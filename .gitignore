@@ -46,6 +46,7 @@ build-*/
 assimp/
 External/
 packages/
+asset/model/Alicia
 
 # CMake generated files
 CMakeFiles/
