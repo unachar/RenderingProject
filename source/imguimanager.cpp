@@ -466,6 +466,14 @@ void ImGuiManager::Update()
 	{
 		DrawLogWindow();
 	}
+	if (m_ShowMeshOutlineWindow)
+	{
+		DrawMeshOutlineWindow();
+	}
+	if (m_ShowMeshShadingWindow)
+	{
+		DrawMeshShadingWindow();
+	}
 
 	if (!m_ShowAdjustmentPanel)
 	{
@@ -1044,17 +1052,19 @@ void ImGuiManager::DrawEditorMainMenu()
 
 	ImGui::Separator();
 
-	ImGui::Checkbox("エディター", &m_ShowEditorWindows);
-	ImGui::SameLine();
-	ImGui::Checkbox("調整", &m_ShowAdjustmentPanel);
-	ImGui::SameLine();
-	ImGui::Checkbox("アセット", &m_ShowAssetBrowser);
-	ImGui::SameLine();
-	ImGui::Checkbox("描画デバッグ", &m_ShowRenderDebugger);
-	ImGui::SameLine();
-	ImGui::Checkbox("Gバッファ", &m_ShowGBufferWindow);
-	ImGui::SameLine();
-	ImGui::Checkbox("ログ", &m_ShowLogWindow);
+	if (ImGui::BeginMenu("Window"))
+	{
+		ImGui::MenuItem("エディター", nullptr, &m_ShowEditorWindows);
+		ImGui::MenuItem("調整", nullptr, &m_ShowAdjustmentPanel);
+		ImGui::MenuItem("アセット", nullptr, &m_ShowAssetBrowser);
+		ImGui::MenuItem("描画デバッグ", nullptr, &m_ShowRenderDebugger);
+		ImGui::MenuItem("Gバッファ", nullptr, &m_ShowGBufferWindow);
+		ImGui::MenuItem("ログ", nullptr, &m_ShowLogWindow);
+		ImGui::Separator();
+		ImGui::MenuItem("メッシュ単位のアウトライン", nullptr, &m_ShowMeshOutlineWindow);
+		ImGui::MenuItem("メッシュ単位のシェーディング", nullptr, &m_ShowMeshShadingWindow);
+		ImGui::EndMenu();
+	}
 	ImGui::SameLine();
 	ImGui::Checkbox("選択AABBのみ", &m_ShowAabbForSelectedOnly);
 
@@ -1434,6 +1444,64 @@ void ImGuiManager::DrawLogWindow()
 	ImGui::End();
 }
 
+void ImGuiManager::DrawMeshOutlineWindow()
+{
+	ImGui::SetNextWindowSize(ImVec2(760.0f, 420.0f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("メッシュ単位のアウトライン", &m_ShowMeshOutlineWindow))
+	{
+		ImGui::End();
+		return;
+	}
+
+	if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
+	{
+		ImGui::TextUnformatted("オブジェクト未選択");
+		ImGui::End();
+		return;
+	}
+
+	ImGui::Text("選択中: %s", GetEntityDisplayName(m_SelectedEntity));
+	ImGui::Separator();
+	if (!IsModelMaterialEntity(m_SelectedEntity))
+	{
+		ImGui::TextUnformatted("メッシュ付きモデルを選択してください");
+		ImGui::End();
+		return;
+	}
+
+	DrawToonMeshOutlineInspector(m_SelectedEntity, false);
+	ImGui::End();
+}
+
+void ImGuiManager::DrawMeshShadingWindow()
+{
+	ImGui::SetNextWindowSize(ImVec2(760.0f, 420.0f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("メッシュ単位のシェーディング", &m_ShowMeshShadingWindow))
+	{
+		ImGui::End();
+		return;
+	}
+
+	if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
+	{
+		ImGui::TextUnformatted("オブジェクト未選択");
+		ImGui::End();
+		return;
+	}
+
+	ImGui::Text("選択中: %s", GetEntityDisplayName(m_SelectedEntity));
+	ImGui::Separator();
+	if (!IsModelMaterialEntity(m_SelectedEntity))
+	{
+		ImGui::TextUnformatted("メッシュ付きモデルを選択してください");
+		ImGui::End();
+		return;
+	}
+
+	DrawMeshShadingInspector(m_SelectedEntity, false);
+	ImGui::End();
+}
+
 void ImGuiManager::DrawHierarchyWindow()
 {
 	ImGui::SetNextWindowPos(ImVec2(8.0f, 32.0f), ImGuiCond_FirstUseEver);
@@ -1685,12 +1753,6 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
 		BeginUndoCapture(entity, before);
 	}
 
-	if (IsModelMaterialEntity(entity))
-	{
-		DrawMeshShadingInspector(entity);
-		DrawToonMeshOutlineInspector(entity);
-	}
-
 	if (!isManualMode && IsModelMaterialEntity(entity))
 	{
 		if (ImGui::CollapsingHeader("シェーディングパラメータ", ImGuiTreeNodeFlags_DefaultOpen))
@@ -1837,7 +1899,7 @@ if (ImGui::Checkbox("テクスチャ使用", &useTexture))
 	}
 }
 
-void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity)
+void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity, bool embeddedInInspector)
 {
 	if (!ComponentManager::HasComponent<MaterialComponent>(entity))
 	{
@@ -1895,10 +1957,19 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity)
 
 	if (meshCount == 0)
 	{
+		if (!embeddedInInspector)
+		{
+			ImGui::TextUnformatted("メッシュがありません");
+		}
 		return;
 	}
 
-	if (!ImGui::TreeNode("メッシュアウトライン上書き"))
+	bool opened = true;
+	if (embeddedInInspector)
+	{
+		opened = ImGui::TreeNode("メッシュアウトライン上書き");
+	}
+	if (!opened)
 	{
 		return;
 	}
@@ -1938,7 +2009,10 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity)
 		ImGuiTableFlags_Resizable |
 		ImGuiTableFlags_ScrollY;
 
-	if (ImGui::BeginTable("MeshOutlineOverrideTable", 6, tableFlags, ImVec2(0.0f, 260.0f)))
+	const float tableHeight = embeddedInInspector
+		? 260.0f
+		: max(180.0f, ImGui::GetContentRegionAvail().y);
+	if (ImGui::BeginTable("MeshOutlineOverrideTable", 6, tableFlags, ImVec2(0.0f, tableHeight)))
 	{
 		ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 32.0f);
 		ImGui::TableSetupColumn("メッシュ");
@@ -2013,7 +2087,10 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity)
 	{
 		BeginUndoCapture(entity, before);
 	}
-	ImGui::TreePop();
+	if (embeddedInInspector)
+	{
+		ImGui::TreePop();
+	}
 }
 
 void ImGuiManager::ApplyMeshShadingOverridesToModel(EntityID entity)
@@ -2054,7 +2131,7 @@ void ImGuiManager::ApplyMeshShadingOverridesToModel(EntityID entity)
 	}
 }
 
-void ImGuiManager::DrawMeshShadingInspector(EntityID entity)
+void ImGuiManager::DrawMeshShadingInspector(EntityID entity, bool embeddedInInspector)
 {
 	if (!ComponentManager::HasComponent<MaterialComponent>(entity))
 	{
@@ -2110,7 +2187,21 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity)
 		}
 	}
 
-	if (meshCount == 0 || !ImGui::TreeNode("メッシュシェーディング上書き"))
+	if (meshCount == 0)
+	{
+		if (!embeddedInInspector)
+		{
+			ImGui::TextUnformatted("メッシュがありません");
+		}
+		return;
+	}
+
+	bool opened = true;
+	if (embeddedInInspector)
+	{
+		opened = ImGui::TreeNode("メッシュシェーディング上書き");
+	}
+	if (!opened)
 	{
 		return;
 	}
@@ -2198,7 +2289,10 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity)
 		ImGuiTableFlags_Resizable |
 		ImGuiTableFlags_ScrollY;
 
-	if (ImGui::BeginTable("MeshShadingOverrideTable", 5, tableFlags, ImVec2(0.0f, 260.0f)))
+	const float tableHeight = embeddedInInspector
+		? 260.0f
+		: max(180.0f, ImGui::GetContentRegionAvail().y);
+	if (ImGui::BeginTable("MeshShadingOverrideTable", 5, tableFlags, ImVec2(0.0f, tableHeight)))
 	{
 		ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 32.0f);
 		ImGui::TableSetupColumn("メッシュ");
@@ -2272,7 +2366,10 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity)
 		ApplyMeshShadingOverridesToModel(entity);
 		BeginUndoCapture(entity, before);
 	}
-	ImGui::TreePop();
+	if (embeddedInInspector)
+	{
+		ImGui::TreePop();
+	}
 }
 
 void ImGuiManager::DrawLightInspector(EntityID entity)
