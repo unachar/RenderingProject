@@ -60,21 +60,21 @@ void Cube::Create()
 
 	// TransformTrackの作成と回転アニメーションの設定
 	auto& track = asset.AddTransformTrack(entity.GetID());
-	auto& clip = track.AddClip(0.0f, 5.0f);
+	auto& clip = track.AddClip(0.0f, asset.GetDuration());
 
 
 
 
 	// Metallicのアニメーションの設定
 	auto& metallicTrack = asset.AddComponentTrack<MaterialComponent>(entity.GetID());
-	auto& metallicClip = metallicTrack.AddFloatClip(0.0f, 5.0f, &MaterialComponent::Metallic);
+	auto& metallicClip = metallicTrack.AddFloatClip(0.0f, asset.GetDuration(), &MaterialComponent::Metallic);
 
 
 
 
 	// Roughnessのアニメーションの設定
 	auto& roughnessTrack = asset.AddComponentTrack<MaterialComponent>(entity.GetID());
-	auto& roughnessClip = roughnessTrack.AddFloatClip(0.0f, 5.0f, &MaterialComponent::Roughness);
+	auto& roughnessClip = roughnessTrack.AddFloatClip(0.0f, asset.GetDuration(), &MaterialComponent::Roughness);
 
 	
 

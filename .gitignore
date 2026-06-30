@@ -51,6 +51,8 @@
 *.vsidx
 *.recipe
 *.exp
+*.bin
+*.ipch
 
 # Build directories
 build/
