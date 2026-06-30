@@ -43,6 +43,9 @@
 build/
 Build/
 build-*/
+assimp/
+External/
+packages/
 
 # CMake generated files
 CMakeFiles/
