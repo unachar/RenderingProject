@@ -38,6 +38,19 @@
 *.exe
 *.out
 *.app
+*.tlog
+*.db
+*.json
+*.res
+*.idb
+*.txt
+*.opendb
+*.db-shm
+*.db-wal
+*.suo
+*.vsidx
+*.recipe
+*.exp
 
 # Build directories
 build/
