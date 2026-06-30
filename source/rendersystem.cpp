@@ -17,6 +17,12 @@ using namespace std;
 
 namespace
 {
+	const MaterialComponent& DefaultMaterial()
+	{
+		static const MaterialComponent material{};
+		return material;
+	}
+
 	bool IsSkyEntity(EntityID entity)
 	{
 		return ComponentManager::HasComponent<NameComponent>(entity) &&
@@ -253,8 +259,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	{
 		auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(i);
 		bool isReceiving = MaterialSystem::IsReceivingPostProcess(i);
-		bool hasMaterial = Registry::HasComponent(i, ComponentType::MATERIAL);
-		bool isTransparent = hasMaterial && MaterialSystem::IsTransparentMaterial(ComponentManager::GetComponentUnchecked<MaterialComponent>(i));
+		const MaterialComponent* material = Registry::HasComponent(i, ComponentType::MATERIAL)
+			? &ComponentManager::GetComponentUnchecked<MaterialComponent>(i)
+			: nullptr;
+		bool isTransparent = material && MaterialSystem::IsTransparentMaterial(*material);
 		if (isTransparent != drawTransparent)
 		{
 			continue;
@@ -306,9 +314,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 				int srvIndex = defaultTextureIndex;
 				int normalSrvIndex = defaultNormalIndex;
-				if (hasMaterial)
+				if (material)
 				{
-					auto& mat = ComponentManager::GetComponentUnchecked<MaterialComponent>(i);
+					const auto& mat = *material;
 					cb3D.UseTexture = mat.UseTexture ? 1 : 0;
 					cb3D.MaterialMetallic = mat.Metallic;
 					cb3D.MaterialRoughness = mat.Roughness;
@@ -333,7 +341,8 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				}
 
 				memcpy(pCbvDataBegin + (i * RendererResource::g_kCB_ALIGNED_SIZE), &cb3D, sizeof(cb3D));
-				m_ModelDrawCalls.push_back(DrawCall{ i, pso, srvIndex, normalSrvIndex, sprite.VertexBufferView, sprite.VertexCount, true });
+				const float cameraDistanceSq = drawTransparent ? GetCameraDistanceSq(i, cameraPos) : 0.0f;
+				m_ModelDrawCalls.push_back(DrawCall{ i, pso, srvIndex, normalSrvIndex, sprite.VertexBufferView, sprite.VertexCount, true, material, cameraDistanceSq });
 				continue;
 			}
 
@@ -373,9 +382,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 			int srvIndex = defaultTextureIndex;
 			int normalSrvIndex = defaultNormalIndex;
-			if (hasMaterial)
+			if (material)
 			{
-				auto& mat = ComponentManager::GetComponentUnchecked<MaterialComponent>(i);
+				const auto& mat = *material;
 				cbData.UseTexture = mat.UseTexture ? 1 : 0;
 				cbData.MaterialMode = static_cast<int>(mat.ShaderClassMode);
 				cbData.ShaderClass = static_cast<int>(mat.ShaderClass);
@@ -398,7 +407,8 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			auto* pCb = reinterpret_cast<CbData*>(pCbvDataBegin + (i * RendererResource::g_kCB_ALIGNED_SIZE));
 			*pCb = cbData;
 
-			m_SpriteDrawCalls.push_back(DrawCall{ i, pso, srvIndex, normalSrvIndex, sprite.VertexBufferView, sprite.VertexCount, false });
+			const float cameraDistanceSq = drawTransparent ? GetCameraDistanceSq(i, cameraPos) : 0.0f;
+			m_SpriteDrawCalls.push_back(DrawCall{ i, pso, srvIndex, normalSrvIndex, sprite.VertexBufferView, sprite.VertexCount, false, material, cameraDistanceSq });
 		}
 	}
 
@@ -421,8 +431,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		}
 
 		bool isReceiving = MaterialSystem::IsReceivingPostProcess(i);
-		bool hasMaterial = Registry::HasComponent(i, ComponentType::MATERIAL);
-		bool isTransparent = hasMaterial && MaterialSystem::IsTransparentMaterial(ComponentManager::GetComponentUnchecked<MaterialComponent>(i));
+		const MaterialComponent* material = Registry::HasComponent(i, ComponentType::MATERIAL)
+			? &ComponentManager::GetComponentUnchecked<MaterialComponent>(i)
+			: nullptr;
+		bool isTransparent = material && MaterialSystem::IsTransparentMaterial(*material);
 		if (isTransparent != drawTransparent)
 		{
 			continue;
@@ -464,9 +476,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 		int srvIndex = defaultTextureIndex;
 		int normalSrvIndex = defaultNormalIndex;
-		if (hasMaterial)
+		if (material)
 		{
-			auto& mat = ComponentManager::GetComponentUnchecked<MaterialComponent>(i);
+			const auto& mat = *material;
 			cb3D.UseTexture = mat.UseTexture ? 1 : 0;
 			cb3D.MaterialMetallic = mat.Metallic;
 			cb3D.MaterialRoughness = mat.Roughness;
@@ -491,20 +503,19 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		}
 
 		memcpy(pCbvDataBegin + (i * RendererResource::g_kCB_ALIGNED_SIZE), &cb3D, sizeof(cb3D));
-		m_ModelDrawCalls.push_back(DrawCall{ i, pso, srvIndex, normalSrvIndex, mesh.VertexBufferView, mesh.VertexCount, true });
+		const float cameraDistanceSq = drawTransparent ? GetCameraDistanceSq(i, cameraPos) : 0.0f;
+		m_ModelDrawCalls.push_back(DrawCall{ i, pso, srvIndex, normalSrvIndex, mesh.VertexBufferView, mesh.VertexCount, true, material, cameraDistanceSq });
 	}
 
-	auto sortDrawCalls = [drawTransparent, cameraPos](vector<DrawCall>& drawCalls)
+	auto sortDrawCalls = [drawTransparent](vector<DrawCall>& drawCalls)
 		{
-			sort(drawCalls.begin(), drawCalls.end(), [drawTransparent, cameraPos](const DrawCall& a, const DrawCall& b)
+			sort(drawCalls.begin(), drawCalls.end(), [drawTransparent](const DrawCall& a, const DrawCall& b)
 				{
 				if (drawTransparent)
 				{
-					const float da = GetCameraDistanceSq(a.EntityID, cameraPos);
-					const float db = GetCameraDistanceSq(b.EntityID, cameraPos);
-					if (fabsf(da - db) > 0.0001f)
+					if (fabsf(a.cameraDistanceSq - b.cameraDistanceSq) > 0.0001f)
 					{
-						return da > db;
+						return a.cameraDistanceSq > b.cameraDistanceSq;
 					}
 				}
 				if (a.pso != b.pso)
@@ -533,11 +544,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 			for (const auto& dc : drawCalls)
 			{
-				MaterialComponent material{};
-				if (Registry::HasComponent(dc.EntityID, ComponentType::MATERIAL))
-				{
-					material = ComponentManager::GetComponentUnchecked<MaterialComponent>(dc.EntityID);
-				}
+				const MaterialComponent& material = dc.material ? *dc.material : DefaultMaterial();
 				RendererResource::SetMaterial(dc.EntityID, material);
 
 				if (dc.pso != lastPso)
