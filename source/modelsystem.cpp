@@ -104,6 +104,15 @@ namespace
 		return meshData.DefaultToonOutlineEnabled;
 	}
 
+	float GetMeshToonOutlineWidthScale(const MaterialComponent& material, UINT meshIndex)
+	{
+		if (meshIndex < material.ToonMeshOutlineWidthScales.size())
+		{
+			return max(material.ToonMeshOutlineWidthScales[meshIndex], 0.0f);
+		}
+		return 1.0f;
+	}
+
 	float GetCameraDistanceSq(EntityID entity, const XMFLOAT3& cameraPos)
 	{
 		if (!Registry::HasComponent(entity, ComponentType::TRANSFORM))
@@ -453,6 +462,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 				if (outlinePso && ShouldDrawToonOutline(dc.EntityID) && ShouldDrawMeshToonOutline(material, m, meshData))
 				{
+					const float meshWidthScale = GetMeshToonOutlineWidthScale(material, m);
 					const int teoMode = GetTeoModeIndex(material);
 					const bool hasTeoMesh =
 						meshData.TeoVertexBuffers[teoMode] &&
@@ -470,14 +480,14 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					pCommandList->SetPipelineState(outlinePso);
 					if (drawExtrude)
 					{
-						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material);
+						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material, meshWidthScale);
 						pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
 						pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 						pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
 					}
 					if (drawTeo)
 					{
-						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material, material.ToonOutlineTeoWidthScale);
+						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material, meshWidthScale * material.ToonOutlineTeoWidthScale);
 						pCommandList->IASetVertexBuffers(0, 1, &meshData.TeoVertexBufferViews[teoMode]);
 						pCommandList->IASetIndexBuffer(&meshData.TeoIndexBufferViews[teoMode]);
 						pCommandList->DrawIndexedInstanced(meshData.TeoIndexCounts[teoMode], 1, 0, 0, 0);
@@ -656,6 +666,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 				if (outlinePso && ShouldDrawToonOutline(dc.EntityID) && ShouldDrawMeshToonOutline(material, m, meshData))
 				{
+					const float meshWidthScale = GetMeshToonOutlineWidthScale(material, m);
 					const int teoMode = GetTeoModeIndex(material);
 					const bool hasTeoMesh =
 						meshData.TeoVertexBuffers[teoMode] &&
@@ -673,14 +684,14 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					pCommandList->SetPipelineState(outlinePso);
 					if (drawExtrude)
 					{
-						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material);
+						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material, meshWidthScale);
 						pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
 						pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 						pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
 					}
 					if (drawTeo)
 					{
-						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material, material.ToonOutlineTeoWidthScale);
+						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material, meshWidthScale * material.ToonOutlineTeoWidthScale);
 						pCommandList->IASetVertexBuffers(0, 1, &meshData.TeoVertexBufferViews[teoMode]);
 						pCommandList->IASetIndexBuffer(&meshData.TeoIndexBufferViews[teoMode]);
 						pCommandList->DrawIndexedInstanced(meshData.TeoIndexCounts[teoMode], 1, 0, 0, 0);

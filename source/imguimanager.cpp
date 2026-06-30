@@ -1912,6 +1912,13 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity)
 				material.ToonMeshOutlineOverrides.resize(meshCount, MeshOutlineOverride::Auto);
 			}
 		};
+	auto ensureWidthScaleSize = [&]()
+		{
+			if (material.ToonMeshOutlineWidthScales.size() < meshCount)
+			{
+				material.ToonMeshOutlineWidthScales.resize(meshCount, 1.0f);
+			}
+		};
 
 	if (ImGui::Button("すべて自動"))
 	{
@@ -1930,6 +1937,12 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity)
 		material.ToonMeshOutlineOverrides.assign(meshCount, MeshOutlineOverride::ForceOff);
 		changed = true;
 	}
+	ImGui::SameLine();
+	if (ImGui::Button("幅リセット"))
+	{
+		material.ToonMeshOutlineWidthScales.assign(meshCount, 1.0f);
+		changed = true;
+	}
 
 	const char* overrideItems[] = { "自動", "オン", "オフ" };
 	constexpr ImGuiTableFlags tableFlags =
@@ -1938,7 +1951,7 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity)
 		ImGuiTableFlags_Resizable |
 		ImGuiTableFlags_ScrollY;
 
-	if (ImGui::BeginTable("MeshOutlineOverrideTable", 6, tableFlags, ImVec2(0.0f, 260.0f)))
+	if (ImGui::BeginTable("MeshOutlineOverrideTable", 7, tableFlags, ImVec2(0.0f, 260.0f)))
 	{
 		ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 32.0f);
 		ImGui::TableSetupColumn("メッシュ");
@@ -1946,6 +1959,7 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity)
 		ImGui::TableSetupColumn("部位", ImGuiTableColumnFlags_WidthFixed, 44.0f);
 		ImGui::TableSetupColumn("自動", ImGuiTableColumnFlags_WidthFixed, 48.0f);
 		ImGui::TableSetupColumn("上書き", ImGuiTableColumnFlags_WidthFixed, 96.0f);
+		ImGui::TableSetupColumn("幅倍率", ImGuiTableColumnFlags_WidthFixed, 112.0f);
 		ImGui::TableHeadersRow();
 
 		for (UINT i = 0; i < meshCount; ++i)
@@ -2002,6 +2016,18 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity)
 			{
 				ensureOverrideSize();
 				material.ToonMeshOutlineOverrides[i] = static_cast<MeshOutlineOverride>(overrideIndex);
+				changed = true;
+			}
+			ImGui::TableSetColumnIndex(6);
+			float widthScale = 1.0f;
+			if (i < material.ToonMeshOutlineWidthScales.size())
+			{
+				widthScale = material.ToonMeshOutlineWidthScales[i];
+			}
+			if (ImGui::SetNextItemWidth(-FLT_MIN), ImGui::SliderFloat("##WidthScale", &widthScale, 0.0f, 3.0f, "%.2f"))
+			{
+				ensureWidthScaleSize();
+				material.ToonMeshOutlineWidthScales[i] = widthScale;
 				changed = true;
 			}
 			ImGui::PopID();

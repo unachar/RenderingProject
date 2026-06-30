@@ -255,6 +255,7 @@ struct MaterialComponent
 	ToonTeoMode ToonTeoRenderMode = ToonTeoMode::Balanced;
 	float ToonOutlineTeoWidthScale = 1.0f;
 	vector<MeshOutlineOverride> ToonMeshOutlineOverrides{};
+	vector<float> ToonMeshOutlineWidthScales{};
 	vector<MeshShadingOverride> MeshShadingOverrides{};
 	float Alpha = 1.0f;
 	bool IsTransparent = false;
