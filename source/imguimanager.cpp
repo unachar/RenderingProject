@@ -2025,7 +2025,7 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity, bool embeddedIn
 	const float tableHeight = embeddedInInspector
 		? 260.0f
 		: max(180.0f, ImGui::GetContentRegionAvail().y);
-	if (ImGui::BeginTable("MeshOutlineOverrideTable", 6, tableFlags, ImVec2(0.0f, tableHeight)))
+	if (ImGui::BeginTable("MeshOutlineOverrideTable", 7, tableFlags, ImVec2(0.0f, tableHeight)))
 	{
 		ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 32.0f);
 		ImGui::TableSetupColumn("メッシュ");
