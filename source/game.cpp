@@ -1,0 +1,83 @@
+﻿#include "pch.h"
+
+#include "game.h"
+#include "world.h"
+#include "camera.h"
+#include "input.h"
+#include "rendererdraw.h"
+#include "renderercore.h"
+#include "renderershader.h"
+
+#include "systemmanager.h"
+#include "modelmanager.h"
+
+#include "polygon3d.h"
+#include "xbot.h"
+#include "field.h"
+#include "moca.h"
+#include "karen.h"
+#include "kacchatta_hone.h"
+#include "alicia.h"
+#include "sky.h"
+#include "cube.h"
+#include "light.h"
+
+void Game::Init()
+{
+	World::Init();
+	Input::Init();
+	SystemManager::Init();
+}
+
+void Game::Create()
+{
+	Camera::Create();
+	const auto& light = Light::Create(LightType::Point);
+	Sky::Create();
+	Field::Create();
+	Polygon3D::Create();
+	//XBot::Create();
+	Alicia::Create();
+	Moca::Create();
+	Karen::Create();
+	KacchattaHone::Create();
+	Cube::Create();
+
+	Light::AttachLightTimeLine(light);
+}
+
+void Game::Uninit()
+{
+	SystemManager::Uninit();
+	ModelManager::Uninit();
+	ComponentManager::Uninit();
+
+	Input::Uninit();
+	RendererCore::Uninit();
+}
+
+void Game::Run()
+{
+	Update();
+	Draw();
+}
+
+void Game::Update()
+{
+	World::Update();
+	Input::Update();
+
+	if (Input::IsKeyPress(VK_ESCAPE))
+	{
+		PostQuitMessage(0);
+	}
+
+	SystemManager::UpdateSystem();
+}
+
+void Game::Draw()
+{
+	RendererDraw::BeginDraw();
+	SystemManager::RenderFlow();
+	RendererDraw::EndDraw();
+}

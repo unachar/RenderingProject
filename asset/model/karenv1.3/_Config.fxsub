@@ -1,0 +1,12 @@
+
+// 透過させる材質
+#define EYE_SUBSET "5,6"
+
+// 髪の材質
+#define HAIR_SUBSET "2,15"
+
+// 透明度
+#define EYE_ALPHA 0.8
+
+// トゥーンシェーダー化するか
+#define ENABLE_TOON 0

@@ -1,0 +1,99 @@
+////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//  _Main.fx
+//  作成: 角砂糖
+//
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+#include "_Config.fxsub"
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+// パラメータ宣言
+
+float4x4 EyeWorldViewProjMatrix      : WORLDVIEWPROJECTION;
+
+// スクリーンサイズ
+float2 EyeViewportSize : VIEWPORTPIXELSIZE;
+static float2 EyeViewportOffset = (float2(0.5,0.5)/EyeViewportSize);
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+// RTタブで非表示にするやつ
+
+#define HIDE_OBJ\
+        "spotlight*.pmx = hide;"\
+        "pointlight*.pmx = hide;"\
+        "*light.pmx = hide;"\
+        "LED.pmx = hide;"\
+        "*fog.pmx = hide;"\
+        "*controller*.pmx = hide;"\
+        "*コントローラ*.pmx = hide;"\
+        "*CTR.pmx = hide;"\
+        "*editor*.pmx = hide;"
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+// 描画用RT
+texture EyeRT: OFFSCREENRENDERTARGET <
+    string Description = "RT for AlphaEyeClip";
+    string Format = "A8R8G8B8";
+    float4 ClearColor = {1,0,0,0};
+    float ClearDepth = 1.0;
+    int Miplevels = 1;
+    bool AntiAlias = true;
+    string DefaultEffect = 
+        "self = _DrawChara.fx;"
+        HIDE_OBJ
+        "* = _DrawEtc.fx;"
+    ;
+>;
+sampler EyeSamp = sampler_state {
+    texture = <EyeRT>;
+    MinFilter = LINEAR;
+    MagFilter = LINEAR;
+    MipFilter = NONE;
+    AddressU  = CLAMP;
+    AddressV  = CLAMP;
+};
+
+
+shared texture2D HairTex : RENDERCOLORTARGET < string Format = "R16F" ; >;
+sampler HairSamp = sampler_state {
+    texture = <HairTex>;
+    MinFilter = LINEAR;
+    MagFilter = LINEAR;
+    MipFilter = NONE;
+    AddressU  = CLAMP;
+    AddressV  = CLAMP;
+};
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+// 処理用
+
+#define EYE_STRUCT \
+    float4 EyeScreenTex  : TEXCOORD9;
+
+#define EYE_DRAW_VS \
+    Out.EyeScreenTex = mul(Pos, EyeWorldViewProjMatrix);
+
+#define EYE_DRAW_PS \
+    IN.EyeScreenTex.xyz /= IN.EyeScreenTex.w; \
+    float2 EyeTransScreenTex; \
+    EyeTransScreenTex.x = (1.0f + IN.EyeScreenTex.x) * 0.5f; \
+    EyeTransScreenTex.y = (1.0f - IN.EyeScreenTex.y) * 0.5f; \
+    EyeTransScreenTex += EyeViewportOffset; \
+    float4 EyeColor = tex2D(EyeSamp, EyeTransScreenTex); \
+    Color.rgb = lerp(Color.rgb, EyeColor.rgb, EyeColor.a * EYE_ALPHA);
+
+#define EYE_DRAW_PS_ANS \
+    IN.EyeScreenTex.xyz /= IN.EyeScreenTex.w; \
+    float2 EyeTransScreenTex; \
+    EyeTransScreenTex.x = (1.0f + IN.EyeScreenTex.x) * 0.5f; \
+    EyeTransScreenTex.y = (1.0f - IN.EyeScreenTex.y) * 0.5f; \
+    EyeTransScreenTex += EyeViewportOffset; \
+    float4 EyeColor = tex2D(EyeSamp, EyeTransScreenTex); \
+    ans.rgb = lerp(ans.rgb, EyeColor.rgb, EyeColor.a * EYE_ALPHA);
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////

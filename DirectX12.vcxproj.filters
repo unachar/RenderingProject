@@ -1,0 +1,562 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="リソース ファイル">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="0_pch">
+      <UniqueIdentifier>{967ab9a4-cb55-49e0-841d-4c9e055beaa7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="1_base">
+      <UniqueIdentifier>{e6545c50-9991-4aaf-b19c-00fbcdecfba2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="2_ecs">
+      <UniqueIdentifier>{18521725-d73d-4027-9a40-6062c7239a4b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="2_ecs\2-1_entities">
+      <UniqueIdentifier>{ff8270c0-6e12-4696-a3ed-0efb76fdcb3c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="2_ecs\2-2_components">
+      <UniqueIdentifier>{04394364-92a9-4928-9649-4b81cb499075}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="2_ecs\2-3_systems">
+      <UniqueIdentifier>{8ac4456c-2b2d-4b7f-ab25-b15c03499b20}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="3_model">
+      <UniqueIdentifier>{5a19dad7-526c-4801-b6ad-664540cc6218}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="4_texture">
+      <UniqueIdentifier>{02b9444a-4bf7-49c7-b91e-448820dca0f9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="5_shader">
+      <UniqueIdentifier>{6d640fe1-df88-4756-867e-456e9591af93}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="5_shader\hlsl">
+      <UniqueIdentifier>{a9b178c9-8190-4783-a2c9-dc61edeb2648}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="5_shader\Slang">
+      <UniqueIdentifier>{c644af08-6b47-45f7-97e9-1210e5a68417}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="3_model\3-1_animationmodel">
+      <UniqueIdentifier>{1d7c8e6f-e2ba-46de-b128-95ec04dac8b2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="3_model\3-2_staticmodel">
+      <UniqueIdentifier>{ec6183ee-904e-4717-997c-958d0f2a4263}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="3_model\3-3_manager">
+      <UniqueIdentifier>{a8631da5-c26d-44fb-8b21-31b0c3f12380}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="4_texture\4-1_manager">
+      <UniqueIdentifier>{523e2c0f-9a49-4d17-b7b7-649e21d6a3b6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="External">
+      <UniqueIdentifier>{d7a7b8e5-8e2b-4d9a-9e7c-8b8a8b8a8b8a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="External\ImGUI">
+      <UniqueIdentifier>{f8a8b8c8-d8e8-4f8f-af8f-bf8fcf8fdf8f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="External\ImGuizmo">
+      <UniqueIdentifier>{a1b2c3d4-e5f6-4a5b-8c7d-9e0f1a2b3c4d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="5_shader\resource">
+      <UniqueIdentifier>{669bad30-0e93-4cf2-951b-a3e7c0b8f685}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="shader\hlsl\colorshaderPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\colorshaderPS_MRT.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\colorshaderVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\common.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\debugLinePS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\debugLinePS_MRT.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\debugLineVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\DeferredPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\DeferredLightingPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GeometryPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modelshaderPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modelshaderPS_MRT.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modelshaderVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\toonOutlinePS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\toonOutlinePS_MRT.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\toonOutlineVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\postProcessBlurPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\postProcessNonePS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\postProcessGrayPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\postProcessInvertPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\postProcessSepiaPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\postProcessVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\skinning_cs.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\colorshader3dVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\colorshader3dPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\colorshader3dPS_MRT.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modellightingVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modellightingPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modellightingspeculerVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modellighingspeculerPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\ShadowMapVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <SlangShader Include="shader\slang\test.slang">
+      <Filter>5_shader\Slang</Filter>
+    </SlangShader>
+    <SlangShader Include="shader\slang\neural_network_sample.slang">
+      <Filter>5_shader\Slang</Filter>
+    </SlangShader>
+    <SlangShader Include="shader\slang\pbrToonPS.slang">
+      <Filter>5_shader\Slang</Filter>
+    </SlangShader>
+    <SlangShader Include="shader\slang\pbrToonVS.slang">
+      <Filter>5_shader\Slang</Filter>
+    </SlangShader>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\pch.cpp">
+      <Filter>0_pch</Filter>
+    </ClCompile>
+    <ClCompile Include="source\game.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\main.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\renderer.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\ecs.cpp">
+      <Filter>2_ecs</Filter>
+    </ClCompile>
+    <ClCompile Include="source\camera.cpp">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\grid.cpp">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\input.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\polygon.cpp">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClCompile>
+    <!-- Block breaker / breakout cpp files removed from filters -->
+    <ClCompile Include="source\world.cpp">
+      <Filter>2_ecs</Filter>
+    </ClCompile>
+    <ClCompile Include="source\componentmanager.cpp">
+      <Filter>2_ecs\2-2_components</Filter>
+    </ClCompile>
+    <ClCompile Include="source\animator.cpp">
+      <Filter>2_ecs\2-2_components</Filter>
+    </ClCompile>
+    <ClCompile Include="source\animationsystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\camerasystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\debugsystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\gridsystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\inputsystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\materialsystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\modelsystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\postprocesssystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendersystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systemmanager.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\timeline.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\timelinesystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\transformsystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\animationmodel.cpp">
+      <Filter>3_model\3-1_animationmodel</Filter>
+    </ClCompile>
+    <ClCompile Include="source\staticmodel.cpp">
+      <Filter>3_model\3-2_staticmodel</Filter>
+    </ClCompile>
+    <ClCompile Include="source\modelmanager.cpp">
+      <Filter>3_model\3-3_manager</Filter>
+    </ClCompile>
+    <ClCompile Include="source\texturemanager.cpp">
+      <Filter>4_texture\4-1_manager</Filter>
+    </ClCompile>
+    <ClCompile Include="External\ImGUI\imgui.cpp">
+      <Filter>External\ImGUI</Filter>
+    </ClCompile>
+    <ClCompile Include="External\ImGUI\imgui_draw.cpp">
+      <Filter>External\ImGUI</Filter>
+    </ClCompile>
+    <ClCompile Include="External\ImGUI\imgui_widgets.cpp">
+      <Filter>External\ImGUI</Filter>
+    </ClCompile>
+    <ClCompile Include="External\ImGUI\imgui_tables.cpp">
+      <Filter>External\ImGUI</Filter>
+    </ClCompile>
+    <ClCompile Include="External\ImGuizmo\ImGuizmo.cpp">
+      <Filter>External\ImGuizmo</Filter>
+    </ClCompile>
+    <ClCompile Include="External\ImGUI\imgui_impl_dx12.cpp">
+      <Filter>External\ImGUI</Filter>
+    </ClCompile>
+    <ClCompile Include="External\ImGUI\imgui_impl_win32.cpp">
+      <Filter>External\ImGUI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\imguimanager.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\light.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\polygon3d.cpp">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\xbot.cpp">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\field.cpp">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\alicia.cpp">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\moca.cpp">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\karen.cpp">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\kacchatta_hone.cpp">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\movementsystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cameracontrolsystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\postprocessinputsystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\lightsystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\renderercore.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\psomanager.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendererdraw.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendererresource.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\renderershader.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendererutils.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\sky.cpp">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cube.cpp">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="source\pch.h">
+      <Filter>0_pch</Filter>
+    </ClInclude>
+    <ClInclude Include="source\vector.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\main.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\input.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\light.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\d3dx12.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\ecs.h">
+      <Filter>2_ecs</Filter>
+    </ClInclude>
+    <ClInclude Include="source\world.h">
+      <Filter>2_ecs</Filter>
+    </ClInclude>
+    <ClInclude Include="source\game.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\camera.h">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\grid.h">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\polygon.h">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClInclude>
+    <!-- Block breaker / breakout header files removed from filters -->
+    <ClInclude Include="source\componentmanager.h">
+      <Filter>2_ecs\2-2_components</Filter>
+    </ClInclude>
+    <ClInclude Include="source\animator.h">
+      <Filter>2_ecs\2-2_components</Filter>
+    </ClInclude>
+    <ClInclude Include="source\animationsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\camerasystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\debugsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\gridsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\inputsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\materialsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\modelsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\postprocesssystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendersystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systembase.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systemmanager.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\timeline.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\timelinesystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\transformsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\animationmodel.h">
+      <Filter>3_model\3-1_animationmodel</Filter>
+    </ClInclude>
+    <ClInclude Include="source\staticmodel.h">
+      <Filter>3_model\3-2_staticmodel</Filter>
+    </ClInclude>
+    <ClInclude Include="source\modelimportutils.h">
+      <Filter>3_model\3-3_manager</Filter>
+    </ClInclude>
+    <ClInclude Include="source\modelmanager.h">
+      <Filter>3_model\3-3_manager</Filter>
+    </ClInclude>
+    <ClInclude Include="source\texturemanager.h">
+      <Filter>4_texture\4-1_manager</Filter>
+    </ClInclude>
+    <ClInclude Include="External\ImGUI\imgui.h">
+      <Filter>External\ImGUI</Filter>
+    </ClInclude>
+    <ClInclude Include="External\ImGUI\imconfig.h">
+      <Filter>External\ImGUI</Filter>
+    </ClInclude>
+    <ClInclude Include="External\ImGUI\imgui_internal.h">
+      <Filter>External\ImGUI</Filter>
+    </ClInclude>
+    <ClInclude Include="External\ImGUI\imstb_rectpack.h">
+      <Filter>External\ImGUI</Filter>
+    </ClInclude>
+    <ClInclude Include="External\ImGUI\imstb_textedit.h">
+      <Filter>External\ImGUI</Filter>
+    </ClInclude>
+    <ClInclude Include="External\ImGUI\imstb_truetype.h">
+      <Filter>External\ImGUI</Filter>
+    </ClInclude>
+    <ClInclude Include="External\ImGUI\imgui_impl_dx12.h">
+      <Filter>External\ImGUI</Filter>
+    </ClInclude>
+    <ClInclude Include="External\ImGUI\imgui_impl_win32.h">
+      <Filter>External\ImGUI</Filter>
+    </ClInclude>
+    <ClInclude Include="External\ImGuizmo\ImGuizmo.h">
+      <Filter>External\ImGuizmo</Filter>
+    </ClInclude>
+    <ClInclude Include="source\imguimanager.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\polygon3d.h">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\resource.h" />
+    <ClInclude Include="source\xbot.h">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\field.h">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\alicia.h">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\moca.h">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\karen.h">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\kacchatta_hone.h">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\movementsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\cameracontrolsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\postprocessinputsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\lightsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\renderercore.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\psomanager.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendererdraw.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendererresource.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\renderershader.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendererstate.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendererutils.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\materialpartresolver.h">
+      <Filter>5_shader\resource</Filter>
+    </ClInclude>
+    <ClInclude Include="source\sky.h">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\cube.h">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config">
+      <Filter>リソース ファイル</Filter>
+    </None>
+    <None Include=".github\copilot-instructions.md" />
+    <None Include="shader\slang\pbrToonCommon.slang">
+      <Filter>5_shader\Slang</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="memo.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="source\app.rc">
+      <Filter>リソース ファイル</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+</Project>
