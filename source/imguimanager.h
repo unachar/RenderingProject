@@ -28,6 +28,8 @@ private:
 	inline static bool m_ShowRenderDebugger = false;
 	inline static bool m_ShowGBufferWindow = true;
 	inline static bool m_ShowLogWindow = true;
+	inline static bool m_ShowMeshOutlineWindow = false;
+	inline static bool m_ShowMeshShadingWindow = false;
 	inline static bool m_ShowAabbForSelectedOnly = false;
 	inline static bool m_ShowLightDebug = true;
 	inline static bool m_HdrEnabled = false;
@@ -99,10 +101,12 @@ private:
 	static void DrawRenderDebuggerWindow();
 	static void DrawGBufferWindow();
 	static void DrawLogWindow();
+	static void DrawMeshOutlineWindow();
+	static void DrawMeshShadingWindow();
 	static void DrawMaterialInspector(EntityID entity);
 	static void ApplyMeshShadingOverridesToModel(EntityID entity);
-	static void DrawToonMeshOutlineInspector(EntityID entity);
-	static void DrawMeshShadingInspector(EntityID entity);
+	static void DrawToonMeshOutlineInspector(EntityID entity, bool embeddedInInspector = true);
+	static void DrawMeshShadingInspector(EntityID entity, bool embeddedInInspector = true);
 	static void DrawLightInspector(EntityID entity);
 	static void DrawComponentInspector(EntityID entity);
 	static void DeleteSelectedEntity();
