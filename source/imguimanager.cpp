@@ -1983,6 +1983,13 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity, bool embeddedIn
 				material.ToonMeshOutlineOverrides.resize(meshCount, MeshOutlineOverride::Auto);
 			}
 		};
+	auto ensureWidthScaleSize = [&]()
+		{
+			if (material.ToonMeshOutlineWidthScales.size() < meshCount)
+			{
+				material.ToonMeshOutlineWidthScales.resize(meshCount, 1.0f);
+			}
+		};
 
 	if (ImGui::Button("すべて自動"))
 	{
@@ -1999,6 +2006,12 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity, bool embeddedIn
 	if (ImGui::Button("すべてオフ"))
 	{
 		material.ToonMeshOutlineOverrides.assign(meshCount, MeshOutlineOverride::ForceOff);
+		changed = true;
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("幅リセット"))
+	{
+		material.ToonMeshOutlineWidthScales.assign(meshCount, 1.0f);
 		changed = true;
 	}
 
@@ -2020,6 +2033,7 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity, bool embeddedIn
 		ImGui::TableSetupColumn("部位", ImGuiTableColumnFlags_WidthFixed, 44.0f);
 		ImGui::TableSetupColumn("自動", ImGuiTableColumnFlags_WidthFixed, 48.0f);
 		ImGui::TableSetupColumn("上書き", ImGuiTableColumnFlags_WidthFixed, 96.0f);
+		ImGui::TableSetupColumn("幅倍率", ImGuiTableColumnFlags_WidthFixed, 112.0f);
 		ImGui::TableHeadersRow();
 
 		for (UINT i = 0; i < meshCount; ++i)
@@ -2076,6 +2090,18 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity, bool embeddedIn
 			{
 				ensureOverrideSize();
 				material.ToonMeshOutlineOverrides[i] = static_cast<MeshOutlineOverride>(overrideIndex);
+				changed = true;
+			}
+			ImGui::TableSetColumnIndex(6);
+			float widthScale = 1.0f;
+			if (i < material.ToonMeshOutlineWidthScales.size())
+			{
+				widthScale = material.ToonMeshOutlineWidthScales[i];
+			}
+			if (ImGui::SetNextItemWidth(-FLT_MIN), ImGui::SliderFloat("##WidthScale", &widthScale, 0.0f, 3.0f, "%.2f"))
+			{
+				ensureWidthScaleSize();
+				material.ToonMeshOutlineWidthScales[i] = widthScale;
 				changed = true;
 			}
 			ImGui::PopID();
