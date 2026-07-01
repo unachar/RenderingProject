@@ -70,6 +70,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     float shaderClass = material.a;
     bool background = shaderClass < -0.5f;
     bool transparent = IsMaterialClass(shaderClass, 0.0f);
+    bool toon = IsMaterialClass(shaderClass, 4.0f);
     bool shadow = IsMaterialClass(shaderClass, 5.0f);
     bool lit = IsMaterialClass(shaderClass, 8.0f);
     bool pbr = IsMaterialClass(shaderClass, 11.0f);
@@ -130,6 +131,21 @@ float4 main(PSInputPostProcess input) : SV_Target
         float3 shadowTint = saturate(float3(0.015f, 0.014f, 0.017f) + environmentColor * 0.16f + lightTint * 0.025f);
         float3 litColor = baseColor.rgb * (0.12f + NdotL * (0.22f + lightColor.rgb * 0.72f));
         baseColor.rgb = lerp(litColor, baseColor.rgb * shadowTint - 0.08f, shadowDensity);
+    }
+
+    if(toon)
+    {
+        float shadowVisibility = SampleDeferredShadowMap(position.xyz, surfaceNormal, lightDir);
+        float castShadow = saturate(1.0f - shadowVisibility);
+        float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
+        float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
+        float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
+        float selfShadowMask = smoothstep(shadowThreshold - shadowSoftness, shadowThreshold + shadowSoftness, castShadow);
+        shadowDensity = saturate(max(shadowDensity, selfShadowMask * shadowStrength * lerp(0.20f, 0.85f, lightShadowPower)));
+        float3 lightTint = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
+        float3 shadowTint = saturate(float3(0.018f, 0.016f, 0.020f) + environmentColor + lightTint * 0.025f);
+        float3 litColor = baseColor.rgb * (lightColor.rgb * 0.72f + NdotL);
+        baseColor.rgb = diffuse * lerp(litColor, litColor * shadowTint, shadowDensity);
     }
 
     if(lit)
