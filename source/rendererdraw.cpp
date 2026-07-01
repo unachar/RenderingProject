@@ -572,7 +572,8 @@ void RendererDraw::EndDraw()
 	ID3D12CommandList* ppCommandLists[] = { m_CommandList.Get() };
 	m_CommandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
 
-	m_SwapChain->Present(1, 0);
+	const UINT syncInterval = World::IsVSyncEnabled() ? 1u : 0u;
+	m_SwapChain->Present(syncInterval, 0);
 
 	m_CurrentFenceValue++;
 	m_FenceValues[m_FrameIndex] = m_CurrentFenceValue;
@@ -585,6 +586,8 @@ void RendererDraw::EndDraw()
 		m_Fence->SetEventOnCompletion(m_FenceValues[m_FrameIndex], m_FenceEvent);
 		WaitForSingleObject(m_FenceEvent, INFINITE);
 	}
+
+	World::WaitForFrameLimit();
 }
 
 bool RendererDraw::CreateSceneRenderTarget()

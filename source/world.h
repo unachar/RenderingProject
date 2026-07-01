@@ -48,8 +48,15 @@ class World
 {
 private:
 	static float m_DeltaTime;
+	static float m_FrameRate;
+	static float m_FrameTimeMs;
+	static double m_FrameStatsAccumulator;
+	static int m_FrameStatsCount;
 	static long long m_LastTime;
 	static long long m_Frequency;
+	static bool m_VSyncEnabled;
+	static bool m_FixedFrameRateEnabled;
+	static int m_TargetFrameRate;
 	static unordered_map<string, EntityID> m_NameMap;
 	static unordered_map<EntityID, string> m_IdToNameMap;
 
@@ -85,7 +92,16 @@ public:
 	}
 
 	static void Update();
+	static void WaitForFrameLimit();
 	static float GetDeltaTime();
+	static float GetFrameRate();
+	static float GetFrameTimeMs();
+	static bool IsVSyncEnabled();
+	static void SetVSyncEnabled(bool enabled);
+	static bool IsFixedFrameRateEnabled();
+	static void SetFixedFrameRateEnabled(bool enabled);
+	static int GetTargetFrameRate();
+	static void SetTargetFrameRate(int fps);
 };
 
 inline Entity& Entity::SetName(const string& name)
