@@ -466,6 +466,10 @@ void ImGuiManager::Update()
 	{
 		DrawLogWindow();
 	}
+	if (m_ShowPerformanceWindow)
+	{
+		DrawPerformanceWindow();
+	}
 	if (m_ShowMeshOutlineWindow)
 	{
 		DrawMeshOutlineWindow();
@@ -564,6 +568,27 @@ ImGui::Begin("調整");
 	}
 
 	ImGui::Checkbox("Gバッファ", &m_ShowGBufferWindow);
+
+	ImGui::SeparatorText("パフォーマンス");
+	ImGui::Text("FPS: %.1f", World::GetFrameRate());
+	ImGui::Text("Frame: %.2f ms", World::GetFrameTimeMs());
+	bool vsyncEnabled = World::IsVSyncEnabled();
+	if (ImGui::Checkbox("垂直同期", &vsyncEnabled))
+	{
+		World::SetVSyncEnabled(vsyncEnabled);
+	}
+	bool fixedFrameRateEnabled = World::IsFixedFrameRateEnabled();
+	if (ImGui::Checkbox("FPS固定", &fixedFrameRateEnabled))
+	{
+		World::SetFixedFrameRateEnabled(fixedFrameRateEnabled);
+	}
+	int targetFrameRate = World::GetTargetFrameRate();
+	ImGui::SetNextItemWidth(120.0f);
+	if (ImGui::SliderInt("目標FPS", &targetFrameRate, 15, 360))
+	{
+		World::SetTargetFrameRate(targetFrameRate);
+	}
+	ImGui::TextDisabled("VSync有効時はモニターの更新間隔も上限になります");
 	ImGui::End();
 	FinalizeUndoCaptureIfIdle();
 	return;
@@ -1060,6 +1085,7 @@ void ImGuiManager::DrawEditorMainMenu()
 		ImGui::MenuItem("描画デバッグ", nullptr, &m_ShowRenderDebugger);
 		ImGui::MenuItem("Gバッファ", nullptr, &m_ShowGBufferWindow);
 		ImGui::MenuItem("ログ", nullptr, &m_ShowLogWindow);
+		ImGui::MenuItem("パフォーマンス", nullptr, &m_ShowPerformanceWindow);
 		ImGui::Separator();
 		ImGui::MenuItem("メッシュ単位のアウトライン", nullptr, &m_ShowMeshOutlineWindow);
 		ImGui::MenuItem("メッシュ単位のシェーディング", nullptr, &m_ShowMeshShadingWindow);
@@ -1099,6 +1125,43 @@ void ImGuiManager::DrawEditorMainMenu()
 	}
 
 	ImGui::EndMainMenuBar();
+}
+
+void ImGuiManager::DrawPerformanceWindow()
+{
+	ImGui::SetNextWindowSize(ImVec2(260.0f, 150.0f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("パフォーマンス", &m_ShowPerformanceWindow, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::End();
+		return;
+	}
+
+	ImGui::Text("FPS: %.1f", World::GetFrameRate());
+	ImGui::Text("Frame: %.2f ms", World::GetFrameTimeMs());
+	ImGui::Separator();
+
+	bool vsyncEnabled = World::IsVSyncEnabled();
+	if (ImGui::Checkbox("垂直同期", &vsyncEnabled))
+	{
+		World::SetVSyncEnabled(vsyncEnabled);
+	}
+
+	bool fixedFrameRateEnabled = World::IsFixedFrameRateEnabled();
+	if (ImGui::Checkbox("FPS固定", &fixedFrameRateEnabled))
+	{
+		World::SetFixedFrameRateEnabled(fixedFrameRateEnabled);
+	}
+
+	int targetFrameRate = World::GetTargetFrameRate();
+	ImGui::BeginDisabled(!fixedFrameRateEnabled);
+	ImGui::SetNextItemWidth(120.0f);
+	if (ImGui::SliderInt("目標FPS", &targetFrameRate, 15, 360))
+	{
+		World::SetTargetFrameRate(targetFrameRate);
+	}
+	ImGui::EndDisabled();
+
+	ImGui::End();
 }
 
 void ImGuiManager::DrawAssetBrowserWindow()
