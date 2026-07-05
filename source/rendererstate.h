@@ -233,8 +233,12 @@ public:
 	static constexpr UINT g_kPBR_CB_SLOT_COUNT = g_kMAX_ENTITIES + 1;
 	static constexpr UINT g_kSHADOW_CB_ALIGNED_SIZE = (sizeof(XMMATRIX) + sizeof(float) * 4 + 255) & ~255;
 	static constexpr UINT g_kSHADOW_MAP_SIZE = 4096;
+	static constexpr UINT g_kTRANSIENT_CB_SLOT_COUNT = 1024;
+	static constexpr UINT g_kTRANSIENT_CB_START_INDEX = g_kMAX_ENTITIES;
+	static constexpr UINT g_kCBV_COUNT = g_kMAX_ENTITIES + g_kTRANSIENT_CB_SLOT_COUNT;
 	static constexpr uint32_t g_kMAX_SRVS = 512;
-	static constexpr UINT g_kSCENE_SRV_INDEX = g_kMAX_ENTITIES + g_kMAX_SRVS;
+	static constexpr UINT g_kTEXTURE_SRV_START_INDEX = g_kCBV_COUNT;
+	static constexpr UINT g_kSCENE_SRV_INDEX = g_kTEXTURE_SRV_START_INDEX + g_kMAX_SRVS;
 	static constexpr UINT g_kEDITOR_SCENE_SRV_INDEX = g_kSCENE_SRV_INDEX + 1;
 	static constexpr UINT g_kGBUFFER_SRV_START_INDEX = g_kEDITOR_SCENE_SRV_INDEX + 1;
 	static constexpr UINT g_kIMGUI_SRV_INDEX = g_kGBUFFER_SRV_START_INDEX + g_kGBUFFER_COUNT;
@@ -254,5 +258,6 @@ public:
 	static D3D12_VERTEX_BUFFER_VIEW m_DynamicVertexBufferView;
 	static Vertex* m_pDynamicVertexDataBegin;
 	static UINT m_DynamicVertexOffset;
+	static UINT m_TransientCbSlot;
 };
 

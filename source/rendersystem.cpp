@@ -335,7 +335,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 						normalSrvIndex = mat.NormalMapID;
 					}
 				}
-				if (srvIndex >= g_kMAX_ENTITIES + RendererResource::g_kMAX_SRVS)
+				if (srvIndex >= RendererResource::g_kTEXTURE_SRV_START_INDEX + RendererResource::g_kMAX_SRVS)
 				{
 					continue;
 				}
@@ -399,7 +399,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					normalSrvIndex = mat.NormalMapID;
 				}
 			}
-			if (srvIndex >= g_kMAX_ENTITIES + RendererResource::g_kMAX_SRVS)
+			if (srvIndex >= RendererResource::g_kTEXTURE_SRV_START_INDEX + RendererResource::g_kMAX_SRVS)
 			{
 				continue;
 			}
@@ -497,7 +497,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				normalSrvIndex = mat.NormalMapID;
 			}
 		}
-		if (srvIndex >= g_kMAX_ENTITIES + RendererResource::g_kMAX_SRVS)
+		if (srvIndex >= RendererResource::g_kTEXTURE_SRV_START_INDEX + RendererResource::g_kMAX_SRVS)
 		{
 			continue;
 		}

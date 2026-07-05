@@ -240,7 +240,7 @@ bool RendererCore::Init(HWND hwnd)
 	m_Viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, (float)m_SceneWidth, (float)m_SceneHeight);
 	m_ScissorRect = CD3DX12_RECT(0, 0, m_SceneWidth, m_SceneHeight);
 
-	const UINT totalCbSize = g_kCB_ALIGNED_SIZE * g_kMAX_ENTITIES;
+	const UINT totalCbSize = g_kCB_ALIGNED_SIZE * g_kCBV_COUNT;
 	auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(totalCbSize);
 	auto cbHeapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
 	hr = m_Device->CreateCommittedResource(
@@ -261,7 +261,7 @@ bool RendererCore::Init(HWND hwnd)
 	CD3DX12_CPU_DESCRIPTOR_HANDLE cbvHandle(m_CbvHeap->GetCPUDescriptorHandleForHeapStart());
 	m_CbvIncrementSize = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 	UINT cbvIncrement = m_CbvIncrementSize;
-	for (uint32_t i = 0; i < g_kMAX_ENTITIES; ++i)
+	for (uint32_t i = 0; i < g_kCBV_COUNT; ++i)
 	{
 		cbvDesc.BufferLocation = m_ConstantBuffer->GetGPUVirtualAddress() + (i * g_kCB_ALIGNED_SIZE);
 		m_Device->CreateConstantBufferView(&cbvDesc, cbvHandle);

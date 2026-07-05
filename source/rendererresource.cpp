@@ -528,6 +528,22 @@ namespace
 void RendererResource::BeginFrame()
 {
 	g_LightCacheValid = false;
+	m_TransientCbSlot = 0;
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE RendererResource::AllocateTransientConstantBuffer(const ConstantBuffer3D& constants)
+{
+	if (!m_pCbvDataBegin || !m_CbvHeap || m_TransientCbSlot >= g_kTRANSIENT_CB_SLOT_COUNT)
+	{
+		return {};
+	}
+
+	const UINT slot = g_kTRANSIENT_CB_START_INDEX + m_TransientCbSlot++;
+	memcpy(m_pCbvDataBegin + (slot * g_kCB_ALIGNED_SIZE), &constants, sizeof(constants));
+	return CD3DX12_GPU_DESCRIPTOR_HANDLE(
+		m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
+		slot,
+		m_CbvIncrementSize);
 }
 
 void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
