@@ -133,6 +133,44 @@ static void LogAssimpModelInfo(const aiScene* scene, const char* fileName, const
 	Debug::Log("==== end %s model import info ====\n", modelKind);
 }
 
+static aiMatrix4x4 MakeAiIdentityMatrix()
+{
+	return aiMatrix4x4(
+		1.0f, 0.0f, 0.0f, 0.0f,
+		0.0f, 1.0f, 0.0f, 0.0f,
+		0.0f, 0.0f, 1.0f, 0.0f,
+		0.0f, 0.0f, 0.0f, 1.0f);
+}
+
+static void NormalizeBoneInfluences(GpuSkinVertex& gpuVertex, DeformVertex& deformVertex)
+{
+	float totalWeight = 0.0f;
+	for (int i = 0; i < 4; ++i)
+	{
+		totalWeight += gpuVertex.BoneWeights[i];
+	}
+
+	if (totalWeight <= 0.0f)
+	{
+		deformVertex.BoneNum = 0;
+		for (int i = 0; i < 4; ++i)
+		{
+			gpuVertex.BoneIndices[i] = 0;
+			gpuVertex.BoneWeights[i] = 0.0f;
+			deformVertex.BoneName[i].clear();
+			deformVertex.BoneWeight[i] = 0.0f;
+		}
+		return;
+	}
+
+	const float invTotalWeight = 1.0f / totalWeight;
+	for (int i = 0; i < 4; ++i)
+	{
+		gpuVertex.BoneWeights[i] *= invTotalWeight;
+		deformVertex.BoneWeight[i] *= invTotalWeight;
+	}
+}
+
 void AnimationModelResource::CreateBone(aiNode* node)
 {
 	string name = node->mName.C_Str();
@@ -141,9 +179,12 @@ void AnimationModelResource::CreateBone(aiNode* node)
 		uint32_t idx = (uint32_t)m_BoneNames.size();
 		m_BoneNames.push_back(name);
 		m_BoneIndexMap[name] = idx;
+		const aiMatrix4x4 identity = MakeAiIdentityMatrix();
 		Bone bone{};
+		bone.Matrix = identity;
 		bone.BindLocalMatrix = node->mTransformation;
 		bone.AnimationMatrix = node->mTransformation;
+		bone.OffsetMatrix = identity;
 		m_Bone.emplace(name, bone);
 	}
 
@@ -157,10 +198,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 {
 	m_pDevice = device;
 
-	unsigned int flags =
-		aiProcess_Triangulate |
-		aiProcess_JoinIdenticalVertices |
-		aiProcess_ImproveCacheLocality;
+	unsigned int flags = aiProcessPreset_TargetRealtime_MaxQuality;
 	if (isConvert)
 	{
 		flags |= aiProcess_ConvertToLeftHanded;
@@ -254,9 +292,27 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 		for (unsigned int b = 0; b < mesh->mNumBones; b++)
 		{
 			aiBone* bone = mesh->mBones[b];
-			m_Bone[bone->mName.C_Str()].OffsetMatrix = bone->mOffsetMatrix;
+			const string boneName = bone->mName.C_Str();
 
-			auto it = m_BoneIndexMap.find(bone->mName.C_Str());
+			auto boneIt = m_Bone.find(boneName);
+			if (boneIt == m_Bone.end())
+			{
+				uint32_t idx = (uint32_t)m_BoneNames.size();
+				m_BoneNames.push_back(boneName);
+				m_BoneIndexMap[boneName] = idx;
+
+				const aiMatrix4x4 identity = MakeAiIdentityMatrix();
+				Bone fallbackBone{};
+				fallbackBone.Matrix = identity;
+				fallbackBone.BindLocalMatrix = identity;
+				fallbackBone.AnimationMatrix = fallbackBone.BindLocalMatrix;
+				fallbackBone.OffsetMatrix = identity;
+				boneIt = m_Bone.emplace(boneName, fallbackBone).first;
+			}
+
+			boneIt->second.OffsetMatrix = bone->mOffsetMatrix;
+
+			auto it = m_BoneIndexMap.find(boneName);
 			uint32_t boneIdx = (it != m_BoneIndexMap.end()) ? it->second : 0;
 
 			for (unsigned int w = 0; w < bone->mNumWeights; w++)
@@ -266,7 +322,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 				if (num < m_kMAX_BONE_INFLUENCES)
 				{
 					m_DeformVertex[m][weight.mVertexId].BoneWeight[num] = weight.mWeight;
-					m_DeformVertex[m][weight.mVertexId].BoneName[num] = bone->mName.C_Str();
+					m_DeformVertex[m][weight.mVertexId].BoneName[num] = boneName;
 					m_DeformVertex[m][weight.mVertexId].BoneNum++;
 
 					m_GpuSkinVertices[m][weight.mVertexId].BoneIndices[num] = boneIdx;
@@ -275,20 +331,9 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 			}
 		}
 
-		for (GpuSkinVertex& vertex : m_GpuSkinVertices[m])
+		for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
 		{
-			float totalWeight = 0.0f;
-			for (int i = 0; i < m_kMAX_BONE_INFLUENCES; ++i)
-			{
-				totalWeight += vertex.BoneWeights[i];
-			}
-			if (totalWeight > 0.0f)
-			{
-				for (int i = 0; i < m_kMAX_BONE_INFLUENCES; ++i)
-				{
-					vertex.BoneWeights[i] /= totalWeight;
-				}
-			}
+			NormalizeBoneInfluences(m_GpuSkinVertices[m][v], m_DeformVertex[m][v]);
 		}
 
 		{
@@ -509,7 +554,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 		return false;
 	}
 
-	UpdateBindPoseBoneMatrix(m_AiScene->mRootNode, aiMatrix4x4());
+	UpdateBindPoseBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
 	WriteBoneMatricesToBuffer();
 
 	return true;
@@ -933,6 +978,10 @@ aiAnimation* AnimationModelResource::GetAnimation(const string& name)
 				return m_AiScene->mAnimations[i];
 			}
 		}
+		if (m_AiScene->mNumAnimations == 1)
+		{
+			return m_AiScene->mAnimations[0];
+		}
 	}
 	return nullptr;
 }
@@ -1096,41 +1145,63 @@ void AnimationModelResource::UpdateBoneMatrices(const char* animName1, float fra
 
 	if (!animation1 && !animation2)
 	{
-		UpdateBindPoseBoneMatrix(m_AiScene->mRootNode, aiMatrix4x4());
-		WriteBoneMatricesToBuffer();
 		return;
 	}
 
-	for (auto& [boneName, bone] : m_Bone)
+	auto sampleRotationKey = [](aiNodeAnim* nodeAnim, float timeInTicks, double duration)
+		{
+			if (!nodeAnim || nodeAnim->mNumRotationKeys == 0)
+			{
+				return aiQuaternion(1.0f, 0.0f, 0.0f, 0.0f);
+			}
+
+			const float t = duration > 0.0 ? fmod(timeInTicks, static_cast<float>(duration)) : timeInTicks;
+			const unsigned int keyIndex = static_cast<unsigned int>(max(0.0f, t)) % nodeAnim->mNumRotationKeys;
+			return nodeAnim->mRotationKeys[keyIndex].mValue;
+		};
+
+	auto samplePositionKey = [](aiNodeAnim* nodeAnim, float timeInTicks, double duration)
+		{
+			if (!nodeAnim || nodeAnim->mNumPositionKeys == 0)
+			{
+				return aiVector3D(0.0f, 0.0f, 0.0f);
+			}
+
+			const float t = duration > 0.0 ? fmod(timeInTicks, static_cast<float>(duration)) : timeInTicks;
+			const unsigned int keyIndex = static_cast<unsigned int>(max(0.0f, t)) % nodeAnim->mNumPositionKeys;
+			return nodeAnim->mPositionKeys[keyIndex].mValue;
+		};
+
+	for (auto pair : m_Bone)
 	{
-		aiNodeAnim* nodeAnim1 = FindNodeAnimChannel(animation1, boneName);
-		aiNodeAnim* nodeAnim2 = FindNodeAnimChannel(animation2, boneName);
+		Bone* bonePtr = &m_Bone[pair.first];
+		aiNodeAnim* nodeAnim1 = FindNodeAnimChannel(animation1, pair.first);
+		aiNodeAnim* nodeAnim2 = FindNodeAnimChannel(animation2, pair.first);
 
-		aiVector3D bindScale(1.0f, 1.0f, 1.0f);
-		aiQuaternion bindRotation(1, 0, 0, 0);
-		aiVector3D bindPosition(0, 0, 0);
-		bone.BindLocalMatrix.Decompose(bindScale, bindRotation, bindPosition);
+		const float ticksPerSecond1 = (animation1 && animation1->mTicksPerSecond != 0)
+			? static_cast<float>(animation1->mTicksPerSecond)
+			: 25.0f;
+		const float ticksPerSecond2 = (animation2 && animation2->mTicksPerSecond != 0)
+			? static_cast<float>(animation2->mTicksPerSecond)
+			: 25.0f;
 
-		aiQuaternion rotation1 = bindRotation;
-		aiVector3D pos1 = bindPosition;
-		aiVector3D scale1 = bindScale;
-		aiQuaternion rotation2 = bindRotation;
-		aiVector3D pos2 = bindPosition;
-		aiVector3D scale2 = bindScale;
+		const float timeInTicks1 = frame1 * ticksPerSecond1;
+		const float timeInTicks2 = frame2 * ticksPerSecond2;
 
-		SampleNodeAnimation(animation1, nodeAnim1, frame1, rotation1, pos1, scale1);
-		SampleNodeAnimation(animation2, nodeAnim2, frame2, rotation2, pos2, scale2);
+		aiQuaternion rotation1 = sampleRotationKey(nodeAnim1, timeInTicks1, animation1 ? animation1->mDuration : 0.0);
+		aiVector3D pos1 = samplePositionKey(nodeAnim1, timeInTicks1, animation1 ? animation1->mDuration : 0.0);
+		aiQuaternion rotation2 = sampleRotationKey(nodeAnim2, timeInTicks2, animation2 ? animation2->mDuration : 0.0);
+		aiVector3D pos2 = samplePositionKey(nodeAnim2, timeInTicks2, animation2 ? animation2->mDuration : 0.0);
 
 		const aiVector3D pos = pos1 * (1.f - blendRate) + pos2 * blendRate;
-		const aiVector3D scale = scale1 * (1.f - blendRate) + scale2 * blendRate;
 
 		aiQuaternion rotation;
 		aiQuaternion::Interpolate(rotation, rotation1, rotation2, blendRate);
 
-		bone.AnimationMatrix = aiMatrix4x4(scale, rotation, pos);
+		bonePtr->AnimationMatrix = aiMatrix4x4(aiVector3D(1.0f, 1.0f, 1.0f), rotation, pos);
 	}
 
-	UpdateBoneMatrix(m_AiScene->mRootNode, aiMatrix4x4());
+	UpdateBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
 	WriteBoneMatricesToBuffer();
 }
 
