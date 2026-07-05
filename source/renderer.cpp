@@ -72,6 +72,7 @@ ComPtr<ID3D12Resource> RendererState::m_DynamicVertexBuffer;
 D3D12_VERTEX_BUFFER_VIEW RendererState::m_DynamicVertexBufferView;
 Vertex* RendererState::m_pDynamicVertexDataBegin = nullptr;
 UINT RendererState::m_DynamicVertexOffset = 0;
+UINT RendererState::m_TransientCbSlot = 0;
 
 ComPtr<ID3D12RootSignature> RendererState::m_SkinningRootSignature;
 ComPtr<ID3D12PipelineState> RendererState::m_SkinningPso;

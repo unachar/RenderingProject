@@ -579,7 +579,7 @@ ComPtr<ID3D12Resource> TextureManager::CreateSolidColorTexture(ID3D12Device* dev
 
 void TextureManager::Init()
 {
-	m_NextSrvIndex = g_kMAX_ENTITIES;
+	m_NextSrvIndex = RendererResource::g_kTEXTURE_SRV_START_INDEX;
 	ID3D12Device* device = RendererCore::GetDevice();
 
 	int whiteIndex = m_NextSrvIndex++;
@@ -665,7 +665,7 @@ int TextureManager::LoadTexture(const filesystem::path& fileName)
 		}
 	}
 
-	const int maxSrvIndex = g_kMAX_ENTITIES + RendererResource::g_kMAX_SRVS + 10;
+	const int maxSrvIndex = RendererResource::g_kTEXTURE_SRV_START_INDEX + RendererResource::g_kMAX_SRVS;
 	int srvIndex = -1;
 	{
 		lock_guard<mutex> lock(g_TextureMutex);
@@ -759,7 +759,7 @@ int TextureManager::LoadTextureFromMemory(const char* name, const uint8_t* pData
 		}
 	}
 
-	const int maxSrvIndex = g_kMAX_ENTITIES + RendererResource::g_kMAX_SRVS + 10;
+	const int maxSrvIndex = RendererResource::g_kTEXTURE_SRV_START_INDEX + RendererResource::g_kMAX_SRVS;
 	int srvIndex = -1;
 	{
 		lock_guard<mutex> lock(g_TextureMutex);

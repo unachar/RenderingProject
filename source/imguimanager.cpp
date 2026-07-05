@@ -38,24 +38,70 @@ namespace
 	{
 		bool changed = false;
 		ImGui::PushID(label);
-		ImGui::TextUnformatted(label);
-		if (ImGui::BeginTable("AxisFloat3", 3, ImGuiTableFlags_SizingStretchSame))
+		ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(3.0f, 2.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(3.0f, 2.0f));
+		ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.025f, 0.027f, 0.030f, 1.00f));
+		ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.050f, 0.055f, 0.064f, 1.00f));
+		ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.070f, 0.082f, 0.100f, 1.00f));
+		if (ImGui::BeginTable("AxisFloat3", 4, ImGuiTableFlags_SizingStretchProp))
 		{
-			const char* axisLabels[3] = { "X", "Y", "Z" };
-			const char* axisIds[3] = { "##X", "##Y", "##Z" };
-			for (int i = 0; i < 3; ++i)
+			const char* axisIds[3] = { "##R", "##G", "##B" };
+			const ImU32 axisColors[3] =
 			{
-				ImGui::TableNextColumn();
-				ImGui::TextUnformatted(axisLabels[i]);
+				ImGui::GetColorU32(ImVec4(0.86f, 0.18f, 0.14f, 1.00f)),
+				ImGui::GetColorU32(ImVec4(0.24f, 0.68f, 0.25f, 1.00f)),
+				ImGui::GetColorU32(ImVec4(0.18f, 0.42f, 0.86f, 1.00f))
+			};
+
+			ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 82.0f);
+			ImGui::TableSetupColumn("R", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("G", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("B", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableNextRow();
+
+			ImGui::TableSetColumnIndex(0);
+			{
+				const float width = ImGui::GetContentRegionAvail().x;
+				const float height = ImGui::GetFrameHeight();
+				ImGui::InvisibleButton("##AxisLabel", ImVec2(width, height));
+
+				ImDrawList* drawList = ImGui::GetWindowDrawList();
+				const ImVec2 min = ImGui::GetItemRectMin();
+				const ImVec2 max = ImGui::GetItemRectMax();
+				drawList->AddRectFilled(min, max, ImGui::GetColorU32(ImVec4(0.095f, 0.100f, 0.108f, 1.00f)), 2.0f);
+				drawList->AddRect(min, max, ImGui::GetColorU32(ImVec4(0.18f, 0.19f, 0.20f, 1.00f)), 2.0f);
+
+				const float textY = min.y + (height - ImGui::GetTextLineHeight()) * 0.5f;
+				drawList->AddText(ImVec2(min.x + 8.0f, textY), ImGui::GetColorU32(ImGuiCol_Text), label);
+
+				const float arrowX = max.x - 13.0f;
+				const float arrowY = min.y + height * 0.5f - 1.0f;
+				drawList->AddTriangleFilled(
+					ImVec2(arrowX - 4.0f, arrowY - 2.0f),
+					ImVec2(arrowX + 4.0f, arrowY - 2.0f),
+					ImVec2(arrowX, arrowY + 3.0f),
+					ImGui::GetColorU32(ImVec4(0.62f, 0.66f, 0.70f, 1.00f)));
 			}
+
 			for (int i = 0; i < 3; ++i)
 			{
 				ImGui::TableNextColumn();
+				const float height = ImGui::GetFrameHeight();
+				ImGui::Dummy(ImVec2(3.0f, height));
+				ImGui::GetWindowDrawList()->AddRectFilled(
+					ImGui::GetItemRectMin(),
+					ImGui::GetItemRectMax(),
+					axisColors[i],
+					1.0f);
+				ImGui::SameLine(0.0f, 2.0f);
 				ImGui::SetNextItemWidth(-FLT_MIN);
 				changed |= ImGui::DragFloat(axisIds[i], &values[i], speed, minValue, maxValue, "%.3f");
 			}
 			ImGui::EndTable();
 		}
+		ImGui::PopStyleColor(3);
+		ImGui::PopStyleVar(3);
 		ImGui::PopID();
 		return changed;
 	}
@@ -223,6 +269,24 @@ namespace
 		return true;
 	}
 
+	void DrawFpsMeter()
+	{
+		const float fps = World::GetFrameRate();
+		const int targetFrameRate = World::GetTargetFrameRate();
+		const float referenceFps = static_cast<float>(max(targetFrameRate, 60));
+		const float fraction = referenceFps > 0.0f ? min(fps / referenceFps, 1.0f) : 0.0f;
+		char overlay[32]{};
+		snprintf(overlay, sizeof(overlay), "%.0f / %.0f FPS", fps, referenceFps);
+		const float overlayWidth = ImGui::CalcTextSize(overlay).x;
+		const float barWidth = max(80.0f, ImGui::GetContentRegionAvail().x - overlayWidth - 10.0f);
+
+		ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.18f, 0.68f, 0.82f, 1.00f));
+		ImGui::ProgressBar(fraction, ImVec2(barWidth, 7.0f), "");
+		ImGui::PopStyleColor();
+		ImGui::SameLine();
+		ImGui::TextDisabled("%s", overlay);
+	}
+
 	bool GetLocalAabb(EntityID entity, XMFLOAT3& center, XMFLOAT3& extents)
 	{
 		if (ComponentManager::HasComponent<AABBComponent>(entity))
@@ -357,12 +421,12 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 	io.ConfigDockingWithShift = false;
 
-	StyleUnreal();
+	StyleModernSlim();
 
 	const char* fontPath = "C:\\Windows\\Fonts\\msgothic.ttc";
 	if (filesystem::exists(fontPath))
 	{
-		io.Fonts->AddFontFromFileTTF(fontPath, 18.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
+		io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
 	}
 
 	if (!ImGui_ImplWin32_Init(hwnd)) return false;
@@ -470,6 +534,10 @@ void ImGuiManager::Update()
 	{
 		DrawPerformanceWindow();
 	}
+	if (m_ShowMaterialEditorWindow)
+	{
+		DrawMaterialEditorWindow();
+	}
 	if (m_ShowMeshOutlineWindow)
 	{
 		DrawMeshOutlineWindow();
@@ -571,6 +639,7 @@ ImGui::Begin("調整");
 
 	ImGui::SeparatorText("パフォーマンス");
 	ImGui::Text("FPS: %.1f", World::GetFrameRate());
+	DrawFpsMeter();
 	ImGui::Text("Frame: %.2f ms", World::GetFrameTimeMs());
 	bool vsyncEnabled = World::IsVSyncEnabled();
 	if (ImGui::Checkbox("垂直同期", &vsyncEnabled))
@@ -1086,6 +1155,7 @@ void ImGuiManager::DrawEditorMainMenu()
 		ImGui::MenuItem("Gバッファ", nullptr, &m_ShowGBufferWindow);
 		ImGui::MenuItem("ログ", nullptr, &m_ShowLogWindow);
 		ImGui::MenuItem("パフォーマンス", nullptr, &m_ShowPerformanceWindow);
+		ImGui::MenuItem("マテリアルエディター", nullptr, &m_ShowMaterialEditorWindow);
 		ImGui::Separator();
 		ImGui::MenuItem("メッシュ単位のアウトライン", nullptr, &m_ShowMeshOutlineWindow);
 		ImGui::MenuItem("メッシュ単位のシェーディング", nullptr, &m_ShowMeshShadingWindow);
@@ -1137,6 +1207,7 @@ void ImGuiManager::DrawPerformanceWindow()
 	}
 
 	ImGui::Text("FPS: %.1f", World::GetFrameRate());
+	DrawFpsMeter();
 	ImGui::Text("Frame: %.2f ms", World::GetFrameTimeMs());
 	ImGui::Separator();
 
@@ -1604,7 +1675,6 @@ void ImGuiManager::DrawHierarchyWindow()
 
 void ImGuiManager::DrawInspectorWindow()
 {
-	ImGui::Text("画面: %u x %u", RendererCore::GetSceneWidth(), RendererCore::GetSceneHeight());
 	ImGui::SetNextWindowSize(ImVec2(312.0f, 520.0f), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin("インスペクター"))
 	{
@@ -1695,13 +1765,39 @@ ImGui::TextUnformatted("オブジェクト未選択");
 	{
 		DrawLightInspector(m_SelectedEntity);
 	}
-	else
-	{
-		DrawMaterialInspector(m_SelectedEntity);
-	}
 	DrawComponentInspector(m_SelectedEntity);
 
 	ImGui::TextUnformatted("右クリック: カメラ / 左クリック: 選択");
+	ImGui::End();
+}
+
+void ImGuiManager::DrawMaterialEditorWindow()
+{
+	ImGui::SetNextWindowSize(ImVec2(380.0f, 560.0f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("マテリアルエディター", &m_ShowMaterialEditorWindow))
+	{
+		ImGui::End();
+		return;
+	}
+
+	if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
+	{
+		ImGui::TextUnformatted("マテリアルを持つオブジェクトを選択してください");
+		ImGui::End();
+		return;
+	}
+
+	ImGui::Text("選択中: %s", GetEntityDisplayName(m_SelectedEntity));
+	ImGui::Separator();
+
+	if (!ComponentManager::HasComponent<MaterialComponent>(m_SelectedEntity))
+	{
+		ImGui::TextUnformatted("選択中のオブジェクトにマテリアルがありません");
+		ImGui::End();
+		return;
+	}
+
+	DrawMaterialInspector(m_SelectedEntity);
 	ImGui::End();
 }
 
@@ -3291,44 +3387,44 @@ void ImGuiManager::AddLog(const char* fmt, ...)
 	Debug::Log("%s\n", buffer);
 }
 
-void ImGuiManager::StyleUnreal()
+void ImGuiManager::StyleModernSlim()
 {
 	auto& style = ImGui::GetStyle();
 	ImVec4* colors = style.Colors;
 
-	colors[ImGuiCol_Text] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-	colors[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.50f, 0.50f, 1.00f);
-	colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.06f, 0.06f, 0.94f);
-	colors[ImGuiCol_ChildBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-	colors[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.08f, 0.08f, 0.94f);
-	colors[ImGuiCol_Border] = ImVec4(0.43f, 0.43f, 0.50f, 0.50f);
+	colors[ImGuiCol_Text] = ImVec4(0.86f, 0.89f, 0.92f, 1.00f);
+	colors[ImGuiCol_TextDisabled] = ImVec4(0.42f, 0.46f, 0.50f, 1.00f);
+	colors[ImGuiCol_WindowBg] = ImVec4(0.075f, 0.080f, 0.090f, 0.98f);
+	colors[ImGuiCol_ChildBg] = ImVec4(0.060f, 0.065f, 0.074f, 0.82f);
+	colors[ImGuiCol_PopupBg] = ImVec4(0.080f, 0.086f, 0.098f, 0.98f);
+	colors[ImGuiCol_Border] = ImVec4(0.20f, 0.23f, 0.27f, 0.72f);
 	colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-	colors[ImGuiCol_FrameBg] = ImVec4(0.20f, 0.21f, 0.22f, 0.54f);
-	colors[ImGuiCol_FrameBgHovered] = ImVec4(0.40f, 0.40f, 0.40f, 0.40f);
-	colors[ImGuiCol_FrameBgActive] = ImVec4(0.18f, 0.18f, 0.18f, 0.67f);
-	colors[ImGuiCol_TitleBg] = ImVec4(0.04f, 0.04f, 0.04f, 1.00f);
-	colors[ImGuiCol_TitleBgActive] = ImVec4(0.29f, 0.29f, 0.29f, 1.00f);
-	colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.00f, 0.00f, 0.00f, 0.51f);
-	colors[ImGuiCol_MenuBarBg] = ImVec4(0.14f, 0.14f, 0.14f, 1.00f);
-	colors[ImGuiCol_ScrollbarBg] = ImVec4(0.02f, 0.02f, 0.02f, 0.53f);
-	colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.31f, 0.31f, 0.31f, 1.00f);
-	colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.41f, 0.41f, 0.41f, 1.00f);
-	colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.51f, 0.51f, 0.51f, 1.00f);
-	colors[ImGuiCol_CheckMark] = ImVec4(0.94f, 0.45f, 0.13f, 1.00f);
-	colors[ImGuiCol_SliderGrab] = ImVec4(0.88f, 0.37f, 0.00f, 1.00f);
-	colors[ImGuiCol_SliderGrabActive] = ImVec4(0.94f, 0.45f, 0.13f, 1.00f);
-	colors[ImGuiCol_Button] = ImVec4(0.26f, 0.59f, 0.98f, 0.40f);
-	colors[ImGuiCol_ButtonHovered] = ImVec4(0.94f, 0.45f, 0.13f, 1.00f);
-	colors[ImGuiCol_ButtonActive] = ImVec4(0.06f, 0.53f, 0.98f, 1.00f);
-	colors[ImGuiCol_Header] = ImVec4(0.94f, 0.45f, 0.13f, 0.31f);
-	colors[ImGuiCol_HeaderHovered] = ImVec4(0.94f, 0.45f, 0.13f, 0.80f);
-	colors[ImGuiCol_HeaderActive] = ImVec4(0.94f, 0.45f, 0.13f, 1.00f);
+	colors[ImGuiCol_FrameBg] = ImVec4(0.115f, 0.125f, 0.142f, 1.00f);
+	colors[ImGuiCol_FrameBgHovered] = ImVec4(0.155f, 0.175f, 0.205f, 1.00f);
+	colors[ImGuiCol_FrameBgActive] = ImVec4(0.105f, 0.190f, 0.255f, 1.00f);
+	colors[ImGuiCol_TitleBg] = ImVec4(0.050f, 0.055f, 0.064f, 1.00f);
+	colors[ImGuiCol_TitleBgActive] = ImVec4(0.080f, 0.092f, 0.108f, 1.00f);
+	colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.050f, 0.055f, 0.064f, 0.92f);
+	colors[ImGuiCol_MenuBarBg] = ImVec4(0.070f, 0.077f, 0.090f, 1.00f);
+	colors[ImGuiCol_ScrollbarBg] = ImVec4(0.055f, 0.060f, 0.070f, 0.82f);
+	colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.22f, 0.25f, 0.29f, 0.86f);
+	colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.30f, 0.35f, 0.40f, 0.92f);
+	colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.38f, 0.44f, 0.50f, 1.00f);
+	colors[ImGuiCol_CheckMark] = ImVec4(0.18f, 0.68f, 0.82f, 1.00f);
+	colors[ImGuiCol_SliderGrab] = ImVec4(0.18f, 0.62f, 0.76f, 1.00f);
+	colors[ImGuiCol_SliderGrabActive] = ImVec4(0.28f, 0.78f, 0.92f, 1.00f);
+	colors[ImGuiCol_Button] = ImVec4(0.13f, 0.16f, 0.19f, 1.00f);
+	colors[ImGuiCol_ButtonHovered] = ImVec4(0.18f, 0.23f, 0.27f, 1.00f);
+	colors[ImGuiCol_ButtonActive] = ImVec4(0.12f, 0.44f, 0.56f, 1.00f);
+	colors[ImGuiCol_Header] = ImVec4(0.13f, 0.18f, 0.22f, 0.78f);
+	colors[ImGuiCol_HeaderHovered] = ImVec4(0.17f, 0.34f, 0.42f, 0.86f);
+	colors[ImGuiCol_HeaderActive] = ImVec4(0.16f, 0.50f, 0.62f, 0.96f);
 	colors[ImGuiCol_Separator] = colors[ImGuiCol_Border];
-	colors[ImGuiCol_SeparatorHovered] = ImVec4(0.94f, 0.45f, 0.13f, 0.78f);
-	colors[ImGuiCol_SeparatorActive] = ImVec4(0.94f, 0.45f, 0.13f, 1.00f);
-	colors[ImGuiCol_ResizeGrip] = ImVec4(0.26f, 0.59f, 0.98f, 0.25f);
-	colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.94f, 0.45f, 0.13f, 0.67f);
-	colors[ImGuiCol_ResizeGripActive] = ImVec4(0.94f, 0.45f, 0.13f, 0.95f);
+	colors[ImGuiCol_SeparatorHovered] = ImVec4(0.18f, 0.68f, 0.82f, 0.78f);
+	colors[ImGuiCol_SeparatorActive] = ImVec4(0.18f, 0.68f, 0.82f, 1.00f);
+	colors[ImGuiCol_ResizeGrip] = ImVec4(0.18f, 0.68f, 0.82f, 0.18f);
+	colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.18f, 0.68f, 0.82f, 0.58f);
+	colors[ImGuiCol_ResizeGripActive] = ImVec4(0.18f, 0.68f, 0.82f, 0.92f);
 
 	auto lerp = [](ImVec4 a, ImVec4 b, float t)
 		{
@@ -3340,27 +3436,53 @@ void ImGuiManager::StyleUnreal()
 	colors[ImGuiCol_TabActive] = lerp(colors[ImGuiCol_HeaderActive], colors[ImGuiCol_TitleBgActive], 0.60f);
 	colors[ImGuiCol_TabUnfocused] = lerp(colors[ImGuiCol_Tab], colors[ImGuiCol_TitleBg], 0.80f);
 	colors[ImGuiCol_TabUnfocusedActive] = lerp(colors[ImGuiCol_TabActive], colors[ImGuiCol_TitleBg], 0.40f);
+	colors[ImGuiCol_TabSelectedOverline] = ImVec4(0.28f, 0.78f, 0.92f, 0.88f);
+	colors[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0.18f, 0.52f, 0.62f, 0.58f);
 
 	ImVec4 ha = colors[ImGuiCol_HeaderActive];
 	colors[ImGuiCol_DockingPreview] = ImVec4(ha.x, ha.y, ha.z, ha.w * 0.7f);
 
-	colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
-	colors[ImGuiCol_PlotLines] = ImVec4(0.61f, 0.61f, 0.61f, 1.00f);
-	colors[ImGuiCol_PlotLinesHovered] = ImVec4(1.00f, 0.43f, 0.35f, 1.00f);
-	colors[ImGuiCol_PlotHistogram] = ImVec4(0.90f, 0.70f, 0.00f, 1.00f);
-	colors[ImGuiCol_PlotHistogramHovered] = ImVec4(1.00f, 0.60f, 0.00f, 1.00f);
-	colors[ImGuiCol_TextSelectedBg] = ImVec4(0.26f, 0.59f, 0.98f, 0.35f);
-	colors[ImGuiCol_DragDropTarget] = ImVec4(1.00f, 1.00f, 0.00f, 0.90f);
-	colors[ImGuiCol_NavHighlight] = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
-	colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
-	colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
-	colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.35f);
+	colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.060f, 0.065f, 0.074f, 1.00f);
+	colors[ImGuiCol_TableHeaderBg] = ImVec4(0.095f, 0.110f, 0.128f, 1.00f);
+	colors[ImGuiCol_TableBorderStrong] = ImVec4(0.19f, 0.22f, 0.26f, 1.00f);
+	colors[ImGuiCol_TableBorderLight] = ImVec4(0.14f, 0.16f, 0.19f, 1.00f);
+	colors[ImGuiCol_TableRowBg] = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
+	colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.13f, 0.15f, 0.18f, 0.28f);
+	colors[ImGuiCol_PlotLines] = ImVec4(0.52f, 0.58f, 0.64f, 1.00f);
+	colors[ImGuiCol_PlotLinesHovered] = ImVec4(0.28f, 0.78f, 0.92f, 1.00f);
+	colors[ImGuiCol_PlotHistogram] = ImVec4(0.18f, 0.68f, 0.82f, 1.00f);
+	colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.36f, 0.82f, 0.96f, 1.00f);
+	colors[ImGuiCol_TextSelectedBg] = ImVec4(0.18f, 0.68f, 0.82f, 0.28f);
+	colors[ImGuiCol_DragDropTarget] = ImVec4(0.28f, 0.78f, 0.92f, 0.86f);
+	colors[ImGuiCol_NavHighlight] = ImVec4(0.28f, 0.78f, 0.92f, 0.96f);
+	colors[ImGuiCol_NavWindowingHighlight] = ImVec4(0.82f, 0.90f, 0.96f, 0.72f);
+	colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.02f, 0.025f, 0.030f, 0.48f);
+	colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.02f, 0.025f, 0.030f, 0.62f);
 
-	style.WindowRounding = 0.0f;
-	style.ChildRounding = 0.0f;
-	style.FrameRounding = 0.0f;
-	style.GrabRounding = 0.0f;
-	style.PopupRounding = 0.0f;
-	style.ScrollbarRounding = 0.0f;
+	style.WindowPadding = ImVec2(8.0f, 6.0f);
+	style.FramePadding = ImVec2(6.0f, 3.0f);
+	style.CellPadding = ImVec2(5.0f, 3.0f);
+	style.ItemSpacing = ImVec2(7.0f, 4.0f);
+	style.ItemInnerSpacing = ImVec2(5.0f, 3.0f);
+	style.IndentSpacing = 14.0f;
+	style.ScrollbarSize = 11.0f;
+	style.GrabMinSize = 8.0f;
+
+	style.WindowBorderSize = 1.0f;
+	style.ChildBorderSize = 1.0f;
+	style.PopupBorderSize = 1.0f;
+	style.FrameBorderSize = 1.0f;
+	style.TabBorderSize = 0.0f;
+	style.TabBarBorderSize = 1.0f;
+	style.TabBarOverlineSize = 1.5f;
+
+	style.WindowRounding = 3.0f;
+	style.ChildRounding = 2.0f;
+	style.FrameRounding = 2.0f;
+	style.GrabRounding = 2.0f;
+	style.PopupRounding = 3.0f;
+	style.ScrollbarRounding = 2.0f;
+	style.TabRounding = 2.0f;
+	style.WindowMenuButtonPosition = ImGuiDir_Right;
 }
 

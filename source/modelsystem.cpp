@@ -76,15 +76,17 @@ namespace
 			material.ToonOutlineWidthModeSetting == ToonOutlineWidthMode::ScreenPixels ? 1 : 0;
 	}
 
-	void SetMappedToonOutlineParams(UINT8* cbvDataBegin, EntityID entity, const MaterialComponent& material, float widthScale = 1.0f)
+	D3D12_GPU_DESCRIPTOR_HANDLE CreateToonOutlineCbv(UINT8* cbvDataBegin, EntityID entity, const MaterialComponent& material, float widthScale = 1.0f)
 	{
 		if (!cbvDataBegin)
 		{
-			return;
+			return {};
 		}
 
-		auto* cb = reinterpret_cast<ConstantBuffer3D*>(cbvDataBegin + (entity * RendererResource::g_kCB_ALIGNED_SIZE));
-		ApplyToonOutlineConstants(*cb, material, widthScale);
+		const auto* source = reinterpret_cast<const ConstantBuffer3D*>(cbvDataBegin + (entity * RendererResource::g_kCB_ALIGNED_SIZE));
+		ConstantBuffer3D outlineConstants = *source;
+		ApplyToonOutlineConstants(outlineConstants, material, widthScale);
+		return RendererResource::AllocateTransientConstantBuffer(outlineConstants);
 	}
 
 	int GetTeoModeIndex(const MaterialComponent& material)
@@ -483,19 +485,35 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					pCommandList->SetPipelineState(outlinePso);
 					if (drawExtrude)
 					{
-						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material, meshWidthScale);
+						const D3D12_GPU_DESCRIPTOR_HANDLE outlineCbvHandle = CreateToonOutlineCbv(pCbvDataBegin, dc.EntityID, material, meshWidthScale);
+						if (outlineCbvHandle.ptr != 0)
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, outlineCbvHandle);
+						}
+						else
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+						}
 						pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
 						pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 						pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
 					}
 					if (drawTeo)
 					{
-						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material, meshWidthScale * material.ToonOutlineTeoWidthScale);
+						const D3D12_GPU_DESCRIPTOR_HANDLE outlineCbvHandle = CreateToonOutlineCbv(pCbvDataBegin, dc.EntityID, material, meshWidthScale * material.ToonOutlineTeoWidthScale);
+						if (outlineCbvHandle.ptr != 0)
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, outlineCbvHandle);
+						}
+						else
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+						}
 						pCommandList->IASetVertexBuffers(0, 1, &meshData.TeoVertexBufferViews[teoMode]);
 						pCommandList->IASetIndexBuffer(&meshData.TeoIndexBufferViews[teoMode]);
 						pCommandList->DrawIndexedInstanced(meshData.TeoIndexCounts[teoMode], 1, 0, 0, 0);
 					}
-					SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material);
+					pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
 					pCommandList->SetPipelineState(dc.pso);
 					lastPso = dc.pso;
 				}
@@ -684,19 +702,35 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					pCommandList->SetPipelineState(outlinePso);
 					if (drawExtrude)
 					{
-						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material, meshWidthScale);
+						const D3D12_GPU_DESCRIPTOR_HANDLE outlineCbvHandle = CreateToonOutlineCbv(pCbvDataBegin, dc.EntityID, material, meshWidthScale);
+						if (outlineCbvHandle.ptr != 0)
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, outlineCbvHandle);
+						}
+						else
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+						}
 						pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
 						pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 						pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
 					}
 					if (drawTeo)
 					{
-						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material, meshWidthScale * material.ToonOutlineTeoWidthScale);
+						const D3D12_GPU_DESCRIPTOR_HANDLE outlineCbvHandle = CreateToonOutlineCbv(pCbvDataBegin, dc.EntityID, material, meshWidthScale * material.ToonOutlineTeoWidthScale);
+						if (outlineCbvHandle.ptr != 0)
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, outlineCbvHandle);
+						}
+						else
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+						}
 						pCommandList->IASetVertexBuffers(0, 1, &meshData.TeoVertexBufferViews[teoMode]);
 						pCommandList->IASetIndexBuffer(&meshData.TeoIndexBufferViews[teoMode]);
 						pCommandList->DrawIndexedInstanced(meshData.TeoIndexCounts[teoMode], 1, 0, 0, 0);
 					}
-					SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material);
+					pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
 					pCommandList->SetPipelineState(dc.pso);
 					lastPso = dc.pso;
 				}
