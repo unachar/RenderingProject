@@ -1,7 +1,7 @@
 ﻿#pragma once
-
-class Field
+#include "entitybase.h"
+class Field : public EntityBase
 {
 public:
-	static void Create();
+	void Create() override;
 };

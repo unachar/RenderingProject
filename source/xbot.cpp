@@ -16,7 +16,7 @@ void XBot::Create()
 	constexpr bool isConvert = true;
 
 	const auto animations = vector<string>{ "Standup", "Idle" };
-	const auto currentAnimation = "Idle";
+	const auto currentAnimation = "Standup";
 
 
 	auto& entity = World::CreateEntity()

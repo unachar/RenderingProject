@@ -1,7 +1,7 @@
 #pragma once
-
-class Moca
+#include "entitybase.h"
+class Moca : public EntityBase
 {
 public:
-	static void Create();
+	void Create() override;
 };
