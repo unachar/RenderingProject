@@ -6,6 +6,7 @@
 #include <vector>
 #include <unordered_map>
 #include <array>
+#include <cstdint>
 
 #include "cimport.h"
 #include "scene.h"
@@ -49,6 +50,112 @@ struct Bone
 	aiMatrix4x4 OffsetMatrix{};
 };
 
+struct VmdKeyframe
+{
+	uint32_t Frame = 0;
+	aiVector3D Position{};
+	aiQuaternion Rotation{};
+	XMFLOAT2 XP1{0,0}, XP2{1,1};
+	XMFLOAT2 YP1{0,0}, YP2{1,1};
+	XMFLOAT2 ZP1{0,0}, ZP2{1,1};
+	XMFLOAT2 RotP1{0,0}, RotP2{1,1};
+};
+
+struct VmdScalarKeyframe
+{
+	uint32_t Frame = 0;
+	float Value = 0.0f;
+};
+
+struct VmdIkKeyframe
+{
+	uint32_t Frame = 0;
+	bool Enable = true;
+};
+
+struct VmdAnimation
+{
+	string ModelName{};
+	uint32_t MaxFrame = 0;
+	uint32_t MotionCount = 0;
+	uint32_t MorphCount = 0;
+	uint32_t CameraCount = 0;
+	uint32_t LightCount = 0;
+	uint32_t ShadowCount = 0;
+	uint32_t IkCount = 0;
+	unordered_map<string, vector<VmdKeyframe>> BoneTracks{};
+	unordered_map<string, vector<VmdScalarKeyframe>> MorphTracks{};
+	unordered_map<string, vector<VmdIkKeyframe>> IkTracks{};
+};
+
+struct PmxIkLink
+{
+	string BoneName{};
+	bool HasLimit = false;
+	aiVector3D LimitMin{};
+	aiVector3D LimitMax{};
+};
+
+struct PmxIkConstraint
+{
+	string BoneName{};
+	string TargetBoneName{};
+	uint32_t IterationCount = 0;
+	float LimitAngle = 0.0f;
+	int32_t DeformDepth = 0;
+	uint32_t BoneOrder = 0;
+	vector<PmxIkLink> Links{};
+};
+
+struct PmxAppendConstraint
+{
+	string BoneName{};
+	string AppendBoneName{};
+	float Weight = 0.0f;
+	bool InheritRotation = false;
+	bool InheritTranslation = false;
+	bool Local = false;
+	int32_t DeformDepth = 0;
+	uint32_t BoneOrder = 0;
+};
+
+struct PmxPositionMorphOffset
+{
+	uint32_t VertexIndex = 0;
+	aiVector3D Position{};
+};
+
+struct PmxUvMorphOffset
+{
+	uint32_t VertexIndex = 0;
+	XMFLOAT4 Uv{};
+};
+
+struct PmxBoneMorphOffset
+{
+	string BoneName{};
+	aiVector3D Position{};
+	aiQuaternion Rotation{};
+};
+
+struct PmxMaterialMorphOffset
+{
+	int32_t MaterialIndex = -1;
+	uint8_t Operation = 0;
+	XMFLOAT4 Diffuse{};
+};
+
+struct PmxMorph
+{
+	string Name{};
+	uint8_t Type = 0;
+	vector<PmxPositionMorphOffset> PositionOffsets{};
+	vector<PmxUvMorphOffset> UvOffsets{};
+	vector<PmxBoneMorphOffset> BoneOffsets{};
+	vector<PmxMaterialMorphOffset> MaterialOffsets{};
+	vector<pair<uint32_t, float>> GroupOffsets{};
+};
+
 struct MeshData
 {
 	ComPtr<ID3D12Resource> VertexBuffer{};
@@ -76,6 +183,7 @@ struct MeshData
 	std::array<UINT, ToonOutlineBuilder::kModeCount> TeoIndexCounts{};
 	std::array<UINT, ToonOutlineBuilder::kModeCount> TeoVertexCounts{};
 	int TextureIndex = -1;
+	int MaterialIndex = -1;
 
 	UINT SrvInputVertexIndex = 0;
 	UINT UavOutputVertexIndex = 0;
@@ -111,14 +219,26 @@ private:
 	vector<string> m_BoneNames{};
 	vector<vector<DeformVertex>> m_DeformVertex{};
 	vector<vector<GpuSkinVertex>> m_GpuSkinVertices{};
+	vector<vector<GpuSkinVertex>> m_BaseGpuSkinVertices{};
 	vector<vector<GpuSkinVertex>> m_TeoGpuSkinVertices{};
 	vector<array<vector<GpuSkinVertex>, ToonOutlineBuilder::kModeCount>> m_TeoGpuSkinVerticesByMode{};
 	
 
 	unordered_map<string, const aiScene*> m_Animation{};
+	unordered_map<string, VmdAnimation> m_VmdAnimations{};
 	unordered_map<string, uint32_t> m_BoneIndexMap{};
 	unordered_map<string, Bone> m_Bone{};
+	unordered_map<string, string> m_BoneParentMap{};
+	vector<PmxAppendConstraint> m_PmxAppendConstraints{};
+	vector<PmxIkConstraint> m_PmxIkConstraints{};
+	vector<aiVector3D> m_PmxBaseVertices{};
+	vector<aiVector3D> m_PmxBaseNormals{};
+	vector<XMFLOAT2> m_PmxBaseTexCoords{};
+	vector<PmxMorph> m_PmxMorphs{};
+	unordered_map<string, uint32_t> m_PmxMorphIndexMap{};
+	vector<vector<pair<uint32_t, uint32_t>>> m_PmxVertexToMeshVertices{};
 	vector<XMFLOAT4X4> m_BoneMatricesScratch{};
+	bool m_HasAppliedVmdMorphs = false;
 
 
 	ComPtr<ID3D12Resource> m_BoneBuffer{};
@@ -136,6 +256,19 @@ private:
 	aiNodeAnim* FindNodeAnimChannel(aiAnimation* animation, const string& boneName) const;
 	void SampleNodeAnimation(aiAnimation* animation, aiNodeAnim* channel, float timeSeconds,
 		aiQuaternion& outRotation, aiVector3D& outPosition, aiVector3D& outScale) const;
+	bool LoadVmdAnimation(const char* fileName, const char* name);
+	void SampleVmdBone(const VmdAnimation* animation, const string& boneName, float timeSeconds,
+		aiQuaternion& outRotation, aiVector3D& outPosition) const;
+	void UpdateVmdBoneMatrices(const VmdAnimation* animation1, float frame1,
+		const VmdAnimation* animation2, float frame2, float blendRate);
+	bool LoadPmxIkData(const char* fileName);
+	void BuildPmxVertexMeshMap();
+	float SampleVmdMorph(const VmdAnimation* animation, const string& morphName, float timeSeconds) const;
+	void ApplyVmdMorphs(const VmdAnimation* animation, float timeSeconds);
+	void ApplyPmxAppendTransforms();
+	void ApplyPmxOrderedTransforms(const VmdAnimation* animation, float timeSeconds);
+	bool IsVmdIkEnabled(const VmdAnimation* animation, const string& ikBoneName, float timeSeconds) const;
+	void ApplyPmxIk(const VmdAnimation* animation, float timeSeconds);
 
 	void CreateBone(aiNode* node);
 	void UpdateBoneMatrix(aiNode* node, aiMatrix4x4 matrix);

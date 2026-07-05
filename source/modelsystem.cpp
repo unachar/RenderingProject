@@ -223,6 +223,11 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				pCommandList->ResourceBarrier(1, &vbBarrier);
 			}
 
+			pCommandList->SetGraphicsRootSignature(RendererShader::GetModelRootSignature());
+			if (ID3D12Resource* shadowCb = RendererResource::GetShadowCB())
+			{
+				pCommandList->SetGraphicsRootConstantBufferView(5, shadowCb->GetGPUVirtualAddress());
+			}
 			pCommandList->SetPipelineState(shadowPso);
 			writeShadowCb(i);
 			for (UINT m = 0; m < model->GetMeshCount(); ++m)
@@ -399,6 +404,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		for (const auto& dc : m_AnimDrawCalls)
 		{
 			dc.model->DispatchGpuSkinning(pCommandList);
+			lastPso = nullptr;
 
 			for (UINT m = 0; m < dc.model->GetMeshCount(); m++)
 			{
