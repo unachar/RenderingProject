@@ -9,6 +9,8 @@
 #include "systemmanager.h"
 #include "camera.h"
 #include "light.h"
+#include "imguimanager.h"
+#include "modelmanager.h"
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
@@ -77,6 +79,71 @@ static XMFLOAT3 Normalize3(const XMFLOAT3& v, const XMFLOAT3& fallback)
 	XMFLOAT3 out{};
 	XMStoreFloat3(&out, XMVector3Normalize(vec));
 	return out;
+}
+
+static bool GetSelectionLocalAabb(EntityID entity, XMFLOAT3& center, XMFLOAT3& extents)
+{
+	if (entity == g_kINVALID_ENTITY ||
+		!Registry::IsAlive(entity) ||
+		!ComponentManager::HasComponent<TransformComponent>(entity))
+	{
+		return false;
+	}
+
+	if (ComponentManager::HasComponent<AABBComponent>(entity))
+	{
+		const auto& aabb = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
+		center = aabb.Center;
+		extents = aabb.Extents;
+		return true;
+	}
+
+	if (ComponentManager::HasComponent<StaticModelComponent>(entity))
+	{
+		const auto& model = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
+		if (auto* resource = ModelManager::GetStaticModel(model.ModelId))
+		{
+			center = resource->GetAabbCenter();
+			extents = resource->GetAabbExtents();
+			return true;
+		}
+	}
+
+	if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
+	{
+		const auto& model = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
+		if (auto* resource = ModelManager::GetAnimModel(model.ModelId))
+		{
+			center = resource->GetAabbCenter();
+			extents = resource->GetAabbExtents();
+		}
+		else
+		{
+			center = { 0.0f, 1.0f, 0.0f };
+			extents = { 0.7f, 1.8f, 0.7f };
+		}
+		return true;
+	}
+
+	if (ComponentManager::HasComponent<SpriteComponent>(entity))
+	{
+		const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
+		if (sprite.Is3D)
+		{
+			center = { 0.0f, 0.0f, 0.0f };
+			extents = { 1.0f, 1.0f, 0.05f };
+			return true;
+		}
+	}
+
+	if (ComponentManager::HasComponent<LightComponent>(entity))
+	{
+		center = { 0.0f, 0.0f, 0.0f };
+		extents = { 0.25f, 0.25f, 0.25f };
+		return true;
+	}
+
+	return false;
 }
 
 static void AppendLine(vector<DebugVertex>& vertices, const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT4& color)
@@ -450,7 +517,11 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	}
 
 	auto lightEntities = World::GetView<LightComponent, TransformComponent>();
-	if (aabbEntities.empty() && obbEntities.empty() && lightEntities.empty())
+	const EntityID selectedEntity = ImGuiManager::GetSelectedEntity();
+	XMFLOAT3 selectedCenter{};
+	XMFLOAT3 selectedExtents{};
+	const bool hasSelectedOutline = GetSelectionLocalAabb(selectedEntity, selectedCenter, selectedExtents);
+	if (aabbEntities.empty() && obbEntities.empty() && lightEntities.empty() && !hasSelectedOutline)
 	{
 		return;
 	}
@@ -561,6 +632,44 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			RendererResource::m_DynamicVertexOffset += offsetIncrement;
 			pCommandList->IASetVertexBuffers(0, 1, &vbView);
 			pCommandList->DrawInstanced(24, 1, 0, 0);
+		}
+	}
+
+	if (hasSelectedOutline)
+	{
+		auto transformIt = transformMap.find(selectedEntity);
+		if (transformIt != transformMap.end())
+		{
+			XMMATRIX world = XMLoadFloat4x4(&transformIt->second->WorldMatrix);
+
+			ConstantBuffer3D cb{};
+			cb.World = XMMatrixTranspose(world);
+			cb.View = XMMatrixTranspose(viewMat);
+			cb.Projection = XMMatrixTranspose(projMat);
+			cb.UseTexture = 0;
+
+			UINT8* pCbvDataBegin = RendererResource::GetConstantBufferPtr();
+			memcpy(pCbvDataBegin + (selectedEntity * RendererResource::g_kCB_ALIGNED_SIZE), &cb, sizeof(cb));
+
+			CD3DX12_GPU_DESCRIPTOR_HANDLE cbvHandle(RendererResource::GetCbvHeap()->GetGPUDescriptorHandleForHeapStart(), selectedEntity, cbvIncrement);
+			pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+
+			const float maxExtent = max(selectedExtents.x, max(selectedExtents.y, selectedExtents.z));
+			const float expand = max(0.03f, maxExtent * 0.015f);
+			const XMFLOAT3 expandedExtents =
+			{
+				selectedExtents.x + expand,
+				selectedExtents.y + expand,
+				selectedExtents.z + expand
+			};
+
+			pCommandList->SetPipelineState(linePso);
+			RendererDraw::BeginLinePass();
+
+			vector<DebugVertex> lineVertices;
+			AppendDebugBoxLines(lineVertices, selectedCenter, selectedExtents, { 1.0f, 0.42f, 0.0f, 1.0f });
+			AppendDebugBoxLines(lineVertices, selectedCenter, expandedExtents, { 1.0f, 0.72f, 0.05f, 1.0f });
+			SubmitDebugLines(pCommandList, lineVertices);
 		}
 	}
 

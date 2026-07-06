@@ -34,11 +34,6 @@ void Game::Init()
 void Game::Create()
 {
 	Camera::Create();
-
-	for (int i = 0; i < 3; i++)
-	{
-		const auto& light = Light::Create(LightType::Point);
-	}
 	
 	
 	//Light::AttachLightTimeLine(light);

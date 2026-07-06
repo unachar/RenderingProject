@@ -250,7 +250,7 @@ float AtmosphereDensityCommon(float3 worldPos)
     float density = max(AtmosphereParams0.w, 0.0f);
     float heightFalloff = max(AtmosphereParams1.x, 0.0f);
     float heightDensity = exp(-max(worldPos.y, 0.0f) * heightFalloff);
-    float noise = lerp(0.92f, 1.08f, ValueNoiseCommon(worldPos * 0.065f + AtmosphereCamera.xyz * 0.011f));
+    float noise = lerp(0.97f, 1.03f, ValueNoiseCommon(worldPos * 0.035f));
     return density * heightDensity * noise;
 }
 
@@ -368,12 +368,11 @@ float3 RayMarchAtmosphereViewCommon(
     float validDistance = step(0.0001f, rawViewDistance);
     float viewDistance = clamp(rawViewDistance, 0.0001f, 80.0f);
 
-    const int stepCount = 32;
+    const int stepCount = 48;
     float3 viewDir = viewDelta / max(rawViewDistance, 0.0001f);
     float3 viewToCamera = -viewDir;
     float stepLength = viewDistance / (float)stepCount;
     float scaledStep = stepLength * max(AtmosphereParams1.w, 0.0001f);
-    float jitterBase = Hash13Common(cameraPos * 61.0f + viewDir * 997.0f);
     float transmittance = 1.0f;
     float3 result = float3(0.0f, 0.0f, 0.0f);
     int count = min((int)round(LightCount.x), MAX_SHADER_LIGHTS);
@@ -381,8 +380,7 @@ float3 RayMarchAtmosphereViewCommon(
     [loop]
     for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
     {
-        float stepJitter = frac(jitterBase + (float)stepIndex * 0.6180339887f) - 0.5f;
-        float t = saturate(((float)stepIndex + 0.5f + stepJitter) / (float)stepCount);
+        float t = ((float)stepIndex + 0.5f) / (float)stepCount;
         float3 samplePos = cameraPos + viewDir * viewDistance * t;
         float3 stepScatter = float3(0.0f, 0.0f, 0.0f);
         float sampleDensity = AtmosphereDensityCommon(samplePos);
@@ -399,15 +397,20 @@ float3 RayMarchAtmosphereViewCommon(
             float singleAttenuation;
             float singleVolume;
             ResolveSingleLightCommon(samplePos, LightDirections[lightIndex], LightPositionTypes[lightIndex], LightExtras[lightIndex], singleDir, singleAttenuation, singleVolume);
-            float3 singleColor = max(LightColors[lightIndex].rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColors[lightIndex].a, 0.0f) * singleAttenuation;
+            float3 rawSingleColor = max(LightColors[lightIndex].rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColors[lightIndex].a, 0.0f);
+            float3 singleColor = rawSingleColor * singleAttenuation;
             float shadowVisibility = SampleAtmosphereShadowMap(samplePos, singleDir, shadowMap, shadowSampler, lightViewProjection, shadowMapParams);
             float3 shadowedColor = singleColor * shadowVisibility;
+            float localLight = step(0.5f, LightPositionTypes[lightIndex].w);
+            float volumeVisibility = lerp(shadowVisibility, max(shadowVisibility, 0.45f), localLight);
+            float3 volumeColor = rawSingleColor * sqrt(saturate(singleAttenuation)) * volumeVisibility;
             float volumeLight = step(2.5f, LightPositionTypes[lightIndex].w) * step(LightPositionTypes[lightIndex].w, 3.5f);
+            float localVolumeStepBoost = lerp(1.0f, 0.35f / max(AtmosphereParams1.w, 0.0001f), localLight);
             float phase = saturate(HenyeyGreensteinCommon(clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
             float shaftBoost = lerp(0.55f, 1.75f, phase) * lerp(1.0f, 2.35f, volumeLight);
             float3 singleAtmosphere = AtmosphereSingleScatterCommon(samplePos, viewToCamera, singleDir, shadowedColor);
             stepScatter += singleAtmosphere * lerp(1.0f, 0.45f, volumeLight);
-            stepScatter += shadowedColor * singleVolume * sampleDensity * shaftBoost * lerp(0.22f, 1.05f, volumeLight);
+            stepScatter += volumeColor * singleVolume * sampleDensity * shaftBoost * localVolumeStepBoost * lerp(0.22f, lerp(0.82f, 1.05f, volumeLight), localLight);
         }
 
         if (count <= 0)
@@ -416,15 +419,20 @@ float3 RayMarchAtmosphereViewCommon(
             float singleAttenuation;
             float singleVolume;
             ResolveSingleLightCommon(samplePos, LightDirection, LightPositionType, LightExtra, singleDir, singleAttenuation, singleVolume);
-            float3 singleColor = max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColor.a, 0.0f) * singleAttenuation;
+            float3 rawSingleColor = max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColor.a, 0.0f);
+            float3 singleColor = rawSingleColor * singleAttenuation;
             float shadowVisibility = SampleAtmosphereShadowMap(samplePos, singleDir, shadowMap, shadowSampler, lightViewProjection, shadowMapParams);
             float3 shadowedColor = singleColor * shadowVisibility;
+            float localLight = step(0.5f, LightPositionType.w);
+            float volumeVisibility = lerp(shadowVisibility, max(shadowVisibility, 0.45f), localLight);
+            float3 volumeColor = rawSingleColor * sqrt(saturate(singleAttenuation)) * volumeVisibility;
             float volumeLight = step(2.5f, LightPositionType.w) * step(LightPositionType.w, 3.5f);
+            float localVolumeStepBoost = lerp(1.0f, 0.35f / max(AtmosphereParams1.w, 0.0001f), localLight);
             float phase = saturate(HenyeyGreensteinCommon(clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
             float shaftBoost = lerp(0.55f, 1.75f, phase) * lerp(1.0f, 2.35f, volumeLight);
             float3 singleAtmosphere = AtmosphereSingleScatterCommon(samplePos, viewToCamera, singleDir, shadowedColor);
             stepScatter += singleAtmosphere * lerp(1.0f, 0.45f, volumeLight);
-            stepScatter += shadowedColor * singleVolume * sampleDensity * shaftBoost * lerp(0.22f, 1.05f, volumeLight);
+            stepScatter += volumeColor * singleVolume * sampleDensity * shaftBoost * localVolumeStepBoost * lerp(0.22f, lerp(0.82f, 1.05f, volumeLight), localLight);
         }
 
         result += stepScatter * transmittance * scaledStep;
@@ -519,7 +527,7 @@ void ResolveSingleLightCommon(
 
             if (lightType == 2)
             {
-                float noise = lerp(0.90f, 1.10f, ValueNoiseCommon(worldPos * 1.45f + lightPositionTypeData.xyz * 0.11f));
+                float noise = lerp(0.97f, 1.03f, ValueNoiseCommon(worldPos * 0.55f + lightPositionTypeData.xyz * 0.05f));
                 volumeScatter = coneBodyMask * density * noise * 0.32f;
             }
         }
@@ -554,7 +562,7 @@ void ResolveSingleLightCommon(
 
             float distanceFade = smoothstep(1.0f, 0.0f, saturate(abs(distanceToLight) / lightRange));
 
-            float noise = lerp(0.92f, 1.08f, ValueNoiseCommon(worldPos * 1.15f + lightPositionTypeData.xyz * 0.11f));
+            float noise = lerp(0.97f, 1.03f, ValueNoiseCommon(worldPos * 0.45f + lightPositionTypeData.xyz * 0.05f));
             attenuation = lerp(attenuation, rangeFade * rangeFade * cylinderMask, volumeShape);
             volumeScatter = shapeMask * distanceFade * density * noise * 0.55f;
         }
