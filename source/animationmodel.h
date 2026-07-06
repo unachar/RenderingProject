@@ -12,6 +12,7 @@
 #include "scene.h"
 #include "postprocess.h"
 #include "matrix4x4.h"
+#include "rendererstate.h"
 #include "toonoutlinebuilder.h"
 #include "vmdanimationimpoter.h"
 #pragma comment(lib, "assimp-vc143-mt.lib")
@@ -171,11 +172,11 @@ private:
 
 	static constexpr UINT m_kMAX_BONES = 2096;
 	static constexpr int m_kMAX_BONE_INFLUENCES = 4;
-	static constexpr UINT m_kSKINNING_DESCRIPTORS_PER_MESH = 3 + (ToonOutlineBuilder::kModeCount * 2);
+	static constexpr UINT m_kSKINNING_DESCRIPTORS_PER_MESH = 2 + RendererState::g_kFRAME_COUNT + (ToonOutlineBuilder::kModeCount * 2);
 	static constexpr UINT m_kINPUT_VERTEX_SRV_OFFSET = 0;
 	static constexpr UINT m_kBONE_SRV_OFFSET = 1;
-	static constexpr UINT m_kOUTPUT_VERTEX_UAV_OFFSET = 2;
-	static constexpr UINT m_kTEO_DESCRIPTOR_OFFSET = 3;
+	static constexpr UINT m_kOUTPUT_VERTEX_UAV_OFFSET = 1 + RendererState::g_kFRAME_COUNT;
+	static constexpr UINT m_kTEO_DESCRIPTOR_OFFSET = 2 + RendererState::g_kFRAME_COUNT;
 
 	struct VmdBoneBinding
 	{
@@ -265,8 +266,8 @@ private:
 	unordered_map<string, PmxAppendResult> m_PmxAppendResultsScratch{};
 
 
-	ComPtr<ID3D12Resource> m_BoneBuffer{};
-	void* m_pBoneBufferMapped = nullptr;
+	array<ComPtr<ID3D12Resource>, RendererState::g_kFRAME_COUNT> m_BoneBuffers{};
+	array<void*, RendererState::g_kFRAME_COUNT> m_pBoneBufferMapped{};
 	
 
 	ComPtr<ID3D12DescriptorHeap> m_SkinningDescHeap{};

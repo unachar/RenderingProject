@@ -7,9 +7,11 @@
 #include "texturemanager.h"
 #include "componentmanager.h"
 #include "imguimanager.h"
+#include "materialsystem.h"
 #include "light.h"
 #include "camera.h"
 #include "atmosphere.h"
+#include <limits>
 
 namespace
 {
@@ -22,6 +24,7 @@ namespace
 
 	RuntimeLightState g_CachedDirectionalLight{};
 	RuntimeLightState g_CachedAnyLight{};
+	RuntimeLightState g_CachedShadowLight{};
 	bool g_LightCacheValid = false;
 
 	struct LightConstants
@@ -251,6 +254,7 @@ namespace
 	{
 		g_CachedDirectionalLight = {};
 		g_CachedAnyLight = {};
+		g_CachedShadowLight = {};
 		for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
 		{
 			const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
@@ -266,12 +270,22 @@ namespace
 				g_CachedAnyLight.Position = transform.Position;
 				g_CachedAnyLight.HasLight = true;
 			}
+			if (light.Type != LightType::Directional && !g_CachedShadowLight.HasLight)
+			{
+				g_CachedShadowLight.Component = light;
+				g_CachedShadowLight.Position = transform.Position;
+				g_CachedShadowLight.HasLight = true;
+			}
 			if (light.Type == LightType::Directional && !g_CachedDirectionalLight.HasLight)
 			{
 				g_CachedDirectionalLight.Component = light;
 				g_CachedDirectionalLight.Position = transform.Position;
 				g_CachedDirectionalLight.HasLight = true;
 			}
+		}
+		if (!g_CachedShadowLight.HasLight)
+		{
+			g_CachedShadowLight = g_CachedDirectionalLight.HasLight ? g_CachedDirectionalLight : g_CachedAnyLight;
 		}
 		g_LightCacheValid = true;
 	}
@@ -283,6 +297,144 @@ namespace
 			RebuildLightCache();
 		}
 		return preferDirectional ? g_CachedDirectionalLight : g_CachedAnyLight;
+	}
+
+	const RuntimeLightState& GetCachedShadowLightState()
+	{
+		if (!g_LightCacheValid)
+		{
+			RebuildLightCache();
+		}
+		return g_CachedShadowLight;
+	}
+
+	bool IsSkyEntity(EntityID entity)
+	{
+		return ComponentManager::HasComponent<NameComponent>(entity) &&
+			ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky";
+	}
+
+	bool IsShadowBoundsEntity(EntityID entity)
+	{
+		if (!Registry::IsAlive(entity) ||
+			!ComponentManager::HasComponent<TransformComponent>(entity) ||
+			ComponentManager::HasComponent<LightComponent>(entity) ||
+			IsSkyEntity(entity))
+		{
+			return false;
+		}
+
+		bool renderable =
+			ComponentManager::HasComponent<MeshComponent>(entity) ||
+			ComponentManager::HasComponent<StaticModelComponent>(entity) ||
+			ComponentManager::HasComponent<AnimationModelComponent>(entity);
+
+		if (ComponentManager::HasComponent<SpriteComponent>(entity))
+		{
+			const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
+			renderable |= sprite.Is3D;
+		}
+
+		if (!renderable)
+		{
+			return false;
+		}
+
+		if (ComponentManager::HasComponent<MaterialComponent>(entity))
+		{
+			const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+			if (MaterialSystem::IsTransparentMaterial(material) ||
+				(material.ShaderClassMode == MaterialMode::Manual && material.ShaderClass == ShaderClass::Shadow))
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	void IncludeBoundsPoint(XMVECTOR point, XMVECTOR& boundsMin, XMVECTOR& boundsMax, bool& hasBounds)
+	{
+		if (!hasBounds)
+		{
+			boundsMin = point;
+			boundsMax = point;
+			hasBounds = true;
+			return;
+		}
+
+		boundsMin = XMVectorMin(boundsMin, point);
+		boundsMax = XMVectorMax(boundsMax, point);
+	}
+
+	void IncludeBoundsSphere(XMVECTOR center, float radius, XMVECTOR& boundsMin, XMVECTOR& boundsMax, bool& hasBounds)
+	{
+		const XMVECTOR extent = XMVectorReplicate(max(radius, 0.01f));
+		IncludeBoundsPoint(XMVectorSubtract(center, extent), boundsMin, boundsMax, hasBounds);
+		IncludeBoundsPoint(XMVectorAdd(center, extent), boundsMin, boundsMax, hasBounds);
+	}
+
+	void BuildShadowFocusBounds(XMVECTOR& outCenter, float& outRadius)
+	{
+		bool hasBounds = false;
+		XMVECTOR boundsMin = XMVectorReplicate(std::numeric_limits<float>::max());
+		XMVECTOR boundsMax = XMVectorReplicate(-std::numeric_limits<float>::max());
+
+		for (EntityID entity : World::GetView<TransformComponent>())
+		{
+			if (!IsShadowBoundsEntity(entity))
+			{
+				continue;
+			}
+
+			const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+			const XMVECTOR position = XMLoadFloat3(&transform.Position);
+			const XMFLOAT3 absScale =
+			{
+				fabsf(transform.Scale.x),
+				fabsf(transform.Scale.y),
+				fabsf(transform.Scale.z)
+			};
+
+			if (ComponentManager::HasComponent<AABBComponent>(entity))
+			{
+				const auto& aabb = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
+				XMFLOAT3 scaledCenter =
+				{
+					aabb.Center.x * transform.Scale.x,
+					aabb.Center.y * transform.Scale.y,
+					aabb.Center.z * transform.Scale.z
+				};
+				XMFLOAT3 scaledExtents =
+				{
+					max(fabsf(aabb.Extents.x * absScale.x), 0.05f),
+					max(fabsf(aabb.Extents.y * absScale.y), 0.05f),
+					max(fabsf(aabb.Extents.z * absScale.z), 0.05f)
+				};
+
+				const XMVECTOR center = XMVectorAdd(position, XMLoadFloat3(&scaledCenter));
+				const XMVECTOR extents = XMLoadFloat3(&scaledExtents);
+				IncludeBoundsPoint(XMVectorSubtract(center, extents), boundsMin, boundsMax, hasBounds);
+				IncludeBoundsPoint(XMVectorAdd(center, extents), boundsMin, boundsMax, hasBounds);
+			}
+			else
+			{
+				const float radius = max(max(absScale.x, absScale.y), max(absScale.z, 1.0f)) * 1.5f;
+				IncludeBoundsSphere(position, radius, boundsMin, boundsMax, hasBounds);
+			}
+		}
+
+		if (!hasBounds)
+		{
+			outCenter = XMVectorSet(0.0f, 1.0f, 0.0f, 1.0f);
+			outRadius = 12.0f;
+			return;
+		}
+
+		outCenter = XMVectorScale(XMVectorAdd(boundsMin, boundsMax), 0.5f);
+		outCenter = XMVectorSetW(outCenter, 1.0f);
+		outRadius = XMVectorGetX(XMVector3Length(XMVectorSubtract(boundsMax, boundsMin))) * 0.5f;
+		outRadius = clamp(outRadius, 6.0f, 80.0f);
 	}
 
 	int GetShapeSideCount(ShapeType shapeType)
@@ -669,7 +821,7 @@ void RendererResource::UpdateShadowConstantBuffer()
 		return;
 	}
 
-	const RuntimeLightState& runtimeLight = GetCachedLightState(false);
+	const RuntimeLightState& runtimeLight = GetCachedShadowLightState();
 	XMFLOAT3 lightDirection = runtimeLight.HasLight ? runtimeLight.Component.Direction : XMFLOAT3(0.25f, 1.0f, -0.25f);
 	XMVECTOR dir = XMVectorSet(lightDirection.x, lightDirection.y, lightDirection.z, 0.0f);
 	if (XMVectorGetX(XMVector3LengthSq(dir)) < 0.000001f)
@@ -678,64 +830,54 @@ void RendererResource::UpdateShadowConstantBuffer()
 	}
 	dir = XMVector3Normalize(dir);
 
-	XMVECTOR target = XMVectorSet(0.0f, 1.2f, 0.0f, 1.0f);
-	XMVECTOR characterFoot = XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f);
-	Entity alicia = World::GetEntityByName("Alicia");
-	if (alicia.IsValid() &&
-		Registry::IsAlive(alicia.GetID()) &&
-		ComponentManager::HasComponent<TransformComponent>(alicia.GetID()))
-	{
-		const auto& aliciaTransform = ComponentManager::GetComponentUnchecked<TransformComponent>(alicia.GetID());
-		characterFoot = XMVectorSet(aliciaTransform.Position.x, aliciaTransform.Position.y, aliciaTransform.Position.z, 1.0f);
-		target = XMVectorSet(aliciaTransform.Position.x, aliciaTransform.Position.y + 0.6f, aliciaTransform.Position.z, 1.0f);
-	}
-
-	Entity field = World::GetEntityByName("field");
-	if (field.IsValid() &&
-		Registry::IsAlive(field.GetID()) &&
-		ComponentManager::HasComponent<TransformComponent>(field.GetID()) &&
-		ComponentManager::HasComponent<AABBComponent>(field.GetID()))
-	{
-		const auto& fieldTransform = ComponentManager::GetComponentUnchecked<TransformComponent>(field.GetID());
-		const XMVECTOR fieldCenter = XMVectorSet(fieldTransform.Position.x, fieldTransform.Position.y, fieldTransform.Position.z, 1.0f);
-		target = XMVectorLerp(fieldCenter, target, 0.55f);
-	}
+	XMVECTOR target = XMVectorSet(0.0f, 1.0f, 0.0f, 1.0f);
+	float focusRadius = 12.0f;
+	BuildShadowFocusBounds(target, focusRadius);
 
 	const LightType lightType = runtimeLight.HasLight ? runtimeLight.Component.Type : LightType::Directional;
-	XMVECTOR lightPos = XMVectorAdd(target, XMVectorScale(dir, 45.0f));
+	XMVECTOR lightPos = XMVectorAdd(target, XMVectorScale(dir, max(45.0f, focusRadius * 2.5f)));
 	float nearClip = 0.1f;
-	float farClip = 1000.0f;
-	float orthoSize = 20.0f;
+	float farClip = max(120.0f, focusRadius * 6.0f + 40.0f);
+	float orthoSize = max(20.0f, focusRadius * 2.2f);
 	float fovY = XM_PIDIV2;
 
 	if (runtimeLight.HasLight && lightType != LightType::Directional)
 	{
 		lightPos = XMLoadFloat3(&runtimeLight.Position);
-		const XMVECTOR lowerBodyTarget = XMVectorLerp(characterFoot, target, 0.35f);
-		XMVECTOR toTarget = XMVectorSubtract(lowerBodyTarget, lightPos);
-		if (XMVectorGetX(XMVector3LengthSq(toTarget)) > 0.000001f)
-		{
-			dir = XMVector3Normalize(toTarget);
-			target = lowerBodyTarget;
-		}
-		else
-		{
-			target = XMVectorAdd(lightPos, XMVectorScale(dir, 1.0f));
-		}
-
-		nearClip = 0.05f;
-		const float distanceToTarget = XMVectorGetX(XMVector3Length(XMVectorSubtract(target, lightPos)));
-		farClip = max(runtimeLight.Component.Range, distanceToTarget + 8.0f);
-		float outerAngle = runtimeLight.Component.OuterAngle * XM_PI / 180.0f;
 		if (lightType == LightType::Point)
 		{
-			fovY = XM_PIDIV2;
+			XMVECTOR toTarget = XMVectorSubtract(target, lightPos);
+			const float distanceToTarget = XMVectorGetX(XMVector3Length(toTarget));
+			if (distanceToTarget > 0.000001f)
+			{
+				dir = XMVectorScale(toTarget, 1.0f / distanceToTarget);
+			}
+			else
+			{
+				dir = XMVectorSet(0.0f, -1.0f, 0.0f, 0.0f);
+				target = XMVectorAdd(lightPos, dir);
+			}
+
+			nearClip = 0.03f;
+			farClip = max(runtimeLight.Component.Range, distanceToTarget + focusRadius + 4.0f);
+			const float requiredFov = 2.0f * atan2f(focusRadius, max(distanceToTarget, 0.1f));
+			fovY = clamp(requiredFov, XM_PIDIV2, XMConvertToRadians(155.0f));
 		}
 		else
 		{
+			XMVECTOR spotDir = XMVectorSet(runtimeLight.Component.Direction.x, runtimeLight.Component.Direction.y, runtimeLight.Component.Direction.z, 0.0f);
+			if (XMVectorGetX(XMVector3LengthSq(spotDir)) > 0.000001f)
+			{
+				dir = XMVector3Normalize(spotDir);
+			}
+			target = XMVectorAdd(lightPos, XMVectorScale(dir, max(runtimeLight.Component.Range, 1.0f)));
+
+			nearClip = 0.05f;
+			farClip = max(runtimeLight.Component.Range, 1.0f);
+			float outerAngle = runtimeLight.Component.OuterAngle * XM_PI / 180.0f;
 			fovY = outerAngle * 2.0f;
 			if (fovY < 0.70f) fovY = 0.70f;
-			if (fovY > XM_PIDIV2) fovY = XM_PIDIV2;
+			if (fovY > XMConvertToRadians(175.0f)) fovY = XMConvertToRadians(175.0f);
 		}
 	}
 
@@ -752,7 +894,11 @@ void RendererResource::UpdateShadowConstantBuffer()
 
 	ShadowConstants constants{};
 	constants.LightViewProjection = XMMatrixTranspose(lightView * lightProjection);
-	constants.ShadowMapParams = XMFLOAT4(1.0f / static_cast<float>(g_kSHADOW_MAP_SIZE), 0.000008f, 0.00001f, 1.0f);
+	constants.ShadowMapParams = XMFLOAT4(
+		1.0f / static_cast<float>(g_kSHADOW_MAP_SIZE),
+		0.000008f,
+		0.00001f,
+		lightType == LightType::Directional ? 1.0f : -1.0f);
 	memcpy(m_pShadowCbvDataBegin, &constants, sizeof(constants));
 }
 

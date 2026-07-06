@@ -2,6 +2,7 @@
 #include "animationmodel.h"
 #include "pmxloader.h"
 #include "texturemanager.h"
+#include "renderercore.h"
 #include "rendererdraw.h"
 #include "renderershader.h"
 #include "psomanager.h"
@@ -2104,29 +2105,34 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 		UINT boneBufferSize = sizeof(XMFLOAT4X4) * m_kMAX_BONES;
 		auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
 		auto resDesc = CD3DX12_RESOURCE_DESC::Buffer(boneBufferSize);
-		HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE,
-			&resDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_BoneBuffer));
-		if (FAILED(hr)) return false;
 
-		CD3DX12_RANGE readRange(0, 0);
-		hr = m_BoneBuffer->Map(0, &readRange, &m_pBoneBufferMapped);
-		if (FAILED(hr))
+		vector<XMFLOAT4X4> identityBones(m_kMAX_BONES);
+		XMFLOAT4X4 identity;
+		XMStoreFloat4x4(&identity, XMMatrixIdentity());
+		for (auto& mtx : identityBones)
 		{
-			Debug::Log("ERROR: Failed to map bone buffer\n");
-			m_pBoneBufferMapped = nullptr;
-			return false;
+			mtx = identity;
 		}
 
-		if (m_pBoneBufferMapped)
+		for (UINT frame = 0; frame < RendererState::g_kFRAME_COUNT; ++frame)
 		{
-			vector<XMFLOAT4X4> identityBones(m_kMAX_BONES);
-			XMFLOAT4X4 identity;
-			XMStoreFloat4x4(&identity, XMMatrixIdentity());
-			for (auto& mtx : identityBones)
+			HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE,
+				&resDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_BoneBuffers[frame]));
+			if (FAILED(hr)) return false;
+
+			CD3DX12_RANGE readRange(0, 0);
+			hr = m_BoneBuffers[frame]->Map(0, &readRange, &m_pBoneBufferMapped[frame]);
+			if (FAILED(hr))
 			{
-				mtx = identity;
+				Debug::Log("ERROR: Failed to map bone buffer\n");
+				m_pBoneBufferMapped[frame] = nullptr;
+				return false;
 			}
-			memcpy(m_pBoneBufferMapped, identityBones.data(), sizeof(XMFLOAT4X4) * m_kMAX_BONES);
+
+			if (m_pBoneBufferMapped[frame])
+			{
+				memcpy(m_pBoneBufferMapped[frame], identityBones.data(), sizeof(XMFLOAT4X4) * m_kMAX_BONES);
+			}
 		}
 	}
 
@@ -2177,6 +2183,7 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 			device->CreateShaderResourceView(m_Meshes[m].InputVertexBuffer.Get(), &srvDesc, srvHandle);
 		}
 
+		for (UINT frame = 0; frame < RendererState::g_kFRAME_COUNT; ++frame)
 		{
 			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
@@ -2185,8 +2192,8 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 			srvDesc.Buffer.StructureByteStride = sizeof(XMFLOAT4X4);
 			srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 			CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(m_SkinningDescHeap->GetCPUDescriptorHandleForHeapStart(),
-				descriptorBase + m_kBONE_SRV_OFFSET, descSize);
-			device->CreateShaderResourceView(m_BoneBuffer.Get(), &srvDesc, srvHandle);
+				descriptorBase + m_kBONE_SRV_OFFSET + frame, descSize);
+			device->CreateShaderResourceView(m_BoneBuffers[frame].Get(), &srvDesc, srvHandle);
 		}
 
 		{
@@ -2435,7 +2442,12 @@ void AnimationModelResource::UpdateBindPoseBoneMatrix(aiNode* node, aiMatrix4x4 
 
 void AnimationModelResource::WriteBoneMatricesToBuffer()
 {
-	if (!m_pBoneBufferMapped)
+	bool hasMappedBoneBuffer = false;
+	for (void* mapped : m_pBoneBufferMapped)
+	{
+		hasMappedBoneBuffer |= (mapped != nullptr);
+	}
+	if (!hasMappedBoneBuffer)
 	{
 		return;
 	}
@@ -2471,7 +2483,13 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
 	}
 
 	UINT copySize = sizeof(XMFLOAT4X4) * m_kMAX_BONES;
-	memcpy(m_pBoneBufferMapped, m_BoneMatricesScratch.data(), copySize);
+	for (void* mapped : m_pBoneBufferMapped)
+	{
+		if (mapped)
+		{
+			memcpy(mapped, m_BoneMatricesScratch.data(), copySize);
+		}
+	}
 }
 
 void AnimationModelResource::BuildPmxVertexMeshMap()
@@ -3811,7 +3829,8 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 		CD3DX12_GPU_DESCRIPTOR_HANDLE srvInputHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), m_Meshes[m].SrvInputVertexIndex, descSize);
 		pCommandList->SetComputeRootDescriptorTable(0, srvInputHandle);
 
-		CD3DX12_GPU_DESCRIPTOR_HANDLE srvBoneHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), descriptorBase + m_kBONE_SRV_OFFSET, descSize);
+		const UINT boneFrameIndex = RendererCore::GetFrameIndex() % RendererState::g_kFRAME_COUNT;
+		CD3DX12_GPU_DESCRIPTOR_HANDLE srvBoneHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), descriptorBase + m_kBONE_SRV_OFFSET + boneFrameIndex, descSize);
 		pCommandList->SetComputeRootDescriptorTable(1, srvBoneHandle);
 
 		CD3DX12_GPU_DESCRIPTOR_HANDLE uavOutputHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), m_Meshes[m].UavOutputVertexIndex, descSize);
@@ -3819,6 +3838,8 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 
 		UINT threadGroups = (m_Meshes[m].VertexCount + kSkinningThreadGroupSize - 1) / kSkinningThreadGroupSize;
 		pCommandList->Dispatch(threadGroups, 1, 1);
+		D3D12_RESOURCE_BARRIER skinningUavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(m_Meshes[m].VertexBuffer.Get());
+		pCommandList->ResourceBarrier(1, &skinningUavBarrier);
 
 		for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
 		{
@@ -3843,6 +3864,8 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 
 			UINT teoThreadGroups = (m_Meshes[m].TeoVertexCounts[mode] + kSkinningThreadGroupSize - 1) / kSkinningThreadGroupSize;
 			pCommandList->Dispatch(teoThreadGroups, 1, 1);
+			D3D12_RESOURCE_BARRIER teoUavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(m_Meshes[m].TeoVertexBuffers[mode].Get());
+			pCommandList->ResourceBarrier(1, &teoUavBarrier);
 		}
 	}
 
@@ -3855,10 +3878,13 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 
 void AnimationModelResource::Uninit()
 {
-	if (m_BoneBuffer && m_pBoneBufferMapped)
+	for (UINT frame = 0; frame < RendererState::g_kFRAME_COUNT; ++frame)
 	{
-		m_BoneBuffer->Unmap(0, nullptr);
-		m_pBoneBufferMapped = nullptr;
+		if (m_BoneBuffers[frame] && m_pBoneBufferMapped[frame])
+		{
+			m_BoneBuffers[frame]->Unmap(0, nullptr);
+			m_pBoneBufferMapped[frame] = nullptr;
+		}
 	}
 
 	m_Meshes.clear();

@@ -25,6 +25,14 @@ namespace
 		XMStoreFloat3(&result, XMVector3Normalize(vector));
 		return result;
 	}
+
+	bool NearlyEqual(const XMFLOAT3& lhs, const XMFLOAT3& rhs)
+	{
+		constexpr float epsilon = 0.0001f;
+		return fabsf(lhs.x - rhs.x) <= epsilon &&
+			fabsf(lhs.y - rhs.y) <= epsilon &&
+			fabsf(lhs.z - rhs.z) <= epsilon;
+	}
 }
 
 EntityID Sun::CreateDefault()
@@ -57,6 +65,7 @@ EntityID Sun::Create(const XMFLOAT3& position, const XMFLOAT3& target)
 
 	auto& light = entity.Get<LightComponent>();
 	light.Type = LightType::Directional;
+	light.Position = position;
 	light.Color = { 1.0f, 0.94f, 0.82f, 1.0f };
 	light.Intensity = 3.0f;
 	light.Range = 80.0f;
@@ -102,10 +111,24 @@ void Sun::Sync(EntityID entity)
 		return;
 	}
 
-	const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
 	const auto& sun = ComponentManager::GetComponentUnchecked<SunComponent>(entity);
 	auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
 	auto& writableTransform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+	const bool transformPositionChanged = writableTransform.IsDirty;
+
+	if (sun.SyncDirectionalLight)
+	{
+		if (transformPositionChanged)
+		{
+			light.Position = writableTransform.Position;
+		}
+		else if (!NearlyEqual(light.Position, writableTransform.Position))
+		{
+			writableTransform.Position = light.Position;
+			writableTransform.IsDirty = true;
+		}
+	}
+
 	const float visualRadius = max(0.1f, sun.VisualRadius);
 	if (fabsf(writableTransform.Scale.x - visualRadius) > 0.0001f ||
 		fabsf(writableTransform.Scale.y - visualRadius) > 0.0001f ||
@@ -114,15 +137,19 @@ void Sun::Sync(EntityID entity)
 		writableTransform.Scale = { visualRadius, visualRadius, visualRadius };
 		writableTransform.IsDirty = true;
 	}
+
+	XMStoreFloat4x4(&writableTransform.WorldMatrix, BuildWorldMatrix(writableTransform));
+	writableTransform.IsDirty = false;
+
 	if (!sun.SyncDirectionalLight)
 	{
 		return;
 	}
 
-	const XMVECTOR sunPosition = XMLoadFloat3(&transform.Position);
+	const XMVECTOR sunPosition = XMLoadFloat3(&writableTransform.Position);
 	const XMVECTOR target = XMLoadFloat3(&sun.Target);
 	light.Type = LightType::Directional;
 	light.Direction = NormalizeOr(XMVectorSubtract(sunPosition, target), { 0.0f, 1.0f, -0.25f });
 	light.Range = max(light.Range, 1.0f);
-	light.Position = transform.Position;
+	light.Position = writableTransform.Position;
 }

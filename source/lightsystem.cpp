@@ -35,24 +35,7 @@ void LightSystem::Update()
 		}
 
 		const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-		if (lightComponent.Type == LightType::Spot || lightComponent.Type == LightType::Volume)
-		{
-			XMFLOAT3 target = { 0.0f, 0.0f, 0.0f };
-			Entity alicia = World::GetEntityByName("Alicia");
-			if (alicia.IsValid() &&
-				Registry::IsAlive(alicia.GetID()) &&
-				ComponentManager::HasComponent<TransformComponent>(alicia.GetID()))
-			{
-				const auto& aliciaTransform = ComponentManager::GetComponentUnchecked<TransformComponent>(alicia.GetID());
-				target = { aliciaTransform.Position.x, aliciaTransform.Position.y, aliciaTransform.Position.z };
-			}
-
-			XMVECTOR dir = XMVectorSubtract(XMLoadFloat3(&target), XMLoadFloat3(&transform.Position));
-			if (XMVectorGetX(XMVector3LengthSq(dir)) > 0.000001f)
-			{
-				XMStoreFloat3(&lightComponent.Direction, XMVector3Normalize(dir));
-			}
-		}
+		lightComponent.Position = transform.Position;
 	}
 }
 

@@ -680,7 +680,6 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
 
 		vector<DebugVertex> lightLines;
-		vector<DebugVertex> lightSolids;
 		for (EntityID entity : lightEntities)
 		{
 			const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
@@ -689,24 +688,7 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				continue;
 			}
 			const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-			if (light.Type == LightType::Volume)
-			{
-				const XMFLOAT3 direction = Normalize3(light.Direction, { 0.0f, -1.0f, 0.0f });
-				const float range = max(light.Range, 0.1f);
-				const float outer = light.OuterAngle * XM_PI / 180.0f;
-				const float radius = max(0.15f, tanf(outer) * range * 0.35f);
-				const XMFLOAT4 cylinderColor = { light.Color.x, light.Color.y, light.Color.z, 0.22f };
-				AppendCylinderSolid(lightSolids, transform.Position, direction, range, radius, cylinderColor);
-			}
 			AppendLightLines(lightLines, transform, light);
-		}
-
-		if (!lightSolids.empty())
-		{
-			pCommandList->SetPipelineState(solidPso);
-			RendererDraw::BeginModelPass();
-			pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
-			SubmitDebugLines(pCommandList, lightSolids);
 		}
 
 		pCommandList->SetPipelineState(linePso);
