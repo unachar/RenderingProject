@@ -8,6 +8,8 @@
 #include "texturemanager.h"
 #include "materialsystem.h"
 #include "light.h"
+#include "sun.h"
+#include "atmosphere.h"
 #include "debugsystem.h"
 #include "animator.h"
 #include <fstream>
@@ -545,6 +547,10 @@ void ImGuiManager::Update()
 	if (m_ShowMeshShadingWindow)
 	{
 		DrawMeshShadingWindow();
+	}
+	if (m_ShowAtmosphereWindow)
+	{
+		DrawAtmosphereWindow();
 	}
 
 	if (!m_ShowAdjustmentPanel)
@@ -1156,6 +1162,7 @@ void ImGuiManager::DrawEditorMainMenu()
 		ImGui::MenuItem("ログ", nullptr, &m_ShowLogWindow);
 		ImGui::MenuItem("パフォーマンス", nullptr, &m_ShowPerformanceWindow);
 		ImGui::MenuItem("マテリアルエディター", nullptr, &m_ShowMaterialEditorWindow);
+		ImGui::MenuItem("大気シミュレーション", nullptr, &m_ShowAtmosphereWindow);
 		ImGui::Separator();
 		ImGui::MenuItem("メッシュ単位のアウトライン", nullptr, &m_ShowMeshOutlineWindow);
 		ImGui::MenuItem("メッシュ単位のシェーディング", nullptr, &m_ShowMeshShadingWindow);
@@ -1184,6 +1191,11 @@ void ImGuiManager::DrawEditorMainMenu()
 		if (ImGui::MenuItem("Volume"))
 		{
 			m_SelectedEntity = CreateLightEntity(LightType::Volume);
+		}
+		ImGui::Separator();
+		if (ImGui::MenuItem("Sun"))
+		{
+			m_SelectedEntity = Sun::CreateDefault();
 		}
 		ImGui::EndMenu();
 	}
@@ -1540,6 +1552,72 @@ void ImGuiManager::DrawGBufferWindow()
 	}
 
 	ImGui::EndChild();
+	ImGui::End();
+}
+
+void ImGuiManager::DrawAtmosphereWindow()
+{
+	ImGui::SetNextWindowSize(ImVec2(360.0f, 430.0f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("大気シミュレーション", &m_ShowAtmosphereWindow))
+	{
+		ImGui::End();
+		return;
+	}
+
+	AtmosphereParameters& atmosphere = Atmosphere::GetMutableParameters();
+	ImGui::Checkbox("有効", &atmosphere.Enabled);
+	ImGui::SeparatorText("散乱");
+	ImGui::SliderFloat("Rayleigh強度", &atmosphere.RayleighStrength, 0.0f, 4.0f, "%.3f");
+	ImGui::SliderFloat("Mie強度", &atmosphere.MieStrength, 0.0f, 2.0f, "%.3f");
+	ImGui::SliderFloat("大気密度", &atmosphere.Density, 0.0f, 3.0f, "%.3f");
+	ImGui::SliderFloat("高度減衰", &atmosphere.HeightFalloff, 0.0f, 1.0f, "%.3f");
+	ImGui::SliderFloat("消散", &atmosphere.Extinction, 0.0f, 2.0f, "%.3f");
+	ImGui::SliderFloat("Mie g", &atmosphere.MieG, -0.95f, 0.95f, "%.3f");
+	ImGui::SliderFloat("距離スケール", &atmosphere.DistanceScale, 0.001f, 0.25f, "%.3f");
+	ImGui::SliderFloat("ライトシャフト", &atmosphere.LightShaftStrength, 0.0f, 4.0f, "%.3f");
+	ImGui::SliderFloat("環境散乱", &atmosphere.AmbientStrength, 0.0f, 1.0f, "%.3f");
+
+	ImGui::SeparatorText("色");
+	ImGui::ColorEdit3("Rayleigh色", &atmosphere.RayleighColor.x);
+	ImGui::ColorEdit3("Mie色", &atmosphere.MieColor.x);
+
+	ImGui::SeparatorText("Sun");
+	EntityID firstSun = g_kINVALID_ENTITY;
+	for (EntityID entity : World::GetView<SunComponent>())
+	{
+		firstSun = entity;
+		break;
+	}
+
+	if (firstSun == g_kINVALID_ENTITY)
+	{
+		if (ImGui::Button("Sunを作成"))
+		{
+			m_SelectedEntity = Sun::CreateDefault();
+		}
+	}
+	else
+	{
+		auto& sun = ComponentManager::GetComponentUnchecked<SunComponent>(firstSun);
+		auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(firstSun);
+		ImGui::Text("Sun Entity: %s", GetEntityDisplayName(firstSun));
+		if (DrawAxisFloat3("位置", transform.Position, 0.1f))
+		{
+			transform.IsDirty = true;
+		}
+		DrawAxisFloat3("注視点", sun.Target, 0.1f);
+		ImGui::Checkbox("Directional同期", &sun.SyncDirectionalLight);
+		if (ImGui::Button("Sunを選択"))
+		{
+			m_SelectedEntity = firstSun;
+		}
+	}
+
+	if (ImGui::Button("大気をリセット"))
+	{
+		Atmosphere::Reset();
+	}
+
 	ImGui::End();
 }
 
@@ -2619,6 +2697,20 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 	{
 		BeginUndoCapture(entity, before);
 		ApplyLightEntityToRuntime(entity);
+	}
+
+	if (ComponentManager::HasComponent<SunComponent>(entity) &&
+		ImGui::CollapsingHeader("Sun", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		auto& sun = ComponentManager::GetComponentUnchecked<SunComponent>(entity);
+		bool sunChanged = false;
+		sunChanged |= DrawAxisFloat3("注視点", sun.Target, 0.05f);
+		sunChanged |= ImGui::DragFloat("表示半径", &sun.VisualRadius, 0.05f, 0.1f, 100.0f);
+		sunChanged |= ImGui::Checkbox("Directional同期", &sun.SyncDirectionalLight);
+		if (sunChanged)
+		{
+			Sun::Sync(entity);
+		}
 	}
 }
 

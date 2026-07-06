@@ -315,6 +315,9 @@
     <ClCompile Include="source\kacchatta_hone.cpp">
       <Filter>2_ecs\2-1_entities</Filter>
     </ClCompile>
+    <ClCompile Include="source\atmosphere.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
     <ClCompile Include="source\movementsystem.cpp">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClCompile>
@@ -348,6 +351,9 @@
     <ClCompile Include="source\sky.cpp">
       <Filter>2_ecs\2-1_entities</Filter>
     </ClCompile>
+    <ClCompile Include="source\sun.cpp">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClCompile>
     <ClCompile Include="source\cube.cpp">
       <Filter>2_ecs\2-1_entities</Filter>
     </ClCompile>
@@ -366,6 +372,9 @@
       <Filter>1_base</Filter>
     </ClInclude>
     <ClInclude Include="source\light.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\atmosphere.h">
       <Filter>1_base</Filter>
     </ClInclude>
     <ClInclude Include="source\d3dx12.h">
@@ -548,6 +557,9 @@
       <Filter>5_shader\resource</Filter>
     </ClInclude>
     <ClInclude Include="source\sky.h">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\sun.h">
       <Filter>2_ecs\2-1_entities</Filter>
     </ClInclude>
     <ClInclude Include="source\cube.h">

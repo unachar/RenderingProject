@@ -3,6 +3,7 @@
 #include "componentmanager.h"
 #include "world.h"
 #include "light.h"
+#include "sun.h"
 
 namespace
 {
@@ -13,7 +14,7 @@ namespace
 			return;
 		}
 
-		Light::CreateDefaultDirectional();
+		Sun::CreateDefault();
 	}
 }
 
@@ -24,6 +25,7 @@ void LightSystem::Init()
 
 void LightSystem::Update()
 {
+	Sun::SyncAll();
 	for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
 	{
 		auto& lightComponent = ComponentManager::GetComponentUnchecked<LightComponent>(entity);

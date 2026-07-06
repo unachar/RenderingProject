@@ -458,6 +458,7 @@
     <ClCompile Include="source\moca.cpp" />
     <ClCompile Include="source\karen.cpp" />
     <ClCompile Include="source\kacchatta_hone.cpp" />
+    <ClCompile Include="source\atmosphere.cpp" />
     <ClCompile Include="source\animator.cpp" />
     <ClCompile Include="source\cube.cpp" />
     <ClCompile Include="source\field.cpp" />
@@ -493,6 +494,7 @@
     <ClCompile Include="source\rendererresource.cpp" />
     <ClCompile Include="source\rendererdraw.cpp" />
     <ClCompile Include="source\sky.cpp" />
+    <ClCompile Include="source\sun.cpp" />
     <ClCompile Include="source\staticmodel.cpp" />
     <ClCompile Include="source\animationsystem.cpp" />
     <ClCompile Include="source\camerasystem.cpp" />
@@ -516,6 +518,7 @@
     <ClInclude Include="source\moca.h" />
     <ClInclude Include="source\karen.h" />
     <ClInclude Include="source\kacchatta_hone.h" />
+    <ClInclude Include="source\atmosphere.h" />
     <ClInclude Include="source\animator.h" />
     <ClInclude Include="source\animationmodel.h" />
     <ClInclude Include="source\pmxloader.h" />
@@ -549,6 +552,7 @@
     <ClInclude Include="source\rendererresource.h" />
     <ClInclude Include="source\rendererdraw.h" />
     <ClInclude Include="source\sky.h" />
+    <ClInclude Include="source\sun.h" />
     <ClInclude Include="source\staticmodel.h" />
     <ClInclude Include="source\animationsystem.h" />
     <ClInclude Include="source\camerasystem.h" />

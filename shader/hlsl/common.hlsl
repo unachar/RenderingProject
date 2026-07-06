@@ -164,6 +164,11 @@ cbuffer LightParams : register(b1)
     float4 LightColors[MAX_SHADER_LIGHTS];
     float4 LightPositionTypes[MAX_SHADER_LIGHTS];
     float4 LightExtras[MAX_SHADER_LIGHTS];
+    float4 AtmosphereParams0; // x: enabled, y: rayleigh, z: mie, w: density
+    float4 AtmosphereParams1; // x: height falloff, y: extinction, z: mie g, w: distance scale
+    float4 AtmosphereColor0;  // rgb: rayleigh color, a: light shaft strength
+    float4 AtmosphereColor1;  // rgb: mie color, a: ambient strength
+    float4 AtmosphereCamera;  // xyz: camera position
 };
 
 float3 SafeNormalizeCommon(float3 value, float3 fallback)
@@ -219,6 +224,64 @@ float ValueNoiseCommon(float3 p)
     float nxy0 = lerp(nx00, nx10, f.y);
     float nxy1 = lerp(nx01, nx11, f.y);
     return lerp(nxy0, nxy1, f.z);
+}
+
+float RayleighPhaseCommon(float cosTheta)
+{
+    return 0.0596831f * (1.0f + cosTheta * cosTheta);
+}
+
+float HenyeyGreensteinCommon(float cosTheta, float g)
+{
+    g = clamp(g, -0.95f, 0.95f);
+    float g2 = g * g;
+    float denom = max(1.0f + g2 - 2.0f * g * cosTheta, 0.0001f);
+    return 0.0795775f * (1.0f - g2) / max(pow(denom, 1.5f), 0.0001f);
+}
+
+float AtmosphereDensityCommon(float3 worldPos)
+{
+    float density = max(AtmosphereParams0.w, 0.0f);
+    float heightFalloff = max(AtmosphereParams1.x, 0.0f);
+    float heightDensity = exp(-max(worldPos.y, 0.0f) * heightFalloff);
+    float noise = lerp(0.92f, 1.08f, ValueNoiseCommon(worldPos * 0.065f + AtmosphereCamera.xyz * 0.011f));
+    return density * heightDensity * noise;
+}
+
+float3 ApplyAtmosphereToLightCommon(
+    float3 worldPos,
+    float3 lightDir,
+    float3 lightColor,
+    inout float volumeScatter)
+{
+    float atmosphereEnabled = step(0.5f, AtmosphereParams0.x);
+    float3 toCamera = AtmosphereCamera.xyz - worldPos;
+    float viewDistance = length(toCamera);
+    float3 viewToCamera = SafeNormalizeCommon(toCamera, -lightDir);
+    float3 toLight = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
+    float cosTheta = clamp(dot(toLight, viewToCamera), -1.0f, 1.0f);
+
+    float opticalDepth = AtmosphereDensityCommon(worldPos) *
+        (1.0f - exp(-viewDistance * max(AtmosphereParams1.w, 0.0001f)));
+    float transmittance = exp(-max(AtmosphereParams1.y, 0.0f) * opticalDepth);
+
+    float rayleighPhase = RayleighPhaseCommon(cosTheta);
+    float miePhase = HenyeyGreensteinCommon(cosTheta, AtmosphereParams1.z);
+    float3 rayleigh = AtmosphereColor0.rgb * max(AtmosphereParams0.y, 0.0f) * rayleighPhase;
+    float3 mie = AtmosphereColor1.rgb * max(AtmosphereParams0.z, 0.0f) * miePhase;
+    float3 inScatter = (rayleigh + mie) * opticalDepth * lightColor;
+
+    float shaftStrength = max(AtmosphereColor0.a, 0.0f);
+    volumeScatter += dot((rayleigh + mie) * opticalDepth, float3(0.299f, 0.587f, 0.114f)) * shaftStrength * atmosphereEnabled;
+    return lerp(lightColor, lightColor * transmittance + inScatter, atmosphereEnabled);
+}
+
+float3 AtmosphereAmbientCommon(float3 worldPos, float3 lightDir)
+{
+    float atmosphereEnabled = step(0.5f, AtmosphereParams0.x);
+    float upScatter = saturate(SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f)).y * 0.5f + 0.5f);
+    float density = AtmosphereDensityCommon(worldPos);
+    return AtmosphereColor0.rgb * AtmosphereColor1.a * density * lerp(0.35f, 1.0f, upScatter) * atmosphereEnabled;
 }
 
 void ResolveSingleLightCommon(
@@ -317,6 +380,7 @@ void ResolveLightAggregate(
         ResolveSingleLightCommon(worldPos, LightDirections[i], LightPositionTypes[i], LightExtras[i], singleDir, singleAttenuation, singleVolume);
 
         float3 singleColor = max(LightColors[i].rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColors[i].a, 0.0f) * singleAttenuation;
+        singleColor = ApplyAtmosphereToLightCommon(worldPos, singleDir, singleColor, singleVolume);
         float weight = max(dot(singleColor, float3(0.299f, 0.587f, 0.114f)), 0.0001f) * singleAttenuation;
         dirSum += singleDir * weight;
         colorSum += singleColor;
@@ -331,13 +395,14 @@ void ResolveLightAggregate(
         float legacyVolume = 0.0f;
         ResolveLightCommon(worldPos, lightDir, attenuation, legacyVolume);
         lightColor = max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColor.a, 0.0f) * attenuation;
+        lightColor = ApplyAtmosphereToLightCommon(worldPos, lightDir, lightColor, legacyVolume);
         volumeScatter = legacyVolume * max(LightColor.a, 0.0f);
         rangeBlend = saturate((max(LightDirection.w, 1.0f) - 1.0f) / 7.0f);
         return;
     }
 
     lightDir = SafeNormalizeCommon(dirSum, SafeNormalizeCommon(LightDirection.xyz, float3(0.0f, 1.0f, 0.0f)));
-    lightColor = colorSum;
+    lightColor = colorSum + AtmosphereAmbientCommon(worldPos, lightDir);
     attenuation = saturate(maxAttenuation);
     volumeScatter = volumeSum;
     rangeBlend = saturate(rangeSum / weightSum);

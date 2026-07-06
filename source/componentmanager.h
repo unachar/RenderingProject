@@ -329,6 +329,13 @@ struct LightComponent
 
 };
 
+struct SunComponent
+{
+	XMFLOAT3 Target = { 0.0f, 0.0f, 0.0f };
+	float VisualRadius = 1.5f;
+	bool SyncDirectionalLight = true;
+};
+
 template<typename T>
 struct ComponentStorage
 {
@@ -397,6 +404,7 @@ inline const ComponentType ComponentType::NAME = ComponentTypeRegistry::GetType<
 inline const ComponentType ComponentType::MOVE = ComponentTypeRegistry::GetType<MoveComponent>();
 inline const ComponentType ComponentType::SPRITE = ComponentTypeRegistry::GetType<SpriteComponent>();
 inline const ComponentType ComponentType::LIGHT = ComponentTypeRegistry::GetType<LightComponent>();
+inline const ComponentType ComponentType::SUN = ComponentTypeRegistry::GetType<SunComponent>();
 
 class ComponentManager
 {

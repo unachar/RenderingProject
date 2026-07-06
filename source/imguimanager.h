@@ -32,6 +32,7 @@ private:
 	inline static bool m_ShowMaterialEditorWindow = true;
 	inline static bool m_ShowMeshOutlineWindow = false;
 	inline static bool m_ShowMeshShadingWindow = false;
+	inline static bool m_ShowAtmosphereWindow = true;
 	inline static bool m_ShowAabbForSelectedOnly = false;
 	inline static bool m_ShowLightDebug = true;
 	inline static bool m_HdrEnabled = false;
@@ -107,6 +108,7 @@ private:
 	static void DrawMaterialEditorWindow();
 	static void DrawMeshOutlineWindow();
 	static void DrawMeshShadingWindow();
+	static void DrawAtmosphereWindow();
 	static void DrawMaterialInspector(EntityID entity);
 	static void ApplyMeshShadingOverridesToModel(EntityID entity);
 	static void DrawToonMeshOutlineInspector(EntityID entity, bool embeddedInInspector = true);

@@ -9,6 +9,7 @@
 #include "imguimanager.h"
 #include "light.h"
 #include "camera.h"
+#include "atmosphere.h"
 
 namespace
 {
@@ -34,6 +35,11 @@ namespace
 		XMFLOAT4 LightColors[RendererState::g_kMAX_SHADER_LIGHTS]{};
 		XMFLOAT4 LightPositionTypes[RendererState::g_kMAX_SHADER_LIGHTS]{};
 		XMFLOAT4 LightExtras[RendererState::g_kMAX_SHADER_LIGHTS]{};
+		XMFLOAT4 AtmosphereParams0 = { 1.0f, 0.42f, 0.075f, 0.36f };
+		XMFLOAT4 AtmosphereParams1 = { 0.18f, 0.22f, 0.76f, 0.030f };
+		XMFLOAT4 AtmosphereColor0 = { 0.46f, 0.62f, 1.0f, 0.55f };
+		XMFLOAT4 AtmosphereColor1 = { 1.0f, 0.82f, 0.56f, 0.035f };
+		XMFLOAT4 AtmosphereCamera = { 0.0f, 0.0f, 0.0f, 0.0f };
 	};
 
 	struct MaterialPartShaderConstants
@@ -199,6 +205,46 @@ namespace
 		XMFLOAT3 result{};
 		XMStoreFloat3(&result, XMVector3Normalize(v));
 		return result;
+	}
+
+	XMFLOAT3 GetActiveCameraPosition()
+	{
+		const EntityID cameraEntity = Camera::GetCameraEntity();
+		if (cameraEntity != g_kINVALID_ENTITY &&
+			Registry::IsAlive(cameraEntity) &&
+			ComponentManager::HasComponent<TransformComponent>(cameraEntity))
+		{
+			return ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
+		}
+		return { 0.0f, 0.0f, -5.0f };
+	}
+
+	void WriteAtmosphereConstants(LightConstants& constants)
+	{
+		const AtmosphereParameters& atmosphere = Atmosphere::GetParameters();
+		constants.AtmosphereParams0 = XMFLOAT4(
+			atmosphere.Enabled ? 1.0f : 0.0f,
+			max(0.0f, atmosphere.RayleighStrength),
+			max(0.0f, atmosphere.MieStrength),
+			max(0.0f, atmosphere.Density));
+		constants.AtmosphereParams1 = XMFLOAT4(
+			max(0.0f, atmosphere.HeightFalloff),
+			max(0.0f, atmosphere.Extinction),
+			clamp(atmosphere.MieG, -0.95f, 0.95f),
+			max(0.0001f, atmosphere.DistanceScale));
+		constants.AtmosphereColor0 = XMFLOAT4(
+			atmosphere.RayleighColor.x,
+			atmosphere.RayleighColor.y,
+			atmosphere.RayleighColor.z,
+			max(0.0f, atmosphere.LightShaftStrength));
+		constants.AtmosphereColor1 = XMFLOAT4(
+			atmosphere.MieColor.x,
+			atmosphere.MieColor.y,
+			atmosphere.MieColor.z,
+			max(0.0f, atmosphere.AmbientStrength));
+
+		const XMFLOAT3 cameraPosition = GetActiveCameraPosition();
+		constants.AtmosphereCamera = XMFLOAT4(cameraPosition.x, cameraPosition.y, cameraPosition.z, 0.0f);
 	}
 
 	void RebuildLightCache()
@@ -555,6 +601,7 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 
 	const RuntimeLightState& runtimeLight = GetCachedLightState(false);
 	LightConstants constants{};
+	WriteAtmosphereConstants(constants);
 	if (runtimeLight.HasLight)
 	{
 		const LightComponent& lightComponent = runtimeLight.Component;
