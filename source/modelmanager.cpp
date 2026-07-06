@@ -137,12 +137,13 @@ ModelManager::LoadModelResult ModelManager::LoadStaticModelDetailed(const char* 
 	return result;
 }
 
-void ModelManager::LoadAnimation(int modelId, const char* fileName, const char* name)
+bool ModelManager::LoadAnimation(int modelId, const char* fileName, const char* name)
 {
 	if (modelId >= 0 && modelId < (int)m_AnimModels.size())
 	{
-		m_AnimModels[modelId]->LoadAnimation(fileName, name);
+		return m_AnimModels[modelId]->LoadAnimation(fileName, name);
 	}
+	return false;
 }
 
 AnimationModelResource* ModelManager::GetAnimModel(int modelId)

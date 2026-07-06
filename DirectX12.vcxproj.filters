@@ -252,6 +252,12 @@
     <ClCompile Include="source\animationmodel.cpp">
       <Filter>3_model\3-1_animationmodel</Filter>
     </ClCompile>
+    <ClCompile Include="source\pmxloader.cpp">
+      <Filter>3_model\3-1_animationmodel</Filter>
+    </ClCompile>
+    <ClCompile Include="source\vmdanimationimpoter.cpp">
+      <Filter>3_model\3-1_animationmodel</Filter>
+    </ClCompile>
     <ClCompile Include="source\staticmodel.cpp">
       <Filter>3_model\3-2_staticmodel</Filter>
     </ClCompile>
@@ -433,6 +439,12 @@
       <Filter>2_ecs\2-3_systems</Filter>
     </ClInclude>
     <ClInclude Include="source\animationmodel.h">
+      <Filter>3_model\3-1_animationmodel</Filter>
+    </ClInclude>
+    <ClInclude Include="source\pmxloader.h">
+      <Filter>3_model\3-1_animationmodel</Filter>
+    </ClInclude>
+    <ClInclude Include="source\vmdanimationimpoter.h">
       <Filter>3_model\3-1_animationmodel</Filter>
     </ClInclude>
     <ClInclude Include="source\staticmodel.h">

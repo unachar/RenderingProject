@@ -20,6 +20,7 @@
 #include "scene.h"
 #include "material.h"
 #include "modelimportutils.h"
+#include "pmxloader.h"
 #include "postprocess.h"
 #include "toonoutlinebuilder.h"
 
@@ -771,28 +772,60 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 	m_MaterialPath.clear();
 	Clear();
 
-	unsigned int flags =
-		aiProcess_Triangulate |
-		aiProcess_JoinIdenticalVertices |
-		aiProcess_ImproveCacheLocality |
-		aiProcess_GenSmoothNormals;
-	if (isConvert)
+	const filesystem::path modelPath = ModelImportUtils::FromUtf8(fileName);
+	const bool isPmxModel = ModelImportUtils::LowerExtension(modelPath) == ".pmx";
+	PmxBinary::Model pmxModel{};
+	vector<vector<uint32_t>> pmxMeshVertexIndices{};
+	bool ownsGeneratedScene = false;
+	const aiScene* scene = nullptr;
+	if (isPmxModel)
 	{
-		flags |= aiProcess_ConvertToLeftHanded;
+		if (!PmxBinary::LoadModel(fileName, pmxModel))
+		{
+			return false;
+		}
+		scene = PmxBinary::CreateGeneratedScene(pmxModel, pmxMeshVertexIndices);
+		ownsGeneratedScene = true;
 	}
-	const aiScene* scene = ModelImportUtils::ImportScene(fileName, flags);
+	else
+	{
+		unsigned int flags =
+			aiProcess_Triangulate |
+			aiProcess_JoinIdenticalVertices |
+			aiProcess_ImproveCacheLocality |
+			aiProcess_GenSmoothNormals;
+		if (isConvert)
+		{
+			flags |= aiProcess_ConvertToLeftHanded;
+		}
+		scene = ModelImportUtils::ImportScene(fileName, flags);
+	}
+	auto releaseScene = [&]()
+		{
+			if (!scene)
+			{
+				return;
+			}
+			if (ownsGeneratedScene)
+			{
+				PmxBinary::DestroyGeneratedScene(const_cast<aiScene*>(scene));
+			}
+			else
+			{
+				aiReleaseImport(scene);
+			}
+			scene = nullptr;
+		};
 	if (!scene || !scene->HasMeshes())
 	{
 		Debug::Log("ERROR: Failed to load static model: %s (%s)\n", fileName, aiGetErrorString());
-		if (scene)
-		{
-			aiReleaseImport(scene);
-		}
+		releaseScene();
 		return false;
 	}
-	LogAssimpModelInfo(scene, fileName, "Static");
-
-	const filesystem::path modelPath = ModelImportUtils::FromUtf8(fileName);
+	if (!isPmxModel)
+	{
+		LogAssimpModelInfo(scene, fileName, "Static");
+	}
 	const string dirPath = ModelImportUtils::ToUtf8(modelPath.parent_path());
 
 	XMFLOAT3 minPos = { FLT_MAX, FLT_MAX, FLT_MAX };
@@ -882,13 +915,13 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 		if (FAILED(hr) || !meshData.VertexBuffer)
 		{
 			Debug::Log("ERROR: Failed to create DEFAULT vertex buffer for static model\n");
-			aiReleaseImport(scene);
+			releaseScene();
 			return false;
 		}
 		if (!UploadBufferData(device, meshData.VertexBuffer.Get(), vertices.data(), vertexBufferSize,
 			D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, "static fbx vertex"))
 		{
-			aiReleaseImport(scene);
+			releaseScene();
 			return false;
 		}
 
@@ -909,13 +942,13 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 		if (FAILED(hr) || !meshData.IndexBuffer)
 		{
 			Debug::Log("ERROR: Failed to create DEFAULT index buffer for static model\n");
-			aiReleaseImport(scene);
+			releaseScene();
 			return false;
 		}
 		if (!UploadBufferData(device, meshData.IndexBuffer.Get(), indices.data(), indexBufferSize,
 			D3D12_RESOURCE_STATE_INDEX_BUFFER, "static fbx index"))
 		{
-			aiReleaseImport(scene);
+			releaseScene();
 			return false;
 		}
 
@@ -948,7 +981,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 					"ERROR: Failed to create DEFAULT TEO vertex buffer for static model\n",
 					"static fbx teo vertex", meshData.TeoVertexBuffers[mode]))
 				{
-					aiReleaseImport(scene);
+					releaseScene();
 					return false;
 				}
 				meshData.TeoVertexBufferViews[mode].BufferLocation = meshData.TeoVertexBuffers[mode]->GetGPUVirtualAddress();
@@ -962,7 +995,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 					"ERROR: Failed to create DEFAULT TEO index buffer for static model\n",
 					"static fbx teo index", meshData.TeoIndexBuffers[mode]))
 				{
-					aiReleaseImport(scene);
+					releaseScene();
 					return false;
 				}
 				meshData.TeoIndexBufferViews[mode].BufferLocation = meshData.TeoIndexBuffers[mode]->GetGPUVirtualAddress();
@@ -990,7 +1023,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 	if (m_Meshes.empty())
 	{
 		Debug::Log("ERROR: Static model has no drawable meshes: %s\n", fileName);
-		aiReleaseImport(scene);
+		releaseScene();
 		return false;
 	}
 
@@ -1004,7 +1037,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 	Debug::Log("Static model loaded: %s (meshes=%zu, vertices=%zu, indices=%zu)\n",
 		fileName, m_Meshes.size(), totalVertices, totalIndices);
 
-	aiReleaseImport(scene);
+	releaseScene();
 	return true;
 }
 

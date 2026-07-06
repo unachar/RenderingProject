@@ -463,6 +463,8 @@
     <ClCompile Include="source\field.cpp" />
     <ClCompile Include="source\imguimanager.cpp" />
     <ClCompile Include="source\animationmodel.cpp" />
+    <ClCompile Include="source\pmxloader.cpp" />
+    <ClCompile Include="source\vmdanimationimpoter.cpp" />
     <ClCompile Include="source\camera.cpp" />
     <ClCompile Include="source\componentmanager.cpp" />
     <ClCompile Include="source\ecs.cpp" />
@@ -516,6 +518,8 @@
     <ClInclude Include="source\kacchatta_hone.h" />
     <ClInclude Include="source\animator.h" />
     <ClInclude Include="source\animationmodel.h" />
+    <ClInclude Include="source\pmxloader.h" />
+    <ClInclude Include="source\vmdanimationimpoter.h" />
     <ClInclude Include="source\camera.h" />
     <ClInclude Include="source\componentmanager.h" />
     <ClInclude Include="source\cube.h" />

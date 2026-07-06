@@ -54,5 +54,5 @@ public:
 	static UINT GetCbvIncrementSize() { return m_CbvIncrementSize; }
 	static ID3D12Resource* GetLightCB() { return m_LightConstantBuffer.Get(); }
 	static ID3D12Resource* GetPBRCB() { return m_PBRConstantBuffer.Get(); }
+	static ID3D12Resource* GetShadowCB() { return m_ShadowConstantBuffer.Get(); }
 };
-
