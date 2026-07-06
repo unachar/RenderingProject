@@ -105,6 +105,15 @@ void Sun::Sync(EntityID entity)
 	const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
 	const auto& sun = ComponentManager::GetComponentUnchecked<SunComponent>(entity);
 	auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
+	auto& writableTransform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+	const float visualRadius = max(0.1f, sun.VisualRadius);
+	if (fabsf(writableTransform.Scale.x - visualRadius) > 0.0001f ||
+		fabsf(writableTransform.Scale.y - visualRadius) > 0.0001f ||
+		fabsf(writableTransform.Scale.z - visualRadius) > 0.0001f)
+	{
+		writableTransform.Scale = { visualRadius, visualRadius, visualRadius };
+		writableTransform.IsDirty = true;
+	}
 	if (!sun.SyncDirectionalLight)
 	{
 		return;

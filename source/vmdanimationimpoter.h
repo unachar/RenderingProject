@@ -2,6 +2,7 @@
 
 #include "main.h"
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -47,12 +48,26 @@ struct VmdAnimation
 	std::unordered_map<std::string, std::vector<VmdIkKeyframe>> IkTracks{};
 };
 
+struct VmdTrackSampleCursor
+{
+	const void* Track = nullptr;
+	size_t NextIndex = 0;
+	float LastFrame = -1.0f;
+};
+
 namespace VmdAnimationImporter
 {
 	bool Load(const char* fileName, VmdAnimation& outAnimation);
 	float ToFrameTime(const VmdAnimation* animation, float timeSeconds);
+	void ResetSampleCursor(VmdTrackSampleCursor& cursor);
 	void SampleBoneTrack(const std::vector<VmdKeyframe>* keys, float currentFrame,
 		aiQuaternion& outRotation, aiVector3D& outPosition);
+	void SampleBoneTrackCached(const std::vector<VmdKeyframe>* keys, float currentFrame,
+		VmdTrackSampleCursor& cursor, aiQuaternion& outRotation, aiVector3D& outPosition);
 	float SampleMorphTrack(const std::vector<VmdScalarKeyframe>* keys, float currentFrame);
+	float SampleMorphTrackCached(const std::vector<VmdScalarKeyframe>* keys, float currentFrame,
+		VmdTrackSampleCursor& cursor);
 	bool SampleIkTrack(const std::vector<VmdIkKeyframe>* keys, float currentFrame);
+	bool SampleIkTrackCached(const std::vector<VmdIkKeyframe>* keys, float currentFrame,
+		VmdTrackSampleCursor& cursor);
 }

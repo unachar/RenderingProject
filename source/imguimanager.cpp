@@ -1600,13 +1600,21 @@ void ImGuiManager::DrawAtmosphereWindow()
 	{
 		auto& sun = ComponentManager::GetComponentUnchecked<SunComponent>(firstSun);
 		auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(firstSun);
+		EntitySnapshot before = CaptureEntity(firstSun);
+		bool sunChanged = false;
 		ImGui::Text("Sun Entity: %s", GetEntityDisplayName(firstSun));
 		if (DrawAxisFloat3("位置", transform.Position, 0.1f))
 		{
 			transform.IsDirty = true;
+			sunChanged = true;
 		}
-		DrawAxisFloat3("注視点", sun.Target, 0.1f);
-		ImGui::Checkbox("Directional同期", &sun.SyncDirectionalLight);
+		sunChanged |= DrawAxisFloat3("注視点", sun.Target, 0.1f);
+		sunChanged |= ImGui::Checkbox("Directional同期", &sun.SyncDirectionalLight);
+		if (sunChanged)
+		{
+			BeginUndoCapture(firstSun, before);
+			Sun::Sync(firstSun);
+		}
 		if (ImGui::Button("Sunを選択"))
 		{
 			m_SelectedEntity = firstSun;
@@ -2684,7 +2692,7 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 		}
 		changed |= ImGui::DragFloat("内角", &light.InnerAngle, 0.2f, 0.1f, 89.0f);
 		changed |= ImGui::DragFloat("外角", &light.OuterAngle, 0.2f, light.InnerAngle + 0.1f, 89.5f);
-		changed |= ImGui::DragFloat("ボリューム密度", &light.VolumeDensity, 0.01f, 0.0f, 3.0f);
+		changed |= ImGui::DragFloat("ボリューム密度", &light.VolumeDensity, 0.01f, 0.0f, 30.0f);
 	}
 
 	if (ImGui::Button("メインライトに設定"))
@@ -3276,6 +3284,12 @@ ImGuiManager::EntitySnapshot ImGuiManager::CaptureEntity(EntityID entity)
 		snapshot.Light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
 	}
 
+	if (ComponentManager::HasComponent<SunComponent>(entity))
+	{
+		snapshot.HasSun = true;
+		snapshot.Sun = ComponentManager::GetComponentUnchecked<SunComponent>(entity);
+	}
+
 	if (ComponentManager::HasComponent<MaterialComponent>(entity))
 	{	snapshot.HasMaterial = true; 
 		snapshot.Material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
@@ -3352,6 +3366,7 @@ void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
 	if (snapshot.HasStaticModel) RestoreSnapshotComponent(snapshot.Entity, snapshot.StaticModel);
 	if (snapshot.HasAnimationModel) RestoreSnapshotComponent(snapshot.Entity, snapshot.AnimationModel);
 	if (snapshot.HasLight) { RestoreSnapshotComponent(snapshot.Entity, snapshot.Light); ApplyLightEntityToRuntime(snapshot.Entity); }
+	if (snapshot.HasSun) { RestoreSnapshotComponent(snapshot.Entity, snapshot.Sun); Sun::Sync(snapshot.Entity); }
 	if (snapshot.HasMaterial) RestoreSnapshotComponent(snapshot.Entity, snapshot.Material);
 	if (snapshot.HasAabb) RestoreSnapshotComponent(snapshot.Entity, snapshot.Aabb);
 	if (snapshot.HasSprite) RestoreSnapshotComponent(snapshot.Entity, snapshot.Sprite);

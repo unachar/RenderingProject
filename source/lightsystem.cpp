@@ -9,7 +9,7 @@ namespace
 {
 	void EnsureDefaultLight()
 	{
-		if (!World::GetView<LightComponent>().empty())
+		if (!World::GetView<SunComponent>().empty())
 		{
 			return;
 		}

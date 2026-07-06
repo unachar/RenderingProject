@@ -67,6 +67,8 @@ private:
 		AnimationModelComponent AnimationModel{};
 		bool HasLight = false;
 		LightComponent Light{};
+		bool HasSun = false;
+		SunComponent Sun{};
 		bool HasMaterial = false;
 		MaterialComponent Material{};
 		bool HasAabb = false;

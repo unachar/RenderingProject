@@ -78,7 +78,13 @@ float4 main(PSInputPostProcess input) : SV_Target
     bool btdf = IsMaterialClass(shaderClass, 13.0f);
     bool bsdf = IsMaterialClass(shaderClass, 14.0f);
     
-    if (background || transparent)
+    if (background)
+    {
+        baseColor.rgb += AtmosphereBackgroundCommon(input.TexCoord);
+        return baseColor;
+    }
+
+    if (transparent)
     {
         return baseColor;
     }
@@ -97,6 +103,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     float rangeBlend;
     ResolveLightAggregate(position.xyz, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend);
     float lightIntensity = LightColor.a;
+    float3 atmosphereViewScatter = RayMarchAtmosphereViewCommon(position.xyz);
 
     
     float Metallic = material.r;
@@ -372,6 +379,7 @@ float4 main(PSInputPostProcess input) : SV_Target
         baseColor.rgb = reflected + transmitted + envReflection + envTransmission * 0.5f;
     }
 
+    baseColor.rgb += atmosphereViewScatter;
     baseColor.a = 1.0f;
     return baseColor;
 }

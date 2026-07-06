@@ -140,7 +140,12 @@ namespace
 			{
 				break;
 			}
-			t = clamp(t - ft / 2.0f, 0.0f, 1.0f);
+			const float df = 3.0f * k0 * t * t + 2.0f * k1 * t + k2;
+			if (fabsf(df) <= 0.00001f)
+			{
+				break;
+			}
+			t = clamp(t - ft / df, 0.0f, 1.0f);
 		}
 
 		const float r = 1.0f - t;
@@ -177,6 +182,74 @@ namespace
 			}
 		}
 		keys.swap(uniqueKeys);
+	}
+
+	template <typename Key>
+	size_t FindLowerBoundIndex(const vector<Key>& keys, float currentFrame, VmdTrackSampleCursor* cursor)
+	{
+		if (!cursor ||
+			cursor->Track != keys.data() ||
+			currentFrame < cursor->LastFrame ||
+			cursor->NextIndex > keys.size())
+		{
+			const auto it = lower_bound(keys.begin(), keys.end(), currentFrame,
+				[](const Key& key, float frame)
+				{
+					return static_cast<float>(key.Frame) < frame;
+				});
+			const size_t index = static_cast<size_t>(it - keys.begin());
+			if (cursor)
+			{
+				cursor->Track = keys.data();
+				cursor->NextIndex = index;
+				cursor->LastFrame = currentFrame;
+			}
+			return index;
+		}
+
+		size_t index = cursor->NextIndex;
+		while (index < keys.size() && static_cast<float>(keys[index].Frame) < currentFrame)
+		{
+			++index;
+		}
+
+		cursor->NextIndex = index;
+		cursor->LastFrame = currentFrame;
+		return index;
+	}
+
+	template <typename Key>
+	size_t FindUpperBoundIndex(const vector<Key>& keys, float currentFrame, VmdTrackSampleCursor* cursor)
+	{
+		if (!cursor ||
+			cursor->Track != keys.data() ||
+			currentFrame < cursor->LastFrame ||
+			cursor->NextIndex > keys.size())
+		{
+			const auto it = upper_bound(keys.begin(), keys.end(), currentFrame,
+				[](float frame, const Key& key)
+				{
+					return frame < static_cast<float>(key.Frame);
+				});
+			const size_t index = static_cast<size_t>(it - keys.begin());
+			if (cursor)
+			{
+				cursor->Track = keys.data();
+				cursor->NextIndex = index;
+				cursor->LastFrame = currentFrame;
+			}
+			return index;
+		}
+
+		size_t index = cursor->NextIndex;
+		while (index < keys.size() && static_cast<float>(keys[index].Frame) <= currentFrame)
+		{
+			++index;
+		}
+
+		cursor->NextIndex = index;
+		cursor->LastFrame = currentFrame;
+		return index;
 	}
 }
 
@@ -400,8 +473,22 @@ float VmdAnimationImporter::ToFrameTime(const VmdAnimation* animation, float tim
 	return currentFrame;
 }
 
+void VmdAnimationImporter::ResetSampleCursor(VmdTrackSampleCursor& cursor)
+{
+	cursor.Track = nullptr;
+	cursor.NextIndex = 0;
+	cursor.LastFrame = -1.0f;
+}
+
 void VmdAnimationImporter::SampleBoneTrack(const vector<VmdKeyframe>* keys, float currentFrame,
 	aiQuaternion& outRotation, aiVector3D& outPosition)
+{
+	VmdTrackSampleCursor cursor{};
+	SampleBoneTrackCached(keys, currentFrame, cursor, outRotation, outPosition);
+}
+
+void VmdAnimationImporter::SampleBoneTrackCached(const vector<VmdKeyframe>* keys, float currentFrame,
+	VmdTrackSampleCursor& cursor, aiQuaternion& outRotation, aiVector3D& outPosition)
 {
 	outRotation = aiQuaternion(1.0f, 0.0f, 0.0f, 0.0f);
 	outPosition = aiVector3D(0.0f, 0.0f, 0.0f);
@@ -411,11 +498,8 @@ void VmdAnimationImporter::SampleBoneTrack(const vector<VmdKeyframe>* keys, floa
 		return;
 	}
 
-	auto nextIt = lower_bound(keys->begin(), keys->end(), currentFrame,
-		[](const VmdKeyframe& key, float frame)
-		{
-			return static_cast<float>(key.Frame) < frame;
-		});
+	const size_t nextIndex = FindLowerBoundIndex(*keys, currentFrame, &cursor);
+	auto nextIt = keys->begin() + static_cast<ptrdiff_t>(nextIndex);
 
 	if (nextIt == keys->begin())
 	{
@@ -443,10 +527,10 @@ void VmdAnimationImporter::SampleBoneTrack(const vector<VmdKeyframe>* keys, floa
 	const float linearFactor = clamp(
 		(currentFrame - static_cast<float>(prev.Frame)) / static_cast<float>(next.Frame - prev.Frame),
 		0.0f, 1.0f);
-	const float xFactor = GetYFromXOnBezier(linearFactor, next.XP1, next.XP2, 12);
-	const float yFactor = GetYFromXOnBezier(linearFactor, next.YP1, next.YP2, 12);
-	const float zFactor = GetYFromXOnBezier(linearFactor, next.ZP1, next.ZP2, 12);
-	const float rotFactor = GetYFromXOnBezier(linearFactor, next.RotP1, next.RotP2, 12);
+	const float xFactor = GetYFromXOnBezier(linearFactor, next.XP1, next.XP2, 5);
+	const float yFactor = GetYFromXOnBezier(linearFactor, next.YP1, next.YP2, 5);
+	const float zFactor = GetYFromXOnBezier(linearFactor, next.ZP1, next.ZP2, 5);
+	const float rotFactor = GetYFromXOnBezier(linearFactor, next.RotP1, next.RotP2, 5);
 	outPosition.x = prev.Position.x * (1.0f - xFactor) + next.Position.x * xFactor;
 	outPosition.y = prev.Position.y * (1.0f - yFactor) + next.Position.y * yFactor;
 	outPosition.z = prev.Position.z * (1.0f - zFactor) + next.Position.z * zFactor;
@@ -456,16 +540,20 @@ void VmdAnimationImporter::SampleBoneTrack(const vector<VmdKeyframe>* keys, floa
 
 float VmdAnimationImporter::SampleMorphTrack(const vector<VmdScalarKeyframe>* keys, float currentFrame)
 {
+	VmdTrackSampleCursor cursor{};
+	return SampleMorphTrackCached(keys, currentFrame, cursor);
+}
+
+float VmdAnimationImporter::SampleMorphTrackCached(const vector<VmdScalarKeyframe>* keys, float currentFrame,
+	VmdTrackSampleCursor& cursor)
+{
 	if (!keys || keys->empty())
 	{
 		return 0.0f;
 	}
 
-	auto nextIt = lower_bound(keys->begin(), keys->end(), currentFrame,
-		[](const VmdScalarKeyframe& key, float frame)
-		{
-			return static_cast<float>(key.Frame) < frame;
-		});
+	const size_t nextIndex = FindLowerBoundIndex(*keys, currentFrame, &cursor);
+	auto nextIt = keys->begin() + static_cast<ptrdiff_t>(nextIndex);
 	if (nextIt == keys->begin())
 	{
 		return nextIt->Value;
@@ -490,16 +578,20 @@ float VmdAnimationImporter::SampleMorphTrack(const vector<VmdScalarKeyframe>* ke
 
 bool VmdAnimationImporter::SampleIkTrack(const vector<VmdIkKeyframe>* keys, float currentFrame)
 {
+	VmdTrackSampleCursor cursor{};
+	return SampleIkTrackCached(keys, currentFrame, cursor);
+}
+
+bool VmdAnimationImporter::SampleIkTrackCached(const vector<VmdIkKeyframe>* keys, float currentFrame,
+	VmdTrackSampleCursor& cursor)
+{
 	if (!keys || keys->empty())
 	{
 		return true;
 	}
 
-	auto nextIt = upper_bound(keys->begin(), keys->end(), currentFrame,
-		[](float frame, const VmdIkKeyframe& key)
-		{
-			return frame < static_cast<float>(key.Frame);
-		});
+	const size_t nextIndex = FindUpperBoundIndex(*keys, currentFrame, &cursor);
+	auto nextIt = keys->begin() + static_cast<ptrdiff_t>(nextIndex);
 	if (nextIt == keys->begin())
 	{
 		return keys->front().Enable;

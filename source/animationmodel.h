@@ -182,6 +182,8 @@ private:
 		Bone* BonePtr = nullptr;
 		const vector<VmdKeyframe>* PrimaryTrack = nullptr;
 		const vector<VmdKeyframe>* SecondaryTrack = nullptr;
+		VmdTrackSampleCursor PrimaryCursor{};
+		VmdTrackSampleCursor SecondaryCursor{};
 		aiVector3D BaseScale{ 1.0f, 1.0f, 1.0f };
 		aiQuaternion BaseRotation{ 1.0f, 0.0f, 0.0f, 0.0f };
 		aiVector3D BasePosition{ 0.0f, 0.0f, 0.0f };
@@ -191,6 +193,29 @@ private:
 	{
 		uint32_t MorphIndex = 0;
 		const vector<VmdScalarKeyframe>* Track = nullptr;
+		VmdTrackSampleCursor Cursor{};
+	};
+
+	struct PmxRuntimeNode
+	{
+		aiNode* Node = nullptr;
+		string Name{};
+		int ParentIndex = -1;
+		Bone* BonePtr = nullptr;
+	};
+
+	struct PmxOrderedTransformStep
+	{
+		bool IsIk = false;
+		size_t Index = 0;
+		int32_t DeformDepth = 0;
+		uint32_t BoneOrder = 0;
+	};
+
+	struct PmxAppendResult
+	{
+		aiQuaternion Rotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+		aiVector3D Translation{ 0.0f, 0.0f, 0.0f };
 	};
 
 	XMFLOAT3 m_AabbCenter{};
@@ -229,9 +254,15 @@ private:
 	vector<VmdBoneBinding> m_VmdBoneBindings{};
 	vector<VmdMorphBinding> m_VmdMorphBindings{};
 	unordered_map<string, const vector<VmdIkKeyframe>*> m_VmdIkTrackCache{};
+	unordered_map<string, VmdTrackSampleCursor> m_VmdIkTrackCursors{};
 	vector<pair<uint32_t, float>> m_VmdActiveMorphsScratch{};
 	vector<aiVector3D> m_VmdMorphPositionOffsetsScratch{};
 	vector<XMFLOAT2> m_VmdMorphUvOffsetsScratch{};
+	vector<PmxRuntimeNode> m_PmxRuntimeNodes{};
+	unordered_map<string, size_t> m_PmxRuntimeNodeIndexMap{};
+	vector<XMFLOAT4X4> m_PmxGlobalMatricesScratch{};
+	vector<PmxOrderedTransformStep> m_PmxOrderedTransformSteps{};
+	unordered_map<string, PmxAppendResult> m_PmxAppendResultsScratch{};
 
 
 	ComPtr<ID3D12Resource> m_BoneBuffer{};
@@ -256,13 +287,14 @@ private:
 		const VmdAnimation* animation2, float frame2, float blendRate);
 	void InvalidateVmdRuntimeCache();
 	void RebuildVmdRuntimeCache(const VmdAnimation* primaryAnimation, const VmdAnimation* secondaryAnimation);
+	void InvalidatePmxRuntimeCache();
+	void RebuildPmxRuntimeCache();
 	bool LoadPmxIkData(const char* fileName);
 	void BuildPmxVertexMeshMap();
 	float SampleVmdMorph(const VmdAnimation* animation, const string& morphName, float timeSeconds) const;
-	void ApplyVmdMorphs(const VmdAnimation* animation, float timeSeconds);
-	void ApplyPmxAppendTransforms();
-	void ApplyPmxOrderedTransforms(const VmdAnimation* animation, float timeSeconds);
-	bool IsVmdIkEnabled(const VmdAnimation* animation, const string& ikBoneName, float timeSeconds) const;
+	void ApplyVmdMorphs(const VmdAnimation* animation, float currentFrame);
+	void ApplyPmxOrderedTransforms(const VmdAnimation* animation, float currentFrame);
+	bool IsVmdIkEnabled(const VmdAnimation* animation, const string& ikBoneName, float currentFrame);
 	void ApplyPmxIk(const VmdAnimation* animation, float timeSeconds);
 
 	void CreateBone(aiNode* node);

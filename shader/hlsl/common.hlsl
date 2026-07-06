@@ -291,6 +291,112 @@ void ResolveSingleLightCommon(
     float4 lightExtraData,
     out float3 lightDir,
     out float attenuation,
+    out float volumeScatter);
+
+float3 AtmosphereSingleScatterCommon(float3 samplePos, float3 viewToCamera, float3 lightDir, float3 lightColor)
+{
+    float3 toLight = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
+    float cosTheta = clamp(dot(toLight, viewToCamera), -1.0f, 1.0f);
+    float rayleighPhase = RayleighPhaseCommon(cosTheta);
+    float miePhase = HenyeyGreensteinCommon(cosTheta, AtmosphereParams1.z);
+    float density = AtmosphereDensityCommon(samplePos);
+    float3 rayleigh = AtmosphereColor0.rgb * max(AtmosphereParams0.y, 0.0f) * rayleighPhase;
+    float3 mie = AtmosphereColor1.rgb * max(AtmosphereParams0.z, 0.0f) * miePhase;
+    return (rayleigh + mie) * density * lightColor;
+}
+
+float3 RayMarchAtmosphereViewCommon(float3 worldPos)
+{
+    float atmosphereEnabled = step(0.5f, AtmosphereParams0.x);
+    float3 cameraPos = AtmosphereCamera.xyz;
+    float3 viewDelta = worldPos - cameraPos;
+    float viewDistance = length(viewDelta);
+    float validDistance = step(0.0001f, viewDistance);
+    viewDistance = max(viewDistance, 0.0001f);
+
+    const int stepCount = 6;
+    float3 viewDir = viewDelta / viewDistance;
+    float3 viewToCamera = -viewDir;
+    float stepLength = viewDistance / (float)stepCount;
+    float scaledStep = stepLength * max(AtmosphereParams1.w, 0.0001f);
+    float transmittance = 1.0f;
+    float3 result = float3(0.0f, 0.0f, 0.0f);
+    int count = min((int)round(LightCount.x), MAX_SHADER_LIGHTS);
+
+    [loop]
+    for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
+    {
+        float t = ((float)stepIndex + 0.5f) / (float)stepCount;
+        float3 samplePos = cameraPos + viewDir * viewDistance * t;
+        float3 stepScatter = float3(0.0f, 0.0f, 0.0f);
+
+        [loop]
+        for (int lightIndex = 0; lightIndex < MAX_SHADER_LIGHTS; ++lightIndex)
+        {
+            if (lightIndex >= count)
+            {
+                break;
+            }
+
+            float3 singleDir;
+            float singleAttenuation;
+            float singleVolume;
+            ResolveSingleLightCommon(samplePos, LightDirections[lightIndex], LightPositionTypes[lightIndex], LightExtras[lightIndex], singleDir, singleAttenuation, singleVolume);
+            float3 singleColor = max(LightColors[lightIndex].rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColors[lightIndex].a, 0.0f) * singleAttenuation;
+            stepScatter += AtmosphereSingleScatterCommon(samplePos, viewToCamera, singleDir, singleColor);
+            stepScatter += singleColor * singleVolume * AtmosphereDensityCommon(samplePos) * 0.18f;
+        }
+
+        if (count <= 0)
+        {
+            float3 singleDir;
+            float singleAttenuation;
+            float singleVolume;
+            ResolveSingleLightCommon(samplePos, LightDirection, LightPositionType, LightExtra, singleDir, singleAttenuation, singleVolume);
+            float3 singleColor = max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColor.a, 0.0f) * singleAttenuation;
+            stepScatter += AtmosphereSingleScatterCommon(samplePos, viewToCamera, singleDir, singleColor);
+            stepScatter += singleColor * singleVolume * AtmosphereDensityCommon(samplePos) * 0.18f;
+        }
+
+        float density = AtmosphereDensityCommon(samplePos);
+        result += stepScatter * transmittance * scaledStep;
+        transmittance *= exp(-max(AtmosphereParams1.y, 0.0f) * density * scaledStep);
+    }
+
+    return result * max(AtmosphereColor0.a, 0.0f) * atmosphereEnabled * validDistance;
+}
+
+float3 AtmosphereBackgroundCommon(float2 uv)
+{
+    float atmosphereEnabled = step(0.5f, AtmosphereParams0.x);
+    float3 viewDir = SafeNormalizeCommon(float3((uv.x - 0.5f) * 1.45f, (0.5f - uv.y) * 0.9f + 0.25f, 1.0f), float3(0.0f, 0.2f, 1.0f));
+    float3 lightDir = SafeNormalizeCommon(LightDirection.xyz, float3(0.0f, 1.0f, 0.0f));
+    float3 lightColor = max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColor.a, 0.0f);
+
+    int count = min((int)round(LightCount.x), MAX_SHADER_LIGHTS);
+    if (count > 0)
+    {
+        lightDir = SafeNormalizeCommon(LightDirections[0].xyz, lightDir);
+        lightColor = max(LightColors[0].rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColors[0].a, 0.0f);
+    }
+
+    float cosTheta = clamp(dot(lightDir, -viewDir), -1.0f, 1.0f);
+    float rayleighPhase = RayleighPhaseCommon(cosTheta);
+    float miePhase = HenyeyGreensteinCommon(cosTheta, AtmosphereParams1.z);
+    float skyDensity = max(AtmosphereParams0.w, 0.0f) * lerp(1.15f, 0.35f, saturate(uv.y));
+    float horizon = pow(saturate(1.0f - abs(uv.y - 0.55f) * 1.35f), 2.0f);
+    float3 rayleigh = AtmosphereColor0.rgb * max(AtmosphereParams0.y, 0.0f) * rayleighPhase;
+    float3 mie = AtmosphereColor1.rgb * max(AtmosphereParams0.z, 0.0f) * miePhase * (0.35f + horizon * 1.25f);
+    return (rayleigh + mie) * lightColor * skyDensity * max(AtmosphereColor0.a, 0.0f) * atmosphereEnabled;
+}
+
+void ResolveSingleLightCommon(
+    float3 worldPos,
+    float4 lightDirectionData,
+    float4 lightPositionTypeData,
+    float4 lightExtraData,
+    out float3 lightDir,
+    out float attenuation,
     out float volumeScatter)
 {
     int lightType = (int)round(lightPositionTypeData.w);
