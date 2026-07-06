@@ -38,9 +38,12 @@ private:
 	inline static bool m_HdrEnabled = false;
 	inline static bool m_ToneMapEnabled = true;
 	inline static float m_Exposure = 1.0f;
+	inline static int m_GizmoOperation = 0;
 	inline static ImVec2 m_SceneViewPos = { 0.0f, 0.0f };
 	inline static ImVec2 m_SceneViewSize = { 1.0f, 1.0f };
 	inline static bool m_IsSceneViewHovered = false;
+	inline static ImVec2 m_LastPickMouse = { -10000.0f, -10000.0f };
+	inline static vector<EntityID> m_LastPickCandidates;
 	inline static filesystem::path m_AssetRoot = "asset";
 	inline static filesystem::path m_CurrentAssetDirectory = "asset";
 	inline static filesystem::path m_SelectedAssetPath;
@@ -98,6 +101,7 @@ private:
 	static void StyleModernSlim();
 	static void DrawDockSpace();
 	static void DrawSceneViewWindow();
+	static void DrawTransformGizmo();
 	static void DrawSceneEditor();
 	static void DrawEditorMainMenu();
 	static void DrawHierarchyWindow();

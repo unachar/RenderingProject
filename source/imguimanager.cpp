@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cctype>
 #include <DirectXCollision.h>
+#include <ImGuizmo.h>
 
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -289,6 +290,34 @@ namespace
 		ImGui::TextDisabled("%s", overlay);
 	}
 
+	ImGuizmo::OPERATION GetGizmoOperationFromIndex(int operation)
+	{
+		switch (operation)
+		{
+		case 1:
+			return ImGuizmo::ROTATE;
+		case 2:
+			return ImGuizmo::SCALE;
+		case 0:
+		default:
+			return ImGuizmo::TRANSLATE;
+		}
+	}
+
+	const char* GetGizmoOperationLabel(int operation)
+	{
+		switch (operation)
+		{
+		case 1:
+			return "回転";
+		case 2:
+			return "スケール";
+		case 0:
+		default:
+			return "移動";
+		}
+	}
+
 	bool GetLocalAabb(EntityID entity, XMFLOAT3& center, XMFLOAT3& extents)
 	{
 		if (ComponentManager::HasComponent<AABBComponent>(entity))
@@ -401,6 +430,7 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
 {
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
+	ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
 	ImGuiIO& io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
@@ -449,6 +479,7 @@ void ImGuiManager::Update()
 	ImGui_ImplDX12_NewFrame();
 	ImGui_ImplWin32_NewFrame();
 	ImGui::NewFrame();
+	ImGuizmo::BeginFrame();
 	DebugSystem::SetShowLightDebug(m_ShowLightDebug);
 
 	ImGuiIO& io = ImGui::GetIO();
@@ -463,6 +494,26 @@ void ImGuiManager::Update()
 	}
 
 	ProcessDroppedFiles();
+	const bool canSwitchGizmo =
+		!io.WantTextInput &&
+		!ImGui::IsAnyItemActive() &&
+		!ImGui::IsMouseDown(ImGuiMouseButton_Right) &&
+		!ImGuizmo::IsUsing();
+	if (canSwitchGizmo)
+	{
+		if (ImGui::IsKeyPressed(ImGuiKey_Q, false))
+		{
+			m_GizmoOperation = 0;
+		}
+		if (ImGui::IsKeyPressed(ImGuiKey_W, false))
+		{
+			m_GizmoOperation = 1;
+		}
+		if (ImGui::IsKeyPressed(ImGuiKey_E, false))
+		{
+			m_GizmoOperation = 2;
+		}
+	}
 	if (m_SelectedEntity != g_kINVALID_ENTITY &&
 		Registry::IsAlive(m_SelectedEntity) &&
 		ComponentManager::HasComponent<NameComponent>(m_SelectedEntity) &&
@@ -990,7 +1041,7 @@ ImGui::SeparatorText("セクション");
 		}
 	}
 
-	ImGui::TextUnformatted("W/E/R: 移動 / 回転 / 拡縮");
+	ImGui::Text("Q/W/E: 移動 / 回転 / スケール（現在: %s）", GetGizmoOperationLabel(m_GizmoOperation));
 }
 
 void ImGuiManager::DrawDockSpace()
@@ -1059,6 +1110,7 @@ void ImGuiManager::DrawSceneViewWindow()
 	D3D12_GPU_DESCRIPTOR_HANDLE handle = RendererDraw::GetEditorSceneSrvHandle();
 	ImGui::Image((ImTextureData*)handle.ptr, imageSize);
 	m_IsSceneViewHovered = ImGui::IsItemHovered();
+	DrawTransformGizmo();
 	if (m_IsSceneViewHovered && fabsf(ImGui::GetIO().MouseWheel) > 0.001f)
 	{
 		EntityID cameraEntity = Camera::GetCameraEntity();
@@ -1107,8 +1159,82 @@ void ImGuiManager::DrawSceneViewWindow()
 		ImGui::EndDragDropTarget();
 	}
 
-	ImGui::TextUnformatted("右ドラッグ: カメラ / 左クリック: 選択 / ドラッグ&ドロップ: 配置または適用");
+	ImGui::Text("右ドラッグ: カメラ / 左クリック: 選択 / Q/W/E: 移動・回転・スケール（現在: %s）", GetGizmoOperationLabel(m_GizmoOperation));
 	ImGui::End();
+}
+
+void ImGuiManager::DrawTransformGizmo()
+{
+	if (m_SelectedEntity == g_kINVALID_ENTITY ||
+		!Registry::IsAlive(m_SelectedEntity) ||
+		!ComponentManager::HasComponent<TransformComponent>(m_SelectedEntity))
+	{
+		return;
+	}
+
+	EntityID cameraEntity = Camera::GetCameraEntity();
+	if (cameraEntity == g_kINVALID_ENTITY || !Registry::IsAlive(cameraEntity))
+	{
+		return;
+	}
+
+	XMMATRIX view;
+	XMMATRIX proj;
+	Camera::GetCameraMatrices(cameraEntity, view, proj);
+
+	XMFLOAT4X4 viewMatrix{};
+	XMFLOAT4X4 projectionMatrix{};
+	XMStoreFloat4x4(&viewMatrix, view);
+	XMStoreFloat4x4(&projectionMatrix, proj);
+
+	auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(m_SelectedEntity);
+	EntitySnapshot before = CaptureEntity(m_SelectedEntity);
+
+	XMFLOAT4X4 modelMatrix{};
+	XMStoreFloat4x4(&modelMatrix, BuildWorldMatrix(transform));
+
+	const ImGuizmo::OPERATION operation = GetGizmoOperationFromIndex(m_GizmoOperation);
+	const ImGuizmo::MODE mode = operation == ImGuizmo::ROTATE ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
+
+	ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
+	ImGuizmo::SetOrthographic(false);
+	ImGuizmo::SetRect(m_SceneViewPos.x, m_SceneViewPos.y, m_SceneViewSize.x, m_SceneViewSize.y);
+
+	if (!ImGuizmo::Manipulate(
+		&viewMatrix._11,
+		&projectionMatrix._11,
+		operation,
+		mode,
+		&modelMatrix._11))
+	{
+		return;
+	}
+
+	BeginUndoCapture(m_SelectedEntity, before);
+
+	float translation[3]{};
+	float rotationDeg[3]{};
+	float scale[3]{};
+	ImGuizmo::DecomposeMatrixToComponents(&modelMatrix._11, translation, rotationDeg, scale);
+
+	transform.Position = { translation[0], translation[1], translation[2] };
+	transform.Rotation =
+	{
+		rotationDeg[0] * kDegToRad,
+		rotationDeg[1] * kDegToRad,
+		rotationDeg[2] * kDegToRad
+	};
+	transform.Scale = ClampScale(scale, false);
+	XMStoreFloat4x4(&transform.WorldMatrix, BuildWorldMatrix(transform));
+	transform.IsDirty = true;
+	if (ComponentManager::HasComponent<SunComponent>(m_SelectedEntity))
+	{
+		Sun::Sync(m_SelectedEntity);
+	}
+	else
+	{
+		ApplyLightEntityToRuntime(m_SelectedEntity);
+	}
 }
 
 void ImGuiManager::DrawEditorMainMenu()
@@ -3054,7 +3180,9 @@ void ImGuiManager::PickEntityFromMouse()
 {
 	ImGuiIO& io = ImGui::GetIO();
 	if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
-		!m_IsSceneViewHovered)
+		!m_IsSceneViewHovered ||
+		ImGuizmo::IsOver() ||
+		ImGuizmo::IsUsing())
 	{
 		return;
 	}
@@ -3094,8 +3222,12 @@ void ImGuiManager::PickEntityFromMouse()
 		proj, view, XMMatrixIdentity());
 	XMVECTOR rayDir = XMVector3Normalize(XMVectorSubtract(farPoint, nearPoint));
 
-	EntityID bestEntity = g_kINVALID_ENTITY;
-	float bestDistance = FLT_MAX;
+	struct PickHit
+	{
+		EntityID Entity = g_kINVALID_ENTITY;
+		float Distance = 0.0f;
+	};
+	vector<PickHit> hits;
 
 	for (EntityID entity : World::GetView<TransformComponent>())
 	{
@@ -3117,14 +3249,57 @@ void ImGuiManager::PickEntityFromMouse()
 		localBox.Transform(worldBox, BuildWorldMatrix(transform));
 
 		float distance = 0.0f;
-		if (worldBox.Intersects(nearPoint, rayDir, distance) && distance < bestDistance)
+		if (worldBox.Intersects(nearPoint, rayDir, distance))
 		{
-			bestDistance = distance;
-			bestEntity = entity;
+			hits.push_back({ entity, distance });
 		}
 	}
 
-	m_SelectedEntity = bestEntity;
+	sort(hits.begin(), hits.end(), [](const PickHit& lhs, const PickHit& rhs)
+		{
+			if (fabsf(lhs.Distance - rhs.Distance) > 0.0001f)
+			{
+				return lhs.Distance < rhs.Distance;
+			}
+			return lhs.Entity < rhs.Entity;
+		});
+
+	vector<EntityID> candidates;
+	candidates.reserve(hits.size());
+	for (const PickHit& hit : hits)
+	{
+		candidates.push_back(hit.Entity);
+	}
+
+	if (hits.empty())
+	{
+		m_SelectedEntity = g_kINVALID_ENTITY;
+		m_LastPickCandidates.clear();
+		m_LastPickMouse = mouse;
+		return;
+	}
+
+	const float pickDx = mouse.x - m_LastPickMouse.x;
+	const float pickDy = mouse.y - m_LastPickMouse.y;
+	const bool samePickSpot = (pickDx * pickDx + pickDy * pickDy) <= 36.0f;
+	const bool sameCandidateStack = samePickSpot && candidates == m_LastPickCandidates;
+
+	size_t pickIndex = 0;
+	if (sameCandidateStack)
+	{
+		for (size_t i = 0; i < candidates.size(); ++i)
+		{
+			if (candidates[i] == m_SelectedEntity)
+			{
+				pickIndex = (i + 1) % candidates.size();
+				break;
+			}
+		}
+	}
+
+	m_SelectedEntity = hits[pickIndex].Entity;
+	m_LastPickCandidates = move(candidates);
+	m_LastPickMouse = mouse;
 }
 
 bool ImGuiManager::IsEditableEntity(EntityID entity)
@@ -3370,7 +3545,7 @@ void ImGuiManager::BeginUndoCapture(EntityID entity, const EntitySnapshot& befor
 
 void ImGuiManager::FinalizeUndoCaptureIfIdle()
 {
-	if (!m_HasPendingUndo || ImGui::IsAnyItemActive()) return;
+	if (!m_HasPendingUndo || ImGui::IsAnyItemActive() || ImGuizmo::IsUsing()) return;
 	PushUndoSnapshot(m_PendingUndo);
 	m_HasPendingUndo = false;
 	m_PendingUndo = {};

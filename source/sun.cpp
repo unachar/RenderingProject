@@ -26,13 +26,6 @@ namespace
 		return result;
 	}
 
-	bool NearlyEqual(const XMFLOAT3& lhs, const XMFLOAT3& rhs)
-	{
-		constexpr float epsilon = 0.0001f;
-		return fabsf(lhs.x - rhs.x) <= epsilon &&
-			fabsf(lhs.y - rhs.y) <= epsilon &&
-			fabsf(lhs.z - rhs.z) <= epsilon;
-	}
 }
 
 EntityID Sun::CreateDefault()
@@ -114,20 +107,6 @@ void Sun::Sync(EntityID entity)
 	const auto& sun = ComponentManager::GetComponentUnchecked<SunComponent>(entity);
 	auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
 	auto& writableTransform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-	const bool transformPositionChanged = writableTransform.IsDirty;
-
-	if (sun.SyncDirectionalLight)
-	{
-		if (transformPositionChanged)
-		{
-			light.Position = writableTransform.Position;
-		}
-		else if (!NearlyEqual(light.Position, writableTransform.Position))
-		{
-			writableTransform.Position = light.Position;
-			writableTransform.IsDirty = true;
-		}
-	}
 
 	const float visualRadius = max(0.1f, sun.VisualRadius);
 	if (fabsf(writableTransform.Scale.x - visualRadius) > 0.0001f ||
@@ -139,7 +118,6 @@ void Sun::Sync(EntityID entity)
 	}
 
 	XMStoreFloat4x4(&writableTransform.WorldMatrix, BuildWorldMatrix(writableTransform));
-	writableTransform.IsDirty = false;
 
 	if (!sun.SyncDirectionalLight)
 	{
