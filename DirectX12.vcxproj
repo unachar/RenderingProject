@@ -588,14 +588,10 @@
     <ResourceCompile Include="source\app.rc" />
   </ItemGroup>
   <ItemGroup>
-    <None Include=".github\copilot-instructions.md" />
     <None Include="packages.config" />
     <None Include="shader\slang\pbrToonCommon.slang">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </None>
-  </ItemGroup>
-  <ItemGroup>
-    <Text Include="memo.txt" />
   </ItemGroup>
   <Import Project="External\slang\Slang.targets" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
