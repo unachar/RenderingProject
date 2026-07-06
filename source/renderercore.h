@@ -18,6 +18,7 @@ public:
 	static UINT GetHeight() { return m_Height; }
 	static UINT GetSceneWidth() { return m_SceneWidth; }
 	static UINT GetSceneHeight() { return m_SceneHeight; }
+	static UINT GetFrameIndex() { return m_FrameIndex; }
 	static float GetSceneAspectRatio()
 	{
 		float h = static_cast<float>(GetSceneHeight());

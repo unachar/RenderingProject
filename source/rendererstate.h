@@ -225,9 +225,9 @@ public:
 
 
 	static constexpr UINT g_kCB_ALIGNED_SIZE = (sizeof(ConstantBuffer3D) + 255) & ~255;
-	static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * 12 + 255) & ~255;
+	static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * 28 + 255) & ~255;
 	static constexpr UINT g_kMAX_SHADER_LIGHTS = 20;
-	static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT = 5 + g_kMAX_SHADER_LIGHTS * 4;
+	static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT = 10 + g_kMAX_SHADER_LIGHTS * 4;
 	static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;
 	static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 384 + 255) & ~255;
 	static constexpr UINT g_kPBR_CB_SLOT_COUNT = g_kMAX_ENTITIES + 1;

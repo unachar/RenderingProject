@@ -52,7 +52,9 @@ float SampleDeferredShadowMap(float3 worldPos, float3 normal, float3 lightDir)
     }
 
     visibility /= 25.0f;
-    return lerp(1.0f, lerp(1.0f, visibility, inBounds), saturate(ShadowMapParams.w));
+    float shadowStrength = saturate(abs(ShadowMapParams.w));
+    float outOfBoundsVisibility = (ShadowMapParams.w < 0.0f) ? 0.0f : 1.0f;
+    return lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
 }
 
 
@@ -77,8 +79,18 @@ float4 main(PSInputPostProcess input) : SV_Target
     bool brdf = IsMaterialClass(shaderClass, 12.0f);
     bool btdf = IsMaterialClass(shaderClass, 13.0f);
     bool bsdf = IsMaterialClass(shaderClass, 14.0f);
+
+    float3 viewRay = ReconstructPostProcessViewRayCommon(input.TexCoord);
+    float3 atmosphereRayEnd = (background || position.w <= 0.0001f) ? (PPCameraPos.xyz + viewRay * 80.0f) : position.xyz;
+    float3 atmosphereViewScatter = RayMarchAtmosphereViewCommon(atmosphereRayEnd, ShadowMapTexture, ShadowSampler, LightViewProjection, ShadowMapParams);
     
-    if (background || transparent)
+    if (background)
+    {
+        baseColor.rgb += AtmosphereBackgroundCommon(input.TexCoord) + atmosphereViewScatter;
+        return baseColor;
+    }
+
+    if (transparent)
     {
         return baseColor;
     }
@@ -169,7 +181,7 @@ float4 main(PSInputPostProcess input) : SV_Target
 
         float3 N = normalize(surfaceNormal + 0.00001f);
         float3 L = normalize(lightDir + 0.00001f);
-        float3 V = normalize(CameraPos - position.xyz + 0.00001f);
+        float3 V = normalize(PPCameraPos.xyz - position.xyz + 0.00001f);
         float3 H = normalize(L + V + 0.00001f);
 
         float NdotLScalar = saturate(dot(N, L));
@@ -259,119 +271,7 @@ float4 main(PSInputPostProcess input) : SV_Target
         baseColor.rgb = directLight + ambient;
     }
 
-    if (brdf)
-    {
-        float3 N = normalize(surfaceNormal + 0.00001f);
-        float3 L = normalize(lightDir + 0.00001f);
-        float3 V = normalize(CameraPos - position.xyz + 0.00001f);
-        float3 H = normalize(L + V + 0.00001f);
-
-        float NdotLScalar = saturate(dot(N, L));
-        float NdotV = saturate(dot(N, V));
-        float NdotH = saturate(dot(N, H));
-        float VdotH = saturate(dot(V, H));
-
-        float metallic = saturate(material.r);
-        float roughness = clamp(material.g, 0.04f, 1.0f);
-        float specularF0 = max(material.b, 0.04f);
-        float3 albedo = baseColor.rgb;
-        float3 F0 = lerp(float3(specularF0, specularF0, specularF0), albedo, metallic);
-
-        float a = roughness * roughness;
-        float a2 = a * a;
-        float d = NdotH * NdotH * (a2 - 1.0f) + 1.0f;
-        float D = a2 / max(PI * d * d, 0.00001f);
-        float k = ((roughness + 1.0f) * (roughness + 1.0f)) / 8.0f;
-        float G_L = NdotLScalar / max(NdotLScalar * (1.0f - k) + k, 0.00001f);
-        float G_V = NdotV / max(NdotV * (1.0f - k) + k, 0.00001f);
-        float G = G_L * G_V;
-        float oneMinusVdotH = 1.0f - VdotH;
-        float FPower = oneMinusVdotH * oneMinusVdotH * oneMinusVdotH * oneMinusVdotH * oneMinusVdotH;
-        float3 F = F0 + (1.0f - F0) * FPower;
-
-        float3 specularBRDF = (D * G * F) / max(4.0f * NdotLScalar * NdotV, 0.00001f);
-        float3 diffuseBRDF = (1.0f - F) * (1.0f - metallic) * albedo / PI;
-        float shadowVisibility = SampleDeferredShadowMap(position.xyz, N, L);
-
-        float3 directReflection = (diffuseBRDF + specularBRDF) * lightColor.rgb * lightIntensity * NdotLScalar * shadowVisibility;
-        float3 R = normalize(reflect(-V, N));
-        float2 reflectionUV = float2(atan2(R.z, R.x) / (2.0f * PI), acos(R.y) / PI);
-        float3 envReflection = EnvironmentTexture.SampleLevel(TextureSampler, reflectionUV, roughness * 8.0f).rgb * F;
-
-        baseColor.rgb = directReflection + envReflection;
-    }
-
-    if (btdf)
-    {
-        float3 N = normalize(surfaceNormal + 0.00001f);
-        float3 L = normalize(lightDir + 0.00001f);
-        float3 V = normalize(CameraPos - position.xyz + 0.00001f);
-        float roughness = clamp(material.g, 0.04f, 1.0f);
-        float transmission = saturate(1.0f - material.r) * lerp(0.35f, 1.0f, roughness);
-        float backNdotL = saturate(dot(-N, L));
-        float frontNdotV = saturate(dot(N, V));
-        float fresnel = pow(1.0f - frontNdotV, 5.0f);
-        float shadowVisibility = SampleDeferredShadowMap(position.xyz, N, L);
-
-        float eta = 1.0f / 1.45f;
-        float3 T = normalize(refract(-V, N, eta));
-        float2 transmissionUV = float2(atan2(T.z, T.x) / (2.0f * PI), acos(T.y) / PI);
-        float3 transmittedEnv = EnvironmentTexture.SampleLevel(TextureSampler, transmissionUV, roughness * 8.0f).rgb;
-        float3 transmittedLight = baseColor.rgb * lightColor.rgb * lightIntensity * backNdotL * transmission * shadowVisibility;
-        float3 transmittedAmbient = baseColor.rgb * transmittedEnv * transmission * lerp(0.35f, 0.8f, fresnel);
-
-        baseColor.rgb = transmittedLight + transmittedAmbient;
-    }
-
-    if (bsdf)
-    {
-        float3 N = normalize(surfaceNormal + 0.00001f);
-        float3 L = normalize(lightDir + 0.00001f);
-        float3 V = normalize(CameraPos - position.xyz + 0.00001f);
-        float3 H = normalize(L + V + 0.00001f);
-
-        float NdotLScalar = saturate(dot(N, L));
-        float NdotV = saturate(dot(N, V));
-        float NdotH = saturate(dot(N, H));
-        float VdotH = saturate(dot(V, H));
-        float roughness = clamp(material.g, 0.04f, 1.0f);
-        float metallic = saturate(material.r);
-        float specularF0 = max(material.b, 0.04f);
-        float3 albedo = baseColor.rgb;
-        float3 F0 = lerp(float3(specularF0, specularF0, specularF0), albedo, metallic);
-
-        float a = roughness * roughness;
-        float a2 = a * a;
-        float d = NdotH * NdotH * (a2 - 1.0f) + 1.0f;
-        float D = a2 / max(PI * d * d, 0.00001f);
-        float k = ((roughness + 1.0f) * (roughness + 1.0f)) / 8.0f;
-        float G_L = NdotLScalar / max(NdotLScalar * (1.0f - k) + k, 0.00001f);
-        float G_V = NdotV / max(NdotV * (1.0f - k) + k, 0.00001f);
-        float G = G_L * G_V;
-        float oneMinusVdotH = 1.0f - VdotH;
-        float FPower = oneMinusVdotH * oneMinusVdotH * oneMinusVdotH * oneMinusVdotH * oneMinusVdotH;
-        float3 F = F0 + (1.0f - F0) * FPower;
-        float shadowVisibility = SampleDeferredShadowMap(position.xyz, N, L);
-
-        float3 reflected = (((1.0f - F) * (1.0f - metallic) * albedo / PI) + ((D * G * F) / max(4.0f * NdotLScalar * NdotV, 0.00001f)))
-            * lightColor.rgb * lightIntensity * NdotLScalar * shadowVisibility;
-
-        float transmission = saturate(1.0f - metallic) * lerp(0.25f, 0.85f, roughness);
-        float backNdotL = saturate(dot(-N, L));
-        float3 transmitted = albedo * lightColor.rgb * lightIntensity * backNdotL * transmission * shadowVisibility;
-
-        float3 R = normalize(reflect(-V, N));
-        float2 reflectionUV = float2(atan2(R.z, R.x) / (2.0f * PI), acos(R.y) / PI);
-        float3 envReflection = EnvironmentTexture.SampleLevel(TextureSampler, reflectionUV, roughness * 8.0f).rgb * F;
-
-        float eta = 1.0f / 1.45f;
-        float3 T = normalize(refract(-V, N, eta));
-        float2 transmissionUV = float2(atan2(T.z, T.x) / (2.0f * PI), acos(T.y) / PI);
-        float3 envTransmission = EnvironmentTexture.SampleLevel(TextureSampler, transmissionUV, roughness * 8.0f).rgb * albedo * transmission;
-
-        baseColor.rgb = reflected + transmitted + envReflection + envTransmission * 0.5f;
-    }
-
+    baseColor.rgb += atmosphereViewScatter;
     baseColor.a = 1.0f;
     return baseColor;
 }

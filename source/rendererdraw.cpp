@@ -10,6 +10,18 @@
 #include "psomanager.h"
 #include "camera.h"
 
+namespace
+{
+	struct PostProcessConstants
+	{
+		XMFLOAT4 Flags{};
+		XMFLOAT4 PPCameraPos{};
+		XMFLOAT4 HdrFlags{};
+		XMFLOAT4X4 PPInvViewProjection{};
+	};
+
+	static_assert(sizeof(PostProcessConstants) <= RendererState::g_kPP_CB_ALIGNED_SIZE);
+}
 
 void RendererDraw::ReleaseGBufferResources()
 {
@@ -428,22 +440,18 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 				{
 					cameraPosition = ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
 				}
-				const float params[12] =
-				{
-					ImGuiManager::GetExposure(),
-					intensity,
-					renderModeFlag,
-					0.0f,
-					cameraPosition.x,
-					cameraPosition.y,
-					cameraPosition.z,
-					1.0f,
-					ImGuiManager::IsHdrEnabled() ? 1.0f : 0.0f,
-					ImGuiManager::IsToneMapEnabled() ? 1.0f : 0.0f,
-					0.0f,
-					0.0f
-				};
-				memcpy(m_pPostProcessCbvDataBegin, params, sizeof(params));
+
+				XMMATRIX view = XMMatrixIdentity();
+				XMMATRIX projection = XMMatrixIdentity();
+				Camera::GetCameraMatrices(cameraEntity, view, projection);
+				const XMMATRIX invViewProjection = XMMatrixInverse(nullptr, view * projection);
+
+				PostProcessConstants params{};
+				params.Flags = XMFLOAT4(ImGuiManager::GetExposure(), intensity, renderModeFlag, 0.0f);
+				params.PPCameraPos = XMFLOAT4(cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f);
+				params.HdrFlags = XMFLOAT4(ImGuiManager::IsHdrEnabled() ? 1.0f : 0.0f, ImGuiManager::IsToneMapEnabled() ? 1.0f : 0.0f, 0.0f, 0.0f);
+				XMStoreFloat4x4(&params.PPInvViewProjection, XMMatrixTranspose(invViewProjection));
+				memcpy(m_pPostProcessCbvDataBegin, &params, sizeof(params));
 			}
 			RendererResource::UpdateLightConstantBuffer(deferredLightStrength);
 			RendererResource::UpdateShadowConstantBuffer();

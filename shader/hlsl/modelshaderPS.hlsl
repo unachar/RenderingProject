@@ -44,7 +44,9 @@ float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 ligh
     }
 
     visibility /= 25.0f;
-    return lerp(1.0f, lerp(1.0f, visibility, inBounds), saturate(ShadowMapParams.w));
+    float shadowStrength = saturate(abs(ShadowMapParams.w));
+    float outOfBoundsVisibility = (ShadowMapParams.w < 0.0f) ? 0.0f : 1.0f;
+    return lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
 }
 
 float3 SampleEnvironmentLatLong(float3 dir, float roughness)

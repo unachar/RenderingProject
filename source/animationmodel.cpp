@@ -2,6 +2,7 @@
 #include "animationmodel.h"
 #include "pmxloader.h"
 #include "texturemanager.h"
+#include "renderercore.h"
 #include "rendererdraw.h"
 #include "renderershader.h"
 #include "psomanager.h"
@@ -307,8 +308,8 @@ static void NormalizeBoneInfluences(GpuSkinVertex& gpuVertex, DeformVertex& defo
 		totalWeight += gpuVertex.BoneWeights[i];
 	}
 
-	// ƒ{[ƒ“ƒEƒFƒCƒg‚ğ‚½‚È‚¢’¸“_‚ÍGPUƒXƒLƒjƒ“ƒO‘¤‚Åu•ÏŠ·‚È‚µv‚Æ‚µ‚Äˆµ‚¤B
-	// ƒZƒ“ƒ^[/root‚Öfallback‚·‚é‚ÆA–¢ƒEƒFƒCƒg’¸“_‚ªŒ´“_‚âƒZƒ“ƒ^[‚Ö‹z‚¢‚Ü‚ê‚ÄƒgƒQó‚É”j’]‚·‚éB
+	// ãƒœãƒ¼ãƒ³ã‚¦ã‚§ã‚¤ãƒˆã‚’æŒãŸãªã„é ‚ç‚¹ã¯GPUã‚¹ã‚­ãƒ‹ãƒ³ã‚°å´ã§ã€Œå¤‰æ›ãªã—ã€ã¨ã—ã¦æ‰±ã†ã€‚
+	// ã‚»ãƒ³ã‚¿ãƒ¼/rootã¸fallbackã™ã‚‹ã¨ã€æœªã‚¦ã‚§ã‚¤ãƒˆé ‚ç‚¹ãŒåŸç‚¹ã‚„ã‚»ãƒ³ã‚¿ãƒ¼ã¸å¸ã„è¾¼ã¾ã‚Œã¦ãƒˆã‚²çŠ¶ã«ç ´ç¶»ã™ã‚‹ã€‚
 	if (totalWeight <= 0.000001f)
 	{
 		deformVertex.BoneNum = 0;
@@ -633,9 +634,9 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 				return vertexIndex < pendingBoneWeights.size() && !pendingBoneWeights[vertexIndex].empty();
 			};
 
-		// Assimp/PMX•ÏŠ·‚Åˆê•”’¸“_‚¾‚¯ƒ{[ƒ“ƒEƒFƒCƒg‚ª—‚¿‚é‚ÆA
-		// ‚»‚Ì’¸“_‚¾‚¯ƒoƒCƒ“ƒhƒ|[ƒY‚Éc‚Á‚ÄOŠpŒ`‚ªƒgƒQó‚ÉL‚Ñ‚éB
-		// ‚Ü‚¸“¯‚¶OŠpŒ`‚É‘®‚·‚é—×Ú’¸“_‚©‚çƒEƒFƒCƒg‚ğ“`”d‚·‚éB
+		// Assimp/PMXå¤‰æ›ã§ä¸€éƒ¨é ‚ç‚¹ã ã‘ãƒœãƒ¼ãƒ³ã‚¦ã‚§ã‚¤ãƒˆãŒè½ã¡ã‚‹ã¨ã€
+		// ãã®é ‚ç‚¹ã ã‘ãƒã‚¤ãƒ³ãƒ‰ãƒãƒ¼ã‚ºã«æ®‹ã£ã¦ä¸‰è§’å½¢ãŒãƒˆã‚²çŠ¶ã«ä¼¸ã³ã‚‹ã€‚
+		// ã¾ãšåŒã˜ä¸‰è§’å½¢ã«å±ã™ã‚‹éš£æ¥é ‚ç‚¹ã‹ã‚‰ã‚¦ã‚§ã‚¤ãƒˆã‚’ä¼æ’­ã™ã‚‹ã€‚
 		for (int pass = 0; pass < 8; ++pass)
 		{
 			bool changed = false;
@@ -679,13 +680,13 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 			}
 		}
 
-		// OŠpŒ`“`”d‚Å“Í‚©‚È‚¢ŒÇ—§’¸“_/•ª—£“‡‚ÍA“¯ˆêƒƒbƒVƒ…“à‚ÌÅ‹ß–T‚Ì
-		// ƒEƒFƒCƒg•t‚«’¸“_‚©‚çƒRƒs[‚·‚éB‚±‚ê‚Å•‚¢…ó‚Ì”j’]‚ğ’×‚·B
+		// ä¸‰è§’å½¢ä¼æ’­ã§å±Šã‹ãªã„å­¤ç«‹é ‚ç‚¹/åˆ†é›¢å³¶ã¯ã€åŒä¸€ãƒ¡ãƒƒã‚·ãƒ¥å†…ã®æœ€è¿‘å‚ã®
+		// ã‚¦ã‚§ã‚¤ãƒˆä»˜ãé ‚ç‚¹ã‹ã‚‰ã‚³ãƒ”ãƒ¼ã™ã‚‹ã€‚ã“ã‚Œã§é»’ã„ç³¸çŠ¶ã®ç ´ç¶»ã‚’æ½°ã™ã€‚
 		size_t zeroWeightVerticesFixedByNearest = 0;
 		size_t zeroWeightVerticesFallbackToRoot = 0;
 		uint32_t wholeMeshFallbackBoneIndex = 0;
-		if (m_BoneIndexMap.count("ƒZƒ“ƒ^[")) wholeMeshFallbackBoneIndex = m_BoneIndexMap["ƒZƒ“ƒ^["];
-		else if (m_BoneIndexMap.count("‘S‚Ä‚Ìe")) wholeMeshFallbackBoneIndex = m_BoneIndexMap["‘S‚Ä‚Ìe"];
+		if (m_BoneIndexMap.count("ã‚»ãƒ³ã‚¿ãƒ¼")) wholeMeshFallbackBoneIndex = m_BoneIndexMap["ã‚»ãƒ³ã‚¿ãƒ¼"];
+		else if (m_BoneIndexMap.count("å…¨ã¦ã®è¦ª")) wholeMeshFallbackBoneIndex = m_BoneIndexMap["å…¨ã¦ã®è¦ª"];
 
 		for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
 		{
@@ -721,8 +722,8 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 			}
 			else
 			{
-				// ƒƒbƒVƒ…‘S‘Ì‚ÉƒEƒFƒCƒg‚ª–³‚¢ê‡‚¾‚¯A‘S‘Ì‚ğ“¯ˆêƒ{[ƒ“‚Ö“¦‚ª‚·B
-				// •”•ª“I‚È–¢ƒEƒFƒCƒg’¸“_‚Éroot fallback‚ğg‚¤‚ÆƒgƒQ‰»‚·‚é‚½‚ßAÅ‹ß–TƒRƒs[‚ğ—Dæ‚·‚éB
+				// ãƒ¡ãƒƒã‚·ãƒ¥å…¨ä½“ã«ã‚¦ã‚§ã‚¤ãƒˆãŒç„¡ã„å ´åˆã ã‘ã€å…¨ä½“ã‚’åŒä¸€ãƒœãƒ¼ãƒ³ã¸é€ƒãŒã™ã€‚
+				// éƒ¨åˆ†çš„ãªæœªã‚¦ã‚§ã‚¤ãƒˆé ‚ç‚¹ã«root fallbackã‚’ä½¿ã†ã¨ãƒˆã‚²åŒ–ã™ã‚‹ãŸã‚ã€æœ€è¿‘å‚ã‚³ãƒ”ãƒ¼ã‚’å„ªå…ˆã™ã‚‹ã€‚
 				pendingBoneWeights[v].push_back({ wholeMeshFallbackBoneIndex, 1.0f, "<whole-mesh-fallback>" });
 				++zeroWeightVerticesFallbackToRoot;
 			}
@@ -960,6 +961,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 
 	BuildPmxVertexMeshMap();
 	InvalidateVmdRuntimeCache();
+	InvalidatePmxRuntimeCache();
 
 	if (hasVertices)
 	{
@@ -1090,6 +1092,7 @@ void AnimationModelResource::InvalidateVmdRuntimeCache()
 	m_VmdBoneBindings.clear();
 	m_VmdMorphBindings.clear();
 	m_VmdIkTrackCache.clear();
+	m_VmdIkTrackCursors.clear();
 	m_VmdActiveMorphsScratch.clear();
 	m_VmdMorphPositionOffsetsScratch.clear();
 	m_VmdMorphUvOffsetsScratch.clear();
@@ -1102,6 +1105,7 @@ void AnimationModelResource::RebuildVmdRuntimeCache(const VmdAnimation* primaryA
 	m_VmdBoneBindings.clear();
 	m_VmdMorphBindings.clear();
 	m_VmdIkTrackCache.clear();
+	m_VmdIkTrackCursors.clear();
 	m_VmdActiveMorphsScratch.clear();
 
 	if (!primaryAnimation)
@@ -1144,9 +1148,11 @@ void AnimationModelResource::RebuildVmdRuntimeCache(const VmdAnimation* primaryA
 	}
 
 	m_VmdIkTrackCache.reserve(primaryAnimation->IkTracks.size());
+	m_VmdIkTrackCursors.reserve(primaryAnimation->IkTracks.size());
 	for (const auto& track : primaryAnimation->IkTracks)
 	{
 		m_VmdIkTrackCache.emplace(track.first, &track.second);
+		m_VmdIkTrackCursors.emplace(track.first, VmdTrackSampleCursor{});
 	}
 
 	if (m_VmdMorphPositionOffsetsScratch.size() != m_PmxBaseVertices.size())
@@ -1156,6 +1162,77 @@ void AnimationModelResource::RebuildVmdRuntimeCache(const VmdAnimation* primaryA
 	}
 }
 
+void AnimationModelResource::InvalidatePmxRuntimeCache()
+{
+	m_PmxRuntimeNodes.clear();
+	m_PmxRuntimeNodeIndexMap.clear();
+	m_PmxGlobalMatricesScratch.clear();
+	m_PmxOrderedTransformSteps.clear();
+	m_PmxAppendResultsScratch.clear();
+}
+
+void AnimationModelResource::RebuildPmxRuntimeCache()
+{
+	InvalidatePmxRuntimeCache();
+	if (!m_AiScene)
+	{
+		return;
+	}
+
+	auto buildFast = [&](auto&& self, aiNode* node, int parent) -> void
+		{
+			if (!node)
+			{
+				return;
+			}
+
+			const int myIndex = static_cast<int>(m_PmxRuntimeNodes.size());
+			const string nodeName = node->mName.C_Str();
+			Bone* bonePtr = nullptr;
+			auto boneIt = m_Bone.find(nodeName);
+			if (boneIt != m_Bone.end())
+			{
+				bonePtr = &boneIt->second;
+			}
+
+			m_PmxRuntimeNodeIndexMap[nodeName] = static_cast<size_t>(myIndex);
+			m_PmxRuntimeNodes.push_back({ node, nodeName, parent, bonePtr });
+
+			for (unsigned int i = 0; i < node->mNumChildren; ++i)
+			{
+				self(self, node->mChildren[i], myIndex);
+			}
+		};
+	buildFast(buildFast, m_AiScene->mRootNode, -1);
+	m_PmxGlobalMatricesScratch.resize(m_PmxRuntimeNodes.size());
+
+	m_PmxOrderedTransformSteps.reserve(m_PmxAppendConstraints.size() + m_PmxIkConstraints.size());
+	for (size_t i = 0; i < m_PmxAppendConstraints.size(); ++i)
+	{
+		const auto& c = m_PmxAppendConstraints[i];
+		m_PmxOrderedTransformSteps.push_back({ false, i, c.DeformDepth, c.BoneOrder });
+	}
+	for (size_t i = 0; i < m_PmxIkConstraints.size(); ++i)
+	{
+		const auto& c = m_PmxIkConstraints[i];
+		m_PmxOrderedTransformSteps.push_back({ true, i, c.DeformDepth, c.BoneOrder });
+	}
+	sort(m_PmxOrderedTransformSteps.begin(), m_PmxOrderedTransformSteps.end(),
+		[](const PmxOrderedTransformStep& lhs, const PmxOrderedTransformStep& rhs)
+		{
+			if (lhs.DeformDepth != rhs.DeformDepth)
+			{
+				return lhs.DeformDepth < rhs.DeformDepth;
+			}
+			if (lhs.BoneOrder != rhs.BoneOrder)
+			{
+				return lhs.BoneOrder < rhs.BoneOrder;
+			}
+			return !lhs.IsIk && rhs.IsIk;
+		});
+
+	m_PmxAppendResultsScratch.reserve(m_PmxAppendConstraints.size());
+}
 bool AnimationModelResource::LoadPmxIkData(const char* fileName)
 {
 	const filesystem::path pmxPath = ModelImportUtils::FromUtf8(fileName);
@@ -2028,29 +2105,34 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 		UINT boneBufferSize = sizeof(XMFLOAT4X4) * m_kMAX_BONES;
 		auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
 		auto resDesc = CD3DX12_RESOURCE_DESC::Buffer(boneBufferSize);
-		HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE,
-			&resDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_BoneBuffer));
-		if (FAILED(hr)) return false;
 
-		CD3DX12_RANGE readRange(0, 0);
-		hr = m_BoneBuffer->Map(0, &readRange, &m_pBoneBufferMapped);
-		if (FAILED(hr))
+		vector<XMFLOAT4X4> identityBones(m_kMAX_BONES);
+		XMFLOAT4X4 identity;
+		XMStoreFloat4x4(&identity, XMMatrixIdentity());
+		for (auto& mtx : identityBones)
 		{
-			Debug::Log("ERROR: Failed to map bone buffer\n");
-			m_pBoneBufferMapped = nullptr;
-			return false;
+			mtx = identity;
 		}
 
-		if (m_pBoneBufferMapped)
+		for (UINT frame = 0; frame < RendererState::g_kFRAME_COUNT; ++frame)
 		{
-			vector<XMFLOAT4X4> identityBones(m_kMAX_BONES);
-			XMFLOAT4X4 identity;
-			XMStoreFloat4x4(&identity, XMMatrixIdentity());
-			for (auto& mtx : identityBones)
+			HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE,
+				&resDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_BoneBuffers[frame]));
+			if (FAILED(hr)) return false;
+
+			CD3DX12_RANGE readRange(0, 0);
+			hr = m_BoneBuffers[frame]->Map(0, &readRange, &m_pBoneBufferMapped[frame]);
+			if (FAILED(hr))
 			{
-				mtx = identity;
+				Debug::Log("ERROR: Failed to map bone buffer\n");
+				m_pBoneBufferMapped[frame] = nullptr;
+				return false;
 			}
-			memcpy(m_pBoneBufferMapped, identityBones.data(), sizeof(XMFLOAT4X4) * m_kMAX_BONES);
+
+			if (m_pBoneBufferMapped[frame])
+			{
+				memcpy(m_pBoneBufferMapped[frame], identityBones.data(), sizeof(XMFLOAT4X4) * m_kMAX_BONES);
+			}
 		}
 	}
 
@@ -2101,6 +2183,7 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 			device->CreateShaderResourceView(m_Meshes[m].InputVertexBuffer.Get(), &srvDesc, srvHandle);
 		}
 
+		for (UINT frame = 0; frame < RendererState::g_kFRAME_COUNT; ++frame)
 		{
 			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
@@ -2109,8 +2192,8 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 			srvDesc.Buffer.StructureByteStride = sizeof(XMFLOAT4X4);
 			srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 			CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(m_SkinningDescHeap->GetCPUDescriptorHandleForHeapStart(),
-				descriptorBase + m_kBONE_SRV_OFFSET, descSize);
-			device->CreateShaderResourceView(m_BoneBuffer.Get(), &srvDesc, srvHandle);
+				descriptorBase + m_kBONE_SRV_OFFSET + frame, descSize);
+			device->CreateShaderResourceView(m_BoneBuffers[frame].Get(), &srvDesc, srvHandle);
 		}
 
 		{
@@ -2359,7 +2442,12 @@ void AnimationModelResource::UpdateBindPoseBoneMatrix(aiNode* node, aiMatrix4x4 
 
 void AnimationModelResource::WriteBoneMatricesToBuffer()
 {
-	if (!m_pBoneBufferMapped)
+	bool hasMappedBoneBuffer = false;
+	for (void* mapped : m_pBoneBufferMapped)
+	{
+		hasMappedBoneBuffer |= (mapped != nullptr);
+	}
+	if (!hasMappedBoneBuffer)
 	{
 		return;
 	}
@@ -2395,7 +2483,13 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
 	}
 
 	UINT copySize = sizeof(XMFLOAT4X4) * m_kMAX_BONES;
-	memcpy(m_pBoneBufferMapped, m_BoneMatricesScratch.data(), copySize);
+	for (void* mapped : m_pBoneBufferMapped)
+	{
+		if (mapped)
+		{
+			memcpy(mapped, m_BoneMatricesScratch.data(), copySize);
+		}
+	}
 }
 
 void AnimationModelResource::BuildPmxVertexMeshMap()
@@ -2498,7 +2592,7 @@ float AnimationModelResource::SampleVmdMorph(const VmdAnimation* animation, cons
 	return VmdAnimationImporter::SampleMorphTrack(&trackIt->second, currentFrame);
 }
 
-void AnimationModelResource::ApplyVmdMorphs(const VmdAnimation* animation, float timeSeconds)
+void AnimationModelResource::ApplyVmdMorphs(const VmdAnimation* animation, float currentFrame)
 {
 	if (!animation || m_PmxMorphs.empty())
 	{
@@ -2510,12 +2604,11 @@ void AnimationModelResource::ApplyVmdMorphs(const VmdAnimation* animation, float
 		RebuildVmdRuntimeCache(animation, m_CachedVmdSecondaryAnimation);
 	}
 
-	const float currentFrame = VmdAnimationImporter::ToFrameTime(animation, timeSeconds);
 	m_VmdActiveMorphsScratch.clear();
 	m_VmdActiveMorphsScratch.reserve(m_VmdMorphBindings.size());
-	for (const VmdMorphBinding& binding : m_VmdMorphBindings)
+	for (VmdMorphBinding& binding : m_VmdMorphBindings)
 	{
-		const float weight = VmdAnimationImporter::SampleMorphTrack(binding.Track, currentFrame);
+		const float weight = VmdAnimationImporter::SampleMorphTrackCached(binding.Track, currentFrame, binding.Cursor);
 		if (fabsf(weight) > 0.00001f)
 		{
 			m_VmdActiveMorphsScratch.push_back({ binding.MorphIndex, weight });
@@ -2726,139 +2819,22 @@ void AnimationModelResource::ApplyVmdMorphs(const VmdAnimation* animation, float
 	m_HasAppliedVmdMorphs = anyMorphApplied;
 }
 
-void AnimationModelResource::ApplyPmxAppendTransforms()
-{
-	if (m_PmxAppendConstraints.empty() || !m_AiScene)
-	{
-		return;
-	}
-
-	auto aiToXm = [](const aiMatrix4x4& src)
-		{
-			return XMMatrixSet(
-				src.a1, src.b1, src.c1, src.d1,
-				src.a2, src.b2, src.c2, src.d2,
-				src.a3, src.b3, src.c3, src.d3,
-				src.a4, src.b4, src.c4, src.d4);
-		};
-
-	struct FastNode {
-		aiNode* Node;
-		string Name;
-		int ParentIndex;
-		Bone* BonePtr;
-	};
-	vector<FastNode> fastNodes;
-	auto buildFast = [&](auto&& self, aiNode* node, int parent) -> void {
-		if (!node) return;
-		int myIdx = (int)fastNodes.size();
-		Bone* bPtr = nullptr;
-		auto it = m_Bone.find(node->mName.C_Str());
-		if (it != m_Bone.end()) bPtr = &it->second;
-		fastNodes.push_back({ node, node->mName.C_Str(), parent, bPtr });
-		for (unsigned int i = 0; i < node->mNumChildren; ++i) self(self, node->mChildren[i], myIdx);
-		};
-	buildFast(buildFast, m_AiScene->mRootNode, -1);
-
-	unordered_map<string, XMFLOAT4X4> globalMatrices;
-	vector<XMMATRIX> fastGlobals;
-	auto rebuildGlobals = [&]()
-		{
-			fastGlobals.resize(fastNodes.size());
-			for (size_t i = 0; i < fastNodes.size(); ++i)
-			{
-				const auto& fn = fastNodes[i];
-				XMMATRIX local = fn.BonePtr ? aiToXm(fn.BonePtr->AnimationMatrix) : aiToXm(fn.Node->mTransformation);
-				XMMATRIX world = fn.ParentIndex >= 0 ? XMMatrixMultiply(local, fastGlobals[fn.ParentIndex]) : local;
-				fastGlobals[i] = world;
-				XMFLOAT4X4 stored{};
-				XMStoreFloat4x4(&stored, world);
-				globalMatrices[fn.Name] = stored;
-			}
-		};
-
-	auto loadGlobal = [&](const string& boneName)
-		{
-			auto it = globalMatrices.find(boneName);
-			return it != globalMatrices.end() ? XMLoadFloat4x4(&it->second) : XMMatrixIdentity();
-		};
-
-	for (int pass = 0; pass < 2; ++pass)
-	{
-		rebuildGlobals();
-		for (const PmxAppendConstraint& constraint : m_PmxAppendConstraints)
-		{
-			auto boneIt = m_Bone.find(constraint.BoneName);
-			auto appendIt = m_Bone.find(constraint.AppendBoneName);
-			if (boneIt == m_Bone.end() || appendIt == m_Bone.end())
-			{
-				continue;
-			}
-
-			aiVector3D scale(1.0f, 1.0f, 1.0f);
-			aiQuaternion rotation(1.0f, 0.0f, 0.0f, 0.0f);
-			aiVector3D position(0.0f, 0.0f, 0.0f);
-			boneIt->second.AnimationMatrix.Decompose(scale, rotation, position);
-
-			aiVector3D appendScale(1.0f, 1.0f, 1.0f);
-			aiQuaternion appendRotation(1.0f, 0.0f, 0.0f, 0.0f);
-			aiVector3D appendPosition(0.0f, 0.0f, 0.0f);
-			if (constraint.Local)
-			{
-				appendIt->second.AnimationMatrix.Decompose(appendScale, appendRotation, appendPosition);
-			}
-			else
-			{
-				XMVECTOR appendScaleVector = XMVectorSet(1.0f, 1.0f, 1.0f, 0.0f);
-				XMVECTOR appendRotationVector = XMQuaternionIdentity();
-				XMVECTOR appendPositionVector = XMVectorZero();
-				if (XMMatrixDecompose(&appendScaleVector, &appendRotationVector, &appendPositionVector, loadGlobal(constraint.AppendBoneName)))
-				{
-					XMFLOAT3 storedScale{};
-					XMFLOAT4 storedRotation{};
-					XMFLOAT3 storedPosition{};
-					XMStoreFloat3(&storedScale, appendScaleVector);
-					XMStoreFloat4(&storedRotation, XMQuaternionNormalize(appendRotationVector));
-					XMStoreFloat3(&storedPosition, appendPositionVector);
-					appendScale = aiVector3D(storedScale.x, storedScale.y, storedScale.z);
-					appendRotation = aiQuaternion(storedRotation.w, storedRotation.x, storedRotation.y, storedRotation.z);
-					appendPosition = aiVector3D(storedPosition.x, storedPosition.y, storedPosition.z);
-				}
-			}
-
-			if (constraint.InheritRotation)
-			{
-				aiQuaternion weightedRotation;
-				aiQuaternion::Interpolate(weightedRotation,
-					aiQuaternion(1.0f, 0.0f, 0.0f, 0.0f),
-					appendRotation,
-					clamp(fabsf(constraint.Weight), 0.0f, 1.0f));
-				weightedRotation.Normalize();
-				if (constraint.Weight < 0.0f)
-				{
-					weightedRotation.Conjugate();
-				}
-				rotation = rotation * weightedRotation;
-				rotation.Normalize();
-			}
-
-			if (constraint.InheritTranslation)
-			{
-				position += appendPosition * constraint.Weight;
-			}
-
-			boneIt->second.AnimationMatrix = aiMatrix4x4(scale, rotation, position);
-		}
-	}
-}
-
-void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* animation, float timeSeconds)
+void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* animation, float currentFrame)
 {
 	if (!m_AiScene || (m_PmxAppendConstraints.empty() && m_PmxIkConstraints.empty()))
 	{
 		return;
 	}
 
+	if (m_PmxRuntimeNodes.empty() || m_PmxOrderedTransformSteps.empty())
+	{
+		RebuildPmxRuntimeCache();
+	}
+	if (m_PmxRuntimeNodes.empty())
+	{
+		return;
+	}
+
 	auto aiToXm = [](const aiMatrix4x4& src)
 		{
 			return XMMatrixSet(
@@ -2868,56 +2844,44 @@ void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* anima
 				src.a4, src.b4, src.c4, src.d4);
 		};
 
-	struct FastNode {
-		aiNode* Node;
-		string Name;
-		int ParentIndex;
-		Bone* BonePtr;
-	};
-	vector<FastNode> fastNodes;
-	auto buildFast = [&](auto&& self, aiNode* node, int parent) -> void {
-		if (!node) return;
-		int myIdx = (int)fastNodes.size();
-		Bone* bPtr = nullptr;
-		auto it = m_Bone.find(node->mName.C_Str());
-		if (it != m_Bone.end()) bPtr = &it->second;
-		fastNodes.push_back({ node, node->mName.C_Str(), parent, bPtr });
-		for (unsigned int i = 0; i < node->mNumChildren; ++i) self(self, node->mChildren[i], myIdx);
-		};
-	buildFast(buildFast, m_AiScene->mRootNode, -1);
-
-	unordered_map<string, XMFLOAT4X4> globalMatrices;
-	vector<XMMATRIX> fastGlobals;
 	auto rebuildGlobals = [&]()
 		{
-			fastGlobals.resize(fastNodes.size());
-			for (size_t i = 0; i < fastNodes.size(); ++i)
+			if (m_PmxGlobalMatricesScratch.size() != m_PmxRuntimeNodes.size())
 			{
-				const auto& fn = fastNodes[i];
+				m_PmxGlobalMatricesScratch.resize(m_PmxRuntimeNodes.size());
+			}
+
+			for (size_t i = 0; i < m_PmxRuntimeNodes.size(); ++i)
+			{
+				const PmxRuntimeNode& fn = m_PmxRuntimeNodes[i];
 				XMMATRIX local = fn.BonePtr ? aiToXm(fn.BonePtr->AnimationMatrix) : aiToXm(fn.Node->mTransformation);
-				XMMATRIX world = fn.ParentIndex >= 0 ? XMMatrixMultiply(local, fastGlobals[fn.ParentIndex]) : local;
-				fastGlobals[i] = world;
-				XMFLOAT4X4 stored{};
-				XMStoreFloat4x4(&stored, world);
-				globalMatrices[fn.Name] = stored;
+				XMMATRIX world = local;
+				if (fn.ParentIndex >= 0)
+				{
+					const XMMATRIX parent = XMLoadFloat4x4(&m_PmxGlobalMatricesScratch[static_cast<size_t>(fn.ParentIndex)]);
+					world = XMMatrixMultiply(local, parent);
+				}
+				XMStoreFloat4x4(&m_PmxGlobalMatricesScratch[i], world);
 			}
 		};
 
 	auto loadGlobal = [&](const string& boneName)
 		{
-			auto it = globalMatrices.find(boneName);
-			return it != globalMatrices.end() ? XMLoadFloat4x4(&it->second) : XMMatrixIdentity();
+			auto it = m_PmxRuntimeNodeIndexMap.find(boneName);
+			return it != m_PmxRuntimeNodeIndexMap.end()
+				? XMLoadFloat4x4(&m_PmxGlobalMatricesScratch[it->second])
+				: XMMatrixIdentity();
 		};
 
 	auto getTranslation = [&](const string& boneName)
 		{
-			auto it = globalMatrices.find(boneName);
-			if (it == globalMatrices.end())
+			auto it = m_PmxRuntimeNodeIndexMap.find(boneName);
+			if (it == m_PmxRuntimeNodeIndexMap.end())
 			{
 				return XMVectorZero();
 			}
 
-			const XMFLOAT4X4& matrix = it->second;
+			const XMFLOAT4X4& matrix = m_PmxGlobalMatricesScratch[it->second];
 			return XMVectorSet(matrix._41, matrix._42, matrix._43, 1.0f);
 		};
 
@@ -2930,7 +2894,6 @@ void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* anima
 			}
 			return loadGlobal(parentIt->second);
 		};
-
 	auto applyIkLinkLimit = [](const PmxIkLink& link, XMVECTOR& localAxis, float& angle) -> bool
 		{
 			if (!link.HasLimit)
@@ -3032,12 +2995,7 @@ void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* anima
 			return true;
 		};
 
-	struct PmxAppendResult
-	{
-		aiQuaternion Rotation{ 1.0f, 0.0f, 0.0f, 0.0f };
-		aiVector3D Translation{ 0.0f, 0.0f, 0.0f };
-	};
-	unordered_map<string, PmxAppendResult> appendResults;
+	m_PmxAppendResultsScratch.clear();
 
 	auto getLocalAnimationDelta = [](const Bone& bone, aiQuaternion& outRotation, aiVector3D& outTranslation)
 		{
@@ -3074,8 +3032,8 @@ void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* anima
 
 			aiQuaternion appendRotation(1.0f, 0.0f, 0.0f, 0.0f);
 			aiVector3D appendPosition(0.0f, 0.0f, 0.0f);
-			auto appendResultIt = appendResults.find(constraint.AppendBoneName);
-			if (!constraint.Local && appendResultIt != appendResults.end())
+			auto appendResultIt = m_PmxAppendResultsScratch.find(constraint.AppendBoneName);
+			if (!constraint.Local && appendResultIt != m_PmxAppendResultsScratch.end())
 			{
 				appendRotation = appendResultIt->second.Rotation;
 				appendPosition = appendResultIt->second.Translation;
@@ -3110,18 +3068,18 @@ void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* anima
 			}
 
 			boneIt->second.AnimationMatrix = aiMatrix4x4(scale, rotation, position);
-			appendResults[constraint.BoneName] = appendResult;
+			m_PmxAppendResultsScratch[constraint.BoneName] = appendResult;
 			return true;
 		};
 
 	auto isToeIkConstraint = [](const string& boneName)
 		{
-			return boneName.find("‚Â‚Üæ") != string::npos;
+			return boneName.find("ã¤ã¾å…ˆ") != string::npos;
 		};
 
 	auto isKneeBone = [](const string& boneName)
 		{
-			return boneName.find("‚Ğ‚´") != string::npos || boneName.find("•G") != string::npos;
+			return boneName.find("ã²ã–") != string::npos || boneName.find("è†") != string::npos;
 		};
 
 	auto axisVectorFromIndex = [](int axisIndex)
@@ -3156,14 +3114,14 @@ void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* anima
 
 	auto solveIk = [&](const PmxIkConstraint& constraint)
 		{
-			// ‚Â‚ÜæIK‚Í‘«ñƒŠƒ“ƒN‚ğ‚³‚ç‚É‰ñ‚µ‚ÄCCD‚ÌU“®‚ğ‘‚â‚µ‚â‚·‚¢‚Ì‚ÅA
-			// ‚Ü‚¸‚Í‘«IK‚ğˆÀ’è‚³‚¹‚é‚½‚ß‚É–³Œø‰»‚·‚éB
+			// ã¤ã¾å…ˆIKã¯è¶³é¦–ãƒªãƒ³ã‚¯ã‚’ã•ã‚‰ã«å›ã—ã¦CCDã®æŒ¯å‹•ã‚’å¢—ã‚„ã—ã‚„ã™ã„ã®ã§ã€
+			// ã¾ãšã¯è¶³IKã‚’å®‰å®šã•ã›ã‚‹ãŸã‚ã«ç„¡åŠ¹åŒ–ã™ã‚‹ã€‚
 			if (isToeIkConstraint(constraint.BoneName))
 			{
 				return false;
 			}
 
-			if (!IsVmdIkEnabled(animation, constraint.BoneName, timeSeconds) ||
+			if (!IsVmdIkEnabled(animation, constraint.BoneName, currentFrame) ||
 				m_Bone.find(constraint.BoneName) == m_Bone.end() ||
 				m_Bone.find(constraint.TargetBoneName) == m_Bone.end())
 			{
@@ -3339,41 +3297,8 @@ void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* anima
 			return changed;
 		};
 
-	struct OrderedTransformStep
-	{
-		bool IsIk = false;
-		size_t Index = 0;
-		int32_t DeformDepth = 0;
-		uint32_t BoneOrder = 0;
-	};
-
-	vector<OrderedTransformStep> steps;
-	steps.reserve(m_PmxAppendConstraints.size() + m_PmxIkConstraints.size());
-	for (size_t i = 0; i < m_PmxAppendConstraints.size(); ++i)
-	{
-		const auto& c = m_PmxAppendConstraints[i];
-		steps.push_back({ false, i, c.DeformDepth, c.BoneOrder });
-	}
-	for (size_t i = 0; i < m_PmxIkConstraints.size(); ++i)
-	{
-		const auto& c = m_PmxIkConstraints[i];
-		steps.push_back({ true, i, c.DeformDepth, c.BoneOrder });
-	}
-	sort(steps.begin(), steps.end(), [](const OrderedTransformStep& lhs, const OrderedTransformStep& rhs)
-		{
-			if (lhs.DeformDepth != rhs.DeformDepth)
-			{
-				return lhs.DeformDepth < rhs.DeformDepth;
-			}
-			if (lhs.BoneOrder != rhs.BoneOrder)
-			{
-				return lhs.BoneOrder < rhs.BoneOrder;
-			}
-			return !lhs.IsIk && rhs.IsIk;
-		});
-
 	rebuildGlobals();
-	for (const OrderedTransformStep& step : steps)
+	for (const PmxOrderedTransformStep& step : m_PmxOrderedTransformSteps)
 	{
 		const bool changed = step.IsIk
 			? solveIk(m_PmxIkConstraints[step.Index])
@@ -3382,7 +3307,6 @@ void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* anima
 		{
 			rebuildGlobals();
 		}
-
 	}
 }
 
@@ -3428,9 +3352,13 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation
 	}
 
 	const float safeBlendRate = clamp(blendRate, 0.0f, 1.0f);
-	const float currentFrame1 = VmdAnimationImporter::ToFrameTime(primaryAnimation, frame1);
-	const float currentFrame2 = VmdAnimationImporter::ToFrameTime(secondaryAnimation, frame2);
-	for (const VmdBoneBinding& binding : m_VmdBoneBindings)
+	const float primaryTime = animation1 ? frame1 : frame2;
+	const float secondaryTime = animation2 ? frame2 : primaryTime;
+	const float currentFrame1 = VmdAnimationImporter::ToFrameTime(primaryAnimation, primaryTime);
+	const bool useSecondarySample = secondaryAnimation && safeBlendRate > 0.0001f &&
+		(secondaryAnimation != primaryAnimation || fabsf(secondaryTime - primaryTime) > 0.0001f);
+	const float currentFrame2 = useSecondarySample ? VmdAnimationImporter::ToFrameTime(secondaryAnimation, secondaryTime) : currentFrame1;
+	for (VmdBoneBinding& binding : m_VmdBoneBindings)
 	{
 		Bone* bonePtr = binding.BonePtr;
 		if (!bonePtr)
@@ -3440,30 +3368,32 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation
 
 		aiQuaternion rotation1(1.0f, 0.0f, 0.0f, 0.0f);
 		aiVector3D pos1(0.0f, 0.0f, 0.0f);
-		aiQuaternion rotation2(1.0f, 0.0f, 0.0f, 0.0f);
-		aiVector3D pos2(0.0f, 0.0f, 0.0f);
+		VmdAnimationImporter::SampleBoneTrackCached(binding.PrimaryTrack, currentFrame1, binding.PrimaryCursor, rotation1, pos1);
 
-		VmdAnimationImporter::SampleBoneTrack(binding.PrimaryTrack, currentFrame1, rotation1, pos1);
-		VmdAnimationImporter::SampleBoneTrack(binding.SecondaryTrack, currentFrame2, rotation2, pos2);
-
-		const aiVector3D pos = pos1 * (1.0f - safeBlendRate) + pos2 * safeBlendRate;
-
-		aiQuaternion rotation;
-		aiQuaternion::Interpolate(rotation, rotation1, rotation2, safeBlendRate);
-		rotation.Normalize();
+		aiQuaternion rotation = rotation1;
+		aiVector3D pos = pos1;
+		if (useSecondarySample)
+		{
+			aiQuaternion rotation2(1.0f, 0.0f, 0.0f, 0.0f);
+			aiVector3D pos2(0.0f, 0.0f, 0.0f);
+			VmdAnimationImporter::SampleBoneTrackCached(binding.SecondaryTrack, currentFrame2, binding.SecondaryCursor, rotation2, pos2);
+			pos = pos1 * (1.0f - safeBlendRate) + pos2 * safeBlendRate;
+			aiQuaternion::Interpolate(rotation, rotation1, rotation2, safeBlendRate);
+			rotation.Normalize();
+		}
 
 		aiQuaternion localRotation = binding.BaseRotation * rotation;
 		localRotation.Normalize();
 		bonePtr->AnimationMatrix = aiMatrix4x4(binding.BaseScale, localRotation, binding.BasePosition + pos);
 	}
 
-	ApplyVmdMorphs(primaryAnimation, frame1);
-	ApplyPmxOrderedTransforms(primaryAnimation, frame1);
+	ApplyVmdMorphs(primaryAnimation, currentFrame1);
+	ApplyPmxOrderedTransforms(primaryAnimation, currentFrame1);
 	UpdateBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
 	WriteBoneMatricesToBuffer();
 }
 
-bool AnimationModelResource::IsVmdIkEnabled(const VmdAnimation* animation, const string& ikBoneName, float timeSeconds) const
+bool AnimationModelResource::IsVmdIkEnabled(const VmdAnimation* animation, const string& ikBoneName, float currentFrame)
 {
 	if (!animation)
 	{
@@ -3471,12 +3401,18 @@ bool AnimationModelResource::IsVmdIkEnabled(const VmdAnimation* animation, const
 	}
 
 	const vector<VmdIkKeyframe>* keys = nullptr;
+	VmdTrackSampleCursor* cursor = nullptr;
 	if (animation == m_CachedVmdPrimaryAnimation)
 	{
 		auto cachedIt = m_VmdIkTrackCache.find(ikBoneName);
 		if (cachedIt != m_VmdIkTrackCache.end())
 		{
 			keys = cachedIt->second;
+		}
+		auto cursorIt = m_VmdIkTrackCursors.find(ikBoneName);
+		if (cursorIt != m_VmdIkTrackCursors.end())
+		{
+			cursor = &cursorIt->second;
 		}
 	}
 	else
@@ -3493,7 +3429,10 @@ bool AnimationModelResource::IsVmdIkEnabled(const VmdAnimation* animation, const
 		return true;
 	}
 
-	const float currentFrame = VmdAnimationImporter::ToFrameTime(animation, timeSeconds);
+	if (cursor)
+	{
+		return VmdAnimationImporter::SampleIkTrackCached(keys, currentFrame, *cursor);
+	}
 	return VmdAnimationImporter::SampleIkTrack(keys, currentFrame);
 }
 
@@ -3503,6 +3442,8 @@ void AnimationModelResource::ApplyPmxIk(const VmdAnimation* animation, float tim
 	{
 		return;
 	}
+
+	const float currentFrame = VmdAnimationImporter::ToFrameTime(animation, timeSeconds);
 
 	auto aiToXm = [](const aiMatrix4x4& src)
 		{
@@ -3680,7 +3621,7 @@ void AnimationModelResource::ApplyPmxIk(const VmdAnimation* animation, float tim
 	rebuildGlobals();
 	for (const PmxIkConstraint& constraint : m_PmxIkConstraints)
 	{
-		if (!IsVmdIkEnabled(animation, constraint.BoneName, timeSeconds) ||
+		if (!IsVmdIkEnabled(animation, constraint.BoneName, currentFrame) ||
 			m_Bone.find(constraint.BoneName) == m_Bone.end() ||
 			m_Bone.find(constraint.TargetBoneName) == m_Bone.end())
 		{
@@ -3888,7 +3829,8 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 		CD3DX12_GPU_DESCRIPTOR_HANDLE srvInputHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), m_Meshes[m].SrvInputVertexIndex, descSize);
 		pCommandList->SetComputeRootDescriptorTable(0, srvInputHandle);
 
-		CD3DX12_GPU_DESCRIPTOR_HANDLE srvBoneHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), descriptorBase + m_kBONE_SRV_OFFSET, descSize);
+		const UINT boneFrameIndex = RendererCore::GetFrameIndex() % RendererState::g_kFRAME_COUNT;
+		CD3DX12_GPU_DESCRIPTOR_HANDLE srvBoneHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), descriptorBase + m_kBONE_SRV_OFFSET + boneFrameIndex, descSize);
 		pCommandList->SetComputeRootDescriptorTable(1, srvBoneHandle);
 
 		CD3DX12_GPU_DESCRIPTOR_HANDLE uavOutputHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), m_Meshes[m].UavOutputVertexIndex, descSize);
@@ -3896,6 +3838,8 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 
 		UINT threadGroups = (m_Meshes[m].VertexCount + kSkinningThreadGroupSize - 1) / kSkinningThreadGroupSize;
 		pCommandList->Dispatch(threadGroups, 1, 1);
+		D3D12_RESOURCE_BARRIER skinningUavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(m_Meshes[m].VertexBuffer.Get());
+		pCommandList->ResourceBarrier(1, &skinningUavBarrier);
 
 		for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
 		{
@@ -3920,6 +3864,8 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 
 			UINT teoThreadGroups = (m_Meshes[m].TeoVertexCounts[mode] + kSkinningThreadGroupSize - 1) / kSkinningThreadGroupSize;
 			pCommandList->Dispatch(teoThreadGroups, 1, 1);
+			D3D12_RESOURCE_BARRIER teoUavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(m_Meshes[m].TeoVertexBuffers[mode].Get());
+			pCommandList->ResourceBarrier(1, &teoUavBarrier);
 		}
 	}
 
@@ -3932,10 +3878,13 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 
 void AnimationModelResource::Uninit()
 {
-	if (m_BoneBuffer && m_pBoneBufferMapped)
+	for (UINT frame = 0; frame < RendererState::g_kFRAME_COUNT; ++frame)
 	{
-		m_BoneBuffer->Unmap(0, nullptr);
-		m_pBoneBufferMapped = nullptr;
+		if (m_BoneBuffers[frame] && m_pBoneBufferMapped[frame])
+		{
+			m_BoneBuffers[frame]->Unmap(0, nullptr);
+			m_pBoneBufferMapped[frame] = nullptr;
+		}
 	}
 
 	m_Meshes.clear();
@@ -3956,6 +3905,7 @@ void AnimationModelResource::Uninit()
 	m_PmxVertexToMeshVertices.clear();
 	m_BoneMatricesScratch.clear();
 	InvalidateVmdRuntimeCache();
+	InvalidatePmxRuntimeCache();
 	m_HasAppliedVmdMorphs = false;
 	m_AabbCenter = {};
 	m_AabbExtents = {};

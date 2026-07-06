@@ -69,6 +69,7 @@ EntityID Light::Create(const CreateDesc& desc)
 
 	auto& light = entity.Get<LightComponent>();
 	light.Type = desc.Type;
+	light.Position = desc.Position;
 	light.Direction = NormalizeDirection(desc.Direction);
 	light.Color = desc.Color;
 	light.Intensity = max(0.0f, desc.Intensity);

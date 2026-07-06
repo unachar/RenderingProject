@@ -12,6 +12,7 @@
 #include "scene.h"
 #include "postprocess.h"
 #include "matrix4x4.h"
+#include "rendererstate.h"
 #include "toonoutlinebuilder.h"
 #include "vmdanimationimpoter.h"
 #pragma comment(lib, "assimp-vc143-mt.lib")
@@ -171,17 +172,19 @@ private:
 
 	static constexpr UINT m_kMAX_BONES = 2096;
 	static constexpr int m_kMAX_BONE_INFLUENCES = 4;
-	static constexpr UINT m_kSKINNING_DESCRIPTORS_PER_MESH = 3 + (ToonOutlineBuilder::kModeCount * 2);
+	static constexpr UINT m_kSKINNING_DESCRIPTORS_PER_MESH = 2 + RendererState::g_kFRAME_COUNT + (ToonOutlineBuilder::kModeCount * 2);
 	static constexpr UINT m_kINPUT_VERTEX_SRV_OFFSET = 0;
 	static constexpr UINT m_kBONE_SRV_OFFSET = 1;
-	static constexpr UINT m_kOUTPUT_VERTEX_UAV_OFFSET = 2;
-	static constexpr UINT m_kTEO_DESCRIPTOR_OFFSET = 3;
+	static constexpr UINT m_kOUTPUT_VERTEX_UAV_OFFSET = 1 + RendererState::g_kFRAME_COUNT;
+	static constexpr UINT m_kTEO_DESCRIPTOR_OFFSET = 2 + RendererState::g_kFRAME_COUNT;
 
 	struct VmdBoneBinding
 	{
 		Bone* BonePtr = nullptr;
 		const vector<VmdKeyframe>* PrimaryTrack = nullptr;
 		const vector<VmdKeyframe>* SecondaryTrack = nullptr;
+		VmdTrackSampleCursor PrimaryCursor{};
+		VmdTrackSampleCursor SecondaryCursor{};
 		aiVector3D BaseScale{ 1.0f, 1.0f, 1.0f };
 		aiQuaternion BaseRotation{ 1.0f, 0.0f, 0.0f, 0.0f };
 		aiVector3D BasePosition{ 0.0f, 0.0f, 0.0f };
@@ -191,6 +194,29 @@ private:
 	{
 		uint32_t MorphIndex = 0;
 		const vector<VmdScalarKeyframe>* Track = nullptr;
+		VmdTrackSampleCursor Cursor{};
+	};
+
+	struct PmxRuntimeNode
+	{
+		aiNode* Node = nullptr;
+		string Name{};
+		int ParentIndex = -1;
+		Bone* BonePtr = nullptr;
+	};
+
+	struct PmxOrderedTransformStep
+	{
+		bool IsIk = false;
+		size_t Index = 0;
+		int32_t DeformDepth = 0;
+		uint32_t BoneOrder = 0;
+	};
+
+	struct PmxAppendResult
+	{
+		aiQuaternion Rotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+		aiVector3D Translation{ 0.0f, 0.0f, 0.0f };
 	};
 
 	XMFLOAT3 m_AabbCenter{};
@@ -229,13 +255,19 @@ private:
 	vector<VmdBoneBinding> m_VmdBoneBindings{};
 	vector<VmdMorphBinding> m_VmdMorphBindings{};
 	unordered_map<string, const vector<VmdIkKeyframe>*> m_VmdIkTrackCache{};
+	unordered_map<string, VmdTrackSampleCursor> m_VmdIkTrackCursors{};
 	vector<pair<uint32_t, float>> m_VmdActiveMorphsScratch{};
 	vector<aiVector3D> m_VmdMorphPositionOffsetsScratch{};
 	vector<XMFLOAT2> m_VmdMorphUvOffsetsScratch{};
+	vector<PmxRuntimeNode> m_PmxRuntimeNodes{};
+	unordered_map<string, size_t> m_PmxRuntimeNodeIndexMap{};
+	vector<XMFLOAT4X4> m_PmxGlobalMatricesScratch{};
+	vector<PmxOrderedTransformStep> m_PmxOrderedTransformSteps{};
+	unordered_map<string, PmxAppendResult> m_PmxAppendResultsScratch{};
 
 
-	ComPtr<ID3D12Resource> m_BoneBuffer{};
-	void* m_pBoneBufferMapped = nullptr;
+	array<ComPtr<ID3D12Resource>, RendererState::g_kFRAME_COUNT> m_BoneBuffers{};
+	array<void*, RendererState::g_kFRAME_COUNT> m_pBoneBufferMapped{};
 	
 
 	ComPtr<ID3D12DescriptorHeap> m_SkinningDescHeap{};
@@ -256,13 +288,14 @@ private:
 		const VmdAnimation* animation2, float frame2, float blendRate);
 	void InvalidateVmdRuntimeCache();
 	void RebuildVmdRuntimeCache(const VmdAnimation* primaryAnimation, const VmdAnimation* secondaryAnimation);
+	void InvalidatePmxRuntimeCache();
+	void RebuildPmxRuntimeCache();
 	bool LoadPmxIkData(const char* fileName);
 	void BuildPmxVertexMeshMap();
 	float SampleVmdMorph(const VmdAnimation* animation, const string& morphName, float timeSeconds) const;
-	void ApplyVmdMorphs(const VmdAnimation* animation, float timeSeconds);
-	void ApplyPmxAppendTransforms();
-	void ApplyPmxOrderedTransforms(const VmdAnimation* animation, float timeSeconds);
-	bool IsVmdIkEnabled(const VmdAnimation* animation, const string& ikBoneName, float timeSeconds) const;
+	void ApplyVmdMorphs(const VmdAnimation* animation, float currentFrame);
+	void ApplyPmxOrderedTransforms(const VmdAnimation* animation, float currentFrame);
+	bool IsVmdIkEnabled(const VmdAnimation* animation, const string& ikBoneName, float currentFrame);
 	void ApplyPmxIk(const VmdAnimation* animation, float timeSeconds);
 
 	void CreateBone(aiNode* node);

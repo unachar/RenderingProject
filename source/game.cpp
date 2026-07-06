@@ -34,8 +34,14 @@ void Game::Init()
 void Game::Create()
 {
 	Camera::Create();
-	const auto& light = Light::Create(LightType::Point);
-	Light::AttachLightTimeLine(light);
+
+	for (int i = 0; i < 3; i++)
+	{
+		const auto& light = Light::Create(LightType::Point);
+	}
+	
+	
+	//Light::AttachLightTimeLine(light);
 
 	AddEntity<Cube>();
 	AddEntity<Polygon3D>();
