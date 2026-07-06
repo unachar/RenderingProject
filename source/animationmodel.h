@@ -13,6 +13,7 @@
 #include "postprocess.h"
 #include "matrix4x4.h"
 #include "toonoutlinebuilder.h"
+#include "vmdanimationimpoter.h"
 #pragma comment(lib, "assimp-vc143-mt.lib")
 
 struct ModelVertex
@@ -31,6 +32,11 @@ struct GpuSkinVertex
 	XMFLOAT4 Diffuse{};
 	int      BoneIndices[4]{};
 	float    BoneWeights[4]{};
+	int      DeformType = 0;
+	int      DeformPadding[3]{};
+	XMFLOAT4 SdefC{};
+	XMFLOAT4 SdefR0{};
+	XMFLOAT4 SdefR1{};
 };
 
 struct DeformVertex
@@ -48,44 +54,6 @@ struct Bone
 	aiMatrix4x4 AnimationMatrix{};
 	aiMatrix4x4 BindLocalMatrix{};
 	aiMatrix4x4 OffsetMatrix{};
-};
-
-struct VmdKeyframe
-{
-	uint32_t Frame = 0;
-	aiVector3D Position{};
-	aiQuaternion Rotation{};
-	XMFLOAT2 XP1{0,0}, XP2{1,1};
-	XMFLOAT2 YP1{0,0}, YP2{1,1};
-	XMFLOAT2 ZP1{0,0}, ZP2{1,1};
-	XMFLOAT2 RotP1{0,0}, RotP2{1,1};
-};
-
-struct VmdScalarKeyframe
-{
-	uint32_t Frame = 0;
-	float Value = 0.0f;
-};
-
-struct VmdIkKeyframe
-{
-	uint32_t Frame = 0;
-	bool Enable = true;
-};
-
-struct VmdAnimation
-{
-	string ModelName{};
-	uint32_t MaxFrame = 0;
-	uint32_t MotionCount = 0;
-	uint32_t MorphCount = 0;
-	uint32_t CameraCount = 0;
-	uint32_t LightCount = 0;
-	uint32_t ShadowCount = 0;
-	uint32_t IkCount = 0;
-	unordered_map<string, vector<VmdKeyframe>> BoneTracks{};
-	unordered_map<string, vector<VmdScalarKeyframe>> MorphTracks{};
-	unordered_map<string, vector<VmdIkKeyframe>> IkTracks{};
 };
 
 struct PmxIkLink
@@ -209,11 +177,28 @@ private:
 	static constexpr UINT m_kOUTPUT_VERTEX_UAV_OFFSET = 2;
 	static constexpr UINT m_kTEO_DESCRIPTOR_OFFSET = 3;
 
+	struct VmdBoneBinding
+	{
+		Bone* BonePtr = nullptr;
+		const vector<VmdKeyframe>* PrimaryTrack = nullptr;
+		const vector<VmdKeyframe>* SecondaryTrack = nullptr;
+		aiVector3D BaseScale{ 1.0f, 1.0f, 1.0f };
+		aiQuaternion BaseRotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+		aiVector3D BasePosition{ 0.0f, 0.0f, 0.0f };
+	};
+
+	struct VmdMorphBinding
+	{
+		uint32_t MorphIndex = 0;
+		const vector<VmdScalarKeyframe>* Track = nullptr;
+	};
+
 	XMFLOAT3 m_AabbCenter{};
 	XMFLOAT3 m_AabbExtents{};
 
 
 	const aiScene* m_AiScene = nullptr;
+	bool m_OwnsGeneratedAiScene = false;
 
 	vector<MeshData> m_Meshes{};
 	vector<string> m_BoneNames{};
@@ -239,6 +224,14 @@ private:
 	vector<vector<pair<uint32_t, uint32_t>>> m_PmxVertexToMeshVertices{};
 	vector<XMFLOAT4X4> m_BoneMatricesScratch{};
 	bool m_HasAppliedVmdMorphs = false;
+	const VmdAnimation* m_CachedVmdPrimaryAnimation = nullptr;
+	const VmdAnimation* m_CachedVmdSecondaryAnimation = nullptr;
+	vector<VmdBoneBinding> m_VmdBoneBindings{};
+	vector<VmdMorphBinding> m_VmdMorphBindings{};
+	unordered_map<string, const vector<VmdIkKeyframe>*> m_VmdIkTrackCache{};
+	vector<pair<uint32_t, float>> m_VmdActiveMorphsScratch{};
+	vector<aiVector3D> m_VmdMorphPositionOffsetsScratch{};
+	vector<XMFLOAT2> m_VmdMorphUvOffsetsScratch{};
 
 
 	ComPtr<ID3D12Resource> m_BoneBuffer{};
@@ -261,6 +254,8 @@ private:
 		aiQuaternion& outRotation, aiVector3D& outPosition) const;
 	void UpdateVmdBoneMatrices(const VmdAnimation* animation1, float frame1,
 		const VmdAnimation* animation2, float frame2, float blendRate);
+	void InvalidateVmdRuntimeCache();
+	void RebuildVmdRuntimeCache(const VmdAnimation* primaryAnimation, const VmdAnimation* secondaryAnimation);
 	bool LoadPmxIkData(const char* fileName);
 	void BuildPmxVertexMeshMap();
 	float SampleVmdMorph(const VmdAnimation* animation, const string& morphName, float timeSeconds) const;

@@ -10,7 +10,7 @@ void Karen::Create()
 	const auto modelPosition = XMFLOAT3(1.0f, 0.0f, 0.0f);
 	const auto modelScale = XMFLOAT3(0.15f, 0.15f, 0.15f);
 	const auto modelPath = "asset\\model\\karenv1.3\\karem.pmx";
-	const auto animPath = "asset\\model\\animation\\anim.vmd";
+	const auto animPath = "asset\\model\\animation\\musicx2.vmd";
 	const auto animName = "anim1";
 
 	auto& entity = World::CreateEntity()

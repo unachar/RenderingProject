@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "animationmodel.h"
+#include "pmxloader.h"
 #include "texturemanager.h"
 #include "rendererdraw.h"
 #include "renderershader.h"
@@ -329,6 +330,90 @@ static void NormalizeBoneInfluences(GpuSkinVertex& gpuVertex, DeformVertex& defo
 	}
 }
 
+static bool IsFiniteAiMatrix(const aiMatrix4x4& matrix)
+{
+	const float values[] =
+	{
+		matrix.a1, matrix.a2, matrix.a3, matrix.a4,
+		matrix.b1, matrix.b2, matrix.b3, matrix.b4,
+		matrix.c1, matrix.c2, matrix.c3, matrix.c4,
+		matrix.d1, matrix.d2, matrix.d3, matrix.d4,
+	};
+	for (float value : values)
+	{
+		if (!isfinite(value))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool IsUsableSkinningMatrix(const aiMatrix4x4& matrix)
+{
+	if (!IsFiniteAiMatrix(matrix) || fabsf(matrix.d4) <= 0.000001f)
+	{
+		return false;
+	}
+
+	const float linearLengthSq =
+		matrix.a1 * matrix.a1 + matrix.a2 * matrix.a2 + matrix.a3 * matrix.a3 +
+		matrix.b1 * matrix.b1 + matrix.b2 * matrix.b2 + matrix.b3 * matrix.b3 +
+		matrix.c1 * matrix.c1 + matrix.c2 * matrix.c2 + matrix.c3 * matrix.c3;
+	return linearLengthSq > 0.000001f;
+}
+
+static bool FindNodeGlobalMatrix(aiNode* node, const string& boneName, const aiMatrix4x4& parentMatrix, aiMatrix4x4& outMatrix)
+{
+	if (!node)
+	{
+		return false;
+	}
+
+	const aiMatrix4x4 worldMatrix = parentMatrix * node->mTransformation;
+	if (boneName == node->mName.C_Str())
+	{
+		outMatrix = worldMatrix;
+		return true;
+	}
+
+	for (unsigned int childIndex = 0; childIndex < node->mNumChildren; ++childIndex)
+	{
+		if (FindNodeGlobalMatrix(node->mChildren[childIndex], boneName, worldMatrix, outMatrix))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+static aiMatrix4x4 GetBoneOffsetMatrixOrFallback(const aiScene* scene, const aiBone* bone)
+{
+	const aiMatrix4x4 identity = MakeAiIdentityMatrix();
+	if (!bone)
+	{
+		return identity;
+	}
+
+	if (IsUsableSkinningMatrix(bone->mOffsetMatrix))
+	{
+		return bone->mOffsetMatrix;
+	}
+
+	aiMatrix4x4 bindGlobalMatrix = identity;
+	if (scene && FindNodeGlobalMatrix(scene->mRootNode, bone->mName.C_Str(), identity, bindGlobalMatrix))
+	{
+		aiMatrix4x4 fallbackOffset = bindGlobalMatrix;
+		fallbackOffset.Inverse();
+		if (IsUsableSkinningMatrix(fallbackOffset))
+		{
+			return fallbackOffset;
+		}
+	}
+
+	return identity;
+}
+
 void AnimationModelResource::CreateBone(aiNode* node)
 {
 	string name = node->mName.C_Str();
@@ -360,19 +445,43 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 {
 	m_pDevice = device;
 
-	unsigned int flags = aiProcessPreset_TargetRealtime_MaxQuality;
-	if (isConvert)
-	{
-		flags |= aiProcess_ConvertToLeftHanded;
-	}
-	m_AiScene = ModelImportUtils::ImportScene(fileName, flags);
-	if (!m_AiScene)
-	{
-		Debug::Log("ERROR: Failed to load animation model: %s (%s)\n", fileName, aiGetErrorString());
-		return false;
-	}
-	LogAssimpModelInfo(m_AiScene, fileName, "Animation");
+	const filesystem::path modelPath = ModelImportUtils::FromUtf8(fileName);
+	const string extension = ModelImportUtils::LowerExtension(modelPath);
+	const bool isPmxModel = extension == ".pmx";
+	PmxBinary::Model pmxModel{};
+	vector<vector<uint32_t>> pmxMeshVertexIndices{};
 
+	if (isPmxModel)
+	{
+		if (!PmxBinary::LoadModel(fileName, pmxModel))
+		{
+			return false;
+		}
+
+		m_AiScene = PmxBinary::CreateGeneratedScene(pmxModel, pmxMeshVertexIndices);
+		m_OwnsGeneratedAiScene = true;
+		if (!m_AiScene)
+		{
+			Debug::Log("ERROR: Failed to generate PMX animation model scene: %s\n", fileName);
+			return false;
+		}
+	}
+	else
+	{
+		unsigned int flags = aiProcessPreset_TargetRealtime_MaxQuality;
+		if (isConvert)
+		{
+			flags |= aiProcess_ConvertToLeftHanded;
+		}
+		m_AiScene = ModelImportUtils::ImportScene(fileName, flags);
+		m_OwnsGeneratedAiScene = false;
+		if (!m_AiScene)
+		{
+			Debug::Log("ERROR: Failed to load animation model: %s (%s)\n", fileName, aiGetErrorString());
+			return false;
+		}
+		LogAssimpModelInfo(m_AiScene, fileName, "Animation");
+	}
 	m_Meshes.resize(m_AiScene->mNumMeshes);
 	m_DeformVertex.resize(m_AiScene->mNumMeshes);
 	m_GpuSkinVertices.resize(m_AiScene->mNumMeshes);
@@ -381,15 +490,27 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 	m_TeoGpuSkinVerticesByMode.resize(m_AiScene->mNumMeshes);
 
 	CreateBone(m_AiScene->mRootNode);
+	m_PmxAppendConstraints.clear();
 	m_PmxIkConstraints.clear();
-	if (ModelImportUtils::LowerExtension(ModelImportUtils::FromUtf8(fileName)) == ".pmx")
+	m_PmxBaseVertices.clear();
+	m_PmxBaseNormals.clear();
+	m_PmxBaseTexCoords.clear();
+	m_PmxMorphs.clear();
+	m_PmxMorphIndexMap.clear();
+	if (isPmxModel)
 	{
-		LoadPmxIkData(fileName);
+		PmxBinary::PopulateAnimationMetadata(
+			pmxModel,
+			m_PmxAppendConstraints,
+			m_PmxIkConstraints,
+			m_PmxBaseVertices,
+			m_PmxBaseNormals,
+			m_PmxBaseTexCoords,
+			m_PmxMorphs,
+			m_PmxMorphIndexMap);
 	}
 
-	const filesystem::path modelPath = ModelImportUtils::FromUtf8(fileName);
 	const string dirPath = ModelImportUtils::ToUtf8(modelPath.parent_path());
-
 	XMFLOAT3 minPos = { FLT_MAX, FLT_MAX, FLT_MAX };
 	XMFLOAT3 maxPos = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
 	bool hasVertices = false;
@@ -442,6 +563,10 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 				gv.BoneIndices[i] = 0;
 				gv.BoneWeights[i] = 0.0f;
 			}
+			if (isPmxModel)
+			{
+				PmxBinary::ApplyVertexDeformData(pmxModel, pmxMeshVertexIndices, m, v, gv);
+			}
 		}
 
 		m_DeformVertex[m].resize(mesh->mNumVertices);
@@ -487,7 +612,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 				boneIt = m_Bone.emplace(boneName, fallbackBone).first;
 			}
 
-			boneIt->second.OffsetMatrix = bone->mOffsetMatrix;
+			boneIt->second.OffsetMatrix = GetBoneOffsetMatrixOrFallback(m_AiScene, bone);
 
 			auto it = m_BoneIndexMap.find(boneName);
 			uint32_t boneIdx = (it != m_BoneIndexMap.end()) ? it->second : 0;
@@ -834,6 +959,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 	}
 
 	BuildPmxVertexMeshMap();
+	InvalidateVmdRuntimeCache();
 
 	if (hasVertices)
 	{
@@ -898,264 +1024,22 @@ bool AnimationModelResource::LoadAnimation(const char* fileName, const char* nam
 	const string animationName = name ? name : "";
 	m_Animation[animationName] = anim;
 	m_VmdAnimations.erase(animationName);
+	InvalidateVmdRuntimeCache();
 	return true;
 }
 
 bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* name)
 {
-	const filesystem::path animPath = ModelImportUtils::FromUtf8(fileName);
-	ifstream stream(animPath, ios::binary);
-	if (!stream)
-	{
-		Debug::Log("ERROR: Failed to open VMD animation: %s\n", fileName);
-		return false;
-	}
-
-	array<char, 30> header{};
-	array<char, 20> modelName{};
-	if (!ReadBinaryArray(stream, header) || !ReadBinaryArray(stream, modelName))
-	{
-		Debug::Log("ERROR: VMD header is too short: %s\n", fileName);
-		return false;
-	}
-
-	const string headerText = DecodeAsciiFixedString(header.data(), header.size());
-	if (headerText.rfind("Vocaloid Motion Data", 0) != 0)
-	{
-		Debug::Log("ERROR: Invalid VMD header: %s (header='%s')\n", fileName, headerText.c_str());
-		return false;
-	}
-
 	VmdAnimation animation{};
-	animation.ModelName = DecodeShiftJisFixedString(modelName.data(), modelName.size());
-	if (!ReadBinary(stream, animation.MotionCount))
-	{
-		Debug::Log("ERROR: VMD motion count is missing: %s\n", fileName);
-		return false;
-	}
-
-	for (uint32_t i = 0; i < animation.MotionCount; ++i)
-	{
-		array<char, 15> boneNameBytes{};
-		uint32_t frame = 0;
-		float px = 0.0f;
-		float py = 0.0f;
-		float pz = 0.0f;
-		float qx = 0.0f;
-		float qy = 0.0f;
-		float qz = 0.0f;
-		float qw = 1.0f;
-		array<char, 64> interpolation{};
-
-		if (!ReadBinaryArray(stream, boneNameBytes) ||
-			!ReadBinary(stream, frame) ||
-			!ReadBinary(stream, px) ||
-			!ReadBinary(stream, py) ||
-			!ReadBinary(stream, pz) ||
-			!ReadBinary(stream, qx) ||
-			!ReadBinary(stream, qy) ||
-			!ReadBinary(stream, qz) ||
-			!ReadBinary(stream, qw) ||
-			!ReadBinaryArray(stream, interpolation))
-		{
-			Debug::Log("ERROR: VMD motion data is truncated: %s (motion=%u/%u)\n",
-				fileName, i, animation.MotionCount);
-			return false;
-		}
-
-		const string boneName = DecodeShiftJisFixedString(boneNameBytes.data(), boneNameBytes.size());
-		if (boneName.empty())
-		{
-			continue;
-		}
-
-		aiVector3D position = ConvertVmdPositionToAssimpLeftHanded(aiVector3D(px, py, pz));
-		aiQuaternion rotation = ConvertVmdRotationToAssimpLeftHanded(aiQuaternion(qw, qx, qy, qz));
-
-		VmdKeyframe keyframe{};
-		keyframe.Frame = frame;
-		keyframe.Position = position;
-		keyframe.Rotation = rotation;
-		keyframe.XP1 = XMFLOAT2(
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[0])),
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[4])));
-		keyframe.XP2 = XMFLOAT2(
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[8])),
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[12])));
-		keyframe.YP1 = XMFLOAT2(
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[1])),
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[5])));
-		keyframe.YP2 = XMFLOAT2(
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[9])),
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[13])));
-		keyframe.ZP1 = XMFLOAT2(
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[2])),
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[6])));
-		keyframe.ZP2 = XMFLOAT2(
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[10])),
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[14])));
-		keyframe.RotP1 = XMFLOAT2(
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[3])),
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[7])));
-		keyframe.RotP2 = XMFLOAT2(
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[11])),
-			NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[15])));
-		animation.BoneTracks[boneName].push_back(keyframe);
-		animation.MaxFrame = max(animation.MaxFrame, frame);
-	}
-
-	if (!ReadOptionalSectionCount(stream, animation.MorphCount, "morph", fileName))
-	{
-		return false;
-	}
-	for (uint32_t i = 0; i < animation.MorphCount; ++i)
-	{
-		array<char, 15> morphNameBytes{};
-		uint32_t frame = 0;
-		float weight = 0.0f;
-		if (!ReadBinaryArray(stream, morphNameBytes) ||
-			!ReadBinary(stream, frame) ||
-			!ReadBinary(stream, weight))
-		{
-			Debug::Log("ERROR: VMD morph data is truncated: %s (morph=%u/%u)\n",
-				fileName, i, animation.MorphCount);
-			return false;
-		}
-
-		const string morphName = DecodeShiftJisFixedString(morphNameBytes.data(), morphNameBytes.size());
-		if (!morphName.empty())
-		{
-			animation.MorphTracks[morphName].push_back({ frame, weight });
-			animation.MaxFrame = max(animation.MaxFrame, frame);
-		}
-	}
-
-	if (!ReadOptionalSectionCount(stream, animation.CameraCount, "camera", fileName) ||
-		!SkipBinaryBytes(stream, static_cast<uint64_t>(animation.CameraCount) * 61u, "camera", fileName))
+	if (!VmdAnimationImporter::Load(fileName, animation))
 	{
 		return false;
 	}
 
-	if (!ReadOptionalSectionCount(stream, animation.LightCount, "light", fileName) ||
-		!SkipBinaryBytes(stream, static_cast<uint64_t>(animation.LightCount) * 28u, "light", fileName))
+	if (animation.BoneTracks.empty())
 	{
+		Debug::Log("ERROR: VMD has no bone motion tracks: %s (motions=%u)\n", fileName, animation.MotionCount);
 		return false;
-	}
-
-	if (!ReadOptionalSectionCount(stream, animation.ShadowCount, "shadow", fileName) ||
-		!SkipBinaryBytes(stream, static_cast<uint64_t>(animation.ShadowCount) * 9u, "shadow", fileName))
-	{
-		return false;
-	}
-
-	if (!ReadOptionalSectionCount(stream, animation.IkCount, "IK", fileName))
-	{
-		return false;
-	}
-	for (uint32_t i = 0; i < animation.IkCount; ++i)
-	{
-		uint32_t frame = 0;
-		unsigned char show = 0;
-		uint32_t ikInfoCount = 0;
-		if (!ReadBinary(stream, frame) ||
-			!ReadBinary(stream, show) ||
-			!ReadBinary(stream, ikInfoCount))
-		{
-			Debug::Log("ERROR: VMD IK data is truncated: %s (ik=%u/%u)\n",
-				fileName, i, animation.IkCount);
-			return false;
-		}
-
-		for (uint32_t info = 0; info < ikInfoCount; ++info)
-		{
-			array<char, 20> ikNameBytes{};
-			unsigned char enable = 0;
-			if (!ReadBinaryArray(stream, ikNameBytes) || !ReadBinary(stream, enable))
-			{
-				Debug::Log("ERROR: VMD IK info is truncated: %s (ik=%u/%u, info=%u/%u)\n",
-					fileName, i, animation.IkCount, info, ikInfoCount);
-				return false;
-			}
-
-			const string ikName = DecodeShiftJisFixedString(ikNameBytes.data(), ikNameBytes.size());
-			if (!ikName.empty())
-			{
-				animation.IkTracks[ikName].push_back({ frame, enable != 0 });
-				animation.MaxFrame = max(animation.MaxFrame, frame);
-			}
-		}
-	}
-
-	for (auto& pair : animation.BoneTracks)
-	{
-		vector<VmdKeyframe>& keys = pair.second;
-		sort(keys.begin(), keys.end(), [](const VmdKeyframe& a, const VmdKeyframe& b)
-			{
-				return a.Frame < b.Frame;
-			});
-
-		vector<VmdKeyframe> uniqueKeys;
-		uniqueKeys.reserve(keys.size());
-		for (const VmdKeyframe& key : keys)
-		{
-			if (!uniqueKeys.empty() && uniqueKeys.back().Frame == key.Frame)
-			{
-				uniqueKeys.back() = key;
-			}
-			else
-			{
-				uniqueKeys.push_back(key);
-			}
-		}
-		keys.swap(uniqueKeys);
-	}
-
-	for (auto& pair : animation.MorphTracks)
-	{
-		vector<VmdScalarKeyframe>& keys = pair.second;
-		sort(keys.begin(), keys.end(), [](const VmdScalarKeyframe& a, const VmdScalarKeyframe& b)
-			{
-				return a.Frame < b.Frame;
-			});
-
-		vector<VmdScalarKeyframe> uniqueKeys;
-		uniqueKeys.reserve(keys.size());
-		for (const VmdScalarKeyframe& key : keys)
-		{
-			if (!uniqueKeys.empty() && uniqueKeys.back().Frame == key.Frame)
-			{
-				uniqueKeys.back() = key;
-			}
-			else
-			{
-				uniqueKeys.push_back(key);
-			}
-		}
-		keys.swap(uniqueKeys);
-	}
-
-	for (auto& pair : animation.IkTracks)
-	{
-		vector<VmdIkKeyframe>& keys = pair.second;
-		sort(keys.begin(), keys.end(), [](const VmdIkKeyframe& a, const VmdIkKeyframe& b)
-			{
-				return a.Frame < b.Frame;
-			});
-
-		vector<VmdIkKeyframe> uniqueKeys;
-		uniqueKeys.reserve(keys.size());
-		for (const VmdIkKeyframe& key : keys)
-		{
-			if (!uniqueKeys.empty() && uniqueKeys.back().Frame == key.Frame)
-			{
-				uniqueKeys.back() = key;
-			}
-			else
-			{
-				uniqueKeys.push_back(key);
-			}
-		}
-		keys.swap(uniqueKeys);
 	}
 
 	size_t matchedTrackCount = 0;
@@ -1169,17 +1053,10 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
 		}
 	}
 
-	if (animation.BoneTracks.empty())
-	{
-		Debug::Log("ERROR: VMD has no bone motion tracks: %s (motions=%u)\n", fileName, animation.MotionCount);
-		return false;
-	}
-
 	const string animationName = name ? name : "";
 	m_VmdAnimations[animationName] = std::move(animation);
 	m_Animation.erase(animationName);
-
-
+	InvalidateVmdRuntimeCache();
 
 	const VmdAnimation& loaded = m_VmdAnimations[animationName];
 	Debug::Log("VMD animation loaded: %s as '%s' (model='%s', motions=%u, boneTracks=%zu, matchedTracks=%zu, matchedKeys=%zu, morphs=%u, morphTracks=%zu, cameras=%u, lights=%u, shadows=%u, ikFrames=%u, ikTracks=%zu, maxFrame=%u)\n",
@@ -1204,6 +1081,79 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
 		Debug::Log("WARNING: VMD loaded but no bone names matched this model: %s\n", fileName);
 	}
 	return true;
+}
+
+void AnimationModelResource::InvalidateVmdRuntimeCache()
+{
+	m_CachedVmdPrimaryAnimation = nullptr;
+	m_CachedVmdSecondaryAnimation = nullptr;
+	m_VmdBoneBindings.clear();
+	m_VmdMorphBindings.clear();
+	m_VmdIkTrackCache.clear();
+	m_VmdActiveMorphsScratch.clear();
+	m_VmdMorphPositionOffsetsScratch.clear();
+	m_VmdMorphUvOffsetsScratch.clear();
+}
+
+void AnimationModelResource::RebuildVmdRuntimeCache(const VmdAnimation* primaryAnimation, const VmdAnimation* secondaryAnimation)
+{
+	m_CachedVmdPrimaryAnimation = primaryAnimation;
+	m_CachedVmdSecondaryAnimation = secondaryAnimation;
+	m_VmdBoneBindings.clear();
+	m_VmdMorphBindings.clear();
+	m_VmdIkTrackCache.clear();
+	m_VmdActiveMorphsScratch.clear();
+
+	if (!primaryAnimation)
+	{
+		return;
+	}
+
+	const VmdAnimation* secondary = secondaryAnimation ? secondaryAnimation : primaryAnimation;
+	m_VmdBoneBindings.reserve(m_Bone.size());
+	for (auto& pair : m_Bone)
+	{
+		VmdBoneBinding binding{};
+		binding.BonePtr = &pair.second;
+		binding.BonePtr->BindLocalMatrix.Decompose(binding.BaseScale, binding.BaseRotation, binding.BasePosition);
+
+		auto primaryTrackIt = primaryAnimation->BoneTracks.find(pair.first);
+		if (primaryTrackIt != primaryAnimation->BoneTracks.end())
+		{
+			binding.PrimaryTrack = &primaryTrackIt->second;
+		}
+
+		auto secondaryTrackIt = secondary->BoneTracks.find(pair.first);
+		if (secondaryTrackIt != secondary->BoneTracks.end())
+		{
+			binding.SecondaryTrack = &secondaryTrackIt->second;
+		}
+
+		m_VmdBoneBindings.push_back(binding);
+	}
+
+	m_VmdMorphBindings.reserve(primaryAnimation->MorphTracks.size());
+	for (const auto& track : primaryAnimation->MorphTracks)
+	{
+		auto morphIt = m_PmxMorphIndexMap.find(track.first);
+		if (morphIt == m_PmxMorphIndexMap.end())
+		{
+			continue;
+		}
+		m_VmdMorphBindings.push_back({ morphIt->second, &track.second });
+	}
+
+	m_VmdIkTrackCache.reserve(primaryAnimation->IkTracks.size());
+	for (const auto& track : primaryAnimation->IkTracks)
+	{
+		m_VmdIkTrackCache.emplace(track.first, &track.second);
+	}
+
+	if (m_VmdMorphPositionOffsetsScratch.size() != m_PmxBaseVertices.size())
+	{
+		m_VmdMorphPositionOffsetsScratch.resize(m_PmxBaseVertices.size());
+		m_VmdMorphUvOffsetsScratch.resize(m_PmxBaseVertices.size());
+	}
 }
 
 bool AnimationModelResource::LoadPmxIkData(const char* fileName)
@@ -2430,8 +2380,14 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
 	{
 		uint32_t idx = kv.second;
 		if (idx >= m_kMAX_BONES) continue;
-		const aiMatrix4x4& src = m_Bone.at(kv.first).Matrix;
 		XMFLOAT4X4& dst = m_BoneMatricesScratch[idx];
+		const aiMatrix4x4& src = m_Bone.at(kv.first).Matrix;
+		if (!IsUsableSkinningMatrix(src))
+		{
+			dst = identity;
+			continue;
+		}
+
 		dst._11 = src.a1; dst._12 = src.a2; dst._13 = src.a3; dst._14 = src.a4;
 		dst._21 = src.b1; dst._22 = src.b2; dst._23 = src.b3; dst._24 = src.b4;
 		dst._31 = src.c1; dst._32 = src.c2; dst._33 = src.c3; dst._34 = src.c4;
@@ -2533,48 +2489,40 @@ float AnimationModelResource::SampleVmdMorph(const VmdAnimation* animation, cons
 	}
 
 	auto trackIt = animation->MorphTracks.find(morphName);
-	if (trackIt == animation->MorphTracks.end() || trackIt->second.empty())
+	if (trackIt == animation->MorphTracks.end())
 	{
 		return 0.0f;
 	}
 
-	const vector<VmdScalarKeyframe>& keys = trackIt->second;
-	float currentFrame = max(0.0f, timeSeconds) * 30.0f;
-	if (animation->MaxFrame > 0)
-	{
-		currentFrame = fmod(currentFrame, static_cast<float>(animation->MaxFrame) + 1.0f);
-	}
-
-	auto nextIt = lower_bound(keys.begin(), keys.end(), currentFrame,
-		[](const VmdScalarKeyframe& key, float frame)
-		{
-			return static_cast<float>(key.Frame) < frame;
-		});
-	if (nextIt == keys.begin())
-	{
-		return nextIt->Value;
-	}
-	if (nextIt == keys.end())
-	{
-		return keys.back().Value;
-	}
-
-	const VmdScalarKeyframe& next = *nextIt;
-	const VmdScalarKeyframe& prev = *(nextIt - 1);
-	if (next.Frame == prev.Frame)
-	{
-		return next.Value;
-	}
-
-	const float factor = clamp(
-		(currentFrame - static_cast<float>(prev.Frame)) / static_cast<float>(next.Frame - prev.Frame),
-		0.0f, 1.0f);
-	return prev.Value * (1.0f - factor) + next.Value * factor;
+	const float currentFrame = VmdAnimationImporter::ToFrameTime(animation, timeSeconds);
+	return VmdAnimationImporter::SampleMorphTrack(&trackIt->second, currentFrame);
 }
 
 void AnimationModelResource::ApplyVmdMorphs(const VmdAnimation* animation, float timeSeconds)
 {
 	if (!animation || m_PmxMorphs.empty())
+	{
+		return;
+	}
+
+	if (animation != m_CachedVmdPrimaryAnimation)
+	{
+		RebuildVmdRuntimeCache(animation, m_CachedVmdSecondaryAnimation);
+	}
+
+	const float currentFrame = VmdAnimationImporter::ToFrameTime(animation, timeSeconds);
+	m_VmdActiveMorphsScratch.clear();
+	m_VmdActiveMorphsScratch.reserve(m_VmdMorphBindings.size());
+	for (const VmdMorphBinding& binding : m_VmdMorphBindings)
+	{
+		const float weight = VmdAnimationImporter::SampleMorphTrack(binding.Track, currentFrame);
+		if (fabsf(weight) > 0.00001f)
+		{
+			m_VmdActiveMorphsScratch.push_back({ binding.MorphIndex, weight });
+		}
+	}
+
+	if (m_VmdActiveMorphsScratch.empty() && !m_HasAppliedVmdMorphs)
 	{
 		return;
 	}
@@ -2592,8 +2540,16 @@ void AnimationModelResource::ApplyVmdMorphs(const VmdAnimation* animation, float
 		}
 	}
 
-	vector<aiVector3D> accumulatedOffsets(m_PmxBaseVertices.size(), aiVector3D(0.0f, 0.0f, 0.0f));
-	vector<XMFLOAT2> accumulatedUvOffsets(m_PmxBaseVertices.size(), XMFLOAT2(0.0f, 0.0f));
+	if (m_VmdMorphPositionOffsetsScratch.size() != m_PmxBaseVertices.size())
+	{
+		m_VmdMorphPositionOffsetsScratch.resize(m_PmxBaseVertices.size());
+		m_VmdMorphUvOffsetsScratch.resize(m_PmxBaseVertices.size());
+	}
+	fill(m_VmdMorphPositionOffsetsScratch.begin(), m_VmdMorphPositionOffsetsScratch.end(), aiVector3D(0.0f, 0.0f, 0.0f));
+	fill(m_VmdMorphUvOffsetsScratch.begin(), m_VmdMorphUvOffsetsScratch.end(), XMFLOAT2(0.0f, 0.0f));
+
+	vector<aiVector3D>& accumulatedOffsets = m_VmdMorphPositionOffsetsScratch;
+	vector<XMFLOAT2>& accumulatedUvOffsets = m_VmdMorphUvOffsetsScratch;
 	bool vertexBufferChanged = false;
 	auto accumulateMorph = [&](auto&& self, uint32_t morphIndex, float weight, int depth) -> void
 		{
@@ -2691,20 +2647,9 @@ void AnimationModelResource::ApplyVmdMorphs(const VmdAnimation* animation, float
 			}
 		};
 
-	for (const auto& track : animation->MorphTracks)
+	for (const auto& activeMorph : m_VmdActiveMorphsScratch)
 	{
-		auto morphIt = m_PmxMorphIndexMap.find(track.first);
-		if (morphIt == m_PmxMorphIndexMap.end())
-		{
-			continue;
-		}
-
-		const float weight = SampleVmdMorph(animation, track.first, timeSeconds);
-		if (fabsf(weight) <= 0.00001f)
-		{
-			continue;
-		}
-		accumulateMorph(accumulateMorph, morphIt->second, weight, 0);
+		accumulateMorph(accumulateMorph, activeMorph.first, activeMorph.second, 0);
 	}
 
 	bool anyMorphApplied = false;
@@ -3453,59 +3398,13 @@ void AnimationModelResource::SampleVmdBone(const VmdAnimation* animation, const 
 	}
 
 	auto trackIt = animation->BoneTracks.find(boneName);
-	if (trackIt == animation->BoneTracks.end() || trackIt->second.empty())
+	if (trackIt == animation->BoneTracks.end())
 	{
 		return;
 	}
 
-	const vector<VmdKeyframe>& keys = trackIt->second;
-	float currentFrame = max(0.0f, timeSeconds) * 30.0f;
-	if (animation->MaxFrame > 0)
-	{
-		currentFrame = fmod(currentFrame, static_cast<float>(animation->MaxFrame) + 1.0f);
-	}
-
-	auto nextIt = lower_bound(keys.begin(), keys.end(), currentFrame,
-		[](const VmdKeyframe& key, float frame)
-		{
-			return static_cast<float>(key.Frame) < frame;
-		});
-
-	if (nextIt == keys.begin())
-	{
-		outRotation = nextIt->Rotation;
-		outPosition = nextIt->Position;
-		return;
-	}
-
-	if (nextIt == keys.end())
-	{
-		outRotation = keys.back().Rotation;
-		outPosition = keys.back().Position;
-		return;
-	}
-
-	const VmdKeyframe& next = *nextIt;
-	const VmdKeyframe& prev = *(nextIt - 1);
-	if (next.Frame == prev.Frame)
-	{
-		outRotation = next.Rotation;
-		outPosition = next.Position;
-		return;
-	}
-
-	const float linearFactor = clamp(
-		(currentFrame - static_cast<float>(prev.Frame)) / static_cast<float>(next.Frame - prev.Frame),
-		0.0f, 1.0f);
-	const float xFactor = GetYFromXOnBezier(linearFactor, next.XP1, next.XP2, 12);
-	const float yFactor = GetYFromXOnBezier(linearFactor, next.YP1, next.YP2, 12);
-	const float zFactor = GetYFromXOnBezier(linearFactor, next.ZP1, next.ZP2, 12);
-	const float rotFactor = GetYFromXOnBezier(linearFactor, next.RotP1, next.RotP2, 12);
-	outPosition.x = prev.Position.x * (1.0f - xFactor) + next.Position.x * xFactor;
-	outPosition.y = prev.Position.y * (1.0f - yFactor) + next.Position.y * yFactor;
-	outPosition.z = prev.Position.z * (1.0f - zFactor) + next.Position.z * zFactor;
-	aiQuaternion::Interpolate(outRotation, prev.Rotation, next.Rotation, rotFactor);
-	outRotation.Normalize();
+	const float currentFrame = VmdAnimationImporter::ToFrameTime(animation, timeSeconds);
+	VmdAnimationImporter::SampleBoneTrack(&trackIt->second, currentFrame, outRotation, outPosition);
 }
 
 void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation1, float frame1,
@@ -3523,17 +3422,29 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation
 		return;
 	}
 
-	const float safeBlendRate = clamp(blendRate, 0.0f, 1.0f);
-	for (auto& pair : m_Bone)
+	if (m_CachedVmdPrimaryAnimation != primaryAnimation || m_CachedVmdSecondaryAnimation != secondaryAnimation)
 	{
-		Bone* bonePtr = &pair.second;
+		RebuildVmdRuntimeCache(primaryAnimation, secondaryAnimation);
+	}
+
+	const float safeBlendRate = clamp(blendRate, 0.0f, 1.0f);
+	const float currentFrame1 = VmdAnimationImporter::ToFrameTime(primaryAnimation, frame1);
+	const float currentFrame2 = VmdAnimationImporter::ToFrameTime(secondaryAnimation, frame2);
+	for (const VmdBoneBinding& binding : m_VmdBoneBindings)
+	{
+		Bone* bonePtr = binding.BonePtr;
+		if (!bonePtr)
+		{
+			continue;
+		}
+
 		aiQuaternion rotation1(1.0f, 0.0f, 0.0f, 0.0f);
 		aiVector3D pos1(0.0f, 0.0f, 0.0f);
 		aiQuaternion rotation2(1.0f, 0.0f, 0.0f, 0.0f);
 		aiVector3D pos2(0.0f, 0.0f, 0.0f);
 
-		SampleVmdBone(primaryAnimation, pair.first, frame1, rotation1, pos1);
-		SampleVmdBone(secondaryAnimation, pair.first, frame2, rotation2, pos2);
+		VmdAnimationImporter::SampleBoneTrack(binding.PrimaryTrack, currentFrame1, rotation1, pos1);
+		VmdAnimationImporter::SampleBoneTrack(binding.SecondaryTrack, currentFrame2, rotation2, pos2);
 
 		const aiVector3D pos = pos1 * (1.0f - safeBlendRate) + pos2 * safeBlendRate;
 
@@ -3541,14 +3452,9 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation
 		aiQuaternion::Interpolate(rotation, rotation1, rotation2, safeBlendRate);
 		rotation.Normalize();
 
-		aiVector3D baseScale(1.0f, 1.0f, 1.0f);
-		aiQuaternion baseRotation(1.0f, 0.0f, 0.0f, 0.0f);
-		aiVector3D basePosition(0.0f, 0.0f, 0.0f);
-		bonePtr->BindLocalMatrix.Decompose(baseScale, baseRotation, basePosition);
-
-		aiQuaternion localRotation = baseRotation * rotation;
+		aiQuaternion localRotation = binding.BaseRotation * rotation;
 		localRotation.Normalize();
-		bonePtr->AnimationMatrix = aiMatrix4x4(baseScale, localRotation, basePosition + pos);
+		bonePtr->AnimationMatrix = aiMatrix4x4(binding.BaseScale, localRotation, binding.BasePosition + pos);
 	}
 
 	ApplyVmdMorphs(primaryAnimation, frame1);
@@ -3564,29 +3470,31 @@ bool AnimationModelResource::IsVmdIkEnabled(const VmdAnimation* animation, const
 		return true;
 	}
 
-	auto trackIt = animation->IkTracks.find(ikBoneName);
-	if (trackIt == animation->IkTracks.end() || trackIt->second.empty())
+	const vector<VmdIkKeyframe>* keys = nullptr;
+	if (animation == m_CachedVmdPrimaryAnimation)
+	{
+		auto cachedIt = m_VmdIkTrackCache.find(ikBoneName);
+		if (cachedIt != m_VmdIkTrackCache.end())
+		{
+			keys = cachedIt->second;
+		}
+	}
+	else
+	{
+		auto trackIt = animation->IkTracks.find(ikBoneName);
+		if (trackIt != animation->IkTracks.end())
+		{
+			keys = &trackIt->second;
+		}
+	}
+
+	if (!keys)
 	{
 		return true;
 	}
 
-	float currentFrame = max(0.0f, timeSeconds) * 30.0f;
-	if (animation->MaxFrame > 0)
-	{
-		currentFrame = fmod(currentFrame, static_cast<float>(animation->MaxFrame) + 1.0f);
-	}
-
-	const vector<VmdIkKeyframe>& keys = trackIt->second;
-	auto nextIt = upper_bound(keys.begin(), keys.end(), currentFrame,
-		[](float frame, const VmdIkKeyframe& key)
-		{
-			return frame < static_cast<float>(key.Frame);
-		});
-	if (nextIt == keys.begin())
-	{
-		return keys.front().Enable;
-	}
-	return (nextIt - 1)->Enable;
+	const float currentFrame = VmdAnimationImporter::ToFrameTime(animation, timeSeconds);
+	return VmdAnimationImporter::SampleIkTrack(keys, currentFrame);
 }
 
 void AnimationModelResource::ApplyPmxIk(const VmdAnimation* animation, float timeSeconds)
@@ -3970,6 +3878,8 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 
 	UINT descSize = m_pDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
+	constexpr UINT kSkinningThreadGroupSize = 128;
+
 	for (UINT m = 0; m < m_Meshes.size(); m++)
 	{
 		if (m_Meshes[m].VertexCount == 0) continue;
@@ -3984,7 +3894,7 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 		CD3DX12_GPU_DESCRIPTOR_HANDLE uavOutputHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), m_Meshes[m].UavOutputVertexIndex, descSize);
 		pCommandList->SetComputeRootDescriptorTable(2, uavOutputHandle);
 
-		UINT threadGroups = (m_Meshes[m].VertexCount + 63) / 64;
+		UINT threadGroups = (m_Meshes[m].VertexCount + kSkinningThreadGroupSize - 1) / kSkinningThreadGroupSize;
 		pCommandList->Dispatch(threadGroups, 1, 1);
 
 		for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
@@ -4008,7 +3918,7 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 				descSize);
 			pCommandList->SetComputeRootDescriptorTable(2, teoUavOutputHandle);
 
-			UINT teoThreadGroups = (m_Meshes[m].TeoVertexCounts[mode] + 63) / 64;
+			UINT teoThreadGroups = (m_Meshes[m].TeoVertexCounts[mode] + kSkinningThreadGroupSize - 1) / kSkinningThreadGroupSize;
 			pCommandList->Dispatch(teoThreadGroups, 1, 1);
 		}
 	}
@@ -4045,16 +3955,24 @@ void AnimationModelResource::Uninit()
 	m_PmxMorphIndexMap.clear();
 	m_PmxVertexToMeshVertices.clear();
 	m_BoneMatricesScratch.clear();
+	InvalidateVmdRuntimeCache();
 	m_HasAppliedVmdMorphs = false;
 	m_AabbCenter = {};
 	m_AabbExtents = {};
 
 	if (m_AiScene)
 	{
-		aiReleaseImport(m_AiScene);
+		if (m_OwnsGeneratedAiScene)
+		{
+			PmxBinary::DestroyGeneratedScene(const_cast<aiScene*>(m_AiScene));
+		}
+		else
+		{
+			aiReleaseImport(m_AiScene);
+		}
 		m_AiScene = nullptr;
+		m_OwnsGeneratedAiScene = false;
 	}
-
 	for (auto& pair : m_Animation)
 	{
 		aiReleaseImport(pair.second);
