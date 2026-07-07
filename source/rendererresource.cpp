@@ -915,19 +915,39 @@ D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetCurrentShadowConstantBufferAddres
 	return GetShadowConstantBufferAddress(g_CurrentShadowPassIndex);
 }
 
+D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetCurrentLightConstantBufferAddress()
+{
+	if (!m_LightConstantBuffer)
+	{
+		return 0;
+	}
+	return m_LightConstantBuffer->GetGPUVirtualAddress() +
+		RendererCore::GetFrameIndex() * g_kLIGHT_CB_ALIGNED_SIZE;
+}
+
+D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetPBRConstantBufferAddress(UINT slot)
+{
+	if (!m_PBRConstantBuffer)
+	{
+		return 0;
+	}
+	const UINT safeSlot = slot < g_kPBR_CB_SLOT_COUNT ? slot : 0;
+	const UINT frameSlot = RendererCore::GetFrameIndex() * g_kPBR_CB_SLOT_COUNT + safeSlot;
+	return m_PBRConstantBuffer->GetGPUVirtualAddress() +
+		frameSlot * g_kPBR_CB_ALIGNED_SIZE;
+}
+
 D3D12_GPU_DESCRIPTOR_HANDLE RendererResource::AllocateTransientConstantBuffer(const ConstantBuffer3D& constants)
 {
-	if (!m_pCbvDataBegin || !m_CbvHeap || m_TransientCbSlot >= g_kTRANSIENT_CB_SLOT_COUNT)
+	UINT8* frameCbvDataBegin = GetConstantBufferPtr();
+	if (!frameCbvDataBegin || !m_CbvHeap || m_TransientCbSlot >= g_kTRANSIENT_CB_SLOT_COUNT)
 	{
 		return {};
 	}
 
 	const UINT slot = g_kTRANSIENT_CB_START_INDEX + m_TransientCbSlot++;
-	memcpy(m_pCbvDataBegin + (slot * g_kCB_ALIGNED_SIZE), &constants, sizeof(constants));
-	return CD3DX12_GPU_DESCRIPTOR_HANDLE(
-		m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
-		slot,
-		m_CbvIncrementSize);
+	memcpy(frameCbvDataBegin + (slot * g_kCB_ALIGNED_SIZE), &constants, sizeof(constants));
+	return GetConstantBufferHandle(slot);
 }
 
 void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
@@ -1014,13 +1034,17 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 		++lightCount;
 	}
 	constants.LightCount = XMFLOAT4(static_cast<float>(lightCount), 0.0f, 0.0f, 0.0f);
-	memcpy(m_pLightCbvDataBegin, &constants, sizeof(constants));
+	auto* lightDst = static_cast<UINT8*>(m_pLightCbvDataBegin) +
+		RendererCore::GetFrameIndex() * g_kLIGHT_CB_ALIGNED_SIZE;
+	memcpy(lightDst, &constants, sizeof(constants));
 
 	// Update PBR constants
 	if (m_pPBRCbvDataBegin)
 	{
 		PBRConstants pbrConstants = BuildPBRConstantsFromMaterial(GetDeferredLightingMaterial());
-		memcpy(m_pPBRCbvDataBegin, &pbrConstants, sizeof(pbrConstants));
+		auto* pbrDst = static_cast<UINT8*>(m_pPBRCbvDataBegin) +
+			RendererCore::GetFrameIndex() * g_kPBR_CB_SLOT_COUNT * g_kPBR_CB_ALIGNED_SIZE;
+		memcpy(pbrDst, &pbrConstants, sizeof(pbrConstants));
 	}
 
 	g_LightConstantsSerial = g_FrameSerial;
@@ -1219,8 +1243,9 @@ void RendererResource::SetMaterial(const EntityID entityID, const MaterialCompon
 	const UINT slot = entityID < g_kMAX_ENTITIES ? entityID + 1 : 0;
 	PBRConstants constants = BuildPBRConstantsFromMaterial(material);
 
-	auto* dst = static_cast<UINT8*>(m_pPBRCbvDataBegin) + slot * g_kPBR_CB_ALIGNED_SIZE;
+	const UINT frameSlot = RendererCore::GetFrameIndex() * g_kPBR_CB_SLOT_COUNT + slot;
+	auto* dst = static_cast<UINT8*>(m_pPBRCbvDataBegin) + frameSlot * g_kPBR_CB_ALIGNED_SIZE;
 	memcpy(dst, &constants, sizeof(constants));
-	m_CommandList->SetGraphicsRootConstantBufferView(3, m_PBRConstantBuffer->GetGPUVirtualAddress() + slot * g_kPBR_CB_ALIGNED_SIZE);
+	m_CommandList->SetGraphicsRootConstantBufferView(3, GetPBRConstantBufferAddress(slot));
 }
 

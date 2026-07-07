@@ -534,13 +534,6 @@ void ImGuiManager::Update()
 	{
 		DeleteSelectedEntity();
 	}
-	if (m_ShowAabbForSelectedOnly)
-	{
-		for (EntityID entity : World::GetView<AABBComponent>())
-		{
-			ComponentManager::GetComponentUnchecked<AABBComponent>(entity).DrawDebug = (entity == m_SelectedEntity);
-		}
-	}
 	DrawDockSpace();
 	DrawSceneViewWindow();
 	PickEntityFromMouse();
@@ -1278,9 +1271,6 @@ void ImGuiManager::DrawEditorMainMenu()
 		ImGui::EndMenu();
 	}
 	ImGui::SameLine();
-	ImGui::Checkbox("選択AABBのみ", &m_ShowAabbForSelectedOnly);
-
-	ImGui::SameLine();
 	ImGui::Checkbox("ライト可視化", &m_ShowLightDebug);
 	ImGui::SameLine();
 	if (ImGui::BeginMenu("ライト追加"))
@@ -1577,7 +1567,6 @@ void ImGuiManager::DrawRenderDebuggerWindow()
 
 	ImGui::Text("描画モード: %s", RendererCore::GetRenderMode() == RenderMode::DEFERRED ? "ディファード" : "フォワード");
 	ImGui::Text("画面: %u x %u", RendererCore::GetSceneWidth(), RendererCore::GetSceneHeight());
-	ImGui::Checkbox("選択AABBのみ", &m_ShowAabbForSelectedOnly);
 
 	ImGui::SeparatorText("セクション");
 	vector<TextureManager::TextureInfo> textures = TextureManager::GetLoadedTextureInfos();

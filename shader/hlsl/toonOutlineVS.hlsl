@@ -35,7 +35,9 @@ PSInput3D main(VSInput3D input)
     output.Position = clipPos;
     output.Normal = worldNormal;
     output.TexCoord = input.TexCoord;
-    output.Diffuse = float4(0.0f, 0.0f, 0.0f, 1.0f);
+    float isSelectionOutline = (ShaderClass == 99) ? 1.0f : 0.0f;
+    float3 outlineColor = lerp(float3(0.0f, 0.0f, 0.0f), float3(1.0f, 0.42f, 0.0f), isSelectionOutline);
+    output.Diffuse = float4(outlineColor, 1.0f);
     output.WorldPos = worldPos.xyz;
     output.ViewPos = viewPos.xyz;
     output.CameraPos = CameraPos;

@@ -163,19 +163,19 @@ bool RendererShader::CreatePostProcessPipeline()
 	if (FAILED(hr)) { ShaderLogToFile("PP: FAIL CreateRootSig\n"); return false; }
 
 	auto cbHeapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-	auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(g_kPP_CB_ALIGNED_SIZE);
+	auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(g_kPP_CB_ALIGNED_SIZE * g_kFRAME_COUNT);
 	ShaderLogToFile("PP: create PP CB\n");
 	hr = m_Device->CreateCommittedResource(&cbHeapProps, D3D12_HEAP_FLAG_NONE, &cbDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_PostProcessConstantBuffer));
 	if (FAILED(hr)) { ShaderLogToFile("PP: FAIL PP CB\n"); return false; }
 	m_PostProcessConstantBuffer->Map(0, nullptr, &m_pPostProcessCbvDataBegin);
 
-	auto lightCbDesc = CD3DX12_RESOURCE_DESC::Buffer(g_kLIGHT_CB_ALIGNED_SIZE);
+	auto lightCbDesc = CD3DX12_RESOURCE_DESC::Buffer(g_kLIGHT_CB_ALIGNED_SIZE * g_kFRAME_COUNT);
 	ShaderLogToFile("PP: create Light CB\n");
 	hr = m_Device->CreateCommittedResource(&cbHeapProps, D3D12_HEAP_FLAG_NONE, &lightCbDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_LightConstantBuffer));
 	if (FAILED(hr)) { ShaderLogToFile("PP: FAIL Light CB\n"); return false; }
 	m_LightConstantBuffer->Map(0, nullptr, &m_pLightCbvDataBegin);
 
-	auto pbrCbDesc = CD3DX12_RESOURCE_DESC::Buffer(g_kPBR_CB_ALIGNED_SIZE * g_kPBR_CB_SLOT_COUNT);
+	auto pbrCbDesc = CD3DX12_RESOURCE_DESC::Buffer(g_kPBR_CB_ALIGNED_SIZE * g_kPBR_CB_TOTAL_SLOT_COUNT);
 	ShaderLogToFile("PP: create PBR CB\n");
 	hr = m_Device->CreateCommittedResource(&cbHeapProps, D3D12_HEAP_FLAG_NONE, &pbrCbDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_PBRConstantBuffer));
 	if (FAILED(hr)) { ShaderLogToFile("PP: FAIL PBR CB\n"); return false; }

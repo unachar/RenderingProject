@@ -9,6 +9,7 @@
 #include "systemmanager.h"
 #include "materialsystem.h"
 #include "camera.h"
+#include "imguimanager.h"
 #include <vector>
 #include <algorithm>
 #include "world.h"
@@ -22,6 +23,10 @@ namespace
 		static const MaterialComponent material{};
 		return material;
 	}
+
+	constexpr int kSelectionOutlineShaderClass = 99;
+	constexpr float kSelectionOutlineWorldProbeWidth = 0.035f;
+	constexpr float kSelectionOutlineScreenWidth = 5.0f;
 
 	bool IsSkyEntity(EntityID entity)
 	{
@@ -74,6 +79,32 @@ namespace
 		return material.ShaderClassMode == MaterialMode::Auto ||
 			(material.ShaderClassMode == MaterialMode::Manual &&
 				material.ShaderClass == ShaderClass::Toon);
+	}
+
+	void ApplySelectionOutlineConstants(ConstantBuffer3D& cb)
+	{
+		cb.ShaderClass = kSelectionOutlineShaderClass;
+		cb.ToonOutlineWidth = kSelectionOutlineWorldProbeWidth;
+		cb.ToonOutlineScreenWidth = kSelectionOutlineScreenWidth;
+		cb.ViewportSize = {
+			max(static_cast<float>(RendererCore::GetSceneWidth()), 1.0f),
+			max(static_cast<float>(RendererCore::GetSceneHeight()), 1.0f)
+		};
+		cb.ToonOutlineUseScreenSpace = 1;
+		cb.MaterialAlpha = 1.0f;
+	}
+
+	D3D12_GPU_DESCRIPTOR_HANDLE CreateSelectionOutlineCbv(UINT8* cbvDataBegin, EntityID entity)
+	{
+		if (!cbvDataBegin)
+		{
+			return {};
+		}
+
+		const auto* source = reinterpret_cast<const ConstantBuffer3D*>(cbvDataBegin + (entity * RendererResource::g_kCB_ALIGNED_SIZE));
+		ConstantBuffer3D outlineConstants = *source;
+		ApplySelectionOutlineConstants(outlineConstants);
+		return RendererResource::AllocateTransientConstantBuffer(outlineConstants);
 	}
 
 	float GetCameraDistanceSq(EntityID entity, const XMFLOAT3& cameraPos)
@@ -156,9 +187,6 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		}
 
 		pCommandList->SetPipelineState(shadowPso);
-		const UINT cbvIncrement = RendererResource::GetCbvIncrementSize();
-		auto heapStart = cbvHeap->GetGPUDescriptorHandleForHeapStart();
-
 		auto writeShadowCb = [&](EntityID entity)
 			{
 				XMMATRIX world = XMLoadFloat4x4(&ComponentManager::GetComponentUnchecked<TransformComponent>(entity).WorldMatrix);
@@ -166,8 +194,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				cb.World = XMMatrixTranspose(world);
 				cb.UseTexture = 0;
 				memcpy(pCbvDataBegin + (entity * RendererResource::g_kCB_ALIGNED_SIZE), &cb, sizeof(cb));
-				CD3DX12_GPU_DESCRIPTOR_HANDLE cbvHandle(heapStart, entity, cbvIncrement);
-				pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+				pCommandList->SetGraphicsRootDescriptorTable(0, RendererResource::GetConstantBufferHandle(entity));
 			};
 
 		for (EntityID i : World::GetView<SpriteComponent>())
@@ -539,6 +566,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		{
 			ID3D12PipelineState* lastPso = nullptr;
 			ID3D12PipelineState* outlinePso = PsoManager::GetOrCreateToonOutlinePso();
+			const EntityID selectedEntity = ImGuiManager::GetSelectedEntity();
 			int lastSrvIndex = -1;
 			int lastNormalSrvIndex = -1;
 
@@ -553,8 +581,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					lastPso = dc.pso;
 				}
 
-				CD3DX12_GPU_DESCRIPTOR_HANDLE cbvHandle(heapStart, dc.EntityID, descriptorIncrement);
-				pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+				pCommandList->SetGraphicsRootDescriptorTable(0, RendererResource::GetConstantBufferHandle(dc.EntityID));
 
 				if (dc.srvIndex != lastSrvIndex)
 				{
@@ -577,6 +604,18 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					pCommandList->SetPipelineState(outlinePso);
 					pCommandList->DrawInstanced(dc.vertexCount, 1, 0, 0);
 					lastPso = outlinePso;
+				}
+
+				if (dc.is3D && outlinePso && dc.EntityID == selectedEntity)
+				{
+					const D3D12_GPU_DESCRIPTOR_HANDLE selectionCbvHandle = CreateSelectionOutlineCbv(pCbvDataBegin, dc.EntityID);
+					if (selectionCbvHandle.ptr != 0)
+					{
+						pCommandList->SetPipelineState(outlinePso);
+						pCommandList->SetGraphicsRootDescriptorTable(0, selectionCbvHandle);
+						pCommandList->DrawInstanced(dc.vertexCount, 1, 0, 0);
+						lastPso = outlinePso;
+					}
 				}
 			}
 		};
