@@ -70,9 +70,6 @@ Makefile
 install_manifest.txt
 compile_commands.json
 
-# NuGet packages
-packages/
-!packages.config
 
 # vcpkg
 vcpkg_installed/
