@@ -59,7 +59,6 @@ build/
 Build/
 build-*/
 assimp/
-External/
 packages/
 asset/model/Alicia
 

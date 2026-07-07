@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ProjectSchemaDefinitions xmlns="http://schemas.microsoft.com/build/2009/properties" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:sys="clr-namespace:System;assembly=mscorlib">
+  
+  <Rule Name="SlangShader" PageTemplate="tool" DisplayName="Slang Shader" Order="100">
+    <Rule.DataSource>
+      <DataSource Persistence="ProjectFile" ItemType="SlangShader" />
+    </Rule.DataSource>
+    
+    <Rule.Categories>
+      <Category Name="General">
+        <Category.DisplayName>
+          <sys:String>General</sys:String>
+        </Category.DisplayName>
+      </Category>
+      <Category Name="Command Line" Subtype="CommandLine">
+        <Category.DisplayName>
+          <sys:String>Command Line</sys:String>
+        </Category.DisplayName>
+      </Category>
+    </Rule.Categories>
+
+    <EnumProperty Name="Stage" Category="General" DisplayName="Shader Stage" Description="Specifies the shader stage (-stage).">
+      <EnumValue Name="compute" DisplayName="Compute" Switch="-stage compute" />
+      <EnumValue Name="vertex" DisplayName="Vertex" Switch="-stage vertex" />
+      <EnumValue Name="pixel" DisplayName="Pixel" Switch="-stage pixel" />
+      <EnumValue Name="geometry" DisplayName="Geometry" Switch="-stage geometry" />
+      <EnumValue Name="hull" DisplayName="Hull" Switch="-stage hull" />
+      <EnumValue Name="domain" DisplayName="Domain" Switch="-stage domain" />
+      <EnumValue Name="raygen" DisplayName="Raygen" Switch="-stage raygen" />
+      <EnumValue Name="closesthit" DisplayName="Closest Hit" Switch="-stage closesthit" />
+      <EnumValue Name="anyhit" DisplayName="Any Hit" Switch="-stage anyhit" />
+      <EnumValue Name="miss" DisplayName="Miss" Switch="-stage miss" />
+      <EnumValue Name="callable" DisplayName="Callable" Switch="-stage callable" />
+    </EnumProperty>
+
+    <StringProperty Name="EntryPoint" Category="General" DisplayName="Entry Point" Description="The entry point function name (-entry)." Switch="-entry &quot;[value]&quot;" />
+    
+    <StringProperty Name="Profile" Category="General" DisplayName="Shader Model Profile" Description="The shader model profile (-profile)." Switch="-profile &quot;[value]&quot;" />
+
+    <!-- コマンドラインを組み立てるテンプレート。プロパティの値を [ ] で埋め込みます -->
+    <StringProperty Name="CommandLineTemplate" DisplayName="Command Line Template" Visible="False" IncludeInCommandLine="False" />
+    <StringProperty Name="ExecutionDescription" DisplayName="Execution Description" Visible="False" IncludeInCommandLine="False" />
+    <StringProperty Name="AdditionalDependencies" DisplayName="Additional Dependencies" Visible="False" IncludeInCommandLine="False" />
+    
+    <StringProperty Subtype="AdditionalOptions" Name="AdditionalOptions" Category="Command Line">
+      <StringProperty.DisplayName>
+        <sys:String>Additional Options</sys:String>
+      </StringProperty.DisplayName>
+      <StringProperty.Description>
+        <sys:String>Additional Options</sys:String>
+      </StringProperty.Description>
+    </StringProperty>
+
+    <StringProperty Name="Outputs" Category="Command Line" DisplayName="Outputs" Description="Generated output file path." Switch="-o &quot;[value]&quot;" />
+  </Rule>
+
+  <ItemType Name="SlangShader" DisplayName="Slang Shader" />
+  <FileExtension Name="*.slang" ContentType="SlangShader" />
+  <ContentType Name="SlangShader" DisplayName="Slang Shader" ItemType="SlangShader" />
+  
+</ProjectSchemaDefinitions>
