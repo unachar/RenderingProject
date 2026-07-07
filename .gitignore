@@ -55,12 +55,12 @@
 /build/
 /Build/
 /build-*/
-Debug/
-Release/
-x64/
-x86/
-bin/
-obj/
+/x64/
+/Release/
+/Debug/
+/x86/
+/bin/
+/obj/
 
 # CMake
 CMakeFiles/
@@ -74,6 +74,14 @@ compile_commands.json
 !External/RTXNS/slang/bin/
 !External/RTXNS/slang/bin/**
 
+# Required DirectXTex library
+!External/DirectXTex/
+!External/DirectXTex/**
+!External/DirectXTex/DirectXTex/Bin/Desktop_2022/x64/Release/DirectXTex.lib
+
+# Required NuGet packages for zip build
+!packages/
+!packages/**
 
 # vcpkg
 vcpkg_installed/
