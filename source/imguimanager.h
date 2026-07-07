@@ -33,7 +33,6 @@ private:
 	inline static bool m_ShowMeshOutlineWindow = false;
 	inline static bool m_ShowMeshShadingWindow = false;
 	inline static bool m_ShowAtmosphereWindow = false;
-	inline static bool m_ShowAabbForSelectedOnly = false;
 	inline static bool m_ShowLightDebug = false;
 	inline static bool m_HdrEnabled = false;
 	inline static bool m_ToneMapEnabled = true;

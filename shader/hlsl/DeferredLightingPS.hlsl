@@ -150,6 +150,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     bool brdf = IsMaterialClass(shaderClass, 12.0f);
     bool btdf = IsMaterialClass(shaderClass, 13.0f);
     bool bsdf = IsMaterialClass(shaderClass, 14.0f);
+    bool selectionOutline = IsMaterialClass(shaderClass, 99.0f);
 
     float3 viewRay = ReconstructPostProcessViewRayCommon(input.TexCoord);
     float3 atmosphereRayEnd = (background || position.w <= 0.0001f) ? (PPCameraPos.xyz + viewRay * 80.0f) : position.xyz;
@@ -164,6 +165,11 @@ float4 main(PSInputPostProcess input) : SV_Target
     if (transparent)
     {
         return baseColor;
+    }
+
+    if (selectionOutline)
+    {
+        return float4(baseColor.rgb, 1.0f);
     }
 
    

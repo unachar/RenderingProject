@@ -233,12 +233,14 @@ public:
 	static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;
 	static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 384 + 255) & ~255;
 	static constexpr UINT g_kPBR_CB_SLOT_COUNT = g_kMAX_ENTITIES + 1;
+	static constexpr UINT g_kPBR_CB_TOTAL_SLOT_COUNT = g_kPBR_CB_SLOT_COUNT * g_kFRAME_COUNT;
 	static constexpr UINT g_kSHADOW_CB_ALIGNED_SIZE = (sizeof(XMMATRIX) + sizeof(float) * 4 + 255) & ~255;
 	static constexpr UINT g_kSHADOW_CB_SLOT_COUNT = g_kFRAME_COUNT * g_kMAX_SHADOW_LIGHTS;
 	static constexpr UINT g_kSHADOW_MAP_SIZE = 2048;
 	static constexpr UINT g_kTRANSIENT_CB_SLOT_COUNT = 1024;
 	static constexpr UINT g_kTRANSIENT_CB_START_INDEX = g_kMAX_ENTITIES;
-	static constexpr UINT g_kCBV_COUNT = g_kMAX_ENTITIES + g_kTRANSIENT_CB_SLOT_COUNT;
+	static constexpr UINT g_kCBV_PER_FRAME_COUNT = g_kMAX_ENTITIES + g_kTRANSIENT_CB_SLOT_COUNT;
+	static constexpr UINT g_kCBV_COUNT = g_kCBV_PER_FRAME_COUNT * g_kFRAME_COUNT;
 	static constexpr uint32_t g_kMAX_SRVS = 512;
 	static constexpr UINT g_kTEXTURE_SRV_START_INDEX = g_kCBV_COUNT;
 	static constexpr UINT g_kSCENE_SRV_INDEX = g_kTEXTURE_SRV_START_INDEX + g_kMAX_SRVS;

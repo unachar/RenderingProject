@@ -30,6 +30,7 @@ class RendererResource : protected RendererState
 {
 public:
 	using RendererState::g_kCB_ALIGNED_SIZE;
+	using RendererState::g_kCBV_PER_FRAME_COUNT;
 	using RendererState::g_kCBV_COUNT;
 	using RendererState::g_kMAX_DYNAMIC_VERTICES;
 	using RendererState::g_kMAX_SRVS;
@@ -47,6 +48,8 @@ public:
 	static void SetCurrentShadowPassIndex(UINT index);
 	static D3D12_GPU_VIRTUAL_ADDRESS GetCurrentShadowConstantBufferAddress();
 	static D3D12_GPU_VIRTUAL_ADDRESS GetShadowConstantBufferAddress(UINT shadowIndex);
+	static D3D12_GPU_VIRTUAL_ADDRESS GetCurrentLightConstantBufferAddress();
+	static D3D12_GPU_VIRTUAL_ADDRESS GetPBRConstantBufferAddress(UINT slot = 0);
 	static void CreateSpriteVertex(const VertexResource& vertexstruct);
 	static void CreateObjectVertex(const VertexResource& vertexstruct);
 	static void SetMaterial(const EntityID entityID, const MaterialComponent& material);
@@ -54,7 +57,31 @@ public:
 	static void BeginFrame();
 
 	static ID3D12DescriptorHeap* GetCbvHeap() { return m_CbvHeap.Get(); }
-	static UINT8* GetConstantBufferPtr() { return m_pCbvDataBegin; }
+	static UINT GetCurrentFrameCbvBaseIndex() { return m_FrameIndex * g_kCBV_PER_FRAME_COUNT; }
+	static UINT GetCurrentFrameCbvIndex(UINT slot)
+	{
+		const UINT safeSlot = slot < g_kCBV_PER_FRAME_COUNT ? slot : g_kCBV_PER_FRAME_COUNT - 1;
+		return GetCurrentFrameCbvBaseIndex() + safeSlot;
+	}
+	static D3D12_GPU_DESCRIPTOR_HANDLE GetConstantBufferHandle(UINT slot)
+	{
+		if (!m_CbvHeap)
+		{
+			return {};
+		}
+		return CD3DX12_GPU_DESCRIPTOR_HANDLE(
+			m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
+			GetCurrentFrameCbvIndex(slot),
+			m_CbvIncrementSize);
+	}
+	static UINT8* GetConstantBufferPtr()
+	{
+		if (!m_pCbvDataBegin)
+		{
+			return nullptr;
+		}
+		return m_pCbvDataBegin + GetCurrentFrameCbvBaseIndex() * g_kCB_ALIGNED_SIZE;
+	}
 	static UINT GetCbvIncrementSize() { return m_CbvIncrementSize; }
 	static ID3D12Resource* GetLightCB() { return m_LightConstantBuffer.Get(); }
 	static ID3D12Resource* GetPBRCB() { return m_PBRConstantBuffer.Get(); }

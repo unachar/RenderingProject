@@ -180,8 +180,8 @@ void RendererDraw::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_T
 	RendererResource::UpdateLightConstantBuffer(1.35f);
 	RendererResource::UpdateShadowConstantBuffer();
 	m_CommandList->SetGraphicsRootSignature(rootSignature);
-	if (m_LightConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(2, m_LightConstantBuffer->GetGPUVirtualAddress());
-	if (m_PBRConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(3, m_PBRConstantBuffer->GetGPUVirtualAddress());
+	if (m_LightConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(2, RendererResource::GetCurrentLightConstantBufferAddress());
+	if (m_PBRConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(3, RendererResource::GetPBRConstantBufferAddress());
 	if (m_ShadowDepthBuffer)
 	{
 		CD3DX12_GPU_DESCRIPTOR_HANDLE shadowSrvHandle(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), RendererState::g_kSHADOW_SRV_INDEX, m_CbvIncrementSize);
@@ -473,7 +473,9 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 				params.PPCameraPos = XMFLOAT4(cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f);
 				params.HdrFlags = XMFLOAT4(ImGuiManager::IsHdrEnabled() ? 1.0f : 0.0f, ImGuiManager::IsToneMapEnabled() ? 1.0f : 0.0f, 0.0f, 0.0f);
 				XMStoreFloat4x4(&params.PPInvViewProjection, XMMatrixTranspose(invViewProjection));
-				memcpy(m_pPostProcessCbvDataBegin, &params, sizeof(params));
+				auto* ppDst = static_cast<UINT8*>(m_pPostProcessCbvDataBegin) +
+					m_FrameIndex * g_kPP_CB_ALIGNED_SIZE;
+				memcpy(ppDst, &params, sizeof(params));
 			}
 			const bool needsLightingConstants = deferredLightStrength > 0.0f;
 			if (needsLightingConstants)
@@ -483,8 +485,13 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 			}
 
 			m_CommandList->SetGraphicsRootDescriptorTable(0, sourceHandle);
-			m_CommandList->SetGraphicsRootConstantBufferView(1, m_PostProcessConstantBuffer->GetGPUVirtualAddress());
-			if (m_LightConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(2, m_LightConstantBuffer->GetGPUVirtualAddress());
+			if (m_PostProcessConstantBuffer)
+			{
+				m_CommandList->SetGraphicsRootConstantBufferView(
+					1,
+					m_PostProcessConstantBuffer->GetGPUVirtualAddress() + m_FrameIndex * g_kPP_CB_ALIGNED_SIZE);
+			}
+			if (m_LightConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(2, RendererResource::GetCurrentLightConstantBufferAddress());
 			int environmentSrvIndex = m_EnvironmentTextureSrvIndex;
 			if (environmentSrvIndex < 0)
 			{
@@ -498,7 +505,7 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 				m_CommandList->SetGraphicsRootDescriptorTable(4, shadowSrvHandle);
 			}
 			if (m_ShadowConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(5, RendererResource::GetCurrentShadowConstantBufferAddress());
-			if (m_PBRConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(6, m_PBRConstantBuffer->GetGPUVirtualAddress());
+			if (m_PBRConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(6, RendererResource::GetPBRConstantBufferAddress());
 			m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			m_CommandList->DrawInstanced(3, 1, 0, 0);
 		};

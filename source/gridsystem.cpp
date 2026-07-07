@@ -46,14 +46,8 @@ void GridSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	cb.Projection = XMMatrixTranspose(projMat);
 	cb.UseTexture = 0;
 
-	const UINT gridSlot = g_kMAX_ENTITIES - 1;
-	UINT8* pCbvDataBegin = RendererResource::GetConstantBufferPtr();
-	memcpy(pCbvDataBegin + (gridSlot * RendererResource::g_kCB_ALIGNED_SIZE), &cb, sizeof(cb));
-
 	UINT cbvIncrement = RendererCore::GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-	CD3DX12_GPU_DESCRIPTOR_HANDLE cbvHandle(
-		RendererResource::GetCbvHeap()->GetGPUDescriptorHandleForHeapStart(), gridSlot, cbvIncrement);
-	pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+	pCommandList->SetGraphicsRootDescriptorTable(0, RendererResource::AllocateTransientConstantBuffer(cb));
 
 	int srvIndex = TextureManager::GetDefaultTextureIndex();
 	CD3DX12_GPU_DESCRIPTOR_HANDLE srvHandle(
