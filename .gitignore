@@ -82,3 +82,7 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# NuGet packages
+packages/
+!packages.config
