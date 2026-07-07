@@ -78,6 +78,8 @@ compile_commands.json
 !External/DirectXTex/
 !External/DirectXTex/**
 !External/DirectXTex/DirectXTex/Bin/Desktop_2022/x64/Release/DirectXTex.lib
+!External/DirectXTex/DirectXTex/Bin/Desktop_2022/x64/Debug/DirectXTex.lib
+
 
 # Required NuGet packages for zip build
 !packages/
