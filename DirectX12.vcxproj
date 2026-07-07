@@ -406,31 +406,6 @@
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
-    <SlangShader Include="shader\slang\neural_network_sample.slang" />
-    <SlangShader Include="shader\slang\pbrToonPS.slang">
-      <ExcludedFromBuild>false</ExcludedFromBuild>
-      <Outputs>$(ProjectDir)shader\slang\build\pbrToonPS.cso</Outputs>
-      <Stage Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">pixel</Stage>
-      <Profile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">sm_6_0</Profile>
-      <Stage Condition="'$(Configuration)|$(Platform)'=='Release|x64'">pixel</Stage>
-      <Profile Condition="'$(Configuration)|$(Platform)'=='Release|x64'">sm_6_0</Profile>
-    </SlangShader>
-    <SlangShader Include="shader\slang\pbrToonVS.slang">
-      <ExcludedFromBuild>false</ExcludedFromBuild>
-      <Outputs>$(ProjectDir)shader\slang\build\pbrToonVS.cso</Outputs>
-      <Stage Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">vertex</Stage>
-      <Profile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">sm_6_0</Profile>
-      <Stage Condition="'$(Configuration)|$(Platform)'=='Release|x64'">vertex</Stage>
-      <Profile Condition="'$(Configuration)|$(Platform)'=='Release|x64'">sm_6_0</Profile>
-    </SlangShader>
-    <SlangShader Include="shader\slang\test.slang">
-      <ExcludedFromBuild>false</ExcludedFromBuild>
-      <Stage Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">compute</Stage>
-      <Profile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">sm_6_0</Profile>
-      <Stage Condition="'$(Configuration)|$(Platform)'=='Release|x64'">compute</Stage>
-    </SlangShader>
-  </ItemGroup>
-  <ItemGroup>
     <!-- ImGui core sources -->
     <ClCompile Include="External\ImGUI\imgui.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -589,9 +564,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
-    <None Include="shader\slang\pbrToonCommon.slang">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
-    </None>
   </ItemGroup>
   <Import Project="External\slang\Slang.targets" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

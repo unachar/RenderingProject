@@ -159,20 +159,6 @@
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
-    <SlangShader Include="shader\slang\test.slang">
-      <Filter>5_shader\Slang</Filter>
-    </SlangShader>
-    <SlangShader Include="shader\slang\neural_network_sample.slang">
-      <Filter>5_shader\Slang</Filter>
-    </SlangShader>
-    <SlangShader Include="shader\slang\pbrToonPS.slang">
-      <Filter>5_shader\Slang</Filter>
-    </SlangShader>
-    <SlangShader Include="shader\slang\pbrToonVS.slang">
-      <Filter>5_shader\Slang</Filter>
-    </SlangShader>
-  </ItemGroup>
-  <ItemGroup>
     <ClCompile Include="source\pch.cpp">
       <Filter>0_pch</Filter>
     </ClCompile>
@@ -565,18 +551,12 @@
     <ClInclude Include="source\cube.h">
       <Filter>2_ecs\2-1_entities</Filter>
     </ClInclude>
+    <ClInclude Include="source\entitybase.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config">
       <Filter>リソース ファイル</Filter>
     </None>
-    <None Include=".github\copilot-instructions.md" />
-    <None Include="shader\slang\pbrToonCommon.slang">
-      <Filter>5_shader\Slang</Filter>
-    </None>
-  </ItemGroup>
-  <ItemGroup>
-    <Text Include="memo.txt" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="source\app.rc">
