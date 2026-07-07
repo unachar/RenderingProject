@@ -9,7 +9,7 @@ Texture2D<float> DepthTexture : register(t3);
 Texture2D<float4> MaterialTexture : register(t4);
 Texture2D<float4> ShadowGBufferTexture : register(t5);
 Texture2D<float4> EnvironmentTexture : register(t6);
-Texture2D<float> ShadowMapTexture : register(t7);
+Texture2DArray<float> ShadowMapTexture : register(t7);
 
 SamplerState TextureSampler : register(s0);
 SamplerState ShadowSampler : register(s1);
@@ -19,11 +19,15 @@ float IsMaterialClass(float value, float target)
     return abs(value - target) < 0.5f;
 }
 
-float SampleDeferredShadowMap(float3 worldPos, float3 normal, float3 lightDir)
+float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, float3 lightDir)
 {
+    float shadowLayer = LightShadowData[lightIndex].x;
+    float shadowEnabled = step(-0.5f, shadowLayer);
+    float safeShadowLayer = max(shadowLayer, 0.0f);
+
     float3 n = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
     float3 l = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
-    float4 lightClip = mul(float4(worldPos, 1.0f), LightViewProjection);
+    float4 lightClip = mul(float4(worldPos, 1.0f), LightViewProjections[lightIndex]);
     float safeW = max(lightClip.w, 0.000001f);
     float3 lightNdc = lightClip.xyz / safeW;
     float2 shadowUv = float2(lightNdc.x * 0.5f + 0.5f, -lightNdc.y * 0.5f + 0.5f);
@@ -34,9 +38,9 @@ float SampleDeferredShadowMap(float3 worldPos, float3 normal, float3 lightDir)
          shadowUv.y >= 0.0f && shadowUv.y <= 1.0f &&
          lightNdc.z >= 0.0f && lightNdc.z <= 1.0f) ? 1.0f : 0.0f;
 
-    float texelSize = ShadowMapParams.x;
+    float texelSize = LightShadowData[lightIndex].y;
     float nDotL = saturate(dot(n, l));
-    float bias = max(ShadowMapParams.y * (1.0f - nDotL), ShadowMapParams.z);
+    float bias = max(LightShadowData[lightIndex].z * (1.0f - nDotL), LightShadowData[lightIndex].w);
     float currentDepth = lightNdc.z - bias;
 
     float visibility = 0.0f;
@@ -46,18 +50,85 @@ float SampleDeferredShadowMap(float3 worldPos, float3 normal, float3 lightDir)
         [unroll]
         for (int x = -2; x <= 2; ++x)
         {
-            float closestDepth = ShadowMapTexture.SampleLevel(ShadowSampler, shadowUv + float2(x, y) * texelSize, 0);
+            float closestDepth = ShadowMapTexture.SampleLevel(ShadowSampler, float3(shadowUv + float2(x, y) * texelSize, safeShadowLayer), 0);
             visibility += (currentDepth <= closestDepth) ? 1.0f : 0.0f;
         }
     }
 
     visibility /= 25.0f;
-    float shadowStrength = saturate(abs(ShadowMapParams.w));
-    float outOfBoundsVisibility = (ShadowMapParams.w < 0.0f) ? 0.0f : 1.0f;
-    return lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
+    float shadowStrength = 1.0f;
+    float outOfBoundsVisibility = 1.0f;
+    float shadowVisibility = lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
+    return lerp(1.0f, shadowVisibility, shadowEnabled);
 }
 
+void ResolveDeferredLightAggregateShadowed(
+    float3 worldPos,
+    float3 normal,
+    out float3 lightDir,
+    out float3 lightColor,
+    out float attenuation,
+    out float volumeScatter,
+    out float rangeBlend,
+    out float aggregateShadowVisibility)
+{
+    lightDir = SafeNormalizeCommon(LightDirection.xyz, float3(0.0f, 1.0f, 0.0f));
+    lightColor = max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColor.a, 0.0f);
+    attenuation = 1.0f;
+    volumeScatter = 0.0f;
+    rangeBlend = saturate((max(LightDirection.w, 1.0f) - 1.0f) / 7.0f);
+    aggregateShadowVisibility = 1.0f;
 
+    int count = min((int)round(LightCount.x), MAX_SHADER_LIGHTS);
+    float3 dirSum = float3(0.0f, 0.0f, 0.0f);
+    float3 colorSum = float3(0.0f, 0.0f, 0.0f);
+    float weightSum = 0.0f;
+    float maxAttenuation = 0.0f;
+    float volumeSum = 0.0f;
+    float rangeSum = 0.0f;
+    float shadowSum = 0.0f;
+
+    [loop]
+    for (int i = 0; i < count; ++i)
+    {
+        float3 singleDir;
+        float singleAttenuation;
+        float singleVolume;
+        ResolveSingleLightCommon(worldPos, LightDirections[i], LightPositionTypes[i], LightExtras[i], singleDir, singleAttenuation, singleVolume);
+
+        float shadowVisibility = SampleDeferredShadowMap(i, worldPos, normal, singleDir);
+        float lightIntensityValue = max(LightColors[i].a, 0.0f);
+        float3 singleColor = max(LightColors[i].rgb, float3(0.0f, 0.0f, 0.0f)) * lightIntensityValue * singleAttenuation * shadowVisibility;
+        singleColor = ApplyAtmosphereToLightCommon(worldPos, singleDir, singleColor, singleVolume);
+
+        float weight = max(dot(max(LightColors[i].rgb, float3(0.0f, 0.0f, 0.0f)) * lightIntensityValue, float3(0.299f, 0.587f, 0.114f)), 0.0001f) * singleAttenuation;
+        dirSum += singleDir * weight;
+        colorSum += singleColor;
+        weightSum += weight;
+        maxAttenuation = max(maxAttenuation, singleAttenuation);
+        volumeSum += singleVolume * lightIntensityValue * shadowVisibility;
+        rangeSum += saturate((max(LightDirections[i].w, 1.0f) - 1.0f) / 7.0f) * weight;
+        shadowSum += shadowVisibility * weight;
+    }
+
+    if (count <= 0 || weightSum <= 0.000001f)
+    {
+        float legacyVolume = 0.0f;
+        ResolveLightCommon(worldPos, lightDir, attenuation, legacyVolume);
+        lightColor = max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColor.a, 0.0f) * attenuation;
+        lightColor = ApplyAtmosphereToLightCommon(worldPos, lightDir, lightColor, legacyVolume);
+        volumeScatter = legacyVolume * max(LightColor.a, 0.0f);
+        rangeBlend = saturate((max(LightDirection.w, 1.0f) - 1.0f) / 7.0f);
+        return;
+    }
+
+    lightDir = SafeNormalizeCommon(dirSum, SafeNormalizeCommon(LightDirection.xyz, float3(0.0f, 1.0f, 0.0f)));
+    lightColor = colorSum + AtmosphereAmbientCommon(worldPos, lightDir);
+    attenuation = saturate(maxAttenuation);
+    volumeScatter = volumeSum;
+    rangeBlend = saturate(rangeSum / weightSum);
+    aggregateShadowVisibility = saturate(shadowSum / weightSum);
+}
 
 float4 main(PSInputPostProcess input) : SV_Target
 {
@@ -107,14 +178,15 @@ float4 main(PSInputPostProcess input) : SV_Target
     float lightAttenuation;
     float volumeScatter;
     float rangeBlend;
-    ResolveLightAggregate(position.xyz, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend);
+    float aggregateShadowVisibility;
+    float3 surfaceNormal = SafeNormalizeCommon(normal.xyz, float3(0.0f, 1.0f, 0.0f));
+    ResolveDeferredLightAggregateShadowed(position.xyz, surfaceNormal, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend, aggregateShadowVisibility);
     float lightIntensity = LightColor.a;
 
     
     float Metallic = material.r;
     float Roughness = material.g;
     float f0 = material.b;
-    float3 surfaceNormal = normalize(normal.xyz);
     
     float3 NdotL = saturate(dot(surfaceNormal, lightDir));
     float3 environmentColor = EnvironmentTexture.SampleLevel(TextureSampler, input.TexCoord, Roughness * 10.0f).rgb;
@@ -134,8 +206,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     
     if(shadow)
     {
-        float shadowVisibility = SampleDeferredShadowMap(position.xyz, surfaceNormal, lightDir);
-        float castShadow = saturate(1.0f - shadowVisibility);
+        float castShadow = saturate(1.0f - aggregateShadowVisibility);
         float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
         float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
         float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
@@ -147,8 +218,7 @@ float4 main(PSInputPostProcess input) : SV_Target
 
     if(toon)
     {
-        float shadowVisibility = SampleDeferredShadowMap(position.xyz, surfaceNormal, lightDir);
-        float castShadow = saturate(1.0f - shadowVisibility);
+        float castShadow = saturate(1.0f - aggregateShadowVisibility);
         float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
         float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
         float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
@@ -162,8 +232,7 @@ float4 main(PSInputPostProcess input) : SV_Target
 
     if(lit)
     {
-        float shadowVisibility = SampleDeferredShadowMap(position.xyz, surfaceNormal, lightDir);
-        float castShadow = saturate(1.0f - shadowVisibility);
+        float castShadow = saturate(1.0f - aggregateShadowVisibility);
         float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
         float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
         float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
@@ -225,7 +294,7 @@ float4 main(PSInputPostProcess input) : SV_Target
 
         float3 diffuseBRDF = kD * albedo / PI;
 
-        float shadowVisibility = SampleDeferredShadowMap(position.xyz, N, L);
+        float shadowVisibility = 1.0f;
 
         float3 directLight =
         (diffuseBRDF + specularBRDF)

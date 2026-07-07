@@ -17,7 +17,7 @@ public:
 	static void BeginSpritePass();
 	static void BeginModelPass();
 	static void BeginLinePass();
-	static void BeginShadowPass();
+	static bool BeginShadowPass(UINT shadowIndex);
 	static void EndShadowPass();
 	static void BeginBackBufferPass();
 	static void BeginEditorSceneOverlayPass();

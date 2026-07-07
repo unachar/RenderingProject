@@ -48,6 +48,8 @@ class World
 {
 private:
 	static float m_DeltaTime;
+	static float m_RawDeltaTime;
+	static float m_SmoothedDeltaTime;
 	static float m_FrameRate;
 	static float m_FrameTimeMs;
 	static double m_FrameStatsAccumulator;
@@ -94,6 +96,7 @@ public:
 	static void Update();
 	static void WaitForFrameLimit();
 	static float GetDeltaTime();
+	static float GetRawDeltaTime();
 	static float GetFrameRate();
 	static float GetFrameTimeMs();
 	static bool IsVSyncEnabled();

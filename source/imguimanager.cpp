@@ -2779,6 +2779,7 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 
 	changed |= ImGui::Checkbox("有効", &light.IsActive);
 	changed |= ImGui::Checkbox("デバッグ描画", &light.DrawDebug);
+	changed |= ImGui::Checkbox("影を描画", &light.CastShadow);
 	changed |= ImGui::ColorEdit3("色", &light.Color.x);
 	changed |= ImGui::DragFloat("ライト強度", &light.Intensity, 0.01f, 0.0f, 20.0f);
 	changed |= ImGui::DragFloat("範囲", &light.Range, 0.05f, 0.1f, 100.0f);

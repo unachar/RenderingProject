@@ -2,6 +2,8 @@
 #include "world.h"
 
 float World::m_DeltaTime = 0.0f;
+float World::m_RawDeltaTime = 0.0f;
+float World::m_SmoothedDeltaTime = 0.0f;
 float World::m_FrameRate = 0.0f;
 float World::m_FrameTimeMs = 0.0f;
 double World::m_FrameStatsAccumulator = 0.0;
@@ -61,6 +63,10 @@ void World::UnregisterName(EntityID entity)
 
 void World::Update()
 {
+    constexpr float kMaxDeltaTime = 0.1f;
+    constexpr float kSmoothingResetDelta = 1.0f / 20.0f;
+    constexpr float kFastFrameDelta = 1.0f / 120.0f;
+
     if (m_Frequency == 0)
     {
         LARGE_INTEGER li;
@@ -69,28 +75,42 @@ void World::Update()
         QueryPerformanceCounter(&li);
         m_LastTime = li.QuadPart;
         m_DeltaTime = 1.0f / 60.0f;
+        m_RawDeltaTime = m_DeltaTime;
+        m_SmoothedDeltaTime = m_DeltaTime;
+        m_FrameTimeMs = m_DeltaTime * 1000.0f;
         return;
     }
 
     LARGE_INTEGER li;
     QueryPerformanceCounter(&li);
     long long currentTime = li.QuadPart;
-    m_DeltaTime = static_cast<float>(currentTime - m_LastTime) / m_Frequency;
+    m_RawDeltaTime = static_cast<float>(currentTime - m_LastTime) / m_Frequency;
     m_LastTime = currentTime;
 
-    if (m_DeltaTime > 0.1f)
+    if (m_RawDeltaTime > kMaxDeltaTime)
     {
-        m_DeltaTime = 0.1f;
+        m_RawDeltaTime = kMaxDeltaTime;
     }
-    else if (m_DeltaTime < 0.0f)
+    else if (m_RawDeltaTime < 0.0f)
     {
-        m_DeltaTime = 0.0f;
+        m_RawDeltaTime = 0.0f;
     }
 
-    m_FrameTimeMs = m_DeltaTime * 1000.0f;
-    m_FrameStatsAccumulator += m_DeltaTime;
+    if (m_SmoothedDeltaTime <= 0.0f || m_RawDeltaTime >= kSmoothingResetDelta)
+    {
+        m_SmoothedDeltaTime = m_RawDeltaTime;
+    }
+    else
+    {
+        const float smoothRate = (m_RawDeltaTime <= kFastFrameDelta) ? 0.18f : 0.32f;
+        m_SmoothedDeltaTime += (m_RawDeltaTime - m_SmoothedDeltaTime) * smoothRate;
+    }
+
+    m_DeltaTime = m_SmoothedDeltaTime;
+    m_FrameTimeMs = m_RawDeltaTime * 1000.0f;
+    m_FrameStatsAccumulator += m_RawDeltaTime;
     m_FrameStatsCount++;
-    if (m_FrameStatsAccumulator >= 0.25)
+    if (m_FrameStatsAccumulator >= 0.5)
     {
         m_FrameRate = m_FrameStatsAccumulator > 0.0
             ? static_cast<float>(m_FrameStatsCount / m_FrameStatsAccumulator)
@@ -131,6 +151,11 @@ void World::WaitForFrameLimit()
 float World::GetDeltaTime()
 {
     return m_DeltaTime;
+}
+
+float World::GetRawDeltaTime()
+{
+    return m_RawDeltaTime;
 }
 
 float World::GetFrameRate()

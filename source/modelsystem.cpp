@@ -224,9 +224,9 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			}
 
 			pCommandList->SetGraphicsRootSignature(RendererShader::GetModelRootSignature());
-			if (ID3D12Resource* shadowCb = RendererResource::GetShadowCB())
+			if (RendererResource::GetShadowCB())
 			{
-				pCommandList->SetGraphicsRootConstantBufferView(5, shadowCb->GetGPUVirtualAddress());
+				pCommandList->SetGraphicsRootConstantBufferView(5, RendererResource::GetCurrentShadowConstantBufferAddress());
 			}
 			pCommandList->SetPipelineState(shadowPso);
 			writeShadowCb(i);

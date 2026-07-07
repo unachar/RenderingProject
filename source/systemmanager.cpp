@@ -2,6 +2,7 @@
 #include "systemmanager.h"
 #include "rendererdraw.h"
 #include "renderercore.h"
+#include "rendererresource.h"
 #include "componentmanager.h"
 #include "world.h"
 #include "camera.h"
@@ -87,9 +88,20 @@ void SystemManager::RenderFlow()
 {
 	auto renderDeferred = []()
 		{
-			RendererDraw::BeginShadowPass();
-			DrawSystem(RenderPass::ShadowMap, false);
-			RendererDraw::EndShadowPass();
+			const UINT shadowLightCount = RendererResource::GetShadowLightCount();
+			for (UINT shadowIndex = 0; shadowIndex < shadowLightCount; ++shadowIndex)
+			{
+				if (RendererDraw::BeginShadowPass(shadowIndex))
+				{
+					DrawSystem(RenderPass::ShadowMap, false);
+					RendererDraw::EndShadowPass();
+				}
+			}
+			if (shadowLightCount > 0)
+			{
+				RendererResource::SetCurrentShadowPassIndex(0);
+				RendererResource::UpdateShadowConstantBuffer();
+			}
 
 			RendererDraw::BeginScenePass();
 			DrawSystem(RenderPass::PrimaryScene, false);

@@ -31,6 +31,7 @@ public:
 		int VolumeShape = 0;
 		bool IsActive = true;
 		bool DrawDebug = true;
+		bool CastShadow = true;
 	};
 
 	static CreateDesc MakeDefaultDesc(LightType type);

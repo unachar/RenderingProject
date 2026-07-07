@@ -43,6 +43,10 @@ public:
 
 	static void UpdateLightConstantBuffer(float deferredLightStrength);
 	static void UpdateShadowConstantBuffer();
+	static UINT GetShadowLightCount();
+	static void SetCurrentShadowPassIndex(UINT index);
+	static D3D12_GPU_VIRTUAL_ADDRESS GetCurrentShadowConstantBufferAddress();
+	static D3D12_GPU_VIRTUAL_ADDRESS GetShadowConstantBufferAddress(UINT shadowIndex);
 	static void CreateSpriteVertex(const VertexResource& vertexstruct);
 	static void CreateObjectVertex(const VertexResource& vertexstruct);
 	static void SetMaterial(const EntityID entityID, const MaterialComponent& material);
