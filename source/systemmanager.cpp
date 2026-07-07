@@ -2,6 +2,7 @@
 #include "systemmanager.h"
 #include "rendererdraw.h"
 #include "renderercore.h"
+#include "rendererresource.h"
 #include "componentmanager.h"
 #include "world.h"
 #include "camera.h"
@@ -22,9 +23,6 @@
 #include "debugsystem.h"
 #include "postprocesssystem.h"
 
-// unique_ptr に変更
-vector<unique_ptr<SystemBase>> SystemManager::m_Systems;
-unordered_map<type_index, SystemBase*> SystemManager::m_SystemMap;
 
 bool SystemManager::Init()
 {
@@ -36,23 +34,6 @@ bool SystemManager::Init()
 			m_SystemMap[type_index(typeid(*rawPtr))] = rawPtr;
 		};
 
-	// System execution order:
-	// 1. InputSystem - Maps raw input to InputComponent booleans
-	// 2. MovementSystem - Applies movement from input (position/velocity)
-	// 3. CameraControlSystem - Handles camera rotation and target tracking
-	// 4. PostProcessInputSystem - Handles post-process type/intensity input
-	// 5. TimeLineSystem - Evaluates Timeline Directors and writes ECS components
-	// 6. AnimationSystem - Advances animation frames
-	// 7. MaterialSystem - Resolves unbound textures from model resources
-	// 8. LightSystem - Ensures default light exists, updates light direction
-	// 9. CameraSystem - Computes view/projection matrices
-	// 10. TransformSystem - Rebuilds world matrices from dirty transforms
-	// Draw systems (called during render flow):
-	// 11. GridSystem - Draws grid lines
-	// 12. RenderSystem - Draws sprites and 3D quads
-	// 13. ModelSystem - Draws animated and static models
-	// 14. DebugSystem - Draws debug shapes (DEBUG only)
-	// Note: PostProcessSystem is called separately in RenderFlow between scene and back buffer passes
 
 	addSystem(make_unique<InputSystem>());
 	addSystem(make_unique<MovementSystem>());
@@ -107,9 +88,20 @@ void SystemManager::RenderFlow()
 {
 	auto renderDeferred = []()
 		{
-			RendererDraw::BeginShadowPass();
-			DrawSystem(RenderPass::ShadowMap, false);
-			RendererDraw::EndShadowPass();
+			const UINT shadowLightCount = RendererResource::GetShadowLightCount();
+			for (UINT shadowIndex = 0; shadowIndex < shadowLightCount; ++shadowIndex)
+			{
+				if (RendererDraw::BeginShadowPass(shadowIndex))
+				{
+					DrawSystem(RenderPass::ShadowMap, false);
+					RendererDraw::EndShadowPass();
+				}
+			}
+			if (shadowLightCount > 0)
+			{
+				RendererResource::SetCurrentShadowPassIndex(0);
+				RendererResource::UpdateShadowConstantBuffer();
+			}
 
 			RendererDraw::BeginScenePass();
 			DrawSystem(RenderPass::PrimaryScene, false);

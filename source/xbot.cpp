@@ -8,7 +8,8 @@ void XBot::Create()
 {
 	const auto modelName = "XBot";
 
-	const auto modelScale = XMFLOAT3(0.03f, 0.03f, 0.03f);
+	const auto modelPosition = XMFLOAT3(-5.0f, 0.0f, 0.0f);
+	const auto modelScale = XMFLOAT3(0.01f, 0.01f, 0.01f);
 
 	const auto modelPath = "asset\\model\\XBot.fbx";
 	const auto animPath1 = "asset\\model\\standup.fbx";
@@ -16,7 +17,7 @@ void XBot::Create()
 	constexpr bool isConvert = true;
 
 	const auto animations = vector<string>{ "Standup", "Idle" };
-	const auto currentAnimation = "Idle";
+	const auto currentAnimation = "Standup";
 
 
 	auto& entity = World::CreateEntity()

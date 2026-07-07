@@ -7,8 +7,11 @@
 #include "texturemanager.h"
 #include "componentmanager.h"
 #include "imguimanager.h"
+#include "materialsystem.h"
 #include "light.h"
 #include "camera.h"
+#include "atmosphere.h"
+#include <limits>
 
 namespace
 {
@@ -21,7 +24,18 @@ namespace
 
 	RuntimeLightState g_CachedDirectionalLight{};
 	RuntimeLightState g_CachedAnyLight{};
+	RuntimeLightState g_CachedShadowLight{};
+	XMMATRIX g_ShadowLightViewProjections[RendererState::g_kMAX_SHADOW_LIGHTS]{};
+	XMFLOAT4 g_ShadowMapParams[RendererState::g_kMAX_SHADOW_LIGHTS]{};
+	EntityID g_ShadowLightEntities[RendererState::g_kMAX_SHADOW_LIGHTS]{};
+	UINT g_ShadowLightCount = 0;
+	UINT g_CurrentShadowPassIndex = 0;
 	bool g_LightCacheValid = false;
+	uint64_t g_FrameSerial = 0;
+	uint64_t g_LightConstantsSerial = 0;
+	uint64_t g_ShadowConstantsSerial = 0;
+	UINT g_ShadowConstantsPassIndex = UINT_MAX;
+	float g_LightConstantsStrength = -1.0f;
 
 	struct LightConstants
 	{
@@ -34,6 +48,13 @@ namespace
 		XMFLOAT4 LightColors[RendererState::g_kMAX_SHADER_LIGHTS]{};
 		XMFLOAT4 LightPositionTypes[RendererState::g_kMAX_SHADER_LIGHTS]{};
 		XMFLOAT4 LightExtras[RendererState::g_kMAX_SHADER_LIGHTS]{};
+		XMMATRIX LightViewProjections[RendererState::g_kMAX_SHADER_LIGHTS]{};
+		XMFLOAT4 LightShadowData[RendererState::g_kMAX_SHADER_LIGHTS]{};
+		XMFLOAT4 AtmosphereParams0 = { 1.0f, 0.42f, 0.075f, 0.36f };
+		XMFLOAT4 AtmosphereParams1 = { 0.18f, 0.22f, 0.76f, 0.030f };
+		XMFLOAT4 AtmosphereColor0 = { 0.46f, 0.62f, 1.0f, 0.55f };
+		XMFLOAT4 AtmosphereColor1 = { 1.0f, 0.82f, 0.56f, 0.035f };
+		XMFLOAT4 AtmosphereCamera = { 0.0f, 0.0f, 0.0f, 0.0f };
 	};
 
 	struct MaterialPartShaderConstants
@@ -192,6 +213,14 @@ namespace
 		XMFLOAT4 ShadowMapParams = { 1.0f / RendererState::g_kSHADOW_MAP_SIZE, 0.0015f, 0.0025f, 1.0f };
 	};
 
+	UINT GetShadowConstantBufferSlot(UINT shadowIndex)
+	{
+		const UINT safeShadowIndex = min(shadowIndex, RendererState::g_kMAX_SHADOW_LIGHTS - 1);
+		return RendererCore::GetFrameIndex() * RendererState::g_kMAX_SHADOW_LIGHTS + safeShadowIndex;
+	}
+
+	void BuildShadowViewProjection(const RuntimeLightState& runtimeLight, XMMATRIX& outLightViewProjection, XMFLOAT4& outShadowMapParams);
+
 	XMFLOAT3 NormalizeFloat3(const XMFLOAT3& value, const XMFLOAT3& fallback)
 	{
 		XMVECTOR v = XMLoadFloat3(&value);
@@ -201,10 +230,64 @@ namespace
 		return result;
 	}
 
+	XMFLOAT3 GetActiveCameraPosition()
+	{
+		const EntityID cameraEntity = Camera::GetCameraEntity();
+		if (cameraEntity != g_kINVALID_ENTITY &&
+			Registry::IsAlive(cameraEntity) &&
+			ComponentManager::HasComponent<TransformComponent>(cameraEntity))
+		{
+			return ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
+		}
+		return { 0.0f, 0.0f, -5.0f };
+	}
+
+	void WriteAtmosphereConstants(LightConstants& constants)
+	{
+		const AtmosphereParameters& atmosphere = Atmosphere::GetParameters();
+		constants.AtmosphereParams0 = XMFLOAT4(
+			atmosphere.Enabled ? 1.0f : 0.0f,
+			max(0.0f, atmosphere.RayleighStrength),
+			max(0.0f, atmosphere.MieStrength),
+			max(0.0f, atmosphere.Density));
+		constants.AtmosphereParams1 = XMFLOAT4(
+			max(0.0f, atmosphere.HeightFalloff),
+			max(0.0f, atmosphere.Extinction),
+			clamp(atmosphere.MieG, -0.95f, 0.95f),
+			max(0.0001f, atmosphere.DistanceScale));
+		constants.AtmosphereColor0 = XMFLOAT4(
+			atmosphere.RayleighColor.x,
+			atmosphere.RayleighColor.y,
+			atmosphere.RayleighColor.z,
+			max(0.0f, atmosphere.LightShaftStrength));
+		constants.AtmosphereColor1 = XMFLOAT4(
+			atmosphere.MieColor.x,
+			atmosphere.MieColor.y,
+			atmosphere.MieColor.z,
+			max(0.0f, atmosphere.AmbientStrength));
+
+		const XMFLOAT3 cameraPosition = GetActiveCameraPosition();
+		constants.AtmosphereCamera = XMFLOAT4(cameraPosition.x, cameraPosition.y, cameraPosition.z, 0.0f);
+	}
+
 	void RebuildLightCache()
 	{
 		g_CachedDirectionalLight = {};
 		g_CachedAnyLight = {};
+		g_CachedShadowLight = {};
+		g_ShadowLightCount = 0;
+		g_CurrentShadowPassIndex = 0;
+		for (UINT i = 0; i < RendererState::g_kMAX_SHADOW_LIGHTS; ++i)
+		{
+			g_ShadowLightEntities[i] = g_kINVALID_ENTITY;
+			g_ShadowLightViewProjections[i] = XMMatrixIdentity();
+			g_ShadowMapParams[i] = XMFLOAT4(
+				1.0f / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE),
+				0.000008f,
+				0.00001f,
+				0.0f);
+		}
+
 		for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
 		{
 			const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
@@ -220,6 +303,25 @@ namespace
 				g_CachedAnyLight.Position = transform.Position;
 				g_CachedAnyLight.HasLight = true;
 			}
+			if (light.Type != LightType::Directional && !g_CachedShadowLight.HasLight)
+			{
+				g_CachedShadowLight.Component = light;
+				g_CachedShadowLight.Position = transform.Position;
+				g_CachedShadowLight.HasLight = true;
+			}
+			if (light.CastShadow && g_ShadowLightCount < RendererState::g_kMAX_SHADOW_LIGHTS)
+			{
+				RuntimeLightState shadowLight{};
+				shadowLight.Component = light;
+				shadowLight.Position = transform.Position;
+				shadowLight.HasLight = true;
+				g_ShadowLightEntities[g_ShadowLightCount] = entity;
+				BuildShadowViewProjection(
+					shadowLight,
+					g_ShadowLightViewProjections[g_ShadowLightCount],
+					g_ShadowMapParams[g_ShadowLightCount]);
+				++g_ShadowLightCount;
+			}
 			if (light.Type == LightType::Directional && !g_CachedDirectionalLight.HasLight)
 			{
 				g_CachedDirectionalLight.Component = light;
@@ -227,7 +329,23 @@ namespace
 				g_CachedDirectionalLight.HasLight = true;
 			}
 		}
+		if (!g_CachedShadowLight.HasLight)
+		{
+			g_CachedShadowLight = g_CachedDirectionalLight.HasLight ? g_CachedDirectionalLight : g_CachedAnyLight;
+		}
 		g_LightCacheValid = true;
+	}
+
+	int FindShadowLightIndex(EntityID entity)
+	{
+		for (UINT i = 0; i < g_ShadowLightCount; ++i)
+		{
+			if (g_ShadowLightEntities[i] == entity)
+			{
+				return static_cast<int>(i);
+			}
+		}
+		return -1;
 	}
 
 	const RuntimeLightState& GetCachedLightState(bool preferDirectional)
@@ -237,6 +355,240 @@ namespace
 			RebuildLightCache();
 		}
 		return preferDirectional ? g_CachedDirectionalLight : g_CachedAnyLight;
+	}
+
+	const RuntimeLightState& GetCachedShadowLightState()
+	{
+		if (!g_LightCacheValid)
+		{
+			RebuildLightCache();
+		}
+		return g_CachedShadowLight;
+	}
+
+	bool IsSkyEntity(EntityID entity)
+	{
+		return ComponentManager::HasComponent<NameComponent>(entity) &&
+			ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky";
+	}
+
+	bool IsShadowBoundsEntity(EntityID entity)
+	{
+		if (!Registry::IsAlive(entity) ||
+			!ComponentManager::HasComponent<TransformComponent>(entity) ||
+			ComponentManager::HasComponent<LightComponent>(entity) ||
+			IsSkyEntity(entity))
+		{
+			return false;
+		}
+
+		bool renderable =
+			ComponentManager::HasComponent<MeshComponent>(entity) ||
+			ComponentManager::HasComponent<StaticModelComponent>(entity) ||
+			ComponentManager::HasComponent<AnimationModelComponent>(entity);
+
+		if (ComponentManager::HasComponent<SpriteComponent>(entity))
+		{
+			const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
+			renderable |= sprite.Is3D;
+		}
+
+		if (!renderable)
+		{
+			return false;
+		}
+
+		if (ComponentManager::HasComponent<MaterialComponent>(entity))
+		{
+			const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+			if (MaterialSystem::IsTransparentMaterial(material) ||
+				(material.ShaderClassMode == MaterialMode::Manual && material.ShaderClass == ShaderClass::Shadow))
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	void IncludeBoundsPoint(XMVECTOR point, XMVECTOR& boundsMin, XMVECTOR& boundsMax, bool& hasBounds)
+	{
+		if (!hasBounds)
+		{
+			boundsMin = point;
+			boundsMax = point;
+			hasBounds = true;
+			return;
+		}
+
+		boundsMin = XMVectorMin(boundsMin, point);
+		boundsMax = XMVectorMax(boundsMax, point);
+	}
+
+	void IncludeBoundsSphere(XMVECTOR center, float radius, XMVECTOR& boundsMin, XMVECTOR& boundsMax, bool& hasBounds)
+	{
+		const XMVECTOR extent = XMVectorReplicate(max(radius, 0.01f));
+		IncludeBoundsPoint(XMVectorSubtract(center, extent), boundsMin, boundsMax, hasBounds);
+		IncludeBoundsPoint(XMVectorAdd(center, extent), boundsMin, boundsMax, hasBounds);
+	}
+
+	void BuildShadowFocusBounds(XMVECTOR& outCenter, float& outRadius)
+	{
+		bool hasBounds = false;
+		XMVECTOR boundsMin = XMVectorReplicate(std::numeric_limits<float>::max());
+		XMVECTOR boundsMax = XMVectorReplicate(-std::numeric_limits<float>::max());
+
+		for (EntityID entity : World::GetView<TransformComponent>())
+		{
+			if (!IsShadowBoundsEntity(entity))
+			{
+				continue;
+			}
+
+			const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+			const XMVECTOR position = XMLoadFloat3(&transform.Position);
+			const XMFLOAT3 absScale =
+			{
+				fabsf(transform.Scale.x),
+				fabsf(transform.Scale.y),
+				fabsf(transform.Scale.z)
+			};
+
+			if (ComponentManager::HasComponent<AABBComponent>(entity))
+			{
+				const auto& aabb = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
+				XMFLOAT3 scaledCenter =
+				{
+					aabb.Center.x * transform.Scale.x,
+					aabb.Center.y * transform.Scale.y,
+					aabb.Center.z * transform.Scale.z
+				};
+				XMFLOAT3 scaledExtents =
+				{
+					max(fabsf(aabb.Extents.x * absScale.x), 0.05f),
+					max(fabsf(aabb.Extents.y * absScale.y), 0.05f),
+					max(fabsf(aabb.Extents.z * absScale.z), 0.05f)
+				};
+
+				const XMVECTOR center = XMVectorAdd(position, XMLoadFloat3(&scaledCenter));
+				const XMVECTOR extents = XMLoadFloat3(&scaledExtents);
+				IncludeBoundsPoint(XMVectorSubtract(center, extents), boundsMin, boundsMax, hasBounds);
+				IncludeBoundsPoint(XMVectorAdd(center, extents), boundsMin, boundsMax, hasBounds);
+			}
+			else
+			{
+				const float radius = max(max(absScale.x, absScale.y), max(absScale.z, 1.0f)) * 1.5f;
+				IncludeBoundsSphere(position, radius, boundsMin, boundsMax, hasBounds);
+			}
+		}
+
+		if (!hasBounds)
+		{
+			outCenter = XMVectorSet(0.0f, 1.0f, 0.0f, 1.0f);
+			outRadius = 12.0f;
+			return;
+		}
+
+		outCenter = XMVectorScale(XMVectorAdd(boundsMin, boundsMax), 0.5f);
+		outCenter = XMVectorSetW(outCenter, 1.0f);
+		outRadius = XMVectorGetX(XMVector3Length(XMVectorSubtract(boundsMax, boundsMin))) * 0.5f;
+		outRadius = clamp(outRadius, 6.0f, 80.0f);
+	}
+
+	void BuildShadowViewProjection(const RuntimeLightState& runtimeLight, XMMATRIX& outLightViewProjection, XMFLOAT4& outShadowMapParams)
+	{
+		XMFLOAT3 lightDirection = runtimeLight.HasLight ? runtimeLight.Component.Direction : XMFLOAT3(0.25f, 1.0f, -0.25f);
+		XMVECTOR dir = XMVectorSet(lightDirection.x, lightDirection.y, lightDirection.z, 0.0f);
+		if (XMVectorGetX(XMVector3LengthSq(dir)) < 0.000001f)
+		{
+			dir = XMVectorSet(0.0f, -1.0f, 0.0f, 0.0f);
+		}
+		dir = XMVector3Normalize(dir);
+
+		XMVECTOR target = XMVectorSet(0.0f, 1.0f, 0.0f, 1.0f);
+		float focusRadius = 12.0f;
+		BuildShadowFocusBounds(target, focusRadius);
+
+		const LightType lightType = runtimeLight.HasLight ? runtimeLight.Component.Type : LightType::Directional;
+		const bool cylinderVolume =
+			runtimeLight.HasLight &&
+			lightType == LightType::Volume &&
+			runtimeLight.Component.VolumeShape == 1;
+		XMVECTOR lightPos = XMVectorAdd(target, XMVectorScale(dir, max(45.0f, focusRadius * 2.5f)));
+		float nearClip = 0.1f;
+		float farClip = max(120.0f, focusRadius * 6.0f + 40.0f);
+		float orthoSize = max(20.0f, focusRadius * 2.2f);
+		float fovY = XM_PIDIV2;
+		bool useOrthographic = true;
+
+		if (runtimeLight.HasLight && lightType != LightType::Directional)
+		{
+			lightPos = XMLoadFloat3(&runtimeLight.Position);
+			if (lightType == LightType::Point)
+			{
+				useOrthographic = false;
+				XMVECTOR toTarget = XMVectorSubtract(target, lightPos);
+				const float distanceToTarget = XMVectorGetX(XMVector3Length(toTarget));
+				if (distanceToTarget > 0.000001f)
+				{
+					dir = XMVectorScale(toTarget, 1.0f / distanceToTarget);
+				}
+				else
+				{
+					dir = XMVectorSet(0.0f, -1.0f, 0.0f, 0.0f);
+					target = XMVectorAdd(lightPos, dir);
+				}
+
+				nearClip = 0.03f;
+				farClip = max(runtimeLight.Component.Range, distanceToTarget + focusRadius + 4.0f);
+				const float requiredFov = 2.0f * atan2f(focusRadius, max(distanceToTarget, 0.1f));
+				fovY = clamp(requiredFov, XM_PIDIV2, XMConvertToRadians(155.0f));
+			}
+			else
+			{
+				XMVECTOR spotDir = XMVectorSet(runtimeLight.Component.Direction.x, runtimeLight.Component.Direction.y, runtimeLight.Component.Direction.z, 0.0f);
+				if (XMVectorGetX(XMVector3LengthSq(spotDir)) > 0.000001f)
+				{
+					dir = XMVector3Normalize(spotDir);
+				}
+				target = XMVectorAdd(lightPos, XMVectorScale(dir, max(runtimeLight.Component.Range, 1.0f)));
+
+				nearClip = 0.05f;
+				farClip = max(runtimeLight.Component.Range, 1.0f);
+				float outerAngle = runtimeLight.Component.OuterAngle * XM_PI / 180.0f;
+				if (cylinderVolume)
+				{
+					const float cylinderRadius = max(0.15f, tanf(outerAngle) * farClip * 0.35f);
+					orthoSize = max(cylinderRadius * 2.0f, 0.3f);
+					useOrthographic = true;
+				}
+				else
+				{
+					fovY = outerAngle * 2.0f;
+					if (fovY < XMConvertToRadians(1.0f)) fovY = XMConvertToRadians(1.0f);
+					if (fovY > XMConvertToRadians(175.0f)) fovY = XMConvertToRadians(175.0f);
+					useOrthographic = false;
+				}
+			}
+		}
+
+		XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+		if (fabsf(XMVectorGetX(XMVector3Dot(dir, up))) > 0.96f)
+		{
+			up = XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
+		}
+
+		const XMMATRIX lightView = XMMatrixLookAtLH(lightPos, target, up);
+		const XMMATRIX lightProjection = useOrthographic
+			? XMMatrixOrthographicLH(orthoSize, orthoSize, nearClip, farClip)
+			: XMMatrixPerspectiveFovLH(fovY, 1.0f, nearClip, farClip);
+
+		outLightViewProjection = XMMatrixTranspose(lightView * lightProjection);
+		outShadowMapParams = XMFLOAT4(
+			1.0f / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE),
+			0.000008f,
+			0.00001f,
+			1.0f);
 	}
 
 	int GetShapeSideCount(ShapeType shapeType)
@@ -527,7 +879,75 @@ namespace
 
 void RendererResource::BeginFrame()
 {
+	++g_FrameSerial;
 	g_LightCacheValid = false;
+	m_TransientCbSlot = 0;
+}
+
+UINT RendererResource::GetShadowLightCount()
+{
+	if (!g_LightCacheValid)
+	{
+		RebuildLightCache();
+	}
+	return g_ShadowLightCount;
+}
+
+void RendererResource::SetCurrentShadowPassIndex(UINT index)
+{
+	g_CurrentShadowPassIndex = (g_ShadowLightCount > 0)
+		? min(index, g_ShadowLightCount - 1)
+		: 0;
+}
+
+D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetShadowConstantBufferAddress(UINT shadowIndex)
+{
+	if (!m_ShadowConstantBuffer)
+	{
+		return 0;
+	}
+	return m_ShadowConstantBuffer->GetGPUVirtualAddress() +
+		GetShadowConstantBufferSlot(shadowIndex) * g_kSHADOW_CB_ALIGNED_SIZE;
+}
+
+D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetCurrentShadowConstantBufferAddress()
+{
+	return GetShadowConstantBufferAddress(g_CurrentShadowPassIndex);
+}
+
+D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetCurrentLightConstantBufferAddress()
+{
+	if (!m_LightConstantBuffer)
+	{
+		return 0;
+	}
+	return m_LightConstantBuffer->GetGPUVirtualAddress() +
+		RendererCore::GetFrameIndex() * g_kLIGHT_CB_ALIGNED_SIZE;
+}
+
+D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetPBRConstantBufferAddress(UINT slot)
+{
+	if (!m_PBRConstantBuffer)
+	{
+		return 0;
+	}
+	const UINT safeSlot = slot < g_kPBR_CB_SLOT_COUNT ? slot : 0;
+	const UINT frameSlot = RendererCore::GetFrameIndex() * g_kPBR_CB_SLOT_COUNT + safeSlot;
+	return m_PBRConstantBuffer->GetGPUVirtualAddress() +
+		frameSlot * g_kPBR_CB_ALIGNED_SIZE;
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE RendererResource::AllocateTransientConstantBuffer(const ConstantBuffer3D& constants)
+{
+	UINT8* frameCbvDataBegin = GetConstantBufferPtr();
+	if (!frameCbvDataBegin || !m_CbvHeap || m_TransientCbSlot >= g_kTRANSIENT_CB_SLOT_COUNT)
+	{
+		return {};
+	}
+
+	const UINT slot = g_kTRANSIENT_CB_START_INDEX + m_TransientCbSlot++;
+	memcpy(frameCbvDataBegin + (slot * g_kCB_ALIGNED_SIZE), &constants, sizeof(constants));
+	return GetConstantBufferHandle(slot);
 }
 
 void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
@@ -536,9 +956,24 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 	{
 		return;
 	}
+	if (g_LightConstantsSerial == g_FrameSerial &&
+		fabsf(g_LightConstantsStrength - deferredLightStrength) <= 0.0001f)
+	{
+		return;
+	}
 
 	const RuntimeLightState& runtimeLight = GetCachedLightState(false);
 	LightConstants constants{};
+	WriteAtmosphereConstants(constants);
+	for (UINT i = 0; i < RendererState::g_kMAX_SHADER_LIGHTS; ++i)
+	{
+		constants.LightViewProjections[i] = XMMatrixIdentity();
+		constants.LightShadowData[i] = XMFLOAT4(
+			-1.0f,
+			1.0f / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE),
+			0.000008f,
+			0.00001f);
+	}
 	if (runtimeLight.HasLight)
 	{
 		const LightComponent& lightComponent = runtimeLight.Component;
@@ -586,17 +1021,34 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 		constants.LightColors[lightCount] = color;
 		constants.LightPositionTypes[lightCount] = XMFLOAT4(transform.Position.x, transform.Position.y, transform.Position.z, static_cast<float>(light.Type));
 		constants.LightExtras[lightCount] = XMFLOAT4(cosf(innerRad), cosf(outerRad), light.VolumeDensity, static_cast<float>(light.VolumeShape));
+		const int shadowIndex = FindShadowLightIndex(entity);
+		if (shadowIndex >= 0)
+		{
+			constants.LightViewProjections[lightCount] = g_ShadowLightViewProjections[shadowIndex];
+			constants.LightShadowData[lightCount] = XMFLOAT4(
+				static_cast<float>(shadowIndex),
+				g_ShadowMapParams[shadowIndex].x,
+				g_ShadowMapParams[shadowIndex].y,
+				g_ShadowMapParams[shadowIndex].z);
+		}
 		++lightCount;
 	}
 	constants.LightCount = XMFLOAT4(static_cast<float>(lightCount), 0.0f, 0.0f, 0.0f);
-	memcpy(m_pLightCbvDataBegin, &constants, sizeof(constants));
+	auto* lightDst = static_cast<UINT8*>(m_pLightCbvDataBegin) +
+		RendererCore::GetFrameIndex() * g_kLIGHT_CB_ALIGNED_SIZE;
+	memcpy(lightDst, &constants, sizeof(constants));
 
 	// Update PBR constants
 	if (m_pPBRCbvDataBegin)
 	{
 		PBRConstants pbrConstants = BuildPBRConstantsFromMaterial(GetDeferredLightingMaterial());
-		memcpy(m_pPBRCbvDataBegin, &pbrConstants, sizeof(pbrConstants));
+		auto* pbrDst = static_cast<UINT8*>(m_pPBRCbvDataBegin) +
+			RendererCore::GetFrameIndex() * g_kPBR_CB_SLOT_COUNT * g_kPBR_CB_ALIGNED_SIZE;
+		memcpy(pbrDst, &pbrConstants, sizeof(pbrConstants));
 	}
+
+	g_LightConstantsSerial = g_FrameSerial;
+	g_LightConstantsStrength = deferredLightStrength;
 }
 
 void RendererResource::UpdateShadowConstantBuffer()
@@ -605,92 +1057,28 @@ void RendererResource::UpdateShadowConstantBuffer()
 	{
 		return;
 	}
-
-	const RuntimeLightState& runtimeLight = GetCachedLightState(false);
-	XMFLOAT3 lightDirection = runtimeLight.HasLight ? runtimeLight.Component.Direction : XMFLOAT3(0.25f, 1.0f, -0.25f);
-	XMVECTOR dir = XMVectorSet(lightDirection.x, lightDirection.y, lightDirection.z, 0.0f);
-	if (XMVectorGetX(XMVector3LengthSq(dir)) < 0.000001f)
+	if (!g_LightCacheValid)
 	{
-		dir = XMVectorSet(0.0f, -1.0f, 0.0f, 0.0f);
+		RebuildLightCache();
 	}
-	dir = XMVector3Normalize(dir);
-
-	XMVECTOR target = XMVectorSet(0.0f, 1.2f, 0.0f, 1.0f);
-	XMVECTOR characterFoot = XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f);
-	Entity alicia = World::GetEntityByName("Alicia");
-	if (alicia.IsValid() &&
-		Registry::IsAlive(alicia.GetID()) &&
-		ComponentManager::HasComponent<TransformComponent>(alicia.GetID()))
+	if (g_CurrentShadowPassIndex >= g_ShadowLightCount)
 	{
-		const auto& aliciaTransform = ComponentManager::GetComponentUnchecked<TransformComponent>(alicia.GetID());
-		characterFoot = XMVectorSet(aliciaTransform.Position.x, aliciaTransform.Position.y, aliciaTransform.Position.z, 1.0f);
-		target = XMVectorSet(aliciaTransform.Position.x, aliciaTransform.Position.y + 0.6f, aliciaTransform.Position.z, 1.0f);
+		return;
 	}
-
-	Entity field = World::GetEntityByName("field");
-	if (field.IsValid() &&
-		Registry::IsAlive(field.GetID()) &&
-		ComponentManager::HasComponent<TransformComponent>(field.GetID()) &&
-		ComponentManager::HasComponent<AABBComponent>(field.GetID()))
+	if (g_ShadowConstantsSerial == g_FrameSerial &&
+		g_ShadowConstantsPassIndex == g_CurrentShadowPassIndex)
 	{
-		const auto& fieldTransform = ComponentManager::GetComponentUnchecked<TransformComponent>(field.GetID());
-		const XMVECTOR fieldCenter = XMVectorSet(fieldTransform.Position.x, fieldTransform.Position.y, fieldTransform.Position.z, 1.0f);
-		target = XMVectorLerp(fieldCenter, target, 0.55f);
+		return;
 	}
-
-	const LightType lightType = runtimeLight.HasLight ? runtimeLight.Component.Type : LightType::Directional;
-	XMVECTOR lightPos = XMVectorAdd(target, XMVectorScale(dir, 45.0f));
-	float nearClip = 0.1f;
-	float farClip = 1000.0f;
-	float orthoSize = 20.0f;
-	float fovY = XM_PIDIV2;
-
-	if (runtimeLight.HasLight && lightType != LightType::Directional)
-	{
-		lightPos = XMLoadFloat3(&runtimeLight.Position);
-		const XMVECTOR lowerBodyTarget = XMVectorLerp(characterFoot, target, 0.35f);
-		XMVECTOR toTarget = XMVectorSubtract(lowerBodyTarget, lightPos);
-		if (XMVectorGetX(XMVector3LengthSq(toTarget)) > 0.000001f)
-		{
-			dir = XMVector3Normalize(toTarget);
-			target = lowerBodyTarget;
-		}
-		else
-		{
-			target = XMVectorAdd(lightPos, XMVectorScale(dir, 1.0f));
-		}
-
-		nearClip = 0.05f;
-		const float distanceToTarget = XMVectorGetX(XMVector3Length(XMVectorSubtract(target, lightPos)));
-		farClip = max(runtimeLight.Component.Range, distanceToTarget + 8.0f);
-		float outerAngle = runtimeLight.Component.OuterAngle * XM_PI / 180.0f;
-		if (lightType == LightType::Point)
-		{
-			fovY = XM_PIDIV2;
-		}
-		else
-		{
-			fovY = outerAngle * 2.0f;
-			if (fovY < 0.70f) fovY = 0.70f;
-			if (fovY > XM_PIDIV2) fovY = XM_PIDIV2;
-		}
-	}
-
-	XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-	if (fabsf(XMVectorGetX(XMVector3Dot(dir, up))) > 0.96f)
-	{
-		up = XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
-	}
-
-	const XMMATRIX lightView = XMMatrixLookAtLH(lightPos, target, up);
-	const XMMATRIX lightProjection = (lightType == LightType::Directional)
-		? XMMatrixOrthographicLH(orthoSize, orthoSize, nearClip, farClip)
-		: XMMatrixPerspectiveFovLH(fovY, 1.0f, nearClip, farClip);
 
 	ShadowConstants constants{};
-	constants.LightViewProjection = XMMatrixTranspose(lightView * lightProjection);
-	constants.ShadowMapParams = XMFLOAT4(1.0f / static_cast<float>(g_kSHADOW_MAP_SIZE), 0.000008f, 0.00001f, 1.0f);
-	memcpy(m_pShadowCbvDataBegin, &constants, sizeof(constants));
+	constants.LightViewProjection = g_ShadowLightViewProjections[g_CurrentShadowPassIndex];
+	constants.ShadowMapParams = g_ShadowMapParams[g_CurrentShadowPassIndex];
+	auto* dst = static_cast<UINT8*>(m_pShadowCbvDataBegin) +
+		GetShadowConstantBufferSlot(g_CurrentShadowPassIndex) * g_kSHADOW_CB_ALIGNED_SIZE;
+	memcpy(dst, &constants, sizeof(constants));
+	g_ShadowConstantsSerial = g_FrameSerial;
+	g_ShadowConstantsPassIndex = g_CurrentShadowPassIndex;
 }
 
 void RendererResource::CreateSpriteVertex(const VertexResource& vertexstruct)
@@ -855,8 +1243,9 @@ void RendererResource::SetMaterial(const EntityID entityID, const MaterialCompon
 	const UINT slot = entityID < g_kMAX_ENTITIES ? entityID + 1 : 0;
 	PBRConstants constants = BuildPBRConstantsFromMaterial(material);
 
-	auto* dst = static_cast<UINT8*>(m_pPBRCbvDataBegin) + slot * g_kPBR_CB_ALIGNED_SIZE;
+	const UINT frameSlot = RendererCore::GetFrameIndex() * g_kPBR_CB_SLOT_COUNT + slot;
+	auto* dst = static_cast<UINT8*>(m_pPBRCbvDataBegin) + frameSlot * g_kPBR_CB_ALIGNED_SIZE;
 	memcpy(dst, &constants, sizeof(constants));
-	m_CommandList->SetGraphicsRootConstantBufferView(3, m_PBRConstantBuffer->GetGPUVirtualAddress() + slot * g_kPBR_CB_ALIGNED_SIZE);
+	m_CommandList->SetGraphicsRootConstantBufferView(3, GetPBRConstantBufferAddress(slot));
 }
 

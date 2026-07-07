@@ -4,6 +4,8 @@
 #include <vector>
 #include <d3d12.h>
 
+struct MaterialComponent;
+
 class ModelSystem : public SystemBase
 {
 private:
@@ -14,6 +16,8 @@ private:
         int srvIndex;
         int normalSrvIndex;
         class AnimationModelResource* model;
+        const MaterialComponent* material;
+        float cameraDistanceSq;
     };
     struct StaticDrawCall
     {
@@ -22,6 +26,8 @@ private:
         int srvIndex;
         int normalSrvIndex;
         class StaticModelResource* model;
+        const MaterialComponent* material;
+        float cameraDistanceSq;
     };
     vector<AnimDrawCall> m_AnimDrawCalls;
     vector<StaticDrawCall> m_StaticDrawCalls;

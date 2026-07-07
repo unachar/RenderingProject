@@ -9,6 +9,7 @@
 #include "renderershader.h"
 #include "psomanager.h"
 #include "camera.h"
+#include "imguimanager.h"
 #include "materialsystem.h"
 #include "toonoutlinebuilder.h"
 #include <vector>
@@ -19,6 +20,16 @@ using namespace std;
 
 namespace
 {
+	const MaterialComponent& DefaultMaterial()
+	{
+		static const MaterialComponent material{};
+		return material;
+	}
+
+	constexpr int kSelectionOutlineShaderClass = 99;
+	constexpr float kSelectionOutlineWorldProbeWidth = 0.035f;
+	constexpr float kSelectionOutlineScreenWidth = 5.0f;
+
 	bool IsSkyEntity(EntityID entity)
 	{
 		return ComponentManager::HasComponent<NameComponent>(entity) &&
@@ -70,15 +81,43 @@ namespace
 			material.ToonOutlineWidthModeSetting == ToonOutlineWidthMode::ScreenPixels ? 1 : 0;
 	}
 
-	void SetMappedToonOutlineParams(UINT8* cbvDataBegin, EntityID entity, const MaterialComponent& material, float widthScale = 1.0f)
+	void ApplySelectionOutlineConstants(ConstantBuffer3D& cb)
+	{
+		cb.ShaderClass = kSelectionOutlineShaderClass;
+		cb.ToonOutlineWidth = kSelectionOutlineWorldProbeWidth;
+		cb.ToonOutlineScreenWidth = kSelectionOutlineScreenWidth;
+		cb.ViewportSize = {
+			max(static_cast<float>(RendererCore::GetSceneWidth()), 1.0f),
+			max(static_cast<float>(RendererCore::GetSceneHeight()), 1.0f)
+		};
+		cb.ToonOutlineUseScreenSpace = 1;
+		cb.MaterialAlpha = 1.0f;
+	}
+
+	D3D12_GPU_DESCRIPTOR_HANDLE CreateToonOutlineCbv(UINT8* cbvDataBegin, EntityID entity, const MaterialComponent& material, float widthScale = 1.0f)
 	{
 		if (!cbvDataBegin)
 		{
-			return;
+			return {};
 		}
 
-		auto* cb = reinterpret_cast<ConstantBuffer3D*>(cbvDataBegin + (entity * RendererResource::g_kCB_ALIGNED_SIZE));
-		ApplyToonOutlineConstants(*cb, material, widthScale);
+		const auto* source = reinterpret_cast<const ConstantBuffer3D*>(cbvDataBegin + (entity * RendererResource::g_kCB_ALIGNED_SIZE));
+		ConstantBuffer3D outlineConstants = *source;
+		ApplyToonOutlineConstants(outlineConstants, material, widthScale);
+		return RendererResource::AllocateTransientConstantBuffer(outlineConstants);
+	}
+
+	D3D12_GPU_DESCRIPTOR_HANDLE CreateSelectionOutlineCbv(UINT8* cbvDataBegin, EntityID entity)
+	{
+		if (!cbvDataBegin)
+		{
+			return {};
+		}
+
+		const auto* source = reinterpret_cast<const ConstantBuffer3D*>(cbvDataBegin + (entity * RendererResource::g_kCB_ALIGNED_SIZE));
+		ConstantBuffer3D outlineConstants = *source;
+		ApplySelectionOutlineConstants(outlineConstants);
+		return RendererResource::AllocateTransientConstantBuffer(outlineConstants);
 	}
 
 	int GetTeoModeIndex(const MaterialComponent& material)
@@ -172,9 +211,6 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		}
 
 		pCommandList->SetPipelineState(shadowPso);
-		const UINT cbvIncrement = RendererResource::GetCbvIncrementSize();
-		auto heapStart = cbvHeap->GetGPUDescriptorHandleForHeapStart();
-
 		auto writeShadowCb = [&](EntityID entity)
 			{
 				XMMATRIX world = XMLoadFloat4x4(&ComponentManager::GetComponentUnchecked<TransformComponent>(entity).WorldMatrix);
@@ -182,8 +218,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				cb.World = XMMatrixTranspose(world);
 				cb.UseTexture = 0;
 				memcpy(pCbvDataBegin + (entity * RendererResource::g_kCB_ALIGNED_SIZE), &cb, sizeof(cb));
-				CD3DX12_GPU_DESCRIPTOR_HANDLE cbvHandle(heapStart, entity, cbvIncrement);
-				pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+				pCommandList->SetGraphicsRootDescriptorTable(0, RendererResource::GetConstantBufferHandle(entity));
 			};
 
 		for (EntityID i : World::GetView<AnimationModelComponent>())
@@ -215,6 +250,11 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				pCommandList->ResourceBarrier(1, &vbBarrier);
 			}
 
+			pCommandList->SetGraphicsRootSignature(RendererShader::GetModelRootSignature());
+			if (RendererResource::GetShadowCB())
+			{
+				pCommandList->SetGraphicsRootConstantBufferView(5, RendererResource::GetCurrentShadowConstantBufferAddress());
+			}
 			pCommandList->SetPipelineState(shadowPso);
 			writeShadowCb(i);
 			for (UINT m = 0; m < model->GetMeshCount(); ++m)
@@ -283,6 +323,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	{
 		cameraPos = ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
 	}
+	const EntityID selectedEntity = ImGuiManager::GetSelectedEntity();
 
 	{
 		m_AnimDrawCalls.clear();
@@ -297,8 +338,10 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			}
 
 			bool isReceiving = MaterialSystem::IsReceivingPostProcess(i);
-			bool hasMaterial = Registry::HasComponent(i, ComponentType::MATERIAL);
-			bool isTransparent = hasMaterial && MaterialSystem::IsTransparentMaterial(ComponentManager::GetComponentUnchecked<MaterialComponent>(i));
+			const MaterialComponent* material = Registry::HasComponent(i, ComponentType::MATERIAL)
+				? &ComponentManager::GetComponentUnchecked<MaterialComponent>(i)
+				: nullptr;
+			bool isTransparent = material && MaterialSystem::IsTransparentMaterial(*material);
 			if (isTransparent != drawTransparent)
 			{
 				continue;
@@ -334,9 +377,9 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 			int srvIndex = defaultTextureIndex;
 			int normalSrvIndex = defaultNormalIndex;
-			if (hasMaterial)
+			if (material)
 			{
-				auto& mat = ComponentManager::GetComponentUnchecked<MaterialComponent>(i);
+				const auto& mat = *material;
 				cb.UseTexture = mat.UseTexture ? 1 : 0;
 				cb.MaterialMetallic = mat.Metallic;
 				cb.MaterialRoughness = mat.Roughness;
@@ -359,18 +402,17 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			}
 
 			memcpy(pCbvDataBegin + (i * RendererResource::g_kCB_ALIGNED_SIZE), &cb, sizeof(cb));
-			m_AnimDrawCalls.push_back({ i, pso, srvIndex, normalSrvIndex, model });
+			const float cameraDistanceSq = drawTransparent ? GetCameraDistanceSq(i, cameraPos) : 0.0f;
+			m_AnimDrawCalls.push_back({ i, pso, srvIndex, normalSrvIndex, model, material, cameraDistanceSq });
 		}
 
-		sort(m_AnimDrawCalls.begin(), m_AnimDrawCalls.end(), [drawTransparent, cameraPos](const AnimDrawCall& a, const AnimDrawCall& b)
+		sort(m_AnimDrawCalls.begin(), m_AnimDrawCalls.end(), [drawTransparent](const AnimDrawCall& a, const AnimDrawCall& b)
 			{
 				if (drawTransparent)
 				{
-					const float da = GetCameraDistanceSq(a.EntityID, cameraPos);
-					const float db = GetCameraDistanceSq(b.EntityID, cameraPos);
-					if (fabsf(da - db) > 0.0001f)
+					if (fabsf(a.cameraDistanceSq - b.cameraDistanceSq) > 0.0001f)
 					{
-						return da > db;
+						return a.cameraDistanceSq > b.cameraDistanceSq;
 					}
 				}
 				if (a.pso != b.pso)
@@ -390,6 +432,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		for (const auto& dc : m_AnimDrawCalls)
 		{
 			dc.model->DispatchGpuSkinning(pCommandList);
+			lastPso = nullptr;
 
 			for (UINT m = 0; m < dc.model->GetMeshCount(); m++)
 			{
@@ -420,11 +463,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			}
 
 			RendererDraw::BeginModelPass();
-			MaterialComponent material{};
-			if (Registry::HasComponent(dc.EntityID, ComponentType::MATERIAL))
-			{
-				material = ComponentManager::GetComponentUnchecked<MaterialComponent>(dc.EntityID);
-			}
+			const MaterialComponent& material = dc.material ? *dc.material : DefaultMaterial();
 			RendererResource::SetMaterial(dc.EntityID, material);
 
 			if (dc.pso != lastPso)
@@ -433,7 +472,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				lastPso = dc.pso;
 			}
 
-			CD3DX12_GPU_DESCRIPTOR_HANDLE cbvHandle(heapStart, dc.EntityID, cbvIncrement);
+			D3D12_GPU_DESCRIPTOR_HANDLE cbvHandle = RendererResource::GetConstantBufferHandle(dc.EntityID);
 			pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
 
 			CD3DX12_GPU_DESCRIPTOR_HANDLE srvHandle(heapStart, dc.srvIndex, cbvIncrement);
@@ -480,21 +519,53 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					pCommandList->SetPipelineState(outlinePso);
 					if (drawExtrude)
 					{
-						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material, meshWidthScale);
+						const D3D12_GPU_DESCRIPTOR_HANDLE outlineCbvHandle = CreateToonOutlineCbv(pCbvDataBegin, dc.EntityID, material, meshWidthScale);
+						if (outlineCbvHandle.ptr != 0)
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, outlineCbvHandle);
+						}
+						else
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+						}
 						pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
 						pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 						pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
 					}
 					if (drawTeo)
 					{
-						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material, meshWidthScale * material.ToonOutlineTeoWidthScale);
+						const D3D12_GPU_DESCRIPTOR_HANDLE outlineCbvHandle = CreateToonOutlineCbv(pCbvDataBegin, dc.EntityID, material, meshWidthScale * material.ToonOutlineTeoWidthScale);
+						if (outlineCbvHandle.ptr != 0)
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, outlineCbvHandle);
+						}
+						else
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+						}
 						pCommandList->IASetVertexBuffers(0, 1, &meshData.TeoVertexBufferViews[teoMode]);
 						pCommandList->IASetIndexBuffer(&meshData.TeoIndexBufferViews[teoMode]);
 						pCommandList->DrawIndexedInstanced(meshData.TeoIndexCounts[teoMode], 1, 0, 0, 0);
 					}
-					SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material);
+					pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
 					pCommandList->SetPipelineState(dc.pso);
 					lastPso = dc.pso;
+				}
+
+				if (outlinePso && dc.EntityID == selectedEntity)
+				{
+					const D3D12_GPU_DESCRIPTOR_HANDLE selectionCbvHandle = CreateSelectionOutlineCbv(pCbvDataBegin, dc.EntityID);
+					if (selectionCbvHandle.ptr != 0)
+					{
+						pCommandList->SetPipelineState(outlinePso);
+						pCommandList->SetGraphicsRootDescriptorTable(0, selectionCbvHandle);
+						pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
+						pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
+						pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
+						pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+						pCommandList->SetPipelineState(dc.pso);
+						lastPso = dc.pso;
+					}
 				}
 
 				D3D12_RESOURCE_BARRIER backBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
@@ -532,8 +603,10 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			}
 
 			bool isReceiving = MaterialSystem::IsReceivingPostProcess(i);
-			bool hasMaterial = Registry::HasComponent(i, ComponentType::MATERIAL);
-			bool isTransparent = hasMaterial && MaterialSystem::IsTransparentMaterial(ComponentManager::GetComponentUnchecked<MaterialComponent>(i));
+			const MaterialComponent* material = Registry::HasComponent(i, ComponentType::MATERIAL)
+				? &ComponentManager::GetComponentUnchecked<MaterialComponent>(i)
+				: nullptr;
+			bool isTransparent = material && MaterialSystem::IsTransparentMaterial(*material);
 			if (isTransparent != drawTransparent)
 			{
 				continue;
@@ -569,9 +642,9 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 			int srvIndex = defaultTextureIndex;
 			int normalSrvIndex = defaultNormalIndex;
-			if (hasMaterial)
+			if (material)
 			{
-				auto& mat = ComponentManager::GetComponentUnchecked<MaterialComponent>(i);
+				const auto& mat = *material;
 				cb.UseTexture = mat.UseTexture ? 1 : 0;
 				cb.MaterialMetallic = mat.Metallic;
 				cb.MaterialRoughness = mat.Roughness;
@@ -594,18 +667,17 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			}
 
 			memcpy(pCbvDataBegin + (i * RendererResource::g_kCB_ALIGNED_SIZE), &cb, sizeof(cb));
-			m_StaticDrawCalls.push_back({ i, pso, srvIndex, normalSrvIndex, model });
+			const float cameraDistanceSq = drawTransparent ? GetCameraDistanceSq(i, cameraPos) : 0.0f;
+			m_StaticDrawCalls.push_back({ i, pso, srvIndex, normalSrvIndex, model, material, cameraDistanceSq });
 		}
 
-		sort(m_StaticDrawCalls.begin(), m_StaticDrawCalls.end(), [drawTransparent, cameraPos](const StaticDrawCall& a, const StaticDrawCall& b)
+		sort(m_StaticDrawCalls.begin(), m_StaticDrawCalls.end(), [drawTransparent](const StaticDrawCall& a, const StaticDrawCall& b)
 			{
 				if (drawTransparent)
 				{
-					const float da = GetCameraDistanceSq(a.EntityID, cameraPos);
-					const float db = GetCameraDistanceSq(b.EntityID, cameraPos);
-					if (fabsf(da - db) > 0.0001f)
+					if (fabsf(a.cameraDistanceSq - b.cameraDistanceSq) > 0.0001f)
 					{
-						return da > db;
+						return a.cameraDistanceSq > b.cameraDistanceSq;
 					}
 				}
 				if (a.pso != b.pso)
@@ -624,11 +696,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 		for (const auto& dc : m_StaticDrawCalls)
 		{
-			MaterialComponent material{};
-			if (Registry::HasComponent(dc.EntityID, ComponentType::MATERIAL))
-			{
-				material = ComponentManager::GetComponentUnchecked<MaterialComponent>(dc.EntityID);
-			}
+			const MaterialComponent& material = dc.material ? *dc.material : DefaultMaterial();
 			RendererResource::SetMaterial(dc.EntityID, material);
 
 			if (dc.pso != lastPso)
@@ -637,7 +705,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				lastPso = dc.pso;
 			}
 
-			CD3DX12_GPU_DESCRIPTOR_HANDLE cbvHandle(heapStart, dc.EntityID, cbvIncrement);
+			D3D12_GPU_DESCRIPTOR_HANDLE cbvHandle = RendererResource::GetConstantBufferHandle(dc.EntityID);
 			pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
 
 			CD3DX12_GPU_DESCRIPTOR_HANDLE srvHandle(heapStart, dc.srvIndex, cbvIncrement);
@@ -684,21 +752,53 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					pCommandList->SetPipelineState(outlinePso);
 					if (drawExtrude)
 					{
-						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material, meshWidthScale);
+						const D3D12_GPU_DESCRIPTOR_HANDLE outlineCbvHandle = CreateToonOutlineCbv(pCbvDataBegin, dc.EntityID, material, meshWidthScale);
+						if (outlineCbvHandle.ptr != 0)
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, outlineCbvHandle);
+						}
+						else
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+						}
 						pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
 						pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 						pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
 					}
 					if (drawTeo)
 					{
-						SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material, meshWidthScale * material.ToonOutlineTeoWidthScale);
+						const D3D12_GPU_DESCRIPTOR_HANDLE outlineCbvHandle = CreateToonOutlineCbv(pCbvDataBegin, dc.EntityID, material, meshWidthScale * material.ToonOutlineTeoWidthScale);
+						if (outlineCbvHandle.ptr != 0)
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, outlineCbvHandle);
+						}
+						else
+						{
+							pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+						}
 						pCommandList->IASetVertexBuffers(0, 1, &meshData.TeoVertexBufferViews[teoMode]);
 						pCommandList->IASetIndexBuffer(&meshData.TeoIndexBufferViews[teoMode]);
 						pCommandList->DrawIndexedInstanced(meshData.TeoIndexCounts[teoMode], 1, 0, 0, 0);
 					}
-					SetMappedToonOutlineParams(pCbvDataBegin, dc.EntityID, material);
+					pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
 					pCommandList->SetPipelineState(dc.pso);
 					lastPso = dc.pso;
+				}
+
+				if (outlinePso && dc.EntityID == selectedEntity)
+				{
+					const D3D12_GPU_DESCRIPTOR_HANDLE selectionCbvHandle = CreateSelectionOutlineCbv(pCbvDataBegin, dc.EntityID);
+					if (selectionCbvHandle.ptr != 0)
+					{
+						pCommandList->SetPipelineState(outlinePso);
+						pCommandList->SetGraphicsRootDescriptorTable(0, selectionCbvHandle);
+						pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
+						pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
+						pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
+						pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+						pCommandList->SetPipelineState(dc.pso);
+						lastPso = dc.pso;
+					}
 				}
 			}
 		}

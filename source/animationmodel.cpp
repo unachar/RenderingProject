@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "animationmodel.h"
+#include "pmxloader.h"
 #include "texturemanager.h"
+#include "renderercore.h"
 #include "rendererdraw.h"
 #include "renderershader.h"
 #include "psomanager.h"
@@ -8,9 +10,12 @@
 #include "material.h"
 #include "modelimportutils.h"
 #include "toonoutlinebuilder.h"
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <cctype>
-
+#include <cmath>
+#include <limits>
 using namespace std;
 using namespace DirectX;
 
@@ -133,17 +138,301 @@ static void LogAssimpModelInfo(const aiScene* scene, const char* fileName, const
 	Debug::Log("==== end %s model import info ====\n", modelKind);
 }
 
+static aiMatrix4x4 MakeAiIdentityMatrix()
+{
+	return aiMatrix4x4(
+		1.0f, 0.0f, 0.0f, 0.0f,
+		0.0f, 1.0f, 0.0f, 0.0f,
+		0.0f, 0.0f, 1.0f, 0.0f,
+		0.0f, 0.0f, 0.0f, 1.0f);
+}
+
+static string DecodeAsciiFixedString(const char* data, size_t length)
+{
+	size_t byteCount = 0;
+	while (byteCount < length && data[byteCount] != '\0')
+	{
+		++byteCount;
+	}
+	return string(data, byteCount);
+}
+
+static string DecodeShiftJisFixedString(const char* data, size_t length)
+{
+	size_t byteCount = 0;
+	while (byteCount < length && data[byteCount] != '\0')
+	{
+		++byteCount;
+	}
+	if (byteCount == 0)
+	{
+		return {};
+	}
+
+	int wideLength = MultiByteToWideChar(932, MB_ERR_INVALID_CHARS, data, static_cast<int>(byteCount), nullptr, 0);
+	if (wideLength <= 0)
+	{
+		wideLength = MultiByteToWideChar(932, 0, data, static_cast<int>(byteCount), nullptr, 0);
+	}
+	if (wideLength <= 0)
+	{
+		return string(data, byteCount);
+	}
+
+	wstring wideText(static_cast<size_t>(wideLength), L'\0');
+	MultiByteToWideChar(932, 0, data, static_cast<int>(byteCount), wideText.data(), wideLength);
+
+	const int utf8Length = WideCharToMultiByte(CP_UTF8, 0, wideText.data(), wideLength, nullptr, 0, nullptr, nullptr);
+	if (utf8Length <= 0)
+	{
+		return string(data, byteCount);
+	}
+
+	string utf8Text(static_cast<size_t>(utf8Length), '\0');
+	WideCharToMultiByte(CP_UTF8, 0, wideText.data(), wideLength, utf8Text.data(), utf8Length, nullptr, nullptr);
+	return utf8Text;
+}
+
+template <typename T>
+static bool ReadBinary(ifstream& stream, T& value)
+{
+	return static_cast<bool>(stream.read(reinterpret_cast<char*>(&value), sizeof(T)));
+}
+
+template <size_t N>
+static bool ReadBinaryArray(ifstream& stream, array<char, N>& value)
+{
+	return static_cast<bool>(stream.read(value.data(), static_cast<streamsize>(value.size())));
+}
+
+static uint64_t GetRemainingBytes(ifstream& stream)
+{
+	const streampos current = stream.tellg();
+	if (current < 0)
+	{
+		return 0;
+	}
+
+	stream.seekg(0, ios::end);
+	const streampos end = stream.tellg();
+	stream.seekg(current, ios::beg);
+	if (end < current)
+	{
+		return 0;
+	}
+	return static_cast<uint64_t>(end - current);
+}
+
+static bool ReadOptionalSectionCount(ifstream& stream, uint32_t& count, const char* sectionName, const char* fileName)
+{
+	const uint64_t remainingBytes = GetRemainingBytes(stream);
+	if (remainingBytes == 0)
+	{
+		count = 0;
+		return true;
+	}
+	if (remainingBytes < sizeof(uint32_t))
+	{
+		Debug::Log("ERROR: VMD %s count is truncated: %s\n", sectionName, fileName);
+		return false;
+	}
+	return ReadBinary(stream, count);
+}
+
+static bool SkipBinaryBytes(ifstream& stream, uint64_t byteCount, const char* sectionName, const char* fileName)
+{
+	if (GetRemainingBytes(stream) < byteCount)
+	{
+		Debug::Log("ERROR: VMD %s data is truncated: %s\n", sectionName, fileName);
+		return false;
+	}
+
+	stream.seekg(static_cast<streamoff>(byteCount), ios::cur);
+	return static_cast<bool>(stream);
+}
+
+static float NormalizeVmdInterpolationByte(unsigned char value)
+{
+	return clamp(static_cast<float>(value) / 127.0f, 0.0f, 1.0f);
+}
+
+static float GetYFromXOnBezier(float x, const XMFLOAT2& p1, const XMFLOAT2& p2, uint8_t iterationCount)
+{
+	x = clamp(x, 0.0f, 1.0f);
+	if (fabsf(p1.x - p1.y) < 0.0001f && fabsf(p2.x - p2.y) < 0.0001f)
+	{
+		return x;
+	}
+
+	float t = x;
+	const float k0 = 1.0f + 3.0f * p1.x - 3.0f * p2.x;
+	const float k1 = 3.0f * p2.x - 6.0f * p1.x;
+	const float k2 = 3.0f * p1.x;
+
+	for (uint8_t i = 0; i < iterationCount; ++i)
+	{
+		const float ft = k0 * t * t * t + k1 * t * t + k2 * t - x;
+		if (fabsf(ft) <= 0.00001f)
+		{
+			break;
+		}
+		t = clamp(t - ft / 2.0f, 0.0f, 1.0f);
+	}
+
+	const float r = 1.0f - t;
+	return t * t * t + 3.0f * t * t * r * p2.y + 3.0f * t * r * r * p1.y;
+}
+
+static aiVector3D ConvertVmdPositionToAssimpLeftHanded(const aiVector3D& position)
+{
+	return aiVector3D(position.x, position.y, position.z);
+}
+
+static aiQuaternion ConvertVmdRotationToAssimpLeftHanded(aiQuaternion rotation)
+{
+	//rotation.x = -rotation.x;
+	//rotation.y = -rotation.y;
+	rotation.Normalize();
+	return rotation;
+}
+
+static void NormalizeBoneInfluences(GpuSkinVertex& gpuVertex, DeformVertex& deformVertex)
+{
+	float totalWeight = 0.0f;
+	for (int i = 0; i < 4; ++i)
+	{
+		if (gpuVertex.BoneWeights[i] < 0.0f)
+		{
+			gpuVertex.BoneWeights[i] = 0.0f;
+		}
+		totalWeight += gpuVertex.BoneWeights[i];
+	}
+
+	// ボーンウェイトを持たない頂点はGPUスキニング側で「変換なし」として扱う。
+	// センター/rootへfallbackすると、未ウェイト頂点が原点やセンターへ吸い込まれてトゲ状に破綻する。
+	if (totalWeight <= 0.000001f)
+	{
+		deformVertex.BoneNum = 0;
+		for (int i = 0; i < 4; ++i)
+		{
+			gpuVertex.BoneIndices[i] = 0;
+			gpuVertex.BoneWeights[i] = 0.0f;
+			deformVertex.BoneName[i].clear();
+			deformVertex.BoneWeight[i] = 0.0f;
+		}
+		return;
+	}
+
+	const float invTotalWeight = 1.0f / totalWeight;
+	for (int i = 0; i < 4; ++i)
+	{
+		gpuVertex.BoneWeights[i] *= invTotalWeight;
+		deformVertex.BoneWeight[i] *= invTotalWeight;
+	}
+}
+
+static bool IsFiniteAiMatrix(const aiMatrix4x4& matrix)
+{
+	const float values[] =
+	{
+		matrix.a1, matrix.a2, matrix.a3, matrix.a4,
+		matrix.b1, matrix.b2, matrix.b3, matrix.b4,
+		matrix.c1, matrix.c2, matrix.c3, matrix.c4,
+		matrix.d1, matrix.d2, matrix.d3, matrix.d4,
+	};
+	for (float value : values)
+	{
+		if (!isfinite(value))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool IsUsableSkinningMatrix(const aiMatrix4x4& matrix)
+{
+	if (!IsFiniteAiMatrix(matrix) || fabsf(matrix.d4) <= 0.000001f)
+	{
+		return false;
+	}
+
+	const float linearLengthSq =
+		matrix.a1 * matrix.a1 + matrix.a2 * matrix.a2 + matrix.a3 * matrix.a3 +
+		matrix.b1 * matrix.b1 + matrix.b2 * matrix.b2 + matrix.b3 * matrix.b3 +
+		matrix.c1 * matrix.c1 + matrix.c2 * matrix.c2 + matrix.c3 * matrix.c3;
+	return linearLengthSq > 0.000001f;
+}
+
+static bool FindNodeGlobalMatrix(aiNode* node, const string& boneName, const aiMatrix4x4& parentMatrix, aiMatrix4x4& outMatrix)
+{
+	if (!node)
+	{
+		return false;
+	}
+
+	const aiMatrix4x4 worldMatrix = parentMatrix * node->mTransformation;
+	if (boneName == node->mName.C_Str())
+	{
+		outMatrix = worldMatrix;
+		return true;
+	}
+
+	for (unsigned int childIndex = 0; childIndex < node->mNumChildren; ++childIndex)
+	{
+		if (FindNodeGlobalMatrix(node->mChildren[childIndex], boneName, worldMatrix, outMatrix))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+static aiMatrix4x4 GetBoneOffsetMatrixOrFallback(const aiScene* scene, const aiBone* bone)
+{
+	const aiMatrix4x4 identity = MakeAiIdentityMatrix();
+	if (!bone)
+	{
+		return identity;
+	}
+
+	if (IsUsableSkinningMatrix(bone->mOffsetMatrix))
+	{
+		return bone->mOffsetMatrix;
+	}
+
+	aiMatrix4x4 bindGlobalMatrix = identity;
+	if (scene && FindNodeGlobalMatrix(scene->mRootNode, bone->mName.C_Str(), identity, bindGlobalMatrix))
+	{
+		aiMatrix4x4 fallbackOffset = bindGlobalMatrix;
+		fallbackOffset.Inverse();
+		if (IsUsableSkinningMatrix(fallbackOffset))
+		{
+			return fallbackOffset;
+		}
+	}
+
+	return identity;
+}
+
 void AnimationModelResource::CreateBone(aiNode* node)
 {
 	string name = node->mName.C_Str();
+	if (node->mParent)
+	{
+		m_BoneParentMap[name] = node->mParent->mName.C_Str();
+	}
 	if (m_BoneIndexMap.find(name) == m_BoneIndexMap.end())
 	{
 		uint32_t idx = (uint32_t)m_BoneNames.size();
 		m_BoneNames.push_back(name);
 		m_BoneIndexMap[name] = idx;
+		const aiMatrix4x4 identity = MakeAiIdentityMatrix();
 		Bone bone{};
+		bone.Matrix = identity;
 		bone.BindLocalMatrix = node->mTransformation;
 		bone.AnimationMatrix = node->mTransformation;
+		bone.OffsetMatrix = identity;
 		m_Bone.emplace(name, bone);
 	}
 
@@ -157,33 +446,72 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 {
 	m_pDevice = device;
 
-	unsigned int flags =
-		aiProcess_Triangulate |
-		aiProcess_JoinIdenticalVertices |
-		aiProcess_ImproveCacheLocality;
-	if (isConvert)
-	{
-		flags |= aiProcess_ConvertToLeftHanded;
-	}
-	m_AiScene = ModelImportUtils::ImportScene(fileName, flags);
-	if (!m_AiScene)
-	{
-		Debug::Log("ERROR: Failed to load animation model: %s (%s)\n", fileName, aiGetErrorString());
-		return false;
-	}
-	LogAssimpModelInfo(m_AiScene, fileName, "Animation");
+	const filesystem::path modelPath = ModelImportUtils::FromUtf8(fileName);
+	const string extension = ModelImportUtils::LowerExtension(modelPath);
+	const bool isPmxModel = extension == ".pmx";
+	PmxBinary::Model pmxModel{};
+	vector<vector<uint32_t>> pmxMeshVertexIndices{};
 
+	if (isPmxModel)
+	{
+		if (!PmxBinary::LoadModel(fileName, pmxModel))
+		{
+			return false;
+		}
+
+		m_AiScene = PmxBinary::CreateGeneratedScene(pmxModel, pmxMeshVertexIndices);
+		m_OwnsGeneratedAiScene = true;
+		if (!m_AiScene)
+		{
+			Debug::Log("ERROR: Failed to generate PMX animation model scene: %s\n", fileName);
+			return false;
+		}
+	}
+	else
+	{
+		unsigned int flags = aiProcessPreset_TargetRealtime_MaxQuality;
+		if (isConvert)
+		{
+			flags |= aiProcess_ConvertToLeftHanded;
+		}
+		m_AiScene = ModelImportUtils::ImportScene(fileName, flags);
+		m_OwnsGeneratedAiScene = false;
+		if (!m_AiScene)
+		{
+			Debug::Log("ERROR: Failed to load animation model: %s (%s)\n", fileName, aiGetErrorString());
+			return false;
+		}
+		LogAssimpModelInfo(m_AiScene, fileName, "Animation");
+	}
 	m_Meshes.resize(m_AiScene->mNumMeshes);
 	m_DeformVertex.resize(m_AiScene->mNumMeshes);
 	m_GpuSkinVertices.resize(m_AiScene->mNumMeshes);
+	m_BaseGpuSkinVertices.resize(m_AiScene->mNumMeshes);
 	m_TeoGpuSkinVertices.resize(m_AiScene->mNumMeshes);
 	m_TeoGpuSkinVerticesByMode.resize(m_AiScene->mNumMeshes);
 
 	CreateBone(m_AiScene->mRootNode);
+	m_PmxAppendConstraints.clear();
+	m_PmxIkConstraints.clear();
+	m_PmxBaseVertices.clear();
+	m_PmxBaseNormals.clear();
+	m_PmxBaseTexCoords.clear();
+	m_PmxMorphs.clear();
+	m_PmxMorphIndexMap.clear();
+	if (isPmxModel)
+	{
+		PmxBinary::PopulateAnimationMetadata(
+			pmxModel,
+			m_PmxAppendConstraints,
+			m_PmxIkConstraints,
+			m_PmxBaseVertices,
+			m_PmxBaseNormals,
+			m_PmxBaseTexCoords,
+			m_PmxMorphs,
+			m_PmxMorphIndexMap);
+	}
 
-	const filesystem::path modelPath = ModelImportUtils::FromUtf8(fileName);
 	const string dirPath = ModelImportUtils::ToUtf8(modelPath.parent_path());
-
 	XMFLOAT3 minPos = { FLT_MAX, FLT_MAX, FLT_MAX };
 	XMFLOAT3 maxPos = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
 	bool hasVertices = false;
@@ -192,6 +520,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 	{
 		aiMesh* mesh = m_AiScene->mMeshes[m];
 		m_Meshes[m].TextureIndex = ResolveMeshTextureIndex(mesh, fileName, dirPath);
+		m_Meshes[m].MaterialIndex = static_cast<int>(mesh->mMaterialIndex);
 		m_Meshes[m].MeshName = mesh->mName.C_Str();
 
 		aiColor3D diffuse(1.0f, 1.0f, 1.0f);
@@ -235,6 +564,10 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 				gv.BoneIndices[i] = 0;
 				gv.BoneWeights[i] = 0.0f;
 			}
+			if (isPmxModel)
+			{
+				PmxBinary::ApplyVertexDeformData(pmxModel, pmxMeshVertexIndices, m, v, gv);
+			}
 		}
 
 		m_DeformVertex[m].resize(mesh->mNumVertices);
@@ -251,44 +584,176 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 			}
 		}
 
+		struct PendingBoneWeight
+		{
+			uint32_t BoneIndex = 0;
+			float Weight = 0.0f;
+			string BoneName{};
+		};
+		vector<vector<PendingBoneWeight>> pendingBoneWeights(mesh->mNumVertices);
+
 		for (unsigned int b = 0; b < mesh->mNumBones; b++)
 		{
 			aiBone* bone = mesh->mBones[b];
-			m_Bone[bone->mName.C_Str()].OffsetMatrix = bone->mOffsetMatrix;
+			const string boneName = bone->mName.C_Str();
 
-			auto it = m_BoneIndexMap.find(bone->mName.C_Str());
+			auto boneIt = m_Bone.find(boneName);
+			if (boneIt == m_Bone.end())
+			{
+				uint32_t idx = (uint32_t)m_BoneNames.size();
+				m_BoneNames.push_back(boneName);
+				m_BoneIndexMap[boneName] = idx;
+
+				const aiMatrix4x4 identity = MakeAiIdentityMatrix();
+				Bone fallbackBone{};
+				fallbackBone.Matrix = identity;
+				fallbackBone.BindLocalMatrix = identity;
+				fallbackBone.AnimationMatrix = fallbackBone.BindLocalMatrix;
+				fallbackBone.OffsetMatrix = identity;
+				boneIt = m_Bone.emplace(boneName, fallbackBone).first;
+			}
+
+			boneIt->second.OffsetMatrix = GetBoneOffsetMatrixOrFallback(m_AiScene, bone);
+
+			auto it = m_BoneIndexMap.find(boneName);
 			uint32_t boneIdx = (it != m_BoneIndexMap.end()) ? it->second : 0;
 
 			for (unsigned int w = 0; w < bone->mNumWeights; w++)
 			{
-				aiVertexWeight weight = bone->mWeights[w];
-				int num = m_DeformVertex[m][weight.mVertexId].BoneNum;
-				if (num < m_kMAX_BONE_INFLUENCES)
+				const aiVertexWeight weight = bone->mWeights[w];
+				if (weight.mVertexId >= mesh->mNumVertices || weight.mWeight <= 0.0f)
 				{
-					m_DeformVertex[m][weight.mVertexId].BoneWeight[num] = weight.mWeight;
-					m_DeformVertex[m][weight.mVertexId].BoneName[num] = bone->mName.C_Str();
-					m_DeformVertex[m][weight.mVertexId].BoneNum++;
-
-					m_GpuSkinVertices[m][weight.mVertexId].BoneIndices[num] = boneIdx;
-					m_GpuSkinVertices[m][weight.mVertexId].BoneWeights[num] = weight.mWeight;
+					continue;
 				}
+				pendingBoneWeights[weight.mVertexId].push_back({ boneIdx, weight.mWeight, boneName });
 			}
 		}
 
-		for (GpuSkinVertex& vertex : m_GpuSkinVertices[m])
+		auto hasInfluence = [&](unsigned int vertexIndex) -> bool
+			{
+				return vertexIndex < pendingBoneWeights.size() && !pendingBoneWeights[vertexIndex].empty();
+			};
+
+		// Assimp/PMX変換で一部頂点だけボーンウェイトが落ちると、
+		// その頂点だけバインドポーズに残って三角形がトゲ状に伸びる。
+		// まず同じ三角形に属する隣接頂点からウェイトを伝播する。
+		for (int pass = 0; pass < 8; ++pass)
 		{
-			float totalWeight = 0.0f;
-			for (int i = 0; i < m_kMAX_BONE_INFLUENCES; ++i)
+			bool changed = false;
+			for (unsigned int f = 0; f < mesh->mNumFaces; ++f)
 			{
-				totalWeight += vertex.BoneWeights[i];
-			}
-			if (totalWeight > 0.0f)
-			{
-				for (int i = 0; i < m_kMAX_BONE_INFLUENCES; ++i)
+				const aiFace& face = mesh->mFaces[f];
+				if (face.mNumIndices < 3)
 				{
-					vertex.BoneWeights[i] /= totalWeight;
+					continue;
+				}
+
+				for (unsigned int i = 0; i < face.mNumIndices; ++i)
+				{
+					const unsigned int vertexIndex = face.mIndices[i];
+					if (vertexIndex >= mesh->mNumVertices || hasInfluence(vertexIndex))
+					{
+						continue;
+					}
+
+					for (unsigned int j = 0; j < face.mNumIndices; ++j)
+					{
+						const unsigned int neighborIndex = face.mIndices[j];
+						if (neighborIndex >= mesh->mNumVertices || neighborIndex == vertexIndex)
+						{
+							continue;
+						}
+
+						if (hasInfluence(neighborIndex))
+						{
+							pendingBoneWeights[vertexIndex] = pendingBoneWeights[neighborIndex];
+							changed = true;
+							break;
+						}
+					}
 				}
 			}
+
+			if (!changed)
+			{
+				break;
+			}
+		}
+
+		// 三角形伝播で届かない孤立頂点/分離島は、同一メッシュ内の最近傍の
+		// ウェイト付き頂点からコピーする。これで黒い糸状の破綻を潰す。
+		size_t zeroWeightVerticesFixedByNearest = 0;
+		size_t zeroWeightVerticesFallbackToRoot = 0;
+		uint32_t wholeMeshFallbackBoneIndex = 0;
+		if (m_BoneIndexMap.count("センター")) wholeMeshFallbackBoneIndex = m_BoneIndexMap["センター"];
+		else if (m_BoneIndexMap.count("全ての親")) wholeMeshFallbackBoneIndex = m_BoneIndexMap["全ての親"];
+
+		for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
+		{
+			if (hasInfluence(v))
+			{
+				continue;
+			}
+
+			const aiVector3D& position = mesh->mVertices[v];
+			float bestDistanceSq = numeric_limits<float>::max();
+			int bestVertex = -1;
+
+			for (unsigned int n = 0; n < mesh->mNumVertices; ++n)
+			{
+				if (!hasInfluence(n))
+				{
+					continue;
+				}
+
+				const aiVector3D diff = mesh->mVertices[n] - position;
+				const float distanceSq = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
+				if (distanceSq < bestDistanceSq)
+				{
+					bestDistanceSq = distanceSq;
+					bestVertex = static_cast<int>(n);
+				}
+			}
+
+			if (bestVertex >= 0)
+			{
+				pendingBoneWeights[v] = pendingBoneWeights[static_cast<unsigned int>(bestVertex)];
+				++zeroWeightVerticesFixedByNearest;
+			}
+			else
+			{
+				// メッシュ全体にウェイトが無い場合だけ、全体を同一ボーンへ逃がす。
+				// 部分的な未ウェイト頂点にroot fallbackを使うとトゲ化するため、最近傍コピーを優先する。
+				pendingBoneWeights[v].push_back({ wholeMeshFallbackBoneIndex, 1.0f, "<whole-mesh-fallback>" });
+				++zeroWeightVerticesFallbackToRoot;
+			}
+		}
+
+		if (zeroWeightVerticesFixedByNearest > 0 || zeroWeightVerticesFallbackToRoot > 0)
+		{
+			Debug::Log("Zero-weight vertices repaired: mesh=%u name='%s' nearest=%zu wholeMeshFallback=%zu\n",
+				m, mesh->mName.C_Str(), zeroWeightVerticesFixedByNearest, zeroWeightVerticesFallbackToRoot);
+		}
+
+		for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
+		{
+			auto& influences = pendingBoneWeights[v];
+			sort(influences.begin(), influences.end(), [](const PendingBoneWeight& lhs, const PendingBoneWeight& rhs)
+				{
+					return lhs.Weight > rhs.Weight;
+				});
+
+			const int influenceCount = min<int>(m_kMAX_BONE_INFLUENCES, static_cast<int>(influences.size()));
+			m_DeformVertex[m][v].BoneNum = influenceCount;
+			for (int i = 0; i < influenceCount; ++i)
+			{
+				m_DeformVertex[m][v].BoneWeight[i] = influences[i].Weight;
+				m_DeformVertex[m][v].BoneName[i] = influences[i].BoneName;
+				m_GpuSkinVertices[m][v].BoneIndices[i] = influences[i].BoneIndex;
+				m_GpuSkinVertices[m][v].BoneWeights[i] = influences[i].Weight;
+			}
+
+			NormalizeBoneInfluences(m_GpuSkinVertices[m][v], m_DeformVertex[m][v]);
 		}
 
 		{
@@ -356,7 +821,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 				D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
 			cmdList->ResourceBarrier(1, &toCopyDest);
 
-			D3D12_SUBRESOURCE_DATA ibData {};
+			D3D12_SUBRESOURCE_DATA ibData{};
 			ibData.pData = indices.data();
 			ibData.RowPitch = indexBufferSize;
 			ibData.SlicePitch = ibData.RowPitch;
@@ -452,7 +917,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 					D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
 				teoCmdList->ResourceBarrier(1, &teoToCopyDest);
 
-				D3D12_SUBRESOURCE_DATA teoIbData {};
+				D3D12_SUBRESOURCE_DATA teoIbData{};
 				teoIbData.pData = teoIndices.data();
 				teoIbData.RowPitch = teoIndexBufferSize;
 				teoIbData.SlicePitch = teoIbData.RowPitch;
@@ -491,7 +956,12 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 		}
 
 		m_Meshes[m].VertexCount = mesh->mNumVertices;
+		m_BaseGpuSkinVertices[m] = m_GpuSkinVertices[m];
 	}
+
+	BuildPmxVertexMeshMap();
+	InvalidateVmdRuntimeCache();
+	InvalidatePmxRuntimeCache();
 
 	if (hasVertices)
 	{
@@ -509,7 +979,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 		return false;
 	}
 
-	UpdateBindPoseBoneMatrix(m_AiScene->mRootNode, aiMatrix4x4());
+	UpdateBindPoseBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
 	WriteBoneMatricesToBuffer();
 
 	return true;
@@ -517,13 +987,918 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 
 bool AnimationModelResource::LoadAnimation(const char* fileName, const char* name)
 {
+	const filesystem::path animPath = ModelImportUtils::FromUtf8(fileName);
+	if (!filesystem::exists(animPath))
+	{
+		Debug::Log("ERROR: Animation file not found: %s\n", fileName);
+		return false;
+	}
+
+	if (ModelImportUtils::LowerExtension(animPath) == ".vmd")
+	{
+		return LoadVmdAnimation(fileName, name);
+	}
+
 	const aiScene* anim = ModelImportUtils::ImportScene(fileName, aiProcess_ConvertToLeftHanded);
 	if (!anim)
 	{
 		Debug::Log("ERROR: Failed to load animation: %s (%s)\n", fileName, aiGetErrorString());
 		return false;
 	}
-	m_Animation[name] = anim;
+
+	if (!anim->HasAnimations())
+	{
+		Debug::Log("ERROR: Animation file has no animation tracks: %s (meshes=%u, materials=%u)\n",
+			fileName, anim->mNumMeshes, anim->mNumMaterials);
+		aiReleaseImport(anim);
+		return false;
+	}
+
+	const aiAnimation* firstAnimation = anim->mAnimations[0];
+	Debug::Log("Animation loaded: %s as '%s' (animations=%u, channels=%u, duration=%.3f, ticksPerSecond=%.3f)\n",
+		fileName,
+		name ? name : "",
+		anim->mNumAnimations,
+		firstAnimation ? firstAnimation->mNumChannels : 0,
+		firstAnimation ? firstAnimation->mDuration : 0.0,
+		firstAnimation ? firstAnimation->mTicksPerSecond : 0.0);
+
+	const string animationName = name ? name : "";
+	m_Animation[animationName] = anim;
+	m_VmdAnimations.erase(animationName);
+	InvalidateVmdRuntimeCache();
+	return true;
+}
+
+bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* name)
+{
+	VmdAnimation animation{};
+	if (!VmdAnimationImporter::Load(fileName, animation))
+	{
+		return false;
+	}
+
+	if (animation.BoneTracks.empty())
+	{
+		Debug::Log("ERROR: VMD has no bone motion tracks: %s (motions=%u)\n", fileName, animation.MotionCount);
+		return false;
+	}
+
+	size_t matchedTrackCount = 0;
+	size_t matchedKeyCount = 0;
+	for (const auto& pair : animation.BoneTracks)
+	{
+		if (m_Bone.find(pair.first) != m_Bone.end())
+		{
+			++matchedTrackCount;
+			matchedKeyCount += pair.second.size();
+		}
+	}
+
+	const string animationName = name ? name : "";
+	m_VmdAnimations[animationName] = std::move(animation);
+	m_Animation.erase(animationName);
+	InvalidateVmdRuntimeCache();
+
+	const VmdAnimation& loaded = m_VmdAnimations[animationName];
+	Debug::Log("VMD animation loaded: %s as '%s' (model='%s', motions=%u, boneTracks=%zu, matchedTracks=%zu, matchedKeys=%zu, morphs=%u, morphTracks=%zu, cameras=%u, lights=%u, shadows=%u, ikFrames=%u, ikTracks=%zu, maxFrame=%u)\n",
+		fileName,
+		animationName.c_str(),
+		loaded.ModelName.c_str(),
+		loaded.MotionCount,
+		loaded.BoneTracks.size(),
+		matchedTrackCount,
+		matchedKeyCount,
+		loaded.MorphCount,
+		loaded.MorphTracks.size(),
+		loaded.CameraCount,
+		loaded.LightCount,
+		loaded.ShadowCount,
+		loaded.IkCount,
+		loaded.IkTracks.size(),
+		loaded.MaxFrame);
+
+	if (matchedTrackCount == 0)
+	{
+		Debug::Log("WARNING: VMD loaded but no bone names matched this model: %s\n", fileName);
+	}
+	return true;
+}
+
+void AnimationModelResource::InvalidateVmdRuntimeCache()
+{
+	m_CachedVmdPrimaryAnimation = nullptr;
+	m_CachedVmdSecondaryAnimation = nullptr;
+	m_VmdBoneBindings.clear();
+	m_VmdMorphBindings.clear();
+	m_VmdIkTrackCache.clear();
+	m_VmdIkTrackCursors.clear();
+	m_VmdActiveMorphsScratch.clear();
+	m_VmdMorphPositionOffsetsScratch.clear();
+	m_VmdMorphUvOffsetsScratch.clear();
+}
+
+void AnimationModelResource::RebuildVmdRuntimeCache(const VmdAnimation* primaryAnimation, const VmdAnimation* secondaryAnimation)
+{
+	m_CachedVmdPrimaryAnimation = primaryAnimation;
+	m_CachedVmdSecondaryAnimation = secondaryAnimation;
+	m_VmdBoneBindings.clear();
+	m_VmdMorphBindings.clear();
+	m_VmdIkTrackCache.clear();
+	m_VmdIkTrackCursors.clear();
+	m_VmdActiveMorphsScratch.clear();
+
+	if (!primaryAnimation)
+	{
+		return;
+	}
+
+	const VmdAnimation* secondary = secondaryAnimation ? secondaryAnimation : primaryAnimation;
+	m_VmdBoneBindings.reserve(m_Bone.size());
+	for (auto& pair : m_Bone)
+	{
+		VmdBoneBinding binding{};
+		binding.BonePtr = &pair.second;
+		binding.BonePtr->BindLocalMatrix.Decompose(binding.BaseScale, binding.BaseRotation, binding.BasePosition);
+
+		auto primaryTrackIt = primaryAnimation->BoneTracks.find(pair.first);
+		if (primaryTrackIt != primaryAnimation->BoneTracks.end())
+		{
+			binding.PrimaryTrack = &primaryTrackIt->second;
+		}
+
+		auto secondaryTrackIt = secondary->BoneTracks.find(pair.first);
+		if (secondaryTrackIt != secondary->BoneTracks.end())
+		{
+			binding.SecondaryTrack = &secondaryTrackIt->second;
+		}
+
+		m_VmdBoneBindings.push_back(binding);
+	}
+
+	m_VmdMorphBindings.reserve(primaryAnimation->MorphTracks.size());
+	for (const auto& track : primaryAnimation->MorphTracks)
+	{
+		auto morphIt = m_PmxMorphIndexMap.find(track.first);
+		if (morphIt == m_PmxMorphIndexMap.end())
+		{
+			continue;
+		}
+		m_VmdMorphBindings.push_back({ morphIt->second, &track.second });
+	}
+
+	m_VmdIkTrackCache.reserve(primaryAnimation->IkTracks.size());
+	m_VmdIkTrackCursors.reserve(primaryAnimation->IkTracks.size());
+	for (const auto& track : primaryAnimation->IkTracks)
+	{
+		m_VmdIkTrackCache.emplace(track.first, &track.second);
+		m_VmdIkTrackCursors.emplace(track.first, VmdTrackSampleCursor{});
+	}
+
+	if (m_VmdMorphPositionOffsetsScratch.size() != m_PmxBaseVertices.size())
+	{
+		m_VmdMorphPositionOffsetsScratch.resize(m_PmxBaseVertices.size());
+		m_VmdMorphUvOffsetsScratch.resize(m_PmxBaseVertices.size());
+	}
+}
+
+void AnimationModelResource::InvalidatePmxRuntimeCache()
+{
+	m_PmxRuntimeNodes.clear();
+	m_PmxRuntimeNodeIndexMap.clear();
+	m_PmxGlobalMatricesScratch.clear();
+	m_PmxOrderedTransformSteps.clear();
+	m_PmxAppendResultsScratch.clear();
+}
+
+void AnimationModelResource::RebuildPmxRuntimeCache()
+{
+	InvalidatePmxRuntimeCache();
+	if (!m_AiScene)
+	{
+		return;
+	}
+
+	auto buildFast = [&](auto&& self, aiNode* node, int parent) -> void
+		{
+			if (!node)
+			{
+				return;
+			}
+
+			const int myIndex = static_cast<int>(m_PmxRuntimeNodes.size());
+			const string nodeName = node->mName.C_Str();
+			Bone* bonePtr = nullptr;
+			auto boneIt = m_Bone.find(nodeName);
+			if (boneIt != m_Bone.end())
+			{
+				bonePtr = &boneIt->second;
+			}
+
+			m_PmxRuntimeNodeIndexMap[nodeName] = static_cast<size_t>(myIndex);
+			m_PmxRuntimeNodes.push_back({ node, nodeName, parent, bonePtr });
+
+			for (unsigned int i = 0; i < node->mNumChildren; ++i)
+			{
+				self(self, node->mChildren[i], myIndex);
+			}
+		};
+	buildFast(buildFast, m_AiScene->mRootNode, -1);
+	m_PmxGlobalMatricesScratch.resize(m_PmxRuntimeNodes.size());
+
+	m_PmxOrderedTransformSteps.reserve(m_PmxAppendConstraints.size() + m_PmxIkConstraints.size());
+	for (size_t i = 0; i < m_PmxAppendConstraints.size(); ++i)
+	{
+		const auto& c = m_PmxAppendConstraints[i];
+		m_PmxOrderedTransformSteps.push_back({ false, i, c.DeformDepth, c.BoneOrder });
+	}
+	for (size_t i = 0; i < m_PmxIkConstraints.size(); ++i)
+	{
+		const auto& c = m_PmxIkConstraints[i];
+		m_PmxOrderedTransformSteps.push_back({ true, i, c.DeformDepth, c.BoneOrder });
+	}
+	sort(m_PmxOrderedTransformSteps.begin(), m_PmxOrderedTransformSteps.end(),
+		[](const PmxOrderedTransformStep& lhs, const PmxOrderedTransformStep& rhs)
+		{
+			if (lhs.DeformDepth != rhs.DeformDepth)
+			{
+				return lhs.DeformDepth < rhs.DeformDepth;
+			}
+			if (lhs.BoneOrder != rhs.BoneOrder)
+			{
+				return lhs.BoneOrder < rhs.BoneOrder;
+			}
+			return !lhs.IsIk && rhs.IsIk;
+		});
+
+	m_PmxAppendResultsScratch.reserve(m_PmxAppendConstraints.size());
+}
+bool AnimationModelResource::LoadPmxIkData(const char* fileName)
+{
+	const filesystem::path pmxPath = ModelImportUtils::FromUtf8(fileName);
+	ifstream stream(pmxPath, ios::binary | ios::ate);
+	if (!stream)
+	{
+		Debug::Log("WARNING: Failed to open PMX for IK metadata: %s\n", fileName);
+		return false;
+	}
+
+	const streamsize fileSize = stream.tellg();
+	if (fileSize <= 0)
+	{
+		Debug::Log("WARNING: PMX file is empty: %s\n", fileName);
+		return false;
+	}
+
+	vector<uint8_t> bytes(static_cast<size_t>(fileSize));
+	stream.seekg(0, ios::beg);
+	if (!stream.read(reinterpret_cast<char*>(bytes.data()), fileSize))
+	{
+		Debug::Log("WARNING: Failed to read PMX for IK metadata: %s\n", fileName);
+		return false;
+	}
+
+	struct PmxReader
+	{
+		const vector<uint8_t>& Bytes;
+		size_t Pos = 0;
+		uint8_t Encoding = 1;
+		uint8_t AdditionalUvCount = 0;
+		uint8_t VertexIndexSize = 4;
+		uint8_t TextureIndexSize = 4;
+		uint8_t MaterialIndexSize = 4;
+		uint8_t BoneIndexSize = 4;
+		uint8_t MorphIndexSize = 4;
+		uint8_t RigidBodyIndexSize = 4;
+
+		bool CanRead(size_t byteCount) const
+		{
+			return Pos <= Bytes.size() && byteCount <= Bytes.size() - Pos;
+		}
+
+		bool ReadBytes(void* outValue, size_t byteCount)
+		{
+			if (!CanRead(byteCount))
+			{
+				return false;
+			}
+			memcpy(outValue, Bytes.data() + Pos, byteCount);
+			Pos += byteCount;
+			return true;
+		}
+
+		bool Read(uint8_t& value) { return ReadBytes(&value, sizeof(value)); }
+		bool Read(int8_t& value) { return ReadBytes(&value, sizeof(value)); }
+		bool Read(uint16_t& value) { return ReadBytes(&value, sizeof(value)); }
+		bool Read(int16_t& value) { return ReadBytes(&value, sizeof(value)); }
+		bool Read(uint32_t& value) { return ReadBytes(&value, sizeof(value)); }
+		bool Read(int32_t& value) { return ReadBytes(&value, sizeof(value)); }
+		bool Read(float& value) { return ReadBytes(&value, sizeof(value)); }
+
+		bool Skip(size_t byteCount)
+		{
+			if (!CanRead(byteCount))
+			{
+				return false;
+			}
+			Pos += byteCount;
+			return true;
+		}
+
+		bool ReadIndex(uint8_t indexSize, int32_t& value)
+		{
+			if (indexSize == 1)
+			{
+				uint8_t raw = 0;
+				if (!Read(raw)) return false;
+				value = (raw == 0xff) ? -1 : static_cast<int32_t>(raw);
+				return true;
+			}
+			if (indexSize == 2)
+			{
+				uint16_t raw = 0;
+				if (!Read(raw)) return false;
+				value = (raw == 0xffff) ? -1 : static_cast<int32_t>(raw);
+				return true;
+			}
+			return Read(value);
+		}
+
+		bool ReadUnsignedIndex(uint8_t indexSize, uint32_t& value)
+		{
+			if (indexSize == 1)
+			{
+				uint8_t v = 0;
+				if (!Read(v)) return false;
+				value = v;
+				return true;
+			}
+			if (indexSize == 2)
+			{
+				uint16_t v = 0;
+				if (!Read(v)) return false;
+				value = static_cast<uint32_t>(v);
+				return true;
+			}
+			int32_t signedValue = 0;
+			if (!Read(signedValue) || signedValue < 0)
+			{
+				return false;
+			}
+			value = static_cast<uint32_t>(signedValue);
+			return true;
+		}
+
+		bool SkipIndex(uint8_t indexSize)
+		{
+			return Skip(indexSize);
+		}
+
+		bool ReadText(string& text)
+		{
+			int32_t byteLength = 0;
+			if (!Read(byteLength) || byteLength < 0 || !CanRead(static_cast<size_t>(byteLength)))
+			{
+				return false;
+			}
+			if (byteLength == 0)
+			{
+				text.clear();
+				return true;
+			}
+
+			if (Encoding == 0)
+			{
+				const int wideLength = byteLength / 2;
+				wstring wideText(static_cast<size_t>(wideLength), L'\0');
+				memcpy(wideText.data(), Bytes.data() + Pos, static_cast<size_t>(wideLength) * sizeof(wchar_t));
+				Pos += static_cast<size_t>(byteLength);
+
+				const int utf8Length = WideCharToMultiByte(CP_UTF8, 0, wideText.data(), wideLength, nullptr, 0, nullptr, nullptr);
+				if (utf8Length <= 0)
+				{
+					text.clear();
+					return true;
+				}
+				text.assign(static_cast<size_t>(utf8Length), '\0');
+				WideCharToMultiByte(CP_UTF8, 0, wideText.data(), wideLength, text.data(), utf8Length, nullptr, nullptr);
+				return true;
+			}
+
+			text.assign(reinterpret_cast<const char*>(Bytes.data() + Pos), static_cast<size_t>(byteLength));
+			Pos += static_cast<size_t>(byteLength);
+			return true;
+		}
+	};
+
+	struct RawIkLink
+	{
+		int32_t BoneIndex = -1;
+		bool HasLimit = false;
+		aiVector3D LimitMin{};
+		aiVector3D LimitMax{};
+	};
+
+	struct RawBone
+	{
+		string Name{};
+		uint16_t Flags = 0;
+		int32_t DeformDepth = 0;
+		int32_t AppendBoneIndex = -1;
+		float AppendWeight = 0.0f;
+		int32_t IkTargetIndex = -1;
+		uint32_t IkIterationCount = 0;
+		float IkLimitAngle = 0.0f;
+		vector<RawIkLink> IkLinks{};
+	};
+
+	auto readFloat3 = [](PmxReader& reader, aiVector3D& outValue)
+		{
+			return reader.Read(outValue.x) && reader.Read(outValue.y) && reader.Read(outValue.z);
+		};
+	auto readFloat4 = [](PmxReader& reader, XMFLOAT4& outValue)
+		{
+			return reader.Read(outValue.x) && reader.Read(outValue.y) &&
+				reader.Read(outValue.z) && reader.Read(outValue.w);
+		};
+
+	PmxReader reader{ bytes };
+	array<char, 4> magic{};
+	if (!reader.CanRead(4))
+	{
+		return false;
+	}
+	memcpy(magic.data(), bytes.data(), 4);
+	reader.Pos = 4;
+	if (string(magic.data(), magic.size()) != "PMX ")
+	{
+		Debug::Log("WARNING: PMX IK metadata skipped because header is invalid: %s\n", fileName);
+		return false;
+	}
+
+	float version = 0.0f;
+	uint8_t configSize = 0;
+	if (!reader.Read(version) || !reader.Read(configSize) || !reader.CanRead(configSize))
+	{
+		Debug::Log("WARNING: PMX IK metadata header is truncated: %s\n", fileName);
+		return false;
+	}
+	if (configSize < 8)
+	{
+		Debug::Log("WARNING: PMX IK metadata config is too short: %s\n", fileName);
+		return false;
+	}
+
+	reader.Read(reader.Encoding);
+	reader.Read(reader.AdditionalUvCount);
+	reader.Read(reader.VertexIndexSize);
+	reader.Read(reader.TextureIndexSize);
+	reader.Read(reader.MaterialIndexSize);
+	reader.Read(reader.BoneIndexSize);
+	reader.Read(reader.MorphIndexSize);
+	reader.Read(reader.RigidBodyIndexSize);
+	if (configSize > 8)
+	{
+		reader.Skip(configSize - 8);
+	}
+
+	string ignoredText;
+	if (!reader.ReadText(ignoredText) || !reader.ReadText(ignoredText) ||
+		!reader.ReadText(ignoredText) || !reader.ReadText(ignoredText))
+	{
+		Debug::Log("WARNING: PMX IK metadata model text is truncated: %s\n", fileName);
+		return false;
+	}
+
+	int32_t vertexCount = 0;
+	if (!reader.Read(vertexCount) || vertexCount < 0)
+	{
+		Debug::Log("WARNING: PMX IK metadata vertex count is invalid: %s\n", fileName);
+		return false;
+	}
+	m_PmxBaseVertices.clear();
+	m_PmxBaseNormals.clear();
+	m_PmxBaseTexCoords.clear();
+	m_PmxBaseVertices.resize(static_cast<size_t>(vertexCount));
+	m_PmxBaseNormals.resize(static_cast<size_t>(vertexCount));
+	m_PmxBaseTexCoords.resize(static_cast<size_t>(vertexCount));
+	for (int32_t i = 0; i < vertexCount; ++i)
+	{
+		aiVector3D position{};
+		aiVector3D normal{};
+		XMFLOAT2 uv{};
+		if (!readFloat3(reader, position) ||
+			!readFloat3(reader, normal) ||
+			!reader.Read(uv.x) ||
+			!reader.Read(uv.y) ||
+			!reader.Skip(static_cast<size_t>(reader.AdditionalUvCount) * 16))
+		{
+			Debug::Log("WARNING: PMX IK metadata vertex data is truncated: %s\n", fileName);
+			return false;
+		}
+		m_PmxBaseVertices[static_cast<size_t>(i)] = ConvertVmdPositionToAssimpLeftHanded(position);
+		m_PmxBaseNormals[static_cast<size_t>(i)] = ConvertVmdPositionToAssimpLeftHanded(normal);
+		m_PmxBaseTexCoords[static_cast<size_t>(i)] = uv;
+
+		uint8_t deformType = 0;
+		if (!reader.Read(deformType))
+		{
+			return false;
+		}
+		switch (deformType)
+		{
+		case 0:
+			if (!reader.SkipIndex(reader.BoneIndexSize)) return false;
+			break;
+		case 1:
+			if (!reader.Skip(static_cast<size_t>(reader.BoneIndexSize) * 2 + 4)) return false;
+			break;
+		case 2:
+			if (!reader.Skip(static_cast<size_t>(reader.BoneIndexSize) * 4 + 16)) return false;
+			break;
+		case 3:
+			if (!reader.Skip(static_cast<size_t>(reader.BoneIndexSize) * 2 + 40)) return false;
+			break;
+		case 4:
+			if (!reader.Skip(static_cast<size_t>(reader.BoneIndexSize) * 4 + 16)) return false;
+			break;
+		default:
+			Debug::Log("WARNING: PMX IK metadata unknown deform type %u: %s\n", deformType, fileName);
+			return false;
+		}
+		if (!reader.Skip(4))
+		{
+			return false;
+		}
+	}
+
+	int32_t indexCount = 0;
+	if (!reader.Read(indexCount) || indexCount < 0 ||
+		!reader.Skip(static_cast<size_t>(indexCount) * reader.VertexIndexSize))
+	{
+		Debug::Log("WARNING: PMX IK metadata index data is truncated: %s\n", fileName);
+		return false;
+	}
+
+	int32_t textureCount = 0;
+	if (!reader.Read(textureCount) || textureCount < 0)
+	{
+		return false;
+	}
+	for (int32_t i = 0; i < textureCount; ++i)
+	{
+		if (!reader.ReadText(ignoredText)) return false;
+	}
+
+	int32_t materialCount = 0;
+	if (!reader.Read(materialCount) || materialCount < 0)
+	{
+		return false;
+	}
+	for (int32_t i = 0; i < materialCount; ++i)
+	{
+		if (!reader.ReadText(ignoredText) || !reader.ReadText(ignoredText) ||
+			!reader.Skip(65) ||
+			!reader.SkipIndex(reader.TextureIndexSize) ||
+			!reader.SkipIndex(reader.TextureIndexSize))
+		{
+			return false;
+		}
+
+		uint8_t sphereMode = 0;
+		uint8_t toonFlag = 0;
+		if (!reader.Read(sphereMode) || !reader.Read(toonFlag))
+		{
+			return false;
+		}
+		if (toonFlag == 0)
+		{
+			if (!reader.SkipIndex(reader.TextureIndexSize)) return false;
+		}
+		else
+		{
+			if (!reader.Skip(1)) return false;
+		}
+		if (!reader.ReadText(ignoredText) || !reader.Skip(4))
+		{
+			return false;
+		}
+	}
+
+	int32_t boneCount = 0;
+	if (!reader.Read(boneCount) || boneCount < 0)
+	{
+		Debug::Log("WARNING: PMX IK metadata bone count is invalid: %s\n", fileName);
+		return false;
+	}
+
+	vector<RawBone> rawBones(static_cast<size_t>(boneCount));
+	for (int32_t i = 0; i < boneCount; ++i)
+	{
+		RawBone& rawBone = rawBones[static_cast<size_t>(i)];
+		string englishName;
+		aiVector3D ignoredVec{};
+		int32_t ignoredIndex = -1;
+		if (!reader.ReadText(rawBone.Name) ||
+			!reader.ReadText(englishName) ||
+			!readFloat3(reader, ignoredVec) ||
+			!reader.ReadIndex(reader.BoneIndexSize, ignoredIndex) ||
+			!reader.Read(rawBone.DeformDepth) ||
+			!reader.Read(rawBone.Flags))
+		{
+			Debug::Log("WARNING: PMX IK metadata bone data is truncated: %s\n", fileName);
+			return false;
+		}
+
+		if ((rawBone.Flags & 0x0001) != 0)
+		{
+			if (!reader.ReadIndex(reader.BoneIndexSize, ignoredIndex)) return false;
+		}
+		else if (!reader.Skip(12))
+		{
+			return false;
+		}
+
+		if ((rawBone.Flags & 0x0100) != 0 || (rawBone.Flags & 0x0200) != 0)
+		{
+			if (!reader.ReadIndex(reader.BoneIndexSize, rawBone.AppendBoneIndex) ||
+				!reader.Read(rawBone.AppendWeight))
+			{
+				return false;
+			}
+		}
+		if ((rawBone.Flags & 0x0400) != 0 && !reader.Skip(12)) return false;
+		if ((rawBone.Flags & 0x0800) != 0 && !reader.Skip(24)) return false;
+		if ((rawBone.Flags & 0x2000) != 0 && !reader.Skip(4)) return false;
+
+		if ((rawBone.Flags & 0x0020) != 0)
+		{
+			int32_t linkCount = 0;
+			if (!reader.ReadIndex(reader.BoneIndexSize, rawBone.IkTargetIndex) ||
+				!reader.Read(rawBone.IkIterationCount) ||
+				!reader.Read(rawBone.IkLimitAngle) ||
+				!reader.Read(linkCount) ||
+				linkCount < 0)
+			{
+				return false;
+			}
+
+			rawBone.IkLinks.resize(static_cast<size_t>(linkCount));
+			for (int32_t link = 0; link < linkCount; ++link)
+			{
+				RawIkLink& rawLink = rawBone.IkLinks[static_cast<size_t>(link)];
+				uint8_t hasLimit = 0;
+				if (!reader.ReadIndex(reader.BoneIndexSize, rawLink.BoneIndex) || !reader.Read(hasLimit))
+				{
+					return false;
+				}
+				rawLink.HasLimit = hasLimit != 0;
+				if (rawLink.HasLimit)
+				{
+					if (!readFloat3(reader, rawLink.LimitMin) || !readFloat3(reader, rawLink.LimitMax))
+					{
+						return false;
+					}
+				}
+			}
+		}
+	}
+
+	int32_t morphCount = 0;
+	if (!reader.Read(morphCount) || morphCount < 0)
+	{
+		Debug::Log("WARNING: PMX morph metadata count is invalid: %s\n", fileName);
+		return false;
+	}
+
+	m_PmxMorphs.clear();
+	m_PmxMorphIndexMap.clear();
+	m_PmxMorphs.resize(static_cast<size_t>(morphCount));
+	for (int32_t i = 0; i < morphCount; ++i)
+	{
+		PmxMorph& morph = m_PmxMorphs[static_cast<size_t>(i)];
+		string englishName;
+		uint8_t panel = 0;
+		int32_t offsetCount = 0;
+		if (!reader.ReadText(morph.Name) ||
+			!reader.ReadText(englishName) ||
+			!reader.Read(panel) ||
+			!reader.Read(morph.Type) ||
+			!reader.Read(offsetCount) ||
+			offsetCount < 0)
+		{
+			Debug::Log("WARNING: PMX morph metadata is truncated: %s\n", fileName);
+			return false;
+		}
+		if (!morph.Name.empty())
+		{
+			m_PmxMorphIndexMap[morph.Name] = static_cast<uint32_t>(i);
+		}
+
+		for (int32_t offset = 0; offset < offsetCount; ++offset)
+		{
+			switch (morph.Type)
+			{
+			case 0:
+			{
+				int32_t morphIndex = -1;
+				float weight = 0.0f;
+				if (!reader.ReadIndex(reader.MorphIndexSize, morphIndex) || !reader.Read(weight))
+				{
+					return false;
+				}
+				if (morphIndex >= 0)
+				{
+					morph.GroupOffsets.push_back({ static_cast<uint32_t>(morphIndex), weight });
+				}
+				break;
+			}
+			case 1:
+			{
+				uint32_t vertexIndex = 0;
+				aiVector3D position{};
+				if (!reader.ReadUnsignedIndex(reader.VertexIndexSize, vertexIndex) ||
+					!readFloat3(reader, position))
+				{
+					return false;
+				}
+				morph.PositionOffsets.push_back({ vertexIndex, ConvertVmdPositionToAssimpLeftHanded(position) });
+				break;
+			}
+			case 2:
+			{
+				int32_t boneIndex = -1;
+				aiVector3D position{};
+				float qx = 0.0f;
+				float qy = 0.0f;
+				float qz = 0.0f;
+				float qw = 1.0f;
+				if (!reader.ReadIndex(reader.BoneIndexSize, boneIndex) ||
+					!readFloat3(reader, position) ||
+					!reader.Read(qx) ||
+					!reader.Read(qy) ||
+					!reader.Read(qz) ||
+					!reader.Read(qw))
+				{
+					return false;
+				}
+				if (boneIndex >= 0 && boneIndex < boneCount)
+				{
+					PmxBoneMorphOffset boneOffset{};
+					boneOffset.BoneName = rawBones[static_cast<size_t>(boneIndex)].Name;
+					boneOffset.Position = ConvertVmdPositionToAssimpLeftHanded(position);
+					boneOffset.Rotation = ConvertVmdRotationToAssimpLeftHanded(aiQuaternion(qw, qx, qy, qz));
+					morph.BoneOffsets.push_back(boneOffset);
+				}
+				break;
+			}
+			case 3:
+			{
+				uint32_t vertexIndex = 0;
+				XMFLOAT4 uv{};
+				if (!reader.ReadUnsignedIndex(reader.VertexIndexSize, vertexIndex) ||
+					!readFloat4(reader, uv))
+				{
+					return false;
+				}
+				morph.UvOffsets.push_back({ vertexIndex, uv });
+				break;
+			}
+			case 4:
+			case 5:
+			case 6:
+			case 7:
+				if (!reader.SkipIndex(reader.VertexIndexSize) || !reader.Skip(16)) return false;
+				break;
+			case 8:
+			{
+				PmxMaterialMorphOffset materialOffset{};
+				XMFLOAT4 ignored{};
+				float ignoredFloat = 0.0f;
+				if (!reader.ReadIndex(reader.MaterialIndexSize, materialOffset.MaterialIndex) ||
+					!reader.Read(materialOffset.Operation) ||
+					!readFloat4(reader, materialOffset.Diffuse) ||
+					!reader.Skip(12) ||
+					!reader.Read(ignoredFloat) ||
+					!reader.Skip(12) ||
+					!readFloat4(reader, ignored) ||
+					!reader.Read(ignoredFloat) ||
+					!readFloat4(reader, ignored) ||
+					!readFloat4(reader, ignored) ||
+					!readFloat4(reader, ignored))
+				{
+					return false;
+				}
+				morph.MaterialOffsets.push_back(materialOffset);
+				break;
+			}
+			break;
+			case 9:
+				if (!reader.SkipIndex(reader.MorphIndexSize) || !reader.Skip(4)) return false;
+				break;
+			case 10:
+				if (!reader.SkipIndex(reader.RigidBodyIndexSize) || !reader.Skip(25)) return false;
+				break;
+			default:
+				Debug::Log("WARNING: PMX morph metadata unknown morph type %u: %s\n", morph.Type, fileName);
+				return false;
+			}
+		}
+	}
+
+	m_PmxAppendConstraints.clear();
+	for (int32_t i = 0; i < boneCount; ++i)
+	{
+		const RawBone& rawBone = rawBones[static_cast<size_t>(i)];
+		if (((rawBone.Flags & 0x0100) == 0 && (rawBone.Flags & 0x0200) == 0) ||
+			rawBone.AppendBoneIndex < 0 ||
+			rawBone.AppendBoneIndex >= boneCount)
+		{
+			continue;
+		}
+
+		PmxAppendConstraint constraint{};
+		constraint.BoneName = rawBone.Name;
+		constraint.AppendBoneName = rawBones[static_cast<size_t>(rawBone.AppendBoneIndex)].Name;
+		constraint.Weight = rawBone.AppendWeight;
+		constraint.InheritRotation = (rawBone.Flags & 0x0100) != 0;
+		constraint.InheritTranslation = (rawBone.Flags & 0x0200) != 0;
+		constraint.Local = (rawBone.Flags & 0x0080) != 0;
+		constraint.DeformDepth = rawBone.DeformDepth;
+		constraint.BoneOrder = static_cast<uint32_t>(i);
+		if (!constraint.BoneName.empty() && !constraint.AppendBoneName.empty())
+		{
+			m_PmxAppendConstraints.push_back(std::move(constraint));
+		}
+	}
+
+	m_PmxIkConstraints.clear();
+	for (int32_t i = 0; i < boneCount; ++i)
+	{
+		const RawBone& rawBone = rawBones[static_cast<size_t>(i)];
+		if ((rawBone.Flags & 0x0020) == 0 ||
+			rawBone.IkTargetIndex < 0 ||
+			rawBone.IkTargetIndex >= boneCount)
+		{
+			continue;
+		}
+
+		PmxIkConstraint constraint{};
+		constraint.BoneName = rawBone.Name;
+		constraint.TargetBoneName = rawBones[static_cast<size_t>(rawBone.IkTargetIndex)].Name;
+		constraint.IterationCount = rawBone.IkIterationCount;
+		constraint.LimitAngle = rawBone.IkLimitAngle;
+		constraint.DeformDepth = rawBone.DeformDepth;
+		constraint.BoneOrder = static_cast<uint32_t>(i);
+		for (const RawIkLink& rawLink : rawBone.IkLinks)
+		{
+			if (rawLink.BoneIndex < 0 || rawLink.BoneIndex >= boneCount)
+			{
+				continue;
+			}
+
+			PmxIkLink link{};
+			link.BoneName = rawBones[static_cast<size_t>(rawLink.BoneIndex)].Name;
+			link.HasLimit = rawLink.HasLimit;
+			link.LimitMin = rawLink.LimitMin;
+			link.LimitMax = rawLink.LimitMax;
+			constraint.Links.push_back(link);
+		}
+
+		if (!constraint.BoneName.empty() && !constraint.TargetBoneName.empty() && !constraint.Links.empty())
+		{
+			m_PmxIkConstraints.push_back(std::move(constraint));
+		}
+	}
+
+	auto comparePmxTransformOrder = [](const auto& lhs, const auto& rhs)
+		{
+			if (lhs.DeformDepth != rhs.DeformDepth)
+			{
+				return lhs.DeformDepth < rhs.DeformDepth;
+			}
+			return lhs.BoneOrder < rhs.BoneOrder;
+		};
+	sort(m_PmxAppendConstraints.begin(), m_PmxAppendConstraints.end(), comparePmxTransformOrder);
+	sort(m_PmxIkConstraints.begin(), m_PmxIkConstraints.end(), comparePmxTransformOrder);
+
+	size_t positionMorphCount = 0;
+	size_t uvMorphCount = 0;
+	size_t boneMorphCount = 0;
+	size_t materialMorphCount = 0;
+	size_t groupMorphCount = 0;
+	for (const PmxMorph& morph : m_PmxMorphs)
+	{
+		if (!morph.PositionOffsets.empty()) ++positionMorphCount;
+		if (!morph.UvOffsets.empty()) ++uvMorphCount;
+		if (!morph.BoneOffsets.empty()) ++boneMorphCount;
+		if (!morph.MaterialOffsets.empty()) ++materialMorphCount;
+		if (!morph.GroupOffsets.empty()) ++groupMorphCount;
+	}
+
+	Debug::Log("PMX animation metadata loaded: %s (vertices=%zu, bones=%d, appendConstraints=%zu, ikConstraints=%zu, morphs=%zu, positionMorphs=%zu, uvMorphs=%zu, boneMorphs=%zu, materialMorphs=%zu, groupMorphs=%zu)\n",
+		fileName, m_PmxBaseVertices.size(), boneCount, m_PmxAppendConstraints.size(), m_PmxIkConstraints.size(),
+		m_PmxMorphs.size(), positionMorphCount, uvMorphCount, boneMorphCount, materialMorphCount, groupMorphCount);
 	return true;
 }
 
@@ -730,34 +2105,39 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 		UINT boneBufferSize = sizeof(XMFLOAT4X4) * m_kMAX_BONES;
 		auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
 		auto resDesc = CD3DX12_RESOURCE_DESC::Buffer(boneBufferSize);
-		HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE,
-			&resDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_BoneBuffer));
-		if (FAILED(hr)) return false;
 
-		CD3DX12_RANGE readRange(0, 0);
-		hr = m_BoneBuffer->Map(0, &readRange, &m_pBoneBufferMapped);
-		if (FAILED(hr))
+		vector<XMFLOAT4X4> identityBones(m_kMAX_BONES);
+		XMFLOAT4X4 identity;
+		XMStoreFloat4x4(&identity, XMMatrixIdentity());
+		for (auto& mtx : identityBones)
 		{
-			Debug::Log("ERROR: Failed to map bone buffer\n");
-			m_pBoneBufferMapped = nullptr;
-			return false;
+			mtx = identity;
 		}
 
-		if (m_pBoneBufferMapped)
+		for (UINT frame = 0; frame < RendererState::g_kFRAME_COUNT; ++frame)
 		{
-			vector<XMFLOAT4X4> identityBones(m_kMAX_BONES);
-			XMFLOAT4X4 identity;
-			XMStoreFloat4x4(&identity, XMMatrixIdentity());
-			for (auto& mtx : identityBones)
+			HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE,
+				&resDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_BoneBuffers[frame]));
+			if (FAILED(hr)) return false;
+
+			CD3DX12_RANGE readRange(0, 0);
+			hr = m_BoneBuffers[frame]->Map(0, &readRange, &m_pBoneBufferMapped[frame]);
+			if (FAILED(hr))
 			{
-				mtx = identity;
+				Debug::Log("ERROR: Failed to map bone buffer\n");
+				m_pBoneBufferMapped[frame] = nullptr;
+				return false;
 			}
-			memcpy(m_pBoneBufferMapped, identityBones.data(), sizeof(XMFLOAT4X4) * m_kMAX_BONES);
+
+			if (m_pBoneBufferMapped[frame])
+			{
+				memcpy(m_pBoneBufferMapped[frame], identityBones.data(), sizeof(XMFLOAT4X4) * m_kMAX_BONES);
+			}
 		}
 	}
 
 	{
-		D3D12_DESCRIPTOR_HEAP_DESC heapDesc {};
+		D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
 		heapDesc.NumDescriptors = numMeshes * m_kSKINNING_DESCRIPTORS_PER_MESH;
 		heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 		heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
@@ -791,7 +2171,7 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 			memcpy(pDest, m_GpuSkinVertices[m].data(), bufSize);
 			m_Meshes[m].InputVertexBuffer->Unmap(0, nullptr);
 
-			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc {};
+			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 			srvDesc.Buffer.NumElements = vertexCount;
@@ -803,16 +2183,17 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 			device->CreateShaderResourceView(m_Meshes[m].InputVertexBuffer.Get(), &srvDesc, srvHandle);
 		}
 
+		for (UINT frame = 0; frame < RendererState::g_kFRAME_COUNT; ++frame)
 		{
-			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc {};
+			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 			srvDesc.Buffer.NumElements = m_kMAX_BONES;
 			srvDesc.Buffer.StructureByteStride = sizeof(XMFLOAT4X4);
 			srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 			CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(m_SkinningDescHeap->GetCPUDescriptorHandleForHeapStart(),
-				descriptorBase + m_kBONE_SRV_OFFSET, descSize);
-			device->CreateShaderResourceView(m_BoneBuffer.Get(), &srvDesc, srvHandle);
+				descriptorBase + m_kBONE_SRV_OFFSET + frame, descSize);
+			device->CreateShaderResourceView(m_BoneBuffers[frame].Get(), &srvDesc, srvHandle);
 		}
 
 		{
@@ -823,7 +2204,7 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 				&resDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&m_Meshes[m].VertexBuffer));
 			if (FAILED(hr)) return false;
 
-			D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc {};
+			D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
 			uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
 			uavDesc.Buffer.NumElements = vertexCount;
 			uavDesc.Buffer.StructureByteStride = sizeof(ModelVertex);
@@ -865,7 +2246,7 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 				memcpy(pDest, m_TeoGpuSkinVerticesByMode[m][mode].data(), bufSize);
 				m_Meshes[m].TeoInputVertexBuffers[mode]->Unmap(0, nullptr);
 
-				D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc {};
+				D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 				srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
 				srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 				srvDesc.Buffer.NumElements = teoVertexCount;
@@ -885,7 +2266,7 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 					&resDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&m_Meshes[m].TeoVertexBuffers[mode]));
 				if (FAILED(hr)) return false;
 
-				D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc {};
+				D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
 				uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
 				uavDesc.Buffer.NumElements = teoVertexCount;
 				uavDesc.Buffer.StructureByteStride = sizeof(ModelVertex);
@@ -933,6 +2314,10 @@ aiAnimation* AnimationModelResource::GetAnimation(const string& name)
 				return m_AiScene->mAnimations[i];
 			}
 		}
+		if (m_AiScene->mNumAnimations == 1)
+		{
+			return m_AiScene->mAnimations[0];
+		}
 	}
 	return nullptr;
 }
@@ -951,6 +2336,13 @@ bool AnimationModelResource::ApplyMeshShadingOverridePartIds(const vector<int>& 
 		for (GpuSkinVertex& vertex : m_GpuSkinVertices[meshIndex])
 		{
 			vertex.Diffuse.w = targetPartId;
+		}
+		if (meshIndex < m_BaseGpuSkinVertices.size())
+		{
+			for (GpuSkinVertex& vertex : m_BaseGpuSkinVertices[meshIndex])
+			{
+				vertex.Diffuse.w = targetPartId;
+			}
 		}
 		if (meshData.InputVertexBuffer && !m_GpuSkinVertices[meshIndex].empty())
 		{
@@ -1050,7 +2442,12 @@ void AnimationModelResource::UpdateBindPoseBoneMatrix(aiNode* node, aiMatrix4x4 
 
 void AnimationModelResource::WriteBoneMatricesToBuffer()
 {
-	if (!m_pBoneBufferMapped)
+	bool hasMappedBoneBuffer = false;
+	for (void* mapped : m_pBoneBufferMapped)
+	{
+		hasMappedBoneBuffer |= (mapped != nullptr);
+	}
+	if (!hasMappedBoneBuffer)
 	{
 		return;
 	}
@@ -1071,8 +2468,14 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
 	{
 		uint32_t idx = kv.second;
 		if (idx >= m_kMAX_BONES) continue;
-		const aiMatrix4x4& src = m_Bone.at(kv.first).Matrix;
 		XMFLOAT4X4& dst = m_BoneMatricesScratch[idx];
+		const aiMatrix4x4& src = m_Bone.at(kv.first).Matrix;
+		if (!IsUsableSkinningMatrix(src))
+		{
+			dst = identity;
+			continue;
+		}
+
 		dst._11 = src.a1; dst._12 = src.a2; dst._13 = src.a3; dst._14 = src.a4;
 		dst._21 = src.b1; dst._22 = src.b2; dst._23 = src.b3; dst._24 = src.b4;
 		dst._31 = src.c1; dst._32 = src.c2; dst._33 = src.c3; dst._34 = src.c4;
@@ -1080,7 +2483,1234 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
 	}
 
 	UINT copySize = sizeof(XMFLOAT4X4) * m_kMAX_BONES;
-	memcpy(m_pBoneBufferMapped, m_BoneMatricesScratch.data(), copySize);
+	for (void* mapped : m_pBoneBufferMapped)
+	{
+		if (mapped)
+		{
+			memcpy(mapped, m_BoneMatricesScratch.data(), copySize);
+		}
+	}
+}
+
+void AnimationModelResource::BuildPmxVertexMeshMap()
+{
+	m_PmxVertexToMeshVertices.clear();
+	if (m_PmxBaseVertices.empty() || m_GpuSkinVertices.empty())
+	{
+		return;
+	}
+
+	auto quantize = [](float value)
+		{
+			return llround(static_cast<double>(value) * 10000.0);
+		};
+	auto makePositionKey = [&](float x, float y, float z)
+		{
+			return to_string(quantize(x)) + "," + to_string(quantize(y)) + "," + to_string(quantize(z));
+		};
+	auto makeVertexKey = [&](const aiVector3D& position, const aiVector3D& normal, const XMFLOAT2& uv)
+		{
+			return makePositionKey(position.x, position.y, position.z) + "|" +
+				makePositionKey(normal.x, normal.y, normal.z) + "|" +
+				to_string(quantize(uv.x)) + "," + to_string(quantize(uv.y));
+		};
+
+	unordered_map<string, vector<uint32_t>> pmxVerticesByPosition;
+	unordered_map<string, vector<uint32_t>> pmxVerticesByVertex;
+	pmxVerticesByPosition.reserve(m_PmxBaseVertices.size());
+	pmxVerticesByVertex.reserve(m_PmxBaseVertices.size());
+	for (uint32_t i = 0; i < static_cast<uint32_t>(m_PmxBaseVertices.size()); ++i)
+	{
+		const aiVector3D& position = m_PmxBaseVertices[i];
+		pmxVerticesByPosition[makePositionKey(position.x, position.y, position.z)].push_back(i);
+		if (i < m_PmxBaseNormals.size() && i < m_PmxBaseTexCoords.size())
+		{
+			pmxVerticesByVertex[makeVertexKey(position, m_PmxBaseNormals[i], m_PmxBaseTexCoords[i])].push_back(i);
+		}
+	}
+
+	m_PmxVertexToMeshVertices.resize(m_PmxBaseVertices.size());
+	size_t mappedMeshVertices = 0;
+	size_t preciseMappedMeshVertices = 0;
+	for (uint32_t meshIndex = 0; meshIndex < static_cast<uint32_t>(m_GpuSkinVertices.size()); ++meshIndex)
+	{
+		const vector<GpuSkinVertex>& vertices = m_GpuSkinVertices[meshIndex];
+		for (uint32_t vertexIndex = 0; vertexIndex < static_cast<uint32_t>(vertices.size()); ++vertexIndex)
+		{
+			const XMFLOAT3& position = vertices[vertexIndex].Position;
+			const XMFLOAT3& normal = vertices[vertexIndex].Normal;
+			const XMFLOAT2& uv = vertices[vertexIndex].TexCoord;
+
+			aiVector3D aiPosition(position.x, position.y, position.z);
+			aiVector3D aiNormal(normal.x, normal.y, normal.z);
+			const vector<uint32_t>* matchedPmxVertices = nullptr;
+			auto preciseIt = pmxVerticesByVertex.find(makeVertexKey(aiPosition, aiNormal, uv));
+			if (preciseIt != pmxVerticesByVertex.end())
+			{
+				matchedPmxVertices = &preciseIt->second;
+				++preciseMappedMeshVertices;
+			}
+			else
+			{
+				auto positionIt = pmxVerticesByPosition.find(makePositionKey(position.x, position.y, position.z));
+				if (positionIt != pmxVerticesByPosition.end())
+				{
+					matchedPmxVertices = &positionIt->second;
+				}
+			}
+			if (!matchedPmxVertices)
+			{
+				continue;
+			}
+
+			++mappedMeshVertices;
+			for (uint32_t pmxVertexIndex : *matchedPmxVertices)
+			{
+				m_PmxVertexToMeshVertices[pmxVertexIndex].push_back({ meshIndex, vertexIndex });
+			}
+		}
+	}
+
+	Debug::Log("PMX morph vertex map built: pmxVertices=%zu, mappedMeshVertices=%zu, preciseMappedMeshVertices=%zu\n",
+		m_PmxBaseVertices.size(), mappedMeshVertices, preciseMappedMeshVertices);
+}
+
+float AnimationModelResource::SampleVmdMorph(const VmdAnimation* animation, const string& morphName, float timeSeconds) const
+{
+	if (!animation)
+	{
+		return 0.0f;
+	}
+
+	auto trackIt = animation->MorphTracks.find(morphName);
+	if (trackIt == animation->MorphTracks.end())
+	{
+		return 0.0f;
+	}
+
+	const float currentFrame = VmdAnimationImporter::ToFrameTime(animation, timeSeconds);
+	return VmdAnimationImporter::SampleMorphTrack(&trackIt->second, currentFrame);
+}
+
+void AnimationModelResource::ApplyVmdMorphs(const VmdAnimation* animation, float currentFrame)
+{
+	if (!animation || m_PmxMorphs.empty())
+	{
+		return;
+	}
+
+	if (animation != m_CachedVmdPrimaryAnimation)
+	{
+		RebuildVmdRuntimeCache(animation, m_CachedVmdSecondaryAnimation);
+	}
+
+	m_VmdActiveMorphsScratch.clear();
+	m_VmdActiveMorphsScratch.reserve(m_VmdMorphBindings.size());
+	for (VmdMorphBinding& binding : m_VmdMorphBindings)
+	{
+		const float weight = VmdAnimationImporter::SampleMorphTrackCached(binding.Track, currentFrame, binding.Cursor);
+		if (fabsf(weight) > 0.00001f)
+		{
+			m_VmdActiveMorphsScratch.push_back({ binding.MorphIndex, weight });
+		}
+	}
+
+	if (m_VmdActiveMorphsScratch.empty() && !m_HasAppliedVmdMorphs)
+	{
+		return;
+	}
+
+	const bool canApplyVertexMorphs =
+		!m_PmxVertexToMeshVertices.empty() &&
+		!m_BaseGpuSkinVertices.empty() &&
+		m_BaseGpuSkinVertices.size() == m_GpuSkinVertices.size();
+
+	if (canApplyVertexMorphs)
+	{
+		for (size_t meshIndex = 0; meshIndex < m_GpuSkinVertices.size(); ++meshIndex)
+		{
+			m_GpuSkinVertices[meshIndex] = m_BaseGpuSkinVertices[meshIndex];
+		}
+	}
+
+	if (m_VmdMorphPositionOffsetsScratch.size() != m_PmxBaseVertices.size())
+	{
+		m_VmdMorphPositionOffsetsScratch.resize(m_PmxBaseVertices.size());
+		m_VmdMorphUvOffsetsScratch.resize(m_PmxBaseVertices.size());
+	}
+	fill(m_VmdMorphPositionOffsetsScratch.begin(), m_VmdMorphPositionOffsetsScratch.end(), aiVector3D(0.0f, 0.0f, 0.0f));
+	fill(m_VmdMorphUvOffsetsScratch.begin(), m_VmdMorphUvOffsetsScratch.end(), XMFLOAT2(0.0f, 0.0f));
+
+	vector<aiVector3D>& accumulatedOffsets = m_VmdMorphPositionOffsetsScratch;
+	vector<XMFLOAT2>& accumulatedUvOffsets = m_VmdMorphUvOffsetsScratch;
+	bool vertexBufferChanged = false;
+	auto accumulateMorph = [&](auto&& self, uint32_t morphIndex, float weight, int depth) -> void
+		{
+			if (weight == 0.0f || morphIndex >= m_PmxMorphs.size() || depth > 8)
+			{
+				return;
+			}
+
+			const PmxMorph& morph = m_PmxMorphs[morphIndex];
+			if (canApplyVertexMorphs)
+			{
+				for (const PmxPositionMorphOffset& offset : morph.PositionOffsets)
+				{
+					if (offset.VertexIndex >= accumulatedOffsets.size())
+					{
+						continue;
+					}
+					accumulatedOffsets[offset.VertexIndex] += offset.Position * weight;
+				}
+
+				for (const PmxUvMorphOffset& offset : morph.UvOffsets)
+				{
+					if (offset.VertexIndex >= accumulatedUvOffsets.size())
+					{
+						continue;
+					}
+					accumulatedUvOffsets[offset.VertexIndex].x += offset.Uv.x * weight;
+					accumulatedUvOffsets[offset.VertexIndex].y += offset.Uv.y * weight;
+				}
+
+				for (const PmxMaterialMorphOffset& offset : morph.MaterialOffsets)
+				{
+					for (size_t meshIndex = 0; meshIndex < m_Meshes.size(); ++meshIndex)
+					{
+						const MeshData& meshData = m_Meshes[meshIndex];
+						if (offset.MaterialIndex >= 0 && meshData.MaterialIndex != offset.MaterialIndex)
+						{
+							continue;
+						}
+
+						for (GpuSkinVertex& vertex : m_GpuSkinVertices[meshIndex])
+						{
+							if (offset.Operation == 0)
+							{
+								vertex.Diffuse.x *= 1.0f + (offset.Diffuse.x - 1.0f) * weight;
+								vertex.Diffuse.y *= 1.0f + (offset.Diffuse.y - 1.0f) * weight;
+								vertex.Diffuse.z *= 1.0f + (offset.Diffuse.z - 1.0f) * weight;
+							}
+							else
+							{
+								vertex.Diffuse.x += offset.Diffuse.x * weight;
+								vertex.Diffuse.y += offset.Diffuse.y * weight;
+								vertex.Diffuse.z += offset.Diffuse.z * weight;
+							}
+						}
+						vertexBufferChanged = true;
+					}
+				}
+			}
+
+			for (const PmxBoneMorphOffset& offset : morph.BoneOffsets)
+			{
+				auto boneIt = m_Bone.find(offset.BoneName);
+				if (boneIt == m_Bone.end())
+				{
+					continue;
+				}
+
+				aiVector3D scale(1.0f, 1.0f, 1.0f);
+				aiQuaternion rotation(1.0f, 0.0f, 0.0f, 0.0f);
+				aiVector3D position(0.0f, 0.0f, 0.0f);
+				boneIt->second.AnimationMatrix.Decompose(scale, rotation, position);
+
+				position += offset.Position * weight;
+
+				aiQuaternion weightedRotation;
+				aiQuaternion::Interpolate(weightedRotation,
+					aiQuaternion(1.0f, 0.0f, 0.0f, 0.0f),
+					offset.Rotation,
+					clamp(fabsf(weight), 0.0f, 1.0f));
+				weightedRotation.Normalize();
+				if (weight < 0.0f)
+				{
+					weightedRotation.Conjugate();
+				}
+				rotation = rotation * weightedRotation;
+				rotation.Normalize();
+
+				boneIt->second.AnimationMatrix = aiMatrix4x4(scale, rotation, position);
+			}
+
+			for (const auto& groupOffset : morph.GroupOffsets)
+			{
+				self(self, groupOffset.first, weight * groupOffset.second, depth + 1);
+			}
+		};
+
+	for (const auto& activeMorph : m_VmdActiveMorphsScratch)
+	{
+		accumulateMorph(accumulateMorph, activeMorph.first, activeMorph.second, 0);
+	}
+
+	bool anyMorphApplied = false;
+	if (canApplyVertexMorphs)
+	{
+		anyMorphApplied = vertexBufferChanged;
+		for (uint32_t pmxVertexIndex = 0; pmxVertexIndex < static_cast<uint32_t>(accumulatedOffsets.size()); ++pmxVertexIndex)
+		{
+			const aiVector3D& offset = accumulatedOffsets[pmxVertexIndex];
+			const XMFLOAT2& uvOffset = accumulatedUvOffsets[pmxVertexIndex];
+			const bool hasPositionOffset =
+				fabsf(offset.x) > 0.000001f || fabsf(offset.y) > 0.000001f || fabsf(offset.z) > 0.000001f;
+			const bool hasUvOffset =
+				fabsf(uvOffset.x) > 0.000001f || fabsf(uvOffset.y) > 0.000001f;
+			if (!hasPositionOffset && !hasUvOffset)
+			{
+				continue;
+			}
+
+			if (pmxVertexIndex >= m_PmxVertexToMeshVertices.size())
+			{
+				continue;
+			}
+
+			for (const auto& target : m_PmxVertexToMeshVertices[pmxVertexIndex])
+			{
+				const uint32_t meshIndex = target.first;
+				const uint32_t vertexIndex = target.second;
+				if (meshIndex >= m_GpuSkinVertices.size() || vertexIndex >= m_GpuSkinVertices[meshIndex].size())
+				{
+					continue;
+				}
+
+				GpuSkinVertex& vertex = m_GpuSkinVertices[meshIndex][vertexIndex];
+				if (hasPositionOffset)
+				{
+					vertex.Position.x += offset.x;
+					vertex.Position.y += offset.y;
+					vertex.Position.z += offset.z;
+				}
+				if (hasUvOffset)
+				{
+					vertex.TexCoord.x += uvOffset.x;
+					vertex.TexCoord.y += uvOffset.y;
+				}
+				anyMorphApplied = true;
+			}
+		}
+	}
+
+	if ((!anyMorphApplied && !m_HasAppliedVmdMorphs) || !canApplyVertexMorphs)
+	{
+		return;
+	}
+
+	for (size_t meshIndex = 0; meshIndex < m_Meshes.size(); ++meshIndex)
+	{
+		MeshData& meshData = m_Meshes[meshIndex];
+		if (!meshData.InputVertexBuffer || m_GpuSkinVertices[meshIndex].empty())
+		{
+			continue;
+		}
+
+		UINT8* pDest = nullptr;
+		CD3DX12_RANGE readRange(0, 0);
+		HRESULT hr = meshData.InputVertexBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pDest));
+		if (SUCCEEDED(hr) && pDest)
+		{
+			memcpy(pDest, m_GpuSkinVertices[meshIndex].data(),
+				sizeof(GpuSkinVertex) * m_GpuSkinVertices[meshIndex].size());
+			meshData.InputVertexBuffer->Unmap(0, nullptr);
+		}
+	}
+	m_HasAppliedVmdMorphs = anyMorphApplied;
+}
+
+void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* animation, float currentFrame)
+{
+	if (!m_AiScene || (m_PmxAppendConstraints.empty() && m_PmxIkConstraints.empty()))
+	{
+		return;
+	}
+
+	if (m_PmxRuntimeNodes.empty() || m_PmxOrderedTransformSteps.empty())
+	{
+		RebuildPmxRuntimeCache();
+	}
+	if (m_PmxRuntimeNodes.empty())
+	{
+		return;
+	}
+
+	auto aiToXm = [](const aiMatrix4x4& src)
+		{
+			return XMMatrixSet(
+				src.a1, src.b1, src.c1, src.d1,
+				src.a2, src.b2, src.c2, src.d2,
+				src.a3, src.b3, src.c3, src.d3,
+				src.a4, src.b4, src.c4, src.d4);
+		};
+
+	auto rebuildGlobals = [&]()
+		{
+			if (m_PmxGlobalMatricesScratch.size() != m_PmxRuntimeNodes.size())
+			{
+				m_PmxGlobalMatricesScratch.resize(m_PmxRuntimeNodes.size());
+			}
+
+			for (size_t i = 0; i < m_PmxRuntimeNodes.size(); ++i)
+			{
+				const PmxRuntimeNode& fn = m_PmxRuntimeNodes[i];
+				XMMATRIX local = fn.BonePtr ? aiToXm(fn.BonePtr->AnimationMatrix) : aiToXm(fn.Node->mTransformation);
+				XMMATRIX world = local;
+				if (fn.ParentIndex >= 0)
+				{
+					const XMMATRIX parent = XMLoadFloat4x4(&m_PmxGlobalMatricesScratch[static_cast<size_t>(fn.ParentIndex)]);
+					world = XMMatrixMultiply(local, parent);
+				}
+				XMStoreFloat4x4(&m_PmxGlobalMatricesScratch[i], world);
+			}
+		};
+
+	auto loadGlobal = [&](const string& boneName)
+		{
+			auto it = m_PmxRuntimeNodeIndexMap.find(boneName);
+			return it != m_PmxRuntimeNodeIndexMap.end()
+				? XMLoadFloat4x4(&m_PmxGlobalMatricesScratch[it->second])
+				: XMMatrixIdentity();
+		};
+
+	auto getTranslation = [&](const string& boneName)
+		{
+			auto it = m_PmxRuntimeNodeIndexMap.find(boneName);
+			if (it == m_PmxRuntimeNodeIndexMap.end())
+			{
+				return XMVectorZero();
+			}
+
+			const XMFLOAT4X4& matrix = m_PmxGlobalMatricesScratch[it->second];
+			return XMVectorSet(matrix._41, matrix._42, matrix._43, 1.0f);
+		};
+
+	auto getParentGlobal = [&](const string& boneName)
+		{
+			auto parentIt = m_BoneParentMap.find(boneName);
+			if (parentIt == m_BoneParentMap.end())
+			{
+				return XMMatrixIdentity();
+			}
+			return loadGlobal(parentIt->second);
+		};
+	auto applyIkLinkLimit = [](const PmxIkLink& link, XMVECTOR& localAxis, float& angle) -> bool
+		{
+			if (!link.HasLimit)
+			{
+				return true;
+			}
+
+			const float component[3] =
+			{
+				XMVectorGetX(localAxis),
+				XMVectorGetY(localAxis),
+				XMVectorGetZ(localAxis),
+			};
+			const float minLimit[3] = { link.LimitMin.x, link.LimitMin.y, link.LimitMin.z };
+			const float maxLimit[3] = { link.LimitMax.x, link.LimitMax.y, link.LimitMax.z };
+
+			float limitedComponent[3] = {};
+			float maxAllowedAngle = 0.0f;
+			int fallbackAxis = -1;
+			float fallbackAxisLimit = 0.0f;
+			for (int axis = 0; axis < 3; ++axis)
+			{
+				float low = minLimit[axis];
+				float high = maxLimit[axis];
+				if (low > high)
+				{
+					swap(low, high);
+				}
+
+				const float axisLimit = max(fabsf(low), fabsf(high));
+				const bool allowsAxis = fabsf(high - low) > 0.00001f && axisLimit > 0.00001f;
+				if (!allowsAxis)
+				{
+					continue;
+				}
+
+				float signedComponent = component[axis];
+				const bool allowsPositive = high > 0.00001f;
+				const bool allowsNegative = low < -0.00001f;
+				if (allowsPositive && !allowsNegative)
+				{
+					signedComponent = fabsf(signedComponent);
+				}
+				else if (!allowsPositive && allowsNegative)
+				{
+					signedComponent = -fabsf(signedComponent);
+				}
+
+				limitedComponent[axis] = signedComponent;
+				maxAllowedAngle = max(maxAllowedAngle, axisLimit);
+				if (axisLimit > fallbackAxisLimit)
+				{
+					fallbackAxis = axis;
+					fallbackAxisLimit = axisLimit;
+				}
+			}
+
+			if (maxAllowedAngle <= 0.00001f)
+			{
+				return false;
+			}
+
+			XMVECTOR limitedAxis = XMVectorSet(
+				limitedComponent[0],
+				limitedComponent[1],
+				limitedComponent[2],
+				0.0f);
+			if (XMVectorGetX(XMVector3LengthSq(limitedAxis)) < 0.000001f)
+			{
+				float fallbackComponent[3] = {};
+				float low = minLimit[fallbackAxis];
+				float high = maxLimit[fallbackAxis];
+				if (low > high)
+				{
+					swap(low, high);
+				}
+
+				const bool allowsPositive = high > 0.00001f;
+				const bool allowsNegative = low < -0.00001f;
+				float sign = component[fallbackAxis] < 0.0f ? -1.0f : 1.0f;
+				if (allowsPositive && !allowsNegative)
+				{
+					sign = 1.0f;
+				}
+				else if (!allowsPositive && allowsNegative)
+				{
+					sign = -1.0f;
+				}
+				fallbackComponent[fallbackAxis] = sign;
+				limitedAxis = XMVectorSet(
+					fallbackComponent[0],
+					fallbackComponent[1],
+					fallbackComponent[2],
+					0.0f);
+			}
+
+			localAxis = XMVector3Normalize(limitedAxis);
+			angle = min(angle, maxAllowedAngle);
+			return true;
+		};
+
+	m_PmxAppendResultsScratch.clear();
+
+	auto getLocalAnimationDelta = [](const Bone& bone, aiQuaternion& outRotation, aiVector3D& outTranslation)
+		{
+			aiVector3D baseScale(1.0f, 1.0f, 1.0f);
+			aiQuaternion baseRotation(1.0f, 0.0f, 0.0f, 0.0f);
+			aiVector3D basePosition(0.0f, 0.0f, 0.0f);
+			bone.BindLocalMatrix.Decompose(baseScale, baseRotation, basePosition);
+
+			aiVector3D currentScale(1.0f, 1.0f, 1.0f);
+			aiQuaternion currentRotation(1.0f, 0.0f, 0.0f, 0.0f);
+			aiVector3D currentPosition(0.0f, 0.0f, 0.0f);
+			bone.AnimationMatrix.Decompose(currentScale, currentRotation, currentPosition);
+
+			aiQuaternion inverseBase = baseRotation;
+			inverseBase.Conjugate();
+			outRotation = inverseBase * currentRotation;
+			outRotation.Normalize();
+			outTranslation = currentPosition - basePosition;
+		};
+
+	auto applyAppend = [&](const PmxAppendConstraint& constraint)
+		{
+			auto boneIt = m_Bone.find(constraint.BoneName);
+			auto appendIt = m_Bone.find(constraint.AppendBoneName);
+			if (boneIt == m_Bone.end() || appendIt == m_Bone.end())
+			{
+				return false;
+			}
+
+			aiVector3D scale(1.0f, 1.0f, 1.0f);
+			aiQuaternion rotation(1.0f, 0.0f, 0.0f, 0.0f);
+			aiVector3D position(0.0f, 0.0f, 0.0f);
+			boneIt->second.AnimationMatrix.Decompose(scale, rotation, position);
+
+			aiQuaternion appendRotation(1.0f, 0.0f, 0.0f, 0.0f);
+			aiVector3D appendPosition(0.0f, 0.0f, 0.0f);
+			auto appendResultIt = m_PmxAppendResultsScratch.find(constraint.AppendBoneName);
+			if (!constraint.Local && appendResultIt != m_PmxAppendResultsScratch.end())
+			{
+				appendRotation = appendResultIt->second.Rotation;
+				appendPosition = appendResultIt->second.Translation;
+			}
+			else
+			{
+				getLocalAnimationDelta(appendIt->second, appendRotation, appendPosition);
+			}
+
+			PmxAppendResult appendResult{};
+			if (constraint.InheritRotation)
+			{
+				aiQuaternion weightedRotation;
+				aiQuaternion::Interpolate(weightedRotation,
+					aiQuaternion(1.0f, 0.0f, 0.0f, 0.0f),
+					appendRotation,
+					clamp(fabsf(constraint.Weight), 0.0f, 1.0f));
+				weightedRotation.Normalize();
+				if (constraint.Weight < 0.0f)
+				{
+					weightedRotation.Conjugate();
+				}
+				rotation = rotation * weightedRotation;
+				rotation.Normalize();
+				appendResult.Rotation = weightedRotation;
+			}
+
+			if (constraint.InheritTranslation)
+			{
+				appendResult.Translation = appendPosition * constraint.Weight;
+				position += appendResult.Translation;
+			}
+
+			boneIt->second.AnimationMatrix = aiMatrix4x4(scale, rotation, position);
+			m_PmxAppendResultsScratch[constraint.BoneName] = appendResult;
+			return true;
+		};
+
+	auto isToeIkConstraint = [](const string& boneName)
+		{
+			return boneName.find("つま先") != string::npos;
+		};
+
+	auto isKneeBone = [](const string& boneName)
+		{
+			return boneName.find("ひざ") != string::npos || boneName.find("膝") != string::npos;
+		};
+
+	auto axisVectorFromIndex = [](int axisIndex)
+		{
+			switch (axisIndex)
+			{
+			case 1: return XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+			case 2: return XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
+			default: return XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f);
+			}
+		};
+
+	auto pickIkLimitAxis = [](const PmxIkLink& link, float& outMinLimit, float& outMaxLimit)
+		{
+			const float minLimit[3] = { link.LimitMin.x, link.LimitMin.y, link.LimitMin.z };
+			const float maxLimit[3] = { link.LimitMax.x, link.LimitMax.y, link.LimitMax.z };
+			int bestAxis = 0;
+			float bestRange = 0.0f;
+			for (int axis = 0; axis < 3; ++axis)
+			{
+				const float range = max(fabsf(minLimit[axis]), fabsf(maxLimit[axis]));
+				if (range > bestRange)
+				{
+					bestRange = range;
+					bestAxis = axis;
+				}
+			}
+			outMinLimit = minLimit[bestAxis];
+			outMaxLimit = maxLimit[bestAxis];
+			return bestAxis;
+		};
+
+	auto solveIk = [&](const PmxIkConstraint& constraint)
+		{
+			// つま先IKは足首リンクをさらに回してCCDの振動を増やしやすいので、
+			// まずは足IKを安定させるために無効化する。
+			if (isToeIkConstraint(constraint.BoneName))
+			{
+				return false;
+			}
+
+			if (!IsVmdIkEnabled(animation, constraint.BoneName, currentFrame) ||
+				m_Bone.find(constraint.BoneName) == m_Bone.end() ||
+				m_Bone.find(constraint.TargetBoneName) == m_Bone.end())
+			{
+				return false;
+			}
+
+			bool changed = false;
+			const uint32_t iterationCount = min<uint32_t>(constraint.IterationCount, 12);
+			const float normalMaxAngle = 0.12f;
+			const float kneeMaxAngle = 0.08f;
+
+			for (uint32_t iteration = 0; iteration < iterationCount; ++iteration)
+			{
+				const XMVECTOR goalPosition = getTranslation(constraint.BoneName);
+				const XMVECTOR effectorPosition = getTranslation(constraint.TargetBoneName);
+				const float currentDistanceSq = XMVectorGetX(XMVector3LengthSq(XMVectorSubtract(goalPosition, effectorPosition)));
+				if (currentDistanceSq < 0.000001f)
+				{
+					break;
+				}
+
+				for (const PmxIkLink& link : constraint.Links)
+				{
+					auto linkBoneIt = m_Bone.find(link.BoneName);
+					if (linkBoneIt == m_Bone.end())
+					{
+						continue;
+					}
+
+					const XMVECTOR linkPosition = getTranslation(link.BoneName);
+					const XMVECTOR toEffector = XMVectorSubtract(getTranslation(constraint.TargetBoneName), linkPosition);
+					const XMVECTOR toGoal = XMVectorSubtract(getTranslation(constraint.BoneName), linkPosition);
+					if (XMVectorGetX(XMVector3LengthSq(toEffector)) < 0.000001f ||
+						XMVectorGetX(XMVector3LengthSq(toGoal)) < 0.000001f)
+					{
+						continue;
+					}
+
+					const XMMATRIX parentGlobal = getParentGlobal(link.BoneName);
+					XMVECTOR localAxis = XMVectorZero();
+					float angle = 0.0f;
+
+					if (isKneeBone(link.BoneName))
+					{
+						float minLimit = 0.0f;
+						float maxLimit = 0.0f;
+						const int hingeAxisIndex = link.HasLimit ? pickIkLimitAxis(link, minLimit, maxLimit) : 0;
+						localAxis = axisVectorFromIndex(hingeAxisIndex);
+
+						XMVECTOR worldAxis = XMVector3TransformNormal(localAxis, parentGlobal);
+						if (XMVectorGetX(XMVector3LengthSq(worldAxis)) < 0.000001f)
+						{
+							continue;
+						}
+						worldAxis = XMVector3Normalize(worldAxis);
+
+						XMVECTOR projectedEffector = XMVectorSubtract(toEffector, XMVectorScale(worldAxis, XMVectorGetX(XMVector3Dot(toEffector, worldAxis))));
+						XMVECTOR projectedGoal = XMVectorSubtract(toGoal, XMVectorScale(worldAxis, XMVectorGetX(XMVector3Dot(toGoal, worldAxis))));
+						if (XMVectorGetX(XMVector3LengthSq(projectedEffector)) < 0.000001f ||
+							XMVectorGetX(XMVector3LengthSq(projectedGoal)) < 0.000001f)
+						{
+							continue;
+						}
+
+						projectedEffector = XMVector3Normalize(projectedEffector);
+						projectedGoal = XMVector3Normalize(projectedGoal);
+
+						float dot = XMVectorGetX(XMVector3Dot(projectedEffector, projectedGoal));
+						dot = clamp(dot, -1.0f, 1.0f);
+						angle = acosf(dot);
+						if (angle < 0.00001f)
+						{
+							continue;
+						}
+
+						const float sign = XMVectorGetX(XMVector3Dot(XMVector3Cross(projectedEffector, projectedGoal), worldAxis)) < 0.0f ? -1.0f : 1.0f;
+						angle *= sign;
+
+						float stepLimit = kneeMaxAngle;
+						if (link.HasLimit)
+						{
+							const float axisLimit = max(fabsf(minLimit), fabsf(maxLimit));
+							if (axisLimit <= 0.00001f)
+							{
+								continue;
+							}
+							stepLimit = min(stepLimit, axisLimit);
+
+							const bool allowsPositive = maxLimit > 0.00001f;
+							const bool allowsNegative = minLimit < -0.00001f;
+							if (allowsPositive && !allowsNegative)
+							{
+								angle = fabsf(angle);
+							}
+							else if (!allowsPositive && allowsNegative)
+							{
+								angle = -fabsf(angle);
+							}
+						}
+						angle = clamp(angle, -stepLimit, stepLimit);
+					}
+					else
+					{
+						const XMVECTOR effectorDir = XMVector3Normalize(toEffector);
+						const XMVECTOR goalDir = XMVector3Normalize(toGoal);
+						float dot = XMVectorGetX(XMVector3Dot(effectorDir, goalDir));
+						dot = clamp(dot, -1.0f, 1.0f);
+
+						angle = acosf(dot);
+						if (angle < 0.00001f)
+						{
+							continue;
+						}
+						angle = min(angle, normalMaxAngle);
+
+						XMVECTOR worldAxis = XMVector3Cross(effectorDir, goalDir);
+						if (XMVectorGetX(XMVector3LengthSq(worldAxis)) < 0.000001f)
+						{
+							continue;
+						}
+						worldAxis = XMVector3Normalize(worldAxis);
+
+						XMVECTOR determinant = XMMatrixDeterminant(parentGlobal);
+						const XMMATRIX inverseParent = XMMatrixInverse(&determinant, parentGlobal);
+						localAxis = XMVector3TransformNormal(worldAxis, inverseParent);
+						if (XMVectorGetX(XMVector3LengthSq(localAxis)) < 0.000001f)
+						{
+							continue;
+						}
+						localAxis = XMVector3Normalize(localAxis);
+						if (!applyIkLinkLimit(link, localAxis, angle))
+						{
+							continue;
+						}
+					}
+
+					if (fabsf(angle) < 0.00001f)
+					{
+						continue;
+					}
+
+					const aiMatrix4x4 previousMatrix = linkBoneIt->second.AnimationMatrix;
+					const XMVECTOR deltaRotation = XMQuaternionRotationAxis(localAxis, angle);
+
+					aiVector3D scale(1.0f, 1.0f, 1.0f);
+					aiQuaternion rotation(1.0f, 0.0f, 0.0f, 0.0f);
+					aiVector3D position(0.0f, 0.0f, 0.0f);
+					linkBoneIt->second.AnimationMatrix.Decompose(scale, rotation, position);
+
+					const XMVECTOR currentRotation = XMVectorSet(rotation.x, rotation.y, rotation.z, rotation.w);
+					XMVECTOR updatedRotation = XMQuaternionMultiply(currentRotation, deltaRotation);
+					updatedRotation = XMQuaternionNormalize(updatedRotation);
+
+					XMFLOAT4 storedRotation{};
+					XMStoreFloat4(&storedRotation, updatedRotation);
+					aiQuaternion aiUpdatedRotation(storedRotation.w, storedRotation.x, storedRotation.y, storedRotation.z);
+					aiUpdatedRotation.Normalize();
+					linkBoneIt->second.AnimationMatrix = aiMatrix4x4(scale, aiUpdatedRotation, position);
+
+					rebuildGlobals();
+					const float newDistanceSq = XMVectorGetX(XMVector3LengthSq(
+						XMVectorSubtract(getTranslation(constraint.BoneName), getTranslation(constraint.TargetBoneName))));
+					if (newDistanceSq > currentDistanceSq + 0.0001f)
+					{
+						linkBoneIt->second.AnimationMatrix = previousMatrix;
+						rebuildGlobals();
+						continue;
+					}
+
+					changed = true;
+				}
+			}
+			return changed;
+		};
+
+	rebuildGlobals();
+	for (const PmxOrderedTransformStep& step : m_PmxOrderedTransformSteps)
+	{
+		const bool changed = step.IsIk
+			? solveIk(m_PmxIkConstraints[step.Index])
+			: applyAppend(m_PmxAppendConstraints[step.Index]);
+		if (changed)
+		{
+			rebuildGlobals();
+		}
+	}
+}
+
+void AnimationModelResource::SampleVmdBone(const VmdAnimation* animation, const string& boneName, float timeSeconds,
+	aiQuaternion& outRotation, aiVector3D& outPosition) const
+{
+	outRotation = aiQuaternion(1.0f, 0.0f, 0.0f, 0.0f);
+	outPosition = aiVector3D(0.0f, 0.0f, 0.0f);
+
+	if (!animation)
+	{
+		return;
+	}
+
+	auto trackIt = animation->BoneTracks.find(boneName);
+	if (trackIt == animation->BoneTracks.end())
+	{
+		return;
+	}
+
+	const float currentFrame = VmdAnimationImporter::ToFrameTime(animation, timeSeconds);
+	VmdAnimationImporter::SampleBoneTrack(&trackIt->second, currentFrame, outRotation, outPosition);
+}
+
+void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation1, float frame1,
+	const VmdAnimation* animation2, float frame2, float blendRate)
+{
+	if (!m_AiScene)
+	{
+		return;
+	}
+
+	const VmdAnimation* primaryAnimation = animation1 ? animation1 : animation2;
+	const VmdAnimation* secondaryAnimation = animation2 ? animation2 : primaryAnimation;
+	if (!primaryAnimation)
+	{
+		return;
+	}
+
+	if (m_CachedVmdPrimaryAnimation != primaryAnimation || m_CachedVmdSecondaryAnimation != secondaryAnimation)
+	{
+		RebuildVmdRuntimeCache(primaryAnimation, secondaryAnimation);
+	}
+
+	const float safeBlendRate = clamp(blendRate, 0.0f, 1.0f);
+	const float primaryTime = animation1 ? frame1 : frame2;
+	const float secondaryTime = animation2 ? frame2 : primaryTime;
+	const float currentFrame1 = VmdAnimationImporter::ToFrameTime(primaryAnimation, primaryTime);
+	const bool useSecondarySample = secondaryAnimation && safeBlendRate > 0.0001f &&
+		(secondaryAnimation != primaryAnimation || fabsf(secondaryTime - primaryTime) > 0.0001f);
+	const float currentFrame2 = useSecondarySample ? VmdAnimationImporter::ToFrameTime(secondaryAnimation, secondaryTime) : currentFrame1;
+	for (VmdBoneBinding& binding : m_VmdBoneBindings)
+	{
+		Bone* bonePtr = binding.BonePtr;
+		if (!bonePtr)
+		{
+			continue;
+		}
+
+		aiQuaternion rotation1(1.0f, 0.0f, 0.0f, 0.0f);
+		aiVector3D pos1(0.0f, 0.0f, 0.0f);
+		VmdAnimationImporter::SampleBoneTrackCached(binding.PrimaryTrack, currentFrame1, binding.PrimaryCursor, rotation1, pos1);
+
+		aiQuaternion rotation = rotation1;
+		aiVector3D pos = pos1;
+		if (useSecondarySample)
+		{
+			aiQuaternion rotation2(1.0f, 0.0f, 0.0f, 0.0f);
+			aiVector3D pos2(0.0f, 0.0f, 0.0f);
+			VmdAnimationImporter::SampleBoneTrackCached(binding.SecondaryTrack, currentFrame2, binding.SecondaryCursor, rotation2, pos2);
+			pos = pos1 * (1.0f - safeBlendRate) + pos2 * safeBlendRate;
+			aiQuaternion::Interpolate(rotation, rotation1, rotation2, safeBlendRate);
+			rotation.Normalize();
+		}
+
+		aiQuaternion localRotation = binding.BaseRotation * rotation;
+		localRotation.Normalize();
+		bonePtr->AnimationMatrix = aiMatrix4x4(binding.BaseScale, localRotation, binding.BasePosition + pos);
+	}
+
+	ApplyVmdMorphs(primaryAnimation, currentFrame1);
+	ApplyPmxOrderedTransforms(primaryAnimation, currentFrame1);
+	UpdateBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
+	WriteBoneMatricesToBuffer();
+}
+
+bool AnimationModelResource::IsVmdIkEnabled(const VmdAnimation* animation, const string& ikBoneName, float currentFrame)
+{
+	if (!animation)
+	{
+		return true;
+	}
+
+	const vector<VmdIkKeyframe>* keys = nullptr;
+	VmdTrackSampleCursor* cursor = nullptr;
+	if (animation == m_CachedVmdPrimaryAnimation)
+	{
+		auto cachedIt = m_VmdIkTrackCache.find(ikBoneName);
+		if (cachedIt != m_VmdIkTrackCache.end())
+		{
+			keys = cachedIt->second;
+		}
+		auto cursorIt = m_VmdIkTrackCursors.find(ikBoneName);
+		if (cursorIt != m_VmdIkTrackCursors.end())
+		{
+			cursor = &cursorIt->second;
+		}
+	}
+	else
+	{
+		auto trackIt = animation->IkTracks.find(ikBoneName);
+		if (trackIt != animation->IkTracks.end())
+		{
+			keys = &trackIt->second;
+		}
+	}
+
+	if (!keys)
+	{
+		return true;
+	}
+
+	if (cursor)
+	{
+		return VmdAnimationImporter::SampleIkTrackCached(keys, currentFrame, *cursor);
+	}
+	return VmdAnimationImporter::SampleIkTrack(keys, currentFrame);
+}
+
+void AnimationModelResource::ApplyPmxIk(const VmdAnimation* animation, float timeSeconds)
+{
+	if (!m_AiScene || m_PmxIkConstraints.empty())
+	{
+		return;
+	}
+
+	const float currentFrame = VmdAnimationImporter::ToFrameTime(animation, timeSeconds);
+
+	auto aiToXm = [](const aiMatrix4x4& src)
+		{
+			return XMMatrixSet(
+				src.a1, src.b1, src.c1, src.d1,
+				src.a2, src.b2, src.c2, src.d2,
+				src.a3, src.b3, src.c3, src.d3,
+				src.a4, src.b4, src.c4, src.d4);
+		};
+
+	struct FastNode {
+		aiNode* Node;
+		string Name;
+		int ParentIndex;
+		Bone* BonePtr;
+	};
+	vector<FastNode> fastNodes;
+	auto buildFast = [&](auto&& self, aiNode* node, int parent) -> void {
+		if (!node) return;
+		int myIdx = (int)fastNodes.size();
+		Bone* bPtr = nullptr;
+		auto it = m_Bone.find(node->mName.C_Str());
+		if (it != m_Bone.end()) bPtr = &it->second;
+		fastNodes.push_back({ node, node->mName.C_Str(), parent, bPtr });
+		for (unsigned int i = 0; i < node->mNumChildren; ++i) self(self, node->mChildren[i], myIdx);
+		};
+	buildFast(buildFast, m_AiScene->mRootNode, -1);
+
+	unordered_map<string, XMFLOAT4X4> globalMatrices;
+	vector<XMMATRIX> fastGlobals;
+	auto rebuildGlobals = [&]()
+		{
+			fastGlobals.resize(fastNodes.size());
+			for (size_t i = 0; i < fastNodes.size(); ++i)
+			{
+				const auto& fn = fastNodes[i];
+				XMMATRIX local = fn.BonePtr ? aiToXm(fn.BonePtr->AnimationMatrix) : aiToXm(fn.Node->mTransformation);
+				XMMATRIX world = fn.ParentIndex >= 0 ? XMMatrixMultiply(local, fastGlobals[fn.ParentIndex]) : local;
+				fastGlobals[i] = world;
+				XMFLOAT4X4 stored{};
+				XMStoreFloat4x4(&stored, world);
+				globalMatrices[fn.Name] = stored;
+			}
+		};
+
+	auto loadGlobal = [&](const string& boneName)
+		{
+			auto it = globalMatrices.find(boneName);
+			return it != globalMatrices.end() ? XMLoadFloat4x4(&it->second) : XMMatrixIdentity();
+		};
+
+	auto getTranslation = [&](const string& boneName)
+		{
+			auto it = globalMatrices.find(boneName);
+			if (it == globalMatrices.end())
+			{
+				return XMVectorZero();
+			}
+			const XMFLOAT4X4& matrix = it->second;
+			return XMVectorSet(matrix._41, matrix._42, matrix._43, 1.0f);
+		};
+
+	auto getParentGlobal = [&](const string& boneName)
+		{
+			auto parentIt = m_BoneParentMap.find(boneName);
+			if (parentIt == m_BoneParentMap.end())
+			{
+				return XMMatrixIdentity();
+			}
+			return loadGlobal(parentIt->second);
+		};
+
+	auto applyIkLinkLimit = [](const PmxIkLink& link, XMVECTOR& localAxis, float& angle) -> bool
+		{
+			if (!link.HasLimit)
+			{
+				return true;
+			}
+
+			const float component[3] =
+			{
+				XMVectorGetX(localAxis),
+				XMVectorGetY(localAxis),
+				XMVectorGetZ(localAxis),
+			};
+			const float minLimit[3] = { link.LimitMin.x, link.LimitMin.y, link.LimitMin.z };
+			const float maxLimit[3] = { link.LimitMax.x, link.LimitMax.y, link.LimitMax.z };
+
+			float limitedComponent[3] = {};
+			float maxAllowedAngle = 0.0f;
+			int fallbackAxis = -1;
+			float fallbackAxisLimit = 0.0f;
+			for (int axis = 0; axis < 3; ++axis)
+			{
+				float low = minLimit[axis];
+				float high = maxLimit[axis];
+				if (low > high)
+				{
+					swap(low, high);
+				}
+
+				const float axisLimit = max(fabsf(low), fabsf(high));
+				const bool allowsAxis = fabsf(high - low) > 0.00001f && axisLimit > 0.00001f;
+				if (!allowsAxis)
+				{
+					continue;
+				}
+
+				float signedComponent = component[axis];
+				const bool allowsPositive = high > 0.00001f;
+				const bool allowsNegative = low < -0.00001f;
+				if (allowsPositive && !allowsNegative)
+				{
+					signedComponent = fabsf(signedComponent);
+				}
+				else if (!allowsPositive && allowsNegative)
+				{
+					signedComponent = -fabsf(signedComponent);
+				}
+
+				limitedComponent[axis] = signedComponent;
+				maxAllowedAngle = max(maxAllowedAngle, axisLimit);
+				if (axisLimit > fallbackAxisLimit)
+				{
+					fallbackAxis = axis;
+					fallbackAxisLimit = axisLimit;
+				}
+			}
+
+			if (maxAllowedAngle <= 0.00001f)
+			{
+				return false;
+			}
+
+			XMVECTOR limitedAxis = XMVectorSet(
+				limitedComponent[0],
+				limitedComponent[1],
+				limitedComponent[2],
+				0.0f);
+
+			if (XMVectorGetX(XMVector3LengthSq(limitedAxis)) < 0.000001f)
+			{
+				float fallbackComponent[3] = {};
+				float low = minLimit[fallbackAxis];
+				float high = maxLimit[fallbackAxis];
+				if (low > high)
+				{
+					swap(low, high);
+				}
+
+				const bool allowsPositive = high > 0.00001f;
+				const bool allowsNegative = low < -0.00001f;
+				float sign = component[fallbackAxis] < 0.0f ? -1.0f : 1.0f;
+				if (allowsPositive && !allowsNegative)
+				{
+					sign = 1.0f;
+				}
+				else if (!allowsPositive && allowsNegative)
+				{
+					sign = -1.0f;
+				}
+				fallbackComponent[fallbackAxis] = sign;
+				limitedAxis = XMVectorSet(
+					fallbackComponent[0],
+					fallbackComponent[1],
+					fallbackComponent[2],
+					0.0f);
+			}
+
+			localAxis = XMVector3Normalize(limitedAxis);
+			angle = min(angle, maxAllowedAngle);
+			return true;
+		};
+
+	rebuildGlobals();
+	for (const PmxIkConstraint& constraint : m_PmxIkConstraints)
+	{
+		if (!IsVmdIkEnabled(animation, constraint.BoneName, currentFrame) ||
+			m_Bone.find(constraint.BoneName) == m_Bone.end() ||
+			m_Bone.find(constraint.TargetBoneName) == m_Bone.end())
+		{
+			continue;
+		}
+
+		const uint32_t iterationCount = min<uint32_t>(constraint.IterationCount, 64);
+		const float maxAngle = constraint.LimitAngle > 0.0f ? constraint.LimitAngle : XM_PIDIV4;
+		for (uint32_t iteration = 0; iteration < iterationCount; ++iteration)
+		{
+			const XMVECTOR goalPosition = getTranslation(constraint.BoneName);
+			const XMVECTOR effectorPosition = getTranslation(constraint.TargetBoneName);
+			const float currentDistanceSq = XMVectorGetX(XMVector3LengthSq(XMVectorSubtract(goalPosition, effectorPosition)));
+			if (currentDistanceSq < 0.000001f)
+			{
+				break;
+			}
+
+			for (const PmxIkLink& link : constraint.Links)
+			{
+				auto linkBoneIt = m_Bone.find(link.BoneName);
+				if (linkBoneIt == m_Bone.end())
+				{
+					continue;
+				}
+
+				const XMVECTOR linkPosition = getTranslation(link.BoneName);
+				const XMVECTOR toEffector = XMVectorSubtract(getTranslation(constraint.TargetBoneName), linkPosition);
+				const XMVECTOR toGoal = XMVectorSubtract(getTranslation(constraint.BoneName), linkPosition);
+				if (XMVectorGetX(XMVector3LengthSq(toEffector)) < 0.000001f ||
+					XMVectorGetX(XMVector3LengthSq(toGoal)) < 0.000001f)
+				{
+					continue;
+				}
+
+				const XMVECTOR effectorDir = XMVector3Normalize(toEffector);
+				const XMVECTOR goalDir = XMVector3Normalize(toGoal);
+				float dot = XMVectorGetX(XMVector3Dot(effectorDir, goalDir));
+				dot = clamp(dot, -1.0f, 1.0f);
+
+				float angle = acosf(dot);
+				if (angle < 0.00001f)
+				{
+					continue;
+				}
+				angle = min(angle, maxAngle);
+
+				XMVECTOR axis = XMVector3Cross(effectorDir, goalDir);
+				if (XMVectorGetX(XMVector3LengthSq(axis)) < 0.000001f)
+				{
+					continue;
+				}
+				axis = XMVector3Normalize(axis);
+
+				const XMMATRIX parentGlobal = getParentGlobal(link.BoneName);
+				XMVECTOR determinant = XMMatrixDeterminant(parentGlobal);
+				const XMMATRIX inverseParent = XMMatrixInverse(&determinant, parentGlobal);
+				XMVECTOR localAxis = XMVector3TransformNormal(axis, inverseParent);
+				if (XMVectorGetX(XMVector3LengthSq(localAxis)) < 0.000001f)
+				{
+					continue;
+				}
+				localAxis = XMVector3Normalize(localAxis);
+				if (!applyIkLinkLimit(link, localAxis, angle))
+				{
+					continue;
+				}
+
+				const XMVECTOR deltaRotation = XMQuaternionRotationAxis(localAxis, angle);
+
+				aiVector3D scale(1.0f, 1.0f, 1.0f);
+				aiQuaternion rotation(1.0f, 0.0f, 0.0f, 0.0f);
+				aiVector3D position(0.0f, 0.0f, 0.0f);
+				linkBoneIt->second.AnimationMatrix.Decompose(scale, rotation, position);
+
+				const XMVECTOR currentRotation = XMVectorSet(rotation.x, rotation.y, rotation.z, rotation.w);
+				XMVECTOR updatedRotation = XMQuaternionMultiply(currentRotation, deltaRotation);
+				updatedRotation = XMQuaternionNormalize(updatedRotation);
+
+				XMFLOAT4 storedRotation{};
+				XMStoreFloat4(&storedRotation, updatedRotation);
+				aiQuaternion aiUpdatedRotation(storedRotation.w, storedRotation.x, storedRotation.y, storedRotation.z);
+				aiUpdatedRotation.Normalize();
+				linkBoneIt->second.AnimationMatrix = aiMatrix4x4(scale, aiUpdatedRotation, position);
+
+				rebuildGlobals();
+			}
+		}
+	}
 }
 
 void AnimationModelResource::UpdateBoneMatrices(const char* animName1, float frame1,
@@ -1091,46 +3721,89 @@ void AnimationModelResource::UpdateBoneMatrices(const char* animName1, float fra
 		return;
 	}
 
-	aiAnimation* animation1 = GetAnimation(animName1);
-	aiAnimation* animation2 = GetAnimation(animName2);
+	const string animationName1 = animName1 ? animName1 : "";
+	const string animationName2 = animName2 ? animName2 : "";
 
-	if (!animation1 && !animation2)
+	const VmdAnimation* vmdAnimation1 = nullptr;
+	const VmdAnimation* vmdAnimation2 = nullptr;
+	auto vmdIt1 = m_VmdAnimations.find(animationName1);
+	if (vmdIt1 != m_VmdAnimations.end())
 	{
-		UpdateBindPoseBoneMatrix(m_AiScene->mRootNode, aiMatrix4x4());
-		WriteBoneMatricesToBuffer();
+		vmdAnimation1 = &vmdIt1->second;
+	}
+	auto vmdIt2 = m_VmdAnimations.find(animationName2);
+	if (vmdIt2 != m_VmdAnimations.end())
+	{
+		vmdAnimation2 = &vmdIt2->second;
+	}
+	if (vmdAnimation1 || vmdAnimation2)
+	{
+		UpdateVmdBoneMatrices(vmdAnimation1, frame1, vmdAnimation2, frame2, blendRate);
 		return;
 	}
 
-	for (auto& [boneName, bone] : m_Bone)
+	aiAnimation* animation1 = GetAnimation(animationName1);
+	aiAnimation* animation2 = GetAnimation(animationName2);
+
+	if (!animation1 && !animation2)
 	{
-		aiNodeAnim* nodeAnim1 = FindNodeAnimChannel(animation1, boneName);
-		aiNodeAnim* nodeAnim2 = FindNodeAnimChannel(animation2, boneName);
+		return;
+	}
 
-		aiVector3D bindScale(1.0f, 1.0f, 1.0f);
-		aiQuaternion bindRotation(1, 0, 0, 0);
-		aiVector3D bindPosition(0, 0, 0);
-		bone.BindLocalMatrix.Decompose(bindScale, bindRotation, bindPosition);
+	auto sampleRotationKey = [](aiNodeAnim* nodeAnim, float timeInTicks, double duration)
+		{
+			if (!nodeAnim || nodeAnim->mNumRotationKeys == 0)
+			{
+				return aiQuaternion(1.0f, 0.0f, 0.0f, 0.0f);
+			}
 
-		aiQuaternion rotation1 = bindRotation;
-		aiVector3D pos1 = bindPosition;
-		aiVector3D scale1 = bindScale;
-		aiQuaternion rotation2 = bindRotation;
-		aiVector3D pos2 = bindPosition;
-		aiVector3D scale2 = bindScale;
+			const float t = duration > 0.0 ? fmod(timeInTicks, static_cast<float>(duration)) : timeInTicks;
+			const unsigned int keyIndex = static_cast<unsigned int>(max(0.0f, t)) % nodeAnim->mNumRotationKeys;
+			return nodeAnim->mRotationKeys[keyIndex].mValue;
+		};
 
-		SampleNodeAnimation(animation1, nodeAnim1, frame1, rotation1, pos1, scale1);
-		SampleNodeAnimation(animation2, nodeAnim2, frame2, rotation2, pos2, scale2);
+	auto samplePositionKey = [](aiNodeAnim* nodeAnim, float timeInTicks, double duration)
+		{
+			if (!nodeAnim || nodeAnim->mNumPositionKeys == 0)
+			{
+				return aiVector3D(0.0f, 0.0f, 0.0f);
+			}
+
+			const float t = duration > 0.0 ? fmod(timeInTicks, static_cast<float>(duration)) : timeInTicks;
+			const unsigned int keyIndex = static_cast<unsigned int>(max(0.0f, t)) % nodeAnim->mNumPositionKeys;
+			return nodeAnim->mPositionKeys[keyIndex].mValue;
+		};
+
+	for (auto pair : m_Bone)
+	{
+		Bone* bonePtr = &m_Bone[pair.first];
+		aiNodeAnim* nodeAnim1 = FindNodeAnimChannel(animation1, pair.first);
+		aiNodeAnim* nodeAnim2 = FindNodeAnimChannel(animation2, pair.first);
+
+		const float ticksPerSecond1 = (animation1 && animation1->mTicksPerSecond != 0)
+			? static_cast<float>(animation1->mTicksPerSecond)
+			: 25.0f;
+		const float ticksPerSecond2 = (animation2 && animation2->mTicksPerSecond != 0)
+			? static_cast<float>(animation2->mTicksPerSecond)
+			: 25.0f;
+
+		const float timeInTicks1 = frame1 * ticksPerSecond1;
+		const float timeInTicks2 = frame2 * ticksPerSecond2;
+
+		aiQuaternion rotation1 = sampleRotationKey(nodeAnim1, timeInTicks1, animation1 ? animation1->mDuration : 0.0);
+		aiVector3D pos1 = samplePositionKey(nodeAnim1, timeInTicks1, animation1 ? animation1->mDuration : 0.0);
+		aiQuaternion rotation2 = sampleRotationKey(nodeAnim2, timeInTicks2, animation2 ? animation2->mDuration : 0.0);
+		aiVector3D pos2 = samplePositionKey(nodeAnim2, timeInTicks2, animation2 ? animation2->mDuration : 0.0);
 
 		const aiVector3D pos = pos1 * (1.f - blendRate) + pos2 * blendRate;
-		const aiVector3D scale = scale1 * (1.f - blendRate) + scale2 * blendRate;
 
 		aiQuaternion rotation;
 		aiQuaternion::Interpolate(rotation, rotation1, rotation2, blendRate);
 
-		bone.AnimationMatrix = aiMatrix4x4(scale, rotation, pos);
+		bonePtr->AnimationMatrix = aiMatrix4x4(aiVector3D(1.0f, 1.0f, 1.0f), rotation, pos);
 	}
 
-	UpdateBoneMatrix(m_AiScene->mRootNode, aiMatrix4x4());
+	UpdateBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
 	WriteBoneMatricesToBuffer();
 }
 
@@ -1146,6 +3819,8 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 
 	UINT descSize = m_pDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
+	constexpr UINT kSkinningThreadGroupSize = 128;
+
 	for (UINT m = 0; m < m_Meshes.size(); m++)
 	{
 		if (m_Meshes[m].VertexCount == 0) continue;
@@ -1154,14 +3829,17 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 		CD3DX12_GPU_DESCRIPTOR_HANDLE srvInputHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), m_Meshes[m].SrvInputVertexIndex, descSize);
 		pCommandList->SetComputeRootDescriptorTable(0, srvInputHandle);
 
-		CD3DX12_GPU_DESCRIPTOR_HANDLE srvBoneHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), descriptorBase + m_kBONE_SRV_OFFSET, descSize);
+		const UINT boneFrameIndex = RendererCore::GetFrameIndex() % RendererState::g_kFRAME_COUNT;
+		CD3DX12_GPU_DESCRIPTOR_HANDLE srvBoneHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), descriptorBase + m_kBONE_SRV_OFFSET + boneFrameIndex, descSize);
 		pCommandList->SetComputeRootDescriptorTable(1, srvBoneHandle);
 
 		CD3DX12_GPU_DESCRIPTOR_HANDLE uavOutputHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), m_Meshes[m].UavOutputVertexIndex, descSize);
 		pCommandList->SetComputeRootDescriptorTable(2, uavOutputHandle);
 
-		UINT threadGroups = (m_Meshes[m].VertexCount + 63) / 64;
+		UINT threadGroups = (m_Meshes[m].VertexCount + kSkinningThreadGroupSize - 1) / kSkinningThreadGroupSize;
 		pCommandList->Dispatch(threadGroups, 1, 1);
+		D3D12_RESOURCE_BARRIER skinningUavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(m_Meshes[m].VertexBuffer.Get());
+		pCommandList->ResourceBarrier(1, &skinningUavBarrier);
 
 		for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
 		{
@@ -1184,8 +3862,10 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 				descSize);
 			pCommandList->SetComputeRootDescriptorTable(2, teoUavOutputHandle);
 
-			UINT teoThreadGroups = (m_Meshes[m].TeoVertexCounts[mode] + 63) / 64;
+			UINT teoThreadGroups = (m_Meshes[m].TeoVertexCounts[mode] + kSkinningThreadGroupSize - 1) / kSkinningThreadGroupSize;
 			pCommandList->Dispatch(teoThreadGroups, 1, 1);
+			D3D12_RESOURCE_BARRIER teoUavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(m_Meshes[m].TeoVertexBuffers[mode].Get());
+			pCommandList->ResourceBarrier(1, &teoUavBarrier);
 		}
 	}
 
@@ -1198,32 +3878,55 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 
 void AnimationModelResource::Uninit()
 {
-	if (m_BoneBuffer && m_pBoneBufferMapped)
+	for (UINT frame = 0; frame < RendererState::g_kFRAME_COUNT; ++frame)
 	{
-		m_BoneBuffer->Unmap(0, nullptr);
-		m_pBoneBufferMapped = nullptr;
+		if (m_BoneBuffers[frame] && m_pBoneBufferMapped[frame])
+		{
+			m_BoneBuffers[frame]->Unmap(0, nullptr);
+			m_pBoneBufferMapped[frame] = nullptr;
+		}
 	}
 
 	m_Meshes.clear();
 	m_DeformVertex.clear();
 	m_GpuSkinVertices.clear();
+	m_BaseGpuSkinVertices.clear();
 	m_Bone.clear();
 	m_BoneNames.clear();
 	m_BoneIndexMap.clear();
+	m_BoneParentMap.clear();
+	m_PmxAppendConstraints.clear();
+	m_PmxIkConstraints.clear();
+	m_PmxBaseVertices.clear();
+	m_PmxBaseNormals.clear();
+	m_PmxBaseTexCoords.clear();
+	m_PmxMorphs.clear();
+	m_PmxMorphIndexMap.clear();
+	m_PmxVertexToMeshVertices.clear();
 	m_BoneMatricesScratch.clear();
+	InvalidateVmdRuntimeCache();
+	InvalidatePmxRuntimeCache();
+	m_HasAppliedVmdMorphs = false;
 	m_AabbCenter = {};
 	m_AabbExtents = {};
 
 	if (m_AiScene)
 	{
-		aiReleaseImport(m_AiScene);
+		if (m_OwnsGeneratedAiScene)
+		{
+			PmxBinary::DestroyGeneratedScene(const_cast<aiScene*>(m_AiScene));
+		}
+		else
+		{
+			aiReleaseImport(m_AiScene);
+		}
 		m_AiScene = nullptr;
+		m_OwnsGeneratedAiScene = false;
 	}
-
 	for (auto& pair : m_Animation)
 	{
 		aiReleaseImport(pair.second);
 	}
 	m_Animation.clear();
+	m_VmdAnimations.clear();
 }
-

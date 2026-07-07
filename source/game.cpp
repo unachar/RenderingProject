@@ -22,6 +22,8 @@
 #include "cube.h"
 #include "light.h"
 
+#include "entitybase.h"
+
 void Game::Init()
 {
 	World::Init();
@@ -32,18 +34,21 @@ void Game::Init()
 void Game::Create()
 {
 	Camera::Create();
-	const auto& light = Light::Create(LightType::Point);
-	Sky::Create();
-	Field::Create();
-	Polygon3D::Create();
-	//XBot::Create();
-	Alicia::Create();
-	Moca::Create();
-	Karen::Create();
-	KacchattaHone::Create();
-	Cube::Create();
 
-	Light::AttachLightTimeLine(light);
+	AddEntity<Cube>();
+	AddEntity<Polygon3D>();
+	AddEntity<XBot>();
+	AddEntity<Field>();
+	AddEntity<Moca>();
+	AddEntity<Karen>();
+	AddEntity<KacchattaHone>();
+	AddEntity<Alicia>();
+	AddEntity<Sky>();
+	
+	for (auto& entitys : entityBase)
+	{
+		entitys->Create();
+	}
 }
 
 void Game::Uninit()

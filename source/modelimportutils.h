@@ -45,6 +45,10 @@ namespace ModelImportUtils
 		{
 			formatHint = "pmx";
 		}
+		else if (extension == ".vmd")
+		{
+			formatHint = "vmd";
+		}
 
 		if (!formatHint)
 		{

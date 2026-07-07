@@ -169,6 +169,7 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="source\entitybase.h" />
     <ClInclude Include="source\modelimportutils.h" />
     <FxCompile Include="shader\hlsl\colorshader3dPS.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
@@ -457,11 +458,14 @@
     <ClCompile Include="source\moca.cpp" />
     <ClCompile Include="source\karen.cpp" />
     <ClCompile Include="source\kacchatta_hone.cpp" />
+    <ClCompile Include="source\atmosphere.cpp" />
     <ClCompile Include="source\animator.cpp" />
     <ClCompile Include="source\cube.cpp" />
     <ClCompile Include="source\field.cpp" />
     <ClCompile Include="source\imguimanager.cpp" />
     <ClCompile Include="source\animationmodel.cpp" />
+    <ClCompile Include="source\pmxloader.cpp" />
+    <ClCompile Include="source\vmdanimationimpoter.cpp" />
     <ClCompile Include="source\camera.cpp" />
     <ClCompile Include="source\componentmanager.cpp" />
     <ClCompile Include="source\ecs.cpp" />
@@ -490,6 +494,7 @@
     <ClCompile Include="source\rendererresource.cpp" />
     <ClCompile Include="source\rendererdraw.cpp" />
     <ClCompile Include="source\sky.cpp" />
+    <ClCompile Include="source\sun.cpp" />
     <ClCompile Include="source\staticmodel.cpp" />
     <ClCompile Include="source\animationsystem.cpp" />
     <ClCompile Include="source\camerasystem.cpp" />
@@ -513,8 +518,11 @@
     <ClInclude Include="source\moca.h" />
     <ClInclude Include="source\karen.h" />
     <ClInclude Include="source\kacchatta_hone.h" />
+    <ClInclude Include="source\atmosphere.h" />
     <ClInclude Include="source\animator.h" />
     <ClInclude Include="source\animationmodel.h" />
+    <ClInclude Include="source\pmxloader.h" />
+    <ClInclude Include="source\vmdanimationimpoter.h" />
     <ClInclude Include="source\camera.h" />
     <ClInclude Include="source\componentmanager.h" />
     <ClInclude Include="source\cube.h" />
@@ -544,6 +552,7 @@
     <ClInclude Include="source\rendererresource.h" />
     <ClInclude Include="source\rendererdraw.h" />
     <ClInclude Include="source\sky.h" />
+    <ClInclude Include="source\sun.h" />
     <ClInclude Include="source\staticmodel.h" />
     <ClInclude Include="source\animationsystem.h" />
     <ClInclude Include="source\camerasystem.h" />
@@ -579,14 +588,10 @@
     <ResourceCompile Include="source\app.rc" />
   </ItemGroup>
   <ItemGroup>
-    <None Include=".github\copilot-instructions.md" />
     <None Include="packages.config" />
     <None Include="shader\slang\pbrToonCommon.slang">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </None>
-  </ItemGroup>
-  <ItemGroup>
-    <Text Include="memo.txt" />
   </ItemGroup>
   <Import Project="External\slang\Slang.targets" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

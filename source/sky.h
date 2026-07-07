@@ -1,7 +1,7 @@
 #pragma once
-
-class Sky
+#include "entitybase.h"
+class Sky : public EntityBase
 {
 public:
-	static void Create();
+	void Create() override;
 };

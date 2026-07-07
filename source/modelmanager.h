@@ -28,7 +28,7 @@ public:
 	static int LoadAnimModel(const char* fileName, bool isConvert = true);
 	static int LoadStaticModel(const char* fileName, bool isConvert = true);
 
-	static void LoadAnimation(int modelId, const char* fileName, const char* name);
+	static bool LoadAnimation(int modelId, const char* fileName, const char* name);
 
 	static AnimationModelResource* GetAnimModel(int modelId);
 	static StaticModelResource* GetStaticModel(int modelId);

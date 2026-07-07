@@ -8,6 +8,8 @@
 #include "texturemanager.h"
 #include "materialsystem.h"
 #include "light.h"
+#include "sun.h"
+#include "atmosphere.h"
 #include "debugsystem.h"
 #include "animator.h"
 #include <fstream>
@@ -16,6 +18,7 @@
 #include <algorithm>
 #include <cctype>
 #include <DirectXCollision.h>
+#include <ImGuizmo.h>
 
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -38,24 +41,70 @@ namespace
 	{
 		bool changed = false;
 		ImGui::PushID(label);
-		ImGui::TextUnformatted(label);
-		if (ImGui::BeginTable("AxisFloat3", 3, ImGuiTableFlags_SizingStretchSame))
+		ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(3.0f, 2.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(3.0f, 2.0f));
+		ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.025f, 0.027f, 0.030f, 1.00f));
+		ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.050f, 0.055f, 0.064f, 1.00f));
+		ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.070f, 0.082f, 0.100f, 1.00f));
+		if (ImGui::BeginTable("AxisFloat3", 4, ImGuiTableFlags_SizingStretchProp))
 		{
-			const char* axisLabels[3] = { "X", "Y", "Z" };
-			const char* axisIds[3] = { "##X", "##Y", "##Z" };
-			for (int i = 0; i < 3; ++i)
+			const char* axisIds[3] = { "##R", "##G", "##B" };
+			const ImU32 axisColors[3] =
 			{
-				ImGui::TableNextColumn();
-				ImGui::TextUnformatted(axisLabels[i]);
+				ImGui::GetColorU32(ImVec4(0.86f, 0.18f, 0.14f, 1.00f)),
+				ImGui::GetColorU32(ImVec4(0.24f, 0.68f, 0.25f, 1.00f)),
+				ImGui::GetColorU32(ImVec4(0.18f, 0.42f, 0.86f, 1.00f))
+			};
+
+			ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 82.0f);
+			ImGui::TableSetupColumn("R", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("G", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("B", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableNextRow();
+
+			ImGui::TableSetColumnIndex(0);
+			{
+				const float width = ImGui::GetContentRegionAvail().x;
+				const float height = ImGui::GetFrameHeight();
+				ImGui::InvisibleButton("##AxisLabel", ImVec2(width, height));
+
+				ImDrawList* drawList = ImGui::GetWindowDrawList();
+				const ImVec2 min = ImGui::GetItemRectMin();
+				const ImVec2 max = ImGui::GetItemRectMax();
+				drawList->AddRectFilled(min, max, ImGui::GetColorU32(ImVec4(0.095f, 0.100f, 0.108f, 1.00f)), 2.0f);
+				drawList->AddRect(min, max, ImGui::GetColorU32(ImVec4(0.18f, 0.19f, 0.20f, 1.00f)), 2.0f);
+
+				const float textY = min.y + (height - ImGui::GetTextLineHeight()) * 0.5f;
+				drawList->AddText(ImVec2(min.x + 8.0f, textY), ImGui::GetColorU32(ImGuiCol_Text), label);
+
+				const float arrowX = max.x - 13.0f;
+				const float arrowY = min.y + height * 0.5f - 1.0f;
+				drawList->AddTriangleFilled(
+					ImVec2(arrowX - 4.0f, arrowY - 2.0f),
+					ImVec2(arrowX + 4.0f, arrowY - 2.0f),
+					ImVec2(arrowX, arrowY + 3.0f),
+					ImGui::GetColorU32(ImVec4(0.62f, 0.66f, 0.70f, 1.00f)));
 			}
+
 			for (int i = 0; i < 3; ++i)
 			{
 				ImGui::TableNextColumn();
+				const float height = ImGui::GetFrameHeight();
+				ImGui::Dummy(ImVec2(3.0f, height));
+				ImGui::GetWindowDrawList()->AddRectFilled(
+					ImGui::GetItemRectMin(),
+					ImGui::GetItemRectMax(),
+					axisColors[i],
+					1.0f);
+				ImGui::SameLine(0.0f, 2.0f);
 				ImGui::SetNextItemWidth(-FLT_MIN);
 				changed |= ImGui::DragFloat(axisIds[i], &values[i], speed, minValue, maxValue, "%.3f");
 			}
 			ImGui::EndTable();
 		}
+		ImGui::PopStyleColor(3);
+		ImGui::PopStyleVar(3);
 		ImGui::PopID();
 		return changed;
 	}
@@ -223,6 +272,52 @@ namespace
 		return true;
 	}
 
+	void DrawFpsMeter()
+	{
+		const float fps = World::GetFrameRate();
+		const int targetFrameRate = World::GetTargetFrameRate();
+		const float referenceFps = static_cast<float>(max(targetFrameRate, 60));
+		const float fraction = referenceFps > 0.0f ? min(fps / referenceFps, 1.0f) : 0.0f;
+		char overlay[32]{};
+		snprintf(overlay, sizeof(overlay), "%.0f / %.0f FPS", fps, referenceFps);
+		const float overlayWidth = ImGui::CalcTextSize(overlay).x;
+		const float barWidth = max(80.0f, ImGui::GetContentRegionAvail().x - overlayWidth - 10.0f);
+
+		ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.18f, 0.68f, 0.82f, 1.00f));
+		ImGui::ProgressBar(fraction, ImVec2(barWidth, 7.0f), "");
+		ImGui::PopStyleColor();
+		ImGui::SameLine();
+		ImGui::TextDisabled("%s", overlay);
+	}
+
+	ImGuizmo::OPERATION GetGizmoOperationFromIndex(int operation)
+	{
+		switch (operation)
+		{
+		case 1:
+			return ImGuizmo::ROTATE;
+		case 2:
+			return ImGuizmo::SCALE;
+		case 0:
+		default:
+			return ImGuizmo::TRANSLATE;
+		}
+	}
+
+	const char* GetGizmoOperationLabel(int operation)
+	{
+		switch (operation)
+		{
+		case 1:
+			return "回転";
+		case 2:
+			return "スケール";
+		case 0:
+		default:
+			return "移動";
+		}
+	}
+
 	bool GetLocalAabb(EntityID entity, XMFLOAT3& center, XMFLOAT3& extents)
 	{
 		if (ComponentManager::HasComponent<AABBComponent>(entity))
@@ -303,24 +398,7 @@ namespace
 		}
 
 		const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-		if (lightComponent.Type == LightType::Spot || lightComponent.Type == LightType::Volume)
-		{
-			XMFLOAT3 target = { 0.0f, 0.0f, 0.0f };
-			Entity alicia = World::GetEntityByName("Alicia");
-			if (alicia.IsValid() &&
-				Registry::IsAlive(alicia.GetID()) &&
-				ComponentManager::HasComponent<TransformComponent>(alicia.GetID()))
-			{
-				const auto& aliciaTransform = ComponentManager::GetComponentUnchecked<TransformComponent>(alicia.GetID());
-				target = { aliciaTransform.Position.x, aliciaTransform.Position.y, aliciaTransform.Position.z };
-			}
-
-			XMVECTOR dir = XMVectorSubtract(XMLoadFloat3(&target), XMLoadFloat3(&transform.Position));
-			if (XMVectorGetX(XMVector3LengthSq(dir)) > 0.000001f)
-			{
-				XMStoreFloat3(&lightComponent.Direction, XMVector3Normalize(dir));
-			}
-		}
+		lightComponent.Position = transform.Position;
 
 	}
 
@@ -352,17 +430,18 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
 {
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
+	ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
 	ImGuiIO& io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 	io.ConfigDockingWithShift = false;
 
-	StyleUnreal();
+	StyleModernSlim();
 
 	const char* fontPath = "C:\\Windows\\Fonts\\msgothic.ttc";
 	if (filesystem::exists(fontPath))
 	{
-		io.Fonts->AddFontFromFileTTF(fontPath, 18.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
+		io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
 	}
 
 	if (!ImGui_ImplWin32_Init(hwnd)) return false;
@@ -400,6 +479,7 @@ void ImGuiManager::Update()
 	ImGui_ImplDX12_NewFrame();
 	ImGui_ImplWin32_NewFrame();
 	ImGui::NewFrame();
+	ImGuizmo::BeginFrame();
 	DebugSystem::SetShowLightDebug(m_ShowLightDebug);
 
 	ImGuiIO& io = ImGui::GetIO();
@@ -414,6 +494,26 @@ void ImGuiManager::Update()
 	}
 
 	ProcessDroppedFiles();
+	const bool canSwitchGizmo =
+		!io.WantTextInput &&
+		!ImGui::IsAnyItemActive() &&
+		!ImGui::IsMouseDown(ImGuiMouseButton_Right) &&
+		!ImGuizmo::IsUsing();
+	if (canSwitchGizmo)
+	{
+		if (ImGui::IsKeyPressed(ImGuiKey_Q, false))
+		{
+			m_GizmoOperation = 0;
+		}
+		if (ImGui::IsKeyPressed(ImGuiKey_W, false))
+		{
+			m_GizmoOperation = 1;
+		}
+		if (ImGui::IsKeyPressed(ImGuiKey_E, false))
+		{
+			m_GizmoOperation = 2;
+		}
+	}
 	if (m_SelectedEntity != g_kINVALID_ENTITY &&
 		Registry::IsAlive(m_SelectedEntity) &&
 		ComponentManager::HasComponent<NameComponent>(m_SelectedEntity) &&
@@ -433,13 +533,6 @@ void ImGuiManager::Update()
 		ImGui::IsKeyPressed(ImGuiKey_Delete, false))
 	{
 		DeleteSelectedEntity();
-	}
-	if (m_ShowAabbForSelectedOnly)
-	{
-		for (EntityID entity : World::GetView<AABBComponent>())
-		{
-			ComponentManager::GetComponentUnchecked<AABBComponent>(entity).DrawDebug = (entity == m_SelectedEntity);
-		}
 	}
 	DrawDockSpace();
 	DrawSceneViewWindow();
@@ -465,6 +558,26 @@ void ImGuiManager::Update()
 	if (m_ShowLogWindow)
 	{
 		DrawLogWindow();
+	}
+	if (m_ShowPerformanceWindow)
+	{
+		DrawPerformanceWindow();
+	}
+	if (m_ShowMaterialEditorWindow)
+	{
+		DrawMaterialEditorWindow();
+	}
+	if (m_ShowMeshOutlineWindow)
+	{
+		DrawMeshOutlineWindow();
+	}
+	if (m_ShowMeshShadingWindow)
+	{
+		DrawMeshShadingWindow();
+	}
+	if (m_ShowAtmosphereWindow)
+	{
+		DrawAtmosphereWindow();
 	}
 
 	if (!m_ShowAdjustmentPanel)
@@ -556,6 +669,28 @@ ImGui::Begin("調整");
 	}
 
 	ImGui::Checkbox("Gバッファ", &m_ShowGBufferWindow);
+
+	ImGui::SeparatorText("パフォーマンス");
+	ImGui::Text("FPS: %.1f", World::GetFrameRate());
+	DrawFpsMeter();
+	ImGui::Text("Frame: %.2f ms", World::GetFrameTimeMs());
+	bool vsyncEnabled = World::IsVSyncEnabled();
+	if (ImGui::Checkbox("垂直同期", &vsyncEnabled))
+	{
+		World::SetVSyncEnabled(vsyncEnabled);
+	}
+	bool fixedFrameRateEnabled = World::IsFixedFrameRateEnabled();
+	if (ImGui::Checkbox("FPS固定", &fixedFrameRateEnabled))
+	{
+		World::SetFixedFrameRateEnabled(fixedFrameRateEnabled);
+	}
+	int targetFrameRate = World::GetTargetFrameRate();
+	ImGui::SetNextItemWidth(120.0f);
+	if (ImGui::SliderInt("目標FPS", &targetFrameRate, 15, 360))
+	{
+		World::SetTargetFrameRate(targetFrameRate);
+	}
+	ImGui::TextDisabled("VSync有効時はモニターの更新間隔も上限になります");
 	ImGui::End();
 	FinalizeUndoCaptureIfIdle();
 	return;
@@ -899,7 +1034,7 @@ ImGui::SeparatorText("セクション");
 		}
 	}
 
-	ImGui::TextUnformatted("W/E/R: 移動 / 回転 / 拡縮");
+	ImGui::Text("Q/W/E: 移動 / 回転 / スケール（現在: %s）", GetGizmoOperationLabel(m_GizmoOperation));
 }
 
 void ImGuiManager::DrawDockSpace()
@@ -968,6 +1103,7 @@ void ImGuiManager::DrawSceneViewWindow()
 	D3D12_GPU_DESCRIPTOR_HANDLE handle = RendererDraw::GetEditorSceneSrvHandle();
 	ImGui::Image((ImTextureData*)handle.ptr, imageSize);
 	m_IsSceneViewHovered = ImGui::IsItemHovered();
+	DrawTransformGizmo();
 	if (m_IsSceneViewHovered && fabsf(ImGui::GetIO().MouseWheel) > 0.001f)
 	{
 		EntityID cameraEntity = Camera::GetCameraEntity();
@@ -1016,8 +1152,82 @@ void ImGuiManager::DrawSceneViewWindow()
 		ImGui::EndDragDropTarget();
 	}
 
-	ImGui::TextUnformatted("右ドラッグ: カメラ / 左クリック: 選択 / ドラッグ&ドロップ: 配置または適用");
+	ImGui::Text("右ドラッグ: カメラ / 左クリック: 選択 / Q/W/E: 移動・回転・スケール（現在: %s）", GetGizmoOperationLabel(m_GizmoOperation));
 	ImGui::End();
+}
+
+void ImGuiManager::DrawTransformGizmo()
+{
+	if (m_SelectedEntity == g_kINVALID_ENTITY ||
+		!Registry::IsAlive(m_SelectedEntity) ||
+		!ComponentManager::HasComponent<TransformComponent>(m_SelectedEntity))
+	{
+		return;
+	}
+
+	EntityID cameraEntity = Camera::GetCameraEntity();
+	if (cameraEntity == g_kINVALID_ENTITY || !Registry::IsAlive(cameraEntity))
+	{
+		return;
+	}
+
+	XMMATRIX view;
+	XMMATRIX proj;
+	Camera::GetCameraMatrices(cameraEntity, view, proj);
+
+	XMFLOAT4X4 viewMatrix{};
+	XMFLOAT4X4 projectionMatrix{};
+	XMStoreFloat4x4(&viewMatrix, view);
+	XMStoreFloat4x4(&projectionMatrix, proj);
+
+	auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(m_SelectedEntity);
+	EntitySnapshot before = CaptureEntity(m_SelectedEntity);
+
+	XMFLOAT4X4 modelMatrix{};
+	XMStoreFloat4x4(&modelMatrix, BuildWorldMatrix(transform));
+
+	const ImGuizmo::OPERATION operation = GetGizmoOperationFromIndex(m_GizmoOperation);
+	const ImGuizmo::MODE mode = operation == ImGuizmo::ROTATE ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
+
+	ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
+	ImGuizmo::SetOrthographic(false);
+	ImGuizmo::SetRect(m_SceneViewPos.x, m_SceneViewPos.y, m_SceneViewSize.x, m_SceneViewSize.y);
+
+	if (!ImGuizmo::Manipulate(
+		&viewMatrix._11,
+		&projectionMatrix._11,
+		operation,
+		mode,
+		&modelMatrix._11))
+	{
+		return;
+	}
+
+	BeginUndoCapture(m_SelectedEntity, before);
+
+	float translation[3]{};
+	float rotationDeg[3]{};
+	float scale[3]{};
+	ImGuizmo::DecomposeMatrixToComponents(&modelMatrix._11, translation, rotationDeg, scale);
+
+	transform.Position = { translation[0], translation[1], translation[2] };
+	transform.Rotation =
+	{
+		rotationDeg[0] * kDegToRad,
+		rotationDeg[1] * kDegToRad,
+		rotationDeg[2] * kDegToRad
+	};
+	transform.Scale = ClampScale(scale, false);
+	XMStoreFloat4x4(&transform.WorldMatrix, BuildWorldMatrix(transform));
+	transform.IsDirty = true;
+	if (ComponentManager::HasComponent<SunComponent>(m_SelectedEntity))
+	{
+		Sun::Sync(m_SelectedEntity);
+	}
+	else
+	{
+		ApplyLightEntityToRuntime(m_SelectedEntity);
+	}
 }
 
 void ImGuiManager::DrawEditorMainMenu()
@@ -1044,20 +1254,22 @@ void ImGuiManager::DrawEditorMainMenu()
 
 	ImGui::Separator();
 
-	ImGui::Checkbox("エディター", &m_ShowEditorWindows);
-	ImGui::SameLine();
-	ImGui::Checkbox("調整", &m_ShowAdjustmentPanel);
-	ImGui::SameLine();
-	ImGui::Checkbox("アセット", &m_ShowAssetBrowser);
-	ImGui::SameLine();
-	ImGui::Checkbox("描画デバッグ", &m_ShowRenderDebugger);
-	ImGui::SameLine();
-	ImGui::Checkbox("Gバッファ", &m_ShowGBufferWindow);
-	ImGui::SameLine();
-	ImGui::Checkbox("ログ", &m_ShowLogWindow);
-	ImGui::SameLine();
-	ImGui::Checkbox("選択AABBのみ", &m_ShowAabbForSelectedOnly);
-
+	if (ImGui::BeginMenu("Window"))
+	{
+		ImGui::MenuItem("エディター", nullptr, &m_ShowEditorWindows);
+		ImGui::MenuItem("調整", nullptr, &m_ShowAdjustmentPanel);
+		ImGui::MenuItem("アセット", nullptr, &m_ShowAssetBrowser);
+		ImGui::MenuItem("描画デバッグ", nullptr, &m_ShowRenderDebugger);
+		ImGui::MenuItem("Gバッファ", nullptr, &m_ShowGBufferWindow);
+		ImGui::MenuItem("ログ", nullptr, &m_ShowLogWindow);
+		ImGui::MenuItem("パフォーマンス", nullptr, &m_ShowPerformanceWindow);
+		ImGui::MenuItem("マテリアルエディター", nullptr, &m_ShowMaterialEditorWindow);
+		ImGui::MenuItem("大気シミュレーション", nullptr, &m_ShowAtmosphereWindow);
+		ImGui::Separator();
+		ImGui::MenuItem("メッシュ単位のアウトライン", nullptr, &m_ShowMeshOutlineWindow);
+		ImGui::MenuItem("メッシュ単位のシェーディング", nullptr, &m_ShowMeshShadingWindow);
+		ImGui::EndMenu();
+	}
 	ImGui::SameLine();
 	ImGui::Checkbox("ライト可視化", &m_ShowLightDebug);
 	ImGui::SameLine();
@@ -1079,6 +1291,11 @@ void ImGuiManager::DrawEditorMainMenu()
 		{
 			m_SelectedEntity = CreateLightEntity(LightType::Volume);
 		}
+		ImGui::Separator();
+		if (ImGui::MenuItem("Sun"))
+		{
+			m_SelectedEntity = Sun::CreateDefault();
+		}
 		ImGui::EndMenu();
 	}
 
@@ -1089,6 +1306,44 @@ void ImGuiManager::DrawEditorMainMenu()
 	}
 
 	ImGui::EndMainMenuBar();
+}
+
+void ImGuiManager::DrawPerformanceWindow()
+{
+	ImGui::SetNextWindowSize(ImVec2(260.0f, 150.0f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("パフォーマンス", &m_ShowPerformanceWindow, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::End();
+		return;
+	}
+
+	ImGui::Text("FPS: %.1f", World::GetFrameRate());
+	DrawFpsMeter();
+	ImGui::Text("Frame: %.2f ms", World::GetFrameTimeMs());
+	ImGui::Separator();
+
+	bool vsyncEnabled = World::IsVSyncEnabled();
+	if (ImGui::Checkbox("垂直同期", &vsyncEnabled))
+	{
+		World::SetVSyncEnabled(vsyncEnabled);
+	}
+
+	bool fixedFrameRateEnabled = World::IsFixedFrameRateEnabled();
+	if (ImGui::Checkbox("FPS固定", &fixedFrameRateEnabled))
+	{
+		World::SetFixedFrameRateEnabled(fixedFrameRateEnabled);
+	}
+
+	int targetFrameRate = World::GetTargetFrameRate();
+	ImGui::BeginDisabled(!fixedFrameRateEnabled);
+	ImGui::SetNextItemWidth(120.0f);
+	if (ImGui::SliderInt("目標FPS", &targetFrameRate, 15, 360))
+	{
+		World::SetTargetFrameRate(targetFrameRate);
+	}
+	ImGui::EndDisabled();
+
+	ImGui::End();
 }
 
 void ImGuiManager::DrawAssetBrowserWindow()
@@ -1312,7 +1567,6 @@ void ImGuiManager::DrawRenderDebuggerWindow()
 
 	ImGui::Text("描画モード: %s", RendererCore::GetRenderMode() == RenderMode::DEFERRED ? "ディファード" : "フォワード");
 	ImGui::Text("画面: %u x %u", RendererCore::GetSceneWidth(), RendererCore::GetSceneHeight());
-	ImGui::Checkbox("選択AABBのみ", &m_ShowAabbForSelectedOnly);
 
 	ImGui::SeparatorText("セクション");
 	vector<TextureManager::TextureInfo> textures = TextureManager::GetLoadedTextureInfos();
@@ -1399,6 +1653,80 @@ void ImGuiManager::DrawGBufferWindow()
 	ImGui::End();
 }
 
+void ImGuiManager::DrawAtmosphereWindow()
+{
+	ImGui::SetNextWindowSize(ImVec2(360.0f, 430.0f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("大気シミュレーション", &m_ShowAtmosphereWindow))
+	{
+		ImGui::End();
+		return;
+	}
+
+	AtmosphereParameters& atmosphere = Atmosphere::GetMutableParameters();
+	ImGui::Checkbox("有効", &atmosphere.Enabled);
+	ImGui::SeparatorText("散乱");
+	ImGui::SliderFloat("Rayleigh強度", &atmosphere.RayleighStrength, 0.0f, 4.0f, "%.3f");
+	ImGui::SliderFloat("Mie強度", &atmosphere.MieStrength, 0.0f, 2.0f, "%.3f");
+	ImGui::SliderFloat("大気密度", &atmosphere.Density, 0.0f, 3.0f, "%.3f");
+	ImGui::SliderFloat("高度減衰", &atmosphere.HeightFalloff, 0.0f, 1.0f, "%.3f");
+	ImGui::SliderFloat("消散", &atmosphere.Extinction, 0.0f, 2.0f, "%.3f");
+	ImGui::SliderFloat("Mie g", &atmosphere.MieG, -0.95f, 0.95f, "%.3f");
+	ImGui::SliderFloat("距離スケール", &atmosphere.DistanceScale, 0.001f, 0.25f, "%.3f");
+	ImGui::SliderFloat("ライトシャフト", &atmosphere.LightShaftStrength, 0.0f, 4.0f, "%.3f");
+	ImGui::SliderFloat("環境散乱", &atmosphere.AmbientStrength, 0.0f, 1.0f, "%.3f");
+
+	ImGui::SeparatorText("色");
+	ImGui::ColorEdit3("Rayleigh色", &atmosphere.RayleighColor.x);
+	ImGui::ColorEdit3("Mie色", &atmosphere.MieColor.x);
+
+	ImGui::SeparatorText("Sun");
+	EntityID firstSun = g_kINVALID_ENTITY;
+	for (EntityID entity : World::GetView<SunComponent>())
+	{
+		firstSun = entity;
+		break;
+	}
+
+	if (firstSun == g_kINVALID_ENTITY)
+	{
+		if (ImGui::Button("Sunを作成"))
+		{
+			m_SelectedEntity = Sun::CreateDefault();
+		}
+	}
+	else
+	{
+		auto& sun = ComponentManager::GetComponentUnchecked<SunComponent>(firstSun);
+		auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(firstSun);
+		EntitySnapshot before = CaptureEntity(firstSun);
+		bool sunChanged = false;
+		ImGui::Text("Sun Entity: %s", GetEntityDisplayName(firstSun));
+		if (DrawAxisFloat3("位置", transform.Position, 0.1f))
+		{
+			transform.IsDirty = true;
+			sunChanged = true;
+		}
+		sunChanged |= DrawAxisFloat3("注視点", sun.Target, 0.1f);
+		sunChanged |= ImGui::Checkbox("Directional同期", &sun.SyncDirectionalLight);
+		if (sunChanged)
+		{
+			BeginUndoCapture(firstSun, before);
+			Sun::Sync(firstSun);
+		}
+		if (ImGui::Button("Sunを選択"))
+		{
+			m_SelectedEntity = firstSun;
+		}
+	}
+
+	if (ImGui::Button("大気をリセット"))
+	{
+		Atmosphere::Reset();
+	}
+
+	ImGui::End();
+}
+
 void ImGuiManager::DrawLogWindow()
 {
 	ImGui::SetNextWindowSize(ImVec2(620.0f, 220.0f), ImGuiCond_FirstUseEver);
@@ -1431,6 +1759,64 @@ void ImGuiManager::DrawLogWindow()
 		ImGui::SetScrollHereY(1.0f);
 	}
 	ImGui::EndChild();
+	ImGui::End();
+}
+
+void ImGuiManager::DrawMeshOutlineWindow()
+{
+	ImGui::SetNextWindowSize(ImVec2(760.0f, 420.0f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("メッシュ単位のアウトライン", &m_ShowMeshOutlineWindow))
+	{
+		ImGui::End();
+		return;
+	}
+
+	if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
+	{
+		ImGui::TextUnformatted("オブジェクト未選択");
+		ImGui::End();
+		return;
+	}
+
+	ImGui::Text("選択中: %s", GetEntityDisplayName(m_SelectedEntity));
+	ImGui::Separator();
+	if (!IsModelMaterialEntity(m_SelectedEntity))
+	{
+		ImGui::TextUnformatted("メッシュ付きモデルを選択してください");
+		ImGui::End();
+		return;
+	}
+
+	DrawToonMeshOutlineInspector(m_SelectedEntity, false);
+	ImGui::End();
+}
+
+void ImGuiManager::DrawMeshShadingWindow()
+{
+	ImGui::SetNextWindowSize(ImVec2(760.0f, 420.0f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("メッシュ単位のシェーディング", &m_ShowMeshShadingWindow))
+	{
+		ImGui::End();
+		return;
+	}
+
+	if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
+	{
+		ImGui::TextUnformatted("オブジェクト未選択");
+		ImGui::End();
+		return;
+	}
+
+	ImGui::Text("選択中: %s", GetEntityDisplayName(m_SelectedEntity));
+	ImGui::Separator();
+	if (!IsModelMaterialEntity(m_SelectedEntity))
+	{
+		ImGui::TextUnformatted("メッシュ付きモデルを選択してください");
+		ImGui::End();
+		return;
+	}
+
+	DrawMeshShadingInspector(m_SelectedEntity, false);
 	ImGui::End();
 }
 
@@ -1473,7 +1859,6 @@ void ImGuiManager::DrawHierarchyWindow()
 
 void ImGuiManager::DrawInspectorWindow()
 {
-	ImGui::Text("画面: %u x %u", RendererCore::GetSceneWidth(), RendererCore::GetSceneHeight());
 	ImGui::SetNextWindowSize(ImVec2(312.0f, 520.0f), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin("インスペクター"))
 	{
@@ -1564,13 +1949,39 @@ ImGui::TextUnformatted("オブジェクト未選択");
 	{
 		DrawLightInspector(m_SelectedEntity);
 	}
-	else
-	{
-		DrawMaterialInspector(m_SelectedEntity);
-	}
 	DrawComponentInspector(m_SelectedEntity);
 
 	ImGui::TextUnformatted("右クリック: カメラ / 左クリック: 選択");
+	ImGui::End();
+}
+
+void ImGuiManager::DrawMaterialEditorWindow()
+{
+	ImGui::SetNextWindowSize(ImVec2(380.0f, 560.0f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("マテリアルエディター", &m_ShowMaterialEditorWindow))
+	{
+		ImGui::End();
+		return;
+	}
+
+	if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
+	{
+		ImGui::TextUnformatted("マテリアルを持つオブジェクトを選択してください");
+		ImGui::End();
+		return;
+	}
+
+	ImGui::Text("選択中: %s", GetEntityDisplayName(m_SelectedEntity));
+	ImGui::Separator();
+
+	if (!ComponentManager::HasComponent<MaterialComponent>(m_SelectedEntity))
+	{
+		ImGui::TextUnformatted("選択中のオブジェクトにマテリアルがありません");
+		ImGui::End();
+		return;
+	}
+
+	DrawMaterialInspector(m_SelectedEntity);
 	ImGui::End();
 }
 
@@ -1683,12 +2094,6 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
 	if (changed)
 	{
 		BeginUndoCapture(entity, before);
-	}
-
-	if (IsModelMaterialEntity(entity))
-	{
-		DrawMeshShadingInspector(entity);
-		DrawToonMeshOutlineInspector(entity);
 	}
 
 	if (!isManualMode && IsModelMaterialEntity(entity))
@@ -1837,7 +2242,7 @@ if (ImGui::Checkbox("テクスチャ使用", &useTexture))
 	}
 }
 
-void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity)
+void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity, bool embeddedInInspector)
 {
 	if (!ComponentManager::HasComponent<MaterialComponent>(entity))
 	{
@@ -1895,10 +2300,19 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity)
 
 	if (meshCount == 0)
 	{
+		if (!embeddedInInspector)
+		{
+			ImGui::TextUnformatted("メッシュがありません");
+		}
 		return;
 	}
 
-	if (!ImGui::TreeNode("メッシュアウトライン上書き"))
+	bool opened = true;
+	if (embeddedInInspector)
+	{
+		opened = ImGui::TreeNode("メッシュアウトライン上書き");
+	}
+	if (!opened)
 	{
 		return;
 	}
@@ -1951,7 +2365,10 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity)
 		ImGuiTableFlags_Resizable |
 		ImGuiTableFlags_ScrollY;
 
-	if (ImGui::BeginTable("MeshOutlineOverrideTable", 7, tableFlags, ImVec2(0.0f, 260.0f)))
+	const float tableHeight = embeddedInInspector
+		? 260.0f
+		: max(180.0f, ImGui::GetContentRegionAvail().y);
+	if (ImGui::BeginTable("MeshOutlineOverrideTable", 7, tableFlags, ImVec2(0.0f, tableHeight)))
 	{
 		ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 32.0f);
 		ImGui::TableSetupColumn("メッシュ");
@@ -2039,7 +2456,10 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity)
 	{
 		BeginUndoCapture(entity, before);
 	}
-	ImGui::TreePop();
+	if (embeddedInInspector)
+	{
+		ImGui::TreePop();
+	}
 }
 
 void ImGuiManager::ApplyMeshShadingOverridesToModel(EntityID entity)
@@ -2080,7 +2500,7 @@ void ImGuiManager::ApplyMeshShadingOverridesToModel(EntityID entity)
 	}
 }
 
-void ImGuiManager::DrawMeshShadingInspector(EntityID entity)
+void ImGuiManager::DrawMeshShadingInspector(EntityID entity, bool embeddedInInspector)
 {
 	if (!ComponentManager::HasComponent<MaterialComponent>(entity))
 	{
@@ -2136,7 +2556,21 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity)
 		}
 	}
 
-	if (meshCount == 0 || !ImGui::TreeNode("メッシュシェーディング上書き"))
+	if (meshCount == 0)
+	{
+		if (!embeddedInInspector)
+		{
+			ImGui::TextUnformatted("メッシュがありません");
+		}
+		return;
+	}
+
+	bool opened = true;
+	if (embeddedInInspector)
+	{
+		opened = ImGui::TreeNode("メッシュシェーディング上書き");
+	}
+	if (!opened)
 	{
 		return;
 	}
@@ -2224,7 +2658,10 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity)
 		ImGuiTableFlags_Resizable |
 		ImGuiTableFlags_ScrollY;
 
-	if (ImGui::BeginTable("MeshShadingOverrideTable", 5, tableFlags, ImVec2(0.0f, 260.0f)))
+	const float tableHeight = embeddedInInspector
+		? 260.0f
+		: max(180.0f, ImGui::GetContentRegionAvail().y);
+	if (ImGui::BeginTable("MeshShadingOverrideTable", 5, tableFlags, ImVec2(0.0f, tableHeight)))
 	{
 		ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 32.0f);
 		ImGui::TableSetupColumn("メッシュ");
@@ -2298,7 +2735,10 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity)
 		ApplyMeshShadingOverridesToModel(entity);
 		BeginUndoCapture(entity, before);
 	}
-	ImGui::TreePop();
+	if (embeddedInInspector)
+	{
+		ImGui::TreePop();
+	}
 }
 
 void ImGuiManager::DrawLightInspector(EntityID entity)
@@ -2328,6 +2768,7 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 
 	changed |= ImGui::Checkbox("有効", &light.IsActive);
 	changed |= ImGui::Checkbox("デバッグ描画", &light.DrawDebug);
+	changed |= ImGui::Checkbox("影を描画", &light.CastShadow);
 	changed |= ImGui::ColorEdit3("色", &light.Color.x);
 	changed |= ImGui::DragFloat("ライト強度", &light.Intensity, 0.01f, 0.0f, 20.0f);
 	changed |= ImGui::DragFloat("範囲", &light.Range, 0.05f, 0.1f, 100.0f);
@@ -2350,7 +2791,7 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 		}
 		changed |= ImGui::DragFloat("内角", &light.InnerAngle, 0.2f, 0.1f, 89.0f);
 		changed |= ImGui::DragFloat("外角", &light.OuterAngle, 0.2f, light.InnerAngle + 0.1f, 89.5f);
-		changed |= ImGui::DragFloat("ボリューム密度", &light.VolumeDensity, 0.01f, 0.0f, 3.0f);
+		changed |= ImGui::DragFloat("ボリューム密度", &light.VolumeDensity, 0.01f, 0.0f, 30.0f);
 	}
 
 	if (ImGui::Button("メインライトに設定"))
@@ -2363,6 +2804,20 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 	{
 		BeginUndoCapture(entity, before);
 		ApplyLightEntityToRuntime(entity);
+	}
+
+	if (ComponentManager::HasComponent<SunComponent>(entity) &&
+		ImGui::CollapsingHeader("Sun", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		auto& sun = ComponentManager::GetComponentUnchecked<SunComponent>(entity);
+		bool sunChanged = false;
+		sunChanged |= DrawAxisFloat3("注視点", sun.Target, 0.05f);
+		sunChanged |= ImGui::DragFloat("表示半径", &sun.VisualRadius, 0.05f, 0.1f, 100.0f);
+		sunChanged |= ImGui::Checkbox("Directional同期", &sun.SyncDirectionalLight);
+		if (sunChanged)
+		{
+			Sun::Sync(entity);
+		}
 	}
 }
 
@@ -2715,7 +3170,9 @@ void ImGuiManager::PickEntityFromMouse()
 {
 	ImGuiIO& io = ImGui::GetIO();
 	if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
-		!m_IsSceneViewHovered)
+		!m_IsSceneViewHovered ||
+		ImGuizmo::IsOver() ||
+		ImGuizmo::IsUsing())
 	{
 		return;
 	}
@@ -2755,8 +3212,12 @@ void ImGuiManager::PickEntityFromMouse()
 		proj, view, XMMatrixIdentity());
 	XMVECTOR rayDir = XMVector3Normalize(XMVectorSubtract(farPoint, nearPoint));
 
-	EntityID bestEntity = g_kINVALID_ENTITY;
-	float bestDistance = FLT_MAX;
+	struct PickHit
+	{
+		EntityID Entity = g_kINVALID_ENTITY;
+		float Distance = 0.0f;
+	};
+	vector<PickHit> hits;
 
 	for (EntityID entity : World::GetView<TransformComponent>())
 	{
@@ -2778,14 +3239,57 @@ void ImGuiManager::PickEntityFromMouse()
 		localBox.Transform(worldBox, BuildWorldMatrix(transform));
 
 		float distance = 0.0f;
-		if (worldBox.Intersects(nearPoint, rayDir, distance) && distance < bestDistance)
+		if (worldBox.Intersects(nearPoint, rayDir, distance))
 		{
-			bestDistance = distance;
-			bestEntity = entity;
+			hits.push_back({ entity, distance });
 		}
 	}
 
-	m_SelectedEntity = bestEntity;
+	sort(hits.begin(), hits.end(), [](const PickHit& lhs, const PickHit& rhs)
+		{
+			if (fabsf(lhs.Distance - rhs.Distance) > 0.0001f)
+			{
+				return lhs.Distance < rhs.Distance;
+			}
+			return lhs.Entity < rhs.Entity;
+		});
+
+	vector<EntityID> candidates;
+	candidates.reserve(hits.size());
+	for (const PickHit& hit : hits)
+	{
+		candidates.push_back(hit.Entity);
+	}
+
+	if (hits.empty())
+	{
+		m_SelectedEntity = g_kINVALID_ENTITY;
+		m_LastPickCandidates.clear();
+		m_LastPickMouse = mouse;
+		return;
+	}
+
+	const float pickDx = mouse.x - m_LastPickMouse.x;
+	const float pickDy = mouse.y - m_LastPickMouse.y;
+	const bool samePickSpot = (pickDx * pickDx + pickDy * pickDy) <= 36.0f;
+	const bool sameCandidateStack = samePickSpot && candidates == m_LastPickCandidates;
+
+	size_t pickIndex = 0;
+	if (sameCandidateStack)
+	{
+		for (size_t i = 0; i < candidates.size(); ++i)
+		{
+			if (candidates[i] == m_SelectedEntity)
+			{
+				pickIndex = (i + 1) % candidates.size();
+				break;
+			}
+		}
+	}
+
+	m_SelectedEntity = hits[pickIndex].Entity;
+	m_LastPickCandidates = move(candidates);
+	m_LastPickMouse = mouse;
 }
 
 bool ImGuiManager::IsEditableEntity(EntityID entity)
@@ -2928,6 +3432,12 @@ ImGuiManager::EntitySnapshot ImGuiManager::CaptureEntity(EntityID entity)
 		snapshot.Light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
 	}
 
+	if (ComponentManager::HasComponent<SunComponent>(entity))
+	{
+		snapshot.HasSun = true;
+		snapshot.Sun = ComponentManager::GetComponentUnchecked<SunComponent>(entity);
+	}
+
 	if (ComponentManager::HasComponent<MaterialComponent>(entity))
 	{	snapshot.HasMaterial = true; 
 		snapshot.Material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
@@ -3004,6 +3514,7 @@ void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
 	if (snapshot.HasStaticModel) RestoreSnapshotComponent(snapshot.Entity, snapshot.StaticModel);
 	if (snapshot.HasAnimationModel) RestoreSnapshotComponent(snapshot.Entity, snapshot.AnimationModel);
 	if (snapshot.HasLight) { RestoreSnapshotComponent(snapshot.Entity, snapshot.Light); ApplyLightEntityToRuntime(snapshot.Entity); }
+	if (snapshot.HasSun) { RestoreSnapshotComponent(snapshot.Entity, snapshot.Sun); Sun::Sync(snapshot.Entity); }
 	if (snapshot.HasMaterial) RestoreSnapshotComponent(snapshot.Entity, snapshot.Material);
 	if (snapshot.HasAabb) RestoreSnapshotComponent(snapshot.Entity, snapshot.Aabb);
 	if (snapshot.HasSprite) RestoreSnapshotComponent(snapshot.Entity, snapshot.Sprite);
@@ -3024,7 +3535,7 @@ void ImGuiManager::BeginUndoCapture(EntityID entity, const EntitySnapshot& befor
 
 void ImGuiManager::FinalizeUndoCaptureIfIdle()
 {
-	if (!m_HasPendingUndo || ImGui::IsAnyItemActive()) return;
+	if (!m_HasPendingUndo || ImGui::IsAnyItemActive() || ImGuizmo::IsUsing()) return;
 	PushUndoSnapshot(m_PendingUndo);
 	m_HasPendingUndo = false;
 	m_PendingUndo = {};
@@ -3131,44 +3642,44 @@ void ImGuiManager::AddLog(const char* fmt, ...)
 	Debug::Log("%s\n", buffer);
 }
 
-void ImGuiManager::StyleUnreal()
+void ImGuiManager::StyleModernSlim()
 {
 	auto& style = ImGui::GetStyle();
 	ImVec4* colors = style.Colors;
 
-	colors[ImGuiCol_Text] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-	colors[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.50f, 0.50f, 1.00f);
-	colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.06f, 0.06f, 0.94f);
-	colors[ImGuiCol_ChildBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-	colors[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.08f, 0.08f, 0.94f);
-	colors[ImGuiCol_Border] = ImVec4(0.43f, 0.43f, 0.50f, 0.50f);
+	colors[ImGuiCol_Text] = ImVec4(0.86f, 0.89f, 0.92f, 1.00f);
+	colors[ImGuiCol_TextDisabled] = ImVec4(0.42f, 0.46f, 0.50f, 1.00f);
+	colors[ImGuiCol_WindowBg] = ImVec4(0.075f, 0.080f, 0.090f, 0.98f);
+	colors[ImGuiCol_ChildBg] = ImVec4(0.060f, 0.065f, 0.074f, 0.82f);
+	colors[ImGuiCol_PopupBg] = ImVec4(0.080f, 0.086f, 0.098f, 0.98f);
+	colors[ImGuiCol_Border] = ImVec4(0.20f, 0.23f, 0.27f, 0.72f);
 	colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-	colors[ImGuiCol_FrameBg] = ImVec4(0.20f, 0.21f, 0.22f, 0.54f);
-	colors[ImGuiCol_FrameBgHovered] = ImVec4(0.40f, 0.40f, 0.40f, 0.40f);
-	colors[ImGuiCol_FrameBgActive] = ImVec4(0.18f, 0.18f, 0.18f, 0.67f);
-	colors[ImGuiCol_TitleBg] = ImVec4(0.04f, 0.04f, 0.04f, 1.00f);
-	colors[ImGuiCol_TitleBgActive] = ImVec4(0.29f, 0.29f, 0.29f, 1.00f);
-	colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.00f, 0.00f, 0.00f, 0.51f);
-	colors[ImGuiCol_MenuBarBg] = ImVec4(0.14f, 0.14f, 0.14f, 1.00f);
-	colors[ImGuiCol_ScrollbarBg] = ImVec4(0.02f, 0.02f, 0.02f, 0.53f);
-	colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.31f, 0.31f, 0.31f, 1.00f);
-	colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.41f, 0.41f, 0.41f, 1.00f);
-	colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.51f, 0.51f, 0.51f, 1.00f);
-	colors[ImGuiCol_CheckMark] = ImVec4(0.94f, 0.45f, 0.13f, 1.00f);
-	colors[ImGuiCol_SliderGrab] = ImVec4(0.88f, 0.37f, 0.00f, 1.00f);
-	colors[ImGuiCol_SliderGrabActive] = ImVec4(0.94f, 0.45f, 0.13f, 1.00f);
-	colors[ImGuiCol_Button] = ImVec4(0.26f, 0.59f, 0.98f, 0.40f);
-	colors[ImGuiCol_ButtonHovered] = ImVec4(0.94f, 0.45f, 0.13f, 1.00f);
-	colors[ImGuiCol_ButtonActive] = ImVec4(0.06f, 0.53f, 0.98f, 1.00f);
-	colors[ImGuiCol_Header] = ImVec4(0.94f, 0.45f, 0.13f, 0.31f);
-	colors[ImGuiCol_HeaderHovered] = ImVec4(0.94f, 0.45f, 0.13f, 0.80f);
-	colors[ImGuiCol_HeaderActive] = ImVec4(0.94f, 0.45f, 0.13f, 1.00f);
+	colors[ImGuiCol_FrameBg] = ImVec4(0.115f, 0.125f, 0.142f, 1.00f);
+	colors[ImGuiCol_FrameBgHovered] = ImVec4(0.155f, 0.175f, 0.205f, 1.00f);
+	colors[ImGuiCol_FrameBgActive] = ImVec4(0.105f, 0.190f, 0.255f, 1.00f);
+	colors[ImGuiCol_TitleBg] = ImVec4(0.050f, 0.055f, 0.064f, 1.00f);
+	colors[ImGuiCol_TitleBgActive] = ImVec4(0.080f, 0.092f, 0.108f, 1.00f);
+	colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.050f, 0.055f, 0.064f, 0.92f);
+	colors[ImGuiCol_MenuBarBg] = ImVec4(0.070f, 0.077f, 0.090f, 1.00f);
+	colors[ImGuiCol_ScrollbarBg] = ImVec4(0.055f, 0.060f, 0.070f, 0.82f);
+	colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.22f, 0.25f, 0.29f, 0.86f);
+	colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.30f, 0.35f, 0.40f, 0.92f);
+	colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.38f, 0.44f, 0.50f, 1.00f);
+	colors[ImGuiCol_CheckMark] = ImVec4(0.18f, 0.68f, 0.82f, 1.00f);
+	colors[ImGuiCol_SliderGrab] = ImVec4(0.18f, 0.62f, 0.76f, 1.00f);
+	colors[ImGuiCol_SliderGrabActive] = ImVec4(0.28f, 0.78f, 0.92f, 1.00f);
+	colors[ImGuiCol_Button] = ImVec4(0.13f, 0.16f, 0.19f, 1.00f);
+	colors[ImGuiCol_ButtonHovered] = ImVec4(0.18f, 0.23f, 0.27f, 1.00f);
+	colors[ImGuiCol_ButtonActive] = ImVec4(0.12f, 0.44f, 0.56f, 1.00f);
+	colors[ImGuiCol_Header] = ImVec4(0.13f, 0.18f, 0.22f, 0.78f);
+	colors[ImGuiCol_HeaderHovered] = ImVec4(0.17f, 0.34f, 0.42f, 0.86f);
+	colors[ImGuiCol_HeaderActive] = ImVec4(0.16f, 0.50f, 0.62f, 0.96f);
 	colors[ImGuiCol_Separator] = colors[ImGuiCol_Border];
-	colors[ImGuiCol_SeparatorHovered] = ImVec4(0.94f, 0.45f, 0.13f, 0.78f);
-	colors[ImGuiCol_SeparatorActive] = ImVec4(0.94f, 0.45f, 0.13f, 1.00f);
-	colors[ImGuiCol_ResizeGrip] = ImVec4(0.26f, 0.59f, 0.98f, 0.25f);
-	colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.94f, 0.45f, 0.13f, 0.67f);
-	colors[ImGuiCol_ResizeGripActive] = ImVec4(0.94f, 0.45f, 0.13f, 0.95f);
+	colors[ImGuiCol_SeparatorHovered] = ImVec4(0.18f, 0.68f, 0.82f, 0.78f);
+	colors[ImGuiCol_SeparatorActive] = ImVec4(0.18f, 0.68f, 0.82f, 1.00f);
+	colors[ImGuiCol_ResizeGrip] = ImVec4(0.18f, 0.68f, 0.82f, 0.18f);
+	colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.18f, 0.68f, 0.82f, 0.58f);
+	colors[ImGuiCol_ResizeGripActive] = ImVec4(0.18f, 0.68f, 0.82f, 0.92f);
 
 	auto lerp = [](ImVec4 a, ImVec4 b, float t)
 		{
@@ -3180,27 +3691,53 @@ void ImGuiManager::StyleUnreal()
 	colors[ImGuiCol_TabActive] = lerp(colors[ImGuiCol_HeaderActive], colors[ImGuiCol_TitleBgActive], 0.60f);
 	colors[ImGuiCol_TabUnfocused] = lerp(colors[ImGuiCol_Tab], colors[ImGuiCol_TitleBg], 0.80f);
 	colors[ImGuiCol_TabUnfocusedActive] = lerp(colors[ImGuiCol_TabActive], colors[ImGuiCol_TitleBg], 0.40f);
+	colors[ImGuiCol_TabSelectedOverline] = ImVec4(0.28f, 0.78f, 0.92f, 0.88f);
+	colors[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0.18f, 0.52f, 0.62f, 0.58f);
 
 	ImVec4 ha = colors[ImGuiCol_HeaderActive];
 	colors[ImGuiCol_DockingPreview] = ImVec4(ha.x, ha.y, ha.z, ha.w * 0.7f);
 
-	colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
-	colors[ImGuiCol_PlotLines] = ImVec4(0.61f, 0.61f, 0.61f, 1.00f);
-	colors[ImGuiCol_PlotLinesHovered] = ImVec4(1.00f, 0.43f, 0.35f, 1.00f);
-	colors[ImGuiCol_PlotHistogram] = ImVec4(0.90f, 0.70f, 0.00f, 1.00f);
-	colors[ImGuiCol_PlotHistogramHovered] = ImVec4(1.00f, 0.60f, 0.00f, 1.00f);
-	colors[ImGuiCol_TextSelectedBg] = ImVec4(0.26f, 0.59f, 0.98f, 0.35f);
-	colors[ImGuiCol_DragDropTarget] = ImVec4(1.00f, 1.00f, 0.00f, 0.90f);
-	colors[ImGuiCol_NavHighlight] = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
-	colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
-	colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
-	colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.35f);
+	colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.060f, 0.065f, 0.074f, 1.00f);
+	colors[ImGuiCol_TableHeaderBg] = ImVec4(0.095f, 0.110f, 0.128f, 1.00f);
+	colors[ImGuiCol_TableBorderStrong] = ImVec4(0.19f, 0.22f, 0.26f, 1.00f);
+	colors[ImGuiCol_TableBorderLight] = ImVec4(0.14f, 0.16f, 0.19f, 1.00f);
+	colors[ImGuiCol_TableRowBg] = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
+	colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.13f, 0.15f, 0.18f, 0.28f);
+	colors[ImGuiCol_PlotLines] = ImVec4(0.52f, 0.58f, 0.64f, 1.00f);
+	colors[ImGuiCol_PlotLinesHovered] = ImVec4(0.28f, 0.78f, 0.92f, 1.00f);
+	colors[ImGuiCol_PlotHistogram] = ImVec4(0.18f, 0.68f, 0.82f, 1.00f);
+	colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.36f, 0.82f, 0.96f, 1.00f);
+	colors[ImGuiCol_TextSelectedBg] = ImVec4(0.18f, 0.68f, 0.82f, 0.28f);
+	colors[ImGuiCol_DragDropTarget] = ImVec4(0.28f, 0.78f, 0.92f, 0.86f);
+	colors[ImGuiCol_NavHighlight] = ImVec4(0.28f, 0.78f, 0.92f, 0.96f);
+	colors[ImGuiCol_NavWindowingHighlight] = ImVec4(0.82f, 0.90f, 0.96f, 0.72f);
+	colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.02f, 0.025f, 0.030f, 0.48f);
+	colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.02f, 0.025f, 0.030f, 0.62f);
 
-	style.WindowRounding = 0.0f;
-	style.ChildRounding = 0.0f;
-	style.FrameRounding = 0.0f;
-	style.GrabRounding = 0.0f;
-	style.PopupRounding = 0.0f;
-	style.ScrollbarRounding = 0.0f;
+	style.WindowPadding = ImVec2(8.0f, 6.0f);
+	style.FramePadding = ImVec2(6.0f, 3.0f);
+	style.CellPadding = ImVec2(5.0f, 3.0f);
+	style.ItemSpacing = ImVec2(7.0f, 4.0f);
+	style.ItemInnerSpacing = ImVec2(5.0f, 3.0f);
+	style.IndentSpacing = 14.0f;
+	style.ScrollbarSize = 11.0f;
+	style.GrabMinSize = 8.0f;
+
+	style.WindowBorderSize = 1.0f;
+	style.ChildBorderSize = 1.0f;
+	style.PopupBorderSize = 1.0f;
+	style.FrameBorderSize = 1.0f;
+	style.TabBorderSize = 0.0f;
+	style.TabBarBorderSize = 1.0f;
+	style.TabBarOverlineSize = 1.5f;
+
+	style.WindowRounding = 3.0f;
+	style.ChildRounding = 2.0f;
+	style.FrameRounding = 2.0f;
+	style.GrabRounding = 2.0f;
+	style.PopupRounding = 3.0f;
+	style.ScrollbarRounding = 2.0f;
+	style.TabRounding = 2.0f;
+	style.WindowMenuButtonPosition = ImGuiDir_Right;
 }
 

@@ -10,6 +10,18 @@
 #include "psomanager.h"
 #include "camera.h"
 
+namespace
+{
+	struct PostProcessConstants
+	{
+		XMFLOAT4 Flags{};
+		XMFLOAT4 PPCameraPos{};
+		XMFLOAT4 HdrFlags{};
+		XMFLOAT4X4 PPInvViewProjection{};
+	};
+
+	static_assert(sizeof(PostProcessConstants) <= RendererState::g_kPP_CB_ALIGNED_SIZE);
+}
 
 void RendererDraw::ReleaseGBufferResources()
 {
@@ -24,7 +36,7 @@ void RendererDraw::ReleaseGBufferResources()
 bool RendererDraw::CreateDepthBuffer()
 {
 	D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc {};
-	dsvHeapDesc.NumDescriptors = 2;
+	dsvHeapDesc.NumDescriptors = 1 + RendererState::g_kMAX_SHADOW_LIGHTS;
 	dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 	HRESULT hr = m_Device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&m_DsvHeap));
 	if (FAILED(hr))
@@ -78,32 +90,49 @@ bool RendererDraw::CreateShadowDepthBuffer()
 	clearValue.Format = DXGI_FORMAT_D32_FLOAT;
 	clearValue.DepthStencil.Depth = 1.0f;
 	clearValue.DepthStencil.Stencil = 0;
-	auto depthDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32_TYPELESS, RendererState::g_kSHADOW_MAP_SIZE, RendererState::g_kSHADOW_MAP_SIZE, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
+	auto depthDesc = CD3DX12_RESOURCE_DESC::Tex2D(
+		DXGI_FORMAT_R32_TYPELESS,
+		RendererState::g_kSHADOW_MAP_SIZE,
+		RendererState::g_kSHADOW_MAP_SIZE,
+		RendererState::g_kMAX_SHADOW_LIGHTS,
+		1,
+		1,
+		0,
+		D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
 	auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
 	HRESULT hr = m_Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &depthDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue, IID_PPV_ARGS(&m_ShadowDepthBuffer));
 	if (FAILED(hr)) { Debug::Log("ERROR: CreateCommittedResource(ShadowDepth) failed\n"); return false; }
 	if (!m_DsvHeap)
 	{
 		D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc {};
-		dsvHeapDesc.NumDescriptors = 2;
+		dsvHeapDesc.NumDescriptors = 1 + RendererState::g_kMAX_SHADOW_LIGHTS;
 		dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 		hr = m_Device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&m_DsvHeap));
 		if (FAILED(hr)) { Debug::Log("ERROR: CreateDescriptorHeap(DSV) failed\n"); return false; }
 	}
-	D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc {};
-	dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
-	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
 	const UINT dsvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
-	CD3DX12_CPU_DESCRIPTOR_HANDLE shadowDsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), 1, dsvIncrement);
-	m_Device->CreateDepthStencilView(m_ShadowDepthBuffer.Get(), &dsvDesc, shadowDsvHandle);
+	for (UINT i = 0; i < RendererState::g_kMAX_SHADOW_LIGHTS; ++i)
+	{
+		D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc {};
+		dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+		dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
+		dsvDesc.Texture2DArray.MipSlice = 0;
+		dsvDesc.Texture2DArray.FirstArraySlice = i;
+		dsvDesc.Texture2DArray.ArraySize = 1;
+		CD3DX12_CPU_DESCRIPTOR_HANDLE shadowDsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), 1 + i, dsvIncrement);
+		m_Device->CreateDepthStencilView(m_ShadowDepthBuffer.Get(), &dsvDesc, shadowDsvHandle);
+	}
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc {};
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
-	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	srvDesc.Texture2D.MipLevels = 1;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+	srvDesc.Texture2DArray.MostDetailedMip = 0;
+	srvDesc.Texture2DArray.MipLevels = 1;
+	srvDesc.Texture2DArray.FirstArraySlice = 0;
+	srvDesc.Texture2DArray.ArraySize = RendererState::g_kMAX_SHADOW_LIGHTS;
 	CD3DX12_CPU_DESCRIPTOR_HANDLE srvCpuHandle(m_CbvHeap->GetCPUDescriptorHandleForHeapStart(), RendererState::g_kSHADOW_SRV_INDEX, m_CbvIncrementSize);
 	m_Device->CreateShaderResourceView(m_ShadowDepthBuffer.Get(), &srvDesc, srvCpuHandle);
-	auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(RendererState::g_kSHADOW_CB_ALIGNED_SIZE);
+	auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(RendererState::g_kSHADOW_CB_ALIGNED_SIZE * RendererState::g_kSHADOW_CB_SLOT_COUNT);
 	auto cbHeapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
 	hr = m_Device->CreateCommittedResource(&cbHeapProps, D3D12_HEAP_FLAG_NONE, &cbDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_ShadowConstantBuffer));
 	if (FAILED(hr)) { Debug::Log("ERROR: CreateCommittedResource(Shadow CB) failed\n"); return false; }
@@ -151,14 +180,14 @@ void RendererDraw::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_T
 	RendererResource::UpdateLightConstantBuffer(1.35f);
 	RendererResource::UpdateShadowConstantBuffer();
 	m_CommandList->SetGraphicsRootSignature(rootSignature);
-	if (m_LightConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(2, m_LightConstantBuffer->GetGPUVirtualAddress());
-	if (m_PBRConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(3, m_PBRConstantBuffer->GetGPUVirtualAddress());
+	if (m_LightConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(2, RendererResource::GetCurrentLightConstantBufferAddress());
+	if (m_PBRConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(3, RendererResource::GetPBRConstantBufferAddress());
 	if (m_ShadowDepthBuffer)
 	{
 		CD3DX12_GPU_DESCRIPTOR_HANDLE shadowSrvHandle(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), RendererState::g_kSHADOW_SRV_INDEX, m_CbvIncrementSize);
 		m_CommandList->SetGraphicsRootDescriptorTable(4, shadowSrvHandle);
 	}
-	if (m_ShadowConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(5, m_ShadowConstantBuffer->GetGPUVirtualAddress());
+	if (m_ShadowConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(5, RendererResource::GetCurrentShadowConstantBufferAddress());
 	int environmentSrvIndex = m_EnvironmentTextureSrvIndex;
 	if (environmentSrvIndex < 0)
 	{
@@ -183,21 +212,26 @@ void RendererDraw::BeginLinePass()
 {
 	BeginPass(m_ModelRootSignature.Get(), D3D_PRIMITIVE_TOPOLOGY_LINELIST);
 }
-void RendererDraw::BeginShadowPass()
+bool RendererDraw::BeginShadowPass(UINT shadowIndex)
 {
-	if (!m_CommandList || !m_ShadowDepthBuffer || !m_DsvHeap) return;
+	if (!m_CommandList || !m_ShadowDepthBuffer || !m_DsvHeap || shadowIndex >= RendererResource::GetShadowLightCount())
+	{
+		return false;
+	}
+	RendererResource::SetCurrentShadowPassIndex(shadowIndex);
 	RendererResource::UpdateShadowConstantBuffer();
 	D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(m_ShadowDepthBuffer.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
 	m_CommandList->ResourceBarrier(1, &barrier);
 	const UINT dsvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
-	CD3DX12_CPU_DESCRIPTOR_HANDLE shadowDsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), 1, dsvIncrement);
+	CD3DX12_CPU_DESCRIPTOR_HANDLE shadowDsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), 1 + shadowIndex, dsvIncrement);
 	m_CommandList->RSSetViewports(1, &m_ShadowViewport);
 	m_CommandList->RSSetScissorRects(1, &m_ShadowScissorRect);
 	m_CommandList->ClearDepthStencilView(shadowDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 	m_CommandList->OMSetRenderTargets(0, nullptr, FALSE, &shadowDsvHandle);
 	m_CommandList->SetGraphicsRootSignature(m_ModelRootSignature.Get());
-	if (m_ShadowConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(5, m_ShadowConstantBuffer->GetGPUVirtualAddress());
+	if (m_ShadowConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(5, RendererResource::GetShadowConstantBufferAddress(shadowIndex));
 	m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	return true;
 }
 void RendererDraw::EndShadowPass()
 {
@@ -428,29 +462,36 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 				{
 					cameraPosition = ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
 				}
-				const float params[12] =
-				{
-					ImGuiManager::GetExposure(),
-					intensity,
-					renderModeFlag,
-					0.0f,
-					cameraPosition.x,
-					cameraPosition.y,
-					cameraPosition.z,
-					1.0f,
-					ImGuiManager::IsHdrEnabled() ? 1.0f : 0.0f,
-					ImGuiManager::IsToneMapEnabled() ? 1.0f : 0.0f,
-					0.0f,
-					0.0f
-				};
-				memcpy(m_pPostProcessCbvDataBegin, params, sizeof(params));
+
+				XMMATRIX view = XMMatrixIdentity();
+				XMMATRIX projection = XMMatrixIdentity();
+				Camera::GetCameraMatrices(cameraEntity, view, projection);
+				const XMMATRIX invViewProjection = XMMatrixInverse(nullptr, view * projection);
+
+				PostProcessConstants params{};
+				params.Flags = XMFLOAT4(ImGuiManager::GetExposure(), intensity, renderModeFlag, 0.0f);
+				params.PPCameraPos = XMFLOAT4(cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f);
+				params.HdrFlags = XMFLOAT4(ImGuiManager::IsHdrEnabled() ? 1.0f : 0.0f, ImGuiManager::IsToneMapEnabled() ? 1.0f : 0.0f, 0.0f, 0.0f);
+				XMStoreFloat4x4(&params.PPInvViewProjection, XMMatrixTranspose(invViewProjection));
+				auto* ppDst = static_cast<UINT8*>(m_pPostProcessCbvDataBegin) +
+					m_FrameIndex * g_kPP_CB_ALIGNED_SIZE;
+				memcpy(ppDst, &params, sizeof(params));
 			}
-			RendererResource::UpdateLightConstantBuffer(deferredLightStrength);
-			RendererResource::UpdateShadowConstantBuffer();
+			const bool needsLightingConstants = deferredLightStrength > 0.0f;
+			if (needsLightingConstants)
+			{
+				RendererResource::UpdateLightConstantBuffer(deferredLightStrength);
+				RendererResource::UpdateShadowConstantBuffer();
+			}
 
 			m_CommandList->SetGraphicsRootDescriptorTable(0, sourceHandle);
-			m_CommandList->SetGraphicsRootConstantBufferView(1, m_PostProcessConstantBuffer->GetGPUVirtualAddress());
-			if (m_LightConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(2, m_LightConstantBuffer->GetGPUVirtualAddress());
+			if (m_PostProcessConstantBuffer)
+			{
+				m_CommandList->SetGraphicsRootConstantBufferView(
+					1,
+					m_PostProcessConstantBuffer->GetGPUVirtualAddress() + m_FrameIndex * g_kPP_CB_ALIGNED_SIZE);
+			}
+			if (m_LightConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(2, RendererResource::GetCurrentLightConstantBufferAddress());
 			int environmentSrvIndex = m_EnvironmentTextureSrvIndex;
 			if (environmentSrvIndex < 0)
 			{
@@ -463,8 +504,8 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 				CD3DX12_GPU_DESCRIPTOR_HANDLE shadowSrvHandle(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), RendererState::g_kSHADOW_SRV_INDEX, m_CbvIncrementSize);
 				m_CommandList->SetGraphicsRootDescriptorTable(4, shadowSrvHandle);
 			}
-			if (m_ShadowConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(5, m_ShadowConstantBuffer->GetGPUVirtualAddress());
-			if (m_PBRConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(6, m_PBRConstantBuffer->GetGPUVirtualAddress());
+			if (m_ShadowConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(5, RendererResource::GetCurrentShadowConstantBufferAddress());
+			if (m_PBRConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(6, RendererResource::GetPBRConstantBufferAddress());
 			m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			m_CommandList->DrawInstanced(3, 1, 0, 0);
 		};
@@ -572,7 +613,9 @@ void RendererDraw::EndDraw()
 	ID3D12CommandList* ppCommandLists[] = { m_CommandList.Get() };
 	m_CommandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
 
-	m_SwapChain->Present(1, 0);
+	const UINT syncInterval = World::IsVSyncEnabled() ? 1u : 0u;
+	const UINT presentFlags = (syncInterval == 0 && m_AllowTearing) ? DXGI_PRESENT_ALLOW_TEARING : 0u;
+	m_SwapChain->Present(syncInterval, presentFlags);
 
 	m_CurrentFenceValue++;
 	m_FenceValues[m_FrameIndex] = m_CurrentFenceValue;
@@ -585,6 +628,8 @@ void RendererDraw::EndDraw()
 		m_Fence->SetEventOnCompletion(m_FenceValues[m_FrameIndex], m_FenceEvent);
 		WaitForSingleObject(m_FenceEvent, INFINITE);
 	}
+
+	World::WaitForFrameLimit();
 }
 
 bool RendererDraw::CreateSceneRenderTarget()

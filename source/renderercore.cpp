@@ -22,8 +22,10 @@ bool RendererCore::Init(HWND hwnd)
 {
 	m_FrameIndex = 0;
 	m_FenceEvent = nullptr;
-	m_FenceValues[0] = 0;
-	m_FenceValues[1] = 0;
+	for (UINT i = 0; i < g_kFRAME_COUNT; ++i)
+	{
+		m_FenceValues[i] = 0;
+	}
 	m_Hwnd = hwnd;
 
 	RECT rc;
@@ -53,6 +55,20 @@ bool RendererCore::Init(HWND hwnd)
 		return false;
 	}
 
+	m_AllowTearing = false;
+	ComPtr<IDXGIFactory5> factory5;
+	if (SUCCEEDED(m_Factory.As(&factory5)))
+	{
+		BOOL allowTearing = FALSE;
+		if (SUCCEEDED(factory5->CheckFeatureSupport(
+			DXGI_FEATURE_PRESENT_ALLOW_TEARING,
+			&allowTearing,
+			sizeof(allowTearing))))
+		{
+			m_AllowTearing = allowTearing == TRUE;
+		}
+	}
+
 	LogToFile("Step: D3D12CreateDevice\n");
 	hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_Device));
 	if (FAILED(hr))
@@ -78,6 +94,7 @@ bool RendererCore::Init(HWND hwnd)
 	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	swapChainDesc.SampleDesc.Count = 1;
+	swapChainDesc.Flags = m_AllowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
 
 	ComPtr<IDXGISwapChain1> sc1;
 	hr = m_Factory->CreateSwapChainForHwnd(m_CommandQueue.Get(), hwnd, &swapChainDesc, nullptr, nullptr, &sc1);
@@ -240,7 +257,7 @@ bool RendererCore::Init(HWND hwnd)
 	m_Viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, (float)m_SceneWidth, (float)m_SceneHeight);
 	m_ScissorRect = CD3DX12_RECT(0, 0, m_SceneWidth, m_SceneHeight);
 
-	const UINT totalCbSize = g_kCB_ALIGNED_SIZE * g_kMAX_ENTITIES;
+	const UINT totalCbSize = g_kCB_ALIGNED_SIZE * g_kCBV_COUNT;
 	auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(totalCbSize);
 	auto cbHeapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
 	hr = m_Device->CreateCommittedResource(
@@ -261,7 +278,7 @@ bool RendererCore::Init(HWND hwnd)
 	CD3DX12_CPU_DESCRIPTOR_HANDLE cbvHandle(m_CbvHeap->GetCPUDescriptorHandleForHeapStart());
 	m_CbvIncrementSize = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 	UINT cbvIncrement = m_CbvIncrementSize;
-	for (uint32_t i = 0; i < g_kMAX_ENTITIES; ++i)
+	for (uint32_t i = 0; i < g_kCBV_COUNT; ++i)
 	{
 		cbvDesc.BufferLocation = m_ConstantBuffer->GetGPUVirtualAddress() + (i * g_kCB_ALIGNED_SIZE);
 		m_Device->CreateConstantBufferView(&cbvDesc, cbvHandle);
@@ -436,8 +453,10 @@ void RendererCore::Resize(UINT width, UINT height)
 			WaitForSingleObject(m_FenceEvent, INFINITE);
 		}
 
-		m_FenceValues[0] = m_CurrentFenceValue;
-		m_FenceValues[1] = m_CurrentFenceValue;
+		for (UINT i = 0; i < g_kFRAME_COUNT; ++i)
+		{
+			m_FenceValues[i] = m_CurrentFenceValue;
+		}
 	}
 
 	for (UINT n = 0; n < g_kFRAME_COUNT; n++)
@@ -449,7 +468,8 @@ void RendererCore::Resize(UINT width, UINT height)
 
 	HRESULT hr = m_SwapChain->ResizeBuffers(
 		g_kFRAME_COUNT, width, height,
-		DXGI_FORMAT_R8G8B8A8_UNORM, 0);
+		DXGI_FORMAT_R8G8B8A8_UNORM,
+		m_AllowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0);
 	if (FAILED(hr))
 	{
 		LogToFile("ERROR: ResizeBuffers failed\n");
@@ -534,8 +554,10 @@ void RendererCore::ApplyPendingRenderMode()
 			WaitForSingleObject(m_FenceEvent, INFINITE);
 		}
 
-		m_FenceValues[0] = m_CurrentFenceValue;
-		m_FenceValues[1] = m_CurrentFenceValue;
+		for (UINT i = 0; i < g_kFRAME_COUNT; ++i)
+		{
+			m_FenceValues[i] = m_CurrentFenceValue;
+		}
 	}
 
 	m_RenderMode = m_PendingRenderMode;
@@ -594,8 +616,10 @@ void RendererCore::ApplyPendingHdr()
 			WaitForSingleObject(m_FenceEvent, INFINITE);
 		}
 
-		m_FenceValues[0] = m_CurrentFenceValue;
-		m_FenceValues[1] = m_CurrentFenceValue;
+		for (UINT i = 0; i < g_kFRAME_COUNT; ++i)
+		{
+			m_FenceValues[i] = m_CurrentFenceValue;
+		}
 	}
 
 	m_SceneColorFormat = m_PendingHdr ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;

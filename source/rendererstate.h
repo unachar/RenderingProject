@@ -129,7 +129,9 @@ class RendererState
 {
 public:
 	static constexpr UINT g_kGBUFFER_COUNT = static_cast<UINT>(GBufferType::COUNT);
-		static constexpr uint32_t g_kFRAME_COUNT = 3;
+	static constexpr uint32_t g_kFRAME_COUNT = 3;
+	static constexpr UINT g_kMAX_SHADER_LIGHTS = 20;
+	static constexpr UINT g_kMAX_SHADOW_LIGHTS = g_kMAX_SHADER_LIGHTS;
 protected:
 	static ComPtr<ID3D12Device> m_Device;
 	static ComPtr<ID3D12CommandQueue> m_CommandQueue;
@@ -202,6 +204,7 @@ protected:
 	static ComPtr<ID3D12PipelineState> m_SkinningPso;
 	static DXGI_FORMAT m_SceneColorFormat;
 	static DXGI_FORMAT m_BackBufferFormat;
+	static bool m_AllowTearing;
 	static bool m_HasPendingHdr;
 	static bool m_PendingHdr;
 	static constexpr float m_kSceneClearColor[4] = { 0.1f, 0.2f, 0.4f, 1.0f };
@@ -225,16 +228,22 @@ public:
 
 
 	static constexpr UINT g_kCB_ALIGNED_SIZE = (sizeof(ConstantBuffer3D) + 255) & ~255;
-	static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * 12 + 255) & ~255;
-	static constexpr UINT g_kMAX_SHADER_LIGHTS = 20;
-	static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT = 5 + g_kMAX_SHADER_LIGHTS * 4;
+	static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * 28 + 255) & ~255;
+	static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT = 10 + g_kMAX_SHADER_LIGHTS * 9;
 	static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;
 	static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 384 + 255) & ~255;
 	static constexpr UINT g_kPBR_CB_SLOT_COUNT = g_kMAX_ENTITIES + 1;
+	static constexpr UINT g_kPBR_CB_TOTAL_SLOT_COUNT = g_kPBR_CB_SLOT_COUNT * g_kFRAME_COUNT;
 	static constexpr UINT g_kSHADOW_CB_ALIGNED_SIZE = (sizeof(XMMATRIX) + sizeof(float) * 4 + 255) & ~255;
-	static constexpr UINT g_kSHADOW_MAP_SIZE = 4096;
+	static constexpr UINT g_kSHADOW_CB_SLOT_COUNT = g_kFRAME_COUNT * g_kMAX_SHADOW_LIGHTS;
+	static constexpr UINT g_kSHADOW_MAP_SIZE = 2048;
+	static constexpr UINT g_kTRANSIENT_CB_SLOT_COUNT = 1024;
+	static constexpr UINT g_kTRANSIENT_CB_START_INDEX = g_kMAX_ENTITIES;
+	static constexpr UINT g_kCBV_PER_FRAME_COUNT = g_kMAX_ENTITIES + g_kTRANSIENT_CB_SLOT_COUNT;
+	static constexpr UINT g_kCBV_COUNT = g_kCBV_PER_FRAME_COUNT * g_kFRAME_COUNT;
 	static constexpr uint32_t g_kMAX_SRVS = 512;
-	static constexpr UINT g_kSCENE_SRV_INDEX = g_kMAX_ENTITIES + g_kMAX_SRVS;
+	static constexpr UINT g_kTEXTURE_SRV_START_INDEX = g_kCBV_COUNT;
+	static constexpr UINT g_kSCENE_SRV_INDEX = g_kTEXTURE_SRV_START_INDEX + g_kMAX_SRVS;
 	static constexpr UINT g_kEDITOR_SCENE_SRV_INDEX = g_kSCENE_SRV_INDEX + 1;
 	static constexpr UINT g_kGBUFFER_SRV_START_INDEX = g_kEDITOR_SCENE_SRV_INDEX + 1;
 	static constexpr UINT g_kIMGUI_SRV_INDEX = g_kGBUFFER_SRV_START_INDEX + g_kGBUFFER_COUNT;
@@ -254,5 +263,6 @@ public:
 	static D3D12_VERTEX_BUFFER_VIEW m_DynamicVertexBufferView;
 	static Vertex* m_pDynamicVertexDataBegin;
 	static UINT m_DynamicVertexOffset;
+	static UINT m_TransientCbSlot;
 };
 

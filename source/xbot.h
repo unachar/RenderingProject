@@ -1,7 +1,7 @@
 ﻿#pragma once
-
-class XBot
+#include "entitybase.h"
+class XBot : public EntityBase
 {
 public:
-	static void Create();
+	void Create() override;
 };

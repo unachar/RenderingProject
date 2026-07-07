@@ -40,6 +40,7 @@ struct ComponentType
 	static const ComponentType MOVE;
 	static const ComponentType SPRITE;
 	static const ComponentType LIGHT;
+	static const ComponentType SUN;
 
 	ComponentTypeID Value = MAX;
 

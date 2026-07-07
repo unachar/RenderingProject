@@ -69,6 +69,7 @@ EntityID Light::Create(const CreateDesc& desc)
 
 	auto& light = entity.Get<LightComponent>();
 	light.Type = desc.Type;
+	light.Position = desc.Position;
 	light.Direction = NormalizeDirection(desc.Direction);
 	light.Color = desc.Color;
 	light.Intensity = max(0.0f, desc.Intensity);
@@ -79,6 +80,7 @@ EntityID Light::Create(const CreateDesc& desc)
 	light.VolumeShape = desc.VolumeShape;
 	light.IsActive = desc.IsActive;
 	light.DrawDebug = desc.DrawDebug;
+	light.CastShadow = desc.CastShadow;
 
 	return entity.GetID();
 }
@@ -103,6 +105,7 @@ EntityID Light::CreateDefaultDirectional()
 	desc.VolumeDensity = 0.35f;
 	desc.IsActive = true;
 	desc.DrawDebug = true;
+	desc.CastShadow = true;
 	return Create(desc);
 }
 

@@ -11,8 +11,8 @@
 class SystemManager
 {
 private:
-	static vector<unique_ptr<SystemBase>> m_Systems;
-	static unordered_map<type_index, SystemBase*> m_SystemMap;
+	inline static vector<unique_ptr<SystemBase>> m_Systems;
+	inline static unordered_map<type_index, SystemBase*> m_SystemMap;
 
 public:
 	static bool Init();

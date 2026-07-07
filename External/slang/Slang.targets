@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <PropertyPageSchema Include="$(MSBuildThisFileDirectory)Slang.xml" />
+  </ItemGroup>
+
+  <!-- デフォルト値とコマンドラインテンプレートの設定 -->
+  <ItemDefinitionGroup>
+    <SlangShader>
+      <Stage>compute</Stage>
+      <EntryPoint>main</EntryPoint>
+      <Profile>sm_6_0</Profile>
+      <ExcludedFromBuild>false</ExcludedFromBuild>
+      <Outputs>$(ProjectDir)shader\slang\build\%(Filename).cso</Outputs>
+      <ExecutionDescription>Compiling Slang shader [%(Stage)]: %(Filename).slang</ExecutionDescription>
+      <!-- [AllOptions] によって、Slang.xmlで定義された Switch の値が全て展開されます -->
+      <CommandLineTemplate>"$(ProjectDir)External\RTXNS\slang\bin\slangc.exe" "%(FullPath)" -target dxil [AllOptions] [AdditionalOptions]</CommandLineTemplate>
+    </SlangShader>
+  </ItemDefinitionGroup>
+
+  <!-- ビルド実行ターゲット。カスタムツール用のタスクは少し工夫が必要 -->
+  <Target Name="SlangCompile" BeforeTargets="ClCompile">
+    <ItemGroup>
+      <SlangShaderToCompile Include="@(SlangShader)" Condition="'%(SlangShader.ExcludedFromBuild)' != 'true'" />
+    </ItemGroup>
+    <Message Condition="'@(SlangShaderToCompile)' != ''" Importance="High" Text="%(SlangShaderToCompile.ExecutionDescription)" />
+    <!-- 実行パスをコマンド文字列に置換して実行 -->
+    <Exec Condition="'@(SlangShaderToCompile)' != ''" Command="set &quot;PATH=$(ProjectDir)External\RTXNS\slang\bin;$(WindowsSDK_ExecutablePath_x64);$(WindowsSdkDir)bin\10.0.26100.0\x64;$(WindowsSdkDir)bin\10.0.22621.0\x64;$(WindowsSdkDir)bin\10.0.22000.0\x64;%PATH%&quot; &amp;&amp; &quot;$(ProjectDir)External\RTXNS\slang\bin\slangc.exe&quot; &quot;%(SlangShaderToCompile.FullPath)&quot; -target dxil -entry %(SlangShaderToCompile.EntryPoint) -stage %(SlangShaderToCompile.Stage) -profile %(SlangShaderToCompile.Profile) -o &quot;%(SlangShaderToCompile.Outputs)&quot;" />
+  </Target>
+</Project>

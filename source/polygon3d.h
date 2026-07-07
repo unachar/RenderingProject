@@ -1,7 +1,7 @@
 ﻿#pragma once
-
-class Polygon3D
+#include "entitybase.h"
+class Polygon3D : public EntityBase
 {
 public: 
-	static void Create();
+	void Create() override;
 };

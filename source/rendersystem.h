@@ -4,6 +4,8 @@
 #include <vector>
 #include <d3d12.h>
 
+struct MaterialComponent;
+
 class RenderSystem : public SystemBase
 {
 private:
@@ -16,6 +18,8 @@ private:
         D3D12_VERTEX_BUFFER_VIEW vbv;
         UINT vertexCount;
         bool is3D;
+        const MaterialComponent* material;
+        float cameraDistanceSq;
     };
     vector<DrawCall> m_SpriteDrawCalls;
     vector<DrawCall> m_ModelDrawCalls;

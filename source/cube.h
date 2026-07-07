@@ -1,7 +1,7 @@
 #pragma once
-
-class Cube
+#include "entitybase.h"
+class Cube : public EntityBase
 {
 public:
-	static void Create();
+	void Create() override;
 };
