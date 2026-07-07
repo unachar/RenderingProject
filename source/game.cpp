@@ -34,9 +34,6 @@ void Game::Init()
 void Game::Create()
 {
 	Camera::Create();
-	
-	
-	//Light::AttachLightTimeLine(light);
 
 	AddEntity<Cube>();
 	AddEntity<Polygon3D>();
