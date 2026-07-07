@@ -1,0 +1,12 @@
+{
+    "slang.additionalSearchPaths": [
+        "${workspaceRoot}/External/RTXNS/src",
+        "${workspaceRoot}/External/RTXNS/src/NeuralShading",
+        "${workspaceRoot}/External/RTXNS/external/donut/include",
+        "${workspaceRoot}/External/RTXNS/external/donut/nvrhi/include",
+        "${workspaceRoot}/shader"
+    ],
+    "slang.predefinedMacros": [
+        "__SLANG__=1"
+    ]
+}

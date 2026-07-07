@@ -10,25 +10,23 @@
 # Precompiled Headers
 *.gch
 *.pch
+*.ipch
 
 # Linker files
 *.ilk
+*.exp
 
-# Debugger Files
+# Debugger files
 *.pdb
+*.idb
 
-# Compiled Dynamic libraries
+# Dynamic libraries
 *.so
+*.so.*
 *.dylib
 *.dll
-*.so.*
 
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
+# Static libraries
 *.lai
 *.la
 *.a
@@ -38,28 +36,33 @@
 *.exe
 *.out
 *.app
-*.tlog
-*.db
-*.json
-*.res
-*.idb
-*.txt
-*.opendb
-*.db-shm
-*.db-wal
+
+# Visual Studio
+.vs/
 *.suo
-*.vsidx
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.VC.opendb
+*.opendb
+*.tlog
+*.lastbuildstate
 *.recipe
-*.exp
-*.bin
-*.ipch
+*.log
 
 # Build directories
 build/
 Build/
 build-*/
+Debug/
+Release/
+x64/
+x86/
+bin/
+obj/
 
-# CMake generated files
+# CMake
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
@@ -67,22 +70,21 @@ Makefile
 install_manifest.txt
 compile_commands.json
 
-# Temporary files
-*.tmp
-*.log
-*.bak
-*.swp
+# NuGet packages
+packages/
+!packages.config
 
 # vcpkg
 vcpkg_installed/
 
-# debug information files
+# Temporary files
+*.tmp
+*.bak
+*.swp
+
+# Debug information files
 *.dwo
 
-# test output & cache
+# Test output & cache
 Testing/
 .cache/
-
-# NuGet packages
-packages/
-!packages.config
