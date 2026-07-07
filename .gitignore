@@ -6,6 +6,8 @@
 *.lo
 *.o
 *.obj
+!asset/model/sky/sky.obj
+!asset/model/tree/tree.obj
 
 # Precompiled Headers
 *.gch
