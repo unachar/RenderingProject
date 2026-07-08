@@ -378,7 +378,7 @@ float3 RayMarchAtmosphereViewCommon(
     float validDistance = step(0.0001f, rawViewDistance);
     float viewDistance = clamp(rawViewDistance, 0.0001f, 80.0f);
 
-    int stepCount = (atmosphereActive > 0.0f) ? 32 : 0;
+    int stepCount = 64;
     float3 viewDir = viewDelta / max(rawViewDistance, 0.0001f);
     float3 viewToCamera = -viewDir;
     float stepLength = viewDistance / (float)max(stepCount, 1);
@@ -434,27 +434,27 @@ float3 RayMarchAtmosphereViewCommon(
             stepScatter += volumeColor * singleVolume * sampleDensity * shaftBoost * localVolumeStepBoost * lerp(0.22f, lerp(0.82f, 1.05f, volumeLight), localLight);
         }
 
-        if (count <= 0)
-        {
-            float3 singleDir;
-            float singleAttenuation;
-            float singleVolume;
-            ResolveSingleLightCommon(samplePos, LightDirection, LightPositionType, LightExtra, singleDir, singleAttenuation, singleVolume);
-            float3 rawSingleColor = max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColor.a, 0.0f);
-            float3 singleColor = rawSingleColor * singleAttenuation;
-            float shadowVisibility = SampleAtmosphereShadowMap(samplePos, singleDir, shadowMap, shadowSampler, lightViewProjection, shadowMapParams, 0.0f);
-            float3 shadowedColor = singleColor * shadowVisibility;
-            float localLight = step(0.5f, LightPositionType.w);
-            float volumeVisibility = lerp(shadowVisibility, max(shadowVisibility, 0.45f), localLight);
-            float3 volumeColor = rawSingleColor * sqrt(saturate(singleAttenuation)) * volumeVisibility;
-            float volumeLight = step(2.5f, LightPositionType.w) * step(LightPositionType.w, 3.5f);
-            float localVolumeStepBoost = lerp(1.0f, 0.35f / max(AtmosphereParams1.w, 0.0001f), localLight);
-            float phase = saturate(HenyeyGreensteinCommon(clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
-            float shaftBoost = lerp(0.55f, 1.75f, phase) * lerp(1.0f, 2.35f, volumeLight);
-            float3 singleAtmosphere = AtmosphereSingleScatterFromDensityCommon(sampleDensity, viewToCamera, singleDir, shadowedColor);
-            stepScatter += singleAtmosphere * lerp(1.0f, 0.45f, volumeLight);
-            stepScatter += volumeColor * singleVolume * sampleDensity * shaftBoost * localVolumeStepBoost * lerp(0.22f, lerp(0.82f, 1.05f, volumeLight), localLight);
-        }
+        //if (count <= 0)
+        //{
+        //    float3 singleDir;
+        //    float singleAttenuation;
+        //    float singleVolume;
+        //    ResolveSingleLightCommon(samplePos, LightDirection, LightPositionType, LightExtra, singleDir, singleAttenuation, singleVolume);
+        //    float3 rawSingleColor = max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColor.a, 0.0f);
+        //    float3 singleColor = rawSingleColor * singleAttenuation;
+        //    float shadowVisibility = SampleAtmosphereShadowMap(samplePos, singleDir, shadowMap, shadowSampler, lightViewProjection, shadowMapParams, 0.0f);
+        //    float3 shadowedColor = singleColor * shadowVisibility;
+        //    float localLight = step(0.5f, LightPositionType.w);
+        //    float volumeVisibility = lerp(shadowVisibility, max(shadowVisibility, 0.45f), localLight);
+        //    float3 volumeColor = rawSingleColor * sqrt(saturate(singleAttenuation)) * volumeVisibility;
+        //    float volumeLight = step(2.5f, LightPositionType.w) * step(LightPositionType.w, 3.5f);
+        //    float localVolumeStepBoost = lerp(1.0f, 0.35f / max(AtmosphereParams1.w, 0.0001f), localLight);
+        //    float phase = saturate(HenyeyGreensteinCommon(clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
+        //    float shaftBoost = lerp(0.55f, 1.75f, phase) * lerp(1.0f, 2.35f, volumeLight);
+        //    float3 singleAtmosphere = AtmosphereSingleScatterFromDensityCommon(sampleDensity, viewToCamera, singleDir, shadowedColor);
+        //    stepScatter += singleAtmosphere * lerp(1.0f, 0.45f, volumeLight);
+        //    stepScatter += volumeColor * singleVolume * sampleDensity * shaftBoost * localVolumeStepBoost * lerp(0.22f, lerp(0.82f, 1.05f, volumeLight), localLight);
+        //}
 
         result += stepScatter * transmittance * scaledStep;
         transmittance *= exp(-max(AtmosphereParams1.y, 0.0f) * sampleDensity * scaledStep);
