@@ -7,6 +7,20 @@
 #include "world.h"
 #include "input.h"
 
+static float Halton(int index, int base)
+{
+    float result = 0.0f;
+    float invBase = 1.0f / (float)base;
+    float f = invBase;
+    while (index > 0)
+    {
+        result += (float)(index % base) * f;
+        index /= base;
+        f *= invBase;
+    }
+    return result;
+}
+
 void CameraSystem::Update()
 {
 	auto cameraEntities = World::GetView<CameraComponent, TransformComponent>();
@@ -16,6 +30,9 @@ void CameraSystem::Update()
 	{
 		auto& cam = ComponentManager::GetComponentUnchecked<CameraComponent>(i);
 		auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(i);
+
+		RendererState::m_PrevViewMatrix = cam.ViewMatrix;
+		RendererState::m_PrevProjMatrix = cam.ProjectionMatrix;
 
 		if (Input::IsKeyHeld(VK_RBUTTON))
 		{
@@ -50,6 +67,18 @@ void CameraSystem::Update()
 
 		XMMATRIX proj = XMMatrixPerspectiveFovLH(
 			cam.Fov, aspectRatio, cam.NearClip, cam.FarClip);
+
+		if (RendererState::m_AntiAliasingMode == AntiAliasingMode::TAA)
+		{
+			float haltonX = Halton(RendererState::m_TaaFrameIndex, 2);
+			float haltonY = Halton(RendererState::m_TaaFrameIndex, 3);
+
+			float jitterX = (haltonX - 0.5f) * 2.0f / (float)RendererCore::GetWidth();
+			float jitterY = (haltonY - 0.5f) * 2.0f / (float)RendererCore::GetHeight();
+
+			proj.r[2].m128_f32[0] += jitterX;
+			proj.r[2].m128_f32[1] += jitterY;
+		}
 
 		XMStoreFloat4x4(&cam.ViewMatrix, view);
 		XMStoreFloat4x4(&cam.ProjectionMatrix, proj);

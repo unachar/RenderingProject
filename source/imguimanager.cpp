@@ -651,6 +651,15 @@ ImGui::Begin("調整");
 		}
 	}
 
+	m_antiAliasingMode = static_cast<int>(RendererState::m_AntiAliasingMode);
+	if (ImGui::Combo("アンチエイリアシング", &m_antiAliasingMode, m_antiAliasingModeItems, IM_ARRAYSIZE(m_antiAliasingModeItems)))
+	{
+		if (m_antiAliasingMode >= 0 && m_antiAliasingMode < static_cast<int>(AntiAliasingMode::COUNT))
+		{
+			RendererState::m_AntiAliasingMode = static_cast<AntiAliasingMode>(m_antiAliasingMode);
+		}
+	}
+
 	ImGui::SeparatorText("セクション");
 	if (ImGui::Checkbox("HDR有効", &m_HdrEnabled))
 	{
@@ -1672,7 +1681,8 @@ void ImGuiManager::DrawAtmosphereWindow()
 	ImGui::SliderFloat("消散", &atmosphere.Extinction, 0.0f, 2.0f, "%.3f");
 	ImGui::SliderFloat("Mie g", &atmosphere.MieG, -0.95f, 0.95f, "%.3f");
 	ImGui::SliderFloat("距離スケール", &atmosphere.DistanceScale, 0.001f, 0.25f, "%.3f");
-	ImGui::SliderFloat("ライトシャフト", &atmosphere.LightShaftStrength, 0.0f, 4.0f, "%.3f");
+	ImGui::SliderFloat("ライトシャフト強度", &atmosphere.LightShaftStrength, 0.0f, 4.0f, "%.3f");
+	ImGui::SliderFloat("ライトシャフトぼかし", &atmosphere.LightShaftBlur, 0.0f, 1.0f, "%.3f");
 	ImGui::SliderFloat("環境散乱", &atmosphere.AmbientStrength, 0.0f, 1.0f, "%.3f");
 
 	ImGui::SeparatorText("色");

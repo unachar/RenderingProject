@@ -127,6 +127,9 @@
     <FxCompile Include="shader\hlsl\postProcessSepiaPS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
+    <FxCompile Include="shader\hlsl\UpscaleBilateralPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
     <FxCompile Include="shader\hlsl\postProcessVS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
