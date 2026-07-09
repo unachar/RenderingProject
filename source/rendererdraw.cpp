@@ -308,6 +308,13 @@ void RendererDraw::BeginEditorSceneOverlayPass()
 	m_IsSceneColorForwardPass = true;
 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
+	// Deferred geometry can use the reduced-resolution depth buffer.  The
+	// transparent overlay is rendered at full resolution, so its full-resolution
+	// depth buffer was never cleared in that path and could reject every fragment.
+	if (m_UseLowResDepth)
+	{
+		m_CommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+	}
 	m_CommandList->OMSetRenderTargets(1, &m_EditorSceneRtvHandle, FALSE, &dsvHandle);
 
 	m_CommandList->RSSetViewports(1, &m_FullViewport);
