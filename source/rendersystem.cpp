@@ -91,7 +91,6 @@ namespace
 			max(static_cast<float>(RendererCore::GetSceneHeight()), 1.0f)
 		};
 		cb.ToonOutlineUseScreenSpace = 1;
-		cb.MaterialAlpha = 1.0f;
 	}
 
 	D3D12_GPU_DESCRIPTOR_HANDLE CreateSelectionOutlineCbv(UINT8* cbvDataBegin, EntityID entity)
@@ -565,7 +564,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	auto submitDrawCalls = [&](const vector<DrawCall>& drawCalls)
 		{
 			ID3D12PipelineState* lastPso = nullptr;
-			ID3D12PipelineState* outlinePso = PsoManager::GetOrCreateToonOutlinePso();
+			ID3D12PipelineState* outlinePso = PsoManager::GetOrCreateToonOutlinePso(drawTransparent);
 			const EntityID selectedEntity = ImGuiManager::GetSelectedEntity();
 			int lastSrvIndex = -1;
 			int lastNormalSrvIndex = -1;
