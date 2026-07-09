@@ -14,7 +14,7 @@ public:
 		ComPtr<ID3D12PipelineState>& outPso);
 
 	static ID3D12PipelineState* GetOrCreateGraphicsPso(const rendererResource& resource);
-	static ID3D12PipelineState* GetOrCreateToonOutlinePso();
+	static ID3D12PipelineState* GetOrCreateToonOutlinePso(bool enableAlphaBlend = false);
 	static ID3D12PipelineState* GetOrCreateShadowMapPso();
 
 	static bool CreateSkinningPso();

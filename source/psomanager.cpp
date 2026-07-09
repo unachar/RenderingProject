@@ -157,11 +157,12 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const rendererResource& 
 	return newPso.Get();
 }
 
-ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso()
+ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso(bool enableAlphaBlend)
 {
 	const bool useDeferredMrt = (m_RenderMode == RenderMode::DEFERRED && m_IsDeferredGeometryPass);
 	const UINT forwardRtvFmt = useDeferredMrt ? 0 : static_cast<UINT>(GetForwardRtvFormat());
-	const string key = string("TOON_OUTLINE|") + (useDeferredMrt ? "DEFERRED" : "FORWARD") + "|" + to_string(forwardRtvFmt);
+	const bool useAlphaBlend = enableAlphaBlend && !useDeferredMrt;
+	const string key = string("TOON_OUTLINE|") + (useDeferredMrt ? "DEFERRED" : "FORWARD") + "|" + to_string(forwardRtvFmt) + "|" + (useAlphaBlend ? "ALPHA" : "OPAQUE");
 	auto it = m_PsoCache.find(key);
 	if (it != m_PsoCache.end())
 	{
@@ -205,6 +206,18 @@ ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso()
 	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
 	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT;
 	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	if (useAlphaBlend)
+	{
+		auto& rtBlend = psoDesc.BlendState.RenderTarget[0];
+		rtBlend.BlendEnable = TRUE;
+		rtBlend.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+		rtBlend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+		rtBlend.BlendOp = D3D12_BLEND_OP_ADD;
+		rtBlend.SrcBlendAlpha = D3D12_BLEND_ONE;
+		rtBlend.DestBlendAlpha = D3D12_BLEND_ZERO;
+		rtBlend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+		rtBlend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+	}
 	psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
 	psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 	psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;

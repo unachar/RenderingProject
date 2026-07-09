@@ -91,7 +91,6 @@ namespace
 			max(static_cast<float>(RendererCore::GetSceneHeight()), 1.0f)
 		};
 		cb.ToonOutlineUseScreenSpace = 1;
-		cb.MaterialAlpha = 1.0f;
 	}
 
 	D3D12_GPU_DESCRIPTOR_HANDLE CreateToonOutlineCbv(UINT8* cbvDataBegin, EntityID entity, const MaterialComponent& material, float widthScale = 1.0f)
@@ -427,7 +426,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			});
 
 		ID3D12PipelineState* lastPso = nullptr;
-		ID3D12PipelineState* outlinePso = PsoManager::GetOrCreateToonOutlinePso();
+		ID3D12PipelineState* outlinePso = PsoManager::GetOrCreateToonOutlinePso(drawTransparent);
 
 		for (const auto& dc : m_AnimDrawCalls)
 		{
@@ -692,7 +691,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			});
 
 		ID3D12PipelineState* lastPso = nullptr;
-		ID3D12PipelineState* outlinePso = PsoManager::GetOrCreateToonOutlinePso();
+		ID3D12PipelineState* outlinePso = PsoManager::GetOrCreateToonOutlinePso(drawTransparent);
 
 		for (const auto& dc : m_StaticDrawCalls)
 		{
