@@ -45,17 +45,17 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
 
     float visibility = 0.0f;
     [unroll]
-    for (int y = -2; y <= 2; ++y)
+    for (int y = -1; y <= 1; ++y)
     {
         [unroll]
-        for (int x = -2; x <= 2; ++x)
+        for (int x = -1; x <= 1; ++x)
         {
             float closestDepth = ShadowMapTexture.SampleLevel(ShadowSampler, float3(shadowUv + float2(x, y) * texelSize, safeShadowLayer), 0);
             visibility += (currentDepth <= closestDepth) ? 1.0f : 0.0f;
         }
     }
 
-    visibility /= 25.0f;
+    visibility /= 9.0f;
     float shadowStrength = 1.0f;
     float outOfBoundsVisibility = 1.0f;
     float shadowVisibility = lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
@@ -322,7 +322,16 @@ float4 main(PSInputPostProcess input) : SV_Target
 
         float maxMip = 8.0f;
 
-        float3 envSpecular = EnvironmentTexture.SampleLevel(TextureSampler,reflectionUV,roughness * maxMip).rgb;
+        float2 ssrUV = ScreenSpaceRayMarch(position.xyz, R, DepthTexture, TextureSampler);
+        float3 envSpecular;
+        if (all(ssrUV >= 0.0f))
+        {
+            envSpecular = BaseColorTexture.SampleLevel(TextureSampler, ssrUV, 0).rgb;
+        }
+        else
+        {
+            envSpecular = EnvironmentTexture.SampleLevel(TextureSampler, reflectionUV, roughness * maxMip).rgb;
+        }
 
         float3 irradiance = EnvironmentTexture.SampleLevel(TextureSampler,normalUV,maxMip).rgb;
 

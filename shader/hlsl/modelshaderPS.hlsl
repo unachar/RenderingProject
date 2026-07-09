@@ -33,17 +33,17 @@ float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 ligh
 
     float visibility = 0.0f;
     [unroll]
-    for (int y = -2; y <= 2; ++y)
+    for (int y = -1; y <= 1; ++y)
     {
         [unroll]
-        for (int x = -2; x <= 2; ++x)
+        for (int x = -1; x <= 1; ++x)
         {
             float closestDepth = g_ShadowMap.SampleLevel(g_ShadowSampler, float3(shadowUv + float2(x, y) * texelSize, 0.0f), 0);
             visibility += (currentDepth <= closestDepth) ? 1.0f : 0.0f;
         }
     }
 
-    visibility /= 25.0f;
+    visibility /= 9.0f;
     float shadowStrength = saturate(abs(ShadowMapParams.w));
     float outOfBoundsVisibility = 1.0f;
     return lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);

@@ -267,7 +267,7 @@ namespace
 			max(0.0f, atmosphere.AmbientStrength));
 
 		const XMFLOAT3 cameraPosition = GetActiveCameraPosition();
-		constants.AtmosphereCamera = XMFLOAT4(cameraPosition.x, cameraPosition.y, cameraPosition.z, 0.0f);
+		constants.AtmosphereCamera = XMFLOAT4(cameraPosition.x, cameraPosition.y, cameraPosition.z, max(0.0f, min(1.0f, atmosphere.LightShaftBlur)));
 	}
 
 	void RebuildLightCache()
@@ -583,9 +583,12 @@ namespace
 			? XMMatrixOrthographicLH(orthoSize, orthoSize, nearClip, farClip)
 			: XMMatrixPerspectiveFovLH(fovY, 1.0f, nearClip, farClip);
 
+		UINT shadowSize = (lightType == LightType::Directional)
+			? RendererState::g_kSHADOW_MAP_SIZE
+			: RendererState::g_kSHADOW_MAP_SIZE_SMALL;
 		outLightViewProjection = XMMatrixTranspose(lightView * lightProjection);
 		outShadowMapParams = XMFLOAT4(
-			1.0f / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE),
+			1.0f / static_cast<float>(shadowSize),
 			0.000008f,
 			0.00001f,
 			1.0f);

@@ -19,6 +19,8 @@ UINT8* RendererState::m_pCbvDataBegin = nullptr;
 HANDLE RendererState::m_FenceEvent = nullptr;
 
 CD3DX12_VIEWPORT RendererState::m_Viewport;
+CD3DX12_VIEWPORT RendererState::m_FullViewport;
+CD3DX12_RECT RendererState::m_FullScissorRect;
 CD3DX12_RECT RendererState::m_ScissorRect;
 UINT64 RendererState::m_FenceValues[g_kFRAME_COUNT] = { 0, 0, 0 };
 UINT64 RendererState::m_CurrentFenceValue = 0;
@@ -33,7 +35,10 @@ UINT RendererState::m_CbvIncrementSize = 0;
 ComPtr<ID3D12RootSignature> RendererState::m_ModelRootSignature;
 ComPtr<ID3D12PipelineState> RendererState::m_ModelPipelineState;
 ComPtr<ID3D12Resource> RendererState::m_DepthStencilBuffer;
+ComPtr<ID3D12Resource> RendererState::m_LowResDepthBuffer;
 ComPtr<ID3D12DescriptorHeap> RendererState::m_DsvHeap;
+CD3DX12_CPU_DESCRIPTOR_HANDLE RendererState::m_LowResDsvHandle;
+bool RendererState::m_UseLowResDepth = false;
 ComPtr<ID3D12Resource> RendererState::m_ShadowDepthBuffer;
 ComPtr<ID3D12PipelineState> RendererState::m_ShadowMapPso;
 ComPtr<ID3D12Resource> RendererState::m_ShadowConstantBuffer;
@@ -53,8 +58,10 @@ CD3DX12_CPU_DESCRIPTOR_HANDLE RendererState::m_GBufferRtvHandles[RendererState::
 CD3DX12_GPU_DESCRIPTOR_HANDLE RendererState::m_GBufferSrvHandles[RendererState::g_kGBUFFER_COUNT];
 int RendererState::m_EnvironmentTextureSrvIndex = -1;
 ComPtr<ID3D12RootSignature> RendererState::m_PostProcessRootSignature;
+ComPtr<ID3D12RootSignature> RendererState::m_UpscaleRootSignature;
 unordered_map<PostProcessType, ComPtr<ID3D12PipelineState>> RendererState::m_PostProcessPsoMap;
 ComPtr<ID3D12PipelineState> RendererState::m_DeferredLightingPso;
+ComPtr<ID3D12PipelineState> RendererState::m_UpscaleBilateralPso;
 ComPtr<ID3D12Resource> RendererState::m_PostProcessConstantBuffer;
 ComPtr<ID3D12Resource> RendererState::m_LightConstantBuffer;
 ComPtr<ID3D12Resource> RendererState::m_PBRConstantBuffer;
@@ -81,6 +88,19 @@ DXGI_FORMAT RendererState::m_BackBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 bool RendererState::m_AllowTearing = false;
 bool RendererState::m_HasPendingHdr = false;
 bool RendererState::m_PendingHdr = false;
+AntiAliasingMode RendererState::m_AntiAliasingMode = AntiAliasingMode::FXAA;
+
+ComPtr<ID3D12RootSignature> RendererState::m_AaRootSignature;
+ComPtr<ID3D12PipelineState> RendererState::m_FxaaPso;
+ComPtr<ID3D12PipelineState> RendererState::m_TaaBlendPso;
+
+ComPtr<ID3D12Resource> RendererState::m_AaRenderTarget;
+CD3DX12_CPU_DESCRIPTOR_HANDLE RendererState::m_AaRtvHandle;
+CD3DX12_GPU_DESCRIPTOR_HANDLE RendererState::m_AaSrvHandle;
+
+XMFLOAT4X4 RendererState::m_PrevViewMatrix = {};
+XMFLOAT4X4 RendererState::m_PrevProjMatrix = {};
+UINT RendererState::m_TaaFrameIndex = 0;
 
 
 

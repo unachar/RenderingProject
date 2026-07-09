@@ -26,6 +26,7 @@ public:
 	static void EndDraw();
 	static void BeginScenePass();
 	static void ApplyPostProcess(const PostProcessComponent& config);
+	static void ApplyAntiAliasing();
 	static void EndScenePass();
 	static void ResizeScene(UINT width, UINT height);
 

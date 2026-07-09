@@ -338,24 +338,25 @@ float SampleAtmosphereShadowMap(
          shadowUv.y >= 0.0f && shadowUv.y <= 1.0f &&
          lightNdc.z >= 0.0f && lightNdc.z <= 1.0f) ? 1.0f : 0.0f;
 
-    float texelSize = shadowMapParams.x;
+    float blur = saturate(AtmosphereCamera.w);
+    float texelSize = shadowMapParams.x * (1.0f + blur * 4.0f);
     float bias = max(shadowMapParams.y, shadowMapParams.z);
     float currentDepth = lightNdc.z - bias;
 
     float visibility = 0.0f;
     [unroll]
-    for (int y = 0; y < 2; ++y)
+    for (int y = -2; y <= 2; ++y)
     {
         [unroll]
-        for (int x = 0; x < 2; ++x)
+        for (int x = -2; x <= 2; ++x)
         {
-            float2 offset = (float2((float)x, (float)y) - 0.5f) * texelSize;
+            float2 offset = float2((float)x, (float)y) * texelSize;
             float closestDepth = shadowMap.SampleLevel(shadowSampler, float3(shadowUv + offset, shadowLayer), 0);
             visibility += (currentDepth <= closestDepth) ? 1.0f : 0.0f;
         }
     }
 
-    visibility *= 0.25f;
+    visibility /= 25.0f;
     float shadowStrength = saturate(abs(shadowMapParams.w));
     float outOfBoundsVisibility = 1.0f;
     return lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
@@ -378,14 +379,14 @@ float3 RayMarchAtmosphereViewCommon(
     float validDistance = step(0.0001f, rawViewDistance);
     float viewDistance = clamp(rawViewDistance, 0.0001f, 80.0f);
 
-    int stepCount = (atmosphereActive > 0.0f) ? 32 : 0;
+    int stepCount = 50;
     float3 viewDir = viewDelta / max(rawViewDistance, 0.0001f);
     float3 viewToCamera = -viewDir;
     float stepLength = viewDistance / (float)max(stepCount, 1);
     float scaledStep = stepLength * max(AtmosphereParams1.w, 0.0001f);
     float transmittance = 1.0f;
     float3 result = float3(0.0f, 0.0f, 0.0f);
-    int count = min((int)round(LightCount.x), MAX_SHADER_LIGHTS);
+    int count = min((int)round(LightCount.x), 5);
 
     [loop]
     for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
@@ -829,6 +830,7 @@ cbuffer PostProcessParams : register(b0)
     float4 PPCameraPos; // xyz=CameraPosition, w=unused
     float4 HdrFlags;    // x=HdrEnabled, y=ToneMapEnabled, zw=unused
     float4x4 PPInvViewProjection;
+    float4x4 PPViewProjection;
 };
 
 float3 ReconstructPostProcessViewRayCommon(float2 uv)
@@ -859,5 +861,46 @@ struct PSInputPostProcess
     float4 Position : SV_POSITION;
     float2 TexCoord : TEXCOORD0;
 };
+
+float3 WorldToScreenUV(float3 worldPos)
+{
+    float4 clipPos = mul(float4(worldPos, 1.0f), PPViewProjection);
+    clipPos.xyz /= max(abs(clipPos.w), 0.000001f);
+    float2 screenUV = float2(clipPos.x * 0.5f + 0.5f, -clipPos.y * 0.5f + 0.5f);
+    return float3(screenUV, clipPos.z);
+}
+
+float2 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> depthTex, SamplerState depthSampler)
+{
+    float maxDist = 20.0f;
+    int maxSteps = 64;
+    float stepSize = maxDist / (float)maxSteps;
+
+    [loop]
+    for (int i = 1; i <= maxSteps; ++i)
+    {
+        float3 rayPos = origin + direction * stepSize * (float)i;
+        float3 rayUVZ = WorldToScreenUV(rayPos);
+
+        if (rayUVZ.x < 0.0f || rayUVZ.x > 1.0f || rayUVZ.y < 0.0f || rayUVZ.y > 1.0f)
+            break;
+
+        if (rayUVZ.z < 0.0f || rayUVZ.z > 1.0f)
+            break;
+
+        float sceneDepth = depthTex.SampleLevel(depthSampler, rayUVZ.xy, 0).r;
+        if (sceneDepth >= 1.0f - 0.001f)
+            continue;
+
+        float sceneZ = sceneDepth * 2.0f - 1.0f;
+        float depthDiff = rayUVZ.z - sceneZ;
+        if (depthDiff > 0.0f && depthDiff < 0.005f)
+        {
+            return rayUVZ.xy;
+        }
+    }
+
+    return float2(-1.0f, -1.0f);
+}
  
 #endif
