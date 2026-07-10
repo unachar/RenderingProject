@@ -1,0 +1,4 @@
+RenderingProject pull request test
+
+This file was added to verify that pull requests can be created successfully.
+Created on 2026-07-10.
