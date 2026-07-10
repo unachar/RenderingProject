@@ -91,6 +91,9 @@
     <FxCompile Include="shader\hlsl\DeferredLightingPS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
+    <FxCompile Include="shader\hlsl\AtmosphereGBufferPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
     <FxCompile Include="shader\hlsl\GeometryPS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>

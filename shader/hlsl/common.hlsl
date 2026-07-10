@@ -1053,7 +1053,7 @@ bool ProjectWorldToScreenCommon(float3 worldPos, out float2 screenUv)
 float2 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> depthTex, SamplerState depthSampler)
 {
     float maxDist = 15.0f;
-    int maxSteps = 12;
+    int maxSteps = 24;
     float stepSize = maxDist / (float)maxSteps;
 
     [loop]
