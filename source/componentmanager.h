@@ -258,6 +258,13 @@ struct MaterialComponent
 	vector<float> ToonMeshOutlineWidthScales{};
 	vector<MeshShadingOverride> MeshShadingOverrides{};
 	float Alpha = 1.0f;
+	// Transparent dielectric parameters. Alpha is the specification's Opacity.
+	float IOR = 1.50f;
+	float Transmission = 0.98f;
+	float TransmissionRoughness = 0.02f;
+	float RefractionStrength = 0.035f;
+	float Thickness = 0.10f;
+	XMFLOAT3 AbsorptionCoefficient = { 0.02f, 0.01f, 0.005f };
 	bool IsTransparent = false;
 	bool ReceivingPostProcess = true;
 	bool UseTexture = false;

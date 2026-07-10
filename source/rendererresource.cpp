@@ -96,6 +96,8 @@ namespace
 		float CastShadowThreshold = 0.28f;
 		float CastShadowSoftness = 0.10f;
 		float Padding[3]{};
+		XMFLOAT4 Transparent0 = { 1.50f, 0.98f, 0.02f, 0.035f };
+		XMFLOAT4 Transparent1 = { 0.10f, 0.02f, 0.01f, 0.005f };
 		MaterialPartShaderConstants PartParams[kMaterialPartParamCount]{};
 	};
 
@@ -143,6 +145,16 @@ namespace
 		constants.SkinShadowScatter = material.SkinShadowScatter;
 		constants.CastShadowThreshold = material.CastShadowThreshold;
 		constants.CastShadowSoftness = material.CastShadowSoftness;
+		constants.Transparent0 = XMFLOAT4(
+			max(material.IOR, 1.0001f),
+			clamp(material.Transmission, 0.0f, 1.0f),
+			clamp(material.TransmissionRoughness, 0.0f, 1.0f),
+			max(material.RefractionStrength, 0.0f));
+		constants.Transparent1 = XMFLOAT4(
+			max(material.Thickness, 0.0f),
+			max(material.AbsorptionCoefficient.x, 0.0f),
+			max(material.AbsorptionCoefficient.y, 0.0f),
+			max(material.AbsorptionCoefficient.z, 0.0f));
 		for (int i = 0; i < kMaterialPartParamCount; ++i)
 		{
 			WriteMaterialPartConstants(constants, i, material.PartParams[i]);

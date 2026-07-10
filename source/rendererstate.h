@@ -25,6 +25,7 @@ enum class GBufferType : uint32_t
 	SHADOW,
 	RIM_STYLE,
 	RIM_LIGHT,
+	ATMOSPHERE,
 	COUNT
 };
 
@@ -37,7 +38,8 @@ inline constexpr LPCWSTR g_GBufferTargetNames[] =
 	L"MaterialBuffer",
 	L"ShadowBuffer",
 	L"RimStyleBuffer",
-	L"RimLightBuffer"
+	L"RimLightBuffer",
+	L"AtmosphereGBuffer"
 };
 
 struct Vertex
@@ -140,6 +142,7 @@ class RendererState
 {
 public:
 	static constexpr UINT g_kGBUFFER_COUNT = static_cast<UINT>(GBufferType::COUNT);
+	static constexpr UINT g_kGEOMETRY_GBUFFER_COUNT = static_cast<UINT>(GBufferType::ATMOSPHERE);
 	static constexpr uint32_t g_kFRAME_COUNT = 3;
 	static constexpr UINT g_kMAX_SHADER_LIGHTS = 20;
 
@@ -192,17 +195,16 @@ protected:
 
 	static ComPtr<ID3D12Resource> m_SceneRenderTarget;
 	static ComPtr<ID3D12Resource> m_EditorSceneRenderTarget;
+	static ComPtr<ID3D12Resource> m_TransparentSceneCopy;
 	static ComPtr<ID3D12DescriptorHeap> m_SceneRtvHeap;
 	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_SceneRtvHandle;
 	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_EditorSceneRtvHandle;
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_SceneSrvHandle;
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_EditorSceneSrvHandle;
+	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_TransparentSceneSrvHandle;
 	static ComPtr<ID3D12Resource> m_GBufferTargets[g_kGBUFFER_COUNT];
 	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_GBufferRtvHandles[g_kGBUFFER_COUNT];
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_GBufferSrvHandles[g_kGBUFFER_COUNT];
-	static ComPtr<ID3D12Resource> m_AtmosphereRenderTarget;
-	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_AtmosphereRtvHandle;
-	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_AtmosphereSrvHandle;
 	static int m_EnvironmentTextureSrvIndex;
 	static ComPtr<ID3D12RootSignature> m_PostProcessRootSignature;
 	static ComPtr<ID3D12RootSignature> m_UpscaleRootSignature;
@@ -253,6 +255,7 @@ public:
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT
 	};
 public:
@@ -269,7 +272,7 @@ public:
 	static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * 44 + 255) & ~255;
 	static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT = 10 + g_kMAX_SHADER_LIGHTS * 9;
 	static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;
-	static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 384 + 255) & ~255;
+	static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 512 + 255) & ~255;
 	static constexpr UINT g_kPBR_CB_SLOT_COUNT = g_kMAX_ENTITIES + 1;
 	static constexpr UINT g_kPBR_CB_TOTAL_SLOT_COUNT = g_kPBR_CB_SLOT_COUNT * g_kFRAME_COUNT;
 	static constexpr UINT g_kSHADOW_CB_ALIGNED_SIZE = (sizeof(XMMATRIX) + sizeof(float) * 4 + 255) & ~255;
@@ -287,12 +290,12 @@ public:
 	static constexpr UINT g_kSCENE_SRV_INDEX = g_kTEXTURE_SRV_START_INDEX + g_kMAX_SRVS;
 	static constexpr UINT g_kEDITOR_SCENE_SRV_INDEX = g_kSCENE_SRV_INDEX + 1;
 	static constexpr UINT g_kGBUFFER_SRV_START_INDEX = g_kEDITOR_SCENE_SRV_INDEX + 1;
-	static constexpr UINT g_kATMOSPHERE_SRV_INDEX = g_kGBUFFER_SRV_START_INDEX + g_kGBUFFER_COUNT;
-	static constexpr UINT g_kIMGUI_SRV_INDEX = g_kATMOSPHERE_SRV_INDEX + 1;
+	static constexpr UINT g_kIMGUI_SRV_INDEX = g_kGBUFFER_SRV_START_INDEX + g_kGBUFFER_COUNT;
 	static constexpr UINT g_kSHADOW_SRV_INDEX = g_kIMGUI_SRV_INDEX + 1;
 	static constexpr UINT g_kAA_SRV_INDEX = g_kSHADOW_SRV_INDEX + 1;
 	static constexpr UINT g_kAA_HISTORY_SRV_INDEX = g_kAA_SRV_INDEX + 1;
-	static constexpr UINT g_kDEPTH_SRV_INDEX = g_kAA_HISTORY_SRV_INDEX + 1;
+	static constexpr UINT g_kTRANSPARENT_SCENE_SRV_INDEX = g_kAA_HISTORY_SRV_INDEX + 1;
+	static constexpr UINT g_kDEPTH_SRV_INDEX = g_kTRANSPARENT_SCENE_SRV_INDEX + 1;
 	static constexpr UINT g_kMAX_DYNAMIC_VERTICES = 65536;
 
 	static DXGI_FORMAT GetSceneColorFormat() { return m_SceneColorFormat; }

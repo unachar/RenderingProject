@@ -21,6 +21,7 @@ public:
 	static void EndShadowPass();
 	static void BeginBackBufferPass();
 	static void BeginEditorSceneOverlayPass();
+	static void PrepareTransparentSceneCopy();
 	static void EndEditorSceneOverlayPass();
 	static void SetDescriptorHeap();
 	static void EndDraw();
@@ -33,7 +34,7 @@ public:
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetSceneSrvHandle() { return m_SceneSrvHandle; }
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetEditorSceneSrvHandle() { return m_EditorSceneSrvHandle; }
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetGBufferSrvHandle(GBufferType type) { return m_GBufferSrvHandles[static_cast<UINT>(type)]; }
-	static D3D12_GPU_DESCRIPTOR_HANDLE GetAtmosphereSrvHandle() { return m_AtmosphereSrvHandle; }
+	static D3D12_GPU_DESCRIPTOR_HANDLE GetAtmosphereSrvHandle() { return GetGBufferSrvHandle(GBufferType::ATMOSPHERE); }
 	static D3D12_CPU_DESCRIPTOR_HANDLE GetImGuiCpuHandle();
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetImGuiGpuHandle();
 };

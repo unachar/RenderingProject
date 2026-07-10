@@ -867,6 +867,8 @@ cbuffer PBRParams : register(b2)
     float CastShadowThreshold;
     float CastShadowSoftness;
     float3 PBRPadding;
+    float4 Transparent0; // x: IOR, y: transmission, z: transmission roughness, w: refraction strength
+    float4 Transparent1; // x: thickness, yzw: absorption coefficient
     MaterialPartShaderParams PartParams[15];
 };
 

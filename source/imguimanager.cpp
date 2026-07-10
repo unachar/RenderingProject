@@ -976,6 +976,10 @@ if (ImGui::SliderFloat("かわいいブレンド", &kawaiiBlend, 0.0f, 1.0f))
 		{ "位置", GBufferType::POSITION },
 		{ "深度",       GBufferType::DEPTH },
 		{ "マテリアル", GBufferType::MATERIAL },
+		{ "影", GBufferType::SHADOW },
+		{ "リムスタイル", GBufferType::RIM_STYLE },
+		{ "リムライト", GBufferType::RIM_LIGHT },
+		{ "大気", GBufferType::ATMOSPHERE },
 		};
 
 		const int cellCount = int(size(cells));
@@ -1625,6 +1629,10 @@ void ImGuiManager::DrawGBufferWindow()
 		{ "位置", GBufferType::POSITION },
 		{ "深度",       GBufferType::DEPTH },
 		{ "マテリアル", GBufferType::MATERIAL },
+		{ "影", GBufferType::SHADOW },
+		{ "リムスタイル", GBufferType::RIM_STYLE },
+		{ "リムライト", GBufferType::RIM_LIGHT },
+		{ "大気", GBufferType::ATMOSPHERE },
 	};
 
 	const int cellCount = int(size(cells));
@@ -2074,6 +2082,19 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
 		changed |= ImGui::SliderFloat("Fresnel", &material.Fresnel, 0.0f, 1.0f);
 	}
 	changed |= ImGui::SliderFloat("Alpha", &material.Alpha, 0.0f, 1.0f);
+	const bool dielectricMaterial = material.IsTransparent ||
+		(isManualMode && (material.ShaderClass == ShaderClass::Transparent ||
+			material.ShaderClass == ShaderClass::BTDF ||
+			material.ShaderClass == ShaderClass::BSDF));
+	if (dielectricMaterial && ImGui::CollapsingHeader("ガラス / アクリル", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		changed |= ImGui::SliderFloat("IOR", &material.IOR, 1.0001f, 2.5f, "%.3f");
+		changed |= ImGui::SliderFloat("透過率", &material.Transmission, 0.0f, 1.0f);
+		changed |= ImGui::SliderFloat("透過ラフネス", &material.TransmissionRoughness, 0.0f, 1.0f);
+		changed |= ImGui::SliderFloat("屈折強度", &material.RefractionStrength, 0.0f, 0.25f, "%.4f");
+		changed |= ImGui::SliderFloat("厚み", &material.Thickness, 0.0f, 10.0f, "%.3f");
+		changed |= ImGui::ColorEdit3("吸収係数", &material.AbsorptionCoefficient.x, ImGuiColorEditFlags_Float);
+	}
 
 	ImGui::SeparatorText("セクション");
 	const char* outlineModes[] = { "押し出し", "TEO", "MIX" };

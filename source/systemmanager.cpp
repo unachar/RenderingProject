@@ -110,6 +110,7 @@ void SystemManager::RenderFlow()
 			PostProcessSystem postProcess;
 			postProcess.Draw(RenderPass::PrimaryScene, false);
 
+			RendererDraw::PrepareTransparentSceneCopy();
 			RendererDraw::BeginEditorSceneOverlayPass();
 			DrawSystem(RenderPass::OverlayScene, false);
 			RendererDraw::EndEditorSceneOverlayPass();
