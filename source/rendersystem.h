@@ -19,7 +19,7 @@ private:
         UINT vertexCount;
         bool is3D;
         const MaterialComponent* material;
-        float cameraDistanceSq;
+        float cameraDepth;
     };
     vector<DrawCall> m_SpriteDrawCalls;
     vector<DrawCall> m_ModelDrawCalls;

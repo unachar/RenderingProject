@@ -26,10 +26,6 @@ namespace
 		return material;
 	}
 
-	constexpr int kSelectionOutlineShaderClass = 99;
-	constexpr float kSelectionOutlineWorldProbeWidth = 0.035f;
-	constexpr float kSelectionOutlineScreenWidth = 5.0f;
-
 	bool IsSkyEntity(EntityID entity)
 	{
 		return ComponentManager::HasComponent<NameComponent>(entity) &&
@@ -81,18 +77,6 @@ namespace
 			material.ToonOutlineWidthModeSetting == ToonOutlineWidthMode::ScreenPixels ? 1 : 0;
 	}
 
-	void ApplySelectionOutlineConstants(ConstantBuffer3D& cb)
-	{
-		cb.ShaderClass = kSelectionOutlineShaderClass;
-		cb.ToonOutlineWidth = kSelectionOutlineWorldProbeWidth;
-		cb.ToonOutlineScreenWidth = kSelectionOutlineScreenWidth;
-		cb.ViewportSize = {
-			max(static_cast<float>(RendererCore::GetSceneWidth()), 1.0f),
-			max(static_cast<float>(RendererCore::GetSceneHeight()), 1.0f)
-		};
-		cb.ToonOutlineUseScreenSpace = 1;
-	}
-
 	D3D12_GPU_DESCRIPTOR_HANDLE CreateToonOutlineCbv(UINT8* cbvDataBegin, EntityID entity, const MaterialComponent& material, float widthScale = 1.0f)
 	{
 		if (!cbvDataBegin)
@@ -103,19 +87,6 @@ namespace
 		const auto* source = reinterpret_cast<const ConstantBuffer3D*>(cbvDataBegin + (entity * RendererResource::g_kCB_ALIGNED_SIZE));
 		ConstantBuffer3D outlineConstants = *source;
 		ApplyToonOutlineConstants(outlineConstants, material, widthScale);
-		return RendererResource::AllocateTransientConstantBuffer(outlineConstants);
-	}
-
-	D3D12_GPU_DESCRIPTOR_HANDLE CreateSelectionOutlineCbv(UINT8* cbvDataBegin, EntityID entity)
-	{
-		if (!cbvDataBegin)
-		{
-			return {};
-		}
-
-		const auto* source = reinterpret_cast<const ConstantBuffer3D*>(cbvDataBegin + (entity * RendererResource::g_kCB_ALIGNED_SIZE));
-		ConstantBuffer3D outlineConstants = *source;
-		ApplySelectionOutlineConstants(outlineConstants);
 		return RendererResource::AllocateTransientConstantBuffer(outlineConstants);
 	}
 
@@ -151,17 +122,15 @@ namespace
 		return 1.0f;
 	}
 
-	float GetCameraDistanceSq(EntityID entity, const XMFLOAT3& cameraPos)
+	float GetCameraDepth(EntityID entity, const XMMATRIX& view)
 	{
 		if (!Registry::HasComponent(entity, ComponentType::TRANSFORM))
 		{
 			return 0.0f;
 		}
 		const XMFLOAT3& pos = ComponentManager::GetComponentUnchecked<TransformComponent>(entity).Position;
-		const float dx = pos.x - cameraPos.x;
-		const float dy = pos.y - cameraPos.y;
-		const float dz = pos.z - cameraPos.z;
-		return dx * dx + dy * dy + dz * dz;
+		const XMVECTOR viewPos = XMVector3TransformCoord(XMLoadFloat3(&pos), view);
+		return XMVectorGetZ(viewPos);
 	}
 
 	const char* GetModelVsPath(EntityID entity)
@@ -316,13 +285,6 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	Camera::GetCameraMatrices(Camera::GetCameraEntity(), viewMat, projMat);
 	const XMMATRIX transposedView = XMMatrixTranspose(viewMat);
 	const XMMATRIX transposedProj = XMMatrixTranspose(projMat);
-	XMFLOAT3 cameraPos = { 0.0f, 0.0f, 5.0f };
-	const EntityID cameraEntity = Camera::GetCameraEntity();
-	if (Registry::HasComponent(cameraEntity, ComponentType::TRANSFORM))
-	{
-		cameraPos = ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
-	}
-	const EntityID selectedEntity = ImGuiManager::GetSelectedEntity();
 
 	{
 		m_AnimDrawCalls.clear();
@@ -384,6 +346,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				cb.MaterialRoughness = mat.Roughness;
 				cb.MaterialFresnel = mat.Fresnel;
 				cb.MaterialAlpha = mat.Alpha;
+				cb.MaterialIsTransparent = mat.IsTransparent ? 1 : 0;
 				cb.MaterialMode = static_cast<int>(mat.ShaderClassMode);
 				cb.ShaderClass = static_cast<int>(mat.ShaderClass);
 				ApplyToonOutlineConstants(cb, mat);
@@ -401,17 +364,17 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			}
 
 			memcpy(pCbvDataBegin + (i * RendererResource::g_kCB_ALIGNED_SIZE), &cb, sizeof(cb));
-			const float cameraDistanceSq = drawTransparent ? GetCameraDistanceSq(i, cameraPos) : 0.0f;
-			m_AnimDrawCalls.push_back({ i, pso, srvIndex, normalSrvIndex, model, material, cameraDistanceSq });
+			const float cameraDepth = drawTransparent ? GetCameraDepth(i, viewMat) : 0.0f;
+			m_AnimDrawCalls.push_back({ i, pso, srvIndex, normalSrvIndex, model, material, cameraDepth });
 		}
 
 		sort(m_AnimDrawCalls.begin(), m_AnimDrawCalls.end(), [drawTransparent](const AnimDrawCall& a, const AnimDrawCall& b)
 			{
 				if (drawTransparent)
 				{
-					if (fabsf(a.cameraDistanceSq - b.cameraDistanceSq) > 0.0001f)
+					if (fabsf(a.cameraDepth - b.cameraDepth) > 0.0001f)
 					{
-						return a.cameraDistanceSq > b.cameraDistanceSq;
+						return a.cameraDepth > b.cameraDepth;
 					}
 				}
 				if (a.pso != b.pso)
@@ -551,22 +514,6 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					lastPso = dc.pso;
 				}
 
-				if (outlinePso && dc.EntityID == selectedEntity)
-				{
-					const D3D12_GPU_DESCRIPTOR_HANDLE selectionCbvHandle = CreateSelectionOutlineCbv(pCbvDataBegin, dc.EntityID);
-					if (selectionCbvHandle.ptr != 0)
-					{
-						pCommandList->SetPipelineState(outlinePso);
-						pCommandList->SetGraphicsRootDescriptorTable(0, selectionCbvHandle);
-						pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
-						pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
-						pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
-						pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
-						pCommandList->SetPipelineState(dc.pso);
-						lastPso = dc.pso;
-					}
-				}
-
 				D3D12_RESOURCE_BARRIER backBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
 					meshData.VertexBuffer.Get(),
 					D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
@@ -649,6 +596,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				cb.MaterialRoughness = mat.Roughness;
 				cb.MaterialFresnel = mat.Fresnel;
 				cb.MaterialAlpha = mat.Alpha;
+				cb.MaterialIsTransparent = mat.IsTransparent ? 1 : 0;
 				cb.MaterialMode = static_cast<int>(mat.ShaderClassMode);
 				cb.ShaderClass = static_cast<int>(mat.ShaderClass);
 				ApplyToonOutlineConstants(cb, mat);
@@ -666,17 +614,17 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			}
 
 			memcpy(pCbvDataBegin + (i * RendererResource::g_kCB_ALIGNED_SIZE), &cb, sizeof(cb));
-			const float cameraDistanceSq = drawTransparent ? GetCameraDistanceSq(i, cameraPos) : 0.0f;
-			m_StaticDrawCalls.push_back({ i, pso, srvIndex, normalSrvIndex, model, material, cameraDistanceSq });
+			const float cameraDepth = drawTransparent ? GetCameraDepth(i, viewMat) : 0.0f;
+			m_StaticDrawCalls.push_back({ i, pso, srvIndex, normalSrvIndex, model, material, cameraDepth });
 		}
 
 		sort(m_StaticDrawCalls.begin(), m_StaticDrawCalls.end(), [drawTransparent](const StaticDrawCall& a, const StaticDrawCall& b)
 			{
 				if (drawTransparent)
 				{
-					if (fabsf(a.cameraDistanceSq - b.cameraDistanceSq) > 0.0001f)
+					if (fabsf(a.cameraDepth - b.cameraDepth) > 0.0001f)
 					{
-						return a.cameraDistanceSq > b.cameraDistanceSq;
+						return a.cameraDepth > b.cameraDepth;
 					}
 				}
 				if (a.pso != b.pso)
@@ -784,21 +732,6 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					lastPso = dc.pso;
 				}
 
-				if (outlinePso && dc.EntityID == selectedEntity)
-				{
-					const D3D12_GPU_DESCRIPTOR_HANDLE selectionCbvHandle = CreateSelectionOutlineCbv(pCbvDataBegin, dc.EntityID);
-					if (selectionCbvHandle.ptr != 0)
-					{
-						pCommandList->SetPipelineState(outlinePso);
-						pCommandList->SetGraphicsRootDescriptorTable(0, selectionCbvHandle);
-						pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
-						pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
-						pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
-						pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
-						pCommandList->SetPipelineState(dc.pso);
-						lastPso = dc.pso;
-					}
-				}
 			}
 		}
 	}

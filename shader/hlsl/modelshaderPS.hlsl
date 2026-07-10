@@ -3,6 +3,7 @@
 
 Texture2D g_Texture : register(t0);
 Texture2D g_NormalTexture : register(t2);
+Texture2D<float4> SceneColorTexture : register(t3);
 Texture2D<float4> EnvironmentTexture : register(t6);
 SamplerState g_SamplerState : register(s0);
 
@@ -89,18 +90,13 @@ float4 main(in PSInput3D In) : SV_Target
         : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
 
     float shaderClass = material.a;
-    bool transparent = IsMaterialClassForward(shaderClass, 0.0f);
+    bool transparent = IsMaterialClassForward(shaderClass, 0.0f) || MaterialIsTransparent != 0;
     bool shadow = IsMaterialClassForward(shaderClass, 5.0f);
     bool lit = IsMaterialClassForward(shaderClass, 8.0f);
     bool pbr = IsMaterialClassForward(shaderClass, 11.0f);
     bool brdf = IsMaterialClassForward(shaderClass, 12.0f);
     bool btdf = IsMaterialClassForward(shaderClass, 13.0f);
     bool bsdf = IsMaterialClassForward(shaderClass, 14.0f);
-
-    if (transparent)
-    {
-        return baseColor;
-    }
 
     float shadowThreshold = shadowParams.r;
     float shadowSoftness = max(shadowParams.g, 0.0001f);
@@ -113,6 +109,49 @@ float4 main(in PSInput3D In) : SV_Target
     float rangeBlend;
     ResolveLightAggregate(In.WorldPos, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend);
     float lightIntensity = LightColor.a;
+
+    if (transparent || btdf || bsdf)
+    {
+        float3 N = SafeNormalizeCommon(surfaceNormal, float3(0.0f, 1.0f, 0.0f));
+        float3 V = SafeNormalizeCommon(CameraPos - In.WorldPos, float3(0.0f, 0.0f, -1.0f));
+        float ior = max(Transparent0.x, 1.0001f);
+        float transmission = saturate(Transparent0.y);
+        float transmissionRoughness = saturate(Transparent0.z);
+        float refractionStrength = max(Transparent0.w, 0.0f);
+        float thickness = max(Transparent1.x, 0.0f);
+        float3 absorption = max(Transparent1.yzw, float3(0.0f, 0.0f, 0.0f));
+        float3 beerLambert = exp(-absorption * thickness);
+
+        float f0Scalar = (1.0f - ior) / (1.0f + ior);
+        f0Scalar *= f0Scalar;
+        float nDotV = saturate(dot(N, V));
+        float oneMinusNdotV = 1.0f - nDotV;
+        float oneMinusNdotV5 = oneMinusNdotV * oneMinusNdotV * oneMinusNdotV * oneMinusNdotV * oneMinusNdotV;
+        float3 fresnel = f0Scalar + (1.0f - f0Scalar) * oneMinusNdotV5;
+
+        float3 refractedDirection = refract(-V, N, rcp(ior));
+        uint sceneWidth;
+        uint sceneHeight;
+        SceneColorTexture.GetDimensions(sceneWidth, sceneHeight);
+        float2 sceneSize = max(float2((float)sceneWidth, (float)sceneHeight), float2(1.0f, 1.0f));
+        float2 screenUv = In.Position.xy / sceneSize;
+        float roughnessAttenuation = 1.0f - transmissionRoughness * 0.75f;
+        float2 refractedUv = saturate(screenUv + refractedDirection.xy * refractionStrength * roughnessAttenuation);
+        float3 sceneTransmission = SceneColorTexture.SampleLevel(g_SamplerState, refractedUv, transmissionRoughness * 4.0f).rgb;
+
+        float shadowVisibility = SampleForwardDeferredShadowMap(In.WorldPos, N, lightDir);
+        float3 shadowTransmittance = lerp(beerLambert, float3(1.0f, 1.0f, 1.0f), shadowVisibility);
+        sceneTransmission *= beerLambert * shadowTransmittance * transmission;
+        sceneTransmission *= lerp(float3(1.0f, 1.0f, 1.0f), saturate(baseColor.rgb), 0.18f);
+
+        float3 reflectedDirection = reflect(-V, N);
+        float3 reflection = SampleEnvironmentLatLong(reflectedDirection, transmissionRoughness);
+        float3 dielectricColor = lerp(sceneTransmission, reflection, fresnel);
+        dielectricColor += lightColor.rgb * lightIntensity * saturate(dot(N, lightDir)) * fresnel * shadowVisibility * 0.08f;
+
+        float opacity = saturate(baseColor.a);
+        return float4(dielectricColor * opacity, opacity);
+    }
 
     float metallicParam = material.r;
     float roughnessParam = material.g;
@@ -285,5 +324,6 @@ float4 main(in PSInput3D In) : SV_Target
         baseColor.rgb = reflected + transmitted + envReflection + envTransmission * 0.5f;
     }
 
+    baseColor.rgb *= baseColor.a;
     return baseColor;
 }

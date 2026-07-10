@@ -32,6 +32,7 @@ private:
 	inline static bool m_ShowLogWindow = false;
 	inline static bool m_ShowPerformanceWindow = false;
 	inline static bool m_ShowMaterialEditorWindow = false;
+	inline static bool m_ShowRimSettingsWindow = false;
 	inline static bool m_ShowMeshOutlineWindow = false;
 	inline static bool m_ShowMeshShadingWindow = false;
 	inline static bool m_ShowAtmosphereWindow = false;
@@ -113,6 +114,7 @@ private:
 	static void DrawLogWindow();
 	static void DrawPerformanceWindow();
 	static void DrawMaterialEditorWindow();
+	static void DrawRimSettingsWindow();
 	static void DrawMeshOutlineWindow();
 	static void DrawMeshShadingWindow();
 	static void DrawAtmosphereWindow();

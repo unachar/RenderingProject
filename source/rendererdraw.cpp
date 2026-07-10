@@ -12,6 +12,42 @@
 
 namespace
 {
+	void GetGBufferClearColor(UINT index, float outColor[4])
+	{
+		outColor[0] = 0.0f;
+		outColor[1] = 0.0f;
+		outColor[2] = 0.0f;
+		outColor[3] = 0.0f;
+
+		if (index == static_cast<UINT>(GBufferType::BASE_COLOR))
+		{
+			outColor[0] = RendererState::m_kSceneClearColor[0];
+			outColor[1] = RendererState::m_kSceneClearColor[1];
+			outColor[2] = RendererState::m_kSceneClearColor[2];
+			outColor[3] = RendererState::m_kSceneClearColor[3];
+		}
+		else if (index == static_cast<UINT>(GBufferType::NORMAL))
+		{
+			outColor[3] = 1.0f;
+		}
+		else if (index == static_cast<UINT>(GBufferType::DEPTH))
+		{
+			outColor[0] = 1.0f;
+			outColor[1] = 1.0f;
+			outColor[2] = 1.0f;
+			outColor[3] = 1.0f;
+		}
+		else if (index == static_cast<UINT>(GBufferType::MATERIAL))
+		{
+			outColor[3] = -1.0f;
+		}
+		else if (index == static_cast<UINT>(GBufferType::RIM_LIGHT) ||
+			index == static_cast<UINT>(GBufferType::ATMOSPHERE))
+		{
+			outColor[3] = 1.0f;
+		}
+	}
+
 	struct PostProcessConstants
 	{
 		XMFLOAT4 Flags{};
@@ -32,9 +68,6 @@ void RendererDraw::ReleaseGBufferResources()
 		m_GBufferRtvHandles[i] = {};
 		m_GBufferSrvHandles[i] = {};
 	}
-	m_AtmosphereRenderTarget.Reset();
-	m_AtmosphereRtvHandle = {};
-	m_AtmosphereSrvHandle = {};
 	m_LowResDepthBuffer.Reset();
 }
 
@@ -217,6 +250,10 @@ void RendererDraw::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_T
 	}
 	CD3DX12_GPU_DESCRIPTOR_HANDLE environmentSrvHandle(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), environmentSrvIndex, m_CbvIncrementSize);
 	m_CommandList->SetGraphicsRootDescriptorTable(7, environmentSrvHandle);
+	if (m_TransparentSceneCopy)
+	{
+		m_CommandList->SetGraphicsRootDescriptorTable(8, m_TransparentSceneSrvHandle);
+	}
 	m_CommandList->IASetPrimitiveTopology(topology);
 }
 
@@ -324,6 +361,37 @@ void RendererDraw::BeginEditorSceneOverlayPass()
 	m_CommandList->RSSetScissorRects(1, &m_FullScissorRect);
 }
 
+void RendererDraw::PrepareTransparentSceneCopy()
+{
+	if (!m_CommandList || !m_EditorSceneRenderTarget || !m_TransparentSceneCopy)
+	{
+		return;
+	}
+
+	D3D12_RESOURCE_BARRIER toCopy[2]{};
+	toCopy[0] = CD3DX12_RESOURCE_BARRIER::Transition(
+		m_EditorSceneRenderTarget.Get(),
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+		D3D12_RESOURCE_STATE_COPY_SOURCE);
+	toCopy[1] = CD3DX12_RESOURCE_BARRIER::Transition(
+		m_TransparentSceneCopy.Get(),
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+		D3D12_RESOURCE_STATE_COPY_DEST);
+	m_CommandList->ResourceBarrier(_countof(toCopy), toCopy);
+	m_CommandList->CopyResource(m_TransparentSceneCopy.Get(), m_EditorSceneRenderTarget.Get());
+
+	D3D12_RESOURCE_BARRIER toShader[2]{};
+	toShader[0] = CD3DX12_RESOURCE_BARRIER::Transition(
+		m_EditorSceneRenderTarget.Get(),
+		D3D12_RESOURCE_STATE_COPY_SOURCE,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+	toShader[1] = CD3DX12_RESOURCE_BARRIER::Transition(
+		m_TransparentSceneCopy.Get(),
+		D3D12_RESOURCE_STATE_COPY_DEST,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+	m_CommandList->ResourceBarrier(_countof(toShader), toShader);
+}
+
 void RendererDraw::EndEditorSceneOverlayPass()
 {
 	if (!m_CommandList || !m_EditorSceneRenderTarget)
@@ -375,8 +443,8 @@ void RendererDraw::BeginScenePass()
 			}
 		}
 
-		D3D12_RESOURCE_BARRIER barriers[g_kGBUFFER_COUNT] {};
-		for (UINT i = 0; i < g_kGBUFFER_COUNT; ++i)
+		D3D12_RESOURCE_BARRIER barriers[g_kGEOMETRY_GBUFFER_COUNT] {};
+		for (UINT i = 0; i < g_kGEOMETRY_GBUFFER_COUNT; ++i)
 		{
 			barriers[i] = CD3DX12_RESOURCE_BARRIER::Transition(
 				m_GBufferTargets[i].Get(),
@@ -393,33 +461,23 @@ void RendererDraw::BeginScenePass()
 			m_CommandList->ResourceBarrier(1, &depthBarrier);
 		}
 
-		m_CommandList->ResourceBarrier(g_kGBUFFER_COUNT, barriers);
+		m_CommandList->ResourceBarrier(g_kGEOMETRY_GBUFFER_COUNT, barriers);
 
 		CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle = m_UseLowResDepth ? m_LowResDsvHandle : CD3DX12_CPU_DESCRIPTOR_HANDLE(m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
-		for (UINT i = 0; i < g_kGBUFFER_COUNT; ++i)
+		for (UINT i = 0; i < g_kGEOMETRY_GBUFFER_COUNT; ++i)
 		{
-			const float normalClear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-			const float positionClear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-			const float depthClear[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-			const float blackClear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-			const float zeroClear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-			const float materialClear[4] = { 0.0f, 0.0f, 0.0f, -1.0f };
-			const float* clearColor = zeroClear;
-			if (i == static_cast<UINT>(GBufferType::BASE_COLOR)) clearColor = m_kSceneClearColor;
-			else if (i == static_cast<UINT>(GBufferType::NORMAL)) clearColor = normalClear;
-			else if (i == static_cast<UINT>(GBufferType::POSITION)) clearColor = positionClear;
-			else if (i == static_cast<UINT>(GBufferType::DEPTH)) clearColor = depthClear;
-			else if (i == static_cast<UINT>(GBufferType::MATERIAL)) clearColor = materialClear;
+			float clearColor[4]{};
+			GetGBufferClearColor(i, clearColor);
 			m_CommandList->ClearRenderTargetView(m_GBufferRtvHandles[i], clearColor, 0, nullptr);
 		}
 		m_CommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
-		D3D12_CPU_DESCRIPTOR_HANDLE handles[g_kGBUFFER_COUNT]{};
-		for (UINT i = 0; i < g_kGBUFFER_COUNT; ++i)
+		D3D12_CPU_DESCRIPTOR_HANDLE handles[g_kGEOMETRY_GBUFFER_COUNT]{};
+		for (UINT i = 0; i < g_kGEOMETRY_GBUFFER_COUNT; ++i)
 		{
 			handles[i] = m_GBufferRtvHandles[i];
 		}
-		m_CommandList->OMSetRenderTargets(g_kGBUFFER_COUNT, handles, TRUE, &dsvHandle);
+		m_CommandList->OMSetRenderTargets(g_kGEOMETRY_GBUFFER_COUNT, handles, TRUE, &dsvHandle);
 		return;
 	}
 
@@ -452,8 +510,8 @@ void RendererDraw::EndScenePass()
 		}
 
 		UINT barrierCount = 0;
-		D3D12_RESOURCE_BARRIER barriers[g_kGBUFFER_COUNT + 2] {};
-		for (UINT i = 0; i < g_kGBUFFER_COUNT; ++i)
+		D3D12_RESOURCE_BARRIER barriers[g_kGEOMETRY_GBUFFER_COUNT + 2] {};
+		for (UINT i = 0; i < g_kGEOMETRY_GBUFFER_COUNT; ++i)
 		{
 			barriers[barrierCount++] = CD3DX12_RESOURCE_BARRIER::Transition(
 				m_GBufferTargets[i].Get(),
@@ -501,7 +559,9 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 {
 	auto DrawFullscreenPass = [&](ID3D12PipelineState* pso, D3D12_CPU_DESCRIPTOR_HANDLE targetRtv,
 		D3D12_GPU_DESCRIPTOR_HANDLE sourceHandle, float intensity, float renderModeFlag, float deferredLightStrength,
-		D3D12_GPU_DESCRIPTOR_HANDLE atmosphereHandle = D3D12_GPU_DESCRIPTOR_HANDLE{})
+		D3D12_GPU_DESCRIPTOR_HANDLE atmosphereHandle = D3D12_GPU_DESCRIPTOR_HANDLE{},
+		D3D12_GPU_DESCRIPTOR_HANDLE rimStyleHandle = D3D12_GPU_DESCRIPTOR_HANDLE{},
+		D3D12_GPU_DESCRIPTOR_HANDLE rimLightHandle = D3D12_GPU_DESCRIPTOR_HANDLE{})
 		{
 			if (!pso || !m_PostProcessRootSignature)
 			{
@@ -568,6 +628,8 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 			if (m_ShadowConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(5, RendererResource::GetCurrentShadowConstantBufferAddress());
 			if (m_PBRConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(6, RendererResource::GetPBRConstantBufferAddress());
 			if (atmosphereHandle.ptr != 0) m_CommandList->SetGraphicsRootDescriptorTable(7, atmosphereHandle);
+			if (rimStyleHandle.ptr != 0) m_CommandList->SetGraphicsRootDescriptorTable(8, rimStyleHandle);
+			if (rimLightHandle.ptr != 0) m_CommandList->SetGraphicsRootDescriptorTable(9, rimLightHandle);
 			m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			m_CommandList->DrawInstanced(3, 1, 0, 0);
 		};
@@ -581,27 +643,28 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 	{
 		ID3D12PipelineState* deferredLightingPso = PsoManager::GetDeferredLightingPso();
 		ID3D12PipelineState* atmospherePso = PsoManager::GetAtmospherePso();
-		if (!deferredLightingPso || !atmospherePso || !m_SceneRenderTarget || !m_AtmosphereRenderTarget)
+		const UINT atmosphereIndex = static_cast<UINT>(GBufferType::ATMOSPHERE);
+		if (!deferredLightingPso || !atmospherePso || !m_SceneRenderTarget || !m_GBufferTargets[atmosphereIndex])
 		{
 			return;
 		}
 
 		D3D12_RESOURCE_BARRIER atmosphereToRt = CD3DX12_RESOURCE_BARRIER::Transition(
-			m_AtmosphereRenderTarget.Get(),
+			m_GBufferTargets[atmosphereIndex].Get(),
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 			D3D12_RESOURCE_STATE_RENDER_TARGET);
 		m_CommandList->ResourceBarrier(1, &atmosphereToRt);
 		const float atmosphereClear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-		m_CommandList->ClearRenderTargetView(m_AtmosphereRtvHandle, atmosphereClear, 0, nullptr);
+		m_CommandList->ClearRenderTargetView(m_GBufferRtvHandles[atmosphereIndex], atmosphereClear, 0, nullptr);
 		DrawFullscreenPass(
 			atmospherePso,
-			m_AtmosphereRtvHandle,
+			m_GBufferRtvHandles[atmosphereIndex],
 			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::BASE_COLOR)],
 			1.0f,
 			1.0f,
 			1.35f);
 		D3D12_RESOURCE_BARRIER atmosphereToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
-			m_AtmosphereRenderTarget.Get(),
+			m_GBufferTargets[atmosphereIndex].Get(),
 			D3D12_RESOURCE_STATE_RENDER_TARGET,
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 		m_CommandList->ResourceBarrier(1, &atmosphereToSrv);
@@ -620,7 +683,9 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 			1.0f,
 			1.0f,
 			1.35f,
-			m_AtmosphereSrvHandle);
+			m_GBufferSrvHandles[atmosphereIndex],
+			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::RIM_STYLE)],
+			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::RIM_LIGHT)]);
 
 		D3D12_RESOURCE_BARRIER toSceneSrv = CD3DX12_RESOURCE_BARRIER::Transition(
 			m_SceneRenderTarget.Get(),
@@ -886,6 +951,7 @@ bool RendererDraw::CreateSceneRenderTarget()
     ReleaseGBufferResources();
 	m_SceneRenderTarget.Reset();
 	m_EditorSceneRenderTarget.Reset();
+	m_TransparentSceneCopy.Reset();
 	m_SceneRtvHeap.Reset();
 
 	auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
@@ -913,8 +979,17 @@ bool RendererDraw::CreateSceneRenderTarget()
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue, IID_PPV_ARGS(&m_EditorSceneRenderTarget));
 	if (FAILED(hr)) return false;
 
+	auto transparentCopyDesc = CD3DX12_RESOURCE_DESC::Tex2D(
+		m_SceneColorFormat, m_Width, m_Height, 1, 1, 1, 0,
+		D3D12_RESOURCE_FLAG_NONE);
+	hr = m_Device->CreateCommittedResource(
+		&heapProps, D3D12_HEAP_FLAG_NONE, &transparentCopyDesc,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&m_TransparentSceneCopy));
+	if (FAILED(hr)) return false;
+	m_TransparentSceneCopy->SetName(L"TransparentSceneCopy");
+
 	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc {};
-	UINT rtvCount = (m_RenderMode == RenderMode::DEFERRED) ? (3 + g_kGBUFFER_COUNT) : 2;
+	UINT rtvCount = (m_RenderMode == RenderMode::DEFERRED) ? (2 + g_kGBUFFER_COUNT) : 2;
 	rtvHeapDesc.NumDescriptors = rtvCount + 1;
 	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 	hr = m_Device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&m_SceneRtvHeap));
@@ -939,6 +1014,15 @@ bool RendererDraw::CreateSceneRenderTarget()
 	srvDesc.Texture2D.MipLevels = 1;
 	m_Device->CreateShaderResourceView(m_SceneRenderTarget.Get(), &srvDesc, srvCpuHandle);
 	m_Device->CreateShaderResourceView(m_EditorSceneRenderTarget.Get(), &srvDesc, editorSceneSrvCpuHandle);
+	m_TransparentSceneSrvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(
+		m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
+		RendererState::g_kTRANSPARENT_SCENE_SRV_INDEX,
+		cbvIncrement);
+	CD3DX12_CPU_DESCRIPTOR_HANDLE transparentSceneSrvCpuHandle(
+		m_CbvHeap->GetCPUDescriptorHandleForHeapStart(),
+		RendererState::g_kTRANSPARENT_SCENE_SRV_INDEX,
+		cbvIncrement);
+	m_Device->CreateShaderResourceView(m_TransparentSceneCopy.Get(), &srvDesc, transparentSceneSrvCpuHandle);
 
 	{
 		auto aaDesc = CD3DX12_RESOURCE_DESC::Tex2D(
@@ -996,62 +1080,7 @@ bool RendererDraw::CreateSceneRenderTarget()
 
 			D3D12_CLEAR_VALUE gbufferClear {};
 			gbufferClear.Format = m_kDeferredRtvFormats[i];
-			if (i == static_cast<UINT>(GBufferType::BASE_COLOR))
-			{
-				gbufferClear.Color[0] = m_kSceneClearColor[0];
-				gbufferClear.Color[1] = m_kSceneClearColor[1];
-				gbufferClear.Color[2] = m_kSceneClearColor[2];
-				gbufferClear.Color[3] = m_kSceneClearColor[3];
-			}
-			else if (i == static_cast<UINT>(GBufferType::NORMAL))
-			{
-				gbufferClear.Color[0] = 0.0f;
-				gbufferClear.Color[1] = 0.0f;
-				gbufferClear.Color[2] = 0.0f;
-				gbufferClear.Color[3] = 1.0f;
-			}
-			else if (i == static_cast<UINT>(GBufferType::POSITION))
-			{
-				gbufferClear.Color[0] = 0.0f;
-				gbufferClear.Color[1] = 0.0f;
-				gbufferClear.Color[2] = 0.0f;
-				gbufferClear.Color[3] = 0.0f;
-			}
-			else if (i == static_cast<UINT>(GBufferType::DEPTH))
-			{
-				gbufferClear.Color[0] = 1.0f;
-				gbufferClear.Color[1] = 1.0f;
-				gbufferClear.Color[2] = 1.0f;
-				gbufferClear.Color[3] = 1.0f;
-			}
-			else if (i == static_cast<UINT>(GBufferType::MATERIAL))
-			{
-				gbufferClear.Color[0] = 0.0f;
-				gbufferClear.Color[1] = 0.0f;
-				gbufferClear.Color[2] = 0.0f;
-				gbufferClear.Color[3] = -1.0f;
-			}
-			else if (i == static_cast<UINT>(GBufferType::SHADOW))
-			{
-				gbufferClear.Color[0] = 0.0f;
-				gbufferClear.Color[1] = 0.0f;
-				gbufferClear.Color[2] = 0.0f;
-				gbufferClear.Color[3] = 0.0f;
-			}
-			else if (i == static_cast<UINT>(GBufferType::RIM_STYLE))
-			{
-				gbufferClear.Color[0] = 0.0f;
-				gbufferClear.Color[1] = 0.0f;
-				gbufferClear.Color[2] = 0.0f;
-				gbufferClear.Color[3] = 0.0f;
-			}
-			else if (i == static_cast<UINT>(GBufferType::RIM_LIGHT))
-			{
-				gbufferClear.Color[0] = 0.0f;
-				gbufferClear.Color[1] = 0.0f;
-				gbufferClear.Color[2] = 0.0f;
-				gbufferClear.Color[3] = 0.0f;
-			}
+			GetGBufferClearColor(i, gbufferClear.Color);
 
 			hr = m_Device->CreateCommittedResource(
 				&heapProps,
@@ -1083,51 +1112,6 @@ bool RendererDraw::CreateSceneRenderTarget()
 
 			gbufferRtvHandle.Offset(1, rtvIncrement);
 		}
-
-		// A separate low-resolution atmosphere GBuffer stores pre-integrated RGB
-		// scattering.  It is generated after geometry and consumed by deferred
-		// lighting, so empty-space shafts do not depend on object GBuffer pixels.
-		auto atmosphereDesc = CD3DX12_RESOURCE_DESC::Tex2D(
-			DXGI_FORMAT_R16G16B16A16_FLOAT,
-			gbufferWidth,
-			gbufferHeight,
-			1,
-			1,
-			1,
-			0,
-			D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
-		D3D12_CLEAR_VALUE atmosphereClear{};
-		atmosphereClear.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-		HRESULT atmosphereHr = m_Device->CreateCommittedResource(
-			&heapProps,
-			D3D12_HEAP_FLAG_NONE,
-			&atmosphereDesc,
-			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-			&atmosphereClear,
-			IID_PPV_ARGS(&m_AtmosphereRenderTarget));
-		if (FAILED(atmosphereHr)) return false;
-		m_AtmosphereRenderTarget->SetName(L"AtmosphereGBuffer");
-
-		D3D12_RENDER_TARGET_VIEW_DESC atmosphereRtvDesc{};
-		atmosphereRtvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-		atmosphereRtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-		m_Device->CreateRenderTargetView(m_AtmosphereRenderTarget.Get(), &atmosphereRtvDesc, gbufferRtvHandle);
-		m_AtmosphereRtvHandle = gbufferRtvHandle;
-
-		CD3DX12_CPU_DESCRIPTOR_HANDLE atmosphereSrvCpuHandle(
-			m_CbvHeap->GetCPUDescriptorHandleForHeapStart(),
-			RendererState::g_kATMOSPHERE_SRV_INDEX,
-			cbvIncrement);
-		m_AtmosphereSrvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(
-			m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
-			RendererState::g_kATMOSPHERE_SRV_INDEX,
-			cbvIncrement);
-		D3D12_SHADER_RESOURCE_VIEW_DESC atmosphereSrvDesc{};
-		atmosphereSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		atmosphereSrvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-		atmosphereSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-		atmosphereSrvDesc.Texture2D.MipLevels = 1;
-		m_Device->CreateShaderResourceView(m_AtmosphereRenderTarget.Get(), &atmosphereSrvDesc, atmosphereSrvCpuHandle);
 	}
 
 	if (m_RenderMode == RenderMode::DEFERRED && (m_SceneWidth != m_Width || m_SceneHeight != m_Height))

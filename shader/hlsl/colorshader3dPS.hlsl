@@ -39,5 +39,5 @@ void main(in PSInput3D In, out float4 outDiffuse : SV_Target)
     float directLight = lerp(0.35f, 1.0f, toonLit) * shadowMask;
     float3 lit = baseColor.rgb * (0.18f + lightColor * directLight * lightIntensity);
     lit += lightColor * volumeScatter;
-    outDiffuse = float4(lit, baseColor.a);
+    outDiffuse = float4(lit * baseColor.a, baseColor.a);
 }

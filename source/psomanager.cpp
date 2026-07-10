@@ -58,7 +58,7 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const rendererResource& 
 		resource.vsPath,
 		resolvedPsPath.c_str(),
 		useDeferredMrt ? "DEFERRED" : "FORWARD",
-		useDeferredMrt ? g_kGBUFFER_COUNT : 1);
+		useDeferredMrt ? g_kGEOMETRY_GBUFFER_COUNT : 1);
 
 	ComPtr<ID3DBlob> vsBlob;
 	ComPtr<ID3DBlob> psBlob;
@@ -87,10 +87,10 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const rendererResource& 
 	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 	psoDesc.SampleMask = UINT_MAX;
 	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-	psoDesc.NumRenderTargets = useDeferredMrt ? g_kGBUFFER_COUNT : 1;
+	psoDesc.NumRenderTargets = useDeferredMrt ? g_kGEOMETRY_GBUFFER_COUNT : 1;
 	if (useDeferredMrt)
 	{
-		for (UINT i = 0; i < g_kGBUFFER_COUNT; ++i)
+		for (UINT i = 0; i < g_kGEOMETRY_GBUFFER_COUNT; ++i)
 		{
 			psoDesc.RTVFormats[i] = m_kDeferredRtvFormats[i];
 		}
@@ -137,7 +137,7 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const rendererResource& 
 	{
 		auto& rtBlend = psoDesc.BlendState.RenderTarget[0];
 		rtBlend.BlendEnable = TRUE;
-		rtBlend.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+		rtBlend.SrcBlend = D3D12_BLEND_ONE;
 		rtBlend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
 		rtBlend.BlendOp = D3D12_BLEND_OP_ADD;
 		rtBlend.SrcBlendAlpha = D3D12_BLEND_ONE;
@@ -210,7 +210,7 @@ ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso(bool enableAlphaBlend
 	{
 		auto& rtBlend = psoDesc.BlendState.RenderTarget[0];
 		rtBlend.BlendEnable = TRUE;
-		rtBlend.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+		rtBlend.SrcBlend = D3D12_BLEND_ONE;
 		rtBlend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
 		rtBlend.BlendOp = D3D12_BLEND_OP_ADD;
 		rtBlend.SrcBlendAlpha = D3D12_BLEND_ONE;
@@ -223,10 +223,10 @@ ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso(bool enableAlphaBlend
 	psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 	psoDesc.SampleMask = UINT_MAX;
 	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-	psoDesc.NumRenderTargets = useDeferredMrt ? g_kGBUFFER_COUNT : 1;
+	psoDesc.NumRenderTargets = useDeferredMrt ? g_kGEOMETRY_GBUFFER_COUNT : 1;
 	if (useDeferredMrt)
 	{
-		for (UINT i = 0; i < g_kGBUFFER_COUNT; ++i)
+		for (UINT i = 0; i < g_kGEOMETRY_GBUFFER_COUNT; ++i)
 		{
 			psoDesc.RTVFormats[i] = m_kDeferredRtvFormats[i];
 		}

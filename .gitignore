@@ -103,5 +103,4 @@ Testing/
 .cache/
 # Compiled shader objects
 *.cso
-
 init_log.txt

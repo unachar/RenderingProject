@@ -26,5 +26,6 @@ float4 main(PSInput2D input) : SV_Target
     float lighting = saturate(dot(normalize(normal), lightDir));
     color.rgb *= lerp(0.35f, 1.0f, lighting);
   
+    color.rgb *= color.a;
     return color;
 }

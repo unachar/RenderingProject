@@ -374,8 +374,8 @@ void DebugSystem::InitDebugLinePso()
 	{
 		D3D12_GRAPHICS_PIPELINE_STATE_DESC deferredDesc = psoDesc;
 		deferredDesc.PS = CD3DX12_SHADER_BYTECODE(psMrtBlob.Get());
-		deferredDesc.NumRenderTargets = static_cast<UINT>(GBufferType::COUNT);
-		for (UINT i = 0; i < static_cast<UINT>(GBufferType::COUNT); ++i)
+		deferredDesc.NumRenderTargets = RendererState::g_kGEOMETRY_GBUFFER_COUNT;
+		for (UINT i = 0; i < RendererState::g_kGEOMETRY_GBUFFER_COUNT; ++i)
 		{
 			deferredDesc.RTVFormats[i] = RendererDraw::GetGBufferFormat(static_cast<GBufferType>(i));
 		}
