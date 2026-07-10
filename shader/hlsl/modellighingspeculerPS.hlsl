@@ -205,5 +205,5 @@ float4 main(in PSInput3D In) : SV_Target
 
     color = AdjustSaturation(color, 1.16f);
     color = lerp(color, sqrt(saturate(color)), 0.12f);
-    return float4(saturate(color), baseColor.a);
+    return float4(saturate(color) * baseColor.a, baseColor.a);
 }

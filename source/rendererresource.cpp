@@ -64,6 +64,8 @@ namespace
 		XMFLOAT4 Shadow0{};
 		XMFLOAT4 Shadow1{};
 		XMFLOAT4 Highlight{};
+		XMFLOAT4 RimStyle{};
+		XMFLOAT4 RimLight{};
 		XMFLOAT4 Skin0{};
 		XMFLOAT4 Skin1{};
 	};
@@ -84,6 +86,11 @@ namespace
 		float LitStrength = 1.0f;
 		float RimStrength = 0.45f;
 		float RimThreshold = 0.70f;
+		float RimSoftness = 0.055f;
+		float RimPower = 1.0f;
+		XMFLOAT3 RimColor = { 0.38f, 0.48f, 0.80f };
+		float RimAlbedoBlend = 0.20f;
+		float RimLightBlend = 0.35f;
 		float SpecularStrength = 0.35f;
 		float SpecularThreshold = 0.35f;
 		float KawaiiBlend = 1.0f;
@@ -96,6 +103,8 @@ namespace
 		float CastShadowThreshold = 0.28f;
 		float CastShadowSoftness = 0.10f;
 		float Padding[3]{};
+		XMFLOAT4 Transparent0 = { 1.50f, 0.98f, 0.02f, 0.035f };
+		XMFLOAT4 Transparent1 = { 0.10f, 0.02f, 0.01f, 0.005f };
 		MaterialPartShaderConstants PartParams[kMaterialPartParamCount]{};
 	};
 
@@ -111,6 +120,8 @@ namespace
 		constants.PartParams[index].Shadow0 = XMFLOAT4(params.ShadowThreshold, params.ShadowSoftness, params.ShadowStrength, params.MidStrength);
 		constants.PartParams[index].Shadow1 = XMFLOAT4(params.LitStrength, params.CastShadowThreshold, params.CastShadowSoftness, 0.0f);
 		constants.PartParams[index].Highlight = XMFLOAT4(params.RimStrength, params.RimThreshold, params.SpecularStrength, params.SpecularThreshold);
+		constants.PartParams[index].RimStyle = XMFLOAT4(params.RimSoftness, params.RimPower, params.RimAlbedoBlend, params.RimLightBlend);
+		constants.PartParams[index].RimLight = XMFLOAT4(params.RimColor.x, params.RimColor.y, params.RimColor.z, 1.0f);
 		constants.PartParams[index].Skin0 = XMFLOAT4(params.SkinScatterStrength, params.SkinScatterWrap, params.SkinBacklightStrength, params.SkinRimScatterStrength);
 		constants.PartParams[index].Skin1 = XMFLOAT4(params.SkinOilSpecularStrength, params.SkinShadowScatter, 0.0f, 0.0f);
 	}
@@ -132,6 +143,11 @@ namespace
 		constants.LitStrength = material.LitStrength;
 		constants.RimStrength = material.RimStrength;
 		constants.RimThreshold = material.RimThreshold;
+		constants.RimSoftness = material.RimSoftness;
+		constants.RimPower = material.RimPower;
+		constants.RimColor = material.RimColor;
+		constants.RimAlbedoBlend = material.RimAlbedoBlend;
+		constants.RimLightBlend = material.RimLightBlend;
 		constants.SpecularStrength = material.SpecularStrength;
 		constants.SpecularThreshold = material.SpecularThreshold;
 		constants.KawaiiBlend = material.KawaiiBlend;
@@ -143,6 +159,16 @@ namespace
 		constants.SkinShadowScatter = material.SkinShadowScatter;
 		constants.CastShadowThreshold = material.CastShadowThreshold;
 		constants.CastShadowSoftness = material.CastShadowSoftness;
+		constants.Transparent0 = XMFLOAT4(
+			max(material.IOR, 1.0001f),
+			clamp(material.Transmission, 0.0f, 1.0f),
+			clamp(material.TransmissionRoughness, 0.0f, 1.0f),
+			max(material.RefractionStrength, 0.0f));
+		constants.Transparent1 = XMFLOAT4(
+			max(material.Thickness, 0.0f),
+			max(material.AbsorptionCoefficient.x, 0.0f),
+			max(material.AbsorptionCoefficient.y, 0.0f),
+			max(material.AbsorptionCoefficient.z, 0.0f));
 		for (int i = 0; i < kMaterialPartParamCount; ++i)
 		{
 			WriteMaterialPartConstants(constants, i, material.PartParams[i]);

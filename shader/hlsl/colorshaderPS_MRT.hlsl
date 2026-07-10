@@ -31,5 +31,8 @@ GBufferOutput main(PSInput2D input)
     output.Depth = 0.0f;
     output.Material = 0.0f;
     output.Material.a = materialPartId;
+    output.Shadow = 0.0f;
+    output.RimStyle = 0.0f;
+    output.RimLight = 0.0f;
     return output;
 }

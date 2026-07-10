@@ -152,6 +152,11 @@ namespace
 			{
 				changed |= ImGui::SliderFloat("リム強度", &params.RimStrength, 0.0f, 2.0f);
 				changed |= ImGui::SliderFloat("リムしきい値", &params.RimThreshold, 0.0f, 1.0f);
+				changed |= ImGui::SliderFloat("リムぼかし", &params.RimSoftness, 0.001f, 0.50f, "%.3f");
+				changed |= ImGui::SliderFloat("リムカーブ", &params.RimPower, 0.05f, 6.0f, "%.2f");
+				changed |= ImGui::ColorEdit3("リム色", &params.RimColor.x, ImGuiColorEditFlags_Float);
+				changed |= ImGui::SliderFloat("ベース色混合", &params.RimAlbedoBlend, 0.0f, 1.0f);
+				changed |= ImGui::SliderFloat("ライト色混合", &params.RimLightBlend, 0.0f, 1.0f);
 				changed |= ImGui::SliderFloat("スペキュラ強度", &params.SpecularStrength, 0.0f, 2.0f);
 				changed |= ImGui::SliderFloat("スペキュラしきい値", &params.SpecularThreshold, 0.0f, 1.0f);
 				ImGui::TreePop();
@@ -567,6 +572,10 @@ void ImGuiManager::Update()
 	{
 		DrawMaterialEditorWindow();
 	}
+	if (m_ShowRimSettingsWindow)
+	{
+		DrawRimSettingsWindow();
+	}
 	if (m_ShowMeshOutlineWindow)
 	{
 		DrawMeshOutlineWindow();
@@ -976,6 +985,10 @@ if (ImGui::SliderFloat("かわいいブレンド", &kawaiiBlend, 0.0f, 1.0f))
 		{ "位置", GBufferType::POSITION },
 		{ "深度",       GBufferType::DEPTH },
 		{ "マテリアル", GBufferType::MATERIAL },
+		{ "影", GBufferType::SHADOW },
+		{ "リムスタイル", GBufferType::RIM_STYLE },
+		{ "リムライト", GBufferType::RIM_LIGHT },
+		{ "大気", GBufferType::ATMOSPHERE },
 		};
 
 		const int cellCount = int(size(cells));
@@ -1273,6 +1286,7 @@ void ImGuiManager::DrawEditorMainMenu()
 		ImGui::MenuItem("ログ", nullptr, &m_ShowLogWindow);
 		ImGui::MenuItem("パフォーマンス", nullptr, &m_ShowPerformanceWindow);
 		ImGui::MenuItem("マテリアルエディター", nullptr, &m_ShowMaterialEditorWindow);
+		ImGui::MenuItem("リム設定", nullptr, &m_ShowRimSettingsWindow);
 		ImGui::MenuItem("大気シミュレーション", nullptr, &m_ShowAtmosphereWindow);
 		ImGui::Separator();
 		ImGui::MenuItem("メッシュ単位のアウトライン", nullptr, &m_ShowMeshOutlineWindow);
@@ -1625,6 +1639,10 @@ void ImGuiManager::DrawGBufferWindow()
 		{ "位置", GBufferType::POSITION },
 		{ "深度",       GBufferType::DEPTH },
 		{ "マテリアル", GBufferType::MATERIAL },
+		{ "影", GBufferType::SHADOW },
+		{ "リムスタイル", GBufferType::RIM_STYLE },
+		{ "リムライト", GBufferType::RIM_LIGHT },
+		{ "大気", GBufferType::ATMOSPHERE },
 	};
 
 	const int cellCount = int(size(cells));
@@ -1995,6 +2013,117 @@ void ImGuiManager::DrawMaterialEditorWindow()
 	ImGui::End();
 }
 
+void ImGuiManager::DrawRimSettingsWindow()
+{
+	ImGui::SetNextWindowSize(ImVec2(420.0f, 560.0f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("リム設定", &m_ShowRimSettingsWindow))
+	{
+		ImGui::End();
+		return;
+	}
+
+	if (m_SelectedEntity == g_kINVALID_ENTITY ||
+		!Registry::IsAlive(m_SelectedEntity) ||
+		!ComponentManager::HasComponent<MaterialComponent>(m_SelectedEntity))
+	{
+		ImGui::TextUnformatted("リムを設定するマテリアル付きオブジェクトを選択してください");
+		ImGui::End();
+		return;
+	}
+
+	auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(m_SelectedEntity);
+	EntitySnapshot before = CaptureEntity(m_SelectedEntity);
+	bool changed = false;
+
+	ImGui::Text("選択中: %s", GetEntityDisplayName(m_SelectedEntity));
+	ImGui::Separator();
+
+	if (ImGui::BeginTabBar("RimSettingsTabs"))
+	{
+		if (ImGui::BeginTabItem("全体"))
+		{
+			changed |= ImGui::SliderFloat("リム強度", &material.RimStrength, 0.0f, 3.0f);
+			changed |= ImGui::SliderFloat("リムしきい値", &material.RimThreshold, 0.0f, 1.0f);
+			changed |= ImGui::SliderFloat("リムぼかし", &material.RimSoftness, 0.001f, 0.50f, "%.3f");
+			changed |= ImGui::SliderFloat("リムカーブ", &material.RimPower, 0.05f, 6.0f, "%.2f");
+			changed |= ImGui::ColorEdit3("リム色", &material.RimColor.x, ImGuiColorEditFlags_Float);
+			changed |= ImGui::SliderFloat("ベース色混合", &material.RimAlbedoBlend, 0.0f, 1.0f);
+			changed |= ImGui::SliderFloat("ライト色混合", &material.RimLightBlend, 0.0f, 1.0f);
+			if (ImGui::Button("リムを標準値に戻す"))
+			{
+				material.RimStrength = 0.45f;
+				material.RimThreshold = 0.70f;
+				material.RimSoftness = 0.055f;
+				material.RimPower = 1.0f;
+				material.RimColor = { 0.38f, 0.48f, 0.80f };
+				material.RimAlbedoBlend = 0.20f;
+				material.RimLightBlend = 0.35f;
+				changed = true;
+			}
+			ImGui::EndTabItem();
+		}
+
+		if (ImGui::BeginTabItem("部位別"))
+		{
+			const char* partNames[] =
+			{
+				"透明", "髪", "服", "肌", "トゥーン", "影", "メタリック", "セルフシャドウ",
+				"ライティング", "目", "非ライティング", "PBR", "BRDF", "BTDF", "BSDF"
+			};
+			const int partValues[] =
+			{
+				static_cast<int>(ShaderClass::Transparent),
+				static_cast<int>(ShaderClass::Hair),
+				static_cast<int>(ShaderClass::Cloth),
+				static_cast<int>(ShaderClass::Skin),
+				static_cast<int>(ShaderClass::Toon),
+				static_cast<int>(ShaderClass::Shadow),
+				static_cast<int>(ShaderClass::Metallic),
+				static_cast<int>(ShaderClass::SelfShadow),
+				static_cast<int>(ShaderClass::Lit),
+				static_cast<int>(ShaderClass::Eye),
+				static_cast<int>(ShaderClass::Unlit),
+				static_cast<int>(ShaderClass::PBR),
+				static_cast<int>(ShaderClass::BRDF),
+				static_cast<int>(ShaderClass::BTDF),
+				static_cast<int>(ShaderClass::BSDF),
+			};
+
+			for (int i = 0; i < IM_ARRAYSIZE(partValues); ++i)
+			{
+				const int part = partValues[i];
+				if (part < 0 || part >= kMaterialPartParamCount)
+				{
+					continue;
+				}
+
+				ImGui::PushID(part);
+				if (ImGui::TreeNode(partNames[i]))
+				{
+					auto& params = material.PartParams[part];
+					changed |= ImGui::SliderFloat("リム強度", &params.RimStrength, 0.0f, 3.0f);
+					changed |= ImGui::SliderFloat("リムしきい値", &params.RimThreshold, 0.0f, 1.0f);
+					changed |= ImGui::SliderFloat("リムぼかし", &params.RimSoftness, 0.001f, 0.50f, "%.3f");
+					changed |= ImGui::SliderFloat("リムカーブ", &params.RimPower, 0.05f, 6.0f, "%.2f");
+					changed |= ImGui::ColorEdit3("リム色", &params.RimColor.x, ImGuiColorEditFlags_Float);
+					changed |= ImGui::SliderFloat("ベース色混合", &params.RimAlbedoBlend, 0.0f, 1.0f);
+					changed |= ImGui::SliderFloat("ライト色混合", &params.RimLightBlend, 0.0f, 1.0f);
+					ImGui::TreePop();
+				}
+				ImGui::PopID();
+			}
+			ImGui::EndTabItem();
+		}
+		ImGui::EndTabBar();
+	}
+
+	if (changed)
+	{
+		BeginUndoCapture(m_SelectedEntity, before);
+	}
+	ImGui::End();
+}
+
 void ImGuiManager::DrawMaterialInspector(EntityID entity)
 {
 	if (!ComponentManager::HasComponent<MaterialComponent>(entity))
@@ -2074,6 +2203,19 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
 		changed |= ImGui::SliderFloat("Fresnel", &material.Fresnel, 0.0f, 1.0f);
 	}
 	changed |= ImGui::SliderFloat("Alpha", &material.Alpha, 0.0f, 1.0f);
+	const bool dielectricMaterial = material.IsTransparent ||
+		(isManualMode && (material.ShaderClass == ShaderClass::Transparent ||
+			material.ShaderClass == ShaderClass::BTDF ||
+			material.ShaderClass == ShaderClass::BSDF));
+	if (dielectricMaterial && ImGui::CollapsingHeader("ガラス / アクリル", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		changed |= ImGui::SliderFloat("IOR", &material.IOR, 1.0001f, 2.5f, "%.3f");
+		changed |= ImGui::SliderFloat("透過率", &material.Transmission, 0.0f, 1.0f);
+		changed |= ImGui::SliderFloat("透過ラフネス", &material.TransmissionRoughness, 0.0f, 1.0f);
+		changed |= ImGui::SliderFloat("屈折強度", &material.RefractionStrength, 0.0f, 0.25f, "%.4f");
+		changed |= ImGui::SliderFloat("厚み", &material.Thickness, 0.0f, 10.0f, "%.3f");
+		changed |= ImGui::ColorEdit3("吸収係数", &material.AbsorptionCoefficient.x, ImGuiColorEditFlags_Float);
+	}
 
 	ImGui::SeparatorText("セクション");
 	const char* outlineModes[] = { "押し出し", "TEO", "MIX" };
@@ -2163,6 +2305,11 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
 			bool lightingChanged = false;
 			lightingChanged |= ImGui::SliderFloat("リム強度", &material.RimStrength, 0.0f, 2.0f);
 			lightingChanged |= ImGui::SliderFloat("リムしきい値", &material.RimThreshold, 0.0f, 1.0f);
+			lightingChanged |= ImGui::SliderFloat("リムぼかし", &material.RimSoftness, 0.001f, 0.50f, "%.3f");
+			lightingChanged |= ImGui::SliderFloat("リムカーブ", &material.RimPower, 0.05f, 6.0f, "%.2f");
+			lightingChanged |= ImGui::ColorEdit3("リム色", &material.RimColor.x, ImGuiColorEditFlags_Float);
+			lightingChanged |= ImGui::SliderFloat("ベース色混合", &material.RimAlbedoBlend, 0.0f, 1.0f);
+			lightingChanged |= ImGui::SliderFloat("ライト色混合", &material.RimLightBlend, 0.0f, 1.0f);
 			lightingChanged |= ImGui::SliderFloat("スペキュラ強度", &material.SpecularStrength, 0.0f, 2.0f);
 			lightingChanged |= ImGui::SliderFloat("スペキュラしきい値", &material.SpecularThreshold, 0.0f, 1.0f);
 			if (lightingChanged)

@@ -1,6 +1,7 @@
 #define SHADER_POSTPROCESS
 #define SHADER_3D
 #include "common.hlsl"
+#pragma warning(disable: 4000)
 
 Texture2D<float4> BaseColorTexture : register(t0);
 Texture2D<float4> NormalTexture : register(t1);
@@ -11,6 +12,8 @@ Texture2D<float4> ShadowGBufferTexture : register(t5);
 Texture2D<float4> EnvironmentTexture : register(t6);
 Texture2DArray<float> ShadowMapTexture : register(t7);
 Texture2D<float4> AtmosphereTexture : register(t8);
+Texture2D<float4> RimStyleTexture : register(t9);
+Texture2D<float4> RimLightTexture : register(t10);
 
 SamplerState TextureSampler : register(s0);
 SamplerState ShadowSampler : register(s1);
@@ -148,18 +151,25 @@ float4 main(PSInputPostProcess input) : SV_Target
     float4 position = PositionTexture.Sample(TextureSampler, input.TexCoord);
     float4 material = MaterialTexture.Sample(TextureSampler, input.TexCoord);
     float4 shadowParams = ShadowGBufferTexture.Sample(TextureSampler, input.TexCoord);
+    float4 rimStyle = RimStyleTexture.Sample(TextureSampler, input.TexCoord);
+    float4 rimLight = RimLightTexture.Sample(TextureSampler, input.TexCoord);
 
     float shaderClass = material.a;
     bool background = shaderClass < -0.5f;
     bool transparent = IsMaterialClass(shaderClass, 0.0f);
+    bool hair = IsMaterialClass(shaderClass, 1.0f);
+    bool cloth = IsMaterialClass(shaderClass, 2.0f);
+    bool skin = IsMaterialClass(shaderClass, 3.0f);
     bool toon = IsMaterialClass(shaderClass, 4.0f);
     bool shadow = IsMaterialClass(shaderClass, 5.0f);
+    bool metallic = IsMaterialClass(shaderClass, 6.0f);
+    bool selfShadow = IsMaterialClass(shaderClass, 7.0f);
     bool lit = IsMaterialClass(shaderClass, 8.0f);
+    bool eye = IsMaterialClass(shaderClass, 9.0f);
     bool pbr = IsMaterialClass(shaderClass, 11.0f);
     bool brdf = IsMaterialClass(shaderClass, 12.0f);
     bool btdf = IsMaterialClass(shaderClass, 13.0f);
     bool bsdf = IsMaterialClass(shaderClass, 14.0f);
-    bool selectionOutline = IsMaterialClass(shaderClass, 99.0f);
 
     float3 atmosphereViewScatter = AtmosphereTexture.SampleLevel(TextureSampler, input.TexCoord, 0).rgb;
     
@@ -172,11 +182,6 @@ float4 main(PSInputPostProcess input) : SV_Target
     if (transparent)
     {
         return baseColor;
-    }
-
-    if (selectionOutline)
-    {
-        return float4(baseColor.rgb, 1.0f);
     }
 
    
@@ -363,6 +368,36 @@ float4 main(PSInputPostProcess input) : SV_Target
 
         baseColor.rgb = directLight + ambient;
     }
+
+    //{
+    //    float rimConfigWeight = step(
+    //        0.0001f,
+    //        dot(abs(rimStyle), float4(1.0f, 1.0f, 1.0f, 1.0f)) +
+    //        dot(abs(rimLight.rgb), float3(1.0f, 1.0f, 1.0f)));
+    //    rimStyle = lerp(float4(RimStrength, RimThreshold, RimSoftness, RimPower), rimStyle, rimConfigWeight);
+    //    rimLight = lerp(float4(RimColor, RimAlbedoBlend), rimLight, rimConfigWeight);
+
+    //    float3 viewDir = SafeNormalizeCommon(PPCameraPos.xyz - position.xyz, float3(0.0f, 0.0f, -1.0f));
+    //    float rimStrength = max(rimStyle.x, 0.0f);
+    //    float rimThreshold = saturate(rimStyle.y);
+    //    float rimSoftness = max(rimStyle.z, 0.0001f);
+    //    float rimPower = max(rimStyle.w, 0.05f);
+    //    float rimAlbedoBlend = saturate(rimLight.a);
+    //    float rimLightBlend = saturate(RimLightBlend);
+
+    //    float rimRaw = 1.0f - saturate(dot(surfaceNormal, viewDir));
+    //    float rimCurved = pow(rimRaw, rimPower);
+    //    float rimMask = smoothstep(rimThreshold - rimSoftness, rimThreshold + rimSoftness, rimCurved);
+    //    rimMask *= smoothstep(-0.25f, 0.35f, dot(surfaceNormal, lightDir));
+    //    rimMask *= saturate(0.35f + aggregateShadowVisibility * 0.65f);
+
+    //    float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
+    //    float3 normalizedLightColor = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
+    //    float3 authoredRimColor = max(rimLight.rgb, 0.0f);
+    //    float3 rimTint = lerp(authoredRimColor, authoredRimColor * baseColor.rgb, rimAlbedoBlend);
+    //    rimTint = lerp(rimTint, rimTint * normalizedLightColor, rimLightBlend);
+    //    baseColor.rgb += rimTint * rimMask * rimStrength * max(lightAttenuation, 0.25f);
+    //}
 
     baseColor.rgb += atmosphereViewScatter;
     baseColor.a = 1.0f;

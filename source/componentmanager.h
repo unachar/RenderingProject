@@ -201,6 +201,11 @@ struct MaterialPartParams
 	float LitStrength = 1.0f;
 	float RimStrength = 0.45f;
 	float RimThreshold = 0.70f;
+	float RimSoftness = 0.055f;
+	float RimPower = 1.0f;
+	XMFLOAT3 RimColor = { 0.38f, 0.48f, 0.80f };
+	float RimAlbedoBlend = 0.20f;
+	float RimLightBlend = 0.35f;
 	float SpecularStrength = 0.35f;
 	float SpecularThreshold = 0.35f;
 	float KawaiiBlend = 1.0f;
@@ -234,6 +239,11 @@ struct MaterialComponent
 	float LitStrength = 1.0f;
 	float RimStrength = 0.45f;
 	float RimThreshold = 0.70f;
+	float RimSoftness = 0.055f;
+	float RimPower = 1.0f;
+	XMFLOAT3 RimColor = { 0.38f, 0.48f, 0.80f };
+	float RimAlbedoBlend = 0.20f;
+	float RimLightBlend = 0.35f;
 	float SpecularStrength = 0.35f;
 	float SpecularThreshold = 0.35f;
 	float KawaiiBlend = 1.0f;
@@ -258,6 +268,13 @@ struct MaterialComponent
 	vector<float> ToonMeshOutlineWidthScales{};
 	vector<MeshShadingOverride> MeshShadingOverrides{};
 	float Alpha = 1.0f;
+	// Transparent dielectric parameters. Alpha is the specification's Opacity.
+	float IOR = 1.50f;
+	float Transmission = 0.98f;
+	float TransmissionRoughness = 0.02f;
+	float RefractionStrength = 0.035f;
+	float Thickness = 0.10f;
+	XMFLOAT3 AbsorptionCoefficient = { 0.02f, 0.01f, 0.005f };
 	bool IsTransparent = false;
 	bool ReceivingPostProcess = true;
 	bool UseTexture = false;

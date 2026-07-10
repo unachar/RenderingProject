@@ -10,5 +10,8 @@ GBufferOutput main(PSInputDebugLine input)
     output.Depth = input.Position.z / input.Position.w;
     output.Material = 0.0f;
     output.Material.a = 10.0f;
+    output.Shadow = 0.0f;
+    output.RimStyle = 0.0f;
+    output.RimLight = 0.0f;
     return output;
 }

@@ -169,8 +169,10 @@ bool RendererCore::Init(HWND hwnd)
 	rangesNormalTex[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND);
 	CD3DX12_DESCRIPTOR_RANGE rangesEnvironmentTex[1];
 	rangesEnvironmentTex[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND);
+	CD3DX12_DESCRIPTOR_RANGE rangesSceneColorTex[1];
+	rangesSceneColorTex[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND);
 
-	CD3DX12_ROOT_PARAMETER rootParametersAll[8];
+	CD3DX12_ROOT_PARAMETER rootParametersAll[9];
 	rootParametersAll[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[1].InitAsDescriptorTable(1, &rangesTex[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -179,6 +181,7 @@ bool RendererCore::Init(HWND hwnd)
 	rootParametersAll[5].InitAsConstantBufferView(3, 0, D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[6].InitAsDescriptorTable(1, &rangesNormalTex[0], D3D12_SHADER_VISIBILITY_PIXEL);
 	rootParametersAll[7].InitAsDescriptorTable(1, &rangesEnvironmentTex[0], D3D12_SHADER_VISIBILITY_PIXEL);
+	rootParametersAll[8].InitAsDescriptorTable(1, &rangesSceneColorTex[0], D3D12_SHADER_VISIBILITY_PIXEL);
 
 	CD3DX12_STATIC_SAMPLER_DESC sampler {};
 	sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -406,6 +409,7 @@ void RendererCore::Uninit()
 	m_UpscaleRootSignature.Reset();
     RendererDraw::ReleaseGBufferResources();
 	m_SceneRenderTarget.Reset();
+	m_TransparentSceneCopy.Reset();
 	m_SceneRtvHeap.Reset();
 	m_CbvHeap.Reset();
 	m_RootSignature.Reset();

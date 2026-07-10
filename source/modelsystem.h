@@ -17,7 +17,7 @@ private:
         int normalSrvIndex;
         class AnimationModelResource* model;
         const MaterialComponent* material;
-        float cameraDistanceSq;
+        float cameraDepth;
     };
     struct StaticDrawCall
     {
@@ -27,7 +27,7 @@ private:
         int normalSrvIndex;
         class StaticModelResource* model;
         const MaterialComponent* material;
-        float cameraDistanceSq;
+        float cameraDepth;
     };
     vector<AnimDrawCall> m_AnimDrawCalls;
     vector<StaticDrawCall> m_StaticDrawCalls;

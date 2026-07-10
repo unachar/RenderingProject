@@ -1,6 +1,7 @@
 // ==========================================================
 // common.hlsl
 // ==========================================================
+#pragma warning(disable: 4000)
 
 struct GBufferOutput
 {
@@ -70,7 +71,8 @@ cbuffer ConstantBuffer3D : register(b0)
     float2 ViewportSize;
     int ToonOutlineUseScreenSpace;
     float MaterialAlpha;
-    float2 ConstantPadding;
+    int MaterialIsTransparent;
+    float ConstantPadding;
 };
 
 struct VSInput3D
@@ -835,6 +837,8 @@ struct MaterialPartShaderParams
     float4 Shadow0;     // x: threshold, y: softness, z: strength, w: mid strength
     float4 Shadow1;     // x: lit strength, y: cast threshold, z: cast softness, w: unused
     float4 Highlight;   // x: rim strength, y: rim threshold, z: specular strength, w: specular threshold
+    float4 RimStyle;    // x: softness, y: power, z: albedo blend, w: light blend
+    float4 RimLight;    // rgb: rim color, a: unused
     float4 Skin0;       // x: scatter strength, y: scatter wrap, z: backlight strength, w: rim scatter strength
     float4 Skin1;       // x: oil specular strength, y: shadow scatter, z: unused, w: unused
 };
@@ -855,6 +859,11 @@ cbuffer PBRParams : register(b2)
     float LitStrength;
     float RimStrength;
     float RimThreshold;
+    float RimSoftness;
+    float RimPower;
+    float3 RimColor;
+    float RimAlbedoBlend;
+    float RimLightBlend;
     float SpecularStrength;
     float SpecularThreshold;
     float KawaiiBlend;
@@ -867,12 +876,14 @@ cbuffer PBRParams : register(b2)
     float CastShadowThreshold;
     float CastShadowSoftness;
     float3 PBRPadding;
+    float4 Transparent0; // x: IOR, y: transmission, z: transmission roughness, w: refraction strength
+    float4 Transparent1; // x: thickness, yzw: absorption coefficient
     MaterialPartShaderParams PartParams[15];
 };
 
 MaterialPartShaderParams ResolveMaterialPartParams(float materialPartId)
 {
-    int index = clamp((int)round(materialPartId), 0, 11);
+    int index = clamp((int)round(materialPartId), 0, 14);
     return PartParams[index];
 }
 
