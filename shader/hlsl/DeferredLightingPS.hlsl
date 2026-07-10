@@ -1,6 +1,7 @@
 #define SHADER_POSTPROCESS
 #define SHADER_3D
 #include "common.hlsl"
+#pragma warning(disable: 4000)
 
 Texture2D<float4> BaseColorTexture : register(t0);
 Texture2D<float4> NormalTexture : register(t1);
@@ -268,7 +269,6 @@ float4 main(PSInputPostProcess input) : SV_Target
     }
     
     if (pbr)
-    if (hair || cloth || skin || toon || metallic || selfShadow || lit || eye || pbr || brdf || btdf || bsdf)
     {
         float PI = 3.14159265359f;
 
@@ -375,28 +375,35 @@ float4 main(PSInputPostProcess input) : SV_Target
         baseColor.rgb = directLight + ambient;
     }
 
-    {
-        float3 viewDir = SafeNormalizeCommon(PPCameraPos.xyz - position.xyz, float3(0.0f, 0.0f, -1.0f));
-        float rimStrength = max(rimStyle.x, 0.0f);
-        float rimThreshold = saturate(rimStyle.y);
-        float rimSoftness = max(rimStyle.z, 0.0001f);
-        float rimPower = max(rimStyle.w, 0.05f);
-        float rimAlbedoBlend = saturate(rimLight.a);
-        float rimLightBlend = saturate(RimLightBlend);
+    //{
+    //    float rimConfigWeight = step(
+    //        0.0001f,
+    //        dot(abs(rimStyle), float4(1.0f, 1.0f, 1.0f, 1.0f)) +
+    //        dot(abs(rimLight.rgb), float3(1.0f, 1.0f, 1.0f)));
+    //    rimStyle = lerp(float4(RimStrength, RimThreshold, RimSoftness, RimPower), rimStyle, rimConfigWeight);
+    //    rimLight = lerp(float4(RimColor, RimAlbedoBlend), rimLight, rimConfigWeight);
 
-        float rimRaw = 1.0f - saturate(dot(surfaceNormal, viewDir));
-        float rimCurved = pow(rimRaw, rimPower);
-        float rimMask = smoothstep(rimThreshold - rimSoftness, rimThreshold + rimSoftness, rimCurved);
-        rimMask *= smoothstep(-0.25f, 0.35f, dot(surfaceNormal, lightDir));
-        rimMask *= saturate(0.35f + aggregateShadowVisibility * 0.65f);
+    //    float3 viewDir = SafeNormalizeCommon(PPCameraPos.xyz - position.xyz, float3(0.0f, 0.0f, -1.0f));
+    //    float rimStrength = max(rimStyle.x, 0.0f);
+    //    float rimThreshold = saturate(rimStyle.y);
+    //    float rimSoftness = max(rimStyle.z, 0.0001f);
+    //    float rimPower = max(rimStyle.w, 0.05f);
+    //    float rimAlbedoBlend = saturate(rimLight.a);
+    //    float rimLightBlend = saturate(RimLightBlend);
 
-        float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
-        float3 normalizedLightColor = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
-        float3 authoredRimColor = max(rimLight.rgb, 0.0f);
-        float3 rimTint = lerp(authoredRimColor, authoredRimColor * baseColor.rgb, rimAlbedoBlend);
-        rimTint = lerp(rimTint, rimTint * normalizedLightColor, rimLightBlend);
-        baseColor.rgb += rimTint * rimMask * rimStrength * max(lightAttenuation, 0.25f);
-    }
+    //    float rimRaw = 1.0f - saturate(dot(surfaceNormal, viewDir));
+    //    float rimCurved = pow(rimRaw, rimPower);
+    //    float rimMask = smoothstep(rimThreshold - rimSoftness, rimThreshold + rimSoftness, rimCurved);
+    //    rimMask *= smoothstep(-0.25f, 0.35f, dot(surfaceNormal, lightDir));
+    //    rimMask *= saturate(0.35f + aggregateShadowVisibility * 0.65f);
+
+    //    float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
+    //    float3 normalizedLightColor = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
+    //    float3 authoredRimColor = max(rimLight.rgb, 0.0f);
+    //    float3 rimTint = lerp(authoredRimColor, authoredRimColor * baseColor.rgb, rimAlbedoBlend);
+    //    rimTint = lerp(rimTint, rimTint * normalizedLightColor, rimLightBlend);
+    //    baseColor.rgb += rimTint * rimMask * rimStrength * max(lightAttenuation, 0.25f);
+    //}
 
     baseColor.rgb += atmosphereViewScatter;
     baseColor.a = 1.0f;

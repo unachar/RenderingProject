@@ -264,8 +264,8 @@ public:
 	static constexpr uint32_t g_kSCREEN_HEIGHT = 600;
 	static constexpr float g_kNEAR_CLIP = 0.1f;
 	static constexpr float g_kFAR_CLIP = 100.0f;
-	static constexpr float g_kResolutionScale = 0.3f;
-	static constexpr float g_kGBufferScale = 0.3f;
+	static constexpr float g_kResolutionScale = 0.4f;
+	static constexpr float g_kGBufferScale = 0.4f;
 
 
 	static constexpr UINT g_kCB_ALIGNED_SIZE = (sizeof(ConstantBuffer3D) + 255) & ~255;
@@ -277,11 +277,10 @@ public:
 	static constexpr UINT g_kPBR_CB_TOTAL_SLOT_COUNT = g_kPBR_CB_SLOT_COUNT * g_kFRAME_COUNT;
 	static constexpr UINT g_kSHADOW_CB_ALIGNED_SIZE = (sizeof(XMMATRIX) + sizeof(float) * 4 + 255) & ~255;
 	static constexpr UINT g_kSHADOW_CB_SLOT_COUNT = g_kFRAME_COUNT * g_kMAX_SHADOW_LIGHTS;
-	// The scene itself renders at a reduced resolution.  A 1024 map is a much
-	// better quality/performance match than the former 2048 map in this path.
-	static constexpr UINT g_kSHADOW_MAP_SIZE = 1024;
+
+	static constexpr UINT g_kSHADOW_MAP_SIZE = 2048;
 	static constexpr UINT g_kSHADOW_MAP_SIZE_SMALL = 1024;
-	static constexpr UINT g_kTRANSIENT_CB_SLOT_COUNT = 1024;
+	static constexpr UINT g_kTRANSIENT_CB_SLOT_COUNT = 2048;
 	static constexpr UINT g_kTRANSIENT_CB_START_INDEX = g_kMAX_ENTITIES;
 	static constexpr UINT g_kCBV_PER_FRAME_COUNT = g_kMAX_ENTITIES + g_kTRANSIENT_CB_SLOT_COUNT;
 	static constexpr UINT g_kCBV_COUNT = g_kCBV_PER_FRAME_COUNT * g_kFRAME_COUNT;

@@ -12,6 +12,42 @@
 
 namespace
 {
+	void GetGBufferClearColor(UINT index, float outColor[4])
+	{
+		outColor[0] = 0.0f;
+		outColor[1] = 0.0f;
+		outColor[2] = 0.0f;
+		outColor[3] = 0.0f;
+
+		if (index == static_cast<UINT>(GBufferType::BASE_COLOR))
+		{
+			outColor[0] = RendererState::m_kSceneClearColor[0];
+			outColor[1] = RendererState::m_kSceneClearColor[1];
+			outColor[2] = RendererState::m_kSceneClearColor[2];
+			outColor[3] = RendererState::m_kSceneClearColor[3];
+		}
+		else if (index == static_cast<UINT>(GBufferType::NORMAL))
+		{
+			outColor[3] = 1.0f;
+		}
+		else if (index == static_cast<UINT>(GBufferType::DEPTH))
+		{
+			outColor[0] = 1.0f;
+			outColor[1] = 1.0f;
+			outColor[2] = 1.0f;
+			outColor[3] = 1.0f;
+		}
+		else if (index == static_cast<UINT>(GBufferType::MATERIAL))
+		{
+			outColor[3] = -1.0f;
+		}
+		else if (index == static_cast<UINT>(GBufferType::RIM_LIGHT) ||
+			index == static_cast<UINT>(GBufferType::ATMOSPHERE))
+		{
+			outColor[3] = 1.0f;
+		}
+	}
+
 	struct PostProcessConstants
 	{
 		XMFLOAT4 Flags{};
@@ -430,17 +466,8 @@ void RendererDraw::BeginScenePass()
 		CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle = m_UseLowResDepth ? m_LowResDsvHandle : CD3DX12_CPU_DESCRIPTOR_HANDLE(m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
 		for (UINT i = 0; i < g_kGEOMETRY_GBUFFER_COUNT; ++i)
 		{
-			const float normalClear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-			const float positionClear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-			const float depthClear[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-			const float zeroClear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-			const float materialClear[4] = { 0.0f, 0.0f, 0.0f, -1.0f };
-			const float* clearColor = zeroClear;
-			if (i == static_cast<UINT>(GBufferType::BASE_COLOR)) clearColor = m_kSceneClearColor;
-			else if (i == static_cast<UINT>(GBufferType::NORMAL)) clearColor = normalClear;
-			else if (i == static_cast<UINT>(GBufferType::POSITION)) clearColor = positionClear;
-			else if (i == static_cast<UINT>(GBufferType::DEPTH)) clearColor = depthClear;
-			else if (i == static_cast<UINT>(GBufferType::MATERIAL)) clearColor = materialClear;
+			float clearColor[4]{};
+			GetGBufferClearColor(i, clearColor);
 			m_CommandList->ClearRenderTargetView(m_GBufferRtvHandles[i], clearColor, 0, nullptr);
 		}
 		m_CommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
@@ -1053,63 +1080,7 @@ bool RendererDraw::CreateSceneRenderTarget()
 
 			D3D12_CLEAR_VALUE gbufferClear {};
 			gbufferClear.Format = m_kDeferredRtvFormats[i];
-			if (i == static_cast<UINT>(GBufferType::BASE_COLOR))
-			{
-				gbufferClear.Color[0] = m_kSceneClearColor[0];
-				gbufferClear.Color[1] = m_kSceneClearColor[1];
-				gbufferClear.Color[2] = m_kSceneClearColor[2];
-				gbufferClear.Color[3] = m_kSceneClearColor[3];
-			}
-			else if (i == static_cast<UINT>(GBufferType::NORMAL))
-			{
-				gbufferClear.Color[0] = 0.0f;
-				gbufferClear.Color[1] = 0.0f;
-				gbufferClear.Color[2] = 0.0f;
-				gbufferClear.Color[3] = 1.0f;
-			}
-			else if (i == static_cast<UINT>(GBufferType::POSITION))
-			{
-				gbufferClear.Color[0] = 0.0f;
-				gbufferClear.Color[1] = 0.0f;
-				gbufferClear.Color[2] = 0.0f;
-				gbufferClear.Color[3] = 0.0f;
-			}
-			else if (i == static_cast<UINT>(GBufferType::DEPTH))
-			{
-				gbufferClear.Color[0] = 1.0f;
-				gbufferClear.Color[1] = 1.0f;
-				gbufferClear.Color[2] = 1.0f;
-				gbufferClear.Color[3] = 1.0f;
-			}
-			else if (i == static_cast<UINT>(GBufferType::MATERIAL))
-			{
-				gbufferClear.Color[0] = 0.0f;
-				gbufferClear.Color[1] = 0.0f;
-				gbufferClear.Color[2] = 0.0f;
-				gbufferClear.Color[3] = -1.0f;
-			}
-			else if (i == static_cast<UINT>(GBufferType::SHADOW))
-			{
-				gbufferClear.Color[0] = 0.0f;
-				gbufferClear.Color[1] = 0.0f;
-				gbufferClear.Color[2] = 0.0f;
-				gbufferClear.Color[3] = 0.0f;
-			}
-			else if (i == static_cast<UINT>(GBufferType::RIM_STYLE))
-			{
-				gbufferClear.Color[0] = 0.0f;
-				gbufferClear.Color[1] = 0.0f;
-				gbufferClear.Color[2] = 0.0f;
-				gbufferClear.Color[3] = 0.0f;
-			}
-			else if (i == static_cast<UINT>(GBufferType::RIM_LIGHT) ||
-				i == static_cast<UINT>(GBufferType::ATMOSPHERE))
-			{
-				gbufferClear.Color[0] = 0.0f;
-				gbufferClear.Color[1] = 0.0f;
-				gbufferClear.Color[2] = 0.0f;
-				gbufferClear.Color[3] = 1.0f;
-			}
+			GetGBufferClearColor(i, gbufferClear.Color);
 
 			hr = m_Device->CreateCommittedResource(
 				&heapProps,
