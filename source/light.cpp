@@ -35,6 +35,7 @@ Light::CreateDesc Light::MakeDefaultDesc(LightType type)
 	desc.Name = string(GetTypeName(type)) + " Light";
 	desc.Intensity = (type == LightType::Volume) ? 1.5f : 1.0f;
 	desc.Range = (type == LightType::Volume) ? 6.0f : 8.0f;
+	desc.CastShadow = (type == LightType::Directional);
 	return desc;
 }
 

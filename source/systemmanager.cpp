@@ -113,6 +113,8 @@ void SystemManager::RenderFlow()
 			RendererDraw::BeginEditorSceneOverlayPass();
 			DrawSystem(RenderPass::OverlayScene, false);
 			RendererDraw::EndEditorSceneOverlayPass();
+
+			RendererDraw::ApplyAntiAliasing();
 		};
 
 	renderDeferred();

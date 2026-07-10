@@ -36,8 +36,8 @@ bool RendererCore::Init(HWND hwnd)
 	if (m_Width == 0) m_Width = g_kSCREEN_WIDTH;
 	if (m_Height == 0) m_Height = g_kSCREEN_HEIGHT;
 
-	m_SceneWidth = m_Width;
-	m_SceneHeight = m_Height;
+	m_SceneWidth = max((UINT)(m_Width * g_kResolutionScale), 1u);
+	m_SceneHeight = max((UINT)(m_Height * g_kResolutionScale), 1u);
 
 #ifdef _DEBUG
 	ComPtr<ID3D12Debug> debugController;
@@ -241,7 +241,7 @@ bool RendererCore::Init(HWND hwnd)
 	}
 
 	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc {};
-	cbvHeapDesc.NumDescriptors = g_kSHADOW_SRV_INDEX + 1;
+	cbvHeapDesc.NumDescriptors = g_kDEPTH_SRV_INDEX + 1;
 	cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	LogToFile("Step: CreateDescriptorHeap(CBV)\n");
@@ -256,6 +256,8 @@ bool RendererCore::Init(HWND hwnd)
 
 	m_Viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, (float)m_SceneWidth, (float)m_SceneHeight);
 	m_ScissorRect = CD3DX12_RECT(0, 0, m_SceneWidth, m_SceneHeight);
+	m_FullViewport = CD3DX12_VIEWPORT(0.0f, 0.0f, (float)m_Width, (float)m_Height);
+	m_FullScissorRect = CD3DX12_RECT(0, 0, m_Width, m_Height);
 
 	const UINT totalCbSize = g_kCB_ALIGNED_SIZE * g_kCBV_COUNT;
 	auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(totalCbSize);
@@ -385,6 +387,7 @@ void RendererCore::Uninit()
 
 	m_PsoCache.clear();
 	m_PostProcessPsoMap.clear();
+	m_AtmospherePso.Reset();
 
 	if (m_DynamicVertexBuffer)
 	{
@@ -400,6 +403,7 @@ void RendererCore::Uninit()
 	m_ConstantBuffer.Reset();
 	m_PostProcessConstantBuffer.Reset();
 	m_PostProcessRootSignature.Reset();
+	m_UpscaleRootSignature.Reset();
     RendererDraw::ReleaseGBufferResources();
 	m_SceneRenderTarget.Reset();
 	m_SceneRtvHeap.Reset();
@@ -487,13 +491,15 @@ void RendererCore::Resize(UINT width, UINT height)
 		rtvHandle.Offset(1, rtvSize);
 	}
 
+	UINT sceneWidth = max((UINT)(width * g_kResolutionScale), 1u);
+	UINT sceneHeight = max((UINT)(height * g_kResolutionScale), 1u);
 	D3D12_RESOURCE_DESC depthDesc {};
 	depthDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
 	depthDesc.Width = width;
 	depthDesc.Height = height;
 	depthDesc.DepthOrArraySize = 1;
 	depthDesc.MipLevels = 1;
-	depthDesc.Format = DXGI_FORMAT_D32_FLOAT;
+	depthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
 	depthDesc.SampleDesc.Count = 1;
 	depthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
@@ -523,13 +529,15 @@ void RendererCore::Resize(UINT width, UINT height)
 		m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
 	m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 
-	m_Viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, (float)width, (float)height);
-	m_ScissorRect = CD3DX12_RECT(0, 0, width, height);
-
 	m_Width = width;
 	m_Height = height;
-	m_SceneWidth = width;
-	m_SceneHeight = height;
+	m_SceneWidth = sceneWidth;
+	m_SceneHeight = sceneHeight;
+
+	m_Viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, (float)m_SceneWidth, (float)m_SceneHeight);
+	m_ScissorRect = CD3DX12_RECT(0, 0, m_SceneWidth, m_SceneHeight);
+	m_FullViewport = CD3DX12_VIEWPORT(0.0f, 0.0f, (float)m_Width, (float)m_Height);
+	m_FullScissorRect = CD3DX12_RECT(0, 0, m_Width, m_Height);
 
 	RendererDraw::CreateSceneRenderTarget();
 }
@@ -628,6 +636,7 @@ void RendererCore::ApplyPendingHdr()
 	m_PsoCache.clear();
 	m_PostProcessPsoMap.clear();
 	m_DeferredLightingPso.Reset();
+	m_AtmospherePso.Reset();
 
 	for (EntityID entity : World::GetView<ShaderComponent>())
 	{
@@ -640,6 +649,14 @@ void RendererCore::ApplyPendingHdr()
 	}
 
 	PsoManager::CreatePostProcessPipelines();
+	PsoManager::CreateAtmospherePso();
+
+	m_UpscaleBilateralPso.Reset();
+	PsoManager::CreateUpscalePso();
+
+	m_FxaaPso.Reset();
+	m_TaaBlendPso.Reset();
+	PsoManager::CreateAaPsos();
 }
 
 

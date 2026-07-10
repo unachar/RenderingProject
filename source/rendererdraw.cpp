@@ -18,6 +18,7 @@ namespace
 		XMFLOAT4 PPCameraPos{};
 		XMFLOAT4 HdrFlags{};
 		XMFLOAT4X4 PPInvViewProjection{};
+		XMFLOAT4X4 PPViewProjection{};
 	};
 
 	static_assert(sizeof(PostProcessConstants) <= RendererState::g_kPP_CB_ALIGNED_SIZE);
@@ -31,12 +32,17 @@ void RendererDraw::ReleaseGBufferResources()
 		m_GBufferRtvHandles[i] = {};
 		m_GBufferSrvHandles[i] = {};
 	}
+	m_AtmosphereRenderTarget.Reset();
+	m_AtmosphereRtvHandle = {};
+	m_AtmosphereSrvHandle = {};
+	m_LowResDepthBuffer.Reset();
 }
 
 bool RendererDraw::CreateDepthBuffer()
 {
+	UINT dsvHeapSize = 1 + RendererState::g_kMAX_SHADOW_LIGHTS + 1;
 	D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc {};
-	dsvHeapDesc.NumDescriptors = 1 + RendererState::g_kMAX_SHADOW_LIGHTS;
+	dsvHeapDesc.NumDescriptors = dsvHeapSize;
 	dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 	HRESULT hr = m_Device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&m_DsvHeap));
 	if (FAILED(hr))
@@ -44,6 +50,10 @@ bool RendererDraw::CreateDepthBuffer()
 		Debug::Log("ERROR: CreateDescriptorHeap(DSV) failed\n");
 		return false;
 	}
+
+	auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+
+	UINT dsvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 
 	D3D12_RESOURCE_DESC depthDesc {};
 	depthDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -60,7 +70,6 @@ bool RendererDraw::CreateDepthBuffer()
 	clearValue.DepthStencil.Depth = 1.0f;
 	clearValue.DepthStencil.Stencil = 0;
 
-	auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
 	hr = m_Device->CreateCommittedResource(
 		&heapProps,
 		D3D12_HEAP_FLAG_NONE,
@@ -80,6 +89,19 @@ bool RendererDraw::CreateDepthBuffer()
 	m_Device->CreateDepthStencilView(m_DepthStencilBuffer.Get(), &dsvDesc,
 		m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
 	m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+	UINT cbvIncrementDepth = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	CD3DX12_CPU_DESCRIPTOR_HANDLE depthSrvCpuHandle(m_CbvHeap->GetCPUDescriptorHandleForHeapStart(), RendererState::g_kDEPTH_SRV_INDEX, cbvIncrementDepth);
+	D3D12_SHADER_RESOURCE_VIEW_DESC depthSrvDesc{};
+	depthSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	depthSrvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+	depthSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	depthSrvDesc.Texture2D.MipLevels = 1;
+	m_Device->CreateShaderResourceView(m_DepthStencilBuffer.Get(), &depthSrvDesc, depthSrvCpuHandle);
+
+	UINT lowResDsvIndex = 1 + RendererState::g_kMAX_SHADOW_LIGHTS;
+	CD3DX12_CPU_DESCRIPTOR_HANDLE lowResDsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), lowResDsvIndex, dsvIncrement);
+	m_LowResDsvHandle = lowResDsvHandle;
 
 	return true;
 }
@@ -105,7 +127,7 @@ bool RendererDraw::CreateShadowDepthBuffer()
 	if (!m_DsvHeap)
 	{
 		D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc {};
-		dsvHeapDesc.NumDescriptors = 1 + RendererState::g_kMAX_SHADOW_LIGHTS;
+		dsvHeapDesc.NumDescriptors = 1 + RendererState::g_kMAX_SHADOW_LIGHTS + 1;
 		dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 		hr = m_Device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&m_DsvHeap));
 		if (FAILED(hr)) { Debug::Log("ERROR: CreateDescriptorHeap(DSV) failed\n"); return false; }
@@ -257,6 +279,8 @@ void RendererDraw::BeginBackBufferPass()
 	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(m_RtvHeap->GetCPUDescriptorHandleForHeapStart(), m_FrameIndex, m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV));
 	CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
 	m_CommandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
+	m_CommandList->RSSetViewports(1, &m_FullViewport);
+	m_CommandList->RSSetScissorRects(1, &m_FullScissorRect);
 }
 
 void RendererDraw::BeginEditorSceneOverlayPass()
@@ -287,7 +311,17 @@ void RendererDraw::BeginEditorSceneOverlayPass()
 	m_IsSceneColorForwardPass = true;
 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
+	// Deferred geometry can use the reduced-resolution depth buffer.  The
+	// transparent overlay is rendered at full resolution, so its full-resolution
+	// depth buffer was never cleared in that path and could reject every fragment.
+	if (m_UseLowResDepth)
+	{
+		m_CommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+	}
 	m_CommandList->OMSetRenderTargets(1, &m_EditorSceneRtvHandle, FALSE, &dsvHandle);
+
+	m_CommandList->RSSetViewports(1, &m_FullViewport);
+	m_CommandList->RSSetScissorRects(1, &m_FullScissorRect);
 }
 
 void RendererDraw::EndEditorSceneOverlayPass()
@@ -315,6 +349,7 @@ void RendererDraw::BeginScenePass()
 {
 	if (!m_SceneRenderTarget) return;
 	m_IsSceneColorForwardPass = true;
+	m_UseLowResDepth = false;
 
 	if (m_DepthStencilState != D3D12_RESOURCE_STATE_DEPTH_WRITE)
 	{
@@ -329,6 +364,7 @@ void RendererDraw::BeginScenePass()
 	if (m_RenderMode == RenderMode::DEFERRED)
 	{
 		m_IsDeferredGeometryPass = true;
+		m_UseLowResDepth = (m_LowResDepthBuffer != nullptr);
 
 		for (UINT i = 0; i < g_kGBUFFER_COUNT; ++i)
 		{
@@ -347,9 +383,19 @@ void RendererDraw::BeginScenePass()
 				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 				D3D12_RESOURCE_STATE_RENDER_TARGET);
 		}
+
+		if (m_UseLowResDepth)
+		{
+			D3D12_RESOURCE_BARRIER depthBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+				m_LowResDepthBuffer.Get(),
+				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+				D3D12_RESOURCE_STATE_DEPTH_WRITE);
+			m_CommandList->ResourceBarrier(1, &depthBarrier);
+		}
+
 		m_CommandList->ResourceBarrier(g_kGBUFFER_COUNT, barriers);
 
-		CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
+		CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle = m_UseLowResDepth ? m_LowResDsvHandle : CD3DX12_CPU_DESCRIPTOR_HANDLE(m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
 		for (UINT i = 0; i < g_kGBUFFER_COUNT; ++i)
 		{
 			const float normalClear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
@@ -405,20 +451,33 @@ void RendererDraw::EndScenePass()
 			}
 		}
 
-		D3D12_RESOURCE_BARRIER barriers[g_kGBUFFER_COUNT + 1] {};
+		UINT barrierCount = 0;
+		D3D12_RESOURCE_BARRIER barriers[g_kGBUFFER_COUNT + 2] {};
 		for (UINT i = 0; i < g_kGBUFFER_COUNT; ++i)
 		{
-			barriers[i] = CD3DX12_RESOURCE_BARRIER::Transition(
+			barriers[barrierCount++] = CD3DX12_RESOURCE_BARRIER::Transition(
 				m_GBufferTargets[i].Get(),
 				D3D12_RESOURCE_STATE_RENDER_TARGET,
 				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 		}
-		barriers[g_kGBUFFER_COUNT] = CD3DX12_RESOURCE_BARRIER::Transition(
-			m_DepthStencilBuffer.Get(),
-			m_DepthStencilState,
-			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-		m_CommandList->ResourceBarrier(g_kGBUFFER_COUNT + 1, barriers);
-		m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+		if (m_UseLowResDepth)
+		{
+			barriers[barrierCount++] = CD3DX12_RESOURCE_BARRIER::Transition(
+				m_LowResDepthBuffer.Get(),
+				D3D12_RESOURCE_STATE_DEPTH_WRITE,
+				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+		}
+		else
+		{
+			barriers[barrierCount++] = CD3DX12_RESOURCE_BARRIER::Transition(
+				m_DepthStencilBuffer.Get(),
+				m_DepthStencilState,
+				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+			m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		}
+
+		m_CommandList->ResourceBarrier(barrierCount, barriers);
 		m_IsDeferredGeometryPass = false;
 		m_IsSceneColorForwardPass = false;
 		return;
@@ -441,7 +500,8 @@ void RendererDraw::EndScenePass()
 void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 {
 	auto DrawFullscreenPass = [&](ID3D12PipelineState* pso, D3D12_CPU_DESCRIPTOR_HANDLE targetRtv,
-		D3D12_GPU_DESCRIPTOR_HANDLE sourceHandle, float intensity, float renderModeFlag, float deferredLightStrength)
+		D3D12_GPU_DESCRIPTOR_HANDLE sourceHandle, float intensity, float renderModeFlag, float deferredLightStrength,
+		D3D12_GPU_DESCRIPTOR_HANDLE atmosphereHandle = D3D12_GPU_DESCRIPTOR_HANDLE{})
 		{
 			if (!pso || !m_PostProcessRootSignature)
 			{
@@ -469,10 +529,11 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 				const XMMATRIX invViewProjection = XMMatrixInverse(nullptr, view * projection);
 
 				PostProcessConstants params{};
-				params.Flags = XMFLOAT4(ImGuiManager::GetExposure(), intensity, renderModeFlag, 0.0f);
+				params.Flags = XMFLOAT4(ImGuiManager::GetExposure(), intensity, renderModeFlag, g_kResolutionScale);
 				params.PPCameraPos = XMFLOAT4(cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f);
 				params.HdrFlags = XMFLOAT4(ImGuiManager::IsHdrEnabled() ? 1.0f : 0.0f, ImGuiManager::IsToneMapEnabled() ? 1.0f : 0.0f, 0.0f, 0.0f);
 				XMStoreFloat4x4(&params.PPInvViewProjection, XMMatrixTranspose(invViewProjection));
+				XMStoreFloat4x4(&params.PPViewProjection, XMMatrixTranspose(view * projection));
 				auto* ppDst = static_cast<UINT8*>(m_pPostProcessCbvDataBegin) +
 					m_FrameIndex * g_kPP_CB_ALIGNED_SIZE;
 				memcpy(ppDst, &params, sizeof(params));
@@ -506,6 +567,7 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 			}
 			if (m_ShadowConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(5, RendererResource::GetCurrentShadowConstantBufferAddress());
 			if (m_PBRConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(6, RendererResource::GetPBRConstantBufferAddress());
+			if (atmosphereHandle.ptr != 0) m_CommandList->SetGraphicsRootDescriptorTable(7, atmosphereHandle);
 			m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			m_CommandList->DrawInstanced(3, 1, 0, 0);
 		};
@@ -518,10 +580,31 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 	if (m_RenderMode == RenderMode::DEFERRED)
 	{
 		ID3D12PipelineState* deferredLightingPso = PsoManager::GetDeferredLightingPso();
-		if (!deferredLightingPso || !m_SceneRenderTarget)
+		ID3D12PipelineState* atmospherePso = PsoManager::GetAtmospherePso();
+		if (!deferredLightingPso || !atmospherePso || !m_SceneRenderTarget || !m_AtmosphereRenderTarget)
 		{
 			return;
 		}
+
+		D3D12_RESOURCE_BARRIER atmosphereToRt = CD3DX12_RESOURCE_BARRIER::Transition(
+			m_AtmosphereRenderTarget.Get(),
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+			D3D12_RESOURCE_STATE_RENDER_TARGET);
+		m_CommandList->ResourceBarrier(1, &atmosphereToRt);
+		const float atmosphereClear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+		m_CommandList->ClearRenderTargetView(m_AtmosphereRtvHandle, atmosphereClear, 0, nullptr);
+		DrawFullscreenPass(
+			atmospherePso,
+			m_AtmosphereRtvHandle,
+			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::BASE_COLOR)],
+			1.0f,
+			1.0f,
+			1.35f);
+		D3D12_RESOURCE_BARRIER atmosphereToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+			m_AtmosphereRenderTarget.Get(),
+			D3D12_RESOURCE_STATE_RENDER_TARGET,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+		m_CommandList->ResourceBarrier(1, &atmosphereToSrv);
 
 		D3D12_RESOURCE_BARRIER toSceneRt = CD3DX12_RESOURCE_BARRIER::Transition(
 			m_SceneRenderTarget.Get(),
@@ -536,7 +619,8 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::BASE_COLOR)],
 			1.0f,
 			1.0f,
-			1.35f);
+			1.35f,
+			m_AtmosphereSrvHandle);
 
 		D3D12_RESOURCE_BARRIER toSceneSrv = CD3DX12_RESOURCE_BARRIER::Transition(
 			m_SceneRenderTarget.Get(),
@@ -558,6 +642,35 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 	m_CommandList->ResourceBarrier(1, &toEditorRt);
 	m_CommandList->ClearRenderTargetView(m_EditorSceneRtvHandle, m_kSceneClearColor, 0, nullptr);
 
+	m_CommandList->RSSetViewports(1, &m_FullViewport);
+	m_CommandList->RSSetScissorRects(1, &m_FullScissorRect);
+
+	if (m_UseLowResDepth && g_kResolutionScale < 1.0f)
+	{
+		ID3D12PipelineState* upscalePso = PsoManager::GetUpscaleBilateralPso();
+		if (upscalePso && m_UpscaleRootSignature)
+		{
+			m_CommandList->OMSetRenderTargets(1, &m_EditorSceneRtvHandle, FALSE, nullptr);
+			m_CommandList->SetPipelineState(upscalePso);
+			m_CommandList->SetGraphicsRootSignature(m_UpscaleRootSignature.Get());
+
+			SetDescriptorHeap();
+
+			m_CommandList->SetGraphicsRootDescriptorTable(0, m_SceneSrvHandle);
+			m_CommandList->SetGraphicsRootDescriptorTable(1, m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)]);
+
+			if (m_PostProcessConstantBuffer)
+			{
+				m_CommandList->SetGraphicsRootConstantBufferView(
+					2,
+					m_PostProcessConstantBuffer->GetGPUVirtualAddress() + m_FrameIndex * g_kPP_CB_ALIGNED_SIZE);
+			}
+
+			m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			m_CommandList->DrawInstanced(3, 1, 0, 0);
+		}
+	}
+
 	DrawFullscreenPass(
 		postProcessPso,
 		m_EditorSceneRtvHandle,
@@ -572,8 +685,142 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 	m_CommandList->ResourceBarrier(1, &toEditorSrv);
 }
-void RendererDraw::SetDescriptorHeap()
+void RendererDraw::ApplyAntiAliasing()
+{
+    if (!m_AaRenderTarget || !m_AaRootSignature)
+        return;
 
+    AntiAliasingMode mode = m_AntiAliasingMode;
+    if (mode == AntiAliasingMode::NONE)
+        return;
+
+    ID3D12PipelineState* pso = nullptr;
+    if (mode == AntiAliasingMode::FXAA)
+        pso = PsoManager::GetFxaaPso();
+    else if (mode == AntiAliasingMode::TAA)
+        pso = PsoManager::GetTaaBlendPso();
+    else
+        return;
+
+    if (!pso)
+        return;
+
+    SetDescriptorHeap();
+
+    D3D12_RESOURCE_BARRIER toAaCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+        m_AaRenderTarget.Get(),
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+        D3D12_RESOURCE_STATE_RENDER_TARGET);
+    m_CommandList->ResourceBarrier(1, &toAaCopy);
+
+    m_CommandList->OMSetRenderTargets(1, &m_AaRtvHandle, FALSE, nullptr);
+    m_CommandList->SetPipelineState(pso);
+    m_CommandList->SetGraphicsRootSignature(m_AaRootSignature.Get());
+    m_CommandList->RSSetViewports(1, &m_FullViewport);
+    m_CommandList->RSSetScissorRects(1, &m_FullScissorRect);
+
+    m_CommandList->SetGraphicsRootConstantBufferView(0, m_PostProcessConstantBuffer->GetGPUVirtualAddress() + m_FrameIndex * g_kPP_CB_ALIGNED_SIZE);
+
+    m_CommandList->SetGraphicsRootDescriptorTable(1, m_EditorSceneSrvHandle);
+
+    if (mode == AntiAliasingMode::FXAA)
+    {
+        m_CommandList->SetGraphicsRootDescriptorTable(2, m_EditorSceneSrvHandle);
+        m_CommandList->SetGraphicsRootDescriptorTable(3, m_EditorSceneSrvHandle);
+
+        struct FxaaCb { float rcpWidth; float rcpHeight; } cb;
+        cb.rcpWidth = 1.0f / (float)m_Width;
+        cb.rcpHeight = 1.0f / (float)m_Height;
+        m_CommandList->SetGraphicsRoot32BitConstants(4, 2, &cb, 0);
+    }
+    else if (mode == AntiAliasingMode::TAA)
+    {
+        CD3DX12_GPU_DESCRIPTOR_HANDLE historySrv(
+            m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
+            RendererState::g_kAA_HISTORY_SRV_INDEX, m_CbvIncrementSize);
+        m_CommandList->SetGraphicsRootDescriptorTable(2, historySrv);
+
+        CD3DX12_GPU_DESCRIPTOR_HANDLE depthSrv(
+            m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
+            RendererState::g_kDEPTH_SRV_INDEX, m_CbvIncrementSize);
+        m_CommandList->SetGraphicsRootDescriptorTable(3, depthSrv);
+
+        XMMATRIX prevView = XMLoadFloat4x4(&m_PrevViewMatrix);
+        XMMATRIX prevProj = XMLoadFloat4x4(&m_PrevProjMatrix);
+        XMMATRIX prevViewProj = XMMatrixTranspose(prevView * prevProj);
+
+        float cbData[20] = {};
+        memcpy(cbData, &prevViewProj, 64);
+        cbData[16] = 0.05f;
+        cbData[17] = 1.0f / (float)m_Width;
+        cbData[18] = 1.0f / (float)m_Height;
+        m_CommandList->SetGraphicsRoot32BitConstants(4, 20, cbData, 0);
+    }
+
+    m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    m_CommandList->DrawInstanced(3, 1, 0, 0);
+
+    D3D12_RESOURCE_BARRIER toAaSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+        m_AaRenderTarget.Get(),
+        D3D12_RESOURCE_STATE_RENDER_TARGET,
+        D3D12_RESOURCE_STATE_COPY_SOURCE);
+    m_CommandList->ResourceBarrier(1, &toAaSrv);
+
+    D3D12_RESOURCE_BARRIER toEditorCopyDest = CD3DX12_RESOURCE_BARRIER::Transition(
+        m_EditorSceneRenderTarget.Get(),
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+        D3D12_RESOURCE_STATE_COPY_DEST);
+    m_CommandList->ResourceBarrier(1, &toEditorCopyDest);
+
+    m_CommandList->CopyResource(m_EditorSceneRenderTarget.Get(), m_AaRenderTarget.Get());
+
+    if (mode == AntiAliasingMode::TAA)
+    {
+        m_TaaFrameIndex++;
+
+        D3D12_RESOURCE_BARRIER toHistoryCopyDest = CD3DX12_RESOURCE_BARRIER::Transition(
+            m_AaRenderTarget.Get(),
+            D3D12_RESOURCE_STATE_COPY_SOURCE,
+            D3D12_RESOURCE_STATE_COPY_DEST);
+        m_CommandList->ResourceBarrier(1, &toHistoryCopyDest);
+
+        D3D12_RESOURCE_BARRIER toEditorCopySource = CD3DX12_RESOURCE_BARRIER::Transition(
+            m_EditorSceneRenderTarget.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_COPY_SOURCE);
+        m_CommandList->ResourceBarrier(1, &toEditorCopySource);
+
+        m_CommandList->CopyResource(m_AaRenderTarget.Get(), m_EditorSceneRenderTarget.Get());
+
+        D3D12_RESOURCE_BARRIER toHistorySrv = CD3DX12_RESOURCE_BARRIER::Transition(
+            m_AaRenderTarget.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        m_CommandList->ResourceBarrier(1, &toHistorySrv);
+
+        D3D12_RESOURCE_BARRIER toEditorSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+            m_EditorSceneRenderTarget.Get(),
+            D3D12_RESOURCE_STATE_COPY_SOURCE,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        m_CommandList->ResourceBarrier(1, &toEditorSrv);
+    }
+    else
+    {
+        D3D12_RESOURCE_BARRIER toAaFinalSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+            m_AaRenderTarget.Get(),
+            D3D12_RESOURCE_STATE_COPY_SOURCE,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        m_CommandList->ResourceBarrier(1, &toAaFinalSrv);
+
+        D3D12_RESOURCE_BARRIER toEditorFinalSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+            m_EditorSceneRenderTarget.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        m_CommandList->ResourceBarrier(1, &toEditorFinalSrv);
+    }
+}
+
+void RendererDraw::SetDescriptorHeap()
 {
 	ID3D12DescriptorHeap* heaps[] = { m_CbvHeap.Get() };
 	m_CommandList->SetDescriptorHeaps(_countof(heaps), heaps);
@@ -645,6 +892,9 @@ bool RendererDraw::CreateSceneRenderTarget()
 	auto resDesc = CD3DX12_RESOURCE_DESC::Tex2D(
 		m_SceneColorFormat, m_SceneWidth, m_SceneHeight, 1, 1, 1, 0,
 		D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+	auto fullResDesc = CD3DX12_RESOURCE_DESC::Tex2D(
+		m_SceneColorFormat, m_Width, m_Height, 1, 1, 1, 0,
+		D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
 
 	D3D12_CLEAR_VALUE clearValue {};
 	clearValue.Format = m_SceneColorFormat;
@@ -659,12 +909,13 @@ bool RendererDraw::CreateSceneRenderTarget()
 	if (FAILED(hr)) return false;
 
 	hr = m_Device->CreateCommittedResource(
-		&heapProps, D3D12_HEAP_FLAG_NONE, &resDesc,
+		&heapProps, D3D12_HEAP_FLAG_NONE, &fullResDesc,
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue, IID_PPV_ARGS(&m_EditorSceneRenderTarget));
 	if (FAILED(hr)) return false;
 
 	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc {};
-	rtvHeapDesc.NumDescriptors = (m_RenderMode == RenderMode::DEFERRED) ? (2 + g_kGBUFFER_COUNT) : 2;
+	UINT rtvCount = (m_RenderMode == RenderMode::DEFERRED) ? (3 + g_kGBUFFER_COUNT) : 2;
+	rtvHeapDesc.NumDescriptors = rtvCount + 1;
 	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 	hr = m_Device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&m_SceneRtvHeap));
 	if (FAILED(hr)) return false;
@@ -689,6 +940,44 @@ bool RendererDraw::CreateSceneRenderTarget()
 	m_Device->CreateShaderResourceView(m_SceneRenderTarget.Get(), &srvDesc, srvCpuHandle);
 	m_Device->CreateShaderResourceView(m_EditorSceneRenderTarget.Get(), &srvDesc, editorSceneSrvCpuHandle);
 
+	{
+		auto aaDesc = CD3DX12_RESOURCE_DESC::Tex2D(
+			m_SceneColorFormat, m_Width, m_Height, 1, 1, 1, 0,
+			D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+		D3D12_CLEAR_VALUE aaClear{};
+		aaClear.Format = m_SceneColorFormat;
+		aaClear.Color[0] = m_kSceneClearColor[0];
+		aaClear.Color[1] = m_kSceneClearColor[1];
+		aaClear.Color[2] = m_kSceneClearColor[2];
+		aaClear.Color[3] = m_kSceneClearColor[3];
+		m_AaRenderTarget.Reset();
+		hr = m_Device->CreateCommittedResource(
+			&heapProps, D3D12_HEAP_FLAG_NONE, &aaDesc,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &aaClear,
+			IID_PPV_ARGS(&m_AaRenderTarget));
+		if (FAILED(hr)) return false;
+		m_AaRenderTarget->SetName(L"AaRenderTarget");
+
+		UINT rtvHeapSize = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+		UINT aaRtvOffset = rtvCount;
+		m_AaRtvHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(m_SceneRtvHandle, aaRtvOffset, rtvHeapSize);
+		m_Device->CreateRenderTargetView(m_AaRenderTarget.Get(), nullptr, m_AaRtvHandle);
+
+		UINT cbvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+		m_AaSrvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), RendererState::g_kAA_SRV_INDEX, cbvIncrement);
+		CD3DX12_CPU_DESCRIPTOR_HANDLE aaSrvCpuHandle(m_CbvHeap->GetCPUDescriptorHandleForHeapStart(), RendererState::g_kAA_SRV_INDEX, cbvIncrement);
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC aaSrvDesc{};
+		aaSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		aaSrvDesc.Format = m_SceneColorFormat;
+		aaSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		aaSrvDesc.Texture2D.MipLevels = 1;
+		m_Device->CreateShaderResourceView(m_AaRenderTarget.Get(), &aaSrvDesc, aaSrvCpuHandle);
+
+		CD3DX12_CPU_DESCRIPTOR_HANDLE historySrvCpuHandle(m_CbvHeap->GetCPUDescriptorHandleForHeapStart(), RendererState::g_kAA_HISTORY_SRV_INDEX, cbvIncrement);
+		m_Device->CreateShaderResourceView(m_AaRenderTarget.Get(), &aaSrvDesc, historySrvCpuHandle);
+	}
+
 	if (m_EnvironmentTextureSrvIndex < 0)
 	{
 		m_EnvironmentTextureSrvIndex = TextureManager::LoadTexture("asset\\model\\sky\\charolettenbrunn_park_2k.DDS");
@@ -696,11 +985,13 @@ bool RendererDraw::CreateSceneRenderTarget()
 
 	if (m_RenderMode == RenderMode::DEFERRED)
 	{
+		UINT gbufferWidth = max((UINT)(m_Width * g_kGBufferScale), 1u);
+		UINT gbufferHeight = max((UINT)(m_Height * g_kGBufferScale), 1u);
 		CD3DX12_CPU_DESCRIPTOR_HANDLE gbufferRtvHandle(m_SceneRtvHandle, 2, rtvIncrement);
 		for (UINT i = 0; i < g_kGBUFFER_COUNT; ++i)
 		{
 			auto gbufferDesc = CD3DX12_RESOURCE_DESC::Tex2D(
-				m_kDeferredRtvFormats[i], m_SceneWidth, m_SceneHeight, 1, 1, 1, 0,
+				m_kDeferredRtvFormats[i], gbufferWidth, gbufferHeight, 1, 1, 1, 0,
 				D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
 
 			D3D12_CLEAR_VALUE gbufferClear {};
@@ -792,6 +1083,85 @@ bool RendererDraw::CreateSceneRenderTarget()
 
 			gbufferRtvHandle.Offset(1, rtvIncrement);
 		}
+
+		// A separate low-resolution atmosphere GBuffer stores pre-integrated RGB
+		// scattering.  It is generated after geometry and consumed by deferred
+		// lighting, so empty-space shafts do not depend on object GBuffer pixels.
+		auto atmosphereDesc = CD3DX12_RESOURCE_DESC::Tex2D(
+			DXGI_FORMAT_R16G16B16A16_FLOAT,
+			gbufferWidth,
+			gbufferHeight,
+			1,
+			1,
+			1,
+			0,
+			D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+		D3D12_CLEAR_VALUE atmosphereClear{};
+		atmosphereClear.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		HRESULT atmosphereHr = m_Device->CreateCommittedResource(
+			&heapProps,
+			D3D12_HEAP_FLAG_NONE,
+			&atmosphereDesc,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+			&atmosphereClear,
+			IID_PPV_ARGS(&m_AtmosphereRenderTarget));
+		if (FAILED(atmosphereHr)) return false;
+		m_AtmosphereRenderTarget->SetName(L"AtmosphereGBuffer");
+
+		D3D12_RENDER_TARGET_VIEW_DESC atmosphereRtvDesc{};
+		atmosphereRtvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		atmosphereRtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+		m_Device->CreateRenderTargetView(m_AtmosphereRenderTarget.Get(), &atmosphereRtvDesc, gbufferRtvHandle);
+		m_AtmosphereRtvHandle = gbufferRtvHandle;
+
+		CD3DX12_CPU_DESCRIPTOR_HANDLE atmosphereSrvCpuHandle(
+			m_CbvHeap->GetCPUDescriptorHandleForHeapStart(),
+			RendererState::g_kATMOSPHERE_SRV_INDEX,
+			cbvIncrement);
+		m_AtmosphereSrvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(
+			m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
+			RendererState::g_kATMOSPHERE_SRV_INDEX,
+			cbvIncrement);
+		D3D12_SHADER_RESOURCE_VIEW_DESC atmosphereSrvDesc{};
+		atmosphereSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		atmosphereSrvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		atmosphereSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		atmosphereSrvDesc.Texture2D.MipLevels = 1;
+		m_Device->CreateShaderResourceView(m_AtmosphereRenderTarget.Get(), &atmosphereSrvDesc, atmosphereSrvCpuHandle);
+	}
+
+	if (m_RenderMode == RenderMode::DEFERRED && (m_SceneWidth != m_Width || m_SceneHeight != m_Height))
+	{
+		D3D12_RESOURCE_DESC lowResDepthDesc{};
+		lowResDepthDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		lowResDepthDesc.Width = m_SceneWidth;
+		lowResDepthDesc.Height = m_SceneHeight;
+		lowResDepthDesc.DepthOrArraySize = 1;
+		lowResDepthDesc.MipLevels = 1;
+		lowResDepthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+		lowResDepthDesc.SampleDesc.Count = 1;
+		lowResDepthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+		D3D12_CLEAR_VALUE clearValue{};
+		clearValue.Format = DXGI_FORMAT_D32_FLOAT;
+		clearValue.DepthStencil.Depth = 1.0f;
+
+		HRESULT hr = m_Device->CreateCommittedResource(
+			&heapProps, D3D12_HEAP_FLAG_NONE, &lowResDepthDesc,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue,
+			IID_PPV_ARGS(&m_LowResDepthBuffer));
+		if (FAILED(hr)) return false;
+
+		m_LowResDepthBuffer->SetName(L"LowResDepthBuffer");
+
+		D3D12_DEPTH_STENCIL_VIEW_DESC lowResDsvDesc{};
+		lowResDsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+		lowResDsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+		m_Device->CreateDepthStencilView(m_LowResDepthBuffer.Get(), &lowResDsvDesc, m_LowResDsvHandle);
+	}
+	else
+	{
+		m_LowResDepthBuffer.Reset();
 	}
 
 	return true;

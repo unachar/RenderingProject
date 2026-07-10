@@ -249,6 +249,14 @@ private:
 	unordered_map<string, uint32_t> m_PmxMorphIndexMap{};
 	vector<vector<pair<uint32_t, uint32_t>>> m_PmxVertexToMeshVertices{};
 	vector<XMFLOAT4X4> m_BoneMatricesScratch{};
+	uint64_t m_SkinningVersion = 0;
+	uint64_t m_DispatchedSkinningVersion = UINT64_MAX;
+	string m_LastPoseAnimation1{};
+	string m_LastPoseAnimation2{};
+	float m_LastPoseFrame1 = 0.0f;
+	float m_LastPoseFrame2 = 0.0f;
+	float m_LastPoseBlendRate = 0.0f;
+	bool m_HasCachedPose = false;
 	bool m_HasAppliedVmdMorphs = false;
 	const VmdAnimation* m_CachedVmdPrimaryAnimation = nullptr;
 	const VmdAnimation* m_CachedVmdSecondaryAnimation = nullptr;

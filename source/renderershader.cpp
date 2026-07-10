@@ -121,12 +121,13 @@ static void ShaderLogToFile(const char* msg)
 bool RendererShader::CreatePostProcessPipeline()
 {
 	ShaderLogToFile("PP: setup ranges\n");
-	CD3DX12_DESCRIPTOR_RANGE ranges[3];
+	CD3DX12_DESCRIPTOR_RANGE ranges[4];
 	ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 6, 0);
 	ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6);
 	ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 7);
+	ranges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 8);
 
-	CD3DX12_ROOT_PARAMETER params[7];
+	CD3DX12_ROOT_PARAMETER params[8];
 	params[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[1].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 	params[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -134,6 +135,7 @@ bool RendererShader::CreatePostProcessPipeline()
 	params[4].InitAsDescriptorTable(1, &ranges[2], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[5].InitAsConstantBufferView(3, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 	params[6].InitAsConstantBufferView(2, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+	params[7].InitAsDescriptorTable(1, &ranges[3], D3D12_SHADER_VISIBILITY_PIXEL);
 
 	CD3DX12_STATIC_SAMPLER_DESC samplers[2] {};
 	samplers[0] = CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
@@ -181,8 +183,66 @@ bool RendererShader::CreatePostProcessPipeline()
 	if (FAILED(hr)) { ShaderLogToFile("PP: FAIL PBR CB\n"); return false; }
 	m_PBRConstantBuffer->Map(0, nullptr, &m_pPBRCbvDataBegin);
 
+	ShaderLogToFile("PP: create upscale root sig\n");
+	{
+		CD3DX12_DESCRIPTOR_RANGE upscaleRange[2];
+		upscaleRange[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+		upscaleRange[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
+
+		CD3DX12_ROOT_PARAMETER upscaleParams[3];
+		upscaleParams[0].InitAsDescriptorTable(1, &upscaleRange[0], D3D12_SHADER_VISIBILITY_PIXEL);
+		upscaleParams[1].InitAsDescriptorTable(1, &upscaleRange[1], D3D12_SHADER_VISIBILITY_PIXEL);
+		upscaleParams[2].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+
+		CD3DX12_STATIC_SAMPLER_DESC upscaleSampler(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
+		CD3DX12_ROOT_SIGNATURE_DESC upscaleRsDesc(_countof(upscaleParams), upscaleParams, 1, &upscaleSampler, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+		ComPtr<ID3DBlob> rsBlob, errBlob;
+		HRESULT hr = D3D12SerializeRootSignature(&upscaleRsDesc, D3D_ROOT_SIGNATURE_VERSION_1, &rsBlob, &errBlob);
+		if (FAILED(hr))
+		{
+			ShaderLogToFile("PP: FAIL SerializeUpscaleRootSig\n");
+			if (errBlob) ShaderLogToFile((const char*)errBlob->GetBufferPointer());
+			return false;
+		}
+		hr = m_Device->CreateRootSignature(0, rsBlob->GetBufferPointer(), rsBlob->GetBufferSize(), IID_PPV_ARGS(&m_UpscaleRootSignature));
+		if (FAILED(hr)) { ShaderLogToFile("PP: FAIL CreateUpscaleRootSig\n"); return false; }
+	}
+
+	ShaderLogToFile("PP: create AA root sig\n");
+	{
+		CD3DX12_DESCRIPTOR_RANGE aaRange[3];
+		aaRange[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+		aaRange[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
+		aaRange[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);
+
+		CD3DX12_ROOT_PARAMETER aaParams[5];
+		aaParams[0].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+		aaParams[1].InitAsDescriptorTable(1, &aaRange[0], D3D12_SHADER_VISIBILITY_PIXEL);
+		aaParams[2].InitAsDescriptorTable(1, &aaRange[1], D3D12_SHADER_VISIBILITY_PIXEL);
+		aaParams[3].InitAsDescriptorTable(1, &aaRange[2], D3D12_SHADER_VISIBILITY_PIXEL);
+		aaParams[4].InitAsConstants(20, 4, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+
+		CD3DX12_STATIC_SAMPLER_DESC aaSampler(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
+		CD3DX12_ROOT_SIGNATURE_DESC aaRsDesc(_countof(aaParams), aaParams, 1, &aaSampler, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+		ComPtr<ID3DBlob> rsBlob, errBlob;
+		HRESULT hr = D3D12SerializeRootSignature(&aaRsDesc, D3D_ROOT_SIGNATURE_VERSION_1, &rsBlob, &errBlob);
+		if (FAILED(hr))
+		{
+			ShaderLogToFile("PP: FAIL SerializeAaRootSig\n");
+			if (errBlob) ShaderLogToFile((const char*)errBlob->GetBufferPointer());
+			return false;
+		}
+		hr = m_Device->CreateRootSignature(0, rsBlob->GetBufferPointer(), rsBlob->GetBufferSize(), IID_PPV_ARGS(&m_AaRootSignature));
+		if (FAILED(hr)) { ShaderLogToFile("PP: FAIL CreateAaRootSig\n"); return false; }
+	}
+
 	ShaderLogToFile("PP: create PSOs\n");
 	if (!PsoManager::CreatePostProcessPipelines()) { ShaderLogToFile("PP: FAIL CreatePostProcessPipelines\n"); return false; }
+	if (!PsoManager::CreateAtmospherePso()) { ShaderLogToFile("PP: FAIL CreateAtmospherePso\n"); return false; }
+	if (!PsoManager::CreateUpscalePso()) { ShaderLogToFile("PP: FAIL CreateUpscalePso\n"); return false; }
+	if (!PsoManager::CreateAaPsos()) { ShaderLogToFile("PP: FAIL CreateAaPsos\n"); return false; }
 	ShaderLogToFile("PP: done\n");
 	return true;
 }

@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "psomanager.h"
 #include "renderershader.h"
+#include "renderercore.h"
 #include "rendererutils.h"
 #include "texturemanager.h"
 
@@ -14,6 +15,7 @@ bool PsoManager::CreateGraphicsPipelineState(
 	if (FAILED(hr))
 	{
 		Debug::Log("ERROR: Failed to create %s graphics PSO. HRESULT: 0x%08X\n", debugName ? debugName : "unnamed", hr);
+
 		return false;
 	}
 	return true;
@@ -155,11 +157,12 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const rendererResource& 
 	return newPso.Get();
 }
 
-ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso()
+ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso(bool enableAlphaBlend)
 {
 	const bool useDeferredMrt = (m_RenderMode == RenderMode::DEFERRED && m_IsDeferredGeometryPass);
 	const UINT forwardRtvFmt = useDeferredMrt ? 0 : static_cast<UINT>(GetForwardRtvFormat());
-	const string key = string("TOON_OUTLINE|") + (useDeferredMrt ? "DEFERRED" : "FORWARD") + "|" + to_string(forwardRtvFmt);
+	const bool useAlphaBlend = enableAlphaBlend && !useDeferredMrt;
+	const string key = string("TOON_OUTLINE|") + (useDeferredMrt ? "DEFERRED" : "FORWARD") + "|" + to_string(forwardRtvFmt) + "|" + (useAlphaBlend ? "ALPHA" : "OPAQUE");
 	auto it = m_PsoCache.find(key);
 	if (it != m_PsoCache.end())
 	{
@@ -203,6 +206,18 @@ ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso()
 	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
 	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT;
 	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	if (useAlphaBlend)
+	{
+		auto& rtBlend = psoDesc.BlendState.RenderTarget[0];
+		rtBlend.BlendEnable = TRUE;
+		rtBlend.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+		rtBlend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+		rtBlend.BlendOp = D3D12_BLEND_OP_ADD;
+		rtBlend.SrcBlendAlpha = D3D12_BLEND_ONE;
+		rtBlend.DestBlendAlpha = D3D12_BLEND_ZERO;
+		rtBlend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+		rtBlend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+	}
 	psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
 	psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 	psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
@@ -384,6 +399,110 @@ bool PsoManager::CreatePostProcessPipelines()
 	psoDesc.SampleDesc.Count = 1;
 
 	return CreateGraphicsPipelineState(psoDesc, "deferred lighting", m_DeferredLightingPso);
+}
+
+bool PsoManager::CreateAtmospherePso()
+{
+	rendererResource resource{};
+	resource.vsPath = "shader\\hlsl\\build\\postProcessVS.cso";
+	resource.psPath = "shader\\hlsl\\build\\AtmosphereGBufferPS.cso";
+
+	rendererResource vsResource = resource;
+	vsResource.csoPath = resource.vsPath;
+	vsResource.ppBlob = resource.vsBlob.GetAddressOf();
+	if (!RendererShader::LoadShaderBlob(vsResource)) return false;
+	rendererResource psResource = resource;
+	psResource.csoPath = resource.psPath;
+	psResource.ppBlob = resource.psBlob.GetAddressOf();
+	if (!RendererShader::LoadShaderBlob(psResource)) return false;
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
+	psoDesc.VS = CD3DX12_SHADER_BYTECODE(resource.vsBlob.Get());
+	psoDesc.PS = CD3DX12_SHADER_BYTECODE(resource.psBlob.Get());
+	psoDesc.pRootSignature = m_PostProcessRootSignature.Get();
+	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	psoDesc.DepthStencilState.DepthEnable = FALSE;
+	psoDesc.SampleMask = UINT_MAX;
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.NumRenderTargets = 1;
+	psoDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	psoDesc.SampleDesc.Count = 1;
+
+	return CreateGraphicsPipelineState(psoDesc, "atmosphere gbuffer", m_AtmospherePso);
+}
+
+bool PsoManager::CreateUpscalePso()
+{
+	const char* psPath = "shader\\hlsl\\build\\UpscaleBilateralPS.cso";
+
+	rendererResource resource{};
+	resource.vsPath = "shader\\hlsl\\build\\postProcessVS.cso";
+	resource.psPath = psPath;
+
+	rendererResource vsResource = resource;
+	vsResource.csoPath = resource.vsPath;
+	vsResource.ppBlob = resource.vsBlob.GetAddressOf();
+	if (!RendererShader::LoadShaderBlob(vsResource)) return false;
+
+	rendererResource psResource = resource;
+	psResource.csoPath = resource.psPath;
+	psResource.ppBlob = resource.psBlob.GetAddressOf();
+	if (!RendererShader::LoadShaderBlob(psResource)) return false;
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
+	psoDesc.VS = CD3DX12_SHADER_BYTECODE(resource.vsBlob.Get());
+	psoDesc.PS = CD3DX12_SHADER_BYTECODE(resource.psBlob.Get());
+	psoDesc.pRootSignature = m_UpscaleRootSignature.Get();
+	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	psoDesc.DepthStencilState.DepthEnable = FALSE;
+	psoDesc.SampleMask = UINT_MAX;
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.NumRenderTargets = 1;
+	psoDesc.RTVFormats[0] = m_SceneColorFormat;
+	psoDesc.SampleDesc.Count = 1;
+
+	return CreateGraphicsPipelineState(psoDesc, "UpscaleBilateralPso", m_UpscaleBilateralPso);
+}
+
+bool PsoManager::CreateAaPsos()
+{
+	auto CreateAAPSO = [&](const char* psPath, ComPtr<ID3D12PipelineState>& outPso, const char* debugName)
+		{
+			rendererResource resource{};
+			resource.vsPath = "shader\\hlsl\\build\\postProcessVS.cso";
+			resource.psPath = psPath;
+
+			rendererResource vsResource = resource;
+			vsResource.csoPath = resource.vsPath;
+			vsResource.ppBlob = resource.vsBlob.GetAddressOf();
+			if (!RendererShader::LoadShaderBlob(vsResource)) return false;
+			rendererResource psResource = resource;
+			psResource.csoPath = resource.psPath;
+			psResource.ppBlob = resource.psBlob.GetAddressOf();
+			if (!RendererShader::LoadShaderBlob(psResource)) return false;
+
+			D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
+			psoDesc.VS = CD3DX12_SHADER_BYTECODE(resource.vsBlob.Get());
+			psoDesc.PS = CD3DX12_SHADER_BYTECODE(resource.psBlob.Get());
+			psoDesc.pRootSignature = m_AaRootSignature.Get();
+			psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+			psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+			psoDesc.DepthStencilState.DepthEnable = FALSE;
+			psoDesc.SampleMask = UINT_MAX;
+			psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+			psoDesc.NumRenderTargets = 1;
+			psoDesc.RTVFormats[0] = m_SceneColorFormat;
+			psoDesc.SampleDesc.Count = 1;
+
+			return CreateGraphicsPipelineState(psoDesc, debugName, outPso);
+		};
+
+	if (!CreateAAPSO("shader\\hlsl\\build\\FXAA_PS.cso", m_FxaaPso, "FxaaPso")) return false;
+	if (!CreateAAPSO("shader\\hlsl\\build\\TAA_BlendPS.cso", m_TaaBlendPso, "TaaBlendPso")) return false;
+
+	return true;
 }
 
 ID3D12PipelineState* PsoManager::GetPostProcessPso(PostProcessType type)

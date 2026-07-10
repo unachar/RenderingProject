@@ -15,6 +15,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -38,6 +40,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -61,6 +65,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -84,6 +90,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -107,6 +115,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -130,6 +140,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -153,6 +165,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -176,6 +190,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -199,6 +215,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -222,6 +240,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -245,6 +265,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -268,6 +290,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -291,6 +315,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -314,6 +340,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -337,6 +365,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -360,6 +390,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -383,6 +415,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -406,6 +440,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -429,6 +465,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -452,6 +490,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -475,6 +515,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -498,6 +540,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -521,6 +565,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -544,6 +590,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -567,12 +615,16 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
 Step: CreateSkinningPipeline
 Step: CreateShadowDepthBuffer
 Step: ImGuiManager::Init
+<<<<<<< Updated upstream
+=======
 Step: CreateDXGIFactory2
 Step: D3D12CreateDevice
 Step: CreateCommandList
@@ -590,12 +642,15 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
 Step: CreateSkinningPipeline
 Step: CreateShadowDepthBuffer
 Step: ImGuiManager::Init
+>>>>>>> Stashed changes
 Step: CreateDXGIFactory2
 Step: D3D12CreateDevice
 Step: CreateCommandList
@@ -613,6 +668,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -636,6 +693,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -659,6 +718,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -682,6 +743,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -705,6 +768,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -728,6 +793,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -751,6 +818,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -774,6 +843,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -797,6 +868,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -820,6 +893,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -843,6 +918,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -866,6 +943,8 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
@@ -889,3067 +968,11 @@ PP: create root sig
 PP: create PP CB
 PP: create Light CB
 PP: create PBR CB
+PP: create upscale root sig
+PP: create AA root sig
 PP: create PSOs
 PP: done
 Step: CreateSceneRenderTarget
 Step: CreateSkinningPipeline
 Step: CreateShadowDepthBuffer
 Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer
-Step: ImGuiManager::Init
-Step: CreateDXGIFactory2
-Step: D3D12CreateDevice
-Step: CreateCommandList
-Step: CreateFence
-Step: D3D12SerializeRootSignature
-Step: CreateRootSignature
-Step: CreateDescriptorHeap(CBV)
-Step: CreateDepthBuffer
-Step: CreateModelPipeline
-Step: TextureManager::Init
-Step: CreatePostProcessPipeline
-PP: setup ranges
-PP: serialize root sig
-PP: create root sig
-PP: create PP CB
-PP: create Light CB
-PP: create PBR CB
-PP: create PSOs
-PP: done
-Step: CreateSceneRenderTarget
-Step: CreateSkinningPipeline
-Step: CreateShadowDepthBuffer

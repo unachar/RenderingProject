@@ -93,6 +93,17 @@ enum class PostProcessType
 	COUNT
 };
 
+enum class AntiAliasingMode
+{
+	NONE = 0,
+	FXAA,
+	TAA,
+	MSAA2X,
+	MSAA4X,
+	MSAA8X,
+	COUNT
+};
+
 struct ConstantBuffer3D
 {
 	XMMATRIX World{};
@@ -131,7 +142,8 @@ public:
 	static constexpr UINT g_kGBUFFER_COUNT = static_cast<UINT>(GBufferType::COUNT);
 	static constexpr uint32_t g_kFRAME_COUNT = 3;
 	static constexpr UINT g_kMAX_SHADER_LIGHTS = 20;
-	static constexpr UINT g_kMAX_SHADOW_LIGHTS = g_kMAX_SHADER_LIGHTS;
+
+	static constexpr UINT g_kMAX_SHADOW_LIGHTS = 5;
 protected:
 	static ComPtr<ID3D12Device> m_Device;
 	static ComPtr<ID3D12CommandQueue> m_CommandQueue;
@@ -151,6 +163,8 @@ protected:
 	static HANDLE m_FenceEvent;
 
 	static CD3DX12_VIEWPORT m_Viewport;
+	static CD3DX12_VIEWPORT m_FullViewport;
+	static CD3DX12_RECT m_FullScissorRect;
 	static CD3DX12_RECT m_ScissorRect;
 	static UINT64 m_FenceValues[g_kFRAME_COUNT];
 	static UINT64 m_CurrentFenceValue;
@@ -165,7 +179,10 @@ protected:
 	static ComPtr<ID3D12RootSignature> m_ModelRootSignature;
 	static ComPtr<ID3D12PipelineState> m_ModelPipelineState;
 	static ComPtr<ID3D12Resource> m_DepthStencilBuffer;
+	static ComPtr<ID3D12Resource> m_LowResDepthBuffer;
 	static ComPtr<ID3D12DescriptorHeap> m_DsvHeap;
+	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_LowResDsvHandle;
+	static bool m_UseLowResDepth;
 	static ComPtr<ID3D12Resource> m_ShadowDepthBuffer;
 	static ComPtr<ID3D12PipelineState> m_ShadowMapPso;
 	static ComPtr<ID3D12Resource> m_ShadowConstantBuffer;
@@ -183,10 +200,16 @@ protected:
 	static ComPtr<ID3D12Resource> m_GBufferTargets[g_kGBUFFER_COUNT];
 	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_GBufferRtvHandles[g_kGBUFFER_COUNT];
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_GBufferSrvHandles[g_kGBUFFER_COUNT];
+	static ComPtr<ID3D12Resource> m_AtmosphereRenderTarget;
+	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_AtmosphereRtvHandle;
+	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_AtmosphereSrvHandle;
 	static int m_EnvironmentTextureSrvIndex;
 	static ComPtr<ID3D12RootSignature> m_PostProcessRootSignature;
+	static ComPtr<ID3D12RootSignature> m_UpscaleRootSignature;
 	static unordered_map<PostProcessType, ComPtr<ID3D12PipelineState>> m_PostProcessPsoMap;
 	static ComPtr<ID3D12PipelineState> m_DeferredLightingPso;
+	static ComPtr<ID3D12PipelineState> m_AtmospherePso;
+	static ComPtr<ID3D12PipelineState> m_UpscaleBilateralPso;
 	static ComPtr<ID3D12Resource> m_PostProcessConstantBuffer;
 	static ComPtr<ID3D12Resource> m_LightConstantBuffer;
 	static ComPtr<ID3D12Resource> m_PBRConstantBuffer;
@@ -207,6 +230,19 @@ protected:
 	static bool m_AllowTearing;
 	static bool m_HasPendingHdr;
 	static bool m_PendingHdr;
+public:
+	static AntiAliasingMode m_AntiAliasingMode;
+	static XMFLOAT4X4 m_PrevViewMatrix;
+	static XMFLOAT4X4 m_PrevProjMatrix;
+	static UINT m_TaaFrameIndex;
+	static ComPtr<ID3D12RootSignature> m_AaRootSignature;
+	static ComPtr<ID3D12PipelineState> m_FxaaPso;
+	static ComPtr<ID3D12PipelineState> m_TaaBlendPso;
+
+	static ComPtr<ID3D12Resource> m_AaRenderTarget;
+	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_AaRtvHandle;
+	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_AaSrvHandle;
+
 	static constexpr float m_kSceneClearColor[4] = { 0.1f, 0.2f, 0.4f, 1.0f };
 	static constexpr DXGI_FORMAT m_kDeferredRtvFormats[g_kGBUFFER_COUNT] =
 	{
@@ -225,10 +261,12 @@ public:
 	static constexpr uint32_t g_kSCREEN_HEIGHT = 600;
 	static constexpr float g_kNEAR_CLIP = 0.1f;
 	static constexpr float g_kFAR_CLIP = 100.0f;
+	static constexpr float g_kResolutionScale = 0.3f;
+	static constexpr float g_kGBufferScale = 0.3f;
 
 
 	static constexpr UINT g_kCB_ALIGNED_SIZE = (sizeof(ConstantBuffer3D) + 255) & ~255;
-	static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * 28 + 255) & ~255;
+	static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * 44 + 255) & ~255;
 	static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT = 10 + g_kMAX_SHADER_LIGHTS * 9;
 	static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;
 	static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 384 + 255) & ~255;
@@ -236,7 +274,10 @@ public:
 	static constexpr UINT g_kPBR_CB_TOTAL_SLOT_COUNT = g_kPBR_CB_SLOT_COUNT * g_kFRAME_COUNT;
 	static constexpr UINT g_kSHADOW_CB_ALIGNED_SIZE = (sizeof(XMMATRIX) + sizeof(float) * 4 + 255) & ~255;
 	static constexpr UINT g_kSHADOW_CB_SLOT_COUNT = g_kFRAME_COUNT * g_kMAX_SHADOW_LIGHTS;
-	static constexpr UINT g_kSHADOW_MAP_SIZE = 2048;
+	// The scene itself renders at a reduced resolution.  A 1024 map is a much
+	// better quality/performance match than the former 2048 map in this path.
+	static constexpr UINT g_kSHADOW_MAP_SIZE = 1024;
+	static constexpr UINT g_kSHADOW_MAP_SIZE_SMALL = 1024;
 	static constexpr UINT g_kTRANSIENT_CB_SLOT_COUNT = 1024;
 	static constexpr UINT g_kTRANSIENT_CB_START_INDEX = g_kMAX_ENTITIES;
 	static constexpr UINT g_kCBV_PER_FRAME_COUNT = g_kMAX_ENTITIES + g_kTRANSIENT_CB_SLOT_COUNT;
@@ -246,8 +287,12 @@ public:
 	static constexpr UINT g_kSCENE_SRV_INDEX = g_kTEXTURE_SRV_START_INDEX + g_kMAX_SRVS;
 	static constexpr UINT g_kEDITOR_SCENE_SRV_INDEX = g_kSCENE_SRV_INDEX + 1;
 	static constexpr UINT g_kGBUFFER_SRV_START_INDEX = g_kEDITOR_SCENE_SRV_INDEX + 1;
-	static constexpr UINT g_kIMGUI_SRV_INDEX = g_kGBUFFER_SRV_START_INDEX + g_kGBUFFER_COUNT;
+	static constexpr UINT g_kATMOSPHERE_SRV_INDEX = g_kGBUFFER_SRV_START_INDEX + g_kGBUFFER_COUNT;
+	static constexpr UINT g_kIMGUI_SRV_INDEX = g_kATMOSPHERE_SRV_INDEX + 1;
 	static constexpr UINT g_kSHADOW_SRV_INDEX = g_kIMGUI_SRV_INDEX + 1;
+	static constexpr UINT g_kAA_SRV_INDEX = g_kSHADOW_SRV_INDEX + 1;
+	static constexpr UINT g_kAA_HISTORY_SRV_INDEX = g_kAA_SRV_INDEX + 1;
+	static constexpr UINT g_kDEPTH_SRV_INDEX = g_kAA_HISTORY_SRV_INDEX + 1;
 	static constexpr UINT g_kMAX_DYNAMIC_VERTICES = 65536;
 
 	static DXGI_FORMAT GetSceneColorFormat() { return m_SceneColorFormat; }

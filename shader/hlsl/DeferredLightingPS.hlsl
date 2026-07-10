@@ -10,6 +10,7 @@ Texture2D<float4> MaterialTexture : register(t4);
 Texture2D<float4> ShadowGBufferTexture : register(t5);
 Texture2D<float4> EnvironmentTexture : register(t6);
 Texture2DArray<float> ShadowMapTexture : register(t7);
+Texture2D<float4> AtmosphereTexture : register(t8);
 
 SamplerState TextureSampler : register(s0);
 SamplerState ShadowSampler : register(s1);
@@ -22,7 +23,14 @@ float IsMaterialClass(float value, float target)
 float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, float3 lightDir)
 {
     float shadowLayer = LightShadowData[lightIndex].x;
-    float shadowEnabled = step(-0.5f, shadowLayer);
+    // Avoid any shadow-map sampling for ordinary (non-shadow-casting) lights.
+    // Previously every light executed a 3x3 PCF lookup even when its layer was
+    // disabled, making a simple fill light disproportionately expensive.
+    [branch]
+    if (shadowLayer < -0.5f)
+    {
+        return 1.0f;
+    }
     float safeShadowLayer = max(shadowLayer, 0.0f);
 
     float3 n = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
@@ -45,21 +53,22 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
 
     float visibility = 0.0f;
     [unroll]
-    for (int y = -2; y <= 2; ++y)
+    for (int y = 0; y < 2; ++y)
     {
         [unroll]
-        for (int x = -2; x <= 2; ++x)
+        for (int x = 0; x < 2; ++x)
         {
-            float closestDepth = ShadowMapTexture.SampleLevel(ShadowSampler, float3(shadowUv + float2(x, y) * texelSize, safeShadowLayer), 0);
+            float2 offset = (float2(x, y) - 0.5f) * texelSize;
+            float closestDepth = ShadowMapTexture.SampleLevel(ShadowSampler, float3(shadowUv + offset, safeShadowLayer), 0);
             visibility += (currentDepth <= closestDepth) ? 1.0f : 0.0f;
         }
     }
 
-    visibility /= 25.0f;
+    visibility *= 0.25f;
     float shadowStrength = 1.0f;
     float outOfBoundsVisibility = 1.0f;
     float shadowVisibility = lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
-    return lerp(1.0f, shadowVisibility, shadowEnabled);
+    return shadowVisibility;
 }
 
 void ResolveDeferredLightAggregateShadowed(
@@ -152,9 +161,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     bool bsdf = IsMaterialClass(shaderClass, 14.0f);
     bool selectionOutline = IsMaterialClass(shaderClass, 99.0f);
 
-    float3 viewRay = ReconstructPostProcessViewRayCommon(input.TexCoord);
-    float3 atmosphereRayEnd = (background || position.w <= 0.0001f) ? (PPCameraPos.xyz + viewRay * 80.0f) : position.xyz;
-    float3 atmosphereViewScatter = RayMarchAtmosphereViewCommon(atmosphereRayEnd, ShadowMapTexture, ShadowSampler, LightViewProjection, ShadowMapParams);
+    float3 atmosphereViewScatter = AtmosphereTexture.SampleLevel(TextureSampler, input.TexCoord, 0).rgb;
     
     if (background)
     {
@@ -322,7 +329,18 @@ float4 main(PSInputPostProcess input) : SV_Target
 
         float maxMip = 8.0f;
 
-        float3 envSpecular = EnvironmentTexture.SampleLevel(TextureSampler,reflectionUV,roughness * maxMip).rgb;
+        float2 ssrUV = (roughness < 0.65f)
+            ? ScreenSpaceRayMarch(position.xyz, R, DepthTexture, TextureSampler)
+            : float2(-1.0f, -1.0f);
+        float3 envSpecular;
+        if (all(ssrUV >= 0.0f))
+        {
+            envSpecular = BaseColorTexture.SampleLevel(TextureSampler, ssrUV, 0).rgb;
+        }
+        else
+        {
+            envSpecular = EnvironmentTexture.SampleLevel(TextureSampler, reflectionUV, roughness * maxMip).rgb;
+        }
 
         float3 irradiance = EnvironmentTexture.SampleLevel(TextureSampler,normalUV,maxMip).rgb;
 

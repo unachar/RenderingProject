@@ -1087,6 +1087,9 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
 
 void AnimationModelResource::InvalidateVmdRuntimeCache()
 {
+	// Reloading or replacing an animation must also invalidate the sampled-pose
+	// fast path, even when it keeps the same public animation name.
+	m_HasCachedPose = false;
 	m_CachedVmdPrimaryAnimation = nullptr;
 	m_CachedVmdSecondaryAnimation = nullptr;
 	m_VmdBoneBindings.clear();
@@ -2391,6 +2394,11 @@ bool AnimationModelResource::ApplyMeshShadingOverridePartIds(const vector<int>& 
 			}
 		}
 	}
+
+	// The compute output contains a copy of the vertex diffuse data, so force a
+	// fresh dispatch after an editor-side mesh override even if the skeleton pose
+	// itself has not advanced.
+	++m_SkinningVersion;
 	return success;
 }
 
@@ -2490,6 +2498,10 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
 			memcpy(mapped, m_BoneMatricesScratch.data(), copySize);
 		}
 	}
+	// A render frame can consume this model in every shadow pass, the main pass,
+	// and the overlay pass.  Mark the new pose once so the compute skinning work
+	// is dispatched only when the pose actually changes.
+	++m_SkinningVersion;
 }
 
 void AnimationModelResource::BuildPmxVertexMeshMap()
@@ -3723,6 +3735,26 @@ void AnimationModelResource::UpdateBoneMatrices(const char* animName1, float fra
 
 	const string animationName1 = animName1 ? animName1 : "";
 	const string animationName2 = animName2 ? animName2 : "";
+	const float safeBlendRate = clamp(blendRate, 0.0f, 1.0f);
+	if (m_HasCachedPose &&
+		m_LastPoseAnimation1 == animationName1 &&
+		m_LastPoseAnimation2 == animationName2 &&
+		fabsf(m_LastPoseFrame1 - frame1) <= 0.000001f &&
+		fabsf(m_LastPoseFrame2 - frame2) <= 0.000001f &&
+		fabsf(m_LastPoseBlendRate - safeBlendRate) <= 0.000001f)
+	{
+		return;
+	}
+
+	auto cachePose = [&]()
+		{
+			m_LastPoseAnimation1 = animationName1;
+			m_LastPoseAnimation2 = animationName2;
+			m_LastPoseFrame1 = frame1;
+			m_LastPoseFrame2 = frame2;
+			m_LastPoseBlendRate = safeBlendRate;
+			m_HasCachedPose = true;
+		};
 
 	const VmdAnimation* vmdAnimation1 = nullptr;
 	const VmdAnimation* vmdAnimation2 = nullptr;
@@ -3738,7 +3770,8 @@ void AnimationModelResource::UpdateBoneMatrices(const char* animName1, float fra
 	}
 	if (vmdAnimation1 || vmdAnimation2)
 	{
-		UpdateVmdBoneMatrices(vmdAnimation1, frame1, vmdAnimation2, frame2, blendRate);
+		UpdateVmdBoneMatrices(vmdAnimation1, frame1, vmdAnimation2, frame2, safeBlendRate);
+		cachePose();
 		return;
 	}
 
@@ -3774,9 +3807,9 @@ void AnimationModelResource::UpdateBoneMatrices(const char* animName1, float fra
 			return nodeAnim->mPositionKeys[keyIndex].mValue;
 		};
 
-	for (auto pair : m_Bone)
+	for (auto& pair : m_Bone)
 	{
-		Bone* bonePtr = &m_Bone[pair.first];
+		Bone* bonePtr = &pair.second;
 		aiNodeAnim* nodeAnim1 = FindNodeAnimChannel(animation1, pair.first);
 		aiNodeAnim* nodeAnim2 = FindNodeAnimChannel(animation2, pair.first);
 
@@ -3805,11 +3838,19 @@ void AnimationModelResource::UpdateBoneMatrices(const char* animName1, float fra
 
 	UpdateBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
 	WriteBoneMatricesToBuffer();
+	cachePose();
 }
 
 void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCommandList)
 {
-	if (!m_SkinningDescHeap || !RendererShader::GetSkinningRootSignature() || !PsoManager::GetSkinningPso()) return;
+	if (!pCommandList ||
+		!m_SkinningDescHeap ||
+		!RendererShader::GetSkinningRootSignature() ||
+		!PsoManager::GetSkinningPso() ||
+		m_DispatchedSkinningVersion == m_SkinningVersion)
+	{
+		return;
+	}
 
 	pCommandList->SetComputeRootSignature(RendererShader::GetSkinningRootSignature());
 	pCommandList->SetPipelineState(PsoManager::GetSkinningPso());
@@ -3874,6 +3915,8 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 		ID3D12DescriptorHeap* rendererHeaps[] = { cbvHeap };
 		pCommandList->SetDescriptorHeaps(_countof(rendererHeaps), rendererHeaps);
 	}
+
+	m_DispatchedSkinningVersion = m_SkinningVersion;
 }
 
 void AnimationModelResource::Uninit()
@@ -3904,6 +3947,14 @@ void AnimationModelResource::Uninit()
 	m_PmxMorphIndexMap.clear();
 	m_PmxVertexToMeshVertices.clear();
 	m_BoneMatricesScratch.clear();
+	m_SkinningVersion = 0;
+	m_DispatchedSkinningVersion = UINT64_MAX;
+	m_LastPoseAnimation1.clear();
+	m_LastPoseAnimation2.clear();
+	m_LastPoseFrame1 = 0.0f;
+	m_LastPoseFrame2 = 0.0f;
+	m_LastPoseBlendRate = 0.0f;
+	m_HasCachedPose = false;
 	InvalidateVmdRuntimeCache();
 	InvalidatePmxRuntimeCache();
 	m_HasAppliedVmdMorphs = false;
