@@ -22,7 +22,14 @@ float IsMaterialClass(float value, float target)
 float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, float3 lightDir)
 {
     float shadowLayer = LightShadowData[lightIndex].x;
-    float shadowEnabled = step(-0.5f, shadowLayer);
+    // Avoid any shadow-map sampling for ordinary (non-shadow-casting) lights.
+    // Previously every light executed a 3x3 PCF lookup even when its layer was
+    // disabled, making a simple fill light disproportionately expensive.
+    [branch]
+    if (shadowLayer < -0.5f)
+    {
+        return 1.0f;
+    }
     float safeShadowLayer = max(shadowLayer, 0.0f);
 
     float3 n = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
@@ -45,21 +52,22 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
 
     float visibility = 0.0f;
     [unroll]
-    for (int y = -1; y <= 1; ++y)
+    for (int y = 0; y < 2; ++y)
     {
         [unroll]
-        for (int x = -1; x <= 1; ++x)
+        for (int x = 0; x < 2; ++x)
         {
-            float closestDepth = ShadowMapTexture.SampleLevel(ShadowSampler, float3(shadowUv + float2(x, y) * texelSize, safeShadowLayer), 0);
+            float2 offset = (float2(x, y) - 0.5f) * texelSize;
+            float closestDepth = ShadowMapTexture.SampleLevel(ShadowSampler, float3(shadowUv + offset, safeShadowLayer), 0);
             visibility += (currentDepth <= closestDepth) ? 1.0f : 0.0f;
         }
     }
 
-    visibility /= 9.0f;
+    visibility *= 0.25f;
     float shadowStrength = 1.0f;
     float outOfBoundsVisibility = 1.0f;
     float shadowVisibility = lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
-    return lerp(1.0f, shadowVisibility, shadowEnabled);
+    return shadowVisibility;
 }
 
 void ResolveDeferredLightAggregateShadowed(
@@ -154,7 +162,8 @@ float4 main(PSInputPostProcess input) : SV_Target
 
     float3 viewRay = ReconstructPostProcessViewRayCommon(input.TexCoord);
     float3 atmosphereRayEnd = (background || position.w <= 0.0001f) ? (PPCameraPos.xyz + viewRay * 80.0f) : position.xyz;
-    float3 atmosphereViewScatter = RayMarchAtmosphereViewCommon(atmosphereRayEnd, ShadowMapTexture, ShadowSampler, LightViewProjection, ShadowMapParams);
+    float3 atmosphereViewScatter = RayMarchAtmosphereViewCommon(
+        atmosphereRayEnd, ShadowMapTexture, ShadowSampler, LightViewProjection, ShadowMapParams);
     
     if (background)
     {
@@ -322,7 +331,9 @@ float4 main(PSInputPostProcess input) : SV_Target
 
         float maxMip = 8.0f;
 
-        float2 ssrUV = ScreenSpaceRayMarch(position.xyz, R, DepthTexture, TextureSampler);
+        float2 ssrUV = (roughness < 0.65f)
+            ? ScreenSpaceRayMarch(position.xyz, R, DepthTexture, TextureSampler)
+            : float2(-1.0f, -1.0f);
         float3 envSpecular;
         if (all(ssrUV >= 0.0f))
         {

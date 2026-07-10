@@ -31,7 +31,9 @@ public:
 		int VolumeShape = 0;
 		bool IsActive = true;
 		bool DrawDebug = true;
-		bool CastShadow = true;
+		// Additional lights are inexpensive by default.  Shadow casting remains
+		// opt-in from the light inspector for the small number of lights that need it.
+		bool CastShadow = false;
 	};
 
 	static CreateDesc MakeDefaultDesc(LightType type);

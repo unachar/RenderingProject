@@ -965,7 +965,12 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 		return;
 	}
 
-	const RuntimeLightState& runtimeLight = GetCachedLightState(false);
+	// The directional light is the stable primary source for the atmosphere and
+	// legacy paths.  Local lights still populate the deferred light array below.
+	const RuntimeLightState& directionalLight = GetCachedLightState(true);
+	const RuntimeLightState& runtimeLight = directionalLight.HasLight
+		? directionalLight
+		: GetCachedLightState(false);
 	LightConstants constants{};
 	WriteAtmosphereConstants(constants);
 	for (UINT i = 0; i < RendererState::g_kMAX_SHADER_LIGHTS; ++i)

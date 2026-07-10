@@ -142,7 +142,10 @@ public:
 	static constexpr UINT g_kGBUFFER_COUNT = static_cast<UINT>(GBufferType::COUNT);
 	static constexpr uint32_t g_kFRAME_COUNT = 3;
 	static constexpr UINT g_kMAX_SHADER_LIGHTS = 20;
-	static constexpr UINT g_kMAX_SHADOW_LIGHTS = 5;
+	// Shadow maps are by far the most expensive per-light operation.  Keep two
+	// explicitly enabled shadow casters (typically the sun plus one hero light)
+	// and let the remaining lights participate in deferred lighting only.
+	static constexpr UINT g_kMAX_SHADOW_LIGHTS = 2;
 protected:
 	static ComPtr<ID3D12Device> m_Device;
 	static ComPtr<ID3D12CommandQueue> m_CommandQueue;
@@ -269,7 +272,9 @@ public:
 	static constexpr UINT g_kPBR_CB_TOTAL_SLOT_COUNT = g_kPBR_CB_SLOT_COUNT * g_kFRAME_COUNT;
 	static constexpr UINT g_kSHADOW_CB_ALIGNED_SIZE = (sizeof(XMMATRIX) + sizeof(float) * 4 + 255) & ~255;
 	static constexpr UINT g_kSHADOW_CB_SLOT_COUNT = g_kFRAME_COUNT * g_kMAX_SHADOW_LIGHTS;
-	static constexpr UINT g_kSHADOW_MAP_SIZE = 2048;
+	// The scene itself renders at a reduced resolution.  A 1024 map is a much
+	// better quality/performance match than the former 2048 map in this path.
+	static constexpr UINT g_kSHADOW_MAP_SIZE = 1024;
 	static constexpr UINT g_kSHADOW_MAP_SIZE_SMALL = 1024;
 	static constexpr UINT g_kTRANSIENT_CB_SLOT_COUNT = 1024;
 	static constexpr UINT g_kTRANSIENT_CB_START_INDEX = g_kMAX_ENTITIES;

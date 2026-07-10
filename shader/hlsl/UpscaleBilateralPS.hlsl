@@ -22,7 +22,8 @@ float4 main(PSInputPostProcess input) : SV_TARGET
         {
             float2 sampleUV = input.TexCoord + float2(x, y) * step;
             float depthSample = LowResDepth.SampleLevel(LinearSampler, sampleUV, 0);
-            float depthWeight = exp(-abs(depthSample - depthCenter) * 100.0f);
+            // Smooth monotonic depth weighting without a per-sample exp call.
+            float depthWeight = rcp(1.0f + abs(depthSample - depthCenter) * 100.0f);
             float4 color = LowResScene.SampleLevel(LinearSampler, sampleUV, 0);
             result += color * depthWeight;
             totalWeight += depthWeight;
