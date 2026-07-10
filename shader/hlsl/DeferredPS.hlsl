@@ -36,6 +36,12 @@ GBufferOutput main(PSInput3D In)
     output.Shadow.g = usePartParams ? partParams.Shadow0.y : ShadowSoftness;
     output.Shadow.b = usePartParams ? partParams.Shadow0.z : ShadowStrength;
     output.Shadow.a = 1.0f;
+    output.RimStyle = usePartParams
+        ? float4(partParams.Highlight.x, partParams.Highlight.y, partParams.RimStyle.x, partParams.RimStyle.y)
+        : float4(RimStrength, RimThreshold, RimSoftness, RimPower);
+    output.RimLight = usePartParams
+        ? float4(partParams.RimLight.rgb, partParams.RimStyle.z)
+        : float4(RimColor, RimAlbedoBlend);
     output.Color.a = 1.0f;
     return output;
 }

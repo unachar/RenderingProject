@@ -532,7 +532,9 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 {
 	auto DrawFullscreenPass = [&](ID3D12PipelineState* pso, D3D12_CPU_DESCRIPTOR_HANDLE targetRtv,
 		D3D12_GPU_DESCRIPTOR_HANDLE sourceHandle, float intensity, float renderModeFlag, float deferredLightStrength,
-		D3D12_GPU_DESCRIPTOR_HANDLE atmosphereHandle = D3D12_GPU_DESCRIPTOR_HANDLE{})
+		D3D12_GPU_DESCRIPTOR_HANDLE atmosphereHandle = D3D12_GPU_DESCRIPTOR_HANDLE{},
+		D3D12_GPU_DESCRIPTOR_HANDLE rimStyleHandle = D3D12_GPU_DESCRIPTOR_HANDLE{},
+		D3D12_GPU_DESCRIPTOR_HANDLE rimLightHandle = D3D12_GPU_DESCRIPTOR_HANDLE{})
 		{
 			if (!pso || !m_PostProcessRootSignature)
 			{
@@ -599,6 +601,8 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 			if (m_ShadowConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(5, RendererResource::GetCurrentShadowConstantBufferAddress());
 			if (m_PBRConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(6, RendererResource::GetPBRConstantBufferAddress());
 			if (atmosphereHandle.ptr != 0) m_CommandList->SetGraphicsRootDescriptorTable(7, atmosphereHandle);
+			if (rimStyleHandle.ptr != 0) m_CommandList->SetGraphicsRootDescriptorTable(8, rimStyleHandle);
+			if (rimLightHandle.ptr != 0) m_CommandList->SetGraphicsRootDescriptorTable(9, rimLightHandle);
 			m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			m_CommandList->DrawInstanced(3, 1, 0, 0);
 		};
@@ -652,7 +656,9 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 			1.0f,
 			1.0f,
 			1.35f,
-			m_GBufferSrvHandles[atmosphereIndex]);
+			m_GBufferSrvHandles[atmosphereIndex],
+			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::RIM_STYLE)],
+			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::RIM_LIGHT)]);
 
 		D3D12_RESOURCE_BARRIER toSceneSrv = CD3DX12_RESOURCE_BARRIER::Transition(
 			m_SceneRenderTarget.Get(),
@@ -1102,7 +1108,7 @@ bool RendererDraw::CreateSceneRenderTarget()
 				gbufferClear.Color[0] = 0.0f;
 				gbufferClear.Color[1] = 0.0f;
 				gbufferClear.Color[2] = 0.0f;
-				gbufferClear.Color[3] = 0.0f;
+				gbufferClear.Color[3] = 1.0f;
 			}
 
 			hr = m_Device->CreateCommittedResource(

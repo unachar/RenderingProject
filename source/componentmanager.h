@@ -201,6 +201,11 @@ struct MaterialPartParams
 	float LitStrength = 1.0f;
 	float RimStrength = 0.45f;
 	float RimThreshold = 0.70f;
+	float RimSoftness = 0.055f;
+	float RimPower = 1.0f;
+	XMFLOAT3 RimColor = { 0.38f, 0.48f, 0.80f };
+	float RimAlbedoBlend = 0.20f;
+	float RimLightBlend = 0.35f;
 	float SpecularStrength = 0.35f;
 	float SpecularThreshold = 0.35f;
 	float KawaiiBlend = 1.0f;
@@ -234,6 +239,11 @@ struct MaterialComponent
 	float LitStrength = 1.0f;
 	float RimStrength = 0.45f;
 	float RimThreshold = 0.70f;
+	float RimSoftness = 0.055f;
+	float RimPower = 1.0f;
+	XMFLOAT3 RimColor = { 0.38f, 0.48f, 0.80f };
+	float RimAlbedoBlend = 0.20f;
+	float RimLightBlend = 0.35f;
 	float SpecularStrength = 0.35f;
 	float SpecularThreshold = 0.35f;
 	float KawaiiBlend = 1.0f;
