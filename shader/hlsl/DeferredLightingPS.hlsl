@@ -160,10 +160,10 @@ float4 main(PSInputPostProcess input) : SV_Target
     bool bsdf = IsMaterialClass(shaderClass, 14.0f);
     bool selectionOutline = IsMaterialClass(shaderClass, 99.0f);
 
-    // The screen-space shaft pass evaluates every active light only where its
-    // finite volume intersects this camera ray.
-    float3 atmosphereViewScatter = ScreenSpaceAtmosphereRayMarchCommon(
-        input.TexCoord, position.xyz, background, DepthTexture, TextureSampler);
+    float3 viewRay = ReconstructPostProcessViewRayCommon(input.TexCoord);
+    float3 atmosphereRayEnd = (background || position.w <= 0.0001f) ? (PPCameraPos.xyz + viewRay * 80.0f) : position.xyz;
+    float3 atmosphereViewScatter = RayMarchAtmosphereViewCommon(
+        atmosphereRayEnd, ShadowMapTexture, ShadowSampler, LightViewProjection, ShadowMapParams);
     
     if (background)
     {

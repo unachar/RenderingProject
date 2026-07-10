@@ -20,7 +20,10 @@ GBufferOutput main(PSInput3D In)
     GBufferOutput output;
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
-    output.Position = (Padding > 0.5f) ? float4(-In.WorldPos, 1.0f) : float4(In.WorldPos, 1.0f);
+    // The sky dome is an environment surface, not a finite world-space
+    // occluder.  Mark it with w=0 so deferred volumetrics march along the
+    // camera ray instead of using the dome's back-face position.
+    output.Position = (Padding > 0.5f) ? float4(-In.WorldPos, 0.0f) : float4(In.WorldPos, 1.0f);
     output.Depth = saturate((In.Position.z / In.Position.w));
     
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
