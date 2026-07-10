@@ -369,8 +369,7 @@ float SampleAtmosphereShadowMap(
     return lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
 }
 
-// Defined with the remaining post-process helpers below.  FXC requires the
-// prototype here because the atmosphere helpers are declared earlier.
+
 float3 WorldToScreenUV(float3 worldPos);
 float3 ReconstructPostProcessViewRayCommon(float2 uv);
 bool ProjectWorldToScreenCommon(float3 worldPos, out float2 screenUv);
@@ -405,9 +404,7 @@ float ScreenSpaceShaftVisibilityCommon(
         occlusion += skyVisibility * weight;
         weightSum += weight;
     }
-    // Surface pixels still receive in-volume scattering; only the occluded
-    // portion is reduced.  The geometric ray interval below prevents it from
-    // leaking through foreground geometry.
+
     return lerp(0.35f, 1.0f, occlusion / max(weightSum, 0.0001f));
 }
 
@@ -1056,7 +1053,7 @@ bool ProjectWorldToScreenCommon(float3 worldPos, out float2 screenUv)
 float2 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> depthTex, SamplerState depthSampler)
 {
     float maxDist = 15.0f;
-    int maxSteps = 24;
+    int maxSteps = 12;
     float stepSize = maxDist / (float)maxSteps;
 
     [loop]
