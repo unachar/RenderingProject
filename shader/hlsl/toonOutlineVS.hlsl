@@ -35,11 +35,9 @@ PSInput3D main(VSInput3D input)
     output.Position = clipPos;
     output.Normal = worldNormal;
     output.TexCoord = input.TexCoord;
-    float isSelectionOutline = (ShaderClass == 99) ? 1.0f : 0.0f;
-    float3 outlineColor = lerp(float3(0.0f, 0.0f, 0.0f), float3(1.0f, 0.42f, 0.0f), isSelectionOutline);
     // Keep the outline in the same opacity domain as its material.  Without this,
     // fading a toon model leaves an opaque black silhouette behind.
-    output.Diffuse = float4(outlineColor, saturate(MaterialAlpha));
+    output.Diffuse = float4(0.0f, 0.0f, 0.0f, saturate(MaterialAlpha));
     output.WorldPos = worldPos.xyz;
     output.ViewPos = viewPos.xyz;
     output.CameraPos = CameraPos;

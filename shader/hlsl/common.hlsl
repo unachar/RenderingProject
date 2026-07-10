@@ -71,7 +71,8 @@ cbuffer ConstantBuffer3D : register(b0)
     float2 ViewportSize;
     int ToonOutlineUseScreenSpace;
     float MaterialAlpha;
-    float2 ConstantPadding;
+    int MaterialIsTransparent;
+    float ConstantPadding;
 };
 
 struct VSInput3D

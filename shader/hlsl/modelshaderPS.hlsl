@@ -90,7 +90,7 @@ float4 main(in PSInput3D In) : SV_Target
         : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
 
     float shaderClass = material.a;
-    bool transparent = IsMaterialClassForward(shaderClass, 0.0f);
+    bool transparent = IsMaterialClassForward(shaderClass, 0.0f) || MaterialIsTransparent != 0;
     bool shadow = IsMaterialClassForward(shaderClass, 5.0f);
     bool lit = IsMaterialClassForward(shaderClass, 8.0f);
     bool pbr = IsMaterialClassForward(shaderClass, 11.0f);

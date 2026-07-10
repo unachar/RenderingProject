@@ -24,10 +24,6 @@ namespace
 		return material;
 	}
 
-	constexpr int kSelectionOutlineShaderClass = 99;
-	constexpr float kSelectionOutlineWorldProbeWidth = 0.035f;
-	constexpr float kSelectionOutlineScreenWidth = 5.0f;
-
 	bool IsSkyEntity(EntityID entity)
 	{
 		return ComponentManager::HasComponent<NameComponent>(entity) &&
@@ -81,42 +77,15 @@ namespace
 				material.ShaderClass == ShaderClass::Toon);
 	}
 
-	void ApplySelectionOutlineConstants(ConstantBuffer3D& cb)
-	{
-		cb.ShaderClass = kSelectionOutlineShaderClass;
-		cb.ToonOutlineWidth = kSelectionOutlineWorldProbeWidth;
-		cb.ToonOutlineScreenWidth = kSelectionOutlineScreenWidth;
-		cb.ViewportSize = {
-			max(static_cast<float>(RendererCore::GetSceneWidth()), 1.0f),
-			max(static_cast<float>(RendererCore::GetSceneHeight()), 1.0f)
-		};
-		cb.ToonOutlineUseScreenSpace = 1;
-	}
-
-	D3D12_GPU_DESCRIPTOR_HANDLE CreateSelectionOutlineCbv(UINT8* cbvDataBegin, EntityID entity)
-	{
-		if (!cbvDataBegin)
-		{
-			return {};
-		}
-
-		const auto* source = reinterpret_cast<const ConstantBuffer3D*>(cbvDataBegin + (entity * RendererResource::g_kCB_ALIGNED_SIZE));
-		ConstantBuffer3D outlineConstants = *source;
-		ApplySelectionOutlineConstants(outlineConstants);
-		return RendererResource::AllocateTransientConstantBuffer(outlineConstants);
-	}
-
-	float GetCameraDistanceSq(EntityID entity, const XMFLOAT3& cameraPos)
+	float GetCameraDepth(EntityID entity, const XMMATRIX& view)
 	{
 		if (!Registry::HasComponent(entity, ComponentType::TRANSFORM))
 		{
 			return 0.0f;
 		}
 		const XMFLOAT3& pos = ComponentManager::GetComponentUnchecked<TransformComponent>(entity).Position;
-		const float dx = pos.x - cameraPos.x;
-		const float dy = pos.y - cameraPos.y;
-		const float dz = pos.z - cameraPos.z;
-		return dx * dx + dy * dy + dz * dz;
+		const XMVECTOR viewPos = XMVector3TransformCoord(XMLoadFloat3(&pos), view);
+		return XMVectorGetZ(viewPos);
 	}
 
 	const char* GetSpriteVsPath(EntityID entity, bool is3D)
@@ -271,12 +240,6 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	Camera::GetCameraMatrices(Camera::GetCameraEntity(), viewMat, projMat);
 	const XMMATRIX transposedView = XMMatrixTranspose(viewMat);
 	const XMMATRIX transposedProj = XMMatrixTranspose(projMat);
-	XMFLOAT3 cameraPos = { 0.0f, 0.0f, 5.0f };
-	const EntityID activeCameraEntity = Camera::GetCameraEntity();
-	if (Registry::HasComponent(activeCameraEntity, ComponentType::TRANSFORM))
-	{
-		cameraPos = ComponentManager::GetComponentUnchecked<TransformComponent>(activeCameraEntity).Position;
-	}
 	const float sceneAspectRatio = RendererCore::GetSceneAspectRatio();
 	const int defaultTextureIndex = TextureManager::GetDefaultTextureIndex();
 	const int defaultNormalIndex = TextureManager::GetDefaultTextureIndex();
@@ -348,6 +311,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					cb3D.MaterialRoughness = mat.Roughness;
 					cb3D.MaterialFresnel = mat.Fresnel;
 					cb3D.MaterialAlpha = mat.Alpha;
+					cb3D.MaterialIsTransparent = mat.IsTransparent ? 1 : 0;
 					cb3D.MaterialMode = static_cast<int>(mat.ShaderClassMode);
 					cb3D.ShaderClass = static_cast<int>(mat.ShaderClass);
 					cb3D.ToonOutlineWidth = mat.ToonOutlineWidth;
@@ -367,8 +331,8 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				}
 
 				memcpy(pCbvDataBegin + (i * RendererResource::g_kCB_ALIGNED_SIZE), &cb3D, sizeof(cb3D));
-				const float cameraDistanceSq = drawTransparent ? GetCameraDistanceSq(i, cameraPos) : 0.0f;
-				m_ModelDrawCalls.push_back(DrawCall{ i, pso, srvIndex, normalSrvIndex, sprite.VertexBufferView, sprite.VertexCount, true, material, cameraDistanceSq });
+				const float cameraDepth = drawTransparent ? GetCameraDepth(i, viewMat) : 0.0f;
+				m_ModelDrawCalls.push_back(DrawCall{ i, pso, srvIndex, normalSrvIndex, sprite.VertexBufferView, sprite.VertexCount, true, material, cameraDepth });
 				continue;
 			}
 
@@ -433,8 +397,8 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			auto* pCb = reinterpret_cast<CbData*>(pCbvDataBegin + (i * RendererResource::g_kCB_ALIGNED_SIZE));
 			*pCb = cbData;
 
-			const float cameraDistanceSq = drawTransparent ? GetCameraDistanceSq(i, cameraPos) : 0.0f;
-			m_SpriteDrawCalls.push_back(DrawCall{ i, pso, srvIndex, normalSrvIndex, sprite.VertexBufferView, sprite.VertexCount, false, material, cameraDistanceSq });
+			const float cameraDepth = drawTransparent ? GetCameraDepth(i, viewMat) : 0.0f;
+			m_SpriteDrawCalls.push_back(DrawCall{ i, pso, srvIndex, normalSrvIndex, sprite.VertexBufferView, sprite.VertexCount, false, material, cameraDepth });
 		}
 	}
 
@@ -510,6 +474,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			cb3D.MaterialRoughness = mat.Roughness;
 			cb3D.MaterialFresnel = mat.Fresnel;
 			cb3D.MaterialAlpha = mat.Alpha;
+			cb3D.MaterialIsTransparent = mat.IsTransparent ? 1 : 0;
 			cb3D.MaterialMode = static_cast<int>(mat.ShaderClassMode);
 			cb3D.ShaderClass = static_cast<int>(mat.ShaderClass);
 			cb3D.ToonOutlineWidth = mat.ToonOutlineWidth;
@@ -529,8 +494,8 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		}
 
 		memcpy(pCbvDataBegin + (i * RendererResource::g_kCB_ALIGNED_SIZE), &cb3D, sizeof(cb3D));
-		const float cameraDistanceSq = drawTransparent ? GetCameraDistanceSq(i, cameraPos) : 0.0f;
-		m_ModelDrawCalls.push_back(DrawCall{ i, pso, srvIndex, normalSrvIndex, mesh.VertexBufferView, mesh.VertexCount, true, material, cameraDistanceSq });
+		const float cameraDepth = drawTransparent ? GetCameraDepth(i, viewMat) : 0.0f;
+		m_ModelDrawCalls.push_back(DrawCall{ i, pso, srvIndex, normalSrvIndex, mesh.VertexBufferView, mesh.VertexCount, true, material, cameraDepth });
 	}
 
 	auto sortDrawCalls = [drawTransparent](vector<DrawCall>& drawCalls)
@@ -539,9 +504,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				{
 				if (drawTransparent)
 				{
-					if (fabsf(a.cameraDistanceSq - b.cameraDistanceSq) > 0.0001f)
+					if (fabsf(a.cameraDepth - b.cameraDepth) > 0.0001f)
 					{
-						return a.cameraDistanceSq > b.cameraDistanceSq;
+						return a.cameraDepth > b.cameraDepth;
 					}
 				}
 				if (a.pso != b.pso)
@@ -565,7 +530,6 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		{
 			ID3D12PipelineState* lastPso = nullptr;
 			ID3D12PipelineState* outlinePso = PsoManager::GetOrCreateToonOutlinePso(drawTransparent);
-			const EntityID selectedEntity = ImGuiManager::GetSelectedEntity();
 			int lastSrvIndex = -1;
 			int lastNormalSrvIndex = -1;
 
@@ -605,17 +569,6 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					lastPso = outlinePso;
 				}
 
-				if (dc.is3D && outlinePso && dc.EntityID == selectedEntity)
-				{
-					const D3D12_GPU_DESCRIPTOR_HANDLE selectionCbvHandle = CreateSelectionOutlineCbv(pCbvDataBegin, dc.EntityID);
-					if (selectionCbvHandle.ptr != 0)
-					{
-						pCommandList->SetPipelineState(outlinePso);
-						pCommandList->SetGraphicsRootDescriptorTable(0, selectionCbvHandle);
-						pCommandList->DrawInstanced(dc.vertexCount, 1, 0, 0);
-						lastPso = outlinePso;
-					}
-				}
 			}
 		};
 

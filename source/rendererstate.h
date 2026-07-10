@@ -126,7 +126,8 @@ struct ConstantBuffer3D
 	XMFLOAT2 ViewportSize = { 1.0f, 1.0f };
 	int ToonOutlineUseScreenSpace = 0;
 	float MaterialAlpha = 1.0f;
-	XMFLOAT2 ConstantPadding = { 0.0f, 0.0f };
+	int MaterialIsTransparent = 0;
+	float ConstantPadding = 0.0f;
 };
 
 struct VertexResource
