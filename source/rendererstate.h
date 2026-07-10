@@ -142,10 +142,8 @@ public:
 	static constexpr UINT g_kGBUFFER_COUNT = static_cast<UINT>(GBufferType::COUNT);
 	static constexpr uint32_t g_kFRAME_COUNT = 3;
 	static constexpr UINT g_kMAX_SHADER_LIGHTS = 20;
-	// Shadow maps are by far the most expensive per-light operation.  Keep two
-	// explicitly enabled shadow casters (typically the sun plus one hero light)
-	// and let the remaining lights participate in deferred lighting only.
-	static constexpr UINT g_kMAX_SHADOW_LIGHTS = 2;
+
+	static constexpr UINT g_kMAX_SHADOW_LIGHTS = 5;
 protected:
 	static ComPtr<ID3D12Device> m_Device;
 	static ComPtr<ID3D12CommandQueue> m_CommandQueue;
