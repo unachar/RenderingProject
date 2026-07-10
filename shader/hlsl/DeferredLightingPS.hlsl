@@ -10,6 +10,7 @@ Texture2D<float4> MaterialTexture : register(t4);
 Texture2D<float4> ShadowGBufferTexture : register(t5);
 Texture2D<float4> EnvironmentTexture : register(t6);
 Texture2DArray<float> ShadowMapTexture : register(t7);
+Texture2D<float4> AtmosphereTexture : register(t8);
 
 SamplerState TextureSampler : register(s0);
 SamplerState ShadowSampler : register(s1);
@@ -160,10 +161,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     bool bsdf = IsMaterialClass(shaderClass, 14.0f);
     bool selectionOutline = IsMaterialClass(shaderClass, 99.0f);
 
-    float3 viewRay = ReconstructPostProcessViewRayCommon(input.TexCoord);
-    float3 atmosphereRayEnd = (background || position.w <= 0.0001f) ? (PPCameraPos.xyz + viewRay * 80.0f) : position.xyz;
-    float3 atmosphereViewScatter = RayMarchAtmosphereViewCommon(
-        atmosphereRayEnd, ShadowMapTexture, ShadowSampler, LightViewProjection, ShadowMapParams);
+    float3 atmosphereViewScatter = AtmosphereTexture.SampleLevel(TextureSampler, input.TexCoord, 0).rgb;
     
     if (background)
     {

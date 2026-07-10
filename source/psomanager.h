@@ -19,11 +19,13 @@ public:
 
 	static bool CreateSkinningPso();
 	static bool CreatePostProcessPipelines();
+	static bool CreateAtmospherePso();
 	static bool CreateUpscalePso();
 	static bool CreateAaPsos();
 
 	static ID3D12PipelineState* GetPostProcessPso(PostProcessType type);
 	static ID3D12PipelineState* GetDeferredLightingPso() { return m_DeferredLightingPso.Get(); }
+	static ID3D12PipelineState* GetAtmospherePso() { return m_AtmospherePso.Get(); }
 	static ID3D12PipelineState* GetUpscaleBilateralPso() { return m_UpscaleBilateralPso.Get(); }
 	static ID3D12PipelineState* GetFxaaPso() { return m_FxaaPso.Get(); }
 	static ID3D12PipelineState* GetTaaBlendPso() { return m_TaaBlendPso.Get(); }

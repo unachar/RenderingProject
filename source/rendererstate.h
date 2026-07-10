@@ -202,11 +202,15 @@ protected:
 	static ComPtr<ID3D12Resource> m_GBufferTargets[g_kGBUFFER_COUNT];
 	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_GBufferRtvHandles[g_kGBUFFER_COUNT];
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_GBufferSrvHandles[g_kGBUFFER_COUNT];
+	static ComPtr<ID3D12Resource> m_AtmosphereRenderTarget;
+	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_AtmosphereRtvHandle;
+	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_AtmosphereSrvHandle;
 	static int m_EnvironmentTextureSrvIndex;
 	static ComPtr<ID3D12RootSignature> m_PostProcessRootSignature;
 	static ComPtr<ID3D12RootSignature> m_UpscaleRootSignature;
 	static unordered_map<PostProcessType, ComPtr<ID3D12PipelineState>> m_PostProcessPsoMap;
 	static ComPtr<ID3D12PipelineState> m_DeferredLightingPso;
+	static ComPtr<ID3D12PipelineState> m_AtmospherePso;
 	static ComPtr<ID3D12PipelineState> m_UpscaleBilateralPso;
 	static ComPtr<ID3D12Resource> m_PostProcessConstantBuffer;
 	static ComPtr<ID3D12Resource> m_LightConstantBuffer;
@@ -285,7 +289,8 @@ public:
 	static constexpr UINT g_kSCENE_SRV_INDEX = g_kTEXTURE_SRV_START_INDEX + g_kMAX_SRVS;
 	static constexpr UINT g_kEDITOR_SCENE_SRV_INDEX = g_kSCENE_SRV_INDEX + 1;
 	static constexpr UINT g_kGBUFFER_SRV_START_INDEX = g_kEDITOR_SCENE_SRV_INDEX + 1;
-	static constexpr UINT g_kIMGUI_SRV_INDEX = g_kGBUFFER_SRV_START_INDEX + g_kGBUFFER_COUNT;
+	static constexpr UINT g_kATMOSPHERE_SRV_INDEX = g_kGBUFFER_SRV_START_INDEX + g_kGBUFFER_COUNT;
+	static constexpr UINT g_kIMGUI_SRV_INDEX = g_kATMOSPHERE_SRV_INDEX + 1;
 	static constexpr UINT g_kSHADOW_SRV_INDEX = g_kIMGUI_SRV_INDEX + 1;
 	static constexpr UINT g_kAA_SRV_INDEX = g_kSHADOW_SRV_INDEX + 1;
 	static constexpr UINT g_kAA_HISTORY_SRV_INDEX = g_kAA_SRV_INDEX + 1;

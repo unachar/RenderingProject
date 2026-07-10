@@ -387,6 +387,7 @@ void RendererCore::Uninit()
 
 	m_PsoCache.clear();
 	m_PostProcessPsoMap.clear();
+	m_AtmospherePso.Reset();
 
 	if (m_DynamicVertexBuffer)
 	{
@@ -635,6 +636,7 @@ void RendererCore::ApplyPendingHdr()
 	m_PsoCache.clear();
 	m_PostProcessPsoMap.clear();
 	m_DeferredLightingPso.Reset();
+	m_AtmospherePso.Reset();
 
 	for (EntityID entity : World::GetView<ShaderComponent>())
 	{
@@ -647,6 +649,7 @@ void RendererCore::ApplyPendingHdr()
 	}
 
 	PsoManager::CreatePostProcessPipelines();
+	PsoManager::CreateAtmospherePso();
 
 	m_UpscaleBilateralPso.Reset();
 	PsoManager::CreateUpscalePso();
