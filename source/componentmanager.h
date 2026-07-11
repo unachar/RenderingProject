@@ -2,6 +2,7 @@
 #include "ecs.h"
 #include "rendererdraw.h"
 #include "light.h"
+#include "animationplayback.h"
 #include <cassert>
 #include <typeindex>
 #include <type_traits>
@@ -87,6 +88,7 @@ struct AnimationModelComponent
 	bool IsConvert = true;
 	vector<string> AnimationPaths{};
 	vector<string> Animations{};
+	vector<AnimationPlaybackLayer> ActiveAnimationLayers{};
 	string CurrentAnimation{};
 	string NextAnimation{};
 	float CurrentTime = 0.0f;
