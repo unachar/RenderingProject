@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "animator.h"
 #include "componentmanager.h"
+#include "animationplayback.h"
 
 void Animator::Play(AnimationModelComponent& animation, bool restart)
 {
@@ -38,8 +39,6 @@ void Animator::Play(AnimationModelComponent& animation, const vector<string>& an
 			continue;
 		}
 
-		// Retain the final occurrence so a repeated name still obeys the public
-		// "later layer wins" rule (A, B, A must resolve conflicts in favor of A).
 		auto duplicate = find(uniqueNames.begin(), uniqueNames.end(), animationName);
 		if (duplicate != uniqueNames.end())
 		{

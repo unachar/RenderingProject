@@ -169,6 +169,7 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="source\animationplayback.h" />
     <ClInclude Include="source\entitybase.h" />
     <ClInclude Include="source\modelimportutils.h" />
     <FxCompile Include="shader\hlsl\colorshader3dPS.hlsl">
