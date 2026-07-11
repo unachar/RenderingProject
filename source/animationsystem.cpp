@@ -23,16 +23,24 @@ void AnimationSystem::Update()
 			continue;
 		}
 
-		if (animationComponent.CurrentAnimation.empty() && !animationComponent.Animations.empty())
+		if (animationComponent.CurrentAnimation.empty() &&
+			animationComponent.ActiveAnimationLayers.empty() &&
+			!animationComponent.Animations.empty())
 		{
 			Animator::Play(animationComponent, animationComponent.Animations[0]);
 		}
-		if (animationComponent.CurrentAnimation.empty())
+		if (animationComponent.CurrentAnimation.empty() && animationComponent.ActiveAnimationLayers.empty())
 		{
 			continue;
 		}
 
 		Animator::Update(animationComponent, World::GetDeltaTime());
+
+		if (animationComponent.ActiveAnimationLayers.size() > 1)
+		{
+			model->UpdateBoneMatrices(animationComponent.ActiveAnimationLayers);
+			continue;
+		}
 
 		const string& nextAnimation = animationComponent.NextAnimation.empty()
 			? animationComponent.CurrentAnimation

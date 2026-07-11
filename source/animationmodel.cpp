@@ -1038,9 +1038,13 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
 		return false;
 	}
 
-	if (animation.BoneTracks.empty())
+	// A VMD may intentionally contain only facial morphs (or only IK switches).
+	// Reject only files that have no model-animation tracks at all; requiring a
+	// bone track here made face-only VMD layers impossible to load/play.
+	if (animation.BoneTracks.empty() && animation.MorphTracks.empty() && animation.IkTracks.empty())
 	{
-		Debug::Log("ERROR: VMD has no bone motion tracks: %s (motions=%u)\n", fileName, animation.MotionCount);
+		Debug::Log("ERROR: VMD has no bone, morph, or IK tracks: %s (motions=%u, morphs=%u, ikFrames=%u)\n",
+			fileName, animation.MotionCount, animation.MorphCount, animation.IkCount);
 		return false;
 	}
 
@@ -1054,6 +1058,16 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
 			matchedKeyCount += pair.second.size();
 		}
 	}
+	size_t matchedMorphTrackCount = 0;
+	size_t matchedMorphKeyCount = 0;
+	for (const auto& pair : animation.MorphTracks)
+	{
+		if (m_PmxMorphIndexMap.find(pair.first) != m_PmxMorphIndexMap.end())
+		{
+			++matchedMorphTrackCount;
+			matchedMorphKeyCount += pair.second.size();
+		}
+	}
 
 	const string animationName = name ? name : "";
 	m_VmdAnimations[animationName] = std::move(animation);
@@ -1061,7 +1075,7 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
 	InvalidateVmdRuntimeCache();
 
 	const VmdAnimation& loaded = m_VmdAnimations[animationName];
-	Debug::Log("VMD animation loaded: %s as '%s' (model='%s', motions=%u, boneTracks=%zu, matchedTracks=%zu, matchedKeys=%zu, morphs=%u, morphTracks=%zu, cameras=%u, lights=%u, shadows=%u, ikFrames=%u, ikTracks=%zu, maxFrame=%u)\n",
+	Debug::Log("VMD animation loaded: %s as '%s' (model='%s', motions=%u, boneTracks=%zu, matchedBoneTracks=%zu, matchedBoneKeys=%zu, morphs=%u, morphTracks=%zu, matchedMorphTracks=%zu, matchedMorphKeys=%zu, cameras=%u, lights=%u, shadows=%u, ikFrames=%u, ikTracks=%zu, maxFrame=%u)\n",
 		fileName,
 		animationName.c_str(),
 		loaded.ModelName.c_str(),
@@ -1071,6 +1085,8 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
 		matchedKeyCount,
 		loaded.MorphCount,
 		loaded.MorphTracks.size(),
+		matchedMorphTrackCount,
+		matchedMorphKeyCount,
 		loaded.CameraCount,
 		loaded.LightCount,
 		loaded.ShadowCount,
@@ -1078,9 +1094,13 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
 		loaded.IkTracks.size(),
 		loaded.MaxFrame);
 
-	if (matchedTrackCount == 0)
+	if (!loaded.BoneTracks.empty() && matchedTrackCount == 0)
 	{
 		Debug::Log("WARNING: VMD loaded but no bone names matched this model: %s\n", fileName);
+	}
+	if (!loaded.MorphTracks.empty() && matchedMorphTrackCount == 0)
+	{
+		Debug::Log("WARNING: VMD loaded but no morph names matched this model: %s\n", fileName);
 	}
 	return true;
 }
@@ -1090,10 +1110,18 @@ void AnimationModelResource::InvalidateVmdRuntimeCache()
 	// Reloading or replacing an animation must also invalidate the sampled-pose
 	// fast path, even when it keeps the same public animation name.
 	m_HasCachedPose = false;
+	m_HasCachedLayeredPose = false;
+	m_UseLayeredVmdIk = false;
 	m_CachedVmdPrimaryAnimation = nullptr;
 	m_CachedVmdSecondaryAnimation = nullptr;
 	m_VmdBoneBindings.clear();
 	m_VmdMorphBindings.clear();
+	m_CachedVmdLayerAnimations.clear();
+	m_VmdLayerFramesScratch.clear();
+	m_LastLayerPoseTimes.clear();
+	m_VmdLayeredBoneBindings.clear();
+	m_VmdLayeredMorphBindings.clear();
+	m_VmdLayeredIkBindings.clear();
 	m_VmdIkTrackCache.clear();
 	m_VmdIkTrackCursors.clear();
 	m_VmdActiveMorphsScratch.clear();
@@ -1103,6 +1131,7 @@ void AnimationModelResource::InvalidateVmdRuntimeCache()
 
 void AnimationModelResource::RebuildVmdRuntimeCache(const VmdAnimation* primaryAnimation, const VmdAnimation* secondaryAnimation)
 {
+	m_UseLayeredVmdIk = false;
 	m_CachedVmdPrimaryAnimation = primaryAnimation;
 	m_CachedVmdSecondaryAnimation = secondaryAnimation;
 	m_VmdBoneBindings.clear();
@@ -1158,6 +1187,139 @@ void AnimationModelResource::RebuildVmdRuntimeCache(const VmdAnimation* primaryA
 		m_VmdIkTrackCursors.emplace(track.first, VmdTrackSampleCursor{});
 	}
 
+	if (m_VmdMorphPositionOffsetsScratch.size() != m_PmxBaseVertices.size())
+	{
+		m_VmdMorphPositionOffsetsScratch.resize(m_PmxBaseVertices.size());
+		m_VmdMorphUvOffsetsScratch.resize(m_PmxBaseVertices.size());
+	}
+}
+
+bool AnimationModelResource::IsVmdLayeredRuntimeCacheValid(
+	const vector<AnimationPlaybackLayer>& animationLayers) const
+{
+	if (m_CachedVmdLayerAnimations.size() != animationLayers.size())
+	{
+		return false;
+	}
+
+	for (size_t layerIndex = 0; layerIndex < animationLayers.size(); ++layerIndex)
+	{
+		const auto animationIt = m_VmdAnimations.find(animationLayers[layerIndex].AnimationName);
+		const VmdAnimation* animation = animationIt != m_VmdAnimations.end() ? &animationIt->second : nullptr;
+		if (m_CachedVmdLayerAnimations[layerIndex] != animation)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+void AnimationModelResource::RebuildVmdLayeredRuntimeCache(
+	const vector<AnimationPlaybackLayer>& animationLayers)
+{
+	m_HasCachedLayeredPose = false;
+	m_UseLayeredVmdIk = true;
+	m_CachedVmdLayerAnimations.clear();
+	m_CachedVmdLayerAnimations.reserve(animationLayers.size());
+	for (const AnimationPlaybackLayer& layer : animationLayers)
+	{
+		const auto animationIt = m_VmdAnimations.find(layer.AnimationName);
+		m_CachedVmdLayerAnimations.push_back(
+			animationIt != m_VmdAnimations.end() ? &animationIt->second : nullptr);
+	}
+
+	m_VmdLayerFramesScratch.resize(animationLayers.size());
+	m_LastLayerPoseTimes.resize(animationLayers.size());
+	m_VmdLayeredBoneBindings.clear();
+	m_VmdLayeredMorphBindings.clear();
+	m_VmdLayeredIkBindings.clear();
+	m_VmdActiveMorphsScratch.clear();
+
+	// Cache the winning source track for every bone. Iterating layers from first
+	// to last makes assignment deterministic: the final matching layer wins.
+	m_VmdLayeredBoneBindings.reserve(m_Bone.size());
+	for (auto& bonePair : m_Bone)
+	{
+		VmdLayeredBoneBinding binding{};
+		binding.BonePtr = &bonePair.second;
+		binding.BonePtr->BindLocalMatrix.Decompose(
+			binding.BaseScale, binding.BaseRotation, binding.BasePosition);
+
+		for (size_t layerIndex = 0; layerIndex < m_CachedVmdLayerAnimations.size(); ++layerIndex)
+		{
+			const VmdAnimation* animation = m_CachedVmdLayerAnimations[layerIndex];
+			if (!animation)
+			{
+				continue;
+			}
+			const auto trackIt = animation->BoneTracks.find(bonePair.first);
+			if (trackIt != animation->BoneTracks.end())
+			{
+				binding.Track = &trackIt->second;
+				binding.LayerIndex = layerIndex;
+			}
+		}
+		m_VmdLayeredBoneBindings.push_back(binding);
+	}
+
+	size_t morphTrackCount = 0;
+	size_t ikTrackCount = 0;
+	for (const VmdAnimation* animation : m_CachedVmdLayerAnimations)
+	{
+		if (animation)
+		{
+			morphTrackCount += animation->MorphTracks.size();
+			ikTrackCount += animation->IkTracks.size();
+		}
+	}
+	m_VmdLayeredMorphBindings.reserve(min(morphTrackCount, m_PmxMorphs.size()));
+	m_VmdLayeredIkBindings.reserve(ikTrackCount);
+	unordered_map<uint32_t, size_t> morphBindingIndices;
+	morphBindingIndices.reserve(min(morphTrackCount, m_PmxMorphs.size()));
+
+	for (size_t layerIndex = 0; layerIndex < m_CachedVmdLayerAnimations.size(); ++layerIndex)
+	{
+		const VmdAnimation* animation = m_CachedVmdLayerAnimations[layerIndex];
+		if (!animation)
+		{
+			continue;
+		}
+
+		for (const auto& trackPair : animation->MorphTracks)
+		{
+			const auto morphIt = m_PmxMorphIndexMap.find(trackPair.first);
+			if (morphIt == m_PmxMorphIndexMap.end())
+			{
+				continue;
+			}
+
+			const uint32_t morphIndex = morphIt->second;
+			const auto bindingIt = morphBindingIndices.find(morphIndex);
+			if (bindingIt == morphBindingIndices.end())
+			{
+				morphBindingIndices.emplace(morphIndex, m_VmdLayeredMorphBindings.size());
+				m_VmdLayeredMorphBindings.push_back(
+					{ morphIndex, &trackPair.second, layerIndex, {} });
+			}
+			else
+			{
+				VmdLayeredMorphBinding& binding = m_VmdLayeredMorphBindings[bindingIt->second];
+				binding.Track = &trackPair.second;
+				binding.LayerIndex = layerIndex;
+				binding.Cursor = {};
+			}
+		}
+
+		for (const auto& trackPair : animation->IkTracks)
+		{
+			VmdLayeredIkBinding& binding = m_VmdLayeredIkBindings[trackPair.first];
+			binding.Track = &trackPair.second;
+			binding.LayerIndex = layerIndex;
+			binding.Cursor = {};
+		}
+	}
+
+	m_VmdActiveMorphsScratch.reserve(m_VmdLayeredMorphBindings.size());
 	if (m_VmdMorphPositionOffsetsScratch.size() != m_PmxBaseVertices.size())
 	{
 		m_VmdMorphPositionOffsetsScratch.resize(m_PmxBaseVertices.size());
@@ -2626,6 +2788,35 @@ void AnimationModelResource::ApplyVmdMorphs(const VmdAnimation* animation, float
 			m_VmdActiveMorphsScratch.push_back({ binding.MorphIndex, weight });
 		}
 	}
+	ApplyActiveVmdMorphs();
+}
+
+void AnimationModelResource::ApplyVmdMorphLayers()
+{
+	if (m_PmxMorphs.empty())
+	{
+		return;
+	}
+
+	m_VmdActiveMorphsScratch.clear();
+	for (VmdLayeredMorphBinding& binding : m_VmdLayeredMorphBindings)
+	{
+		if (binding.LayerIndex >= m_VmdLayerFramesScratch.size())
+		{
+			continue;
+		}
+		const float weight = VmdAnimationImporter::SampleMorphTrackCached(
+			binding.Track, m_VmdLayerFramesScratch[binding.LayerIndex], binding.Cursor);
+		if (fabsf(weight) > 0.00001f)
+		{
+			m_VmdActiveMorphsScratch.push_back({ binding.MorphIndex, weight });
+		}
+	}
+	ApplyActiveVmdMorphs();
+}
+
+void AnimationModelResource::ApplyActiveVmdMorphs()
+{
 
 	if (m_VmdActiveMorphsScratch.empty() && !m_HasAppliedVmdMorphs)
 	{
@@ -3346,6 +3537,7 @@ void AnimationModelResource::SampleVmdBone(const VmdAnimation* animation, const 
 void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation1, float frame1,
 	const VmdAnimation* animation2, float frame2, float blendRate)
 {
+	m_UseLayeredVmdIk = false;
 	if (!m_AiScene)
 	{
 		return;
@@ -3405,8 +3597,107 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation
 	WriteBoneMatricesToBuffer();
 }
 
+void AnimationModelResource::UpdateVmdBoneMatrices(
+	const vector<AnimationPlaybackLayer>& animationLayers)
+{
+	if (!m_AiScene || animationLayers.empty())
+	{
+		return;
+	}
+
+	if (!IsVmdLayeredRuntimeCacheValid(animationLayers))
+	{
+		RebuildVmdLayeredRuntimeCache(animationLayers);
+	}
+	m_UseLayeredVmdIk = true;
+
+	bool hasVmdAnimation = false;
+	for (size_t layerIndex = 0; layerIndex < animationLayers.size(); ++layerIndex)
+	{
+		const VmdAnimation* animation = m_CachedVmdLayerAnimations[layerIndex];
+		hasVmdAnimation = hasVmdAnimation || animation != nullptr;
+		m_VmdLayerFramesScratch[layerIndex] = VmdAnimationImporter::ToFrameTime(
+			animation, animationLayers[layerIndex].CurrentTime);
+	}
+	if (!hasVmdAnimation)
+	{
+		return;
+	}
+
+	bool poseUnchanged = m_HasCachedLayeredPose &&
+		m_LastLayerPoseTimes.size() == animationLayers.size();
+	if (poseUnchanged)
+	{
+		for (size_t layerIndex = 0; layerIndex < animationLayers.size(); ++layerIndex)
+		{
+			if (fabsf(m_LastLayerPoseTimes[layerIndex] - animationLayers[layerIndex].CurrentTime) > 0.000001f)
+			{
+				poseUnchanged = false;
+				break;
+			}
+		}
+	}
+	if (poseUnchanged)
+	{
+		return;
+	}
+
+	for (VmdLayeredBoneBinding& binding : m_VmdLayeredBoneBindings)
+	{
+		if (!binding.BonePtr)
+		{
+			continue;
+		}
+
+		aiQuaternion rotation(1.0f, 0.0f, 0.0f, 0.0f);
+		aiVector3D position(0.0f, 0.0f, 0.0f);
+		if (binding.Track && binding.LayerIndex < m_VmdLayerFramesScratch.size())
+		{
+			VmdAnimationImporter::SampleBoneTrackCached(
+				binding.Track,
+				m_VmdLayerFramesScratch[binding.LayerIndex],
+				binding.Cursor,
+				rotation,
+				position);
+		}
+
+		aiQuaternion localRotation = binding.BaseRotation * rotation;
+		localRotation.Normalize();
+		binding.BonePtr->AnimationMatrix = aiMatrix4x4(
+			binding.BaseScale, localRotation, binding.BasePosition + position);
+	}
+
+	ApplyVmdMorphLayers();
+	ApplyPmxOrderedTransforms(nullptr, 0.0f);
+	UpdateBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
+	WriteBoneMatricesToBuffer();
+
+	for (size_t layerIndex = 0; layerIndex < animationLayers.size(); ++layerIndex)
+	{
+		m_LastLayerPoseTimes[layerIndex] = animationLayers[layerIndex].CurrentTime;
+	}
+	m_HasCachedLayeredPose = true;
+}
+
 bool AnimationModelResource::IsVmdIkEnabled(const VmdAnimation* animation, const string& ikBoneName, float currentFrame)
 {
+	if (m_UseLayeredVmdIk)
+	{
+		auto bindingIt = m_VmdLayeredIkBindings.find(ikBoneName);
+		if (bindingIt == m_VmdLayeredIkBindings.end())
+		{
+			return true;
+		}
+
+		VmdLayeredIkBinding& binding = bindingIt->second;
+		if (!binding.Track || binding.LayerIndex >= m_VmdLayerFramesScratch.size())
+		{
+			return true;
+		}
+		return VmdAnimationImporter::SampleIkTrackCached(
+			binding.Track, m_VmdLayerFramesScratch[binding.LayerIndex], binding.Cursor);
+	}
+
 	if (!animation)
 	{
 		return true;
@@ -3732,6 +4023,8 @@ void AnimationModelResource::UpdateBoneMatrices(const char* animName1, float fra
 	{
 		return;
 	}
+	m_HasCachedLayeredPose = false;
+	m_UseLayeredVmdIk = false;
 
 	const string animationName1 = animName1 ? animName1 : "";
 	const string animationName2 = animName2 ? animName2 : "";
@@ -3839,6 +4132,51 @@ void AnimationModelResource::UpdateBoneMatrices(const char* animName1, float fra
 	UpdateBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
 	WriteBoneMatricesToBuffer();
 	cachePose();
+}
+
+void AnimationModelResource::UpdateBoneMatrices(
+	const vector<AnimationPlaybackLayer>& animationLayers)
+{
+	if (!m_AiScene || animationLayers.empty())
+	{
+		return;
+	}
+
+	if (animationLayers.size() == 1)
+	{
+		const AnimationPlaybackLayer& layer = animationLayers.front();
+		UpdateBoneMatrices(
+			layer.AnimationName.c_str(), layer.CurrentTime,
+			layer.AnimationName.c_str(), layer.CurrentTime, 0.0f);
+		return;
+	}
+
+	bool hasVmdAnimation = false;
+	for (const AnimationPlaybackLayer& layer : animationLayers)
+	{
+		if (m_VmdAnimations.find(layer.AnimationName) != m_VmdAnimations.end())
+		{
+			hasVmdAnimation = true;
+			break;
+		}
+	}
+
+	if (hasVmdAnimation)
+	{
+		// The simultaneous VMD path owns a separate cache so switching between it
+		// and the legacy cross-fade path cannot reuse a pose from the other mode.
+		m_HasCachedPose = false;
+		UpdateVmdBoneMatrices(animationLayers);
+		return;
+	}
+
+	// Simultaneous playback is primarily a VMD feature. Preserve deterministic
+	// behavior for other import formats by selecting the final (highest-priority)
+	// animation instead of accidentally treating the set as a cross-fade.
+	const AnimationPlaybackLayer& highestPriorityLayer = animationLayers.back();
+	UpdateBoneMatrices(
+		highestPriorityLayer.AnimationName.c_str(), highestPriorityLayer.CurrentTime,
+		highestPriorityLayer.AnimationName.c_str(), highestPriorityLayer.CurrentTime, 0.0f);
 }
 
 void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCommandList)
