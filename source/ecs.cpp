@@ -10,6 +10,7 @@ vector<EntityID> Registry::m_ActiveEntities[g_kMAX_COMPONENTS];
 vector<int32_t> Registry::m_EntityToIndex[g_kMAX_COMPONENTS];
 queue<EntityID> Registry::m_FreeList;
 uint32_t Registry::m_NextEntityId = 0;
+uint64_t Registry::m_StructureVersion = 1;
 
 unordered_map<type_index, ComponentTypeID>& ComponentTypeRegistry::TypeIds()
 {
@@ -58,13 +59,13 @@ void Registry::Init()
         m_Entities.resize(g_kMAX_ENTITIES);
     }
 
+    TouchStructure();
 }
 
 EntityID Registry::CreateEntity()
 {
     EntityID id = g_kINVALID_ENTITY;
 
-    
     if (!m_FreeList.empty())
     {
         id = m_FreeList.front();
@@ -82,6 +83,7 @@ EntityID Registry::CreateEntity()
 
     m_Entities[id].IsAlive = true;
     m_Entities[id].Mask.reset();
+    TouchStructure();
 
     return id;
 }
@@ -107,6 +109,7 @@ bool Registry::RestoreEntity(EntityID entity)
 
     m_Entities[entity].IsAlive = true;
     m_Entities[entity].Mask.reset();
+    TouchStructure();
     return true;
 }
 
@@ -117,7 +120,6 @@ void Registry::DestroyEntity(EntityID entity)
         return;
     }
 
-    
     for (ComponentTypeID i = 0; i < ComponentTypeRegistry::GetRegisteredCount(); ++i)
     {
         if (m_Entities[entity].Mask.test(i))
@@ -138,8 +140,7 @@ void Registry::DestroyEntity(EntityID entity)
     m_Entities[entity].IsAlive = false;
     m_Entities[entity].Mask.reset();
     m_FreeList.push(entity);
+    TouchStructure();
 
-    
-	World::UnregisterName(entity);
+    World::UnregisterName(entity);
 }
-
