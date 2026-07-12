@@ -213,6 +213,7 @@ protected:
 	static ComPtr<ID3D12PipelineState> m_DeferredLightingPso;
 	static ComPtr<ID3D12PipelineState> m_AtmospherePso;
 	static ComPtr<ID3D12PipelineState> m_UpscaleBilateralPso;
+	static ComPtr<ID3D12PipelineState> m_UpscaleDepthPso;
 	static ComPtr<ID3D12Resource> m_PostProcessConstantBuffer;
 	static ComPtr<ID3D12Resource> m_LightConstantBuffer;
 	static ComPtr<ID3D12Resource> m_PBRConstantBuffer;
@@ -265,8 +266,10 @@ public:
 	static constexpr uint32_t g_kSCREEN_HEIGHT = 600;
 	static constexpr float g_kNEAR_CLIP = 0.1f;
 	static constexpr float g_kFAR_CLIP = 100.0f;
-	static constexpr float g_kResolutionScale = 0.4f;
-	static constexpr float g_kGBufferScale = 0.4f;
+	static constexpr float g_kResolutionScale = 0.3f;
+	static constexpr float g_kGBufferScale = g_kResolutionScale;
+	static_assert(g_kResolutionScale == g_kGBufferScale,
+		"Scene and GBuffer resolution scales must match");
 
 
 	static constexpr UINT g_kCB_ALIGNED_SIZE = (sizeof(ConstantBuffer3D) + 255) & ~255;

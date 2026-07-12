@@ -246,6 +246,7 @@ bool RendererShader::CreatePostProcessPipeline()
 	if (!PsoManager::CreatePostProcessPipelines()) { ShaderLogToFile("PP: FAIL CreatePostProcessPipelines\n"); return false; }
 	if (!PsoManager::CreateAtmospherePso()) { ShaderLogToFile("PP: FAIL CreateAtmospherePso\n"); return false; }
 	if (!PsoManager::CreateUpscalePso()) { ShaderLogToFile("PP: FAIL CreateUpscalePso\n"); return false; }
+	if (!PsoManager::CreateUpscaleDepthPso()) { ShaderLogToFile("PP: FAIL CreateUpscaleDepthPso\n"); return false; }
 	if (!PsoManager::CreateAaPsos()) { ShaderLogToFile("PP: FAIL CreateAaPsos\n"); return false; }
 	ShaderLogToFile("PP: done\n");
 	return true;

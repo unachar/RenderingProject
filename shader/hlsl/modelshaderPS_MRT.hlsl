@@ -27,7 +27,8 @@ GBufferOutput main(in PSInput3D In)
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
     output.Position = float4(In.WorldPos, 2.0f);
-    output.Depth = saturate((In.Position.z / In.Position.w));
+    // SV_Position.z is already the post-projection D3D depth in [0, 1].
+    output.Depth = saturate(In.Position.z);
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
     bool usePartParams = MaterialMode != 1;
     output.Material.r = usePartParams ? partParams.Basic.x : mMetallic;

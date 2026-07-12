@@ -348,12 +348,32 @@ void RendererDraw::BeginEditorSceneOverlayPass()
 	m_IsSceneColorForwardPass = true;
 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
-	// Deferred geometry can use the reduced-resolution depth buffer.  The
-	// transparent overlay is rendered at full resolution, so its full-resolution
-	// depth buffer was never cleared in that path and could reject every fragment.
 	if (m_UseLowResDepth)
 	{
 		m_CommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+		// Reconstruct the opaque low-resolution depth into the full-resolution
+		// DSV before drawing transparent geometry. Point sampling preserves hard
+		// depth discontinuities and avoids foreground halos at object silhouettes.
+		ID3D12PipelineState* depthPso = PsoManager::GetUpscaleDepthPso();
+		if (depthPso && m_UpscaleRootSignature)
+		{
+			m_CommandList->OMSetRenderTargets(0, nullptr, FALSE, &dsvHandle);
+			m_CommandList->SetPipelineState(depthPso);
+			m_CommandList->SetGraphicsRootSignature(m_UpscaleRootSignature.Get());
+			SetDescriptorHeap();
+			m_CommandList->SetGraphicsRootDescriptorTable(0, m_SceneSrvHandle);
+			m_CommandList->SetGraphicsRootDescriptorTable(1,
+				m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)]);
+			if (m_PostProcessConstantBuffer)
+			{
+				m_CommandList->SetGraphicsRootConstantBufferView(2,
+					m_PostProcessConstantBuffer->GetGPUVirtualAddress() +
+					m_FrameIndex * g_kPP_CB_ALIGNED_SIZE);
+			}
+			m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			m_CommandList->DrawInstanced(3, 1, 0, 0);
+		}
 	}
 	m_CommandList->OMSetRenderTargets(1, &m_EditorSceneRtvHandle, FALSE, &dsvHandle);
 
