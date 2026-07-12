@@ -454,7 +454,7 @@ void RendererDraw::BeginScenePass()
 		m_IsDeferredGeometryPass = true;
 		m_UseLowResDepth = (m_LowResDepthBuffer != nullptr);
 
-		for (UINT i = 0; i < g_kGBUFFER_COUNT; ++i)
+		for (UINT i = 0; i < g_kGEOMETRY_GBUFFER_COUNT; ++i)
 		{
 			if (!m_GBufferTargets[i])
 			{
@@ -520,7 +520,7 @@ void RendererDraw::EndScenePass()
 
 	if (m_RenderMode == RenderMode::DEFERRED)
 	{
-		for (UINT i = 0; i < g_kGBUFFER_COUNT; ++i)
+		for (UINT i = 0; i < g_kGEOMETRY_GBUFFER_COUNT; ++i)
 		{
 			if (!m_GBufferTargets[i])
 			{
@@ -574,6 +574,72 @@ void RendererDraw::EndScenePass()
 	m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 	m_IsDeferredGeometryPass = false;
 	m_IsSceneColorForwardPass = false;
+}
+
+void RendererDraw::RenderVelocityBuffer()
+{
+	if (m_RenderMode != RenderMode::DEFERRED || !m_CommandList || !m_AaRootSignature)
+	{
+		return;
+	}
+
+	const UINT velocityIndex = static_cast<UINT>(GBufferType::VELOCITY);
+	ID3D12PipelineState* velocityPso = PsoManager::GetVelocityPso();
+	if (!velocityPso || !m_GBufferTargets[velocityIndex])
+	{
+		return;
+	}
+
+	D3D12_RESOURCE_BARRIER toVelocityRt = CD3DX12_RESOURCE_BARRIER::Transition(
+		m_GBufferTargets[velocityIndex].Get(),
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+		D3D12_RESOURCE_STATE_RENDER_TARGET);
+	m_CommandList->ResourceBarrier(1, &toVelocityRt);
+
+	const float clearVelocity[4] = {};
+	m_CommandList->ClearRenderTargetView(m_GBufferRtvHandles[velocityIndex], clearVelocity, 0, nullptr);
+	m_CommandList->OMSetRenderTargets(1, &m_GBufferRtvHandles[velocityIndex], FALSE, nullptr);
+	m_CommandList->SetPipelineState(velocityPso);
+	m_CommandList->SetGraphicsRootSignature(m_AaRootSignature.Get());
+	SetDescriptorHeap();
+	m_CommandList->RSSetViewports(1, &m_Viewport);
+	m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
+
+	if (m_PostProcessConstantBuffer)
+	{
+		m_CommandList->SetGraphicsRootConstantBufferView(0,
+			m_PostProcessConstantBuffer->GetGPUVirtualAddress() + m_FrameIndex * g_kPP_CB_ALIGNED_SIZE);
+	}
+	m_CommandList->SetGraphicsRootDescriptorTable(1,
+		m_GBufferSrvHandles[static_cast<UINT>(GBufferType::POSITION)]);
+	m_CommandList->SetGraphicsRootDescriptorTable(2,
+		m_GBufferSrvHandles[static_cast<UINT>(GBufferType::POSITION)]);
+	m_CommandList->SetGraphicsRootDescriptorTable(3,
+		m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)]);
+
+	XMMATRIX prevView = XMLoadFloat4x4(&m_PrevViewMatrix);
+	XMMATRIX prevProj = XMLoadFloat4x4(&m_PrevProjMatrix);
+	XMMATRIX prevViewProj = XMMatrixTranspose(prevView * prevProj);
+	float constants[20] = {};
+	memcpy(constants, &prevViewProj, sizeof(XMFLOAT4X4));
+	constants[16] = 1.0f / max(static_cast<float>(m_SceneWidth), 1.0f);
+	constants[17] = 1.0f / max(static_cast<float>(m_SceneHeight), 1.0f);
+	m_CommandList->SetGraphicsRoot32BitConstants(4, 20, constants, 0);
+	m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	m_CommandList->DrawInstanced(3, 1, 0, 0);
+
+	// Keep the target bound for the following object/animation velocity pass.
+}
+
+void RendererDraw::EndVelocityBuffer()
+{
+	const UINT velocityIndex = static_cast<UINT>(GBufferType::VELOCITY);
+	if (!m_CommandList || !m_GBufferTargets[velocityIndex]) return;
+	D3D12_RESOURCE_BARRIER toVelocitySrv = CD3DX12_RESOURCE_BARRIER::Transition(
+		m_GBufferTargets[velocityIndex].Get(),
+		D3D12_RESOURCE_STATE_RENDER_TARGET,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+	m_CommandList->ResourceBarrier(1, &toVelocitySrv);
 }
 void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 {

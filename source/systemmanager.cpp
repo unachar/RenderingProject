@@ -70,9 +70,31 @@ void SystemManager::Uninit()
 
 void SystemManager::UpdateSystem()
 {
+	// Snapshot transforms before any movement, timeline, animation or camera
+	// system mutates the current frame. Newly-created entities are initialized
+	// after TransformSystem has produced their first valid world matrix.
+	for (EntityID entity : World::GetView<TransformComponent>())
+	{
+		auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+		if (transform.HasPreviousWorld)
+		{
+			transform.PreviousWorldMatrix = transform.WorldMatrix;
+		}
+	}
+
 	for (auto& system : m_Systems)
 	{
 		system->Update();
+	}
+
+	for (EntityID entity : World::GetView<TransformComponent>())
+	{
+		auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+		if (!transform.HasPreviousWorld)
+		{
+			transform.PreviousWorldMatrix = transform.WorldMatrix;
+			transform.HasPreviousWorld = true;
+		}
 	}
 }
 
@@ -106,6 +128,9 @@ void SystemManager::RenderFlow()
 			RendererDraw::BeginScenePass();
 			DrawSystem(RenderPass::PrimaryScene, false);
 			RendererDraw::EndScenePass();
+			RendererDraw::RenderVelocityBuffer();
+			DrawSystem(RenderPass::Velocity, false);
+			RendererDraw::EndVelocityBuffer();
 
 			PostProcessSystem postProcess;
 			postProcess.Draw(RenderPass::PrimaryScene, false);

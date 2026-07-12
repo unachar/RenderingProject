@@ -266,6 +266,72 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		return;
 	}
 
+	if (renderPass == RenderPass::Velocity)
+	{
+		ID3D12GraphicsCommandList* commandList = RendererCore::GetCommandList();
+		ID3D12PipelineState* pso = PsoManager::GetVelocityGeometryPso();
+		if (!commandList || !pso) return;
+		XMMATRIX view = XMMatrixIdentity(), projection = XMMatrixIdentity();
+		Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
+		XMMATRIX previousViewProjection =
+			XMLoadFloat4x4(&RendererCore::GetPreviousViewMatrix()) * XMLoadFloat4x4(&RendererCore::GetPreviousProjectionMatrix());
+		commandList->SetGraphicsRootSignature(RendererShader::GetModelRootSignature());
+		commandList->SetPipelineState(pso);
+		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+		auto setConstants = [&](EntityID entity)
+			{
+				const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+				ConstantBuffer3D cb{};
+				cb.World = XMMatrixTranspose(XMLoadFloat4x4(&transform.WorldMatrix));
+				cb.View = XMMatrixTranspose(view);
+				cb.Projection = XMMatrixTranspose(projection);
+				cb.PreviousWorld = XMMatrixTranspose(XMLoadFloat4x4(&transform.PreviousWorldMatrix));
+				cb.PreviousViewProjection = XMMatrixTranspose(previousViewProjection);
+				commandList->SetGraphicsRootDescriptorTable(0, RendererResource::AllocateTransientConstantBuffer(cb));
+			};
+
+		for (EntityID entity : World::GetView<AnimationModelComponent>())
+		{
+			auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
+			AnimationModelResource* model = ModelManager::GetAnimModel(component.ModelId);
+			if (!model || !ComponentManager::HasComponent<TransformComponent>(entity)) continue;
+			setConstants(entity);
+			for (UINT mesh = 0; mesh < model->GetMeshCount(); ++mesh)
+			{
+				const MeshData& data = model->GetMeshData(mesh);
+				if (!data.VertexBuffer || !data.PreviousVertexValid) continue;
+				D3D12_RESOURCE_BARRIER currentReady = CD3DX12_RESOURCE_BARRIER::Transition(data.VertexBuffer.Get(),
+					D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+				commandList->ResourceBarrier(1, &currentReady);
+				D3D12_VERTEX_BUFFER_VIEW views[2] = { data.VertexBufferView, data.PreviousVertexBufferView };
+				commandList->IASetVertexBuffers(0, 2, views);
+				commandList->IASetIndexBuffer(&data.IndexBufferView);
+				commandList->DrawIndexedInstanced(data.IndexCount, 1, 0, 0, 0);
+				D3D12_RESOURCE_BARRIER currentBack = CD3DX12_RESOURCE_BARRIER::Transition(data.VertexBuffer.Get(),
+					D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+				commandList->ResourceBarrier(1, &currentBack);
+			}
+		}
+
+		for (EntityID entity : World::GetView<StaticModelComponent>())
+		{
+			auto& component = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
+			StaticModelResource* model = ModelManager::GetStaticModel(component.ModelId);
+			if (!model || !ComponentManager::HasComponent<TransformComponent>(entity)) continue;
+			setConstants(entity);
+			for (UINT mesh = 0; mesh < model->GetMeshCount(); ++mesh)
+			{
+				const StaticMeshData& data = model->GetMeshData(mesh);
+				D3D12_VERTEX_BUFFER_VIEW views[2] = { data.VertexBufferView, data.VertexBufferView };
+				commandList->IASetVertexBuffers(0, 2, views);
+				commandList->IASetIndexBuffer(&data.IndexBufferView);
+				commandList->DrawIndexedInstanced(data.IndexCount, 1, 0, 0, 0);
+			}
+		}
+		return;
+	}
+
 	const bool drawTransparent = (renderPass == RenderPass::OverlayScene);
 	ID3D12GraphicsCommandList* pCommandList = RendererCore::GetCommandList();
 	if (!pCommandList)

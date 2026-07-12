@@ -248,6 +248,8 @@ bool RendererShader::CreatePostProcessPipeline()
 	if (!PsoManager::CreateUpscalePso()) { ShaderLogToFile("PP: FAIL CreateUpscalePso\n"); return false; }
 	if (!PsoManager::CreateUpscaleDepthPso()) { ShaderLogToFile("PP: FAIL CreateUpscaleDepthPso\n"); return false; }
 	if (!PsoManager::CreateAaPsos()) { ShaderLogToFile("PP: FAIL CreateAaPsos\n"); return false; }
+	if (!PsoManager::CreateVelocityPso()) { ShaderLogToFile("PP: FAIL CreateVelocityPso\n"); return false; }
+	if (!PsoManager::CreateVelocityGeometryPso()) { ShaderLogToFile("PP: FAIL CreateVelocityGeometryPso\n"); return false; }
 	ShaderLogToFile("PP: done\n");
 	return true;
 }

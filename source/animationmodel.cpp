@@ -2284,7 +2284,6 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 			HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE,
 				&resDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_BoneBuffers[frame]));
 			if (FAILED(hr)) return false;
-
 			CD3DX12_RANGE readRange(0, 0);
 			hr = m_BoneBuffers[frame]->Map(0, &readRange, &m_pBoneBufferMapped[frame]);
 			if (FAILED(hr))
@@ -2368,6 +2367,10 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 			HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE,
 				&resDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&m_Meshes[m].VertexBuffer));
 			if (FAILED(hr)) return false;
+			hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE,
+				&resDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+				IID_PPV_ARGS(&m_Meshes[m].PreviousVertexBuffer));
+			if (FAILED(hr)) return false;
 
 			D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
 			uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
@@ -2382,6 +2385,9 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 			m_Meshes[m].VertexBufferView.BufferLocation = m_Meshes[m].VertexBuffer->GetGPUVirtualAddress();
 			m_Meshes[m].VertexBufferView.SizeInBytes = bufSize;
 			m_Meshes[m].VertexBufferView.StrideInBytes = sizeof(ModelVertex);
+			m_Meshes[m].PreviousVertexBufferView.BufferLocation = m_Meshes[m].PreviousVertexBuffer->GetGPUVirtualAddress();
+			m_Meshes[m].PreviousVertexBufferView.SizeInBytes = bufSize;
+			m_Meshes[m].PreviousVertexBufferView.StrideInBytes = sizeof(ModelVertex);
 		}
 
 		for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
@@ -4203,6 +4209,24 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 	for (UINT m = 0; m < m_Meshes.size(); m++)
 	{
 		if (m_Meshes[m].VertexCount == 0) continue;
+
+		if (m_Meshes[m].PreviousVertexValid)
+		{
+			D3D12_RESOURCE_BARRIER copyBarriers[2] =
+			{
+				CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].VertexBuffer.Get(),
+					D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE),
+				CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].PreviousVertexBuffer.Get(),
+					D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, D3D12_RESOURCE_STATE_COPY_DEST)
+			};
+			pCommandList->ResourceBarrier(_countof(copyBarriers), copyBarriers);
+			pCommandList->CopyResource(m_Meshes[m].PreviousVertexBuffer.Get(), m_Meshes[m].VertexBuffer.Get());
+			copyBarriers[0] = CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].VertexBuffer.Get(),
+				D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+			copyBarriers[1] = CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].PreviousVertexBuffer.Get(),
+				D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+			pCommandList->ResourceBarrier(_countof(copyBarriers), copyBarriers);
+		}
 		const UINT descriptorBase = m * m_kSKINNING_DESCRIPTORS_PER_MESH;
 
 		CD3DX12_GPU_DESCRIPTOR_HANDLE srvInputHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), m_Meshes[m].SrvInputVertexIndex, descSize);
@@ -4219,6 +4243,23 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 		pCommandList->Dispatch(threadGroups, 1, 1);
 		D3D12_RESOURCE_BARRIER skinningUavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(m_Meshes[m].VertexBuffer.Get());
 		pCommandList->ResourceBarrier(1, &skinningUavBarrier);
+
+		if (!m_Meshes[m].PreviousVertexValid)
+		{
+			D3D12_RESOURCE_BARRIER toCopy = CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].VertexBuffer.Get(),
+				D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+			pCommandList->ResourceBarrier(1, &toCopy);
+			pCommandList->CopyResource(m_Meshes[m].PreviousVertexBuffer.Get(), m_Meshes[m].VertexBuffer.Get());
+			D3D12_RESOURCE_BARRIER ready[2] =
+			{
+				CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].VertexBuffer.Get(),
+					D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+				CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].PreviousVertexBuffer.Get(),
+					D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER)
+			};
+			pCommandList->ResourceBarrier(_countof(ready), ready);
+			m_Meshes[m].PreviousVertexValid = true;
+		}
 
 		for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
 		{

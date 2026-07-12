@@ -989,6 +989,7 @@ if (ImGui::SliderFloat("かわいいブレンド", &kawaiiBlend, 0.0f, 1.0f))
 		{ "リムスタイル", GBufferType::RIM_STYLE },
 		{ "リムライト", GBufferType::RIM_LIGHT },
 		{ "大気", GBufferType::ATMOSPHERE },
+		{ "ベロシティ", GBufferType::VELOCITY },
 		};
 
 		const int cellCount = int(size(cells));
@@ -1643,6 +1644,7 @@ void ImGuiManager::DrawGBufferWindow()
 		{ "リムスタイル", GBufferType::RIM_STYLE },
 		{ "リムライト", GBufferType::RIM_LIGHT },
 		{ "大気", GBufferType::ATMOSPHERE },
+		{ "ベロシティ", GBufferType::VELOCITY },
 	};
 
 	const int cellCount = int(size(cells));

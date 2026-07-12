@@ -73,6 +73,8 @@ cbuffer ConstantBuffer3D : register(b0)
     float MaterialAlpha;
     int MaterialIsTransparent;
     float ConstantPadding;
+    float4x4 PreviousWorld;
+    float4x4 PreviousViewProjection;
 };
 
 struct VSInput3D

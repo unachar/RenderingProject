@@ -15,6 +15,8 @@ struct TransformComponent
 	XMFLOAT3 Scale = { 1.0f, 1.0f, 1.0f };
 	XMFLOAT3 Rotation = { 0.0f, 0.0f, 0.0f };
 	XMFLOAT4X4 WorldMatrix {};
+	XMFLOAT4X4 PreviousWorldMatrix {};
+	bool HasPreviousWorld = false;
 	bool IsDirty = true;
 
 };

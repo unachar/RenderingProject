@@ -26,6 +26,7 @@ enum class GBufferType : uint32_t
 	RIM_STYLE,
 	RIM_LIGHT,
 	ATMOSPHERE,
+	VELOCITY,
 	COUNT
 };
 
@@ -39,7 +40,8 @@ inline constexpr LPCWSTR g_GBufferTargetNames[] =
 	L"ShadowBuffer",
 	L"RimStyleBuffer",
 	L"RimLightBuffer",
-	L"AtmosphereGBuffer"
+	L"AtmosphereGBuffer",
+	L"VelocityBuffer"
 };
 
 struct Vertex
@@ -128,6 +130,8 @@ struct ConstantBuffer3D
 	float MaterialAlpha = 1.0f;
 	int MaterialIsTransparent = 0;
 	float ConstantPadding = 0.0f;
+	XMMATRIX PreviousWorld{};
+	XMMATRIX PreviousViewProjection{};
 };
 
 struct VertexResource
@@ -214,6 +218,8 @@ protected:
 	static ComPtr<ID3D12PipelineState> m_AtmospherePso;
 	static ComPtr<ID3D12PipelineState> m_UpscaleBilateralPso;
 	static ComPtr<ID3D12PipelineState> m_UpscaleDepthPso;
+	static ComPtr<ID3D12PipelineState> m_VelocityPso;
+	static ComPtr<ID3D12PipelineState> m_VelocityGeometryPso;
 	static ComPtr<ID3D12Resource> m_PostProcessConstantBuffer;
 	static ComPtr<ID3D12Resource> m_LightConstantBuffer;
 	static ComPtr<ID3D12Resource> m_PBRConstantBuffer;
@@ -258,7 +264,8 @@ public:
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT
+		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_R16G16_FLOAT
 	};
 public:
 	
