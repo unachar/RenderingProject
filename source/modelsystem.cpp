@@ -296,6 +296,11 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
 			AnimationModelResource* model = ModelManager::GetAnimModel(component.ModelId);
 			if (!model || !ComponentManager::HasComponent<TransformComponent>(entity)) continue;
+
+			model->DispatchGpuSkinning(commandList);
+			commandList->SetGraphicsRootSignature(RendererShader::GetModelRootSignature());
+			commandList->SetPipelineState(pso);
+			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			setConstants(entity);
 			for (UINT mesh = 0; mesh < model->GetMeshCount(); ++mesh)
 			{

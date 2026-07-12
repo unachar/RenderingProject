@@ -557,6 +557,7 @@ bool PsoManager::CreateVelocityGeometryPso()
 	desc.InputLayout = { layout, _countof(layout) };
 	desc.pRootSignature = m_ModelRootSignature.Get();
 	desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 	desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 	desc.DepthStencilState.DepthEnable = FALSE;
 	desc.SampleMask = UINT_MAX;

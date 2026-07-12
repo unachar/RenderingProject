@@ -666,6 +666,7 @@ ImGui::Begin("調整");
 		if (m_antiAliasingMode >= 0 && m_antiAliasingMode < static_cast<int>(AntiAliasingMode::COUNT))
 		{
 			RendererState::m_AntiAliasingMode = static_cast<AntiAliasingMode>(m_antiAliasingMode);
+			RendererState::m_TaaFrameIndex = 0;
 		}
 	}
 

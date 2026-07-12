@@ -46,6 +46,11 @@ namespace
 		{
 			outColor[3] = 1.0f;
 		}
+		else if (index == static_cast<UINT>(GBufferType::VELOCITY))
+		{
+			outColor[0] = 0.5f;
+			outColor[1] = 0.5f;
+		}
 	}
 
 	struct PostProcessConstants
@@ -596,7 +601,7 @@ void RendererDraw::RenderVelocityBuffer()
 		D3D12_RESOURCE_STATE_RENDER_TARGET);
 	m_CommandList->ResourceBarrier(1, &toVelocityRt);
 
-	const float clearVelocity[4] = {};
+	const float clearVelocity[4] = { 0.5f, 0.5f, 0.0f, 0.0f };
 	m_CommandList->ClearRenderTargetView(m_GBufferRtvHandles[velocityIndex], clearVelocity, 0, nullptr);
 	m_CommandList->OMSetRenderTargets(1, &m_GBufferRtvHandles[velocityIndex], FALSE, nullptr);
 	m_CommandList->SetPipelineState(velocityPso);
@@ -878,6 +883,7 @@ void RendererDraw::ApplyAntiAliasing()
     {
         m_CommandList->SetGraphicsRootDescriptorTable(2, m_EditorSceneSrvHandle);
         m_CommandList->SetGraphicsRootDescriptorTable(3, m_EditorSceneSrvHandle);
+		m_CommandList->SetGraphicsRootDescriptorTable(5, m_EditorSceneSrvHandle);
 
         struct FxaaCb { float rcpWidth; float rcpHeight; } cb;
         cb.rcpWidth = 1.0f / (float)m_Width;
@@ -895,6 +901,10 @@ void RendererDraw::ApplyAntiAliasing()
             m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
             RendererState::g_kDEPTH_SRV_INDEX, m_CbvIncrementSize);
         m_CommandList->SetGraphicsRootDescriptorTable(3, depthSrv);
+		CD3DX12_GPU_DESCRIPTOR_HANDLE velocityCalculationSrv(
+			m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
+			RendererState::g_kVELOCITY_CALCULATION_SRV_INDEX, m_CbvIncrementSize);
+		m_CommandList->SetGraphicsRootDescriptorTable(5, velocityCalculationSrv);
 
         XMMATRIX prevView = XMLoadFloat4x4(&m_PrevViewMatrix);
         XMMATRIX prevProj = XMLoadFloat4x4(&m_PrevProjMatrix);
@@ -902,9 +912,10 @@ void RendererDraw::ApplyAntiAliasing()
 
         float cbData[20] = {};
         memcpy(cbData, &prevViewProj, 64);
-        cbData[16] = 0.05f;
+        cbData[16] = 0.90f;
         cbData[17] = 1.0f / (float)m_Width;
         cbData[18] = 1.0f / (float)m_Height;
+		cbData[19] = m_TaaFrameIndex > 0 ? 1.0f : 0.0f;
         m_CommandList->SetGraphicsRoot32BitConstants(4, 20, cbData, 0);
     }
 
@@ -1146,6 +1157,7 @@ bool RendererDraw::CreateSceneRenderTarget()
 
 		CD3DX12_CPU_DESCRIPTOR_HANDLE historySrvCpuHandle(m_CbvHeap->GetCPUDescriptorHandleForHeapStart(), RendererState::g_kAA_HISTORY_SRV_INDEX, cbvIncrement);
 		m_Device->CreateShaderResourceView(m_AaRenderTarget.Get(), &aaSrvDesc, historySrvCpuHandle);
+		m_TaaFrameIndex = 0;
 	}
 
 	if (m_EnvironmentTextureSrvIndex < 0)
@@ -1191,10 +1203,31 @@ bool RendererDraw::CreateSceneRenderTarget()
 
 			D3D12_SHADER_RESOURCE_VIEW_DESC gbufferSrvDesc {};
 			gbufferSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			if (i == static_cast<UINT>(GBufferType::VELOCITY))
+			{
+				// The editor displays encoded RG and must not blend with raw velocity
+				// stored in alpha. Force opaque alpha for this display SRV.
+				gbufferSrvDesc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+					D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_0,
+					D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_1);
+			}
 			gbufferSrvDesc.Format = m_kDeferredRtvFormats[i];
 			gbufferSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 			gbufferSrvDesc.Texture2D.MipLevels = 1;
 			m_Device->CreateShaderResourceView(m_GBufferTargets[i].Get(), &gbufferSrvDesc, gbufferSrvCpuHandle);
+
+			if (i == static_cast<UINT>(GBufferType::VELOCITY))
+			{
+				D3D12_SHADER_RESOURCE_VIEW_DESC velocityCalculationSrvDesc = gbufferSrvDesc;
+				velocityCalculationSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+				CD3DX12_CPU_DESCRIPTOR_HANDLE velocityCalculationSrvCpuHandle(
+					m_CbvHeap->GetCPUDescriptorHandleForHeapStart(),
+					RendererState::g_kVELOCITY_CALCULATION_SRV_INDEX, cbvIncrement);
+				m_Device->CreateShaderResourceView(
+					m_GBufferTargets[i].Get(), &velocityCalculationSrvDesc, velocityCalculationSrvCpuHandle);
+			}
 
 			gbufferRtvHandle.Offset(1, rtvIncrement);
 		}

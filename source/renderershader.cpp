@@ -215,17 +215,19 @@ bool RendererShader::CreatePostProcessPipeline()
 
 	ShaderLogToFile("PP: create AA root sig\n");
 	{
-		CD3DX12_DESCRIPTOR_RANGE aaRange[3];
+		CD3DX12_DESCRIPTOR_RANGE aaRange[4];
 		aaRange[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
 		aaRange[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
 		aaRange[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);
+		aaRange[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3);
 
-		CD3DX12_ROOT_PARAMETER aaParams[5];
+		CD3DX12_ROOT_PARAMETER aaParams[6];
 		aaParams[0].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 		aaParams[1].InitAsDescriptorTable(1, &aaRange[0], D3D12_SHADER_VISIBILITY_PIXEL);
 		aaParams[2].InitAsDescriptorTable(1, &aaRange[1], D3D12_SHADER_VISIBILITY_PIXEL);
 		aaParams[3].InitAsDescriptorTable(1, &aaRange[2], D3D12_SHADER_VISIBILITY_PIXEL);
 		aaParams[4].InitAsConstants(20, 4, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+		aaParams[5].InitAsDescriptorTable(1, &aaRange[3], D3D12_SHADER_VISIBILITY_PIXEL);
 
 		CD3DX12_STATIC_SAMPLER_DESC aaSampler(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
 		CD3DX12_ROOT_SIGNATURE_DESC aaRsDesc(_countof(aaParams), aaParams, 1, &aaSampler, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);

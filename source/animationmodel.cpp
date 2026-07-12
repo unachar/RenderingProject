@@ -2368,7 +2368,7 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 				&resDesc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&m_Meshes[m].VertexBuffer));
 			if (FAILED(hr)) return false;
 			hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE,
-				&resDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+				&resDesc, D3D12_RESOURCE_STATE_COMMON, nullptr,
 				IID_PPV_ARGS(&m_Meshes[m].PreviousVertexBuffer));
 			if (FAILED(hr)) return false;
 
@@ -4246,6 +4246,10 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 
 		if (!m_Meshes[m].PreviousVertexValid)
 		{
+			D3D12_RESOURCE_BARRIER previousToCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+				m_Meshes[m].PreviousVertexBuffer.Get(),
+				D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+			pCommandList->ResourceBarrier(1, &previousToCopy);
 			D3D12_RESOURCE_BARRIER toCopy = CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].VertexBuffer.Get(),
 				D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
 			pCommandList->ResourceBarrier(1, &toCopy);
