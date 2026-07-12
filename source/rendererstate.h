@@ -26,6 +26,7 @@ enum class GBufferType : uint32_t
 	RIM_STYLE,
 	RIM_LIGHT,
 	ATMOSPHERE,
+	VELOCITY,
 	COUNT
 };
 
@@ -39,7 +40,8 @@ inline constexpr LPCWSTR g_GBufferTargetNames[] =
 	L"ShadowBuffer",
 	L"RimStyleBuffer",
 	L"RimLightBuffer",
-	L"AtmosphereGBuffer"
+	L"AtmosphereGBuffer",
+	L"VelocityBuffer"
 };
 
 struct Vertex
@@ -128,6 +130,8 @@ struct ConstantBuffer3D
 	float MaterialAlpha = 1.0f;
 	int MaterialIsTransparent = 0;
 	float ConstantPadding = 0.0f;
+	XMMATRIX PreviousWorld{};
+	XMMATRIX PreviousViewProjection{};
 };
 
 struct VertexResource
@@ -213,6 +217,9 @@ protected:
 	static ComPtr<ID3D12PipelineState> m_DeferredLightingPso;
 	static ComPtr<ID3D12PipelineState> m_AtmospherePso;
 	static ComPtr<ID3D12PipelineState> m_UpscaleBilateralPso;
+	static ComPtr<ID3D12PipelineState> m_UpscaleDepthPso;
+	static ComPtr<ID3D12PipelineState> m_VelocityPso;
+	static ComPtr<ID3D12PipelineState> m_VelocityGeometryPso;
 	static ComPtr<ID3D12Resource> m_PostProcessConstantBuffer;
 	static ComPtr<ID3D12Resource> m_LightConstantBuffer;
 	static ComPtr<ID3D12Resource> m_PBRConstantBuffer;
@@ -257,6 +264,7 @@ public:
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT
 	};
 public:
@@ -265,8 +273,10 @@ public:
 	static constexpr uint32_t g_kSCREEN_HEIGHT = 600;
 	static constexpr float g_kNEAR_CLIP = 0.1f;
 	static constexpr float g_kFAR_CLIP = 100.0f;
-	static constexpr float g_kResolutionScale = 0.4f;
-	static constexpr float g_kGBufferScale = 0.4f;
+	static constexpr float g_kResolutionScale = 0.3f;
+	static constexpr float g_kGBufferScale = g_kResolutionScale;
+	static_assert(g_kResolutionScale == g_kGBufferScale,
+		"Scene and GBuffer resolution scales must match");
 
 
 	static constexpr UINT g_kCB_ALIGNED_SIZE = (sizeof(ConstantBuffer3D) + 255) & ~255;
@@ -295,7 +305,8 @@ public:
 	static constexpr UINT g_kAA_SRV_INDEX = g_kSHADOW_SRV_INDEX + 1;
 	static constexpr UINT g_kAA_HISTORY_SRV_INDEX = g_kAA_SRV_INDEX + 1;
 	static constexpr UINT g_kTRANSPARENT_SCENE_SRV_INDEX = g_kAA_HISTORY_SRV_INDEX + 1;
-	static constexpr UINT g_kDEPTH_SRV_INDEX = g_kTRANSPARENT_SCENE_SRV_INDEX + 1;
+	static constexpr UINT g_kVELOCITY_CALCULATION_SRV_INDEX = g_kTRANSPARENT_SCENE_SRV_INDEX + 1;
+	static constexpr UINT g_kDEPTH_SRV_INDEX = g_kVELOCITY_CALCULATION_SRV_INDEX + 1;
 	static constexpr UINT g_kMAX_DYNAMIC_VERTICES = 65536;
 
 	static DXGI_FORMAT GetSceneColorFormat() { return m_SceneColorFormat; }

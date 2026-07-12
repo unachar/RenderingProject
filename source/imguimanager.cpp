@@ -666,6 +666,7 @@ ImGui::Begin("調整");
 		if (m_antiAliasingMode >= 0 && m_antiAliasingMode < static_cast<int>(AntiAliasingMode::COUNT))
 		{
 			RendererState::m_AntiAliasingMode = static_cast<AntiAliasingMode>(m_antiAliasingMode);
+			RendererState::m_TaaFrameIndex = 0;
 		}
 	}
 
@@ -989,6 +990,7 @@ if (ImGui::SliderFloat("かわいいブレンド", &kawaiiBlend, 0.0f, 1.0f))
 		{ "リムスタイル", GBufferType::RIM_STYLE },
 		{ "リムライト", GBufferType::RIM_LIGHT },
 		{ "大気", GBufferType::ATMOSPHERE },
+		{ "ベロシティ", GBufferType::VELOCITY },
 		};
 
 		const int cellCount = int(size(cells));
@@ -1643,6 +1645,7 @@ void ImGuiManager::DrawGBufferWindow()
 		{ "リムスタイル", GBufferType::RIM_STYLE },
 		{ "リムライト", GBufferType::RIM_LIGHT },
 		{ "大気", GBufferType::ATMOSPHERE },
+		{ "ベロシティ", GBufferType::VELOCITY },
 	};
 
 	const int cellCount = int(size(cells));

@@ -29,9 +29,7 @@ PS_OUTPUT_GEOMETRY main(PSInput3D input)
     output.Normal = MakeGBufferNormal(normal);
     output.Position = float4(input.WorldPos, 1.0f);
     
-    float clipDepth = output.Position.z / output.Position.w;
-    float normalizedDepth = saturate(clipDepth * 0.5f + 0.5f);
-    output.Depth = normalizedDepth;
+    output.Depth = saturate(input.Position.z);
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
     bool usePartParams = MaterialMode != 1;
     output.Material.r = usePartParams ? partParams.Basic.x : mMetallic;

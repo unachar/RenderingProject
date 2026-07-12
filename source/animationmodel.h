@@ -130,6 +130,9 @@ struct MeshData
 {
 	ComPtr<ID3D12Resource> VertexBuffer{};
 	D3D12_VERTEX_BUFFER_VIEW VertexBufferView{};
+	ComPtr<ID3D12Resource> PreviousVertexBuffer{};
+	D3D12_VERTEX_BUFFER_VIEW PreviousVertexBufferView{};
+	bool PreviousVertexValid = false;
 	ComPtr<ID3D12Resource> TeoVertexBuffer{};
 	D3D12_VERTEX_BUFFER_VIEW TeoVertexBufferView{};
 	std::array<ComPtr<ID3D12Resource>, ToonOutlineBuilder::kModeCount> TeoVertexBuffers{};

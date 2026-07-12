@@ -4,6 +4,7 @@ enum class RenderPass
 {
 	ShadowMap,
 	PrimaryScene,
+	Velocity,
 	OverlayScene
 };
 

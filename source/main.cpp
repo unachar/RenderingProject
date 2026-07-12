@@ -97,13 +97,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
 	char exePath[MAX_PATH]{};
 	GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-	string dir = string(exePath);
-	for (int i = 0; i < 3; ++i)
+
+	filesystem::path dir = filesystem::path(exePath).parent_path();
+	filesystem::path runtimeRoot;
+	for (int i = 0; i < 8 && !dir.empty(); ++i)
 	{
-		size_t pos = dir.find_last_of("\\/");
-		if (pos != string::npos) dir = dir.substr(0, pos);
+		if (filesystem::exists(dir / "shader" / "hlsl" / "build") &&
+			filesystem::exists(dir / "asset"))
+		{
+			runtimeRoot = dir;
+			break;
+		}
+		dir = dir.parent_path();
 	}
-	if (!dir.empty()) SetCurrentDirectoryA(dir.c_str());
+	if (!runtimeRoot.empty())
+	{
+		SetCurrentDirectoryW(runtimeRoot.c_str());
+	}
 
 	const char className[] = "DX12AI_WindowClass";
 	WNDCLASSA wc = { 0 };

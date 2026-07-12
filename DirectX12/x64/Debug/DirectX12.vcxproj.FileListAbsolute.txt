@@ -1,4 +1,0 @@
-C:\Users\songt\Desktop\Render\x64\Debug\D3D12\D3D12Core.dll
-C:\Users\songt\Desktop\Render\x64\Debug\D3D12\D3D12Core.pdb
-C:\Users\songt\Desktop\Render\x64\Debug\D3D12\D3D12SDKLayers.dll
-C:\Users\songt\Desktop\Render\x64\Debug\D3D12\D3D12SDKLayers.pdb

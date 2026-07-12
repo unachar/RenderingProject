@@ -406,7 +406,7 @@ void DebugSystem::InitDebugLinePso()
 void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
 #ifdef _DEBUG
-	if (renderPass == RenderPass::OverlayScene || renderPass == RenderPass::ShadowMap)
+	if (renderPass == RenderPass::OverlayScene || renderPass == RenderPass::ShadowMap || renderPass == RenderPass::Velocity)
 	{
 		return;
 	}

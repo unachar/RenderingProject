@@ -657,6 +657,12 @@ void RendererCore::ApplyPendingHdr()
 
 	m_UpscaleBilateralPso.Reset();
 	PsoManager::CreateUpscalePso();
+	m_UpscaleDepthPso.Reset();
+	PsoManager::CreateUpscaleDepthPso();
+	m_VelocityPso.Reset();
+	PsoManager::CreateVelocityPso();
+	m_VelocityGeometryPso.Reset();
+	PsoManager::CreateVelocityGeometryPso();
 
 	m_FxaaPso.Reset();
 	m_TaaBlendPso.Reset();

@@ -73,6 +73,8 @@ cbuffer ConstantBuffer3D : register(b0)
     float MaterialAlpha;
     int MaterialIsTransparent;
     float ConstantPadding;
+    float4x4 PreviousWorld;
+    float4x4 PreviousViewProjection;
 };
 
 struct VSInput3D
@@ -410,126 +412,6 @@ float ScreenSpaceShaftVisibilityCommon(
     return lerp(0.35f, 1.0f, occlusion / max(weightSum, 0.0001f));
 }
 
-// Fixed-cost screen-space volumetric approximation.  Local lights are
-// evaluated only where their range intersects the camera ray; directional
-// lights use the same radial visibility without a finite range.  This keeps
-// light shafts inside the actual light volume and works on the sky dome too.
-float3 ScreenSpaceAtmosphereRayMarchCommon(
-    float2 screenUv,
-    float3 surfaceWorldPos,
-    bool background,
-    Texture2D<float> depthTexture,
-    SamplerState depthSampler)
-{
-    [branch]
-    if (AtmosphereParams0.x < 0.5f ||
-        AtmosphereColor0.a <= 0.0001f ||
-        AtmosphereParams0.w <= 0.0001f)
-    {
-        return float3(0.0f, 0.0f, 0.0f);
-    }
-
-    float3 viewRay = ReconstructPostProcessViewRayCommon(screenUv);
-    float3 scatterTint =
-        AtmosphereColor0.rgb * max(AtmosphereParams0.y, 0.0f) * 0.45f +
-        AtmosphereColor1.rgb * max(AtmosphereParams0.z, 0.0f);
-    float surfaceDistance = background
-        ? 100.0f
-        : min(length(surfaceWorldPos - AtmosphereCamera.xyz), 100.0f);
-    float3 result = float3(0.0f, 0.0f, 0.0f);
-    int lightCount = min((int)round(LightCount.x), MAX_SHADER_LIGHTS);
-
-    [loop]
-    for (int lightIndex = 0; lightIndex < MAX_SHADER_LIGHTS; ++lightIndex)
-    {
-        if (lightIndex >= lightCount)
-        {
-            break;
-        }
-
-        float4 directionData = LightDirections[lightIndex];
-        float4 positionTypeData = LightPositionTypes[lightIndex];
-        float4 extraData = LightExtras[lightIndex];
-        float3 lightColor = max(LightColors[lightIndex].rgb, 0.0f) * max(LightColors[lightIndex].a, 0.0f);
-        float density = max(extraData.z, 0.0f);
-        if (density <= 0.0001f || dot(lightColor, lightColor) <= 0.000001f)
-        {
-            continue;
-        }
-
-        int lightType = (int)round(positionTypeData.w);
-        float3 lightDir = SafeNormalizeCommon(directionData.xyz, float3(0.0f, 1.0f, 0.0f));
-        float3 sourceWorldPos = (lightType == 0)
-            ? AtmosphereCamera.xyz + lightDir * 80.0f
-            : positionTypeData.xyz;
-        float2 sourceUv;
-        if (!ProjectWorldToScreenCommon(sourceWorldPos, sourceUv))
-        {
-            continue;
-        }
-
-        float rayLength = length(sourceUv - screenUv);
-        if (rayLength > 2.0f)
-        {
-            continue;
-        }
-        float shaftVisibility = ScreenSpaceShaftVisibilityCommon(screenUv, sourceUv, depthTexture, depthSampler);
-
-        if (lightType == 0)
-        {
-            float forward = saturate(dot(viewRay, lightDir));
-            forward *= forward;
-            forward *= forward;
-            float radialFalloff = saturate(1.0f - rayLength * 0.28f);
-            result += lightColor * density * shaftVisibility *
-                (0.35f + forward * 1.65f) * radialFalloff;
-            continue;
-        }
-
-        float lightRange = max(directionData.w, 0.01f);
-        float3 toLight = positionTypeData.xyz - AtmosphereCamera.xyz;
-        float closestT = dot(toLight, viewRay);
-        if (closestT <= 0.0f)
-        {
-            continue;
-        }
-        float closestDistanceSq = dot(toLight, toLight) - closestT * closestT;
-        float rangeSq = lightRange * lightRange;
-        if (closestDistanceSq >= rangeSq)
-        {
-            continue;
-        }
-
-        float halfChord = sqrt(max(rangeSq - closestDistanceSq, 0.0f));
-        float segmentStart = max(0.0f, closestT - halfChord);
-        float segmentEnd = min(surfaceDistance, closestT + halfChord);
-        if (segmentEnd <= segmentStart)
-        {
-            continue;
-        }
-
-        float3 samplePos = AtmosphereCamera.xyz + viewRay * ((segmentStart + segmentEnd) * 0.5f);
-        float3 sampleLightDir;
-        float attenuation;
-        float volumeScatter;
-        ResolveSingleLightCommon(samplePos, directionData, positionTypeData, extraData,
-            sampleLightDir, attenuation, volumeScatter);
-        if (attenuation <= 0.0001f)
-        {
-            continue;
-        }
-
-        float segmentFraction = (segmentEnd - segmentStart) / lightRange;
-        float localScatter = max(volumeScatter, density * attenuation * 0.08f);
-        result += lightColor * localScatter * segmentFraction * shaftVisibility * 8.0f;
-    }
-
-    return result * scatterTint * AtmosphereColor0.a;
-}
-
-// dev_main visual path: integrate scattering through the actual light volume.
-// This is retained for the authored light-shaft look, including its soft
-// shadowed cones and point/volume-light glow.
 float3 RayMarchAtmosphereViewCommon(
     float3 worldPos,
     Texture2DArray<float> shadowMap,
