@@ -52,3 +52,11 @@ public:
 	}
 };
 
+#if defined(RENDERINGPROJECT_USE_DXC) && RENDERINGPROJECT_USE_DXC
+#include "dxccompiler.h"
+
+// Preserve legacy call sites while routing runtime HLSL compilation through
+// IDxcCompiler3. Legacy stage_5_x targets are promoted to stage_6_0 by the
+// compatibility adapter.
+#define D3DCompileFromFile DxcCompileFromFileCompat
+#endif
