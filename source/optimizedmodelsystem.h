@@ -11,6 +11,7 @@
 #include "camera.h"
 #include "materialsystem.h"
 #include "world.h"
+#include "gpudrivenindirect.h"
 #include <DirectXCollision.h>
 #include <vector>
 
@@ -20,12 +21,14 @@
 // behaviour is unchanged. Shadow and velocity passes are implemented here to:
 //  * batch resource-barrier API calls per animated model;
 //  * avoid velocity draws outside the camera frustum;
+//  * consume per-model mesh command streams through ExecuteIndirect;
 //  * query the ECS with the complete component mask;
 //  * retain the existing GPU-skinning version cache and all fallbacks.
 class OptimizedModelSystem final : public SystemBase
 {
 private:
     ModelSystem m_Legacy{};
+    GpuDrivenIndirectDrawCache m_IndirectDraws{};
 
     static bool IsSkyEntity(EntityID entity)
     {
@@ -182,16 +185,19 @@ private:
             SubmitBarriers(commandList, barriers);
 
             writeShadowConstants(entity);
-            for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
+            if (!m_IndirectDraws.ExecuteShadow(commandList, model))
             {
-                const MeshData& mesh = model->GetMeshData(meshIndex);
-                if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount == 0)
+                for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
                 {
-                    continue;
+                    const MeshData& mesh = model->GetMeshData(meshIndex);
+                    if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount == 0)
+                    {
+                        continue;
+                    }
+                    commandList->IASetVertexBuffers(0, 1, &mesh.VertexBufferView);
+                    commandList->IASetIndexBuffer(&mesh.IndexBufferView);
+                    commandList->DrawIndexedInstanced(mesh.IndexCount, 1, 0, 0, 0);
                 }
-                commandList->IASetVertexBuffers(0, 1, &mesh.VertexBufferView);
-                commandList->IASetIndexBuffer(&mesh.IndexBufferView);
-                commandList->DrawIndexedInstanced(mesh.IndexCount, 1, 0, 0, 0);
             }
 
             barriers.clear();
@@ -226,16 +232,19 @@ private:
             }
 
             writeShadowConstants(entity);
-            for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
+            if (!m_IndirectDraws.ExecuteShadow(commandList, model))
             {
-                const StaticMeshData& mesh = model->GetMeshData(meshIndex);
-                if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount == 0)
+                for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
                 {
-                    continue;
+                    const StaticMeshData& mesh = model->GetMeshData(meshIndex);
+                    if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount == 0)
+                    {
+                        continue;
+                    }
+                    commandList->IASetVertexBuffers(0, 1, &mesh.VertexBufferView);
+                    commandList->IASetIndexBuffer(&mesh.IndexBufferView);
+                    commandList->DrawIndexedInstanced(mesh.IndexCount, 1, 0, 0, 0);
                 }
-                commandList->IASetVertexBuffers(0, 1, &mesh.VertexBufferView);
-                commandList->IASetIndexBuffer(&mesh.IndexBufferView);
-                commandList->DrawIndexedInstanced(mesh.IndexCount, 1, 0, 0, 0);
             }
         }
     }
@@ -314,21 +323,24 @@ private:
             SubmitBarriers(commandList, barriers);
 
             setConstants(entity);
-            for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
+            if (!m_IndirectDraws.ExecuteVelocity(commandList, model))
             {
-                const MeshData& mesh = model->GetMeshData(meshIndex);
-                if (!mesh.VertexBuffer || !mesh.IndexBuffer || !mesh.PreviousVertexValid || mesh.IndexCount == 0)
+                for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
                 {
-                    continue;
+                    const MeshData& mesh = model->GetMeshData(meshIndex);
+                    if (!mesh.VertexBuffer || !mesh.IndexBuffer || !mesh.PreviousVertexValid || mesh.IndexCount == 0)
+                    {
+                        continue;
+                    }
+                    D3D12_VERTEX_BUFFER_VIEW views[2] =
+                    {
+                        mesh.VertexBufferView,
+                        mesh.PreviousVertexBufferView
+                    };
+                    commandList->IASetVertexBuffers(0, _countof(views), views);
+                    commandList->IASetIndexBuffer(&mesh.IndexBufferView);
+                    commandList->DrawIndexedInstanced(mesh.IndexCount, 1, 0, 0, 0);
                 }
-                D3D12_VERTEX_BUFFER_VIEW views[2] =
-                {
-                    mesh.VertexBufferView,
-                    mesh.PreviousVertexBufferView
-                };
-                commandList->IASetVertexBuffers(0, _countof(views), views);
-                commandList->IASetIndexBuffer(&mesh.IndexBufferView);
-                commandList->DrawIndexedInstanced(mesh.IndexCount, 1, 0, 0, 0);
             }
 
             barriers.clear();
@@ -368,21 +380,24 @@ private:
             }
 
             setConstants(entity);
-            for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
+            if (!m_IndirectDraws.ExecuteVelocity(commandList, model))
             {
-                const StaticMeshData& mesh = model->GetMeshData(meshIndex);
-                if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount == 0)
+                for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
                 {
-                    continue;
+                    const StaticMeshData& mesh = model->GetMeshData(meshIndex);
+                    if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount == 0)
+                    {
+                        continue;
+                    }
+                    D3D12_VERTEX_BUFFER_VIEW views[2] =
+                    {
+                        mesh.VertexBufferView,
+                        mesh.VertexBufferView
+                    };
+                    commandList->IASetVertexBuffers(0, _countof(views), views);
+                    commandList->IASetIndexBuffer(&mesh.IndexBufferView);
+                    commandList->DrawIndexedInstanced(mesh.IndexCount, 1, 0, 0, 0);
                 }
-                D3D12_VERTEX_BUFFER_VIEW views[2] =
-                {
-                    mesh.VertexBufferView,
-                    mesh.VertexBufferView
-                };
-                commandList->IASetVertexBuffers(0, _countof(views), views);
-                commandList->IASetIndexBuffer(&mesh.IndexBufferView);
-                commandList->DrawIndexedInstanced(mesh.IndexCount, 1, 0, 0, 0);
             }
         }
     }
@@ -395,6 +410,7 @@ public:
 
     void Uninit() override
     {
+        m_IndirectDraws.Reset();
         m_Legacy.Uninit();
     }
 
