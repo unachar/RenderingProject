@@ -64,8 +64,9 @@ namespace RenderingDxcDetail
             return {};
         }
 
-        std::wstring output(static_cast<size_t>(length - 1), L'\0');
+        std::wstring output(static_cast<size_t>(length), L'\0');
         MultiByteToWideChar(CP_UTF8, 0, text, -1, output.data(), length);
+        output.pop_back();
         return output;
     }
 
@@ -242,21 +243,25 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
     {
         AddArgument(argumentStorage, L"-Od");
     }
-    else if ((flags1 & D3DCOMPILE_OPTIMIZATION_LEVEL0) != 0)
-    {
-        AddArgument(argumentStorage, L"-O0");
-    }
-    else if ((flags1 & D3DCOMPILE_OPTIMIZATION_LEVEL1) != 0)
-    {
-        AddArgument(argumentStorage, L"-O1");
-    }
-    else if ((flags1 & D3DCOMPILE_OPTIMIZATION_LEVEL2) != 0)
-    {
-        AddArgument(argumentStorage, L"-O2");
-    }
     else
     {
-        AddArgument(argumentStorage, L"-O3");
+        const UINT optimizationLevel = flags1 & D3DCOMPILE_OPTIMIZATION_LEVEL3;
+        if (optimizationLevel == D3DCOMPILE_OPTIMIZATION_LEVEL0)
+        {
+            AddArgument(argumentStorage, L"-O0");
+        }
+        else if (optimizationLevel == D3DCOMPILE_OPTIMIZATION_LEVEL2)
+        {
+            AddArgument(argumentStorage, L"-O2");
+        }
+        else if (optimizationLevel == D3DCOMPILE_OPTIMIZATION_LEVEL3)
+        {
+            AddArgument(argumentStorage, L"-O3");
+        }
+        else
+        {
+            AddArgument(argumentStorage, L"-O1");
+        }
     }
 
     if ((flags1 & D3DCOMPILE_WARNINGS_ARE_ERRORS) != 0)
