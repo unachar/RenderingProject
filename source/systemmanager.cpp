@@ -19,7 +19,7 @@
 #include "camerasystem.h"
 #include "gridsystem.h"
 #include "rendersystem.h"
-#include "modelsystem.h"
+#include "optimizedmodelsystem.h"
 #include "debugsystem.h"
 #include "postprocesssystem.h"
 
@@ -48,7 +48,7 @@ bool SystemManager::Init()
 
 	addSystem(make_unique<GridSystem>());
 	addSystem(make_unique<RenderSystem>());
-	addSystem(make_unique<ModelSystem>());
+	addSystem(make_unique<OptimizedModelSystem>());
 	addSystem(make_unique<DebugSystem>());
 
 	for (auto& system : m_Systems)
@@ -145,4 +145,3 @@ void SystemManager::RenderFlow()
 
 	renderDeferred();
 }
-
