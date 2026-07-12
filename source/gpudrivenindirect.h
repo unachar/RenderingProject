@@ -2,18 +2,18 @@
 
 #include "pch.h"
 #include "renderercore.h"
+#include "rendererstate.h"
 #include "animationmodel.h"
 #include "staticmodel.h"
 #include <unordered_map>
 #include <vector>
 
-// Stage-one GPU-driven rendering for the existing renderer.
+// GPU-driven indirect drawing.
 //
-// The current model root signature uses descriptor tables for per-entity data,
-// so one ExecuteIndirect call is emitted per entity after its constants are
-// bound. Inside that call, all mesh VBV/IBV/draw commands are consumed by the
-// GPU from an indirect argument buffer. A later compute-culling stage can write
-// the same command layout and an optional count buffer without changing callers.
+// Candidate records are created once when a model is first encountered. Every
+// render submission dispatches a compute shader that performs the AABB/frustum
+// test, compacts visible records into a UAV argument buffer, writes a GPU count
+// buffer, and finally consumes both buffers through ExecuteIndirect.
 class GpuDrivenIndirectDrawCache
 {
 private:
@@ -32,15 +32,37 @@ private:
         D3D12_DRAW_INDEXED_ARGUMENTS Draw{};
     };
 
+    struct alignas(256) CullConstants
+    {
+        XMFLOAT4X4 World{};
+        XMFLOAT4X4 ViewProjection{};
+        XMFLOAT4 LocalCenter{};
+        XMFLOAT4 LocalExtents{};
+        UINT CommandStrideBytes = 0;
+        UINT CandidateCount = 0;
+        UINT EnableFrustumCulling = 0;
+        UINT Padding0 = 0;
+        UINT Padding[20]{};
+    };
+    static_assert(sizeof(CullConstants) == 256);
+
     struct IndirectBatch
     {
-        ComPtr<ID3D12Resource> ArgumentBuffer{};
+        ComPtr<ID3D12Resource> CandidateBuffer{};
+        ComPtr<ID3D12Resource> VisibleBuffer{};
+        ComPtr<ID3D12Resource> CountBuffer{};
         UINT CommandCount = 0;
         UINT SourceMeshCount = 0;
+        UINT CommandStride = 0;
     };
 
     ComPtr<ID3D12CommandSignature> m_ShadowSignature{};
     ComPtr<ID3D12CommandSignature> m_VelocitySignature{};
+    ComPtr<ID3D12RootSignature> m_CullRootSignature{};
+    ComPtr<ID3D12PipelineState> m_CullPipelineState{};
+    ComPtr<ID3D12Resource> m_ZeroCounterUpload{};
+    ComPtr<ID3D12Resource> m_CullConstantsUpload{};
+    UINT8* m_MappedCullConstants = nullptr;
     bool m_InitializationAttempted = false;
 
     std::unordered_map<const AnimationModelResource*, IndirectBatch> m_AnimatedShadowBatches{};
@@ -53,60 +75,172 @@ private:
         D3D12_DRAW_INDEXED_ARGUMENTS draw{};
         draw.IndexCountPerInstance = indexCount;
         draw.InstanceCount = 1;
-        draw.StartIndexLocation = 0;
-        draw.BaseVertexLocation = 0;
-        draw.StartInstanceLocation = 0;
         return draw;
     }
 
-    static bool CreateUploadArgumentBuffer(
-        const void* data,
-        size_t sizeInBytes,
-        ComPtr<ID3D12Resource>& output)
+    static bool CreateUploadBuffer(const void* data, UINT64 sizeInBytes, ComPtr<ID3D12Resource>& output)
     {
         ID3D12Device* device = RendererCore::GetDevice();
-        if (!device || !data || sizeInBytes == 0)
+        if (!device || sizeInBytes == 0)
         {
             return false;
         }
 
-        const CD3DX12_HEAP_PROPERTIES heapProperties(D3D12_HEAP_TYPE_UPLOAD);
-        const CD3DX12_RESOURCE_DESC bufferDescription =
-            CD3DX12_RESOURCE_DESC::Buffer(static_cast<UINT64>(sizeInBytes));
-
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+        const auto description = CD3DX12_RESOURCE_DESC::Buffer(sizeInBytes);
         HRESULT result = device->CreateCommittedResource(
-            &heapProperties,
+            &heap,
             D3D12_HEAP_FLAG_NONE,
-            &bufferDescription,
+            &description,
             D3D12_RESOURCE_STATE_GENERIC_READ,
             nullptr,
             IID_PPV_ARGS(&output));
         if (FAILED(result))
         {
-            Debug::Log("ERROR: Failed to create ExecuteIndirect argument buffer (hr=0x%08X).\n",
-                static_cast<unsigned int>(result));
             return false;
         }
 
-        void* mappedData = nullptr;
-        const D3D12_RANGE readRange{ 0, 0 };
-        result = output->Map(0, &readRange, &mappedData);
-        if (FAILED(result) || !mappedData)
+        if (data)
         {
-            Debug::Log("ERROR: Failed to map ExecuteIndirect argument buffer (hr=0x%08X).\n",
-                static_cast<unsigned int>(result));
-            output.Reset();
+            void* mapped = nullptr;
+            const D3D12_RANGE noRead{ 0, 0 };
+            result = output->Map(0, &noRead, &mapped);
+            if (FAILED(result) || !mapped)
+            {
+                output.Reset();
+                return false;
+            }
+            memcpy(mapped, data, static_cast<size_t>(sizeInBytes));
+            output->Unmap(0, nullptr);
+        }
+        return true;
+    }
+
+    static bool CreateUavBuffer(UINT64 sizeInBytes, ComPtr<ID3D12Resource>& output)
+    {
+        ID3D12Device* device = RendererCore::GetDevice();
+        if (!device || sizeInBytes == 0)
+        {
             return false;
         }
 
-        memcpy(mappedData, data, sizeInBytes);
-        output->Unmap(0, nullptr);
-        return true;
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        const auto description = CD3DX12_RESOURCE_DESC::Buffer(
+            sizeInBytes,
+            D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        return SUCCEEDED(device->CreateCommittedResource(
+            &heap,
+            D3D12_HEAP_FLAG_NONE,
+            &description,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+            nullptr,
+            IID_PPV_ARGS(&output)));
+    }
+
+    bool CreateCullPipeline()
+    {
+        ID3D12Device* device = RendererCore::GetDevice();
+        if (!device)
+        {
+            return false;
+        }
+
+        CD3DX12_ROOT_PARAMETER parameters[4]{};
+        parameters[0].InitAsShaderResourceView(0, 0);
+        parameters[1].InitAsUnorderedAccessView(0, 0);
+        parameters[2].InitAsUnorderedAccessView(1, 0);
+        parameters[3].InitAsConstantBufferView(0, 0);
+
+        CD3DX12_ROOT_SIGNATURE_DESC rootDescription{};
+        rootDescription.Init(_countof(parameters), parameters, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE);
+
+        ComPtr<ID3DBlob> serialized;
+        ComPtr<ID3DBlob> errors;
+        HRESULT result = D3D12SerializeRootSignature(
+            &rootDescription,
+            D3D_ROOT_SIGNATURE_VERSION_1,
+            &serialized,
+            &errors);
+        if (FAILED(result))
+        {
+            if (errors)
+            {
+                Debug::Log("%s\n", static_cast<const char*>(errors->GetBufferPointer()));
+            }
+            return false;
+        }
+
+        result = device->CreateRootSignature(
+            0,
+            serialized->GetBufferPointer(),
+            serialized->GetBufferSize(),
+            IID_PPV_ARGS(&m_CullRootSignature));
+        if (FAILED(result))
+        {
+            return false;
+        }
+
+        ComPtr<ID3DBlob> computeShader;
+        result = D3DCompileFromFile(
+            L"shader/hlsl/GpuDrivenCullCS.hlsl",
+            nullptr,
+            D3D_COMPILE_STANDARD_FILE_INCLUDE,
+            "main",
+            "cs_5_1",
+#ifdef _DEBUG
+            D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,
+#else
+            D3DCOMPILE_OPTIMIZATION_LEVEL3,
+#endif
+            0,
+            &computeShader,
+            &errors);
+        if (FAILED(result))
+        {
+            if (errors)
+            {
+                Debug::Log("GPU culling shader compile failed: %s\n",
+                    static_cast<const char*>(errors->GetBufferPointer()));
+            }
+            return false;
+        }
+
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pipelineDescription{};
+        pipelineDescription.pRootSignature = m_CullRootSignature.Get();
+        pipelineDescription.CS = {
+            computeShader->GetBufferPointer(),
+            computeShader->GetBufferSize()
+        };
+        if (FAILED(device->CreateComputePipelineState(
+            &pipelineDescription,
+            IID_PPV_ARGS(&m_CullPipelineState))))
+        {
+            return false;
+        }
+
+        const UINT zero = 0;
+        if (!CreateUploadBuffer(&zero, sizeof(zero), m_ZeroCounterUpload))
+        {
+            return false;
+        }
+
+        const UINT64 constantsSize =
+            static_cast<UINT64>(RendererState::g_kFRAME_COUNT) *
+            g_kMAX_ENTITIES * sizeof(CullConstants);
+        if (!CreateUploadBuffer(nullptr, constantsSize, m_CullConstantsUpload))
+        {
+            return false;
+        }
+        const D3D12_RANGE noRead{ 0, 0 };
+        return SUCCEEDED(m_CullConstantsUpload->Map(
+            0,
+            &noRead,
+            reinterpret_cast<void**>(&m_MappedCullConstants)));
     }
 
     bool EnsureInitialized()
     {
-        if (m_ShadowSignature && m_VelocitySignature)
+        if (m_ShadowSignature && m_VelocitySignature && m_CullPipelineState)
         {
             return true;
         }
@@ -117,7 +251,7 @@ private:
         m_InitializationAttempted = true;
 
         ID3D12Device* device = RendererCore::GetDevice();
-        if (!device)
+        if (!device || !CreateCullPipeline())
         {
             return false;
         }
@@ -127,20 +261,15 @@ private:
         shadowArguments[0].VertexBuffer.Slot = 0;
         shadowArguments[1].Type = D3D12_INDIRECT_ARGUMENT_TYPE_INDEX_BUFFER_VIEW;
         shadowArguments[2].Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
-
-        D3D12_COMMAND_SIGNATURE_DESC shadowSignatureDescription{};
-        shadowSignatureDescription.ByteStride = sizeof(ShadowCommand);
-        shadowSignatureDescription.NumArgumentDescs = _countof(shadowArguments);
-        shadowSignatureDescription.pArgumentDescs = shadowArguments;
-
-        HRESULT result = device->CreateCommandSignature(
-            &shadowSignatureDescription,
+        D3D12_COMMAND_SIGNATURE_DESC shadowDescription{};
+        shadowDescription.ByteStride = sizeof(ShadowCommand);
+        shadowDescription.NumArgumentDescs = _countof(shadowArguments);
+        shadowDescription.pArgumentDescs = shadowArguments;
+        if (FAILED(device->CreateCommandSignature(
+            &shadowDescription,
             nullptr,
-            IID_PPV_ARGS(&m_ShadowSignature));
-        if (FAILED(result))
+            IID_PPV_ARGS(&m_ShadowSignature))))
         {
-            Debug::Log("ERROR: Failed to create shadow ExecuteIndirect signature (hr=0x%08X).\n",
-                static_cast<unsigned int>(result));
             return false;
         }
 
@@ -151,153 +280,110 @@ private:
         velocityArguments[1].VertexBuffer.Slot = 1;
         velocityArguments[2].Type = D3D12_INDIRECT_ARGUMENT_TYPE_INDEX_BUFFER_VIEW;
         velocityArguments[3].Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
-
-        D3D12_COMMAND_SIGNATURE_DESC velocitySignatureDescription{};
-        velocitySignatureDescription.ByteStride = sizeof(VelocityCommand);
-        velocitySignatureDescription.NumArgumentDescs = _countof(velocityArguments);
-        velocitySignatureDescription.pArgumentDescs = velocityArguments;
-
-        result = device->CreateCommandSignature(
-            &velocitySignatureDescription,
+        D3D12_COMMAND_SIGNATURE_DESC velocityDescription{};
+        velocityDescription.ByteStride = sizeof(VelocityCommand);
+        velocityDescription.NumArgumentDescs = _countof(velocityArguments);
+        velocityDescription.pArgumentDescs = velocityArguments;
+        return SUCCEEDED(device->CreateCommandSignature(
+            &velocityDescription,
             nullptr,
-            IID_PPV_ARGS(&m_VelocitySignature));
-        if (FAILED(result))
+            IID_PPV_ARGS(&m_VelocitySignature)));
+    }
+
+    template<typename Command>
+    static bool FinalizeBatch(const std::vector<Command>& commands, UINT sourceMeshCount, IndirectBatch& batch)
+    {
+        if (commands.empty())
         {
-            Debug::Log("ERROR: Failed to create velocity ExecuteIndirect signature (hr=0x%08X).\n",
-                static_cast<unsigned int>(result));
-            m_ShadowSignature.Reset();
             return false;
         }
 
-        return true;
+        const UINT64 byteSize = static_cast<UINT64>(commands.size()) * sizeof(Command);
+        batch = {};
+        batch.CommandCount = static_cast<UINT>(commands.size());
+        batch.SourceMeshCount = sourceMeshCount;
+        batch.CommandStride = sizeof(Command);
+        return CreateUploadBuffer(commands.data(), byteSize, batch.CandidateBuffer) &&
+            CreateUavBuffer(byteSize, batch.VisibleBuffer) &&
+            CreateUavBuffer(sizeof(UINT), batch.CountBuffer);
     }
 
-    static bool BuildAnimatedShadowBatch(
-        const AnimationModelResource* model,
-        IndirectBatch& batch)
+    static bool BuildAnimatedShadowBatch(const AnimationModelResource* model, IndirectBatch& batch)
     {
         std::vector<ShadowCommand> commands;
         commands.reserve(model->GetMeshCount());
-        for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
+        for (UINT index = 0; index < model->GetMeshCount(); ++index)
         {
-            const MeshData& mesh = model->GetMeshData(meshIndex);
-            if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount == 0)
+            const MeshData& mesh = model->GetMeshData(index);
+            if (mesh.VertexBuffer && mesh.IndexBuffer && mesh.IndexCount > 0)
             {
-                continue;
+                commands.push_back({ mesh.VertexBufferView, mesh.IndexBufferView, MakeDrawArguments(mesh.IndexCount) });
             }
-            commands.push_back({
-                mesh.VertexBufferView,
-                mesh.IndexBufferView,
-                MakeDrawArguments(mesh.IndexCount)
-                });
         }
-
-        batch.ArgumentBuffer.Reset();
-        batch.CommandCount = static_cast<UINT>(commands.size());
-        batch.SourceMeshCount = model->GetMeshCount();
-        return !commands.empty() && CreateUploadArgumentBuffer(
-            commands.data(),
-            commands.size() * sizeof(ShadowCommand),
-            batch.ArgumentBuffer);
+        return FinalizeBatch(commands, model->GetMeshCount(), batch);
     }
 
-    static bool BuildStaticShadowBatch(
-        const StaticModelResource* model,
-        IndirectBatch& batch)
+    static bool BuildStaticShadowBatch(const StaticModelResource* model, IndirectBatch& batch)
     {
         std::vector<ShadowCommand> commands;
         commands.reserve(model->GetMeshCount());
-        for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
+        for (UINT index = 0; index < model->GetMeshCount(); ++index)
         {
-            const StaticMeshData& mesh = model->GetMeshData(meshIndex);
-            if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount == 0)
+            const StaticMeshData& mesh = model->GetMeshData(index);
+            if (mesh.VertexBuffer && mesh.IndexBuffer && mesh.IndexCount > 0)
             {
-                continue;
+                commands.push_back({ mesh.VertexBufferView, mesh.IndexBufferView, MakeDrawArguments(mesh.IndexCount) });
             }
-            commands.push_back({
-                mesh.VertexBufferView,
-                mesh.IndexBufferView,
-                MakeDrawArguments(mesh.IndexCount)
-                });
         }
-
-        batch.ArgumentBuffer.Reset();
-        batch.CommandCount = static_cast<UINT>(commands.size());
-        batch.SourceMeshCount = model->GetMeshCount();
-        return !commands.empty() && CreateUploadArgumentBuffer(
-            commands.data(),
-            commands.size() * sizeof(ShadowCommand),
-            batch.ArgumentBuffer);
+        return FinalizeBatch(commands, model->GetMeshCount(), batch);
     }
 
-    static bool BuildAnimatedVelocityBatch(
-        const AnimationModelResource* model,
-        IndirectBatch& batch)
+    static bool BuildAnimatedVelocityBatch(const AnimationModelResource* model, IndirectBatch& batch)
     {
         std::vector<VelocityCommand> commands;
         commands.reserve(model->GetMeshCount());
-        for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
+        for (UINT index = 0; index < model->GetMeshCount(); ++index)
         {
-            const MeshData& mesh = model->GetMeshData(meshIndex);
-            if (!mesh.VertexBuffer || !mesh.IndexBuffer || !mesh.PreviousVertexValid || mesh.IndexCount == 0)
+            const MeshData& mesh = model->GetMeshData(index);
+            if (mesh.VertexBuffer && mesh.PreviousVertexBuffer && mesh.IndexBuffer &&
+                mesh.PreviousVertexValid && mesh.IndexCount > 0)
             {
-                continue;
+                commands.push_back({
+                    mesh.VertexBufferView,
+                    mesh.PreviousVertexBufferView,
+                    mesh.IndexBufferView,
+                    MakeDrawArguments(mesh.IndexCount)
+                    });
             }
-            commands.push_back({
-                mesh.VertexBufferView,
-                mesh.PreviousVertexBufferView,
-                mesh.IndexBufferView,
-                MakeDrawArguments(mesh.IndexCount)
-                });
         }
-
-        batch.ArgumentBuffer.Reset();
-        batch.CommandCount = static_cast<UINT>(commands.size());
-        batch.SourceMeshCount = model->GetMeshCount();
-        return !commands.empty() && CreateUploadArgumentBuffer(
-            commands.data(),
-            commands.size() * sizeof(VelocityCommand),
-            batch.ArgumentBuffer);
+        return FinalizeBatch(commands, model->GetMeshCount(), batch);
     }
 
-    static bool BuildStaticVelocityBatch(
-        const StaticModelResource* model,
-        IndirectBatch& batch)
+    static bool BuildStaticVelocityBatch(const StaticModelResource* model, IndirectBatch& batch)
     {
         std::vector<VelocityCommand> commands;
         commands.reserve(model->GetMeshCount());
-        for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
+        for (UINT index = 0; index < model->GetMeshCount(); ++index)
         {
-            const StaticMeshData& mesh = model->GetMeshData(meshIndex);
-            if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount == 0)
+            const StaticMeshData& mesh = model->GetMeshData(index);
+            if (mesh.VertexBuffer && mesh.IndexBuffer && mesh.IndexCount > 0)
             {
-                continue;
+                commands.push_back({
+                    mesh.VertexBufferView,
+                    mesh.VertexBufferView,
+                    mesh.IndexBufferView,
+                    MakeDrawArguments(mesh.IndexCount)
+                    });
             }
-            commands.push_back({
-                mesh.VertexBufferView,
-                mesh.VertexBufferView,
-                mesh.IndexBufferView,
-                MakeDrawArguments(mesh.IndexCount)
-                });
         }
-
-        batch.ArgumentBuffer.Reset();
-        batch.CommandCount = static_cast<UINT>(commands.size());
-        batch.SourceMeshCount = model->GetMeshCount();
-        return !commands.empty() && CreateUploadArgumentBuffer(
-            commands.data(),
-            commands.size() * sizeof(VelocityCommand),
-            batch.ArgumentBuffer);
+        return FinalizeBatch(commands, model->GetMeshCount(), batch);
     }
 
-    template<typename ModelType, typename MapType, typename Builder>
-    static IndirectBatch* FindOrBuildBatch(
-        const ModelType* model,
-        MapType& batches,
-        Builder&& builder)
+    template<typename Model, typename Map, typename Builder>
+    static IndirectBatch* FindOrBuild(const Model* model, Map& map, Builder&& builder)
     {
-        IndirectBatch& batch = batches[model];
-        if (!batch.ArgumentBuffer || batch.SourceMeshCount != model->GetMeshCount())
+        IndirectBatch& batch = map[model];
+        if (!batch.CandidateBuffer || batch.SourceMeshCount != model->GetMeshCount())
         {
             if (!builder(model, batch))
             {
@@ -307,119 +393,226 @@ private:
         return &batch;
     }
 
+    bool CullAndExecute(
+        ID3D12GraphicsCommandList* commandList,
+        ID3D12CommandSignature* signature,
+        IndirectBatch& batch,
+        EntityID entity,
+        const XMMATRIX& world,
+        const XMMATRIX& viewProjection,
+        const XMFLOAT3& localCenter,
+        const XMFLOAT3& localExtents,
+        bool enableFrustumCulling,
+        ID3D12PipelineState* graphicsPipelineState)
+    {
+        if (!commandList || !signature || !graphicsPipelineState ||
+            entity >= g_kMAX_ENTITIES || !m_MappedCullConstants)
+        {
+            return false;
+        }
+
+        D3D12_RESOURCE_BARRIER countToCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+            batch.CountBuffer.Get(),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+            D3D12_RESOURCE_STATE_COPY_DEST);
+        commandList->ResourceBarrier(1, &countToCopy);
+        commandList->CopyBufferRegion(batch.CountBuffer.Get(), 0, m_ZeroCounterUpload.Get(), 0, sizeof(UINT));
+        D3D12_RESOURCE_BARRIER countToUav = CD3DX12_RESOURCE_BARRIER::Transition(
+            batch.CountBuffer.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commandList->ResourceBarrier(1, &countToUav);
+
+        const UINT frameIndex = RendererCore::GetFrameIndex() % RendererState::g_kFRAME_COUNT;
+        const UINT64 constantIndex = static_cast<UINT64>(frameIndex) * g_kMAX_ENTITIES + entity;
+        CullConstants constants{};
+        XMStoreFloat4x4(&constants.World, world);
+        XMStoreFloat4x4(&constants.ViewProjection, viewProjection);
+        constants.LocalCenter = XMFLOAT4(localCenter.x, localCenter.y, localCenter.z, 1.0f);
+        constants.LocalExtents = XMFLOAT4(localExtents.x, localExtents.y, localExtents.z, 0.0f);
+        constants.CommandStrideBytes = batch.CommandStride;
+        constants.CandidateCount = batch.CommandCount;
+        constants.EnableFrustumCulling = enableFrustumCulling ? 1u : 0u;
+        memcpy(
+            m_MappedCullConstants + constantIndex * sizeof(CullConstants),
+            &constants,
+            sizeof(constants));
+
+        commandList->SetComputeRootSignature(m_CullRootSignature.Get());
+        commandList->SetPipelineState(m_CullPipelineState.Get());
+        commandList->SetComputeRootShaderResourceView(0, batch.CandidateBuffer->GetGPUVirtualAddress());
+        commandList->SetComputeRootUnorderedAccessView(1, batch.VisibleBuffer->GetGPUVirtualAddress());
+        commandList->SetComputeRootUnorderedAccessView(2, batch.CountBuffer->GetGPUVirtualAddress());
+        commandList->SetComputeRootConstantBufferView(
+            3,
+            m_CullConstantsUpload->GetGPUVirtualAddress() + constantIndex * sizeof(CullConstants));
+        commandList->Dispatch((batch.CommandCount + 63) / 64, 1, 1);
+
+        D3D12_RESOURCE_BARRIER uavBarriers[2] =
+        {
+            CD3DX12_RESOURCE_BARRIER::UAV(batch.VisibleBuffer.Get()),
+            CD3DX12_RESOURCE_BARRIER::UAV(batch.CountBuffer.Get())
+        };
+        commandList->ResourceBarrier(_countof(uavBarriers), uavBarriers);
+
+        D3D12_RESOURCE_BARRIER toIndirect[2] =
+        {
+            CD3DX12_RESOURCE_BARRIER::Transition(
+                batch.VisibleBuffer.Get(),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT),
+            CD3DX12_RESOURCE_BARRIER::Transition(
+                batch.CountBuffer.Get(),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT)
+        };
+        commandList->ResourceBarrier(_countof(toIndirect), toIndirect);
+
+        commandList->SetPipelineState(graphicsPipelineState);
+        commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        commandList->ExecuteIndirect(
+            signature,
+            batch.CommandCount,
+            batch.VisibleBuffer.Get(),
+            0,
+            batch.CountBuffer.Get(),
+            0);
+
+        D3D12_RESOURCE_BARRIER toUav[2] =
+        {
+            CD3DX12_RESOURCE_BARRIER::Transition(
+                batch.VisibleBuffer.Get(),
+                D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+            CD3DX12_RESOURCE_BARRIER::Transition(
+                batch.CountBuffer.Get(),
+                D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+        };
+        commandList->ResourceBarrier(_countof(toUav), toUav);
+        return true;
+    }
+
 public:
     bool ExecuteShadow(
         ID3D12GraphicsCommandList* commandList,
-        const AnimationModelResource* model)
+        const AnimationModelResource* model,
+        EntityID entity,
+        const XMMATRIX& world,
+        ID3D12PipelineState* graphicsPipelineState)
     {
-        if (!commandList || !model || !EnsureInitialized())
+        if (!EnsureInitialized() || !model)
         {
             return false;
         }
-        IndirectBatch* batch = FindOrBuildBatch(
-            model,
-            m_AnimatedShadowBatches,
-            BuildAnimatedShadowBatch);
-        if (!batch)
-        {
-            return false;
-        }
-        commandList->ExecuteIndirect(
+        IndirectBatch* batch = FindOrBuild(model, m_AnimatedShadowBatches, BuildAnimatedShadowBatch);
+        return batch && CullAndExecute(
+            commandList,
             m_ShadowSignature.Get(),
-            batch->CommandCount,
-            batch->ArgumentBuffer.Get(),
-            0,
-            nullptr,
-            0);
-        return true;
+            *batch,
+            entity,
+            world,
+            XMMatrixIdentity(),
+            model->GetAabbCenter(),
+            model->GetAabbExtents(),
+            false,
+            graphicsPipelineState);
     }
 
     bool ExecuteShadow(
         ID3D12GraphicsCommandList* commandList,
-        const StaticModelResource* model)
+        const StaticModelResource* model,
+        EntityID entity,
+        const XMMATRIX& world,
+        ID3D12PipelineState* graphicsPipelineState)
     {
-        if (!commandList || !model || !EnsureInitialized())
+        if (!EnsureInitialized() || !model)
         {
             return false;
         }
-        IndirectBatch* batch = FindOrBuildBatch(
-            model,
-            m_StaticShadowBatches,
-            BuildStaticShadowBatch);
-        if (!batch)
-        {
-            return false;
-        }
-        commandList->ExecuteIndirect(
+        IndirectBatch* batch = FindOrBuild(model, m_StaticShadowBatches, BuildStaticShadowBatch);
+        return batch && CullAndExecute(
+            commandList,
             m_ShadowSignature.Get(),
-            batch->CommandCount,
-            batch->ArgumentBuffer.Get(),
-            0,
-            nullptr,
-            0);
-        return true;
+            *batch,
+            entity,
+            world,
+            XMMatrixIdentity(),
+            model->GetAabbCenter(),
+            model->GetAabbExtents(),
+            false,
+            graphicsPipelineState);
     }
 
     bool ExecuteVelocity(
         ID3D12GraphicsCommandList* commandList,
-        const AnimationModelResource* model)
+        const AnimationModelResource* model,
+        EntityID entity,
+        const XMMATRIX& world,
+        const XMMATRIX& viewProjection,
+        ID3D12PipelineState* graphicsPipelineState)
     {
-        if (!commandList || !model || !EnsureInitialized())
+        if (!EnsureInitialized() || !model)
         {
             return false;
         }
-        IndirectBatch* batch = FindOrBuildBatch(
-            model,
-            m_AnimatedVelocityBatches,
-            BuildAnimatedVelocityBatch);
-        if (!batch)
-        {
-            return false;
-        }
-        commandList->ExecuteIndirect(
+        IndirectBatch* batch = FindOrBuild(model, m_AnimatedVelocityBatches, BuildAnimatedVelocityBatch);
+        return batch && CullAndExecute(
+            commandList,
             m_VelocitySignature.Get(),
-            batch->CommandCount,
-            batch->ArgumentBuffer.Get(),
-            0,
-            nullptr,
-            0);
-        return true;
+            *batch,
+            entity,
+            world,
+            viewProjection,
+            model->GetAabbCenter(),
+            model->GetAabbExtents(),
+            true,
+            graphicsPipelineState);
     }
 
     bool ExecuteVelocity(
         ID3D12GraphicsCommandList* commandList,
-        const StaticModelResource* model)
+        const StaticModelResource* model,
+        EntityID entity,
+        const XMMATRIX& world,
+        const XMMATRIX& viewProjection,
+        ID3D12PipelineState* graphicsPipelineState)
     {
-        if (!commandList || !model || !EnsureInitialized())
+        if (!EnsureInitialized() || !model)
         {
             return false;
         }
-        IndirectBatch* batch = FindOrBuildBatch(
-            model,
-            m_StaticVelocityBatches,
-            BuildStaticVelocityBatch);
-        if (!batch)
-        {
-            return false;
-        }
-        commandList->ExecuteIndirect(
+        IndirectBatch* batch = FindOrBuild(model, m_StaticVelocityBatches, BuildStaticVelocityBatch);
+        return batch && CullAndExecute(
+            commandList,
             m_VelocitySignature.Get(),
-            batch->CommandCount,
-            batch->ArgumentBuffer.Get(),
-            0,
-            nullptr,
-            0);
-        return true;
+            *batch,
+            entity,
+            world,
+            viewProjection,
+            model->GetAabbCenter(),
+            model->GetAabbExtents(),
+            true,
+            graphicsPipelineState);
     }
 
     void Reset()
     {
+        if (m_CullConstantsUpload && m_MappedCullConstants)
+        {
+            m_CullConstantsUpload->Unmap(0, nullptr);
+        }
+        m_MappedCullConstants = nullptr;
         m_AnimatedShadowBatches.clear();
         m_StaticShadowBatches.clear();
         m_AnimatedVelocityBatches.clear();
         m_StaticVelocityBatches.clear();
         m_ShadowSignature.Reset();
         m_VelocitySignature.Reset();
+        m_CullRootSignature.Reset();
+        m_CullPipelineState.Reset();
+        m_ZeroCounterUpload.Reset();
+        m_CullConstantsUpload.Reset();
         m_InitializationAttempted = false;
     }
 };
