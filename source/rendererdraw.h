@@ -29,6 +29,8 @@ public:
 	static void ApplyPostProcess(const PostProcessComponent& config);
 	static void ApplyAntiAliasing();
 	static void EndScenePass();
+	static void RenderVelocityBuffer();
+	static void EndVelocityBuffer();
 	static void ResizeScene(UINT width, UINT height);
 
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetSceneSrvHandle() { return m_SceneSrvHandle; }

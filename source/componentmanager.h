@@ -2,6 +2,7 @@
 #include "ecs.h"
 #include "rendererdraw.h"
 #include "light.h"
+#include "animationplayback.h"
 #include <cassert>
 #include <typeindex>
 #include <type_traits>
@@ -14,6 +15,8 @@ struct TransformComponent
 	XMFLOAT3 Scale = { 1.0f, 1.0f, 1.0f };
 	XMFLOAT3 Rotation = { 0.0f, 0.0f, 0.0f };
 	XMFLOAT4X4 WorldMatrix {};
+	XMFLOAT4X4 PreviousWorldMatrix {};
+	bool HasPreviousWorld = false;
 	bool IsDirty = true;
 
 };
@@ -87,6 +90,7 @@ struct AnimationModelComponent
 	bool IsConvert = true;
 	vector<string> AnimationPaths{};
 	vector<string> Animations{};
+	vector<AnimationPlaybackLayer> ActiveAnimationLayers{};
 	string CurrentAnimation{};
 	string NextAnimation{};
 	float CurrentTime = 0.0f;

@@ -15,6 +15,7 @@
 #include "rendererstate.h"
 #include "toonoutlinebuilder.h"
 #include "vmdanimationimpoter.h"
+#include "animationplayback.h"
 #pragma comment(lib, "assimp-vc143-mt.lib")
 
 struct ModelVertex
@@ -129,6 +130,9 @@ struct MeshData
 {
 	ComPtr<ID3D12Resource> VertexBuffer{};
 	D3D12_VERTEX_BUFFER_VIEW VertexBufferView{};
+	ComPtr<ID3D12Resource> PreviousVertexBuffer{};
+	D3D12_VERTEX_BUFFER_VIEW PreviousVertexBufferView{};
+	bool PreviousVertexValid = false;
 	ComPtr<ID3D12Resource> TeoVertexBuffer{};
 	D3D12_VERTEX_BUFFER_VIEW TeoVertexBufferView{};
 	std::array<ComPtr<ID3D12Resource>, ToonOutlineBuilder::kModeCount> TeoVertexBuffers{};
@@ -197,6 +201,32 @@ private:
 		VmdTrackSampleCursor Cursor{};
 	};
 
+	struct VmdLayeredBoneBinding
+	{
+		Bone* BonePtr = nullptr;
+		const vector<VmdKeyframe>* Track = nullptr;
+		size_t LayerIndex = 0;
+		VmdTrackSampleCursor Cursor{};
+		aiVector3D BaseScale{ 1.0f, 1.0f, 1.0f };
+		aiQuaternion BaseRotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+		aiVector3D BasePosition{ 0.0f, 0.0f, 0.0f };
+	};
+
+	struct VmdLayeredMorphBinding
+	{
+		uint32_t MorphIndex = 0;
+		const vector<VmdScalarKeyframe>* Track = nullptr;
+		size_t LayerIndex = 0;
+		VmdTrackSampleCursor Cursor{};
+	};
+
+	struct VmdLayeredIkBinding
+	{
+		const vector<VmdIkKeyframe>* Track = nullptr;
+		size_t LayerIndex = 0;
+		VmdTrackSampleCursor Cursor{};
+	};
+
 	struct PmxRuntimeNode
 	{
 		aiNode* Node = nullptr;
@@ -233,7 +263,7 @@ private:
 	vector<vector<GpuSkinVertex>> m_BaseGpuSkinVertices{};
 	vector<vector<GpuSkinVertex>> m_TeoGpuSkinVertices{};
 	vector<array<vector<GpuSkinVertex>, ToonOutlineBuilder::kModeCount>> m_TeoGpuSkinVerticesByMode{};
-	
+
 
 	unordered_map<string, const aiScene*> m_Animation{};
 	unordered_map<string, VmdAnimation> m_VmdAnimations{};
@@ -257,11 +287,19 @@ private:
 	float m_LastPoseFrame2 = 0.0f;
 	float m_LastPoseBlendRate = 0.0f;
 	bool m_HasCachedPose = false;
+	bool m_HasCachedLayeredPose = false;
 	bool m_HasAppliedVmdMorphs = false;
+	bool m_UseLayeredVmdIk = false;
 	const VmdAnimation* m_CachedVmdPrimaryAnimation = nullptr;
 	const VmdAnimation* m_CachedVmdSecondaryAnimation = nullptr;
 	vector<VmdBoneBinding> m_VmdBoneBindings{};
 	vector<VmdMorphBinding> m_VmdMorphBindings{};
+	vector<const VmdAnimation*> m_CachedVmdLayerAnimations{};
+	vector<float> m_VmdLayerFramesScratch{};
+	vector<float> m_LastLayerPoseTimes{};
+	vector<VmdLayeredBoneBinding> m_VmdLayeredBoneBindings{};
+	vector<VmdLayeredMorphBinding> m_VmdLayeredMorphBindings{};
+	unordered_map<string, VmdLayeredIkBinding> m_VmdLayeredIkBindings{};
 	unordered_map<string, const vector<VmdIkKeyframe>*> m_VmdIkTrackCache{};
 	unordered_map<string, VmdTrackSampleCursor> m_VmdIkTrackCursors{};
 	vector<pair<uint32_t, float>> m_VmdActiveMorphsScratch{};
@@ -276,7 +314,7 @@ private:
 
 	array<ComPtr<ID3D12Resource>, RendererState::g_kFRAME_COUNT> m_BoneBuffers{};
 	array<void*, RendererState::g_kFRAME_COUNT> m_pBoneBufferMapped{};
-	
+
 
 	ComPtr<ID3D12DescriptorHeap> m_SkinningDescHeap{};
 	UINT m_SkinningDescHeapStart = 0;
@@ -294,14 +332,19 @@ private:
 		aiQuaternion& outRotation, aiVector3D& outPosition) const;
 	void UpdateVmdBoneMatrices(const VmdAnimation* animation1, float frame1,
 		const VmdAnimation* animation2, float frame2, float blendRate);
+	void UpdateVmdBoneMatrices(const vector<AnimationPlaybackLayer>& animationLayers);
 	void InvalidateVmdRuntimeCache();
 	void RebuildVmdRuntimeCache(const VmdAnimation* primaryAnimation, const VmdAnimation* secondaryAnimation);
+	bool IsVmdLayeredRuntimeCacheValid(const vector<AnimationPlaybackLayer>& animationLayers) const;
+	void RebuildVmdLayeredRuntimeCache(const vector<AnimationPlaybackLayer>& animationLayers);
 	void InvalidatePmxRuntimeCache();
 	void RebuildPmxRuntimeCache();
 	bool LoadPmxIkData(const char* fileName);
 	void BuildPmxVertexMeshMap();
 	float SampleVmdMorph(const VmdAnimation* animation, const string& morphName, float timeSeconds) const;
 	void ApplyVmdMorphs(const VmdAnimation* animation, float currentFrame);
+	void ApplyVmdMorphLayers();
+	void ApplyActiveVmdMorphs();
 	void ApplyPmxOrderedTransforms(const VmdAnimation* animation, float currentFrame);
 	bool IsVmdIkEnabled(const VmdAnimation* animation, const string& ikBoneName, float currentFrame);
 	void ApplyPmxIk(const VmdAnimation* animation, float timeSeconds);
@@ -321,6 +364,7 @@ public:
 
 	void UpdateBoneMatrices(const char* animName1, float frame1,
 		const char* animName2, float frame2, float blendRate);
+	void UpdateBoneMatrices(const vector<AnimationPlaybackLayer>& animationLayers);
 
 	bool ApplyMeshShadingOverridePartIds(const vector<int>& overridePartIds);
 	void DispatchGpuSkinning(ID3D12GraphicsCommandList* pCommandList);

@@ -65,6 +65,9 @@ unordered_map<PostProcessType, ComPtr<ID3D12PipelineState>> RendererState::m_Pos
 ComPtr<ID3D12PipelineState> RendererState::m_DeferredLightingPso;
 ComPtr<ID3D12PipelineState> RendererState::m_AtmospherePso;
 ComPtr<ID3D12PipelineState> RendererState::m_UpscaleBilateralPso;
+ComPtr<ID3D12PipelineState> RendererState::m_UpscaleDepthPso;
+ComPtr<ID3D12PipelineState> RendererState::m_VelocityPso;
+ComPtr<ID3D12PipelineState> RendererState::m_VelocityGeometryPso;
 ComPtr<ID3D12Resource> RendererState::m_PostProcessConstantBuffer;
 ComPtr<ID3D12Resource> RendererState::m_LightConstantBuffer;
 ComPtr<ID3D12Resource> RendererState::m_PBRConstantBuffer;

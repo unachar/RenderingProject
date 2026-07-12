@@ -163,6 +163,12 @@
     <FxCompile Include="shader\hlsl\ShadowMapVS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
+    <FxCompile Include="shader\hlsl\UpscaleDepthPS.hlsl" />
+    <FxCompile Include="shader\hlsl\VelocityPS.hlsl" />
+    <FxCompile Include="shader\hlsl\VelocityGeometryVS.hlsl" />
+    <FxCompile Include="shader\hlsl\VelocityGeometryPS.hlsl" />
+    <FxCompile Include="shader\hlsl\FXAA_PS.hlsl" />
+    <FxCompile Include="shader\hlsl\TAA_BlendPS.hlsl" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\pch.cpp">
@@ -558,6 +564,7 @@
       <Filter>2_ecs\2-1_entities</Filter>
     </ClInclude>
     <ClInclude Include="source\entitybase.h" />
+    <ClInclude Include="source\animationplayback.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config">

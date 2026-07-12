@@ -11,7 +11,9 @@ void Karen::Create()
 	const auto modelScale = XMFLOAT3(0.15f, 0.15f, 0.15f);
 	const auto modelPath = "asset\\model\\karenv1.3\\karem.pmx";
 	const auto animPath = "asset\\model\\animation\\kasou.vmd";
+	const auto animPath2 = "asset\\model\\animation\\kasou_kao.vmd";
 	const auto animName = "anim1";
+	const auto animName2 = "anim2";
 
 	auto& entity = World::CreateEntity()
 		.Add<NameComponent>()
@@ -27,16 +29,16 @@ void Karen::Create()
 
 	const int modelID = ModelManager::LoadAnimModel(modelPath);
 	const bool animationLoaded = ModelManager::LoadAnimation(modelID, animPath, animName);
+	const bool animationLoaded2 = ModelManager::LoadAnimation(modelID, animPath2, "anim2");
 
 	auto& anim = entity.Get<AnimationModelComponent>();
 	anim.ModelId = modelID;
 	anim.ModelPath = modelPath;
-	if (animationLoaded)
+	if (animationLoaded && animationLoaded2)
 	{
-		anim.AnimationPaths = { animPath };
-		anim.Animations = { animName };
-		anim.CurrentAnimation = animName;
-		Animator::Play(anim, animName);
+		anim.AnimationPaths = { animPath, animPath2 };
+		anim.Animations = { animName, animName2 };
+		Animator::Play(anim, { animName, animName2 });
 	}
 	else
 	{

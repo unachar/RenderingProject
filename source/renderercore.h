@@ -17,6 +17,8 @@ public:
 	static UINT GetWidth() { return m_Width; }
 	static UINT GetHeight() { return m_Height; }
 	static UINT GetSceneWidth() { return m_SceneWidth; }
+	static const XMFLOAT4X4& GetPreviousViewMatrix() { return m_PrevViewMatrix; }
+	static const XMFLOAT4X4& GetPreviousProjectionMatrix() { return m_PrevProjMatrix; }
 	static UINT GetSceneHeight() { return m_SceneHeight; }
 	static UINT GetFrameIndex() { return m_FrameIndex; }
 	static float GetSceneAspectRatio()

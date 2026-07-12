@@ -24,7 +24,7 @@ GBufferOutput main(PSInput3D In)
     // occluder.  Mark it with w=0 so deferred volumetrics march along the
     // camera ray instead of using the dome's back-face position.
     output.Position = (Padding > 0.5f) ? float4(-In.WorldPos, 0.0f) : float4(In.WorldPos, 1.0f);
-    output.Depth = saturate((In.Position.z / In.Position.w));
+    output.Depth = saturate(In.Position.z);
     
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
     bool usePartParams = MaterialMode != 1;
