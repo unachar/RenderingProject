@@ -12,18 +12,10 @@
 #include "materialsystem.h"
 #include "world.h"
 #include "gpudrivenindirect.h"
-#include <DirectXCollision.h>
 #include <vector>
 
-// A low-risk optimization layer around the existing ModelSystem.
-//
-// The material/transparent/toon passes remain in ModelSystem so their rendering
-// behaviour is unchanged. Shadow and velocity passes are implemented here to:
-//  * batch resource-barrier API calls per animated model;
-//  * avoid velocity draws outside the camera frustum;
-//  * consume per-model mesh command streams through ExecuteIndirect;
-//  * query the ECS with the complete component mask;
-//  * retain the existing GPU-skinning version cache and all fallbacks.
+// GPU-driven shadow and velocity submission. Primary/transparent/toon rendering
+// remains on the legacy path until its bindless material tables are available.
 class OptimizedModelSystem final : public SystemBase
 {
 private:
@@ -42,7 +34,6 @@ private:
         {
             return false;
         }
-
         if (!Registry::HasComponent(entity, ComponentType::MATERIAL))
         {
             return true;
@@ -53,36 +44,8 @@ private:
         {
             return false;
         }
-
         return !(material.ShaderClassMode == MaterialMode::Manual &&
             material.ShaderClass == ShaderClass::Shadow);
-    }
-
-    static BoundingFrustum BuildWorldFrustum(const XMMATRIX& view, const XMMATRIX& projection)
-    {
-        BoundingFrustum viewFrustum{};
-        BoundingFrustum::CreateFromMatrix(viewFrustum, projection);
-
-        XMVECTOR determinant{};
-        const XMMATRIX inverseView = XMMatrixInverse(&determinant, view);
-        BoundingFrustum worldFrustum{};
-        viewFrustum.Transform(worldFrustum, inverseView);
-        return worldFrustum;
-    }
-
-    static bool IntersectsFrustum(
-        const BoundingFrustum& frustum,
-        const XMFLOAT3& localCenter,
-        const XMFLOAT3& localExtents,
-        const XMFLOAT4X4& worldMatrix)
-    {
-        const BoundingBox localBox(localCenter, localExtents);
-        BoundingOrientedBox localOrientedBox{};
-        BoundingOrientedBox::CreateFromBoundingBox(localOrientedBox, localBox);
-
-        BoundingOrientedBox worldOrientedBox{};
-        localOrientedBox.Transform(worldOrientedBox, XMLoadFloat4x4(&worldMatrix));
-        return frustum.Intersects(worldOrientedBox);
     }
 
     static void SubmitBarriers(
@@ -141,7 +104,7 @@ private:
                 constants.World = XMMatrixTranspose(XMLoadFloat4x4(&transform.WorldMatrix));
                 constants.UseTexture = 0;
                 memcpy(
-                    constantBufferBegin + (entity * RendererResource::g_kCB_ALIGNED_SIZE),
+                    constantBufferBegin + entity * RendererResource::g_kCB_ALIGNED_SIZE,
                     &constants,
                     sizeof(constants));
                 commandList->SetGraphicsRootDescriptorTable(
@@ -150,7 +113,6 @@ private:
             };
 
         std::vector<D3D12_RESOURCE_BARRIER> barriers;
-
         for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
         {
             const auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
@@ -173,20 +135,22 @@ private:
             for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
             {
                 const MeshData& mesh = model->GetMeshData(meshIndex);
-                if (!mesh.VertexBuffer)
+                if (mesh.VertexBuffer)
                 {
-                    continue;
+                    barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
+                        mesh.VertexBuffer.Get(),
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                        D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
                 }
-                barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
-                    mesh.VertexBuffer.Get(),
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
             }
             SubmitBarriers(commandList, barriers);
 
+            const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+            const XMMATRIX world = XMLoadFloat4x4(&transform.WorldMatrix);
             writeShadowConstants(entity);
-            if (!m_IndirectDraws.ExecuteShadow(commandList, model))
+            if (!m_IndirectDraws.ExecuteShadow(commandList, model, entity, world, shadowPso))
             {
+                RestoreShadowGraphicsState(commandList, shadowPso);
                 for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
                 {
                     const MeshData& mesh = model->GetMeshData(meshIndex);
@@ -201,18 +165,16 @@ private:
             }
 
             barriers.clear();
-            barriers.reserve(model->GetMeshCount());
             for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
             {
                 const MeshData& mesh = model->GetMeshData(meshIndex);
-                if (!mesh.VertexBuffer)
+                if (mesh.VertexBuffer)
                 {
-                    continue;
+                    barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
+                        mesh.VertexBuffer.Get(),
+                        D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
                 }
-                barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
-                    mesh.VertexBuffer.Get(),
-                    D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
             }
             SubmitBarriers(commandList, barriers);
         }
@@ -231,9 +193,12 @@ private:
                 continue;
             }
 
+            const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+            const XMMATRIX world = XMLoadFloat4x4(&transform.WorldMatrix);
             writeShadowConstants(entity);
-            if (!m_IndirectDraws.ExecuteShadow(commandList, model))
+            if (!m_IndirectDraws.ExecuteShadow(commandList, model, entity, world, shadowPso))
             {
+                RestoreShadowGraphicsState(commandList, shadowPso);
                 for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
                 {
                     const StaticMeshData& mesh = model->GetMeshData(meshIndex);
@@ -261,11 +226,10 @@ private:
         XMMATRIX view = XMMatrixIdentity();
         XMMATRIX projection = XMMatrixIdentity();
         Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
-        const BoundingFrustum worldFrustum = BuildWorldFrustum(view, projection);
+        const XMMATRIX viewProjection = view * projection;
         const XMMATRIX previousViewProjection =
             XMLoadFloat4x4(&RendererCore::GetPreviousViewMatrix()) *
             XMLoadFloat4x4(&RendererCore::GetPreviousProjectionMatrix());
-
         RestoreVelocityGraphicsState(commandList, velocityPso);
 
         auto setConstants = [&](EntityID entity)
@@ -283,22 +247,11 @@ private:
             };
 
         std::vector<D3D12_RESOURCE_BARRIER> barriers;
-
         for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
         {
             const auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
             AnimationModelResource* model = ModelManager::GetAnimModel(component.ModelId);
             if (!model)
-            {
-                continue;
-            }
-
-            const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-            if (!IntersectsFrustum(
-                worldFrustum,
-                model->GetAabbCenter(),
-                model->GetAabbExtents(),
-                transform.WorldMatrix))
             {
                 continue;
             }
@@ -311,24 +264,33 @@ private:
             for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
             {
                 const MeshData& mesh = model->GetMeshData(meshIndex);
-                if (!mesh.VertexBuffer || !mesh.PreviousVertexValid)
+                if (mesh.VertexBuffer && mesh.PreviousVertexValid)
                 {
-                    continue;
+                    barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
+                        mesh.VertexBuffer.Get(),
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                        D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
                 }
-                barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
-                    mesh.VertexBuffer.Get(),
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
             }
             SubmitBarriers(commandList, barriers);
 
+            const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+            const XMMATRIX world = XMLoadFloat4x4(&transform.WorldMatrix);
             setConstants(entity);
-            if (!m_IndirectDraws.ExecuteVelocity(commandList, model))
+            if (!m_IndirectDraws.ExecuteVelocity(
+                commandList,
+                model,
+                entity,
+                world,
+                viewProjection,
+                velocityPso))
             {
+                RestoreVelocityGraphicsState(commandList, velocityPso);
                 for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
                 {
                     const MeshData& mesh = model->GetMeshData(meshIndex);
-                    if (!mesh.VertexBuffer || !mesh.IndexBuffer || !mesh.PreviousVertexValid || mesh.IndexCount == 0)
+                    if (!mesh.VertexBuffer || !mesh.IndexBuffer ||
+                        !mesh.PreviousVertexValid || mesh.IndexCount == 0)
                     {
                         continue;
                     }
@@ -344,18 +306,16 @@ private:
             }
 
             barriers.clear();
-            barriers.reserve(model->GetMeshCount());
             for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
             {
                 const MeshData& mesh = model->GetMeshData(meshIndex);
-                if (!mesh.VertexBuffer || !mesh.PreviousVertexValid)
+                if (mesh.VertexBuffer && mesh.PreviousVertexValid)
                 {
-                    continue;
+                    barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
+                        mesh.VertexBuffer.Get(),
+                        D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
                 }
-                barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
-                    mesh.VertexBuffer.Get(),
-                    D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
             }
             SubmitBarriers(commandList, barriers);
         }
@@ -370,18 +330,17 @@ private:
             }
 
             const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-            if (!IntersectsFrustum(
-                worldFrustum,
-                model->GetAabbCenter(),
-                model->GetAabbExtents(),
-                transform.WorldMatrix))
-            {
-                continue;
-            }
-
+            const XMMATRIX world = XMLoadFloat4x4(&transform.WorldMatrix);
             setConstants(entity);
-            if (!m_IndirectDraws.ExecuteVelocity(commandList, model))
+            if (!m_IndirectDraws.ExecuteVelocity(
+                commandList,
+                model,
+                entity,
+                world,
+                viewProjection,
+                velocityPso))
             {
+                RestoreVelocityGraphicsState(commandList, velocityPso);
                 for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
                 {
                     const StaticMeshData& mesh = model->GetMeshData(meshIndex);
