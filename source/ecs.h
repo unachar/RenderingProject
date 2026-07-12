@@ -6,6 +6,8 @@
 #include <unordered_map>
 #include <string>
 #include <typeindex>
+#include <memory>
+#include <cstdint>
 #include <windows.h>
 #include <DirectXMath.h>
 #include <wrl.h>
@@ -15,8 +17,9 @@ static constexpr uint32_t g_kMAX_COMPONENTS = 32;
 static constexpr uint32_t g_kINVALID_ENTITY = UINT32_MAX;
 
 using EntityID = uint32_t;
-using ComponentMask = bitset<g_kMAX_COMPONENTS>;
+using ComponentMask = std::bitset<g_kMAX_COMPONENTS>;
 using ComponentTypeID = uint32_t;
+using CachedEntityList = std::shared_ptr<const std::vector<EntityID>>;
 
 class Entity;
 class Registry;
@@ -52,8 +55,8 @@ struct ComponentType
 class ComponentTypeRegistry
 {
 private:
-	static unordered_map<type_index, ComponentTypeID>& TypeIds();
-	static vector<void(*)(EntityID)>& ClearCallbacks();
+	static std::unordered_map<std::type_index, ComponentTypeID>& TypeIds();
+	static std::vector<void(*)(EntityID)>& ClearCallbacks();
 	static ComponentTypeID& NextTypeId();
 
 public:
@@ -64,6 +67,8 @@ public:
 	static ComponentTypeID GetRegisteredCount();
 };
 
+// Retained for source compatibility with code that explicitly uses the old
+// iterator. EntityView itself now iterates a cached, tightly packed result list.
 class EntityIterator
 {
 private:
@@ -82,14 +87,22 @@ public:
 class EntityView
 {
 private:
-	ComponentMask m_Mask;
-	ComponentType m_BaseType;
+	CachedEntityList m_Entities;
 public:
-	EntityView(ComponentMask mask, ComponentType baseType) : m_Mask(mask), m_BaseType(baseType) {}
-	EntityIterator begin() const;
-	EntityIterator end() const;
-	size_t size() const;
-	bool empty() const { return begin() == end(); }
+	explicit EntityView(CachedEntityList entities) : m_Entities(std::move(entities)) {}
+
+	using const_iterator = std::vector<EntityID>::const_iterator;
+	const_iterator begin() const { return m_Entities ? m_Entities->begin() : Empty().begin(); }
+	const_iterator end() const { return m_Entities ? m_Entities->end() : Empty().end(); }
+	size_t size() const { return m_Entities ? m_Entities->size() : 0; }
+	bool empty() const { return size() == 0; }
+
+private:
+	static const std::vector<EntityID>& Empty()
+	{
+		static const std::vector<EntityID> empty;
+		return empty;
+	}
 };
 
 struct EntityData
@@ -101,11 +114,64 @@ struct EntityData
 class Registry
 {
 private:
-	static vector<EntityData> m_Entities;
-	static queue<EntityID> m_FreeList;
+	static std::vector<EntityData> m_Entities;
+	static std::queue<EntityID> m_FreeList;
 	static uint32_t m_NextEntityId;
-	static vector<EntityID> m_ActiveEntities[g_kMAX_COMPONENTS];
-	static vector<int32_t> m_EntityToIndex[g_kMAX_COMPONENTS];
+	static std::vector<EntityID> m_ActiveEntities[g_kMAX_COMPONENTS];
+	static std::vector<int32_t> m_EntityToIndex[g_kMAX_COMPONENTS];
+	static uint64_t m_StructureVersion;
+
+	static void TouchStructure()
+	{
+		++m_StructureVersion;
+		if (m_StructureVersion == 0)
+		{
+			m_StructureVersion = 1;
+		}
+	}
+
+	static CachedEntityList GetCachedEntities(const ComponentMask& requiredMask, ComponentType baseType)
+	{
+		struct QueryCacheEntry
+		{
+			uint64_t Version = 0;
+			CachedEntityList Entities;
+		};
+
+		static std::unordered_map<uint64_t, QueryCacheEntry> queryCache;
+		const uint64_t key =
+			(requiredMask.to_ullong() << 6) ^ static_cast<uint64_t>(baseType.Value);
+		QueryCacheEntry& entry = queryCache[key];
+
+		if (entry.Version == m_StructureVersion && entry.Entities)
+		{
+			return entry.Entities;
+		}
+
+		auto result = std::make_shared<std::vector<EntityID>>();
+		if (baseType.Value < g_kMAX_COMPONENTS)
+		{
+			const auto& activeList = m_ActiveEntities[baseType.Value];
+			result->reserve(activeList.size());
+			for (EntityID entity : activeList)
+			{
+				if (entity >= m_Entities.size())
+				{
+					continue;
+				}
+
+				const EntityData& data = m_Entities[entity];
+				if (data.IsAlive && (data.Mask & requiredMask) == requiredMask)
+				{
+					result->push_back(entity);
+				}
+			}
+		}
+
+		entry.Version = m_StructureVersion;
+		entry.Entities = result;
+		return entry.Entities;
+	}
 
 public:
 	static void Init();
@@ -120,11 +186,11 @@ public:
 	static bool RestoreEntity(EntityID entity);
 	static void DestroyEntity(EntityID entity);
 
-	static const vector<EntityData>& GetEntities()
+	static const std::vector<EntityData>& GetEntities()
 	{
 		return m_Entities;
 	}
-	static const vector<EntityID>& GetActiveEntities(ComponentType type)
+	static const std::vector<EntityID>& GetActiveEntities(ComponentType type)
 	{
 		return m_ActiveEntities[type];
 	}
@@ -149,7 +215,7 @@ public:
 				}
 			}
 		}
-		return EntityView(requiredMask, bestType);
+		return EntityView(GetCachedEntities(requiredMask, bestType));
 	}
 
 	static void AddComponent(EntityID entity, ComponentType type)
@@ -159,6 +225,7 @@ public:
 			m_Entities[entity].Mask.set(type);
 			m_ActiveEntities[type].push_back(entity);
 			m_EntityToIndex[type][entity] = static_cast<int32_t>(m_ActiveEntities[type].size() - 1);
+			TouchStructure();
 		}
 	}
 
@@ -183,6 +250,7 @@ public:
 				m_ActiveEntities[type].pop_back();
 				m_EntityToIndex[type][entity] = -1;
 			}
+			TouchStructure();
 		}
 	}
 
@@ -229,25 +297,3 @@ inline EntityID EntityIterator::operator*() const
 	if (m_BaseType.Value == ComponentType::MAX) return g_kINVALID_ENTITY;
 	return Registry::GetActiveEntities(m_BaseType)[m_VectorIndex];
 }
-
-inline EntityIterator EntityView::begin() const
-{
-	return EntityIterator(0, m_BaseType, m_Mask);
-}
-
-inline EntityIterator EntityView::end() const
-{
-	if (m_BaseType.Value == ComponentType::MAX)
-	{
-		return EntityIterator(0, m_BaseType, m_Mask);
-	}
-
-	return EntityIterator(static_cast<uint32_t>(Registry::GetActiveEntities(m_BaseType).size()), m_BaseType, m_Mask);
-}
-
-inline size_t EntityView::size() const
-{
-	if (m_BaseType.Value == ComponentType::MAX) return 0;
-	return Registry::GetActiveEntities(m_BaseType).size();
-}
-
