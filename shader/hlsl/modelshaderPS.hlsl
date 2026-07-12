@@ -14,6 +14,13 @@ float IsMaterialClassForward(float value, float target)
 
 float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 lightDir)
 {
+    float shadowStrength = saturate(abs(ShadowMapParams.w));
+    [branch]
+    if (shadowStrength <= 0.0001f)
+    {
+        return 1.0f;
+    }
+
     float3 n = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
     float3 l = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
     float4 lightClip = mul(float4(worldPos, 1.0f), LightViewProjection);
@@ -21,11 +28,16 @@ float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 ligh
     float3 lightNdc = lightClip.xyz / safeW;
     float2 shadowUv = float2(lightNdc.x * 0.5f + 0.5f, -lightNdc.y * 0.5f + 0.5f);
 
-    float inBounds =
-        (lightClip.w > 0.0f &&
-         shadowUv.x >= 0.0f && shadowUv.x <= 1.0f &&
-         shadowUv.y >= 0.0f && shadowUv.y <= 1.0f &&
-         lightNdc.z >= 0.0f && lightNdc.z <= 1.0f) ? 1.0f : 0.0f;
+    bool inBounds =
+        lightClip.w > 0.0f &&
+        shadowUv.x >= 0.0f && shadowUv.x <= 1.0f &&
+        shadowUv.y >= 0.0f && shadowUv.y <= 1.0f &&
+        lightNdc.z >= 0.0f && lightNdc.z <= 1.0f;
+    [branch]
+    if (!inBounds)
+    {
+        return 1.0f;
+    }
 
     float texelSize = ShadowMapParams.x;
     float nDotL = saturate(dot(n, l));
@@ -45,9 +57,7 @@ float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 ligh
     }
 
     visibility /= 9.0f;
-    float shadowStrength = saturate(abs(ShadowMapParams.w));
-    float outOfBoundsVisibility = 1.0f;
-    return lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
+    return lerp(1.0f, visibility, shadowStrength);
 }
 
 float3 SampleEnvironmentLatLong(float3 dir, float roughness)
