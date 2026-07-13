@@ -84,7 +84,8 @@ public:
 
 #define ExecuteIndirect(pCommandSignature, MaxCommandCount, pArgumentBuffer, ArgumentBufferOffset, pCountBuffer, CountBufferOffset) \
 	ExecuteIndirect(pCommandSignature, MaxCommandCount, pArgumentBuffer, ArgumentBufferOffset, pCountBuffer, CountBufferOffset), \
-	RenderProfiler::RecordExecuteIndirect(static_cast<UINT>(MaxCommandCount))
+	RenderProfiler::RecordExecuteIndirect(static_cast<UINT>(MaxCommandCount)), \
+	RenderProfiler::RecordCullCandidates(static_cast<UINT>(MaxCommandCount))
 
 #define SetPipelineState(pPipelineState) \
 	SetPipelineState(pPipelineState), RenderProfiler::RecordPipelineStateBind()
