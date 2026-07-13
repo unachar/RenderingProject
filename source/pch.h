@@ -2,7 +2,6 @@
 #include <windows.h>
 #include <wrl.h>
 
-
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <d3dcompiler.h>
@@ -26,8 +25,6 @@
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
 using namespace std;
-
-
 
 class Debug
 {
@@ -59,4 +56,48 @@ public:
 // IDxcCompiler3. Legacy stage_5_x targets are promoted to stage_6_0 by the
 // compatibility adapter.
 #define D3DCompileFromFile DxcCompileFromFileCompat
+#endif
+
+#include "renderprofiler.h"
+
+// Count the engine's actual D3D12 submissions without replacing the command
+// list object. These expression-style macros remain a single statement, so they
+// are safe under an unbraced if/for statement. D3D12 interfaces have already
+// been declared above, preventing the macros from altering SDK declarations.
+// Define RENDERINGPROJECT_DISABLE_RENDER_CALL_INSTRUMENTATION before pch.h to
+// disable this layer while diagnosing an integration conflict.
+#ifndef RENDERINGPROJECT_DISABLE_RENDER_CALL_INSTRUMENTATION
+#define DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation) \
+	DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation), \
+	RenderProfiler::RecordDraw(static_cast<UINT>(InstanceCount), false)
+
+#define DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation) \
+	DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation), \
+	RenderProfiler::RecordDraw(static_cast<UINT>(InstanceCount), true)
+
+#define Dispatch(ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ) \
+	Dispatch(ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ), \
+	RenderProfiler::RecordDispatch( \
+		static_cast<UINT>(ThreadGroupCountX), \
+		static_cast<UINT>(ThreadGroupCountY), \
+		static_cast<UINT>(ThreadGroupCountZ))
+
+#define ExecuteIndirect(pCommandSignature, MaxCommandCount, pArgumentBuffer, ArgumentBufferOffset, pCountBuffer, CountBufferOffset) \
+	ExecuteIndirect(pCommandSignature, MaxCommandCount, pArgumentBuffer, ArgumentBufferOffset, pCountBuffer, CountBufferOffset), \
+	RenderProfiler::RecordExecuteIndirect(static_cast<UINT>(MaxCommandCount))
+
+#define SetPipelineState(pPipelineState) \
+	SetPipelineState(pPipelineState), RenderProfiler::RecordPipelineStateBind()
+
+#define SetGraphicsRootDescriptorTable(RootParameterIndex, BaseDescriptor) \
+	SetGraphicsRootDescriptorTable(RootParameterIndex, BaseDescriptor), \
+	RenderProfiler::RecordGraphicsDescriptorTableBind()
+
+#define SetComputeRootDescriptorTable(RootParameterIndex, BaseDescriptor) \
+	SetComputeRootDescriptorTable(RootParameterIndex, BaseDescriptor), \
+	RenderProfiler::RecordComputeDescriptorTableBind()
+
+#define ResourceBarrier(NumBarriers, pBarriers) \
+	ResourceBarrier(NumBarriers, pBarriers), \
+	RenderProfiler::RecordResourceBarriers(static_cast<UINT>(NumBarriers))
 #endif
