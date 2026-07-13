@@ -27,6 +27,10 @@ struct MeshComponent
 	ComPtr<ID3D12Resource> VertexBuffer;
 	D3D12_VERTEX_BUFFER_VIEW VertexBufferView {};
 	UINT VertexCount = 0;
+	uint64_t GeometryHash = 0;
+	XMFLOAT3 LocalBoundsCenter{};
+	XMFLOAT3 LocalBoundsExtents{};
+	bool HasLocalBounds = false;
 };
 
 struct InputComponent
@@ -329,7 +333,20 @@ struct SpriteComponent
 	ComPtr<ID3D12Resource> VertexBuffer;
 	D3D12_VERTEX_BUFFER_VIEW VertexBufferView {};
 	UINT VertexCount = 0;
+	uint64_t GeometryHash = 0;
+	XMFLOAT3 LocalBoundsCenter{};
+	XMFLOAT3 LocalBoundsExtents{};
+	bool HasLocalBounds = false;
 	bool UsePostProcess = false;
+};
+
+struct InstancingComponent
+{
+	bool UseInstancing = false;
+	bool EnableFrustumCulling = true;
+	// Zero selects automatic grouping by geometry, shader and material state.
+	// A non-zero value can explicitly join compatible entities into one batch.
+	uint32_t GroupId = 0;
 };
 
 struct LightComponent
@@ -427,6 +444,7 @@ inline const ComponentType ComponentType::MOVE = ComponentTypeRegistry::GetType<
 inline const ComponentType ComponentType::SPRITE = ComponentTypeRegistry::GetType<SpriteComponent>();
 inline const ComponentType ComponentType::LIGHT = ComponentTypeRegistry::GetType<LightComponent>();
 inline const ComponentType ComponentType::SUN = ComponentTypeRegistry::GetType<SunComponent>();
+inline const ComponentType ComponentType::INSTANCING = ComponentTypeRegistry::GetType<InstancingComponent>();
 
 class ComponentManager
 {

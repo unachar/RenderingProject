@@ -1014,15 +1014,6 @@ bool AnimationModelResource::LoadAnimation(const char* fileName, const char* nam
 		return false;
 	}
 
-	const aiAnimation* firstAnimation = anim->mAnimations[0];
-	Debug::Log("Animation loaded: %s as '%s' (animations=%u, channels=%u, duration=%.3f, ticksPerSecond=%.3f)\n",
-		fileName,
-		name ? name : "",
-		anim->mNumAnimations,
-		firstAnimation ? firstAnimation->mNumChannels : 0,
-		firstAnimation ? firstAnimation->mDuration : 0.0,
-		firstAnimation ? firstAnimation->mTicksPerSecond : 0.0);
-
 	const string animationName = name ? name : "";
 	m_Animation[animationName] = anim;
 	m_VmdAnimations.erase(animationName);
@@ -1049,23 +1040,19 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
 	}
 
 	size_t matchedTrackCount = 0;
-	size_t matchedKeyCount = 0;
 	for (const auto& pair : animation.BoneTracks)
 	{
 		if (m_Bone.find(pair.first) != m_Bone.end())
 		{
 			++matchedTrackCount;
-			matchedKeyCount += pair.second.size();
 		}
 	}
 	size_t matchedMorphTrackCount = 0;
-	size_t matchedMorphKeyCount = 0;
 	for (const auto& pair : animation.MorphTracks)
 	{
 		if (m_PmxMorphIndexMap.find(pair.first) != m_PmxMorphIndexMap.end())
 		{
 			++matchedMorphTrackCount;
-			matchedMorphKeyCount += pair.second.size();
 		}
 	}
 
@@ -1075,25 +1062,6 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
 	InvalidateVmdRuntimeCache();
 
 	const VmdAnimation& loaded = m_VmdAnimations[animationName];
-	Debug::Log("VMD animation loaded: %s as '%s' (model='%s', motions=%u, boneTracks=%zu, matchedBoneTracks=%zu, matchedBoneKeys=%zu, morphs=%u, morphTracks=%zu, matchedMorphTracks=%zu, matchedMorphKeys=%zu, cameras=%u, lights=%u, shadows=%u, ikFrames=%u, ikTracks=%zu, maxFrame=%u)\n",
-		fileName,
-		animationName.c_str(),
-		loaded.ModelName.c_str(),
-		loaded.MotionCount,
-		loaded.BoneTracks.size(),
-		matchedTrackCount,
-		matchedKeyCount,
-		loaded.MorphCount,
-		loaded.MorphTracks.size(),
-		matchedMorphTrackCount,
-		matchedMorphKeyCount,
-		loaded.CameraCount,
-		loaded.LightCount,
-		loaded.ShadowCount,
-		loaded.IkCount,
-		loaded.IkTracks.size(),
-		loaded.MaxFrame);
-
 	if (!loaded.BoneTracks.empty() && matchedTrackCount == 0)
 	{
 		Debug::Log("WARNING: VMD loaded but no bone names matched this model: %s\n", fileName);

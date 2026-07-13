@@ -18,9 +18,15 @@ void XBot::Create()
 
 	const auto animations = vector<string>{ "Standup", "Idle" };
 	const auto currentAnimation = "Standup";
+	const int modelID = ModelManager::LoadAnimModel(modelPath, isConvert);
+	if (modelID < 0)
+	{
+		return;
+	}
+	ModelManager::LoadAnimation(modelID, animPath1, "Standup");
+	ModelManager::LoadAnimation(modelID, animPath2, "Idle");
 
-
-	for (int i = 0; i <= 100; ++i)
+	for (int i = 0; i < 1000; ++i)
 	{
 		auto& entity = World::CreateEntity()
 			.Add<TransformComponent>()
@@ -28,18 +34,17 @@ void XBot::Create()
 			.Add<MeshComponent>()
 			.Add<AABBComponent>()
 			.Add<MaterialComponent>()
+			.Add<InstancingComponent>()
 			.Add<AnimationModelComponent>();
 
 		entity.SetName(modelName);
 
-		entity.Get<TransformComponent>().Position = { modelPosition.x + i * 0.1f, modelPosition.y, modelPosition.z };
+		entity.Get<TransformComponent>().Position = { modelPosition.x + (i % 10) * 2.0f,
+			modelPosition.y,
+			modelPosition.z + (i / 10) * 2.0f
+		};
 		entity.Get<TransformComponent>().Scale = modelScale;
 		entity.Get<MaterialComponent>().UseTexture = true;
-
-		int modelID = ModelManager::LoadAnimModel(modelPath, isConvert);
-		ModelManager::LoadAnimation(modelID, animPath1, "Standup");
-		ModelManager::LoadAnimation(modelID, animPath2, "Idle");
-
 
 		auto& anim = entity.Get<AnimationModelComponent>();
 		anim.ModelId = modelID;
@@ -53,6 +58,9 @@ void XBot::Create()
 		entity.Get<MaterialComponent>().ShaderClassMode = MaterialMode::Manual;
 		entity.Get<MaterialComponent>().ShaderClass = ShaderClass::Metallic;
 
+		entity.Get<InstancingComponent>().UseInstancing = true;
+		entity.Get<InstancingComponent>().EnableFrustumCulling = true;
+
 
 		if (auto* model = ModelManager::GetAnimModel(modelID))
 		{
@@ -60,10 +68,5 @@ void XBot::Create()
 			entity.Get<AABBComponent>().Extents = model->GetAabbExtents();
 		}
 	}
-
-
-
-	
-	
 }
 

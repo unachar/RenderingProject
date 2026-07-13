@@ -97,6 +97,12 @@
     <FxCompile Include="shader\hlsl\GeometryPS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
+    <FxCompile Include="shader\hlsl\colorshader3dInstancedVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modelshaderInstancedVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
     <FxCompile Include="shader\hlsl\GpuDrivenCullCS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
@@ -230,6 +236,9 @@
       <Filter>2_ecs\2-3_systems</Filter>
     </ClCompile>
     <ClCompile Include="source\modelsystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\instancingsystem.cpp">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClCompile>
     <ClCompile Include="source\postprocesssystem.cpp">
@@ -425,6 +434,9 @@
       <Filter>2_ecs\2-3_systems</Filter>
     </ClInclude>
     <ClInclude Include="source\modelsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\instancingsystem.h">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClInclude>
     <ClInclude Include="source\postprocesssystem.h">

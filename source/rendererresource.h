@@ -54,6 +54,7 @@ public:
 	static void CreateSpriteVertex(const VertexResource& vertexstruct);
 	static void CreateObjectVertex(const VertexResource& vertexstruct);
 	static void SetMaterial(const EntityID entityID, const MaterialComponent& material);
+	static uint64_t GetMaterialBatchHash(const MaterialComponent& material);
 	static D3D12_GPU_DESCRIPTOR_HANDLE AllocateTransientConstantBuffer(const ConstantBuffer3D& constants);
 	static void BeginFrame();
 

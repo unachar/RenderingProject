@@ -44,6 +44,7 @@ struct ComponentType
 	static const ComponentType SPRITE;
 	static const ComponentType LIGHT;
 	static const ComponentType SUN;
+	static const ComponentType INSTANCING;
 
 	ComponentTypeID Value = MAX;
 

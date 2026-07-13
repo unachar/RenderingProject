@@ -15,6 +15,41 @@
 
 namespace
 {
+	uint64_t HashGeometry(const void* data, size_t size)
+	{
+		uint64_t hash = 1469598103934665603ull;
+		const auto* bytes = static_cast<const uint8_t*>(data);
+		for (size_t i = 0; i < size; ++i)
+		{
+			hash ^= bytes[i];
+			hash *= 1099511628211ull;
+		}
+		return hash;
+	}
+
+	void CalculateGeometryBounds(const vector<Vertex>& vertices, XMFLOAT3& center, XMFLOAT3& extents)
+	{
+		if (vertices.empty())
+		{
+			center = {};
+			extents = {};
+			return;
+		}
+		XMFLOAT3 minimum = vertices.front().Pos;
+		XMFLOAT3 maximum = vertices.front().Pos;
+		for (const Vertex& vertex : vertices)
+		{
+			minimum.x = min(minimum.x, vertex.Pos.x);
+			minimum.y = min(minimum.y, vertex.Pos.y);
+			minimum.z = min(minimum.z, vertex.Pos.z);
+			maximum.x = max(maximum.x, vertex.Pos.x);
+			maximum.y = max(maximum.y, vertex.Pos.y);
+			maximum.z = max(maximum.z, vertex.Pos.z);
+		}
+		center = { (minimum.x + maximum.x) * 0.5f, (minimum.y + maximum.y) * 0.5f, (minimum.z + maximum.z) * 0.5f };
+		extents = { (maximum.x - minimum.x) * 0.5f, (maximum.y - minimum.y) * 0.5f, (maximum.z - minimum.z) * 0.5f };
+	}
+
 	struct RuntimeLightState
 	{
 		LightComponent Component{};
@@ -1196,6 +1231,9 @@ void RendererResource::CreateSpriteVertex(const VertexResource& vertexstruct)
 	spriteComponent.VertexBufferView.StrideInBytes = sizeof(Vertex);
 	spriteComponent.VertexBufferView.SizeInBytes = vertexBufferSize;
 	spriteComponent.VertexCount = static_cast<UINT>(vertices.size());
+	spriteComponent.GeometryHash = HashGeometry(vertices.data(), vertexBufferSize);
+	CalculateGeometryBounds(vertices, spriteComponent.LocalBoundsCenter, spriteComponent.LocalBoundsExtents);
+	spriteComponent.HasLocalBounds = !vertices.empty();
 }
 
 void RendererResource::CreateObjectVertex(const VertexResource& vertexstruct)
@@ -1279,6 +1317,9 @@ void RendererResource::CreateObjectVertex(const VertexResource& vertexstruct)
 	meshComponent.VertexBufferView.StrideInBytes = sizeof(Vertex);
 	meshComponent.VertexBufferView.SizeInBytes = vertexBufferSize;
 	meshComponent.VertexCount = static_cast<UINT>(vertices.size());
+	meshComponent.GeometryHash = HashGeometry(vertices.data(), vertexBufferSize);
+	CalculateGeometryBounds(vertices, meshComponent.LocalBoundsCenter, meshComponent.LocalBoundsExtents);
+	meshComponent.HasLocalBounds = !vertices.empty();
 }
 
 void RendererResource::SetMaterial(const EntityID entityID, const MaterialComponent& material)
@@ -1295,5 +1336,30 @@ void RendererResource::SetMaterial(const EntityID entityID, const MaterialCompon
 	auto* dst = static_cast<UINT8*>(m_pPBRCbvDataBegin) + frameSlot * g_kPBR_CB_ALIGNED_SIZE;
 	memcpy(dst, &constants, sizeof(constants));
 	m_CommandList->SetGraphicsRootConstantBufferView(3, GetPBRConstantBufferAddress(slot));
+}
+
+uint64_t RendererResource::GetMaterialBatchHash(const MaterialComponent& material)
+{
+	const PBRConstants constants = BuildPBRConstantsFromMaterial(material);
+	uint64_t hash = HashGeometry(&constants, sizeof(constants));
+	struct BatchMaterialState
+	{
+		int ShaderMode = 0;
+		int ShaderClassValue = 0;
+		float Alpha = 1.0f;
+		UINT IsTransparent = 0;
+		UINT UseTexture = 0;
+		UINT UseNormalMap = 0;
+	} state{};
+	state.ShaderMode = static_cast<int>(material.ShaderClassMode);
+	state.ShaderClassValue = static_cast<int>(material.ShaderClass);
+	state.Alpha = material.Alpha;
+	state.IsTransparent = material.IsTransparent ? 1u : 0u;
+	state.UseTexture = material.UseTexture ? 1u : 0u;
+	state.UseNormalMap = material.NormalMapID >= 0 ? 1u : 0u;
+	const uint64_t stateHash = HashGeometry(&state, sizeof(state));
+	// Combine the two stable hashes without hashing object padding or STL members.
+	hash ^= stateHash + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+	return hash;
 }
 

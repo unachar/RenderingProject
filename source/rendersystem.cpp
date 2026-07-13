@@ -10,6 +10,7 @@
 #include "materialsystem.h"
 #include "camera.h"
 #include "imguimanager.h"
+#include "instancingsystem.h"
 #include <vector>
 #include <algorithm>
 #include "world.h"
@@ -315,6 +316,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				{
 					continue;
 				}
+				if (InstancingSystem::CanInstance(i) && !InstancingSystem::IsEntityVisible(i))
+				{
+					continue;
+				}
 
 				RendererDraw::BeginModelPass();
 				rendererResource psoResource{};
@@ -465,6 +470,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		{
 			continue;
 		}
+		if (InstancingSystem::CanInstance(i) && !InstancingSystem::IsEntityVisible(i))
+		{
+			continue;
+		}
 
 		bool isReceiving = MaterialSystem::IsReceivingPostProcess(i);
 		const MaterialComponent* material = Registry::HasComponent(i, ComponentType::MATERIAL)
@@ -583,6 +592,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			{
 				const MaterialComponent& material = dc.material ? *dc.material : DefaultMaterial();
 				RendererResource::SetMaterial(dc.EntityID, material);
+				if (InstancingSystem::CanInstance(dc.EntityID))
+				{
+					continue;
+				}
 
 				if (dc.pso != lastPso)
 				{

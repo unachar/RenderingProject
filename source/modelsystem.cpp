@@ -1,6 +1,7 @@
 ﻿#include "pch.h"
 #include "modelsystem.h"
 #include "gpudrivenindirect.h"
+#include "instancingsystem.h"
 #include "componentmanager.h"
 #include "modelmanager.h"
 #include "texturemanager.h"
@@ -161,7 +162,7 @@ namespace
 	}
 }
 
-void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
+void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
 	if (renderPass == RenderPass::ShadowMap)
 	{
@@ -203,7 +204,6 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			{
 				continue;
 			}
-
 			model->DispatchGpuSkinning(pCommandList);
 			for (UINT m = 0; m < model->GetMeshCount(); ++m)
 			{
@@ -389,6 +389,10 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			{
 				continue;
 			}
+			if (InstancingSystem::CanInstance(i) && !InstancingSystem::IsEntityVisible(i))
+			{
+				continue;
+			}
 
 			rendererResource psoResource{};
 			psoResource.vsPath = GetModelVsPath(i);
@@ -466,6 +470,10 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 		for (const auto& dc : m_AnimDrawCalls)
 		{
+			if (InstancingSystem::CanInstance(dc.EntityID))
+			{
+				continue;
+			}
 			dc.model->DispatchGpuSkinning(pCommandList);
 			lastPso = nullptr;
 
