@@ -21,10 +21,6 @@ float4 main(PSInputPostProcess input) : SV_Target
     float4 position = PositionTexture.SampleLevel(TextureSampler, input.TexCoord, 0);
     float4 material = MaterialTexture.SampleLevel(TextureSampler, input.TexCoord, 0);
     bool background = material.a < -0.5f;
-
-    // The dedicated buffer has no geometry dependency for empty pixels.  Sky
-    // pixels use a camera ray, while geometry terminates the integration at
-    // its actual world-space position.
     float3 viewRay = ReconstructPostProcessViewRayCommon(input.TexCoord);
     float3 rayEnd = (background || position.w <= 0.0001f)
         ? PPCameraPos.xyz + viewRay * 80.0f

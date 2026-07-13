@@ -7,6 +7,15 @@
   <Import Project="$(DirectXShaderCompilerPackageRoot)build\native\Microsoft.Direct3D.DXC.targets"
           Condition="'$(Platform)' == 'x64' and Exists('$(DirectXShaderCompilerPackageRoot)build\native\Microsoft.Direct3D.DXC.targets')" />
 
+  <!--
+    DXC 1.9 sets FXCToolPath to its own bin directory, but that package no
+    longer contains fxc.exe.  FxCompile items are still handled by the
+    Windows SDK compiler, so restore its tool directory after importing DXC.
+  -->
+  <PropertyGroup Condition="'$(Platform)' == 'x64' and '$(WindowsSDK_ExecutablePath_x64)' != ''">
+    <FXCToolPath>$(WindowsSDK_ExecutablePath_x64.Split(';')[0])</FXCToolPath>
+  </PropertyGroup>
+
   <Target Name="EnsureDirectXShaderCompilerNuGetPackage"
           BeforeTargets="PrepareForBuild"
           Condition="'$(Platform)' == 'x64'">
