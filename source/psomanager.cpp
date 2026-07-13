@@ -303,6 +303,62 @@ ID3D12PipelineState* PsoManager::GetOrCreateShadowMapPso()
 	return m_ShadowMapPso.Get();
 }
 
+ID3D12PipelineState* PsoManager::GetOrCreateShadowMapInstancedPso()
+{
+	constexpr const char* key = "shadow_map_instanced";
+	auto cached = m_PsoCache.find(key);
+	if (cached != m_PsoCache.end())
+	{
+		return cached->second.Get();
+	}
+
+	rendererResource resource{};
+	resource.vsPath = "shader/hlsl/build/ShadowMapInstancedVS.cso";
+	resource.csoPath = resource.vsPath;
+	ComPtr<ID3DBlob> vsBlob;
+	resource.ppBlob = vsBlob.GetAddressOf();
+	if (!RendererShader::LoadShaderBlob(resource))
+	{
+		return nullptr;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
+	psoDesc.VS = CD3DX12_SHADER_BYTECODE(vsBlob.Get());
+	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	psoDesc.RasterizerState.DepthBias = 1500;
+	psoDesc.RasterizerState.SlopeScaledDepthBias = 1.5f;
+	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+	psoDesc.DepthStencilState.DepthEnable = TRUE;
+	psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+	psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+	psoDesc.DepthStencilState.StencilEnable = FALSE;
+	psoDesc.SampleMask = UINT_MAX;
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.NumRenderTargets = 0;
+	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+	psoDesc.SampleDesc.Count = 1;
+	psoDesc.pRootSignature = m_ModelRootSignature.Get();
+
+	static D3D12_INPUT_ELEMENT_DESC modelLayout[] =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+	};
+	psoDesc.InputLayout = { modelLayout, _countof(modelLayout) };
+
+	ComPtr<ID3D12PipelineState> pso;
+	if (!CreateGraphicsPipelineState(psoDesc, key, pso))
+	{
+		return nullptr;
+	}
+	m_PsoCache.emplace(key, pso);
+	return pso.Get();
+}
+
 bool PsoManager::CreateSkinningPso()
 {
 	rendererResource resource{};

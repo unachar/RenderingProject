@@ -128,6 +128,7 @@ struct PmxMorph
 
 struct MeshData
 {
+	static constexpr UINT LodCount = 3;
 	ComPtr<ID3D12Resource> VertexBuffer{};
 	D3D12_VERTEX_BUFFER_VIEW VertexBufferView{};
 	ComPtr<ID3D12Resource> PreviousVertexBuffer{};
@@ -144,6 +145,9 @@ struct MeshData
 
 	ComPtr<ID3D12Resource> IndexBuffer{};
 	D3D12_INDEX_BUFFER_VIEW IndexBufferView{};
+	std::array<ComPtr<ID3D12Resource>, LodCount - 1> LodIndexBuffers{};
+	std::array<D3D12_INDEX_BUFFER_VIEW, LodCount - 1> LodIndexBufferViews{};
+	std::array<UINT, LodCount - 1> LodIndexCounts{};
 	ComPtr<ID3D12Resource> TeoIndexBuffer{};
 	D3D12_INDEX_BUFFER_VIEW TeoIndexBufferView{};
 	std::array<ComPtr<ID3D12Resource>, ToonOutlineBuilder::kModeCount> TeoIndexBuffers{};
@@ -168,6 +172,22 @@ struct MeshData
 	string MaterialName{};
 	float MaterialPartId = 10.0f;
 	bool DefaultToonOutlineEnabled = true;
+
+	const D3D12_INDEX_BUFFER_VIEW& GetLodIndexBufferView(UINT lod) const
+	{
+		if (lod == 0 || lod >= LodCount || LodIndexCounts[lod - 1] == 0)
+		{
+			return IndexBufferView;
+		}
+		return LodIndexBufferViews[lod - 1];
+	}
+
+	UINT GetLodIndexCount(UINT lod) const
+	{
+		return (lod == 0 || lod >= LodCount || LodIndexCounts[lod - 1] == 0)
+			? IndexCount
+			: LodIndexCounts[lod - 1];
+	}
 };
 
 class AnimationModelResource

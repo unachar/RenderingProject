@@ -16,6 +16,7 @@ public:
 	static ID3D12PipelineState* GetOrCreateGraphicsPso(const rendererResource& resource);
 	static ID3D12PipelineState* GetOrCreateToonOutlinePso(bool enableAlphaBlend = false);
 	static ID3D12PipelineState* GetOrCreateShadowMapPso();
+	static ID3D12PipelineState* GetOrCreateShadowMapInstancedPso();
 
 	static bool CreateSkinningPso();
 	static bool CreatePostProcessPipelines();

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "../External/meshoptimizer/src/meshoptimizer.h"
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
 #include <string.h>
@@ -471,6 +472,51 @@ bool StaticModelResource::CreateDefaultBufferAndUpload(
 	return UploadBufferData(device, outResource.Get(), srcData, sizeInBytes, finalState, uploadLogTag);
 }
 
+bool StaticModelResource::BuildLodIndexBuffers(
+	ID3D12Device* device,
+	const vector<StaticModelVertex>& vertices,
+	const vector<unsigned int>& indices,
+	StaticMeshData& meshData)
+{
+	if (!device || vertices.empty() || indices.size() < 6)
+	{
+		return true;
+	}
+
+	constexpr float ratios[StaticMeshData::LodCount - 1] = { 0.50f, 0.20f };
+	constexpr float errors[StaticMeshData::LodCount - 1] = { 0.01f, 0.035f };
+	for (UINT lod = 0; lod < StaticMeshData::LodCount - 1; ++lod)
+	{
+		const size_t targetCount = max<size_t>(
+			3, (static_cast<size_t>(indices.size() * ratios[lod]) / 3) * 3);
+		vector<unsigned int> lodIndices(indices.size());
+		const size_t resultCount = meshopt_simplify(
+			lodIndices.data(), indices.data(), indices.size(),
+			reinterpret_cast<const float*>(vertices.data()), vertices.size(),
+			sizeof(StaticModelVertex), targetCount, errors[lod],
+			meshopt_SimplifyRegularize);
+		if (resultCount < 3 || resultCount >= indices.size())
+		{
+			continue;
+		}
+		lodIndices.resize(resultCount);
+		const UINT byteSize = static_cast<UINT>(resultCount * sizeof(unsigned int));
+		if (!CreateDefaultBufferAndUpload(
+			device, byteSize, lodIndices.data(), D3D12_RESOURCE_STATE_INDEX_BUFFER,
+			"ERROR: Failed to create static LOD index buffer\n",
+			"static LOD index upload", meshData.LodIndexBuffers[lod]))
+		{
+			return false;
+		}
+		meshData.LodIndexBufferViews[lod].BufferLocation =
+			meshData.LodIndexBuffers[lod]->GetGPUVirtualAddress();
+		meshData.LodIndexBufferViews[lod].Format = DXGI_FORMAT_R32_UINT;
+		meshData.LodIndexBufferViews[lod].SizeInBytes = byteSize;
+		meshData.LodIndexCounts[lod] = static_cast<UINT>(resultCount);
+	}
+	return true;
+}
+
 bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 {
 	m_MaterialPath.clear();
@@ -742,6 +788,10 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 	if (!m_MaterialPath.empty())
 	{
 		meshData.TextureIndex = TextureManager::LoadTexture(m_MaterialPath.c_str());
+	}
+	if (!BuildLodIndexBuffers(device, m_Vertices, m_Indices, meshData))
+	{
+		return false;
 	}
 
 	m_Meshes.push_back(move(meshData));
@@ -1017,6 +1067,11 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 
 		totalVertices += vertices.size();
 		totalIndices += indices.size();
+		if (!BuildLodIndexBuffers(device, vertices, indices, meshData))
+		{
+			releaseScene();
+			return false;
+		}
 		m_Meshes.push_back(move(meshData));
 	}
 

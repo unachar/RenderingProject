@@ -94,6 +94,8 @@ private:
 		PhysicsComponent Physics{};
 		bool HasObb = false;
 		OBBComponent Obb{};
+		bool HasLod = false;
+		LODComponent Lod{};
 	};
 	inline static vector<EntitySnapshot> m_UndoStack;
 	inline static vector<EntitySnapshot> m_RedoStack;

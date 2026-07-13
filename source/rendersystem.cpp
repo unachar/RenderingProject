@@ -172,7 +172,8 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			if (!sprite.Is3D ||
 				sprite.VertexBufferView.BufferLocation == 0 ||
 				!Registry::HasComponent(i, ComponentType::TRANSFORM) ||
-				!ShouldCastShadow(i))
+				!ShouldCastShadow(i) ||
+				InstancingSystem::CanInstance(i))
 			{
 				continue;
 			}
@@ -193,7 +194,8 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(i);
 			if (mesh.VertexBufferView.BufferLocation == 0 ||
 				!Registry::HasComponent(i, ComponentType::TRANSFORM) ||
-				!ShouldCastShadow(i))
+				!ShouldCastShadow(i) ||
+				InstancingSystem::CanInstance(i))
 			{
 				continue;
 			}
@@ -222,6 +224,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		auto draw = [&](EntityID entity, const D3D12_VERTEX_BUFFER_VIEW& vbv, UINT vertexCount)
 			{
 				if (!ComponentManager::HasComponent<TransformComponent>(entity) || vbv.BufferLocation == 0) return;
+				if (InstancingSystem::CanInstance(entity) && !InstancingSystem::IsEntityVisible(entity)) return;
 				const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
 				ConstantBuffer3D cb{};
 				cb.World = XMMatrixTranspose(XMLoadFloat4x4(&transform.WorldMatrix));
@@ -316,10 +319,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				{
 					continue;
 				}
-				if (InstancingSystem::CanInstance(i) && !InstancingSystem::IsEntityVisible(i))
-				{
-					continue;
-				}
+				if (InstancingSystem::CanInstance(i)) continue;
 
 				RendererDraw::BeginModelPass();
 				rendererResource psoResource{};
@@ -470,10 +470,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		{
 			continue;
 		}
-		if (InstancingSystem::CanInstance(i) && !InstancingSystem::IsEntityVisible(i))
-		{
-			continue;
-		}
+		if (InstancingSystem::CanInstance(i)) continue;
 
 		bool isReceiving = MaterialSystem::IsReceivingPostProcess(i);
 		const MaterialComponent* material = Registry::HasComponent(i, ComponentType::MATERIAL)

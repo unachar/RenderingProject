@@ -17,19 +17,23 @@ struct StaticModelVertex
 
 struct StaticMeshData
 {
+	static constexpr UINT LodCount = 3;
 	ComPtr<ID3D12Resource> VertexBuffer{};
 	ComPtr<ID3D12Resource> IndexBuffer{};
+	std::array<ComPtr<ID3D12Resource>, LodCount - 1> LodIndexBuffers{};
 	ComPtr<ID3D12Resource> TeoVertexBuffer{};
 	ComPtr<ID3D12Resource> TeoIndexBuffer{};
 	std::array<ComPtr<ID3D12Resource>, ToonOutlineBuilder::kModeCount> TeoVertexBuffers{};
 	std::array<ComPtr<ID3D12Resource>, ToonOutlineBuilder::kModeCount> TeoIndexBuffers{};
 	D3D12_VERTEX_BUFFER_VIEW VertexBufferView{};
 	D3D12_INDEX_BUFFER_VIEW IndexBufferView{};
+	std::array<D3D12_INDEX_BUFFER_VIEW, LodCount - 1> LodIndexBufferViews{};
 	D3D12_VERTEX_BUFFER_VIEW TeoVertexBufferView{};
 	D3D12_INDEX_BUFFER_VIEW TeoIndexBufferView{};
 	std::array<D3D12_VERTEX_BUFFER_VIEW, ToonOutlineBuilder::kModeCount> TeoVertexBufferViews{};
 	std::array<D3D12_INDEX_BUFFER_VIEW, ToonOutlineBuilder::kModeCount> TeoIndexBufferViews{};
 	UINT IndexCount = 0;
+	std::array<UINT, LodCount - 1> LodIndexCounts{};
 	UINT VertexCount = 0;
 	UINT TeoIndexCount = 0;
 	UINT TeoVertexCount = 0;
@@ -43,6 +47,17 @@ struct StaticMeshData
 	bool DefaultToonOutlineEnabled = true;
 	vector<StaticModelVertex> CpuVertices{};
 	std::array<vector<StaticModelVertex>, ToonOutlineBuilder::kModeCount> CpuTeoVerticesByMode{};
+
+	const D3D12_INDEX_BUFFER_VIEW& GetLodIndexBufferView(UINT lod) const
+	{
+		return (lod == 0 || lod >= LodCount || LodIndexCounts[lod - 1] == 0)
+			? IndexBufferView : LodIndexBufferViews[lod - 1];
+	}
+	UINT GetLodIndexCount(UINT lod) const
+	{
+		return (lod == 0 || lod >= LodCount || LodIndexCounts[lod - 1] == 0)
+			? IndexCount : LodIndexCounts[lod - 1];
+	}
 };
 
 class StaticModelResource
@@ -104,6 +119,11 @@ private:
 		const char* createErrorLog,
 		const char* uploadLogTag,
 		ComPtr<ID3D12Resource>& outResource);
+	bool BuildLodIndexBuffers(
+		ID3D12Device* device,
+		const vector<StaticModelVertex>& vertices,
+		const vector<unsigned int>& indices,
+		StaticMeshData& meshData);
 
 public:
 	bool LoadObj(const char* fileName, ID3D12Device* device);

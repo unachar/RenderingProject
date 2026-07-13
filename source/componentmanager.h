@@ -349,6 +349,13 @@ struct InstancingComponent
 	uint32_t GroupId = 0;
 };
 
+struct LODComponent
+{
+	bool UseLOD = false;
+	float Lod1Distance = 12.0f;
+	float Lod2Distance = 28.0f;
+};
+
 struct LightComponent
 {
 	XMFLOAT3 Position = { 0.0f, 0.0f, 0.0f };
@@ -445,6 +452,7 @@ inline const ComponentType ComponentType::SPRITE = ComponentTypeRegistry::GetTyp
 inline const ComponentType ComponentType::LIGHT = ComponentTypeRegistry::GetType<LightComponent>();
 inline const ComponentType ComponentType::SUN = ComponentTypeRegistry::GetType<SunComponent>();
 inline const ComponentType ComponentType::INSTANCING = ComponentTypeRegistry::GetType<InstancingComponent>();
+inline const ComponentType ComponentType::LOD = ComponentTypeRegistry::GetType<LODComponent>();
 
 class ComponentManager
 {

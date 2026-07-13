@@ -11,8 +11,10 @@
 #include "psomanager.h"
 #include "camera.h"
 #include "materialsystem.h"
+#include "instancingsystem.h"
 #include "world.h"
 #include "gpudrivenindirect.h"
+#include <unordered_set>
 #include <vector>
 
 struct MaterialComponent;
@@ -147,6 +149,7 @@ private:
             };
 
         std::vector<D3D12_RESOURCE_BARRIER> barriers;
+        std::unordered_set<AnimationModelResource*> skinnedModels;
         for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
         {
             const auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
@@ -154,6 +157,11 @@ private:
             {
                 continue;
             }
+			if (InstancingSystem::CanInstance(entity))
+			{
+				// InstancingSystem owns the batched shadow submission.
+				continue;
+			}
 
             AnimationModelResource* model = ModelManager::GetAnimModel(component.ModelId);
             if (!model)
@@ -161,8 +169,22 @@ private:
                 continue;
             }
 
-            model->DispatchGpuSkinning(commandList);
-            RestoreShadowGraphicsState(commandList, shadowPso);
+            // GPU culling happens after skinning and resource transitions.  Reject
+            // camera-culled instanced entities here so they never reach the shadow
+            // map path at all.
+            if (InstancingSystem::CanInstance(entity) &&
+                !InstancingSystem::IsEntityVisible(entity))
+            {
+                continue;
+            }
+
+            // Instanced entities share one animated vertex stream.  Skin that
+            // stream only once for this shadow pass, not once per Entity.
+            if (skinnedModels.insert(model).second)
+            {
+                model->DispatchGpuSkinning(commandList);
+                RestoreShadowGraphicsState(commandList, shadowPso);
+            }
 
             barriers.clear();
             barriers.reserve(model->GetMeshCount());
@@ -226,6 +248,16 @@ private:
             {
                 continue;
             }
+			if (InstancingSystem::CanInstance(entity))
+			{
+				continue;
+			}
+
+            if (InstancingSystem::CanInstance(entity) &&
+                !InstancingSystem::IsEntityVisible(entity))
+            {
+                continue;
+            }
 
             const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
             const XMMATRIX world = XMLoadFloat4x4(&transform.WorldMatrix);
@@ -281,17 +313,31 @@ private:
             };
 
         std::vector<D3D12_RESOURCE_BARRIER> barriers;
+        std::unordered_set<AnimationModelResource*> skinnedModels;
         for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
         {
             const auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
+			if (InstancingSystem::CanInstance(entity))
+			{
+				continue;
+			}
             AnimationModelResource* model = ModelManager::GetAnimModel(component.ModelId);
             if (!model)
             {
                 continue;
             }
 
-            model->DispatchGpuSkinning(commandList);
-            RestoreVelocityGraphicsState(commandList, velocityPso);
+            if (InstancingSystem::CanInstance(entity) &&
+                !InstancingSystem::IsEntityVisible(entity))
+            {
+                continue;
+            }
+
+            if (skinnedModels.insert(model).second)
+            {
+                model->DispatchGpuSkinning(commandList);
+                RestoreVelocityGraphicsState(commandList, velocityPso);
+            }
 
             barriers.clear();
             barriers.reserve(model->GetMeshCount());
@@ -359,6 +405,12 @@ private:
             const auto& component = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
             StaticModelResource* model = ModelManager::GetStaticModel(component.ModelId);
             if (!model)
+            {
+                continue;
+            }
+
+            if (InstancingSystem::CanInstance(entity) &&
+                !InstancingSystem::IsEntityVisible(entity))
             {
                 continue;
             }

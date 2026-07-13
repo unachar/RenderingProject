@@ -26,7 +26,7 @@ void XBot::Create()
 	ModelManager::LoadAnimation(modelID, animPath1, "Standup");
 	ModelManager::LoadAnimation(modelID, animPath2, "Idle");
 
-	for (int i = 0; i < 1000; ++i)
+	for (int i = 0; i < 10; ++i)
 	{
 		auto& entity = World::CreateEntity()
 			.Add<TransformComponent>()
@@ -35,6 +35,7 @@ void XBot::Create()
 			.Add<AABBComponent>()
 			.Add<MaterialComponent>()
 			.Add<InstancingComponent>()
+			.Add<LODComponent>()
 			.Add<AnimationModelComponent>();
 
 		entity.SetName(modelName);
@@ -60,6 +61,7 @@ void XBot::Create()
 
 		entity.Get<InstancingComponent>().UseInstancing = true;
 		entity.Get<InstancingComponent>().EnableFrustumCulling = true;
+		entity.Get<LODComponent>().UseLOD = true;
 
 
 		if (auto* model = ModelManager::GetAnimModel(modelID))

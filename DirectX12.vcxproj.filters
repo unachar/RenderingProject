@@ -106,6 +106,12 @@
     <FxCompile Include="shader\hlsl\GpuDrivenCullCS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
+    <FxCompile Include="shader\hlsl\GpuInstanceCullLodCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GpuInstanceArgsCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
     <FxCompile Include="shader\hlsl\modelshaderPS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
@@ -170,6 +176,9 @@
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
     <FxCompile Include="shader\hlsl\ShadowMapVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\ShadowMapInstancedVS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
     <FxCompile Include="shader\hlsl\UpscaleDepthPS.hlsl" />
@@ -261,6 +270,12 @@
     </ClCompile>
     <ClCompile Include="source\animationmodel.cpp">
       <Filter>3_model\3-1_animationmodel</Filter>
+    </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\allocator.cpp">
+      <Filter>3_external</Filter>
+    </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\simplifier.cpp">
+      <Filter>3_external</Filter>
     </ClCompile>
     <ClCompile Include="source\pmxloader.cpp">
       <Filter>3_model\3-1_animationmodel</Filter>

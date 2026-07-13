@@ -2983,6 +2983,13 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 
 void ImGuiManager::DrawComponentInspector(EntityID entity)
 {
+	const bool isRenderable3D =
+		ComponentManager::HasComponent<AnimationModelComponent>(entity) ||
+		ComponentManager::HasComponent<StaticModelComponent>(entity) ||
+		ComponentManager::HasComponent<MeshComponent>(entity) ||
+		(ComponentManager::HasComponent<SpriteComponent>(entity) &&
+			ComponentManager::GetComponentUnchecked<SpriteComponent>(entity).Is3D);
+
 	if (ImGui::CollapsingHeader("コンポーネント"))
 	{
 		ImGui::Text("エンティティID: %u", entity);
@@ -3008,6 +3015,11 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
 			mat.TextureID = TextureManager::GetDefaultTextureIndex();
 			mat.UseTexture = false;
 		}
+		if (isRenderable3D && !ComponentManager::HasComponent<LODComponent>(entity) && ImGui::Button("LOD追加"))
+		{
+			PushUndoSnapshot(CaptureEntity(entity));
+			ComponentManager::AddComponent(entity, ComponentType::LOD);
+		}
 ImGui::Text("メッシュ: %s", ComponentManager::HasComponent<MeshComponent>(entity) ? "あり" : "なし");
 	if (ComponentManager::HasComponent<StaticModelComponent>(entity))
 	{
@@ -3030,6 +3042,21 @@ ImGui::Text("メッシュ: %s", ComponentManager::HasComponent<MeshComponent>(en
 		ImGui::Text("アニメーションモデル: なし");
 	}
 	ImGui::Text("スプライト: %s", ComponentManager::HasComponent<SpriteComponent>(entity) ? "あり" : "なし");
+	}
+
+	if (ComponentManager::HasComponent<LODComponent>(entity) && ImGui::CollapsingHeader("LOD", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		const EntitySnapshot before = CaptureEntity(entity);
+		auto& lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
+		bool changed = ImGui::Checkbox("GPU LODを使用", &lod.UseLOD);
+		changed |= ImGui::DragFloat("LOD1距離", &lod.Lod1Distance, 0.25f, 0.0f, 100000.0f, "%.2f");
+		changed |= ImGui::DragFloat("LOD2距離", &lod.Lod2Distance, 0.25f, 0.0f, 100000.0f, "%.2f");
+		lod.Lod1Distance = max(0.0f, lod.Lod1Distance);
+		lod.Lod2Distance = max(lod.Lod1Distance, lod.Lod2Distance);
+		if (changed)
+		{
+			BeginUndoCapture(entity, before);
+		}
 	}
 
 	if (ComponentManager::HasComponent<SpriteComponent>(entity) && ImGui::CollapsingHeader("スプライト"))
@@ -3648,6 +3675,12 @@ ImGuiManager::EntitySnapshot ImGuiManager::CaptureEntity(EntityID entity)
 		snapshot.Obb = ComponentManager::GetComponentUnchecked<OBBComponent>(entity);
 	}
 
+	if (ComponentManager::HasComponent<LODComponent>(entity))
+	{
+		snapshot.HasLod = true;
+		snapshot.Lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
+	}
+
 	return snapshot;
 }
 
@@ -3685,6 +3718,14 @@ void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
 	if (snapshot.HasMove) RestoreSnapshotComponent(snapshot.Entity, snapshot.Move);
 	if (snapshot.HasPhysics) RestoreSnapshotComponent(snapshot.Entity, snapshot.Physics);
 	if (snapshot.HasObb) RestoreSnapshotComponent(snapshot.Entity, snapshot.Obb);
+	if (snapshot.HasLod)
+	{
+		RestoreSnapshotComponent(snapshot.Entity, snapshot.Lod);
+	}
+	else if (ComponentManager::HasComponent<LODComponent>(snapshot.Entity))
+	{
+		ComponentManager::RemoveComponent(snapshot.Entity, ComponentType::LOD);
+	}
 }
 
 void ImGuiManager::BeginUndoCapture(EntityID entity, const EntitySnapshot& before)

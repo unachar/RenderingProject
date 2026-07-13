@@ -389,10 +389,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			{
 				continue;
 			}
-			if (InstancingSystem::CanInstance(i) && !InstancingSystem::IsEntityVisible(i))
-			{
-				continue;
-			}
+			if (InstancingSystem::CanInstance(i)) continue;
 
 			rendererResource psoResource{};
 			psoResource.vsPath = GetModelVsPath(i);
@@ -639,6 +636,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 		auto staticEntities = World::GetView<StaticModelComponent>();
 		for (EntityID i : staticEntities)
 		{
+			if (InstancingSystem::CanInstance(i)) continue;
 			auto& staticComp = ComponentManager::GetComponentUnchecked<StaticModelComponent>(i);
 			if (staticComp.ModelId < 0)
 			{

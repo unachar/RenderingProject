@@ -17,16 +17,34 @@ public:
     void Draw(RenderPass renderPass, bool receivingPostProcessOnly) override;
 
 private:
-    static constexpr UINT kMaxInstancesPerFrame = g_kMAX_ENTITIES * 4;
+    // Shadow, opaque and overlay passes may submit the same entity through
+    // several mesh batches in one frame.
+    static constexpr UINT kMaxInstancesPerFrame = g_kMAX_ENTITIES * 16;
 
-    struct InstanceTransform
+    struct GpuInstanceInput
     {
         XMFLOAT4X4 World{};
+        XMFLOAT4 LocalCenter{};
+        XMFLOAT4 LocalExtents{};
+        XMFLOAT4 LodDistances{};
     };
+	static_assert(sizeof(GpuInstanceInput) == 112);
 
     Microsoft::WRL::ComPtr<ID3D12Resource> m_InstanceUpload;
-    InstanceTransform* m_MappedInstances = nullptr;
+	GpuInstanceInput* m_MappedInstances = nullptr;
+	Microsoft::WRL::ComPtr<ID3D12Resource> m_LodInstances[3];
+	Microsoft::WRL::ComPtr<ID3D12Resource> m_LodCounts;
+	Microsoft::WRL::ComPtr<ID3D12Resource> m_IndirectArguments;
+	Microsoft::WRL::ComPtr<ID3D12Resource> m_ZeroCountsUpload;
+	Microsoft::WRL::ComPtr<ID3D12RootSignature> m_CullLodRootSignature;
+	Microsoft::WRL::ComPtr<ID3D12PipelineState> m_CullLodPso;
+	Microsoft::WRL::ComPtr<ID3D12RootSignature> m_ArgsRootSignature;
+	Microsoft::WRL::ComPtr<ID3D12PipelineState> m_ArgsPso;
+	Microsoft::WRL::ComPtr<ID3D12CommandSignature> m_DrawIndexedSignature;
+	Microsoft::WRL::ComPtr<ID3D12CommandSignature> m_DrawSignature;
     UINT m_FrameIndex = UINT_MAX;
     UINT m_FrameCursor = 0;
     static inline bool s_Available = false;
+
+	bool CreateGpuCullingResources(ID3D12Device* device);
 };

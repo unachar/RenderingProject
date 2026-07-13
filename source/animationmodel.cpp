@@ -10,6 +10,7 @@
 #include "material.h"
 #include "modelimportutils.h"
 #include "toonoutlinebuilder.h"
+#include "../External/meshoptimizer/src/meshoptimizer.h"
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -18,6 +19,89 @@
 #include <limits>
 using namespace std;
 using namespace DirectX;
+
+static bool CreateLodIndexBuffer(
+	ID3D12Device* device,
+	const vector<unsigned int>& indices,
+	ComPtr<ID3D12Resource>& resource,
+	D3D12_INDEX_BUFFER_VIEW& view)
+{
+	if (!device || indices.empty())
+	{
+		return false;
+	}
+
+	const UINT byteSize = static_cast<UINT>(indices.size() * sizeof(unsigned int));
+	const D3D12_RESOURCE_DESC description = CD3DX12_RESOURCE_DESC::Buffer(byteSize);
+	const CD3DX12_HEAP_PROPERTIES heap(D3D12_HEAP_TYPE_DEFAULT);
+	if (FAILED(device->CreateCommittedResource(
+		&heap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_COMMON,
+		nullptr, IID_PPV_ARGS(&resource))))
+	{
+		return false;
+	}
+
+	UINT64 uploadSize = 0;
+	device->GetCopyableFootprints(&description, 0, 1, 0, nullptr, nullptr, nullptr, &uploadSize);
+	ComPtr<ID3D12Resource> upload = TextureManager::AcquireUploadBuffer(device, uploadSize);
+	if (!upload)
+	{
+		resource.Reset();
+		return false;
+	}
+
+	const bool batchMode = TextureManager::IsBatchLoading();
+	ComPtr<ID3D12CommandAllocator> allocator;
+	ComPtr<ID3D12GraphicsCommandList> commandList;
+	if (batchMode)
+	{
+		commandList = TextureManager::GetBatchCommandList();
+	}
+	else
+	{
+		if (FAILED(device->CreateCommandAllocator(
+			D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator))) ||
+			FAILED(device->CreateCommandList(
+				0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr,
+				IID_PPV_ARGS(&commandList))))
+		{
+			TextureManager::ReleaseUploadBuffer(upload, uploadSize);
+			resource.Reset();
+			return false;
+		}
+	}
+	if (!commandList)
+	{
+		TextureManager::ReleaseUploadBuffer(upload, uploadSize);
+		resource.Reset();
+		return false;
+	}
+
+	const auto toCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+		resource.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+	commandList->ResourceBarrier(1, &toCopy);
+	D3D12_SUBRESOURCE_DATA data{};
+	data.pData = indices.data();
+	data.RowPitch = byteSize;
+	data.SlicePitch = byteSize;
+	UpdateSubresources(commandList.Get(), resource.Get(), upload.Get(), 0, 0, 1, &data);
+	const auto ready = CD3DX12_RESOURCE_BARRIER::Transition(
+		resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+	commandList->ResourceBarrier(1, &ready);
+
+	if (!batchMode && !TextureManager::ExecuteCommandListAndSync(commandList.Get()))
+	{
+		TextureManager::ReleaseUploadBuffer(upload, uploadSize);
+		resource.Reset();
+		return false;
+	}
+	TextureManager::ReleaseUploadBuffer(upload, uploadSize, batchMode);
+
+	view.BufferLocation = resource->GetGPUVirtualAddress();
+	view.Format = DXGI_FORMAT_R32_UINT;
+	view.SizeInBytes = byteSize;
+	return true;
+}
 
 static const char* GetAssimpTextureTypeName(aiTextureType type)
 {
@@ -848,6 +932,42 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 			m_Meshes[m].IndexBufferView.Format = DXGI_FORMAT_R32_UINT;
 			m_Meshes[m].IndexBufferView.SizeInBytes = indexBufferSize;
 			m_Meshes[m].IndexCount = (UINT)indices.size();
+
+			// Build two topology-preserving index-only LODs.  They continue to
+			// reference the original skinned vertex stream, so bone weights and
+			// animation data remain identical across all LOD levels.
+			constexpr float lodRatios[MeshData::LodCount - 1] = { 0.50f, 0.20f };
+			constexpr float lodErrors[MeshData::LodCount - 1] = { 0.01f, 0.035f };
+			for (UINT lodIndex = 0; lodIndex < MeshData::LodCount - 1; ++lodIndex)
+			{
+				const size_t targetCount = max<size_t>(
+					3,
+					(static_cast<size_t>(indices.size() * lodRatios[lodIndex]) / 3) * 3);
+				vector<unsigned int> lodIndices(indices.size());
+				const size_t resultCount = meshopt_simplify(
+					lodIndices.data(),
+					indices.data(),
+					indices.size(),
+					reinterpret_cast<const float*>(m_GpuSkinVertices[m].data()),
+					m_GpuSkinVertices[m].size(),
+					sizeof(GpuSkinVertex),
+					targetCount,
+					lodErrors[lodIndex],
+					meshopt_SimplifyRegularize);
+				if (resultCount >= indices.size() || resultCount < 3)
+				{
+					continue;
+				}
+				lodIndices.resize(resultCount);
+				if (CreateLodIndexBuffer(
+					m_pDevice,
+					lodIndices,
+					m_Meshes[m].LodIndexBuffers[lodIndex],
+					m_Meshes[m].LodIndexBufferViews[lodIndex]))
+				{
+					m_Meshes[m].LodIndexCounts[lodIndex] = static_cast<UINT>(resultCount);
+				}
+			}
 
 			for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
 			{
