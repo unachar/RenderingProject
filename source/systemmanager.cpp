@@ -110,37 +110,58 @@ void SystemManager::RenderFlow()
 {
 	auto renderDeferred = []()
 		{
-			const UINT shadowLightCount = RendererResource::GetShadowLightCount();
-			for (UINT shadowIndex = 0; shadowIndex < shadowLightCount; ++shadowIndex)
+			ID3D12GraphicsCommandList* commandList = RendererCore::GetCommandList();
+
 			{
-				if (RendererDraw::BeginShadowPass(shadowIndex))
+				RenderProfiler::ScopedEvent profile("Shadow", commandList);
+				const UINT shadowLightCount = RendererResource::GetShadowLightCount();
+				for (UINT shadowIndex = 0; shadowIndex < shadowLightCount; ++shadowIndex)
 				{
-					DrawSystem(RenderPass::ShadowMap, false);
-					RendererDraw::EndShadowPass();
+					if (RendererDraw::BeginShadowPass(shadowIndex))
+					{
+						DrawSystem(RenderPass::ShadowMap, false);
+						RendererDraw::EndShadowPass();
+					}
+				}
+				if (shadowLightCount > 0)
+				{
+					RendererResource::SetCurrentShadowPassIndex(0);
+					RendererResource::UpdateShadowConstantBuffer();
 				}
 			}
-			if (shadowLightCount > 0)
+
 			{
-				RendererResource::SetCurrentShadowPassIndex(0);
-				RendererResource::UpdateShadowConstantBuffer();
+				RenderProfiler::ScopedEvent profile("GBuffer / Opaque", commandList);
+				RendererDraw::BeginScenePass();
+				DrawSystem(RenderPass::PrimaryScene, false);
+				RendererDraw::EndScenePass();
 			}
 
-			RendererDraw::BeginScenePass();
-			DrawSystem(RenderPass::PrimaryScene, false);
-			RendererDraw::EndScenePass();
-			RendererDraw::RenderVelocityBuffer();
-			DrawSystem(RenderPass::Velocity, false);
-			RendererDraw::EndVelocityBuffer();
+			{
+				RenderProfiler::ScopedEvent profile("Velocity", commandList);
+				RendererDraw::RenderVelocityBuffer();
+				DrawSystem(RenderPass::Velocity, false);
+				RendererDraw::EndVelocityBuffer();
+			}
 
-			PostProcessSystem postProcess;
-			postProcess.Draw(RenderPass::PrimaryScene, false);
+			{
+				RenderProfiler::ScopedEvent profile("Deferred Lighting / PostProcess", commandList);
+				PostProcessSystem postProcess;
+				postProcess.Draw(RenderPass::PrimaryScene, false);
+			}
 
-			RendererDraw::PrepareTransparentSceneCopy();
-			RendererDraw::BeginEditorSceneOverlayPass();
-			DrawSystem(RenderPass::OverlayScene, false);
-			RendererDraw::EndEditorSceneOverlayPass();
+			{
+				RenderProfiler::ScopedEvent profile("Transparent / Overlay", commandList);
+				RendererDraw::PrepareTransparentSceneCopy();
+				RendererDraw::BeginEditorSceneOverlayPass();
+				DrawSystem(RenderPass::OverlayScene, false);
+				RendererDraw::EndEditorSceneOverlayPass();
+			}
 
-			RendererDraw::ApplyAntiAliasing();
+			{
+				RenderProfiler::ScopedEvent profile("AntiAliasing", commandList);
+				RendererDraw::ApplyAntiAliasing();
+			}
 		};
 
 	renderDeferred();

@@ -83,6 +83,21 @@ void Game::Update()
 void Game::Draw()
 {
 	RendererDraw::BeginDraw();
+
+	RenderProfiler::BeginFrame(
+		RendererCore::GetDevice(),
+		RendererCore::GetCommandQueue(),
+		RendererCore::GetCommandList(),
+		RendererCore::GetFrameIndex());
+
+	// The ImGui frame has already been opened by RendererDraw::BeginDraw().
+	// Display the last fence-safe result while the current frame is measured.
+	RenderProfiler::DrawImGuiWindow();
+
 	SystemManager::RenderFlow();
+
+	// Timestamp and pipeline-statistics queries must be resolved before
+	// RendererDraw::EndDraw() closes and submits the command list.
+	RenderProfiler::EndFrame(RendererCore::GetCommandList());
 	RendererDraw::EndDraw();
 }
