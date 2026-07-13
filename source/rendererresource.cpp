@@ -929,6 +929,20 @@ void RendererResource::SetCurrentShadowPassIndex(UINT index)
 		: 0;
 }
 
+XMMATRIX RendererResource::GetCurrentShadowViewProjection()
+{
+	if (!g_LightCacheValid)
+	{
+		RebuildLightCache();
+	}
+	if (g_ShadowLightCount == 0)
+	{
+		return XMMatrixIdentity();
+	}
+
+	return XMMatrixTranspose(g_ShadowLightViewProjections[g_CurrentShadowPassIndex]);
+}
+
 D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetShadowConstantBufferAddress(UINT shadowIndex)
 {
 	if (!m_ShadowConstantBuffer)

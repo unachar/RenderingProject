@@ -97,6 +97,9 @@
     <FxCompile Include="shader\hlsl\GeometryPS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
+    <FxCompile Include="shader\hlsl\GpuDrivenCullCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
     <FxCompile Include="shader\hlsl\modelshaderPS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>

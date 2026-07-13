@@ -10,9 +10,11 @@ double World::m_FrameStatsAccumulator = 0.0;
 int World::m_FrameStatsCount = 0;
 long long World::m_LastTime = 0;
 long long World::m_Frequency = 0;
-bool World::m_VSyncEnabled = true;
 bool World::m_FixedFrameRateEnabled = false;
 int World::m_TargetFrameRate = 60;
+bool World::m_VSyncEnabled = false;
+bool World::m_FixedFrameRateEnabled = true;
+int World::m_TargetFrameRate = 144;
 unordered_map<string, EntityID> World::m_NameMap;
 unordered_map<EntityID, string> World::m_IdToNameMap;
 

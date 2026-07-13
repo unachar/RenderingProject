@@ -17,6 +17,7 @@ ComPtr<ID3D12DescriptorHeap> RendererState::m_CbvHeap;
 ComPtr<ID3D12Resource> RendererState::m_ConstantBuffer;
 UINT8* RendererState::m_pCbvDataBegin = nullptr;
 HANDLE RendererState::m_FenceEvent = nullptr;
+HANDLE RendererState::m_FrameLatencyWaitableObject = nullptr;
 
 CD3DX12_VIEWPORT RendererState::m_Viewport;
 CD3DX12_VIEWPORT RendererState::m_FullViewport;

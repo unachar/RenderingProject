@@ -22,6 +22,7 @@ bool RendererCore::Init(HWND hwnd)
 {
 	m_FrameIndex = 0;
 	m_FenceEvent = nullptr;
+	m_FrameLatencyWaitableObject = nullptr;
 	for (UINT i = 0; i < g_kFRAME_COUNT; ++i)
 	{
 		m_FenceValues[i] = 0;
@@ -94,7 +95,8 @@ bool RendererCore::Init(HWND hwnd)
 	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	swapChainDesc.SampleDesc.Count = 1;
-	swapChainDesc.Flags = m_AllowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
+	swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT |
+		(m_AllowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0);
 
 	ComPtr<IDXGISwapChain1> sc1;
 	hr = m_Factory->CreateSwapChainForHwnd(m_CommandQueue.Get(), hwnd, &swapChainDesc, nullptr, nullptr, &sc1);
@@ -104,6 +106,11 @@ bool RendererCore::Init(HWND hwnd)
 		return false;
 	}
 	sc1.As(&m_SwapChain);
+	if (m_SwapChain)
+	{
+		m_SwapChain->SetMaximumFrameLatency(1);
+		m_FrameLatencyWaitableObject = m_SwapChain->GetFrameLatencyWaitableObject();
+	}
 	m_FrameIndex = m_SwapChain->GetCurrentBackBufferIndex();
 
 	D3D12_DESCRIPTOR_HEAP_DESC rtvDesc {};
@@ -424,6 +431,11 @@ void RendererCore::Uninit()
 		m_RenderTargets[n].Reset();
 	}
 	m_RtvHeap.Reset();
+	if (m_FrameLatencyWaitableObject)
+	{
+		CloseHandle(m_FrameLatencyWaitableObject);
+		m_FrameLatencyWaitableObject = nullptr;
+	}
 	m_SwapChain.Reset();
 	m_CommandQueue.Reset();
 	m_Factory.Reset();
@@ -477,7 +489,8 @@ void RendererCore::Resize(UINT width, UINT height)
 	HRESULT hr = m_SwapChain->ResizeBuffers(
 		g_kFRAME_COUNT, width, height,
 		DXGI_FORMAT_R8G8B8A8_UNORM,
-		m_AllowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0);
+		DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT |
+		(m_AllowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0));
 	if (FAILED(hr))
 	{
 		LogToFile("ERROR: ResizeBuffers failed\n");

@@ -18,11 +18,9 @@ groupshared uint GroupVisible;
 groupshared uint GroupDestinationBase;
 groupshared uint GroupCommandCount;
 
-bool IsObjectVisible()
+uint IsObjectVisible()
 {
-    if (EnableFrustumCulling == 0)
-        return true;
-
+    uint visible = 1u;
     bool outsideLeft = true;
     bool outsideRight = true;
     bool outsideBottom = true;
@@ -31,7 +29,7 @@ bool IsObjectVisible()
     bool outsideFar = true;
 
     [unroll]
-    for (uint cornerIndex = 0; cornerIndex < 8; ++cornerIndex)
+    for (uint cornerIndex = 0; cornerIndex < 8 && EnableFrustumCulling != 0; ++cornerIndex)
     {
         float3 signValue = float3(
             (cornerIndex & 1) ? 1.0f : -1.0f,
@@ -41,15 +39,21 @@ bool IsObjectVisible()
         float4 worldPosition = mul(float4(localPosition, 1.0f), World);
         float4 clipPosition = mul(worldPosition, ViewProjection);
 
-        outsideLeft &= clipPosition.x < -clipPosition.w;
-        outsideRight &= clipPosition.x > clipPosition.w;
-        outsideBottom &= clipPosition.y < -clipPosition.w;
-        outsideTop &= clipPosition.y > clipPosition.w;
-        outsideNear &= clipPosition.z < 0.0f;
-        outsideFar &= clipPosition.z > clipPosition.w;
+        outsideLeft = outsideLeft && (clipPosition.x < -clipPosition.w);
+        outsideRight = outsideRight && (clipPosition.x > clipPosition.w);
+        outsideBottom = outsideBottom && (clipPosition.y < -clipPosition.w);
+        outsideTop = outsideTop && (clipPosition.y > clipPosition.w);
+        outsideNear = outsideNear && (clipPosition.z < 0.0f);
+        outsideFar = outsideFar && (clipPosition.z > clipPosition.w);
     }
 
-    return !(outsideLeft || outsideRight || outsideBottom || outsideTop || outsideNear || outsideFar);
+    if (EnableFrustumCulling != 0)
+    {
+        visible = (outsideLeft || outsideRight || outsideBottom || outsideTop || outsideNear || outsideFar)
+            ? 0u
+            : 1u;
+    }
+    return visible;
 }
 
 void CopyCommand(uint sourceBase, uint destinationBase)
@@ -76,7 +80,7 @@ void main(uint3 groupId : SV_GroupID,
 
     if (groupThreadIndex == 0)
     {
-        GroupVisible = IsObjectVisible() ? 1u : 0u;
+        GroupVisible = IsObjectVisible();
         GroupDestinationBase = 0;
         GroupCommandCount = groupBegin < CandidateCount
             ? min(64u, CandidateCount - groupBegin)

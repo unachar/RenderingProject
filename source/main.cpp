@@ -157,15 +157,33 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 	MSG msg = { 0 };
 	while (msg.message != WM_QUIT)
 	{
-		if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+		while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
 		{
 			TranslateMessage(&msg);
 			DispatchMessage(&msg);
+			if (msg.message == WM_QUIT)
+			{
+				break;
+			}
 		}
-		else
+
+		if (msg.message == WM_QUIT)
 		{
-			Game::Run();
+			break;
 		}
+
+		if (IsIconic(hwnd) || !IsWindowVisible(hwnd))
+		{
+			MsgWaitForMultipleObjectsEx(0, nullptr, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+			continue;
+		}
+
+		if (GetForegroundWindow() != hwnd)
+		{
+			MsgWaitForMultipleObjectsEx(0, nullptr, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+		}
+
+		Game::Run();
 	}
 	Game::Uninit();
 	return 0;

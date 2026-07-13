@@ -3,6 +3,7 @@
 #include "pch.h"
 #include "renderercore.h"
 #include "rendererstate.h"
+#include "renderershader.h"
 #include "animationmodel.h"
 #include "staticmodel.h"
 #include <unordered_map>
@@ -17,6 +18,7 @@
 class GpuDrivenIndirectDrawCache
 {
 private:
+    static constexpr UINT g_kMAX_CULL_DISPATCHES_PER_FRAME = 16384;
     struct ShadowCommand
     {
         D3D12_VERTEX_BUFFER_VIEW VertexBuffer{};
@@ -56,6 +58,17 @@ private:
         UINT CommandStride = 0;
     };
 
+    struct PrimaryBatch
+    {
+        struct Group
+        {
+            int TextureIndex = -1;
+            IndirectBatch Commands{};
+        };
+        std::vector<Group> Groups{};
+        UINT SourceMeshCount = 0;
+    };
+
     ComPtr<ID3D12CommandSignature> m_ShadowSignature{};
     ComPtr<ID3D12CommandSignature> m_VelocitySignature{};
     ComPtr<ID3D12RootSignature> m_CullRootSignature{};
@@ -63,12 +76,16 @@ private:
     ComPtr<ID3D12Resource> m_ZeroCounterUpload{};
     ComPtr<ID3D12Resource> m_CullConstantsUpload{};
     UINT8* m_MappedCullConstants = nullptr;
+    UINT m_CullConstantFrameIndex = UINT_MAX;
+    UINT m_CullConstantCursor = 0;
     bool m_InitializationAttempted = false;
 
     std::unordered_map<const AnimationModelResource*, IndirectBatch> m_AnimatedShadowBatches{};
     std::unordered_map<const StaticModelResource*, IndirectBatch> m_StaticShadowBatches{};
     std::unordered_map<const AnimationModelResource*, IndirectBatch> m_AnimatedVelocityBatches{};
     std::unordered_map<const StaticModelResource*, IndirectBatch> m_StaticVelocityBatches{};
+    std::unordered_map<const AnimationModelResource*, PrimaryBatch> m_AnimatedPrimaryBatches{};
+    std::unordered_map<const StaticModelResource*, PrimaryBatch> m_StaticPrimaryBatches{};
 
     static D3D12_DRAW_INDEXED_ARGUMENTS MakeDrawArguments(UINT indexCount)
     {
@@ -181,27 +198,12 @@ private:
         }
 
         ComPtr<ID3DBlob> computeShader;
-        result = D3DCompileFromFile(
-            L"shader/hlsl/GpuDrivenCullCS.hlsl",
-            nullptr,
-            D3D_COMPILE_STANDARD_FILE_INCLUDE,
-            "main",
-            "cs_5_1",
-#ifdef _DEBUG
-            D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,
-#else
-            D3DCOMPILE_OPTIMIZATION_LEVEL3,
-#endif
-            0,
-            &computeShader,
-            &errors);
-        if (FAILED(result))
+        rendererResource shaderResource{};
+        shaderResource.csoPath = "shader/hlsl/build/GpuDrivenCullCS.cso";
+        shaderResource.ppBlob = computeShader.GetAddressOf();
+        if (!RendererShader::LoadShaderBlob(shaderResource))
         {
-            if (errors)
-            {
-                Debug::Log("GPU culling shader compile failed: %s\n",
-                    static_cast<const char*>(errors->GetBufferPointer()));
-            }
+            Debug::Log("GPU culling shader load failed: %s\n", shaderResource.csoPath);
             return false;
         }
 
@@ -226,7 +228,7 @@ private:
 
         const UINT64 constantsSize =
             static_cast<UINT64>(RendererState::g_kFRAME_COUNT) *
-            g_kMAX_ENTITIES * sizeof(CullConstants);
+            g_kMAX_CULL_DISPATCHES_PER_FRAME * sizeof(CullConstants);
         if (!CreateUploadBuffer(nullptr, constantsSize, m_CullConstantsUpload))
         {
             return false;
@@ -379,6 +381,63 @@ private:
         return FinalizeBatch(commands, model->GetMeshCount(), batch);
     }
 
+    template<typename Model, typename Mesh>
+    static bool BuildPrimaryBatch(const Model* model, PrimaryBatch& batch)
+    {
+        batch = {};
+        batch.SourceMeshCount = model->GetMeshCount();
+        std::vector<std::pair<int, std::vector<ShadowCommand>>> groupedCommands;
+        for (UINT index = 0; index < model->GetMeshCount(); ++index)
+        {
+            const Mesh& mesh = model->GetMeshData(index);
+            if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount == 0)
+            {
+                continue;
+            }
+
+            auto group = std::find_if(
+                groupedCommands.begin(),
+                groupedCommands.end(),
+                [&](const auto& candidate) { return candidate.first == mesh.TextureIndex; });
+            if (group == groupedCommands.end())
+            {
+                groupedCommands.emplace_back(mesh.TextureIndex, std::vector<ShadowCommand>{});
+                group = std::prev(groupedCommands.end());
+            }
+            group->second.push_back({
+                mesh.VertexBufferView,
+                mesh.IndexBufferView,
+                MakeDrawArguments(mesh.IndexCount)
+                });
+        }
+
+        for (auto& [textureIndex, commands] : groupedCommands)
+        {
+            PrimaryBatch::Group group{};
+            group.TextureIndex = textureIndex;
+            if (!FinalizeBatch(commands, model->GetMeshCount(), group.Commands))
+            {
+                return false;
+            }
+            batch.Groups.push_back(std::move(group));
+        }
+        return !batch.Groups.empty();
+    }
+
+    template<typename Model, typename Map, typename Mesh>
+    static PrimaryBatch* FindOrBuildPrimary(const Model* model, Map& map)
+    {
+        PrimaryBatch& batch = map[model];
+        if (batch.Groups.empty() || batch.SourceMeshCount != model->GetMeshCount())
+        {
+            if (!BuildPrimaryBatch<Model, Mesh>(model, batch))
+            {
+                return nullptr;
+            }
+        }
+        return &batch;
+    }
+
     template<typename Model, typename Map, typename Builder>
     static IndirectBatch* FindOrBuild(const Model* model, Map& map, Builder&& builder)
     {
@@ -424,7 +483,19 @@ private:
         commandList->ResourceBarrier(1, &countToUav);
 
         const UINT frameIndex = RendererCore::GetFrameIndex() % RendererState::g_kFRAME_COUNT;
-        const UINT64 constantIndex = static_cast<UINT64>(frameIndex) * g_kMAX_ENTITIES + entity;
+        if (m_CullConstantFrameIndex != frameIndex)
+        {
+            m_CullConstantFrameIndex = frameIndex;
+            m_CullConstantCursor = 0;
+        }
+        if (m_CullConstantCursor >= g_kMAX_CULL_DISPATCHES_PER_FRAME)
+        {
+            Debug::Log("GPU culling constant ring exhausted for frame %u\n", frameIndex);
+            return false;
+        }
+        const UINT64 constantIndex =
+            static_cast<UINT64>(frameIndex) * g_kMAX_CULL_DISPATCHES_PER_FRAME +
+            m_CullConstantCursor++;
         CullConstants constants{};
         XMStoreFloat4x4(&constants.World, world);
         XMStoreFloat4x4(&constants.ViewProjection, viewProjection);
@@ -494,11 +565,96 @@ private:
     }
 
 public:
+    template<typename Model, typename Mesh, typename Map>
+    bool ExecutePrimaryImpl(
+        ID3D12GraphicsCommandList* commandList,
+        const Model* model,
+        Map& map,
+        EntityID entity,
+        const XMMATRIX& world,
+        const XMMATRIX& viewProjection,
+        int fallbackTextureIndex,
+        D3D12_GPU_DESCRIPTOR_HANDLE descriptorHeapStart,
+        UINT descriptorIncrement,
+        ID3D12PipelineState* graphicsPipelineState)
+    {
+        if (!EnsureInitialized() || !model)
+        {
+            return false;
+        }
+        PrimaryBatch* batch = FindOrBuildPrimary<Model, Map, Mesh>(model, map);
+        if (!batch)
+        {
+            return false;
+        }
+
+        bool submitted = false;
+        for (auto& group : batch->Groups)
+        {
+            const int textureIndex = group.TextureIndex >= 0
+                ? group.TextureIndex
+                : fallbackTextureIndex;
+            commandList->SetGraphicsRootDescriptorTable(
+                1,
+                CD3DX12_GPU_DESCRIPTOR_HANDLE(
+                    descriptorHeapStart,
+                    textureIndex,
+                    descriptorIncrement));
+            submitted |= CullAndExecute(
+                commandList,
+                m_ShadowSignature.Get(),
+                group.Commands,
+                entity,
+                world,
+                viewProjection,
+                model->GetAabbCenter(),
+                model->GetAabbExtents(),
+                true,
+                graphicsPipelineState);
+        }
+        return submitted;
+    }
+
+    bool ExecutePrimary(
+        ID3D12GraphicsCommandList* commandList,
+        const AnimationModelResource* model,
+        EntityID entity,
+        const XMMATRIX& world,
+        const XMMATRIX& viewProjection,
+        int fallbackTextureIndex,
+        D3D12_GPU_DESCRIPTOR_HANDLE descriptorHeapStart,
+        UINT descriptorIncrement,
+        ID3D12PipelineState* graphicsPipelineState)
+    {
+        return ExecutePrimaryImpl<AnimationModelResource, MeshData>(
+            commandList, model, m_AnimatedPrimaryBatches, entity, world,
+            viewProjection, fallbackTextureIndex, descriptorHeapStart,
+            descriptorIncrement, graphicsPipelineState);
+    }
+
+    bool ExecutePrimary(
+        ID3D12GraphicsCommandList* commandList,
+        const StaticModelResource* model,
+        EntityID entity,
+        const XMMATRIX& world,
+        const XMMATRIX& viewProjection,
+        int fallbackTextureIndex,
+        D3D12_GPU_DESCRIPTOR_HANDLE descriptorHeapStart,
+        UINT descriptorIncrement,
+        ID3D12PipelineState* graphicsPipelineState)
+    {
+        return ExecutePrimaryImpl<StaticModelResource, StaticMeshData>(
+            commandList, model, m_StaticPrimaryBatches, entity, world,
+            viewProjection, fallbackTextureIndex, descriptorHeapStart,
+            descriptorIncrement, graphicsPipelineState);
+    }
+
     bool ExecuteShadow(
         ID3D12GraphicsCommandList* commandList,
         const AnimationModelResource* model,
         EntityID entity,
         const XMMATRIX& world,
+        const XMMATRIX& lightViewProjection,
         ID3D12PipelineState* graphicsPipelineState)
     {
         if (!EnsureInitialized() || !model)
@@ -512,10 +668,10 @@ public:
             *batch,
             entity,
             world,
-            XMMatrixIdentity(),
+            lightViewProjection,
             model->GetAabbCenter(),
             model->GetAabbExtents(),
-            false,
+            true,
             graphicsPipelineState);
     }
 
@@ -524,6 +680,7 @@ public:
         const StaticModelResource* model,
         EntityID entity,
         const XMMATRIX& world,
+        const XMMATRIX& lightViewProjection,
         ID3D12PipelineState* graphicsPipelineState)
     {
         if (!EnsureInitialized() || !model)
@@ -537,10 +694,10 @@ public:
             *batch,
             entity,
             world,
-            XMMatrixIdentity(),
+            lightViewProjection,
             model->GetAabbCenter(),
             model->GetAabbExtents(),
-            false,
+            true,
             graphicsPipelineState);
     }
 
@@ -603,10 +760,14 @@ public:
             m_CullConstantsUpload->Unmap(0, nullptr);
         }
         m_MappedCullConstants = nullptr;
+        m_CullConstantFrameIndex = UINT_MAX;
+        m_CullConstantCursor = 0;
         m_AnimatedShadowBatches.clear();
         m_StaticShadowBatches.clear();
         m_AnimatedVelocityBatches.clear();
         m_StaticVelocityBatches.clear();
+        m_AnimatedPrimaryBatches.clear();
+        m_StaticPrimaryBatches.clear();
         m_ShadowSignature.Reset();
         m_VelocitySignature.Reset();
         m_CullRootSignature.Reset();

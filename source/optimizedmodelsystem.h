@@ -14,8 +14,10 @@
 #include "gpudrivenindirect.h"
 #include <vector>
 
-// GPU-driven shadow and velocity submission. Primary/transparent/toon rendering
-// remains on the legacy path until its bindless material tables are available.
+// GPU-driven model submission. Geometry is culled and emitted through
+// ExecuteIndirect for the primary, shadow, and velocity passes; material and
+// PSO state is grouped on the CPU because D3D12 indirect signatures cannot
+// change pipeline state or descriptor tables.
 class OptimizedModelSystem final : public SystemBase
 {
 private:
@@ -96,6 +98,7 @@ private:
         ID3D12DescriptorHeap* heaps[] = { cbvHeap };
         commandList->SetDescriptorHeaps(_countof(heaps), heaps);
         RestoreShadowGraphicsState(commandList, shadowPso);
+        const XMMATRIX lightViewProjection = RendererResource::GetCurrentShadowViewProjection();
 
         auto writeShadowConstants = [&](EntityID entity)
             {
@@ -148,7 +151,7 @@ private:
             const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
             const XMMATRIX world = XMLoadFloat4x4(&transform.WorldMatrix);
             writeShadowConstants(entity);
-            if (!m_IndirectDraws.ExecuteShadow(commandList, model, entity, world, shadowPso))
+            if (!m_IndirectDraws.ExecuteShadow(commandList, model, entity, world, lightViewProjection, shadowPso))
             {
                 RestoreShadowGraphicsState(commandList, shadowPso);
                 for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
@@ -196,7 +199,7 @@ private:
             const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
             const XMMATRIX world = XMLoadFloat4x4(&transform.WorldMatrix);
             writeShadowConstants(entity);
-            if (!m_IndirectDraws.ExecuteShadow(commandList, model, entity, world, shadowPso))
+            if (!m_IndirectDraws.ExecuteShadow(commandList, model, entity, world, lightViewProjection, shadowPso))
             {
                 RestoreShadowGraphicsState(commandList, shadowPso);
                 for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
@@ -389,6 +392,7 @@ public:
             DrawVelocity();
             break;
         default:
+            m_Legacy.SetIndirectDrawCache(&m_IndirectDraws);
             m_Legacy.Draw(renderPass, receivingPostProcessOnly);
             break;
         }

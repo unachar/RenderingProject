@@ -204,6 +204,10 @@ bool RendererDraw::CreateShadowDepthBuffer()
 }
 void RendererDraw::BeginDraw()
 {
+	if (m_FrameLatencyWaitableObject)
+	{
+		WaitForSingleObjectEx(m_FrameLatencyWaitableObject, 1000, TRUE);
+	}
 	RendererCore::ApplyPendingRenderMode();
 	RendererCore::ApplyPendingHdr();
 	RendererResource::BeginFrame();

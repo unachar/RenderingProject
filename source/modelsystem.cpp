@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include "modelsystem.h"
+#include "gpudrivenindirect.h"
 #include "componentmanager.h"
 #include "modelmanager.h"
 #include "texturemanager.h"
@@ -356,6 +357,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	Camera::GetCameraMatrices(Camera::GetCameraEntity(), viewMat, projMat);
 	const XMMATRIX transposedView = XMMatrixTranspose(viewMat);
 	const XMMATRIX transposedProj = XMMatrixTranspose(projMat);
+	const XMMATRIX viewProjection = viewMat * projMat;
 
 	{
 		m_AnimDrawCalls.clear();
@@ -513,6 +515,19 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			CD3DX12_GPU_DESCRIPTOR_HANDLE normalSrvHandle(heapStart, dc.normalSrvIndex, cbvIncrement);
 			pCommandList->SetGraphicsRootDescriptorTable(6, normalSrvHandle);
 
+			const XMMATRIX world = XMLoadFloat4x4(
+				&ComponentManager::GetComponentUnchecked<TransformComponent>(dc.EntityID).WorldMatrix);
+			const bool indirectBaseDrawn = m_IndirectDraws && m_IndirectDraws->ExecutePrimary(
+				pCommandList,
+				dc.model,
+				dc.EntityID,
+				world,
+				viewProjection,
+				dc.srvIndex,
+				heapStart,
+				cbvIncrement,
+				dc.pso);
+
 			for (UINT m = 0; m < dc.model->GetMeshCount(); m++)
 			{
 				const MeshData& meshData = dc.model->GetMeshData(m);
@@ -528,9 +543,12 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					pCommandList->SetGraphicsRootDescriptorTable(1, entitySrvHandle);
 				}
 
-				pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
-				pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
-				pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
+				if (!indirectBaseDrawn)
+				{
+					pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
+					pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
+					pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
+				}
 
 				if (outlinePso && ShouldDrawToonOutline(dc.EntityID) && ShouldDrawMeshToonOutline(material, m, meshData))
 				{
@@ -731,6 +749,19 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			CD3DX12_GPU_DESCRIPTOR_HANDLE normalSrvHandle(heapStart, dc.normalSrvIndex, cbvIncrement);
 			pCommandList->SetGraphicsRootDescriptorTable(6, normalSrvHandle);
 
+			const XMMATRIX world = XMLoadFloat4x4(
+				&ComponentManager::GetComponentUnchecked<TransformComponent>(dc.EntityID).WorldMatrix);
+			const bool indirectBaseDrawn = m_IndirectDraws && m_IndirectDraws->ExecutePrimary(
+				pCommandList,
+				dc.model,
+				dc.EntityID,
+				world,
+				viewProjection,
+				dc.srvIndex,
+				heapStart,
+				cbvIncrement,
+				dc.pso);
+
 			for (UINT m = 0; m < dc.model->GetMeshCount(); m++)
 			{
 				const StaticMeshData& meshData = dc.model->GetMeshData(m);
@@ -746,9 +777,12 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					pCommandList->SetGraphicsRootDescriptorTable(1, entitySrvHandle);
 				}
 
-				pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
-				pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
-				pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
+				if (!indirectBaseDrawn)
+				{
+					pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
+					pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
+					pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
+				}
 
 				if (outlinePso && ShouldDrawToonOutline(dc.EntityID) && ShouldDrawMeshToonOutline(material, m, meshData))
 				{
