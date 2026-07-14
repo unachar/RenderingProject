@@ -84,8 +84,7 @@ bool IntersectVolumetricLightBounds(
 // Sun/directional atmosphere. This intentionally keeps the same global
 // atmosphere-density integration that was already producing a stable result.
 float3 RayMarchDirectionalAtmosphere(
-    float3 rayEnd,
-    float2 pixelPosition)
+    float3 rayEnd)
 {
     float atmosphereActive =
         step(0.5f, AtmosphereParams0.x) *
@@ -103,7 +102,6 @@ float3 RayMarchDirectionalAtmosphere(
     const int stepCount = 50;
     float stepLength = viewDistance / (float)stepCount;
     float scaledStep = stepLength * max(AtmosphereParams1.w, 0.0001f);
-    float jitter = InterleavedGradientNoiseAtmosphere(pixelPosition);
     float transmittance = 1.0f;
     float3 result = float3(0.0f, 0.0f, 0.0f);
     int count = min((int)round(LightCount.x), 5);
@@ -111,11 +109,8 @@ float3 RayMarchDirectionalAtmosphere(
     [loop]
     for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
     {
-        float sampleOffset = 0.25f + jitter * 0.50f;
-        float sampleDistance = min(
-            ((float)stepIndex + sampleOffset) * stepLength,
-            viewDistance);
-        float3 samplePos = cameraPos + viewDir * sampleDistance;
+        float t = ((float)stepIndex + 0.5f) / (float)stepCount;
+        float3 samplePos = cameraPos + viewDir * viewDistance * t;
         float sampleDensity = AtmosphereDensityCommon(samplePos);
         float3 stepScatter = float3(0.0f, 0.0f, 0.0f);
 
@@ -592,8 +587,7 @@ float4 main(PSInputPostProcess input) : SV_Target
 
     float3 scatter =
         RayMarchDirectionalAtmosphere(
-            rayEnd,
-            input.Position.xy);
+            rayEnd);
     scatter +=
         RayMarchLocalLightVolumes(
             rayEnd,
