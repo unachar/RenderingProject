@@ -1,6 +1,11 @@
 name: Generate VSM Code Artifact
 
 on:
+  pull_request:
+    branches:
+      - automation/trigger-vsm-upgrade
+    types:
+      - opened
   push:
     branches:
       - automation/trigger-vsm-upgrade
@@ -24,6 +29,7 @@ jobs:
 
       - name: Fetch patch generator
         run: |
+          git fetch origin automation/trigger-vsm-upgrade --depth=1
           git show origin/automation/trigger-vsm-upgrade:.github/scripts/apply_vsm_upgrade_v2.py > /tmp/apply_vsm_upgrade_v2.py
 
       - name: Generate VSM implementation
