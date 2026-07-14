@@ -101,6 +101,7 @@ float3 RayMarchAtmosphereViewFixed(
     float sampleJitter = InterleavedGradientNoiseAtmosphere(pixelPosition);
     float transmittance = 1.0f;
     float3 result = float3(0.0f, 0.0f, 0.0f);
+    float3 previousPreviousStepScatter = float3(0.0f, 0.0f, 0.0f);
     float3 previousStepScatter = float3(0.0f, 0.0f, 0.0f);
     int count = min((int)round(LightCount.x), 5);
 
@@ -275,12 +276,22 @@ float3 RayMarchAtmosphereViewFixed(
                 lerp(0.22f, lerp(0.82f, 1.05f, volumeLight), localLight);
         }
 
-        // Trapezoidal integration works as a small one-dimensional low-pass
-        // filter and removes the harsh transition between adjacent march cells.
-        float3 filteredStepScatter = (stepIndex > 0)
-            ? (previousStepScatter + stepScatter) * 0.5f
-            : stepScatter;
+        // A compact [1 2 1] Gaussian over adjacent world-space samples hides
+        // the remaining cell boundaries without a separate full-screen pass.
+        float3 filteredStepScatter = stepScatter;
+        if (stepIndex == 1)
+        {
+            filteredStepScatter = (previousStepScatter + stepScatter) * 0.5f;
+        }
+        else if (stepIndex > 1)
+        {
+            filteredStepScatter =
+                (previousPreviousStepScatter +
+                 previousStepScatter * 2.0f +
+                 stepScatter) * 0.25f;
+        }
         result += filteredStepScatter * transmittance * scaledStep;
+        previousPreviousStepScatter = previousStepScatter;
         previousStepScatter = stepScatter;
 
         transmittance *= exp(
