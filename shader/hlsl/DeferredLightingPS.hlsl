@@ -506,8 +506,8 @@ float4 main(PSInputPostProcess input) : SV_Target
         float3 ambientSpecular = envSpecular * F_IBL;
 
         float3 ambient = ambientDiffuse + ambientSpecular;
-
-        baseColor.rgb = directLight;
+        ambient *= 1.3f - shadowVisibility;
+        baseColor.rgb = directLight + ambient;
     }
 
     //{
