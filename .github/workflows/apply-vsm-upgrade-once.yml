@@ -47,3 +47,5 @@ jobs:
           git add -A
           git commit -m "Implement paged clipmap VSM and stabilize contact shadows"
           git push origin HEAD:dev_main_renderoptimize
+
+# Triggered after the workflow file was present on the branch.
