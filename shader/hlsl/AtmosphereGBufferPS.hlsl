@@ -20,8 +20,53 @@ struct LocalFogRayResult
     float Transmittance;
 };
 
+// Stable per-pixel sub-step offset. It converts coherent ray-march bands into
+// fine noise that the existing linear upsample/TAA can remove much more easily.
+float InterleavedGradientNoiseAtmosphere(float2 pixelPosition)
+{
+    return frac(52.9829189f * frac(dot(pixelPosition, float2(0.06711056f, 0.00583715f))));
+}
+
+// The cone radius approaches zero at a point/spot/volume light origin. Without
+// an emitter-sized fade, one ray-march sample can become a camera-dependent hot
+// blob. Fade over a small world-space region derived from light range instead.
+float LocalLightEmitterFade(
+    float3 samplePos,
+    float4 lightDirectionData,
+    float4 lightPositionTypeData)
+{
+    int lightType = (int)round(lightPositionTypeData.w);
+    if (lightType <= 0)
+    {
+        return 1.0f;
+    }
+
+    float lightRange = max(lightDirectionData.w, 0.01f);
+    float3 fromLight = samplePos - lightPositionTypeData.xyz;
+    float sourceDistance = length(fromLight);
+
+    if (lightType == 2 || lightType == 3)
+    {
+        float3 spotForward = SafeNormalizeCommon(
+            lightDirectionData.xyz,
+            float3(0.0f, -1.0f, 0.0f));
+        float axialDistance = dot(fromLight, spotForward);
+        sourceDistance = (lightType == 3)
+            ? abs(axialDistance)
+            : max(axialDistance, 0.0f);
+    }
+
+    float sourceRadiusRatio = (lightType == 3)
+        ? 0.050f
+        : ((lightType == 2) ? 0.025f : 0.015f);
+    float fadeStart = max(lightRange * sourceRadiusRatio, 0.05f);
+    float fadeEnd = fadeStart * 2.75f;
+    return smoothstep(fadeStart, fadeEnd, sourceDistance);
+}
+
 float3 RayMarchAtmosphereViewFixed(
     float3 worldPos,
+    float2 pixelPosition,
     Texture2DArray<float> shadowMap,
     SamplerState shadowSampler,
     float4x4 lightViewProjection,
@@ -38,20 +83,40 @@ float3 RayMarchAtmosphereViewFixed(
     float validDistance = step(0.0001f, rawViewDistance);
     float viewDistance = clamp(rawViewDistance, 0.0001f, 100.0f);
 
-    const int stepCount = 50;
+    // Keep approximately the same world-space distance between samples as the
+    // camera moves. The old fixed 50 steps made the first cone sample move by
+    // metres on long background rays, which changed the apparent shaft root.
+    const float targetWorldStep = 0.85f;
+    const int minStepCount = 32;
+    const int maxStepCount = 96;
+    int stepCount = clamp(
+        (int)ceil(viewDistance / targetWorldStep),
+        minStepCount,
+        maxStepCount);
+
     float3 viewDir = viewDelta / max(rawViewDistance, 0.0001f);
     float3 viewToCamera = -viewDir;
-    float stepLength = viewDistance / (float)stepCount;
+    float stepLength = viewDistance / (float)max(stepCount, 1);
     float scaledStep = stepLength * max(AtmosphereParams1.w, 0.0001f);
+    float sampleJitter = InterleavedGradientNoiseAtmosphere(pixelPosition);
     float transmittance = 1.0f;
     float3 result = float3(0.0f, 0.0f, 0.0f);
+    float3 previousStepScatter = float3(0.0f, 0.0f, 0.0f);
     int count = min((int)round(LightCount.x), 5);
 
     [loop]
-    for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
+    for (int stepIndex = 0; stepIndex < maxStepCount; ++stepIndex)
     {
-        float t = ((float)stepIndex + 0.5f) / (float)stepCount;
-        float3 samplePos = cameraPos + viewDir * viewDistance * t;
+        if (stepIndex >= stepCount)
+        {
+            break;
+        }
+
+        float sampleOffset = 0.20f + sampleJitter * 0.60f;
+        float sampleDistance = min(
+            ((float)stepIndex + sampleOffset) * stepLength,
+            viewDistance);
+        float3 samplePos = cameraPos + viewDir * sampleDistance;
         float3 stepScatter = float3(0.0f, 0.0f, 0.0f);
         float sampleDensity = AtmosphereDensityCommon(samplePos);
 
@@ -95,8 +160,14 @@ float3 RayMarchAtmosphereViewFixed(
 
             float3 shadowedColor = singleColor * shadowVisibility;
             float localLight = step(0.5f, LightPositionTypes[lightIndex].w);
-            float volumeVisibility = lerp(shadowVisibility, max(shadowVisibility, 0.45f), localLight);
-            float3 volumeColor = rawSingleColor * sqrt(saturate(singleAttenuation)) * volumeVisibility;
+            float volumeVisibility = lerp(
+                shadowVisibility,
+                max(shadowVisibility, 0.45f),
+                localLight);
+            float3 volumeColor =
+                rawSingleColor *
+                sqrt(saturate(singleAttenuation)) *
+                volumeVisibility;
             float volumeLight =
                 step(2.5f, LightPositionTypes[lightIndex].w) *
                 step(LightPositionTypes[lightIndex].w, 3.5f);
@@ -119,16 +190,17 @@ float3 RayMarchAtmosphereViewFixed(
                 shadowedColor);
             stepScatter += singleAtmosphere * lerp(1.0f, 0.45f, volumeLight);
 
-            // Directional light follows the global atmosphere height profile.
-            // Point/spot/volume lights use a local medium with the atmosphere's
-            // base density, so moving the light upward does not erase its shaft.
             float volumeMediumDensity = lerp(
                 sampleDensity,
                 max(AtmosphereParams0.w, 0.0001f),
                 localLight);
+            float emitterFade = LocalLightEmitterFade(
+                samplePos,
+                LightDirections[lightIndex],
+                LightPositionTypes[lightIndex]);
             stepScatter +=
                 volumeColor * singleVolume * volumeMediumDensity *
-                shaftBoost * localVolumeStepBoost *
+                shaftBoost * localVolumeStepBoost * emitterFade *
                 lerp(0.22f, lerp(0.82f, 1.05f, volumeLight), localLight);
         }
 
@@ -160,9 +232,17 @@ float3 RayMarchAtmosphereViewFixed(
                 0.0f);
             float3 shadowedColor = singleColor * shadowVisibility;
             float localLight = step(0.5f, LightPositionType.w);
-            float volumeVisibility = lerp(shadowVisibility, max(shadowVisibility, 0.45f), localLight);
-            float3 volumeColor = rawSingleColor * sqrt(saturate(singleAttenuation)) * volumeVisibility;
-            float volumeLight = step(2.5f, LightPositionType.w) * step(LightPositionType.w, 3.5f);
+            float volumeVisibility = lerp(
+                shadowVisibility,
+                max(shadowVisibility, 0.45f),
+                localLight);
+            float3 volumeColor =
+                rawSingleColor *
+                sqrt(saturate(singleAttenuation)) *
+                volumeVisibility;
+            float volumeLight =
+                step(2.5f, LightPositionType.w) *
+                step(LightPositionType.w, 3.5f);
             float localVolumeStepBoost = lerp(
                 1.0f,
                 0.35f / max(AtmosphereParams1.w, 0.0001f),
@@ -185,13 +265,24 @@ float3 RayMarchAtmosphereViewFixed(
                 sampleDensity,
                 max(AtmosphereParams0.w, 0.0001f),
                 localLight);
+            float emitterFade = LocalLightEmitterFade(
+                samplePos,
+                LightDirection,
+                LightPositionType);
             stepScatter +=
                 volumeColor * singleVolume * volumeMediumDensity *
-                shaftBoost * localVolumeStepBoost *
+                shaftBoost * localVolumeStepBoost * emitterFade *
                 lerp(0.22f, lerp(0.82f, 1.05f, volumeLight), localLight);
         }
 
-        result += stepScatter * transmittance * scaledStep;
+        // Trapezoidal integration works as a small one-dimensional low-pass
+        // filter and removes the harsh transition between adjacent march cells.
+        float3 filteredStepScatter = (stepIndex > 0)
+            ? (previousStepScatter + stepScatter) * 0.5f
+            : stepScatter;
+        result += filteredStepScatter * transmittance * scaledStep;
+        previousStepScatter = stepScatter;
+
         transmittance *= exp(
             -max(AtmosphereParams1.y, 0.0f) *
             sampleDensity * scaledStep);
@@ -201,10 +292,15 @@ float3 RayMarchAtmosphereViewFixed(
         }
     }
 
-    return result * max(AtmosphereColor0.a, 0.0f) * atmosphereActive * validDistance;
+    return result *
+        max(AtmosphereColor0.a, 0.0f) *
+        atmosphereActive *
+        validDistance;
 }
 
-LocalFogRayResult RayMarchLocalFogBackground(float3 rayEnd)
+LocalFogRayResult RayMarchLocalFogBackground(
+    float3 rayEnd,
+    float2 pixelPosition)
 {
     LocalFogRayResult result;
     result.Scattering = float3(0.0f, 0.0f, 0.0f);
@@ -222,14 +318,29 @@ LocalFogRayResult RayMarchLocalFogBackground(float3 rayEnd)
     float viewDistance = clamp(rawDistance, 0.0001f, 100.0f);
     float3 viewDir = viewDelta / max(rawDistance, 0.0001f);
 
-    const int stepCount = 32;
-    float stepLength = viewDistance / (float)stepCount;
+    const float targetWorldStep = 0.75f;
+    const int minStepCount = 32;
+    const int maxStepCount = 96;
+    int stepCount = clamp(
+        (int)ceil(viewDistance / targetWorldStep),
+        minStepCount,
+        maxStepCount);
+    float stepLength = viewDistance / (float)max(stepCount, 1);
+    float sampleJitter = InterleavedGradientNoiseAtmosphere(pixelPosition + 17.0f);
 
     [loop]
-    for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
+    for (int stepIndex = 0; stepIndex < maxStepCount; ++stepIndex)
     {
-        float t = ((float)stepIndex + 0.5f) / (float)stepCount;
-        float3 samplePos = cameraPos + viewDir * viewDistance * t;
+        if (stepIndex >= stepCount)
+        {
+            break;
+        }
+
+        float sampleOffset = 0.20f + sampleJitter * 0.60f;
+        float sampleDistance = min(
+            ((float)stepIndex + sampleOffset) * stepLength,
+            viewDistance);
+        float3 samplePos = cameraPos + viewDir * sampleDistance;
         float sampleDensity = 0.0f;
         float3 sampleColorSum = float3(0.0f, 0.0f, 0.0f);
 
@@ -296,6 +407,7 @@ float4 main(PSInputPostProcess input) : SV_Target
 
     float3 scatter = RayMarchAtmosphereViewFixed(
         rayEnd,
+        input.Position.xy,
         ShadowMapTexture,
         ShadowSampler,
         LightViewProjection,
@@ -303,7 +415,9 @@ float4 main(PSInputPostProcess input) : SV_Target
 
     if (background)
     {
-        LocalFogRayResult localFog = RayMarchLocalFogBackground(rayEnd);
+        LocalFogRayResult localFog = RayMarchLocalFogBackground(
+            rayEnd,
+            input.Position.xy);
 
         float3 sceneBeforeFog =
             baseColor.rgb +
