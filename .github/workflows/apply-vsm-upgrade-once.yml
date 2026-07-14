@@ -1,6 +1,12 @@
 name: Apply VSM Upgrade Once
 
 on:
+  pull_request:
+    branches:
+      - dev_main_renderoptimize
+    types:
+      - opened
+      - synchronize
   push:
     branches:
       - dev_main_renderoptimize
@@ -47,5 +53,3 @@ jobs:
           git add -A
           git commit -m "Implement paged clipmap VSM and stabilize contact shadows"
           git push origin HEAD:dev_main_renderoptimize
-
-# Triggered after the workflow file was present on the branch.
