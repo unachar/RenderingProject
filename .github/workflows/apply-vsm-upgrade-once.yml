@@ -1,0 +1,49 @@
+name: Apply VSM Upgrade Once
+
+on:
+  push:
+    branches:
+      - dev_main_renderoptimize
+    paths:
+      - .github/workflows/apply-vsm-upgrade-once.yml
+      - .github/scripts/apply_vsm_upgrade.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply-upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out target branch
+        uses: actions/checkout@v4
+        with:
+          ref: dev_main_renderoptimize
+          fetch-depth: 0
+
+      - name: Configure commit identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Apply VSM and contact-shadow upgrade
+        run: python3 .github/scripts/apply_vsm_upgrade.py
+
+      - name: Validate generated diff
+        run: |
+          git diff --check
+          test -n "$(git status --porcelain)"
+          grep -q "VirtualShadowPageOrigins" source/rendererresource.cpp
+          grep -q "VirtualShadowResidency" shader/hlsl/common.hlsl
+          grep -q "ReconstructContactWorldPosition" shader/hlsl/DeferredLightingPS.hlsl
+
+      - name: Remove one-shot automation
+        run: |
+          rm -f .github/scripts/apply_vsm_upgrade.py
+          rm -f .github/workflows/apply-vsm-upgrade-once.yml
+
+      - name: Commit and push generated implementation
+        run: |
+          git add -A
+          git commit -m "Implement paged clipmap VSM and stabilize contact shadows"
+          git push origin HEAD:dev_main_renderoptimize
