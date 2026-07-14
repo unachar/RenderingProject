@@ -86,9 +86,9 @@ float3 RayMarchAtmosphereViewFixed(
     // Keep approximately the same world-space distance between samples as the
     // camera moves. The old fixed 50 steps made the first cone sample move by
     // metres on long background rays, which changed the apparent shaft root.
-    const float targetWorldStep = 0.85f;
+    const float targetWorldStep = 1.20f;
     const int minStepCount = 32;
-    const int maxStepCount = 96;
+    const int maxStepCount = 64;
     int stepCount = clamp(
         (int)ceil(viewDistance / targetWorldStep),
         minStepCount,
@@ -329,9 +329,9 @@ LocalFogRayResult RayMarchLocalFogBackground(
     float viewDistance = clamp(rawDistance, 0.0001f, 100.0f);
     float3 viewDir = viewDelta / max(rawDistance, 0.0001f);
 
-    const float targetWorldStep = 0.75f;
+    const float targetWorldStep = 0.90f;
     const int minStepCount = 32;
-    const int maxStepCount = 96;
+    const int maxStepCount = 64;
     int stepCount = clamp(
         (int)ceil(viewDistance / targetWorldStep),
         minStepCount,
