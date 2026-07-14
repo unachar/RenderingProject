@@ -1,55 +1,57 @@
-name: Apply VSM Upgrade Once
+name: Generate VSM Code Artifact
 
 on:
-  pull_request:
-    branches:
-      - dev_main_renderoptimize
-    types:
-      - opened
-      - synchronize
   push:
     branches:
-      - dev_main_renderoptimize
+      - automation/trigger-vsm-upgrade
     paths:
       - .github/workflows/apply-vsm-upgrade-once.yml
-      - .github/scripts/apply_vsm_upgrade.py
+      - .github/scripts/apply_vsm_upgrade_v2.py
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-upgrade:
+  generate:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out target branch
+      - name: Check out target code
         uses: actions/checkout@v4
         with:
           ref: dev_main_renderoptimize
-          fetch-depth: 0
+          fetch-depth: 1
+          show-progress: false
 
-      - name: Configure commit identity
+      - name: Fetch patch generator
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git show origin/automation/trigger-vsm-upgrade:.github/scripts/apply_vsm_upgrade_v2.py > /tmp/apply_vsm_upgrade_v2.py
 
-      - name: Apply VSM and contact-shadow upgrade
-        run: python3 .github/scripts/apply_vsm_upgrade.py
+      - name: Generate VSM implementation
+        run: python3 /tmp/apply_vsm_upgrade_v2.py
 
-      - name: Validate generated diff
+      - name: Validate code-only diff
         run: |
           git diff --check
           test -n "$(git status --porcelain)"
           grep -q "VirtualShadowPageOrigins" source/rendererresource.cpp
           grep -q "VirtualShadowResidency" shader/hlsl/common.hlsl
           grep -q "ReconstructContactWorldPosition" shader/hlsl/DeferredLightingPS.hlsl
+          grep -q "NeedsRender" source/rendererresource.cpp
 
-      - name: Remove one-shot automation
+      - name: Package modified code
         run: |
-          rm -f .github/scripts/apply_vsm_upgrade.py
-          rm -f .github/workflows/apply-vsm-upgrade-once.yml
+          mkdir -p /tmp/vsm-code/source /tmp/vsm-code/shader/hlsl
+          cp source/rendererstate.h /tmp/vsm-code/source/
+          cp source/renderersettings.h /tmp/vsm-code/source/
+          cp source/rendererresource.cpp /tmp/vsm-code/source/
+          cp source/rendererdraw.cpp /tmp/vsm-code/source/
+          cp shader/hlsl/common.hlsl /tmp/vsm-code/shader/hlsl/
+          cp shader/hlsl/DeferredLightingPS.hlsl /tmp/vsm-code/shader/hlsl/
+          cp shader/hlsl/AtmosphereGBufferPS.hlsl /tmp/vsm-code/shader/hlsl/
 
-      - name: Commit and push generated implementation
-        run: |
-          git add -A
-          git commit -m "Implement paged clipmap VSM and stabilize contact shadows"
-          git push origin HEAD:dev_main_renderoptimize
+      - name: Upload generated code
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsm-code-only
+          path: /tmp/vsm-code
+          if-no-files-found: error
