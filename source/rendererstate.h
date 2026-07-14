@@ -153,7 +153,9 @@ public:
 
 	static constexpr UINT g_kMAX_SHADOW_LIGHTS = 8;
 	static constexpr UINT g_kMAX_VIRTUAL_SHADOW_LEVELS = 4;
-	static constexpr UINT g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION = 2;
+	// A 4x4 requested window is kept resident inside the 16x16 physical atlas.
+	// Camera movement remaps the window as a ring and redraws only entering pages.
+	static constexpr UINT g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION = 4;
 	static constexpr UINT g_kMAX_SHADOW_PASSES =
 		g_kMAX_VIRTUAL_SHADOW_LEVELS *
 		g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION *
@@ -292,7 +294,7 @@ public:
 	static constexpr UINT g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES = 16;
 	static constexpr UINT g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS = 16;
 	static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT =
-		10 + g_kMAX_SHADER_LIGHTS * 9 + g_kMAX_VIRTUAL_SHADOW_LEVELS * 5 + 3 +
+		10 + g_kMAX_SHADER_LIGHTS * 9 + g_kMAX_VIRTUAL_SHADOW_LEVELS * 6 + 16 + 3 +
 		g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS * 2 + 1 +
 		g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES * 3 + 1;
 	static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;

@@ -178,7 +178,9 @@ cbuffer LightParams : register(b1)
     float4 LightShadowData[MAX_SHADER_LIGHTS]; // x: shadow layer, y: texel size, z: depth bias, w: normal bias
     float4x4 VirtualShadowViewProjections[4];
     float4 VirtualShadowParams[4]; // x: physical layer, y: texel size, z: depth bias, w: normal bias
-    float4 VirtualShadowGlobal; // x: enabled, y: level count, z: PCF radius, w: clipmap guard band
+    float4 VirtualShadowPageOrigins[4]; // xy: global page origin, z: page grid, w: page world size
+    uint4 VirtualShadowResidency[16]; // four packed 16-row masks per clipmap level
+    float4 VirtualShadowGlobal; // x: mode, y: level count, z: PCF radius, w: transition width in pages
     float4 ShadowRuntimeGlobal; // x: contact enabled, y: length, z: steps, w: method
     float4 ShadowDebugGlobal; // x: mode, y: cache hit, z: resident pages per dimension, w: pages per dimension
     float4 DistanceFieldData0[16]; // xyz: world AABB center, w: active
@@ -194,6 +196,61 @@ cbuffer LightParams : register(b1)
     float4 AtmosphereColor1;  // rgb: mie color, a: ambient strength
     float4 AtmosphereCamera;  // xyz: camera position
 };
+
+uint VirtualShadowResidencyRowCommon(int level, int row)
+{
+    uint4 packedRows = VirtualShadowResidency[level * 4 + row / 4];
+    return packedRows[row & 3];
+}
+
+bool VirtualShadowPageResidentCommon(int level, int2 localPage)
+{
+    int pageGrid = max((int)round(VirtualShadowPageOrigins[level].z), 1);
+    if (level < 0 || level >= 4 ||
+        localPage.x < 0 || localPage.x >= pageGrid ||
+        localPage.y < 0 || localPage.y >= pageGrid)
+    {
+        return false;
+    }
+    uint rowMask = VirtualShadowResidencyRowCommon(level, localPage.y);
+    return (rowMask & (1u << localPage.x)) != 0u;
+}
+
+int VirtualShadowPositiveModuloCommon(int value, int modulus)
+{
+    int result = value % modulus;
+    return result < 0 ? result + modulus : result;
+}
+
+float2 VirtualShadowMapUvCommon(
+    int level,
+    float2 virtualUv,
+    out bool resident,
+    out int2 localPage)
+{
+    int pageGrid = max((int)round(VirtualShadowPageOrigins[level].z), 1);
+    float2 pagePosition = virtualUv * (float)pageGrid;
+    localPage = (int2)floor(pagePosition);
+    resident =
+        all(virtualUv >= 0.0f) && all(virtualUv < 1.0f) &&
+        VirtualShadowPageResidentCommon(level, localPage);
+    if (!resident)
+    {
+        return float2(0.0f, 0.0f);
+    }
+
+    int2 globalPage = (int2)round(VirtualShadowPageOrigins[level].xy) + localPage;
+    int2 physicalPage = int2(
+        VirtualShadowPositiveModuloCommon(globalPage.x, pageGrid),
+        VirtualShadowPositiveModuloCommon(globalPage.y, pageGrid));
+    float2 inPageUv = frac(pagePosition);
+    float halfLocalTexel = VirtualShadowParams[level].y * (float)pageGrid * 0.5f;
+    inPageUv = clamp(
+        inPageUv,
+        float2(halfLocalTexel, halfLocalTexel),
+        float2(1.0f - halfLocalTexel, 1.0f - halfLocalTexel));
+    return ((float2)physicalPage + inPageUv) / (float)pageGrid;
+}
 
 float3 ApplyLocalHeightFogCommon(float3 color, float3 worldPos, float3 cameraPos)
 {
@@ -412,6 +469,38 @@ float SampleAtmosphereShadowMap(
     float shadowStrength = saturate(abs(shadowMapParams.w));
     float outOfBoundsVisibility = 1.0f;
     return lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
+}
+
+
+float SampleVirtualAtmosphereShadowMapCommon(
+    float3 worldPos,
+    Texture2DArray<float> shadowMap,
+    SamplerState shadowSampler)
+{
+    int levelCount = clamp((int)round(VirtualShadowGlobal.y), 1, 4);
+    [unroll]
+    for (int level = 0; level < 4; ++level)
+    {
+        if (level >= levelCount) break;
+        float4 clip = mul(float4(worldPos, 1.0f), VirtualShadowViewProjections[level]);
+        if (clip.w <= 0.000001f) continue;
+        float3 ndc = clip.xyz / clip.w;
+        if (ndc.z < 0.0f || ndc.z > 1.0f) continue;
+        float2 virtualUv = float2(ndc.x * 0.5f + 0.5f, -ndc.y * 0.5f + 0.5f);
+        bool resident;
+        int2 localPage;
+        float2 physicalUv = VirtualShadowMapUvCommon(level, virtualUv, resident, localPage);
+        if (!resident) continue;
+
+        float4 params = VirtualShadowParams[level];
+        float currentDepth = ndc.z - max(params.z, params.w) * (1.0f + level * 0.45f);
+        float closestDepth = shadowMap.SampleLevel(
+            shadowSampler,
+            float3(physicalUv, max(params.x, 0.0f)),
+            0);
+        return currentDepth <= closestDepth ? 1.0f : 0.0f;
+    }
+    return 1.0f;
 }
 
 

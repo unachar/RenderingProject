@@ -53,7 +53,7 @@ public:
 	{
 		s_ShadowMapMethod = ShadowMapMethod::VirtualShadowMap;
 		s_VirtualClipmapLevels = 4;
-		s_VirtualFirstLevelRadius = 12.0f;
+		s_VirtualFirstLevelRadius = 16.0f;
 		s_ShadowFilterRadius = 1;
 		s_ShadowDepthBias = 0.000008f;
 		s_ShadowNormalBias = 0.00001f;
@@ -62,8 +62,8 @@ public:
 		s_ShadowCascadeCount = 4;
 		s_ShadowDistance = 96.0f;
 		s_ContactShadowsEnabled = true;
-		s_ContactShadowLength = 0.8f;
-		s_ContactShadowSteps = 8;
+		s_ContactShadowLength = 0.65f;
+		s_ContactShadowSteps = 16;
 		s_VirtualShadowDebugMode = 0;
 		s_DistanceFieldShadowsEnabled = false;
 		s_DistanceFieldShadowDistance = 30.0f;
@@ -84,7 +84,7 @@ private:
 
 	inline static ShadowMapMethod s_ShadowMapMethod = ShadowMapMethod::VirtualShadowMap;
 	inline static int s_VirtualClipmapLevels = 4;
-	inline static float s_VirtualFirstLevelRadius = 12.0f;
+	inline static float s_VirtualFirstLevelRadius = 16.0f;
 	inline static int s_ShadowFilterRadius = 1;
 	inline static float s_ShadowDepthBias = 0.000008f;
 	inline static float s_ShadowNormalBias = 0.00001f;
@@ -93,8 +93,8 @@ private:
 	inline static int s_ShadowCascadeCount = 4;
 	inline static float s_ShadowDistance = 96.0f;
 	inline static bool s_ContactShadowsEnabled = true;
-	inline static float s_ContactShadowLength = 0.8f;
-	inline static int s_ContactShadowSteps = 8;
+	inline static float s_ContactShadowLength = 0.65f;
+	inline static int s_ContactShadowSteps = 16;
 	inline static int s_VirtualShadowDebugMode = 0;
 	inline static bool s_DistanceFieldShadowsEnabled = false;
 	inline static float s_DistanceFieldShadowDistance = 30.0f;

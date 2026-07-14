@@ -14,6 +14,7 @@
 #include "renderersettings.h"
 #include "localheightfog.h"
 #include <limits>
+#include <climits>
 
 namespace
 {
@@ -72,6 +73,7 @@ namespace
 		UINT Size = RendererState::g_kSHADOW_MAP_SIZE;
 		bool ClearLayer = true;
 		bool VirtualPage = false;
+		bool NeedsRender = true;
 	};
 	XMMATRIX g_ShadowLightViewProjections[RendererState::g_kMAX_SHADOW_LIGHTS]{};
 	XMFLOAT4 g_ShadowMapParams[RendererState::g_kMAX_SHADOW_LIGHTS]{};
@@ -82,6 +84,20 @@ namespace
 	EntityID g_VirtualShadowLightEntity = g_kINVALID_ENTITY;
 	XMMATRIX g_VirtualShadowViewProjections[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
 	XMFLOAT4 g_VirtualShadowParams[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
+	XMFLOAT4 g_VirtualShadowPageOrigins[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
+	uint32_t g_VirtualShadowResidencyRows[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]
+		[RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION]{};
+	struct VirtualShadowPhysicalPageCache
+	{
+		int GlobalPageX = INT_MIN;
+		int GlobalPageY = INT_MIN;
+		uint64_t ContentKey = 0;
+		bool Valid = false;
+	};
+	VirtualShadowPhysicalPageCache g_VirtualShadowPageCache
+		[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]
+		[RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION]
+		[RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION]{};
 	UINT g_VirtualShadowLevelCount = 0;
 	float g_DirectionalShadowMode = 0.0f;
 	uint64_t g_PreviousVirtualShadowCacheKey = 0;
@@ -109,7 +125,9 @@ namespace
 		XMFLOAT4 LightShadowData[RendererState::g_kMAX_SHADER_LIGHTS]{};
 		XMMATRIX VirtualShadowViewProjections[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
 		XMFLOAT4 VirtualShadowParams[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
-		XMFLOAT4 VirtualShadowGlobal = { 0.0f, 0.0f, 1.0f, 0.0f };
+		XMFLOAT4 VirtualShadowPageOrigins[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
+		XMUINT4 VirtualShadowResidency[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS * 4]{};
+		XMFLOAT4 VirtualShadowGlobal = { 0.0f, 0.0f, 1.0f, 0.8f };
 		XMFLOAT4 ShadowRuntimeGlobal = { 1.0f, 0.8f, 8.0f, 0.0f };
 		XMFLOAT4 ShadowDebugGlobal = { 0.0f, 0.0f, 128.0f, 16.0f };
 		XMFLOAT4 DistanceFieldData0[RendererState::g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS]{};
@@ -376,6 +394,7 @@ namespace
 		g_ShadowRenderPassCount = 0;
 		g_VirtualShadowLightEntity = g_kINVALID_ENTITY;
 		g_VirtualShadowLevelCount = 0;
+		memset(g_VirtualShadowResidencyRows, 0, sizeof(g_VirtualShadowResidencyRows));
 		g_DirectionalShadowMode = 0.0f;
 		g_CurrentShadowPassIndex = 0;
 		for (UINT i = 0; i < RendererState::g_kMAX_SHADOW_LIGHTS; ++i)
@@ -392,6 +411,8 @@ namespace
 		{
 			g_VirtualShadowViewProjections[i] = XMMatrixIdentity();
 			g_VirtualShadowParams[i] = XMFLOAT4(-1.0f, 1.0f / RendererState::g_kSHADOW_MAP_SIZE, 0.0f, 0.0f);
+			g_VirtualShadowPageOrigins[i] = XMFLOAT4(0.0f, 0.0f,
+				static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION), 0.0f);
 		}
 
 		for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
@@ -471,7 +492,43 @@ namespace
 			g_CachedShadowLight = g_CachedDirectionalLight.HasLight ? g_CachedDirectionalLight : g_CachedAnyLight;
 		}
 
-		for (UINT layer = 0; layer < g_ShadowLightCount && g_ShadowRenderPassCount < RendererState::g_kMAX_SHADOW_PASSES; ++layer)
+		uint64_t virtualSceneKey = 1469598103934665603ull;
+		auto hashVirtualBytes = [&](const void* data, size_t size)
+		{
+			const auto* bytes = static_cast<const uint8_t*>(data);
+			for (size_t byteIndex = 0; byteIndex < size; ++byteIndex)
+			{
+				virtualSceneKey ^= bytes[byteIndex];
+				virtualSceneKey *= 1099511628211ull;
+			}
+		};
+		const uint64_t settingsRevision = RendererSettings::GetRevision();
+		hashVirtualBytes(&settingsRevision, sizeof(settingsRevision));
+		if (g_CachedDirectionalLight.HasLight)
+		{
+			hashVirtualBytes(
+				&g_CachedDirectionalLight.Component.Direction,
+				sizeof(g_CachedDirectionalLight.Component.Direction));
+		}
+		for (EntityID entity : World::GetView<TransformComponent>())
+		{
+			if (!IsShadowBoundsEntity(entity)) continue;
+			const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+			hashVirtualBytes(&entity, sizeof(entity));
+			hashVirtualBytes(&transform.Position, sizeof(transform.Position));
+			hashVirtualBytes(&transform.Rotation, sizeof(transform.Rotation));
+			hashVirtualBytes(&transform.Scale, sizeof(transform.Scale));
+		}
+
+		if (g_DirectionalShadowMode != 1.0f)
+		{
+			memset(g_VirtualShadowPageCache, 0, sizeof(g_VirtualShadowPageCache));
+		}
+		g_VirtualShadowCacheHit = g_DirectionalShadowMode == 1.0f;
+
+		for (UINT layer = 0;
+			layer < g_ShadowLightCount && g_ShadowRenderPassCount < RendererState::g_kMAX_SHADOW_PASSES;
+			++layer)
 		{
 			const bool virtualLayer =
 				g_DirectionalShadowMode == 1.0f &&
@@ -487,14 +544,34 @@ namespace
 				pass.Size = RendererState::g_kSHADOW_MAP_SIZE;
 				pass.ClearLayer = true;
 				pass.VirtualPage = false;
+				pass.NeedsRender = true;
 				continue;
 			}
 
+			UINT virtualLevel = 0;
+			for (UINT level = 0; level < g_VirtualShadowLevelCount; ++level)
+			{
+				if (static_cast<UINT>(max(g_VirtualShadowParams[level].x, 0.0f)) == layer)
+				{
+					virtualLevel = level;
+					break;
+				}
+			}
+
 			const UINT pageGrid = RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION;
-			const UINT residentGrid = RendererState::g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION;
+			const UINT residentGrid = min(
+				RendererState::g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION,
+				pageGrid);
 			const UINT firstPage = (pageGrid - residentGrid) / 2;
+			const int pageOriginX = static_cast<int>(roundf(g_VirtualShadowPageOrigins[virtualLevel].x));
+			const int pageOriginY = static_cast<int>(roundf(g_VirtualShadowPageOrigins[virtualLevel].y));
 			const XMMATRIX fullViewProjection = XMMatrixTranspose(g_ShadowLightViewProjections[layer]);
-			bool firstPassForLayer = true;
+			auto positiveModulo = [](int value, int modulus)
+			{
+				const int result = value % modulus;
+				return result < 0 ? result + modulus : result;
+			};
+
 			for (UINT localPageY = 0; localPageY < residentGrid; ++localPageY)
 			{
 				for (UINT localPageX = 0; localPageX < residentGrid; ++localPageX)
@@ -502,8 +579,39 @@ namespace
 					if (g_ShadowRenderPassCount >= RendererState::g_kMAX_SHADOW_PASSES) break;
 					const UINT pageX = firstPage + localPageX;
 					const UINT pageY = firstPage + localPageY;
-					const float centerX = -1.0f + (2.0f * static_cast<float>(pageX) + 1.0f) / static_cast<float>(pageGrid);
-					const float centerY = 1.0f - (2.0f * static_cast<float>(pageY) + 1.0f) / static_cast<float>(pageGrid);
+					g_VirtualShadowResidencyRows[virtualLevel][pageY] |= (1u << pageX);
+
+					const int globalPageX = pageOriginX + static_cast<int>(pageX);
+					const int globalPageY = pageOriginY + static_cast<int>(pageY);
+					const UINT physicalPageX = static_cast<UINT>(positiveModulo(globalPageX, static_cast<int>(pageGrid)));
+					const UINT physicalPageY = static_cast<UINT>(positiveModulo(globalPageY, static_cast<int>(pageGrid)));
+
+					uint64_t pageContentKey = virtualSceneKey;
+					auto hashPageValue = [&](const void* data, size_t size)
+					{
+						const auto* bytes = static_cast<const uint8_t*>(data);
+						for (size_t byteIndex = 0; byteIndex < size; ++byteIndex)
+						{
+							pageContentKey ^= bytes[byteIndex];
+							pageContentKey *= 1099511628211ull;
+						}
+					};
+					hashPageValue(&virtualLevel, sizeof(virtualLevel));
+					hashPageValue(&globalPageX, sizeof(globalPageX));
+					hashPageValue(&globalPageY, sizeof(globalPageY));
+
+					auto& cacheEntry = g_VirtualShadowPageCache[virtualLevel][physicalPageY][physicalPageX];
+					const bool needsRender =
+						!RendererSettings::GetCacheVirtualShadowPages() ||
+						!cacheEntry.Valid ||
+						cacheEntry.GlobalPageX != globalPageX ||
+						cacheEntry.GlobalPageY != globalPageY ||
+						cacheEntry.ContentKey != pageContentKey;
+
+					const float centerX = -1.0f +
+						(2.0f * static_cast<float>(pageX) + 1.0f) / static_cast<float>(pageGrid);
+					const float centerY = 1.0f -
+						(2.0f * static_cast<float>(pageY) + 1.0f) / static_cast<float>(pageGrid);
 					const XMMATRIX crop =
 						XMMatrixTranslation(-centerX, -centerY, 0.0f) *
 						XMMatrixScaling(static_cast<float>(pageGrid), static_cast<float>(pageGrid), 1.0f);
@@ -512,45 +620,24 @@ namespace
 					pass.ViewProjection = XMMatrixTranspose(fullViewProjection * crop);
 					pass.Params = g_ShadowMapParams[layer];
 					pass.Layer = layer;
-					pass.X = pageX * RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
-					pass.Y = pageY * RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
+					pass.X = physicalPageX * RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
+					pass.Y = physicalPageY * RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
 					pass.Size = RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
-					pass.ClearLayer = firstPassForLayer;
+					pass.ClearLayer = false;
 					pass.VirtualPage = true;
-					firstPassForLayer = false;
+					pass.NeedsRender = needsRender;
+
+					if (needsRender)
+					{
+						g_VirtualShadowCacheHit = false;
+						cacheEntry.GlobalPageX = globalPageX;
+						cacheEntry.GlobalPageY = globalPageY;
+						cacheEntry.ContentKey = pageContentKey;
+						cacheEntry.Valid = true;
+					}
 				}
 			}
 		}
-
-		uint64_t cacheKey = 1469598103934665603ull;
-		auto hashBytes = [&](const void* data, size_t size)
-		{
-			const auto* bytes = static_cast<const uint8_t*>(data);
-			for (size_t byteIndex = 0; byteIndex < size; ++byteIndex)
-			{
-				cacheKey ^= bytes[byteIndex];
-				cacheKey *= 1099511628211ull;
-			}
-		};
-		const XMFLOAT3 cameraPosition = GetActiveCameraPosition();
-		hashBytes(&cameraPosition, sizeof(cameraPosition));
-		const uint64_t settingsRevision = RendererSettings::GetRevision();
-		hashBytes(&settingsRevision, sizeof(settingsRevision));
-		for (EntityID entity : World::GetView<TransformComponent>())
-		{
-			if (!IsShadowBoundsEntity(entity) && !ComponentManager::HasComponent<LightComponent>(entity)) continue;
-			const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-			hashBytes(&entity, sizeof(entity));
-			hashBytes(&transform.Position, sizeof(transform.Position));
-			hashBytes(&transform.Rotation, sizeof(transform.Rotation));
-			hashBytes(&transform.Scale, sizeof(transform.Scale));
-		}
-		g_VirtualShadowCacheHit =
-			RendererSettings::GetCacheVirtualShadowPages() &&
-			g_DirectionalShadowMode == 1.0f &&
-			g_PreviousVirtualShadowCacheKey != 0 &&
-			g_PreviousVirtualShadowCacheKey == cacheKey;
-		g_PreviousVirtualShadowCacheKey = cacheKey;
 		g_LightCacheValid = true;
 	}
 
@@ -822,31 +909,73 @@ namespace
 		}
 		lightDirection = XMVector3Normalize(lightDirection);
 
-		XMFLOAT3 cameraPosition = GetActiveCameraPosition();
 		const bool conventionalCascade = level >= 4;
 		const UINT actualLevel = conventionalCascade ? level - 4 : level;
 		const UINT cascadeCount = static_cast<UINT>(RendererSettings::GetShadowCascadeCount());
-		const float radius = conventionalCascade
-			? RendererSettings::GetShadowDistance() / static_cast<float>(1u << max(0, static_cast<int>(cascadeCount - 1 - actualLevel)))
+		float radius = conventionalCascade
+			? RendererSettings::GetShadowDistance() /
+				static_cast<float>(1u << max(0, static_cast<int>(cascadeCount - 1 - actualLevel)))
 			: RendererSettings::GetVirtualFirstLevelRadius() * static_cast<float>(1u << actualLevel);
+		if (!conventionalCascade && actualLevel == 3)
+		{
+			const float residentFraction =
+				static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION) /
+				static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION);
+			radius = max(radius, RendererSettings::GetShadowDistance() / max(residentFraction, 0.01f));
+		}
+
+		XMVECTOR viewForward = XMVectorNegate(lightDirection);
+		XMVECTOR upHint = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+		if (fabsf(XMVectorGetX(XMVector3Dot(viewForward, upHint))) > 0.96f)
+		{
+			upHint = XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
+		}
+		const XMVECTOR right = XMVector3Normalize(XMVector3Cross(upHint, viewForward));
+		const XMVECTOR lightUp = XMVector3Normalize(XMVector3Cross(viewForward, right));
+		const XMFLOAT3 cameraPosition = GetActiveCameraPosition();
+		const XMVECTOR camera = XMLoadFloat3(&cameraPosition);
+
+		float planeX = XMVectorGetX(XMVector3Dot(camera, right));
+		float planeY = XMVectorGetX(XMVector3Dot(camera, lightUp));
+		const float planeZ = XMVectorGetX(XMVector3Dot(camera, lightDirection));
+		const float pageGrid = static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION);
+		const float pageWorldSize = (radius * 2.0f) / pageGrid;
+
 		if (RendererSettings::GetStabilizeVirtualClipmaps())
 		{
-			const float worldUnitsPerTexel = (radius * 2.0f) / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE);
-			cameraPosition.x = roundf(cameraPosition.x / worldUnitsPerTexel) * worldUnitsPerTexel;
-			cameraPosition.y = roundf(cameraPosition.y / worldUnitsPerTexel) * worldUnitsPerTexel;
-			cameraPosition.z = roundf(cameraPosition.z / worldUnitsPerTexel) * worldUnitsPerTexel;
+			const float snapSize = conventionalCascade
+				? (radius * 2.0f) / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE)
+				: pageWorldSize;
+			planeX = roundf(planeX / snapSize) * snapSize;
+			planeY = roundf(planeY / snapSize) * snapSize;
 		}
 
-		const XMVECTOR target = XMVectorSet(cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f);
-		const XMVECTOR lightPosition = XMVectorAdd(target, XMVectorScale(lightDirection, max(120.0f, radius * 3.0f)));
-		XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-		if (fabsf(XMVectorGetX(XMVector3Dot(lightDirection, up))) > 0.96f)
+		XMVECTOR target = XMVectorAdd(
+			XMVectorAdd(XMVectorScale(right, planeX), XMVectorScale(lightUp, planeY)),
+			XMVectorScale(lightDirection, planeZ));
+		target = XMVectorSetW(target, 1.0f);
+
+		if (!conventionalCascade && actualLevel < RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS)
 		{
-			up = XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
+			const int centerPageX = static_cast<int>(roundf(planeX / pageWorldSize));
+			const int centerPageY = static_cast<int>(roundf(-planeY / pageWorldSize));
+			const int halfGrid = static_cast<int>(RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION / 2);
+			g_VirtualShadowPageOrigins[actualLevel] = XMFLOAT4(
+				static_cast<float>(centerPageX - halfGrid),
+				static_cast<float>(centerPageY - halfGrid),
+				pageGrid,
+				pageWorldSize);
 		}
 
-		const XMMATRIX view = XMMatrixLookAtLH(lightPosition, target, up);
-		const XMMATRIX projection = XMMatrixOrthographicLH(radius * 2.0f, radius * 2.0f, 0.1f, max(300.0f, radius * 8.0f));
+		const XMVECTOR lightPosition = XMVectorAdd(
+			target,
+			XMVectorScale(lightDirection, max(120.0f, radius * 3.0f)));
+		const XMMATRIX view = XMMatrixLookAtLH(lightPosition, target, lightUp);
+		const XMMATRIX projection = XMMatrixOrthographicLH(
+			radius * 2.0f,
+			radius * 2.0f,
+			0.1f,
+			max(300.0f, radius * 8.0f));
 		outLightViewProjection = XMMatrixTranspose(view * projection);
 		outShadowMapParams = XMFLOAT4(
 			1.0f / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE),
@@ -1261,12 +1390,25 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 	{
 		constants.VirtualShadowViewProjections[i] = g_VirtualShadowViewProjections[i];
 		constants.VirtualShadowParams[i] = g_VirtualShadowParams[i];
+		constants.VirtualShadowPageOrigins[i] = g_VirtualShadowPageOrigins[i];
+	}
+	for (UINT level = 0; level < RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS; ++level)
+	{
+		for (UINT group = 0; group < 4; ++group)
+		{
+			const UINT row = group * 4;
+			constants.VirtualShadowResidency[level * 4 + group] = XMUINT4(
+				g_VirtualShadowResidencyRows[level][row + 0],
+				g_VirtualShadowResidencyRows[level][row + 1],
+				g_VirtualShadowResidencyRows[level][row + 2],
+				g_VirtualShadowResidencyRows[level][row + 3]);
+		}
 	}
 	constants.VirtualShadowGlobal = XMFLOAT4(
 		g_DirectionalShadowMode,
 		static_cast<float>(g_VirtualShadowLevelCount),
 		static_cast<float>(RendererSettings::GetShadowFilterRadius()),
-		0.06f);
+		0.8f);
 	constants.ShadowRuntimeGlobal = XMFLOAT4(
 		RendererSettings::GetContactShadowsEnabled() ? 1.0f : 0.0f,
 		RendererSettings::GetContactShadowLength(),
@@ -1582,8 +1724,8 @@ bool RendererResource::ShouldRenderShadowPass(UINT shadowIndex)
 {
 	if (!g_LightCacheValid) RebuildLightCache();
 	if (shadowIndex >= g_ShadowRenderPassCount) return false;
-	const bool virtualDirectionalPass = g_ShadowRenderPasses[shadowIndex].VirtualPage;
-	return !virtualDirectionalPass || !g_VirtualShadowCacheHit;
+	const ShadowRenderPass& pass = g_ShadowRenderPasses[shadowIndex];
+	return !pass.VirtualPage || pass.NeedsRender;
 }
 
 bool RendererResource::IsVirtualShadowCacheHit()

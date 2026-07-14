@@ -306,6 +306,12 @@ bool RendererDraw::BeginShadowPass(UINT shadowIndex)
 	{
 		m_CommandList->ClearDepthStencilView(shadowDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 	}
+	else
+	{
+		// Virtual pages share a depth-array layer. Clear only this physical slot.
+		m_CommandList->ClearDepthStencilView(
+			shadowDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &shadowScissor);
+	}
 	m_CommandList->OMSetRenderTargets(0, nullptr, FALSE, &shadowDsvHandle);
 	m_CommandList->SetGraphicsRootSignature(m_ModelRootSignature.Get());
 	if (m_ShadowConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(5, RendererResource::GetShadowConstantBufferAddress(shadowIndex));

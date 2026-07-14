@@ -85,19 +85,31 @@ float3 RayMarchAtmosphereViewFixed(
             float shadowVisibility = 1.0f;
             if (LightShadowData[lightIndex].x >= -0.5f)
             {
-                float4 perLightShadowParams = float4(
-                    LightShadowData[lightIndex].y,
-                    LightShadowData[lightIndex].z,
-                    LightShadowData[lightIndex].w,
-                    1.0f);
-                shadowVisibility = SampleAtmosphereShadowMap(
-                    samplePos,
-                    singleDir,
-                    shadowMap,
-                    shadowSampler,
-                    LightViewProjections[lightIndex],
-                    perLightShadowParams,
-                    LightShadowData[lightIndex].x);
+                const bool virtualDirectional =
+                    VirtualShadowGlobal.x > 0.5f &&
+                    LightPositionTypes[lightIndex].w < 0.5f &&
+                    LightShadowData[lightIndex].w < 0.0f;
+                if (virtualDirectional)
+                {
+                    shadowVisibility = SampleVirtualAtmosphereShadowMapCommon(
+                        samplePos, shadowMap, shadowSampler);
+                }
+                else
+                {
+                    float4 perLightShadowParams = float4(
+                        LightShadowData[lightIndex].y,
+                        LightShadowData[lightIndex].z,
+                        LightShadowData[lightIndex].w,
+                        1.0f);
+                    shadowVisibility = SampleAtmosphereShadowMap(
+                        samplePos,
+                        singleDir,
+                        shadowMap,
+                        shadowSampler,
+                        LightViewProjections[lightIndex],
+                        perLightShadowParams,
+                        LightShadowData[lightIndex].x);
+                }
             }
 
             float3 shadowedColor = singleColor * shadowVisibility;
@@ -157,14 +169,17 @@ float3 RayMarchAtmosphereViewFixed(
                 max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) *
                 max(LightColor.a, 0.0f);
             float3 singleColor = rawSingleColor * singleAttenuation;
-            float shadowVisibility = SampleAtmosphereShadowMap(
-                samplePos,
-                singleDir,
-                shadowMap,
-                shadowSampler,
-                lightViewProjection,
-                shadowMapParams,
-                0.0f);
+            float shadowVisibility =
+                (VirtualShadowGlobal.x > 0.5f && LightPositionType.w < 0.5f)
+                ? SampleVirtualAtmosphereShadowMapCommon(samplePos, shadowMap, shadowSampler)
+                : SampleAtmosphereShadowMap(
+                    samplePos,
+                    singleDir,
+                    shadowMap,
+                    shadowSampler,
+                    lightViewProjection,
+                    shadowMapParams,
+                    0.0f);
             float3 shadowedColor = singleColor * shadowVisibility;
             float localLight = step(0.5f, LightPositionType.w);
             float volumeVisibility = lerp(shadowVisibility, max(shadowVisibility, 0.45f), localLight);
