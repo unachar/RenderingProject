@@ -176,12 +176,53 @@ cbuffer LightParams : register(b1)
     float4 LightExtras[MAX_SHADER_LIGHTS];
     float4x4 LightViewProjections[MAX_SHADER_LIGHTS];
     float4 LightShadowData[MAX_SHADER_LIGHTS]; // x: shadow layer, y: texel size, z: depth bias, w: normal bias
+    float4x4 VirtualShadowViewProjections[4];
+    float4 VirtualShadowParams[4]; // x: physical layer, y: texel size, z: depth bias, w: normal bias
+    float4 VirtualShadowGlobal; // x: enabled, y: level count, z: PCF radius, w: clipmap guard band
+    float4 ShadowRuntimeGlobal; // x: contact enabled, y: length, z: steps, w: method
+    float4 ShadowDebugGlobal; // x: mode, y: cache hit, z: resident pages per dimension, w: pages per dimension
+    float4 DistanceFieldData0[16]; // xyz: world AABB center, w: active
+    float4 DistanceFieldData1[16]; // xyz: world AABB extents
+    float4 DistanceFieldGlobal; // x: object count, y: ray distance, z: steps
+    float4 LocalFogData0[16]; // xyz: center, w: radius
+    float4 LocalFogData1[16]; // x: height falloff, y: density, z: shape, w: enabled
+    float4 LocalFogColors[16];
+    float4 LocalFogGlobal; // x: active volume count
     float4 AtmosphereParams0; // x: enabled, y: rayleigh, z: mie, w: density
     float4 AtmosphereParams1; // x: height falloff, y: extinction, z: mie g, w: distance scale
     float4 AtmosphereColor0;  // rgb: rayleigh color, a: light shaft strength
     float4 AtmosphereColor1;  // rgb: mie color, a: ambient strength
     float4 AtmosphereCamera;  // xyz: camera position
 };
+
+float3 ApplyLocalHeightFogCommon(float3 color, float3 worldPos, float3 cameraPos)
+{
+    float accumulatedDensity = 0.0f;
+    float3 accumulatedColor = float3(0.0f, 0.0f, 0.0f);
+    int fogCount = min((int)round(LocalFogGlobal.x), 16);
+    [loop]
+    for (int fogIndex = 0; fogIndex < fogCount; ++fogIndex)
+    {
+        float4 data0 = LocalFogData0[fogIndex];
+        float4 data1 = LocalFogData1[fogIndex];
+        if (data1.w < 0.5f) continue;
+        float3 delta = worldPos - data0.xyz;
+        float radius = max(data0.w, 0.01f);
+        float horizontal = saturate(1.0f - length(delta.xz) / radius);
+        float heightWeight = exp(-abs(delta.y) * max(data1.x, 0.0001f));
+        float sphereWeight = saturate(1.0f - length(delta) / radius);
+        float volumeWeight = lerp(horizontal * heightWeight, sphereWeight, step(0.5f, data1.z));
+        float contribution = volumeWeight * max(data1.y, 0.0f);
+        accumulatedDensity += contribution;
+        accumulatedColor += LocalFogColors[fogIndex].rgb * contribution;
+    }
+    float viewDistance = length(worldPos - cameraPos);
+    float fogAmount = 1.0f - exp(-accumulatedDensity * min(viewDistance, 100.0f) * 0.08f);
+    float3 fogColor = accumulatedDensity > 0.00001f
+        ? accumulatedColor / accumulatedDensity
+        : color;
+    return lerp(color, fogColor, saturate(fogAmount));
+}
 
 float3 SafeNormalizeCommon(float3 value, float3 fallback)
 {

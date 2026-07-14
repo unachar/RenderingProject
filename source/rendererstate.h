@@ -151,7 +151,14 @@ public:
 	static constexpr uint32_t g_kFRAME_COUNT = 3;
 	static constexpr UINT g_kMAX_SHADER_LIGHTS = 20;
 
-	static constexpr UINT g_kMAX_SHADOW_LIGHTS = 5;
+	static constexpr UINT g_kMAX_SHADOW_LIGHTS = 8;
+	static constexpr UINT g_kMAX_VIRTUAL_SHADOW_LEVELS = 4;
+	static constexpr UINT g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION = 2;
+	static constexpr UINT g_kMAX_SHADOW_PASSES =
+		g_kMAX_VIRTUAL_SHADOW_LEVELS *
+		g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION *
+		g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION +
+		g_kMAX_SHADOW_LIGHTS;
 protected:
 	static ComPtr<ID3D12Device> m_Device;
 	static ComPtr<ID3D12CommandQueue> m_CommandQueue;
@@ -282,16 +289,23 @@ public:
 
 	static constexpr UINT g_kCB_ALIGNED_SIZE = (sizeof(ConstantBuffer3D) + 255) & ~255;
 	static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * 44 + 255) & ~255;
-	static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT = 10 + g_kMAX_SHADER_LIGHTS * 9;
+	static constexpr UINT g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES = 16;
+	static constexpr UINT g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS = 16;
+	static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT =
+		10 + g_kMAX_SHADER_LIGHTS * 9 + g_kMAX_VIRTUAL_SHADOW_LEVELS * 5 + 3 +
+		g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS * 2 + 1 +
+		g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES * 3 + 1;
 	static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;
 	static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 512 + 255) & ~255;
 	static constexpr UINT g_kPBR_CB_SLOT_COUNT = g_kMAX_ENTITIES + 1;
 	static constexpr UINT g_kPBR_CB_TOTAL_SLOT_COUNT = g_kPBR_CB_SLOT_COUNT * g_kFRAME_COUNT;
 	static constexpr UINT g_kSHADOW_CB_ALIGNED_SIZE = (sizeof(XMMATRIX) + sizeof(float) * 4 + 255) & ~255;
-	static constexpr UINT g_kSHADOW_CB_SLOT_COUNT = g_kFRAME_COUNT * g_kMAX_SHADOW_LIGHTS;
+	static constexpr UINT g_kSHADOW_CB_SLOT_COUNT = g_kFRAME_COUNT * g_kMAX_SHADOW_PASSES;
 
 	static constexpr UINT g_kSHADOW_MAP_SIZE = 2048;
 	static constexpr UINT g_kSHADOW_MAP_SIZE_SMALL = 1024;
+	static constexpr UINT g_kVIRTUAL_SHADOW_PAGE_SIZE = 128;
+	static constexpr UINT g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION = g_kSHADOW_MAP_SIZE / g_kVIRTUAL_SHADOW_PAGE_SIZE;
 	static constexpr UINT g_kTRANSIENT_CB_SLOT_COUNT = 2048;
 	static constexpr UINT g_kTRANSIENT_CB_START_INDEX = g_kMAX_ENTITIES;
 	static constexpr UINT g_kCBV_PER_FRAME_COUNT = g_kMAX_ENTITIES + g_kTRANSIENT_CB_SLOT_COUNT;

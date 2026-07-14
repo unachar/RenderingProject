@@ -38,7 +38,45 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
 
     float3 n = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
     float3 l = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
-    float4 lightClip = mul(float4(worldPos, 1.0f), LightViewProjections[lightIndex]);
+    const bool virtualShadow = VirtualShadowGlobal.x > 0.5f && LightShadowData[lightIndex].w < 0.0f;
+    float4x4 selectedMatrix = LightViewProjections[lightIndex];
+    float4 selectedParams = float4(
+        safeShadowLayer,
+        LightShadowData[lightIndex].y,
+        LightShadowData[lightIndex].z,
+        abs(LightShadowData[lightIndex].w));
+
+    if (virtualShadow)
+    {
+        const int levelCount = clamp((int)round(VirtualShadowGlobal.y), 1, 4);
+        const float guardBand = saturate(VirtualShadowGlobal.w);
+        [unroll]
+        for (int level = 0; level < 4; ++level)
+        {
+            if (level >= levelCount) break;
+            float4 candidateClip = mul(float4(worldPos, 1.0f), VirtualShadowViewProjections[level]);
+            float3 candidateNdc = candidateClip.xyz / max(candidateClip.w, 0.000001f);
+            float2 candidateUv = float2(candidateNdc.x * 0.5f + 0.5f, -candidateNdc.y * 0.5f + 0.5f);
+            const bool inside =
+                candidateClip.w > 0.0f &&
+                candidateUv.x >= guardBand && candidateUv.x <= 1.0f - guardBand &&
+                candidateUv.y >= guardBand && candidateUv.y <= 1.0f - guardBand &&
+                candidateNdc.z >= 0.0f && candidateNdc.z <= 1.0f;
+			float2 virtualPage = floor(saturate(candidateUv) * max(ShadowDebugGlobal.w, 1.0f));
+			const float residentPageCount = max(ShadowDebugGlobal.z, 1.0f);
+			const float firstResidentPage = (ShadowDebugGlobal.w - residentPageCount) * 0.5f;
+			const bool residentPage =
+				VirtualShadowGlobal.x > 1.5f ||
+				(virtualPage.x >= firstResidentPage && virtualPage.x < firstResidentPage + residentPageCount &&
+				 virtualPage.y >= firstResidentPage && virtualPage.y < firstResidentPage + residentPageCount);
+            selectedMatrix = VirtualShadowViewProjections[level];
+            selectedParams = VirtualShadowParams[level];
+            if (inside && residentPage) break;
+        }
+        safeShadowLayer = max(selectedParams.x, 0.0f);
+    }
+
+    float4 lightClip = mul(float4(worldPos, 1.0f), selectedMatrix);
     float safeW = max(lightClip.w, 0.000001f);
     float3 lightNdc = lightClip.xyz / safeW;
     float2 shadowUv = float2(lightNdc.x * 0.5f + 0.5f, -lightNdc.y * 0.5f + 0.5f);
@@ -49,29 +87,91 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
          shadowUv.y >= 0.0f && shadowUv.y <= 1.0f &&
          lightNdc.z >= 0.0f && lightNdc.z <= 1.0f) ? 1.0f : 0.0f;
 
-    float texelSize = LightShadowData[lightIndex].y;
+    float texelSize = selectedParams.y;
     float nDotL = saturate(dot(n, l));
-    float bias = max(LightShadowData[lightIndex].z * (1.0f - nDotL), LightShadowData[lightIndex].w);
+    float bias = max(selectedParams.z * (1.0f - nDotL), selectedParams.w);
     float currentDepth = lightNdc.z - bias;
 
     float visibility = 0.0f;
-    [unroll]
-    for (int y = 0; y < 2; ++y)
+    const int filterRadius = virtualShadow ? clamp((int)round(VirtualShadowGlobal.z), 0, 3) : 1;
+    float sampleCount = 0.0f;
+    [loop]
+    for (int y = -filterRadius; y <= filterRadius; ++y)
     {
-        [unroll]
-        for (int x = 0; x < 2; ++x)
+        [loop]
+        for (int x = -filterRadius; x <= filterRadius; ++x)
         {
-            float2 offset = (float2(x, y) - 0.5f) * texelSize;
+            float2 offset = float2(x, y) * texelSize;
             float closestDepth = ShadowMapTexture.SampleLevel(ShadowSampler, float3(shadowUv + offset, safeShadowLayer), 0);
             visibility += (currentDepth <= closestDepth) ? 1.0f : 0.0f;
+            sampleCount += 1.0f;
         }
     }
 
-    visibility *= 0.25f;
+    visibility /= max(sampleCount, 1.0f);
     float shadowStrength = 1.0f;
     float outOfBoundsVisibility = 1.0f;
     float shadowVisibility = lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
     return shadowVisibility;
+}
+
+float SampleContactShadow(float3 worldPos, float3 normal, float3 lightDir)
+{
+    if (ShadowRuntimeGlobal.x < 0.5f) return 1.0f;
+    const int stepCount = clamp((int)round(ShadowRuntimeGlobal.z), 4, 24);
+    const float rayLength = max(ShadowRuntimeGlobal.y, 0.01f);
+    const float3 origin = worldPos + SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f)) * 0.015f;
+    [loop]
+    for (int stepIndex = 1; stepIndex <= stepCount; ++stepIndex)
+    {
+        const float t = (float)stepIndex / (float)stepCount;
+        const float3 rayPosition = origin + lightDir * rayLength * t;
+        const float3 projected = WorldToScreenUV(rayPosition);
+        if (projected.x <= 0.0f || projected.x >= 1.0f || projected.y <= 0.0f || projected.y >= 1.0f || projected.z <= 0.0f || projected.z >= 1.0f) break;
+        const float sceneDepth = DepthTexture.SampleLevel(TextureSampler, projected.xy, 0).r;
+        const float depthDelta = projected.z - sceneDepth;
+        if (sceneDepth < 0.9999f && depthDelta > 0.00015f && depthDelta < 0.015f)
+        {
+            return lerp(0.35f, 0.8f, t);
+        }
+    }
+    return 1.0f;
+}
+
+float DistanceToBoxSdf(float3 samplePoint, float3 center, float3 extents)
+{
+    float3 q = abs(samplePoint - center) - extents;
+    return length(max(q, 0.0f)) + min(max(q.x, max(q.y, q.z)), 0.0f);
+}
+
+float SampleDistanceFieldShadow(float3 worldPos, float3 normal, float3 lightDir)
+{
+    const int objectCount = min((int)round(DistanceFieldGlobal.x), 16);
+    if (objectCount <= 0) return 1.0f;
+    const int stepCount = clamp((int)round(DistanceFieldGlobal.z), 4, 24);
+    const float maxDistance = max(DistanceFieldGlobal.y, 0.1f);
+    float travel = 0.12f;
+    const float3 origin = worldPos + SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f)) * 0.04f;
+    [loop]
+    for (int stepIndex = 0; stepIndex < stepCount && travel < maxDistance; ++stepIndex)
+    {
+        const float3 samplePosition = origin + lightDir * travel;
+        float closestDistance = maxDistance;
+        [loop]
+        for (int objectIndex = 0; objectIndex < objectCount; ++objectIndex)
+        {
+            const float3 center = DistanceFieldData0[objectIndex].xyz;
+            const float3 extents = DistanceFieldData1[objectIndex].xyz;
+            const bool receiverObject = all(abs(worldPos - center) <= extents + 0.02f);
+            if (!receiverObject)
+            {
+                closestDistance = min(closestDistance, DistanceToBoxSdf(samplePosition, center, extents));
+            }
+        }
+        if (closestDistance < 0.025f) return 0.45f;
+        travel += max(closestDistance, 0.05f);
+    }
+    return 1.0f;
 }
 
 void ResolveDeferredLightAggregateShadowed(
@@ -109,6 +209,11 @@ void ResolveDeferredLightAggregateShadowed(
         ResolveSingleLightCommon(worldPos, LightDirections[i], LightPositionTypes[i], LightExtras[i], singleDir, singleAttenuation, singleVolume);
 
         float shadowVisibility = SampleDeferredShadowMap(i, worldPos, normal, singleDir);
+        shadowVisibility *= SampleContactShadow(worldPos, normal, singleDir);
+		if (LightPositionTypes[i].w < 0.5f)
+		{
+			shadowVisibility *= SampleDistanceFieldShadow(worldPos, normal, singleDir);
+		}
         float lightIntensityValue = max(LightColors[i].a, 0.0f);
         float3 singleColor = max(LightColors[i].rgb, float3(0.0f, 0.0f, 0.0f)) * lightIntensityValue * singleAttenuation * shadowVisibility;
         singleColor = ApplyAtmosphereToLightCommon(worldPos, singleDir, singleColor, singleVolume);
@@ -199,6 +304,42 @@ float4 main(PSInputPostProcess input) : SV_Target
     float aggregateShadowVisibility;
     float3 surfaceNormal = SafeNormalizeCommon(normal.xyz, float3(0.0f, 1.0f, 0.0f));
     ResolveDeferredLightAggregateShadowed(position.xyz, surfaceNormal, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend, aggregateShadowVisibility);
+
+    const int shadowDebugMode = (int)round(ShadowDebugGlobal.x);
+    if (shadowDebugMode > 0 && VirtualShadowGlobal.x > 0.5f && VirtualShadowGlobal.x < 1.5f)
+    {
+        if (shadowDebugMode == 1)
+        {
+            return float4(aggregateShadowVisibility.xxx, 1.0f);
+        }
+        int selectedLevel = max((int)round(VirtualShadowGlobal.y) - 1, 0);
+        float2 selectedUv = float2(0.5f, 0.5f);
+        [unroll]
+        for (int level = 0; level < 4; ++level)
+        {
+            if (level >= (int)round(VirtualShadowGlobal.y)) break;
+            float4 clip = mul(float4(position.xyz, 1.0f), VirtualShadowViewProjections[level]);
+            float3 ndc = clip.xyz / max(clip.w, 0.000001f);
+            float2 uv = float2(ndc.x * 0.5f + 0.5f, -ndc.y * 0.5f + 0.5f);
+            selectedUv = uv;
+            if (all(uv >= VirtualShadowGlobal.ww) && all(uv <= 1.0f - VirtualShadowGlobal.ww))
+            {
+                selectedLevel = level;
+                break;
+            }
+        }
+        if (shadowDebugMode == 2)
+        {
+            const float3 levelColors[4] = {
+                float3(0.10f, 0.85f, 0.30f), float3(0.15f, 0.45f, 1.00f),
+                float3(1.00f, 0.70f, 0.10f), float3(0.95f, 0.18f, 0.25f) };
+            return float4(levelColors[selectedLevel], 1.0f);
+        }
+        float2 page = floor(saturate(selectedUv) * max(ShadowDebugGlobal.w, 1.0f));
+        float pageHash = frac(dot(page, float2(0.06711056f, 0.00583715f)));
+        float3 pageColor = frac(pageHash + float3(0.0f, 0.333f, 0.667f));
+        return float4(pageColor, 1.0f);
+    }
     float lightIntensity = LightColor.a;
 
     
@@ -400,6 +541,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     //}
 
     baseColor.rgb += atmosphereViewScatter;
+    baseColor.rgb = ApplyLocalHeightFogCommon(baseColor.rgb, position.xyz, PPCameraPos.xyz);
     baseColor.a = 1.0f;
     return baseColor;
 }

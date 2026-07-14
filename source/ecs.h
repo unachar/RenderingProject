@@ -12,7 +12,7 @@
 #include <DirectXMath.h>
 #include <wrl.h>
 
-static constexpr uint32_t g_kMAX_ENTITIES = 2048;
+static constexpr uint32_t g_kMAX_ENTITIES = 1024;
 static constexpr uint32_t g_kMAX_COMPONENTS = 32;
 static constexpr uint32_t g_kINVALID_ENTITY = UINT32_MAX;
 

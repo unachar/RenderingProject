@@ -11,6 +11,8 @@
 #include "light.h"
 #include "camera.h"
 #include "atmosphere.h"
+#include "renderersettings.h"
+#include "localheightfog.h"
 #include <limits>
 
 namespace
@@ -60,10 +62,30 @@ namespace
 	RuntimeLightState g_CachedDirectionalLight{};
 	RuntimeLightState g_CachedAnyLight{};
 	RuntimeLightState g_CachedShadowLight{};
+	struct ShadowRenderPass
+	{
+		XMMATRIX ViewProjection = XMMatrixIdentity();
+		XMFLOAT4 Params = {};
+		UINT Layer = 0;
+		UINT X = 0;
+		UINT Y = 0;
+		UINT Size = RendererState::g_kSHADOW_MAP_SIZE;
+		bool ClearLayer = true;
+		bool VirtualPage = false;
+	};
 	XMMATRIX g_ShadowLightViewProjections[RendererState::g_kMAX_SHADOW_LIGHTS]{};
 	XMFLOAT4 g_ShadowMapParams[RendererState::g_kMAX_SHADOW_LIGHTS]{};
 	EntityID g_ShadowLightEntities[RendererState::g_kMAX_SHADOW_LIGHTS]{};
 	UINT g_ShadowLightCount = 0;
+	ShadowRenderPass g_ShadowRenderPasses[RendererState::g_kMAX_SHADOW_PASSES]{};
+	UINT g_ShadowRenderPassCount = 0;
+	EntityID g_VirtualShadowLightEntity = g_kINVALID_ENTITY;
+	XMMATRIX g_VirtualShadowViewProjections[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
+	XMFLOAT4 g_VirtualShadowParams[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
+	UINT g_VirtualShadowLevelCount = 0;
+	float g_DirectionalShadowMode = 0.0f;
+	uint64_t g_PreviousVirtualShadowCacheKey = 0;
+	bool g_VirtualShadowCacheHit = false;
 	UINT g_CurrentShadowPassIndex = 0;
 	bool g_LightCacheValid = false;
 	uint64_t g_FrameSerial = 0;
@@ -85,6 +107,18 @@ namespace
 		XMFLOAT4 LightExtras[RendererState::g_kMAX_SHADER_LIGHTS]{};
 		XMMATRIX LightViewProjections[RendererState::g_kMAX_SHADER_LIGHTS]{};
 		XMFLOAT4 LightShadowData[RendererState::g_kMAX_SHADER_LIGHTS]{};
+		XMMATRIX VirtualShadowViewProjections[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
+		XMFLOAT4 VirtualShadowParams[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
+		XMFLOAT4 VirtualShadowGlobal = { 0.0f, 0.0f, 1.0f, 0.0f };
+		XMFLOAT4 ShadowRuntimeGlobal = { 1.0f, 0.8f, 8.0f, 0.0f };
+		XMFLOAT4 ShadowDebugGlobal = { 0.0f, 0.0f, 128.0f, 16.0f };
+		XMFLOAT4 DistanceFieldData0[RendererState::g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS]{};
+		XMFLOAT4 DistanceFieldData1[RendererState::g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS]{};
+		XMFLOAT4 DistanceFieldGlobal = { 0.0f, 30.0f, 12.0f, 0.0f };
+		XMFLOAT4 LocalFogData0[RendererState::g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES]{};
+		XMFLOAT4 LocalFogData1[RendererState::g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES]{};
+		XMFLOAT4 LocalFogColors[RendererState::g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES]{};
+		XMFLOAT4 LocalFogGlobal = { 0.0f, 0.0f, 0.0f, 0.0f };
 		XMFLOAT4 AtmosphereParams0 = { 1.0f, 0.42f, 0.075f, 0.36f };
 		XMFLOAT4 AtmosphereParams1 = { 0.18f, 0.22f, 0.76f, 0.030f };
 		XMFLOAT4 AtmosphereColor0 = { 0.46f, 0.62f, 1.0f, 0.55f };
@@ -276,11 +310,13 @@ namespace
 
 	UINT GetShadowConstantBufferSlot(UINT shadowIndex)
 	{
-		const UINT safeShadowIndex = min(shadowIndex, RendererState::g_kMAX_SHADOW_LIGHTS - 1);
-		return RendererCore::GetFrameIndex() * RendererState::g_kMAX_SHADOW_LIGHTS + safeShadowIndex;
+		const UINT safeShadowIndex = min(shadowIndex, RendererState::g_kMAX_SHADOW_PASSES - 1);
+		return RendererCore::GetFrameIndex() * RendererState::g_kMAX_SHADOW_PASSES + safeShadowIndex;
 	}
 
 	void BuildShadowViewProjection(const RuntimeLightState& runtimeLight, XMMATRIX& outLightViewProjection, XMFLOAT4& outShadowMapParams);
+	void BuildVirtualDirectionalShadowViewProjection(const RuntimeLightState& runtimeLight, UINT level, XMMATRIX& outLightViewProjection, XMFLOAT4& outShadowMapParams);
+	bool IsShadowBoundsEntity(EntityID entity);
 
 	XMFLOAT3 NormalizeFloat3(const XMFLOAT3& value, const XMFLOAT3& fallback)
 	{
@@ -337,6 +373,10 @@ namespace
 		g_CachedAnyLight = {};
 		g_CachedShadowLight = {};
 		g_ShadowLightCount = 0;
+		g_ShadowRenderPassCount = 0;
+		g_VirtualShadowLightEntity = g_kINVALID_ENTITY;
+		g_VirtualShadowLevelCount = 0;
+		g_DirectionalShadowMode = 0.0f;
 		g_CurrentShadowPassIndex = 0;
 		for (UINT i = 0; i < RendererState::g_kMAX_SHADOW_LIGHTS; ++i)
 		{
@@ -347,6 +387,11 @@ namespace
 				0.000008f,
 				0.00001f,
 				0.0f);
+		}
+		for (UINT i = 0; i < RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS; ++i)
+		{
+			g_VirtualShadowViewProjections[i] = XMMatrixIdentity();
+			g_VirtualShadowParams[i] = XMFLOAT4(-1.0f, 1.0f / RendererState::g_kSHADOW_MAP_SIZE, 0.0f, 0.0f);
 		}
 
 		for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
@@ -376,12 +421,43 @@ namespace
 				shadowLight.Component = light;
 				shadowLight.Position = transform.Position;
 				shadowLight.HasLight = true;
-				g_ShadowLightEntities[g_ShadowLightCount] = entity;
-				BuildShadowViewProjection(
-					shadowLight,
-					g_ShadowLightViewProjections[g_ShadowLightCount],
-					g_ShadowMapParams[g_ShadowLightCount]);
-				++g_ShadowLightCount;
+				const bool useMultiLevelDirectional =
+					light.Type == LightType::Directional &&
+					g_VirtualShadowLightEntity == g_kINVALID_ENTITY;
+				if (useMultiLevelDirectional)
+				{
+					g_VirtualShadowLightEntity = entity;
+					const bool virtualMode = RendererSettings::GetShadowMapMethod() == ShadowMapMethod::VirtualShadowMap;
+					g_DirectionalShadowMode = virtualMode ? 1.0f : 2.0f;
+					const UINT requestedLevels = static_cast<UINT>(virtualMode
+						? RendererSettings::GetVirtualClipmapLevels()
+						: RendererSettings::GetShadowCascadeCount());
+					g_VirtualShadowLevelCount = min(requestedLevels, RendererState::g_kMAX_SHADOW_LIGHTS - g_ShadowLightCount);
+					for (UINT level = 0; level < g_VirtualShadowLevelCount; ++level)
+					{
+						const UINT viewIndex = g_ShadowLightCount++;
+						g_ShadowLightEntities[viewIndex] = entity;
+						BuildVirtualDirectionalShadowViewProjection(
+							shadowLight, virtualMode ? level : level + 4,
+							g_ShadowLightViewProjections[viewIndex],
+							g_ShadowMapParams[viewIndex]);
+						g_VirtualShadowViewProjections[level] = g_ShadowLightViewProjections[viewIndex];
+						g_VirtualShadowParams[level] = XMFLOAT4(
+							static_cast<float>(viewIndex),
+							g_ShadowMapParams[viewIndex].x,
+							g_ShadowMapParams[viewIndex].y,
+							g_ShadowMapParams[viewIndex].z);
+					}
+				}
+				else
+				{
+					g_ShadowLightEntities[g_ShadowLightCount] = entity;
+					BuildShadowViewProjection(
+						shadowLight,
+						g_ShadowLightViewProjections[g_ShadowLightCount],
+						g_ShadowMapParams[g_ShadowLightCount]);
+					++g_ShadowLightCount;
+				}
 			}
 			if (light.Type == LightType::Directional && !g_CachedDirectionalLight.HasLight)
 			{
@@ -394,6 +470,87 @@ namespace
 		{
 			g_CachedShadowLight = g_CachedDirectionalLight.HasLight ? g_CachedDirectionalLight : g_CachedAnyLight;
 		}
+
+		for (UINT layer = 0; layer < g_ShadowLightCount && g_ShadowRenderPassCount < RendererState::g_kMAX_SHADOW_PASSES; ++layer)
+		{
+			const bool virtualLayer =
+				g_DirectionalShadowMode == 1.0f &&
+				g_ShadowLightEntities[layer] == g_VirtualShadowLightEntity;
+			if (!virtualLayer)
+			{
+				ShadowRenderPass& pass = g_ShadowRenderPasses[g_ShadowRenderPassCount++];
+				pass.ViewProjection = g_ShadowLightViewProjections[layer];
+				pass.Params = g_ShadowMapParams[layer];
+				pass.Layer = layer;
+				pass.X = 0;
+				pass.Y = 0;
+				pass.Size = RendererState::g_kSHADOW_MAP_SIZE;
+				pass.ClearLayer = true;
+				pass.VirtualPage = false;
+				continue;
+			}
+
+			const UINT pageGrid = RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION;
+			const UINT residentGrid = RendererState::g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION;
+			const UINT firstPage = (pageGrid - residentGrid) / 2;
+			const XMMATRIX fullViewProjection = XMMatrixTranspose(g_ShadowLightViewProjections[layer]);
+			bool firstPassForLayer = true;
+			for (UINT localPageY = 0; localPageY < residentGrid; ++localPageY)
+			{
+				for (UINT localPageX = 0; localPageX < residentGrid; ++localPageX)
+				{
+					if (g_ShadowRenderPassCount >= RendererState::g_kMAX_SHADOW_PASSES) break;
+					const UINT pageX = firstPage + localPageX;
+					const UINT pageY = firstPage + localPageY;
+					const float centerX = -1.0f + (2.0f * static_cast<float>(pageX) + 1.0f) / static_cast<float>(pageGrid);
+					const float centerY = 1.0f - (2.0f * static_cast<float>(pageY) + 1.0f) / static_cast<float>(pageGrid);
+					const XMMATRIX crop =
+						XMMatrixTranslation(-centerX, -centerY, 0.0f) *
+						XMMatrixScaling(static_cast<float>(pageGrid), static_cast<float>(pageGrid), 1.0f);
+
+					ShadowRenderPass& pass = g_ShadowRenderPasses[g_ShadowRenderPassCount++];
+					pass.ViewProjection = XMMatrixTranspose(fullViewProjection * crop);
+					pass.Params = g_ShadowMapParams[layer];
+					pass.Layer = layer;
+					pass.X = pageX * RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
+					pass.Y = pageY * RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
+					pass.Size = RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
+					pass.ClearLayer = firstPassForLayer;
+					pass.VirtualPage = true;
+					firstPassForLayer = false;
+				}
+			}
+		}
+
+		uint64_t cacheKey = 1469598103934665603ull;
+		auto hashBytes = [&](const void* data, size_t size)
+		{
+			const auto* bytes = static_cast<const uint8_t*>(data);
+			for (size_t byteIndex = 0; byteIndex < size; ++byteIndex)
+			{
+				cacheKey ^= bytes[byteIndex];
+				cacheKey *= 1099511628211ull;
+			}
+		};
+		const XMFLOAT3 cameraPosition = GetActiveCameraPosition();
+		hashBytes(&cameraPosition, sizeof(cameraPosition));
+		const uint64_t settingsRevision = RendererSettings::GetRevision();
+		hashBytes(&settingsRevision, sizeof(settingsRevision));
+		for (EntityID entity : World::GetView<TransformComponent>())
+		{
+			if (!IsShadowBoundsEntity(entity) && !ComponentManager::HasComponent<LightComponent>(entity)) continue;
+			const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+			hashBytes(&entity, sizeof(entity));
+			hashBytes(&transform.Position, sizeof(transform.Position));
+			hashBytes(&transform.Rotation, sizeof(transform.Rotation));
+			hashBytes(&transform.Scale, sizeof(transform.Scale));
+		}
+		g_VirtualShadowCacheHit =
+			RendererSettings::GetCacheVirtualShadowPages() &&
+			g_DirectionalShadowMode == 1.0f &&
+			g_PreviousVirtualShadowCacheKey != 0 &&
+			g_PreviousVirtualShadowCacheKey == cacheKey;
+		g_PreviousVirtualShadowCacheKey = cacheKey;
 		g_LightCacheValid = true;
 	}
 
@@ -650,8 +807,51 @@ namespace
 		outLightViewProjection = XMMatrixTranspose(lightView * lightProjection);
 		outShadowMapParams = XMFLOAT4(
 			1.0f / static_cast<float>(shadowSize),
-			0.000008f,
-			0.00001f,
+			RendererSettings::GetShadowDepthBias(),
+			RendererSettings::GetShadowNormalBias(),
+			1.0f);
+	}
+
+	void BuildVirtualDirectionalShadowViewProjection(const RuntimeLightState& runtimeLight, UINT level, XMMATRIX& outLightViewProjection, XMFLOAT4& outShadowMapParams)
+	{
+		XMFLOAT3 direction = runtimeLight.Component.Direction;
+		XMVECTOR lightDirection = XMVectorSet(direction.x, direction.y, direction.z, 0.0f);
+		if (XMVectorGetX(XMVector3LengthSq(lightDirection)) < 0.000001f)
+		{
+			lightDirection = XMVectorSet(0.25f, 1.0f, -0.25f, 0.0f);
+		}
+		lightDirection = XMVector3Normalize(lightDirection);
+
+		XMFLOAT3 cameraPosition = GetActiveCameraPosition();
+		const bool conventionalCascade = level >= 4;
+		const UINT actualLevel = conventionalCascade ? level - 4 : level;
+		const UINT cascadeCount = static_cast<UINT>(RendererSettings::GetShadowCascadeCount());
+		const float radius = conventionalCascade
+			? RendererSettings::GetShadowDistance() / static_cast<float>(1u << max(0, static_cast<int>(cascadeCount - 1 - actualLevel)))
+			: RendererSettings::GetVirtualFirstLevelRadius() * static_cast<float>(1u << actualLevel);
+		if (RendererSettings::GetStabilizeVirtualClipmaps())
+		{
+			const float worldUnitsPerTexel = (radius * 2.0f) / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE);
+			cameraPosition.x = roundf(cameraPosition.x / worldUnitsPerTexel) * worldUnitsPerTexel;
+			cameraPosition.y = roundf(cameraPosition.y / worldUnitsPerTexel) * worldUnitsPerTexel;
+			cameraPosition.z = roundf(cameraPosition.z / worldUnitsPerTexel) * worldUnitsPerTexel;
+		}
+
+		const XMVECTOR target = XMVectorSet(cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f);
+		const XMVECTOR lightPosition = XMVectorAdd(target, XMVectorScale(lightDirection, max(120.0f, radius * 3.0f)));
+		XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+		if (fabsf(XMVectorGetX(XMVector3Dot(lightDirection, up))) > 0.96f)
+		{
+			up = XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
+		}
+
+		const XMMATRIX view = XMMatrixLookAtLH(lightPosition, target, up);
+		const XMMATRIX projection = XMMatrixOrthographicLH(radius * 2.0f, radius * 2.0f, 0.1f, max(300.0f, radius * 8.0f));
+		outLightViewProjection = XMMatrixTranspose(view * projection);
+		outShadowMapParams = XMFLOAT4(
+			1.0f / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE),
+			RendererSettings::GetShadowDepthBias(),
+			RendererSettings::GetShadowNormalBias(),
 			1.0f);
 	}
 
@@ -954,13 +1154,13 @@ UINT RendererResource::GetShadowLightCount()
 	{
 		RebuildLightCache();
 	}
-	return g_ShadowLightCount;
+	return g_ShadowRenderPassCount;
 }
 
 void RendererResource::SetCurrentShadowPassIndex(UINT index)
 {
-	g_CurrentShadowPassIndex = (g_ShadowLightCount > 0)
-		? min(index, g_ShadowLightCount - 1)
+	g_CurrentShadowPassIndex = (g_ShadowRenderPassCount > 0)
+		? min(index, g_ShadowRenderPassCount - 1)
 		: 0;
 }
 
@@ -970,12 +1170,12 @@ XMMATRIX RendererResource::GetCurrentShadowViewProjection()
 	{
 		RebuildLightCache();
 	}
-	if (g_ShadowLightCount == 0)
+	if (g_ShadowRenderPassCount == 0)
 	{
 		return XMMatrixIdentity();
 	}
 
-	return XMMatrixTranspose(g_ShadowLightViewProjections[g_CurrentShadowPassIndex]);
+	return XMMatrixTranspose(g_ShadowRenderPasses[g_CurrentShadowPassIndex].ViewProjection);
 }
 
 D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetShadowConstantBufferAddress(UINT shadowIndex)
@@ -1057,6 +1257,60 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 			0.000008f,
 			0.00001f);
 	}
+	for (UINT i = 0; i < RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS; ++i)
+	{
+		constants.VirtualShadowViewProjections[i] = g_VirtualShadowViewProjections[i];
+		constants.VirtualShadowParams[i] = g_VirtualShadowParams[i];
+	}
+	constants.VirtualShadowGlobal = XMFLOAT4(
+		g_DirectionalShadowMode,
+		static_cast<float>(g_VirtualShadowLevelCount),
+		static_cast<float>(RendererSettings::GetShadowFilterRadius()),
+		0.06f);
+	constants.ShadowRuntimeGlobal = XMFLOAT4(
+		RendererSettings::GetContactShadowsEnabled() ? 1.0f : 0.0f,
+		RendererSettings::GetContactShadowLength(),
+		static_cast<float>(RendererSettings::GetContactShadowSteps()),
+		static_cast<float>(RendererSettings::GetShadowMapMethod()));
+	constants.ShadowDebugGlobal = XMFLOAT4(
+		static_cast<float>(RendererSettings::GetVirtualShadowDebugMode()),
+		g_VirtualShadowCacheHit ? 1.0f : 0.0f,
+		static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION),
+		static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION));
+	UINT distanceFieldCount = 0;
+	for (EntityID entity : World::GetView<TransformComponent, AABBComponent>())
+	{
+		if (distanceFieldCount >= RendererState::g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS) break;
+		if (!IsShadowBoundsEntity(entity)) continue;
+		const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+		const auto& aabb = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
+		const XMFLOAT3 center = {
+			transform.Position.x + aabb.Center.x * transform.Scale.x,
+			transform.Position.y + aabb.Center.y * transform.Scale.y,
+			transform.Position.z + aabb.Center.z * transform.Scale.z };
+		const XMFLOAT3 extents = {
+			max(fabsf(aabb.Extents.x * transform.Scale.x), 0.02f),
+			max(fabsf(aabb.Extents.y * transform.Scale.y), 0.02f),
+			max(fabsf(aabb.Extents.z * transform.Scale.z), 0.02f) };
+		constants.DistanceFieldData0[distanceFieldCount] = XMFLOAT4(center.x, center.y, center.z, 1.0f);
+		constants.DistanceFieldData1[distanceFieldCount] = XMFLOAT4(extents.x, extents.y, extents.z, 0.0f);
+		++distanceFieldCount;
+	}
+	constants.DistanceFieldGlobal = XMFLOAT4(
+		RendererSettings::GetDistanceFieldShadowsEnabled() ? static_cast<float>(distanceFieldCount) : 0.0f,
+		RendererSettings::GetDistanceFieldShadowDistance(),
+		static_cast<float>(RendererSettings::GetDistanceFieldShadowSteps()),
+		0.0f);
+	const auto& localFogVolumes = LocalHeightFog::GetVolumes();
+	const UINT localFogCount = min(static_cast<UINT>(localFogVolumes.size()), RendererState::g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES);
+	for (UINT i = 0; i < localFogCount; ++i)
+	{
+		const auto& volume = localFogVolumes[i];
+		constants.LocalFogData0[i] = XMFLOAT4(volume.Position.x, volume.Position.y, volume.Position.z, max(volume.Radius, 0.01f));
+		constants.LocalFogData1[i] = XMFLOAT4(max(volume.HeightFalloff, 0.0f), max(volume.Density, 0.0f), static_cast<float>(volume.Shape), volume.Enabled ? 1.0f : 0.0f);
+		constants.LocalFogColors[i] = XMFLOAT4(volume.Color.x, volume.Color.y, volume.Color.z, 1.0f);
+	}
+	constants.LocalFogGlobal = XMFLOAT4(static_cast<float>(localFogCount), 0.0f, 0.0f, 0.0f);
 	if (runtimeLight.HasLight)
 	{
 		const LightComponent& lightComponent = runtimeLight.Component;
@@ -1112,7 +1366,9 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 				static_cast<float>(shadowIndex),
 				g_ShadowMapParams[shadowIndex].x,
 				g_ShadowMapParams[shadowIndex].y,
-				g_ShadowMapParams[shadowIndex].z);
+				(entity == g_VirtualShadowLightEntity)
+					? -max(g_ShadowMapParams[shadowIndex].z, 0.0000001f)
+					: g_ShadowMapParams[shadowIndex].z);
 		}
 		++lightCount;
 	}
@@ -1144,7 +1400,7 @@ void RendererResource::UpdateShadowConstantBuffer()
 	{
 		RebuildLightCache();
 	}
-	if (g_CurrentShadowPassIndex >= g_ShadowLightCount)
+	if (g_CurrentShadowPassIndex >= g_ShadowRenderPassCount)
 	{
 		return;
 	}
@@ -1155,8 +1411,8 @@ void RendererResource::UpdateShadowConstantBuffer()
 	}
 
 	ShadowConstants constants{};
-	constants.LightViewProjection = g_ShadowLightViewProjections[g_CurrentShadowPassIndex];
-	constants.ShadowMapParams = g_ShadowMapParams[g_CurrentShadowPassIndex];
+	constants.LightViewProjection = g_ShadowRenderPasses[g_CurrentShadowPassIndex].ViewProjection;
+	constants.ShadowMapParams = g_ShadowRenderPasses[g_CurrentShadowPassIndex].Params;
 	auto* dst = static_cast<UINT8*>(m_pShadowCbvDataBegin) +
 		GetShadowConstantBufferSlot(g_CurrentShadowPassIndex) * g_kSHADOW_CB_ALIGNED_SIZE;
 	memcpy(dst, &constants, sizeof(constants));
@@ -1320,6 +1576,42 @@ void RendererResource::CreateObjectVertex(const VertexResource& vertexstruct)
 	meshComponent.GeometryHash = HashGeometry(vertices.data(), vertexBufferSize);
 	CalculateGeometryBounds(vertices, meshComponent.LocalBoundsCenter, meshComponent.LocalBoundsExtents);
 	meshComponent.HasLocalBounds = !vertices.empty();
+}
+
+bool RendererResource::ShouldRenderShadowPass(UINT shadowIndex)
+{
+	if (!g_LightCacheValid) RebuildLightCache();
+	if (shadowIndex >= g_ShadowRenderPassCount) return false;
+	const bool virtualDirectionalPass = g_ShadowRenderPasses[shadowIndex].VirtualPage;
+	return !virtualDirectionalPass || !g_VirtualShadowCacheHit;
+}
+
+bool RendererResource::IsVirtualShadowCacheHit()
+{
+	if (!g_LightCacheValid) RebuildLightCache();
+	return g_VirtualShadowCacheHit;
+}
+
+bool RendererResource::GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_VIEWPORT& viewport, D3D12_RECT& scissor, bool& clearLayer)
+{
+	if (!g_LightCacheValid) RebuildLightCache();
+	if (shadowIndex >= g_ShadowRenderPassCount) return false;
+	const ShadowRenderPass& pass = g_ShadowRenderPasses[shadowIndex];
+	layer = pass.Layer;
+	viewport = {};
+	viewport.TopLeftX = static_cast<float>(pass.X);
+	viewport.TopLeftY = static_cast<float>(pass.Y);
+	viewport.Width = static_cast<float>(pass.Size);
+	viewport.Height = static_cast<float>(pass.Size);
+	viewport.MinDepth = 0.0f;
+	viewport.MaxDepth = 1.0f;
+	scissor = {
+		static_cast<LONG>(pass.X),
+		static_cast<LONG>(pass.Y),
+		static_cast<LONG>(pass.X + pass.Size),
+		static_cast<LONG>(pass.Y + pass.Size) };
+	clearLayer = pass.ClearLayer;
+	return true;
 }
 
 void RendererResource::SetMaterial(const EntityID entityID, const MaterialComponent& material)

@@ -288,13 +288,24 @@ bool RendererDraw::BeginShadowPass(UINT shadowIndex)
 	}
 	RendererResource::SetCurrentShadowPassIndex(shadowIndex);
 	RendererResource::UpdateShadowConstantBuffer();
+	UINT shadowLayer = 0;
+	D3D12_VIEWPORT shadowViewport{};
+	D3D12_RECT shadowScissor{};
+	bool clearShadowLayer = true;
+	if (!RendererResource::GetShadowPassInfo(shadowIndex, shadowLayer, shadowViewport, shadowScissor, clearShadowLayer))
+	{
+		return false;
+	}
 	D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(m_ShadowDepthBuffer.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
 	m_CommandList->ResourceBarrier(1, &barrier);
 	const UINT dsvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
-	CD3DX12_CPU_DESCRIPTOR_HANDLE shadowDsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), 1 + shadowIndex, dsvIncrement);
-	m_CommandList->RSSetViewports(1, &m_ShadowViewport);
-	m_CommandList->RSSetScissorRects(1, &m_ShadowScissorRect);
-	m_CommandList->ClearDepthStencilView(shadowDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+	CD3DX12_CPU_DESCRIPTOR_HANDLE shadowDsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), 1 + shadowLayer, dsvIncrement);
+	m_CommandList->RSSetViewports(1, &shadowViewport);
+	m_CommandList->RSSetScissorRects(1, &shadowScissor);
+	if (clearShadowLayer)
+	{
+		m_CommandList->ClearDepthStencilView(shadowDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+	}
 	m_CommandList->OMSetRenderTargets(0, nullptr, FALSE, &shadowDsvHandle);
 	m_CommandList->SetGraphicsRootSignature(m_ModelRootSignature.Get());
 	if (m_ShadowConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(5, RendererResource::GetShadowConstantBufferAddress(shadowIndex));

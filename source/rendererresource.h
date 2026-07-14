@@ -45,6 +45,9 @@ public:
 	static void UpdateLightConstantBuffer(float deferredLightStrength);
 	static void UpdateShadowConstantBuffer();
 	static UINT GetShadowLightCount();
+	static bool ShouldRenderShadowPass(UINT shadowIndex);
+	static bool IsVirtualShadowCacheHit();
+	static bool GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_VIEWPORT& viewport, D3D12_RECT& scissor, bool& clearLayer);
 	static void SetCurrentShadowPassIndex(UINT index);
 	static XMMATRIX GetCurrentShadowViewProjection();
 	static D3D12_GPU_VIRTUAL_ADDRESS GetCurrentShadowConstantBufferAddress();

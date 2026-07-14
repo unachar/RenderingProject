@@ -119,6 +119,10 @@ void SystemManager::RenderFlow()
 				const UINT shadowLightCount = RendererResource::GetShadowLightCount();
 				for (UINT shadowIndex = 0; shadowIndex < shadowLightCount; ++shadowIndex)
 				{
+					if (!RendererResource::ShouldRenderShadowPass(shadowIndex))
+					{
+						continue;
+					}
 					if (RendererDraw::BeginShadowPass(shadowIndex))
 					{
 						DrawSystem(RenderPass::ShadowMap, false);
