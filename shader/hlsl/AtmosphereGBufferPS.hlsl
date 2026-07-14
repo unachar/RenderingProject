@@ -2,7 +2,6 @@
 #define SHADER_3D
 #include "common.hlsl"
 
-// shadow maps are supplied by the existing t6/t7 root tables.
 Texture2D<float4> BaseColorTexture : register(t0);
 Texture2D<float4> NormalTexture : register(t1);
 Texture2D<float4> PositionTexture : register(t2);
