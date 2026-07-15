@@ -33,6 +33,7 @@ bool ProjectVirtualShadowLevel(
     float3 worldPos,
     out float3 lightNdc,
     out float2 virtualUv,
+    out float2 physicalUv,
     out float levelInterior)
 {
     float4 clip = mul(float4(worldPos, 1.0f), VirtualShadowViewProjections[level]);
@@ -40,6 +41,7 @@ bool ProjectVirtualShadowLevel(
     {
         lightNdc = 0.0f;
         virtualUv = 0.0f;
+        physicalUv = 0.0f;
         levelInterior = 0.0f;
         return false;
     }
@@ -48,7 +50,7 @@ bool ProjectVirtualShadowLevel(
     virtualUv = float2(lightNdc.x * 0.5f + 0.5f, -lightNdc.y * 0.5f + 0.5f);
     bool resident;
     int2 localPage;
-    VirtualShadowMapUvCommon(level, virtualUv, resident, localPage);
+    physicalUv = VirtualShadowMapUvCommon(level, virtualUv, resident, localPage);
     if (!resident || lightNdc.z < 0.0f || lightNdc.z > 1.0f)
     {
         levelInterior = 0.0f;
@@ -79,7 +81,9 @@ bool SampleVirtualShadowLevel(
 {
     float3 lightNdc;
     float2 virtualUv;
-    if (!ProjectVirtualShadowLevel(level, worldPos, lightNdc, virtualUv, levelInterior))
+    float2 centerPhysicalUv;
+    if (!ProjectVirtualShadowLevel(
+            level, worldPos, lightNdc, virtualUv, centerPhysicalUv, levelInterior))
     {
         visibility = 1.0f;
         return false;
@@ -114,6 +118,18 @@ bool SampleVirtualShadowLevel(
     sincos(angle, sineValue, cosineValue);
     float2x2 rotation = float2x2(cosineValue, -sineValue, sineValue, cosineValue);
 
+    // Most kernels are fully contained in one 128x128 physical page. In that
+    // case virtual->physical translation is affine, so translate once and use
+    // ordinary texel offsets for every tap. Only the narrow page-edge band
+    // needs per-tap residency and ring-address checks.
+    float pageGrid = max(VirtualShadowPageOrigins[level].z, 1.0f);
+    float pageTexels = rcp(max(params.y * pageGrid, 0.000001f));
+    float2 texelInPage = frac(virtualUv * pageGrid) * pageTexels;
+    float edgeTexels = min(
+        min(texelInPage.x, texelInPage.y),
+        min(pageTexels - texelInPage.x, pageTexels - texelInPage.y));
+    bool kernelInOnePage = edgeTexels > (float)filterRadius + 1.0f;
+
     float visibilitySum = 0.0f;
     float sampleCount = 0.0f;
     [unroll]
@@ -122,14 +138,22 @@ bool SampleVirtualShadowLevel(
         if (tap >= tapCount) break;
         float2 offset = mul(poisson[tap], rotation) * (float)max(filterRadius, 1);
         float2 tapVirtualUv = virtualUv + offset * params.y;
-        bool tapResident;
-        int2 tapPage;
-        float2 physicalUv = VirtualShadowMapUvCommon(
-            level,
-            tapVirtualUv,
-            tapResident,
-            tapPage);
-        if (!tapResident) continue;
+        float2 physicalUv;
+        if (kernelInOnePage)
+        {
+            physicalUv = centerPhysicalUv + offset * params.y;
+        }
+        else
+        {
+            bool tapResident;
+            int2 tapPage;
+            physicalUv = VirtualShadowMapUvCommon(
+                level,
+                tapVirtualUv,
+                tapResident,
+                tapPage);
+            if (!tapResident) continue;
+        }
 
         float closestDepth = ShadowMapTexture.SampleLevel(
             ShadowSampler,
@@ -157,9 +181,10 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
         return 1.0f;
     }
 
+    const bool directionalMultiLevel = LightShadowData[lightIndex].w < 0.0f;
     const bool virtualShadow =
-        VirtualShadowGlobal.x > 0.5f &&
-        LightShadowData[lightIndex].w < 0.0f;
+        VirtualShadowGlobal.x > 0.5f && VirtualShadowGlobal.x < 1.5f &&
+        directionalMultiLevel;
     if (virtualShadow)
     {
         int levelCount = clamp((int)round(VirtualShadowGlobal.y), 1, 4);
@@ -198,6 +223,53 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
             return lerp(levelVisibility, fineVisibility, fineInterior);
         }
         return hasFine ? fineVisibility : 1.0f;
+    }
+
+    // Conventional cascades use one complete texture-array layer per level.
+    // They share the level matrices with VSM, but must not use the virtual-page
+    // address translation above.
+    if (VirtualShadowGlobal.x > 1.5f && directionalMultiLevel)
+    {
+        float3 n = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
+        float3 l = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
+        int levelCount = clamp((int)round(VirtualShadowGlobal.y), 1, 4);
+
+        [unroll]
+        for (int level = 0; level < 4; ++level)
+        {
+            if (level >= levelCount) break;
+            float4 lightClip = mul(float4(worldPos, 1.0f), VirtualShadowViewProjections[level]);
+            if (lightClip.w <= 0.000001f) continue;
+
+            float3 lightNdc = lightClip.xyz / lightClip.w;
+            float2 shadowUv = float2(lightNdc.x * 0.5f + 0.5f, -lightNdc.y * 0.5f + 0.5f);
+            if (any(shadowUv < 0.0f) || any(shadowUv > 1.0f) ||
+                lightNdc.z < 0.0f || lightNdc.z > 1.0f)
+            {
+                continue;
+            }
+
+            float4 params = VirtualShadowParams[level];
+            float currentDepth = lightNdc.z - max(
+                params.z * (1.0f - saturate(dot(n, l))),
+                params.w);
+            float visibility = 0.0f;
+            [unroll]
+            for (int y = -1; y <= 1; ++y)
+            {
+                [unroll]
+                for (int x = -1; x <= 1; ++x)
+                {
+                    float closestDepth = ShadowMapTexture.SampleLevel(
+                        ShadowSampler,
+                        float3(shadowUv + float2(x, y) * params.y, params.x),
+                        0);
+                    visibility += currentDepth <= closestDepth ? 1.0f : 0.0f;
+                }
+            }
+            return visibility / 9.0f;
+        }
+        return 1.0f;
     }
 
     float3 n = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));

@@ -719,7 +719,8 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         std::unordered_map<string, size_t> batchLookup;
         for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
         {
-            if (!CanInstance(entity) || !ShouldCastShadow(entity))
+            if (!CanInstance(entity) || !ShouldCastShadow(entity) ||
+                !RendererResource::ShouldDrawEntityInCurrentShadowPass(entity))
             {
                 continue;
             }
@@ -775,7 +776,8 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
 		for (EntityID entity : World::GetView<StaticModelComponent, TransformComponent>())
 		{
-			if (!CanInstance(entity) || !ShouldCastShadow(entity)) continue;
+			if (!CanInstance(entity) || !ShouldCastShadow(entity) ||
+				!RendererResource::ShouldDrawEntityInCurrentShadowPass(entity)) continue;
 			const auto& component = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
 			StaticModelResource* model = ModelManager::GetStaticModel(component.ModelId);
 			if (!model) continue;

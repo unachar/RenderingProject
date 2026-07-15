@@ -335,6 +335,7 @@ namespace
 	void BuildShadowViewProjection(const RuntimeLightState& runtimeLight, XMMATRIX& outLightViewProjection, XMFLOAT4& outShadowMapParams);
 	void BuildVirtualDirectionalShadowViewProjection(const RuntimeLightState& runtimeLight, UINT level, XMMATRIX& outLightViewProjection, XMFLOAT4& outShadowMapParams);
 	bool IsShadowBoundsEntity(EntityID entity);
+	bool IsShadowCasterVisible(EntityID entity, const XMMATRIX& transposedViewProjection);
 
 	XMFLOAT3 NormalizeFloat3(const XMFLOAT3& value, const XMFLOAT3& fallback)
 	{
@@ -510,15 +511,6 @@ namespace
 				&g_CachedDirectionalLight.Component.Direction,
 				sizeof(g_CachedDirectionalLight.Component.Direction));
 		}
-		for (EntityID entity : World::GetView<TransformComponent>())
-		{
-			if (!IsShadowBoundsEntity(entity)) continue;
-			const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-			hashVirtualBytes(&entity, sizeof(entity));
-			hashVirtualBytes(&transform.Position, sizeof(transform.Position));
-			hashVirtualBytes(&transform.Rotation, sizeof(transform.Rotation));
-			hashVirtualBytes(&transform.Scale, sizeof(transform.Scale));
-		}
 
 		if (g_DirectionalShadowMode != 1.0f)
 		{
@@ -586,6 +578,15 @@ namespace
 					const UINT physicalPageX = static_cast<UINT>(positiveModulo(globalPageX, static_cast<int>(pageGrid)));
 					const UINT physicalPageY = static_cast<UINT>(positiveModulo(globalPageY, static_cast<int>(pageGrid)));
 
+					const float centerX = -1.0f +
+						(2.0f * static_cast<float>(pageX) + 1.0f) / static_cast<float>(pageGrid);
+					const float centerY = 1.0f -
+						(2.0f * static_cast<float>(pageY) + 1.0f) / static_cast<float>(pageGrid);
+					const XMMATRIX crop =
+						XMMatrixTranslation(-centerX, -centerY, 0.0f) *
+						XMMatrixScaling(static_cast<float>(pageGrid), static_cast<float>(pageGrid), 1.0f);
+					const XMMATRIX pageViewProjection = XMMatrixTranspose(fullViewProjection * crop);
+
 					uint64_t pageContentKey = virtualSceneKey;
 					auto hashPageValue = [&](const void* data, size_t size)
 					{
@@ -599,6 +600,28 @@ namespace
 					hashPageValue(&virtualLevel, sizeof(virtualLevel));
 					hashPageValue(&globalPageX, sizeof(globalPageX));
 					hashPageValue(&globalPageY, sizeof(globalPageY));
+					// A moving caster invalidates only pages it can actually touch.  The
+					// previous implementation mixed every transform into every page key,
+					// turning one animated character into a full 64-page redraw.
+					for (EntityID entity : World::GetView<TransformComponent>())
+					{
+						if (!IsShadowBoundsEntity(entity) ||
+							!IsShadowCasterVisible(entity, pageViewProjection))
+						{
+							continue;
+						}
+						const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+						hashPageValue(&entity, sizeof(entity));
+						hashPageValue(&transform.Position, sizeof(transform.Position));
+						hashPageValue(&transform.Rotation, sizeof(transform.Rotation));
+						hashPageValue(&transform.Scale, sizeof(transform.Scale));
+						if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
+						{
+							const auto& animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
+							hashPageValue(&animation.CurrentTime, sizeof(animation.CurrentTime));
+							hashPageValue(&animation.BlendRate, sizeof(animation.BlendRate));
+						}
+					}
 
 					auto& cacheEntry = g_VirtualShadowPageCache[virtualLevel][physicalPageY][physicalPageX];
 					const bool needsRender =
@@ -608,16 +631,8 @@ namespace
 						cacheEntry.GlobalPageY != globalPageY ||
 						cacheEntry.ContentKey != pageContentKey;
 
-					const float centerX = -1.0f +
-						(2.0f * static_cast<float>(pageX) + 1.0f) / static_cast<float>(pageGrid);
-					const float centerY = 1.0f -
-						(2.0f * static_cast<float>(pageY) + 1.0f) / static_cast<float>(pageGrid);
-					const XMMATRIX crop =
-						XMMatrixTranslation(-centerX, -centerY, 0.0f) *
-						XMMatrixScaling(static_cast<float>(pageGrid), static_cast<float>(pageGrid), 1.0f);
-
 					ShadowRenderPass& pass = g_ShadowRenderPasses[g_ShadowRenderPassCount++];
-					pass.ViewProjection = XMMatrixTranspose(fullViewProjection * crop);
+					pass.ViewProjection = pageViewProjection;
 					pass.Params = g_ShadowMapParams[layer];
 					pass.Layer = layer;
 					pass.X = physicalPageX * RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
@@ -735,6 +750,57 @@ namespace
 		const XMVECTOR extent = XMVectorReplicate(max(radius, 0.01f));
 		IncludeBoundsPoint(XMVectorSubtract(center, extent), boundsMin, boundsMax, hasBounds);
 		IncludeBoundsPoint(XMVectorAdd(center, extent), boundsMin, boundsMax, hasBounds);
+	}
+
+	bool IsShadowCasterVisible(EntityID entity, const XMMATRIX& transposedViewProjection)
+	{
+		if (!IsShadowBoundsEntity(entity)) return false;
+
+		const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+		XMFLOAT3 center = transform.Position;
+		float radius = max(max(fabsf(transform.Scale.x), fabsf(transform.Scale.y)),
+			max(fabsf(transform.Scale.z), 1.0f)) * 1.5f;
+		if (ComponentManager::HasComponent<AABBComponent>(entity))
+		{
+			const auto& bounds = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
+			center.x += bounds.Center.x * transform.Scale.x;
+			center.y += bounds.Center.y * transform.Scale.y;
+			center.z += bounds.Center.z * transform.Scale.z;
+			const XMFLOAT3 extents = {
+				fabsf(bounds.Extents.x * transform.Scale.x),
+				fabsf(bounds.Extents.y * transform.Scale.y),
+				fabsf(bounds.Extents.z * transform.Scale.z) };
+			radius = max(sqrtf(extents.x * extents.x + extents.y * extents.y + extents.z * extents.z), 0.05f);
+		}
+
+		const XMMATRIX viewProjection = XMMatrixTranspose(transposedViewProjection);
+		const XMVECTOR worldCenter = XMLoadFloat3(&center);
+		const XMVECTOR projectedCenter = XMVector3TransformCoord(worldCenter, viewProjection);
+		const float centerX = XMVectorGetX(projectedCenter);
+		const float centerY = XMVectorGetY(projectedCenter);
+		const float centerZ = XMVectorGetZ(projectedCenter);
+
+		// Project three world-space radius vectors and sum their absolute
+		// contributions.  This slightly overestimates rotated AABBs, which is the
+		// desired failure mode for shadow culling.
+		float ndcRadiusX = 0.0f;
+		float ndcRadiusY = 0.0f;
+		float ndcRadiusZ = 0.0f;
+		const XMVECTOR axes[3] = {
+			XMVectorSet(radius, 0.0f, 0.0f, 0.0f),
+			XMVectorSet(0.0f, radius, 0.0f, 0.0f),
+			XMVectorSet(0.0f, 0.0f, radius, 0.0f) };
+		for (const XMVECTOR axis : axes)
+		{
+			const XMVECTOR projected = XMVector3TransformCoord(XMVectorAdd(worldCenter, axis), viewProjection);
+			ndcRadiusX += fabsf(XMVectorGetX(projected) - centerX);
+			ndcRadiusY += fabsf(XMVectorGetY(projected) - centerY);
+			ndcRadiusZ += fabsf(XMVectorGetZ(projected) - centerZ);
+		}
+
+		return centerX + ndcRadiusX >= -1.0f && centerX - ndcRadiusX <= 1.0f &&
+			centerY + ndcRadiusY >= -1.0f && centerY - ndcRadiusY <= 1.0f &&
+			centerZ + ndcRadiusZ >= 0.0f && centerZ - ndcRadiusZ <= 1.0f;
 	}
 
 	void BuildShadowFocusBounds(XMVECTOR& outCenter, float& outRadius)
@@ -1726,6 +1792,14 @@ bool RendererResource::ShouldRenderShadowPass(UINT shadowIndex)
 	if (shadowIndex >= g_ShadowRenderPassCount) return false;
 	const ShadowRenderPass& pass = g_ShadowRenderPasses[shadowIndex];
 	return !pass.VirtualPage || pass.NeedsRender;
+}
+
+bool RendererResource::ShouldDrawEntityInCurrentShadowPass(EntityID entity)
+{
+	if (!g_LightCacheValid) RebuildLightCache();
+	if (g_CurrentShadowPassIndex >= g_ShadowRenderPassCount) return true;
+	const ShadowRenderPass& pass = g_ShadowRenderPasses[g_CurrentShadowPassIndex];
+	return !pass.VirtualPage || IsShadowCasterVisible(entity, pass.ViewProjection);
 }
 
 bool RendererResource::IsVirtualShadowCacheHit()

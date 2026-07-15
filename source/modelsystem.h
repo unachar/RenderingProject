@@ -153,7 +153,8 @@ private:
         for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
         {
             const auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
-            if (component.ModelId < 0 || !ShouldCastShadow(entity))
+            if (component.ModelId < 0 || !ShouldCastShadow(entity) ||
+                !RendererResource::ShouldDrawEntityInCurrentShadowPass(entity))
             {
                 continue;
             }
@@ -238,7 +239,8 @@ private:
         for (EntityID entity : World::GetView<StaticModelComponent, TransformComponent>())
         {
             const auto& component = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
-            if (component.ModelId < 0 || !ShouldCastShadow(entity))
+            if (component.ModelId < 0 || !ShouldCastShadow(entity) ||
+                !RendererResource::ShouldDrawEntityInCurrentShadowPass(entity))
             {
                 continue;
             }

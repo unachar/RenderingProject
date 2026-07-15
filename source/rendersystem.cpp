@@ -173,6 +173,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				sprite.VertexBufferView.BufferLocation == 0 ||
 				!Registry::HasComponent(i, ComponentType::TRANSFORM) ||
 				!ShouldCastShadow(i) ||
+				!RendererResource::ShouldDrawEntityInCurrentShadowPass(i) ||
 				InstancingSystem::CanInstance(i))
 			{
 				continue;
@@ -195,6 +196,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			if (mesh.VertexBufferView.BufferLocation == 0 ||
 				!Registry::HasComponent(i, ComponentType::TRANSFORM) ||
 				!ShouldCastShadow(i) ||
+				!RendererResource::ShouldDrawEntityInCurrentShadowPass(i) ||
 				InstancingSystem::CanInstance(i))
 			{
 				continue;

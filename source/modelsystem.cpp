@@ -194,7 +194,8 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 		for (EntityID i : World::GetView<AnimationModelComponent>())
 		{
 			auto& animComp = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(i);
-			if (animComp.ModelId < 0 || !ShouldCastShadow(i))
+			if (animComp.ModelId < 0 || !ShouldCastShadow(i) ||
+				!RendererResource::ShouldDrawEntityInCurrentShadowPass(i))
 			{
 				continue;
 			}
@@ -244,7 +245,8 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 		for (EntityID i : World::GetView<StaticModelComponent>())
 		{
 			auto& staticComp = ComponentManager::GetComponentUnchecked<StaticModelComponent>(i);
-			if (staticComp.ModelId < 0 || !ShouldCastShadow(i))
+			if (staticComp.ModelId < 0 || !ShouldCastShadow(i) ||
+				!RendererResource::ShouldDrawEntityInCurrentShadowPass(i))
 			{
 				continue;
 			}

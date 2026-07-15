@@ -503,6 +503,35 @@ float SampleVirtualAtmosphereShadowMapCommon(
     return 1.0f;
 }
 
+float SampleCascadedAtmosphereShadowMapCommon(
+    float3 worldPos,
+    Texture2DArray<float> shadowMap,
+    SamplerState shadowSampler)
+{
+    int levelCount = clamp((int)round(VirtualShadowGlobal.y), 1, 4);
+    [unroll]
+    for (int level = 0; level < 4; ++level)
+    {
+        if (level >= levelCount) break;
+        float4 clip = mul(float4(worldPos, 1.0f), VirtualShadowViewProjections[level]);
+        if (clip.w <= 0.000001f) continue;
+        float3 ndc = clip.xyz / clip.w;
+        float2 uv = float2(ndc.x * 0.5f + 0.5f, -ndc.y * 0.5f + 0.5f);
+        if (any(uv < 0.0f) || any(uv > 1.0f) || ndc.z < 0.0f || ndc.z > 1.0f) continue;
+
+        float4 params = VirtualShadowParams[level];
+        return SampleAtmosphereShadowMap(
+            worldPos,
+            float3(0.0f, 1.0f, 0.0f),
+            shadowMap,
+            shadowSampler,
+            VirtualShadowViewProjections[level],
+            float4(params.y, params.z, params.w, 1.0f),
+            params.x);
+    }
+    return 1.0f;
+}
+
 
 float3 WorldToScreenUV(float3 worldPos);
 float3 ReconstructPostProcessViewRayCommon(float2 uv);

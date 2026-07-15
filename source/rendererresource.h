@@ -46,6 +46,9 @@ public:
 	static void UpdateShadowConstantBuffer();
 	static UINT GetShadowLightCount();
 	static bool ShouldRenderShadowPass(UINT shadowIndex);
+	// Reject shadow casters that cannot overlap the active virtual page.  This is
+	// intentionally conservative so it only removes work, never visible shadows.
+	static bool ShouldDrawEntityInCurrentShadowPass(EntityID entity);
 	static bool IsVirtualShadowCacheHit();
 	static bool GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_VIEWPORT& viewport, D3D12_RECT& scissor, bool& clearLayer);
 	static void SetCurrentShadowPassIndex(UINT index);
