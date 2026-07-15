@@ -54,7 +54,9 @@ float3 SampleEnvironmentLatLong(float3 dir, float roughness)
 {
     const float PI = 3.14159265358979323846f;
     dir = SafeNormalizeCommon(dir, float3(0.0f, 1.0f, 0.0f));
-    float2 uv = float2(atan2(dir.z, dir.x) / (2.0f * PI), acos(dir.y) / PI);
+    float2 uv = float2(
+        frac(atan2(dir.z, dir.x) / (2.0f * PI) + 0.5f),
+        acos(clamp(dir.y, -1.0f, 1.0f)) / PI);
     return EnvironmentTexture.SampleLevel(g_SamplerState, uv, roughness * 8.0f).rgb;
 }
 

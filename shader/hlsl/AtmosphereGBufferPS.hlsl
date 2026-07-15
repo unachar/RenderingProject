@@ -22,10 +22,9 @@ struct LocalFogRayResult
 
 int GetAtmosphereStepCount(float viewDistance)
 {
-    // Keep the world-space distance between samples reasonably stable. The
-    // previous resolution-only 10 step march made one sample represent up to
-    // ten world units, which caused volume lights to grow and shrink as the
-    // camera moved.
+    // Keep the world-space distance between samples reasonably stable for the
+    // broad atmosphere. Bounded volume lights use a separate, light-anchored
+    // integration path below.
     float scale = clamp(Flags.w, 0.25f, 1.0f);
     float lowResolutionWeight = saturate((1.0f - scale) / 0.75f);
     int maxSteps = (int)round(lerp(28.0f, 36.0f, lowResolutionWeight));
@@ -213,6 +212,353 @@ float3 EvaluateAtmosphereLight(
     return result;
 }
 
+bool IntersectRaySphereSegment(
+    float3 rayOrigin,
+    float3 rayDirection,
+    float maxDistance,
+    float3 sphereCenter,
+    float sphereRadius,
+    out float segmentStart,
+    out float segmentEnd)
+{
+    float3 offset = rayOrigin - sphereCenter;
+    float projected = dot(offset, rayDirection);
+    float discriminant =
+        projected * projected -
+        (dot(offset, offset) - sphereRadius * sphereRadius);
+
+    if (discriminant <= 0.0f)
+    {
+        segmentStart = 0.0f;
+        segmentEnd = 0.0f;
+        return false;
+    }
+
+    float root = sqrt(discriminant);
+    segmentStart = max(-projected - root, 0.0f);
+    segmentEnd = min(-projected + root, maxDistance);
+    return segmentEnd > segmentStart + 0.0001f;
+}
+
+bool IntersectRayHorizontalCylinderSegment(
+    float3 rayOrigin,
+    float3 rayDirection,
+    float maxDistance,
+    float3 cylinderCenter,
+    float cylinderRadius,
+    out float segmentStart,
+    out float segmentEnd)
+{
+    float2 offset = rayOrigin.xz - cylinderCenter.xz;
+    float2 direction = rayDirection.xz;
+    float a = dot(direction, direction);
+    float c = dot(offset, offset) - cylinderRadius * cylinderRadius;
+
+    if (a <= 0.000001f)
+    {
+        segmentStart = 0.0f;
+        segmentEnd = c <= 0.0f ? maxDistance : 0.0f;
+        return segmentEnd > segmentStart + 0.0001f;
+    }
+
+    float b = dot(offset, direction);
+    float discriminant = b * b - a * c;
+    if (discriminant <= 0.0f)
+    {
+        segmentStart = 0.0f;
+        segmentEnd = 0.0f;
+        return false;
+    }
+
+    float root = sqrt(discriminant);
+    segmentStart = max((-b - root) / a, 0.0f);
+    segmentEnd = min((-b + root) / a, maxDistance);
+    return segmentEnd > segmentStart + 0.0001f;
+}
+
+bool ClipRayToQuadraticInterior(
+    float quadraticA,
+    float quadraticB,
+    float quadraticC,
+    inout float segmentStart,
+    inout float segmentEnd)
+{
+    const float epsilon = 0.000001f;
+
+    if (abs(quadraticA) <= epsilon)
+    {
+        if (abs(quadraticB) <= epsilon)
+        {
+            return quadraticC <= 0.0f;
+        }
+
+        float root = -quadraticC / quadraticB;
+        if (quadraticB > 0.0f)
+        {
+            segmentEnd = min(segmentEnd, root);
+        }
+        else
+        {
+            segmentStart = max(segmentStart, root);
+        }
+        return segmentEnd > segmentStart + 0.0001f;
+    }
+
+    float discriminant =
+        quadraticB * quadraticB -
+        4.0f * quadraticA * quadraticC;
+    if (discriminant < 0.0f)
+    {
+        float midpoint = (segmentStart + segmentEnd) * 0.5f;
+        float midpointValue =
+            (quadraticA * midpoint + quadraticB) * midpoint +
+            quadraticC;
+        return midpointValue <= 0.0f;
+    }
+
+    float rootTerm = sqrt(max(discriminant, 0.0f));
+    float reciprocalDenominator = 0.5f / quadraticA;
+    float root0 =
+        (-quadraticB - rootTerm) * reciprocalDenominator;
+    float root1 =
+        (-quadraticB + rootTerm) * reciprocalDenominator;
+    if (root0 > root1)
+    {
+        float swapRoot = root0;
+        root0 = root1;
+        root1 = swapRoot;
+    }
+
+    if (quadraticA > 0.0f)
+    {
+        segmentStart = max(segmentStart, root0);
+        segmentEnd = min(segmentEnd, root1);
+        return segmentEnd > segmentStart + 0.0001f;
+    }
+
+    // For the forward finite cone the axial slab selects one convex branch of
+    // the double-cone quadratic. Pick the outside-root interval that overlaps
+    // that slab.
+    if (segmentEnd <= root0 || segmentStart >= root1)
+    {
+        return true;
+    }
+    if (segmentStart < root0)
+    {
+        segmentEnd = min(segmentEnd, root0);
+    }
+    else if (segmentEnd > root1)
+    {
+        segmentStart = max(segmentStart, root1);
+    }
+    else
+    {
+        return false;
+    }
+    return segmentEnd > segmentStart + 0.0001f;
+}
+
+bool IntersectRayFiniteConeSegment(
+    float3 rayOrigin,
+    float3 rayDirection,
+    float maxDistance,
+    float3 coneOrigin,
+    float3 coneAxis,
+    float coneLength,
+    float rootRadius,
+    float endRadius,
+    out float segmentStart,
+    out float segmentEnd)
+{
+    float3 offset = rayOrigin - coneOrigin;
+    float originAxial = dot(offset, coneAxis);
+    float directionAxial = dot(rayDirection, coneAxis);
+
+    segmentStart = 0.0f;
+    segmentEnd = maxDistance;
+
+    if (abs(directionAxial) <= 0.000001f)
+    {
+        if (originAxial < 0.0f || originAxial > coneLength)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        float cap0 = -originAxial / directionAxial;
+        float cap1 = (coneLength - originAxial) / directionAxial;
+        float axialStart = min(cap0, cap1);
+        float axialEnd = max(cap0, cap1);
+        segmentStart = max(segmentStart, axialStart);
+        segmentEnd = min(segmentEnd, axialEnd);
+        if (segmentEnd <= segmentStart + 0.0001f)
+        {
+            return false;
+        }
+    }
+
+    float radiusSlope =
+        (endRadius - rootRadius) /
+        max(coneLength, 0.0001f);
+    float radiusAtRayOrigin =
+        rootRadius + radiusSlope * originAxial;
+    float radiusAlongRay = radiusSlope * directionAxial;
+    float3 offsetRadial = offset - coneAxis * originAxial;
+    float3 directionRadial =
+        rayDirection - coneAxis * directionAxial;
+
+    float quadraticA =
+        dot(directionRadial, directionRadial) -
+        radiusAlongRay * radiusAlongRay;
+    float quadraticB = 2.0f * (
+        dot(offsetRadial, directionRadial) -
+        radiusAtRayOrigin * radiusAlongRay);
+    float quadraticC =
+        dot(offsetRadial, offsetRadial) -
+        radiusAtRayOrigin * radiusAtRayOrigin;
+
+    return ClipRayToQuadraticInterior(
+        quadraticA,
+        quadraticB,
+        quadraticC,
+        segmentStart,
+        segmentEnd);
+}
+
+float3 IntegrateVolumeLightRay(
+    float3 rayOrigin,
+    float3 rayDirection,
+    float maxDistance,
+    float4 lightDirectionData,
+    float4 lightColorData,
+    float4 lightPositionTypeData,
+    float4 lightExtraData,
+    float4x4 lightViewProjection,
+    float4 shadowParams,
+    float shadowLayer,
+    bool hasShadow,
+    Texture2DArray<float> shadowMap,
+    SamplerState shadowSampler)
+{
+    if ((int)round(lightPositionTypeData.w) != 3 ||
+        lightExtraData.z <= 0.0001f ||
+        lightColorData.a <= 0.0001f)
+    {
+        return float3(0.0f, 0.0f, 0.0f);
+    }
+
+    float lightRange = max(lightDirectionData.w, 0.01f);
+    float3 lightForward = SafeNormalizeCommon(
+        lightDirectionData.xyz,
+        float3(0.0f, -1.0f, 0.0f));
+    float outerCos = clamp(lightExtraData.y, 0.001f, 0.999f);
+    float outerTan =
+        sqrt(saturate(1.0f - outerCos * outerCos)) /
+        outerCos;
+    float coneEndRadius = lightRange * outerTan;
+    float coneRootRadius = max(coneEndRadius * 0.04f, 0.05f);
+    float cylinderRadius = coneEndRadius * 0.45f;
+    bool cylinderVolume = lightExtraData.w >= 0.5f;
+    float volumeRootRadius = cylinderVolume
+        ? cylinderRadius
+        : coneRootRadius;
+    float volumeEndRadius = cylinderVolume
+        ? cylinderRadius
+        : coneEndRadius;
+
+    float segmentStart;
+    float segmentEnd;
+    if (!IntersectRayFiniteConeSegment(
+            rayOrigin,
+            rayDirection,
+            maxDistance,
+            lightPositionTypeData.xyz,
+            lightForward,
+            lightRange,
+            volumeRootRadius,
+            volumeEndRadius,
+            segmentStart,
+            segmentEnd))
+    {
+        return float3(0.0f, 0.0f, 0.0f);
+    }
+
+    // The sample phase is anchored to the exact finite cone/cylinder entry and
+    // exit. Empty space around the light never consumes samples, so moving the
+    // camera cannot shift the first illuminated sample at the emitter.
+    const int stepCount = 24;
+    float segmentLength = segmentEnd - segmentStart;
+    float stepLength = segmentLength / (float)stepCount;
+    float scaledStep =
+        stepLength *
+        max(AtmosphereParams1.w, 0.0001f);
+    float3 viewToCamera = -rayDirection;
+    float3 integratedScatter = float3(0.0f, 0.0f, 0.0f);
+
+    [loop]
+    for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
+    {
+        float sampleDistance =
+            segmentStart +
+            ((float)stepIndex + 0.5f) * stepLength;
+        float3 samplePos =
+            rayOrigin +
+            rayDirection * sampleDistance;
+
+        float3 singleDir;
+        float singleAttenuation;
+        float singleVolume;
+        ResolveSingleLightCommon(
+            samplePos,
+            lightDirectionData,
+            lightPositionTypeData,
+            lightExtraData,
+            singleDir,
+            singleAttenuation,
+            singleVolume);
+
+        if (singleVolume <= 0.000001f &&
+            singleAttenuation <= 0.000001f)
+        {
+            continue;
+        }
+
+        float shadowVisibility = ComputeAtmosphereShadow(
+            samplePos,
+            singleDir,
+            lightPositionTypeData,
+            lightViewProjection,
+            shadowParams,
+            shadowLayer,
+            hasShadow,
+            false,
+            shadowMap,
+            shadowSampler);
+        float sampleDensity = AtmosphereDensityCommon(samplePos);
+        float viewTransmittance = exp(
+            -max(AtmosphereParams1.y, 0.0f) *
+            sampleDensity *
+            sampleDistance *
+            max(AtmosphereParams1.w, 0.0001f));
+
+        integratedScatter +=
+            EvaluateAtmosphereLight(
+                viewToCamera,
+                sampleDensity,
+                singleDir,
+                singleAttenuation,
+                singleVolume,
+                lightColorData,
+                lightPositionTypeData,
+                shadowVisibility) *
+            viewTransmittance *
+            scaledStep;
+    }
+
+    return integratedScatter;
+}
+
 float3 RayMarchAtmosphereViewFixed(
     float3 worldPos,
     Texture2DArray<float> shadowMap,
@@ -280,6 +626,14 @@ float3 RayMarchAtmosphereViewFixed(
         [loop]
         for (int lightIndex = 0; lightIndex < count; ++lightIndex)
         {
+            // Volume lights are integrated over their own light-anchored ray
+            // segment below.  Sampling them in this camera-length march is the
+            // source of the distance-dependent root and visible shells.
+            if ((int)round(LightPositionTypes[lightIndex].w) == 3)
+            {
+                continue;
+            }
+
             float3 singleDir;
             float singleAttenuation;
             float singleVolume;
@@ -330,7 +684,8 @@ float3 RayMarchAtmosphereViewFixed(
                 cachedShadowVisibility[lightIndex]);
         }
 
-        if (count <= 0)
+        if (count <= 0 &&
+            (int)round(LightPositionType.w) != 3)
         {
             float3 singleDir;
             float singleAttenuation;
@@ -387,10 +742,58 @@ float3 RayMarchAtmosphereViewFixed(
         }
     }
 
+    [loop]
+    for (int volumeIndex = 0; volumeIndex < count; ++volumeIndex)
+    {
+        if ((int)round(LightPositionTypes[volumeIndex].w) != 3)
+        {
+            continue;
+        }
+
+        float4 perLightShadowParams = float4(
+            LightShadowData[volumeIndex].y,
+            LightShadowData[volumeIndex].z,
+            LightShadowData[volumeIndex].w,
+            1.0f);
+        result += IntegrateVolumeLightRay(
+            cameraPos,
+            viewDir,
+            viewDistance,
+            LightDirections[volumeIndex],
+            LightColors[volumeIndex],
+            LightPositionTypes[volumeIndex],
+            LightExtras[volumeIndex],
+            LightViewProjections[volumeIndex],
+            perLightShadowParams,
+            LightShadowData[volumeIndex].x,
+            LightShadowData[volumeIndex].x >= -0.5f,
+            shadowMap,
+            shadowSampler);
+    }
+
+    if (count <= 0 &&
+        (int)round(LightPositionType.w) == 3)
+    {
+        result += IntegrateVolumeLightRay(
+            cameraPos,
+            viewDir,
+            viewDistance,
+            LightDirection,
+            LightColor,
+            LightPositionType,
+            LightExtra,
+            lightViewProjection,
+            shadowMapParams,
+            0.0f,
+            true,
+            shadowMap,
+            shadowSampler);
+    }
+
     return result * max(AtmosphereColor0.a, 0.0f);
 }
 
-LocalFogRayResult RayMarchLocalFogBackground(float3 rayEnd)
+LocalFogRayResult IntegrateLocalFogRay(float3 rayEnd)
 {
     LocalFogRayResult result;
     result.Scattering = float3(0.0f, 0.0f, 0.0f);
@@ -415,98 +818,97 @@ LocalFogRayResult RayMarchLocalFogBackground(float3 rayEnd)
     float viewDistance = min(rawDistance, 100.0f);
     float3 viewDir = viewDelta / rawDistance;
 
-    // Local fog volumes are relatively small in world space. Keeping the
-    // original 32 samples prevents them from popping or scaling with camera
-    // distance. This path runs only for background pixels and only when at
-    // least one local fog volume is active.
-    const int stepCount = 32;
-    float stepLength =
-        viewDistance /
-        (float)stepCount;
+    float totalOpticalDepth = 0.0f;
+    float3 opticalDepthColor = float3(0.0f, 0.0f, 0.0f);
 
     [loop]
-    for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
+    for (int fogIndex = 0; fogIndex < fogCount; ++fogIndex)
     {
-        float t =
-            ((float)stepIndex + 0.5f) /
-            (float)stepCount;
-        float3 samplePos =
-            cameraPos +
-            viewDir * viewDistance * t;
+        float4 data0 = LocalFogData0[fogIndex];
+        float4 data1 = LocalFogData1[fogIndex];
+        if (data1.w < 0.5f || data1.y <= 0.00001f)
+        {
+            continue;
+        }
 
-        float sampleDensity = 0.0f;
-        float3 sampleColorSum =
-            float3(0.0f, 0.0f, 0.0f);
+        float radius = max(data0.w, 0.01f);
+        bool sphereFog = data1.z >= 0.5f;
+        float segmentStart;
+        float segmentEnd;
+        bool intersects = sphereFog
+            ? IntersectRaySphereSegment(
+                cameraPos,
+                viewDir,
+                viewDistance,
+                data0.xyz,
+                radius,
+                segmentStart,
+                segmentEnd)
+            : IntersectRayHorizontalCylinderSegment(
+                cameraPos,
+                viewDir,
+                viewDistance,
+                data0.xyz,
+                radius,
+                segmentStart,
+                segmentEnd);
+
+        if (!intersects)
+        {
+            continue;
+        }
+
+        // Every volume owns a fixed number of samples over its actual ray
+        // interval.  The integration quality therefore depends on the fog
+        // volume, not on how much empty space lies between it and the camera.
+        const int stepCount = 24;
+        float segmentLength = segmentEnd - segmentStart;
+        float stepLength = segmentLength / (float)stepCount;
+        float densityIntegral = 0.0f;
 
         [loop]
-        for (int fogIndex = 0; fogIndex < fogCount; ++fogIndex)
+        for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
         {
-            float4 data0 = LocalFogData0[fogIndex];
-            float4 data1 = LocalFogData1[fogIndex];
-
-            if (data1.w < 0.5f)
-            {
-                continue;
-            }
-
+            float sampleDistance =
+                segmentStart +
+                ((float)stepIndex + 0.5f) * stepLength;
+            float3 samplePos =
+                cameraPos +
+                viewDir * sampleDistance;
             float3 delta = samplePos - data0.xyz;
-            float radius = max(data0.w, 0.01f);
-            float horizontal =
-                saturate(
-                    1.0f -
-                    length(delta.xz) /
-                    radius);
+            float horizontal = saturate(
+                1.0f - length(delta.xz) / radius);
             float heightWeight = exp(
                 -abs(delta.y) *
                 max(data1.x, 0.0001f));
-            float sphereWeight =
-                saturate(
-                    1.0f -
-                    length(delta) /
-                    radius);
+            float sphereWeight = saturate(
+                1.0f - length(delta) / radius);
+            float volumeWeight = sphereFog
+                ? sphereWeight
+                : horizontal * heightWeight;
 
-            float volumeWeight = lerp(
-                horizontal * heightWeight,
-                sphereWeight,
-                step(0.5f, data1.z));
-
-            float contribution =
+            densityIntegral +=
                 volumeWeight *
-                max(data1.y, 0.0f);
-
-            sampleDensity += contribution;
-            sampleColorSum +=
-                LocalFogColors[fogIndex].rgb *
-                contribution;
+                max(data1.y, 0.0f) *
+                stepLength;
         }
 
-        if (sampleDensity > 0.00001f)
-        {
-            float3 sampleColor =
-                sampleColorSum /
-                sampleDensity;
-            float sampleOpacity =
-                1.0f -
-                exp(
-                    -sampleDensity *
-                    stepLength *
-                    0.08f);
-            sampleOpacity =
-                saturate(sampleOpacity);
+        float opticalDepth = densityIntegral * 0.08f;
+        totalOpticalDepth += opticalDepth;
+        opticalDepthColor +=
+            LocalFogColors[fogIndex].rgb *
+            opticalDepth;
+    }
 
-            result.Scattering +=
-                sampleColor *
-                sampleOpacity *
-                result.Transmittance;
-            result.Transmittance *=
-                1.0f -
-                sampleOpacity;
-        }
-
-        if (result.Transmittance <= 0.01f)
-        {
-            break;
-        }
+    result.Transmittance = exp(-totalOpticalDepth);
+    if (totalOpticalDepth > 0.00001f)
+    {
+        float3 fogColor =
+            opticalDepthColor /
+            totalOpticalDepth;
+        result.Scattering =
+            fogColor *
+            (1.0f - result.Transmittance);
     }
 
     return result;
@@ -514,11 +916,6 @@ LocalFogRayResult RayMarchLocalFogBackground(float3 rayEnd)
 
 float4 main(PSInputPostProcess input) : SV_Target
 {
-    float4 baseColor =
-        BaseColorTexture.SampleLevel(
-            TextureSampler,
-            input.TexCoord,
-            0);
     float4 position =
         PositionTexture.SampleLevel(
             TextureSampler,
@@ -557,27 +954,16 @@ float4 main(PSInputPostProcess input) : SV_Target
             LightViewProjection,
             ShadowMapParams);
 
-    if (background)
-    {
-        LocalFogRayResult localFog =
-            RayMarchLocalFogBackground(rayEnd);
+    LocalFogRayResult localFog =
+        IntegrateLocalFogRay(rayEnd);
 
-        float3 sceneBeforeFog =
-            baseColor.rgb +
-            AtmosphereBackgroundCommon(input.TexCoord) +
-            scatter;
-        float3 foggedScene =
-            sceneBeforeFog *
-            localFog.Transmittance +
-            localFog.Scattering;
-
-        // DeferredLightingPS adds base color and analytic sky later. Store the
-        // signed delta so the final background becomes the correctly fogged
-        // scene instead of adding fog on top of it.
-        scatter +=
-            foggedScene -
-            sceneBeforeFog;
-    }
-
-    return float4(scatter, 1.0f);
+    // RGB contains all additive participating-media light. Alpha carries the
+    // local-fog transmittance so deferred lighting can attenuate the complete
+    // lit scene after shading, for both geometry and background pixels.
+    float3 participatingMedia =
+        scatter * localFog.Transmittance +
+        localFog.Scattering;
+    return float4(
+        participatingMedia,
+        localFog.Transmittance);
 }

@@ -23,11 +23,12 @@ float IsMaterialClass(float value, float target)
     return abs(value - target) < 0.5f;
 }
 
-// Contact shadows use a small ray-start jitter to avoid regular step bands.
-// VSM filtering deliberately does not use this hash so self shadows stay stable.
-float ShadowNoiseHash(float3 value)
+// Stable screen-space interleaved gradient noise. A sine hash of world
+// position becomes a set of parallel contours on planar geometry, which was
+// visible as stripes in contact shadows.
+float ContactShadowPixelNoise(float2 pixelPosition)
 {
-    return frac(sin(dot(value, float3(12.9898f, 78.233f, 37.719f))) * 43758.5453f);
+    return frac(52.9829189f * frac(dot(pixelPosition, float2(0.06711056f, 0.00583715f))));
 }
 
 float SampleConventionalShadowPcf9(
@@ -336,13 +337,22 @@ float SampleContactShadow(float3 worldPos, float3 normal, float3 lightDir)
     const float3 safeLightDir = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
     const float stepLength = rayLength / (float)stepCount;
     const float3 origin = worldPos + safeNormal * max(0.018f, stepLength * 0.55f);
-    const float jitter = ShadowNoiseHash(worldPos * 31.0f + safeNormal * 7.0f);
+
+    uint depthWidth;
+    uint depthHeight;
+    DepthTexture.GetDimensions(depthWidth, depthHeight);
+    float3 receiverProjection = WorldToScreenUV(worldPos);
+    float2 receiverPixel = floor(saturate(receiverProjection.xy) *
+        float2((float)depthWidth, (float)depthHeight));
+    const float jitter = ContactShadowPixelNoise(receiverPixel);
 
     float occlusion = 0.0f;
     [loop]
     for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
     {
-        float t = ((float)stepIndex + 0.25f + jitter * 0.65f) / (float)stepCount;
+        // Center the jitter within each interval. This keeps coverage uniform
+        // while breaking the visible shells produced by fixed ray steps.
+        float t = ((float)stepIndex + 0.15f + jitter * 0.70f) / (float)stepCount;
         float3 rayPosition = origin + safeLightDir * rayLength * t;
         float3 projected = WorldToScreenUV(rayPosition);
         if (projected.x <= 0.001f || projected.x >= 0.999f ||
@@ -362,9 +372,12 @@ float SampleContactShadow(float3 worldPos, float3 normal, float3 lightDir)
         float depthDelta = rayDistance - sceneDistance;
         float thickness = 0.012f + stepLength * 0.75f + rayDistance * 0.0015f;
         float hit =
-            smoothstep(0.0015f, thickness * 0.35f, depthDelta) *
-            (1.0f - smoothstep(thickness * 0.72f, thickness, depthDelta));
-        occlusion = max(occlusion, hit * (1.0f - t * 0.65f));
+            smoothstep(0.0015f, thickness * 0.30f, depthDelta) *
+            (1.0f - smoothstep(thickness * 0.76f, thickness, depthDelta));
+        float weightedHit = hit * (1.0f - t * 0.65f);
+        // Probabilistic union is smoother than selecting a single maximum
+        // sample and does not expose one marching interval as a dark stripe.
+        occlusion = 1.0f - (1.0f - occlusion) * (1.0f - weightedHit);
     }
 
     float cameraDistance = length(worldPos - PPCameraPos.xyz);
@@ -513,11 +526,19 @@ float4 main(PSInputPostProcess input) : SV_Target
     bool btdf = IsMaterialClass(shaderClass, 13.0f);
     bool bsdf = IsMaterialClass(shaderClass, 14.0f);
 
-    float3 atmosphereViewScatter = AtmosphereTexture.SampleLevel(TextureSampler, input.TexCoord, 0).rgb;
+    float4 atmosphereMedia =
+        AtmosphereTexture.SampleLevel(
+            TextureSampler,
+            input.TexCoord,
+            0);
+    float fogTransmittance = saturate(atmosphereMedia.a);
     
     if (background)
     {
-        baseColor.rgb += AtmosphereBackgroundCommon(input.TexCoord) + atmosphereViewScatter;
+        baseColor.rgb =
+            (baseColor.rgb + AtmosphereBackgroundCommon(input.TexCoord)) *
+            fogTransmittance +
+            atmosphereMedia.rgb;
         return baseColor;
     }
 
@@ -709,26 +730,43 @@ float4 main(PSInputPostProcess input) : SV_Target
         R = normalize(R);
 
         float2 reflectionUV;
-        reflectionUV.x = atan2(R.z, R.x) / (2.0f * PI);
-        reflectionUV.y = acos(R.y) / PI;
+        reflectionUV.x = frac(atan2(R.z, R.x) / (2.0f * PI) + 0.5f);
+        reflectionUV.y = acos(clamp(R.y, -1.0f, 1.0f)) / PI;
 
         float2 normalUV;
-        normalUV.x = atan2(N.z, N.x) / (2.0f * PI);
-        normalUV.y = acos(N.y) / PI;
+        normalUV.x = frac(atan2(N.z, N.x) / (2.0f * PI) + 0.5f);
+        normalUV.y = acos(clamp(N.y, -1.0f, 1.0f)) / PI;
 
         float maxMip = 8.0f;
 
-        float2 ssrUV = (roughness < 0.65f)
-            ? ScreenSpaceRayMarch(position.xyz, R, DepthTexture, TextureSampler)
-            : float2(-1.0f, -1.0f);
-        float3 envSpecular;
-        if (all(ssrUV >= 0.0f))
+        // Move the ray off the current surface to avoid self-reflection. The
+        // returned hit is additionally checked against the world-position
+        // G-buffer, rejecting depth discontinuities that create white streaks.
+        float3 ssrHit = (roughness < 0.65f && dot(R, V) < 0.0f)
+            ? ScreenSpaceRayMarch(position.xyz + N * 0.04f + R * 0.02f, R, DepthTexture, TextureSampler)
+            : float3(-1.0f, -1.0f, -1.0f);
+        float3 envSpecular = EnvironmentTexture.SampleLevel(
+            TextureSampler, reflectionUV, roughness * maxMip).rgb;
+        if (all(ssrHit.xy >= 0.0f) && all(ssrHit.xy <= 1.0f))
         {
-            envSpecular = BaseColorTexture.SampleLevel(TextureSampler, ssrUV, 0).rgb;
-        }
-        else
-        {
-            envSpecular = EnvironmentTexture.SampleLevel(TextureSampler, reflectionUV, roughness * maxMip).rgb;
+            float3 rayOrigin = position.xyz + N * 0.04f + R * 0.02f;
+            float3 rayHitPosition = rayOrigin + R * ssrHit.z;
+            float4 gbufferHitPosition = PositionTexture.SampleLevel(TextureSampler, ssrHit.xy, 0);
+            float4 gbufferHitMaterial = MaterialTexture.SampleLevel(TextureSampler, ssrHit.xy, 0);
+            float hitTolerance = 0.10f + ssrHit.z * 0.015f;
+            bool validGeometryHit = gbufferHitMaterial.a >= -0.5f &&
+                distance(rayHitPosition, gbufferHitPosition.xyz) <= hitTolerance;
+
+            if (validGeometryHit)
+            {
+                float2 edgeDistance = min(ssrHit.xy, 1.0f - ssrHit.xy);
+                float edgeConfidence = saturate(min(edgeDistance.x, edgeDistance.y) * 24.0f);
+                float distanceConfidence = saturate(1.0f - ssrHit.z / 15.0f);
+                float roughnessConfidence = saturate((0.65f - roughness) / 0.25f);
+                float ssrConfidence = edgeConfidence * distanceConfidence * roughnessConfidence;
+                float3 ssrColor = BaseColorTexture.SampleLevel(TextureSampler, ssrHit.xy, roughness * 2.0f).rgb;
+                envSpecular = lerp(envSpecular, ssrColor, ssrConfidence);
+            }
         }
 
         float3 irradiance = EnvironmentTexture.SampleLevel(TextureSampler,normalUV,maxMip).rgb;
@@ -749,8 +787,7 @@ float4 main(PSInputPostProcess input) : SV_Target
         float3 ambientSpecular = envSpecular * F_IBL;
 
         float3 ambient = ambientDiffuse + ambientSpecular;
-
-        baseColor.rgb = directLight;
+        baseColor.rgb = directLight + ambient;
     }
 
     //{
@@ -783,8 +820,9 @@ float4 main(PSInputPostProcess input) : SV_Target
     //    baseColor.rgb += rimTint * rimMask * rimStrength * max(lightAttenuation, 0.25f);
     //}
 
-    baseColor.rgb += atmosphereViewScatter;
-    baseColor.rgb = ApplyLocalHeightFogCommon(baseColor.rgb, position.xyz, PPCameraPos.xyz);
+    baseColor.rgb =
+        baseColor.rgb * fogTransmittance +
+        atmosphereMedia.rgb;
     baseColor.a = 1.0f;
     return baseColor;
 }

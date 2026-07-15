@@ -267,35 +267,6 @@ float2 VirtualShadowMapUvCommon(
     return ((float2)physicalPage + inPageUv) / (float)pageGrid;
 }
 
-float3 ApplyLocalHeightFogCommon(float3 color, float3 worldPos, float3 cameraPos)
-{
-    float accumulatedDensity = 0.0f;
-    float3 accumulatedColor = float3(0.0f, 0.0f, 0.0f);
-    int fogCount = min((int)round(LocalFogGlobal.x), 16);
-    [loop]
-    for (int fogIndex = 0; fogIndex < fogCount; ++fogIndex)
-    {
-        float4 data0 = LocalFogData0[fogIndex];
-        float4 data1 = LocalFogData1[fogIndex];
-        if (data1.w < 0.5f) continue;
-        float3 delta = worldPos - data0.xyz;
-        float radius = max(data0.w, 0.01f);
-        float horizontal = saturate(1.0f - length(delta.xz) / radius);
-        float heightWeight = exp(-abs(delta.y) * max(data1.x, 0.0001f));
-        float sphereWeight = saturate(1.0f - length(delta) / radius);
-        float volumeWeight = lerp(horizontal * heightWeight, sphereWeight, step(0.5f, data1.z));
-        float contribution = volumeWeight * max(data1.y, 0.0f);
-        accumulatedDensity += contribution;
-        accumulatedColor += LocalFogColors[fogIndex].rgb * contribution;
-    }
-    float viewDistance = length(worldPos - cameraPos);
-    float fogAmount = 1.0f - exp(-accumulatedDensity * min(viewDistance, 100.0f) * 0.08f);
-    float3 fogColor = accumulatedDensity > 0.00001f
-        ? accumulatedColor / accumulatedDensity
-        : color;
-    return lerp(color, fogColor, saturate(fogAmount));
-}
-
 float3 SafeNormalizeCommon(float3 value, float3 fallback)
 {
     float lenSq = dot(value, value);
@@ -790,29 +761,56 @@ void ResolveSingleLightCommon(
             float outerCos = clamp(lightExtraData.y, 0.001f, 0.999f);
             float outerSin = sqrt(saturate(1.0f - outerCos * outerCos));
             float outerTan = outerSin / outerCos;
-            float coneRadius = max(abs(axialDistance) * outerTan, 0.001f);
-            float cylinderRadius = max(lightRange * outerTan * 0.45f, 0.001f);
+            float coneEndRadius = max(lightRange * outerTan, 0.001f);
+            float coneRootRadius = max(coneEndRadius * 0.04f, 0.05f);
+            float coneRadiusSlope =
+                max(coneEndRadius - coneRootRadius, 0.0f) /
+                lightRange;
+            float coneRadius = max(
+                coneRootRadius + axialDistance * coneRadiusSlope,
+                coneRootRadius);
+            float cylinderRadius = max(coneEndRadius * 0.45f, 0.001f);
 
-            float coneRadialAlpha = saturate(radialDistance / coneRadius);
-            float cylinderRadialAlpha = saturate(radialDistance / cylinderRadius);
-            float axialAlpha = saturate(abs(axialDistance) / lightRange);
+            // A volume light is a finite, forward-facing cone/cylinder.  The
+            // old abs(axialDistance) made a second lobe behind the emitter and
+            // saturating radial alpha left exp(-1.6) outside the authored
+            // boundary.  Both errors showed up as a rounded extra layer near
+            // the shaft root.
+            float insideAxial =
+                step(0.0f, axialDistance) *
+                step(axialDistance, lightRange);
+            float axialAlpha = saturate(axialDistance / lightRange);
+            float coneRadialAlpha = radialDistance / coneRadius;
+            float cylinderRadialAlpha = radialDistance / cylinderRadius;
 
-            float coneMask = exp(-coneRadialAlpha * coneRadialAlpha * 1.6f)
-                           * exp(-axialAlpha * axialAlpha * 1.8f);
-            float cylinderMask = exp(-cylinderRadialAlpha * cylinderRadialAlpha * 2.0f)
-                               * exp(-axialAlpha * axialAlpha * 2.2f);
+            float coneEdge =
+                1.0f - smoothstep(0.78f, 1.0f, coneRadialAlpha);
+            float cylinderEdge =
+                1.0f - smoothstep(0.78f, 1.0f, cylinderRadialAlpha);
+            float endFade =
+                1.0f - smoothstep(0.72f, 1.0f, axialAlpha);
+
+            float coneMask =
+                exp(-coneRadialAlpha * coneRadialAlpha * 1.35f) *
+                coneEdge *
+                endFade *
+                insideAxial;
+            float cylinderMask =
+                exp(-cylinderRadialAlpha * cylinderRadialAlpha * 1.7f) *
+                cylinderEdge *
+                endFade *
+                insideAxial;
 
             float shapeMask = lerp(coneMask, cylinderMask, volumeShape);
-
-            float glowRadius = max(lightRange * outerTan, 0.001f);
-            float glowAlpha = saturate(abs(distanceToLight) / max(glowRadius, 0.001f));
-            float glowMask = pow(1.0f - glowAlpha * glowAlpha, 2.0f) * exp(-axialAlpha * axialAlpha * 1.2f);
-            shapeMask = max(shapeMask, glowMask * 0.35f);
-
-            float distanceFade = smoothstep(1.0f, 0.0f, saturate(abs(distanceToLight) / lightRange));
-
-            attenuation = lerp(attenuation, rangeFade * rangeFade * cylinderMask, volumeShape);
-            volumeScatter = shapeMask * distanceFade * density * 0.55f;
+            // Volume lights use the same finite shape for both direct
+            // attenuation and participating-media density. Reusing the old
+            // apex-based spotMask here zeroed the new emitter cap and left a
+            // camera-dependent dark gap below the transform position.
+            attenuation =
+                rangeFade *
+                rangeFade *
+                shapeMask;
+            volumeScatter = shapeMask * density * 0.55f;
         }
     }
 }
@@ -1117,17 +1115,34 @@ bool ProjectWorldToScreenCommon(float3 worldPos, out float2 screenUv)
     return ndc.z >= 0.0f && ndc.z <= 1.0f;
 }
 
-float2 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> depthTex, SamplerState depthSampler)
+// Returns hit UV in xy and the world-space distance along the reflection ray in z.
+// A negative x/y means no reliable hit. D3D depth is already in [0, 1], so it
+// must not be remapped to the OpenGL [-1, 1] range here.
+float3 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> depthTex, SamplerState depthSampler)
 {
-    float maxDist = 15.0f;
-    int maxSteps = 24;
-    float stepSize = maxDist / (float)maxSteps;
+    const float maxDist = 15.0f;
+    const int maxSteps = 64;
+    const int refineSteps = 6;
+    const float stepSize = maxDist / (float)maxSteps;
+
+    float previousT = 0.0f;
+    float previousDepthDiff = -1.0f;
+    bool hasFrontSample = false;
 
     [loop]
     for (int i = 1; i <= maxSteps; ++i)
     {
-        float3 rayPos = origin + direction * stepSize * (float)i;
-        float3 rayUVZ = WorldToScreenUV(rayPos);
+        float currentT = stepSize * (float)i;
+        float3 rayPos = origin + direction * currentT;
+        float4 clipPos = mul(float4(rayPos, 1.0f), PPViewProjection);
+        if (clipPos.w <= 0.000001f)
+            break;
+
+        float3 rayNdc = clipPos.xyz / clipPos.w;
+        float3 rayUVZ = float3(
+            rayNdc.x * 0.5f + 0.5f,
+            -rayNdc.y * 0.5f + 0.5f,
+            rayNdc.z);
 
         if (rayUVZ.x < 0.0f || rayUVZ.x > 1.0f || rayUVZ.y < 0.0f || rayUVZ.y > 1.0f)
             break;
@@ -1137,17 +1152,56 @@ float2 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> dep
 
         float sceneDepth = depthTex.SampleLevel(depthSampler, rayUVZ.xy, 0).r;
         if (sceneDepth >= 1.0f - 0.001f)
-            continue;
-
-        float sceneZ = sceneDepth * 2.0f - 1.0f;
-        float depthDiff = rayUVZ.z - sceneZ;
-        if (depthDiff > 0.0f && depthDiff < 0.005f)
         {
-            return rayUVZ.xy;
+            previousT = currentT;
+            continue;
         }
+
+        float depthDiff = rayUVZ.z - sceneDepth;
+        if (depthDiff <= 0.0f)
+        {
+            hasFrontSample = true;
+            previousT = currentT;
+            previousDepthDiff = depthDiff;
+            continue;
+        }
+
+        // Only accept an actual front-to-back crossing. This prevents the ray
+        // from immediately selecting its own surface or a foreground silhouette.
+        if (hasFrontSample && previousDepthDiff <= 0.0f)
+        {
+            float lowT = previousT;
+            float highT = currentT;
+
+            [unroll]
+            for (int refine = 0; refine < refineSteps; ++refine)
+            {
+                float midT = (lowT + highT) * 0.5f;
+                float3 midPos = origin + direction * midT;
+                float4 midClip = mul(float4(midPos, 1.0f), PPViewProjection);
+                float3 midNdc = midClip.xyz / max(midClip.w, 0.000001f);
+                float2 midUv = float2(midNdc.x * 0.5f + 0.5f, -midNdc.y * 0.5f + 0.5f);
+                float midSceneDepth = depthTex.SampleLevel(depthSampler, midUv, 0).r;
+
+                if (midNdc.z > midSceneDepth)
+                    highT = midT;
+                else
+                    lowT = midT;
+            }
+
+            float hitT = (lowT + highT) * 0.5f;
+            float3 hitPos = origin + direction * hitT;
+            float4 hitClip = mul(float4(hitPos, 1.0f), PPViewProjection);
+            float3 hitNdc = hitClip.xyz / max(hitClip.w, 0.000001f);
+            float2 hitUv = float2(hitNdc.x * 0.5f + 0.5f, -hitNdc.y * 0.5f + 0.5f);
+            return float3(hitUv, hitT);
+        }
+
+        previousT = currentT;
+        previousDepthDiff = depthDiff;
     }
 
-    return float2(-1.0f, -1.0f);
+    return float3(-1.0f, -1.0f, -1.0f);
 }
  
 #endif
