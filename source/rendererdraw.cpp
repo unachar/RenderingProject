@@ -210,6 +210,7 @@ void RendererDraw::BeginDraw()
 	}
 	RendererCore::ApplyPendingRenderMode();
 	RendererCore::ApplyPendingHdr();
+	RendererCore::ApplyPendingResolutionScale();
 	RendererResource::BeginFrame();
 
 	m_CommandAllocator[m_FrameIndex]->Reset();
@@ -701,7 +702,7 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 				const XMMATRIX invViewProjection = XMMatrixInverse(nullptr, view * projection);
 
 				PostProcessConstants params{};
-				params.Flags = XMFLOAT4(ImGuiManager::GetExposure(), intensity, renderModeFlag, g_kResolutionScale);
+				params.Flags = XMFLOAT4(ImGuiManager::GetExposure(), intensity, renderModeFlag, m_ResolutionScale);
 				params.PPCameraPos = XMFLOAT4(cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f);
 				params.HdrFlags = XMFLOAT4(ImGuiManager::IsHdrEnabled() ? 1.0f : 0.0f, ImGuiManager::IsToneMapEnabled() ? 1.0f : 0.0f, 0.0f, 0.0f);
 				XMStoreFloat4x4(&params.PPInvViewProjection, XMMatrixTranspose(invViewProjection));
@@ -822,7 +823,7 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 	m_CommandList->RSSetViewports(1, &m_FullViewport);
 	m_CommandList->RSSetScissorRects(1, &m_FullScissorRect);
 
-	if (m_UseLowResDepth && g_kResolutionScale < 1.0f)
+	if (m_UseLowResDepth && m_ResolutionScale < 1.0f)
 	{
 		ID3D12PipelineState* upscalePso = PsoManager::GetUpscaleBilateralPso();
 		if (upscalePso && m_UpscaleRootSignature)
@@ -1188,8 +1189,8 @@ bool RendererDraw::CreateSceneRenderTarget()
 
 	if (m_RenderMode == RenderMode::DEFERRED)
 	{
-		UINT gbufferWidth = max((UINT)(m_Width * g_kGBufferScale), 1u);
-		UINT gbufferHeight = max((UINT)(m_Height * g_kGBufferScale), 1u);
+		UINT gbufferWidth = m_SceneWidth;
+		UINT gbufferHeight = m_SceneHeight;
 		CD3DX12_CPU_DESCRIPTOR_HANDLE gbufferRtvHandle(m_SceneRtvHandle, 2, rtvIncrement);
 		for (UINT i = 0; i < g_kGBUFFER_COUNT; ++i)
 		{

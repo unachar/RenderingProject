@@ -44,19 +44,9 @@ float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 ligh
     float bias = max(ShadowMapParams.y * (1.0f - nDotL), ShadowMapParams.z);
     float currentDepth = lightNdc.z - bias;
 
-    float visibility = 0.0f;
-    [unroll]
-    for (int y = -1; y <= 1; ++y)
-    {
-        [unroll]
-        for (int x = -1; x <= 1; ++x)
-        {
-            float closestDepth = g_ShadowMap.SampleLevel(g_ShadowSampler, float3(shadowUv + float2(x, y) * texelSize, 0.0f), 0);
-            visibility += (currentDepth <= closestDepth) ? 1.0f : 0.0f;
-        }
-    }
-
-    visibility /= 9.0f;
+    int filterRadius = clamp((int)round(ShadowFilterParams.x), 0, 3);
+    float visibility = SampleShadowMapPcf9(
+        shadowUv, 0.0f, texelSize, currentDepth, filterRadius);
     return lerp(1.0f, visibility, shadowStrength);
 }
 

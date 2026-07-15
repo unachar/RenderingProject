@@ -960,11 +960,23 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
             MaterialSystem::IsReceivingPostProcess(entity) == receivingPostProcessOnly;
     };
 
+	// GPU culling is useful for large visible instance groups, but starting it
+	// per mesh is expensive when the whole entity is outside the camera.  Reject
+	// those entities first so off-screen animated models do not run skinning,
+	// cull/argument compute dispatches, ExecuteIndirect, or resource barriers.
+	auto isCameraVisible = [&](EntityID entity, const XMFLOAT3& center,
+		const XMFLOAT3& extents, bool hasBounds)
+	{
+		return IsBoundsVisible(entity, viewProjection, center, extents, hasBounds);
+	};
+
     for (EntityID entity : World::GetView<SpriteComponent, TransformComponent>())
     {
         if (!CanInstance(entity)) continue;
         const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
         if (!sprite.Is3D || sprite.VertexBufferView.BufferLocation == 0 || sprite.VertexCount == 0) continue;
+		if (!isCameraVisible(entity, sprite.LocalBoundsCenter,
+			sprite.LocalBoundsExtents, sprite.HasLocalBounds)) continue;
         const MaterialComponent* material = ComponentManager::HasComponent<MaterialComponent>(entity)
             ? &ComponentManager::GetComponentUnchecked<MaterialComponent>(entity) : nullptr;
         if (!acceptsPass(entity, material)) continue;
@@ -999,6 +1011,8 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			ComponentManager::HasComponent<StaticModelComponent>(entity)) continue;
         const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
         if (mesh.VertexBufferView.BufferLocation == 0 || mesh.VertexCount == 0) continue;
+		if (!isCameraVisible(entity, mesh.LocalBoundsCenter,
+			mesh.LocalBoundsExtents, mesh.HasLocalBounds)) continue;
         const MaterialComponent* material = ComponentManager::HasComponent<MaterialComponent>(entity)
             ? &ComponentManager::GetComponentUnchecked<MaterialComponent>(entity) : nullptr;
         if (!acceptsPass(entity, material)) continue;
@@ -1032,6 +1046,8 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         const auto& animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
         AnimationModelResource* model = ModelManager::GetAnimModel(animation.ModelId);
         if (!model) continue;
+		if (!isCameraVisible(entity, model->GetAabbCenter(),
+			model->GetAabbExtents(), true)) continue;
         const MaterialComponent* material = ComponentManager::HasComponent<MaterialComponent>(entity)
             ? &ComponentManager::GetComponentUnchecked<MaterialComponent>(entity) : nullptr;
         if (!acceptsPass(entity, material)) continue;
@@ -1089,6 +1105,8 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 		const auto& component = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
 		StaticModelResource* model = ModelManager::GetStaticModel(component.ModelId);
 		if (!model) continue;
+		if (!isCameraVisible(entity, model->GetAabbCenter(),
+			model->GetAabbExtents(), true)) continue;
 		const MaterialComponent* material = ComponentManager::HasComponent<MaterialComponent>(entity)
 			? &ComponentManager::GetComponentUnchecked<MaterialComponent>(entity) : nullptr;
 		if (!acceptsPass(entity, material)) continue;

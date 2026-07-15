@@ -37,8 +37,8 @@ bool RendererCore::Init(HWND hwnd)
 	if (m_Width == 0) m_Width = g_kSCREEN_WIDTH;
 	if (m_Height == 0) m_Height = g_kSCREEN_HEIGHT;
 
-	m_SceneWidth = max((UINT)(m_Width * g_kResolutionScale), 1u);
-	m_SceneHeight = max((UINT)(m_Height * g_kResolutionScale), 1u);
+	m_SceneWidth = max((UINT)roundf(m_Width * m_ResolutionScale), 1u);
+	m_SceneHeight = max((UINT)roundf(m_Height * m_ResolutionScale), 1u);
 
 #ifdef _DEBUG
 	ComPtr<ID3D12Debug> debugController;
@@ -509,8 +509,8 @@ void RendererCore::Resize(UINT width, UINT height)
 		rtvHandle.Offset(1, rtvSize);
 	}
 
-	UINT sceneWidth = max((UINT)(width * g_kResolutionScale), 1u);
-	UINT sceneHeight = max((UINT)(height * g_kResolutionScale), 1u);
+	UINT sceneWidth = max((UINT)roundf(width * m_ResolutionScale), 1u);
+	UINT sceneHeight = max((UINT)roundf(height * m_ResolutionScale), 1u);
 	D3D12_RESOURCE_DESC depthDesc {};
 	depthDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
 	depthDesc.Width = width;
@@ -622,6 +622,57 @@ void RendererCore::SetHdr(bool enabled)
 	}
 	m_PendingHdr = enabled;
 	m_HasPendingHdr = true;
+}
+
+void RendererCore::SetResolutionScale(float scale)
+{
+	const float clampedScale = clamp(scale, 0.25f, 1.0f);
+	if (fabsf(GetResolutionScale() - clampedScale) < 0.0001f)
+	{
+		return;
+	}
+	m_PendingResolutionScale = clampedScale;
+	m_HasPendingResolutionScale = true;
+}
+
+void RendererCore::ApplyPendingResolutionScale()
+{
+	if (!m_HasPendingResolutionScale)
+	{
+		return;
+	}
+
+	const UINT sceneWidth = max((UINT)roundf(m_Width * m_PendingResolutionScale), 1u);
+	const UINT sceneHeight = max((UINT)roundf(m_Height * m_PendingResolutionScale), 1u);
+	if (sceneWidth == m_SceneWidth && sceneHeight == m_SceneHeight)
+	{
+		m_ResolutionScale = m_PendingResolutionScale;
+		m_HasPendingResolutionScale = false;
+		return;
+	}
+
+	if (m_CommandQueue && m_Fence && m_FenceEvent)
+	{
+		m_CurrentFenceValue++;
+		m_CommandQueue->Signal(m_Fence.Get(), m_CurrentFenceValue);
+		if (m_Fence->GetCompletedValue() < m_CurrentFenceValue)
+		{
+			m_Fence->SetEventOnCompletion(m_CurrentFenceValue, m_FenceEvent);
+			WaitForSingleObject(m_FenceEvent, INFINITE);
+		}
+		for (UINT i = 0; i < g_kFRAME_COUNT; ++i)
+		{
+			m_FenceValues[i] = m_CurrentFenceValue;
+		}
+	}
+
+	m_ResolutionScale = m_PendingResolutionScale;
+	m_HasPendingResolutionScale = false;
+	m_SceneWidth = sceneWidth;
+	m_SceneHeight = sceneHeight;
+	m_Viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, (float)m_SceneWidth, (float)m_SceneHeight);
+	m_ScissorRect = CD3DX12_RECT(0, 0, m_SceneWidth, m_SceneHeight);
+	RendererDraw::CreateSceneRenderTarget();
 }
 
 void RendererCore::ApplyPendingHdr()

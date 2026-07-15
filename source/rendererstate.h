@@ -191,6 +191,9 @@ protected:
 	static UINT m_Height;
 	static UINT m_SceneWidth;
 	static UINT m_SceneHeight;
+	static float m_ResolutionScale;
+	static float m_PendingResolutionScale;
+	static bool m_HasPendingResolutionScale;
 	static HWND m_Hwnd;
 	static UINT m_CbvIncrementSize;
 
@@ -283,10 +286,7 @@ public:
 	static constexpr uint32_t g_kSCREEN_HEIGHT = 600;
 	static constexpr float g_kNEAR_CLIP = 0.1f;
 	static constexpr float g_kFAR_CLIP = 100.0f;
-	static constexpr float g_kResolutionScale = 0.3f;
-	static constexpr float g_kGBufferScale = g_kResolutionScale;
-	static_assert(g_kResolutionScale == g_kGBufferScale,
-		"Scene and GBuffer resolution scales must match");
+	static constexpr float g_kDEFAULT_RESOLUTION_SCALE = 0.3f;
 
 
 	static constexpr UINT g_kCB_ALIGNED_SIZE = (sizeof(ConstantBuffer3D) + 255) & ~255;
@@ -301,7 +301,7 @@ public:
 	static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 512 + 255) & ~255;
 	static constexpr UINT g_kPBR_CB_SLOT_COUNT = g_kMAX_ENTITIES + 1;
 	static constexpr UINT g_kPBR_CB_TOTAL_SLOT_COUNT = g_kPBR_CB_SLOT_COUNT * g_kFRAME_COUNT;
-	static constexpr UINT g_kSHADOW_CB_ALIGNED_SIZE = (sizeof(XMMATRIX) + sizeof(float) * 4 + 255) & ~255;
+	static constexpr UINT g_kSHADOW_CB_ALIGNED_SIZE = (sizeof(XMMATRIX) + sizeof(float) * 8 + 255) & ~255;
 	static constexpr UINT g_kSHADOW_CB_SLOT_COUNT = g_kFRAME_COUNT * g_kMAX_SHADOW_PASSES;
 
 	static constexpr UINT g_kSHADOW_MAP_SIZE = 2048;

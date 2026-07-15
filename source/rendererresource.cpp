@@ -324,6 +324,7 @@ namespace
 	{
 		XMMATRIX LightViewProjection{};
 		XMFLOAT4 ShadowMapParams = { 1.0f / RendererState::g_kSHADOW_MAP_SIZE, 0.0015f, 0.0025f, 1.0f };
+		XMFLOAT4 ShadowFilterParams = { 1.0f, 0.0f, 0.0f, 0.0f };
 	};
 
 	UINT GetShadowConstantBufferSlot(UINT shadowIndex)
@@ -1621,6 +1622,7 @@ void RendererResource::UpdateShadowConstantBuffer()
 	ShadowConstants constants{};
 	constants.LightViewProjection = g_ShadowRenderPasses[g_CurrentShadowPassIndex].ViewProjection;
 	constants.ShadowMapParams = g_ShadowRenderPasses[g_CurrentShadowPassIndex].Params;
+	constants.ShadowFilterParams.x = static_cast<float>(RendererSettings::GetShadowFilterRadius());
 	auto* dst = static_cast<UINT8*>(m_pShadowCbvDataBegin) +
 		GetShadowConstantBufferSlot(g_CurrentShadowPassIndex) * g_kSHADOW_CB_ALIGNED_SIZE;
 	memcpy(dst, &constants, sizeof(constants));

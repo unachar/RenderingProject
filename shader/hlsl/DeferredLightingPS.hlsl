@@ -23,9 +23,40 @@ float IsMaterialClass(float value, float target)
     return abs(value - target) < 0.5f;
 }
 
+// Contact shadows use a small ray-start jitter to avoid regular step bands.
+// VSM filtering deliberately does not use this hash so self shadows stay stable.
 float ShadowNoiseHash(float3 value)
 {
     return frac(sin(dot(value, float3(12.9898f, 78.233f, 37.719f))) * 43758.5453f);
+}
+
+float SampleConventionalShadowPcf9(
+    float2 shadowUv,
+    float shadowLayer,
+    float texelSize,
+    float currentDepth)
+{
+    const float2 kernel[9] =
+    {
+        float2(0.0f, 0.0f),
+        float2(1.0f, 0.0f), float2(-1.0f, 0.0f),
+        float2(0.0f, 1.0f), float2(0.0f, -1.0f),
+        float2(0.7071068f, 0.7071068f), float2(-0.7071068f, 0.7071068f),
+        float2(0.7071068f, -0.7071068f), float2(-0.7071068f, -0.7071068f)
+    };
+    int filterRadius = clamp((int)round(VirtualShadowGlobal.z), 0, 3);
+    int tapCount = filterRadius <= 0 ? 1 : 9;
+    float visibility = 0.0f;
+    [unroll]
+    for (int tap = 0; tap < 9; ++tap)
+    {
+        if (tap >= tapCount) break;
+        float2 offset = kernel[tap] * (float)max(filterRadius, 1) * texelSize;
+        float closestDepth = ShadowMapTexture.SampleLevel(
+            ShadowSampler, float3(shadowUv + offset, shadowLayer), 0);
+        visibility += currentDepth <= closestDepth ? 1.0f : 0.0f;
+    }
+    return visibility / (float)tapCount;
 }
 
 bool ProjectVirtualShadowLevel(
@@ -97,26 +128,24 @@ bool SampleVirtualShadowLevel(
     float currentDepth = lightNdc.z -
         max(params.z * (1.0f - nDotL), params.w) * levelBiasScale;
 
+    // Keep the kernel stable in world space to avoid self-shadow grain without
+    // paying for temporal/spatial random rotation or a separate denoise pass.
+    // Nine taps restores the optimized VSM cost while retaining smooth PCF.
     const float2 poisson[9] =
     {
         float2(0.0f, 0.0f),
-        float2(-0.613392f, 0.617481f),
-        float2(0.170019f, -0.040254f),
-        float2(-0.299417f, 0.791925f),
-        float2(0.645680f, 0.493210f),
-        float2(-0.651784f, -0.717887f),
-        float2(0.421003f, 0.027070f),
-        float2(-0.817194f, -0.271096f),
-        float2(-0.705374f, -0.668203f)
+        float2(0.286f, 0.088f),
+        float2(-0.218f, 0.273f),
+        float2(-0.153f, -0.394f),
+        float2(0.424f, -0.309f),
+        float2(0.523f, 0.334f),
+        float2(-0.444f, 0.474f),
+        float2(-0.666f, -0.126f),
+        float2(0.137f, -0.712f)
     };
 
     int filterRadius = clamp((int)round(VirtualShadowGlobal.z), 0, 3);
     int tapCount = filterRadius <= 0 ? 1 : 9;
-    float angle = ShadowNoiseHash(worldPos * 17.0f + (float)level) * 6.28318530718f;
-    float sineValue;
-    float cosineValue;
-    sincos(angle, sineValue, cosineValue);
-    float2x2 rotation = float2x2(cosineValue, -sineValue, sineValue, cosineValue);
 
     // Most kernels are fully contained in one 128x128 physical page. In that
     // case virtual->physical translation is affine, so translate once and use
@@ -136,7 +165,7 @@ bool SampleVirtualShadowLevel(
     for (int tap = 0; tap < 9; ++tap)
     {
         if (tap >= tapCount) break;
-        float2 offset = mul(poisson[tap], rotation) * (float)max(filterRadius, 1);
+        float2 offset = poisson[tap] * (float)max(filterRadius, 1);
         float2 tapVirtualUv = virtualUv + offset * params.y;
         float2 physicalUv;
         if (kernelInOnePage)
@@ -253,21 +282,8 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
             float currentDepth = lightNdc.z - max(
                 params.z * (1.0f - saturate(dot(n, l))),
                 params.w);
-            float visibility = 0.0f;
-            [unroll]
-            for (int y = -1; y <= 1; ++y)
-            {
-                [unroll]
-                for (int x = -1; x <= 1; ++x)
-                {
-                    float closestDepth = ShadowMapTexture.SampleLevel(
-                        ShadowSampler,
-                        float3(shadowUv + float2(x, y) * params.y, params.x),
-                        0);
-                    visibility += currentDepth <= closestDepth ? 1.0f : 0.0f;
-                }
-            }
-            return visibility / 9.0f;
+            return SampleConventionalShadowPcf9(
+                shadowUv, params.x, params.y, currentDepth);
         }
         return 1.0f;
     }
@@ -287,21 +303,8 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
     float currentDepth = lightNdc.z - max(
         LightShadowData[lightIndex].z * (1.0f - saturate(dot(n, l))),
         abs(LightShadowData[lightIndex].w));
-    float visibility = 0.0f;
-    [unroll]
-    for (int y = -1; y <= 1; ++y)
-    {
-        [unroll]
-        for (int x = -1; x <= 1; ++x)
-        {
-            float closestDepth = ShadowMapTexture.SampleLevel(
-                ShadowSampler,
-                float3(shadowUv + float2(x, y) * texelSize, shadowLayer),
-                0);
-            visibility += currentDepth <= closestDepth ? 1.0f : 0.0f;
-        }
-    }
-    return visibility / 9.0f;
+    return SampleConventionalShadowPcf9(
+        shadowUv, shadowLayer, texelSize, currentDepth);
 }
 
 float LoadContactDepth(float2 uv)

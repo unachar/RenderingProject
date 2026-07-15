@@ -3763,6 +3763,15 @@ void ImGuiManager::DrawProjectSettingsWindow()
 
 	if (ImGui::CollapsingHeader("表示とフレーム", ImGuiTreeNodeFlags_DefaultOpen))
 	{
+		float resolutionScale = RendererCore::GetResolutionScale();
+		int resolutionPercent = static_cast<int>(roundf(resolutionScale * 100.0f));
+		if (ImGui::SliderInt("レンダー解像度", &resolutionPercent, 25, 100, "%d%%"))
+		{
+			RendererCore::SetResolutionScale(static_cast<float>(resolutionPercent) / 100.0f);
+		}
+		ImGui::TextDisabled("適用後: %u x %u",
+			max(static_cast<UINT>(roundf(RendererCore::GetWidth() * RendererCore::GetResolutionScale())), 1u),
+			max(static_cast<UINT>(roundf(RendererCore::GetHeight() * RendererCore::GetResolutionScale())), 1u));
 		bool vsync = World::IsVSyncEnabled();
 		if (ImGui::Checkbox("垂直同期", &vsync)) World::SetVSyncEnabled(vsync);
 		bool fixedRate = World::IsFixedFrameRateEnabled();
@@ -3906,6 +3915,7 @@ void ImGuiManager::SaveProjectSettings()
 	stream << "vsync=" << (World::IsVSyncEnabled() ? 1 : 0) << '\n';
 	stream << "fixed_fps=" << (World::IsFixedFrameRateEnabled() ? 1 : 0) << '\n';
 	stream << "target_fps=" << World::GetTargetFrameRate() << '\n';
+	stream << "resolution_scale=" << RendererCore::GetResolutionScale() << '\n';
 	stream << "anti_aliasing=" << static_cast<int>(RendererState::m_AntiAliasingMode) << '\n';
 	stream << "hdr=" << (m_HdrEnabled ? 1 : 0) << '\n';
 	stream << "tone_map=" << (m_ToneMapEnabled ? 1 : 0) << '\n';
@@ -3953,6 +3963,7 @@ void ImGuiManager::LoadProjectSettings()
 			if (key == "vsync") World::SetVSyncEnabled(stoi(value) != 0);
 			else if (key == "fixed_fps") World::SetFixedFrameRateEnabled(stoi(value) != 0);
 			else if (key == "target_fps") World::SetTargetFrameRate(stoi(value));
+			else if (key == "resolution_scale") RendererCore::SetResolutionScale(stof(value));
 			else if (key == "anti_aliasing") RendererState::m_AntiAliasingMode = static_cast<AntiAliasingMode>(clamp(stoi(value), 0, static_cast<int>(AntiAliasingMode::COUNT) - 1));
 			else if (key == "hdr") { m_HdrEnabled = stoi(value) != 0; RendererCore::SetHdr(m_HdrEnabled); }
 			else if (key == "tone_map") m_ToneMapEnabled = stoi(value) != 0;

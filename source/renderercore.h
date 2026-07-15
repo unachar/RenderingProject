@@ -11,6 +11,8 @@ public:
 	static void ApplyPendingRenderMode();
 	static void SetHdr(bool enabled);
 	static void ApplyPendingHdr();
+	static void SetResolutionScale(float scale);
+	static void ApplyPendingResolutionScale();
 
 	static RenderMode GetRenderMode() { return m_RenderMode; }
 	static RenderMode GetRequestedRenderMode() { return m_HasPendingRenderMode ? m_PendingRenderMode : m_RenderMode; }
@@ -20,6 +22,7 @@ public:
 	static const XMFLOAT4X4& GetPreviousViewMatrix() { return m_PrevViewMatrix; }
 	static const XMFLOAT4X4& GetPreviousProjectionMatrix() { return m_PrevProjMatrix; }
 	static UINT GetSceneHeight() { return m_SceneHeight; }
+	static float GetResolutionScale() { return m_HasPendingResolutionScale ? m_PendingResolutionScale : m_ResolutionScale; }
 	static UINT GetFrameIndex() { return m_FrameIndex; }
 	static float GetSceneAspectRatio()
 	{

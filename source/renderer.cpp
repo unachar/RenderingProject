@@ -30,6 +30,9 @@ UINT RendererState::m_Width = 0;
 UINT RendererState::m_Height = 0;
 UINT RendererState::m_SceneWidth = 0;
 UINT RendererState::m_SceneHeight = 0;
+float RendererState::m_ResolutionScale = RendererState::g_kDEFAULT_RESOLUTION_SCALE;
+float RendererState::m_PendingResolutionScale = RendererState::g_kDEFAULT_RESOLUTION_SCALE;
+bool RendererState::m_HasPendingResolutionScale = false;
 HWND RendererState::m_Hwnd = nullptr;
 UINT RendererState::m_CbvIncrementSize = 0;
 

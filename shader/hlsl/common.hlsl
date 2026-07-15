@@ -104,9 +104,34 @@ cbuffer ShadowParams : register(b3)
 {
     float4x4 LightViewProjection;
     float4 ShadowMapParams; // x: texel size, y: depth bias, z: normal bias, w: strength
+    float4 ShadowFilterParams; // x: PCF radius (0-3)
 };
 
 #ifndef SHADER_POSTPROCESS
+float SampleShadowMapPcf9(float2 shadowUv, float shadowLayer, float texelSize, float currentDepth, int filterRadius)
+{
+    const float2 kernel[9] =
+    {
+        float2(0.0f, 0.0f),
+        float2(1.0f, 0.0f), float2(-1.0f, 0.0f),
+        float2(0.0f, 1.0f), float2(0.0f, -1.0f),
+        float2(0.7071068f, 0.7071068f), float2(-0.7071068f, 0.7071068f),
+        float2(0.7071068f, -0.7071068f), float2(-0.7071068f, -0.7071068f)
+    };
+    int tapCount = filterRadius <= 0 ? 1 : 9;
+    float visibility = 0.0f;
+    [unroll]
+    for (int tap = 0; tap < 9; ++tap)
+    {
+        if (tap >= tapCount) break;
+        float2 offset = kernel[tap] * (float)max(filterRadius, 1) * texelSize;
+        float closestDepth = g_ShadowMap.SampleLevel(
+            g_ShadowSampler, float3(shadowUv + offset, shadowLayer), 0);
+        visibility += currentDepth <= closestDepth ? 1.0f : 0.0f;
+    }
+    return visibility / (float)tapCount;
+}
+
 float SampleShadowMap(float3 worldPos, float3 normal, float3 lightDir)
 {
     float normalLenSq = dot(normal, normal);
@@ -130,19 +155,9 @@ float SampleShadowMap(float3 worldPos, float3 normal, float3 lightDir)
     float bias = max(ShadowMapParams.y * (1.0f - nDotL), ShadowMapParams.z);
     float currentDepth = lightNdc.z - bias;
 
-    float visibility = 0.0f;
-    [unroll]
-    for (int y = -1; y <= 1; ++y)
-    {
-        [unroll]
-        for (int x = -1; x <= 1; ++x)
-        {
-            float closestDepth = g_ShadowMap.SampleLevel(g_ShadowSampler, float3(shadowUv + float2(x, y) * texelSize, 0.0f), 0);
-            visibility += (currentDepth <= closestDepth) ? 1.0f : 0.0f;
-        }
-    }
-
-    visibility /= 9.0f;
+    int filterRadius = clamp((int)round(ShadowFilterParams.x), 0, 3);
+    float visibility = SampleShadowMapPcf9(
+        shadowUv, 0.0f, texelSize, currentDepth, filterRadius);
     float shadowStrength = saturate(abs(ShadowMapParams.w));
     float outOfBoundsVisibility = 1.0f;
     return lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
