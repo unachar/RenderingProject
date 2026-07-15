@@ -10,7 +10,7 @@ void KacchattaHone::Create()
 	const auto modelScale = XMFLOAT3(0.5f, 0.5f, 0.5f);
 	const auto modelPath = "asset\\model\\kacchatta_hone\\kacchatta_hone.pmx";
 
-	auto& entity = World::CreateEntity()
+	auto entity = World::CreateEntity()
 		.Add<NameComponent>()
 		.Add<TransformComponent>()
 		.Add<MeshComponent>()

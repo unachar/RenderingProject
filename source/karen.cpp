@@ -15,7 +15,7 @@ void Karen::Create()
 	const auto animName = "anim1";
 	const auto animName2 = "anim2";
 
-	auto& entity = World::CreateEntity()
+	auto entity = World::CreateEntity()
 		.Add<NameComponent>()
 		.Add<TransformComponent>()
 		.Add<MeshComponent>()

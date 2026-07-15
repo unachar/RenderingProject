@@ -3262,7 +3262,7 @@ void ImGuiManager::PlaceAssetInScene(const filesystem::path& path, const ImVec2&
 	XMFLOAT3 pos{};
 	XMStoreFloat3(&pos, hit);
 
-	auto& entity = World::CreateEntity()
+	auto entity = World::CreateEntity()
 		.Add<NameComponent>()
 		.Add<TransformComponent>()
 		.Add<MeshComponent>()

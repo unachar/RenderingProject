@@ -4,6 +4,9 @@
 #include "light.h"
 #include "animationplayback.h"
 #include <cassert>
+#include <array>
+#include <cstdlib>
+#include <limits>
 #include <typeindex>
 #include <type_traits>
 
@@ -385,24 +388,92 @@ struct SunComponent
 template<typename T>
 struct ComponentStorage
 {
-	static vector<T>& Data()
+	static constexpr uint32_t kInvalidIndex = numeric_limits<uint32_t>::max();
+
+	static vector<T>& DenseData()
 	{
-		static vector<T> data(g_kMAX_ENTITIES);
+		static vector<T> data;
 		return data;
 	}
 
-	static void ClearEntity(EntityID entity)
+	static vector<EntityID>& DenseEntities()
 	{
-		if (entity >= g_kMAX_ENTITIES)
+		static vector<EntityID> entities;
+		return entities;
+	}
+
+	static array<uint32_t, g_kMAX_ENTITIES>& SparseIndices()
+	{
+		static array<uint32_t, g_kMAX_ENTITIES> indices = []
+			{
+				array<uint32_t, g_kMAX_ENTITIES> value{};
+				value.fill(kInvalidIndex);
+				return value;
+			}();
+		return indices;
+	}
+
+	static void CreateEntity(EntityID entity)
+	{
+		if (entity >= g_kMAX_ENTITIES || SparseIndices()[entity] != kInvalidIndex)
 		{
 			return;
 		}
 
-		if constexpr (is_same_v<T, SpriteComponent> || is_same_v<T, MeshComponent>)
+		auto& data = DenseData();
+		auto& entities = DenseEntities();
+		entities.push_back(entity);
+		try
 		{
-			Data()[entity].VertexBuffer.Reset();
+			data.emplace_back();
 		}
-		Data()[entity] = T{};
+		catch (...)
+		{
+			entities.pop_back();
+			throw;
+		}
+		SparseIndices()[entity] = static_cast<uint32_t>(data.size() - 1);
+	}
+
+	static bool Contains(EntityID entity)
+	{
+		return entity < g_kMAX_ENTITIES && SparseIndices()[entity] != kInvalidIndex;
+	}
+
+	static T& Get(EntityID entity)
+	{
+		return DenseData()[SparseIndices()[entity]];
+	}
+
+	static void ClearEntity(EntityID entity)
+	{
+		if (!Contains(entity))
+		{
+			return;
+		}
+
+		auto& data = DenseData();
+		auto& entities = DenseEntities();
+		auto& sparse = SparseIndices();
+		const uint32_t index = sparse[entity];
+		const uint32_t lastIndex = static_cast<uint32_t>(data.size() - 1);
+		if (index != lastIndex)
+		{
+			data[index] = std::move(data[lastIndex]);
+			const EntityID movedEntity = entities[lastIndex];
+			entities[index] = movedEntity;
+			sparse[movedEntity] = index;
+		}
+		data.pop_back();
+		entities.pop_back();
+		sparse[entity] = kInvalidIndex;
+	}
+
+	static void Reset()
+	{
+		DenseData().clear();
+		DenseEntities().clear();
+		SparseIndices().fill(kInvalidIndex);
 	}
 };
 
@@ -421,7 +492,9 @@ inline ComponentType ComponentTypeRegistry::GetType()
 	assert(nextTypeId < g_kMAX_COMPONENTS && "Component type limit reached");
 	ComponentTypeID id = nextTypeId++;
 	typeIds.emplace(key, id);
+	ComponentTypeRegistry::CreateCallbacks().push_back(&ComponentStorage<T>::CreateEntity);
 	ClearCallbacks().push_back(&ComponentStorage<T>::ClearEntity);
+	ComponentTypeRegistry::ResetCallbacks().push_back(&ComponentStorage<T>::Reset);
 	return ComponentType(id);
 }
 
@@ -471,21 +544,64 @@ public:
 		{
 			ReportMissingComponentError(entity, "Invalid Entity");
 			assert(false && "GetComponent called on invalid entity id");
+			std::abort();
 		}
 
 		if (!Registry::HasComponent(entity, ComponentTypeTraits<T>::value()))
 		{
 			ReportMissingComponentError(entity, typeid(T).name());
 			assert(false && "GetComponent called for a missing component");
+			std::abort();
 		}
 
-		return ComponentStorage<T>::Data()[entity];
+		return ComponentStorage<T>::Get(entity);
 	}
 
 	template<typename T>
 	static T& GetComponentUnchecked(EntityID entity)
 	{
-		return ComponentStorage<T>::Data()[entity];
+		assert(entity < g_kMAX_ENTITIES && Registry::IsAlive(entity));
+		assert(ComponentStorage<T>::Contains(entity));
+		return ComponentStorage<T>::Get(entity);
+	}
+
+	template<typename T>
+	static const vector<T>& GetDenseComponents() { return ComponentStorage<T>::DenseData(); }
+
+	template<typename T>
+	static const vector<EntityID>& GetDenseEntities() { return ComponentStorage<T>::DenseEntities(); }
+
+	// Structural changes (Add/Remove/Destroy) are not allowed while this callback
+	// is running. This keeps component traversal contiguous and avoids EntityID
+	// lookups in hot single-component systems.
+	template<typename T, typename Function>
+	static void ForEachComponent(Function&& function)
+	{
+		auto& data = ComponentStorage<T>::DenseData();
+		const auto& entities = ComponentStorage<T>::DenseEntities();
+		const size_t count = data.size();
+		for (size_t i = 0; i < count; ++i)
+		{
+			function(entities[i], data[i]);
+		}
+	}
+
+	// Primary should be the least common component in the query. No temporary
+	// entity list is built; matching components are passed by reference.
+	template<typename Primary, typename... Required, typename Function>
+	static void ForEach(Function&& function)
+	{
+		auto& primaryData = ComponentStorage<Primary>::DenseData();
+		const auto& entities = ComponentStorage<Primary>::DenseEntities();
+		const size_t count = primaryData.size();
+		for (size_t i = 0; i < count; ++i)
+		{
+			const EntityID entity = entities[i];
+			if ((ComponentStorage<Required>::Contains(entity) && ...))
+			{
+				function(entity, primaryData[i], ComponentStorage<Required>::Get(entity)...);
+			}
+		}
 	}
 
 	static void ReportMissingComponentError(EntityID entity, const char* componentName);

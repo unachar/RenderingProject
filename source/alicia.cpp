@@ -16,7 +16,7 @@ void Alicia::Create()
 	const auto modelPath = "asset\\model\\Alicia\\Alicia_solid_Unity.FBX";
 
 
-	auto& entity = World::CreateEntity()
+	auto entity = World::CreateEntity()
 		.Add<NameComponent>()
 		.Add<TransformComponent>()
 		.Add<MeshComponent>()

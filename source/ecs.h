@@ -6,7 +6,6 @@
 #include <unordered_map>
 #include <string>
 #include <typeindex>
-#include <memory>
 #include <cstdint>
 #include <windows.h>
 #include <DirectXMath.h>
@@ -19,7 +18,7 @@ static constexpr uint32_t g_kINVALID_ENTITY = UINT32_MAX;
 using EntityID = uint32_t;
 using ComponentMask = std::bitset<g_kMAX_COMPONENTS>;
 using ComponentTypeID = uint32_t;
-using CachedEntityList = std::shared_ptr<const std::vector<EntityID>>;
+using CachedEntityList = const std::vector<EntityID>*;
 
 class Entity;
 class Registry;
@@ -58,14 +57,18 @@ class ComponentTypeRegistry
 {
 private:
 	static std::unordered_map<std::type_index, ComponentTypeID>& TypeIds();
+	static std::vector<void(*)(EntityID)>& CreateCallbacks();
 	static std::vector<void(*)(EntityID)>& ClearCallbacks();
+	static std::vector<void(*)()>& ResetCallbacks();
 	static ComponentTypeID& NextTypeId();
 
 public:
 	template<typename T>
 	static ComponentType GetType();
 
+	static void CreateComponent(EntityID entity, ComponentType type);
 	static void ClearComponent(EntityID entity, ComponentType type);
+	static void ResetComponents();
 	static ComponentTypeID GetRegisteredCount();
 };
 
@@ -91,7 +94,7 @@ class EntityView
 private:
 	CachedEntityList m_Entities;
 public:
-	explicit EntityView(CachedEntityList entities) : m_Entities(std::move(entities)) {}
+	explicit EntityView(CachedEntityList entities) : m_Entities(entities) {}
 
 	using const_iterator = std::vector<EntityID>::const_iterator;
 	const_iterator begin() const { return m_Entities ? m_Entities->begin() : Empty().begin(); }
@@ -137,24 +140,30 @@ private:
 		struct QueryCacheEntry
 		{
 			uint64_t Version = 0;
-			CachedEntityList Entities;
+			std::vector<EntityID> Entities;
 		};
+
+		if (baseType.Value < g_kMAX_COMPONENTS && requiredMask.count() == 1)
+		{
+			return &m_ActiveEntities[baseType.Value];
+		}
 
 		static std::unordered_map<uint64_t, QueryCacheEntry> queryCache;
 		const uint64_t key =
 			(requiredMask.to_ullong() << 6) ^ static_cast<uint64_t>(baseType.Value);
 		QueryCacheEntry& entry = queryCache[key];
 
-		if (entry.Version == m_StructureVersion && entry.Entities)
+		if (entry.Version == m_StructureVersion)
 		{
-			return entry.Entities;
+			return &entry.Entities;
 		}
 
-		auto result = std::make_shared<std::vector<EntityID>>();
+		auto& result = entry.Entities;
+		result.clear();
 		if (baseType.Value < g_kMAX_COMPONENTS)
 		{
 			const auto& activeList = m_ActiveEntities[baseType.Value];
-			result->reserve(activeList.size());
+			result.reserve(activeList.size());
 			for (EntityID entity : activeList)
 			{
 				if (entity >= m_Entities.size())
@@ -165,14 +174,13 @@ private:
 				const EntityData& data = m_Entities[entity];
 				if (data.IsAlive && (data.Mask & requiredMask) == requiredMask)
 				{
-					result->push_back(entity);
+					result.push_back(entity);
 				}
 			}
 		}
 
 		entry.Version = m_StructureVersion;
-		entry.Entities = result;
-		return entry.Entities;
+		return &entry.Entities;
 	}
 
 public:
@@ -222,8 +230,10 @@ public:
 
 	static void AddComponent(EntityID entity, ComponentType type)
 	{
-		if (entity < g_kMAX_ENTITIES && type.Value < g_kMAX_COMPONENTS && !m_Entities[entity].Mask.test(type))
+		if (entity < g_kMAX_ENTITIES && type.Value < g_kMAX_COMPONENTS &&
+			m_Entities[entity].IsAlive && !m_Entities[entity].Mask.test(type))
 		{
+			ComponentTypeRegistry::CreateComponent(entity, type);
 			m_Entities[entity].Mask.set(type);
 			m_ActiveEntities[type].push_back(entity);
 			m_EntityToIndex[type][entity] = static_cast<int32_t>(m_ActiveEntities[type].size() - 1);

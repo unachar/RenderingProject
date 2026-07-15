@@ -28,7 +28,7 @@ void XBot::Create()
 
 	for (int i = 0; i < 10; ++i)
 	{
-		auto& entity = World::CreateEntity()
+		auto entity = World::CreateEntity()
 			.Add<TransformComponent>()
 			.Add<NameComponent>()
 			.Add<MeshComponent>()

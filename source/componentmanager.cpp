@@ -37,7 +37,7 @@ void ComponentManager::ReportMissingComponentError(EntityID entity, const char* 
 
 	if (entity < g_kMAX_ENTITIES && HasComponent(entity, ComponentType::NAME))
 	{
-		string n = ComponentStorage<NameComponent>::Data()[entity].Name;
+		string n = ComponentStorage<NameComponent>::Get(entity).Name;
 		int len = MultiByteToWideChar(CP_UTF8, 0, n.c_str(), -1, NULL, 0);
 		if (len > 0)
 		{

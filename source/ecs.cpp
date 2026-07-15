@@ -18,16 +18,37 @@ unordered_map<type_index, ComponentTypeID>& ComponentTypeRegistry::TypeIds()
     return typeIds;
 }
 
+vector<void(*)(EntityID)>& ComponentTypeRegistry::CreateCallbacks()
+{
+    static vector<void(*)(EntityID)> createCallbacks;
+    return createCallbacks;
+}
+
 vector<void(*)(EntityID)>& ComponentTypeRegistry::ClearCallbacks()
 {
     static vector<void(*)(EntityID)> clearCallbacks;
     return clearCallbacks;
 }
 
+vector<void(*)()>& ComponentTypeRegistry::ResetCallbacks()
+{
+    static vector<void(*)()> resetCallbacks;
+    return resetCallbacks;
+}
+
 ComponentTypeID& ComponentTypeRegistry::NextTypeId()
 {
     static ComponentTypeID nextTypeId = 0;
     return nextTypeId;
+}
+
+void ComponentTypeRegistry::CreateComponent(EntityID entity, ComponentType type)
+{
+    auto& createCallbacks = CreateCallbacks();
+    if (type.Value < createCallbacks.size())
+    {
+        createCallbacks[type.Value](entity);
+    }
 }
 
 void ComponentTypeRegistry::ClearComponent(EntityID entity, ComponentType type)
@@ -39,6 +60,14 @@ void ComponentTypeRegistry::ClearComponent(EntityID entity, ComponentType type)
     }
 }
 
+void ComponentTypeRegistry::ResetComponents()
+{
+    for (auto reset : ResetCallbacks())
+    {
+        reset();
+    }
+}
+
 ComponentTypeID ComponentTypeRegistry::GetRegisteredCount()
 {
     return NextTypeId();
@@ -47,6 +76,8 @@ ComponentTypeID ComponentTypeRegistry::GetRegisteredCount()
 void Registry::Init()
 {
     m_NextEntityId = 0;
+    m_FreeList = {};
+    ComponentTypeRegistry::ResetComponents();
     ComponentManager::Init();
     for (ComponentTypeID i = 0; i < g_kMAX_COMPONENTS; ++i)
     {
@@ -54,10 +85,7 @@ void Registry::Init()
         m_EntityToIndex[i].assign(g_kMAX_ENTITIES, -1);
     }
 
-    if (m_Entities.empty())
-    {
-        m_Entities.resize(g_kMAX_ENTITIES);
-    }
+    m_Entities.assign(g_kMAX_ENTITIES, EntityData{});
 
     TouchStructure();
 }
