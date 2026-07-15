@@ -2,8 +2,6 @@
 #define SHADER_3D
 #include "common.hlsl"
 
-// GBuffer inputs. The range rooted at t0 supplies t0-t5; environment and
-// shadow maps are supplied by the existing t6/t7 root tables.
 Texture2D<float4> BaseColorTexture : register(t0);
 Texture2D<float4> NormalTexture : register(t1);
 Texture2D<float4> PositionTexture : register(t2);
@@ -22,11 +20,75 @@ struct LocalFogRayResult
     float Transmittance;
 };
 
-// The original atmosphere march multiplied every local light shaft by the
-// global atmosphere height density. That density is based on absolute world Y,
-// so spot/volume lights rapidly vanished above y=0 even though their own
-// LightExtra.z density was still non-zero. Directional atmospheric scattering
-// should use the height density, but local lights represent their own medium.
+int GetAtmosphereStepCount()
+{
+    float scale = clamp(Flags.w, 0.25f, 1.0f);
+    float lowResolutionWeight = saturate((1.0f - scale) / 0.75f);
+    return (int)round(lerp(10.0f, 18.0f, lowResolutionWeight));
+}
+
+int GetLocalFogStepCount()
+{
+    float scale = clamp(Flags.w, 0.25f, 1.0f);
+    float lowResolutionWeight = saturate((1.0f - scale) / 0.75f);
+    return (int)round(lerp(8.0f, 16.0f, lowResolutionWeight));
+}
+
+float SampleAtmosphereShadowFast(
+    float3 worldPos,
+    float3 lightDir,
+    Texture2DArray<float> shadowMap,
+    SamplerState shadowSampler,
+    float4x4 lightViewProjection,
+    float4 shadowMapParams,
+    float shadowLayer)
+{
+    float4 lightClip = mul(float4(worldPos, 1.0f), lightViewProjection);
+    if (lightClip.w <= 0.000001f)
+    {
+        return 1.0f;
+    }
+
+    float3 lightNdc = lightClip.xyz / lightClip.w;
+    float2 shadowUv = float2(lightNdc.x * 0.5f + 0.5f, -lightNdc.y * 0.5f + 0.5f);
+    if (any(shadowUv < 0.0f) || any(shadowUv > 1.0f) ||
+        lightNdc.z < 0.0f || lightNdc.z > 1.0f)
+    {
+        return 1.0f;
+    }
+
+    float currentDepth = lightNdc.z - max(shadowMapParams.y, abs(shadowMapParams.z));
+    float scale = clamp(Flags.w, 0.25f, 1.0f);
+
+    if (scale >= 0.60f)
+    {
+        float closestDepth = shadowMap.SampleLevel(
+            shadowSampler, float3(shadowUv, shadowLayer), 0);
+        return currentDepth <= closestDepth ? 1.0f : 0.0f;
+    }
+
+    float texelSize = shadowMapParams.x * (1.0f + saturate(AtmosphereCamera.w) * 2.0f);
+    const float2 offsets[4] =
+    {
+        float2(-0.5f, -0.5f),
+        float2( 0.5f, -0.5f),
+        float2(-0.5f,  0.5f),
+        float2( 0.5f,  0.5f)
+    };
+
+    float visibility = 0.0f;
+    [unroll]
+    for (int tap = 0; tap < 4; ++tap)
+    {
+        float closestDepth = shadowMap.SampleLevel(
+            shadowSampler,
+            float3(shadowUv + offsets[tap] * texelSize, shadowLayer),
+            0);
+        visibility += currentDepth <= closestDepth ? 1.0f : 0.0f;
+    }
+    return visibility * 0.25f;
+}
+
 float3 RayMarchAtmosphereViewFixed(
     float3 worldPos,
     Texture2DArray<float> shadowMap,
@@ -34,25 +96,31 @@ float3 RayMarchAtmosphereViewFixed(
     float4x4 lightViewProjection,
     float4 shadowMapParams)
 {
-    float atmosphereActive =
-        step(0.5f, AtmosphereParams0.x) *
-        step(0.0001f, AtmosphereColor0.a) *
-        step(0.0001f, AtmosphereParams0.w);
+    [branch]
+    if (AtmosphereParams0.x < 0.5f ||
+        AtmosphereColor0.a <= 0.0001f ||
+        AtmosphereParams0.w <= 0.0001f)
+    {
+        return float3(0.0f, 0.0f, 0.0f);
+    }
 
     float3 cameraPos = AtmosphereCamera.xyz;
     float3 viewDelta = worldPos - cameraPos;
     float rawViewDistance = length(viewDelta);
-    float validDistance = step(0.0001f, rawViewDistance);
-    float viewDistance = clamp(rawViewDistance, 0.0001f, 100.0f);
+    if (rawViewDistance <= 0.0001f)
+    {
+        return float3(0.0f, 0.0f, 0.0f);
+    }
 
-    const int stepCount = 50;
-    float3 viewDir = viewDelta / max(rawViewDistance, 0.0001f);
+    float viewDistance = min(rawViewDistance, 100.0f);
+    int stepCount = GetAtmosphereStepCount();
+    float3 viewDir = viewDelta / rawViewDistance;
     float3 viewToCamera = -viewDir;
     float stepLength = viewDistance / (float)stepCount;
     float scaledStep = stepLength * max(AtmosphereParams1.w, 0.0001f);
     float transmittance = 1.0f;
     float3 result = float3(0.0f, 0.0f, 0.0f);
-    int count = min((int)round(LightCount.x), 5);
+    int count = min((int)round(LightCount.x), 3);
 
     [loop]
     for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
@@ -108,7 +176,7 @@ float3 RayMarchAtmosphereViewFixed(
                         LightShadowData[lightIndex].z,
                         LightShadowData[lightIndex].w,
                         1.0f);
-                    shadowVisibility = SampleAtmosphereShadowMap(
+                    shadowVisibility = SampleAtmosphereShadowFast(
                         samplePos,
                         singleDir,
                         shadowMap,
@@ -145,9 +213,6 @@ float3 RayMarchAtmosphereViewFixed(
                 shadowedColor);
             stepScatter += singleAtmosphere * lerp(1.0f, 0.45f, volumeLight);
 
-            // Directional light follows the global atmosphere height profile.
-            // Point/spot/volume lights use a local medium with the atmosphere's
-            // base density, so moving the light upward does not erase its shaft.
             float volumeMediumDensity = lerp(
                 sampleDensity,
                 max(AtmosphereParams0.w, 0.0001f),
@@ -176,7 +241,7 @@ float3 RayMarchAtmosphereViewFixed(
                 max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) *
                 max(LightColor.a, 0.0f);
             float3 singleColor = rawSingleColor * singleAttenuation;
-            float shadowVisibility;
+            float shadowVisibility = 1.0f;
             if (VirtualShadowGlobal.x > 0.5f && VirtualShadowGlobal.x < 1.5f && LightPositionType.w < 0.5f)
             {
                 shadowVisibility = SampleVirtualAtmosphereShadowMapCommon(samplePos, shadowMap, shadowSampler);
@@ -187,7 +252,7 @@ float3 RayMarchAtmosphereViewFixed(
             }
             else
             {
-                shadowVisibility = SampleAtmosphereShadowMap(
+                shadowVisibility = SampleAtmosphereShadowFast(
                     samplePos,
                     singleDir,
                     shadowMap,
@@ -196,6 +261,7 @@ float3 RayMarchAtmosphereViewFixed(
                     shadowMapParams,
                     0.0f);
             }
+
             float3 shadowedColor = singleColor * shadowVisibility;
             float localLight = step(0.5f, LightPositionType.w);
             float volumeVisibility = lerp(shadowVisibility, max(shadowVisibility, 0.45f), localLight);
@@ -239,13 +305,9 @@ float3 RayMarchAtmosphereViewFixed(
         }
     }
 
-    return result * max(AtmosphereColor0.a, 0.0f) * atmosphereActive * validDistance;
+    return result * max(AtmosphereColor0.a, 0.0f);
 }
 
-// Integrate local height fog along an empty-background camera ray. The old
-// deferred path evaluated fog only once at PositionTexture.xyz, and returned
-// before that evaluation for background pixels. This made fog visible only
-// where geometry (typically Field) existed behind it.
 LocalFogRayResult RayMarchLocalFogBackground(float3 rayEnd)
 {
     LocalFogRayResult result;
@@ -261,10 +323,14 @@ LocalFogRayResult RayMarchLocalFogBackground(float3 rayEnd)
     float3 cameraPos = PPCameraPos.xyz;
     float3 viewDelta = rayEnd - cameraPos;
     float rawDistance = length(viewDelta);
-    float viewDistance = clamp(rawDistance, 0.0001f, 100.0f);
-    float3 viewDir = viewDelta / max(rawDistance, 0.0001f);
+    if (rawDistance <= 0.0001f)
+    {
+        return result;
+    }
 
-    const int stepCount = 32;
+    float viewDistance = min(rawDistance, 100.0f);
+    float3 viewDir = viewDelta / rawDistance;
+    int stepCount = GetLocalFogStepCount();
     float stepLength = viewDistance / (float)stepCount;
 
     [loop]
@@ -305,8 +371,7 @@ LocalFogRayResult RayMarchLocalFogBackground(float3 rayEnd)
             float3 sampleColor = sampleColorSum / sampleDensity;
             float sampleOpacity = 1.0f - exp(-sampleDensity * stepLength * 0.08f);
             sampleOpacity = saturate(sampleOpacity);
-            result.Scattering +=
-                sampleColor * sampleOpacity * result.Transmittance;
+            result.Scattering += sampleColor * sampleOpacity * result.Transmittance;
             result.Transmittance *= 1.0f - sampleOpacity;
         }
 
@@ -343,13 +408,9 @@ float4 main(PSInputPostProcess input) : SV_Target
         LightViewProjection,
         ShadowMapParams);
 
-    if (background)
+    if (background && LocalFogGlobal.x > 0.5f)
     {
         LocalFogRayResult localFog = RayMarchLocalFogBackground(rayEnd);
-
-        // DeferredLightingPS later adds baseColor, the analytic sky, and this
-        // atmosphere buffer. Store a signed delta so the final sum becomes a
-        // proper fog blend instead of merely adding a bright fog color.
         float3 sceneBeforeFog =
             baseColor.rgb +
             AtmosphereBackgroundCommon(input.TexCoord) +
