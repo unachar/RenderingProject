@@ -625,12 +625,23 @@ namespace
 					}
 
 					auto& cacheEntry = g_VirtualShadowPageCache[virtualLevel][physicalPageY][physicalPageX];
+					const bool cacheEnabled = RendererSettings::GetCacheVirtualShadowPages();
+					const bool mappingMatches =
+						cacheEntry.Valid &&
+						cacheEntry.GlobalPageX == globalPageX &&
+						cacheEntry.GlobalPageY == globalPageY;
+					const bool contentMatches =
+						mappingMatches && cacheEntry.ContentKey == pageContentKey;
+					const UINT updatePeriod = 1u << virtualLevel;
+					const UINT updatePhase =
+						(physicalPageX + physicalPageY * pageGrid) % updatePeriod;
+					const bool contentUpdateDue =
+						updatePeriod == 1u ||
+						((g_FrameSerial + updatePhase) % updatePeriod) == 0u;
 					const bool needsRender =
-						!RendererSettings::GetCacheVirtualShadowPages() ||
-						!cacheEntry.Valid ||
-						cacheEntry.GlobalPageX != globalPageX ||
-						cacheEntry.GlobalPageY != globalPageY ||
-						cacheEntry.ContentKey != pageContentKey;
+						!cacheEnabled ||
+						!mappingMatches ||
+						(!contentMatches && contentUpdateDue);
 
 					ShadowRenderPass& pass = g_ShadowRenderPasses[g_ShadowRenderPassCount++];
 					pass.ViewProjection = pageViewProjection;
@@ -1802,6 +1813,13 @@ bool RendererResource::ShouldDrawEntityInCurrentShadowPass(EntityID entity)
 	if (g_CurrentShadowPassIndex >= g_ShadowRenderPassCount) return true;
 	const ShadowRenderPass& pass = g_ShadowRenderPasses[g_CurrentShadowPassIndex];
 	return !pass.VirtualPage || IsShadowCasterVisible(entity, pass.ViewProjection);
+}
+
+bool RendererResource::IsCurrentShadowPassVirtualPage()
+{
+	if (!g_LightCacheValid) RebuildLightCache();
+	return g_CurrentShadowPassIndex < g_ShadowRenderPassCount &&
+		g_ShadowRenderPasses[g_CurrentShadowPassIndex].VirtualPage;
 }
 
 bool RendererResource::IsVirtualShadowCacheHit()

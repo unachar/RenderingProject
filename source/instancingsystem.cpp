@@ -457,6 +457,29 @@ void InstancingSystem::Init()
         m_InstanceUpload.Reset();
         return;
     }
+	const auto directDesc = CD3DX12_RESOURCE_DESC::Buffer(count * sizeof(XMFLOAT4X4));
+	if (FAILED(device->CreateCommittedResource(
+		&heap,
+		D3D12_HEAP_FLAG_NONE,
+		&directDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(&m_DirectInstanceUpload))))
+	{
+		m_InstanceUpload->Unmap(0, nullptr);
+		m_MappedInstances = nullptr;
+		m_InstanceUpload.Reset();
+		return;
+	}
+	if (FAILED(m_DirectInstanceUpload->Map(
+		0, &noRead, reinterpret_cast<void**>(&m_MappedDirectInstances))))
+	{
+		m_DirectInstanceUpload.Reset();
+		m_InstanceUpload->Unmap(0, nullptr);
+		m_MappedInstances = nullptr;
+		m_InstanceUpload.Reset();
+		return;
+	}
     s_Available = CreateGpuCullingResources(device);
 }
 
@@ -469,6 +492,12 @@ void InstancingSystem::Uninit()
     }
     m_MappedInstances = nullptr;
     m_InstanceUpload.Reset();
+	if (m_DirectInstanceUpload && m_MappedDirectInstances)
+	{
+		m_DirectInstanceUpload->Unmap(0, nullptr);
+	}
+	m_MappedDirectInstances = nullptr;
+	m_DirectInstanceUpload.Reset();
 	for (auto& resource : m_LodInstances) resource.Reset();
 	m_LodCounts.Reset();
 	m_IndirectArguments.Reset();
@@ -483,7 +512,7 @@ void InstancingSystem::Uninit()
 
 void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
-    if (!s_Available || !m_MappedInstances ||
+    if (!s_Available || !m_MappedInstances || !m_MappedDirectInstances ||
         (renderPass != RenderPass::PrimaryScene &&
             renderPass != RenderPass::OverlayScene &&
             renderPass != RenderPass::ShadowMap))
@@ -503,6 +532,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
     {
         m_FrameIndex = frameIndex;
         m_FrameCursor = 0;
+		m_DirectFrameCursor = 0;
     }
 
     XMMATRIX view = XMMatrixIdentity();
@@ -707,6 +737,92 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			commandList->ResourceBarrier(_countof(restore), restore);
 		};
 
+	auto executeCpuCulledShadow = [&](InstanceBatch& batch, auto&& bindGraphics)
+		{
+			if (batch.Entities.empty() || !m_DirectInstanceUpload ||
+				m_DirectFrameCursor + batch.Entities.size() > kMaxInstancesPerFrame)
+			{
+				return;
+			}
+
+			for (auto& transforms : m_DirectLodScratch)
+			{
+				transforms.clear();
+				if (transforms.capacity() < batch.Entities.size())
+				{
+					transforms.reserve(batch.Entities.size());
+				}
+			}
+			for (EntityID entity : batch.Entities)
+			{
+				const auto& transform =
+					ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+				float lod1 = FLT_MAX;
+				float lod2 = FLT_MAX;
+				if (ComponentManager::HasComponent<LODComponent>(entity))
+				{
+					const auto& lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
+					if (lod.UseLOD)
+					{
+						lod1 = max(lod.Lod1Distance, 0.0f);
+						lod2 = max(lod.Lod2Distance, lod1);
+					}
+				}
+
+				const float dx = transform.Position.x - cameraPosition.x;
+				const float dy = transform.Position.y - cameraPosition.y;
+				const float dz = transform.Position.z - cameraPosition.z;
+				const float distanceToCamera = sqrtf(dx * dx + dy * dy + dz * dz);
+				UINT lodIndex = 0;
+				if (batch.AvailableLodCount > 2 && distanceToCamera >= lod2)
+				{
+					lodIndex = 2;
+				}
+				else if (batch.AvailableLodCount > 1 && distanceToCamera >= lod1)
+				{
+					lodIndex = 1;
+				}
+				m_DirectLodScratch[lodIndex].push_back(transform.WorldMatrix);
+			}
+
+			const UINT64 frameBase = static_cast<UINT64>(frameIndex) * kMaxInstancesPerFrame;
+			for (UINT lod = 0; lod < batch.AvailableLodCount; ++lod)
+			{
+				const auto& transforms = m_DirectLodScratch[lod];
+				if (transforms.empty())
+				{
+					continue;
+				}
+				const UINT firstTransform = m_DirectFrameCursor;
+				memcpy(
+					m_MappedDirectInstances + frameBase + firstTransform,
+					transforms.data(),
+					transforms.size() * sizeof(XMFLOAT4X4));
+				m_DirectFrameCursor += static_cast<UINT>(transforms.size());
+
+				bindGraphics();
+				commandList->SetGraphicsRootShaderResourceView(
+					9,
+					m_DirectInstanceUpload->GetGPUVirtualAddress() +
+						(frameBase + firstTransform) * sizeof(XMFLOAT4X4));
+				commandList->IASetVertexBuffers(0, 1, &batch.VertexBuffer);
+				commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+				const UINT instanceCount = static_cast<UINT>(transforms.size());
+				if (batch.IndexCount != 0)
+				{
+					commandList->IASetIndexBuffer(&batch.LodIndexBuffers[lod]);
+					commandList->DrawIndexedInstanced(
+						batch.LodDrawCounts[lod], instanceCount, 0, 0, 0);
+				}
+				else
+				{
+					commandList->IASetIndexBuffer(nullptr);
+					commandList->DrawInstanced(
+						batch.LodDrawCounts[lod], instanceCount, 0, 0);
+				}
+			}
+		};
+
     if (renderPass == RenderPass::ShadowMap)
     {
         ID3D12PipelineState* shadowPso = PsoManager::GetOrCreateShadowMapInstancedPso();
@@ -850,6 +966,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 		{
 			const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
 			if (CanInstance(entity) && ShouldCastShadow(entity) && sprite.Is3D &&
+				RendererResource::ShouldDrawEntityInCurrentShadowPass(entity) &&
 				sprite.VertexBufferView.BufferLocation != 0 && sprite.VertexCount != 0)
 			{
 				addNonIndexedShadow(entity, InstanceKind::Sprite3D, sprite.VertexBufferView,
@@ -863,6 +980,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 				ComponentManager::HasComponent<StaticModelComponent>(entity)) continue;
 			const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
 			if (CanInstance(entity) && ShouldCastShadow(entity) &&
+				RendererResource::ShouldDrawEntityInCurrentShadowPass(entity) &&
 				mesh.VertexBufferView.BufferLocation != 0 && mesh.VertexCount != 0)
 			{
 				addNonIndexedShadow(entity, InstanceKind::Mesh, mesh.VertexBufferView,
@@ -885,6 +1003,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         commandList->SetPipelineState(shadowPso);
         commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
+		const bool cpuCulledVirtualPage = RendererResource::IsCurrentShadowPassVirtualPage();
         std::unordered_set<AnimationModelResource*> skinnedModels;
         for (auto& batch : batches)
         {
@@ -908,13 +1027,21 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 				commandList->ResourceBarrier(1, &ready);
 			}
 
-			executeGpuCullLod(batch, [&]()
+			auto bindShadowGraphics = [&]()
 				{
 					commandList->SetGraphicsRootSignature(RendererShader::GetModelRootSignature());
 					commandList->SetGraphicsRootConstantBufferView(
 						5, RendererResource::GetCurrentShadowConstantBufferAddress());
 					commandList->SetPipelineState(shadowPso);
-				});
+				};
+			if (cpuCulledVirtualPage)
+			{
+				executeCpuCulledShadow(batch, bindShadowGraphics);
+			}
+			else
+			{
+				executeGpuCullLod(batch, bindShadowGraphics);
+			}
 
 			if (animatedMesh)
 			{

@@ -4,6 +4,8 @@
 #include "ecs.h"
 #include <d3d12.h>
 #include <wrl.h>
+#include <array>
+#include <vector>
 
 class InstancingSystem final : public SystemBase
 {
@@ -30,8 +32,11 @@ private:
     };
 	static_assert(sizeof(GpuInstanceInput) == 112);
 
-    Microsoft::WRL::ComPtr<ID3D12Resource> m_InstanceUpload;
+	Microsoft::WRL::ComPtr<ID3D12Resource> m_InstanceUpload;
 	GpuInstanceInput* m_MappedInstances = nullptr;
+	Microsoft::WRL::ComPtr<ID3D12Resource> m_DirectInstanceUpload;
+	XMFLOAT4X4* m_MappedDirectInstances = nullptr;
+	std::array<std::vector<XMFLOAT4X4>, 3> m_DirectLodScratch;
 	Microsoft::WRL::ComPtr<ID3D12Resource> m_LodInstances[3];
 	Microsoft::WRL::ComPtr<ID3D12Resource> m_LodCounts;
 	Microsoft::WRL::ComPtr<ID3D12Resource> m_IndirectArguments;
@@ -44,6 +49,7 @@ private:
 	Microsoft::WRL::ComPtr<ID3D12CommandSignature> m_DrawSignature;
     UINT m_FrameIndex = UINT_MAX;
     UINT m_FrameCursor = 0;
+	UINT m_DirectFrameCursor = 0;
     static inline bool s_Available = false;
 
 	bool CreateGpuCullingResources(ID3D12Device* device);

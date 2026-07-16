@@ -132,6 +132,7 @@ private:
         commandList->SetDescriptorHeaps(_countof(heaps), heaps);
         RestoreShadowGraphicsState(commandList, shadowPso);
         const XMMATRIX lightViewProjection = RendererResource::GetCurrentShadowViewProjection();
+		const bool cpuCulledVirtualPage = RendererResource::IsCurrentShadowPassVirtualPage();
 
         auto writeShadowConstants = [&](EntityID entity)
             {
@@ -205,7 +206,9 @@ private:
             const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
             const XMMATRIX world = XMLoadFloat4x4(&transform.WorldMatrix);
             writeShadowConstants(entity);
-            if (!m_IndirectDraws.ExecuteShadow(commandList, model, entity, world, lightViewProjection, shadowPso))
+            if (!m_IndirectDraws.ExecuteShadow(
+				commandList, model, entity, world, lightViewProjection, shadowPso,
+				cpuCulledVirtualPage))
             {
                 RestoreShadowGraphicsState(commandList, shadowPso);
                 for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
@@ -264,7 +267,9 @@ private:
             const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
             const XMMATRIX world = XMLoadFloat4x4(&transform.WorldMatrix);
             writeShadowConstants(entity);
-            if (!m_IndirectDraws.ExecuteShadow(commandList, model, entity, world, lightViewProjection, shadowPso))
+            if (!m_IndirectDraws.ExecuteShadow(
+				commandList, model, entity, world, lightViewProjection, shadowPso,
+				cpuCulledVirtualPage))
             {
                 RestoreShadowGraphicsState(commandList, shadowPso);
                 for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)

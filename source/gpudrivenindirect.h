@@ -564,6 +564,30 @@ private:
         return true;
     }
 
+    static bool ExecuteCandidatesDirect(
+        ID3D12GraphicsCommandList* commandList,
+        ID3D12CommandSignature* signature,
+        const IndirectBatch& batch,
+        ID3D12PipelineState* graphicsPipelineState)
+    {
+        if (!commandList || !signature || !batch.CandidateBuffer ||
+            batch.CommandCount == 0 || !graphicsPipelineState)
+        {
+            return false;
+        }
+
+        commandList->SetPipelineState(graphicsPipelineState);
+        commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        commandList->ExecuteIndirect(
+            signature,
+            batch.CommandCount,
+            batch.CandidateBuffer.Get(),
+            0,
+            nullptr,
+            0);
+        return true;
+    }
+
 public:
     template<typename Model, typename Mesh, typename Map>
     bool ExecutePrimaryImpl(
@@ -655,14 +679,24 @@ public:
         EntityID entity,
         const XMMATRIX& world,
         const XMMATRIX& lightViewProjection,
-        ID3D12PipelineState* graphicsPipelineState)
+        ID3D12PipelineState* graphicsPipelineState,
+        bool cpuCulledVirtualPage)
     {
         if (!EnsureInitialized() || !model)
         {
             return false;
         }
         IndirectBatch* batch = FindOrBuild(model, m_AnimatedShadowBatches, BuildAnimatedShadowBatch);
-        return batch && CullAndExecute(
+        if (!batch)
+        {
+            return false;
+        }
+        if (cpuCulledVirtualPage)
+        {
+            return ExecuteCandidatesDirect(
+                commandList, m_ShadowSignature.Get(), *batch, graphicsPipelineState);
+        }
+        return CullAndExecute(
             commandList,
             m_ShadowSignature.Get(),
             *batch,
@@ -681,14 +715,24 @@ public:
         EntityID entity,
         const XMMATRIX& world,
         const XMMATRIX& lightViewProjection,
-        ID3D12PipelineState* graphicsPipelineState)
+        ID3D12PipelineState* graphicsPipelineState,
+        bool cpuCulledVirtualPage)
     {
         if (!EnsureInitialized() || !model)
         {
             return false;
         }
         IndirectBatch* batch = FindOrBuild(model, m_StaticShadowBatches, BuildStaticShadowBatch);
-        return batch && CullAndExecute(
+        if (!batch)
+        {
+            return false;
+        }
+        if (cpuCulledVirtualPage)
+        {
+            return ExecuteCandidatesDirect(
+                commandList, m_ShadowSignature.Get(), *batch, graphicsPipelineState);
+        }
+        return CullAndExecute(
             commandList,
             m_ShadowSignature.Get(),
             *batch,

@@ -146,6 +146,7 @@ bool RendererDraw::CreateDepthBuffer()
 
 bool RendererDraw::CreateShadowDepthBuffer()
 {
+	s_ShadowDepthWriteActive = false;
 	D3D12_CLEAR_VALUE clearValue {};
 	clearValue.Format = DXGI_FORMAT_D32_FLOAT;
 	clearValue.DepthStencil.Depth = 1.0f;
@@ -297,8 +298,15 @@ bool RendererDraw::BeginShadowPass(UINT shadowIndex)
 	{
 		return false;
 	}
-	D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(m_ShadowDepthBuffer.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
-	m_CommandList->ResourceBarrier(1, &barrier);
+	if (!s_ShadowDepthWriteActive)
+	{
+		D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+			m_ShadowDepthBuffer.Get(),
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE);
+		m_CommandList->ResourceBarrier(1, &barrier);
+		s_ShadowDepthWriteActive = true;
+	}
 	const UINT dsvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 	CD3DX12_CPU_DESCRIPTOR_HANDLE shadowDsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), 1 + shadowLayer, dsvIncrement);
 	m_CommandList->RSSetViewports(1, &shadowViewport);
@@ -321,9 +329,20 @@ bool RendererDraw::BeginShadowPass(UINT shadowIndex)
 }
 void RendererDraw::EndShadowPass()
 {
+}
+
+void RendererDraw::EndShadowPassBatch()
+{
 	if (!m_CommandList || !m_ShadowDepthBuffer) return;
-	D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(m_ShadowDepthBuffer.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-	m_CommandList->ResourceBarrier(1, &barrier);
+	if (s_ShadowDepthWriteActive)
+	{
+		D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+			m_ShadowDepthBuffer.Get(),
+			D3D12_RESOURCE_STATE_DEPTH_WRITE,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+		m_CommandList->ResourceBarrier(1, &barrier);
+		s_ShadowDepthWriteActive = false;
+	}
 	m_CommandList->RSSetViewports(1, &m_Viewport);
 	m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
 }
@@ -769,6 +788,19 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 		m_CommandList->ResourceBarrier(1, &atmosphereToRt);
 		const float atmosphereClear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 		m_CommandList->ClearRenderTargetView(m_GBufferRtvHandles[atmosphereIndex], atmosphereClear, 0, nullptr);
+		const D3D12_RESOURCE_DESC atmosphereDesc = m_GBufferTargets[atmosphereIndex]->GetDesc();
+		const CD3DX12_VIEWPORT atmosphereViewport(
+			0.0f,
+			0.0f,
+			static_cast<float>(atmosphereDesc.Width),
+			static_cast<float>(atmosphereDesc.Height));
+		const CD3DX12_RECT atmosphereScissor(
+			0,
+			0,
+			static_cast<LONG>(atmosphereDesc.Width),
+			static_cast<LONG>(atmosphereDesc.Height));
+		m_CommandList->RSSetViewports(1, &atmosphereViewport);
+		m_CommandList->RSSetScissorRects(1, &atmosphereScissor);
 		DrawFullscreenPass(
 			atmospherePso,
 			m_GBufferRtvHandles[atmosphereIndex],
@@ -776,6 +808,8 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 			1.0f,
 			1.0f,
 			1.35f);
+		m_CommandList->RSSetViewports(1, &m_Viewport);
+		m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
 		D3D12_RESOURCE_BARRIER atmosphereToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
 			m_GBufferTargets[atmosphereIndex].Get(),
 			D3D12_RESOURCE_STATE_RENDER_TARGET,
@@ -1194,8 +1228,17 @@ bool RendererDraw::CreateSceneRenderTarget()
 		CD3DX12_CPU_DESCRIPTOR_HANDLE gbufferRtvHandle(m_SceneRtvHandle, 2, rtvIncrement);
 		for (UINT i = 0; i < g_kGBUFFER_COUNT; ++i)
 		{
+			const bool halfResolutionAtmosphere =
+				i == static_cast<UINT>(GBufferType::ATMOSPHERE) &&
+				m_ResolutionScale >= 0.75f;
+			const UINT targetWidth = halfResolutionAtmosphere
+				? max((gbufferWidth + 1u) / 2u, 1u)
+				: gbufferWidth;
+			const UINT targetHeight = halfResolutionAtmosphere
+				? max((gbufferHeight + 1u) / 2u, 1u)
+				: gbufferHeight;
 			auto gbufferDesc = CD3DX12_RESOURCE_DESC::Tex2D(
-				m_kDeferredRtvFormats[i], gbufferWidth, gbufferHeight, 1, 1, 1, 0,
+				m_kDeferredRtvFormats[i], targetWidth, targetHeight, 1, 1, 1, 0,
 				D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
 
 			D3D12_CLEAR_VALUE gbufferClear {};

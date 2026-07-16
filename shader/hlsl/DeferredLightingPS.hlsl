@@ -331,7 +331,15 @@ float SampleContactShadow(float3 worldPos, float3 normal, float3 lightDir)
 {
     if (ShadowRuntimeGlobal.x < 0.5f) return 1.0f;
 
-    const int stepCount = clamp((int)round(ShadowRuntimeGlobal.z), 6, 24);
+    float cameraDistance = length(worldPos - PPCameraPos.xyz);
+    if (cameraDistance >= 30.0f) return 1.0f;
+
+    const int configuredSteps = clamp((int)round(ShadowRuntimeGlobal.z), 4, 24);
+    const float distanceQuality = 1.0f - smoothstep(8.0f, 24.0f, cameraDistance);
+    const int stepCount = clamp(
+        (int)round(lerp(4.0f, (float)configuredSteps, distanceQuality)),
+        4,
+        configuredSteps);
     const float rayLength = max(ShadowRuntimeGlobal.y, 0.02f);
     const float3 safeNormal = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
     const float3 safeLightDir = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
@@ -380,8 +388,7 @@ float SampleContactShadow(float3 worldPos, float3 normal, float3 lightDir)
         occlusion = 1.0f - (1.0f - occlusion) * (1.0f - weightedHit);
     }
 
-    float cameraDistance = length(worldPos - PPCameraPos.xyz);
-    float distanceFade = 1.0f - smoothstep(24.0f, 55.0f, cameraDistance);
+    float distanceFade = 1.0f - smoothstep(18.0f, 30.0f, cameraDistance);
     return lerp(1.0f, 0.42f, saturate(occlusion * distanceFade));
 }
 

@@ -127,6 +127,7 @@ void SystemManager::RenderFlow()
 						RendererDraw::EndShadowPass();
 					}
 				}
+				RendererDraw::EndShadowPassBatch();
 				if (shadowLightCount > 0)
 				{
 					RendererResource::SetCurrentShadowPassIndex(0);
