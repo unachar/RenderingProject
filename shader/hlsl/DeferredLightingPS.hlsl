@@ -5,7 +5,8 @@
 
 Texture2D<float4> BaseColorTexture : register(t0);
 Texture2D<float4> NormalTexture : register(t1);
-Texture2D<float4> ShadowGBufferTexture : register(t5);
+Texture2D<float> DepthTexture : register(t2);
+Texture2D<float4> MaterialTexture : register(t3);
 Texture2D<float4> ShadowGBufferTexture : register(t4);
 Texture2D<float4> EnvironmentTexture : register(t6);
 Texture2DArray<float> ShadowMapTexture : register(t7);
@@ -20,9 +21,6 @@ float IsMaterialClass(float value, float target)
     return abs(value - target) < 0.5f;
 }
 
-// Stable screen-space interleaved gradient noise. A sine hash of world
-// position becomes a set of parallel contours on planar geometry, which was
-// visible as stripes in contact shadows.
 float ContactShadowPixelNoise(float2 pixelPosition)
 {
     return frac(52.9829189f * frac(dot(pixelPosition, float2(0.06711056f, 0.00583715f))));
@@ -454,6 +452,9 @@ void ResolveDeferredLightAggregateShadowed(
         : count;
     uint lightingWidth;
     uint lightingHeight;
+    BaseColorTexture.GetDimensions(lightingWidth, lightingHeight);
+    const float2 monitorUv = pixelPosition /
+        float2(max(lightingWidth, 1u), max(lightingHeight, 1u));
     const float3 monitorColor = MonitorTexture.SampleLevel(TextureSampler, monitorUv, 0).rgb;
     [loop]
     for (int iteration = 0; iteration < MAX_SHADER_LIGHTS; ++iteration)
@@ -462,6 +463,8 @@ void ResolveDeferredLightAggregateShadowed(
         {
             break;
         }
+        uint lightIndex = useLightGrid
+            ? LightTileIndices[tileBase + (uint)iteration]
             : (uint)iteration;
         if (lightIndex == 0xffffffffu || lightIndex >= (uint)count ||
             LightFlags[lightIndex].x < 0.5f || LightFlags[lightIndex].w >= 1.5f)

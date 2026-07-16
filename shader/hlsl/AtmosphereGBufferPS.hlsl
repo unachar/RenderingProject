@@ -4,6 +4,8 @@
 
 Texture2D<float4> BaseColorTexture : register(t0);
 Texture2D<float4> NormalTexture : register(t1);
+Texture2D<float> DepthTexture : register(t2);
+Texture2D<float4> MaterialTexture : register(t3);
 Texture2D<float4> EnvironmentTexture : register(t6);
 Texture2DArray<float> ShadowMapTexture : register(t7);
 

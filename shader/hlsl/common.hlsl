@@ -16,8 +16,7 @@ struct PS_OUTPUT_GEOMETRY
 {
     float4 Color : SV_Target0;
     float4 Normal : SV_Target1;
-    float4 RimStyle : SV_Target6;
-    float4 RimLight : SV_Target7;
+    float4 Depth : SV_Target2;
     float4 Material : SV_Target3;
     float4 Shadow : SV_Target4;
 };
