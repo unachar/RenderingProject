@@ -109,7 +109,7 @@ float4 main(in PSInput3D In) : SV_Target
     float lightAttenuation;
     float volumeScatter;
     float rangeBlend;
-    ResolveLightAggregate(In.WorldPos, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend);
+    ResolveLightAggregate(In.WorldPos, In.Position.xy, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend);
     float lightIntensity = LightColor.a;
 
     if (transparent || btdf || bsdf)

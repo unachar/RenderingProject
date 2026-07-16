@@ -7,24 +7,19 @@ struct GBufferOutput
 {
     float4 Color : SV_Target0;
     float4 Normal : SV_Target1;
-    float4 Position : SV_Target2;
-    float4 Depth : SV_Target3;
-    float4 Material : SV_Target4;
-    float4 Shadow : SV_Target5;
-    float4 RimStyle : SV_Target6;
-    float4 RimLight : SV_Target7;
+    float4 Depth : SV_Target2;
+    float4 Material : SV_Target3;
+    float4 Shadow : SV_Target4;
 };
 
 struct PS_OUTPUT_GEOMETRY
 {
     float4 Color : SV_Target0;
     float4 Normal : SV_Target1;
-    float4 Position : SV_Target2;
-    float4 Depth : SV_Target3;
-    float4 Material : SV_Target4;
-    float4 Shadow : SV_Target5;
     float4 RimStyle : SV_Target6;
     float4 RimLight : SV_Target7;
+    float4 Material : SV_Target3;
+    float4 Shadow : SV_Target4;
 };
 
 struct PS_OUTPUT
@@ -36,12 +31,12 @@ struct PS_OUTPUT
 
 float4 MakeGBufferNormal(float3 normal)
 {
-    return float4(normalize(normal), 1.0f);
+    return float4(normalize(normal) * 0.5f + 0.5f, 1.0f);
 }
 
 float3 DecodeGBufferNormal(float3 normal)
 {
-    return normalize(normal);
+    return normalize(normal * 2.0f - 1.0f);
 }
 
 #ifdef SHADER_3D
@@ -176,7 +171,9 @@ struct Light
 
 #if defined(SHADER_3D) || defined(SHADER_POSTPROCESS)
 
-#define MAX_SHADER_LIGHTS 20
+#define MAX_SHADER_LIGHTS 160
+#define LIGHT_TILE_SIZE 16
+#define MAX_LIGHTS_PER_TILE 8
 
 cbuffer LightParams : register(b1)
 {
@@ -191,6 +188,7 @@ cbuffer LightParams : register(b1)
     float4 LightExtras[MAX_SHADER_LIGHTS];
     float4x4 LightViewProjections[MAX_SHADER_LIGHTS];
     float4 LightShadowData[MAX_SHADER_LIGHTS]; // x: shadow layer, y: texel size, z: depth bias, w: normal bias
+    float4 LightFlags[MAX_SHADER_LIGHTS]; // x: opaque, y: forward, z: volumetric, w: render mode
     float4x4 VirtualShadowViewProjections[4];
     float4 VirtualShadowParams[4]; // x: physical layer, y: texel size, z: depth bias, w: normal bias
     float4 VirtualShadowPageOrigins[4]; // xy: global page origin, z: page grid, w: page world size
@@ -212,9 +210,29 @@ cbuffer LightParams : register(b1)
     float4 AtmosphereCamera;  // xyz: camera position
 };
 
+// CPU-built 16x16 screen tiles keep the cost proportional to local overlap,
+// rather than to the number of authored lights. Each tile is a fixed four-
+// index block ordered by light priority; 0xffffffff marks an unused slot.
+StructuredBuffer<uint> LightTileIndices : register(t11);
+
+bool HasLightTileGridCommon()
+{
+    return LightCount.y >= 1.0f && LightCount.z >= 1.0f && LightCount.w >= 1.0f;
+}
+
+uint LightTileBaseCommon(float2 pixelPosition)
+{
+    uint tileCountX = max((uint)round(LightCount.y), 1u);
+    uint tileCountY = max((uint)round(LightCount.z), 1u);
+    uint2 tile = min(
+        (uint2)max(pixelPosition, float2(0.0f, 0.0f)) / LIGHT_TILE_SIZE,
+        uint2(tileCountX - 1u, tileCountY - 1u));
+    return (tile.y * tileCountX + tile.x) * MAX_LIGHTS_PER_TILE;
+}
+
 uint VirtualShadowResidencyRowCommon(int level, int row)
 {
-    uint4 packedRows = VirtualShadowResidency[level * 4 + row / 4];
+    uint4 packedRows = VirtualShadowResidency[level * 4 + (row >> 2)];
     return packedRows[row & 3];
 }
 
@@ -233,8 +251,10 @@ bool VirtualShadowPageResidentCommon(int level, int2 localPage)
 
 int VirtualShadowPositiveModuloCommon(int value, int modulus)
 {
-    int result = value % modulus;
-    return result < 0 ? result + modulus : result;
+	// The physical VSM page grid is fixed at 16x16.  Its power-of-two mask is
+	// equivalent to positive modulo for both positive and negative page IDs and
+	// avoids a costly signed integer divide in every shadow tap.
+	return value & (modulus - 1);
 }
 
 float2 VirtualShadowMapUvCommon(
@@ -521,6 +541,7 @@ float SampleCascadedAtmosphereShadowMapCommon(
 
 float3 WorldToScreenUV(float3 worldPos);
 float3 ReconstructPostProcessViewRayCommon(float2 uv);
+float3 ReconstructPostProcessWorldPositionCommon(float2 uv, float depth);
 bool ProjectWorldToScreenCommon(float3 worldPos, out float2 screenUv);
 void ResolveSingleLightCommon(
     float3 worldPos,
@@ -822,6 +843,7 @@ void ResolveLightCommon(float3 worldPos, out float3 lightDir, out float attenuat
 
 void ResolveLightAggregate(
     float3 worldPos,
+    float2 pixelPosition,
     out float3 lightDir,
     out float3 lightColor,
     out float attenuation,
@@ -842,13 +864,29 @@ void ResolveLightAggregate(
     float volumeSum = 0.0f;
     float rangeSum = 0.0f;
 
+    bool useLightGrid = HasLightTileGridCommon();
+    uint tileBase = useLightGrid ? LightTileBaseCommon(pixelPosition) : 0u;
+    int iterationCount = useLightGrid
+        ? min(MAX_LIGHTS_PER_TILE, max((int)round(LightCount.w), 1))
+        : count;
     [loop]
-    for (int i = 0; i < MAX_SHADER_LIGHTS; ++i)
+    for (int iteration = 0; iteration < MAX_SHADER_LIGHTS; ++iteration)
     {
-        if (i >= count)
+        if (iteration >= iterationCount)
         {
             break;
         }
+
+        uint lightIndex = useLightGrid
+            ? LightTileIndices[tileBase + (uint)iteration]
+            : (uint)iteration;
+        if (lightIndex == 0xffffffffu || lightIndex >= (uint)count ||
+            LightFlags[lightIndex].y < 0.5f || LightFlags[lightIndex].w >= 0.5f)
+        {
+            continue;
+        }
+
+        int i = (int)lightIndex;
 
         float3 singleDir;
         float singleAttenuation;
@@ -866,7 +904,7 @@ void ResolveLightAggregate(
         rangeSum += saturate((max(LightDirections[i].w, 1.0f) - 1.0f) / 7.0f) * weight;
     }
 
-    if (count <= 0 || weightSum <= 0.000001f)
+    if (count <= 0)
     {
         float legacyVolume = 0.0f;
         ResolveLightCommon(worldPos, lightDir, attenuation, legacyVolume);
@@ -874,6 +912,15 @@ void ResolveLightAggregate(
         lightColor = ApplyAtmosphereToLightCommon(worldPos, lightDir, lightColor, legacyVolume);
         volumeScatter = legacyVolume * max(LightColor.a, 0.0f);
         rangeBlend = saturate((max(LightDirection.w, 1.0f) - 1.0f) / 7.0f);
+        return;
+    }
+
+    if (weightSum <= 0.000001f)
+    {
+        lightColor = float3(0.0f, 0.0f, 0.0f);
+        attenuation = 0.0f;
+        volumeScatter = 0.0f;
+        rangeBlend = 0.0f;
         return;
     }
 
@@ -1202,6 +1249,13 @@ float3 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> dep
     }
 
     return float3(-1.0f, -1.0f, -1.0f);
+}
+
+float3 ReconstructPostProcessWorldPositionCommon(float2 uv, float depth)
+{
+    float2 ndc = uv * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f);
+    float4 world = mul(float4(ndc, depth, 1.0f), PPInvViewProjection);
+    return world.xyz / max(abs(world.w), 0.000001f);
 }
  
 #endif

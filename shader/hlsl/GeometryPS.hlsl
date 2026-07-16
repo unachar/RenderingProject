@@ -27,7 +27,6 @@ PS_OUTPUT_GEOMETRY main(PSInput3D input)
 
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
-    output.Position = float4(input.WorldPos, 1.0f);
     
     output.Depth = saturate(input.Position.z);
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
@@ -39,12 +38,6 @@ PS_OUTPUT_GEOMETRY main(PSInput3D input)
     output.Shadow = usePartParams
         ? float4(partParams.Shadow0.x, partParams.Shadow0.y, partParams.Shadow0.z, 0.0f)
         : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
-    output.RimStyle = usePartParams
-        ? float4(partParams.Highlight.x, partParams.Highlight.y, partParams.RimStyle.x, partParams.RimStyle.y)
-        : float4(RimStrength, RimThreshold, RimSoftness, RimPower);
-    output.RimLight = usePartParams
-        ? float4(partParams.RimLight.rgb, partParams.RimStyle.z)
-        : float4(RimColor, RimAlbedoBlend);
 
     return output;
 }

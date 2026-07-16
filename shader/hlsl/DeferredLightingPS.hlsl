@@ -5,15 +5,12 @@
 
 Texture2D<float4> BaseColorTexture : register(t0);
 Texture2D<float4> NormalTexture : register(t1);
-Texture2D<float4> PositionTexture : register(t2);
-Texture2D<float> DepthTexture : register(t3);
-Texture2D<float4> MaterialTexture : register(t4);
 Texture2D<float4> ShadowGBufferTexture : register(t5);
+Texture2D<float4> ShadowGBufferTexture : register(t4);
 Texture2D<float4> EnvironmentTexture : register(t6);
 Texture2DArray<float> ShadowMapTexture : register(t7);
 Texture2D<float4> AtmosphereTexture : register(t8);
-Texture2D<float4> RimStyleTexture : register(t9);
-Texture2D<float4> RimLightTexture : register(t10);
+Texture2D<float4> MonitorTexture : register(t12);
 
 SamplerState TextureSampler : register(s0);
 SamplerState ShadowSampler : register(s1);
@@ -122,9 +119,10 @@ bool SampleVirtualShadowLevel(
     }
 
     float4 params = VirtualShadowParams[level];
-    float3 n = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
-    float3 l = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
-    float nDotL = saturate(dot(n, l));
+    // Callers pass the normalized G-buffer normal and the normalized result of
+    // ResolveSingleLightCommon. Avoid repeating two reciprocal square roots for
+    // every clipmap level tested by the same pixel.
+    float nDotL = saturate(dot(normal, lightDir));
     float levelBiasScale = 1.0f + (float)level * 0.55f;
     float currentDepth = lightNdc.z -
         max(params.z * (1.0f - nDotL), params.w) * levelBiasScale;
@@ -260,8 +258,6 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
     // address translation above.
     if (VirtualShadowGlobal.x > 1.5f && directionalMultiLevel)
     {
-        float3 n = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
-        float3 l = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
         int levelCount = clamp((int)round(VirtualShadowGlobal.y), 1, 4);
 
         [unroll]
@@ -281,7 +277,7 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
 
             float4 params = VirtualShadowParams[level];
             float currentDepth = lightNdc.z - max(
-                params.z * (1.0f - saturate(dot(n, l))),
+                params.z * (1.0f - saturate(dot(normal, lightDir))),
                 params.w);
             return SampleConventionalShadowPcf9(
                 shadowUv, params.x, params.y, currentDepth);
@@ -289,8 +285,6 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
         return 1.0f;
     }
 
-    float3 n = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
-    float3 l = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
     float4 lightClip = mul(float4(worldPos, 1.0f), LightViewProjections[lightIndex]);
     float3 lightNdc = lightClip.xyz / max(lightClip.w, 0.000001f);
     float2 shadowUv = float2(lightNdc.x * 0.5f + 0.5f, -lightNdc.y * 0.5f + 0.5f);
@@ -302,7 +296,7 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
 
     float texelSize = LightShadowData[lightIndex].y;
     float currentDepth = lightNdc.z - max(
-        LightShadowData[lightIndex].z * (1.0f - saturate(dot(n, l))),
+        LightShadowData[lightIndex].z * (1.0f - saturate(dot(normal, lightDir))),
         abs(LightShadowData[lightIndex].w));
     return SampleConventionalShadowPcf9(
         shadowUv, shadowLayer, texelSize, currentDepth);
@@ -341,10 +335,8 @@ float SampleContactShadow(float3 worldPos, float3 normal, float3 lightDir)
         4,
         configuredSteps);
     const float rayLength = max(ShadowRuntimeGlobal.y, 0.02f);
-    const float3 safeNormal = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
-    const float3 safeLightDir = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
     const float stepLength = rayLength / (float)stepCount;
-    const float3 origin = worldPos + safeNormal * max(0.018f, stepLength * 0.55f);
+    const float3 origin = worldPos + normal * max(0.018f, stepLength * 0.55f);
 
     uint depthWidth;
     uint depthHeight;
@@ -361,7 +353,7 @@ float SampleContactShadow(float3 worldPos, float3 normal, float3 lightDir)
         // Center the jitter within each interval. This keeps coverage uniform
         // while breaking the visible shells produced by fixed ray steps.
         float t = ((float)stepIndex + 0.15f + jitter * 0.70f) / (float)stepCount;
-        float3 rayPosition = origin + safeLightDir * rayLength * t;
+        float3 rayPosition = origin + lightDir * rayLength * t;
         float3 projected = WorldToScreenUV(rayPosition);
         if (projected.x <= 0.001f || projected.x >= 0.999f ||
             projected.y <= 0.001f || projected.y >= 0.999f ||
@@ -405,7 +397,7 @@ float SampleDistanceFieldShadow(float3 worldPos, float3 normal, float3 lightDir)
     const int stepCount = clamp((int)round(DistanceFieldGlobal.z), 4, 24);
     const float maxDistance = max(DistanceFieldGlobal.y, 0.1f);
     float travel = 0.12f;
-    const float3 origin = worldPos + SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f)) * 0.04f;
+    const float3 origin = worldPos + normal * 0.04f;
     [loop]
     for (int stepIndex = 0; stepIndex < stepCount && travel < maxDistance; ++stepIndex)
     {
@@ -431,6 +423,7 @@ float SampleDistanceFieldShadow(float3 worldPos, float3 normal, float3 lightDir)
 void ResolveDeferredLightAggregateShadowed(
     float3 worldPos,
     float3 normal,
+    float2 pixelPosition,
     out float3 lightDir,
     out float3 lightColor,
     out float attenuation,
@@ -454,28 +447,75 @@ void ResolveDeferredLightAggregateShadowed(
     float rangeSum = 0.0f;
     float shadowSum = 0.0f;
 
+    bool useLightGrid = HasLightTileGridCommon();
+    uint tileBase = useLightGrid ? LightTileBaseCommon(pixelPosition) : 0u;
+    int iterationCount = useLightGrid
+        ? min(MAX_LIGHTS_PER_TILE, max((int)round(LightCount.w), 1))
+        : count;
+    uint lightingWidth;
+    uint lightingHeight;
+    const float3 monitorColor = MonitorTexture.SampleLevel(TextureSampler, monitorUv, 0).rgb;
     [loop]
-    for (int i = 0; i < count; ++i)
+    for (int iteration = 0; iteration < MAX_SHADER_LIGHTS; ++iteration)
     {
+        if (iteration >= iterationCount)
+        {
+            break;
+        }
+            : (uint)iteration;
+        if (lightIndex == 0xffffffffu || lightIndex >= (uint)count ||
+            LightFlags[lightIndex].x < 0.5f || LightFlags[lightIndex].w >= 1.5f)
+        {
+            continue;
+        }
+
+        int i = (int)lightIndex;
         float3 singleDir;
         float singleAttenuation;
         float singleVolume;
         ResolveSingleLightCommon(worldPos, LightDirections[i], LightPositionTypes[i], LightExtras[i], singleDir, singleAttenuation, singleVolume);
 
-        float shadowVisibility = SampleDeferredShadowMap(i, worldPos, normal, singleDir);
-        float contactVisibility = LightShadowData[i].x >= -0.5f
+		// Local lights outside their finite range (or outside a spot cone) cannot
+		// contribute.  Reject them before VSM/PCF and screen-space ray marching;
+		// the old order paid those costs for every configured light at every pixel.
+		float lightIntensityValue = max(LightColors[i].a, 0.0f);
+		[branch]
+		if (singleAttenuation <= 0.000001f || lightIntensityValue <= 0.000001f)
+		{
+			continue;
+		}
+
+		const bool decalLight = LightFlags[i].w >= 0.5f;
+        float shadowVisibility = decalLight
+			? 1.0f
+			: SampleDeferredShadowMap(i, worldPos, normal, singleDir);
+		// Contact shadows fill near-field detail for the directional VSM.  Running
+		// the depth ray march once for every shadowed local light multiplies the
+		// full-screen cost and provides little useful information.
+		const bool directionalShadow =
+			LightPositionTypes[i].w < 0.5f && LightShadowData[i].x >= -0.5f;
+        float contactVisibility = !decalLight && directionalShadow
             ? SampleContactShadow(worldPos, normal, singleDir)
             : 1.0f;
         shadowVisibility *= lerp(1.0f, contactVisibility, 0.45f);
-		if (LightPositionTypes[i].w < 0.5f)
+		if (!decalLight && LightPositionTypes[i].w < 0.5f)
 		{
 			shadowVisibility *= SampleDistanceFieldShadow(worldPos, normal, singleDir);
 		}
-        float lightIntensityValue = max(LightColors[i].a, 0.0f);
-        float3 singleColor = max(LightColors[i].rgb, float3(0.0f, 0.0f, 0.0f)) * lightIntensityValue * singleAttenuation * shadowVisibility;
-        singleColor = ApplyAtmosphereToLightCommon(worldPos, singleDir, singleColor, singleVolume);
+        float3 authoredLightColor = max(LightColors[i].rgb, float3(0.0f, 0.0f, 0.0f));
+		if (decalLight)
+		{
+			// One stage/monitor texture can drive every cheap decal light without
+			// duplicating animation state across hundreds of authored emitters.
+			authoredLightColor *= monitorColor;
+		}
+        float3 singleColor = authoredLightColor * lightIntensityValue * singleAttenuation * shadowVisibility;
+        if (!decalLight)
+		{
+			singleColor = ApplyAtmosphereToLightCommon(worldPos, singleDir, singleColor, singleVolume);
+		}
 
-        float weight = max(dot(max(LightColors[i].rgb, float3(0.0f, 0.0f, 0.0f)) * lightIntensityValue, float3(0.299f, 0.587f, 0.114f)), 0.0001f) * singleAttenuation;
+        float weight = max(dot(authoredLightColor * lightIntensityValue, float3(0.299f, 0.587f, 0.114f)), 0.0001f) * singleAttenuation;
         dirSum += singleDir * weight;
         colorSum += singleColor;
         weightSum += weight;
@@ -485,7 +525,7 @@ void ResolveDeferredLightAggregateShadowed(
         shadowSum += shadowVisibility * weight;
     }
 
-    if (count <= 0 || weightSum <= 0.000001f)
+    if (count <= 0)
     {
         float legacyVolume = 0.0f;
         ResolveLightCommon(worldPos, lightDir, attenuation, legacyVolume);
@@ -493,6 +533,16 @@ void ResolveDeferredLightAggregateShadowed(
         lightColor = ApplyAtmosphereToLightCommon(worldPos, lightDir, lightColor, legacyVolume);
         volumeScatter = legacyVolume * max(LightColor.a, 0.0f);
         rangeBlend = saturate((max(LightDirection.w, 1.0f) - 1.0f) / 7.0f);
+        return;
+    }
+
+    if (weightSum <= 0.000001f)
+    {
+        lightColor = float3(0.0f, 0.0f, 0.0f);
+        attenuation = 0.0f;
+        volumeScatter = 0.0f;
+        rangeBlend = 0.0f;
+        aggregateShadowVisibility = 1.0f;
         return;
     }
 
@@ -508,51 +558,47 @@ float4 main(PSInputPostProcess input) : SV_Target
 {
     
     const float PI = 3.14159265358979323846f;
-    float4 baseColor = BaseColorTexture.Sample(TextureSampler, input.TexCoord);
-    float4 normal = NormalTexture.Sample(TextureSampler, input.TexCoord);
-    float4 position = PositionTexture.Sample(TextureSampler, input.TexCoord);
     float4 material = MaterialTexture.Sample(TextureSampler, input.TexCoord);
-    float4 shadowParams = ShadowGBufferTexture.Sample(TextureSampler, input.TexCoord);
-    float4 rimStyle = RimStyleTexture.Sample(TextureSampler, input.TexCoord);
-    float4 rimLight = RimLightTexture.Sample(TextureSampler, input.TexCoord);
-
     float shaderClass = material.a;
     bool background = shaderClass < -0.5f;
     bool transparent = IsMaterialClass(shaderClass, 0.0f);
-    bool hair = IsMaterialClass(shaderClass, 1.0f);
-    bool cloth = IsMaterialClass(shaderClass, 2.0f);
-    bool skin = IsMaterialClass(shaderClass, 3.0f);
-    bool toon = IsMaterialClass(shaderClass, 4.0f);
-    bool shadow = IsMaterialClass(shaderClass, 5.0f);
-    bool metallic = IsMaterialClass(shaderClass, 6.0f);
-    bool selfShadow = IsMaterialClass(shaderClass, 7.0f);
-    bool lit = IsMaterialClass(shaderClass, 8.0f);
-    bool eye = IsMaterialClass(shaderClass, 9.0f);
-    bool pbr = IsMaterialClass(shaderClass, 11.0f);
-    bool brdf = IsMaterialClass(shaderClass, 12.0f);
-    bool btdf = IsMaterialClass(shaderClass, 13.0f);
-    bool bsdf = IsMaterialClass(shaderClass, 14.0f);
+	float4 baseColor = BaseColorTexture.Sample(TextureSampler, input.TexCoord);
 
-    float4 atmosphereMedia =
-        AtmosphereTexture.SampleLevel(
-            TextureSampler,
-            input.TexCoord,
-            0);
-    float fogTransmittance = saturate(atmosphereMedia.a);
-    
-    if (background)
-    {
-        baseColor.rgb =
-            (baseColor.rgb + AtmosphereBackgroundCommon(input.TexCoord)) *
-            fogTransmittance +
-            atmosphereMedia.rgb;
-        return baseColor;
-    }
+	if (transparent)
+	{
+		return baseColor;
+	}
 
-    if (transparent)
-    {
-        return baseColor;
-    }
+	float4 atmosphereMedia = AtmosphereTexture.SampleLevel(
+		TextureSampler, input.TexCoord, 0);
+	float fogTransmittance = saturate(atmosphereMedia.a);
+	if (background)
+	{
+		baseColor.rgb =
+			(baseColor.rgb + AtmosphereBackgroundCommon(input.TexCoord)) *
+			fogTransmittance + atmosphereMedia.rgb;
+		return baseColor;
+	}
+
+	bool toon = IsMaterialClass(shaderClass, 4.0f);
+	bool shadow = IsMaterialClass(shaderClass, 5.0f);
+	bool lit = IsMaterialClass(shaderClass, 8.0f);
+	bool pbr = IsMaterialClass(shaderClass, 11.0f);
+	const int shadowDebugMode = (int)round(ShadowDebugGlobal.x);
+	const bool needsDeferredLighting =
+		toon || shadow || lit || pbr || shadowDebugMode > 0;
+	[branch]
+	if (!needsDeferredLighting)
+	{
+		baseColor.rgb = baseColor.rgb * fogTransmittance + atmosphereMedia.rgb;
+		baseColor.a = 1.0f;
+		return baseColor;
+	}
+
+	float4 normal = NormalTexture.Sample(TextureSampler, input.TexCoord);
+	float depth = DepthTexture.Sample(TextureSampler, input.TexCoord);
+	float3 position = ReconstructPostProcessWorldPositionCommon(input.TexCoord, depth);
+	float4 shadowParams = ShadowGBufferTexture.Sample(TextureSampler, input.TexCoord);
 
    
     float shadowThreshold = shadowParams.r;
@@ -567,10 +613,9 @@ float4 main(PSInputPostProcess input) : SV_Target
     float volumeScatter;
     float rangeBlend;
     float aggregateShadowVisibility;
-    float3 surfaceNormal = SafeNormalizeCommon(normal.xyz, float3(0.0f, 1.0f, 0.0f));
-    ResolveDeferredLightAggregateShadowed(position.xyz, surfaceNormal, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend, aggregateShadowVisibility);
+    float3 surfaceNormal = DecodeGBufferNormal(normal.xyz);
+    ResolveDeferredLightAggregateShadowed(position, surfaceNormal, input.Position.xy, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend, aggregateShadowVisibility);
 
-    const int shadowDebugMode = (int)round(ShadowDebugGlobal.x);
     if (shadowDebugMode > 0 && VirtualShadowGlobal.x > 0.5f && VirtualShadowGlobal.x < 1.5f)
     {
         if (shadowDebugMode == 1)
@@ -614,9 +659,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     float lightIntensity = LightColor.a;
 
     
-    float Metallic = material.r;
     float Roughness = material.g;
-    float f0 = material.b;
     
     float3 NdotL = saturate(dot(surfaceNormal, lightDir));
     float3 environmentColor = EnvironmentTexture.SampleLevel(TextureSampler, input.TexCoord, Roughness * 10.0f).rgb;
@@ -750,19 +793,20 @@ float4 main(PSInputPostProcess input) : SV_Target
         // returned hit is additionally checked against the world-position
         // G-buffer, rejecting depth discontinuities that create white streaks.
         float3 ssrHit = (roughness < 0.65f && dot(R, V) < 0.0f)
-            ? ScreenSpaceRayMarch(position.xyz + N * 0.04f + R * 0.02f, R, DepthTexture, TextureSampler)
+            ? ScreenSpaceRayMarch(position + N * 0.04f + R * 0.02f, R, DepthTexture, TextureSampler)
             : float3(-1.0f, -1.0f, -1.0f);
         float3 envSpecular = EnvironmentTexture.SampleLevel(
             TextureSampler, reflectionUV, roughness * maxMip).rgb;
         if (all(ssrHit.xy >= 0.0f) && all(ssrHit.xy <= 1.0f))
         {
-            float3 rayOrigin = position.xyz + N * 0.04f + R * 0.02f;
+            float3 rayOrigin = position + N * 0.04f + R * 0.02f;
             float3 rayHitPosition = rayOrigin + R * ssrHit.z;
-            float4 gbufferHitPosition = PositionTexture.SampleLevel(TextureSampler, ssrHit.xy, 0);
+            float hitDepth = DepthTexture.SampleLevel(TextureSampler, ssrHit.xy, 0);
+            float3 gbufferHitPosition = ReconstructPostProcessWorldPositionCommon(ssrHit.xy, hitDepth);
             float4 gbufferHitMaterial = MaterialTexture.SampleLevel(TextureSampler, ssrHit.xy, 0);
             float hitTolerance = 0.10f + ssrHit.z * 0.015f;
             bool validGeometryHit = gbufferHitMaterial.a >= -0.5f &&
-                distance(rayHitPosition, gbufferHitPosition.xyz) <= hitTolerance;
+                hitDepth < 0.9999f && distance(rayHitPosition, gbufferHitPosition) <= hitTolerance;
 
             if (validGeometryHit)
             {

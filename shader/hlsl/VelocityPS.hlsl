@@ -1,7 +1,6 @@
 #define SHADER_POSTPROCESS
 #include "common.hlsl"
 
-Texture2D<float4> WorldPositionTexture : register(t0);
 Texture2D<float> DepthTexture : register(t2);
 SamplerState PointSampler : register(s0);
 
@@ -26,7 +25,7 @@ float4 main(PSInputPostProcess input) : SV_Target
         return EncodeVelocity(0.0f);
     }
 
-    float3 worldPosition = WorldPositionTexture.SampleLevel(PointSampler, input.TexCoord, 0).xyz;
+    float3 worldPosition = ReconstructPostProcessWorldPositionCommon(input.TexCoord, depth);
     float4 previousClip = mul(float4(worldPosition, 1.0f), PrevViewProjection);
     if (previousClip.w <= 0.00001f)
     {

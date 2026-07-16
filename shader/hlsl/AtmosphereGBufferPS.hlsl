@@ -4,10 +4,6 @@
 
 Texture2D<float4> BaseColorTexture : register(t0);
 Texture2D<float4> NormalTexture : register(t1);
-Texture2D<float4> PositionTexture : register(t2);
-Texture2D<float> DepthTexture : register(t3);
-Texture2D<float4> MaterialTexture : register(t4);
-Texture2D<float4> ShadowGBufferTexture : register(t5);
 Texture2D<float4> EnvironmentTexture : register(t6);
 Texture2DArray<float> ShadowMapTexture : register(t7);
 
@@ -173,21 +169,24 @@ float3 EvaluateAtmosphereLight(
         0.35f / max(AtmosphereParams1.w, 0.0001f),
         localLight);
 
-    float phase = saturate(
-        HenyeyGreensteinCommon(
-            clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f),
-            AtmosphereParams1.z) * 6.0f);
+    // ResolveSingleLightCommon returns a normalized direction and the view ray
+    // is normalized by the caller.  Compute both atmosphere phase terms once:
+    // the old path evaluated Henyey-Greenstein here and then repeated it inside
+    // AtmosphereSingleScatterFromDensityCommon for every light at every step.
+    float cosTheta = clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f);
+    float rayleighPhase = RayleighPhaseCommon(cosTheta);
+    float miePhase = HenyeyGreensteinCommon(cosTheta, AtmosphereParams1.z);
+    float phase = saturate(miePhase * 6.0f);
 
     float shaftBoost =
         lerp(0.55f, 1.75f, phase) *
         lerp(1.0f, 2.35f, volumeLight);
 
+    float3 atmospherePhase =
+        AtmosphereColor0.rgb * max(AtmosphereParams0.y, 0.0f) * rayleighPhase +
+        AtmosphereColor1.rgb * max(AtmosphereParams0.z, 0.0f) * miePhase;
     float3 result =
-        AtmosphereSingleScatterFromDensityCommon(
-            sampleDensity,
-            viewToCamera,
-            singleDir,
-            shadowedColor) *
+        atmospherePhase * sampleDensity * shadowedColor *
         lerp(1.0f, 0.45f, volumeLight);
 
     // Directional light follows the global atmosphere height profile.
@@ -495,6 +494,9 @@ float3 IntegrateVolumeLightRay(
         max(AtmosphereParams1.w, 0.0001f);
     float3 viewToCamera = -rayDirection;
     float3 integratedScatter = float3(0.0f, 0.0f, 0.0f);
+    float3 sampleStep = rayDirection * stepLength;
+    float3 samplePos =
+        rayOrigin + rayDirection * (segmentStart + 0.5f * stepLength);
 
     [loop]
     for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
@@ -502,9 +504,6 @@ float3 IntegrateVolumeLightRay(
         float sampleDistance =
             segmentStart +
             ((float)stepIndex + 0.5f) * stepLength;
-        float3 samplePos =
-            rayOrigin +
-            rayDirection * sampleDistance;
 
         float3 singleDir;
         float singleAttenuation;
@@ -554,6 +553,8 @@ float3 IntegrateVolumeLightRay(
                 shadowVisibility) *
             viewTransmittance *
             scaledStep;
+
+        samplePos += sampleStep;
     }
 
     return integratedScatter;
@@ -595,6 +596,8 @@ float3 RayMarchAtmosphereViewFixed(
     float transmittance = 1.0f;
     float3 result = float3(0.0f, 0.0f, 0.0f);
     int count = min((int)round(LightCount.x), 5);
+    float3 sampleStep = viewDir * stepLength;
+    float3 samplePos = cameraPos + sampleStep * 0.5f;
 
     float cachedShadowVisibility[5];
     [unroll]
@@ -608,12 +611,6 @@ float3 RayMarchAtmosphereViewFixed(
     [loop]
     for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
     {
-        float t =
-            ((float)stepIndex + 0.5f) /
-            (float)stepCount;
-        float3 samplePos =
-            cameraPos +
-            viewDir * viewDistance * t;
         float3 stepScatter = float3(0.0f, 0.0f, 0.0f);
         float sampleDensity =
             AtmosphereDensityCommon(samplePos);
@@ -626,6 +623,12 @@ float3 RayMarchAtmosphereViewFixed(
         [loop]
         for (int lightIndex = 0; lightIndex < count; ++lightIndex)
         {
+            if (LightFlags[lightIndex].z < 0.5f ||
+                LightFlags[lightIndex].w >= 0.5f)
+            {
+                continue;
+            }
+
             // Volume lights are integrated over their own light-anchored ray
             // segment below.  Sampling them in this camera-length march is the
             // source of the distance-dependent root and visible shells.
@@ -740,12 +743,16 @@ float3 RayMarchAtmosphereViewFixed(
         {
             break;
         }
+
+        samplePos += sampleStep;
     }
 
     [loop]
     for (int volumeIndex = 0; volumeIndex < count; ++volumeIndex)
     {
-        if ((int)round(LightPositionTypes[volumeIndex].w) != 3)
+        if (LightFlags[volumeIndex].z < 0.5f ||
+            LightFlags[volumeIndex].w >= 0.5f ||
+            (int)round(LightPositionTypes[volumeIndex].w) != 3)
         {
             continue;
         }
@@ -865,16 +872,13 @@ LocalFogRayResult IntegrateLocalFogRay(float3 rayEnd)
         float segmentLength = segmentEnd - segmentStart;
         float stepLength = segmentLength / (float)stepCount;
         float densityIntegral = 0.0f;
+        float3 sampleStep = viewDir * stepLength;
+        float3 samplePos =
+            cameraPos + viewDir * (segmentStart + 0.5f * stepLength);
 
         [loop]
         for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
         {
-            float sampleDistance =
-                segmentStart +
-                ((float)stepIndex + 0.5f) * stepLength;
-            float3 samplePos =
-                cameraPos +
-                viewDir * sampleDistance;
             float3 delta = samplePos - data0.xyz;
             float horizontal = saturate(
                 1.0f - length(delta.xz) / radius);
@@ -891,6 +895,8 @@ LocalFogRayResult IntegrateLocalFogRay(float3 rayEnd)
                 volumeWeight *
                 max(data1.y, 0.0f) *
                 stepLength;
+
+            samplePos += sampleStep;
         }
 
         float opticalDepth = densityIntegral * 0.08f;
@@ -916,11 +922,6 @@ LocalFogRayResult IntegrateLocalFogRay(float3 rayEnd)
 
 float4 main(PSInputPostProcess input) : SV_Target
 {
-    float4 position =
-        PositionTexture.SampleLevel(
-            TextureSampler,
-            input.TexCoord,
-            0);
     float depth =
         DepthTexture.SampleLevel(
             TextureSampler,
@@ -934,8 +935,7 @@ float4 main(PSInputPostProcess input) : SV_Target
 
     bool background =
         material.a < -0.5f ||
-        depth >= 0.9999f ||
-        position.w <= 0.0001f;
+        depth >= 0.9999f;
 
     float3 viewRay =
         ReconstructPostProcessViewRayCommon(
@@ -944,7 +944,7 @@ float4 main(PSInputPostProcess input) : SV_Target
         background
         ? PPCameraPos.xyz +
           viewRay * 100.0f
-        : position.xyz;
+        : ReconstructPostProcessWorldPositionCommon(input.TexCoord, depth);
 
     float3 scatter =
         RayMarchAtmosphereViewFixed(

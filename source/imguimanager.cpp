@@ -995,12 +995,9 @@ if (ImGui::SliderFloat("かわいいブレンド", &kawaiiBlend, 0.0f, 1.0f))
 		{
 		{ "ベースカラー",     GBufferType::BASE_COLOR },
 		{ "法線",       GBufferType::NORMAL },
-		{ "位置", GBufferType::POSITION },
 		{ "深度",       GBufferType::DEPTH },
 		{ "マテリアル", GBufferType::MATERIAL },
 		{ "影", GBufferType::SHADOW },
-		{ "リムスタイル", GBufferType::RIM_STYLE },
-		{ "リムライト", GBufferType::RIM_LIGHT },
 		{ "大気", GBufferType::ATMOSPHERE },
 		{ "ベロシティ", GBufferType::VELOCITY },
 		};
@@ -1359,6 +1356,34 @@ void ImGuiManager::DrawPerformanceWindow()
 	DrawFpsMeter();
 	ImGui::Text("Frame: %.2f ms", World::GetFrameTimeMs());
 	ImGui::Separator();
+	const RendererResource::LightGridStats& lightStats =
+		RendererResource::GetLightGridStats();
+	ImGui::Text("Lights: authored %u / screen %u / GPU %u",
+		lightStats.AuthoredLights,
+		lightStats.OnScreenLights,
+		lightStats.GpuVisibleLights);
+	ImGui::Text("Physical %u / Decal %u",
+		lightStats.GpuPhysicalLights,
+		lightStats.GpuDecalLights);
+	ImGui::Text("Tiles: %ux%u / overlap %u of %u",
+		lightStats.TileCountX,
+		lightStats.TileCountY,
+		lightStats.MaxLightsPerTile,
+		RendererSettings::GetTileLightBudget() +
+		RendererSettings::GetDecalTileLightBudget());
+	ImGui::Text("Geometry GBuffer: %u bit/pixel",
+		RendererState::g_kGEOMETRY_GBUFFER_BITS_PER_PIXEL);
+	ImGui::Text("Volumetric %u / shadowed %u / overflow %u",
+		lightStats.VolumetricLights,
+		lightStats.ShadowedLights,
+		lightStats.OverflowedTileAssignments);
+	if (lightStats.OverflowedTileAssignments > 0)
+	{
+		ImGui::TextColored(
+			ImVec4(1.0f, 0.45f, 0.20f, 1.0f),
+			"ライト重複予算を超過しています");
+	}
+	ImGui::Separator();
 
 	bool vsyncEnabled = World::IsVSyncEnabled();
 	if (ImGui::Checkbox("垂直同期", &vsyncEnabled))
@@ -1651,12 +1676,9 @@ void ImGuiManager::DrawGBufferWindow()
 	{
 		{ "ベースカラー",     GBufferType::BASE_COLOR },
 		{ "法線",       GBufferType::NORMAL },
-		{ "位置", GBufferType::POSITION },
 		{ "深度",       GBufferType::DEPTH },
 		{ "マテリアル", GBufferType::MATERIAL },
 		{ "影", GBufferType::SHADOW },
-		{ "リムスタイル", GBufferType::RIM_STYLE },
-		{ "リムライト", GBufferType::RIM_LIGHT },
 		{ "大気", GBufferType::ATMOSPHERE },
 		{ "ベロシティ", GBufferType::VELOCITY },
 	};
@@ -2941,7 +2963,31 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 
 	changed |= ImGui::Checkbox("有効", &light.IsActive);
 	changed |= ImGui::Checkbox("デバッグ描画", &light.DrawDebug);
+	const char* renderModes[] = { "Physical", "Decal (軽量)", "Emission Only" };
+	int renderMode = static_cast<int>(light.RenderMode);
+	if (ImGui::Combo("照明経路", &renderMode, renderModes, IM_ARRAYSIZE(renderModes)))
+	{
+		light.RenderMode = static_cast<LightRenderMode>(renderMode);
+		if (light.RenderMode != LightRenderMode::Physical)
+		{
+			light.CastShadow = false;
+			light.AffectsVolumetrics = false;
+			light.VolumeDensity = 0.0f;
+			light.AffectsForward = false;
+		}
+		if (light.RenderMode == LightRenderMode::EmissionOnly)
+		{
+			light.AffectsOpaque = false;
+		}
+		changed = true;
+	}
+	changed |= ImGui::Checkbox("不透明に影響", &light.AffectsOpaque);
+	changed |= ImGui::Checkbox("Forwardに影響", &light.AffectsForward);
+	changed |= ImGui::Checkbox("大気・ボリュームに影響", &light.AffectsVolumetrics);
+	changed |= ImGui::DragFloat("ライト優先度", &light.Priority, 0.05f, -10.0f, 10.0f);
+	ImGui::BeginDisabled(light.RenderMode != LightRenderMode::Physical);
 	changed |= ImGui::Checkbox("影を描画", &light.CastShadow);
+	ImGui::EndDisabled();
 	changed |= ImGui::ColorEdit3("色", &light.Color.x);
 	changed |= ImGui::DragFloat("ライト強度", &light.Intensity, 0.01f, 0.0f, 20.0f);
 	changed |= ImGui::DragFloat("範囲", &light.Range, 0.05f, 0.1f, 100.0f);
@@ -2965,6 +3011,10 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 		changed |= ImGui::DragFloat("内角", &light.InnerAngle, 0.2f, 0.1f, 89.0f);
 		changed |= ImGui::DragFloat("外角", &light.OuterAngle, 0.2f, light.InnerAngle + 0.1f, 89.5f);
 		changed |= ImGui::DragFloat("ボリューム密度", &light.VolumeDensity, 0.01f, 0.0f, 30.0f);
+	}
+	else if (light.AffectsVolumetrics)
+	{
+		changed |= ImGui::DragFloat("ボリューム密度", &light.VolumeDensity, 0.01f, 0.0f, 3.0f);
 	}
 
 	if (ImGui::Button("メインライトに設定"))
@@ -3794,6 +3844,57 @@ void ImGuiManager::DrawProjectSettingsWindow()
 		ImGui::SliderFloat("露光", &m_Exposure, 0.01f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
 	}
 
+	if (ImGui::CollapsingHeader("照明予算", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		int screenBudget = RendererSettings::GetScreenLightBudget();
+		if (ImGui::SliderInt("画面内 Physical Light", &screenBudget, 1, 32))
+			RendererSettings::SetScreenLightBudget(screenBudget);
+		int tileBudget = RendererSettings::GetTileLightBudget();
+		if (ImGui::SliderInt("16x16 タイル重複", &tileBudget, 1, 4))
+			RendererSettings::SetTileLightBudget(tileBudget);
+		int decalBudget = RendererSettings::GetDecalLightBudget();
+		if (ImGui::SliderInt("画面内 Decal Light", &decalBudget, 0, 110))
+			RendererSettings::SetDecalLightBudget(decalBudget);
+		int decalTileBudget = RendererSettings::GetDecalTileLightBudget();
+		if (ImGui::SliderInt("タイル内 Decal Light", &decalTileBudget, 0, 4))
+			RendererSettings::SetDecalTileLightBudget(decalTileBudget);
+		int volumetricBudget = RendererSettings::GetVolumetricLightBudget();
+		if (ImGui::SliderInt("Volumetric Light", &volumetricBudget, 0, 5))
+			RendererSettings::SetVolumetricLightBudget(volumetricBudget);
+		int shadowBudget = RendererSettings::GetShadowLightBudget();
+		if (ImGui::SliderInt("Shadow map layer", &shadowBudget, 1, 8))
+			RendererSettings::SetShadowLightBudget(shadowBudget);
+		const int monitorTextureIndex = RendererCore::GetMonitorTextureIndex();
+		const vector<TextureManager::TextureInfo> textureInfos = TextureManager::GetLoadedTextureInfos();
+		string monitorLabel = "白 (未指定)";
+		for (const auto& info : textureInfos)
+		{
+			if (info.SrvIndex == monitorTextureIndex)
+			{
+				monitorLabel = filesystem::path(info.Path).filename().string();
+				break;
+			}
+		}
+		if (ImGui::BeginCombo("Monitor Texture", monitorLabel.c_str()))
+		{
+			if (ImGui::Selectable("白 (未指定)", monitorTextureIndex < 0))
+			{
+				RendererCore::SetMonitorTextureIndex(-1);
+			}
+			for (const auto& info : textureInfos)
+			{
+				const string label = filesystem::path(info.Path).filename().string() +
+					"##monitor_" + to_string(info.SrvIndex);
+				if (ImGui::Selectable(label.c_str(), info.SrvIndex == monitorTextureIndex))
+				{
+					RendererCore::SetMonitorTextureIndex(info.SrvIndex);
+				}
+			}
+			ImGui::EndCombo();
+		}
+		ImGui::TextWrapped("大量配置したライトは Priority と画面占有率で選別され、ピクセル当たりの評価数はタイル重複予算を超えません。");
+	}
+
 	if (ImGui::CollapsingHeader("シャドウ", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 		int method = static_cast<int>(RendererSettings::GetShadowMapMethod());
@@ -3937,6 +4038,20 @@ void ImGuiManager::SaveProjectSettings()
 	stream << "distance_field_shadows=" << (RendererSettings::GetDistanceFieldShadowsEnabled() ? 1 : 0) << '\n';
 	stream << "distance_field_distance=" << RendererSettings::GetDistanceFieldShadowDistance() << '\n';
 	stream << "distance_field_steps=" << RendererSettings::GetDistanceFieldShadowSteps() << '\n';
+	stream << "screen_light_budget=" << RendererSettings::GetScreenLightBudget() << '\n';
+	stream << "tile_light_budget=" << RendererSettings::GetTileLightBudget() << '\n';
+	stream << "decal_light_budget=" << RendererSettings::GetDecalLightBudget() << '\n';
+	stream << "decal_tile_light_budget=" << RendererSettings::GetDecalTileLightBudget() << '\n';
+	stream << "volumetric_light_budget=" << RendererSettings::GetVolumetricLightBudget() << '\n';
+	stream << "shadow_light_budget=" << RendererSettings::GetShadowLightBudget() << '\n';
+	for (const auto& info : TextureManager::GetLoadedTextureInfos())
+	{
+		if (info.SrvIndex == RendererCore::GetMonitorTextureIndex())
+		{
+			stream << "monitor_texture=" << info.Path << '\n';
+			break;
+		}
+	}
 	for (const auto& fog : LocalHeightFog::GetVolumes())
 	{
 		stream << "fog=" << (fog.Enabled ? 1 : 0) << ',' << static_cast<int>(fog.Shape) << ','
@@ -3985,6 +4100,13 @@ void ImGuiManager::LoadProjectSettings()
 			else if (key == "distance_field_shadows") RendererSettings::SetDistanceFieldShadowsEnabled(stoi(value) != 0);
 			else if (key == "distance_field_distance") RendererSettings::SetDistanceFieldShadowDistance(stof(value));
 			else if (key == "distance_field_steps") RendererSettings::SetDistanceFieldShadowSteps(stoi(value));
+			else if (key == "screen_light_budget") RendererSettings::SetScreenLightBudget(stoi(value));
+			else if (key == "tile_light_budget") RendererSettings::SetTileLightBudget(stoi(value));
+			else if (key == "decal_light_budget") RendererSettings::SetDecalLightBudget(stoi(value));
+			else if (key == "decal_tile_light_budget") RendererSettings::SetDecalTileLightBudget(stoi(value));
+			else if (key == "volumetric_light_budget") RendererSettings::SetVolumetricLightBudget(stoi(value));
+			else if (key == "shadow_light_budget") RendererSettings::SetShadowLightBudget(stoi(value));
+			else if (key == "monitor_texture") RendererCore::SetMonitorTextureIndex(TextureManager::LoadTexture(value));
 			else if (key == "fog" && LocalHeightFog::GetVolumes().size() < LocalHeightFog::MaxVolumes)
 			{
 				vector<float> fields;

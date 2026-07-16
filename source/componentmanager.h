@@ -372,7 +372,12 @@ struct LightComponent
 	int VolumeShape = 0; // 0: cone, 1: cylinder
 	bool IsActive = true;
 	bool DrawDebug = false;
-	bool CastShadow = true;
+	bool AffectsOpaque = true;
+	bool AffectsForward = true;
+	bool AffectsVolumetrics = false;
+	bool CastShadow = false;
+	float Priority = 0.0f;
+	LightRenderMode RenderMode = LightRenderMode::Physical;
 
 	LightType Type = LightType::Directional;
 

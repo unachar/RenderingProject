@@ -47,6 +47,18 @@ public:
 	static void SetDistanceFieldShadowDistance(float value) { SetValue(s_DistanceFieldShadowDistance, std::clamp(value, 2.0f, 100.0f)); }
 	static int GetDistanceFieldShadowSteps() { return s_DistanceFieldShadowSteps; }
 	static void SetDistanceFieldShadowSteps(int value) { SetValue(s_DistanceFieldShadowSteps, std::clamp(value, 4, 24)); }
+	static int GetScreenLightBudget() { return s_ScreenLightBudget; }
+	static void SetScreenLightBudget(int value) { SetValue(s_ScreenLightBudget, std::clamp(value, 1, 32)); }
+	static int GetTileLightBudget() { return s_TileLightBudget; }
+	static void SetTileLightBudget(int value) { SetValue(s_TileLightBudget, std::clamp(value, 1, 4)); }
+	static int GetDecalLightBudget() { return s_DecalLightBudget; }
+	static void SetDecalLightBudget(int value) { SetValue(s_DecalLightBudget, std::clamp(value, 0, 110)); }
+	static int GetDecalTileLightBudget() { return s_DecalTileLightBudget; }
+	static void SetDecalTileLightBudget(int value) { SetValue(s_DecalTileLightBudget, std::clamp(value, 0, 4)); }
+	static int GetVolumetricLightBudget() { return s_VolumetricLightBudget; }
+	static void SetVolumetricLightBudget(int value) { SetValue(s_VolumetricLightBudget, std::clamp(value, 0, 5)); }
+	static int GetShadowLightBudget() { return s_ShadowLightBudget; }
+	static void SetShadowLightBudget(int value) { SetValue(s_ShadowLightBudget, std::clamp(value, 1, 8)); }
 	static uint64_t GetRevision() { return s_Revision; }
 
 	static void ResetShadowDefaults()
@@ -99,5 +111,11 @@ private:
 	inline static bool s_DistanceFieldShadowsEnabled = false;
 	inline static float s_DistanceFieldShadowDistance = 30.0f;
 	inline static int s_DistanceFieldShadowSteps = 12;
+	inline static int s_ScreenLightBudget = 32;
+	inline static int s_TileLightBudget = 4;
+	inline static int s_DecalLightBudget = 110;
+	inline static int s_DecalTileLightBudget = 4;
+	inline static int s_VolumetricLightBudget = 5;
+	inline static int s_ShadowLightBudget = 4;
 	inline static uint64_t s_Revision = 1;
 };

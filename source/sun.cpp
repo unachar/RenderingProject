@@ -65,6 +65,10 @@ EntityID Sun::Create(const XMFLOAT3& position, const XMFLOAT3& target)
 	light.InnerAngle = 18.0f;
 	light.OuterAngle = 32.0f;
 	light.VolumeDensity = 0.22f;
+	light.AffectsOpaque = true;
+	light.AffectsForward = true;
+	light.AffectsVolumetrics = true;
+	light.RenderMode = LightRenderMode::Physical;
 	light.VolumeShape = 0;
 	light.IsActive = true;
 	light.DrawDebug = true;

@@ -26,7 +26,6 @@ GBufferOutput main(in PSInput3D In)
     GBufferOutput output;
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
-    output.Position = float4(In.WorldPos, 2.0f);
     // SV_Position.z is already the post-projection D3D depth in [0, 1].
     output.Depth = saturate(In.Position.z);
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
@@ -38,11 +37,5 @@ GBufferOutput main(in PSInput3D In)
     output.Shadow = usePartParams
         ? float4(partParams.Shadow0.x, partParams.Shadow0.y, partParams.Shadow0.z, 0.0f)
         : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
-    output.RimStyle = usePartParams
-        ? float4(partParams.Highlight.x, partParams.Highlight.y, partParams.RimStyle.x, partParams.RimStyle.y)
-        : float4(RimStrength, RimThreshold, RimSoftness, RimPower);
-    output.RimLight = usePartParams
-        ? float4(partParams.RimLight.rgb, partParams.RimStyle.z)
-        : float4(RimColor, RimAlbedoBlend);
     return output;
 }

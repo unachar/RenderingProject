@@ -9,6 +9,7 @@
 #include "imguimanager.h"
 #include "psomanager.h"
 #include "camera.h"
+#include "renderprofiler.h"
 
 namespace
 {
@@ -41,8 +42,7 @@ namespace
 		{
 			outColor[3] = -1.0f;
 		}
-		else if (index == static_cast<UINT>(GBufferType::RIM_LIGHT) ||
-			index == static_cast<UINT>(GBufferType::ATMOSPHERE))
+		else if (index == static_cast<UINT>(GBufferType::ATMOSPHERE))
 		{
 			outColor[3] = 1.0f;
 		}
@@ -264,6 +264,12 @@ void RendererDraw::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_T
 	if (m_TransparentSceneCopy)
 	{
 		m_CommandList->SetGraphicsRootDescriptorTable(8, m_TransparentSceneSrvHandle);
+	}
+	const D3D12_GPU_VIRTUAL_ADDRESS lightTileAddress =
+		RendererResource::GetCurrentLightTileIndexBufferAddress();
+	if (lightTileAddress != 0)
+	{
+		m_CommandList->SetGraphicsRootShaderResourceView(10, lightTileAddress);
 	}
 	m_CommandList->IASetPrimitiveTopology(topology);
 }
@@ -657,9 +663,9 @@ void RendererDraw::RenderVelocityBuffer()
 			m_PostProcessConstantBuffer->GetGPUVirtualAddress() + m_FrameIndex * g_kPP_CB_ALIGNED_SIZE);
 	}
 	m_CommandList->SetGraphicsRootDescriptorTable(1,
-		m_GBufferSrvHandles[static_cast<UINT>(GBufferType::POSITION)]);
+		m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)]);
 	m_CommandList->SetGraphicsRootDescriptorTable(2,
-		m_GBufferSrvHandles[static_cast<UINT>(GBufferType::POSITION)]);
+		m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)]);
 	m_CommandList->SetGraphicsRootDescriptorTable(3,
 		m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)]);
 
@@ -762,6 +768,22 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 			if (atmosphereHandle.ptr != 0) m_CommandList->SetGraphicsRootDescriptorTable(7, atmosphereHandle);
 			if (rimStyleHandle.ptr != 0) m_CommandList->SetGraphicsRootDescriptorTable(8, rimStyleHandle);
 			if (rimLightHandle.ptr != 0) m_CommandList->SetGraphicsRootDescriptorTable(9, rimLightHandle);
+			const D3D12_GPU_VIRTUAL_ADDRESS lightTileAddress =
+				RendererResource::GetCurrentLightTileIndexBufferAddress();
+			if (lightTileAddress != 0)
+			{
+				m_CommandList->SetGraphicsRootShaderResourceView(10, lightTileAddress);
+			}
+			int monitorSrvIndex = m_MonitorTextureSrvIndex;
+			if (monitorSrvIndex < 0)
+			{
+				monitorSrvIndex = TextureManager::GetDefaultTextureIndex();
+			}
+			CD3DX12_GPU_DESCRIPTOR_HANDLE monitorSrvHandle(
+				m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
+				monitorSrvIndex,
+				m_CbvIncrementSize);
+			m_CommandList->SetGraphicsRootDescriptorTable(11, monitorSrvHandle);
 			m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			m_CommandList->DrawInstanced(3, 1, 0, 0);
 		};
@@ -801,13 +823,16 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 			static_cast<LONG>(atmosphereDesc.Height));
 		m_CommandList->RSSetViewports(1, &atmosphereViewport);
 		m_CommandList->RSSetScissorRects(1, &atmosphereScissor);
-		DrawFullscreenPass(
-			atmospherePso,
-			m_GBufferRtvHandles[atmosphereIndex],
-			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::BASE_COLOR)],
-			1.0f,
-			1.0f,
-			1.35f);
+		{
+			RenderProfiler::ScopedEvent profile("Atmosphere", m_CommandList.Get());
+			DrawFullscreenPass(
+				atmospherePso,
+				m_GBufferRtvHandles[atmosphereIndex],
+				m_GBufferSrvHandles[static_cast<UINT>(GBufferType::BASE_COLOR)],
+				1.0f,
+				1.0f,
+				1.35f);
+		}
 		m_CommandList->RSSetViewports(1, &m_Viewport);
 		m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
 		D3D12_RESOURCE_BARRIER atmosphereToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
@@ -823,16 +848,17 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 		m_CommandList->ResourceBarrier(1, &toSceneRt);
 		m_CommandList->ClearRenderTargetView(m_SceneRtvHandle, m_kSceneClearColor, 0, nullptr);
 
-		DrawFullscreenPass(
-			deferredLightingPso,
-			m_SceneRtvHandle,
-			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::BASE_COLOR)],
-			1.0f,
-			1.0f,
-			1.35f,
-			m_GBufferSrvHandles[atmosphereIndex],
-			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::RIM_STYLE)],
-			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::RIM_LIGHT)]);
+		{
+			RenderProfiler::ScopedEvent profile("Deferred Lighting", m_CommandList.Get());
+			DrawFullscreenPass(
+				deferredLightingPso,
+				m_SceneRtvHandle,
+				m_GBufferSrvHandles[static_cast<UINT>(GBufferType::BASE_COLOR)],
+				1.0f,
+				1.0f,
+				1.35f,
+				m_GBufferSrvHandles[atmosphereIndex]);
+		}
 
 		D3D12_RESOURCE_BARRIER toSceneSrv = CD3DX12_RESOURCE_BARRIER::Transition(
 			m_SceneRenderTarget.Get(),
@@ -883,13 +909,16 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 		}
 	}
 
-	DrawFullscreenPass(
-		postProcessPso,
-		m_EditorSceneRtvHandle,
-		m_SceneSrvHandle,
-		config.Intensity,
-		0.0f,
-		0.0f);
+	{
+		RenderProfiler::ScopedEvent profile("Final PostProcess", m_CommandList.Get());
+		DrawFullscreenPass(
+			postProcessPso,
+			m_EditorSceneRtvHandle,
+			m_SceneSrvHandle,
+			config.Intensity,
+			0.0f,
+			0.0f);
+	}
 
 	D3D12_RESOURCE_BARRIER toEditorSrv = CD3DX12_RESOURCE_BARRIER::Transition(
 		m_EditorSceneRenderTarget.Get(),

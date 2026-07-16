@@ -11,6 +11,13 @@ enum class LightType
 	Volume
 };
 
+enum class LightRenderMode
+{
+	Physical = 0,
+	Decal,
+	EmissionOnly
+};
+
 class Light
 {
 public:
@@ -27,13 +34,18 @@ public:
 		float Range = 8.0f;
 		float InnerAngle = 18.0f;
 		float OuterAngle = 32.0f;
-		float VolumeDensity = 0.35f;
+		float VolumeDensity = 0.0f;
 		int VolumeShape = 0;
 		bool IsActive = true;
 		bool DrawDebug = true;
+		bool AffectsOpaque = true;
+		bool AffectsForward = true;
+		bool AffectsVolumetrics = false;
 		// Additional lights are inexpensive by default.  Shadow casting remains
 		// opt-in from the light inspector for the small number of lights that need it.
 		bool CastShadow = false;
+		float Priority = 0.0f;
+		LightRenderMode RenderMode = LightRenderMode::Physical;
 	};
 
 	static CreateDesc MakeDefaultDesc(LightType type);

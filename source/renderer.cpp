@@ -63,6 +63,7 @@ ComPtr<ID3D12Resource> RendererState::m_GBufferTargets[RendererState::g_kGBUFFER
 CD3DX12_CPU_DESCRIPTOR_HANDLE RendererState::m_GBufferRtvHandles[RendererState::g_kGBUFFER_COUNT];
 CD3DX12_GPU_DESCRIPTOR_HANDLE RendererState::m_GBufferSrvHandles[RendererState::g_kGBUFFER_COUNT];
 int RendererState::m_EnvironmentTextureSrvIndex = -1;
+int RendererState::m_MonitorTextureSrvIndex = -1;
 ComPtr<ID3D12RootSignature> RendererState::m_PostProcessRootSignature;
 ComPtr<ID3D12RootSignature> RendererState::m_UpscaleRootSignature;
 unordered_map<PostProcessType, ComPtr<ID3D12PipelineState>> RendererState::m_PostProcessPsoMap;

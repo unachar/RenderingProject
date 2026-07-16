@@ -19,12 +19,9 @@ enum class GBufferType : uint32_t
 {
 	BASE_COLOR = 0,
 	NORMAL,
-	POSITION,
 	DEPTH,
 	MATERIAL,
 	SHADOW,
-	RIM_STYLE,
-	RIM_LIGHT,
 	ATMOSPHERE,
 	VELOCITY,
 	COUNT
@@ -34,12 +31,9 @@ inline constexpr LPCWSTR g_GBufferTargetNames[] =
 {
 	L"ColorBuffer",
 	L"NormalBuffer",
-	L"PositionBuffer",
 	L"DepthBuffer",
 	L"MaterialBuffer",
 	L"ShadowBuffer",
-	L"RimStyleBuffer",
-	L"RimLightBuffer",
 	L"AtmosphereGBuffer",
 	L"VelocityBuffer"
 };
@@ -149,7 +143,20 @@ public:
 	static constexpr UINT g_kGBUFFER_COUNT = static_cast<UINT>(GBufferType::COUNT);
 	static constexpr UINT g_kGEOMETRY_GBUFFER_COUNT = static_cast<UINT>(GBufferType::ATMOSPHERE);
 	static constexpr uint32_t g_kFRAME_COUNT = 3;
-	static constexpr UINT g_kMAX_SHADER_LIGHTS = 20;
+	// The authored scene may contain hundreds of emitters.  Only the highest
+	// priority on-screen physical lights enter this bounded GPU-visible set.
+	static constexpr UINT g_kMAX_SHADER_LIGHTS = 160;
+	static constexpr UINT g_kLIGHT_TILE_SIZE = 16;
+	static constexpr UINT g_kMAX_LIGHTS_PER_TILE = 8;
+	// Color32 + Normal32 + Depth16 + Material64 + Shadow32.
+	static constexpr UINT g_kGEOMETRY_GBUFFER_BITS_PER_PIXEL = 176;
+	static_assert(g_kGEOMETRY_GBUFFER_BITS_PER_PIXEL <= 256,
+		"Stage renderer GBuffer must stay within the 256-bit bandwidth budget");
+	static constexpr UINT g_kMAX_LIGHT_GRID_WIDTH = 7680;
+	static constexpr UINT g_kMAX_LIGHT_GRID_HEIGHT = 4320;
+	static constexpr UINT g_kMAX_LIGHT_TILE_COUNT =
+		((g_kMAX_LIGHT_GRID_WIDTH + g_kLIGHT_TILE_SIZE - 1) / g_kLIGHT_TILE_SIZE) *
+		((g_kMAX_LIGHT_GRID_HEIGHT + g_kLIGHT_TILE_SIZE - 1) / g_kLIGHT_TILE_SIZE);
 
 	static constexpr UINT g_kMAX_SHADOW_LIGHTS = 8;
 	static constexpr UINT g_kMAX_VIRTUAL_SHADOW_LEVELS = 4;
@@ -224,6 +231,7 @@ protected:
 	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_GBufferRtvHandles[g_kGBUFFER_COUNT];
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_GBufferSrvHandles[g_kGBUFFER_COUNT];
 	static int m_EnvironmentTextureSrvIndex;
+	static int m_MonitorTextureSrvIndex;
 	static ComPtr<ID3D12RootSignature> m_PostProcessRootSignature;
 	static ComPtr<ID3D12RootSignature> m_UpscaleRootSignature;
 	static unordered_map<PostProcessType, ComPtr<ID3D12PipelineState>> m_PostProcessPsoMap;
@@ -269,14 +277,11 @@ public:
 	static constexpr float m_kSceneClearColor[4] = { 0.1f, 0.2f, 0.4f, 1.0f };
 	static constexpr DXGI_FORMAT m_kDeferredRtvFormats[g_kGBUFFER_COUNT] =
 	{
-		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_R8G8B8A8_UNORM,
+		DXGI_FORMAT_R10G10B10A2_UNORM,
 		DXGI_FORMAT_R16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_R8G8B8A8_UNORM,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT
 	};
@@ -294,7 +299,7 @@ public:
 	static constexpr UINT g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES = 16;
 	static constexpr UINT g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS = 16;
 	static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT =
-		10 + g_kMAX_SHADER_LIGHTS * 9 + g_kMAX_VIRTUAL_SHADOW_LEVELS * 6 + 16 + 3 +
+		10 + g_kMAX_SHADER_LIGHTS * 10 + g_kMAX_VIRTUAL_SHADOW_LEVELS * 6 + 16 + 3 +
 		g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS * 2 + 1 +
 		g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES * 3 + 1;
 	static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;
@@ -308,6 +313,10 @@ public:
 	static constexpr UINT g_kSHADOW_MAP_SIZE_SMALL = 1024;
 	static constexpr UINT g_kVIRTUAL_SHADOW_PAGE_SIZE = 128;
 	static constexpr UINT g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION = g_kSHADOW_MAP_SIZE / g_kVIRTUAL_SHADOW_PAGE_SIZE;
+	static_assert(
+		(g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION &
+			(g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION - 1)) == 0,
+		"VSM ring addressing requires a power-of-two physical page grid");
 	static constexpr UINT g_kTRANSIENT_CB_SLOT_COUNT = 2048;
 	static constexpr UINT g_kTRANSIENT_CB_START_INDEX = g_kMAX_ENTITIES;
 	static constexpr UINT g_kCBV_PER_FRAME_COUNT = g_kMAX_ENTITIES + g_kTRANSIENT_CB_SLOT_COUNT;

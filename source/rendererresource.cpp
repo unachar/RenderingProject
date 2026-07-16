@@ -71,6 +71,7 @@ namespace
 		UINT X = 0;
 		UINT Y = 0;
 		UINT Size = RendererState::g_kSHADOW_MAP_SIZE;
+		UINT VirtualLevel = 0;
 		bool ClearLayer = true;
 		bool VirtualPage = false;
 		bool NeedsRender = true;
@@ -109,6 +110,47 @@ namespace
 	uint64_t g_ShadowConstantsSerial = 0;
 	UINT g_ShadowConstantsPassIndex = UINT_MAX;
 	float g_LightConstantsStrength = -1.0f;
+	ComPtr<ID3D12Resource> g_LightTileIndexBuffers[RendererState::g_kFRAME_COUNT];
+	uint32_t* g_LightTileIndexData[RendererState::g_kFRAME_COUNT]{};
+	RendererResource::LightGridStats g_LightGridStats{};
+
+	bool EnsureLightTileIndexBuffers(ID3D12Device* device)
+	{
+		if (!device)
+		{
+			return false;
+		}
+		const UINT64 bufferSize =
+			static_cast<UINT64>(RendererState::g_kMAX_LIGHT_TILE_COUNT) *
+			RendererState::g_kMAX_LIGHTS_PER_TILE * sizeof(uint32_t);
+		for (UINT frame = 0; frame < RendererState::g_kFRAME_COUNT; ++frame)
+		{
+			if (g_LightTileIndexBuffers[frame] && g_LightTileIndexData[frame])
+			{
+				continue;
+			}
+			auto heapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+			auto bufferDescription = CD3DX12_RESOURCE_DESC::Buffer(bufferSize);
+			if (FAILED(device->CreateCommittedResource(
+				&heapProperties,
+				D3D12_HEAP_FLAG_NONE,
+				&bufferDescription,
+				D3D12_RESOURCE_STATE_GENERIC_READ,
+				nullptr,
+				IID_PPV_ARGS(&g_LightTileIndexBuffers[frame]))))
+			{
+				return false;
+			}
+			g_LightTileIndexBuffers[frame]->SetName(L"LightTileIndexBuffer");
+			if (FAILED(g_LightTileIndexBuffers[frame]->Map(
+				0, nullptr, reinterpret_cast<void**>(&g_LightTileIndexData[frame]))))
+			{
+				g_LightTileIndexBuffers[frame].Reset();
+				return false;
+			}
+		}
+		return true;
+	}
 
 	struct LightConstants
 	{
@@ -123,6 +165,7 @@ namespace
 		XMFLOAT4 LightExtras[RendererState::g_kMAX_SHADER_LIGHTS]{};
 		XMMATRIX LightViewProjections[RendererState::g_kMAX_SHADER_LIGHTS]{};
 		XMFLOAT4 LightShadowData[RendererState::g_kMAX_SHADER_LIGHTS]{};
+		XMFLOAT4 LightFlags[RendererState::g_kMAX_SHADER_LIGHTS]{};
 		XMMATRIX VirtualShadowViewProjections[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
 		XMFLOAT4 VirtualShadowParams[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
 		XMFLOAT4 VirtualShadowPageOrigins[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
@@ -143,6 +186,9 @@ namespace
 		XMFLOAT4 AtmosphereColor1 = { 1.0f, 0.82f, 0.56f, 0.035f };
 		XMFLOAT4 AtmosphereCamera = { 0.0f, 0.0f, 0.0f, 0.0f };
 	};
+	static_assert(
+		sizeof(LightConstants) <= RendererState::g_kLIGHT_CB_ALIGNED_SIZE,
+		"Light constant buffer size accounting must match the CPU structure");
 
 	struct MaterialPartShaderConstants
 	{
@@ -421,7 +467,7 @@ namespace
 		{
 			const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
 			const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-			if (!light.IsActive)
+			if (!light.IsActive || light.RenderMode != LightRenderMode::Physical)
 			{
 				continue;
 			}
@@ -438,7 +484,10 @@ namespace
 				g_CachedShadowLight.Position = transform.Position;
 				g_CachedShadowLight.HasLight = true;
 			}
-			if (light.CastShadow && g_ShadowLightCount < RendererState::g_kMAX_SHADOW_LIGHTS)
+			const UINT shadowLightBudget = min(
+				static_cast<UINT>(RendererSettings::GetShadowLightBudget()),
+				RendererState::g_kMAX_SHADOW_LIGHTS);
+			if (light.CastShadow && g_ShadowLightCount < shadowLightBudget)
 			{
 				RuntimeLightState shadowLight{};
 				shadowLight.Component = light;
@@ -455,7 +504,7 @@ namespace
 					const UINT requestedLevels = static_cast<UINT>(virtualMode
 						? RendererSettings::GetVirtualClipmapLevels()
 						: RendererSettings::GetShadowCascadeCount());
-					g_VirtualShadowLevelCount = min(requestedLevels, RendererState::g_kMAX_SHADOW_LIGHTS - g_ShadowLightCount);
+					g_VirtualShadowLevelCount = min(requestedLevels, shadowLightBudget - g_ShadowLightCount);
 					for (UINT level = 0; level < g_VirtualShadowLevelCount; ++level)
 					{
 						const UINT viewIndex = g_ShadowLightCount++;
@@ -535,6 +584,7 @@ namespace
 				pass.X = 0;
 				pass.Y = 0;
 				pass.Size = RendererState::g_kSHADOW_MAP_SIZE;
+				pass.VirtualLevel = 0;
 				pass.ClearLayer = true;
 				pass.VirtualPage = false;
 				pass.NeedsRender = true;
@@ -650,6 +700,7 @@ namespace
 					pass.X = physicalPageX * RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
 					pass.Y = physicalPageY * RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
 					pass.Size = RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
+					pass.VirtualLevel = virtualLevel;
 					pass.ClearLayer = false;
 					pass.VirtualPage = true;
 					pass.NeedsRender = needsRender;
@@ -1410,6 +1461,21 @@ D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetCurrentLightConstantBufferAddress
 		RendererCore::GetFrameIndex() * g_kLIGHT_CB_ALIGNED_SIZE;
 }
 
+D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetCurrentLightTileIndexBufferAddress()
+{
+	const UINT frameIndex = RendererCore::GetFrameIndex();
+	if (frameIndex >= g_kFRAME_COUNT || !g_LightTileIndexBuffers[frameIndex])
+	{
+		return 0;
+	}
+	return g_LightTileIndexBuffers[frameIndex]->GetGPUVirtualAddress();
+}
+
+const RendererResource::LightGridStats& RendererResource::GetLightGridStats()
+{
+	return g_LightGridStats;
+}
+
 D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetPBRConstantBufferAddress(UINT slot)
 {
 	if (!m_PBRConstantBuffer)
@@ -1553,46 +1619,311 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 		constants.LightExtra = XMFLOAT4(cosf(18.0f * XM_PI / 180.0f), cosf(32.0f * XM_PI / 180.0f), 0.35f, 0.0f);
 	}
 
-	UINT lightCount = 0;
-	for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
+	struct VisibleLightCandidate
 	{
-		if (lightCount >= g_kMAX_SHADER_LIGHTS)
+		EntityID Entity = g_kINVALID_ENTITY;
+		LightComponent Light{};
+		XMFLOAT3 Position{};
+		UINT MinTileX = 0;
+		UINT MinTileY = 0;
+		UINT MaxTileX = 0;
+		UINT MaxTileY = 0;
+		float Score = 0.0f;
+		bool Directional = false;
+	};
+
+	g_LightGridStats = {};
+	const UINT sceneWidth = max(m_SceneWidth, 1u);
+	const UINT sceneHeight = max(m_SceneHeight, 1u);
+	const UINT tileCountX =
+		(sceneWidth + g_kLIGHT_TILE_SIZE - 1) / g_kLIGHT_TILE_SIZE;
+	const UINT tileCountY =
+		(sceneHeight + g_kLIGHT_TILE_SIZE - 1) / g_kLIGHT_TILE_SIZE;
+	g_LightGridStats.TileCountX = tileCountX;
+	g_LightGridStats.TileCountY = tileCountY;
+
+	XMMATRIX cameraView = XMMatrixIdentity();
+	XMMATRIX cameraProjection = XMMatrixIdentity();
+	Camera::GetCameraMatrices(Camera::GetCameraEntity(), cameraView, cameraProjection);
+	const float projectionX = fabsf(XMVectorGetX(cameraProjection.r[0]));
+	const float projectionY = fabsf(XMVectorGetY(cameraProjection.r[1]));
+
+	auto calculateTileBounds = [&](const LightComponent& light, const XMFLOAT3& position,
+		UINT& minTileX, UINT& minTileY, UINT& maxTileX, UINT& maxTileY) -> bool
+	{
+		if (light.Type == LightType::Directional)
 		{
-			break;
+			minTileX = 0;
+			minTileY = 0;
+			maxTileX = tileCountX - 1;
+			maxTileY = tileCountY - 1;
+			return true;
 		}
 
+		XMFLOAT3 viewPosition{};
+		XMStoreFloat3(&viewPosition, XMVector3TransformCoord(XMLoadFloat3(&position), cameraView));
+		const float radius = max(light.Range, 0.01f);
+		if (viewPosition.z + radius <= 0.1f)
+		{
+			return false;
+		}
+
+		if (viewPosition.z <= radius + 0.1f)
+		{
+			minTileX = 0;
+			minTileY = 0;
+			maxTileX = tileCountX - 1;
+			maxTileY = tileCountY - 1;
+			return true;
+		}
+
+		const float reciprocalDepth = 1.0f / max(viewPosition.z, 0.1f);
+		const float radiusDepth = 1.0f / max(viewPosition.z - radius, 0.1f);
+		const float centerNdcX = viewPosition.x * projectionX * reciprocalDepth;
+		const float centerNdcY = viewPosition.y * projectionY * reciprocalDepth;
+		const float radiusNdcX = radius * projectionX * radiusDepth;
+		const float radiusNdcY = radius * projectionY * radiusDepth;
+		const float centerPixelX = (centerNdcX * 0.5f + 0.5f) * sceneWidth;
+		const float centerPixelY = (-centerNdcY * 0.5f + 0.5f) * sceneHeight;
+		const float radiusPixelX = radiusNdcX * 0.5f * sceneWidth;
+		const float radiusPixelY = radiusNdcY * 0.5f * sceneHeight;
+		const int minPixelX = static_cast<int>(floorf(centerPixelX - radiusPixelX));
+		const int minPixelY = static_cast<int>(floorf(centerPixelY - radiusPixelY));
+		const int maxPixelX = static_cast<int>(ceilf(centerPixelX + radiusPixelX));
+		const int maxPixelY = static_cast<int>(ceilf(centerPixelY + radiusPixelY));
+		if (maxPixelX < 0 || maxPixelY < 0 ||
+			minPixelX >= static_cast<int>(sceneWidth) ||
+			minPixelY >= static_cast<int>(sceneHeight))
+		{
+			return false;
+		}
+
+		const UINT clampedMinX = static_cast<UINT>(clamp(minPixelX, 0, static_cast<int>(sceneWidth) - 1));
+		const UINT clampedMinY = static_cast<UINT>(clamp(minPixelY, 0, static_cast<int>(sceneHeight) - 1));
+		const UINT clampedMaxX = static_cast<UINT>(clamp(maxPixelX, 0, static_cast<int>(sceneWidth) - 1));
+		const UINT clampedMaxY = static_cast<UINT>(clamp(maxPixelY, 0, static_cast<int>(sceneHeight) - 1));
+		minTileX = clampedMinX / g_kLIGHT_TILE_SIZE;
+		minTileY = clampedMinY / g_kLIGHT_TILE_SIZE;
+		maxTileX = clampedMaxX / g_kLIGHT_TILE_SIZE;
+		maxTileY = clampedMaxY / g_kLIGHT_TILE_SIZE;
+		return true;
+	};
+
+	vector<VisibleLightCandidate> candidates;
+	candidates.reserve(64);
+	for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
+	{
+		++g_LightGridStats.AuthoredLights;
 		const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-		if (!light.IsActive)
+		if (!light.IsActive || light.RenderMode == LightRenderMode::EmissionOnly)
 		{
 			continue;
 		}
+		if (light.RenderMode == LightRenderMode::Physical)
+		{
+			++g_LightGridStats.ActivePhysicalLights;
+		}
+		else
+		{
+			++g_LightGridStats.ActiveDecalLights;
+		}
 
 		const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+		VisibleLightCandidate candidate{};
+		candidate.Entity = entity;
+		candidate.Light = light;
+		candidate.Position = transform.Position;
+		candidate.Directional = light.Type == LightType::Directional;
+		if (!calculateTileBounds(light, transform.Position,
+			candidate.MinTileX, candidate.MinTileY,
+			candidate.MaxTileX, candidate.MaxTileY))
+		{
+			continue;
+		}
+		++g_LightGridStats.OnScreenLights;
+		if (light.AffectsVolumetrics && light.VolumeDensity > 0.0001f)
+		{
+			++g_LightGridStats.VolumetricLights;
+		}
+		if (light.CastShadow)
+		{
+			++g_LightGridStats.ShadowedLights;
+		}
+		const float tileCoverage = static_cast<float>(
+			(candidate.MaxTileX - candidate.MinTileX + 1) *
+			(candidate.MaxTileY - candidate.MinTileY + 1)) /
+			max(static_cast<float>(tileCountX * tileCountY), 1.0f);
+		const float luminance = max(
+			light.Color.x * 0.299f + light.Color.y * 0.587f + light.Color.z * 0.114f,
+			0.0f);
+		candidate.Score = light.Priority * 1000.0f +
+			max(light.Intensity, 0.0f) * luminance * (0.25f + tileCoverage);
+		candidates.push_back(candidate);
+	}
+
+	stable_sort(candidates.begin(), candidates.end(),
+		[](const VisibleLightCandidate& lhs, const VisibleLightCandidate& rhs)
+		{
+			if (lhs.Light.RenderMode != rhs.Light.RenderMode)
+			{
+				return lhs.Light.RenderMode == LightRenderMode::Physical;
+			}
+			if (lhs.Directional != rhs.Directional)
+			{
+				return lhs.Directional;
+			}
+			if (lhs.Light.AffectsVolumetrics != rhs.Light.AffectsVolumetrics)
+			{
+				return lhs.Light.AffectsVolumetrics;
+			}
+			if (fabsf(lhs.Score - rhs.Score) > 0.000001f)
+			{
+				return lhs.Score > rhs.Score;
+			}
+			return lhs.Entity < rhs.Entity;
+		});
+
+	const UINT screenLightBudget = min(
+		static_cast<UINT>(RendererSettings::GetScreenLightBudget()),
+		g_kMAX_SHADER_LIGHTS);
+	const UINT physicalTileLightBudget = min(
+		static_cast<UINT>(RendererSettings::GetTileLightBudget()),
+		g_kMAX_LIGHTS_PER_TILE);
+	const UINT decalLightBudget = min(
+		static_cast<UINT>(RendererSettings::GetDecalLightBudget()),
+		g_kMAX_SHADER_LIGHTS - screenLightBudget);
+	const UINT decalTileLightBudget = min(
+		static_cast<UINT>(RendererSettings::GetDecalTileLightBudget()),
+		g_kMAX_LIGHTS_PER_TILE - physicalTileLightBudget);
+	const UINT volumetricLightBudget = min(
+		static_cast<UINT>(RendererSettings::GetVolumetricLightBudget()),
+		5u);
+	vector<VisibleLightCandidate> selectedCandidates;
+	selectedCandidates.reserve(screenLightBudget + decalLightBudget);
+	UINT selectedPhysicalLights = 0;
+	UINT selectedDecalLights = 0;
+	for (const VisibleLightCandidate& candidate : candidates)
+	{
+		if (candidate.Light.RenderMode == LightRenderMode::Physical)
+		{
+			if (selectedPhysicalLights >= screenLightBudget) continue;
+			++selectedPhysicalLights;
+		}
+		else
+		{
+			if (selectedDecalLights >= decalLightBudget) continue;
+			++selectedDecalLights;
+		}
+		selectedCandidates.push_back(candidate);
+	}
+	const UINT lightCount = static_cast<UINT>(selectedCandidates.size());
+	g_LightGridStats.GpuVisibleLights = lightCount;
+	g_LightGridStats.GpuPhysicalLights = selectedPhysicalLights;
+	g_LightGridStats.GpuDecalLights = selectedDecalLights;
+	UINT enabledVolumetricLights = 0;
+	for (UINT lightIndex = 0; lightIndex < lightCount; ++lightIndex)
+	{
+		const VisibleLightCandidate& candidate = selectedCandidates[lightIndex];
+		const LightComponent& light = candidate.Light;
 		const XMFLOAT3 direction = NormalizeFloat3(light.Direction, { 0.0f, 1.0f, -1.0f });
 		XMFLOAT4 color = light.Color;
 		color.w = deferredLightStrength * light.Intensity;
 		const float innerRad = light.InnerAngle * XM_PI / 180.0f;
 		const float outerRad = light.OuterAngle * XM_PI / 180.0f;
 
-		constants.LightDirections[lightCount] = XMFLOAT4(direction.x, direction.y, direction.z, light.Range);
-		constants.LightColors[lightCount] = color;
-		constants.LightPositionTypes[lightCount] = XMFLOAT4(transform.Position.x, transform.Position.y, transform.Position.z, static_cast<float>(light.Type));
-		constants.LightExtras[lightCount] = XMFLOAT4(cosf(innerRad), cosf(outerRad), light.VolumeDensity, static_cast<float>(light.VolumeShape));
-		const int shadowIndex = FindShadowLightIndex(entity);
+		constants.LightDirections[lightIndex] = XMFLOAT4(direction.x, direction.y, direction.z, light.Range);
+		constants.LightColors[lightIndex] = color;
+		constants.LightPositionTypes[lightIndex] = XMFLOAT4(
+			candidate.Position.x, candidate.Position.y, candidate.Position.z,
+			static_cast<float>(light.Type));
+		constants.LightExtras[lightIndex] = XMFLOAT4(
+			cosf(innerRad), cosf(outerRad), light.VolumeDensity,
+			static_cast<float>(light.VolumeShape));
+		const bool enableVolumetrics = light.RenderMode == LightRenderMode::Physical &&
+			light.AffectsVolumetrics &&
+			light.VolumeDensity > 0.0001f &&
+			enabledVolumetricLights < volumetricLightBudget;
+		if (enableVolumetrics)
+		{
+			++enabledVolumetricLights;
+		}
+		constants.LightFlags[lightIndex] = XMFLOAT4(
+			light.AffectsOpaque ? 1.0f : 0.0f,
+			light.AffectsForward ? 1.0f : 0.0f,
+			enableVolumetrics ? 1.0f : 0.0f,
+			static_cast<float>(light.RenderMode));
+		// An explicit -1 is required for non-shadowed lights.  Zero denotes
+		// shadow array layer zero and previously made every light sample it.
+		constants.LightShadowData[lightIndex] = XMFLOAT4(-1.0f, 0.0f, 0.0f, 0.0f);
+		const int shadowIndex = FindShadowLightIndex(candidate.Entity);
 		if (shadowIndex >= 0)
 		{
-			constants.LightViewProjections[lightCount] = g_ShadowLightViewProjections[shadowIndex];
-			constants.LightShadowData[lightCount] = XMFLOAT4(
+			constants.LightViewProjections[lightIndex] = g_ShadowLightViewProjections[shadowIndex];
+			constants.LightShadowData[lightIndex] = XMFLOAT4(
 				static_cast<float>(shadowIndex),
 				g_ShadowMapParams[shadowIndex].x,
 				g_ShadowMapParams[shadowIndex].y,
-				(entity == g_VirtualShadowLightEntity)
+				(candidate.Entity == g_VirtualShadowLightEntity)
 					? -max(g_ShadowMapParams[shadowIndex].z, 0.0000001f)
 					: g_ShadowMapParams[shadowIndex].z);
 		}
-		++lightCount;
 	}
-	constants.LightCount = XMFLOAT4(static_cast<float>(lightCount), 0.0f, 0.0f, 0.0f);
+
+	bool lightGridAvailable =
+		tileCountX * tileCountY <= g_kMAX_LIGHT_TILE_COUNT &&
+		EnsureLightTileIndexBuffers(m_Device.Get());
+	if (lightGridAvailable)
+	{
+		uint32_t* tileIndices = g_LightTileIndexData[m_FrameIndex];
+		const size_t activeIndexCount =
+			static_cast<size_t>(tileCountX) * tileCountY * g_kMAX_LIGHTS_PER_TILE;
+		fill(tileIndices, tileIndices + activeIndexCount, UINT_MAX);
+		for (UINT lightIndex = 0; lightIndex < lightCount; ++lightIndex)
+		{
+			const VisibleLightCandidate& candidate = selectedCandidates[lightIndex];
+			if (!candidate.Light.AffectsOpaque && !candidate.Light.AffectsForward)
+			{
+				continue;
+			}
+			for (UINT tileY = candidate.MinTileY; tileY <= candidate.MaxTileY; ++tileY)
+			{
+				for (UINT tileX = candidate.MinTileX; tileX <= candidate.MaxTileX; ++tileX)
+				{
+					const size_t tileBase =
+						(static_cast<size_t>(tileY) * tileCountX + tileX) *
+						g_kMAX_LIGHTS_PER_TILE;
+					const bool decal = candidate.Light.RenderMode == LightRenderMode::Decal;
+					const UINT slotBegin = decal ? physicalTileLightBudget : 0u;
+					const UINT slotEnd = decal
+						? physicalTileLightBudget + decalTileLightBudget
+						: physicalTileLightBudget;
+					UINT slot = slotBegin;
+					while (slot < slotEnd && tileIndices[tileBase + slot] != UINT_MAX)
+					{
+						++slot;
+					}
+					if (slot < slotEnd)
+					{
+						tileIndices[tileBase + slot] = lightIndex;
+						g_LightGridStats.MaxLightsPerTile = max(
+							g_LightGridStats.MaxLightsPerTile, slot + 1);
+					}
+					else
+					{
+						++g_LightGridStats.OverflowedTileAssignments;
+					}
+				}
+			}
+		}
+	}
+
+	constants.LightCount = XMFLOAT4(
+		static_cast<float>(lightCount),
+		lightGridAvailable ? static_cast<float>(tileCountX) : 0.0f,
+		lightGridAvailable ? static_cast<float>(tileCountY) : 0.0f,
+		lightGridAvailable
+			? static_cast<float>(physicalTileLightBudget + decalTileLightBudget)
+			: 0.0f);
 	auto* lightDst = static_cast<UINT8*>(m_pLightCbvDataBegin) +
 		RendererCore::GetFrameIndex() * g_kLIGHT_CB_ALIGNED_SIZE;
 	memcpy(lightDst, &constants, sizeof(constants));
@@ -1812,7 +2143,7 @@ bool RendererResource::ShouldDrawEntityInCurrentShadowPass(EntityID entity)
 	if (!g_LightCacheValid) RebuildLightCache();
 	if (g_CurrentShadowPassIndex >= g_ShadowRenderPassCount) return true;
 	const ShadowRenderPass& pass = g_ShadowRenderPasses[g_CurrentShadowPassIndex];
-	return !pass.VirtualPage || IsShadowCasterVisible(entity, pass.ViewProjection);
+	return IsShadowCasterVisible(entity, pass.ViewProjection);
 }
 
 bool RendererResource::IsCurrentShadowPassVirtualPage()
@@ -1820,6 +2151,17 @@ bool RendererResource::IsCurrentShadowPassVirtualPage()
 	if (!g_LightCacheValid) RebuildLightCache();
 	return g_CurrentShadowPassIndex < g_ShadowRenderPassCount &&
 		g_ShadowRenderPasses[g_CurrentShadowPassIndex].VirtualPage;
+}
+
+UINT RendererResource::GetCurrentShadowLodBias()
+{
+	if (!g_LightCacheValid) RebuildLightCache();
+	if (g_CurrentShadowPassIndex >= g_ShadowRenderPassCount)
+	{
+		return 0;
+	}
+	const ShadowRenderPass& pass = g_ShadowRenderPasses[g_CurrentShadowPassIndex];
+	return pass.VirtualPage ? min(pass.VirtualLevel, 2u) : 0u;
 }
 
 bool RendererResource::IsVirtualShadowCacheHit()

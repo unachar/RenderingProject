@@ -737,12 +737,12 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			commandList->ResourceBarrier(_countof(restore), restore);
 		};
 
-	auto executeCpuCulledShadow = [&](InstanceBatch& batch, auto&& bindGraphics)
+	auto executeCpuCulledDraw = [&](InstanceBatch& batch, UINT minimumLod, auto&& bindGraphics)
 		{
 			if (batch.Entities.empty() || !m_DirectInstanceUpload ||
 				m_DirectFrameCursor + batch.Entities.size() > kMaxInstancesPerFrame)
 			{
-				return;
+				return false;
 			}
 
 			for (auto& transforms : m_DirectLodScratch)
@@ -782,6 +782,9 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 				{
 					lodIndex = 1;
 				}
+				lodIndex = min(
+					max(lodIndex, minimumLod),
+					max(batch.AvailableLodCount, 1u) - 1u);
 				m_DirectLodScratch[lodIndex].push_back(transform.WorldMatrix);
 			}
 
@@ -821,6 +824,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 						batch.LodDrawCounts[lod], instanceCount, 0, 0);
 				}
 			}
+			return true;
 		};
 
     if (renderPass == RenderPass::ShadowMap)
@@ -1003,7 +1007,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         commandList->SetPipelineState(shadowPso);
         commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-		const bool cpuCulledVirtualPage = RendererResource::IsCurrentShadowPassVirtualPage();
+		const UINT shadowLodBias = RendererResource::GetCurrentShadowLodBias();
         std::unordered_set<AnimationModelResource*> skinnedModels;
         for (auto& batch : batches)
         {
@@ -1034,11 +1038,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 						5, RendererResource::GetCurrentShadowConstantBufferAddress());
 					commandList->SetPipelineState(shadowPso);
 				};
-			if (cpuCulledVirtualPage)
-			{
-				executeCpuCulledShadow(batch, bindShadowGraphics);
-			}
-			else
+			if (!executeCpuCulledDraw(batch, shadowLodBias, bindShadowGraphics))
 			{
 				executeGpuCullLod(batch, bindShadowGraphics);
 			}
@@ -1334,7 +1334,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 		}
 		const D3D12_GPU_DESCRIPTOR_HANDLE batchConstantHandle =
 			RendererResource::AllocateTransientConstantBuffer(batchConstants);
-		executeGpuCullLod(batch, [&]()
+		auto bindPrimaryGraphics = [&]()
 			{
 				RendererDraw::BeginModelPass();
 				commandList->SetPipelineState(batch.Pso);
@@ -1348,7 +1348,11 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 						descriptorStart, batch.NormalIndex, descriptorIncrement));
 				RendererResource::SetMaterial(
 					representative, batch.Material ? *batch.Material : DefaultMaterial());
-			});
+			};
+		if (!executeCpuCulledDraw(batch, 0, bindPrimaryGraphics))
+		{
+			executeGpuCullLod(batch, bindPrimaryGraphics);
+		}
 
         if (batch.AnimatedModel)
         {

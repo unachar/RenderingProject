@@ -23,6 +23,8 @@ public:
 	static const XMFLOAT4X4& GetPreviousProjectionMatrix() { return m_PrevProjMatrix; }
 	static UINT GetSceneHeight() { return m_SceneHeight; }
 	static float GetResolutionScale() { return m_HasPendingResolutionScale ? m_PendingResolutionScale : m_ResolutionScale; }
+	static int GetMonitorTextureIndex() { return m_MonitorTextureSrvIndex; }
+	static void SetMonitorTextureIndex(int srvIndex) { m_MonitorTextureSrvIndex = srvIndex; }
 	static UINT GetFrameIndex() { return m_FrameIndex; }
 	static float GetSceneAspectRatio()
 	{
