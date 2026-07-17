@@ -24,6 +24,13 @@
 #include "debugsystem.h"
 #include "postprocesssystem.h"
 
+namespace
+{
+	// Temporary diagnostic switch. InstancingSystem owns the current distance-based
+	// mesh LOD path, so keeping it unregistered forces models, meshes and 3D sprites
+	// through their ordinary non-LOD draw paths. Set this back to true after testing.
+	constexpr bool g_kENABLE_INSTANCING_AND_LOD = false;
+}
 
 bool SystemManager::Init()
 {
@@ -50,7 +57,10 @@ bool SystemManager::Init()
 	addSystem(make_unique<GridSystem>());
 	addSystem(make_unique<RenderSystem>());
 	addSystem(make_unique<ModelSystem>());
-	addSystem(make_unique<InstancingSystem>());
+	if constexpr (g_kENABLE_INSTANCING_AND_LOD)
+	{
+		addSystem(make_unique<InstancingSystem>());
+	}
 	addSystem(make_unique<DebugSystem>());
 
 	for (auto& system : m_Systems)
