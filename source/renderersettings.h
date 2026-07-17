@@ -87,13 +87,7 @@ public:
 	static void SetShadowResolutionTransition(float value) { SetValue(s_ShadowResolutionTransition, std::clamp(value, 0.05f, 0.40f)); }
 	static bool GetStabilizeVirtualClipmaps() { return s_StabilizeVirtualClipmaps; }
 	static void SetStabilizeVirtualClipmaps(bool value) { SetValue(s_StabilizeVirtualClipmaps, value); }
-	static bool GetCacheVirtualShadowPages()
-	{
-		// VSM depth is currently camera-relative. Reusing pages rendered with an
-		// older depth projection mixes incompatible depth values and creates the
-		// large page-shaped stripes seen while moving the camera.
-		return false;
-	}
+	static bool GetCacheVirtualShadowPages() { return s_CacheVirtualShadowPages; }
 	static void SetCacheVirtualShadowPages(bool value) { SetValue(s_CacheVirtualShadowPages, value); }
 	static int GetShadowCascadeCount() { return s_ShadowCascadeCount; }
 	static void SetShadowCascadeCount(int value) { SetValue(s_ShadowCascadeCount, std::clamp(value, 1, 4)); }
@@ -137,7 +131,7 @@ public:
 		s_ShadowNormalBias = 0.00001f;
 		s_ShadowResolutionTransition = 0.20f;
 		s_StabilizeVirtualClipmaps = true;
-		s_CacheVirtualShadowPages = false;
+		s_CacheVirtualShadowPages = true;
 		s_ShadowCascadeCount = 4;
 		s_ShadowDistance = 96.0f;
 		s_ContactShadowsEnabled = true;
@@ -184,7 +178,7 @@ private:
 	inline static float s_ShadowNormalBias = 0.00001f;
 	inline static float s_ShadowResolutionTransition = 0.20f;
 	inline static bool s_StabilizeVirtualClipmaps = true;
-	inline static bool s_CacheVirtualShadowPages = false;
+	inline static bool s_CacheVirtualShadowPages = true;
 	inline static int s_ShadowCascadeCount = 4;
 	inline static float s_ShadowDistance = 96.0f;
 	inline static bool s_ContactShadowsEnabled = true;
