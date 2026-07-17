@@ -79,9 +79,34 @@ public:
 	static void SetVirtualFirstLevelRadius(float value) { SetValue(s_VirtualFirstLevelRadius, std::clamp(value, 4.0f, 64.0f)); }
 	static int GetShadowFilterRadius() { return s_ShadowFilterRadius; }
 	static void SetShadowFilterRadius(int value) { SetValue(s_ShadowFilterRadius, std::clamp(value, 0, 3)); }
-	static float GetShadowDepthBias() { return s_ShadowDepthBias; }
+	static float GetShadowDepthBias()
+	{
+		if (s_ShadowMapMethod != ShadowMapMethod::VirtualShadowMap)
+		{
+			return s_ShadowDepthBias;
+		}
+
+		// The first resident VSM level covers 4 pages of 128 texels per axis.
+		// Scale the minimum bias from that world-space texel size instead of using
+		// a fixed near-zero depth value. This removes stable receiver-plane acne
+		// bands while still allowing a larger authored bias through the UI.
+		const float automaticBias = s_VirtualFirstLevelRadius / 256000.0f;
+		return std::max(s_ShadowDepthBias, automaticBias);
+	}
 	static void SetShadowDepthBias(float value) { SetValue(s_ShadowDepthBias, std::clamp(value, 0.0f, 0.01f)); }
-	static float GetShadowNormalBias() { return s_ShadowNormalBias; }
+	static float GetShadowNormalBias()
+	{
+		if (s_ShadowMapMethod != ShadowMapMethod::VirtualShadowMap)
+		{
+			return s_ShadowNormalBias;
+		}
+
+		// Keep the receiver at least 0.2 of a finest-level texel away from its
+		// own shadow depth. The projection code converts this reference value to
+		// the actual depth range of every clipmap level.
+		const float automaticBias = s_VirtualFirstLevelRadius / 384000.0f;
+		return std::max(s_ShadowNormalBias, automaticBias);
+	}
 	static void SetShadowNormalBias(float value) { SetValue(s_ShadowNormalBias, std::clamp(value, 0.0f, 0.01f)); }
 	static float GetShadowResolutionTransition() { return s_ShadowResolutionTransition; }
 	static void SetShadowResolutionTransition(float value) { SetValue(s_ShadowResolutionTransition, std::clamp(value, 0.05f, 0.40f)); }
@@ -127,8 +152,8 @@ public:
 		s_VirtualClipmapLevels = 4;
 		s_VirtualFirstLevelRadius = 16.0f;
 		s_ShadowFilterRadius = 1;
-		s_ShadowDepthBias = 0.000008f;
-		s_ShadowNormalBias = 0.00001f;
+		s_ShadowDepthBias = 0.000063f;
+		s_ShadowNormalBias = 0.000042f;
 		s_ShadowResolutionTransition = 0.20f;
 		s_StabilizeVirtualClipmaps = true;
 		s_CacheVirtualShadowPages = true;
@@ -174,8 +199,8 @@ private:
 	inline static int s_VirtualClipmapLevels = 4;
 	inline static float s_VirtualFirstLevelRadius = 16.0f;
 	inline static int s_ShadowFilterRadius = 1;
-	inline static float s_ShadowDepthBias = 0.000008f;
-	inline static float s_ShadowNormalBias = 0.00001f;
+	inline static float s_ShadowDepthBias = 0.000063f;
+	inline static float s_ShadowNormalBias = 0.000042f;
 	inline static float s_ShadowResolutionTransition = 0.20f;
 	inline static bool s_StabilizeVirtualClipmaps = true;
 	inline static bool s_CacheVirtualShadowPages = true;
