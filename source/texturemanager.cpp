@@ -4,6 +4,7 @@
 #include "DirectXTex.h"
 #include "texturemanager.h"
 #include "componentmanager.h"
+#include "renderersettings.h"
 #include <thread>
 #include <memory>
 #include <future>
@@ -15,6 +16,24 @@ int TextureManager::m_NextSrvIndex = 0;
 ComPtr<ID3D12Resource> TextureManager::m_DefaultTexture;
 ComPtr<ID3D12Resource> TextureManager::m_ErrorTexture;
 
+struct TextureMipUploadData
+{
+	vector<uint8_t> Pixels{};
+	LONG_PTR RowPitch = 0;
+	LONG_PTR SlicePitch = 0;
+	UINT TileCount = 0;
+};
+
+struct TextureStreamingState
+{
+	vector<TextureMipUploadData> Mips{};
+	vector<ComPtr<ID3D12Heap>> TileHeaps{};
+	UINT MostDetailedResidentMip = 0;
+	UINT StandardMipCount = 0;
+	UINT TotalMipCount = 0;
+	uint64_t LastTouchedFrame = 0;
+};
+
 static ComPtr<ID3D12CommandAllocator> g_BatchCmdAlloc;
 static ComPtr<ID3D12GraphicsCommandList> g_BatchCmdList;
 static bool g_IsBatchLoading = false;
@@ -25,9 +44,28 @@ static ComPtr<ID3D12Fence> g_SingleFence;
 static HANDLE g_SingleFenceEvent = nullptr;
 static UINT64 g_SingleFenceValue = 0;
 static mutex g_TextureMutex;
+static mutex g_UploadMutex;
 struct UploadPoolEntry { ComPtr<ID3D12Resource> Resource; UINT64 Size; };
 static vector<UploadPoolEntry> g_UploadPool;
 static vector<UploadPoolEntry> g_DeferredUploadReturns;
+struct StreamingUploadEntry
+{
+	ComPtr<ID3D12Resource> Resource;
+	UINT64 Size = 0;
+	uint64_t RetireFrame = 0;
+};
+static vector<StreamingUploadEntry> g_StreamingUploads;
+static uint64_t g_StreamingFrame = 1;
+static bool g_ReservedResourcesSupported = false;
+// Diagnostic-safe material path: keep a source image as one image instead of
+// selecting generated mip levels by camera distance.  The high quality
+// anisotropic sampler still filters the selected base image.
+static constexpr bool g_MaterialMipMapsEnabled = false;
+// Reusing one physical tile for every non-resident detailed tile repeats a
+// small part of the source image across the material.  Keep the reserved
+// resource path unavailable until sampling is clamped by a resident MinMip
+// map (or an equivalent per-frame resident-mip view).
+static constexpr bool g_ReservedResourceStreamingSafe = false;
 
 struct DecodedEntry
 {
@@ -103,6 +141,187 @@ namespace
 		if (SUCCEEDED(hr)) return hr;
 
 		return LoadFromTGAMemory(data, size, &metadata, image);
+	}
+
+	void EnsureMipChain(TexMetadata& metadata, ScratchImage& image)
+	{
+		if (!g_MaterialMipMapsEnabled) return;
+		if (metadata.mipLevels > 1 || metadata.arraySize != 1 || metadata.dimension != TEX_DIMENSION_TEXTURE2D ||
+			metadata.width < 512 || metadata.height < 512 || IsCompressed(metadata.format))
+		{
+			return;
+		}
+		const Image* baseImage = image.GetImage(0, 0, 0);
+		if (!baseImage) return;
+		ScratchImage mipChain;
+		if (SUCCEEDED(GenerateMipMaps(*baseImage, TEX_FILTER_FANT, 0, mipChain)))
+		{
+			image = move(mipChain);
+			metadata = image.GetMetadata();
+		}
+	}
+
+	ComPtr<ID3D12Heap> CreateTextureTileHeap(ID3D12Device* device, UINT tileCount)
+	{
+		if (!device || tileCount == 0) return nullptr;
+		D3D12_HEAP_DESC heapDesc{};
+		heapDesc.SizeInBytes = static_cast<UINT64>(tileCount) * D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+		heapDesc.Properties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+		heapDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+		heapDesc.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
+		ComPtr<ID3D12Heap> heap;
+		if (FAILED(device->CreateHeap(&heapDesc, IID_PPV_ARGS(&heap)))) return nullptr;
+		return heap;
+	}
+
+	ComPtr<ID3D12Resource> LoadReservedTextureToDevice(
+		ID3D12Device* device,
+		const TexMetadata& metadata,
+		const ScratchImage& image,
+		shared_ptr<TextureStreamingState>& outStreaming)
+	{
+		outStreaming.reset();
+		if (!g_ReservedResourceStreamingSafe ||
+			!device || !g_ReservedResourcesSupported ||
+			!RendererSettings::GetTextureStreamingEnabled() ||
+			!RendererSettings::GetReservedResourcesEnabled() ||
+			metadata.dimension != TEX_DIMENSION_TEXTURE2D || metadata.arraySize != 1 ||
+			metadata.mipLevels < 4 || metadata.width < 512 || metadata.height < 512)
+		{
+			return nullptr;
+		}
+
+		D3D12_RESOURCE_DESC desc{};
+		desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		desc.Width = metadata.width;
+		desc.Height = static_cast<UINT>(metadata.height);
+		desc.DepthOrArraySize = 1;
+		desc.MipLevels = static_cast<UINT16>(metadata.mipLevels);
+		desc.Format = metadata.format;
+		desc.SampleDesc.Count = 1;
+		desc.Layout = D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE;
+		desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+		ComPtr<ID3D12Resource> texture;
+		HRESULT hr = device->CreateReservedResource(
+			&desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&texture));
+		if (FAILED(hr)) return nullptr;
+
+		UINT totalTiles = 0;
+		D3D12_PACKED_MIP_INFO packed{};
+		D3D12_TILE_SHAPE tileShape{};
+		UINT tilingCount = static_cast<UINT>(metadata.mipLevels);
+		vector<D3D12_SUBRESOURCE_TILING> tilings(tilingCount);
+		device->GetResourceTiling(texture.Get(), &totalTiles, &packed, &tileShape, &tilingCount, 0, tilings.data());
+		if (totalTiles == 0 || tilingCount == 0) return nullptr;
+
+		const UINT standardMipCount = packed.NumStandardMips;
+		const UINT firstResidentMip = standardMipCount > 2 ? standardMipCount - 2 : 0;
+		const UINT firstResidentTile = firstResidentMip < standardMipCount
+			? tilings[firstResidentMip].StartTileIndexInOverallResource
+			: packed.StartTileIndexInOverallResource;
+		const UINT residentTileCount = totalTiles - firstResidentTile;
+		ComPtr<ID3D12Heap> residentHeap = CreateTextureTileHeap(device, residentTileCount);
+		if (!residentHeap) return nullptr;
+
+		ID3D12CommandQueue* queue = RendererCore::GetCommandQueue();
+		D3D12_TILED_RESOURCE_COORDINATE residentCoordinate{};
+		residentCoordinate.Subresource = firstResidentMip;
+		D3D12_TILE_REGION_SIZE residentRegion{};
+		residentRegion.NumTiles = residentTileCount;
+		D3D12_TILE_RANGE_FLAGS residentFlag = D3D12_TILE_RANGE_FLAG_NONE;
+		UINT residentOffset = 0;
+		queue->UpdateTileMappings(
+			texture.Get(), 1, &residentCoordinate, &residentRegion,
+			residentHeap.Get(), 1, &residentFlag, &residentOffset, &residentTileCount,
+			D3D12_TILE_MAPPING_FLAG_NONE);
+
+		// Until a detailed mip arrives, map it to the first resident tile.  The SRV
+		// remains immutable while progressive remaps replace these fallback tiles.
+		for (UINT mip = 0; mip < firstResidentMip; ++mip)
+		{
+			const UINT mipTileCount = tilings[mip].WidthInTiles *
+				tilings[mip].HeightInTiles * tilings[mip].DepthInTiles;
+			if (mipTileCount == 0) continue;
+			D3D12_TILED_RESOURCE_COORDINATE coordinate{};
+			coordinate.Subresource = mip;
+			D3D12_TILE_REGION_SIZE region{};
+			region.NumTiles = mipTileCount;
+			D3D12_TILE_RANGE_FLAGS flag = D3D12_TILE_RANGE_FLAG_REUSE_SINGLE_TILE;
+			UINT heapOffset = 0;
+			queue->UpdateTileMappings(
+				texture.Get(), 1, &coordinate, &region,
+				residentHeap.Get(), 1, &flag, &heapOffset, &mipTileCount,
+				D3D12_TILE_MAPPING_FLAG_NONE);
+		}
+
+		const UINT uploadCount = static_cast<UINT>(metadata.mipLevels) - firstResidentMip;
+		vector<D3D12_SUBRESOURCE_DATA> subresources(uploadCount);
+		for (UINT i = 0; i < uploadCount; ++i)
+		{
+			const Image* mipImage = image.GetImage(firstResidentMip + i, 0, 0);
+			if (!mipImage) return nullptr;
+			subresources[i] = { mipImage->pixels, static_cast<LONG_PTR>(mipImage->rowPitch), static_cast<LONG_PTR>(mipImage->slicePitch) };
+		}
+		const UINT64 uploadSize = GetRequiredIntermediateSize(texture.Get(), firstResidentMip, uploadCount);
+		ComPtr<ID3D12Resource> upload = TextureManager::AcquireUploadBuffer(device, uploadSize);
+		if (!upload) return nullptr;
+
+		ComPtr<ID3D12CommandAllocator> allocator;
+		ComPtr<ID3D12GraphicsCommandList> ownedList;
+		ID3D12GraphicsCommandList* commandList = nullptr;
+		const bool batch = TextureManager::IsBatchLoading();
+		if (batch)
+		{
+			commandList = TextureManager::GetBatchCommandList();
+		}
+		else
+		{
+			if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator))) ||
+				FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&ownedList))))
+			{
+				return nullptr;
+			}
+			commandList = ownedList.Get();
+		}
+		if (!commandList) return nullptr;
+		UpdateSubresources(commandList, texture.Get(), upload.Get(), 0, firstResidentMip, uploadCount, subresources.data());
+		auto toShader = CD3DX12_RESOURCE_BARRIER::Transition(
+			texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+		commandList->ResourceBarrier(1, &toShader);
+		if (batch)
+		{
+			TextureManager::ReleaseUploadBuffer(upload, uploadSize, true);
+		}
+		else
+		{
+			if (!TextureManager::ExecuteCommandListAndSync(commandList)) return nullptr;
+			TextureManager::ReleaseUploadBuffer(upload, uploadSize, false);
+		}
+
+		auto streaming = make_shared<TextureStreamingState>();
+		streaming->MostDetailedResidentMip = firstResidentMip;
+		streaming->StandardMipCount = standardMipCount;
+		streaming->TotalMipCount = static_cast<UINT>(metadata.mipLevels);
+		streaming->LastTouchedFrame = g_StreamingFrame;
+		streaming->TileHeaps.push_back(residentHeap);
+		streaming->Mips.resize(metadata.mipLevels);
+		for (UINT mip = 0; mip < metadata.mipLevels; ++mip)
+		{
+			const Image* mipImage = image.GetImage(mip, 0, 0);
+			if (!mipImage) continue;
+			auto& destination = streaming->Mips[mip];
+			destination.Pixels.assign(mipImage->pixels, mipImage->pixels + mipImage->slicePitch);
+			destination.RowPitch = static_cast<LONG_PTR>(mipImage->rowPitch);
+			destination.SlicePitch = static_cast<LONG_PTR>(mipImage->slicePitch);
+			if (mip < standardMipCount)
+			{
+				destination.TileCount = tilings[mip].WidthInTiles *
+					tilings[mip].HeightInTiles * tilings[mip].DepthInTiles;
+			}
+		}
+		outStreaming = move(streaming);
+		return texture;
 	}
 
 	ComPtr<ID3D12Resource> LoadTextureToDevice(ID3D12Device* device, const TexMetadata& metadata, const ScratchImage& image)
@@ -226,7 +445,7 @@ ID3D12GraphicsCommandList* TextureManager::GetBatchCommandList()
 
 ComPtr<ID3D12Resource> TextureManager::AcquireUploadBuffer(ID3D12Device* device, UINT64 size)
 {
-	lock_guard<mutex> lock(g_TextureMutex);
+	lock_guard<mutex> lock(g_UploadMutex);
 	for (auto it = g_UploadPool.begin(); it != g_UploadPool.end(); ++it)
 	{
 		if (it->Size >= size)
@@ -259,7 +478,7 @@ ComPtr<ID3D12Resource> TextureManager::AcquireUploadBuffer(ID3D12Device* device,
 void TextureManager::ReleaseUploadBuffer(ComPtr<ID3D12Resource> upload, UINT64 size, bool defer)
 {
 	if (!upload) return;
-	lock_guard<mutex> lock(g_TextureMutex);
+	lock_guard<mutex> lock(g_UploadMutex);
 	if (defer)
 	{
 		g_DeferredUploadReturns.push_back({ upload, size });
@@ -438,7 +657,13 @@ void TextureManager::EndTextureLoading()
 			continue;
 		}
 
-		ComPtr<ID3D12Resource> resource = LoadTextureToDevice(device, d.Metadata, *d.Image);
+		EnsureMipChain(d.Metadata, *d.Image);
+		shared_ptr<TextureStreamingState> streaming;
+		ComPtr<ID3D12Resource> resource = LoadReservedTextureToDevice(device, d.Metadata, *d.Image, streaming);
+		if (!resource)
+		{
+			resource = LoadTextureToDevice(device, d.Metadata, *d.Image);
+		}
 		if (!resource)
 		{
 			ok = false;
@@ -454,6 +679,7 @@ void TextureManager::EndTextureLoading()
 
 		TextureManager::CreateShaderResourceView(resource.Get(), resource->GetDesc(), d.SrvIndex);
 		td.Resource = resource;
+		td.Streaming = move(streaming);
 		lock_guard<mutex> lock(g_TextureMutex);
 		m_Textures[d.Key] = td;
 	}
@@ -469,7 +695,7 @@ void TextureManager::EndTextureLoading()
 	}
 
 	{
-		lock_guard<mutex> lock(g_TextureMutex);
+		lock_guard<mutex> lock(g_UploadMutex);
 		for (auto& e : g_DeferredUploadReturns) g_UploadPool.push_back(e);
 		g_DeferredUploadReturns.clear();
 	}
@@ -587,6 +813,10 @@ void TextureManager::Init()
 
 	m_DefaultTexture = CreateSolidColorTexture(device, 0xFFFFFFFF, whiteIndex);
 	m_ErrorTexture = CreateSolidColorTexture(device, 0xFFFF00FF, pinkIndex);
+	D3D12_FEATURE_DATA_D3D12_OPTIONS options{};
+	g_ReservedResourcesSupported = SUCCEEDED(device->CheckFeatureSupport(
+		D3D12_FEATURE_D3D12_OPTIONS, &options, sizeof(options))) &&
+		options.TiledResourcesTier >= D3D12_TILED_RESOURCES_TIER_2;
 
 	lock_guard<mutex> lock(g_TextureMutex);
 	TextureData whiteData;
@@ -605,6 +835,9 @@ void TextureManager::Uninit()
 	m_Textures.clear();
 	m_DefaultTexture.Reset();
 	m_ErrorTexture.Reset();
+	g_StreamingUploads.clear();
+	g_ReservedResourcesSupported = false;
+	g_StreamingFrame = 1;
 	g_SingleFence.Reset();
 	g_BatchFence.Reset();
 	if (g_SingleFenceEvent)
@@ -626,7 +859,7 @@ bool TextureManager::CreateShaderResourceView(ID3D12Resource* pResource, const D
 	srvDesc.Format = desc.Format;
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	srvDesc.Texture2D.MipLevels = desc.MipLevels;
+	srvDesc.Texture2D.MipLevels = g_MaterialMipMapsEnabled ? desc.MipLevels : 1;
 
 	UINT incrementSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 	CD3DX12_CPU_DESCRIPTOR_HANDLE handle(RendererResource::GetCbvHeap()->GetCPUDescriptorHandleForHeapStart());
@@ -721,9 +954,15 @@ int TextureManager::LoadTexture(const filesystem::path& fileName)
 		Debug::Log("ERROR: Failed to load texture: %s (HRESULT: 0x%08X)\n", displayPath.c_str(), hr);
 		return GetErrorTextureIndex();
 	}
+	EnsureMipChain(metadata, image);
 
 	ID3D12Device* device = RendererCore::GetDevice();
-	ComPtr<ID3D12Resource> resource = LoadTextureToDevice(device, metadata, image);
+	shared_ptr<TextureStreamingState> streaming;
+	ComPtr<ID3D12Resource> resource = LoadReservedTextureToDevice(device, metadata, image, streaming);
+	if (!resource)
+	{
+		resource = LoadTextureToDevice(device, metadata, image);
+	}
 	if (!resource)
 	{
 		return GetErrorTextureIndex();
@@ -734,6 +973,7 @@ int TextureManager::LoadTexture(const filesystem::path& fileName)
 	TextureData tData;
 	tData.Resource = resource;
 	tData.SrvIndex = srvIndex;
+	tData.Streaming = move(streaming);
 	{
 		lock_guard<mutex> lock(g_TextureMutex);
 		m_Textures.emplace(key, tData);
@@ -779,9 +1019,15 @@ int TextureManager::LoadTextureFromMemory(const char* name, const uint8_t* pData
 		Debug::Log("ERROR: Failed to load texture from memory: %s (HRESULT: 0x%08X)\n", name, hr);
 		return GetErrorTextureIndex();
 	}
+	EnsureMipChain(metadata, image);
 
 	ID3D12Device* device = RendererCore::GetDevice();
-	ComPtr<ID3D12Resource> resource = LoadTextureToDevice(device, metadata, image);
+	shared_ptr<TextureStreamingState> streaming;
+	ComPtr<ID3D12Resource> resource = LoadReservedTextureToDevice(device, metadata, image, streaming);
+	if (!resource)
+	{
+		resource = LoadTextureToDevice(device, metadata, image);
+	}
 	if (!resource)
 	{
 		return GetErrorTextureIndex();
@@ -792,6 +1038,7 @@ int TextureManager::LoadTextureFromMemory(const char* name, const uint8_t* pData
 	TextureData tData;
 	tData.Resource = resource;
 	tData.SrvIndex = srvIndex;
+	tData.Streaming = move(streaming);
 	{
 		lock_guard<mutex> lock(g_TextureMutex);
 		m_Textures.emplace(key, tData);
@@ -863,6 +1110,111 @@ vector<TextureManager::TextureInfo> TextureManager::GetLoadedTextureInfos()
 			return a.Path < b.Path;
 		});
 	return infos;
+}
+
+void TextureManager::TouchTexture(int srvIndex)
+{
+	if (srvIndex < 0) return;
+	lock_guard<mutex> lock(g_TextureMutex);
+	for (auto& pair : m_Textures)
+	{
+		auto& texture = pair.second;
+		if (texture.SrvIndex == srvIndex && texture.Streaming)
+		{
+			texture.Streaming->LastTouchedFrame = g_StreamingFrame;
+			return;
+		}
+	}
+}
+
+void TextureManager::UpdateStreaming(ID3D12GraphicsCommandList* commandList)
+{
+	if (!g_ReservedResourceStreamingSafe ||
+		!commandList || !g_ReservedResourcesSupported ||
+		!RendererSettings::GetTextureStreamingEnabled() ||
+		!RendererSettings::GetReservedResourcesEnabled())
+	{
+		return;
+	}
+	++g_StreamingFrame;
+
+	for (auto it = g_StreamingUploads.begin(); it != g_StreamingUploads.end();)
+	{
+		if (it->RetireFrame <= g_StreamingFrame)
+		{
+			ReleaseUploadBuffer(it->Resource, it->Size, false);
+			it = g_StreamingUploads.erase(it);
+		}
+		else
+		{
+			++it;
+		}
+	}
+
+	lock_guard<mutex> lock(g_TextureMutex);
+	for (auto& pair : m_Textures)
+	{
+		auto& texture = pair.second;
+		auto state = texture.Streaming;
+		if (!state || !texture.Resource || state->MostDetailedResidentMip == 0 ||
+			g_StreamingFrame > state->LastTouchedFrame + 30)
+		{
+			continue;
+		}
+
+		const UINT mip = state->MostDetailedResidentMip - 1;
+		if (mip >= state->Mips.size()) continue;
+		auto& mipData = state->Mips[mip];
+		if (mipData.Pixels.empty() || mipData.TileCount == 0) continue;
+
+		ComPtr<ID3D12Heap> mipHeap = CreateTextureTileHeap(RendererCore::GetDevice(), mipData.TileCount);
+		if (!mipHeap) continue;
+		D3D12_TILED_RESOURCE_COORDINATE coordinate{};
+		coordinate.Subresource = mip;
+		D3D12_TILE_REGION_SIZE region{};
+		region.NumTiles = mipData.TileCount;
+		D3D12_TILE_RANGE_FLAGS rangeFlag = D3D12_TILE_RANGE_FLAG_NONE;
+		UINT heapOffset = 0;
+		RendererCore::GetCommandQueue()->UpdateTileMappings(
+			texture.Resource.Get(), 1, &coordinate, &region,
+			mipHeap.Get(), 1, &rangeFlag, &heapOffset, &mipData.TileCount,
+			D3D12_TILE_MAPPING_FLAG_NONE);
+
+		const UINT64 uploadSize = GetRequiredIntermediateSize(texture.Resource.Get(), mip, 1);
+		ComPtr<ID3D12Resource> upload = AcquireUploadBuffer(RendererCore::GetDevice(), uploadSize);
+		if (!upload) continue;
+		D3D12_SUBRESOURCE_DATA subresource{};
+		subresource.pData = mipData.Pixels.data();
+		subresource.RowPitch = mipData.RowPitch;
+		subresource.SlicePitch = mipData.SlicePitch;
+		auto toCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+			texture.Resource.Get(),
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+			D3D12_RESOURCE_STATE_COPY_DEST);
+		commandList->ResourceBarrier(1, &toCopy);
+		UpdateSubresources(commandList, texture.Resource.Get(), upload.Get(), 0, mip, 1, &subresource);
+		auto toShader = CD3DX12_RESOURCE_BARRIER::Transition(
+			texture.Resource.Get(),
+			D3D12_RESOURCE_STATE_COPY_DEST,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+		commandList->ResourceBarrier(1, &toShader);
+
+		state->TileHeaps.push_back(move(mipHeap));
+		state->MostDetailedResidentMip = mip;
+		g_StreamingUploads.push_back({ move(upload), uploadSize, g_StreamingFrame + 4 });
+		// One detailed mip per frame limits both upload bandwidth and tile-map churn.
+		break;
+	}
+}
+
+bool TextureManager::IsReservedResourceStreamingSupported()
+{
+	return g_ReservedResourcesSupported;
+}
+
+bool TextureManager::IsReservedResourceStreamingAvailable()
+{
+	return g_ReservedResourcesSupported && g_ReservedResourceStreamingSafe;
 }
 
 int TextureManager::LoadTextureUV(const char* fileName, SpriteComponent& sprite, const XMFLOAT4& uvRect)

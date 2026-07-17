@@ -300,7 +300,7 @@ bool InstancingSystem::CreateGpuCullingResources(ID3D12Device* device)
         if (!createDefaultBuffer(
             transformBytes,
             D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+			D3D12_RESOURCE_STATE_COMMON,
             resource))
         {
             return false;
@@ -308,11 +308,11 @@ bool InstancingSystem::CreateGpuCullingResources(ID3D12Device* device)
     }
     if (!createDefaultBuffer(
         3 * sizeof(UINT), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
-        D3D12_RESOURCE_STATE_UNORDERED_ACCESS, m_LodCounts) ||
+		D3D12_RESOURCE_STATE_COMMON, m_LodCounts) ||
         !createDefaultBuffer(
             3 * sizeof(D3D12_DRAW_INDEXED_ARGUMENTS),
             D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+			D3D12_RESOURCE_STATE_COMMON,
             m_IndirectArguments))
     {
         return false;
@@ -433,6 +433,7 @@ bool InstancingSystem::CreateGpuCullingResources(ID3D12Device* device)
 
 void InstancingSystem::Init()
 {
+	m_GpuCullingInitialized = false;
     ID3D12Device* device = RendererCore::GetDevice();
     if (!device)
     {
@@ -486,6 +487,7 @@ void InstancingSystem::Init()
 void InstancingSystem::Uninit()
 {
     s_Available = false;
+	m_GpuCullingInitialized = false;
     if (m_InstanceUpload && m_MappedInstances)
     {
         m_InstanceUpload->Unmap(0, nullptr);
@@ -512,6 +514,7 @@ void InstancingSystem::Uninit()
 
 void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
+	if (renderPass == RenderPass::OcclusionPhase2) return;
     if (!s_Available || !m_MappedInstances || !m_MappedDirectInstances ||
         (renderPass != RenderPass::PrimaryScene &&
             renderPass != RenderPass::OverlayScene &&
@@ -604,7 +607,8 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			m_FrameCursor += static_cast<UINT>(batch.Entities.size());
 
 			const auto countToCopy = CD3DX12_RESOURCE_BARRIER::Transition(
-				m_LodCounts.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+				m_LodCounts.Get(), m_GpuCullingInitialized
+					? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_COMMON,
 				D3D12_RESOURCE_STATE_COPY_DEST);
 			commandList->ResourceBarrier(1, &countToCopy);
 			commandList->CopyBufferRegion(
@@ -735,6 +739,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 				CD3DX12_RESOURCE_BARRIER::Transition(m_IndirectArguments.Get(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
 			};
 			commandList->ResourceBarrier(_countof(restore), restore);
+			m_GpuCullingInitialized = true;
 		};
 
 	auto executeCpuCulledDraw = [&](InstanceBatch& batch, UINT minimumLod, auto&& bindGraphics)
@@ -1338,6 +1343,8 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			{
 				RendererDraw::BeginModelPass();
 				commandList->SetPipelineState(batch.Pso);
+				TextureManager::TouchTexture(batch.TextureIndex);
+				TextureManager::TouchTexture(batch.NormalIndex);
 				commandList->SetGraphicsRootDescriptorTable(
 					0, batchConstantHandle);
 				commandList->SetGraphicsRootDescriptorTable(

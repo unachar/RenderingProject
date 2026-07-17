@@ -8,6 +8,12 @@
 #include "componentmanager.h"
 #include "imguimanager.h"
 #include "psomanager.h"
+#include "spatialupscaler.h"
+#include "visibilitybuffer.h"
+#include "screenspaceeffects.h"
+#include "occlusionculling.h"
+#include "meshshaderpipeline.h"
+#include "lightinstancebuilder.h"
 
 
 static void LogToFile(const char* msg)
@@ -17,9 +23,12 @@ static void LogToFile(const char* msg)
 	if (fp) { fprintf(fp, "%s", msg); fclose(fp); }
 }
 
+static bool g_DeviceRemovalLogged = false;
+
 
 bool RendererCore::Init(HWND hwnd)
 {
+	g_DeviceRemovalLogged = false;
 	m_FrameIndex = 0;
 	m_FenceEvent = nullptr;
 	m_FrameLatencyWaitableObject = nullptr;
@@ -39,6 +48,18 @@ bool RendererCore::Init(HWND hwnd)
 
 	m_SceneWidth = max((UINT)roundf(m_Width * m_ResolutionScale), 1u);
 	m_SceneHeight = max((UINT)roundf(m_Height * m_ResolutionScale), 1u);
+
+	ComPtr<ID3D12DeviceRemovedExtendedDataSettings> dredSettings;
+	if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&dredSettings))))
+	{
+		dredSettings->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+		dredSettings->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+	}
+	ComPtr<ID3D12DeviceRemovedExtendedDataSettings1> dredSettings1;
+	if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&dredSettings1))))
+	{
+		dredSettings1->SetBreadcrumbContextEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+	}
 
 #ifdef _DEBUG
 	ComPtr<ID3D12Debug> debugController;
@@ -86,6 +107,7 @@ bool RendererCore::Init(HWND hwnd)
 		LogToFile("ERROR: CreateCommandQueue failed\n");
 		return false;
 	}
+	m_CommandQueue->SetName(L"Main Direct Queue");
 
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc {};
 	swapChainDesc.BufferCount = g_kFRAME_COUNT;
@@ -150,6 +172,7 @@ bool RendererCore::Init(HWND hwnd)
 		return false;
 	}
 	m_CommandList->Close();
+	m_CommandList->SetName(L"Main Frame Command List");
 
 	LogToFile("Step: CreateFence\n");
 	hr = m_Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_Fence));
@@ -178,8 +201,11 @@ bool RendererCore::Init(HWND hwnd)
 	rangesEnvironmentTex[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND);
 	CD3DX12_DESCRIPTOR_RANGE rangesSceneColorTex[1];
 	rangesSceneColorTex[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND);
+	CD3DX12_DESCRIPTOR_RANGE meshHiZRanges[2];
+	meshHiZRanges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 22);
+	meshHiZRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 23);
 
-	CD3DX12_ROOT_PARAMETER rootParametersAll[11];
+	CD3DX12_ROOT_PARAMETER rootParametersAll[16];
 	rootParametersAll[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[1].InitAsDescriptorTable(1, &rangesTex[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -191,9 +217,19 @@ bool RendererCore::Init(HWND hwnd)
 	rootParametersAll[8].InitAsDescriptorTable(1, &rangesSceneColorTex[0], D3D12_SHADER_VISIBILITY_PIXEL);
 	rootParametersAll[9].InitAsShaderResourceView(0, 2, D3D12_SHADER_VISIBILITY_VERTEX);
 	rootParametersAll[10].InitAsShaderResourceView(11, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+	rootParametersAll[11].InitAsShaderResourceView(20, 0, D3D12_SHADER_VISIBILITY_ALL);
+	rootParametersAll[12].InitAsShaderResourceView(21, 0, D3D12_SHADER_VISIBILITY_ALL);
+	rootParametersAll[13].InitAsConstants(16, 4, 0, D3D12_SHADER_VISIBILITY_ALL);
+	rootParametersAll[14].InitAsDescriptorTable(1, &meshHiZRanges[0], D3D12_SHADER_VISIBILITY_ALL);
+	rootParametersAll[15].InitAsDescriptorTable(1, &meshHiZRanges[1], D3D12_SHADER_VISIBILITY_ALL);
 
 	CD3DX12_STATIC_SAMPLER_DESC sampler {};
-	sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+	// Material textures are commonly viewed at grazing angles (terrain and
+	// floors).  Trilinear filtering chooses one isotropic mip footprint and
+	// exposes the mip transitions as camera-dependent horizontal bands.
+	// The sampler already requested 16 taps, but MaxAnisotropy is ignored unless
+	// the filter itself is anisotropic.
+	sampler.Filter = D3D12_FILTER_ANISOTROPIC;
 	sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
 	sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
 	sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -207,21 +243,34 @@ bool RendererCore::Init(HWND hwnd)
 	sampler.RegisterSpace = 0;
 	sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-	CD3DX12_STATIC_SAMPLER_DESC staticSamplers[2] {};
+	CD3DX12_STATIC_SAMPLER_DESC staticSamplers[3] {};
 	staticSamplers[0] = sampler;
-	staticSamplers[1].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+	staticSamplers[1].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
 	staticSamplers[1].AddressU = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
 	staticSamplers[1].AddressV = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
 	staticSamplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
 	staticSamplers[1].MipLODBias = 0.0f;
 	staticSamplers[1].MaxAnisotropy = 1;
-	staticSamplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+	staticSamplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 	staticSamplers[1].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
 	staticSamplers[1].MinLOD = 0.0f;
 	staticSamplers[1].MaxLOD = D3D12_FLOAT32_MAX;
 	staticSamplers[1].ShaderRegister = 1;
 	staticSamplers[1].RegisterSpace = 0;
 	staticSamplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	staticSamplers[2] = CD3DX12_STATIC_SAMPLER_DESC(
+		2,
+		D3D12_FILTER_MIN_MAG_MIP_POINT,
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+		0.0f,
+		1,
+		D3D12_COMPARISON_FUNC_NEVER,
+		D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE,
+		0.0f,
+		D3D12_FLOAT32_MAX,
+		D3D12_SHADER_VISIBILITY_ALL);
 
 	CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
 	rootSignatureDesc.Init(_countof(rootParametersAll), rootParametersAll, _countof(staticSamplers), staticSamplers, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
@@ -253,7 +302,7 @@ bool RendererCore::Init(HWND hwnd)
 	}
 
 	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc {};
-	cbvHeapDesc.NumDescriptors = g_kDEPTH_SRV_INDEX + 1;
+	cbvHeapDesc.NumDescriptors = g_kENGINE_DESCRIPTOR_END + 1;
 	cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	LogToFile("Step: CreateDescriptorHeap(CBV)\n");
@@ -342,6 +391,14 @@ TextureManager::Init();
 	LogToFile("Step: CreatePostProcessPipeline\n");
 if (!RendererShader::CreatePostProcessPipeline()) return false;
 
+	LogToFile("Step: SpatialUpscaler::Initialize\n");
+	SpatialUpscaler::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	VisibilityBuffer::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	ScreenSpaceEffects::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	OcclusionCulling::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	MeshShaderPipeline::Initialize(m_Device.Get(), RendererShader::GetModelRootSignature());
+	LightInstanceBuilder::Initialize(m_Device.Get());
+
 	LogToFile("Step: CreateSceneRenderTarget\n");
 if (!RendererDraw::CreateSceneRenderTarget()) return false;
 
@@ -371,16 +428,7 @@ if (!ImGuiManager::Init(
 
 void RendererCore::Uninit()
 {
-	if (m_CommandQueue && m_Fence && m_FenceEvent)
-	{
-		m_CurrentFenceValue++;
-		m_CommandQueue->Signal(m_Fence.Get(), m_CurrentFenceValue);
-		if (m_Fence->GetCompletedValue() < m_CurrentFenceValue)
-		{
-			m_Fence->SetEventOnCompletion(m_CurrentFenceValue, m_FenceEvent);
-			WaitForSingleObject(m_FenceEvent, INFINITE);
-		}
-	}
+	WaitForGpuIdle();
 
 	ImGuiManager::Uninit();
 
@@ -416,8 +464,17 @@ void RendererCore::Uninit()
 	m_PostProcessConstantBuffer.Reset();
 	m_PostProcessRootSignature.Reset();
 	m_UpscaleRootSignature.Reset();
+	SpatialUpscaler::Shutdown();
+	VisibilityBuffer::Shutdown();
+	ScreenSpaceEffects::Shutdown();
+	OcclusionCulling::Shutdown();
+	MeshShaderPipeline::Shutdown();
+	LightInstanceBuilder::Shutdown();
     RendererDraw::ReleaseGBufferResources();
 	m_SceneRenderTarget.Reset();
+	m_PostProcessRenderTarget.Reset();
+	m_PreUpscaleAaRenderTarget.Reset();
+	m_EditorSceneRenderTarget.Reset();
 	m_TransparentSceneCopy.Reset();
 	m_SceneRtvHeap.Reset();
 	m_CbvHeap.Reset();
@@ -450,6 +507,117 @@ void RendererCore::Uninit()
 	}
 }
 
+bool RendererCore::CheckDeviceHealth(HRESULT operationResult, const char* operation)
+{
+	if (!m_Device) return false;
+	const HRESULT removedReason = m_Device->GetDeviceRemovedReason();
+	if (SUCCEEDED(operationResult) && SUCCEEDED(removedReason)) return true;
+	if (g_DeviceRemovalLogged) return false;
+	g_DeviceRemovalLogged = true;
+
+	FILE* log = nullptr;
+	fopen_s(&log, "device_removed.log", "a");
+	if (!log) return false;
+	fprintf(log, "\nDEVICE REMOVED: operation=%s operationHr=0x%08X reason=0x%08X\n",
+		operation ? operation : "unknown", operationResult, removedReason);
+
+#ifdef _DEBUG
+	ComPtr<ID3D12InfoQueue> infoQueue;
+	if (SUCCEEDED(m_Device.As(&infoQueue)))
+	{
+		const UINT64 messageCount = infoQueue->GetNumStoredMessagesAllowedByRetrievalFilter();
+		const UINT64 firstMessage = messageCount > 64u ? messageCount - 64u : 0u;
+		for (UINT64 messageIndex = firstMessage; messageIndex < messageCount; ++messageIndex)
+		{
+			SIZE_T messageSize = 0;
+			if (FAILED(infoQueue->GetMessage(messageIndex, nullptr, &messageSize)) || messageSize == 0) continue;
+			std::vector<BYTE> messageStorage(messageSize);
+			auto* message = reinterpret_cast<D3D12_MESSAGE*>(messageStorage.data());
+			if (SUCCEEDED(infoQueue->GetMessage(messageIndex, message, &messageSize)))
+				fprintf(log, "DebugLayer[%llu] severity=%u id=%u: %s\n",
+					static_cast<unsigned long long>(messageIndex), static_cast<UINT>(message->Severity),
+					static_cast<UINT>(message->ID), message->pDescription ? message->pDescription : "<empty>");
+		}
+	}
+#endif
+
+	ComPtr<ID3D12DeviceRemovedExtendedData1> dred;
+	if (SUCCEEDED(m_Device.As(&dred)))
+	{
+		D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 breadcrumbs{};
+		if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput1(&breadcrumbs)))
+		{
+			UINT nodeCount = 0;
+			for (auto* node = breadcrumbs.pHeadAutoBreadcrumbNode; node && nodeCount < 64; node = node->pNext, ++nodeCount)
+			{
+				const UINT completed = node->pLastBreadcrumbValue ? *node->pLastBreadcrumbValue : 0;
+				const UINT operationIndex = node->BreadcrumbCount > 0
+					? min(completed, node->BreadcrumbCount - 1u) : 0u;
+				const UINT lastOperation = node->pCommandHistory && node->BreadcrumbCount > 0
+					? static_cast<UINT>(node->pCommandHistory[operationIndex]) : UINT_MAX;
+				fprintf(log, "Breadcrumb[%u]: queue=%s list=%s completed=%u/%u lastOp=%u\n",
+					nodeCount,
+					node->pCommandQueueDebugNameA ? node->pCommandQueueDebugNameA : "<unnamed>",
+					node->pCommandListDebugNameA ? node->pCommandListDebugNameA : "<unnamed>",
+					completed, node->BreadcrumbCount, lastOperation);
+				if (node->pCommandHistory && node->BreadcrumbCount > 0)
+				{
+					const UINT begin = completed > 12u ? completed - 12u : 0u;
+					const UINT end = min(completed + 4u, node->BreadcrumbCount);
+					fprintf(log, "  Operations:");
+					for (UINT index = begin; index < end; ++index)
+						fprintf(log, " %u:%u%s", index, static_cast<UINT>(node->pCommandHistory[index]), index == completed ? "*" : "");
+					fprintf(log, "\n");
+				}
+				for (UINT contextIndex = 0; contextIndex < node->BreadcrumbContextsCount; ++contextIndex)
+				{
+					const auto& context = node->pBreadcrumbContexts[contextIndex];
+					if (context.BreadcrumbIndex + 32u >= completed && context.BreadcrumbIndex <= completed + 4u)
+						fprintf(log, "  Context[%u] @%u: %ls\n", contextIndex, context.BreadcrumbIndex,
+							context.pContextString ? context.pContextString : L"<unnamed>");
+				}
+			}
+		}
+
+		D3D12_DRED_PAGE_FAULT_OUTPUT1 pageFault{};
+		if (SUCCEEDED(dred->GetPageFaultAllocationOutput1(&pageFault)))
+		{
+			fprintf(log, "PageFaultVA=0x%016llX\n", static_cast<unsigned long long>(pageFault.PageFaultVA));
+			UINT allocationCount = 0;
+			for (auto* node = pageFault.pHeadExistingAllocationNode; node && allocationCount < 32;
+				node = node->pNext, ++allocationCount)
+			{
+				fprintf(log, "ExistingAllocation[%u]: %s type=%u\n", allocationCount,
+					node->ObjectNameA ? node->ObjectNameA : "<unnamed>", static_cast<UINT>(node->AllocationType));
+			}
+			allocationCount = 0;
+			for (auto* node = pageFault.pHeadRecentFreedAllocationNode; node && allocationCount < 32;
+				node = node->pNext, ++allocationCount)
+			{
+				fprintf(log, "RecentFreedAllocation[%u]: %s type=%u\n", allocationCount,
+					node->ObjectNameA ? node->ObjectNameA : "<unnamed>", static_cast<UINT>(node->AllocationType));
+			}
+		}
+	}
+	fclose(log);
+	return false;
+}
+
+bool RendererCore::WaitForGpuIdle()
+{
+	if (!m_CommandQueue || !m_Fence || !m_FenceEvent) return false;
+	const UINT64 fenceValue = ++m_CurrentFenceValue;
+	const HRESULT signalHr = m_CommandQueue->Signal(m_Fence.Get(), fenceValue);
+	if (!CheckDeviceHealth(signalHr, "GPU idle fence signal")) return false;
+	if (m_Fence->GetCompletedValue() < fenceValue)
+	{
+		const HRESULT eventHr = m_Fence->SetEventOnCompletion(fenceValue, m_FenceEvent);
+		if (FAILED(eventHr)) return false;
+		WaitForSingleObject(m_FenceEvent, INFINITE);
+	}
+	return CheckDeviceHealth(S_OK, "GPU idle wait");
+}
+
 void RendererCore::Resize(UINT width, UINT height)
 {
 	if (!m_SwapChain || !m_Device)
@@ -464,11 +632,21 @@ void RendererCore::Resize(UINT width, UINT height)
 	{
 		return;
 	}
+	if (!CheckDeviceHealth(S_OK, "Resize begin"))
+	{
+		PostMessage(m_Hwnd, WM_CLOSE, 0, 0);
+		return;
+	}
 
 	if (m_CommandQueue && m_Fence && m_FenceEvent)
 	{
 		m_CurrentFenceValue++;
-		m_CommandQueue->Signal(m_Fence.Get(), m_CurrentFenceValue);
+		const HRESULT signalHr = m_CommandQueue->Signal(m_Fence.Get(), m_CurrentFenceValue);
+		if (!CheckDeviceHealth(signalHr, "Resize fence signal"))
+		{
+			PostMessage(m_Hwnd, WM_CLOSE, 0, 0);
+			return;
+		}
 		if (m_Fence->GetCompletedValue() < m_CurrentFenceValue)
 		{
 			m_Fence->SetEventOnCompletion(m_CurrentFenceValue, m_FenceEvent);
@@ -496,6 +674,7 @@ void RendererCore::Resize(UINT width, UINT height)
 	if (FAILED(hr))
 	{
 		LogToFile("ERROR: ResizeBuffers failed\n");
+		CheckDeviceHealth(hr, "ResizeBuffers");
 		return;
 	}
 
@@ -612,6 +791,15 @@ void RendererCore::SetRenderMode(RenderMode mode)
 
 	m_PendingRenderMode = RenderMode::DEFERRED;
 	m_HasPendingRenderMode = true;
+}
+
+void RendererCore::InvalidateScenePipelineCache()
+{
+	m_PsoCache.clear();
+	for (EntityID entity : World::GetView<ShaderComponent>())
+	{
+		ComponentManager::GetComponent<ShaderComponent>(entity).Pso.Reset();
+	}
 }
 
 void RendererCore::SetHdr(bool enabled)

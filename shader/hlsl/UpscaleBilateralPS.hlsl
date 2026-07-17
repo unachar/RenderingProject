@@ -29,8 +29,7 @@ float4 main(PSInputPostProcess input) : SV_TARGET
         }
     }
 
-    result /= max(totalWeight, 0.001f);
-    result.rgb = ApplyHdrOutput(result.rgb);
-    result.a = 1.0f;
+	result /= max(totalWeight, 0.001f);
+	result.a = 1.0f;
     return result;
 }

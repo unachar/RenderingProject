@@ -91,7 +91,7 @@ struct PSInput3D
 };
 
 Texture2DArray<float> g_ShadowMap : register(t1);
-SamplerState g_ShadowSampler : register(s1);
+SamplerComparisonState g_ShadowSampler : register(s1);
 #endif
 
 cbuffer ShadowParams : register(b3)
@@ -119,9 +119,10 @@ float SampleShadowMapPcf9(float2 shadowUv, float shadowLayer, float texelSize, f
     {
         if (tap >= tapCount) break;
         float2 offset = kernel[tap] * (float)max(filterRadius, 1) * texelSize;
-        float closestDepth = g_ShadowMap.SampleLevel(
-            g_ShadowSampler, float3(shadowUv + offset, shadowLayer), 0);
-        visibility += currentDepth <= closestDepth ? 1.0f : 0.0f;
+        visibility += g_ShadowMap.SampleCmpLevelZero(
+            g_ShadowSampler,
+            float3(shadowUv + offset, shadowLayer),
+            currentDepth);
     }
     return visibility / (float)tapCount;
 }
@@ -192,7 +193,7 @@ cbuffer LightParams : register(b1)
     float4 VirtualShadowParams[4]; // x: physical layer, y: texel size, z: depth bias, w: normal bias
     float4 VirtualShadowPageOrigins[4]; // xy: global page origin, z: page grid, w: page world size
     uint4 VirtualShadowResidency[16]; // four packed 16-row masks per clipmap level
-    float4 VirtualShadowGlobal; // x: mode, y: level count, z: PCF radius, w: transition width in pages
+    float4 VirtualShadowGlobal; // x: mode, y: level count, z: PCF radius, w: light-space overlap fraction
     float4 ShadowRuntimeGlobal; // x: contact enabled, y: length, z: steps, w: method
     float4 ShadowDebugGlobal; // x: mode, y: cache hit, z: resident pages per dimension, w: pages per dimension
     float4 DistanceFieldData0[16]; // xyz: world AABB center, w: active
@@ -209,10 +210,11 @@ cbuffer LightParams : register(b1)
     float4 AtmosphereCamera;  // xyz: camera position
 };
 
-// CPU-built 16x16 screen tiles keep the cost proportional to local overlap,
+// GPU-built 16x16 screen tiles keep the cost proportional to local overlap,
 // rather than to the number of authored lights. Each tile is a fixed four-
 // index block ordered by light priority; 0xffffffff marks an unused slot.
 StructuredBuffer<uint> LightTileIndices : register(t11);
+StructuredBuffer<uint> VolumetricLightIndices : register(t24);
 
 bool HasLightTileGridCommon()
 {
@@ -284,6 +286,46 @@ float2 VirtualShadowMapUvCommon(
         float2(halfLocalTexel, halfLocalTexel),
         float2(1.0f - halfLocalTexel, 1.0f - halfLocalTexel));
     return ((float2)physicalPage + inPageUv) / (float)pageGrid;
+}
+
+float VirtualShadowLevelInteriorCommon(int level, float2 virtualUv, float3 worldPos)
+{
+    float pageGrid = max(VirtualShadowPageOrigins[level].z, 1.0f);
+    float residentGrid = max(ShadowDebugGlobal.z, 1.0f);
+    float firstResident = (pageGrid - residentGrid) * 0.5f;
+    float2 pagePosition = virtualUv * pageGrid;
+    float2 edgeDistance = min(
+        pagePosition - firstResident,
+        firstResident + residentGrid - pagePosition);
+    // Clipmap coverage is a square in light space.  Basing the blend on
+    // Euclidean camera distance creates a circular, moving LOD contour that
+    // cuts through this square and makes the shadow silhouette "swim".
+    // Blend only in the real overlap of two clipmap levels.  The coordinates
+    // are snapped with the clipmap, so this weight is stable while the camera
+    // moves inside a page.
+    float overlapPages =
+        max(residentGrid * 0.5f * clamp(VirtualShadowGlobal.w, 0.05f, 0.40f),
+            0.25f);
+    return smoothstep(
+        0.0f,
+        overlapPages,
+        min(edgeDistance.x, edgeDistance.y));
+}
+
+float CascadedShadowLevelInteriorCommon(int level, float2 shadowUv, float3 worldPos)
+{
+    float2 edgeDistance = min(shadowUv, 1.0f - shadowUv);
+    float overlapUv =
+        max(0.5f * clamp(VirtualShadowGlobal.w, 0.05f, 0.40f),
+            2.0f / 2048.0f);
+    return smoothstep(0.0f, overlapUv, min(edgeDistance.x, edgeDistance.y));
+}
+
+float ShadowWorldFilterScaleCommon(int level)
+{
+    float finestWorldTexel = max(VirtualShadowPageOrigins[0].w, 0.000001f);
+    float levelWorldTexel = max(VirtualShadowPageOrigins[level].w, finestWorldTexel);
+    return clamp(finestWorldTexel / levelWorldTexel, 0.125f, 1.0f);
 }
 
 float3 SafeNormalizeCommon(float3 value, float3 fallback)
@@ -434,7 +476,7 @@ float SampleAtmosphereShadowMap(
     float3 worldPos,
     float3 lightDir,
     Texture2DArray<float> shadowMap,
-    SamplerState shadowSampler,
+    SamplerComparisonState shadowSampler,
     float4x4 lightViewProjection,
     float4 shadowMapParams,
     float shadowLayer)
@@ -465,8 +507,10 @@ float SampleAtmosphereShadowMap(
         for (int x = -2; x <= 2; ++x)
         {
             float2 offset = float2((float)x, (float)y) * texelSize;
-            float closestDepth = shadowMap.SampleLevel(shadowSampler, float3(shadowUv + offset, shadowLayer), 0);
-            visibility += (currentDepth <= closestDepth) ? 1.0f : 0.0f;
+            visibility += shadowMap.SampleCmpLevelZero(
+                shadowSampler,
+                float3(shadowUv + offset, shadowLayer),
+                currentDepth);
         }
     }
 
@@ -480,9 +524,12 @@ float SampleAtmosphereShadowMap(
 float SampleVirtualAtmosphereShadowMapCommon(
     float3 worldPos,
     Texture2DArray<float> shadowMap,
-    SamplerState shadowSampler)
+    SamplerComparisonState shadowSampler)
 {
     int levelCount = clamp((int)round(VirtualShadowGlobal.y), 1, 4);
+    float fineVisibility = 1.0f;
+    float fineInterior = 1.0f;
+    bool hasFine = false;
     [unroll]
     for (int level = 0; level < 4; ++level)
     {
@@ -499,21 +546,36 @@ float SampleVirtualAtmosphereShadowMapCommon(
 
         float4 params = VirtualShadowParams[level];
         float currentDepth = ndc.z - max(params.z, params.w) * (1.0f + level * 0.45f);
-        float closestDepth = shadowMap.SampleLevel(
+        float levelVisibility = shadowMap.SampleCmpLevelZero(
             shadowSampler,
             float3(physicalUv, max(params.x, 0.0f)),
-            0);
-        return currentDepth <= closestDepth ? 1.0f : 0.0f;
+            currentDepth);
+        float levelInterior = VirtualShadowLevelInteriorCommon(level, virtualUv, worldPos);
+        if (!hasFine)
+        {
+            fineVisibility = levelVisibility;
+            fineInterior = levelInterior;
+            hasFine = true;
+            if (fineInterior >= 0.999f || level == levelCount - 1)
+            {
+                return fineVisibility;
+            }
+            continue;
+        }
+        return lerp(levelVisibility, fineVisibility, fineInterior);
     }
-    return 1.0f;
+    return hasFine ? fineVisibility : 1.0f;
 }
 
 float SampleCascadedAtmosphereShadowMapCommon(
     float3 worldPos,
     Texture2DArray<float> shadowMap,
-    SamplerState shadowSampler)
+    SamplerComparisonState shadowSampler)
 {
     int levelCount = clamp((int)round(VirtualShadowGlobal.y), 1, 4);
+    float fineVisibility = 1.0f;
+    float fineInterior = 1.0f;
+    bool hasFine = false;
     [unroll]
     for (int level = 0; level < 4; ++level)
     {
@@ -525,16 +587,29 @@ float SampleCascadedAtmosphereShadowMapCommon(
         if (any(uv < 0.0f) || any(uv > 1.0f) || ndc.z < 0.0f || ndc.z > 1.0f) continue;
 
         float4 params = VirtualShadowParams[level];
-        return SampleAtmosphereShadowMap(
+        float levelVisibility = SampleAtmosphereShadowMap(
             worldPos,
             float3(0.0f, 1.0f, 0.0f),
             shadowMap,
             shadowSampler,
             VirtualShadowViewProjections[level],
-            float4(params.y, params.z, params.w, 1.0f),
+            float4(params.y * ShadowWorldFilterScaleCommon(level), params.z, params.w, 1.0f),
             params.x);
+        float levelInterior = CascadedShadowLevelInteriorCommon(level, uv, worldPos);
+        if (!hasFine)
+        {
+            fineVisibility = levelVisibility;
+            fineInterior = levelInterior;
+            hasFine = true;
+            if (fineInterior >= 0.999f || level == levelCount - 1)
+            {
+                return fineVisibility;
+            }
+            continue;
+        }
+        return lerp(levelVisibility, fineVisibility, fineInterior);
     }
-    return 1.0f;
+    return hasFine ? fineVisibility : 1.0f;
 }
 
 
@@ -580,7 +655,7 @@ float ScreenSpaceShaftVisibilityCommon(
 float3 RayMarchAtmosphereViewCommon(
     float3 worldPos,
     Texture2DArray<float> shadowMap,
-    SamplerState shadowSampler,
+    SamplerComparisonState shadowSampler,
     float4x4 lightViewProjection,
     float4 shadowMapParams)
 {

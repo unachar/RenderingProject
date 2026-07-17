@@ -430,6 +430,7 @@ public:
         const UINT endLocal = s_ActiveSlot->TimestampQueryCount++;
         const UINT absoluteBegin =
             s_ActiveFrameIndex * kMaxTimestampQueriesPerFrame + beginLocal;
+		commandList->SetMarker(0, name, static_cast<UINT>(strlen(name)));
         commandList->EndQuery(
             s_TimestampHeap.Get(),
             D3D12_QUERY_TYPE_TIMESTAMP,

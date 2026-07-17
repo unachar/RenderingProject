@@ -77,6 +77,7 @@ public:
 	static D3D12_GPU_VIRTUAL_ADDRESS GetShadowConstantBufferAddress(UINT shadowIndex);
 	static D3D12_GPU_VIRTUAL_ADDRESS GetCurrentLightConstantBufferAddress();
 	static D3D12_GPU_VIRTUAL_ADDRESS GetCurrentLightTileIndexBufferAddress();
+	static D3D12_GPU_VIRTUAL_ADDRESS GetCurrentVolumetricLightIndexBufferAddress();
 	static const LightGridStats& GetLightGridStats();
 	static D3D12_GPU_VIRTUAL_ADDRESS GetPBRConstantBufferAddress(UINT slot = 0);
 	static void CreateSpriteVertex(const VertexResource& vertexstruct);

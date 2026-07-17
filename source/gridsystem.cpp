@@ -9,7 +9,8 @@
 
 void GridSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
-	if (renderPass == RenderPass::OverlayScene || renderPass == RenderPass::ShadowMap || renderPass == RenderPass::Velocity)
+	if (renderPass == RenderPass::OverlayScene || renderPass == RenderPass::ShadowMap ||
+		renderPass == RenderPass::Velocity || renderPass == RenderPass::OcclusionPhase2)
 	{
 		return;
 	}

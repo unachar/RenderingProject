@@ -9,9 +9,67 @@ enum class ShadowMapMethod : int
 	VirtualShadowMap = 1
 };
 
+enum class UpscaleMode : int
+{
+	Bilateral = 0,
+	Fsr1,
+	Nis
+};
+
+enum class UpscaleQuality : int
+{
+	UltraQuality = 0,
+	Quality,
+	Balanced,
+	Performance,
+	Custom
+};
+
 class RendererSettings
 {
 public:
+	static UpscaleMode GetUpscaleMode() { return s_UpscaleMode; }
+	static void SetUpscaleMode(UpscaleMode value) { SetValue(s_UpscaleMode, value); }
+	static UpscaleQuality GetUpscaleQuality() { return s_UpscaleQuality; }
+	static void SetUpscaleQuality(UpscaleQuality value) { SetValue(s_UpscaleQuality, value); }
+	static float GetFsrSharpness() { return s_FsrSharpness; }
+	static void SetFsrSharpness(float value) { SetValue(s_FsrSharpness, std::clamp(value, 0.0f, 2.0f)); }
+	static float GetNisSharpness() { return s_NisSharpness; }
+	static void SetNisSharpness(float value) { SetValue(s_NisSharpness, std::clamp(value, 0.0f, 1.0f)); }
+	static bool GetComputeGBufferEnabled() { return s_ComputeGBufferEnabled; }
+	static void SetComputeGBufferEnabled(bool value) { SetValue(s_ComputeGBufferEnabled, value); }
+	static bool GetSsaoEnabled() { return s_SsaoEnabled; }
+	static void SetSsaoEnabled(bool value) { SetValue(s_SsaoEnabled, value); }
+	static float GetSsaoRadius() { return s_SsaoRadius; }
+	static void SetSsaoRadius(float value) { SetValue(s_SsaoRadius, std::clamp(value, 0.1f, 4.0f)); }
+	static float GetSsaoPower() { return s_SsaoPower; }
+	static void SetSsaoPower(float value) { SetValue(s_SsaoPower, std::clamp(value, 0.25f, 4.0f)); }
+	static bool GetSsgiEnabled() { return s_SsgiEnabled; }
+	static void SetSsgiEnabled(bool value) { SetValue(s_SsgiEnabled, value); }
+	static float GetSsgiIntensity() { return s_SsgiIntensity; }
+	static void SetSsgiIntensity(float value) { SetValue(s_SsgiIntensity, std::clamp(value, 0.0f, 3.0f)); }
+	static bool GetRayBinningEnabled() { return s_RayBinningEnabled; }
+	static void SetRayBinningEnabled(bool value) { SetValue(s_RayBinningEnabled, value); }
+	static bool GetTextureStreamingEnabled() { return s_TextureStreamingEnabled; }
+	static void SetTextureStreamingEnabled(bool value) { SetValue(s_TextureStreamingEnabled, value); }
+	static bool GetReservedResourcesEnabled() { return s_ReservedResourcesEnabled; }
+	static void SetReservedResourcesEnabled(bool value) { SetValue(s_ReservedResourcesEnabled, value); }
+	static bool GetMeshShadersEnabled() { return s_MeshShadersEnabled; }
+	static void SetMeshShadersEnabled(bool value) { SetValue(s_MeshShadersEnabled, value); }
+	static bool GetTwoPhaseOcclusionEnabled() { return s_TwoPhaseOcclusionEnabled; }
+	static void SetTwoPhaseOcclusionEnabled(bool value) { SetValue(s_TwoPhaseOcclusionEnabled, value); }
+	static float GetUpscaleQualityScale(UpscaleQuality quality)
+	{
+		switch (quality)
+		{
+		case UpscaleQuality::UltraQuality: return 1.0f / 1.3f;
+		case UpscaleQuality::Quality: return 1.0f / 1.5f;
+		case UpscaleQuality::Balanced: return 1.0f / 1.7f;
+		case UpscaleQuality::Performance: return 1.0f / 2.0f;
+		default: return 1.0f;
+		}
+	}
+
 	static ShadowMapMethod GetShadowMapMethod() { return s_ShadowMapMethod; }
 	static void SetShadowMapMethod(ShadowMapMethod value) { SetValue(s_ShadowMapMethod, value); }
 
@@ -25,6 +83,8 @@ public:
 	static void SetShadowDepthBias(float value) { SetValue(s_ShadowDepthBias, std::clamp(value, 0.0f, 0.01f)); }
 	static float GetShadowNormalBias() { return s_ShadowNormalBias; }
 	static void SetShadowNormalBias(float value) { SetValue(s_ShadowNormalBias, std::clamp(value, 0.0f, 0.01f)); }
+	static float GetShadowResolutionTransition() { return s_ShadowResolutionTransition; }
+	static void SetShadowResolutionTransition(float value) { SetValue(s_ShadowResolutionTransition, std::clamp(value, 0.05f, 0.40f)); }
 	static bool GetStabilizeVirtualClipmaps() { return s_StabilizeVirtualClipmaps; }
 	static void SetStabilizeVirtualClipmaps(bool value) { SetValue(s_StabilizeVirtualClipmaps, value); }
 	static bool GetCacheVirtualShadowPages() { return s_CacheVirtualShadowPages; }
@@ -69,6 +129,7 @@ public:
 		s_ShadowFilterRadius = 1;
 		s_ShadowDepthBias = 0.000008f;
 		s_ShadowNormalBias = 0.00001f;
+		s_ShadowResolutionTransition = 0.20f;
 		s_StabilizeVirtualClipmaps = true;
 		s_CacheVirtualShadowPages = true;
 		s_ShadowCascadeCount = 4;
@@ -94,12 +155,28 @@ private:
 		}
 	}
 
+	inline static UpscaleMode s_UpscaleMode = UpscaleMode::Fsr1;
+	inline static UpscaleQuality s_UpscaleQuality = UpscaleQuality::Performance;
+	inline static float s_FsrSharpness = 0.2f;
+	inline static float s_NisSharpness = 0.5f;
+	inline static bool s_ComputeGBufferEnabled = true;
+	inline static bool s_SsaoEnabled = true;
+	inline static float s_SsaoRadius = 1.15f;
+	inline static float s_SsaoPower = 1.35f;
+	inline static bool s_SsgiEnabled = true;
+	inline static float s_SsgiIntensity = 0.45f;
+	inline static bool s_RayBinningEnabled = true;
+	inline static bool s_TextureStreamingEnabled = true;
+	inline static bool s_ReservedResourcesEnabled = true;
+	inline static bool s_MeshShadersEnabled = true;
+	inline static bool s_TwoPhaseOcclusionEnabled = true;
 	inline static ShadowMapMethod s_ShadowMapMethod = ShadowMapMethod::VirtualShadowMap;
 	inline static int s_VirtualClipmapLevels = 4;
 	inline static float s_VirtualFirstLevelRadius = 16.0f;
 	inline static int s_ShadowFilterRadius = 1;
 	inline static float s_ShadowDepthBias = 0.000008f;
 	inline static float s_ShadowNormalBias = 0.00001f;
+	inline static float s_ShadowResolutionTransition = 0.20f;
 	inline static bool s_StabilizeVirtualClipmaps = true;
 	inline static bool s_CacheVirtualShadowPages = true;
 	inline static int s_ShadowCascadeCount = 4;

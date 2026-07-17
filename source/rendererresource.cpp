@@ -13,6 +13,7 @@
 #include "atmosphere.h"
 #include "renderersettings.h"
 #include "localheightfog.h"
+#include "lightinstancebuilder.h"
 #include <limits>
 #include <climits>
 
@@ -170,7 +171,7 @@ namespace
 		XMFLOAT4 VirtualShadowParams[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
 		XMFLOAT4 VirtualShadowPageOrigins[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS]{};
 		XMUINT4 VirtualShadowResidency[RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS * 4]{};
-		XMFLOAT4 VirtualShadowGlobal = { 0.0f, 0.0f, 1.0f, 0.8f };
+		XMFLOAT4 VirtualShadowGlobal = { 0.0f, 0.0f, 1.0f, 0.20f };
 		XMFLOAT4 ShadowRuntimeGlobal = { 1.0f, 0.8f, 8.0f, 0.0f };
 		XMFLOAT4 ShadowDebugGlobal = { 0.0f, 0.0f, 128.0f, 16.0f };
 		XMFLOAT4 DistanceFieldData0[RendererState::g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS]{};
@@ -1041,17 +1042,21 @@ namespace
 		const bool conventionalCascade = level >= 4;
 		const UINT actualLevel = conventionalCascade ? level - 4 : level;
 		const UINT cascadeCount = static_cast<UINT>(RendererSettings::GetShadowCascadeCount());
+		const float residentFraction =
+			static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION) /
+			static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION);
+		// VirtualFirstLevelRadius describes the actually resident world-space
+		// radius, not the unallocated 16x16 virtual extent.  Keeping every level
+		// in the same exact 2x series prevents the former level 2 -> 3 jump
+		// (64 m -> 384 m full-map radius), which visibly changed silhouettes at
+		// the last resolution boundary.
+		const float residentRadius =
+			RendererSettings::GetVirtualFirstLevelRadius() *
+			static_cast<float>(1u << actualLevel);
 		float radius = conventionalCascade
 			? RendererSettings::GetShadowDistance() /
 				static_cast<float>(1u << max(0, static_cast<int>(cascadeCount - 1 - actualLevel)))
-			: RendererSettings::GetVirtualFirstLevelRadius() * static_cast<float>(1u << actualLevel);
-		if (!conventionalCascade && actualLevel == 3)
-		{
-			const float residentFraction =
-				static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION) /
-				static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION);
-			radius = max(radius, RendererSettings::GetShadowDistance() / max(residentFraction, 0.01f));
-		}
+			: residentRadius / max(residentFraction, 0.01f);
 
 		XMVECTOR viewForward = XMVectorNegate(lightDirection);
 		XMVECTOR upHint = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
@@ -1095,21 +1100,36 @@ namespace
 				pageGrid,
 				pageWorldSize);
 		}
+		else if (conventionalCascade && actualLevel < RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS)
+		{
+			// Conventional cascades use the same metadata for their light-space
+			// overlap and a level-independent world-space PCF width.
+			g_VirtualShadowPageOrigins[actualLevel] = XMFLOAT4(
+				0.0f,
+				0.0f,
+				pageGrid,
+				pageWorldSize);
+		}
 
 		const XMVECTOR lightPosition = XMVectorAdd(
 			target,
 			XMVectorScale(lightDirection, max(120.0f, radius * 3.0f)));
 		const XMMATRIX view = XMMatrixLookAtLH(lightPosition, target, lightUp);
+		const float shadowFarClip = max(300.0f, radius * 8.0f);
 		const XMMATRIX projection = XMMatrixOrthographicLH(
 			radius * 2.0f,
 			radius * 2.0f,
 			0.1f,
-			max(300.0f, radius * 8.0f));
+			shadowFarClip);
 		outLightViewProjection = XMMatrixTranspose(view * projection);
+		// The UI bias is calibrated against the 300 m reference projection.
+		// Convert it per level so the receiver offset remains constant in world
+		// space instead of doubling at coarse cascade/clipmap boundaries.
+		const float biasScale = (300.0f - 0.1f) / max(shadowFarClip - 0.1f, 0.0001f);
 		outShadowMapParams = XMFLOAT4(
 			1.0f / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE),
-			RendererSettings::GetShadowDepthBias(),
-			RendererSettings::GetShadowNormalBias(),
+			RendererSettings::GetShadowDepthBias() * biasScale,
+			RendererSettings::GetShadowNormalBias() * biasScale,
 			1.0f);
 	}
 
@@ -1463,12 +1483,12 @@ D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetCurrentLightConstantBufferAddress
 
 D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetCurrentLightTileIndexBufferAddress()
 {
-	const UINT frameIndex = RendererCore::GetFrameIndex();
-	if (frameIndex >= g_kFRAME_COUNT || !g_LightTileIndexBuffers[frameIndex])
-	{
-		return 0;
-	}
-	return g_LightTileIndexBuffers[frameIndex]->GetGPUVirtualAddress();
+	return LightInstanceBuilder::GetTileIndexAddress(RendererCore::GetFrameIndex());
+}
+
+D3D12_GPU_VIRTUAL_ADDRESS RendererResource::GetCurrentVolumetricLightIndexBufferAddress()
+{
+	return LightInstanceBuilder::GetVolumetricIndexAddress(RendererCore::GetFrameIndex());
 }
 
 const RendererResource::LightGridStats& RendererResource::GetLightGridStats()
@@ -1552,7 +1572,7 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 		g_DirectionalShadowMode,
 		static_cast<float>(g_VirtualShadowLevelCount),
 		static_cast<float>(RendererSettings::GetShadowFilterRadius()),
-		0.8f);
+		RendererSettings::GetShadowResolutionTransition());
 	constants.ShadowRuntimeGlobal = XMFLOAT4(
 		RendererSettings::GetContactShadowsEnabled() ? 1.0f : 0.0f,
 		RendererSettings::GetContactShadowLength(),
@@ -1821,6 +1841,8 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 	g_LightGridStats.GpuPhysicalLights = selectedPhysicalLights;
 	g_LightGridStats.GpuDecalLights = selectedDecalLights;
 	UINT enabledVolumetricLights = 0;
+	vector<LightInstanceBuilder::Input> lightInstances;
+	lightInstances.reserve(lightCount);
 	for (UINT lightIndex = 0; lightIndex < lightCount; ++lightIndex)
 	{
 		const VisibleLightCandidate& candidate = selectedCandidates[lightIndex];
@@ -1847,6 +1869,21 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 		{
 			++enabledVolumetricLights;
 		}
+		const bool decal = light.RenderMode == LightRenderMode::Decal;
+		const UINT slotBegin = decal ? physicalTileLightBudget : 0u;
+		const UINT slotEnd = decal
+			? physicalTileLightBudget + decalTileLightBudget
+			: physicalTileLightBudget;
+		if (light.AffectsOpaque || light.AffectsForward || enableVolumetrics)
+		{
+			LightInstanceBuilder::Input instance{};
+			instance.TileBounds = XMUINT4(
+				candidate.MinTileX, candidate.MinTileY,
+				candidate.MaxTileX, candidate.MaxTileY);
+			instance.Metadata = XMUINT4(
+				lightIndex, slotBegin, slotEnd, enableVolumetrics ? 1u : 0u);
+			lightInstances.push_back(instance);
+		}
 		constants.LightFlags[lightIndex] = XMFLOAT4(
 			light.AffectsOpaque ? 1.0f : 0.0f,
 			light.AffectsForward ? 1.0f : 0.0f,
@@ -1869,60 +1906,25 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 		}
 	}
 
+	const UINT slotsPerTile = physicalTileLightBudget + decalTileLightBudget;
 	bool lightGridAvailable =
 		tileCountX * tileCountY <= g_kMAX_LIGHT_TILE_COUNT &&
-		EnsureLightTileIndexBuffers(m_Device.Get());
+		slotsPerTile > 0 &&
+		LightInstanceBuilder::Build(
+			RendererCore::GetCommandList(), RendererCore::GetFrameIndex(),
+			lightInstances, tileCountX, tileCountY, slotsPerTile);
 	if (lightGridAvailable)
 	{
-		uint32_t* tileIndices = g_LightTileIndexData[m_FrameIndex];
-		const size_t activeIndexCount =
-			static_cast<size_t>(tileCountX) * tileCountY * g_kMAX_LIGHTS_PER_TILE;
-		fill(tileIndices, tileIndices + activeIndexCount, UINT_MAX);
-		for (UINT lightIndex = 0; lightIndex < lightCount; ++lightIndex)
-		{
-			const VisibleLightCandidate& candidate = selectedCandidates[lightIndex];
-			if (!candidate.Light.AffectsOpaque && !candidate.Light.AffectsForward)
-			{
-				continue;
-			}
-			for (UINT tileY = candidate.MinTileY; tileY <= candidate.MaxTileY; ++tileY)
-			{
-				for (UINT tileX = candidate.MinTileX; tileX <= candidate.MaxTileX; ++tileX)
-				{
-					const size_t tileBase =
-						(static_cast<size_t>(tileY) * tileCountX + tileX) *
-						g_kMAX_LIGHTS_PER_TILE;
-					const bool decal = candidate.Light.RenderMode == LightRenderMode::Decal;
-					const UINT slotBegin = decal ? physicalTileLightBudget : 0u;
-					const UINT slotEnd = decal
-						? physicalTileLightBudget + decalTileLightBudget
-						: physicalTileLightBudget;
-					UINT slot = slotBegin;
-					while (slot < slotEnd && tileIndices[tileBase + slot] != UINT_MAX)
-					{
-						++slot;
-					}
-					if (slot < slotEnd)
-					{
-						tileIndices[tileBase + slot] = lightIndex;
-						g_LightGridStats.MaxLightsPerTile = max(
-							g_LightGridStats.MaxLightsPerTile, slot + 1);
-					}
-					else
-					{
-						++g_LightGridStats.OverflowedTileAssignments;
-					}
-				}
-			}
-		}
+		g_LightGridStats.MaxLightsPerTile = slotsPerTile;
 	}
+	constants.LocalFogGlobal.y = static_cast<float>(enabledVolumetricLights);
 
 	constants.LightCount = XMFLOAT4(
 		static_cast<float>(lightCount),
 		lightGridAvailable ? static_cast<float>(tileCountX) : 0.0f,
 		lightGridAvailable ? static_cast<float>(tileCountY) : 0.0f,
 		lightGridAvailable
-			? static_cast<float>(physicalTileLightBudget + decalTileLightBudget)
+			? static_cast<float>(slotsPerTile)
 			: 0.0f);
 	auto* lightDst = static_cast<UINT8*>(m_pLightCbvDataBegin) +
 		RendererCore::GetFrameIndex() * g_kLIGHT_CB_ALIGNED_SIZE;
@@ -2155,13 +2157,10 @@ bool RendererResource::IsCurrentShadowPassVirtualPage()
 
 UINT RendererResource::GetCurrentShadowLodBias()
 {
-	if (!g_LightCacheValid) RebuildLightCache();
-	if (g_CurrentShadowPassIndex >= g_ShadowRenderPassCount)
-	{
-		return 0;
-	}
-	const ShadowRenderPass& pass = g_ShadowRenderPasses[g_CurrentShadowPassIndex];
-	return pass.VirtualPage ? min(pass.VirtualLevel, 2u) : 0u;
+	// Keep the caster mesh identical in every shadow pass.  Selecting a coarser
+	// mesh for outer virtual levels changes the silhouette exactly where the
+	// shadow-map resolution changes and produces visible LOD bands.
+	return 0;
 }
 
 bool RendererResource::IsVirtualShadowCacheHit()

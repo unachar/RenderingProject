@@ -17,9 +17,8 @@ cbuffer AaConstants : register(b4)
 
 float4 main(PSInputPostProcess input) : SV_TARGET
 {
-    float2 uv = input.TexCoord;
-    float4 current = CurrentColor.SampleLevel(LinearSampler, uv, 0);
-    current.rgb = ApplyHdrOutput(current.rgb);
+	float2 uv = input.TexCoord;
+	float4 current = CurrentColor.SampleLevel(LinearSampler, uv, 0);
 
     float2 velocity = VelocityBuffer.SampleLevel(LinearSampler, uv, 0).ba;
     float2 historyUv = uv - velocity;
@@ -34,7 +33,7 @@ float4 main(PSInputPostProcess input) : SV_TARGET
         for (int x = -1; x <= 1; ++x)
         {
             float2 sampleUv = saturate(uv + float2(x, y) * RcpFrame);
-            float3 sampleColor = ApplyHdrOutput(CurrentColor.SampleLevel(LinearSampler, sampleUv, 0).rgb);
+			float3 sampleColor = CurrentColor.SampleLevel(LinearSampler, sampleUv, 0).rgb;
             neighborhoodMin = min(neighborhoodMin, sampleColor);
             neighborhoodMax = max(neighborhoodMax, sampleColor);
         }

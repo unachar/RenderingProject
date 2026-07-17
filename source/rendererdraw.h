@@ -30,6 +30,7 @@ public:
 	static void ApplyPostProcess(const PostProcessComponent& config);
 	static void ApplyAntiAliasing();
 	static void EndScenePass();
+	static bool BuildOcclusionHierarchyAndBeginPhaseTwo();
 	static void RenderVelocityBuffer();
 	static void EndVelocityBuffer();
 	static void ResizeScene(UINT width, UINT height);

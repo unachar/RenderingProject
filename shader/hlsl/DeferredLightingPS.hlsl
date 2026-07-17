@@ -12,9 +12,11 @@ Texture2D<float4> EnvironmentTexture : register(t6);
 Texture2DArray<float> ShadowMapTexture : register(t7);
 Texture2D<float4> AtmosphereTexture : register(t8);
 Texture2D<float4> MonitorTexture : register(t12);
+Texture2D<float> VisibilityBitmaskAO : register(t13);
+Texture2D<float4> DeinterleavedSSGI : register(t14);
 
 SamplerState TextureSampler : register(s0);
-SamplerState ShadowSampler : register(s1);
+SamplerComparisonState ShadowSampler : register(s1);
 
 float IsMaterialClass(float value, float target)
 {
@@ -48,9 +50,10 @@ float SampleConventionalShadowPcf9(
     {
         if (tap >= tapCount) break;
         float2 offset = kernel[tap] * (float)max(filterRadius, 1) * texelSize;
-        float closestDepth = ShadowMapTexture.SampleLevel(
-            ShadowSampler, float3(shadowUv + offset, shadowLayer), 0);
-        visibility += currentDepth <= closestDepth ? 1.0f : 0.0f;
+        visibility += ShadowMapTexture.SampleCmpLevelZero(
+            ShadowSampler,
+            float3(shadowUv + offset, shadowLayer),
+            currentDepth);
     }
     return visibility / (float)tapCount;
 }
@@ -84,17 +87,7 @@ bool ProjectVirtualShadowLevel(
         return false;
     }
 
-    float pageGrid = max(VirtualShadowPageOrigins[level].z, 1.0f);
-    float residentGrid = max(ShadowDebugGlobal.z, 1.0f);
-    float firstResident = (pageGrid - residentGrid) * 0.5f;
-    float2 pagePosition = virtualUv * pageGrid;
-    float2 edgeDistance = min(
-        pagePosition - firstResident,
-        firstResident + residentGrid - pagePosition);
-    levelInterior = smoothstep(
-        0.12f,
-        max(VirtualShadowGlobal.w, 0.25f),
-        min(edgeDistance.x, edgeDistance.y));
+    levelInterior = VirtualShadowLevelInteriorCommon(level, virtualUv, worldPos);
     return true;
 }
 
@@ -121,9 +114,8 @@ bool SampleVirtualShadowLevel(
     // ResolveSingleLightCommon. Avoid repeating two reciprocal square roots for
     // every clipmap level tested by the same pixel.
     float nDotL = saturate(dot(normal, lightDir));
-    float levelBiasScale = 1.0f + (float)level * 0.55f;
     float currentDepth = lightNdc.z -
-        max(params.z * (1.0f - nDotL), params.w) * levelBiasScale;
+        max(params.z * (1.0f - nDotL), params.w);
 
     // Keep the kernel stable in world space to avoid self-shadow grain without
     // paying for temporal/spatial random rotation or a separate denoise pass.
@@ -162,7 +154,8 @@ bool SampleVirtualShadowLevel(
     for (int tap = 0; tap < 9; ++tap)
     {
         if (tap >= tapCount) break;
-        float2 offset = poisson[tap] * (float)max(filterRadius, 1);
+        float2 offset = poisson[tap] * (float)max(filterRadius, 1) *
+            ShadowWorldFilterScaleCommon(level);
         float2 tapVirtualUv = virtualUv + offset * params.y;
         float2 physicalUv;
         if (kernelInOnePage)
@@ -181,11 +174,10 @@ bool SampleVirtualShadowLevel(
             if (!tapResident) continue;
         }
 
-        float closestDepth = ShadowMapTexture.SampleLevel(
+        visibilitySum += ShadowMapTexture.SampleCmpLevelZero(
             ShadowSampler,
             float3(physicalUv, max(params.x, 0.0f)),
-            0);
-        visibilitySum += currentDepth <= closestDepth ? 1.0f : 0.0f;
+            currentDepth);
         sampleCount += 1.0f;
     }
 
@@ -257,6 +249,9 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
     if (VirtualShadowGlobal.x > 1.5f && directionalMultiLevel)
     {
         int levelCount = clamp((int)round(VirtualShadowGlobal.y), 1, 4);
+        float fineVisibility = 1.0f;
+        float fineInterior = 1.0f;
+        bool hasFine = false;
 
         [unroll]
         for (int level = 0; level < 4; ++level)
@@ -277,10 +272,28 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
             float currentDepth = lightNdc.z - max(
                 params.z * (1.0f - saturate(dot(normal, lightDir))),
                 params.w);
-            return SampleConventionalShadowPcf9(
-                shadowUv, params.x, params.y, currentDepth);
+            float levelVisibility = SampleConventionalShadowPcf9(
+                shadowUv,
+                params.x,
+                params.y * ShadowWorldFilterScaleCommon(level),
+                currentDepth);
+            float levelInterior = CascadedShadowLevelInteriorCommon(
+                level, shadowUv, worldPos);
+
+            if (!hasFine)
+            {
+                fineVisibility = levelVisibility;
+                fineInterior = levelInterior;
+                hasFine = true;
+                if (fineInterior >= 0.999f || level == levelCount - 1)
+                {
+                    return fineVisibility;
+                }
+                continue;
+            }
+            return lerp(levelVisibility, fineVisibility, fineInterior);
         }
-        return 1.0f;
+        return hasFine ? fineVisibility : 1.0f;
     }
 
     float4 lightClip = mul(float4(worldPos, 1.0f), LightViewProjections[lightIndex]);
@@ -873,6 +886,15 @@ float4 main(PSInputPostProcess input) : SV_Target
     //    rimTint = lerp(rimTint, rimTint * normalizedLightColor, rimLightBlend);
     //    baseColor.rgb += rimTint * rimMask * rimStrength * max(lightAttenuation, 0.25f);
     //}
+
+	float ambientVisibility = HdrFlags.z > 0.5f
+		? VisibilityBitmaskAO.SampleLevel(TextureSampler, input.TexCoord, 0)
+		: 1.0f;
+	float3 screenIndirect = HdrFlags.w > 0.5f
+		? DeinterleavedSSGI.SampleLevel(TextureSampler, input.TexCoord, 0).rgb
+		: 0.0f;
+	baseColor.rgb = baseColor.rgb * lerp(0.38f, 1.0f, ambientVisibility) +
+		screenIndirect * saturate(baseColor.rgb + 0.18f);
 
     baseColor.rgb =
         baseColor.rgb * fogTransmittance +

@@ -24,6 +24,7 @@ enum class GBufferType : uint32_t
 	SHADOW,
 	ATMOSPHERE,
 	VELOCITY,
+	VISIBILITY,
 	COUNT
 };
 
@@ -35,7 +36,8 @@ inline constexpr LPCWSTR g_GBufferTargetNames[] =
 	L"MaterialBuffer",
 	L"ShadowBuffer",
 	L"AtmosphereGBuffer",
-	L"VelocityBuffer"
+	L"VelocityBuffer",
+	L"VisibilityBuffer"
 };
 
 struct Vertex
@@ -96,9 +98,6 @@ enum class AntiAliasingMode
 	NONE = 0,
 	FXAA,
 	TAA,
-	MSAA2X,
-	MSAA4X,
-	MSAA8X,
 	COUNT
 };
 
@@ -219,13 +218,20 @@ protected:
 	static CD3DX12_RECT m_ShadowScissorRect;
 
 	static ComPtr<ID3D12Resource> m_SceneRenderTarget;
+	static ComPtr<ID3D12Resource> m_PostProcessRenderTarget;
+	static ComPtr<ID3D12Resource> m_PreUpscaleAaRenderTarget;
 	static ComPtr<ID3D12Resource> m_EditorSceneRenderTarget;
 	static ComPtr<ID3D12Resource> m_TransparentSceneCopy;
 	static ComPtr<ID3D12DescriptorHeap> m_SceneRtvHeap;
 	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_SceneRtvHandle;
+	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_PostProcessRtvHandle;
+	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_PreUpscaleAaRtvHandle;
 	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_EditorSceneRtvHandle;
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_SceneSrvHandle;
+	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_PostProcessSrvHandle;
+	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_PreUpscaleAaSrvHandle;
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_EditorSceneSrvHandle;
+	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_EditorSceneUavHandle;
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_TransparentSceneSrvHandle;
 	static ComPtr<ID3D12Resource> m_GBufferTargets[g_kGBUFFER_COUNT];
 	static CD3DX12_CPU_DESCRIPTOR_HANDLE m_GBufferRtvHandles[g_kGBUFFER_COUNT];
@@ -283,7 +289,8 @@ public:
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R8G8B8A8_UNORM,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R16G16B16A16_FLOAT
+		DXGI_FORMAT_R16G16B16A16_FLOAT,
+		DXGI_FORMAT_R32G32B32A32_UINT
 	};
 public:
 	
@@ -291,7 +298,7 @@ public:
 	static constexpr uint32_t g_kSCREEN_HEIGHT = 600;
 	static constexpr float g_kNEAR_CLIP = 0.1f;
 	static constexpr float g_kFAR_CLIP = 100.0f;
-	static constexpr float g_kDEFAULT_RESOLUTION_SCALE = 0.3f;
+	static constexpr float g_kDEFAULT_RESOLUTION_SCALE = 0.5f;
 
 
 	static constexpr UINT g_kCB_ALIGNED_SIZE = (sizeof(ConstantBuffer3D) + 255) & ~255;
@@ -333,6 +340,38 @@ public:
 	static constexpr UINT g_kTRANSPARENT_SCENE_SRV_INDEX = g_kAA_HISTORY_SRV_INDEX + 1;
 	static constexpr UINT g_kVELOCITY_CALCULATION_SRV_INDEX = g_kTRANSPARENT_SCENE_SRV_INDEX + 1;
 	static constexpr UINT g_kDEPTH_SRV_INDEX = g_kVELOCITY_CALCULATION_SRV_INDEX + 1;
+	static constexpr UINT g_kPOST_PROCESS_SRV_INDEX = g_kDEPTH_SRV_INDEX + 1;
+	static constexpr UINT g_kPRE_UPSCALE_AA_SRV_INDEX = g_kPOST_PROCESS_SRV_INDEX + 1;
+	static constexpr UINT g_kEDITOR_SCENE_UAV_INDEX = g_kPRE_UPSCALE_AA_SRV_INDEX + 1;
+	static constexpr UINT g_kFSR_SCRATCH_SRV_INDEX = g_kEDITOR_SCENE_UAV_INDEX + 1;
+	static constexpr UINT g_kFSR_SCRATCH_UAV_INDEX = g_kFSR_SCRATCH_SRV_INDEX + 1;
+	static constexpr UINT g_kNIS_COEF_SCALE_SRV_INDEX = g_kFSR_SCRATCH_UAV_INDEX + 1;
+	static constexpr UINT g_kNIS_COEF_USM_SRV_INDEX = g_kNIS_COEF_SCALE_SRV_INDEX + 1;
+	static constexpr UINT g_kGBUFFER_UAV_START_INDEX = g_kNIS_COEF_USM_SRV_INDEX + 1;
+	static constexpr UINT g_kSSAO_SRV_INDEX = g_kGBUFFER_UAV_START_INDEX + g_kGEOMETRY_GBUFFER_COUNT;
+	static constexpr UINT g_kSSGI_SRV_INDEX = g_kSSAO_SRV_INDEX + 1;
+	static constexpr UINT g_kSS_HISTORY_SRV_INDEX = g_kSSGI_SRV_INDEX + 1;
+	static constexpr UINT g_kSS_DEINTERLEAVED_DEPTH_SRV_INDEX = g_kSS_HISTORY_SRV_INDEX + 1;
+	static constexpr UINT g_kSS_DEINTERLEAVED_NORMAL_SRV_INDEX = g_kSS_DEINTERLEAVED_DEPTH_SRV_INDEX + 1;
+	static constexpr UINT g_kSS_DEINTERLEAVED_LIGHT_SRV_INDEX = g_kSS_DEINTERLEAVED_NORMAL_SRV_INDEX + 1;
+	static constexpr UINT g_kSS_DEINTERLEAVED_GI_SRV_INDEX = g_kSS_DEINTERLEAVED_LIGHT_SRV_INDEX + 1;
+	static constexpr UINT g_kSS_RAY_ORDER_SRV_INDEX = g_kSS_DEINTERLEAVED_GI_SRV_INDEX + 1;
+	static constexpr UINT g_kSSAO_UAV_INDEX = g_kSS_RAY_ORDER_SRV_INDEX + 1;
+	static constexpr UINT g_kSSGI_UAV_INDEX = g_kSSAO_UAV_INDEX + 1;
+	static constexpr UINT g_kSS_DEINTERLEAVED_DEPTH_UAV_INDEX = g_kSSGI_UAV_INDEX + 1;
+	static constexpr UINT g_kSS_DEINTERLEAVED_NORMAL_UAV_INDEX = g_kSS_DEINTERLEAVED_DEPTH_UAV_INDEX + 1;
+	static constexpr UINT g_kSS_DEINTERLEAVED_LIGHT_UAV_INDEX = g_kSS_DEINTERLEAVED_NORMAL_UAV_INDEX + 1;
+	static constexpr UINT g_kSS_DEINTERLEAVED_GI_UAV_INDEX = g_kSS_DEINTERLEAVED_LIGHT_UAV_INDEX + 1;
+	static constexpr UINT g_kSS_RAY_ORDER_UAV_INDEX = g_kSS_DEINTERLEAVED_GI_UAV_INDEX + 1;
+	static constexpr UINT g_kLOW_RES_DEPTH_SRV_INDEX = g_kSS_RAY_ORDER_UAV_INDEX + 1;
+	static constexpr UINT g_kHIZ_SRV_START_INDEX = g_kLOW_RES_DEPTH_SRV_INDEX + 1;
+	static constexpr UINT g_kHIZ_MAX_MIPS = 16;
+	static constexpr UINT g_kHIZ_UAV_START_INDEX = g_kHIZ_SRV_START_INDEX + 2;
+	static constexpr UINT g_kHIZ_MIP_SRV_START_INDEX = g_kHIZ_UAV_START_INDEX + 2 * g_kHIZ_MAX_MIPS;
+	// Keep a stable engine-owned descriptor range for the advanced compute paths.
+	static constexpr UINT g_kENGINE_DESCRIPTOR_END = g_kDEPTH_SRV_INDEX + 128;
+	static_assert(g_kHIZ_MIP_SRV_START_INDEX + 2 * g_kHIZ_MAX_MIPS <= g_kENGINE_DESCRIPTOR_END + 1,
+		"The Hi-Z descriptor range exceeds the engine-owned descriptor range.");
 	static constexpr UINT g_kMAX_DYNAMIC_VERTICES = 65536;
 
 	static DXGI_FORMAT GetSceneColorFormat() { return m_SceneColorFormat; }

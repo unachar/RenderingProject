@@ -14,6 +14,7 @@
 #include "imguimanager.h"
 #include "materialsystem.h"
 #include "toonoutlinebuilder.h"
+#include "meshshaderpipeline.h"
 #include <vector>
 #include <algorithm>
 #include "world.h"
@@ -341,6 +342,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 	}
 
 	const bool drawTransparent = (renderPass == RenderPass::OverlayScene);
+	const bool occlusionPhaseTwo = renderPass == RenderPass::OcclusionPhase2;
 	ID3D12GraphicsCommandList* pCommandList = RendererCore::GetCommandList();
 	if (!pCommandList)
 	{
@@ -466,9 +468,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
 		ID3D12PipelineState* lastPso = nullptr;
 		ID3D12PipelineState* outlinePso = PsoManager::GetOrCreateToonOutlinePso(drawTransparent);
-
 		for (const auto& dc : m_AnimDrawCalls)
 		{
+			TextureManager::TouchTexture(dc.srvIndex);
+			TextureManager::TouchTexture(dc.normalSrvIndex);
 			if (InstancingSystem::CanInstance(dc.EntityID))
 			{
 				continue;
@@ -541,6 +544,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
 				if (meshData.TextureIndex >= 0)
 				{
+					TextureManager::TouchTexture(meshData.TextureIndex);
 					CD3DX12_GPU_DESCRIPTOR_HANDLE meshSrvHandle(heapStart, meshData.TextureIndex, cbvIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, meshSrvHandle);
 				}
@@ -549,15 +553,15 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 					CD3DX12_GPU_DESCRIPTOR_HANDLE entitySrvHandle(heapStart, dc.srvIndex, cbvIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, entitySrvHandle);
 				}
-
-				if (!indirectBaseDrawn)
+				if (!indirectBaseDrawn && !occlusionPhaseTwo)
 				{
+					pCommandList->SetPipelineState(dc.pso);
 					pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
 					pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 					pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
 				}
 
-				if (outlinePso && ShouldDrawToonOutline(dc.EntityID) && ShouldDrawMeshToonOutline(material, m, meshData))
+				if (!occlusionPhaseTwo && outlinePso && ShouldDrawToonOutline(dc.EntityID) && ShouldDrawMeshToonOutline(material, m, meshData))
 				{
 					const float meshWidthScale = GetMeshToonOutlineWidthScale(material, m);
 					const int teoMode = GetTeoModeIndex(material);
@@ -737,9 +741,14 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
 		ID3D12PipelineState* lastPso = nullptr;
 		ID3D12PipelineState* outlinePso = PsoManager::GetOrCreateToonOutlinePso(drawTransparent);
+		const bool useMeshShaders = !drawTransparent &&
+			RendererCore::GetRenderMode() == RenderMode::DEFERRED &&
+			MeshShaderPipeline::IsSupported();
 
 		for (const auto& dc : m_StaticDrawCalls)
 		{
+			TextureManager::TouchTexture(dc.srvIndex);
+			TextureManager::TouchTexture(dc.normalSrvIndex);
 			const MaterialComponent& material = dc.material ? *dc.material : DefaultMaterial();
 			RendererResource::SetMaterial(dc.EntityID, material);
 
@@ -759,7 +768,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
 			const XMMATRIX world = XMLoadFloat4x4(
 				&ComponentManager::GetComponentUnchecked<TransformComponent>(dc.EntityID).WorldMatrix);
-			const bool indirectBaseDrawn = m_IndirectDraws && m_IndirectDraws->ExecutePrimary(
+			const bool indirectBaseDrawn = !useMeshShaders && m_IndirectDraws && m_IndirectDraws->ExecutePrimary(
 				pCommandList,
 				dc.model,
 				dc.EntityID,
@@ -776,6 +785,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
 				if (meshData.TextureIndex >= 0)
 				{
+					TextureManager::TouchTexture(meshData.TextureIndex);
 					CD3DX12_GPU_DESCRIPTOR_HANDLE meshSrvHandle(heapStart, meshData.TextureIndex, cbvIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, meshSrvHandle);
 				}
@@ -784,15 +794,21 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 					CD3DX12_GPU_DESCRIPTOR_HANDLE entitySrvHandle(heapStart, dc.srvIndex, cbvIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, entitySrvHandle);
 				}
+				const bool meshShaderDrawn = useMeshShaders && MeshShaderPipeline::Draw(
+					pCommandList,
+					meshData,
+					dc.model->GetAabbCenter(),
+					dc.model->GetAabbExtents());
 
-				if (!indirectBaseDrawn)
+				if (!meshShaderDrawn && !indirectBaseDrawn && !occlusionPhaseTwo)
 				{
+					pCommandList->SetPipelineState(dc.pso);
 					pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
 					pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 					pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
 				}
 
-				if (outlinePso && ShouldDrawToonOutline(dc.EntityID) && ShouldDrawMeshToonOutline(material, m, meshData))
+				if (!occlusionPhaseTwo && outlinePso && ShouldDrawToonOutline(dc.EntityID) && ShouldDrawMeshToonOutline(material, m, meshData))
 				{
 					const float meshWidthScale = GetMeshToonOutlineWidthScale(material, m);
 					const int teoMode = GetTeoModeIndex(material);

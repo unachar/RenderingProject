@@ -6,6 +6,8 @@
 #include "renderershader.h"
 #include "animationmodel.h"
 #include "staticmodel.h"
+#include "occlusionculling.h"
+#include "renderersettings.h"
 #include <unordered_map>
 #include <vector>
 
@@ -43,8 +45,14 @@ private:
         UINT CommandStrideBytes = 0;
         UINT CandidateCount = 0;
         UINT EnableFrustumCulling = 0;
-        UINT Padding0 = 0;
-        UINT Padding[20]{};
+		UINT Phase = 0;
+		UINT EnableOcclusion = 0;
+		UINT HiZWidth = 0;
+		UINT HiZHeight = 0;
+		UINT HiZMipCount = 0;
+		UINT PreviousHiZValid = 0;
+		UINT CurrentHiZValid = 0;
+		UINT Padding[14]{};
     };
     static_assert(sizeof(CullConstants) == 256);
 
@@ -56,6 +64,7 @@ private:
         UINT CommandCount = 0;
         UINT SourceMeshCount = 0;
         UINT CommandStride = 0;
+		bool Initialized = false;
     };
 
     struct PrimaryBatch
@@ -149,7 +158,7 @@ private:
             &heap,
             D3D12_HEAP_FLAG_NONE,
             &description,
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+			D3D12_RESOURCE_STATE_COMMON,
             nullptr,
             IID_PPV_ARGS(&output)));
     }
@@ -162,14 +171,25 @@ private:
             return false;
         }
 
-        CD3DX12_ROOT_PARAMETER parameters[4]{};
+		CD3DX12_DESCRIPTOR_RANGE hiZRanges[2]{};
+		hiZRanges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
+		hiZRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);
+		CD3DX12_ROOT_PARAMETER parameters[6]{};
         parameters[0].InitAsShaderResourceView(0, 0);
         parameters[1].InitAsUnorderedAccessView(0, 0);
         parameters[2].InitAsUnorderedAccessView(1, 0);
-        parameters[3].InitAsConstantBufferView(0, 0);
+		parameters[3].InitAsConstantBufferView(0, 0);
+		parameters[4].InitAsDescriptorTable(1, &hiZRanges[0]);
+		parameters[5].InitAsDescriptorTable(1, &hiZRanges[1]);
+		CD3DX12_STATIC_SAMPLER_DESC hiZSampler(
+			0,
+			D3D12_FILTER_MIN_MAG_MIP_POINT,
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+			D3D12_TEXTURE_ADDRESS_MODE_CLAMP);
 
         CD3DX12_ROOT_SIGNATURE_DESC rootDescription{};
-        rootDescription.Init(_countof(parameters), parameters, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE);
+		rootDescription.Init(_countof(parameters), parameters, 1, &hiZSampler, D3D12_ROOT_SIGNATURE_FLAG_NONE);
 
         ComPtr<ID3DBlob> serialized;
         ComPtr<ID3DBlob> errors;
@@ -462,7 +482,8 @@ private:
         const XMFLOAT3& localCenter,
         const XMFLOAT3& localExtents,
         bool enableFrustumCulling,
-        ID3D12PipelineState* graphicsPipelineState)
+		ID3D12PipelineState* graphicsPipelineState,
+		bool enableOcclusion = false)
     {
         if (!commandList || !signature || !graphicsPipelineState ||
             entity >= g_kMAX_ENTITIES || !m_MappedCullConstants)
@@ -472,7 +493,7 @@ private:
 
         D3D12_RESOURCE_BARRIER countToCopy = CD3DX12_RESOURCE_BARRIER::Transition(
             batch.CountBuffer.Get(),
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+			batch.Initialized ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_COMMON,
             D3D12_RESOURCE_STATE_COPY_DEST);
         commandList->ResourceBarrier(1, &countToCopy);
         commandList->CopyBufferRegion(batch.CountBuffer.Get(), 0, m_ZeroCounterUpload.Get(), 0, sizeof(UINT));
@@ -503,7 +524,14 @@ private:
         constants.LocalExtents = XMFLOAT4(localExtents.x, localExtents.y, localExtents.z, 0.0f);
         constants.CommandStrideBytes = batch.CommandStride;
         constants.CandidateCount = batch.CommandCount;
-        constants.EnableFrustumCulling = enableFrustumCulling ? 1u : 0u;
+		constants.EnableFrustumCulling = enableFrustumCulling ? 1u : 0u;
+		constants.Phase = OcclusionCulling::GetPhase();
+		constants.EnableOcclusion = enableOcclusion && RendererSettings::GetTwoPhaseOcclusionEnabled() ? 1u : 0u;
+		constants.HiZWidth = OcclusionCulling::GetWidth();
+		constants.HiZHeight = OcclusionCulling::GetHeight();
+		constants.HiZMipCount = OcclusionCulling::GetMipCount();
+		constants.PreviousHiZValid = OcclusionCulling::HasPrevious() ? 1u : 0u;
+		constants.CurrentHiZValid = OcclusionCulling::HasCurrent() ? 1u : 0u;
         memcpy(
             m_MappedCullConstants + constantIndex * sizeof(CullConstants),
             &constants,
@@ -514,9 +542,11 @@ private:
         commandList->SetComputeRootShaderResourceView(0, batch.CandidateBuffer->GetGPUVirtualAddress());
         commandList->SetComputeRootUnorderedAccessView(1, batch.VisibleBuffer->GetGPUVirtualAddress());
         commandList->SetComputeRootUnorderedAccessView(2, batch.CountBuffer->GetGPUVirtualAddress());
-        commandList->SetComputeRootConstantBufferView(
+		commandList->SetComputeRootConstantBufferView(
             3,
-            m_CullConstantsUpload->GetGPUVirtualAddress() + constantIndex * sizeof(CullConstants));
+			m_CullConstantsUpload->GetGPUVirtualAddress() + constantIndex * sizeof(CullConstants));
+		commandList->SetComputeRootDescriptorTable(4, OcclusionCulling::GetPreviousSrv());
+		commandList->SetComputeRootDescriptorTable(5, OcclusionCulling::GetCurrentSrv());
         commandList->Dispatch((batch.CommandCount + 63) / 64, 1, 1);
 
         D3D12_RESOURCE_BARRIER uavBarriers[2] =
@@ -561,6 +591,7 @@ private:
                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
         };
         commandList->ResourceBarrier(_countof(toUav), toUav);
+		batch.Initialized = true;
         return true;
     }
 
@@ -634,7 +665,8 @@ public:
                 model->GetAabbCenter(),
                 model->GetAabbExtents(),
                 true,
-                graphicsPipelineState);
+				graphicsPipelineState,
+				true);
         }
         return submitted;
     }

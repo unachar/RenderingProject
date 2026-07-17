@@ -139,6 +139,10 @@ void SystemManager::RenderFlow()
 				RenderProfiler::ScopedEvent profile("GBuffer / Opaque", commandList);
 				RendererDraw::BeginScenePass();
 				DrawSystem(RenderPass::PrimaryScene, false);
+				if (RendererDraw::BuildOcclusionHierarchyAndBeginPhaseTwo())
+				{
+					DrawSystem(RenderPass::OcclusionPhase2, false);
+				}
 				RendererDraw::EndScenePass();
 			}
 

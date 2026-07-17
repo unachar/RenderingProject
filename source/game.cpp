@@ -53,6 +53,9 @@ void Game::Create()
 
 void Game::Uninit()
 {
+	// Model and system resources can still be referenced by the final submitted
+	// frame. Drain the direct queue before any resource owner starts teardown.
+	RendererCore::WaitForGpuIdle();
 	SystemManager::Uninit();
 	ModelManager::Uninit();
 	ComponentManager::Uninit();

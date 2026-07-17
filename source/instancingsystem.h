@@ -50,6 +50,7 @@ private:
     UINT m_FrameIndex = UINT_MAX;
     UINT m_FrameCursor = 0;
 	UINT m_DirectFrameCursor = 0;
+	bool m_GpuCullingInitialized = false;
     static inline bool s_Available = false;
 
 	bool CreateGpuCullingResources(ID3D12Device* device);

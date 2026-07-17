@@ -13,6 +13,7 @@
 #include "renderersettings.h"
 #include "localheightfog.h"
 #include "debugsystem.h"
+#include "meshshaderpipeline.h"
 #include "animator.h"
 #include <fstream>
 #include <sstream>
@@ -29,6 +30,72 @@ namespace
 {
 	constexpr float kRadToDeg = 180.0f / XM_PI;
 	constexpr float kDegToRad = XM_PI / 180.0f;
+
+	void DrawUpscaleControls()
+	{
+		const char* modes[] = { "Bilateral", "AMD FidelityFX FSR 1", "NVIDIA Image Scaling" };
+		int mode = static_cast<int>(RendererSettings::GetUpscaleMode());
+		ImGui::SetNextItemWidth(-1.0f);
+		if (ImGui::Combo("アップスケーラー", &mode, modes, IM_ARRAYSIZE(modes)))
+		{
+			RendererSettings::SetUpscaleMode(static_cast<UpscaleMode>(mode));
+			RendererState::m_TaaFrameIndex = 0;
+			if (mode == static_cast<int>(UpscaleMode::Nis) && RendererCore::GetResolutionScale() < 0.5f)
+			{
+				RendererCore::SetResolutionScale(0.5f);
+				RendererSettings::SetUpscaleQuality(UpscaleQuality::Custom);
+			}
+		}
+
+		const bool vendorUpscaler = mode != static_cast<int>(UpscaleMode::Bilateral);
+		UpscaleQuality quality = RendererSettings::GetUpscaleQuality();
+		if (vendorUpscaler)
+		{
+			const char* qualities[] = { "Ultra Quality (1.3x)", "Quality (1.5x)", "Balanced (1.7x)", "Performance (2.0x)", "Custom" };
+			int qualityIndex = static_cast<int>(quality);
+			ImGui::SetNextItemWidth(-1.0f);
+			if (ImGui::Combo("品質", &qualityIndex, qualities, IM_ARRAYSIZE(qualities)))
+			{
+				quality = static_cast<UpscaleQuality>(qualityIndex);
+				RendererSettings::SetUpscaleQuality(quality);
+				if (quality != UpscaleQuality::Custom)
+				{
+					RendererCore::SetResolutionScale(RendererSettings::GetUpscaleQualityScale(quality));
+				}
+			}
+		}
+
+		float resolutionScale = RendererCore::GetResolutionScale();
+		int resolutionPercent = static_cast<int>(roundf(resolutionScale * 100.0f));
+		ImGui::BeginDisabled(vendorUpscaler && quality != UpscaleQuality::Custom);
+		const int minimumResolutionPercent =
+			mode == static_cast<int>(UpscaleMode::Nis) ? 50 : 25;
+		if (ImGui::SliderInt("内部解像度", &resolutionPercent, minimumResolutionPercent, 100, "%d%%"))
+		{
+			RendererCore::SetResolutionScale(static_cast<float>(resolutionPercent) / 100.0f);
+			if (vendorUpscaler) RendererSettings::SetUpscaleQuality(UpscaleQuality::Custom);
+		}
+		ImGui::EndDisabled();
+
+		if (mode == static_cast<int>(UpscaleMode::Fsr1))
+		{
+			float sharpness = RendererSettings::GetFsrSharpness();
+			if (ImGui::SliderFloat("RCAS シャープネス", &sharpness, 0.0f, 2.0f, "%.2f stops"))
+			{
+				RendererSettings::SetFsrSharpness(sharpness);
+			}
+			ImGui::TextDisabled("EASU + RCAS / 入力に FXAA を自動適用");
+		}
+		else if (mode == static_cast<int>(UpscaleMode::Nis))
+		{
+			float sharpness = RendererSettings::GetNisSharpness();
+			if (ImGui::SliderFloat("NIS シャープネス", &sharpness, 0.0f, 1.0f, "%.2f"))
+			{
+				RendererSettings::SetNisSharpness(sharpness);
+			}
+			ImGui::TextDisabled("6-tap scaler + directional sharpening / 50-100%% / 入力に FXAA を自動適用");
+		}
+	}
 
 	XMMATRIX BuildWorldMatrix(const TransformComponent& transform)
 	{
@@ -489,6 +556,7 @@ void ImGuiManager::Update()
 		LoadProjectSettings();
 		m_ProjectSettingsLoaded = true;
 	}
+
 	ImGui_ImplDX12_NewFrame();
 	ImGui_ImplWin32_NewFrame();
 	ImGui::NewFrame();
@@ -514,18 +582,9 @@ void ImGuiManager::Update()
 		!ImGuizmo::IsUsing();
 	if (canSwitchGizmo)
 	{
-		if (ImGui::IsKeyPressed(ImGuiKey_Q, false))
-		{
-			m_GizmoOperation = 0;
-		}
-		if (ImGui::IsKeyPressed(ImGuiKey_W, false))
-		{
-			m_GizmoOperation = 1;
-		}
-		if (ImGui::IsKeyPressed(ImGuiKey_E, false))
-		{
-			m_GizmoOperation = 2;
-		}
+		if (ImGui::IsKeyPressed(ImGuiKey_Q, false)) m_GizmoOperation = 0;
+		if (ImGui::IsKeyPressed(ImGuiKey_W, false)) m_GizmoOperation = 1;
+		if (ImGui::IsKeyPressed(ImGuiKey_E, false)) m_GizmoOperation = 2;
 	}
 	if (m_SelectedEntity != g_kINVALID_ENTITY &&
 		Registry::IsAlive(m_SelectedEntity) &&
@@ -547,6 +606,7 @@ void ImGuiManager::Update()
 	{
 		DeleteSelectedEntity();
 	}
+
 	DrawDockSpace();
 	DrawSceneViewWindow();
 	PickEntityFromMouse();
@@ -556,491 +616,129 @@ void ImGuiManager::Update()
 		DrawHierarchyWindow();
 		DrawInspectorWindow();
 	}
-	if (m_ShowAssetBrowser)
-	{
-		DrawAssetBrowserWindow();
-	}
-	if (m_ShowRenderDebugger)
-	{
-		DrawRenderDebuggerWindow();
-	}
-	if (m_ShowGBufferWindow)
-	{
-		DrawGBufferWindow();
-	}
-	if (m_ShowLogWindow)
-	{
-		DrawLogWindow();
-	}
-	if (m_ShowPerformanceWindow)
-	{
-		DrawPerformanceWindow();
-	}
-	if (m_ShowMaterialEditorWindow)
-	{
-		DrawMaterialEditorWindow();
-	}
-	if (m_ShowRimSettingsWindow)
-	{
-		DrawRimSettingsWindow();
-	}
-	if (m_ShowMeshOutlineWindow)
-	{
-		DrawMeshOutlineWindow();
-	}
-	if (m_ShowMeshShadingWindow)
-	{
-		DrawMeshShadingWindow();
-	}
-	if (m_ShowAtmosphereWindow)
-	{
-		DrawAtmosphereWindow();
-	}
-	if (m_ShowProjectSettingsWindow)
-	{
-		DrawProjectSettingsWindow();
-	}
+	if (m_ShowAssetBrowser) DrawAssetBrowserWindow();
+	if (m_ShowRenderDebugger) DrawRenderDebuggerWindow();
+	if (m_ShowGBufferWindow) DrawGBufferWindow();
+	if (m_ShowLogWindow) DrawLogWindow();
+	if (m_ShowPerformanceWindow) DrawPerformanceWindow();
+	if (m_ShowMaterialEditorWindow) DrawMaterialEditorWindow();
+	if (m_ShowRimSettingsWindow) DrawRimSettingsWindow();
+	if (m_ShowMeshOutlineWindow) DrawMeshOutlineWindow();
+	if (m_ShowMeshShadingWindow) DrawMeshShadingWindow();
+	if (m_ShowAtmosphereWindow) DrawAtmosphereWindow();
+	if (m_ShowProjectSettingsWindow) DrawProjectSettingsWindow();
 
-	if (!m_ShowAdjustmentPanel)
+	if (m_ShowAdjustmentPanel)
 	{
-		FinalizeUndoCaptureIfIdle();
-		return;
-	}
-ImGui::Begin("調整");
-
-	if (RendererCore::GetRequestedRenderMode() == RenderMode::DEFERRED)
-	{
-		m_renderMode = 1;
-	}
-	else
-	{
-		Debug::Log("不明な描画モード: %d", static_cast<int>(RendererCore::GetRequestedRenderMode()));
-	}
-
-	if (Camera::GetCameraPostProcess() == PostProcessType::NONE)
-	{
-		m_cameraPostProcess = 0;
-	}
-	else if (Camera::GetCameraPostProcess() == PostProcessType::BLUR)
-	{
-		m_cameraPostProcess = 1;
-	}
-	else if (Camera::GetCameraPostProcess() == PostProcessType::SEPIA)
-	{
-		m_cameraPostProcess = 2;
-	}
-	else if (Camera::GetCameraPostProcess() == PostProcessType::GRAYSCALE)
-	{
-		m_cameraPostProcess = 3;
-	}
-	else if (Camera::GetCameraPostProcess() == PostProcessType::INVERT)
-	{
-		m_cameraPostProcess = 4;
-	}
-	else
-	{
-		Debug::Log("不明なカメラポストプロセス: %d", static_cast<int>(Camera::GetCameraPostProcess()));
-	}
-
-	ImGui::TextUnformatted("描画モード: Deferred");
-
-	if (ImGui::Combo("カメラポストプロセス", &m_cameraPostProcess, m_cameraPostProcessModeItems, IM_ARRAYSIZE(m_cameraPostProcessModeItems)))
-	{
-		if (m_cameraPostProcess == 0)
+		ImGui::SetNextWindowSize(ImVec2(360.0f, 520.0f), ImGuiCond_FirstUseEver);
+		if (ImGui::Begin("レンダーコントロール", &m_ShowAdjustmentPanel))
 		{
-			Camera::SetCameraPostProcess(PostProcessType::NONE);
-		}
-		else if (m_cameraPostProcess == 1)
-		{
-			Camera::SetCameraPostProcess(PostProcessType::BLUR);
-		}
-		else if (m_cameraPostProcess == 2)
-		{
-			Camera::SetCameraPostProcess(PostProcessType::SEPIA);
-		}
-		else if (m_cameraPostProcess == 3)
-		{
-			Camera::SetCameraPostProcess(PostProcessType::GRAYSCALE);
-		}
-		else if (m_cameraPostProcess == 4)
-		{
-			Camera::SetCameraPostProcess(PostProcessType::INVERT);
-		}
-		else
-		{
-			Debug::Log("不明なカメラポストプロセス: %d", m_cameraPostProcess);
-		}
-	}
+			const float fps = World::GetFrameRate();
+			const ImVec4 healthyColor = fps >= 55.0f
+				? ImVec4(0.34f, 0.86f, 0.62f, 1.0f)
+				: (fps >= 30.0f ? ImVec4(0.96f, 0.72f, 0.28f, 1.0f) : ImVec4(0.96f, 0.38f, 0.38f, 1.0f));
+			ImGui::TextColored(ImVec4(0.28f, 0.78f, 0.92f, 1.0f), "DIRECTX 12  /  DEFERRED");
+			ImGui::SameLine();
+			ImGui::TextColored(healthyColor, "%.1f FPS", fps);
+			ImGui::TextDisabled(
+				"%u x %u  |  internal %u x %u  |  %.2f ms",
+				RendererCore::GetWidth(),
+				RendererCore::GetHeight(),
+				RendererCore::GetSceneWidth(),
+				RendererCore::GetSceneHeight(),
+				World::GetFrameTimeMs());
 
-	m_antiAliasingMode = static_cast<int>(RendererState::m_AntiAliasingMode);
-	if (ImGui::Combo("アンチエイリアシング", &m_antiAliasingMode, m_antiAliasingModeItems, IM_ARRAYSIZE(m_antiAliasingModeItems)))
-	{
-		if (m_antiAliasingMode >= 0 && m_antiAliasingMode < static_cast<int>(AntiAliasingMode::COUNT))
-		{
-			RendererState::m_AntiAliasingMode = static_cast<AntiAliasingMode>(m_antiAliasingMode);
-			RendererState::m_TaaFrameIndex = 0;
-		}
-	}
-
-	ImGui::SeparatorText("セクション");
-	if (ImGui::Checkbox("HDR有効", &m_HdrEnabled))
-	{
-		RendererCore::SetHdr(m_HdrEnabled);
-	}
-	ImGui::Checkbox("ACESトーンマップ", &m_ToneMapEnabled);
-	ImGui::SetNextItemWidth(200.0f);
-	ImGui::SliderFloat("露光", &m_Exposure, 0.01f, 10.0f, "%.2f");
-
-	ImGui::SeparatorText("セクション");
-	ImGui::SetNextItemWidth(200.0f);
-	float ppIntensity = Camera::GetCameraPostProcessIntensity();
-	if (ImGui::SliderFloat("ポストプロセス強度", &ppIntensity, 0.01f, 1.0f, "%.2f"))
-	{
-		Camera::SetCameraPostProcessIntensity(ppIntensity);
-	}
-
-	ImGui::Checkbox("Gバッファ", &m_ShowGBufferWindow);
-
-	ImGui::SeparatorText("パフォーマンス");
-	ImGui::Text("FPS: %.1f", World::GetFrameRate());
-	DrawFpsMeter();
-	ImGui::Text("Frame: %.2f ms", World::GetFrameTimeMs());
-	bool vsyncEnabled = World::IsVSyncEnabled();
-	if (ImGui::Checkbox("垂直同期", &vsyncEnabled))
-	{
-		World::SetVSyncEnabled(vsyncEnabled);
-	}
-	bool fixedFrameRateEnabled = World::IsFixedFrameRateEnabled();
-	if (ImGui::Checkbox("FPS固定", &fixedFrameRateEnabled))
-	{
-		World::SetFixedFrameRateEnabled(fixedFrameRateEnabled);
-	}
-	int targetFrameRate = World::GetTargetFrameRate();
-	ImGui::SetNextItemWidth(120.0f);
-	if (ImGui::SliderInt("目標FPS", &targetFrameRate, 15, 360))
-	{
-		World::SetTargetFrameRate(targetFrameRate);
-	}
-	ImGui::TextDisabled("VSync有効時はモニターの更新間隔も上限になります");
-	ImGui::End();
-	FinalizeUndoCaptureIfIdle();
-	return;
-
-	LightComponent* activeLight = nullptr;
-	for (EntityID entity : World::GetView<LightComponent>())
-	{
-		auto& candidate = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-		if (candidate.IsActive)
-		{
-			activeLight = &candidate;
-			break;
-		}
-		if (!activeLight)
-		{
-			activeLight = &candidate;
-		}
-	}
-	XMFLOAT3 lightDirection = activeLight ? activeLight->Direction : XMFLOAT3(0.0f, 1.0f, 0.0f);
-	XMFLOAT4 lightColor = activeLight ? activeLight->Color : XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	float lightIntensity = activeLight ? activeLight->Intensity : 1.0f;
-	float lightRange = activeLight ? activeLight->Range : 1.0f;
-
-	EntityID materialEntity = g_kINVALID_ENTITY;
-	if (m_SelectedEntity != g_kINVALID_ENTITY &&
-		Registry::IsAlive(m_SelectedEntity) &&
-		ComponentManager::HasComponent<MaterialComponent>(m_SelectedEntity))
-	{
-		materialEntity = m_SelectedEntity;
-	}
-	else
-	{
-		auto materialEntities = World::GetView<MaterialComponent>();
-		for (EntityID entity : materialEntities)
-		{
-			materialEntity = entity;
-			break;
-		}
-	}
-	MaterialComponent* material = (materialEntity != g_kINVALID_ENTITY)
-		? &ComponentManager::GetComponentUnchecked<MaterialComponent>(materialEntity)
-		: nullptr;
-	EntitySnapshot materialBefore = (materialEntity != g_kINVALID_ENTITY) ? CaptureEntity(materialEntity) : EntitySnapshot{};
-	auto captureMaterialUndo = [&]()
-		{
-			if (materialEntity != g_kINVALID_ENTITY)
+			ImGui::Spacing();
+			ImGui::SeparatorText("映像パイプライン");
+			m_cameraPostProcess = static_cast<int>(Camera::GetCameraPostProcess());
+			if (m_cameraPostProcess < 0 || m_cameraPostProcess >= static_cast<int>(PostProcessType::COUNT))
 			{
-				BeginUndoCapture(materialEntity, materialBefore);
+				m_cameraPostProcess = 0;
 			}
-		};
-
-	MaterialComponent defaultMaterial{};
-	MaterialComponent& materialValues = material ? *material : defaultMaterial;
-	float normalBlend = materialValues.NormalBlend;
-	float normalBias = materialValues.NormalBias;
-	float baseSaturation = materialValues.BaseSaturation;
-	float baseBrightness = materialValues.BaseBrightness;
-	float shadowThreshold = materialValues.ShadowThreshold;
-	float shadowSoftness = materialValues.ShadowSoftness;
-	float shadowStrength = materialValues.ShadowStrength;
-	float midStrength = materialValues.MidStrength;
-	float litStrength = materialValues.LitStrength;
-	float rimStrength = materialValues.RimStrength;
-	float rimThreshold = materialValues.RimThreshold;
-	float specularStrength = materialValues.SpecularStrength;
-	float specularThreshold = materialValues.SpecularThreshold;
-	float kawaiiBlend = materialValues.KawaiiBlend;
-	float skinScatterStrength = materialValues.SkinScatterStrength;
-	float skinScatterWrap = materialValues.SkinScatterWrap;
-	float skinBacklightStrength = materialValues.SkinBacklightStrength;
-	float skinRimScatterStrength = materialValues.SkinRimScatterStrength;
-	float skinOilSpecularStrength = materialValues.SkinOilSpecularStrength;
-	float skinShadowScatter = materialValues.SkinShadowScatter;
-	float castShadowThreshold = materialValues.CastShadowThreshold;
-	float castShadowSoftness = materialValues.CastShadowSoftness;
-
-	bool changed = false;
-ImGui::SeparatorText("セクション");
-	if (changed |= ImGui::DragFloat3("ライト方向", &lightDirection.x, 0.01f, -1.0f, 1.0f))
-	{
-		if (activeLight) activeLight->Direction = lightDirection;
-	}
-	if (changed |= ImGui::ColorEdit3("ライト色", &lightColor.x))
-	{
-		if (activeLight) activeLight->Color = lightColor;
-	}
-if (changed |= ImGui::DragFloat("ライト強度", &lightIntensity, 0.01f, 0.0f, 5.0f))
-	{
-		if (activeLight) activeLight->Intensity = lightIntensity;
-	}
-if (ImGui::DragFloat("ライト範囲", &lightRange, 0.05f, 0.01f, 8.0f))
-	{
-		if (activeLight) activeLight->Range = lightRange;
-	}
-
-	ImGui::SeparatorText("セクション");
-	if (!material)
-	{
-		ImGui::BeginDisabled();
-	}
-	if (ImGui::SliderFloat("法線ブレンド", &normalBlend, 0.0f, 1.0f))
-	{
-		captureMaterialUndo();
-		material->NormalBlend = normalBlend;
-	}
-	if (ImGui::SliderFloat("法線バイアス", &normalBias, -1.0f, 1.0f))
-	{
-		captureMaterialUndo();
-		material->NormalBias = normalBias;
-	}
-	if (ImGui::SliderFloat("ベース彩度", &baseSaturation, 0.0f, 3.0f))
-	{
-		captureMaterialUndo();
-		material->BaseSaturation = baseSaturation;
-	}
-if (ImGui::SliderFloat("ベース明度", &baseBrightness, 0.0f, 3.0f))
-	{
-		captureMaterialUndo();
-		material->BaseBrightness = baseBrightness;
-	}
-if (ImGui::SliderFloat("かわいいブレンド", &kawaiiBlend, 0.0f, 1.0f))
-	{
-		captureMaterialUndo();
-		material->KawaiiBlend = kawaiiBlend;
-	}
-
-	if (ImGui::TreeNode("影"))
-	{
-		if (ImGui::SliderFloat("影しきい値", &shadowThreshold, 0.0f, 1.0f))
-		{
-			captureMaterialUndo();
-			material->ShadowThreshold = shadowThreshold;
-		}
-		if (ImGui::SliderFloat("影ぼかし", &shadowSoftness, 0.0f, 0.5f))
-		{
-			captureMaterialUndo();
-			material->ShadowSoftness = shadowSoftness;
-		}
-		if (ImGui::SliderFloat("影の強さ", &shadowStrength, 0.0f, 2.0f))
-		{
-			captureMaterialUndo();
-			material->ShadowStrength = shadowStrength;
-		}
-		if (ImGui::SliderFloat("中間色の強さ", &midStrength, 0.0f, 2.0f))
-		{
-			captureMaterialUndo();
-			material->MidStrength = midStrength;
-		}
-		if (ImGui::SliderFloat("明部の強さ", &litStrength, 0.0f, 2.0f))
-		{
-			captureMaterialUndo();
-			material->LitStrength = litStrength;
-		}
-		if (ImGui::SliderFloat("影しきい値", &castShadowThreshold, 0.0f, 1.0f))
-		{
-			captureMaterialUndo();
-			material->CastShadowThreshold = castShadowThreshold;
-		}
-		if (ImGui::SliderFloat("影ぼかし", &castShadowSoftness, 0.0f, 0.5f))
-		{
-			captureMaterialUndo();
-			material->CastShadowSoftness = castShadowSoftness;
-		}
-		ImGui::TreePop();
-	}
-
-		if (ImGui::TreeNode("ハイライト"))
-		{
-		if (ImGui::SliderFloat("リム強度", &rimStrength, 0.0f, 2.0f))
-		{
-			captureMaterialUndo();
-			material->RimStrength = rimStrength;
-		}
-		if (ImGui::SliderFloat("リムしきい値", &rimThreshold, 0.0f, 1.0f))
-		{
-			captureMaterialUndo();
-			material->RimThreshold = rimThreshold;
-		}
-		if (ImGui::SliderFloat("スペキュラ強度", &specularStrength, 0.0f, 2.0f))
-		{
-			captureMaterialUndo();
-			material->SpecularStrength = specularStrength;
-		}
-		if (ImGui::SliderFloat("スペキュラしきい値", &specularThreshold, 0.0f, 1.0f))
-		{
-			captureMaterialUndo();
-			material->SpecularThreshold = specularThreshold;
-		}
-		ImGui::TreePop();
-		}
-	
-	if (ImGui::TreeNode("肌"))
-	{
-		if (ImGui::SliderFloat("肌散乱強度", &skinScatterStrength, 0.0f, 3.0f))
-		{
-			captureMaterialUndo();
-			material->SkinScatterStrength = skinScatterStrength;
-		}
-		if (ImGui::SliderFloat("肌散乱ラップ", &skinScatterWrap, 0.0f, 1.0f))
-		{
-			captureMaterialUndo();
-			material->SkinScatterWrap = skinScatterWrap;
-		}
-		if (ImGui::SliderFloat("肌逆光強度", &skinBacklightStrength, 0.0f, 3.0f))
-		{
-			captureMaterialUndo();
-			material->SkinBacklightStrength = skinBacklightStrength;
-		}
-		if (ImGui::SliderFloat("肌リム散乱強度", &skinRimScatterStrength, 0.0f, 3.0f))
-		{
-			captureMaterialUndo();
-			material->SkinRimScatterStrength = skinRimScatterStrength;
-		}
-		if (ImGui::SliderFloat("スペキュラ強度", &skinOilSpecularStrength, 0.0f, 3.0f))
-		{
-			captureMaterialUndo();
-			material->SkinOilSpecularStrength = skinOilSpecularStrength;
-		}
-		if (ImGui::SliderFloat("肌影散乱", &skinShadowScatter, 0.0f, 1.0f))
-		{
-			captureMaterialUndo();
-			material->SkinShadowScatter = skinShadowScatter;
-		}
-		ImGui::TreePop();
-	}
-	if (!material)
-	{
-		ImGui::EndDisabled();
-	}
-
-	float cameraPostProcessIntensity = Camera::GetCameraPostProcessIntensity();
-	ImGui::SeparatorText("セクション");
-	if (ImGui::SliderFloat("ポストプロセス強度", &cameraPostProcessIntensity, 0.01f, 1.0f))
-	{
-		Camera::SetCameraPostProcessIntensity(cameraPostProcessIntensity);
-	}
-
-	if (ImGui::Button("ライトをリセット"))
-	{
-		if (activeLight)
-		{
-			activeLight->Type = LightType::Directional;
-			activeLight->Direction = { 0.0f, 1.0f, 0.0f };
-			activeLight->Color = { 1.0f, 1.0f, 1.0f, 1.0f };
-			activeLight->Intensity = 1.0f;
-			activeLight->Range = 1.0f;
-			activeLight->InnerAngle = 18.0f;
-			activeLight->OuterAngle = 32.0f;
-			activeLight->VolumeDensity = 0.35f;
-			activeLight->VolumeShape = 0;
-			activeLight->IsActive = true;
-		}
-	}
-
-	if (RenderMode::DEFERRED == RendererCore::GetRenderMode())
-	{
-		ImGui::SeparatorText("セクション");
-		ImGui::BeginChild("Gバッファ", ImVec2(0, 600), true);
-
-		const ImVec2 previewSize(320.0f, 180.0f);
-		const float cellSpacing = 12.0f;
-		const int columns = 2;
-
-		const struct
-		{
-			const char* Label;
-			GBufferType Type;
-		}
-
-		cells[] =
-		{
-		{ "ベースカラー",     GBufferType::BASE_COLOR },
-		{ "法線",       GBufferType::NORMAL },
-		{ "深度",       GBufferType::DEPTH },
-		{ "マテリアル", GBufferType::MATERIAL },
-		{ "影", GBufferType::SHADOW },
-		{ "大気", GBufferType::ATMOSPHERE },
-		{ "ベロシティ", GBufferType::VELOCITY },
-		};
-
-		const int cellCount = int(size(cells));
-		const int rowCount = (cellCount + columns - 1) / columns;
-
-		for (int row = 0; row < rowCount; ++row)
-		{
-			for (int col = 0; col < columns; ++col)
+			ImGui::SetNextItemWidth(-1.0f);
+			if (ImGui::Combo(
+				"##CameraPostProcess",
+				&m_cameraPostProcess,
+				m_cameraPostProcessModeItems,
+				IM_ARRAYSIZE(m_cameraPostProcessModeItems)))
 			{
-				const int index = row * columns + col;
-				if (index >= cellCount)
-				{
-					break;
-				}
-
-				ImGui::BeginGroup();
-				ImGui::TextUnformatted(cells[index].Label);
-				ImGui::Image(
-					ImTextureID(RendererDraw::GetGBufferSrvHandle(cells[index].Type).ptr),
-					previewSize);
-				ImGui::EndGroup();
-
-				if (col < columns - 1 && index + 1 < cellCount)
-				{
-					ImGui::SameLine(0.0f, cellSpacing);
-				}
+				Camera::SetCameraPostProcess(static_cast<PostProcessType>(m_cameraPostProcess));
 			}
 
-			if (row < rowCount - 1)
+			m_antiAliasingMode = static_cast<int>(RendererState::m_AntiAliasingMode);
+			ImGui::SetNextItemWidth(-1.0f);
+			if (ImGui::Combo(
+				"アンチエイリアシング",
+				&m_antiAliasingMode,
+				m_antiAliasingModeItems,
+				IM_ARRAYSIZE(m_antiAliasingModeItems)))
 			{
-				ImGui::Dummy(ImVec2(0.0f, cellSpacing));
+				RendererState::m_AntiAliasingMode = static_cast<AntiAliasingMode>(m_antiAliasingMode);
+				RendererState::m_TaaFrameIndex = 0;
+			}
+
+			DrawUpscaleControls();
+
+			ImGui::Spacing();
+			ImGui::SeparatorText("カラー");
+			if (ImGui::Checkbox("HDR シーンカラー", &m_HdrEnabled))
+			{
+				RendererCore::SetHdr(m_HdrEnabled);
+			}
+			ImGui::SameLine();
+			ImGui::Checkbox("ACES", &m_ToneMapEnabled);
+			ImGui::SetNextItemWidth(-1.0f);
+			ImGui::SliderFloat(
+				"露光",
+				&m_Exposure,
+				0.01f,
+				10.0f,
+				"%.2f",
+				ImGuiSliderFlags_Logarithmic);
+
+			float postProcessIntensity = Camera::GetCameraPostProcessIntensity();
+			ImGui::BeginDisabled(Camera::GetCameraPostProcess() == PostProcessType::NONE);
+			ImGui::SetNextItemWidth(-1.0f);
+			if (ImGui::SliderFloat("エフェクト強度", &postProcessIntensity, 0.01f, 1.0f, "%.2f"))
+			{
+				Camera::SetCameraPostProcessIntensity(postProcessIntensity);
+			}
+			ImGui::EndDisabled();
+
+			ImGui::Spacing();
+			ImGui::SeparatorText("フレーム制御");
+			DrawFpsMeter();
+			bool vsyncEnabled = World::IsVSyncEnabled();
+			if (ImGui::Checkbox("垂直同期", &vsyncEnabled))
+			{
+				World::SetVSyncEnabled(vsyncEnabled);
+			}
+			ImGui::SameLine();
+			bool fixedFrameRateEnabled = World::IsFixedFrameRateEnabled();
+			if (ImGui::Checkbox("FPS 固定", &fixedFrameRateEnabled))
+			{
+				World::SetFixedFrameRateEnabled(fixedFrameRateEnabled);
+			}
+			int targetFrameRate = World::GetTargetFrameRate();
+			ImGui::BeginDisabled(!fixedFrameRateEnabled);
+			ImGui::SetNextItemWidth(-1.0f);
+			if (ImGui::SliderInt("目標 FPS", &targetFrameRate, 15, 360))
+			{
+				World::SetTargetFrameRate(targetFrameRate);
+			}
+			ImGui::EndDisabled();
+
+			ImGui::Spacing();
+			if (ImGui::Button("GBuffer を表示", ImVec2(-1.0f, 0.0f)))
+			{
+				m_ShowGBufferWindow = true;
 			}
 		}
-
-		ImGui::EndChild();
+		ImGui::End();
 	}
 
-	ImGui::End();
 	FinalizeUndoCaptureIfIdle();
 }
-
 void ImGuiManager::DrawSceneEditor()
 {
 ImGui::SeparatorText("セクション");
@@ -1290,7 +988,7 @@ void ImGuiManager::DrawEditorMainMenu()
 	if (ImGui::BeginMenu("Window"))
 	{
 		ImGui::MenuItem("エディター", nullptr, &m_ShowEditorWindows);
-		ImGui::MenuItem("調整", nullptr, &m_ShowAdjustmentPanel);
+		ImGui::MenuItem("レンダーコントロール", nullptr, &m_ShowAdjustmentPanel);
 		ImGui::MenuItem("アセット", nullptr, &m_ShowAssetBrowser);
 		ImGui::MenuItem("描画デバッグ", nullptr, &m_ShowRenderDebugger);
 		ImGui::MenuItem("Gバッファ", nullptr, &m_ShowGBufferWindow);
@@ -3813,12 +3511,6 @@ void ImGuiManager::DrawProjectSettingsWindow()
 
 	if (ImGui::CollapsingHeader("表示とフレーム", ImGuiTreeNodeFlags_DefaultOpen))
 	{
-		float resolutionScale = RendererCore::GetResolutionScale();
-		int resolutionPercent = static_cast<int>(roundf(resolutionScale * 100.0f));
-		if (ImGui::SliderInt("レンダー解像度", &resolutionPercent, 25, 100, "%d%%"))
-		{
-			RendererCore::SetResolutionScale(static_cast<float>(resolutionPercent) / 100.0f);
-		}
 		ImGui::TextDisabled("適用後: %u x %u",
 			max(static_cast<UINT>(roundf(RendererCore::GetWidth() * RendererCore::GetResolutionScale())), 1u),
 			max(static_cast<UINT>(roundf(RendererCore::GetHeight() * RendererCore::GetResolutionScale())), 1u));
@@ -3834,6 +3526,14 @@ void ImGuiManager::DrawProjectSettingsWindow()
 
 	if (ImGui::CollapsingHeader("グラフィックス", ImGuiTreeNodeFlags_DefaultOpen))
 	{
+		DrawUpscaleControls();
+		bool computeGBuffer = RendererSettings::GetComputeGBufferEnabled();
+		if (ImGui::Checkbox("Visibility Buffer + Compute GBuffer", &computeGBuffer))
+		{
+			RendererSettings::SetComputeGBufferEnabled(computeGBuffer);
+			RendererCore::InvalidateScenePipelineCache();
+		}
+		ImGui::SeparatorText("出力");
 		int aa = static_cast<int>(RendererState::m_AntiAliasingMode);
 		if (ImGui::Combo("アンチエイリアス", &aa, m_antiAliasingModeItems, IM_ARRAYSIZE(m_antiAliasingModeItems)))
 		{
@@ -3842,6 +3542,62 @@ void ImGuiManager::DrawProjectSettingsWindow()
 		if (ImGui::Checkbox("HDR シーンカラー", &m_HdrEnabled)) RendererCore::SetHdr(m_HdrEnabled);
 		ImGui::Checkbox("トーンマッピング", &m_ToneMapEnabled);
 		ImGui::SliderFloat("露光", &m_Exposure, 0.01f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+	}
+
+	if (ImGui::CollapsingHeader("Advanced GPU", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		bool meshShaders = RendererSettings::GetMeshShadersEnabled();
+		ImGui::BeginDisabled(!MeshShaderPipeline::IsSupported());
+		if (ImGui::Checkbox("Mesh Shader", &meshShaders))
+			RendererSettings::SetMeshShadersEnabled(meshShaders);
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::TextDisabled(MeshShaderPipeline::IsSupported() ? "対応" : "GPU 非対応: indirect fallback");
+
+		bool twoPhase = RendererSettings::GetTwoPhaseOcclusionEnabled();
+		if (ImGui::Checkbox("2-phase Occlusion Culling (Hi-Z)", &twoPhase))
+			RendererSettings::SetTwoPhaseOcclusionEnabled(twoPhase);
+
+		bool textureStreaming = RendererSettings::GetTextureStreamingEnabled();
+		if (ImGui::Checkbox("Texture Streaming", &textureStreaming))
+			RendererSettings::SetTextureStreamingEnabled(textureStreaming);
+		bool reservedResources = RendererSettings::GetReservedResourcesEnabled();
+		const bool reservedHardwareSupported = TextureManager::IsReservedResourceStreamingSupported();
+		const bool reservedStreamingAvailable = TextureManager::IsReservedResourceStreamingAvailable();
+		if (!reservedStreamingAvailable && reservedResources)
+		{
+			reservedResources = false;
+			RendererSettings::SetReservedResourcesEnabled(false);
+		}
+		ImGui::BeginDisabled(!reservedStreamingAvailable);
+		if (ImGui::Checkbox("Reserved Resource (64 KiB tiles)", &reservedResources))
+			RendererSettings::SetReservedResourcesEnabled(reservedResources);
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::TextDisabled(reservedStreamingAvailable
+			? "対応"
+			: (reservedHardwareSupported
+				? "停止中: 未常駐ミップ反復対策"
+				: "Tiled Resources 非対応"));
+
+		ImGui::SeparatorText("Screen Space");
+		bool ssao = RendererSettings::GetSsaoEnabled();
+		if (ImGui::Checkbox("SSAO Visibility Bitmask", &ssao)) RendererSettings::SetSsaoEnabled(ssao);
+		ImGui::BeginDisabled(!ssao);
+		float aoRadius = RendererSettings::GetSsaoRadius();
+		if (ImGui::SliderFloat("AO 半径", &aoRadius, 0.1f, 4.0f, "%.2f m")) RendererSettings::SetSsaoRadius(aoRadius);
+		float aoPower = RendererSettings::GetSsaoPower();
+		if (ImGui::SliderFloat("AO 強度", &aoPower, 0.25f, 4.0f, "%.2f")) RendererSettings::SetSsaoPower(aoPower);
+		ImGui::EndDisabled();
+
+		bool ssgi = RendererSettings::GetSsgiEnabled();
+		if (ImGui::Checkbox("SSGI (4x4 Deinterleaved)", &ssgi)) RendererSettings::SetSsgiEnabled(ssgi);
+		ImGui::BeginDisabled(!ssgi);
+		float ssgiIntensity = RendererSettings::GetSsgiIntensity();
+		if (ImGui::SliderFloat("SSGI 強度", &ssgiIntensity, 0.0f, 3.0f, "%.2f")) RendererSettings::SetSsgiIntensity(ssgiIntensity);
+		bool rayBinning = RendererSettings::GetRayBinningEnabled();
+		if (ImGui::Checkbox("Ray Binning", &rayBinning)) RendererSettings::SetRayBinningEnabled(rayBinning);
+		ImGui::EndDisabled();
 	}
 
 	if (ImGui::CollapsingHeader("照明予算", ImGuiTreeNodeFlags_DefaultOpen))
@@ -3892,7 +3648,7 @@ void ImGuiManager::DrawProjectSettingsWindow()
 			}
 			ImGui::EndCombo();
 		}
-		ImGui::TextWrapped("大量配置したライトは Priority と画面占有率で選別され、ピクセル当たりの評価数はタイル重複予算を超えません。");
+		ImGui::TextWrapped("ライトは GPU 上でタイル別 instance list と volumetric shaft list に圧縮され、ピクセル当たりの評価数はタイル重複予算を超えません。");
 	}
 
 	if (ImGui::CollapsingHeader("シャドウ", ImGuiTreeNodeFlags_DefaultOpen))
@@ -3936,6 +3692,12 @@ void ImGuiManager::DrawProjectSettingsWindow()
 
 		int filterRadius = RendererSettings::GetShadowFilterRadius();
 		if (ImGui::SliderInt("PCF フィルター半径", &filterRadius, 0, 3)) RendererSettings::SetShadowFilterRadius(filterRadius);
+		float resolutionTransition = RendererSettings::GetShadowResolutionTransition();
+		if (ImGui::SliderFloat("解像度遷移スケール", &resolutionTransition, 0.05f, 0.40f, "%.2f"))
+		{
+			RendererSettings::SetShadowResolutionTransition(resolutionTransition);
+		}
+		ImGui::TextDisabled("ライト空間の重複領域で解像度を連続遷移（SM/VSM 共通）");
 		float depthBias = RendererSettings::GetShadowDepthBias();
 		if (ImGui::SliderFloat("深度バイアス", &depthBias, 0.0f, 0.001f, "%.7f")) RendererSettings::SetShadowDepthBias(depthBias);
 		float normalBias = RendererSettings::GetShadowNormalBias();
@@ -4017,6 +3779,21 @@ void ImGuiManager::SaveProjectSettings()
 	stream << "fixed_fps=" << (World::IsFixedFrameRateEnabled() ? 1 : 0) << '\n';
 	stream << "target_fps=" << World::GetTargetFrameRate() << '\n';
 	stream << "resolution_scale=" << RendererCore::GetResolutionScale() << '\n';
+	stream << "upscale_mode=" << static_cast<int>(RendererSettings::GetUpscaleMode()) << '\n';
+	stream << "upscale_quality=" << static_cast<int>(RendererSettings::GetUpscaleQuality()) << '\n';
+	stream << "fsr_sharpness=" << RendererSettings::GetFsrSharpness() << '\n';
+	stream << "nis_sharpness=" << RendererSettings::GetNisSharpness() << '\n';
+	stream << "compute_gbuffer=" << (RendererSettings::GetComputeGBufferEnabled() ? 1 : 0) << '\n';
+	stream << "mesh_shaders=" << (RendererSettings::GetMeshShadersEnabled() ? 1 : 0) << '\n';
+	stream << "two_phase_occlusion=" << (RendererSettings::GetTwoPhaseOcclusionEnabled() ? 1 : 0) << '\n';
+	stream << "texture_streaming=" << (RendererSettings::GetTextureStreamingEnabled() ? 1 : 0) << '\n';
+	stream << "reserved_resources=" << (RendererSettings::GetReservedResourcesEnabled() ? 1 : 0) << '\n';
+	stream << "ssao=" << (RendererSettings::GetSsaoEnabled() ? 1 : 0) << '\n';
+	stream << "ssao_radius=" << RendererSettings::GetSsaoRadius() << '\n';
+	stream << "ssao_power=" << RendererSettings::GetSsaoPower() << '\n';
+	stream << "ssgi=" << (RendererSettings::GetSsgiEnabled() ? 1 : 0) << '\n';
+	stream << "ssgi_intensity=" << RendererSettings::GetSsgiIntensity() << '\n';
+	stream << "ray_binning=" << (RendererSettings::GetRayBinningEnabled() ? 1 : 0) << '\n';
 	stream << "anti_aliasing=" << static_cast<int>(RendererState::m_AntiAliasingMode) << '\n';
 	stream << "hdr=" << (m_HdrEnabled ? 1 : 0) << '\n';
 	stream << "tone_map=" << (m_ToneMapEnabled ? 1 : 0) << '\n';
@@ -4032,6 +3809,7 @@ void ImGuiManager::SaveProjectSettings()
 	stream << "shadow_filter_radius=" << RendererSettings::GetShadowFilterRadius() << '\n';
 	stream << "shadow_depth_bias=" << RendererSettings::GetShadowDepthBias() << '\n';
 	stream << "shadow_normal_bias=" << RendererSettings::GetShadowNormalBias() << '\n';
+	stream << "shadow_resolution_transition=" << RendererSettings::GetShadowResolutionTransition() << '\n';
 	stream << "contact_shadows=" << (RendererSettings::GetContactShadowsEnabled() ? 1 : 0) << '\n';
 	stream << "contact_length=" << RendererSettings::GetContactShadowLength() << '\n';
 	stream << "contact_steps=" << RendererSettings::GetContactShadowSteps() << '\n';
@@ -4079,6 +3857,21 @@ void ImGuiManager::LoadProjectSettings()
 			else if (key == "fixed_fps") World::SetFixedFrameRateEnabled(stoi(value) != 0);
 			else if (key == "target_fps") World::SetTargetFrameRate(stoi(value));
 			else if (key == "resolution_scale") RendererCore::SetResolutionScale(stof(value));
+			else if (key == "upscale_mode") RendererSettings::SetUpscaleMode(static_cast<UpscaleMode>(clamp(stoi(value), 0, 2)));
+			else if (key == "upscale_quality") RendererSettings::SetUpscaleQuality(static_cast<UpscaleQuality>(clamp(stoi(value), 0, 4)));
+			else if (key == "fsr_sharpness") RendererSettings::SetFsrSharpness(stof(value));
+			else if (key == "nis_sharpness") RendererSettings::SetNisSharpness(stof(value));
+			else if (key == "compute_gbuffer") RendererSettings::SetComputeGBufferEnabled(stoi(value) != 0);
+			else if (key == "mesh_shaders") RendererSettings::SetMeshShadersEnabled(stoi(value) != 0);
+			else if (key == "two_phase_occlusion") RendererSettings::SetTwoPhaseOcclusionEnabled(stoi(value) != 0);
+			else if (key == "texture_streaming") RendererSettings::SetTextureStreamingEnabled(stoi(value) != 0);
+			else if (key == "reserved_resources") RendererSettings::SetReservedResourcesEnabled(stoi(value) != 0);
+			else if (key == "ssao") RendererSettings::SetSsaoEnabled(stoi(value) != 0);
+			else if (key == "ssao_radius") RendererSettings::SetSsaoRadius(stof(value));
+			else if (key == "ssao_power") RendererSettings::SetSsaoPower(stof(value));
+			else if (key == "ssgi") RendererSettings::SetSsgiEnabled(stoi(value) != 0);
+			else if (key == "ssgi_intensity") RendererSettings::SetSsgiIntensity(stof(value));
+			else if (key == "ray_binning") RendererSettings::SetRayBinningEnabled(stoi(value) != 0);
 			else if (key == "anti_aliasing") RendererState::m_AntiAliasingMode = static_cast<AntiAliasingMode>(clamp(stoi(value), 0, static_cast<int>(AntiAliasingMode::COUNT) - 1));
 			else if (key == "hdr") { m_HdrEnabled = stoi(value) != 0; RendererCore::SetHdr(m_HdrEnabled); }
 			else if (key == "tone_map") m_ToneMapEnabled = stoi(value) != 0;
@@ -4094,6 +3887,14 @@ void ImGuiManager::LoadProjectSettings()
 			else if (key == "shadow_filter_radius") RendererSettings::SetShadowFilterRadius(stoi(value));
 			else if (key == "shadow_depth_bias") RendererSettings::SetShadowDepthBias(stof(value));
 			else if (key == "shadow_normal_bias") RendererSettings::SetShadowNormalBias(stof(value));
+			else if (key == "shadow_resolution_transition")
+			{
+				float transition = stof(value);
+				// Values above 0.4 were saved by the former page-width control.
+				// Convert those projects to the new light-space overlap ratio.
+				if (transition > 0.40f) transition /= 8.0f;
+				RendererSettings::SetShadowResolutionTransition(transition);
+			}
 			else if (key == "contact_shadows") RendererSettings::SetContactShadowsEnabled(stoi(value) != 0);
 			else if (key == "contact_length") RendererSettings::SetContactShadowLength(stof(value));
 			else if (key == "contact_steps") RendererSettings::SetContactShadowSteps(stoi(value));

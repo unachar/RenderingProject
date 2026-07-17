@@ -10,7 +10,7 @@ Texture2D<float4> EnvironmentTexture : register(t6);
 Texture2DArray<float> ShadowMapTexture : register(t7);
 
 SamplerState TextureSampler : register(s0);
-SamplerState ShadowSampler : register(s1);
+SamplerComparisonState ShadowSampler : register(s1);
 
 struct LocalFogRayResult
 {
@@ -33,7 +33,7 @@ int GetAtmosphereStepCount(float viewDistance)
 float SampleAtmosphereShadowFast(
     float3 worldPos,
     Texture2DArray<float> shadowMap,
-    SamplerState shadowSampler,
+    SamplerComparisonState shadowSampler,
     float4x4 lightViewProjection,
     float4 shadowMapParams,
     float shadowLayer)
@@ -73,11 +73,10 @@ float SampleAtmosphereShadowFast(
     [unroll]
     for (int tap = 0; tap < 4; ++tap)
     {
-        float closestDepth = shadowMap.SampleLevel(
+        visibility += shadowMap.SampleCmpLevelZero(
             shadowSampler,
             float3(shadowUv + offsets[tap] * texelSize, shadowLayer),
-            0);
-        visibility += currentDepth <= closestDepth ? 1.0f : 0.0f;
+            currentDepth);
     }
 
     visibility *= 0.25f;
@@ -97,7 +96,7 @@ float ComputeAtmosphereShadow(
     bool hasShadow,
     bool directionalMultiLevel,
     Texture2DArray<float> shadowMap,
-    SamplerState shadowSampler)
+    SamplerComparisonState shadowSampler)
 {
     if (!hasShadow)
     {
@@ -440,7 +439,7 @@ float3 IntegrateVolumeLightRay(
     float shadowLayer,
     bool hasShadow,
     Texture2DArray<float> shadowMap,
-    SamplerState shadowSampler)
+    SamplerComparisonState shadowSampler)
 {
     if ((int)round(lightPositionTypeData.w) != 3 ||
         lightExtraData.z <= 0.0001f ||
@@ -565,7 +564,7 @@ float3 IntegrateVolumeLightRay(
 float3 RayMarchAtmosphereViewFixed(
     float3 worldPos,
     Texture2DArray<float> shadowMap,
-    SamplerState shadowSampler,
+    SamplerComparisonState shadowSampler,
     float4x4 lightViewProjection,
     float4 shadowMapParams)
 {
@@ -597,7 +596,7 @@ float3 RayMarchAtmosphereViewFixed(
 
     float transmittance = 1.0f;
     float3 result = float3(0.0f, 0.0f, 0.0f);
-    int count = min((int)round(LightCount.x), 5);
+    int count = min((int)round(LocalFogGlobal.y), 5);
     float3 sampleStep = viewDir * stepLength;
     float3 samplePos = cameraPos + sampleStep * 0.5f;
 
@@ -623,8 +622,9 @@ float3 RayMarchAtmosphereViewFixed(
         bool updateShadow = (stepIndex & 3) == 0;
 
         [loop]
-        for (int lightIndex = 0; lightIndex < count; ++lightIndex)
+        for (int instanceIndex = 0; instanceIndex < count; ++instanceIndex)
         {
+            int lightIndex = (int)VolumetricLightIndices[instanceIndex];
             if (LightFlags[lightIndex].z < 0.5f ||
                 LightFlags[lightIndex].w >= 0.5f)
             {
@@ -750,8 +750,9 @@ float3 RayMarchAtmosphereViewFixed(
     }
 
     [loop]
-    for (int volumeIndex = 0; volumeIndex < count; ++volumeIndex)
+    for (int instanceIndex = 0; instanceIndex < count; ++instanceIndex)
     {
+        int volumeIndex = (int)VolumetricLightIndices[instanceIndex];
         if (LightFlags[volumeIndex].z < 0.5f ||
             LightFlags[volumeIndex].w >= 0.5f ||
             (int)round(LightPositionTypes[volumeIndex].w) != 3)

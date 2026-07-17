@@ -121,7 +121,7 @@ static void ShaderLogToFile(const char* msg)
 bool RendererShader::CreatePostProcessPipeline()
 {
 	ShaderLogToFile("PP: setup ranges\n");
-	CD3DX12_DESCRIPTOR_RANGE ranges[7];
+	CD3DX12_DESCRIPTOR_RANGE ranges[9];
 	ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 0);
 	ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6);
 	ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 7);
@@ -129,8 +129,10 @@ bool RendererShader::CreatePostProcessPipeline()
 	ranges[4].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 9);
 	ranges[5].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 10);
 	ranges[6].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 12);
+	ranges[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 13);
+	ranges[8].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 14);
 
-	CD3DX12_ROOT_PARAMETER params[12];
+	CD3DX12_ROOT_PARAMETER params[15];
 	params[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[1].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 	params[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -143,18 +145,21 @@ bool RendererShader::CreatePostProcessPipeline()
 	params[9].InitAsDescriptorTable(1, &ranges[5], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[10].InitAsShaderResourceView(11, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 	params[11].InitAsDescriptorTable(1, &ranges[6], D3D12_SHADER_VISIBILITY_PIXEL);
+	params[12].InitAsDescriptorTable(1, &ranges[7], D3D12_SHADER_VISIBILITY_PIXEL);
+	params[13].InitAsDescriptorTable(1, &ranges[8], D3D12_SHADER_VISIBILITY_PIXEL);
+	params[14].InitAsShaderResourceView(24, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 
 	CD3DX12_STATIC_SAMPLER_DESC samplers[2] {};
 	samplers[0] = CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
 	samplers[1] = CD3DX12_STATIC_SAMPLER_DESC(
 		1,
-		D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+		D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT,
 		D3D12_TEXTURE_ADDRESS_MODE_BORDER,
 		D3D12_TEXTURE_ADDRESS_MODE_BORDER,
 		D3D12_TEXTURE_ADDRESS_MODE_BORDER,
 		0.0f,
 		1,
-		D3D12_COMPARISON_FUNC_NEVER,
+		D3D12_COMPARISON_FUNC_LESS_EQUAL,
 		D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE);
 	CD3DX12_ROOT_SIGNATURE_DESC rsDesc(_countof(params), params, _countof(samplers), samplers, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 

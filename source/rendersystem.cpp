@@ -144,6 +144,7 @@ namespace
 
 void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
+	if (renderPass == RenderPass::OcclusionPhase2) return;
 	if (renderPass == RenderPass::ShadowMap)
 	{
 		ID3D12GraphicsCommandList* pCommandList = RendererCore::GetCommandList();
@@ -604,14 +605,16 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 				pCommandList->SetGraphicsRootDescriptorTable(0, RendererResource::GetConstantBufferHandle(dc.EntityID));
 
-				if (dc.srvIndex != lastSrvIndex)
-				{
+			if (dc.srvIndex != lastSrvIndex)
+			{
+				TextureManager::TouchTexture(dc.srvIndex);
 					CD3DX12_GPU_DESCRIPTOR_HANDLE srvHandle(heapStart, dc.srvIndex, descriptorIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, srvHandle);
 					lastSrvIndex = dc.srvIndex;
 				}
-				if (dc.normalSrvIndex != lastNormalSrvIndex)
-				{
+			if (dc.normalSrvIndex != lastNormalSrvIndex)
+			{
+				TextureManager::TouchTexture(dc.normalSrvIndex);
 					CD3DX12_GPU_DESCRIPTOR_HANDLE normalSrvHandle(heapStart, dc.normalSrvIndex, descriptorIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(6, normalSrvHandle);
 					lastNormalSrvIndex = dc.normalSrvIndex;
