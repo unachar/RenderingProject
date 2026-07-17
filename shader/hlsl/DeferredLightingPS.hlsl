@@ -488,6 +488,7 @@ float SampleDistanceFieldShadow(float3 worldPos, float3 normal, float3 lightDir)
 
 void ResolveDeferredLightAggregateShadowed(
     float3 worldPos,
+    float3 worldPosDx,
     float3 worldPosDy,
     float3 normal,
     float2 pixelPosition,
