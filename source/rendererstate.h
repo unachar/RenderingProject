@@ -147,8 +147,8 @@ public:
 	static constexpr UINT g_kMAX_SHADER_LIGHTS = 160;
 	static constexpr UINT g_kLIGHT_TILE_SIZE = 16;
 	static constexpr UINT g_kMAX_LIGHTS_PER_TILE = 8;
-	// Color32 + Normal32 + Depth16 + Material64 + Shadow32.
-	static constexpr UINT g_kGEOMETRY_GBUFFER_BITS_PER_PIXEL = 176;
+	// Color32 + Normal32 + Depth32 + Material64 + Shadow32.
+	static constexpr UINT g_kGEOMETRY_GBUFFER_BITS_PER_PIXEL = 192;
 	static_assert(g_kGEOMETRY_GBUFFER_BITS_PER_PIXEL <= 256,
 		"Stage renderer GBuffer must stay within the 256-bit bandwidth budget");
 	static constexpr UINT g_kMAX_LIGHT_GRID_WIDTH = 7680;
@@ -285,7 +285,7 @@ public:
 	{
 		DXGI_FORMAT_R8G8B8A8_UNORM,
 		DXGI_FORMAT_R10G10B10A2_UNORM,
-		DXGI_FORMAT_R16_FLOAT,
+		DXGI_FORMAT_R32_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R8G8B8A8_UNORM,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
@@ -389,4 +389,3 @@ public:
 	static UINT m_DynamicVertexOffset;
 	static UINT m_TransientCbSlot;
 };
-
