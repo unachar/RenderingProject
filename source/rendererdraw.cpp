@@ -68,6 +68,22 @@ namespace
 	};
 
 	static_assert(sizeof(PostProcessConstants) <= RendererState::g_kPP_CB_ALIGNED_SIZE);
+
+	UpscaleMode ResolveUpscaleMode(UINT inputWidth, UINT inputHeight, UINT outputWidth, UINT outputHeight)
+	{
+		UpscaleMode mode = RendererSettings::GetUpscaleMode();
+		if (!SpatialUpscaler::IsAvailable(mode) ||
+			!SpatialUpscaler::IsScaleSupported(
+				mode,
+				inputWidth,
+				inputHeight,
+				outputWidth,
+				outputHeight))
+		{
+			return UpscaleMode::Bilateral;
+		}
+		return mode;
+	}
 }
 
 void RendererDraw::ReleaseGBufferResources()
@@ -1073,63 +1089,123 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 	m_CommandList->ResourceBarrier(1, &postToSrv);
 
 	const bool needsUpscale = m_SceneWidth != m_Width || m_SceneHeight != m_Height;
-	UpscaleMode upscaleMode = RendererSettings::GetUpscaleMode();
-	if (!SpatialUpscaler::IsAvailable(upscaleMode))
-	{
-		upscaleMode = UpscaleMode::Bilateral;
-	}
-	if (!SpatialUpscaler::IsScaleSupported(
-		upscaleMode,
-		m_SceneWidth,
-		m_SceneHeight,
-		m_Width,
-		m_Height))
-	{
-		// NIS supports 0.5x..1.0x input ratios. Keep producing fresh frames
-		// with the bilateral path if an old/custom project requests less.
-		upscaleMode = UpscaleMode::Bilateral;
-	}
+	const UpscaleMode upscaleMode =
+		ResolveUpscaleMode(m_SceneWidth, m_SceneHeight, m_Width, m_Height);
 
 	D3D12_GPU_DESCRIPTOR_HANDLE upscaleSourceSrv = m_PostProcessSrvHandle;
 	ID3D12Resource* upscaleSource = m_PostProcessRenderTarget.Get();
 
-	// FSR 1 and NIS expect an antialiased input. Apply a compact FXAA pass before
-	// compute upscaling, regardless of the display-resolution AA selection.
+	// FSR 1 and NIS expect an antialiased input. Run the selected AA at the
+	// internal resolution so TAA does not become a full-display pass followed by
+	// two full-display history copies. At 0.25 scale this reduces its pixel cost
+	// to 1/16 while preserving temporal accumulation before reconstruction.
 	if (needsUpscale && upscaleMode != UpscaleMode::Bilateral && m_PreUpscaleAaRenderTarget)
 	{
-		ID3D12PipelineState* fxaaPso = PsoManager::GetFxaaPso();
-		if (fxaaPso && m_AaRootSignature)
+		const bool useTaa =
+			m_AntiAliasingMode == AntiAliasingMode::TAA &&
+			m_PreUpscaleAaHistory;
+		ID3D12PipelineState* aaPso =
+			useTaa ? PsoManager::GetTaaBlendPso() : PsoManager::GetFxaaPso();
+		if (aaPso && m_AaRootSignature)
 		{
+			RenderProfiler::ScopedEvent profile(
+				useTaa ? "Pre-upscale TAA" : "Pre-upscale FXAA",
+				m_CommandList.Get());
 			D3D12_RESOURCE_BARRIER preAaToRt = CD3DX12_RESOURCE_BARRIER::Transition(
 				m_PreUpscaleAaRenderTarget.Get(),
 				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 				D3D12_RESOURCE_STATE_RENDER_TARGET);
 			m_CommandList->ResourceBarrier(1, &preAaToRt);
-			m_CommandList->ClearRenderTargetView(m_PreUpscaleAaRtvHandle, m_kSceneClearColor, 0, nullptr);
 			m_CommandList->OMSetRenderTargets(1, &m_PreUpscaleAaRtvHandle, FALSE, nullptr);
-			m_CommandList->SetPipelineState(fxaaPso);
+			m_CommandList->SetPipelineState(aaPso);
 			m_CommandList->SetGraphicsRootSignature(m_AaRootSignature.Get());
 			SetDescriptorHeap();
 			m_CommandList->SetGraphicsRootConstantBufferView(
 				0,
 				m_PostProcessConstantBuffer->GetGPUVirtualAddress() + m_FrameIndex * g_kPP_CB_ALIGNED_SIZE);
 			m_CommandList->SetGraphicsRootDescriptorTable(1, m_PostProcessSrvHandle);
-			m_CommandList->SetGraphicsRootDescriptorTable(2, m_PostProcessSrvHandle);
-			m_CommandList->SetGraphicsRootDescriptorTable(3, m_PostProcessSrvHandle);
-			m_CommandList->SetGraphicsRootDescriptorTable(5, m_PostProcessSrvHandle);
-			const float reciprocalExtent[2] =
+			if (useTaa)
 			{
-				1.0f / max(static_cast<float>(m_SceneWidth), 1.0f),
-				1.0f / max(static_cast<float>(m_SceneHeight), 1.0f)
-			};
-			m_CommandList->SetGraphicsRoot32BitConstants(4, 2, reciprocalExtent, 0);
+				m_CommandList->SetGraphicsRootDescriptorTable(
+					2,
+					m_PreUpscaleAaHistorySrvHandle);
+				m_CommandList->SetGraphicsRootDescriptorTable(
+					3,
+					m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)]);
+				m_CommandList->SetGraphicsRootDescriptorTable(
+					5,
+					CD3DX12_GPU_DESCRIPTOR_HANDLE(
+						m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
+						RendererState::g_kVELOCITY_CALCULATION_SRV_INDEX,
+						m_CbvIncrementSize));
+
+				XMMATRIX prevView = XMLoadFloat4x4(&m_PrevViewMatrix);
+				XMMATRIX prevProj = XMLoadFloat4x4(&m_PrevProjMatrix);
+				XMMATRIX prevViewProj = XMMatrixTranspose(prevView * prevProj);
+				float constants[20] = {};
+				memcpy(constants, &prevViewProj, sizeof(XMFLOAT4X4));
+				constants[16] = 0.90f;
+				constants[17] = 1.0f / max(static_cast<float>(m_SceneWidth), 1.0f);
+				constants[18] = 1.0f / max(static_cast<float>(m_SceneHeight), 1.0f);
+				constants[19] = m_TaaFrameIndex > 0 ? 1.0f : 0.0f;
+				m_CommandList->SetGraphicsRoot32BitConstants(4, 20, constants, 0);
+			}
+			else
+			{
+				m_CommandList->SetGraphicsRootDescriptorTable(2, m_PostProcessSrvHandle);
+				m_CommandList->SetGraphicsRootDescriptorTable(3, m_PostProcessSrvHandle);
+				m_CommandList->SetGraphicsRootDescriptorTable(5, m_PostProcessSrvHandle);
+				const float reciprocalExtent[2] =
+				{
+					1.0f / max(static_cast<float>(m_SceneWidth), 1.0f),
+					1.0f / max(static_cast<float>(m_SceneHeight), 1.0f)
+				};
+				m_CommandList->SetGraphicsRoot32BitConstants(4, 2, reciprocalExtent, 0);
+			}
+			m_CommandList->RSSetViewports(1, &m_Viewport);
+			m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
 			m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			m_CommandList->DrawInstanced(3, 1, 0, 0);
-			D3D12_RESOURCE_BARRIER preAaToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
-				m_PreUpscaleAaRenderTarget.Get(),
-				D3D12_RESOURCE_STATE_RENDER_TARGET,
-				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-			m_CommandList->ResourceBarrier(1, &preAaToSrv);
+
+			if (useTaa)
+			{
+				D3D12_RESOURCE_BARRIER toCopy[] =
+				{
+					CD3DX12_RESOURCE_BARRIER::Transition(
+						m_PreUpscaleAaRenderTarget.Get(),
+						D3D12_RESOURCE_STATE_RENDER_TARGET,
+						D3D12_RESOURCE_STATE_COPY_SOURCE),
+					CD3DX12_RESOURCE_BARRIER::Transition(
+						m_PreUpscaleAaHistory.Get(),
+						D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+						D3D12_RESOURCE_STATE_COPY_DEST)
+				};
+				m_CommandList->ResourceBarrier(_countof(toCopy), toCopy);
+				m_CommandList->CopyResource(
+					m_PreUpscaleAaHistory.Get(),
+					m_PreUpscaleAaRenderTarget.Get());
+				D3D12_RESOURCE_BARRIER toShaderRead[] =
+				{
+					CD3DX12_RESOURCE_BARRIER::Transition(
+						m_PreUpscaleAaRenderTarget.Get(),
+						D3D12_RESOURCE_STATE_COPY_SOURCE,
+						D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+					CD3DX12_RESOURCE_BARRIER::Transition(
+						m_PreUpscaleAaHistory.Get(),
+						D3D12_RESOURCE_STATE_COPY_DEST,
+						D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+				};
+				m_CommandList->ResourceBarrier(_countof(toShaderRead), toShaderRead);
+				++m_TaaFrameIndex;
+			}
+			else
+			{
+				D3D12_RESOURCE_BARRIER preAaToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+					m_PreUpscaleAaRenderTarget.Get(),
+					D3D12_RESOURCE_STATE_RENDER_TARGET,
+					D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+				m_CommandList->ResourceBarrier(1, &preAaToSrv);
+			}
 			upscaleSourceSrv = m_PreUpscaleAaSrvHandle;
 			upscaleSource = m_PreUpscaleAaRenderTarget.Get();
 		}
@@ -1246,11 +1322,15 @@ void RendererDraw::ApplyAntiAliasing()
     AntiAliasingMode mode = m_AntiAliasingMode;
     if (mode == AntiAliasingMode::NONE)
         return;
-	if (mode == AntiAliasingMode::FXAA &&
-		m_ResolutionScale < 1.0f &&
-		RendererSettings::GetUpscaleMode() != UpscaleMode::Bilateral)
+	const bool usesPreUpscaleAa =
+		(m_SceneWidth != m_Width || m_SceneHeight != m_Height) &&
+		ResolveUpscaleMode(m_SceneWidth, m_SceneHeight, m_Width, m_Height) !=
+			UpscaleMode::Bilateral;
+	if (usesPreUpscaleAa)
 	{
-		// FSR/NIS already receive FXAA at their required pre-upscale position.
+		// FSR/NIS already received FXAA or TAA at internal resolution. Running
+		// AA again here would add a full-resolution pass and, for TAA, two
+		// full-resolution history copies.
 		return;
 	}
 
@@ -1468,6 +1548,7 @@ bool RendererDraw::CreateSceneRenderTarget()
 	m_SceneRenderTarget.Reset();
 	m_PostProcessRenderTarget.Reset();
 	m_PreUpscaleAaRenderTarget.Reset();
+	m_PreUpscaleAaHistory.Reset();
 	m_EditorSceneRenderTarget.Reset();
 	m_TransparentSceneCopy.Reset();
 	m_SceneRtvHeap.Reset();
@@ -1504,6 +1585,12 @@ bool RendererDraw::CreateSceneRenderTarget()
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue, IID_PPV_ARGS(&m_PreUpscaleAaRenderTarget));
 	if (FAILED(hr)) return false;
 	m_PreUpscaleAaRenderTarget->SetName(L"Pre-Upscale Antialiasing");
+
+	hr = m_Device->CreateCommittedResource(
+		&heapProps, D3D12_HEAP_FLAG_NONE, &resDesc,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue, IID_PPV_ARGS(&m_PreUpscaleAaHistory));
+	if (FAILED(hr)) return false;
+	m_PreUpscaleAaHistory->SetName(L"Pre-Upscale TAA History");
 
 	hr = m_Device->CreateCommittedResource(
 		&heapProps, D3D12_HEAP_FLAG_NONE, &fullResDesc,
@@ -1546,6 +1633,14 @@ bool RendererDraw::CreateSceneRenderTarget()
 	CD3DX12_CPU_DESCRIPTOR_HANDLE postProcessSrvCpuHandle(m_CbvHeap->GetCPUDescriptorHandleForHeapStart(), RendererState::g_kPOST_PROCESS_SRV_INDEX, cbvIncrement);
 	m_PreUpscaleAaSrvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), RendererState::g_kPRE_UPSCALE_AA_SRV_INDEX, cbvIncrement);
 	CD3DX12_CPU_DESCRIPTOR_HANDLE preUpscaleAaSrvCpuHandle(m_CbvHeap->GetCPUDescriptorHandleForHeapStart(), RendererState::g_kPRE_UPSCALE_AA_SRV_INDEX, cbvIncrement);
+	m_PreUpscaleAaHistorySrvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(
+		m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
+		RendererState::g_kPRE_UPSCALE_AA_HISTORY_SRV_INDEX,
+		cbvIncrement);
+	CD3DX12_CPU_DESCRIPTOR_HANDLE preUpscaleAaHistorySrvCpuHandle(
+		m_CbvHeap->GetCPUDescriptorHandleForHeapStart(),
+		RendererState::g_kPRE_UPSCALE_AA_HISTORY_SRV_INDEX,
+		cbvIncrement);
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc {};
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -1556,6 +1651,10 @@ bool RendererDraw::CreateSceneRenderTarget()
 	m_Device->CreateShaderResourceView(m_EditorSceneRenderTarget.Get(), &srvDesc, editorSceneSrvCpuHandle);
 	m_Device->CreateShaderResourceView(m_PostProcessRenderTarget.Get(), &srvDesc, postProcessSrvCpuHandle);
 	m_Device->CreateShaderResourceView(m_PreUpscaleAaRenderTarget.Get(), &srvDesc, preUpscaleAaSrvCpuHandle);
+	m_Device->CreateShaderResourceView(
+		m_PreUpscaleAaHistory.Get(),
+		&srvDesc,
+		preUpscaleAaHistorySrvCpuHandle);
 
 	m_EditorSceneUavHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(
 		m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),

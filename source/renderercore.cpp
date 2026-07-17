@@ -130,7 +130,10 @@ bool RendererCore::Init(HWND hwnd)
 	sc1.As(&m_SwapChain);
 	if (m_SwapChain)
 	{
-		m_SwapChain->SetMaximumFrameLatency(1);
+		// Keep one frame available for the GPU while the CPU records the next.
+		// A latency of one serialized the ~5 ms command-recording workload with
+		// the ~9 ms GPU workload and prevented 60 fps despite ample GPU headroom.
+		m_SwapChain->SetMaximumFrameLatency(2);
 		m_FrameLatencyWaitableObject = m_SwapChain->GetFrameLatencyWaitableObject();
 	}
 	m_FrameIndex = m_SwapChain->GetCurrentBackBufferIndex();
@@ -474,6 +477,7 @@ void RendererCore::Uninit()
 	m_SceneRenderTarget.Reset();
 	m_PostProcessRenderTarget.Reset();
 	m_PreUpscaleAaRenderTarget.Reset();
+	m_PreUpscaleAaHistory.Reset();
 	m_EditorSceneRenderTarget.Reset();
 	m_TransparentSceneCopy.Reset();
 	m_SceneRtvHeap.Reset();

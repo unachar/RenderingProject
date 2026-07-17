@@ -73,8 +73,13 @@ void CameraSystem::Update()
 			float haltonX = Halton(RendererState::m_TaaFrameIndex, 2);
 			float haltonY = Halton(RendererState::m_TaaFrameIndex, 3);
 
-			float jitterX = (haltonX - 0.5f) * 2.0f / (float)RendererCore::GetWidth();
-			float jitterY = (haltonY - 0.5f) * 2.0f / (float)RendererCore::GetHeight();
+			// TAA runs before FSR/NIS at the internal render resolution. Jitter by
+			// one internal pixel so low resolution modes retain useful sub-pixel
+			// coverage instead of shrinking the sample pattern by the upscale ratio.
+			float jitterX = (haltonX - 0.5f) * 2.0f /
+				max((float)RendererCore::GetSceneWidth(), 1.0f);
+			float jitterY = (haltonY - 0.5f) * 2.0f /
+				max((float)RendererCore::GetSceneHeight(), 1.0f);
 
 			proj.r[2].m128_f32[0] += jitterX;
 			proj.r[2].m128_f32[1] += jitterY;

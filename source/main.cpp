@@ -16,6 +16,16 @@ extern "C"
 
 static bool g_IsResizing = false;
 
+static bool IsAutomatedBenchmark()
+{
+	char value[16]{};
+	return GetEnvironmentVariableA(
+		"DX12_BENCHMARK_FRAMES",
+		value,
+		static_cast<DWORD>(size(value))) > 0 &&
+		atoi(value) > 0;
+}
+
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	if (uMsg == WM_DROPFILES)
@@ -95,6 +105,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
+	const bool automatedBenchmark = IsAutomatedBenchmark();
 	char exePath[MAX_PATH]{};
 	GetModuleFileNameA(nullptr, exePath, MAX_PATH);
 
@@ -178,7 +189,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 			continue;
 		}
 
-		if (GetForegroundWindow() != hwnd)
+		if (!automatedBenchmark && GetForegroundWindow() != hwnd)
 		{
 			MsgWaitForMultipleObjectsEx(0, nullptr, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
 		}

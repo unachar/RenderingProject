@@ -220,6 +220,7 @@ protected:
 	static ComPtr<ID3D12Resource> m_SceneRenderTarget;
 	static ComPtr<ID3D12Resource> m_PostProcessRenderTarget;
 	static ComPtr<ID3D12Resource> m_PreUpscaleAaRenderTarget;
+	static ComPtr<ID3D12Resource> m_PreUpscaleAaHistory;
 	static ComPtr<ID3D12Resource> m_EditorSceneRenderTarget;
 	static ComPtr<ID3D12Resource> m_TransparentSceneCopy;
 	static ComPtr<ID3D12DescriptorHeap> m_SceneRtvHeap;
@@ -230,6 +231,7 @@ protected:
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_SceneSrvHandle;
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_PostProcessSrvHandle;
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_PreUpscaleAaSrvHandle;
+	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_PreUpscaleAaHistorySrvHandle;
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_EditorSceneSrvHandle;
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_EditorSceneUavHandle;
 	static CD3DX12_GPU_DESCRIPTOR_HANDLE m_TransparentSceneSrvHandle;
@@ -342,7 +344,8 @@ public:
 	static constexpr UINT g_kDEPTH_SRV_INDEX = g_kVELOCITY_CALCULATION_SRV_INDEX + 1;
 	static constexpr UINT g_kPOST_PROCESS_SRV_INDEX = g_kDEPTH_SRV_INDEX + 1;
 	static constexpr UINT g_kPRE_UPSCALE_AA_SRV_INDEX = g_kPOST_PROCESS_SRV_INDEX + 1;
-	static constexpr UINT g_kEDITOR_SCENE_UAV_INDEX = g_kPRE_UPSCALE_AA_SRV_INDEX + 1;
+	static constexpr UINT g_kPRE_UPSCALE_AA_HISTORY_SRV_INDEX = g_kPRE_UPSCALE_AA_SRV_INDEX + 1;
+	static constexpr UINT g_kEDITOR_SCENE_UAV_INDEX = g_kPRE_UPSCALE_AA_HISTORY_SRV_INDEX + 1;
 	static constexpr UINT g_kFSR_SCRATCH_SRV_INDEX = g_kEDITOR_SCENE_UAV_INDEX + 1;
 	static constexpr UINT g_kFSR_SCRATCH_UAV_INDEX = g_kFSR_SCRATCH_SRV_INDEX + 1;
 	static constexpr UINT g_kNIS_COEF_SCALE_SRV_INDEX = g_kFSR_SCRATCH_UAV_INDEX + 1;
