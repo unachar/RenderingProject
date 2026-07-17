@@ -151,13 +151,12 @@ bool RendererShader::CreatePostProcessPipeline()
 
 	CD3DX12_STATIC_SAMPLER_DESC samplers[2] {};
 	samplers[0] = CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
-	// Virtual shadow pages are unrelated physical atlas tiles. Hardware linear
-	// comparison filtering can blend a page edge with a different tile and expose
-	// the static diagonal page pattern. The shader already performs nine-tap PCF,
-	// so each comparison tap must use point filtering.
+	// Page-aware VSM address translation already keeps the manual PCF taps in
+	// their correct physical tiles. Restore bilinear comparison within each tap
+	// so the filter does not expose individual depth texels as fine static bands.
 	samplers[1] = CD3DX12_STATIC_SAMPLER_DESC(
 		1,
-		D3D12_FILTER_COMPARISON_MIN_MAG_MIP_POINT,
+		D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT,
 		D3D12_TEXTURE_ADDRESS_MODE_BORDER,
 		D3D12_TEXTURE_ADDRESS_MODE_BORDER,
 		D3D12_TEXTURE_ADDRESS_MODE_BORDER,
