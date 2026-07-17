@@ -28,11 +28,39 @@ float ContactShadowPixelNoise(float2 pixelPosition)
     return frac(52.9829189f * frac(dot(pixelPosition, float2(0.06711056f, 0.00583715f))));
 }
 
+float DirectionalReceiverPlaneBias(
+    float3 receiverWorldDx,
+    float3 receiverWorldDy,
+    float4x4 lightViewProjection,
+    float baseBias,
+    int filterRadius)
+{
+    // A constant comparison bias cannot follow a sloped receiver: adjacent
+    // pixels alternately fall in front of and behind the quantized shadow
+    // plane, producing bands whose spacing changes with the cascade/clipmap
+    // world-texel size. Account for the depth change across this pixel quad
+    // and expand it for the configured PCF footprint.
+    float filterFootprint = 1.0f + (float)max(filterRadius, 1);
+    // Directional shadow projections are orthographic, so transforming the
+    // already-computed world-position derivatives gives the exact NDC depth
+    // change without using gradient instructions inside the light/level loops.
+    float depthDx = abs(mul(float4(receiverWorldDx, 0.0f), lightViewProjection).z);
+    float depthDy = abs(mul(float4(receiverWorldDy, 0.0f), lightViewProjection).z);
+    float derivativeBias = (depthDx + depthDy) * filterFootprint;
+
+    // Keep the correction bounded by the authored per-level bias so thin
+    // contact shadows remain attached to their casters.
+    return min(
+        derivativeBias,
+        max(baseBias * 4.0f, 0.000004f));
+}
+
 float SampleConventionalShadowPcf9(
     float2 shadowUv,
     float shadowLayer,
     float texelSize,
-    float currentDepth)
+    float currentDepth,
+    int filterRadius)
 {
     const float2 kernel[9] =
     {
@@ -42,7 +70,7 @@ float SampleConventionalShadowPcf9(
         float2(0.7071068f, 0.7071068f), float2(-0.7071068f, 0.7071068f),
         float2(0.7071068f, -0.7071068f), float2(-0.7071068f, -0.7071068f)
     };
-    int filterRadius = clamp((int)round(VirtualShadowGlobal.z), 0, 3);
+    filterRadius = clamp(filterRadius, 0, 3);
     int tapCount = filterRadius <= 0 ? 1 : 9;
     float visibility = 0.0f;
     [unroll]
@@ -94,8 +122,11 @@ bool ProjectVirtualShadowLevel(
 bool SampleVirtualShadowLevel(
     int level,
     float3 worldPos,
+    float3 worldPosDx,
+    float3 worldPosDy,
     float3 normal,
     float3 lightDir,
+    int filterRadius,
     out float visibility,
     out float levelInterior)
 {
@@ -114,8 +145,14 @@ bool SampleVirtualShadowLevel(
     // ResolveSingleLightCommon. Avoid repeating two reciprocal square roots for
     // every clipmap level tested by the same pixel.
     float nDotL = saturate(dot(normal, lightDir));
-    float currentDepth = lightNdc.z -
-        max(params.z * (1.0f - nDotL), params.w);
+    float baseBias = max(params.z * (1.0f - nDotL), params.w);
+    float currentDepth = lightNdc.z - baseBias -
+        DirectionalReceiverPlaneBias(
+            worldPosDx,
+            worldPosDy,
+            VirtualShadowViewProjections[level],
+            baseBias,
+            filterRadius);
 
     // Keep the kernel stable in world space to avoid self-shadow grain without
     // paying for temporal/spatial random rotation or a separate denoise pass.
@@ -133,7 +170,7 @@ bool SampleVirtualShadowLevel(
         float2(0.137f, -0.712f)
     };
 
-    int filterRadius = clamp((int)round(VirtualShadowGlobal.z), 0, 3);
+    filterRadius = clamp(filterRadius, 0, 3);
     int tapCount = filterRadius <= 0 ? 1 : 9;
 
     // Most kernels are fully contained in one 128x128 physical page. In that
@@ -190,7 +227,14 @@ bool SampleVirtualShadowLevel(
     return true;
 }
 
-float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, float3 lightDir)
+float SampleDeferredShadowMap(
+    int lightIndex,
+    float3 worldPos,
+    float3 worldPosDx,
+    float3 worldPosDy,
+    float3 normal,
+    float3 lightDir,
+    int filterRadius)
 {
     float shadowLayer = LightShadowData[lightIndex].x;
     [branch]
@@ -219,8 +263,11 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
             if (!SampleVirtualShadowLevel(
                     level,
                     worldPos,
+                    worldPosDx,
+                    worldPosDy,
                     normal,
                     lightDir,
+                    filterRadius,
                     levelVisibility,
                     levelInterior))
             {
@@ -269,14 +316,22 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
             }
 
             float4 params = VirtualShadowParams[level];
-            float currentDepth = lightNdc.z - max(
+            float baseBias = max(
                 params.z * (1.0f - saturate(dot(normal, lightDir))),
                 params.w);
+            float currentDepth = lightNdc.z - baseBias -
+                DirectionalReceiverPlaneBias(
+                    worldPosDx,
+                    worldPosDy,
+                    VirtualShadowViewProjections[level],
+                    baseBias,
+                    filterRadius);
             float levelVisibility = SampleConventionalShadowPcf9(
                 shadowUv,
                 params.x,
                 params.y * ShadowWorldFilterScaleCommon(level),
-                currentDepth);
+                currentDepth,
+                filterRadius);
             float levelInterior = CascadedShadowLevelInteriorCommon(
                 level, shadowUv, worldPos);
 
@@ -310,7 +365,7 @@ float SampleDeferredShadowMap(int lightIndex, float3 worldPos, float3 normal, fl
         LightShadowData[lightIndex].z * (1.0f - saturate(dot(normal, lightDir))),
         abs(LightShadowData[lightIndex].w));
     return SampleConventionalShadowPcf9(
-        shadowUv, shadowLayer, texelSize, currentDepth);
+        shadowUv, shadowLayer, texelSize, currentDepth, filterRadius);
 }
 
 float LoadContactDepth(float2 uv)
@@ -433,8 +488,10 @@ float SampleDistanceFieldShadow(float3 worldPos, float3 normal, float3 lightDir)
 
 void ResolveDeferredLightAggregateShadowed(
     float3 worldPos,
+    float3 worldPosDy,
     float3 normal,
     float2 pixelPosition,
+    int shadowFilterRadius,
     out float3 lightDir,
     out float3 lightColor,
     out float attenuation,
@@ -504,7 +561,14 @@ void ResolveDeferredLightAggregateShadowed(
 		const bool decalLight = LightFlags[i].w >= 0.5f;
         float shadowVisibility = decalLight
 			? 1.0f
-			: SampleDeferredShadowMap(i, worldPos, normal, singleDir);
+			: SampleDeferredShadowMap(
+                i,
+                worldPos,
+                worldPosDx,
+                worldPosDy,
+                normal,
+                singleDir,
+                shadowFilterRadius);
 		// Contact shadows fill near-field detail for the directional VSM.  Running
 		// the depth ray march once for every shadowed local light multiplies the
 		// full-screen cost and provides little useful information.
@@ -614,6 +678,8 @@ float4 main(PSInputPostProcess input) : SV_Target
 	float4 normal = NormalTexture.Sample(TextureSampler, input.TexCoord);
 	float depth = DepthTexture.Sample(TextureSampler, input.TexCoord);
 	float3 position = ReconstructPostProcessWorldPositionCommon(input.TexCoord, depth);
+    float3 positionDx = ddx(position);
+    float3 positionDy = ddy(position);
 	float4 shadowParams = ShadowGBufferTexture.Sample(TextureSampler, input.TexCoord);
 
    
@@ -630,7 +696,29 @@ float4 main(PSInputPostProcess input) : SV_Target
     float rangeBlend;
     float aggregateShadowVisibility;
     float3 surfaceNormal = DecodeGBufferNormal(normal.xyz);
-    ResolveDeferredLightAggregateShadowed(position, surfaceNormal, input.Position.xy, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend, aggregateShadowVisibility);
+    int materialShadowFilterRadius =
+        pbr
+            ? clamp(
+                (int)round(lerp(
+                    max(VirtualShadowGlobal.z, 1.0f),
+                    3.0f,
+                    saturate(shadowSoftness * 2.0f))),
+                1,
+                3)
+            : clamp((int)round(VirtualShadowGlobal.z), 0, 3);
+    ResolveDeferredLightAggregateShadowed(
+        position,
+        positionDx,
+        positionDy,
+        surfaceNormal,
+        input.Position.xy,
+        materialShadowFilterRadius,
+        lightDir,
+        lightColor,
+        lightAttenuation,
+        volumeScatter,
+        rangeBlend,
+        aggregateShadowVisibility);
 
     if (shadowDebugMode > 0 && VirtualShadowGlobal.x > 0.5f && VirtualShadowGlobal.x < 1.5f)
     {
@@ -742,7 +830,8 @@ float4 main(PSInputPostProcess input) : SV_Target
         float3 V = normalize(PPCameraPos.xyz - position.xyz + 0.00001f);
         float3 H = normalize(L + V + 0.00001f);
 
-        float NdotLScalar = saturate(dot(N, L));
+        float rawNdotL = dot(N, L);
+        float NdotLScalar = saturate(rawNdotL);
         float NdotV = saturate(dot(N, V));
         float NdotH = saturate(dot(N, H));
         float VdotH = saturate(dot(V, H));
@@ -783,14 +872,23 @@ float4 main(PSInputPostProcess input) : SV_Target
 
         float3 diffuseBRDF = kD * albedo / PI;
 
-        float shadowVisibility = 1.0f;
+        // PBR faces benefit from a wrapped diffuse terminator: cast shadows
+        // still come from PCF, while the curved surface no longer snaps from
+        // lit to black at N.L=0. Specular remains on the physical N.L term.
+        float terminatorWidth = lerp(
+            0.08f,
+            0.45f,
+            saturate(shadowSoftness * 2.0f));
+        float wrappedNdotL = saturate(
+            (rawNdotL + terminatorWidth) / (1.0f + terminatorWidth));
+        wrappedNdotL =
+            wrappedNdotL * wrappedNdotL * (3.0f - 2.0f * wrappedNdotL);
 
-        float3 directLight =
-        (diffuseBRDF + specularBRDF)
-        * lightColor.rgb
-        * lightIntensity
-        * NdotLScalar
-        * shadowVisibility;
+        float3 directDiffuse =
+            diffuseBRDF * lightColor.rgb * lightIntensity * wrappedNdotL;
+        float3 directSpecular =
+            specularBRDF * lightColor.rgb * lightIntensity * NdotLScalar;
+        float3 directLight = directDiffuse + directSpecular;
         
         float3 R = reflect(-V, N);
         R = normalize(R);
@@ -854,6 +952,9 @@ float4 main(PSInputPostProcess input) : SV_Target
         float3 ambientSpecular = envSpecular * F_IBL;
 
         float3 ambient = ambientDiffuse + ambientSpecular;
+        // Preserve the original deferred PBR appearance. Environment/SSR IBL
+        // was intentionally excluded here; reintroducing it made dielectric,
+        // fully rough materials look metallic.
         baseColor.rgb = directLight + ambient;
     }
 

@@ -1124,12 +1124,17 @@ namespace
 		outLightViewProjection = XMMatrixTranspose(view * projection);
 		// The UI bias is calibrated against the 300 m reference projection.
 		// Convert it per level so the receiver offset remains constant in world
-		// space instead of doubling at coarse cascade/clipmap boundaries.
+		// space for conventional cascades. VSM texels double in world size at
+		// every clipmap level, so its receiver offset must grow by the same 2x
+		// series or the coarse levels regress into self-shadow bands.
 		const float biasScale = (300.0f - 0.1f) / max(shadowFarClip - 0.1f, 0.0001f);
+		const float virtualLevelBiasScale = conventionalCascade
+			? 1.0f
+			: static_cast<float>(1u << actualLevel);
 		outShadowMapParams = XMFLOAT4(
 			1.0f / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE),
-			RendererSettings::GetShadowDepthBias() * biasScale,
-			RendererSettings::GetShadowNormalBias() * biasScale,
+			RendererSettings::GetShadowDepthBias() * biasScale * virtualLevelBiasScale,
+			RendererSettings::GetShadowNormalBias() * biasScale * virtualLevelBiasScale,
 			1.0f);
 	}
 

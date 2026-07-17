@@ -57,15 +57,13 @@ struct StreamingUploadEntry
 static vector<StreamingUploadEntry> g_StreamingUploads;
 static uint64_t g_StreamingFrame = 1;
 static bool g_ReservedResourcesSupported = false;
-// Diagnostic-safe material path: keep a source image as one image instead of
-// selecting generated mip levels by camera distance.  The high quality
-// anisotropic sampler still filters the selected base image.
-static constexpr bool g_MaterialMipMapsEnabled = false;
-// Reusing one physical tile for every non-resident detailed tile repeats a
-// small part of the source image across the material.  Keep the reserved
-// resource path unavailable until sampling is clamped by a resident MinMip
-// map (or an equivalent per-frame resident-mip view).
-static constexpr bool g_ReservedResourceStreamingSafe = false;
+// Material and environment roughness select a mip explicitly in the lighting
+// shaders. Exposing only mip 0 makes roughness=1 sample the sharp environment
+// and gives both Lit and PBR materials an incorrect mirror-like appearance.
+static constexpr bool g_MaterialMipMapsEnabled = true;
+// Reserved-resource streaming is available again after the diagnostic path.
+// Hardware support and the project setting are still checked before use.
+static constexpr bool g_ReservedResourceStreamingSafe = true;
 
 struct DecodedEntry
 {

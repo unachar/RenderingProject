@@ -91,9 +91,23 @@ public:
 		// a fixed near-zero depth value. This removes stable receiver-plane acne
 		// bands while still allowing a larger authored bias through the UI.
 		const float automaticBias = s_VirtualFirstLevelRadius / 256000.0f;
-		return std::max(s_ShadowDepthBias, automaticBias);
+		return std::max(s_VirtualShadowDepthBias, automaticBias);
 	}
-	static void SetShadowDepthBias(float value) { SetValue(s_ShadowDepthBias, std::clamp(value, 0.0f, 0.01f)); }
+	static void SetShadowDepthBias(float value)
+	{
+		if (s_ShadowMapMethod == ShadowMapMethod::VirtualShadowMap)
+		{
+			SetVirtualShadowDepthBias(value);
+		}
+		else
+		{
+			SetConventionalShadowDepthBias(value);
+		}
+	}
+	static float GetConventionalShadowDepthBias() { return s_ShadowDepthBias; }
+	static void SetConventionalShadowDepthBias(float value) { SetValue(s_ShadowDepthBias, std::clamp(value, 0.0f, 0.01f)); }
+	static float GetAuthoredVirtualShadowDepthBias() { return s_VirtualShadowDepthBias; }
+	static void SetVirtualShadowDepthBias(float value) { SetValue(s_VirtualShadowDepthBias, std::clamp(value, 0.0f, 0.01f)); }
 	static float GetShadowNormalBias()
 	{
 		if (s_ShadowMapMethod != ShadowMapMethod::VirtualShadowMap)
@@ -105,9 +119,23 @@ public:
 		// own shadow depth. The projection code converts this reference value to
 		// the actual depth range of every clipmap level.
 		const float automaticBias = s_VirtualFirstLevelRadius / 384000.0f;
-		return std::max(s_ShadowNormalBias, automaticBias);
+		return std::max(s_VirtualShadowNormalBias, automaticBias);
 	}
-	static void SetShadowNormalBias(float value) { SetValue(s_ShadowNormalBias, std::clamp(value, 0.0f, 0.01f)); }
+	static void SetShadowNormalBias(float value)
+	{
+		if (s_ShadowMapMethod == ShadowMapMethod::VirtualShadowMap)
+		{
+			SetVirtualShadowNormalBias(value);
+		}
+		else
+		{
+			SetConventionalShadowNormalBias(value);
+		}
+	}
+	static float GetConventionalShadowNormalBias() { return s_ShadowNormalBias; }
+	static void SetConventionalShadowNormalBias(float value) { SetValue(s_ShadowNormalBias, std::clamp(value, 0.0f, 0.01f)); }
+	static float GetAuthoredVirtualShadowNormalBias() { return s_VirtualShadowNormalBias; }
+	static void SetVirtualShadowNormalBias(float value) { SetValue(s_VirtualShadowNormalBias, std::clamp(value, 0.0f, 0.01f)); }
 	static float GetShadowResolutionTransition() { return s_ShadowResolutionTransition; }
 	static void SetShadowResolutionTransition(float value) { SetValue(s_ShadowResolutionTransition, std::clamp(value, 0.05f, 0.40f)); }
 	static bool GetStabilizeVirtualClipmaps() { return s_StabilizeVirtualClipmaps; }
@@ -154,6 +182,8 @@ public:
 		s_ShadowFilterRadius = 1;
 		s_ShadowDepthBias = 0.000063f;
 		s_ShadowNormalBias = 0.000042f;
+		s_VirtualShadowDepthBias = 0.000063f;
+		s_VirtualShadowNormalBias = 0.000042f;
 		s_ShadowResolutionTransition = 0.20f;
 		s_StabilizeVirtualClipmaps = true;
 		s_CacheVirtualShadowPages = true;
@@ -201,6 +231,8 @@ private:
 	inline static int s_ShadowFilterRadius = 1;
 	inline static float s_ShadowDepthBias = 0.000063f;
 	inline static float s_ShadowNormalBias = 0.000042f;
+	inline static float s_VirtualShadowDepthBias = 0.000063f;
+	inline static float s_VirtualShadowNormalBias = 0.000042f;
 	inline static float s_ShadowResolutionTransition = 0.20f;
 	inline static bool s_StabilizeVirtualClipmaps = true;
 	inline static bool s_CacheVirtualShadowPages = true;

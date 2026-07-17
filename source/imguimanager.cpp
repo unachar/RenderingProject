@@ -3569,16 +3569,9 @@ void ImGuiManager::DrawProjectSettingsWindow()
 			reservedResources = false;
 			RendererSettings::SetReservedResourcesEnabled(false);
 		}
-		ImGui::BeginDisabled(!reservedStreamingAvailable);
 		if (ImGui::Checkbox("Reserved Resource (64 KiB tiles)", &reservedResources))
 			RendererSettings::SetReservedResourcesEnabled(reservedResources);
-		ImGui::EndDisabled();
-		ImGui::SameLine();
-		ImGui::TextDisabled(reservedStreamingAvailable
-			? "対応"
-			: (reservedHardwareSupported
-				? "停止中: 未常駐ミップ反復対策"
-				: "Tiled Resources 非対応"));
+
 
 		ImGui::SeparatorText("Screen Space");
 		bool ssao = RendererSettings::GetSsaoEnabled();
@@ -3699,9 +3692,27 @@ void ImGuiManager::DrawProjectSettingsWindow()
 		}
 		ImGui::TextDisabled("ライト空間の重複領域で解像度を連続遷移（SM/VSM 共通）");
 		float depthBias = RendererSettings::GetShadowDepthBias();
-		if (ImGui::SliderFloat("深度バイアス", &depthBias, 0.0f, 0.001f, "%.7f")) RendererSettings::SetShadowDepthBias(depthBias);
+		if (virtualMode)
+		{
+			if (ImGui::SliderFloat("深度バイアス", &depthBias, 0.000001f, 0.005f, "%.7f", ImGuiSliderFlags_Logarithmic)) RendererSettings::SetShadowDepthBias(depthBias);
+		}
+		else if (ImGui::SliderFloat("深度バイアス", &depthBias, 0.0f, 0.001f, "%.7f"))
+		{
+			RendererSettings::SetShadowDepthBias(depthBias);
+		}
 		float normalBias = RendererSettings::GetShadowNormalBias();
-		if (ImGui::SliderFloat("法線バイアス", &normalBias, 0.0f, 0.001f, "%.7f")) RendererSettings::SetShadowNormalBias(normalBias);
+		if (virtualMode)
+		{
+			if (ImGui::SliderFloat("法線バイアス", &normalBias, 0.000001f, 0.003f, "%.7f", ImGuiSliderFlags_Logarithmic)) RendererSettings::SetShadowNormalBias(normalBias);
+		}
+		else if (ImGui::SliderFloat("法線バイアス", &normalBias, 0.0f, 0.001f, "%.7f"))
+		{
+			RendererSettings::SetShadowNormalBias(normalBias);
+		}
+		if (virtualMode)
+		{
+			ImGui::TextDisabled("VSM バイアスはクリップマップの texel 幅に合わせてレベルごとに拡大");
+		}
 		bool contactShadows = RendererSettings::GetContactShadowsEnabled();
 		if (ImGui::Checkbox("Contact Shadow (スクリーンスペース)", &contactShadows)) RendererSettings::SetContactShadowsEnabled(contactShadows);
 		ImGui::BeginDisabled(!contactShadows);
@@ -3807,8 +3818,10 @@ void ImGuiManager::SaveProjectSettings()
 	stream << "vsm_cache_pages=" << (RendererSettings::GetCacheVirtualShadowPages() ? 1 : 0) << '\n';
 	stream << "vsm_debug_mode=" << RendererSettings::GetVirtualShadowDebugMode() << '\n';
 	stream << "shadow_filter_radius=" << RendererSettings::GetShadowFilterRadius() << '\n';
-	stream << "shadow_depth_bias=" << RendererSettings::GetShadowDepthBias() << '\n';
-	stream << "shadow_normal_bias=" << RendererSettings::GetShadowNormalBias() << '\n';
+	stream << "shadow_depth_bias=" << RendererSettings::GetConventionalShadowDepthBias() << '\n';
+	stream << "shadow_normal_bias=" << RendererSettings::GetConventionalShadowNormalBias() << '\n';
+	stream << "vsm_depth_bias=" << RendererSettings::GetAuthoredVirtualShadowDepthBias() << '\n';
+	stream << "vsm_normal_bias=" << RendererSettings::GetAuthoredVirtualShadowNormalBias() << '\n';
 	stream << "shadow_resolution_transition=" << RendererSettings::GetShadowResolutionTransition() << '\n';
 	stream << "contact_shadows=" << (RendererSettings::GetContactShadowsEnabled() ? 1 : 0) << '\n';
 	stream << "contact_length=" << RendererSettings::GetContactShadowLength() << '\n';
@@ -3887,6 +3900,8 @@ void ImGuiManager::LoadProjectSettings()
 			else if (key == "shadow_filter_radius") RendererSettings::SetShadowFilterRadius(stoi(value));
 			else if (key == "shadow_depth_bias") RendererSettings::SetShadowDepthBias(stof(value));
 			else if (key == "shadow_normal_bias") RendererSettings::SetShadowNormalBias(stof(value));
+			else if (key == "vsm_depth_bias") RendererSettings::SetVirtualShadowDepthBias(stof(value));
+			else if (key == "vsm_normal_bias") RendererSettings::SetVirtualShadowNormalBias(stof(value));
 			else if (key == "shadow_resolution_transition")
 			{
 				float transition = stof(value);
