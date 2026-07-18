@@ -82,6 +82,14 @@ compile_commands.json
 !External/DirectXTex/DirectXTex/Bin/Desktop_2022/x64/Release/DirectXTex.lib
 !External/DirectXTex/DirectXTex/Bin/Desktop_2022/x64/Debug/DirectXTex.lib
 
+# Required prebuilt physics libraries for zip builds
+!External/Build/Bullet-vs18/lib/Debug/*.lib
+!External/Build/Bullet-vs18/lib/Release/*.lib
+!External/Build/Jolt-vs18/Debug/Jolt.lib
+!External/Build/Jolt-vs18/Release/Jolt.lib
+!External/Build/PhysX-output-static/bin/win.x86_64.vc143.mt/debug/*.lib
+!External/Build/PhysX-output-static/bin/win.x86_64.vc143.mt/release/*.lib
+
 
 # Required NuGet packages for zip build
 !packages/

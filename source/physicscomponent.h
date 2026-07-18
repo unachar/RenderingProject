@@ -22,6 +22,15 @@ enum class PhysicsShape : int
 	Box = 0,
 	Sphere = 1,
 	Capsule = 2,
+	Mesh = 3,
+};
+
+enum class PhysicsColliderRole : int
+{
+	Default = 0,
+	Floor = 1,
+	Wall = 2,
+	Obstacle = 3,
 };
 
 // Engine-independent rigid body settings. Runtime-only engine objects are owned
@@ -33,6 +42,7 @@ struct PhysicsComponent
 	PhysicsEngine UsePhysicsEngine = PhysicsEngine::Bullet;
 	PhysicsBodyType BodyType = PhysicsBodyType::Dynamic;
 	PhysicsShape Shape = PhysicsShape::Box;
+	PhysicsColliderRole ColliderRole = PhysicsColliderRole::Default;
 
 	DirectX::XMFLOAT3 ColliderCenter = { 0.0f, 0.0f, 0.0f };
 	DirectX::XMFLOAT3 ColliderSize = { 1.0f, 1.0f, 1.0f };

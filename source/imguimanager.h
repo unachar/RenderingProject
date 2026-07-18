@@ -95,6 +95,8 @@ private:
 		MoveComponent Move{};
 		bool HasPhysics = false;
 		PhysicsComponent Physics{};
+		bool HasTimeline = false;
+		TimelineComponent Timeline{};
 		bool HasObb = false;
 		OBBComponent Obb{};
 		bool HasLod = false;

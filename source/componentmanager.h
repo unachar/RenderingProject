@@ -4,6 +4,7 @@
 #include "light.h"
 #include "animationplayback.h"
 #include "physicscomponent.h"
+#include "timelinecomponent.h"
 #include <cassert>
 #include <array>
 #include <cstdlib>
@@ -521,6 +522,7 @@ inline const ComponentType ComponentType::LIGHT = ComponentTypeRegistry::GetType
 inline const ComponentType ComponentType::SUN = ComponentTypeRegistry::GetType<SunComponent>();
 inline const ComponentType ComponentType::INSTANCING = ComponentTypeRegistry::GetType<InstancingComponent>();
 inline const ComponentType ComponentType::LOD = ComponentTypeRegistry::GetType<LODComponent>();
+inline const ComponentType ComponentType::TIMELINE = ComponentTypeRegistry::GetType<TimelineComponent>();
 
 class ComponentManager
 {

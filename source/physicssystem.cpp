@@ -42,6 +42,7 @@ namespace
 		HashCombine(hash, static_cast<uint64_t>(physics.UsePhysicsEngine));
 		HashCombine(hash, static_cast<uint64_t>(physics.BodyType));
 		HashCombine(hash, static_cast<uint64_t>(physics.Shape));
+		HashCombine(hash, static_cast<uint64_t>(physics.ColliderRole));
 		HashFloat3(hash, physics.ColliderCenter);
 		HashFloat3(hash, physics.ColliderSize);
 		HashFloat(hash, physics.SphereRadius);
@@ -304,6 +305,31 @@ void PhysicsSystem::CreateEntityBody(EntityID entity)
 		? physics.SphereRadius : physics.CapsuleRadius;
 	desc.Radius = max(radius * max(scale.x, scale.z), 0.001f);
 	desc.Height = max(physics.CapsuleHeight * scale.y, 0.001f);
+	if (physics.Shape == PhysicsShape::Mesh &&
+		ComponentManager::HasComponent<StaticModelComponent>(entity))
+	{
+		const auto& modelComponent =
+			ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
+		if (StaticModelResource* model =
+			ModelManager::GetStaticModel(modelComponent.ModelId))
+		{
+			for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
+			{
+				const auto& mesh = model->GetMeshData(meshIndex);
+				desc.MeshVertices.reserve(
+					desc.MeshVertices.size() + mesh.CpuVertices.size());
+				for (const auto& vertex : mesh.CpuVertices)
+				{
+					desc.MeshVertices.push_back(
+					{
+						(vertex.Position.x - physics.ColliderCenter.x) * scale.x,
+						(vertex.Position.y - physics.ColliderCenter.y) * scale.y,
+						(vertex.Position.z - physics.ColliderCenter.z) * scale.z
+					});
+				}
+			}
+		}
+	}
 	desc.Mass = physics.Mass;
 	desc.Friction = physics.Friction;
 	desc.Restitution = physics.Restitution;

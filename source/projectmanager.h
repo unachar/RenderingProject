@@ -22,6 +22,12 @@ class ProjectManager final
 		TransformComponent Transform{};
 		bool HasAnimation = false;
 		AnimationModelComponent Animation{};
+		bool HasCamera = false;
+		CameraComponent Camera{};
+		bool HasPostProcess = false;
+		PostProcessComponent PostProcess{};
+		bool HasTimeline = false;
+		TimelineComponent Timeline{};
 	};
 
 	inline static ProjectPlayState s_State = ProjectPlayState::Edit;
@@ -46,4 +52,3 @@ public:
 	static bool IsSimulationRunning() { return s_State == ProjectPlayState::Playing; }
 	static uint64_t GetPlaySession() { return s_PlaySession; }
 };
-

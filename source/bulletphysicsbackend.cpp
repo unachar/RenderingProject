@@ -3,6 +3,7 @@
 
 #include <btBulletDynamicsCommon.h>
 #include <BulletDynamics/ConstraintSolver/btGeneric6DofSpring2Constraint.h>
+#include <BulletCollision/CollisionShapes/btConvexHullShape.h>
 #include <unordered_map>
 
 namespace
@@ -119,6 +120,23 @@ namespace
 			BodyRecord record{};
 			switch (desc.Shape)
 			{
+			case PhysicsShape::Mesh:
+				if (!desc.MeshVertices.empty())
+				{
+					auto hull = make_unique<btConvexHullShape>();
+					for (const XMFLOAT3& vertex : desc.MeshVertices)
+						hull->addPoint(ToBt(vertex), false);
+					hull->recalcLocalAabb();
+					record.Shape = move(hull);
+				}
+				else
+				{
+					record.Shape = make_unique<btBoxShape>(btVector3(
+						max(desc.HalfExtent.x, 0.001f),
+						max(desc.HalfExtent.y, 0.001f),
+						max(desc.HalfExtent.z, 0.001f)));
+				}
+				break;
 			case PhysicsShape::Sphere:
 				record.Shape = make_unique<btSphereShape>(max(desc.Radius, 0.001f));
 				break;

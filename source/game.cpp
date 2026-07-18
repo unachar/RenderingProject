@@ -159,6 +159,14 @@ namespace
 				}
 			}
 			previousPoseApplySerial = poseApplySerial;
+			if (frame == 5)
+			{
+				physicsSystem->GetSettings().TimeScale = 0.0f;
+			}
+			else if (frame == 8)
+			{
+				physicsSystem->GetSettings().TimeScale = 1.0f;
+			}
 		}
 
 		if (frame == 10 || frame == 20 || frame == 40)
@@ -209,6 +217,32 @@ namespace
 			fprintf(file, "physx_max_bone_scale_error=%.8f\n", maxBoneScaleErrors[2]);
 			fprintf(file, "zero_step_frames=%d\n", zeroStepFrames);
 			fprintf(file, "zero_step_pose_apply_failures=%d\n", zeroStepPoseApplyFailures);
+			const EntityID editorCamera = Camera::GetEditorCameraEntity();
+			const EntityID gameCamera = Camera::GetGameCameraEntity();
+			fprintf(file, "editor_camera=%u\n", editorCamera);
+			fprintf(file, "game_camera=%u\n", gameCamera);
+			fprintf(file, "play_uses_game_camera=%d\n",
+				editorCamera != gameCamera &&
+				Camera::GetCameraEntity() == gameCamera ? 1 : 0);
+			if (gameCamera != g_kINVALID_ENTITY &&
+				ComponentManager::HasComponent<CameraComponent>(gameCamera))
+			{
+				fprintf(file, "timeline_camera_fov=%.6f\n",
+					ComponentManager::GetComponentUnchecked<CameraComponent>(
+						gameCamera).Fov);
+				fprintf(file, "timeline_camera_pass=%d\n",
+					ComponentManager::GetComponentUnchecked<CameraComponent>(
+						gameCamera).Fov > XMConvertToRadians(50.0f) ? 1 : 0);
+			}
+			const Entity cube = World::GetEntityByName("Cube");
+			if (cube.IsValid() && cube.Has<TransformComponent>())
+			{
+				fprintf(file, "floor_collision_cube_y=%.6f\n",
+					cube.Get<TransformComponent>().Position.y);
+				fprintf(file, "floor_collision_pass=%d\n",
+					cube.Get<TransformComponent>().Position.y >= 0.45f &&
+					cube.Get<TransformComponent>().Position.y <= 0.70f ? 1 : 0);
+			}
 			if (physicsSystem)
 			{
 				fprintf(file, "bullet_available=%d\n",
@@ -348,6 +382,7 @@ void Game::Init()
 void Game::Create()
 {
 	Camera::Create();
+	Camera::CreateGameCamera();
 
 	AddEntity<Cube>();
 	AddEntity<Polygon3D>();
@@ -374,6 +409,47 @@ void Game::Create()
 			physics.UsePhysicsEngine = PhysicsEngine::Bullet;
 			physics.BodyType = PhysicsBodyType::Dynamic;
 			physics.Shape = PhysicsShape::Box;
+			physics.Velocity = { 0.0f, -5.0f, 0.0f };
+			cube.Get<TransformComponent>().Position = { 100.0f, 0.60f, 0.0f };
+		}
+		Entity floor = World::CreateEntity()
+			.Add<NameComponent>()
+			.Add<TransformComponent>()
+			.Add<PhysicsComponent>();
+		floor.SetName("PhysicsSmokeFloor");
+		floor.Get<TransformComponent>().Position = { 100.0f, -0.5f, 0.0f };
+		auto& floorPhysics = floor.Get<PhysicsComponent>();
+		floorPhysics.UsePhysics = true;
+		floorPhysics.UsePhysicsEngine = PhysicsEngine::Bullet;
+		floorPhysics.BodyType = PhysicsBodyType::Static;
+		floorPhysics.Shape = PhysicsShape::Box;
+		floorPhysics.ColliderRole = PhysicsColliderRole::Floor;
+		floorPhysics.ColliderSize = { 20.0f, 1.0f, 20.0f };
+		floorPhysics.UseGravity = false;
+		const EntityID gameCamera = Camera::GetGameCameraEntity();
+		if (gameCamera != g_kINVALID_ENTITY)
+		{
+			ComponentManager::AddComponent(gameCamera, ComponentType::TIMELINE);
+			auto& timeline =
+				ComponentManager::GetComponentUnchecked<TimelineComponent>(gameCamera);
+			timeline.Duration = 1.0f;
+			timeline.PlayOnAwake = true;
+			TimelineTrackData track{};
+			track.Name = "Smoke Camera FOV";
+			track.Target = gameCamera;
+			track.Property = TimelineProperty::CameraFov;
+			track.HasDefaultValue = true;
+			track.DefaultValue = { XM_PIDIV4, 0, 0, 0 };
+			TimelineClipData clip{};
+			clip.Name = "FOV";
+			clip.Duration = 0.25f;
+			clip.Keys.push_back(
+				{ 0.0f, { XM_PIDIV4, 0, 0, 0 }, TimelineInterpolation::Linear });
+			clip.Keys.push_back(
+				{ 0.25f, { XMConvertToRadians(60.0f), 0, 0, 0 },
+					TimelineInterpolation::Linear });
+			track.Clips.push_back(move(clip));
+			timeline.Tracks.push_back(move(track));
 		}
 		ProjectManager::Play();
 	}

@@ -831,6 +831,7 @@ copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\b
     <ClInclude Include="source\systemmanager.h" />
     <ClInclude Include="source\timeline.h" />
     <ClInclude Include="source\timelinesystem.h" />
+    <ClInclude Include="source\timelinecomponent.h" />
     <ClInclude Include="source\transformsystem.h" />
     <ClInclude Include="source\texturemanager.h" />
     <ClInclude Include="source\vector.h" />

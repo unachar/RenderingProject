@@ -20,6 +20,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/CollisionGroup.h>
 #include <Jolt/Physics/Collision/GroupFilter.h>
 #include <Jolt/Physics/Constraints/SixDOFConstraint.h>
@@ -264,6 +265,24 @@ namespace
 			ShapeRefC shape;
 			switch (desc.Shape)
 			{
+			case PhysicsShape::Mesh:
+				if (desc.MeshVertices.size() >= 4)
+				{
+					Array<Vec3> points;
+					points.reserve(desc.MeshVertices.size());
+					for (const XMFLOAT3& vertex : desc.MeshVertices)
+						points.push_back(ToJoltVector(vertex));
+					ConvexHullShapeSettings hullSettings(points);
+					ShapeSettings::ShapeResult hullResult = hullSettings.Create();
+					if (!hullResult.HasError())
+						shape = hullResult.Get();
+				}
+				if (shape == nullptr)
+					shape = new BoxShape(Vec3(
+						max(desc.HalfExtent.x, 0.001f),
+						max(desc.HalfExtent.y, 0.001f),
+						max(desc.HalfExtent.z, 0.001f)));
+				break;
 			case PhysicsShape::Sphere:
 				shape = new SphereShape(max(desc.Radius, 0.001f));
 				break;

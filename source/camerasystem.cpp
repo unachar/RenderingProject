@@ -6,6 +6,8 @@
 #include "renderercore.h"
 #include "world.h"
 #include "input.h"
+#include "camera.h"
+#include "projectmanager.h"
 
 static float Halton(int index, int base)
 {
@@ -25,16 +27,30 @@ void CameraSystem::Update()
 {
 	auto cameraEntities = World::GetView<CameraComponent, TransformComponent>();
 	float aspectRatio = RendererCore::GetSceneAspectRatio();
+	const EntityID activeCamera = Camera::GetCameraEntity();
+	static EntityID previousActiveCamera = g_kINVALID_ENTITY;
 
 	for (EntityID i : cameraEntities)
 	{
 		auto& cam = ComponentManager::GetComponentUnchecked<CameraComponent>(i);
 		auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(i);
+		const bool isActive = i == activeCamera;
 
-		RendererState::m_PrevViewMatrix = cam.ViewMatrix;
-		RendererState::m_PrevProjMatrix = cam.ProjectionMatrix;
+		if (isActive)
+		{
+			if (previousActiveCamera == activeCamera)
+			{
+				RendererState::m_PrevViewMatrix = cam.ViewMatrix;
+				RendererState::m_PrevProjMatrix = cam.ProjectionMatrix;
+			}
+			else
+			{
+				RendererState::m_PrevViewMatrix = {};
+				RendererState::m_PrevProjMatrix = {};
+			}
+		}
 
-		if (Input::IsKeyHeld(VK_RBUTTON))
+		if (isActive && cam.AllowUserControl && Input::IsKeyHeld(VK_RBUTTON))
 		{
 			const POINT mouseDelta = Input::GetMouseDelta();
 			const float sensitivity = 0.004f;
@@ -48,6 +64,53 @@ void CameraSystem::Update()
 				XMMatrixRotationRollPitchYaw(transform.Rotation.x, transform.Rotation.y, 0.0f));
 			XMVECTOR target = XMVectorAdd(XMLoadFloat3(&transform.Position), forward);
 			XMStoreFloat3(&cam.Target, target);
+		}
+
+		// Edit mode does not execute gameplay input/movement systems.  Keep a
+		// dedicated editor fly camera available there without running scripts.
+		if (isActive && !ProjectManager::IsPlaying() && !cam.IsGameCamera &&
+			cam.AllowUserControl && Input::IsKeyHeld(VK_RBUTTON))
+		{
+			XMFLOAT3 input = {};
+			if (Input::IsKeyHeld('A')) input.x -= 1.0f;
+			if (Input::IsKeyHeld('D')) input.x += 1.0f;
+			if (Input::IsKeyHeld('Q')) input.y -= 1.0f;
+			if (Input::IsKeyHeld('E')) input.y += 1.0f;
+			if (Input::IsKeyHeld('S')) input.z -= 1.0f;
+			if (Input::IsKeyHeld('W')) input.z += 1.0f;
+
+			const XMMATRIX rotation = XMMatrixRotationRollPitchYaw(
+				transform.Rotation.x, transform.Rotation.y, 0.0f);
+			XMVECTOR direction = XMVectorAdd(
+				XMVectorScale(XMVector3TransformNormal(
+					XMVectorSet(1, 0, 0, 0), rotation), input.x),
+				XMVectorAdd(
+					XMVectorScale(XMVectorSet(0, 1, 0, 0), input.y),
+					XMVectorScale(XMVector3TransformNormal(
+						XMVectorSet(0, 0, 1, 0), rotation), input.z)));
+			if (XMVectorGetX(XMVector3LengthSq(direction)) > 0.0001f)
+			{
+				direction = XMVector3Normalize(direction);
+				float speed = 0.1f;
+				if (ComponentManager::HasComponent<MoveComponent>(i))
+				{
+					speed = ComponentManager::GetComponentUnchecked<MoveComponent>(i).Speed;
+				}
+				if (Input::IsKeyHeld(VK_SHIFT))
+				{
+					speed *= 4.0f;
+				}
+				const XMVECTOR delta = XMVectorScale(
+					direction, speed * World::GetDeltaTime() * 60.0f);
+				XMVECTOR position = XMVectorAdd(XMLoadFloat3(&transform.Position), delta);
+				XMStoreFloat3(&transform.Position, position);
+				if (cam.LockOnTarget == g_kINVALID_ENTITY)
+				{
+					XMVECTOR target = XMVectorAdd(XMLoadFloat3(&cam.Target), delta);
+					XMStoreFloat3(&cam.Target, target);
+				}
+				transform.IsDirty = true;
+			}
 		}
 
 		if (cam.LockOnTarget != g_kINVALID_ENTITY &&
@@ -88,5 +151,6 @@ void CameraSystem::Update()
 		XMStoreFloat4x4(&cam.ViewMatrix, view);
 		XMStoreFloat4x4(&cam.ProjectionMatrix, proj);
 	}
+	previousActiveCamera = activeCamera;
 }
 

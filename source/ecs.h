@@ -45,6 +45,7 @@ struct ComponentType
 	static const ComponentType SUN;
 	static const ComponentType INSTANCING;
 	static const ComponentType LOD;
+	static const ComponentType TIMELINE;
 
 	ComponentTypeID Value = MAX;
 

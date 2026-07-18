@@ -499,6 +499,9 @@
     <ClInclude Include="source\timelinesystem.h">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClInclude>
+    <ClInclude Include="source\timelinecomponent.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
     <ClInclude Include="source\transformsystem.h">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClInclude>

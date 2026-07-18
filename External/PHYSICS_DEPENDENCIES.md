@@ -15,11 +15,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\setup_physics_dependencies.ps1 -Configuration All
 ```
 
-The script clones the pinned revisions into `External`, configures each library
-for the project's static MSVC runtime (`/MTd` and `/MT`), and writes generated
-libraries below `External/Build`. The generated directories are intentionally
-ignored by the parent repository. Physics dependency builds currently target
-the project's x64 Debug and Release configurations.
+The pinned source revisions and the required Debug/Release static libraries are
+vendored in the parent repository so that GitHub source archives build without
+an additional dependency download. The script reuses vendored source when
+present; if a dependency directory is empty, it clones the pinned revision.
+It configures each library for the project's static MSVC runtime (`/MTd` and
+`/MT`) and writes generated libraries below `External/Build`. Physics
+dependency builds currently target the project's x64 Debug and Release
+configurations.
 
 ## Runtime usage
 

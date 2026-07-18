@@ -22,10 +22,23 @@ function Ensure-Repository {
         [string]$Directory,
         [string]$Url,
         [string]$Tag,
-        [string]$Commit
+        [string]$Commit,
+        [string]$RequiredPath
     )
 
     if (-not (Test-Path -LiteralPath (Join-Path $Directory ".git"))) {
+        if (Test-Path -LiteralPath (Join-Path $Directory $RequiredPath)) {
+            Write-Host "Using vendored dependency in $Directory ($Commit)."
+            return
+        }
+
+        $existingFiles = @(
+            Get-ChildItem -LiteralPath $Directory -Force -ErrorAction SilentlyContinue
+        )
+        if ($existingFiles.Count -gt 0) {
+            throw "Dependency directory is incomplete: $Directory"
+        }
+
         Invoke-Native "git" @(
             "clone", "--depth", "1", "--branch", $Tag, $Url, $Directory
         )
@@ -69,17 +82,20 @@ Ensure-Repository `
     (Join-Path $externalRoot "BulletPhysics") `
     "https://github.com/bulletphysics/bullet3.git" `
     "3.25" `
-    "2c204c49e56ed15ec5fcfa71d199ab6d6570b3f5"
+    "2c204c49e56ed15ec5fcfa71d199ab6d6570b3f5" `
+    "src\btBulletDynamicsCommon.h"
 Ensure-Repository `
     (Join-Path $externalRoot "JoltPhysics") `
     "https://github.com/jrouwe/JoltPhysics.git" `
     "v5.6.0" `
-    "e77f175595e64cb44218cc9d9d56fc365ad0e36a"
+    "e77f175595e64cb44218cc9d9d56fc365ad0e36a" `
+    "Jolt\Jolt.h"
 Ensure-Repository `
     (Join-Path $externalRoot "PhysX") `
     "https://github.com/NVIDIA-Omniverse/PhysX.git" `
     "107.3-physx-5.6.1" `
-    "5ca9f472105a90d70d957c243cb0ef36fe251a9f"
+    "5ca9f472105a90d70d957c243cb0ef36fe251a9f" `
+    "physx\include\PxPhysicsAPI.h"
 
 $bulletSource = (Join-Path $externalRoot "BulletPhysics").Replace("\", "/")
 $bulletBuild = (Join-Path $buildRoot "Bullet-vs18").Replace("\", "/")

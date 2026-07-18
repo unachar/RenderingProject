@@ -18,6 +18,7 @@
 #include "projectmanager.h"
 #include "physicssystem.h"
 #include "systemmanager.h"
+#include "timelinesystem.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -1629,6 +1630,41 @@ void ImGuiManager::DrawHierarchyWindow()
 	{
 		m_SelectedEntity = g_kINVALID_ENTITY;
 	}
+	ImGui::SameLine();
+	if (ImGui::Button("+ 作成"))
+	{
+		ImGui::OpenPopup("HierarchyCreatePopup");
+	}
+	if (ImGui::BeginPopup("HierarchyCreatePopup"))
+	{
+		if (ImGui::MenuItem("GameCamera"))
+		{
+			int cameraNumber = 1;
+			for (EntityID candidate : World::GetView<CameraComponent>())
+			{
+				if (ComponentManager::GetComponentUnchecked<CameraComponent>(
+					candidate).IsGameCamera)
+				{
+					++cameraNumber;
+				}
+			}
+			m_SelectedEntity = Camera::CreateGameCamera(
+				"GameCamera " + to_string(cameraNumber),
+				{ 5.0f, 4.0f, -10.0f },
+				{ 0.0f, 3.0f, 0.0f },
+				XM_PIDIV4,
+				Camera::GetGameCameraEntity() == g_kINVALID_ENTITY);
+			AddLog("GameCamera追加: #%u", m_SelectedEntity);
+		}
+		if (ImGui::BeginMenu("ライト"))
+		{
+			if (ImGui::MenuItem("Directional")) m_SelectedEntity = CreateLightEntity(LightType::Directional);
+			if (ImGui::MenuItem("Point")) m_SelectedEntity = CreateLightEntity(LightType::Point);
+			if (ImGui::MenuItem("Spot")) m_SelectedEntity = CreateLightEntity(LightType::Spot);
+			ImGui::EndMenu();
+		}
+		ImGui::EndPopup();
+	}
 
 	ImGui::SeparatorText("セクション");
 	for (EntityID entity : World::GetView<TransformComponent>())
@@ -2836,6 +2872,359 @@ ImGui::Text("メッシュ: %s", ComponentManager::HasComponent<MeshComponent>(en
 	ImGui::Text("スプライト: %s", ComponentManager::HasComponent<SpriteComponent>(entity) ? "あり" : "なし");
 	}
 
+	if (ComponentManager::HasComponent<CameraComponent>(entity) &&
+		ImGui::CollapsingHeader("カメラ", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		const EntitySnapshot before = CaptureEntity(entity);
+		auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(entity);
+		bool changed = false;
+		const bool isEditorCamera = entity == Camera::GetEditorCameraEntity();
+		const bool isActive = entity == Camera::GetCameraEntity();
+		ImGui::TextColored(
+			isActive ? ImVec4(0.25f, 0.9f, 0.4f, 1.0f)
+				: ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
+			isActive ? "現在の描画カメラ" : "非アクティブ");
+		ImGui::TextUnformatted(isEditorCamera ? "種類: EditorCamera" : "種類: GameCamera");
+
+		if (!isEditorCamera)
+		{
+			if (!camera.IsMainGameCamera)
+			{
+				if (ImGui::Button("メインGameCameraに設定"))
+				{
+					Camera::SetMainGameCamera(entity);
+					changed = true;
+				}
+			}
+			else
+			{
+				ImGui::TextColored(ImVec4(0.25f, 0.9f, 0.4f, 1.0f), "Main GameCamera");
+			}
+			changed |= ImGui::InputInt("優先度", &camera.Priority);
+		}
+
+		changed |= ImGui::Checkbox("ユーザー操作を許可", &camera.AllowUserControl);
+		changed |= ImGui::DragFloat3("注視点", &camera.Target.x, 0.01f);
+		float fovDegrees = XMConvertToDegrees(camera.Fov);
+		if (ImGui::SliderFloat("視野角 (度)", &fovDegrees, 1.0f, 179.0f))
+		{
+			camera.Fov = XMConvertToRadians(fovDegrees);
+			changed = true;
+		}
+		changed |= ImGui::DragFloat("Near Clip", &camera.NearClip, 0.01f, 0.001f, 1000.0f);
+		changed |= ImGui::DragFloat("Far Clip", &camera.FarClip, 1.0f, 0.01f, 1000000.0f);
+		camera.NearClip = max(0.001f, camera.NearClip);
+		camera.FarClip = max(camera.NearClip + 0.001f, camera.FarClip);
+
+		int lockTarget = camera.LockOnTarget == g_kINVALID_ENTITY
+			? -1 : static_cast<int>(camera.LockOnTarget);
+		if (ImGui::InputInt("追従Entity ID (-1=なし)", &lockTarget))
+		{
+			camera.LockOnTarget = lockTarget < 0
+				? g_kINVALID_ENTITY : static_cast<EntityID>(lockTarget);
+			changed = true;
+		}
+		changed |= ImGui::DragFloat3("追従オフセット", &camera.LockOnOffset.x, 0.01f);
+		changed |= ImGui::Checkbox("ポストプロセス有効", &camera.EnablePostProcess);
+
+		if (ComponentManager::HasComponent<PostProcessComponent>(entity))
+		{
+			auto& post = ComponentManager::GetComponentUnchecked<PostProcessComponent>(entity);
+			const char* postNames[] = { "なし", "ブラー", "セピア", "グレースケール", "反転" };
+			int type = static_cast<int>(post.Type);
+			if (ImGui::Combo("ポストプロセス", &type, postNames, IM_ARRAYSIZE(postNames)))
+			{
+				post.Type = static_cast<PostProcessType>(clamp(type, 0, 4));
+				changed = true;
+			}
+			changed |= ImGui::SliderFloat("エフェクト強度", &post.Intensity, 0.0f, 1.0f);
+		}
+
+		if (ComponentManager::HasComponent<MoveComponent>(entity))
+		{
+			auto& move = ComponentManager::GetComponentUnchecked<MoveComponent>(entity);
+			changed |= ImGui::Checkbox("移動可能", &move.CanMove);
+			changed |= ImGui::DragFloat("移動速度", &move.Speed, 0.01f, 0.0f, 1000.0f);
+			changed |= ImGui::DragFloat("回転速度", &move.RotationSpeed, 0.001f, 0.0f, 100.0f);
+		}
+		ImGui::TextWrapped("EditorCamera: 右ドラッグ + WASDQE、Shiftで高速移動");
+		if (changed)
+		{
+			BeginUndoCapture(entity, before);
+		}
+	}
+
+	if (!ComponentManager::HasComponent<TimelineComponent>(entity))
+	{
+		ImGui::SeparatorText("Timeline");
+		ImGui::TextWrapped("TimelineComponentが設定されていません。追加しますか?");
+		if (ImGui::Button("TimelineComponentを追加"))
+		{
+			PushUndoSnapshot(CaptureEntity(entity));
+			ComponentManager::AddComponent(entity, ComponentType::TIMELINE);
+		}
+	}
+
+	if (ComponentManager::HasComponent<TimelineComponent>(entity) &&
+		ImGui::CollapsingHeader("Timeline", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		const EntitySnapshot before = CaptureEntity(entity);
+		auto& timeline = ComponentManager::GetComponentUnchecked<TimelineComponent>(entity);
+		bool changed = false;
+		bool evaluate = false;
+
+		changed |= ImGui::DragFloat("長さ (秒)", &timeline.Duration, 0.1f, 0.01f, 36000.0f);
+		changed |= ImGui::DragFloat("再生速度", &timeline.Speed, 0.01f, -100.0f, 100.0f);
+		changed |= ImGui::Checkbox("Play On Awake", &timeline.PlayOnAwake);
+		ImGui::SameLine();
+		changed |= ImGui::Checkbox("Loop", &timeline.Loop);
+		timeline.Duration = max(0.01f, timeline.Duration);
+
+		if (ImGui::Button(timeline.IsPlaying ? "一時停止##Timeline" : "再生##Timeline"))
+		{
+			timeline.IsPlaying = !timeline.IsPlaying;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("停止##Timeline"))
+		{
+			timeline.IsPlaying = false;
+			timeline.CurrentTime = 0.0f;
+			evaluate = true;
+		}
+		if (ImGui::SliderFloat(
+			"再生ヘッド", &timeline.CurrentTime, 0.0f, timeline.Duration, "%.3f 秒"))
+		{
+			timeline.IsPlaying = false;
+			evaluate = true;
+		}
+
+		const char* propertyNames[] =
+		{
+			"Transform / Position", "Transform / Rotation", "Transform / Scale",
+			"Camera / Target", "Camera / FOV", "Camera / Near Clip",
+			"Camera / Far Clip", "Camera / Lock-on Offset",
+			"PostProcess / Intensity"
+		};
+		if (ImGui::Button("+ Track"))
+		{
+			TimelineTrackData track{};
+			track.Target = entity;
+			track.Name = string("Track ") + to_string(timeline.Tracks.size() + 1);
+			bool valid = false;
+			track.DefaultValue = TimeLineSystem::ReadProperty(
+				track.Target, track.Property, &valid);
+			track.HasDefaultValue = valid;
+			timeline.Tracks.push_back(move(track));
+			changed = true;
+		}
+
+		for (size_t trackIndex = 0; trackIndex < timeline.Tracks.size();)
+		{
+			auto& track = timeline.Tracks[trackIndex];
+			ImGui::PushID(static_cast<int>(trackIndex));
+			bool removeTrack = false;
+			if (ImGui::TreeNodeEx(
+				"TrackNode", ImGuiTreeNodeFlags_DefaultOpen,
+				"%s  (%s)", track.Name.c_str(),
+				propertyNames[static_cast<int>(track.Property)]))
+			{
+				changed |= ImGui::Checkbox("有効##Track", &track.Enabled);
+				char trackName[128]{};
+				strncpy_s(trackName, track.Name.c_str(), _TRUNCATE);
+				if (ImGui::InputText("Track名", trackName, IM_ARRAYSIZE(trackName)))
+				{
+					track.Name = trackName;
+					changed = true;
+				}
+				int targetId = track.Target == g_kINVALID_ENTITY
+					? -1 : static_cast<int>(track.Target);
+				if (ImGui::InputInt("対象Entity ID", &targetId))
+				{
+					track.Target = targetId < 0
+						? g_kINVALID_ENTITY : static_cast<EntityID>(targetId);
+					changed = true;
+				}
+				int property = static_cast<int>(track.Property);
+				if (ImGui::Combo(
+					"パラメーター", &property,
+					propertyNames, IM_ARRAYSIZE(propertyNames)))
+				{
+					track.Property = static_cast<TimelineProperty>(
+						clamp(property, 0, IM_ARRAYSIZE(propertyNames) - 1));
+					bool valid = false;
+					track.DefaultValue = TimeLineSystem::ReadProperty(
+						track.Target, track.Property, &valid);
+					track.HasDefaultValue = valid;
+					changed = true;
+				}
+				if (ImGui::Button("+ Clip"))
+				{
+					TimelineClipData clip{};
+					clip.Name = string("Clip ") + to_string(track.Clips.size() + 1);
+					clip.StartTime = timeline.CurrentTime;
+					clip.Duration = min(1.0f, max(0.01f, timeline.Duration - clip.StartTime));
+					bool valid = false;
+					const XMFLOAT4 value = TimeLineSystem::ReadProperty(
+						track.Target, track.Property, &valid);
+					if (valid)
+					{
+						clip.Keys.push_back({ 0.0f, value, TimelineInterpolation::Linear });
+						clip.Keys.push_back({ clip.Duration, value, TimelineInterpolation::Linear });
+					}
+					track.Clips.push_back(move(clip));
+					changed = true;
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("Track削除"))
+				{
+					removeTrack = true;
+				}
+
+				for (size_t clipIndex = 0;
+					!removeTrack && clipIndex < track.Clips.size();)
+				{
+					auto& clip = track.Clips[clipIndex];
+					ImGui::PushID(static_cast<int>(clipIndex));
+					bool removeClip = false;
+					if (ImGui::TreeNodeEx(
+						"ClipNode", ImGuiTreeNodeFlags_DefaultOpen,
+						"%s  %.2f - %.2f 秒",
+						clip.Name.c_str(), clip.StartTime,
+						clip.StartTime + clip.Duration))
+					{
+						changed |= ImGui::Checkbox("有効##Clip", &clip.Enabled);
+						char clipName[128]{};
+						strncpy_s(clipName, clip.Name.c_str(), _TRUNCATE);
+						if (ImGui::InputText("Clip名", clipName, IM_ARRAYSIZE(clipName)))
+						{
+							clip.Name = clipName;
+							changed = true;
+						}
+						changed |= ImGui::DragFloat(
+							"開始 (秒)", &clip.StartTime, 0.01f, 0.0f, timeline.Duration);
+						float endTime = clip.StartTime + clip.Duration;
+						if (ImGui::DragFloat(
+							"終了 (秒)", &endTime, 0.01f,
+							clip.StartTime + 0.001f, timeline.Duration))
+						{
+							clip.Duration = endTime - clip.StartTime;
+							changed = true;
+						}
+						clip.StartTime = clamp(clip.StartTime, 0.0f, timeline.Duration);
+						clip.Duration = clamp(
+							clip.Duration, 0.001f, max(0.001f, timeline.Duration - clip.StartTime));
+						changed |= ImGui::DragFloat(
+							"Blend In", &clip.BlendIn, 0.01f, 0.0f, clip.Duration);
+						changed |= ImGui::DragFloat(
+							"Blend Out", &clip.BlendOut, 0.01f, 0.0f, clip.Duration);
+						clip.BlendIn = clamp(clip.BlendIn, 0.0f, clip.Duration);
+						clip.BlendOut = clamp(clip.BlendOut, 0.0f, clip.Duration);
+
+						if (ImGui::Button("+ Key (現在値)"))
+						{
+							bool valid = false;
+							const XMFLOAT4 value = TimeLineSystem::ReadProperty(
+								track.Target, track.Property, &valid);
+							if (valid)
+							{
+								clip.Keys.push_back(
+									{ clamp(timeline.CurrentTime - clip.StartTime,
+										0.0f, clip.Duration), value,
+										TimelineInterpolation::Linear });
+								sort(clip.Keys.begin(), clip.Keys.end(),
+									[](const auto& a, const auto& b)
+									{ return a.Time < b.Time; });
+								changed = true;
+							}
+						}
+						ImGui::SameLine();
+						if (ImGui::Button("Clip削除"))
+							removeClip = true;
+
+						for (size_t keyIndex = 0;
+							!removeClip && keyIndex < clip.Keys.size();)
+						{
+							auto& key = clip.Keys[keyIndex];
+							ImGui::PushID(static_cast<int>(keyIndex));
+							bool removeKey = false;
+							if (ImGui::TreeNode(
+								"KeyNode", "Key %.3f 秒", key.Time))
+							{
+								changed |= ImGui::DragFloat(
+									"時刻", &key.Time, 0.01f, 0.0f, clip.Duration);
+								key.Time = clamp(key.Time, 0.0f, clip.Duration);
+								const bool vectorProperty =
+									track.Property == TimelineProperty::TransformPosition ||
+									track.Property == TimelineProperty::TransformRotation ||
+									track.Property == TimelineProperty::TransformScale ||
+									track.Property == TimelineProperty::CameraTarget ||
+									track.Property == TimelineProperty::CameraLockOnOffset;
+								if (vectorProperty)
+									changed |= ImGui::DragFloat3("値", &key.Value.x, 0.01f);
+								else
+									changed |= ImGui::DragFloat("値", &key.Value.x, 0.01f);
+								const char* easing[] =
+								{
+									"Step", "Linear", "Ease In", "Ease Out", "Ease In Out"
+								};
+								int interpolation = static_cast<int>(key.Interpolation);
+								if (ImGui::Combo(
+									"補間", &interpolation, easing, IM_ARRAYSIZE(easing)))
+								{
+									key.Interpolation = static_cast<TimelineInterpolation>(
+										clamp(interpolation, 0, 4));
+									changed = true;
+								}
+								if (ImGui::Button("Key削除"))
+									removeKey = true;
+								ImGui::TreePop();
+							}
+							ImGui::PopID();
+							if (removeKey)
+							{
+								clip.Keys.erase(clip.Keys.begin() + keyIndex);
+								changed = true;
+							}
+							else
+								++keyIndex;
+						}
+						if (changed)
+							sort(clip.Keys.begin(), clip.Keys.end(),
+								[](const auto& a, const auto& b)
+								{ return a.Time < b.Time; });
+						ImGui::TreePop();
+					}
+					ImGui::PopID();
+					if (removeClip)
+					{
+						track.Clips.erase(track.Clips.begin() + clipIndex);
+						changed = true;
+					}
+					else
+						++clipIndex;
+				}
+				ImGui::TreePop();
+			}
+			ImGui::PopID();
+			if (removeTrack)
+			{
+				timeline.Tracks.erase(timeline.Tracks.begin() + trackIndex);
+				changed = true;
+			}
+			else
+				++trackIndex;
+		}
+
+		if (evaluate || (!ProjectManager::IsSimulationRunning() && changed))
+		{
+			TimeLineSystem::EvaluateComponent(timeline);
+		}
+		if (changed)
+		{
+			BeginUndoCapture(entity, before);
+		}
+	}
+
 	if (!ComponentManager::HasComponent<PhysicsComponent>(entity))
 	{
 		ImGui::SeparatorText("物理");
@@ -2886,6 +3275,57 @@ ImGui::Text("メッシュ: %s", ComponentManager::HasComponent<MeshComponent>(en
 		}
 
 		ImGui::SeparatorText("剛体");
+		ImGui::TextUnformatted("当たり判定プリセット");
+		auto applyColliderPreset = [&](PhysicsColliderRole role)
+		{
+			physics.UsePhysics = true;
+			physics.UsePhysicsBone = false;
+			physics.BodyType = PhysicsBodyType::Static;
+			physics.ColliderRole = role;
+			physics.UseGravity = false;
+			XMFLOAT3 center{};
+			XMFLOAT3 extents{};
+			if (GetLocalAabb(entity, center, extents))
+			{
+				physics.ColliderCenter = center;
+				physics.ColliderSize =
+				{ extents.x * 2.0f, extents.y * 2.0f, extents.z * 2.0f };
+			}
+			changed = true;
+		};
+		if (ImGui::Button("床"))
+		{
+			applyColliderPreset(PhysicsColliderRole::Floor);
+			physics.Shape = PhysicsShape::Box;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("壁"))
+		{
+			applyColliderPreset(PhysicsColliderRole::Wall);
+			physics.Shape = PhysicsShape::Box;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("障害物"))
+		{
+			applyColliderPreset(PhysicsColliderRole::Obstacle);
+			physics.Shape = PhysicsShape::Box;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Mesh障害物"))
+		{
+			applyColliderPreset(PhysicsColliderRole::Obstacle);
+			physics.Shape = PhysicsShape::Mesh;
+		}
+		const char* colliderRoles[] = { "Default", "Floor", "Wall", "Obstacle" };
+		int colliderRole = static_cast<int>(physics.ColliderRole);
+		if (ImGui::Combo(
+			"Collider Role", &colliderRole,
+			colliderRoles, IM_ARRAYSIZE(colliderRoles)))
+		{
+			physics.ColliderRole =
+				static_cast<PhysicsColliderRole>(clamp(colliderRole, 0, 3));
+			changed = true;
+		}
 		const char* bodyTypes[] = { "Static", "Dynamic", "Kinematic" };
 		int bodyType = static_cast<int>(physics.BodyType);
 		if (ImGui::Combo("Body Type", &bodyType, bodyTypes, IM_ARRAYSIZE(bodyTypes)))
@@ -2894,12 +3334,27 @@ ImGui::Text("メッシュ: %s", ComponentManager::HasComponent<MeshComponent>(en
 				static_cast<PhysicsBodyType>(clamp(bodyType, 0, 2));
 			changed = true;
 		}
-		const char* shapes[] = { "Box", "Sphere", "Capsule" };
+		const char* shapes[] = { "Box", "Sphere", "Capsule", "Mesh (Convex)" };
 		int shape = static_cast<int>(physics.Shape);
 		if (ImGui::Combo("Collider Shape", &shape, shapes, IM_ARRAYSIZE(shapes)))
 		{
-			physics.Shape = static_cast<PhysicsShape>(clamp(shape, 0, 2));
+			physics.Shape = static_cast<PhysicsShape>(clamp(shape, 0, 3));
 			changed = true;
+		}
+		if (physics.Shape == PhysicsShape::Mesh)
+		{
+			const bool hasStaticGeometry =
+				ComponentManager::HasComponent<StaticModelComponent>(entity);
+			ImGui::TextWrapped(
+				hasStaticGeometry
+					? "StaticModelの頂点から凸メッシュコライダーを生成します。"
+					: "CPUメッシュ頂点がないためCollider SizeのBoxにフォールバックします。");
+			if (physics.BodyType == PhysicsBodyType::Dynamic)
+			{
+				ImGui::TextColored(
+					ImVec4(0.95f, 0.75f, 0.25f, 1.0f),
+					"動的Meshは凸形状として扱われます。");
+			}
 		}
 		changed |= ImGui::DragFloat3(
 			"Collider Center", &physics.ColliderCenter.x, 0.01f);
@@ -3413,7 +3868,7 @@ bool ImGuiManager::IsEditableEntity(EntityID entity)
 
 	if (ComponentManager::HasComponent<CameraComponent>(entity))
 	{
-		return false;
+		return true;
 	}
 
 	if (ComponentManager::HasComponent<MeshComponent>(entity) ||
@@ -3594,6 +4049,11 @@ ImGuiManager::EntitySnapshot ImGuiManager::CaptureEntity(EntityID entity)
 	{	snapshot.HasPhysics = true; 
 		snapshot.Physics = ComponentManager::GetComponentUnchecked<PhysicsComponent>(entity);
 	}
+	if (ComponentManager::HasComponent<TimelineComponent>(entity))
+	{
+		snapshot.HasTimeline = true;
+		snapshot.Timeline = ComponentManager::GetComponentUnchecked<TimelineComponent>(entity);
+	}
 
 	if (ComponentManager::HasComponent<OBBComponent>(entity)) 
 	{	snapshot.HasObb = true; 
@@ -3644,6 +4104,9 @@ void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
 	if (snapshot.HasPhysics) RestoreSnapshotComponent(snapshot.Entity, snapshot.Physics);
 	else if (ComponentManager::HasComponent<PhysicsComponent>(snapshot.Entity))
 		ComponentManager::RemoveComponent(snapshot.Entity, ComponentType::PHYSICS);
+	if (snapshot.HasTimeline) RestoreSnapshotComponent(snapshot.Entity, snapshot.Timeline);
+	else if (ComponentManager::HasComponent<TimelineComponent>(snapshot.Entity))
+		ComponentManager::RemoveComponent(snapshot.Entity, ComponentType::TIMELINE);
 	if (snapshot.HasObb) RestoreSnapshotComponent(snapshot.Entity, snapshot.Obb);
 	if (snapshot.HasLod)
 	{

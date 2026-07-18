@@ -39,6 +39,15 @@ void ProjectManager::CaptureRuntimeState()
 		{
 			snapshot.Animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
 		}
+		snapshot.HasCamera = ComponentManager::HasComponent<CameraComponent>(entity);
+		if (snapshot.HasCamera)
+			snapshot.Camera = ComponentManager::GetComponentUnchecked<CameraComponent>(entity);
+		snapshot.HasPostProcess = ComponentManager::HasComponent<PostProcessComponent>(entity);
+		if (snapshot.HasPostProcess)
+			snapshot.PostProcess = ComponentManager::GetComponentUnchecked<PostProcessComponent>(entity);
+		snapshot.HasTimeline = ComponentManager::HasComponent<TimelineComponent>(entity);
+		if (snapshot.HasTimeline)
+			snapshot.Timeline = ComponentManager::GetComponentUnchecked<TimelineComponent>(entity);
 		s_RuntimeSnapshots.push_back(std::move(snapshot));
 	}
 }
@@ -91,6 +100,12 @@ void ProjectManager::RestoreRuntimeState()
 				model->ResetBoneMatricesToBindPose();
 			}
 		}
+		if (snapshot.HasCamera && ComponentManager::HasComponent<CameraComponent>(snapshot.Entity))
+			ComponentManager::GetComponentUnchecked<CameraComponent>(snapshot.Entity) = snapshot.Camera;
+		if (snapshot.HasPostProcess && ComponentManager::HasComponent<PostProcessComponent>(snapshot.Entity))
+			ComponentManager::GetComponentUnchecked<PostProcessComponent>(snapshot.Entity) = snapshot.PostProcess;
+		if (snapshot.HasTimeline && ComponentManager::HasComponent<TimelineComponent>(snapshot.Entity))
+			ComponentManager::GetComponentUnchecked<TimelineComponent>(snapshot.Entity) = snapshot.Timeline;
 	}
 	s_RuntimeSnapshots.clear();
 }

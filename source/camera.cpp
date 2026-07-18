@@ -44,7 +44,9 @@ namespace
 		camera.AllowUserControl = true;
 
 		entity.Get<PostProcessComponent>().Type = PostProcessType::NONE;
-		entity.Get<InputComponent>().IsActive = gameCamera;
+		// Only the camera selected by SetMainGameCamera receives gameplay input.
+		// Additional GameCameras remain available for timeline/cut switching.
+		entity.Get<InputComponent>().IsActive = false;
 		auto& move = entity.Get<MoveComponent>();
 		move.Speed = 0.1f;
 		move.RotationSpeed = 0.02f;
@@ -164,6 +166,11 @@ void Camera::SetMainGameCamera(EntityID entity)
 		if (camera.IsGameCamera)
 		{
 			camera.IsMainGameCamera = cameraEntity == entity;
+			if (ComponentManager::HasComponent<InputComponent>(cameraEntity))
+			{
+				ComponentManager::GetComponentUnchecked<InputComponent>(
+					cameraEntity).IsActive = cameraEntity == entity;
+			}
 		}
 	}
 	auto& selected = ComponentManager::GetComponentUnchecked<CameraComponent>(entity);

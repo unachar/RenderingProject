@@ -2,6 +2,7 @@
 
 #include "systembase.h"
 #include "timeline.h"
+#include "timelinecomponent.h"
 
 class TimeLineSystem : public SystemBase
 {
@@ -16,4 +17,9 @@ public:
 	static void AddDirector(unique_ptr<TimeLineDirector> director);
 	static void Clear();
 	static size_t GetDirectorCount();
+	static void EvaluateComponent(TimelineComponent& timeline);
+	static XMFLOAT4 ReadProperty(
+		EntityID target,
+		TimelineProperty property,
+		bool* valid = nullptr);
 };
