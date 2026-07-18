@@ -53,6 +53,7 @@ class PhysicsSystem final : public SystemBase
 	uint64_t m_PlaySession = 0;
 	uint64_t m_PoseApplySerial = 0;
 	int m_LastSubStepCount = 0;
+	uint8_t m_ActiveEngineMask = 0;
 
 	IPhysicsBackend* GetBackend(PhysicsEngine engine) const;
 	void ClearRuntime();

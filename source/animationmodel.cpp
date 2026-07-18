@@ -2750,14 +2750,19 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
 		dst._41 = src.d1; dst._42 = src.d2; dst._43 = src.d3; dst._44 = src.d4;
 	}
 
-	UINT copySize = sizeof(XMFLOAT4X4) * m_kMAX_BONES;
-	for (void* mapped : m_pBoneBufferMapped)
+	const UINT frameIndex =
+		RendererCore::GetFrameIndex() % RendererState::g_kFRAME_COUNT;
+	void* mapped = m_pBoneBufferMapped[frameIndex];
+	if (mapped)
 	{
-		if (mapped)
-		{
-			memcpy(mapped, m_BoneMatricesScratch.data(), copySize);
-		}
+		const UINT copySize = sizeof(XMFLOAT4X4) * m_kMAX_BONES;
+		memcpy(mapped, m_BoneMatricesScratch.data(), copySize);
 	}
+	// EndDraw waits for the fence associated with the next back-buffer slot
+	// before the following update begins. Only that slot is safe for CPU writes.
+	// Updating every mapped upload buffer here can overwrite bone matrices that
+	// an older GPU frame is still reading, which appears as intermittent PMX
+	// mesh corruption when recording or otherwise increasing GPU latency.
 	// A render frame can consume this model in every shadow pass, the main pass,
 	// and the overlay pass.  Mark the new pose once so the compute skinning work
 	// is dispatched only when the pose actually changes.

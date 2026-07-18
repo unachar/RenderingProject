@@ -233,6 +233,7 @@ void PhysicsSystem::ClearRuntime()
 	for (EntityID entity : entities) DestroyEntityBody(entity);
 	m_Accumulator = 0.0;
 	m_LastSubStepCount = 0;
+	m_ActiveEngineMask = 0;
 }
 
 void PhysicsSystem::DestroyEntityBody(EntityID entity)
@@ -555,6 +556,16 @@ void PhysicsSystem::SynchronizeRuntimeObjects()
 				CreateEntityBody(entity);
 			}
 		});
+
+	m_ActiveEngineMask = 0;
+	for (const auto& [entity, runtime] : m_EntityBodies)
+	{
+		m_ActiveEngineMask |= static_cast<uint8_t>(1u << EngineIndex(runtime.Engine));
+	}
+	for (const auto& [entity, rig] : m_BoneRigs)
+	{
+		m_ActiveEngineMask |= static_cast<uint8_t>(1u << EngineIndex(rig.Engine));
+	}
 }
 
 void PhysicsSystem::SynchronizeKinematicBodies()
@@ -686,9 +697,12 @@ void PhysicsSystem::ApplySimulationResults()
 void PhysicsSystem::StepFixed(float fixedDeltaTime)
 {
 	SynchronizeKinematicBodies();
-	for (auto& backend : m_Backends)
+	for (size_t engineIndex = 0; engineIndex < m_Backends.size(); ++engineIndex)
 	{
-		if (backend && backend->IsAvailable())
+		auto& backend = m_Backends[engineIndex];
+		const bool engineActive =
+			(m_ActiveEngineMask & static_cast<uint8_t>(1u << engineIndex)) != 0;
+		if (engineActive && backend && backend->IsAvailable())
 		{
 			backend->Step(fixedDeltaTime);
 		}
