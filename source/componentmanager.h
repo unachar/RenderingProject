@@ -80,10 +80,14 @@ struct CameraComponent
 {
 	XMFLOAT3 Position = { 0.0f, 0.0f, 0.0f };
 	XMFLOAT3 Target = { 0.0f, 0.0f, 0.0f };
-	float Fov = 45.0f;
+	float Fov = XM_PIDIV4;
 	float NearClip = 0.1f;
 	float FarClip = 100.0f;
 	bool EnablePostProcess = false;
+	bool IsGameCamera = false;
+	bool IsMainGameCamera = false;
+	bool AllowUserControl = true;
+	int Priority = 0;
 	EntityID LockOnTarget = g_kINVALID_ENTITY;
 	XMFLOAT3 LockOnOffset = { 0.0f, 0.0f, 0.0f };
 	XMFLOAT4X4 ViewMatrix {};

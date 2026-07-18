@@ -77,13 +77,11 @@ namespace
 			XMMatrixTranslation(transform.Position.x, transform.Position.y, transform.Position.z);
 	}
 
-	XMMATRIX BuildTransformMatrix(const PhysicsTransform& transform)
+	XMMATRIX BuildEntityRotation(const TransformComponent& transform)
 	{
-		return XMMatrixRotationQuaternion(XMLoadFloat4(&transform.Rotation)) *
-			XMMatrixTranslation(
-				transform.Position.x,
-				transform.Position.y,
-				transform.Position.z);
+		return XMMatrixRotationX(transform.Rotation.x) *
+			XMMatrixRotationY(transform.Rotation.y) *
+			XMMatrixRotationZ(transform.Rotation.z);
 	}
 
 	PhysicsTransform DecomposePhysicsTransform(FXMMATRIX matrix)
@@ -98,6 +96,34 @@ namespace
 			XMStoreFloat4(&result.Rotation, XMQuaternionNormalize(rotation));
 		}
 		return result;
+	}
+
+	XMMATRIX ConvertPhysicsWorldToModel(
+		const PhysicsTransform& bodyTransform,
+		const TransformComponent& entityTransform)
+	{
+		XMVECTOR determinant{};
+		const XMMATRIX entityWorldInverse =
+			XMMatrixInverse(&determinant, BuildEntityWorld(entityTransform));
+		const XMVECTOR modelPosition = XMVector3TransformCoord(
+			XMLoadFloat3(&bodyTransform.Position),
+			entityWorldInverse);
+
+		// Entity scale affects a rigid body's position and collider dimensions,
+		// but it must never be written into the skeleton. Multiplying the whole
+		// body matrix by entityWorldInverse also applies inverse scale to the
+		// rotation basis, which makes physics-driven bones grow at small entity
+		// scales and shrink at large scales.
+		const XMMATRIX entityRotationInverse =
+			XMMatrixInverse(&determinant, BuildEntityRotation(entityTransform));
+		const XMMATRIX modelRotation =
+			XMMatrixRotationQuaternion(XMLoadFloat4(&bodyTransform.Rotation)) *
+			entityRotationInverse;
+
+		XMFLOAT3 position{};
+		XMStoreFloat3(&position, modelPosition);
+		return modelRotation *
+			XMMatrixTranslation(position.x, position.y, position.z);
 	}
 
 	XMMATRIX BuildPmxTransform(const XMFLOAT3& rotation, const XMFLOAT3& position)
@@ -570,6 +596,7 @@ void PhysicsSystem::SynchronizeKinematicBodies()
 
 void PhysicsSystem::ApplySimulationResults()
 {
+	++m_PoseApplySerial;
 	for (const auto& [entity, runtime] : m_EntityBodies)
 	{
 		if (!Registry::IsAlive(entity))
@@ -603,8 +630,6 @@ void PhysicsSystem::ApplySimulationResults()
 		{
 			continue;
 		}
-		XMVECTOR determinant{};
-		const XMMATRIX entityInverse = XMMatrixInverse(&determinant, BuildEntityWorld(transform));
 		bool poseChanged = false;
 		for (const BoneBodyRuntime& body : rig.Bodies)
 		{
@@ -617,7 +642,8 @@ void PhysicsSystem::ApplySimulationResults()
 			{
 				continue;
 			}
-			const XMMATRIX modelRigid = BuildTransformMatrix(bodyPose) * entityInverse;
+			const XMMATRIX modelRigid =
+				ConvertPhysicsWorldToModel(bodyPose, transform);
 			const XMMATRIX boneGlobal = XMLoadFloat4x4(&body.InverseOffset) * modelRigid;
 			XMFLOAT4X4 stored{};
 			XMStoreFloat4x4(&stored, boneGlobal);
@@ -641,7 +667,6 @@ void PhysicsSystem::StepFixed(float fixedDeltaTime)
 			backend->Step(fixedDeltaTime);
 		}
 	}
-	ApplySimulationResults();
 }
 
 void PhysicsSystem::Update()
@@ -693,6 +718,12 @@ void PhysicsSystem::Update()
 	{
 		m_Accumulator = fmod(m_Accumulator, static_cast<double>(fixedDelta));
 	}
+
+	// AnimationSystem evaluates the authored pose every render frame, including
+	// frames where the fixed-step accumulator does not advance. Reapply the
+	// latest simulated body transforms unconditionally so authored and physics
+	// poses cannot alternate at render rates above the physics frequency.
+	ApplySimulationResults();
 }
 
 bool PhysicsSystem::IsBackendAvailable(PhysicsEngine engine) const

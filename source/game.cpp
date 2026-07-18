@@ -25,6 +25,7 @@
 #include "physicssystem.h"
 
 #include "entitybase.h"
+#include <unordered_set>
 
 namespace
 {
@@ -42,6 +43,65 @@ namespace
 		return enabled;
 	}
 
+	float MeasurePmxDynamicBoneScaleError()
+	{
+		const Entity karen = World::GetEntityByName("Karen");
+		if (!karen.IsValid() || !karen.Has<AnimationModelComponent>())
+		{
+			return 0.0f;
+		}
+		const auto& animation = karen.Get<AnimationModelComponent>();
+		AnimationModelResource* model = ModelManager::GetAnimModel(animation.ModelId);
+		if (!model)
+		{
+			return 0.0f;
+		}
+
+		float maxError = 0.0f;
+		unordered_set<string> measuredBones;
+		for (const PmxRigidBodyData& body : model->GetPmxRigidBodies())
+		{
+			if (body.Operation == 0 || body.BoneName.empty() ||
+				!measuredBones.insert(body.BoneName).second)
+			{
+				continue;
+			}
+
+			XMFLOAT4X4 currentStored{};
+			XMFLOAT4X4 bindStored{};
+			if (!model->GetBoneGlobalTransform(body.BoneName, currentStored) ||
+				!model->GetBoneBindGlobalTransform(body.BoneName, bindStored))
+			{
+				continue;
+			}
+
+			XMVECTOR currentScale{};
+			XMVECTOR currentRotation{};
+			XMVECTOR currentTranslation{};
+			XMVECTOR bindScale{};
+			XMVECTOR bindRotation{};
+			XMVECTOR bindTranslation{};
+			if (!XMMatrixDecompose(
+				&currentScale, &currentRotation, &currentTranslation,
+				XMLoadFloat4x4(&currentStored)) ||
+				!XMMatrixDecompose(
+					&bindScale, &bindRotation, &bindTranslation,
+					XMLoadFloat4x4(&bindStored)))
+			{
+				continue;
+			}
+
+			XMFLOAT3 current{};
+			XMFLOAT3 bind{};
+			XMStoreFloat3(&current, currentScale);
+			XMStoreFloat3(&bind, bindScale);
+			maxError = max(maxError, fabsf(current.x - bind.x));
+			maxError = max(maxError, fabsf(current.y - bind.y));
+			maxError = max(maxError, fabsf(current.z - bind.z));
+		}
+		return maxError;
+	}
+
 	void UpdatePhysicsSmokeTest()
 	{
 		if (!IsPhysicsSmokeTestEnabled())
@@ -54,6 +114,10 @@ namespace
 		static size_t maxRigBodyCounts[3]{};
 		static size_t maxRigJointCounts[3]{};
 		static size_t maxEntityBodyCounts[3]{};
+		static float maxBoneScaleErrors[3]{};
+		static uint64_t previousPoseApplySerial = 0;
+		static int zeroStepFrames = 0;
+		static int zeroStepPoseApplyFailures = 0;
 		++frame;
 		if (frame == 1 || frame == 20 || frame == 40)
 		{
@@ -81,18 +145,43 @@ namespace
 			maxEntityBodyCounts[phase] = max(
 				maxEntityBodyCounts[phase],
 				physicsSystem->GetEntityBodyCount());
+			maxBoneScaleErrors[phase] = max(
+				maxBoneScaleErrors[phase],
+				MeasurePmxDynamicBoneScaleError());
+			const uint64_t poseApplySerial = physicsSystem->GetPoseApplySerial();
+			if (physicsSystem->GetBoneRigCount() > 0 &&
+				physicsSystem->GetLastSubStepCount() == 0)
+			{
+				++zeroStepFrames;
+				if (poseApplySerial <= previousPoseApplySerial)
+				{
+					++zeroStepPoseApplyFailures;
+				}
+			}
+			previousPoseApplySerial = poseApplySerial;
 		}
 
-		if (frame == 20 || frame == 40)
+		if (frame == 10 || frame == 20 || frame == 40)
 		{
-			const PhysicsEngine engine =
-				frame == 20 ? PhysicsEngine::Jolt : PhysicsEngine::PhysX;
-			ComponentManager::ForEachComponent<PhysicsComponent>(
-				[engine](EntityID, PhysicsComponent& physics)
-				{
-					physics.UsePhysicsEngine = engine;
-					++physics.SettingsRevision;
-				});
+			Entity karen = World::GetEntityByName("Karen");
+			if (karen.IsValid() && karen.Has<TransformComponent>())
+			{
+				const float scale = frame == 10 ? 0.075f
+					: (frame == 20 ? 0.30f : 0.15f);
+				karen.Get<TransformComponent>().Scale = { scale, scale, scale };
+				karen.Get<TransformComponent>().IsDirty = true;
+			}
+			if (frame == 20 || frame == 40)
+			{
+				const PhysicsEngine engine =
+					frame == 20 ? PhysicsEngine::Jolt : PhysicsEngine::PhysX;
+				ComponentManager::ForEachComponent<PhysicsComponent>(
+					[engine](EntityID, PhysicsComponent& physics)
+					{
+						physics.UsePhysicsEngine = engine;
+						++physics.SettingsRevision;
+					});
+			}
 		}
 
 		if (frame < 60)
@@ -115,6 +204,11 @@ namespace
 			fprintf(file, "bullet_entity_bodies=%zu\n", maxEntityBodyCounts[0]);
 			fprintf(file, "jolt_entity_bodies=%zu\n", maxEntityBodyCounts[1]);
 			fprintf(file, "physx_entity_bodies=%zu\n", maxEntityBodyCounts[2]);
+			fprintf(file, "bullet_max_bone_scale_error=%.8f\n", maxBoneScaleErrors[0]);
+			fprintf(file, "jolt_max_bone_scale_error=%.8f\n", maxBoneScaleErrors[1]);
+			fprintf(file, "physx_max_bone_scale_error=%.8f\n", maxBoneScaleErrors[2]);
+			fprintf(file, "zero_step_frames=%d\n", zeroStepFrames);
+			fprintf(file, "zero_step_pose_apply_failures=%d\n", zeroStepPoseApplyFailures);
 			if (physicsSystem)
 			{
 				fprintf(file, "bullet_available=%d\n",

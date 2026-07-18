@@ -15,6 +15,7 @@ void KacchattaHone::Create()
 		.Add<TransformComponent>()
 		.Add<MeshComponent>()
 		.Add<MaterialComponent>()
+		.Add<PhysicsComponent>()
 		.Add<StaticModelComponent>();
 
 	entity.SetName(modelName);
@@ -32,4 +33,9 @@ void KacchattaHone::Create()
 	material.ShadowStrength = 0.066f;
 	material.ShaderClassMode = MaterialMode::Manual;
 	material.ShaderClass = ShaderClass::PBR;
+
+	auto& physics = entity.Get<PhysicsComponent>();
+	physics.UsePhysics = true;
+	physics.UsePhysicsBone = false;
+	physics.UsePhysicsEngine = PhysicsEngine::Bullet;
 }

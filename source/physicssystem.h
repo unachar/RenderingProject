@@ -51,6 +51,7 @@ class PhysicsSystem final : public SystemBase
 	PhysicsSettings m_Settings{};
 	double m_Accumulator = 0.0;
 	uint64_t m_PlaySession = 0;
+	uint64_t m_PoseApplySerial = 0;
 	int m_LastSubStepCount = 0;
 
 	IPhysicsBackend* GetBackend(PhysicsEngine engine) const;
@@ -72,6 +73,7 @@ public:
 	PhysicsSettings& GetSettings() { return m_Settings; }
 	const PhysicsSettings& GetSettings() const { return m_Settings; }
 	int GetLastSubStepCount() const { return m_LastSubStepCount; }
+	uint64_t GetPoseApplySerial() const { return m_PoseApplySerial; }
 	size_t GetEntityBodyCount() const { return m_EntityBodies.size(); }
 	size_t GetBoneRigCount() const { return m_BoneRigs.size(); }
 	size_t GetBoneBodyCount() const;
