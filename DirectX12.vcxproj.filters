@@ -229,6 +229,18 @@
     <ClCompile Include="source\animationsystem.cpp">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClCompile>
+    <ClCompile Include="source\physicssystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\bulletphysicsbackend.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\joltphysicsbackend.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\physxphysicsbackend.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
     <ClCompile Include="source\camerasystem.cpp">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClCompile>
@@ -258,6 +270,9 @@
     </ClCompile>
     <ClCompile Include="source\systemmanager.cpp">
       <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\projectmanager.cpp">
+      <Filter>1_base</Filter>
     </ClCompile>
     <ClCompile Include="source\timeline.cpp">
       <Filter>2_ecs\2-3_systems</Filter>
@@ -427,10 +442,19 @@
     <ClInclude Include="source\componentmanager.h">
       <Filter>2_ecs\2-2_components</Filter>
     </ClInclude>
+    <ClInclude Include="source\physicscomponent.h">
+      <Filter>2_ecs\2-2_components</Filter>
+    </ClInclude>
     <ClInclude Include="source\animator.h">
       <Filter>2_ecs\2-2_components</Filter>
     </ClInclude>
     <ClInclude Include="source\animationsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\physicssystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\physicsbackend.h">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClInclude>
     <ClInclude Include="source\camerasystem.h">
@@ -466,6 +490,9 @@
     <ClInclude Include="source\systemmanager.h">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClInclude>
+    <ClInclude Include="source\projectmanager.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
     <ClInclude Include="source\timeline.h">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClInclude>
@@ -479,6 +506,9 @@
       <Filter>3_model\3-1_animationmodel</Filter>
     </ClInclude>
     <ClInclude Include="source\pmxloader.h">
+      <Filter>3_model\3-1_animationmodel</Filter>
+    </ClInclude>
+    <ClInclude Include="source\pmxphysicsdata.h">
       <Filter>3_model\3-1_animationmodel</Filter>
     </ClInclude>
     <ClInclude Include="source\vmdanimationimpoter.h">

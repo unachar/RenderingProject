@@ -103,9 +103,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
+static bool IsPhysicsSmokeTest()
+{
+	char value[8]{};
+	return GetEnvironmentVariableA(
+		"DX12_PHYSICS_SMOKE_TEST",
+		value,
+		static_cast<DWORD>(size(value))) > 0 &&
+		atoi(value) != 0;
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
 	const bool automatedBenchmark = IsAutomatedBenchmark();
+	const bool automatedRun = automatedBenchmark || IsPhysicsSmokeTest();
 	char exePath[MAX_PATH]{};
 	GetModuleFileNameA(nullptr, exePath, MAX_PATH);
 
@@ -183,13 +194,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 			break;
 		}
 
-		if (IsIconic(hwnd) || !IsWindowVisible(hwnd))
+		if (!automatedRun && (IsIconic(hwnd) || !IsWindowVisible(hwnd)))
 		{
 			MsgWaitForMultipleObjectsEx(0, nullptr, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
 			continue;
 		}
 
-		if (!automatedBenchmark && GetForegroundWindow() != hwnd)
+		if (!automatedRun && GetForegroundWindow() != hwnd)
 		{
 			MsgWaitForMultipleObjectsEx(0, nullptr, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
 		}

@@ -16,6 +16,7 @@
 #include "toonoutlinebuilder.h"
 #include "vmdanimationimpoter.h"
 #include "animationplayback.h"
+#include "pmxphysicsdata.h"
 #pragma comment(lib, "assimp-vc143-mt.lib")
 
 struct ModelVertex
@@ -296,6 +297,8 @@ private:
 	vector<aiVector3D> m_PmxBaseNormals{};
 	vector<XMFLOAT2> m_PmxBaseTexCoords{};
 	vector<PmxMorph> m_PmxMorphs{};
+	vector<PmxRigidBodyData> m_PmxRigidBodies{};
+	vector<PmxJointData> m_PmxJoints{};
 	unordered_map<string, uint32_t> m_PmxMorphIndexMap{};
 	vector<vector<pair<uint32_t, uint32_t>>> m_PmxVertexToMeshVertices{};
 	vector<XMFLOAT4X4> m_BoneMatricesScratch{};
@@ -385,6 +388,12 @@ public:
 	void UpdateBoneMatrices(const char* animName1, float frame1,
 		const char* animName2, float frame2, float blendRate);
 	void UpdateBoneMatrices(const vector<AnimationPlaybackLayer>& animationLayers);
+	void InvalidateAnimationPoseCache();
+	void ResetBoneMatricesToBindPose();
+	bool GetBoneGlobalTransform(const string& boneName, XMFLOAT4X4& transform);
+	bool GetBoneBindGlobalTransform(const string& boneName, XMFLOAT4X4& transform);
+	bool SetBoneGlobalTransform(const string& boneName, const XMFLOAT4X4& transform, bool preserveTranslation);
+	void CommitPhysicsPose();
 
 	bool ApplyMeshShadingOverridePartIds(const vector<int>& overridePartIds);
 	void DispatchGpuSkinning(ID3D12GraphicsCommandList* pCommandList);
@@ -399,5 +408,8 @@ public:
 
 	XMFLOAT3 GetAabbCenter() const { return m_AabbCenter; }
 	XMFLOAT3 GetAabbExtents() const { return m_AabbExtents; }
+	const vector<PmxRigidBodyData>& GetPmxRigidBodies() const { return m_PmxRigidBodies; }
+	const vector<PmxJointData>& GetPmxJoints() const { return m_PmxJoints; }
+	bool HasPmxPhysics() const { return !m_PmxRigidBodies.empty(); }
 };
 

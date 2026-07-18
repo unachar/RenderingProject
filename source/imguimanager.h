@@ -37,6 +37,7 @@ private:
 	inline static bool m_ShowMeshShadingWindow = false;
 	inline static bool m_ShowAtmosphereWindow = false;
 	inline static bool m_ShowProjectSettingsWindow = false;
+	inline static bool m_ShowPhysicsSettingsWindow = false;
 	inline static bool m_ProjectSettingsLoaded = false;
 	inline static bool m_ShowLightDebug = false;
 	inline static bool m_HdrEnabled = false;
@@ -123,6 +124,7 @@ private:
 	static void DrawMeshShadingWindow();
 	static void DrawAtmosphereWindow();
 	static void DrawProjectSettingsWindow();
+	static void DrawPhysicsSettingsWindow();
 	static void LoadProjectSettings();
 	static void SaveProjectSettings();
 	static void DrawMaterialInspector(EntityID entity);

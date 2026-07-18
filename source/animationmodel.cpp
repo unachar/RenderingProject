@@ -582,6 +582,8 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 	m_PmxBaseTexCoords.clear();
 	m_PmxMorphs.clear();
 	m_PmxMorphIndexMap.clear();
+	m_PmxRigidBodies.clear();
+	m_PmxJoints.clear();
 	if (isPmxModel)
 	{
 		PmxBinary::PopulateAnimationMetadata(
@@ -593,6 +595,8 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 			m_PmxBaseTexCoords,
 			m_PmxMorphs,
 			m_PmxMorphIndexMap);
+		m_PmxRigidBodies = pmxModel.RigidBodies;
+		m_PmxJoints = pmxModel.Joints;
 	}
 
 	const string dirPath = ModelImportUtils::ToUtf8(modelPath.parent_path());
@@ -2760,6 +2764,181 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
 	++m_SkinningVersion;
 }
 
+bool AnimationModelResource::GetBoneGlobalTransform(const string& boneName, XMFLOAT4X4& transform)
+{
+	if (m_PmxRuntimeNodes.empty())
+	{
+		RebuildPmxRuntimeCache();
+	}
+	auto nodeIt = m_PmxRuntimeNodeIndexMap.find(boneName);
+	if (nodeIt == m_PmxRuntimeNodeIndexMap.end())
+	{
+		return false;
+	}
+	if (m_PmxGlobalMatricesScratch.size() != m_PmxRuntimeNodes.size())
+	{
+		m_PmxGlobalMatricesScratch.resize(m_PmxRuntimeNodes.size());
+	}
+
+	auto aiToXm = [](const aiMatrix4x4& src)
+		{
+			return XMMatrixSet(
+				src.a1, src.b1, src.c1, src.d1,
+				src.a2, src.b2, src.c2, src.d2,
+				src.a3, src.b3, src.c3, src.d3,
+				src.a4, src.b4, src.c4, src.d4);
+		};
+	for (size_t i = 0; i < m_PmxRuntimeNodes.size(); ++i)
+	{
+		const PmxRuntimeNode& node = m_PmxRuntimeNodes[i];
+		XMMATRIX local = node.BonePtr
+			? aiToXm(node.BonePtr->AnimationMatrix)
+			: aiToXm(node.Node->mTransformation);
+		XMMATRIX global = local;
+		if (node.ParentIndex >= 0)
+		{
+			global = XMMatrixMultiply(
+				local,
+				XMLoadFloat4x4(&m_PmxGlobalMatricesScratch[static_cast<size_t>(node.ParentIndex)]));
+		}
+		XMStoreFloat4x4(&m_PmxGlobalMatricesScratch[i], global);
+	}
+	transform = m_PmxGlobalMatricesScratch[nodeIt->second];
+	return true;
+}
+
+bool AnimationModelResource::GetBoneBindGlobalTransform(
+	const string& boneName,
+	XMFLOAT4X4& transform)
+{
+	if (m_PmxRuntimeNodes.empty())
+	{
+		RebuildPmxRuntimeCache();
+	}
+	auto nodeIt = m_PmxRuntimeNodeIndexMap.find(boneName);
+	if (nodeIt == m_PmxRuntimeNodeIndexMap.end())
+	{
+		return false;
+	}
+	if (m_PmxGlobalMatricesScratch.size() != m_PmxRuntimeNodes.size())
+	{
+		m_PmxGlobalMatricesScratch.resize(m_PmxRuntimeNodes.size());
+	}
+
+	auto aiToXm = [](const aiMatrix4x4& src)
+		{
+			return XMMatrixSet(
+				src.a1, src.b1, src.c1, src.d1,
+				src.a2, src.b2, src.c2, src.d2,
+				src.a3, src.b3, src.c3, src.d3,
+				src.a4, src.b4, src.c4, src.d4);
+		};
+	for (size_t i = 0; i < m_PmxRuntimeNodes.size(); ++i)
+	{
+		const PmxRuntimeNode& node = m_PmxRuntimeNodes[i];
+		const XMMATRIX local = node.BonePtr
+			? aiToXm(node.BonePtr->BindLocalMatrix)
+			: aiToXm(node.Node->mTransformation);
+		XMMATRIX global = local;
+		if (node.ParentIndex >= 0)
+		{
+			global = XMMatrixMultiply(
+				local,
+				XMLoadFloat4x4(
+					&m_PmxGlobalMatricesScratch[static_cast<size_t>(node.ParentIndex)]));
+		}
+		XMStoreFloat4x4(&m_PmxGlobalMatricesScratch[i], global);
+	}
+	transform = m_PmxGlobalMatricesScratch[nodeIt->second];
+	return true;
+}
+
+bool AnimationModelResource::SetBoneGlobalTransform(
+	const string& boneName,
+	const XMFLOAT4X4& transform,
+	bool preserveTranslation)
+{
+	XMFLOAT4X4 currentGlobal{};
+	if (!GetBoneGlobalTransform(boneName, currentGlobal))
+	{
+		return false;
+	}
+	auto nodeIt = m_PmxRuntimeNodeIndexMap.find(boneName);
+	if (nodeIt == m_PmxRuntimeNodeIndexMap.end())
+	{
+		return false;
+	}
+	PmxRuntimeNode& node = m_PmxRuntimeNodes[nodeIt->second];
+	if (!node.BonePtr)
+	{
+		return false;
+	}
+
+	XMFLOAT4X4 target = transform;
+	if (preserveTranslation)
+	{
+		target._41 = currentGlobal._41;
+		target._42 = currentGlobal._42;
+		target._43 = currentGlobal._43;
+	}
+	XMMATRIX parentGlobal = XMMatrixIdentity();
+	if (node.ParentIndex >= 0)
+	{
+		parentGlobal = XMLoadFloat4x4(
+			&m_PmxGlobalMatricesScratch[static_cast<size_t>(node.ParentIndex)]);
+	}
+	XMVECTOR determinant{};
+	const XMMATRIX parentInverse = XMMatrixInverse(&determinant, parentGlobal);
+	const XMMATRIX local = XMMatrixMultiply(XMLoadFloat4x4(&target), parentInverse);
+
+	XMVECTOR scale{};
+	XMVECTOR rotation{};
+	XMVECTOR translation{};
+	if (!XMMatrixDecompose(&scale, &rotation, &translation, local))
+	{
+		return false;
+	}
+	XMFLOAT3 localScale{};
+	XMFLOAT3 localPosition{};
+	XMFLOAT4 localRotation{};
+	XMStoreFloat3(&localScale, scale);
+	XMStoreFloat3(&localPosition, translation);
+	XMStoreFloat4(&localRotation, XMQuaternionNormalize(rotation));
+	node.BonePtr->AnimationMatrix = aiMatrix4x4(
+		aiVector3D(localScale.x, localScale.y, localScale.z),
+		aiQuaternion(localRotation.w, localRotation.x, localRotation.y, localRotation.z),
+		aiVector3D(localPosition.x, localPosition.y, localPosition.z));
+	return true;
+}
+
+void AnimationModelResource::CommitPhysicsPose()
+{
+	if (!m_AiScene || !m_AiScene->mRootNode)
+	{
+		return;
+	}
+	UpdateBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
+	WriteBoneMatricesToBuffer();
+}
+
+void AnimationModelResource::InvalidateAnimationPoseCache()
+{
+	m_HasCachedPose = false;
+	m_HasCachedLayeredPose = false;
+	m_UseLayeredVmdIk = false;
+}
+
+void AnimationModelResource::ResetBoneMatricesToBindPose()
+{
+	if (!m_AiScene || !m_AiScene->mRootNode)
+	{
+		return;
+	}
+	InvalidateAnimationPoseCache();
+	UpdateBindPoseBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
+	WriteBoneMatricesToBuffer();
+}
+
 void AnimationModelResource::BuildPmxVertexMeshMap()
 {
 	m_PmxVertexToMeshVertices.clear();
@@ -4416,6 +4595,8 @@ void AnimationModelResource::Uninit()
 	m_PmxBaseTexCoords.clear();
 	m_PmxMorphs.clear();
 	m_PmxMorphIndexMap.clear();
+	m_PmxRigidBodies.clear();
+	m_PmxJoints.clear();
 	m_PmxVertexToMeshVertices.clear();
 	m_BoneMatricesScratch.clear();
 	m_SkinningVersion = 0;

@@ -120,7 +120,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>NOMINMAX;_SILENCE_CXX20_U8PATH_DEPRECATION_WARNING</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NOMINMAX;PX_PHYSX_STATIC_LIB;_SILENCE_CXX20_U8PATH_DEPRECATION_WARNING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
@@ -128,14 +128,14 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)$(TargetName).pch</PrecompiledHeaderOutputFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include;$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include;$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)External\BulletPhysics\src;$(ProjectDir)External\JoltPhysics;$(ProjectDir)External\PhysX\physx\include;$(ProjectDir)assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp23</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\lib\x64;$(ProjectDir)External\DirectXTex\DirectXTex\Bin\Desktop_2022\x64\Debug;$(ProjectDir)External\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>DirectXTex.lib;$(ProjectDir)External\RTXNS\lib\Debug\NeuralShading.lib;$(ProjectDir)External\RTXNS\lib\Debug\Utils.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi_d3d12.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_core.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_engine.lib;$(ProjectDir)External\RTXNS\lib\Debug\jsoncpp.lib;$(ProjectDir)External\RTXNS\lib\Debug\miniz.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang-rt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\lib\x64;$(ProjectDir)External\DirectXTex\DirectXTex\Bin\Desktop_2022\x64\Debug;$(ProjectDir)External\Build\Bullet-vs18\lib\Debug;$(ProjectDir)External\Build\Jolt-vs18\Debug;$(ProjectDir)External\Build\PhysX-output-static\bin\win.x86_64.vc143.mt\debug;$(ProjectDir)External\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>BulletDynamics_Debug.lib;BulletCollision_Debug.lib;LinearMath_Debug.lib;Jolt.lib;PhysXExtensions_static.lib;PhysX_static.lib;PhysXCommon_static.lib;PhysXFoundation_static.lib;PhysXPvdSDK_static.lib;DirectXTex.lib;$(ProjectDir)External\RTXNS\lib\Debug\NeuralShading.lib;$(ProjectDir)External\RTXNS\lib\Debug\Utils.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi_d3d12.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_core.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_engine.lib;$(ProjectDir)External\RTXNS\lib\Debug\jsoncpp.lib;$(ProjectDir)External\RTXNS\lib\Debug\miniz.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang-rt.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <FxCompile>
       <ShaderModel>5.0</ShaderModel>
@@ -153,7 +153,7 @@ copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\b
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>NOMINMAX;_SILENCE_CXX20_U8PATH_DEPRECATION_WARNING</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NOMINMAX;NDEBUG;PX_PHYSX_STATIC_LIB;_SILENCE_CXX20_U8PATH_DEPRECATION_WARNING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
@@ -161,7 +161,7 @@ copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\b
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)$(TargetName).pch</PrecompiledHeaderOutputFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include;$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include;$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)External\BulletPhysics\src;$(ProjectDir)External\JoltPhysics;$(ProjectDir)External\PhysX\physx\include;$(ProjectDir)assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp23</LanguageStandard>
     </ClCompile>
     <Link>
@@ -169,8 +169,8 @@ copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\b
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\lib\x64;$(ProjectDir)External\DirectXTex\DirectXTex\Bin\Desktop_2022\x64\Release;$(ProjectDir)External\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>DirectXTex.lib;$(ProjectDir)External\RTXNS\lib\Debug\NeuralShading.lib;$(ProjectDir)External\RTXNS\lib\Debug\Utils.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi_d3d12.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_core.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_engine.lib;$(ProjectDir)External\RTXNS\lib\Debug\jsoncpp.lib;$(ProjectDir)External\RTXNS\lib\Debug\miniz.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang-rt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\lib\x64;$(ProjectDir)External\DirectXTex\DirectXTex\Bin\Desktop_2022\x64\Release;$(ProjectDir)External\Build\Bullet-vs18\lib\Release;$(ProjectDir)External\Build\Jolt-vs18\Release;$(ProjectDir)External\Build\PhysX-output-static\bin\win.x86_64.vc143.mt\release;$(ProjectDir)External\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>BulletDynamics.lib;BulletCollision.lib;LinearMath.lib;Jolt.lib;PhysXExtensions_static.lib;PhysX_static.lib;PhysXCommon_static.lib;PhysXFoundation_static.lib;PhysXPvdSDK_static.lib;DirectXTex.lib;$(ProjectDir)External\RTXNS\lib\Debug\NeuralShading.lib;$(ProjectDir)External\RTXNS\lib\Debug\Utils.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi_d3d12.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_core.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_engine.lib;$(ProjectDir)External\RTXNS\lib\Debug\jsoncpp.lib;$(ProjectDir)External\RTXNS\lib\Debug\miniz.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang-rt.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <FxCompile>
       <ShaderModel>5.1</ShaderModel>
@@ -749,6 +749,11 @@ copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\b
     <ClCompile Include="source\postprocesssystem.cpp" />
     <ClCompile Include="source\rendersystem.cpp" />
     <ClCompile Include="source\systemmanager.cpp" />
+    <ClCompile Include="source\projectmanager.cpp" />
+    <ClCompile Include="source\physicssystem.cpp" />
+    <ClCompile Include="source\bulletphysicsbackend.cpp" />
+    <ClCompile Include="source\joltphysicsbackend.cpp" />
+    <ClCompile Include="source\physxphysicsbackend.cpp" />
     <ClCompile Include="source\timeline.cpp" />
     <ClCompile Include="source\timelinesystem.cpp" />
     <ClCompile Include="source\transformsystem.cpp" />
@@ -768,6 +773,11 @@ copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\b
     <ClInclude Include="source\vmdanimationimpoter.h" />
     <ClInclude Include="source\camera.h" />
     <ClInclude Include="source\componentmanager.h" />
+    <ClInclude Include="source\projectmanager.h" />
+    <ClInclude Include="source\physicscomponent.h" />
+    <ClInclude Include="source\physicsbackend.h" />
+    <ClInclude Include="source\physicssystem.h" />
+    <ClInclude Include="source\pmxphysicsdata.h" />
     <ClInclude Include="source\cube.h" />
     <ClInclude Include="source\d3dx12.h" />
     <ClInclude Include="source\ecs.h" />

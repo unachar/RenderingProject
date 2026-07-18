@@ -3,6 +3,7 @@
 #include "rendererdraw.h"
 #include "light.h"
 #include "animationplayback.h"
+#include "physicscomponent.h"
 #include <cassert>
 #include <array>
 #include <cstdlib>
@@ -289,21 +290,6 @@ struct MaterialComponent
 	bool IsTransparent = false;
 	bool ReceivingPostProcess = true;
 	bool UseTexture = false;
-};
-
-struct PhysicsComponent
-{
-	XMFLOAT3 Velocity = { 0.0f, 0.0f, 0.0f };
-	XMFLOAT3 Acceleration = { 0.0f, 0.0f, 0.0f };
-	XMFLOAT3 AngularVelocity = { 0.0f, 0.0f, 0.0f };
-	XMFLOAT3 InverseInertiaTensor = { 1.0f, 1.0f, 1.0f };
-	XMFLOAT3 Torque = { 0.0f, 0.0f, 0.0f };
-	float Mass = 1.0f;
-	float InverseMass = 1.0f;
-	float Restitution = 0.5f;
-	float Friction = 0.3f;
-	bool UseGravity = true;
-	bool IsGrounded = false;
 };
 
 struct PostProcessComponent

@@ -15,6 +15,9 @@
 #include "debugsystem.h"
 #include "meshshaderpipeline.h"
 #include "animator.h"
+#include "projectmanager.h"
+#include "physicssystem.h"
+#include "systemmanager.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -627,6 +630,7 @@ void ImGuiManager::Update()
 	if (m_ShowMeshShadingWindow) DrawMeshShadingWindow();
 	if (m_ShowAtmosphereWindow) DrawAtmosphereWindow();
 	if (m_ShowProjectSettingsWindow) DrawProjectSettingsWindow();
+	if (m_ShowPhysicsSettingsWindow) DrawPhysicsSettingsWindow();
 
 	if (m_ShowAdjustmentPanel)
 	{
@@ -995,6 +999,7 @@ void ImGuiManager::DrawEditorMainMenu()
 		ImGui::MenuItem("ログ", nullptr, &m_ShowLogWindow);
 		ImGui::MenuItem("パフォーマンス", nullptr, &m_ShowPerformanceWindow);
 		ImGui::MenuItem("環境設定", nullptr, &m_ShowProjectSettingsWindow);
+		ImGui::MenuItem("物理設定", nullptr, &m_ShowPhysicsSettingsWindow);
 		ImGui::MenuItem("マテリアルエディター", nullptr, &m_ShowMaterialEditorWindow);
 		ImGui::MenuItem("リム設定", nullptr, &m_ShowRimSettingsWindow);
 		ImGui::MenuItem("大気シミュレーション", nullptr, &m_ShowAtmosphereWindow);
@@ -1031,6 +1036,32 @@ void ImGuiManager::DrawEditorMainMenu()
 		}
 		ImGui::EndMenu();
 	}
+
+	// Project-wide play controls stay centered in the main menu bar.
+	// Play toggles between Play and Stop; Pause is active only in play mode.
+	const float playControlsWidth = 184.0f;
+	const float centeredX = max(
+		(ImGui::GetIO().DisplaySize.x - playControlsWidth) * 0.5f,
+		ImGui::GetCursorPosX() + 12.0f);
+	ImGui::SameLine();
+	ImGui::SetCursorPosX(centeredX);
+	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.58f, 0.25f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.14f, 0.72f, 0.31f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.08f, 0.46f, 0.20f, 1.0f));
+	if (ImGui::Button(ProjectManager::IsPlaying() ? "■ Stop##ProjectPlay" : "▶ Play##ProjectPlay",
+		ImVec2(88.0f, 0.0f)))
+	{
+		ProjectManager::TogglePlay();
+	}
+	ImGui::PopStyleColor(3);
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!ProjectManager::IsPlaying());
+	if (ImGui::Button(ProjectManager::IsPaused() ? "▶ Resume##ProjectPause" : "Ⅱ Pause##ProjectPause",
+		ImVec2(88.0f, 0.0f)))
+	{
+		ProjectManager::TogglePause();
+	}
+	ImGui::EndDisabled();
 
 	if (m_SelectedEntity != g_kINVALID_ENTITY)
 	{
@@ -2805,6 +2836,139 @@ ImGui::Text("メッシュ: %s", ComponentManager::HasComponent<MeshComponent>(en
 	ImGui::Text("スプライト: %s", ComponentManager::HasComponent<SpriteComponent>(entity) ? "あり" : "なし");
 	}
 
+	if (!ComponentManager::HasComponent<PhysicsComponent>(entity))
+	{
+		ImGui::SeparatorText("物理");
+		ImGui::TextWrapped("PhysicsComponentが設定されていません。追加しますか?");
+		if (ImGui::Button("PhysicsComponentを追加"))
+		{
+			PushUndoSnapshot(CaptureEntity(entity));
+			ComponentManager::AddComponent(entity, ComponentType::PHYSICS);
+		}
+	}
+
+	if (ComponentManager::HasComponent<PhysicsComponent>(entity) &&
+		ImGui::CollapsingHeader("物理設定", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		const EntitySnapshot before = CaptureEntity(entity);
+		auto& physics = ComponentManager::GetComponentUnchecked<PhysicsComponent>(entity);
+		bool changed = false;
+
+		changed |= ImGui::Checkbox("物理を使用", &physics.UsePhysics);
+		const bool hasAnimationModel =
+			ComponentManager::HasComponent<AnimationModelComponent>(entity);
+		ImGui::BeginDisabled(!hasAnimationModel);
+		changed |= ImGui::Checkbox("PMXボーン物理を使用", &physics.UsePhysicsBone);
+		ImGui::EndDisabled();
+		if (!hasAnimationModel && physics.UsePhysicsBone)
+		{
+			physics.UsePhysicsBone = false;
+			changed = true;
+		}
+
+		const char* engineNames[] = { "Bullet Physics", "Jolt Physics", "NVIDIA PhysX" };
+		int engine = static_cast<int>(physics.UsePhysicsEngine);
+		if (ImGui::Combo("物理エンジン", &engine, engineNames, IM_ARRAYSIZE(engineNames)))
+		{
+			physics.UsePhysicsEngine =
+				static_cast<PhysicsEngine>(clamp(engine, 0, 2));
+			changed = true;
+		}
+		if (PhysicsSystem* physicsSystem = SystemManager::GetSystem<PhysicsSystem>())
+		{
+			const bool available =
+				physicsSystem->IsBackendAvailable(physics.UsePhysicsEngine);
+			ImGui::SameLine();
+			ImGui::TextColored(
+				available ? ImVec4(0.30f, 0.85f, 0.45f, 1.0f)
+					: ImVec4(0.95f, 0.35f, 0.30f, 1.0f),
+				available ? "利用可能" : "初期化失敗");
+		}
+
+		ImGui::SeparatorText("剛体");
+		const char* bodyTypes[] = { "Static", "Dynamic", "Kinematic" };
+		int bodyType = static_cast<int>(physics.BodyType);
+		if (ImGui::Combo("Body Type", &bodyType, bodyTypes, IM_ARRAYSIZE(bodyTypes)))
+		{
+			physics.BodyType =
+				static_cast<PhysicsBodyType>(clamp(bodyType, 0, 2));
+			changed = true;
+		}
+		const char* shapes[] = { "Box", "Sphere", "Capsule" };
+		int shape = static_cast<int>(physics.Shape);
+		if (ImGui::Combo("Collider Shape", &shape, shapes, IM_ARRAYSIZE(shapes)))
+		{
+			physics.Shape = static_cast<PhysicsShape>(clamp(shape, 0, 2));
+			changed = true;
+		}
+		changed |= ImGui::DragFloat3(
+			"Collider Center", &physics.ColliderCenter.x, 0.01f);
+		changed |= ImGui::DragFloat3(
+			"Collider Size", &physics.ColliderSize.x, 0.01f, 0.001f, 10000.0f);
+		if (physics.Shape == PhysicsShape::Sphere)
+		{
+			changed |= ImGui::DragFloat(
+				"Sphere Radius", &physics.SphereRadius, 0.01f, 0.001f, 10000.0f);
+		}
+		if (physics.Shape == PhysicsShape::Capsule)
+		{
+			changed |= ImGui::DragFloat(
+				"Capsule Radius", &physics.CapsuleRadius, 0.01f, 0.001f, 10000.0f);
+			changed |= ImGui::DragFloat(
+				"Capsule Height", &physics.CapsuleHeight, 0.01f, 0.001f, 10000.0f);
+		}
+		changed |= ImGui::DragFloat3("初速", &physics.Velocity.x, 0.01f);
+		changed |= ImGui::DragFloat3("初期角速度", &physics.AngularVelocity.x, 0.01f);
+		changed |= ImGui::DragFloat("質量", &physics.Mass, 0.01f, 0.0001f, 100000.0f);
+		changed |= ImGui::SliderFloat("摩擦", &physics.Friction, 0.0f, 2.0f);
+		changed |= ImGui::SliderFloat("反発", &physics.Restitution, 0.0f, 1.0f);
+		changed |= ImGui::SliderFloat("線形減衰", &physics.LinearDamping, 0.0f, 1.0f);
+		changed |= ImGui::SliderFloat("角減衰", &physics.AngularDamping, 0.0f, 1.0f);
+		changed |= ImGui::Checkbox("重力を使用", &physics.UseGravity);
+		ImGui::BeginDisabled(!physics.UseGravity);
+		changed |= ImGui::DragFloat(
+			"重力倍率", &physics.GravityFactor, 0.01f, -10.0f, 10.0f);
+		ImGui::EndDisabled();
+		changed |= ImGui::Checkbox(
+			"Continuous Collision Detection", &physics.EnableContinuousCollision);
+		changed |= ImGui::Checkbox("Sleepを許可", &physics.AllowSleeping);
+
+		if (hasAnimationModel)
+		{
+			ImGui::SeparatorText("PMXボーン");
+			changed |= ImGui::DragFloat(
+				"PMX 質量倍率", &physics.PmxMassScale, 0.01f, 0.001f, 100.0f);
+			changed |= ImGui::DragFloat(
+				"PMX 減衰倍率", &physics.PmxDampingScale, 0.01f, 0.0f, 100.0f);
+			changed |= ImGui::DragFloat(
+				"PMX バネ倍率", &physics.PmxStiffnessScale, 0.01f, 0.0f, 100.0f);
+			changed |= ImGui::DragFloat(
+				"PMX Collider倍率", &physics.PmxColliderScale, 0.01f, 0.001f, 100.0f);
+		}
+
+		int collisionLayer = physics.CollisionLayer;
+		int collisionMask = physics.CollisionMask;
+		ImGui::SeparatorText("Collision Filter");
+		if (ImGui::InputInt("Collision Layer", &collisionLayer))
+		{
+			physics.CollisionLayer =
+				static_cast<uint16_t>(clamp(collisionLayer, 0, 15));
+			changed = true;
+		}
+		if (ImGui::InputInt("Collision Mask", &collisionMask))
+		{
+			physics.CollisionMask =
+				static_cast<uint16_t>(clamp(collisionMask, 0, 65535));
+			changed = true;
+		}
+
+		if (changed)
+		{
+			++physics.SettingsRevision;
+			BeginUndoCapture(entity, before);
+		}
+	}
+
 	if (ComponentManager::HasComponent<LODComponent>(entity) && ImGui::CollapsingHeader("LOD", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 		const EntitySnapshot before = CaptureEntity(entity);
@@ -3478,6 +3642,8 @@ void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
 	if (snapshot.HasInput) RestoreSnapshotComponent(snapshot.Entity, snapshot.Input);
 	if (snapshot.HasMove) RestoreSnapshotComponent(snapshot.Entity, snapshot.Move);
 	if (snapshot.HasPhysics) RestoreSnapshotComponent(snapshot.Entity, snapshot.Physics);
+	else if (ComponentManager::HasComponent<PhysicsComponent>(snapshot.Entity))
+		ComponentManager::RemoveComponent(snapshot.Entity, ComponentType::PHYSICS);
 	if (snapshot.HasObb) RestoreSnapshotComponent(snapshot.Entity, snapshot.Obb);
 	if (snapshot.HasLod)
 	{
@@ -3487,6 +3653,92 @@ void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
 	{
 		ComponentManager::RemoveComponent(snapshot.Entity, ComponentType::LOD);
 	}
+}
+
+void ImGuiManager::DrawPhysicsSettingsWindow()
+{
+	ImGui::SetNextWindowSize(ImVec2(430.0f, 420.0f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("物理設定", &m_ShowPhysicsSettingsWindow))
+	{
+		ImGui::End();
+		return;
+	}
+
+	PhysicsSystem* physicsSystem = SystemManager::GetSystem<PhysicsSystem>();
+	if (!physicsSystem)
+	{
+		ImGui::TextColored(
+			ImVec4(0.95f, 0.35f, 0.30f, 1.0f),
+			"PhysicsSystemが初期化されていません。");
+		ImGui::End();
+		return;
+	}
+
+	ImGui::Text("状態: %s",
+		ProjectManager::IsPaused() ? "Paused"
+			: (ProjectManager::IsPlaying() ? "Playing" : "Static / Edit"));
+	ImGui::Text(
+		"剛体: %zu / PMXリグ: %zu (Bodies %zu / Joints %zu)",
+		physicsSystem->GetEntityBodyCount(),
+		physicsSystem->GetBoneRigCount(),
+		physicsSystem->GetBoneBodyCount(),
+		physicsSystem->GetBoneJointCount());
+	ImGui::Text(
+		"今フレームのFixed Step: %d",
+		physicsSystem->GetLastSubStepCount());
+
+	ImGui::SeparatorText("バックエンド");
+	for (int i = 0; i < 3; ++i)
+	{
+		const PhysicsEngine engine = static_cast<PhysicsEngine>(i);
+		const bool available = physicsSystem->IsBackendAvailable(engine);
+		ImGui::TextColored(
+			available ? ImVec4(0.30f, 0.85f, 0.45f, 1.0f)
+				: ImVec4(0.95f, 0.35f, 0.30f, 1.0f),
+			"%s: %s",
+			physicsSystem->GetBackendName(engine),
+			available ? "Ready" : "Unavailable");
+	}
+
+	PhysicsSettings& settings = physicsSystem->GetSettings();
+	ImGui::SeparatorText("Fixed Update");
+	int fixedFrequency = clamp(
+		static_cast<int>(roundf(1.0f / max(settings.FixedTimeStep, 0.000001f))),
+		1,
+		1000);
+	if (ImGui::SliderInt("Fixed Update (Hz)", &fixedFrequency, 15, 240))
+	{
+		settings.FixedTimeStep = 1.0f / static_cast<float>(fixedFrequency);
+		physicsSystem->ResetSimulation();
+	}
+	ImGui::TextDisabled("Fixed Delta Time: %.4f ms",
+		settings.FixedTimeStep * 1000.0f);
+	if (ImGui::SliderInt("最大Sub Step", &settings.MaxSubSteps, 1, 16))
+	{
+		settings.MaxSubSteps = clamp(settings.MaxSubSteps, 1, 32);
+	}
+	if (ImGui::DragFloat(
+		"最大蓄積時間", &settings.MaxAccumulatedTime, 0.001f, 0.001f, 1.0f, "%.3f sec"))
+	{
+		settings.MaxAccumulatedTime =
+			max(settings.MaxAccumulatedTime, settings.FixedTimeStep);
+	}
+	ImGui::DragFloat("Physics Time Scale", &settings.TimeScale, 0.01f, 0.0f, 10.0f);
+
+	ImGui::SeparatorText("ワールド");
+	if (ImGui::DragFloat3("重力", &settings.Gravity.x, 0.01f))
+	{
+		physicsSystem->ResetSimulation();
+	}
+	if (ImGui::Button("物理シミュレーションを再生成"))
+	{
+		physicsSystem->ResetSimulation();
+	}
+	ImGui::TextWrapped(
+		"物理は描画FPSとは独立した固定ステップで更新されます。"
+		"変更したバックエンドや剛体設定はランタイム中でも再生成されます。");
+
+	ImGui::End();
 }
 
 void ImGuiManager::DrawProjectSettingsWindow()

@@ -104,3 +104,6 @@ Testing/
 # Compiled shader objects
 *.cso
 init_log.txt
+Save/physics_smoke_progress.txt
+Save/physics_smoke_test.txt
+Save/jolt_assert.txt

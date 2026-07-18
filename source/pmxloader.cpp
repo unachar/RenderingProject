@@ -159,6 +159,11 @@ namespace
 		return reader.Read(outValue.x) && reader.Read(outValue.y) && reader.Read(outValue.z);
 	}
 
+	bool ReadFloat3(Reader& reader, XMFLOAT3& outValue)
+	{
+		return reader.Read(outValue.x) && reader.Read(outValue.y) && reader.Read(outValue.z);
+	}
+
 	bool ReadFloat4(Reader& reader, XMFLOAT4& outValue)
 	{
 		return reader.Read(outValue.x) && reader.Read(outValue.y) &&
@@ -634,9 +639,114 @@ namespace PmxBinary
 			}
 		}
 
-		Debug::Log("PMX binary model loaded: %s (version=%.1f, vertices=%zu, indices=%zu, materials=%zu, textures=%zu, bones=%zu, morphs=%zu, sdefVertices=%zu)\n",
+		// Display frames sit between morphs and rigid bodies in PMX 2.x. They
+		// are editor metadata, but must be consumed to reach the physics block.
+		int32_t displayFrameCount = 0;
+		if (!reader.Read(displayFrameCount) || displayFrameCount < 0)
+		{
+			Debug::Log("ERROR: PMX display frame count is invalid: %s\n", fileName);
+			return false;
+		}
+		for (int32_t frame = 0; frame < displayFrameCount; ++frame)
+		{
+			string frameName;
+			string frameEnglishName;
+			uint8_t specialFrame = 0;
+			int32_t elementCount = 0;
+			if (!reader.ReadText(frameName) ||
+				!reader.ReadText(frameEnglishName) ||
+				!reader.Read(specialFrame) ||
+				!reader.Read(elementCount) ||
+				elementCount < 0)
+			{
+				Debug::Log("ERROR: PMX display frame data is truncated: %s\n", fileName);
+				return false;
+			}
+			for (int32_t element = 0; element < elementCount; ++element)
+			{
+				uint8_t elementType = 0;
+				if (!reader.Read(elementType))
+				{
+					return false;
+				}
+				const uint8_t indexSize = elementType == 0
+					? reader.BoneIndexSize : reader.MorphIndexSize;
+				if (elementType > 1 || !reader.SkipIndex(indexSize))
+				{
+					return false;
+				}
+			}
+		}
+
+		int32_t rigidBodyCount = 0;
+		if (!reader.Read(rigidBodyCount) || rigidBodyCount < 0)
+		{
+			Debug::Log("ERROR: PMX rigid body count is invalid: %s\n", fileName);
+			return false;
+		}
+		outModel.RigidBodies.resize(static_cast<size_t>(rigidBodyCount));
+		for (int32_t i = 0; i < rigidBodyCount; ++i)
+		{
+			PmxRigidBodyData& body = outModel.RigidBodies[static_cast<size_t>(i)];
+			if (!reader.ReadText(body.Name) ||
+				!reader.ReadText(body.EnglishName) ||
+				!reader.ReadIndex(reader.BoneIndexSize, body.BoneIndex) ||
+				!reader.Read(body.CollisionGroup) ||
+				!reader.Read(body.CollisionMask) ||
+				!reader.Read(body.Shape) ||
+				!ReadFloat3(reader, body.Size) ||
+				!ReadFloat3(reader, body.Position) ||
+				!ReadFloat3(reader, body.Rotation) ||
+				!reader.Read(body.Mass) ||
+				!reader.Read(body.LinearDamping) ||
+				!reader.Read(body.AngularDamping) ||
+				!reader.Read(body.Restitution) ||
+				!reader.Read(body.Friction) ||
+				!reader.Read(body.Operation))
+			{
+				Debug::Log("ERROR: PMX rigid body data is truncated: %s\n", fileName);
+				return false;
+			}
+			if (body.BoneIndex >= 0 &&
+				body.BoneIndex < static_cast<int32_t>(outModel.Bones.size()))
+			{
+				body.BoneName = outModel.Bones[static_cast<size_t>(body.BoneIndex)].Name;
+			}
+		}
+
+		int32_t jointCount = 0;
+		if (!reader.Read(jointCount) || jointCount < 0)
+		{
+			Debug::Log("ERROR: PMX joint count is invalid: %s\n", fileName);
+			return false;
+		}
+		outModel.Joints.resize(static_cast<size_t>(jointCount));
+		for (int32_t i = 0; i < jointCount; ++i)
+		{
+			PmxJointData& joint = outModel.Joints[static_cast<size_t>(i)];
+			if (!reader.ReadText(joint.Name) ||
+				!reader.ReadText(joint.EnglishName) ||
+				!reader.Read(joint.Type) ||
+				!reader.ReadIndex(reader.RigidBodyIndexSize, joint.RigidBodyA) ||
+				!reader.ReadIndex(reader.RigidBodyIndexSize, joint.RigidBodyB) ||
+				!ReadFloat3(reader, joint.Position) ||
+				!ReadFloat3(reader, joint.Rotation) ||
+				!ReadFloat3(reader, joint.LinearLimitMin) ||
+				!ReadFloat3(reader, joint.LinearLimitMax) ||
+				!ReadFloat3(reader, joint.AngularLimitMin) ||
+				!ReadFloat3(reader, joint.AngularLimitMax) ||
+				!ReadFloat3(reader, joint.LinearSpring) ||
+				!ReadFloat3(reader, joint.AngularSpring))
+			{
+				Debug::Log("ERROR: PMX joint data is truncated: %s\n", fileName);
+				return false;
+			}
+		}
+
+		Debug::Log("PMX binary model loaded: %s (version=%.1f, vertices=%zu, indices=%zu, materials=%zu, textures=%zu, bones=%zu, morphs=%zu, rigidBodies=%zu, joints=%zu, sdefVertices=%zu)\n",
 			fileName, version, outModel.Vertices.size(), outModel.Indices.size(), outModel.Materials.size(),
-			outModel.Textures.size(), outModel.Bones.size(), outModel.Morphs.size(), sdefVertexCount);
+			outModel.Textures.size(), outModel.Bones.size(), outModel.Morphs.size(),
+			outModel.RigidBodies.size(), outModel.Joints.size(), sdefVertexCount);
 		return true;
 	}
 

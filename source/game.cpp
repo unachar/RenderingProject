@@ -21,11 +21,115 @@
 #include "sky.h"
 #include "cube.h"
 #include "light.h"
+#include "projectmanager.h"
+#include "physicssystem.h"
 
 #include "entitybase.h"
 
 namespace
 {
+	bool IsPhysicsSmokeTestEnabled()
+	{
+		static const bool enabled = []()
+			{
+				char value[8]{};
+				return GetEnvironmentVariableA(
+					"DX12_PHYSICS_SMOKE_TEST",
+					value,
+					static_cast<DWORD>(size(value))) > 0 &&
+					atoi(value) != 0;
+			}();
+		return enabled;
+	}
+
+	void UpdatePhysicsSmokeTest()
+	{
+		if (!IsPhysicsSmokeTestEnabled())
+		{
+			return;
+		}
+
+		static int frame = 0;
+		static size_t maxRigCounts[3]{};
+		static size_t maxRigBodyCounts[3]{};
+		static size_t maxRigJointCounts[3]{};
+		static size_t maxEntityBodyCounts[3]{};
+		++frame;
+		if (frame == 1 || frame == 20 || frame == 40)
+		{
+			FILE* progress = nullptr;
+			if (fopen_s(&progress, "Save/physics_smoke_progress.txt", "a") == 0 && progress)
+			{
+				fprintf(progress, "frame=%d phase=%s\n", frame,
+					frame < 20 ? "Bullet" : (frame < 40 ? "Jolt" : "PhysX"));
+				fclose(progress);
+			}
+		}
+		PhysicsSystem* physicsSystem = SystemManager::GetSystem<PhysicsSystem>();
+		const int phase = frame < 20 ? 0 : (frame < 40 ? 1 : 2);
+		if (physicsSystem)
+		{
+			maxRigCounts[phase] = max(
+				maxRigCounts[phase],
+				physicsSystem->GetBoneRigCount());
+			maxRigBodyCounts[phase] = max(
+				maxRigBodyCounts[phase],
+				physicsSystem->GetBoneBodyCount());
+			maxRigJointCounts[phase] = max(
+				maxRigJointCounts[phase],
+				physicsSystem->GetBoneJointCount());
+			maxEntityBodyCounts[phase] = max(
+				maxEntityBodyCounts[phase],
+				physicsSystem->GetEntityBodyCount());
+		}
+
+		if (frame == 20 || frame == 40)
+		{
+			const PhysicsEngine engine =
+				frame == 20 ? PhysicsEngine::Jolt : PhysicsEngine::PhysX;
+			ComponentManager::ForEachComponent<PhysicsComponent>(
+				[engine](EntityID, PhysicsComponent& physics)
+				{
+					physics.UsePhysicsEngine = engine;
+					++physics.SettingsRevision;
+				});
+		}
+
+		if (frame < 60)
+		{
+			return;
+		}
+
+		FILE* file = nullptr;
+		if (fopen_s(&file, "Save/physics_smoke_test.txt", "w") == 0 && file)
+		{
+			fprintf(file, "bullet_rigs=%zu\n", maxRigCounts[0]);
+			fprintf(file, "jolt_rigs=%zu\n", maxRigCounts[1]);
+			fprintf(file, "physx_rigs=%zu\n", maxRigCounts[2]);
+			fprintf(file, "bullet_bodies=%zu\n", maxRigBodyCounts[0]);
+			fprintf(file, "jolt_bodies=%zu\n", maxRigBodyCounts[1]);
+			fprintf(file, "physx_bodies=%zu\n", maxRigBodyCounts[2]);
+			fprintf(file, "bullet_joints=%zu\n", maxRigJointCounts[0]);
+			fprintf(file, "jolt_joints=%zu\n", maxRigJointCounts[1]);
+			fprintf(file, "physx_joints=%zu\n", maxRigJointCounts[2]);
+			fprintf(file, "bullet_entity_bodies=%zu\n", maxEntityBodyCounts[0]);
+			fprintf(file, "jolt_entity_bodies=%zu\n", maxEntityBodyCounts[1]);
+			fprintf(file, "physx_entity_bodies=%zu\n", maxEntityBodyCounts[2]);
+			if (physicsSystem)
+			{
+				fprintf(file, "bullet_available=%d\n",
+					physicsSystem->IsBackendAvailable(PhysicsEngine::Bullet) ? 1 : 0);
+				fprintf(file, "jolt_available=%d\n",
+					physicsSystem->IsBackendAvailable(PhysicsEngine::Jolt) ? 1 : 0);
+				fprintf(file, "physx_available=%d\n",
+					physicsSystem->IsBackendAvailable(PhysicsEngine::PhysX) ? 1 : 0);
+			}
+			fclose(file);
+		}
+		ProjectManager::Stop();
+		PostQuitMessage(0);
+	}
+
 	void CaptureAutomatedBenchmark()
 	{
 		static int sampleTarget = []()
@@ -142,6 +246,7 @@ namespace
 void Game::Init()
 {
 	World::Init();
+	ProjectManager::Init();
 	Input::Init();
 	SystemManager::Init();
 }
@@ -164,6 +269,20 @@ void Game::Create()
 	{
 		entitys->Create();
 	}
+	if (IsPhysicsSmokeTestEnabled())
+	{
+		Entity cube = World::GetEntityByName("Cube");
+		if (cube.IsValid() && !cube.Has<PhysicsComponent>())
+		{
+			cube.Add<PhysicsComponent>();
+			auto& physics = cube.Get<PhysicsComponent>();
+			physics.UsePhysics = true;
+			physics.UsePhysicsEngine = PhysicsEngine::Bullet;
+			physics.BodyType = PhysicsBodyType::Dynamic;
+			physics.Shape = PhysicsShape::Box;
+		}
+		ProjectManager::Play();
+	}
 }
 
 void Game::Uninit()
@@ -174,6 +293,7 @@ void Game::Uninit()
 	SystemManager::Uninit();
 	ModelManager::Uninit();
 	ComponentManager::Uninit();
+	ProjectManager::Uninit();
 
 	Input::Uninit();
 	RendererCore::Uninit();
@@ -196,6 +316,7 @@ void Game::Update()
 	}
 
 	SystemManager::UpdateSystem();
+	UpdatePhysicsSmokeTest();
 }
 
 void Game::Draw()

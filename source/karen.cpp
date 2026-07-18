@@ -21,7 +21,8 @@ void Karen::Create()
 		.Add<MeshComponent>()
 		.Add<AABBComponent>()
 		.Add<MaterialComponent>()
-		.Add<AnimationModelComponent>();
+		.Add<AnimationModelComponent>()
+		.Add<PhysicsComponent>();
 
 	entity.SetName(modelName);
 	entity.Get<TransformComponent>().Position = modelPosition;
@@ -40,10 +41,16 @@ void Karen::Create()
 		anim.Animations = { animName, animName2 };
 		Animator::Play(anim, { animName, animName2 });
 	}
+
 	else
 	{
 		anim.IsPlaying = false;
 	}
+
+	auto& physics = entity.Get<PhysicsComponent>();
+	physics.UsePhysics = true;
+	physics.UsePhysicsBone = true;
+	physics.UsePhysicsEngine = PhysicsEngine::Bullet;
 
 	auto& material = entity.Get<MaterialComponent>();
 	material.UseTexture = true;

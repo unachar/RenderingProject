@@ -14,6 +14,8 @@
 #include "cameracontrolsystem.h"
 #include "postprocessinputsystem.h"
 #include "animationsystem.h"
+#include "physicssystem.h"
+#include "projectmanager.h"
 #include "materialsystem.h"
 #include "lightsystem.h"
 #include "camerasystem.h"
@@ -42,6 +44,9 @@ bool SystemManager::Init()
 	addSystem(make_unique<PostProcessInputSystem>());
 	addSystem(make_unique<TimeLineSystem>());
 	addSystem(make_unique<AnimationSystem>());
+	// Animation evaluates the authored pose first. Physics then updates dynamic
+	// bodies/bones before the final entity transform and render systems run.
+	addSystem(make_unique<PhysicsSystem>());
 	addSystem(make_unique<MaterialSystem>());
 	addSystem(make_unique<LightSystem>());
 	addSystem(make_unique<CameraSystem>());
@@ -85,6 +90,18 @@ void SystemManager::UpdateSystem()
 
 	for (auto& system : m_Systems)
 	{
+		const type_index systemType(typeid(*system));
+		const bool playOnlySystem =
+			systemType == type_index(typeid(InputSystem)) ||
+			systemType == type_index(typeid(MovementSystem)) ||
+			systemType == type_index(typeid(CameraControlSystem)) ||
+			systemType == type_index(typeid(PostProcessInputSystem)) ||
+			systemType == type_index(typeid(TimeLineSystem)) ||
+			systemType == type_index(typeid(AnimationSystem));
+		if (playOnlySystem && !ProjectManager::IsSimulationRunning())
+		{
+			continue;
+		}
 		system->Update();
 	}
 
