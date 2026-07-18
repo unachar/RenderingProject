@@ -35,6 +35,13 @@ Light::CreateDesc Light::MakeDefaultDesc(LightType type)
 	desc.Name = string(GetTypeName(type)) + " Light";
 	desc.Intensity = (type == LightType::Volume) ? 1.5f : 1.0f;
 	desc.Range = (type == LightType::Volume) ? 6.0f : 8.0f;
+	desc.VolumeDensity = (type == LightType::Directional || type == LightType::Volume)
+		? 0.35f
+		: 0.0f;
+	desc.AffectsOpaque = type != LightType::Volume;
+	desc.AffectsForward = type != LightType::Volume;
+	desc.AffectsVolumetrics =
+		type == LightType::Directional || type == LightType::Volume;
 	desc.CastShadow = (type == LightType::Directional);
 	return desc;
 }
@@ -81,7 +88,12 @@ EntityID Light::Create(const CreateDesc& desc)
 	light.VolumeShape = desc.VolumeShape;
 	light.IsActive = desc.IsActive;
 	light.DrawDebug = desc.DrawDebug;
+	light.AffectsOpaque = desc.AffectsOpaque;
+	light.AffectsForward = desc.AffectsForward;
+	light.AffectsVolumetrics = desc.AffectsVolumetrics;
 	light.CastShadow = desc.CastShadow;
+	light.Priority = desc.Priority;
+	light.RenderMode = desc.RenderMode;
 
 	return entity.GetID();
 }
@@ -106,6 +118,9 @@ EntityID Light::CreateDefaultDirectional()
 	desc.VolumeDensity = 0.35f;
 	desc.IsActive = true;
 	desc.DrawDebug = true;
+	desc.AffectsOpaque = true;
+	desc.AffectsForward = true;
+	desc.AffectsVolumetrics = true;
 	desc.CastShadow = true;
 	return Create(desc);
 }

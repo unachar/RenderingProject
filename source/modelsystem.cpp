@@ -1,5 +1,7 @@
 ﻿#include "pch.h"
 #include "modelsystem.h"
+#include "gpudrivenindirect.h"
+#include "instancingsystem.h"
 #include "componentmanager.h"
 #include "modelmanager.h"
 #include "texturemanager.h"
@@ -12,6 +14,7 @@
 #include "imguimanager.h"
 #include "materialsystem.h"
 #include "toonoutlinebuilder.h"
+#include "meshshaderpipeline.h"
 #include <vector>
 #include <algorithm>
 #include "world.h"
@@ -160,7 +163,7 @@ namespace
 	}
 }
 
-void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
+void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
 	if (renderPass == RenderPass::ShadowMap)
 	{
@@ -192,7 +195,8 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		for (EntityID i : World::GetView<AnimationModelComponent>())
 		{
 			auto& animComp = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(i);
-			if (animComp.ModelId < 0 || !ShouldCastShadow(i))
+			if (animComp.ModelId < 0 || !ShouldCastShadow(i) ||
+				!RendererResource::ShouldDrawEntityInCurrentShadowPass(i))
 			{
 				continue;
 			}
@@ -202,7 +206,6 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			{
 				continue;
 			}
-
 			model->DispatchGpuSkinning(pCommandList);
 			for (UINT m = 0; m < model->GetMeshCount(); ++m)
 			{
@@ -243,7 +246,8 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		for (EntityID i : World::GetView<StaticModelComponent>())
 		{
 			auto& staticComp = ComponentManager::GetComponentUnchecked<StaticModelComponent>(i);
-			if (staticComp.ModelId < 0 || !ShouldCastShadow(i))
+			if (staticComp.ModelId < 0 || !ShouldCastShadow(i) ||
+				!RendererResource::ShouldDrawEntityInCurrentShadowPass(i))
 			{
 				continue;
 			}
@@ -338,6 +342,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	}
 
 	const bool drawTransparent = (renderPass == RenderPass::OverlayScene);
+	const bool occlusionPhaseTwo = renderPass == RenderPass::OcclusionPhase2;
 	ID3D12GraphicsCommandList* pCommandList = RendererCore::GetCommandList();
 	if (!pCommandList)
 	{
@@ -356,6 +361,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	Camera::GetCameraMatrices(Camera::GetCameraEntity(), viewMat, projMat);
 	const XMMATRIX transposedView = XMMatrixTranspose(viewMat);
 	const XMMATRIX transposedProj = XMMatrixTranspose(projMat);
+	const XMMATRIX viewProjection = viewMat * projMat;
 
 	{
 		m_AnimDrawCalls.clear();
@@ -387,6 +393,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			{
 				continue;
 			}
+			if (InstancingSystem::CanInstance(i)) continue;
 
 			rendererResource psoResource{};
 			psoResource.vsPath = GetModelVsPath(i);
@@ -461,9 +468,14 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 		ID3D12PipelineState* lastPso = nullptr;
 		ID3D12PipelineState* outlinePso = PsoManager::GetOrCreateToonOutlinePso(drawTransparent);
-
 		for (const auto& dc : m_AnimDrawCalls)
 		{
+			TextureManager::TouchTexture(dc.srvIndex);
+			TextureManager::TouchTexture(dc.normalSrvIndex);
+			if (InstancingSystem::CanInstance(dc.EntityID))
+			{
+				continue;
+			}
 			dc.model->DispatchGpuSkinning(pCommandList);
 			lastPso = nullptr;
 
@@ -513,12 +525,26 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			CD3DX12_GPU_DESCRIPTOR_HANDLE normalSrvHandle(heapStart, dc.normalSrvIndex, cbvIncrement);
 			pCommandList->SetGraphicsRootDescriptorTable(6, normalSrvHandle);
 
+			const XMMATRIX world = XMLoadFloat4x4(
+				&ComponentManager::GetComponentUnchecked<TransformComponent>(dc.EntityID).WorldMatrix);
+			const bool indirectBaseDrawn = m_IndirectDraws && m_IndirectDraws->ExecutePrimary(
+				pCommandList,
+				dc.model,
+				dc.EntityID,
+				world,
+				viewProjection,
+				dc.srvIndex,
+				heapStart,
+				cbvIncrement,
+				dc.pso);
+
 			for (UINT m = 0; m < dc.model->GetMeshCount(); m++)
 			{
 				const MeshData& meshData = dc.model->GetMeshData(m);
 
 				if (meshData.TextureIndex >= 0)
 				{
+					TextureManager::TouchTexture(meshData.TextureIndex);
 					CD3DX12_GPU_DESCRIPTOR_HANDLE meshSrvHandle(heapStart, meshData.TextureIndex, cbvIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, meshSrvHandle);
 				}
@@ -527,12 +553,15 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					CD3DX12_GPU_DESCRIPTOR_HANDLE entitySrvHandle(heapStart, dc.srvIndex, cbvIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, entitySrvHandle);
 				}
+				if (!indirectBaseDrawn && !occlusionPhaseTwo)
+				{
+					pCommandList->SetPipelineState(dc.pso);
+					pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
+					pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
+					pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
+				}
 
-				pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
-				pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
-				pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
-
-				if (outlinePso && ShouldDrawToonOutline(dc.EntityID) && ShouldDrawMeshToonOutline(material, m, meshData))
+				if (!occlusionPhaseTwo && outlinePso && ShouldDrawToonOutline(dc.EntityID) && ShouldDrawMeshToonOutline(material, m, meshData))
 				{
 					const float meshWidthScale = GetMeshToonOutlineWidthScale(material, m);
 					const int teoMode = GetTeoModeIndex(material);
@@ -613,6 +642,7 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		auto staticEntities = World::GetView<StaticModelComponent>();
 		for (EntityID i : staticEntities)
 		{
+			if (InstancingSystem::CanInstance(i)) continue;
 			auto& staticComp = ComponentManager::GetComponentUnchecked<StaticModelComponent>(i);
 			if (staticComp.ModelId < 0)
 			{
@@ -711,9 +741,14 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 		ID3D12PipelineState* lastPso = nullptr;
 		ID3D12PipelineState* outlinePso = PsoManager::GetOrCreateToonOutlinePso(drawTransparent);
+		const bool useMeshShaders = !drawTransparent &&
+			RendererCore::GetRenderMode() == RenderMode::DEFERRED &&
+			MeshShaderPipeline::IsSupported();
 
 		for (const auto& dc : m_StaticDrawCalls)
 		{
+			TextureManager::TouchTexture(dc.srvIndex);
+			TextureManager::TouchTexture(dc.normalSrvIndex);
 			const MaterialComponent& material = dc.material ? *dc.material : DefaultMaterial();
 			RendererResource::SetMaterial(dc.EntityID, material);
 
@@ -731,12 +766,26 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			CD3DX12_GPU_DESCRIPTOR_HANDLE normalSrvHandle(heapStart, dc.normalSrvIndex, cbvIncrement);
 			pCommandList->SetGraphicsRootDescriptorTable(6, normalSrvHandle);
 
+			const XMMATRIX world = XMLoadFloat4x4(
+				&ComponentManager::GetComponentUnchecked<TransformComponent>(dc.EntityID).WorldMatrix);
+			const bool indirectBaseDrawn = !useMeshShaders && m_IndirectDraws && m_IndirectDraws->ExecutePrimary(
+				pCommandList,
+				dc.model,
+				dc.EntityID,
+				world,
+				viewProjection,
+				dc.srvIndex,
+				heapStart,
+				cbvIncrement,
+				dc.pso);
+
 			for (UINT m = 0; m < dc.model->GetMeshCount(); m++)
 			{
 				const StaticMeshData& meshData = dc.model->GetMeshData(m);
 
 				if (meshData.TextureIndex >= 0)
 				{
+					TextureManager::TouchTexture(meshData.TextureIndex);
 					CD3DX12_GPU_DESCRIPTOR_HANDLE meshSrvHandle(heapStart, meshData.TextureIndex, cbvIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, meshSrvHandle);
 				}
@@ -745,12 +794,21 @@ void ModelSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					CD3DX12_GPU_DESCRIPTOR_HANDLE entitySrvHandle(heapStart, dc.srvIndex, cbvIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, entitySrvHandle);
 				}
+				const bool meshShaderDrawn = useMeshShaders && MeshShaderPipeline::Draw(
+					pCommandList,
+					meshData,
+					dc.model->GetAabbCenter(),
+					dc.model->GetAabbExtents());
 
-				pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
-				pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
-				pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
+				if (!meshShaderDrawn && !indirectBaseDrawn && !occlusionPhaseTwo)
+				{
+					pCommandList->SetPipelineState(dc.pso);
+					pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
+					pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
+					pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
+				}
 
-				if (outlinePso && ShouldDrawToonOutline(dc.EntityID) && ShouldDrawMeshToonOutline(material, m, meshData))
+				if (!occlusionPhaseTwo && outlinePso && ShouldDrawToonOutline(dc.EntityID) && ShouldDrawMeshToonOutline(material, m, meshData))
 				{
 					const float meshWidthScale = GetMeshToonOutlineWidthScale(material, m);
 					const int teoMode = GetTeoModeIndex(material);

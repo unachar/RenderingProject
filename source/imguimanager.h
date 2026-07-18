@@ -20,9 +20,9 @@ private:
 	inline static int m_renderMode = -1;
 	inline static int m_cameraPostProcess = -1;
 	inline static const char* m_renderModeItems[] = { "フォワード", "ディファード" };
-	inline static const char* m_cameraPostProcessModeItems[] = { "HDR", "ブラー", "セピア", "グレースケール", "反転" };
+	inline static const char* m_cameraPostProcessModeItems[] = { "なし", "ブラー", "セピア", "グレースケール", "反転" };
 	inline static int m_antiAliasingMode = 0;
-	inline static const char* m_antiAliasingModeItems[] = { "なし", "FXAA", "TAA", "MSAA2X", "MSAA4X", "MSAA8X" };
+	inline static const char* m_antiAliasingModeItems[] = { "なし", "FXAA", "TAA" };
 	inline static EntityID m_SelectedEntity = g_kINVALID_ENTITY;
 	inline static bool m_ShowEditorWindows = true;
 	inline static bool m_ShowAdjustmentPanel = true;
@@ -36,6 +36,9 @@ private:
 	inline static bool m_ShowMeshOutlineWindow = false;
 	inline static bool m_ShowMeshShadingWindow = false;
 	inline static bool m_ShowAtmosphereWindow = false;
+	inline static bool m_ShowProjectSettingsWindow = false;
+	inline static bool m_ShowPhysicsSettingsWindow = false;
+	inline static bool m_ProjectSettingsLoaded = false;
 	inline static bool m_ShowLightDebug = false;
 	inline static bool m_HdrEnabled = false;
 	inline static bool m_ToneMapEnabled = true;
@@ -92,8 +95,12 @@ private:
 		MoveComponent Move{};
 		bool HasPhysics = false;
 		PhysicsComponent Physics{};
+		bool HasTimeline = false;
+		TimelineComponent Timeline{};
 		bool HasObb = false;
 		OBBComponent Obb{};
+		bool HasLod = false;
+		LODComponent Lod{};
 	};
 	inline static vector<EntitySnapshot> m_UndoStack;
 	inline static vector<EntitySnapshot> m_RedoStack;
@@ -118,6 +125,10 @@ private:
 	static void DrawMeshOutlineWindow();
 	static void DrawMeshShadingWindow();
 	static void DrawAtmosphereWindow();
+	static void DrawProjectSettingsWindow();
+	static void DrawPhysicsSettingsWindow();
+	static void LoadProjectSettings();
+	static void SaveProjectSettings();
 	static void DrawMaterialInspector(EntityID entity);
 	static void ApplyMeshShadingOverridesToModel(EntityID entity);
 	static void DrawToonMeshOutlineInspector(EntityID entity, bool embeddedInInspector = true);

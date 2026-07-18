@@ -4,6 +4,8 @@
 #include "renderercore.h"
 #include "rendererutils.h"
 #include "texturemanager.h"
+#include "renderersettings.h"
+#include "visibilitybuffer.h"
 
 bool PsoManager::CreateGraphicsPipelineState(
 	const D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc,
@@ -14,7 +16,35 @@ bool PsoManager::CreateGraphicsPipelineState(
 	HRESULT hr = m_Device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&outPso));
 	if (FAILED(hr))
 	{
+		const HRESULT removedReason = m_Device ? m_Device->GetDeviceRemovedReason() : E_POINTER;
+		if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_HUNG || FAILED(removedReason))
+		{
+			RendererCore::CheckDeviceHealth(hr, "Create graphics pipeline state");
+			return false;
+		}
 		Debug::Log("ERROR: Failed to create %s graphics PSO. HRESULT: 0x%08X\n", debugName ? debugName : "unnamed", hr);
+		FILE* log = nullptr;
+		fopen_s(&log, "init_log.txt", "a");
+		if (log)
+		{
+			fprintf(log, "PSO ERROR: %s HRESULT=0x%08X\n", debugName ? debugName : "unnamed", hr);
+			ComPtr<ID3D12InfoQueue> infoQueue;
+			if (SUCCEEDED(m_Device.As(&infoQueue)))
+			{
+				const UINT64 messageCount = infoQueue->GetNumStoredMessagesAllowedByRetrievalFilter();
+				const UINT64 firstMessage = messageCount > 8 ? messageCount - 8 : 0;
+				for (UINT64 index = firstMessage; index < messageCount; ++index)
+				{
+					SIZE_T messageSize = 0;
+					infoQueue->GetMessage(index, nullptr, &messageSize);
+					vector<uint8_t> storage(messageSize);
+					auto* message = reinterpret_cast<D3D12_MESSAGE*>(storage.data());
+					if (SUCCEEDED(infoQueue->GetMessage(index, message, &messageSize)))
+						fprintf(log, "D3D12: %s\n", message->pDescription);
+				}
+			}
+			fclose(log);
+		}
 
 		return false;
 	}
@@ -30,6 +60,12 @@ bool PsoManager::CreateComputePipelineState(
 	HRESULT hr = m_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&outPso));
 	if (FAILED(hr))
 	{
+		const HRESULT removedReason = m_Device ? m_Device->GetDeviceRemovedReason() : E_POINTER;
+		if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_HUNG || FAILED(removedReason))
+		{
+			RendererCore::CheckDeviceHealth(hr, "Create compute pipeline state");
+			return false;
+		}
 		Debug::Log("ERROR: Failed to create %s compute PSO. HRESULT: 0x%08X\n", debugName ? debugName : "unnamed", hr);
 		return false;
 	}
@@ -39,14 +75,21 @@ bool PsoManager::CreateComputePipelineState(
 ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const rendererResource& resource)
 {
 	const bool requestDeferredScene = (m_RenderMode == RenderMode::DEFERRED && m_IsDeferredGeometryPass);
-	const string resolvedPsPath = requestDeferredScene
-		? RendererUtils::ResolvePixelShaderPathForRenderMode(resource.psPath, RenderMode::DEFERRED)
-		: RendererUtils::ResolvePixelShaderPathForRenderMode(resource.psPath, RenderMode::FORWARD);
+	const bool visibilityPass = requestDeferredScene &&
+		RendererSettings::GetComputeGBufferEnabled() &&
+		VisibilityBuffer::IsAvailable();
+	const string resolvedPsPath = visibilityPass
+		? (resource.isModel
+			? "shader/hlsl/build/VisibilityPS.cso"
+			: "shader/hlsl/build/Visibility2DPS.cso")
+		: (requestDeferredScene
+			? RendererUtils::ResolvePixelShaderPathForRenderMode(resource.psPath, RenderMode::DEFERRED)
+			: RendererUtils::ResolvePixelShaderPathForRenderMode(resource.psPath, RenderMode::FORWARD));
 	const bool useDeferredMrt = requestDeferredScene || RendererUtils::EndsWith(resolvedPsPath, "_MRT.cso") || RendererUtils::EndsWith(resolvedPsPath, "GeometryPS.cso");
 	const bool enableAlphaBlend = resource.enableAlphaBlend && !useDeferredMrt;
 	const DXGI_FORMAT forwardRtvFormat = useDeferredMrt ? DXGI_FORMAT_UNKNOWN : GetForwardRtvFormat();
 	const UINT forwardRtvFormatVal = static_cast<UINT>(forwardRtvFormat);
-	string key = resource.vsPath + resolvedPsPath + "|" + (resource.isModel ? "M" : "2D") + "|" + (useDeferredMrt ? "DEFERRED" : "FORWARD") + "|" + to_string(forwardRtvFormatVal) + "|" + (resource.frontCounterClockwise ? "FRONT_CCW" : "FRONT_CW") + "|" + (enableAlphaBlend ? "ALPHA" : "OPAQUE");
+	string key = resource.vsPath + resolvedPsPath + "|" + (resource.isModel ? "M" : "2D") + "|" + (visibilityPass ? "VISIBILITY" : (useDeferredMrt ? "DEFERRED" : "FORWARD")) + "|" + to_string(forwardRtvFormatVal) + "|" + (resource.frontCounterClockwise ? "FRONT_CCW" : "FRONT_CW") + "|" + (enableAlphaBlend ? "ALPHA" : "OPAQUE");
 
 	auto it = m_PsoCache.find(key);
 	if (it != m_PsoCache.end())
@@ -58,7 +101,7 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const rendererResource& 
 		resource.vsPath,
 		resolvedPsPath.c_str(),
 		useDeferredMrt ? "DEFERRED" : "FORWARD",
-		useDeferredMrt ? g_kGEOMETRY_GBUFFER_COUNT : 1);
+		visibilityPass ? 1 : (useDeferredMrt ? g_kGEOMETRY_GBUFFER_COUNT : 1));
 
 	ComPtr<ID3DBlob> vsBlob;
 	ComPtr<ID3DBlob> psBlob;
@@ -87,8 +130,12 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const rendererResource& 
 	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 	psoDesc.SampleMask = UINT_MAX;
 	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-	psoDesc.NumRenderTargets = useDeferredMrt ? g_kGEOMETRY_GBUFFER_COUNT : 1;
-	if (useDeferredMrt)
+	psoDesc.NumRenderTargets = visibilityPass ? 1 : (useDeferredMrt ? g_kGEOMETRY_GBUFFER_COUNT : 1);
+	if (visibilityPass)
+	{
+		psoDesc.RTVFormats[0] = GetGBufferFormat(GBufferType::VISIBILITY);
+	}
+	else if (useDeferredMrt)
 	{
 		for (UINT i = 0; i < g_kGEOMETRY_GBUFFER_COUNT; ++i)
 		{
@@ -160,9 +207,12 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const rendererResource& 
 ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso(bool enableAlphaBlend)
 {
 	const bool useDeferredMrt = (m_RenderMode == RenderMode::DEFERRED && m_IsDeferredGeometryPass);
+	const bool visibilityPass = useDeferredMrt &&
+		RendererSettings::GetComputeGBufferEnabled() &&
+		VisibilityBuffer::IsAvailable();
 	const UINT forwardRtvFmt = useDeferredMrt ? 0 : static_cast<UINT>(GetForwardRtvFormat());
 	const bool useAlphaBlend = enableAlphaBlend && !useDeferredMrt;
-	const string key = string("TOON_OUTLINE|") + (useDeferredMrt ? "DEFERRED" : "FORWARD") + "|" + to_string(forwardRtvFmt) + "|" + (useAlphaBlend ? "ALPHA" : "OPAQUE");
+	const string key = string("TOON_OUTLINE|") + (visibilityPass ? "VISIBILITY" : (useDeferredMrt ? "DEFERRED" : "FORWARD")) + "|" + to_string(forwardRtvFmt) + "|" + (useAlphaBlend ? "ALPHA" : "OPAQUE");
 	auto it = m_PsoCache.find(key);
 	if (it != m_PsoCache.end())
 	{
@@ -181,7 +231,9 @@ ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso(bool enableAlphaBlend
 	}
 
 	rendererResource psResource{};
-	psResource.csoPath = useDeferredMrt
+	psResource.csoPath = visibilityPass
+		? "shader\\hlsl\\build\\VisibilityOutlinePS.cso"
+		: useDeferredMrt
 		? "shader\\hlsl\\build\\toonOutlinePS_MRT.cso"
 		: "shader\\hlsl\\build\\toonOutlinePS.cso";
 	psResource.ppBlob = psBlob.GetAddressOf();
@@ -223,8 +275,12 @@ ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso(bool enableAlphaBlend
 	psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 	psoDesc.SampleMask = UINT_MAX;
 	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-	psoDesc.NumRenderTargets = useDeferredMrt ? g_kGEOMETRY_GBUFFER_COUNT : 1;
-	if (useDeferredMrt)
+	psoDesc.NumRenderTargets = visibilityPass ? 1 : (useDeferredMrt ? g_kGEOMETRY_GBUFFER_COUNT : 1);
+	if (visibilityPass)
+	{
+		psoDesc.RTVFormats[0] = GetGBufferFormat(GBufferType::VISIBILITY);
+	}
+	else if (useDeferredMrt)
 	{
 		for (UINT i = 0; i < g_kGEOMETRY_GBUFFER_COUNT; ++i)
 		{
@@ -270,8 +326,12 @@ ID3D12PipelineState* PsoManager::GetOrCreateShadowMapPso()
 	psoDesc.PS = { nullptr, 0 };
 	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
 	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-	psoDesc.RasterizerState.DepthBias = 1500;
-	psoDesc.RasterizerState.SlopeScaledDepthBias = 1.5f;
+	// A fixed rasterizer bias is measured in depth-buffer units.  Because each
+	// directional level has a different depth range it displaced the caster by
+	// a different world-space amount at every resolution boundary.  Bias is
+	// applied once, in the receiver shader, where it is normalized per level.
+	psoDesc.RasterizerState.DepthBias = 0;
+	psoDesc.RasterizerState.SlopeScaledDepthBias = 0.0f;
 	psoDesc.RasterizerState.DepthBiasClamp = 0.0f;
 	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 	psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
@@ -301,6 +361,62 @@ ID3D12PipelineState* PsoManager::GetOrCreateShadowMapPso()
 	}
 
 	return m_ShadowMapPso.Get();
+}
+
+ID3D12PipelineState* PsoManager::GetOrCreateShadowMapInstancedPso()
+{
+	constexpr const char* key = "shadow_map_instanced";
+	auto cached = m_PsoCache.find(key);
+	if (cached != m_PsoCache.end())
+	{
+		return cached->second.Get();
+	}
+
+	rendererResource resource{};
+	resource.vsPath = "shader/hlsl/build/ShadowMapInstancedVS.cso";
+	resource.csoPath = resource.vsPath;
+	ComPtr<ID3DBlob> vsBlob;
+	resource.ppBlob = vsBlob.GetAddressOf();
+	if (!RendererShader::LoadShaderBlob(resource))
+	{
+		return nullptr;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
+	psoDesc.VS = CD3DX12_SHADER_BYTECODE(vsBlob.Get());
+	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	psoDesc.RasterizerState.DepthBias = 0;
+	psoDesc.RasterizerState.SlopeScaledDepthBias = 0.0f;
+	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+	psoDesc.DepthStencilState.DepthEnable = TRUE;
+	psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+	psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+	psoDesc.DepthStencilState.StencilEnable = FALSE;
+	psoDesc.SampleMask = UINT_MAX;
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.NumRenderTargets = 0;
+	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+	psoDesc.SampleDesc.Count = 1;
+	psoDesc.pRootSignature = m_ModelRootSignature.Get();
+
+	static D3D12_INPUT_ELEMENT_DESC modelLayout[] =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+	};
+	psoDesc.InputLayout = { modelLayout, _countof(modelLayout) };
+
+	ComPtr<ID3D12PipelineState> pso;
+	if (!CreateGraphicsPipelineState(psoDesc, key, pso))
+	{
+		return nullptr;
+	}
+	m_PsoCache.emplace(key, pso);
+	return pso.Get();
 }
 
 bool PsoManager::CreateSkinningPso()

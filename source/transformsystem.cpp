@@ -5,10 +5,8 @@
 
 void TransformSystem::Update()
 {
-	auto transformEntities = World::GetView<TransformComponent>();
-	for (EntityID i : transformEntities)
-	{
-		auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(i);
+	ComponentManager::ForEachComponent<TransformComponent>([](EntityID, TransformComponent& transform)
+		{
 		if (transform.IsDirty)
 		{
 			XMMATRIX world = XMMatrixScaling(transform.Scale.x, transform.Scale.y, transform.Scale.z) *
@@ -19,6 +17,6 @@ void TransformSystem::Update()
 			XMStoreFloat4x4(&transform.WorldMatrix, world);
 			transform.IsDirty = false;
 		}
-	}
+		});
 }
 

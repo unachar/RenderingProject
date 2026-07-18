@@ -11,7 +11,7 @@ public:
 	Entity(EntityID id) : m_Id(id) {}
 
 	EntityID GetID() const { return m_Id; }
-	bool IsValid() const { return m_Id != g_kINVALID_ENTITY; }
+	bool IsValid() const { return m_Id < g_kMAX_ENTITIES && Registry::IsAlive(m_Id); }
 
 	template<typename T>
 	Entity& Add()

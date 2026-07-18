@@ -97,6 +97,21 @@
     <FxCompile Include="shader\hlsl\GeometryPS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
+    <FxCompile Include="shader\hlsl\colorshader3dInstancedVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modelshaderInstancedVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GpuDrivenCullCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GpuInstanceCullLodCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GpuInstanceArgsCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
     <FxCompile Include="shader\hlsl\modelshaderPS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
@@ -163,6 +178,9 @@
     <FxCompile Include="shader\hlsl\ShadowMapVS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
+    <FxCompile Include="shader\hlsl\ShadowMapInstancedVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
     <FxCompile Include="shader\hlsl\UpscaleDepthPS.hlsl" />
     <FxCompile Include="shader\hlsl\VelocityPS.hlsl" />
     <FxCompile Include="shader\hlsl\VelocityGeometryVS.hlsl" />
@@ -211,6 +229,18 @@
     <ClCompile Include="source\animationsystem.cpp">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClCompile>
+    <ClCompile Include="source\physicssystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\bulletphysicsbackend.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\joltphysicsbackend.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\physxphysicsbackend.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
     <ClCompile Include="source\camerasystem.cpp">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClCompile>
@@ -229,6 +259,9 @@
     <ClCompile Include="source\modelsystem.cpp">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClCompile>
+    <ClCompile Include="source\instancingsystem.cpp">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
     <ClCompile Include="source\postprocesssystem.cpp">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClCompile>
@@ -237,6 +270,9 @@
     </ClCompile>
     <ClCompile Include="source\systemmanager.cpp">
       <Filter>2_ecs\2-3_systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\projectmanager.cpp">
+      <Filter>1_base</Filter>
     </ClCompile>
     <ClCompile Include="source\timeline.cpp">
       <Filter>2_ecs\2-3_systems</Filter>
@@ -249,6 +285,12 @@
     </ClCompile>
     <ClCompile Include="source\animationmodel.cpp">
       <Filter>3_model\3-1_animationmodel</Filter>
+    </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\allocator.cpp">
+      <Filter>3_external</Filter>
+    </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\simplifier.cpp">
+      <Filter>3_external</Filter>
     </ClCompile>
     <ClCompile Include="source\pmxloader.cpp">
       <Filter>3_model\3-1_animationmodel</Filter>
@@ -400,10 +442,19 @@
     <ClInclude Include="source\componentmanager.h">
       <Filter>2_ecs\2-2_components</Filter>
     </ClInclude>
+    <ClInclude Include="source\physicscomponent.h">
+      <Filter>2_ecs\2-2_components</Filter>
+    </ClInclude>
     <ClInclude Include="source\animator.h">
       <Filter>2_ecs\2-2_components</Filter>
     </ClInclude>
     <ClInclude Include="source\animationsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\physicssystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\physicsbackend.h">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClInclude>
     <ClInclude Include="source\camerasystem.h">
@@ -424,6 +475,9 @@
     <ClInclude Include="source\modelsystem.h">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClInclude>
+    <ClInclude Include="source\instancingsystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
     <ClInclude Include="source\postprocesssystem.h">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClInclude>
@@ -436,10 +490,16 @@
     <ClInclude Include="source\systemmanager.h">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClInclude>
+    <ClInclude Include="source\projectmanager.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
     <ClInclude Include="source\timeline.h">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClInclude>
     <ClInclude Include="source\timelinesystem.h">
+      <Filter>2_ecs\2-3_systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\timelinecomponent.h">
       <Filter>2_ecs\2-3_systems</Filter>
     </ClInclude>
     <ClInclude Include="source\transformsystem.h">
@@ -449,6 +509,9 @@
       <Filter>3_model\3-1_animationmodel</Filter>
     </ClInclude>
     <ClInclude Include="source\pmxloader.h">
+      <Filter>3_model\3-1_animationmodel</Filter>
+    </ClInclude>
+    <ClInclude Include="source\pmxphysicsdata.h">
       <Filter>3_model\3-1_animationmodel</Filter>
     </ClInclude>
     <ClInclude Include="source\vmdanimationimpoter.h">

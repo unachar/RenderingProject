@@ -22,7 +22,7 @@ void main(in PSInput3D In, out float4 outDiffuse : SV_Target)
     float lightAttenuation;
     float volumeScatter;
     float rangeBlend;
-    ResolveLightAggregate(In.WorldPos, lightDirection, lightColor, lightAttenuation, volumeScatter, rangeBlend);
+    ResolveLightAggregate(In.WorldPos, In.Position.xy, lightDirection, lightColor, lightAttenuation, volumeScatter, rangeBlend);
     float lightIntensity = 1.0f;
     
     if (UseTexture)

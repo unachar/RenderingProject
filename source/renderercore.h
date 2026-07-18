@@ -11,6 +11,9 @@ public:
 	static void ApplyPendingRenderMode();
 	static void SetHdr(bool enabled);
 	static void ApplyPendingHdr();
+	static void SetResolutionScale(float scale);
+	static void ApplyPendingResolutionScale();
+	static void InvalidateScenePipelineCache();
 
 	static RenderMode GetRenderMode() { return m_RenderMode; }
 	static RenderMode GetRequestedRenderMode() { return m_HasPendingRenderMode ? m_PendingRenderMode : m_RenderMode; }
@@ -20,6 +23,9 @@ public:
 	static const XMFLOAT4X4& GetPreviousViewMatrix() { return m_PrevViewMatrix; }
 	static const XMFLOAT4X4& GetPreviousProjectionMatrix() { return m_PrevProjMatrix; }
 	static UINT GetSceneHeight() { return m_SceneHeight; }
+	static float GetResolutionScale() { return m_HasPendingResolutionScale ? m_PendingResolutionScale : m_ResolutionScale; }
+	static int GetMonitorTextureIndex() { return m_MonitorTextureSrvIndex; }
+	static void SetMonitorTextureIndex(int srvIndex) { m_MonitorTextureSrvIndex = srvIndex; }
 	static UINT GetFrameIndex() { return m_FrameIndex; }
 	static float GetSceneAspectRatio()
 	{
@@ -28,6 +34,8 @@ public:
 	}
 	static ID3D12Device* GetDevice() { return m_Device.Get(); }
 	static ID3D12GraphicsCommandList* GetCommandList() { return m_CommandList.Get(); }
+	static bool CheckDeviceHealth(HRESULT operationResult, const char* operation);
+	static bool WaitForGpuIdle();
 	static ID3D12CommandQueue* GetCommandQueue() { return m_CommandQueue.Get(); }
 };
 

@@ -14,12 +14,15 @@
 #include "cameracontrolsystem.h"
 #include "postprocessinputsystem.h"
 #include "animationsystem.h"
+#include "physicssystem.h"
+#include "projectmanager.h"
 #include "materialsystem.h"
 #include "lightsystem.h"
 #include "camerasystem.h"
 #include "gridsystem.h"
 #include "rendersystem.h"
 #include "modelsystem.h"
+#include "instancingsystem.h"
 #include "debugsystem.h"
 #include "postprocesssystem.h"
 
@@ -41,6 +44,9 @@ bool SystemManager::Init()
 	addSystem(make_unique<PostProcessInputSystem>());
 	addSystem(make_unique<TimeLineSystem>());
 	addSystem(make_unique<AnimationSystem>());
+	// Animation evaluates the authored pose first. Physics then updates dynamic
+	// bodies/bones before the final entity transform and render systems run.
+	addSystem(make_unique<PhysicsSystem>());
 	addSystem(make_unique<MaterialSystem>());
 	addSystem(make_unique<LightSystem>());
 	addSystem(make_unique<CameraSystem>());
@@ -49,6 +55,7 @@ bool SystemManager::Init()
 	addSystem(make_unique<GridSystem>());
 	addSystem(make_unique<RenderSystem>());
 	addSystem(make_unique<ModelSystem>());
+	addSystem(make_unique<InstancingSystem>());
 	addSystem(make_unique<DebugSystem>());
 
 	for (auto& system : m_Systems)
@@ -73,29 +80,39 @@ void SystemManager::UpdateSystem()
 	// Snapshot transforms before any movement, timeline, animation or camera
 	// system mutates the current frame. Newly-created entities are initialized
 	// after TransformSystem has produced their first valid world matrix.
-	for (EntityID entity : World::GetView<TransformComponent>())
-	{
-		auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+	ComponentManager::ForEachComponent<TransformComponent>([](EntityID, TransformComponent& transform)
+		{
 		if (transform.HasPreviousWorld)
 		{
 			transform.PreviousWorldMatrix = transform.WorldMatrix;
 		}
-	}
+		});
 
 	for (auto& system : m_Systems)
 	{
+		const type_index systemType(typeid(*system));
+		const bool playOnlySystem =
+			systemType == type_index(typeid(InputSystem)) ||
+			systemType == type_index(typeid(MovementSystem)) ||
+			systemType == type_index(typeid(CameraControlSystem)) ||
+			systemType == type_index(typeid(PostProcessInputSystem)) ||
+			systemType == type_index(typeid(TimeLineSystem)) ||
+			systemType == type_index(typeid(AnimationSystem));
+		if (playOnlySystem && !ProjectManager::IsSimulationRunning())
+		{
+			continue;
+		}
 		system->Update();
 	}
 
-	for (EntityID entity : World::GetView<TransformComponent>())
-	{
-		auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+	ComponentManager::ForEachComponent<TransformComponent>([](EntityID, TransformComponent& transform)
+		{
 		if (!transform.HasPreviousWorld)
 		{
 			transform.PreviousWorldMatrix = transform.WorldMatrix;
 			transform.HasPreviousWorld = true;
 		}
-	}
+		});
 }
 
 void SystemManager::DrawSystem(RenderPass renderPass, bool receivingPostProcessOnly)
@@ -110,39 +127,68 @@ void SystemManager::RenderFlow()
 {
 	auto renderDeferred = []()
 		{
-			const UINT shadowLightCount = RendererResource::GetShadowLightCount();
-			for (UINT shadowIndex = 0; shadowIndex < shadowLightCount; ++shadowIndex)
+			ID3D12GraphicsCommandList* commandList = RendererCore::GetCommandList();
+
 			{
-				if (RendererDraw::BeginShadowPass(shadowIndex))
+				RenderProfiler::ScopedEvent profile("Shadow", commandList);
+				const UINT shadowLightCount = RendererResource::GetShadowLightCount();
+				for (UINT shadowIndex = 0; shadowIndex < shadowLightCount; ++shadowIndex)
 				{
-					DrawSystem(RenderPass::ShadowMap, false);
-					RendererDraw::EndShadowPass();
+					if (!RendererResource::ShouldRenderShadowPass(shadowIndex))
+					{
+						continue;
+					}
+					if (RendererDraw::BeginShadowPass(shadowIndex))
+					{
+						DrawSystem(RenderPass::ShadowMap, false);
+						RendererDraw::EndShadowPass();
+					}
+				}
+				RendererDraw::EndShadowPassBatch();
+				if (shadowLightCount > 0)
+				{
+					RendererResource::SetCurrentShadowPassIndex(0);
+					RendererResource::UpdateShadowConstantBuffer();
 				}
 			}
-			if (shadowLightCount > 0)
+
 			{
-				RendererResource::SetCurrentShadowPassIndex(0);
-				RendererResource::UpdateShadowConstantBuffer();
+				RenderProfiler::ScopedEvent profile("GBuffer / Opaque", commandList);
+				RendererDraw::BeginScenePass();
+				DrawSystem(RenderPass::PrimaryScene, false);
+				if (RendererDraw::BuildOcclusionHierarchyAndBeginPhaseTwo())
+				{
+					DrawSystem(RenderPass::OcclusionPhase2, false);
+				}
+				RendererDraw::EndScenePass();
 			}
 
-			RendererDraw::BeginScenePass();
-			DrawSystem(RenderPass::PrimaryScene, false);
-			RendererDraw::EndScenePass();
-			RendererDraw::RenderVelocityBuffer();
-			DrawSystem(RenderPass::Velocity, false);
-			RendererDraw::EndVelocityBuffer();
+			{
+				RenderProfiler::ScopedEvent profile("Velocity", commandList);
+				RendererDraw::RenderVelocityBuffer();
+				DrawSystem(RenderPass::Velocity, false);
+				RendererDraw::EndVelocityBuffer();
+			}
 
-			PostProcessSystem postProcess;
-			postProcess.Draw(RenderPass::PrimaryScene, false);
+			{
+				RenderProfiler::ScopedEvent profile("Deferred Lighting / PostProcess", commandList);
+				PostProcessSystem postProcess;
+				postProcess.Draw(RenderPass::PrimaryScene, false);
+			}
 
-			RendererDraw::PrepareTransparentSceneCopy();
-			RendererDraw::BeginEditorSceneOverlayPass();
-			DrawSystem(RenderPass::OverlayScene, false);
-			RendererDraw::EndEditorSceneOverlayPass();
+			{
+				RenderProfiler::ScopedEvent profile("Transparent / Overlay", commandList);
+				RendererDraw::PrepareTransparentSceneCopy();
+				RendererDraw::BeginEditorSceneOverlayPass();
+				DrawSystem(RenderPass::OverlayScene, false);
+				RendererDraw::EndEditorSceneOverlayPass();
+			}
 
-			RendererDraw::ApplyAntiAliasing();
+			{
+				RenderProfiler::ScopedEvent profile("AntiAliasing", commandList);
+				RendererDraw::ApplyAntiAliasing();
+			}
 		};
 
 	renderDeferred();
 }
-

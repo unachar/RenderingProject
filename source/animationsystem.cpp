@@ -4,10 +4,12 @@
 #include "componentmanager.h"
 #include "modelmanager.h"
 #include "world.h"
+#include <unordered_set>
 
 void AnimationSystem::Update()
 {
 	auto animEntities = World::GetView<AnimationModelComponent>();
+	std::unordered_set<int> updatedInstancedModels;
 
 	for (EntityID i : animEntities)
 	{
@@ -35,6 +37,16 @@ void AnimationSystem::Update()
 		}
 
 		Animator::Update(animationComponent, World::GetDeltaTime());
+
+		const bool useSharedInstancedPose =
+			ComponentManager::HasComponent<InstancingComponent>(i) &&
+			ComponentManager::GetComponentUnchecked<InstancingComponent>(i).UseInstancing;
+		if (useSharedInstancedPose && !updatedInstancedModels.insert(animationComponent.ModelId).second)
+		{
+			// GPU-instanced entities referencing the same model share one skinned
+			// vertex stream, so evaluating the identical pose per Entity is wasted work.
+			continue;
+		}
 
 		if (animationComponent.ActiveAnimationLayers.size() > 1)
 		{

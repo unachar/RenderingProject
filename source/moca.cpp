@@ -11,7 +11,7 @@ void Moca::Create()
 	const auto modelRotation = XMFLOAT3(XM_PIDIV2, 0.0f, 0.0f);
 	const auto modelPath = "asset\\model\\moca.vrm";
 
-	auto& entity = World::CreateEntity()
+	auto entity = World::CreateEntity()
 		.Add<NameComponent>()
 		.Add<TransformComponent>()
 		.Add<MeshComponent>()

@@ -10,6 +10,7 @@
 #include "materialsystem.h"
 #include "camera.h"
 #include "imguimanager.h"
+#include "instancingsystem.h"
 #include <vector>
 #include <algorithm>
 #include "world.h"
@@ -143,6 +144,7 @@ namespace
 
 void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
+	if (renderPass == RenderPass::OcclusionPhase2) return;
 	if (renderPass == RenderPass::ShadowMap)
 	{
 		ID3D12GraphicsCommandList* pCommandList = RendererCore::GetCommandList();
@@ -171,7 +173,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			if (!sprite.Is3D ||
 				sprite.VertexBufferView.BufferLocation == 0 ||
 				!Registry::HasComponent(i, ComponentType::TRANSFORM) ||
-				!ShouldCastShadow(i))
+				!ShouldCastShadow(i) ||
+				!RendererResource::ShouldDrawEntityInCurrentShadowPass(i) ||
+				InstancingSystem::CanInstance(i))
 			{
 				continue;
 			}
@@ -192,7 +196,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(i);
 			if (mesh.VertexBufferView.BufferLocation == 0 ||
 				!Registry::HasComponent(i, ComponentType::TRANSFORM) ||
-				!ShouldCastShadow(i))
+				!ShouldCastShadow(i) ||
+				!RendererResource::ShouldDrawEntityInCurrentShadowPass(i) ||
+				InstancingSystem::CanInstance(i))
 			{
 				continue;
 			}
@@ -221,6 +227,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		auto draw = [&](EntityID entity, const D3D12_VERTEX_BUFFER_VIEW& vbv, UINT vertexCount)
 			{
 				if (!ComponentManager::HasComponent<TransformComponent>(entity) || vbv.BufferLocation == 0) return;
+				if (InstancingSystem::CanInstance(entity) && !InstancingSystem::IsEntityVisible(entity)) return;
 				const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
 				ConstantBuffer3D cb{};
 				cb.World = XMMatrixTranspose(XMLoadFloat4x4(&transform.WorldMatrix));
@@ -315,6 +322,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				{
 					continue;
 				}
+				if (InstancingSystem::CanInstance(i)) continue;
 
 				RendererDraw::BeginModelPass();
 				rendererResource psoResource{};
@@ -465,6 +473,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		{
 			continue;
 		}
+		if (InstancingSystem::CanInstance(i)) continue;
 
 		bool isReceiving = MaterialSystem::IsReceivingPostProcess(i);
 		const MaterialComponent* material = Registry::HasComponent(i, ComponentType::MATERIAL)
@@ -583,6 +592,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			{
 				const MaterialComponent& material = dc.material ? *dc.material : DefaultMaterial();
 				RendererResource::SetMaterial(dc.EntityID, material);
+				if (InstancingSystem::CanInstance(dc.EntityID))
+				{
+					continue;
+				}
 
 				if (dc.pso != lastPso)
 				{
@@ -592,14 +605,16 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 				pCommandList->SetGraphicsRootDescriptorTable(0, RendererResource::GetConstantBufferHandle(dc.EntityID));
 
-				if (dc.srvIndex != lastSrvIndex)
-				{
+			if (dc.srvIndex != lastSrvIndex)
+			{
+				TextureManager::TouchTexture(dc.srvIndex);
 					CD3DX12_GPU_DESCRIPTOR_HANDLE srvHandle(heapStart, dc.srvIndex, descriptorIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, srvHandle);
 					lastSrvIndex = dc.srvIndex;
 				}
-				if (dc.normalSrvIndex != lastNormalSrvIndex)
-				{
+			if (dc.normalSrvIndex != lastNormalSrvIndex)
+			{
+				TextureManager::TouchTexture(dc.normalSrvIndex);
 					CD3DX12_GPU_DESCRIPTOR_HANDLE normalSrvHandle(heapStart, dc.normalSrvIndex, descriptorIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(6, normalSrvHandle);
 					lastNormalSrvIndex = dc.normalSrvIndex;

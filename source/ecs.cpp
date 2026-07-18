@@ -10,11 +10,18 @@ vector<EntityID> Registry::m_ActiveEntities[g_kMAX_COMPONENTS];
 vector<int32_t> Registry::m_EntityToIndex[g_kMAX_COMPONENTS];
 queue<EntityID> Registry::m_FreeList;
 uint32_t Registry::m_NextEntityId = 0;
+uint64_t Registry::m_StructureVersion = 1;
 
 unordered_map<type_index, ComponentTypeID>& ComponentTypeRegistry::TypeIds()
 {
     static unordered_map<type_index, ComponentTypeID> typeIds;
     return typeIds;
+}
+
+vector<void(*)(EntityID)>& ComponentTypeRegistry::CreateCallbacks()
+{
+    static vector<void(*)(EntityID)> createCallbacks;
+    return createCallbacks;
 }
 
 vector<void(*)(EntityID)>& ComponentTypeRegistry::ClearCallbacks()
@@ -23,10 +30,25 @@ vector<void(*)(EntityID)>& ComponentTypeRegistry::ClearCallbacks()
     return clearCallbacks;
 }
 
+vector<void(*)()>& ComponentTypeRegistry::ResetCallbacks()
+{
+    static vector<void(*)()> resetCallbacks;
+    return resetCallbacks;
+}
+
 ComponentTypeID& ComponentTypeRegistry::NextTypeId()
 {
     static ComponentTypeID nextTypeId = 0;
     return nextTypeId;
+}
+
+void ComponentTypeRegistry::CreateComponent(EntityID entity, ComponentType type)
+{
+    auto& createCallbacks = CreateCallbacks();
+    if (type.Value < createCallbacks.size())
+    {
+        createCallbacks[type.Value](entity);
+    }
 }
 
 void ComponentTypeRegistry::ClearComponent(EntityID entity, ComponentType type)
@@ -38,6 +60,14 @@ void ComponentTypeRegistry::ClearComponent(EntityID entity, ComponentType type)
     }
 }
 
+void ComponentTypeRegistry::ResetComponents()
+{
+    for (auto reset : ResetCallbacks())
+    {
+        reset();
+    }
+}
+
 ComponentTypeID ComponentTypeRegistry::GetRegisteredCount()
 {
     return NextTypeId();
@@ -46,6 +76,8 @@ ComponentTypeID ComponentTypeRegistry::GetRegisteredCount()
 void Registry::Init()
 {
     m_NextEntityId = 0;
+    m_FreeList = {};
+    ComponentTypeRegistry::ResetComponents();
     ComponentManager::Init();
     for (ComponentTypeID i = 0; i < g_kMAX_COMPONENTS; ++i)
     {
@@ -53,18 +85,15 @@ void Registry::Init()
         m_EntityToIndex[i].assign(g_kMAX_ENTITIES, -1);
     }
 
-    if (m_Entities.empty())
-    {
-        m_Entities.resize(g_kMAX_ENTITIES);
-    }
+    m_Entities.assign(g_kMAX_ENTITIES, EntityData{});
 
+    TouchStructure();
 }
 
 EntityID Registry::CreateEntity()
 {
     EntityID id = g_kINVALID_ENTITY;
 
-    
     if (!m_FreeList.empty())
     {
         id = m_FreeList.front();
@@ -82,6 +111,7 @@ EntityID Registry::CreateEntity()
 
     m_Entities[id].IsAlive = true;
     m_Entities[id].Mask.reset();
+    TouchStructure();
 
     return id;
 }
@@ -107,6 +137,7 @@ bool Registry::RestoreEntity(EntityID entity)
 
     m_Entities[entity].IsAlive = true;
     m_Entities[entity].Mask.reset();
+    TouchStructure();
     return true;
 }
 
@@ -117,7 +148,6 @@ void Registry::DestroyEntity(EntityID entity)
         return;
     }
 
-    
     for (ComponentTypeID i = 0; i < ComponentTypeRegistry::GetRegisteredCount(); ++i)
     {
         if (m_Entities[entity].Mask.test(i))
@@ -138,8 +168,7 @@ void Registry::DestroyEntity(EntityID entity)
     m_Entities[entity].IsAlive = false;
     m_Entities[entity].Mask.reset();
     m_FreeList.push(entity);
+    TouchStructure();
 
-    
-	World::UnregisterName(entity);
+    World::UnregisterName(entity);
 }
-

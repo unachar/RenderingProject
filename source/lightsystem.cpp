@@ -26,17 +26,16 @@ void LightSystem::Init()
 void LightSystem::Update()
 {
 	Sun::SyncAll();
-	for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
-	{
-		auto& lightComponent = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
+	ComponentManager::ForEach<LightComponent, TransformComponent>(
+		[](EntityID, LightComponent& lightComponent, TransformComponent& transform)
+		{
 		if (!lightComponent.IsActive)
 		{
-			continue;
+			return;
 		}
 
-		const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
 		lightComponent.Position = transform.Position;
-	}
+		});
 }
 
 void LightSystem::SetPBRParam(EntityID entity, float metallic, float roughness, float fresnel)

@@ -10,6 +10,7 @@
 #include "material.h"
 #include "modelimportutils.h"
 #include "toonoutlinebuilder.h"
+#include "../External/meshoptimizer/src/meshoptimizer.h"
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -18,6 +19,89 @@
 #include <limits>
 using namespace std;
 using namespace DirectX;
+
+static bool CreateLodIndexBuffer(
+	ID3D12Device* device,
+	const vector<unsigned int>& indices,
+	ComPtr<ID3D12Resource>& resource,
+	D3D12_INDEX_BUFFER_VIEW& view)
+{
+	if (!device || indices.empty())
+	{
+		return false;
+	}
+
+	const UINT byteSize = static_cast<UINT>(indices.size() * sizeof(unsigned int));
+	const D3D12_RESOURCE_DESC description = CD3DX12_RESOURCE_DESC::Buffer(byteSize);
+	const CD3DX12_HEAP_PROPERTIES heap(D3D12_HEAP_TYPE_DEFAULT);
+	if (FAILED(device->CreateCommittedResource(
+		&heap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_COMMON,
+		nullptr, IID_PPV_ARGS(&resource))))
+	{
+		return false;
+	}
+
+	UINT64 uploadSize = 0;
+	device->GetCopyableFootprints(&description, 0, 1, 0, nullptr, nullptr, nullptr, &uploadSize);
+	ComPtr<ID3D12Resource> upload = TextureManager::AcquireUploadBuffer(device, uploadSize);
+	if (!upload)
+	{
+		resource.Reset();
+		return false;
+	}
+
+	const bool batchMode = TextureManager::IsBatchLoading();
+	ComPtr<ID3D12CommandAllocator> allocator;
+	ComPtr<ID3D12GraphicsCommandList> commandList;
+	if (batchMode)
+	{
+		commandList = TextureManager::GetBatchCommandList();
+	}
+	else
+	{
+		if (FAILED(device->CreateCommandAllocator(
+			D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator))) ||
+			FAILED(device->CreateCommandList(
+				0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr,
+				IID_PPV_ARGS(&commandList))))
+		{
+			TextureManager::ReleaseUploadBuffer(upload, uploadSize);
+			resource.Reset();
+			return false;
+		}
+	}
+	if (!commandList)
+	{
+		TextureManager::ReleaseUploadBuffer(upload, uploadSize);
+		resource.Reset();
+		return false;
+	}
+
+	const auto toCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+		resource.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+	commandList->ResourceBarrier(1, &toCopy);
+	D3D12_SUBRESOURCE_DATA data{};
+	data.pData = indices.data();
+	data.RowPitch = byteSize;
+	data.SlicePitch = byteSize;
+	UpdateSubresources(commandList.Get(), resource.Get(), upload.Get(), 0, 0, 1, &data);
+	const auto ready = CD3DX12_RESOURCE_BARRIER::Transition(
+		resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+	commandList->ResourceBarrier(1, &ready);
+
+	if (!batchMode && !TextureManager::ExecuteCommandListAndSync(commandList.Get()))
+	{
+		TextureManager::ReleaseUploadBuffer(upload, uploadSize);
+		resource.Reset();
+		return false;
+	}
+	TextureManager::ReleaseUploadBuffer(upload, uploadSize, batchMode);
+
+	view.BufferLocation = resource->GetGPUVirtualAddress();
+	view.Format = DXGI_FORMAT_R32_UINT;
+	view.SizeInBytes = byteSize;
+	return true;
+}
 
 static const char* GetAssimpTextureTypeName(aiTextureType type)
 {
@@ -498,6 +582,8 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 	m_PmxBaseTexCoords.clear();
 	m_PmxMorphs.clear();
 	m_PmxMorphIndexMap.clear();
+	m_PmxRigidBodies.clear();
+	m_PmxJoints.clear();
 	if (isPmxModel)
 	{
 		PmxBinary::PopulateAnimationMetadata(
@@ -509,6 +595,8 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 			m_PmxBaseTexCoords,
 			m_PmxMorphs,
 			m_PmxMorphIndexMap);
+		m_PmxRigidBodies = pmxModel.RigidBodies;
+		m_PmxJoints = pmxModel.Joints;
 	}
 
 	const string dirPath = ModelImportUtils::ToUtf8(modelPath.parent_path());
@@ -849,6 +937,42 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 			m_Meshes[m].IndexBufferView.SizeInBytes = indexBufferSize;
 			m_Meshes[m].IndexCount = (UINT)indices.size();
 
+			// Build two topology-preserving index-only LODs.  They continue to
+			// reference the original skinned vertex stream, so bone weights and
+			// animation data remain identical across all LOD levels.
+			constexpr float lodRatios[MeshData::LodCount - 1] = { 0.50f, 0.20f };
+			constexpr float lodErrors[MeshData::LodCount - 1] = { 0.01f, 0.035f };
+			for (UINT lodIndex = 0; lodIndex < MeshData::LodCount - 1; ++lodIndex)
+			{
+				const size_t targetCount = max<size_t>(
+					3,
+					(static_cast<size_t>(indices.size() * lodRatios[lodIndex]) / 3) * 3);
+				vector<unsigned int> lodIndices(indices.size());
+				const size_t resultCount = meshopt_simplify(
+					lodIndices.data(),
+					indices.data(),
+					indices.size(),
+					reinterpret_cast<const float*>(m_GpuSkinVertices[m].data()),
+					m_GpuSkinVertices[m].size(),
+					sizeof(GpuSkinVertex),
+					targetCount,
+					lodErrors[lodIndex],
+					meshopt_SimplifyRegularize);
+				if (resultCount >= indices.size() || resultCount < 3)
+				{
+					continue;
+				}
+				lodIndices.resize(resultCount);
+				if (CreateLodIndexBuffer(
+					m_pDevice,
+					lodIndices,
+					m_Meshes[m].LodIndexBuffers[lodIndex],
+					m_Meshes[m].LodIndexBufferViews[lodIndex]))
+				{
+					m_Meshes[m].LodIndexCounts[lodIndex] = static_cast<UINT>(resultCount);
+				}
+			}
+
 			for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
 			{
 				vector<unsigned int> teoIndices;
@@ -1014,15 +1138,6 @@ bool AnimationModelResource::LoadAnimation(const char* fileName, const char* nam
 		return false;
 	}
 
-	const aiAnimation* firstAnimation = anim->mAnimations[0];
-	Debug::Log("Animation loaded: %s as '%s' (animations=%u, channels=%u, duration=%.3f, ticksPerSecond=%.3f)\n",
-		fileName,
-		name ? name : "",
-		anim->mNumAnimations,
-		firstAnimation ? firstAnimation->mNumChannels : 0,
-		firstAnimation ? firstAnimation->mDuration : 0.0,
-		firstAnimation ? firstAnimation->mTicksPerSecond : 0.0);
-
 	const string animationName = name ? name : "";
 	m_Animation[animationName] = anim;
 	m_VmdAnimations.erase(animationName);
@@ -1049,23 +1164,19 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
 	}
 
 	size_t matchedTrackCount = 0;
-	size_t matchedKeyCount = 0;
 	for (const auto& pair : animation.BoneTracks)
 	{
 		if (m_Bone.find(pair.first) != m_Bone.end())
 		{
 			++matchedTrackCount;
-			matchedKeyCount += pair.second.size();
 		}
 	}
 	size_t matchedMorphTrackCount = 0;
-	size_t matchedMorphKeyCount = 0;
 	for (const auto& pair : animation.MorphTracks)
 	{
 		if (m_PmxMorphIndexMap.find(pair.first) != m_PmxMorphIndexMap.end())
 		{
 			++matchedMorphTrackCount;
-			matchedMorphKeyCount += pair.second.size();
 		}
 	}
 
@@ -1075,25 +1186,6 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
 	InvalidateVmdRuntimeCache();
 
 	const VmdAnimation& loaded = m_VmdAnimations[animationName];
-	Debug::Log("VMD animation loaded: %s as '%s' (model='%s', motions=%u, boneTracks=%zu, matchedBoneTracks=%zu, matchedBoneKeys=%zu, morphs=%u, morphTracks=%zu, matchedMorphTracks=%zu, matchedMorphKeys=%zu, cameras=%u, lights=%u, shadows=%u, ikFrames=%u, ikTracks=%zu, maxFrame=%u)\n",
-		fileName,
-		animationName.c_str(),
-		loaded.ModelName.c_str(),
-		loaded.MotionCount,
-		loaded.BoneTracks.size(),
-		matchedTrackCount,
-		matchedKeyCount,
-		loaded.MorphCount,
-		loaded.MorphTracks.size(),
-		matchedMorphTrackCount,
-		matchedMorphKeyCount,
-		loaded.CameraCount,
-		loaded.LightCount,
-		loaded.ShadowCount,
-		loaded.IkCount,
-		loaded.IkTracks.size(),
-		loaded.MaxFrame);
-
 	if (!loaded.BoneTracks.empty() && matchedTrackCount == 0)
 	{
 		Debug::Log("WARNING: VMD loaded but no bone names matched this model: %s\n", fileName);
@@ -2658,18 +2750,198 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
 		dst._41 = src.d1; dst._42 = src.d2; dst._43 = src.d3; dst._44 = src.d4;
 	}
 
-	UINT copySize = sizeof(XMFLOAT4X4) * m_kMAX_BONES;
-	for (void* mapped : m_pBoneBufferMapped)
+	const UINT frameIndex =
+		RendererCore::GetFrameIndex() % RendererState::g_kFRAME_COUNT;
+	void* mapped = m_pBoneBufferMapped[frameIndex];
+	if (mapped)
 	{
-		if (mapped)
-		{
-			memcpy(mapped, m_BoneMatricesScratch.data(), copySize);
-		}
+		const UINT copySize = sizeof(XMFLOAT4X4) * m_kMAX_BONES;
+		memcpy(mapped, m_BoneMatricesScratch.data(), copySize);
 	}
+	// EndDraw waits for the fence associated with the next back-buffer slot
+	// before the following update begins. Only that slot is safe for CPU writes.
+	// Updating every mapped upload buffer here can overwrite bone matrices that
+	// an older GPU frame is still reading, which appears as intermittent PMX
+	// mesh corruption when recording or otherwise increasing GPU latency.
 	// A render frame can consume this model in every shadow pass, the main pass,
 	// and the overlay pass.  Mark the new pose once so the compute skinning work
 	// is dispatched only when the pose actually changes.
 	++m_SkinningVersion;
+}
+
+bool AnimationModelResource::GetBoneGlobalTransform(const string& boneName, XMFLOAT4X4& transform)
+{
+	if (m_PmxRuntimeNodes.empty())
+	{
+		RebuildPmxRuntimeCache();
+	}
+	auto nodeIt = m_PmxRuntimeNodeIndexMap.find(boneName);
+	if (nodeIt == m_PmxRuntimeNodeIndexMap.end())
+	{
+		return false;
+	}
+	if (m_PmxGlobalMatricesScratch.size() != m_PmxRuntimeNodes.size())
+	{
+		m_PmxGlobalMatricesScratch.resize(m_PmxRuntimeNodes.size());
+	}
+
+	auto aiToXm = [](const aiMatrix4x4& src)
+		{
+			return XMMatrixSet(
+				src.a1, src.b1, src.c1, src.d1,
+				src.a2, src.b2, src.c2, src.d2,
+				src.a3, src.b3, src.c3, src.d3,
+				src.a4, src.b4, src.c4, src.d4);
+		};
+	for (size_t i = 0; i < m_PmxRuntimeNodes.size(); ++i)
+	{
+		const PmxRuntimeNode& node = m_PmxRuntimeNodes[i];
+		XMMATRIX local = node.BonePtr
+			? aiToXm(node.BonePtr->AnimationMatrix)
+			: aiToXm(node.Node->mTransformation);
+		XMMATRIX global = local;
+		if (node.ParentIndex >= 0)
+		{
+			global = XMMatrixMultiply(
+				local,
+				XMLoadFloat4x4(&m_PmxGlobalMatricesScratch[static_cast<size_t>(node.ParentIndex)]));
+		}
+		XMStoreFloat4x4(&m_PmxGlobalMatricesScratch[i], global);
+	}
+	transform = m_PmxGlobalMatricesScratch[nodeIt->second];
+	return true;
+}
+
+bool AnimationModelResource::GetBoneBindGlobalTransform(
+	const string& boneName,
+	XMFLOAT4X4& transform)
+{
+	if (m_PmxRuntimeNodes.empty())
+	{
+		RebuildPmxRuntimeCache();
+	}
+	auto nodeIt = m_PmxRuntimeNodeIndexMap.find(boneName);
+	if (nodeIt == m_PmxRuntimeNodeIndexMap.end())
+	{
+		return false;
+	}
+	if (m_PmxGlobalMatricesScratch.size() != m_PmxRuntimeNodes.size())
+	{
+		m_PmxGlobalMatricesScratch.resize(m_PmxRuntimeNodes.size());
+	}
+
+	auto aiToXm = [](const aiMatrix4x4& src)
+		{
+			return XMMatrixSet(
+				src.a1, src.b1, src.c1, src.d1,
+				src.a2, src.b2, src.c2, src.d2,
+				src.a3, src.b3, src.c3, src.d3,
+				src.a4, src.b4, src.c4, src.d4);
+		};
+	for (size_t i = 0; i < m_PmxRuntimeNodes.size(); ++i)
+	{
+		const PmxRuntimeNode& node = m_PmxRuntimeNodes[i];
+		const XMMATRIX local = node.BonePtr
+			? aiToXm(node.BonePtr->BindLocalMatrix)
+			: aiToXm(node.Node->mTransformation);
+		XMMATRIX global = local;
+		if (node.ParentIndex >= 0)
+		{
+			global = XMMatrixMultiply(
+				local,
+				XMLoadFloat4x4(
+					&m_PmxGlobalMatricesScratch[static_cast<size_t>(node.ParentIndex)]));
+		}
+		XMStoreFloat4x4(&m_PmxGlobalMatricesScratch[i], global);
+	}
+	transform = m_PmxGlobalMatricesScratch[nodeIt->second];
+	return true;
+}
+
+bool AnimationModelResource::SetBoneGlobalTransform(
+	const string& boneName,
+	const XMFLOAT4X4& transform,
+	bool preserveTranslation)
+{
+	XMFLOAT4X4 currentGlobal{};
+	if (!GetBoneGlobalTransform(boneName, currentGlobal))
+	{
+		return false;
+	}
+	auto nodeIt = m_PmxRuntimeNodeIndexMap.find(boneName);
+	if (nodeIt == m_PmxRuntimeNodeIndexMap.end())
+	{
+		return false;
+	}
+	PmxRuntimeNode& node = m_PmxRuntimeNodes[nodeIt->second];
+	if (!node.BonePtr)
+	{
+		return false;
+	}
+
+	XMFLOAT4X4 target = transform;
+	if (preserveTranslation)
+	{
+		target._41 = currentGlobal._41;
+		target._42 = currentGlobal._42;
+		target._43 = currentGlobal._43;
+	}
+	XMMATRIX parentGlobal = XMMatrixIdentity();
+	if (node.ParentIndex >= 0)
+	{
+		parentGlobal = XMLoadFloat4x4(
+			&m_PmxGlobalMatricesScratch[static_cast<size_t>(node.ParentIndex)]);
+	}
+	XMVECTOR determinant{};
+	const XMMATRIX parentInverse = XMMatrixInverse(&determinant, parentGlobal);
+	const XMMATRIX local = XMMatrixMultiply(XMLoadFloat4x4(&target), parentInverse);
+
+	XMVECTOR scale{};
+	XMVECTOR rotation{};
+	XMVECTOR translation{};
+	if (!XMMatrixDecompose(&scale, &rotation, &translation, local))
+	{
+		return false;
+	}
+	XMFLOAT3 localScale{};
+	XMFLOAT3 localPosition{};
+	XMFLOAT4 localRotation{};
+	XMStoreFloat3(&localScale, scale);
+	XMStoreFloat3(&localPosition, translation);
+	XMStoreFloat4(&localRotation, XMQuaternionNormalize(rotation));
+	node.BonePtr->AnimationMatrix = aiMatrix4x4(
+		aiVector3D(localScale.x, localScale.y, localScale.z),
+		aiQuaternion(localRotation.w, localRotation.x, localRotation.y, localRotation.z),
+		aiVector3D(localPosition.x, localPosition.y, localPosition.z));
+	return true;
+}
+
+void AnimationModelResource::CommitPhysicsPose()
+{
+	if (!m_AiScene || !m_AiScene->mRootNode)
+	{
+		return;
+	}
+	UpdateBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
+	WriteBoneMatricesToBuffer();
+}
+
+void AnimationModelResource::InvalidateAnimationPoseCache()
+{
+	m_HasCachedPose = false;
+	m_HasCachedLayeredPose = false;
+	m_UseLayeredVmdIk = false;
+}
+
+void AnimationModelResource::ResetBoneMatricesToBindPose()
+{
+	if (!m_AiScene || !m_AiScene->mRootNode)
+	{
+		return;
+	}
+	InvalidateAnimationPoseCache();
+	UpdateBindPoseBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
+	WriteBoneMatricesToBuffer();
 }
 
 void AnimationModelResource::BuildPmxVertexMeshMap()
@@ -4328,6 +4600,8 @@ void AnimationModelResource::Uninit()
 	m_PmxBaseTexCoords.clear();
 	m_PmxMorphs.clear();
 	m_PmxMorphIndexMap.clear();
+	m_PmxRigidBodies.clear();
+	m_PmxJoints.clear();
 	m_PmxVertexToMeshVertices.clear();
 	m_BoneMatricesScratch.clear();
 	m_SkinningVersion = 0;

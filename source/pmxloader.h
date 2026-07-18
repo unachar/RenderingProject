@@ -1,6 +1,7 @@
 #pragma once
 
 #include "animationmodel.h"
+#include "pmxphysicsdata.h"
 
 namespace PmxBinary
 {
@@ -71,6 +72,8 @@ namespace PmxBinary
 		vector<Material> Materials{};
 		vector<Bone> Bones{};
 		vector<PmxMorph> Morphs{};
+		vector<PmxRigidBodyData> RigidBodies{};
+		vector<PmxJointData> Joints{};
 	};
 
 	bool LoadModel(const char* fileName, Model& outModel);

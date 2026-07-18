@@ -8,6 +8,7 @@
 #include <filesystem>
 
 struct SpriteComponent;
+struct TextureStreamingState;
 
 class TextureManager
 {
@@ -16,6 +17,7 @@ private:
 	{
 		ComPtr<ID3D12Resource> Resource{};
 		int SrvIndex = -1;
+		shared_ptr<TextureStreamingState> Streaming{};
 	};
 
 	static unordered_map<string, TextureData> m_Textures;
@@ -47,6 +49,10 @@ public:
 	static bool GetTextureSize(int srvIndex, UINT& outWidth, UINT& outHeight);
 	static vector<TextureInfo> GetLoadedTextureInfos();
 	static int LoadTextureUV(const char* fileName, SpriteComponent& sprite, const XMFLOAT4& uvRect);
+	static void TouchTexture(int srvIndex);
+	static void UpdateStreaming(ID3D12GraphicsCommandList* commandList);
+	static bool IsReservedResourceStreamingSupported();
+	static bool IsReservedResourceStreamingAvailable();
 
 	static void BeginTextureLoading();
 	static void EndTextureLoading();

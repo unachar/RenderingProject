@@ -19,6 +19,7 @@ public:
 	static void BeginLinePass();
 	static bool BeginShadowPass(UINT shadowIndex);
 	static void EndShadowPass();
+	static void EndShadowPassBatch();
 	static void BeginBackBufferPass();
 	static void BeginEditorSceneOverlayPass();
 	static void PrepareTransparentSceneCopy();
@@ -29,6 +30,7 @@ public:
 	static void ApplyPostProcess(const PostProcessComponent& config);
 	static void ApplyAntiAliasing();
 	static void EndScenePass();
+	static bool BuildOcclusionHierarchyAndBeginPhaseTwo();
 	static void RenderVelocityBuffer();
 	static void EndVelocityBuffer();
 	static void ResizeScene(UINT width, UINT height);
@@ -39,5 +41,8 @@ public:
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetAtmosphereSrvHandle() { return GetGBufferSrvHandle(GBufferType::ATMOSPHERE); }
 	static D3D12_CPU_DESCRIPTOR_HANDLE GetImGuiCpuHandle();
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetImGuiGpuHandle();
+
+private:
+	inline static bool s_ShadowDepthWriteActive = false;
 };
 

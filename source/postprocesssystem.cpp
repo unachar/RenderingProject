@@ -13,13 +13,14 @@ void PostProcessSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnl
 		return;
 	}
 
-	auto cameraPostView = World::GetView<CameraComponent, PostProcessComponent>();
-	if (cameraPostView.empty())
+	const EntityID cameraEntity = Camera::GetCameraEntity();
+	if (cameraEntity == g_kINVALID_ENTITY ||
+		!ComponentManager::HasComponent<CameraComponent>(cameraEntity) ||
+		!ComponentManager::HasComponent<PostProcessComponent>(cameraEntity))
 	{
 		return;
 	}
 
-	EntityID cameraEntity = *cameraPostView.begin();
 	auto& camera = ComponentManager::GetComponent<CameraComponent>(cameraEntity);
 	auto& postProcess = ComponentManager::GetComponent<PostProcessComponent>(cameraEntity);
 

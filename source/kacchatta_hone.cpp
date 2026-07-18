@@ -10,11 +10,12 @@ void KacchattaHone::Create()
 	const auto modelScale = XMFLOAT3(0.5f, 0.5f, 0.5f);
 	const auto modelPath = "asset\\model\\kacchatta_hone\\kacchatta_hone.pmx";
 
-	auto& entity = World::CreateEntity()
+	auto entity = World::CreateEntity()
 		.Add<NameComponent>()
 		.Add<TransformComponent>()
 		.Add<MeshComponent>()
 		.Add<MaterialComponent>()
+		.Add<PhysicsComponent>()
 		.Add<StaticModelComponent>();
 
 	entity.SetName(modelName);
@@ -32,4 +33,9 @@ void KacchattaHone::Create()
 	material.ShadowStrength = 0.066f;
 	material.ShaderClassMode = MaterialMode::Manual;
 	material.ShaderClass = ShaderClass::PBR;
+
+	auto& physics = entity.Get<PhysicsComponent>();
+	physics.UsePhysics = true;
+	physics.UsePhysicsBone = false;
+	physics.UsePhysicsEngine = PhysicsEngine::Bullet;
 }

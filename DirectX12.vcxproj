@@ -120,7 +120,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>NOMINMAX;_SILENCE_CXX20_U8PATH_DEPRECATION_WARNING</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NOMINMAX;PX_PHYSX_STATIC_LIB;_SILENCE_CXX20_U8PATH_DEPRECATION_WARNING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
@@ -128,20 +128,22 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)$(TargetName).pch</PrecompiledHeaderOutputFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include;$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)External\BulletPhysics\src;$(ProjectDir)External\JoltPhysics;$(ProjectDir)External\PhysX\physx\include;$(ProjectDir)assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp23</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(ProjectDir)External\DirectXTex\DirectXTex\Bin\Desktop_2022\x64\Debug;$(ProjectDir)External\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>DirectXTex.lib;$(ProjectDir)External\RTXNS\lib\Debug\NeuralShading.lib;$(ProjectDir)External\RTXNS\lib\Debug\Utils.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi_d3d12.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_core.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_engine.lib;$(ProjectDir)External\RTXNS\lib\Debug\jsoncpp.lib;$(ProjectDir)External\RTXNS\lib\Debug\miniz.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang-rt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\lib\x64;$(ProjectDir)External\DirectXTex\DirectXTex\Bin\Desktop_2022\x64\Debug;$(ProjectDir)External\Build\Bullet-vs18\lib\Debug;$(ProjectDir)External\Build\Jolt-vs18\Debug;$(ProjectDir)External\Build\PhysX-output-static\bin\win.x86_64.vc143.mt\debug;$(ProjectDir)External\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>BulletDynamics_Debug.lib;BulletCollision_Debug.lib;LinearMath_Debug.lib;Jolt.lib;PhysXExtensions_static.lib;PhysX_static.lib;PhysXCommon_static.lib;PhysXFoundation_static.lib;PhysXPvdSDK_static.lib;DirectXTex.lib;$(ProjectDir)External\RTXNS\lib\Debug\NeuralShading.lib;$(ProjectDir)External\RTXNS\lib\Debug\Utils.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi_d3d12.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_core.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_engine.lib;$(ProjectDir)External\RTXNS\lib\Debug\jsoncpp.lib;$(ProjectDir)External\RTXNS\lib\Debug\miniz.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang-rt.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <FxCompile>
       <ShaderModel>5.0</ShaderModel>
     </FxCompile>
     <PostBuildEvent>
       <Command>copy /Y "$(ProjectDir)External\dll\assimp\assimp-vc143-mt.dll" "$(OutDir)"
+copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\bin\x64\dxcompiler.dll" "$(OutDir)"
+copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\bin\x64\dxil.dll" "$(OutDir)"
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -151,7 +153,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>false</SDLCheck>
-      <PreprocessorDefinitions>NOMINMAX;_SILENCE_CXX20_U8PATH_DEPRECATION_WARNING</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NOMINMAX;NDEBUG;PX_PHYSX_STATIC_LIB;_SILENCE_CXX20_U8PATH_DEPRECATION_WARNING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalOptions>/utf-8 /FS %(AdditionalOptions)</AdditionalOptions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
@@ -159,7 +161,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)$(TargetName).pch</PrecompiledHeaderOutputFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include;$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)External\BulletPhysics\src;$(ProjectDir)External\JoltPhysics;$(ProjectDir)External\PhysX\physx\include;$(ProjectDir)assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp23</LanguageStandard>
     </ClCompile>
     <Link>
@@ -167,14 +169,16 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(ProjectDir)External\DirectXTex\DirectXTex\Bin\Desktop_2022\x64\Release;$(ProjectDir)External\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>DirectXTex.lib;$(ProjectDir)External\RTXNS\lib\Debug\NeuralShading.lib;$(ProjectDir)External\RTXNS\lib\Debug\Utils.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi_d3d12.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_core.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_engine.lib;$(ProjectDir)External\RTXNS\lib\Debug\jsoncpp.lib;$(ProjectDir)External\RTXNS\lib\Debug\miniz.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang-rt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\lib\x64;$(ProjectDir)External\DirectXTex\DirectXTex\Bin\Desktop_2022\x64\Release;$(ProjectDir)External\Build\Bullet-vs18\lib\Release;$(ProjectDir)External\Build\Jolt-vs18\Release;$(ProjectDir)External\Build\PhysX-output-static\bin\win.x86_64.vc143.mt\release;$(ProjectDir)External\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>BulletDynamics.lib;BulletCollision.lib;LinearMath.lib;Jolt.lib;PhysXExtensions_static.lib;PhysX_static.lib;PhysXCommon_static.lib;PhysXFoundation_static.lib;PhysXPvdSDK_static.lib;DirectXTex.lib;$(ProjectDir)External\RTXNS\lib\Debug\NeuralShading.lib;$(ProjectDir)External\RTXNS\lib\Debug\Utils.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi.lib;$(ProjectDir)External\RTXNS\lib\Debug\nvrhi_d3d12.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_core.lib;$(ProjectDir)External\RTXNS\lib\Debug\donut_engine.lib;$(ProjectDir)External\RTXNS\lib\Debug\jsoncpp.lib;$(ProjectDir)External\RTXNS\lib\Debug\miniz.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang.lib;$(ProjectDir)External\RTXNS\lib\Debug\slang-rt.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <FxCompile>
       <ShaderModel>5.1</ShaderModel>
     </FxCompile>
     <PostBuildEvent>
       <Command>copy /Y "$(ProjectDir)External\dll\assimp\assimp-vc143-mt.dll" "$(OutDir)"
+copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\bin\x64\dxcompiler.dll" "$(OutDir)"
+copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\bin\x64\dxil.dll" "$(OutDir)"
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -186,6 +190,7 @@
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
     </FxCompile>
     <FxCompile Include="shader\hlsl\colorshader3dPS_MRT.hlsl">
@@ -200,6 +205,7 @@
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
     </FxCompile>
     <FxCompile Include="shader\hlsl\colorshaderPS.hlsl">
@@ -235,6 +241,7 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
     </FxCompile>
     <FxCompile Include="shader\hlsl\debugLinePS.hlsl">
@@ -293,27 +300,55 @@
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.0</ShaderModel>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
     </FxCompile>
+    <FxCompile Include="shader\hlsl\colorshader3dInstancedVS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modelshaderInstancedVS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GpuDrivenCullCS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+    </FxCompile>
     <FxCompile Include="shader\hlsl\modellighingspeculerPS.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
     <FxCompile Include="shader\hlsl\modellightingPS.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
     <FxCompile Include="shader\hlsl\modellightingspeculerVS.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
     <FxCompile Include="shader\hlsl\modellightingVS.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
@@ -324,6 +359,30 @@
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.0</ShaderModel>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.0</ShaderModel>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GpuInstanceCullLodCS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GpuInstanceArgsCS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\ShadowMapInstancedVS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
     </FxCompile>
     <FxCompile Include="shader\hlsl\modelshaderPS.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
@@ -414,8 +473,129 @@
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.0</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\FsrEasuCS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\FsrRcasCS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\VisibilityPS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\Visibility2DPS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\VisibilityOutlinePS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GBufferFromVisibilityCS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\ScreenSpaceDeinterleaveCS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\RayBinningCS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\SsgiDeinterleavedCS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\SsgiResolveCS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\SsaoVisibilityBitmaskCS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\LightInstanceBuilderCS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\HiZCopyCS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\HiZReduceCS.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="External\NVIDIAImageScaling\NIS_Main.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Compute</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">5.1</ShaderModel>
+      <PreprocessorDefinitions>NIS_SCALER=1;NIS_HDR_MODE=0;NIS_BLOCK_WIDTH=32;NIS_BLOCK_HEIGHT=24;NIS_THREAD_GROUP_SIZE=128;NIS_USE_HALF_PRECISION=0;NIS_COEFFICIENT_BUFFERS=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\NisScalerCS.cso</ObjectFileOutput>
+      <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shader\hlsl\build\NisScalerCS.cso</ObjectFileOutput>
     </FxCompile>
     <FxCompile Include="shader\hlsl\UpscaleDepthPS.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
@@ -497,6 +677,12 @@
     <ClCompile Include="External\ImGuizmo\ImGuizmo.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\allocator.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\simplifier.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <!-- ImGui backend -->
     <ClCompile Include="External\ImGUI\imgui_impl_dx12.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -543,6 +729,12 @@
     <ClCompile Include="source\renderershader.cpp" />
     <ClCompile Include="source\rendererresource.cpp" />
     <ClCompile Include="source\rendererdraw.cpp" />
+    <ClCompile Include="source\spatialupscaler.cpp" />
+    <ClCompile Include="source\visibilitybuffer.cpp" />
+    <ClCompile Include="source\screenspaceeffects.cpp" />
+    <ClCompile Include="source\occlusionculling.cpp" />
+    <ClCompile Include="source\meshshaderpipeline.cpp" />
+    <ClCompile Include="source\lightinstancebuilder.cpp" />
     <ClCompile Include="source\sky.cpp" />
     <ClCompile Include="source\sun.cpp" />
     <ClCompile Include="source\staticmodel.cpp" />
@@ -553,9 +745,15 @@
     <ClCompile Include="source\inputsystem.cpp" />
     <ClCompile Include="source\materialsystem.cpp" />
     <ClCompile Include="source\modelsystem.cpp" />
+    <ClCompile Include="source\instancingsystem.cpp" />
     <ClCompile Include="source\postprocesssystem.cpp" />
     <ClCompile Include="source\rendersystem.cpp" />
     <ClCompile Include="source\systemmanager.cpp" />
+    <ClCompile Include="source\projectmanager.cpp" />
+    <ClCompile Include="source\physicssystem.cpp" />
+    <ClCompile Include="source\bulletphysicsbackend.cpp" />
+    <ClCompile Include="source\joltphysicsbackend.cpp" />
+    <ClCompile Include="source\physxphysicsbackend.cpp" />
     <ClCompile Include="source\timeline.cpp" />
     <ClCompile Include="source\timelinesystem.cpp" />
     <ClCompile Include="source\transformsystem.cpp" />
@@ -575,6 +773,11 @@
     <ClInclude Include="source\vmdanimationimpoter.h" />
     <ClInclude Include="source\camera.h" />
     <ClInclude Include="source\componentmanager.h" />
+    <ClInclude Include="source\projectmanager.h" />
+    <ClInclude Include="source\physicscomponent.h" />
+    <ClInclude Include="source\physicsbackend.h" />
+    <ClInclude Include="source\physicssystem.h" />
+    <ClInclude Include="source\pmxphysicsdata.h" />
     <ClInclude Include="source\cube.h" />
     <ClInclude Include="source\d3dx12.h" />
     <ClInclude Include="source\ecs.h" />
@@ -601,6 +804,16 @@
     <ClInclude Include="source\renderershader.h" />
     <ClInclude Include="source\rendererresource.h" />
     <ClInclude Include="source\rendererdraw.h" />
+    <ClInclude Include="source\spatialupscaler.h" />
+    <ClInclude Include="source\visibilitybuffer.h" />
+    <ClInclude Include="source\screenspaceeffects.h" />
+    <ClInclude Include="source\occlusionculling.h" />
+    <ClInclude Include="source\meshshaderpipeline.h" />
+    <ClInclude Include="source\lightinstancebuilder.h" />
+    <ClInclude Include="External\FidelityFX-FSR\ffx_a.h" />
+    <ClInclude Include="External\FidelityFX-FSR\ffx_fsr1.h" />
+    <ClInclude Include="External\NVIDIAImageScaling\NIS_Config.h" />
+    <ClInclude Include="External\NVIDIAImageScaling\NIS_Scaler.h" />
     <ClInclude Include="source\sky.h" />
     <ClInclude Include="source\sun.h" />
     <ClInclude Include="source\staticmodel.h" />
@@ -611,12 +824,14 @@
     <ClInclude Include="source\inputsystem.h" />
     <ClInclude Include="source\materialsystem.h" />
     <ClInclude Include="source\modelsystem.h" />
+    <ClInclude Include="source\instancingsystem.h" />
     <ClInclude Include="source\postprocesssystem.h" />
     <ClInclude Include="source\rendersystem.h" />
     <ClInclude Include="source\systembase.h" />
     <ClInclude Include="source\systemmanager.h" />
     <ClInclude Include="source\timeline.h" />
     <ClInclude Include="source\timelinesystem.h" />
+    <ClInclude Include="source\timelinecomponent.h" />
     <ClInclude Include="source\transformsystem.h" />
     <ClInclude Include="source\texturemanager.h" />
     <ClInclude Include="source\vector.h" />
@@ -639,6 +854,8 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
+    <None Include="shader\hlsl\MeshVisibility.hlsl" />
+    <None Include="shader\hlsl\MeshVisibilityPS.hlsl" />
   </ItemGroup>
   <Import Project="External\slang\Slang.targets" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

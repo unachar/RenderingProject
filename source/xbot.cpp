@@ -18,43 +18,57 @@ void XBot::Create()
 
 	const auto animations = vector<string>{ "Standup", "Idle" };
 	const auto currentAnimation = "Standup";
-
-
-	auto& entity = World::CreateEntity()
-		.Add<TransformComponent>()
-		.Add<NameComponent>()
-		.Add<MeshComponent>()
-		.Add<AABBComponent>()
-		.Add<MaterialComponent>()
-		.Add<AnimationModelComponent>();
-	
-	entity.SetName(modelName);
-
-	entity.Get<TransformComponent>().Scale = modelScale;
-	entity.Get<MaterialComponent>().UseTexture = true;
-
-	int modelID = ModelManager::LoadAnimModel(modelPath, isConvert);
+	const int modelID = ModelManager::LoadAnimModel(modelPath, isConvert);
+	if (modelID < 0)
+	{
+		return;
+	}
 	ModelManager::LoadAnimation(modelID, animPath1, "Standup");
 	ModelManager::LoadAnimation(modelID, animPath2, "Idle");
 
-
-	auto& anim = entity.Get<AnimationModelComponent>();
-	anim.ModelId = modelID;
-	anim.ModelPath = modelPath;
-	anim.AnimationPaths = { animPath1, animPath2 };
-	anim.Animations = animations;
-	anim.CurrentAnimation = currentAnimation;
-
-	Animator::Play(anim, currentAnimation);
-
-	entity.Get<MaterialComponent>().ShaderClassMode = MaterialMode::Manual;
-	entity.Get<MaterialComponent>().ShaderClass = ShaderClass::Metallic;
-
-
-	if (auto* model = ModelManager::GetAnimModel(modelID))
+	for (int i = 0; i < 10; ++i)
 	{
-		entity.Get<AABBComponent>().Center = model->GetAabbCenter();
-		entity.Get<AABBComponent>().Extents = model->GetAabbExtents();
+		auto entity = World::CreateEntity()
+			.Add<TransformComponent>()
+			.Add<NameComponent>()
+			.Add<MeshComponent>()
+			.Add<AABBComponent>()
+			.Add<MaterialComponent>()
+			.Add<InstancingComponent>()
+			.Add<LODComponent>()
+			.Add<AnimationModelComponent>();
+
+		entity.SetName(modelName);
+
+		entity.Get<TransformComponent>().Position = { modelPosition.x + (i % 10) * 2.0f,
+			modelPosition.y,
+			modelPosition.z + (i / 10) * 2.0f
+		};
+		entity.Get<TransformComponent>().Scale = modelScale;
+		entity.Get<MaterialComponent>().UseTexture = true;
+
+		auto& anim = entity.Get<AnimationModelComponent>();
+		anim.ModelId = modelID;
+		anim.ModelPath = modelPath;
+		anim.AnimationPaths = { animPath1, animPath2 };
+		anim.Animations = animations;
+		anim.CurrentAnimation = currentAnimation;
+
+		Animator::Play(anim, currentAnimation);
+
+		entity.Get<MaterialComponent>().ShaderClassMode = MaterialMode::Manual;
+		entity.Get<MaterialComponent>().ShaderClass = ShaderClass::Metallic;
+
+		entity.Get<InstancingComponent>().UseInstancing = true;
+		entity.Get<InstancingComponent>().EnableFrustumCulling = true;
+		entity.Get<LODComponent>().UseLOD = true;
+
+
+		if (auto* model = ModelManager::GetAnimModel(modelID))
+		{
+			entity.Get<AABBComponent>().Center = model->GetAabbCenter();
+			entity.Get<AABBComponent>().Extents = model->GetAabbExtents();
+		}
 	}
 }
 

@@ -8,23 +8,19 @@ void CameraControlSystem::Update()
 	float dt = World::GetDeltaTime();
 	const float frameScale = dt * 60.0f;
 
-	auto cameraView = World::GetView<InputComponent, MoveComponent, TransformComponent, CameraComponent>();
-	for (EntityID i : cameraView)
-	{
-		auto& input = ComponentManager::GetComponentUnchecked<InputComponent>(i);
+	ComponentManager::ForEach<CameraComponent, InputComponent, MoveComponent, TransformComponent>(
+		[frameScale](EntityID, CameraComponent& camera, InputComponent& input,
+			MoveComponent& move, TransformComponent& transform)
+		{
 		if (!input.IsActive)
 		{
-			continue;
+			return;
 		}
 
-		auto& move = ComponentManager::GetComponentUnchecked<MoveComponent>(i);
 		if (!move.CanMove)
 		{
-			continue;
+			return;
 		}
-
-		auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(i);
-		auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(i);
 
 		float rotInputY = 0.0f;
 		if (input.RotateLeft) rotInputY = -1.0f;
@@ -59,5 +55,5 @@ void CameraControlSystem::Update()
 		}
 
 		transform.IsDirty = true;
-	}
+		});
 }

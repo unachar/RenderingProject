@@ -14,6 +14,13 @@ float IsMaterialClassForward(float value, float target)
 
 float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 lightDir)
 {
+    float shadowStrength = saturate(abs(ShadowMapParams.w));
+    [branch]
+    if (shadowStrength <= 0.0001f)
+    {
+        return 1.0f;
+    }
+
     float3 n = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
     float3 l = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
     float4 lightClip = mul(float4(worldPos, 1.0f), LightViewProjection);
@@ -21,40 +28,35 @@ float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 ligh
     float3 lightNdc = lightClip.xyz / safeW;
     float2 shadowUv = float2(lightNdc.x * 0.5f + 0.5f, -lightNdc.y * 0.5f + 0.5f);
 
-    float inBounds =
-        (lightClip.w > 0.0f &&
-         shadowUv.x >= 0.0f && shadowUv.x <= 1.0f &&
-         shadowUv.y >= 0.0f && shadowUv.y <= 1.0f &&
-         lightNdc.z >= 0.0f && lightNdc.z <= 1.0f) ? 1.0f : 0.0f;
+    bool inBounds =
+        lightClip.w > 0.0f &&
+        shadowUv.x >= 0.0f && shadowUv.x <= 1.0f &&
+        shadowUv.y >= 0.0f && shadowUv.y <= 1.0f &&
+        lightNdc.z >= 0.0f && lightNdc.z <= 1.0f;
+    [branch]
+    if (!inBounds)
+    {
+        return 1.0f;
+    }
 
     float texelSize = ShadowMapParams.x;
     float nDotL = saturate(dot(n, l));
     float bias = max(ShadowMapParams.y * (1.0f - nDotL), ShadowMapParams.z);
     float currentDepth = lightNdc.z - bias;
 
-    float visibility = 0.0f;
-    [unroll]
-    for (int y = -1; y <= 1; ++y)
-    {
-        [unroll]
-        for (int x = -1; x <= 1; ++x)
-        {
-            float closestDepth = g_ShadowMap.SampleLevel(g_ShadowSampler, float3(shadowUv + float2(x, y) * texelSize, 0.0f), 0);
-            visibility += (currentDepth <= closestDepth) ? 1.0f : 0.0f;
-        }
-    }
-
-    visibility /= 9.0f;
-    float shadowStrength = saturate(abs(ShadowMapParams.w));
-    float outOfBoundsVisibility = 1.0f;
-    return lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
+    int filterRadius = clamp((int)round(ShadowFilterParams.x), 0, 3);
+    float visibility = SampleShadowMapPcf9(
+        shadowUv, 0.0f, texelSize, currentDepth, filterRadius);
+    return lerp(1.0f, visibility, shadowStrength);
 }
 
 float3 SampleEnvironmentLatLong(float3 dir, float roughness)
 {
     const float PI = 3.14159265358979323846f;
     dir = SafeNormalizeCommon(dir, float3(0.0f, 1.0f, 0.0f));
-    float2 uv = float2(atan2(dir.z, dir.x) / (2.0f * PI), acos(dir.y) / PI);
+    float2 uv = float2(
+        frac(atan2(dir.z, dir.x) / (2.0f * PI) + 0.5f),
+        acos(clamp(dir.y, -1.0f, 1.0f)) / PI);
     return EnvironmentTexture.SampleLevel(g_SamplerState, uv, roughness * 8.0f).rgb;
 }
 
@@ -107,7 +109,7 @@ float4 main(in PSInput3D In) : SV_Target
     float lightAttenuation;
     float volumeScatter;
     float rangeBlend;
-    ResolveLightAggregate(In.WorldPos, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend);
+    ResolveLightAggregate(In.WorldPos, In.Position.xy, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend);
     float lightIntensity = LightColor.a;
 
     if (transparent || btdf || bsdf)

@@ -6,8 +6,7 @@ SamplerState LinearSampler : register(s0);
 
 float4 main(PSInputPostProcess input) : SV_TARGET
 {
-    float4 color = InputColor.Sample(LinearSampler, input.TexCoord);
-    color.rgb = ApplyHdrOutput(color.rgb);
-    color.a = 1.0f;
+	float4 color = InputColor.Sample(LinearSampler, input.TexCoord);
+	color.a = 1.0f;
     return color;
 }

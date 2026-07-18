@@ -16,6 +16,16 @@ extern "C"
 
 static bool g_IsResizing = false;
 
+static bool IsAutomatedBenchmark()
+{
+	char value[16]{};
+	return GetEnvironmentVariableA(
+		"DX12_BENCHMARK_FRAMES",
+		value,
+		static_cast<DWORD>(size(value))) > 0 &&
+		atoi(value) > 0;
+}
+
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	if (uMsg == WM_DROPFILES)
@@ -93,8 +103,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
+static bool IsPhysicsSmokeTest()
+{
+	char value[8]{};
+	return GetEnvironmentVariableA(
+		"DX12_PHYSICS_SMOKE_TEST",
+		value,
+		static_cast<DWORD>(size(value))) > 0 &&
+		atoi(value) != 0;
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
+	const bool automatedBenchmark = IsAutomatedBenchmark();
+	const bool automatedRun = automatedBenchmark || IsPhysicsSmokeTest();
 	char exePath[MAX_PATH]{};
 	GetModuleFileNameA(nullptr, exePath, MAX_PATH);
 
@@ -157,15 +179,33 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 	MSG msg = { 0 };
 	while (msg.message != WM_QUIT)
 	{
-		if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+		while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
 		{
 			TranslateMessage(&msg);
 			DispatchMessage(&msg);
+			if (msg.message == WM_QUIT)
+			{
+				break;
+			}
 		}
-		else
+
+		if (msg.message == WM_QUIT)
 		{
-			Game::Run();
+			break;
 		}
+
+		if (!automatedRun && (IsIconic(hwnd) || !IsWindowVisible(hwnd)))
+		{
+			MsgWaitForMultipleObjectsEx(0, nullptr, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+			continue;
+		}
+
+		if (!automatedRun && GetForegroundWindow() != hwnd)
+		{
+			MsgWaitForMultipleObjectsEx(0, nullptr, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+		}
+
+		Game::Run();
 	}
 	Game::Uninit();
 	return 0;
