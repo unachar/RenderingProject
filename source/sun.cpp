@@ -3,9 +3,8 @@
 #include "world.h"
 #include "rendererresource.h"
 
-namespace
-{
-	XMMATRIX BuildWorldMatrix(const TransformComponent& transform)
+
+	static XMMATRIX BuildWorldMatrix(const TransformComponent& transform)
 	{
 		return XMMatrixScaling(transform.Scale.x, transform.Scale.y, transform.Scale.z) *
 			XMMatrixRotationX(transform.Rotation.x) *
@@ -26,7 +25,7 @@ namespace
 		return result;
 	}
 
-}
+
 
 EntityID Sun::CreateDefault()
 {

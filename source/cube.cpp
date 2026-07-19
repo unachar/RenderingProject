@@ -11,7 +11,7 @@ void Cube::Create()
 
 
 
-	//Entityの作成
+
 	auto entity = World::CreateEntity()
 		.Add<TransformComponent>()
 		.Add<MeshComponent>()
@@ -24,7 +24,7 @@ void Cube::Create()
 
 
 
-	//MaterialComponentの設定
+
 	auto& material = entity.Get<MaterialComponent>();
 	material.Metallic = 0.0f;
 	material.Roughness = 0.5f;
@@ -36,7 +36,7 @@ void Cube::Create()
 
 
 
-	//頂点情報の設定
+
 	VertexResource resource{};
 	resource.entityid = entity.GetID();
 	resource.color = Color::WHITE;
@@ -47,41 +47,41 @@ void Cube::Create()
 
 
 
-	//TimeLine設定
+
 	auto& director = TimeLineSystem::CreateDirector();
 	auto& asset = director.CreateAsset();
 
 
 
-	// 5秒間のアニメーションを設定
+
 	asset.SetDuration(5.0f);
 
 
 
-	// TransformTrackの作成と回転アニメーションの設定
+
 	auto& track = asset.AddTransformTrack(entity.GetID());
 	auto& clip = track.AddClip(0.0f, asset.GetDuration());
 
 
 
 
-	// Metallicのアニメーションの設定
+
 	auto& metallicTrack = asset.AddComponentTrack<MaterialComponent>(entity.GetID());
 	auto& metallicClip = metallicTrack.AddFloatClip(0.0f, asset.GetDuration(), &MaterialComponent::Metallic);
 
 
 
 
-	// Roughnessのアニメーションの設定
+
 	auto& roughnessTrack = asset.AddComponentTrack<MaterialComponent>(entity.GetID());
 	auto& roughnessClip = roughnessTrack.AddFloatClip(0.0f, asset.GetDuration(), &MaterialComponent::Roughness);
 
-	
 
 
-	//第一引数は時間、第二引数は（X, Y, Z）を指定
 
-	// キーフレームの追加
+
+
+
 	clip.AddRotationKey(0.0f, { 0.0f, 0.0f, 0.0f });
 	clip.AddRotationKey(5.0f, { 0.0f, 10.0f, 0.0f });
 
@@ -93,7 +93,7 @@ void Cube::Create()
 
 
 
-	// 第一引数は時間、第二引数は値(float)を指定
+
 
 	metallicClip.AddKey(0.0f, 0.0f);
 	metallicClip.AddKey(5.0f, 1.0f);
@@ -106,7 +106,7 @@ void Cube::Create()
 
 
 
-	// TimeLineDirectorの設定
+
 	director.SetLoop(true);
 	director.Play();
 }

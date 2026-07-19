@@ -216,7 +216,7 @@
     <ClCompile Include="source\polygon.cpp">
       <Filter>2_ecs\2-1_entities</Filter>
     </ClCompile>
-    <!-- Block breaker / breakout cpp files removed from filters -->
+
     <ClCompile Include="source\world.cpp">
       <Filter>2_ecs</Filter>
     </ClCompile>
@@ -379,6 +379,9 @@
     <ClCompile Include="source\rendererdraw.cpp">
       <Filter>1_base</Filter>
     </ClCompile>
+    <ClCompile Include="source\rendergraph.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
     <ClCompile Include="source\rendererresource.cpp">
       <Filter>1_base</Filter>
     </ClCompile>
@@ -438,7 +441,7 @@
     <ClInclude Include="source\polygon.h">
       <Filter>2_ecs\2-1_entities</Filter>
     </ClInclude>
-    <!-- Block breaker / breakout header files removed from filters -->
+
     <ClInclude Include="source\componentmanager.h">
       <Filter>2_ecs\2-2_components</Filter>
     </ClInclude>
@@ -600,6 +603,9 @@
       <Filter>1_base</Filter>
     </ClInclude>
     <ClInclude Include="source\rendererdraw.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendergraph.h">
       <Filter>1_base</Filter>
     </ClInclude>
     <ClInclude Include="source\rendererresource.h">

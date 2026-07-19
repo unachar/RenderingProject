@@ -3,17 +3,16 @@
 #include "rendererstate.h"
 #include "renderprofiler.h"
 
-namespace
-{
-	ComPtr<ID3D12Device> g_Device;
-	ComPtr<ID3D12RootSignature> g_RootSignature;
-	ComPtr<ID3D12PipelineState> g_PipelineState;
-	ComPtr<ID3D12Resource> g_Input[RendererState::g_kFRAME_COUNT];
-	ComPtr<ID3D12Resource> g_TileIndices[RendererState::g_kFRAME_COUNT];
-	ComPtr<ID3D12Resource> g_VolumetricIndices[RendererState::g_kFRAME_COUNT];
-	ComPtr<ID3D12Resource> g_Counters[RendererState::g_kFRAME_COUNT];
+
+	static ComPtr<ID3D12Device> g_Device;
+	static ComPtr<ID3D12RootSignature> g_RootSignature;
+	static ComPtr<ID3D12PipelineState> g_PipelineState;
+	static ComPtr<ID3D12Resource> g_Input[RendererState::g_kFRAME_COUNT];
+	static ComPtr<ID3D12Resource> g_TileIndices[RendererState::g_kFRAME_COUNT];
+	static ComPtr<ID3D12Resource> g_VolumetricIndices[RendererState::g_kFRAME_COUNT];
+	static ComPtr<ID3D12Resource> g_Counters[RendererState::g_kFRAME_COUNT];
 	LightInstanceBuilder::Input* g_MappedInput[RendererState::g_kFRAME_COUNT]{};
-	bool g_OutputInShaderRead[RendererState::g_kFRAME_COUNT]{};
+	static bool g_OutputInShaderRead[RendererState::g_kFRAME_COUNT]{};
 
 	bool CreateBuffer(UINT64 size, D3D12_HEAP_TYPE heapType, D3D12_RESOURCE_FLAGS flags,
 		D3D12_RESOURCE_STATES state, ComPtr<ID3D12Resource>& output)
@@ -23,7 +22,7 @@ namespace
 		return SUCCEEDED(g_Device->CreateCommittedResource(
 			&heap, D3D12_HEAP_FLAG_NONE, &desc, state, nullptr, IID_PPV_ARGS(&output)));
 	}
-}
+
 
 bool LightInstanceBuilder::Initialize(ID3D12Device* device)
 {

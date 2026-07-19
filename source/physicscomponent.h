@@ -33,8 +33,8 @@ enum class PhysicsColliderRole : int
 	Obstacle = 3,
 };
 
-// Engine-independent rigid body settings. Runtime-only engine objects are owned
-// by PhysicsSystem so the component remains safe to copy for editor undo/redo.
+
+
 struct PhysicsComponent
 {
 	bool UsePhysics = false;
@@ -62,7 +62,7 @@ struct PhysicsComponent
 	bool EnableContinuousCollision = false;
 	bool AllowSleeping = true;
 
-	// Multipliers applied to PMX-authored rigid body / joint parameters.
+
 	float PmxMassScale = 1.0f;
 	float PmxDampingScale = 1.0f;
 	float PmxStiffnessScale = 1.0f;
@@ -71,8 +71,8 @@ struct PhysicsComponent
 	uint16_t CollisionLayer = 0;
 	uint16_t CollisionMask = 0xffff;
 
-	// Incremented by the inspector and may also be changed by gameplay code.
-	// PhysicsSystem additionally compares all settings, so direct field edits
-	// still cause the runtime body to be rebuilt.
+
+
+
 	uint64_t SettingsRevision = 1;
 };

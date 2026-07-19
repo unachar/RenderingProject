@@ -11,12 +11,12 @@
 #include <unordered_map>
 #include <vector>
 
-// GPU-driven indirect drawing.
-//
-// Candidate records are created once when a model is first encountered. Every
-// render submission dispatches a compute shader that performs the AABB/frustum
-// test, compacts visible records into a UAV argument buffer, writes a GPU count
-// buffer, and finally consumes both buffers through ExecuteIndirect.
+
+
+
+
+
+
 class GpuDrivenIndirectDrawCache
 {
 private:

@@ -16,8 +16,7 @@
 #include "screenspaceeffects.h"
 #include "occlusionculling.h"
 
-namespace
-{
+
 	void GetGBufferClearColor(UINT index, float outColor[4])
 	{
 		outColor[0] = 0.0f;
@@ -84,7 +83,7 @@ namespace
 		}
 		return mode;
 	}
-}
+
 
 void RendererDraw::ReleaseGBufferResources()
 {
@@ -167,7 +166,6 @@ bool RendererDraw::CreateDepthBuffer()
 
 bool RendererDraw::CreateShadowDepthBuffer()
 {
-	s_ShadowDepthWriteActive = false;
 	D3D12_CLEAR_VALUE clearValue {};
 	clearValue.Format = DXGI_FORMAT_D32_FLOAT;
 	clearValue.DepthStencil.Depth = 1.0f;
@@ -326,15 +324,6 @@ bool RendererDraw::BeginShadowPass(UINT shadowIndex)
 	{
 		return false;
 	}
-	if (!s_ShadowDepthWriteActive)
-	{
-		D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
-			m_ShadowDepthBuffer.Get(),
-			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-			D3D12_RESOURCE_STATE_DEPTH_WRITE);
-		m_CommandList->ResourceBarrier(1, &barrier);
-		s_ShadowDepthWriteActive = true;
-	}
 	const UINT dsvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 	CD3DX12_CPU_DESCRIPTOR_HANDLE shadowDsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), 1 + shadowLayer, dsvIncrement);
 	m_CommandList->RSSetViewports(1, &shadowViewport);
@@ -345,7 +334,7 @@ bool RendererDraw::BeginShadowPass(UINT shadowIndex)
 	}
 	else
 	{
-		// Virtual pages share a depth-array layer. Clear only this physical slot.
+
 		m_CommandList->ClearDepthStencilView(
 			shadowDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &shadowScissor);
 	}
@@ -362,15 +351,6 @@ void RendererDraw::EndShadowPass()
 void RendererDraw::EndShadowPassBatch()
 {
 	if (!m_CommandList || !m_ShadowDepthBuffer) return;
-	if (s_ShadowDepthWriteActive)
-	{
-		D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
-			m_ShadowDepthBuffer.Get(),
-			D3D12_RESOURCE_STATE_DEPTH_WRITE,
-			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-		m_CommandList->ResourceBarrier(1, &barrier);
-		s_ShadowDepthWriteActive = false;
-	}
 	m_CommandList->RSSetViewports(1, &m_Viewport);
 	m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
 }
@@ -426,9 +406,9 @@ void RendererDraw::BeginEditorSceneOverlayPass()
 	{
 		m_CommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
-		// Reconstruct the opaque low-resolution depth into the full-resolution
-		// DSV before drawing transparent geometry. Point sampling preserves hard
-		// depth discontinuities and avoids foreground halos at object silhouettes.
+
+
+
 		ID3D12PipelineState* depthPso = PsoManager::GetUpscaleDepthPso();
 		if (depthPso && m_UpscaleRootSignature)
 		{
@@ -847,7 +827,7 @@ void RendererDraw::RenderVelocityBuffer()
 	m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	m_CommandList->DrawInstanced(3, 1, 0, 0);
 
-	// Keep the target bound for the following object/animation velocity pass.
+
 }
 
 void RendererDraw::EndVelocityBuffer()
@@ -872,8 +852,8 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 			{
 				return;
 			}
-			// Light instance compaction is a compute pass.  Run it before restoring
-			// the fullscreen graphics state used by this pass.
+
+
 			const bool needsLightingConstants = deferredLightStrength > 0.0f;
 			if (needsLightingConstants)
 			{
@@ -1061,9 +1041,9 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 		return;
 	}
 
-	// Tone mapping and the selected post effect run at the internal resolution.
-	// Spatial upscalers consume this perceptual-space image; overlays are composed
-	// later at display resolution.
+
+
+
 	D3D12_RESOURCE_BARRIER postToRt = CD3DX12_RESOURCE_BARRIER::Transition(
 		m_PostProcessRenderTarget.Get(),
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
@@ -1095,10 +1075,10 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 	D3D12_GPU_DESCRIPTOR_HANDLE upscaleSourceSrv = m_PostProcessSrvHandle;
 	ID3D12Resource* upscaleSource = m_PostProcessRenderTarget.Get();
 
-	// FSR 1 and NIS expect an antialiased input. Run the selected AA at the
-	// internal resolution so TAA does not become a full-display pass followed by
-	// two full-display history copies. At 0.25 scale this reduces its pixel cost
-	// to 1/16 while preserving temporal accumulation before reconstruction.
+
+
+
+
 	if (needsUpscale && upscaleMode != UpscaleMode::Bilateral && m_PreUpscaleAaRenderTarget)
 	{
 		const bool useTaa =
@@ -1328,9 +1308,9 @@ void RendererDraw::ApplyAntiAliasing()
 			UpscaleMode::Bilateral;
 	if (usesPreUpscaleAa)
 	{
-		// FSR/NIS already received FXAA or TAA at internal resolution. Running
-		// AA again here would add a full-resolution pass and, for TAA, two
-		// full-resolution history copies.
+
+
+
 		return;
 	}
 
@@ -1779,8 +1759,8 @@ bool RendererDraw::CreateSceneRenderTarget()
 			gbufferSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 			if (i == static_cast<UINT>(GBufferType::VELOCITY))
 			{
-				// The editor displays encoded RG and must not blend with raw velocity
-				// stored in alpha. Force opaque alpha for this display SRV.
+
+
 				gbufferSrvDesc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
 					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
 					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
@@ -1905,11 +1885,3 @@ void RendererDraw::ResizeScene(UINT width, UINT height)
 	m_SceneHeight = height;
 	CreateSceneRenderTarget();
 }
-
-
-
-
-
-
-
-

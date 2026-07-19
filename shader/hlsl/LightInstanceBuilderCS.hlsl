@@ -1,7 +1,7 @@
 struct LightInstanceInput
 {
-    uint4 TileBounds; // min x/y, max x/y
-    uint4 Metadata;   // light index, first slot, slot end, volumetric flag
+    uint4 TileBounds;
+    uint4 Metadata;
 };
 
 StructuredBuffer<LightInstanceInput> Instances : register(t0);

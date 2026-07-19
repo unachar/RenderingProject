@@ -92,7 +92,7 @@ uint IsObjectVisible()
         }
         else if (Phase == 2u)
         {
-            // Phase two is restricted to objects rejected by the previous frame.
+
             if (PreviousHiZValid == 0u ||
                 !IsOccluded(PreviousHiZ, uvMinimum, uvMaximum, nearestDepth) ||
                 (CurrentHiZValid != 0u && IsOccluded(CurrentHiZ, uvMinimum, uvMaximum, nearestDepth)))

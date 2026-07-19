@@ -20,9 +20,9 @@ struct LocalFogRayResult
 
 int GetAtmosphereStepCount(float viewDistance)
 {
-    // Keep the world-space distance between samples reasonably stable for the
-    // broad atmosphere. Bounded volume lights use a separate, light-anchored
-    // integration path below.
+
+
+
     float scale = clamp(Flags.w, 0.25f, 1.0f);
     float lowResolutionWeight = saturate((1.0f - scale) / 0.75f);
     int maxSteps = (int)round(lerp(28.0f, 36.0f, lowResolutionWeight));
@@ -170,10 +170,10 @@ float3 EvaluateAtmosphereLight(
         0.35f / max(AtmosphereParams1.w, 0.0001f),
         localLight);
 
-    // ResolveSingleLightCommon returns a normalized direction and the view ray
-    // is normalized by the caller.  Compute both atmosphere phase terms once:
-    // the old path evaluated Henyey-Greenstein here and then repeated it inside
-    // AtmosphereSingleScatterFromDensityCommon for every light at every step.
+
+
+
+
     float cosTheta = clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f);
     float rayleighPhase = RayleighPhaseCommon(cosTheta);
     float miePhase = HenyeyGreensteinCommon(cosTheta, AtmosphereParams1.z);
@@ -190,9 +190,9 @@ float3 EvaluateAtmosphereLight(
         atmospherePhase * sampleDensity * shadowedColor *
         lerp(1.0f, 0.45f, volumeLight);
 
-    // Directional light follows the global atmosphere height profile.
-    // Local point/spot/volume lights use their own medium density so their
-    // shafts do not disappear when the light is moved above world Y = 0.
+
+
+
     float volumeMediumDensity = lerp(
         sampleDensity,
         max(AtmosphereParams0.w, 0.0001f),
@@ -336,9 +336,9 @@ bool ClipRayToQuadraticInterior(
         return segmentEnd > segmentStart + 0.0001f;
     }
 
-    // For the forward finite cone the axial slab selects one convex branch of
-    // the double-cone quadratic. Pick the outside-root interval that overlaps
-    // that slab.
+
+
+
     if (segmentEnd <= root0 || segmentStart >= root1)
     {
         return true;
@@ -484,9 +484,9 @@ float3 IntegrateVolumeLightRay(
         return float3(0.0f, 0.0f, 0.0f);
     }
 
-    // The sample phase is anchored to the exact finite cone/cylinder entry and
-    // exit. Empty space around the light never consumes samples, so moving the
-    // camera cannot shift the first illuminated sample at the emitter.
+
+
+
     const int stepCount = 24;
     float segmentLength = segmentEnd - segmentStart;
     float stepLength = segmentLength / (float)stepCount;
@@ -616,9 +616,9 @@ float3 RayMarchAtmosphereViewFixed(
         float sampleDensity =
             AtmosphereDensityCommon(samplePos);
 
-        // Shadow visibility changes much more slowly than the volume density.
-        // Reusing it for four adjacent march samples preserves the shaft shape
-        // while avoiding a 4-tap PCF lookup on every sample.
+
+
+
         bool updateShadow = (stepIndex & 3) == 0;
 
         [loop]
@@ -631,9 +631,9 @@ float3 RayMarchAtmosphereViewFixed(
                 continue;
             }
 
-            // Volume lights are integrated over their own light-anchored ray
-            // segment below.  Sampling them in this camera-length march is the
-            // source of the distance-dependent root and visible shells.
+
+
+
             if ((int)round(LightPositionTypes[lightIndex].w) == 3)
             {
                 continue;
@@ -868,9 +868,9 @@ LocalFogRayResult IntegrateLocalFogRay(float3 rayEnd)
             continue;
         }
 
-        // Every volume owns a fixed number of samples over its actual ray
-        // interval.  The integration quality therefore depends on the fog
-        // volume, not on how much empty space lies between it and the camera.
+
+
+
         const int stepCount = 24;
         float segmentLength = segmentEnd - segmentStart;
         float stepLength = segmentLength / (float)stepCount;
@@ -960,9 +960,9 @@ float4 main(PSInputPostProcess input) : SV_Target
     LocalFogRayResult localFog =
         IntegrateLocalFogRay(rayEnd);
 
-    // RGB contains all additive participating-media light. Alpha carries the
-    // local-fog transmittance so deferred lighting can attenuate the complete
-    // lit scene after shading, for both geometry and background pixels.
+
+
+
     float3 participatingMedia =
         scatter * localFog.Transmittance +
         localFog.Scattering;

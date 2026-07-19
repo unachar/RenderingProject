@@ -73,8 +73,8 @@ public:
 	static ComponentTypeID GetRegisteredCount();
 };
 
-// Retained for source compatibility with code that explicitly uses the old
-// iterator. EntityView itself now iterates a cached, tightly packed result list.
+
+
 class EntityIterator
 {
 private:

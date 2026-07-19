@@ -15,8 +15,7 @@ vector<unique_ptr<StaticModelResource>> ModelManager::m_StaticModels;
 unordered_map<string, int> ModelManager::m_AnimModelCache;
 unordered_map<string, int> ModelManager::m_StaticModelCache;
 
-namespace
-{
+
 	string GetLowerExtension(const char* fileName)
 	{
 		string ext = filesystem::path(fileName ? fileName : "").extension().string();
@@ -31,7 +30,7 @@ namespace
 	{
 		return string(fileName ? fileName : "") + (isConvert ? "|convert" : "|raw");
 	}
-}
+
 
 int ModelManager::LoadAnimModel(const char* fileName, bool isConvert)
 {
@@ -180,4 +179,3 @@ void ModelManager::Uninit()
 	m_StaticModels.clear();
 	m_StaticModelCache.clear();
 }
-

@@ -12,12 +12,11 @@
 
 #pragma comment(lib, "dxcompiler.lib")
 
-// Runtime DXC adapter used while the project still contains legacy
-// D3DCompileFromFile call sites. It compiles through IDxcCompiler3 and copies
-// the resulting DXIL container into an ID3DBlob so existing PSO creation code
-// does not need to change all at once.
-namespace RenderingDxcDetail
-{
+
+
+
+
+
     using Microsoft::WRL::ComPtr;
 
     struct CompilerState
@@ -140,11 +139,11 @@ namespace RenderingDxcDetail
     {
         storage.emplace_back(value);
     }
-}
+
 
 inline bool DxcRuntimeCompilerIsAvailable()
 {
-    return SUCCEEDED(RenderingDxcDetail::GetCompilerState().Status);
+    return SUCCEEDED(GetCompilerState().Status);
 }
 
 inline HRESULT WINAPI DxcCompileFromFileCompat(
@@ -154,11 +153,11 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
     LPCSTR entryPoint,
     LPCSTR target,
     UINT flags1,
-    UINT /*flags2*/,
+    UINT ,
     ID3DBlob** code,
     ID3DBlob** errorMessages)
 {
-    using namespace RenderingDxcDetail;
+
 
     if (code)
     {

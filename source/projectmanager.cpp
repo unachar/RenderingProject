@@ -75,9 +75,9 @@ void ProjectManager::RestoreRuntimeState()
 				continue;
 			}
 
-			// Physics writes directly into the shared skeletal resource. Force the
-			// saved edit-time pose back immediately, even when the cached animation
-			// time is identical to the time at which play mode was entered.
+
+
+
 			model->InvalidateAnimationPoseCache();
 			if (!snapshot.Animation.ActiveAnimationLayers.empty())
 			{

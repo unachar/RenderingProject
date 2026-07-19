@@ -9,10 +9,9 @@
 #include "componentmanager.h"
 #include "imguimanager.h"
 
-namespace
-{
+
 	unordered_map<string, ComPtr<ID3DBlob>> g_ShaderBlobCache;
-}
+
 
 
 bool RendererShader::CreateModelPipeline()
@@ -151,9 +150,9 @@ bool RendererShader::CreatePostProcessPipeline()
 
 	CD3DX12_STATIC_SAMPLER_DESC samplers[2] {};
 	samplers[0] = CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
-	// Page-aware VSM address translation already keeps the manual PCF taps in
-	// their correct physical tiles. Restore bilinear comparison within each tap
-	// so the filter does not expose individual depth texels as fine static bands.
+
+
+
 	samplers[1] = CD3DX12_STATIC_SAMPLER_DESC(
 		1,
 		D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT,

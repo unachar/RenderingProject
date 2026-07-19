@@ -1,7 +1,5 @@
-# Prerequisites
 *.d
 
-# Compiled Object files
 *.slo
 *.lo
 *.o
@@ -9,37 +7,30 @@
 !asset/model/sky/sky.obj
 !asset/model/tree/tree.obj
 
-# Precompiled Headers
 *.gch
 *.pch
 *.ipch
 
-# Linker files
 *.ilk
 *.exp
 
-# Debugger files
 *.pdb
 *.idb
 
-# Dynamic libraries
 *.so
 *.so.*
 *.dylib
 *.dll
 
-# Static libraries
 *.lai
 *.la
 *.a
 *.lib
 
-# Executables
 *.exe
 *.out
 *.app
 
-# Visual Studio
 .vs/
 *.suo
 *.user
@@ -53,7 +44,6 @@
 *.recipe
 *.log
 
-# Build directories
 /build/
 /Build/
 /build-*/
@@ -64,7 +54,6 @@
 /bin/
 /obj/
 
-# CMake
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
@@ -72,17 +61,14 @@ Makefile
 install_manifest.txt
 compile_commands.json
 
-# Slang compiler required for shader build
 !External/RTXNS/slang/bin/
 !External/RTXNS/slang/bin/**
 
-# Required DirectXTex library
 !External/DirectXTex/
 !External/DirectXTex/**
 !External/DirectXTex/DirectXTex/Bin/Desktop_2022/x64/Release/DirectXTex.lib
 !External/DirectXTex/DirectXTex/Bin/Desktop_2022/x64/Debug/DirectXTex.lib
 
-# Required prebuilt physics libraries for zip builds
 !External/Build/Bullet-vs18/lib/Debug/*.lib
 !External/Build/Bullet-vs18/lib/Release/*.lib
 !External/Build/Jolt-vs18/Debug/Jolt.lib
@@ -90,26 +76,19 @@ compile_commands.json
 !External/Build/PhysX-output-static/bin/win.x86_64.vc143.mt/debug/*.lib
 !External/Build/PhysX-output-static/bin/win.x86_64.vc143.mt/release/*.lib
 
-
-# Required NuGet packages for zip build
 !packages/
 !packages/**
 
-# vcpkg
 vcpkg_installed/
 
-# Temporary files
 *.tmp
 *.bak
 *.swp
 
-# Debug information files
 *.dwo
 
-# Test output & cache
 Testing/
 .cache/
-# Compiled shader objects
 *.cso
 init_log.txt
 Save/physics_smoke_progress.txt

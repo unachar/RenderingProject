@@ -8,11 +8,10 @@
 #include <unordered_map>
 #include <vector>
 
-namespace ToonOutlineBuilder
-{
-	static constexpr int kModeCount = 4;
 
-	enum class Mode : int
+	static constexpr int kToonOutlineModeCount = 4;
+
+	enum class ToonOutlineMeshMode : int
 	{
 		Balanced = 0,
 		Boundary = 1,
@@ -20,7 +19,7 @@ namespace ToonOutlineBuilder
 		Clean = 3,
 	};
 
-	struct Options
+	struct ToonOutlineOptions
 	{
 		bool IncludeBoundaryEdges = true;
 		bool IncludeHardEdges = true;
@@ -29,49 +28,49 @@ namespace ToonOutlineBuilder
 		float MinEdgeLength = 0.0f;
 	};
 
-	inline Options GetPreset(Mode mode)
+	inline ToonOutlineOptions GetToonOutlinePreset(ToonOutlineMeshMode mode)
 	{
 		switch (mode)
 		{
-		case Mode::Boundary:
+		case ToonOutlineMeshMode::Boundary:
 			return { true, false, 180.0f, 0.0010f, 0.0020f };
-		case Mode::HardEdge:
+		case ToonOutlineMeshMode::HardEdge:
 			return { false, true, 50.0f, 0.0010f, 0.0010f };
-		case Mode::Clean:
+		case ToonOutlineMeshMode::Clean:
 			return { true, true, 70.0f, 0.0030f, 0.0100f };
-		case Mode::Balanced:
+		case ToonOutlineMeshMode::Balanced:
 		default:
 			return { true, true, 55.0f, 0.0010f, 0.0020f };
 		}
 	}
 
-	struct EdgeKey
+	struct ToonOutlineEdgeKey
 	{
 		uint32_t A = 0;
 		uint32_t B = 0;
 
-		EdgeKey() = default;
-		EdgeKey(uint32_t a, uint32_t b)
+		ToonOutlineEdgeKey() = default;
+		ToonOutlineEdgeKey(uint32_t a, uint32_t b)
 		{
 			A = std::min(a, b);
 			B = std::max(a, b);
 		}
 
-		bool operator==(const EdgeKey& rhs) const
+		bool operator==(const ToonOutlineEdgeKey& rhs) const
 		{
 			return A == rhs.A && B == rhs.B;
 		}
 	};
 
-	struct EdgeKeyHash
+	struct ToonOutlineEdgeKeyHash
 	{
-		size_t operator()(const EdgeKey& key) const
+		size_t operator()(const ToonOutlineEdgeKey& key) const
 		{
 			return (static_cast<size_t>(key.A) << 32) ^ static_cast<size_t>(key.B);
 		}
 	};
 
-	struct EdgeInfo
+	struct ToonOutlineEdgeInfo
 	{
 		uint32_t Count = 0;
 		XMFLOAT3 Normal[2] = {};
@@ -79,21 +78,21 @@ namespace ToonOutlineBuilder
 		uint32_t OriginalB = 0;
 	};
 
-	struct QuantizedPosition
+	struct ToonOutlineQuantizedPosition
 	{
 		int X = 0;
 		int Y = 0;
 		int Z = 0;
 
-		bool operator==(const QuantizedPosition& rhs) const
+		bool operator==(const ToonOutlineQuantizedPosition& rhs) const
 		{
 			return X == rhs.X && Y == rhs.Y && Z == rhs.Z;
 		}
 	};
 
-	struct QuantizedPositionHash
+	struct ToonOutlineQuantizedPositionHash
 	{
-		size_t operator()(const QuantizedPosition& key) const
+		size_t operator()(const ToonOutlineQuantizedPosition& key) const
 		{
 			size_t h = static_cast<size_t>(key.X) * 73856093u;
 			h ^= static_cast<size_t>(key.Y) * 19349663u;
@@ -102,27 +101,27 @@ namespace ToonOutlineBuilder
 		}
 	};
 
-	inline XMFLOAT3 Add(const XMFLOAT3& a, const XMFLOAT3& b)
+	inline XMFLOAT3 ToonOutlineAdd(const XMFLOAT3& a, const XMFLOAT3& b)
 	{
 		return { a.x + b.x, a.y + b.y, a.z + b.z };
 	}
 
-	inline XMFLOAT3 Subtract(const XMFLOAT3& a, const XMFLOAT3& b)
+	inline XMFLOAT3 ToonOutlineSubtract(const XMFLOAT3& a, const XMFLOAT3& b)
 	{
 		return { a.x - b.x, a.y - b.y, a.z - b.z };
 	}
 
-	inline XMFLOAT3 Scale(const XMFLOAT3& v, float s)
+	inline XMFLOAT3 ToonOutlineScale(const XMFLOAT3& v, float s)
 	{
 		return { v.x * s, v.y * s, v.z * s };
 	}
 
-	inline float Dot(const XMFLOAT3& a, const XMFLOAT3& b)
+	inline float ToonOutlineDot(const XMFLOAT3& a, const XMFLOAT3& b)
 	{
 		return a.x * b.x + a.y * b.y + a.z * b.z;
 	}
 
-	inline XMFLOAT3 Cross(const XMFLOAT3& a, const XMFLOAT3& b)
+	inline XMFLOAT3 ToonOutlineCross(const XMFLOAT3& a, const XMFLOAT3& b)
 	{
 		return
 		{
@@ -132,23 +131,23 @@ namespace ToonOutlineBuilder
 		};
 	}
 
-	inline XMFLOAT3 NormalizeOr(const XMFLOAT3& v, const XMFLOAT3& fallback)
+	inline XMFLOAT3 NormalizeToonOutlineOr(const XMFLOAT3& v, const XMFLOAT3& fallback)
 	{
-		const float lenSq = Dot(v, v);
+		const float lenSq = ToonOutlineDot(v, v);
 		if (lenSq <= 1.0e-8f)
 		{
 			return fallback;
 		}
 		const float invLen = 1.0f / std::sqrt(lenSq);
-		return Scale(v, invLen);
+		return ToonOutlineScale(v, invLen);
 	}
 
-	inline float Length(const XMFLOAT3& v)
+	inline float ToonOutlineLength(const XMFLOAT3& v)
 	{
-		return std::sqrt(Dot(v, v));
+		return std::sqrt(ToonOutlineDot(v, v));
 	}
 
-	inline QuantizedPosition Quantize(const XMFLOAT3& p, float tolerance)
+	inline ToonOutlineQuantizedPosition QuantizeToonOutlinePosition(const XMFLOAT3& p, float tolerance)
 	{
 		if (tolerance <= 0.0f)
 		{
@@ -174,7 +173,7 @@ namespace ToonOutlineBuilder
 		const std::vector<unsigned int>& sourceIndices,
 		std::vector<TVertex>& outVertices,
 		std::vector<unsigned int>& outIndices,
-		const Options& options)
+		const ToonOutlineOptions& options)
 	{
 		outVertices.clear();
 		outIndices.clear();
@@ -189,11 +188,11 @@ namespace ToonOutlineBuilder
 		const float minEdgeLength = std::max(options.MinEdgeLength, 0.0f);
 
 		std::vector<uint32_t> canonicalIndices(sourceVertices.size());
-		std::unordered_map<QuantizedPosition, uint32_t, QuantizedPositionHash> canonicalByPosition;
+		std::unordered_map<ToonOutlineQuantizedPosition, uint32_t, ToonOutlineQuantizedPositionHash> canonicalByPosition;
 		canonicalByPosition.reserve(sourceVertices.size());
 		for (uint32_t i = 0; i < sourceVertices.size(); ++i)
 		{
-			const QuantizedPosition key = Quantize(sourceVertices[i].Position, options.WeldTolerance);
+			const ToonOutlineQuantizedPosition key = QuantizeToonOutlinePosition(sourceVertices[i].Position, options.WeldTolerance);
 			auto it = canonicalByPosition.find(key);
 			if (it == canonicalByPosition.end())
 			{
@@ -206,7 +205,7 @@ namespace ToonOutlineBuilder
 			}
 		}
 
-		std::unordered_map<EdgeKey, EdgeInfo, EdgeKeyHash> edges;
+		std::unordered_map<ToonOutlineEdgeKey, ToonOutlineEdgeInfo, ToonOutlineEdgeKeyHash> edges;
 		edges.reserve(sourceIndices.size());
 
 		auto addEdge = [&](uint32_t a, uint32_t b, const XMFLOAT3& faceNormal)
@@ -217,7 +216,7 @@ namespace ToonOutlineBuilder
 				{
 					return;
 				}
-				EdgeInfo& info = edges[EdgeKey(ca, cb)];
+				ToonOutlineEdgeInfo& info = edges[ToonOutlineEdgeKey(ca, cb)];
 				if (info.Count == 0)
 				{
 					info.OriginalA = a;
@@ -243,44 +242,44 @@ namespace ToonOutlineBuilder
 			const XMFLOAT3& p0 = sourceVertices[i0].Position;
 			const XMFLOAT3& p1 = sourceVertices[i1].Position;
 			const XMFLOAT3& p2 = sourceVertices[i2].Position;
-			const XMFLOAT3 faceNormal = NormalizeOr(Cross(Subtract(p1, p0), Subtract(p2, p0)), { 0.0f, 1.0f, 0.0f });
+			const XMFLOAT3 faceNormal = NormalizeToonOutlineOr(ToonOutlineCross(ToonOutlineSubtract(p1, p0), ToonOutlineSubtract(p2, p0)), { 0.0f, 1.0f, 0.0f });
 
 			addEdge(i0, i1, faceNormal);
 			addEdge(i1, i2, faceNormal);
 			addEdge(i2, i0, faceNormal);
 		}
 
-		std::vector<EdgeKey> selectedEdges;
+		std::vector<ToonOutlineEdgeKey> selectedEdges;
 		selectedEdges.reserve(edges.size());
 		std::vector<XMFLOAT3> neighborSum(sourceVertices.size(), { 0.0f, 0.0f, 0.0f });
 
 		for (const auto& kv : edges)
 		{
-			const EdgeInfo& info = kv.second;
+			const ToonOutlineEdgeInfo& info = kv.second;
 			const bool boundaryEdge = options.IncludeBoundaryEdges && info.Count == 1;
-			const bool hardEdge = options.IncludeHardEdges && info.Count == 2 && Dot(info.Normal[0], info.Normal[1]) < hardEdgeCos;
+			const bool hardEdge = options.IncludeHardEdges && info.Count == 2 && ToonOutlineDot(info.Normal[0], info.Normal[1]) < hardEdgeCos;
 			if (!boundaryEdge && !hardEdge)
 			{
 				continue;
 			}
 
-			EdgeKey edge(info.OriginalA, info.OriginalB);
+			ToonOutlineEdgeKey edge(info.OriginalA, info.OriginalB);
 			const XMFLOAT3& pa = sourceVertices[edge.A].Position;
 			const XMFLOAT3& pb = sourceVertices[edge.B].Position;
-			if (minEdgeLength > 0.0f && Length(Subtract(pb, pa)) < minEdgeLength)
+			if (minEdgeLength > 0.0f && ToonOutlineLength(ToonOutlineSubtract(pb, pa)) < minEdgeLength)
 			{
 				continue;
 			}
 
 			selectedEdges.push_back(edge);
-			neighborSum[edge.A] = Add(neighborSum[edge.A], Subtract(pb, pa));
-			neighborSum[edge.B] = Add(neighborSum[edge.B], Subtract(pa, pb));
+			neighborSum[edge.A] = ToonOutlineAdd(neighborSum[edge.A], ToonOutlineSubtract(pb, pa));
+			neighborSum[edge.B] = ToonOutlineAdd(neighborSum[edge.B], ToonOutlineSubtract(pa, pb));
 		}
 
 		outVertices.reserve(selectedEdges.size() * 4);
 		outIndices.reserve(selectedEdges.size() * 12);
 
-		for (const EdgeKey& edge : selectedEdges)
+		for (const ToonOutlineEdgeKey& edge : selectedEdges)
 		{
 			const TVertex& srcA = sourceVertices[edge.A];
 			const TVertex& srcB = sourceVertices[edge.B];
@@ -292,8 +291,8 @@ namespace ToonOutlineBuilder
 
 			aBase.Normal = { 0.0f, 0.0f, 0.0f };
 			bBase.Normal = { 0.0f, 0.0f, 0.0f };
-			aOuter.Normal = NormalizeOr(Scale(neighborSum[edge.A], -1.0f), srcA.Normal);
-			bOuter.Normal = NormalizeOr(Scale(neighborSum[edge.B], -1.0f), srcB.Normal);
+			aOuter.Normal = NormalizeToonOutlineOr(ToonOutlineScale(neighborSum[edge.A], -1.0f), srcA.Normal);
+			bOuter.Normal = NormalizeToonOutlineOr(ToonOutlineScale(neighborSum[edge.B], -1.0f), srcB.Normal);
 
 			const unsigned int base = static_cast<unsigned int>(outVertices.size());
 			outVertices.push_back(aBase);
@@ -322,8 +321,7 @@ namespace ToonOutlineBuilder
 		const std::vector<unsigned int>& sourceIndices,
 		std::vector<TVertex>& outVertices,
 		std::vector<unsigned int>& outIndices,
-		Mode mode)
+		ToonOutlineMeshMode mode)
 	{
-		BuildTeoMesh(sourceVertices, sourceIndices, outVertices, outIndices, GetPreset(mode));
+		BuildTeoMesh(sourceVertices, sourceIndices, outVertices, outIndices, GetToonOutlinePreset(mode));
 	}
-}

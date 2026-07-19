@@ -26,7 +26,7 @@ GBufferOutput main(in PSInput3D In)
     GBufferOutput output;
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
-    // SV_Position.z is already the post-projection D3D depth in [0, 1].
+
     output.Depth = saturate(In.Position.z);
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
     bool usePartParams = MaterialMode != 1;

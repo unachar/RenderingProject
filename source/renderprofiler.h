@@ -12,11 +12,11 @@
 #include <utility>
 #include <vector>
 
-// Phase 0 measurement foundation for the GPU-driven renderer.
-//
-// GPU timings use D3D12 timestamp queries and are consumed only when the
-// corresponding back-buffer slot is known to be fence-safe. Pipeline statistics
-// are collected with a second query heap. CPU timings use steady_clock.
+
+
+
+
+
 class RenderProfiler final
 {
 public:

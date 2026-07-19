@@ -8,8 +8,7 @@
 
 using namespace DirectX;
 
-namespace
-{
+
 	struct GridVertex
 	{
 		XMFLOAT3 Pos;
@@ -17,7 +16,7 @@ namespace
 		XMFLOAT2 Tex;
 		XMFLOAT4 Color;
 	};
-}
+
 
 ComPtr<ID3D12Resource> Grid::VertexBuffer;
 D3D12_VERTEX_BUFFER_VIEW Grid::VertexBufferView {};
@@ -170,4 +169,3 @@ void Grid::Uninit()
 	m_VertexCount = 0;
 	m_IsInitialized = false;
 }
-

@@ -10,20 +10,19 @@
 #include "../External/FidelityFX-FSR/ffx_fsr1.h"
 #include "../External/NVIDIAImageScaling/NIS_Config.h"
 
-namespace
-{
-	ComPtr<ID3D12Device> g_Device;
-	ComPtr<ID3D12DescriptorHeap> g_DescriptorHeap;
-	UINT g_DescriptorIncrement = 0;
-	ComPtr<ID3D12RootSignature> g_RootSignature;
-	ComPtr<ID3D12PipelineState> g_FsrEasuPso;
-	ComPtr<ID3D12PipelineState> g_FsrRcasPso;
-	ComPtr<ID3D12PipelineState> g_NisPso;
-	ComPtr<ID3D12Resource> g_FsrScratch;
-	ComPtr<ID3D12Resource> g_NisScaleCoefficients;
-	ComPtr<ID3D12Resource> g_NisUsmCoefficients;
-	UINT g_OutputWidth = 0;
-	UINT g_OutputHeight = 0;
+
+	static ComPtr<ID3D12Device> g_Device;
+	static ComPtr<ID3D12DescriptorHeap> g_DescriptorHeap;
+	static UINT g_DescriptorIncrement = 0;
+	static ComPtr<ID3D12RootSignature> g_RootSignature;
+	static ComPtr<ID3D12PipelineState> g_FsrEasuPso;
+	static ComPtr<ID3D12PipelineState> g_FsrRcasPso;
+	static ComPtr<ID3D12PipelineState> g_NisPso;
+	static ComPtr<ID3D12Resource> g_FsrScratch;
+	static ComPtr<ID3D12Resource> g_NisScaleCoefficients;
+	static ComPtr<ID3D12Resource> g_NisUsmCoefficients;
+	static UINT g_OutputWidth = 0;
+	static UINT g_OutputHeight = 0;
 	DXGI_FORMAT g_OutputFormat = DXGI_FORMAT_UNKNOWN;
 
 	struct FsrConstants
@@ -36,13 +35,13 @@ namespace
 	};
 	static_assert(sizeof(FsrConstants) == sizeof(uint32_t) * 20);
 
-	// NISConfig is alignas(256) for use as a constant buffer.  Root constants
-	// must only upload the declared fields, not sizeof(NISConfig)'s tail padding.
+
+
 	constexpr UINT kNisConfigDwordCount = static_cast<UINT>(
 		(offsetof(NISConfig, reserved1) + sizeof(NISConfig::reserved1)) / sizeof(uint32_t));
 	static_assert(kNisConfigDwordCount == 28);
 	static_assert(kNisConfigDwordCount <= 32);
-}
+
 
 D3D12_CPU_DESCRIPTOR_HANDLE SpatialUpscaler::CpuHandle(UINT index)
 {
@@ -286,7 +285,7 @@ bool SpatialUpscaler::IsScaleSupported(
 		return true;
 	}
 
-	// NVScalerUpdateConfig accepts a 0.5..1.0 source-to-output ratio per axis.
+
 	return inputWidth <= outputWidth && inputHeight <= outputHeight &&
 		static_cast<uint64_t>(inputWidth) * 2u >= outputWidth &&
 		static_cast<uint64_t>(inputHeight) * 2u >= outputHeight;

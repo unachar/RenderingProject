@@ -2,8 +2,7 @@
 #include "timeline.h"
 #include <cmath>
 
-namespace
-{
+
 	float Clamp01(float value)
 	{
 		if (value < 0.0f) return 0.0f;
@@ -46,7 +45,7 @@ namespace
 		if (duration > 0.0f && time > duration) return duration;
 		return time;
 	}
-}
+
 
 void TimeLineVectorCurve::AddKey(float time, const XMFLOAT3& value, TimeLineEase ease)
 {

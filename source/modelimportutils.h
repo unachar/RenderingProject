@@ -9,22 +9,21 @@
 #include <string>
 #include <vector>
 
-namespace ModelImportUtils
-{
-	inline std::filesystem::path FromUtf8(const char* value)
+
+	inline std::filesystem::path ModelPathFromUtf8(const char* value)
 	{
 		return std::filesystem::u8path(value ? value : "");
 	}
 
-	inline std::string ToUtf8(const std::filesystem::path& path)
+	inline std::string ModelPathToUtf8(const std::filesystem::path& path)
 	{
 		const auto value = path.u8string();
 		return std::string(reinterpret_cast<const char*>(value.data()), value.size());
 	}
 
-	inline std::string LowerExtension(const std::filesystem::path& path)
+	inline std::string ModelPathLowerExtension(const std::filesystem::path& path)
 	{
-		std::string extension = ToUtf8(path.extension());
+		std::string extension = ModelPathToUtf8(path.extension());
 		std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c)
 			{
 				return static_cast<char>(std::tolower(c));
@@ -32,10 +31,10 @@ namespace ModelImportUtils
 		return extension;
 	}
 
-	inline const aiScene* ImportScene(const char* fileName, unsigned int flags)
+	inline const aiScene* ImportModelScene(const char* fileName, unsigned int flags)
 	{
-		const std::filesystem::path path = FromUtf8(fileName);
-		const std::string extension = LowerExtension(path);
+		const std::filesystem::path path = ModelPathFromUtf8(fileName);
+		const std::string extension = ModelPathLowerExtension(path);
 		const char* formatHint = nullptr;
 		if (extension == ".vrm")
 		{
@@ -77,4 +76,3 @@ namespace ModelImportUtils
 		return aiImportFileFromMemory(
 			bytes.data(), static_cast<unsigned int>(bytes.size()), flags, formatHint);
 	}
-}

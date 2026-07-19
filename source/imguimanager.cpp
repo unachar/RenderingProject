@@ -30,8 +30,7 @@
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-namespace
-{
+
 	constexpr float kRadToDeg = 180.0f / XM_PI;
 	constexpr float kDegToRad = XM_PI / 180.0f;
 
@@ -101,7 +100,7 @@ namespace
 		}
 	}
 
-	XMMATRIX BuildWorldMatrix(const TransformComponent& transform)
+	static XMMATRIX BuildWorldMatrix(const TransformComponent& transform)
 	{
 		return XMMatrixScaling(transform.Scale.x, transform.Scale.y, transform.Scale.z) *
 			XMMatrixRotationX(transform.Rotation.x) *
@@ -270,8 +269,8 @@ namespace
 				return static_cast<char>(tolower(c));
 			});
 
-		//trueなら90度回転させる
-		//falseなら回転させない
+
+
 
 		if (lower.find("xbot") != string::npos)
 		{
@@ -302,8 +301,8 @@ namespace
 		{
 			return true;
 		}
-		
-		// それ以外のモデルは基本的に回転させる
+
+
 		return true;
 	}
 
@@ -502,7 +501,7 @@ namespace
 		World::RegisterName(entity, name.Name);
 	}
 
-}
+
 
 bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* commandQueue, int numFrames, DXGI_FORMAT rtvFormat, ID3D12DescriptorHeap* cbvHeap, D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle, D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle)
 {
@@ -1038,8 +1037,8 @@ void ImGuiManager::DrawEditorMainMenu()
 		ImGui::EndMenu();
 	}
 
-	// Project-wide play controls stay centered in the main menu bar.
-	// Play toggles between Play and Stop; Pause is active only in play mode.
+
+
 	const float playControlsWidth = 184.0f;
 	const float centeredX = max(
 		(ImGui::GetIO().DisplaySize.x - playControlsWidth) * 0.5f,
@@ -3968,33 +3967,33 @@ ImGuiManager::EntitySnapshot ImGuiManager::CaptureEntity(EntityID entity)
 	if (entity == g_kINVALID_ENTITY || !Registry::IsAlive(entity)) return snapshot;
 	snapshot.WasAlive = true;
 	if (ComponentManager::HasComponent<NameComponent>(entity))
-	{ 
-		snapshot.HasName = true; 
+	{
+		snapshot.HasName = true;
 		snapshot.Name = ComponentManager::GetComponentUnchecked<NameComponent>(entity);
 	}
 
 	if (ComponentManager::HasComponent<TransformComponent>(entity))
-	{ 
+	{
 		snapshot.HasTransform = true;
-		snapshot.Transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity); 
+		snapshot.Transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
 	}
 
-	if (ComponentManager::HasComponent<ShaderComponent>(entity)) 
+	if (ComponentManager::HasComponent<ShaderComponent>(entity))
 	{	snapshot.HasShader = true;
-		snapshot.Shader = ComponentManager::GetComponentUnchecked<ShaderComponent>(entity); 
+		snapshot.Shader = ComponentManager::GetComponentUnchecked<ShaderComponent>(entity);
 	}
 
 	if (ComponentManager::HasComponent<StaticModelComponent>(entity))
 	{	snapshot.HasStaticModel = true;
-		snapshot.StaticModel = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity); 
+		snapshot.StaticModel = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
 	}
 
-	if (ComponentManager::HasComponent<AnimationModelComponent>(entity)) 
-	{	snapshot.HasAnimationModel = true; 
+	if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
+	{	snapshot.HasAnimationModel = true;
 		snapshot.AnimationModel = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
 	}
 
-	if (ComponentManager::HasComponent<LightComponent>(entity)) 
+	if (ComponentManager::HasComponent<LightComponent>(entity))
 	{	snapshot.HasLight = true;
 		snapshot.Light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
 	}
@@ -4006,7 +4005,7 @@ ImGuiManager::EntitySnapshot ImGuiManager::CaptureEntity(EntityID entity)
 	}
 
 	if (ComponentManager::HasComponent<MaterialComponent>(entity))
-	{	snapshot.HasMaterial = true; 
+	{	snapshot.HasMaterial = true;
 		snapshot.Material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
 	}
 
@@ -4021,18 +4020,18 @@ ImGuiManager::EntitySnapshot ImGuiManager::CaptureEntity(EntityID entity)
 	}
 
 	if (ComponentManager::HasComponent<MeshComponent>(entity))
-	{	snapshot.HasMesh = true; 
+	{	snapshot.HasMesh = true;
 		snapshot.Mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
 	}
 
-	if (ComponentManager::HasComponent<CameraComponent>(entity)) 
+	if (ComponentManager::HasComponent<CameraComponent>(entity))
 	{	snapshot.HasCamera = true;
-		snapshot.Camera = ComponentManager::GetComponentUnchecked<CameraComponent>(entity); 
+		snapshot.Camera = ComponentManager::GetComponentUnchecked<CameraComponent>(entity);
 	}
 
 	if (ComponentManager::HasComponent<PostProcessComponent>(entity))
 	{	snapshot.HasPostProcess = true;
-		snapshot.PostProcess = ComponentManager::GetComponentUnchecked<PostProcessComponent>(entity); 
+		snapshot.PostProcess = ComponentManager::GetComponentUnchecked<PostProcessComponent>(entity);
 	}
 
 	if (ComponentManager::HasComponent<InputComponent>(entity))
@@ -4040,13 +4039,13 @@ ImGuiManager::EntitySnapshot ImGuiManager::CaptureEntity(EntityID entity)
 		snapshot.Input = ComponentManager::GetComponentUnchecked<InputComponent>(entity);
 	}
 
-	if (ComponentManager::HasComponent<MoveComponent>(entity)) 
-	{	snapshot.HasMove = true; 
+	if (ComponentManager::HasComponent<MoveComponent>(entity))
+	{	snapshot.HasMove = true;
 		snapshot.Move = ComponentManager::GetComponentUnchecked<MoveComponent>(entity);
 	}
 
-	if (ComponentManager::HasComponent<PhysicsComponent>(entity)) 
-	{	snapshot.HasPhysics = true; 
+	if (ComponentManager::HasComponent<PhysicsComponent>(entity))
+	{	snapshot.HasPhysics = true;
 		snapshot.Physics = ComponentManager::GetComponentUnchecked<PhysicsComponent>(entity);
 	}
 	if (ComponentManager::HasComponent<TimelineComponent>(entity))
@@ -4055,8 +4054,8 @@ ImGuiManager::EntitySnapshot ImGuiManager::CaptureEntity(EntityID entity)
 		snapshot.Timeline = ComponentManager::GetComponentUnchecked<TimelineComponent>(entity);
 	}
 
-	if (ComponentManager::HasComponent<OBBComponent>(entity)) 
-	{	snapshot.HasObb = true; 
+	if (ComponentManager::HasComponent<OBBComponent>(entity))
+	{	snapshot.HasObb = true;
 		snapshot.Obb = ComponentManager::GetComponentUnchecked<OBBComponent>(entity);
 	}
 
@@ -4393,10 +4392,19 @@ void ImGuiManager::DrawProjectSettingsWindow()
 			RendererState::g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION,
 			RendererState::g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION);
 		ImGui::Text("キャッシュ: %s", RendererResource::IsVirtualShadowCacheHit() ? "HIT (再利用)" : "MISS (更新)");
+		ImGui::EndDisabled();
 		int debugMode = RendererSettings::GetVirtualShadowDebugMode();
 		const char* debugModes[] = { "なし", "Shadow Mask", "Clipmap Level", "Virtual Page" };
-		if (ImGui::Combo("VSM 可視化", &debugMode, debugModes, IM_ARRAYSIZE(debugModes))) RendererSettings::SetVirtualShadowDebugMode(debugMode);
-		ImGui::EndDisabled();
+		const int debugModeCount = virtualMode ? IM_ARRAYSIZE(debugModes) : 2;
+		if (debugMode >= debugModeCount)
+		{
+			debugMode = 0;
+			RendererSettings::SetVirtualShadowDebugMode(debugMode);
+		}
+		if (ImGui::Combo("シャドウ可視化", &debugMode, debugModes, debugModeCount))
+		{
+			RendererSettings::SetVirtualShadowDebugMode(debugMode);
+		}
 
 		int filterRadius = RendererSettings::GetShadowFilterRadius();
 		if (ImGui::SliderInt("PCF フィルター半径", &filterRadius, 0, 3)) RendererSettings::SetShadowFilterRadius(filterRadius);
@@ -4613,15 +4621,18 @@ void ImGuiManager::LoadProjectSettings()
 			else if (key == "vsm_cache_pages") RendererSettings::SetCacheVirtualShadowPages(stoi(value) != 0);
 			else if (key == "vsm_debug_mode") RendererSettings::SetVirtualShadowDebugMode(stoi(value));
 			else if (key == "shadow_filter_radius") RendererSettings::SetShadowFilterRadius(stoi(value));
-			else if (key == "shadow_depth_bias") RendererSettings::SetShadowDepthBias(stof(value));
-			else if (key == "shadow_normal_bias") RendererSettings::SetShadowNormalBias(stof(value));
+
+
+
+			else if (key == "shadow_depth_bias") RendererSettings::SetConventionalShadowDepthBias(stof(value));
+			else if (key == "shadow_normal_bias") RendererSettings::SetConventionalShadowNormalBias(stof(value));
 			else if (key == "vsm_depth_bias") RendererSettings::SetVirtualShadowDepthBias(stof(value));
 			else if (key == "vsm_normal_bias") RendererSettings::SetVirtualShadowNormalBias(stof(value));
 			else if (key == "shadow_resolution_transition")
 			{
 				float transition = stof(value);
-				// Values above 0.4 were saved by the former page-width control.
-				// Convert those projects to the new light-space overlap ratio.
+
+
 				if (transition > 0.40f) transition /= 8.0f;
 				RendererSettings::SetShadowResolutionTransition(transition);
 			}
@@ -4878,4 +4889,3 @@ void ImGuiManager::StyleModernSlim()
 	style.TabRounding = 2.0f;
 	style.WindowMenuButtonPosition = ImGuiDir_Right;
 }
-

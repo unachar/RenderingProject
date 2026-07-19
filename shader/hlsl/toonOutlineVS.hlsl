@@ -35,8 +35,8 @@ PSInput3D main(VSInput3D input)
     output.Position = clipPos;
     output.Normal = worldNormal;
     output.TexCoord = input.TexCoord;
-    // Keep the outline in the same opacity domain as its material.  Without this,
-    // fading a toon model leaves an opaque black silhouette behind.
+
+
     output.Diffuse = float4(0.0f, 0.0f, 0.0f, saturate(MaterialAlpha));
     output.WorldPos = worldPos.xyz;
     output.ViewPos = viewPos.xyz;

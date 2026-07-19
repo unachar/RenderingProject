@@ -39,10 +39,7 @@ public:
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetEditorSceneSrvHandle() { return m_EditorSceneSrvHandle; }
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetGBufferSrvHandle(GBufferType type) { return m_GBufferSrvHandles[static_cast<UINT>(type)]; }
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetAtmosphereSrvHandle() { return GetGBufferSrvHandle(GBufferType::ATMOSPHERE); }
+	static ID3D12Resource* GetShadowDepthResource() { return m_ShadowDepthBuffer.Get(); }
 	static D3D12_CPU_DESCRIPTOR_HANDLE GetImGuiCpuHandle();
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetImGuiGpuHandle();
-
-private:
-	inline static bool s_ShadowDepthWriteActive = false;
 };
-

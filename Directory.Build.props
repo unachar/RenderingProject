@@ -5,19 +5,19 @@
     <DirectXShaderCompilerPackageRoot>$(MSBuildThisFileDirectory)packages\Microsoft.Direct3D.DXC.$(DirectXShaderCompilerPackageVersion)\</DirectXShaderCompilerPackageRoot>
   </PropertyGroup>
 
-  <!-- RenderProfiler is included through pch.h, including for legacy Win32
-       configurations. Keep the editor UI include path available globally. -->
+
+
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)External\ImGUI;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
 
-  <!--
-    Keep the existing FXC/SM5.x project items intact, but add the native DXC
-    development environment to every x64 configuration. The NuGet property
-    sheet provides dxcapi.h and the x64 import-library search path.
-  -->
+
+
+
+
+
   <Import Project="$(DirectXShaderCompilerPackageRoot)build\native\Microsoft.Direct3D.DXC.props"
           Condition="'$(Platform)' == 'x64' and Exists('$(DirectXShaderCompilerPackageRoot)build\native\Microsoft.Direct3D.DXC.props')" />
 
@@ -26,7 +26,7 @@
       <PreprocessorDefinitions>RENDERINGPROJECT_USE_DXC=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
-      <!-- Explicitly link the API used by DxcCreateInstance. -->
+
       <AdditionalDependencies>dxcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>

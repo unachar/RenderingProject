@@ -161,7 +161,7 @@ private:
             }
 			if (InstancingSystem::CanInstance(entity))
 			{
-				// InstancingSystem owns the batched shadow submission.
+
 				continue;
 			}
 
@@ -171,17 +171,17 @@ private:
                 continue;
             }
 
-            // GPU culling happens after skinning and resource transitions.  Reject
-            // camera-culled instanced entities here so they never reach the shadow
-            // map path at all.
+
+
+
             if (InstancingSystem::CanInstance(entity) &&
                 !InstancingSystem::IsEntityVisible(entity))
             {
                 continue;
             }
 
-            // Instanced entities share one animated vertex stream.  Skin that
-            // stream only once for this shadow pass, not once per Entity.
+
+
             if (skinnedModels.insert(model).second)
             {
                 model->DispatchGpuSkinning(commandList);

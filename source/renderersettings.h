@@ -86,10 +86,10 @@ public:
 			return s_ShadowDepthBias;
 		}
 
-		// The first resident VSM level covers 4 pages of 128 texels per axis.
-		// Scale the minimum bias from that world-space texel size instead of using
-		// a fixed near-zero depth value. This removes stable receiver-plane acne
-		// bands while still allowing a larger authored bias through the UI.
+
+
+
+
 		const float automaticBias = s_VirtualFirstLevelRadius / 256000.0f;
 		return std::max(s_VirtualShadowDepthBias, automaticBias);
 	}
@@ -115,9 +115,9 @@ public:
 			return s_ShadowNormalBias;
 		}
 
-		// Keep the receiver at least 0.2 of a finest-level texel away from its
-		// own shadow depth. The projection code converts this reference value to
-		// the actual depth range of every clipmap level.
+
+
+
 		const float automaticBias = s_VirtualFirstLevelRadius / 384000.0f;
 		return std::max(s_VirtualShadowNormalBias, automaticBias);
 	}

@@ -217,7 +217,7 @@ static void LogAssimpModelInfo(const aiScene* scene, const char* fileName, const
 		Debug::Log("  Mesh[%u]: name='%s', material=%u, vertices=%u, faces=%u, bones=%u, normals=%d, texcoord0=%d\n",
 			i, mesh->mName.C_Str(), mesh->mMaterialIndex, mesh->mNumVertices, mesh->mNumFaces,
 			mesh->mNumBones, mesh->HasNormals() ? 1 : 0, mesh->HasTextureCoords(0) ? 1 : 0);
-		Debug::Log("    MaterialPartId=%.0f\n", MaterialPartResolver::ResolveMaterialPartId(scene, mesh));
+		Debug::Log("    MaterialPartId=%.0f\n", ResolveMaterialPartId(scene, mesh));
 	}
 	Debug::Log("==== end %s model import info ====\n", modelKind);
 }
@@ -374,8 +374,8 @@ static aiVector3D ConvertVmdPositionToAssimpLeftHanded(const aiVector3D& positio
 
 static aiQuaternion ConvertVmdRotationToAssimpLeftHanded(aiQuaternion rotation)
 {
-	//rotation.x = -rotation.x;
-	//rotation.y = -rotation.y;
+
+
 	rotation.Normalize();
 	return rotation;
 }
@@ -392,8 +392,8 @@ static void NormalizeBoneInfluences(GpuSkinVertex& gpuVertex, DeformVertex& defo
 		totalWeight += gpuVertex.BoneWeights[i];
 	}
 
-	// ボーンウェイトを持たない頂点はGPUスキニング側で「変換なし」として扱う。
-	// センター/rootへfallbackすると、未ウェイト頂点が原点やセンターへ吸い込まれてトゲ状に破綻する。
+
+
 	if (totalWeight <= 0.000001f)
 	{
 		deformVertex.BoneNum = 0;
@@ -530,20 +530,20 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 {
 	m_pDevice = device;
 
-	const filesystem::path modelPath = ModelImportUtils::FromUtf8(fileName);
-	const string extension = ModelImportUtils::LowerExtension(modelPath);
+	const filesystem::path modelPath = ModelPathFromUtf8(fileName);
+	const string extension = ModelPathLowerExtension(modelPath);
 	const bool isPmxModel = extension == ".pmx";
-	PmxBinary::Model pmxModel{};
+	PmxModel pmxModel{};
 	vector<vector<uint32_t>> pmxMeshVertexIndices{};
 
 	if (isPmxModel)
 	{
-		if (!PmxBinary::LoadModel(fileName, pmxModel))
+		if (!LoadPmxModel(fileName, pmxModel))
 		{
 			return false;
 		}
 
-		m_AiScene = PmxBinary::CreateGeneratedScene(pmxModel, pmxMeshVertexIndices);
+		m_AiScene = CreatePmxGeneratedScene(pmxModel, pmxMeshVertexIndices);
 		m_OwnsGeneratedAiScene = true;
 		if (!m_AiScene)
 		{
@@ -558,7 +558,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 		{
 			flags |= aiProcess_ConvertToLeftHanded;
 		}
-		m_AiScene = ModelImportUtils::ImportScene(fileName, flags);
+		m_AiScene = ImportModelScene(fileName, flags);
 		m_OwnsGeneratedAiScene = false;
 		if (!m_AiScene)
 		{
@@ -586,7 +586,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 	m_PmxJoints.clear();
 	if (isPmxModel)
 	{
-		PmxBinary::PopulateAnimationMetadata(
+		PopulatePmxAnimationMetadata(
 			pmxModel,
 			m_PmxAppendConstraints,
 			m_PmxIkConstraints,
@@ -599,7 +599,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 		m_PmxJoints = pmxModel.Joints;
 	}
 
-	const string dirPath = ModelImportUtils::ToUtf8(modelPath.parent_path());
+	const string dirPath = ModelPathToUtf8(modelPath.parent_path());
 	XMFLOAT3 minPos = { FLT_MAX, FLT_MAX, FLT_MAX };
 	XMFLOAT3 maxPos = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
 	bool hasVertices = false;
@@ -621,7 +621,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 			material->Get(AI_MATKEY_COLOR_DIFFUSE, diffuse);
 			material->Get(AI_MATKEY_OPACITY, opacity);
 		}
-		const float materialPartId = MaterialPartResolver::ResolveMaterialPartId(m_AiScene, mesh);
+		const float materialPartId = ResolveMaterialPartId(m_AiScene, mesh);
 		m_Meshes[m].MaterialName = materialName.C_Str();
 		m_Meshes[m].MaterialPartId = materialPartId;
 		m_Meshes[m].DefaultToonOutlineEnabled = materialPartId != 3.0f;
@@ -654,7 +654,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 			}
 			if (isPmxModel)
 			{
-				PmxBinary::ApplyVertexDeformData(pmxModel, pmxMeshVertexIndices, m, v, gv);
+				ApplyPmxVertexDeformData(pmxModel, pmxMeshVertexIndices, m, v, gv);
 			}
 		}
 
@@ -722,9 +722,9 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 				return vertexIndex < pendingBoneWeights.size() && !pendingBoneWeights[vertexIndex].empty();
 			};
 
-		// Assimp/PMX変換で一部頂点だけボーンウェイトが落ちると、
-		// その頂点だけバインドポーズに残って三角形がトゲ状に伸びる。
-		// まず同じ三角形に属する隣接頂点からウェイトを伝播する。
+
+
+
 		for (int pass = 0; pass < 8; ++pass)
 		{
 			bool changed = false;
@@ -768,8 +768,8 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 			}
 		}
 
-		// 三角形伝播で届かない孤立頂点/分離島は、同一メッシュ内の最近傍の
-		// ウェイト付き頂点からコピーする。これで黒い糸状の破綻を潰す。
+
+
 		size_t zeroWeightVerticesFixedByNearest = 0;
 		size_t zeroWeightVerticesFallbackToRoot = 0;
 		uint32_t wholeMeshFallbackBoneIndex = 0;
@@ -810,8 +810,8 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 			}
 			else
 			{
-				// メッシュ全体にウェイトが無い場合だけ、全体を同一ボーンへ逃がす。
-				// 部分的な未ウェイト頂点にroot fallbackを使うとトゲ化するため、最近傍コピーを優先する。
+
+
 				pendingBoneWeights[v].push_back({ wholeMeshFallbackBoneIndex, 1.0f, "<whole-mesh-fallback>" });
 				++zeroWeightVerticesFallbackToRoot;
 			}
@@ -937,9 +937,9 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 			m_Meshes[m].IndexBufferView.SizeInBytes = indexBufferSize;
 			m_Meshes[m].IndexCount = (UINT)indices.size();
 
-			// Build two topology-preserving index-only LODs.  They continue to
-			// reference the original skinned vertex stream, so bone weights and
-			// animation data remain identical across all LOD levels.
+
+
+
 			constexpr float lodRatios[MeshData::LodCount - 1] = { 0.50f, 0.20f };
 			constexpr float lodErrors[MeshData::LodCount - 1] = { 0.01f, 0.035f };
 			for (UINT lodIndex = 0; lodIndex < MeshData::LodCount - 1; ++lodIndex)
@@ -973,15 +973,15 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 				}
 			}
 
-			for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
+			for (int mode = 0; mode < kToonOutlineModeCount; ++mode)
 			{
 				vector<unsigned int> teoIndices;
-				ToonOutlineBuilder::BuildTeoMesh(
+				BuildTeoMesh(
 					m_GpuSkinVertices[m],
 					indices,
 					m_TeoGpuSkinVerticesByMode[m][mode],
 					teoIndices,
-					static_cast<ToonOutlineBuilder::Mode>(mode));
+					static_cast<ToonOutlineMeshMode>(mode));
 				if (m_TeoGpuSkinVerticesByMode[m][mode].empty() || teoIndices.empty())
 				{
 					continue;
@@ -1068,7 +1068,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 				m_Meshes[m].TeoIndexCounts[mode] = (UINT)teoIndices.size();
 				m_Meshes[m].TeoVertexCounts[mode] = (UINT)m_TeoGpuSkinVerticesByMode[m][mode].size();
 
-				if (mode == static_cast<int>(ToonOutlineBuilder::Mode::Balanced))
+				if (mode == static_cast<int>(ToonOutlineMeshMode::Balanced))
 				{
 					m_TeoGpuSkinVertices[m] = m_TeoGpuSkinVerticesByMode[m][mode];
 					m_Meshes[m].TeoIndexBuffer = m_Meshes[m].TeoIndexBuffers[mode];
@@ -1111,19 +1111,19 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 
 bool AnimationModelResource::LoadAnimation(const char* fileName, const char* name)
 {
-	const filesystem::path animPath = ModelImportUtils::FromUtf8(fileName);
+	const filesystem::path animPath = ModelPathFromUtf8(fileName);
 	if (!filesystem::exists(animPath))
 	{
 		Debug::Log("ERROR: Animation file not found: %s\n", fileName);
 		return false;
 	}
 
-	if (ModelImportUtils::LowerExtension(animPath) == ".vmd")
+	if (ModelPathLowerExtension(animPath) == ".vmd")
 	{
 		return LoadVmdAnimation(fileName, name);
 	}
 
-	const aiScene* anim = ModelImportUtils::ImportScene(fileName, aiProcess_ConvertToLeftHanded);
+	const aiScene* anim = ImportModelScene(fileName, aiProcess_ConvertToLeftHanded);
 	if (!anim)
 	{
 		Debug::Log("ERROR: Failed to load animation: %s (%s)\n", fileName, aiGetErrorString());
@@ -1148,14 +1148,14 @@ bool AnimationModelResource::LoadAnimation(const char* fileName, const char* nam
 bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* name)
 {
 	VmdAnimation animation{};
-	if (!VmdAnimationImporter::Load(fileName, animation))
+	if (!LoadVmdAnimationFile(fileName, animation))
 	{
 		return false;
 	}
 
-	// A VMD may intentionally contain only facial morphs (or only IK switches).
-	// Reject only files that have no model-animation tracks at all; requiring a
-	// bone track here made face-only VMD layers impossible to load/play.
+
+
+
 	if (animation.BoneTracks.empty() && animation.MorphTracks.empty() && animation.IkTracks.empty())
 	{
 		Debug::Log("ERROR: VMD has no bone, morph, or IK tracks: %s (motions=%u, morphs=%u, ikFrames=%u)\n",
@@ -1199,8 +1199,8 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
 
 void AnimationModelResource::InvalidateVmdRuntimeCache()
 {
-	// Reloading or replacing an animation must also invalidate the sampled-pose
-	// fast path, even when it keeps the same public animation name.
+
+
 	m_HasCachedPose = false;
 	m_HasCachedLayeredPose = false;
 	m_UseLayeredVmdIk = false;
@@ -1327,8 +1327,8 @@ void AnimationModelResource::RebuildVmdLayeredRuntimeCache(
 	m_VmdLayeredIkBindings.clear();
 	m_VmdActiveMorphsScratch.clear();
 
-	// Cache the winning source track for every bone. Iterating layers from first
-	// to last makes assignment deterministic: the final matching layer wins.
+
+
 	m_VmdLayeredBoneBindings.reserve(m_Bone.size());
 	for (auto& bonePair : m_Bone)
 	{
@@ -1492,7 +1492,7 @@ void AnimationModelResource::RebuildPmxRuntimeCache()
 }
 bool AnimationModelResource::LoadPmxIkData(const char* fileName)
 {
-	const filesystem::path pmxPath = ModelImportUtils::FromUtf8(fileName);
+	const filesystem::path pmxPath = ModelPathFromUtf8(fileName);
 	ifstream stream(pmxPath, ios::binary | ios::ate);
 	if (!stream)
 	{
@@ -2227,7 +2227,7 @@ int AnimationModelResource::ResolveMeshTextureIndex(const aiMesh* mesh, const ch
 
 	auto toLower = [](string value)
 		{
-			return MaterialPartResolver::ToLowerString(value);
+			return MaterialPartToLowerString(value);
 		};
 	auto isSupportedTextureExtension = [&](const filesystem::path& path)
 		{
@@ -2244,14 +2244,14 @@ int AnimationModelResource::ResolveMeshTextureIndex(const aiMesh* mesh, const ch
 			}
 		};
 
-	filesystem::path texFilePath = ModelImportUtils::FromUtf8(texPath.C_Str());
+	filesystem::path texFilePath = ModelPathFromUtf8(texPath.C_Str());
 	vector<filesystem::path> candidates;
 	if (texFilePath.extension() != ".tga" && texFilePath.extension() != ".TGA")
 	{
 		filesystem::path tgaPath = texFilePath;
 		tgaPath.replace_extension(".tga");
-		pushCandidate(candidates, ModelImportUtils::FromUtf8(dirPath.c_str()) / tgaPath);
-		pushCandidate(candidates, ModelImportUtils::FromUtf8(dirPath.c_str()) / tgaPath.filename());
+		pushCandidate(candidates, ModelPathFromUtf8(dirPath.c_str()) / tgaPath);
+		pushCandidate(candidates, ModelPathFromUtf8(dirPath.c_str()) / tgaPath.filename());
 	}
 	if (isSupportedTextureExtension(texFilePath))
 	{
@@ -2259,8 +2259,8 @@ int AnimationModelResource::ResolveMeshTextureIndex(const aiMesh* mesh, const ch
 		{
 			pushCandidate(candidates, texFilePath);
 		}
-		pushCandidate(candidates, ModelImportUtils::FromUtf8(dirPath.c_str()) / texFilePath);
-		pushCandidate(candidates, ModelImportUtils::FromUtf8(dirPath.c_str()) / texFilePath.filename());
+		pushCandidate(candidates, ModelPathFromUtf8(dirPath.c_str()) / texFilePath);
+		pushCandidate(candidates, ModelPathFromUtf8(dirPath.c_str()) / texFilePath.filename());
 	}
 
 	for (const auto& candidate : candidates)
@@ -2482,7 +2482,7 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 			m_Meshes[m].PreviousVertexBufferView.StrideInBytes = sizeof(ModelVertex);
 		}
 
-		for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
+		for (int mode = 0; mode < kToonOutlineModeCount; ++mode)
 		{
 			const UINT teoVertexCount = m_Meshes[m].TeoVertexCounts[mode];
 			if (teoVertexCount == 0 || m_TeoGpuSkinVerticesByMode[m][mode].empty())
@@ -2543,7 +2543,7 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 				m_Meshes[m].TeoVertexBufferViews[mode].SizeInBytes = bufSize;
 				m_Meshes[m].TeoVertexBufferViews[mode].StrideInBytes = sizeof(ModelVertex);
 
-				if (mode == static_cast<int>(ToonOutlineBuilder::Mode::Balanced))
+				if (mode == static_cast<int>(ToonOutlineMeshMode::Balanced))
 				{
 					m_Meshes[m].TeoInputVertexBuffer = m_Meshes[m].TeoInputVertexBuffers[mode];
 					m_Meshes[m].TeoVertexBuffer = m_Meshes[m].TeoVertexBuffers[mode];
@@ -2625,7 +2625,7 @@ bool AnimationModelResource::ApplyMeshShadingOverridePartIds(const vector<int>& 
 			}
 		}
 
-		for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
+		for (int mode = 0; mode < kToonOutlineModeCount; ++mode)
 		{
 			auto& teoVertices = m_TeoGpuSkinVerticesByMode[meshIndex][mode];
 			for (GpuSkinVertex& vertex : teoVertices)
@@ -2648,16 +2648,16 @@ bool AnimationModelResource::ApplyMeshShadingOverridePartIds(const vector<int>& 
 					success = false;
 				}
 			}
-			if (mode == static_cast<int>(ToonOutlineBuilder::Mode::Balanced))
+			if (mode == static_cast<int>(ToonOutlineMeshMode::Balanced))
 			{
 				m_TeoGpuSkinVertices[meshIndex] = teoVertices;
 			}
 		}
 	}
 
-	// The compute output contains a copy of the vertex diffuse data, so force a
-	// fresh dispatch after an editor-side mesh override even if the skeleton pose
-	// itself has not advanced.
+
+
+
 	++m_SkinningVersion;
 	return success;
 }
@@ -2758,14 +2758,14 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
 		const UINT copySize = sizeof(XMFLOAT4X4) * m_kMAX_BONES;
 		memcpy(mapped, m_BoneMatricesScratch.data(), copySize);
 	}
-	// EndDraw waits for the fence associated with the next back-buffer slot
-	// before the following update begins. Only that slot is safe for CPU writes.
-	// Updating every mapped upload buffer here can overwrite bone matrices that
-	// an older GPU frame is still reading, which appears as intermittent PMX
-	// mesh corruption when recording or otherwise increasing GPU latency.
-	// A render frame can consume this model in every shadow pass, the main pass,
-	// and the overlay pass.  Mark the new pose once so the compute skinning work
-	// is dispatched only when the pose actually changes.
+
+
+
+
+
+
+
+
 	++m_SkinningVersion;
 }
 
@@ -3040,8 +3040,8 @@ float AnimationModelResource::SampleVmdMorph(const VmdAnimation* animation, cons
 		return 0.0f;
 	}
 
-	const float currentFrame = VmdAnimationImporter::ToFrameTime(animation, timeSeconds);
-	return VmdAnimationImporter::SampleMorphTrack(&trackIt->second, currentFrame);
+	const float currentFrame = VmdToFrameTime(animation, timeSeconds);
+	return SampleVmdMorphTrack(&trackIt->second, currentFrame);
 }
 
 void AnimationModelResource::ApplyVmdMorphs(const VmdAnimation* animation, float currentFrame)
@@ -3060,7 +3060,7 @@ void AnimationModelResource::ApplyVmdMorphs(const VmdAnimation* animation, float
 	m_VmdActiveMorphsScratch.reserve(m_VmdMorphBindings.size());
 	for (VmdMorphBinding& binding : m_VmdMorphBindings)
 	{
-		const float weight = VmdAnimationImporter::SampleMorphTrackCached(binding.Track, currentFrame, binding.Cursor);
+		const float weight = SampleVmdMorphTrackCached(binding.Track, currentFrame, binding.Cursor);
 		if (fabsf(weight) > 0.00001f)
 		{
 			m_VmdActiveMorphsScratch.push_back({ binding.MorphIndex, weight });
@@ -3083,7 +3083,7 @@ void AnimationModelResource::ApplyVmdMorphLayers()
 		{
 			continue;
 		}
-		const float weight = VmdAnimationImporter::SampleMorphTrackCached(
+		const float weight = SampleVmdMorphTrackCached(
 			binding.Track, m_VmdLayerFramesScratch[binding.LayerIndex], binding.Cursor);
 		if (fabsf(weight) > 0.00001f)
 		{
@@ -3595,8 +3595,8 @@ void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* anima
 
 	auto solveIk = [&](const PmxIkConstraint& constraint)
 		{
-			// つま先IKは足首リンクをさらに回してCCDの振動を増やしやすいので、
-			// まずは足IKを安定させるために無効化する。
+
+
 			if (isToeIkConstraint(constraint.BoneName))
 			{
 				return false;
@@ -3808,8 +3808,8 @@ void AnimationModelResource::SampleVmdBone(const VmdAnimation* animation, const 
 		return;
 	}
 
-	const float currentFrame = VmdAnimationImporter::ToFrameTime(animation, timeSeconds);
-	VmdAnimationImporter::SampleBoneTrack(&trackIt->second, currentFrame, outRotation, outPosition);
+	const float currentFrame = VmdToFrameTime(animation, timeSeconds);
+	SampleVmdBoneTrack(&trackIt->second, currentFrame, outRotation, outPosition);
 }
 
 void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation1, float frame1,
@@ -3836,10 +3836,10 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation
 	const float safeBlendRate = clamp(blendRate, 0.0f, 1.0f);
 	const float primaryTime = animation1 ? frame1 : frame2;
 	const float secondaryTime = animation2 ? frame2 : primaryTime;
-	const float currentFrame1 = VmdAnimationImporter::ToFrameTime(primaryAnimation, primaryTime);
+	const float currentFrame1 = VmdToFrameTime(primaryAnimation, primaryTime);
 	const bool useSecondarySample = secondaryAnimation && safeBlendRate > 0.0001f &&
 		(secondaryAnimation != primaryAnimation || fabsf(secondaryTime - primaryTime) > 0.0001f);
-	const float currentFrame2 = useSecondarySample ? VmdAnimationImporter::ToFrameTime(secondaryAnimation, secondaryTime) : currentFrame1;
+	const float currentFrame2 = useSecondarySample ? VmdToFrameTime(secondaryAnimation, secondaryTime) : currentFrame1;
 	for (VmdBoneBinding& binding : m_VmdBoneBindings)
 	{
 		Bone* bonePtr = binding.BonePtr;
@@ -3850,7 +3850,7 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation
 
 		aiQuaternion rotation1(1.0f, 0.0f, 0.0f, 0.0f);
 		aiVector3D pos1(0.0f, 0.0f, 0.0f);
-		VmdAnimationImporter::SampleBoneTrackCached(binding.PrimaryTrack, currentFrame1, binding.PrimaryCursor, rotation1, pos1);
+		SampleVmdBoneTrackCached(binding.PrimaryTrack, currentFrame1, binding.PrimaryCursor, rotation1, pos1);
 
 		aiQuaternion rotation = rotation1;
 		aiVector3D pos = pos1;
@@ -3858,7 +3858,7 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation
 		{
 			aiQuaternion rotation2(1.0f, 0.0f, 0.0f, 0.0f);
 			aiVector3D pos2(0.0f, 0.0f, 0.0f);
-			VmdAnimationImporter::SampleBoneTrackCached(binding.SecondaryTrack, currentFrame2, binding.SecondaryCursor, rotation2, pos2);
+			SampleVmdBoneTrackCached(binding.SecondaryTrack, currentFrame2, binding.SecondaryCursor, rotation2, pos2);
 			pos = pos1 * (1.0f - safeBlendRate) + pos2 * safeBlendRate;
 			aiQuaternion::Interpolate(rotation, rotation1, rotation2, safeBlendRate);
 			rotation.Normalize();
@@ -3894,7 +3894,7 @@ void AnimationModelResource::UpdateVmdBoneMatrices(
 	{
 		const VmdAnimation* animation = m_CachedVmdLayerAnimations[layerIndex];
 		hasVmdAnimation = hasVmdAnimation || animation != nullptr;
-		m_VmdLayerFramesScratch[layerIndex] = VmdAnimationImporter::ToFrameTime(
+		m_VmdLayerFramesScratch[layerIndex] = VmdToFrameTime(
 			animation, animationLayers[layerIndex].CurrentTime);
 	}
 	if (!hasVmdAnimation)
@@ -3931,7 +3931,7 @@ void AnimationModelResource::UpdateVmdBoneMatrices(
 		aiVector3D position(0.0f, 0.0f, 0.0f);
 		if (binding.Track && binding.LayerIndex < m_VmdLayerFramesScratch.size())
 		{
-			VmdAnimationImporter::SampleBoneTrackCached(
+			SampleVmdBoneTrackCached(
 				binding.Track,
 				m_VmdLayerFramesScratch[binding.LayerIndex],
 				binding.Cursor,
@@ -3972,7 +3972,7 @@ bool AnimationModelResource::IsVmdIkEnabled(const VmdAnimation* animation, const
 		{
 			return true;
 		}
-		return VmdAnimationImporter::SampleIkTrackCached(
+		return SampleVmdIkTrackCached(
 			binding.Track, m_VmdLayerFramesScratch[binding.LayerIndex], binding.Cursor);
 	}
 
@@ -4012,9 +4012,9 @@ bool AnimationModelResource::IsVmdIkEnabled(const VmdAnimation* animation, const
 
 	if (cursor)
 	{
-		return VmdAnimationImporter::SampleIkTrackCached(keys, currentFrame, *cursor);
+		return SampleVmdIkTrackCached(keys, currentFrame, *cursor);
 	}
-	return VmdAnimationImporter::SampleIkTrack(keys, currentFrame);
+	return SampleVmdIkTrack(keys, currentFrame);
 }
 
 void AnimationModelResource::ApplyPmxIk(const VmdAnimation* animation, float timeSeconds)
@@ -4024,7 +4024,7 @@ void AnimationModelResource::ApplyPmxIk(const VmdAnimation* animation, float tim
 		return;
 	}
 
-	const float currentFrame = VmdAnimationImporter::ToFrameTime(animation, timeSeconds);
+	const float currentFrame = VmdToFrameTime(animation, timeSeconds);
 
 	auto aiToXm = [](const aiMatrix4x4& src)
 		{
@@ -4441,16 +4441,16 @@ void AnimationModelResource::UpdateBoneMatrices(
 
 	if (hasVmdAnimation)
 	{
-		// The simultaneous VMD path owns a separate cache so switching between it
-		// and the legacy cross-fade path cannot reuse a pose from the other mode.
+
+
 		m_HasCachedPose = false;
 		UpdateVmdBoneMatrices(animationLayers);
 		return;
 	}
 
-	// Simultaneous playback is primarily a VMD feature. Preserve deterministic
-	// behavior for other import formats by selecting the final (highest-priority)
-	// animation instead of accidentally treating the set as a cross-fade.
+
+
+
 	const AnimationPlaybackLayer& highestPriorityLayer = animationLayers.back();
 	UpdateBoneMatrices(
 		highestPriorityLayer.AnimationName.c_str(), highestPriorityLayer.CurrentTime,
@@ -4537,7 +4537,7 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 			m_Meshes[m].PreviousVertexValid = true;
 		}
 
-		for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
+		for (int mode = 0; mode < kToonOutlineModeCount; ++mode)
 		{
 			if (m_Meshes[m].TeoVertexCounts[mode] == 0 ||
 				!m_Meshes[m].TeoInputVertexBuffers[mode] ||
@@ -4622,7 +4622,7 @@ void AnimationModelResource::Uninit()
 	{
 		if (m_OwnsGeneratedAiScene)
 		{
-			PmxBinary::DestroyGeneratedScene(const_cast<aiScene*>(m_AiScene));
+			DestroyPmxGeneratedScene(const_cast<aiScene*>(m_AiScene));
 		}
 		else
 		{

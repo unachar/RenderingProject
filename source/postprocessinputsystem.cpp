@@ -3,8 +3,7 @@
 #include "componentmanager.h"
 #include "world.h"
 
-namespace
-{
+
 	void ApplyPostProcessFromInput(const InputComponent& input, PostProcessComponent& post, float dt, float minIntensity)
 	{
 		if (!input.IsActive)
@@ -31,7 +30,7 @@ namespace
 		if (post.Intensity < minIntensity) post.Intensity = minIntensity;
 		if (post.Intensity > 1.0f) post.Intensity = 1.0f;
 	}
-}
+
 
 void PostProcessInputSystem::Update()
 {

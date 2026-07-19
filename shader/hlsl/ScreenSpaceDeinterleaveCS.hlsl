@@ -11,7 +11,7 @@ cbuffer ScreenSpaceConstants : register(b0)
     float4x4 InvViewProjection;
     uint2 FullExtent;
     uint2 DeinterleavedExtent;
-    float4 EffectParams; // x: AO radius, y: AO power, z: SSGI intensity, w: history valid
+    float4 EffectParams;
     uint4 FeatureFlags;
 };
 

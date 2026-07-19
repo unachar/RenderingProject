@@ -4,32 +4,31 @@
 #include "renderersettings.h"
 #include "renderprofiler.h"
 
-namespace
-{
-	ComPtr<ID3D12Device> g_Device;
-	ComPtr<ID3D12DescriptorHeap> g_Heap;
-	UINT g_Increment = 0;
-	ComPtr<ID3D12RootSignature> g_RootSignature;
-	ComPtr<ID3D12PipelineState> g_ReducePso;
-	ComPtr<ID3D12Resource> g_HiZ[2];
-	UINT g_Width = 0;
-	UINT g_Height = 0;
-	UINT g_MipCount = 0;
-	UINT g_PreviousIndex = 0;
-	UINT g_CurrentIndex = 1;
-	UINT g_Phase = 0;
-	bool g_PreviousValid = false;
-	bool g_CurrentValid = false;
 
-	D3D12_CPU_DESCRIPTOR_HANDLE Cpu(UINT index)
+	static ComPtr<ID3D12Device> g_Device;
+	static ComPtr<ID3D12DescriptorHeap> g_Heap;
+	static UINT g_Increment = 0;
+	static ComPtr<ID3D12RootSignature> g_RootSignature;
+	static ComPtr<ID3D12PipelineState> g_ReducePso;
+	static ComPtr<ID3D12Resource> g_HiZ[2];
+	static UINT g_Width = 0;
+	static UINT g_Height = 0;
+	static UINT g_MipCount = 0;
+	static UINT g_PreviousIndex = 0;
+	static UINT g_CurrentIndex = 1;
+	static UINT g_Phase = 0;
+	static bool g_PreviousValid = false;
+	static bool g_CurrentValid = false;
+
+	static D3D12_CPU_DESCRIPTOR_HANDLE Cpu(UINT index)
 	{
 		return CD3DX12_CPU_DESCRIPTOR_HANDLE(g_Heap->GetCPUDescriptorHandleForHeapStart(), index, g_Increment);
 	}
-	D3D12_GPU_DESCRIPTOR_HANDLE Gpu(UINT index)
+	static D3D12_GPU_DESCRIPTOR_HANDLE Gpu(UINT index)
 	{
 		return CD3DX12_GPU_DESCRIPTOR_HANDLE(g_Heap->GetGPUDescriptorHandleForHeapStart(), index, g_Increment);
 	}
-	bool LoadPipeline(const wchar_t* path, ComPtr<ID3D12PipelineState>& output)
+	static bool LoadPipeline(const wchar_t* path, ComPtr<ID3D12PipelineState>& output)
 	{
 		ComPtr<ID3DBlob> shader;
 		if (FAILED(D3DReadFileToBlob(path, &shader))) return false;
@@ -38,7 +37,7 @@ namespace
 		desc.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
 		return SUCCEEDED(g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&output)));
 	}
-}
+
 
 bool OcclusionCulling::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UINT descriptorIncrement)
 {
@@ -154,8 +153,8 @@ void OcclusionCulling::BuildCurrent(
 	commandList->SetDescriptorHeaps(1, heaps);
 	commandList->SetComputeRootSignature(g_RootSignature.Get());
 
-	// A full-subresource copy is both faster and more robust than sampling a
-	// depth/stencil allocation from compute on the mip-zero path.
+
+
 	auto mipZeroToCopy = CD3DX12_RESOURCE_BARRIER::Transition(
 		g_HiZ[g_CurrentIndex].Get(),
 		D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
@@ -189,8 +188,8 @@ void OcclusionCulling::BuildCurrent(
 		commandList->SetComputeRootDescriptorTable(
 			1, Gpu(RendererState::g_kHIZ_UAV_START_INDEX +
 				g_CurrentIndex * RendererState::g_kHIZ_MAX_MIPS + mip));
-		// A one-mip SRV remaps the previous physical mip to shader mip zero. Keeping
-		// the SRV disjoint from the destination UAV avoids a read/write view overlap.
+
+
 		const UINT constants[4] = { width, height, 0u, 1u };
 		commandList->SetComputeRoot32BitConstants(2, 4, constants, 0);
 		commandList->Dispatch((width + 7u) / 8u, (height + 7u) / 8u, 1);

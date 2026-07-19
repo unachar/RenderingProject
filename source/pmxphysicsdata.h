@@ -12,7 +12,7 @@ struct PmxRigidBodyData
 	std::string BoneName{};
 	uint8_t CollisionGroup = 0;
 	uint16_t CollisionMask = 0xffff;
-	uint8_t Shape = 0;      // 0 sphere, 1 box, 2 capsule
+	uint8_t Shape = 0;
 	DirectX::XMFLOAT3 Size{};
 	DirectX::XMFLOAT3 Position{};
 	DirectX::XMFLOAT3 Rotation{};
@@ -21,7 +21,7 @@ struct PmxRigidBodyData
 	float AngularDamping = 0.0f;
 	float Restitution = 0.0f;
 	float Friction = 0.5f;
-	uint8_t Operation = 0;  // 0 bone-follow, 1 dynamic, 2 dynamic + bone translation
+	uint8_t Operation = 0;
 };
 
 struct PmxJointData
@@ -40,4 +40,3 @@ struct PmxJointData
 	DirectX::XMFLOAT3 LinearSpring{};
 	DirectX::XMFLOAT3 AngularSpring{};
 };
-

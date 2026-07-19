@@ -3,9 +3,8 @@
 #include "animationmodel.h"
 #include "pmxphysicsdata.h"
 
-namespace PmxBinary
-{
-	struct Vertex
+
+	struct PmxVertex
 	{
 		aiVector3D Position{};
 		aiVector3D Normal{};
@@ -19,7 +18,7 @@ namespace PmxBinary
 		float EdgeScale = 1.0f;
 	};
 
-	struct Material
+	struct PmxMaterial
 	{
 		string Name{};
 		string EnglishName{};
@@ -38,7 +37,7 @@ namespace PmxBinary
 		uint32_t IndexCount = 0;
 	};
 
-	struct IkLink
+	struct PmxBinaryIkLink
 	{
 		int32_t BoneIndex = -1;
 		bool HasLimit = false;
@@ -46,7 +45,7 @@ namespace PmxBinary
 		aiVector3D LimitMax{};
 	};
 
-	struct Bone
+	struct PmxBone
 	{
 		string Name{};
 		string EnglishName{};
@@ -59,28 +58,28 @@ namespace PmxBinary
 		int32_t IkTargetIndex = -1;
 		uint32_t IkIterationCount = 0;
 		float IkLimitAngle = 0.0f;
-		vector<IkLink> IkLinks{};
+		vector<PmxBinaryIkLink> IkLinks{};
 	};
 
-	struct Model
+	struct PmxModel
 	{
 		string ModelName{};
 		string EnglishModelName{};
-		vector<Vertex> Vertices{};
+		vector<PmxVertex> Vertices{};
 		vector<uint32_t> Indices{};
 		vector<string> Textures{};
-		vector<Material> Materials{};
-		vector<Bone> Bones{};
+		vector<PmxMaterial> Materials{};
+		vector<PmxBone> Bones{};
 		vector<PmxMorph> Morphs{};
 		vector<PmxRigidBodyData> RigidBodies{};
 		vector<PmxJointData> Joints{};
 	};
 
-	bool LoadModel(const char* fileName, Model& outModel);
-	aiScene* CreateGeneratedScene(const Model& model, vector<vector<uint32_t>>& outMeshVertexPmxIndices);
-	void DestroyGeneratedScene(aiScene* scene);
-	void PopulateAnimationMetadata(
-		const Model& model,
+	bool LoadPmxModel(const char* fileName, PmxModel& outModel);
+	aiScene* CreatePmxGeneratedScene(const PmxModel& model, vector<vector<uint32_t>>& outMeshVertexPmxIndices);
+	void DestroyPmxGeneratedScene(aiScene* scene);
+	void PopulatePmxAnimationMetadata(
+		const PmxModel& model,
 		vector<PmxAppendConstraint>& appendConstraints,
 		vector<PmxIkConstraint>& ikConstraints,
 		vector<aiVector3D>& baseVertices,
@@ -88,10 +87,9 @@ namespace PmxBinary
 		vector<XMFLOAT2>& baseTexCoords,
 		vector<PmxMorph>& morphs,
 		unordered_map<string, uint32_t>& morphIndexMap);
-	void ApplyVertexDeformData(
-		const Model& model,
+	void ApplyPmxVertexDeformData(
+		const PmxModel& model,
 		const vector<vector<uint32_t>>& meshVertexPmxIndices,
 		uint32_t meshIndex,
 		uint32_t vertexIndex,
 		GpuSkinVertex& gpuVertex);
-}

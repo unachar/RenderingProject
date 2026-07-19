@@ -1,8 +1,8 @@
-// ==========================================================
-// skinning_cs.hlsl
-// コンピュートシェーダによるGPUスキニング
-// 2026-07-05: zero-weight / invalid-index safe version
-// ==========================================================
+
+
+
+
+
 
 struct GpuSkinVertex
 {
@@ -135,8 +135,8 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
 
     GpuSkinVertex input = g_InputVertices[vertexIndex];
 
-    // 範囲外ボーンや負のボーン番号は読まない。
-    // C++側でほぼ起きない前提だが、ここで守っておくとトゲ状破綻の最後の保険になる。
+
+
     bool validX = input.BoneWeights.x > 0.0f && input.BoneIndices.x >= 0 && (uint) input.BoneIndices.x < boneCount;
     bool validY = input.BoneWeights.y > 0.0f && input.BoneIndices.y >= 0 && (uint) input.BoneIndices.y < boneCount;
     bool validZ = input.BoneWeights.z > 0.0f && input.BoneIndices.z >= 0 && (uint) input.BoneIndices.z < boneCount;
@@ -150,8 +150,8 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
 
     const float totalWeight = weights.x + weights.y + weights.z + weights.w;
 
-    // C++側で未ウェイト頂点は近傍頂点のウェイトで補修する。
-    // それでも残った場合は、変換せず元頂点を出す。
+
+
     if (totalWeight <= 0.0001f)
     {
         SkinnedVertex output;

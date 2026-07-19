@@ -6,8 +6,7 @@
 
 using namespace std;
 
-namespace
-{
+
 	struct Reader
 	{
 		const vector<uint8_t>& Bytes;
@@ -181,7 +180,7 @@ namespace
 		return value;
 	}
 
-	void AddMaterialProperties(aiMaterial* material, const PmxBinary::Material& source, const vector<string>& textures)
+	void AddMaterialProperties(aiMaterial* material, const PmxMaterial& source, const vector<string>& textures)
 	{
 		const string materialName = !source.Name.empty() ? source.Name : source.EnglishName;
 		aiString name(materialName.c_str());
@@ -204,13 +203,12 @@ namespace
 			material->AddProperty(&texPath, AI_MATKEY_TEXTURE(aiTextureType_DIFFUSE, 0));
 		}
 	}
-}
 
-namespace PmxBinary
-{
-	bool LoadModel(const char* fileName, Model& outModel)
+
+
+	bool LoadPmxModel(const char* fileName, PmxModel& outModel)
 	{
-		const filesystem::path pmxPath = ModelImportUtils::FromUtf8(fileName);
+		const filesystem::path pmxPath = ModelPathFromUtf8(fileName);
 		ifstream stream(pmxPath, ios::binary | ios::ate);
 		if (!stream)
 		{
@@ -285,7 +283,7 @@ namespace PmxBinary
 		size_t sdefVertexCount = 0;
 		for (int32_t i = 0; i < vertexCount; ++i)
 		{
-			Vertex& vertex = outModel.Vertices[static_cast<size_t>(i)];
+			PmxVertex& vertex = outModel.Vertices[static_cast<size_t>(i)];
 			if (!ReadFloat3(reader, vertex.Position) ||
 				!ReadFloat3(reader, vertex.Normal) ||
 				!reader.Read(vertex.TexCoord.x) ||
@@ -391,7 +389,7 @@ namespace PmxBinary
 		outModel.Materials.resize(static_cast<size_t>(materialCount));
 		for (int32_t i = 0; i < materialCount; ++i)
 		{
-			Material& material = outModel.Materials[static_cast<size_t>(i)];
+			PmxMaterial& material = outModel.Materials[static_cast<size_t>(i)];
 			int32_t surfaceCount = 0;
 			if (!reader.ReadText(material.Name) ||
 				!reader.ReadText(material.EnglishName) ||
@@ -442,7 +440,7 @@ namespace PmxBinary
 		outModel.Bones.resize(static_cast<size_t>(boneCount));
 		for (int32_t i = 0; i < boneCount; ++i)
 		{
-			Bone& bone = outModel.Bones[static_cast<size_t>(i)];
+			PmxBone& bone = outModel.Bones[static_cast<size_t>(i)];
 			int32_t ignoredIndex = -1;
 			if (!reader.ReadText(bone.Name) ||
 				!reader.ReadText(bone.EnglishName) ||
@@ -491,7 +489,7 @@ namespace PmxBinary
 				bone.IkLinks.resize(static_cast<size_t>(linkCount));
 				for (int32_t link = 0; link < linkCount; ++link)
 				{
-					IkLink& rawLink = bone.IkLinks[static_cast<size_t>(link)];
+					PmxBinaryIkLink& rawLink = bone.IkLinks[static_cast<size_t>(link)];
 					uint8_t hasLimit = 0;
 					if (!reader.ReadIndex(reader.BoneIndexSize, rawLink.BoneIndex) ||
 						!reader.Read(hasLimit))
@@ -639,8 +637,8 @@ namespace PmxBinary
 			}
 		}
 
-		// Display frames sit between morphs and rigid bodies in PMX 2.x. They
-		// are editor metadata, but must be consumed to reach the physics block.
+
+
 		int32_t displayFrameCount = 0;
 		if (!reader.Read(displayFrameCount) || displayFrameCount < 0)
 		{
@@ -750,7 +748,7 @@ namespace PmxBinary
 		return true;
 	}
 
-	aiScene* CreateGeneratedScene(const Model& model, vector<vector<uint32_t>>& outMeshVertexPmxIndices)
+	aiScene* CreatePmxGeneratedScene(const PmxModel& model, vector<vector<uint32_t>>& outMeshVertexPmxIndices)
 	{
 		unique_ptr<aiScene> scene(new aiScene());
 		scene->mRootNode = new aiNode();
@@ -762,7 +760,7 @@ namespace PmxBinary
 		const size_t rootChildSlot = model.Bones.size();
 		for (size_t i = 0; i < model.Bones.size(); ++i)
 		{
-			const Bone& bone = model.Bones[i];
+			const PmxBone& bone = model.Bones[i];
 			aiNode* node = new aiNode();
 			node->mName = aiString(bone.Name.c_str());
 			const bool hasParent = bone.ParentIndex >= 0 &&
@@ -775,7 +773,7 @@ namespace PmxBinary
 
 		for (size_t i = 0; i < model.Bones.size(); ++i)
 		{
-			const Bone& bone = model.Bones[i];
+			const PmxBone& bone = model.Bones[i];
 			const bool hasParent = bone.ParentIndex >= 0 &&
 				bone.ParentIndex < static_cast<int32_t>(model.Bones.size()) &&
 				bone.ParentIndex != static_cast<int32_t>(i);
@@ -824,7 +822,7 @@ namespace PmxBinary
 			}
 			else
 			{
-				Material fallback{};
+				PmxMaterial fallback{};
 				fallback.Name = "Default";
 				AddMaterialProperties(scene->mMaterials[i], fallback, model.Textures);
 			}
@@ -935,7 +933,7 @@ namespace PmxBinary
 			mesh->mNumUVComponents[0] = 2;
 			for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
 			{
-				const Vertex& sourceVertex = model.Vertices[build.PmxVertexIndices[v]];
+				const PmxVertex& sourceVertex = model.Vertices[build.PmxVertexIndices[v]];
 				mesh->mVertices[v] = ConvertPosition(sourceVertex.Position);
 				mesh->mNormals[v] = ConvertPosition(sourceVertex.Normal);
 				mesh->mTextureCoords[0][v] = aiVector3D(sourceVertex.TexCoord.x, sourceVertex.TexCoord.y, 0.0f);
@@ -956,7 +954,7 @@ namespace PmxBinary
 			vector<vector<aiVertexWeight>> weightsByBone(model.Bones.size());
 			for (unsigned int localVertex = 0; localVertex < mesh->mNumVertices; ++localVertex)
 			{
-				const Vertex& sourceVertex = model.Vertices[build.PmxVertexIndices[localVertex]];
+				const PmxVertex& sourceVertex = model.Vertices[build.PmxVertexIndices[localVertex]];
 				for (int influence = 0; influence < 4; ++influence)
 				{
 					const int32_t boneIndex = sourceVertex.BoneIndices[influence];
@@ -1016,7 +1014,7 @@ namespace PmxBinary
 		return scene.release();
 	}
 
-	void DestroyGeneratedScene(aiScene* scene)
+	void DestroyPmxGeneratedScene(aiScene* scene)
 	{
 		if (!scene)
 		{
@@ -1114,8 +1112,8 @@ namespace PmxBinary
 		delete scene;
 	}
 
-	void PopulateAnimationMetadata(
-		const Model& model,
+	void PopulatePmxAnimationMetadata(
+		const PmxModel& model,
 		vector<PmxAppendConstraint>& appendConstraints,
 		vector<PmxIkConstraint>& ikConstraints,
 		vector<aiVector3D>& baseVertices,
@@ -1130,7 +1128,7 @@ namespace PmxBinary
 		baseVertices.reserve(model.Vertices.size());
 		baseNormals.reserve(model.Vertices.size());
 		baseTexCoords.reserve(model.Vertices.size());
-		for (const Vertex& vertex : model.Vertices)
+		for (const PmxVertex& vertex : model.Vertices)
 		{
 			baseVertices.push_back(ConvertPosition(vertex.Position));
 			baseNormals.push_back(ConvertPosition(vertex.Normal));
@@ -1150,7 +1148,7 @@ namespace PmxBinary
 		appendConstraints.clear();
 		for (uint32_t i = 0; i < static_cast<uint32_t>(model.Bones.size()); ++i)
 		{
-			const Bone& bone = model.Bones[i];
+			const PmxBone& bone = model.Bones[i];
 			if (((bone.Flags & 0x0100) == 0 && (bone.Flags & 0x0200) == 0) ||
 				bone.AppendBoneIndex < 0 ||
 				bone.AppendBoneIndex >= static_cast<int32_t>(model.Bones.size()))
@@ -1176,7 +1174,7 @@ namespace PmxBinary
 		ikConstraints.clear();
 		for (uint32_t i = 0; i < static_cast<uint32_t>(model.Bones.size()); ++i)
 		{
-			const Bone& bone = model.Bones[i];
+			const PmxBone& bone = model.Bones[i];
 			if ((bone.Flags & 0x0020) == 0 ||
 				bone.IkTargetIndex < 0 ||
 				bone.IkTargetIndex >= static_cast<int32_t>(model.Bones.size()))
@@ -1191,7 +1189,7 @@ namespace PmxBinary
 			constraint.LimitAngle = bone.IkLimitAngle;
 			constraint.DeformDepth = bone.DeformDepth;
 			constraint.BoneOrder = i;
-			for (const IkLink& rawLink : bone.IkLinks)
+			for (const PmxBinaryIkLink& rawLink : bone.IkLinks)
 			{
 				if (rawLink.BoneIndex < 0 || rawLink.BoneIndex >= static_cast<int32_t>(model.Bones.size()))
 				{
@@ -1242,8 +1240,8 @@ namespace PmxBinary
 			positionMorphCount, uvMorphCount, boneMorphCount, materialMorphCount, groupMorphCount);
 	}
 
-	void ApplyVertexDeformData(
-		const Model& model,
+	void ApplyPmxVertexDeformData(
+		const PmxModel& model,
 		const vector<vector<uint32_t>>& meshVertexPmxIndices,
 		uint32_t meshIndex,
 		uint32_t vertexIndex,
@@ -1261,10 +1259,9 @@ namespace PmxBinary
 			return;
 		}
 
-		const Vertex& sourceVertex = model.Vertices[pmxVertexIndex];
+		const PmxVertex& sourceVertex = model.Vertices[pmxVertexIndex];
 		gpuVertex.DeformType = sourceVertex.DeformType;
 		gpuVertex.SdefC = XMFLOAT4(sourceVertex.SdefC.x, sourceVertex.SdefC.y, sourceVertex.SdefC.z, 0.0f);
 		gpuVertex.SdefR0 = XMFLOAT4(sourceVertex.SdefR0.x, sourceVertex.SdefR0.y, sourceVertex.SdefR0.z, 0.0f);
 		gpuVertex.SdefR1 = XMFLOAT4(sourceVertex.SdefR1.x, sourceVertex.SdefR1.y, sourceVertex.SdefR1.z, 0.0f);
 	}
-}

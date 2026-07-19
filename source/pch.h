@@ -52,20 +52,11 @@ public:
 #if defined(RENDERINGPROJECT_USE_DXC) && RENDERINGPROJECT_USE_DXC
 #include "dxccompiler.h"
 
-// Preserve legacy call sites while routing runtime HLSL compilation through
-// IDxcCompiler3. Legacy stage_5_x targets are promoted to stage_6_0 by the
-// compatibility adapter.
 #define D3DCompileFromFile DxcCompileFromFileCompat
 #endif
 
 #include "renderprofiler.h"
 
-// Count the engine's actual D3D12 submissions without replacing the command
-// list object. These expression-style macros remain a single statement, so they
-// are safe under an unbraced if/for statement. D3D12 interfaces have already
-// been declared above, preventing the macros from altering SDK declarations.
-// Define RENDERINGPROJECT_DISABLE_RENDER_CALL_INSTRUMENTATION before pch.h to
-// disable this layer while diagnosing an integration conflict.
 #ifndef RENDERINGPROJECT_DISABLE_RENDER_CALL_INSTRUMENTATION
 #define DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation) \
 	DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation), \
