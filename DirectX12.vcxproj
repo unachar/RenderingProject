@@ -661,7 +661,7 @@ copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\b
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
-    <!-- ImGui core sources -->
+
     <ClCompile Include="External\ImGUI\imgui.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -683,7 +683,7 @@ copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\b
     <ClCompile Include="External\meshoptimizer\src\simplifier.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
-    <!-- ImGui backend -->
+
     <ClCompile Include="External\ImGUI\imgui_impl_dx12.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -721,7 +721,7 @@ copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\b
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="source\polygon.cpp" />
-    <!-- Block breaker removed -->
+
     <ClCompile Include="source\polygon3d.cpp" />
     <ClCompile Include="source\renderer.cpp" />
     <ClCompile Include="source\renderercore.cpp" />
@@ -729,6 +729,7 @@ copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\b
     <ClCompile Include="source\renderershader.cpp" />
     <ClCompile Include="source\rendererresource.cpp" />
     <ClCompile Include="source\rendererdraw.cpp" />
+    <ClCompile Include="source\rendergraph.cpp" />
     <ClCompile Include="source\spatialupscaler.cpp" />
     <ClCompile Include="source\visibilitybuffer.cpp" />
     <ClCompile Include="source\screenspaceeffects.cpp" />
@@ -797,13 +798,14 @@ copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\b
     <ClInclude Include="source\rendererutils.h" />
     <ClInclude Include="source\pch.h" />
     <ClInclude Include="source\polygon.h" />
-    <!-- Block breaker headers removed -->
+
     <ClInclude Include="source\polygon3d.h" />
     <ClInclude Include="source\rendererstate.h" />
     <ClInclude Include="source\renderercore.h" />
     <ClInclude Include="source\renderershader.h" />
     <ClInclude Include="source\rendererresource.h" />
     <ClInclude Include="source\rendererdraw.h" />
+    <ClInclude Include="source\rendergraph.h" />
     <ClInclude Include="source\spatialupscaler.h" />
     <ClInclude Include="source\visibilitybuffer.h" />
     <ClInclude Include="source\screenspaceeffects.h" />

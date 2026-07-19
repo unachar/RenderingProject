@@ -21,21 +21,20 @@
 
 using namespace std;
 
-namespace
-{
-	const MaterialComponent& DefaultMaterial()
+
+	static const MaterialComponent& DefaultMaterial()
 	{
 		static const MaterialComponent material{};
 		return material;
 	}
 
-	bool IsSkyEntity(EntityID entity)
+	static bool IsSkyEntity(EntityID entity)
 	{
 		return ComponentManager::HasComponent<NameComponent>(entity) &&
 			ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky";
 	}
 
-	bool ShouldCastShadow(EntityID entity)
+	static bool ShouldCastShadow(EntityID entity)
 	{
 		if (IsSkyEntity(entity) || ComponentManager::HasComponent<LightComponent>(entity))
 		{
@@ -55,7 +54,7 @@ namespace
 			material.ShaderClass == ShaderClass::Shadow);
 	}
 
-	bool ShouldDrawToonOutline(EntityID entity)
+	static bool ShouldDrawToonOutline(EntityID entity)
 	{
 		if (!Registry::HasComponent(entity, ComponentType::MATERIAL))
 		{
@@ -95,7 +94,7 @@ namespace
 
 	int GetTeoModeIndex(const MaterialComponent& material)
 	{
-		return std::clamp(static_cast<int>(material.ToonTeoRenderMode), 0, ToonOutlineBuilder::kModeCount - 1);
+		return std::clamp(static_cast<int>(material.ToonTeoRenderMode), 0, kToonOutlineModeCount - 1);
 	}
 
 	template <class TMeshData>
@@ -125,7 +124,7 @@ namespace
 		return 1.0f;
 	}
 
-	float GetCameraDepth(EntityID entity, const XMMATRIX& view)
+	static float GetCameraDepth(EntityID entity, const XMMATRIX& view)
 	{
 		if (!Registry::HasComponent(entity, ComponentType::TRANSFORM))
 		{
@@ -161,7 +160,7 @@ namespace
 		}
 		return "shader/hlsl/build/modelshaderPS.cso";
 	}
-}
+
 
 void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
@@ -493,7 +492,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 					D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
 				pCommandList->ResourceBarrier(1, &vbBarrier);
 
-				for (int teoMode = 0; teoMode < ToonOutlineBuilder::kModeCount; ++teoMode)
+				for (int teoMode = 0; teoMode < kToonOutlineModeCount; ++teoMode)
 				{
 					if (!meshData.TeoVertexBuffers[teoMode])
 					{
@@ -620,7 +619,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 					D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 				pCommandList->ResourceBarrier(1, &backBarrier);
 
-				for (int teoMode = 0; teoMode < ToonOutlineBuilder::kModeCount; ++teoMode)
+				for (int teoMode = 0; teoMode < kToonOutlineModeCount; ++teoMode)
 				{
 					if (!meshData.TeoVertexBuffers[teoMode])
 					{
@@ -865,4 +864,3 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 		}
 	}
 }
-

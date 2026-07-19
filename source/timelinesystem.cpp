@@ -5,8 +5,7 @@
 #include "projectmanager.h"
 #include <algorithm>
 
-namespace
-{
+
 	float ApplyEase(float value, TimelineInterpolation interpolation)
 	{
 		value = clamp(value, 0.0f, 1.0f);
@@ -107,7 +106,7 @@ namespace
 				target).Intensity = clamp(value.x, 0.0f, 1.0f);
 		}
 	}
-}
+
 
 vector<unique_ptr<TimeLineDirector>> TimeLineSystem::m_Directors;
 

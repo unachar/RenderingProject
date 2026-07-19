@@ -1,10 +1,9 @@
 #include "pch.h"
 #include "atmosphere.h"
 
-namespace
-{
+
 	AtmosphereParameters g_AtmosphereParameters{};
-}
+
 
 const AtmosphereParameters& Atmosphere::GetParameters()
 {

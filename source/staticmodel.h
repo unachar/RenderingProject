@@ -23,22 +23,22 @@ struct StaticMeshData
 	std::array<ComPtr<ID3D12Resource>, LodCount - 1> LodIndexBuffers{};
 	ComPtr<ID3D12Resource> TeoVertexBuffer{};
 	ComPtr<ID3D12Resource> TeoIndexBuffer{};
-	std::array<ComPtr<ID3D12Resource>, ToonOutlineBuilder::kModeCount> TeoVertexBuffers{};
-	std::array<ComPtr<ID3D12Resource>, ToonOutlineBuilder::kModeCount> TeoIndexBuffers{};
+	std::array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoVertexBuffers{};
+	std::array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoIndexBuffers{};
 	D3D12_VERTEX_BUFFER_VIEW VertexBufferView{};
 	D3D12_INDEX_BUFFER_VIEW IndexBufferView{};
 	std::array<D3D12_INDEX_BUFFER_VIEW, LodCount - 1> LodIndexBufferViews{};
 	D3D12_VERTEX_BUFFER_VIEW TeoVertexBufferView{};
 	D3D12_INDEX_BUFFER_VIEW TeoIndexBufferView{};
-	std::array<D3D12_VERTEX_BUFFER_VIEW, ToonOutlineBuilder::kModeCount> TeoVertexBufferViews{};
-	std::array<D3D12_INDEX_BUFFER_VIEW, ToonOutlineBuilder::kModeCount> TeoIndexBufferViews{};
+	std::array<D3D12_VERTEX_BUFFER_VIEW, kToonOutlineModeCount> TeoVertexBufferViews{};
+	std::array<D3D12_INDEX_BUFFER_VIEW, kToonOutlineModeCount> TeoIndexBufferViews{};
 	UINT IndexCount = 0;
 	std::array<UINT, LodCount - 1> LodIndexCounts{};
 	UINT VertexCount = 0;
 	UINT TeoIndexCount = 0;
 	UINT TeoVertexCount = 0;
-	std::array<UINT, ToonOutlineBuilder::kModeCount> TeoIndexCounts{};
-	std::array<UINT, ToonOutlineBuilder::kModeCount> TeoVertexCounts{};
+	std::array<UINT, kToonOutlineModeCount> TeoIndexCounts{};
+	std::array<UINT, kToonOutlineModeCount> TeoVertexCounts{};
 	int TextureIndex = -1;
 	string MeshName{};
 	string MaterialName{};
@@ -46,7 +46,7 @@ struct StaticMeshData
 	float AppliedMaterialPartId = 10.0f;
 	bool DefaultToonOutlineEnabled = true;
 	vector<StaticModelVertex> CpuVertices{};
-	std::array<vector<StaticModelVertex>, ToonOutlineBuilder::kModeCount> CpuTeoVerticesByMode{};
+	std::array<vector<StaticModelVertex>, kToonOutlineModeCount> CpuTeoVerticesByMode{};
 
 	const D3D12_INDEX_BUFFER_VIEW& GetLodIndexBufferView(UINT lod) const
 	{
@@ -139,4 +139,3 @@ public:
 	XMFLOAT3 GetAabbCenter() const { return m_AabbCenter; }
 	XMFLOAT3 GetAabbExtents() const { return m_AabbExtents; }
 };
-

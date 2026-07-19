@@ -83,9 +83,9 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const rendererResource& 
 			? "shader/hlsl/build/VisibilityPS.cso"
 			: "shader/hlsl/build/Visibility2DPS.cso")
 		: (requestDeferredScene
-			? RendererUtils::ResolvePixelShaderPathForRenderMode(resource.psPath, RenderMode::DEFERRED)
-			: RendererUtils::ResolvePixelShaderPathForRenderMode(resource.psPath, RenderMode::FORWARD));
-	const bool useDeferredMrt = requestDeferredScene || RendererUtils::EndsWith(resolvedPsPath, "_MRT.cso") || RendererUtils::EndsWith(resolvedPsPath, "GeometryPS.cso");
+			? ResolvePixelShaderPathForRenderMode(resource.psPath, RenderMode::DEFERRED)
+			: ResolvePixelShaderPathForRenderMode(resource.psPath, RenderMode::FORWARD));
+	const bool useDeferredMrt = requestDeferredScene || RendererPathEndsWith(resolvedPsPath, "_MRT.cso") || RendererPathEndsWith(resolvedPsPath, "GeometryPS.cso");
 	const bool enableAlphaBlend = resource.enableAlphaBlend && !useDeferredMrt;
 	const DXGI_FORMAT forwardRtvFormat = useDeferredMrt ? DXGI_FORMAT_UNKNOWN : GetForwardRtvFormat();
 	const UINT forwardRtvFormatVal = static_cast<UINT>(forwardRtvFormat);
@@ -326,10 +326,10 @@ ID3D12PipelineState* PsoManager::GetOrCreateShadowMapPso()
 	psoDesc.PS = { nullptr, 0 };
 	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
 	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-	// A fixed rasterizer bias is measured in depth-buffer units.  Because each
-	// directional level has a different depth range it displaced the caster by
-	// a different world-space amount at every resolution boundary.  Bias is
-	// applied once, in the receiver shader, where it is normalized per level.
+
+
+
+
 	psoDesc.RasterizerState.DepthBias = 0;
 	psoDesc.RasterizerState.SlopeScaledDepthBias = 0.0f;
 	psoDesc.RasterizerState.DepthBiasClamp = 0.0f;

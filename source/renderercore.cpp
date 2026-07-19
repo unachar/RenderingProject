@@ -130,9 +130,9 @@ bool RendererCore::Init(HWND hwnd)
 	sc1.As(&m_SwapChain);
 	if (m_SwapChain)
 	{
-		// Keep one frame available for the GPU while the CPU records the next.
-		// A latency of one serialized the ~5 ms command-recording workload with
-		// the ~9 ms GPU workload and prevented 60 fps despite ample GPU headroom.
+
+
+
 		m_SwapChain->SetMaximumFrameLatency(2);
 		m_FrameLatencyWaitableObject = m_SwapChain->GetFrameLatencyWaitableObject();
 	}
@@ -227,11 +227,11 @@ bool RendererCore::Init(HWND hwnd)
 	rootParametersAll[15].InitAsDescriptorTable(1, &meshHiZRanges[1], D3D12_SHADER_VISIBILITY_ALL);
 
 	CD3DX12_STATIC_SAMPLER_DESC sampler {};
-	// Material textures are commonly viewed at grazing angles (terrain and
-	// floors).  Trilinear filtering chooses one isotropic mip footprint and
-	// exposes the mip transitions as camera-dependent horizontal bands.
-	// The sampler already requested 16 taps, but MaxAnisotropy is ignored unless
-	// the filter itself is anisotropic.
+
+
+
+
+
 	sampler.Filter = D3D12_FILTER_ANISOTROPIC;
 	sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
 	sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -926,8 +926,3 @@ void RendererCore::ApplyPendingHdr()
 	m_TaaBlendPso.Reset();
 	PsoManager::CreateAaPsos();
 }
-
-
-
-
-

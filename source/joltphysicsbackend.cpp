@@ -26,8 +26,8 @@
 #include <Jolt/Physics/Constraints/SixDOFConstraint.h>
 #include <unordered_map>
 
-namespace JPH
-{
+using namespace JPH;
+
 	class PhysicsCollisionGroupFilter final : public GroupFilter
 	{
 		JPH_DECLARE_SERIALIZABLE_VIRTUAL(JPH_NO_EXPORT, PhysicsCollisionGroupFilter)
@@ -47,11 +47,6 @@ namespace JPH
 	JPH_IMPLEMENT_SERIALIZABLE_VIRTUAL(PhysicsCollisionGroupFilter)
 	{
 	}
-}
-
-namespace
-{
-	using namespace JPH;
 
 	void JoltTrace(const char* format, ...)
 	{
@@ -92,40 +87,33 @@ namespace
 	}
 #endif
 
-	namespace ObjectLayers
-	{
-		static constexpr ObjectLayer Static = 0;
-		static constexpr ObjectLayer Moving = 1;
-		static constexpr ObjectLayer Count = 2;
-	}
-
-	namespace BroadPhaseLayers
-	{
-		static constexpr BroadPhaseLayer Static(0);
-		static constexpr BroadPhaseLayer Moving(1);
-		static constexpr uint Count = 2;
-	}
+	static constexpr ObjectLayer kJoltStaticObjectLayer = 0;
+	static constexpr ObjectLayer kJoltMovingObjectLayer = 1;
+	static constexpr ObjectLayer kJoltObjectLayerCount = 2;
+	static constexpr BroadPhaseLayer kJoltStaticBroadPhaseLayer(0);
+	static constexpr BroadPhaseLayer kJoltMovingBroadPhaseLayer(1);
+	static constexpr uint kJoltBroadPhaseLayerCount = 2;
 
 	class JoltObjectLayerPairFilter final : public ObjectLayerPairFilter
 	{
 	public:
 		bool ShouldCollide(ObjectLayer object1, ObjectLayer object2) const override
 		{
-			return object1 != ObjectLayers::Static || object2 != ObjectLayers::Static;
+			return object1 != kJoltStaticObjectLayer || object2 != kJoltStaticObjectLayer;
 		}
 	};
 
 	class JoltBroadPhaseLayerInterface final : public BroadPhaseLayerInterface
 	{
 	public:
-		uint GetNumBroadPhaseLayers() const override { return BroadPhaseLayers::Count; }
+		uint GetNumBroadPhaseLayers() const override { return kJoltBroadPhaseLayerCount; }
 		BroadPhaseLayer GetBroadPhaseLayer(ObjectLayer layer) const override
 		{
-			return layer == ObjectLayers::Static ? BroadPhaseLayers::Static : BroadPhaseLayers::Moving;
+			return layer == kJoltStaticObjectLayer ? kJoltStaticBroadPhaseLayer : kJoltMovingBroadPhaseLayer;
 		}
 		const char* GetBroadPhaseLayerName(BroadPhaseLayer layer) const override
 		{
-			return layer == BroadPhaseLayers::Static ? "Static" : "Moving";
+			return layer == kJoltStaticBroadPhaseLayer ? "Static" : "Moving";
 		}
 	};
 
@@ -134,7 +122,7 @@ namespace
 	public:
 		bool ShouldCollide(ObjectLayer layer, BroadPhaseLayer broadPhaseLayer) const override
 		{
-			return layer != ObjectLayers::Static || broadPhaseLayer == BroadPhaseLayers::Moving;
+			return layer != kJoltStaticObjectLayer || broadPhaseLayer == kJoltMovingBroadPhaseLayer;
 		}
 	};
 
@@ -302,7 +290,7 @@ namespace
 			if (desc.BodyType == PhysicsBodyType::Static) motionType = EMotionType::Static;
 			else if (desc.BodyType == PhysicsBodyType::Kinematic) motionType = EMotionType::Kinematic;
 			const ObjectLayer layer = motionType == EMotionType::Static
-				? ObjectLayers::Static : ObjectLayers::Moving;
+				? kJoltStaticObjectLayer : kJoltMovingObjectLayer;
 			BodyCreationSettings settings(
 				shape,
 				ToJoltPosition(desc.Transform.Position),
@@ -486,7 +474,7 @@ namespace
 			m_Joints.erase(it);
 		}
 	};
-}
+
 
 unique_ptr<IPhysicsBackend> CreateJoltPhysicsBackend()
 {

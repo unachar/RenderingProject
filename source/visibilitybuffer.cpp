@@ -2,14 +2,13 @@
 #include "visibilitybuffer.h"
 #include "rendererstate.h"
 
-namespace
-{
+
 	ComPtr<ID3D12Device> g_VisibilityDevice;
 	ComPtr<ID3D12DescriptorHeap> g_VisibilityDescriptorHeap;
 	ComPtr<ID3D12RootSignature> g_VisibilityRootSignature;
 	ComPtr<ID3D12PipelineState> g_VisibilityPso;
 	UINT g_VisibilityDescriptorIncrement = 0;
-}
+
 
 bool VisibilityBuffer::Initialize(
 	ID3D12Device* device,

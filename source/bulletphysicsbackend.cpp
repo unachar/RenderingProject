@@ -6,8 +6,7 @@
 #include <BulletCollision/CollisionShapes/btConvexHullShape.h>
 #include <unordered_map>
 
-namespace
-{
+
 	btVector3 ToBt(const XMFLOAT3& value)
 	{
 		return btVector3(value.x, value.y, value.z);
@@ -309,7 +308,7 @@ namespace
 			m_Joints.erase(it);
 		}
 	};
-}
+
 
 unique_ptr<IPhysicsBackend> CreateBulletPhysicsBackend()
 {

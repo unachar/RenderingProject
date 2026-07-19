@@ -66,8 +66,6 @@ void CameraSystem::Update()
 			XMStoreFloat3(&cam.Target, target);
 		}
 
-		// Edit mode does not execute gameplay input/movement systems.  Keep a
-		// dedicated editor fly camera available there without running scripts.
 		if (isActive && !ProjectManager::IsPlaying() && !cam.IsGameCamera &&
 			cam.AllowUserControl && Input::IsKeyHeld(VK_RBUTTON))
 		{
@@ -117,7 +115,7 @@ void CameraSystem::Update()
 			Registry::IsAlive(cam.LockOnTarget) &&
 			Registry::HasComponent(cam.LockOnTarget, ComponentType::TRANSFORM))
 		{
-			
+
 			cam.Target.x = ComponentManager::GetComponentUnchecked<TransformComponent>(cam.LockOnTarget).Position.x + cam.LockOnOffset.x;
 			cam.Target.y = ComponentManager::GetComponentUnchecked<TransformComponent>(cam.LockOnTarget).Position.y + cam.LockOnOffset.y;
 			cam.Target.z = ComponentManager::GetComponentUnchecked<TransformComponent>(cam.LockOnTarget).Position.z + cam.LockOnOffset.z;
@@ -136,9 +134,6 @@ void CameraSystem::Update()
 			float haltonX = Halton(RendererState::m_TaaFrameIndex, 2);
 			float haltonY = Halton(RendererState::m_TaaFrameIndex, 3);
 
-			// TAA runs before FSR/NIS at the internal render resolution. Jitter by
-			// one internal pixel so low resolution modes retain useful sub-pixel
-			// coverage instead of shrinking the sample pattern by the upscale ratio.
 			float jitterX = (haltonX - 0.5f) * 2.0f /
 				max((float)RendererCore::GetSceneWidth(), 1.0f);
 			float jitterY = (haltonY - 0.5f) * 2.0f /
@@ -153,4 +148,3 @@ void CameraSystem::Update()
 	}
 	previousActiveCamera = activeCamera;
 }
-

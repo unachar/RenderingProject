@@ -19,8 +19,8 @@ public:
     void Draw(RenderPass renderPass, bool receivingPostProcessOnly) override;
 
 private:
-    // Shadow, opaque and overlay passes may submit the same entity through
-    // several mesh batches in one frame.
+
+
     static constexpr UINT kMaxInstancesPerFrame = g_kMAX_ENTITIES * 16;
 
     struct GpuInstanceInput

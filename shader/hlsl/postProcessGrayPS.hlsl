@@ -1,4 +1,4 @@
-// postProcessGrayPS.hlsl
+
 #define SHADER_POSTPROCESS
 #include "common.hlsl"
 
@@ -8,10 +8,10 @@ SamplerState TextureSampler : register(s0);
 float4 main(PSInputPostProcess input) : SV_TARGET
 {
     float4 color = SceneTexture.Sample(TextureSampler, input.TexCoord);
-    
-    // NTSC 輝度変換
+
+
     float gray = dot(color.rgb, float3(0.299, 0.587, 0.114));
-    
+
     float4 result = lerp(color, float4(gray, gray, gray, color.a), Flags.y);
     result.rgb = ApplyHdrOutput(result.rgb);
     result.a = 1.0f;

@@ -3,7 +3,7 @@
 
 struct rendererResource
 {
-	// 描画関連
+
 	const char* csoPath{};
 	const char* vsPath{};
 	const char* psPath{};
@@ -18,7 +18,7 @@ struct rendererResource
 	bool frontCounterClockwise{};
 	bool enableAlphaBlend{};
 
-	// リソース関連
+
 	HWND hwnd{};
 	UINT width{};
 	UINT height{};
@@ -62,12 +62,12 @@ public:
 	static void UpdateShadowConstantBuffer();
 	static UINT GetShadowLightCount();
 	static bool ShouldRenderShadowPass(UINT shadowIndex);
-	// Reject shadow casters that cannot overlap the active virtual page.  This is
-	// Reject shadow casters that cannot overlap the active light/page frustum.
+
+
 	static bool ShouldDrawEntityInCurrentShadowPass(EntityID entity);
 	static bool IsCurrentShadowPassVirtualPage();
-	// Coarser clipmap levels cannot represent the detail of LOD0 geometry.  Use
-	// this as the minimum mesh LOD while drawing the active virtual page.
+
+
 	static UINT GetCurrentShadowLodBias();
 	static bool IsVirtualShadowCacheHit();
 	static bool GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_VIEWPORT& viewport, D3D12_RECT& scissor, bool& clearLayer);

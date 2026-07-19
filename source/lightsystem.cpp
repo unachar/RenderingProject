@@ -5,8 +5,7 @@
 #include "light.h"
 #include "sun.h"
 
-namespace
-{
+
 	void EnsureDefaultLight()
 	{
 		if (!World::GetView<SunComponent>().empty())
@@ -16,7 +15,7 @@ namespace
 
 		Sun::CreateDefault();
 	}
-}
+
 
 void LightSystem::Init()
 {
@@ -49,4 +48,3 @@ void LightSystem::SetPBRParam(EntityID entity, float metallic, float roughness, 
 	light.Color.y = roughness;
 	light.Color.z = fresnel;
 }
-

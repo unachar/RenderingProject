@@ -5,39 +5,38 @@
 #include "camera.h"
 #include "renderprofiler.h"
 
-namespace
-{
+
 	constexpr D3D12_RESOURCE_STATES kShaderReadState =
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
 		D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 
-	ComPtr<ID3D12Device> g_Device;
-	ComPtr<ID3D12DescriptorHeap> g_Heap;
-	UINT g_DescriptorIncrement = 0;
-	ComPtr<ID3D12RootSignature> g_RootSignature;
-	ComPtr<ID3D12PipelineState> g_DeinterleavePso;
-	ComPtr<ID3D12PipelineState> g_RayBinningPso;
-	ComPtr<ID3D12PipelineState> g_SsgiPso;
-	ComPtr<ID3D12PipelineState> g_ResolvePso;
-	ComPtr<ID3D12PipelineState> g_SsaoPso;
-	ComPtr<ID3D12Resource> g_Ao;
-	ComPtr<ID3D12Resource> g_Gi;
-	ComPtr<ID3D12Resource> g_History;
-	ComPtr<ID3D12Resource> g_DeDepth;
-	ComPtr<ID3D12Resource> g_DeNormal;
-	ComPtr<ID3D12Resource> g_DeLight;
-	ComPtr<ID3D12Resource> g_DeGi;
-	ComPtr<ID3D12Resource> g_RayOrder;
-	ComPtr<ID3D12Resource> g_Constants;
+	static ComPtr<ID3D12Device> g_Device;
+	static ComPtr<ID3D12DescriptorHeap> g_Heap;
+	static UINT g_DescriptorIncrement = 0;
+	static ComPtr<ID3D12RootSignature> g_RootSignature;
+	static ComPtr<ID3D12PipelineState> g_DeinterleavePso;
+	static ComPtr<ID3D12PipelineState> g_RayBinningPso;
+	static ComPtr<ID3D12PipelineState> g_SsgiPso;
+	static ComPtr<ID3D12PipelineState> g_ResolvePso;
+	static ComPtr<ID3D12PipelineState> g_SsaoPso;
+	static ComPtr<ID3D12Resource> g_Ao;
+	static ComPtr<ID3D12Resource> g_Gi;
+	static ComPtr<ID3D12Resource> g_History;
+	static ComPtr<ID3D12Resource> g_DeDepth;
+	static ComPtr<ID3D12Resource> g_DeNormal;
+	static ComPtr<ID3D12Resource> g_DeLight;
+	static ComPtr<ID3D12Resource> g_DeGi;
+	static ComPtr<ID3D12Resource> g_RayOrder;
+	static ComPtr<ID3D12Resource> g_Constants;
 	UINT8* g_MappedConstants = nullptr;
-	UINT g_Width = 0;
-	UINT g_Height = 0;
-	UINT g_DeWidth = 0;
-	UINT g_DeHeight = 0;
-	UINT g_RayCount = 0;
+	static UINT g_Width = 0;
+	static UINT g_Height = 0;
+	static UINT g_DeWidth = 0;
+	static UINT g_DeHeight = 0;
+	static UINT g_RayCount = 0;
 	DXGI_FORMAT g_LightingFormat = DXGI_FORMAT_UNKNOWN;
-	bool g_HistoryValid = false;
-	bool g_RayOrderInitialized = false;
+	static bool g_HistoryValid = false;
+	static bool g_RayOrderInitialized = false;
 
 	struct alignas(16) Constants
 	{
@@ -49,19 +48,19 @@ namespace
 	};
 	constexpr UINT kConstantStride = (sizeof(Constants) + 255u) & ~255u;
 
-	D3D12_CPU_DESCRIPTOR_HANDLE Cpu(UINT index)
+	static D3D12_CPU_DESCRIPTOR_HANDLE Cpu(UINT index)
 	{
 		return CD3DX12_CPU_DESCRIPTOR_HANDLE(
 			g_Heap->GetCPUDescriptorHandleForHeapStart(), index, g_DescriptorIncrement);
 	}
 
-	D3D12_GPU_DESCRIPTOR_HANDLE Gpu(UINT index)
+	static D3D12_GPU_DESCRIPTOR_HANDLE Gpu(UINT index)
 	{
 		return CD3DX12_GPU_DESCRIPTOR_HANDLE(
 			g_Heap->GetGPUDescriptorHandleForHeapStart(), index, g_DescriptorIncrement);
 	}
 
-	bool LoadPipeline(const wchar_t* path, ComPtr<ID3D12PipelineState>& output)
+	static bool LoadPipeline(const wchar_t* path, ComPtr<ID3D12PipelineState>& output)
 	{
 		ComPtr<ID3DBlob> shader;
 		if (FAILED(D3DReadFileToBlob(path, &shader)))
@@ -156,7 +155,7 @@ namespace
 		auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(resource);
 		commandList->ResourceBarrier(1, &barrier);
 	}
-}
+
 
 bool ScreenSpaceEffects::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UINT descriptorIncrement)
 {
@@ -271,8 +270,8 @@ bool ScreenSpaceEffects::Resize(UINT width, UINT height, DXGI_FORMAT lightingFor
 	}
 
 	auto defaultHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-	// CopyResource requires identical subresource layouts.  Tex2D's default
-	// MipLevels=0 creates a complete chain, while the lighting source has one mip.
+
+
 	auto historyDesc = CD3DX12_RESOURCE_DESC::Tex2D(
 		lightingFormat, width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_NONE);
 	if (FAILED(g_Device->CreateCommittedResource(

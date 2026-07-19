@@ -142,12 +142,12 @@ public:
 	static constexpr UINT g_kGBUFFER_COUNT = static_cast<UINT>(GBufferType::COUNT);
 	static constexpr UINT g_kGEOMETRY_GBUFFER_COUNT = static_cast<UINT>(GBufferType::ATMOSPHERE);
 	static constexpr uint32_t g_kFRAME_COUNT = 3;
-	// The authored scene may contain hundreds of emitters.  Only the highest
-	// priority on-screen physical lights enter this bounded GPU-visible set.
+
+
 	static constexpr UINT g_kMAX_SHADER_LIGHTS = 160;
 	static constexpr UINT g_kLIGHT_TILE_SIZE = 16;
 	static constexpr UINT g_kMAX_LIGHTS_PER_TILE = 8;
-	// Color32 + Normal32 + Depth32 + Material64 + Shadow32.
+
 	static constexpr UINT g_kGEOMETRY_GBUFFER_BITS_PER_PIXEL = 192;
 	static_assert(g_kGEOMETRY_GBUFFER_BITS_PER_PIXEL <= 256,
 		"Stage renderer GBuffer must stay within the 256-bit bandwidth budget");
@@ -159,8 +159,8 @@ public:
 
 	static constexpr UINT g_kMAX_SHADOW_LIGHTS = 8;
 	static constexpr UINT g_kMAX_VIRTUAL_SHADOW_LEVELS = 4;
-	// A 4x4 requested window is kept resident inside the 16x16 physical atlas.
-	// Camera movement remaps the window as a ring and redraws only entering pages.
+
+
 	static constexpr UINT g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION = 4;
 	static constexpr UINT g_kMAX_SHADOW_PASSES =
 		g_kMAX_VIRTUAL_SHADOW_LEVELS *
@@ -295,7 +295,7 @@ public:
 		DXGI_FORMAT_R32G32B32A32_UINT
 	};
 public:
-	
+
 	static constexpr uint32_t g_kSCREEN_WIDTH = 800;
 	static constexpr uint32_t g_kSCREEN_HEIGHT = 600;
 	static constexpr float g_kNEAR_CLIP = 0.1f;
@@ -371,7 +371,7 @@ public:
 	static constexpr UINT g_kHIZ_MAX_MIPS = 16;
 	static constexpr UINT g_kHIZ_UAV_START_INDEX = g_kHIZ_SRV_START_INDEX + 2;
 	static constexpr UINT g_kHIZ_MIP_SRV_START_INDEX = g_kHIZ_UAV_START_INDEX + 2 * g_kHIZ_MAX_MIPS;
-	// Keep a stable engine-owned descriptor range for the advanced compute paths.
+
 	static constexpr UINT g_kENGINE_DESCRIPTOR_END = g_kDEPTH_SRV_INDEX + 128;
 	static_assert(g_kHIZ_MIP_SRV_START_INDEX + 2 * g_kHIZ_MAX_MIPS <= g_kENGINE_DESCRIPTOR_END + 1,
 		"The Hi-Z descriptor range exceeds the engine-owned descriptor range.");

@@ -1,12 +1,12 @@
-// FidelityFX FSR 1.0 EASU integration. The filter implementation is provided
-// by AMD's official ffx_fsr1.h and distributed under its MIT license.
+
+
 cbuffer FsrConstants : register(b0)
 {
     uint4 Const0;
     uint4 Const1;
     uint4 Const2;
     uint4 Const3;
-    uint4 DispatchInfo; // xy = output extent
+    uint4 DispatchInfo;
 };
 
 #define A_GPU 1

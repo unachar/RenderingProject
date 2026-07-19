@@ -41,8 +41,8 @@ public:
 		bool AffectsOpaque = true;
 		bool AffectsForward = true;
 		bool AffectsVolumetrics = false;
-		// Additional lights are inexpensive by default.  Shadow casting remains
-		// opt-in from the light inspector for the small number of lights that need it.
+
+
 		bool CastShadow = false;
 		float Priority = 0.0f;
 		LightRenderMode RenderMode = LightRenderMode::Physical;
@@ -55,4 +55,3 @@ public:
 	static const char* GetTypeName(LightType type);
 	static void AttachLightTimeLine(EntityID entity);
 };
-

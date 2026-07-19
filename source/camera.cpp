@@ -4,8 +4,7 @@
 #include "componentmanager.h"
 #include "projectmanager.h"
 
-namespace
-{
+
 	bool IsCameraEntity(EntityID entity)
 	{
 		return entity != g_kINVALID_ENTITY &&
@@ -44,8 +43,8 @@ namespace
 		camera.AllowUserControl = true;
 
 		entity.Get<PostProcessComponent>().Type = PostProcessType::NONE;
-		// Only the camera selected by SetMainGameCamera receives gameplay input.
-		// Additional GameCameras remain available for timeline/cut switching.
+
+
 		entity.Get<InputComponent>().IsActive = false;
 		auto& move = entity.Get<MoveComponent>();
 		move.Speed = 0.1f;
@@ -53,7 +52,7 @@ namespace
 		move.UseCameraRelativeMovement = true;
 		return entity;
 	}
-}
+
 
 void Camera::Create(XMFLOAT3 target, float fov)
 {
@@ -238,4 +237,3 @@ float Camera::GetCameraPostProcessIntensity()
 	}
 	return 0.0f;
 }
-

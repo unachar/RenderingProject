@@ -9,8 +9,7 @@
 
 using namespace std;
 
-namespace
-{
+
 	string DecodeAsciiFixedString(const char* data, size_t length)
 	{
 		size_t byteCount = 0;
@@ -251,11 +250,11 @@ namespace
 		cursor->LastFrame = currentFrame;
 		return index;
 	}
-}
 
-bool VmdAnimationImporter::Load(const char* fileName, VmdAnimation& outAnimation)
+
+bool LoadVmdAnimationFile(const char* fileName, VmdAnimation& outAnimation)
 {
-	const filesystem::path animPath = ModelImportUtils::FromUtf8(fileName);
+	const filesystem::path animPath = ModelPathFromUtf8(fileName);
 	ifstream stream(animPath, ios::binary);
 	if (!stream)
 	{
@@ -463,7 +462,7 @@ bool VmdAnimationImporter::Load(const char* fileName, VmdAnimation& outAnimation
 	return true;
 }
 
-float VmdAnimationImporter::ToFrameTime(const VmdAnimation* animation, float timeSeconds)
+float VmdToFrameTime(const VmdAnimation* animation, float timeSeconds)
 {
 	float currentFrame = max(0.0f, timeSeconds) * 30.0f;
 	if (animation && animation->MaxFrame > 0)
@@ -473,21 +472,21 @@ float VmdAnimationImporter::ToFrameTime(const VmdAnimation* animation, float tim
 	return currentFrame;
 }
 
-void VmdAnimationImporter::ResetSampleCursor(VmdTrackSampleCursor& cursor)
+void ResetVmdSampleCursor(VmdTrackSampleCursor& cursor)
 {
 	cursor.Track = nullptr;
 	cursor.NextIndex = 0;
 	cursor.LastFrame = -1.0f;
 }
 
-void VmdAnimationImporter::SampleBoneTrack(const vector<VmdKeyframe>* keys, float currentFrame,
+void SampleVmdBoneTrack(const vector<VmdKeyframe>* keys, float currentFrame,
 	aiQuaternion& outRotation, aiVector3D& outPosition)
 {
 	VmdTrackSampleCursor cursor{};
-	SampleBoneTrackCached(keys, currentFrame, cursor, outRotation, outPosition);
+	SampleVmdBoneTrackCached(keys, currentFrame, cursor, outRotation, outPosition);
 }
 
-void VmdAnimationImporter::SampleBoneTrackCached(const vector<VmdKeyframe>* keys, float currentFrame,
+void SampleVmdBoneTrackCached(const vector<VmdKeyframe>* keys, float currentFrame,
 	VmdTrackSampleCursor& cursor, aiQuaternion& outRotation, aiVector3D& outPosition)
 {
 	outRotation = aiQuaternion(1.0f, 0.0f, 0.0f, 0.0f);
@@ -538,13 +537,13 @@ void VmdAnimationImporter::SampleBoneTrackCached(const vector<VmdKeyframe>* keys
 	outRotation.Normalize();
 }
 
-float VmdAnimationImporter::SampleMorphTrack(const vector<VmdScalarKeyframe>* keys, float currentFrame)
+float SampleVmdMorphTrack(const vector<VmdScalarKeyframe>* keys, float currentFrame)
 {
 	VmdTrackSampleCursor cursor{};
-	return SampleMorphTrackCached(keys, currentFrame, cursor);
+	return SampleVmdMorphTrackCached(keys, currentFrame, cursor);
 }
 
-float VmdAnimationImporter::SampleMorphTrackCached(const vector<VmdScalarKeyframe>* keys, float currentFrame,
+float SampleVmdMorphTrackCached(const vector<VmdScalarKeyframe>* keys, float currentFrame,
 	VmdTrackSampleCursor& cursor)
 {
 	if (!keys || keys->empty())
@@ -576,13 +575,13 @@ float VmdAnimationImporter::SampleMorphTrackCached(const vector<VmdScalarKeyfram
 	return prev.Value * (1.0f - factor) + next.Value * factor;
 }
 
-bool VmdAnimationImporter::SampleIkTrack(const vector<VmdIkKeyframe>* keys, float currentFrame)
+bool SampleVmdIkTrack(const vector<VmdIkKeyframe>* keys, float currentFrame)
 {
 	VmdTrackSampleCursor cursor{};
-	return SampleIkTrackCached(keys, currentFrame, cursor);
+	return SampleVmdIkTrackCached(keys, currentFrame, cursor);
 }
 
-bool VmdAnimationImporter::SampleIkTrackCached(const vector<VmdIkKeyframe>* keys, float currentFrame,
+bool SampleVmdIkTrackCached(const vector<VmdIkKeyframe>* keys, float currentFrame,
 	VmdTrackSampleCursor& cursor)
 {
 	if (!keys || keys->empty())

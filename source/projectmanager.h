@@ -11,8 +11,8 @@ enum class ProjectPlayState : int
 	Paused = 2,
 };
 
-// Owns project-wide runtime state rather than placing play-mode state in Game.
-// Entering play captures editable state; stopping restores it.
+
+
 class ProjectManager final
 {
 	struct RuntimeSnapshot

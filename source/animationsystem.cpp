@@ -43,8 +43,6 @@ void AnimationSystem::Update()
 			ComponentManager::GetComponentUnchecked<InstancingComponent>(i).UseInstancing;
 		if (useSharedInstancedPose && !updatedInstancedModels.insert(animationComponent.ModelId).second)
 		{
-			// GPU-instanced entities referencing the same model share one skinned
-			// vertex stream, so evaluating the identical pose per Entity is wasted work.
 			continue;
 		}
 

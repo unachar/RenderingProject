@@ -8,8 +8,7 @@
 #include <bit>
 #include <unordered_set>
 
-namespace
-{
+
 	size_t EngineIndex(PhysicsEngine engine)
 	{
 		const int value = static_cast<int>(engine);
@@ -110,11 +109,6 @@ namespace
 			XMLoadFloat3(&bodyTransform.Position),
 			entityWorldInverse);
 
-		// Entity scale affects a rigid body's position and collider dimensions,
-		// but it must never be written into the skeleton. Multiplying the whole
-		// body matrix by entityWorldInverse also applies inverse scale to the
-		// rotation basis, which makes physics-driven bones grow at small entity
-		// scales and shrink at large scales.
 		const XMMATRIX entityRotationInverse =
 			XMMatrixInverse(&determinant, BuildEntityRotation(entityTransform));
 		const XMMATRIX modelRotation =
@@ -181,7 +175,7 @@ namespace
 		}
 		transform.IsDirty = true;
 	}
-}
+
 
 IPhysicsBackend* PhysicsSystem::GetBackend(PhysicsEngine engine) const
 {
@@ -759,10 +753,6 @@ void PhysicsSystem::Update()
 		m_Accumulator = fmod(m_Accumulator, static_cast<double>(fixedDelta));
 	}
 
-	// AnimationSystem evaluates the authored pose every render frame, including
-	// frames where the fixed-step accumulator does not advance. Reapply the
-	// latest simulated body transforms unconditionally so authored and physics
-	// poses cannot alternate at render rates above the physics frequency.
 	ApplySimulationResults();
 }
 

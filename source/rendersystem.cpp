@@ -17,21 +17,20 @@
 
 using namespace std;
 
-namespace
-{
-	const MaterialComponent& DefaultMaterial()
+
+	static const MaterialComponent& DefaultMaterial()
 	{
 		static const MaterialComponent material{};
 		return material;
 	}
 
-	bool IsSkyEntity(EntityID entity)
+	static bool IsSkyEntity(EntityID entity)
 	{
 		return ComponentManager::HasComponent<NameComponent>(entity) &&
 			ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky";
 	}
 
-	bool ShouldCastShadow(EntityID entity)
+	static bool ShouldCastShadow(EntityID entity)
 	{
 		if (IsSkyEntity(entity) || ComponentManager::HasComponent<LightComponent>(entity))
 		{
@@ -51,7 +50,7 @@ namespace
 			material.ShaderClass == ShaderClass::Shadow);
 	}
 
-	bool ShouldDrawToonOutline(EntityID entity)
+	static bool ShouldDrawToonOutline(EntityID entity)
 	{
 		if (!Registry::HasComponent(entity, ComponentType::MATERIAL))
 		{
@@ -78,7 +77,7 @@ namespace
 				material.ShaderClass == ShaderClass::Toon);
 	}
 
-	float GetCameraDepth(EntityID entity, const XMMATRIX& view)
+	static float GetCameraDepth(EntityID entity, const XMMATRIX& view)
 	{
 		if (!Registry::HasComponent(entity, ComponentType::TRANSFORM))
 		{
@@ -140,7 +139,7 @@ namespace
 		}
 		return "shader/hlsl/build/modelshaderPS.cso";
 	}
-}
+
 
 void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
@@ -344,7 +343,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				cb3D.Projection = transposedProj;
 				cb3D.UseTexture = 0;
 
-				// Get camera position from camera entity
+
 				EntityID cameraEntity = Camera::GetCameraEntity();
 				if (Registry::HasComponent(cameraEntity, ComponentType::TRANSFORM))
 				{
@@ -645,4 +644,3 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		submitDrawCalls(m_ModelDrawCalls);
 	}
 }
-

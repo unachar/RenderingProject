@@ -285,7 +285,7 @@ struct MaterialComponent
 	vector<float> ToonMeshOutlineWidthScales{};
 	vector<MeshShadingOverride> MeshShadingOverrides{};
 	float Alpha = 1.0f;
-	// Transparent dielectric parameters. Alpha is the specification's Opacity.
+
 	float IOR = 1.50f;
 	float Transmission = 0.98f;
 	float TransmissionRoughness = 0.02f;
@@ -338,8 +338,8 @@ struct InstancingComponent
 {
 	bool UseInstancing = false;
 	bool EnableFrustumCulling = true;
-	// Zero selects automatic grouping by geometry, shader and material state.
-	// A non-zero value can explicitly join compatible entities into one batch.
+
+
 	uint32_t GroupId = 0;
 };
 
@@ -360,7 +360,7 @@ struct LightComponent
 	float OuterAngle = 0.0f;
 	float InnerAngle = 0.0f;
 	float VolumeDensity = 0.0f;
-	int VolumeShape = 0; // 0: cone, 1: cylinder
+	int VolumeShape = 0;
 	bool IsActive = true;
 	bool DrawDebug = false;
 	bool AffectsOpaque = true;
@@ -568,9 +568,9 @@ public:
 	template<typename T>
 	static const vector<EntityID>& GetDenseEntities() { return ComponentStorage<T>::DenseEntities(); }
 
-	// Structural changes (Add/Remove/Destroy) are not allowed while this callback
-	// is running. This keeps component traversal contiguous and avoids EntityID
-	// lookups in hot single-component systems.
+
+
+
 	template<typename T, typename Function>
 	static void ForEachComponent(Function&& function)
 	{
@@ -583,8 +583,8 @@ public:
 		}
 	}
 
-	// Primary should be the least common component in the query. No temporary
-	// entity list is built; matching components are passed by reference.
+
+
 	template<typename Primary, typename... Required, typename Function>
 	static void ForEach(Function&& function)
 	{
@@ -623,5 +623,3 @@ public:
 		Registry::RemoveComponent(entity, types...);
 	}
 };
-
-

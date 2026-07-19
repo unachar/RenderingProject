@@ -28,31 +28,47 @@ float ContactShadowPixelNoise(float2 pixelPosition)
     return frac(52.9829189f * frac(dot(pixelPosition, float2(0.06711056f, 0.00583715f))));
 }
 
-float DirectionalReceiverPlaneBias(
+float2 DirectionalReceiverDepthGradient(
     float3 receiverWorldDx,
     float3 receiverWorldDy,
-    float4x4 lightViewProjection,
-    float baseBias,
-    int filterRadius)
+    float4x4 lightViewProjection)
 {
-    // A constant comparison bias cannot follow a sloped receiver: adjacent
-    // pixels alternately fall in front of and behind the quantized shadow
-    // plane, producing bands whose spacing changes with the cascade/clipmap
-    // world-texel size. Account for the depth change across this pixel quad
-    // and expand it for the configured PCF footprint.
-    float filterFootprint = 1.0f + (float)max(filterRadius, 1);
-    // Directional shadow projections are orthographic, so transforming the
-    // already-computed world-position derivatives gives the exact NDC depth
-    // change without using gradient instructions inside the light/level loops.
-    float depthDx = abs(mul(float4(receiverWorldDx, 0.0f), lightViewProjection).z);
-    float depthDy = abs(mul(float4(receiverWorldDy, 0.0f), lightViewProjection).z);
-    float derivativeBias = (depthDx + depthDy) * filterFootprint;
 
-    // Keep the correction bounded by the authored per-level bias so thin
-    // contact shadows remain attached to their casters.
-    return min(
-        derivativeBias,
-        max(baseBias * 4.0f, 0.000004f));
+
+
+
+
+
+    float3 lightDx = mul(
+        float4(receiverWorldDx, 0.0f), lightViewProjection).xyz;
+    float3 lightDy = mul(
+        float4(receiverWorldDy, 0.0f), lightViewProjection).xyz;
+    float2 uvDx = float2(lightDx.x * 0.5f, -lightDx.y * 0.5f);
+    float2 uvDy = float2(lightDy.x * 0.5f, -lightDy.y * 0.5f);
+    float determinant = uvDx.x * uvDy.y - uvDx.y * uvDy.x;
+    if (abs(determinant) <= 0.0000000001f)
+    {
+        return float2(0.0f, 0.0f);
+    }
+
+    float inverseDeterminant = rcp(determinant);
+    float2 gradient = float2(
+        (lightDx.z * uvDy.y - lightDy.z * uvDx.y) * inverseDeterminant,
+        (uvDx.x * lightDy.z - uvDy.x * lightDx.z) * inverseDeterminant);
+
+
+
+    return clamp(gradient, float2(-4.0f, -4.0f), float2(4.0f, 4.0f));
+}
+
+float DirectionalShadowComparisonBias(float4 shadowParams, float nDotL)
+{
+
+
+
+
+    return max(shadowParams.z, 0.0f) +
+        max(shadowParams.w, 0.0f) * (1.0f - saturate(nDotL));
 }
 
 float SampleConventionalShadowPcf9(
@@ -60,6 +76,7 @@ float SampleConventionalShadowPcf9(
     float shadowLayer,
     float texelSize,
     float currentDepth,
+    float2 receiverDepthGradient,
     int filterRadius)
 {
     const float2 kernel[9] =
@@ -81,7 +98,7 @@ float SampleConventionalShadowPcf9(
         visibility += ShadowMapTexture.SampleCmpLevelZero(
             ShadowSampler,
             float3(shadowUv + offset, shadowLayer),
-            currentDepth);
+            currentDepth + dot(receiverDepthGradient, offset));
     }
     return visibility / (float)tapCount;
 }
@@ -141,22 +158,20 @@ bool SampleVirtualShadowLevel(
     }
 
     float4 params = VirtualShadowParams[level];
-    // Callers pass the normalized G-buffer normal and the normalized result of
-    // ResolveSingleLightCommon. Avoid repeating two reciprocal square roots for
-    // every clipmap level tested by the same pixel.
-    float nDotL = saturate(dot(normal, lightDir));
-    float baseBias = max(params.z * (1.0f - nDotL), params.w);
-    float currentDepth = lightNdc.z - baseBias -
-        DirectionalReceiverPlaneBias(
-            worldPosDx,
-            worldPosDy,
-            VirtualShadowViewProjections[level],
-            baseBias,
-            filterRadius);
 
-    // Keep the kernel stable in world space to avoid self-shadow grain without
-    // paying for temporal/spatial random rotation or a separate denoise pass.
-    // Nine taps restores the optimized VSM cost while retaining smooth PCF.
+
+
+    float nDotL = saturate(dot(normal, lightDir));
+    float baseBias = DirectionalShadowComparisonBias(params, nDotL);
+    float currentDepth = lightNdc.z - baseBias;
+    float2 receiverDepthGradient = DirectionalReceiverDepthGradient(
+        worldPosDx,
+        worldPosDy,
+        VirtualShadowViewProjections[level]);
+
+
+
+
     const float2 poisson[9] =
     {
         float2(0.0f, 0.0f),
@@ -173,10 +188,10 @@ bool SampleVirtualShadowLevel(
     filterRadius = clamp(filterRadius, 0, 3);
     int tapCount = filterRadius <= 0 ? 1 : 9;
 
-    // Most kernels are fully contained in one 128x128 physical page. In that
-    // case virtual->physical translation is affine, so translate once and use
-    // ordinary texel offsets for every tap. Only the narrow page-edge band
-    // needs per-tap residency and ring-address checks.
+
+
+
+
     float pageGrid = max(VirtualShadowPageOrigins[level].z, 1.0f);
     float pageTexels = rcp(max(params.y * pageGrid, 0.000001f));
     float2 texelInPage = frac(virtualUv * pageGrid) * pageTexels;
@@ -214,7 +229,9 @@ bool SampleVirtualShadowLevel(
         visibilitySum += ShadowMapTexture.SampleCmpLevelZero(
             ShadowSampler,
             float3(physicalUv, max(params.x, 0.0f)),
-            currentDepth);
+            currentDepth + dot(
+                receiverDepthGradient,
+                tapVirtualUv - virtualUv));
         sampleCount += 1.0f;
     }
 
@@ -287,12 +304,16 @@ float SampleDeferredShadowMap(
             }
             return lerp(levelVisibility, fineVisibility, fineInterior);
         }
-        return hasFine ? fineVisibility : 1.0f;
+
+
+
+
+        return hasFine ? lerp(1.0f, fineVisibility, fineInterior) : 1.0f;
     }
 
-    // Conventional cascades use one complete texture-array layer per level.
-    // They share the level matrices with VSM, but must not use the virtual-page
-    // address translation above.
+
+
+
     if (VirtualShadowGlobal.x > 1.5f && directionalMultiLevel)
     {
         int levelCount = clamp((int)round(VirtualShadowGlobal.y), 1, 4);
@@ -316,21 +337,19 @@ float SampleDeferredShadowMap(
             }
 
             float4 params = VirtualShadowParams[level];
-            float baseBias = max(
-                params.z * (1.0f - saturate(dot(normal, lightDir))),
-                params.w);
-            float currentDepth = lightNdc.z - baseBias -
-                DirectionalReceiverPlaneBias(
-                    worldPosDx,
-                    worldPosDy,
-                    VirtualShadowViewProjections[level],
-                    baseBias,
-                    filterRadius);
+            float baseBias = DirectionalShadowComparisonBias(
+                params, dot(normal, lightDir));
+            float currentDepth = lightNdc.z - baseBias;
+            float2 receiverDepthGradient = DirectionalReceiverDepthGradient(
+                worldPosDx,
+                worldPosDy,
+                VirtualShadowViewProjections[level]);
             float levelVisibility = SampleConventionalShadowPcf9(
                 shadowUv,
                 params.x,
                 params.y * ShadowWorldFilterScaleCommon(level),
                 currentDepth,
+                receiverDepthGradient,
                 filterRadius);
             float levelInterior = CascadedShadowLevelInteriorCommon(
                 level, shadowUv, worldPos);
@@ -340,7 +359,7 @@ float SampleDeferredShadowMap(
                 fineVisibility = levelVisibility;
                 fineInterior = levelInterior;
                 hasFine = true;
-                if (fineInterior >= 0.999f || level == levelCount - 1)
+                if (fineInterior >= 0.999f)
                 {
                     return fineVisibility;
                 }
@@ -348,7 +367,9 @@ float SampleDeferredShadowMap(
             }
             return lerp(levelVisibility, fineVisibility, fineInterior);
         }
-        return hasFine ? fineVisibility : 1.0f;
+
+
+        return hasFine ? lerp(1.0f, fineVisibility, fineInterior) : 1.0f;
     }
 
     float4 lightClip = mul(float4(worldPos, 1.0f), LightViewProjections[lightIndex]);
@@ -361,11 +382,17 @@ float SampleDeferredShadowMap(
     if (!inBounds) return 1.0f;
 
     float texelSize = LightShadowData[lightIndex].y;
-    float currentDepth = lightNdc.z - max(
-        LightShadowData[lightIndex].z * (1.0f - saturate(dot(normal, lightDir))),
-        abs(LightShadowData[lightIndex].w));
+    float currentDepth = lightNdc.z -
+        max(LightShadowData[lightIndex].z, 0.0f) -
+        abs(LightShadowData[lightIndex].w) *
+            (1.0f - saturate(dot(normal, lightDir)));
     return SampleConventionalShadowPcf9(
-        shadowUv, shadowLayer, texelSize, currentDepth, filterRadius);
+        shadowUv,
+        shadowLayer,
+        texelSize,
+        currentDepth,
+        float2(0.0f, 0.0f),
+        filterRadius);
 }
 
 float LoadContactDepth(float2 uv)
@@ -416,8 +443,8 @@ float SampleContactShadow(float3 worldPos, float3 normal, float3 lightDir)
     [loop]
     for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
     {
-        // Center the jitter within each interval. This keeps coverage uniform
-        // while breaking the visible shells produced by fixed ray steps.
+
+
         float t = ((float)stepIndex + 0.15f + jitter * 0.70f) / (float)stepCount;
         float3 rayPosition = origin + lightDir * rayLength * t;
         float3 projected = WorldToScreenUV(rayPosition);
@@ -441,8 +468,8 @@ float SampleContactShadow(float3 worldPos, float3 normal, float3 lightDir)
             smoothstep(0.0015f, thickness * 0.30f, depthDelta) *
             (1.0f - smoothstep(thickness * 0.76f, thickness, depthDelta));
         float weightedHit = hit * (1.0f - t * 0.65f);
-        // Probabilistic union is smoother than selecting a single maximum
-        // sample and does not expose one marching interval as a dark stripe.
+
+
         occlusion = 1.0f - (1.0f - occlusion) * (1.0f - weightedHit);
     }
 
@@ -549,9 +576,9 @@ void ResolveDeferredLightAggregateShadowed(
         float singleVolume;
         ResolveSingleLightCommon(worldPos, LightDirections[i], LightPositionTypes[i], LightExtras[i], singleDir, singleAttenuation, singleVolume);
 
-		// Local lights outside their finite range (or outside a spot cone) cannot
-		// contribute.  Reject them before VSM/PCF and screen-space ray marching;
-		// the old order paid those costs for every configured light at every pixel.
+
+
+
 		float lightIntensityValue = max(LightColors[i].a, 0.0f);
 		[branch]
 		if (singleAttenuation <= 0.000001f || lightIntensityValue <= 0.000001f)
@@ -570,9 +597,9 @@ void ResolveDeferredLightAggregateShadowed(
                 normal,
                 singleDir,
                 shadowFilterRadius);
-		// Contact shadows fill near-field detail for the directional VSM.  Running
-		// the depth ray march once for every shadowed local light multiplies the
-		// full-screen cost and provides little useful information.
+
+
+
 		const bool directionalShadow =
 			LightPositionTypes[i].w < 0.5f && LightShadowData[i].x >= -0.5f;
         float contactVisibility = !decalLight && directionalShadow
@@ -586,8 +613,8 @@ void ResolveDeferredLightAggregateShadowed(
         float3 authoredLightColor = max(LightColors[i].rgb, float3(0.0f, 0.0f, 0.0f));
 		if (decalLight)
 		{
-			// One stage/monitor texture can drive every cheap decal light without
-			// duplicating animation state across hundreds of authored emitters.
+
+
 			authoredLightColor *= monitorColor;
 		}
         float3 singleColor = authoredLightColor * lightIntensityValue * singleAttenuation * shadowVisibility;
@@ -637,7 +664,7 @@ void ResolveDeferredLightAggregateShadowed(
 
 float4 main(PSInputPostProcess input) : SV_Target
 {
-    
+
     const float PI = 3.14159265358979323846f;
     float4 material = MaterialTexture.Sample(TextureSampler, input.TexCoord);
     float shaderClass = material.a;
@@ -683,7 +710,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     float3 positionDy = ddy(position);
 	float4 shadowParams = ShadowGBufferTexture.Sample(TextureSampler, input.TexCoord);
 
-   
+
     float shadowThreshold = shadowParams.r;
     float shadowSoftness = max(shadowParams.g, 0.0001f);
     float shadowStrength = saturate(shadowParams.b);
@@ -721,12 +748,15 @@ float4 main(PSInputPostProcess input) : SV_Target
         rangeBlend,
         aggregateShadowVisibility);
 
-    if (shadowDebugMode > 0 && VirtualShadowGlobal.x > 0.5f && VirtualShadowGlobal.x < 1.5f)
+    if (shadowDebugMode == 1 && VirtualShadowGlobal.x > 0.5f)
     {
-        if (shadowDebugMode == 1)
-        {
-            return float4(aggregateShadowVisibility.xxx, 1.0f);
-        }
+
+
+        return float4(aggregateShadowVisibility.xxx, 1.0f);
+    }
+    if (shadowDebugMode > 1 &&
+        VirtualShadowGlobal.x > 0.5f && VirtualShadowGlobal.x < 1.5f)
+    {
         int selectedLevel = max((int)round(VirtualShadowGlobal.y) - 1, 0);
         float2 selectedUv = float2(0.5f, 0.5f);
         [unroll]
@@ -763,25 +793,25 @@ float4 main(PSInputPostProcess input) : SV_Target
     }
     float lightIntensity = LightColor.a;
 
-    
+
     float Roughness = material.g;
-    
+
     float3 NdotL = saturate(dot(surfaceNormal, lightDir));
     float3 environmentColor = EnvironmentTexture.SampleLevel(TextureSampler, input.TexCoord, Roughness * 10.0f).rgb;
     NdotL += lightIntensity;
-    
-    
+
+
     float3 diffuse = 0.0f;
     {
         float3 light = lightColor.rgb * saturate(dot(lightDir, surfaceNormal));
-        
+
         float2 iblTexcoord;
         iblTexcoord.x = -atan2(surfaceNormal.x, surfaceNormal.z) / (PI * 2);
         iblTexcoord.y = asin(surfaceNormal.y) / PI;
         light += EnvironmentTexture.SampleLevel(TextureSampler, iblTexcoord, Roughness  * 10.0f).rgb * 6;
         diffuse = light * baseColor.rgb / PI;
     }
-    
+
     if(shadow)
     {
         float castShadow = saturate(1.0f - aggregateShadowVisibility);
@@ -821,7 +851,7 @@ float4 main(PSInputPostProcess input) : SV_Target
         float3 litColor = baseColor.rgb * (lightColor.rgb * 0.72f + NdotL);
         baseColor.rgb = diffuse * lerp(litColor, litColor * shadowTint, shadowDensity);
     }
-    
+
     if (pbr)
     {
         float PI = 3.14159265359f;
@@ -873,9 +903,9 @@ float4 main(PSInputPostProcess input) : SV_Target
 
         float3 diffuseBRDF = kD * albedo / PI;
 
-        // PBR faces benefit from a wrapped diffuse terminator: cast shadows
-        // still come from PCF, while the curved surface no longer snaps from
-        // lit to black at N.L=0. Specular remains on the physical N.L term.
+
+
+
         float terminatorWidth = lerp(
             0.08f,
             0.45f,
@@ -890,7 +920,7 @@ float4 main(PSInputPostProcess input) : SV_Target
         float3 directSpecular =
             specularBRDF * lightColor.rgb * lightIntensity * NdotLScalar;
         float3 directLight = directDiffuse + directSpecular;
-        
+
         float3 R = reflect(-V, N);
         R = normalize(R);
 
@@ -904,9 +934,9 @@ float4 main(PSInputPostProcess input) : SV_Target
 
         float maxMip = 8.0f;
 
-        // Move the ray off the current surface to avoid self-reflection. The
-        // returned hit is additionally checked against the world-position
-        // G-buffer, rejecting depth discontinuities that create white streaks.
+
+
+
         float3 ssrHit = (roughness < 0.65f && dot(R, V) < 0.0f)
             ? ScreenSpaceRayMarch(position + N * 0.04f + R * 0.02f, R, DepthTexture, TextureSampler)
             : float3(-1.0f, -1.0f, -1.0f);
@@ -953,41 +983,41 @@ float4 main(PSInputPostProcess input) : SV_Target
         float3 ambientSpecular = envSpecular * F_IBL;
 
         float3 ambient = ambientDiffuse + ambientSpecular;
-        // Preserve the original deferred PBR appearance. Environment/SSR IBL
-        // was intentionally excluded here; reintroducing it made dielectric,
-        // fully rough materials look metallic.
+
+
+
         baseColor.rgb = directLight + ambient;
     }
 
-    //{
-    //    float rimConfigWeight = step(
-    //        0.0001f,
-    //        dot(abs(rimStyle), float4(1.0f, 1.0f, 1.0f, 1.0f)) +
-    //        dot(abs(rimLight.rgb), float3(1.0f, 1.0f, 1.0f)));
-    //    rimStyle = lerp(float4(RimStrength, RimThreshold, RimSoftness, RimPower), rimStyle, rimConfigWeight);
-    //    rimLight = lerp(float4(RimColor, RimAlbedoBlend), rimLight, rimConfigWeight);
 
-    //    float3 viewDir = SafeNormalizeCommon(PPCameraPos.xyz - position.xyz, float3(0.0f, 0.0f, -1.0f));
-    //    float rimStrength = max(rimStyle.x, 0.0f);
-    //    float rimThreshold = saturate(rimStyle.y);
-    //    float rimSoftness = max(rimStyle.z, 0.0001f);
-    //    float rimPower = max(rimStyle.w, 0.05f);
-    //    float rimAlbedoBlend = saturate(rimLight.a);
-    //    float rimLightBlend = saturate(RimLightBlend);
 
-    //    float rimRaw = 1.0f - saturate(dot(surfaceNormal, viewDir));
-    //    float rimCurved = pow(rimRaw, rimPower);
-    //    float rimMask = smoothstep(rimThreshold - rimSoftness, rimThreshold + rimSoftness, rimCurved);
-    //    rimMask *= smoothstep(-0.25f, 0.35f, dot(surfaceNormal, lightDir));
-    //    rimMask *= saturate(0.35f + aggregateShadowVisibility * 0.65f);
 
-    //    float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
-    //    float3 normalizedLightColor = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
-    //    float3 authoredRimColor = max(rimLight.rgb, 0.0f);
-    //    float3 rimTint = lerp(authoredRimColor, authoredRimColor * baseColor.rgb, rimAlbedoBlend);
-    //    rimTint = lerp(rimTint, rimTint * normalizedLightColor, rimLightBlend);
-    //    baseColor.rgb += rimTint * rimMask * rimStrength * max(lightAttenuation, 0.25f);
-    //}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 	float ambientVisibility = HdrFlags.z > 0.5f
 		? VisibilityBitmaskAO.SampleLevel(TextureSampler, input.TexCoord, 0)

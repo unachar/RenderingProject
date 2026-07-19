@@ -25,8 +25,8 @@ struct PhysicsBodyDesc
 	DirectX::XMFLOAT3 HalfExtent = { 0.5f, 0.5f, 0.5f };
 	float Radius = 0.5f;
 	float Height = 1.0f;
-	// Local-space geometry for Mesh. Bullet/Jolt create a convex mesh; PhysX
-	// uses the fitted bounds when cooking support is unavailable.
+
+
 	std::vector<DirectX::XMFLOAT3> MeshVertices{};
 	float Mass = 1.0f;
 	float Friction = 0.5f;

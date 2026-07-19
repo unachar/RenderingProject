@@ -5,8 +5,7 @@
 #include <thread>
 #include <unordered_map>
 
-namespace
-{
+
 	using namespace physx;
 
 	PxVec3 ToPx(const XMFLOAT3& value)
@@ -220,9 +219,9 @@ namespace
 			}
 			if (desc.Shape == PhysicsShape::Capsule)
 			{
-				// PhysX capsules are X-axis aligned; Bullet and Jolt use Y.
-				// Normalize the backend convention so a shared descriptor has
-				// identical orientation in all three engines.
+
+
+
 				shape->setLocalPose(PxTransform(
 					PxQuat(PxHalfPi, PxVec3(0.0f, 0.0f, 1.0f))));
 			}
@@ -429,7 +428,7 @@ namespace
 			m_Joints.erase(it);
 		}
 	};
-}
+
 
 unique_ptr<IPhysicsBackend> CreatePhysXPhysicsBackend()
 {

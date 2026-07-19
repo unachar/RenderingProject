@@ -137,12 +137,12 @@ struct MeshData
 	bool PreviousVertexValid = false;
 	ComPtr<ID3D12Resource> TeoVertexBuffer{};
 	D3D12_VERTEX_BUFFER_VIEW TeoVertexBufferView{};
-	std::array<ComPtr<ID3D12Resource>, ToonOutlineBuilder::kModeCount> TeoVertexBuffers{};
-	std::array<D3D12_VERTEX_BUFFER_VIEW, ToonOutlineBuilder::kModeCount> TeoVertexBufferViews{};
+	std::array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoVertexBuffers{};
+	std::array<D3D12_VERTEX_BUFFER_VIEW, kToonOutlineModeCount> TeoVertexBufferViews{};
 
 	ComPtr<ID3D12Resource> InputVertexBuffer{};
 	ComPtr<ID3D12Resource> TeoInputVertexBuffer{};
-	std::array<ComPtr<ID3D12Resource>, ToonOutlineBuilder::kModeCount> TeoInputVertexBuffers{};
+	std::array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoInputVertexBuffers{};
 
 	ComPtr<ID3D12Resource> IndexBuffer{};
 	D3D12_INDEX_BUFFER_VIEW IndexBufferView{};
@@ -151,15 +151,15 @@ struct MeshData
 	std::array<UINT, LodCount - 1> LodIndexCounts{};
 	ComPtr<ID3D12Resource> TeoIndexBuffer{};
 	D3D12_INDEX_BUFFER_VIEW TeoIndexBufferView{};
-	std::array<ComPtr<ID3D12Resource>, ToonOutlineBuilder::kModeCount> TeoIndexBuffers{};
-	std::array<D3D12_INDEX_BUFFER_VIEW, ToonOutlineBuilder::kModeCount> TeoIndexBufferViews{};
+	std::array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoIndexBuffers{};
+	std::array<D3D12_INDEX_BUFFER_VIEW, kToonOutlineModeCount> TeoIndexBufferViews{};
 
 	UINT IndexCount = 0;
 	UINT VertexCount = 0;
 	UINT TeoIndexCount = 0;
 	UINT TeoVertexCount = 0;
-	std::array<UINT, ToonOutlineBuilder::kModeCount> TeoIndexCounts{};
-	std::array<UINT, ToonOutlineBuilder::kModeCount> TeoVertexCounts{};
+	std::array<UINT, kToonOutlineModeCount> TeoIndexCounts{};
+	std::array<UINT, kToonOutlineModeCount> TeoVertexCounts{};
 	int TextureIndex = -1;
 	int MaterialIndex = -1;
 
@@ -167,8 +167,8 @@ struct MeshData
 	UINT UavOutputVertexIndex = 0;
 	UINT SrvTeoInputVertexIndex = 0;
 	UINT UavTeoOutputVertexIndex = 0;
-	std::array<UINT, ToonOutlineBuilder::kModeCount> SrvTeoInputVertexIndices{};
-	std::array<UINT, ToonOutlineBuilder::kModeCount> UavTeoOutputVertexIndices{};
+	std::array<UINT, kToonOutlineModeCount> SrvTeoInputVertexIndices{};
+	std::array<UINT, kToonOutlineModeCount> UavTeoOutputVertexIndices{};
 	string MeshName{};
 	string MaterialName{};
 	float MaterialPartId = 10.0f;
@@ -197,7 +197,7 @@ private:
 
 	static constexpr UINT m_kMAX_BONES = 2096;
 	static constexpr int m_kMAX_BONE_INFLUENCES = 4;
-	static constexpr UINT m_kSKINNING_DESCRIPTORS_PER_MESH = 2 + RendererState::g_kFRAME_COUNT + (ToonOutlineBuilder::kModeCount * 2);
+	static constexpr UINT m_kSKINNING_DESCRIPTORS_PER_MESH = 2 + RendererState::g_kFRAME_COUNT + (kToonOutlineModeCount * 2);
 	static constexpr UINT m_kINPUT_VERTEX_SRV_OFFSET = 0;
 	static constexpr UINT m_kBONE_SRV_OFFSET = 1;
 	static constexpr UINT m_kOUTPUT_VERTEX_UAV_OFFSET = 1 + RendererState::g_kFRAME_COUNT;
@@ -283,7 +283,7 @@ private:
 	vector<vector<GpuSkinVertex>> m_GpuSkinVertices{};
 	vector<vector<GpuSkinVertex>> m_BaseGpuSkinVertices{};
 	vector<vector<GpuSkinVertex>> m_TeoGpuSkinVertices{};
-	vector<array<vector<GpuSkinVertex>, ToonOutlineBuilder::kModeCount>> m_TeoGpuSkinVerticesByMode{};
+	vector<array<vector<GpuSkinVertex>, kToonOutlineModeCount>> m_TeoGpuSkinVerticesByMode{};
 
 
 	unordered_map<string, const aiScene*> m_Animation{};
@@ -412,4 +412,3 @@ public:
 	const vector<PmxJointData>& GetPmxJoints() const { return m_PmxJoints; }
 	bool HasPmxPhysics() const { return !m_PmxRigidBodies.empty(); }
 };
-

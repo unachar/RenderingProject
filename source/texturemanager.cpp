@@ -57,12 +57,12 @@ struct StreamingUploadEntry
 static vector<StreamingUploadEntry> g_StreamingUploads;
 static uint64_t g_StreamingFrame = 1;
 static bool g_ReservedResourcesSupported = false;
-// Material and environment roughness select a mip explicitly in the lighting
-// shaders. Exposing only mip 0 makes roughness=1 sample the sharp environment
-// and gives both Lit and PBR materials an incorrect mirror-like appearance.
+
+
+
 static constexpr bool g_MaterialMipMapsEnabled = true;
-// Reserved-resource streaming is available again after the diagnostic path.
-// Hardware support and the project setting are still checked before use.
+
+
 static constexpr bool g_ReservedResourceStreamingSafe = true;
 
 struct DecodedEntry
@@ -76,8 +76,7 @@ struct DecodedEntry
 };
 static vector<shared_ptr<DecodedEntry>> g_PendingTextures;
 
-namespace
-{
+
 	string PathToUtf8(const filesystem::path& path)
 	{
 		const auto value = path.u8string();
@@ -234,8 +233,8 @@ namespace
 			residentHeap.Get(), 1, &residentFlag, &residentOffset, &residentTileCount,
 			D3D12_TILE_MAPPING_FLAG_NONE);
 
-		// Until a detailed mip arrives, map it to the first resident tile.  The SRV
-		// remains immutable while progressive remaps replace these fallback tiles.
+
+
 		for (UINT mip = 0; mip < firstResidentMip; ++mip)
 		{
 			const UINT mipTileCount = tilings[mip].WidthInTiles *
@@ -429,7 +428,7 @@ namespace
 
 		return texture;
 	}
-}
+
 
 bool TextureManager::IsBatchLoading()
 {
@@ -1200,7 +1199,7 @@ void TextureManager::UpdateStreaming(ID3D12GraphicsCommandList* commandList)
 		state->TileHeaps.push_back(move(mipHeap));
 		state->MostDetailedResidentMip = mip;
 		g_StreamingUploads.push_back({ move(upload), uploadSize, g_StreamingFrame + 4 });
-		// One detailed mip per frame limits both upload bandwidth and tile-map churn.
+
 		break;
 	}
 }
@@ -1222,4 +1221,3 @@ int TextureManager::LoadTextureUV(const char* fileName, SpriteComponent& sprite,
 	sprite.UvScale = { uvRect.z, uvRect.w };
 	return LoadTexture(fileName);
 }
-

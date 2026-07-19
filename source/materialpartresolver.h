@@ -8,41 +8,40 @@
 #include <string_view>
 #include <vector>
 
-namespace MaterialPartResolver
-{
-	inline const vector<string_view> kWearMaterialTokens =
+
+	inline const vector<string_view> kMaterialPartWearMaterialTokens =
 	{
 		"wear", "other"
 	};
 
-	inline const vector<string_view> kWearMeshTokens =
+	inline const vector<string_view> kMaterialPartWearMeshTokens =
 	{
 		"other", "other02"
 	};
 
-	inline const vector<string_view> kAccessoryTokens =
+	inline const vector<string_view> kMaterialPartAccessoryTokens =
 	{
 		"ribbon", "bow", "choker", "collar", "necklace", "lace",
 		"frill", "accessory", "ornament", "deco"
 	};
 
-	inline const vector<string_view> kHairTokens =
+	inline const vector<string_view> kMaterialPartHairTokens =
 	{
 		"hair", "kami", "bang", "brow", "eyelash"
 	};
 
-	inline const vector<string_view> kSkinTokens =
+	inline const vector<string_view> kMaterialPartSkinTokens =
 	{
 		"skin", "body", "face", "head", "hand", "arm", "leg",
 		"neck", "ear", "eye", "iris", "pupil", "hada"
 	};
 
-	inline const vector<string_view> kClothTokens =
+	inline const vector<string_view> kMaterialPartClothTokens =
 	{
 		"cloth", "dress", "shoe", "socks", "skirt"
 	};
 
-	inline string ToLowerString(string value)
+	inline string MaterialPartToLowerString(string value)
 	{
 		transform(value.begin(), value.end(), value.begin(), [](unsigned char c)
 			{
@@ -51,7 +50,7 @@ namespace MaterialPartResolver
 		return value;
 	}
 
-	inline bool ContainsAnyToken(const string& value, const vector<string_view>& tokens)
+	inline bool MaterialPartContainsAnyToken(const string& value, const vector<string_view>& tokens)
 	{
 		for (string_view token : tokens)
 		{
@@ -73,29 +72,29 @@ namespace MaterialPartResolver
 		const aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
 		aiString name;
 		material->Get(AI_MATKEY_NAME, name);
-		const string materialName = ToLowerString(name.C_Str());
-		const string meshName = ToLowerString(mesh->mName.C_Str());
+		const string materialName = MaterialPartToLowerString(name.C_Str());
+		const string meshName = MaterialPartToLowerString(mesh->mName.C_Str());
 		const string lowerName = materialName + " " + meshName;
 
-		if (ContainsAnyToken(materialName, kWearMaterialTokens) ||
-			ContainsAnyToken(meshName, kWearMeshTokens) ||
+		if (MaterialPartContainsAnyToken(materialName, kMaterialPartWearMaterialTokens) ||
+			MaterialPartContainsAnyToken(meshName, kMaterialPartWearMeshTokens) ||
 			(materialName.find("face_alpha") != string::npos && meshName.find("other") != string::npos) ||
-			ContainsAnyToken(lowerName, kAccessoryTokens))
+			MaterialPartContainsAnyToken(lowerName, kMaterialPartAccessoryTokens))
 		{
 			return 2.0f;
 		}
 
-		if (ContainsAnyToken(lowerName, kHairTokens))
+		if (MaterialPartContainsAnyToken(lowerName, kMaterialPartHairTokens))
 		{
 			return 1.0f;
 		}
 
-		if (ContainsAnyToken(lowerName, kSkinTokens))
+		if (MaterialPartContainsAnyToken(lowerName, kMaterialPartSkinTokens))
 		{
 			return 3.0f;
 		}
 
-		if (ContainsAnyToken(lowerName, kClothTokens))
+		if (MaterialPartContainsAnyToken(lowerName, kMaterialPartClothTokens))
 		{
 			return 2.0f;
 		}
@@ -110,4 +109,3 @@ namespace MaterialPartResolver
 		}
 		return 2.0f;
 	}
-}

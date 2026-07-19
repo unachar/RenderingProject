@@ -147,7 +147,7 @@ static void LogAssimpModelInfo(const aiScene* scene, const char* fileName, const
 		Debug::Log("  Mesh[%u]: name='%s', material=%u, vertices=%u, faces=%u, bones=%u, normals=%d, texcoord0=%d\n",
 			i, mesh->mName.C_Str(), mesh->mMaterialIndex, mesh->mNumVertices, mesh->mNumFaces,
 			mesh->mNumBones, mesh->HasNormals() ? 1 : 0, mesh->HasTextureCoords(0) ? 1 : 0);
-		Debug::Log("    MaterialPartId=%.0f\n", MaterialPartResolver::ResolveMaterialPartId(scene, mesh));
+		Debug::Log("    MaterialPartId=%.0f\n", ResolveMaterialPartId(scene, mesh));
 	}
 	Debug::Log("==== end %s model import info ====\n", modelKind);
 }
@@ -271,7 +271,7 @@ static int ResolveStaticMeshTextureIndex(const aiScene* scene, const aiMesh* mes
 
 	auto toLower = [](string value)
 		{
-			return MaterialPartResolver::ToLowerString(value);
+			return MaterialPartToLowerString(value);
 		};
 	auto isSupportedTextureExtension = [&](const filesystem::path& path)
 		{
@@ -288,14 +288,14 @@ static int ResolveStaticMeshTextureIndex(const aiScene* scene, const aiMesh* mes
 			}
 		};
 
-	filesystem::path texFilePath = ModelImportUtils::FromUtf8(texPath.C_Str());
+	filesystem::path texFilePath = ModelPathFromUtf8(texPath.C_Str());
 	vector<filesystem::path> candidates;
 	if (texFilePath.extension() != ".tga" && texFilePath.extension() != ".TGA")
 	{
 		filesystem::path tgaPath = texFilePath;
 		tgaPath.replace_extension(".tga");
-		pushCandidate(candidates, ModelImportUtils::FromUtf8(dirPath.c_str()) / tgaPath);
-		pushCandidate(candidates, ModelImportUtils::FromUtf8(dirPath.c_str()) / tgaPath.filename());
+		pushCandidate(candidates, ModelPathFromUtf8(dirPath.c_str()) / tgaPath);
+		pushCandidate(candidates, ModelPathFromUtf8(dirPath.c_str()) / tgaPath.filename());
 	}
 	if (isSupportedTextureExtension(texFilePath))
 	{
@@ -303,8 +303,8 @@ static int ResolveStaticMeshTextureIndex(const aiScene* scene, const aiMesh* mes
 		{
 			pushCandidate(candidates, texFilePath);
 		}
-		pushCandidate(candidates, ModelImportUtils::FromUtf8(dirPath.c_str()) / texFilePath);
-		pushCandidate(candidates, ModelImportUtils::FromUtf8(dirPath.c_str()) / texFilePath.filename());
+		pushCandidate(candidates, ModelPathFromUtf8(dirPath.c_str()) / texFilePath);
+		pushCandidate(candidates, ModelPathFromUtf8(dirPath.c_str()) / texFilePath.filename());
 	}
 
 	for (const auto& candidate : candidates)
@@ -731,16 +731,16 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 	meshData.IndexCount = (UINT)m_Indices.size();
 
 	{
-		for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
+		for (int mode = 0; mode < kToonOutlineModeCount; ++mode)
 		{
 			vector<StaticModelVertex> teoVertices;
 			vector<unsigned int> teoIndices;
-			ToonOutlineBuilder::BuildTeoMesh(
+			BuildTeoMesh(
 				m_Vertices,
 				m_Indices,
 				teoVertices,
 				teoIndices,
-				static_cast<ToonOutlineBuilder::Mode>(mode));
+				static_cast<ToonOutlineMeshMode>(mode));
 			if (teoVertices.empty() || teoIndices.empty())
 			{
 				continue;
@@ -773,7 +773,7 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 			meshData.TeoIndexBufferViews[mode].SizeInBytes = teoIndexBufferSize;
 			meshData.TeoIndexCounts[mode] = (UINT)teoIndices.size();
 
-			if (mode == static_cast<int>(ToonOutlineBuilder::Mode::Balanced))
+			if (mode == static_cast<int>(ToonOutlineMeshMode::Balanced))
 			{
 				meshData.TeoVertexBuffer = meshData.TeoVertexBuffers[mode];
 				meshData.TeoIndexBuffer = meshData.TeoIndexBuffers[mode];
@@ -822,19 +822,19 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 	m_MaterialPath.clear();
 	Clear();
 
-	const filesystem::path modelPath = ModelImportUtils::FromUtf8(fileName);
-	const bool isPmxModel = ModelImportUtils::LowerExtension(modelPath) == ".pmx";
-	PmxBinary::Model pmxModel{};
+	const filesystem::path modelPath = ModelPathFromUtf8(fileName);
+	const bool isPmxModel = ModelPathLowerExtension(modelPath) == ".pmx";
+	PmxModel pmxModel{};
 	vector<vector<uint32_t>> pmxMeshVertexIndices{};
 	bool ownsGeneratedScene = false;
 	const aiScene* scene = nullptr;
 	if (isPmxModel)
 	{
-		if (!PmxBinary::LoadModel(fileName, pmxModel))
+		if (!LoadPmxModel(fileName, pmxModel))
 		{
 			return false;
 		}
-		scene = PmxBinary::CreateGeneratedScene(pmxModel, pmxMeshVertexIndices);
+		scene = CreatePmxGeneratedScene(pmxModel, pmxMeshVertexIndices);
 		ownsGeneratedScene = true;
 	}
 	else
@@ -848,7 +848,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 		{
 			flags |= aiProcess_ConvertToLeftHanded;
 		}
-		scene = ModelImportUtils::ImportScene(fileName, flags);
+		scene = ImportModelScene(fileName, flags);
 	}
 	auto releaseScene = [&]()
 		{
@@ -858,7 +858,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 			}
 			if (ownsGeneratedScene)
 			{
-				PmxBinary::DestroyGeneratedScene(const_cast<aiScene*>(scene));
+				DestroyPmxGeneratedScene(const_cast<aiScene*>(scene));
 			}
 			else
 			{
@@ -876,7 +876,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 	{
 		LogAssimpModelInfo(scene, fileName, "Static");
 	}
-	const string dirPath = ModelImportUtils::ToUtf8(modelPath.parent_path());
+	const string dirPath = ModelPathToUtf8(modelPath.parent_path());
 
 	XMFLOAT3 minPos = { FLT_MAX, FLT_MAX, FLT_MAX };
 	XMFLOAT3 maxPos = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
@@ -901,7 +901,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 			material->Get(AI_MATKEY_COLOR_DIFFUSE, diffuse);
 			material->Get(AI_MATKEY_OPACITY, opacity);
 		}
-		const float materialPartId = MaterialPartResolver::ResolveMaterialPartId(scene, mesh);
+		const float materialPartId = ResolveMaterialPartId(scene, mesh);
 		const XMFLOAT4 meshDiffuse(diffuse.r, diffuse.g, diffuse.b, materialPartId);
 
 		vector<StaticModelVertex> vertices(mesh->mNumVertices);
@@ -1009,16 +1009,16 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 		meshData.TextureIndex = ResolveStaticMeshTextureIndex(scene, mesh, fileName, dirPath);
 
 	{
-			for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
+			for (int mode = 0; mode < kToonOutlineModeCount; ++mode)
 			{
 				vector<StaticModelVertex> teoVertices;
 				vector<unsigned int> teoIndices;
-				ToonOutlineBuilder::BuildTeoMesh(
+				BuildTeoMesh(
 					vertices,
 					indices,
 					teoVertices,
 					teoIndices,
-					static_cast<ToonOutlineBuilder::Mode>(mode));
+					static_cast<ToonOutlineMeshMode>(mode));
 				if (teoVertices.empty() || teoIndices.empty())
 				{
 					continue;
@@ -1053,7 +1053,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 				meshData.TeoIndexBufferViews[mode].SizeInBytes = teoIndexBufferSize;
 				meshData.TeoIndexCounts[mode] = (UINT)teoIndices.size();
 
-				if (mode == static_cast<int>(ToonOutlineBuilder::Mode::Balanced))
+				if (mode == static_cast<int>(ToonOutlineMeshMode::Balanced))
 				{
 					meshData.TeoVertexBuffer = meshData.TeoVertexBuffers[mode];
 					meshData.TeoIndexBuffer = meshData.TeoIndexBuffers[mode];
@@ -1129,7 +1129,7 @@ bool StaticModelResource::ApplyMeshShadingOverridePartIds(ID3D12Device* device, 
 				"static mesh shading vertex");
 		}
 
-		for (int mode = 0; mode < ToonOutlineBuilder::kModeCount; ++mode)
+		for (int mode = 0; mode < kToonOutlineModeCount; ++mode)
 		{
 			auto& teoVertices = meshData.CpuTeoVerticesByMode[mode];
 			for (StaticModelVertex& vertex : teoVertices)
@@ -1157,4 +1157,3 @@ void StaticModelResource::Uninit()
 	m_Meshes.clear();
 	Clear();
 }
-

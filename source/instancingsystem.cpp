@@ -15,8 +15,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace
-{
+
     enum class InstanceKind : UINT8
     {
         Mesh,
@@ -48,13 +47,13 @@ namespace
         UINT AnimatedMeshIndex = 0;
     };
 
-    const MaterialComponent& DefaultMaterial()
+    static const MaterialComponent& DefaultMaterial()
     {
         static const MaterialComponent material{};
         return material;
     }
 
-    bool ShouldCastShadow(EntityID entity)
+    static bool ShouldCastShadow(EntityID entity)
     {
         if (ComponentManager::HasComponent<LightComponent>(entity))
         {
@@ -191,7 +190,7 @@ namespace
         }
         return key;
     }
-}
+
 
 bool InstancingSystem::CanInstance(EntityID entity)
 {
@@ -422,8 +421,8 @@ bool InstancingSystem::CreateGpuCullingResources(ID3D12Device* device)
     D3D12_INDIRECT_ARGUMENT_DESC drawArgument{};
     drawArgument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW;
     D3D12_COMMAND_SIGNATURE_DESC drawDescription{};
-    // Keep each record aligned to the indexed argument size so both signatures
-    // consume the same GPU-generated argument array.
+
+
     drawDescription.ByteStride = sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
     drawDescription.NumArgumentDescs = 1;
     drawDescription.pArgumentDescs = &drawArgument;
@@ -636,8 +635,8 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 					constants.FrustumPlanes[planeIndex] =
 						{ a * inverseLength, b * inverseLength, c * inverseLength, d * inverseLength };
 				};
-			// DirectXMath uses row vectors. Clip-space planes are therefore
-			// extracted from the columns of View * Projection.
+
+
 			setPlane(0, vp._11 + vp._14, vp._21 + vp._24, vp._31 + vp._34, vp._41 + vp._44);
 			setPlane(1, vp._14 - vp._11, vp._24 - vp._21, vp._34 - vp._31, vp._44 - vp._41);
 			setPlane(2, vp._12 + vp._14, vp._22 + vp._24, vp._32 + vp._34, vp._42 + vp._44);
@@ -1092,10 +1091,6 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
             MaterialSystem::IsReceivingPostProcess(entity) == receivingPostProcessOnly;
     };
 
-	// GPU culling is useful for large visible instance groups, but starting it
-	// per mesh is expensive when the whole entity is outside the camera.  Reject
-	// those entities first so off-screen animated models do not run skinning,
-	// cull/argument compute dispatches, ExecuteIndirect, or resource barriers.
 	auto isCameraVisible = [&](EntityID entity, const XMFLOAT3& center,
 		const XMFLOAT3& extents, bool hasBounds)
 	{

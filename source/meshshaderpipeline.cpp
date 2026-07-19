@@ -5,12 +5,11 @@
 #include "renderersettings.h"
 #include "occlusionculling.h"
 
-namespace
-{
-	ComPtr<ID3D12Device> g_Device;
-	ComPtr<ID3D12RootSignature> g_RootSignature;
-	ComPtr<ID3D12PipelineState> g_PipelineState;
-	bool g_FeatureSupported = false;
+
+	static ComPtr<ID3D12Device> g_Device;
+	static ComPtr<ID3D12RootSignature> g_RootSignature;
+	static ComPtr<ID3D12PipelineState> g_PipelineState;
+	static bool g_FeatureSupported = false;
 
 	template<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE Type, typename T>
 	struct alignas(void*) StreamSubobject
@@ -63,7 +62,7 @@ namespace
 		memcpy(&bits, &value, sizeof(bits));
 		return bits;
 	}
-}
+
 
 bool MeshShaderPipeline::Initialize(ID3D12Device* device, ID3D12RootSignature* rootSignature)
 {

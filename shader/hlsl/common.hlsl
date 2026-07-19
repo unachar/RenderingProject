@@ -1,6 +1,6 @@
-// ==========================================================
-// common.hlsl
-// ==========================================================
+
+
+
 #pragma warning(disable: 4000)
 
 struct GBufferOutput
@@ -40,9 +40,9 @@ float3 DecodeGBufferNormal(float3 normal)
 
 #ifdef SHADER_3D
 
-// ----------------------------------------------------------
-// 3D 
-// ----------------------------------------------------------
+
+
+
 
 #ifndef SHADER_POSTPROCESS
 cbuffer ConstantBuffer3D : register(b0)
@@ -97,8 +97,8 @@ SamplerComparisonState g_ShadowSampler : register(s1);
 cbuffer ShadowParams : register(b3)
 {
     float4x4 LightViewProjection;
-    float4 ShadowMapParams; // x: texel size, y: depth bias, z: normal bias, w: strength
-    float4 ShadowFilterParams; // x: PCF radius (0-3)
+    float4 ShadowMapParams;
+    float4 ShadowFilterParams;
 };
 
 #ifndef SHADER_POSTPROCESS
@@ -167,7 +167,7 @@ struct Light
     float Intensity;
 };
 
-#endif // SHADER_3D
+#endif
 
 #if defined(SHADER_3D) || defined(SHADER_POSTPROCESS)
 
@@ -179,40 +179,40 @@ cbuffer LightParams : register(b1)
 {
     float4 LightDirection;
     float4 LightColor;
-    float4 LightPositionType; // xyz: position, w: 0 directional / 1 point / 2 spot / 3 volume
-    float4 LightExtra;        // x: spot inner cos, y: spot outer cos, z: volume density, w: volume shape
+    float4 LightPositionType;
+    float4 LightExtra;
     float4 LightCount;
     float4 LightDirections[MAX_SHADER_LIGHTS];
     float4 LightColors[MAX_SHADER_LIGHTS];
     float4 LightPositionTypes[MAX_SHADER_LIGHTS];
     float4 LightExtras[MAX_SHADER_LIGHTS];
     float4x4 LightViewProjections[MAX_SHADER_LIGHTS];
-    float4 LightShadowData[MAX_SHADER_LIGHTS]; // x: shadow layer, y: texel size, z: depth bias, w: normal bias
-    float4 LightFlags[MAX_SHADER_LIGHTS]; // x: opaque, y: forward, z: volumetric, w: render mode
+    float4 LightShadowData[MAX_SHADER_LIGHTS];
+    float4 LightFlags[MAX_SHADER_LIGHTS];
     float4x4 VirtualShadowViewProjections[4];
-    float4 VirtualShadowParams[4]; // x: physical layer, y: texel size, z: depth bias, w: normal bias
-    float4 VirtualShadowPageOrigins[4]; // xy: global page origin, z: page grid, w: page world size
-    uint4 VirtualShadowResidency[16]; // four packed 16-row masks per clipmap level
-    float4 VirtualShadowGlobal; // x: mode, y: level count, z: PCF radius, w: light-space overlap fraction
-    float4 ShadowRuntimeGlobal; // x: contact enabled, y: length, z: steps, w: method
-    float4 ShadowDebugGlobal; // x: mode, y: cache hit, z: resident pages per dimension, w: pages per dimension
-    float4 DistanceFieldData0[16]; // xyz: world AABB center, w: active
-    float4 DistanceFieldData1[16]; // xyz: world AABB extents
-    float4 DistanceFieldGlobal; // x: object count, y: ray distance, z: steps
-    float4 LocalFogData0[16]; // xyz: center, w: radius
-    float4 LocalFogData1[16]; // x: height falloff, y: density, z: shape, w: enabled
+    float4 VirtualShadowParams[4];
+    float4 VirtualShadowPageOrigins[4];
+    uint4 VirtualShadowResidency[16];
+    float4 VirtualShadowGlobal;
+    float4 ShadowRuntimeGlobal;
+    float4 ShadowDebugGlobal;
+    float4 DistanceFieldData0[16];
+    float4 DistanceFieldData1[16];
+    float4 DistanceFieldGlobal;
+    float4 LocalFogData0[16];
+    float4 LocalFogData1[16];
     float4 LocalFogColors[16];
-    float4 LocalFogGlobal; // x: active volume count
-    float4 AtmosphereParams0; // x: enabled, y: rayleigh, z: mie, w: density
-    float4 AtmosphereParams1; // x: height falloff, y: extinction, z: mie g, w: distance scale
-    float4 AtmosphereColor0;  // rgb: rayleigh color, a: light shaft strength
-    float4 AtmosphereColor1;  // rgb: mie color, a: ambient strength
-    float4 AtmosphereCamera;  // xyz: camera position
+    float4 LocalFogGlobal;
+    float4 AtmosphereParams0;
+    float4 AtmosphereParams1;
+    float4 AtmosphereColor0;
+    float4 AtmosphereColor1;
+    float4 AtmosphereCamera;
 };
 
-// GPU-built 16x16 screen tiles keep the cost proportional to local overlap,
-// rather than to the number of authored lights. Each tile is a fixed four-
-// index block ordered by light priority; 0xffffffff marks an unused slot.
+
+
+
 StructuredBuffer<uint> LightTileIndices : register(t11);
 StructuredBuffer<uint> VolumetricLightIndices : register(t24);
 
@@ -252,9 +252,9 @@ bool VirtualShadowPageResidentCommon(int level, int2 localPage)
 
 int VirtualShadowPositiveModuloCommon(int value, int modulus)
 {
-	// The physical VSM page grid is fixed at 16x16.  Its power-of-two mask is
-	// equivalent to positive modulo for both positive and negative page IDs and
-	// avoids a costly signed integer divide in every shadow tap.
+
+
+
 	return value & (modulus - 1);
 }
 
@@ -297,12 +297,12 @@ float VirtualShadowLevelInteriorCommon(int level, float2 virtualUv, float3 world
     float2 edgeDistance = min(
         pagePosition - firstResident,
         firstResident + residentGrid - pagePosition);
-    // Clipmap coverage is a square in light space.  Basing the blend on
-    // Euclidean camera distance creates a circular, moving LOD contour that
-    // cuts through this square and makes the shadow silhouette "swim".
-    // Blend only in the real overlap of two clipmap levels.  The coordinates
-    // are snapped with the clipmap, so this weight is stable while the camera
-    // moves inside a page.
+
+
+
+
+
+
     float overlapPages =
         max(residentGrid * 0.5f * clamp(VirtualShadowGlobal.w, 0.05f, 0.40f),
             0.25f);
@@ -393,7 +393,7 @@ float HenyeyGreensteinCommon(float cosTheta, float g)
     g = clamp(g, -0.95f, 0.95f);
     float g2 = g * g;
     float denom = max(1.0f + g2 - 2.0f * g * cosTheta, 0.0001f);
-    // Equivalent to denom^-1.5 without the relatively expensive generic pow.
+
     float invSqrtDenom = rsqrt(denom);
     return 0.0795775f * (1.0f - g2) * invSqrtDenom * invSqrtDenom * invSqrtDenom;
 }
@@ -866,11 +866,11 @@ void ResolveSingleLightCommon(
                 coneRootRadius);
             float cylinderRadius = max(coneEndRadius * 0.45f, 0.001f);
 
-            // A volume light is a finite, forward-facing cone/cylinder.  The
-            // old abs(axialDistance) made a second lobe behind the emitter and
-            // saturating radial alpha left exp(-1.6) outside the authored
-            // boundary.  Both errors showed up as a rounded extra layer near
-            // the shaft root.
+
+
+
+
+
             float insideAxial =
                 step(0.0f, axialDistance) *
                 step(axialDistance, lightRange);
@@ -897,10 +897,10 @@ void ResolveSingleLightCommon(
                 insideAxial;
 
             float shapeMask = lerp(coneMask, cylinderMask, volumeShape);
-            // Volume lights use the same finite shape for both direct
-            // attenuation and participating-media density. Reusing the old
-            // apex-based spotMask here zeroed the new emitter cap and left a
-            // camera-dependent dark gap below the transform position.
+
+
+
+
             attenuation =
                 rangeFade *
                 rangeFade *
@@ -1007,15 +1007,15 @@ void ResolveLightAggregate(
 
 struct MaterialPartShaderParams
 {
-    float4 Basic;       // x: metallic, y: roughness, z: fresnel, w: normal blend
-    float4 Base;        // x: normal bias, y: saturation, z: brightness, w: kawaii blend
-    float4 Shadow0;     // x: threshold, y: softness, z: strength, w: mid strength
-    float4 Shadow1;     // x: lit strength, y: cast threshold, z: cast softness, w: unused
-    float4 Highlight;   // x: rim strength, y: rim threshold, z: specular strength, w: specular threshold
-    float4 RimStyle;    // x: softness, y: power, z: albedo blend, w: light blend
-    float4 RimLight;    // rgb: rim color, a: unused
-    float4 Skin0;       // x: scatter strength, y: scatter wrap, z: backlight strength, w: rim scatter strength
-    float4 Skin1;       // x: oil specular strength, y: shadow scatter, z: unused, w: unused
+    float4 Basic;
+    float4 Base;
+    float4 Shadow0;
+    float4 Shadow1;
+    float4 Highlight;
+    float4 RimStyle;
+    float4 RimLight;
+    float4 Skin0;
+    float4 Skin1;
 };
 
 cbuffer PBRParams : register(b2)
@@ -1051,8 +1051,8 @@ cbuffer PBRParams : register(b2)
     float CastShadowThreshold;
     float CastShadowSoftness;
     float3 PBRPadding;
-    float4 Transparent0; // x: IOR, y: transmission, z: transmission roughness, w: refraction strength
-    float4 Transparent1; // x: thickness, yzw: absorption coefficient
+    float4 Transparent0;
+    float4 Transparent1;
     MaterialPartShaderParams PartParams[15];
 };
 
@@ -1067,9 +1067,9 @@ MaterialPartShaderParams ResolveMaterialPartParams(float materialPartId)
 
 #ifdef SHADER_2D
 
-// ----------------------------------------------------------
-// 2D 
-// ----------------------------------------------------------
+
+
+
 
 float3 SafeNormalizeCommon(float3 value, float3 fallback)
 {
@@ -1124,14 +1124,14 @@ struct PSInput2D
     float3 WorldPos : TEXCOORD1;
 };
 
-#endif // SHADER_2D
+#endif
 
 
 #ifdef SHADER_DEBUG_LINE
 
-// ----------------------------------------------------------
-// Debug Line 
-// ----------------------------------------------------------
+
+
+
 
 cbuffer cbModelDebugLine : register(b0)
 {
@@ -1156,14 +1156,14 @@ struct PSInputDebugLine
     float3 WorldPos : TEXCOORD0;
 };
 
-#endif // SHADER_DEBUG_LINE
- 
- 
+#endif
+
+
 #ifdef SHADER_POSTPROCESS
- 
-// ----------------------------------------------------------
-// PostProcess 
-// ----------------------------------------------------------
+
+
+
+
 
 float3 ACESToneMap(float3 color)
 {
@@ -1178,9 +1178,9 @@ float3 ACESToneMap(float3 color)
 
 cbuffer PostProcessParams : register(b0)
 {
-    float4 Flags;       // x=Exposure, y=Intensity, z=RenderModeFlag, w=unused
-    float4 PPCameraPos; // xyz=CameraPosition, w=unused
-    float4 HdrFlags;    // x=HdrEnabled, y=ToneMapEnabled, zw=unused
+    float4 Flags;
+    float4 PPCameraPos;
+    float4 HdrFlags;
     float4x4 PPInvViewProjection;
     float4x4 PPViewProjection;
 };
@@ -1236,9 +1236,9 @@ bool ProjectWorldToScreenCommon(float3 worldPos, out float2 screenUv)
     return ndc.z >= 0.0f && ndc.z <= 1.0f;
 }
 
-// Returns hit UV in xy and the world-space distance along the reflection ray in z.
-// A negative x/y means no reliable hit. D3D depth is already in [0, 1], so it
-// must not be remapped to the OpenGL [-1, 1] range here.
+
+
+
 float3 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> depthTex, SamplerState depthSampler)
 {
     const float maxDist = 15.0f;
@@ -1287,8 +1287,8 @@ float3 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> dep
             continue;
         }
 
-        // Only accept an actual front-to-back crossing. This prevents the ray
-        // from immediately selecting its own surface or a foreground silhouette.
+
+
         if (hasFrontSample && previousDepthDiff <= 0.0f)
         {
             float lowT = previousT;
@@ -1331,5 +1331,5 @@ float3 ReconstructPostProcessWorldPositionCommon(float2 uv, float depth)
     float4 world = mul(float4(ndc, depth, 1.0f), PPInvViewProjection);
     return world.xyz / max(abs(world.w), 0.000001f);
 }
- 
+
 #endif

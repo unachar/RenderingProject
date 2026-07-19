@@ -17,8 +17,7 @@
 #include <limits>
 #include <climits>
 
-namespace
-{
+
 	uint64_t HashGeometry(const void* data, size_t size)
 	{
 		uint64_t hash = 1469598103934665603ull;
@@ -93,6 +92,7 @@ namespace
 	{
 		int GlobalPageX = INT_MIN;
 		int GlobalPageY = INT_MIN;
+		uint64_t ProjectionKey = 0;
 		uint64_t ContentKey = 0;
 		bool Valid = false;
 	};
@@ -639,6 +639,17 @@ namespace
 						XMMatrixScaling(static_cast<float>(pageGrid), static_cast<float>(pageGrid), 1.0f);
 					const XMMATRIX pageViewProjection = XMMatrixTranspose(fullViewProjection * crop);
 
+					uint64_t pageProjectionKey = 1469598103934665603ull;
+					const auto* projectionBytes =
+						reinterpret_cast<const uint8_t*>(&pageViewProjection);
+					for (size_t byteIndex = 0;
+						byteIndex < sizeof(pageViewProjection);
+						++byteIndex)
+					{
+						pageProjectionKey ^= projectionBytes[byteIndex];
+						pageProjectionKey *= 1099511628211ull;
+					}
+
 					uint64_t pageContentKey = virtualSceneKey;
 					auto hashPageValue = [&](const void* data, size_t size)
 					{
@@ -652,9 +663,17 @@ namespace
 					hashPageValue(&virtualLevel, sizeof(virtualLevel));
 					hashPageValue(&globalPageX, sizeof(globalPageX));
 					hashPageValue(&globalPageY, sizeof(globalPageY));
-					// A moving caster invalidates only pages it can actually touch.  The
-					// previous implementation mixed every transform into every page key,
-					// turning one animated character into a full 64-page redraw.
+
+
+
+
+
+
+
+					hashPageValue(&pageViewProjection, sizeof(pageViewProjection));
+
+
+
 					for (EntityID entity : World::GetView<TransformComponent>())
 					{
 						if (!IsShadowBoundsEntity(entity) ||
@@ -680,7 +699,8 @@ namespace
 					const bool mappingMatches =
 						cacheEntry.Valid &&
 						cacheEntry.GlobalPageX == globalPageX &&
-						cacheEntry.GlobalPageY == globalPageY;
+						cacheEntry.GlobalPageY == globalPageY &&
+						cacheEntry.ProjectionKey == pageProjectionKey;
 					const bool contentMatches =
 						mappingMatches && cacheEntry.ContentKey == pageContentKey;
 					const UINT updatePeriod = 1u << virtualLevel;
@@ -711,6 +731,7 @@ namespace
 						g_VirtualShadowCacheHit = false;
 						cacheEntry.GlobalPageX = globalPageX;
 						cacheEntry.GlobalPageY = globalPageY;
+						cacheEntry.ProjectionKey = pageProjectionKey;
 						cacheEntry.ContentKey = pageContentKey;
 						cacheEntry.Valid = true;
 					}
@@ -750,7 +771,7 @@ namespace
 		return g_CachedShadowLight;
 	}
 
-	bool IsSkyEntity(EntityID entity)
+	static bool IsSkyEntity(EntityID entity)
 	{
 		return ComponentManager::HasComponent<NameComponent>(entity) &&
 			ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky";
@@ -844,9 +865,9 @@ namespace
 		const float centerY = XMVectorGetY(projectedCenter);
 		const float centerZ = XMVectorGetZ(projectedCenter);
 
-		// Project three world-space radius vectors and sum their absolute
-		// contributions.  This slightly overestimates rotated AABBs, which is the
-		// desired failure mode for shadow culling.
+
+
+
 		float ndcRadiusX = 0.0f;
 		float ndcRadiusY = 0.0f;
 		float ndcRadiusZ = 0.0f;
@@ -1045,11 +1066,11 @@ namespace
 		const float residentFraction =
 			static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION) /
 			static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION);
-		// VirtualFirstLevelRadius describes the actually resident world-space
-		// radius, not the unallocated 16x16 virtual extent.  Keeping every level
-		// in the same exact 2x series prevents the former level 2 -> 3 jump
-		// (64 m -> 384 m full-map radius), which visibly changed silhouettes at
-		// the last resolution boundary.
+
+
+
+
+
 		const float residentRadius =
 			RendererSettings::GetVirtualFirstLevelRadius() *
 			static_cast<float>(1u << actualLevel);
@@ -1071,7 +1092,7 @@ namespace
 
 		float planeX = XMVectorGetX(XMVector3Dot(camera, right));
 		float planeY = XMVectorGetX(XMVector3Dot(camera, lightUp));
-		const float planeZ = XMVectorGetX(XMVector3Dot(camera, lightDirection));
+		float planeZ = XMVectorGetX(XMVector3Dot(camera, lightDirection));
 		const float pageGrid = static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION);
 		const float pageWorldSize = (radius * 2.0f) / pageGrid;
 
@@ -1082,6 +1103,11 @@ namespace
 				: pageWorldSize;
 			planeX = roundf(planeX / snapSize) * snapSize;
 			planeY = roundf(planeY / snapSize) * snapSize;
+
+
+
+
+			planeZ = roundf(planeZ / snapSize) * snapSize;
 		}
 
 		XMVECTOR target = XMVectorAdd(
@@ -1102,8 +1128,8 @@ namespace
 		}
 		else if (conventionalCascade && actualLevel < RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS)
 		{
-			// Conventional cascades use the same metadata for their light-space
-			// overlap and a level-independent world-space PCF width.
+
+
 			g_VirtualShadowPageOrigins[actualLevel] = XMFLOAT4(
 				0.0f,
 				0.0f,
@@ -1122,11 +1148,11 @@ namespace
 			0.1f,
 			shadowFarClip);
 		outLightViewProjection = XMMatrixTranspose(view * projection);
-		// The UI bias is calibrated against the 300 m reference projection.
-		// Convert it per level so the receiver offset remains constant in world
-		// space for conventional cascades. VSM texels double in world size at
-		// every clipmap level, so its receiver offset must grow by the same 2x
-		// series or the coarse levels regress into self-shadow bands.
+
+
+
+
+
 		const float biasScale = (300.0f - 0.1f) / max(shadowFarClip - 0.1f, 0.0001f);
 		const float virtualLevelBiasScale = conventionalCascade
 			? 1.0f
@@ -1422,7 +1448,7 @@ namespace
 		return vertices;
 	}
 
-}
+
 
 void RendererResource::BeginFrame()
 {
@@ -1538,8 +1564,8 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 		return;
 	}
 
-	// The directional light is the stable primary source for the atmosphere and
-	// legacy paths.  Local lights still populate the deferred light array below.
+
+
 	const RuntimeLightState& directionalLight = GetCachedLightState(true);
 	const RuntimeLightState& runtimeLight = directionalLight.HasLight
 		? directionalLight
@@ -1894,8 +1920,8 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 			light.AffectsForward ? 1.0f : 0.0f,
 			enableVolumetrics ? 1.0f : 0.0f,
 			static_cast<float>(light.RenderMode));
-		// An explicit -1 is required for non-shadowed lights.  Zero denotes
-		// shadow array layer zero and previously made every light sample it.
+
+
 		constants.LightShadowData[lightIndex] = XMFLOAT4(-1.0f, 0.0f, 0.0f, 0.0f);
 		const int shadowIndex = FindShadowLightIndex(candidate.Entity);
 		if (shadowIndex >= 0)
@@ -1935,7 +1961,7 @@ void RendererResource::UpdateLightConstantBuffer(float deferredLightStrength)
 		RendererCore::GetFrameIndex() * g_kLIGHT_CB_ALIGNED_SIZE;
 	memcpy(lightDst, &constants, sizeof(constants));
 
-	// Update PBR constants
+
 	if (m_pPBRCbvDataBegin)
 	{
 		PBRConstants pbrConstants = BuildPBRConstantsFromMaterial(GetDeferredLightingMaterial());
@@ -2162,9 +2188,9 @@ bool RendererResource::IsCurrentShadowPassVirtualPage()
 
 UINT RendererResource::GetCurrentShadowLodBias()
 {
-	// Keep the caster mesh identical in every shadow pass.  Selecting a coarser
-	// mesh for outer virtual levels changes the silhouette exactly where the
-	// shadow-map resolution changes and produces visible LOD bands.
+
+
+
 	return 0;
 }
 
@@ -2232,8 +2258,7 @@ uint64_t RendererResource::GetMaterialBatchHash(const MaterialComponent& materia
 	state.UseTexture = material.UseTexture ? 1u : 0u;
 	state.UseNormalMap = material.NormalMapID >= 0 ? 1u : 0u;
 	const uint64_t stateHash = HashGeometry(&state, sizeof(state));
-	// Combine the two stable hashes without hashing object padding or STL members.
+
 	hash ^= stateHash + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
 	return hash;
 }
-
