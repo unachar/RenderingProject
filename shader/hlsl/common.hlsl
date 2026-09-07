@@ -1181,6 +1181,7 @@ cbuffer PostProcessParams : register(b0)
     float4 Flags;
     float4 PPCameraPos;
     float4 HdrFlags;
+    float4 BloomParams;
     float4x4 PPInvViewProjection;
     float4x4 PPViewProjection;
 };

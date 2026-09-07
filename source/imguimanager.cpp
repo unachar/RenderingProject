@@ -701,11 +701,34 @@ void ImGuiManager::Update()
 				ImGuiSliderFlags_Logarithmic);
 
 			float postProcessIntensity = Camera::GetCameraPostProcessIntensity();
-			ImGui::BeginDisabled(Camera::GetCameraPostProcess() == PostProcessType::NONE);
+			const PostProcessType activePostProcess = Camera::GetCameraPostProcess();
+			ImGui::BeginDisabled(activePostProcess == PostProcessType::NONE);
 			ImGui::SetNextItemWidth(-1.0f);
-			if (ImGui::SliderFloat("エフェクト強度", &postProcessIntensity, 0.01f, 1.0f, "%.2f"))
+			const float maxPostProcessIntensity = activePostProcess == PostProcessType::BLOOM ? 5.0f : 1.0f;
+			if (ImGui::SliderFloat("エフェクト強度", &postProcessIntensity, 0.0f, maxPostProcessIntensity, "%.2f"))
 			{
 				Camera::SetCameraPostProcessIntensity(postProcessIntensity);
+			}
+			if (activePostProcess == PostProcessType::BLOOM)
+			{
+				float bloomThreshold = Camera::GetCameraBloomThreshold();
+				float bloomSoftKnee = Camera::GetCameraBloomSoftKnee();
+				float bloomRadius = Camera::GetCameraBloomRadius();
+				ImGui::SetNextItemWidth(-1.0f);
+				if (ImGui::SliderFloat("Bloom しきい値", &bloomThreshold, 0.0f, 16.0f, "%.2f"))
+				{
+					Camera::SetCameraBloomThreshold(bloomThreshold);
+				}
+				ImGui::SetNextItemWidth(-1.0f);
+				if (ImGui::SliderFloat("Bloom Soft Knee", &bloomSoftKnee, 0.0f, 1.0f, "%.2f"))
+				{
+					Camera::SetCameraBloomSoftKnee(bloomSoftKnee);
+				}
+				ImGui::SetNextItemWidth(-1.0f);
+				if (ImGui::SliderFloat("Bloom 半径", &bloomRadius, 0.25f, 4.0f, "%.2f"))
+				{
+					Camera::SetCameraBloomRadius(bloomRadius);
+				}
 			}
 			ImGui::EndDisabled();
 
@@ -1410,6 +1433,7 @@ void ImGuiManager::DrawGBufferWindow()
 		{ "影", GBufferType::SHADOW },
 		{ "大気", GBufferType::ATMOSPHERE },
 		{ "ベロシティ", GBufferType::VELOCITY },
+		{ "ブルーム", GBufferType::BLOOM },
 	};
 
 	const int cellCount = int(size(cells));
@@ -2929,14 +2953,21 @@ ImGui::Text("メッシュ: %s", ComponentManager::HasComponent<MeshComponent>(en
 		if (ComponentManager::HasComponent<PostProcessComponent>(entity))
 		{
 			auto& post = ComponentManager::GetComponentUnchecked<PostProcessComponent>(entity);
-			const char* postNames[] = { "なし", "ブラー", "セピア", "グレースケール", "反転" };
+			const char* postNames[] = { "なし", "ブラー", "セピア", "グレースケール", "反転", "ブルーム" };
 			int type = static_cast<int>(post.Type);
 			if (ImGui::Combo("ポストプロセス", &type, postNames, IM_ARRAYSIZE(postNames)))
 			{
-				post.Type = static_cast<PostProcessType>(clamp(type, 0, 4));
+				post.Type = static_cast<PostProcessType>(clamp(type, 0, static_cast<int>(PostProcessType::COUNT) - 1));
 				changed = true;
 			}
-			changed |= ImGui::SliderFloat("エフェクト強度", &post.Intensity, 0.0f, 1.0f);
+			const float maxPostProcessIntensity = post.Type == PostProcessType::BLOOM ? 5.0f : 1.0f;
+			changed |= ImGui::SliderFloat("エフェクト強度", &post.Intensity, 0.0f, maxPostProcessIntensity);
+			if (post.Type == PostProcessType::BLOOM)
+			{
+				changed |= ImGui::SliderFloat("Bloom しきい値", &post.BloomThreshold, 0.0f, 16.0f);
+				changed |= ImGui::SliderFloat("Bloom Soft Knee", &post.BloomSoftKnee, 0.0f, 1.0f);
+				changed |= ImGui::SliderFloat("Bloom 半径", &post.BloomRadius, 0.25f, 4.0f);
+			}
 		}
 
 		if (ComponentManager::HasComponent<MoveComponent>(entity))

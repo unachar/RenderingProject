@@ -120,7 +120,7 @@ static void ShaderLogToFile(const char* msg)
 bool RendererShader::CreatePostProcessPipeline()
 {
 	ShaderLogToFile("PP: setup ranges\n");
-	CD3DX12_DESCRIPTOR_RANGE ranges[9];
+	CD3DX12_DESCRIPTOR_RANGE ranges[10];
 	ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 0);
 	ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6);
 	ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 7);
@@ -130,8 +130,9 @@ bool RendererShader::CreatePostProcessPipeline()
 	ranges[6].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 12);
 	ranges[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 13);
 	ranges[8].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 14);
+	ranges[9].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 15);
 
-	CD3DX12_ROOT_PARAMETER params[15];
+	CD3DX12_ROOT_PARAMETER params[16];
 	params[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[1].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 	params[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -147,6 +148,7 @@ bool RendererShader::CreatePostProcessPipeline()
 	params[12].InitAsDescriptorTable(1, &ranges[7], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[13].InitAsDescriptorTable(1, &ranges[8], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[14].InitAsShaderResourceView(24, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+	params[15].InitAsDescriptorTable(1, &ranges[9], D3D12_SHADER_VISIBILITY_PIXEL);
 
 	CD3DX12_STATIC_SAMPLER_DESC samplers[2] {};
 	samplers[0] = CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);

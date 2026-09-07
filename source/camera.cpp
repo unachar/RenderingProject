@@ -237,3 +237,60 @@ float Camera::GetCameraPostProcessIntensity()
 	}
 	return 0.0f;
 }
+
+void Camera::SetCameraBloomThreshold(float threshold)
+{
+	const EntityID cameraEntity = GetCameraEntity();
+	if (cameraEntity != g_kINVALID_ENTITY && Registry::HasComponent(cameraEntity, ComponentType::POST_PROCESS))
+	{
+		ComponentManager::GetComponentUnchecked<PostProcessComponent>(cameraEntity).BloomThreshold = max(threshold, 0.0f);
+	}
+}
+
+float Camera::GetCameraBloomThreshold()
+{
+	const EntityID cameraEntity = GetCameraEntity();
+	if (cameraEntity != g_kINVALID_ENTITY && Registry::HasComponent(cameraEntity, ComponentType::POST_PROCESS))
+	{
+		return ComponentManager::GetComponentUnchecked<PostProcessComponent>(cameraEntity).BloomThreshold;
+	}
+	return 2.0f;
+}
+
+void Camera::SetCameraBloomSoftKnee(float softKnee)
+{
+	const EntityID cameraEntity = GetCameraEntity();
+	if (cameraEntity != g_kINVALID_ENTITY && Registry::HasComponent(cameraEntity, ComponentType::POST_PROCESS))
+	{
+		ComponentManager::GetComponentUnchecked<PostProcessComponent>(cameraEntity).BloomSoftKnee = clamp(softKnee, 0.0f, 1.0f);
+	}
+}
+
+float Camera::GetCameraBloomSoftKnee()
+{
+	const EntityID cameraEntity = GetCameraEntity();
+	if (cameraEntity != g_kINVALID_ENTITY && Registry::HasComponent(cameraEntity, ComponentType::POST_PROCESS))
+	{
+		return ComponentManager::GetComponentUnchecked<PostProcessComponent>(cameraEntity).BloomSoftKnee;
+	}
+	return 0.5f;
+}
+
+void Camera::SetCameraBloomRadius(float radius)
+{
+	const EntityID cameraEntity = GetCameraEntity();
+	if (cameraEntity != g_kINVALID_ENTITY && Registry::HasComponent(cameraEntity, ComponentType::POST_PROCESS))
+	{
+		ComponentManager::GetComponentUnchecked<PostProcessComponent>(cameraEntity).BloomRadius = clamp(radius, 0.25f, 4.0f);
+	}
+}
+
+float Camera::GetCameraBloomRadius()
+{
+	const EntityID cameraEntity = GetCameraEntity();
+	if (cameraEntity != g_kINVALID_ENTITY && Registry::HasComponent(cameraEntity, ComponentType::POST_PROCESS))
+	{
+		return ComponentManager::GetComponentUnchecked<PostProcessComponent>(cameraEntity).BloomRadius;
+	}
+	return 1.0f;
+}

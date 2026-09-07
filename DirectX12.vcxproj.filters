@@ -59,6 +59,12 @@
     <Filter Include="External\ImGuizmo">
       <UniqueIdentifier>{a1b2c3d4-e5f6-4a5b-8c7d-9e0f1a2b3c4d}</UniqueIdentifier>
     </Filter>
+    <Filter Include="External\FidelityFX-FSR">
+      <UniqueIdentifier>{b2c3d4e5-f6a7-4b6c-9d8e-0f1a2b3c4d5e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="External\NVIDIAImageScaling">
+      <UniqueIdentifier>{c3d4e5f6-a7b8-4c9d-8e0f-1a2b3c4d5e6f}</UniqueIdentifier>
+    </Filter>
     <Filter Include="5_shader\resource">
       <UniqueIdentifier>{669bad30-0e93-4cf2-951b-a3e7c0b8f685}</UniqueIdentifier>
     </Filter>
@@ -133,6 +139,9 @@
     <FxCompile Include="shader\hlsl\postProcessBlurPS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
+    <FxCompile Include="shader\hlsl\postProcessBloomPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
     <FxCompile Include="shader\hlsl\postProcessNonePS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
@@ -181,12 +190,75 @@
     <FxCompile Include="shader\hlsl\ShadowMapInstancedVS.hlsl">
       <Filter>5_shader\hlsl</Filter>
     </FxCompile>
-    <FxCompile Include="shader\hlsl\UpscaleDepthPS.hlsl" />
-    <FxCompile Include="shader\hlsl\VelocityPS.hlsl" />
-    <FxCompile Include="shader\hlsl\VelocityGeometryVS.hlsl" />
-    <FxCompile Include="shader\hlsl\VelocityGeometryPS.hlsl" />
-    <FxCompile Include="shader\hlsl\FXAA_PS.hlsl" />
-    <FxCompile Include="shader\hlsl\TAA_BlendPS.hlsl" />
+    <FxCompile Include="shader\hlsl\FsrEasuCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\FsrRcasCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\VisibilityPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\Visibility2DPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\VisibilityOutlinePS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GBufferFromVisibilityCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\ScreenSpaceDeinterleaveCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\RayBinningCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\SsgiDeinterleavedCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\SsgiResolveCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\SsaoVisibilityBitmaskCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\LightInstanceBuilderCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\HiZCopyCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\HiZReduceCS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="External\NVIDIAImageScaling\NIS_Main.hlsl">
+      <Filter>External\NVIDIAImageScaling</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\UpscaleDepthPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\VelocityPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\VelocityGeometryVS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\VelocityGeometryPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\FXAA_PS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\TAA_BlendPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </FxCompile>
+    <None Include="shader\hlsl\MeshVisibility.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </None>
+    <None Include="shader\hlsl\MeshVisibilityPS.hlsl">
+      <Filter>5_shader\hlsl</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\pch.cpp">
@@ -400,6 +472,24 @@
     <ClCompile Include="source\cube.cpp">
       <Filter>2_ecs\2-1_entities</Filter>
     </ClCompile>
+    <ClCompile Include="source\spatialupscaler.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\visibilitybuffer.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\screenspaceeffects.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\occlusionculling.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\meshshaderpipeline.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
+    <ClCompile Include="source\lightinstancebuilder.cpp">
+      <Filter>1_base</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="source\pch.h">
@@ -565,7 +655,6 @@
     <ClInclude Include="source\polygon3d.h">
       <Filter>2_ecs\2-1_entities</Filter>
     </ClInclude>
-    <ClInclude Include="source\resource.h" />
     <ClInclude Include="source\xbot.h">
       <Filter>2_ecs\2-1_entities</Filter>
     </ClInclude>
@@ -632,8 +721,45 @@
     <ClInclude Include="source\cube.h">
       <Filter>2_ecs\2-1_entities</Filter>
     </ClInclude>
-    <ClInclude Include="source\entitybase.h" />
-    <ClInclude Include="source\animationplayback.h" />
+    <ClInclude Include="source\spatialupscaler.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\visibilitybuffer.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\screenspaceeffects.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\occlusionculling.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\meshshaderpipeline.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="source\lightinstancebuilder.h">
+      <Filter>1_base</Filter>
+    </ClInclude>
+    <ClInclude Include="External\FidelityFX-FSR\ffx_a.h">
+      <Filter>External\FidelityFX-FSR</Filter>
+    </ClInclude>
+    <ClInclude Include="External\FidelityFX-FSR\ffx_fsr1.h">
+      <Filter>External\FidelityFX-FSR</Filter>
+    </ClInclude>
+    <ClInclude Include="External\NVIDIAImageScaling\NIS_Config.h">
+      <Filter>External\NVIDIAImageScaling</Filter>
+    </ClInclude>
+    <ClInclude Include="External\NVIDIAImageScaling\NIS_Scaler.h">
+      <Filter>External\NVIDIAImageScaling</Filter>
+    </ClInclude>
+    <ClInclude Include="source\resource.h">
+      <Filter>リソース ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="source\entitybase.h">
+      <Filter>2_ecs\2-1_entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\animationplayback.h">
+      <Filter>3_model\3-1_animationmodel</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config">

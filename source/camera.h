@@ -30,5 +30,11 @@ public:
 
 	static void SetCameraPostProcessIntensity(float intensity);
 	static float GetCameraPostProcessIntensity();
+	static void SetCameraBloomThreshold(float threshold);
+	static float GetCameraBloomThreshold();
+	static void SetCameraBloomSoftKnee(float softKnee);
+	static float GetCameraBloomSoftKnee();
+	static void SetCameraBloomRadius(float radius);
+	static float GetCameraBloomRadius();
 };
 

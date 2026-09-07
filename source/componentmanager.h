@@ -301,6 +301,9 @@ struct PostProcessComponent
 {
 	PostProcessType Type = PostProcessType::NONE;
 	float Intensity = 1.0f;
+	float BloomThreshold = 2.0f;
+	float BloomSoftKnee = 0.5f;
+	float BloomRadius = 1.0f;
 };
 
 struct NameComponent

@@ -62,6 +62,7 @@
 		XMFLOAT4 Flags{};
 		XMFLOAT4 PPCameraPos{};
 		XMFLOAT4 HdrFlags{};
+		XMFLOAT4 BloomParams{};
 		XMFLOAT4X4 PPInvViewProjection{};
 		XMFLOAT4X4 PPViewProjection{};
 	};
@@ -846,7 +847,9 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 		D3D12_GPU_DESCRIPTOR_HANDLE sourceHandle, float intensity, float renderModeFlag, float deferredLightStrength,
 		D3D12_GPU_DESCRIPTOR_HANDLE atmosphereHandle = D3D12_GPU_DESCRIPTOR_HANDLE{},
 		D3D12_GPU_DESCRIPTOR_HANDLE rimStyleHandle = D3D12_GPU_DESCRIPTOR_HANDLE{},
-		D3D12_GPU_DESCRIPTOR_HANDLE rimLightHandle = D3D12_GPU_DESCRIPTOR_HANDLE{})
+		D3D12_GPU_DESCRIPTOR_HANDLE rimLightHandle = D3D12_GPU_DESCRIPTOR_HANDLE{},
+		D3D12_GPU_DESCRIPTOR_HANDLE bloomHandle = D3D12_GPU_DESCRIPTOR_HANDLE{},
+		float bloomPass = 0.0f)
 		{
 			if (!pso || !m_PostProcessRootSignature)
 			{
@@ -889,6 +892,11 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 					ImGuiManager::IsToneMapEnabled() ? 1.0f : 0.0f,
 					RendererSettings::GetSsaoEnabled() ? 1.0f : 0.0f,
 					RendererSettings::GetSsgiEnabled() ? 1.0f : 0.0f);
+				params.BloomParams = XMFLOAT4(
+					bloomPass,
+					config.BloomThreshold,
+					config.BloomSoftKnee,
+					config.BloomRadius);
 				XMStoreFloat4x4(&params.PPInvViewProjection, XMMatrixTranspose(invViewProjection));
 				XMStoreFloat4x4(&params.PPViewProjection, XMMatrixTranspose(view * projection));
 				auto* ppDst = static_cast<UINT8*>(m_pPostProcessCbvDataBegin) +
@@ -944,6 +952,9 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 			{
 				m_CommandList->SetGraphicsRootShaderResourceView(14, volumetricLightAddress);
 			}
+			m_CommandList->SetGraphicsRootDescriptorTable(
+				15,
+				bloomHandle.ptr != 0 ? bloomHandle : sourceHandle);
 			m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			m_CommandList->DrawInstanced(3, 1, 0, 0);
 		};
@@ -952,6 +963,8 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 	{
 		return;
 	}
+
+	ID3D12PipelineState* postProcessPso = PsoManager::GetPostProcessPso(config.Type);
 
 	if (m_RenderMode == RenderMode::DEFERRED)
 	{
@@ -1035,10 +1048,45 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 		ScreenSpaceEffects::CaptureHistory(m_CommandList.Get(), m_SceneRenderTarget.Get());
 	}
 
-	ID3D12PipelineState* postProcessPso = PsoManager::GetPostProcessPso(config.Type);
 	if (!postProcessPso || !m_PostProcessRenderTarget)
 	{
 		return;
+	}
+
+	const UINT bloomIndex = static_cast<UINT>(GBufferType::BLOOM);
+	const bool useBloomBuffer =
+		config.Type == PostProcessType::BLOOM &&
+		m_RenderMode == RenderMode::DEFERRED &&
+		m_GBufferTargets[bloomIndex];
+	if (useBloomBuffer)
+	{
+		D3D12_RESOURCE_BARRIER bloomToRt = CD3DX12_RESOURCE_BARRIER::Transition(
+			m_GBufferTargets[bloomIndex].Get(),
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+			D3D12_RESOURCE_STATE_RENDER_TARGET);
+		m_CommandList->ResourceBarrier(1, &bloomToRt);
+		const float bloomClear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+		m_CommandList->ClearRenderTargetView(m_GBufferRtvHandles[bloomIndex], bloomClear, 0, nullptr);
+		{
+			RenderProfiler::ScopedEvent profile("Bloom Extract", m_CommandList.Get());
+			DrawFullscreenPass(
+				postProcessPso,
+				m_GBufferRtvHandles[bloomIndex],
+				m_SceneSrvHandle,
+				1.0f,
+				0.0f,
+				0.0f,
+				D3D12_GPU_DESCRIPTOR_HANDLE{},
+				D3D12_GPU_DESCRIPTOR_HANDLE{},
+				D3D12_GPU_DESCRIPTOR_HANDLE{},
+				m_SceneSrvHandle,
+				1.0f);
+		}
+		D3D12_RESOURCE_BARRIER bloomToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+			m_GBufferTargets[bloomIndex].Get(),
+			D3D12_RESOURCE_STATE_RENDER_TARGET,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+		m_CommandList->ResourceBarrier(1, &bloomToSrv);
 	}
 
 
@@ -1060,7 +1108,12 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 			m_SceneSrvHandle,
 			config.Intensity,
 			0.0f,
-			0.0f);
+			0.0f,
+			D3D12_GPU_DESCRIPTOR_HANDLE{},
+			D3D12_GPU_DESCRIPTOR_HANDLE{},
+			D3D12_GPU_DESCRIPTOR_HANDLE{},
+			useBloomBuffer ? m_GBufferSrvHandles[bloomIndex] : D3D12_GPU_DESCRIPTOR_HANDLE{},
+			useBloomBuffer ? 2.0f : 0.0f);
 	}
 	D3D12_RESOURCE_BARRIER postToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
 		m_PostProcessRenderTarget.Get(),
@@ -1715,10 +1768,11 @@ bool RendererDraw::CreateSceneRenderTarget()
 			const bool halfResolutionAtmosphere =
 				i == static_cast<UINT>(GBufferType::ATMOSPHERE) &&
 				m_ResolutionScale >= 0.75f;
-			const UINT targetWidth = halfResolutionAtmosphere
+			const bool halfResolutionBloom = i == static_cast<UINT>(GBufferType::BLOOM);
+			const UINT targetWidth = (halfResolutionAtmosphere || halfResolutionBloom)
 				? max((gbufferWidth + 1u) / 2u, 1u)
 				: gbufferWidth;
-			const UINT targetHeight = halfResolutionAtmosphere
+			const UINT targetHeight = (halfResolutionAtmosphere || halfResolutionBloom)
 				? max((gbufferHeight + 1u) / 2u, 1u)
 				: gbufferHeight;
 			D3D12_RESOURCE_FLAGS gbufferFlags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;

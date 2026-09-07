@@ -20,7 +20,7 @@ private:
 	inline static int m_renderMode = -1;
 	inline static int m_cameraPostProcess = -1;
 	inline static const char* m_renderModeItems[] = { "フォワード", "ディファード" };
-	inline static const char* m_cameraPostProcessModeItems[] = { "なし", "ブラー", "セピア", "グレースケール", "反転" };
+	inline static const char* m_cameraPostProcessModeItems[] = { "なし", "ブラー", "セピア", "グレースケール", "反転", "ブルーム" };
 	inline static int m_antiAliasingMode = 0;
 	inline static const char* m_antiAliasingModeItems[] = { "なし", "FXAA", "TAA" };
 	inline static EntityID m_SelectedEntity = g_kINVALID_ENTITY;

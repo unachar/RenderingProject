@@ -25,6 +25,7 @@ enum class GBufferType : uint32_t
 	ATMOSPHERE,
 	VELOCITY,
 	VISIBILITY,
+	BLOOM,
 	COUNT
 };
 
@@ -37,7 +38,8 @@ inline constexpr LPCWSTR g_GBufferTargetNames[] =
 	L"ShadowBuffer",
 	L"AtmosphereGBuffer",
 	L"VelocityBuffer",
-	L"VisibilityBuffer"
+	L"VisibilityBuffer",
+	L"BloomBuffer"
 };
 
 struct Vertex
@@ -90,6 +92,7 @@ enum class PostProcessType
 	SEPIA,
 	GRAYSCALE,
 	INVERT,
+	BLOOM,
 	COUNT
 };
 
@@ -292,7 +295,8 @@ public:
 		DXGI_FORMAT_R8G8B8A8_UNORM,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
 		DXGI_FORMAT_R16G16B16A16_FLOAT,
-		DXGI_FORMAT_R32G32B32A32_UINT
+		DXGI_FORMAT_R32G32B32A32_UINT,
+		DXGI_FORMAT_R16G16B16A16_FLOAT
 	};
 public:
 
@@ -304,7 +308,7 @@ public:
 
 
 	static constexpr UINT g_kCB_ALIGNED_SIZE = (sizeof(ConstantBuffer3D) + 255) & ~255;
-	static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * 44 + 255) & ~255;
+	static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * 48 + 255) & ~255;
 	static constexpr UINT g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES = 16;
 	static constexpr UINT g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS = 16;
 	static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT =

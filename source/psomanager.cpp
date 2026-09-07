@@ -487,6 +487,7 @@ bool PsoManager::CreatePostProcessPipelines()
 	CreatePPPSO("shader\\hlsl\\build\\postProcessSepiaPS.cso", PostProcessType::SEPIA);
 	CreatePPPSO("shader\\hlsl\\build\\postProcessGrayPS.cso", PostProcessType::GRAYSCALE);
 	CreatePPPSO("shader\\hlsl\\build\\postProcessInvertPS.cso", PostProcessType::INVERT);
+	CreatePPPSO("shader\\hlsl\\build\\postProcessBloomPS.cso", PostProcessType::BLOOM);
 
 	rendererResource resource{};
 	resource.vsPath = "shader\\hlsl\\build\\postProcessVS.cso";
