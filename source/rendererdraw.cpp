@@ -1058,7 +1058,7 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 		config.Type == PostProcessType::BLOOM &&
 		m_RenderMode == RenderMode::DEFERRED &&
 		m_GBufferTargets[bloomIndex];
-	if (useBloomBuffer)
+if (useBloomBuffer)
 	{
 		D3D12_RESOURCE_BARRIER bloomToRt = CD3DX12_RESOURCE_BARRIER::Transition(
 			m_GBufferTargets[bloomIndex].Get(),
@@ -1068,6 +1068,18 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 		const float bloomClear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 		m_CommandList->ClearRenderTargetView(m_GBufferRtvHandles[bloomIndex], bloomClear, 0, nullptr);
 		{
+			const D3D12_RESOURCE_DESC bloomDesc = m_GBufferTargets[bloomIndex]->GetDesc();
+			const CD3DX12_VIEWPORT bloomViewport(
+				0.0f, 0.0f,
+				static_cast<float>(bloomDesc.Width),
+				static_cast<float>(bloomDesc.Height));
+			const CD3DX12_RECT bloomScissor(
+				0, 0,
+				static_cast<LONG>(bloomDesc.Width),
+				static_cast<LONG>(bloomDesc.Height));
+			m_CommandList->RSSetViewports(1, &bloomViewport);
+			m_CommandList->RSSetScissorRects(1, &bloomScissor);
+
 			RenderProfiler::ScopedEvent profile("Bloom Extract", m_CommandList.Get());
 			DrawFullscreenPass(
 				postProcessPso,
@@ -1081,6 +1093,9 @@ void RendererDraw::ApplyPostProcess(const PostProcessComponent& config)
 				D3D12_GPU_DESCRIPTOR_HANDLE{},
 				m_SceneSrvHandle,
 				1.0f);
+
+			m_CommandList->RSSetViewports(1, &m_Viewport);
+			m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
 		}
 		D3D12_RESOURCE_BARRIER bloomToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
 			m_GBufferTargets[bloomIndex].Get(),

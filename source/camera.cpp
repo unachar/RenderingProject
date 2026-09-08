@@ -42,7 +42,7 @@
 		camera.IsMainGameCamera = false;
 		camera.AllowUserControl = true;
 
-		entity.Get<PostProcessComponent>().Type = PostProcessType::NONE;
+		entity.Get<PostProcessComponent>().Type = PostProcessType::BLOOM;
 
 
 		entity.Get<InputComponent>().IsActive = false;
