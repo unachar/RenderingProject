@@ -35,7 +35,7 @@ struct VmdIkKeyframe
 
 struct VmdAnimation
 {
-	std::string ModelName{};
+	string ModelName{};
 	uint32_t MaxFrame = 0;
 	uint32_t MotionCount = 0;
 	uint32_t MorphCount = 0;
@@ -43,9 +43,9 @@ struct VmdAnimation
 	uint32_t LightCount = 0;
 	uint32_t ShadowCount = 0;
 	uint32_t IkCount = 0;
-	std::unordered_map<std::string, std::vector<VmdKeyframe>> BoneTracks{};
-	std::unordered_map<std::string, std::vector<VmdScalarKeyframe>> MorphTracks{};
-	std::unordered_map<std::string, std::vector<VmdIkKeyframe>> IkTracks{};
+	unordered_map<string, vector<VmdKeyframe>> BoneTracks{};
+	unordered_map<string, vector<VmdScalarKeyframe>> MorphTracks{};
+	unordered_map<string, vector<VmdIkKeyframe>> IkTracks{};
 };
 
 struct VmdTrackSampleCursor
@@ -59,13 +59,13 @@ struct VmdTrackSampleCursor
 	bool LoadVmdAnimationFile(const char* fileName, VmdAnimation& outAnimation);
 	float VmdToFrameTime(const VmdAnimation* animation, float timeSeconds);
 	void ResetVmdSampleCursor(VmdTrackSampleCursor& cursor);
-	void SampleVmdBoneTrack(const std::vector<VmdKeyframe>* keys, float currentFrame,
+	void SampleVmdBoneTrack(const vector<VmdKeyframe>* keys, float currentFrame,
 		aiQuaternion& outRotation, aiVector3D& outPosition);
-	void SampleVmdBoneTrackCached(const std::vector<VmdKeyframe>* keys, float currentFrame,
+	void SampleVmdBoneTrackCached(const vector<VmdKeyframe>* keys, float currentFrame,
 		VmdTrackSampleCursor& cursor, aiQuaternion& outRotation, aiVector3D& outPosition);
-	float SampleVmdMorphTrack(const std::vector<VmdScalarKeyframe>* keys, float currentFrame);
-	float SampleVmdMorphTrackCached(const std::vector<VmdScalarKeyframe>* keys, float currentFrame,
+	float SampleVmdMorphTrack(const vector<VmdScalarKeyframe>* keys, float currentFrame);
+	float SampleVmdMorphTrackCached(const vector<VmdScalarKeyframe>* keys, float currentFrame,
 		VmdTrackSampleCursor& cursor);
-	bool SampleVmdIkTrack(const std::vector<VmdIkKeyframe>* keys, float currentFrame);
-	bool SampleVmdIkTrackCached(const std::vector<VmdIkKeyframe>* keys, float currentFrame,
+	bool SampleVmdIkTrack(const vector<VmdIkKeyframe>* keys, float currentFrame);
+	bool SampleVmdIkTrackCached(const vector<VmdIkKeyframe>* keys, float currentFrame,
 		VmdTrackSampleCursor& cursor);

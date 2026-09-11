@@ -20,25 +20,25 @@ struct StaticMeshData
 	static constexpr UINT LodCount = 3;
 	ComPtr<ID3D12Resource> VertexBuffer{};
 	ComPtr<ID3D12Resource> IndexBuffer{};
-	std::array<ComPtr<ID3D12Resource>, LodCount - 1> LodIndexBuffers{};
+	array<ComPtr<ID3D12Resource>, LodCount - 1> LodIndexBuffers{};
 	ComPtr<ID3D12Resource> TeoVertexBuffer{};
 	ComPtr<ID3D12Resource> TeoIndexBuffer{};
-	std::array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoVertexBuffers{};
-	std::array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoIndexBuffers{};
+	array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoVertexBuffers{};
+	array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoIndexBuffers{};
 	D3D12_VERTEX_BUFFER_VIEW VertexBufferView{};
 	D3D12_INDEX_BUFFER_VIEW IndexBufferView{};
-	std::array<D3D12_INDEX_BUFFER_VIEW, LodCount - 1> LodIndexBufferViews{};
+	array<D3D12_INDEX_BUFFER_VIEW, LodCount - 1> LodIndexBufferViews{};
 	D3D12_VERTEX_BUFFER_VIEW TeoVertexBufferView{};
 	D3D12_INDEX_BUFFER_VIEW TeoIndexBufferView{};
-	std::array<D3D12_VERTEX_BUFFER_VIEW, kToonOutlineModeCount> TeoVertexBufferViews{};
-	std::array<D3D12_INDEX_BUFFER_VIEW, kToonOutlineModeCount> TeoIndexBufferViews{};
+	array<D3D12_VERTEX_BUFFER_VIEW, kToonOutlineModeCount> TeoVertexBufferViews{};
+	array<D3D12_INDEX_BUFFER_VIEW, kToonOutlineModeCount> TeoIndexBufferViews{};
 	UINT IndexCount = 0;
-	std::array<UINT, LodCount - 1> LodIndexCounts{};
+	array<UINT, LodCount - 1> LodIndexCounts{};
 	UINT VertexCount = 0;
 	UINT TeoIndexCount = 0;
 	UINT TeoVertexCount = 0;
-	std::array<UINT, kToonOutlineModeCount> TeoIndexCounts{};
-	std::array<UINT, kToonOutlineModeCount> TeoVertexCounts{};
+	array<UINT, kToonOutlineModeCount> TeoIndexCounts{};
+	array<UINT, kToonOutlineModeCount> TeoVertexCounts{};
 	int TextureIndex = -1;
 	string MeshName{};
 	string MaterialName{};
@@ -46,7 +46,7 @@ struct StaticMeshData
 	float AppliedMaterialPartId = 10.0f;
 	bool DefaultToonOutlineEnabled = true;
 	vector<StaticModelVertex> CpuVertices{};
-	std::array<vector<StaticModelVertex>, kToonOutlineModeCount> CpuTeoVerticesByMode{};
+	array<vector<StaticModelVertex>, kToonOutlineModeCount> CpuTeoVerticesByMode{};
 
 	const D3D12_INDEX_BUFFER_VIEW& GetLodIndexBufferView(UINT lod) const
 	{

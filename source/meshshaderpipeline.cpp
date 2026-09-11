@@ -177,8 +177,8 @@ bool MeshShaderPipeline::Draw(
 	const UINT meshletCount = (mesh.IndexCount / 3u + 63u) / 64u;
 	meshCommandList->DispatchMesh(meshletCount, 1, 1);
 
-	std::swap(barriers[0].Transition.StateBefore, barriers[0].Transition.StateAfter);
-	std::swap(barriers[1].Transition.StateBefore, barriers[1].Transition.StateAfter);
+	swap(barriers[0].Transition.StateBefore, barriers[0].Transition.StateAfter);
+	swap(barriers[1].Transition.StateBefore, barriers[1].Transition.StateAfter);
 	commandList->ResourceBarrier(2, barriers);
 	return true;
 }

@@ -483,11 +483,7 @@ float3 IntegrateVolumeLightRay(
     {
         return float3(0.0f, 0.0f, 0.0f);
     }
-
-
-
-
-    const int stepCount = 24;
+    const int stepCount = 64;
     float segmentLength = segmentEnd - segmentStart;
     float stepLength = segmentLength / (float)stepCount;
     float scaledStep =

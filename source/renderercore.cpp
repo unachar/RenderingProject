@@ -535,7 +535,7 @@ bool RendererCore::CheckDeviceHealth(HRESULT operationResult, const char* operat
 		{
 			SIZE_T messageSize = 0;
 			if (FAILED(infoQueue->GetMessage(messageIndex, nullptr, &messageSize)) || messageSize == 0) continue;
-			std::vector<BYTE> messageStorage(messageSize);
+			vector<BYTE> messageStorage(messageSize);
 			auto* message = reinterpret_cast<D3D12_MESSAGE*>(messageStorage.data());
 			if (SUCCEEDED(infoQueue->GetMessage(messageIndex, message, &messageSize)))
 				fprintf(log, "DebugLayer[%llu] severity=%u id=%u: %s\n",

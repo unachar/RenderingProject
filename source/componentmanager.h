@@ -458,7 +458,7 @@ struct ComponentStorage
 		const uint32_t lastIndex = static_cast<uint32_t>(data.size() - 1);
 		if (index != lastIndex)
 		{
-			data[index] = std::move(data[lastIndex]);
+			data[index] = move(data[lastIndex]);
 			const EntityID movedEntity = entities[lastIndex];
 			entities[index] = movedEntity;
 			sparse[movedEntity] = index;
@@ -544,14 +544,14 @@ public:
 		{
 			ReportMissingComponentError(entity, "Invalid Entity");
 			assert(false && "GetComponent called on invalid entity id");
-			std::abort();
+			abort();
 		}
 
 		if (!Registry::HasComponent(entity, ComponentTypeTraits<T>::value()))
 		{
 			ReportMissingComponentError(entity, typeid(T).name());
 			assert(false && "GetComponent called for a missing component");
-			std::abort();
+			abort();
 		}
 
 		return ComponentStorage<T>::Get(entity);

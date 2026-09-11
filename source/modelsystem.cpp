@@ -19,8 +19,6 @@
 #include <algorithm>
 #include "world.h"
 
-using namespace std;
-
 
 	static const MaterialComponent& DefaultMaterial()
 	{
@@ -94,7 +92,7 @@ using namespace std;
 
 	int GetTeoModeIndex(const MaterialComponent& material)
 	{
-		return std::clamp(static_cast<int>(material.ToonTeoRenderMode), 0, kToonOutlineModeCount - 1);
+		return clamp(static_cast<int>(material.ToonTeoRenderMode), 0, kToonOutlineModeCount - 1);
 	}
 
 	template <class TMeshData>

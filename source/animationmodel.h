@@ -137,29 +137,29 @@ struct MeshData
 	bool PreviousVertexValid = false;
 	ComPtr<ID3D12Resource> TeoVertexBuffer{};
 	D3D12_VERTEX_BUFFER_VIEW TeoVertexBufferView{};
-	std::array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoVertexBuffers{};
-	std::array<D3D12_VERTEX_BUFFER_VIEW, kToonOutlineModeCount> TeoVertexBufferViews{};
+	array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoVertexBuffers{};
+	array<D3D12_VERTEX_BUFFER_VIEW, kToonOutlineModeCount> TeoVertexBufferViews{};
 
 	ComPtr<ID3D12Resource> InputVertexBuffer{};
 	ComPtr<ID3D12Resource> TeoInputVertexBuffer{};
-	std::array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoInputVertexBuffers{};
+	array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoInputVertexBuffers{};
 
 	ComPtr<ID3D12Resource> IndexBuffer{};
 	D3D12_INDEX_BUFFER_VIEW IndexBufferView{};
-	std::array<ComPtr<ID3D12Resource>, LodCount - 1> LodIndexBuffers{};
-	std::array<D3D12_INDEX_BUFFER_VIEW, LodCount - 1> LodIndexBufferViews{};
-	std::array<UINT, LodCount - 1> LodIndexCounts{};
+	array<ComPtr<ID3D12Resource>, LodCount - 1> LodIndexBuffers{};
+	array<D3D12_INDEX_BUFFER_VIEW, LodCount - 1> LodIndexBufferViews{};
+	array<UINT, LodCount - 1> LodIndexCounts{};
 	ComPtr<ID3D12Resource> TeoIndexBuffer{};
 	D3D12_INDEX_BUFFER_VIEW TeoIndexBufferView{};
-	std::array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoIndexBuffers{};
-	std::array<D3D12_INDEX_BUFFER_VIEW, kToonOutlineModeCount> TeoIndexBufferViews{};
+	array<ComPtr<ID3D12Resource>, kToonOutlineModeCount> TeoIndexBuffers{};
+	array<D3D12_INDEX_BUFFER_VIEW, kToonOutlineModeCount> TeoIndexBufferViews{};
 
 	UINT IndexCount = 0;
 	UINT VertexCount = 0;
 	UINT TeoIndexCount = 0;
 	UINT TeoVertexCount = 0;
-	std::array<UINT, kToonOutlineModeCount> TeoIndexCounts{};
-	std::array<UINT, kToonOutlineModeCount> TeoVertexCounts{};
+	array<UINT, kToonOutlineModeCount> TeoIndexCounts{};
+	array<UINT, kToonOutlineModeCount> TeoVertexCounts{};
 	int TextureIndex = -1;
 	int MaterialIndex = -1;
 
@@ -167,8 +167,8 @@ struct MeshData
 	UINT UavOutputVertexIndex = 0;
 	UINT SrvTeoInputVertexIndex = 0;
 	UINT UavTeoOutputVertexIndex = 0;
-	std::array<UINT, kToonOutlineModeCount> SrvTeoInputVertexIndices{};
-	std::array<UINT, kToonOutlineModeCount> UavTeoOutputVertexIndices{};
+	array<UINT, kToonOutlineModeCount> SrvTeoInputVertexIndices{};
+	array<UINT, kToonOutlineModeCount> UavTeoOutputVertexIndices{};
 	string MeshName{};
 	string MaterialName{};
 	float MaterialPartId = 10.0f;

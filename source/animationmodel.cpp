@@ -17,8 +17,6 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
-using namespace std;
-using namespace DirectX;
 
 static bool CreateLodIndexBuffer(
 	ID3D12Device* device,
@@ -1181,7 +1179,7 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
 	}
 
 	const string animationName = name ? name : "";
-	m_VmdAnimations[animationName] = std::move(animation);
+	m_VmdAnimations[animationName] = move(animation);
 	m_Animation.erase(animationName);
 	InvalidateVmdRuntimeCache();
 
@@ -2039,10 +2037,7 @@ bool AnimationModelResource::LoadPmxIkData(const char* fileName)
 					!reader.Read(ignoredFloat) ||
 					!reader.Skip(12) ||
 					!readFloat4(reader, ignored) ||
-					!reader.Read(ignoredFloat) ||
-					!readFloat4(reader, ignored) ||
-					!readFloat4(reader, ignored) ||
-					!readFloat4(reader, ignored))
+					!reader.Read(ignoredFloat))
 				{
 					return false;
 				}
@@ -2085,7 +2080,7 @@ bool AnimationModelResource::LoadPmxIkData(const char* fileName)
 		constraint.BoneOrder = static_cast<uint32_t>(i);
 		if (!constraint.BoneName.empty() && !constraint.AppendBoneName.empty())
 		{
-			m_PmxAppendConstraints.push_back(std::move(constraint));
+			m_PmxAppendConstraints.push_back(move(constraint));
 		}
 	}
 
@@ -2124,7 +2119,7 @@ bool AnimationModelResource::LoadPmxIkData(const char* fileName)
 
 		if (!constraint.BoneName.empty() && !constraint.TargetBoneName.empty() && !constraint.Links.empty())
 		{
-			m_PmxIkConstraints.push_back(std::move(constraint));
+			m_PmxIkConstraints.push_back(move(constraint));
 		}
 	}
 

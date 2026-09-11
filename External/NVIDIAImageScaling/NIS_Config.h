@@ -163,7 +163,7 @@ inline bool NVScalerUpdateConfig(NISConfig& config, float sharpness,
     NISHDRMode hdrMode = NISHDRMode::None)
 {
     // adjust params based on value from sharpness slider
-    sharpness = std::max<float>(std::min<float>(1.f, sharpness), 0.f);
+    sharpness = max<float>(min<float>(1.f, sharpness), 0.f);
     float sharpen_slider = sharpness - 0.5f;   // Map 0 to 1 to -0.5 to +0.5
 
     // Different range for 0 to 50% vs 50% to 100%
@@ -182,9 +182,9 @@ inline bool NVScalerUpdateConfig(NISConfig& config, float sharpness,
 
     float kSharpStartY = 0.45f;
     float kSharpEndY = 0.9f;
-    float kSharpStrengthMin = std::max<float>(0.0f, 0.4f + sharpen_slider * MinScale * 1.2f);
+    float kSharpStrengthMin = max<float>(0.0f, 0.4f + sharpen_slider * MinScale * 1.2f);
     float kSharpStrengthMax = 1.6f + sharpen_slider * MaxScale * 1.8f;
-    float kSharpLimitMin = std::max<float>(0.1f, 0.14f + sharpen_slider * LimitScale * 0.32f);
+    float kSharpLimitMin = max<float>(0.1f, 0.14f + sharpen_slider * LimitScale * 0.32f);
     float kSharpLimitMax = 0.5f + sharpen_slider * LimitScale * 0.6f;
 
     if (hdrMode == NISHDRMode::Linear || hdrMode == NISHDRMode::PQ)
@@ -194,9 +194,9 @@ inline bool NVScalerUpdateConfig(NISConfig& config, float sharpness,
         kMinContrastRatio = 1.5f;
         kMaxContrastRatio = 5.0f;
 
-        kSharpStrengthMin = std::max<float>(0.0f, 0.4f + sharpen_slider * MinScale * 1.1f);
+        kSharpStrengthMin = max<float>(0.0f, 0.4f + sharpen_slider * MinScale * 1.1f);
         kSharpStrengthMax = 2.2f + sharpen_slider * MaxScale * 1.8f;
-        kSharpLimitMin = std::max<float>(0.06f, 0.10f + sharpen_slider * LimitScale * 0.28f);
+        kSharpLimitMin = max<float>(0.06f, 0.10f + sharpen_slider * LimitScale * 0.28f);
         kSharpLimitMax = 0.6f + sharpen_slider * LimitScale * 0.6f;
 
         if (hdrMode == NISHDRMode::PQ)

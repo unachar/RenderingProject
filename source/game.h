@@ -6,7 +6,7 @@
 class Game
 {
 private:
-	inline static std::vector<std::unique_ptr<EntityBase>> entityBase;
+	inline static vector<unique_ptr<EntityBase>> entityBase;
 public:
 	static void Init();
 	static void Create();
@@ -18,7 +18,7 @@ public:
 	template<typename T>
 	static void AddEntity()
 	{
-		entityBase.emplace_back(std::make_unique<T>());
+		entityBase.emplace_back(make_unique<T>());
 	}
 
 

@@ -48,7 +48,7 @@ void ProjectManager::CaptureRuntimeState()
 		snapshot.HasTimeline = ComponentManager::HasComponent<TimelineComponent>(entity);
 		if (snapshot.HasTimeline)
 			snapshot.Timeline = ComponentManager::GetComponentUnchecked<TimelineComponent>(entity);
-		s_RuntimeSnapshots.push_back(std::move(snapshot));
+		s_RuntimeSnapshots.push_back(move(snapshot));
 	}
 }
 

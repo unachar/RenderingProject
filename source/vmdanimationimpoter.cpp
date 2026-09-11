@@ -7,8 +7,6 @@
 #include <filesystem>
 #include <fstream>
 
-using namespace std;
-
 
 	string DecodeAsciiFixedString(const char* data, size_t length)
 	{
@@ -458,7 +456,7 @@ bool LoadVmdAnimationFile(const char* fileName, VmdAnimation& outAnimation)
 			});
 	}
 
-	outAnimation = std::move(animation);
+	outAnimation = move(animation);
 	return true;
 }
 

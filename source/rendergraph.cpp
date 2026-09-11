@@ -16,9 +16,9 @@
 		return left == right ? left : RenderGraph::Access::ReadWrite;
 	}
 
-	void AddUniqueDependency(std::vector<uint32_t>& dependencies, uint32_t dependency)
+	void AddUniqueDependency(vector<uint32_t>& dependencies, uint32_t dependency)
 	{
-		if (std::find(dependencies.begin(), dependencies.end(), dependency) ==
+		if (find(dependencies.begin(), dependencies.end(), dependency) ==
 			dependencies.end())
 		{
 			dependencies.push_back(dependency);
@@ -76,7 +76,7 @@ RenderGraph::ResourceHandle RenderGraph::ImportResource(const ImportedResource& 
 	record.Subresource = resource.Subresource;
 
 	const ResourceHandle handle{ static_cast<uint32_t>(m_Resources.size()) };
-	m_Resources.push_back(std::move(record));
+	m_Resources.push_back(move(record));
 	m_IsCompiled = false;
 	return handle;
 }
@@ -91,7 +91,7 @@ void RenderGraph::AddPass(
 	pass.Execute = execute;
 
 	const uint32_t passIndex = static_cast<uint32_t>(m_Passes.size());
-	m_Passes.push_back(std::move(pass));
+	m_Passes.push_back(move(pass));
 	m_IsCompiled = false;
 
 	if (setup)
@@ -120,7 +120,7 @@ void RenderGraph::AddUsage(
 	}
 
 	auto& usages = m_Passes[passIndex].Usages;
-	auto existing = std::find_if(
+	auto existing = find_if(
 		usages.begin(),
 		usages.end(),
 		[resource](const Usage& usage)
@@ -161,9 +161,9 @@ bool RenderGraph::Compile()
 		}
 	}
 
-	const uint32_t invalidPass = std::numeric_limits<uint32_t>::max();
-	std::vector<uint32_t> lastWriter(m_Resources.size(), invalidPass);
-	std::vector<std::vector<uint32_t>> readers(m_Resources.size());
+	const uint32_t invalidPass = numeric_limits<uint32_t>::max();
+	vector<uint32_t> lastWriter(m_Resources.size(), invalidPass);
+	vector<vector<uint32_t>> readers(m_Resources.size());
 
 	for (uint32_t passIndex = 0; passIndex < m_Passes.size(); ++passIndex)
 	{
@@ -197,8 +197,8 @@ bool RenderGraph::Compile()
 		}
 	}
 
-	std::vector<uint32_t> indegree(m_Passes.size(), 0);
-	std::vector<std::vector<uint32_t>> outgoing(m_Passes.size());
+	vector<uint32_t> indegree(m_Passes.size(), 0);
+	vector<vector<uint32_t>> outgoing(m_Passes.size());
 	for (uint32_t passIndex = 0; passIndex < m_Passes.size(); ++passIndex)
 	{
 		indegree[passIndex] = static_cast<uint32_t>(
@@ -213,7 +213,7 @@ bool RenderGraph::Compile()
 		}
 	}
 
-	std::priority_queue<uint32_t, std::vector<uint32_t>, std::greater<uint32_t>> ready;
+	priority_queue<uint32_t, vector<uint32_t>, greater<uint32_t>> ready;
 	for (uint32_t passIndex = 0; passIndex < m_Passes.size(); ++passIndex)
 	{
 		if (indegree[passIndex] == 0)
@@ -263,19 +263,19 @@ bool RenderGraph::Execute(ID3D12GraphicsCommandList* commandList)
 		return Fail("RenderGraph automatic barriers require a command list.");
 	}
 
-	std::vector<D3D12_RESOURCE_STATES> states;
+	vector<D3D12_RESOURCE_STATES> states;
 	states.reserve(m_Resources.size());
 	for (const ResourceRecord& resource : m_Resources)
 	{
 		states.push_back(resource.InitialState);
 	}
-	std::vector<bool> previousUavAccess(m_Resources.size(), false);
-	std::vector<bool> previousUavWrite(m_Resources.size(), false);
+	vector<bool> previousUavAccess(m_Resources.size(), false);
+	vector<bool> previousUavWrite(m_Resources.size(), false);
 
 	for (const uint32_t passIndex : m_ExecutionOrder)
 	{
 		PassRecord& pass = m_Passes[passIndex];
-		std::vector<D3D12_RESOURCE_BARRIER> barriers;
+		vector<D3D12_RESOURCE_BARRIER> barriers;
 		barriers.reserve(pass.Usages.size());
 
 		for (const Usage& usage : pass.Usages)
@@ -335,7 +335,7 @@ bool RenderGraph::Execute(ID3D12GraphicsCommandList* commandList)
 		}
 	}
 
-	std::vector<D3D12_RESOURCE_BARRIER> finalBarriers;
+	vector<D3D12_RESOURCE_BARRIER> finalBarriers;
 	finalBarriers.reserve(m_Resources.size());
 	for (uint32_t resourceIndex = 0; resourceIndex < m_Resources.size(); ++resourceIndex)
 	{
@@ -372,7 +372,7 @@ void RenderGraph::Reset()
 	m_IsCompiled = false;
 }
 
-bool RenderGraph::Fail(const std::string& message)
+bool RenderGraph::Fail(const string& message)
 {
 	m_LastError = message;
 	m_IsCompiled = false;

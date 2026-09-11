@@ -15,8 +15,6 @@
 #include <algorithm>
 #include "world.h"
 
-using namespace std;
-
 
 	static const MaterialComponent& DefaultMaterial()
 	{

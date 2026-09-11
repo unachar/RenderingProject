@@ -27,14 +27,14 @@
     struct InstanceBatch
     {
         InstanceKind Kind = InstanceKind::Mesh;
-        std::vector<EntityID> Entities;
+        vector<EntityID> Entities;
         ID3D12PipelineState* Pso = nullptr;
         D3D12_VERTEX_BUFFER_VIEW VertexBuffer{};
         D3D12_INDEX_BUFFER_VIEW IndexBuffer{};
         UINT VertexCount = 0;
         UINT IndexCount = 0;
-		std::array<D3D12_INDEX_BUFFER_VIEW, 3> LodIndexBuffers{};
-		std::array<UINT, 3> LodDrawCounts{};
+		array<D3D12_INDEX_BUFFER_VIEW, 3> LodIndexBuffers{};
+		array<UINT, 3> LodDrawCounts{};
 		UINT AvailableLodCount = 1;
         int TextureIndex = -1;
         int NormalIndex = -1;
@@ -839,8 +839,8 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
             return;
         }
 
-        std::vector<InstanceBatch> batches;
-        std::unordered_map<string, size_t> batchLookup;
+        vector<InstanceBatch> batches;
+        unordered_map<string, size_t> batchLookup;
         for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
         {
             if (!CanInstance(entity) || !ShouldCastShadow(entity) ||
@@ -889,7 +889,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                     batch.AnimatedMeshIndex = meshIndex;
                     batch.Entities.push_back(entity);
                     batchLookup.emplace(key, batches.size());
-                    batches.push_back(std::move(batch));
+                    batches.push_back(move(batch));
                 }
                 else
                 {
@@ -934,7 +934,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 					batch.AnimatedMeshIndex = meshIndex;
 					batch.Entities.push_back(entity);
 					batchLookup.emplace(key, batches.size());
-					batches.push_back(std::move(batch));
+					batches.push_back(move(batch));
 				}
 				else
 				{
@@ -963,7 +963,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 					batch.HasBounds = hasBounds;
 					batch.Entities.push_back(entity);
 					batchLookup.emplace(key, batches.size());
-					batches.push_back(std::move(batch));
+					batches.push_back(move(batch));
 				}
 				else
 				{
@@ -1012,7 +1012,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 		const UINT shadowLodBias = RendererResource::GetCurrentShadowLodBias();
-        std::unordered_set<AnimationModelResource*> skinnedModels;
+        unordered_set<AnimationModelResource*> skinnedModels;
         for (auto& batch : batches)
         {
             if (batch.AnimatedModel && skinnedModels.insert(batch.AnimatedModel).second)
@@ -1062,8 +1062,8 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
     const bool deferredOpaque = RendererCore::GetRenderMode() == RenderMode::DEFERRED && renderPass == RenderPass::PrimaryScene;
     const int defaultTexture = TextureManager::GetDefaultTextureIndex();
 
-    std::vector<InstanceBatch> batches;
-    std::unordered_map<string, size_t> batchLookup;
+    vector<InstanceBatch> batches;
+    unordered_map<string, size_t> batchLookup;
     auto add = [&](EntityID entity, InstanceBatch prototype, const string& key)
     {
         auto it = batchLookup.find(key);
@@ -1072,7 +1072,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
             const size_t index = batches.size();
             batchLookup.emplace(key, index);
             prototype.Entities.push_back(entity);
-            batches.push_back(std::move(prototype));
+            batches.push_back(move(prototype));
         }
         else
         {
@@ -1281,7 +1281,7 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 		}
 	}
 
-    std::unordered_set<AnimationModelResource*> skinned;
+    unordered_set<AnimationModelResource*> skinned;
     const UINT descriptorIncrement = RendererResource::GetCbvIncrementSize();
     const auto descriptorStart = heap->GetGPUDescriptorHandleForHeapStart();
     RendererDraw::BeginModelPass();

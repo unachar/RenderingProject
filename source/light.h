@@ -23,7 +23,7 @@ class Light
 public:
 	struct CreateDesc
 	{
-		std::string Name;
+		string Name;
 		LightType Type = LightType::Directional;
 		XMFLOAT3 Position = { 0.0f, 2.5f, -2.0f };
 		XMFLOAT3 Rotation = { 0.0f, 0.0f, 0.0f };

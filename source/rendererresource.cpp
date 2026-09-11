@@ -891,8 +891,8 @@
 	void BuildShadowFocusBounds(XMVECTOR& outCenter, float& outRadius)
 	{
 		bool hasBounds = false;
-		XMVECTOR boundsMin = XMVectorReplicate(std::numeric_limits<float>::max());
-		XMVECTOR boundsMax = XMVectorReplicate(-std::numeric_limits<float>::max());
+		XMVECTOR boundsMin = XMVectorReplicate(numeric_limits<float>::max());
+		XMVECTOR boundsMax = XMVectorReplicate(-numeric_limits<float>::max());
 
 		for (EntityID entity : World::GetView<TransformComponent>())
 		{

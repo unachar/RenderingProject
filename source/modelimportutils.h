@@ -10,31 +10,31 @@
 #include <vector>
 
 
-	inline std::filesystem::path ModelPathFromUtf8(const char* value)
+	inline filesystem::path ModelPathFromUtf8(const char* value)
 	{
-		return std::filesystem::u8path(value ? value : "");
+		return filesystem::u8path(value ? value : "");
 	}
 
-	inline std::string ModelPathToUtf8(const std::filesystem::path& path)
+	inline string ModelPathToUtf8(const filesystem::path& path)
 	{
 		const auto value = path.u8string();
-		return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+		return string(reinterpret_cast<const char*>(value.data()), value.size());
 	}
 
-	inline std::string ModelPathLowerExtension(const std::filesystem::path& path)
+	inline string ModelPathLowerExtension(const filesystem::path& path)
 	{
-		std::string extension = ModelPathToUtf8(path.extension());
-		std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c)
+		string extension = ModelPathToUtf8(path.extension());
+		transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c)
 			{
-				return static_cast<char>(std::tolower(c));
+				return static_cast<char>(tolower(c));
 			});
 		return extension;
 	}
 
 	inline const aiScene* ImportModelScene(const char* fileName, unsigned int flags)
 	{
-		const std::filesystem::path path = ModelPathFromUtf8(fileName);
-		const std::string extension = ModelPathLowerExtension(path);
+		const filesystem::path path = ModelPathFromUtf8(fileName);
+		const string extension = ModelPathLowerExtension(path);
 		const char* formatHint = nullptr;
 		if (extension == ".vrm")
 		{
@@ -54,20 +54,20 @@
 			return aiImportFile(fileName, flags);
 		}
 
-		std::ifstream stream(path, std::ios::binary | std::ios::ate);
+		ifstream stream(path, ios::binary | ios::ate);
 		if (!stream)
 		{
 			return nullptr;
 		}
 
-		const std::streamsize size = stream.tellg();
+		const streamsize size = stream.tellg();
 		if (size <= 0)
 		{
 			return nullptr;
 		}
 
-		std::vector<char> bytes(static_cast<size_t>(size));
-		stream.seekg(0, std::ios::beg);
+		vector<char> bytes(static_cast<size_t>(size));
+		stream.seekg(0, ios::beg);
 		if (!stream.read(bytes.data(), size))
 		{
 			return nullptr;

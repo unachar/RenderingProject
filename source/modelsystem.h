@@ -85,7 +85,7 @@ private:
 
     static void SubmitBarriers(
         ID3D12GraphicsCommandList* commandList,
-        const std::vector<D3D12_RESOURCE_BARRIER>& barriers)
+        const vector<D3D12_RESOURCE_BARRIER>& barriers)
     {
         if (commandList && !barriers.empty())
         {
@@ -149,8 +149,8 @@ private:
                     RendererResource::GetConstantBufferHandle(entity));
             };
 
-        std::vector<D3D12_RESOURCE_BARRIER> barriers;
-        std::unordered_set<AnimationModelResource*> skinnedModels;
+        vector<D3D12_RESOURCE_BARRIER> barriers;
+        unordered_set<AnimationModelResource*> skinnedModels;
         for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
         {
             const auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
@@ -319,8 +319,8 @@ private:
                     RendererResource::AllocateTransientConstantBuffer(constants));
             };
 
-        std::vector<D3D12_RESOURCE_BARRIER> barriers;
-        std::unordered_set<AnimationModelResource*> skinnedModels;
+        vector<D3D12_RESOURCE_BARRIER> barriers;
+        unordered_set<AnimationModelResource*> skinnedModels;
         for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
         {
             const auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);

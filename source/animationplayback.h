@@ -4,6 +4,6 @@
 
 struct AnimationPlaybackLayer
 {
-	std::string AnimationName{};
+	string AnimationName{};
 	float CurrentTime = 0.0f;
 };

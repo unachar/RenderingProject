@@ -65,8 +65,8 @@ public:
 		uint32_t m_PassIndex;
 	};
 
-	using SetupCallback = std::function<void(PassBuilder&)>;
-	using ExecuteCallback = std::function<void(ID3D12GraphicsCommandList*)>;
+	using SetupCallback = function<void(PassBuilder&)>;
+	using ExecuteCallback = function<void(ID3D12GraphicsCommandList*)>;
 
 
 	ResourceHandle CreateLogicalResource(const char* name);
@@ -84,9 +84,9 @@ public:
 	bool Execute(ID3D12GraphicsCommandList* commandList);
 	void Reset();
 
-	const std::string& GetLastError() const { return m_LastError; }
+	const string& GetLastError() const { return m_LastError; }
 	size_t GetPassCount() const { return m_Passes.size(); }
-	const std::vector<uint32_t>& GetExecutionOrder() const { return m_ExecutionOrder; }
+	const vector<uint32_t>& GetExecutionOrder() const { return m_ExecutionOrder; }
 
 private:
 	struct Usage
@@ -98,7 +98,7 @@ private:
 
 	struct ResourceRecord
 	{
-		std::string Name;
+		string Name;
 		ID3D12Resource* Resource = nullptr;
 		D3D12_RESOURCE_STATES InitialState = D3D12_RESOURCE_STATE_COMMON;
 		D3D12_RESOURCE_STATES FinalState = D3D12_RESOURCE_STATE_COMMON;
@@ -109,9 +109,9 @@ private:
 
 	struct PassRecord
 	{
-		std::string Name;
-		std::vector<Usage> Usages;
-		std::vector<uint32_t> Dependencies;
+		string Name;
+		vector<Usage> Usages;
+		vector<uint32_t> Dependencies;
 		ExecuteCallback Execute;
 	};
 
@@ -120,11 +120,11 @@ private:
 		ResourceHandle resource,
 		D3D12_RESOURCE_STATES state,
 		Access access);
-	bool Fail(const std::string& message);
+	bool Fail(const string& message);
 
-	std::vector<ResourceRecord> m_Resources;
-	std::vector<PassRecord> m_Passes;
-	std::vector<uint32_t> m_ExecutionOrder;
-	std::string m_LastError;
+	vector<ResourceRecord> m_Resources;
+	vector<PassRecord> m_Passes;
+	vector<uint32_t> m_ExecutionOrder;
+	string m_LastError;
 	bool m_IsCompiled = false;
 };

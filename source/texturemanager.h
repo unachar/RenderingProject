@@ -41,7 +41,7 @@ public:
 	static void Uninit();
 
 	static int LoadTexture(const char* fileName);
-	static int LoadTexture(const std::filesystem::path& fileName);
+	static int LoadTexture(const filesystem::path& fileName);
 	static int LoadNormalTexture(const char* fileName);
 	static int LoadTextureFromMemory(const char* name, const uint8_t* pData, size_t dataSize);
 	static int GetDefaultTextureIndex();

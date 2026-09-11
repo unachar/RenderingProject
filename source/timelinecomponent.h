@@ -36,24 +36,24 @@ struct TimelineKeyframe
 
 struct TimelineClipData
 {
-	std::string Name = "Clip";
+	string Name = "Clip";
 	float StartTime = 0.0f;
 	float Duration = 1.0f;
 	float BlendIn = 0.0f;
 	float BlendOut = 0.0f;
 	bool Enabled = true;
-	std::vector<TimelineKeyframe> Keys{};
+	vector<TimelineKeyframe> Keys{};
 };
 
 struct TimelineTrackData
 {
-	std::string Name = "Track";
+	string Name = "Track";
 	EntityID Target = g_kINVALID_ENTITY;
 	TimelineProperty Property = TimelineProperty::TransformPosition;
 	bool Enabled = true;
 	bool HasDefaultValue = false;
 	DirectX::XMFLOAT4 DefaultValue = { 0, 0, 0, 0 };
-	std::vector<TimelineClipData> Clips{};
+	vector<TimelineClipData> Clips{};
 };
 
 struct TimelineComponent
@@ -65,5 +65,5 @@ struct TimelineComponent
 	bool Loop = false;
 	bool IsPlaying = false;
 	uint64_t LastPlaySession = 0;
-	std::vector<TimelineTrackData> Tracks{};
+	vector<TimelineTrackData> Tracks{};
 };

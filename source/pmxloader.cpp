@@ -4,8 +4,6 @@
 #include <filesystem>
 #include <fstream>
 
-using namespace std;
-
 
 	struct Reader
 	{
@@ -885,7 +883,7 @@ using namespace std;
 
 				if (!build.PmxVertexIndices.empty() && build.Indices.size() >= 3)
 				{
-					meshBuilds.push_back(std::move(build));
+					meshBuilds.push_back(move(build));
 				}
 			};
 
@@ -1167,7 +1165,7 @@ using namespace std;
 			constraint.BoneOrder = i;
 			if (!constraint.BoneName.empty() && !constraint.AppendBoneName.empty())
 			{
-				appendConstraints.push_back(std::move(constraint));
+				appendConstraints.push_back(move(constraint));
 			}
 		}
 
@@ -1206,7 +1204,7 @@ using namespace std;
 
 			if (!constraint.BoneName.empty() && !constraint.TargetBoneName.empty() && !constraint.Links.empty())
 			{
-				ikConstraints.push_back(std::move(constraint));
+				ikConstraints.push_back(move(constraint));
 			}
 		}
 

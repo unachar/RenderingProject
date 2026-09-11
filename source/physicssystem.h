@@ -30,7 +30,7 @@ class PhysicsSystem final : public SystemBase
 	struct BoneBodyRuntime
 	{
 		PhysicsBodyHandle Body = kInvalidPhysicsBody;
-		std::string BoneName{};
+		string BoneName{};
 		uint8_t Operation = 0;
 		DirectX::XMFLOAT4X4 Offset{};
 		DirectX::XMFLOAT4X4 InverseOffset{};
@@ -41,13 +41,13 @@ class PhysicsSystem final : public SystemBase
 		PhysicsEngine Engine = PhysicsEngine::Bullet;
 		int ModelId = -1;
 		uint64_t SettingsHash = 0;
-		std::vector<BoneBodyRuntime> Bodies{};
-		std::vector<PhysicsJointHandle> Joints{};
+		vector<BoneBodyRuntime> Bodies{};
+		vector<PhysicsJointHandle> Joints{};
 	};
 
-	std::array<std::unique_ptr<IPhysicsBackend>, 3> m_Backends{};
-	std::unordered_map<EntityID, EntityBodyRuntime> m_EntityBodies{};
-	std::unordered_map<EntityID, BoneRigRuntime> m_BoneRigs{};
+	array<unique_ptr<IPhysicsBackend>, 3> m_Backends{};
+	unordered_map<EntityID, EntityBodyRuntime> m_EntityBodies{};
+	unordered_map<EntityID, BoneRigRuntime> m_BoneRigs{};
 	PhysicsSettings m_Settings{};
 	double m_Accumulator = 0.0;
 	uint64_t m_PlaySession = 0;

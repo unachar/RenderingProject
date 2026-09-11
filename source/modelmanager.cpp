@@ -8,8 +8,6 @@
 #include <cctype>
 #include <filesystem>
 
-using namespace std;
-
 vector<unique_ptr<AnimationModelResource>> ModelManager::m_AnimModels;
 vector<unique_ptr<StaticModelResource>> ModelManager::m_StaticModels;
 unordered_map<string, int> ModelManager::m_AnimModelCache;

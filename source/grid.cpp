@@ -6,8 +6,6 @@
 #include <d3dcompiler.h>
 #include <vector>
 
-using namespace DirectX;
-
 
 	struct GridVertex
 	{

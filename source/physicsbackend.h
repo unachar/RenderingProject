@@ -27,7 +27,7 @@ struct PhysicsBodyDesc
 	float Height = 1.0f;
 
 
-	std::vector<DirectX::XMFLOAT3> MeshVertices{};
+	vector<DirectX::XMFLOAT3> MeshVertices{};
 	float Mass = 1.0f;
 	float Friction = 0.5f;
 	float Restitution = 0.0f;
@@ -78,6 +78,6 @@ public:
 	virtual void DestroyJoint(PhysicsJointHandle joint) = 0;
 };
 
-std::unique_ptr<IPhysicsBackend> CreateBulletPhysicsBackend();
-std::unique_ptr<IPhysicsBackend> CreateJoltPhysicsBackend();
-std::unique_ptr<IPhysicsBackend> CreatePhysXPhysicsBackend();
+unique_ptr<IPhysicsBackend> CreateBulletPhysicsBackend();
+unique_ptr<IPhysicsBackend> CreateJoltPhysicsBackend();
+unique_ptr<IPhysicsBackend> CreatePhysXPhysicsBackend();

@@ -98,7 +98,7 @@
 			PxSceneDesc sceneDesc(scale);
 			sceneDesc.gravity = ToPx(m_Gravity);
 			m_Dispatcher = PxDefaultCpuDispatcherCreate(
-				max(1u, std::thread::hardware_concurrency() / 2u));
+				max(1u, thread::hardware_concurrency() / 2u));
 			sceneDesc.cpuDispatcher = m_Dispatcher;
 			sceneDesc.filterShader = PhysicsFilterShader;
 			sceneDesc.flags |= PxSceneFlag::eENABLE_CCD;

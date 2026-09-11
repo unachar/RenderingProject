@@ -9,7 +9,7 @@
 void AnimationSystem::Update()
 {
 	auto animEntities = World::GetView<AnimationModelComponent>();
-	std::unordered_set<int> updatedInstancedModels;
+	unordered_set<int> updatedInstancedModels;
 
 	for (EntityID i : animEntities)
 	{

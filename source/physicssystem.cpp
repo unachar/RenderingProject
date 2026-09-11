@@ -22,7 +22,7 @@
 
 	void HashFloat(uint64_t& hash, float value)
 	{
-		HashCombine(hash, std::bit_cast<uint32_t>(value));
+		HashCombine(hash, bit_cast<uint32_t>(value));
 	}
 
 	void HashFloat3(uint64_t& hash, const XMFLOAT3& value)
@@ -428,7 +428,7 @@ void PhysicsSystem::CreateBoneRig(EntityID entity)
 		runtime.Operation = pmx.Operation;
 		XMStoreFloat4x4(&runtime.Offset, offset);
 		XMStoreFloat4x4(&runtime.InverseOffset, inverseOffset);
-		rig.Bodies.push_back(std::move(runtime));
+		rig.Bodies.push_back(move(runtime));
 	}
 
 	const auto& joints = model->GetPmxJoints();
@@ -480,7 +480,7 @@ void PhysicsSystem::CreateBoneRig(EntityID entity)
 			rig.Joints.push_back(joint);
 		}
 	}
-	m_BoneRigs[entity] = std::move(rig);
+	m_BoneRigs[entity] = move(rig);
 }
 
 void PhysicsSystem::SynchronizeRuntimeObjects()

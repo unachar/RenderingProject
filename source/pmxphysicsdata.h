@@ -6,10 +6,10 @@
 
 struct PmxRigidBodyData
 {
-	std::string Name{};
-	std::string EnglishName{};
+	string Name{};
+	string EnglishName{};
 	int32_t BoneIndex = -1;
-	std::string BoneName{};
+	string BoneName{};
 	uint8_t CollisionGroup = 0;
 	uint16_t CollisionMask = 0xffff;
 	uint8_t Shape = 0;
@@ -26,8 +26,8 @@ struct PmxRigidBodyData
 
 struct PmxJointData
 {
-	std::string Name{};
-	std::string EnglishName{};
+	string Name{};
+	string EnglishName{};
 	uint8_t Type = 0;
 	int32_t RigidBodyA = -1;
 	int32_t RigidBodyB = -1;

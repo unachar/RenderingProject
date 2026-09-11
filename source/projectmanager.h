@@ -31,7 +31,7 @@ class ProjectManager final
 	};
 
 	inline static ProjectPlayState s_State = ProjectPlayState::Edit;
-	inline static std::vector<RuntimeSnapshot> s_RuntimeSnapshots{};
+	inline static vector<RuntimeSnapshot> s_RuntimeSnapshots{};
 	inline static uint64_t s_PlaySession = 0;
 
 	static void CaptureRuntimeState();

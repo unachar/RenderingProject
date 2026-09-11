@@ -8,7 +8,7 @@ void Animator::Play(AnimationModelComponent& animation, bool restart)
 	Play(animation, animation.CurrentAnimation, restart);
 }
 
-void Animator::Play(AnimationModelComponent& animation, const std::string& animationName, bool restart)
+void Animator::Play(AnimationModelComponent& animation, const string& animationName, bool restart)
 {
 	if (animationName.empty())
 	{

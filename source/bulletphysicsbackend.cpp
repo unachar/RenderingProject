@@ -189,7 +189,7 @@
 			const short mask = static_cast<short>(desc.CollisionMask);
 			m_World->addRigidBody(record.Body.get(), group, mask);
 			record.Body->setGravity(m_World->getGravity() * desc.GravityFactor);
-			m_Bodies.emplace(handle, std::move(record));
+			m_Bodies.emplace(handle, move(record));
 			return handle;
 		}
 
@@ -290,7 +290,7 @@
 
 			const PhysicsJointHandle handle = m_NextJoint++;
 			m_World->addConstraint(joint.get(), true);
-			m_Joints.emplace(handle, std::move(joint));
+			m_Joints.emplace(handle, move(joint));
 			return handle;
 		}
 

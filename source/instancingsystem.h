@@ -36,7 +36,7 @@ private:
 	GpuInstanceInput* m_MappedInstances = nullptr;
 	Microsoft::WRL::ComPtr<ID3D12Resource> m_DirectInstanceUpload;
 	XMFLOAT4X4* m_MappedDirectInstances = nullptr;
-	std::array<std::vector<XMFLOAT4X4>, 3> m_DirectLodScratch;
+	array<vector<XMFLOAT4X4>, 3> m_DirectLodScratch;
 	Microsoft::WRL::ComPtr<ID3D12Resource> m_LodInstances[3];
 	Microsoft::WRL::ComPtr<ID3D12Resource> m_LodCounts;
 	Microsoft::WRL::ComPtr<ID3D12Resource> m_IndirectArguments;
