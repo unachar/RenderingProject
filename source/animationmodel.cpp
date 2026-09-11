@@ -2035,9 +2035,7 @@ bool AnimationModelResource::LoadPmxIkData(const char* fileName)
 					!readFloat4(reader, materialOffset.Diffuse) ||
 					!reader.Skip(12) ||
 					!reader.Read(ignoredFloat) ||
-					!reader.Skip(12) ||
-					!readFloat4(reader, ignored) ||
-					!reader.Read(ignoredFloat))
+					!readFloat4(reader, ignored))
 				{
 					return false;
 				}
