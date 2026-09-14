@@ -188,10 +188,10 @@ public:
 		s_StabilizeVirtualClipmaps = true;
 		s_CacheVirtualShadowPages = true;
 		s_ShadowCascadeCount = 4;
-		s_ShadowDistance = 96.0f;
+		s_ShadowDistance = 64.0f;
 		s_ContactShadowsEnabled = true;
 		s_ContactShadowLength = 0.65f;
-		s_ContactShadowSteps = 16;
+		s_ContactShadowSteps = 12;
 		s_VirtualShadowDebugMode = 0;
 		s_DistanceFieldShadowsEnabled = false;
 		s_DistanceFieldShadowDistance = 30.0f;
@@ -237,10 +237,10 @@ private:
 	inline static bool s_StabilizeVirtualClipmaps = true;
 	inline static bool s_CacheVirtualShadowPages = true;
 	inline static int s_ShadowCascadeCount = 4;
-	inline static float s_ShadowDistance = 96.0f;
+	inline static float s_ShadowDistance = 64.0f;
 	inline static bool s_ContactShadowsEnabled = true;
 	inline static float s_ContactShadowLength = 0.65f;
-	inline static int s_ContactShadowSteps = 16;
+	inline static int s_ContactShadowSteps = 12;
 	inline static int s_VirtualShadowDebugMode = 0;
 	inline static bool s_DistanceFieldShadowsEnabled = false;
 	inline static float s_DistanceFieldShadowDistance = 30.0f;

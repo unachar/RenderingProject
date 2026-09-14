@@ -280,10 +280,11 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 	auto spriteEntities = World::GetView<SpriteComponent>();
 	const size_t spriteCapacity = Registry::GetActiveEntities(ComponentType::SPRITE).size();
+	const size_t modelCapacity = Registry::GetActiveEntities(ComponentType::MESH).size();
 	m_SpriteDrawCalls.clear();
 	m_ModelDrawCalls.clear();
 	m_SpriteDrawCalls.reserve(spriteCapacity);
-	m_ModelDrawCalls.reserve(spriteCapacity);
+	m_ModelDrawCalls.reserve(modelCapacity);
 
 	XMMATRIX viewMat = XMMatrixIdentity();
 	XMMATRIX projMat = XMMatrixIdentity();

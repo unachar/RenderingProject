@@ -500,6 +500,9 @@ bool StaticModelResource::BuildLodIndexBuffers(
 			continue;
 		}
 		lodIndices.resize(resultCount);
+		// Perf: LODインデックスにも頂点キャッシュ最適化を適用。
+		meshopt_optimizeVertexCache(
+			lodIndices.data(), lodIndices.data(), lodIndices.size(), vertices.size());
 		const UINT byteSize = static_cast<UINT>(resultCount * sizeof(unsigned int));
 		if (!CreateDefaultBufferAndUpload(
 			device, byteSize, lodIndices.data(), D3D12_RESOURCE_STATE_INDEX_BUFFER,
@@ -700,6 +703,17 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 	meshData.VertexBufferView.StrideInBytes = sizeof(StaticModelVertex);
 	meshData.VertexBufferView.SizeInBytes = vertexBufferSize;
 	meshData.VertexCount = (UINT)m_Vertices.size();
+
+	// Perf: OBJパスも Assimp パスと同様にインデックス順を最適化。
+	if (!m_Indices.empty() && !m_Vertices.empty())
+	{
+		meshopt_optimizeVertexCache(
+			m_Indices.data(), m_Indices.data(), m_Indices.size(), m_Vertices.size());
+		meshopt_optimizeOverdraw(
+			m_Indices.data(), m_Indices.data(), m_Indices.size(),
+			reinterpret_cast<const float*>(m_Vertices.data()),
+			m_Vertices.size(), sizeof(StaticModelVertex), 1.05f);
+	}
 
 	const UINT indexBufferSize = sizeof(unsigned int) * (UINT)m_Indices.size();
 	{
@@ -943,6 +957,18 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 		if (indices.empty())
 		{
 			continue;
+		}
+
+		// Perf: GPU頂点キャッシュ効率とオーバードロー削減のためインデックス順を最適化。
+		// 頂点自体は並べ替えないので描画結果は不変。
+		if (!vertices.empty())
+		{
+			meshopt_optimizeVertexCache(
+				indices.data(), indices.data(), indices.size(), vertices.size());
+			meshopt_optimizeOverdraw(
+				indices.data(), indices.data(), indices.size(),
+				reinterpret_cast<const float*>(vertices.data()),
+				vertices.size(), sizeof(StaticModelVertex), 1.05f);
 		}
 
 		StaticMeshData meshData {};

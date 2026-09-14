@@ -143,8 +143,9 @@ static vector<shared_ptr<DecodedEntry>> g_PendingTextures;
 	void EnsureMipChain(TexMetadata& metadata, ScratchImage& image)
 	{
 		if (!g_MaterialMipMapsEnabled) return;
+		// Perf: 256px 以上にも mip を生成してエイリアシングと帯域を削減 (従来は 512px 以上のみ)。
 		if (metadata.mipLevels > 1 || metadata.arraySize != 1 || metadata.dimension != TEX_DIMENSION_TEXTURE2D ||
-			metadata.width < 512 || metadata.height < 512 || IsCompressed(metadata.format))
+			metadata.width < 256 || metadata.height < 256 || IsCompressed(metadata.format))
 		{
 			return;
 		}

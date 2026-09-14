@@ -348,6 +348,9 @@ private:
 	bool TryLoadEmbeddedTextureByName(const aiString& texPath, const char* modelName, int& outTexIndex) const;
 	int ResolveMeshTextureIndex(const aiMesh* mesh, const char* fileName, const string& dirPath) const;
 	aiNodeAnim* FindNodeAnimChannel(aiAnimation* animation, const string& boneName) const;
+	aiNodeAnim* FindNodeAnimChannelCached(aiAnimation* animation, const string& boneName);
+	mutable unordered_map<const aiAnimation*, unordered_map<string, aiNodeAnim*>> m_NodeAnimChannelCache{};
+	uint32_t m_SkinningMatrixCount = 0;
 	void SampleNodeAnimation(aiAnimation* animation, aiNodeAnim* channel, float timeSeconds,
 		aiQuaternion& outRotation, aiVector3D& outPosition, aiVector3D& outScale) const;
 	bool LoadVmdAnimation(const char* fileName, const char* name);

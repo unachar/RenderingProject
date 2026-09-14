@@ -364,6 +364,12 @@
     <ClCompile Include="External\meshoptimizer\src\simplifier.cpp">
       <Filter>3_external</Filter>
     </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\vcacheoptimizer.cpp">
+      <Filter>3_external</Filter>
+    </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\overdrawoptimizer.cpp">
+      <Filter>3_external</Filter>
+    </ClCompile>
     <ClCompile Include="source\pmxloader.cpp">
       <Filter>3_model\3-1_animationmodel</Filter>
     </ClCompile>

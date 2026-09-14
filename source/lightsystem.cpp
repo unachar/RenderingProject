@@ -28,7 +28,7 @@ void LightSystem::Update()
 	ComponentManager::ForEach<LightComponent, TransformComponent>(
 		[](EntityID, LightComponent& lightComponent, TransformComponent& transform)
 		{
-		if (!lightComponent.IsActive)
+		if (!lightComponent.IsActive || lightComponent.Intensity <= 0.0f)
 		{
 			return;
 		}

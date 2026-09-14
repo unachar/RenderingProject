@@ -150,6 +150,10 @@ private:
 		}
 
 		static unordered_map<uint64_t, QueryCacheEntry> queryCache;
+		if (queryCache.empty())
+		{
+			queryCache.reserve(64);
+		}
 		const uint64_t key =
 			(requiredMask.to_ullong() << 6) ^ static_cast<uint64_t>(baseType.Value);
 		QueryCacheEntry& entry = queryCache[key];

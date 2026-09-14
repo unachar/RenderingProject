@@ -119,6 +119,19 @@
 
         const XMMATRIX world = XMLoadFloat4x4(
             &ComponentManager::GetComponentUnchecked<TransformComponent>(entity).WorldMatrix);
+        {
+            const XMVECTOR clipCenter = XMVector4Transform(
+                XMVectorSet(center.x, center.y, center.z, 1.0f),
+                world * viewProjection);
+            XMFLOAT4 c{};
+            XMStoreFloat4(&c, clipCenter);
+            if (c.x >= -c.w && c.x <= c.w &&
+                c.y >= -c.w && c.y <= c.w &&
+                c.z >= 0.0f && c.z <= c.w)
+            {
+                return true;
+            }
+        }
         bool outsideLeft = true;
         bool outsideRight = true;
         bool outsideBottom = true;
@@ -171,13 +184,29 @@
         const uint64_t geometryIdentity = groupId != 0
             ? static_cast<uint64_t>(groupId)
             : (geometryHash != 0 ? geometryHash : vertexBuffer);
-        string key = to_string(static_cast<UINT>(kind)) + "|" +
-            to_string(reinterpret_cast<uintptr_t>(pso)) + "|" +
-            to_string(geometryIdentity) + "|" + to_string(vertexCount) + "|" +
-            to_string(indexBuffer) + "|" + to_string(indexCount) + "|" +
-            to_string(textureIndex) + "|" + to_string(normalIndex) + "|" +
-            to_string(HashMaterial(material)) + "|" + to_string(meshIndex) + "|" +
-            to_string(groupId);
+        string key;
+        key.reserve(160);
+        key += to_string(static_cast<UINT>(kind));
+        key += "|";
+        key += to_string(reinterpret_cast<uintptr_t>(pso));
+        key += "|";
+        key += to_string(geometryIdentity);
+        key += "|";
+        key += to_string(vertexCount);
+        key += "|";
+        key += to_string(indexBuffer);
+        key += "|";
+        key += to_string(indexCount);
+        key += "|";
+        key += to_string(textureIndex);
+        key += "|";
+        key += to_string(normalIndex);
+        key += "|";
+        key += to_string(HashMaterial(material));
+        key += "|";
+        key += to_string(meshIndex);
+        key += "|";
+        key += to_string(groupId);
         if (animation)
         {
             key += "|" + to_string(animation->ModelId) + "|" + animation->CurrentAnimation + "|" +

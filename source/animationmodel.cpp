@@ -551,7 +551,8 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 	}
 	else
 	{
-		unsigned int flags = aiProcessPreset_TargetRealtime_MaxQuality;
+		unsigned int flags = aiProcessPreset_TargetRealtime_MaxQuality &
+			~(aiProcess_CalcTangentSpace | aiProcess_ValidateDataStructure);
 		if (isConvert)
 		{
 			flags |= aiProcess_ConvertToLeftHanded;
@@ -843,14 +844,23 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 		}
 
 		{
-			vector<unsigned int> indices(mesh->mNumFaces * 3);
-			for (unsigned int f = 0; f < mesh->mNumFaces; f++)
-			{
-				const aiFace* face = &mesh->mFaces[f];
-				indices[f * 3 + 0] = face->mIndices[0];
-				indices[f * 3 + 1] = face->mIndices[1];
-				indices[f * 3 + 2] = face->mIndices[2];
-			}
+		vector<unsigned int> indices(mesh->mNumFaces * 3);
+		for (unsigned int f = 0; f < mesh->mNumFaces; f++)
+		{
+			const aiFace* face = &mesh->mFaces[f];
+			indices[f * 3 + 0] = face->mIndices[0];
+			indices[f * 3 + 1] = face->mIndices[1];
+			indices[f * 3 + 2] = face->mIndices[2];
+		}
+		if (!indices.empty() && !m_GpuSkinVertices[m].empty())
+		{
+			meshopt_optimizeVertexCache(
+				indices.data(), indices.data(), indices.size(), m_GpuSkinVertices[m].size());
+			meshopt_optimizeOverdraw(
+				indices.data(), indices.data(), indices.size(),
+				reinterpret_cast<const float*>(m_GpuSkinVertices[m].data()),
+				m_GpuSkinVertices[m].size(), sizeof(GpuSkinVertex), 1.05f);
+		}
 			const UINT indexBufferSize = sizeof(unsigned int) * (UINT)indices.size();
 
 			D3D12_RESOURCE_DESC ibDesc = CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize);
@@ -960,8 +970,10 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 				{
 					continue;
 				}
-				lodIndices.resize(resultCount);
-				if (CreateLodIndexBuffer(
+			lodIndices.resize(resultCount);
+			meshopt_optimizeVertexCache(
+				lodIndices.data(), lodIndices.data(), lodIndices.size(), m_GpuSkinVertices[m].size());
+			if (CreateLodIndexBuffer(
 					m_pDevice,
 					lodIndices,
 					m_Meshes[m].LodIndexBuffers[lodIndex],
@@ -2268,6 +2280,34 @@ int AnimationModelResource::ResolveMeshTextureIndex(const aiMesh* mesh, const ch
 	return textureIndex;
 }
 
+aiNodeAnim* AnimationModelResource::FindNodeAnimChannelCached(aiAnimation* animation, const string& boneName)
+{
+	if (!animation)
+	{
+		return nullptr;
+	}
+
+	auto& perAnim = m_NodeAnimChannelCache[animation];
+	auto cached = perAnim.find(boneName);
+	if (cached != perAnim.end())
+	{
+		return cached->second;
+	}
+
+	aiNodeAnim* found = nullptr;
+	for (unsigned int c = 0; c < animation->mNumChannels; ++c)
+	{
+		aiNodeAnim* channel = animation->mChannels[c];
+		if (channel && strcmp(channel->mNodeName.C_Str(), boneName.c_str()) == 0)
+		{
+			found = channel;
+			break;
+		}
+	}
+	perAnim.emplace(boneName, found);
+	return found;
+}
+
 aiNodeAnim* AnimationModelResource::FindNodeAnimChannel(aiAnimation* animation, const string& boneName) const
 {
 	if (!animation)
@@ -2713,9 +2753,21 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
 		return;
 	}
 
-	if (m_BoneMatricesScratch.size() != m_kMAX_BONES)
+	// Perf: 実使用ボーン数のみ転送する (バッファは生成時に identity 初期化済み)。
+	if (m_SkinningMatrixCount == 0)
 	{
-		m_BoneMatricesScratch.resize(m_kMAX_BONES);
+		uint32_t maxIndex = 0;
+		for (const auto& kv : m_BoneIndexMap)
+		{
+			maxIndex = max(maxIndex, kv.second);
+		}
+		m_SkinningMatrixCount = min<uint32_t>(m_kMAX_BONES, maxIndex + 1);
+	}
+	const uint32_t matrixCount = (m_SkinningMatrixCount != 0) ? m_SkinningMatrixCount : m_kMAX_BONES;
+
+	if (m_BoneMatricesScratch.size() != matrixCount)
+	{
+		m_BoneMatricesScratch.resize(matrixCount);
 	}
 
 	XMFLOAT4X4 identity;
@@ -2728,7 +2780,7 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
 	for (const auto& kv : m_BoneIndexMap)
 	{
 		uint32_t idx = kv.second;
-		if (idx >= m_kMAX_BONES) continue;
+		if (idx >= matrixCount) continue;
 		XMFLOAT4X4& dst = m_BoneMatricesScratch[idx];
 		const aiMatrix4x4& src = m_Bone.at(kv.first).Matrix;
 		if (!IsUsableSkinningMatrix(src))
@@ -2748,7 +2800,7 @@ void AnimationModelResource::WriteBoneMatricesToBuffer()
 	void* mapped = m_pBoneBufferMapped[frameIndex];
 	if (mapped)
 	{
-		const UINT copySize = sizeof(XMFLOAT4X4) * m_kMAX_BONES;
+		const UINT copySize = sizeof(XMFLOAT4X4) * matrixCount;
 		memcpy(mapped, m_BoneMatricesScratch.data(), copySize);
 	}
 
@@ -4374,8 +4426,8 @@ void AnimationModelResource::UpdateBoneMatrices(const char* animName1, float fra
 	for (auto& pair : m_Bone)
 	{
 		Bone* bonePtr = &pair.second;
-		aiNodeAnim* nodeAnim1 = FindNodeAnimChannel(animation1, pair.first);
-		aiNodeAnim* nodeAnim2 = FindNodeAnimChannel(animation2, pair.first);
+		aiNodeAnim* nodeAnim1 = FindNodeAnimChannelCached(animation1, pair.first);
+		aiNodeAnim* nodeAnim2 = FindNodeAnimChannelCached(animation2, pair.first);
 
 		const float ticksPerSecond1 = (animation1 && animation1->mTicksPerSecond != 0)
 			? static_cast<float>(animation1->mTicksPerSecond)
@@ -4585,6 +4637,8 @@ void AnimationModelResource::Uninit()
 	m_Bone.clear();
 	m_BoneNames.clear();
 	m_BoneIndexMap.clear();
+	m_NodeAnimChannelCache.clear();
+	m_SkinningMatrixCount = 0;
 	m_BoneParentMap.clear();
 	m_PmxAppendConstraints.clear();
 	m_PmxIkConstraints.clear();
