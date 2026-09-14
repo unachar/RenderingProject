@@ -33,12 +33,6 @@ float2 DirectionalReceiverDepthGradient(
     float3 receiverWorldDy,
     float4x4 lightViewProjection)
 {
-
-
-
-
-
-
     float3 lightDx = mul(
         float4(receiverWorldDx, 0.0f), lightViewProjection).xyz;
     float3 lightDy = mul(
@@ -63,10 +57,6 @@ float2 DirectionalReceiverDepthGradient(
 
 float DirectionalShadowComparisonBias(float4 shadowParams, float nDotL)
 {
-
-
-
-
     return max(shadowParams.z, 0.0f) +
         max(shadowParams.w, 0.0f) * (1.0f - saturate(nDotL));
 }
@@ -854,12 +844,12 @@ float4 main(PSInputPostProcess input) : SV_Target
 
     if (pbr)
     {
-        float PI = 3.14159265359f;
+        const float PI = 3.14159265359f;
 
-        float3 N = normalize(surfaceNormal + 0.00001f);
-        float3 L = normalize(lightDir + 0.00001f);
-        float3 V = normalize(PPCameraPos.xyz - position.xyz + 0.00001f);
-        float3 H = normalize(L + V + 0.00001f);
+        float3 N = normalize(surfaceNormal);
+        float3 L = normalize(lightDir);
+        float3 V = normalize(PPCameraPos.xyz - position.xyz);
+        float3 H = normalize(L + V);
 
         float rawNdotL = dot(N, L);
         float NdotLScalar = saturate(rawNdotL);
@@ -912,13 +902,13 @@ float4 main(PSInputPostProcess input) : SV_Target
             saturate(shadowSoftness * 2.0f));
         float wrappedNdotL = saturate(
             (rawNdotL + terminatorWidth) / (1.0f + terminatorWidth));
-        wrappedNdotL =
-            wrappedNdotL * wrappedNdotL * (3.0f - 2.0f * wrappedNdotL);
+        
+        
+        wrappedNdotL = wrappedNdotL * wrappedNdotL * (3.0f - 2.0f * wrappedNdotL);
+        
 
-        float3 directDiffuse =
-            diffuseBRDF * lightColor.rgb * lightIntensity * wrappedNdotL;
-        float3 directSpecular =
-            specularBRDF * lightColor.rgb * lightIntensity * NdotLScalar;
+        float3 directDiffuse = diffuseBRDF * lightColor.rgb * lightIntensity * wrappedNdotL;
+        float3 directSpecular = specularBRDF * lightColor.rgb * lightIntensity * NdotLScalar;
         float3 directLight = directDiffuse + directSpecular;
 
         float3 R = reflect(-V, N);
@@ -934,12 +924,10 @@ float4 main(PSInputPostProcess input) : SV_Target
 
         float maxMip = 8.0f;
 
-
-
-
         float3 ssrHit = (roughness < 0.65f && dot(R, V) < 0.0f)
             ? ScreenSpaceRayMarch(position + N * 0.04f + R * 0.02f, R, DepthTexture, TextureSampler)
             : float3(-1.0f, -1.0f, -1.0f);
+        
         float3 envSpecular = EnvironmentTexture.SampleLevel(
             TextureSampler, reflectionUV, roughness * maxMip).rgb;
         if (all(ssrHit.xy >= 0.0f) && all(ssrHit.xy <= 1.0f))
@@ -950,8 +938,7 @@ float4 main(PSInputPostProcess input) : SV_Target
             float3 gbufferHitPosition = ReconstructPostProcessWorldPositionCommon(ssrHit.xy, hitDepth);
             float4 gbufferHitMaterial = MaterialTexture.SampleLevel(TextureSampler, ssrHit.xy, 0);
             float hitTolerance = 0.10f + ssrHit.z * 0.015f;
-            bool validGeometryHit = gbufferHitMaterial.a >= -0.5f &&
-                hitDepth < 0.9999f && distance(rayHitPosition, gbufferHitPosition) <= hitTolerance;
+            bool validGeometryHit = gbufferHitMaterial.a >= -0.5f && hitDepth < 0.9999f && distance(rayHitPosition, gbufferHitPosition) <= hitTolerance;
 
             if (validGeometryHit)
             {
@@ -972,7 +959,8 @@ float4 main(PSInputPostProcess input) : SV_Target
         float oneMinusNdotV5 = oneMinusNdotV2 * oneMinusNdotV2 * oneMinusNdotV;
 
         float3 roughnessF0Max = max(
-        float3(1.0f - roughness, 1.0f - roughness, 1.0f - roughness),F0);
+        float3(1.0f - roughness, 1.0f - roughness, 1.0f - roughness),F0
+        );
 
         float3 F_IBL = F0 + (roughnessF0Max - F0) * oneMinusNdotV5;
 
@@ -990,47 +978,20 @@ float4 main(PSInputPostProcess input) : SV_Target
     }
 
 
+	float ambientVisibility = 1.0f;
+    if (HdrFlags.z > 0.5f)
+    {
+        ambientVisibility = VisibilityBitmaskAO.SampleLevel(TextureSampler,input.TexCoord,0);
+    }
 
+    float3 screenIndirect = 0.0f;
+    if (HdrFlags.w > 0.5f)
+    {
+        screenIndirect = DeinterleavedSSGI.SampleLevel(TextureSampler,input.TexCoord,0).rgb;
+    }
+	baseColor.rgb = baseColor.rgb * lerp(0.38f, 1.0f, ambientVisibility) + screenIndirect * saturate(baseColor.rgb + 0.18f);
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-	float ambientVisibility = HdrFlags.z > 0.5f
-		? VisibilityBitmaskAO.SampleLevel(TextureSampler, input.TexCoord, 0)
-		: 1.0f;
-	float3 screenIndirect = HdrFlags.w > 0.5f
-		? DeinterleavedSSGI.SampleLevel(TextureSampler, input.TexCoord, 0).rgb
-		: 0.0f;
-	baseColor.rgb = baseColor.rgb * lerp(0.38f, 1.0f, ambientVisibility) +
-		screenIndirect * saturate(baseColor.rgb + 0.18f);
-
-    baseColor.rgb =
-        baseColor.rgb * fogTransmittance +
-        atmosphereMedia.rgb;
+    baseColor.rgb = baseColor.rgb * fogTransmittance + atmosphereMedia.rgb;
     baseColor.a = 1.0f;
     return baseColor;
 }
