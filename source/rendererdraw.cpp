@@ -1857,6 +1857,15 @@ bool RendererDraw::CreateSceneRenderTarget()
 		}
 	}
 
+	if (!SpatialUpscaler::Resize(m_Width, m_Height, m_SceneColorFormat))
+	{
+		Debug::Log("WARNING: SpatialUpscaler::Resize(%u, %u) failed; FSR1 falls back to bilateral.\n", m_Width, m_Height);
+	}
+	if (!ScreenSpaceEffects::Resize(m_SceneWidth, m_SceneHeight, m_SceneColorFormat))
+	{
+		Debug::Log("WARNING: ScreenSpaceEffects::Resize(%u, %u) failed; SSAO/SSGI disabled.\n", m_SceneWidth, m_SceneHeight);
+	}
+
 	return true;
 }
 
