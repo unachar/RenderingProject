@@ -9,8 +9,28 @@
 
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)External\ImGUI;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>
+        $(MSBuildThisFileDirectory)External\ImGUI;
+        $(MSBuildThisFileDirectory)External\DLSS\include;
+        $(MSBuildThisFileDirectory)External\NVAPI\include;
+        $(MSBuildThisFileDirectory)External\NRD\include;
+        %(AdditionalIncludeDirectories)
+      </AdditionalIncludeDirectories>
     </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>
+        $(MSBuildThisFileDirectory)External\DLSS\lib\x64;
+        $(MSBuildThisFileDirectory)External\NVAPI\lib\x64;
+        $(MSBuildThisFileDirectory)External\NRD\lib\x64;
+        %(AdditionalLibraryDirectories)
+      </AdditionalLibraryDirectories>
+      <AdditionalDependencies>
+        nvsdk_ngx.lib;
+        nvapi64.lib;
+        nrd.lib;
+        %(AdditionalDependencies)
+      </AdditionalDependencies>
+    </Link>
   </ItemDefinitionGroup>
 
 

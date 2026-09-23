@@ -9,6 +9,9 @@
 #include "d3dx12.h"
 
 #pragma comment(lib, "d3dcompiler.lib")
+#pragma comment(lib, "nvsdk_ngx.lib")
+#pragma comment(lib, "nvapi64.lib")
+#pragma comment(lib, "nrd.lib")
 
 #include <vector>
 #include <string>
@@ -21,6 +24,17 @@
 #include <cstdarg>
 #include <cstdio>
 #include <array>
+
+// DLSS
+#include <nvsdk_ngx.h>
+#include <nvsdk_ngx_helpers.h>
+
+// NVAPI
+#include <nvapi.h>
+
+// NRD
+#include <NRD.h>
+#include <NRDIntegration.h>
 
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;

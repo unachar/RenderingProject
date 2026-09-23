@@ -144,6 +144,9 @@
       <Command>copy /Y "$(ProjectDir)External\dll\assimp\assimp-vc143-mt.dll" "$(OutDir)"
 copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\bin\x64\dxcompiler.dll" "$(OutDir)"
 copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\bin\x64\dxil.dll" "$(OutDir)"
+copy /Y "$(ProjectDir)External\DLSS\dll\x64\*.dll" "$(OutDir)"
+copy /Y "$(ProjectDir)External\NVAPI\dll\x64\*.dll" "$(OutDir)"
+copy /Y "$(ProjectDir)External\NRD\dll\x64\*.dll" "$(OutDir)"
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -179,6 +182,9 @@ copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\b
       <Command>copy /Y "$(ProjectDir)External\dll\assimp\assimp-vc143-mt.dll" "$(OutDir)"
 copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\bin\x64\dxcompiler.dll" "$(OutDir)"
 copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\bin\x64\dxil.dll" "$(OutDir)"
+copy /Y "$(ProjectDir)External\DLSS\dll\x64\*.dll" "$(OutDir)"
+copy /Y "$(ProjectDir)External\NVAPI\dll\x64\*.dll" "$(OutDir)"
+copy /Y "$(ProjectDir)External\NRD\dll\x64\*.dll" "$(OutDir)"
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
