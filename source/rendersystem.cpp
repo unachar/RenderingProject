@@ -562,6 +562,13 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 						return a.cameraDepth > b.cameraDepth;
 					}
 				}
+				else
+				{
+					if (fabsf(a.cameraDepth - b.cameraDepth) > 0.0001f)
+					{
+						return a.cameraDepth < b.cameraDepth;
+					}
+				}
 				if (a.pso != b.pso)
 				{
 					return a.pso < b.pso;

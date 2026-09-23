@@ -362,6 +362,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
 	{
 		m_AnimDrawCalls.clear();
+		m_AnimDrawCalls.reserve(World::GetView<AnimationModelComponent>().size());
 
 		auto animEntities = World::GetView<AnimationModelComponent>();
 		for (EntityID i : animEntities)
@@ -452,6 +453,13 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 						return a.cameraDepth > b.cameraDepth;
 					}
 				}
+				else
+				{
+					if (fabsf(a.cameraDepth - b.cameraDepth) > 0.0001f)
+					{
+						return a.cameraDepth < b.cameraDepth;
+					}
+				}
 				if (a.pso != b.pso)
 				{
 					return a.pso < b.pso;
@@ -463,8 +471,12 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 				return a.model < b.model;
 			});
 
-		ID3D12PipelineState* lastPso = nullptr;
+ID3D12PipelineState* lastPso = nullptr;
 		ID3D12PipelineState* outlinePso = PsoManager::GetOrCreateToonOutlinePso(drawTransparent);
+
+		vector<D3D12_RESOURCE_BARRIER> barriers;
+		barriers.reserve(128);
+
 		for (const auto& dc : m_AnimDrawCalls)
 		{
 			TextureManager::TouchTexture(dc.srvIndex);
@@ -476,6 +488,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			dc.model->DispatchGpuSkinning(pCommandList);
 			lastPso = nullptr;
 
+			barriers.clear();
 			for (UINT m = 0; m < dc.model->GetMeshCount(); m++)
 			{
 				const MeshData& meshData = dc.model->GetMeshData(m);
@@ -484,11 +497,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 					continue;
 				}
 
-				D3D12_RESOURCE_BARRIER vbBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+				barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
 					meshData.VertexBuffer.Get(),
 					D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-					D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
-				pCommandList->ResourceBarrier(1, &vbBarrier);
+					D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
 
 				for (int teoMode = 0; teoMode < kToonOutlineModeCount; ++teoMode)
 				{
@@ -496,12 +508,15 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 					{
 						continue;
 					}
-					D3D12_RESOURCE_BARRIER teoVbBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+					barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
 						meshData.TeoVertexBuffers[teoMode].Get(),
 						D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-						D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
-					pCommandList->ResourceBarrier(1, &teoVbBarrier);
+						D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
 				}
+			}
+			if (!barriers.empty())
+			{
+				pCommandList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
 			}
 
 			RendererDraw::BeginModelPass();
@@ -573,7 +588,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 					const bool drawTeo =
 						hasTeoMesh &&
 						(material.ToonOutlineRenderMode == ToonOutlineMode::TEO ||
-							material.ToonOutlineRenderMode == ToonOutlineMode::Mix);
+						material.ToonOutlineRenderMode == ToonOutlineMode::Mix);
 
 					pCommandList->SetPipelineState(outlinePso);
 					if (drawExtrude)
@@ -610,12 +625,21 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 					pCommandList->SetPipelineState(dc.pso);
 					lastPso = dc.pso;
 				}
+			}
 
-				D3D12_RESOURCE_BARRIER backBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+			barriers.clear();
+			for (UINT m = 0; m < dc.model->GetMeshCount(); m++)
+			{
+				const MeshData& meshData = dc.model->GetMeshData(m);
+				if (!meshData.VertexBuffer)
+				{
+					continue;
+				}
+
+				barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
 					meshData.VertexBuffer.Get(),
 					D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
-					D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-				pCommandList->ResourceBarrier(1, &backBarrier);
+					D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
 
 				for (int teoMode = 0; teoMode < kToonOutlineModeCount; ++teoMode)
 				{
@@ -623,18 +647,22 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 					{
 						continue;
 					}
-					D3D12_RESOURCE_BARRIER teoBackBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+					barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
 						meshData.TeoVertexBuffers[teoMode].Get(),
 						D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
-						D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-					pCommandList->ResourceBarrier(1, &teoBackBarrier);
+						D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
 				}
+			}
+			if (!barriers.empty())
+			{
+				pCommandList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
 			}
 		}
 	}
 
 	{
 		m_StaticDrawCalls.clear();
+		m_StaticDrawCalls.reserve(World::GetView<StaticModelComponent>().size());
 
 		auto staticEntities = World::GetView<StaticModelComponent>();
 		for (EntityID i : staticEntities)
@@ -723,6 +751,13 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 					if (fabsf(a.cameraDepth - b.cameraDepth) > 0.0001f)
 					{
 						return a.cameraDepth > b.cameraDepth;
+					}
+				}
+				else
+				{
+					if (fabsf(a.cameraDepth - b.cameraDepth) > 0.0001f)
+					{
+						return a.cameraDepth < b.cameraDepth;
 					}
 				}
 				if (a.pso != b.pso)

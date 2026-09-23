@@ -263,7 +263,6 @@ void RendererDraw::BeginDraw()
 void RendererDraw::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_TOPOLOGY topology)
 {
 	if (!m_CommandList) return;
-	SetDescriptorHeap();
 	RendererResource::UpdateLightConstantBuffer(1.35f);
 	RendererResource::UpdateShadowConstantBuffer();
 	m_CommandList->SetGraphicsRootSignature(rootSignature);
