@@ -10,6 +10,16 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>
+        $(MSBuildThisFileDirectory)source\assets;
+        $(MSBuildThisFileDirectory)source\core;
+        $(MSBuildThisFileDirectory)source\ecs;
+        $(MSBuildThisFileDirectory)source\editor;
+        $(MSBuildThisFileDirectory)source\entities;
+        $(MSBuildThisFileDirectory)source\models;
+        $(MSBuildThisFileDirectory)source\physics;
+        $(MSBuildThisFileDirectory)source\rendering;
+        $(MSBuildThisFileDirectory)source\scene;
+        $(MSBuildThisFileDirectory)source\systems;
         $(MSBuildThisFileDirectory)External\ImGUI;
         $(MSBuildThisFileDirectory)External\DLSS\include;
         $(MSBuildThisFileDirectory)External\NVAPI\include;
