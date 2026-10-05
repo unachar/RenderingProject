@@ -6,6 +6,21 @@
 #include <wrl.h>
 #include <array>
 #include <vector>
+#include <functional>
+
+enum class InstanceKind : UINT8;
+struct InstanceBatch;
+struct BatchKey;
+struct DrawContext;
+struct BatchBuilder;
+struct MaterialComponent;
+struct AnimationModelComponent;
+struct SpriteComponent;
+struct MeshComponent;
+struct MeshData;
+struct StaticMeshData;
+class AnimationModelResource;
+class StaticModelResource;
 
 class InstancingSystem final : public SystemBase
 {
@@ -19,6 +34,39 @@ public:
     void Draw(RenderPass renderPass, bool receivingPostProcessOnly) override;
 
 private:
+
+    static uint64_t HashMaterial(const MaterialComponent* material);
+    static const char* ResolvePixelShader(EntityID entity, InstanceKind kind);
+    static bool IsBoundsVisible(EntityID entity, const XMMATRIX& viewProjection, const XMFLOAT3& fallbackCenter,
+        const XMFLOAT3& fallbackExtents, bool hasFallbackBounds);
+    static BatchKey MakeKey(
+        EntityID entity,
+        InstanceKind kind,
+        ID3D12PipelineState* pso,
+        D3D12_GPU_VIRTUAL_ADDRESS vertexBuffer,
+        uint64_t geometryHash,
+        UINT vertexCount,
+        D3D12_GPU_VIRTUAL_ADDRESS indexBuffer,
+        UINT indexCount,
+        int textureIndex,
+        int normalIndex,
+        const MaterialComponent* material,
+        UINT meshIndex,
+        const AnimationModelComponent* animation);
+    bool SetupDrawContext(RenderPass renderPass, DrawContext& ctx);
+    bool AcceptsPass(EntityID entity, const MaterialComponent* material, const DrawContext& ctx);
+    bool IsCameraVisible(EntityID entity, const XMFLOAT3& center,
+        const XMFLOAT3& extents, bool hasBounds, const DrawContext& ctx);
+    void BuildShadowBatches(DrawContext& ctx, BatchBuilder& builder);
+    InstanceBatch CreateAnimShadowBatch(const MeshData& mesh, AnimationModelResource* model, UINT meshIndex, ID3D12PipelineState* pso);
+    InstanceBatch CreateStaticShadowBatch(const StaticMeshData& mesh, StaticModelResource* model, UINT meshIndex, ID3D12PipelineState* pso);
+    InstanceBatch CreateNonIndexedShadowBatch(const SpriteComponent& sprite, ID3D12PipelineState* pso, const BatchKey&);
+    InstanceBatch CreateNonIndexedShadowBatch(const MeshComponent& mesh, ID3D12PipelineState* pso, const BatchKey&);
+    void ExecuteShadowBatches(const DrawContext& ctx, const vector<InstanceBatch>& batches);
+    void BuildMainBatches(DrawContext& ctx, BatchBuilder& builder);
+    void ExecuteMainBatches(const DrawContext& ctx, const vector<InstanceBatch>& batches);
+    void ExecuteGpuCullLod(InstanceBatch& batch, const function<void()>& bindGraphics, const DrawContext& ctx);
+    bool ExecuteCpuCulledDraw(InstanceBatch& batch, UINT minimumLod, const function<void()>& bindGraphics, const DrawContext& ctx);
 
 
     static constexpr UINT kMaxInstancesPerFrame = g_kMAX_ENTITIES * 16;
