@@ -2,11 +2,11 @@
 #include "main.h"
 #include "resource.h"
 #include "game.h"
-#include "rendererdraw.h"
-#include "renderercore.h"
+#include "graphicsdevice.h"
 #include "imguimanager.h"
 #include <memory>
 #include <shellapi.h>
+#include "renderconfiguration.h"
 
 extern "C"
 {
@@ -70,7 +70,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		UINT height = rc.bottom - rc.top;
 		if (width > 0 && height > 0)
 		{
-			RendererCore::Resize(width, height);
+			RenderConfiguration::Resize(width, height);
 		}
 		return 0;
 	}
@@ -82,7 +82,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		const UINT height = static_cast<UINT>(rc.bottom - rc.top);
 		if (width > 0 && height > 0)
 		{
-			RendererCore::Resize(width, height);
+			RenderConfiguration::Resize(width, height);
 		}
 		return 0;
 	}
@@ -94,7 +94,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			UINT height = HIWORD(lParam);
 			if (width > 0 && height > 0)
 			{
-				RendererCore::Resize(width, height);
+				RenderConfiguration::Resize(width, height);
 			}
 		}
 		return 0;
@@ -167,7 +167,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 	ShowWindow(hwnd, nCmdShow);
 	DragAcceptFiles(hwnd, TRUE);
 
-	if (!RendererCore::Init(hwnd))
+	if (!GraphicsDevice::Init(hwnd))
 	{
 		MessageBoxA(hwnd, "Failed to initialize renderer.", "Error", MB_OK | MB_ICONERROR);
 		return 0;
