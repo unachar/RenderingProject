@@ -6,6 +6,7 @@ namespace EditorWidgets
 {
 	inline constexpr float kRadToDeg = 180.0f / XM_PI;
 	inline constexpr float kDegToRad = XM_PI / 180.0f;
+	void DrawSearchField(const char* id, const char* hint, ImGuiTextFilter& filter);
 	void DrawUpscaleControls();
 	XMMATRIX BuildWorldMatrix(const TransformComponent& transform);
 	bool DrawAxisFloat3(const char* label, float* values, float speed, float minValue = 0.0f, float maxValue = 0.0f);

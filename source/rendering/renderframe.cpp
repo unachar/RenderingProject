@@ -75,7 +75,7 @@ void RenderFrame::EndDraw()
 	m_CommandList->ResourceBarrier(1, &barrier);
 
 	const HRESULT closeHr = m_CommandList->Close();
-	if (FAILED(closeHr))
+	if (!GraphicsDevice::CheckDeviceHealth(closeHr, "Command list close"))
 	{
 		PostMessage(m_Hwnd, WM_CLOSE, 0, 0);
 		return;

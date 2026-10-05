@@ -1,12 +1,9 @@
-// This file is part of meshoptimizer library; see meshoptimizer.h for version/license details
 #include "meshoptimizer.h"
 
 #include <assert.h>
 #include <math.h>
 #include <string.h>
 
-// This work is based on:
-// Pedro Sander, Diego Nehab and Joshua Barczak. Fast Triangle Reordering for Vertex Locality and Reduced Overdraw. 2007
 namespace meshopt
 {
 
@@ -84,7 +81,6 @@ static void calculateSortData(float* sort_data, const unsigned int* indices, siz
 
 static void calculateSortOrderRadix(unsigned int* sort_order, const float* sort_data, unsigned short* sort_keys, size_t cluster_count)
 {
-	// compute sort data bounds and renormalize, using fixed point snorm
 	float sort_data_max = 1e-3f;
 
 	for (size_t i = 0; i < cluster_count; ++i)
@@ -98,13 +94,11 @@ static void calculateSortOrderRadix(unsigned int* sort_order, const float* sort_
 
 	for (size_t i = 0; i < cluster_count; ++i)
 	{
-		// note that we flip distribution since high dot product should come first
 		float sort_key = 0.5f - 0.5f * (sort_data[i] / sort_data_max);
 
 		sort_keys[i] = meshopt_quantizeUnorm(sort_key, sort_bits) & ((1 << sort_bits) - 1);
 	}
 
-	// fill histogram for counting sort
 	unsigned int histogram[1 << sort_bits];
 	memset(histogram, 0, sizeof(histogram));
 
@@ -113,7 +107,6 @@ static void calculateSortOrderRadix(unsigned int* sort_order, const float* sort_
 		histogram[sort_keys[i]]++;
 	}
 
-	// compute offsets based on histogram data
 	size_t histogram_sum = 0;
 
 	for (size_t i = 0; i < 1 << sort_bits; ++i)
@@ -125,7 +118,6 @@ static void calculateSortOrderRadix(unsigned int* sort_order, const float* sort_
 
 	assert(histogram_sum == cluster_count);
 
-	// compute sort order based on offsets
 	for (size_t i = 0; i < cluster_count; ++i)
 	{
 		sort_order[histogram[sort_keys[i]]++] = unsigned(i);
@@ -136,7 +128,6 @@ static unsigned int updateCache(unsigned int a, unsigned int b, unsigned int c, 
 {
 	unsigned int cache_misses = 0;
 
-	// if vertex is not in cache, put it in cache
 	if (timestamp - cache_timestamps[a] > cache_size)
 	{
 		cache_timestamps[a] = timestamp++;
@@ -172,10 +163,6 @@ static size_t generateHardBoundaries(unsigned int* destination, const unsigned i
 	{
 		unsigned int m = updateCache(indices[i * 3 + 0], indices[i * 3 + 1], indices[i * 3 + 2], cache_size, &cache_timestamps[0], timestamp);
 
-		// when all three vertices are not in the cache it's usually relatively safe to assume that this is a new patch in the mesh
-		// that is disjoint from previous vertices; sometimes it might come back to reference existing vertices but that frequently
-		// suggests an inefficiency in the vertex cache optimization algorithm
-		// usually the first triangle has 3 misses unless it's degenerate - thus we make sure the first cluster always starts with 0
 		if (i == 0 || m == 3)
 		{
 			destination[result++] = unsigned(i);
@@ -216,7 +203,6 @@ static size_t generateSoftBoundaries(unsigned int* destination, const unsigned i
 
 		float cluster_threshold = threshold * (float(cluster_misses) / float(end - start));
 
-		// first cluster always starts from the hard cluster boundary
 		destination[result++] = unsigned(start);
 
 		// reset cache
@@ -234,9 +220,6 @@ static size_t generateSoftBoundaries(unsigned int* destination, const unsigned i
 
 			if (float(running_misses) / float(running_faces) <= cluster_threshold)
 			{
-				// we have reached the target ACMR with the current triangle so we need to start a new cluster on the next one
-				// note that this may mean that we add 'end` to destination for the last triangle, which will imply that the last
-				// cluster is empty; however, the 'pop_back' after the loop will clean it up
 				destination[result++] = unsigned(i + 1);
 
 				// reset cache
@@ -247,12 +230,6 @@ static size_t generateSoftBoundaries(unsigned int* destination, const unsigned i
 			}
 		}
 
-		// each time we reach the target ACMR we flush the cluster
-		// this means that the last cluster is by definition not very good - there are frequent cases where we are left with a few triangles
-		// in the last cluster, producing a very bad ACMR and significantly penalizing the overall results
-		// thus we remove the last cluster boundary, merging the last complete cluster with the last incomplete one
-		// there are sometimes cases when the last cluster is actually good enough - in which case the code above would have added 'end'
-		// to the cluster boundary array which we need to remove anyway - this code will do that automatically
 		if (destination[result - 1] != start)
 		{
 			result--;
@@ -313,7 +290,6 @@ void meshopt_optimizeOverdraw(unsigned int* destination, const unsigned int* ind
 	unsigned int* sort_order = allocator.allocate<unsigned int>(cluster_count);
 	calculateSortOrderRadix(sort_order, sort_data, sort_keys, cluster_count);
 
-	// fill output buffer
 	size_t offset = 0;
 
 	for (size_t it = 0; it < cluster_count; ++it)

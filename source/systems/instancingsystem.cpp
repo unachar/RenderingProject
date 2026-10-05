@@ -579,6 +579,7 @@ struct DrawContext
     XMFLOAT3 cameraPosition{};
     bool transparentPass = false;
     bool deferredOpaque = false;
+    bool receivingPostProcessOnly = false;
     int defaultTexture = -1;
 };
 
@@ -824,7 +825,7 @@ InstanceBatch InstancingSystem::CreateNonIndexedShadowBatch(const MeshComponent&
     return batch;
 }
 
-void InstancingSystem::ExecuteShadowBatches(const DrawContext& ctx, const vector<InstanceBatch>& batches)
+void InstancingSystem::ExecuteShadowBatches(const DrawContext& ctx, vector<InstanceBatch>& batches)
 {
     if (batches.empty()) return;
 
@@ -860,9 +861,10 @@ void InstancingSystem::ExecuteShadowBatches(const DrawContext& ctx, const vector
         }
         if (animatedMesh)
         {
-            ctx.commandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+            const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
                 animatedMesh->VertexBuffer.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
+                D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+            ctx.commandList->ResourceBarrier(1, &barrier);
         }
 
         auto bindShadowGraphics = [&]()
@@ -877,9 +879,10 @@ void InstancingSystem::ExecuteShadowBatches(const DrawContext& ctx, const vector
 
         if (animatedMesh)
         {
-            ctx.commandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+            const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
                 animatedMesh->VertexBuffer.Get(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
-                D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            ctx.commandList->ResourceBarrier(1, &barrier);
         }
     }
 }
@@ -1210,7 +1213,7 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
     }
 }
 
-void InstancingSystem::ExecuteMainBatches(const DrawContext& ctx, const vector<InstanceBatch>& batches)
+void InstancingSystem::ExecuteMainBatches(const DrawContext& ctx, vector<InstanceBatch>& batches)
 {
     for (auto& batch : batches)
     {
@@ -1219,6 +1222,10 @@ void InstancingSystem::ExecuteMainBatches(const DrawContext& ctx, const vector<I
         if (batch.Kind == InstanceKind::AnimatedMesh && batch.AnimatedModel)
         {
             batch.AnimatedModel->DispatchGpuSkinning(ctx.commandList);
+            const auto ready = CD3DX12_RESOURCE_BARRIER::Transition(
+                batch.AnimatedModel->GetMeshData(batch.AnimatedMeshIndex).VertexBuffer.Get(),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+            ctx.commandList->ResourceBarrier(1, &ready);
         }
 
         auto bindGraphics = [&]()
@@ -1234,6 +1241,14 @@ void InstancingSystem::ExecuteMainBatches(const DrawContext& ctx, const vector<I
 
         if (!ExecuteCpuCulledDraw(batch, 0, bindGraphics, ctx))
             ExecuteGpuCullLod(batch, bindGraphics, ctx);
+
+        if (batch.Kind == InstanceKind::AnimatedMesh && batch.AnimatedModel)
+        {
+            const auto back = CD3DX12_RESOURCE_BARRIER::Transition(
+                batch.AnimatedModel->GetMeshData(batch.AnimatedMeshIndex).VertexBuffer.Get(),
+                D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            ctx.commandList->ResourceBarrier(1, &back);
+        }
     }
 }
 

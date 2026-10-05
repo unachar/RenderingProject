@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "animationmodel.h"
+#include "animationmath.h"
 #include "graphicsdevice.h"
 #include "shaderpipelines.h"
 #include "psomanager.h"

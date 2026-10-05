@@ -670,7 +670,7 @@ bool PsoManager::CreateSkinningPso()
 
 bool PsoManager::CreatePostProcessPipelines()
 {
-	auto CreatePPPSO = [&](const char* psPath, PostProcessType type)
+	auto CreatePPPSO = [&](const char* psPath, PostProcessType type, DXGI_FORMAT targetFormat = DXGI_FORMAT_UNKNOWN, ComPtr<ID3D12PipelineState>* output = nullptr)
 		{
 			ShaderDescription resource{};
 			resource.vsPath = "shader\\hlsl\\build\\postProcessVS.cso";
@@ -696,13 +696,14 @@ bool PsoManager::CreatePostProcessPipelines()
 			psoDesc.SampleMask = UINT_MAX;
 			psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 			psoDesc.NumRenderTargets = 1;
-			psoDesc.RTVFormats[0] = m_SceneColorFormat;
+			psoDesc.RTVFormats[0] = targetFormat == DXGI_FORMAT_UNKNOWN ? m_SceneColorFormat : targetFormat;
 			psoDesc.SampleDesc.Count = 1;
 
 			ComPtr<ID3D12PipelineState> pso;
 			if (CreateGraphicsPipelineState(psoDesc, "post process", pso))
 			{
-				m_PostProcessPsoMap[type] = pso;
+				if (output) *output = pso;
+				else m_PostProcessPsoMap[type] = pso;
 				return true;
 			}
 			return false;
@@ -714,6 +715,8 @@ bool PsoManager::CreatePostProcessPipelines()
 	CreatePPPSO("shader\\hlsl\\build\\postProcessGrayPS.cso", PostProcessType::GRAYSCALE);
 	CreatePPPSO("shader\\hlsl\\build\\postProcessInvertPS.cso", PostProcessType::INVERT);
 	CreatePPPSO("shader\\hlsl\\build\\postProcessBloomPS.cso", PostProcessType::BLOOM);
+	if (!CreatePPPSO("shader\\hlsl\\build\\postProcessBloomPS.cso", PostProcessType::BLOOM,
+		GetGBufferFormat(GBufferType::BLOOM), &m_BloomExtractPso)) return false;
 
 	ShaderDescription resource{};
 	resource.vsPath = "shader\\hlsl\\build\\postProcessVS.cso";

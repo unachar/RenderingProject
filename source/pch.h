@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <windows.h>
 #include <wrl.h>
 
@@ -9,9 +9,6 @@
 #include "d3dx12.h"
 
 #pragma comment(lib, "d3dcompiler.lib")
-#pragma comment(lib, "nvsdk_ngx.lib")
-#pragma comment(lib, "nvapi64.lib")
-#pragma comment(lib, "nrd.lib")
 
 #include <vector>
 #include <string>

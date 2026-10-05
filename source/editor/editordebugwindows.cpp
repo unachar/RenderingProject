@@ -274,6 +274,8 @@ void ImGuiManager::DrawAtmosphereWindow()
 
 void ImGuiManager::DrawLogWindow()
 {
+	static ImGuiTextFilter logFilter;
+	static bool autoScroll = true;
 	ImGui::SetNextWindowSize(ImVec2(620.0f, 220.0f), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin("ログ", &m_ShowLogWindow))
 	{
@@ -286,20 +288,29 @@ void ImGuiManager::DrawLogWindow()
 		m_Logs.clear();
 	}
 	ImGui::SameLine();
-	ImGui::Text("件数: %d", static_cast<int>(m_Logs.size()));
+	ImGui::Checkbox("末尾を追従", &autoScroll);
+	DrawSearchField("LogSearch", "ログを検索...", logFilter);
 	ImGui::Separator();
 
+	vector<int> visibleLogs;
+	for (int i = 0; i < static_cast<int>(m_Logs.size()); ++i)
+	{
+		if (logFilter.PassFilter(m_Logs[i].c_str())) visibleLogs.push_back(i);
+	}
+	ImGui::TextDisabled("%d / %d 件", static_cast<int>(visibleLogs.size()), static_cast<int>(m_Logs.size()));
 	ImGui::BeginChild("LogScroll", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+	const bool wasAtBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f;
+	if (visibleLogs.empty()) ImGui::TextUnformatted("表示するログがありません。");
 	ImGuiListClipper clipper;
-	clipper.Begin(static_cast<int>(m_Logs.size()));
+	clipper.Begin(static_cast<int>(visibleLogs.size()));
 	while (clipper.Step())
 	{
 		for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
 		{
-			ImGui::TextUnformatted(m_Logs[i].c_str());
+			ImGui::TextUnformatted(m_Logs[visibleLogs[i]].c_str());
 		}
 	}
-	if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f)
+	if (autoScroll && wasAtBottom)
 	{
 		ImGui::SetScrollHereY(1.0f);
 	}

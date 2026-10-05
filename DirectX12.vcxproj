@@ -128,7 +128,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)$(TargetName).pch</PrecompiledHeaderOutputFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include;$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)External\BulletPhysics\src;$(ProjectDir)External\JoltPhysics;$(ProjectDir)External\PhysX\physx\include;$(ProjectDir)assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)source\assets;$(ProjectDir)source\core;$(ProjectDir)source\ecs;$(ProjectDir)source\editor;$(ProjectDir)source\entities;$(ProjectDir)source\models;$(ProjectDir)source\physics;$(ProjectDir)source\rendering;$(ProjectDir)source\scene;$(ProjectDir)source\systems;$(ProjectDir)source\utils;$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include;$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)External\BulletPhysics\src;$(ProjectDir)External\JoltPhysics;$(ProjectDir)External\PhysX\physx\include;$(ProjectDir)assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp23</LanguageStandard>
     </ClCompile>
     <Link>
@@ -144,9 +144,9 @@
       <Command>copy /Y "$(ProjectDir)External\dll\assimp\assimp-vc143-mt.dll" "$(OutDir)"
 copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\bin\x64\dxcompiler.dll" "$(OutDir)"
 copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\bin\x64\dxil.dll" "$(OutDir)"
-copy /Y "$(ProjectDir)External\DLSS\dll\x64\*.dll" "$(OutDir)"
-copy /Y "$(ProjectDir)External\NVAPI\dll\x64\*.dll" "$(OutDir)"
-copy /Y "$(ProjectDir)External\NRD\dll\x64\*.dll" "$(OutDir)"
+if exist "$(ProjectDir)External\DLSS\dll\x64\*.dll" copy /Y "$(ProjectDir)External\DLSS\dll\x64\*.dll" "$(OutDir)"
+if exist "$(ProjectDir)External\NVAPI\dll\x64\*.dll" copy /Y "$(ProjectDir)External\NVAPI\dll\x64\*.dll" "$(OutDir)"
+if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)External\NRD\dll\x64\*.dll" "$(OutDir)"
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -164,7 +164,7 @@ copy /Y "$(ProjectDir)External\NRD\dll\x64\*.dll" "$(OutDir)"
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)$(TargetName).pch</PrecompiledHeaderOutputFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include;$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)External\BulletPhysics\src;$(ProjectDir)External\JoltPhysics;$(ProjectDir)External\PhysX\physx\include;$(ProjectDir)assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)source\assets;$(ProjectDir)source\core;$(ProjectDir)source\ecs;$(ProjectDir)source\editor;$(ProjectDir)source\entities;$(ProjectDir)source\models;$(ProjectDir)source\physics;$(ProjectDir)source\rendering;$(ProjectDir)source\scene;$(ProjectDir)source\systems;$(ProjectDir)source\utils;$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include;$(ProjectDir)External\ImGuizmo;$(ProjectDir)External\ImGUI;$(ProjectDir)External\DirectXTex\DirectXTex;$(ProjectDir)External\RTXNS\src;$(ProjectDir)External\RTXNS\src\NeuralShading;$(ProjectDir)External\RTXNS\src\Utils;$(ProjectDir)External\RTXNS\external\donut\include;$(ProjectDir)External\RTXNS\external\donut\nvrhi\include;$(ProjectDir)External\RTXNS\external\donut\thirdparty\jsoncpp\include;$(ProjectDir)External\BulletPhysics\src;$(ProjectDir)External\JoltPhysics;$(ProjectDir)External\PhysX\physx\include;$(ProjectDir)assimp;$(ProjectDir)source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp23</LanguageStandard>
     </ClCompile>
     <Link>
@@ -182,9 +182,9 @@ copy /Y "$(ProjectDir)External\NRD\dll\x64\*.dll" "$(OutDir)"
       <Command>copy /Y "$(ProjectDir)External\dll\assimp\assimp-vc143-mt.dll" "$(OutDir)"
 copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\bin\x64\dxcompiler.dll" "$(OutDir)"
 copy /Y "$(ProjectDir)packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\bin\x64\dxil.dll" "$(OutDir)"
-copy /Y "$(ProjectDir)External\DLSS\dll\x64\*.dll" "$(OutDir)"
-copy /Y "$(ProjectDir)External\NVAPI\dll\x64\*.dll" "$(OutDir)"
-copy /Y "$(ProjectDir)External\NRD\dll\x64\*.dll" "$(OutDir)"
+if exist "$(ProjectDir)External\DLSS\dll\x64\*.dll" copy /Y "$(ProjectDir)External\DLSS\dll\x64\*.dll" "$(OutDir)"
+if exist "$(ProjectDir)External\NVAPI\dll\x64\*.dll" copy /Y "$(ProjectDir)External\NVAPI\dll\x64\*.dll" "$(OutDir)"
+if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)External\NRD\dll\x64\*.dll" "$(OutDir)"
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>

@@ -27,7 +27,7 @@ using namespace EditorWidgets;
 void ImGuiManager::DrawInspectorWindow()
 {
 	ImGui::SetNextWindowSize(ImVec2(312.0f, 520.0f), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("インスペクター"))
+	if (!ImGui::Begin("インスペクター", &m_ShowInspectorWindow))
 	{
 		ImGui::End();
 		return;
@@ -35,7 +35,8 @@ void ImGuiManager::DrawInspectorWindow()
 
 	if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
 	{
-ImGui::TextUnformatted("オブジェクト未選択");
+		ImGui::SeparatorText("オブジェクト未選択");
+		ImGui::TextWrapped("ヒエラルキーまたはシーンビューでオブジェクトを選択すると、ここでプロパティを編集できます。");
 		ImGui::End();
 		return;
 	}
@@ -46,12 +47,14 @@ ImGui::TextUnformatted("オブジェクト未選択");
 	}
 	else
 	{
-		ImGui::Text("選択中: %s", GetEntityDisplayName(m_SelectedEntity));
+		ImGui::TextWrapped("%s", GetEntityDisplayName(m_SelectedEntity));
+		ImGui::TextDisabled("Entity #%u", m_SelectedEntity);
 	}
 	ImGui::Separator();
 
 	if (ImGui::BeginPopupContextWindow("InspectorEntityContext", ImGuiPopupFlags_MouseButtonRight))
 	{
+		if (ImGui::MenuItem("名前を変更", "F2", false, ComponentManager::HasComponent<NameComponent>(m_SelectedEntity))) BeginRename(m_SelectedEntity);
 		if (ImGui::MenuItem("削除"))
 		{
 			DeleteSelectedEntity();

@@ -305,7 +305,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 
 			RenderProfiler::ScopedEvent profile("Bloom Extract", m_CommandList.Get());
 			DrawFullscreenPass(
-				postProcessPso,
+				m_BloomExtractPso.Get(),
 				m_GBufferRtvHandles[bloomIndex],
 				GetRenderTargetSrvHandle(RenderTargetType::Scene),
 				1.0f,

@@ -2,7 +2,7 @@
 
 #include "game.h"
 #include "world.h"
-#include "camera.h"
+#include "Camera.h"
 #include "input.h"
 #include "graphicsdevice.h"
 #include "shaderpipelines.h"
@@ -39,6 +39,7 @@ void Game::Create()
 {
 	Camera::Create();
 	Camera::CreateGameCamera();
+	
 
 	AddEntity<Cube>();
 	AddEntity<Polygon3D>();

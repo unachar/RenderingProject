@@ -305,7 +305,7 @@ bool GraphicsDevice::Init(HWND hwnd)
 	}
 
 	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc {};
-	cbvHeapDesc.NumDescriptors = g_kENGINE_DESCRIPTOR_END + 1;
+	cbvHeapDesc.NumDescriptors = g_kENGINE_DESCRIPTOR_END + 1 + ImGuiManager::kSrvDescriptorCount;
 	cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	WriteGraphicsLog("Step: CreateDescriptorHeap(CBV)\n");
@@ -450,6 +450,7 @@ void GraphicsDevice::Uninit()
 
 	m_PsoCache.clear();
 	m_PostProcessPsoMap.clear();
+	m_BloomExtractPso.Reset();
 	m_AtmospherePso.Reset();
 
 	if (m_DynamicVertexBuffer)
@@ -540,9 +541,9 @@ bool GraphicsDevice::CheckDeviceHealth(HRESULT operationResult, const char* oper
 	{
 		const UINT64 messageCount = infoQueue->GetNumStoredMessagesAllowedByRetrievalFilter();
 		UINT64 firstMessage;
-		if (messageCount > 64u)
+		if (messageCount > 256u)
 		{
-			firstMessage = messageCount - 64u;
+			firstMessage = messageCount - 256u;
 		}
 		else
 		{

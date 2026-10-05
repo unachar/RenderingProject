@@ -21,6 +21,7 @@ using namespace EditorWidgets;
 
 void ImGuiManager::DrawSceneViewWindow()
 {
+	m_IsSceneViewHovered = false;
 	ImGui::SetNextWindowSize(ImVec2(860.0f, 520.0f), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin("シーンビュー"))
 	{
@@ -28,7 +29,38 @@ void ImGuiManager::DrawSceneViewWindow()
 		return;
 	}
 
+	const char* toolLabels[] = { "移動 Q", "回転 W", "スケール E" };
+	const float toolbarWidth = ImGui::GetContentRegionAvail().x;
+	const float toolSpacing = ImGui::GetStyle().ItemSpacing.x;
+	float rowWidth = 0.0f;
+	for (int tool = 0; tool < 3; ++tool)
+	{
+		const float toolWidth = ImGui::CalcTextSize(toolLabels[tool]).x + 16.0f;
+		if (tool > 0 && rowWidth + toolSpacing + toolWidth <= toolbarWidth)
+		{
+			ImGui::SameLine();
+			rowWidth += toolSpacing;
+		}
+		else rowWidth = 0.0f;
+		if (ImGui::Selectable(toolLabels[tool], m_GizmoOperation == tool, 0,
+			ImVec2(toolWidth, ImGui::GetFrameHeight())))
+		{
+			m_GizmoOperation = tool;
+		}
+		rowWidth += toolWidth;
+	}
+	const float lightToggleWidth = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("ライト可視化").x;
+	if (rowWidth + toolSpacing + lightToggleWidth <= toolbarWidth) ImGui::SameLine();
+	ImGui::Checkbox("ライト可視化", &m_ShowLightDebug);
+	ImGui::Separator();
+	const bool sceneFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+	if (sceneFocused && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() &&
+		!ImGuizmo::IsUsing() && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+	{
+		DeleteSelectedEntity();
+	}
 	ImVec2 available = ImGui::GetContentRegionAvail();
+	available.y -= ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
 	const float sceneAspect = GraphicsDevice::GetSceneAspectRatio();
 	if (available.x <= 1.0f || available.y <= 1.0f)
 	{
@@ -50,6 +82,9 @@ void ImGuiManager::DrawSceneViewWindow()
 		}
 	}
 
+	const ImVec2 imageCursor = ImGui::GetCursorPos();
+	ImGui::SetCursorPos(ImVec2(imageCursor.x + (available.x - imageSize.x) * 0.5f,
+		imageCursor.y + (available.y - imageSize.y) * 0.5f));
 	const ImVec2 cursor = ImGui::GetCursorScreenPos();
 	m_SceneViewPos = cursor;
 	m_SceneViewSize = imageSize;
@@ -106,7 +141,8 @@ void ImGuiManager::DrawSceneViewWindow()
 		ImGui::EndDragDropTarget();
 	}
 
-	ImGui::Text("右ドラッグ: カメラ / 左クリック: 選択 / Q/W/E: 移動・回転・スケール（現在: %s）", GetGizmoOperationLabel(m_GizmoOperation));
+	ImGui::SetCursorPos(ImVec2(imageCursor.x, imageCursor.y + available.y + ImGui::GetStyle().ItemSpacing.y));
+	ImGui::TextDisabled("左クリック: 選択 / 右ドラッグ: カメラ / ホイール: ズーム");
 	ImGui::End();
 }
 
@@ -196,16 +232,24 @@ void ImGuiManager::DrawHierarchyWindow()
 {
 	ImGui::SetNextWindowPos(ImVec2(8.0f, 32.0f), ImGuiCond_FirstUseEver);
 	ImGui::SetNextWindowSize(ImVec2(260.0f, 420.0f), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("ヒエラルキー", &m_ShowEditorWindows))
+	if (!ImGui::Begin("ヒエラルキー", &m_ShowHierarchyWindow))
 	{
 		ImGui::End();
 		return;
 	}
 
+	const bool hierarchyFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+	if (hierarchyFocused && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() &&
+		m_RenamingEntity == g_kINVALID_ENTITY && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+	{
+		DeleteSelectedEntity();
+	}
+	ImGui::BeginDisabled(m_SelectedEntity == g_kINVALID_ENTITY);
 	if (ImGui::Button("選択解除"))
 	{
 		m_SelectedEntity = g_kINVALID_ENTITY;
 	}
+	ImGui::EndDisabled();
 	ImGui::SameLine();
 	if (ImGui::Button("+ 作成"))
 	{
@@ -242,7 +286,13 @@ void ImGuiManager::DrawHierarchyWindow()
 		ImGui::EndPopup();
 	}
 
-	ImGui::SeparatorText("セクション");
+	static ImGuiTextFilter entityFilter;
+	DrawSearchField("EntitySearch", "名前で検索...", entityFilter);
+	ImGui::Separator();
+	int totalCount = 0;
+	int visibleCount = 0;
+	bool deleteRequested = false;
+	ImGui::BeginChild("EntityList", ImVec2(0.0f, -ImGui::GetTextLineHeightWithSpacing()));
 	for (EntityID entity : World::GetView<TransformComponent>())
 	{
 		if (!IsEditableEntity(entity))
@@ -250,17 +300,36 @@ void ImGuiManager::DrawHierarchyWindow()
 			continue;
 		}
 
+		++totalCount;
+		const string displayName = GetEntityDisplayName(entity);
+		if (m_RenamingEntity != entity && !entityFilter.PassFilter(displayName.c_str())) continue;
+		++visibleCount;
+		ImGui::PushID(static_cast<int>(entity));
 		const bool selected = entity == m_SelectedEntity;
 		if (m_RenamingEntity == entity)
 		{
 			DrawRenameInput(entity);
 		}
-		else if (ImGui::Selectable(GetEntityDisplayName(entity), selected))
+		else if (ImGui::Selectable(displayName.c_str(), selected))
 		{
 			m_SelectedEntity = entity;
 		}
+		if (ImGui::BeginPopupContextItem("EntityActions"))
+		{
+			m_SelectedEntity = entity;
+			if (ImGui::MenuItem("名前を変更", "F2", false, ComponentManager::HasComponent<NameComponent>(entity))) BeginRename(entity);
+			if (ImGui::MenuItem("削除", "Delete")) deleteRequested = true;
+			ImGui::EndPopup();
+		}
+		ImGui::PopID();
 	}
-
+	if (visibleCount == 0)
+	{
+		ImGui::TextWrapped("表示するオブジェクトがありません。検索条件を変更するか、+ 作成から追加してください。");
+	}
+	ImGui::EndChild();
+	if (deleteRequested) DeleteSelectedEntity();
+	ImGui::TextDisabled("%d / %d 件", visibleCount, totalCount);
 	ImGui::End();
 }
 
@@ -489,6 +558,7 @@ void ImGuiManager::BeginRename(EntityID entity)
 	}
 
 	m_RenamingEntity = entity;
+	m_RenameNeedsFocus = true;
 	m_RenameBuffer = ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name;
 }
 
@@ -518,6 +588,7 @@ void ImGuiManager::CancelRename()
 {
 	m_RenamingEntity = g_kINVALID_ENTITY;
 	m_RenameBuffer.clear();
+	m_RenameNeedsFocus = false;
 }
 
 bool ImGuiManager::DrawRenameInput(EntityID entity)
@@ -531,11 +602,12 @@ bool ImGuiManager::DrawRenameInput(EntityID entity)
 	strncpy_s(buffer, m_RenameBuffer.c_str(), _TRUNCATE);
 	ImGui::SetNextItemWidth(-1.0f);
 	ImGui::PushID(static_cast<int>(entity));
-	const bool submitted = ImGui::InputText("##Rename", buffer, IM_ARRAYSIZE(buffer), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-	if (ImGui::IsItemActivated())
+	if (m_RenameNeedsFocus)
 	{
-		ImGui::SetKeyboardFocusHere(-1);
+		ImGui::SetKeyboardFocusHere();
+		m_RenameNeedsFocus = false;
 	}
+	const bool submitted = ImGui::InputText("##Rename", buffer, IM_ARRAYSIZE(buffer), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
 	m_RenameBuffer = buffer;
 	const bool deactivated = ImGui::IsItemDeactivatedAfterEdit();
 	ImGui::PopID();

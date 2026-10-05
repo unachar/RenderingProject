@@ -1,390 +1,68 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="リソース ファイル">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    <Filter Include="assets">
+      <UniqueIdentifier>{22320014-7bc3-4844-b378-a2fdc7fe00b6}</UniqueIdentifier>
     </Filter>
-    <Filter Include="0_pch">
-      <UniqueIdentifier>{967ab9a4-cb55-49e0-841d-4c9e055beaa7}</UniqueIdentifier>
+    <Filter Include="core">
+      <UniqueIdentifier>{96ed3428-2a48-4263-856d-2b7aa0e58b0e}</UniqueIdentifier>
     </Filter>
-    <Filter Include="1_base">
-      <UniqueIdentifier>{e6545c50-9991-4aaf-b19c-00fbcdecfba2}</UniqueIdentifier>
+    <Filter Include="ecs">
+      <UniqueIdentifier>{a76b5120-cfac-49e0-9572-831818adc61c}</UniqueIdentifier>
     </Filter>
-    <Filter Include="2_ecs">
-      <UniqueIdentifier>{18521725-d73d-4027-9a40-6062c7239a4b}</UniqueIdentifier>
+    <Filter Include="editor">
+      <UniqueIdentifier>{7c0a9750-7900-4976-a5e5-0a3122e521e1}</UniqueIdentifier>
     </Filter>
-    <Filter Include="2_ecs\2-1_entities">
-      <UniqueIdentifier>{ff8270c0-6e12-4696-a3ed-0efb76fdcb3c}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="2_ecs\2-2_components">
-      <UniqueIdentifier>{04394364-92a9-4928-9649-4b81cb499075}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="2_ecs\2-3_systems">
-      <UniqueIdentifier>{8ac4456c-2b2d-4b7f-ab25-b15c03499b20}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="3_model">
-      <UniqueIdentifier>{5a19dad7-526c-4801-b6ad-664540cc6218}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="4_texture">
-      <UniqueIdentifier>{02b9444a-4bf7-49c7-b91e-448820dca0f9}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="5_shader">
-      <UniqueIdentifier>{6d640fe1-df88-4756-867e-456e9591af93}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="5_shader\hlsl">
-      <UniqueIdentifier>{a9b178c9-8190-4783-a2c9-dc61edeb2648}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="5_shader\Slang">
-      <UniqueIdentifier>{c644af08-6b47-45f7-97e9-1210e5a68417}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="3_model\3-1_animationmodel">
-      <UniqueIdentifier>{1d7c8e6f-e2ba-46de-b128-95ec04dac8b2}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="3_model\3-2_staticmodel">
-      <UniqueIdentifier>{ec6183ee-904e-4717-997c-958d0f2a4263}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="3_model\3-3_manager">
-      <UniqueIdentifier>{a8631da5-c26d-44fb-8b21-31b0c3f12380}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="4_texture\4-1_manager">
-      <UniqueIdentifier>{523e2c0f-9a49-4d17-b7b7-649e21d6a3b6}</UniqueIdentifier>
+    <Filter Include="entities">
+      <UniqueIdentifier>{6cb068a0-f516-4ad2-81f3-0cc0aeaa341a}</UniqueIdentifier>
     </Filter>
     <Filter Include="External">
-      <UniqueIdentifier>{d7a7b8e5-8e2b-4d9a-9e7c-8b8a8b8a8b8a}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="External\ImGUI">
-      <UniqueIdentifier>{f8a8b8c8-d8e8-4f8f-af8f-bf8fcf8fdf8f}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="External\ImGuizmo">
-      <UniqueIdentifier>{a1b2c3d4-e5f6-4a5b-8c7d-9e0f1a2b3c4d}</UniqueIdentifier>
+      <UniqueIdentifier>{88f01f69-3771-4244-b81b-65eabc004069}</UniqueIdentifier>
     </Filter>
     <Filter Include="External\FidelityFX-FSR">
-      <UniqueIdentifier>{b2c3d4e5-f6a7-4b6c-9d8e-0f1a2b3c4d5e}</UniqueIdentifier>
+      <UniqueIdentifier>{ff2f3c2c-19ea-484f-8c08-18767bd85169}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="External\ImGUI">
+      <UniqueIdentifier>{973db605-a506-4422-a4e4-6de9a38714cb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="External\ImGuizmo">
+      <UniqueIdentifier>{b18bfabf-9f9c-4215-90ee-bf2223b42fbd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="External\meshoptimizer">
+      <UniqueIdentifier>{f323728b-314f-4d03-a6d7-769ee38da2b5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="External\meshoptimizer\src">
+      <UniqueIdentifier>{da323714-0c0f-45f5-b6ac-56c3f9c66813}</UniqueIdentifier>
     </Filter>
     <Filter Include="External\NVIDIAImageScaling">
-      <UniqueIdentifier>{c3d4e5f6-a7b8-4c9d-8e0f-1a2b3c4d5e6f}</UniqueIdentifier>
+      <UniqueIdentifier>{38338c61-b811-42a5-8548-da319fc3be56}</UniqueIdentifier>
     </Filter>
-    <Filter Include="5_shader\resource">
-      <UniqueIdentifier>{669bad30-0e93-4cf2-951b-a3e7c0b8f685}</UniqueIdentifier>
+    <Filter Include="models">
+      <UniqueIdentifier>{aeee5d0c-aead-40e5-9970-88fb22ef3f42}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="physics">
+      <UniqueIdentifier>{457c7d0b-c17e-41d0-bcaa-e153be94b8f4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="rendering">
+      <UniqueIdentifier>{8bb55b0c-d91c-4d62-8210-a33c5dd1b723}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="scene">
+      <UniqueIdentifier>{210c1f9e-74bb-4d54-82b7-20df0061ebe0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="shader">
+      <UniqueIdentifier>{6ece020c-ca38-4f39-811e-7b90f130a734}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="shader\hlsl">
+      <UniqueIdentifier>{118d6462-5ea1-4758-84f4-997901d799e9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="systems">
+      <UniqueIdentifier>{b02fe446-1d29-409d-ac1b-d8aafe636873}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="utils">
+      <UniqueIdentifier>{2a5822da-dfaf-4335-8d84-81453c68198b}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="shader\hlsl\colorshaderPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\colorshaderPS_MRT.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\colorshaderVS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\common.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\debugLinePS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\debugLinePS_MRT.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\debugLineVS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\DeferredPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\DeferredLightingPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\AtmosphereGBufferPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\GeometryPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\colorshader3dInstancedVS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\modelshaderInstancedVS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\GpuDrivenCullCS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\GpuInstanceCullLodCS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\GpuInstanceArgsCS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\modelshaderPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\modelshaderPS_MRT.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\modelshaderVS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\toonOutlinePS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\toonOutlinePS_MRT.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\toonOutlineVS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\postProcessBlurPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\postProcessBloomPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\postProcessNonePS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\postProcessGrayPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\postProcessInvertPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\postProcessSepiaPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\UpscaleBilateralPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\postProcessVS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\skinning_cs.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\colorshader3dVS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\colorshader3dPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\colorshader3dPS_MRT.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\modellightingVS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\modellightingPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\modellightingspeculerVS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\modellighingspeculerPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\ShadowMapVS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\ShadowMapInstancedVS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\FsrEasuCS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\FsrRcasCS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\VisibilityPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\Visibility2DPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\VisibilityOutlinePS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\GBufferFromVisibilityCS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\ScreenSpaceDeinterleaveCS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\RayBinningCS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\SsgiDeinterleavedCS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\SsgiResolveCS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\SsaoVisibilityBitmaskCS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\LightInstanceBuilderCS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\HiZCopyCS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\HiZReduceCS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="External\NVIDIAImageScaling\NIS_Main.hlsl">
-      <Filter>External\NVIDIAImageScaling</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\UpscaleDepthPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\VelocityPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\VelocityGeometryVS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\VelocityGeometryPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\FXAA_PS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <FxCompile Include="shader\hlsl\TAA_BlendPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </FxCompile>
-    <None Include="shader\hlsl\MeshVisibility.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </None>
-    <None Include="shader\hlsl\MeshVisibilityPS.hlsl">
-      <Filter>5_shader\hlsl</Filter>
-    </None>
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="source\pch.cpp">
-      <Filter>0_pch</Filter>
-    </ClCompile>
-    <ClCompile Include="source\core\game.cpp">
-      <Filter>Source\core</Filter>
-    </ClCompile>
-    <ClCompile Include="source\main.cpp">
-      <Filter>1_base</Filter>
-    </ClCompile>
-    <ClCompile Include="source\rendering\rendererstate.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="source\ecs\ecs.cpp">
-      <Filter>Source\ecs</Filter>
-    </ClCompile>
-    <ClCompile Include="source\scene\camera.cpp">
-      <Filter>Source\scene</Filter>
-    </ClCompile>
-    <ClCompile Include="source\scene\grid.cpp">
-      <Filter>Source\scene</Filter>
-    </ClCompile>
-    <ClCompile Include="source\core\input.cpp">
-      <Filter>Source\core</Filter>
-    </ClCompile>
-    <ClCompile Include="source\entities\polygon.cpp">
-      <Filter>Source\entities</Filter>
-    </ClCompile>
-
-    <ClCompile Include="source\core\world.cpp">
-      <Filter>Source\core</Filter>
-    </ClCompile>
-    <ClCompile Include="source\ecs\componentmanager.cpp">
-      <Filter>Source\ecs</Filter>
-    </ClCompile>
-    <ClCompile Include="source\models\animator.cpp">
-      <Filter>Source\models</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\animationsystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\physicssystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\physics\bulletphysicsbackend.cpp">
-      <Filter>Source\physics</Filter>
-    </ClCompile>
-    <ClCompile Include="source\physics\joltphysicsbackend.cpp">
-      <Filter>Source\physics</Filter>
-    </ClCompile>
-    <ClCompile Include="source\physics\physxphysicsbackend.cpp">
-      <Filter>Source\physics</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\camerasystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\debugsystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\gridsystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\inputsystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\materialsystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\modelsystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\instancingsystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\postprocesssystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\rendersystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\systemmanager.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\editor\projectmanager.cpp">
-      <Filter>Source\editor</Filter>
-    </ClCompile>
-    <ClCompile Include="source\entities\timeline.cpp">
-      <Filter>Source\entities</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\timelinesystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\transformsystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\models\animationmodel.cpp">
-      <Filter>Source\models</Filter>
-    </ClCompile>
-    <ClCompile Include="External\meshoptimizer\src\allocator.cpp">
-      <Filter>3_external</Filter>
-    </ClCompile>
-    <ClCompile Include="External\meshoptimizer\src\simplifier.cpp">
-      <Filter>3_external</Filter>
-    </ClCompile>
-    <ClCompile Include="External\meshoptimizer\src\vcacheoptimizer.cpp">
-      <Filter>3_external</Filter>
-    </ClCompile>
-    <ClCompile Include="External\meshoptimizer\src\overdrawoptimizer.cpp">
-      <Filter>3_external</Filter>
-    </ClCompile>
-    <ClCompile Include="source\models\pmxloader.cpp">
-      <Filter>Source\models</Filter>
-    </ClCompile>
-    <ClCompile Include="source\models\vmdanimationimpoter.cpp">
-      <Filter>Source\models</Filter>
-    </ClCompile>
-    <ClCompile Include="source\models\staticmodel.cpp">
-      <Filter>Source\models</Filter>
-    </ClCompile>
-    <ClCompile Include="source\models\modelmanager.cpp">
-      <Filter>Source\models</Filter>
-    </ClCompile>
-    <ClCompile Include="source\assets\texturemanager.cpp">
-      <Filter>Source\assets</Filter>
-    </ClCompile>
     <ClCompile Include="External\ImGUI\imgui.cpp">
       <Filter>External\ImGUI</Filter>
     </ClCompile>
@@ -400,230 +78,506 @@
     <ClCompile Include="External\ImGuizmo\ImGuizmo.cpp">
       <Filter>External\ImGuizmo</Filter>
     </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\allocator.cpp">
+      <Filter>External\meshoptimizer\src</Filter>
+    </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\simplifier.cpp">
+      <Filter>External\meshoptimizer\src</Filter>
+    </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\vcacheoptimizer.cpp">
+      <Filter>External\meshoptimizer\src</Filter>
+    </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\overdrawoptimizer.cpp">
+      <Filter>External\meshoptimizer\src</Filter>
+    </ClCompile>
     <ClCompile Include="External\ImGUI\imgui_impl_dx12.cpp">
       <Filter>External\ImGUI</Filter>
     </ClCompile>
     <ClCompile Include="External\ImGUI\imgui_impl_win32.cpp">
       <Filter>External\ImGUI</Filter>
     </ClCompile>
-    <ClCompile Include="source\editor\imguimanager.cpp">
-      <Filter>Source\editor</Filter>
-    </ClCompile>
-    <ClCompile Include="source\scene\light.cpp">
-      <Filter>Source\scene</Filter>
-    </ClCompile>
-    <ClCompile Include="source\entities\polygon3d.cpp">
-      <Filter>Source\entities</Filter>
-    </ClCompile>
-    <ClCompile Include="source\entities\xbot.cpp">
-      <Filter>Source\entities</Filter>
-    </ClCompile>
-    <ClCompile Include="source\entities\field.cpp">
-      <Filter>Source\entities</Filter>
-    </ClCompile>
     <ClCompile Include="source\entities\alicia.cpp">
-      <Filter>Source\entities</Filter>
+      <Filter>entities</Filter>
     </ClCompile>
     <ClCompile Include="source\entities\moca.cpp">
-      <Filter>Source\entities</Filter>
+      <Filter>entities</Filter>
     </ClCompile>
     <ClCompile Include="source\entities\karen.cpp">
-      <Filter>Source\entities</Filter>
+      <Filter>entities</Filter>
     </ClCompile>
     <ClCompile Include="source\entities\kacchatta_hone.cpp">
-      <Filter>Source\entities</Filter>
+      <Filter>entities</Filter>
     </ClCompile>
     <ClCompile Include="source\scene\atmosphere.cpp">
-      <Filter>Source\scene</Filter>
+      <Filter>scene</Filter>
     </ClCompile>
-    <ClCompile Include="source\systems\movementsystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\cameracontrolsystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\postprocessinputsystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\systems\lightsystem.cpp">
-      <Filter>Source\systems</Filter>
-    </ClCompile>
-    <ClCompile Include="source\rendering\graphicsdevice.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="source\rendering\psomanager.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-
-    <ClCompile Include="source\rendering\rendergraph.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-
-    <ClCompile Include="source\rendering\shaderpipelines.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="source\rendering\shaderpaths.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClCompile Include="source\entities\sky.cpp">
-      <Filter>Source\entities</Filter>
-    </ClCompile>
-    <ClCompile Include="source\scene\sun.cpp">
-      <Filter>Source\scene</Filter>
+    <ClCompile Include="source\models\animator.cpp">
+      <Filter>models</Filter>
     </ClCompile>
     <ClCompile Include="source\entities\cube.cpp">
-      <Filter>Source\entities</Filter>
+      <Filter>entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\entities\field.cpp">
+      <Filter>entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\imguimanager.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\models\animationmodel.cpp">
+      <Filter>models</Filter>
+    </ClCompile>
+    <ClCompile Include="source\models\pmxloader.cpp">
+      <Filter>models</Filter>
+    </ClCompile>
+    <ClCompile Include="source\models\vmdanimationimpoter.cpp">
+      <Filter>models</Filter>
+    </ClCompile>
+    <ClCompile Include="source\scene\camera.cpp">
+      <Filter>scene</Filter>
+    </ClCompile>
+    <ClCompile Include="source\ecs\componentmanager.cpp">
+      <Filter>ecs</Filter>
+    </ClCompile>
+    <ClCompile Include="source\ecs\ecs.cpp">
+      <Filter>ecs</Filter>
+    </ClCompile>
+    <ClCompile Include="source\core\game.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="source\scene\grid.cpp">
+      <Filter>scene</Filter>
+    </ClCompile>
+    <ClCompile Include="source\core\input.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="source\scene\light.cpp">
+      <Filter>scene</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\lightsystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\main.cpp" />
+    <ClCompile Include="source\models\modelmanager.cpp">
+      <Filter>models</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\movementsystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\cameracontrolsystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\postprocessinputsystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\shaderpaths.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\pch.cpp" />
+    <ClCompile Include="source\entities\polygon.cpp">
+      <Filter>entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\entities\polygon3d.cpp">
+      <Filter>entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\rendererstate.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\graphicsdevice.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\psomanager.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\shaderpipelines.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\rendergraph.cpp">
+      <Filter>rendering</Filter>
     </ClCompile>
     <ClCompile Include="source\rendering\spatialupscaler.cpp">
-      <Filter>Source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClCompile>
     <ClCompile Include="source\rendering\visibilitybuffer.cpp">
-      <Filter>Source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClCompile>
     <ClCompile Include="source\rendering\screenspaceeffects.cpp">
-      <Filter>Source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClCompile>
     <ClCompile Include="source\rendering\occlusionculling.cpp">
-      <Filter>Source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClCompile>
     <ClCompile Include="source\rendering\meshshaderpipeline.cpp">
-      <Filter>Source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClCompile>
     <ClCompile Include="source\rendering\lightinstancebuilder.cpp">
-      <Filter>Source\rendering</Filter>
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\entities\sky.cpp">
+      <Filter>entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\scene\sun.cpp">
+      <Filter>scene</Filter>
+    </ClCompile>
+    <ClCompile Include="source\models\staticmodel.cpp">
+      <Filter>models</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\animationsystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\camerasystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\debugsystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\gridsystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\inputsystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\materialsystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\modelsystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\instancingsystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\postprocesssystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\rendersystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\systemmanager.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\projectmanager.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\physicssystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\physics\bulletphysicsbackend.cpp">
+      <Filter>physics</Filter>
+    </ClCompile>
+    <ClCompile Include="source\physics\joltphysicsbackend.cpp">
+      <Filter>physics</Filter>
+    </ClCompile>
+    <ClCompile Include="source\physics\physxphysicsbackend.cpp">
+      <Filter>physics</Filter>
+    </ClCompile>
+    <ClCompile Include="source\entities\timeline.cpp">
+      <Filter>entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\timelinesystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\transformsystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
+    <ClCompile Include="source\assets\texturemanager.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClCompile Include="source\core\world.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClCompile Include="source\entities\xbot.cpp">
+      <Filter>entities</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\editorassets.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\editordebugwindows.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\editorhistory.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\editorinspectors.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\editorscene.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\editorsettings.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\editorwidgets.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\models\animationcache.cpp">
+      <Filter>models</Filter>
+    </ClCompile>
+    <ClCompile Include="source\models\animationmorph.cpp">
+      <Filter>models</Filter>
+    </ClCompile>
+    <ClCompile Include="source\models\animationpose.cpp">
+      <Filter>models</Filter>
+    </ClCompile>
+    <ClCompile Include="source\models\animationskinning.cpp">
+      <Filter>models</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\frameconstants.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\framepipeline.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\graphicslog.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\lightingresources.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\materialbindings.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\postprocesspass.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\primitivegeometry.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\renderconfiguration.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\renderframe.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\rendertargets.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\scenepasses.cpp">
+      <Filter>rendering</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="source\pch.h">
-      <Filter>0_pch</Filter>
+    <ClInclude Include="source\models\animationplayback.h">
+      <Filter>models</Filter>
     </ClInclude>
-    <ClInclude Include="source\core\vector.h">
-      <Filter>Source\core</Filter>
-    </ClInclude>
-    <ClInclude Include="source\main.h">
-      <Filter>1_base</Filter>
-    </ClInclude>
-    <ClInclude Include="source\core\input.h">
-      <Filter>Source\core</Filter>
-    </ClInclude>
-    <ClInclude Include="source\scene\light.h">
-      <Filter>Source\scene</Filter>
-    </ClInclude>
-    <ClInclude Include="source\scene\atmosphere.h">
-      <Filter>Source\scene</Filter>
-    </ClInclude>
-    <ClInclude Include="source\d3dx12.h">
-      <Filter>1_base</Filter>
-    </ClInclude>
-    <ClInclude Include="source\ecs\ecs.h">
-      <Filter>Source\ecs</Filter>
-    </ClInclude>
-    <ClInclude Include="source\core\world.h">
-      <Filter>Source\core</Filter>
-    </ClInclude>
-    <ClInclude Include="source\core\game.h">
-      <Filter>Source\core</Filter>
-    </ClInclude>
-    <ClInclude Include="source\scene\camera.h">
-      <Filter>Source\scene</Filter>
-    </ClInclude>
-    <ClInclude Include="source\scene\grid.h">
-      <Filter>Source\scene</Filter>
-    </ClInclude>
-    <ClInclude Include="source\entities\polygon.h">
-      <Filter>Source\entities</Filter>
-    </ClInclude>
-
-    <ClInclude Include="source\ecs\componentmanager.h">
-      <Filter>Source\ecs</Filter>
-    </ClInclude>
-    <ClInclude Include="source\physics\physicscomponent.h">
-      <Filter>Source\physics</Filter>
-    </ClInclude>
-    <ClInclude Include="source\models\animator.h">
-      <Filter>Source\models</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\animationsystem.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\physicssystem.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\physics\physicsbackend.h">
-      <Filter>Source\physics</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\camerasystem.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\debugsystem.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\gridsystem.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\inputsystem.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\materialsystem.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\modelsystem.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\instancingsystem.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\postprocesssystem.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\rendersystem.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\systembase.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\systemmanager.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\editor\projectmanager.h">
-      <Filter>Source\editor</Filter>
-    </ClInclude>
-    <ClInclude Include="source\entities\timeline.h">
-      <Filter>Source\entities</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\timelinesystem.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\entities\timelinecomponent.h">
-      <Filter>Source\entities</Filter>
-    </ClInclude>
-    <ClInclude Include="source\systems\transformsystem.h">
-      <Filter>Source\systems</Filter>
-    </ClInclude>
-    <ClInclude Include="source\models\animationmodel.h">
-      <Filter>Source\models</Filter>
-    </ClInclude>
-    <ClInclude Include="source\models\pmxloader.h">
-      <Filter>Source\models</Filter>
-    </ClInclude>
-    <ClInclude Include="source\models\pmxphysicsdata.h">
-      <Filter>Source\models</Filter>
-    </ClInclude>
-    <ClInclude Include="source\models\vmdanimationimpoter.h">
-      <Filter>Source\models</Filter>
-    </ClInclude>
-    <ClInclude Include="source\models\staticmodel.h">
-      <Filter>Source\models</Filter>
+    <ClInclude Include="source\entities\entitybase.h">
+      <Filter>entities</Filter>
     </ClInclude>
     <ClInclude Include="source\models\modelimportutils.h">
-      <Filter>Source\models</Filter>
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\entities\alicia.h">
+      <Filter>entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\entities\moca.h">
+      <Filter>entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\entities\karen.h">
+      <Filter>entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\entities\kacchatta_hone.h">
+      <Filter>entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\scene\atmosphere.h">
+      <Filter>scene</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\animator.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\animationmodel.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\pmxloader.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\vmdanimationimpoter.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\scene\camera.h">
+      <Filter>scene</Filter>
+    </ClInclude>
+    <ClInclude Include="source\ecs\componentmanager.h">
+      <Filter>ecs</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\projectmanager.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\physics\physicscomponent.h">
+      <Filter>physics</Filter>
+    </ClInclude>
+    <ClInclude Include="source\physics\physicsbackend.h">
+      <Filter>physics</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\physicssystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\pmxphysicsdata.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\entities\cube.h">
+      <Filter>entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\d3dx12.h" />
+    <ClInclude Include="source\ecs\ecs.h">
+      <Filter>ecs</Filter>
+    </ClInclude>
+    <ClInclude Include="source\entities\field.h">
+      <Filter>entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\core\game.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\scene\grid.h">
+      <Filter>scene</Filter>
+    </ClInclude>
+    <ClInclude Include="source\core\input.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\scene\light.h">
+      <Filter>scene</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\lightsystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\main.h" />
+    <ClInclude Include="source\models\materialpartresolver.h">
+      <Filter>models</Filter>
     </ClInclude>
     <ClInclude Include="source\models\modelmanager.h">
-      <Filter>Source\models</Filter>
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\movementsystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\cameracontrolsystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\postprocessinputsystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\psomanager.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\shaderpaths.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\pch.h" />
+    <ClInclude Include="source\entities\polygon.h">
+      <Filter>entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\entities\polygon3d.h">
+      <Filter>entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\rendererstate.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\graphicsdevice.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\shaderpipelines.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\rendergraph.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\spatialupscaler.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\visibilitybuffer.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\screenspaceeffects.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\occlusionculling.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\meshshaderpipeline.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\lightinstancebuilder.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="External\FidelityFX-FSR\ffx_a.h">
+      <Filter>External\FidelityFX-FSR</Filter>
+    </ClInclude>
+    <ClInclude Include="External\FidelityFX-FSR\ffx_fsr1.h">
+      <Filter>External\FidelityFX-FSR</Filter>
+    </ClInclude>
+    <ClInclude Include="External\NVIDIAImageScaling\NIS_Config.h">
+      <Filter>External\NVIDIAImageScaling</Filter>
+    </ClInclude>
+    <ClInclude Include="External\NVIDIAImageScaling\NIS_Scaler.h">
+      <Filter>External\NVIDIAImageScaling</Filter>
+    </ClInclude>
+    <ClInclude Include="source\entities\sky.h">
+      <Filter>entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\scene\sun.h">
+      <Filter>scene</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\staticmodel.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\animationsystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\camerasystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\debugsystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\gridsystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\inputsystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\materialsystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\modelsystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\instancingsystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\postprocesssystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\rendersystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\systembase.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\systemmanager.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\entities\timeline.h">
+      <Filter>entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\timelinesystem.h">
+      <Filter>systems</Filter>
+    </ClInclude>
+    <ClInclude Include="source\entities\timelinecomponent.h">
+      <Filter>entities</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\transformsystem.h">
+      <Filter>systems</Filter>
     </ClInclude>
     <ClInclude Include="source\assets\texturemanager.h">
-      <Filter>Source\assets</Filter>
+      <Filter>assets</Filter>
     </ClInclude>
+    <ClInclude Include="source\core\vector.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\core\world.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\imguimanager.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\resource.h" />
     <ClInclude Include="External\ImGUI\imgui.h">
       <Filter>External\ImGUI</Filter>
     </ClInclude>
@@ -651,264 +605,266 @@
     <ClInclude Include="External\ImGuizmo\ImGuizmo.h">
       <Filter>External\ImGuizmo</Filter>
     </ClInclude>
-    <ClInclude Include="source\editor\imguimanager.h">
-      <Filter>Source\editor</Filter>
-    </ClInclude>
-    <ClInclude Include="source\entities\polygon3d.h">
-      <Filter>Source\entities</Filter>
-    </ClInclude>
     <ClInclude Include="source\entities\xbot.h">
-      <Filter>Source\entities</Filter>
+      <Filter>entities</Filter>
     </ClInclude>
-    <ClInclude Include="source\entities\field.h">
-      <Filter>Source\entities</Filter>
+    <ClInclude Include="source\dxccompiler.h" />
+    <ClInclude Include="source\editor\editorwidgets.h">
+      <Filter>editor</Filter>
     </ClInclude>
-    <ClInclude Include="source\entities\alicia.h">
-      <Filter>Source\entities</Filter>
+    <ClInclude Include="source\models\animationmath.h">
+      <Filter>models</Filter>
     </ClInclude>
-    <ClInclude Include="source\entities\moca.h">
-      <Filter>Source\entities</Filter>
+    <ClInclude Include="source\models\toonoutlinebuilder.h">
+      <Filter>models</Filter>
     </ClInclude>
-    <ClInclude Include="source\entities\karen.h">
-      <Filter>Source\entities</Filter>
+    <ClInclude Include="source\rendering\frameconstants.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\entities\kacchatta_hone.h">
-      <Filter>Source\entities</Filter>
+    <ClInclude Include="source\rendering\framepipeline.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\systems\movementsystem.h">
-      <Filter>Source\systems</Filter>
+    <ClInclude Include="source\rendering\gpudrivenindirect.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\systems\cameracontrolsystem.h">
-      <Filter>Source\systems</Filter>
+    <ClInclude Include="source\rendering\graphicslog.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\systems\postprocessinputsystem.h">
-      <Filter>Source\systems</Filter>
+    <ClInclude Include="source\rendering\lightingresources.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\systems\lightsystem.h">
-      <Filter>Source\systems</Filter>
+    <ClInclude Include="source\rendering\localheightfog.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\rendering\graphicsdevice.h">
-      <Filter>Source\rendering</Filter>
+    <ClInclude Include="source\rendering\materialbindings.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\rendering\psomanager.h">
-      <Filter>Source\rendering</Filter>
+    <ClInclude Include="source\rendering\postprocesspass.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-
-    <ClInclude Include="source\rendering\rendergraph.h">
-      <Filter>Source\rendering</Filter>
+    <ClInclude Include="source\rendering\primitivegeometry.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-
-    <ClInclude Include="source\rendering\shaderpipelines.h">
-      <Filter>Source\rendering</Filter>
+    <ClInclude Include="source\rendering\renderconfiguration.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\rendering\rendererstate.h">
-      <Filter>Source\rendering</Filter>
+    <ClInclude Include="source\rendering\renderersettings.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\rendering\shaderpaths.h">
-      <Filter>Source\rendering</Filter>
+    <ClInclude Include="source\rendering\renderframe.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\models\materialpartresolver.h">
-      <Filter>Source\models</Filter>
+    <ClInclude Include="source\rendering\renderprofiler.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\entities\sky.h">
-      <Filter>Source\entities</Filter>
+    <ClInclude Include="source\rendering\rendertargets.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\scene\sun.h">
-      <Filter>Source\scene</Filter>
+    <ClInclude Include="source\rendering\rendertypes.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\entities\cube.h">
-      <Filter>Source\entities</Filter>
+    <ClInclude Include="source\rendering\scenepasses.h">
+      <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\rendering\spatialupscaler.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="source\rendering\visibilitybuffer.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="source\rendering\screenspaceeffects.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="source\rendering\occlusionculling.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="source\rendering\meshshaderpipeline.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="source\rendering\lightinstancebuilder.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="External\FidelityFX-FSR\ffx_a.h">
-      <Filter>External\FidelityFX-FSR</Filter>
-    </ClInclude>
-    <ClInclude Include="External\FidelityFX-FSR\ffx_fsr1.h">
-      <Filter>External\FidelityFX-FSR</Filter>
-    </ClInclude>
-    <ClInclude Include="External\NVIDIAImageScaling\NIS_Config.h">
-      <Filter>External\NVIDIAImageScaling</Filter>
-    </ClInclude>
-    <ClInclude Include="External\NVIDIAImageScaling\NIS_Scaler.h">
-      <Filter>External\NVIDIAImageScaling</Filter>
-    </ClInclude>
-    <ClInclude Include="source\resource.h">
-      <Filter>リソース ファイル</Filter>
-    </ClInclude>
-    <ClInclude Include="source\entities\entitybase.h">
-      <Filter>Source\entities</Filter>
-    </ClInclude>
-    <ClInclude Include="source\models\animationplayback.h">
-      <Filter>Source\models</Filter>
+    <ClInclude Include="source\rendering\shaderdescription.h">
+      <Filter>rendering</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <None Include="packages.config">
-      <Filter>リソース ファイル</Filter>
+    <FxCompile Include="shader\hlsl\colorshader3dPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\colorshader3dPS_MRT.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\colorshader3dVS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\colorshaderPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\colorshaderVS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\colorshaderPS_MRT.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\common.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\debugLinePS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\debugLinePS_MRT.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\debugLineVS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\DeferredPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\DeferredLightingPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\AtmosphereGBufferPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GeometryPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\colorshader3dInstancedVS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modelshaderInstancedVS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GpuDrivenCullCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modellighingspeculerPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modellightingPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modellightingspeculerVS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modellightingVS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\ShadowMapVS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GpuInstanceCullLodCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GpuInstanceArgsCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\ShadowMapInstancedVS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modelshaderPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modelshaderPS_MRT.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\modelshaderVS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\toonOutlinePS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\toonOutlinePS_MRT.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\toonOutlineVS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\postProcessBlurPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\postProcessBloomPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\postProcessNonePS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\postProcessGrayPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\postProcessInvertPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\postProcessSepiaPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\UpscaleBilateralPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\FsrEasuCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\FsrRcasCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\VisibilityPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\Visibility2DPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\VisibilityOutlinePS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GBufferFromVisibilityCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\ScreenSpaceDeinterleaveCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\RayBinningCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\SsgiDeinterleavedCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\SsgiResolveCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\SsaoVisibilityBitmaskCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\LightInstanceBuilderCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\HiZCopyCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\HiZReduceCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="External\NVIDIAImageScaling\NIS_Main.hlsl">
+      <Filter>External\NVIDIAImageScaling</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\UpscaleDepthPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\VelocityPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\VelocityGeometryVS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\VelocityGeometryPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\FXAA_PS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\TAA_BlendPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\postProcessVS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\skinning_cs.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
+    <None Include="shader\hlsl\MeshVisibility.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </None>
+    <None Include="shader\hlsl\MeshVisibilityPS.hlsl">
+      <Filter>shader\hlsl</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="source\app.rc">
-      <Filter>リソース ファイル</Filter>
-    </ResourceCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="source\dxccompiler.h" />
-    <ClCompile Include="source\editor\editorassets.cpp">
-      <Filter>Source\editor</Filter>
-    </ClCompile>
-    <ClCompile Include="source\editor\editordebugwindows.cpp">
-      <Filter>Source\editor</Filter>
-    </ClCompile>
-    <ClCompile Include="source\editor\editorhistory.cpp">
-      <Filter>Source\editor</Filter>
-    </ClCompile>
-    <ClCompile Include="source\editor\editorinspectors.cpp">
-      <Filter>Source\editor</Filter>
-    </ClCompile>
-    <ClCompile Include="source\editor\editorscene.cpp">
-      <Filter>Source\editor</Filter>
-    </ClCompile>
-    <ClCompile Include="source\editor\editorsettings.cpp">
-      <Filter>Source\editor</Filter>
-    </ClCompile>
-    <ClCompile Include="source\editor\editorwidgets.cpp">
-      <Filter>Source\editor</Filter>
-    </ClCompile>
-    <ClInclude Include="source\editor\editorwidgets.h">
-      <Filter>Source\editor</Filter>
-    </ClInclude>
-    <ClCompile Include="source\models\animationcache.cpp">
-      <Filter>Source\models</Filter>
-    </ClCompile>
-    <ClInclude Include="source\models\animationmath.h">
-      <Filter>Source\models</Filter>
-    </ClInclude>
-    <ClCompile Include="source\models\animationmorph.cpp">
-      <Filter>Source\models</Filter>
-    </ClCompile>
-    <ClCompile Include="source\models\animationpose.cpp">
-      <Filter>Source\models</Filter>
-    </ClCompile>
-    <ClCompile Include="source\models\animationskinning.cpp">
-      <Filter>Source\models</Filter>
-    </ClCompile>
-    <ClInclude Include="source\models\toonoutlinebuilder.h">
-      <Filter>Source\models</Filter>
-    </ClInclude>
-    <ClCompile Include="source\rendering\frameconstants.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClInclude Include="source\rendering\frameconstants.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClCompile Include="source\rendering\framepipeline.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClInclude Include="source\rendering\framepipeline.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="source\rendering\gpudrivenindirect.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClCompile Include="source\rendering\graphicslog.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClInclude Include="source\rendering\graphicslog.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClCompile Include="source\rendering\lightingresources.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClInclude Include="source\rendering\lightingresources.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="source\rendering\localheightfog.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClCompile Include="source\rendering\materialbindings.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClInclude Include="source\rendering\materialbindings.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClCompile Include="source\rendering\postprocesspass.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClInclude Include="source\rendering\postprocesspass.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClCompile Include="source\rendering\primitivegeometry.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClInclude Include="source\rendering\primitivegeometry.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClCompile Include="source\rendering\renderconfiguration.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClInclude Include="source\rendering\renderconfiguration.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="source\rendering\renderersettings.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClCompile Include="source\rendering\renderframe.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClInclude Include="source\rendering\renderframe.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="source\rendering\renderprofiler.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClCompile Include="source\rendering\rendertargets.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClInclude Include="source\rendering\rendertargets.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="source\rendering\rendertypes.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClCompile Include="source\rendering\scenepasses.cpp">
-      <Filter>Source\rendering</Filter>
-    </ClCompile>
-    <ClInclude Include="source\rendering\scenepasses.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-    <ClInclude Include="source\rendering\shaderdescription.h">
-      <Filter>Source\rendering</Filter>
-    </ClInclude>
-  </ItemGroup>
-  <ItemGroup>
-    <Filter Include="Source"><UniqueIdentifier>{f2a0cbaa-0125-58ea-8203-972319cd1e10}</UniqueIdentifier></Filter>
-    <Filter Include="Source\assets"><UniqueIdentifier>{1de3e539-e3aa-5b5f-a27c-ef2a4c5d8bd5}</UniqueIdentifier></Filter>
-    <Filter Include="Source\core"><UniqueIdentifier>{ea8093eb-5c27-5509-933d-7b031e572ab6}</UniqueIdentifier></Filter>
-    <Filter Include="Source\ecs"><UniqueIdentifier>{0430e212-181c-5a6f-b5dd-d30dbd0087d0}</UniqueIdentifier></Filter>
-    <Filter Include="Source\editor"><UniqueIdentifier>{4f9d4943-ad21-5669-9009-2fd6f80472f4}</UniqueIdentifier></Filter>
-    <Filter Include="Source\entities"><UniqueIdentifier>{2bc451a7-dc31-5c8a-85db-0d1bbc904b17}</UniqueIdentifier></Filter>
-    <Filter Include="Source\models"><UniqueIdentifier>{fda4847e-3d1e-5bf4-968d-de71d76d41cc}</UniqueIdentifier></Filter>
-    <Filter Include="Source\physics"><UniqueIdentifier>{8c17193d-3b2c-574b-86e4-7d71e65feb72}</UniqueIdentifier></Filter>
-    <Filter Include="Source\rendering"><UniqueIdentifier>{e0469f46-75dd-570d-9445-deb12f45059d}</UniqueIdentifier></Filter>
-    <Filter Include="Source\scene"><UniqueIdentifier>{04d06900-8a77-51cc-8c81-db5c308cb3a5}</UniqueIdentifier></Filter>
-    <Filter Include="Source\systems"><UniqueIdentifier>{f484dcda-2038-55bc-980e-e624647928f5}</UniqueIdentifier></Filter>
+    <ResourceCompile Include="source\app.rc" />
   </ItemGroup>
 </Project>

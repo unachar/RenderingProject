@@ -23,23 +23,41 @@
 #include <iomanip>
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <DirectXCollision.h>
 #include <ImGuizmo.h>
 #include "rendertargets.h"
 #include "frameconstants.h"
 #include "lightingresources.h"
 #include "renderconfiguration.h"
+#include "graphicslog.h"
 
 
 #include "editorwidgets.h"
+#include <imgui_internal.h> // DockBuilder is supplied by the bundled docking branch.
 
 using namespace EditorWidgets;
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+namespace
+{
+    // ImGui 1.92 may keep multiple atlas textures alive during font atlas growth.
+    struct ImGuiSrvPool
+    {
+        D3D12_CPU_DESCRIPTOR_HANDLE CpuStart{};
+        D3D12_GPU_DESCRIPTOR_HANDLE GpuStart{};
+        UINT Increment = 0;
+        std::array<bool, ImGuiManager::kSrvDescriptorCount> Used{};
+    };
+    ImGuiSrvPool g_ImGuiSrvPool;
+}
+
 bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* commandQueue, int numFrames, DXGI_FORMAT rtvFormat, ID3D12DescriptorHeap* cbvHeap, D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle, D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle)
 {
+	WriteGraphicsLog("ImGui: check version\n");
 	IMGUI_CHECKVERSION();
+	WriteGraphicsLog("ImGui: create context\n");
 	ImGui::CreateContext();
 	ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
 	ImGuiIO& io = ImGui::GetIO();
@@ -47,14 +65,17 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 	io.ConfigDockingWithShift = false;
 
+	WriteGraphicsLog("ImGui: style\n");
 	StyleModernSlim();
 
+	WriteGraphicsLog("ImGui: load font\n");
 	const char* fontPath = "C:\\Windows\\Fonts\\msgothic.ttc";
 	if (filesystem::exists(fontPath))
 	{
 		io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
 	}
 
+	WriteGraphicsLog("ImGui: Win32 backend\n");
 	if (!ImGui_ImplWin32_Init(hwnd)) return false;
 
 	ImGui_ImplDX12_InitInfo initInfo {};
@@ -64,16 +85,44 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
 	initInfo.RTVFormat = rtvFormat;
 	initInfo.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 	initInfo.SrvDescriptorHeap = cbvHeap;
-	initInfo.LegacySingleSrvCpuDescriptor = cpuHandle;
-	initInfo.LegacySingleSrvGpuDescriptor = gpuHandle;
+	g_ImGuiSrvPool = {};
+	g_ImGuiSrvPool.CpuStart = cpuHandle;
+	g_ImGuiSrvPool.GpuStart = gpuHandle;
+	g_ImGuiSrvPool.Increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	initInfo.UserData = &g_ImGuiSrvPool;
 	initInfo.SrvDescriptorAllocFn = [](ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE* out_cpu, D3D12_GPU_DESCRIPTOR_HANDLE* out_gpu)
+	{
+		auto& pool = *static_cast<ImGuiSrvPool*>(info->UserData);
+		for (UINT i = 0; i < pool.Used.size(); ++i)
 		{
-		*out_cpu = info->LegacySingleSrvCpuDescriptor;
-		*out_gpu = info->LegacySingleSrvGpuDescriptor;
-		};
-	initInfo.SrvDescriptorFreeFn = [](ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_GPU_DESCRIPTOR_HANDLE) {};
+			if (pool.Used[i]) continue;
+			pool.Used[i] = true;
+			*out_cpu = CD3DX12_CPU_DESCRIPTOR_HANDLE(pool.CpuStart, i, pool.Increment);
+			*out_gpu = CD3DX12_GPU_DESCRIPTOR_HANDLE(pool.GpuStart, i, pool.Increment);
+			return;
+		}
+		WriteGraphicsLog("ERROR: ImGui SRV descriptor pool exhausted\n");
+		// The backend has no allocation-failure return path. Never overwrite a live SRV.
+		std::abort();
+	};
+	initInfo.SrvDescriptorFreeFn = [](ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE cpu, D3D12_GPU_DESCRIPTOR_HANDLE gpu)
+	{
+		auto& pool = *static_cast<ImGuiSrvPool*>(info->UserData);
+		const SIZE_T offset = cpu.ptr - pool.CpuStart.ptr;
+		const SIZE_T index = offset / pool.Increment;
+		const bool valid = offset % pool.Increment == 0 && index < pool.Used.size() &&
+			gpu.ptr == pool.GpuStart.ptr + index * pool.Increment;
+		IM_ASSERT(valid && "Invalid ImGui SRV descriptor");
+		if (valid)
+		{
+			IM_ASSERT(pool.Used[index] && "ImGui SRV descriptor already freed");
+			pool.Used[index] = false;
+		}
+	};
 
+	WriteGraphicsLog("ImGui: DX12 backend\n");
 	if (!ImGui_ImplDX12_Init(&initInfo)) return false;
+	WriteGraphicsLog("ImGui: initialization complete\n");
 
 	return true;
 }
@@ -101,12 +150,12 @@ void ImGuiManager::Update()
 	DebugSystem::SetShowLightDebug(m_ShowLightDebug);
 
 	ImGuiIO& io = ImGui::GetIO();
-	if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))
+	if (!io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))
 	{
 		if (io.KeyShift) Redo();
 		else Undo();
 	}
-	if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, false))
+	if (!io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, false))
 	{
 		Redo();
 	}
@@ -123,7 +172,8 @@ void ImGuiManager::Update()
 		if (ImGui::IsKeyPressed(ImGuiKey_W, false)) m_GizmoOperation = 1;
 		if (ImGui::IsKeyPressed(ImGuiKey_E, false)) m_GizmoOperation = 2;
 	}
-	if (m_SelectedEntity != g_kINVALID_ENTITY &&
+	if (canSwitchGizmo && !io.KeyCtrl && !io.KeyAlt &&
+		m_SelectedEntity != g_kINVALID_ENTITY &&
 		Registry::IsAlive(m_SelectedEntity) &&
 		ComponentManager::HasComponent<NameComponent>(m_SelectedEntity) &&
 		ImGui::IsKeyPressed(ImGuiKey_F2, false))
@@ -134,25 +184,12 @@ void ImGuiManager::Update()
 	{
 		CancelRename();
 	}
-	if (m_SelectedEntity != g_kINVALID_ENTITY &&
-		Registry::IsAlive(m_SelectedEntity) &&
-		m_RenamingEntity == g_kINVALID_ENTITY &&
-		!io.WantTextInput &&
-		!ImGui::IsAnyItemActive() &&
-		ImGui::IsKeyPressed(ImGuiKey_Delete, false))
-	{
-		DeleteSelectedEntity();
-	}
-
+	DrawEditorMainMenu();
 	DrawDockSpace();
 	DrawSceneViewWindow();
 	PickEntityFromMouse();
-	DrawEditorMainMenu();
-	if (m_ShowEditorWindows)
-	{
-		DrawHierarchyWindow();
-		DrawInspectorWindow();
-	}
+	if (m_ShowHierarchyWindow) DrawHierarchyWindow();
+	if (m_ShowInspectorWindow) DrawInspectorWindow();
 	if (m_ShowAssetBrowser) DrawAssetBrowserWindow();
 	if (m_ShowRenderDebugger) DrawRenderDebuggerWindow();
 	if (m_ShowGBufferWindow) DrawGBufferWindow();
@@ -376,6 +413,24 @@ void ImGuiManager::DrawDockSpace()
 	ImGui::PopStyleVar(3);
 
 	ImGuiID dockspaceId = ImGui::GetID("MainEditorDockSpace");
+	if (m_ResetEditorLayout || !ImGui::DockBuilderGetNode(dockspaceId))
+	{
+		ImGui::DockBuilderRemoveNode(dockspaceId);
+		ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+		ImGui::DockBuilderSetNodeSize(dockspaceId, viewport->WorkSize);
+		ImGuiID center = dockspaceId;
+		const ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.27f, nullptr, &center);
+		const ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
+		const ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.32f, nullptr, &center);
+		ImGui::DockBuilderDockWindow("ヒエラルキー", left);
+		ImGui::DockBuilderDockWindow("シーンビュー", center);
+		ImGui::DockBuilderDockWindow("インスペクター", right);
+		ImGui::DockBuilderDockWindow("レンダーコントロール", right);
+		ImGui::DockBuilderDockWindow("プロジェクト", bottom);
+		ImGui::DockBuilderDockWindow("ログ", bottom);
+		ImGui::DockBuilderFinish(dockspaceId);
+		m_ResetEditorLayout = false;
+	}
 	ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), dockspaceFlags);
 	ImGui::End();
 }
@@ -388,28 +443,18 @@ void ImGuiManager::DrawEditorMainMenu()
 		return;
 	}
 
-	ImGui::TextUnformatted("DirectX12 エディター");
-	ImGui::Separator();
-	if (ImGui::Button("元に戻す"))
+	if (ImGui::BeginMenu("編集"))
 	{
-		Undo();
+		if (ImGui::MenuItem("元に戻す", "Ctrl+Z", false, !m_UndoStack.empty())) Undo();
+		if (ImGui::MenuItem("やり直し", "Ctrl+Y", false, !m_RedoStack.empty())) Redo();
+		ImGui::EndMenu();
 	}
-	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ctrl+Z");
-	ImGui::SameLine();
-	if (ImGui::Button("やり直し"))
+	if (ImGui::BeginMenu("ウィンドウ"))
 	{
-		Redo();
-	}
-	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ctrl+Y / Ctrl+Shift+Z");
-	ImGui::SameLine();
-
-	ImGui::Separator();
-
-	if (ImGui::BeginMenu("Window"))
-	{
-		ImGui::MenuItem("エディター", nullptr, &m_ShowEditorWindows);
+		ImGui::MenuItem("ヒエラルキー", nullptr, &m_ShowHierarchyWindow);
+		ImGui::MenuItem("インスペクター", nullptr, &m_ShowInspectorWindow);
 		ImGui::MenuItem("レンダーコントロール", nullptr, &m_ShowAdjustmentPanel);
-		ImGui::MenuItem("アセット", nullptr, &m_ShowAssetBrowser);
+		ImGui::MenuItem("プロジェクト", nullptr, &m_ShowAssetBrowser);
 		ImGui::MenuItem("描画デバッグ", nullptr, &m_ShowRenderDebugger);
 		ImGui::MenuItem("Gバッファ", nullptr, &m_ShowGBufferWindow);
 		ImGui::MenuItem("ログ", nullptr, &m_ShowLogWindow);
@@ -422,10 +467,15 @@ void ImGuiManager::DrawEditorMainMenu()
 		ImGui::Separator();
 		ImGui::MenuItem("メッシュ単位のアウトライン", nullptr, &m_ShowMeshOutlineWindow);
 		ImGui::MenuItem("メッシュ単位のシェーディング", nullptr, &m_ShowMeshShadingWindow);
+		ImGui::Separator();
+		if (ImGui::MenuItem("標準レイアウトに戻す"))
+		{
+			m_ResetEditorLayout = true;
+			m_ShowHierarchyWindow = m_ShowInspectorWindow = m_ShowAssetBrowser = true;
+			m_ShowAdjustmentPanel = true;
+		}
 		ImGui::EndMenu();
 	}
-	ImGui::SameLine();
-	ImGui::Checkbox("ライト可視化", &m_ShowLightDebug);
 	ImGui::SameLine();
 	if (ImGui::BeginMenu("ライト追加"))
 	{
@@ -460,17 +510,26 @@ void ImGuiManager::DrawEditorMainMenu()
 		ImGui::GetCursorPosX() + 12.0f);
 	ImGui::SameLine();
 	ImGui::SetCursorPosX(centeredX);
-	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.58f, 0.25f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.14f, 0.72f, 0.31f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.08f, 0.46f, 0.20f, 1.0f));
+	ImVec4 playColor(0.10f, 0.38f, 0.22f, 1.0f);
+	ImVec4 playHoveredColor(0.14f, 0.48f, 0.28f, 1.0f);
+	ImVec4 playActiveColor(0.08f, 0.30f, 0.18f, 1.0f);
+	if (ProjectManager::IsPlaying())
+	{
+		playColor = ImVec4(0.48f, 0.18f, 0.18f, 1.0f);
+		playHoveredColor = ImVec4(0.60f, 0.24f, 0.24f, 1.0f);
+		playActiveColor = ImVec4(0.38f, 0.14f, 0.14f, 1.0f);
+	}
+	ImGui::PushStyleColor(ImGuiCol_Button, playColor);
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, playHoveredColor);
+	ImGui::PushStyleColor(ImGuiCol_ButtonActive, playActiveColor);
 	const char* statusText;
 	if (ProjectManager::IsPlaying())
 	{
-		statusText = "■ Stop##ProjectPlay";
+		statusText = "停止##ProjectPlay";
 	}
 	else
 	{
-		statusText = "▶ Play##ProjectPlay";
+		statusText = "再生##ProjectPlay";
 	}
 	if (ImGui::Button(statusText,
 		ImVec2(88.0f, 0.0f)))
@@ -483,11 +542,11 @@ void ImGuiManager::DrawEditorMainMenu()
 	const char* statusTextValue;
 	if (ProjectManager::IsPaused())
 	{
-		statusTextValue = "▶ Resume##ProjectPause";
+		statusTextValue = "再開##ProjectPause";
 	}
 	else
 	{
-		statusTextValue = "Ⅱ Pause##ProjectPause";
+		statusTextValue = "一時停止##ProjectPause";
 	}
 	if (ImGui::Button(statusTextValue,
 		ImVec2(88.0f, 0.0f)))
@@ -496,10 +555,12 @@ void ImGuiManager::DrawEditorMainMenu()
 	}
 	ImGui::EndDisabled();
 
-	if (m_SelectedEntity != g_kINVALID_ENTITY)
+	if (ImGui::GetContentRegionAvail().x > 120.0f)
 	{
 		ImGui::SameLine();
-		ImGui::Text("選択中: %s", GetEntityDisplayName(m_SelectedEntity));
+		if (ProjectManager::IsPaused()) ImGui::TextUnformatted("一時停止中");
+		else if (ProjectManager::IsPlaying()) ImGui::TextUnformatted("実行中");
+		else ImGui::TextUnformatted("編集中");
 	}
 
 	ImGui::EndMainMenuBar();
@@ -550,7 +611,7 @@ void ImGuiManager::StyleModernSlim()
 	ImVec4* colors = style.Colors;
 
 	colors[ImGuiCol_Text] = ImVec4(0.86f, 0.89f, 0.92f, 1.00f);
-	colors[ImGuiCol_TextDisabled] = ImVec4(0.42f, 0.46f, 0.50f, 1.00f);
+	colors[ImGuiCol_TextDisabled] = ImVec4(0.60f, 0.64f, 0.69f, 1.00f);
 	colors[ImGuiCol_WindowBg] = ImVec4(0.075f, 0.080f, 0.090f, 0.98f);
 	colors[ImGuiCol_ChildBg] = ImVec4(0.060f, 0.065f, 0.074f, 0.82f);
 	colors[ImGuiCol_PopupBg] = ImVec4(0.080f, 0.086f, 0.098f, 0.98f);
@@ -616,14 +677,14 @@ void ImGuiManager::StyleModernSlim()
 	colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.02f, 0.025f, 0.030f, 0.48f);
 	colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.02f, 0.025f, 0.030f, 0.62f);
 
-	style.WindowPadding = ImVec2(8.0f, 6.0f);
-	style.FramePadding = ImVec2(6.0f, 3.0f);
+	style.WindowPadding = ImVec2(8.0f, 8.0f);
+	style.FramePadding = ImVec2(8.0f, 4.0f);
 	style.CellPadding = ImVec2(5.0f, 3.0f);
-	style.ItemSpacing = ImVec2(7.0f, 4.0f);
+	style.ItemSpacing = ImVec2(8.0f, 6.0f);
 	style.ItemInnerSpacing = ImVec2(5.0f, 3.0f);
 	style.IndentSpacing = 14.0f;
-	style.ScrollbarSize = 11.0f;
-	style.GrabMinSize = 8.0f;
+	style.ScrollbarSize = 14.0f;
+	style.GrabMinSize = 12.0f;
 
 	style.WindowBorderSize = 1.0f;
 	style.ChildBorderSize = 1.0f;

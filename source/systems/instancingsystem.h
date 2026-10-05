@@ -51,8 +51,8 @@ private:
         int textureIndex,
         int normalIndex,
         const MaterialComponent* material,
-        UINT meshIndex,
-        const AnimationModelComponent* animation);
+        UINT meshIndex = 0,
+        const AnimationModelComponent* animation = nullptr);
     bool SetupDrawContext(RenderPass renderPass, DrawContext& ctx);
     bool AcceptsPass(EntityID entity, const MaterialComponent* material, const DrawContext& ctx);
     bool IsCameraVisible(EntityID entity, const XMFLOAT3& center,
@@ -62,9 +62,9 @@ private:
     InstanceBatch CreateStaticShadowBatch(const StaticMeshData& mesh, StaticModelResource* model, UINT meshIndex, ID3D12PipelineState* pso);
     InstanceBatch CreateNonIndexedShadowBatch(const SpriteComponent& sprite, ID3D12PipelineState* pso, const BatchKey&);
     InstanceBatch CreateNonIndexedShadowBatch(const MeshComponent& mesh, ID3D12PipelineState* pso, const BatchKey&);
-    void ExecuteShadowBatches(const DrawContext& ctx, const vector<InstanceBatch>& batches);
+    void ExecuteShadowBatches(const DrawContext& ctx, vector<InstanceBatch>& batches);
     void BuildMainBatches(DrawContext& ctx, BatchBuilder& builder);
-    void ExecuteMainBatches(const DrawContext& ctx, const vector<InstanceBatch>& batches);
+    void ExecuteMainBatches(const DrawContext& ctx, vector<InstanceBatch>& batches);
     void ExecuteGpuCullLod(InstanceBatch& batch, const function<void()>& bindGraphics, const DrawContext& ctx);
     bool ExecuteCpuCulledDraw(InstanceBatch& batch, UINT minimumLod, const function<void()>& bindGraphics, const DrawContext& ctx);
 

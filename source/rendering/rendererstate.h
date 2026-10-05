@@ -108,6 +108,7 @@ protected:
 	static ComPtr<ID3D12RootSignature> m_PostProcessRootSignature;
 	static ComPtr<ID3D12RootSignature> m_UpscaleRootSignature;
 	static unordered_map<PostProcessType, ComPtr<ID3D12PipelineState>> m_PostProcessPsoMap;
+	static ComPtr<ID3D12PipelineState> m_BloomExtractPso;
 	static ComPtr<ID3D12PipelineState> m_DeferredLightingPso;
 	static ComPtr<ID3D12PipelineState> m_AtmospherePso;
 	static ComPtr<ID3D12PipelineState> m_UpscaleBilateralPso;

@@ -13,6 +13,7 @@
 #include "instancingsystem.h"
 #include "world.h"
 #include "gpudrivenindirect.h"
+#include <functional>
 #include <unordered_set>
 #include <vector>
 #include "frameconstants.h"
@@ -66,20 +67,15 @@ private:
         bool cpuCulledVirtualPage = false;
     };
 
-    using WriteConstantsFn = void(*)(EntityID, void*);
-    using ExecuteIndirectFn = bool(*)(ID3D12GraphicsCommandList*, const void*, EntityID, const XMMATRIX&, const XMMATRIX&, ID3D12PipelineState*, bool);
-    using FallbackDrawFn = void(*)(ID3D12GraphicsCommandList*, const void*, EntityID, const XMMATRIX&, ID3D12PipelineState*);
-    using ShouldTransitionFn = bool(*)(const void*, UINT);
-
+    template<typename ModelResource, typename MeshDataType>
     struct ModelCallbacks
     {
         void(*restoreGraphicsState)(ID3D12GraphicsCommandList*, ID3D12PipelineState*);
-        WriteConstantsFn writeConstants;
-        ExecuteIndirectFn executeIndirect;
-        FallbackDrawFn fallbackDraw;
-        ShouldTransitionFn shouldTransitionMesh;
+        std::function<void(EntityID, void*)> writeConstants;
+        std::function<bool(ID3D12GraphicsCommandList*, const ModelResource*, EntityID, const XMMATRIX&, const XMMATRIX&, ID3D12PipelineState*, bool)> executeIndirect;
+        std::function<void(ID3D12GraphicsCommandList*, const ModelResource*, EntityID, const XMMATRIX&, ID3D12PipelineState*)> fallbackDraw;
+        std::function<bool(const ModelResource*, UINT, const MeshDataType&)> shouldTransitionMesh;
     };
-
     static bool IsSkyEntity(EntityID entity)
     {
         return ComponentManager::HasComponent<NameComponent>(entity) &&
@@ -135,7 +131,7 @@ private:
     template<typename ModelComponent, typename ModelResource, typename MeshDataType>
     void DrawModels(
         const ModelDrawContext& ctx,
-        const ModelCallbacks& callbacks)
+        const ModelCallbacks<ModelResource, MeshDataType>& callbacks)
     {
         if (!ctx.commandList || !ctx.pso)
             return;
@@ -143,7 +139,7 @@ private:
         callbacks.restoreGraphicsState(ctx.commandList, ctx.pso);
 
         vector<D3D12_RESOURCE_BARRIER> barriers;
-        unordered_set<AnimationModelResource*> skinnedModels;
+        unordered_set<ModelResource*> skinnedModels;
 
         for (EntityID entity : World::GetView<ModelComponent, TransformComponent>())
         {
@@ -151,14 +147,14 @@ private:
             if (component.ModelId < 0)
                 continue;
 
-            bool isAnimated = std::is_same_v<ModelComponent, AnimationModelComponent>;
+            constexpr bool isAnimated = std::is_same_v<ModelComponent, AnimationModelComponent>;
             if (isAnimated && (!ShouldCastShadow(entity) || !LightingResources::ShouldDrawEntityInCurrentShadowPass(entity)))
                 continue;
             if (InstancingSystem::CanInstance(entity) || (InstancingSystem::CanInstance(entity) && !InstancingSystem::IsEntityVisible(entity)))
                 continue;
 
             ModelResource* model;
-            if (isAnimated)
+            if constexpr (isAnimated)
             {
                 model = ModelManager::GetAnimModel(component.ModelId);
             }
@@ -169,10 +165,13 @@ private:
             if (!model)
                 continue;
 
-            if (skinnedModels.insert(model).second)
+            if constexpr (isAnimated)
             {
-                model->DispatchGpuSkinning(ctx.commandList);
-                callbacks.restoreGraphicsState(ctx.commandList, ctx.pso);
+                if (skinnedModels.insert(model).second)
+                {
+                    model->DispatchGpuSkinning(ctx.commandList);
+                    callbacks.restoreGraphicsState(ctx.commandList, ctx.pso);
+                }
             }
 
             barriers.clear();
@@ -180,7 +179,7 @@ private:
             for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
             {
                 const MeshDataType& mesh = model->GetMeshData(meshIndex);
-                if (callbacks.shouldTransitionMesh(model, meshIndex, mesh))
+                if (isAnimated && callbacks.shouldTransitionMesh(model, meshIndex, mesh))
                 {
                     barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
                         mesh.VertexBuffer.Get(),
@@ -203,7 +202,7 @@ private:
             for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
             {
                 const MeshDataType& mesh = model->GetMeshData(meshIndex);
-                if (callbacks.shouldTransitionMesh(model, meshIndex, mesh))
+                if (isAnimated && callbacks.shouldTransitionMesh(model, meshIndex, mesh))
                 {
                     barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
                         mesh.VertexBuffer.Get(),
@@ -242,7 +241,7 @@ private:
         };
 
         ModelDrawContext ctx{ commandList, shadowPso, lightViewProjection, cpuCulledVirtualPage };
-        ModelCallbacks animCallbacks{
+        ModelCallbacks<AnimationModelResource, MeshData> animCallbacks{
             [](auto cl, auto ps) { RestoreShadowGraphicsState(cl, ps); },
             writeShadowConstants,
             [this](auto cl, auto model, auto entity, auto world, auto vp, auto ps, auto cpu) 
@@ -250,7 +249,7 @@ private:
             [this](auto cl, auto model, auto entity, auto world, auto ps) { DrawAnimFallback(cl, model, entity, world, ps); },
             [](auto model, auto idx, auto mesh) { return mesh.VertexBuffer != nullptr; }
         };
-        ModelCallbacks staticCallbacks{
+        ModelCallbacks<StaticModelResource, StaticMeshData> staticCallbacks{
             [](auto cl, auto ps) { RestoreShadowGraphicsState(cl, ps); },
             writeShadowConstants,
             [this](auto cl, auto model, auto entity, auto world, auto vp, auto ps, auto cpu)
@@ -292,7 +291,7 @@ private:
         };
 
         ModelDrawContext ctx{ commandList, velocityPso, viewProjection, false };
-        ModelCallbacks animCallbacks{
+        ModelCallbacks<AnimationModelResource, MeshData> animCallbacks{
             [](auto cl, auto ps) { RestoreVelocityGraphicsState(cl, ps); },
             setConstants,
             [this](auto cl, auto model, auto entity, auto world, auto vp, auto ps, auto)
@@ -300,7 +299,7 @@ private:
             [this](auto cl, auto model, auto entity, auto world, auto ps) { DrawAnimVelocityFallback(cl, model, entity, world, ps); },
             [](auto model, auto idx, auto mesh) { return mesh.VertexBuffer && mesh.PreviousVertexValid; }
         };
-        ModelCallbacks staticCallbacks{
+        ModelCallbacks<StaticModelResource, StaticMeshData> staticCallbacks{
             [](auto cl, auto ps) { RestoreVelocityGraphicsState(cl, ps); },
             setConstants,
             [this](auto cl, auto model, auto entity, auto world, auto vp, auto ps, auto)

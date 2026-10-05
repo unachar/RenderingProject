@@ -20,7 +20,7 @@ using namespace EditorWidgets;
 void ImGuiManager::DrawAssetBrowserWindow()
 {
 	ImGui::SetNextWindowSize(ImVec2(720.0f, 260.0f), ImGuiCond_FirstUseEver);
-if (!ImGui::Begin("プロジェクト", &m_ShowAssetBrowser))
+	if (!ImGui::Begin("プロジェクト", &m_ShowAssetBrowser))
 	{
 		ImGui::End();
 		return;
@@ -36,38 +36,52 @@ if (!ImGui::Begin("プロジェクト", &m_ShowAssetBrowser))
 		m_CurrentAssetDirectory = m_AssetRoot;
 	}
 
-	ImGui::Text("現在: %s", m_CurrentAssetDirectory.generic_string().c_str());
-	if (m_CurrentAssetDirectory != m_AssetRoot)
+	ImGui::BeginDisabled(m_CurrentAssetDirectory == m_AssetRoot);
+	if (ImGui::Button("上へ"))
 	{
-		ImGui::SameLine();
-		if (ImGui::Button("上へ"))
-		{
-			m_CurrentAssetDirectory = m_CurrentAssetDirectory.parent_path();
-		}
+		m_CurrentAssetDirectory = m_CurrentAssetDirectory.parent_path();
+		m_SelectedAssetPath.clear();
 	}
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	if (ImGui::Button("ルート"))
+	{
+		m_CurrentAssetDirectory = m_AssetRoot;
+		m_SelectedAssetPath.clear();
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("+ 作成")) ImGui::OpenPopup("CreateAssetPopup");
+	ImGui::TextWrapped("%s", m_CurrentAssetDirectory.generic_string().c_str());
 
 	static char folderName[128] = "NewFolder";
 	static char fileName[128] = "NewMaterial.txt";
-	ImGui::InputText("フォルダ名", folderName, IM_ARRAYSIZE(folderName));
-	ImGui::SameLine();
-	if (ImGui::Button("フォルダ作成") && folderName[0] != '\0')
+	if (ImGui::BeginPopup("CreateAssetPopup"))
 	{
-		filesystem::create_directories(m_CurrentAssetDirectory / folderName, ec);
-	}
-	ImGui::InputText("ファイル名", fileName, IM_ARRAYSIZE(fileName));
-	ImGui::SameLine();
-	if (ImGui::Button("ファイル作成") && fileName[0] != '\0')
-	{
-		const filesystem::path newPath = m_CurrentAssetDirectory / fileName;
-		CreateAssetFile(newPath);
+		ImGui::InputText("フォルダ名", folderName, IM_ARRAYSIZE(folderName));
+		if (ImGui::Button("フォルダ作成") && folderName[0] != '\0')
+		{
+			filesystem::create_directories(m_CurrentAssetDirectory / folderName, ec);
+		}
+		ImGui::Separator();
+		ImGui::InputText("ファイル名", fileName, IM_ARRAYSIZE(fileName));
+		if (ImGui::Button("ファイル作成") && fileName[0] != '\0')
+		{
+			const filesystem::path newPath = m_CurrentAssetDirectory / fileName;
+			CreateAssetFile(newPath);
+		}
+		ImGui::EndPopup();
 	}
 
-	ImGui::SeparatorText("セクション");
-	ImGui::BeginChild("AssetList", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
-	if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Delete) && !m_SelectedAssetPath.empty())
+	static ImGuiTextFilter assetFilter;
+	static filesystem::path pendingDeletePath;
+	bool deleteRequested = false;
+	DrawSearchField("AssetSearch", "ファイル名で検索...", assetFilter);
+	ImGui::BeginChild("AssetList", ImVec2(0, -ImGui::GetTextLineHeightWithSpacing()), true, ImGuiWindowFlags_HorizontalScrollbar);
+	if (ImGui::IsWindowFocused() && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() &&
+		ImGui::IsKeyPressed(ImGuiKey_Delete, false) && !m_SelectedAssetPath.empty())
 	{
-		DeleteAssetPath(m_SelectedAssetPath);
-		m_SelectedAssetPath.clear();
+		pendingDeletePath = m_SelectedAssetPath;
+		deleteRequested = true;
 	}
 	if (ImGui::BeginPopupContextWindow("AssetBackgroundContext", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
 	{
@@ -103,8 +117,10 @@ if (!ImGui::Begin("プロジェクト", &m_ShowAssetBrowser))
 	vector<filesystem::directory_entry> entries;
 	for (const auto& entry : filesystem::directory_iterator(m_CurrentAssetDirectory, ec))
 	{
-		entries.push_back(entry);
+		if (assetFilter.PassFilter(entry.path().filename().generic_string().c_str())) entries.push_back(entry);
 	}
+	if (ec) ImGui::TextWrapped("フォルダを読み込めません: %s", ec.message().c_str());
+	else if (entries.empty()) ImGui::TextWrapped("表示するアセットがありません。検索条件を変更するか、ファイルをドロップして取り込んでください。");
 	sort(entries.begin(), entries.end(), [](const auto& a, const auto& b)
 		{
 			if (a.is_directory() != b.is_directory())
@@ -178,12 +194,12 @@ if (!ImGui::Begin("プロジェクト", &m_ShowAssetBrowser))
 			if (ImGui::Selectable(displayName.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick))
 			{
 				m_SelectedAssetPath = path;
-				if (isDir)
+				if (isDir && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 				{
 					m_CurrentAssetDirectory = path;
 					m_SelectedAssetPath.clear();
 				}
-				else if (IsTextureFile(path))
+				else if (IsTextureFile(path) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 				{
 					const string relative = MakeRelativeAssetPath(path);
 					TextureManager::LoadTexture(relative.c_str());
@@ -215,7 +231,8 @@ if (!ImGui::Begin("プロジェクト", &m_ShowAssetBrowser))
 				}
 				if (ImGui::MenuItem("削除"))
 				{
-					DeleteAssetPath(path);
+					pendingDeletePath = path;
+					deleteRequested = true;
 				}
 				ImGui::EndPopup();
 			}
@@ -232,6 +249,28 @@ if (!ImGui::Begin("プロジェクト", &m_ShowAssetBrowser))
 		}
 	}
 	ImGui::EndChild();
+	if (deleteRequested) ImGui::OpenPopup("アセットを削除");
+	if (ImGui::BeginPopupModal("アセットを削除", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::TextWrapped("%s", pendingDeletePath.generic_string().c_str());
+		ImGui::TextUnformatted("フォルダ内のファイルも削除されます。この操作は元に戻せません。");
+		ImGui::Separator();
+		if (ImGui::Button("削除する"))
+		{
+			DeleteAssetPath(pendingDeletePath);
+			m_SelectedAssetPath.clear();
+			pendingDeletePath.clear();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("キャンセル") || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+		{
+			pendingDeletePath.clear();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+	}
+	ImGui::TextDisabled("%d 件 / ダブルクリック: 開く・適用 / ドラッグ: 配置", static_cast<int>(entries.size()));
 	ImGui::End();
 }
 

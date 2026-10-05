@@ -24,7 +24,10 @@ private:
 	inline static int m_antiAliasingMode = 0;
 	inline static const char* m_antiAliasingModeItems[] = { "なし", "FXAA", "TAA" };
 	inline static EntityID m_SelectedEntity = g_kINVALID_ENTITY;
-	inline static bool m_ShowEditorWindows = true;
+	inline static bool m_ShowHierarchyWindow = true;
+	inline static bool m_ShowInspectorWindow = true;
+	inline static bool m_ResetEditorLayout = false;
+	inline static bool m_RenameNeedsFocus = false;
 	inline static bool m_ShowAdjustmentPanel = true;
 	inline static bool m_ShowAssetBrowser = true;
 	inline static bool m_ShowRenderDebugger = false;
@@ -163,6 +166,7 @@ private:
 	static const char* GetLightTypeName(LightType type);
 
 public:
+	static constexpr UINT kSrvDescriptorCount = 64;
 	ImGuiManager() = delete;
 
 	static bool Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* commandQueue, int numFrames, DXGI_FORMAT rtvFormat, ID3D12DescriptorHeap* cbvHeap, D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle, D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle);

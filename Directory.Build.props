@@ -35,9 +35,6 @@
         %(AdditionalLibraryDirectories)
       </AdditionalLibraryDirectories>
       <AdditionalDependencies>
-        nvsdk_ngx.lib;
-        nvapi64.lib;
-        nrd.lib;
         %(AdditionalDependencies)
       </AdditionalDependencies>
     </Link>

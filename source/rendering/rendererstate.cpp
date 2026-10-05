@@ -76,6 +76,7 @@ int RendererState::m_MonitorTextureSrvIndex = -1;
 ComPtr<ID3D12RootSignature> RendererState::m_PostProcessRootSignature;
 ComPtr<ID3D12RootSignature> RendererState::m_UpscaleRootSignature;
 unordered_map<PostProcessType, ComPtr<ID3D12PipelineState>> RendererState::m_PostProcessPsoMap;
+ComPtr<ID3D12PipelineState> RendererState::m_BloomExtractPso;
 ComPtr<ID3D12PipelineState> RendererState::m_DeferredLightingPso;
 ComPtr<ID3D12PipelineState> RendererState::m_AtmospherePso;
 ComPtr<ID3D12PipelineState> RendererState::m_UpscaleBilateralPso;

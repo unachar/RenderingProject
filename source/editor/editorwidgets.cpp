@@ -17,6 +17,28 @@
 
 namespace EditorWidgets
 {
+	void DrawSearchField(const char* id, const char* hint, ImGuiTextFilter& filter)
+	{
+		ImGui::PushID(id);
+		const float clearWidth = ImGui::GetFrameHeight();
+		ImGui::SetNextItemWidth(max(1.0f, ImGui::GetContentRegionAvail().x - clearWidth - ImGui::GetStyle().ItemSpacing.x));
+		if (ImGui::InputTextWithHint("##Search", hint, filter.InputBuf, IM_ARRAYSIZE(filter.InputBuf))) filter.Build();
+		// ImGui returns on the first positive match. Evaluate exclusions first,
+		// so "Light,-Spot" and "-Spot,Light" have the same meaning.
+		if (filter.Filters.Size > 1)
+		{
+			std::stable_partition(filter.Filters.begin(), filter.Filters.end(),
+				[](const ImGuiTextFilter::ImGuiTextRange& range) { return *range.b == '-'; });
+		}
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("複数条件: カンマ区切り / 除外: -語句");
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!filter.IsActive());
+		if (ImGui::Button("X", ImVec2(clearWidth, 0.0f))) filter.Clear();
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("検索をクリア");
+		ImGui::PopID();
+	}
+
 	void DrawUpscaleControls()
 	{
 		const char* modes[] = { "Bilateral", "AMD FidelityFX FSR 1", "NVIDIA Image Scaling" };

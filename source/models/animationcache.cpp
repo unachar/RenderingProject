@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "animationmodel.h"
+#include "animationmath.h"
 
 
 using namespace AnimationMath;
