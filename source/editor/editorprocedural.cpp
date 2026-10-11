@@ -10,8 +10,19 @@
 
 namespace
 {
-const char* kNoiseNames[] = { "Perlin", "Value", "Worley (Cellular)", "fBm", "Ridged fBm", "Domain Warp" };
+const char* kNoiseNames[] = { "Perlin", "Value", "Worley (Cellular)", "fBm", "Ridged fBm", "Domain Warp", "Composite / 複合ノイズ" };
 const char* kMotionNames[] = { "Wave / 波", "Orbit / 軌道", "Noise / ゆらぎ" };
+
+bool DrawNoiseParameters(Procedural::BasicNoiseSettings& noise)
+{
+    bool changed = ImGui::InputScalar("Seed", ImGuiDataType_U32, &noise.Seed);
+    changed |= ImGui::SliderFloat("周波数", &noise.Frequency, 0.005f, 0.5f, "%.3f");
+    changed |= ImGui::SliderInt("オクターブ", &noise.Octaves, 1, 8);
+    changed |= ImGui::SliderFloat("振幅の減衰", &noise.Persistence, 0.0f, 1.0f);
+    changed |= ImGui::SliderFloat("周波数の倍率", &noise.Lacunarity, 1.0f, 4.0f);
+    changed |= ImGui::SliderFloat("Warp 強度", &noise.WarpStrength, 0.0f, 10.0f);
+    return changed;
+}
 
 void DrawNoisePreview(const Procedural::TerrainSettings& settings, bool changed)
 {
@@ -26,7 +37,8 @@ void DrawNoisePreview(const Procedural::TerrainSettings& settings, bool changed)
         preview = Procedural::BuildHeightMap(previewSettings);
     }
     const ImVec2 origin = ImGui::GetCursorScreenPos();
-    const float extent = (std::min)(ImGui::GetContentRegionAvail().x, 240.0f);
+    const ImVec2 available = ImGui::GetContentRegionAvail();
+    const float extent = (std::max)(0.0f, (std::min)({ available.x, available.y, 240.0f }));
     const float cell = extent / side;
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     for (int row = 0; row < side; ++row)
@@ -45,7 +57,8 @@ void DrawNoisePreview(const Procedural::TerrainSettings& settings, bool changed)
 
 void ImGuiManager::DrawProceduralWindow()
 {
-    ImGui::SetNextWindowSize(ImVec2(510.0f, 670.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(800.0f, 670.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(600.0f, 360.0f), ImVec2(FLT_MAX, FLT_MAX));
     if (!ImGui::Begin("プロシージャルエディター", &m_ShowProceduralWindow))
     {
         ImGui::End();
@@ -55,6 +68,7 @@ void ImGuiManager::DrawProceduralWindow()
     static Procedural::TerrainEditState terrainEdit;
     static char presetPath[260] = "Save/terrain.proc";
     static std::string status;
+    const float statusHeight = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
     if (ImGui::BeginTabBar("ProceduralTabs"))
     {
         if (ImGui::BeginTabItem("地形・マップ"))
@@ -69,6 +83,11 @@ void ImGuiManager::DrawProceduralWindow()
             {
                 settings = terrainEdit.GetSettings();
             }
+            ImVec2 contentSize = ImGui::GetContentRegionAvail();
+            contentSize.y = (std::max)(1.0f, contentSize.y - statusHeight - ImGui::GetStyle().ItemSpacing.y);
+            const float previewWidth = std::clamp(contentSize.x * 0.32f, 160.0f, 260.0f);
+            const float controlsWidth = contentSize.x - previewWidth - ImGui::GetStyle().ItemSpacing.x;
+            ImGui::BeginChild("TerrainControls", ImVec2(controlsWidth, contentSize.y));
             bool liveUpdate = ProceduralScene::GetLiveUpdate();
             if (ImGui::Checkbox("選択した地形をリアルタイムで更新", &liveUpdate))
             {
@@ -77,12 +96,39 @@ void ImGuiManager::DrawProceduralWindow()
             int method = static_cast<int>(settings.Noise.Method);
             bool changed = ImGui::Combo("生成手法", &method, kNoiseNames, IM_ARRAYSIZE(kNoiseNames)) || synchronized;
             settings.Noise.Method = static_cast<Procedural::NoiseMethod>(method);
-            changed |= ImGui::InputScalar("Seed", ImGuiDataType_U32, &settings.Noise.Seed);
-            changed |= ImGui::SliderFloat("周波数", &settings.Noise.Frequency, 0.005f, 0.5f, "%.3f");
-            changed |= ImGui::SliderInt("オクターブ", &settings.Noise.Octaves, 1, 8);
-            changed |= ImGui::SliderFloat("振幅の減衰", &settings.Noise.Persistence, 0.0f, 1.0f);
-            changed |= ImGui::SliderFloat("周波数の倍率", &settings.Noise.Lacunarity, 1.0f, 4.0f);
-            changed |= ImGui::SliderFloat("Warp 強度", &settings.Noise.WarpStrength, 0.0f, 10.0f);
+            if (settings.Noise.Method == Procedural::NoiseMethod::Composite)
+            {
+                changed |= ImGui::SliderInt("合成するノイズ数", &settings.Noise.LayerCount, 2, 5);
+                ImGui::SeparatorText("共通パラメータ");
+                changed |= DrawNoiseParameters(settings.Noise);
+                ImGui::TextWrapped("共通値を調整して一括反映してください。個別設定は反映するまで保持されます。");
+                if (ImGui::Button("共通パラメータを全ノイズに反映"))
+                {
+                    Procedural::ApplyCommonNoiseParameters(settings.Noise);
+                    changed = true;
+                }
+                ImGui::SeparatorText("個別パラメータ");
+                ImGui::TextWrapped("合成比率で重み付き平均を取ります。比率が 0 のノイズは合成しません。");
+                for (int index = 0; index < settings.Noise.LayerCount; ++index)
+                {
+                    ImGui::PushID(index);
+                    auto& layer = settings.Noise.Layers[index];
+                    if (ImGui::TreeNodeEx("Layer", ImGuiTreeNodeFlags_DefaultOpen, "ノイズ %d", index + 1))
+                    {
+                        int layerMethod = static_cast<int>(layer.Noise.Method);
+                        changed |= ImGui::Combo("ノイズの種類", &layerMethod, kNoiseNames, IM_ARRAYSIZE(kNoiseNames) - 1);
+                        layer.Noise.Method = static_cast<Procedural::NoiseMethod>(layerMethod);
+                        changed |= ImGui::SliderFloat("合成比率", &layer.Weight, 0.0f, 5.0f);
+                        changed |= DrawNoiseParameters(layer.Noise);
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                }
+            }
+            else
+            {
+                changed |= DrawNoiseParameters(settings.Noise);
+            }
             changed |= ImGui::SliderInt("解像度", &settings.Resolution, 4, 256);
             changed |= ImGui::SliderFloat("マップの幅", &settings.Size, 1.0f, 500.0f, "%.1f m");
             changed |= ImGui::SliderFloat("高さ", &settings.Height, 0.0f, 100.0f, "%.1f m");
@@ -158,7 +204,13 @@ void ImGuiManager::DrawProceduralWindow()
                     status = "地形を更新できませんでした。";
                 }
             }
+            ImGui::EndChild();
+            ImGui::SameLine();
+            ImGui::BeginChild("TerrainPreview", ImVec2(previewWidth, contentSize.y),
+                ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            ImGui::SeparatorText("ノイズプレビュー");
             DrawNoisePreview(settings, changed);
+            ImGui::EndChild();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("動き"))
@@ -246,7 +298,10 @@ void ImGuiManager::DrawProceduralWindow()
         }
         ImGui::EndTabBar();
     }
+    ImGui::BeginChild("ProceduralStatus", ImVec2(0.0f, statusHeight),
+        ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::TextWrapped("%s", status.c_str());
+    ImGui::EndChild();
     ImGui::End();
 }
 

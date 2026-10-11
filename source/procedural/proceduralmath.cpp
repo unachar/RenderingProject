@@ -2,6 +2,10 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <istream>
+#include <ostream>
+#include <iomanip>
+#include <string>
 
 namespace Procedural
 {
@@ -98,7 +102,7 @@ float CellularNoise(float x, float y, uint32_t seed)
     return 1.0f - 2.0f * std::clamp(std::sqrt(nearestSquared), 0.0f, 1.0f);
 }
 
-float FractalNoise(float x, float y, const NoiseSettings& settings, bool ridged)
+float FractalNoise(float x, float y, const BasicNoiseSettings& settings, bool ridged)
 {
     float total = 0.0f;
     float amplitude = 1.0f;
@@ -122,7 +126,7 @@ float FractalNoise(float x, float y, const NoiseSettings& settings, bool ridged)
 }
 }
 
-float SampleNoise(float x, float y, const NoiseSettings& settings)
+static float SampleSingleNoise(float x, float y, const BasicNoiseSettings& settings)
 {
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(settings.Frequency))
     {
@@ -163,6 +167,35 @@ float SampleNoise(float x, float y, const NoiseSettings& settings)
         break;
     }
     return std::clamp(result, -1.0f, 1.0f);
+}
+
+void ApplyCommonNoiseParameters(NoiseSettings& settings)
+{
+    for (auto& layer : settings.Layers)
+    {
+        const auto method = layer.Noise.Method;
+        layer.Noise = settings;
+        layer.Noise.Method = method;
+    }
+}
+
+float SampleNoise(float x, float y, const NoiseSettings& settings)
+{
+    if (settings.Method != NoiseMethod::Composite)
+        return SampleSingleNoise(x, y, settings);
+
+    double total = 0.0;
+    double weightSum = 0.0;
+    const int count = std::clamp(settings.LayerCount, 2, 5);
+    for (int index = 0; index < count; ++index)
+    {
+        const auto& layer = settings.Layers[index];
+        if (!std::isfinite(layer.Weight) || layer.Weight <= 0.0f)
+            continue;
+        total += SampleSingleNoise(x, y, layer.Noise) * static_cast<double>(layer.Weight);
+        weightSum += layer.Weight;
+    }
+    return weightSum > 0.0 ? static_cast<float>(total / weightSum) : 0.0f;
 }
 
 std::vector<float> BuildHeightMap(const TerrainSettings& settings)
@@ -218,11 +251,86 @@ Vector3 SampleMotion(MotionMethod method, double time, float speed,
 
 bool TerrainSettingsEqual(const TerrainSettings& first, const TerrainSettings& second)
 {
+    if (first.Noise.LayerCount != second.Noise.LayerCount)
+        return false;
+    for (size_t index = 0; index < first.Noise.Layers.size(); ++index)
+    {
+        const auto& a = first.Noise.Layers[index];
+        const auto& b = second.Noise.Layers[index];
+        if (a.Weight != b.Weight || a.Noise.Method != b.Noise.Method || a.Noise.Seed != b.Noise.Seed ||
+            a.Noise.Frequency != b.Noise.Frequency || a.Noise.Octaves != b.Noise.Octaves ||
+            a.Noise.Persistence != b.Noise.Persistence || a.Noise.Lacunarity != b.Noise.Lacunarity ||
+            a.Noise.WarpStrength != b.Noise.WarpStrength)
+            return false;
+    }
     return first.Resolution == second.Resolution && first.Size == second.Size &&
         first.Height == second.Height && first.BaseHeight == second.BaseHeight &&
         first.Noise.Method == second.Noise.Method && first.Noise.Seed == second.Noise.Seed &&
         first.Noise.Frequency == second.Noise.Frequency && first.Noise.Octaves == second.Noise.Octaves &&
         first.Noise.Persistence == second.Noise.Persistence && first.Noise.Lacunarity == second.Noise.Lacunarity &&
         first.Noise.WarpStrength == second.Noise.WarpStrength;
+}
+
+bool WriteTerrainPreset(std::ostream& stream, const TerrainSettings& settings)
+{
+    const auto writeNoise = [&stream](const BasicNoiseSettings& noise)
+    {
+        stream << static_cast<int>(noise.Method) << ' ' << noise.Seed << ' ' << noise.Frequency << ' '
+            << noise.Octaves << ' ' << noise.Persistence << ' ' << noise.Lacunarity << ' ' << noise.WarpStrength << '\n';
+    };
+    stream << "PROCEDURAL_TERRAIN 2\n" << std::setprecision(9);
+    writeNoise(settings.Noise);
+    stream << settings.Resolution << ' ' << settings.Size << ' ' << settings.Height << ' ' << settings.BaseHeight << '\n';
+    stream << settings.Noise.LayerCount << '\n';
+    for (const auto& layer : settings.Noise.Layers)
+    {
+        writeNoise(layer.Noise);
+        stream << layer.Weight << '\n';
+    }
+    return static_cast<bool>(stream);
+}
+
+bool ReadTerrainPreset(std::istream& stream, TerrainSettings& settings)
+{
+    std::string signature;
+    int version = 0;
+    TerrainSettings loaded;
+    const auto readNoise = [&stream](BasicNoiseSettings& noise, int maximumMethod)
+    {
+        int method = 0;
+        if (!(stream >> method >> noise.Seed >> noise.Frequency >> noise.Octaves >> noise.Persistence
+            >> noise.Lacunarity >> noise.WarpStrength) || method < 0 || method > maximumMethod ||
+            !std::isfinite(noise.Frequency) || noise.Frequency < 0.0001f || noise.Frequency > 2.0f ||
+            noise.Octaves < 1 || noise.Octaves > 8 || !std::isfinite(noise.Persistence) ||
+            noise.Persistence < 0.0f || noise.Persistence > 1.0f || !std::isfinite(noise.Lacunarity) ||
+            noise.Lacunarity < 1.0f || noise.Lacunarity > 4.0f || !std::isfinite(noise.WarpStrength) ||
+            noise.WarpStrength < 0.0f || noise.WarpStrength > 10.0f)
+            return false;
+        noise.Method = static_cast<NoiseMethod>(method);
+        return true;
+    };
+    if (!(stream >> signature >> version) || signature != "PROCEDURAL_TERRAIN" || (version != 1 && version != 2) ||
+        !readNoise(loaded.Noise, version == 1 ? 5 : 6) ||
+        !(stream >> loaded.Resolution >> loaded.Size >> loaded.Height >> loaded.BaseHeight) ||
+        loaded.Resolution < 4 || loaded.Resolution > 256 ||
+        !std::isfinite(loaded.Size) || loaded.Size < 1.0f || loaded.Size > 500.0f ||
+        !std::isfinite(loaded.Height) || loaded.Height < 0.0f || loaded.Height > 100.0f ||
+        !std::isfinite(loaded.BaseHeight) || std::abs(loaded.BaseHeight) > 1000.0f)
+        return false;
+    if (version == 2)
+    {
+        if (!(stream >> loaded.Noise.LayerCount) || loaded.Noise.LayerCount < 2 || loaded.Noise.LayerCount > 5)
+            return false;
+        for (auto& layer : loaded.Noise.Layers)
+        {
+            if (!readNoise(layer.Noise, 5) || !(stream >> layer.Weight) ||
+                !std::isfinite(layer.Weight) || layer.Weight < 0.0f || layer.Weight > 5.0f)
+                return false;
+        }
+    }
+    else
+        ApplyCommonNoiseParameters(loaded.Noise);
+    settings = loaded;
+    return true;
 }
 }

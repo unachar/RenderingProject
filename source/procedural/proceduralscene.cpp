@@ -6,7 +6,6 @@
 #include "world.h"
 #include "vertexdeformation.h"
 #include <fstream>
-#include <iomanip>
 #include <cmath>
 
 namespace
@@ -152,41 +151,11 @@ void ProceduralScene::ResetMotion(EntityID entity)
 bool ProceduralScene::SavePreset(const char* path, const Procedural::TerrainSettings& settings)
 {
     std::ofstream file(path);
-    if (!file)
-    {
-        return false;
-    }
-    const auto& noise = settings.Noise;
-    file << "PROCEDURAL_TERRAIN 1\n" << std::setprecision(9)
-        << static_cast<int>(noise.Method) << ' ' << noise.Seed << ' ' << noise.Frequency << ' '
-        << noise.Octaves << ' ' << noise.Persistence << ' ' << noise.Lacunarity << ' ' << noise.WarpStrength << '\n'
-        << settings.Resolution << ' ' << settings.Size << ' ' << settings.Height << ' ' << settings.BaseHeight << '\n';
-    return static_cast<bool>(file);
+    return Procedural::WriteTerrainPreset(file, settings);
 }
 
 bool ProceduralScene::LoadPreset(const char* path, Procedural::TerrainSettings& settings)
 {
     std::ifstream file(path);
-    std::string signature;
-    int version = 0;
-    int method = 0;
-    Procedural::TerrainSettings loaded;
-    auto& noise = loaded.Noise;
-    if (!(file >> signature >> version) || signature != "PROCEDURAL_TERRAIN" || version != 1 ||
-        !(file >> method >> noise.Seed >> noise.Frequency >> noise.Octaves >> noise.Persistence >> noise.Lacunarity >> noise.WarpStrength
-            >> loaded.Resolution >> loaded.Size >> loaded.Height >> loaded.BaseHeight) ||
-        method < 0 || method > 5 || loaded.Resolution < 4 || loaded.Resolution > 256 ||
-        !std::isfinite(noise.Frequency) || noise.Frequency < 0.0001f || noise.Frequency > 2.0f ||
-        noise.Octaves < 1 || noise.Octaves > 8 || !std::isfinite(noise.Persistence) || noise.Persistence < 0.0f || noise.Persistence > 1.0f ||
-        !std::isfinite(noise.Lacunarity) || noise.Lacunarity < 1.0f || noise.Lacunarity > 4.0f ||
-        !std::isfinite(noise.WarpStrength) || noise.WarpStrength < 0.0f || noise.WarpStrength > 10.0f ||
-        !std::isfinite(loaded.Size) || loaded.Size < 1.0f || loaded.Size > 500.0f ||
-        !std::isfinite(loaded.Height) || loaded.Height < 0.0f || loaded.Height > 100.0f ||
-        !std::isfinite(loaded.BaseHeight) || std::abs(loaded.BaseHeight) > 1000.0f)
-    {
-        return false;
-    }
-    noise.Method = static_cast<Procedural::NoiseMethod>(method);
-    settings = loaded;
-    return true;
+    return Procedural::ReadTerrainPreset(file, settings);
 }

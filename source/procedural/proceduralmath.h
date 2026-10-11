@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
+#include <iosfwd>
 #include <vector>
 
 namespace Procedural
@@ -12,10 +14,11 @@ enum class NoiseMethod
     Worley,
     Fractal,
     Ridged,
-    DomainWarp
+    DomainWarp,
+    Composite
 };
 
-struct NoiseSettings
+struct BasicNoiseSettings
 {
     NoiseMethod Method = NoiseMethod::Fractal;
     uint32_t Seed = 42;
@@ -25,6 +28,21 @@ struct NoiseSettings
     float Lacunarity = 2.0f;
     float WarpStrength = 1.5f;
 };
+
+struct NoiseLayer
+{
+    BasicNoiseSettings Noise;
+    float Weight = 1.0f;
+};
+
+struct NoiseSettings : BasicNoiseSettings
+{
+    int LayerCount = 2;
+    std::array<NoiseLayer, 5> Layers;
+};
+
+// Copy common values while preserving each layer's method and blend weight.
+void ApplyCommonNoiseParameters(NoiseSettings& settings);
 
 struct TerrainSettings
 {
@@ -60,4 +78,6 @@ std::vector<float> BuildHeightMap(const TerrainSettings& settings);
 Vector3 SampleMotion(MotionMethod method, double time, float speed,
     const Vector3& amplitude, uint32_t seed);
 bool TerrainSettingsEqual(const TerrainSettings& first, const TerrainSettings& second);
+bool WriteTerrainPreset(std::ostream& stream, const TerrainSettings& settings);
+bool ReadTerrainPreset(std::istream& stream, TerrainSettings& settings);
 }

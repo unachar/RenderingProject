@@ -26,8 +26,17 @@ int main()
     TerrainEditState edit;
     TerrainSettings first;
     TerrainSettings second;
+    first.Noise.Method = NoiseMethod::Composite;
     second.Noise.Seed = 907;
     Check(edit.SynchronizeSelection(17, &first), "load first selected terrain");
+    auto individualEdit = first;
+    individualEdit.Noise.Layers[1].Noise.Frequency = 0.2f;
+    edit.SetSettings(individualEdit);
+    Check(edit.HasPendingChanges(), "individual parameter changes request terrain update");
+    individualEdit = first;
+    individualEdit.Noise.Layers[1].Weight = 0.25f;
+    edit.SetSettings(individualEdit);
+    Check(edit.HasPendingChanges(), "blend weight changes request terrain update");
     auto changed = first;
     changed.Height = 8;
     edit.SetSettings(changed);

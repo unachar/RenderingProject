@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <sstream>
 
 namespace
 {
@@ -23,6 +24,68 @@ void Check(bool passed, const char* message)
 int main()
 {
     using namespace Procedural;
+    NoiseSettings composite;
+    composite.Method = NoiseMethod::Composite;
+    // The new method must produce a usable signal before testing its controls.
+    bool compositeHasSignal = false;
+    for (int sample = 1; sample < 20; ++sample)
+        compositeHasSignal |= SampleNoise(sample * 1.37f, -3.79f, composite) != 0.0f;
+    Check(compositeHasSignal, "composite noise produces a non-flat signal");
+    composite.Layers[0].Noise.Method = NoiseMethod::Value;
+    composite.Layers[0].Weight = 1.0f;
+    composite.Layers[1].Noise.Method = NoiseMethod::Worley;
+    composite.Layers[1].Noise.Seed = 907;
+    composite.Layers[1].Weight = 3.0f;
+    NoiseSettings single;
+    static_cast<BasicNoiseSettings&>(single) = composite.Layers[0].Noise;
+    const float firstSample = SampleNoise(3.71f, -2.19f, single);
+    static_cast<BasicNoiseSettings&>(single) = composite.Layers[1].Noise;
+    const float secondSample = SampleNoise(3.71f, -2.19f, single);
+    Check(std::abs(SampleNoise(3.71f, -2.19f, composite) - (firstSample + 3.0f * secondSample) / 4.0f) < 1e-6f,
+        "composite respects individual methods, seeds and blend weights");
+    composite.Layers[0].Weight = 0.0f;
+    Check(SampleNoise(3.71f, -2.19f, composite) == secondSample, "zero weight excludes a layer");
+    composite.Layers[1].Weight = 0.0f;
+    Check(SampleNoise(3.71f, -2.19f, composite) == 0.0f, "all zero weights produce flat noise");
+    composite.LayerCount = 5;
+    composite.Layers[4].Weight = 2.0f;
+    composite.Layers[4].Noise.Method = NoiseMethod::Value;
+    composite.Layers[4].Noise.Seed = 321;
+    static_cast<BasicNoiseSettings&>(single) = composite.Layers[4].Noise;
+    composite.Layers[2].Weight = composite.Layers[3].Weight = 0.0f;
+    Check(SampleNoise(3.71f, -2.19f, composite) == SampleNoise(3.71f, -2.19f, single),
+        "fifth layer participates in composition");
+    composite.LayerCount = 2;
+    Check(SampleNoise(3.71f, -2.19f, composite) == 0.0f, "inactive layers do not affect noise");
+    composite.Seed = 123;
+    composite.Frequency = 0.17f;
+    composite.Octaves = 3;
+    composite.Persistence = 0.7f;
+    composite.Lacunarity = 3.0f;
+    composite.WarpStrength = 2.3f;
+    ApplyCommonNoiseParameters(composite);
+    for (const auto& layer : composite.Layers)
+        Check(layer.Noise.Seed == 123 && layer.Noise.Frequency == 0.17f && layer.Noise.Octaves == 3 &&
+            layer.Noise.Persistence == 0.7f && layer.Noise.Lacunarity == 3.0f && layer.Noise.WarpStrength == 2.3f,
+            "bulk apply copies every common parameter including inactive layers");
+    Check(composite.Layers[0].Noise.Method == NoiseMethod::Value && composite.Layers[1].Noise.Method == NoiseMethod::Worley &&
+        composite.Layers[4].Weight == 2.0f, "bulk apply preserves layer methods and weights");
+    TerrainSettings compositeTerrain;
+    compositeTerrain.Noise = composite;
+    compositeTerrain.Noise.LayerCount = 5;
+    compositeTerrain.Noise.Layers[4].Noise.Frequency = 0.31f;
+    std::stringstream preset;
+    Check(WriteTerrainPreset(preset, compositeTerrain), "save composite preset");
+    TerrainSettings restored;
+    Check(ReadTerrainPreset(preset, restored) && TerrainSettingsEqual(compositeTerrain, restored) &&
+        BuildHeightMap(compositeTerrain) == BuildHeightMap(restored), "preset restores individual and common parameters exactly");
+    std::stringstream legacy("PROCEDURAL_TERRAIN 1\n5 907 0.08 5 0.5 2 1.5\n64 40 5 -2\n");
+    Check(ReadTerrainPreset(legacy, restored) && restored.Noise.Method == NoiseMethod::DomainWarp && restored.Noise.Seed == 907,
+        "legacy presets remain readable");
+    std::stringstream invalid("PROCEDURAL_TERRAIN 2\n6 42 0.08 5 0.5 2 1.5\n64 40 5 -2\n6\n");
+    const auto beforeInvalid = restored;
+    Check(!ReadTerrainPreset(invalid, restored) && TerrainSettingsEqual(beforeInvalid, restored),
+        "invalid layer count rejects preset without changing current settings");
     for (int method = 0; method < 6; ++method)
     {
         NoiseSettings settings;
