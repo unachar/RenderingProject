@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include "polygon3d.h"
+#include "game.h"
 #include "texturemanager.h"
 #include "world.h"
 #include "vector.h"
@@ -51,5 +52,7 @@ void Polygon3D::Create()
 	material.ShaderClass = ShaderClass::PBR;
 
 	PrimitiveGeometry::CreateSpriteVertex(vertexResource);
+
+	Game::RegisterEntity(this);
 }
 

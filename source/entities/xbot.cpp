@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include "xbot.h"
+#include "game.h"
 #include "world.h"
 #include "animator.h"
 #include "modelmanager.h"
@@ -26,7 +27,7 @@ void XBot::Create()
 	ModelManager::LoadAnimation(modelID, animPath1, "Standup");
 	ModelManager::LoadAnimation(modelID, animPath2, "Idle");
 
-	for (int i = 0; i < 2; ++i)
+	for (int i = 0; i < 1; ++i)
 	{
 		auto entity = World::CreateEntity()
 			.Add<TransformComponent>()
@@ -70,5 +71,7 @@ void XBot::Create()
 			entity.Get<AABBComponent>().Extents = model->GetAabbExtents();
 		}
 	}
+
+	Game::RegisterEntity(this);
 }
 

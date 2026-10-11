@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include "field.h"
+#include "game.h"
 #include "world.h"
 #include "texturemanager.h"
 #include "systemmanager.h"
@@ -54,5 +55,7 @@ void Field::Create()
 	vertexResource.color = Color::WHITE;
 
 	PrimitiveGeometry::CreateSpriteVertex(vertexResource);
+
+	Game::RegisterEntity(this);
 }
 

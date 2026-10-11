@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "kacchatta_hone.h"
+#include "game.h"
 #include "world.h"
 #include "modelmanager.h"
 
@@ -38,4 +39,6 @@ void KacchattaHone::Create()
 	physics.UsePhysics = true;
 	physics.UsePhysicsBone = false;
 	physics.UsePhysicsEngine = PhysicsEngine::Bullet;
+
+	Game::RegisterEntity(this);
 }

@@ -11,15 +11,6 @@
 #include "systemmanager.h"
 #include "modelmanager.h"
 
-#include "polygon3d.h"
-#include "xbot.h"
-#include "field.h"
-#include "moca.h"
-#include "karen.h"
-#include "kacchatta_hone.h"
-#include "alicia.h"
-#include "sky.h"
-#include "cube.h"
 #include "light.h"
 #include "projectmanager.h"
 #include "physicssystem.h"
@@ -27,6 +18,45 @@
 #include "entitybase.h"
 #include <unordered_set>
 #include "renderframe.h"
+
+std::vector<std::unique_ptr<EntityBase>>& Game::GetEntities()
+{
+	static std::vector<std::unique_ptr<EntityBase>> entities;
+	return entities;
+}
+
+std::vector<std::unique_ptr<EntityBase>>& Game::GetPendingEntities()
+{
+	static std::vector<std::unique_ptr<EntityBase>> entities;
+	return entities;
+}
+
+bool Game::RegisterEntity(EntityBase* entity)
+{
+	if (!entity)
+	{
+		return false;
+	}
+
+	for (const auto& registered : GetEntities())
+	{
+		if (registered.get() == entity)
+		{
+			return true;
+		}
+	}
+
+	for (auto& pending : GetPendingEntities())
+	{
+		if (pending.get() == entity)
+		{
+			GetEntities().emplace_back(std::move(pending));
+			return true;
+		}
+	}
+
+	return false;
+}
 
 void Game::Init()
 {
@@ -40,22 +70,12 @@ void Game::Create()
 {
 	Camera::Create();
 	Camera::CreateGameCamera();
-	
 
-	AddEntity<Cube>();
-	AddEntity<Polygon3D>();
-	AddEntity<XBot>();
-	AddEntity<Field>();
-	AddEntity<Moca>();
-	AddEntity<Karen>();
-	AddEntity<KacchattaHone>();
-	AddEntity<Alicia>();
-	AddEntity<Sky>();
-
-	for (auto& entitys : entityBase)
+	for (auto& entity : GetPendingEntities())
 	{
-		entitys->Create();
+		entity->Create();
 	}
+	GetPendingEntities().clear();
 }
 
 void Game::Uninit()
@@ -72,7 +92,6 @@ void Game::Uninit()
 
 void Game::Run()
 {
-	// Camera projection and motion vectors must use the render extent of this frame.
 	RenderConfiguration::ApplyPendingRenderMode();
 	RenderConfiguration::ApplyPendingHdr();
 	RenderConfiguration::ApplyPendingResolutionScale();

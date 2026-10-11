@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include "alicia.h"
+#include "game.h"
 #include "world.h"
 #include "modelmanager.h"
 
@@ -44,4 +45,6 @@ void Alicia::Create()
 	material.ShadowStrength = 0.066f;
 	material.ShaderClassMode = MaterialMode::Manual;
 	material.ShaderClass = ShaderClass::Lit;
+
+	Game::RegisterEntity(this);
 }

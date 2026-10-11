@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "sky.h"
+#include "game.h"
 #include "world.h"
 #include "texturemanager.h"
 #include "modelmanager.h"
@@ -39,4 +40,6 @@ void Sky::Create()
 	material.ShaderClassMode = MaterialMode::Manual;
 	material.ShaderClass = ShaderClass::Unlit;
 	material.UseTexture = true;
+
+	Game::RegisterEntity(this);
 }

@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "karen.h"
+#include "game.h"
 #include "world.h"
 #include "animator.h"
 #include "modelmanager.h"
@@ -69,4 +70,6 @@ void Karen::Create()
 		entity.Get<AABBComponent>().Center = model->GetAabbCenter();
 		entity.Get<AABBComponent>().Extents = model->GetAabbExtents();
 	}
+
+	Game::RegisterEntity(this);
 }

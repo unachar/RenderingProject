@@ -3,6 +3,7 @@
 #include "world.h"
 #include "timelinesystem.h"
 #include "primitivegeometry.h"
+#include "game.h"
 
 void Cube::Create()
 {
@@ -76,4 +77,6 @@ void Cube::Create()
 
 	director.SetLoop(true);
 	director.Play();
+
+	Game::RegisterEntity(this);
 }

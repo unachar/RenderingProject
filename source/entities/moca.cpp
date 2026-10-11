@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "moca.h"
+#include "game.h"
 #include "world.h"
 #include "modelmanager.h"
 
@@ -34,4 +35,6 @@ void Moca::Create()
 	material.ShadowStrength = 0.066f;
 	material.ShaderClassMode = MaterialMode::Manual;
 	material.ShaderClass = ShaderClass::Lit;
+
+	Game::RegisterEntity(this);
 }

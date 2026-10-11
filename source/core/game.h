@@ -2,11 +2,13 @@
 #include "ecs.h"
 #include "entitybase.h"
 
-#include <xmemory>
+#include <memory>
+#include <vector>
 class Game
 {
 private:
-	inline static vector<unique_ptr<EntityBase>> entityBase;
+	static std::vector<std::unique_ptr<EntityBase>>& GetEntities();
+	static std::vector<std::unique_ptr<EntityBase>>& GetPendingEntities();
 public:
 	static void Init();
 	static void Create();
@@ -14,14 +16,27 @@ public:
 	static void Update();
 	static void Draw();
 	static void Run();
+	// Register a Game-owned instance after its Create has completed.
+	static bool RegisterEntity(EntityBase* entity);
 
 	template<typename T>
 	static void AddEntity()
 	{
-		entityBase.emplace_back(make_unique<T>());
+		GetPendingEntities().emplace_back(std::make_unique<T>());
 	}
 
 
+};
+
+// An inline static member declares automatic creation once per entity class.
+template<typename T>
+class EntityRegistration
+{
+public:
+	EntityRegistration()
+	{
+		Game::AddEntity<T>();
+	}
 };
 
 

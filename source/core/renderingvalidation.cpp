@@ -150,6 +150,25 @@ void Check(bool passed, const char* name)
 
 void CreateTestScene()
 {
+    // Check the real startup scene, including registration from separate .cpp files.
+    const char* startupNames[] = {
+        "Cube", "polygon3d", "XBot", "field", "Moca", "Karen",
+        "Kacchatta_Hone", "Alicia", "Sky"
+    };
+    for (const char* name : startupNames)
+    {
+        unsigned int count = 0;
+        for (EntityID id : World::GetView<NameComponent>())
+        {
+            if (ComponentManager::GetComponent<NameComponent>(id).Name == name)
+            {
+                ++count;
+            }
+        }
+        const std::string checkName = std::string("auto-registered startup entity created once: ") + name;
+        Check(count == 1, checkName.c_str());
+    }
+
     RendererSettings::SetMeshShadersEnabled(true);
     D3D12_FEATURE_DATA_D3D12_OPTIONS7 meshOptions{};
     if (SUCCEEDED(GraphicsDevice::GetDevice()->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &meshOptions, sizeof(meshOptions))) &&

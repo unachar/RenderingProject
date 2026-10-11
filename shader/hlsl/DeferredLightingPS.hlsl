@@ -510,6 +510,66 @@ float SampleDistanceFieldShadow(float3 worldPos, float3 normal, float3 lightDir)
     return 1.0f;
 }
 
+// Radiance already includes this light's intensity, attenuation and visibility.
+float3 EvaluatePbrDirectLight(
+    float3 N, float3 V, float3 L, float3 radiance,
+    float3 albedo, float3 materialData, float shadowSoftness)
+{
+    const float PI = 3.14159265359f;
+    float3 H = SafeNormalizeCommon(L + V, N);
+
+    float rawNdotL = dot(N, L);
+    float NdotLScalar = saturate(rawNdotL);
+    float NdotV = saturate(dot(N, V));
+    float NdotH = saturate(dot(N, H));
+    float VdotH = saturate(dot(V, H));
+
+    float metallic = saturate(materialData.r);
+    float roughness = clamp(materialData.g, 0.04f, 1.0f);
+    float specularF0 = max(materialData.b, 0.04f);
+
+    float3 F0 = lerp(float3(specularF0, specularF0, specularF0), albedo, metallic);
+
+    float a = roughness * roughness;
+    float a2 = a * a;
+
+    float d = NdotH * NdotH * (a2 - 1.0f) + 1.0f;
+    float D = a2 / max(PI * d * d, 0.00001f);
+
+    float r = roughness + 1.0f;
+    float k = (r * r) / 8.0f;
+
+    float G_L = NdotLScalar / max(NdotLScalar * (1.0f - k) + k, 0.00001f);
+    float G_V = NdotV / max(NdotV * (1.0f - k) + k, 0.00001f);
+    float G = G_L * G_V;
+
+    float oneMinusVdotH = 1.0f - VdotH;
+    float oneMinusVdotH2 = oneMinusVdotH * oneMinusVdotH;
+    float oneMinusVdotH5 = oneMinusVdotH2 * oneMinusVdotH2 * oneMinusVdotH;
+
+    float3 F = F0 + (1.0f - F0) * oneMinusVdotH5;
+
+    float3 specularBRDF = D * G * F;
+    specularBRDF /= max(4.0f * NdotLScalar * NdotV, 0.00001f);
+
+    float3 kS = F;
+    float3 kD = 1.0f - kS;
+    kD *= 1.0f - metallic;
+
+    float3 diffuseBRDF = kD * albedo / PI;
+
+    float terminatorWidth = lerp(
+        0.08f,
+        0.45f,
+        saturate(shadowSoftness * 2.0f));
+    float wrappedNdotL = saturate(
+        (rawNdotL + terminatorWidth) / (1.0f + terminatorWidth));
+
+    wrappedNdotL = wrappedNdotL * wrappedNdotL * (3.0f - 2.0f * wrappedNdotL);
+
+    return (diffuseBRDF * wrappedNdotL + specularBRDF * NdotLScalar) * radiance;
+}
+
 void ResolveDeferredLightAggregateShadowed(
     float3 worldPos,
     float3 worldPosDx,
@@ -517,6 +577,12 @@ void ResolveDeferredLightAggregateShadowed(
     float3 normal,
     float2 pixelPosition,
     int shadowFilterRadius,
+    bool evaluatePbr,
+    float3 viewDir,
+    float3 albedo,
+    float3 materialData,
+    float shadowSoftness,
+    out float3 pbrDirectLight,
     out float3 lightDir,
     out float3 lightColor,
     out float attenuation,
@@ -524,6 +590,7 @@ void ResolveDeferredLightAggregateShadowed(
     out float rangeBlend,
     out float aggregateShadowVisibility)
 {
+    pbrDirectLight = 0.0f;
     lightDir = SafeNormalizeCommon(LightDirection.xyz, float3(0.0f, 1.0f, 0.0f));
     lightColor = max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColor.a, 0.0f);
     attenuation = 1.0f;
@@ -637,6 +704,12 @@ void ResolveDeferredLightAggregateShadowed(
 			singleColor = ApplyAtmosphereToLightCommon(worldPos, singleDir, singleColor, singleVolume);
 		}
 
+        if (evaluatePbr)
+        {
+            pbrDirectLight += EvaluatePbrDirectLight(
+                normal, viewDir, singleDir, singleColor, albedo, materialData, shadowSoftness);
+        }
+
         float weight = max(dot(authoredLightColor * lightIntensityValue, float3(0.299f, 0.587f, 0.114f)), 0.0001f) * singleAttenuation;
         dirSum += singleDir * weight;
         colorSum += singleColor;
@@ -653,6 +726,11 @@ void ResolveDeferredLightAggregateShadowed(
         ResolveLightCommon(worldPos, lightDir, attenuation, legacyVolume);
         lightColor = max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColor.a, 0.0f) * attenuation;
         lightColor = ApplyAtmosphereToLightCommon(worldPos, lightDir, lightColor, legacyVolume);
+        if (evaluatePbr)
+        {
+            pbrDirectLight = EvaluatePbrDirectLight(
+                normal, viewDir, lightDir, lightColor, albedo, materialData, shadowSoftness);
+        }
         volumeScatter = legacyVolume * max(LightColor.a, 0.0f);
         rangeBlend = saturate((max(LightDirection.w, 1.0f) - 1.0f) / 7.0f);
         return;
@@ -743,6 +821,8 @@ float4 main(PSInputPostProcess input) : SV_Target
     float rangeBlend;
     float aggregateShadowVisibility;
     float3 surfaceNormal = DecodeGBufferNormal(normal.xyz);
+    float3 viewDir = SafeNormalizeCommon(PPCameraPos.xyz - position, surfaceNormal);
+    float3 pbrDirectLight;
     int materialShadowFilterRadius =
         pbr
             ? clamp(
@@ -760,6 +840,12 @@ float4 main(PSInputPostProcess input) : SV_Target
         surfaceNormal,
         input.Position.xy,
         materialShadowFilterRadius,
+        pbr,
+        viewDir,
+        baseColor.rgb,
+        material.rgb,
+        shadowSoftness,
+        pbrDirectLight,
         lightDir,
         lightColor,
         lightAttenuation,
@@ -874,71 +960,14 @@ float4 main(PSInputPostProcess input) : SV_Target
     if (pbr)
     {
         const float PI = 3.14159265359f;
-
-        float3 N = normalize(surfaceNormal);
-        float3 L = normalize(lightDir);
-        float3 V = normalize(PPCameraPos.xyz - position.xyz);
-        float3 H = normalize(L + V);
-
-        float rawNdotL = dot(N, L);
-        float NdotLScalar = saturate(rawNdotL);
+        float3 N = surfaceNormal;
+        float3 V = viewDir;
         float NdotV = saturate(dot(N, V));
-        float NdotH = saturate(dot(N, H));
-        float VdotH = saturate(dot(V, H));
-
         float metallic = saturate(material.r);
         float roughness = clamp(material.g, 0.04f, 1.0f);
         float specularF0 = max(material.b, 0.04f);
-
         float3 albedo = baseColor.rgb;
-
         float3 F0 = lerp(float3(specularF0, specularF0, specularF0), albedo, metallic);
-
-        float a = roughness * roughness;
-        float a2 = a * a;
-
-        float d = NdotH * NdotH * (a2 - 1.0f) + 1.0f;
-        float D = a2 / max(PI * d * d, 0.00001f);
-
-        float r = roughness + 1.0f;
-        float k = (r * r) / 8.0f;
-
-        float G_L = NdotLScalar / max(NdotLScalar * (1.0f - k) + k, 0.00001f);
-        float G_V = NdotV / max(NdotV * (1.0f - k) + k, 0.00001f);
-        float G = G_L * G_V;
-
-        float oneMinusVdotH = 1.0f - VdotH;
-        float oneMinusVdotH2 = oneMinusVdotH * oneMinusVdotH;
-        float oneMinusVdotH5 = oneMinusVdotH2 * oneMinusVdotH2 * oneMinusVdotH;
-
-        float3 F = F0 + (1.0f - F0) * oneMinusVdotH5;
-
-        float3 specularBRDF = D * G * F;
-        specularBRDF /= max(4.0f * NdotLScalar * NdotV, 0.00001f);
-
-        float3 kS = F;
-        float3 kD = 1.0f - kS;
-        kD *= 1.0f - metallic;
-
-        float3 diffuseBRDF = kD * albedo / PI;
-
-
-
-
-        float terminatorWidth = lerp(
-            0.08f,
-            0.45f,
-            saturate(shadowSoftness * 2.0f));
-        float wrappedNdotL = saturate(
-            (rawNdotL + terminatorWidth) / (1.0f + terminatorWidth));
-        
-        
-        wrappedNdotL = wrappedNdotL * wrappedNdotL * (3.0f - 2.0f * wrappedNdotL);
-        
-
-        float3 directDiffuse = diffuseBRDF * lightColor.rgb * lightIntensity * wrappedNdotL;
-        float3 directSpecular = specularBRDF * lightColor.rgb * lightIntensity * NdotLScalar;
-        float3 directLight = directDiffuse + directSpecular;
 
         float3 R = reflect(-V, N);
         R = normalize(R);
@@ -986,7 +1015,7 @@ float4 main(PSInputPostProcess input) : SV_Target
         {
             ambient *= lerp(0.025f, 1.0f, SkyParameters.y);
         }
-        baseColor.rgb = directLight + ambient;
+        baseColor.rgb = pbrDirectLight + ambient;
     }
 
 
