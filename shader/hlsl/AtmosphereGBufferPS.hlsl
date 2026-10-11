@@ -102,6 +102,14 @@ float ComputeAtmosphereShadow(
     {
         return 1.0f;
     }
+#ifdef SHADER_RAYTRACING
+    if (SceneRayFlags.x > 0.5f)
+    {
+        float range = lightPositionTypeData.w < 0.5f ? SceneRayParameters.x :
+            min(length(lightPositionTypeData.xyz - samplePos), SceneRayParameters.x);
+        return TraceSceneShadow(samplePos, lightDir, lightDir, range);
+    }
+#endif
 
     bool directional = lightPositionTypeData.w < 0.5f;
 
@@ -650,7 +658,7 @@ float3 RayMarchAtmosphereViewFixed(
             if (updateShadow)
             {
                 bool hasShadow =
-                    LightShadowData[lightIndex].x >= -0.5f;
+                    SceneLightCastsShadowCommon(lightIndex, LightShadowData[lightIndex].x >= -0.5f);
                 bool directionalMultiLevel =
                     LightShadowData[lightIndex].w < 0.0f;
 
@@ -772,7 +780,7 @@ float3 RayMarchAtmosphereViewFixed(
             LightViewProjections[volumeIndex],
             perLightShadowParams,
             LightShadowData[volumeIndex].x,
-            LightShadowData[volumeIndex].x >= -0.5f,
+            SceneLightCastsShadowCommon(volumeIndex, LightShadowData[volumeIndex].x >= -0.5f),
             shadowMap,
             shadowSampler);
     }

@@ -1,5 +1,7 @@
 ﻿#include "pch.h"
 #include "modelsystem.h"
+#include "vertexdeformation.h"
+#include "atmosphere.h"
 #include "gpudrivenindirect.h"
 #include "instancingsystem.h"
 #include "componentmanager.h"
@@ -264,7 +266,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			for (UINT m = 0; m < model->GetMeshCount(); ++m)
 			{
 				const StaticMeshData& meshData = model->GetMeshData(m);
-				pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
+				VertexDeformationView deformation;
+				const auto vertexView = VertexDeformation::TryResolveStaticMesh(i, m, deformation) ?
+					deformation.CurrentView : meshData.VertexBufferView;
+				pCommandList->IASetVertexBuffers(0, 1, &vertexView);
 				pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 				pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
 			}
@@ -274,6 +279,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
 	if (renderPass == RenderPass::Velocity)
 	{
+		if (RenderConfiguration::GetRenderMode() != RenderMode::DEFERRED) return;
 		ID3D12GraphicsCommandList* commandList = GraphicsDevice::GetCommandList();
 		ID3D12PipelineState* pso = PsoManager::GetVelocityGeometryPso();
 		if (!commandList || !pso) return;
@@ -300,6 +306,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 		for (EntityID entity : World::GetView<AnimationModelComponent>())
 		{
 			auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
+			if (MaterialSystem::IsTransparent(entity)) continue;
 			AnimationModelResource* model = ModelManager::GetAnimModel(component.ModelId);
 			if (!model || !ComponentManager::HasComponent<TransformComponent>(entity)) continue;
 
@@ -328,6 +335,13 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 		for (EntityID entity : World::GetView<StaticModelComponent>())
 		{
 			auto& component = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
+			if (MaterialSystem::IsTransparent(entity)) continue;
+			if (ComponentManager::HasComponent<MeshComponent>(entity) &&
+				ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment &&
+				Atmosphere::GetParameters().Enabled && Atmosphere::GetParameters().PhysicalSky)
+			{
+				continue;
+			}
 			StaticModelResource* model = ModelManager::GetStaticModel(component.ModelId);
 			if (!model || !ComponentManager::HasComponent<TransformComponent>(entity)) continue;
 			setConstants(entity);
@@ -335,6 +349,12 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			{
 				const StaticMeshData& data = model->GetMeshData(mesh);
 				D3D12_VERTEX_BUFFER_VIEW views[2] = { data.VertexBufferView, data.VertexBufferView };
+				VertexDeformationView deformation;
+				if (VertexDeformation::TryResolveStaticMesh(entity, mesh, deformation))
+				{
+					views[0] = deformation.CurrentView;
+					views[1] = deformation.PreviousView;
+				}
 				commandList->IASetVertexBuffers(0, 2, views);
 				commandList->IASetIndexBuffer(&data.IndexBufferView);
 				commandList->DrawIndexedInstanced(data.IndexCount, 1, 0, 0, 0);
@@ -695,6 +715,12 @@ ID3D12PipelineState* lastPso = nullptr;
 		auto staticEntities = World::GetView<StaticModelComponent>();
 		for (EntityID i : staticEntities)
 		{
+			if (ComponentManager::HasComponent<MeshComponent>(i) &&
+				ComponentManager::GetComponentUnchecked<MeshComponent>(i).IsEnvironment &&
+				Atmosphere::GetParameters().Enabled && Atmosphere::GetParameters().PhysicalSky)
+			{
+				continue;
+			}
 			if (InstancingSystem::CanInstance(i)) continue;
 			auto& staticComp = ComponentManager::GetComponentUnchecked<StaticModelComponent>(i);
 			if (staticComp.ModelId < 0)
@@ -851,7 +877,8 @@ ID3D12PipelineState* lastPso = nullptr;
 
 			const XMMATRIX world = XMLoadFloat4x4(
 				&ComponentManager::GetComponentUnchecked<TransformComponent>(dc.EntityID).WorldMatrix);
-			const bool indirectBaseDrawn = !useMeshShaders && m_IndirectDraws && m_IndirectDraws->ExecutePrimary(
+			const bool deforming = VertexDeformation::IsRequested(dc.EntityID);
+			const bool indirectBaseDrawn = !deforming && !useMeshShaders && m_IndirectDraws && m_IndirectDraws->ExecutePrimary(
 				pCommandList,
 				dc.model,
 				dc.EntityID,
@@ -865,6 +892,9 @@ ID3D12PipelineState* lastPso = nullptr;
 			for (UINT m = 0; m < dc.model->GetMeshCount(); m++)
 			{
 				const StaticMeshData& meshData = dc.model->GetMeshData(m);
+				VertexDeformationView deformation;
+				const auto vertexView = VertexDeformation::TryResolveStaticMesh(dc.EntityID, m, deformation) ?
+					deformation.CurrentView : meshData.VertexBufferView;
 
 				if (meshData.TextureIndex >= 0)
 				{
@@ -877,16 +907,21 @@ ID3D12PipelineState* lastPso = nullptr;
 					CD3DX12_GPU_DESCRIPTOR_HANDLE entitySrvHandle(heapStart, dc.srvIndex, cbvIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, entitySrvHandle);
 				}
+				MeshShaderPipeline::Geometry geometry;
+				geometry.Vertices = deformation.CurrentResource ? deformation.CurrentResource : meshData.VertexBuffer.Get();
+				geometry.Indices = meshData.IndexBuffer.Get();
+				geometry.VertexView = vertexView;
+				geometry.IndexView = meshData.IndexBufferView;
+				geometry.ElementCount = meshData.IndexCount;
+				XMFLOAT3 localCenter = dc.model->GetAabbCenter(), localExtents = dc.model->GetAabbExtents();
+				VertexDeformation::TryGetLocalBounds(dc.EntityID, localCenter, localExtents);
 				const bool meshShaderDrawn = useMeshShaders && MeshShaderPipeline::Draw(
-					pCommandList,
-					meshData,
-					dc.model->GetAabbCenter(),
-					dc.model->GetAabbExtents());
+					pCommandList, geometry, localCenter, localExtents);
 
 				if (!meshShaderDrawn && !indirectBaseDrawn && !occlusionPhaseTwo)
 				{
 					pCommandList->SetPipelineState(dc.pso);
-					pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
+					pCommandList->IASetVertexBuffers(0, 1, &vertexView);
 					pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 					pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
 				}
@@ -920,7 +955,7 @@ ID3D12PipelineState* lastPso = nullptr;
 						{
 							pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
 						}
-						pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
+						pCommandList->IASetVertexBuffers(0, 1, &vertexView);
 						pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 						pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
 					}
@@ -935,7 +970,10 @@ ID3D12PipelineState* lastPso = nullptr;
 						{
 							pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
 						}
-						pCommandList->IASetVertexBuffers(0, 1, &meshData.TeoVertexBufferViews[teoMode]);
+						VertexDeformationView outlineDeformation;
+						const auto outlineView = VertexDeformation::TryResolveStaticMesh(dc.EntityID, m, outlineDeformation, teoMode) ?
+							outlineDeformation.CurrentView : meshData.TeoVertexBufferViews[teoMode];
+						pCommandList->IASetVertexBuffers(0, 1, &outlineView);
 						pCommandList->IASetIndexBuffer(&meshData.TeoIndexBufferViews[teoMode]);
 						pCommandList->DrawIndexedInstanced(meshData.TeoIndexCounts[teoMode], 1, 0, 0, 0);
 					}

@@ -2,6 +2,7 @@
 
 #include "ecs.h"
 #include "componentmanager.h"
+#include "daynightcycle.h"
 #include <vector>
 
 enum class ProjectPlayState : int
@@ -27,11 +28,16 @@ class ProjectManager final
 		PostProcessComponent PostProcess{};
 		bool HasTimeline = false;
 		TimelineComponent Timeline{};
+		bool HasProceduralMotion = false;
+		ProceduralMotionComponent ProceduralMotion{};
+		bool HasLight = false;
+		LightComponent Light{};
 	};
 
 	inline static ProjectPlayState s_State = ProjectPlayState::Edit;
 	inline static vector<RuntimeSnapshot> s_RuntimeSnapshots{};
 	inline static uint64_t s_PlaySession = 0;
+	inline static DayNightCycle::Settings s_EditorDayNight{};
 
 	static void CaptureRuntimeState();
 	static void RestoreRuntimeState();

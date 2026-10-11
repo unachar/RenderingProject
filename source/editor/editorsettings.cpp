@@ -12,6 +12,10 @@
 #include "systemmanager.h"
 #include "texturemanager.h"
 #include "world.h"
+#include "atmosphere.h"
+#include "simulationconfiguration.h"
+#include "raytracing.h"
+#include "nrddenoiser.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -160,6 +164,20 @@ void ImGuiManager::DrawProjectSettingsWindow()
 		ImGui::Text("シーン解像度: %u x %u", GraphicsDevice::GetSceneWidth(), GraphicsDevice::GetSceneHeight());
 		ImGui::TextUnformatted("描画パス: Deferred");
 	}
+	if (ImGui::CollapsingHeader("レイトレーシング", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		ImGui::TextWrapped("%s", Raytracing::GetStatus());
+		ImGui::BeginDisabled(!Raytracing::IsAvailable());
+		auto& rays = Raytracing::GetSettings();
+		ImGui::Checkbox("レイトレーシングを使用", &rays.Enabled);
+		ImGui::Checkbox("全ライトのレイトレーシング影", &rays.Shadows);
+		ImGui::Checkbox("レイトレーシング反射", &rays.Reflections);
+		ImGui::Checkbox("レイトレーシング AO", &rays.AmbientOcclusion);
+		ImGui::BeginDisabled(!NrdDenoiser::IsCompiled());
+		ImGui::Checkbox("NVIDIA NRD でノイズを除去", &rays.Denoise);
+		ImGui::EndDisabled();
+		ImGui::EndDisabled();
+	}
 	if (ImGui::Button("プロジェクト設定を保存")) SaveProjectSettings();
 	ImGui::SameLine();
 	ImGui::TextDisabled("Save/project_environment.cfg");
@@ -202,13 +220,13 @@ void ImGuiManager::DrawProjectSettingsWindow()
 	if (ImGui::CollapsingHeader("Advanced GPU", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 		bool meshShaders = RendererSettings::GetMeshShadersEnabled();
-		ImGui::BeginDisabled(!MeshShaderPipeline::IsSupported());
+		ImGui::BeginDisabled(!MeshShaderPipeline::IsAvailable());
 		if (ImGui::Checkbox("Mesh Shader", &meshShaders))
 			RendererSettings::SetMeshShadersEnabled(meshShaders);
 		ImGui::EndDisabled();
 		ImGui::SameLine();
 		const char* statusText4;
-		if (MeshShaderPipeline::IsSupported())
+		if (MeshShaderPipeline::IsAvailable())
 		{
 			statusText4 = "対応";
 		}
@@ -310,6 +328,12 @@ void ImGuiManager::DrawProjectSettingsWindow()
 
 	if (ImGui::CollapsingHeader("シャドウ", ImGuiTreeNodeFlags_DefaultOpen))
 	{
+		const bool raytracedShadowsSupported = Raytracing::IsAvailable();
+		if (raytracedShadowsSupported)
+		{
+			ImGui::TextWrapped("この GPU の影はレイトレーシング設定で制御します。以下は非対応 GPU 用のシャドウマップ設定です。");
+		}
+		ImGui::BeginDisabled(raytracedShadowsSupported);
 		int method = static_cast<int>(RendererSettings::GetShadowMapMethod());
 		const char* methods[] = { "ShadowMap", "Virtual ShadowMap" };
 		if (ImGui::Combo("方式", &method, methods, IM_ARRAYSIZE(methods)))
@@ -434,6 +458,7 @@ void ImGuiManager::DrawProjectSettingsWindow()
 		ImGui::Text("確保済み深度プール: %.0f MB", allocatedMemoryMb);
 		ImGui::TextWrapped("Virtual ShadowMap はカメラ周辺に複数のクリップマップを配置し、受光点に必要な最も細かいレベルを選択します。");
 		if (ImGui::Button("シャドウ設定を初期値へ戻す")) RendererSettings::ResetShadowDefaults();
+		ImGui::EndDisabled();
 	}
 
 	if (ImGui::CollapsingHeader("Local Height Fog", ImGuiTreeNodeFlags_DefaultOpen))
@@ -486,12 +511,18 @@ void ImGuiManager::DrawProjectSettingsWindow()
 
 void ImGuiManager::SaveProjectSettings()
 {
+	char validationMode[8]{};
+	if (GetEnvironmentVariableA("DX12_VALIDATION_MODE", validationMode, sizeof(validationMode)) > 0 && atoi(validationMode) != 0)
+	{
+		return;
+	}
 	error_code ec;
 	filesystem::create_directories("Save", ec);
 	ofstream stream("Save/project_environment.cfg", ios::trunc);
 	if (!stream) return;
 	stream << fixed << setprecision(7);
 	stream << "version=1\n";
+	SimulationConfiguration::Save(stream);
 	stream << "vsync=" << (static_cast<int>(World::IsVSyncEnabled())) << '\n';
 	stream << "fixed_fps=" << (static_cast<int>(World::IsFixedFrameRateEnabled())) << '\n';
 	stream << "target_fps=" << World::GetTargetFrameRate() << '\n';
@@ -572,11 +603,15 @@ void ImGuiManager::LoadProjectSettings()
 		const string value = line.substr(separator + 1);
 		try
 		{
+			if (SimulationConfiguration::TryLoad(key, value))
+			{
+				continue;
+			}
 			if (key == "vsync") World::SetVSyncEnabled(stoi(value) != 0);
 			else if (key == "fixed_fps") World::SetFixedFrameRateEnabled(stoi(value) != 0);
 			else if (key == "target_fps") World::SetTargetFrameRate(stoi(value));
 			else if (key == "resolution_scale") RenderConfiguration::SetResolutionScale(stof(value));
-			else if (key == "upscale_mode") RendererSettings::SetUpscaleMode(static_cast<UpscaleMode>(clamp(stoi(value), 0, 2)));
+			else if (key == "upscale_mode") RendererSettings::SetUpscaleMode(static_cast<UpscaleMode>(clamp(stoi(value), 0, 3)));
 			else if (key == "upscale_quality") RendererSettings::SetUpscaleQuality(static_cast<UpscaleQuality>(clamp(stoi(value), 0, 4)));
 			else if (key == "fsr_sharpness") RendererSettings::SetFsrSharpness(stof(value));
 			else if (key == "nis_sharpness") RendererSettings::SetNisSharpness(stof(value));

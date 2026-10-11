@@ -1169,7 +1169,7 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 		auto& sun = ComponentManager::GetComponentUnchecked<SunComponent>(entity);
 		bool sunChanged = false;
 		sunChanged |= DrawAxisFloat3("注視点", sun.Target, 0.05f);
-		sunChanged |= ImGui::DragFloat("表示半径", &sun.VisualRadius, 0.05f, 0.1f, 100.0f);
+		ImGui::TextWrapped("仮想の太陽です。位置からターゲットへ向かう平行光を放ちます。空の太陽は大気設定で描画します。");
 		sunChanged |= ImGui::Checkbox("Directional同期", &sun.SyncDirectionalLight);
 		if (sunChanged)
 		{

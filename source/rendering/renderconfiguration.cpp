@@ -125,6 +125,10 @@ void RenderConfiguration::Resize(UINT width, UINT height)
 	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
 	m_Device->CreateDepthStencilView(m_DepthStencilBuffer.Get(), &dsvDesc,
 		m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
+	dsvDesc.Flags = D3D12_DSV_FLAG_READ_ONLY_DEPTH;
+	m_Device->CreateDepthStencilView(m_DepthStencilBuffer.Get(), &dsvDesc,
+		CD3DX12_CPU_DESCRIPTOR_HANDLE(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(),
+			g_kFULL_DEPTH_READ_DSV_INDEX, m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV)));
 	m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 
 	m_Width = width;

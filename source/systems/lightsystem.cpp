@@ -4,6 +4,7 @@
 #include "world.h"
 #include "light.h"
 #include "sun.h"
+#include "daynightcycle.h"
 
 
 	void EnsureDefaultLight()
@@ -24,7 +25,11 @@ void LightSystem::Init()
 
 void LightSystem::Update()
 {
-	Sun::SyncAll();
+	if (!Sun::MigrateLegacyGeometryBeforeFrame())
+	{
+		Debug::Log("Sun: legacy geometry migration could not wait for the GPU.\n");
+	}
+	DayNightCycle::Update(World::GetDeltaTime());
 	ComponentManager::ForEach<LightComponent, TransformComponent>(
 		[](EntityID, LightComponent& lightComponent, TransformComponent& transform)
 		{

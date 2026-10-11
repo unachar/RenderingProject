@@ -5,6 +5,7 @@
 struct AtmosphereParameters
 {
 	bool Enabled = true;
+	bool PhysicalSky = true;
 	float RayleighStrength = 0.42f;
 	float MieStrength = 0.075f;
 	float Density = 0.36f;

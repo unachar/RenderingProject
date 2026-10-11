@@ -14,9 +14,6 @@ void RenderFrame::BeginDraw()
 	{
 		WaitForSingleObjectEx(m_FrameLatencyWaitableObject, 1000, TRUE);
 	}
-	RenderConfiguration::ApplyPendingRenderMode();
-	RenderConfiguration::ApplyPendingHdr();
-	RenderConfiguration::ApplyPendingResolutionScale();
 	LightingResources::BeginFrame();
 
 	m_CommandAllocator[m_FrameIndex]->Reset();

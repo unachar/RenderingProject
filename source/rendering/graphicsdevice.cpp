@@ -16,6 +16,9 @@
 #include "lightinstancebuilder.h"
 #include "graphicsdevice.h"
 #include "rendertargets.h"
+#include "raytracing.h"
+#include "vertexdeformation.h"
+#include "dlssupscaler.h"
 
 
 static bool g_DeviceRemovalLogged = false;
@@ -87,7 +90,39 @@ bool GraphicsDevice::Init(HWND hwnd)
 	}
 
 	WriteGraphicsLog("Step: D3D12CreateDevice\n");
-	hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_Device));
+	ComPtr<IDXGIFactory6> adapterFactory;
+	ComPtr<IDXGIAdapter1> selectedAdapter;
+	if (SUCCEEDED(m_Factory.As(&adapterFactory)))
+	{
+		for (UINT adapterIndex = 0; ; ++adapterIndex)
+		{
+			selectedAdapter.Reset();
+			const HRESULT adapterResult = adapterFactory->EnumAdapterByGpuPreference(
+				adapterIndex, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&selectedAdapter));
+			if (FAILED(adapterResult))
+			{
+				break;
+			}
+			DXGI_ADAPTER_DESC1 adapterDescription{};
+			if (FAILED(selectedAdapter->GetDesc1(&adapterDescription)) ||
+				(adapterDescription.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0)
+			{
+				continue;
+			}
+			if (SUCCEEDED(D3D12CreateDevice(selectedAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_Device))))
+			{
+				char adapterName[256]{};
+				WideCharToMultiByte(CP_UTF8, 0, adapterDescription.Description, -1, adapterName, sizeof(adapterName), nullptr, nullptr);
+				WriteGraphicsLog("Adapter: %s\n", adapterName);
+				break;
+			}
+		}
+	}
+	hr = S_OK;
+	if (!m_Device)
+	{
+		hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_Device));
+	}
 	if (FAILED(hr))
 	{
 		WriteGraphicsLog("ERROR: D3D12CreateDevice failed\n");
@@ -211,7 +246,7 @@ bool GraphicsDevice::Init(HWND hwnd)
 	meshHiZRanges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 22);
 	meshHiZRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 23);
 
-	CD3DX12_ROOT_PARAMETER rootParametersAll[16];
+	CD3DX12_ROOT_PARAMETER rootParametersAll[18];
 	rootParametersAll[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[1].InitAsDescriptorTable(1, &rangesTex[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -228,6 +263,8 @@ bool GraphicsDevice::Init(HWND hwnd)
 	rootParametersAll[13].InitAsConstants(16, 4, 0, D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[14].InitAsDescriptorTable(1, &meshHiZRanges[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[15].InitAsDescriptorTable(1, &meshHiZRanges[1], D3D12_SHADER_VISIBILITY_ALL);
+	rootParametersAll[16].InitAsShaderResourceView(25, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+	rootParametersAll[17].InitAsConstantBufferView(5, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 
 	CD3DX12_STATIC_SAMPLER_DESC sampler {};
 
@@ -398,6 +435,8 @@ if (!ShaderPipelines::CreatePostProcessPipeline()) return false;
 	SpatialUpscaler::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	VisibilityBuffer::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	ScreenSpaceEffects::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	Raytracing::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	DlssUpscaler::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	OcclusionCulling::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	MeshShaderPipeline::Initialize(m_Device.Get(), ShaderPipelines::GetModelRootSignature());
 	LightInstanceBuilder::Initialize(m_Device.Get());
@@ -471,6 +510,9 @@ void GraphicsDevice::Uninit()
 	SpatialUpscaler::Shutdown();
 	VisibilityBuffer::Shutdown();
 	ScreenSpaceEffects::Shutdown();
+	Raytracing::Shutdown();
+	VertexDeformation::Shutdown();
+	DlssUpscaler::Shutdown();
 	OcclusionCulling::Shutdown();
 	MeshShaderPipeline::Shutdown();
 	LightInstanceBuilder::Shutdown();

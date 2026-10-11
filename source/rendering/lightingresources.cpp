@@ -11,6 +11,9 @@
 #include "light.h"
 #include "camera.h"
 #include "atmosphere.h"
+#include "daynightcycle.h"
+#include "vertexdeformation.h"
+#include "raytracing.h"
 #include "renderersettings.h"
 #include "localheightfog.h"
 #include "lightinstancebuilder.h"
@@ -154,6 +157,8 @@ namespace
 		XMFLOAT4 AtmosphereColor0 = { 0.46f, 0.62f, 1.0f, 0.55f };
 		XMFLOAT4 AtmosphereColor1 = { 1.0f, 0.82f, 0.56f, 0.035f };
 		XMFLOAT4 AtmosphereCamera = { 0.0f, 0.0f, 0.0f, 0.0f };
+		XMFLOAT4 SkySunDirection{};
+		XMFLOAT4 SkyParameters{};
 	};
 	static_assert(
 		sizeof(LightConstants) <= RendererState::g_kLIGHT_CB_ALIGNED_SIZE,
@@ -201,6 +206,10 @@ namespace
 	void WriteAtmosphereConstants(LightConstants& constants)
 	{
 		const AtmosphereParameters& atmosphere = Atmosphere::GetParameters();
+		const auto& cycle = DayNightCycle::GetSettings();
+		constants.SkySunDirection = DayNightCycle::GetSunDirection();
+		constants.SkyParameters = { static_cast<float>(atmosphere.Enabled && atmosphere.PhysicalSky),
+			DayNightCycle::GetDaylight(), cycle.SkyIntensity, cycle.StarBrightness };
 		constants.AtmosphereParams0 = XMFLOAT4(
 			static_cast<float>(atmosphere.Enabled),
 			max(0.0f, atmosphere.RayleighStrength),
@@ -682,6 +691,14 @@ namespace
 			radius = max(sqrtf(extents.x * extents.x + extents.y * extents.y + extents.z * extents.z), 0.05f);
 		}
 
+		XMFLOAT3 localCenter, localExtents;
+		if (VertexDeformation::TryGetLocalBounds(entity, localCenter, localExtents))
+		{
+			XMStoreFloat3(&center, XMVector3TransformCoord(XMLoadFloat3(&localCenter), XMLoadFloat4x4(&transform.WorldMatrix)));
+			const XMVECTOR scaledExtents = XMVectorMultiply(XMLoadFloat3(&localExtents), XMLoadFloat3(&transform.Scale));
+			radius = max(XMVectorGetX(XMVector3Length(scaledExtents)), 0.05f);
+		}
+
 		const XMMATRIX viewProjection = XMMatrixTranspose(transposedViewProjection);
 		const XMVECTOR worldCenter = XMLoadFloat3(&center);
 		const XMVECTOR projectedCenter = XMVector3TransformCoord(worldCenter, viewProjection);
@@ -732,7 +749,14 @@ namespace
 				fabsf(transform.Scale.z)
 			};
 
-			if (ComponentManager::HasComponent<AABBComponent>(entity))
+			XMFLOAT3 deformedCenter, deformedExtents;
+			if (VertexDeformation::TryGetLocalBounds(entity, deformedCenter, deformedExtents))
+			{
+				const XMVECTOR center = XMVector3TransformCoord(XMLoadFloat3(&deformedCenter), XMLoadFloat4x4(&transform.WorldMatrix));
+				const XMVECTOR scaledExtents = XMVectorMultiply(XMLoadFloat3(&deformedExtents), XMLoadFloat3(&absScale));
+				IncludeBoundsSphere(center, XMVectorGetX(XMVector3Length(scaledExtents)), boundsMin, boundsMax, hasBounds);
+			}
+			else if (ComponentManager::HasComponent<AABBComponent>(entity))
 			{
 				const auto& aabb = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
 				XMFLOAT3 scaledCenter =
@@ -1141,6 +1165,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 	}
 	const RuntimeLightState& runtimeLight = *runtimeLightSelection;
 	LightConstants constants{};
+	Raytracing::BeginLightList();
 	WriteAtmosphereConstants(constants);
 	for (UINT i = 0; i < RendererState::g_kMAX_SHADER_LIGHTS; ++i)
 	{
@@ -1516,6 +1541,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 
 
 		constants.LightShadowData[lightIndex] = XMFLOAT4(-1.0f, 0.0f, 0.0f, 0.0f);
+		Raytracing::SetLightShadowFlag(lightIndex, light.CastShadow && light.RenderMode == LightRenderMode::Physical);
 		const int shadowIndex = FindShadowLightIndex(candidate.Entity);
 		if (shadowIndex >= 0)
 		{

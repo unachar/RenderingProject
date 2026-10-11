@@ -23,6 +23,8 @@ public:
 		((g_kMAX_LIGHT_GRID_HEIGHT + g_kLIGHT_TILE_SIZE - 1) / g_kLIGHT_TILE_SIZE);
 
 	static constexpr UINT g_kMAX_SHADOW_LIGHTS = 8;
+	static constexpr UINT g_kFULL_DEPTH_READ_DSV_INDEX = g_kMAX_SHADOW_LIGHTS + 2;
+	static constexpr UINT g_kLOW_DEPTH_READ_DSV_INDEX = g_kFULL_DEPTH_READ_DSV_INDEX + 1;
 	static constexpr UINT g_kMAX_VIRTUAL_SHADOW_LEVELS = 4;
 
 
@@ -118,7 +120,7 @@ protected:
 	static ComPtr<ID3D12Resource> m_PostProcessConstantBuffer;
 	static ComPtr<ID3D12Resource> m_LightConstantBuffer;
 	static ComPtr<ID3D12Resource> m_PBRConstantBuffer;
-	static void* m_pPostProcessCbvDataBegin;
+	static UINT8* m_pPostProcessCbvDataBegin;
 	static void* m_pLightCbvDataBegin;
 	static void* m_pPBRCbvDataBegin;
 	static RenderMode m_RenderMode;
@@ -171,13 +173,15 @@ public:
 
 
 	static constexpr UINT g_kCB_ALIGNED_SIZE = (sizeof(ConstantBuffer3D) + 255) & ~255;
-	static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * 48 + 255) & ~255;
+	static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * 56 + 255) & ~255;
+	static constexpr UINT g_kPP_CB_SLOTS_PER_FRAME = 32;
+	static UINT GetPostProcessFrameOffset() { return m_FrameIndex * g_kPP_CB_SLOTS_PER_FRAME * g_kPP_CB_ALIGNED_SIZE; }
 	static constexpr UINT g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES = 16;
 	static constexpr UINT g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS = 16;
 	static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT =
 		10 + g_kMAX_SHADER_LIGHTS * 10 + g_kMAX_VIRTUAL_SHADOW_LEVELS * 6 + 16 + 3 +
 		g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS * 2 + 1 +
-		g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES * 3 + 1;
+		g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES * 3 + 1 + 2;
 	static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;
 	static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 512 + 255) & ~255;
 	static constexpr UINT g_kPBR_CB_SLOT_COUNT = g_kMAX_ENTITIES + 1;
@@ -239,7 +243,7 @@ public:
 	static constexpr UINT g_kHIZ_UAV_START_INDEX = g_kHIZ_SRV_START_INDEX + 2;
 	static constexpr UINT g_kHIZ_MIP_SRV_START_INDEX = g_kHIZ_UAV_START_INDEX + 2 * g_kHIZ_MAX_MIPS;
 
-	static constexpr UINT g_kENGINE_DESCRIPTOR_END = g_kDEPTH_SRV_INDEX + 128;
+	static constexpr UINT g_kENGINE_DESCRIPTOR_END = g_kDEPTH_SRV_INDEX + 256;
 	static_assert(g_kHIZ_MIP_SRV_START_INDEX + 2 * g_kHIZ_MAX_MIPS <= g_kENGINE_DESCRIPTOR_END + 1,
 		"The Hi-Z descriptor range exceeds the engine-owned descriptor range.");
 	static constexpr UINT g_kMAX_DYNAMIC_VERTICES = 65536;

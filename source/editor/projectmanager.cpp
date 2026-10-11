@@ -18,6 +18,7 @@ void ProjectManager::Uninit()
 
 void ProjectManager::CaptureRuntimeState()
 {
+	s_EditorDayNight = DayNightCycle::GetSettings();
 	s_RuntimeSnapshots.clear();
 	const auto& entities = Registry::GetEntities();
 	for (EntityID entity = 0; entity < static_cast<EntityID>(entities.size()); ++entity)
@@ -48,12 +49,23 @@ void ProjectManager::CaptureRuntimeState()
 		snapshot.HasTimeline = ComponentManager::HasComponent<TimelineComponent>(entity);
 		if (snapshot.HasTimeline)
 			snapshot.Timeline = ComponentManager::GetComponentUnchecked<TimelineComponent>(entity);
+		snapshot.HasProceduralMotion = ComponentManager::HasComponent<ProceduralMotionComponent>(entity);
+		if (snapshot.HasProceduralMotion)
+		{
+			snapshot.ProceduralMotion = ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(entity);
+		}
+		snapshot.HasLight = ComponentManager::HasComponent<LightComponent>(entity);
+		if (snapshot.HasLight)
+		{
+			snapshot.Light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
+		}
 		s_RuntimeSnapshots.push_back(move(snapshot));
 	}
 }
 
 void ProjectManager::RestoreRuntimeState()
 {
+	DayNightCycle::GetSettings() = s_EditorDayNight;
 	for (const RuntimeSnapshot& snapshot : s_RuntimeSnapshots)
 	{
 		if (!Registry::IsAlive(snapshot.Entity))
@@ -65,6 +77,18 @@ void ProjectManager::RestoreRuntimeState()
 			auto restored = snapshot.Transform;
 			restored.IsDirty = true;
 			ComponentManager::GetComponentUnchecked<TransformComponent>(snapshot.Entity) = restored;
+		}
+		if (snapshot.HasProceduralMotion && ComponentManager::HasComponent<ProceduralMotionComponent>(snapshot.Entity))
+		{
+			ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(snapshot.Entity) = snapshot.ProceduralMotion;
+		}
+		else if (!snapshot.HasProceduralMotion && ComponentManager::HasComponent<ProceduralMotionComponent>(snapshot.Entity))
+		{
+			ComponentManager::RemoveComponent(snapshot.Entity, ComponentType::PROCEDURAL_MOTION);
+		}
+		if (snapshot.HasLight && ComponentManager::HasComponent<LightComponent>(snapshot.Entity))
+		{
+			ComponentManager::GetComponentUnchecked<LightComponent>(snapshot.Entity) = snapshot.Light;
 		}
 		if (snapshot.HasAnimation && ComponentManager::HasComponent<AnimationModelComponent>(snapshot.Entity))
 		{

@@ -15,6 +15,7 @@ struct ID3D12DescriptorHeap;
 
 class ImGuiManager
 {
+    friend class RenderingValidation;
 private:
 	inline static bool m_IsClosing = false;
 	inline static int m_renderMode = -1;
@@ -39,6 +40,8 @@ private:
 	inline static bool m_ShowMeshOutlineWindow = false;
 	inline static bool m_ShowMeshShadingWindow = false;
 	inline static bool m_ShowAtmosphereWindow = false;
+	inline static bool m_ShowProceduralWindow = false;
+	inline static bool m_ShowRaytracingWindow = false;
 	inline static bool m_ShowProjectSettingsWindow = false;
 	inline static bool m_ShowPhysicsSettingsWindow = false;
 	inline static bool m_ProjectSettingsLoaded = false;
@@ -80,6 +83,10 @@ private:
 		LightComponent Light{};
 		bool HasSun = false;
 		SunComponent Sun{};
+		bool HasProceduralTerrain = false;
+		ProceduralTerrainComponent ProceduralTerrain{};
+		bool HasProceduralMotion = false;
+		ProceduralMotionComponent ProceduralMotion{};
 		bool HasMaterial = false;
 		MaterialComponent Material{};
 		bool HasAabb = false;
@@ -128,6 +135,8 @@ private:
 	static void DrawMeshOutlineWindow();
 	static void DrawMeshShadingWindow();
 	static void DrawAtmosphereWindow();
+	static void DrawProceduralWindow();
+	static void DrawRaytracingWindow();
 	static void DrawProjectSettingsWindow();
 	static void DrawPhysicsSettingsWindow();
 	static void LoadProjectSettings();

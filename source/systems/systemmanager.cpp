@@ -21,6 +21,7 @@
 #include "modelsystem.h"
 #include "instancingsystem.h"
 #include "debugsystem.h"
+#include "proceduralsystem.h"
 
 
 bool SystemManager::Init()
@@ -41,6 +42,7 @@ bool SystemManager::Init()
 	addSystem(make_unique<TimeLineSystem>());
 	addSystem(make_unique<AnimationSystem>());
 
+	addSystem(make_unique<ProceduralSystem>());
 	addSystem(make_unique<PhysicsSystem>());
 	addSystem(make_unique<MaterialSystem>());
 	addSystem(make_unique<LightSystem>());

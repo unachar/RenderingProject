@@ -22,6 +22,7 @@ void Sky::Create()
 
 	
 	entity.SetName(name);
+	entity.Get<MeshComponent>().IsEnvironment = true;
 
 	entity.Get<TransformComponent>().Scale = scale;
 

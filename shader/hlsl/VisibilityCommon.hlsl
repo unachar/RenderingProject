@@ -13,7 +13,8 @@ float2 EncodeVisibilityOctahedron(float3 normal)
     float2 encoded = normal.xy;
     if (normal.z < 0.0f)
     {
-        encoded = (1.0f - abs(encoded.yx)) * (encoded.xy >= 0.0f ? 1.0f : -1.0f);
+        float2 signValue = float2(encoded.x >= 0.0f ? 1.0f : -1.0f, encoded.y >= 0.0f ? 1.0f : -1.0f);
+        encoded = (1.0f - abs(encoded.yx)) * signValue;
     }
     return encoded * 0.5f + 0.5f;
 }

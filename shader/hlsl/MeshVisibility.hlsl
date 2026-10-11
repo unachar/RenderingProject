@@ -26,7 +26,8 @@ cbuffer MeshDispatchConstants : register(b4)
     uint HiZHeight;
     uint HiZMipCount;
     float4 MeshLocalCenter;
-    float4 MeshLocalExtents;
+    float3 MeshLocalExtents;
+    uint MeshletBase;
 };
 
 struct MeshPayload
@@ -35,6 +36,20 @@ struct MeshPayload
 };
 
 groupshared MeshPayload AmplificationPayload;
+groupshared float3 MeshletMinimum[64];
+groupshared float3 MeshletMaximum[64];
+groupshared uint MeshletVisible;
+
+uint LoadMeshIndex(uint index)
+{
+    if (MeshIndexIs16Bit == 2u) return index; // non-indexed procedural geometry
+    if (MeshIndexIs16Bit != 0u)
+    {
+        uint packed = MeshIndices.Load((index >> 1u) * 4u);
+        return (index & 1u) != 0u ? packed >> 16u : packed & 0xffffu;
+    }
+    return MeshIndices.Load(index * 4u);
+}
 
 bool MeshObjectOccluded(Texture2D<float> hierarchy, float2 uvMinimum, float2 uvMaximum, float nearestDepth)
 {
@@ -49,7 +64,7 @@ bool MeshObjectOccluded(Texture2D<float> hierarchy, float2 uvMinimum, float2 uvM
     return depth < nearestDepth - 0.0015f;
 }
 
-bool MeshObjectVisible()
+bool MeshBoundsVisible(float3 center, float3 extents)
 {
     bool outsideLeft = true;
     bool outsideRight = true;
@@ -68,7 +83,7 @@ bool MeshObjectVisible()
             (corner & 1u) ? 1.0f : -1.0f,
             (corner & 2u) ? 1.0f : -1.0f,
             (corner & 4u) ? 1.0f : -1.0f);
-        float3 localPosition = MeshLocalCenter.xyz + MeshLocalExtents.xyz * signValue;
+        float3 localPosition = center + extents * signValue;
         float4 worldPosition = mul(float4(localPosition, 1.0f), World);
         float4 viewPosition = mul(worldPosition, View);
         float4 clipPosition = mul(viewPosition, Projection);
@@ -99,21 +114,43 @@ bool MeshObjectVisible()
     return CurrentHiZValid == 0u || !MeshObjectOccluded(CurrentHiZ, uvMinimum, uvMaximum, nearestDepth);
 }
 
-[numthreads(1, 1, 1)]
-void ASMain(uint3 groupId : SV_GroupID)
+[numthreads(64, 1, 1)]
+void ASMain(uint3 groupId : SV_GroupID, uint threadIndex : SV_GroupIndex)
 {
-    AmplificationPayload.MeshletIndex = groupId.x;
-    DispatchMesh(MeshObjectVisible() ? 1u : 0u, 1u, 1u, AmplificationPayload);
-}
-
-uint LoadMeshIndex(uint index)
-{
-    if (MeshIndexIs16Bit != 0u)
+    uint meshlet = MeshletBase + groupId.x;
+    uint firstIndex = meshlet * 192u + threadIndex * 3u;
+    float3 low = 3.402823e+38f;
+    float3 high = -3.402823e+38f;
+    if (firstIndex + 2u < MeshIndexCount)
     {
-        uint packed = MeshIndices.Load((index >> 1u) * 4u);
-        return (index & 1u) != 0u ? packed >> 16u : packed & 0xffffu;
+        [unroll] for (uint corner = 0; corner < 3; ++corner)
+        {
+            float3 position = MeshVertices[LoadMeshIndex(firstIndex + corner)].Position;
+            low = min(low, position);
+            high = max(high, position);
+        }
     }
-    return MeshIndices.Load(index * 4u);
+    MeshletMinimum[threadIndex] = low;
+    MeshletMaximum[threadIndex] = high;
+    GroupMemoryBarrierWithGroupSync();
+    [unroll] for (uint stride = 32; stride > 0; stride >>= 1)
+    {
+        if (threadIndex < stride)
+        {
+            MeshletMinimum[threadIndex] = min(MeshletMinimum[threadIndex], MeshletMinimum[threadIndex + stride]);
+            MeshletMaximum[threadIndex] = max(MeshletMaximum[threadIndex], MeshletMaximum[threadIndex + stride]);
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (threadIndex == 0)
+    {
+        AmplificationPayload.MeshletIndex = meshlet;
+        float3 center = (MeshletMinimum[0] + MeshletMaximum[0]) * 0.5f;
+        float3 extents = max((MeshletMaximum[0] - MeshletMinimum[0]) * 0.5f, 0.0001f);
+        MeshletVisible = MeshBoundsVisible(center, extents) ? 1u : 0u;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    DispatchMesh(MeshletVisible, 1u, 1u, AmplificationPayload);
 }
 
 PSInput3D BuildMeshVertex(uint index)

@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "vertexdeformation.h"
+#include "meshshaderpipeline.h"
 #include "rendersystem.h"
 #include "graphicsdevice.h"
 #include "shaderpipelines.h"
@@ -154,7 +156,8 @@
 
 void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
-	if (renderPass == RenderPass::OcclusionPhase2) return;
+	const bool occlusionPhaseTwo = renderPass == RenderPass::OcclusionPhase2;
+	if (occlusionPhaseTwo && !MeshShaderPipeline::IsSupported()) return;
 	if (renderPass == RenderPass::ShadowMap)
 	{
 		ID3D12GraphicsCommandList* pCommandList = GraphicsDevice::GetCommandList();
@@ -214,7 +217,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			}
 
 			writeShadowCb(i);
-			pCommandList->IASetVertexBuffers(0, 1, &mesh.VertexBufferView);
+			VertexDeformationView deformation;
+			const auto vertexView = VertexDeformation::TryResolveMesh(i, deformation) ? deformation.CurrentView : mesh.VertexBufferView;
+			pCommandList->IASetVertexBuffers(0, 1, &vertexView);
 			pCommandList->DrawInstanced(mesh.VertexCount, 1, 0, 0);
 		}
 		return;
@@ -222,6 +227,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 	if (renderPass == RenderPass::Velocity)
 	{
+		if (RenderConfiguration::GetRenderMode() != RenderMode::DEFERRED) return;
 		ID3D12GraphicsCommandList* commandList = GraphicsDevice::GetCommandList();
 		ID3D12PipelineState* pso = PsoManager::GetVelocityGeometryPso();
 		if (!commandList || !pso) return;
@@ -237,6 +243,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		auto draw = [&](EntityID entity, const D3D12_VERTEX_BUFFER_VIEW& vbv, UINT vertexCount)
 			{
 				if (!ComponentManager::HasComponent<TransformComponent>(entity) || vbv.BufferLocation == 0) return;
+				if (MaterialSystem::IsTransparent(entity)) return;
 				if (InstancingSystem::CanInstance(entity) && !InstancingSystem::IsEntityVisible(entity)) return;
 				const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
 				ConstantBuffer3D cb{};
@@ -247,6 +254,12 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				cb.PreviousViewProjection = XMMatrixTranspose(previousViewProjection);
 				commandList->SetGraphicsRootDescriptorTable(0, FrameConstants::AllocateTransientConstantBuffer(cb));
 				D3D12_VERTEX_BUFFER_VIEW views[2] = { vbv, vbv };
+				VertexDeformationView deformation;
+				if (VertexDeformation::TryResolveMesh(entity, deformation))
+				{
+					views[0] = deformation.CurrentView;
+					views[1] = deformation.PreviousView;
+				}
 				commandList->IASetVertexBuffers(0, 2, views);
 				commandList->IASetIndexBuffer(nullptr);
 				commandList->DrawInstanced(vertexCount, 1, 0, 0);
@@ -268,7 +281,8 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	}
 
 	const bool drawTransparent = (renderPass == RenderPass::OverlayScene);
-	const bool drawDeferredOpaque = RenderConfiguration::GetRenderMode() == RenderMode::DEFERRED && renderPass == RenderPass::PrimaryScene;
+	const bool drawDeferredOpaque = RenderConfiguration::GetRenderMode() == RenderMode::DEFERRED &&
+		(renderPass == RenderPass::PrimaryScene || occlusionPhaseTwo);
 	ID3D12GraphicsCommandList* pCommandList = GraphicsDevice::GetCommandList();
 	if (!pCommandList)
 	{
@@ -597,7 +611,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		{
 			cameraDepth = 0.0f;
 		}
-		m_ModelDrawCalls.push_back(DrawCall{ i, pso, srvIndex, normalSrvIndex, mesh.VertexBufferView, mesh.VertexCount, true, material, cameraDepth });
+		VertexDeformationView deformation;
+		const auto vertexView = VertexDeformation::TryResolveMesh(i, deformation) ? deformation.CurrentView : mesh.VertexBufferView;
+		m_ModelDrawCalls.push_back(DrawCall{ i, pso, srvIndex, normalSrvIndex, vertexView, mesh.VertexCount, true, material, cameraDepth });
 	}
 
 	auto sortDrawCalls = [drawTransparent](vector<DrawCall>& drawCalls)
@@ -644,6 +660,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 			for (const auto& dc : drawCalls)
 			{
+				if (occlusionPhaseTwo && (!dc.is3D || !ComponentManager::HasComponent<MeshComponent>(dc.EntityID))) continue;
 				const MaterialComponent* materialSelection = nullptr;
 				if (dc.material)
 				{
@@ -684,9 +701,25 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				}
 
 				pCommandList->IASetVertexBuffers(0, 1, &dc.vbv);
-				pCommandList->DrawInstanced(dc.vertexCount, 1, 0, 0);
+				bool meshShaderDrawn = false;
+				if (drawDeferredOpaque && dc.is3D && ComponentManager::HasComponent<MeshComponent>(dc.EntityID))
+				{
+					const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(dc.EntityID);
+					VertexDeformationView deformation;
+					MeshShaderPipeline::Geometry geometry;
+					geometry.Vertices = VertexDeformation::TryResolveMesh(dc.EntityID, deformation) ?
+						deformation.CurrentResource : mesh.VertexBuffer.Get();
+					geometry.VertexState = deformation.CurrentResource ? D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER : D3D12_RESOURCE_STATE_GENERIC_READ;
+					geometry.VertexView = dc.vbv;
+					geometry.ElementCount = dc.vertexCount;
+					XMFLOAT3 center = mesh.LocalBoundsCenter, extents = mesh.LocalBoundsExtents;
+					VertexDeformation::TryGetLocalBounds(dc.EntityID, center, extents);
+					meshShaderDrawn = MeshShaderPipeline::Draw(pCommandList, geometry, center, extents);
+				}
+				if (meshShaderDrawn) lastPso = nullptr;
+				else if (!occlusionPhaseTwo) pCommandList->DrawInstanced(dc.vertexCount, 1, 0, 0);
 
-				if (dc.is3D && outlinePso && ShouldDrawToonOutline(dc.EntityID))
+				if (!occlusionPhaseTwo && dc.is3D && outlinePso && ShouldDrawToonOutline(dc.EntityID))
 				{
 					pCommandList->SetPipelineState(outlinePso);
 					pCommandList->DrawInstanced(dc.vertexCount, 1, 0, 0);

@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "raytracing.h"
+#include "dlssupscaler.h"
 #include "postprocesspass.h"
 #include "scenepasses.h"
 #include "renderframe.h"
@@ -32,6 +34,8 @@ struct PostProcessConstants
 	XMFLOAT4 BloomParams{};
 	XMFLOAT4X4 PPInvViewProjection{};
 	XMFLOAT4X4 PPViewProjection{};
+	XMFLOAT4 RaytracingFlags{};
+	XMFLOAT4 RaytracingSunDirection{};
 };
 
 static_assert(sizeof(PostProcessConstants) <= RendererState::g_kPP_CB_ALIGNED_SIZE);
@@ -39,6 +43,10 @@ static_assert(sizeof(PostProcessConstants) <= RendererState::g_kPP_CB_ALIGNED_SI
 UpscaleMode ResolveUpscaleMode(UINT inputWidth, UINT inputHeight, UINT outputWidth, UINT outputHeight)
 {
 	UpscaleMode mode = RendererSettings::GetUpscaleMode();
+	if (mode == UpscaleMode::Dlss)
+	{
+		return DlssUpscaler::IsRequested() ? UpscaleMode::Dlss : UpscaleMode::Bilateral;
+	}
 	if (!SpatialUpscaler::IsAvailable(mode) ||
 		!SpatialUpscaler::IsScaleSupported(
 			mode,
@@ -55,8 +63,32 @@ UpscaleMode ResolveUpscaleMode(UINT inputWidth, UINT inputHeight, UINT outputWid
 
 }
 
+void PostProcessPass::UpdateCameraConstants()
+{
+	if (!m_pPostProcessCbvDataBegin)
+	{
+		return;
+	}
+	const EntityID camera = Camera::GetCameraEntity();
+	XMFLOAT3 position = { 0.0f, 0.0f, 5.0f };
+	if (camera != g_kINVALID_ENTITY && ComponentManager::HasComponent<TransformComponent>(camera))
+	{
+		position = ComponentManager::GetComponentUnchecked<TransformComponent>(camera).Position;
+	}
+	XMMATRIX view = XMMatrixIdentity();
+	XMMATRIX projection = XMMatrixIdentity();
+	Camera::GetCameraMatrices(camera, view, projection);
+	PostProcessConstants constants{};
+	constants.PPCameraPos = { position.x, position.y, position.z, 1.0f };
+	XMStoreFloat4x4(&constants.PPInvViewProjection, XMMatrixTranspose(XMMatrixInverse(nullptr, view * projection)));
+	XMStoreFloat4x4(&constants.PPViewProjection, XMMatrixTranspose(view * projection));
+	memcpy(m_pPostProcessCbvDataBegin + GetPostProcessFrameOffset(), &constants, sizeof(constants));
+}
+
 void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 {
+	UpdateCameraConstants();
+	UINT nextConstantSlot = 1; // Slot zero holds the frame camera data used by velocity and AA.
 	auto DrawFullscreenPass = [&](ID3D12PipelineState* pso, D3D12_CPU_DESCRIPTOR_HANDLE targetRtv,
 		D3D12_GPU_DESCRIPTOR_HANDLE sourceHandle, float intensity, float renderModeFlag, float deferredLightStrength,
 		D3D12_GPU_DESCRIPTOR_HANDLE atmosphereHandle = D3D12_GPU_DESCRIPTOR_HANDLE{},
@@ -65,7 +97,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 		D3D12_GPU_DESCRIPTOR_HANDLE bloomHandle = D3D12_GPU_DESCRIPTOR_HANDLE{},
 		float bloomPass = 0.0f)
 		{
-			if (!pso || !m_PostProcessRootSignature)
+			if (!pso || !m_PostProcessRootSignature || nextConstantSlot >= g_kPP_CB_SLOTS_PER_FRAME)
 			{
 				return;
 			}
@@ -81,26 +113,17 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			m_CommandList->OMSetRenderTargets(1, &targetRtv, FALSE, nullptr);
 			m_CommandList->SetPipelineState(pso);
 			m_CommandList->SetGraphicsRootSignature(m_PostProcessRootSignature.Get());
+			Raytracing::BindLighting(m_CommandList.Get(), 17, 18);
+			m_CommandList->SetGraphicsRootDescriptorTable(19, Raytracing::GetReflectionSrv());
 
 			RenderFrame::SetDescriptorHeap();
 
+			D3D12_GPU_VIRTUAL_ADDRESS constantAddress = 0;
 			if (m_pPostProcessCbvDataBegin)
 			{
-				XMFLOAT3 cameraPosition = { 0.0f, 0.0f, 5.0f };
-				EntityID cameraEntity = Camera::GetCameraEntity();
-				if (cameraEntity != g_kINVALID_ENTITY && ComponentManager::HasComponent<TransformComponent>(cameraEntity))
-				{
-					cameraPosition = ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
-				}
-
-				XMMATRIX view = XMMatrixIdentity();
-				XMMATRIX projection = XMMatrixIdentity();
-				Camera::GetCameraMatrices(cameraEntity, view, projection);
-				const XMMATRIX invViewProjection = XMMatrixInverse(nullptr, view * projection);
-
 				PostProcessConstants params{};
+				memcpy(&params, m_pPostProcessCbvDataBegin + GetPostProcessFrameOffset(), sizeof(params));
 				params.Flags = XMFLOAT4(ImGuiManager::GetExposure(), intensity, renderModeFlag, m_ResolutionScale);
-				params.PPCameraPos = XMFLOAT4(cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f);
 				params.HdrFlags = XMFLOAT4(
 					static_cast<float>(ImGuiManager::IsHdrEnabled()),
 					static_cast<float>(ImGuiManager::IsToneMapEnabled()),
@@ -111,18 +134,22 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 					config.BloomThreshold,
 					config.BloomSoftKnee,
 					config.BloomRadius);
-				XMStoreFloat4x4(&params.PPInvViewProjection, XMMatrixTranspose(invViewProjection));
-				XMStoreFloat4x4(&params.PPViewProjection, XMMatrixTranspose(view * projection));
-				auto* ppDst = static_cast<UINT8*>(m_pPostProcessCbvDataBegin) +
-					m_FrameIndex * g_kPP_CB_ALIGNED_SIZE;
+				params.RaytracingFlags = XMFLOAT4(static_cast<float>(Raytracing::IsActive()),
+					static_cast<float>(Raytracing::GetSettings().AmbientOcclusion),
+					static_cast<float>(Raytracing::GetSettings().Shadows), static_cast<float>(Raytracing::AreReflectionsActive()));
+				params.RaytracingSunDirection = Raytracing::GetSunDirection();
+				const UINT offset = GetPostProcessFrameOffset() + nextConstantSlot++ * g_kPP_CB_ALIGNED_SIZE;
+				auto* ppDst = m_pPostProcessCbvDataBegin + offset;
 				memcpy(ppDst, &params, sizeof(params));
+				memcpy(m_pPostProcessCbvDataBegin + GetPostProcessFrameOffset(), &params, sizeof(params));
+				constantAddress = m_PostProcessConstantBuffer->GetGPUVirtualAddress() + offset;
 			}
 			m_CommandList->SetGraphicsRootDescriptorTable(0, sourceHandle);
 			if (m_PostProcessConstantBuffer)
 			{
 				m_CommandList->SetGraphicsRootConstantBufferView(
 					1,
-					m_PostProcessConstantBuffer->GetGPUVirtualAddress() + m_FrameIndex * g_kPP_CB_ALIGNED_SIZE);
+					constantAddress);
 			}
 			if (m_LightConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(2, LightingResources::GetCurrentLightConstantBufferAddress());
 			int environmentSrvIndex = m_EnvironmentTextureSrvIndex;
@@ -160,6 +187,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			m_CommandList->SetGraphicsRootDescriptorTable(11, monitorSrvHandle);
 			m_CommandList->SetGraphicsRootDescriptorTable(12, ScreenSpaceEffects::GetAoSrv());
 			m_CommandList->SetGraphicsRootDescriptorTable(13, ScreenSpaceEffects::GetGiSrv());
+			m_CommandList->SetGraphicsRootDescriptorTable(16, Raytracing::GetResultSrv());
 			const D3D12_GPU_VIRTUAL_ADDRESS volumetricLightAddress =
 				LightingResources::GetCurrentVolumetricLightIndexBufferAddress();
 			if (volumetricLightAddress != 0)
@@ -199,6 +227,11 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			return;
 		}
 
+		Raytracing::Execute(m_CommandList.Get(),
+			m_GBufferTargets[static_cast<UINT>(GBufferType::DEPTH)].Get(),
+			m_GBufferTargets[static_cast<UINT>(GBufferType::NORMAL)].Get(),
+			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)],
+			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::NORMAL)], m_FrameIndex);
 		D3D12_RESOURCE_BARRIER atmosphereToRt = CD3DX12_RESOURCE_BARRIER::Transition(
 			m_GBufferTargets[atmosphereIndex].Get(),
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
@@ -382,7 +415,8 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 	D3D12_GPU_DESCRIPTOR_HANDLE upscaleSourceSrv = GetRenderTargetSrvHandle(RenderTargetType::PostProcess);
 	ID3D12Resource* upscaleSource = GetRenderTarget(RenderTargetType::PostProcess).Get();
 
-	if (needsUpscale && upscaleMode != UpscaleMode::Bilateral && GetRenderTarget(RenderTargetType::PreUpscaleAa))
+	if (needsUpscale && upscaleMode != UpscaleMode::Bilateral && upscaleMode != UpscaleMode::Dlss &&
+		GetRenderTarget(RenderTargetType::PreUpscaleAa))
 	{
 		const bool useTaa =
 			m_AntiAliasingMode == AntiAliasingMode::TAA &&
@@ -421,7 +455,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			RenderFrame::SetDescriptorHeap();
 			m_CommandList->SetGraphicsRootConstantBufferView(
 				0,
-				m_PostProcessConstantBuffer->GetGPUVirtualAddress() + m_FrameIndex * g_kPP_CB_ALIGNED_SIZE);
+				m_PostProcessConstantBuffer->GetGPUVirtualAddress() + GetPostProcessFrameOffset());
 			m_CommandList->SetGraphicsRootDescriptorTable(1, GetRenderTargetSrvHandle(RenderTargetType::PostProcess));
 			if (useTaa)
 			{
@@ -510,7 +544,41 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 		}
 	}
 
-	if (!needsUpscale)
+	bool dlssRendered = false;
+	if (needsUpscale && upscaleMode == UpscaleMode::Dlss)
+	{
+		ID3D12Resource* depth = m_GBufferTargets[static_cast<UINT>(GBufferType::DEPTH)].Get();
+		ID3D12Resource* velocity = m_GBufferTargets[static_cast<UINT>(GBufferType::VELOCITY)].Get();
+		ID3D12Resource* output = GetRenderTarget(RenderTargetType::EditorScene).Get();
+		if (depth && velocity && output)
+		{
+			D3D12_RESOURCE_BARRIER barriers[] =
+			{
+				CD3DX12_RESOURCE_BARRIER::Transition(upscaleSource, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
+				CD3DX12_RESOURCE_BARRIER::Transition(depth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
+				CD3DX12_RESOURCE_BARRIER::Transition(velocity, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
+				CD3DX12_RESOURCE_BARRIER::Transition(output, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+			};
+			m_CommandList->ResourceBarrier(_countof(barriers), barriers);
+			{
+				RenderProfiler::ScopedEvent profile("DLSS Super Resolution", m_CommandList.Get());
+				dlssRendered = DlssUpscaler::Execute(m_CommandList.Get(), m_FrameIndex, upscaleSource, upscaleSourceSrv,
+					depth, velocity, m_GBufferSrvHandles[static_cast<UINT>(GBufferType::VELOCITY)], output, m_EditorSceneUavHandle);
+			}
+			for (auto& barrier : barriers)
+			{
+				std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+			}
+			m_CommandList->ResourceBarrier(_countof(barriers), barriers);
+			RenderFrame::SetDescriptorHeap();
+		}
+	}
+
+	if (dlssRendered)
+	{
+		// DLSS has already produced the display-resolution image and antialiasing.
+	}
+	else if (!needsUpscale)
 	{
 		D3D12_RESOURCE_BARRIER barriers[] =
 		{
@@ -535,7 +603,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 		m_CommandList->ResourceBarrier(_countof(barriers), barriers);
 	}
-	else if (upscaleMode == UpscaleMode::Bilateral)
+	else if (upscaleMode == UpscaleMode::Bilateral || upscaleMode == UpscaleMode::Dlss)
 	{
 		D3D12_RESOURCE_BARRIER editorToRt = CD3DX12_RESOURCE_BARRIER::Transition(
 			GetRenderTarget(RenderTargetType::EditorScene).Get(),
@@ -560,7 +628,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 				m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)]);
 			m_CommandList->SetGraphicsRootConstantBufferView(
 				2,
-				m_PostProcessConstantBuffer->GetGPUVirtualAddress() + m_FrameIndex * g_kPP_CB_ALIGNED_SIZE);
+				m_PostProcessConstantBuffer->GetGPUVirtualAddress() + GetPostProcessFrameOffset());
 			m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			m_CommandList->DrawInstanced(3, 1, 0, 0);
 		}
@@ -667,7 +735,7 @@ void PostProcessPass::ApplyAntiAliasing()
 	m_CommandList->RSSetViewports(1, &m_FullViewport);
 	m_CommandList->RSSetScissorRects(1, &m_FullScissorRect);
 
-	m_CommandList->SetGraphicsRootConstantBufferView(0, m_PostProcessConstantBuffer->GetGPUVirtualAddress() + m_FrameIndex * g_kPP_CB_ALIGNED_SIZE);
+	m_CommandList->SetGraphicsRootConstantBufferView(0, m_PostProcessConstantBuffer->GetGPUVirtualAddress() + GetPostProcessFrameOffset());
 
 	m_CommandList->SetGraphicsRootDescriptorTable(1, GetRenderTargetSrvHandle(RenderTargetType::EditorScene));
 

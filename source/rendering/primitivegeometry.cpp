@@ -438,49 +438,41 @@ void PrimitiveGeometry::CreateObjectVertex(const VertexResource& vertexstruct)
 		return;
 	}
 
-	const UINT vertexBufferSize = static_cast<UINT>(sizeof(Vertex) * vertices.size());
+	UploadVertices(vertexstruct.entityid, vertices);
+}
 
-	auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-	auto resourceDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
-
-	ID3D12Device* device = GraphicsDevice::GetDevice();
-	if (!device)
-	{
-		Debug::Log("ERROR: Renderer device is null in CreateObjectVertex\n");
-		return;
-	}
-
-	HRESULT hr = device->CreateCommittedResource(
-		&heapProps,
-		D3D12_HEAP_FLAG_NONE,
-		&resourceDesc,
-		D3D12_RESOURCE_STATE_GENERIC_READ,
-		nullptr,
-		IID_PPV_ARGS(&meshComponent.VertexBuffer)
-	);
-	if (FAILED(hr))
-	{
-		Debug::Log("ERROR: CreateCommittedResource failed\n");
-		return;
-	}
-
-	UINT8* pVertexDataBegin{};
-	CD3DX12_RANGE readRange(0, 0);
-
-	hr = meshComponent.VertexBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pVertexDataBegin));
-	if (FAILED(hr))
-	{
-		Debug::Log("ERROR: VertexBuffer Map failed in CreateObjectVertex\n");
-		return;
-	}
-	memcpy(pVertexDataBegin, vertices.data(), vertexBufferSize);
-	meshComponent.VertexBuffer->Unmap(0, nullptr);
-
-	meshComponent.VertexBufferView.BufferLocation = meshComponent.VertexBuffer->GetGPUVirtualAddress();
-	meshComponent.VertexBufferView.StrideInBytes = sizeof(Vertex);
-	meshComponent.VertexBufferView.SizeInBytes = vertexBufferSize;
-	meshComponent.VertexCount = static_cast<UINT>(vertices.size());
-	meshComponent.GeometryHash = HashGeometry(vertices.data(), vertexBufferSize);
-	CalculateGeometryBounds(vertices, meshComponent.LocalBoundsCenter, meshComponent.LocalBoundsExtents);
-	meshComponent.HasLocalBounds = !vertices.empty();
+bool PrimitiveGeometry::UploadVertices(EntityID entity, const std::vector<Vertex>& vertices)
+{
+    ID3D12Device* device = GraphicsDevice::GetDevice();
+    if (!device || vertices.empty() || !Registry::IsAlive(entity) ||
+        !ComponentManager::HasComponent<MeshComponent>(entity) || vertices.size() > UINT_MAX / sizeof(Vertex))
+    {
+        return false;
+    }
+    const UINT byteSize = static_cast<UINT>(vertices.size() * sizeof(Vertex));
+    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+    const auto description = CD3DX12_RESOURCE_DESC::Buffer(byteSize);
+    ComPtr<ID3D12Resource> buffer;
+    if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&buffer))))
+    {
+        return false;
+    }
+    void* mapped = nullptr;
+    const CD3DX12_RANGE noRead(0, 0);
+    if (FAILED(buffer->Map(0, &noRead, &mapped)))
+    {
+        return false;
+    }
+    memcpy(mapped, vertices.data(), byteSize);
+    buffer->Unmap(0, nullptr);
+    buffer->SetName(L"Primitive or Procedural Mesh");
+    auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+    mesh.VertexBuffer = std::move(buffer);
+    mesh.VertexBufferView = { mesh.VertexBuffer->GetGPUVirtualAddress(), byteSize, sizeof(Vertex) };
+    mesh.VertexCount = static_cast<UINT>(vertices.size());
+    mesh.GeometryHash = HashGeometry(vertices.data(), byteSize);
+    CalculateGeometryBounds(vertices, mesh.LocalBoundsCenter, mesh.LocalBoundsExtents);
+    mesh.HasLocalBounds = true;
+    return true;
 }

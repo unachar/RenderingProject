@@ -13,7 +13,8 @@ enum class UpscaleMode : int
 {
 	Bilateral = 0,
 	Fsr1,
-	Nis
+	Nis,
+	Dlss
 };
 
 enum class UpscaleQuality : int

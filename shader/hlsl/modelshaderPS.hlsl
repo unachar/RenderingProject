@@ -14,6 +14,10 @@ float IsMaterialClassForward(float value, float target)
 
 float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 lightDir)
 {
+#ifdef SHADER_RAYTRACING
+    // Each forward light already receives its scene-ray visibility during aggregation.
+    if (SceneRayFlags.x > 0.5f) return 1.0f;
+#endif
     float shadowStrength = saturate(abs(ShadowMapParams.w));
     [branch]
     if (shadowStrength <= 0.0001f)

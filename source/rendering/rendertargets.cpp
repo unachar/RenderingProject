@@ -58,7 +58,7 @@ void RenderTargets::ReleaseGBufferResources()
 
 bool RenderTargets::CreateDepthBuffer()
 {
-	UINT dsvHeapSize = 1 + RendererState::g_kMAX_SHADOW_LIGHTS + 1;
+	UINT dsvHeapSize = g_kLOW_DEPTH_READ_DSV_INDEX + 1;
 	D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc{};
 	dsvHeapDesc.NumDescriptors = dsvHeapSize;
 	dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
@@ -106,6 +106,9 @@ bool RenderTargets::CreateDepthBuffer()
 	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
 	m_Device->CreateDepthStencilView(m_DepthStencilBuffer.Get(), &dsvDesc,
 		m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
+	dsvDesc.Flags = D3D12_DSV_FLAG_READ_ONLY_DEPTH;
+	m_Device->CreateDepthStencilView(m_DepthStencilBuffer.Get(), &dsvDesc,
+		CD3DX12_CPU_DESCRIPTOR_HANDLE(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), g_kFULL_DEPTH_READ_DSV_INDEX, dsvIncrement));
 	m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 
 	UINT cbvIncrementDepth = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -145,7 +148,7 @@ bool RenderTargets::CreateShadowDepthBuffer()
 	if (!m_DsvHeap)
 	{
 		D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc{};
-		dsvHeapDesc.NumDescriptors = 1 + RendererState::g_kMAX_SHADOW_LIGHTS + 1;
+		dsvHeapDesc.NumDescriptors = g_kLOW_DEPTH_READ_DSV_INDEX + 1;
 		dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 		hr = m_Device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&m_DsvHeap));
 		if (FAILED(hr)) { Debug::Log("ERROR: CreateDescriptorHeap(DSV) failed\n"); return false; }
@@ -479,6 +482,14 @@ bool RenderTargets::CreateSceneRenderTarget()
 			gbufferSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 			gbufferSrvDesc.Texture2D.MipLevels = 1;
 			m_Device->CreateShaderResourceView(m_GBufferTargets[i].Get(), &gbufferSrvDesc, gbufferSrvCpuHandle);
+			if (i < g_kGEOMETRY_GBUFFER_COUNT)
+			{
+				D3D12_UNORDERED_ACCESS_VIEW_DESC gbufferUav{};
+				gbufferUav.Format = m_kDeferredRtvFormats[i];
+				gbufferUav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+				m_Device->CreateUnorderedAccessView(m_GBufferTargets[i].Get(), nullptr, &gbufferUav,
+					CD3DX12_CPU_DESCRIPTOR_HANDLE(cbvHeapCpuStart, g_kGBUFFER_UAV_START_INDEX + i, cbvIncrement));
+			}
 
 			gbufferRtvHandle.Offset(1, rtvIncrement);
 		}

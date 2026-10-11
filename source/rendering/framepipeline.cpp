@@ -8,10 +8,15 @@
 #include "scenepasses.h"
 #include "postprocesspass.h"
 #include "lightingresources.h"
+#include "vertexdeformation.h"
+#include "meshshaderpipeline.h"
+#include "raytracing.h"
 
 void FramePipeline::Execute()
 {
 	ID3D12GraphicsCommandList* commandList = GraphicsDevice::GetCommandList();
+	VertexDeformation::PrepareFrame(commandList, GraphicsDevice::GetFrameIndex());
+	MeshShaderPipeline::BeginFrame();
 	static RenderGraph graph;
 	static bool graphReady = false;
 
@@ -42,6 +47,7 @@ void FramePipeline::Execute()
 				[](ID3D12GraphicsCommandList* passCommandList)
 				{
 					RenderProfiler::ScopedEvent profile("Shadow", passCommandList);
+					if (Raytracing::IsAvailable()) return;
 					const UINT shadowLightCount = LightingResources::GetShadowLightCount();
 					for (UINT shadowIndex = 0; shadowIndex < shadowLightCount; ++shadowIndex)
 					{

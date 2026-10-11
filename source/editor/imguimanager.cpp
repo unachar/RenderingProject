@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "renderingvalidation.h"
 #include "imguimanager.h"
 #include "modelmanager.h"
 #include "world.h"
@@ -61,6 +62,11 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
 	ImGui::CreateContext();
 	ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
 	ImGuiIO& io = ImGui::GetIO();
+	char validationMode[8]{};
+	if (GetEnvironmentVariableA("DX12_VALIDATION_MODE", validationMode, sizeof(validationMode)) > 0 && atoi(validationMode) != 0)
+	{
+		io.IniFilename = nullptr;
+	}
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 	io.ConfigDockingWithShift = false;
@@ -137,9 +143,19 @@ void ImGuiManager::Uninit()
 
 void ImGuiManager::Update()
 {
+	char featureTest[8]{};
+	if (GetEnvironmentVariableA("DX12_FEATURE_SMOKE_TEST", featureTest, sizeof(featureTest)) > 0 && atoi(featureTest) != 0)
+	{
+		m_ShowProceduralWindow = true;
+		m_ShowRaytracingWindow = true;
+		m_ShowAtmosphereWindow = true;
+	}
 	if (!m_ProjectSettingsLoaded)
 	{
-		LoadProjectSettings();
+		if (!RenderingValidation::IsEnabled())
+		{
+			LoadProjectSettings();
+		}
 		m_ProjectSettingsLoaded = true;
 	}
 
@@ -200,6 +216,8 @@ void ImGuiManager::Update()
 	if (m_ShowMeshOutlineWindow) DrawMeshOutlineWindow();
 	if (m_ShowMeshShadingWindow) DrawMeshShadingWindow();
 	if (m_ShowAtmosphereWindow) DrawAtmosphereWindow();
+	if (m_ShowProceduralWindow) DrawProceduralWindow();
+	if (m_ShowRaytracingWindow) DrawRaytracingWindow();
 	if (m_ShowProjectSettingsWindow) DrawProjectSettingsWindow();
 	if (m_ShowPhysicsSettingsWindow) DrawPhysicsSettingsWindow();
 
@@ -464,6 +482,8 @@ void ImGuiManager::DrawEditorMainMenu()
 		ImGui::MenuItem("マテリアルエディター", nullptr, &m_ShowMaterialEditorWindow);
 		ImGui::MenuItem("リム設定", nullptr, &m_ShowRimSettingsWindow);
 		ImGui::MenuItem("大気シミュレーション", nullptr, &m_ShowAtmosphereWindow);
+		ImGui::MenuItem("プロシージャルエディター", nullptr, &m_ShowProceduralWindow);
+		ImGui::MenuItem("レイトレーシング", nullptr, &m_ShowRaytracingWindow);
 		ImGui::Separator();
 		ImGui::MenuItem("メッシュ単位のアウトライン", nullptr, &m_ShowMeshOutlineWindow);
 		ImGui::MenuItem("メッシュ単位のシェーディング", nullptr, &m_ShowMeshShadingWindow);

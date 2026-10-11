@@ -22,7 +22,15 @@ float4 main(PSInputPostProcess input) : SV_Target
     float depth = DepthTexture.SampleLevel(PointSampler, input.TexCoord, 0);
     if (depth >= 0.9999f)
     {
-        return EncodeVelocity(0.0f);
+        // An infinite sky responds to camera rotation and projection jitter, without translation.
+        float3 direction = ReconstructPostProcessViewRayCommon(input.TexCoord);
+        float4 previousSky = mul(float4(direction, 0.0f), PrevViewProjection);
+        if (previousSky.w <= 0.00001f)
+        {
+            return EncodeVelocity(0.0f);
+        }
+        float2 previousSkyUv = previousSky.xy / previousSky.w * float2(0.5f, -0.5f) + 0.5f;
+        return EncodeVelocity(input.TexCoord - previousSkyUv);
     }
 
     float3 worldPosition = ReconstructPostProcessWorldPositionCommon(input.TexCoord, depth);

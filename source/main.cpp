@@ -8,6 +8,7 @@
 #include <memory>
 #include <shellapi.h>
 #include "renderconfiguration.h"
+#include "renderingvalidation.h"
 
 extern "C"
 {
@@ -214,12 +215,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 		}
 
 		if (completedFrames == 0) WriteGraphicsLog("Step: first frame begin\n");
+		RenderingValidation::BeforeFrame(completedFrames);
 		Game::Run();
+		RenderingValidation::AfterFrame(completedFrames);
 		if (completedFrames == 0) WriteGraphicsLog("Step: first frame complete\n");
 		++completedFrames;
 		if (startupSmokeFrames > 0 && completedFrames >= static_cast<UINT64>(startupSmokeFrames)) PostQuitMessage(0);
 	}
+	const bool featuresPassed = RenderingValidation::Finish();
 	Game::Uninit();
+	if (!featuresPassed)
+	{
+		return 1;
+	}
 	if (startupSmokeFrames > 0)
 	{
 		if (completedFrames < static_cast<UINT64>(startupSmokeFrames))

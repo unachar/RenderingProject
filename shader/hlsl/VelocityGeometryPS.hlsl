@@ -13,6 +13,10 @@ float4 EncodeVelocity(float2 velocity)
 
 float4 main(VelocityInput input) : SV_Target
 {
+    if (input.CurrentClip.w <= 0.00001f || input.PreviousClip.w <= 0.00001f)
+    {
+        return EncodeVelocity(0.0f);
+    }
     float2 currentNdc = input.CurrentClip.xy / input.CurrentClip.w;
     float2 previousNdc = input.PreviousClip.xy / input.PreviousClip.w;
     float2 currentUv = currentNdc * float2(0.5f, -0.5f) + 0.5f;

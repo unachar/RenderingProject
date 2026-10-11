@@ -3,6 +3,7 @@
 #include "editorwidgets.h"
 #include "sun.h"
 #include "world.h"
+#include "graphicsdevice.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -72,6 +73,16 @@ ImGuiManager::EntitySnapshot ImGuiManager::CaptureEntity(EntityID entity)
 		snapshot.HasSun = true;
 		snapshot.Sun = ComponentManager::GetComponentUnchecked<SunComponent>(entity);
 	}
+	if (ComponentManager::HasComponent<ProceduralTerrainComponent>(entity))
+	{
+		snapshot.HasProceduralTerrain = true;
+		snapshot.ProceduralTerrain = ComponentManager::GetComponentUnchecked<ProceduralTerrainComponent>(entity);
+	}
+	if (ComponentManager::HasComponent<ProceduralMotionComponent>(entity))
+	{
+		snapshot.HasProceduralMotion = true;
+		snapshot.ProceduralMotion = ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(entity);
+	}
 
 	if (ComponentManager::HasComponent<MaterialComponent>(entity))
 	{	snapshot.HasMaterial = true;
@@ -139,6 +150,10 @@ ImGuiManager::EntitySnapshot ImGuiManager::CaptureEntity(EntityID entity)
 
 void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
 {
+	if (!GraphicsDevice::WaitForGpuIdle())
+	{
+		return;
+	}
 	if (snapshot.Entity == g_kINVALID_ENTITY) return;
 	if (!snapshot.WasAlive)
 	{
@@ -165,6 +180,12 @@ void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
 	if (snapshot.HasAabb) RestoreSnapshotComponent(snapshot.Entity, snapshot.Aabb);
 	if (snapshot.HasSprite) RestoreSnapshotComponent(snapshot.Entity, snapshot.Sprite);
 	if (snapshot.HasMesh) RestoreSnapshotComponent(snapshot.Entity, snapshot.Mesh);
+	if (snapshot.HasProceduralTerrain) RestoreSnapshotComponent(snapshot.Entity, snapshot.ProceduralTerrain);
+	if (snapshot.HasProceduralMotion) RestoreSnapshotComponent(snapshot.Entity, snapshot.ProceduralMotion);
+	if (!snapshot.HasProceduralMotion && ComponentManager::HasComponent<ProceduralMotionComponent>(snapshot.Entity))
+	{
+		ComponentManager::RemoveComponent(snapshot.Entity, ComponentType::PROCEDURAL_MOTION);
+	}
 	if (snapshot.HasCamera) RestoreSnapshotComponent(snapshot.Entity, snapshot.Camera);
 	if (snapshot.HasPostProcess) RestoreSnapshotComponent(snapshot.Entity, snapshot.PostProcess);
 	if (snapshot.HasInput) RestoreSnapshotComponent(snapshot.Entity, snapshot.Input);

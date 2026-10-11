@@ -1,3 +1,3 @@
 #pragma once
 
-void WriteGraphicsLog(const char* message);
+void WriteGraphicsLog(const char* format, ...);

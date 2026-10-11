@@ -5,6 +5,7 @@
 #include "world.h"
 #include "renderconfiguration.h"
 #include "renderersettings.h"
+#include "dlssupscaler.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -41,7 +42,7 @@ namespace EditorWidgets
 
 	void DrawUpscaleControls()
 	{
-		const char* modes[] = { "Bilateral", "AMD FidelityFX FSR 1", "NVIDIA Image Scaling" };
+		const char* modes[] = { "Bilateral", "AMD FidelityFX FSR 1", "NVIDIA Image Scaling", "NVIDIA DLSS Super Resolution" };
 		int mode = static_cast<int>(RendererSettings::GetUpscaleMode());
 		ImGui::SetNextItemWidth(-1.0f);
 		if (ImGui::Combo("アップスケーラー", &mode, modes, IM_ARRAYSIZE(modes)))
@@ -109,6 +110,11 @@ namespace EditorWidgets
 				RendererSettings::SetNisSharpness(sharpness);
 			}
 			ImGui::TextDisabled("6-tap scaler + directional sharpening / 50-100%% / 入力に FXAA を自動適用");
+		}
+		else if (mode == static_cast<int>(UpscaleMode::Dlss))
+		{
+			ImGui::TextWrapped("%s", DlssUpscaler::GetStatus());
+			ImGui::TextWrapped("深度・動き・サブピクセルサンプルで時間方向に復元します。利用できない場合は Bilateral に戻ります。");
 		}
 	}
 

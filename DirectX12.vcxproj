@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props" Condition="Exists('packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props')" />
   <ItemGroup Label="ProjectConfigurations">
@@ -674,7 +674,6 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
-
     <ClCompile Include="External\ImGUI\imgui.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -702,7 +701,6 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="External\meshoptimizer\src\overdrawoptimizer.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
-
     <ClCompile Include="External\ImGUI\imgui_impl_dx12.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -740,14 +738,11 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="source\entities\polygon.cpp" />
-
     <ClCompile Include="source\entities\polygon3d.cpp" />
     <ClCompile Include="source\rendering\rendererstate.cpp" />
     <ClCompile Include="source\rendering\graphicsdevice.cpp" />
     <ClCompile Include="source\rendering\psomanager.cpp" />
     <ClCompile Include="source\rendering\shaderpipelines.cpp" />
-
-
     <ClCompile Include="source\rendering\rendergraph.cpp" />
     <ClCompile Include="source\rendering\spatialupscaler.cpp" />
     <ClCompile Include="source\rendering\visibilitybuffer.cpp" />
@@ -817,13 +812,10 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\rendering\shaderpaths.h" />
     <ClInclude Include="source\pch.h" />
     <ClInclude Include="source\entities\polygon.h" />
-
     <ClInclude Include="source\entities\polygon3d.h" />
     <ClInclude Include="source\rendering\rendererstate.h" />
     <ClInclude Include="source\rendering\graphicsdevice.h" />
     <ClInclude Include="source\rendering\shaderpipelines.h" />
-
-
     <ClInclude Include="source\rendering\rendergraph.h" />
     <ClInclude Include="source\rendering\spatialupscaler.h" />
     <ClInclude Include="source\rendering\visibilitybuffer.h" />
@@ -924,6 +916,50 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\rendering\scenepasses.h" />
     <ClInclude Include="source\rendering\shaderdescription.h" />
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\editor\editorprocedural.cpp" />
+    <ClInclude Include="source\procedural\proceduralcomponents.h" />
+    <ClCompile Include="source\procedural\proceduralmath.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClInclude Include="source\procedural\proceduralmath.h" />
+    <ClCompile Include="source\procedural\terrainediting.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClInclude Include="source\procedural\terrainediting.h" />
+    <ClCompile Include="source\procedural\vertexdeformationmath.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClInclude Include="source\procedural\vertexdeformationmath.h" />
+    <ClCompile Include="source\procedural\vertexdeformation.cpp" />
+    <ClInclude Include="source\procedural\vertexdeformation.h" />
+    <None Include="shader\hlsl\VertexDeformationCS.hlsl" />
+    <ClCompile Include="source\procedural\proceduralscene.cpp" />
+    <ClInclude Include="source\procedural\proceduralscene.h" />
+    <ClCompile Include="source\rendering\raytracing.cpp" />
+    <ClCompile Include="source\rendering\nrddenoiser.cpp" />
+    <ClCompile Include="source\rendering\rayreflections.cpp" />
+    <ClInclude Include="source\rendering\rayreflections.h" />
+    <ClInclude Include="source\rendering\raytracing.h" />
+    <ClInclude Include="source\rendering\nrddenoiser.h" />
+    <ClCompile Include="source\rendering\raytracingscene.cpp" />
+    <ClInclude Include="source\rendering\raytracingscene.h" />
+    <ClCompile Include="source\scene\daynightcycle.cpp" />
+    <ClInclude Include="source\scene\daynightcycle.h" />
+    <ClInclude Include="source\scene\solarcycle.h" />
+    <ClCompile Include="source\systems\proceduralsystem.cpp" />
+    <ClInclude Include="source\systems\proceduralsystem.h" />
+    <None Include="shader\hlsl\RaytracingCS.hlsl" />
+    <None Include="shader\hlsl\SkyAtmosphere.hlsli" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\core\renderingvalidation.cpp" />
+    <ClInclude Include="source\core\renderingvalidation.h" />
+    <ClCompile Include="source\rendering\rendercapture.cpp" />
+    <ClInclude Include="source\rendering\rendercapture.h" />
+    <ClCompile Include="source\scene\simulationconfiguration.cpp" />
+    <ClInclude Include="source\scene\simulationconfiguration.h" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
     <Import Project="packages\Microsoft.Direct3D.D3D12.1.618.5\build\native\Microsoft.Direct3D.D3D12.targets" Condition="Exists('packages\Microsoft.Direct3D.D3D12.1.618.5\build\native\Microsoft.Direct3D.D3D12.targets')" />
@@ -936,4 +972,13 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <Error Condition="!Exists('packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props')" Text="$([System.String]::Format('$(ErrorText)', 'packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props'))" />
     <Error Condition="!Exists('packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.targets'))" />
   </Target>
+  <ItemGroup>
+    <ClCompile Include="source\rendering\dlssupscaler.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="source\rendering\dlssupscaler.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shader\hlsl\DlssPrepareCS.hlsl" />
+  </ItemGroup>
 </Project>

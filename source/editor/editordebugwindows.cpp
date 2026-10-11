@@ -2,6 +2,8 @@
 #include "imguimanager.h"
 #include "editorwidgets.h"
 #include "atmosphere.h"
+#include "daynightcycle.h"
+#include "solarcycle.h"
 #include "graphicsdevice.h"
 #include "lightingresources.h"
 #include "renderconfiguration.h"
@@ -199,7 +201,7 @@ void ImGuiManager::DrawGBufferWindow()
 
 void ImGuiManager::DrawAtmosphereWindow()
 {
-	ImGui::SetNextWindowSize(ImVec2(360.0f, 430.0f), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowSize(ImVec2(470.0f, 680.0f), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin("大気シミュレーション", &m_ShowAtmosphereWindow))
 	{
 		ImGui::End();
@@ -208,6 +210,42 @@ void ImGuiManager::DrawAtmosphereWindow()
 
 	AtmosphereParameters& atmosphere = Atmosphere::GetMutableParameters();
 	ImGui::Checkbox("有効", &atmosphere.Enabled);
+	ImGui::Checkbox("太陽の位置から空を描画", &atmosphere.PhysicalSky);
+	ImGui::SeparatorText("時間帯と太陽");
+	auto& cycle = DayNightCycle::GetSettings();
+	bool cycleChanged = ImGui::Checkbox("時刻から太陽の位置を計算", &cycle.TimeDriven);
+	cycleChanged |= ImGui::SliderFloat("太陽時", &cycle.Hours, 0.0f, 24.0f, "%.2f 時");
+	ImGui::Checkbox("時間を進める", &cycle.Running);
+	ImGui::Checkbox("編集画面でも時間を進める", &cycle.PreviewInEditor);
+	cycleChanged |= ImGui::SliderFloat("1日の長さ", &cycle.DayDurationSeconds, 10.0f, 1200.0f, "%.0f 秒");
+	cycleChanged |= ImGui::SliderFloat("緯度", &cycle.Latitude, -89.0f, 89.0f, "%.1f 度");
+	cycleChanged |= ImGui::SliderInt("年の何日目", &cycle.DayOfYear, 1, 365);
+	cycleChanged |= ImGui::Checkbox("太陽の色と明るさを自動調整", &cycle.AutomaticLighting);
+	cycleChanged |= ImGui::SliderFloat("昼の太陽強度", &cycle.DayIntensity, 0.0f, 20.0f);
+	ImGui::SliderFloat("空の強度", &cycle.SkyIntensity, 0.0f, 30.0f);
+	ImGui::SliderFloat("星の明るさ", &cycle.StarBrightness, 0.0f, 1.0f);
+	const char* presets[] = { "朝", "昼", "夕方", "夜" };
+	const float hours[] = { 6.0f, 12.0f, 18.0f, 0.0f };
+	for (int preset = 0; preset < 4; ++preset)
+	{
+		if (preset > 0)
+		{
+			ImGui::SameLine();
+		}
+		if (ImGui::Button(presets[preset]))
+		{
+			DayNightCycle::SetTime(hours[preset]);
+			cycleChanged = true;
+		}
+	}
+	if (cycleChanged)
+	{
+		DayNightCycle::Update(0.0f);
+	}
+	ImGui::Text("太陽高度: %.1f 度 / 昼光: %.2f",
+		asinf(std::clamp(DayNightCycle::GetSunDirection().y, -1.0f, 1.0f)) * 180.0f / SolarCycle::Pi,
+		DayNightCycle::GetDaylight());
+	ImGui::TextWrapped("太陽時は太陽の位置を基準とする時刻です。時刻制御をオフにすると Sun を直接配置できます。");
 	ImGui::SeparatorText("散乱");
 	ImGui::SliderFloat("Rayleigh強度", &atmosphere.RayleighStrength, 0.0f, 4.0f, "%.3f");
 	ImGui::SliderFloat("Mie強度", &atmosphere.MieStrength, 0.0f, 2.0f, "%.3f");

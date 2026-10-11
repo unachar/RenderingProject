@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="assets">
@@ -866,5 +866,112 @@
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="source\app.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="source\procedural" />
+    <ClCompile Include="source\editor\editorprocedural.cpp">
+      <Filter>source\editor</Filter>
+    </ClCompile>
+    <ClInclude Include="source\procedural\proceduralcomponents.h">
+      <Filter>source\procedural</Filter>
+    </ClInclude>
+    <ClCompile Include="source\procedural\proceduralmath.cpp">
+      <Filter>source\procedural</Filter>
+    </ClCompile>
+    <ClInclude Include="source\procedural\proceduralmath.h">
+      <Filter>source\procedural</Filter>
+    </ClInclude>
+    <ClCompile Include="source\procedural\proceduralscene.cpp">
+      <Filter>source\procedural</Filter>
+    </ClCompile>
+    <ClCompile Include="source\procedural\vertexdeformation.cpp">
+      <Filter>source\procedural</Filter>
+    </ClCompile>
+    <ClInclude Include="source\procedural\vertexdeformation.h">
+      <Filter>source\procedural</Filter>
+    </ClInclude>
+    <ClCompile Include="source\procedural\vertexdeformationmath.cpp">
+      <Filter>source\procedural</Filter>
+    </ClCompile>
+    <ClInclude Include="source\procedural\vertexdeformationmath.h">
+      <Filter>source\procedural</Filter>
+    </ClInclude>
+    <ClCompile Include="source\procedural\terrainediting.cpp">
+      <Filter>source\procedural</Filter>
+    </ClCompile>
+    <ClInclude Include="source\procedural\terrainediting.h">
+      <Filter>source\procedural</Filter>
+    </ClInclude>
+    <ClInclude Include="source\procedural\proceduralscene.h">
+      <Filter>source\procedural</Filter>
+    </ClInclude>
+    <ClCompile Include="source\rendering\raytracing.cpp">
+      <Filter>source\rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\nrddenoiser.cpp">
+      <Filter>source\rendering</Filter>
+    </ClCompile>
+    <ClInclude Include="source\rendering\nrddenoiser.h">
+      <Filter>source\rendering</Filter>
+    </ClInclude>
+    <ClCompile Include="source\rendering\rayreflections.cpp">
+      <Filter>source\rendering</Filter>
+    </ClCompile>
+    <ClInclude Include="source\rendering\rayreflections.h">
+      <Filter>source\rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\raytracing.h">
+      <Filter>source\rendering</Filter>
+    </ClInclude>
+    <ClCompile Include="source\rendering\raytracingscene.cpp">
+      <Filter>source\rendering</Filter>
+    </ClCompile>
+    <ClInclude Include="source\rendering\raytracingscene.h">
+      <Filter>source\rendering</Filter>
+    </ClInclude>
+    <ClCompile Include="source\scene\daynightcycle.cpp">
+      <Filter>source\scene</Filter>
+    </ClCompile>
+    <ClInclude Include="source\scene\daynightcycle.h">
+      <Filter>source\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="source\scene\solarcycle.h">
+      <Filter>source\scene</Filter>
+    </ClInclude>
+    <ClCompile Include="source\systems\proceduralsystem.cpp">
+      <Filter>source\systems</Filter>
+    </ClCompile>
+    <ClInclude Include="source\systems\proceduralsystem.h">
+      <Filter>source\systems</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\core\renderingvalidation.cpp">
+      <Filter>source\core</Filter>
+    </ClCompile>
+    <ClInclude Include="source\core\renderingvalidation.h">
+      <Filter>source\core</Filter>
+    </ClInclude>
+    <ClCompile Include="source\rendering\rendercapture.cpp">
+      <Filter>source\rendering</Filter>
+    </ClCompile>
+    <ClInclude Include="source\rendering\rendercapture.h">
+      <Filter>source\rendering</Filter>
+    </ClInclude>
+    <ClCompile Include="source\scene\simulationconfiguration.cpp">
+      <Filter>source\scene</Filter>
+    </ClCompile>
+    <ClInclude Include="source\scene\simulationconfiguration.h">
+      <Filter>source\scene</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\rendering\dlssupscaler.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="source\rendering\dlssupscaler.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shader\hlsl\DlssPrepareCS.hlsl" />
   </ItemGroup>
 </Project>

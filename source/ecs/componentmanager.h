@@ -5,6 +5,7 @@
 #include "animationplayback.h"
 #include "physicscomponent.h"
 #include "timelinecomponent.h"
+#include "proceduralcomponents.h"
 #include <cassert>
 #include <array>
 #include <cstdlib>
@@ -36,6 +37,7 @@ struct MeshComponent
 	XMFLOAT3 LocalBoundsCenter{};
 	XMFLOAT3 LocalBoundsExtents{};
 	bool HasLocalBounds = false;
+	bool IsEnvironment = false;
 };
 
 struct InputComponent
@@ -526,6 +528,8 @@ inline const ComponentType ComponentType::SUN = ComponentTypeRegistry::GetType<S
 inline const ComponentType ComponentType::INSTANCING = ComponentTypeRegistry::GetType<InstancingComponent>();
 inline const ComponentType ComponentType::LOD = ComponentTypeRegistry::GetType<LODComponent>();
 inline const ComponentType ComponentType::TIMELINE = ComponentTypeRegistry::GetType<TimelineComponent>();
+inline const ComponentType ComponentType::PROCEDURAL_TERRAIN = ComponentTypeRegistry::GetType<ProceduralTerrainComponent>();
+inline const ComponentType ComponentType::PROCEDURAL_MOTION = ComponentTypeRegistry::GetType<ProceduralMotionComponent>();
 
 class ComponentManager
 {

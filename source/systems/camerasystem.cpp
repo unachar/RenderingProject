@@ -7,6 +7,7 @@
 #include "input.h"
 #include "camera.h"
 #include "projectmanager.h"
+#include "dlssupscaler.h"
 
 static float Halton(int index, int base)
 {
@@ -27,6 +28,7 @@ void CameraSystem::Update()
 	auto cameraEntities = World::GetView<CameraComponent, TransformComponent>();
 	float aspectRatio = GraphicsDevice::GetSceneAspectRatio();
 	const EntityID activeCamera = Camera::GetCameraEntity();
+	DlssUpscaler::PrepareFrame(activeCamera);
 	static EntityID previousActiveCamera = g_kINVALID_ENTITY;
 
 	for (EntityID i : cameraEntities)
@@ -128,7 +130,13 @@ void CameraSystem::Update()
 		XMMATRIX proj = XMMatrixPerspectiveFovLH(
 			cam.Fov, aspectRatio, cam.NearClip, cam.FarClip);
 
-		if (RendererState::m_AntiAliasingMode == AntiAliasingMode::TAA)
+		if (isActive && DlssUpscaler::IsRequested())
+		{
+			const XMFLOAT2 jitter = DlssUpscaler::GetJitter();
+			proj.r[2].m128_f32[0] -= jitter.x * 2.0f / GraphicsDevice::GetSceneWidth();
+			proj.r[2].m128_f32[1] += jitter.y * 2.0f / GraphicsDevice::GetSceneHeight();
+		}
+		else if (RendererState::m_AntiAliasingMode == AntiAliasingMode::TAA)
 		{
 			float haltonX = Halton(RendererState::m_TaaFrameIndex, 2);
 			float haltonY = Halton(RendererState::m_TaaFrameIndex, 3);

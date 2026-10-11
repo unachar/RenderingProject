@@ -1,6 +1,7 @@
 ﻿#include "pch.h"
 
 #include "game.h"
+#include "renderconfiguration.h"
 #include "world.h"
 #include "Camera.h"
 #include "input.h"
@@ -71,6 +72,10 @@ void Game::Uninit()
 
 void Game::Run()
 {
+	// Camera projection and motion vectors must use the render extent of this frame.
+	RenderConfiguration::ApplyPendingRenderMode();
+	RenderConfiguration::ApplyPendingHdr();
+	RenderConfiguration::ApplyPendingResolutionScale();
 	Update();
 	Draw();
 }

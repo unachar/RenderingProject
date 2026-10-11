@@ -2,6 +2,7 @@
 
 
 #pragma warning(disable: 4000)
+#include "SceneRayShadow.hlsli"
 
 struct GBufferOutput
 {
@@ -129,6 +130,10 @@ float SampleShadowMapPcf9(float2 shadowUv, float shadowLayer, float texelSize, f
 
 float SampleShadowMap(float3 worldPos, float3 normal, float3 lightDir)
 {
+#ifdef SHADER_RAYTRACING
+    // Forward lighting applies scene visibility separately to every contributing light.
+    if (SceneRayFlags.x > 0.5f) return 1.0f;
+#endif
     float normalLenSq = dot(normal, normal);
     float lightLenSq = dot(lightDir, lightDir);
     float3 n = (normalLenSq > 0.000001f) ? normal * rsqrt(normalLenSq) : float3(0.0f, 1.0f, 0.0f);
@@ -208,6 +213,8 @@ cbuffer LightParams : register(b1)
     float4 AtmosphereColor0;
     float4 AtmosphereColor1;
     float4 AtmosphereCamera;
+    float4 SkySunDirection;
+    float4 SkyParameters;
 };
 
 
@@ -215,6 +222,29 @@ cbuffer LightParams : register(b1)
 
 StructuredBuffer<uint> LightTileIndices : register(t11);
 StructuredBuffer<uint> VolumetricLightIndices : register(t24);
+
+bool SceneLightCastsShadowCommon(uint index, bool legacyHasShadow)
+{
+#ifdef SHADER_RAYTRACING
+    if (SceneRayFlags.x > 0.5f)
+        return index < MAX_SHADER_LIGHTS && SceneShadowLights[index].x != 0;
+#endif
+    return legacyHasShadow;
+}
+
+float SceneShadowForLightCommon(uint index, float3 worldPos, float3 normal, float3 lightDir)
+{
+#ifdef SHADER_RAYTRACING
+    if (SceneRayFlags.x > 0.5f)
+    {
+        if (index >= 160u || SceneShadowLights[index].x == 0u) return 1.0f;
+        float maximumDistance = LightPositionTypes[index].w < 0.5f ? SceneRayParameters.x :
+            min(length(LightPositionTypes[index].xyz - worldPos), SceneRayParameters.x);
+        return TraceSceneShadow(worldPos, normal, lightDir, maximumDistance);
+    }
+#endif
+    return 1.0f;
+}
 
 bool HasLightTileGridCommon()
 {
@@ -481,6 +511,9 @@ float SampleAtmosphereShadowMap(
     float4 shadowMapParams,
     float shadowLayer)
 {
+#ifdef SHADER_RAYTRACING
+    if (SceneRayFlags.x > 0.5f) return 1.0f;
+#endif
     float3 l = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
 
     float4 lightClip = mul(float4(worldPos, 1.0f), lightViewProjection);
@@ -712,6 +745,10 @@ float3 RayMarchAtmosphereViewCommon(
                     perLightShadowParams,
                     LightShadowData[lightIndex].x);
             }
+#ifdef SHADER_RAYTRACING
+            if (SceneRayFlags.x > 0.5f)
+                shadowVisibility = SceneShadowForLightCommon(lightIndex, samplePos, singleDir, singleDir);
+#endif
             float3 shadowedColor = singleColor * shadowVisibility;
             float localLight = step(0.5f, LightPositionTypes[lightIndex].w);
             float volumeVisibility = lerp(shadowVisibility, max(shadowVisibility, 0.45f), localLight);
@@ -968,6 +1005,7 @@ void ResolveLightAggregate(
         ResolveSingleLightCommon(worldPos, LightDirections[i], LightPositionTypes[i], LightExtras[i], singleDir, singleAttenuation, singleVolume);
 
         float3 singleColor = max(LightColors[i].rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColors[i].a, 0.0f) * singleAttenuation;
+        singleColor *= SceneShadowForLightCommon(lightIndex, worldPos, float3(0.0f, 0.0f, 0.0f), singleDir);
         singleColor = ApplyAtmosphereToLightCommon(worldPos, singleDir, singleColor, singleVolume);
         float weight = max(dot(singleColor, float3(0.299f, 0.587f, 0.114f)), 0.0001f) * singleAttenuation;
         dirSum += singleDir * weight;
@@ -1184,6 +1222,8 @@ cbuffer PostProcessParams : register(b0)
     float4 BloomParams;
     float4x4 PPInvViewProjection;
     float4x4 PPViewProjection;
+    float4 RaytracingFlags;
+    float4 RaytracingSunDirection;
 };
 
 float3 ReconstructPostProcessViewRayCommon(float2 uv)

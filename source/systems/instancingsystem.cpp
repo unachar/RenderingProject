@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "vertexdeformation.h"
 #include "instancingsystem.h"
 #include "componentmanager.h"
 #include "world.h"
@@ -340,6 +341,13 @@ BatchKey InstancingSystem::MakeKey(
 
 bool InstancingSystem::CanInstance(EntityID entity)
 {
+	// Different per-entity vertex fields cannot share the same instanced draw geometry.
+	if (VertexDeformation::IsRequested(entity)) return false;
+	if (ComponentManager::HasComponent<MeshComponent>(entity) &&
+		ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
+	{
+		return false;
+	}
     if (!s_Available || !ComponentManager::HasComponent<TransformComponent>(entity))
         return false;
 

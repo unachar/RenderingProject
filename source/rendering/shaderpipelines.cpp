@@ -9,6 +9,9 @@
 #include "componentmanager.h"
 #include "imguimanager.h"
 #include "shaderdescription.h"
+#include "raytracing.h"
+#include "graphicslog.h"
+#include <filesystem>
 
 
 	unordered_map<string, ComPtr<ID3DBlob>> g_ShaderBlobCache;
@@ -70,8 +73,16 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource)
 		return false;
 	}
 	*ppBlob = nullptr;
+	std::string key = csoPath;
+	std::replace(key.begin(), key.end(), '\\', '/');
+	const std::string leaf = std::filesystem::path(key).filename().string();
+	const bool scenePixelShader = leaf.find("PS") != std::string::npos && Raytracing::IsAvailable();
+	const bool sceneVertexShader = leaf.find("VS") != std::string::npos && Raytracing::IsAvailable();
+	const bool sceneGeometryShader = leaf.find("GS") != std::string::npos && Raytracing::IsAvailable();
+	const bool compileModern = scenePixelShader || sceneVertexShader || sceneGeometryShader;
+	const std::string cacheKey = key + (compileModern ? ":DXR" : "");
 
-	auto cached = g_ShaderBlobCache.find(csoPath);
+	auto cached = g_ShaderBlobCache.find(cacheKey);
 	if (cached != g_ShaderBlobCache.end())
 	{
 		*ppBlob = cached->second.Get();
@@ -83,7 +94,29 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource)
 	wstring wPath(len, 0);
 	MultiByteToWideChar(CP_UTF8, 0, csoPath, -1, &wPath[0], len);
 
-	HRESULT hr = D3DReadFileToBlob(wPath.c_str(), ppBlob);
+	HRESULT hr = E_FAIL;
+	if (compileModern)
+	{
+		std::string source = key;
+		const auto buildFolder = source.find("/build/");
+		if (buildFolder != std::string::npos) source.erase(buildFolder, 6);
+		source = std::filesystem::path(source).replace_extension(".hlsl").string();
+		if (std::filesystem::exists(source))
+		{
+			const auto sourcePath = std::filesystem::path(source).wstring();
+			const D3D_SHADER_MACRO defines[] = { { "SHADER_RAYTRACING", "1" }, {} };
+			ComPtr<ID3DBlob> errors;
+			hr = D3DCompileFromFile(sourcePath.c_str(), defines, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+				"main", scenePixelShader ? "ps_6_5" : sceneVertexShader ? "vs_6_5" : "gs_6_5",
+                D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, ppBlob, &errors);
+			if (FAILED(hr))
+			{
+				WriteGraphicsLog("DXR pixel shader failed: %s %s\n", source.c_str(), errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
+				return false;
+			}
+		}
+	}
+	if (FAILED(hr)) hr = D3DReadFileToBlob(wPath.c_str(), ppBlob);
 	if (FAILED(hr))
 	{
 		char buf[256];
@@ -92,7 +125,7 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource)
 		return false;
 	}
 
-	g_ShaderBlobCache.emplace(csoPath, *ppBlob);
+	g_ShaderBlobCache.emplace(cacheKey, *ppBlob);
 	return true;
 }
 
@@ -120,7 +153,7 @@ static void ShaderLogToFile(const char* msg)
 bool ShaderPipelines::CreatePostProcessPipeline()
 {
 	ShaderLogToFile("PP: setup ranges\n");
-	CD3DX12_DESCRIPTOR_RANGE ranges[10];
+	CD3DX12_DESCRIPTOR_RANGE ranges[12];
 	ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 0);
 	ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6);
 	ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 7);
@@ -131,8 +164,10 @@ bool ShaderPipelines::CreatePostProcessPipeline()
 	ranges[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 13);
 	ranges[8].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 14);
 	ranges[9].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 15);
+	ranges[10].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 16);
+	ranges[11].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 17);
 
-	CD3DX12_ROOT_PARAMETER params[16];
+	CD3DX12_ROOT_PARAMETER params[20];
 	params[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[1].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 	params[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -149,6 +184,10 @@ bool ShaderPipelines::CreatePostProcessPipeline()
 	params[13].InitAsDescriptorTable(1, &ranges[8], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[14].InitAsShaderResourceView(24, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 	params[15].InitAsDescriptorTable(1, &ranges[9], D3D12_SHADER_VISIBILITY_PIXEL);
+	params[16].InitAsDescriptorTable(1, &ranges[10], D3D12_SHADER_VISIBILITY_PIXEL);
+	params[17].InitAsShaderResourceView(25, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+	params[18].InitAsConstantBufferView(5, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+	params[19].InitAsDescriptorTable(1, &ranges[11], D3D12_SHADER_VISIBILITY_PIXEL);
 
 	CD3DX12_STATIC_SAMPLER_DESC samplers[2] {};
 	samplers[0] = CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
@@ -180,11 +219,11 @@ bool ShaderPipelines::CreatePostProcessPipeline()
 	if (FAILED(hr)) { ShaderLogToFile("PP: FAIL CreateRootSig\n"); return false; }
 
 	auto cbHeapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-	auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(g_kPP_CB_ALIGNED_SIZE * g_kFRAME_COUNT);
+	auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(g_kPP_CB_ALIGNED_SIZE * g_kPP_CB_SLOTS_PER_FRAME * g_kFRAME_COUNT);
 	ShaderLogToFile("PP: create PP CB\n");
 	hr = m_Device->CreateCommittedResource(&cbHeapProps, D3D12_HEAP_FLAG_NONE, &cbDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_PostProcessConstantBuffer));
 	if (FAILED(hr)) { ShaderLogToFile("PP: FAIL PP CB\n"); return false; }
-	m_PostProcessConstantBuffer->Map(0, nullptr, &m_pPostProcessCbvDataBegin);
+	m_PostProcessConstantBuffer->Map(0, nullptr, reinterpret_cast<void**>(&m_pPostProcessCbvDataBegin));
 
 	auto lightCbDesc = CD3DX12_RESOURCE_DESC::Buffer(g_kLIGHT_CB_ALIGNED_SIZE * g_kFRAME_COUNT);
 	ShaderLogToFile("PP: create Light CB\n");

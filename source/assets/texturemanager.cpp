@@ -1075,6 +1075,27 @@ int TextureManager::GetDefaultTextureIndex()
 	return -1;
 }
 
+ComPtr<ID3D12Resource> TextureManager::GetTextureResource(int srvIndex)
+{
+	lock_guard<mutex> lock(g_TextureMutex);
+	for (const auto& pair : m_Textures)
+	{
+		if (pair.second.SrvIndex == srvIndex) return pair.second.Resource;
+	}
+	return {};
+}
+
+UINT TextureManager::GetTextureResidentMip(int srvIndex)
+{
+	lock_guard<mutex> lock(g_TextureMutex);
+	for (const auto& pair : m_Textures)
+	{
+		if (pair.second.SrvIndex == srvIndex)
+			return pair.second.Streaming ? pair.second.Streaming->MostDetailedResidentMip : 0;
+	}
+	return 0;
+}
+
 int TextureManager::GetErrorTextureIndex()
 {
 	lock_guard<mutex> lock(g_TextureMutex);

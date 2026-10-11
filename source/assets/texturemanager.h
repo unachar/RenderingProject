@@ -45,6 +45,8 @@ public:
 	static int LoadNormalTexture(const char* fileName);
 	static int LoadTextureFromMemory(const char* name, const uint8_t* pData, size_t dataSize);
 	static int GetDefaultTextureIndex();
+	static ComPtr<ID3D12Resource> GetTextureResource(int srvIndex);
+	static UINT GetTextureResidentMip(int srvIndex);
 	static int GetErrorTextureIndex();
 	static bool GetTextureSize(int srvIndex, UINT& outWidth, UINT& outHeight);
 	static vector<TextureInfo> GetLoadedTextureInfos();

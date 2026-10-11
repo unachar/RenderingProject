@@ -1,9 +1,10 @@
 #include "pch.h"
 #include "sun.h"
 #include "world.h"
-#include "primitivegeometry.h"
+#include "graphicsdevice.h"
 
-
+namespace
+{
 	static XMMATRIX BuildWorldMatrix(const TransformComponent& transform)
 	{
 		return XMMatrixScaling(transform.Scale.x, transform.Scale.y, transform.Scale.z) *
@@ -26,6 +27,8 @@
 	}
 
 
+}
+
 EntityID Sun::CreateDefault()
 {
 	return Create({ -18.0f, 24.0f, -12.0f }, { 0.0f, 0.0f, 0.0f });
@@ -36,8 +39,6 @@ EntityID Sun::Create(const XMFLOAT3& position, const XMFLOAT3& target)
 	Entity entity = World::CreateEntity()
 		.Add<NameComponent>()
 		.Add<TransformComponent>()
-		.Add<MeshComponent>()
-		.Add<MaterialComponent>()
 		.Add<LightComponent>()
 		.Add<SunComponent>();
 
@@ -45,7 +46,6 @@ EntityID Sun::Create(const XMFLOAT3& position, const XMFLOAT3& target)
 
 	auto& transform = entity.Get<TransformComponent>();
 	transform.Position = position;
-	transform.Scale = { 2.5f, 2.5f, 2.5f };
 	XMStoreFloat4x4(&transform.WorldMatrix, BuildWorldMatrix(transform));
 	transform.IsDirty = true;
 
@@ -66,26 +66,45 @@ EntityID Sun::Create(const XMFLOAT3& position, const XMFLOAT3& target)
 	light.AffectsOpaque = true;
 	light.AffectsForward = true;
 	light.AffectsVolumetrics = true;
+	light.CastShadow = true;
 	light.RenderMode = LightRenderMode::Physical;
 	light.VolumeShape = 0;
 	light.IsActive = true;
 	light.DrawDebug = true;
 
-	auto& material = entity.Get<MaterialComponent>();
-	material.ShaderClassMode = MaterialMode::Manual;
-	material.ShaderClass = ShaderClass::Unlit;
-	material.BaseBrightness = 2.2f;
-	material.UseTexture = false;
-
-	VertexResource resource{};
-	resource.entityid = entity.GetID();
-	resource.color = Color::YELLOW;
-	resource.objectType = ObjectType::SPHERE;
-	resource.radius = 1.0f;
-	PrimitiveGeometry::CreateObjectVertex(resource);
-
 	Sync(entity.GetID());
 	return entity.GetID();
+}
+
+bool Sun::MigrateLegacyGeometryBeforeFrame()
+{
+	vector<EntityID> legacySuns;
+	for (EntityID entity : World::GetView<SunComponent>())
+	{
+		if (ComponentManager::HasComponent<MeshComponent>(entity) ||
+			ComponentManager::HasComponent<MaterialComponent>(entity))
+		{
+			legacySuns.push_back(entity);
+		}
+	}
+
+	if (legacySuns.empty())
+	{
+		return true;
+	}
+
+	// The mesh owns a vertex buffer that earlier frames may still reference.
+	// A queue fence cannot protect commands in a frame that is still being recorded.
+	if (!GraphicsDevice::WaitForGpuIdle())
+	{
+		return false;
+	}
+
+	for (EntityID entity : legacySuns)
+	{
+		ComponentManager::RemoveComponent(entity, ComponentType::MESH, ComponentType::MATERIAL);
+	}
+	return true;
 }
 
 void Sun::SyncAll()
@@ -108,62 +127,18 @@ void Sun::Sync(EntityID entity)
 
 	const auto& sun = ComponentManager::GetComponentUnchecked<SunComponent>(entity);
 	auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-	auto& writableTransform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-
-	// Perf: 太陽はほぼ静止物のため、入力が変わっていない場合は行列再計算を省略。
-	static EntityID s_LastEntity = g_kINVALID_ENTITY;
-	static XMFLOAT3 s_LastPosition{};
-	static XMFLOAT3 s_LastScale{};
-	static XMFLOAT3 s_LastTarget{};
-	static float s_LastVisualRadius = 0.0f;
-	static bool s_LastSyncFlag = false;
-	static bool s_HasLastState = false;
-	const bool stateUnchanged = s_HasLastState && s_LastEntity == entity &&
-		fabsf(s_LastPosition.x - writableTransform.Position.x) <= 0.000001f &&
-		fabsf(s_LastPosition.y - writableTransform.Position.y) <= 0.000001f &&
-		fabsf(s_LastPosition.z - writableTransform.Position.z) <= 0.000001f &&
-		fabsf(s_LastScale.x - writableTransform.Scale.x) <= 0.000001f &&
-		fabsf(s_LastScale.y - writableTransform.Scale.y) <= 0.000001f &&
-		fabsf(s_LastScale.z - writableTransform.Scale.z) <= 0.000001f &&
-		fabsf(s_LastTarget.x - sun.Target.x) <= 0.000001f &&
-		fabsf(s_LastTarget.y - sun.Target.y) <= 0.000001f &&
-		fabsf(s_LastTarget.z - sun.Target.z) <= 0.000001f &&
-		fabsf(s_LastVisualRadius - sun.VisualRadius) <= 0.000001f &&
-		s_LastSyncFlag == sun.SyncDirectionalLight;
-	if (stateUnchanged)
-	{
-		return;
-	}
-
-	const float visualRadius = max(0.1f, sun.VisualRadius);
-	if (fabsf(writableTransform.Scale.x - visualRadius) > 0.0001f ||
-		fabsf(writableTransform.Scale.y - visualRadius) > 0.0001f ||
-		fabsf(writableTransform.Scale.z - visualRadius) > 0.0001f)
-	{
-		writableTransform.Scale = { visualRadius, visualRadius, visualRadius };
-		writableTransform.IsDirty = true;
-	}
-
-	// Perf: 次フレームの早期終了判定用に入力状態を記録 (スケール補正後の値で)。
-	s_LastEntity = entity;
-	s_LastPosition = writableTransform.Position;
-	s_LastScale = writableTransform.Scale;
-	s_LastTarget = sun.Target;
-	s_LastVisualRadius = sun.VisualRadius;
-	s_LastSyncFlag = sun.SyncDirectionalLight;
-	s_HasLastState = true;
-
-	XMStoreFloat4x4(&writableTransform.WorldMatrix, BuildWorldMatrix(writableTransform));
+	const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
 
 	if (!sun.SyncDirectionalLight)
 	{
 		return;
 	}
 
-	const XMVECTOR sunPosition = XMLoadFloat3(&writableTransform.Position);
+	const XMVECTOR sunPosition = XMLoadFloat3(&transform.Position);
 	const XMVECTOR target = XMLoadFloat3(&sun.Target);
 	light.Type = LightType::Directional;
-	light.Direction = NormalizeOr(XMVectorSubtract(sunPosition, target), { 0.0f, 1.0f, -0.25f });
+	// The renderer stores the direction from the target towards the sun.
+	light.Direction = NormalizeOr(XMVectorSubtract(sunPosition, target), { 0.0f, 0.9701425f, -0.2425356f });
 	light.Range = max(light.Range, 1.0f);
-	light.Position = writableTransform.Position;
+	light.Position = transform.Position;
 }

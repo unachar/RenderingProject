@@ -86,7 +86,7 @@ ComPtr<ID3D12PipelineState> RendererState::m_VelocityGeometryPso;
 ComPtr<ID3D12Resource> RendererState::m_PostProcessConstantBuffer;
 ComPtr<ID3D12Resource> RendererState::m_LightConstantBuffer;
 ComPtr<ID3D12Resource> RendererState::m_PBRConstantBuffer;
-void* RendererState::m_pPostProcessCbvDataBegin = nullptr;
+UINT8* RendererState::m_pPostProcessCbvDataBegin = nullptr;
 void* RendererState::m_pLightCbvDataBegin = nullptr;
 void* RendererState::m_pPBRCbvDataBegin = nullptr;
 RenderMode RendererState::m_RenderMode = RenderMode::DEFERRED;

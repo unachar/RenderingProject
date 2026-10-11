@@ -8,6 +8,13 @@
 #include "renderersettings.h"
 #include "visibilitybuffer.h"
 #include "occlusionculling.h"
+#include "postprocesspass.h"
+#include "raytracing.h"
+
+namespace
+{
+bool g_VelocityDepthReadActive = false;
+}
 
 
 void ScenePasses::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_TOPOLOGY topology)
@@ -16,6 +23,7 @@ void ScenePasses::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_TO
 	LightingResources::UpdateLightConstantBuffer(1.35f);
 	LightingResources::UpdateShadowConstantBuffer();
 	m_CommandList->SetGraphicsRootSignature(rootSignature);
+	Raytracing::BindLighting(m_CommandList.Get(), 16, 17);
 	if (m_LightConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(2, LightingResources::GetCurrentLightConstantBufferAddress());
 	if (m_PBRConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(3, MaterialBindings::GetPBRConstantBufferAddress());
 	if (m_ShadowDepthBuffer)
@@ -153,7 +161,7 @@ void ScenePasses::BeginEditorSceneOverlayPass()
 			{
 				m_CommandList->SetGraphicsRootConstantBufferView(2,
 					m_PostProcessConstantBuffer->GetGPUVirtualAddress() +
-					m_FrameIndex * g_kPP_CB_ALIGNED_SIZE);
+					GetPostProcessFrameOffset());
 			}
 			m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			m_CommandList->DrawInstanced(3, 1, 0, 0);
@@ -537,6 +545,8 @@ void ScenePasses::EndScenePass()
 
 void ScenePasses::RenderVelocityBuffer()
 {
+	g_VelocityDepthReadActive = false;
+	PostProcessPass::UpdateCameraConstants();
 	if (m_RenderMode != RenderMode::DEFERRED || !m_CommandList || !m_AaRootSignature)
 	{
 		return;
@@ -567,7 +577,7 @@ void ScenePasses::RenderVelocityBuffer()
 	if (m_PostProcessConstantBuffer)
 	{
 		m_CommandList->SetGraphicsRootConstantBufferView(0,
-			m_PostProcessConstantBuffer->GetGPUVirtualAddress() + m_FrameIndex * g_kPP_CB_ALIGNED_SIZE);
+			m_PostProcessConstantBuffer->GetGPUVirtualAddress() + GetPostProcessFrameOffset());
 	}
 	m_CommandList->SetGraphicsRootDescriptorTable(1,
 		m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)]);
@@ -586,12 +596,40 @@ void ScenePasses::RenderVelocityBuffer()
 	m_CommandList->SetGraphicsRoot32BitConstants(4, 20, constants, 0);
 	m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	m_CommandList->DrawInstanced(3, 1, 0, 0);
-
-
+	ID3D12Resource* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
+	if (depth)
+	{
+		const auto readDepth = CD3DX12_RESOURCE_BARRIER::Transition(depth,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_READ);
+		m_CommandList->ResourceBarrier(1, &readDepth);
+		const UINT index = m_UseLowResDepth ? g_kLOW_DEPTH_READ_DSV_INDEX : g_kFULL_DEPTH_READ_DSV_INDEX;
+		const auto readOnlyDsv = CD3DX12_CPU_DESCRIPTOR_HANDLE(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(),
+			index, m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV));
+		m_CommandList->OMSetRenderTargets(1, &m_GBufferRtvHandles[velocityIndex], FALSE, &readOnlyDsv);
+		g_VelocityDepthReadActive = true;
+		if (!m_UseLowResDepth)
+		{
+			m_DepthStencilState = D3D12_RESOURCE_STATE_DEPTH_READ;
+		}
+	}
 }
 
 void ScenePasses::EndVelocityBuffer()
 {
+	if (m_RenderMode != RenderMode::DEFERRED || !m_CommandList) return;
+	if (g_VelocityDepthReadActive)
+	{
+		m_CommandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+		ID3D12Resource* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
+		const auto restoreDepth = CD3DX12_RESOURCE_BARRIER::Transition(depth,
+			D3D12_RESOURCE_STATE_DEPTH_READ, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+		m_CommandList->ResourceBarrier(1, &restoreDepth);
+		if (!m_UseLowResDepth)
+		{
+			m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		}
+		g_VelocityDepthReadActive = false;
+	}
 	const UINT velocityIndex = static_cast<UINT>(GBufferType::VELOCITY);
 	if (!m_CommandList || !m_GBufferTargets[velocityIndex]) return;
 	D3D12_RESOURCE_BARRIER toVelocitySrv = CD3DX12_RESOURCE_BARRIER::Transition(
