@@ -1,6 +1,7 @@
 #define SHADER_POSTPROCESS
 #define SHADER_3D
 #include "common.hlsl"
+#include "SkyAtmosphere.hlsli"
 #pragma warning(disable: 4000)
 
 Texture2D<float4> BaseColorTexture : register(t0);
@@ -14,6 +15,8 @@ Texture2D<float4> AtmosphereTexture : register(t8);
 Texture2D<float4> MonitorTexture : register(t12);
 Texture2D<float> VisibilityBitmaskAO : register(t13);
 Texture2D<float4> DeinterleavedSSGI : register(t14);
+Texture2D<float2> RaytracedVisibility : register(t16);
+Texture2D<float4> RaytracedReflections : register(t17);
 
 SamplerState TextureSampler : register(s0);
 SamplerComparisonState ShadowSampler : register(s1);
@@ -243,6 +246,10 @@ float SampleDeferredShadowMap(
     float3 lightDir,
     int filterRadius)
 {
+#ifdef SHADER_RAYTRACING
+    if (SceneRayFlags.x > 0.5f)
+        return SceneShadowForLightCommon(lightIndex, worldPos, normal, lightDir);
+#endif
     float shadowLayer = LightShadowData[lightIndex].x;
     [branch]
     if (shadowLayer < -0.5f)
@@ -595,8 +602,25 @@ void ResolveDeferredLightAggregateShadowed(
         float contactVisibility = !decalLight && directionalShadow
             ? SampleContactShadow(worldPos, normal, singleDir)
             : 1.0f;
+#ifdef SHADER_RAYTRACING
+        if (SceneRayFlags.x > 0.5f) contactVisibility = 1.0f;
+#endif
         shadowVisibility *= lerp(1.0f, contactVisibility, 0.45f);
-		if (!decalLight && LightPositionTypes[i].w < 0.5f)
+		const bool useRayShadow = !decalLight && directionalShadow &&
+			RaytracingFlags.x > 0.5f && RaytracingFlags.z > 0.5f &&
+			RaytracingSunDirection.w > 0.5f && dot(singleDir, RaytracingSunDirection.xyz) > 0.999f;
+		if (useRayShadow)
+		{
+			uint rayWidth;
+			uint rayHeight;
+			RaytracedVisibility.GetDimensions(rayWidth, rayHeight);
+			shadowVisibility = RaytracedVisibility.SampleLevel(TextureSampler, pixelPosition / float2(rayWidth, rayHeight), 0).r;
+		}
+		bool useLegacyDistanceShadow = !useRayShadow && !decalLight && directionalShadow;
+#ifdef SHADER_RAYTRACING
+        useLegacyDistanceShadow = useLegacyDistanceShadow && SceneRayFlags.x < 0.5f;
+#endif
+		if (useLegacyDistanceShadow)
 		{
 			shadowVisibility *= SampleDistanceFieldShadow(worldPos, normal, singleDir);
 		}
@@ -672,6 +696,11 @@ float4 main(PSInputPostProcess input) : SV_Target
 	float fogTransmittance = saturate(atmosphereMedia.a);
 	if (background)
 	{
+		if (SkyParameters.x > 0.5f)
+		{
+			// The sky integral already includes atmospheric extinction and scattering.
+			return float4(EvaluateSkyAtmosphere(ReconstructPostProcessViewRayCommon(input.TexCoord)), 1.0f);
+		}
 		baseColor.rgb =
 			(baseColor.rgb + AtmosphereBackgroundCommon(input.TexCoord)) *
 			fogTransmittance + atmosphereMedia.rgb;
@@ -924,33 +953,12 @@ float4 main(PSInputPostProcess input) : SV_Target
 
         float maxMip = 8.0f;
 
-        float3 ssrHit = (roughness < 0.65f && dot(R, V) < 0.0f)
-            ? ScreenSpaceRayMarch(position + N * 0.04f + R * 0.02f, R, DepthTexture, TextureSampler)
-            : float3(-1.0f, -1.0f, -1.0f);
-        
         float3 envSpecular = EnvironmentTexture.SampleLevel(
             TextureSampler, reflectionUV, roughness * maxMip).rgb;
-        if (all(ssrHit.xy >= 0.0f) && all(ssrHit.xy <= 1.0f))
-        {
-            float3 rayOrigin = position + N * 0.04f + R * 0.02f;
-            float3 rayHitPosition = rayOrigin + R * ssrHit.z;
-            float hitDepth = DepthTexture.SampleLevel(TextureSampler, ssrHit.xy, 0);
-            float3 gbufferHitPosition = ReconstructPostProcessWorldPositionCommon(ssrHit.xy, hitDepth);
-            float4 gbufferHitMaterial = MaterialTexture.SampleLevel(TextureSampler, ssrHit.xy, 0);
-            float hitTolerance = 0.10f + ssrHit.z * 0.015f;
-            bool validGeometryHit = gbufferHitMaterial.a >= -0.5f && hitDepth < 0.9999f && distance(rayHitPosition, gbufferHitPosition) <= hitTolerance;
-
-            if (validGeometryHit)
-            {
-                float2 edgeDistance = min(ssrHit.xy, 1.0f - ssrHit.xy);
-                float edgeConfidence = saturate(min(edgeDistance.x, edgeDistance.y) * 24.0f);
-                float distanceConfidence = saturate(1.0f - ssrHit.z / 15.0f);
-                float roughnessConfidence = saturate((0.65f - roughness) / 0.25f);
-                float ssrConfidence = edgeConfidence * distanceConfidence * roughnessConfidence;
-                float3 ssrColor = BaseColorTexture.SampleLevel(TextureSampler, ssrHit.xy, roughness * 2.0f).rgb;
-                envSpecular = lerp(envSpecular, ssrColor, ssrConfidence);
-            }
-        }
+#ifdef SHADER_RAYTRACING
+        if (SceneRayFlags.x > 0.5f)
+            envSpecular = RaytracingFlags.w > 0.5f ? RaytracedReflections.SampleLevel(TextureSampler, input.TexCoord, 0).rgb : 0;
+#endif
 
         float3 irradiance = EnvironmentTexture.SampleLevel(TextureSampler,normalUV,maxMip).rgb;
 
@@ -974,6 +982,10 @@ float4 main(PSInputPostProcess input) : SV_Target
 
 
 
+        if (SkyParameters.x > 0.5f)
+        {
+            ambient *= lerp(0.025f, 1.0f, SkyParameters.y);
+        }
         baseColor.rgb = directLight + ambient;
     }
 
@@ -990,6 +1002,11 @@ float4 main(PSInputPostProcess input) : SV_Target
         screenIndirect = DeinterleavedSSGI.SampleLevel(TextureSampler,input.TexCoord,0).rgb;
     }
 	baseColor.rgb = baseColor.rgb * lerp(0.38f, 1.0f, ambientVisibility) + screenIndirect * saturate(baseColor.rgb + 0.18f);
+	if (RaytracingFlags.x > 0.5f && RaytracingFlags.y > 0.5f)
+	{
+		float rayAmbient = RaytracedVisibility.SampleLevel(TextureSampler, input.TexCoord, 0).g;
+		baseColor.rgb *= lerp(0.45f, 1.0f, rayAmbient);
+	}
 
     baseColor.rgb = baseColor.rgb * fogTransmittance + atmosphereMedia.rgb;
     baseColor.a = 1.0f;

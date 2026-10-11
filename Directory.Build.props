@@ -3,14 +3,68 @@
   <PropertyGroup>
     <DirectXShaderCompilerPackageVersion>1.9.2602.24</DirectXShaderCompilerPackageVersion>
     <DirectXShaderCompilerPackageRoot>$(MSBuildThisFileDirectory)packages\Microsoft.Direct3D.DXC.$(DirectXShaderCompilerPackageVersion)\</DirectXShaderCompilerPackageRoot>
+    <DlssSdkRoot>$(MSBuildThisFileDirectory)External\DLSS\sdk\</DlssSdkRoot>
+    <EnableDlss Condition="'$(EnableDlss)' == '' and '$(Platform)' == 'x64' and Exists('$(DlssSdkRoot)include\nvsdk_ngx.h') and Exists('$(DlssSdkRoot)lib\Windows_x86_64\x64\nvsdk_ngx_s.lib') and Exists('$(DlssSdkRoot)lib\Windows_x86_64\x64\nvsdk_ngx_s_dbg.lib') and Exists('$(DlssSdkRoot)lib\Windows_x86_64\rel\nvngx_dlss.dll')">true</EnableDlss>
+    <EnableDlss Condition="'$(EnableDlss)' == ''">false</EnableDlss>
+    <DlssLibrary Condition="'$(Configuration)' == 'Debug'">nvsdk_ngx_s_dbg.lib</DlssLibrary>
+    <DlssLibrary Condition="'$(Configuration)' != 'Debug'">nvsdk_ngx_s.lib</DlssLibrary>
+    <NrdSdkRoot>$(MSBuildThisFileDirectory)External\NRD\sdk\</NrdSdkRoot>
+    <EnableNrd Condition="'$(EnableNrd)' == '' and '$(Platform)' == 'x64' and Exists('$(NrdSdkRoot)Include\NRD.h') and Exists('$(NrdSdkRoot)_Bin\$(Configuration)\NRD.lib') and Exists('$(NrdSdkRoot)_Build\_deps\shadermake-build\$(Configuration)\ShaderMakeBlob.lib')">true</EnableNrd>
+    <EnableNrd Condition="'$(EnableNrd)' == ''">false</EnableNrd>
   </PropertyGroup>
 
 
 
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)External\ImGUI;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>
+        $(MSBuildThisFileDirectory)source\assets;
+        $(MSBuildThisFileDirectory)source\core;
+        $(MSBuildThisFileDirectory)source\ecs;
+        $(MSBuildThisFileDirectory)source\editor;
+        $(MSBuildThisFileDirectory)source\entities;
+        $(MSBuildThisFileDirectory)source\models;
+        $(MSBuildThisFileDirectory)source\physics;
+        $(MSBuildThisFileDirectory)source\procedural;
+        $(MSBuildThisFileDirectory)source\rendering;
+        $(MSBuildThisFileDirectory)source\scene;
+        $(MSBuildThisFileDirectory)source\systems;
+        $(MSBuildThisFileDirectory)External\ImGUI;
+        $(MSBuildThisFileDirectory)External\NVAPI\include;
+        %(AdditionalIncludeDirectories)
+      </AdditionalIncludeDirectories>
     </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>
+        $(MSBuildThisFileDirectory)External\NVAPI\lib\x64;
+        %(AdditionalLibraryDirectories)
+      </AdditionalLibraryDirectories>
+      <AdditionalDependencies>
+        %(AdditionalDependencies)
+      </AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableDlss)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(DlssSdkRoot)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_DLSS=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(DlssSdkRoot)lib\Windows_x86_64\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(DlssLibrary);advapi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableNrd)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(NrdSdkRoot)Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_NRD=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(NrdSdkRoot)_Bin\$(Configuration);$(NrdSdkRoot)_Build\_deps\shadermake-build\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>NRD.lib;ShaderMakeBlob.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
   </ItemDefinitionGroup>
 
 

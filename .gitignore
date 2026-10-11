@@ -95,3 +95,5 @@ Save/physics_smoke_progress.txt
 Save/physics_smoke_test.txt
 Save/jolt_assert.txt
 imgui.ini
+/External/DLSS/sdk/
+/External/NRD/sdk/

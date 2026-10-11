@@ -2,11 +2,13 @@
 #include "main.h"
 #include "resource.h"
 #include "game.h"
-#include "rendererdraw.h"
-#include "renderercore.h"
+#include "graphicsdevice.h"
+#include "graphicslog.h"
 #include "imguimanager.h"
 #include <memory>
 #include <shellapi.h>
+#include "renderconfiguration.h"
+#include "renderingvalidation.h"
 
 extern "C"
 {
@@ -70,7 +72,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		UINT height = rc.bottom - rc.top;
 		if (width > 0 && height > 0)
 		{
-			RendererCore::Resize(width, height);
+			RenderConfiguration::Resize(width, height);
 		}
 		return 0;
 	}
@@ -82,7 +84,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		const UINT height = static_cast<UINT>(rc.bottom - rc.top);
 		if (width > 0 && height > 0)
 		{
-			RendererCore::Resize(width, height);
+			RenderConfiguration::Resize(width, height);
 		}
 		return 0;
 	}
@@ -94,7 +96,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			UINT height = HIWORD(lParam);
 			if (width > 0 && height > 0)
 			{
-				RendererCore::Resize(width, height);
+				RenderConfiguration::Resize(width, height);
 			}
 		}
 		return 0;
@@ -116,7 +118,10 @@ static bool IsPhysicsSmokeTest()
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
 	const bool automatedBenchmark = IsAutomatedBenchmark();
-	const bool automatedRun = automatedBenchmark || IsPhysicsSmokeTest();
+	char startupSmokeValue[16]{};
+	GetEnvironmentVariableA("DX12_STARTUP_SMOKE_FRAMES", startupSmokeValue, static_cast<DWORD>(size(startupSmokeValue)));
+	const int startupSmokeFrames = (std::max)(0, atoi(startupSmokeValue));
+	const bool automatedRun = automatedBenchmark || IsPhysicsSmokeTest() || startupSmokeFrames > 0;
 	char exePath[MAX_PATH]{};
 	GetModuleFileNameA(nullptr, exePath, MAX_PATH);
 
@@ -167,15 +172,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 	ShowWindow(hwnd, nCmdShow);
 	DragAcceptFiles(hwnd, TRUE);
 
-	if (!RendererCore::Init(hwnd))
+	if (!GraphicsDevice::Init(hwnd))
 	{
 		MessageBoxA(hwnd, "Failed to initialize renderer.", "Error", MB_OK | MB_ICONERROR);
-		return 0;
+		return 1;
 	}
 
+	WriteGraphicsLog("Step: Game::Init\n");
 	Game::Init();
+	WriteGraphicsLog("Step: Game::Create\n");
 	Game::Create();
+	WriteGraphicsLog("Step: initialization complete; entering main loop\n");
 	
+	UINT64 completedFrames = 0;
 	MSG msg = { 0 };
 	while (msg.message != WM_QUIT)
 	{
@@ -205,9 +214,29 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 			MsgWaitForMultipleObjectsEx(0, nullptr, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
 		}
 
+		if (completedFrames == 0) WriteGraphicsLog("Step: first frame begin\n");
+		RenderingValidation::BeforeFrame(completedFrames);
 		Game::Run();
+		RenderingValidation::AfterFrame(completedFrames);
+		if (completedFrames == 0) WriteGraphicsLog("Step: first frame complete\n");
+		++completedFrames;
+		if (startupSmokeFrames > 0 && completedFrames >= static_cast<UINT64>(startupSmokeFrames)) PostQuitMessage(0);
 	}
+	const bool featuresPassed = RenderingValidation::Finish();
 	Game::Uninit();
+	if (!featuresPassed)
+	{
+		return 1;
+	}
+	if (startupSmokeFrames > 0)
+	{
+		if (completedFrames < static_cast<UINT64>(startupSmokeFrames))
+		{
+			WriteGraphicsLog("ERROR: startup smoke test interrupted before target frame count\n");
+			return 1;
+		}
+		WriteGraphicsLog("Step: startup smoke test complete; shutdown complete\n");
+	}
 	return 0;
 }
 

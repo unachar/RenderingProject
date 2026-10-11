@@ -39,7 +39,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         OutBaseColor[pixel] = float4(0.1f, 0.2f, 0.4f, 1.0f);
         OutNormal[pixel] = float4(0.5f, 1.0f, 0.5f, 1.0f);
         OutDepth[pixel] = 1.0f;
-        OutMaterial[pixel] = 0.0f;
+        OutMaterial[pixel] = float4(0.0f, 0.0f, 0.0f, -1.0f);
         OutShadow[pixel] = float4(0.0f, 0.0f, 0.0f, 1.0f);
         return;
     }

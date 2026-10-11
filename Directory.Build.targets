@@ -27,4 +27,35 @@
     <Error Condition="!Exists('$(DirectXShaderCompilerPackageRoot)build\native\Microsoft.Direct3D.DXC.targets')"
            Text="$([System.String]::Format('$(DxcMissingPackageMessage)', '$(DirectXShaderCompilerPackageRoot)build\native\Microsoft.Direct3D.DXC.targets'))" />
   </Target>
+  <Target Name="CompileDlssHelperShaders" BeforeTargets="ClCompile"
+          Inputs="$(MSBuildThisFileDirectory)shader\hlsl\DlssPrepareCS.hlsl"
+          Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\DlssPrepareCS.cso;$(MSBuildThisFileDirectory)shader\hlsl\build\DlssCopyCS.cso"
+          Condition="'$(EnableDlss)' == 'true' and '$(Platform)' == 'x64'">
+    <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
+    <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T cs_6_0 -E Prepare -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\DlssPrepareCS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\DlssPrepareCS.hlsl&quot;" />
+    <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T cs_6_0 -E Copy -D DLSS_COPY=1 -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\DlssCopyCS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\DlssPrepareCS.hlsl&quot;" />
+  </Target>
+  <Target Name="CopyDlssRuntime" AfterTargets="Build" Condition="'$(EnableDlss)' == 'true' and '$(Platform)' == 'x64'">
+    <Copy SourceFiles="$(DlssSdkRoot)lib\Windows_x86_64\rel\nvngx_dlss.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(DlssSdkRoot)LICENSE.txt" DestinationFiles="$(OutDir)NVIDIA_DLSS_LICENSE.txt" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="CopyNrdLicense" AfterTargets="Build" Condition="'$(EnableNrd)' == 'true' and '$(Platform)' == 'x64'">
+    <Copy SourceFiles="$(NrdSdkRoot)LICENSE.txt" DestinationFiles="$(OutDir)NVIDIA_NRD_LICENSE.txt" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="CompileRaytracingShader" BeforeTargets="ClCompile"
+          Inputs="$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl;$(MSBuildThisFileDirectory)Directory.Build.props"
+          Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\RaytracingCS.cso"
+          Condition="'$(Platform)' == 'x64'">
+    <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
+    <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T cs_6_5 -E main -D USE_NRD=0 -HV 2021 -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\RaytracingCS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl&quot;" />
+  </Target>
+  <Target Name="CompileNrdRaytracingShaders" BeforeTargets="ClCompile"
+          Inputs="$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl;$(NrdSdkRoot)Shaders\NRD.hlsli;$(NrdSdkRoot)Shaders\NRDConfig.hlsli"
+          Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\RaytracingNrdCS.cso;$(MSBuildThisFileDirectory)shader\hlsl\build\NrdComposeShadowCS.cso;$(MSBuildThisFileDirectory)shader\hlsl\build\NrdComposeAmbientCS.cso"
+          Condition="'$(EnableNrd)' == 'true' and '$(Platform)' == 'x64'">
+    <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
+    <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T cs_6_5 -E main -D USE_NRD=1 -HV 2021 -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\RaytracingNrdCS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl&quot;" />
+    <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T cs_6_5 -E ComposeShadow -D USE_NRD=1 -HV 2021 -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\NrdComposeShadowCS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl&quot;" />
+    <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T cs_6_5 -E ComposeAmbient -D USE_NRD=1 -HV 2021 -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\NrdComposeAmbientCS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl&quot;" />
+  </Target>
 </Project>
