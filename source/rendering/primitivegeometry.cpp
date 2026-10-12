@@ -474,5 +474,6 @@ bool PrimitiveGeometry::UploadVertices(EntityID entity, const std::vector<Vertex
     mesh.GeometryHash = HashGeometry(vertices.data(), byteSize);
     CalculateGeometryBounds(vertices, mesh.LocalBoundsCenter, mesh.LocalBoundsExtents);
     mesh.HasLocalBounds = true;
+    GpuSceneChanges::Notify(entity, GpuSceneDirtyFlags::Mesh | GpuSceneDirtyFlags::Bounds);
     return true;
 }

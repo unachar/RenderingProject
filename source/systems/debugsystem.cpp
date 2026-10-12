@@ -484,7 +484,7 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	for (EntityID i : aabbEntities)
 	{
 		XMFLOAT4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
-		const auto& aabb = ComponentManager::GetComponent<AABBComponent>(i);
+		const auto& aabb = ComponentManager::GetComponentUnchecked<AABBComponent>(i);
 		if (!aabb.DrawDebug)
 		{
 			continue;

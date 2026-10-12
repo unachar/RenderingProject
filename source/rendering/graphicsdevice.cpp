@@ -13,6 +13,7 @@
 #include "screenspaceeffects.h"
 #include "occlusionculling.h"
 #include "meshshaderpipeline.h"
+#include "gpuscene/gpuscene.h"
 #include "lightinstancebuilder.h"
 #include "graphicsdevice.h"
 #include "rendertargets.h"
@@ -64,6 +65,16 @@ bool GraphicsDevice::Init(HWND hwnd)
 	if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
 	{
 		debugController->EnableDebugLayer();
+		char gpuValidation[8]{};
+		if (GetEnvironmentVariableA("DX12_GPU_BASED_VALIDATION", gpuValidation, sizeof(gpuValidation)) && atoi(gpuValidation))
+		{
+			ComPtr<ID3D12Debug1> validation;
+			if (SUCCEEDED(debugController.As(&validation)))
+			{
+				validation->SetEnableGPUBasedValidation(TRUE);
+				WriteGraphicsLog("GPU Based Validation enabled\n");
+			}
+		}
 	}
 #endif
 
@@ -514,6 +525,7 @@ void GraphicsDevice::Uninit()
 	VertexDeformation::Shutdown();
 	DlssUpscaler::Shutdown();
 	OcclusionCulling::Shutdown();
+	GpuScene::Shutdown();
 	MeshShaderPipeline::Shutdown();
 	LightInstanceBuilder::Shutdown();
     RenderTargets::ReleaseGBufferResources();

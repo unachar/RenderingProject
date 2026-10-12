@@ -65,6 +65,7 @@ bool MaterialSystem::SetTexture(EntityID entity, const char* texturePath)
 		ComponentManager::AddComponent(entity, ComponentType::MATERIAL);
 	}
 
+	GpuSceneChanges::Notify(entity, GpuSceneDirtyFlags::Material);
 	auto& mat = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
 
 	if (!texturePath || texturePath[0] == '\0')
@@ -99,6 +100,7 @@ bool MaterialSystem::SetPBRParameters(EntityID entity, float metallic, float rou
 		ComponentManager::AddComponent(entity, ComponentType::MATERIAL);
 	}
 
+	GpuSceneChanges::Notify(entity, GpuSceneDirtyFlags::Material);
 	auto& mat = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
 	mat.Metallic = clamp(metallic, 0.0f, 1.0f);
 	mat.Roughness = clamp(roughness, 0.0f, 1.0f);
@@ -116,6 +118,7 @@ void MaterialSystem::Update()
 				return;
 			}
 
+			GpuSceneChanges::Notify(i, GpuSceneDirtyFlags::Material);
 			StaticModelResource* model = ModelManager::GetStaticModel(
 				ComponentManager::GetComponentUnchecked<StaticModelComponent>(i).ModelId);
 			if (model)
@@ -149,6 +152,7 @@ void MaterialSystem::Update()
 				return;
 			}
 
+			GpuSceneChanges::Notify(i, GpuSceneDirtyFlags::Material);
 			AnimationModelResource* model = ModelManager::GetAnimModel(
 				ComponentManager::GetComponentUnchecked<AnimationModelComponent>(i).ModelId);
 			if (model && model->GetMeshCount() > 0)
@@ -184,6 +188,7 @@ void MaterialSystem::Update()
 		auto& mat = ComponentManager::GetComponentUnchecked<MaterialComponent>(i);
 		if (mat.TextureID < 0)
 		{
+            GpuSceneChanges::Notify(i, GpuSceneDirtyFlags::Material);
 			mat.TextureID = TextureManager::GetErrorTextureIndex();
 		}
 	}

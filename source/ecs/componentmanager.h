@@ -558,6 +558,15 @@ public:
 			abort();
 		}
 
+        if constexpr (std::is_same_v<T, MeshComponent> || std::is_same_v<T, StaticModelComponent> ||
+            std::is_same_v<T, AnimationModelComponent> || std::is_same_v<T, MaterialComponent> ||
+            std::is_same_v<T, SpriteComponent> || std::is_same_v<T, AABBComponent> ||
+            std::is_same_v<T, LODComponent> || std::is_same_v<T, InstancingComponent> ||
+            std::is_same_v<T, ShaderComponent> || std::is_same_v<T, NameComponent> ||
+            std::is_same_v<T, ProceduralMotionComponent>)
+        {
+            GpuSceneChanges::Notify(entity);
+        }
 		return ComponentStorage<T>::Get(entity);
 	}
 

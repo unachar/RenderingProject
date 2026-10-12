@@ -7,11 +7,12 @@
 #include <string>
 #include <typeindex>
 #include <cstdint>
+#include "rendering/gpuscene/gpuscenechanges.h"
 #include <windows.h>
 #include <DirectXMath.h>
 #include <wrl.h>
 
-static constexpr uint32_t g_kMAX_ENTITIES = 1024;
+static constexpr uint32_t g_kMAX_ENTITIES = 16384;
 static constexpr uint32_t g_kMAX_COMPONENTS = 32;
 static constexpr uint32_t g_kINVALID_ENTITY = UINT32_MAX;
 
@@ -265,6 +266,7 @@ public:
 			m_ActiveEntities[type].push_back(entity);
 			m_EntityToIndex[type][entity] = static_cast<int32_t>(m_ActiveEntities[type].size() - 1);
 			TouchStructure();
+			GpuSceneChanges::Notify(entity);
 		}
 	}
 
@@ -290,6 +292,7 @@ public:
 				m_EntityToIndex[type][entity] = -1;
 			}
 			TouchStructure();
+			GpuSceneChanges::Notify(entity);
 		}
 	}
 

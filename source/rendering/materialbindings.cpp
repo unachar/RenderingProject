@@ -3,6 +3,8 @@
 #include "graphicsdevice.h"
 #include "componentmanager.h"
 #include "world.h"
+#include "materialsystem.h"
+
 
 namespace
 {
@@ -196,6 +198,23 @@ namespace
 
 }
 
+GPUMaterialData MaterialBindings::BuildGpuSceneMaterial(const MaterialComponent& material)
+{
+    GPUMaterialData result{};
+    result.BaseColor.w = material.Alpha;
+    result.Surface = XMFLOAT4(material.Metallic, material.Roughness, material.Fresnel, material.NormalBlend);
+    result.AlbedoTextureIndex = material.TextureID >= 0 ? static_cast<uint32_t>(material.TextureID) : UINT32_MAX;
+    result.NormalTextureIndex = material.NormalMapID >= 0 ? static_cast<uint32_t>(material.NormalMapID) : UINT32_MAX;
+    result.Flags = (material.UseTexture ? 1u : 0u) | (MaterialSystem::IsTransparentMaterial(material) ? 2u : 0u);
+    result.ShaderClass = static_cast<uint32_t>(material.ShaderClass);
+    result.ShaderMode = static_cast<uint32_t>(material.ShaderClassMode);
+    const auto constants = BuildPBRConstantsFromMaterial(material);
+    static_assert(sizeof(constants) <= sizeof(result.ShadingParameters));
+    result.ParameterVectorCount = (sizeof(constants) + 15) / 16;
+    std::memcpy(result.ShadingParameters.data(), &constants, sizeof(constants));
+    return result;
+}
+
 D3D12_GPU_VIRTUAL_ADDRESS MaterialBindings::GetPBRConstantBufferAddress(UINT slot)
 {
 	if (!m_PBRConstantBuffer)
@@ -233,6 +252,8 @@ void MaterialBindings::SetMaterial(const EntityID entityID, const MaterialCompon
 		slot = 0;
 	}
 	PBRConstants constants = BuildPBRConstantsFromMaterial(material);
+	static_assert(sizeof(constants) <= g_kPBR_CB_ALIGNED_SIZE,
+		"Material constants must fit within one per-entity frame slot");
 
 	const UINT frameSlot = GraphicsDevice::GetFrameIndex() * g_kPBR_CB_SLOT_COUNT + slot;
 	auto* dst = static_cast<UINT8*>(m_pPBRCbvDataBegin) + frameSlot * g_kPBR_CB_ALIGNED_SIZE;

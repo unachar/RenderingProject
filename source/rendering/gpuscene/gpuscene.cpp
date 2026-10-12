@@ -1,0 +1,522 @@
+#include "pch.h"
+#include "gpuscene.h"
+#include "gpuscenechanges.h"
+#include "gpusceneslots.h"
+#include "gpuscenebuffer.h"
+#include "gpusceneculling.h"
+#include "gpuscenevalidation.h"
+#include "gpudriven/gpudrivenrenderer.h"
+#include "componentmanager.h"
+#include "world.h"
+#include "modelmanager.h"
+#include "materialbindings.h"
+#include "graphicsdevice.h"
+#include "rendergraph.h"
+#include "renderprofiler.h"
+#include <unordered_set>
+
+namespace
+{
+struct SceneState
+{
+    GpuSceneSlots Instances;
+    std::vector<GPUMeshData> Meshes;
+    std::vector<GPUMaterialData> Materials;
+    std::vector<uint32_t> NewMeshes, NewMaterials;
+    std::vector<ComPtr<ID3D12Resource>> GeometryOwners;
+    std::unordered_map<uint64_t, std::vector<uint32_t>> MeshLookup, MaterialLookup;
+    std::unordered_map<uint32_t, std::vector<GPUInstanceID>> Entities;
+    std::vector<uint32_t> CpuOpaqueStatic;
+    std::unordered_map<uint32_t, size_t> CpuOpaquePositions;
+    GpuSceneBuffer InstanceBuffer, MeshBuffer, MaterialBuffer;
+    GpuSceneCulling Culling;
+    GpuSceneStatistics Stats;
+};
+SceneState &Scene()
+{
+    static SceneState state;
+    return state;
+}
+uint64_t Hash(const void *data, size_t size)
+{
+    uint64_t hash = 1469598103934665603ull;
+    const auto *bytes = static_cast<const uint8_t *>(data);
+    for (size_t i = 0; i < size; ++i)
+    {
+        hash = (hash ^ bytes[i]) * 1099511628211ull;
+    }
+    return hash;
+}
+template <typename T>
+uint32_t RegisterShared(const T &data, std::vector<T> &records,
+                        std::unordered_map<uint64_t, std::vector<uint32_t>> &lookup, std::vector<uint32_t> &changes)
+{
+    auto &matches = lookup[Hash(&data, sizeof(data))];
+    for (uint32_t id : matches)
+    {
+        if (std::memcmp(&records[id], &data, sizeof(data)) == 0)
+        {
+            return id;
+        }
+    }
+    const uint32_t id = static_cast<uint32_t>(records.size());
+    records.push_back(data);
+    matches.push_back(id);
+    changes.push_back(id);
+    return id;
+}
+void SetCpuOpaqueEntity(uint32_t entity, bool include)
+{
+    auto& scene = Scene();
+    const auto position = scene.CpuOpaquePositions.find(entity);
+    if (include && position == scene.CpuOpaquePositions.end())
+    {
+        scene.CpuOpaquePositions[entity] = scene.CpuOpaqueStatic.size();
+        scene.CpuOpaqueStatic.push_back(entity);
+    }
+    else if (!include && position != scene.CpuOpaquePositions.end())
+    {
+        const size_t index = position->second;
+        const uint32_t moved = scene.CpuOpaqueStatic.back();
+        scene.CpuOpaqueStatic[index] = moved;
+        scene.CpuOpaquePositions[moved] = index;
+        scene.CpuOpaqueStatic.pop_back();
+        scene.CpuOpaquePositions.erase(entity);
+    }
+}
+void RemoveEntity(uint32_t entity)
+{
+    GPUDrivenRenderer::TrackEntityTextures(entity, {});
+    SetCpuOpaqueEntity(entity, false);
+    auto &scene = Scene();
+    const auto found = scene.Entities.find(entity);
+    if (found == scene.Entities.end())
+    {
+        return;
+    }
+    for (GPUInstanceID id : found->second)
+    {
+        scene.Instances.Remove(id);
+    }
+    scene.Entities.erase(found);
+}
+uint32_t RegisterMesh(ID3D12Resource *vertices, ID3D12Resource *indices, uint32_t vertexCount, uint32_t indexCount,
+                      const XMFLOAT3 &center, const XMFLOAT3 &extents)
+{
+    auto &scene = Scene();
+    GPUMeshData mesh{};
+    const uint64_t vertexAddress = vertices ? vertices->GetGPUVirtualAddress() : 0;
+    const uint64_t indexAddress = indices ? indices->GetGPUVirtualAddress() : 0;
+    mesh.VertexAddressLow = static_cast<uint32_t>(vertexAddress);
+    mesh.VertexAddressHigh = static_cast<uint32_t>(vertexAddress >> 32);
+    mesh.IndexAddressLow = static_cast<uint32_t>(indexAddress);
+    mesh.IndexAddressHigh = static_cast<uint32_t>(indexAddress >> 32);
+    mesh.VertexCount = vertexCount;
+    mesh.IndexCount = indexCount;
+    mesh.BoundsCenter = XMFLOAT4(center.x, center.y, center.z, 1);
+    mesh.BoundsExtents = XMFLOAT4(extents.x, extents.y, extents.z, 0);
+    const size_t oldCount = scene.Meshes.size();
+    const uint32_t id = RegisterShared(mesh, scene.Meshes, scene.MeshLookup, scene.NewMeshes);
+    if (scene.Meshes.size() != oldCount)
+    {
+        if (vertices)
+        {
+            scene.GeometryOwners.emplace_back(vertices);
+        }
+        if (indices)
+        {
+            scene.GeometryOwners.emplace_back(indices);
+        }
+    }
+    return id;
+}
+void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
+{
+    auto &scene = Scene();
+    if (!Registry::IsAlive(entity) || !ComponentManager::HasComponent<TransformComponent>(entity))
+    {
+        RemoveEntity(entity);
+        return;
+    }
+    const auto &transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+    const MaterialComponent defaultMaterial{};
+    const auto &material = ComponentManager::HasComponent<MaterialComponent>(entity)
+                               ? ComponentManager::GetComponentUnchecked<MaterialComponent>(entity)
+                               : defaultMaterial;
+    auto &ids = scene.Entities[entity];
+    size_t section = 0;
+    auto append = [&](ID3D12Resource *vertices, ID3D12Resource *indices, uint32_t vertexCount, uint32_t indexCount,
+                      XMFLOAT3 center, XMFLOAT3 extents, int texture) {
+        if (!vertices || !vertexCount)
+        {
+            return;
+        }
+        const XMFLOAT3 meshCenter = center;
+        const XMFLOAT3 meshExtents = extents;
+        if (ComponentManager::HasComponent<AABBComponent>(entity))
+        {
+            const auto &bounds = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
+            center = bounds.Center;
+            extents = bounds.Extents;
+        }
+        GPUInstanceData instance{};
+        instance.Entity = entity;
+        instance.Flags = 3;
+        if (section < ids.size()) instance.Flags |= scene.Instances.Data()[ids[section]].Flags & 4u;
+        instance.World = transform.WorldMatrix;
+        instance.PreviousWorld = section < ids.size() ? scene.Instances.Data()[ids[section]].World : instance.World;
+        // Material-only edits must preserve the temporal state of a moving instance.
+        if (section < ids.size() &&
+            std::memcmp(&instance.World, &scene.Instances.Data()[ids[section]].World, sizeof(instance.World)) == 0)
+        {
+            instance.PreviousWorld = scene.Instances.Data()[ids[section]].PreviousWorld;
+        }
+        instance.LocalCenter = XMFLOAT4(meshCenter.x, meshCenter.y, meshCenter.z, 1);
+        instance.LocalExtents = XMFLOAT4(meshExtents.x, meshExtents.y, meshExtents.z, 0);
+        const XMMATRIX world = XMLoadFloat4x4(&instance.World);
+        XMFLOAT3 worldCenter;
+        XMStoreFloat3(&worldCenter, XMVector3TransformCoord(XMLoadFloat3(&center), world));
+        const auto &matrix = instance.World;
+        instance.BoundsCenter = XMFLOAT4(worldCenter.x, worldCenter.y, worldCenter.z, 1);
+        instance.BoundsExtents = XMFLOAT4(
+            std::abs(matrix._11) * extents.x + std::abs(matrix._21) * extents.y + std::abs(matrix._31) * extents.z,
+            std::abs(matrix._12) * extents.x + std::abs(matrix._22) * extents.y + std::abs(matrix._32) * extents.z,
+            std::abs(matrix._13) * extents.x + std::abs(matrix._23) * extents.y + std::abs(matrix._33) * extents.z, 0);
+        if (ComponentManager::HasComponent<InstancingComponent>(entity) &&
+            !ComponentManager::GetComponentUnchecked<InstancingComponent>(entity).EnableFrustumCulling)
+        {
+            instance.Flags &= ~2u;
+        }
+        if (ComponentManager::HasComponent<LODComponent>(entity))
+        {
+            const auto &lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
+            instance.LodDistances = XMFLOAT4(lod.Lod1Distance, lod.Lod2Distance, lod.UseLOD ? 1.0f : 0.0f, 0);
+        }
+        const bool existing = section < ids.size();
+        const uint32_t flags = static_cast<uint32_t>(dirty);
+        if (existing && !(flags & static_cast<uint32_t>(GpuSceneDirtyFlags::Mesh | GpuSceneDirtyFlags::Bounds)))
+        {
+            instance.MeshIndex = scene.Instances.Data()[ids[section]].MeshIndex;
+        }
+        else
+        {
+            instance.MeshIndex = RegisterMesh(vertices, indices, vertexCount, indexCount, meshCenter, meshExtents);
+        }
+        if (existing && !(flags & static_cast<uint32_t>(GpuSceneDirtyFlags::Material | GpuSceneDirtyFlags::Mesh)))
+        {
+            instance.MaterialIndex = scene.Instances.Data()[ids[section]].MaterialIndex;
+        }
+        else
+        {
+            auto gpuMaterial = MaterialBindings::BuildGpuSceneMaterial(material);
+            if (material.UseTexture && texture >= 0)
+            {
+                gpuMaterial.AlbedoTextureIndex = static_cast<uint32_t>(texture);
+            }
+            instance.MaterialIndex =
+                RegisterShared(gpuMaterial, scene.Materials, scene.MaterialLookup, scene.NewMaterials);
+        }
+        if (section < ids.size())
+        {
+            scene.Instances.Update(ids[section], instance);
+        }
+        else
+        {
+            ids.push_back(scene.Instances.Register(instance));
+        }
+        ++section;
+    };
+    if (ComponentManager::HasComponent<StaticModelComponent>(entity))
+    {
+        auto *model =
+            ModelManager::GetStaticModel(ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId);
+        if (model)
+        {
+            for (UINT i = 0; i < model->GetMeshCount(); ++i)
+            {
+                const auto &mesh = model->GetMeshData(i);
+                const size_t before = section;
+                append(mesh.VertexBuffer.Get(), mesh.IndexBuffer.Get(), mesh.VertexCount, mesh.IndexCount,
+                       model->GetAabbCenter(), model->GetAabbExtents(), mesh.TextureIndex);
+                if (section > before)
+                    GPUDrivenRenderer::RegisterGeometry(scene.Instances.Data()[ids[section - 1]].MeshIndex, mesh);
+            }
+        }
+    }
+    else if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
+    {
+        auto *model = ModelManager::GetAnimModel(
+            ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelId);
+        if (model)
+        {
+            for (UINT i = 0; i < model->GetMeshCount(); ++i)
+            {
+                const auto &mesh = model->GetMeshData(i);
+                append(mesh.VertexBuffer.Get(), mesh.IndexBuffer.Get(), mesh.VertexCount, mesh.IndexCount,
+                       model->GetAabbCenter(), model->GetAabbExtents(), mesh.TextureIndex);
+            }
+        }
+    }
+    else if (ComponentManager::HasComponent<MeshComponent>(entity))
+    {
+        const auto &mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+        append(mesh.VertexBuffer.Get(), nullptr, mesh.VertexCount, 0, mesh.LocalBoundsCenter, mesh.LocalBoundsExtents,
+               -1);
+    }
+    else if (ComponentManager::HasComponent<SpriteComponent>(entity))
+    {
+        const auto &sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
+        if (sprite.Is3D)
+        {
+            append(sprite.VertexBuffer.Get(), nullptr, sprite.VertexCount, 0, sprite.LocalBoundsCenter,
+                   sprite.LocalBoundsExtents, -1);
+        }
+    }
+    while (ids.size() > section)
+    {
+        scene.Instances.Remove(ids.back());
+        ids.pop_back();
+    }
+    if (ids.empty())
+    {
+        scene.Entities.erase(entity);
+        SetCpuOpaqueEntity(entity, ComponentManager::HasComponent<StaticModelComponent>(entity));
+        GPUDrivenRenderer::TrackEntityTextures(entity, {});
+    }
+    else
+    {
+        bool supported = GPUDrivenRenderer::SupportsEntity(entity);
+        for (auto id : ids) supported &= GPUDrivenRenderer::GeometryReady(scene.Instances.Data()[id].MeshIndex);
+        for (auto id : ids)
+        {
+            auto instance = scene.Instances.Data()[id];
+            instance.Flags = supported ? (instance.Flags | 4u) : (instance.Flags & ~4u);
+            scene.Instances.Update(id, instance);
+        }
+        SetCpuOpaqueEntity(entity, !supported && ComponentManager::HasComponent<StaticModelComponent>(entity));
+        std::vector<uint32_t> textures;
+        if (supported)
+            for (auto id : ids)
+            {
+                const auto& material = scene.Materials[scene.Instances.Data()[id].MaterialIndex];
+                if ((material.Flags & 1u) && material.AlbedoTextureIndex != UINT32_MAX) textures.push_back(material.AlbedoTextureIndex);
+                if (material.NormalTextureIndex != UINT32_MAX) textures.push_back(material.NormalTextureIndex);
+            }
+        GPUDrivenRenderer::TrackEntityTextures(entity, textures);
+    }
+}
+} // namespace
+
+void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
+{
+    GpuSceneValidation::BeforeScene();
+    const auto start = std::chrono::steady_clock::now();
+    auto &scene = Scene();
+    const uint32_t frame = GraphicsDevice::GetFrameIndex();
+    auto *device = GraphicsDevice::GetDevice();
+    scene.Instances.SettlePreviousTransforms();
+    auto pending = std::move(GpuSceneChanges::Pending());
+    GpuSceneChanges::Pending() = {};
+    if (pending.ResetScene)
+    {
+        for (auto &[entity, ids] : scene.Entities)
+        {
+            GPUDrivenRenderer::TrackEntityTextures(entity, {});
+            for (auto id : ids)
+            {
+                scene.Instances.Remove(id);
+            }
+        }
+        scene.Entities.clear();
+        scene.CpuOpaqueStatic.clear();
+        scene.CpuOpaquePositions.clear();
+    }
+    for (uint32_t entity : pending.Destroyed)
+    {
+        RemoveEntity(entity);
+    }
+    auto changed = std::move(pending.Changed);
+    for (const auto &[entity, flags] : changed)
+    {
+        UpdateEntity(entity, flags);
+    }
+    scene.Stats.EntitiesProcessed = static_cast<uint32_t>(changed.size());
+    scene.Stats.DirtyInstances = static_cast<uint32_t>(scene.Instances.Updates().size());
+    scene.Stats.InstanceSlots = static_cast<uint32_t>(scene.Instances.Data().size());
+    scene.Stats.ActiveInstances = scene.Instances.ActiveCount();
+    scene.Stats.Meshes = static_cast<uint32_t>(scene.Meshes.size());
+    scene.Stats.Materials = static_cast<uint32_t>(scene.Materials.size());
+    scene.InstanceBuffer.BeginFrame(frame);
+    scene.MeshBuffer.BeginFrame(frame);
+    scene.MaterialBuffer.BeginFrame(frame);
+    scene.InstanceBuffer.Ensure(device, scene.Stats.InstanceSlots, sizeof(GPUInstanceData), frame,
+                                L"GPU Scene Instances");
+    scene.MeshBuffer.Ensure(device, scene.Stats.Meshes, sizeof(GPUMeshData), frame, L"GPU Scene Meshes");
+    scene.MaterialBuffer.Ensure(device, scene.Stats.Materials, sizeof(GPUMaterialData), frame, L"GPU Scene Materials");
+    scene.Culling.Prepare(device, scene.Stats.InstanceSlots, frame);
+    const uint64_t instanceBytes = scene.InstanceBuffer.Stage(device, frame, scene.Instances.Data().data(),
+                                                              scene.Stats.InstanceSlots, scene.Instances.Updates());
+    const uint64_t meshBytes =
+        scene.MeshBuffer.Stage(device, frame, scene.Meshes.data(), scene.Stats.Meshes, scene.NewMeshes);
+    const uint64_t materialBytes =
+        scene.MaterialBuffer.Stage(device, frame, scene.Materials.data(), scene.Stats.Materials, scene.NewMaterials);
+    scene.Stats.InstanceUploadedBytes = instanceBytes;
+    scene.Stats.UploadedBytes = instanceBytes + meshBytes + materialBytes;
+    RenderGraph graph;
+    auto import = [&](const char *name, GpuSceneBuffer &buffer) {
+        RenderGraph::ImportedResource resource{};
+        resource.Name = name;
+        resource.Resource = buffer.Resource();
+        resource.InitialState = buffer.State;
+        resource.FinalState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        resource.HasFinalState = true;
+        return graph.ImportResource(resource);
+    };
+    const auto instances = import("GPU Scene Instances", scene.InstanceBuffer);
+    const auto meshes = import("GPU Scene Meshes", scene.MeshBuffer);
+    const auto materials = import("GPU Scene Materials", scene.MaterialBuffer);
+    const auto visibility = import("GPU Scene Visibility", scene.Culling.Visibility);
+    if (scene.Stats.UploadedBytes)
+    {
+        graph.AddPass(
+            "GPU Scene Update",
+            [&](RenderGraph::PassBuilder &builder) {
+                if (instanceBytes)
+                {
+                    builder.Write(instances, D3D12_RESOURCE_STATE_COPY_DEST);
+                }
+                if (meshBytes)
+                {
+                    builder.Write(meshes, D3D12_RESOURCE_STATE_COPY_DEST);
+                }
+                if (materialBytes)
+                {
+                    builder.Write(materials, D3D12_RESOURCE_STATE_COPY_DEST);
+                }
+            },
+            [&](ID3D12GraphicsCommandList *list) {
+                RenderProfiler::ScopedEvent profile("GPU Scene Update", list);
+                scene.InstanceBuffer.Copy(list, frame);
+                scene.MeshBuffer.Copy(list, frame);
+                scene.MaterialBuffer.Copy(list, frame);
+            });
+    }
+    graph.AddPass(
+        "GPU Scene Culling",
+        [&](RenderGraph::PassBuilder &builder) {
+            builder.Read(instances, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+                .Read(meshes, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+                .Read(materials, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+                .Write(visibility, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        },
+        [&](ID3D12GraphicsCommandList *list) {
+            scene.Culling.ExecuteCulling(list, scene.InstanceBuffer.Resource(), scene.MeshBuffer.Resource(),
+                                         scene.MaterialBuffer.Resource(), scene.Stats.InstanceSlots, scene.Stats.Meshes,
+                                         scene.Stats.Materials);
+        });
+    GPUDrivenRenderer::Prepare(graph, instances, visibility, scene.Stats.InstanceSlots,
+                               scene.InstanceBuffer.Capacity(), scene.Stats.Meshes);
+    if (!graph.Compile() || !graph.Execute(commands))
+    {
+        throw std::runtime_error(graph.GetLastError());
+    }
+    scene.InstanceBuffer.State = scene.MeshBuffer.State = scene.MaterialBuffer.State =
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    scene.Culling.Visibility.State = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    scene.Instances.ClearUpdates();
+    scene.NewMeshes.clear();
+    scene.NewMaterials.clear();
+    scene.Stats.InstanceCapacity = scene.InstanceBuffer.Capacity();
+    scene.Stats.BufferMemoryBytes = scene.InstanceBuffer.MemoryBytes() + scene.MeshBuffer.MemoryBytes() +
+                                    scene.MaterialBuffer.MemoryBytes() + scene.Culling.Visibility.MemoryBytes();
+    scene.Stats.UpdateCpuMilliseconds =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+}
+
+void GpuScene::Shutdown()
+{
+    GPUDrivenRenderer::Shutdown();
+    Scene() = {};
+}
+uint32_t Entity::GetGPUInstanceID() const
+{
+    return IsValid() ? GpuScene::GetEntityInstance(m_Id) : InvalidGPUInstanceID;
+}
+const std::vector<GPUInstanceID> &GpuScene::GetEntityInstances(uint32_t entity)
+{
+    static const std::vector<GPUInstanceID> empty;
+    const auto found = Scene().Entities.find(entity);
+    return found == Scene().Entities.end() ? empty : found->second;
+}
+const std::vector<uint32_t>& GpuScene::CpuOpaqueStaticEntities()
+{
+    return Scene().CpuOpaqueStatic;
+}
+GPUInstanceID GpuScene::GetEntityInstance(uint32_t entity)
+{
+    const auto &ids = GetEntityInstances(entity);
+    return ids.empty() ? InvalidGPUInstanceID : ids.front();
+}
+ID3D12Resource *GpuScene::InstanceBuffer()
+{
+    return Scene().InstanceBuffer.Resource();
+}
+ID3D12Resource *GpuScene::MeshBuffer()
+{
+    return Scene().MeshBuffer.Resource();
+}
+ID3D12Resource *GpuScene::MaterialBuffer()
+{
+    return Scene().MaterialBuffer.Resource();
+}
+ID3D12Resource *GpuScene::VisibilityBuffer()
+{
+    return Scene().Culling.Visibility.Resource();
+}
+const GpuSceneStatistics &GpuScene::Statistics()
+{
+    return Scene().Stats;
+}
+const GPUInstanceData *GpuScene::GetInstance(GPUInstanceID id)
+{
+    return Scene().Instances.IsActive(id) ? &Scene().Instances.Data()[id] : nullptr;
+}
+void GpuScene::DrawDebug()
+{
+    if (!ImGui::TreeNode("GPU Scene"))
+    {
+        return;
+    }
+    const auto &stats = Statistics();
+    ImGui::Text("Instances: %u / Active: %u / Capacity: %u", stats.InstanceSlots, stats.ActiveInstances,
+                stats.InstanceCapacity);
+    ImGui::Text("Meshes: %u / Materials: %u / Dirty: %u", stats.Meshes, stats.Materials, stats.DirtyInstances);
+    ImGui::Text("Changed entities: %u / Upload: %llu bytes", stats.EntitiesProcessed, stats.UploadedBytes);
+    ImGui::Text("Instance upload: %llu bytes / Memory: %.2f MiB", stats.InstanceUploadedBytes,
+                stats.BufferMemoryBytes / 1048576.0);
+    ImGui::Text("CPU update: %.3f ms", stats.UpdateCpuMilliseconds);
+    for (const auto &pass : RenderProfiler::GetLatest().Passes)
+    {
+        if (pass.Name == "GPU Scene Update")
+        {
+            ImGui::Text("GPU update: %.3f ms", pass.GpuMs);
+        }
+    }
+    if (ImGui::TreeNode("Instance / Entity / Mesh / Material"))
+    {
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(stats.InstanceSlots));
+        while (clipper.Step())
+        {
+            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
+            {
+                if (const auto *data = GetInstance(static_cast<GPUInstanceID>(i)))
+                {
+                    ImGui::Text("%u / %u / %u / %u", i, data->Entity, data->MeshIndex, data->MaterialIndex);
+                }
+            }
+        }
+        ImGui::TreePop();
+    }
+    ImGui::TreePop();
+}

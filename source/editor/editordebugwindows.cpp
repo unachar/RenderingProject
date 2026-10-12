@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "gpuscene/gpuscene.h"
+#include "gpudriven/gpudrivenrenderer.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
 #include "atmosphere.h"
@@ -110,6 +112,8 @@ void ImGuiManager::DrawRenderDebuggerWindow()
 	}
 	ImGui::Text("描画モード: %s", statusText);
 	ImGui::Text("画面: %u x %u", GraphicsDevice::GetSceneWidth(), GraphicsDevice::GetSceneHeight());
+	GpuScene::DrawDebug();
+	GPUDrivenRenderer::DrawDebug();
 
 	ImGui::SeparatorText("セクション");
 	vector<TextureManager::TextureInfo> textures = TextureManager::GetLoadedTextureInfos();

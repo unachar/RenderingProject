@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "gpudriven/gpudrivenrenderer.h"
 #include "../../External/meshoptimizer/src/meshoptimizer.h"
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
@@ -757,6 +758,7 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 	meshData.IndexBufferView.Format = DXGI_FORMAT_R32_UINT;
 	meshData.IndexBufferView.SizeInBytes = indexBufferSize;
 	meshData.IndexCount = (UINT)m_Indices.size();
+	meshData.CpuIndices.assign(m_Indices.begin(), m_Indices.end());
 
 	{
 		for (int mode = 0; mode < kToonOutlineModeCount; ++mode)
@@ -1004,6 +1006,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 		meshData.AppliedMaterialPartId = meshData.MaterialPartId;
 		meshData.DefaultToonOutlineEnabled = materialPartId != 3.0f;
 		meshData.CpuVertices = vertices;
+		meshData.CpuIndices.assign(indices.begin(), indices.end());
 		const UINT vertexBufferSize = sizeof(StaticModelVertex) * (UINT)vertices.size();
 		auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
 		auto vbDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
@@ -1204,6 +1207,7 @@ bool StaticModelResource::ApplyMeshShadingOverridePartIds(ID3D12Device* device, 
 		}
 
 		meshData.AppliedMaterialPartId = targetPartId;
+		GPUDrivenRenderer::UpdateGeometry(meshData);
 	}
 
 	return success;

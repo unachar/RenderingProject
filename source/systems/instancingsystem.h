@@ -69,7 +69,7 @@ private:
     bool ExecuteCpuCulledDraw(InstanceBatch& batch, UINT minimumLod, const function<void()>& bindGraphics, const DrawContext& ctx);
 
 
-    static constexpr UINT kMaxInstancesPerFrame = g_kMAX_ENTITIES * 16;
+    static constexpr UINT kMaxInstancesPerFrame = 32768;
 
     struct GpuInstanceInput
     {

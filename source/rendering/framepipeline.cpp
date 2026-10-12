@@ -11,6 +11,8 @@
 #include "vertexdeformation.h"
 #include "meshshaderpipeline.h"
 #include "raytracing.h"
+#include "gpuscene/gpuscene.h"
+#include "gpudriven/gpudrivenrenderer.h"
 
 void FramePipeline::Execute()
 {
@@ -32,7 +34,10 @@ void FramePipeline::Execute()
 			shadowDepthResource.HasFinalState = true;
 			const auto shadowDepth = graph.ImportResource(shadowDepthResource);
 
-			const auto geometry = graph.CreateLogicalResource("Geometry Buffers");
+			const auto gpuScene = graph.CreateLogicalResource("GPU Scene");
+            graph.AddPass("GPU Scene", [gpuScene](RenderGraph::PassBuilder& builder) { builder.Write(gpuScene); },
+                [](ID3D12GraphicsCommandList* list) { RenderProfiler::ScopedEvent profile("GPU Scene", list); GpuScene::Execute(list); });
+            const auto geometry = graph.CreateLogicalResource("Geometry Buffers");
 			const auto sceneDepth = graph.CreateLogicalResource("Scene Depth");
 			const auto velocity = graph.CreateLogicalResource("Velocity");
 			const auto sceneColor = graph.CreateLogicalResource("Scene Color");
@@ -40,9 +45,9 @@ void FramePipeline::Execute()
 
 			graph.AddPass(
 				"Shadow",
-				[shadowDepth](RenderGraph::PassBuilder& builder)
+				[shadowDepth, gpuScene](RenderGraph::PassBuilder& builder)
 				{
-					builder.Write(shadowDepth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+					builder.Read(gpuScene).Write(shadowDepth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
 				},
 				[](ID3D12GraphicsCommandList* passCommandList)
 				{
@@ -71,22 +76,25 @@ void FramePipeline::Execute()
 
 			graph.AddPass(
 				"GBuffer / Opaque",
-				[shadowDepth, geometry, sceneDepth](RenderGraph::PassBuilder& builder)
+				[shadowDepth, geometry, sceneDepth, gpuScene](RenderGraph::PassBuilder& builder)
 				{
-					builder.Read(shadowDepth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+					builder.Read(gpuScene).Read(shadowDepth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
 						.Write(geometry)
 						.Write(sceneDepth);
 				},
 				[](ID3D12GraphicsCommandList* passCommandList)
 				{
 					RenderProfiler::ScopedEvent profile("GBuffer / Opaque", passCommandList);
+					const auto submissionStart = std::chrono::steady_clock::now();
 					ScenePasses::BeginScenePass();
+					GPUDrivenRenderer::Draw(passCommandList);
 					SystemManager::DrawSystem(RenderPass::PrimaryScene, false);
 					if (ScenePasses::BuildOcclusionHierarchyAndBeginPhaseTwo())
 					{
 						SystemManager::DrawSystem(RenderPass::OcclusionPhase2, false);
 					}
 					ScenePasses::EndScenePass();
+					GPUDrivenRenderer::RecordOpaqueSubmission(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - submissionStart).count());
 				});
 
 			graph.AddPass(
@@ -105,10 +113,10 @@ void FramePipeline::Execute()
 
 			graph.AddPass(
 				"Deferred Lighting / PostProcess",
-				[shadowDepth, geometry, sceneDepth, velocity, sceneColor, editorScene](
+				[shadowDepth, geometry, sceneDepth, velocity, sceneColor, editorScene, gpuScene](
 					RenderGraph::PassBuilder& builder)
 				{
-					builder.Read(shadowDepth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+					builder.Read(gpuScene).Read(shadowDepth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
 						.Read(geometry)
 						.Read(sceneDepth)
 						.Read(velocity)

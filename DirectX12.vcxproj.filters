@@ -974,4 +974,105 @@
   <ItemGroup>
     <None Include="shader\hlsl\DlssPrepareCS.hlsl" />
   </ItemGroup>
+  <ItemGroup>
+    <Filter Include="virtualgeometry"><UniqueIdentifier>{df8c0a62-a668-479f-b760-3e681c1f7b94}</UniqueIdentifier></Filter>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrybuilder.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrygeometry.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryhierarchy.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrymetadata.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryreport.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryserializer.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrystaticmesh.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryvalidator.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\clusterizer.cpp">
+      <Filter>External\meshoptimizer\src</Filter>
+    </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\indexgenerator.cpp">
+      <Filter>External\meshoptimizer\src</Filter>
+    </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\meshletutils.cpp">
+      <Filter>External\meshoptimizer\src</Filter>
+    </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\partition.cpp">
+      <Filter>External\meshoptimizer\src</Filter>
+    </ClCompile>
+    <ClCompile Include="External\meshoptimizer\src\spatialorder.cpp">
+      <Filter>External\meshoptimizer\src</Filter>
+    </ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryasset.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrybuilder.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryconfig.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryinternal.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryreport.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryserializationinternal.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryserializer.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrytypes.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryvalidator.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="source\rendering\gpuscene\gpuscene.h" />
+    <ClInclude Include="source\rendering\gpuscene\gpuscenebuffer.h" />
+    <ClInclude Include="source\rendering\gpuscene\gpuscenechanges.h" />
+    <ClInclude Include="source\rendering\gpuscene\gpusceneslots.h" />
+    <ClInclude Include="source\rendering\gpuscene\gpuscenetypes.h" />
+    <ClCompile Include="source\rendering\gpuscene\gpuscene.cpp" />
+    <ClCompile Include="source\rendering\gpuscene\gpuscenebuffer.cpp" />
+    <ClInclude Include="shader\hlsl\GpuSceneCommon.hlsli" />
+    <FxCompile Include="shader\hlsl\GpuSceneCullCS.hlsl" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="source\rendering\gpuscene\gpusceneculling.h" />
+    <ClCompile Include="source\rendering\gpuscene\gpusceneculling.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="source\rendering\gpuscene\gpuscenevalidation.h" />
+    <ClCompile Include="source\rendering\gpuscene\gpuscenevalidation.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="source\rendering\gpudriven\indirectcommand.h" />
+    <ClInclude Include="source\rendering\gpudriven\gpudrivenrenderer.h" />
+    <ClInclude Include="source\rendering\gpudriven\gpudrivenvalidation.h" />
+    <ClCompile Include="source\rendering\gpudriven\gpudrivenrenderer.cpp" />
+    <ClCompile Include="source\rendering\gpudriven\gpudrivenvalidation.cpp" />
+    <ClInclude Include="shader\hlsl\GPUDrivenOpaque.hlsli" />
+    <FxCompile Include="shader\hlsl\GPUDrivenResetCS.hlsl" />
+    <FxCompile Include="shader\hlsl\GPUDrivenCompactCS.hlsl" />
+    <FxCompile Include="shader\hlsl\GenerateIndirectCommandsCS.hlsl" />
+    <FxCompile Include="shader\hlsl\GPUDrivenOpaqueVS.hlsl" />
+    <FxCompile Include="shader\hlsl\GPUDrivenOpaquePS.hlsl" />
+  </ItemGroup>
 </Project>

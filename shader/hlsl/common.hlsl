@@ -89,6 +89,9 @@ struct PSInput3D
     float3 WorldPos : TEXCOORD1;
     float3 ViewPos  : TEXCOORD2;
     float3 CameraPos : TEXCOORD3;
+#ifdef SHADER_GPU_DRIVEN
+    nointerpolation uint InstanceID : TEXCOORD4;
+#endif
 };
 
 Texture2DArray<float> g_ShadowMap : register(t1);

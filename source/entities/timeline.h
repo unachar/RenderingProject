@@ -432,6 +432,7 @@ public:
 			if (clip)
 			{
 				clip->Evaluate(component, time);
+				GpuSceneChanges::Notify(m_Target);
 			}
 		}
 	}

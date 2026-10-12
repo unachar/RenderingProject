@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "renderingvalidation.h"
+#include "gpudriven/gpudrivenvalidation.h"
+#include "gpuscene/gpuscenevalidation.h"
 #include "rendercapture.h"
 #include "rendertargets.h"
 #include "graphicsdevice.h"
@@ -308,6 +310,7 @@ bool RenderingValidation::IsEnabled()
 
 void RenderingValidation::BeforeFrame(uint64_t frame)
 {
+    if (GPUDrivenValidation::Enabled()) { GPUDrivenValidation::BeforeFrame(frame); return; }
     if (!IsEnabled())
     {
         return;
@@ -444,10 +447,13 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
     {
         ImGuiManager::m_ToneMapEnabled = true;
     }
+    GpuSceneValidation::BeforeFrame(frame);
 }
 
 void RenderingValidation::AfterFrame(uint64_t frame)
 {
+    if (GPUDrivenValidation::Enabled()) { GPUDrivenValidation::AfterFrame(frame); return; }
+    GpuSceneValidation::AfterFrame(frame);
     if (!IsEnabled())
     {
         return;
@@ -611,12 +617,14 @@ void RenderingValidation::AfterFrame(uint64_t frame)
 
 bool RenderingValidation::Finish()
 {
+    if (GPUDrivenValidation::Enabled()) return GPUDrivenValidation::Finish();
     if (!IsEnabled())
     {
         return true;
     }
     GraphicsDevice::WaitForGpuIdle();
     Check(g_FrameCount >= 84, "complete feature smoke sequence");
+    g_Failures += GpuSceneValidation::Failures();
     g_Failures += RenderCapture::ReportGraphicsErrors();
     WriteGraphicsLog("Validation: feature smoke failures = %u\n", g_Failures);
     return g_Failures == 0;

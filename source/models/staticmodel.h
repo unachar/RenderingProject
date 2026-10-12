@@ -46,6 +46,7 @@ struct StaticMeshData
 	float AppliedMaterialPartId = 10.0f;
 	bool DefaultToonOutlineEnabled = true;
 	vector<StaticModelVertex> CpuVertices{};
+	vector<uint32_t> CpuIndices{}; // Exact optimized LOD0 upload data; never reconstructed by GPU readback.
 	array<vector<StaticModelVertex>, kToonOutlineModeCount> CpuTeoVerticesByMode{};
 
 	const D3D12_INDEX_BUFFER_VIEW& GetLodIndexBufferView(UINT lod) const

@@ -1,3 +1,5 @@
+#include "GpuSceneCommon.hlsli"
+StructuredBuffer<GPUInstanceData> SceneInstances : register(t3);
 ByteAddressBuffer CandidateCommands : register(t0);
 RWByteAddressBuffer VisibleCommands : register(u0);
 RWByteAddressBuffer VisibleCommandCount : register(u1);
@@ -21,6 +23,7 @@ cbuffer CullConstants : register(b0)
 	uint HiZMipCount;
 	uint PreviousHiZValid;
 	uint CurrentHiZValid;
+    uint SceneInstanceId;
 };
 
 bool IsOccluded(Texture2D<float> hierarchy, float2 uvMinimum, float2 uvMaximum, float nearestDepth)
@@ -42,6 +45,17 @@ groupshared uint GroupCommandCount;
 
 uint IsObjectVisible()
 {
+    row_major float4x4 objectWorld = World;
+    float3 objectCenter = LocalCenter.xyz;
+    float3 objectExtents = LocalExtents.xyz;
+    if (SceneInstanceId != 0xffffffffu)
+    {
+        GPUInstanceData instance = SceneInstances[SceneInstanceId];
+        if (!(instance.Flags & 1u)) return 0;
+        objectWorld = instance.World;
+        objectCenter = instance.LocalCenter.xyz;
+        objectExtents = instance.LocalExtents.xyz;
+    }
     uint result = 1u;
     uint outsideMask = 0x3fu;
     float2 uvMinimum = 1.0f;
@@ -56,8 +70,8 @@ uint IsObjectVisible()
             (cornerIndex & 1) ? 1.0f : -1.0f,
             (cornerIndex & 2) ? 1.0f : -1.0f,
             (cornerIndex & 4) ? 1.0f : -1.0f);
-        float3 localPosition = LocalCenter.xyz + LocalExtents.xyz * signValue;
-        float4 worldPosition = mul(float4(localPosition, 1.0f), World);
+        float3 localPosition = objectCenter + objectExtents * signValue;
+        float4 worldPosition = mul(float4(localPosition, 1.0f), objectWorld);
         float4 clipPosition = mul(worldPosition, ViewProjection);
 
         uint cornerMask =

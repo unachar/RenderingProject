@@ -49,6 +49,9 @@ struct FrameResources
     ComPtr<ID3D12Resource> Result;
     UINT Width = 0;
     std::vector<RaytracingGeometry> SceneGeometry;
+    // A scene SRV can already reference the previous TLAS earlier in this same
+    // command list. Keep replaced resources until this frame's fence is reused.
+    std::vector<ComPtr<ID3D12Resource>> Retired;
     UINT Height = 0;
 };
 
@@ -132,6 +135,7 @@ bool EnsureBuffer(ComPtr<ID3D12Resource>& resource, UINT64 bytes,
         return false;
     }
     created->SetName(name);
+    if (resource) g_Frames[g_FrameIndex].Retired.push_back(resource);
     resource = std::move(created);
     return true;
 }
@@ -327,6 +331,11 @@ bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
     {
         if (iterator->second.LastSeen != g_Serial)
         {
+            const auto& bottom = iterator->second;
+            if (bottom.Result) frame.Retired.push_back(bottom.Result);
+            if (bottom.Scratch) frame.Retired.push_back(bottom.Scratch);
+            if (bottom.Vertices) frame.Retired.push_back(bottom.Vertices);
+            if (bottom.Indices) frame.Retired.push_back(bottom.Indices);
             iterator = frame.Geometry.erase(iterator);
         }
         else
@@ -534,6 +543,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     g_AmbientDispatchCount = 0;
     g_InstanceCount = 0;
     g_FrameIndex = frameIndex % kFrameCount;
+    g_Frames[g_FrameIndex].Retired.clear();
     auto updateLighting = [&](bool sceneReady)
     {
         if (!g_LightingConstants) return;

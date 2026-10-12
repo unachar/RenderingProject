@@ -1,4 +1,6 @@
 #pragma once
+#include "gpuscene/gpuscene.h"
+#include "gpuscene/gpuscenevalidation.h"
 
 #include "pch.h"
 #include "graphicsdevice.h"
@@ -48,7 +50,8 @@ private:
 		UINT HiZMipCount = 0;
 		UINT PreviousHiZValid = 0;
 		UINT CurrentHiZValid = 0;
-		UINT Padding[14]{};
+		UINT SceneInstanceId = InvalidGPUInstanceID;
+        UINT Padding[13]{};
     };
     static_assert(sizeof(CullConstants) == 256);
 
@@ -170,13 +173,14 @@ private:
 		CD3DX12_DESCRIPTOR_RANGE hiZRanges[2]{};
 		hiZRanges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
 		hiZRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);
-		CD3DX12_ROOT_PARAMETER parameters[6]{};
+		CD3DX12_ROOT_PARAMETER parameters[7]{};
         parameters[0].InitAsShaderResourceView(0, 0);
         parameters[1].InitAsUnorderedAccessView(0, 0);
         parameters[2].InitAsUnorderedAccessView(1, 0);
 		parameters[3].InitAsConstantBufferView(0, 0);
 		parameters[4].InitAsDescriptorTable(1, &hiZRanges[0]);
 		parameters[5].InitAsDescriptorTable(1, &hiZRanges[1]);
+        parameters[6].InitAsShaderResourceView(3, 0);
 		CD3DX12_STATIC_SAMPLER_DESC hiZSampler(
 			0,
 			D3D12_FILTER_MIN_MAG_MIP_POINT,
@@ -523,10 +527,15 @@ private:
             static_cast<UINT64>(frameIndex) * g_kMAX_CULL_DISPATCHES_PER_FRAME +
             m_CullConstantCursor++;
         CullConstants constants{};
-        XMStoreFloat4x4(&constants.World, world);
+        constants.SceneInstanceId = GpuSceneValidation::UseLegacyCulling() ? InvalidGPUInstanceID : GpuScene::GetEntityInstance(entity);
+        GpuSceneValidation::RecordModelCull(constants.SceneInstanceId != InvalidGPUInstanceID);
+        if (constants.SceneInstanceId == InvalidGPUInstanceID)
+        {
+            XMStoreFloat4x4(&constants.World, world);
+            constants.LocalCenter = XMFLOAT4(localCenter.x, localCenter.y, localCenter.z, 1.0f);
+            constants.LocalExtents = XMFLOAT4(localExtents.x, localExtents.y, localExtents.z, 0.0f);
+        }
         XMStoreFloat4x4(&constants.ViewProjection, viewProjection);
-        constants.LocalCenter = XMFLOAT4(localCenter.x, localCenter.y, localCenter.z, 1.0f);
-        constants.LocalExtents = XMFLOAT4(localExtents.x, localExtents.y, localExtents.z, 0.0f);
         constants.CommandStrideBytes = batch.CommandStride;
         constants.CandidateCount = batch.CommandCount;
 		constants.EnableFrustumCulling = static_cast<UINT>(enableFrustumCulling);
@@ -552,6 +561,7 @@ private:
 			m_CullConstantsUpload->GetGPUVirtualAddress() + constantIndex * sizeof(CullConstants));
 		commandList->SetComputeRootDescriptorTable(4, OcclusionCulling::GetPreviousSrv());
 		commandList->SetComputeRootDescriptorTable(5, OcclusionCulling::GetCurrentSrv());
+        commandList->SetComputeRootShaderResourceView(6, GpuScene::InstanceBuffer()->GetGPUVirtualAddress());
         commandList->Dispatch((batch.CommandCount + 63) / 64, 1, 1);
 
         D3D12_RESOURCE_BARRIER uavBarriers[2] =

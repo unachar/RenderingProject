@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "renderframe.h"
+#include "gpudriven/gpudrivenrenderer.h"
 #include "renderconfiguration.h"
 #include "graphicsdevice.h"
 #include "lightingresources.h"
@@ -107,6 +108,7 @@ void RenderFrame::EndDraw()
 		return;
 	}
 
+	GPUDrivenRenderer::EndFrame();
 	m_FrameIndex = m_SwapChain->GetCurrentBackBufferIndex();
 
 	if (m_Fence->GetCompletedValue() < m_FenceValues[m_FrameIndex])

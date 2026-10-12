@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "vertexdeformation.h"
 #include "instancingsystem.h"
+#include "gpudriven/gpudrivenrenderer.h"
+#include "gpuscene/gpuscene.h"
 #include "componentmanager.h"
 #include "world.h"
 #include "camera.h"
@@ -1127,10 +1129,13 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
         }
     }
 
-    // Static models
-    for (EntityID entity : World::GetView<StaticModelComponent, TransformComponent>())
+    // GPU-target instances are absent from this incremental CPU fallback list.
+    const auto staticEntities = !ctx.transparentPass && GPUDrivenRenderer::IsActive()
+        ? EntityView(&GpuScene::CpuOpaqueStaticEntities()) : World::GetView<StaticModelComponent, TransformComponent>();
+    for (EntityID entity : staticEntities)
     {
         if (!CanInstance(entity)) continue;
+        if (!ctx.transparentPass && GPUDrivenRenderer::HandlesEntity(entity)) continue;
         const auto& component = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
         StaticModelResource* model = ModelManager::GetStaticModel(component.ModelId);
         if (!model) continue;

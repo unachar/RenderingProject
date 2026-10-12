@@ -1,16 +1,40 @@
 #define SHADER_3D
 #include "common.hlsl"
 
+#ifdef SHADER_GPU_DRIVEN
+#include "GPUDrivenOpaque.hlsli"
+#else
 Texture2D g_Texture : register(t0);
+#endif
 SamplerState g_SamplerState : register(s0);
 
 GBufferOutput main(PSInput3D In)
 {
+#ifdef SHADER_GPU_DRIVEN
+    uint materialID = gSceneInstances[In.InstanceID].MaterialIndex;
+    uint address = materialID * GPU_SCENE_MATERIAL_STRIDE;
+    uint4 metadata = gSceneMaterials.Load4(address + 32u);
+    int UseTexture = (metadata.z & 1u) != 0;
+    int FlipNormal = 0;
+    int ShaderClass = metadata.w;
+    int MaterialMode = gSceneMaterials.Load(address + 52u);
+    float4 surface = asfloat(gSceneMaterials.Load4(address + 16u));
+    float mMetallic = surface.x;
+    float mRoughness = surface.y;
+    float mFresnel = surface.z;
+    float ShadowThreshold = LoadSceneMaterialVector(gSceneMaterials, materialID, 1u).w;
+    float ShadowSoftness = LoadSceneMaterialVector(gSceneMaterials, materialID, 2u).x;
+    float ShadowStrength = LoadSceneMaterialVector(gSceneMaterials, materialID, 2u).y;
+#endif
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
     if (UseTexture != 0)
     {
+#ifdef SHADER_GPU_DRIVEN
+        baseColor *= gSceneTextures[NonUniformResourceIndex(SceneTextureIndex(metadata.x))].Sample(g_SamplerState, In.TexCoord);
+#else
         baseColor *= g_Texture.Sample(g_SamplerState, In.TexCoord);
+#endif
     }
 
     clip(baseColor.a - 0.01f);
@@ -25,7 +49,11 @@ GBufferOutput main(PSInput3D In)
 
     output.Depth = saturate(In.Position.z);
 
+#ifdef SHADER_GPU_DRIVEN
+    MaterialPartShaderParams partParams = LoadGpuDrivenPart(materialID, materialPartId);
+#else
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
+#endif
     bool usePartParams = MaterialMode != 1;
     output.Material.r = usePartParams ? partParams.Basic.x : mMetallic;
     output.Material.g = usePartParams ? partParams.Basic.y : mRoughness;

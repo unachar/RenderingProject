@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include "modelsystem.h"
+#include "gpudriven/gpudrivenrenderer.h"
 #include "vertexdeformation.h"
 #include "atmosphere.h"
 #include "gpudrivenindirect.h"
@@ -710,11 +711,12 @@ ID3D12PipelineState* lastPso = nullptr;
 
 	{
 		m_StaticDrawCalls.clear();
-		m_StaticDrawCalls.reserve(World::GetView<StaticModelComponent>().size());
-
-		auto staticEntities = World::GetView<StaticModelComponent>();
+		auto staticEntities = !drawTransparent && GPUDrivenRenderer::IsActive()
+			? EntityView(&GpuScene::CpuOpaqueStaticEntities()) : World::GetView<StaticModelComponent>();
+		m_StaticDrawCalls.reserve(staticEntities.size());
 		for (EntityID i : staticEntities)
 		{
+			if (!drawTransparent && GPUDrivenRenderer::HandlesEntity(i)) continue;
 			if (ComponentManager::HasComponent<MeshComponent>(i) &&
 				ComponentManager::GetComponentUnchecked<MeshComponent>(i).IsEnvironment &&
 				Atmosphere::GetParameters().Enabled && Atmosphere::GetParameters().PhysicalSky)

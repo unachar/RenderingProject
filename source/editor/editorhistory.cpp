@@ -26,6 +26,7 @@ namespace
 			ComponentManager::AddComponent(entity, ComponentTypeTraits<T>::value());
 		}
 		ComponentManager::GetComponentUnchecked<T>(entity) = component;
+        GpuSceneChanges::Notify(entity);
 	}
 
 }
@@ -210,6 +211,7 @@ void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
 void ImGuiManager::BeginUndoCapture(EntityID entity, const EntitySnapshot& before)
 {
 	if (entity == g_kINVALID_ENTITY || !Registry::IsAlive(entity)) return;
+	GpuSceneChanges::Notify(entity);
 	if (!m_HasPendingUndo) { m_PendingUndo = before; m_HasPendingUndo = true; }
 }
 

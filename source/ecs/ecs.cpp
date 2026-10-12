@@ -74,6 +74,7 @@ ComponentTypeID ComponentTypeRegistry::GetRegisteredCount()
 
 void Registry::Init()
 {
+    GpuSceneChanges::Reset();
     m_NextEntityId = 0;
     m_FreeList = {};
     ComponentTypeRegistry::ResetComponents();
@@ -163,6 +164,7 @@ void Registry::DestroyEntity(EntityID entity)
         }
     }
 
+    GpuSceneChanges::Destroy(entity);
     ComponentManager::ClearEntity(entity);
     m_Entities[entity].IsAlive = false;
     m_Entities[entity].Mask.reset();

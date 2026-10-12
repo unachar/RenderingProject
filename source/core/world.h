@@ -11,6 +11,7 @@ public:
 	Entity(EntityID id) : m_Id(id) {}
 
 	EntityID GetID() const { return m_Id; }
+	uint32_t GetGPUInstanceID() const;
 	bool IsValid() const { return m_Id < g_kMAX_ENTITIES && Registry::IsAlive(m_Id); }
 
 	template<typename T>
