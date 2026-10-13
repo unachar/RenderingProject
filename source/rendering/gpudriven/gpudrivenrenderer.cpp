@@ -739,11 +739,7 @@ void GPUDrivenRenderer::TrackEntityTextures(uint32_t entity, const std::vector<u
 
 void GPUDrivenRenderer::DrawDebug()
 {
-    VirtualGeometryDebug::DrawControls();
-    MeshShaderRenderer::DrawDebug();
-    GPUVisibility::DrawDebug();
     auto& state = Data();
-    if (!ImGui::TreeNode("GPU Driven Rendering")) return;
     ImGui::Checkbox("Enabled", &state.Enabled);
     int geometryPath=state.Enabled?(MeshShaderRenderer::GetSettings().Enabled?2:1):0;
     const char* paths[]={"Traditional","GPU Driven Traditional","GPU Driven Mesh Shader"};
@@ -782,7 +778,6 @@ void GPUDrivenRenderer::DrawDebug()
         }
     }
     else ImGui::TextUnformatted("Counts remain on GPU; enable debug readback to inspect.");
-    ImGui::TreePop();
 }
 
 void GPUDrivenRenderer::EndFrame()

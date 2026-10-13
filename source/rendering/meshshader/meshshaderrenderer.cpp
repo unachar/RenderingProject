@@ -579,8 +579,6 @@ bool DrawVelocity(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices)
 void DrawDebug()
 {
     auto &s = Data();
-    if (!ImGui::TreeNode("Phase 5 Mesh Shader"))
-        return;
     ImGui::Checkbox("Enabled##Phase5", &s.Options.Enabled);
     ImGui::Text("Supported: %s Tier: %u Active: %s", s.Supported ? "Yes" : "No",
                 static_cast<uint32_t>(s.Tier), s.Active ? "Yes" : "No");
@@ -702,7 +700,6 @@ void DrawDebug()
         }
         ImGui::Dummy(size);
     }
-    ImGui::TreePop();
 }
 void EndFrame()
 {

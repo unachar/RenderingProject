@@ -1,6 +1,10 @@
 #include "pch.h"
 #include "gpuscene/gpuscene.h"
 #include "gpudriven/gpudrivenrenderer.h"
+#include "visibility/gpuvisibility.h"
+#include "meshshader/meshshaderrenderer.h"
+#include "virtualgeometry/virtualgeometrydebug.h"
+#include "cloud/cloudrenderer.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
 #include "atmosphere.h"
@@ -95,7 +99,7 @@ void ImGuiManager::DrawPerformanceWindow()
 void ImGuiManager::DrawRenderDebuggerWindow()
 {
 	ImGui::SetNextWindowSize(ImVec2(420.0f, 360.0f), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("描画デバッガー", &m_ShowRenderDebugger))
+	if (!ImGui::Begin("描画概要", &m_ShowRenderDebugger))
 	{
 		ImGui::End();
 		return;
@@ -112,10 +116,41 @@ void ImGuiManager::DrawRenderDebuggerWindow()
 	}
 	ImGui::Text("描画モード: %s", statusText);
 	ImGui::Text("画面: %u x %u", GraphicsDevice::GetSceneWidth(), GraphicsDevice::GetSceneHeight());
-	GpuScene::DrawDebug();
-	GPUDrivenRenderer::DrawDebug();
+	ImGui::End();
+}
 
-	ImGui::SeparatorText("セクション");
+void ImGuiManager::DrawRenderFeatureWindows()
+{
+	const struct FeatureWindow
+	{
+		const char* Title;
+		bool* IsOpen;
+		void (*DrawContent)();
+	} windows[] =
+	{
+		{ "GPU Scene", &m_ShowGpuSceneWindow, GpuScene::DrawDebug },
+		{ "GPU Driven Rendering", &m_ShowGpuDrivenWindow, GPUDrivenRenderer::DrawDebug },
+		{ "Visibility", &m_ShowVisibilityWindow, GPUVisibility::DrawDebug },
+		{ "Mesh Shader", &m_ShowMeshShaderWindow, MeshShaderRenderer::DrawDebug },
+		{ "Nanite / LOD", &m_ShowVirtualGeometryWindow, VirtualGeometryDebug::DrawControls },
+		{ "プロシージャルクラウド", &m_ShowCloudWindow, CloudRenderer::DrawDebugUI },
+		{ "テクスチャ一覧", &m_ShowTextureListWindow, DrawTextureListContent },
+	};
+
+	for (const auto& window : windows)
+	{
+		if (!*window.IsOpen) continue;
+		ImGui::SetNextWindowSize(ImVec2(520.0f, 560.0f), ImGuiCond_FirstUseEver);
+		if (ImGui::Begin(window.Title, window.IsOpen))
+		{
+			window.DrawContent();
+		}
+		ImGui::End();
+	}
+}
+
+void ImGuiManager::DrawTextureListContent()
+{
 	vector<TextureManager::TextureInfo> textures = TextureManager::GetLoadedTextureInfos();
 	ImGuiListClipper clipper;
 	clipper.Begin(static_cast<int>(textures.size()));
@@ -127,7 +162,6 @@ void ImGuiManager::DrawRenderDebuggerWindow()
 			ImGui::Text("#%d %ux%u %s", tex.SrvIndex, tex.Width, tex.Height, tex.Path.c_str());
 		}
 	}
-	ImGui::End();
 }
 
 void ImGuiManager::DrawGBufferWindow()

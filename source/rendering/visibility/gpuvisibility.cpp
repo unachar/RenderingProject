@@ -500,11 +500,6 @@ void DrawDebug()
 {
     auto &state = Data();
     auto &options = state.Options;
-    if (!ImGui::TreeNode("Phase 4 Visibility"))
-    {
-        OcclusionCulling::SetDebugPreview(0, false);
-        return;
-    }
     ImGui::Checkbox("Enable Frustum Culling", &options.Frustum);
     ImGui::Checkbox("Enable Hi-Z Occlusion", &options.Occlusion);
     ImGui::Checkbox("Enable GPU LOD", &options.LOD);
@@ -622,7 +617,6 @@ void DrawDebug()
         }
         ImGui::Dummy(extent);
     }
-    ImGui::TreePop();
 }
 void Shutdown()
 {

@@ -690,10 +690,6 @@ const GPUInstanceData *GpuScene::GetInstance(GPUInstanceID id)
 }
 void GpuScene::DrawDebug()
 {
-    if (!ImGui::TreeNode("GPU Scene"))
-    {
-        return;
-    }
     const auto &stats = Statistics();
     ImGui::Text("Instances: %u / Active: %u / Capacity: %u", stats.InstanceSlots, stats.ActiveInstances,
                 stats.InstanceCapacity);
@@ -725,5 +721,4 @@ void GpuScene::DrawDebug()
         }
         ImGui::TreePop();
     }
-    ImGui::TreePop();
 }

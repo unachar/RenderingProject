@@ -71,8 +71,6 @@ const ImU32 LODColors[] = {IM_COL32(26, 255, 51, 255),  IM_COL32(26, 128, 255, 2
 
 void DrawControls()
 {
-    if (!ImGui::TreeNode("Nanite / LOD View"))
-        return;
     auto &options = Settings();
     auto &visibility = GPUVisibility::GetSettings();
     auto &mesh = MeshShaderRenderer::GetSettings();
@@ -210,7 +208,6 @@ void DrawControls()
     }
     ImGui::Text("Scene sections: GPU eligible %u / traditional %u", eligible, fallback);
     ImGui::TextDisabled("GPU eligible can still fall back on missing clusters or capacity overflow.");
-    ImGui::TreePop();
 }
 
 void DrawViewport(ImDrawList *draw, const ImVec2 &origin, const ImVec2 &size, uint32_t selected)

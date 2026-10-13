@@ -397,7 +397,6 @@ void CloudRenderer::Render(ID3D12GraphicsCommandList* commands, UINT frameIndex,
 
 void CloudRenderer::DrawDebugUI()
 {
-    if (!ImGui::CollapsingHeader("Procedural Cloud")) return;
     ImGui::Checkbox("Enable clouds", &g_Settings.Enabled);
     ImGui::Checkbox("Cloud shadows", &g_Settings.CastShadows);
     if (!g_Available) ImGui::TextUnformatted("Cloud pipelines unavailable");

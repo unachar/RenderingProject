@@ -32,6 +32,13 @@ private:
 	inline static bool m_ShowAdjustmentPanel = true;
 	inline static bool m_ShowAssetBrowser = true;
 	inline static bool m_ShowRenderDebugger = false;
+	inline static bool m_ShowGpuSceneWindow = false;
+	inline static bool m_ShowGpuDrivenWindow = false;
+	inline static bool m_ShowVisibilityWindow = false;
+	inline static bool m_ShowMeshShaderWindow = false;
+	inline static bool m_ShowVirtualGeometryWindow = false;
+	inline static bool m_ShowCloudWindow = false;
+	inline static bool m_ShowTextureListWindow = false;
 	inline static bool m_ShowGBufferWindow = false;
 	inline static bool m_ShowLogWindow = false;
 	inline static bool m_ShowPerformanceWindow = false;
@@ -127,6 +134,8 @@ private:
 	static void DrawInspectorWindow();
 	static void DrawAssetBrowserWindow();
 	static void DrawRenderDebuggerWindow();
+	static void DrawRenderFeatureWindows();
+	static void DrawTextureListContent();
 	static void DrawGBufferWindow();
 	static void DrawLogWindow();
 	static void DrawPerformanceWindow();
