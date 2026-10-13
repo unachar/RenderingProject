@@ -49,6 +49,7 @@ void SimulationConfiguration::Save(std::ostream& stream)
         << rays.SunAngularRadius << '\n';
     stream << "raytracing_denoise=" << rays.Denoise << '\n';
     stream << "raytracing_reflections=" << rays.Reflections << '\n';
+    stream << "raytracing_mode=" << static_cast<int>(rays.RenderMode) << '\n';
     stream << "atmosphere=" << air.Enabled << ' ' << air.PhysicalSky << ' ' << air.RayleighStrength << ' '
         << air.MieStrength << ' ' << air.Density << ' ' << air.HeightFalloff << ' ' << air.Extinction << ' '
         << air.MieG << ' ' << air.DistanceScale << ' ' << air.LightShaftStrength << ' ' << air.LightShaftBlur << ' '
@@ -91,6 +92,8 @@ bool SimulationConfiguration::TryLoad(const std::string& key, const std::string&
     if (key == "raytracing")
     {
         auto rays = Raytracing::GetSettings();
+        // Settings saved before the mode selector used the full RT pipeline.
+        rays.RenderMode = Raytracing::Mode::Full;
         record >> rays.Enabled >> rays.Shadows >> rays.AmbientOcclusion >> rays.Samples;
         rays.Samples = std::clamp(rays.Samples, 1, 8);
         rays.ShadowDistance = ReadFloat(record, 1.0f, 2000.0f);
@@ -99,6 +102,15 @@ bool SimulationConfiguration::TryLoad(const std::string& key, const std::string&
         rays.SunAngularRadius = ReadFloat(record, 0.0f, 0.05f);
         RequireValidRecord(record);
         Raytracing::GetSettings() = rays;
+        return true;
+    }
+    if (key == "raytracing_mode")
+    {
+        int mode = -1;
+        record >> mode;
+        RequireValidRecord(record);
+        if (mode < 0 || mode > 1) throw std::invalid_argument("Invalid raytracing mode");
+        Raytracing::GetSettings().RenderMode = static_cast<Raytracing::Mode>(mode);
         return true;
     }
     if (key == "raytracing_denoise")

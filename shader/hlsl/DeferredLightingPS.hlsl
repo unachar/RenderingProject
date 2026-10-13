@@ -985,7 +985,7 @@ float4 main(PSInputPostProcess input) : SV_Target
         float3 envSpecular = EnvironmentTexture.SampleLevel(
             TextureSampler, reflectionUV, roughness * maxMip).rgb;
 #ifdef SHADER_RAYTRACING
-        if (SceneRayFlags.x > 0.5f)
+        if (SceneRayFlags.x > 0.5f || RaytracingFlags.w > 0.5f)
             envSpecular = RaytracingFlags.w > 0.5f ? RaytracedReflections.SampleLevel(TextureSampler, input.TexCoord, 0).rgb : 0;
 #endif
 

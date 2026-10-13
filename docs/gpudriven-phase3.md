@@ -41,9 +41,11 @@ CPUテストはCommand layout、capacity拡張、geometry offsets、整数overfl
 5つの独立したmaterial sectionsを持つ10,000 Entityで **50,000 Static Mesh instances／commands** を試験する。既存ECSの16,384 Entity上限は変更しない。50,000 Entityの試験とは区別する。
 CPU／GPUの5つのGBufferを画素単位で比較する。Opaque sortingは行わないため、比較fixtureは同じ深度の異なるmaterial面が重ならないよう配置する。
 
-GPU Based Validationはこの環境で初回フレームが240秒以内に完了せず、CPU開始／GPU開始の双方でタイムアウトした。完了条件のGPU Based Validation合格は未確認。ログは`build/gpudriven/runtime-Debug-gbv.log`へ保存する。通常Debug Layer試験とは区別する。
+GPU Based Validationは **Phase 3の実経路に絞った試験** として実行する。GPU Scene、既存Culling、Counter Reset、Compaction、Command Generation、実際のOpaque ExecuteIndirect、frame fencesは通常と同じ実装を使用する。Shadow／Velocity／PostProcess／Transparent／CPU fallback drawはこの試験では実行しない。GBuffer描画一致・CPU fallback移行・補助Passとの共存は通常Debug／Release試験で確認する。
 
-### 2026-10-12 実測結果
+初回にフレーム全体へGPU Based Validationを適用した試験は240秒でtimeoutした。その後Phase 3の実経路へ対象を絞り、84 frames・最大50,000 commandsまで合格した。フレーム全体のGPU Based Validation合格とは区別する。`-GpuValidation`の既定timeoutは900秒、`-TimeoutSeconds`で変更できる。ログは`build/gpudriven/runtime-Debug-gbv.log`へ保存する。
+
+### 2026-10-13 最終実測結果
 
 | 検証 | 結果 |
 |---|---|
@@ -53,19 +55,19 @@ GPU Based Validationはこの環境で初回フレームが240秒以内に完了
 | 50,000 commands | capacity 65,536、一意なlive Instance ID、draw arguments一致、ExecuteIndirect 1回 |
 | Debug Layer | Debug試験、D3D12 errors 0。Releaseではdebug queue無効 |
 | 既存GPU Scene／描画機能の回帰 | Debug features、84 frames合格、D3D12 errors 0 |
-| GPU Based Validation | 初回フレームでtimeout、未合格 |
+| GPU Based Validation | 2026-10-13、Phase 3経路84 frames、最大50,000 commands、D3D12 errors 0 |
 
 10,000 Instanceの`GBuffer / Opaque` CPU処理時間を、安定した各4フレームの平均で比較した。
 
 | 構成 | CPU Driven | GPU Driven |
 |---|---:|---:|
-| Debug | 507.8745 ms | 15.2344 ms |
-| Release | 58.0857 ms | 0.2087 ms |
+| Debug | 502.9059 ms | 14.9359 ms |
+| Release | 61.4463 ms | 0.2467 ms |
 
-50,000 Instance時のRelease GPU profiler値は、Culling 0.0280 ms、Command Generation 0.0215 ms、ExecuteIndirect 1.4787 ms。
+50,000 Instance時のRelease GPU profiler値は、Culling 0.0306 ms、Command Generation 0.0195 ms、ExecuteIndirect 1.4920 ms。
 この小さいStatic Mesh fixtureでの同一環境比較であり、実際のSceneやMeshの性能値ではない。
 
 証拠ログは`build/gpudriven/runtime-Debug.log`、`runtime-Release.log`、`runtime-Debug-gbv.log`、`build/gpuscene/Debug-stress-features/init_log.txt`。
-初回Release増分buildは既存中間ファイルの`LNK1103`で失敗したが、`/Z7`を指定したクリーン再ビルドと再実行で合格した。再現時に中間ファイルの問題が出た場合はスクリプトの`-Rebuild`を使用する。
+初回Release増分buildの`LNK1103`と、追加検証時のPCH設定不一致`C2855`は、`/Z7`を指定したクリーン再ビルドで解消した。再現時に中間ファイルの問題が出た場合はスクリプトの`-Rebuild`を使用する。
 
-実装・通常Debug Layer検証は完了した。Phase 3仕様の全完了条件を満たしたと判断するには、GPU Based Validationを完了できる環境での追加確認が必要。
+Phase 3の実装、描画一致、stress、CPU比較、通常Debug Layer、Phase 3経路のGPU Based Validationを確認した。フレーム全体のGPU Based Validationは初回timeoutのため未確認。

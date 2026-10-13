@@ -150,6 +150,7 @@ ModelManager::LoadModelResult ModelManager::LoadStaticModelDetailed(const char* 
 	}
 
 	result.ModelId = (int)m_StaticModels.size();
+	model->LoadLODMetadata(fileName);
 	m_StaticModels.push_back(move(model));
 	TextureManager::EndTextureLoading();
 

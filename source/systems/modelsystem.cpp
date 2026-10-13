@@ -1,4 +1,5 @@
-﻿#include "pch.h"
+#include "pch.h"
+#include "meshshader/meshshaderrenderer.h"
 #include "modelsystem.h"
 #include "gpudriven/gpudrivenrenderer.h"
 #include "vertexdeformation.h"
@@ -335,6 +336,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
 		for (EntityID entity : World::GetView<StaticModelComponent>())
 		{
+			if (MeshShaderRenderer::IsActive() && GPUDrivenRenderer::HandlesEntity(entity)) continue;
 			auto& component = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
 			if (MaterialSystem::IsTransparent(entity)) continue;
 			if (ComponentManager::HasComponent<MeshComponent>(entity) &&

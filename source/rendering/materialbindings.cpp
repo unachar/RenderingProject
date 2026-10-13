@@ -205,7 +205,8 @@ GPUMaterialData MaterialBindings::BuildGpuSceneMaterial(const MaterialComponent&
     result.Surface = XMFLOAT4(material.Metallic, material.Roughness, material.Fresnel, material.NormalBlend);
     result.AlbedoTextureIndex = material.TextureID >= 0 ? static_cast<uint32_t>(material.TextureID) : UINT32_MAX;
     result.NormalTextureIndex = material.NormalMapID >= 0 ? static_cast<uint32_t>(material.NormalMapID) : UINT32_MAX;
-    result.Flags = (material.UseTexture ? 1u : 0u) | (MaterialSystem::IsTransparentMaterial(material) ? 2u : 0u);
+    result.Flags = (material.UseTexture ? 1u : 0u) | (MaterialSystem::IsTransparentMaterial(material) ? 2u : 0u) |
+        (material.DoubleSided ? 4u : 0u);
     result.ShaderClass = static_cast<uint32_t>(material.ShaderClass);
     result.ShaderMode = static_cast<uint32_t>(material.ShaderClassMode);
     const auto constants = BuildPBRConstantsFromMaterial(material);

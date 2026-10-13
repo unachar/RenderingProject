@@ -318,11 +318,17 @@ void ImGuiManager::DrawRaytracingWindow()
     ImGui::BeginDisabled(!Raytracing::IsAvailable());
     auto& settings = Raytracing::GetSettings();
     ImGui::Checkbox("レイトレーシングを有効にする", &settings.Enabled);
+    int mode = static_cast<int>(settings.RenderMode);
+    const char* modes[] = { "反射のみ", "フルレイトレーシング" };
+    if (ImGui::Combo("描画モード", &mode, modes, IM_ARRAYSIZE(modes)))
+        settings.RenderMode = static_cast<Raytracing::Mode>(mode);
+    ImGui::BeginDisabled(settings.RenderMode == Raytracing::Mode::ReflectionsOnly);
     ImGui::Checkbox("全ライトの影", &settings.Shadows);
-    ImGui::Checkbox("シーンのレイトレーシング反射", &settings.Reflections);
     ImGui::Checkbox("環境遮蔽 (AO)", &settings.AmbientOcclusion);
+    ImGui::EndDisabled();
+    ImGui::Checkbox("シーンのレイトレーシング反射", &settings.Reflections);
     ImGui::BeginDisabled(!NrdDenoiser::IsCompiled());
-    ImGui::Checkbox("NVIDIA NRD で影のノイズを除去", &settings.Denoise);
+    ImGui::Checkbox("NVIDIA NRD でノイズを除去", &settings.Denoise);
     ImGui::EndDisabled();
     ImGui::Text("NRD: %s / GPU パス: %u", NrdDenoiser::GetVersion(), Raytracing::GetDenoiserDispatchCount());
     ImGui::SliderInt("サンプル数", &settings.Samples, 1, 8);
@@ -331,7 +337,7 @@ void ImGuiManager::DrawRaytracingWindow()
     ImGui::SliderFloat("表面からのオフセット", &settings.NormalBias, 0.001f, 0.1f, "%.3f m");
     ImGui::SliderFloat("太陽の角半径", &settings.SunAngularRadius, 0.0f, 0.05f, "%.4f rad");
     ImGui::EndDisabled();
-    ImGui::TextWrapped("実三角形を使う太陽の影と AO です。透明面は対象外です。非対応 GPU は既存描画を使用します。");
+    ImGui::TextWrapped("反射のみ: 影は環境設定の ShadowMap / Virtual ShadowMap を使用。フル: 反射・影・AO をレイトレーシングで描画します。透明面は対象外です。");
     ImGui::Separator();
     ImGui::TextWrapped("DLSS: %s", DlssUpscaler::GetStatus());
     ImGui::TextWrapped("アップスケーラーは環境設定から選択できます。");

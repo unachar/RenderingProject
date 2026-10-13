@@ -3,7 +3,8 @@ StructuredBuffer<GPUInstanceData> gSceneInstances : register(t30);
 ByteAddressBuffer gSceneMaterials : register(t31);
 cbuffer IndirectInstance : register(b4) { uint GPUInstanceID; }
 Texture2D gSceneTextures[512] : register(t0, space1);
-cbuffer TextureLimits : register(b5) { uint TextureBase; uint DefaultTexture; }
+cbuffer TextureLimits : register(b5) { uint TextureBase; uint DefaultTexture; uint VisibilityDebugMode; }
+StructuredBuffer<uint4> gVisibilityDebug : register(t32);
 
 uint SceneTextureIndex(uint heapIndex)
 {

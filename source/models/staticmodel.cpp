@@ -15,6 +15,7 @@
 
 #include "main.h"
 #include "staticmodel.h"
+#include "meshlets/meshletmanager.h"
 #include "texturemanager.h"
 #include "materialpartresolver.h"
 #include "cimport.h"
@@ -472,6 +473,13 @@ bool StaticModelResource::CreateDefaultBufferAndUpload(
 	return UploadBufferData(device, outResource.Get(), srcData, sizeInBytes, finalState, uploadLogTag);
 }
 
+void StaticModelResource::LoadLODMetadata(const char* path)
+{
+	m_SourcePath = path;
+	std::ifstream file(m_SourcePath + ".lod");
+	if (file && !Visibility::LoadLOD(file, m_LODMetadata)) Debug::Log("Invalid LOD metadata: %s.lod\n", path);
+}
+
 bool StaticModelResource::BuildLodIndexBuffers(
 	ID3D12Device* device,
 	const vector<StaticModelVertex>& vertices,
@@ -483,8 +491,8 @@ bool StaticModelResource::BuildLodIndexBuffers(
 		return true;
 	}
 
-	constexpr float ratios[StaticMeshData::LodCount - 1] = { 0.50f, 0.20f };
-	constexpr float errors[StaticMeshData::LodCount - 1] = { 0.01f, 0.035f };
+	constexpr float ratios[StaticMeshData::LodCount - 1] = { 0.50f, 0.20f, 0.08f, 0.03f };
+	constexpr float errors[StaticMeshData::LodCount - 1] = { 0.01f, 0.035f, 0.08f, 0.15f };
 	for (UINT lod = 0; lod < StaticMeshData::LodCount - 1; ++lod)
 	{
 		const size_t targetCount = max<size_t>(
@@ -516,6 +524,7 @@ bool StaticModelResource::BuildLodIndexBuffers(
 		meshData.LodIndexBufferViews[lod].Format = DXGI_FORMAT_R32_UINT;
 		meshData.LodIndexBufferViews[lod].SizeInBytes = byteSize;
 		meshData.LodIndexCounts[lod] = static_cast<UINT>(resultCount);
+		meshData.CpuLodIndices[lod].assign(lodIndices.begin(), lodIndices.end());
 	}
 	return true;
 }
@@ -824,6 +833,7 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 		return false;
 	}
 
+	MeshletManager::BuildImportedMesh(meshData);
 	m_Meshes.push_back(move(meshData));
 
 	char buf[512];
@@ -1127,7 +1137,8 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 			releaseScene();
 			return false;
 		}
-		m_Meshes.push_back(move(meshData));
+		MeshletManager::BuildImportedMesh(meshData);
+	m_Meshes.push_back(move(meshData));
 	}
 
 	if (m_Meshes.empty())

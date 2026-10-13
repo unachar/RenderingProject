@@ -37,7 +37,7 @@
 
 - [x] `gpudrivenvalidation.cpp`と`validate-gpudriven.ps1`で100/1000/10000 indexed Static Mesh、CPU/GPU GBuffer比較、command/count/ID validation、camera移動、create/delete、capacity拡張を検証。
 - [x] Debug/Release buildとruntime、Debug Layerを完了。各84 frames、失敗0、Debug D3D12 errors 0。
-- [ ] GPU Based Validation合格。CPU開始／GPU開始とも初回フレームで240秒timeout、未合格。
+- [x] GPU Based Validation合格。Phase 3の実経路に絞った84 frames、最大50000 commands、D3D12 errors 0。フレーム全体のGBVはtimeoutのため未確認。
 - [x] 実測と未検証制約を`docs/gpudriven-phase3.md`に記録。50000はECS上限との整合性を確認して実行。
 
 ## 最終確認
@@ -46,5 +46,5 @@
 - 5 submeshes × 10000 Entityの50000 commandsをDebug／Releaseで検証。CPU／GPU GBuffer比較も差分0。
 - CPU fallbackは変更時に一覧を更新し、GPU対象Static EntityをOpaque CPU loopへ列挙しない。
 - 既存GPU Scene／描画機能のDebug回帰84 frames合格。変更後の最終reviewにmust-fix指摘なし。
-- Releaseの既存中間ファイルによるLNK1103はクリーン再ビルドで解消。
-- GPU Based Validationのみ未合格のため、仕様の全完了条件達成とは扱わない。
+- Releaseの既存中間ファイルによるLNK1103／PCH設定不一致C2855はクリーン再ビルドで解消。追加検証後の最終Debug／Release 84 framesも合格。
+- 2026-10-13: GPU Scene／Culling／Command Generation／Opaque ExecuteIndirectを使うPhase 3 GBV試験が84 frames合格。既存補助Passを含むフレーム全体のGBVはtimeoutを別途記録する。

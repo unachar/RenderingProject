@@ -2,10 +2,12 @@ param(
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Debug',
     [switch]$SkipBuild,
     [switch]$Rebuild,
-    [switch]$GpuValidation
+    [switch]$GpuValidation,
+    [ValidateRange(1, 3600)][int]$TimeoutSeconds = 240
 )
 $ErrorActionPreference = 'Stop'
 if ($SkipBuild -and $Rebuild) { throw '-SkipBuild and -Rebuild cannot be combined.' }
+if ($GpuValidation -and -not $PSBoundParameters.ContainsKey('TimeoutSeconds')) { $TimeoutSeconds = 900 }
 if ($GpuValidation -and $Configuration -ne 'Debug') { throw '-GpuValidation requires the Debug configuration.' }
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $results = Join-Path $workspace 'build/gpudriven'
@@ -40,7 +42,7 @@ try {
     $offset = if (Test-Path -LiteralPath $log) { (Get-Item -LiteralPath $log).Length } else { 0 }
     $executable = Join-Path $workspace "bin/x64/$Configuration/DirectX12.exe"
     $process = Start-Process -FilePath $executable -WorkingDirectory $workspace -WindowStyle Hidden -PassThru
-    $timedOut = -not $process.WaitForExit(240000)
+    $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
     if ($timedOut) { $process.Kill(); $process.WaitForExit() }
     $process.Refresh()
     $stream = [IO.File]::OpenRead($log)

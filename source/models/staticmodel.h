@@ -6,6 +6,8 @@
 #include <unordered_map>
 #include <array>
 #include "toonoutlinebuilder.h"
+#include "visibility/visibilitytypes.h"
+#include "meshlets/meshletbuilder.h"
 
 struct StaticModelVertex
 {
@@ -17,7 +19,7 @@ struct StaticModelVertex
 
 struct StaticMeshData
 {
-	static constexpr UINT LodCount = 3;
+	static constexpr UINT LodCount = 5;
 	ComPtr<ID3D12Resource> VertexBuffer{};
 	ComPtr<ID3D12Resource> IndexBuffer{};
 	array<ComPtr<ID3D12Resource>, LodCount - 1> LodIndexBuffers{};
@@ -46,7 +48,9 @@ struct StaticMeshData
 	float AppliedMaterialPartId = 10.0f;
 	bool DefaultToonOutlineEnabled = true;
 	vector<StaticModelVertex> CpuVertices{};
+	array<Meshlets::Asset, LodCount> MeshletLODs{};
 	vector<uint32_t> CpuIndices{}; // Exact optimized LOD0 upload data; never reconstructed by GPU readback.
+	array<vector<uint32_t>, LodCount - 1> CpuLodIndices{};
 	array<vector<StaticModelVertex>, kToonOutlineModeCount> CpuTeoVerticesByMode{};
 
 	const D3D12_INDEX_BUFFER_VIEW& GetLodIndexBufferView(UINT lod) const
@@ -72,6 +76,8 @@ class StaticModelResource
 private:
 	vector<StaticMeshData> m_Meshes{};
 	string m_MaterialPath{};
+	string m_SourcePath{};
+	Visibility::LODMetadata m_LODMetadata{};
 
 	vector<XMFLOAT3> m_Positions{};
 	vector<XMFLOAT3> m_Normals{};
@@ -142,6 +148,10 @@ public:
 	UINT GetMeshCount() const { return (UINT)m_Meshes.size(); }
 	const StaticMeshData& GetMeshData(UINT index) const { return m_Meshes[index]; }
 	const string& GetMaterialPath() const { return m_MaterialPath; }
+	const string& GetSourcePath() const { return m_SourcePath; }
+	const Visibility::LODMetadata& GetLODMetadata() const { return m_LODMetadata; }
+	void SetLODMetadata(const Visibility::LODMetadata& value) { if (Visibility::ValidLOD(value)) m_LODMetadata = value; }
+	void LoadLODMetadata(const char* path);
 
 	XMFLOAT3 GetAabbCenter() const { return m_AabbCenter; }
 	XMFLOAT3 GetAabbExtents() const { return m_AabbExtents; }

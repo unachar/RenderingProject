@@ -1,7 +1,9 @@
 #include "pch.h"
 #include "renderingvalidation.h"
+#include "meshlets/meshletvalidation.h"
 #include "gpudriven/gpudrivenvalidation.h"
 #include "gpuscene/gpuscenevalidation.h"
+#include "visibility/gpuvisibilityvalidation.h"
 #include "rendercapture.h"
 #include "rendertargets.h"
 #include "graphicsdevice.h"
@@ -24,6 +26,7 @@
 #include "nrddenoiser.h"
 #include "meshshaderpipeline.h"
 #include "rayreflections.h"
+#include "lightingresources.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -224,6 +227,21 @@ void CreateTestScene()
         const size_t delimiter = line.find('=');
         Check(SimulationConfiguration::TryLoad(line.substr(0, delimiter), line.substr(delimiter + 1)), "simulation configuration roundtrip");
     }
+    for (auto mode : { Raytracing::Mode::ReflectionsOnly, Raytracing::Mode::Full })
+    {
+        Raytracing::GetSettings().RenderMode = mode;
+        std::ostringstream saved;
+        SimulationConfiguration::Save(saved);
+        Raytracing::GetSettings().RenderMode = mode == Raytracing::Mode::Full ?
+            Raytracing::Mode::ReflectionsOnly : Raytracing::Mode::Full;
+        std::istringstream reload(saved.str());
+        while (std::getline(reload, line))
+        {
+            const size_t delimiter = line.find('=');
+            SimulationConfiguration::TryLoad(line.substr(0, delimiter), line.substr(delimiter + 1));
+        }
+        Check(Raytracing::GetSettings().RenderMode == mode, "raytracing mode survives save/load");
+    }
 }
 
 void ValidateRayTexture()
@@ -310,6 +328,8 @@ bool RenderingValidation::IsEnabled()
 
 void RenderingValidation::BeforeFrame(uint64_t frame)
 {
+    if (MeshletValidation::Enabled()) { MeshletValidation::BeforeFrame(frame); return; }
+    if (GPUVisibilityValidation::Enabled()) { GPUVisibilityValidation::BeforeFrame(frame); return; }
     if (GPUDrivenValidation::Enabled()) { GPUDrivenValidation::BeforeFrame(frame); return; }
     if (!IsEnabled())
     {
@@ -332,7 +352,11 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
     DayNightCycle::SetTime(hours[(frame / 8) % 4]);
     Raytracing::GetSettings().Enabled = frame < 32 || frame >= 36;
     Raytracing::GetSettings().Reflections = (frame < 24 || frame >= 28) && frame != 18;
-    Raytracing::GetSettings().Shadows = frame != 12 && frame != 13;
+    Raytracing::GetSettings().Shadows = true;
+    Raytracing::GetSettings().RenderMode = (frame == 12 || frame == 13) ?
+        Raytracing::Mode::ReflectionsOnly : Raytracing::Mode::Full;
+    if (frame == 12) RendererSettings::SetShadowMapMethod(ShadowMapMethod::ShadowMap);
+    if (frame == 13) RendererSettings::SetShadowMapMethod(ShadowMapMethod::VirtualShadowMap);
     if (frame == 8)
     {
         ProjectManager::Play();
@@ -452,6 +476,8 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
 
 void RenderingValidation::AfterFrame(uint64_t frame)
 {
+    if (MeshletValidation::Enabled()) { MeshletValidation::AfterFrame(frame); return; }
+    if (GPUVisibilityValidation::Enabled()) { GPUVisibilityValidation::AfterFrame(frame); return; }
     if (GPUDrivenValidation::Enabled()) { GPUDrivenValidation::AfterFrame(frame); return; }
     GpuSceneValidation::AfterFrame(frame);
     if (!IsEnabled())
@@ -504,10 +530,27 @@ void RenderingValidation::AfterFrame(uint64_t frame)
         ValidateSkyBrightness(false);
     }
     if (frame == 31) ValidateSkyBrightness(true);
-    if (frame == 13 && Raytracing::IsAvailable())
+    if ((frame == 12 || frame == 13) && Raytracing::IsAvailable())
     {
         Check(Raytracing::AreReflectionsActive(), "reflection-only mode remains active");
-        if (NrdDenoiser::IsCompiled()) Check(!RayReflections::DidRestartHistory(), "reflection-only mode accumulates temporal history");
+        Check(!Raytracing::UsesRaytracedShadows() && !Raytracing::UsesRaytracedAmbientOcclusion(),
+            "reflection-only mode uses raster shadows and disables ray AO");
+        if (frame == 13 && NrdDenoiser::IsCompiled()) Check(!RayReflections::DidRestartHistory(), "reflection-only mode accumulates temporal history");
+        Check(LightingResources::GetShadowLightCount() > 0, "reflection-only mode has raster shadow passes");
+        RenderCapture::TextureData shadowDepth;
+        bool hasRasterShadow = RenderCapture::ReadTexture(RenderTargets::GetShadowDepthResource(), shadowDepth);
+        UINT writtenDepth = 0;
+        if (hasRasterShadow)
+        {
+            for (UINT y = 0; y < shadowDepth.Height; ++y)
+            {
+                const auto* values = reinterpret_cast<const float*>(shadowDepth.Bytes.data() + y * shadowDepth.RowPitch);
+                for (UINT x = 0; x < shadowDepth.Width; ++x)
+                    writtenDepth += std::isfinite(values[x]) && values[x] > 0.0f && values[x] < 1.0f;
+            }
+        }
+        Check(hasRasterShadow && writtenDepth > 0, frame == 12 ?
+            "reflection-only ShadowMap writes geometry depth" : "reflection-only Virtual ShadowMap writes geometry depth");
         RenderCapture::TextureData visibility;
         bool unshadowed = RenderCapture::ReadTexture(Raytracing::GetResultResource(), visibility);
         if (unshadowed)
@@ -617,6 +660,8 @@ void RenderingValidation::AfterFrame(uint64_t frame)
 
 bool RenderingValidation::Finish()
 {
+    if (MeshletValidation::Enabled()) return MeshletValidation::Finish();
+    if (GPUVisibilityValidation::Enabled()) return GPUVisibilityValidation::Finish();
     if (GPUDrivenValidation::Enabled()) return GPUDrivenValidation::Finish();
     if (!IsEnabled())
     {

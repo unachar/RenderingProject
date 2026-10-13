@@ -3,6 +3,9 @@ struct VelocityInput
     float4 Position : SV_POSITION;
     float4 CurrentClip : TEXCOORD0;
     float4 PreviousClip : TEXCOORD1;
+#ifdef MESHLET_VELOCITY
+    nointerpolation uint MaterialFlags : TEXCOORD2;
+#endif
 };
 
 float4 EncodeVelocity(float2 velocity)
@@ -11,8 +14,11 @@ float4 EncodeVelocity(float2 velocity)
     return float4(displayVelocity * 0.5f + 0.5f, velocity);
 }
 
-float4 main(VelocityInput input) : SV_Target
+float4 main(VelocityInput input, bool frontFace : SV_IsFrontFace) : SV_Target
 {
+#ifdef MESHLET_VELOCITY
+    if ((input.MaterialFlags & 4u) == 0 && !frontFace) discard;
+#endif
     if (input.CurrentClip.w <= 0.00001f || input.PreviousClip.w <= 0.00001f)
     {
         return EncodeVelocity(0.0f);

@@ -13,6 +13,7 @@
 #include "raytracing.h"
 #include "gpuscene/gpuscene.h"
 #include "gpudriven/gpudrivenrenderer.h"
+#include "gpudriven/gpudrivenvalidation.h"
 
 void FramePipeline::Execute()
 {
@@ -52,7 +53,10 @@ void FramePipeline::Execute()
 				[](ID3D12GraphicsCommandList* passCommandList)
 				{
 					RenderProfiler::ScopedEvent profile("Shadow", passCommandList);
-					if (Raytracing::IsAvailable()) return;
+					// Phase 3 GBV exercises the production GPU Scene/opaque passes.
+					// Full-frame CPU fallback and auxiliary passes are tested separately.
+					if (GPUDrivenValidation::IsGpuValidationRun()) return;
+					if (Raytracing::UsesRaytracedShadows()) return;
 					const UINT shadowLightCount = LightingResources::GetShadowLightCount();
 					for (UINT shadowIndex = 0; shadowIndex < shadowLightCount; ++shadowIndex)
 					{
@@ -88,11 +92,12 @@ void FramePipeline::Execute()
 					const auto submissionStart = std::chrono::steady_clock::now();
 					ScenePasses::BeginScenePass();
 					GPUDrivenRenderer::Draw(passCommandList);
-					SystemManager::DrawSystem(RenderPass::PrimaryScene, false);
+					if (!GPUDrivenValidation::IsGpuValidationRun()) SystemManager::DrawSystem(RenderPass::PrimaryScene, false);
 					if (ScenePasses::BuildOcclusionHierarchyAndBeginPhaseTwo())
 					{
 						SystemManager::DrawSystem(RenderPass::OcclusionPhase2, false);
 					}
+					GPUDrivenRenderer::BuildHiZ(passCommandList);
 					ScenePasses::EndScenePass();
 					GPUDrivenRenderer::RecordOpaqueSubmission(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - submissionStart).count());
 				});
@@ -106,8 +111,10 @@ void FramePipeline::Execute()
 				[](ID3D12GraphicsCommandList* passCommandList)
 				{
 					RenderProfiler::ScopedEvent profile("Velocity", passCommandList);
+					if (GPUDrivenValidation::IsGpuValidationRun()) return;
 					ScenePasses::RenderVelocityBuffer();
 					SystemManager::DrawSystem(RenderPass::Velocity, false);
+					GPUDrivenRenderer::DrawVelocity(passCommandList);
 					ScenePasses::EndVelocityBuffer();
 				});
 
@@ -126,6 +133,7 @@ void FramePipeline::Execute()
 				[](ID3D12GraphicsCommandList* passCommandList)
 				{
 					RenderProfiler::ScopedEvent profile("Deferred Lighting / PostProcess", passCommandList);
+					if (GPUDrivenValidation::IsGpuValidationRun()) return;
 					PostProcessSystem postProcess;
 					postProcess.Draw(RenderPass::PrimaryScene, false);
 				});
@@ -139,6 +147,7 @@ void FramePipeline::Execute()
 				[](ID3D12GraphicsCommandList* passCommandList)
 				{
 					RenderProfiler::ScopedEvent profile("Transparent / Overlay", passCommandList);
+					if (GPUDrivenValidation::IsGpuValidationRun()) return;
 					ScenePasses::PrepareTransparentSceneCopy();
 					ScenePasses::BeginEditorSceneOverlayPass();
 					SystemManager::DrawSystem(RenderPass::OverlayScene, false);
@@ -154,6 +163,7 @@ void FramePipeline::Execute()
 				[](ID3D12GraphicsCommandList* passCommandList)
 				{
 					RenderProfiler::ScopedEvent profile("AntiAliasing", passCommandList);
+					if (GPUDrivenValidation::IsGpuValidationRun()) return;
 					PostProcessPass::ApplyAntiAliasing();
 				});
 		}

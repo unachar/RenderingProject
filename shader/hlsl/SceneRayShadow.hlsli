@@ -5,7 +5,7 @@
 RaytracingAccelerationStructure LightingScene : register(t25);
 cbuffer SceneRayGlobals : register(b5)
 {
-    float4 SceneRayFlags; // DXR capability, shadow enable, TLAS ready, reserved
+    float4 SceneRayFlags; // RT shadow mode, shadow enable, TLAS ready, reserved
     float4 SceneRayParameters; // maximum range, normal bias, reserved
     uint4 SceneShadowLights[160];
 };

@@ -88,6 +88,8 @@ UINT g_NrdWidth = 0, g_NrdHeight = 0, g_NrdDispatchCount = 0;
 UINT g_AmbientDispatchCount = 0;
 NrdFrame g_PreviousNrdFrame;
 bool g_NrdHistoryValid = false;
+bool g_ShadowHistoryValid = false;
+bool g_AmbientHistoryValid = false;
 EntityID g_NrdCamera = g_kINVALID_ENTITY;
 ComPtr<ID3D12Resource> g_Constants;
 std::array<FrameResources, kFrameCount> g_Frames;
@@ -530,6 +532,8 @@ void Raytracing::Shutdown()
     g_Heap.Reset();
     g_Active = false;
     g_ReflectionsActive = false;
+    g_ShadowHistoryValid = false;
+    g_AmbientHistoryValid = false;
     g_InstanceCount = 0;
     g_Serial = 0;
 }
@@ -539,6 +543,10 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
 {
     g_Active = false;
     g_ReflectionsActive = false;
+    const bool shadowHistoryValid = g_ShadowHistoryValid;
+    const bool ambientHistoryValid = g_AmbientHistoryValid;
+    g_ShadowHistoryValid = false;
+    g_AmbientHistoryValid = false;
     g_NrdDispatchCount = 0;
     g_AmbientDispatchCount = 0;
     g_InstanceCount = 0;
@@ -548,8 +556,8 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     {
         if (!g_LightingConstants) return;
         LightingConstants lighting{};
-        lighting.Flags = { static_cast<float>(IsAvailable()),
-            static_cast<float>(g_Settings.Enabled && g_Settings.Shadows), static_cast<float>(sceneReady), 0.0f };
+        lighting.Flags = { static_cast<float>(UsesRaytracedShadows()),
+            static_cast<float>(UsesRaytracedShadows()), static_cast<float>(sceneReady), 0.0f };
         lighting.Parameters = { std::clamp(g_Settings.ShadowDistance, 1.0f, 2000.0f),
             std::clamp(g_Settings.NormalBias, 0.001f, 0.1f), 0.0f, 0.0f };
         lighting.Lights = g_LightShadowFlags;
@@ -562,7 +570,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         }
     };
     updateLighting(false);
-    if (!IsAvailable() || !g_Settings.Enabled || (!g_Settings.Shadows && !g_Settings.AmbientOcclusion && !g_Settings.Reflections) ||
+    if (!IsAvailable() || !g_Settings.Enabled || (!UsesRaytracedShadows() && !UsesRaytracedAmbientOcclusion() && !g_Settings.Reflections) ||
         !commandList || !depth || !normal)
     {
         g_NrdHistoryValid = false;
@@ -595,7 +603,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     constants.Distances = { std::clamp(g_Settings.ShadowDistance, 1.0f, 2000.0f),
         std::clamp(g_Settings.AmbientRadius, 0.05f, 10.0f), std::clamp(g_Settings.NormalBias, 0.001f, 0.1f),
         std::clamp(g_Settings.SunAngularRadius, 0.0f, 0.05f) };
-    constants.Features = { static_cast<UINT>(g_Settings.Shadows), static_cast<UINT>(g_Settings.AmbientOcclusion), 0, 0 };
+    constants.Features = { static_cast<UINT>(UsesRaytracedShadows()), static_cast<UINT>(UsesRaytracedAmbientOcclusion()), 0, 0 };
     XMStoreFloat4x4(&constants.WorldToView, XMMatrixTranspose(view));
     NrdFrame nrdFrame;
     XMStoreFloat4x4(&nrdFrame.View, view);
@@ -658,8 +666,9 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         Transition(commandList, frame.AmbientGuide.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         Transition(commandList, velocity, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         Transition(commandList, material, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        const bool denoise = g_Settings.Denoise && g_Settings.Shadows && g_SunDirection.w > 0.5f;
+        const bool denoise = g_Settings.Denoise && UsesRaytracedShadows() && g_SunDirection.w > 0.5f;
         NrdFrame sunFrame = nrdFrame;
+        sunFrame.ResetHistory |= !shadowHistoryValid;
         const auto& oldDirection = g_PreviousNrdFrame.LightDirection;
         const float directionSimilarity = oldDirection.x * nrdFrame.LightDirection.x +
             oldDirection.y * nrdFrame.LightDirection.y + oldDirection.z * nrdFrame.LightDirection.z;
@@ -668,6 +677,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
             { { frame.Guides[0].Get() }, { frame.Guides[1].Get() }, { frame.Guides[2].Get() }, { frame.Guides[3].Get() } }, sunFrame))
         {
             g_NrdDispatchCount = g_NrdSun->GetDispatchCount();
+            g_ShadowHistoryValid = true;
             D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
             srv.Format = DXGI_FORMAT_R8_UNORM;
             srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -688,10 +698,13 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
             Transition(commandList, g_NrdSun->GetOutput(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
             if (g_Serial == 1) WriteGraphicsLog("NRD: SIGMA GPU dispatches=%u\n", g_NrdDispatchCount);
         }
-        if (g_Settings.Denoise && g_Settings.AmbientOcclusion && g_NrdAmbient->Execute(commandList,
-            { { frame.Guides[0].Get() }, { frame.Guides[1].Get() }, { frame.Guides[2].Get() }, { frame.AmbientGuide.Get() } }, nrdFrame))
+        NrdFrame ambientFrame = nrdFrame;
+        ambientFrame.ResetHistory |= !ambientHistoryValid;
+        if (g_Settings.Denoise && UsesRaytracedAmbientOcclusion() && g_NrdAmbient->Execute(commandList,
+            { { frame.Guides[0].Get() }, { frame.Guides[1].Get() }, { frame.Guides[2].Get() }, { frame.AmbientGuide.Get() } }, ambientFrame))
         {
             g_AmbientDispatchCount = g_NrdAmbient->GetDispatchCount();
+            g_AmbientHistoryValid = true;
             g_NrdDispatchCount += g_AmbientDispatchCount;
             D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
             srv.Format = DXGI_FORMAT_R16_UNORM; srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -729,6 +742,14 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
 }
 
 bool Raytracing::IsAvailable() { return g_Pipeline != nullptr; }
+bool Raytracing::UsesRaytracedShadows()
+{
+    return IsAvailable() && g_Settings.Enabled && g_Settings.RenderMode == Mode::Full && g_Settings.Shadows;
+}
+bool Raytracing::UsesRaytracedAmbientOcclusion()
+{
+    return IsAvailable() && g_Settings.Enabled && g_Settings.RenderMode == Mode::Full && g_Settings.AmbientOcclusion;
+}
 bool Raytracing::IsActive() { return g_Active; }
 const char* Raytracing::GetStatus() { return g_Status; }
 Raytracing::Settings& Raytracing::GetSettings() { return g_Settings; }

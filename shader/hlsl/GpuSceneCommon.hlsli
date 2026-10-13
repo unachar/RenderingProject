@@ -15,6 +15,8 @@ struct GPUInstanceData
     float4 LocalCenter;
     float4 LocalExtents;
     float4 LodDistances;
+    uint LODGroupIndex;
+    uint3 VisibilityPadding;
 };
 struct GPUMeshData
 {

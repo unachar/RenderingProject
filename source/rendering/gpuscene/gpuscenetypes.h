@@ -38,6 +38,8 @@ struct GPUInstanceData
     DirectX::XMFLOAT4 LocalCenter{};
     DirectX::XMFLOAT4 LocalExtents{};
     DirectX::XMFLOAT4 LodDistances{}; // Preserve existing component metadata; no new LOD selection.
+    uint32_t LODGroupIndex = UINT32_MAX;
+    uint32_t VisibilityPadding[3]{};
 };
 struct GPUMeshData
 {
@@ -65,7 +67,8 @@ struct GPUMaterialData
     uint32_t Padding[2]{};
     std::array<DirectX::XMFLOAT4, GpuSceneMaterialParameterVectors> ShadingParameters{};
 };
-static_assert(sizeof(GPUInstanceData) == 224);
+static_assert(sizeof(GPUInstanceData) == 240);
+static_assert(offsetof(GPUInstanceData, LODGroupIndex) == 224);
 static_assert(offsetof(GPUInstanceData, PreviousWorld) == 64);
 static_assert(offsetof(GPUInstanceData, MeshIndex) == 128);
 static_assert(offsetof(GPUInstanceData, BoundsCenter) == 144);

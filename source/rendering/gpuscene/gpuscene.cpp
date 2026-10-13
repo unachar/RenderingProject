@@ -6,6 +6,7 @@
 #include "gpusceneculling.h"
 #include "gpuscenevalidation.h"
 #include "gpudriven/gpudrivenrenderer.h"
+#include "gpudriven/gpudrivenvalidation.h"
 #include "componentmanager.h"
 #include "world.h"
 #include "modelmanager.h"
@@ -13,6 +14,7 @@
 #include "graphicsdevice.h"
 #include "rendergraph.h"
 #include "renderprofiler.h"
+#include "visibility/gpuvisibility.h"
 #include <unordered_set>
 
 namespace
@@ -239,7 +241,49 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
                 append(mesh.VertexBuffer.Get(), mesh.IndexBuffer.Get(), mesh.VertexCount, mesh.IndexCount,
                        model->GetAabbCenter(), model->GetAabbExtents(), mesh.TextureIndex);
                 if (section > before)
-                    GPUDrivenRenderer::RegisterGeometry(scene.Instances.Data()[ids[section - 1]].MeshIndex, mesh);
+                {
+                    const auto slot = ids[section - 1];
+                    auto instance = scene.Instances.Data()[slot];
+                    GPUDrivenRenderer::RegisterGeometry(instance.MeshIndex, mesh);
+                    if (ComponentManager::HasComponent<LODComponent>(entity))
+                    {
+                        const auto& lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
+                        if (lod.UseLOD)
+                        {
+                            std::array<uint32_t, Visibility::MaxLODs> lodMeshes;
+                            lodMeshes.fill(Visibility::InvalidID); lodMeshes[0] = instance.MeshIndex;
+                            const auto& metadata = lod.UseAssetSettings ? model->GetLODMetadata() : lod.ScreenLOD;
+                            for (uint32_t level = 1; level < metadata.Count && level < Visibility::MaxLODs; ++level)
+                            {
+                                if (!metadata.MeshPaths[level].empty())
+                                {
+                                    auto* alternative = ModelManager::GetStaticModel(ModelManager::LoadStaticModel(metadata.MeshPaths[level].c_str(), false));
+                                    if (!alternative || alternative->GetMeshCount() != model->GetMeshCount()) continue;
+                                    // Original bounds must cover every selectable LOD.
+                                    const auto c = model->GetAabbCenter(), e = model->GetAabbExtents();
+                                    const auto ac = alternative->GetAabbCenter(), ae = alternative->GetAabbExtents();
+                                    if (std::abs(ac.x - c.x) + ae.x > e.x + 0.0001f || std::abs(ac.y - c.y) + ae.y > e.y + 0.0001f || std::abs(ac.z - c.z) + ae.z > e.z + 0.0001f) continue;
+                                    const auto& alternativeMesh = alternative->GetMeshData(i);
+                                    const auto meshID = RegisterMesh(alternativeMesh.VertexBuffer.Get(), alternativeMesh.IndexBuffer.Get(), alternativeMesh.VertexCount, alternativeMesh.IndexCount, ac, ae);
+                                    GPUDrivenRenderer::RegisterGeometry(meshID, alternativeMesh);
+                                    if (GPUDrivenRenderer::GeometryReady(meshID)) lodMeshes[level] = meshID;
+                                    continue;
+                                }
+                                if (level >= StaticMeshData::LodCount) continue;
+                                const auto& indices = mesh.CpuLodIndices[level - 1];
+                                if (indices.empty()) continue;
+                                const auto meshID = RegisterMesh(mesh.VertexBuffer.Get(), mesh.LodIndexBuffers[level - 1].Get(),
+                                    mesh.VertexCount, static_cast<uint32_t>(indices.size()), model->GetAabbCenter(), model->GetAabbExtents());
+                                GPUDrivenRenderer::RegisterLODGeometry(meshID, instance.MeshIndex, indices, &mesh.MeshletLODs[level]);
+                                if (GPUDrivenRenderer::GeometryReady(meshID)) lodMeshes[level] = meshID;
+                            }
+                            instance.LODGroupIndex = GPUVisibility::RegisterLODGroup(lodMeshes, metadata);
+                        }
+                    }
+                    if (ComponentManager::HasComponent<ProceduralMotionComponent>(entity) &&
+                        ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(entity).Enabled) instance.Flags |= 8u;
+                    scene.Instances.Update(slot, instance);
+                }
             }
         }
     }
@@ -309,6 +353,7 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
 
 void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
 {
+    GPUDrivenValidation::Trace("GPU Scene begin");
     GpuSceneValidation::BeforeScene();
     const auto start = std::chrono::steady_clock::now();
     auto &scene = Scene();
@@ -317,6 +362,11 @@ void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
     scene.Instances.SettlePreviousTransforms();
     auto pending = std::move(GpuSceneChanges::Pending());
     GpuSceneChanges::Pending() = {};
+    bool occluderChanged = pending.ResetScene || !pending.Destroyed.empty();
+    for (const auto& [entity, dirty] : pending.Changed)
+        if (scene.Entities.contains(entity) || ComponentManager::HasComponent<StaticModelComponent>(entity)) occluderChanged = true;
+    if (occluderChanged) GPUVisibility::Invalidate("Scene/occluder changed");
+    GPUVisibility::PrepareCamera();
     if (pending.ResetScene)
     {
         for (auto &[entity, ids] : scene.Entities)
@@ -354,6 +404,7 @@ void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
     scene.MeshBuffer.Ensure(device, scene.Stats.Meshes, sizeof(GPUMeshData), frame, L"GPU Scene Meshes");
     scene.MaterialBuffer.Ensure(device, scene.Stats.Materials, sizeof(GPUMaterialData), frame, L"GPU Scene Materials");
     scene.Culling.Prepare(device, scene.Stats.InstanceSlots, frame);
+    GPUDrivenValidation::Trace("GPU Scene culling pipeline ready");
     const uint64_t instanceBytes = scene.InstanceBuffer.Stage(device, frame, scene.Instances.Data().data(),
                                                               scene.Stats.InstanceSlots, scene.Instances.Updates());
     const uint64_t meshBytes =
@@ -416,6 +467,7 @@ void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
         });
     GPUDrivenRenderer::Prepare(graph, instances, visibility, scene.Stats.InstanceSlots,
                                scene.InstanceBuffer.Capacity(), scene.Stats.Meshes);
+    GPUDrivenValidation::Trace("indirect pipeline ready");
     if (!graph.Compile() || !graph.Execute(commands))
     {
         throw std::runtime_error(graph.GetLastError());

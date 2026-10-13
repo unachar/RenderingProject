@@ -18,6 +18,7 @@ public:
 	using RendererState::m_DynamicVertexOffset;
 
 	static D3D12_GPU_DESCRIPTOR_HANDLE AllocateTransientConstantBuffer(const ConstantBuffer3D& constants);
+	static D3D12_GPU_DESCRIPTOR_HANDLE AllocateTransientConstantBuffer(const void* data, size_t bytes);
 	static ID3D12DescriptorHeap* GetCbvHeap() { return m_CbvHeap.Get(); }
 	static UINT GetCurrentFrameCbvBaseIndex() { return m_FrameIndex * g_kCBV_PER_FRAME_COUNT; }
 	static UINT GetCurrentFrameCbvIndex(UINT slot)

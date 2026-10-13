@@ -245,9 +245,12 @@ public:
 	static constexpr UINT g_kHIZ_MAX_MIPS = 16;
 	static constexpr UINT g_kHIZ_UAV_START_INDEX = g_kHIZ_SRV_START_INDEX + 2;
 	static constexpr UINT g_kHIZ_MIP_SRV_START_INDEX = g_kHIZ_UAV_START_INDEX + 2 * g_kHIZ_MAX_MIPS;
+	static constexpr UINT g_kHIZ_SOURCE_SRV_INDEX = g_kHIZ_MIP_SRV_START_INDEX + 2 * g_kHIZ_MAX_MIPS;
+	static constexpr UINT g_kHIZ_DEBUG_SRV_INDEX = g_kHIZ_SOURCE_SRV_INDEX + 1;
+	static constexpr UINT g_kHIZ_DEBUG_UAV_INDEX = g_kHIZ_SOURCE_SRV_INDEX + 2;
 
 	static constexpr UINT g_kENGINE_DESCRIPTOR_END = g_kDEPTH_SRV_INDEX + 256;
-	static_assert(g_kHIZ_MIP_SRV_START_INDEX + 2 * g_kHIZ_MAX_MIPS <= g_kENGINE_DESCRIPTOR_END + 1,
+	static_assert(g_kHIZ_DEBUG_UAV_INDEX <= g_kENGINE_DESCRIPTOR_END,
 		"The Hi-Z descriptor range exceeds the engine-owned descriptor range.");
 	static constexpr UINT g_kMAX_DYNAMIC_VERTICES = 65536;
 

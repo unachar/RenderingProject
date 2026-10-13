@@ -16,6 +16,7 @@
 #include "gpuscene/gpuscene.h"
 #include "lightinstancebuilder.h"
 #include "graphicsdevice.h"
+#include "meshshader/meshshaderrenderer.h"
 #include "rendertargets.h"
 #include "raytracing.h"
 #include "vertexdeformation.h"
@@ -450,6 +451,7 @@ if (!ShaderPipelines::CreatePostProcessPipeline()) return false;
 	DlssUpscaler::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	OcclusionCulling::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	MeshShaderPipeline::Initialize(m_Device.Get(), ShaderPipelines::GetModelRootSignature());
+	MeshShaderRenderer::QuerySupport(m_Device.Get());
 	LightInstanceBuilder::Initialize(m_Device.Get());
 
 	WriteGraphicsLog("Step: CreateSceneRenderTarget\n");

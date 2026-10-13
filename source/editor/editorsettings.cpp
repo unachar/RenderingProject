@@ -170,9 +170,15 @@ void ImGuiManager::DrawProjectSettingsWindow()
 		ImGui::BeginDisabled(!Raytracing::IsAvailable());
 		auto& rays = Raytracing::GetSettings();
 		ImGui::Checkbox("レイトレーシングを使用", &rays.Enabled);
+		int rayMode = static_cast<int>(rays.RenderMode);
+		const char* rayModes[] = { "反射のみ", "フルレイトレーシング" };
+		if (ImGui::Combo("描画モード", &rayMode, rayModes, IM_ARRAYSIZE(rayModes)))
+			rays.RenderMode = static_cast<Raytracing::Mode>(rayMode);
+		ImGui::BeginDisabled(rays.RenderMode == Raytracing::Mode::ReflectionsOnly);
 		ImGui::Checkbox("全ライトのレイトレーシング影", &rays.Shadows);
-		ImGui::Checkbox("レイトレーシング反射", &rays.Reflections);
 		ImGui::Checkbox("レイトレーシング AO", &rays.AmbientOcclusion);
+		ImGui::EndDisabled();
+		ImGui::Checkbox("レイトレーシング反射", &rays.Reflections);
 		ImGui::BeginDisabled(!NrdDenoiser::IsCompiled());
 		ImGui::Checkbox("NVIDIA NRD でノイズを除去", &rays.Denoise);
 		ImGui::EndDisabled();
@@ -328,10 +334,10 @@ void ImGuiManager::DrawProjectSettingsWindow()
 
 	if (ImGui::CollapsingHeader("シャドウ", ImGuiTreeNodeFlags_DefaultOpen))
 	{
-		const bool raytracedShadowsSupported = Raytracing::IsAvailable();
+		const bool raytracedShadowsSupported = Raytracing::UsesRaytracedShadows();
 		if (raytracedShadowsSupported)
 		{
-			ImGui::TextWrapped("この GPU の影はレイトレーシング設定で制御します。以下は非対応 GPU 用のシャドウマップ設定です。");
+			ImGui::TextWrapped("現在はレイトレーシングで影を描画しています。反射のみのモードでは以下のシャドウマップ設定を使用します。");
 		}
 		ImGui::BeginDisabled(raytracedShadowsSupported);
 		int method = static_cast<int>(RendererSettings::GetShadowMapMethod());

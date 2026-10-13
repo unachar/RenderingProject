@@ -8,12 +8,13 @@ Texture2D g_Texture : register(t0);
 #endif
 SamplerState g_SamplerState : register(s0);
 
-GBufferOutput main(PSInput3D In)
+GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
 {
 #ifdef SHADER_GPU_DRIVEN
     uint materialID = gSceneInstances[In.InstanceID].MaterialIndex;
     uint address = materialID * GPU_SCENE_MATERIAL_STRIDE;
     uint4 metadata = gSceneMaterials.Load4(address + 32u);
+    if ((metadata.z & 4u) == 0 && !frontFace) discard;
     int UseTexture = (metadata.z & 1u) != 0;
     int FlipNormal = 0;
     int ShaderClass = metadata.w;
@@ -64,5 +65,14 @@ GBufferOutput main(PSInput3D In)
     output.Shadow.b = usePartParams ? partParams.Shadow0.z : ShadowStrength;
     output.Shadow.a = 1.0f;
     output.Color.a = 1.0f;
+#ifdef SHADER_GPU_DRIVEN
+    if (VisibilityDebugMode != 0)
+    {
+        uint4 visibility = gVisibilityDebug[In.InstanceID];
+        const float3 palette[8] = {float3(0.1, 1, 0.2), float3(0.1, 0.5, 1), float3(1, 0.8, 0.1), float3(1, 0.3, 0.1),
+            float3(0.7, 0.2, 1), float3(0.2, 1, 1), float3(1, 0.2, 0.7), float3(0.8, 0.8, 0.8)};
+        output.Color.rgb = VisibilityDebugMode == 2 ? palette[min(visibility.z, 7u)] : float3(0.1, 1, 0.2);
+    }
+#endif
     return output;
 }

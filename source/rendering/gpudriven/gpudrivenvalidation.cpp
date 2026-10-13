@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "visibility/gpuvisibility.h"
+#include "visibility/gpuvisibilityvalidation.h"
 #include "gpudrivenvalidation.h"
 #include "gpudrivenrenderer.h"
 #include "indirectcommand.h"
@@ -148,8 +150,20 @@ bool GPUDrivenValidation::Enabled()
     char value[8]{};
     return GetEnvironmentVariableA("DX12_GPU_DRIVEN_STRESS_TEST", value, sizeof(value)) && atoi(value) != 0;
 }
+void GPUDrivenValidation::Trace(const char* stage)
+{
+    if (frames == 1 && IsGpuValidationRun())
+        WriteGraphicsLog("GPU Driven GBV stage: %s\n", stage);
+}
+bool GPUDrivenValidation::IsGpuValidationRun()
+{
+    static const bool enabled = (Enabled() || GPUVisibilityValidation::Enabled()) && GpuValidation();
+    return enabled;
+}
 void GPUDrivenValidation::BeforeFrame(uint64_t frame)
 {
+    GPUVisibility::GetSettings().Occlusion = false;
+    GPUVisibility::GetSettings().LOD = false;
     frames = frame + 1;
     if (frame == 0)
     {
@@ -163,14 +177,18 @@ void GPUDrivenValidation::BeforeFrame(uint64_t frame)
         obj.close();
         modelID = ModelManager::LoadStaticModel("build/gpudriven/fixture.obj", false);
         Check(modelID >= 0, "load indexed static fixture");
+        Trace("create fixtures begin");
         Grow(100);
+        Trace("create fixtures end");
         World::SetVSyncEnabled(false);
     }
     RenderConfiguration::SetRenderMode(RenderMode::DEFERRED);
+    Trace("set deferred mode end");
     RendererSettings::SetComputeGBufferEnabled(false);
     RendererSettings::SetMeshShadersEnabled(false);
     RendererSettings::SetTwoPhaseOcclusionEnabled(false);
     RendererSettings::SetUpscaleMode(UpscaleMode::Bilateral);
+    Trace("set raster GBuffer mode end");
     Raytracing::GetSettings().Enabled = false;
     DayNightCycle::GetSettings().Running = false;
     auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(Camera::GetCameraEntity());
@@ -254,6 +272,7 @@ void GPUDrivenValidation::BeforeFrame(uint64_t frame)
               model->GetMeshCount() == 5, "reload fixture with five indexed static mesh sections");
         for (auto entity : fixtures) GpuSceneChanges::Notify(entity, GpuSceneDirtyFlags::All);
     }
+    Trace("BeforeFrame end");
 }
 void GPUDrivenValidation::AfterFrame(uint64_t frame)
 {

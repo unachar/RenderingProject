@@ -48,15 +48,21 @@ bool RenderCapture::ReadBuffer(ID3D12Resource* source, D3D12_RESOURCE_STATES sta
 
 bool RenderCapture::ReadTexture(ID3D12Resource* texture, TextureData& output)
 {
+    return ReadTextureMip(texture, output, 0, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+}
+
+bool RenderCapture::ReadTextureMip(ID3D12Resource* texture, TextureData& output, UINT mip, D3D12_RESOURCE_STATES state)
+{
     ID3D12Device* device = GraphicsDevice::GetDevice();
     if (!device || !texture || !GraphicsDevice::WaitForGpuIdle())
     {
         return false;
     }
     const auto description = texture->GetDesc();
+    if (mip >= description.MipLevels) return false;
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
     UINT64 bytes = 0;
-    device->GetCopyableFootprints(&description, 0, 1, 0, &footprint, nullptr, nullptr, &bytes);
+    device->GetCopyableFootprints(&description, mip, 1, 0, &footprint, nullptr, nullptr, &bytes);
     ComPtr<ID3D12Resource> readback;
     const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
     const auto buffer = CD3DX12_RESOURCE_DESC::Buffer(bytes);
@@ -70,13 +76,13 @@ bool RenderCapture::ReadTexture(ID3D12Resource* texture, TextureData& output)
         return false;
     }
     auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(texture,
-        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        state, D3D12_RESOURCE_STATE_COPY_SOURCE, mip);
     commands->ResourceBarrier(1, &barrier);
     const CD3DX12_TEXTURE_COPY_LOCATION destination(readback.Get(), footprint);
-    const CD3DX12_TEXTURE_COPY_LOCATION source(texture, 0);
+    const CD3DX12_TEXTURE_COPY_LOCATION source(texture, mip);
     commands->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
     barrier = CD3DX12_RESOURCE_BARRIER::Transition(texture,
-        D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        D3D12_RESOURCE_STATE_COPY_SOURCE, state, mip);
     commands->ResourceBarrier(1, &barrier);
     if (FAILED(commands->Close()))
     {
@@ -94,8 +100,8 @@ bool RenderCapture::ReadTexture(ID3D12Resource* texture, TextureData& output)
     {
         return false;
     }
-    output.Width = static_cast<UINT>(description.Width);
-    output.Height = description.Height;
+    output.Width = footprint.Footprint.Width;
+    output.Height = footprint.Footprint.Height;
     output.RowPitch = footprint.Footprint.RowPitch;
     output.Format = description.Format;
     output.Bytes.resize(static_cast<size_t>(bytes));

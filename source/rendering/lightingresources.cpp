@@ -394,7 +394,8 @@ namespace
 				sizeof(g_CachedDirectionalLight.Component.Direction));
 		}
 
-		if (g_DirectionalShadowMode != 1.0f)
+		// RT frames skip page rendering; do not retain residency for unwritten pages.
+		if (g_DirectionalShadowMode != 1.0f || Raytracing::UsesRaytracedShadows())
 		{
 			memset(g_VirtualShadowPageCache, 0, sizeof(g_VirtualShadowPageCache));
 		}
@@ -562,7 +563,7 @@ namespace
 						cacheEntry.GlobalPageY = globalPageY;
 						cacheEntry.ProjectionKey = pageProjectionKey;
 						cacheEntry.ContentKey = pageContentKey;
-						cacheEntry.Valid = true;
+						cacheEntry.Valid = !Raytracing::UsesRaytracedShadows();
 					}
 				}
 			}

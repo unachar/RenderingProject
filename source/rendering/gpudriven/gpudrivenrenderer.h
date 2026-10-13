@@ -6,11 +6,13 @@
 
 struct StaticMeshData;
 class RenderGraph;
+namespace Meshlets { struct Asset; }
 
 class GPUDrivenRenderer
 {
 public:
     static void RegisterGeometry(uint32_t meshID, const StaticMeshData& mesh);
+    static void RegisterLODGeometry(uint32_t meshID, uint32_t baseMeshID, const std::vector<uint32_t>& indices, const Meshlets::Asset* meshlets = nullptr);
     static void UpdateGeometry(const StaticMeshData& mesh);
     static bool GeometryReady(uint32_t meshID);
     static bool SupportsEntity(uint32_t entity);
@@ -18,6 +20,8 @@ public:
     static void Prepare(RenderGraph& graph, RenderGraph::ResourceHandle instances, RenderGraph::ResourceHandle visibility,
                         uint32_t slots, uint32_t capacity, uint32_t meshes);
     static void Draw(ID3D12GraphicsCommandList* commands);
+    static void DrawVelocity(ID3D12GraphicsCommandList* commands);
+    static void BuildHiZ(ID3D12GraphicsCommandList* commands);
     static bool IsEnabled();
     static bool IsActive();
     static void SetEnabled(bool enabled);

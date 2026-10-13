@@ -1,6 +1,9 @@
 #include "pch.h"
 #include "gpudrivenrenderer.h"
+#include "meshlets/meshletmanager.h"
+#include "meshshader/meshshaderrenderer.h"
 #include "indirectcommand.h"
+#include "gpudrivenvalidation.h"
 #include "gpuscene/gpuscene.h"
 #include "gpuscene/gpuscenebuffer.h"
 #include "staticmodel.h"
@@ -18,6 +21,8 @@
 #include "camera.h"
 #include "rendercapture.h"
 #include "graphicslog.h"
+#include "visibility/gpuvisibility.h"
+#include "occlusionculling.h"
 #include <unordered_set>
 #include <unordered_map>
 
@@ -33,6 +38,7 @@ struct State
     bool Enabled = true;
     bool Active = false;
     bool Failed = false;
+    bool PreviousCompatible = false;
     std::array<FrameBuffers, GpuSceneBuffer::FrameCount> Frames;
     GpuSceneBuffer Vertices, Indices, Geometry;
     std::vector<StaticModelVertex> CpuVertices;
@@ -43,7 +49,7 @@ struct State
     std::unordered_map<uint32_t, std::vector<uint32_t>> EntityTextures;
     std::unordered_map<uint32_t, uint32_t> TextureUsers;
     ComPtr<ID3D12RootSignature> ComputeRoot, OpaqueRoot, ResetRoot;
-    ComPtr<ID3D12PipelineState> ResetPSO, CompactPSO, GeneratePSO, OpaquePSO;
+    ComPtr<ID3D12PipelineState> ResetPSO, CompactPSO, GeneratePSO, OpaquePSO, OccluderPSO;
     ComPtr<ID3D12CommandSignature> Signature;
     uint32_t Slots = 0, Meshes = 0, Calls = 0, FrameIndex = 0;
     double SubmissionMs = 0;
@@ -56,7 +62,12 @@ State& Data() { static State state; return state; }
 FrameBuffers& Frame() { return Data().Frames.at(Data().FrameIndex); }
 void Check(HRESULT result)
 {
-    if (FAILED(result)) throw std::runtime_error("GPU driven pipeline creation failed");
+    if (FAILED(result))
+    {
+        WriteGraphicsLog("GPU driven pipeline HRESULT: 0x%08X\n", result);
+        RenderCapture::ReportGraphicsErrors();
+        throw std::runtime_error("GPU driven pipeline creation failed");
+    }
 }
 void Root(ID3D12Device* device, CD3DX12_ROOT_SIGNATURE_DESC& description, ComPtr<ID3D12RootSignature>& output)
 {
@@ -87,6 +98,7 @@ void Initialize()
 {
     auto& state = Data();
     if (state.Signature) return;
+    GPUDrivenValidation::Trace("indirect pipeline initialization begin");
     auto* device = GraphicsDevice::GetDevice();
     CD3DX12_ROOT_PARAMETER reset;
     reset.InitAsUnorderedAccessView(0);
@@ -103,17 +115,19 @@ void Initialize()
     Root(device, computeDescription, state.ComputeRoot);
     Compute(device, state.ComputeRoot.Get(), "shader/hlsl/build/GPUDrivenCompactCS.cso", state.CompactPSO);
     Compute(device, state.ComputeRoot.Get(), "shader/hlsl/build/GenerateIndirectCommandsCS.cso", state.GeneratePSO);
+    GPUDrivenValidation::Trace("indirect compute pipelines ready");
 
     CD3DX12_DESCRIPTOR_RANGE constants, textures;
     constants.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
     textures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, FrameConstants::g_kMAX_SRVS, 0, 1);
-    CD3DX12_ROOT_PARAMETER opaque[6];
+    CD3DX12_ROOT_PARAMETER opaque[7];
     opaque[0].InitAsConstants(1, 4); // This index is part of the command signature contract.
     opaque[1].InitAsDescriptorTable(1, &constants);
     opaque[2].InitAsShaderResourceView(30);
     opaque[3].InitAsShaderResourceView(31);
     opaque[4].InitAsDescriptorTable(1, &textures, D3D12_SHADER_VISIBILITY_PIXEL);
-    opaque[5].InitAsConstants(2, 5);
+    opaque[5].InitAsConstants(3, 5);
+    opaque[6].InitAsShaderResourceView(32, 0, D3D12_SHADER_VISIBILITY_PIXEL);
     CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
     CD3DX12_ROOT_SIGNATURE_DESC opaqueDescription(_countof(opaque), opaque, 1, &sampler,
                                                   D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
@@ -132,6 +146,7 @@ void Initialize()
     pipeline.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
     pipeline.InputLayout = {layout, _countof(layout)};
     pipeline.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    pipeline.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
     pipeline.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
     pipeline.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
     pipeline.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
@@ -142,6 +157,14 @@ void Initialize()
     for (uint32_t i = 0; i < 5; ++i) pipeline.RTVFormats[i] = RendererState::GetGBufferFormat(static_cast<GBufferType>(i));
     pipeline.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     Check(device->CreateGraphicsPipelineState(&pipeline, IID_PPV_ARGS(&state.OpaquePSO)));
+    auto occluder = Shader("shader/hlsl/build/GPUOccluderPS.cso");
+    pipeline.PS = {occluder->GetBufferPointer(), occluder->GetBufferSize()};
+    // Omit back-facing occluders conservatively; the depth-only shader has no material face test.
+    pipeline.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+    pipeline.NumRenderTargets = 0;
+    for (auto& format : pipeline.RTVFormats) format = DXGI_FORMAT_UNKNOWN;
+    Check(device->CreateGraphicsPipelineState(&pipeline, IID_PPV_ARGS(&state.OccluderPSO)));
+    GPUDrivenValidation::Trace("indirect opaque pipeline ready");
 
     D3D12_INDIRECT_ARGUMENT_DESC arguments[2]{};
     arguments[0].Type = D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT;
@@ -188,6 +211,21 @@ void GPUDrivenRenderer::RegisterGeometry(uint32_t meshID, const StaticMeshData& 
     state.CpuGeometry[meshID] = geometry;
     state.NewGeometry.push_back(meshID);
     state.GeometryMeshIDs[mesh.VertexBuffer->GetGPUVirtualAddress()].push_back(meshID);
+    MeshletManager::Register(meshID, mesh.MeshletLODs[0], geometry.BaseVertex);
+}
+
+void GPUDrivenRenderer::RegisterLODGeometry(uint32_t meshID, uint32_t baseMeshID, const std::vector<uint32_t>& indices, const Meshlets::Asset* meshlets)
+{
+    auto& state = Data();
+    if (GeometryReady(meshID) || !GeometryReady(baseMeshID) || indices.empty()) return;
+    const auto base = state.CpuGeometry[baseMeshID];
+    const auto reservation = ReserveGpuDrivenGeometry(0, state.CpuIndices.size(), 0, static_cast<uint32_t>(indices.size()));
+    if (state.CpuGeometry.size() <= meshID) state.CpuGeometry.resize(size_t(meshID) + 1);
+    state.CpuGeometry[meshID] = {reservation.StartIndex, reservation.IndexCount, base.BaseVertex, 1};
+    for (uint32_t i = 0; i < indices.size(); ++i) state.NewIndices.push_back(static_cast<uint32_t>(state.CpuIndices.size()) + i);
+    state.CpuIndices.insert(state.CpuIndices.end(), indices.begin(), indices.end());
+    state.NewGeometry.push_back(meshID);
+    if (meshlets) MeshletManager::Register(meshID, *meshlets, base.BaseVertex);
 }
 
 void GPUDrivenRenderer::UpdateGeometry(const StaticMeshData& mesh)
@@ -198,6 +236,7 @@ void GPUDrivenRenderer::UpdateGeometry(const StaticMeshData& mesh)
     if (found == state.GeometryMeshIDs.end()) return;
     for (uint32_t meshID : found->second)
     {
+        MeshletManager::Invalidate(meshID);
         const auto& geometry = state.CpuGeometry.at(meshID);
         const size_t first = static_cast<size_t>(geometry.BaseVertex);
         if (first + mesh.CpuVertices.size() > state.CpuVertices.size())
@@ -211,7 +250,6 @@ bool GPUDrivenRenderer::SupportsEntity(uint32_t entity)
 {
     if (!ComponentManager::HasComponent<StaticModelComponent>(entity) ||
         !ComponentManager::HasComponent<MaterialComponent>(entity) || VertexDeformation::IsRequested(entity)) return false;
-    if (ComponentManager::HasComponent<LODComponent>(entity) && ComponentManager::GetComponentUnchecked<LODComponent>(entity).UseLOD) return false;
     if (ComponentManager::HasComponent<MeshComponent>(entity) && ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment) return false;
     if (ComponentManager::HasComponent<NameComponent>(entity) && ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky") return false;
     const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
@@ -251,7 +289,10 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
     state.Active = false;
     state.Calls = 0;
     state.SubmissionMs = 0;
-    if (!state.Enabled || state.Failed || !CompatibleMode()) return;
+    const bool compatible = state.Enabled && !state.Failed && CompatibleMode();
+    if (compatible != state.PreviousCompatible) GPUVisibility::Invalidate("GPU/CPU path changed");
+    state.PreviousCompatible = compatible;
+    if (!compatible) return;
     try { Initialize(); }
     catch (const std::exception& error)
     {
@@ -274,7 +315,7 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
     prepare(state.Vertices, static_cast<uint32_t>(state.CpuVertices.size()), sizeof(StaticModelVertex), L"Global Static Vertices");
     prepare(state.Indices, static_cast<uint32_t>(state.CpuIndices.size()), 4, L"Global Static Indices");
     prepare(state.Geometry, meshes, sizeof(GPUDrivenGeometryData), L"GPU Driven Mesh Geometry");
-    prepare(frame.Visible, capacity, 4, L"GPU Driven Visible IDs", true);
+    prepare(frame.Visible, capacity, sizeof(Visibility::VisibleInstanceData), L"GPU Driven Visible LOD Instances", true);
     prepare(frame.Commands, capacity, sizeof(GPUIndirectDrawCommand), L"GPU Driven Commands", true);
     prepare(frame.Count, 1, 4, L"GPU Driven Count", true);
     const uint64_t vertexBytes = state.Vertices.Stage(device, frameIndex, state.CpuVertices.data(), static_cast<uint32_t>(state.CpuVertices.size()), state.NewVertices);
@@ -305,12 +346,21 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
         list->SetComputeRootUnorderedAccessView(0, Frame().Count.Resource()->GetGPUVirtualAddress());
         list->Dispatch(1, 1, 1);
     });
+    RenderGraph::ResourceHandle selected;
+    try { selected = GPUVisibility::Prepare(graph, instances, visibility, geometry, state.Geometry.Resource(), slots, capacity, meshes); }
+    catch (const std::exception& error)
+    {
+        state.Failed = true;
+        GPUVisibility::Invalidate("Visibility initialization failed");
+        WriteGraphicsLog("GPU Visibility CPU fallback: %s\n", error.what());
+        return;
+    }
     auto bindCompute = [](ID3D12GraphicsCommandList* list, bool generate) {
         auto& data = Data(); auto& buffers = Frame();
         list->SetComputeRootSignature(data.ComputeRoot.Get());
         list->SetPipelineState(generate ? data.GeneratePSO.Get() : data.CompactPSO.Get());
         list->SetComputeRootShaderResourceView(0, GpuScene::InstanceBuffer()->GetGPUVirtualAddress());
-        list->SetComputeRootShaderResourceView(1, (generate ? buffers.Visible.Resource() : GpuScene::VisibilityBuffer())->GetGPUVirtualAddress());
+        list->SetComputeRootShaderResourceView(1, (generate ? buffers.Visible.Resource() : GPUVisibility::ResultBuffer())->GetGPUVirtualAddress());
         list->SetComputeRootShaderResourceView(2, data.Geometry.Resource()->GetGPUVirtualAddress());
         list->SetComputeRootShaderResourceView(3, buffers.Count.Resource()->GetGPUVirtualAddress());
         list->SetComputeRootUnorderedAccessView(4, (generate ? buffers.Commands.Resource() : buffers.Visible.Resource())->GetGPUVirtualAddress());
@@ -320,7 +370,7 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
     };
     graph.AddPass("Compact Visible Instances", [=](RenderGraph::PassBuilder& builder) {
         builder.Read(instances, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
-            .Read(visibility, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE).Read(geometry, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+            .Read(selected, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE).Read(geometry, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
             .Write(visible, D3D12_RESOURCE_STATE_UNORDERED_ACCESS).ReadWrite(count, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }, [bindCompute](ID3D12GraphicsCommandList* list) {
         RenderProfiler::ScopedEvent profile("Compact Visible Instances", list);
@@ -336,6 +386,7 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
         bindCompute(list, true);
         list->Dispatch((Frame().Commands.Capacity() + 63) / 64, 1, 1);
     });
+    MeshShaderRenderer::Prepare(graph, instances, visible, count, arguments, frame.Visible.Resource(), frame.Count.Resource(), frame.Commands.Resource(), frame.Commands.Capacity(), meshes);
     state.Active = true;
     for (const auto& [texture, users] : state.TextureUsers)
         if (users) TextureManager::TouchTexture(static_cast<int>(texture));
@@ -347,6 +398,17 @@ void GPUDrivenRenderer::Draw(ID3D12GraphicsCommandList* commands)
     if (!state.Active) return;
     if (state.CpuVertices.empty() || state.CpuIndices.empty()) return;
     const auto start = std::chrono::steady_clock::now();
+    if (MeshShaderRenderer::IsActive())
+    {
+        const D3D12_VERTEX_BUFFER_VIEW vb{state.Vertices.Resource()->GetGPUVirtualAddress(), static_cast<UINT>(state.CpuVertices.size() * sizeof(StaticModelVertex)), sizeof(StaticModelVertex)};
+        const D3D12_INDEX_BUFFER_VIEW ib{state.Indices.Resource()->GetGPUVirtualAddress(), static_cast<UINT>(state.CpuIndices.size() * 4), DXGI_FORMAT_R32_UINT};
+        commands->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        commands->IASetVertexBuffers(0, 1, &vb); commands->IASetIndexBuffer(&ib);
+        MeshShaderRenderer::Draw(commands, state.Vertices);
+        state.Calls = 2;
+        state.SubmissionMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        return;
+    }
     RenderGraph graph;
     RenderGraph::ImportedResource input{};
     input.HasFinalState = true;
@@ -359,9 +421,12 @@ void GPUDrivenRenderer::Draw(ID3D12GraphicsCommandList* commands)
     const auto indices = Import(graph, "Opaque Global Indices", state.Indices, D3D12_RESOURCE_STATE_INDEX_BUFFER);
     const auto arguments = Import(graph, "Opaque Indirect Commands", Frame().Commands, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
     const auto count = Import(graph, "Opaque Command Count", Frame().Count, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    input.Name = "Opaque Visibility Debug"; input.Resource = GPUVisibility::ResultBuffer();
+    const auto selected = graph.ImportResource(input);
     graph.AddPass("Opaque GPU Driven", [=](RenderGraph::PassBuilder& builder) {
         const auto sceneRead = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
         builder.Read(instances, sceneRead).Read(materials, sceneRead)
+            .Read(selected, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
             .Read(vertices, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER).Read(indices, D3D12_RESOURCE_STATE_INDEX_BUFFER)
             .Read(arguments, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT).Read(count, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
     }, [](ID3D12GraphicsCommandList* list) {
@@ -378,11 +443,13 @@ void GPUDrivenRenderer::Draw(ID3D12GraphicsCommandList* commands)
         list->SetGraphicsRootDescriptorTable(1, FrameConstants::AllocateTransientConstantBuffer(constants));
         list->SetGraphicsRootShaderResourceView(2, GpuScene::InstanceBuffer()->GetGPUVirtualAddress());
         list->SetGraphicsRootShaderResourceView(3, GpuScene::MaterialBuffer()->GetGPUVirtualAddress());
+        list->SetGraphicsRootShaderResourceView(6, GPUVisibility::ResultBuffer()->GetGPUVirtualAddress());
         const CD3DX12_GPU_DESCRIPTOR_HANDLE textures(heap->GetGPUDescriptorHandleForHeapStart(), FrameConstants::g_kTEXTURE_SRV_START_INDEX, FrameConstants::GetCbvIncrementSize());
         list->SetGraphicsRootDescriptorTable(4, textures);
         const uint32_t textureLimits[] = {FrameConstants::g_kTEXTURE_SRV_START_INDEX,
-            static_cast<uint32_t>(TextureManager::GetDefaultTextureIndex()) - FrameConstants::g_kTEXTURE_SRV_START_INDEX};
-        list->SetGraphicsRoot32BitConstants(5, 2, textureLimits, 0);
+            static_cast<uint32_t>(TextureManager::GetDefaultTextureIndex()) - FrameConstants::g_kTEXTURE_SRV_START_INDEX,
+            static_cast<uint32_t>(GPUVisibility::GetSettings().DebugMode)};
+        list->SetGraphicsRoot32BitConstants(5, 3, textureLimits, 0);
         const D3D12_VERTEX_BUFFER_VIEW vb{data.Vertices.Resource()->GetGPUVirtualAddress(),
             static_cast<UINT>(data.CpuVertices.size() * sizeof(StaticModelVertex)), sizeof(StaticModelVertex)};
         const D3D12_INDEX_BUFFER_VIEW ib{data.Indices.Resource()->GetGPUVirtualAddress(),
@@ -396,10 +463,70 @@ void GPUDrivenRenderer::Draw(ID3D12GraphicsCommandList* commands)
     state.SubmissionMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
 
+void GPUDrivenRenderer::BuildHiZ(ID3D12GraphicsCommandList* commands)
+{
+    auto& state = Data();
+    if (!state.Active || !GPUVisibility::GetSettings().Occlusion || !OcclusionCulling::IsAvailable())
+    { OcclusionCulling::InvalidateHistory(); return; }
+    RenderGraph graph;
+    const auto vertices = Import(graph, "Occluder Vertices", state.Vertices, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+    const auto indices = Import(graph, "Occluder Indices", state.Indices, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+    const auto arguments = Import(graph, "Occluder Commands", Frame().Commands, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    const auto count = Import(graph, "Occluder Count", Frame().Count, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    RenderGraph::ImportedResource input{};
+    input.Name = "Opaque Occluder Depth"; input.Resource = OcclusionCulling::GetOccluderDepth();
+    input.InitialState = input.FinalState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE; input.HasFinalState = true;
+    const auto depth = graph.ImportResource(input);
+    input.Name = "Occluder Instances"; input.Resource = GpuScene::InstanceBuffer();
+    const auto instances = graph.ImportResource(input);
+    input.Name = "Occluder Materials"; input.Resource = GpuScene::MaterialBuffer();
+    const auto materials = graph.ImportResource(input);
+    graph.AddPass("Opaque Occluder Depth", [=](RenderGraph::PassBuilder& builder) {
+        builder.Read(vertices, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER).Read(indices, D3D12_RESOURCE_STATE_INDEX_BUFFER)
+            .Read(arguments, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT).Read(count, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT)
+            .Read(instances, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+            .Read(materials, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE).Write(depth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    }, [](ID3D12GraphicsCommandList* list) {
+        RenderProfiler::ScopedEvent profile("Opaque Occluder Depth", list);
+        auto& data = Data();
+        const auto dsv = OcclusionCulling::GetOccluderDsv();
+        list->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1, 0, 0, nullptr);
+        list->OMSetRenderTargets(0, nullptr, FALSE, &dsv);
+        const D3D12_VIEWPORT viewport{0, 0, float(OcclusionCulling::GetWidth()), float(OcclusionCulling::GetHeight()), 0, 1};
+        const D3D12_RECT scissor{0, 0, LONG(OcclusionCulling::GetWidth()), LONG(OcclusionCulling::GetHeight())};
+        list->RSSetViewports(1, &viewport); list->RSSetScissorRects(1, &scissor);
+        ID3D12DescriptorHeap* heap = FrameConstants::GetCbvHeap(); list->SetDescriptorHeaps(1, &heap);
+        list->SetGraphicsRootSignature(data.OpaqueRoot.Get()); list->SetPipelineState(data.OccluderPSO.Get());
+        XMMATRIX view, projection; Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
+        ConstantBuffer3D constants{}; constants.View = XMMatrixTranspose(view); constants.Projection = XMMatrixTranspose(projection);
+        list->SetGraphicsRootDescriptorTable(1, FrameConstants::AllocateTransientConstantBuffer(constants));
+        list->SetGraphicsRootShaderResourceView(2, GpuScene::InstanceBuffer()->GetGPUVirtualAddress());
+        list->SetGraphicsRootShaderResourceView(3, GpuScene::MaterialBuffer()->GetGPUVirtualAddress());
+        const D3D12_VERTEX_BUFFER_VIEW vb{data.Vertices.Resource()->GetGPUVirtualAddress(), uint32_t(data.CpuVertices.size() * sizeof(StaticModelVertex)), sizeof(StaticModelVertex)};
+        const D3D12_INDEX_BUFFER_VIEW ib{data.Indices.Resource()->GetGPUVirtualAddress(), uint32_t(data.CpuIndices.size() * sizeof(uint32_t)), DXGI_FORMAT_R32_UINT};
+        list->IASetVertexBuffers(0, 1, &vb); list->IASetIndexBuffer(&ib); list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        list->ExecuteIndirect(data.Signature.Get(), Frame().Commands.Capacity(), Frame().Commands.Resource(), 0, Frame().Count.Resource(), 0);
+        list->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+    });
+    if (!graph.Compile() || !graph.Execute(commands)) throw std::runtime_error(graph.GetLastError());
+    OcclusionCulling::BuildTemporal(commands, OcclusionCulling::GetOccluderDepth(), OcclusionCulling::GetOccluderSrv());
+}
+
+void GPUDrivenRenderer::DrawVelocity(ID3D12GraphicsCommandList* commands)
+{
+    auto& state=Data();
+    if(!state.Active||!MeshShaderRenderer::IsActive()) return;
+    const D3D12_VERTEX_BUFFER_VIEW vb{state.Vertices.Resource()->GetGPUVirtualAddress(),static_cast<UINT>(state.CpuVertices.size()*sizeof(StaticModelVertex)),sizeof(StaticModelVertex)};
+    const D3D12_INDEX_BUFFER_VIEW ib{state.Indices.Resource()->GetGPUVirtualAddress(),static_cast<UINT>(state.CpuIndices.size()*4),DXGI_FORMAT_R32_UINT};
+    commands->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    commands->IASetVertexBuffers(0,1,&vb); commands->IASetIndexBuffer(&ib);
+    MeshShaderRenderer::DrawVelocity(commands,state.Vertices);
+}
+
 bool GPUDrivenRenderer::IsEnabled() { return Data().Enabled; }
 bool GPUDrivenRenderer::IsActive() { return Data().Active; }
 void GPUDrivenRenderer::SetEnabled(bool enabled) { Data().Enabled = enabled; }
-void GPUDrivenRenderer::Shutdown() { Data() = {}; }
+void GPUDrivenRenderer::Shutdown() { MeshShaderRenderer::Shutdown(); GPUVisibility::Shutdown(); Data() = {}; }
 ID3D12Resource* GPUDrivenRenderer::CommandBuffer() { return Frame().Commands.Resource(); }
 ID3D12Resource* GPUDrivenRenderer::CountBuffer() { return Frame().Count.Resource(); }
 ID3D12Resource* GPUDrivenRenderer::VisibleBuffer() { return Frame().Visible.Resource(); }
@@ -431,9 +558,19 @@ void GPUDrivenRenderer::TrackEntityTextures(uint32_t entity, const std::vector<u
 
 void GPUDrivenRenderer::DrawDebug()
 {
+    MeshShaderRenderer::DrawDebug();
+    GPUVisibility::DrawDebug();
     auto& state = Data();
     if (!ImGui::TreeNode("GPU Driven Rendering")) return;
     ImGui::Checkbox("Enabled", &state.Enabled);
+    int geometryPath=state.Enabled?(MeshShaderRenderer::GetSettings().Enabled?2:1):0;
+    const char* paths[]={"Traditional","GPU Driven Traditional","GPU Driven Mesh Shader"};
+    if(ImGui::Combo("Rendering Geometry Path",&geometryPath,paths,3))
+    {
+        state.Enabled=geometryPath!=0;
+        MeshShaderRenderer::GetSettings().Enabled=geometryPath==2;
+        GPUVisibility::Invalidate("Geometry path changed");
+    }
     ImGui::Text("Opaque path: %s", state.Active ? "GPU Driven" : "CPU fallback");
     if (state.Enabled && !CompatibleMode()) ImGui::TextUnformatted("Requires Deferred mode with Compute GBuffer disabled.");
     if (state.Failed) ImGui::TextUnformatted("Pipeline initialization failed; see init_log.txt");
@@ -468,6 +605,7 @@ void GPUDrivenRenderer::DrawDebug()
 
 void GPUDrivenRenderer::EndFrame()
 {
+    MeshShaderRenderer::EndFrame();
     auto& state = Data();
     if (state.DebugReadback && state.Active)
     {

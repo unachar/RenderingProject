@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props" Condition="Exists('packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props')" />
   <ItemGroup Label="ProjectConfigurations">
@@ -1055,6 +1055,10 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
   <ItemGroup>
     <ClInclude Include="source\rendering\gpudriven\indirectcommand.h" />
     <ClInclude Include="source\rendering\gpudriven\gpudrivenrenderer.h" />
+    <ClCompile Include="source\rendering\meshlets\meshletbuilder.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="source\rendering\meshlets\meshletvalidation.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="source\rendering\meshlets\meshletmanager.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="source\rendering\meshshader\meshshaderrenderer.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="source\rendering\gpudriven\gpudrivenrenderer.cpp" />
     <ClInclude Include="shader\hlsl\GPUDrivenOpaque.hlsli" />
     <FxCompile Include="shader\hlsl\GPUDrivenResetCS.hlsl">
@@ -1086,5 +1090,38 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
   <ItemGroup>
     <ClInclude Include="source\rendering\gpudriven\gpudrivenvalidation.h" />
     <ClCompile Include="source\rendering\gpudriven\gpudrivenvalidation.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="source\rendering\visibility\visibilitytypes.h" />
+    <ClInclude Include="source\rendering\visibility\gpuvisibility.h" />
+    <ClCompile Include="source\rendering\visibility\gpuvisibility.cpp" />
+    <ClCompile Include="source\rendering\visibility\gpuvisibilityvalidation.cpp" />
+    <ClInclude Include="source\rendering\visibility\gpuvisibilityvalidation.h" />
+    <FxCompile Include="shader\hlsl\GPUVisibilityResetCS.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.1</ShaderModel>
+      <ObjectFileOutput>$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GPUOcclusionCS.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.1</ShaderModel>
+      <ObjectFileOutput>$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GPULODSelectionCS.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.1</ShaderModel>
+      <ObjectFileOutput>$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GPUOccluderPS.hlsl">
+      <ShaderType>Pixel</ShaderType>
+      <ShaderModel>5.1</ShaderModel>
+      <ObjectFileOutput>$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\HiZDebugCS.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.1</ShaderModel>
+      <ObjectFileOutput>$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <ClInclude Include="shader\hlsl\GPUVisibilityCommon.hlsli" />
   </ItemGroup>
 </Project>

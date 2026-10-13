@@ -6,6 +6,7 @@
 #include "physicscomponent.h"
 #include "timelinecomponent.h"
 #include "proceduralcomponents.h"
+#include "visibility/visibilitytypes.h"
 #include <cassert>
 #include <array>
 #include <cstdlib>
@@ -295,6 +296,7 @@ struct MaterialComponent
 	float Thickness = 0.10f;
 	XMFLOAT3 AbsorptionCoefficient = { 0.02f, 0.01f, 0.005f };
 	bool IsTransparent = false;
+	bool DoubleSided = false; // Static opaque Mesh Shader rasterization and cone policy.
 	bool ReceivingPostProcess = true;
 	bool UseTexture = false;
 };
@@ -353,6 +355,8 @@ struct LODComponent
 	bool UseLOD = false;
 	float Lod1Distance = 12.0f;
 	float Lod2Distance = 28.0f;
+	Visibility::LODMetadata ScreenLOD{};
+	bool UseAssetSettings = true;
 };
 
 struct LightComponent

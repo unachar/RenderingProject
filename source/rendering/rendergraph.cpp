@@ -94,6 +94,16 @@ RenderGraph::ResourceHandle RenderGraph::ImportResource(const ImportedResource& 
 	return handle;
 }
 
+RenderGraph::ResourceHandle RenderGraph::FindImportedResource(ID3D12Resource* resource) const
+{
+    if (!resource) return {};
+    for (uint32_t i = 0; i < m_Resources.size(); ++i)
+        if (m_Resources[i].Resource == resource &&
+            m_Resources[i].Subresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES)
+            return {i};
+    return {};
+}
+
 void RenderGraph::AddPass(
 	const char* name,
 	const SetupCallback& setup,

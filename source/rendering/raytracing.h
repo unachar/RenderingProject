@@ -5,8 +5,10 @@
 class Raytracing
 {
 public:
+    enum class Mode { ReflectionsOnly, Full };
     struct Settings
     {
+        Mode RenderMode = Mode::ReflectionsOnly;
         bool Enabled = true;
         bool Shadows = true;
         bool AmbientOcclusion = true;
@@ -26,6 +28,8 @@ public:
         D3D12_GPU_DESCRIPTOR_HANDLE depthSrv, D3D12_GPU_DESCRIPTOR_HANDLE normalSrv,
         UINT frameIndex);
     static bool IsAvailable();
+    static bool UsesRaytracedShadows();
+    static bool UsesRaytracedAmbientOcclusion();
     static bool IsActive();
     static const char* GetStatus();
     static Settings& GetSettings();

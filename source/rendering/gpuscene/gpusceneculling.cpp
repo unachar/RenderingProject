@@ -4,6 +4,7 @@
 #include "componentmanager.h"
 #include "camera.h"
 #include "renderprofiler.h"
+#include "visibility/gpuvisibility.h"
 
 void GpuSceneCulling::Prepare(ID3D12Device *device, uint32_t slots, uint32_t frame)
 {
@@ -69,7 +70,7 @@ void GpuSceneCulling::ExecuteCulling(ID3D12GraphicsCommandList *commands, ID3D12
         const auto &data = ComponentManager::GetComponentUnchecked<CameraComponent>(camera);
         XMStoreFloat4x4(&constants.ViewProjection,
                         XMLoadFloat4x4(&data.ViewMatrix) * XMLoadFloat4x4(&data.ProjectionMatrix));
-        constants.EnableFrustum = 1;
+        constants.EnableFrustum = GPUVisibility::GetSettings().Frustum ? 1 : 0;
     }
     constants.Slots = slots;
     constants.Meshes = meshCount;

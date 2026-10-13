@@ -73,6 +73,7 @@ public:
 
 
 	ResourceHandle ImportResource(const ImportedResource& resource);
+	ResourceHandle FindImportedResource(ID3D12Resource* resource) const;
 
 	void AddPass(
 		const char* name,

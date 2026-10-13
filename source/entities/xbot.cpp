@@ -27,7 +27,7 @@ void XBot::Create()
 	ModelManager::LoadAnimation(modelID, animPath1, "Standup");
 	ModelManager::LoadAnimation(modelID, animPath2, "Idle");
 
-	for (int i = 0; i < 100; ++i)
+	for (int i = 0; i < 1; ++i)
 	{
 		auto entity = World::CreateEntity()
 			.Add<TransformComponent>()

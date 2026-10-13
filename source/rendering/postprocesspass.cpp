@@ -135,8 +135,8 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 					config.BloomSoftKnee,
 					config.BloomRadius);
 				params.RaytracingFlags = XMFLOAT4(static_cast<float>(Raytracing::IsActive()),
-					static_cast<float>(Raytracing::GetSettings().AmbientOcclusion),
-					static_cast<float>(Raytracing::GetSettings().Shadows), static_cast<float>(Raytracing::AreReflectionsActive()));
+					static_cast<float>(Raytracing::UsesRaytracedAmbientOcclusion()),
+					static_cast<float>(Raytracing::UsesRaytracedShadows()), static_cast<float>(Raytracing::AreReflectionsActive()));
 				params.RaytracingSunDirection = Raytracing::GetSunDirection();
 				const UINT offset = GetPostProcessFrameOffset() + nextConstantSlot++ * g_kPP_CB_ALIGNED_SIZE;
 				auto* ppDst = m_pPostProcessCbvDataBegin + offset;

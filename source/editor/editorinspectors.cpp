@@ -12,6 +12,7 @@
 #include "systemmanager.h"
 #include "texturemanager.h"
 #include "timelinesystem.h"
+#include "gpuscene/gpuscenechanges.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -483,6 +484,10 @@ if (ImGui::Checkbox("テクスチャ使用", &useTexture))
 		material.UseTexture = static_cast<int>(useTexture);
 	}
 	if (ImGui::Checkbox("透明", &material.IsTransparent))
+	{
+		BeginUndoCapture(entity, before);
+	}
+	if (ImGui::Checkbox("両面 (Mesh Shader)", &material.DoubleSided))
 	{
 		BeginUndoCapture(entity, before);
 	}
@@ -1929,8 +1934,55 @@ ImGui::Text("メッシュ: %s", statusText4);
 		changed |= ImGui::DragFloat("LOD2距離", &lod.Lod2Distance, 0.25f, 0.0f, 100000.0f, "%.2f");
 		lod.Lod1Distance = max(0.0f, lod.Lod1Distance);
 		lod.Lod2Distance = max(lod.Lod1Distance, lod.Lod2Distance);
+		changed |= ImGui::Checkbox("Use asset LOD metadata", &lod.UseAssetSettings);
+		StaticModelResource* lodModel = ComponentManager::HasComponent<StaticModelComponent>(entity) ? ModelManager::GetStaticModel(ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId) : nullptr;
+		if (lod.UseAssetSettings && lodModel) lod.ScreenLOD = lodModel->GetLODMetadata();
+		bool screenChanged = false;
+		int lodCount = int(lod.ScreenLOD.Count);
+		if (ImGui::SliderInt("LOD Count", &lodCount, 1, 8)) { lod.ScreenLOD.Count = uint32_t(lodCount); screenChanged = true; }
+		screenChanged |= ImGui::SliderFloat("LOD Hysteresis", &lod.ScreenLOD.Hysteresis, 0, 0.5f);
+		for (uint32_t level = 0; level < lod.ScreenLOD.Count; ++level)
+		{
+			ImGui::PushID(int(level));
+			ImGui::Text("LOD%u", level);
+			const float maximum = level == 0 ? 1.0f : lod.ScreenLOD.Thresholds[level - 1];
+			if (lod.ScreenLOD.Thresholds[level] > maximum) { lod.ScreenLOD.Thresholds[level] = maximum; screenChanged = true; }
+			screenChanged |= ImGui::SliderFloat("Screen Height Threshold", &lod.ScreenLOD.Thresholds[level], 0, maximum);
+			if (level > 0)
+			{
+				char path[260]{}; strncpy_s(path, lod.ScreenLOD.MeshPaths[level].c_str(), _TRUNCATE);
+				if (ImGui::InputText("Mesh asset (Enter to apply)", path, sizeof(path), ImGuiInputTextFlags_EnterReturnsTrue)) { lod.ScreenLOD.MeshPaths[level] = path; screenChanged = true; }
+			}
+			ImGui::PopID();
+		}
+		if (screenChanged) { lod.UseAssetSettings = false; changed = true; }
+		if (lodModel)
+		{
+			auto notifyAssetUsers = [&]()
+			{
+				for (uint32_t id = 0; id < Registry::GetEntities().size(); ++id)
+					if (Registry::IsAlive(id) && ComponentManager::HasComponent<StaticModelComponent>(id) &&
+						ComponentManager::GetComponentUnchecked<StaticModelComponent>(id).ModelId == ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId) GpuSceneChanges::Notify(id);
+			};
+			if (ImGui::Button("Save LOD asset metadata") && Visibility::ValidLOD(lod.ScreenLOD))
+			{
+				std::ofstream file(lodModel->GetSourcePath() + ".lod");
+				if (Visibility::SaveLOD(file, lod.ScreenLOD))
+				{ lodModel->SetLODMetadata(lod.ScreenLOD); lod.UseAssetSettings = true; changed = true; notifyAssetUsers(); }
+				else Debug::Log("LOD metadata save failed\n");
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Reload LOD asset metadata"))
+			{
+				std::ifstream file(lodModel->GetSourcePath() + ".lod");
+				if (Visibility::LoadLOD(file, lod.ScreenLOD))
+				{ lodModel->SetLODMetadata(lod.ScreenLOD); lod.UseAssetSettings = true; changed = true; notifyAssetUsers(); }
+			}
+			ImGui::TextDisabled("Metadata: %s.lod", lodModel->GetSourcePath().c_str());
+		}
 		if (changed)
 		{
+			GpuSceneChanges::Notify(entity);
 			BeginUndoCapture(entity, before);
 		}
 	}
