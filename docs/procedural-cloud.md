@@ -1,5 +1,7 @@
 # Procedural Volumetric Cloud MVP
 
+> 太陽接続・地表雲影の追加仕様は [cloud-sun-lighting.md](cloud-sun-lighting.md) を参照。以下の性能値・292フレーム検証・対象外一覧は追加前のMVP記録。
+
 `dev_main` のDeferred HDRパイプラインへ、一層のWorld Spaceボリュームクラウドを追加した。外部Cloud Shape Textureは使用しない。既存の変更との干渉を避けるため、初期状態はOFF。
 
 ## 使用方法

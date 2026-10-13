@@ -1,3 +1,4 @@
+#include "CelestialLighting.hlsli"
 // Single scattering in a spherical Earth atmosphere. Distances are in metres.
 float2 SkySphereIntersection(float3 origin, float3 direction, float radius)
 {
@@ -146,6 +147,14 @@ float3 EvaluatePhysicalSky(float3 direction, float angularFootprint)
         float solarGlare = dot(sky, float3(0.2126f, 0.7152f, 0.0722f));
         float stellarContrast = rcp(1 + max(solarGlare, 0) * 10000000);
         sky += EvaluateCelestialSky(direction, angularFootprint) * viewTransmission * stellarContrast;
+        float3 moon = VirtualMoonDirection();
+        float moonCosine = dot(direction, moon);
+        float discRadius = 0.00465;
+        float discEdge = max(angularFootprint, 0.00005);
+        float disc = smoothstep(cos(discRadius + discEdge), cos(max(discRadius - discEdge, 0.00001)), moonCosine);
+        float3 moonLight = VirtualMoonIrradiance();
+        float halo = 0.008 / max(1.0 - moonCosine + 0.008, 0.008);
+        sky += moonLight * (disc * 120 + halo * halo * 0.8) * viewTransmission;
         // Airglow is emitted inside the atmosphere rather than extinguished as distant starlight.
         sky += float3(0.006f, 0.010f, 0.024f) * lerp(0.2f, 1.0f, smoothstep(0.0f, 0.12f, direction.y));
     }

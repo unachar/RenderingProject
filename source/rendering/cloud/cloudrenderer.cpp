@@ -213,6 +213,15 @@ bool CloudRenderer::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap,
     g_Device = device;
     g_Heap = heap;
     g_Increment = increment;
+    // Valid null volumes keep the deferred pipeline usable if cloud initialization fails.
+    D3D12_SHADER_RESOURCE_VIEW_DESC nullVolume{};
+    nullVolume.Format = DXGI_FORMAT_R8_UNORM;
+    nullVolume.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+    nullVolume.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    nullVolume.Texture3D.MipLevels = 1;
+    device->CreateShaderResourceView(nullptr, &nullVolume, Cpu(kBaseSrv));
+    device->CreateShaderResourceView(nullptr, &nullVolume, Cpu(kDetailSrv));
+
     CD3DX12_DESCRIPTOR_RANGE ranges[6];
     CD3DX12_ROOT_PARAMETER params[9];
     for (UINT i = 0; i < 6; ++i)
@@ -284,22 +293,17 @@ UINT CloudRenderer::GetNoiseGenerationCount() { return g_GenerationCount; }
 ID3D12Resource* CloudRenderer::GetCloudResource(UINT frame) { return g_Frames[frame % kFrames].Color.Get(); }
 ID3D12Resource* CloudRenderer::GetBaseNoiseResource() { return g_BaseNoise.Get(); }
 
-void CloudRenderer::Render(ID3D12GraphicsCommandList* commands, UINT frameIndex, UINT width, UINT height,
-    D3D12_GPU_DESCRIPTOR_HANDLE depth, D3D12_GPU_DESCRIPTOR_HANDLE material,
-    D3D12_GPU_VIRTUAL_ADDRESS camera, D3D12_GPU_VIRTUAL_ADDRESS light,
-    D3D12_CPU_DESCRIPTOR_HANDLE sceneRtv, DXGI_FORMAT sceneFormat, float deltaTime)
+void CloudRenderer::PrepareLighting(ID3D12GraphicsCommandList* commands, UINT frameIndex,
+    UINT width, UINT height, float deltaTime)
 {
-    if (!g_Available || !g_Settings.Enabled || !commands || !width || !height || !camera || !light || !g_RtvStart.ptr) return;
-    if (sceneFormat != DXGI_FORMAT_R16G16B16A16_FLOAT && sceneFormat != DXGI_FORMAT_R8G8B8A8_UNORM) return;
+    if (!g_Available || !commands) return;
     g_Settings.Validate();
     const UINT index = frameIndex % kFrames;
     const UINT cloudWidth = max(1u, static_cast<UINT>(ceilf(width * g_Settings.ResolutionScale)));
     const UINT cloudHeight = max(1u, static_cast<UINT>(ceilf(height * g_Settings.ResolutionScale)));
-    if (!EnsureFrame(index, cloudWidth, cloudHeight)) return;
-    RenderProfiler::ScopedEvent total("Cloud Total", commands);
     ID3D12DescriptorHeap* heaps[] = { g_Heap.Get() };
     commands->SetDescriptorHeaps(1, heaps);
-    if (g_NoiseDirty || g_GeneratedSeed != g_Settings.Seed)
+    if (g_Settings.Enabled && (g_NoiseDirty || g_GeneratedSeed != g_Settings.Seed))
     {
         RenderProfiler::ScopedEvent profile("Cloud Noise Generation", commands);
         DispatchNoise(commands, g_BaseNoise.Get(), g_BasePso.Get(), kBaseUav, 128);
@@ -326,8 +330,32 @@ void CloudRenderer::Render(ID3D12GraphicsCommandList* commands, UINT frameIndex,
     constants.Quality = { static_cast<UINT>(g_Settings.ViewSteps), static_cast<UINT>(g_Settings.LightSteps),
         static_cast<UINT>(g_Settings.Debug), g_Settings.Seed };
     constants.Extent = { static_cast<float>(width), static_cast<float>(height), static_cast<float>(cloudWidth), static_cast<float>(cloudHeight) };
-    constants.Trace = { g_Settings.MaxTraceDistance, g_Settings.NoiseSlice, 0, 0 };
+    constants.Trace = { g_Settings.MaxTraceDistance, g_Settings.NoiseSlice, static_cast<float>(g_Settings.Enabled), static_cast<float>(g_Settings.CastShadows) };
     memcpy(g_Mapped + index * kConstantStride, &constants, sizeof(constants));
+}
+
+void CloudRenderer::BindLighting(ID3D12GraphicsCommandList* commands, UINT frameIndex)
+{
+    if (!commands || !g_Heap) return;
+    commands->SetGraphicsRootDescriptorTable(20, Gpu(kBaseSrv));
+    commands->SetGraphicsRootDescriptorTable(21, Gpu(kDetailSrv));
+    const Constants disabled{};
+    const void* constants = g_Available ? static_cast<const void*>(g_Mapped + (frameIndex % kFrames) * kConstantStride) : static_cast<const void*>(&disabled);
+    commands->SetGraphicsRoot32BitConstants(22, sizeof(Constants) / sizeof(UINT), constants, 0);
+}
+
+void CloudRenderer::Render(ID3D12GraphicsCommandList* commands, UINT frameIndex, UINT width, UINT height,
+    D3D12_GPU_DESCRIPTOR_HANDLE depth, D3D12_GPU_DESCRIPTOR_HANDLE material,
+    D3D12_GPU_VIRTUAL_ADDRESS camera, D3D12_GPU_VIRTUAL_ADDRESS light,
+    D3D12_CPU_DESCRIPTOR_HANDLE sceneRtv, DXGI_FORMAT sceneFormat)
+{
+    if (!g_Available || !g_Settings.Enabled || !commands || !width || !height || !camera || !light || !g_RtvStart.ptr) return;
+    if (sceneFormat != DXGI_FORMAT_R16G16B16A16_FLOAT && sceneFormat != DXGI_FORMAT_R8G8B8A8_UNORM) return;
+    const UINT index = frameIndex % kFrames;
+    const UINT cloudWidth = max(1u, static_cast<UINT>(ceilf(width * g_Settings.ResolutionScale)));
+    const UINT cloudHeight = max(1u, static_cast<UINT>(ceilf(height * g_Settings.ResolutionScale)));
+    if (!EnsureFrame(index, cloudWidth, cloudHeight)) return;
+    RenderProfiler::ScopedEvent total("Cloud Total", commands);
     auto& frame = g_Frames[index];
     commands->SetGraphicsRootSignature(g_DrawRoot.Get());
     commands->SetGraphicsRootDescriptorTable(0, depth);
@@ -371,6 +399,7 @@ void CloudRenderer::DrawDebugUI()
 {
     if (!ImGui::CollapsingHeader("Procedural Cloud")) return;
     ImGui::Checkbox("Enable clouds", &g_Settings.Enabled);
+    ImGui::Checkbox("Cloud shadows", &g_Settings.CastShadows);
     if (!g_Available) ImGui::TextUnformatted("Cloud pipelines unavailable");
     if (ImGui::TreeNode("Shape"))
     {

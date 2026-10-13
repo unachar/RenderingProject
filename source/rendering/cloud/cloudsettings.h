@@ -10,6 +10,7 @@ enum class CloudDebug { Normal, Density, Transmittance, Lighting, Depth, Steps, 
 struct CloudSettings
 {
     bool Enabled = false;
+    bool CastShadows = true;
     float BottomHeight = 20.0f;
     float TopHeight = 40.0f;
     float Coverage = 0.55f;

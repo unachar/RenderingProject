@@ -2,6 +2,7 @@
 #define SHADER_3D
 #include "common.hlsl"
 #include "SkyAtmosphere.hlsli"
+#include "CloudMedium.hlsli"
 #pragma warning(disable: 4000)
 
 Texture2D<float4> BaseColorTexture : register(t0);
@@ -691,6 +692,9 @@ void ResolveDeferredLightAggregateShadowed(
 		{
 			shadowVisibility *= SampleDistanceFieldShadow(worldPos, normal, singleDir);
 		}
+        // Apply after raster/DXR visibility so neither path can overwrite cloud extinction.
+        if (!decalLight && i == CloudSunIndex())
+            shadowVisibility *= CloudSunVisibility(worldPos);
         float3 authoredLightColor = max(LightColors[i].rgb, float3(0.0f, 0.0f, 0.0f));
 		if (decalLight)
 		{
@@ -1015,6 +1019,13 @@ float4 main(PSInputPostProcess input) : SV_Target
         {
             ambient *= lerp(0.025f, 1.0f, SkyParameters.y);
         }
+        float3 moonDirection = VirtualMoonDirection();
+        float moonVisibility = CloudTrace.z > 0.5 && CloudTrace.w > 0.5 ?
+            CloudSolarTransmittance(position, moonDirection) : 1;
+        float3 moonRadiance = VirtualMoonIrradiance() * moonVisibility *
+            CelestialAtmosphereTransmission(position.y, moonDirection);
+        pbrDirectLight += EvaluatePbrDirectLight(N, V, moonDirection, moonRadiance,
+            albedo, material.rgb, shadowSoftness);
         baseColor.rgb = pbrDirectLight + ambient;
     }
 

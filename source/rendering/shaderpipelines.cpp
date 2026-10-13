@@ -153,7 +153,7 @@ static void ShaderLogToFile(const char* msg)
 bool ShaderPipelines::CreatePostProcessPipeline()
 {
 	ShaderLogToFile("PP: setup ranges\n");
-	CD3DX12_DESCRIPTOR_RANGE ranges[12];
+	CD3DX12_DESCRIPTOR_RANGE ranges[14];
 	ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 0);
 	ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6);
 	ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 7);
@@ -167,7 +167,9 @@ bool ShaderPipelines::CreatePostProcessPipeline()
 	ranges[10].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 16);
 	ranges[11].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 17);
 
-	CD3DX12_ROOT_PARAMETER params[20];
+	ranges[12].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 31);
+	ranges[13].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 32);
+	CD3DX12_ROOT_PARAMETER params[23];
 	params[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[1].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 	params[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -189,7 +191,10 @@ bool ShaderPipelines::CreatePostProcessPipeline()
 	params[18].InitAsConstantBufferView(5, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 	params[19].InitAsDescriptorTable(1, &ranges[11], D3D12_SHADER_VISIBILITY_PIXEL);
 
-	CD3DX12_STATIC_SAMPLER_DESC samplers[2] {};
+	params[20].InitAsDescriptorTable(1, &ranges[12], D3D12_SHADER_VISIBILITY_PIXEL);
+	params[21].InitAsDescriptorTable(1, &ranges[13], D3D12_SHADER_VISIBILITY_PIXEL);
+	params[22].InitAsConstants(28, 9, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+	CD3DX12_STATIC_SAMPLER_DESC samplers[3] {};
 	samplers[0] = CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
 
 
@@ -203,6 +208,9 @@ bool ShaderPipelines::CreatePostProcessPipeline()
 		1,
 		D3D12_COMPARISON_FUNC_LESS_EQUAL,
 		D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE);
+	samplers[2] = CD3DX12_STATIC_SAMPLER_DESC(3, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+		D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP);
+	samplers[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	CD3DX12_ROOT_SIGNATURE_DESC rsDesc(_countof(params), params, _countof(samplers), samplers, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
 	ComPtr<ID3DBlob> rsBlob, errBlob;

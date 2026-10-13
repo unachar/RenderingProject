@@ -38,15 +38,16 @@ try {
     $env:DX12_GPU_BASED_VALIDATION = [int]$GpuValidation.IsPresent
     $env:DX12_FEATURE_SMOKE_TEST = '1'
     $env:DX12_VALIDATION_MODE = '1'
-    $env:DX12_STARTUP_SMOKE_FRAMES = '292'
+    $env:DX12_STARTUP_SMOKE_FRAMES = '316'
     $env:DX12_SUN_LIGHTING_TEST = '0'
     $env:DX12_MESHLET_STRESS_TEST = '0'
     $env:DX12_GPU_DRIVEN_STRESS_TEST = '0'
     $env:DX12_GPU_VISIBILITY_STRESS_TEST = '0'
     $cloudLog = Join-Path $cloudWorkspace 'init_log.txt'
     $cloudOffset = if (Test-Path $cloudLog) { (Get-Item $cloudLog).Length } else { 0 }
+    $cloudTimeoutMs = if ($GpuValidation) { 600000 } else { 240000 }
     $cloudProcess = Start-Process -FilePath (Join-Path $cloudWorkspace "bin/x64/$Configuration/DirectX12.exe") -WorkingDirectory $cloudWorkspace -WindowStyle Hidden -PassThru
-    if (-not $cloudProcess.WaitForExit(240000)) { $cloudProcess.Kill(); throw 'Cloud validation timed out.' }
+    if (-not $cloudProcess.WaitForExit($cloudTimeoutMs)) { $cloudProcess.Kill(); throw 'Cloud validation timed out.' }
     $cloudProcess.Refresh()
     $cloudStream = [IO.File]::OpenRead($cloudLog)
     try {

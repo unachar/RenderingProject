@@ -116,6 +116,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			m_CommandList->SetGraphicsRootSignature(m_PostProcessRootSignature.Get());
 			Raytracing::BindLighting(m_CommandList.Get(), 17, 18);
 			m_CommandList->SetGraphicsRootDescriptorTable(19, Raytracing::GetReflectionSrv());
+			CloudRenderer::BindLighting(m_CommandList.Get(), m_FrameIndex);
 
 			RenderFrame::SetDescriptorHeap();
 
@@ -228,6 +229,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			return;
 		}
 
+		CloudRenderer::PrepareLighting(m_CommandList.Get(), m_FrameIndex, m_SceneWidth, m_SceneHeight, World::GetRawDeltaTime());
 		Raytracing::Execute(m_CommandList.Get(),
 			m_GBufferTargets[static_cast<UINT>(GBufferType::DEPTH)].Get(),
 			m_GBufferTargets[static_cast<UINT>(GBufferType::NORMAL)].Get(),
@@ -302,7 +304,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::MATERIAL)],
 			m_PostProcessConstantBuffer->GetGPUVirtualAddress() + GetPostProcessFrameOffset(),
 			LightingResources::GetCurrentLightConstantBufferAddress(),
-			GetRenderTargetRtvHandle(RenderTargetType::Scene), m_SceneColorFormat, World::GetRawDeltaTime());
+			GetRenderTargetRtvHandle(RenderTargetType::Scene), m_SceneColorFormat);
 		m_CommandList->RSSetViewports(1, &m_Viewport);
 		m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
 

@@ -13,6 +13,7 @@
 #include "camera.h"
 #include "world.h"
 #include "sun.h"
+#include "light.h"
 #include "daynightcycle.h"
 #include <cmath>
 
@@ -23,6 +24,9 @@ UINT g_LastFrame = 0;
 uint64_t g_NoiseHash = 0;
 double g_InitialOpacity = 0;
 double g_InitialRadiance = 0;
+double g_ConnectedSunRadiance = 0;
+RenderCapture::TextureData g_ConnectedSunCloud;
+EntityID g_UnrelatedDirectional = g_kINVALID_ENTITY;
 bool g_SawGpuTiming = false;
 UINT g_RecordedFrameIndex = 0;
 RenderCapture::TextureData g_CloudHdr;
@@ -134,10 +138,11 @@ void ValidateCompositeForeground()
         clearHdr.Format == DXGI_FORMAT_R16G16B16A16_FLOAT && g_CloudHdr.Format == clearHdr.Format &&
         g_ForegroundMask.size() == static_cast<size_t>(clearHdr.Width) * clearHdr.Height &&
         !clearHdr.Bytes.empty() && !g_CloudHdr.Bytes.empty();
-    Check(compatible, "read clouds-disabled HDR reference");
+    Check(compatible, "read HDR reference without cloud shadows");
     if (!compatible) return;
     UINT tested = 0;
-    bool equal = true;
+    bool attenuated = true;
+    UINT shadowed = 0;
     for (UINT y = 0; y < clearHdr.Height; ++y)
     {
         const auto* actual = reinterpret_cast<const uint16_t*>(g_CloudHdr.Bytes.data() + y * g_CloudHdr.RowPitch);
@@ -147,10 +152,16 @@ void ValidateCompositeForeground()
             {
                 ++tested;
                 for (UINT channel = 0; channel < 3; ++channel)
-                    equal &= actual[x * 4 + channel] == reference[x * 4 + channel];
+                {
+                    const float lit = RenderCapture::HalfToFloat(reference[x * 4 + channel]);
+                    const float shaded = RenderCapture::HalfToFloat(actual[x * 4 + channel]);
+                    attenuated &= shaded <= lit + 0.002f;
+                    if (lit - shaded > 0.005f) ++shadowed;
+                }
             }
     }
-    Check(tested > 100 && equal, "final bilateral composite preserves foreground HDR pixels exactly");
+    Check(tested > 100 && attenuated, "cloud shadow only attenuates foreground illumination");
+    Check(shadowed > 100, "clouds cast measurable shadows on foreground receivers");
 }
 }
 bool CloudValidation::Enabled()
@@ -195,7 +206,7 @@ void CloudValidation::BeforeFrame(uint64_t frame)
     view.Target = { 0, 12, 40 };
     view.AllowUserControl = false;
     transform.IsDirty = true;
-    // Shared directional light remains the sole source of direct cloud illumination.
+    // The selected solar light drives daylight; a shared virtual moon lights night.
     for (auto id : World::GetView<LightComponent>())
     {
         auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(id);
@@ -230,8 +241,48 @@ void CloudValidation::BeforeFrame(uint64_t frame)
     if (frame == 72) CloudRenderer::GenerateNoise(1337);
     if (frame >= 84 && frame < 144) settings.ApplyQuality(CloudQuality::Low);
     if (frame >= 204 && frame < 264) settings.ApplyQuality(CloudQuality::High);
-    if (frame >= 264) settings.Debug = static_cast<CloudDebug>(1 + (frame - 264) / 4);
+    if (frame >= 264 && frame < 292) settings.Debug = static_cast<CloudDebug>(1 + (frame - 264) / 4);
+    if (frame >= 292)
+    {
+        settings.Debug = CloudDebug::Normal;
+        settings.CastShadows = frame < 296;
+        if (frame == 300)
+        {
+            Light::CreateDesc desc;
+            desc.Name = "Cloud unrelated directional regression";
+            desc.Direction = { 0, 1, 0 };
+            desc.Color = { 1, 0, 1, 1 };
+            desc.Intensity = 100;
+            desc.Priority = 100;
+            g_UnrelatedDirectional = Light::Create(desc);
+        }
+        if (Registry::IsAlive(g_UnrelatedDirectional))
+        {
+            auto& unrelated = ComponentManager::GetComponentUnchecked<LightComponent>(g_UnrelatedDirectional);
+            unrelated.Intensity = 100;
+            unrelated.Color = { 1, 0, 1, 1 };
+        }
+        if (frame >= 304)
+            for (auto id : World::GetView<SunComponent, LightComponent>())
+                ComponentManager::GetComponentUnchecked<LightComponent>(id).IsActive = false;
+    }
     if (frame == 0) Check(CloudRenderer::IsAvailable(), "cloud pipelines initialize");
+    if (frame >= 308)
+    {
+        auto& cycle = DayNightCycle::GetSettings();
+        cycle.Running = false;
+        cycle.AutomaticLighting = true;
+        for (auto id : World::GetView<SunComponent, LightComponent>())
+            ComponentManager::GetComponentUnchecked<LightComponent>(id).IsActive = true;
+        if (Registry::IsAlive(g_UnrelatedDirectional))
+            ComponentManager::GetComponentUnchecked<LightComponent>(g_UnrelatedDirectional).IsActive = false;
+        DayNightCycle::SetTime(frame < 312 ? 17.15f : 0.0f);
+        const auto direction = DayNightCycle::GetSunDirection();
+        const float sign = frame < 312 ? 1.0f : -1.0f;
+        view.Target = { transform.Position.x + direction.x * sign * 100,
+            transform.Position.y + (std::max)(direction.y * sign, 0.15f) * 100,
+            transform.Position.z + direction.z * sign * 100 };
+    }
     g_Configurations.push_back({ static_cast<UINT>(ceilf(GraphicsDevice::GetWidth() * settings.ResolutionScale)),
         static_cast<UINT>(ceilf(GraphicsDevice::GetHeight() * settings.ResolutionScale)), settings.ViewSteps, settings.LightSteps });
 }
@@ -290,6 +341,41 @@ void CloudValidation::AfterFrame(uint64_t frame)
         }
     }
     Check(valid, "finite nonnegative scattering and transmittance in [0,1]");
+    if (frame >= 308)
+    {
+        Check(opacity > 1 && radiance > 0, "celestial lighting produces visible cloud scattering");
+        if (frame == 311 || frame == 315)
+        {
+            const wchar_t* path = frame == 311 ? L"bin/validation/cloud-sunset.png" : L"bin/validation/cloud-moon.png";
+            Check(RenderCapture::SaveScenePng(path), "capture sunset or moonlit clouds");
+        }
+        if (frame == 315)
+            Check(DayNightCycle::GetSunDirection().y < 0, "moonlit clouds render with sun below horizon");
+        return;
+    }
+    if (frame >= 292)
+    {
+        if (frame == 295)
+        {
+            g_ConnectedSunCloud = cloud;
+            g_ConnectedSunRadiance = radiance;
+            ValidateSceneOcclusion(cloud);
+        }
+        if (frame == 299 || frame == 303)
+        {
+            bool identical = cloud.Width == g_ConnectedSunCloud.Width && cloud.Height == g_ConnectedSunCloud.Height;
+            if (identical)
+                for (UINT y = 0; y < cloud.Height; ++y)
+                    identical &= memcmp(cloud.Bytes.data() + y * cloud.RowPitch,
+                        g_ConnectedSunCloud.Bytes.data() + y * g_ConnectedSunCloud.RowPitch, cloud.Width * 8) == 0;
+            Check(identical, frame == 299 ? "shadow toggle preserves cloud scattering" :
+                "bright unrelated directional light does not replace the virtual sun");
+            if (frame == 299) ValidateCompositeForeground();
+        }
+        if (frame == 307)
+            Check(radiance < g_ConnectedSunRadiance, "inactive sun removes direct cloud scattering despite unrelated light");
+        return;
+    }
     if (frame >= 264)
     {
         Check(settings.Debug != CloudDebug::Normal, "runtime diagnostic view renders without shader recompile");
@@ -336,7 +422,7 @@ void CloudValidation::AfterFrame(uint64_t frame)
 }
 bool CloudValidation::Finish()
 {
-    Check(g_LastFrame >= 291, "complete cloud validation scenarios and diagnostic modes");
+    Check(g_LastFrame >= 315, "complete cloud validation including sunset and moonlight");
     Check(g_SawGpuTiming, "cloud GPU timestamps available");
     const char* qualityNames[] = { "Low", "Medium", "High" };
     std::array<double, 3> medians{};

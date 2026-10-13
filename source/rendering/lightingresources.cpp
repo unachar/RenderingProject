@@ -208,6 +208,7 @@ namespace
 		const AtmosphereParameters& atmosphere = Atmosphere::GetParameters();
 		const auto& cycle = DayNightCycle::GetSettings();
 		constants.SkySunDirection = DayNightCycle::GetSunDirection();
+		constants.SkySunDirection.w = 0; // No selected solar light yet.
 		constants.SkyParameters = { static_cast<float>(atmosphere.Enabled && atmosphere.PhysicalSky),
 			DayNightCycle::GetDaylight(), cycle.SkyIntensity, cycle.StarBrightness };
 		constants.AtmosphereParams0 = XMFLOAT4(
@@ -1483,6 +1484,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 	g_LightGridStats.GpuVisibleLights = lightCount;
 	g_LightGridStats.GpuPhysicalLights = selectedPhysicalLights;
 	g_LightGridStats.GpuDecalLights = selectedDecalLights;
+	const auto suns = World::GetView<SunComponent, LightComponent>();
 	UINT enabledVolumetricLights = 0;
 	vector<LightInstanceBuilder::Input> lightInstances;
 	lightInstances.reserve(lightCount);
@@ -1498,6 +1500,12 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 
 		constants.LightDirections[lightIndex] = XMFLOAT4(direction.x, direction.y, direction.z, light.Range);
 		constants.LightColors[lightIndex] = color;
+		if (!suns.empty() && candidate.Entity == *suns.begin() &&
+			light.Type == LightType::Directional && light.RenderMode == LightRenderMode::Physical)
+		{
+			constants.SkySunDirection = { direction.x, direction.y, direction.z, static_cast<float>(lightIndex + 1) };
+		}
+
 		constants.LightPositionTypes[lightIndex] = XMFLOAT4(
 			candidate.Position.x, candidate.Position.y, candidate.Position.z,
 			static_cast<float>(light.Type));
