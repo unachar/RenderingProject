@@ -27,6 +27,7 @@ struct SceneState
     std::vector<uint32_t> NewMeshes, NewMaterials;
     std::vector<ComPtr<ID3D12Resource>> GeometryOwners;
     std::unordered_map<uint32_t,ComPtr<ID3D12Resource>> PrimitiveOwners;
+    std::unordered_map<uint32_t, std::array<uint32_t, StaticMeshData::LodCount - 1>> PrimitiveLODs;
     std::array<std::vector<ComPtr<ID3D12Resource>>,GpuSceneBuffer::FrameCount> RetiredPrimitiveOwners;
     std::vector<uint32_t> FreePrimitiveMeshes;
     std::unordered_map<uint64_t, std::vector<uint32_t>> MeshLookup, MaterialLookup;
@@ -201,6 +202,15 @@ void RetireUnusedPrimitiveMeshes()
     for (const auto &instance : scene.Instances.Data())
         if (instance.Flags & 1u)
             used.insert(instance.MeshIndex);
+    for (auto it = scene.PrimitiveLODs.begin(); it != scene.PrimitiveLODs.end();)
+    {
+        if (used.contains(it->first))
+        {
+            for (auto id : it->second) if (id != UINT32_MAX) used.insert(id);
+            ++it;
+        }
+        else it = scene.PrimitiveLODs.erase(it);
+    }
     for (auto it = scene.PrimitiveOwners.begin(); it != scene.PrimitiveOwners.end();)
     {
         if (used.contains(it->first))
@@ -394,7 +404,56 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
         append(mesh.VertexBuffer.Get(), nullptr, mesh.VertexCount, 0, mesh.LocalBoundsCenter, mesh.LocalBoundsExtents,
                -1,mesh.NaniteMesh!=nullptr);
         if (mesh.NaniteMesh && !ids.empty())
-            GPUDrivenRenderer::RegisterPrimitiveGeometry(scene.Instances.Data()[ids.back()].MeshIndex,*mesh.NaniteMesh);
+        {
+            const auto slot = ids.back();
+            auto instance = scene.Instances.Data()[slot];
+            const auto& source = *mesh.NaniteMesh;
+            GPUDrivenRenderer::RegisterPrimitiveGeometry(instance.MeshIndex, source);
+            const bool hasSettings = ComponentManager::HasComponent<LODComponent>(entity);
+            const auto settings = hasSettings ? ComponentManager::GetComponentUnchecked<LODComponent>(entity) : LODComponent{};
+            // Generated geometry has no imported asset settings. Enable its generated
+            // levels by default, while honoring an explicitly attached LOD component.
+            if (!hasSettings || settings.UseLOD)
+            {
+                auto [entry, inserted] = scene.PrimitiveLODs.try_emplace(instance.MeshIndex);
+                if (inserted) entry->second.fill(UINT32_MAX);
+                std::array<uint32_t, Visibility::MaxLODs> lodMeshes;
+                lodMeshes.fill(UINT32_MAX);
+                lodMeshes[0] = instance.MeshIndex;
+                const auto metadata = settings.UseAssetSettings ? Visibility::LODMetadata{} : settings.ScreenLOD;
+                for (uint32_t level = 1; level < StaticMeshData::LodCount; ++level)
+                {
+                    const auto& indices = source.CpuLodIndices[level - 1];
+                    auto& id = entry->second[level - 1];
+                    if (indices.empty())
+                    {
+                        if (id != UINT32_MAX) GPUDrivenRenderer::ReleasePrimitiveGeometry(id);
+                        continue;
+                    }
+                    if (id == UINT32_MAX)
+                    {
+                        if (!scene.FreePrimitiveMeshes.empty())
+                        {
+                            id = scene.FreePrimitiveMeshes.back();
+                            scene.FreePrimitiveMeshes.pop_back();
+                        }
+                        else { id = static_cast<uint32_t>(scene.Meshes.size()); scene.Meshes.emplace_back(); }
+                    }
+                    auto record = scene.Meshes[instance.MeshIndex];
+                    record.IndexCount = static_cast<uint32_t>(indices.size());
+                    if (std::memcmp(&scene.Meshes[id], &record, sizeof(record)) != 0)
+                    {
+                        scene.Meshes[id] = record;
+                        scene.NewMeshes.push_back(id);
+                    }
+                    scene.PrimitiveOwners[id] = mesh.VertexBuffer;
+                    GPUDrivenRenderer::RegisterPrimitiveGeometry(id, source, level, instance.MeshIndex);
+                    if (GPUDrivenRenderer::GeometryReady(id)) lodMeshes[level] = id;
+                }
+                instance.LODGroupIndex = GPUVisibility::RegisterLODGroup(lodMeshes, metadata);
+            }
+            scene.Instances.Update(slot, instance);
+        }
     }
     else if (ComponentManager::HasComponent<SpriteComponent>(entity))
     {

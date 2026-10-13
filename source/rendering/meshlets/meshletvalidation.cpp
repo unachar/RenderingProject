@@ -650,10 +650,54 @@ void BeforeFrame(uint64_t frame)
                 "set Auto imported model to a forward-only material part");
             GpuSceneChanges::Notify(fixtures[0], GpuSceneDirtyFlags::Mesh | GpuSceneDirtyFlags::Material);
         }
+        if (frame == 150)
+        {
+            Clear();
+            terrainSettings.Resolution = 32;
+            terrain = ProceduralScene::GenerateTerrain(terrainSettings);
+            Check(Registry::IsAlive(terrain), "create procedural LOD fixture");
+            if (Registry::IsAlive(terrain)) fixtures.push_back(terrain);
+        }
+        if (frame >= 150)
+        {
+            GPUVisibility::GetSettings().LOD = true;
+            GPUVisibility::GetSettings().ForceLOD = int((std::min)(frame - 150, uint64_t(4)));
+        }
+        if (frame == 155)
+        {
+            terrainSettings.Noise.Seed += 7;
+            Check(ProceduralScene::GenerateTerrain(terrainSettings, terrain) == terrain,
+                  "edit terrain with GPU LOD enabled");
+        }
+        if (frame == 157 || frame == 158)
+        {
+            Entity e(terrain);
+            if (frame == 157) e.Add<LODComponent>();
+            e.Get<LODComponent>().UseLOD = frame == 158;
+            GpuSceneChanges::Notify(terrain, GpuSceneDirtyFlags::Mesh);
+        }
     }
 }
 void AfterFrame(uint64_t frame)
 {
+    if (frame >= 150 && frame <= 158 && Registry::IsAlive(terrain))
+    {
+        const auto& mesh = *Entity(terrain).Get<MeshComponent>().NaniteMesh;
+        const auto slot = GpuScene::GetEntityInstance(terrain);
+        std::vector<uint8_t> bytes;
+        const bool read = slot != UINT32_MAX && RenderCapture::ReadBuffer(GPUVisibility::ResultBuffer(),
+            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, uint64_t(slot + 1) * 16, bytes);
+        Visibility::VisibleInstanceData result{};
+        if (read) std::memcpy(&result, bytes.data() + size_t(slot) * 16, sizeof(result));
+        const uint32_t expected = frame == 157 ? 0 : uint32_t((std::min)(frame - 150, uint64_t(4)));
+        Check(read && result.SelectedLOD == expected, "procedural forced GPU LOD selects requested level");
+        const uint32_t triangles = expected ? uint32_t(mesh.CpuLodIndices[expected - 1].size() / 3) : mesh.IndexCount / 3;
+        WriteGraphicsLog("Procedural LOD frame=%llu level=%u sourceTriangles=%u drawnTriangles=%u\n",
+                         static_cast<unsigned long long>(frame), expected, mesh.IndexCount / 3, triangles);
+        Check(Stats()[8] == triangles, "procedural GPU draw executes selected LOD triangle count");
+        if (expected) Check(triangles > 0 && triangles < mesh.IndexCount / 3,
+                            "procedural GPU LOD reduces drawn triangles");
+    }
     if (frame==113 || frame==117 || frame==121) Capture(false);
     if (frame==115 || frame==119 || frame==123) Capture(true);
     if (frame==115 || frame==119)
@@ -706,8 +750,10 @@ void AfterFrame(uint64_t frame)
             "repeated terrain edits keep stable mesh ID and table size");
         Check(GPUDrivenRenderer::GeometryArenaBytes()==repeatedEditArena,"repeated terrain edits reuse reserved GPU geometry arena");
         const auto& mesh=Entity(terrain).Get<MeshComponent>();
-        Check(GPUDrivenRenderer::GeometryUploadBytes()<=uint64_t(mesh.VertexCount)*52,
-            "terrain edit uploads one source geometry without historical aliases");
+        uint64_t expectedUpload = uint64_t(mesh.VertexCount) * 52;
+        for (const auto& indices : mesh.NaniteMesh->CpuLodIndices) expectedUpload += indices.size() * sizeof(uint32_t);
+        Check(GPUDrivenRenderer::GeometryUploadBytes() <= expectedUpload,
+            "terrain edit uploads shared vertices and LOD indices without historical aliases");
     }
     if (frame == 139)
     {
@@ -913,7 +959,7 @@ void AfterFrame(uint64_t frame)
 bool Finish()
 {
     GraphicsDevice::WaitForGpuIdle();
-    Check(frames >= 150, "complete meshlet sequence");
+    Check(frames >= 159, "complete meshlet sequence");
     WriteGraphicsLog("Meshlet performance samples traditional=%u mesh=%u opaqueTraditionalMs=%.5f "
                      "opaqueMeshMs=%.5f meshComputeMs=%.5f\n",
                      traditionalSamples, meshSamples,

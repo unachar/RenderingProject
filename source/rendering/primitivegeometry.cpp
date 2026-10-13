@@ -6,9 +6,43 @@
 #include "meshlets/meshletmanager.h"
 #include "gpudriven/gpudrivenrenderer.h"
 #include <numeric>
+#include "../../External/meshoptimizer/src/meshoptimizer.h"
 
 namespace
 {
+	void BuildPrimitiveLODs(StaticMeshData& mesh)
+	{
+		mesh.CpuLodIndices = {};
+		mesh.LodIndexCounts = {};
+		// Weld identical attributes for simplification, then map back to the original
+		// triangle-list vertices so fallback drawing and vertex deformation stay intact.
+		std::vector<uint32_t> remap(mesh.VertexCount);
+		const size_t uniqueCount = meshopt_generateVertexRemap(remap.data(),
+			mesh.CpuIndices.data(), mesh.CpuIndices.size(), mesh.CpuVertices.data(),
+			mesh.CpuVertices.size(), sizeof(StaticModelVertex));
+		std::vector<StaticModelVertex> vertices(uniqueCount);
+		std::vector<uint32_t> indices(mesh.CpuIndices.size()), original(uniqueCount);
+		meshopt_remapVertexBuffer(vertices.data(), mesh.CpuVertices.data(), mesh.VertexCount,
+			sizeof(StaticModelVertex), remap.data());
+		meshopt_remapIndexBuffer(indices.data(), mesh.CpuIndices.data(), indices.size(), remap.data());
+		for (uint32_t i = 0; i < mesh.VertexCount; ++i) original[remap[i]] = i;
+		constexpr float ratios[] = {0.50f, 0.20f, 0.08f, 0.03f};
+		constexpr float errors[] = {0.01f, 0.035f, 0.08f, 0.15f};
+		for (uint32_t lod = 0; lod < StaticMeshData::LodCount - 1; ++lod)
+		{
+			auto& result = mesh.CpuLodIndices[lod];
+			result.resize(indices.size());
+			const size_t target = (std::max)(size_t(3), size_t(indices.size() * ratios[lod]) / 3 * 3);
+			const size_t count = meshopt_simplify(result.data(), indices.data(), indices.size(),
+				reinterpret_cast<const float*>(vertices.data()), vertices.size(), sizeof(StaticModelVertex),
+				target, errors[lod], meshopt_SimplifyRegularize);
+			if (count < 3 || count >= indices.size()) { result.clear(); continue; }
+			result.resize(count);
+			for (auto& index : result) index = original[index];
+			meshopt_optimizeVertexCache(result.data(), result.data(), result.size(), mesh.VertexCount);
+			mesh.LodIndexCounts[lod] = static_cast<UINT>(count);
+		}
+	}
 	uint64_t HashGeometry(const void* data, size_t size)
 	{
 		uint64_t hash = 1469598103934665603ull;
@@ -497,6 +531,7 @@ bool PrimitiveGeometry::UploadVertices(EntityID entity, const std::vector<Vertex
             source->CpuVertices.push_back({vertex.Pos,vertex.Normal,vertex.Tex,vertex.Color});
         source->CpuIndices.resize(vertices.size());
         std::iota(source->CpuIndices.begin(),source->CpuIndices.end(),0u);
+        BuildPrimitiveLODs(*source);
         MeshletManager::BuildImportedMesh(*source);
         mesh.NaniteMesh=std::move(source);
     }

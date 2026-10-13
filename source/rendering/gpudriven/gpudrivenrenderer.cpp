@@ -249,35 +249,47 @@ void GPUDrivenRenderer::RegisterGeometry(uint32_t meshID, const StaticMeshData& 
     MeshletManager::Register(meshID, mesh.MeshletLODs[0], geometry.BaseVertex);
 }
 
-void GPUDrivenRenderer::RegisterPrimitiveGeometry(uint32_t meshID, const StaticMeshData &mesh)
+void GPUDrivenRenderer::RegisterPrimitiveGeometry(uint32_t meshID, const StaticMeshData &mesh,
+                                                 uint32_t lod, uint32_t baseMeshID)
 {
     auto &state = Data();
-    if (mesh.CpuVertices.empty() || mesh.CpuIndices.empty() || !mesh.VirtualGeometryLODs[0])
+    if (lod >= StaticMeshData::LodCount || (lod && !GeometryReady(baseMeshID))) return;
+    const auto& indices = lod ? mesh.CpuLodIndices[lod - 1] : mesh.CpuIndices;
+    const uint32_t vertexCount = lod ? 0 : mesh.VertexCount;
+    const uint32_t indexCount = static_cast<uint32_t>(indices.size());
+    if (mesh.CpuVertices.empty() || indices.empty() || !mesh.VirtualGeometryLODs[lod])
         return;
-    const auto key = mesh.VirtualGeometryLODs[0]->Key;
+    const auto key = mesh.VirtualGeometryLODs[lod]->Key;
     auto found = state.PrimitiveRanges.find(meshID);
     if (found != state.PrimitiveRanges.end() && found->second.SourceKey == key)
     {
-        MeshletManager::Register(meshID, mesh.MeshletLODs[0], found->second.FirstVertex);
+        const uint32_t firstVertex = lod ? state.CpuGeometry[baseMeshID].BaseVertex : found->second.FirstVertex;
+        if (state.CpuGeometry[meshID].BaseVertex != int32_t(firstVertex))
+        {
+            state.CpuGeometry[meshID].BaseVertex = int32_t(firstVertex);
+            state.NewGeometry.push_back(meshID);
+            MeshletManager::Replace(meshID, mesh.MeshletLODs[lod], firstVertex);
+        }
+        else MeshletManager::Register(meshID, mesh.MeshletLODs[lod], firstVertex);
         return;
     }
     State::PrimitiveRange range;
     if (found != state.PrimitiveRanges.end())
     {
         range = found->second;
-        if (range.VertexCapacity < mesh.VertexCount || range.IndexCapacity < mesh.IndexCount)
+        if (range.VertexCapacity < vertexCount || range.IndexCapacity < indexCount)
         {
             state.FreePrimitiveRanges.push_back(range);
             range = {};
         }
     }
-    if (!range.VertexCapacity)
+    if (!range.IndexCapacity)
     {
         auto free = std::find_if(state.FreePrimitiveRanges.begin(), state.FreePrimitiveRanges.end(),
                                  [&](const auto &candidate)
                                  {
-                                     return candidate.VertexCapacity >= mesh.VertexCount &&
-                                            candidate.IndexCapacity >= mesh.IndexCount;
+                                     return candidate.VertexCapacity >= vertexCount &&
+                                            candidate.IndexCapacity >= indexCount;
                                  });
         if (free != state.FreePrimitiveRanges.end())
         {
@@ -286,8 +298,8 @@ void GPUDrivenRenderer::RegisterPrimitiveGeometry(uint32_t meshID, const StaticM
         }
         else
         {
-            range.VertexCapacity = GpuDrivenCapacity(0, mesh.VertexCount);
-            range.IndexCapacity = GpuDrivenCapacity(0, mesh.IndexCount);
+            range.VertexCapacity = vertexCount ? GpuDrivenCapacity(0, vertexCount) : 0;
+            range.IndexCapacity = GpuDrivenCapacity(0, indexCount);
             const auto reservation = ReserveGpuDrivenGeometry(
                 state.CpuVertices.size(), state.CpuIndices.size(), range.VertexCapacity, range.IndexCapacity);
             range.FirstVertex = uint32_t(reservation.BaseVertex);
@@ -296,20 +308,21 @@ void GPUDrivenRenderer::RegisterPrimitiveGeometry(uint32_t meshID, const StaticM
             state.CpuIndices.resize(state.CpuIndices.size() + range.IndexCapacity);
         }
     }
-    std::copy(mesh.CpuVertices.begin(), mesh.CpuVertices.end(),
-              state.CpuVertices.begin() + range.FirstVertex);
-    std::copy(mesh.CpuIndices.begin(), mesh.CpuIndices.end(), state.CpuIndices.begin() + range.FirstIndex);
-    for (uint32_t i = 0; i < mesh.VertexCount; ++i)
+    if (!lod) std::copy(mesh.CpuVertices.begin(), mesh.CpuVertices.end(),
+                       state.CpuVertices.begin() + range.FirstVertex);
+    std::copy(indices.begin(), indices.end(), state.CpuIndices.begin() + range.FirstIndex);
+    for (uint32_t i = 0; i < vertexCount; ++i)
         state.NewVertices.push_back(range.FirstVertex + i);
-    for (uint32_t i = 0; i < mesh.IndexCount; ++i)
+    for (uint32_t i = 0; i < indexCount; ++i)
         state.NewIndices.push_back(range.FirstIndex + i);
     if (state.CpuGeometry.size() <= meshID)
         state.CpuGeometry.resize(size_t(meshID) + 1);
-    state.CpuGeometry[meshID] = {range.FirstIndex, mesh.IndexCount, int32_t(range.FirstVertex), 1};
+    const uint32_t firstVertex = lod ? state.CpuGeometry[baseMeshID].BaseVertex : range.FirstVertex;
+    state.CpuGeometry[meshID] = {range.FirstIndex, indexCount, int32_t(firstVertex), 1};
     state.NewGeometry.push_back(meshID);
     range.SourceKey = key;
     state.PrimitiveRanges[meshID] = range;
-    MeshletManager::Replace(meshID, mesh.MeshletLODs[0], range.FirstVertex);
+    MeshletManager::Replace(meshID, mesh.MeshletLODs[lod], firstVertex);
 }
 void GPUDrivenRenderer::ReleasePrimitiveGeometry(uint32_t meshID)
 {

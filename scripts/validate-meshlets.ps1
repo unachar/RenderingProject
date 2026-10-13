@@ -42,7 +42,7 @@ try {
         $env:DX12_MESHLET_STRESS_TEST='1'; $env:DX12_PHASE5_MESH_SHADER='0'
         $env:DX12_GPU_VISIBILITY_STRESS_TEST='0'; $env:DX12_GPU_DRIVEN_STRESS_TEST='0'
         $env:DX12_GPU_BASED_VALIDATION=[int][bool]$GpuValidation
-        $env:DX12_STARTUP_SMOKE_FRAMES='150'; $env:DX12_VALIDATION_MODE='1'; $env:DX12_FEATURE_SMOKE_TEST='1'
+        $env:DX12_STARTUP_SMOKE_FRAMES='159'; $env:DX12_VALIDATION_MODE='1'; $env:DX12_FEATURE_SMOKE_TEST='1'
         $env:DX12_DISABLE_DXR='1'; $env:DX12_DISABLE_DLSS='1'
         $log=Join-Path $workspace 'init_log.txt'
         $offset=if(Test-Path -LiteralPath $log) { (Get-Item -LiteralPath $log).Length } else { 0 }
