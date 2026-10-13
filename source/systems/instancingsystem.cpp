@@ -140,6 +140,13 @@ static const MaterialComponent& DefaultMaterial()
 
 static bool ShouldCastShadow(EntityID entity)
 {
+    // Environment meshes supply background radiance and must not occlude the sun.
+    if (ComponentManager::HasComponent<MeshComponent>(entity) &&
+        ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
+    {
+        return false;
+    }
+
     if (ComponentManager::HasComponent<LightComponent>(entity))
         return false;
     if (ComponentManager::HasComponent<NameComponent>(entity) &&
@@ -971,6 +978,7 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
     // Meshes
     for (EntityID entity : World::GetView<MeshComponent, TransformComponent>())
     {
+        if (!ctx.transparentPass && GPUDrivenRenderer::HandlesEntity(entity)) continue;
         if (!CanInstance(entity) ||
             ComponentManager::HasComponent<AnimationModelComponent>(entity) ||
             ComponentManager::HasComponent<StaticModelComponent>(entity)) continue;

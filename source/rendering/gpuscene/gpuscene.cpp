@@ -26,6 +26,9 @@ struct SceneState
     std::vector<GPUMaterialData> Materials;
     std::vector<uint32_t> NewMeshes, NewMaterials;
     std::vector<ComPtr<ID3D12Resource>> GeometryOwners;
+    std::unordered_map<uint32_t,ComPtr<ID3D12Resource>> PrimitiveOwners;
+    std::array<std::vector<ComPtr<ID3D12Resource>>,GpuSceneBuffer::FrameCount> RetiredPrimitiveOwners;
+    std::vector<uint32_t> FreePrimitiveMeshes;
     std::unordered_map<uint64_t, std::vector<uint32_t>> MeshLookup, MaterialLookup;
     std::unordered_map<uint32_t, std::vector<GPUInstanceID>> Entities;
     std::vector<uint32_t> CpuOpaqueStatic;
@@ -103,7 +106,7 @@ void RemoveEntity(uint32_t entity)
     scene.Entities.erase(found);
 }
 uint32_t RegisterMesh(ID3D12Resource *vertices, ID3D12Resource *indices, uint32_t vertexCount, uint32_t indexCount,
-                      const XMFLOAT3 &center, const XMFLOAT3 &extents)
+                      const XMFLOAT3 &center, const XMFLOAT3 &extents, bool retain=true)
 {
     auto &scene = Scene();
     GPUMeshData mesh{};
@@ -119,7 +122,7 @@ uint32_t RegisterMesh(ID3D12Resource *vertices, ID3D12Resource *indices, uint32_
     mesh.BoundsExtents = XMFLOAT4(extents.x, extents.y, extents.z, 0);
     const size_t oldCount = scene.Meshes.size();
     const uint32_t id = RegisterShared(mesh, scene.Meshes, scene.MeshLookup, scene.NewMeshes);
-    if (scene.Meshes.size() != oldCount)
+    if (retain && scene.Meshes.size() != oldCount)
     {
         if (vertices)
         {
@@ -131,6 +134,89 @@ uint32_t RegisterMesh(ID3D12Resource *vertices, ID3D12Resource *indices, uint32_
         }
     }
     return id;
+}
+void RemoveMeshLookup(uint32_t id)
+{
+    auto &scene = Scene();
+    const auto key = Hash(&scene.Meshes.at(id), sizeof(GPUMeshData));
+    auto found = scene.MeshLookup.find(key);
+    if (found == scene.MeshLookup.end())
+        return;
+    std::erase(found->second, id);
+    if (found->second.empty())
+        scene.MeshLookup.erase(found);
+}
+uint32_t RegisterPrimitiveMesh(uint32_t entity, ID3D12Resource *vertices, uint32_t vertexCount,
+                               const XMFLOAT3 &center, const XMFLOAT3 &extents)
+{
+    auto &scene = Scene();
+    uint32_t reusable = UINT32_MAX;
+    if (const auto previous = scene.Entities.find(entity);
+        previous != scene.Entities.end() && !previous->second.empty())
+    {
+        const auto old = scene.Instances.Data()[previous->second.front()].MeshIndex;
+        uint32_t references = 0;
+        if (scene.PrimitiveOwners.contains(old))
+            for (const auto &instance : scene.Instances.Data())
+                if ((instance.Flags & 1u) && instance.MeshIndex == old)
+                    ++references;
+        if (references == 1)
+            reusable = old;
+    }
+    GPUMeshData record{};
+    const auto address = vertices->GetGPUVirtualAddress();
+    record.VertexAddressLow = uint32_t(address);
+    record.VertexAddressHigh = uint32_t(address >> 32);
+    record.VertexCount = vertexCount;
+    record.BoundsCenter = XMFLOAT4(center.x, center.y, center.z, 1);
+    record.BoundsExtents = XMFLOAT4(extents.x, extents.y, extents.z, 0);
+    const auto key = Hash(&record, sizeof(record));
+    if (const auto existing = scene.MeshLookup.find(key); existing != scene.MeshLookup.end())
+        for (auto id : existing->second)
+            if (std::memcmp(&scene.Meshes[id], &record, sizeof(record)) == 0)
+                return id;
+    if (reusable == UINT32_MAX && !scene.FreePrimitiveMeshes.empty())
+    {
+        reusable = scene.FreePrimitiveMeshes.back();
+        scene.FreePrimitiveMeshes.pop_back();
+    }
+    if (reusable != UINT32_MAX)
+    {
+        RemoveMeshLookup(reusable);
+        if (auto old = scene.PrimitiveOwners.find(reusable); old != scene.PrimitiveOwners.end())
+            scene.RetiredPrimitiveOwners[GraphicsDevice::GetFrameIndex()].push_back(std::move(old->second));
+        scene.Meshes[reusable] = record;
+        scene.MeshLookup[key].push_back(reusable);
+        scene.NewMeshes.push_back(reusable);
+    }
+    else
+        reusable = RegisterMesh(vertices, nullptr, vertexCount, 0, center, extents, false);
+    scene.PrimitiveOwners[reusable] = vertices;
+    return reusable;
+}
+void RetireUnusedPrimitiveMeshes()
+{
+    auto &scene = Scene();
+    std::unordered_set<uint32_t> used;
+    for (const auto &instance : scene.Instances.Data())
+        if (instance.Flags & 1u)
+            used.insert(instance.MeshIndex);
+    for (auto it = scene.PrimitiveOwners.begin(); it != scene.PrimitiveOwners.end();)
+    {
+        if (used.contains(it->first))
+        {
+            ++it;
+            continue;
+        }
+        const auto id = it->first;
+        scene.RetiredPrimitiveOwners[GraphicsDevice::GetFrameIndex()].push_back(std::move(it->second));
+        RemoveMeshLookup(id);
+        scene.Meshes[id] = {};
+        scene.NewMeshes.push_back(id);
+        scene.FreePrimitiveMeshes.push_back(id);
+        GPUDrivenRenderer::ReleasePrimitiveGeometry(id);
+        it = scene.PrimitiveOwners.erase(it);
+    }
 }
 void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
 {
@@ -148,7 +234,7 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
     auto &ids = scene.Entities[entity];
     size_t section = 0;
     auto append = [&](ID3D12Resource *vertices, ID3D12Resource *indices, uint32_t vertexCount, uint32_t indexCount,
-                      XMFLOAT3 center, XMFLOAT3 extents, int texture) {
+                      XMFLOAT3 center, XMFLOAT3 extents, int texture, bool primitive=false) {
         if (!vertices || !vertexCount)
         {
             return;
@@ -202,7 +288,8 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
         }
         else
         {
-            instance.MeshIndex = RegisterMesh(vertices, indices, vertexCount, indexCount, meshCenter, meshExtents);
+            instance.MeshIndex = primitive ? RegisterPrimitiveMesh(entity,vertices,vertexCount,meshCenter,meshExtents) :
+                RegisterMesh(vertices, indices, vertexCount, indexCount, meshCenter, meshExtents);
         }
         if (existing && !(flags & static_cast<uint32_t>(GpuSceneDirtyFlags::Material | GpuSceneDirtyFlags::Mesh)))
         {
@@ -305,7 +392,9 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
     {
         const auto &mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
         append(mesh.VertexBuffer.Get(), nullptr, mesh.VertexCount, 0, mesh.LocalBoundsCenter, mesh.LocalBoundsExtents,
-               -1);
+               -1,mesh.NaniteMesh!=nullptr);
+        if (mesh.NaniteMesh && !ids.empty())
+            GPUDrivenRenderer::RegisterPrimitiveGeometry(scene.Instances.Data()[ids.back()].MeshIndex,*mesh.NaniteMesh);
     }
     else if (ComponentManager::HasComponent<SpriteComponent>(entity))
     {
@@ -337,7 +426,9 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
             instance.Flags = supported ? (instance.Flags | 4u) : (instance.Flags & ~4u);
             scene.Instances.Update(id, instance);
         }
-        SetCpuOpaqueEntity(entity, !supported && ComponentManager::HasComponent<StaticModelComponent>(entity));
+        // Auto models still use the CPU outline pass after their base geometry moves to Nanite.
+        SetCpuOpaqueEntity(entity, ComponentManager::HasComponent<StaticModelComponent>(entity) &&
+            (!supported || material.ShaderClassMode == MaterialMode::Auto));
         std::vector<uint32_t> textures;
         if (supported)
             for (auto id : ids)
@@ -358,6 +449,7 @@ void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
     const auto start = std::chrono::steady_clock::now();
     auto &scene = Scene();
     const uint32_t frame = GraphicsDevice::GetFrameIndex();
+    scene.RetiredPrimitiveOwners[frame].clear(); // This frame slot's fence completed before Execute.
     auto *device = GraphicsDevice::GetDevice();
     scene.Instances.SettlePreviousTransforms();
     auto pending = std::move(GpuSceneChanges::Pending());
@@ -390,6 +482,10 @@ void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
     {
         UpdateEntity(entity, flags);
     }
+    const bool geometryChanged=std::any_of(changed.begin(),changed.end(),[](const auto& change) {
+        return (static_cast<uint32_t>(change.second)&static_cast<uint32_t>(GpuSceneDirtyFlags::Mesh))!=0;
+    });
+    if (geometryChanged || pending.ResetScene || !pending.Destroyed.empty()) RetireUnusedPrimitiveMeshes();
     scene.Stats.EntitiesProcessed = static_cast<uint32_t>(changed.size());
     scene.Stats.DirtyInstances = static_cast<uint32_t>(scene.Instances.Updates().size());
     scene.Stats.InstanceSlots = static_cast<uint32_t>(scene.Instances.Data().size());

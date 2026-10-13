@@ -27,6 +27,8 @@
 #include "meshshaderpipeline.h"
 #include "rayreflections.h"
 #include "lightingresources.h"
+#include "camera.h"
+#include "modelmanager.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -43,6 +45,159 @@ double g_PausedTime = 0;
 uint64_t g_OriginalTerrainHash = 0;
 double g_PreviousVertexTime = 0;
 void Check(bool passed, const char* name);
+
+bool SunLightingTestEnabled()
+{
+    char value[8]{};
+    return GetEnvironmentVariableA("DX12_SUN_LIGHTING_TEST", value, sizeof(value)) && atoi(value) != 0;
+}
+EntityID g_TestSun = g_kINVALID_ENTITY;
+std::array<double, 5> g_SunRadiance{};
+std::array<std::array<double, 3>, 5> g_SunColors{};
+void BeforeSunLightingFrame(uint64_t frame)
+{
+    g_FrameCount = frame + 1;
+    const uint64_t phase = frame <= 10 ? frame : (frame <= 20 ? frame - 10 : 10);
+    if (frame == 11)
+    {
+        auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(g_TestSun);
+        transform.Position = {0, 1.568f, -10}; // 8.9 degree sun elevation, matching the reported morning.
+        transform.IsDirty = true;
+        ComponentManager::GetComponentUnchecked<LightComponent>(g_TestSun).Color = {1, 0.35f, 0.08f, 1};
+    }
+    if (frame == 0)
+    {
+        std::vector<EntityID> removed;
+        for (EntityID id : World::GetView<TransformComponent>())
+        {
+            if (ComponentManager::HasComponent<MeshComponent>(id) &&
+                ComponentManager::GetComponentUnchecked<MeshComponent>(id).IsEnvironment)
+            {
+                Entity(id).SetName("Renamed Environment Regression Sky");
+                continue; // Environment identity must not depend on its editable name.
+            }
+            if (!ComponentManager::HasComponent<CameraComponent>(id)) removed.push_back(id);
+        }
+        for (auto id : removed) World::DestroyEntity(Entity(id));
+        Entity environment = World::CreateEntity().Add<NameComponent>().Add<MeshComponent>()
+            .Add<StaticModelComponent>().Add<TransformComponent>().Add<MaterialComponent>();
+        environment.SetName("Renamed Environment Regression Sky");
+        environment.Get<MeshComponent>().IsEnvironment = true;
+        environment.Get<TransformComponent>().Scale = {50, 50, 50};
+        environment.Get<TransformComponent>().IsDirty = true;
+        environment.Get<StaticModelComponent>().ModelId = ModelManager::LoadStaticModel("asset/model/sky/sky.obj");
+        environment.Get<MaterialComponent>().ShaderClassMode = MaterialMode::Manual;
+        environment.Get<MaterialComponent>().ShaderClass = ShaderClass::Unlit;
+        g_TestSun = Sun::Create({0, 8, -8}, {0, 0, 0});
+        Entity cube = World::CreateEntity().Add<NameComponent>().Add<MeshComponent>()
+            .Add<TransformComponent>().Add<MaterialComponent>();
+        cube.SetName("Sun Lighting Regression Cube");
+        auto& material = cube.Get<MaterialComponent>();
+        material.ShaderClassMode = MaterialMode::Manual;
+        material.ShaderClass = ShaderClass::PBR;
+        material.Metallic = 0;
+        material.Roughness = 0.8f;
+        VertexResource resource;
+        resource.entityid = cube.GetID();
+        resource.objectType = ObjectType::CUBE;
+        resource.color = Color::WHITE;
+        PrimitiveGeometry::CreateObjectVertex(resource);
+        auto id = Camera::GetCameraEntity();
+        auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(id);
+        transform.Position = {0, 3, -8};
+        transform.IsDirty = true;
+        auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(id);
+        camera.Target = {0, 0, 0};
+        camera.AllowUserControl = false;
+        camera.LockOnTarget = g_kINVALID_ENTITY;
+    }
+    RenderConfiguration::SetHdr(true);
+    RenderConfiguration::SetResolutionScale(1.0f);
+    DayNightCycle::GetSettings().Running = false;
+    DayNightCycle::GetSettings().TimeDriven = false;
+    DayNightCycle::GetSettings().AutomaticLighting = false;
+    RenderConfiguration::SetRenderMode(RenderMode::DEFERRED);
+    RendererSettings::SetMeshShadersEnabled(false);
+    RendererSettings::SetComputeGBufferEnabled(false);
+    RendererSettings::SetSsaoEnabled(false);
+    RendererSettings::SetSsgiEnabled(false);
+    RendererSettings::SetUpscaleMode(UpscaleMode::Bilateral);
+    auto& rays = Raytracing::GetSettings();
+    rays.Enabled = true;
+    rays.Reflections = true;
+    rays.Denoise = false;
+    rays.Shadows = true;
+    rays.RenderMode = phase >= 7 && phase <= 8 ? Raytracing::Mode::Full : Raytracing::Mode::ReflectionsOnly;
+    RendererSettings::SetShadowMapMethod(phase >= 5 && phase <= 6 ?
+        ShadowMapMethod::VirtualShadowMap : ShadowMapMethod::ShadowMap);
+    auto& sun = ComponentManager::GetComponentUnchecked<LightComponent>(g_TestSun);
+    sun.IsActive = phase < 9;
+    sun.CastShadow = phase >= 3;
+    sun.AffectsVolumetrics = false;
+}
+void AfterSunLightingFrame(uint64_t frame)
+{
+    if (frame < 2 || frame > 20 || frame % 2) return;
+    const uint64_t phase = frame <= 10 ? frame : frame - 10;
+    Check(phase == 8 ? Raytracing::UsesRaytracedShadows() : !Raytracing::UsesRaytracedShadows(),
+        "sun regression uses the requested raster or raytraced shadow path");
+    if (phase == 4 || phase == 6)
+        for (EntityID id : World::GetView<MeshComponent>())
+            if (ComponentManager::GetComponentUnchecked<MeshComponent>(id).IsEnvironment)
+                Check(!LightingResources::ShouldDrawEntityInCurrentShadowPass(id),
+                    "environment mesh is excluded from shadow culling and bounds");
+    RenderCapture::TextureData image, materials;
+    bool read = RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), image) &&
+        RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::MATERIAL), materials);
+    const bool compatible = read && image.Format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
+        materials.Format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
+        image.Width == materials.Width && image.Height == materials.Height;
+    Check(compatible, "read sun regression HDR and PBR mask");
+    if (!compatible) return;
+    double sum = 0;
+    std::array<double, 3> channels{};
+    uint32_t pixels = 0;
+    for (uint32_t y = 0; y < image.Height; ++y)
+    {
+        auto* color = reinterpret_cast<const uint16_t*>(image.Bytes.data() + y * image.RowPitch);
+        auto* mask = reinterpret_cast<const uint16_t*>(materials.Bytes.data() + y * materials.RowPitch);
+        for (uint32_t x = 0; x < image.Width; ++x)
+            if (std::abs(RenderCapture::HalfToFloat(mask[x * 4 + 3]) - 11.f) < 0.1f)
+            {
+                sum += 0.2126 * RenderCapture::HalfToFloat(color[x * 4]) +
+                    0.7152 * RenderCapture::HalfToFloat(color[x * 4 + 1]) +
+                    0.0722 * RenderCapture::HalfToFloat(color[x * 4 + 2]);
+                for (uint32_t c = 0; c < 3; ++c) channels[c] += RenderCapture::HalfToFloat(color[x * 4 + c]);
+                ++pixels;
+            }
+    }
+    Check(pixels > 100, "sun regression includes visible PBR pixels");
+    g_SunRadiance[phase / 2 - 1] = pixels ? sum / pixels : 0;
+    WriteGraphicsLog("Sun lighting regression frame=%llu radiance=%.6f pixels=%u\n", frame,
+        g_SunRadiance[phase / 2 - 1], pixels);
+    for (uint32_t c = 0; c < 3; ++c) g_SunColors[phase / 2 - 1][c] = pixels ? channels[c] / pixels : 0;
+    if (phase == 10)
+    {
+        double direct = g_SunRadiance[0] - g_SunRadiance[4];
+        Check(direct > 0.05, "virtual sun lights unshadowed PBR surface");
+        Check(g_SunRadiance[1] - g_SunRadiance[4] > direct * 0.5,
+            "reflection-only ShadowMap preserves sun on unoccluded PBR surface");
+        Check(g_SunRadiance[2] - g_SunRadiance[4] > direct * 0.5,
+            "reflection-only Virtual ShadowMap preserves sun on unoccluded PBR surface");
+        Check(g_SunRadiance[3] - g_SunRadiance[4] > direct * 0.5,
+            "full raytracing preserves sun on unoccluded PBR surface");
+        if (frame == 20)
+            for (uint32_t path = 1; path <= 3; ++path)
+            {
+                double red = g_SunColors[path][0] - g_SunColors[4][0];
+                double green = g_SunColors[path][1] - g_SunColors[4][1];
+                double blue = g_SunColors[path][2] - g_SunColors[4][2];
+                WriteGraphicsLog("Sun morning direct path=%u RGB=%.6f,%.6f,%.6f\n", path, red, green, blue);
+                Check(red > green * 1.4 && green > blue * 1.3,
+                    "morning sun color reaches PBR in raster and raytraced shadow paths");
+            }
+    }
+}
 
 void ValidateReflectionDenoising(const RenderCapture::TextureData& filtered)
 {
@@ -158,7 +313,7 @@ void CreateTestScene()
     // Check the real startup scene, including registration from separate .cpp files.
     const char* startupNames[] = {
         "Cube", "polygon3d", "XBot", "field", "Moca", "Karen",
-        "Kacchatta_Hone", "Alicia", "Sky"
+        "Kacchatta_Hone", "Alicia"
     };
     for (const char* name : startupNames)
     {
@@ -173,6 +328,11 @@ void CreateTestScene()
         const std::string checkName = std::string("auto-registered startup entity created once: ") + name;
         Check(count == 1, checkName.c_str());
     }
+
+    bool startupSky = false;
+    for (EntityID id : World::GetView<MeshComponent>())
+        startupSky |= ComponentManager::GetComponentUnchecked<MeshComponent>(id).IsEnvironment;
+    Check(!startupSky, "physical atmosphere startup does not create a legacy Sky object");
 
     RendererSettings::SetMeshShadersEnabled(true);
     D3D12_FEATURE_DATA_D3D12_OPTIONS7 meshOptions{};
@@ -328,6 +488,13 @@ bool RenderingValidation::IsEnabled()
 
 void RenderingValidation::BeforeFrame(uint64_t frame)
 {
+    if (SunLightingTestEnabled())
+    {
+        ImGuiManager::m_HdrEnabled = true;
+        ImGuiManager::m_ToneMapEnabled = false;
+        BeforeSunLightingFrame(frame);
+        return;
+    }
     if (MeshletValidation::Enabled()) { MeshletValidation::BeforeFrame(frame); return; }
     if (GPUVisibilityValidation::Enabled()) { GPUVisibilityValidation::BeforeFrame(frame); return; }
     if (GPUDrivenValidation::Enabled()) { GPUDrivenValidation::BeforeFrame(frame); return; }
@@ -476,6 +643,7 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
 
 void RenderingValidation::AfterFrame(uint64_t frame)
 {
+    if (SunLightingTestEnabled()) { AfterSunLightingFrame(frame); return; }
     if (MeshletValidation::Enabled()) { MeshletValidation::AfterFrame(frame); return; }
     if (GPUVisibilityValidation::Enabled()) { GPUVisibilityValidation::AfterFrame(frame); return; }
     if (GPUDrivenValidation::Enabled()) { GPUDrivenValidation::AfterFrame(frame); return; }

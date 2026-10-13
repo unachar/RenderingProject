@@ -1,6 +1,6 @@
 # Phase 5 実装設計案
 
-状態: ユーザー承認済み。実装・ビルド・GPU検証は未実施。ユーザーより、現在の実機環境でMesh Shaderの動作確認・有効化が可能との情報を受領した。EngineによるFeature検出と実行検証は別途行う。
+状態: ユーザー承認済み。実装とDebug/Release実機検証・GPU Based Validation・Phase 3/4回帰を実施。最新の結果・制約は [実装記録](gpudriven-phase5.md) と [検証台帳](gpudriven-phase5-progress.md) を参照。
 
 ## 目的と範囲
 

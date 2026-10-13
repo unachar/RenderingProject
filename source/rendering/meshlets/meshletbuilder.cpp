@@ -123,6 +123,12 @@ template <class T> bool Read(std::ifstream &stream, std::vector<T> &data, uint32
     return bool(stream);
 }
 } // namespace
+void RefreshMeshletBounds(Asset &asset, std::span<const Position> positions)
+{
+    asset.Bounds.resize(asset.Meshlets.size());
+    for (size_t i=0;i<asset.Meshlets.size();++i)
+        asset.Bounds[i]=ComputeBounds(asset,asset.Meshlets[i],positions);
+}
 Asset Build(std::span<const Position> positions, std::span<const uint32_t> indices, BuildConfig config)
 {
     if (!ConfigValid(config) || indices.size() % 3)

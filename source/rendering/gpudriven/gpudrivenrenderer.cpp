@@ -7,6 +7,7 @@
 #include "gpuscene/gpuscene.h"
 #include "gpuscene/gpuscenebuffer.h"
 #include "staticmodel.h"
+#include "modelmanager.h"
 #include "graphicsdevice.h"
 #include "rendergraph.h"
 #include "renderprofiler.h"
@@ -22,6 +23,7 @@
 #include "rendercapture.h"
 #include "graphicslog.h"
 #include "visibility/gpuvisibility.h"
+#include "virtualgeometry/virtualgeometrydebug.h"
 #include "occlusionculling.h"
 #include <unordered_set>
 #include <unordered_map>
@@ -35,6 +37,14 @@ struct FrameBuffers
 };
 struct State
 {
+    struct PrimitiveRange
+    {
+        uint32_t FirstVertex=0,VertexCapacity=0,FirstIndex=0,IndexCapacity=0;
+        uint64_t SourceKey=0;
+    };
+    std::unordered_map<uint32_t,PrimitiveRange> PrimitiveRanges;
+    std::vector<PrimitiveRange> FreePrimitiveRanges;
+    uint64_t LastGeometryUploadBytes=0;
     bool Enabled = true;
     bool Active = false;
     bool Failed = false;
@@ -198,10 +208,35 @@ bool CompatibleMode()
 void GPUDrivenRenderer::RegisterGeometry(uint32_t meshID, const StaticMeshData& mesh)
 {
     auto& state = Data();
-    if (meshID < state.CpuGeometry.size() && state.CpuGeometry[meshID].Ready) return;
-    if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.CpuVertices.size() != mesh.VertexCount || mesh.CpuIndices.size() != mesh.IndexCount ||
+    if (meshID < state.CpuGeometry.size() && state.CpuGeometry[meshID].Ready)
+    {
+        MeshletManager::Register(meshID,mesh.MeshletLODs[0],state.CpuGeometry[meshID].BaseVertex);
+        return;
+    }
+    // Procedural triangle lists supply synthesized CPU indices without a source index buffer.
+    if (!mesh.VertexBuffer || mesh.CpuVertices.size() != mesh.VertexCount || mesh.CpuIndices.size() != mesh.IndexCount ||
         !mesh.IndexCount || !mesh.VertexCount || mesh.IndexBufferView.Format != DXGI_FORMAT_R32_UINT) return;
     for (uint32_t index : mesh.CpuIndices) if (index >= mesh.VertexCount) return;
+    const auto address=mesh.VertexBuffer->GetGPUVirtualAddress();
+    if (auto existing=state.GeometryMeshIDs.find(address); existing!=state.GeometryMeshIDs.end())
+    {
+        for (auto previousID : existing->second)
+        {
+            const auto previous=state.CpuGeometry.at(previousID);
+            if (previous.Ready && previous.IndexCount==mesh.IndexCount &&
+                size_t(previous.BaseVertex)+mesh.VertexCount<=state.CpuVertices.size() &&
+                size_t(previous.StartIndex)+mesh.IndexCount<=state.CpuIndices.size() &&
+                std::equal(mesh.CpuIndices.begin(),mesh.CpuIndices.end(),state.CpuIndices.begin()+previous.StartIndex))
+            {
+                if (state.CpuGeometry.size()<=meshID) state.CpuGeometry.resize(size_t(meshID)+1);
+                state.CpuGeometry[meshID]=previous;
+                state.NewGeometry.push_back(meshID);
+                existing->second.push_back(meshID);
+                MeshletManager::Register(meshID,mesh.MeshletLODs[0],previous.BaseVertex);
+                return;
+            }
+        }
+    }
     const auto geometry = ReserveGpuDrivenGeometry(state.CpuVertices.size(), state.CpuIndices.size(), mesh.VertexCount, mesh.IndexCount);
     if (state.CpuGeometry.size() <= meshID) state.CpuGeometry.resize(size_t(meshID) + 1);
     for (uint32_t i = 0; i < mesh.VertexCount; ++i) state.NewVertices.push_back(static_cast<uint32_t>(state.CpuVertices.size()) + i);
@@ -214,10 +249,101 @@ void GPUDrivenRenderer::RegisterGeometry(uint32_t meshID, const StaticMeshData& 
     MeshletManager::Register(meshID, mesh.MeshletLODs[0], geometry.BaseVertex);
 }
 
-void GPUDrivenRenderer::RegisterLODGeometry(uint32_t meshID, uint32_t baseMeshID, const std::vector<uint32_t>& indices, const Meshlets::Asset* meshlets)
+void GPUDrivenRenderer::RegisterPrimitiveGeometry(uint32_t meshID, const StaticMeshData &mesh)
+{
+    auto &state = Data();
+    if (mesh.CpuVertices.empty() || mesh.CpuIndices.empty() || !mesh.VirtualGeometryLODs[0])
+        return;
+    const auto key = mesh.VirtualGeometryLODs[0]->Key;
+    auto found = state.PrimitiveRanges.find(meshID);
+    if (found != state.PrimitiveRanges.end() && found->second.SourceKey == key)
+    {
+        MeshletManager::Register(meshID, mesh.MeshletLODs[0], found->second.FirstVertex);
+        return;
+    }
+    State::PrimitiveRange range;
+    if (found != state.PrimitiveRanges.end())
+    {
+        range = found->second;
+        if (range.VertexCapacity < mesh.VertexCount || range.IndexCapacity < mesh.IndexCount)
+        {
+            state.FreePrimitiveRanges.push_back(range);
+            range = {};
+        }
+    }
+    if (!range.VertexCapacity)
+    {
+        auto free = std::find_if(state.FreePrimitiveRanges.begin(), state.FreePrimitiveRanges.end(),
+                                 [&](const auto &candidate)
+                                 {
+                                     return candidate.VertexCapacity >= mesh.VertexCount &&
+                                            candidate.IndexCapacity >= mesh.IndexCount;
+                                 });
+        if (free != state.FreePrimitiveRanges.end())
+        {
+            range = *free;
+            state.FreePrimitiveRanges.erase(free);
+        }
+        else
+        {
+            range.VertexCapacity = GpuDrivenCapacity(0, mesh.VertexCount);
+            range.IndexCapacity = GpuDrivenCapacity(0, mesh.IndexCount);
+            const auto reservation = ReserveGpuDrivenGeometry(
+                state.CpuVertices.size(), state.CpuIndices.size(), range.VertexCapacity, range.IndexCapacity);
+            range.FirstVertex = uint32_t(reservation.BaseVertex);
+            range.FirstIndex = reservation.StartIndex;
+            state.CpuVertices.resize(state.CpuVertices.size() + range.VertexCapacity);
+            state.CpuIndices.resize(state.CpuIndices.size() + range.IndexCapacity);
+        }
+    }
+    std::copy(mesh.CpuVertices.begin(), mesh.CpuVertices.end(),
+              state.CpuVertices.begin() + range.FirstVertex);
+    std::copy(mesh.CpuIndices.begin(), mesh.CpuIndices.end(), state.CpuIndices.begin() + range.FirstIndex);
+    for (uint32_t i = 0; i < mesh.VertexCount; ++i)
+        state.NewVertices.push_back(range.FirstVertex + i);
+    for (uint32_t i = 0; i < mesh.IndexCount; ++i)
+        state.NewIndices.push_back(range.FirstIndex + i);
+    if (state.CpuGeometry.size() <= meshID)
+        state.CpuGeometry.resize(size_t(meshID) + 1);
+    state.CpuGeometry[meshID] = {range.FirstIndex, mesh.IndexCount, int32_t(range.FirstVertex), 1};
+    state.NewGeometry.push_back(meshID);
+    range.SourceKey = key;
+    state.PrimitiveRanges[meshID] = range;
+    MeshletManager::Replace(meshID, mesh.MeshletLODs[0], range.FirstVertex);
+}
+void GPUDrivenRenderer::ReleasePrimitiveGeometry(uint32_t meshID)
+{
+    auto &state = Data();
+    const auto found = state.PrimitiveRanges.find(meshID);
+    if (found == state.PrimitiveRanges.end())
+        return;
+    state.FreePrimitiveRanges.push_back(found->second);
+    state.PrimitiveRanges.erase(found);
+    state.CpuGeometry.at(meshID) = {};
+    state.NewGeometry.push_back(meshID);
+    MeshletManager::Replace(meshID, {}, 0);
+}
+uint64_t GPUDrivenRenderer::GeometryArenaBytes()
+{
+    const auto &state = Data();
+    return uint64_t(state.CpuVertices.size()) * sizeof(StaticModelVertex) +
+           uint64_t(state.CpuIndices.size()) * 4;
+}
+uint64_t GPUDrivenRenderer::GeometryUploadBytes()
+{
+    return Data().LastGeometryUploadBytes;
+}
+void GPUDrivenRenderer::RegisterLODGeometry(uint32_t meshID, uint32_t baseMeshID,
+                                            const std::vector<uint32_t> &indices,
+                                            const Meshlets::Asset *meshlets)
 {
     auto& state = Data();
-    if (GeometryReady(meshID) || !GeometryReady(baseMeshID) || indices.empty()) return;
+    if (GeometryReady(meshID))
+    {
+        if (meshlets) MeshletManager::Register(meshID,*meshlets,state.CpuGeometry[meshID].BaseVertex);
+        return;
+    }
+    if (!GeometryReady(baseMeshID) || indices.empty()) return;
     const auto base = state.CpuGeometry[baseMeshID];
     const auto reservation = ReserveGpuDrivenGeometry(0, state.CpuIndices.size(), 0, static_cast<uint32_t>(indices.size()));
     if (state.CpuGeometry.size() <= meshID) state.CpuGeometry.resize(size_t(meshID) + 1);
@@ -234,11 +360,20 @@ void GPUDrivenRenderer::UpdateGeometry(const StaticMeshData& mesh)
     auto& state = Data();
     const auto found = state.GeometryMeshIDs.find(mesh.VertexBuffer->GetGPUVirtualAddress());
     if (found == state.GeometryMeshIDs.end()) return;
+    std::unordered_set<uint32_t> updatedVertices;
     for (uint32_t meshID : found->second)
     {
-        MeshletManager::Invalidate(meshID);
         const auto& geometry = state.CpuGeometry.at(meshID);
+        // Each registered LOD uses the same source vertices but its own leaf clusters.
+        const Meshlets::Asset* asset = &mesh.MeshletLODs[0];
+        for (uint32_t lod=1; lod<StaticMeshData::LodCount; ++lod)
+            if (geometry.IndexCount == mesh.CpuLodIndices[lod-1].size() &&
+                geometry.StartIndex + geometry.IndexCount <= state.CpuIndices.size() &&
+                std::equal(mesh.CpuLodIndices[lod-1].begin(),mesh.CpuLodIndices[lod-1].end(),
+                    state.CpuIndices.begin()+geometry.StartIndex)) { asset=&mesh.MeshletLODs[lod]; break; }
+        MeshletManager::Replace(meshID,*asset,geometry.BaseVertex);
         const size_t first = static_cast<size_t>(geometry.BaseVertex);
+        if (!updatedVertices.insert(static_cast<uint32_t>(first)).second) continue;
         if (first + mesh.CpuVertices.size() > state.CpuVertices.size())
             throw std::runtime_error("GPU driven geometry update exceeds registered range");
         std::copy(mesh.CpuVertices.begin(), mesh.CpuVertices.end(), state.CpuVertices.begin() + first);
@@ -248,18 +383,47 @@ void GPUDrivenRenderer::UpdateGeometry(const StaticMeshData& mesh)
 
 bool GPUDrivenRenderer::SupportsEntity(uint32_t entity)
 {
-    if (!ComponentManager::HasComponent<StaticModelComponent>(entity) ||
-        !ComponentManager::HasComponent<MaterialComponent>(entity) || VertexDeformation::IsRequested(entity)) return false;
-    if (ComponentManager::HasComponent<MeshComponent>(entity) && ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment) return false;
-    if (ComponentManager::HasComponent<NameComponent>(entity) && ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky") return false;
-    const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
-    if (material.ShaderClassMode != MaterialMode::Manual || material.ShaderClass != ShaderClass::PBR ||
-        material.IsTransparent || material.Alpha < 1.0f) return false;
+    const bool staticModel = ComponentManager::HasComponent<StaticModelComponent>(entity);
+    const bool primitive =
+        ComponentManager::HasComponent<MeshComponent>(entity) &&
+        ComponentManager::GetComponentUnchecked<MeshComponent>(entity).NaniteMesh != nullptr;
+    if ((!staticModel && !primitive) || ComponentManager::HasComponent<AnimationModelComponent>(entity) ||
+        !ComponentManager::HasComponent<MaterialComponent>(entity) || VertexDeformation::IsRequested(entity))
+        return false;
+    if (ComponentManager::HasComponent<MeshComponent>(entity) &&
+        ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
+        return false;
+    if (ComponentManager::HasComponent<NameComponent>(entity) &&
+        ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky")
+        return false;
+    const auto &material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+    const bool manualPbr =
+        material.ShaderClassMode == MaterialMode::Manual && material.ShaderClass == ShaderClass::PBR;
+    const bool automaticModel = staticModel && material.ShaderClassMode == MaterialMode::Auto;
+    if ((!manualPbr && !automaticModel) || material.IsTransparent || material.Alpha < 1.0f)
+        return false;
+    if (automaticModel)
+    {
+        // The GPU deferred shader does not yet reproduce the model normal-map path.
+        if (material.NormalMapID >= 0)
+            return false;
+        const auto *model = ModelManager::GetStaticModel(
+            ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId);
+        if (!model)
+            return false;
+        for (uint32_t mesh = 0; mesh < model->GetMeshCount(); ++mesh)
+        {
+            const auto part = model->GetMeshData(mesh).AppliedMaterialPartId;
+            if (part == float(ShaderClass::Transparent) || part == float(ShaderClass::Shadow))
+                return false;
+        }
+    }
     if (ComponentManager::HasComponent<ShaderComponent>(entity))
     {
-        const auto& shader = ComponentManager::GetComponentUnchecked<ShaderComponent>(entity);
+        const auto &shader = ComponentManager::GetComponentUnchecked<ShaderComponent>(entity);
         if ((!shader.VsPath.empty() && shader.VsPath != "shader/hlsl/build/modelshaderVS.cso") ||
-            (!shader.PsPath.empty() && shader.PsPath != "shader/hlsl/build/modelshaderPS.cso")) return false;
+            (!shader.PsPath.empty() && shader.PsPath != "shader/hlsl/build/modelshaderPS.cso"))
+            return false;
     }
     return true;
 }
@@ -271,13 +435,16 @@ bool GPUDrivenRenderer::GeometryReady(uint32_t meshID)
 
 bool GPUDrivenRenderer::HandlesEntity(uint32_t entity)
 {
-    if (!Data().Active) return false;
-    const auto& ids = GpuScene::GetEntityInstances(entity);
-    if (ids.empty()) return false;
+    if (!Data().Active)
+        return false;
+    const auto &ids = GpuScene::GetEntityInstances(entity);
+    if (ids.empty())
+        return false;
     for (auto id : ids)
     {
-        const auto* instance = GpuScene::GetInstance(id);
-        if (!instance || !(instance->Flags & OpaqueInstanceFlag)) return false;
+        const auto *instance = GpuScene::GetInstance(id);
+        if (!instance || !(instance->Flags & OpaqueInstanceFlag))
+            return false;
     }
     return true;
 }
@@ -321,6 +488,7 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
     const uint64_t vertexBytes = state.Vertices.Stage(device, frameIndex, state.CpuVertices.data(), static_cast<uint32_t>(state.CpuVertices.size()), state.NewVertices);
     const uint64_t indexBytes = state.Indices.Stage(device, frameIndex, state.CpuIndices.data(), static_cast<uint32_t>(state.CpuIndices.size()), state.NewIndices);
     const uint64_t meshBytes = state.Geometry.Stage(device, frameIndex, state.CpuGeometry.data(), meshes, state.NewGeometry);
+    state.LastGeometryUploadBytes=vertexBytes+indexBytes;
     state.NewVertices.clear(); state.NewIndices.clear(); state.NewGeometry.clear();
     const auto vertices = Import(graph, "Global Static Vertices", state.Vertices, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
     const auto indices = Import(graph, "Global Static Indices", state.Indices, D3D12_RESOURCE_STATE_INDEX_BUFFER);
@@ -558,6 +726,7 @@ void GPUDrivenRenderer::TrackEntityTextures(uint32_t entity, const std::vector<u
 
 void GPUDrivenRenderer::DrawDebug()
 {
+    VirtualGeometryDebug::DrawControls();
     MeshShaderRenderer::DrawDebug();
     GPUVisibility::DrawDebug();
     auto& state = Data();

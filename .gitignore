@@ -97,3 +97,5 @@ Save/jolt_assert.txt
 imgui.ini
 /External/DLSS/sdk/
 /External/NRD/sdk/
+*.meshlets
+*.vgmesh

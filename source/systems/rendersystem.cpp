@@ -21,6 +21,8 @@
 #include "frameconstants.h"
 #include "lightingresources.h"
 #include "renderconfiguration.h"
+#include "gpudriven/gpudrivenrenderer.h"
+#include "meshshader/meshshaderrenderer.h"
 
 
 	static const MaterialComponent& DefaultMaterial()
@@ -37,6 +39,13 @@
 
 	static bool ShouldCastShadow(EntityID entity)
 	{
+		// Environment meshes supply background radiance and must not occlude the sun.
+		if (ComponentManager::HasComponent<MeshComponent>(entity) &&
+		    ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
+		{
+		    return false;
+		}
+
 		if (IsSkyEntity(entity) || ComponentManager::HasComponent<LightComponent>(entity))
 		{
 			return false;
@@ -274,6 +283,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		{
 			if (Registry::HasComponent(entity, ComponentType::STATIC_MODEL) ||
 				Registry::HasComponent(entity, ComponentType::ANIMATION_MODEL)) continue;
+			if (MeshShaderRenderer::IsActive() && GPUDrivenRenderer::HandlesEntity(entity)) continue;
 			const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
 			draw(entity, mesh.VertexBufferView, mesh.VertexCount);
 		}
@@ -505,6 +515,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 	for (EntityID i : World::GetView<MeshComponent>())
 	{
+		if (!drawTransparent && drawDeferredOpaque && GPUDrivenRenderer::HandlesEntity(i)) continue;
 		if (Registry::HasComponent(i, ComponentType::STATIC_MODEL) ||
 			Registry::HasComponent(i, ComponentType::ANIMATION_MODEL))
 		{

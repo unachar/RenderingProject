@@ -70,6 +70,8 @@ void GpuSceneCulling::ExecuteCulling(ID3D12GraphicsCommandList *commands, ID3D12
         const auto &data = ComponentManager::GetComponentUnchecked<CameraComponent>(camera);
         XMStoreFloat4x4(&constants.ViewProjection,
                         XMLoadFloat4x4(&data.ViewMatrix) * XMLoadFloat4x4(&data.ProjectionMatrix));
+        if (GPUVisibility::GetSettings().FreezeCamera)
+            constants.ViewProjection=GPUVisibility::CullingViewProjection();
         constants.EnableFrustum = GPUVisibility::GetSettings().Frustum ? 1 : 0;
     }
     constants.Slots = slots;

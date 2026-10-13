@@ -621,6 +621,13 @@ namespace
 			return false;
 		}
 
+		// Environment backgrounds never block lights, regardless of their editable entity name.
+		if (ComponentManager::HasComponent<MeshComponent>(entity) &&
+			ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
+		{
+			return false;
+		}
+
 		bool renderable =
 			ComponentManager::HasComponent<MeshComponent>(entity) ||
 			ComponentManager::HasComponent<StaticModelComponent>(entity) ||

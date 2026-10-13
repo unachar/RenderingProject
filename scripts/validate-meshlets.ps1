@@ -1,6 +1,7 @@
-param([switch]$CpuOnly, [switch]$SkipBuild, [switch]$GpuValidation, [switch]$ForceFallback,
+param([switch]$CpuOnly, [switch]$BuildOnly, [switch]$SkipBuild, [switch]$Rebuild, [switch]$GpuValidation, [switch]$ForceFallback,
       [ValidateSet('Debug','Release')][string]$Configuration='Debug')
 $ErrorActionPreference='Stop'
+if($SkipBuild -and $Rebuild) { throw '-SkipBuild and -Rebuild cannot be combined.' }
 $workspace=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 New-Item -ItemType Directory -Force -Path (Join-Path $workspace 'build/meshlets') | Out-Null
 $vswhere=Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -16,11 +17,13 @@ try {
     if ($LASTEXITCODE) { throw 'Meshlet CPU tests failed.' }
     if ($CpuOnly) { return }
     if (-not $SkipBuild) {
-        $command='"{0}" -no_logo -arch=amd64 -host_arch=amd64 && MSBuild.exe DirectX12.sln /t:Build /p:Configuration={1} /p:Platform=x64 /m /v:quiet /clp:ErrorsOnly /nologo /fl "/flp:logfile=build\meshlets\build-{1}.log;verbosity=minimal"' -f $developerCommand,$Configuration
+        $buildTask=if($Rebuild) { 'Rebuild' } else { 'Build' }
+        $command='"{0}" -no_logo -arch=amd64 -host_arch=amd64 && MSBuild.exe DirectX12.sln /t:{2} /p:Configuration={1} /p:Platform=x64 /m /v:quiet /clp:ErrorsOnly /nologo /fl "/flp:logfile=build\meshlets\build-{1}.log;verbosity=minimal"' -f $developerCommand,$Configuration,$buildTask
         & $env:ComSpec /d /c $command
         if ($LASTEXITCODE) { throw 'Meshlet engine build failed.' }
     }
     if ($GpuValidation -and $Configuration -ne 'Debug') { throw 'GBV requires Debug.' }
+    if ($BuildOnly) { return }
     $names=@('DX12_MESHLET_STRESS_TEST','DX12_PHASE5_MESH_SHADER','DX12_PHASE5_FORCE_UNSUPPORTED','DX12_GPU_VISIBILITY_STRESS_TEST','DX12_GPU_DRIVEN_STRESS_TEST','DX12_GPU_BASED_VALIDATION','DX12_STARTUP_SMOKE_FRAMES','DX12_VALIDATION_MODE','DX12_FEATURE_SMOKE_TEST','DX12_DISABLE_DXR','DX12_DISABLE_DLSS')
     $saved=@{}
     foreach($name in $names) { $saved[$name]=[Environment]::GetEnvironmentVariable($name,'Process') }
@@ -39,7 +42,7 @@ try {
         $env:DX12_MESHLET_STRESS_TEST='1'; $env:DX12_PHASE5_MESH_SHADER='0'
         $env:DX12_GPU_VISIBILITY_STRESS_TEST='0'; $env:DX12_GPU_DRIVEN_STRESS_TEST='0'
         $env:DX12_GPU_BASED_VALIDATION=[int][bool]$GpuValidation
-        $env:DX12_STARTUP_SMOKE_FRAMES='112'; $env:DX12_VALIDATION_MODE='1'; $env:DX12_FEATURE_SMOKE_TEST='1'
+        $env:DX12_STARTUP_SMOKE_FRAMES='150'; $env:DX12_VALIDATION_MODE='1'; $env:DX12_FEATURE_SMOKE_TEST='1'
         $env:DX12_DISABLE_DXR='1'; $env:DX12_DISABLE_DLSS='1'
         $log=Join-Path $workspace 'init_log.txt'
         $offset=if(Test-Path -LiteralPath $log) { (Get-Item -LiteralPath $log).Length } else { 0 }

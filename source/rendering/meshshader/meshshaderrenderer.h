@@ -1,17 +1,20 @@
 #pragma once
 #include "rendergraph.h"
 #include "gpuscene/gpuscenebuffer.h"
+#include <array>
+#include <vector>
 namespace MeshShaderRenderer
 {
 struct Settings
 {
-    bool Enabled = false, Frustum = true, Cone = true, Occlusion = true, Clusters = true;
+    bool Enabled = true, Frustum = true, Cone = true, Occlusion = true, Clusters = true;
     bool Colors = false, DebugReadback = false;
     bool MeshletBounds = false, ClusterBounds = false, ConeAxes = false;
     float Bias = 0.001f;
     uint32_t MaxMeshlets = 2000000;
 };
 Settings &GetSettings();
+const std::vector<std::array<uint32_t,4>>& DebugRecords();
 void QuerySupport(ID3D12Device *device);
 bool Supported();
 bool IsActive();

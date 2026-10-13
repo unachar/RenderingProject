@@ -13,6 +13,7 @@
 #include <limits>
 #include <typeindex>
 #include <type_traits>
+#include <memory>
 
 enum class PostProcessType;
 
@@ -28,6 +29,8 @@ struct TransformComponent
 
 };
 
+struct StaticMeshData;
+
 struct MeshComponent
 {
 	void* MeshData = nullptr;
@@ -39,6 +42,7 @@ struct MeshComponent
 	XMFLOAT3 LocalBoundsExtents{};
 	bool HasLocalBounds = false;
 	bool IsEnvironment = false;
+	std::shared_ptr<StaticMeshData> NaniteMesh;
 };
 
 struct InputComponent

@@ -13,6 +13,8 @@
 #include "raytracing.h"
 #include "renderprofiler.h"
 #include "renderersettings.h"
+#include "gpudriven/gpudrivenrenderer.h"
+#include "meshshader/meshshaderrenderer.h"
 #include <filesystem>
 #include <fstream>
 
@@ -159,6 +161,14 @@ void GpuSceneValidation::BeforeFrame(uint64_t frame)
         return;
     }
     currentFrame = frame;
+    char cpuGeometry[8]{};
+    if (GetEnvironmentVariableA("DX12_GPU_SCENE_CPU_GEOMETRY", cpuGeometry, sizeof(cpuGeometry)) &&
+        atoi(cpuGeometry) != 0)
+    {
+        // Isolate scene bookkeeping from both GPU geometry drawing paths.
+        GPUDrivenRenderer::SetEnabled(false);
+        MeshShaderRenderer::GetSettings().Enabled = false;
+    }
     legacyCulling = frame == 81;
     residentDrawCulls = legacyDrawCulls = 0;
     if (frame == 60)

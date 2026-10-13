@@ -14,6 +14,7 @@
 #include <cctype>
 #include <DirectXCollision.h>
 #include <ImGuizmo.h>
+#include "virtualgeometry/virtualgeometrydebug.h"
 
 
 
@@ -52,6 +53,12 @@ void ImGuiManager::DrawSceneViewWindow()
 	const float lightToggleWidth = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("ライト可視化").x;
 	if (rowWidth + toolSpacing + lightToggleWidth <= toolbarWidth) ImGui::SameLine();
 	ImGui::Checkbox("ライト可視化", &m_ShowLightDebug);
+	if (ImGui::Button("Nanite / LOD")) ImGui::OpenPopup("NaniteDebugControls");
+	if (ImGui::BeginPopup("NaniteDebugControls"))
+	{
+		VirtualGeometryDebug::DrawControls();
+		ImGui::EndPopup();
+	}
 	ImGui::Separator();
 	const bool sceneFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 	if (sceneFocused && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() &&
@@ -92,6 +99,7 @@ void ImGuiManager::DrawSceneViewWindow()
 	D3D12_GPU_DESCRIPTOR_HANDLE handle = RenderTargets::GetEditorSceneSrvHandle();
 	ImGui::Image((ImTextureData*)handle.ptr, imageSize);
 	m_IsSceneViewHovered = ImGui::IsItemHovered();
+	VirtualGeometryDebug::DrawViewport(ImGui::GetWindowDrawList(),cursor,imageSize,m_SelectedEntity);
 	DrawTransformGizmo();
 	if (m_IsSceneViewHovered && fabsf(ImGui::GetIO().MouseWheel) > 0.001f)
 	{

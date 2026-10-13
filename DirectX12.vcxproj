@@ -1020,6 +1020,10 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClInclude Include="source\virtualgeometry\virtualgeometryasset.h" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometryruntime.h" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometrydebug.h" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometrydebug.cpp" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometryruntime.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClInclude Include="source\virtualgeometry\virtualgeometrybuilder.h" />
     <ClInclude Include="source\virtualgeometry\virtualgeometryconfig.h" />
     <ClInclude Include="source\virtualgeometry\virtualgeometryinternal.h" />

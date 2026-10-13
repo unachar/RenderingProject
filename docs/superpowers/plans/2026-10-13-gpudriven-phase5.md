@@ -10,6 +10,21 @@
 
 **Spec:** [承認済み設計](../../gpudriven-phase5-design.md)
 
+## 実行結果（2026-10-13）
+
+Nativeで実装。最終構成と検証証拠は [実装資料](../../gpudriven-phase5.md) と [検証台帳](../../gpudriven-phase5-progress.md) を参照する。以下は承認時の計画であり、ファイル分割やProbeの方式は実装時に調整した。
+
+| Task | 実施内容 |
+|---|---|
+| 1 | 機能検出・PSO・Indirect Mesh Dispatch・Unsupported Fallbackを実機検証。描画Probeは実際のMeshlet描画で代替し、常設しない |
+| 2 | Builder、Bounds/Cone、2階層Cluster、Import/Cache、CPU検証。Releaseは保存済みCacheを使用 |
+| 3 | Global Buffer、GPU Scene/LOD、PBR/GBuffer/Velocity、Traditional混在Fallbackを統合 |
+| 4 | GPU Cluster/Meshlet Cull、Compact、Dispatch Argument、RenderGraph/Frame寿命、Capacity Fallbackを実装 |
+| 5 | Debug UI・色・Bounds/Cone Preview・統計・GPU Pass計測を実装。手動UI操作とPixel Shader単独の時間計測は未検証 |
+| 6 | Stress Scene、画像/Velocity比較、性能比較、Phase 3/4回帰、独立レビューを実施。最終検証結果は台帳に記載 |
+
+Cluster候補生成とCluster Cullingは1 Compute Passへ統合。Cluster Coneは安全側に無効化。Mesh Shader Opaque時間はRaster/Pixel/Fallbackを含む。DLSS/FSR有効時の画質を含め、未検証項目を完了扱いしない。
+
 ## Global Constraints
 
 - Phase 1〜4の未コミット変更を維持する。無関係な変更を含めたCommitを行わない。

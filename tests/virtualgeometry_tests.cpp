@@ -263,10 +263,13 @@ namespace
     }
 }
 
+void TestVirtualGeometryRuntime();
+
 int main(int argc, char** argv)
 {
     try
     {
+        TestVirtualGeometryRuntime();
         TestBadGeometry();
         TestRoundTrip(MakeCube(), "vg_cube", false);
         auto asset = TestRoundTrip(MakeGrid(80), "vg_medium", true);

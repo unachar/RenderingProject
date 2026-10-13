@@ -8,6 +8,7 @@
 #include "toonoutlinebuilder.h"
 #include "visibility/visibilitytypes.h"
 #include "meshlets/meshletbuilder.h"
+#include "virtualgeometry/virtualgeometryruntime.h"
 
 struct StaticModelVertex
 {
@@ -49,6 +50,7 @@ struct StaticMeshData
 	bool DefaultToonOutlineEnabled = true;
 	vector<StaticModelVertex> CpuVertices{};
 	array<Meshlets::Asset, LodCount> MeshletLODs{};
+	array<std::shared_ptr<const VirtualGeometryRuntime::RuntimeAsset>, LodCount> VirtualGeometryLODs{};
 	vector<uint32_t> CpuIndices{}; // Exact optimized LOD0 upload data; never reconstructed by GPU readback.
 	array<vector<uint32_t>, LodCount - 1> CpuLodIndices{};
 	array<vector<StaticModelVertex>, kToonOutlineModeCount> CpuTeoVerticesByMode{};

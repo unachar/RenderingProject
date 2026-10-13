@@ -3,6 +3,9 @@
 #include "staticmodel.h"
 #include "graphicsdevice.h"
 #include "graphicslog.h"
+#include "gpuscene/gpuscene.h"
+#include "visibility/gpuvisibility.h"
+#include <unordered_set>
 #include <sstream>
 #include <numeric>
 #include <unordered_map>
@@ -13,11 +16,15 @@ namespace
 {
 struct State
 {
+    struct Entry { Meshlets::Asset Asset; uint32_t BaseVertex = 0; };
+    std::unordered_map<uint32_t, Entry> Entries;
     Meshlets::Asset Data;
     std::vector<Meshlets::Range> Ranges;
     std::unordered_map<uint32_t, Meshlets::Range> DisabledRanges;
     GpuSceneBuffer Meshlets, Vertices, Primitives, Bounds, Clusters, Range;
     bool Dirty = false;
+    bool Rebuild = false;
+    uint32_t PreviousActive = UINT32_MAX;
 };
 State &Data()
 {
@@ -25,34 +32,29 @@ State &Data()
     return state;
 }
 } // namespace
-void BuildImportedMesh(StaticMeshData &mesh, Meshlets::BuildConfig config)
+void BuildImportedMesh(StaticMeshData &mesh)
 {
     try
     {
-        std::vector<Meshlets::Position> positions;
-        positions.reserve(mesh.CpuVertices.size());
+        std::vector<VirtualGeometryVertex> vertices;
+        vertices.reserve(mesh.CpuVertices.size());
         for (const auto &v : mesh.CpuVertices)
-            positions.push_back({v.Position.x, v.Position.y, v.Position.z});
+            vertices.push_back({{v.Position.x,v.Position.y,v.Position.z},
+                {v.Normal.x,v.Normal.y,v.Normal.z}, {v.TexCoord.x,v.TexCoord.y},
+                {v.Diffuse.x,v.Diffuse.y,v.Diffuse.z,v.Diffuse.w}});
+        mesh.VirtualGeometryLODs = {};
+        mesh.MeshletLODs = {};
         for (uint32_t lod = 0; lod < StaticMeshData::LodCount; ++lod)
         {
             const auto &indices = lod ? mesh.CpuLodIndices[lod - 1] : mesh.CpuIndices;
             if (indices.empty())
                 continue;
-            const auto key = Meshlets::GeometryKey(positions, indices, config);
-            std::ostringstream name;
-            name << "asset/meshlet-cache/" << std::hex << key << ".meshlets";
-            auto &asset = mesh.MeshletLODs[lod];
-            if (!Meshlets::Load(name.str(), asset, key, positions))
+            auto asset = VirtualGeometryRuntime::Acquire(vertices, indices, 0, mesh.AppliedMaterialPartId);
+            mesh.VirtualGeometryLODs[lod] = asset;
+            if (asset->Error.empty()) mesh.MeshletLODs[lod] = asset->Meshlets;
+            else
             {
-#if defined(NDEBUG)
-                // Shipping loads prebuilt data; missing or invalid assets use the traditional path.
-                asset = {};
-                continue;
-#else
-                asset = Meshlets::Build(positions, indices, config);
-                if (!Meshlets::Save(name.str(), asset, key))
-                    WriteGraphicsLog("Meshlet asset save failed: %s\n", name.str().c_str());
-#endif
+                WriteGraphicsLog("Nanite import fallback (%s LOD%u): %s\n", mesh.MeshName.c_str(),lod,asset->Error.c_str());
             }
         }
     }
@@ -66,9 +68,13 @@ void Register(uint32_t meshID, const Meshlets::Asset &asset, uint32_t baseVertex
 {
     auto &state = Data();
     if (state.Ranges.size() <= meshID)
+    {
         state.Ranges.resize(size_t(meshID) + 1);
-    if (state.Ranges[meshID].MeshletCount || asset.Meshlets.empty())
+        state.Dirty = true; // Upload new zero ranges even when a legacy asset has no meshlets.
+    }
+    if (state.DisabledRanges.contains(meshID) || state.Ranges[meshID].MeshletCount || asset.Meshlets.empty())
         return;
+    state.Entries[meshID] = {asset, baseVertex};
     auto &data = state.Data;
     const uint64_t limits[] = {
         data.Meshlets.size() + asset.Meshlets.size(), data.Vertices.size() + asset.Vertices.size(),
@@ -103,6 +109,14 @@ void Register(uint32_t meshID, const Meshlets::Asset &asset, uint32_t baseVertex
     state.Ranges[meshID] = range;
     state.Dirty = true;
 }
+void Replace(uint32_t meshID, const Meshlets::Asset &asset, uint32_t baseVertex)
+{
+    auto &state = Data();
+    state.DisabledRanges.erase(meshID);
+    state.Entries[meshID] = {asset, baseVertex};
+    state.Rebuild = true;
+    state.Dirty = true;
+}
 void Invalidate(uint32_t meshID)
 {
     if (meshID < Data().Ranges.size())
@@ -119,15 +133,70 @@ void RestoreForValidation(uint32_t meshID)
     const auto found = state.DisabledRanges.find(meshID);
     if (found != state.DisabledRanges.end())
     {
-        state.Ranges.at(meshID) = found->second;
         state.DisabledRanges.erase(found);
+        state.Rebuild = true;
         state.Dirty = true;
     }
 }
 void Prepare(RenderGraph &graph, uint32_t meshes)
 {
     auto &state = Data();
-    state.Ranges.resize((std::max)(state.Ranges.size(), size_t(meshes)));
+    if (state.Dirty || state.PreviousActive != GpuScene::Statistics().ActiveInstances)
+    {
+        state.PreviousActive = GpuScene::Statistics().ActiveInstances;
+        std::unordered_set<uint32_t> used, groups;
+        for (uint32_t slot = 0; slot < GpuScene::Statistics().InstanceSlots; ++slot)
+        {
+            const auto *instance = GpuScene::GetInstance(slot);
+            if (!instance || !(instance->Flags & 1u))
+                continue;
+            used.insert(instance->MeshIndex);
+            groups.insert(instance->LODGroupIndex);
+        }
+        for (auto group : groups)
+            for (auto id : GPUVisibility::LODMeshes(group))
+                used.insert(id);
+        for (auto it = state.Entries.begin(); it != state.Entries.end();)
+        {
+            if (!used.contains(it->first))
+            {
+                state.DisabledRanges.erase(it->first);
+                it = state.Entries.erase(it);
+                state.Rebuild = true;
+            }
+            else
+                ++it;
+        }
+    }
+    if (state.Rebuild)
+    {
+        // Compact once per frame after all edits. Keep GPU buffers alive; their upload
+        // resources and resized allocations retain the existing frame/fence lifetime.
+        auto entries = std::move(state.Entries);
+        state.Data = {};
+        state.Ranges.assign(std::max(size_t(meshes), state.Ranges.size()), {});
+        std::vector<uint32_t> ids;
+        for (const auto &[id, entry] : entries)
+            ids.push_back(id);
+        std::sort(ids.begin(), ids.end());
+        for (auto id : ids)
+        {
+            const auto &entry = entries.at(id);
+            if (!state.DisabledRanges.contains(id))
+                Register(id, entry.Asset, entry.BaseVertex);
+        }
+        // Disabled assets retain source data for validation restore.
+        for (auto id : ids)
+            if (state.DisabledRanges.contains(id))
+                state.Entries[id] = std::move(entries.at(id));
+        state.Rebuild = false;
+        state.Dirty = true;
+    }
+    if (state.Ranges.size() < meshes)
+    {
+        state.Ranges.resize(meshes);
+        state.Dirty = true;
+    }
     const uint32_t frame = GraphicsDevice::GetFrameIndex();
     auto upload = [&](GpuSceneBuffer &buffer, const auto &values, const char *name) {
         using Element = typename std::decay_t<decltype(values)>::value_type;

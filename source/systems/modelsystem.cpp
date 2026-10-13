@@ -43,6 +43,13 @@
 
 	static bool ShouldCastShadow(EntityID entity)
 	{
+		// Environment meshes supply background radiance and must not occlude the sun.
+		if (ComponentManager::HasComponent<MeshComponent>(entity) &&
+		    ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
+		{
+		    return false;
+		}
+
 		if (IsSkyEntity(entity) || ComponentManager::HasComponent<LightComponent>(entity))
 		{
 			return false;
@@ -718,7 +725,8 @@ ID3D12PipelineState* lastPso = nullptr;
 		m_StaticDrawCalls.reserve(staticEntities.size());
 		for (EntityID i : staticEntities)
 		{
-			if (!drawTransparent && GPUDrivenRenderer::HandlesEntity(i)) continue;
+			const bool gpuBaseDrawn = !drawTransparent && GPUDrivenRenderer::HandlesEntity(i);
+			if (gpuBaseDrawn && !ShouldDrawToonOutline(i)) continue;
 			if (ComponentManager::HasComponent<MeshComponent>(i) &&
 				ComponentManager::GetComponentUnchecked<MeshComponent>(i).IsEnvironment &&
 				Atmosphere::GetParameters().Enabled && Atmosphere::GetParameters().PhysicalSky)
@@ -882,7 +890,8 @@ ID3D12PipelineState* lastPso = nullptr;
 			const XMMATRIX world = XMLoadFloat4x4(
 				&ComponentManager::GetComponentUnchecked<TransformComponent>(dc.EntityID).WorldMatrix);
 			const bool deforming = VertexDeformation::IsRequested(dc.EntityID);
-			const bool indirectBaseDrawn = !deforming && !useMeshShaders && m_IndirectDraws && m_IndirectDraws->ExecutePrimary(
+			const bool gpuBaseDrawn = !drawTransparent && GPUDrivenRenderer::HandlesEntity(dc.EntityID);
+			const bool indirectBaseDrawn = gpuBaseDrawn || (!deforming && !useMeshShaders && m_IndirectDraws && m_IndirectDraws->ExecutePrimary(
 				pCommandList,
 				dc.model,
 				dc.EntityID,
@@ -891,7 +900,7 @@ ID3D12PipelineState* lastPso = nullptr;
 				dc.srvIndex,
 				heapStart,
 				cbvIncrement,
-				dc.pso);
+				dc.pso));
 
 			for (UINT m = 0; m < dc.model->GetMeshCount(); m++)
 			{
@@ -919,7 +928,7 @@ ID3D12PipelineState* lastPso = nullptr;
 				geometry.ElementCount = meshData.IndexCount;
 				XMFLOAT3 localCenter = dc.model->GetAabbCenter(), localExtents = dc.model->GetAabbExtents();
 				VertexDeformation::TryGetLocalBounds(dc.EntityID, localCenter, localExtents);
-				const bool meshShaderDrawn = useMeshShaders && MeshShaderPipeline::Draw(
+				const bool meshShaderDrawn = !gpuBaseDrawn && useMeshShaders && MeshShaderPipeline::Draw(
 					pCommandList, geometry, localCenter, localExtents);
 
 				if (!meshShaderDrawn && !indirectBaseDrawn && !occlusionPhaseTwo)

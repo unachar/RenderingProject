@@ -1,11 +1,9 @@
 #pragma once
 #include "entitybase.h"
 #include "game.h"
+// The physical atmosphere supplies the startup sky. Legacy environment meshes may still be loaded explicitly.
 class Sky : public EntityBase
 {
-private:
-	inline static const EntityRegistration<Sky> registration;
-
 public:
 	void Create() override;
 };

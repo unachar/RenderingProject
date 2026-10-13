@@ -2,6 +2,10 @@
 #include "primitivegeometry.h"
 #include "graphicsdevice.h"
 #include "componentmanager.h"
+#include "staticmodel.h"
+#include "meshlets/meshletmanager.h"
+#include "gpudriven/gpudrivenrenderer.h"
+#include <numeric>
 
 namespace
 {
@@ -450,10 +454,14 @@ bool PrimitiveGeometry::UploadVertices(EntityID entity, const std::vector<Vertex
         return false;
     }
     const UINT byteSize = static_cast<UINT>(vertices.size() * sizeof(Vertex));
+    auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
     const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
     const auto description = CD3DX12_RESOURCE_DESC::Buffer(byteSize);
     ComPtr<ID3D12Resource> buffer;
-    if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+    const bool reuse = mesh.NaniteMesh && mesh.NaniteMesh.use_count()==1 &&
+        mesh.VertexBuffer && mesh.VertexCount==vertices.size() && GraphicsDevice::WaitForGpuIdle();
+    if (reuse) buffer=mesh.VertexBuffer;
+    else if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&buffer))))
     {
         return false;
@@ -467,13 +475,32 @@ bool PrimitiveGeometry::UploadVertices(EntityID entity, const std::vector<Vertex
     memcpy(mapped, vertices.data(), byteSize);
     buffer->Unmap(0, nullptr);
     buffer->SetName(L"Primitive or Procedural Mesh");
-    auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
     mesh.VertexBuffer = std::move(buffer);
     mesh.VertexBufferView = { mesh.VertexBuffer->GetGPUVirtualAddress(), byteSize, sizeof(Vertex) };
     mesh.VertexCount = static_cast<UINT>(vertices.size());
     mesh.GeometryHash = HashGeometry(vertices.data(), byteSize);
     CalculateGeometryBounds(vertices, mesh.LocalBoundsCenter, mesh.LocalBoundsExtents);
     mesh.HasLocalBounds = true;
+    if (vertices.size()%3==0)
+    {
+        auto source = reuse ? mesh.NaniteMesh : std::make_shared<StaticMeshData>();
+        source->VertexBuffer=mesh.VertexBuffer;
+        source->VertexBufferView=mesh.VertexBufferView;
+        source->VertexCount=mesh.VertexCount;
+        source->IndexCount=mesh.VertexCount;
+        source->IndexBufferView.Format=DXGI_FORMAT_R32_UINT;
+        source->MeshName="Procedural/Primitive mesh";
+        source->AppliedMaterialPartId=vertices.front().Color.w;
+        source->CpuVertices.clear();
+        source->CpuVertices.reserve(vertices.size());
+        for (const auto& vertex : vertices)
+            source->CpuVertices.push_back({vertex.Pos,vertex.Normal,vertex.Tex,vertex.Color});
+        source->CpuIndices.resize(vertices.size());
+        std::iota(source->CpuIndices.begin(),source->CpuIndices.end(),0u);
+        MeshletManager::BuildImportedMesh(*source);
+        mesh.NaniteMesh=std::move(source);
+    }
+    else mesh.NaniteMesh.reset();
     GpuSceneChanges::Notify(entity, GpuSceneDirtyFlags::Mesh | GpuSceneDirtyFlags::Bounds);
     return true;
 }

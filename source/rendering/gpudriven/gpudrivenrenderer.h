@@ -12,6 +12,10 @@ class GPUDrivenRenderer
 {
 public:
     static void RegisterGeometry(uint32_t meshID, const StaticMeshData& mesh);
+    static void RegisterPrimitiveGeometry(uint32_t meshID, const StaticMeshData& mesh);
+    static void ReleasePrimitiveGeometry(uint32_t meshID);
+    static uint64_t GeometryArenaBytes();
+    static uint64_t GeometryUploadBytes();
     static void RegisterLODGeometry(uint32_t meshID, uint32_t baseMeshID, const std::vector<uint32_t>& indices, const Meshlets::Asset* meshlets = nullptr);
     static void UpdateGeometry(const StaticMeshData& mesh);
     static bool GeometryReady(uint32_t meshID);

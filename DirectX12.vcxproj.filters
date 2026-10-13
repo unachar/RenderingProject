@@ -1075,4 +1075,10 @@
     <FxCompile Include="shader\hlsl\GPUDrivenOpaqueVS.hlsl" />
     <FxCompile Include="shader\hlsl\GPUDrivenOpaquePS.hlsl" />
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryruntime.h" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometrydebug.h" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometryruntime.cpp" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometrydebug.cpp" />
+  </ItemGroup>
 </Project>

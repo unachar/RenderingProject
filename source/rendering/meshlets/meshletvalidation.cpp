@@ -18,6 +18,9 @@
 #include "modelmanager.h"
 #include "renderprofiler.h"
 #include "world.h"
+#include "proceduralscene.h"
+#include "virtualgeometry/virtualgeometrydebug.h"
+#include "virtualgeometry/virtualgeometryruntime.h"
 #include <fstream>
 #include <filesystem>
 
@@ -35,6 +38,15 @@ std::ofstream measurements;
 double traditionalOpaque = 0, meshOpaque = 0, meshCompute = 0;
 double traditionalFrame = 0, meshFrame = 0, traditionalSubmission = 0, meshSubmission = 0;
 uint32_t traditionalSamples = 0, meshSamples = 0;
+EntityID terrain = g_kINVALID_ENTITY;
+EntityID terrainClone = g_kINVALID_ENTITY;
+uint64_t sharedTerrainHash = 0, sharedTerrainAddress = 0;
+uint32_t sharedTerrainMesh = UINT32_MAX;
+Procedural::TerrainSettings terrainSettings;
+uint64_t terrainVertexAddress = 0;
+XMFLOAT4X4 frozenCamera{};
+uint64_t repeatedEditArena = 0;
+uint32_t repeatedEditMeshID = UINT32_MAX, repeatedEditMeshSlots = 0;
 void Check(bool success, const char *name)
 {
     WriteGraphicsLog("Meshlet validation: %s %s\n", success ? "PASS" : "FAIL", name);
@@ -147,9 +159,17 @@ void Capture(bool compare, bool compareVelocity = true)
         reference = std::move(output);
         return;
     }
-    uint64_t changed = 0, total = 0;
+    uint64_t changed = 0, total = 0, paddingChanged = 0;
     for (size_t i = 0; i < output.size(); ++i)
     {
+        if (i >= reference.size() || output[i].Width != reference[i].Width ||
+            output[i].Height != reference[i].Height || output[i].Format != reference[i].Format ||
+            output[i].RowPitch != reference[i].RowPitch ||
+            output[i].Bytes.size() != reference[i].Bytes.size())
+        {
+            Check(false, "matching GBuffer dimensions and format");
+            return;
+        }
         if (i == 5)
         {
             if (!compareVelocity)
@@ -178,13 +198,30 @@ void Capture(bool compare, bool compareVelocity = true)
             Check(false, "matching GBuffer dimensions");
             return;
         }
-        for (size_t b = 0; b < output[i].Bytes.size(); ++b)
+        const auto description = RenderTargets::GetGBufferResource(static_cast<GBufferType>(i))->GetDesc();
+        UINT64 rowBytes = 0;
+        GraphicsDevice::GetDevice()->GetCopyableFootprints(&description, 0, 1, 0, nullptr, nullptr,
+                                                          &rowBytes, nullptr);
+        uint64_t targetChanged = 0;
+        for (uint32_t y = 0; y < output[i].Height; ++y)
         {
-            changed += std::abs(int(output[i].Bytes[b]) - int(reference[i].Bytes[b])) > 1;
-            ++total;
+            const size_t row = size_t(y) * output[i].RowPitch;
+            // CopyTextureRegion does not define row padding. Compare only actual texel bytes.
+            for (size_t b = 0; b < rowBytes; ++b)
+            {
+                targetChanged += std::abs(int(output[i].Bytes[row + b]) -
+                                          int(reference[i].Bytes[row + b])) > 1;
+                ++total;
+            }
+            const size_t end = (std::min)(row + output[i].RowPitch, output[i].Bytes.size());
+            for (size_t b = row + size_t(rowBytes); b < end; ++b)
+                paddingChanged += std::abs(int(output[i].Bytes[b]) - int(reference[i].Bytes[b])) > 1;
         }
+        changed += targetChanged;
+        WriteGraphicsLog("Meshlet image target=%zu changed texel bytes=%llu\n", i, targetChanged);
     }
-    WriteGraphicsLog("Meshlet image comparison changed=%llu total=%llu\n", changed, total);
+    WriteGraphicsLog("Meshlet image comparison changed=%llu total=%llu ignoredPaddingChanges=%llu\n",
+                     changed, total, paddingChanged);
     Check(changed <= total / 10000, "Traditional/Mesh Shader GBuffer agreement");
 }
 std::array<uint32_t, 16> Stats()
@@ -403,6 +440,20 @@ void BeforeFrame(uint64_t frame)
             MeshletManager::Invalidate(disabledMesh);
         }
     }
+    if (frame == 82)
+    {
+        Grid("build/meshlets/legacy.obj", 8);
+        int legacy = ModelManager::LoadStaticModel("build/meshlets/legacy.obj", false);
+        auto *asset = ModelManager::GetStaticModel(legacy);
+        Check(asset && asset->GetMeshCount() == 1, "import legacy asset during rendering");
+        if (asset)
+            for (uint32_t i = 0; i < asset->GetMeshCount(); ++i)
+                // Simulate an imported asset predating meshlet metadata before its first registration.
+                const_cast<StaticMeshData &>(asset->GetMeshData(i)).MeshletLODs = {};
+        Clear();
+        Grow(1, legacy);
+        options.Enabled = false;
+    }
     if (frame == 84)
     {
         Clear();
@@ -463,9 +514,246 @@ void BeforeFrame(uint64_t frame)
         options.Cone = false;
         options.Clusters = true;
     }
+    if (frame >= 112)
+    {
+        options.Enabled = true;
+        options.Frustum = false;
+        options.Cone = false;
+        options.Occlusion = false;
+        options.Clusters = false;
+        GPUVisibility::GetSettings().Occlusion = false;
+        if (frame == 112)
+        {
+            Clear();
+            terrainSettings.Resolution=16;
+            terrainSettings.Size=8;
+            terrainSettings.Height=1;
+            terrainSettings.BaseHeight=0;
+            terrain=ProceduralScene::GenerateTerrain(terrainSettings);
+            Check(Registry::IsAlive(terrain),"generate procedural Nanite terrain");
+            if (Registry::IsAlive(terrain))
+            {
+                fixtures.push_back(terrain);
+                const auto& mesh=Entity(terrain).Get<MeshComponent>();
+                terrainVertexAddress=mesh.VertexBufferView.BufferLocation;
+                Check(mesh.NaniteMesh && mesh.NaniteMesh->VirtualGeometryLODs[0] &&
+                    mesh.NaniteMesh->VirtualGeometryLODs[0]->Error.empty(),"terrain automatically builds VirtualGeometry");
+            }
+        }
+        if (frame < 120)
+        {
+            transform.Position={0,8,-12}; camera.Target={0,0,0};
+            GPUDrivenRenderer::SetEnabled(frame!=112 && frame!=113 && frame!=116 && frame!=117);
+        }
+        if (frame == 116 && Registry::IsAlive(terrain))
+        {
+            terrainSettings.Height=2;
+            terrainSettings.Noise.Seed+=17;
+            Check(ProceduralScene::GenerateTerrain(terrainSettings,terrain)==terrain,"edit terrain and rebuild Nanite");
+            Check(Entity(terrain).Get<MeshComponent>().VertexBufferView.BufferLocation==terrainVertexAddress,
+                "same-resolution terrain edit reuses vertex buffer");
+        }
+        if (frame == 120)
+        {
+            Clear(); Grow(1,model);
+            auto e=Entity(fixtures[0]); e.Add<LODComponent>();
+            auto& lod=e.Get<LODComponent>(); lod.UseLOD=true; lod.UseAssetSettings=false;
+            GpuSceneChanges::Notify(fixtures[0],GpuSceneDirtyFlags::All);
+        }
+        if (frame>=120 && frame<124)
+        {
+            GPUVisibility::GetSettings().LOD=true;
+            GPUVisibility::GetSettings().ForceLOD=2;
+            GPUVisibility::GetSettings().DebugMode=2;
+            options.Enabled=frame>=122;
+        }
+        if (frame>=124) GPUVisibility::GetSettings().DebugMode=0;
+        if (frame == 124) GPUVisibility::GetSettings().FreezeCamera=true;
+        if (frame>=125 && frame<=127)
+        {
+            transform.Position={20,0,-12}; camera.Target={20,0,0};
+            if (frame==126) { transform.Position={0,0,-12}; camera.Target={0,0,0}; }
+            options.MeshletBounds=true; options.ClusterBounds=true; options.ConeAxes=true;
+        }
+        if (frame == 128)
+        {
+            GPUVisibility::GetSettings().FreezeCamera=false;
+            options.MeshletBounds=false; options.ClusterBounds=false; options.ConeAxes=false;
+        }
+        if (frame == 130)
+        {
+            const auto instance=GpuScene::GetInstance(GpuScene::GetEntityInstance(fixtures[0]));
+            auto* resource=ModelManager::GetStaticModel(model);
+            Check(instance && resource,"material override fixture available");
+            if (resource) Check(resource->ApplyMeshShadingOverridePartIds(GraphicsDevice::GetDevice(),{3}),"material override rebuilds Nanite");
+        }
+        if (frame == 133)
+        {
+            Clear();
+            terrainSettings.Resolution=32;
+            terrain=ProceduralScene::GenerateTerrain(terrainSettings);
+            if (Registry::IsAlive(terrain)) fixtures.push_back(terrain);
+        }
+        if (frame>=134 && frame<=138 && Registry::IsAlive(terrain))
+        {
+            terrainSettings.Resolution=frame%2 ? 16 : 32;
+            terrainSettings.Noise.Seed+=1;
+            Check(ProceduralScene::GenerateTerrain(terrainSettings,terrain)==terrain,"repeat terrain resolution and bounds edit");
+        }
+        if (frame == 139 && Registry::IsAlive(terrain))
+        {
+            Entity clone = World::CreateEntity();
+            clone.Add<TransformComponent>().Add<MeshComponent>().Add<MaterialComponent>()
+                .Add<ProceduralTerrainComponent>();
+            clone.Get<TransformComponent>() = Entity(terrain).Get<TransformComponent>();
+            clone.Get<MeshComponent>() = Entity(terrain).Get<MeshComponent>();
+            clone.Get<MaterialComponent>() = Entity(terrain).Get<MaterialComponent>();
+            clone.Get<ProceduralTerrainComponent>() = Entity(terrain).Get<ProceduralTerrainComponent>();
+            clone.Get<TransformComponent>().Position.x += 2;
+            clone.Get<TransformComponent>().IsDirty = true;
+            terrainClone = clone.GetID();
+            fixtures.push_back(terrainClone);
+            const auto& source = Entity(terrain).Get<MeshComponent>();
+            sharedTerrainHash = source.GeometryHash;
+            sharedTerrainAddress = source.VertexBufferView.BufferLocation;
+        }
+        if (frame == 140 && Registry::IsAlive(terrainClone))
+        {
+            auto settings = terrainSettings;
+            settings.Resolution = 16;
+            settings.Noise.Seed += 123;
+            Check(ProceduralScene::GenerateTerrain(settings, terrainClone) == terrainClone,
+                "edit cloned procedural terrain");
+        }
+        if (frame == 141 && Registry::IsAlive(terrain))
+            World::DestroyEntity(Entity(terrain));
+        if (frame == 144)
+        {
+            Clear();
+            Grow(1, cube);
+            auto& material = Entity(fixtures[0]).Get<MaterialComponent>();
+            material.ShaderClassMode = MaterialMode::Auto;
+            material.UseTexture = true;
+            transform.Position = {0, 0, -8};
+            camera.Target = {0, 0, 0};
+        }
+        if (frame >= 144)
+        {
+            transform.Position = {0, 0, -8};
+            camera.Target = {0, 0, 0};
+            GPUDrivenRenderer::SetEnabled(frame >= 146);
+        }
+        if (frame == 148)
+        {
+            auto* imported = ModelManager::GetStaticModel(cube);
+            Check(imported && imported->ApplyMeshShadingOverridePartIds(GraphicsDevice::GetDevice(), {0}),
+                "set Auto imported model to a forward-only material part");
+            GpuSceneChanges::Notify(fixtures[0], GpuSceneDirtyFlags::Mesh | GpuSceneDirtyFlags::Material);
+        }
+    }
 }
 void AfterFrame(uint64_t frame)
 {
+    if (frame==113 || frame==117 || frame==121) Capture(false);
+    if (frame==115 || frame==119 || frame==123) Capture(true);
+    if (frame==115 || frame==119)
+    {
+        Check(GPUDrivenRenderer::HandlesEntity(terrain),"procedural terrain uses GPU drawing");
+        const auto stats=Stats();
+        Check(stats[1]>0 && stats[8]==512,"procedural leaf clusters execute all source triangles");
+    }
+    if (frame==123)
+    {
+        const uint32_t slot=GpuScene::GetEntityInstance(fixtures[0]);
+        std::vector<uint8_t> bytes;
+        const bool read=RenderCapture::ReadBuffer(GPUVisibility::ResultBuffer(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,uint64_t(slot+1)*16,bytes);
+        Visibility::VisibleInstanceData result{};
+        if (read) std::memcpy(&result,bytes.data()+size_t(slot)*16,sizeof(result));
+        Check(read && result.SelectedLOD==2,"LOD View uses actual forced GPU LOD");
+    }
+    if (frame==124) frozenCamera=GPUVisibility::CullingViewProjection();
+    if (frame==126)
+    {
+        const auto camera=GPUVisibility::CullingViewProjection();
+        Check(std::memcmp(&camera,&frozenCamera,sizeof(camera))==0 && !GPUVisibility::HistoryValid(),"frozen culling camera and conservative Hi-Z disable");
+        Check(!MeshShaderRenderer::DebugRecords().empty(),"viewport culling records read back on demand");
+        ImDrawList overlay(ImGui::GetDrawListSharedData());
+        overlay._ResetForNewFrame();
+        overlay.PushTexture(ImGui::GetIO().Fonts->TexRef);
+        VirtualGeometryDebug::DrawViewport(&overlay,ImVec2(0,0),ImVec2(640,360),fixtures[0]);
+        overlay.PopTexture();
+        Check(overlay.VtxBuffer.Size>400,"Nanite viewport bounds generate overlay geometry");
+    }
+    if (frame==129)
+        Check(MeshShaderRenderer::DebugRecords().empty(),"debug off clears sample and stops readback");
+    if (frame==132)
+    {
+        const auto* resource=ModelManager::GetStaticModel(model);
+        const auto& asset=resource->GetMeshData(0).VirtualGeometryLODs[0];
+        Check(asset && asset->Error.empty() && asset->Hierarchy.SourceMaterialPartId==3,"material edits retain drawable VirtualGeometry");
+    }
+    if (frame==133)
+    {
+        const auto* instance=GpuScene::GetInstance(GpuScene::GetEntityInstance(terrain));
+        repeatedEditMeshID=instance ? instance->MeshIndex : UINT32_MAX;
+        repeatedEditArena=GPUDrivenRenderer::GeometryArenaBytes();
+        repeatedEditMeshSlots=GpuScene::Statistics().Meshes;
+    }
+    if (frame>=134 && frame<=138)
+    {
+        const auto* instance=GpuScene::GetInstance(GpuScene::GetEntityInstance(terrain));
+        Check(instance && instance->MeshIndex==repeatedEditMeshID && GpuScene::Statistics().Meshes==repeatedEditMeshSlots,
+            "repeated terrain edits keep stable mesh ID and table size");
+        Check(GPUDrivenRenderer::GeometryArenaBytes()==repeatedEditArena,"repeated terrain edits reuse reserved GPU geometry arena");
+        const auto& mesh=Entity(terrain).Get<MeshComponent>();
+        Check(GPUDrivenRenderer::GeometryUploadBytes()<=uint64_t(mesh.VertexCount)*52,
+            "terrain edit uploads one source geometry without historical aliases");
+    }
+    if (frame == 139)
+    {
+        const auto* original = GpuScene::GetInstance(GpuScene::GetEntityInstance(terrain));
+        const auto* clone = GpuScene::GetInstance(GpuScene::GetEntityInstance(terrainClone));
+        Check(original && clone && original->MeshIndex == clone->MeshIndex,
+            "cloned terrain shares one GPU mesh registration");
+        if (original) sharedTerrainMesh = original->MeshIndex;
+    }
+    if (frame == 140)
+    {
+        const auto& original = Entity(terrain).Get<MeshComponent>();
+        const auto& cloneMesh = Entity(terrainClone).Get<MeshComponent>();
+        const auto* clone = GpuScene::GetInstance(GpuScene::GetEntityInstance(terrainClone));
+        Check(original.GeometryHash == sharedTerrainHash &&
+            original.VertexBufferView.BufferLocation == sharedTerrainAddress &&
+            original.NaniteMesh != cloneMesh.NaniteMesh &&
+            cloneMesh.VertexBufferView.BufferLocation != sharedTerrainAddress &&
+            clone && clone->MeshIndex != sharedTerrainMesh,
+            "editing a shared terrain separates source and GPU mesh without changing original");
+        Check(GPUDrivenRenderer::HandlesEntity(terrain) && GPUDrivenRenderer::HandlesEntity(terrainClone),
+            "original and edited clone both remain GPU drawable");
+    }
+    if (frame == 142)
+    {
+        Check(GPUDrivenRenderer::HandlesEntity(terrainClone) && Stats()[8] == 512,
+            "edited terrain clone remains drawable after original deletion");
+    }
+    if (frame == 145) Capture(false);
+    if (frame == 147)
+    {
+        Check(GPUDrivenRenderer::HandlesEntity(fixtures[0]),
+            "default Auto imported model automatically uses GPU drawing");
+        Check(!GpuScene::CpuOpaqueStaticEntities().empty(),
+            "Auto imported model retains traditional outline pass");
+        Capture(true);
+        auto& material = Entity(fixtures[0]).Get<MaterialComponent>();
+        const auto originalNormalMap = material.NormalMapID;
+        material.NormalMapID = 0;
+        Check(!GPUDrivenRenderer::SupportsEntity(fixtures[0]),
+            "Auto normal-mapped models retain traditional rendering");
+        material.NormalMapID = originalNormalMap;
+    }
+    if (frame == 149)
+        Check(!GPUDrivenRenderer::SupportsEntity(fixtures[0]) && !GPUDrivenRenderer::HandlesEntity(fixtures[0]),
+            "Auto forward-only material parts retain traditional rendering");
     if (frame == 74 || frame == 75)
     {
         RenderCapture::TextureData velocity;
@@ -510,10 +798,11 @@ void AfterFrame(uint64_t frame)
         Capture(true);
     if (frame == 73)
         Capture(true, false); // Reference frame applies scale change; motion histories differ.
-    if (frame == 85 || frame == 88 || frame == 91 || frame == 100)
+    if (frame == 82 || frame == 85 || frame == 88 || frame == 91 || frame == 100)
         Capture(false);
-    if (frame == 86 || frame == 89 || frame == 90 || frame == 92 || frame == 108)
-        Capture(true);
+    if (frame == 83 || frame == 86 || frame == 89 || frame == 90 || frame == 92 || frame == 108)
+        // Frame 91 changes the camera; compare opaque fallback without its motion history.
+        Capture(true, frame != 92);
     if (frame == 4 || frame == 7 || frame == 10 || frame == 16 || frame == 24 || frame == 30 || frame == 34)
     {
         Capture(true, frame != 34);
@@ -561,6 +850,21 @@ void AfterFrame(uint64_t frame)
         }
         if (frame == 81)
             Check(stats[1] == 0, "missing meshlet asset draws with traditional fallback");
+        if (frame == 83)
+        {
+            const auto *instance = GpuScene::GetInstance(GpuScene::GetEntityInstance(fixtures[0]));
+            std::vector<uint8_t> bytes;
+            bool read = instance && RenderCapture::ReadBuffer(
+                                        MeshletManager::RangeBuffer().Resource(),
+                                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                                        uint64_t(instance->MeshIndex + 1) * sizeof(Meshlets::Range), bytes);
+            Meshlets::Range range{};
+            if (read)
+                std::memcpy(&range, bytes.data() + size_t(instance->MeshIndex) * sizeof(range),
+                            sizeof(range));
+            Check(read && range.MeshletCount == 0 && range.ClusterCount == 0 && stats[1] == 0,
+                  "new legacy asset uploads zero GPU range and draws fallback");
+        }
         if (frame == 90)
             Check(stats[5] > 0, "sphere cone culling removes back-facing meshlets");
         if (frame == 92)
@@ -577,10 +881,13 @@ void AfterFrame(uint64_t frame)
     }
     if ((frame >= 100 && frame <= 103) || (frame >= 108 && frame <= 111))
     {
-        if (frame <= 103) {
+        if (frame <= 103)
+        {
             traditionalFrame += RenderProfiler::GetLatest().GpuRenderMs;
             traditionalSubmission += GPUDrivenRenderer::SubmissionMilliseconds();
-        } else {
+        }
+        else
+        {
             meshFrame += RenderProfiler::GetLatest().GpuRenderMs;
             meshSubmission += GPUDrivenRenderer::SubmissionMilliseconds();
         }
@@ -606,17 +913,18 @@ void AfterFrame(uint64_t frame)
 bool Finish()
 {
     GraphicsDevice::WaitForGpuIdle();
-    Check(frames >= 112, "complete meshlet sequence");
+    Check(frames >= 150, "complete meshlet sequence");
     WriteGraphicsLog("Meshlet performance samples traditional=%u mesh=%u opaqueTraditionalMs=%.5f "
                      "opaqueMeshMs=%.5f meshComputeMs=%.5f\n",
                      traditionalSamples, meshSamples,
                      traditionalSamples ? traditionalOpaque / traditionalSamples : 0,
                      meshSamples ? meshOpaque / meshSamples : 0, meshSamples ? meshCompute / meshSamples : 0);
-    WriteGraphicsLog("Meshlet performance totalGPU traditionalMs=%.5f meshMs=%.5f CPU submission traditionalMs=%.5f meshMs=%.5f\n",
-        traditionalSamples ? traditionalFrame / traditionalSamples : 0,
-        meshSamples ? meshFrame / meshSamples : 0,
-        traditionalSamples ? traditionalSubmission / traditionalSamples : 0,
-        meshSamples ? meshSubmission / meshSamples : 0);
+    WriteGraphicsLog("Meshlet performance totalGPU traditionalMs=%.5f meshMs=%.5f CPU submission "
+                     "traditionalMs=%.5f meshMs=%.5f\n",
+                     traditionalSamples ? traditionalFrame / traditionalSamples : 0,
+                     meshSamples ? meshFrame / meshSamples : 0,
+                     traditionalSamples ? traditionalSubmission / traditionalSamples : 0,
+                     meshSamples ? meshSubmission / meshSamples : 0);
     Check(RenderCapture::ReportGraphicsErrors() == 0, "final D3D12 errors");
     measurements.close();
     WriteGraphicsLog("Meshlet validation failures = %u\n", failures);

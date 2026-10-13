@@ -59,6 +59,7 @@ public:
 	static void ResizeScene(UINT width, UINT height);
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetSceneSrvHandle() { return GetRenderTargetSrvHandle(RenderTargetType::Scene); }
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetEditorSceneSrvHandle() { return GetRenderTargetSrvHandle(RenderTargetType::EditorScene); }
+	static ID3D12Resource* GetSceneResource() { return GetRenderTarget(RenderTargetType::Scene).Get(); }
 	static ID3D12Resource* GetEditorSceneResource() { return GetRenderTarget(RenderTargetType::EditorScene).Get(); }
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetGBufferSrvHandle(GBufferType type) { return m_GBufferSrvHandles[static_cast<UINT>(type)]; }
 	static ID3D12Resource* GetGBufferResource(GBufferType type) { return m_GBufferTargets[static_cast<UINT>(type)].Get(); }

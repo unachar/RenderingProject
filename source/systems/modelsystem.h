@@ -65,6 +65,7 @@ private:
         ID3D12PipelineState* pso = nullptr;
         XMMATRIX viewProjection{};
         bool cpuCulledVirtualPage = false;
+        bool shadowPass = false;
     };
 
     template<typename ModelResource, typename MeshDataType>
@@ -84,6 +85,9 @@ private:
 
     static bool ShouldCastShadow(EntityID entity)
     {
+        if (ComponentManager::HasComponent<MeshComponent>(entity) &&
+            ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
+            return false;
         if (IsSkyEntity(entity) || ComponentManager::HasComponent<LightComponent>(entity))
             return false;
         if (!Registry::HasComponent(entity, ComponentType::MATERIAL))
@@ -148,7 +152,7 @@ private:
                 continue;
 
             constexpr bool isAnimated = std::is_same_v<ModelComponent, AnimationModelComponent>;
-            if (isAnimated && (!ShouldCastShadow(entity) || !LightingResources::ShouldDrawEntityInCurrentShadowPass(entity)))
+            if (ctx.shadowPass && (!ShouldCastShadow(entity) || !LightingResources::ShouldDrawEntityInCurrentShadowPass(entity)))
                 continue;
             if (InstancingSystem::CanInstance(entity) || (InstancingSystem::CanInstance(entity) && !InstancingSystem::IsEntityVisible(entity)))
                 continue;
@@ -240,7 +244,7 @@ private:
             cl->SetGraphicsRootDescriptorTable(0, FrameConstants::GetConstantBufferHandle(entity));
         };
 
-        ModelDrawContext ctx{ commandList, shadowPso, lightViewProjection, cpuCulledVirtualPage };
+        ModelDrawContext ctx{ commandList, shadowPso, lightViewProjection, cpuCulledVirtualPage, true };
         ModelCallbacks<AnimationModelResource, MeshData> animCallbacks{
             [](auto cl, auto ps) { RestoreShadowGraphicsState(cl, ps); },
             writeShadowConstants,

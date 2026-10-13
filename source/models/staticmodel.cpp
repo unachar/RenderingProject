@@ -1218,6 +1218,7 @@ bool StaticModelResource::ApplyMeshShadingOverridePartIds(ID3D12Device* device, 
 		}
 
 		meshData.AppliedMaterialPartId = targetPartId;
+		MeshletManager::BuildImportedMesh(meshData);
 		GPUDrivenRenderer::UpdateGeometry(meshData);
 	}
 

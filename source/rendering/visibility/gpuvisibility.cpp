@@ -45,11 +45,12 @@ struct State
     XMFLOAT4X4 PreviousVP{}, PreviousView{}, PreviousProjection{};
     uint32_t PreviousCamera = UINT32_MAX, FrameIndex = 0;
     bool HaveCamera = false, Cut = true, Reset = true, UsableHistory = false;
-    bool PreviousOcclusion = false, PreviousLOD = true;
+    bool PreviousOcclusion = false, PreviousLOD = true, CameraFrozen = false;
     int PreviousForce = -1;
     float PreviousBias = 0;
     const char *Reason = "First frame";
     Visibility::Statistics Latest;
+    bool HasSample=false;
     std::vector<Visibility::VisibleInstanceData> DebugRecords;
 };
 State &Data()
@@ -148,6 +149,7 @@ void ConsumeReadback(FrameData &frame)
     if (SUCCEEDED(frame.Readback->Map(0, &range, &mapped)))
     {
         std::memcpy(&Data().Latest, mapped, sizeof(Visibility::Statistics));
+        Data().HasSample=true;
         const D3D12_RANGE noWrite{0, 0};
         frame.Readback->Unmap(0, &noWrite);
     }
@@ -193,6 +195,24 @@ Settings &GetSettings()
 {
     return Data().Options;
 }
+DirectX::XMFLOAT4X4 CullingViewProjection()
+{
+    XMFLOAT4X4 result;
+    const auto& p=Data().Parameters;
+    XMStoreFloat4x4(&result,XMLoadFloat4x4(&p.View)*XMLoadFloat4x4(&p.Projection));
+    return result;
+}
+std::vector<uint32_t> LODMeshes(uint32_t id)
+{
+    const auto& state=Data();
+    std::vector<uint32_t> result;
+    if (id<state.Groups.size())
+    {
+        const auto& group=state.Groups[id];
+        for (uint32_t i=0;i<group.Count;++i) result.push_back(state.Levels[group.Offset+i].MeshIndex);
+    }
+    return result;
+}
 uint32_t RegisterLODGroup(const std::array<uint32_t, Visibility::MaxLODs> &meshes,
                           const Visibility::LODMetadata &metadata)
 {
@@ -235,6 +255,14 @@ void Invalidate(const char *reason)
 void PrepareCamera()
 {
     auto &state = Data();
+    if (state.Options.FreezeCamera && state.CameraFrozen)
+    {
+        // Frozen view is not compatible with Hi-Z captured from the live camera.
+        state.UsableHistory=false;
+        return;
+    }
+    if (state.CameraFrozen) Invalidate("Culling camera released");
+    state.CameraFrozen=state.Options.FreezeCamera;
     if (OcclusionCulling::GetWidth() != GraphicsDevice::GetSceneWidth() ||
         OcclusionCulling::GetHeight() != GraphicsDevice::GetSceneHeight())
     {
@@ -282,7 +310,7 @@ void PrepareCamera()
         state.Reason = "Camera moved (LOD history retained)";
     }
     state.Parameters.PreviousViewProjection = state.PreviousVP;
-    state.UsableHistory = !state.Reset && OcclusionCulling::HasPrevious() && !state.Cut && !viewChanged;
+    state.UsableHistory = !state.Options.FreezeCamera && !state.Reset && OcclusionCulling::HasPrevious() && !state.Cut && !viewChanged;
     state.PreviousView = state.Parameters.View;
     state.PreviousProjection = state.Parameters.Projection;
     XMStoreFloat4x4(&state.PreviousVP, view * projection);
@@ -459,6 +487,7 @@ const Visibility::Statistics &LatestStatistics()
 {
     return Data().Latest;
 }
+bool HasStatisticsSample() { return Data().HasSample; }
 bool HistoryValid()
 {
     return Data().UsableHistory;

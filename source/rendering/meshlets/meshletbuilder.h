@@ -46,6 +46,7 @@ struct Asset
 };
 static_assert(sizeof(Meshlet) == 16 && sizeof(Bounds) == 32 && sizeof(Cluster) == 48 && sizeof(Range) == 16);
 Asset Build(std::span<const Position> positions, std::span<const uint32_t> indices, BuildConfig config = {});
+void RefreshMeshletBounds(Asset &asset, std::span<const Position> positions);
 bool Validate(const Asset &asset, std::span<const Position> positions, std::string &error);
 uint64_t GeometryKey(std::span<const Position> positions, std::span<const uint32_t> indices,
                      BuildConfig config);

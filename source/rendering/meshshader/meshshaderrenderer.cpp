@@ -294,7 +294,7 @@ void QuerySupport(ID3D12Device *device)
         SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &model, sizeof(model))) &&
         model.HighestShaderModel >= D3D_SHADER_MODEL_6_5;
     s.Tier = options.MeshShaderTier;
-    s.Reason = s.Supported ? "Supported; disabled until selected" : "Mesh Shader/SM6.5 unsupported";
+    s.Reason = s.Supported ? "Nanite automatic static geometry rendering" : "Mesh Shader/SM6.5 unsupported; traditional rendering";
     char env[8]{};
     if (GetEnvironmentVariableA("DX12_PHASE5_FORCE_UNSUPPORTED", env, sizeof(env)) && atoi(env) != 0)
     {
@@ -368,12 +368,17 @@ void Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances, RenderGr
     XMStoreFloat4x4(&p.PreviousVP, XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix()) *
                                        XMLoadFloat4x4(&GraphicsDevice::GetPreviousProjectionMatrix()));
     XMStoreFloat4(&p.Camera, XMMatrixInverse(nullptr, view).r[3]);
+    if (GPUVisibility::GetSettings().FreezeCamera)
+    {
+        p.VP=GPUVisibility::CullingViewProjection();
+        // Disable normal cones while the live camera differs from the culling camera.
+    }
     p.Capacity = s.Options.MaxMeshlets;
     p.ObjectCapacity = capacity;
     p.Meshes = meshes;
     p.Materials = GpuScene::Statistics().Materials;
     p.Frustum = s.Options.Frustum;
-    p.Cone = s.Options.Cone;
+    p.Cone = s.Options.Cone && !GPUVisibility::GetSettings().FreezeCamera;
     p.Occlusion = s.Options.Occlusion && GPUVisibility::HistoryValid();
     p.Clusters = s.Options.Clusters;
     p.Bias = s.Options.Bias;
@@ -701,8 +706,13 @@ void DrawDebug()
 }
 void EndFrame()
 {
-    if (!Data().Active || !Data().Options.DebugReadback)
+    Data().DebugRecords.clear();
+    const auto& options=Data().Options;
+    if (!Data().Active || (!options.DebugReadback && !options.MeshletBounds && !options.ClusterBounds && !options.ConeAxes))
+    {
+        Data().DebugRecords.clear();
         return;
+    }
     std::vector<uint8_t> bytes;
     if (RenderCapture::ReadBuffer(Current().Counters.Resource(), Current().Counters.State, 64, bytes))
     {
@@ -717,6 +727,10 @@ void EndFrame()
         else
             Data().DebugRecords.clear();
     }
+}
+const std::vector<std::array<uint32_t,4>>& DebugRecords()
+{
+    return Data().DebugRecords;
 }
 ID3D12Resource *VisibleBuffer()
 {

@@ -6,6 +6,9 @@ set(VG "${ROOT}/source/virtualgeometry")
 set(MESHOPT "${ROOT}/External/meshoptimizer/src")
 add_executable(virtualgeometry_tests
     "${ROOT}/tests/virtualgeometry_tests.cpp"
+    "${ROOT}/tests/virtualgeometry_runtime_tests.cpp"
+    "${VG}/virtualgeometryruntime.cpp"
+    "${ROOT}/source/rendering/meshlets/meshletbuilder.cpp"
     "${VG}/virtualgeometrybuilder.cpp"
     "${VG}/virtualgeometrygeometry.cpp"
     "${VG}/virtualgeometryhierarchy.cpp"
