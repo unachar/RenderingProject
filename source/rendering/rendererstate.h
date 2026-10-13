@@ -250,6 +250,9 @@ public:
 	static constexpr UINT g_kHIZ_DEBUG_UAV_INDEX = g_kHIZ_SOURCE_SRV_INDEX + 2;
 
 	static constexpr UINT g_kENGINE_DESCRIPTOR_END = g_kDEPTH_SRV_INDEX + 256;
+	// Reserved after DXR/NRD/reflection bindings in the existing engine heap.
+	static constexpr UINT g_kCLOUD_DESCRIPTOR_START = g_kHIZ_MIP_SRV_START_INDEX + 2 * g_kHIZ_MAX_MIPS + 48;
+	static_assert(g_kCLOUD_DESCRIPTOR_START + 4 + 2 * g_kFRAME_COUNT <= g_kENGINE_DESCRIPTOR_END);
 	static_assert(g_kHIZ_DEBUG_UAV_INDEX <= g_kENGINE_DESCRIPTOR_END,
 		"The Hi-Z descriptor range exceeds the engine-owned descriptor range.");
 	static constexpr UINT g_kMAX_DYNAMIC_VERTICES = 65536;

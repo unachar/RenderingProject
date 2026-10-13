@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="assets">
@@ -1080,5 +1080,18 @@
     <ClInclude Include="source\virtualgeometry\virtualgeometrydebug.h" />
     <ClCompile Include="source\virtualgeometry\virtualgeometryruntime.cpp" />
     <ClCompile Include="source\virtualgeometry\virtualgeometrydebug.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\rendering\cloud\cloudrenderer.cpp"><Filter>rendering</Filter></ClCompile>
+    <ClCompile Include="source\rendering\cloud\cloudvalidation.cpp"><Filter>rendering</Filter></ClCompile>
+    <ClInclude Include="source\rendering\cloud\cloudrenderer.h"><Filter>rendering</Filter></ClInclude>
+    <ClInclude Include="source\rendering\cloud\cloudsettings.h"><Filter>rendering</Filter></ClInclude>
+    <ClInclude Include="source\rendering\cloud\cloudvalidation.h"><Filter>rendering</Filter></ClInclude>
+    <None Include="shader\hlsl\CloudCommon.hlsli" />
+    <None Include="shader\hlsl\CloudNoise.hlsli" />
+    <FxCompile Include="shader\hlsl\GenerateCloudBaseNoiseCS.hlsl" />
+    <FxCompile Include="shader\hlsl\GenerateCloudDetailNoiseCS.hlsl" />
+    <FxCompile Include="shader\hlsl\CloudRaymarchPS.hlsl" />
+    <FxCompile Include="shader\hlsl\CloudCompositePS.hlsl" />
   </ItemGroup>
 </Project>

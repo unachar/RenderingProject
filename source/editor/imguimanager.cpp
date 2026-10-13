@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "cloud/cloudrenderer.h"
 #include "renderingvalidation.h"
 #include "imguimanager.h"
 #include "modelmanager.h"
@@ -286,6 +287,7 @@ void ImGuiManager::Update()
 			}
 
 			DrawUpscaleControls();
+			CloudRenderer::DrawDebugUI();
 
 			ImGui::Spacing();
 			ImGui::SeparatorText("カラー");

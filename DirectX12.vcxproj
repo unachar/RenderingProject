@@ -1128,4 +1128,29 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     </FxCompile>
     <ClInclude Include="shader\hlsl\GPUVisibilityCommon.hlsli" />
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\rendering\cloud\cloudrenderer.cpp" />
+    <ClCompile Include="source\rendering\cloud\cloudvalidation.cpp" />
+    <ClInclude Include="source\rendering\cloud\cloudvalidation.h" />
+    <ClInclude Include="source\rendering\cloud\cloudrenderer.h" />
+    <ClInclude Include="source\rendering\cloud\cloudsettings.h" />
+    <None Include="shader\hlsl\CloudCommon.hlsli" />
+    <None Include="shader\hlsl\CloudNoise.hlsli" />
+    <FxCompile Include="shader\hlsl\GenerateCloudBaseNoiseCS.hlsl">
+      <ShaderType>Compute</ShaderType><ShaderModel>5.1</ShaderModel>
+      <ObjectFileOutput>$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GenerateCloudDetailNoiseCS.hlsl">
+      <ShaderType>Compute</ShaderType><ShaderModel>5.1</ShaderModel>
+      <ObjectFileOutput>$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\CloudRaymarchPS.hlsl">
+      <ShaderType>Pixel</ShaderType><ShaderModel>5.1</ShaderModel>
+      <ObjectFileOutput>$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\CloudCompositePS.hlsl">
+      <ShaderType>Pixel</ShaderType><ShaderModel>5.1</ShaderModel>
+      <ObjectFileOutput>$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
+    </FxCompile>
+  </ItemGroup>
 </Project>

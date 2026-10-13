@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "cloud/cloudrenderer.h"
 #include "raytracing.h"
 #include "dlssupscaler.h"
 #include "postprocesspass.h"
@@ -295,6 +296,15 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 				1.35f,
 				m_GBufferSrvHandles[atmosphereIndex]);
 		}
+
+		CloudRenderer::Render(m_CommandList.Get(), m_FrameIndex, m_SceneWidth, m_SceneHeight,
+			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)],
+			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::MATERIAL)],
+			m_PostProcessConstantBuffer->GetGPUVirtualAddress() + GetPostProcessFrameOffset(),
+			LightingResources::GetCurrentLightConstantBufferAddress(),
+			GetRenderTargetRtvHandle(RenderTargetType::Scene), m_SceneColorFormat, World::GetRawDeltaTime());
+		m_CommandList->RSSetViewports(1, &m_Viewport);
+		m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
 
 		D3D12_RESOURCE_BARRIER toSceneSrv = CD3DX12_RESOURCE_BARRIER::Transition(
 			GetRenderTarget(RenderTargetType::Scene).Get(),

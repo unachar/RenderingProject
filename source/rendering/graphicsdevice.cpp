@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "cloud/cloudrenderer.h"
 #include "graphicslog.h"
 #include "shaderpipelines.h"
 #include "shaderpaths.h"
@@ -447,6 +448,7 @@ if (!ShaderPipelines::CreatePostProcessPipeline()) return false;
 	SpatialUpscaler::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	VisibilityBuffer::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	ScreenSpaceEffects::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	CloudRenderer::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	Raytracing::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	DlssUpscaler::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	OcclusionCulling::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
@@ -523,6 +525,7 @@ void GraphicsDevice::Uninit()
 	SpatialUpscaler::Shutdown();
 	VisibilityBuffer::Shutdown();
 	ScreenSpaceEffects::Shutdown();
+	CloudRenderer::Shutdown();
 	Raytracing::Shutdown();
 	VertexDeformation::Shutdown();
 	DlssUpscaler::Shutdown();

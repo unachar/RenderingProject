@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "cloud/cloudrenderer.h"
 #include "rendertargets.h"
 #include "texturemanager.h"
 #include "spatialupscaler.h"
@@ -271,7 +272,7 @@ bool RenderTargets::CreateSceneRenderTarget()
 	{
 		rtvCount = 4;
 	}
-	rtvHeapDesc.NumDescriptors = rtvCount + 1;
+	rtvHeapDesc.NumDescriptors = rtvCount + 1 + CloudRenderer::kRtvCount;
 	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 	hr = m_Device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&m_SceneRtvHeap));
 	if (FAILED(hr)) return false;
@@ -279,6 +280,7 @@ bool RenderTargets::CreateSceneRenderTarget()
 	UINT cbvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 	UINT rtvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 	const D3D12_CPU_DESCRIPTOR_HANDLE rtvHeapStart = m_SceneRtvHeap->GetCPUDescriptorHandleForHeapStart();
+	CloudRenderer::Resize(CD3DX12_CPU_DESCRIPTOR_HANDLE(rtvHeapStart, rtvCount + 1, rtvIncrement), rtvIncrement);
 
 	constexpr array<RenderTargetType, 4> kRtvRenderTargets =
 	{

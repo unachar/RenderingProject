@@ -206,8 +206,10 @@ UINT RenderCapture::ReportGraphicsErrors()
         info->GetMessage(index, nullptr, &bytes);
         std::vector<BYTE> storage(bytes);
         auto* message = reinterpret_cast<D3D12_MESSAGE*>(storage.data());
-        if (SUCCEEDED(info->GetMessage(index, message, &bytes)) &&
-            (message->Severity == D3D12_MESSAGE_SEVERITY_ERROR || message->Severity == D3D12_MESSAGE_SEVERITY_CORRUPTION))
+        if (FAILED(info->GetMessage(index, message, &bytes))) continue;
+        if (message->ID == D3D12_MESSAGE_ID_GPU_BASED_VALIDATION_RESOURCE_STATE_IMPRECISE)
+            WriteGraphicsLog("D3D12 validation tracking limitation id=%u: %s\n", static_cast<UINT>(message->ID), message->pDescription);
+        if (message->Severity == D3D12_MESSAGE_SEVERITY_ERROR || message->Severity == D3D12_MESSAGE_SEVERITY_CORRUPTION)
         {
             ++errorCount;
             WriteGraphicsLog("D3D12 validation error: %s\n", message->pDescription);
