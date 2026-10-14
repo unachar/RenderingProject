@@ -105,6 +105,9 @@ cbuffer ShadowParams : register(b3)
     float4x4 LightViewProjection;
     float4 ShadowMapParams;
     float4 ShadowFilterParams;
+    float4 ShadowTransmissionParams;
+    float4 ShadowLightPositionType;
+    float4 ShadowLightDirection;
 };
 
 #ifndef SHADER_POSTPROCESS
@@ -1212,7 +1215,7 @@ struct PSInputDebugLine
 #endif
 
 
-#ifdef SHADER_POSTPROCESS
+#if defined(SHADER_POSTPROCESS) || defined(SHADER_FORWARD_LIGHTING)
 
 
 
@@ -1229,7 +1232,11 @@ float3 ACESToneMap(float3 color)
     return color;
 }
 
+#ifdef SHADER_FORWARD_LIGHTING
+cbuffer PostProcessParams : register(b6)
+#else
 cbuffer PostProcessParams : register(b0)
+#endif
 {
     float4 Flags;
     float4 PPCameraPos;

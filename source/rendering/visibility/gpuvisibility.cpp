@@ -35,11 +35,11 @@ struct State
 {
     Settings Options;
     Constants Parameters;
-    std::vector<Visibility::GPULODGroup> Groups;
-    std::vector<Visibility::GPULODLevel> Levels;
-    std::vector<uint32_t> NewGroups, NewLevels;
+    vector<Visibility::GPULODGroup> Groups;
+    vector<Visibility::GPULODLevel> Levels;
+    vector<uint32_t> NewGroups, NewLevels;
     GpuSceneBuffer GroupBuffer, LevelBuffer, History;
-    std::array<FrameData, GpuSceneBuffer::FrameCount> Frames;
+    array<FrameData, GpuSceneBuffer::FrameCount> Frames;
     ComPtr<ID3D12RootSignature> Root;
     ComPtr<ID3D12PipelineState> ResetPSO, OcclusionPSO, LODPSO;
     XMFLOAT4X4 PreviousVP{}, PreviousView{}, PreviousProjection{};
@@ -51,7 +51,7 @@ struct State
     const char *Reason = "First frame";
     Visibility::Statistics Latest;
     bool HasSample=false;
-    std::vector<Visibility::VisibleInstanceData> DebugRecords;
+    vector<Visibility::VisibleInstanceData> DebugRecords;
 };
 State &Data()
 {
@@ -100,7 +100,7 @@ void Initialize()
         FAILED(
             device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&state.Root))))
     {
-        throw std::runtime_error("GPU visibility root signature failed");
+        throw runtime_error("GPU visibility root signature failed");
     }
     auto pipeline = [&](const char *path, ComPtr<ID3D12PipelineState> &output) {
         ComPtr<ID3DBlob> shader;
@@ -109,14 +109,14 @@ void Initialize()
         input.ppBlob = shader.GetAddressOf();
         if (!ShaderPipelines::LoadShaderBlob(input))
         {
-            throw std::runtime_error("GPU visibility shader missing");
+            throw runtime_error("GPU visibility shader missing");
         }
         D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
         desc.pRootSignature = state.Root.Get();
         desc.CS = {shader->GetBufferPointer(), shader->GetBufferSize()};
         if (FAILED(device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&output))))
         {
-            throw std::runtime_error("GPU visibility compute pipeline failed");
+            throw runtime_error("GPU visibility compute pipeline failed");
         }
     };
     pipeline("shader/hlsl/build/GPUVisibilityResetCS.cso", state.ResetPSO);
@@ -134,7 +134,7 @@ void AllocateReadback(ComPtr<ID3D12Resource> &resource, uint64_t bytes)
     if (FAILED(GraphicsDevice::GetDevice()->CreateCommittedResource(
             &heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&resource))))
     {
-        throw std::runtime_error("GPU visibility debug readback allocation failed");
+        throw runtime_error("GPU visibility debug readback allocation failed");
     }
 }
 void ConsumeReadback(FrameData &frame)
@@ -148,7 +148,7 @@ void ConsumeReadback(FrameData &frame)
     D3D12_RANGE range{0, sizeof(Visibility::Statistics)};
     if (SUCCEEDED(frame.Readback->Map(0, &range, &mapped)))
     {
-        std::memcpy(&Data().Latest, mapped, sizeof(Visibility::Statistics));
+        memcpy(&Data().Latest, mapped, sizeof(Visibility::Statistics));
         Data().HasSample=true;
         const D3D12_RANGE noWrite{0, 0};
         frame.Readback->Unmap(0, &noWrite);
@@ -186,7 +186,7 @@ void Bind(ID3D12GraphicsCommandList *list, ID3D12Resource *geometry)
     const auto cbv = FrameConstants::AllocateTransientConstantBuffer(&data.Parameters, sizeof(data.Parameters));
     if (!cbv.ptr)
     {
-        throw std::runtime_error("GPU visibility transient constants exhausted");
+        throw runtime_error("GPU visibility transient constants exhausted");
     }
     list->SetComputeRootDescriptorTable(9, cbv);
 }
@@ -202,10 +202,10 @@ DirectX::XMFLOAT4X4 CullingViewProjection()
     XMStoreFloat4x4(&result,XMLoadFloat4x4(&p.View)*XMLoadFloat4x4(&p.Projection));
     return result;
 }
-std::vector<uint32_t> LODMeshes(uint32_t id)
+vector<uint32_t> LODMeshes(uint32_t id)
 {
     const auto& state=Data();
-    std::vector<uint32_t> result;
+    vector<uint32_t> result;
     if (id<state.Groups.size())
     {
         const auto& group=state.Groups[id];
@@ -213,7 +213,7 @@ std::vector<uint32_t> LODMeshes(uint32_t id)
     }
     return result;
 }
-uint32_t RegisterLODGroup(const std::array<uint32_t, Visibility::MaxLODs> &meshes,
+uint32_t RegisterLODGroup(const array<uint32_t, Visibility::MaxLODs> &meshes,
                           const Visibility::LODMetadata &metadata)
 {
     if (!Visibility::ValidLOD(metadata))
@@ -221,7 +221,7 @@ uint32_t RegisterLODGroup(const std::array<uint32_t, Visibility::MaxLODs> &meshe
         return Visibility::InvalidID;
     }
     auto &state = Data();
-    std::array<Visibility::GPULODLevel, Visibility::MaxLODs> levels{};
+    array<Visibility::GPULODLevel, Visibility::MaxLODs> levels{};
     for (uint32_t i = 0; i < metadata.Count; ++i)
     {
         levels[i] = {meshes[i], metadata.Thresholds[i], metadata.Hysteresis, 0};
@@ -230,7 +230,7 @@ uint32_t RegisterLODGroup(const std::array<uint32_t, Visibility::MaxLODs> &meshe
     {
         const auto &group = state.Groups[id];
         if (group.Count == metadata.Count &&
-            std::memcmp(state.Levels.data() + group.Offset, levels.data(), metadata.Count * sizeof(levels[0])) == 0)
+            memcmp(state.Levels.data() + group.Offset, levels.data(), metadata.Count * sizeof(levels[0])) == 0)
         {
             return id;
         }
@@ -290,9 +290,9 @@ void PrepareCamera()
     Camera::GetCameraMatrices(camera, view, projection);
     XMStoreFloat4x4(&state.Parameters.View, view);
     XMStoreFloat4x4(&state.Parameters.Projection, projection);
-    const bool viewChanged = std::memcmp(&state.PreviousView, &state.Parameters.View, sizeof(XMFLOAT4X4)) != 0;
+    const bool viewChanged = memcmp(&state.PreviousView, &state.Parameters.View, sizeof(XMFLOAT4X4)) != 0;
     const bool projectionChanged =
-        std::memcmp(&state.PreviousProjection, &state.Parameters.Projection, sizeof(XMFLOAT4X4)) != 0;
+        memcmp(&state.PreviousProjection, &state.Parameters.Projection, sizeof(XMFLOAT4X4)) != 0;
     const XMMATRIX currentWorld = XMMatrixInverse(nullptr, view);
     const XMMATRIX previousWorld = XMMatrixInverse(nullptr, XMLoadFloat4x4(&state.PreviousView));
     const float translation =
@@ -377,9 +377,9 @@ RenderGraph::ResourceHandle Prepare(RenderGraph &graph, RenderGraph::ResourceHan
     state.Parameters.Force = static_cast<uint32_t>(state.Options.ForceLOD);
     state.Parameters.DepthBias = state.Options.DepthBias;
     state.Parameters.LODBias = state.Options.LODBias;
-    state.Parameters.Width = float((std::max)(OcclusionCulling::GetWidth(), 1u));
-    state.Parameters.Height = float((std::max)(OcclusionCulling::GetHeight(), 1u));
-    state.Parameters.Mips = (std::max)(OcclusionCulling::GetMipCount(), 1u);
+    state.Parameters.Width = float((max)(OcclusionCulling::GetWidth(), 1u));
+    state.Parameters.Height = float((max)(OcclusionCulling::GetHeight(), 1u));
+    state.Parameters.Mips = (max)(OcclusionCulling::GetMipCount(), 1u);
     graph.AddPass(
         "Visibility Counter Reset",
         [=](RenderGraph::PassBuilder &builder) { builder.Write(counters, D3D12_RESOURCE_STATE_UNORDERED_ACCESS); },
@@ -445,7 +445,7 @@ RenderGraph::ResourceHandle Prepare(RenderGraph &graph, RenderGraph::ResourceHan
     if (state.Options.DebugReadback || state.Options.Bounds || state.Options.ScreenRectangles)
     {
         AllocateReadback(frame.Readback, sizeof(Visibility::Statistics));
-        const uint32_t records = state.Options.Bounds || state.Options.ScreenRectangles ? (std::min)(slots, 4096u) : 0;
+        const uint32_t records = state.Options.Bounds || state.Options.ScreenRectangles ? (min)(slots, 4096u) : 0;
         if (records)
         {
             AllocateReadback(frame.RecordReadback, 4096 * 16);
@@ -519,7 +519,7 @@ void DrawDebug()
     if (OcclusionCulling::HasPrevious())
     {
         const int maximum = int(OcclusionCulling::GetMipCount()) - 1;
-        options.HiZMip = std::clamp(options.HiZMip, 0, maximum);
+        options.HiZMip = clamp(options.HiZMip, 0, maximum);
         ImGui::SliderInt("Hi-Z Mip", &options.HiZMip, 0, maximum);
         OcclusionCulling::SetDebugPreview(uint32_t(options.HiZMip), true);
         ImGui::Image((ImTextureID)OcclusionCulling::GetDebugMipSrv(uint32_t(options.HiZMip)).ptr, ImVec2(320, 180));
@@ -583,10 +583,10 @@ void DrawDebug()
                     break;
                 }
                 const float x = clip.x / clip.w * 0.5f + 0.5f, y = 0.5f - clip.y / clip.w * 0.5f;
-                minX = (std::min)(minX, x);
-                minY = (std::min)(minY, y);
-                maxX = (std::max)(maxX, x);
-                maxY = (std::max)(maxY, y);
+                minX = (min)(minX, x);
+                minY = (min)(minY, y);
+                maxX = (max)(maxX, x);
+                maxY = (max)(maxY, y);
                 points[i] = ImVec2(origin.x + x * extent.x, origin.y + y * extent.y);
             }
             if (!valid || minX < 0 || minY < 0 || maxX > 1 || maxY > 1)

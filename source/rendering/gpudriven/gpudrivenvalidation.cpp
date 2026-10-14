@@ -25,12 +25,12 @@
 
 namespace
 {
-std::vector<EntityID> fixtures;
+vector<EntityID> fixtures;
 int modelID = -1;
 uint32_t failures = 0;
 uint64_t frames = 0;
-std::vector<RenderCapture::TextureData> reference;
-std::vector<double> cpuTimes, gpuTimes;
+vector<RenderCapture::TextureData> reference;
+vector<double> cpuTimes, gpuTimes;
 bool GpuValidation()
 {
     char value[8]{};
@@ -69,12 +69,12 @@ void Grow(size_t count)
 }
 void Capture(bool compare)
 {
-    std::vector<RenderCapture::TextureData> images(5);
+    vector<RenderCapture::TextureData> images(5);
     bool read = true;
     for (uint32_t i = 0; i < 5; ++i) read &= RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(static_cast<GBufferType>(i)), images[i]);
     Check(read, "capture GBuffer");
     if (!read) return;
-    if (!compare) { reference = std::move(images); return; }
+    if (!compare) { reference = move(images); return; }
     bool match = reference.size() == images.size();
     uint64_t compared = 0, different = 0, covered = 0;
     for (size_t i = 0; i < images.size() && match; ++i)
@@ -90,11 +90,11 @@ void Capture(bool compare)
                 const auto* pb = b.Bytes.data() + y * b.RowPitch + x * pixelBytes;
                 if (i == 2)
                 {
-                    float da, db; std::memcpy(&da, pa, 4); std::memcpy(&db, pb, 4);
-                    different += std::abs(da - db) > 0.00001f;
+                    float da, db; memcpy(&da, pa, 4); memcpy(&db, pb, 4);
+                    different += abs(da - db) > 0.00001f;
                     covered += da < 0.999f && da > 0.0f;
                 }
-                else different += std::memcmp(pa, pb, pixelBytes) != 0;
+                else different += memcmp(pa, pb, pixelBytes) != 0;
                 ++compared;
             }
     }
@@ -104,7 +104,7 @@ void Capture(bool compare)
 void ValidateCommands()
 {
     const auto& stats = GpuScene::Statistics();
-    std::vector<uint8_t> counts, visibility, commands, geometry;
+    vector<uint8_t> counts, visibility, commands, geometry;
     bool read = RenderCapture::ReadBuffer(GPUDrivenRenderer::CountBuffer(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, 4, counts);
     read &= RenderCapture::ReadBuffer(GpuScene::VisibilityBuffer(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                                      uint64_t(stats.InstanceSlots) * 4, visibility);
@@ -112,8 +112,8 @@ void ValidateCommands()
                                      uint64_t(stats.Meshes) * sizeof(GPUDrivenGeometryData), geometry);
     Check(read, "read debug count/visibility/geometry");
     if (!read) return;
-    uint32_t count = 0; std::memcpy(&count, counts.data(), 4);
-    std::unordered_set<uint32_t> expected;
+    uint32_t count = 0; memcpy(&count, counts.data(), 4);
+    unordered_set<uint32_t> expected;
     const auto* flags = reinterpret_cast<const uint32_t*>(visibility.data());
     for (EntityID entity : fixtures)
         for (auto id : GpuScene::GetEntityInstances(entity))
@@ -130,7 +130,7 @@ void ValidateCommands()
     for (uint32_t i = 0; i < count && valid; ++i)
     {
         GPUIndirectDrawCommand command{};
-        std::memcpy(&command, commands.data() + size_t(i) * sizeof(command), sizeof(command));
+        memcpy(&command, commands.data() + size_t(i) * sizeof(command), sizeof(command));
         const auto* instance = GpuScene::GetInstance(command.InstanceID);
         valid &= instance && expected.erase(command.InstanceID) == 1;
         if (!valid) break;
@@ -167,12 +167,12 @@ void GPUDrivenValidation::BeforeFrame(uint64_t frame)
     frames = frame + 1;
     if (frame == 0)
     {
-        std::vector<EntityID> remove;
+        vector<EntityID> remove;
         for (uint32_t i = 0; i < Registry::GetEntities().size(); ++i)
             if (Registry::IsAlive(i) && !ComponentManager::HasComponent<CameraComponent>(i)) remove.push_back(i);
         for (auto id : remove) World::DestroyEntity(Entity(id));
-        std::filesystem::create_directories("build/gpudriven");
-        std::ofstream obj("build/gpudriven/fixture.obj");
+        filesystem::create_directories("build/gpudriven");
+        ofstream obj("build/gpudriven/fixture.obj");
         obj << "v -1 -1 0\nv 0 1 0\nv 1 -1 0\nvt 0 0\nvt 0.5 1\nvt 1 0\nvn 0 0 -1\nf 1/1/1 2/2/1 3/3/1\n";
         obj.close();
         modelID = ModelManager::LoadStaticModel("build/gpudriven/fixture.obj", false);
@@ -254,8 +254,8 @@ void GPUDrivenValidation::BeforeFrame(uint64_t frame)
         // 10,000 entities with five material sections exercise 50,000 static mesh
         // instances without changing the existing 16,384-entity ECS contract.
         Grow(10000);
-        std::ofstream obj("build/gpudriven/fixture-sections.obj");
-        std::ofstream mtl("build/gpudriven/fixture-sections.mtl");
+        ofstream obj("build/gpudriven/fixture-sections.obj");
+        ofstream mtl("build/gpudriven/fixture-sections.mtl");
         obj << "mtllib fixture-sections.mtl\n";
         for (uint32_t i = 0; i < 5; ++i)
         {
@@ -289,7 +289,7 @@ void GPUDrivenValidation::AfterFrame(uint64_t frame)
         }
     if (frame == 31 && !GpuValidation())
     {
-        auto average = [](const std::vector<double>& values) { double sum = 0; for (double value : values) sum += value; return values.empty() ? 0 : sum / values.size(); };
+        auto average = [](const vector<double>& values) { double sum = 0; for (double value : values) sum += value; return values.empty() ? 0 : sum / values.size(); };
         const double cpu = average(cpuTimes), gpu = average(gpuTimes);
         WriteGraphicsLog("GPU Driven CPU submission comparison (10000): CPU=%.4f ms GPU=%.4f ms\n", cpu, gpu);
         Check(cpu > 0 && gpu > 0 && gpu < cpu, "10000 GPU opaque submission costs less than CPU fallback");
@@ -301,20 +301,20 @@ void GPUDrivenValidation::AfterFrame(uint64_t frame)
     if (frame == 58 && !fixtures.empty())
     {
         const auto* instance = GpuScene::GetInstance(Entity(fixtures[0]).GetGPUInstanceID());
-        Check(instance && std::memcmp(&instance->World, &instance->PreviousWorld, sizeof(instance->World)) != 0,
+        Check(instance && memcmp(&instance->World, &instance->PreviousWorld, sizeof(instance->World)) != 0,
               "GPU driven instance preserves previous transform during motion");
     }
     if (frame == 59 && !fixtures.empty())
     {
         const auto* instance = GpuScene::GetInstance(Entity(fixtures[0]).GetGPUInstanceID());
-        Check(instance && std::memcmp(&instance->World, &instance->PreviousWorld, sizeof(instance->World)) == 0,
+        Check(instance && memcmp(&instance->World, &instance->PreviousWorld, sizeof(instance->World)) == 0,
               "GPU driven previous transform settles on stationary frame");
     }
     if (frame >= 66 && frame <= 71 && !GpuValidation())
     {
         const bool expectedGpu = frame % 2 != 0;
         const auto& fallback = GpuScene::CpuOpaqueStaticEntities();
-        const bool found = std::find(fallback.begin(), fallback.end(), fixtures[0]) != fallback.end();
+        const bool found = find(fallback.begin(), fallback.end(), fixtures[0]) != fallback.end();
         Check(GPUDrivenRenderer::HandlesEntity(fixtures[0]) == expectedGpu && found != expectedGpu,
               "component API edits transfer ownership between GPU and CPU fallback");
     }

@@ -52,8 +52,8 @@
 		ToonOutlineEdgeKey() = default;
 		ToonOutlineEdgeKey(uint32_t a, uint32_t b)
 		{
-			A = std::min(a, b);
-			B = std::max(a, b);
+			A = min(a, b);
+			B = max(a, b);
 		}
 
 		bool operator==(const ToonOutlineEdgeKey& rhs) const
@@ -138,13 +138,13 @@
 		{
 			return fallback;
 		}
-		const float invLen = 1.0f / std::sqrt(lenSq);
+		const float invLen = 1.0f / sqrt(lenSq);
 		return ToonOutlineScale(v, invLen);
 	}
 
 	inline float ToonOutlineLength(const XMFLOAT3& v)
 	{
-		return std::sqrt(ToonOutlineDot(v, v));
+		return sqrt(ToonOutlineDot(v, v));
 	}
 
 	inline ToonOutlineQuantizedPosition QuantizeToonOutlinePosition(const XMFLOAT3& p, float tolerance)
@@ -153,26 +153,26 @@
 		{
 			return
 			{
-				static_cast<int>(std::round(p.x * 1000000.0f)),
-				static_cast<int>(std::round(p.y * 1000000.0f)),
-				static_cast<int>(std::round(p.z * 1000000.0f))
+				static_cast<int>(round(p.x * 1000000.0f)),
+				static_cast<int>(round(p.y * 1000000.0f)),
+				static_cast<int>(round(p.z * 1000000.0f))
 			};
 		}
 		const float invTolerance = 1.0f / tolerance;
 		return
 		{
-			static_cast<int>(std::round(p.x * invTolerance)),
-			static_cast<int>(std::round(p.y * invTolerance)),
-			static_cast<int>(std::round(p.z * invTolerance))
+			static_cast<int>(round(p.x * invTolerance)),
+			static_cast<int>(round(p.y * invTolerance)),
+			static_cast<int>(round(p.z * invTolerance))
 		};
 	}
 
 	template <typename TVertex>
 	void BuildTeoMesh(
-		const std::vector<TVertex>& sourceVertices,
-		const std::vector<unsigned int>& sourceIndices,
-		std::vector<TVertex>& outVertices,
-		std::vector<unsigned int>& outIndices,
+		const vector<TVertex>& sourceVertices,
+		const vector<unsigned int>& sourceIndices,
+		vector<TVertex>& outVertices,
+		vector<unsigned int>& outIndices,
 		const ToonOutlineOptions& options)
 	{
 		outVertices.clear();
@@ -183,12 +183,12 @@
 			return;
 		}
 
-		const float clampedAngle = std::clamp(options.HardEdgeAngleDegrees, 0.0f, 180.0f);
-		const float hardEdgeCos = std::cos(clampedAngle * 3.1415926535f / 180.0f);
-		const float minEdgeLength = std::max(options.MinEdgeLength, 0.0f);
+		const float clampedAngle = clamp(options.HardEdgeAngleDegrees, 0.0f, 180.0f);
+		const float hardEdgeCos = cos(clampedAngle * 3.1415926535f / 180.0f);
+		const float minEdgeLength = max(options.MinEdgeLength, 0.0f);
 
-		std::vector<uint32_t> canonicalIndices(sourceVertices.size());
-		std::unordered_map<ToonOutlineQuantizedPosition, uint32_t, ToonOutlineQuantizedPositionHash> canonicalByPosition;
+		vector<uint32_t> canonicalIndices(sourceVertices.size());
+		unordered_map<ToonOutlineQuantizedPosition, uint32_t, ToonOutlineQuantizedPositionHash> canonicalByPosition;
 		canonicalByPosition.reserve(sourceVertices.size());
 		for (uint32_t i = 0; i < sourceVertices.size(); ++i)
 		{
@@ -205,7 +205,7 @@
 			}
 		}
 
-		std::unordered_map<ToonOutlineEdgeKey, ToonOutlineEdgeInfo, ToonOutlineEdgeKeyHash> edges;
+		unordered_map<ToonOutlineEdgeKey, ToonOutlineEdgeInfo, ToonOutlineEdgeKeyHash> edges;
 		edges.reserve(sourceIndices.size());
 
 		auto addEdge = [&](uint32_t a, uint32_t b, const XMFLOAT3& faceNormal)
@@ -249,9 +249,9 @@
 			addEdge(i2, i0, faceNormal);
 		}
 
-		std::vector<ToonOutlineEdgeKey> selectedEdges;
+		vector<ToonOutlineEdgeKey> selectedEdges;
 		selectedEdges.reserve(edges.size());
-		std::vector<XMFLOAT3> neighborSum(sourceVertices.size(), { 0.0f, 0.0f, 0.0f });
+		vector<XMFLOAT3> neighborSum(sourceVertices.size(), { 0.0f, 0.0f, 0.0f });
 
 		for (const auto& kv : edges)
 		{
@@ -317,10 +317,10 @@
 
 	template <typename TVertex>
 	void BuildTeoMesh(
-		const std::vector<TVertex>& sourceVertices,
-		const std::vector<unsigned int>& sourceIndices,
-		std::vector<TVertex>& outVertices,
-		std::vector<unsigned int>& outIndices,
+		const vector<TVertex>& sourceVertices,
+		const vector<unsigned int>& sourceIndices,
+		vector<TVertex>& outVertices,
+		vector<unsigned int>& outIndices,
 		ToonOutlineMeshMode mode)
 	{
 		BuildTeoMesh(sourceVertices, sourceIndices, outVertices, outIndices, GetToonOutlinePreset(mode));

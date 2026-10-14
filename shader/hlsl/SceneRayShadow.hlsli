@@ -20,7 +20,7 @@ float TraceSceneShadow(float3 position, float3 normal, float3 lightDirection, fl
     ray.TMin = SceneRayParameters.y * 0.25f;
     ray.TMax = max(maximumDistance - SceneRayParameters.y, ray.TMin + 0.001f);
     RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_FORCE_OPAQUE> query;
-    query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
+    query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0x01, ray);
     while (query.Proceed()) { }
     return query.CommittedStatus() == COMMITTED_NOTHING ? 1.0f : 0.0f;
 }

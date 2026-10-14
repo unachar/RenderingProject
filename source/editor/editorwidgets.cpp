@@ -28,7 +28,7 @@ namespace EditorWidgets
 		// so "Light,-Spot" and "-Spot,Light" have the same meaning.
 		if (filter.Filters.Size > 1)
 		{
-			std::stable_partition(filter.Filters.begin(), filter.Filters.end(),
+			stable_partition(filter.Filters.begin(), filter.Filters.end(),
 				[](const ImGuiTextFilter::ImGuiTextRange& range) { return *range.b == '-'; });
 		}
 		if (ImGui::IsItemHovered()) ImGui::SetTooltip("複数条件: カンマ区切り / 除外: -語句");

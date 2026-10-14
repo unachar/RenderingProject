@@ -7,8 +7,8 @@
 class Game
 {
 private:
-	static std::vector<std::unique_ptr<EntityBase>>& GetEntities();
-	static std::vector<std::unique_ptr<EntityBase>>& GetPendingEntities();
+	static vector<unique_ptr<EntityBase>>& GetEntities();
+	static vector<unique_ptr<EntityBase>>& GetPendingEntities();
 public:
 	static void Init();
 	static void Create();
@@ -22,7 +22,7 @@ public:
 	template<typename T>
 	static void AddEntity()
 	{
-		GetPendingEntities().emplace_back(std::make_unique<T>());
+		GetPendingEntities().emplace_back(make_unique<T>());
 	}
 
 

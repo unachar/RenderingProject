@@ -28,12 +28,36 @@ int main()
         authored.Cull = MaterialCull::None;
         authored.DepthWrite = false;
         authored.AlphaCutoff = 0.3f;
+        authored.ShadowMode = MaterialShadowMode::AlphaTest;
+        authored.ShadowCutoff = 0.4f;
+        authored.IOR = 1.45f;
+        authored.Transmission = 0.95f;
+        authored.Thickness = 0.2f;
+        authored.AbsorptionCoefficient = {0.1f, 0.2f, 0.3f};
         std::string error;
         const auto path = root / "Brick.material";
         Check(MaterialSerializer::Save(path, authored, error), error.c_str());
         MaterialAssetData loaded;
         Check(MaterialSerializer::Load(path, loaded, error), error.c_str());
         Check(loaded == authored, "full material roundtrip including 64-bit texture handles");
+        for (auto mode : {MaterialShadowMode::Auto, MaterialShadowMode::Transmittance, MaterialShadowMode::Opaque})
+        {
+            authored.ShadowMode = mode;
+            Check(MaterialSerializer::Save(path, authored, error) && MaterialSerializer::Load(path, loaded, error) && loaded == authored,
+                "optical shadow modes roundtrip");
+        }
+        auto invalidOptics = authored;
+        invalidOptics.AbsorptionCoefficient[0] = -0.01f;
+        Check(!MaterialSerializer::Validate(invalidOptics, error), "negative absorption cannot amplify light");
+        invalidOptics = authored;
+        invalidOptics.IOR = 0.5f;
+        Check(!MaterialSerializer::Validate(invalidOptics, error), "invalid refractive index rejected");
+        auto invalidShadow = authored;
+        invalidShadow.ShadowMode = static_cast<MaterialShadowMode>(99);
+        Check(!MaterialSerializer::Validate(invalidShadow, error), "reject unsupported shadow mode");
+        invalidShadow = authored;
+        invalidShadow.ShadowCutoff = -0.1f;
+        Check(!MaterialSerializer::Validate(invalidShadow, error), "reject invalid shadow cutoff");
         Check(ParseAssetHandle(FormatAssetHandle(authored.Textures[1])) == authored.Textures[1], "handle precision");
         auto invalid = authored;
         invalid.Roughness = -1.0f;

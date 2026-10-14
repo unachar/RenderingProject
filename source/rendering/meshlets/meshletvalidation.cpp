@@ -31,10 +31,10 @@ namespace
 uint32_t failures = 0;
 uint32_t disabledMesh = UINT32_MAX;
 uint64_t frames = 0;
-std::vector<EntityID> fixtures;
+vector<EntityID> fixtures;
 int model = -1, high = -1, sections = -1, cube = -1, sphere = -1;
-std::vector<RenderCapture::TextureData> reference;
-std::ofstream measurements;
+vector<RenderCapture::TextureData> reference;
+ofstream measurements;
 double traditionalOpaque = 0, meshOpaque = 0, meshCompute = 0;
 double traditionalFrame = 0, meshFrame = 0, traditionalSubmission = 0, meshSubmission = 0;
 uint32_t traditionalSamples = 0, meshSamples = 0;
@@ -53,13 +53,13 @@ void Check(bool success, const char *name)
     if (!success)
         ++failures;
 }
-void Grid(const std::string &path, uint32_t size, uint32_t parts = 1)
+void Grid(const string &path, uint32_t size, uint32_t parts = 1)
 {
-    std::ofstream file(path);
+    ofstream file(path);
     if (parts > 1)
     {
-        auto mtl = std::filesystem::path(path).replace_extension(".mtl");
-        std::ofstream material(mtl);
+        auto mtl = filesystem::path(path).replace_extension(".mtl");
+        ofstream material(mtl);
         file << "mtllib " << mtl.filename().string() << '\n';
         for (uint32_t part = 0; part < parts; ++part)
             material << "newmtl Section" << part << "\nKd " << 0.2f + 0.1f * part << " 1 1\n";
@@ -90,11 +90,11 @@ void Clear()
 }
 void WritePrimitives()
 {
-    std::ofstream box("build/meshlets/cube.obj");
+    ofstream box("build/meshlets/cube.obj");
     box << "v -1 -1 -1\nv 1 -1 -1\nv 1 1 -1\nv -1 1 -1\nv -1 -1 1\nv 1 -1 1\nv 1 1 1\nv -1 1 1\n";
     box << "f 1 3 2\nf 1 4 3\nf 5 6 7\nf 5 7 8\nf 1 5 8\nf 1 8 4\nf 2 3 7\nf 2 7 6\nf 1 2 6\nf 1 6 5\nf 4 8 "
            "7\nf 4 7 3\n";
-    std::ofstream ball("build/meshlets/sphere.obj");
+    ofstream ball("build/meshlets/sphere.obj");
     constexpr uint32_t latitude = 24, longitude = 48;
     for (uint32_t y = 0; y <= latitude; ++y)
         for (uint32_t x = 0; x <= longitude; ++x)
@@ -145,7 +145,7 @@ void Grow(size_t count, int mesh)
 }
 void Capture(bool compare, bool compareVelocity = true)
 {
-    std::vector<RenderCapture::TextureData> output(6);
+    vector<RenderCapture::TextureData> output(6);
     bool read = true;
     for (uint32_t i = 0; i < 6; ++i)
         read &= RenderCapture::ReadTexture(
@@ -156,7 +156,7 @@ void Capture(bool compare, bool compareVelocity = true)
         return;
     if (!compare)
     {
-        reference = std::move(output);
+        reference = move(output);
         return;
     }
     uint64_t changed = 0, total = 0, paddingChanged = 0;
@@ -185,8 +185,8 @@ void Capture(bool compare, bool compareVelocity = true)
                                                                         y * reference[i].RowPitch) +
                                      x * 4;
                     for (uint32_t lane = 2; lane < 4; ++lane)
-                        maximumMotionError = (std::max)(maximumMotionError,
-                                                        std::abs(RenderCapture::HalfToFloat(current[lane]) -
+                        maximumMotionError = (max)(maximumMotionError,
+                                                        abs(RenderCapture::HalfToFloat(current[lane]) -
                                                                  RenderCapture::HalfToFloat(previous[lane])));
                 }
             WriteGraphicsLog("Meshlet velocity comparison maximum UV error=%.8f\n", maximumMotionError);
@@ -209,13 +209,13 @@ void Capture(bool compare, bool compareVelocity = true)
             // CopyTextureRegion does not define row padding. Compare only actual texel bytes.
             for (size_t b = 0; b < rowBytes; ++b)
             {
-                targetChanged += std::abs(int(output[i].Bytes[row + b]) -
+                targetChanged += abs(int(output[i].Bytes[row + b]) -
                                           int(reference[i].Bytes[row + b])) > 1;
                 ++total;
             }
-            const size_t end = (std::min)(row + output[i].RowPitch, output[i].Bytes.size());
+            const size_t end = (min)(row + output[i].RowPitch, output[i].Bytes.size());
             for (size_t b = row + size_t(rowBytes); b < end; ++b)
-                paddingChanged += std::abs(int(output[i].Bytes[b]) - int(reference[i].Bytes[b])) > 1;
+                paddingChanged += abs(int(output[i].Bytes[b]) - int(reference[i].Bytes[b])) > 1;
         }
         changed += targetChanged;
         WriteGraphicsLog("Meshlet image target=%zu changed texel bytes=%llu\n", i, targetChanged);
@@ -224,15 +224,15 @@ void Capture(bool compare, bool compareVelocity = true)
                      changed, total, paddingChanged);
     Check(changed <= total / 10000, "Traditional/Mesh Shader GBuffer agreement");
 }
-std::array<uint32_t, 16> Stats()
+array<uint32_t, 16> Stats()
 {
-    std::array<uint32_t, 16> stats{};
-    std::vector<uint8_t> bytes;
+    array<uint32_t, 16> stats{};
+    vector<uint8_t> bytes;
     Check(MeshShaderRenderer::IsActive(), "GPU Mesh Shader path active");
     if (MeshShaderRenderer::IsActive() &&
         RenderCapture::ReadBuffer(MeshShaderRenderer::StatisticsBuffer(),
                                   D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, 64, bytes))
-        std::memcpy(stats.data(), bytes.data(), 64);
+        memcpy(stats.data(), bytes.data(), 64);
     else
         Check(false, "read Meshlet counters");
     return stats;
@@ -248,13 +248,13 @@ void BeforeFrame(uint64_t frame)
     frames = frame + 1;
     if (frame == 0)
     {
-        std::vector<EntityID> remove;
+        vector<EntityID> remove;
         for (uint32_t i = 0; i < Registry::GetEntities().size(); ++i)
             if (Registry::IsAlive(i) && !ComponentManager::HasComponent<CameraComponent>(i))
                 remove.push_back(i);
         for (auto id : remove)
             World::DestroyEntity(Entity(id));
-        std::filesystem::create_directories("build/meshlets");
+        filesystem::create_directories("build/meshlets");
         Grid("build/meshlets/grid.obj", 32);
         Grid("build/meshlets/high.obj", 724);
         Grid("build/meshlets/sections.obj", 10, 5);
@@ -661,7 +661,7 @@ void BeforeFrame(uint64_t frame)
         if (frame >= 150)
         {
             GPUVisibility::GetSettings().LOD = true;
-            GPUVisibility::GetSettings().ForceLOD = int((std::min)(frame - 150, uint64_t(4)));
+            GPUVisibility::GetSettings().ForceLOD = int((min)(frame - 150, uint64_t(4)));
         }
         if (frame == 155)
         {
@@ -684,12 +684,12 @@ void AfterFrame(uint64_t frame)
     {
         const auto& mesh = *Entity(terrain).Get<MeshComponent>().NaniteMesh;
         const auto slot = GpuScene::GetEntityInstance(terrain);
-        std::vector<uint8_t> bytes;
+        vector<uint8_t> bytes;
         const bool read = slot != UINT32_MAX && RenderCapture::ReadBuffer(GPUVisibility::ResultBuffer(),
             D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, uint64_t(slot + 1) * 16, bytes);
         Visibility::VisibleInstanceData result{};
-        if (read) std::memcpy(&result, bytes.data() + size_t(slot) * 16, sizeof(result));
-        const uint32_t expected = frame == 157 ? 0 : uint32_t((std::min)(frame - 150, uint64_t(4)));
+        if (read) memcpy(&result, bytes.data() + size_t(slot) * 16, sizeof(result));
+        const uint32_t expected = frame == 157 ? 0 : uint32_t((min)(frame - 150, uint64_t(4)));
         Check(read && result.SelectedLOD == expected, "procedural forced GPU LOD selects requested level");
         const uint32_t triangles = expected ? uint32_t(mesh.CpuLodIndices[expected - 1].size() / 3) : mesh.IndexCount / 3;
         WriteGraphicsLog("Procedural LOD frame=%llu level=%u sourceTriangles=%u drawnTriangles=%u\n",
@@ -709,17 +709,17 @@ void AfterFrame(uint64_t frame)
     if (frame==123)
     {
         const uint32_t slot=GpuScene::GetEntityInstance(fixtures[0]);
-        std::vector<uint8_t> bytes;
+        vector<uint8_t> bytes;
         const bool read=RenderCapture::ReadBuffer(GPUVisibility::ResultBuffer(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,uint64_t(slot+1)*16,bytes);
         Visibility::VisibleInstanceData result{};
-        if (read) std::memcpy(&result,bytes.data()+size_t(slot)*16,sizeof(result));
+        if (read) memcpy(&result,bytes.data()+size_t(slot)*16,sizeof(result));
         Check(read && result.SelectedLOD==2,"LOD View uses actual forced GPU LOD");
     }
     if (frame==124) frozenCamera=GPUVisibility::CullingViewProjection();
     if (frame==126)
     {
         const auto camera=GPUVisibility::CullingViewProjection();
-        Check(std::memcmp(&camera,&frozenCamera,sizeof(camera))==0 && !GPUVisibility::HistoryValid(),"frozen culling camera and conservative Hi-Z disable");
+        Check(memcmp(&camera,&frozenCamera,sizeof(camera))==0 && !GPUVisibility::HistoryValid(),"frozen culling camera and conservative Hi-Z disable");
         Check(!MeshShaderRenderer::DebugRecords().empty(),"viewport culling records read back on demand");
         ImDrawList overlay(ImGui::GetDrawListSharedData());
         overlay._ResetForNewFrame();
@@ -815,7 +815,7 @@ void AfterFrame(uint64_t frame)
                         reinterpret_cast<const uint16_t *>(velocity.Bytes.data() + y * velocity.RowPitch) +
                         x * 4;
                     float motion = RenderCapture::HalfToFloat(pixel[2]);
-                    if (std::abs(motion) > 1e-5f)
+                    if (abs(motion) > 1e-5f)
                     {
                         sum += motion;
                         ++samples;
@@ -833,7 +833,7 @@ void AfterFrame(uint64_t frame)
         double observed = samples ? sum / samples : 0;
         WriteGraphicsLog("Meshlet moving velocity expected=%.8f observed=%.8f pixels=%u\n", expected,
                          observed, samples);
-        Check(read && samples > 100 && std::abs(observed - expected) < 0.00002,
+        Check(read && samples > 100 && abs(observed - expected) < 0.00002,
               "moving mesh Current/Previous GPU Scene velocity");
     }
     if (frame == 1 || frame == 22 || frame == 28 || frame == 32)
@@ -882,13 +882,13 @@ void AfterFrame(uint64_t frame)
         if (frame >= 62 && frame < 72 && frame % 2 != 0)
         {
             uint32_t slot = GpuScene::GetEntityInstance(fixtures[0]);
-            std::vector<uint8_t> bytes;
+            vector<uint8_t> bytes;
             bool read = RenderCapture::ReadBuffer(GPUVisibility::ResultBuffer(),
                                                   D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                                                   uint64_t(slot + 1) * 16, bytes);
             Visibility::VisibleInstanceData selected{};
             if (read)
-                std::memcpy(&selected, bytes.data() + size_t(slot) * 16, 16);
+                memcpy(&selected, bytes.data() + size_t(slot) * 16, 16);
             Check(read && selected.SelectedLOD == (frame - 62) / 2, "correct GPU selected LOD");
             if (read && selected.SelectedMeshID < MeshletManager::Ranges().size())
                 Check(stats[1] == MeshletManager::Ranges()[selected.SelectedMeshID].MeshletCount,
@@ -899,14 +899,14 @@ void AfterFrame(uint64_t frame)
         if (frame == 83)
         {
             const auto *instance = GpuScene::GetInstance(GpuScene::GetEntityInstance(fixtures[0]));
-            std::vector<uint8_t> bytes;
+            vector<uint8_t> bytes;
             bool read = instance && RenderCapture::ReadBuffer(
                                         MeshletManager::RangeBuffer().Resource(),
                                         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                                         uint64_t(instance->MeshIndex + 1) * sizeof(Meshlets::Range), bytes);
             Meshlets::Range range{};
             if (read)
-                std::memcpy(&range, bytes.data() + size_t(instance->MeshIndex) * sizeof(range),
+                memcpy(&range, bytes.data() + size_t(instance->MeshIndex) * sizeof(range),
                             sizeof(range));
             Check(read && range.MeshletCount == 0 && range.ClusterCount == 0 && stats[1] == 0,
                   "new legacy asset uploads zero GPU range and draws fallback");

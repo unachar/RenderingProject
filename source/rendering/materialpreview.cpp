@@ -26,17 +26,17 @@ struct PreviewState : RendererState
     float Distance = 4.5f;
     float LightIntensity = 2.0f;
     bool SceneEnvironment = false;
-    std::string Error;
+    string Error;
     ComPtr<ID3D12Resource> Target;
     ComPtr<ID3D12Resource> Depth;
     ComPtr<ID3D12DescriptorHeap> RTVHeap;
     ComPtr<ID3D12DescriptorHeap> DSVHeap;
     ComPtr<ID3D12Resource> Lights;
     uint8_t* MappedLights = nullptr;
-    std::array<ComPtr<ID3D12Resource>, 3> Vertices;
-    std::array<D3D12_VERTEX_BUFFER_VIEW, 3> Views{};
-    std::array<UINT, 3> Counts{};
-    std::array<ComPtr<ID3D12PipelineState>, 12> Pipelines;
+    array<ComPtr<ID3D12Resource>, 3> Vertices;
+    array<D3D12_VERTEX_BUFFER_VIEW, 3> Views{};
+    array<UINT, 3> Counts{};
+    array<ComPtr<ID3D12PipelineState>, 12> Pipelines;
     D3D12_CPU_DESCRIPTOR_HANDLE CpuSrv() const
     {
         return CD3DX12_CPU_DESCRIPTOR_HANDLE(FrameConstants::GetCbvHeap()->GetCPUDescriptorHandleForHeapStart(),
@@ -57,23 +57,23 @@ StaticModelVertex Vertex(float x, float y, float z, float nx, float ny, float nz
     return {{x, y, z}, {nx, ny, nz}, {u, v}, {1, 1, 1, 11}};
 }
 
-void Triangle(std::vector<StaticModelVertex>& vertices, StaticModelVertex first,
+void Triangle(vector<StaticModelVertex>& vertices, StaticModelVertex first,
     StaticModelVertex second, StaticModelVertex third)
 {
     const auto edge1 = XMVectorSubtract(XMLoadFloat3(&second.Position), XMLoadFloat3(&first.Position));
     const auto edge2 = XMVectorSubtract(XMLoadFloat3(&third.Position), XMLoadFloat3(&first.Position));
     if (XMVectorGetX(XMVector3Dot(XMVector3Cross(edge1, edge2), XMLoadFloat3(&first.Normal))) < 0)
     {
-        std::swap(second, third);
+        swap(second, third);
     }
     vertices.push_back(first);
     vertices.push_back(second);
     vertices.push_back(third);
 }
 
-std::vector<StaticModelVertex> MakeGeometry(int shape)
+vector<StaticModelVertex> MakeGeometry(int shape)
 {
-    std::vector<StaticModelVertex> vertices;
+    vector<StaticModelVertex> vertices;
     if (shape == 0)
     {
         auto sphereVertex = [](int latitude, int longitude)
@@ -115,7 +115,7 @@ std::vector<StaticModelVertex> MakeGeometry(int shape)
             {
                 direction = 1.0f;
             }
-            std::array<StaticModelVertex, 4> corners;
+            array<StaticModelVertex, 4> corners;
             for (int corner = 0; corner < 4; ++corner)
             {
                 float position[3]{};
@@ -237,7 +237,7 @@ bool PreviewState::Initialize()
 ID3D12PipelineState* PreviewState::Pipeline(const MaterialComponent& material)
 {
     size_t index = static_cast<size_t>(material.AssetCull);
-    if (!material.AssetDepthWrite)
+    if (!material.AssetDepthWrite || material.IsTransparent)
     {
         index += 3;
     }
@@ -280,7 +280,7 @@ ID3D12PipelineState* PreviewState::Pipeline(const MaterialComponent& material)
         description.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT;
     }
     description.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-    if (!material.AssetDepthWrite)
+    if (!material.AssetDepthWrite || material.IsTransparent)
     {
         description.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
     }
@@ -297,7 +297,7 @@ ID3D12PipelineState* PreviewState::Pipeline(const MaterialComponent& material)
     description.SampleMask = UINT_MAX;
     description.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     description.NumRenderTargets = 1;
-    description.RTVFormats[0] = GetSceneColorFormat();
+    description.RTVFormats[0] = Target->GetDesc().Format;
     description.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     description.SampleDesc.Count = 1;
     const D3D12_INPUT_ELEMENT_DESC layout[] = {
@@ -348,7 +348,7 @@ void MaterialPreview::DrawImage(AssetHandle material)
         return;
     }
     const auto available = ImGui::GetContentRegionAvail();
-    const float side = std::min(available.x, available.y);
+    const float side = min(available.x, available.y);
     ImGui::Image(reinterpret_cast<ImTextureData*>(preview.GpuSrv().ptr), ImVec2(side, side));
     if (ImGui::IsItemHovered())
     {
@@ -356,9 +356,9 @@ void MaterialPreview::DrawImage(AssetHandle material)
         if (ImGui::IsMouseDragging(ImGuiMouseButton_Left))
         {
             preview.Yaw += input.MouseDelta.x * 0.01f;
-            preview.Pitch = std::clamp(preview.Pitch + input.MouseDelta.y * 0.01f, -1.4f, 1.4f);
+            preview.Pitch = clamp(preview.Pitch + input.MouseDelta.y * 0.01f, -1.4f, 1.4f);
         }
-        preview.Distance = std::clamp(preview.Distance - input.MouseWheel * 0.25f, 1.5f, 12.0f);
+        preview.Distance = clamp(preview.Distance - input.MouseWheel * 0.25f, 1.5f, 12.0f);
     }
     if (!preview.Error.empty())
     {
@@ -407,6 +407,8 @@ void MaterialPreview::Render()
     const auto zeroAddress = preview.Lights->GetGPUVirtualAddress() + GraphicsDevice::GetFrameIndex() * constantBytes + constantBytes - 256;
     commands->SetGraphicsRootConstantBufferView(5, zeroAddress);
     commands->SetGraphicsRootConstantBufferView(17, zeroAddress);
+    commands->SetGraphicsRootConstantBufferView(26, zeroAddress);
+    commands->SetGraphicsRootConstantBufferView(27, zeroAddress);
     const XMFLOAT3 eye = {sinf(preview.Yaw) * cosf(preview.Pitch) * preview.Distance,
         sinf(preview.Pitch) * preview.Distance, -cosf(preview.Yaw) * cosf(preview.Pitch) * preview.Distance};
     ConstantBuffer3D constants;

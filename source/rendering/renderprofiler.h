@@ -23,7 +23,7 @@ public:
 
     struct PassTiming
     {
-        std::string Name;
+        string Name;
         double CpuMs = 0.0;
         double GpuMs = 0.0;
     };
@@ -56,13 +56,13 @@ public:
         bool PipelineStatisticsValid = false;
         Counters Calls{};
         D3D12_QUERY_DATA_PIPELINE_STATISTICS Pipeline{};
-        std::vector<PassTiming> Passes;
+        vector<PassTiming> Passes;
     };
 
 private:
     struct GpuEvent
     {
-        std::string Name;
+        string Name;
         UINT BeginLocalQuery = 0;
         UINT EndLocalQuery = 0;
         bool Ended = false;
@@ -72,11 +72,11 @@ private:
     {
         bool Pending = false;
         UINT TimestampQueryCount = 0;
-        std::vector<GpuEvent> GpuEvents;
+        vector<GpuEvent> GpuEvents;
         FrameSnapshot Snapshot{};
     };
 
-    using Clock = std::chrono::steady_clock;
+    using Clock = chrono::steady_clock;
 
     static inline Microsoft::WRL::ComPtr<ID3D12QueryHeap> s_TimestampHeap{};
     static inline Microsoft::WRL::ComPtr<ID3D12Resource> s_TimestampReadback{};
@@ -86,7 +86,7 @@ private:
     static inline bool s_GpuInitializationAttempted = false;
     static inline bool s_GpuResourcesReady = false;
 
-    static inline std::array<FrameSlot, kFrameCount> s_FrameSlots{};
+    static inline array<FrameSlot, kFrameCount> s_FrameSlots{};
     static inline FrameSlot* s_ActiveSlot = nullptr;
     static inline UINT s_ActiveFrameIndex = 0;
     static inline ID3D12GraphicsCommandList* s_ActiveCommandList = nullptr;
@@ -98,8 +98,8 @@ private:
     static inline bool s_HasLatest = false;
     static inline bool s_Enabled = true;
     static inline bool s_ShowWindow = true;
-    static inline std::array<float, kHistoryLength> s_CpuHistory{};
-    static inline std::array<float, kHistoryLength> s_GpuHistory{};
+    static inline array<float, kHistoryLength> s_CpuHistory{};
+    static inline array<float, kHistoryLength> s_GpuHistory{};
 
     static D3D12_RESOURCE_DESC BufferDescription(UINT64 sizeInBytes)
     {
@@ -207,7 +207,7 @@ private:
         return true;
     }
 
-    static PassTiming& FindOrCreatePass(FrameSnapshot& snapshot, const std::string& name)
+    static PassTiming& FindOrCreatePass(FrameSnapshot& snapshot, const string& name)
     {
         for (PassTiming& pass : snapshot.Passes)
         {
@@ -220,7 +220,7 @@ private:
         return snapshot.Passes.back();
     }
 
-    static void PushHistory(std::array<float, kHistoryLength>& history, float value)
+    static void PushHistory(array<float, kHistoryLength>& history, float value)
     {
         for (size_t index = 1; index < history.size(); ++index)
         {
@@ -301,7 +301,7 @@ private:
             }
         }
 
-        s_Latest = std::move(snapshot);
+        s_Latest = move(snapshot);
         s_HasLatest = true;
         PushHistory(s_CpuHistory, static_cast<float>(s_Latest.CpuRenderMs));
         PushHistory(s_GpuHistory, static_cast<float>(s_Latest.GpuRenderMs));
@@ -350,7 +350,7 @@ public:
                 return;
             }
             RenderProfiler::EndGpuEvent(m_GpuToken, m_CommandList);
-            const double cpuMs = std::chrono::duration<double, std::milli>(
+            const double cpuMs = chrono::duration<double, milli>(
                 Clock::now() - m_CpuBegin).count();
             RenderProfiler::RecordCpuPass(m_Name, cpuMs);
         }
@@ -481,7 +481,7 @@ public:
 
         EndGpuEvent(s_FrameGpuToken, commandList);
         s_ActiveSlot->Snapshot.CpuRenderMs =
-            std::chrono::duration<double, std::milli>(Clock::now() - s_CpuFrameBegin).count();
+            chrono::duration<double, milli>(Clock::now() - s_CpuFrameBegin).count();
 
         if (s_GpuResourcesReady)
         {

@@ -22,11 +22,11 @@
 #include <cstdio>
 
 #if !defined(isnan)
-#define isnan std::isnan
+#define isnan isnan
 #endif
 
 #if !defined(isfinite)
-#define isfinite std::isfinite
+#define isfinite isfinite
 #endif
 
 #else
@@ -86,9 +86,9 @@
 namespace Json {
 
 #if __cplusplus >= 201103L || (defined(_CPPLIB_VER) && _CPPLIB_VER >= 520)
-using StreamWriterPtr = std::unique_ptr<StreamWriter>;
+using StreamWriterPtr = unique_ptr<StreamWriter>;
 #else
-using StreamWriterPtr = std::auto_ptr<StreamWriter>;
+using StreamWriterPtr = auto_ptr<StreamWriter>;
 #endif
 
 String valueToString(LargestInt value) {
@@ -181,7 +181,7 @@ String valueToString(bool value) { return value ? "true" : "false"; }
 static bool doesAnyCharRequireEscaping(char const* s, size_t n) {
   assert(s || !n);
 
-  return std::any_of(s, s + n, [](unsigned char c) {
+  return any_of(s, s + n, [](unsigned char c) {
     return c == '\\' || c == '"' || c < 0x20 || c > 0x7F;
   });
 }
@@ -652,7 +652,7 @@ bool StyledWriter::hasCommentForValue(const Value& value) {
 // //////////////////////////////////////////////////////////////////
 
 StyledStreamWriter::StyledStreamWriter(String indentation)
-    : document_(nullptr), indentation_(std::move(indentation)),
+    : document_(nullptr), indentation_(move(indentation)),
       addChildValues_(), indented_(false) {}
 
 void StyledStreamWriter::write(OStream& out, const Value& root) {
@@ -901,7 +901,7 @@ private:
   void writeCommentAfterValueOnSameLine(Value const& root);
   static bool hasCommentForValue(const Value& value);
 
-  using ChildValues = std::vector<String>;
+  using ChildValues = vector<String>;
 
   ChildValues childValues_;
   String indentString_;
@@ -922,9 +922,9 @@ BuiltStyledStreamWriter::BuiltStyledStreamWriter(
     String indentation, CommentStyle::Enum cs, String colonSymbol,
     String nullSymbol, String endingLineFeedSymbol, bool useSpecialFloats,
     bool emitUTF8, unsigned int precision, PrecisionType precisionType)
-    : rightMargin_(74), indentation_(std::move(indentation)), cs_(cs),
-      colonSymbol_(std::move(colonSymbol)), nullSymbol_(std::move(nullSymbol)),
-      endingLineFeedSymbol_(std::move(endingLineFeedSymbol)),
+    : rightMargin_(74), indentation_(move(indentation)), cs_(cs),
+      colonSymbol_(move(colonSymbol)), nullSymbol_(move(nullSymbol)),
+      endingLineFeedSymbol_(move(endingLineFeedSymbol)),
       addChildValues_(false), indented_(false),
       useSpecialFloats_(useSpecialFloats), emitUTF8_(emitUTF8),
       precision_(precision), precisionType_(precisionType) {}
@@ -1208,7 +1208,7 @@ StreamWriter* StreamWriterBuilder::newStreamWriter() const {
 }
 
 bool StreamWriterBuilder::validate(Json::Value* invalid) const {
-  static const auto& valid_keys = *new std::set<String>{
+  static const auto& valid_keys = *new set<String>{
       "indentation",
       "commentStyle",
       "enableYAMLCompatibility",
@@ -1251,7 +1251,7 @@ String writeString(StreamWriter::Factory const& factory, Value const& root) {
   OStringStream sout;
   StreamWriterPtr const writer(factory.newStreamWriter());
   writer->write(root, &sout);
-  return std::move(sout).str();
+  return move(sout).str();
 }
 
 OStream& operator<<(OStream& sout, Value const& root) {

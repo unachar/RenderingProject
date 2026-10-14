@@ -24,27 +24,27 @@ namespace
 struct SceneState
 {
     GpuSceneSlots Instances;
-    std::vector<GPUMeshData> Meshes;
-    std::vector<GPUMaterialData> Materials;
-    std::vector<uint32_t> NewMeshes, NewMaterials;
-    std::vector<ComPtr<ID3D12Resource>> GeometryOwners;
-    std::unordered_map<uint32_t,ComPtr<ID3D12Resource>> PrimitiveOwners;
-    std::unordered_map<uint32_t, std::array<uint32_t, StaticMeshData::LodCount - 1>> PrimitiveLODs;
-    std::array<std::vector<ComPtr<ID3D12Resource>>,GpuSceneBuffer::FrameCount> RetiredPrimitiveOwners;
-    std::vector<uint32_t> FreePrimitiveMeshes;
-    std::unordered_map<uint64_t, std::vector<uint32_t>> MeshLookup, MaterialLookup;
+    vector<GPUMeshData> Meshes;
+    vector<GPUMaterialData> Materials;
+    vector<uint32_t> NewMeshes, NewMaterials;
+    vector<ComPtr<ID3D12Resource>> GeometryOwners;
+    unordered_map<uint32_t,ComPtr<ID3D12Resource>> PrimitiveOwners;
+    unordered_map<uint32_t, array<uint32_t, StaticMeshData::LodCount - 1>> PrimitiveLODs;
+    array<vector<ComPtr<ID3D12Resource>>,GpuSceneBuffer::FrameCount> RetiredPrimitiveOwners;
+    vector<uint32_t> FreePrimitiveMeshes;
+    unordered_map<uint64_t, vector<uint32_t>> MeshLookup, MaterialLookup;
     struct AssetMaterialRecord
     {
         uint32_t Index = 0;
         uint64_t Revision = 0;
         uint64_t PipelineRevision = 0;
-        std::unordered_set<uint32_t> Users;
+        unordered_set<uint32_t> Users;
     };
-    std::unordered_map<AssetHandle, AssetMaterialRecord> AssetMaterials;
-    std::unordered_map<uint32_t, std::vector<AssetHandle>> EntityAssets;
-    std::unordered_map<uint32_t, std::vector<GPUInstanceID>> Entities;
-    std::vector<uint32_t> CpuOpaqueStatic;
-    std::unordered_map<uint32_t, size_t> CpuOpaquePositions;
+    unordered_map<AssetHandle, AssetMaterialRecord> AssetMaterials;
+    unordered_map<uint32_t, vector<AssetHandle>> EntityAssets;
+    unordered_map<uint32_t, vector<GPUInstanceID>> Entities;
+    vector<uint32_t> CpuOpaqueStatic;
+    unordered_map<uint32_t, size_t> CpuOpaquePositions;
     GpuSceneBuffer InstanceBuffer, MeshBuffer, MaterialBuffer;
     GpuSceneCulling Culling;
     GpuSceneStatistics Stats;
@@ -65,13 +65,13 @@ uint64_t Hash(const void *data, size_t size)
     return hash;
 }
 template <typename T>
-uint32_t RegisterShared(const T &data, std::vector<T> &records,
-                        std::unordered_map<uint64_t, std::vector<uint32_t>> &lookup, std::vector<uint32_t> &changes)
+uint32_t RegisterShared(const T &data, vector<T> &records,
+                        unordered_map<uint64_t, vector<uint32_t>> &lookup, vector<uint32_t> &changes)
 {
     auto &matches = lookup[Hash(&data, sizeof(data))];
     for (uint32_t id : matches)
     {
-        if (std::memcmp(&records[id], &data, sizeof(data)) == 0)
+        if (memcmp(&records[id], &data, sizeof(data)) == 0)
         {
             return id;
         }
@@ -164,7 +164,7 @@ void RemoveMeshLookup(uint32_t id)
     auto found = scene.MeshLookup.find(key);
     if (found == scene.MeshLookup.end())
         return;
-    std::erase(found->second, id);
+    erase(found->second, id);
     if (found->second.empty())
         scene.MeshLookup.erase(found);
 }
@@ -195,7 +195,7 @@ uint32_t RegisterPrimitiveMesh(uint32_t entity, ID3D12Resource *vertices, uint32
     const auto key = Hash(&record, sizeof(record));
     if (const auto existing = scene.MeshLookup.find(key); existing != scene.MeshLookup.end())
         for (auto id : existing->second)
-            if (std::memcmp(&scene.Meshes[id], &record, sizeof(record)) == 0)
+            if (memcmp(&scene.Meshes[id], &record, sizeof(record)) == 0)
                 return id;
     if (reusable == UINT32_MAX && !scene.FreePrimitiveMeshes.empty())
     {
@@ -206,7 +206,7 @@ uint32_t RegisterPrimitiveMesh(uint32_t entity, ID3D12Resource *vertices, uint32
     {
         RemoveMeshLookup(reusable);
         if (auto old = scene.PrimitiveOwners.find(reusable); old != scene.PrimitiveOwners.end())
-            scene.RetiredPrimitiveOwners[GraphicsDevice::GetFrameIndex()].push_back(std::move(old->second));
+            scene.RetiredPrimitiveOwners[GraphicsDevice::GetFrameIndex()].push_back(move(old->second));
         scene.Meshes[reusable] = record;
         scene.MeshLookup[key].push_back(reusable);
         scene.NewMeshes.push_back(reusable);
@@ -219,7 +219,7 @@ uint32_t RegisterPrimitiveMesh(uint32_t entity, ID3D12Resource *vertices, uint32
 void RetireUnusedPrimitiveMeshes()
 {
     auto &scene = Scene();
-    std::unordered_set<uint32_t> used;
+    unordered_set<uint32_t> used;
     for (const auto &instance : scene.Instances.Data())
         if (instance.Flags & 1u)
             used.insert(instance.MeshIndex);
@@ -240,7 +240,7 @@ void RetireUnusedPrimitiveMeshes()
             continue;
         }
         const auto id = it->first;
-        scene.RetiredPrimitiveOwners[GraphicsDevice::GetFrameIndex()].push_back(std::move(it->second));
+        scene.RetiredPrimitiveOwners[GraphicsDevice::GetFrameIndex()].push_back(move(it->second));
         RemoveMeshLookup(id);
         scene.Meshes[id] = {};
         scene.NewMeshes.push_back(id);
@@ -291,7 +291,7 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
         instance.PreviousWorld = section < ids.size() ? scene.Instances.Data()[ids[section]].World : instance.World;
         // Material-only edits must preserve the temporal state of a moving instance.
         if (section < ids.size() &&
-            std::memcmp(&instance.World, &scene.Instances.Data()[ids[section]].World, sizeof(instance.World)) == 0)
+            memcmp(&instance.World, &scene.Instances.Data()[ids[section]].World, sizeof(instance.World)) == 0)
         {
             instance.PreviousWorld = scene.Instances.Data()[ids[section]].PreviousWorld;
         }
@@ -303,9 +303,9 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
         const auto &matrix = instance.World;
         instance.BoundsCenter = XMFLOAT4(worldCenter.x, worldCenter.y, worldCenter.z, 1);
         instance.BoundsExtents = XMFLOAT4(
-            std::abs(matrix._11) * extents.x + std::abs(matrix._21) * extents.y + std::abs(matrix._31) * extents.z,
-            std::abs(matrix._12) * extents.x + std::abs(matrix._22) * extents.y + std::abs(matrix._32) * extents.z,
-            std::abs(matrix._13) * extents.x + std::abs(matrix._23) * extents.y + std::abs(matrix._33) * extents.z, 0);
+            abs(matrix._11) * extents.x + abs(matrix._21) * extents.y + abs(matrix._31) * extents.z,
+            abs(matrix._12) * extents.x + abs(matrix._22) * extents.y + abs(matrix._32) * extents.z,
+            abs(matrix._13) * extents.x + abs(matrix._23) * extents.y + abs(matrix._33) * extents.z, 0);
         if (ComponentManager::HasComponent<InstancingComponent>(entity) &&
             !ComponentManager::GetComponentUnchecked<InstancingComponent>(entity).EnableFrustumCulling)
         {
@@ -401,7 +401,7 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
                         const auto& lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
                         if (lod.UseLOD)
                         {
-                            std::array<uint32_t, Visibility::MaxLODs> lodMeshes;
+                            array<uint32_t, Visibility::MaxLODs> lodMeshes;
                             lodMeshes.fill(Visibility::InvalidID); lodMeshes[0] = instance.MeshIndex;
                             const auto& metadata = lod.UseAssetSettings ? model->GetLODMetadata() : lod.ScreenLOD;
                             for (uint32_t level = 1; level < metadata.Count && level < Visibility::MaxLODs; ++level)
@@ -413,7 +413,7 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
                                     // Original bounds must cover every selectable LOD.
                                     const auto c = model->GetAabbCenter(), e = model->GetAabbExtents();
                                     const auto ac = alternative->GetAabbCenter(), ae = alternative->GetAabbExtents();
-                                    if (std::abs(ac.x - c.x) + ae.x > e.x + 0.0001f || std::abs(ac.y - c.y) + ae.y > e.y + 0.0001f || std::abs(ac.z - c.z) + ae.z > e.z + 0.0001f) continue;
+                                    if (abs(ac.x - c.x) + ae.x > e.x + 0.0001f || abs(ac.y - c.y) + ae.y > e.y + 0.0001f || abs(ac.z - c.z) + ae.z > e.z + 0.0001f) continue;
                                     const auto& alternativeMesh = alternative->GetMeshData(i);
                                     const auto meshID = RegisterMesh(alternativeMesh.VertexBuffer.Get(), alternativeMesh.IndexBuffer.Get(), alternativeMesh.VertexCount, alternativeMesh.IndexCount, ac, ae);
                                     GPUDrivenRenderer::RegisterGeometry(meshID, alternativeMesh);
@@ -471,7 +471,7 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
             {
                 auto [entry, inserted] = scene.PrimitiveLODs.try_emplace(instance.MeshIndex);
                 if (inserted) entry->second.fill(UINT32_MAX);
-                std::array<uint32_t, Visibility::MaxLODs> lodMeshes;
+                array<uint32_t, Visibility::MaxLODs> lodMeshes;
                 lodMeshes.fill(UINT32_MAX);
                 lodMeshes[0] = instance.MeshIndex;
                 const auto metadata = settings.UseAssetSettings ? Visibility::LODMetadata{} : settings.ScreenLOD;
@@ -495,7 +495,7 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
                     }
                     auto record = scene.Meshes[instance.MeshIndex];
                     record.IndexCount = static_cast<uint32_t>(indices.size());
-                    if (std::memcmp(&scene.Meshes[id], &record, sizeof(record)) != 0)
+                    if (memcmp(&scene.Meshes[id], &record, sizeof(record)) != 0)
                     {
                         scene.Meshes[id] = record;
                         scene.NewMeshes.push_back(id);
@@ -542,7 +542,7 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
         // Auto models still use the CPU outline pass after their base geometry moves to Nanite.
         SetCpuOpaqueEntity(entity, ComponentManager::HasComponent<StaticModelComponent>(entity) &&
             (!supported || material.ShaderClassMode == MaterialMode::Auto));
-        std::vector<uint32_t> textures;
+        vector<uint32_t> textures;
         if (supported)
             for (auto id : ids)
             {
@@ -559,7 +559,7 @@ void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
 {
     GPUDrivenValidation::Trace("GPU Scene begin");
     GpuSceneValidation::BeforeScene();
-    const auto start = std::chrono::steady_clock::now();
+    const auto start = chrono::steady_clock::now();
     auto &scene = Scene();
     const uint32_t frame = GraphicsDevice::GetFrameIndex();
     scene.RetiredPrimitiveOwners[frame].clear(); // This frame slot's fence completed before Execute.
@@ -577,7 +577,7 @@ void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
             record.PipelineRevision = runtime.PipelineRevision;
         }
     }
-    auto pending = std::move(GpuSceneChanges::Pending());
+    auto pending = move(GpuSceneChanges::Pending());
     GpuSceneChanges::Pending() = {};
     bool occluderChanged = pending.ResetScene || !pending.Destroyed.empty();
     for (const auto& [entity, dirty] : pending.Changed)
@@ -607,12 +607,12 @@ void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
     {
         RemoveEntity(entity);
     }
-    auto changed = std::move(pending.Changed);
+    auto changed = move(pending.Changed);
     for (const auto &[entity, flags] : changed)
     {
         UpdateEntity(entity, flags);
     }
-    const bool geometryChanged=std::any_of(changed.begin(),changed.end(),[](const auto& change) {
+    const bool geometryChanged=any_of(changed.begin(),changed.end(),[](const auto& change) {
         return (static_cast<uint32_t>(change.second)&static_cast<uint32_t>(GpuSceneDirtyFlags::Mesh))!=0;
     });
     if (geometryChanged || pending.ResetScene || !pending.Destroyed.empty()) RetireUnusedPrimitiveMeshes();
@@ -713,7 +713,7 @@ void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
     GPUDrivenValidation::Trace("indirect pipeline ready");
     if (!graph.Compile() || !graph.Execute(commands))
     {
-        throw std::runtime_error(graph.GetLastError());
+        throw runtime_error(graph.GetLastError());
     }
     scene.InstanceBuffer.State = scene.MeshBuffer.State = scene.MaterialBuffer.State =
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
@@ -725,7 +725,7 @@ void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
     scene.Stats.BufferMemoryBytes = scene.InstanceBuffer.MemoryBytes() + scene.MeshBuffer.MemoryBytes() +
                                     scene.MaterialBuffer.MemoryBytes() + scene.Culling.Visibility.MemoryBytes();
     scene.Stats.UpdateCpuMilliseconds =
-        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        chrono::duration<double, milli>(chrono::steady_clock::now() - start).count();
 }
 
 void GpuScene::Shutdown()
@@ -737,13 +737,13 @@ uint32_t Entity::GetGPUInstanceID() const
 {
     return IsValid() ? GpuScene::GetEntityInstance(m_Id) : InvalidGPUInstanceID;
 }
-const std::vector<GPUInstanceID> &GpuScene::GetEntityInstances(uint32_t entity)
+const vector<GPUInstanceID> &GpuScene::GetEntityInstances(uint32_t entity)
 {
-    static const std::vector<GPUInstanceID> empty;
+    static const vector<GPUInstanceID> empty;
     const auto found = Scene().Entities.find(entity);
     return found == Scene().Entities.end() ? empty : found->second;
 }
-const std::vector<uint32_t>& GpuScene::CpuOpaqueStaticEntities()
+const vector<uint32_t>& GpuScene::CpuOpaqueStaticEntities()
 {
     return Scene().CpuOpaqueStatic;
 }

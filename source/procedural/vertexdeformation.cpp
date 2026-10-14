@@ -13,7 +13,7 @@
 
 namespace
 {
-using GeometryKey = std::tuple<EntityID, UINT, int>;
+using GeometryKey = tuple<EntityID, UINT, int>;
 constexpr UINT kPrimitiveMesh = UINT_MAX;
 constexpr UINT kFrameCount = 3;
 constexpr UINT kConstantSize = 256;
@@ -48,8 +48,8 @@ struct History
     bool Valid = false;
 };
 
-std::array<std::map<GeometryKey, FrameGeometry>, kFrameCount> g_Frames;
-std::map<GeometryKey, History> g_History;
+array<map<GeometryKey, FrameGeometry>, kFrameCount> g_Frames;
+map<GeometryKey, History> g_History;
 ComPtr<ID3D12RootSignature> g_Root;
 ComPtr<ID3D12PipelineState> g_Pipeline;
 UINT g_FrameIndex = 0;
@@ -95,7 +95,7 @@ bool Allocate(FrameGeometry& geometry, ID3D12Resource* base, const D3D12_VERTEX_
     const auto defaultHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
     const auto vertexDescription = CD3DX12_RESOURCE_DESC::Buffer(view.SizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     auto* device = GraphicsDevice::GetDevice();
-    const std::array<ComPtr<ID3D12Resource>*, 2> outputs = { std::addressof(created.Current), std::addressof(created.Previous) };
+    const array<ComPtr<ID3D12Resource>*, 2> outputs = { addressof(created.Current), addressof(created.Previous) };
     for (auto* output : outputs)
     {
         if (FAILED(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &vertexDescription,
@@ -107,7 +107,7 @@ bool Allocate(FrameGeometry& geometry, ID3D12Resource* base, const D3D12_VERTEX_
     const auto constantDescription = CD3DX12_RESOURCE_DESC::Buffer(kConstantSize);
     if (FAILED(device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &constantDescription,
         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&created.ConstantBuffer)))) return false;
-    geometry = std::move(created);
+    geometry = move(created);
     return true;
 }
 
@@ -115,13 +115,13 @@ MotionConstants PackMotion(const ProceduralMotionComponent& motion)
 {
     MotionConstants result;
     const double cycles = motion.Time * motion.Speed;
-    const float phase = std::isfinite(cycles) ? static_cast<float>(std::remainder(cycles, 1.0) * XM_2PI) : 0;
-    const float noiseTime = std::isfinite(cycles) ? static_cast<float>(std::remainder(cycles, 8192.0)) : 0;
-    const auto amplitude = [](float value) { return std::isfinite(value) ? std::clamp(value, -100.0f, 100.0f) : 0.0f; };
+    const float phase = isfinite(cycles) ? static_cast<float>(remainder(cycles, 1.0) * XM_2PI) : 0;
+    const float noiseTime = isfinite(cycles) ? static_cast<float>(remainder(cycles, 8192.0)) : 0;
+    const auto amplitude = [](float value) { return isfinite(value) ? clamp(value, -100.0f, 100.0f) : 0.0f; };
     result.AmplitudeAndPhase = { amplitude(motion.Amplitude.x), amplitude(motion.Amplitude.y), amplitude(motion.Amplitude.z), phase };
     float seedBits;
     memcpy(&seedBits, &motion.Seed, sizeof(seedBits));
-    result.Parameters = { std::isfinite(motion.SpatialFrequency) ? std::clamp(motion.SpatialFrequency, 0.001f, 4.0f) : 0.3f, noiseTime,
+    result.Parameters = { isfinite(motion.SpatialFrequency) ? clamp(motion.SpatialFrequency, 0.001f, 4.0f) : 0.3f, noiseTime,
         static_cast<float>(motion.Method), seedBits };
     return result;
 }
@@ -147,7 +147,7 @@ void DispatchGeometry(ID3D12GraphicsCommandList* commandList, const GeometryKey&
     D3D12_HEAP_PROPERTIES heapProperties{};
     base->GetHeapProperties(&heapProperties, nullptr);
     const bool uploadBase = heapProperties.Type == D3D12_HEAP_TYPE_UPLOAD;
-    std::vector<D3D12_RESOURCE_BARRIER> barriers;
+    vector<D3D12_RESOURCE_BARRIER> barriers;
     if (!uploadBase)
     {
         barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(base,
@@ -165,8 +165,8 @@ void DispatchGeometry(ID3D12GraphicsCommandList* commandList, const GeometryKey&
     commandList->SetComputeRootUnorderedAccessView(2, geometry.Previous->GetGPUVirtualAddress());
     commandList->SetComputeRootConstantBufferView(3, geometry.ConstantBuffer->GetGPUVirtualAddress());
     const UINT groups = (constants.Geometry.x + 63u) / 64u;
-    commandList->Dispatch((std::min)(groups, 65535u), (groups + 65534u) / 65535u, 1);
-    for (auto& barrier : barriers) std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+    commandList->Dispatch((min)(groups, 65535u), (groups + 65534u) / 65535u, 1);
+    for (auto& barrier : barriers) swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
     commandList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
     history = { view.BufferLocation, constants.Current, motion.Time, true };
     geometry.Revision = g_Revision;
@@ -175,7 +175,7 @@ void DispatchGeometry(ID3D12GraphicsCommandList* commandList, const GeometryKey&
 
 bool Resolve(const GeometryKey& key, VertexDeformationView& output)
 {
-    if (!VertexDeformation::IsRequested(std::get<0>(key))) return false;
+    if (!VertexDeformation::IsRequested(get<0>(key))) return false;
     const auto found = g_Frames[g_FrameIndex].find(key);
     if (found == g_Frames[g_FrameIndex].end() || found->second.Revision != g_Revision) return false;
     const auto& geometry = found->second;
@@ -205,7 +205,7 @@ void VertexDeformation::PrepareFrame(ID3D12GraphicsCommandList* commandList, UIN
     ++g_Revision;
     if (!commandList || !Initialize()) return;
     RenderProfiler::ScopedEvent profile("Procedural Vertices", commandList);
-    std::set<GeometryKey> live;
+    set<GeometryKey> live;
     for (EntityID entity : World::GetView<ProceduralMotionComponent>())
     {
         if (!IsRequested(entity)) continue;
@@ -289,7 +289,7 @@ void VertexDeformation::ResetHistory(EntityID entity)
 {
     for (auto& [key, history] : g_History)
     {
-        if (std::get<0>(key) == entity) history.Valid = false;
+        if (get<0>(key) == entity) history.Valid = false;
     }
 }
 void VertexDeformation::Shutdown()

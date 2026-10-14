@@ -8,7 +8,7 @@ SamplerState g_SamplerState : register(s0);
 void main(in PSInput3D In, out float4 outDiffuse : SV_Target)
 {
     float4 baseColor = In.Diffuse;
-    float3 normal = normalize(-In.Normal.xyz);
+    float3 normal = normalize(In.Normal.xyz);
     if (UseNormalMap != 0)
     {
         float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
@@ -30,6 +30,7 @@ void main(in PSInput3D In, out float4 outDiffuse : SV_Target)
         baseColor *= g_Texture.Sample(g_SamplerState, In.TexCoord);
     }
     baseColor.a *= saturate(MaterialAlpha);
+    clip(baseColor.a - (1.0f / 255.0f));
     
     float lighting = saturate(dot(normal, lightDirection));
     float shadowVisibility = SampleShadowMap(In.WorldPos, normal, lightDirection);

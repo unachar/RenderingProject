@@ -598,7 +598,7 @@ void ImGuiManager::SaveProjectSettings()
 
 void ImGuiManager::LoadProjectSettings()
 {
-    std::string materialError;
+    string materialError;
     if (!MaterialManager::LoadSceneReferences("Save/scene_materials.json", materialError))
     {
         AddLog("Scene material load failed: %s", materialError.c_str());

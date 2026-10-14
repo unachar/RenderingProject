@@ -8,8 +8,8 @@ class VirtualGeometryBuilder
 {
 public:
     static VirtualGeometryBuildResult Build(
-        std::span<const VirtualGeometryVertex> vertices,
-        std::span<const uint32_t> indices,
+        span<const VirtualGeometryVertex> vertices,
+        span<const uint32_t> indices,
         const VirtualGeometryBuildConfig& config = {},
         uint32_t materialId = 0);
 

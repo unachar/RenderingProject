@@ -28,9 +28,9 @@ Options &Settings()
     static Options options;
     return options;
 }
-std::vector<const StaticMeshData *> Meshes(uint32_t entity)
+vector<const StaticMeshData *> Meshes(uint32_t entity)
 {
-    std::vector<const StaticMeshData *> result;
+    vector<const StaticMeshData *> result;
     if (ComponentManager::HasComponent<StaticModelComponent>(entity))
     {
         auto *model = ModelManager::GetStaticModel(
@@ -93,7 +93,7 @@ void DrawControls()
     {
         if (lod)
             ImGui::SameLine();
-        ImGui::ColorButton(("LOD" + std::to_string(lod)).c_str(),
+        ImGui::ColorButton(("LOD" + to_string(lod)).c_str(),
                            ImGui::ColorConvertU32ToFloat4(LODColors[lod]), ImGuiColorEditFlags_NoTooltip,
                            ImVec2(12, 12));
         ImGui::SameLine();
@@ -167,7 +167,7 @@ void DrawControls()
             if (!asset->HierarchyWarning.empty())
                 ImGui::TextWrapped("Hierarchy: %s (leaf rendering available)",
                                    asset->HierarchyWarning.c_str());
-            if (ImGui::BeginTable(("Hierarchy##" + source->MeshName + std::to_string(asset->Key)).c_str(), 4))
+            if (ImGui::BeginTable(("Hierarchy##" + source->MeshName + to_string(asset->Key)).c_str(), 4))
             {
                 ImGui::TableSetupColumn("Level");
                 ImGui::TableSetupColumn("Clusters");
@@ -180,7 +180,7 @@ void DrawControls()
                     float error = 0;
                     for (const auto &cluster : asset->Hierarchy.Clusters)
                         if (cluster.Level == level)
-                            error = std::max(error, cluster.LodError);
+                            error = max(error, cluster.LodError);
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
                     ImGui::Text("%zu", level);
@@ -274,7 +274,7 @@ void DrawViewport(ImDrawList *draw, const ImVec2 &origin, const ImVec2 &size, ui
             const auto world = XMLoadFloat4x4(&instance->World);
             const auto &bounds = data.Bounds[record[1]];
             if (settings.MeshletBounds)
-                sphere(bounds, world, colors[std::min(record[2], 5u)]);
+                sphere(bounds, world, colors[min(record[2], 5u)]);
             if (settings.ClusterBounds && record[3] < data.Clusters.size() &&
                 record[1] == data.Clusters[record[3]].MeshletOffset)
                 sphere(data.Clusters[record[3]].Bounds, world, IM_COL32(190, 190, 255, 200));
@@ -311,7 +311,7 @@ void DrawViewport(ImDrawList *draw, const ImVec2 &origin, const ImVec2 &size, ui
                 if (!bounds && !wire)
                     continue;
                 ++previews;
-                const auto color = LODColors[std::min(cluster.Level, 7u)];
+                const auto color = LODColors[min(cluster.Level, 7u)];
                 if (bounds)
                     sphere({{cluster.Bounds.Center[0], cluster.Bounds.Center[1], cluster.Bounds.Center[2]},
                             cluster.Bounds.Radius,
@@ -342,8 +342,8 @@ void DrawViewport(ImDrawList *draw, const ImVec2 &origin, const ImVec2 &size, ui
         displayed += previews;
     }
     draw->AddText(ImVec2(origin.x + 8, origin.y + 8), IM_COL32_WHITE,
-                  ("Nanite overlay: " + std::to_string(displayed) + " clusters (limit " +
-                   std::to_string(options.Limit) + ")")
+                  ("Nanite overlay: " + to_string(displayed) + " clusters (limit " +
+                   to_string(options.Limit) + ")")
                       .c_str());
     draw->PopClipRect();
 }

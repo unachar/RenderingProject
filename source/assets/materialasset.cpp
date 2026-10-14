@@ -7,36 +7,36 @@
 #include <sstream>
 #include <windows.h>
 
-std::string FormatAssetHandle(AssetHandle handle)
+string FormatAssetHandle(AssetHandle handle)
 {
-    std::ostringstream output;
-    output << "guid:" << std::hex << std::setw(16) << std::setfill('0') << handle;
+    ostringstream output;
+    output << "guid:" << hex << setw(16) << setfill('0') << handle;
     return output.str();
 }
 
-AssetHandle ParseAssetHandle(const std::string& text)
+AssetHandle ParseAssetHandle(const string& text)
 {
     if (text.size() != 21 || text.substr(0, 5) != "guid:")
     {
         return 0;
     }
     AssetHandle handle = 0;
-    const auto result = std::from_chars(text.data() + 5, text.data() + text.size(), handle, 16);
-    if (result.ec != std::errc{} || result.ptr != text.data() + text.size())
+    const auto result = from_chars(text.data() + 5, text.data() + text.size(), handle, 16);
+    if (result.ec != errc{} || result.ptr != text.data() + text.size())
     {
         return 0;
     }
     return handle;
 }
 
-bool WriteAssetFile(const std::filesystem::path& path, const std::string& contents, std::string& error)
+bool WriteAssetFile(const filesystem::path& path, const string& contents, string& error)
 {
     error.clear();
     auto temporary = path;
     temporary += ".tmp";
     {
-        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
-        stream.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+        ofstream stream(temporary, ios::binary | ios::trunc);
+        stream.write(contents.data(), static_cast<streamsize>(contents.size()));
         stream.flush();
         if (!stream)
         {
@@ -46,22 +46,22 @@ bool WriteAssetFile(const std::filesystem::path& path, const std::string& conten
     }
     if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
     {
-        error = "Failed to replace " + path.generic_string() + " (" + std::to_string(GetLastError()) + ")";
-        std::error_code ignored;
-        std::filesystem::remove(temporary, ignored);
+        error = "Failed to replace " + path.generic_string() + " (" + to_string(GetLastError()) + ")";
+        error_code ignored;
+        filesystem::remove(temporary, ignored);
         return false;
     }
     return true;
 }
 
-bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string& error)
+bool MaterialSerializer::Validate(const MaterialAssetData& material, string& error)
 {
     error.clear();
     auto range = [&](float value, float minimum, float maximum, const char* property)
     {
-        if (!std::isfinite(value) || value < minimum || value > maximum)
+        if (!isfinite(value) || value < minimum || value > maximum)
         {
-            error = std::string("Invalid ") + property;
+            error = string("Invalid ") + property;
             return false;
         }
         return true;
@@ -85,11 +85,17 @@ bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string
         !range(material.NormalScale, 0, 8, "normalScale") ||
         !range(material.AOStrength, 0, 1, "aoStrength") ||
         !range(material.EmissiveIntensity, 0, 65504, "emissiveIntensity") ||
-        !range(material.AlphaCutoff, 0, 1, "alphaCutoff"))
+        !range(material.AlphaCutoff, 0, 1, "alphaCutoff") ||
+        !range(material.ShadowCutoff, 0, 1, "shadowCutoff") ||
+        !range(material.IOR, 1, 10, "ior") || !range(material.Transmission, 0, 1, "transmission") ||
+        !range(material.Thickness, 0, 65504, "thickness"))
     {
         return false;
     }
-    if (material.Surface > MaterialSurface::Transparent || material.Cull > MaterialCull::Front)
+    for (float channel : material.AbsorptionCoefficient)
+        if (!range(channel, 0, 65504, "absorptionCoefficient")) return false;
+    if (material.Surface > MaterialSurface::Transparent || material.Cull > MaterialCull::Front ||
+        material.ShadowMode > MaterialShadowMode::Auto)
     {
         error = "Unsupported render state";
         return false;
@@ -100,7 +106,7 @@ bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string
 namespace
 {
 constexpr const char* textureNames[] = {"baseColor", "normal", "metallicRoughness", "ao", "emissive"};
-bool ReadFloat(const Json::Value& object, const char* name, float& value, std::string& error)
+bool ReadFloat(const Json::Value& object, const char* name, float& value, string& error)
 {
     if (!object.isMember(name))
     {
@@ -108,14 +114,14 @@ bool ReadFloat(const Json::Value& object, const char* name, float& value, std::s
     }
     if (!object[name].isNumeric())
     {
-        error = std::string("Invalid ") + name + " property";
+        error = string("Invalid ") + name + " property";
         return false;
     }
     value = object[name].asFloat();
     return true;
 }
 template<size_t Count>
-bool ReadColor(const Json::Value& object, const char* name, std::array<float, Count>& color, std::string& error)
+bool ReadColor(const Json::Value& object, const char* name, array<float, Count>& color, string& error)
 {
     if (!object.isMember(name))
     {
@@ -124,14 +130,14 @@ bool ReadColor(const Json::Value& object, const char* name, std::array<float, Co
     const auto& array = object[name];
     if (!array.isArray() || array.size() != Count)
     {
-        error = std::string("Invalid ") + name + " array";
+        error = string("Invalid ") + name + " array";
         return false;
     }
     for (Json::ArrayIndex i = 0; i < Count; ++i)
     {
         if (!array[i].isNumeric())
         {
-            error = std::string("Invalid ") + name + " channel";
+            error = string("Invalid ") + name + " channel";
             return false;
         }
         color[i] = array[i].asFloat();
@@ -140,10 +146,10 @@ bool ReadColor(const Json::Value& object, const char* name, std::array<float, Co
 }
 }
 
-bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetData& material, std::string& error)
+bool MaterialSerializer::Load(const filesystem::path& path, MaterialAssetData& material, string& error)
 {
     error.clear();
-    std::ifstream stream(path, std::ios::binary);
+    ifstream stream(path, ios::binary);
     if (!stream)
     {
         error = "Failed to open " + path.generic_string();
@@ -175,7 +181,7 @@ bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetDa
     {
         if (root.isMember(object) && !root[object].isObject())
         {
-            error = std::string("Invalid ") + object + " object";
+            error = string("Invalid ") + object + " object";
             return false;
         }
     }
@@ -186,7 +192,12 @@ bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetDa
         !ReadFloat(parameters, "normalScale", result.NormalScale, error) ||
         !ReadFloat(parameters, "aoStrength", result.AOStrength, error) ||
         !ReadFloat(parameters, "emissiveIntensity", result.EmissiveIntensity, error) ||
-        !ReadFloat(renderState, "alphaCutoff", result.AlphaCutoff, error))
+        !ReadFloat(renderState, "alphaCutoff", result.AlphaCutoff, error) ||
+        !ReadFloat(renderState, "shadowCutoff", result.ShadowCutoff, error) ||
+        !ReadFloat(parameters, "ior", result.IOR, error) ||
+        !ReadFloat(parameters, "transmission", result.Transmission, error) ||
+        !ReadFloat(parameters, "thickness", result.Thickness, error) ||
+        !ReadColor(parameters, "absorptionCoefficient", result.AbsorptionCoefficient, error))
     {
         return false;
     }
@@ -206,6 +217,30 @@ bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetDa
             error = "Unsupported surfaceType";
             return false;
         }
+    }
+    if (renderState.isMember("shadowMode"))
+    {
+        const auto& mode = renderState["shadowMode"];
+        if (mode == "None")
+        {
+            result.ShadowMode = MaterialShadowMode::None;
+        }
+        else if (mode == "AlphaTest")
+        {
+            result.ShadowMode = MaterialShadowMode::AlphaTest;
+        }
+        else if (mode == "Opaque") result.ShadowMode = MaterialShadowMode::Opaque;
+        else if (mode == "Transmittance") result.ShadowMode = MaterialShadowMode::Transmittance;
+        else if (mode != "Auto")
+        {
+            error = "Invalid shadowMode";
+            return false;
+        }
+    }
+    else if (result.Surface == MaterialSurface::Masked)
+    {
+        result.ShadowMode = MaterialShadowMode::AlphaTest;
+        result.ShadowCutoff = result.AlphaCutoff;
     }
     if (renderState.isMember("cullMode"))
     {
@@ -242,14 +277,14 @@ bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetDa
         }
         if (!reference.isString())
         {
-            error = std::string("Invalid texture reference: ") + textureNames[slot];
+            error = string("Invalid texture reference: ") + textureNames[slot];
             return false;
         }
         const auto text = reference.asString();
         result.Textures[slot] = ParseAssetHandle(text);
         if (result.Textures[slot] == 0 && text != FormatAssetHandle(0) && !text.empty())
         {
-            error = std::string("Invalid texture GUID: ") + textureNames[slot];
+            error = string("Invalid texture GUID: ") + textureNames[slot];
             return false;
         }
     }
@@ -261,7 +296,7 @@ bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetDa
     return true;
 }
 
-bool MaterialSerializer::Save(const std::filesystem::path& path, const MaterialAssetData& material, std::string& error)
+bool MaterialSerializer::Save(const filesystem::path& path, const MaterialAssetData& material, string& error)
 {
     if (!Validate(material, error))
     {
@@ -284,6 +319,9 @@ bool MaterialSerializer::Save(const std::filesystem::path& path, const MaterialA
     state["cullMode"] = cullNames[static_cast<size_t>(material.Cull)];
     state["depthWrite"] = material.DepthWrite;
     state["alphaCutoff"] = material.AlphaCutoff;
+    const char* shadowNames[] = {"None", "Opaque", "AlphaTest", "Transmittance", "Auto"};
+    state["shadowMode"] = shadowNames[static_cast<size_t>(material.ShadowMode)];
+    state["shadowCutoff"] = material.ShadowCutoff;
     auto& parameters = root["parameters"];
     for (float value : material.BaseColor)
     {
@@ -294,6 +332,10 @@ bool MaterialSerializer::Save(const std::filesystem::path& path, const MaterialA
         parameters["emissiveColor"].append(value);
     }
     parameters["metallic"] = material.Metallic;
+    parameters["ior"] = material.IOR;
+    parameters["transmission"] = material.Transmission;
+    parameters["thickness"] = material.Thickness;
+    for (float value : material.AbsorptionCoefficient) parameters["absorptionCoefficient"].append(value);
     parameters["roughness"] = material.Roughness;
     parameters["normalScale"] = material.NormalScale;
     parameters["aoStrength"] = material.AOStrength;

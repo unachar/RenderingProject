@@ -33,7 +33,7 @@ bool g_LoggedEvaluation = false;
 UINT g_JitterFrame = 0;
 EntityID g_Camera = g_kINVALID_ENTITY;
 XMFLOAT2 g_Jitter{};
-std::string g_Status = "NGX SDK is not installed";
+string g_Status = "NGX SDK is not installed";
 
 #ifdef RENDERINGPROJECT_USE_DLSS
 NVSDK_NGX_Parameter* g_Parameters = nullptr;
@@ -54,7 +54,7 @@ struct FrameResources
     ComPtr<ID3D12Resource> Motion;
     ComPtr<ID3D12Resource> Output;
 };
-std::array<FrameResources, kFrameCount> g_Frames;
+array<FrameResources, kFrameCount> g_Frames;
 
 D3D12_CPU_DESCRIPTOR_HANDLE CpuHandle(UINT index)
 {
@@ -237,14 +237,14 @@ void DlssUpscaler::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, 
     }
     wchar_t executable[MAX_PATH]{};
     GetModuleFileNameW(nullptr, executable, MAX_PATH);
-    const auto directory = std::filesystem::path(executable).parent_path().wstring();
+    const auto directory = filesystem::path(executable).parent_path().wstring();
     const wchar_t* paths[] = { directory.c_str() };
     NVSDK_NGX_FeatureCommonInfo info{};
     info.PathListInfo.Path = paths;
     info.PathListInfo.Length = 1;
-    const auto logs = std::filesystem::absolute("bin/ngx").wstring();
-    std::error_code error;
-    std::filesystem::create_directories(logs, error);
+    const auto logs = filesystem::absolute("bin/ngx").wstring();
+    error_code error;
+    filesystem::create_directories(logs, error);
     const auto result = NVSDK_NGX_D3D12_Init_with_ProjectID("ddaac575-3a1b-4406-94ce-e13d43222fe2",
         NVSDK_NGX_ENGINE_TYPE_CUSTOM, "1.0", logs.c_str(), device, &info);
     if (NVSDK_NGX_FAILED(result))
@@ -331,7 +331,7 @@ void DlssUpscaler::PrepareFrame(EntityID camera)
     g_Jitter = {};
     if (requested)
     {
-        const UINT phaseCount = std::max(8u, static_cast<UINT>(8.0f * GraphicsDevice::GetWidth() /
+        const UINT phaseCount = max(8u, static_cast<UINT>(8.0f * GraphicsDevice::GetWidth() /
             GraphicsDevice::GetSceneWidth() * GraphicsDevice::GetHeight() / GraphicsDevice::GetSceneHeight()));
         const UINT index = g_JitterFrame++ % phaseCount + 1;
         g_Jitter = { Halton(index, 2) - 0.5f, Halton(index, 3) - 0.5f };

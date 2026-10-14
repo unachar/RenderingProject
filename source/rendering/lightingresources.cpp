@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "transmittanceshadows.h"
+#include "materialmanager.h"
 #include "lightingresources.h"
 #include "graphicsdevice.h"
 #include "shaderpaths.h"
@@ -81,6 +83,7 @@ namespace
 	uint64_t g_LightConstantsSerial = 0;
 	uint64_t g_ShadowConstantsSerial = 0;
 	UINT g_ShadowConstantsPassIndex = UINT_MAX;
+    bool g_ShadowConstantsTransmissionEnabled = false;
 	float g_LightConstantsStrength = -1.0f;
 	ComPtr<ID3D12Resource> g_LightTileIndexBuffers[RendererState::g_kFRAME_COUNT];
 	uint32_t* g_LightTileIndexData[RendererState::g_kFRAME_COUNT]{};
@@ -517,6 +520,32 @@ namespace
 						hashPageValue(&transform.Position, sizeof(transform.Position));
 						hashPageValue(&transform.Rotation, sizeof(transform.Rotation));
 						hashPageValue(&transform.Scale, sizeof(transform.Scale));
+                        if (ComponentManager::HasComponent<MaterialComponent>(entity))
+                        {
+                            const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+                            const size_t count = max(size_t(1), source.MaterialSlots.size());
+                            for (size_t slot = 0; slot < count; ++slot)
+                            {
+                                const auto& material = MaterialManager::Resolve(source, slot);
+                                hashPageValue(&material.Alpha, sizeof(material.Alpha));
+                                hashPageValue(&material.BaseColor.w, sizeof(material.BaseColor.w));
+                                hashPageValue(&material.ShadowMode, sizeof(material.ShadowMode));
+                                hashPageValue(&material.ShadowCutoff, sizeof(material.ShadowCutoff));
+                                hashPageValue(&material.IOR, sizeof(material.IOR));
+                                hashPageValue(&material.Transmission, sizeof(material.Transmission));
+                                hashPageValue(&material.Thickness, sizeof(material.Thickness));
+                                hashPageValue(&material.AbsorptionCoefficient, sizeof(material.AbsorptionCoefficient));
+                                hashPageValue(&material.BaseColor, sizeof(material.BaseColor));
+                                hashPageValue(&material.IsTransparent, sizeof(material.IsTransparent));
+                                hashPageValue(&material.AssetCull, sizeof(material.AssetCull));
+                                hashPageValue(&material.TextureID, sizeof(material.TextureID));
+                                if (material.RuntimeHandle != 0)
+                                {
+                                    const auto revision = MaterialManager::GetRuntime(material.RuntimeHandle).Revision;
+                                    hashPageValue(&revision, sizeof(revision));
+                                }
+                            }
+                        }
 						if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
 						{
 							const auto& animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
@@ -647,9 +676,13 @@ namespace
 
 		if (ComponentManager::HasComponent<MaterialComponent>(entity))
 		{
-			const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
-			if (MaterialSystem::IsTransparentMaterial(material) ||
-				(material.ShaderClassMode == MaterialMode::Manual && material.ShaderClass == ShaderClass::Shadow))
+			const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+            bool castsShadow = MaterialSystem::CastsShadow(MaterialManager::Resolve(source));
+            for (size_t slot = 0; slot < source.MaterialSlots.size(); ++slot)
+            {
+                castsShadow |= MaterialSystem::CastsShadow(MaterialManager::Resolve(source, slot));
+            }
+            if (!castsShadow)
 			{
 				return false;
 			}
@@ -1121,7 +1154,18 @@ D3D12_GPU_VIRTUAL_ADDRESS LightingResources::GetShadowConstantBufferAddress(UINT
 
 D3D12_GPU_VIRTUAL_ADDRESS LightingResources::GetCurrentShadowConstantBufferAddress()
 {
+	if (TransmittanceShadows::IsActive()) return TransmittanceShadows::GetCurrentConstantBufferAddress();
 	return GetShadowConstantBufferAddress(g_CurrentShadowPassIndex);
+}
+
+void LightingResources::GetCurrentShadowLight(XMFLOAT4& positionType, XMFLOAT4& direction)
+{
+    const UINT layer = g_ShadowRenderPasses[g_CurrentShadowPassIndex].Layer;
+    const EntityID entity = g_ShadowLightEntities[layer];
+    const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
+    const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+    positionType = {transform.Position.x, transform.Position.y, transform.Position.z, static_cast<float>(light.Type)};
+    direction = {light.Direction.x, light.Direction.y, light.Direction.z, 0};
 }
 
 D3D12_GPU_VIRTUAL_ADDRESS LightingResources::GetCurrentLightConstantBufferAddress()
@@ -1223,6 +1267,15 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 	{
 		if (distanceFieldCount >= RendererState::g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS) break;
 		if (!IsShadowBoundsEntity(entity)) continue;
+        // Box distance fields cannot represent partial or colored extinction.
+        if (ComponentManager::HasComponent<MaterialComponent>(entity))
+        {
+            const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+            bool opaque = false;
+            for (size_t slot = 0; slot < max(size_t(1), source.MaterialSlots.size()); ++slot)
+                opaque |= MaterialSystem::CastsShadowInPass(MaterialManager::Resolve(source, slot), false);
+            if (!opaque) continue;
+        }
 		const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
 		const auto& aabb = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
 		const XMFLOAT3 center = {
@@ -1650,7 +1703,8 @@ void LightingResources::UpdateShadowConstantBuffer()
 		return;
 	}
 	if (g_ShadowConstantsSerial == g_FrameSerial &&
-		g_ShadowConstantsPassIndex == g_CurrentShadowPassIndex)
+		g_ShadowConstantsPassIndex == g_CurrentShadowPassIndex &&
+        g_ShadowConstantsTransmissionEnabled == TransmittanceShadows::HasCasters())
 	{
 		return;
 	}
@@ -1659,11 +1713,13 @@ void LightingResources::UpdateShadowConstantBuffer()
 	constants.LightViewProjection = g_ShadowRenderPasses[g_CurrentShadowPassIndex].ViewProjection;
 	constants.ShadowMapParams = g_ShadowRenderPasses[g_CurrentShadowPassIndex].Params;
 	constants.ShadowFilterParams.x = static_cast<float>(RendererSettings::GetShadowFilterRadius());
+    constants.ShadowFilterParams.y = TransmittanceShadows::HasCasters() ? 1.0f : 0.0f;
 	auto* dst = static_cast<UINT8*>(m_pShadowCbvDataBegin) +
 		GetShadowConstantBufferSlot(g_CurrentShadowPassIndex) * g_kSHADOW_CB_ALIGNED_SIZE;
 	memcpy(dst, &constants, sizeof(constants));
 	g_ShadowConstantsSerial = g_FrameSerial;
 	g_ShadowConstantsPassIndex = g_CurrentShadowPassIndex;
+    g_ShadowConstantsTransmissionEnabled = TransmittanceShadows::HasCasters();
 }
 
 bool LightingResources::ShouldRenderShadowPass(UINT shadowIndex)

@@ -27,7 +27,7 @@ void DayNightCycle::Update(float deltaTime)
     if (g_Settings.Running && g_Settings.TimeDriven && !ProjectManager::IsPaused() &&
         (ProjectManager::IsSimulationRunning() || g_Settings.PreviewInEditor))
     {
-        const double hoursPerSecond = 24.0 / (std::max)(1.0f, g_Settings.DayDurationSeconds);
+        const double hoursPerSecond = 24.0 / (max)(1.0f, g_Settings.DayDurationSeconds);
         g_Settings.Hours = SolarCycle::WrapHours(g_Settings.Hours + deltaTime * hoursPerSecond);
     }
     bool firstSun = true;
@@ -39,7 +39,7 @@ void DayNightCycle::Update(float deltaTime)
         if (g_Settings.TimeDriven && firstSun)
         {
             const auto direction = SolarCycle::Calculate(g_Settings.Hours, g_Settings.Latitude, g_Settings.DayOfYear);
-            const float radius = std::clamp(g_Settings.OrbitRadius, 10.0f, 1000.0f);
+            const float radius = clamp(g_Settings.OrbitRadius, 10.0f, 1000.0f);
             const XMFLOAT3 position = { sun.Target.x + direction.East * radius,
                 sun.Target.y + direction.Up * radius, sun.Target.z + direction.North * radius };
             if (position.x != transform.Position.x || position.y != transform.Position.y || position.z != transform.Position.z)
@@ -54,8 +54,8 @@ void DayNightCycle::Update(float deltaTime)
             const float daylight = SolarCycle::Daylight(light.Direction.y);
             const float neutral = SolarCycle::SmoothRange(0.0f, 0.65f, light.Direction.y);
             light.Color = { 1.0f, 0.38f + neutral * 0.57f, 0.12f + neutral * 0.73f, 1.0f };
-            light.Intensity = (std::max)(0.0f, g_Settings.DayIntensity) * daylight *
-                std::pow((std::max)(0.05f, light.Direction.y), 0.35f);
+            light.Intensity = (max)(0.0f, g_Settings.DayIntensity) * daylight *
+                pow((max)(0.05f, light.Direction.y), 0.35f);
         }
         firstSun = false;
     }

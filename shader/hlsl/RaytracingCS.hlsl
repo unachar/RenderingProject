@@ -42,7 +42,8 @@ float3 Tangent(float3 normal)
     return normalize(cross(axis, normal));
 }
 
-float TraceHitDistance(float3 origin, float3 direction, float distance, bool closest = false)
+float TraceHitDistance(float3 origin, float3 direction, float distance, bool closest = false,
+    uint visibilityMask = 0x01)
 {
     RayDesc ray;
     ray.Origin = origin;
@@ -50,7 +51,8 @@ float TraceHitDistance(float3 origin, float3 direction, float distance, bool clo
     ray.TMin = Distances.z * 0.25f;
     ray.TMax = distance;
     RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
-    query.TraceRayInline(Scene, closest ? RAY_FLAG_NONE : RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xff, ray);
+    query.TraceRayInline(Scene, closest ? RAY_FLAG_NONE : RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+        visibilityMask, ray);
     while (query.Proceed()) { }
     return query.CommittedStatus() == COMMITTED_NOTHING ? 65504.0f : query.CommittedRayT();
 }
@@ -115,7 +117,7 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
         if (Features.y != 0)
         {
             float3 direction = tangent * disk.x + bitangent * disk.y + normal * sqrt(1.0f - radius * radius);
-            float hitDistance = TraceHitDistance(origin, direction, Distances.y, sample == 0);
+            float hitDistance = TraceHitDistance(origin, direction, Distances.y, sample == 0, 0x02);
             ambient += hitDistance >= 65504.0f ? 1.0f : 0.0f;
             if (sample == 0) ambientDistance = min(hitDistance, Distances.y);
         }

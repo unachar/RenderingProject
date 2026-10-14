@@ -43,22 +43,22 @@ struct State
         uint32_t FirstVertex=0,VertexCapacity=0,FirstIndex=0,IndexCapacity=0;
         uint64_t SourceKey=0;
     };
-    std::unordered_map<uint32_t,PrimitiveRange> PrimitiveRanges;
-    std::vector<PrimitiveRange> FreePrimitiveRanges;
+    unordered_map<uint32_t,PrimitiveRange> PrimitiveRanges;
+    vector<PrimitiveRange> FreePrimitiveRanges;
     uint64_t LastGeometryUploadBytes=0;
     bool Enabled = true;
     bool Active = false;
     bool Failed = false;
     bool PreviousCompatible = false;
-    std::array<FrameBuffers, GpuSceneBuffer::FrameCount> Frames;
+    array<FrameBuffers, GpuSceneBuffer::FrameCount> Frames;
     GpuSceneBuffer Vertices, Indices, Geometry;
-    std::vector<StaticModelVertex> CpuVertices;
-    std::vector<uint32_t> CpuIndices;
-    std::vector<GPUDrivenGeometryData> CpuGeometry;
-    std::vector<uint32_t> NewVertices, NewIndices, NewGeometry;
-    std::unordered_map<uint64_t, std::vector<uint32_t>> GeometryMeshIDs;
-    std::unordered_map<uint32_t, std::vector<uint32_t>> EntityTextures;
-    std::unordered_map<uint32_t, uint32_t> TextureUsers;
+    vector<StaticModelVertex> CpuVertices;
+    vector<uint32_t> CpuIndices;
+    vector<GPUDrivenGeometryData> CpuGeometry;
+    vector<uint32_t> NewVertices, NewIndices, NewGeometry;
+    unordered_map<uint64_t, vector<uint32_t>> GeometryMeshIDs;
+    unordered_map<uint32_t, vector<uint32_t>> EntityTextures;
+    unordered_map<uint32_t, uint32_t> TextureUsers;
     ComPtr<ID3D12RootSignature> ComputeRoot, OpaqueRoot, ResetRoot;
     ComPtr<ID3D12PipelineState> ResetPSO, CompactPSO, GeneratePSO, OpaquePSO, OccluderPSO;
     ComPtr<ID3D12CommandSignature> Signature;
@@ -67,7 +67,7 @@ struct State
     double CpuOpaqueMs = 0, GpuOpaqueMs = 0;
     bool DebugReadback = false;
     uint32_t DebugCount = 0;
-    std::vector<GPUIndirectDrawCommand> DebugCommands;
+    vector<GPUIndirectDrawCommand> DebugCommands;
 };
 State& Data() { static State state; return state; }
 FrameBuffers& Frame() { return Data().Frames.at(Data().FrameIndex); }
@@ -77,7 +77,7 @@ void Check(HRESULT result)
     {
         WriteGraphicsLog("GPU driven pipeline HRESULT: 0x%08X\n", result);
         RenderCapture::ReportGraphicsErrors();
-        throw std::runtime_error("GPU driven pipeline creation failed");
+        throw runtime_error("GPU driven pipeline creation failed");
     }
 }
 void Root(ID3D12Device* device, CD3DX12_ROOT_SIGNATURE_DESC& description, ComPtr<ID3D12RootSignature>& output)
@@ -94,7 +94,7 @@ ComPtr<ID3DBlob> Shader(const char* path)
     ShaderDescription description{};
     description.csoPath = path;
     description.ppBlob = blob.GetAddressOf();
-    if (!ShaderPipelines::LoadShaderBlob(description)) throw std::runtime_error("GPU driven shader missing");
+    if (!ShaderPipelines::LoadShaderBlob(description)) throw runtime_error("GPU driven shader missing");
     return blob;
 }
 void Compute(ID3D12Device* device, ID3D12RootSignature* root, const char* path, ComPtr<ID3D12PipelineState>& output)
@@ -228,7 +228,7 @@ void GPUDrivenRenderer::RegisterGeometry(uint32_t meshID, const StaticMeshData& 
             if (previous.Ready && previous.IndexCount==mesh.IndexCount &&
                 size_t(previous.BaseVertex)+mesh.VertexCount<=state.CpuVertices.size() &&
                 size_t(previous.StartIndex)+mesh.IndexCount<=state.CpuIndices.size() &&
-                std::equal(mesh.CpuIndices.begin(),mesh.CpuIndices.end(),state.CpuIndices.begin()+previous.StartIndex))
+                equal(mesh.CpuIndices.begin(),mesh.CpuIndices.end(),state.CpuIndices.begin()+previous.StartIndex))
             {
                 if (state.CpuGeometry.size()<=meshID) state.CpuGeometry.resize(size_t(meshID)+1);
                 state.CpuGeometry[meshID]=previous;
@@ -287,7 +287,7 @@ void GPUDrivenRenderer::RegisterPrimitiveGeometry(uint32_t meshID, const StaticM
     }
     if (!range.IndexCapacity)
     {
-        auto free = std::find_if(state.FreePrimitiveRanges.begin(), state.FreePrimitiveRanges.end(),
+        auto free = find_if(state.FreePrimitiveRanges.begin(), state.FreePrimitiveRanges.end(),
                                  [&](const auto &candidate)
                                  {
                                      return candidate.VertexCapacity >= vertexCount &&
@@ -310,9 +310,9 @@ void GPUDrivenRenderer::RegisterPrimitiveGeometry(uint32_t meshID, const StaticM
             state.CpuIndices.resize(state.CpuIndices.size() + range.IndexCapacity);
         }
     }
-    if (!lod) std::copy(mesh.CpuVertices.begin(), mesh.CpuVertices.end(),
+    if (!lod) copy(mesh.CpuVertices.begin(), mesh.CpuVertices.end(),
                        state.CpuVertices.begin() + range.FirstVertex);
-    std::copy(indices.begin(), indices.end(), state.CpuIndices.begin() + range.FirstIndex);
+    copy(indices.begin(), indices.end(), state.CpuIndices.begin() + range.FirstIndex);
     for (uint32_t i = 0; i < vertexCount; ++i)
         state.NewVertices.push_back(range.FirstVertex + i);
     for (uint32_t i = 0; i < indexCount; ++i)
@@ -349,7 +349,7 @@ uint64_t GPUDrivenRenderer::GeometryUploadBytes()
     return Data().LastGeometryUploadBytes;
 }
 void GPUDrivenRenderer::RegisterLODGeometry(uint32_t meshID, uint32_t baseMeshID,
-                                            const std::vector<uint32_t> &indices,
+                                            const vector<uint32_t> &indices,
                                             const Meshlets::Asset *meshlets)
 {
     auto& state = Data();
@@ -375,7 +375,7 @@ void GPUDrivenRenderer::UpdateGeometry(const StaticMeshData& mesh)
     auto& state = Data();
     const auto found = state.GeometryMeshIDs.find(mesh.VertexBuffer->GetGPUVirtualAddress());
     if (found == state.GeometryMeshIDs.end()) return;
-    std::unordered_set<uint32_t> updatedVertices;
+    unordered_set<uint32_t> updatedVertices;
     for (uint32_t meshID : found->second)
     {
         const auto& geometry = state.CpuGeometry.at(meshID);
@@ -384,14 +384,14 @@ void GPUDrivenRenderer::UpdateGeometry(const StaticMeshData& mesh)
         for (uint32_t lod=1; lod<StaticMeshData::LodCount; ++lod)
             if (geometry.IndexCount == mesh.CpuLodIndices[lod-1].size() &&
                 geometry.StartIndex + geometry.IndexCount <= state.CpuIndices.size() &&
-                std::equal(mesh.CpuLodIndices[lod-1].begin(),mesh.CpuLodIndices[lod-1].end(),
+                equal(mesh.CpuLodIndices[lod-1].begin(),mesh.CpuLodIndices[lod-1].end(),
                     state.CpuIndices.begin()+geometry.StartIndex)) { asset=&mesh.MeshletLODs[lod]; break; }
         MeshletManager::Replace(meshID,*asset,geometry.BaseVertex);
         const size_t first = static_cast<size_t>(geometry.BaseVertex);
         if (!updatedVertices.insert(static_cast<uint32_t>(first)).second) continue;
         if (first + mesh.CpuVertices.size() > state.CpuVertices.size())
-            throw std::runtime_error("GPU driven geometry update exceeds registered range");
-        std::copy(mesh.CpuVertices.begin(), mesh.CpuVertices.end(), state.CpuVertices.begin() + first);
+            throw runtime_error("GPU driven geometry update exceeds registered range");
+        copy(mesh.CpuVertices.begin(), mesh.CpuVertices.end(), state.CpuVertices.begin() + first);
         for (uint32_t i = 0; i < mesh.CpuVertices.size(); ++i) state.NewVertices.push_back(static_cast<uint32_t>(first) + i);
     }
 }
@@ -488,7 +488,7 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
     state.PreviousCompatible = compatible;
     if (!compatible) return;
     try { Initialize(); }
-    catch (const std::exception& error)
+    catch (const exception& error)
     {
         state.Failed = true;
         WriteGraphicsLog("GPU Driven CPU fallback: %s\n", error.what());
@@ -501,7 +501,7 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
     state.Slots = slots;
     state.Meshes = meshes;
     // A sparse mesh table may include animated records without arena geometry.
-    state.CpuGeometry.resize((std::max)(size_t(meshes), state.CpuGeometry.size()));
+    state.CpuGeometry.resize((max)(size_t(meshes), state.CpuGeometry.size()));
     auto prepare = [&](GpuSceneBuffer& buffer, uint32_t count, uint32_t stride, const wchar_t* name, bool uav = false) {
         buffer.BeginFrame(frameIndex);
         buffer.Ensure(device, count, stride, frameIndex, name, uav);
@@ -543,7 +543,7 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
     });
     RenderGraph::ResourceHandle selected;
     try { selected = GPUVisibility::Prepare(graph, instances, visibility, geometry, state.Geometry.Resource(), slots, capacity, meshes); }
-    catch (const std::exception& error)
+    catch (const exception& error)
     {
         state.Failed = true;
         GPUVisibility::Invalidate("Visibility initialization failed");
@@ -592,7 +592,7 @@ void GPUDrivenRenderer::Draw(ID3D12GraphicsCommandList* commands)
     auto& state = Data();
     if (!state.Active) return;
     if (state.CpuVertices.empty() || state.CpuIndices.empty()) return;
-    const auto start = std::chrono::steady_clock::now();
+    const auto start = chrono::steady_clock::now();
     if (MeshShaderRenderer::IsActive())
     {
         const D3D12_VERTEX_BUFFER_VIEW vb{state.Vertices.Resource()->GetGPUVirtualAddress(), static_cast<UINT>(state.CpuVertices.size() * sizeof(StaticModelVertex)), sizeof(StaticModelVertex)};
@@ -601,7 +601,7 @@ void GPUDrivenRenderer::Draw(ID3D12GraphicsCommandList* commands)
         commands->IASetVertexBuffers(0, 1, &vb); commands->IASetIndexBuffer(&ib);
         MeshShaderRenderer::Draw(commands, state.Vertices);
         state.Calls = 2;
-        state.SubmissionMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        state.SubmissionMs = chrono::duration<double, milli>(chrono::steady_clock::now() - start).count();
         return;
     }
     RenderGraph graph;
@@ -654,8 +654,8 @@ void GPUDrivenRenderer::Draw(ID3D12GraphicsCommandList* commands)
         list->ExecuteIndirect(data.Signature.Get(), Frame().Commands.Capacity(), Frame().Commands.Resource(), 0, Frame().Count.Resource(), 0);
         ++data.Calls;
     });
-    if (!graph.Compile() || !graph.Execute(commands)) throw std::runtime_error(graph.GetLastError());
-    state.SubmissionMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    if (!graph.Compile() || !graph.Execute(commands)) throw runtime_error(graph.GetLastError());
+    state.SubmissionMs = chrono::duration<double, milli>(chrono::steady_clock::now() - start).count();
 }
 
 void GPUDrivenRenderer::BuildHiZ(ID3D12GraphicsCommandList* commands)
@@ -703,7 +703,7 @@ void GPUDrivenRenderer::BuildHiZ(ID3D12GraphicsCommandList* commands)
         list->ExecuteIndirect(data.Signature.Get(), Frame().Commands.Capacity(), Frame().Commands.Resource(), 0, Frame().Count.Resource(), 0);
         list->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
     });
-    if (!graph.Compile() || !graph.Execute(commands)) throw std::runtime_error(graph.GetLastError());
+    if (!graph.Compile() || !graph.Execute(commands)) throw runtime_error(graph.GetLastError());
     OcclusionCulling::BuildTemporal(commands, OcclusionCulling::GetOccluderDepth(), OcclusionCulling::GetOccluderSrv());
 }
 
@@ -733,7 +733,7 @@ void GPUDrivenRenderer::RecordOpaqueSubmission(double milliseconds)
 {
     (Data().Active ? Data().GpuOpaqueMs : Data().CpuOpaqueMs) = milliseconds;
 }
-void GPUDrivenRenderer::TrackEntityTextures(uint32_t entity, const std::vector<uint32_t>& descriptors)
+void GPUDrivenRenderer::TrackEntityTextures(uint32_t entity, const vector<uint32_t>& descriptors)
 {
     auto& state = Data();
     if (auto found = state.EntityTextures.find(entity); found != state.EntityTextures.end())
@@ -800,16 +800,16 @@ void GPUDrivenRenderer::EndFrame()
     auto& state = Data();
     if (state.DebugReadback && state.Active)
     {
-        std::vector<uint8_t> bytes;
+        vector<uint8_t> bytes;
         if (RenderCapture::ReadBuffer(CountBuffer(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, 4, bytes))
         {
-            std::memcpy(&state.DebugCount, bytes.data(), 4);
-            const uint32_t samples = (std::min)(state.DebugCount, 16u);
+            memcpy(&state.DebugCount, bytes.data(), 4);
+            const uint32_t samples = (min)(state.DebugCount, 16u);
             if (samples && RenderCapture::ReadBuffer(CommandBuffer(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
                     uint64_t(samples) * sizeof(GPUIndirectDrawCommand), bytes))
             {
                 state.DebugCommands.resize(samples);
-                std::memcpy(state.DebugCommands.data(), bytes.data(), bytes.size());
+                memcpy(state.DebugCommands.data(), bytes.data(), bytes.size());
             }
             else state.DebugCommands.clear();
         }

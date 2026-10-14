@@ -13,13 +13,13 @@ VirtualGeometryBuildResult VirtualGeometryBuilder::Build(
         result.Error = "Static mesh is missing complete CPU LOD0 geometry";
         return result;
     }
-    if (!std::isfinite(source.AppliedMaterialPartId))
+    if (!isfinite(source.AppliedMaterialPartId))
     {
         VirtualGeometryBuildResult result;
         result.Error = "Static mesh has a non-finite material part ID";
         return result;
     }
-    std::vector<VirtualGeometryVertex> vertices;
+    vector<VirtualGeometryVertex> vertices;
     try
     {
         vertices.reserve(source.CpuVertices.size());
@@ -48,7 +48,7 @@ VirtualGeometryBuildResult VirtualGeometryBuilder::Build(
         }
         return result;
     }
-    catch (const std::exception& exception)
+    catch (const exception& exception)
     {
         VirtualGeometryBuildResult result;
         result.Error = exception.what();

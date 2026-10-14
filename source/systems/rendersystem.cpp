@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "transmittanceshadows.h"
 #include "materialmanager.h"
 #include "vertexdeformation.h"
 #include "meshshaderpipeline.h"
@@ -38,7 +39,7 @@
 			ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky";
 	}
 
-	static bool ShouldCastShadow(EntityID entity)
+	static bool ShouldCastShadow(EntityID entity, bool transmission = false)
 	{
 		// Environment meshes supply background radiance and must not occlude the sun.
 		if (ComponentManager::HasComponent<MeshComponent>(entity) &&
@@ -57,12 +58,15 @@
 		}
 
 		const auto& material = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity));
-		if (MaterialSystem::IsTransparentMaterial(material))
-		{
-			return false;
-		}
-		return !(material.ShaderClassMode == MaterialMode::Manual &&
-			material.ShaderClass == ShaderClass::Shadow);
+		const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+        for (size_t slot = 0; slot < source.MaterialSlots.size(); ++slot)
+        {
+            if (MaterialSystem::CastsShadowInPass(MaterialManager::Resolve(source, slot), transmission))
+            {
+                return true;
+            }
+        }
+        return MaterialSystem::CastsShadowInPass(material, transmission);
 	}
 
 	static bool ShouldDrawToonOutline(EntityID entity)
@@ -168,10 +172,11 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
 	const bool occlusionPhaseTwo = renderPass == RenderPass::OcclusionPhase2;
 	if (occlusionPhaseTwo && !MeshShaderPipeline::IsSupported()) return;
-	if (renderPass == RenderPass::ShadowMap)
+	if (renderPass == RenderPass::ShadowMap || renderPass == RenderPass::TransmittanceShadow)
 	{
 		ID3D12GraphicsCommandList* pCommandList = GraphicsDevice::GetCommandList();
-		ID3D12PipelineState* shadowPso = PsoManager::GetOrCreateShadowMapPso();
+		const bool transmission = renderPass == RenderPass::TransmittanceShadow;
+		ID3D12PipelineState* shadowPso = transmission ? TransmittanceShadows::GetPipelineState() : PsoManager::GetOrCreateShadowMapPso();
 		UINT8* pCbvDataBegin = FrameConstants::GetConstantBufferPtr();
 		ID3D12DescriptorHeap* cbvHeap = FrameConstants::GetCbvHeap();
 		if (!pCommandList || !shadowPso || !pCbvDataBegin || !cbvHeap)
@@ -188,6 +193,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				cb.UseTexture = 0;
 				memcpy(pCbvDataBegin + (entity * FrameConstants::g_kCB_ALIGNED_SIZE), &cb, sizeof(cb));
 				pCommandList->SetGraphicsRootDescriptorTable(0, FrameConstants::GetConstantBufferHandle(entity));
+                const auto& material = MaterialManager::Resolve(
+                    ComponentManager::HasComponent<MaterialComponent>(entity)
+                        ? ComponentManager::GetComponentUnchecked<MaterialComponent>(entity) : DefaultMaterial());
+                MaterialBindings::BindAssetSlot(entity, material);
 			};
 
 		for (EntityID i : World::GetView<SpriteComponent>())
@@ -196,7 +205,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			if (!sprite.Is3D ||
 				sprite.VertexBufferView.BufferLocation == 0 ||
 				!Registry::HasComponent(i, ComponentType::TRANSFORM) ||
-				!ShouldCastShadow(i) ||
+				!ShouldCastShadow(i, transmission) ||
 				!LightingResources::ShouldDrawEntityInCurrentShadowPass(i) ||
 				InstancingSystem::CanInstance(i))
 			{
@@ -219,7 +228,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(i);
 			if (mesh.VertexBufferView.BufferLocation == 0 ||
 				!Registry::HasComponent(i, ComponentType::TRANSFORM) ||
-				!ShouldCastShadow(i) ||
+				!ShouldCastShadow(i, transmission) ||
 				!LightingResources::ShouldDrawEntityInCurrentShadowPass(i) ||
 				InstancingSystem::CanInstance(i))
 			{
@@ -291,7 +300,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		return;
 	}
 
-	const bool drawTransparent = (renderPass == RenderPass::OverlayScene);
+	const bool drawTransparent = renderPass == RenderPass::OverlayScene || renderPass == RenderPass::TransparentScene;
 	const bool drawDeferredOpaque = RenderConfiguration::GetRenderMode() == RenderMode::DEFERRED &&
 		(renderPass == RenderPass::PrimaryScene || occlusionPhaseTwo);
 	ID3D12GraphicsCommandList* pCommandList = GraphicsDevice::GetCommandList();
@@ -336,6 +345,11 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	for (EntityID i : spriteEntities)
 	{
 		auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(i);
+        if ((renderPass == RenderPass::TransparentScene && !sprite.Is3D) ||
+            (renderPass == RenderPass::OverlayScene && sprite.Is3D))
+        {
+            continue;
+        }
 		bool isReceiving = MaterialSystem::IsReceivingPostProcess(i);
 		const MaterialComponent* material;
 		if (Registry::HasComponent(i, ComponentType::MATERIAL))
@@ -370,6 +384,11 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				ShaderDescription psoResource{};
 				psoResource.vsPath = GetSpriteVsPath(i, true);
 				psoResource.psPath = GetSpritePsPath(i, true);
+                if (material && material->ShaderClassMode == MaterialMode::Manual &&
+                    material->ShaderClass == ShaderClass::PBR)
+                {
+                    psoResource.psPath = "shader/hlsl/build/modelshaderPS.cso";
+                }
 				psoResource.isModel = true;
 				psoResource.enableAlphaBlend = drawTransparent;
         if (material && material->RuntimeHandle != 0)
@@ -554,6 +573,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		{
 			continue;
 		}
+        if (renderPass == RenderPass::OverlayScene)
+        {
+            continue;
+        }
 		if (!Registry::HasComponent(i, ComponentType::TRANSFORM))
 		{
 			continue;

@@ -25,13 +25,36 @@ bool MaterialSystem::IsTransparentMaterial(const MaterialComponent& material)
 
 bool MaterialSystem::IsTransparent(EntityID entity)
 {
-	if (entity == g_kINVALID_ENTITY || !Registry::IsAlive(entity) ||
-		!ComponentManager::HasComponent<MaterialComponent>(entity))
-	{
-		return false;
-	}
+    if (entity == g_kINVALID_ENTITY || !Registry::IsAlive(entity) ||
+        !ComponentManager::HasComponent<MaterialComponent>(entity))
+    {
+        return false;
+    }
+    return IsTransparentMaterial(MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity)));
+}
 
-	return IsTransparentMaterial(MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity)));
+bool MaterialSystem::CastsShadow(const MaterialComponent& material)
+{
+    float opacity = material.Alpha;
+    if (material.RuntimeHandle != 0)
+    {
+        opacity *= material.BaseColor.w;
+    }
+    return opacity > 0.0f && material.ShadowMode != MaterialShadowMode::None &&
+        !(material.ShaderClassMode == MaterialMode::Manual && material.ShaderClass == ShaderClass::Shadow);
+}
+
+MaterialShadowMode MaterialSystem::ResolveShadowMode(const MaterialComponent& material)
+{
+    if (material.ShadowMode != MaterialShadowMode::Auto) return material.ShadowMode;
+    if (material.AssetSurface == MaterialSurface::Masked) return MaterialShadowMode::AlphaTest;
+    return IsTransparentMaterial(material) ? MaterialShadowMode::Transmittance : MaterialShadowMode::Opaque;
+}
+
+bool MaterialSystem::CastsShadowInPass(const MaterialComponent& material, bool transmission)
+{
+    return CastsShadow(material) &&
+        (ResolveShadowMode(material) == MaterialShadowMode::Transmittance) == transmission;
 }
 
 bool MaterialSystem::IsReceivingPostProcess(EntityID entity)

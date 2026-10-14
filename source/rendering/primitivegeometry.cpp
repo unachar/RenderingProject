@@ -16,12 +16,12 @@ namespace
 		mesh.LodIndexCounts = {};
 		// Weld identical attributes for simplification, then map back to the original
 		// triangle-list vertices so fallback drawing and vertex deformation stay intact.
-		std::vector<uint32_t> remap(mesh.VertexCount);
+		vector<uint32_t> remap(mesh.VertexCount);
 		const size_t uniqueCount = meshopt_generateVertexRemap(remap.data(),
 			mesh.CpuIndices.data(), mesh.CpuIndices.size(), mesh.CpuVertices.data(),
 			mesh.CpuVertices.size(), sizeof(StaticModelVertex));
-		std::vector<StaticModelVertex> vertices(uniqueCount);
-		std::vector<uint32_t> indices(mesh.CpuIndices.size()), original(uniqueCount);
+		vector<StaticModelVertex> vertices(uniqueCount);
+		vector<uint32_t> indices(mesh.CpuIndices.size()), original(uniqueCount);
 		meshopt_remapVertexBuffer(vertices.data(), mesh.CpuVertices.data(), mesh.VertexCount,
 			sizeof(StaticModelVertex), remap.data());
 		meshopt_remapIndexBuffer(indices.data(), mesh.CpuIndices.data(), indices.size(), remap.data());
@@ -32,7 +32,7 @@ namespace
 		{
 			auto& result = mesh.CpuLodIndices[lod];
 			result.resize(indices.size());
-			const size_t target = (std::max)(size_t(3), size_t(indices.size() * ratios[lod]) / 3 * 3);
+			const size_t target = (max)(size_t(3), size_t(indices.size() * ratios[lod]) / 3 * 3);
 			const size_t count = meshopt_simplify(result.data(), indices.data(), indices.size(),
 				reinterpret_cast<const float*>(vertices.data()), vertices.size(), sizeof(StaticModelVertex),
 				target, errors[lod], meshopt_SimplifyRegularize);
@@ -123,13 +123,13 @@ namespace
 			float halfW = radius;
 			float halfH = radius;
 
-			vertices.push_back({ { -halfW,  halfH, 0.0f }, { 0.0f, 0.0f, 1.0f }, applyUv({ 0.0f, 0.0f }), vertexColor });
-			vertices.push_back({ {  halfW,  halfH, 0.0f }, { 0.0f, 0.0f, 1.0f }, applyUv({ 1.0f, 0.0f }), vertexColor });
-			vertices.push_back({ { -halfW, -halfH, 0.0f }, { 0.0f, 0.0f, 1.0f }, applyUv({ 0.0f, 1.0f }), vertexColor });
+			vertices.push_back({ { -halfW,  halfH, 0.0f }, { 0.0f, 0.0f, -1.0f }, applyUv({ 0.0f, 0.0f }), vertexColor });
+			vertices.push_back({ {  halfW,  halfH, 0.0f }, { 0.0f, 0.0f, -1.0f }, applyUv({ 1.0f, 0.0f }), vertexColor });
+			vertices.push_back({ { -halfW, -halfH, 0.0f }, { 0.0f, 0.0f, -1.0f }, applyUv({ 0.0f, 1.0f }), vertexColor });
 
-			vertices.push_back({ {  halfW,  halfH, 0.0f }, { 0.0f, 0.0f, 1.0f }, applyUv({ 1.0f, 0.0f }), vertexColor });
-			vertices.push_back({ {  halfW, -halfH, 0.0f }, { 0.0f, 0.0f, 1.0f }, applyUv({ 1.0f, 1.0f }), vertexColor });
-			vertices.push_back({ { -halfW, -halfH, 0.0f }, { 0.0f, 0.0f, 1.0f }, applyUv({ 0.0f, 1.0f }), vertexColor });
+			vertices.push_back({ {  halfW,  halfH, 0.0f }, { 0.0f, 0.0f, -1.0f }, applyUv({ 1.0f, 0.0f }), vertexColor });
+			vertices.push_back({ {  halfW, -halfH, 0.0f }, { 0.0f, 0.0f, -1.0f }, applyUv({ 1.0f, 1.0f }), vertexColor });
+			vertices.push_back({ { -halfW, -halfH, 0.0f }, { 0.0f, 0.0f, -1.0f }, applyUv({ 0.0f, 1.0f }), vertexColor });
 			return vertices;
 		}
 
@@ -142,17 +142,17 @@ namespace
 			float angle1 = i * angleStep + rotationOffset;
 			float angle2 = (i + 1) * angleStep + rotationOffset;
 
-			vertices.push_back({ { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, applyUv({ 0.5f, 0.5f }), vertexColor });
+			vertices.push_back({ { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f }, applyUv({ 0.5f, 0.5f }), vertexColor });
 
 			vertices.push_back({
 				{ radius * sinf(angle1), radius * cosf(angle1), 0.0f },
-				{ 0.0f, 0.0f, 1.0f },
+				{ 0.0f, 0.0f, -1.0f },
 				applyUv({ 0.5f + 0.5f * sinf(angle1), 0.5f - 0.5f * cosf(angle1) }),
 				vertexColor
 				});
 			vertices.push_back({
 				{ radius * sinf(angle2), radius * cosf(angle2), 0.0f },
-				{ 0.0f, 0.0f, 1.0f },
+				{ 0.0f, 0.0f, -1.0f },
 				applyUv({ 0.5f + 0.5f * sinf(angle2), 0.5f - 0.5f * cosf(angle2) }),
 				vertexColor
 				});
@@ -479,7 +479,7 @@ void PrimitiveGeometry::CreateObjectVertex(const VertexResource& vertexstruct)
 	UploadVertices(vertexstruct.entityid, vertices);
 }
 
-bool PrimitiveGeometry::UploadVertices(EntityID entity, const std::vector<Vertex>& vertices)
+bool PrimitiveGeometry::UploadVertices(EntityID entity, const vector<Vertex>& vertices)
 {
     ID3D12Device* device = GraphicsDevice::GetDevice();
     if (!device || vertices.empty() || !Registry::IsAlive(entity) ||
@@ -509,7 +509,7 @@ bool PrimitiveGeometry::UploadVertices(EntityID entity, const std::vector<Vertex
     memcpy(mapped, vertices.data(), byteSize);
     buffer->Unmap(0, nullptr);
     buffer->SetName(L"Primitive or Procedural Mesh");
-    mesh.VertexBuffer = std::move(buffer);
+    mesh.VertexBuffer = move(buffer);
     mesh.VertexBufferView = { mesh.VertexBuffer->GetGPUVirtualAddress(), byteSize, sizeof(Vertex) };
     mesh.VertexCount = static_cast<UINT>(vertices.size());
     mesh.GeometryHash = HashGeometry(vertices.data(), byteSize);
@@ -517,7 +517,7 @@ bool PrimitiveGeometry::UploadVertices(EntityID entity, const std::vector<Vertex
     mesh.HasLocalBounds = true;
     if (vertices.size()%3==0)
     {
-        auto source = reuse ? mesh.NaniteMesh : std::make_shared<StaticMeshData>();
+        auto source = reuse ? mesh.NaniteMesh : make_shared<StaticMeshData>();
         source->VertexBuffer=mesh.VertexBuffer;
         source->VertexBufferView=mesh.VertexBufferView;
         source->VertexCount=mesh.VertexCount;
@@ -530,10 +530,10 @@ bool PrimitiveGeometry::UploadVertices(EntityID entity, const std::vector<Vertex
         for (const auto& vertex : vertices)
             source->CpuVertices.push_back({vertex.Pos,vertex.Normal,vertex.Tex,vertex.Color});
         source->CpuIndices.resize(vertices.size());
-        std::iota(source->CpuIndices.begin(),source->CpuIndices.end(),0u);
+        iota(source->CpuIndices.begin(),source->CpuIndices.end(),0u);
         BuildPrimitiveLODs(*source);
         MeshletManager::BuildImportedMesh(*source);
-        mesh.NaniteMesh=std::move(source);
+        mesh.NaniteMesh=move(source);
     }
     else mesh.NaniteMesh.reset();
     GpuSceneChanges::Notify(entity, GpuSceneDirtyFlags::Mesh | GpuSceneDirtyFlags::Bounds);

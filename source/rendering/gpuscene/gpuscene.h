@@ -9,8 +9,8 @@ class GpuScene
     static void Execute(ID3D12GraphicsCommandList *commands);
     static void Shutdown(); // Caller has already waited for GraphicsDevice's fences.
     static GPUInstanceID GetEntityInstance(uint32_t entity);
-    static const std::vector<GPUInstanceID> &GetEntityInstances(uint32_t entity);
-    static const std::vector<uint32_t>& CpuOpaqueStaticEntities();
+    static const vector<GPUInstanceID> &GetEntityInstances(uint32_t entity);
+    static const vector<uint32_t>& CpuOpaqueStaticEntities();
     static ID3D12Resource *InstanceBuffer();
     static ID3D12Resource *MeshBuffer();
     static ID3D12Resource *MaterialBuffer();

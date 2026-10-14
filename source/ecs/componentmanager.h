@@ -43,7 +43,7 @@ struct MeshComponent
 	XMFLOAT3 LocalBoundsExtents{};
 	bool HasLocalBounds = false;
 	bool IsEnvironment = false;
-	std::shared_ptr<StaticMeshData> NaniteMesh;
+	shared_ptr<StaticMeshData> NaniteMesh;
 };
 
 struct InputComponent
@@ -308,6 +308,8 @@ struct MaterialComponent
 	vector<float> ToonMeshOutlineWidthScales{};
 	vector<MeshShadingOverride> MeshShadingOverrides{};
 	float Alpha = 1.0f;
+    MaterialShadowMode ShadowMode = MaterialShadowMode::Auto;
+    float ShadowCutoff = 0.5f;
 
 	float IOR = 1.50f;
 	float Transmission = 0.98f;
@@ -582,12 +584,12 @@ public:
 			abort();
 		}
 
-        if constexpr (std::is_same_v<T, MeshComponent> || std::is_same_v<T, StaticModelComponent> ||
-            std::is_same_v<T, AnimationModelComponent> || std::is_same_v<T, MaterialComponent> ||
-            std::is_same_v<T, SpriteComponent> || std::is_same_v<T, AABBComponent> ||
-            std::is_same_v<T, LODComponent> || std::is_same_v<T, InstancingComponent> ||
-            std::is_same_v<T, ShaderComponent> || std::is_same_v<T, NameComponent> ||
-            std::is_same_v<T, ProceduralMotionComponent>)
+        if constexpr (is_same_v<T, MeshComponent> || is_same_v<T, StaticModelComponent> ||
+            is_same_v<T, AnimationModelComponent> || is_same_v<T, MaterialComponent> ||
+            is_same_v<T, SpriteComponent> || is_same_v<T, AABBComponent> ||
+            is_same_v<T, LODComponent> || is_same_v<T, InstancingComponent> ||
+            is_same_v<T, ShaderComponent> || is_same_v<T, NameComponent> ||
+            is_same_v<T, ProceduralMotionComponent>)
         {
             GpuSceneChanges::Notify(entity);
         }

@@ -21,7 +21,7 @@
 namespace
 {
 uint32_t failures = 0;
-std::vector<EntityID> entities;
+vector<EntityID> entities;
 MeshComponent sharedMesh;
 GPUInstanceID removed = InvalidGPUInstanceID;
 uint32_t sharedMaterial = UINT32_MAX;
@@ -30,7 +30,7 @@ bool legacyCulling = false;
 uint64_t currentFrame = 0;
 uint32_t residentDrawCulls = 0, legacyDrawCulls = 0;
 XMFLOAT4X4 comparisonProjection{};
-std::vector<RenderCapture::TextureData> referenceGBuffer;
+vector<RenderCapture::TextureData> referenceGBuffer;
 bool Enabled()
 {
     char value[8]{};
@@ -89,7 +89,7 @@ bool CpuVisible(const GPUInstanceData &instance, const XMMATRIX &viewProjection)
 }
 void Readback()
 {
-    std::vector<uint8_t> instanceBytes, visibilityBytes, meshBytes, materialBytes;
+    vector<uint8_t> instanceBytes, visibilityBytes, meshBytes, materialBytes;
     const auto &stats = GpuScene::Statistics();
     const auto state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
     const bool read =
@@ -121,7 +121,7 @@ void Readback()
             continue;
         }
         const auto *gpu = reinterpret_cast<const GPUInstanceData *>(instanceBytes.data()) + id;
-        matching &= std::memcmp(cached, gpu, sizeof(*gpu)) == 0;
+        matching &= memcmp(cached, gpu, sizeof(*gpu)) == 0;
         const uint32_t result = reinterpret_cast<const uint32_t *>(visibilityBytes.data())[id];
         visibilityMatching &= result == (CpuVisible(*cached, view * projection) ? 1u : 0u);
         visible += result;
@@ -146,7 +146,7 @@ void Readback()
                     gpuMaterial->ParameterVectorCount <= GpuSceneMaterialParameterVectors;
         const auto expectedMaterial =
             MaterialBindings::BuildGpuSceneMaterial(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity));
-        matching &= std::memcmp(gpuMaterial, &expectedMaterial, sizeof(expectedMaterial)) == 0;
+        matching &= memcmp(gpuMaterial, &expectedMaterial, sizeof(expectedMaterial)) == 0;
     }
     Check(matching, "CPU/HLSL layout and resident instance/material bytes");
     Check(visibilityMatching && visible == 1, "10000 resident GPU frustum results match CPU reference");
@@ -175,7 +175,7 @@ void GpuSceneValidation::BeforeFrame(uint64_t frame)
     {
         Entity source = World::CreateEntity();
         source.Add<MeshComponent>();
-        std::vector<Vertex> triangle(3);
+        vector<Vertex> triangle(3);
         triangle[0].Pos = {-0.5f, 0, 0};
         triangle[1].Pos = {0.5f, 0, 0};
         triangle[2].Pos = {0, 1, 0};
@@ -227,7 +227,7 @@ void GpuSceneValidation::BeforeFrame(uint64_t frame)
     if (frame == 74)
     {
         previousMesh = GpuScene::GetInstance(Entity(entities[6791]).GetGPUInstanceID())->MeshIndex;
-        std::vector<Vertex> triangle(3);
+        vector<Vertex> triangle(3);
         triangle[0].Pos = {-1, 0, 0};
         triangle[1].Pos = {1, 0, 0};
         triangle[2].Pos = {0, 2, 0};
@@ -235,8 +235,8 @@ void GpuSceneValidation::BeforeFrame(uint64_t frame)
     }
     if (frame == 75)
     {
-        std::filesystem::create_directories("build/gpuscene");
-        std::ofstream mesh("build/gpuscene/culling-fixture.obj");
+        filesystem::create_directories("build/gpuscene");
+        ofstream mesh("build/gpuscene/culling-fixture.obj");
         mesh << "v -1 0 0\nv 0 2 0\nv 1 0 0\nvt 0 0\nvt 0.5 1\nvt 1 0\nvn 0 0 -1\nf 1/1/1 2/2/1 3/3/1\n";
         mesh.close();
         const int model = ModelManager::LoadStaticModel("build/gpuscene/culling-fixture.obj", false);
@@ -346,7 +346,7 @@ void GpuSceneValidation::AfterFrame(uint64_t frame)
     }
     if (frame == 69)
     {
-        std::vector<uint8_t> bytes;
+        vector<uint8_t> bytes;
         Check(!GpuScene::GetInstance(removed), "destroyed instance is inactive");
         const bool read =
             RenderCapture::ReadBuffer(GpuScene::VisibilityBuffer(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
@@ -382,13 +382,13 @@ void GpuSceneValidation::AfterFrame(uint64_t frame)
                                           local.Center.y + ((corner & 2) ? local.Extents.y : -local.Extents.y),
                                           local.Center.z + ((corner & 4) ? local.Extents.z : -local.Extents.z), 1),
                               XMLoadFloat4x4(&transform.WorldMatrix)));
-            minimum = {(std::min)(minimum.x, point.x), (std::min)(minimum.y, point.y), (std::min)(minimum.z, point.z)};
-            maximum = {(std::max)(maximum.x, point.x), (std::max)(maximum.y, point.y), (std::max)(maximum.z, point.z)};
+            minimum = {(min)(minimum.x, point.x), (min)(minimum.y, point.y), (min)(minimum.z, point.z)};
+            maximum = {(max)(maximum.x, point.x), (max)(maximum.y, point.y), (max)(maximum.z, point.z)};
         }
-        Check(instance && std::abs(instance->BoundsCenter.x - (minimum.x + maximum.x) * 0.5f) < 0.02f &&
-                  std::abs(instance->BoundsExtents.x - (maximum.x - minimum.x) * 0.5f) < 0.02f &&
-                  std::abs(instance->BoundsExtents.y - (maximum.y - minimum.y) * 0.5f) < 0.002f &&
-                  std::abs(instance->BoundsExtents.z - (maximum.z - minimum.z) * 0.5f) < 0.002f,
+        Check(instance && abs(instance->BoundsCenter.x - (minimum.x + maximum.x) * 0.5f) < 0.02f &&
+                  abs(instance->BoundsExtents.x - (maximum.x - minimum.x) * 0.5f) < 0.02f &&
+                  abs(instance->BoundsExtents.y - (maximum.y - minimum.y) * 0.5f) < 0.002f &&
+                  abs(instance->BoundsExtents.z - (maximum.z - minimum.z) * 0.5f) < 0.002f,
               "rotated negative scale and overridden bounds match transformed corners");
     }
     if (frame == 74)
@@ -406,7 +406,7 @@ void GpuSceneValidation::AfterFrame(uint64_t frame)
         // their histories. The camera projection is identical for these frames.
         bool matching = true;
         const GBufferType targets[] = {GBufferType::BASE_COLOR, GBufferType::NORMAL, GBufferType::MATERIAL};
-        for (size_t i = 0; i < std::size(targets); ++i)
+        for (size_t i = 0; i < size(targets); ++i)
         {
             RenderCapture::TextureData capture;
             if (!RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(targets[i]), capture))
@@ -416,7 +416,7 @@ void GpuSceneValidation::AfterFrame(uint64_t frame)
             }
             if (frame == 80)
             {
-                referenceGBuffer.push_back(std::move(capture));
+                referenceGBuffer.push_back(move(capture));
             }
             else if (i >= referenceGBuffer.size())
             {
@@ -432,7 +432,7 @@ void GpuSceneValidation::AfterFrame(uint64_t frame)
                 {
                     for (UINT row = 0; row < capture.Height; ++row)
                     {
-                        matching &= std::memcmp(previous.Bytes.data() + row * previous.RowPitch,
+                        matching &= memcmp(previous.Bytes.data() + row * previous.RowPitch,
                                                 capture.Bytes.data() + row * capture.RowPitch,
                                                 capture.Width * bytesPerPixel) == 0;
                     }

@@ -12,33 +12,33 @@ namespace
 {
 bool g_LiveUpdate = true;
 
-std::vector<Vertex> BuildTerrainVertices(const Procedural::TerrainSettings& settings)
+vector<Vertex> BuildTerrainVertices(const Procedural::TerrainSettings& settings)
 {
-    const int resolution = std::clamp(settings.Resolution, 4, 256);
+    const int resolution = clamp(settings.Resolution, 4, 256);
     const int side = resolution + 1;
-    const float size = std::clamp(settings.Size, 1.0f, 500.0f);
+    const float size = clamp(settings.Size, 1.0f, 500.0f);
     const float spacing = size / resolution;
     const auto heights = Procedural::BuildHeightMap(settings);
-    std::vector<Vertex> lattice(heights.size());
+    vector<Vertex> lattice(heights.size());
     for (int row = 0; row < side; ++row)
     {
         for (int column = 0; column < side; ++column)
         {
-            const int left = (std::max)(column - 1, 0);
-            const int right = (std::min)(column + 1, resolution);
-            const int lower = (std::max)(row - 1, 0);
-            const int upper = (std::min)(row + 1, resolution);
+            const int left = (max)(column - 1, 0);
+            const int right = (min)(column + 1, resolution);
+            const int lower = (max)(row - 1, 0);
+            const int upper = (min)(row + 1, resolution);
             const float slopeX = (heights[row * side + right] - heights[row * side + left]) / ((right - left) * spacing);
             const float slopeZ = (heights[upper * side + column] - heights[lower * side + column]) / ((upper - lower) * spacing);
             Vertex& vertex = lattice[row * side + column];
             vertex.Pos = { column * spacing - size * 0.5f, heights[row * side + column], row * spacing - size * 0.5f };
             XMStoreFloat3(&vertex.Normal, XMVector3Normalize(XMVectorSet(-slopeX, 1.0f, -slopeZ, 0.0f)));
             vertex.Tex = { static_cast<float>(column) / resolution, static_cast<float>(row) / resolution };
-            const float rock = std::clamp((1.0f - vertex.Normal.y) * 3.0f, 0.0f, 1.0f);
+            const float rock = clamp((1.0f - vertex.Normal.y) * 3.0f, 0.0f, 1.0f);
             vertex.Color = { 0.16f + rock * 0.32f, 0.36f + rock * 0.10f, 0.11f + rock * 0.31f, 1.0f };
         }
     }
-    std::vector<Vertex> vertices;
+    vector<Vertex> vertices;
     vertices.reserve(static_cast<size_t>(resolution) * resolution * 6);
     for (int row = 0; row < resolution; ++row)
     {
@@ -78,7 +78,7 @@ EntityID ProceduralScene::GenerateTerrain(const Procedural::TerrainSettings& set
         {
             return g_kINVALID_ENTITY;
         }
-        entity.SetName("Procedural Terrain " + std::to_string(entity.GetID()));
+        entity.SetName("Procedural Terrain " + to_string(entity.GetID()));
 		XMStoreFloat4x4(&entity.Get<TransformComponent>().WorldMatrix, XMMatrixIdentity());
         auto& material = entity.Get<MaterialComponent>();
         material.ShaderClassMode = MaterialMode::Manual;
@@ -120,7 +120,7 @@ void ProceduralScene::UpdateMotion(float deltaTime)
         {
             continue;
         }
-        motion.Time += std::clamp(static_cast<double>(deltaTime), 0.0, 0.1);
+        motion.Time += clamp(static_cast<double>(deltaTime), 0.0, 0.1);
         if (motion.Target == Procedural::MotionTarget::MeshVertices)
         {
             continue;
@@ -150,12 +150,12 @@ void ProceduralScene::ResetMotion(EntityID entity)
 
 bool ProceduralScene::SavePreset(const char* path, const Procedural::TerrainSettings& settings)
 {
-    std::ofstream file(path);
+    ofstream file(path);
     return Procedural::WriteTerrainPreset(file, settings);
 }
 
 bool ProceduralScene::LoadPreset(const char* path, Procedural::TerrainSettings& settings)
 {
-    std::ifstream file(path);
+    ifstream file(path);
     return Procedural::ReadTerrainPreset(file, settings);
 }

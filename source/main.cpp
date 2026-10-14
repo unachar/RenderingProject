@@ -120,7 +120,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 	const bool automatedBenchmark = IsAutomatedBenchmark();
 	char startupSmokeValue[16]{};
 	GetEnvironmentVariableA("DX12_STARTUP_SMOKE_FRAMES", startupSmokeValue, static_cast<DWORD>(size(startupSmokeValue)));
-	const int startupSmokeFrames = (std::max)(0, atoi(startupSmokeValue));
+	const int startupSmokeFrames = (max)(0, atoi(startupSmokeValue));
 	const bool automatedRun = automatedBenchmark || IsPhysicsSmokeTest() || startupSmokeFrames > 0;
 	char exePath[MAX_PATH]{};
 	GetModuleFileNameA(nullptr, exePath, MAX_PATH);

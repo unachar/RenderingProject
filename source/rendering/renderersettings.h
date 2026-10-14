@@ -35,9 +35,9 @@ public:
 	static UpscaleQuality GetUpscaleQuality() { return s_UpscaleQuality; }
 	static void SetUpscaleQuality(UpscaleQuality value) { SetValue(s_UpscaleQuality, value); }
 	static float GetFsrSharpness() { return s_FsrSharpness; }
-	static void SetFsrSharpness(float value) { SetValue(s_FsrSharpness, std::clamp(value, 0.0f, 2.0f)); }
+	static void SetFsrSharpness(float value) { SetValue(s_FsrSharpness, clamp(value, 0.0f, 2.0f)); }
 	static float GetNisSharpness() { return s_NisSharpness; }
-	static void SetNisSharpness(float value) { SetValue(s_NisSharpness, std::clamp(value, 0.0f, 1.0f)); }
+	static void SetNisSharpness(float value) { SetValue(s_NisSharpness, clamp(value, 0.0f, 1.0f)); }
     // The packed visibility payload has no emission/AO channels. Use production raster
     // GBuffer generation when the scene contains material assets; keep the user's option.
 	static bool GetComputeGBufferEnabled() { return s_ComputeGBufferEnabled && !SceneHasMaterialAssets(); }
@@ -45,13 +45,13 @@ public:
 	static bool GetSsaoEnabled() { return s_SsaoEnabled; }
 	static void SetSsaoEnabled(bool value) { SetValue(s_SsaoEnabled, value); }
 	static float GetSsaoRadius() { return s_SsaoRadius; }
-	static void SetSsaoRadius(float value) { SetValue(s_SsaoRadius, std::clamp(value, 0.1f, 4.0f)); }
+	static void SetSsaoRadius(float value) { SetValue(s_SsaoRadius, clamp(value, 0.1f, 4.0f)); }
 	static float GetSsaoPower() { return s_SsaoPower; }
-	static void SetSsaoPower(float value) { SetValue(s_SsaoPower, std::clamp(value, 0.25f, 4.0f)); }
+	static void SetSsaoPower(float value) { SetValue(s_SsaoPower, clamp(value, 0.25f, 4.0f)); }
 	static bool GetSsgiEnabled() { return s_SsgiEnabled; }
 	static void SetSsgiEnabled(bool value) { SetValue(s_SsgiEnabled, value); }
 	static float GetSsgiIntensity() { return s_SsgiIntensity; }
-	static void SetSsgiIntensity(float value) { SetValue(s_SsgiIntensity, std::clamp(value, 0.0f, 3.0f)); }
+	static void SetSsgiIntensity(float value) { SetValue(s_SsgiIntensity, clamp(value, 0.0f, 3.0f)); }
 	static bool GetRayBinningEnabled() { return s_RayBinningEnabled; }
 	static void SetRayBinningEnabled(bool value) { SetValue(s_RayBinningEnabled, value); }
 	static bool GetTextureStreamingEnabled() { return s_TextureStreamingEnabled; }
@@ -78,11 +78,11 @@ public:
 	static void SetShadowMapMethod(ShadowMapMethod value) { SetValue(s_ShadowMapMethod, value); }
 
 	static int GetVirtualClipmapLevels() { return s_VirtualClipmapLevels; }
-	static void SetVirtualClipmapLevels(int value) { SetValue(s_VirtualClipmapLevels, std::clamp(value, 1, 4)); }
+	static void SetVirtualClipmapLevels(int value) { SetValue(s_VirtualClipmapLevels, clamp(value, 1, 4)); }
 	static float GetVirtualFirstLevelRadius() { return s_VirtualFirstLevelRadius; }
-	static void SetVirtualFirstLevelRadius(float value) { SetValue(s_VirtualFirstLevelRadius, std::clamp(value, 4.0f, 64.0f)); }
+	static void SetVirtualFirstLevelRadius(float value) { SetValue(s_VirtualFirstLevelRadius, clamp(value, 4.0f, 64.0f)); }
 	static int GetShadowFilterRadius() { return s_ShadowFilterRadius; }
-	static void SetShadowFilterRadius(int value) { SetValue(s_ShadowFilterRadius, std::clamp(value, 0, 3)); }
+	static void SetShadowFilterRadius(int value) { SetValue(s_ShadowFilterRadius, clamp(value, 0, 3)); }
 	static float GetShadowDepthBias()
 	{
 		if (s_ShadowMapMethod != ShadowMapMethod::VirtualShadowMap)
@@ -92,7 +92,7 @@ public:
 
 
 		const float automaticBias = s_VirtualFirstLevelRadius / 256000.0f;
-		return std::max(s_VirtualShadowDepthBias, automaticBias);
+		return max(s_VirtualShadowDepthBias, automaticBias);
 	}
 	static void SetShadowDepthBias(float value)
 	{
@@ -106,9 +106,9 @@ public:
 		}
 	}
 	static float GetConventionalShadowDepthBias() { return s_ShadowDepthBias; }
-	static void SetConventionalShadowDepthBias(float value) { SetValue(s_ShadowDepthBias, std::clamp(value, 0.0f, 0.01f)); }
+	static void SetConventionalShadowDepthBias(float value) { SetValue(s_ShadowDepthBias, clamp(value, 0.0f, 0.01f)); }
 	static float GetAuthoredVirtualShadowDepthBias() { return s_VirtualShadowDepthBias; }
-	static void SetVirtualShadowDepthBias(float value) { SetValue(s_VirtualShadowDepthBias, std::clamp(value, 0.0f, 0.01f)); }
+	static void SetVirtualShadowDepthBias(float value) { SetValue(s_VirtualShadowDepthBias, clamp(value, 0.0f, 0.01f)); }
 	static float GetShadowNormalBias()
 	{
 		if (s_ShadowMapMethod != ShadowMapMethod::VirtualShadowMap)
@@ -118,7 +118,7 @@ public:
 
 
 		const float automaticBias = s_VirtualFirstLevelRadius / 384000.0f;
-		return std::max(s_VirtualShadowNormalBias, automaticBias);
+		return max(s_VirtualShadowNormalBias, automaticBias);
 	}
 	static void SetShadowNormalBias(float value)
 	{
@@ -132,45 +132,45 @@ public:
 		}
 	}
 	static float GetConventionalShadowNormalBias() { return s_ShadowNormalBias; }
-	static void SetConventionalShadowNormalBias(float value) { SetValue(s_ShadowNormalBias, std::clamp(value, 0.0f, 0.01f)); }
+	static void SetConventionalShadowNormalBias(float value) { SetValue(s_ShadowNormalBias, clamp(value, 0.0f, 0.01f)); }
 	static float GetAuthoredVirtualShadowNormalBias() { return s_VirtualShadowNormalBias; }
-	static void SetVirtualShadowNormalBias(float value) { SetValue(s_VirtualShadowNormalBias, std::clamp(value, 0.0f, 0.01f)); }
+	static void SetVirtualShadowNormalBias(float value) { SetValue(s_VirtualShadowNormalBias, clamp(value, 0.0f, 0.01f)); }
 	static float GetShadowResolutionTransition() { return s_ShadowResolutionTransition; }
-	static void SetShadowResolutionTransition(float value) { SetValue(s_ShadowResolutionTransition, std::clamp(value, 0.05f, 0.40f)); }
+	static void SetShadowResolutionTransition(float value) { SetValue(s_ShadowResolutionTransition, clamp(value, 0.05f, 0.40f)); }
 	static bool GetStabilizeVirtualClipmaps() { return s_StabilizeVirtualClipmaps; }
 	static void SetStabilizeVirtualClipmaps(bool value) { SetValue(s_StabilizeVirtualClipmaps, value); }
 	static bool GetCacheVirtualShadowPages() { return s_CacheVirtualShadowPages; }
 	static void SetCacheVirtualShadowPages(bool value) { SetValue(s_CacheVirtualShadowPages, value); }
 	static int GetShadowCascadeCount() { return s_ShadowCascadeCount; }
-	static void SetShadowCascadeCount(int value) { SetValue(s_ShadowCascadeCount, std::clamp(value, 1, 4)); }
+	static void SetShadowCascadeCount(int value) { SetValue(s_ShadowCascadeCount, clamp(value, 1, 4)); }
 	static float GetShadowDistance() { return s_ShadowDistance; }
-	static void SetShadowDistance(float value) { SetValue(s_ShadowDistance, std::clamp(value, 8.0f, 512.0f)); }
+	static void SetShadowDistance(float value) { SetValue(s_ShadowDistance, clamp(value, 8.0f, 512.0f)); }
 	static bool GetContactShadowsEnabled() { return s_ContactShadowsEnabled; }
 	static void SetContactShadowsEnabled(bool value) { SetValue(s_ContactShadowsEnabled, value); }
 	static float GetContactShadowLength() { return s_ContactShadowLength; }
-	static void SetContactShadowLength(float value) { SetValue(s_ContactShadowLength, std::clamp(value, 0.05f, 5.0f)); }
+	static void SetContactShadowLength(float value) { SetValue(s_ContactShadowLength, clamp(value, 0.05f, 5.0f)); }
 	static int GetContactShadowSteps() { return s_ContactShadowSteps; }
-	static void SetContactShadowSteps(int value) { SetValue(s_ContactShadowSteps, std::clamp(value, 4, 24)); }
+	static void SetContactShadowSteps(int value) { SetValue(s_ContactShadowSteps, clamp(value, 4, 24)); }
 	static int GetVirtualShadowDebugMode() { return s_VirtualShadowDebugMode; }
-	static void SetVirtualShadowDebugMode(int value) { SetValue(s_VirtualShadowDebugMode, std::clamp(value, 0, 3)); }
+	static void SetVirtualShadowDebugMode(int value) { SetValue(s_VirtualShadowDebugMode, clamp(value, 0, 3)); }
 	static bool GetDistanceFieldShadowsEnabled() { return s_DistanceFieldShadowsEnabled; }
 	static void SetDistanceFieldShadowsEnabled(bool value) { SetValue(s_DistanceFieldShadowsEnabled, value); }
 	static float GetDistanceFieldShadowDistance() { return s_DistanceFieldShadowDistance; }
-	static void SetDistanceFieldShadowDistance(float value) { SetValue(s_DistanceFieldShadowDistance, std::clamp(value, 2.0f, 100.0f)); }
+	static void SetDistanceFieldShadowDistance(float value) { SetValue(s_DistanceFieldShadowDistance, clamp(value, 2.0f, 100.0f)); }
 	static int GetDistanceFieldShadowSteps() { return s_DistanceFieldShadowSteps; }
-	static void SetDistanceFieldShadowSteps(int value) { SetValue(s_DistanceFieldShadowSteps, std::clamp(value, 4, 24)); }
+	static void SetDistanceFieldShadowSteps(int value) { SetValue(s_DistanceFieldShadowSteps, clamp(value, 4, 24)); }
 	static int GetScreenLightBudget() { return s_ScreenLightBudget; }
-	static void SetScreenLightBudget(int value) { SetValue(s_ScreenLightBudget, std::clamp(value, 1, 32)); }
+	static void SetScreenLightBudget(int value) { SetValue(s_ScreenLightBudget, clamp(value, 1, 32)); }
 	static int GetTileLightBudget() { return s_TileLightBudget; }
-	static void SetTileLightBudget(int value) { SetValue(s_TileLightBudget, std::clamp(value, 1, 4)); }
+	static void SetTileLightBudget(int value) { SetValue(s_TileLightBudget, clamp(value, 1, 4)); }
 	static int GetDecalLightBudget() { return s_DecalLightBudget; }
-	static void SetDecalLightBudget(int value) { SetValue(s_DecalLightBudget, std::clamp(value, 0, 110)); }
+	static void SetDecalLightBudget(int value) { SetValue(s_DecalLightBudget, clamp(value, 0, 110)); }
 	static int GetDecalTileLightBudget() { return s_DecalTileLightBudget; }
-	static void SetDecalTileLightBudget(int value) { SetValue(s_DecalTileLightBudget, std::clamp(value, 0, 4)); }
+	static void SetDecalTileLightBudget(int value) { SetValue(s_DecalTileLightBudget, clamp(value, 0, 4)); }
 	static int GetVolumetricLightBudget() { return s_VolumetricLightBudget; }
-	static void SetVolumetricLightBudget(int value) { SetValue(s_VolumetricLightBudget, std::clamp(value, 0, 5)); }
+	static void SetVolumetricLightBudget(int value) { SetValue(s_VolumetricLightBudget, clamp(value, 0, 5)); }
 	static int GetShadowLightBudget() { return s_ShadowLightBudget; }
-	static void SetShadowLightBudget(int value) { SetValue(s_ShadowLightBudget, std::clamp(value, 1, 8)); }
+	static void SetShadowLightBudget(int value) { SetValue(s_ShadowLightBudget, clamp(value, 1, 8)); }
 	static uint64_t GetRevision() { return s_Revision; }
 
 	static void ResetShadowDefaults()

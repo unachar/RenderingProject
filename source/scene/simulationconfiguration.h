@@ -5,6 +5,6 @@
 
 namespace SimulationConfiguration
 {
-void Save(std::ostream& stream);
-bool TryLoad(const std::string& key, const std::string& value);
+void Save(ostream& stream);
+bool TryLoad(const string& key, const string& value);
 }

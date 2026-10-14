@@ -23,15 +23,15 @@
 
 namespace
 {
-std::vector<EntityID> fixtures;
+vector<EntityID> fixtures;
 EntityID wall = UINT32_MAX;
 int meshID = -1, wallMeshID = -1;
 uint32_t failures = 0;
 uint64_t frameCount = 0;
-std::vector<RenderCapture::TextureData> reference;
-std::array<std::string, 8> meshPaths;
-std::ofstream measurements;
-std::vector<EntityID> buildings;
+vector<RenderCapture::TextureData> reference;
+array<string, 8> meshPaths;
+ofstream measurements;
+vector<EntityID> buildings;
 void Check(bool success, const char *description)
 {
     WriteGraphicsLog("GPU Visibility validation: %s %s\n", success ? "PASS" : "FAIL", description);
@@ -40,13 +40,13 @@ void Check(bool success, const char *description)
         ++failures;
     }
 }
-void WriteGrid(const std::string &path, uint32_t subdivisions, uint32_t sections = 1)
+void WriteGrid(const string &path, uint32_t subdivisions, uint32_t sections = 1)
 {
-    std::ofstream file(path);
+    ofstream file(path);
     if (sections > 1)
     {
-        const auto materialPath = std::filesystem::path(path).replace_extension(".mtl");
-        std::ofstream materials(materialPath);
+        const auto materialPath = filesystem::path(path).replace_extension(".mtl");
+        ofstream materials(materialPath);
         file << "mtllib " << materialPath.filename().string() << '\n';
         for (uint32_t section = 0; section < sections; ++section)
         {
@@ -137,7 +137,7 @@ void Clear()
 }
 void Capture(bool compare)
 {
-    std::vector<RenderCapture::TextureData> image(2);
+    vector<RenderCapture::TextureData> image(2);
     bool read = RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::BASE_COLOR), image[0]);
     read &= RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::DEPTH), image[1]);
     Check(read, "capture opaque color/depth");
@@ -147,7 +147,7 @@ void Capture(bool compare)
     }
     if (!compare)
     {
-        reference = std::move(image);
+        reference = move(image);
         return;
     }
     uint64_t differences = 0, covered = 0;
@@ -170,14 +170,14 @@ void Capture(bool compare)
                 if (i == 1)
                 {
                     float da, db;
-                    std::memcpy(&da, first, 4);
-                    std::memcpy(&db, second, 4);
-                    differences += std::abs(da - db) > 0.00001f;
+                    memcpy(&da, first, 4);
+                    memcpy(&db, second, 4);
+                    differences += abs(da - db) > 0.00001f;
                     covered += da > 0 && da < 0.999f;
                 }
                 else
                 {
-                    differences += std::memcmp(first, second, 4) != 0;
+                    differences += memcmp(first, second, 4) != 0;
                 }
             }
         }
@@ -187,14 +187,14 @@ void Capture(bool compare)
 }
 Visibility::Statistics ReadStats()
 {
-    std::vector<uint8_t> bytes;
+    vector<uint8_t> bytes;
     Visibility::Statistics stats;
     const bool read = RenderCapture::ReadBuffer(GPUVisibility::StatisticsBuffer(),
                                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, sizeof(stats), bytes);
     Check(read, "read validation-only visibility counters");
     if (read)
     {
-        std::memcpy(&stats, bytes.data(), sizeof(stats));
+        memcpy(&stats, bytes.data(), sizeof(stats));
     }
     Check(stats.FinalVisible + stats.Occluded == stats.FrustumVisible &&
               stats.FrustumVisible + stats.FrustumCulled == stats.Total,
@@ -203,13 +203,13 @@ Visibility::Statistics ReadStats()
 }
 void ValidateSelectedCommands(uint32_t expectedLOD)
 {
-    std::vector<uint8_t> counter, visible, commands, geometry;
+    vector<uint8_t> counter, visible, commands, geometry;
     bool valid =
         RenderCapture::ReadBuffer(GPUDrivenRenderer::CountBuffer(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, 4, counter);
     uint32_t count = 0;
     if (valid)
     {
-        std::memcpy(&count, counter.data(), 4);
+        memcpy(&count, counter.data(), 4);
     }
     valid &= count > 0 && count <= GPUDrivenRenderer::CommandCapacity();
     if (valid)
@@ -228,14 +228,14 @@ void ValidateSelectedCommands(uint32_t expectedLOD)
         Visibility::VisibleInstanceData record{};
         GPUIndirectDrawCommand command{};
         GPUDrivenGeometryData mesh{};
-        std::memcpy(&record, visible.data() + size_t(i) * 16, 16);
-        std::memcpy(&command, commands.data() + size_t(i) * sizeof(command), sizeof(command));
+        memcpy(&record, visible.data() + size_t(i) * 16, 16);
+        memcpy(&command, commands.data() + size_t(i) * sizeof(command), sizeof(command));
         if (record.SelectedMeshID >= GpuScene::Statistics().Meshes || record.SelectedLOD != expectedLOD)
         {
             valid = false;
             break;
         }
-        std::memcpy(&mesh, geometry.data() + size_t(record.SelectedMeshID) * sizeof(mesh), sizeof(mesh));
+        memcpy(&mesh, geometry.data() + size_t(record.SelectedMeshID) * sizeof(mesh), sizeof(mesh));
         valid &= mesh.Ready != 0 && command.InstanceID == record.InstanceID &&
                  command.Draw.IndexCountPerInstance == mesh.IndexCount &&
                  command.Draw.StartIndexLocation == mesh.StartIndex &&
@@ -268,7 +268,7 @@ void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
     frameCount = frame + 1;
     if (!frame)
     {
-        std::vector<EntityID> remove;
+        vector<EntityID> remove;
         for (uint32_t i = 0; i < Registry::GetEntities().size(); ++i)
         {
             if (Registry::IsAlive(i) && !ComponentManager::HasComponent<CameraComponent>(i))
@@ -280,10 +280,10 @@ void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
         {
             World::DestroyEntity(Entity(entity));
         }
-        std::filesystem::create_directories("build/visibility");
+        filesystem::create_directories("build/visibility");
         for (uint32_t level = 0; level < 5; ++level)
         {
-            const auto path = "build/visibility/grid-lod" + std::to_string(level) + ".obj";
+            const auto path = "build/visibility/grid-lod" + to_string(level) + ".obj";
             WriteGrid(path, 16u >> level);
             if (level)
             {
@@ -384,7 +384,7 @@ void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
     {
         Clear();
         const uint32_t sections = frame == 100 ? 5 : 10;
-        const auto path = "build/visibility/city-" + std::to_string(sections) + ".obj";
+        const auto path = "build/visibility/city-" + to_string(sections) + ".obj";
         WriteGrid(path, 2, sections);
         meshID = ModelManager::LoadStaticModel(path.c_str(), false);
         auto *city = ModelManager::GetStaticModel(meshID);
@@ -529,7 +529,7 @@ void GPUVisibilityValidation::AfterFrame(uint64_t frame)
     }
     if (frame == 138)
     {
-        std::vector<RenderCapture::TextureData> mips(OcclusionCulling::GetMipCount());
+        vector<RenderCapture::TextureData> mips(OcclusionCulling::GetMipCount());
         bool valid = true;
         for (uint32_t level = 0; level < mips.size(); ++level)
         {
@@ -552,11 +552,11 @@ void GPUVisibilityValidation::AfterFrame(uint64_t frame)
                         for (uint32_t sx = xr.first; sx < xr.second; ++sx)
                         {
                             float depth;
-                            std::memcpy(&depth, source.Bytes.data() + sy * source.RowPitch + sx * 4, 4);
-                            maximum = (std::max)(maximum, depth);
+                            memcpy(&depth, source.Bytes.data() + sy * source.RowPitch + sx * 4, 4);
+                            maximum = (max)(maximum, depth);
                         }
                     }
-                    std::memcpy(&actual, destination.Bytes.data() + y * destination.RowPitch + x * 4, 4);
+                    memcpy(&actual, destination.Bytes.data() + y * destination.RowPitch + x * 4, 4);
                     if (actual != maximum)
                     {
                         valid = false;

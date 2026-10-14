@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "transmittanceshadows.h"
 #include "scenepasses.h"
 #include "renderframe.h"
 #include "lightingresources.h"
@@ -10,6 +11,8 @@
 #include "occlusionculling.h"
 #include "postprocesspass.h"
 #include "raytracing.h"
+#include "cloud/cloudrenderer.h"
+#include "screenspaceeffects.h"
 
 namespace
 {
@@ -39,6 +42,27 @@ void ScenePasses::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_TO
 	}
 	CD3DX12_GPU_DESCRIPTOR_HANDLE environmentSrvHandle(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), environmentSrvIndex, m_CbvIncrementSize);
 	m_CommandList->SetGraphicsRootDescriptorTable(7, environmentSrvHandle);
+    m_CommandList->SetGraphicsRootDescriptorTable(19, m_GBufferSrvHandles[static_cast<UINT>(GBufferType::BASE_COLOR)]);
+    m_CommandList->SetGraphicsRootDescriptorTable(20, m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)]);
+    int monitorIndex = m_MonitorTextureSrvIndex;
+    if (monitorIndex < 0)
+    {
+        monitorIndex = TextureManager::GetDefaultTextureIndex();
+    }
+    m_CommandList->SetGraphicsRootDescriptorTable(21, CD3DX12_GPU_DESCRIPTOR_HANDLE(
+        m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), monitorIndex, m_CbvIncrementSize));
+    m_CommandList->SetGraphicsRootDescriptorTable(22, Raytracing::GetResultSrv());
+    m_CommandList->SetGraphicsRootDescriptorTable(23, Raytracing::GetReflectionSrv());
+    if (m_PostProcessConstantBuffer)
+    {
+        m_CommandList->SetGraphicsRootConstantBufferView(26,
+            m_PostProcessConstantBuffer->GetGPUVirtualAddress() + GetPostProcessFrameOffset());
+    }
+    CloudRenderer::BindForwardLighting(m_CommandList.Get(), m_FrameIndex);
+    m_CommandList->SetGraphicsRootDescriptorTable(28, ScreenSpaceEffects::GetAoSrv());
+    m_CommandList->SetGraphicsRootDescriptorTable(29, ScreenSpaceEffects::GetGiSrv());
+    m_CommandList->SetGraphicsRootDescriptorTable(30, m_GBufferSrvHandles[static_cast<UINT>(GBufferType::ATMOSPHERE)]);
+    TransmittanceShadows::BindLighting(m_CommandList.Get(), 31, 32);
 	if (m_TransparentSceneCopy)
 	{
 		m_CommandList->SetGraphicsRootDescriptorTable(8, m_TransparentSceneSrvHandle);
@@ -171,6 +195,40 @@ void ScenePasses::BeginEditorSceneOverlayPass()
 
 	m_CommandList->RSSetViewports(1, &m_FullViewport);
 	m_CommandList->RSSetScissorRects(1, &m_FullScissorRect);
+}
+
+void ScenePasses::BeginHdrTransparentPass()
+{
+    m_UseLowResDepth = m_RenderMode == RenderMode::DEFERRED && m_LowResDepthBuffer != nullptr;
+    auto* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
+    D3D12_RESOURCE_STATES depthState = m_UseLowResDepth ? D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE : m_DepthStencilState;
+    auto depthBarrier = CD3DX12_RESOURCE_BARRIER::Transition(depth, depthState, D3D12_RESOURCE_STATE_DEPTH_READ);
+    m_CommandList->ResourceBarrier(1, &depthBarrier);
+    if (!m_UseLowResDepth)
+    {
+        m_DepthStencilState = D3D12_RESOURCE_STATE_DEPTH_READ;
+    }
+    UINT depthIndex = m_UseLowResDepth ? g_kLOW_DEPTH_READ_DSV_INDEX : g_kFULL_DEPTH_READ_DSV_INDEX;
+    CD3DX12_CPU_DESCRIPTOR_HANDLE dsv(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), depthIndex,
+        m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV));
+    m_IsDeferredGeometryPass = false;
+    m_IsSceneColorForwardPass = true;
+    m_CommandList->OMSetRenderTargets(1, &GetRenderTargetRtvHandle(RenderTargetType::Scene), FALSE, &dsv);
+    m_CommandList->RSSetViewports(1, &m_Viewport);
+    m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
+}
+
+void ScenePasses::EndHdrTransparentPass()
+{
+    auto* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
+    auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(depth,
+        D3D12_RESOURCE_STATE_DEPTH_READ, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    m_CommandList->ResourceBarrier(1, &barrier);
+    if (!m_UseLowResDepth)
+    {
+        m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    }
+    m_IsSceneColorForwardPass = false;
 }
 
 void ScenePasses::PrepareTransparentSceneCopy()

@@ -477,7 +477,7 @@ bool StaticModelResource::CreateDefaultBufferAndUpload(
 void StaticModelResource::LoadLODMetadata(const char* path)
 {
 	m_SourcePath = path;
-	std::ifstream file(m_SourcePath + ".lod");
+	ifstream file(m_SourcePath + ".lod");
 	if (file && !Visibility::LoadLOD(file, m_LODMetadata)) Debug::Log("Invalid LOD metadata: %s.lod\n", path);
 }
 
@@ -534,10 +534,10 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 {
     // The legacy OBJ importer combines every face into one section. Preserve its
     // single-material behavior, but retain authored material sections via Assimp.
-    std::ifstream source(fileName);
-    std::unordered_set<std::string> sectionMaterials;
-    std::string sourceLine;
-    while (std::getline(source, sourceLine))
+    ifstream source(fileName);
+    unordered_set<string> sectionMaterials;
+    string sourceLine;
+    while (getline(source, sourceLine))
     {
         if (sourceLine.rfind("usemtl ", 0) == 0)
         {

@@ -281,7 +281,7 @@ void ImGuiManager::DrawAtmosphereWindow()
 		DayNightCycle::Update(0.0f);
 	}
 	ImGui::Text("太陽高度: %.1f 度 / 昼光: %.2f",
-		asinf(std::clamp(DayNightCycle::GetSunDirection().y, -1.0f, 1.0f)) * 180.0f / SolarCycle::Pi,
+		asinf(clamp(DayNightCycle::GetSunDirection().y, -1.0f, 1.0f)) * 180.0f / SolarCycle::Pi,
 		DayNightCycle::GetDaylight());
 	ImGui::TextWrapped("太陽時は太陽の位置を基準とする時刻です。時刻制御をオフにすると Sun を直接配置できます。");
 	ImGui::SeparatorText("散乱");

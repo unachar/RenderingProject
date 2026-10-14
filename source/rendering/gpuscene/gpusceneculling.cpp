@@ -25,12 +25,12 @@ void GpuSceneCulling::Prepare(ID3D12Device *device, uint32_t slots, uint32_t fra
     ComPtr<ID3DBlob> serialized, errors;
     if (FAILED(D3D12SerializeRootSignature(&description, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors)))
     {
-        throw std::runtime_error("GPU scene culling root signature failed");
+        throw runtime_error("GPU scene culling root signature failed");
     }
     if (FAILED(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
                                            IID_PPV_ARGS(&m_Root))))
     {
-        throw std::runtime_error("GPU scene culling root creation failed");
+        throw runtime_error("GPU scene culling root creation failed");
     }
     ComPtr<ID3DBlob> shader;
     ShaderDescription shaderDescription{};
@@ -38,14 +38,14 @@ void GpuSceneCulling::Prepare(ID3D12Device *device, uint32_t slots, uint32_t fra
     shaderDescription.ppBlob = shader.GetAddressOf();
     if (!ShaderPipelines::LoadShaderBlob(shaderDescription))
     {
-        throw std::runtime_error("GPU scene culling shader is missing");
+        throw runtime_error("GPU scene culling shader is missing");
     }
     D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline{};
     pipeline.pRootSignature = m_Root.Get();
     pipeline.CS = {shader->GetBufferPointer(), shader->GetBufferSize()};
     if (FAILED(device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&m_Pipeline))))
     {
-        throw std::runtime_error("GPU scene culling pipeline failed");
+        throw runtime_error("GPU scene culling pipeline failed");
     }
 }
 

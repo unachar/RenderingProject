@@ -19,15 +19,15 @@
 #include <unordered_set>
 #include "renderframe.h"
 
-std::vector<std::unique_ptr<EntityBase>>& Game::GetEntities()
+vector<unique_ptr<EntityBase>>& Game::GetEntities()
 {
-	static std::vector<std::unique_ptr<EntityBase>> entities;
+	static vector<unique_ptr<EntityBase>> entities;
 	return entities;
 }
 
-std::vector<std::unique_ptr<EntityBase>>& Game::GetPendingEntities()
+vector<unique_ptr<EntityBase>>& Game::GetPendingEntities()
 {
-	static std::vector<std::unique_ptr<EntityBase>> entities;
+	static vector<unique_ptr<EntityBase>> entities;
 	return entities;
 }
 
@@ -50,7 +50,7 @@ bool Game::RegisterEntity(EntityBase* entity)
 	{
 		if (pending.get() == entity)
 		{
-			GetEntities().emplace_back(std::move(pending));
+			GetEntities().emplace_back(move(pending));
 			return true;
 		}
 	}

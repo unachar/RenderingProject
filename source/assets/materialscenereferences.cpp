@@ -27,7 +27,7 @@ bool IsFiniteArray(const Json::Value& array, Json::ArrayIndex length)
     }
     for (const auto& value : array)
     {
-        if (!value.isNumeric() || !std::isfinite(value.asFloat()))
+        if (!value.isNumeric() || !isfinite(value.asFloat()))
         {
             return false;
         }
@@ -122,7 +122,7 @@ bool MatchesSavedSource(const Json::Value& record, EntityID entity)
 }
 }
 
-bool MaterialManager::SaveSceneReferences(const std::filesystem::path& path, std::string& error)
+bool MaterialManager::SaveSceneReferences(const filesystem::path& path, string& error)
 {
     Json::Value root;
     root["version"] = 1;
@@ -197,10 +197,10 @@ bool MaterialManager::SaveSceneReferences(const std::filesystem::path& path, std
     return WriteAssetFile(path, Json::writeString(writer, root), error);
 }
 
-bool MaterialManager::LoadSceneReferences(const std::filesystem::path& path, std::string& error)
+bool MaterialManager::LoadSceneReferences(const filesystem::path& path, string& error)
 {
     error.clear();
-    std::ifstream stream(path);
+    ifstream stream(path);
     if (!stream)
     {
         return true;
@@ -292,7 +292,7 @@ bool MaterialManager::LoadSceneReferences(const std::filesystem::path& path, std
             else if (record.isMember("vertices") && !record["vertices"].empty())
             {
                 restored.Add<MeshComponent>();
-                std::vector<Vertex> vertices;
+                vector<Vertex> vertices;
                 for (const auto& encoded : record["vertices"])
                 {
                     vertices.push_back({{encoded[0].asFloat(), encoded[1].asFloat(), encoded[2].asFloat()},

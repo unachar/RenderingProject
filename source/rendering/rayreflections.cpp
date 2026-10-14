@@ -45,15 +45,15 @@ struct FrameResources
     ComPtr<ID3D12DescriptorHeap> Heap;
     ComPtr<ID3D12Resource> Meshes, Lights, Constants, Noisy, Result;
     // Keep sampled resources alive until this frame slot's fence completes.
-    std::vector<RaytracingGeometry> Geometry;
+    vector<RaytracingGeometry> Geometry;
     UINT Width = 0, Height = 0;
 };
 ComPtr<ID3D12Device> g_Device;
 ComPtr<ID3D12DescriptorHeap> g_EngineHeap;
 ComPtr<ID3D12RootSignature> g_Root;
 ComPtr<ID3D12PipelineState> g_Trace, g_Compose;
-std::array<FrameResources, kFrames> g_Frames;
-std::unique_ptr<NrdDenoiser> g_Denoiser;
+array<FrameResources, kFrames> g_Frames;
+unique_ptr<NrdDenoiser> g_Denoiser;
 UINT g_Increment = 0, g_Width = 0, g_Height = 0, g_Dispatches = 0;
 UINT g_LastFrame = 0;
 bool g_HistoryValid = false;
@@ -119,7 +119,7 @@ bool EnsureFrame(FrameResources& frame, UINT slot, UINT width, UINT height)
     const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
     const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT,
         width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    for (auto* resource : { std::addressof(frame.Noisy), std::addressof(frame.Result) })
+    for (auto* resource : { addressof(frame.Noisy), addressof(frame.Result) })
     {
         if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(resource->ReleaseAndGetAddressOf())))) return false;
@@ -189,8 +189,8 @@ void RayReflections::Shutdown()
 }
 
 bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource* scene,
-    const std::vector<RaytracingGeometry>& geometry, const NrdFrame& nrdFrame,
-    const std::array<ComPtr<ID3D12Resource>, 4>& guides, bool denoise)
+    const vector<RaytracingGeometry>& geometry, const NrdFrame& nrdFrame,
+    const array<ComPtr<ID3D12Resource>, 4>& guides, bool denoise)
 {
     g_Dispatches = 0;
     if (!commands || !scene || !g_Trace || geometry.empty()) return false;
@@ -204,9 +204,9 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     auto& frame = g_Frames[slot];
     if (!EnsureFrame(frame, slot, static_cast<UINT>(extent.Width), extent.Height)) return false;
     frame.Geometry = geometry;
-    const UINT count = static_cast<UINT>((std::min)(geometry.size(), static_cast<size_t>(kMaximumMeshes)));
-    std::vector<MeshConstants> meshes(count);
-    std::map<ID3D12Resource*, D3D12_RESOURCE_STATES> sampledResources;
+    const UINT count = static_cast<UINT>((min)(geometry.size(), static_cast<size_t>(kMaximumMeshes)));
+    vector<MeshConstants> meshes(count);
+    map<ID3D12Resource*, D3D12_RESOURCE_STATES> sampledResources;
     sampledResources.emplace(depth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     sampledResources.emplace(normal, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     sampledResources.emplace(material, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -236,7 +236,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     if (!EnsureUpload(frame.Meshes, meshes.size() * sizeof(MeshConstants)) ||
         !Upload(frame.Meshes.Get(), meshes.data(), meshes.size() * sizeof(MeshConstants))) return false;
     FrameConstants constants;
-    std::vector<ReflectionLight> lights;
+    vector<ReflectionLight> lights;
     lights.reserve(RendererState::g_kMAX_SHADER_LIGHTS);
     for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
     {
@@ -255,7 +255,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         entry.Flags.x = static_cast<UINT>(light.CastShadow);
         lights.push_back(entry);
     }
-    if (!EnsureUpload(frame.Lights, (std::max)(sizeof(ReflectionLight), lights.size() * sizeof(ReflectionLight))) ||
+    if (!EnsureUpload(frame.Lights, (max)(sizeof(ReflectionLight), lights.size() * sizeof(ReflectionLight))) ||
         (!lights.empty() && !Upload(frame.Lights.Get(), lights.data(), lights.size() * sizeof(ReflectionLight)))) return false;
     const XMMATRIX view = XMLoadFloat4x4(&nrdFrame.View);
     XMMATRIX projection = XMLoadFloat4x4(&nrdFrame.Projection);
@@ -308,9 +308,9 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         {
             if (GraphicsDevice::WaitForGpuIdle())
             {
-                auto created = std::make_unique<NrdDenoiser>();
+                auto created = make_unique<NrdDenoiser>();
                 if (created->Initialize(g_Device.Get(), NrdSignal::Specular, frame.Width, frame.Height))
-                { g_Denoiser = std::move(created); g_Width = frame.Width; g_Height = frame.Height; g_HistoryValid = false; }
+                { g_Denoiser = move(created); g_Width = frame.Width; g_Height = frame.Height; g_HistoryValid = false; }
             }
         }
         NrdFrame temporalFrame = nrdFrame;

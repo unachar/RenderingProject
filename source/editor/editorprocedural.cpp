@@ -27,7 +27,7 @@ bool DrawNoiseParameters(Procedural::BasicNoiseSettings& noise)
 void DrawNoisePreview(const Procedural::TerrainSettings& settings, bool changed)
 {
     constexpr int side = 48;
-    static std::vector<float> preview;
+    static vector<float> preview;
     if (changed || preview.empty())
     {
         auto previewSettings = settings;
@@ -38,7 +38,7 @@ void DrawNoisePreview(const Procedural::TerrainSettings& settings, bool changed)
     }
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const ImVec2 available = ImGui::GetContentRegionAvail();
-    const float extent = (std::max)(0.0f, (std::min)({ available.x, available.y, 240.0f }));
+    const float extent = (max)(0.0f, (min)({ available.x, available.y, 240.0f }));
     const float cell = extent / side;
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     for (int row = 0; row < side; ++row)
@@ -67,7 +67,7 @@ void ImGuiManager::DrawProceduralWindow()
     static Procedural::TerrainSettings settings;
     static Procedural::TerrainEditState terrainEdit;
     static char presetPath[260] = "Save/terrain.proc";
-    static std::string status;
+    static string status;
     const float statusHeight = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
     if (ImGui::BeginTabBar("ProceduralTabs"))
     {
@@ -84,8 +84,8 @@ void ImGuiManager::DrawProceduralWindow()
                 settings = terrainEdit.GetSettings();
             }
             ImVec2 contentSize = ImGui::GetContentRegionAvail();
-            contentSize.y = (std::max)(1.0f, contentSize.y - statusHeight - ImGui::GetStyle().ItemSpacing.y);
-            const float previewWidth = std::clamp(contentSize.x * 0.32f, 160.0f, 260.0f);
+            contentSize.y = (max)(1.0f, contentSize.y - statusHeight - ImGui::GetStyle().ItemSpacing.y);
+            const float previewWidth = clamp(contentSize.x * 0.32f, 160.0f, 260.0f);
             const float controlsWidth = contentSize.x - previewWidth - ImGui::GetStyle().ItemSpacing.x;
             ImGui::BeginChild("TerrainControls", ImVec2(controlsWidth, contentSize.y));
             bool liveUpdate = ProceduralScene::GetLiveUpdate();

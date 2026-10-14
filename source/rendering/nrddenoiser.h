@@ -52,5 +52,5 @@ public:
     static const char* GetVersion();
 private:
     struct Impl;
-    std::unique_ptr<Impl> m_Impl;
+    unique_ptr<Impl> m_Impl;
 };

@@ -9,7 +9,7 @@ namespace Procedural
 class TerrainEditState
 {
 public:
-    static constexpr uint32_t InvalidTarget = (std::numeric_limits<uint32_t>::max)();
+    static constexpr uint32_t InvalidTarget = (numeric_limits<uint32_t>::max)();
 
     bool SynchronizeSelection(uint32_t target, const TerrainSettings* appliedSettings);
     void SetSettings(const TerrainSettings& settings);

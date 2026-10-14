@@ -58,8 +58,8 @@ float Gradient(int x, int y, float offsetX, float offsetY, uint32_t seed)
 
 float LatticeNoise(float x, float y, uint32_t seed, bool useGradient)
 {
-    const int cellX = static_cast<int>(std::floor(x));
-    const int cellY = static_cast<int>(std::floor(y));
+    const int cellX = static_cast<int>(floor(x));
+    const int cellY = static_cast<int>(floor(y));
     const float localX = x - cellX;
     const float localY = y - cellY;
     float corners[4]{};
@@ -85,9 +85,9 @@ float LatticeNoise(float x, float y, uint32_t seed, bool useGradient)
 
 float CellularNoise(float x, float y, uint32_t seed)
 {
-    const int cellX = static_cast<int>(std::floor(x));
-    const int cellY = static_cast<int>(std::floor(y));
-    float nearestSquared = std::numeric_limits<float>::max();
+    const int cellX = static_cast<int>(floor(x));
+    const int cellY = static_cast<int>(floor(y));
+    float nearestSquared = numeric_limits<float>::max();
     for (int row = -1; row <= 1; ++row)
     {
         for (int column = -1; column <= 1; ++column)
@@ -96,10 +96,10 @@ float CellularNoise(float x, float y, uint32_t seed)
             const int sampleY = cellY + row;
             const float deltaX = sampleX + Random01(sampleX, sampleY, seed) - x;
             const float deltaY = sampleY + Random01(sampleX, sampleY, seed ^ 0xa511e9b3u) - y;
-            nearestSquared = (std::min)(nearestSquared, deltaX * deltaX + deltaY * deltaY);
+            nearestSquared = (min)(nearestSquared, deltaX * deltaX + deltaY * deltaY);
         }
     }
-    return 1.0f - 2.0f * std::clamp(std::sqrt(nearestSquared), 0.0f, 1.0f);
+    return 1.0f - 2.0f * clamp(sqrt(nearestSquared), 0.0f, 1.0f);
 }
 
 float FractalNoise(float x, float y, const BasicNoiseSettings& settings, bool ridged)
@@ -107,20 +107,20 @@ float FractalNoise(float x, float y, const BasicNoiseSettings& settings, bool ri
     float total = 0.0f;
     float amplitude = 1.0f;
     float amplitudeSum = 0.0f;
-    const int octaves = std::clamp(settings.Octaves, 1, 8);
+    const int octaves = clamp(settings.Octaves, 1, 8);
     for (int octave = 0; octave < octaves; ++octave)
     {
         float sample = LatticeNoise(x, y, settings.Seed + static_cast<uint32_t>(octave) * 1013u, true);
         if (ridged)
         {
-            sample = 1.0f - std::abs(sample);
+            sample = 1.0f - abs(sample);
             sample = sample * sample * 2.0f - 1.0f;
         }
         total += sample * amplitude;
         amplitudeSum += amplitude;
-        amplitude *= std::clamp(settings.Persistence, 0.0f, 1.0f);
-        x *= std::clamp(settings.Lacunarity, 1.0f, 4.0f);
-        y *= std::clamp(settings.Lacunarity, 1.0f, 4.0f);
+        amplitude *= clamp(settings.Persistence, 0.0f, 1.0f);
+        x *= clamp(settings.Lacunarity, 1.0f, 4.0f);
+        y *= clamp(settings.Lacunarity, 1.0f, 4.0f);
     }
     return total / amplitudeSum;
 }
@@ -128,15 +128,15 @@ float FractalNoise(float x, float y, const BasicNoiseSettings& settings, bool ri
 
 static float SampleSingleNoise(float x, float y, const BasicNoiseSettings& settings)
 {
-    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(settings.Frequency))
+    if (!isfinite(x) || !isfinite(y) || !isfinite(settings.Frequency))
     {
         return 0.0f;
     }
-    x *= std::clamp(settings.Frequency, 0.0001f, 2.0f);
-    y *= std::clamp(settings.Frequency, 0.0001f, 2.0f);
+    x *= clamp(settings.Frequency, 0.0001f, 2.0f);
+    y *= clamp(settings.Frequency, 0.0001f, 2.0f);
     // Keep conversion to integer cells defined, including the highest octave.
-    x = std::clamp(x, -10000.0f, 10000.0f);
-    y = std::clamp(y, -10000.0f, 10000.0f);
+    x = clamp(x, -10000.0f, 10000.0f);
+    y = clamp(y, -10000.0f, 10000.0f);
     float result = 0.0f;
     switch (settings.Method)
     {
@@ -157,7 +157,7 @@ static float SampleSingleNoise(float x, float y, const BasicNoiseSettings& setti
         break;
     case NoiseMethod::DomainWarp:
     {
-        const float warp = std::clamp(settings.WarpStrength, 0.0f, 10.0f);
+        const float warp = clamp(settings.WarpStrength, 0.0f, 10.0f);
         const float warpedX = x + LatticeNoise(x + 17.3f, y + 9.2f, settings.Seed, true) * warp;
         const float warpedY = y + LatticeNoise(x - 7.1f, y + 31.7f, settings.Seed ^ 239u, true) * warp;
         result = FractalNoise(warpedX, warpedY, settings, false);
@@ -166,7 +166,7 @@ static float SampleSingleNoise(float x, float y, const BasicNoiseSettings& setti
     default:
         break;
     }
-    return std::clamp(result, -1.0f, 1.0f);
+    return clamp(result, -1.0f, 1.0f);
 }
 
 void ApplyCommonNoiseParameters(NoiseSettings& settings)
@@ -186,11 +186,11 @@ float SampleNoise(float x, float y, const NoiseSettings& settings)
 
     double total = 0.0;
     double weightSum = 0.0;
-    const int count = std::clamp(settings.LayerCount, 2, 5);
+    const int count = clamp(settings.LayerCount, 2, 5);
     for (int index = 0; index < count; ++index)
     {
         const auto& layer = settings.Layers[index];
-        if (!std::isfinite(layer.Weight) || layer.Weight <= 0.0f)
+        if (!isfinite(layer.Weight) || layer.Weight <= 0.0f)
             continue;
         total += SampleSingleNoise(x, y, layer.Noise) * static_cast<double>(layer.Weight);
         weightSum += layer.Weight;
@@ -198,13 +198,13 @@ float SampleNoise(float x, float y, const NoiseSettings& settings)
     return weightSum > 0.0 ? static_cast<float>(total / weightSum) : 0.0f;
 }
 
-std::vector<float> BuildHeightMap(const TerrainSettings& settings)
+vector<float> BuildHeightMap(const TerrainSettings& settings)
 {
-    const int resolution = std::clamp(settings.Resolution, 4, 256);
+    const int resolution = clamp(settings.Resolution, 4, 256);
     const int side = resolution + 1;
-    const float size = std::clamp(settings.Size, 1.0f, 500.0f);
-    const float height = std::clamp(settings.Height, 0.0f, 100.0f);
-    std::vector<float> heights(static_cast<size_t>(side) * side);
+    const float size = clamp(settings.Size, 1.0f, 500.0f);
+    const float height = clamp(settings.Height, 0.0f, 100.0f);
+    vector<float> heights(static_cast<size_t>(side) * side);
     for (int row = 0; row < side; ++row)
     {
         for (int column = 0; column < side; ++column)
@@ -220,25 +220,25 @@ std::vector<float> BuildHeightMap(const TerrainSettings& settings)
 Vector3 SampleMotion(MotionMethod method, double time, float speed,
     const Vector3& amplitude, uint32_t seed)
 {
-    if (!std::isfinite(time) || !std::isfinite(speed))
+    if (!isfinite(time) || !isfinite(speed))
     {
         return {};
     }
     const double cycles = time * speed;
-    const float phase = static_cast<float>(std::remainder(cycles, 1.0) * 2.0 * kPi);
+    const float phase = static_cast<float>(remainder(cycles, 1.0) * 2.0 * kPi);
     switch (method)
     {
     case MotionMethod::Wave:
-        return { amplitude.X * std::sin(phase), amplitude.Y * std::sin(phase), amplitude.Z * std::sin(phase) };
+        return { amplitude.X * sin(phase), amplitude.Y * sin(phase), amplitude.Z * sin(phase) };
     case MotionMethod::Orbit:
-        return { amplitude.X * (std::cos(phase) - 1.0f), amplitude.Y * std::sin(phase), amplitude.Z * std::sin(phase) };
+        return { amplitude.X * (cos(phase) - 1.0f), amplitude.Y * sin(phase), amplitude.Z * sin(phase) };
     case MotionMethod::Noise:
     {
         NoiseSettings settings;
         settings.Method = NoiseMethod::Perlin;
         settings.Seed = seed;
         settings.Frequency = 1.0f;
-        const float coordinate = static_cast<float>(std::remainder(cycles, 8192.0));
+        const float coordinate = static_cast<float>(remainder(cycles, 8192.0));
         return {
             amplitude.X * (SampleNoise(coordinate, 11.2f, settings) - SampleNoise(0.0f, 11.2f, settings)),
             amplitude.Y * (SampleNoise(coordinate, 37.9f, settings) - SampleNoise(0.0f, 37.9f, settings)),
@@ -271,14 +271,14 @@ bool TerrainSettingsEqual(const TerrainSettings& first, const TerrainSettings& s
         first.Noise.WarpStrength == second.Noise.WarpStrength;
 }
 
-bool WriteTerrainPreset(std::ostream& stream, const TerrainSettings& settings)
+bool WriteTerrainPreset(ostream& stream, const TerrainSettings& settings)
 {
     const auto writeNoise = [&stream](const BasicNoiseSettings& noise)
     {
         stream << static_cast<int>(noise.Method) << ' ' << noise.Seed << ' ' << noise.Frequency << ' '
             << noise.Octaves << ' ' << noise.Persistence << ' ' << noise.Lacunarity << ' ' << noise.WarpStrength << '\n';
     };
-    stream << "PROCEDURAL_TERRAIN 2\n" << std::setprecision(9);
+    stream << "PROCEDURAL_TERRAIN 2\n" << setprecision(9);
     writeNoise(settings.Noise);
     stream << settings.Resolution << ' ' << settings.Size << ' ' << settings.Height << ' ' << settings.BaseHeight << '\n';
     stream << settings.Noise.LayerCount << '\n';
@@ -290,9 +290,9 @@ bool WriteTerrainPreset(std::ostream& stream, const TerrainSettings& settings)
     return static_cast<bool>(stream);
 }
 
-bool ReadTerrainPreset(std::istream& stream, TerrainSettings& settings)
+bool ReadTerrainPreset(istream& stream, TerrainSettings& settings)
 {
-    std::string signature;
+    string signature;
     int version = 0;
     TerrainSettings loaded;
     const auto readNoise = [&stream](BasicNoiseSettings& noise, int maximumMethod)
@@ -300,10 +300,10 @@ bool ReadTerrainPreset(std::istream& stream, TerrainSettings& settings)
         int method = 0;
         if (!(stream >> method >> noise.Seed >> noise.Frequency >> noise.Octaves >> noise.Persistence
             >> noise.Lacunarity >> noise.WarpStrength) || method < 0 || method > maximumMethod ||
-            !std::isfinite(noise.Frequency) || noise.Frequency < 0.0001f || noise.Frequency > 2.0f ||
-            noise.Octaves < 1 || noise.Octaves > 8 || !std::isfinite(noise.Persistence) ||
-            noise.Persistence < 0.0f || noise.Persistence > 1.0f || !std::isfinite(noise.Lacunarity) ||
-            noise.Lacunarity < 1.0f || noise.Lacunarity > 4.0f || !std::isfinite(noise.WarpStrength) ||
+            !isfinite(noise.Frequency) || noise.Frequency < 0.0001f || noise.Frequency > 2.0f ||
+            noise.Octaves < 1 || noise.Octaves > 8 || !isfinite(noise.Persistence) ||
+            noise.Persistence < 0.0f || noise.Persistence > 1.0f || !isfinite(noise.Lacunarity) ||
+            noise.Lacunarity < 1.0f || noise.Lacunarity > 4.0f || !isfinite(noise.WarpStrength) ||
             noise.WarpStrength < 0.0f || noise.WarpStrength > 10.0f)
             return false;
         noise.Method = static_cast<NoiseMethod>(method);
@@ -313,9 +313,9 @@ bool ReadTerrainPreset(std::istream& stream, TerrainSettings& settings)
         !readNoise(loaded.Noise, version == 1 ? 5 : 6) ||
         !(stream >> loaded.Resolution >> loaded.Size >> loaded.Height >> loaded.BaseHeight) ||
         loaded.Resolution < 4 || loaded.Resolution > 256 ||
-        !std::isfinite(loaded.Size) || loaded.Size < 1.0f || loaded.Size > 500.0f ||
-        !std::isfinite(loaded.Height) || loaded.Height < 0.0f || loaded.Height > 100.0f ||
-        !std::isfinite(loaded.BaseHeight) || std::abs(loaded.BaseHeight) > 1000.0f)
+        !isfinite(loaded.Size) || loaded.Size < 1.0f || loaded.Size > 500.0f ||
+        !isfinite(loaded.Height) || loaded.Height < 0.0f || loaded.Height > 100.0f ||
+        !isfinite(loaded.BaseHeight) || abs(loaded.BaseHeight) > 1000.0f)
         return false;
     if (version == 2)
     {
@@ -324,7 +324,7 @@ bool ReadTerrainPreset(std::istream& stream, TerrainSettings& settings)
         for (auto& layer : loaded.Noise.Layers)
         {
             if (!readNoise(layer.Noise, 5) || !(stream >> layer.Weight) ||
-                !std::isfinite(layer.Weight) || layer.Weight < 0.0f || layer.Weight > 5.0f)
+                !isfinite(layer.Weight) || layer.Weight < 0.0f || layer.Weight > 5.0f)
                 return false;
         }
     }

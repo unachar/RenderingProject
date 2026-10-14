@@ -12,7 +12,7 @@
 #pragma comment(lib, "ole32.lib")
 
 bool RenderCapture::ReadBuffer(ID3D12Resource* source, D3D12_RESOURCE_STATES state,
-    UINT64 bytes, std::vector<uint8_t>& output)
+    UINT64 bytes, vector<uint8_t>& output)
 {
     auto* device = GraphicsDevice::GetDevice();
     if (!device || !source || !bytes || source->GetDesc().Dimension != D3D12_RESOURCE_DIMENSION_BUFFER ||
@@ -51,7 +51,7 @@ bool RenderCapture::ReadTexture(ID3D12Resource* texture, TextureData& output)
     return ReadTextureMip(texture, output, 0, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 }
 
-bool RenderCapture::ReadTextureMip(ID3D12Resource* texture, TextureData& output, UINT mip, D3D12_RESOURCE_STATES state)
+static bool ReadTextureSubresource(ID3D12Resource* texture, RenderCapture::TextureData& output, UINT mip, D3D12_RESOURCE_STATES state)
 {
     ID3D12Device* device = GraphicsDevice::GetDevice();
     if (!device || !texture || !GraphicsDevice::WaitForGpuIdle())
@@ -59,7 +59,7 @@ bool RenderCapture::ReadTextureMip(ID3D12Resource* texture, TextureData& output,
         return false;
     }
     const auto description = texture->GetDesc();
-    if (mip >= description.MipLevels) return false;
+    if (mip >= description.MipLevels * description.DepthOrArraySize) return false;
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
     UINT64 bytes = 0;
     device->GetCopyableFootprints(&description, mip, 1, 0, &footprint, nullptr, nullptr, &bytes);
@@ -111,6 +111,17 @@ bool RenderCapture::ReadTextureMip(ID3D12Resource* texture, TextureData& output,
     return true;
 }
 
+bool RenderCapture::ReadTextureMip(ID3D12Resource* texture, TextureData& output, UINT mip, D3D12_RESOURCE_STATES state)
+{
+    return texture && mip < texture->GetDesc().MipLevels && ReadTextureSubresource(texture, output, mip, state);
+}
+
+bool RenderCapture::ReadTextureSlice(ID3D12Resource* texture, TextureData& output, UINT slice)
+{
+    return texture && slice < texture->GetDesc().DepthOrArraySize &&
+        ReadTextureSubresource(texture, output, slice * texture->GetDesc().MipLevels, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+}
+
 float RenderCapture::HalfToFloat(uint16_t value)
 {
     const float sign = (value & 0x8000u) != 0 ? -1.0f : 1.0f;
@@ -118,13 +129,13 @@ float RenderCapture::HalfToFloat(uint16_t value)
     const int mantissa = value & 1023;
     if (exponent == 0)
     {
-        return sign * std::ldexp(static_cast<float>(mantissa), -24);
+        return sign * ldexp(static_cast<float>(mantissa), -24);
     }
     if (exponent == 31)
     {
-        return std::numeric_limits<float>::infinity();
+        return numeric_limits<float>::infinity();
     }
-    return sign * std::ldexp(static_cast<float>(mantissa + 1024), exponent - 25);
+    return sign * ldexp(static_cast<float>(mantissa + 1024), exponent - 25);
 }
 
 bool RenderCapture::SaveScenePng(const wchar_t* path)
@@ -140,7 +151,7 @@ bool RenderCapture::SaveTexturePng(ID3D12Resource* resource, const wchar_t* path
     {
         return false;
     }
-    std::vector<BYTE> pixels(static_cast<size_t>(texture.Width) * texture.Height * 4);
+    vector<BYTE> pixels(static_cast<size_t>(texture.Width) * texture.Height * 4);
     for (UINT row = 0; row < texture.Height; ++row)
     {
         for (UINT column = 0; column < texture.Width; ++column)
@@ -160,11 +171,11 @@ bool RenderCapture::SaveTexturePng(ID3D12Resource* resource, const wchar_t* path
                 for (UINT channel = 0; channel < 3; ++channel)
                 {
                     const float color = HalfToFloat(components[2 - channel]);
-                    if (!std::isfinite(color))
+                    if (!isfinite(color))
                     {
                         return false;
                     }
-                    destination[channel] = static_cast<BYTE>(std::clamp(color, 0.0f, 1.0f) * 255.0f + 0.5f);
+                    destination[channel] = static_cast<BYTE>(clamp(color, 0.0f, 1.0f) * 255.0f + 0.5f);
                 }
             }
             destination[3] = 255;
@@ -209,7 +220,7 @@ UINT RenderCapture::ReportGraphicsErrors()
     {
         SIZE_T bytes = 0;
         info->GetMessage(index, nullptr, &bytes);
-        std::vector<BYTE> storage(bytes);
+        vector<BYTE> storage(bytes);
         auto* message = reinterpret_cast<D3D12_MESSAGE*>(storage.data());
         if (FAILED(info->GetMessage(index, message, &bytes))) continue;
         if (message->ID == D3D12_MESSAGE_ID_GPU_BASED_VALIDATION_RESOURCE_STATE_IMPRECISE)

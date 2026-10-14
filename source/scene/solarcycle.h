@@ -16,11 +16,11 @@ struct Position
 
 inline float WrapHours(double hours)
 {
-    if (!std::isfinite(hours))
+    if (!isfinite(hours))
     {
         return 12.0f;
     }
-    double wrapped = std::fmod(hours, 24.0);
+    double wrapped = fmod(hours, 24.0);
     if (wrapped < 0.0)
     {
         wrapped += 24.0;
@@ -31,22 +31,22 @@ inline float WrapHours(double hours)
 // Local solar time; longitude, time zones and the equation of time are excluded.
 inline Position Calculate(float hours, float latitudeDegrees, int dayOfYear)
 {
-    const float latitude = std::clamp(latitudeDegrees, -89.0f, 89.0f) * Pi / 180.0f;
-    const float season = static_cast<float>(std::clamp(dayOfYear, 1, 365) - 81) / 365.0f;
-    const float declination = 23.44f * Pi / 180.0f * std::sin(2.0f * Pi * season);
+    const float latitude = clamp(latitudeDegrees, -89.0f, 89.0f) * Pi / 180.0f;
+    const float season = static_cast<float>(clamp(dayOfYear, 1, 365) - 81) / 365.0f;
+    const float declination = 23.44f * Pi / 180.0f * sin(2.0f * Pi * season);
     const float hourAngle = (WrapHours(hours) - 12.0f) * Pi / 12.0f;
     Position result;
-    result.East = -std::cos(declination) * std::sin(hourAngle);
-    result.Up = std::sin(latitude) * std::sin(declination) +
-        std::cos(latitude) * std::cos(declination) * std::cos(hourAngle);
-    result.North = std::cos(latitude) * std::sin(declination) -
-        std::sin(latitude) * std::cos(declination) * std::cos(hourAngle);
+    result.East = -cos(declination) * sin(hourAngle);
+    result.Up = sin(latitude) * sin(declination) +
+        cos(latitude) * cos(declination) * cos(hourAngle);
+    result.North = cos(latitude) * sin(declination) -
+        sin(latitude) * cos(declination) * cos(hourAngle);
     return result;
 }
 
 inline float SmoothRange(float lower, float upper, float value)
 {
-    const float weight = std::clamp((value - lower) / (upper - lower), 0.0f, 1.0f);
+    const float weight = clamp((value - lower) / (upper - lower), 0.0f, 1.0f);
     return weight * weight * (3.0f - 2.0f * weight);
 }
 

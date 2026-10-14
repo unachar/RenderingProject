@@ -50,7 +50,7 @@ ComPtr<ID3D12PipelineState> g_DetailPso;
 ComPtr<ID3D12Resource> g_BaseNoise;
 ComPtr<ID3D12Resource> g_DetailNoise;
 ComPtr<ID3D12Resource> g_Constants;
-std::array<FrameResources, kFrames> g_Frames;
+array<FrameResources, kFrames> g_Frames;
 UINT8* g_Mapped = nullptr;
 UINT g_Increment = 0;
 UINT g_RtvIncrement = 0;
@@ -314,7 +314,7 @@ void CloudRenderer::PrepareLighting(ID3D12GraphicsCommandList* commands, UINT fr
     }
     const double length = sqrt(static_cast<double>(g_Settings.WindX) * g_Settings.WindX +
         static_cast<double>(g_Settings.WindZ) * g_Settings.WindZ);
-    const double delta = std::isfinite(deltaTime) ? std::clamp(deltaTime, 0.0f, 1.0f) : 0;
+    const double delta = isfinite(deltaTime) ? clamp(deltaTime, 0.0f, 1.0f) : 0;
     if (length > 0.000001)
     {
         g_WindX += g_Settings.WindX / length * g_Settings.WindSpeed * delta;
@@ -342,6 +342,18 @@ void CloudRenderer::BindLighting(ID3D12GraphicsCommandList* commands, UINT frame
     const Constants disabled{};
     const void* constants = g_Available ? static_cast<const void*>(g_Mapped + (frameIndex % kFrames) * kConstantStride) : static_cast<const void*>(&disabled);
     commands->SetGraphicsRoot32BitConstants(22, sizeof(Constants) / sizeof(UINT), constants, 0);
+}
+
+void CloudRenderer::BindForwardLighting(ID3D12GraphicsCommandList* commands, UINT frameIndex)
+{
+    if (!commands || !g_Heap || !g_Constants)
+    {
+        return;
+    }
+    commands->SetGraphicsRootDescriptorTable(24, Gpu(kBaseSrv));
+    commands->SetGraphicsRootDescriptorTable(25, Gpu(kDetailSrv));
+    commands->SetGraphicsRootConstantBufferView(27,
+        g_Constants->GetGPUVirtualAddress() + (frameIndex % kFrames) * kConstantStride);
 }
 
 void CloudRenderer::Render(ID3D12GraphicsCommandList* commands, UINT frameIndex, UINT width, UINT height,

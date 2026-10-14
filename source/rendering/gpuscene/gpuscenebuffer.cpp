@@ -9,7 +9,7 @@ void ThrowIfFailed(HRESULT result)
 {
     if (FAILED(result))
     {
-        throw std::runtime_error("GPU scene buffer allocation/map failed");
+        throw runtime_error("GPU scene buffer allocation/map failed");
     }
 }
 ComPtr<ID3D12Resource> CreateBuffer(ID3D12Device *device, uint64_t bytes, D3D12_HEAP_TYPE heapType,
@@ -37,12 +37,12 @@ bool GpuSceneBuffer::Ensure(ID3D12Device *device, uint32_t count, uint32_t strid
     {
         return false;
     }
-    uint32_t capacity = std::max(1024u, m_Capacity);
+    uint32_t capacity = max(1024u, m_Capacity);
     while (capacity < count)
     {
         if (capacity > UINT32_MAX / 2)
         {
-            throw std::overflow_error("GPU scene capacity overflow");
+            throw overflow_error("GPU scene capacity overflow");
         }
         capacity *= 2;
     }
@@ -63,7 +63,7 @@ bool GpuSceneBuffer::Ensure(ID3D12Device *device, uint32_t count, uint32_t strid
 }
 
 uint64_t GpuSceneBuffer::Stage(ID3D12Device *device, uint32_t frame, const void *data, uint32_t count,
-                               std::span<const uint32_t> changes)
+                               span<const uint32_t> changes)
 {
     m_Copies.clear();
     uint64_t bytes = uint64_t(m_NeedsFullUpload ? count : changes.size()) * m_Stride;
@@ -93,7 +93,7 @@ uint64_t GpuSceneBuffer::Stage(ID3D12Device *device, uint32_t frame, const void 
     auto *destination = static_cast<uint8_t *>(mapped);
     if (m_NeedsFullUpload)
     {
-        std::memcpy(destination, source, static_cast<size_t>(bytes));
+        memcpy(destination, source, static_cast<size_t>(bytes));
         m_Copies.push_back({0, 0, bytes});
     }
     else
@@ -102,7 +102,7 @@ uint64_t GpuSceneBuffer::Stage(ID3D12Device *device, uint32_t frame, const void 
         for (uint32_t id : changes)
         {
             const uint64_t target = uint64_t(id) * m_Stride;
-            std::memcpy(destination + offset, source + target, m_Stride);
+            memcpy(destination + offset, source + target, m_Stride);
             if (!m_Copies.empty() && m_Copies.back().Destination + m_Copies.back().Size == target)
             {
                 m_Copies.back().Size += m_Stride;

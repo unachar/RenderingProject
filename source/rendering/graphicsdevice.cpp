@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "transmittanceshadows.h"
 #include "materialmanager.h"
 #include "materialpreview.h"
 #include "cloud/cloudrenderer.h"
@@ -263,7 +264,13 @@ bool GraphicsDevice::Init(HWND hwnd)
 
     CD3DX12_DESCRIPTOR_RANGE assetTextures;
     assetTextures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 512, 0, 1);
-	CD3DX12_ROOT_PARAMETER rootParametersAll[19];
+    CD3DX12_DESCRIPTOR_RANGE forwardResources[13];
+    const UINT forwardRegisters[] = {26, 27, 12, 16, 17, 31, 32, 13, 14, 28, 35, 36, 29};
+    for (UINT index = 0; index < _countof(forwardRegisters); ++index)
+    {
+        forwardResources[index].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, forwardRegisters[index]);
+    }
+	CD3DX12_ROOT_PARAMETER rootParametersAll[34];
 	rootParametersAll[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[1].InitAsDescriptorTable(1, &rangesTex[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -283,6 +290,16 @@ bool GraphicsDevice::Init(HWND hwnd)
 	rootParametersAll[16].InitAsShaderResourceView(25, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 	rootParametersAll[17].InitAsConstantBufferView(5, 0, D3D12_SHADER_VISIBILITY_PIXEL);
     rootParametersAll[18].InitAsDescriptorTable(1, &assetTextures, D3D12_SHADER_VISIBILITY_PIXEL);
+    for (UINT index = 0; index < 7; ++index)
+    {
+        rootParametersAll[19 + index].InitAsDescriptorTable(1, &forwardResources[index], D3D12_SHADER_VISIBILITY_PIXEL);
+    }
+    rootParametersAll[26].InitAsConstantBufferView(6, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    rootParametersAll[27].InitAsConstantBufferView(9, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    for (UINT index = 7; index < _countof(forwardResources); ++index)
+    {
+        rootParametersAll[21 + index].InitAsDescriptorTable(1, &forwardResources[index], D3D12_SHADER_VISIBILITY_PIXEL);
+    }
 
 	CD3DX12_STATIC_SAMPLER_DESC sampler {};
 
@@ -301,7 +318,9 @@ bool GraphicsDevice::Init(HWND hwnd)
 	sampler.RegisterSpace = 0;
 	sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-	CD3DX12_STATIC_SAMPLER_DESC staticSamplers[3] {};
+	CD3DX12_STATIC_SAMPLER_DESC staticSamplers[5] {};
+    staticSamplers[4] = CD3DX12_STATIC_SAMPLER_DESC(4, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
+    staticSamplers[3] = CD3DX12_STATIC_SAMPLER_DESC(3, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
 	staticSamplers[0] = sampler;
 	staticSamplers[1].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
 	staticSamplers[1].AddressU = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
@@ -496,6 +515,7 @@ void GraphicsDevice::Uninit()
 	ImGuiManager::Uninit();
 
 	MaterialPreview::Shutdown();
+    TransmittanceShadows::Shutdown();
     MaterialManager::Shutdown();
 	TextureManager::Uninit();
 

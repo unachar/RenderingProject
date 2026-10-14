@@ -30,10 +30,10 @@ EntityID g_UnrelatedDirectional = g_kINVALID_ENTITY;
 bool g_SawGpuTiming = false;
 UINT g_RecordedFrameIndex = 0;
 RenderCapture::TextureData g_CloudHdr;
-std::vector<uint8_t> g_ForegroundMask;
+vector<uint8_t> g_ForegroundMask;
 struct TimingConfiguration { UINT Width; UINT Height; int ViewSteps; int LightSteps; };
-std::vector<TimingConfiguration> g_Configurations;
-std::array<std::vector<double>, 3> g_BenchmarkMs;
+vector<TimingConfiguration> g_Configurations;
+array<vector<double>, 3> g_BenchmarkMs;
 uint64_t g_LastTimingSerial = 0;
 void Check(bool condition, const char* message)
 {
@@ -280,7 +280,7 @@ void CloudValidation::BeforeFrame(uint64_t frame)
         const auto direction = DayNightCycle::GetSunDirection();
         const float sign = frame < 312 ? 1.0f : -1.0f;
         view.Target = { transform.Position.x + direction.x * sign * 100,
-            transform.Position.y + (std::max)(direction.y * sign, 0.15f) * 100,
+            transform.Position.y + (max)(direction.y * sign, 0.15f) * 100,
             transform.Position.z + direction.z * sign * 100 };
     }
     g_Configurations.push_back({ static_cast<UINT>(ceilf(GraphicsDevice::GetWidth() * settings.ResolutionScale)),
@@ -334,7 +334,7 @@ void CloudValidation::AfterFrame(uint64_t frame)
             for (UINT channel = 0; channel < 4; ++channel)
             {
                 const float value = RenderCapture::HalfToFloat(pixels[x * 4 + channel]);
-                valid &= std::isfinite(value) && value >= 0;
+                valid &= isfinite(value) && value >= 0;
                 if (channel == 3) { valid &= value <= 1; opacity += 1 - value; }
                 else radiance += value;
             }
@@ -410,7 +410,7 @@ void CloudValidation::AfterFrame(uint64_t frame)
     if (scenario == 18)
     {
         Check(NoiseHash() == g_NoiseHash, "same seed regenerates identical GPU noise");
-        Check(std::abs(opacity - g_InitialOpacity) < 0.01, "returning camera and seed restores world-space cloud");
+        Check(abs(opacity - g_InitialOpacity) < 0.01, "returning camera and seed restores world-space cloud");
         Check(CloudRenderer::GetNoiseGenerationCount() == 3, "noise generated only at startup and seed changes");
     }
     if (scenario == 0 || scenario == 3 || scenario == 4 || scenario == 6 || scenario == 20)
@@ -425,13 +425,13 @@ bool CloudValidation::Finish()
     Check(g_LastFrame >= 315, "complete cloud validation including sunset and moonlight");
     Check(g_SawGpuTiming, "cloud GPU timestamps available");
     const char* qualityNames[] = { "Low", "Medium", "High" };
-    std::array<double, 3> medians{};
+    array<double, 3> medians{};
     for (UINT quality = 0; quality < 3; ++quality)
     {
         auto& samples = g_BenchmarkMs[quality];
         Check(samples.size() >= 30, "warmed 1920x1080 GPU samples for quality preset");
         if (samples.empty()) continue;
-        std::sort(samples.begin(), samples.end());
+        sort(samples.begin(), samples.end());
         medians[quality] = samples[samples.size() / 2];
         WriteGraphicsLog("Cloud benchmark: 1920x1080 %s samples=%zu median=%.3f ms p95=%.3f ms\n",
             qualityNames[quality], samples.size(), medians[quality],
@@ -449,7 +449,7 @@ bool CloudValidation::Finish()
         {
             SIZE_T bytes = 0;
             info->GetMessage(index, nullptr, &bytes);
-            std::vector<BYTE> storage(bytes);
+            vector<BYTE> storage(bytes);
             auto* message = reinterpret_cast<D3D12_MESSAGE*>(storage.data());
             if (SUCCEEDED(info->GetMessage(index, message, &bytes)) && message->Severity == D3D12_MESSAGE_SEVERITY_WARNING)
             {

@@ -8,14 +8,14 @@
 namespace
 {
     using namespace VirtualGeometryInternal;
-    bool Finite(const std::array<float, 3>& values)
+    bool Finite(const array<float, 3>& values)
     {
-        return std::all_of(values.begin(), values.end(), [](float value) { return std::isfinite(value); });
+        return all_of(values.begin(), values.end(), [](float value) { return isfinite(value); });
     }
 
     bool ValidSphere(const VirtualGeometrySphere& sphere)
     {
-        return Finite(sphere.Center) && std::isfinite(sphere.Radius) && sphere.Radius >= 0;
+        return Finite(sphere.Center) && isfinite(sphere.Radius) && sphere.Radius >= 0;
     }
 
     bool Contains(const VirtualGeometrySphere& outer, const VirtualGeometrySphere& inner, float epsilon)
@@ -26,18 +26,18 @@ namespace
             double difference = double(outer.Center[axis]) - inner.Center[axis];
             distanceSquared += difference * difference;
         }
-        double tolerance = std::max(double(epsilon), double(outer.Radius) * 1e-5);
-        return std::sqrt(distanceSquared) + inner.Radius <= outer.Radius + tolerance;
+        double tolerance = max(double(epsilon), double(outer.Radius) * 1e-5);
+        return sqrt(distanceSquared) + inner.Radius <= outer.Radius + tolerance;
     }
 
     struct PositionKey
     {
-        std::array<uint32_t, 3> Bits{};
+        array<uint32_t, 3> Bits{};
         explicit PositionKey(const VirtualGeometryVertex& vertex)
         {
             for (size_t axis = 0; axis < 3; ++axis)
             {
-                Bits[axis] = vertex.Position[axis] == 0 ? 0 : std::bit_cast<uint32_t>(vertex.Position[axis]);
+                Bits[axis] = vertex.Position[axis] == 0 ? 0 : bit_cast<uint32_t>(vertex.Position[axis]);
             }
         }
         bool operator==(const PositionKey&) const = default;
@@ -54,10 +54,10 @@ namespace
             return hash;
         }
     };
-    using EdgeCounts = std::unordered_map<uint64_t, uint32_t>;
+    using EdgeCounts = unordered_map<uint64_t, uint32_t>;
 
     void AddEdges(const VirtualGeometryAsset& asset, uint32_t clusterIndex,
-        const std::vector<uint32_t>& positionIds, EdgeCounts& counts)
+        const vector<uint32_t>& positionIds, EdgeCounts& counts)
     {
         const auto& cluster = asset.Clusters[clusterIndex];
         for (uint32_t triangle = 0; triangle < cluster.TriangleCount; ++triangle)
@@ -68,15 +68,15 @@ namespace
                     asset.TriangleIndices[cluster.TriangleOffset + triangle * 3 + corner]];
                 uint32_t second = positionIds[cluster.VertexOffset +
                     asset.TriangleIndices[cluster.TriangleOffset + triangle * 3 + (corner + 1) % 3]];
-                ++counts[uint64_t(std::min(first, second)) << 32 | std::max(first, second)];
+                ++counts[uint64_t(min(first, second)) << 32 | max(first, second)];
             }
         }
     }
 
-    bool ValidateGroupBoundaries(const VirtualGeometryAsset& asset, std::string& error)
+    bool ValidateGroupBoundaries(const VirtualGeometryAsset& asset, string& error)
     {
-        std::unordered_map<PositionKey, uint32_t, PositionHash> positions;
-        std::vector<uint32_t> positionIds;
+        unordered_map<PositionKey, uint32_t, PositionHash> positions;
+        vector<uint32_t> positionIds;
         positionIds.reserve(asset.Vertices.size());
         for (const auto& vertex : asset.Vertices)
         {
@@ -90,7 +90,7 @@ namespace
             uint32_t Group = VirtualGeometryConfig::InvalidIndex;
             bool Shared = false;
         };
-        std::vector<std::unordered_map<uint64_t, Incidence>> levelEdges(asset.Levels.size());
+        vector<unordered_map<uint64_t, Incidence>> levelEdges(asset.Levels.size());
         for (uint32_t index = 0; index < asset.Clusters.size(); ++index)
         {
             const auto& cluster = asset.Clusters[index];
@@ -141,7 +141,7 @@ namespace
         return true;
     }
 
-    bool ValidateData(const VirtualGeometryAsset& asset, std::string& error)
+    bool ValidateData(const VirtualGeometryAsset& asset, string& error)
     {
         auto fail = [&error](const char* message)
         {
@@ -153,7 +153,7 @@ namespace
             return fail("Unsupported asset version or invalid build config");
         }
         if (asset.Clusters.empty() || asset.RootClusters.empty() || asset.Levels.empty() ||
-            asset.Levels.size() > asset.Config.MaxHierarchyLevels || !std::isfinite(asset.SourceMaterialPartId))
+            asset.Levels.size() > asset.Config.MaxHierarchyLevels || !isfinite(asset.SourceMaterialPartId))
         {
             return fail("Empty or invalid virtual geometry asset");
         }
@@ -172,7 +172,7 @@ namespace
                 return fail("Non-finite asset vertex");
             }
         }
-        std::vector<VirtualGeometryLevelStats> measured(asset.Levels.size());
+        vector<VirtualGeometryLevelStats> measured(asset.Levels.size());
         uint64_t vertexEnd = 0;
         uint64_t triangleEnd = 0;
         uint32_t maximumTriangles = 0;
@@ -192,8 +192,8 @@ namespace
             triangleEnd += uint64_t(cluster.TriangleCount) * 3;
             if (!ValidSphere(cluster.Bounds) || !Finite(cluster.Aabb.Min) || !Finite(cluster.Aabb.Max) ||
                 !Finite(cluster.Cone.Axis) || !Finite(cluster.Cone.Apex) ||
-                !std::isfinite(cluster.Cone.Cutoff) || cluster.Cone.Cutoff < 0 || cluster.Cone.Cutoff > 1 ||
-                !std::isfinite(cluster.LodError) || cluster.LodError < 0 ||
+                !isfinite(cluster.Cone.Cutoff) || cluster.Cone.Cutoff < 0 || cluster.Cone.Cutoff > 1 ||
+                !isfinite(cluster.LodError) || cluster.LodError < 0 ||
                 (cluster.Level == 0 && cluster.LodError != 0))
             {
                 return fail("Invalid cluster bounds/cone/error");
@@ -209,7 +209,7 @@ namespace
             {
                 const auto& vertex = asset.Vertices[cluster.VertexOffset + vertexIndex];
                 VirtualGeometrySphere point;
-                std::copy_n(vertex.Position, 3, point.Center.begin());
+                copy_n(vertex.Position, 3, point.Center.begin());
                 if (!Contains(cluster.Bounds, point, asset.Config.BoundaryEpsilon))
                 {
                     return fail("Cluster sphere does not cover geometry");
@@ -233,15 +233,15 @@ namespace
             ++level.Clusters;
             level.Triangles += cluster.TriangleCount;
             level.Vertices += cluster.VertexCount;
-            maximumTriangles = std::max(maximumTriangles, cluster.TriangleCount);
-            maximumVertices = std::max(maximumVertices, cluster.VertexCount);
+            maximumTriangles = max(maximumTriangles, cluster.TriangleCount);
+            maximumVertices = max(maximumVertices, cluster.VertexCount);
         }
         if (vertexEnd != asset.Vertices.size() || triangleEnd != asset.TriangleIndices.size())
         {
             return fail("Unreferenced geometry payload");
         }
-        std::vector<uint32_t> consumers(asset.Clusters.size(), VirtualGeometryConfig::InvalidIndex);
-        std::vector<uint32_t> producers(asset.Clusters.size(), VirtualGeometryConfig::InvalidIndex);
+        vector<uint32_t> consumers(asset.Clusters.size(), VirtualGeometryConfig::InvalidIndex);
+        vector<uint32_t> producers(asset.Clusters.size(), VirtualGeometryConfig::InvalidIndex);
         uint64_t hierarchyEnd = 0;
         for (uint32_t index = 0; index < asset.Groups.size(); ++index)
         {
@@ -250,7 +250,7 @@ namespace
                 !RangeFits(group.FirstChild, group.ChildCount, asset.HierarchyIndices.size()) ||
                 !RangeFits(group.FirstParent, group.ParentCount, asset.HierarchyIndices.size()) ||
                 group.FirstChild != hierarchyEnd || uint64_t(group.FirstParent) != hierarchyEnd + group.ChildCount ||
-                !ValidSphere(group.Bounds) || !std::isfinite(group.MinError) || !std::isfinite(group.MaxError) ||
+                !ValidSphere(group.Bounds) || !isfinite(group.MinError) || !isfinite(group.MaxError) ||
                 group.MinError < 0 || group.MaxError < group.MinError)
             {
                 return fail("Invalid cluster group ranges/bounds/error");
@@ -278,7 +278,7 @@ namespace
                 {
                     return fail("Group sphere does not cover descendants");
                 }
-                maximumChildError = std::max(maximumChildError, cluster.LodError);
+                maximumChildError = max(maximumChildError, cluster.LodError);
                 childTriangles += cluster.TriangleCount;
             }
             if (group.MinError != maximumChildError)
@@ -311,7 +311,7 @@ namespace
         {
             return fail("Unreferenced hierarchy payload");
         }
-        std::vector<bool> roots(asset.Clusters.size());
+        vector<bool> roots(asset.Clusters.size());
         for (uint32_t root : asset.RootClusters)
         {
             if (root >= asset.Clusters.size() || roots[root] || consumers[root] != VirtualGeometryConfig::InvalidIndex)
@@ -341,7 +341,7 @@ namespace
             stats.FinalLeafTriangles != measured[0].Triangles || stats.LeafClusters != measured[0].Clusters ||
             stats.TotalClusters != asset.Clusters.size() || stats.TotalGroups != asset.Groups.size() ||
             stats.HierarchyLevels != asset.Levels.size() || stats.MaximumTrianglesPerCluster != maximumTriangles ||
-            stats.MaximumVerticesPerCluster != maximumVertices || !std::isfinite(stats.BuildMilliseconds) || stats.BuildMilliseconds < 0)
+            stats.MaximumVerticesPerCluster != maximumVertices || !isfinite(stats.BuildMilliseconds) || stats.BuildMilliseconds < 0)
         {
             return fail("Invalid source/leaf/asset statistics");
         }
@@ -374,14 +374,14 @@ namespace
     }
 }
 
-bool VirtualGeometryValidator::Validate(const VirtualGeometryAsset& asset, std::string& error)
+bool VirtualGeometryValidator::Validate(const VirtualGeometryAsset& asset, string& error)
 {
     error.clear();
     try
     {
         return ValidateData(asset, error);
     }
-    catch (const std::exception& exception)
+    catch (const exception& exception)
     {
         error = exception.what();
         return false;

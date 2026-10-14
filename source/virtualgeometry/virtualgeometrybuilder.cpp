@@ -5,7 +5,7 @@
 #include <algorithm>
 
 VirtualGeometryBuildResult VirtualGeometryBuilder::Build(
-    std::span<const VirtualGeometryVertex> vertices, std::span<const uint32_t> indices,
+    span<const VirtualGeometryVertex> vertices, span<const uint32_t> indices,
     const VirtualGeometryBuildConfig& config, uint32_t materialId)
 {
     VirtualGeometryBuildResult result;
@@ -13,7 +13,7 @@ VirtualGeometryBuildResult VirtualGeometryBuilder::Build(
     {
         return result;
     }
-    auto start = std::chrono::steady_clock::now();
+    auto start = chrono::steady_clock::now();
     try
     {
         auto& asset = result.Asset;
@@ -26,18 +26,18 @@ VirtualGeometryBuildResult VirtualGeometryBuilder::Build(
         auto leaves = VirtualGeometryInternal::AppendClusters(asset, vertices, clean, 0, 0);
         asset.Stats.LeafClusters = VirtualGeometryInternal::CheckedIndex(leaves.size());
         // Release source-sized temporary indices before hierarchy group temporaries.
-        std::vector<uint32_t>().swap(clean);
-        VirtualGeometryInternal::BuildHierarchy(asset, std::move(leaves));
+        vector<uint32_t>().swap(clean);
+        VirtualGeometryInternal::BuildHierarchy(asset, move(leaves));
         VirtualGeometryInternal::UpdateStatistics(asset);
         if (!VirtualGeometryValidator::Validate(asset, result.Error))
         {
             result.Asset = {};
             return result;
         }
-        asset.Stats.BuildMilliseconds = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - start).count();
+        asset.Stats.BuildMilliseconds = chrono::duration<double, milli>(
+            chrono::steady_clock::now() - start).count();
     }
-    catch (const std::exception& exception)
+    catch (const exception& exception)
     {
         result.Asset = {};
         result.Error = exception.what();
@@ -65,8 +65,8 @@ void VirtualGeometryInternal::UpdateStatistics(VirtualGeometryAsset& asset)
         level.Vertices += cluster.VertexCount;
         triangles += cluster.TriangleCount;
         vertices += cluster.VertexCount;
-        stats.MaximumTrianglesPerCluster = std::max(stats.MaximumTrianglesPerCluster, cluster.TriangleCount);
-        stats.MaximumVerticesPerCluster = std::max(stats.MaximumVerticesPerCluster, cluster.VertexCount);
+        stats.MaximumTrianglesPerCluster = max(stats.MaximumTrianglesPerCluster, cluster.TriangleCount);
+        stats.MaximumVerticesPerCluster = max(stats.MaximumVerticesPerCluster, cluster.VertexCount);
     }
     stats.HierarchyLevels = CheckedIndex(asset.Levels.size());
     stats.AverageTrianglesPerCluster = double(triangles) / stats.TotalClusters;

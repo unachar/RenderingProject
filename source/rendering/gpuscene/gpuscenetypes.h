@@ -65,7 +65,7 @@ struct GPUMaterialData
     uint32_t ParameterVectorCount = 0;
     uint32_t ShaderMode = 0;
     uint32_t Padding[2]{};
-    std::array<DirectX::XMFLOAT4, GpuSceneMaterialParameterVectors> ShadingParameters{};
+    array<DirectX::XMFLOAT4, GpuSceneMaterialParameterVectors> ShadingParameters{};
 };
 static_assert(sizeof(GPUInstanceData) == 240);
 static_assert(offsetof(GPUInstanceData, LODGroupIndex) == 224);

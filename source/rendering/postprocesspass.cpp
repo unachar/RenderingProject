@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "transmittanceshadows.h"
 #include "cloud/cloudrenderer.h"
 #include "raytracing.h"
 #include "dlssupscaler.h"
@@ -23,6 +24,7 @@
 #include "screenspaceeffects.h"
 #include "occlusionculling.h"
 #include "materialbindings.h"
+#include "systemmanager.h"
 
 
 namespace
@@ -115,6 +117,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			m_CommandList->SetPipelineState(pso);
 			m_CommandList->SetGraphicsRootSignature(m_PostProcessRootSignature.Get());
             m_CommandList->SetGraphicsRootDescriptorTable(23, m_GBufferSrvHandles[static_cast<UINT>(GBufferType::EMISSION_AO)]);
+            TransmittanceShadows::BindLighting(m_CommandList.Get(), 24, 25);
 			Raytracing::BindLighting(m_CommandList.Get(), 17, 18);
 			m_CommandList->SetGraphicsRootDescriptorTable(19, Raytracing::GetReflectionSrv());
 			CloudRenderer::BindLighting(m_CommandList.Get(), m_FrameIndex);
@@ -309,6 +312,12 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 		m_CommandList->RSSetViewports(1, &m_Viewport);
 		m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
 
+        {
+            RenderProfiler::ScopedEvent profile("HDR Transparent", m_CommandList.Get());
+            ScenePasses::BeginHdrTransparentPass();
+            SystemManager::DrawSystem(RenderPass::TransparentScene, false);
+            ScenePasses::EndHdrTransparentPass();
+        }
 		D3D12_RESOURCE_BARRIER toSceneSrv = CD3DX12_RESOURCE_BARRIER::Transition(
 			GetRenderTarget(RenderTargetType::Scene).Get(),
 			D3D12_RESOURCE_STATE_RENDER_TARGET,
@@ -317,6 +326,19 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 		ScreenSpaceEffects::CaptureHistory(m_CommandList.Get(), GetRenderTarget(RenderTargetType::Scene).Get());
 	}
 
+    if (m_RenderMode != RenderMode::DEFERRED)
+    {
+        auto* scene = GetRenderTarget(RenderTargetType::Scene).Get();
+        auto toTarget = CD3DX12_RESOURCE_BARRIER::Transition(scene,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        m_CommandList->ResourceBarrier(1, &toTarget);
+        ScenePasses::BeginHdrTransparentPass();
+        SystemManager::DrawSystem(RenderPass::TransparentScene, false);
+        ScenePasses::EndHdrTransparentPass();
+        auto toShader = CD3DX12_RESOURCE_BARRIER::Transition(scene,
+            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        m_CommandList->ResourceBarrier(1, &toShader);
+    }
 	if (!postProcessPso || !GetRenderTarget(RenderTargetType::PostProcess))
 	{
 		return;
@@ -580,7 +602,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			}
 			for (auto& barrier : barriers)
 			{
-				std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+				swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
 			}
 			m_CommandList->ResourceBarrier(_countof(barriers), barriers);
 			RenderFrame::SetDescriptorHeap();

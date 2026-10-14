@@ -18,8 +18,8 @@ struct Settings
 };
 Settings &GetSettings();
 DirectX::XMFLOAT4X4 CullingViewProjection();
-std::vector<uint32_t> LODMeshes(uint32_t group);
-uint32_t RegisterLODGroup(const std::array<uint32_t, Visibility::MaxLODs> &meshes,
+vector<uint32_t> LODMeshes(uint32_t group);
+uint32_t RegisterLODGroup(const array<uint32_t, Visibility::MaxLODs> &meshes,
                           const Visibility::LODMetadata &metadata);
 void Invalidate(const char *reason);
 void PrepareCamera();

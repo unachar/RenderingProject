@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "transmittanceshadows.h"
 #include "framepipeline.h"
 #include "systemmanager.h"
 #include "rendergraph.h"
@@ -18,6 +19,7 @@
 void FramePipeline::Execute()
 {
 	ID3D12GraphicsCommandList* commandList = GraphicsDevice::GetCommandList();
+    TransmittanceShadows::PrepareFrame();
 	VertexDeformation::PrepareFrame(commandList, GraphicsDevice::GetFrameIndex());
 	MeshShaderPipeline::BeginFrame();
 	static RenderGraph graph;
@@ -78,18 +80,43 @@ void FramePipeline::Execute()
 					}
 				});
 
+            const auto transmission = graph.CreateLogicalResource("Transparent Shadow Transmission");
+            graph.AddPass("Transparent Shadows",
+                [shadowDepth, gpuScene, transmission](RenderGraph::PassBuilder& builder)
+                {
+                    builder.Read(gpuScene).Read(shadowDepth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE).Write(transmission);
+                },
+                [](ID3D12GraphicsCommandList* list)
+                {
+                    RenderProfiler::ScopedEvent profile("Transparent Shadows", list);
+                    if (GPUDrivenValidation::IsGpuValidationRun() || !TransmittanceShadows::HasCasters()) return;
+                    for (UINT shadow = 0; shadow < LightingResources::GetShadowLightCount(); ++shadow)
+                    {
+                        if (!LightingResources::ShouldRenderShadowPass(shadow)) continue;
+                        for (UINT peel = 0; peel < RendererState::g_kTRANSMITTANCE_SHADOW_LAYERS; ++peel)
+                        {
+                            if (!TransmittanceShadows::BeginPass(shadow, peel)) continue;
+                            SystemManager::DrawSystem(RenderPass::TransmittanceShadow, false);
+                            TransmittanceShadows::EndPass();
+                        }
+                    }
+                    ScenePasses::EndShadowPassBatch();
+                    LightingResources::SetCurrentShadowPassIndex(0);
+                    LightingResources::UpdateShadowConstantBuffer();
+                });
+
 			graph.AddPass(
 				"GBuffer / Opaque",
-				[shadowDepth, geometry, sceneDepth, gpuScene](RenderGraph::PassBuilder& builder)
+				[shadowDepth, geometry, sceneDepth, gpuScene, transmission](RenderGraph::PassBuilder& builder)
 				{
-					builder.Read(gpuScene).Read(shadowDepth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+					builder.Read(transmission).Read(gpuScene).Read(shadowDepth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
 						.Write(geometry)
 						.Write(sceneDepth);
 				},
 				[](ID3D12GraphicsCommandList* passCommandList)
 				{
 					RenderProfiler::ScopedEvent profile("GBuffer / Opaque", passCommandList);
-					const auto submissionStart = std::chrono::steady_clock::now();
+					const auto submissionStart = chrono::steady_clock::now();
 					ScenePasses::BeginScenePass();
 					GPUDrivenRenderer::Draw(passCommandList);
 					if (!GPUDrivenValidation::IsGpuValidationRun()) SystemManager::DrawSystem(RenderPass::PrimaryScene, false);
@@ -99,7 +126,7 @@ void FramePipeline::Execute()
 					}
 					GPUDrivenRenderer::BuildHiZ(passCommandList);
 					ScenePasses::EndScenePass();
-					GPUDrivenRenderer::RecordOpaqueSubmission(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - submissionStart).count());
+					GPUDrivenRenderer::RecordOpaqueSubmission(chrono::duration<double, milli>(chrono::steady_clock::now() - submissionStart).count());
 				});
 
 			graph.AddPass(
@@ -148,7 +175,6 @@ void FramePipeline::Execute()
 				{
 					RenderProfiler::ScopedEvent profile("Transparent / Overlay", passCommandList);
 					if (GPUDrivenValidation::IsGpuValidationRun()) return;
-					ScenePasses::PrepareTransparentSceneCopy();
 					ScenePasses::BeginEditorSceneOverlayPass();
 					SystemManager::DrawSystem(RenderPass::OverlayScene, false);
 					ScenePasses::EndEditorSceneOverlayPass();

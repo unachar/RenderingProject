@@ -7,11 +7,11 @@
 // CPU cache bookkeeping is independently testable; no draw calls or GPU synchronization here.
 class GpuSceneSlots
 {
-    std::vector<GPUInstanceData> m_Data;
-    std::vector<GPUInstanceID> m_Free;
-    std::vector<uint8_t> m_Dirty;
-    std::vector<GPUInstanceID> m_Updates;
-    std::vector<GPUInstanceID> m_Moving;
+    vector<GPUInstanceData> m_Data;
+    vector<GPUInstanceID> m_Free;
+    vector<uint8_t> m_Dirty;
+    vector<GPUInstanceID> m_Updates;
+    vector<GPUInstanceID> m_Moving;
     uint32_t m_Active = 0;
 
   public:
@@ -22,7 +22,7 @@ class GpuSceneSlots
         {
             if (m_Data.size() >= UINT32_MAX)
             {
-                throw std::runtime_error("GPU scene instance ID limit reached");
+                throw runtime_error("GPU scene instance ID limit reached");
             }
             id = static_cast<uint32_t>(m_Data.size());
             m_Data.push_back(data);
@@ -55,13 +55,13 @@ class GpuSceneSlots
     {
         if (!IsActive(id))
         {
-            throw std::runtime_error("Updating a dead GPU scene instance");
+            throw runtime_error("Updating a dead GPU scene instance");
         }
-        if (std::memcmp(&m_Data[id], &data, sizeof(data)) == 0)
+        if (memcmp(&m_Data[id], &data, sizeof(data)) == 0)
         {
             return;
         }
-        if (std::memcmp(&m_Data[id].World, &data.World, sizeof(data.World)) != 0)
+        if (memcmp(&m_Data[id].World, &data.World, sizeof(data.World)) != 0)
         {
             m_Moving.push_back(id);
         }
@@ -74,7 +74,7 @@ class GpuSceneSlots
         for (GPUInstanceID id : m_Moving)
         {
             if (IsActive(id) &&
-                std::memcmp(&m_Data[id].PreviousWorld, &m_Data[id].World, sizeof(m_Data[id].World)) != 0)
+                memcmp(&m_Data[id].PreviousWorld, &m_Data[id].World, sizeof(m_Data[id].World)) != 0)
             {
                 m_Data[id].PreviousWorld = m_Data[id].World;
                 MarkDirty(id);
@@ -99,6 +99,6 @@ class GpuSceneSlots
         m_Updates.clear();
     }
     uint32_t ActiveCount() const { return m_Active; }
-    const std::vector<GPUInstanceData> &Data() const { return m_Data; }
-    const std::vector<GPUInstanceID> &Updates() const { return m_Updates; }
+    const vector<GPUInstanceData> &Data() const { return m_Data; }
+    const vector<GPUInstanceID> &Updates() const { return m_Updates; }
 };

@@ -6,7 +6,9 @@ enum class RenderPass
 	PrimaryScene,
 	OcclusionPhase2,
 	Velocity,
-	OverlayScene
+	OverlayScene,
+    TransparentScene,
+    TransmittanceShadow
 };
 
 class SystemBase

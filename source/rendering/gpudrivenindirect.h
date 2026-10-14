@@ -73,7 +73,7 @@ private:
             int TextureIndex = -1;
             IndirectBatch Commands{};
         };
-        std::vector<Group> Groups{};
+        vector<Group> Groups{};
         UINT SourceMeshCount = 0;
     };
 
@@ -88,12 +88,12 @@ private:
     UINT m_CullConstantCursor = 0;
     bool m_InitializationAttempted = false;
 
-    std::unordered_map<const AnimationModelResource*, IndirectBatch> m_AnimatedShadowBatches{};
-    std::unordered_map<const StaticModelResource*, IndirectBatch> m_StaticShadowBatches{};
-    std::unordered_map<const AnimationModelResource*, IndirectBatch> m_AnimatedVelocityBatches{};
-    std::unordered_map<const StaticModelResource*, IndirectBatch> m_StaticVelocityBatches{};
-    std::unordered_map<const AnimationModelResource*, PrimaryBatch> m_AnimatedPrimaryBatches{};
-    std::unordered_map<const StaticModelResource*, PrimaryBatch> m_StaticPrimaryBatches{};
+    unordered_map<const AnimationModelResource*, IndirectBatch> m_AnimatedShadowBatches{};
+    unordered_map<const StaticModelResource*, IndirectBatch> m_StaticShadowBatches{};
+    unordered_map<const AnimationModelResource*, IndirectBatch> m_AnimatedVelocityBatches{};
+    unordered_map<const StaticModelResource*, IndirectBatch> m_StaticVelocityBatches{};
+    unordered_map<const AnimationModelResource*, PrimaryBatch> m_AnimatedPrimaryBatches{};
+    unordered_map<const StaticModelResource*, PrimaryBatch> m_StaticPrimaryBatches{};
 
     static D3D12_DRAW_INDEXED_ARGUMENTS MakeDrawArguments(UINT indexCount)
     {
@@ -313,7 +313,7 @@ private:
     }
 
     template<typename Command>
-    static bool FinalizeBatch(const std::vector<Command>& commands, UINT sourceMeshCount, IndirectBatch& batch)
+    static bool FinalizeBatch(const vector<Command>& commands, UINT sourceMeshCount, IndirectBatch& batch)
     {
         if (commands.empty())
         {
@@ -332,7 +332,7 @@ private:
 
     static bool BuildAnimatedShadowBatch(const AnimationModelResource* model, IndirectBatch& batch)
     {
-        std::vector<ShadowCommand> commands;
+        vector<ShadowCommand> commands;
         commands.reserve(model->GetMeshCount());
         for (UINT index = 0; index < model->GetMeshCount(); ++index)
         {
@@ -347,7 +347,7 @@ private:
 
     static bool BuildStaticShadowBatch(const StaticModelResource* model, IndirectBatch& batch)
     {
-        std::vector<ShadowCommand> commands;
+        vector<ShadowCommand> commands;
         commands.reserve(model->GetMeshCount());
         for (UINT index = 0; index < model->GetMeshCount(); ++index)
         {
@@ -362,7 +362,7 @@ private:
 
     static bool BuildAnimatedVelocityBatch(const AnimationModelResource* model, IndirectBatch& batch)
     {
-        std::vector<VelocityCommand> commands;
+        vector<VelocityCommand> commands;
         commands.reserve(model->GetMeshCount());
         for (UINT index = 0; index < model->GetMeshCount(); ++index)
         {
@@ -383,7 +383,7 @@ private:
 
     static bool BuildStaticVelocityBatch(const StaticModelResource* model, IndirectBatch& batch)
     {
-        std::vector<VelocityCommand> commands;
+        vector<VelocityCommand> commands;
         commands.reserve(model->GetMeshCount());
         for (UINT index = 0; index < model->GetMeshCount(); ++index)
         {
@@ -406,7 +406,7 @@ private:
     {
         batch = {};
         batch.SourceMeshCount = model->GetMeshCount();
-        std::vector<std::pair<int, std::vector<ShadowCommand>>> groupedCommands;
+        vector<pair<int, vector<ShadowCommand>>> groupedCommands;
         for (UINT index = 0; index < model->GetMeshCount(); ++index)
         {
             const Mesh& mesh = model->GetMeshData(index);
@@ -415,14 +415,14 @@ private:
                 continue;
             }
 
-            auto group = std::find_if(
+            auto group = find_if(
                 groupedCommands.begin(),
                 groupedCommands.end(),
                 [&](const auto& candidate) { return candidate.first == mesh.TextureIndex; });
             if (group == groupedCommands.end())
             {
-                groupedCommands.emplace_back(mesh.TextureIndex, std::vector<ShadowCommand>{});
-                group = std::prev(groupedCommands.end());
+                groupedCommands.emplace_back(mesh.TextureIndex, vector<ShadowCommand>{});
+                group = prev(groupedCommands.end());
             }
             group->second.push_back({
                 mesh.VertexBufferView,
@@ -439,7 +439,7 @@ private:
             {
                 return false;
             }
-            batch.Groups.push_back(std::move(group));
+            batch.Groups.push_back(move(group));
         }
         return !batch.Groups.empty();
     }

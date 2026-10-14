@@ -53,7 +53,7 @@ namespace
         D3D12_CPU_DESCRIPTOR_HANDLE CpuStart{};
         D3D12_GPU_DESCRIPTOR_HANDLE GpuStart{};
         UINT Increment = 0;
-        std::array<bool, ImGuiManager::kSrvDescriptorCount> Used{};
+        array<bool, ImGuiManager::kSrvDescriptorCount> Used{};
     };
     ImGuiSrvPool g_ImGuiSrvPool;
 }
@@ -113,7 +113,7 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
 		}
 		WriteGraphicsLog("ERROR: ImGui SRV descriptor pool exhausted\n");
 		// The backend has no allocation-failure return path. Never overwrite a live SRV.
-		std::abort();
+		abort();
 	};
 	initInfo.SrvDescriptorFreeFn = [](ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE cpu, D3D12_GPU_DESCRIPTOR_HANDLE gpu)
 	{
@@ -196,8 +196,8 @@ void ImGuiManager::Update()
     MaterialPreview::SetVisible(false);
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && !MaterialEditorHasFocus())
     {
-        std::string error;
-        std::filesystem::create_directories("Save");
+        string error;
+        filesystem::create_directories("Save");
         if (!MaterialManager::SaveSceneReferences("Save/scene_materials.json", error))
         {
             AddLog("Scene save failed: %s", error.c_str());
@@ -494,8 +494,8 @@ void ImGuiManager::DrawEditorMainMenu()
     {
         if (ImGui::MenuItem("シーンのマテリアル参照を保存", "Ctrl+S"))
         {
-            std::string error;
-            std::filesystem::create_directories("Save");
+            string error;
+            filesystem::create_directories("Save");
             if (!MaterialManager::SaveSceneReferences("Save/scene_materials.json", error))
             {
                 AddLog("Scene save failed: %s", error.c_str());

@@ -353,7 +353,7 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const ShaderDescription&
 		rtBlend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
 		rtBlend.BlendOp = D3D12_BLEND_OP_ADD;
 		rtBlend.SrcBlendAlpha = D3D12_BLEND_ONE;
-		rtBlend.DestBlendAlpha = D3D12_BLEND_ZERO;
+		rtBlend.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
 		rtBlend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
 		rtBlend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 		psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
@@ -549,7 +549,14 @@ ID3D12PipelineState* PsoManager::GetOrCreateShadowMapPso()
 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
 	psoDesc.VS = CD3DX12_SHADER_BYTECODE(vsBlob.Get());
-	psoDesc.PS = { nullptr, 0 };
+    ComPtr<ID3DBlob> psBlob;
+    resource.csoPath = "shader/hlsl/build/ShadowMapPS.cso";
+    resource.ppBlob = psBlob.GetAddressOf();
+    if (!ShaderPipelines::LoadShaderBlob(resource))
+    {
+        return nullptr;
+    }
+    psoDesc.PS = CD3DX12_SHADER_BYTECODE(psBlob.Get());
 	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
 	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 

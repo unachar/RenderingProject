@@ -9,6 +9,8 @@
 #include "rayreflections.h"
 #include "rendertargets.h"
 #include "graphicsdevice.h"
+#include "materialmanager.h"
+#include "materialsystem.h"
 #include <map>
 #include <tuple>
 
@@ -26,7 +28,7 @@ static_assert(kFallbackSrv < RendererState::g_kENGINE_DESCRIPTOR_END, "DXR descr
 constexpr UINT kConstantStride = 256;
 constexpr UINT kMaximumInstances = 16384;
 
-using GeometryKey = std::tuple<UINT64, UINT64, UINT, UINT, UINT>;
+using GeometryKey = tuple<UINT64, UINT64, UINT, UINT, UINT>;
 
 struct BottomLevel
 {
@@ -40,18 +42,18 @@ struct BottomLevel
 
 struct FrameResources
 {
-    std::array<ComPtr<ID3D12Resource>, 4> Guides;
+    array<ComPtr<ID3D12Resource>, 4> Guides;
     ComPtr<ID3D12Resource> AmbientGuide;
-    std::map<GeometryKey, BottomLevel> Geometry;
+    map<GeometryKey, BottomLevel> Geometry;
     ComPtr<ID3D12Resource> TopLevel;
     ComPtr<ID3D12Resource> Scratch;
     ComPtr<ID3D12Resource> Instances;
     ComPtr<ID3D12Resource> Result;
     UINT Width = 0;
-    std::vector<RaytracingGeometry> SceneGeometry;
+    vector<RaytracingGeometry> SceneGeometry;
     // A scene SRV can already reference the previous TLAS earlier in this same
     // command list. Keep replaced resources until this frame's fence is reused.
-    std::vector<ComPtr<ID3D12Resource>> Retired;
+    vector<ComPtr<ID3D12Resource>> Retired;
     UINT Height = 0;
 };
 
@@ -69,10 +71,10 @@ struct LightingConstants
 {
     XMFLOAT4 Flags{};
     XMFLOAT4 Parameters{};
-    std::array<XMUINT4, 160> Lights{};
+    array<XMUINT4, 160> Lights{};
 };
 constexpr UINT kLightingStride = (sizeof(LightingConstants) + 255u) & ~255u;
-std::array<XMUINT4, 160> g_LightShadowFlags{};
+array<XMUINT4, 160> g_LightShadowFlags{};
 ComPtr<ID3D12Resource> g_LightingConstants;
 static_assert(sizeof(Constants) <= kConstantStride);
 
@@ -82,8 +84,8 @@ ComPtr<ID3D12RootSignature> g_RootSignature;
 ComPtr<ID3D12PipelineState> g_Pipeline;
 ComPtr<ID3D12PipelineState> g_ComposeShadow;
 ComPtr<ID3D12PipelineState> g_ComposeAmbient;
-std::unique_ptr<NrdDenoiser> g_NrdSun;
-std::unique_ptr<NrdDenoiser> g_NrdAmbient;
+unique_ptr<NrdDenoiser> g_NrdSun;
+unique_ptr<NrdDenoiser> g_NrdAmbient;
 UINT g_NrdWidth = 0, g_NrdHeight = 0, g_NrdDispatchCount = 0;
 UINT g_AmbientDispatchCount = 0;
 NrdFrame g_PreviousNrdFrame;
@@ -92,7 +94,7 @@ bool g_ShadowHistoryValid = false;
 bool g_AmbientHistoryValid = false;
 EntityID g_NrdCamera = g_kINVALID_ENTITY;
 ComPtr<ID3D12Resource> g_Constants;
-std::array<FrameResources, kFrameCount> g_Frames;
+array<FrameResources, kFrameCount> g_Frames;
 Raytracing::Settings g_Settings;
 UINT g_Increment = 0;
 UINT g_FrameIndex = 0;
@@ -138,7 +140,7 @@ bool EnsureBuffer(ComPtr<ID3D12Resource>& resource, UINT64 bytes,
     }
     created->SetName(name);
     if (resource) g_Frames[g_FrameIndex].Retired.push_back(resource);
-    resource = std::move(created);
+    resource = move(created);
     return true;
 }
 
@@ -169,7 +171,7 @@ bool EnsureOutput(FrameResources& frame, UINT width, UINT height)
         return false;
     }
     created->SetName(L"Raytraced Sun Shadow and AO");
-    frame.Result = std::move(created);
+    frame.Result = move(created);
     frame.Width = width;
     frame.Height = height;
     D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
@@ -220,12 +222,12 @@ bool EnsureDenoiser(FrameResources& frame)
     {
         // Histories are shared across queued frames; retire them only after the queue has completed.
         if (!GraphicsDevice::WaitForGpuIdle()) return false;
-        auto created = std::make_unique<NrdDenoiser>();
+        auto created = make_unique<NrdDenoiser>();
         if (!created->Initialize(g_Device.Get(), NrdSignal::Shadow, frame.Width, frame.Height)) return false;
-        auto ambient = std::make_unique<NrdDenoiser>();
+        auto ambient = make_unique<NrdDenoiser>();
         if (!ambient->Initialize(g_Device.Get(), NrdSignal::AmbientOcclusion, frame.Width, frame.Height)) return false;
-        g_NrdSun = std::move(created);
-        g_NrdAmbient = std::move(ambient);
+        g_NrdSun = move(created);
+        g_NrdAmbient = move(ambient);
         g_NrdWidth = frame.Width;
         g_NrdHeight = frame.Height;
         g_NrdHistoryValid = false;
@@ -271,7 +273,7 @@ bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingG
     if (sizes.ResultDataMaxSizeInBytes == 0 ||
         !EnsureBuffer(level.Result, sizes.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
             D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene BLAS") ||
-        !EnsureBuffer(level.Scratch, (std::max)(sizes.ScratchDataSizeInBytes, sizes.UpdateScratchDataSizeInBytes),
+        !EnsureBuffer(level.Scratch, (max)(sizes.ScratchDataSizeInBytes, sizes.UpdateScratchDataSizeInBytes),
             D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"BLAS Scratch"))
     {
         return false;
@@ -303,8 +305,8 @@ bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
 {
     const auto geometry = GatherRaytracingGeometry();
     frame.SceneGeometry.clear();
-    std::vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
-    instances.reserve((std::min)(geometry.size(), static_cast<size_t>(kMaximumInstances)));
+    vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
+    instances.reserve((min)(geometry.size(), static_cast<size_t>(kMaximumInstances)));
     for (const auto& entry : geometry)
     {
         if (instances.size() >= kMaximumInstances || entry.VertexView.StrideInBytes < sizeof(XMFLOAT3))
@@ -323,7 +325,8 @@ bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
         XMStoreFloat4x4(&transform, XMMatrixTranspose(XMLoadFloat4x4(&entry.World)));
         memcpy(instance.Transform, &transform, sizeof(instance.Transform));
         instance.InstanceID = static_cast<UINT>(instances.size());
-        instance.InstanceMask = 0xff;
+        // Bit zero is shadow visibility; bit one remains available to AO and reflections.
+        instance.InstanceMask = entry.CastShadow ? 3 : 2;
         instance.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
         instance.AccelerationStructure = bottom.Result->GetGPUVirtualAddress();
         instances.push_back(instance);
@@ -558,8 +561,8 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         LightingConstants lighting{};
         lighting.Flags = { static_cast<float>(UsesRaytracedShadows()),
             static_cast<float>(UsesRaytracedShadows()), static_cast<float>(sceneReady), 0.0f };
-        lighting.Parameters = { std::clamp(g_Settings.ShadowDistance, 1.0f, 2000.0f),
-            std::clamp(g_Settings.NormalBias, 0.001f, 0.1f), 0.0f, 0.0f };
+        lighting.Parameters = { clamp(g_Settings.ShadowDistance, 1.0f, 2000.0f),
+            clamp(g_Settings.NormalBias, 0.001f, 0.1f), 0.0f, 0.0f };
         lighting.Lights = g_LightShadowFlags;
         void* mapped = nullptr;
         D3D12_RANGE noRead{ 0, 0 };
@@ -599,10 +602,10 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     Constants constants{};
     XMStoreFloat4x4(&constants.InvViewProjection, XMMatrixTranspose(XMMatrixInverse(nullptr, view * projection)));
     constants.SunDirection = g_SunDirection;
-    constants.ExtentSamples = { frame.Width, frame.Height, static_cast<UINT>(std::clamp(g_Settings.Samples, 1, 8)), static_cast<UINT>(g_Serial) };
-    constants.Distances = { std::clamp(g_Settings.ShadowDistance, 1.0f, 2000.0f),
-        std::clamp(g_Settings.AmbientRadius, 0.05f, 10.0f), std::clamp(g_Settings.NormalBias, 0.001f, 0.1f),
-        std::clamp(g_Settings.SunAngularRadius, 0.0f, 0.05f) };
+    constants.ExtentSamples = { frame.Width, frame.Height, static_cast<UINT>(clamp(g_Settings.Samples, 1, 8)), static_cast<UINT>(g_Serial) };
+    constants.Distances = { clamp(g_Settings.ShadowDistance, 1.0f, 2000.0f),
+        clamp(g_Settings.AmbientRadius, 0.05f, 10.0f), clamp(g_Settings.NormalBias, 0.001f, 0.1f),
+        clamp(g_Settings.SunAngularRadius, 0.0f, 0.05f) };
     constants.Features = { static_cast<UINT>(UsesRaytracedShadows()), static_cast<UINT>(UsesRaytracedAmbientOcclusion()), 0, 0 };
     XMStoreFloat4x4(&constants.WorldToView, XMMatrixTranspose(view));
     NrdFrame nrdFrame;
@@ -619,7 +622,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     nrdFrame.Range = 2000.0f;
     nrdFrame.AmbientRadius = constants.Distances.y;
     if (ComponentManager::HasComponent<CameraComponent>(cameraEntity))
-        nrdFrame.Range = (std::max)(ComponentManager::GetComponentUnchecked<CameraComponent>(cameraEntity).FarClip, 1.0f);
+        nrdFrame.Range = (max)(ComponentManager::GetComponentUnchecked<CameraComponent>(cameraEntity).FarClip, 1.0f);
     nrdFrame.ResetHistory = !g_NrdHistoryValid;
     constants.Jitter = { nrdFrame.Jitter.x, nrdFrame.Jitter.y, nrdFrame.PreviousJitter.x, nrdFrame.PreviousJitter.y };
     memcpy(&constants.Features.w, &nrdFrame.Range, sizeof(float));
@@ -744,7 +747,27 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
 bool Raytracing::IsAvailable() { return g_Pipeline != nullptr; }
 bool Raytracing::UsesRaytracedShadows()
 {
-    return IsAvailable() && g_Settings.Enabled && g_Settings.RenderMode == Mode::Full && g_Settings.Shadows;
+    if (!IsAvailable() || !g_Settings.Enabled || g_Settings.RenderMode != Mode::Full || !g_Settings.Shadows)
+    {
+        return false;
+    }
+    // The current inline ray query forces opaque geometry. Cutout shadows use
+    // the material-aware raster pass until the ray path can evaluate texture alpha.
+    for (EntityID entity : World::GetView<MaterialComponent>())
+    {
+        const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+        const size_t count = max(size_t(1), source.MaterialSlots.size());
+        for (size_t slot = 0; slot < count; ++slot)
+        {
+            const auto& material = MaterialManager::Resolve(source, slot);
+            if ((MaterialSystem::ResolveShadowMode(material) == MaterialShadowMode::AlphaTest ||
+                MaterialSystem::ResolveShadowMode(material) == MaterialShadowMode::Transmittance) && MaterialSystem::CastsShadow(material))
+            {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 bool Raytracing::UsesRaytracedAmbientOcclusion()
 {

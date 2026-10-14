@@ -10,6 +10,7 @@ struct RaytracingGeometry
     D3D12_INDEX_BUFFER_VIEW IndexView{};
     UINT IndexCount = 0;
     bool Deforming = false;
+    bool CastShadow = true;
     D3D12_RESOURCE_STATES VertexState = D3D12_RESOURCE_STATE_GENERIC_READ;
     D3D12_RESOURCE_STATES IndexState = D3D12_RESOURCE_STATE_GENERIC_READ;
     XMFLOAT4X4 World{};
@@ -20,4 +21,4 @@ struct RaytracingGeometry
     float Metallic = 0.0f;
 };
 
-std::vector<RaytracingGeometry> GatherRaytracingGeometry();
+vector<RaytracingGeometry> GatherRaytracingGeometry();

@@ -25,8 +25,8 @@ bool editorFocused = false;
 bool focusEditorRequested = false;
 bool pendingEdit = false;
 MaterialEdit editStart;
-std::unordered_map<AssetHandle, std::vector<MaterialAssetData>> materialUndo;
-std::unordered_map<AssetHandle, std::vector<MaterialAssetData>> materialRedo;
+unordered_map<AssetHandle, vector<MaterialAssetData>> materialUndo;
+unordered_map<AssetHandle, vector<MaterialAssetData>> materialRedo;
 EntityID dropEntity = g_kINVALID_ENTITY;
 AssetHandle dropMaterial = 0;
 
@@ -44,7 +44,7 @@ const AssetDragPayload* ReadPayload(const ImGuiPayload* payload, AssetType expec
     return asset;
 }
 
-std::string AssetName(AssetHandle handle, const char* empty)
+string AssetName(AssetHandle handle, const char* empty)
 {
     if (handle == 0)
     {
@@ -146,7 +146,7 @@ void ImGuiManager::MaterialEditorUndo(bool redo)
     auto* destination = &materialRedo[openMaterial];
     if (redo)
     {
-        std::swap(source, destination);
+        swap(source, destination);
     }
     if (source->empty())
     {
@@ -171,7 +171,7 @@ void ImGuiManager::DrawMaterialEditorWindow()
     }
     auto& runtime = MaterialManager::GetRuntime(openMaterial);
     const auto name = AssetName(openMaterial, "Default");
-    std::string title = "Material: " + name;
+    string title = "Material: " + name;
     if (runtime.Dirty)
     {
         title += " *";
@@ -285,7 +285,24 @@ void ImGuiManager::DrawMaterialEditorWindow()
         }
         changed |= ImGui::Checkbox("Depth Write", &editing.DepthWrite);
         changed |= ImGui::SliderFloat("Alpha Cutoff", &editing.AlphaCutoff, 0, 1);
+        int shadowMode = static_cast<int>(editing.ShadowMode);
+        if (ImGui::Combo("Shadow Mode", &shadowMode, "None\0Opaque\0AlphaTest\0Transmittance\0Auto\0"))
+        {
+            editing.ShadowMode = static_cast<MaterialShadowMode>(shadowMode);
+            changed = true;
+        }
+        if (editing.ShadowMode == MaterialShadowMode::AlphaTest)
+        {
+            changed |= ImGui::SliderFloat("Shadow Cutoff", &editing.ShadowCutoff, 0, 1);
+        }
         ImGui::Text("Handle: %s", FormatAssetHandle(openMaterial).c_str());
+        if (editing.Surface == MaterialSurface::Transparent || editing.ShadowMode == MaterialShadowMode::Transmittance)
+        {
+            changed |= ImGui::SliderFloat("Transmission", &editing.Transmission, 0, 1);
+            changed |= ImGui::DragFloat("IOR", &editing.IOR, 0.01f, 1, 10);
+            changed |= ImGui::DragFloat("Thickness", &editing.Thickness, 0.01f, 0, 65504);
+            changed |= ImGui::DragFloat3("Absorption / world unit", editing.AbsorptionCoefficient.data(), 0.01f, 0, 65504);
+        }
         ImGui::Text("Runtime revision: %llu", runtime.Revision);
     }
     if (changed)
@@ -499,10 +516,10 @@ void ImGuiManager::DrawMaterialDropTarget()
                         XMFLOAT3 screen;
                         XMStoreFloat3(&screen, XMVector3Project(XMVectorSet(x, y, z, 1), m_SceneViewPos.x,
                             m_SceneViewPos.y, m_SceneViewSize.x, m_SceneViewSize.y, 0, 1, projection, view, world));
-                        minimum.x = std::min(minimum.x, screen.x);
-                        minimum.y = std::min(minimum.y, screen.y);
-                        maximum.x = std::max(maximum.x, screen.x);
-                        maximum.y = std::max(maximum.y, screen.y);
+                        minimum.x = min(minimum.x, screen.x);
+                        minimum.y = min(minimum.y, screen.y);
+                        maximum.x = max(maximum.x, screen.x);
+                        maximum.y = max(maximum.y, screen.y);
                     }
                     ImGui::GetWindowDrawList()->AddRect(minimum, maximum, IM_COL32(70, 210, 255, 255), 3, 0, 2);
                 }
@@ -535,7 +552,7 @@ void ImGuiManager::DrawMaterialDropTarget()
     {
         for (size_t slot = 0; slot < MaterialManager::SlotCount(dropEntity); ++slot)
         {
-            if (ImGui::Selectable(("Element " + std::to_string(slot)).c_str()))
+            if (ImGui::Selectable(("Element " + to_string(slot)).c_str()))
             {
                 AssignMaterialAsset(dropEntity, slot, dropMaterial);
             }

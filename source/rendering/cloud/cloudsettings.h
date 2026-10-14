@@ -45,7 +45,7 @@ struct CloudSettings
     {
         constexpr float coverage[] = { 0.0f, 0.35f, 0.6f, 0.95f, 1.0f };
         constexpr float density[] = { 1.0f, 0.7f, 1.0f, 1.4f, 2.0f };
-        const int index = std::clamp(static_cast<int>(preset), 0, 4);
+        const int index = clamp(static_cast<int>(preset), 0, 4);
         Coverage = coverage[index];
         Density = density[index];
     }
@@ -54,7 +54,7 @@ struct CloudSettings
     {
         auto bounded = [](float value, float fallback, float low, float high)
         {
-            return std::clamp(std::isfinite(value) ? value : fallback, low, high);
+            return clamp(isfinite(value) ? value : fallback, low, high);
         };
         BottomHeight = bounded(BottomHeight, 20, -10000, 10000);
         TopHeight = bounded(TopHeight, 40, BottomHeight + 0.01f, 20000);
@@ -74,8 +74,8 @@ struct CloudSettings
         MaxTraceDistance = bounded(MaxTraceDistance, 2000, 0.1f, 100000);
         ResolutionScale = bounded(ResolutionScale, 0.5f, 0.25f, 1);
         NoiseSlice = bounded(NoiseSlice, 0.5f, 0, 1);
-        ViewSteps = std::clamp(ViewSteps, 1, 192);
-        LightSteps = std::clamp(LightSteps, 1, 16);
-        Debug = static_cast<CloudDebug>(std::clamp(static_cast<int>(Debug), 0, 7));
+        ViewSteps = clamp(ViewSteps, 1, 192);
+        LightSteps = clamp(LightSteps, 1, 16);
+        Debug = static_cast<CloudDebug>(clamp(static_cast<int>(Debug), 0, 7));
     }
 };

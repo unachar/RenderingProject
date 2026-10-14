@@ -272,7 +272,7 @@ void OcclusionCulling::BuildPyramid(ID3D12GraphicsCommandList *commands, ID3D12R
     input.InitialState = input.FinalState = depthState;
     input.HasFinalState = true;
     const auto source = graph.ImportResource(input);
-    std::vector<RenderGraph::ResourceHandle> mips;
+    vector<RenderGraph::ResourceHandle> mips;
     for (UINT mip = 0; mip < g_MipCount; ++mip)
     {
         input.Name = "Hi-Z Mip";
@@ -335,7 +335,7 @@ void OcclusionCulling::BuildPyramid(ID3D12GraphicsCommandList *commands, ID3D12R
     }
     if (!graph.Compile() || !graph.Execute(commands))
     {
-        throw std::runtime_error(graph.GetLastError());
+        throw runtime_error(graph.GetLastError());
     }
     g_CurrentValid = true;
 }

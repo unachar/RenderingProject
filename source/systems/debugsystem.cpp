@@ -410,7 +410,7 @@ void DebugSystem::InitDebugLinePso()
 void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
 #ifdef _DEBUG
-	if (renderPass == RenderPass::OverlayScene || renderPass == RenderPass::ShadowMap ||
+	if (renderPass == RenderPass::TransparentScene || renderPass == RenderPass::OverlayScene || renderPass == RenderPass::TransmittanceShadow || renderPass == RenderPass::ShadowMap ||
 		renderPass == RenderPass::Velocity || renderPass == RenderPass::OcclusionPhase2)
 	{
 		return;

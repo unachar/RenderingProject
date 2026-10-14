@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "transmittanceshadows.h"
 #include "materialmanager.h"
 #include "meshshader/meshshaderrenderer.h"
 #include "modelsystem.h"
@@ -51,7 +52,7 @@
 			ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky";
 	}
 
-	static bool ShouldCastShadow(EntityID entity)
+	static bool ShouldCastShadow(EntityID entity, bool transmission = false)
 	{
 		// Environment meshes supply background radiance and must not occlude the sun.
 		if (ComponentManager::HasComponent<MeshComponent>(entity) &&
@@ -70,12 +71,15 @@
 		}
 
 		const auto& material = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity));
-		if (MaterialSystem::IsTransparentMaterial(material))
-		{
-			return false;
-		}
-		return !(material.ShaderClassMode == MaterialMode::Manual &&
-			material.ShaderClass == ShaderClass::Shadow);
+		const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+        for (size_t slot = 0; slot < source.MaterialSlots.size(); ++slot)
+        {
+            if (MaterialSystem::CastsShadowInPass(MaterialManager::Resolve(source, slot), transmission))
+            {
+                return true;
+            }
+        }
+        return MaterialSystem::CastsShadowInPass(material, transmission);
 	}
 
 	static bool ShouldDrawToonOutline(EntityID entity)
@@ -188,7 +192,11 @@
 
 void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
-	if (renderPass == RenderPass::ShadowMap)
+    if (renderPass == RenderPass::OverlayScene)
+    {
+        return;
+    }
+	if (renderPass == RenderPass::ShadowMap || renderPass == RenderPass::TransmittanceShadow)
 	{
 		ID3D12GraphicsCommandList* pCommandList = GraphicsDevice::GetCommandList();
 		if (!pCommandList)
@@ -196,7 +204,8 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			return;
 		}
 
-		ID3D12PipelineState* shadowPso = PsoManager::GetOrCreateShadowMapPso();
+		const bool transmission = renderPass == RenderPass::TransmittanceShadow;
+		ID3D12PipelineState* shadowPso = transmission ? TransmittanceShadows::GetPipelineState() : PsoManager::GetOrCreateShadowMapPso();
 		UINT8* pCbvDataBegin = FrameConstants::GetConstantBufferPtr();
 		ID3D12DescriptorHeap* cbvHeap = FrameConstants::GetCbvHeap();
 		if (!shadowPso || !pCbvDataBegin || !cbvHeap)
@@ -213,13 +222,17 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 				cb.UseTexture = 0;
 				memcpy(pCbvDataBegin + (entity * FrameConstants::g_kCB_ALIGNED_SIZE), &cb, sizeof(cb));
 				pCommandList->SetGraphicsRootDescriptorTable(0, FrameConstants::GetConstantBufferHandle(entity));
+                const auto& material = MaterialManager::Resolve(
+                    ComponentManager::HasComponent<MaterialComponent>(entity)
+                        ? ComponentManager::GetComponentUnchecked<MaterialComponent>(entity) : DefaultMaterial());
+                MaterialBindings::BindAssetSlot(entity, material);
 			};
 
 		for (EntityID i : World::GetView<AnimationModelComponent>())
 		{
 			auto& animComp = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(i);
-			if (animComp.ModelId < 0 || !ShouldCastShadow(i) ||
-				!LightingResources::ShouldDrawEntityInCurrentShadowPass(i))
+			if (animComp.ModelId < 0 || !ShouldCastShadow(i, transmission) ||
+				!LightingResources::ShouldDrawEntityInCurrentShadowPass(i) || InstancingSystem::CanInstance(i))
 			{
 				continue;
 			}
@@ -249,11 +262,21 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			{
 				pCommandList->SetGraphicsRootConstantBufferView(5, LightingResources::GetCurrentShadowConstantBufferAddress());
 			}
+			TransmittanceShadows::BindCurrentPass(pCommandList);
 			pCommandList->SetPipelineState(shadowPso);
 			writeShadowCb(i);
 			for (UINT m = 0; m < model->GetMeshCount(); ++m)
 			{
 				const MeshData& meshData = model->GetMeshData(m);
+                const auto& slotMaterial = MaterialManager::Resolve(LegacyMaterialForEntity(i), m);
+                if (!MaterialSystem::CastsShadowInPass(slotMaterial, transmission))
+                {
+                    const auto restore = CD3DX12_RESOURCE_BARRIER::Transition(meshData.VertexBuffer.Get(),
+                        D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                    pCommandList->ResourceBarrier(1, &restore);
+                    continue;
+                }
+                MaterialBindings::BindAssetSlot(i, slotMaterial, meshData.TextureIndex);
 				pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
 				pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 				pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
@@ -269,8 +292,8 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 		for (EntityID i : World::GetView<StaticModelComponent>())
 		{
 			auto& staticComp = ComponentManager::GetComponentUnchecked<StaticModelComponent>(i);
-			if (staticComp.ModelId < 0 || !ShouldCastShadow(i) ||
-				!LightingResources::ShouldDrawEntityInCurrentShadowPass(i))
+			if (staticComp.ModelId < 0 || !ShouldCastShadow(i, transmission) ||
+				!LightingResources::ShouldDrawEntityInCurrentShadowPass(i) || InstancingSystem::CanInstance(i))
 			{
 				continue;
 			}
@@ -288,6 +311,12 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 				VertexDeformationView deformation;
 				const auto vertexView = VertexDeformation::TryResolveStaticMesh(i, m, deformation) ?
 					deformation.CurrentView : meshData.VertexBufferView;
+                const auto& slotMaterial = MaterialManager::Resolve(LegacyMaterialForEntity(i), m);
+                if (!MaterialSystem::CastsShadowInPass(slotMaterial, transmission))
+                {
+                    continue;
+                }
+                MaterialBindings::BindAssetSlot(i, slotMaterial, meshData.TextureIndex);
 				pCommandList->IASetVertexBuffers(0, 1, &vertexView);
 				pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 				pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
@@ -383,7 +412,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 		return;
 	}
 
-	const bool drawTransparent = (renderPass == RenderPass::OverlayScene);
+	const bool drawTransparent = (renderPass == RenderPass::TransparentScene);
 	const bool occlusionPhaseTwo = renderPass == RenderPass::OcclusionPhase2;
 	ID3D12GraphicsCommandList* pCommandList = GraphicsDevice::GetCommandList();
 	if (!pCommandList)

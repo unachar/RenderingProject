@@ -72,10 +72,10 @@ private:
     struct ModelCallbacks
     {
         void(*restoreGraphicsState)(ID3D12GraphicsCommandList*, ID3D12PipelineState*);
-        std::function<void(EntityID, void*)> writeConstants;
-        std::function<bool(ID3D12GraphicsCommandList*, const ModelResource*, EntityID, const XMMATRIX&, const XMMATRIX&, ID3D12PipelineState*, bool)> executeIndirect;
-        std::function<void(ID3D12GraphicsCommandList*, const ModelResource*, EntityID, const XMMATRIX&, ID3D12PipelineState*)> fallbackDraw;
-        std::function<bool(const ModelResource*, UINT, const MeshDataType&)> shouldTransitionMesh;
+        function<void(EntityID, void*)> writeConstants;
+        function<bool(ID3D12GraphicsCommandList*, const ModelResource*, EntityID, const XMMATRIX&, const XMMATRIX&, ID3D12PipelineState*, bool)> executeIndirect;
+        function<void(ID3D12GraphicsCommandList*, const ModelResource*, EntityID, const XMMATRIX&, ID3D12PipelineState*)> fallbackDraw;
+        function<bool(const ModelResource*, UINT, const MeshDataType&)> shouldTransitionMesh;
     };
     static bool IsSkyEntity(EntityID entity)
     {
@@ -151,7 +151,7 @@ private:
             if (component.ModelId < 0)
                 continue;
 
-            constexpr bool isAnimated = std::is_same_v<ModelComponent, AnimationModelComponent>;
+            constexpr bool isAnimated = is_same_v<ModelComponent, AnimationModelComponent>;
             if (ctx.shadowPass && (!ShouldCastShadow(entity) || !LightingResources::ShouldDrawEntityInCurrentShadowPass(entity)))
                 continue;
             if (InstancingSystem::CanInstance(entity) || (InstancingSystem::CanInstance(entity) && !InstancingSystem::IsEntityVisible(entity)))
@@ -378,7 +378,10 @@ public:
     {
         switch (renderPass)
         {
-        case RenderPass::ShadowMap: DrawShadowMap(); break;
+        case RenderPass::TransmittanceShadow:
+        case RenderPass::ShadowMap:
+            m_Backend.Draw(renderPass, receivingPostProcessOnly);
+            break;
         case RenderPass::Velocity: DrawVelocity(); break;
         default:
             m_Backend.SetIndirectDrawCache(&m_IndirectDraws);

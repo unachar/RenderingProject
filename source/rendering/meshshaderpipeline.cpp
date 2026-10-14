@@ -84,7 +84,7 @@ bool MeshShaderPipeline::Initialize(ID3D12Device* device, ID3D12RootSignature* r
 	char validationLimit[16]{};
 	const DWORD length = GetEnvironmentVariableA("DX12_VALIDATION_MESH_PAGE_LIMIT", validationLimit, sizeof(validationLimit));
 	g_PageLimit = length > 0 && length < sizeof(validationLimit) ?
-		std::clamp(static_cast<UINT>(strtoul(validationLimit, nullptr, 10)), 1u, MeshDispatch::GroupsPerPage) : MeshDispatch::GroupsPerPage;
+		clamp(static_cast<UINT>(strtoul(validationLimit, nullptr, 10)), 1u, MeshDispatch::GroupsPerPage) : MeshDispatch::GroupsPerPage;
 	D3D12_FEATURE_DATA_D3D12_OPTIONS7 options7{};
 	g_FeatureSupported = SUCCEEDED(device->CheckFeatureSupport(
 		D3D12_FEATURE_D3D12_OPTIONS7, &options7, sizeof(options7))) &&
@@ -188,7 +188,7 @@ bool MeshShaderPipeline::Draw(ID3D12GraphicsCommandList* commandList, const Geom
 	ComPtr<ID3D12GraphicsCommandList6> meshCommandList;
 	if (FAILED(commandList->QueryInterface(IID_PPV_ARGS(&meshCommandList)))) return false;
 
-	std::vector<D3D12_RESOURCE_BARRIER> barriers;
+	vector<D3D12_RESOURCE_BARRIER> barriers;
 	const auto addBarrier = [&](ID3D12Resource* resource, D3D12_RESOURCE_STATES state)
 	{
 		D3D12_HEAP_PROPERTIES heap{};
@@ -225,7 +225,7 @@ bool MeshShaderPipeline::Draw(ID3D12GraphicsCommandList* commandList, const Geom
 		commandList->SetGraphicsRoot32BitConstants(13, 1, &first, 15);
 		meshCommandList->DispatchMesh(count, 1, 1);
 		++g_Statistics.Pages;
-		g_Statistics.MaxGroupsPerPage = (std::max)(g_Statistics.MaxGroupsPerPage, count);
+		g_Statistics.MaxGroupsPerPage = (max)(g_Statistics.MaxGroupsPerPage, count);
 		first += count;
 	}
 	++g_Statistics.Draws;

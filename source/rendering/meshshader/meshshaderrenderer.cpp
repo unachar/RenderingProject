@@ -36,17 +36,17 @@ struct State
     Settings Options;
     bool Supported = false, Active = false, Failed = false;
     D3D12_MESH_SHADER_TIER Tier = D3D12_MESH_SHADER_TIER_NOT_SUPPORTED;
-    std::string Reason = "Not initialized";
+    string Reason = "Not initialized";
     ComPtr<ID3D12RootSignature> ComputeRoot, OpaqueRoot;
     ComPtr<ID3D12PipelineState> ResetPSO, ClusterPSO, CullPSO, DispatchPSO, OpaquePSO, FallbackPSO;
     ComPtr<ID3D12PipelineState> VelocityPSO, VelocityFallbackPSO;
     ComPtr<ID3D12CommandSignature> MeshSignature, FallbackSignature;
-    std::array<Frame, GpuSceneBuffer::FrameCount> Frames;
+    array<Frame, GpuSceneBuffer::FrameCount> Frames;
     uint32_t FrameIndex = 0, ObjectCapacity = 0;
     ID3D12Resource *Objects = nullptr, *Count = nullptr, *Commands = nullptr;
     Constants Parameters;
-    std::array<uint32_t, 16> Debug{};
-    std::vector<std::array<uint32_t, 4>> DebugRecords;
+    array<uint32_t, 16> Debug{};
+    vector<array<uint32_t, 4>> DebugRecords;
 };
 State &Data()
 {
@@ -60,7 +60,7 @@ Frame &Current()
 void Check(HRESULT result)
 {
     if (FAILED(result))
-        throw std::runtime_error("Mesh Shader resource/pipeline initialization failed");
+        throw runtime_error("Mesh Shader resource/pipeline initialization failed");
 }
 void Root(CD3DX12_ROOT_SIGNATURE_DESC &desc, ComPtr<ID3D12RootSignature> &output)
 {
@@ -76,7 +76,7 @@ ComPtr<ID3DBlob> Shader(const char *path)
     desc.csoPath = path;
     desc.ppBlob = blob.GetAddressOf();
     if (!ShaderPipelines::LoadShaderBlob(desc))
-        throw std::runtime_error(path);
+        throw runtime_error(path);
     return blob;
 }
 template <D3D12_PIPELINE_STATE_SUBOBJECT_TYPE Type, class T> struct alignas(void *) Subobject
@@ -328,7 +328,7 @@ void Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances, RenderGr
     {
         Initialize();
     }
-    catch (const std::exception &error)
+    catch (const exception &error)
     {
         s.Failed = true;
         s.Reason = error.what();
@@ -340,7 +340,7 @@ void Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances, RenderGr
     s.Count = countResource;
     s.Commands = commandsResource;
     s.ObjectCapacity = capacity;
-    s.Options.MaxMeshlets = std::clamp(s.Options.MaxMeshlets, 1u, 4000000u);
+    s.Options.MaxMeshlets = clamp(s.Options.MaxMeshlets, 1u, 4000000u);
     auto &f = Current();
     auto prepare = [&](GpuSceneBuffer &buffer, uint32_t n, uint32_t stride) {
         buffer.BeginFrame(s.FrameIndex);
@@ -355,7 +355,7 @@ void Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances, RenderGr
         prepare(f.Fallback, capacity, 24);
         MeshletManager::Prepare(graph, meshes);
     }
-    catch (const std::exception &error)
+    catch (const exception &error)
     {
         s.Failed = true;
         s.Reason = error.what();
@@ -383,9 +383,9 @@ void Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances, RenderGr
     p.Occlusion = s.Options.Occlusion && GPUVisibility::HistoryValid();
     p.Clusters = s.Options.Clusters;
     p.Bias = s.Options.Bias;
-    p.Width = float((std::max)(1u, OcclusionCulling::GetWidth()));
-    p.Height = float((std::max)(1u, OcclusionCulling::GetHeight()));
-    p.Mips = (std::max)(1u, OcclusionCulling::GetMipCount());
+    p.Width = float((max)(1u, OcclusionCulling::GetWidth()));
+    p.Height = float((max)(1u, OcclusionCulling::GetHeight()));
+    p.Mips = (max)(1u, OcclusionCulling::GetMipCount());
     auto candidate = Import(graph, "Meshlet Candidates", f.Candidates, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     auto visible =
         Import(graph, "Visible Meshlets", f.Visible, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -394,7 +394,7 @@ void Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances, RenderGr
     auto args = Import(graph, "Mesh Dispatch Arguments", f.Arguments, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
     auto fallback =
         Import(graph, "Mesh Shader Fallback Commands", f.Fallback, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
-    std::vector<RenderGraph::ResourceHandle> asset;
+    vector<RenderGraph::ResourceHandle> asset;
     GpuSceneBuffer *sources[] = {&MeshletManager::RangeBuffer(), &MeshletManager::ClusterBuffer(),
                                  &MeshletManager::BoundsBuffer(), &MeshletManager::MeshletBuffer()};
     for (auto *source : sources)
@@ -493,7 +493,7 @@ static bool DrawPass(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices, 
                              D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     auto debug = External(graph, "Mesh Shader Visibility Debug", GPUVisibility::ResultBuffer(),
                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    std::vector<RenderGraph::ResourceHandle> asset;
+    vector<RenderGraph::ResourceHandle> asset;
     GpuSceneBuffer *sources[] = {&MeshletManager::MeshletBuffer(), &MeshletManager::VertexBuffer(),
                                  &MeshletManager::PrimitiveBuffer()};
     for (auto *source : sources)
@@ -566,7 +566,7 @@ static bool DrawPass(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices, 
                                       0);
         });
     if (!graph.Compile() || !graph.Execute(list))
-        throw std::runtime_error(graph.GetLastError());
+        throw runtime_error(graph.GetLastError());
     return true;
 }
 bool Draw(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices)
@@ -595,7 +595,7 @@ void DrawDebug()
     ImGui::Checkbox("Cone Axes", &s.Options.ConeAxes);
     int capacity = static_cast<int>(s.Options.MaxMeshlets);
     if (ImGui::InputInt("Meshlet Capacity (overflow falls back)", &capacity))
-        s.Options.MaxMeshlets = static_cast<uint32_t>(std::clamp(capacity, 1, 4000000));
+        s.Options.MaxMeshlets = static_cast<uint32_t>(clamp(capacity, 1, 4000000));
     uint64_t total = 0, clusters = 0;
     for (const auto &r : MeshletManager::Ranges())
     {
@@ -681,7 +681,7 @@ void DrawDebug()
                     }
                 }
             };
-            auto color = colors[(std::min)(record[2], 5u)];
+            auto color = colors[(min)(record[2], 5u)];
             const auto &bounds = assets.Bounds[record[1]];
             if (s.Options.MeshletBounds)
                 sphere(bounds, color);
@@ -711,22 +711,22 @@ void EndFrame()
         Data().DebugRecords.clear();
         return;
     }
-    std::vector<uint8_t> bytes;
+    vector<uint8_t> bytes;
     if (RenderCapture::ReadBuffer(Current().Counters.Resource(), Current().Counters.State, 64, bytes))
     {
-        std::memcpy(Data().Debug.data(), bytes.data(), 64);
-        uint32_t samples = (std::min)(Data().Debug[0], 4096u);
+        memcpy(Data().Debug.data(), bytes.data(), 64);
+        uint32_t samples = (min)(Data().Debug[0], 4096u);
         if (samples && RenderCapture::ReadBuffer(Current().Candidates.Resource(), Current().Candidates.State,
                                                  uint64_t(samples) * 16, bytes))
         {
             Data().DebugRecords.resize(samples);
-            std::memcpy(Data().DebugRecords.data(), bytes.data(), bytes.size());
+            memcpy(Data().DebugRecords.data(), bytes.data(), bytes.size());
         }
         else
             Data().DebugRecords.clear();
     }
 }
-const std::vector<std::array<uint32_t,4>>& DebugRecords()
+const vector<array<uint32_t,4>>& DebugRecords()
 {
     return Data().DebugRecords;
 }

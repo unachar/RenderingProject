@@ -251,7 +251,10 @@ public:
 	static constexpr UINT g_kHIZ_DEBUG_UAV_INDEX = g_kHIZ_SOURCE_SRV_INDEX + 2;
 
 	static constexpr UINT g_kMATERIAL_PREVIEW_SRV_INDEX = g_kDEPTH_SRV_INDEX + 256;
-    static constexpr UINT g_kENGINE_DESCRIPTOR_END = g_kMATERIAL_PREVIEW_SRV_INDEX + 1;
+    static constexpr UINT g_kTRANSMITTANCE_SHADOW_LAYERS = 4;
+    static constexpr UINT g_kTRANSMITTANCE_SHADOW_SIZE = 512;
+    static constexpr UINT g_kTRANSMITTANCE_SHADOW_SRV_START = g_kMATERIAL_PREVIEW_SRV_INDEX + 2;
+    static constexpr UINT g_kENGINE_DESCRIPTOR_END = g_kTRANSMITTANCE_SHADOW_SRV_START + 2 + g_kTRANSMITTANCE_SHADOW_LAYERS * g_kMAX_SHADOW_LIGHTS;
 	// Reserved after DXR/NRD/reflection bindings in the existing engine heap.
 	static constexpr UINT g_kCLOUD_DESCRIPTOR_START = g_kHIZ_MIP_SRV_START_INDEX + 2 * g_kHIZ_MAX_MIPS + 48;
 	static_assert(g_kCLOUD_DESCRIPTOR_START + 4 + 2 * g_kFRAME_COUNT <= g_kENGINE_DESCRIPTOR_END);

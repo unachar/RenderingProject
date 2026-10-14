@@ -15,6 +15,7 @@ public:
     static void PrepareLighting(ID3D12GraphicsCommandList* commands, UINT frameIndex,
         UINT width, UINT height, float deltaTime);
     static void BindLighting(ID3D12GraphicsCommandList* commands, UINT frameIndex);
+    static void BindForwardLighting(ID3D12GraphicsCommandList* commands, UINT frameIndex);
     static void Render(ID3D12GraphicsCommandList* commands, UINT frameIndex,
         UINT width, UINT height, D3D12_GPU_DESCRIPTOR_HANDLE depth, D3D12_GPU_DESCRIPTOR_HANDLE material,
         D3D12_GPU_VIRTUAL_ADDRESS cameraConstants, D3D12_GPU_VIRTUAL_ADDRESS lightConstants,

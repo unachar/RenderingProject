@@ -25,8 +25,8 @@ class LocalHeightFog
 {
 public:
 	static constexpr size_t MaxVolumes = 16;
-	static const std::vector<LocalHeightFogVolume>& GetVolumes() { return s_Volumes; }
-	static std::vector<LocalHeightFogVolume>& GetMutableVolumes() { return s_Volumes; }
+	static const vector<LocalHeightFogVolume>& GetVolumes() { return s_Volumes; }
+	static vector<LocalHeightFogVolume>& GetMutableVolumes() { return s_Volumes; }
 	static bool Add(LocalFogShape shape = LocalFogShape::Height)
 	{
 		if (s_Volumes.size() >= MaxVolumes) return false;
@@ -42,5 +42,5 @@ public:
 	static void Clear() { s_Volumes.clear(); }
 
 private:
-	inline static std::vector<LocalHeightFogVolume> s_Volumes{};
+	inline static vector<LocalHeightFogVolume> s_Volumes{};
 };

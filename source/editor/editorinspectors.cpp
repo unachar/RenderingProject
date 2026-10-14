@@ -355,6 +355,16 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
 		changed |= ImGui::SliderFloat("Fresnel", &material.Fresnel, 0.0f, 1.0f);
 	}
 	changed |= ImGui::SliderFloat("Alpha", &material.Alpha, 0.0f, 1.0f);
+    int shadowMode = static_cast<int>(material.ShadowMode);
+    if (ImGui::Combo("Shadow Mode", &shadowMode, "None\0Opaque\0AlphaTest\0Transmittance\0Auto\0"))
+    {
+        material.ShadowMode = static_cast<MaterialShadowMode>(shadowMode);
+        changed = true;
+    }
+    if (material.ShadowMode == MaterialShadowMode::AlphaTest)
+    {
+        changed |= ImGui::SliderFloat("Shadow Cutoff", &material.ShadowCutoff, 0.0f, 1.0f);
+    }
 	const bool dielectricMaterial = material.IsTransparent ||
 		(isManualMode && (material.ShaderClass == ShaderClass::Transparent ||
 			material.ShaderClass == ShaderClass::BTDF ||
@@ -1991,7 +2001,7 @@ ImGui::Text("メッシュ: %s", statusText4);
 			};
 			if (ImGui::Button("Save LOD asset metadata") && Visibility::ValidLOD(lod.ScreenLOD))
 			{
-				std::ofstream file(lodModel->GetSourcePath() + ".lod");
+				ofstream file(lodModel->GetSourcePath() + ".lod");
 				if (Visibility::SaveLOD(file, lod.ScreenLOD))
 				{ lodModel->SetLODMetadata(lod.ScreenLOD); lod.UseAssetSettings = true; changed = true; notifyAssetUsers(); }
 				else Debug::Log("LOD metadata save failed\n");
@@ -1999,7 +2009,7 @@ ImGui::Text("メッシュ: %s", statusText4);
 			ImGui::SameLine();
 			if (ImGui::Button("Reload LOD asset metadata"))
 			{
-				std::ifstream file(lodModel->GetSourcePath() + ".lod");
+				ifstream file(lodModel->GetSourcePath() + ".lod");
 				if (Visibility::LoadLOD(file, lod.ScreenLOD))
 				{ lodModel->SetLODMetadata(lod.ScreenLOD); lod.UseAssetSettings = true; changed = true; notifyAssetUsers(); }
 			}

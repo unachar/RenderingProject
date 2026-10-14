@@ -8,8 +8,8 @@ namespace GpuSceneChanges
 {
 struct PendingChanges
 {
-    std::unordered_map<uint32_t, GpuSceneDirtyFlags> Changed;
-    std::vector<uint32_t> Destroyed;
+    unordered_map<uint32_t, GpuSceneDirtyFlags> Changed;
+    vector<uint32_t> Destroyed;
     bool ResetScene = false;
 };
 inline PendingChanges &Pending()

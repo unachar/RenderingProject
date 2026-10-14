@@ -10,7 +10,7 @@
 
 namespace
 {
-std::unordered_map<AssetHandle, std::unique_ptr<MaterialRuntime>> runtimes;
+unordered_map<AssetHandle, unique_ptr<MaterialRuntime>> runtimes;
 AssetRegistry registry;
 bool sceneHasAssets = false;
 }
@@ -38,7 +38,7 @@ void MaterialManager::Shutdown()
 
 void MaterialManager::Refresh()
 {
-    std::string error;
+    string error;
     registry.Refresh(error);
     if (!error.empty())
     {
@@ -75,7 +75,7 @@ MaterialRuntime& MaterialManager::GetRuntime(AssetHandle handle)
     {
         return *found->second;
     }
-    auto runtime = std::make_unique<MaterialRuntime>();
+    auto runtime = make_unique<MaterialRuntime>();
     runtime->Handle = handle;
     const auto path = registry.Resolve(handle);
     if (handle != 0 && !path.empty() && registry.TypeOf(handle) == AssetType::Material)
@@ -90,7 +90,7 @@ MaterialRuntime& MaterialManager::GetRuntime(AssetHandle handle)
     runtime->Editing = runtime->Saved;
     UpdateBinding(*runtime, runtime->Editing);
     auto& result = *runtime;
-    runtimes.emplace(handle, std::move(runtime));
+    runtimes.emplace(handle, move(runtime));
     return result;
 }
 
@@ -112,9 +112,15 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
     binding.AssetCull = material.Cull;
     binding.AssetDepthWrite = material.DepthWrite;
     binding.AlphaCutoff = material.AlphaCutoff;
+    binding.ShadowMode = material.ShadowMode;
+    binding.ShadowCutoff = material.ShadowCutoff;
+    binding.IOR = material.IOR;
+    binding.Transmission = material.Transmission;
+    binding.Thickness = material.Thickness;
+    binding.AbsorptionCoefficient = {material.AbsorptionCoefficient[0], material.AbsorptionCoefficient[1], material.AbsorptionCoefficient[2]};
     binding.DoubleSided = material.Cull == MaterialCull::None;
     binding.BaseSaturation = 1.0f;
-    std::array<int, 5> descriptors;
+    array<int, 5> descriptors;
     descriptors.fill(-1);
     for (size_t slot = 0; slot < descriptors.size(); ++slot)
     {
@@ -160,7 +166,7 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
         {
             ++runtime.PipelineRevision;
         }
-        runtime.Binding = std::move(binding);
+        runtime.Binding = move(binding);
         runtime.BoundData = material;
         runtime.TextureDescriptors = descriptors;
         ++runtime.Revision;
@@ -256,7 +262,7 @@ bool MaterialManager::HasSurfaceForPass(EntityID entity, bool transparent)
         return !transparent;
     }
     const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
-    const auto count = std::max<size_t>(1, SlotCount(entity));
+    const auto count = max<size_t>(1, SlotCount(entity));
     for (size_t slot = 0; slot < count; ++slot)
     {
         if (MaterialSystem::IsTransparentMaterial(Resolve(source, slot)) == transparent)
@@ -302,7 +308,7 @@ bool MaterialManager::Assign(EntityID entity, size_t slot, AssetHandle handle)
     auto& component = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
     component.MaterialSlots.resize(SlotCount(entity));
     component.MaterialSlots[slot] = handle;
-    if (std::all_of(component.MaterialSlots.begin(), component.MaterialSlots.end(), [](AssetHandle assigned)
+    if (all_of(component.MaterialSlots.begin(), component.MaterialSlots.end(), [](AssetHandle assigned)
         { return assigned == 0; }))
     {
         component.MaterialSlots.clear();
@@ -318,7 +324,7 @@ void MaterialManager::NotifyAssignmentsChanged()
     for (EntityID entity : World::GetView<MaterialComponent>())
     {
         const auto& slots = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity).MaterialSlots;
-        if (std::any_of(slots.begin(), slots.end(), [](AssetHandle handle) { return handle != 0; }))
+        if (any_of(slots.begin(), slots.end(), [](AssetHandle handle) { return handle != 0; }))
         {
             sceneHasAssets = true;
             return;

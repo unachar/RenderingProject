@@ -30,9 +30,9 @@ DXGI_FORMAT ToDxgi(nrd::Format format)
         DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R10G10B10A2_UINT,
         DXGI_FORMAT_R11G11B10_FLOAT, DXGI_FORMAT_R9G9B9E5_SHAREDEXP
     };
-    static_assert(std::size(formats) == static_cast<size_t>(nrd::Format::MAX_NUM));
+    static_assert(size(formats) == static_cast<size_t>(nrd::Format::MAX_NUM));
     const auto index = static_cast<size_t>(format);
-    return index < std::size(formats) ? formats[index] : DXGI_FORMAT_UNKNOWN;
+    return index < size(formats) ? formats[index] : DXGI_FORMAT_UNKNOWN;
 }
 
 struct Texture
@@ -65,8 +65,8 @@ struct NrdDenoiser::Impl
     ComPtr<ID3D12RootSignature> Root;
     ComPtr<ID3D12DescriptorHeap> Heap;
     ComPtr<ID3D12Resource> Constants;
-    std::vector<ComPtr<ID3D12PipelineState>> Pipelines;
-    std::vector<Texture> Permanent, Transient;
+    vector<ComPtr<ID3D12PipelineState>> Pipelines;
+    vector<Texture> Permanent, Transient;
     Texture Output;
     NrdSignal Signal = NrdSignal::Shadow;
     UINT Width = 0, Height = 0;
@@ -101,8 +101,8 @@ struct NrdDenoiser::Impl
         const nrd::InstanceCreationDesc creation{ {}, &denoiser, 1 };
         if (nrd::CreateInstance(creation, Instance) != nrd::Result::SUCCESS) return false;
         const auto& description = *nrd::GetInstanceDesc(*Instance);
-        SrvCount = (std::max)(1u, description.descriptorPoolDesc.perSetTexturesMaxNum);
-        UavCount = (std::max)(1u, description.descriptorPoolDesc.perSetStorageTexturesMaxNum);
+        SrvCount = (max)(1u, description.descriptorPoolDesc.perSetTexturesMaxNum);
+        UavCount = (max)(1u, description.descriptorPoolDesc.perSetStorageTexturesMaxNum);
         ConstantStride = (description.constantBufferMaxDataSize + 255u) & ~255u;
         DescriptorsPerFrame = (SrvCount + UavCount) * kMaxDispatches;
         Increment = Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -117,7 +117,7 @@ struct NrdDenoiser::Impl
             description.constantBufferAndSamplersSpaceIndex);
         parameters[1].InitAsDescriptorTable(1, &ranges[0]);
         parameters[2].InitAsDescriptorTable(1, &ranges[1]);
-        std::vector<CD3DX12_STATIC_SAMPLER_DESC> samplers;
+        vector<CD3DX12_STATIC_SAMPLER_DESC> samplers;
         for (UINT index = 0; index < description.samplersNum; ++index)
         {
             samplers.emplace_back(description.samplersBaseRegisterIndex + index,
@@ -177,8 +177,8 @@ struct NrdDenoiser::Impl
         Dispatches = 0;
         if (!commands || !inputs.Motion.Resource || !inputs.NormalRoughness.Resource ||
             !inputs.ViewZ.Resource || !inputs.NoisySignal.Resource) return false;
-        if (std::abs(frame.Jitter.x) > 0.5f || std::abs(frame.Jitter.y) > 0.5f ||
-            std::abs(frame.PreviousJitter.x) > 0.5f || std::abs(frame.PreviousJitter.y) > 0.5f)
+        if (abs(frame.Jitter.x) > 0.5f || abs(frame.Jitter.y) > 0.5f ||
+            abs(frame.PreviousJitter.x) > 0.5f || abs(frame.PreviousJitter.y) > 0.5f)
         {
             WriteGraphicsLog("NRD: rejected projection jitter sequence=%u size=%ux%u current=(%.7f,%.7f) previous=(%.7f,%.7f)\n",
                 frame.Sequence, Width, Height, frame.Jitter.x, frame.Jitter.y, frame.PreviousJitter.x, frame.PreviousJitter.y);
@@ -223,7 +223,7 @@ struct NrdDenoiser::Impl
             count > kMaxDispatches) return false;
 
         // Validate the entire dispatch sequence before recording commands or changing states.
-        std::map<ID3D12Resource*, D3D12_RESOURCE_STATES> externalStates;
+        map<ID3D12Resource*, D3D12_RESOURCE_STATES> externalStates;
         for (const auto& texture : { inputs.Motion, inputs.NormalRoughness, inputs.ViewZ, inputs.NoisySignal })
             externalStates[texture.Resource] = texture.State;
         const auto resolve = [&](const nrd::ResourceDesc& resource) -> ID3D12Resource*
@@ -326,10 +326,10 @@ bool NrdDenoiser::Initialize(ID3D12Device* device, NrdSignal signal, UINT width,
 {
 #if defined(RENDERINGPROJECT_USE_NRD)
     if (!device || !width || !height || width > UINT16_MAX || height > UINT16_MAX) return false;
-    auto created = std::make_unique<Impl>();
+    auto created = make_unique<Impl>();
     created->Device = device;
     if (!created->Create(signal, width, height)) return false;
-    m_Impl = std::move(created);
+    m_Impl = move(created);
     return true;
 #else
     return false;

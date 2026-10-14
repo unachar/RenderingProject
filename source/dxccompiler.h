@@ -50,7 +50,7 @@
         return state;
     }
 
-    inline std::wstring ToWide(const char* text)
+    inline wstring ToWide(const char* text)
     {
         if (!text)
         {
@@ -63,20 +63,20 @@
             return {};
         }
 
-        std::wstring output(static_cast<size_t>(length), L'\0');
+        wstring output(static_cast<size_t>(length), L'\0');
         MultiByteToWideChar(CP_UTF8, 0, text, -1, output.data(), length);
         output.pop_back();
         return output;
     }
 
-    inline std::wstring PromoteLegacyProfile(const char* target)
+    inline wstring PromoteLegacyProfile(const char* target)
     {
-        std::wstring profile = ToWide(target);
+        wstring profile = ToWide(target);
         const size_t legacyMarker = profile.find(L"_5_");
-        if (legacyMarker != std::wstring::npos)
+        if (legacyMarker != wstring::npos)
         {
             const size_t stageEnd = profile.find(L'_');
-            if (stageEnd != std::wstring::npos)
+            if (stageEnd != wstring::npos)
             {
                 profile = profile.substr(0, stageEnd + 1) + L"6_0";
             }
@@ -107,7 +107,7 @@
         return S_OK;
     }
 
-    inline void SetDiagnosticBlob(const std::string& diagnostics, ID3DBlob** output)
+    inline void SetDiagnosticBlob(const string& diagnostics, ID3DBlob** output)
     {
         if (!output)
         {
@@ -130,12 +130,12 @@
         *output = blob.Detach();
     }
 
-    inline void AddArgument(std::vector<std::wstring>& storage, const wchar_t* value)
+    inline void AddArgument(vector<wstring>& storage, const wchar_t* value)
     {
         storage.emplace_back(value);
     }
 
-    inline void AddArgument(std::vector<std::wstring>& storage, const std::wstring& value)
+    inline void AddArgument(vector<wstring>& storage, const wstring& value)
     {
         storage.emplace_back(value);
     }
@@ -208,10 +208,10 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
         sourceBuffer.Encoding = codePage;
     }
 
-    const std::wstring wideEntryPoint = ToWide(entryPoint);
-    const std::wstring wideTarget = PromoteLegacyProfile(target);
+    const wstring wideEntryPoint = ToWide(entryPoint);
+    const wstring wideTarget = PromoteLegacyProfile(target);
 
-    std::vector<std::wstring> argumentStorage;
+    vector<wstring> argumentStorage;
     argumentStorage.reserve(32);
     AddArgument(argumentStorage, fileName);
     AddArgument(argumentStorage, L"-E");
@@ -221,7 +221,7 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
     AddArgument(argumentStorage, L"-HV");
     AddArgument(argumentStorage, L"2021");
 
-    const std::filesystem::path sourcePath(fileName);
+    const filesystem::path sourcePath(fileName);
     if (!sourcePath.parent_path().empty())
     {
         AddArgument(argumentStorage, L"-I");
@@ -288,7 +288,7 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
     {
         for (const D3D_SHADER_MACRO* define = defines; define->Name; ++define)
         {
-            std::wstring definition = ToWide(define->Name);
+            wstring definition = ToWide(define->Name);
             if (define->Definition && define->Definition[0] != '\0')
             {
                 definition += L"=";
@@ -299,9 +299,9 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
         }
     }
 
-    std::vector<LPCWSTR> arguments;
+    vector<LPCWSTR> arguments;
     arguments.reserve(argumentStorage.size());
-    for (const std::wstring& argument : argumentStorage)
+    for (const wstring& argument : argumentStorage)
     {
         arguments.push_back(argument.c_str());
     }
@@ -319,7 +319,7 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
         return FAILED(result) ? result : E_FAIL;
     }
 
-    std::string diagnostics;
+    string diagnostics;
     ComPtr<IDxcBlobUtf8> diagnosticsBlob;
     if (SUCCEEDED(compileResult->GetOutput(
         DXC_OUT_ERRORS,

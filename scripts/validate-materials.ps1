@@ -1,4 +1,4 @@
-param([ValidateSet('Debug','Release')][string]$Configuration = 'Debug', [switch]$SkipBuild, [switch]$Rebuild)
+param([ValidateSet('Debug','Release')][string]$Configuration = 'Debug', [switch]$SkipBuild, [switch]$Rebuild, [switch]$Transparency)
 $ErrorActionPreference = 'Stop'
 if ($SkipBuild -and $Rebuild) { throw '-SkipBuild and -Rebuild cannot be combined.' }
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -26,6 +26,7 @@ try {
     $env:DX12_FEATURE_SMOKE_TEST = '0'
     $env:DX12_VALIDATION_MODE = '1'
     $env:DX12_STARTUP_SMOKE_FRAMES = '24'
+    if ($Transparency) { $env:DX12_STARTUP_SMOKE_FRAMES = '70' }
     $env:DX12_MATERIAL_ASSET_TEST = '1'
     $logPath = Join-Path $workspace 'init_log.txt'
     $initialLength = (Get-Item -LiteralPath $logPath).Length

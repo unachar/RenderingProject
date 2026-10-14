@@ -10,31 +10,31 @@
 
 namespace
 {
-float ReadFloat(std::istream& stream, float minimum, float maximum)
+float ReadFloat(istream& stream, float minimum, float maximum)
 {
     float value = 0.0f;
-    if (!(stream >> value) || !std::isfinite(value))
+    if (!(stream >> value) || !isfinite(value))
     {
-        throw std::invalid_argument("Invalid simulation setting");
+        throw invalid_argument("Invalid simulation setting");
     }
-    return std::clamp(value, minimum, maximum);
+    return clamp(value, minimum, maximum);
 }
 
-void RequireValidRecord(std::istream& stream)
+void RequireValidRecord(istream& stream)
 {
     if (stream.fail())
     {
-        throw std::invalid_argument("Incomplete simulation setting");
+        throw invalid_argument("Incomplete simulation setting");
     }
-    std::string extra;
+    string extra;
     if (stream >> extra)
     {
-        throw std::invalid_argument("Unexpected simulation setting field");
+        throw invalid_argument("Unexpected simulation setting field");
     }
 }
 }
 
-void SimulationConfiguration::Save(std::ostream& stream)
+void SimulationConfiguration::Save(ostream& stream)
 {
     const auto& cycle = DayNightCycle::GetSettings();
     const auto& rays = Raytracing::GetSettings();
@@ -57,9 +57,9 @@ void SimulationConfiguration::Save(std::ostream& stream)
         << air.MieColor.x << ' ' << air.MieColor.y << ' ' << air.MieColor.z << '\n';
 }
 
-bool SimulationConfiguration::TryLoad(const std::string& key, const std::string& value)
+bool SimulationConfiguration::TryLoad(const string& key, const string& value)
 {
-    std::istringstream record(value);
+    istringstream record(value);
     if (key == "procedural_live_update")
     {
         int enabled = -1;
@@ -67,7 +67,7 @@ bool SimulationConfiguration::TryLoad(const std::string& key, const std::string&
         RequireValidRecord(record);
         if (enabled != 0 && enabled != 1)
         {
-            throw std::invalid_argument("Invalid procedural live update setting");
+            throw invalid_argument("Invalid procedural live update setting");
         }
         ProceduralScene::SetLiveUpdate(enabled != 0);
         return true;
@@ -79,7 +79,7 @@ bool SimulationConfiguration::TryLoad(const std::string& key, const std::string&
         cycle.Hours = ReadFloat(record, 0.0f, 24.0f);
         cycle.Latitude = ReadFloat(record, -89.0f, 89.0f);
         record >> cycle.DayOfYear;
-        cycle.DayOfYear = std::clamp(cycle.DayOfYear, 1, 365);
+        cycle.DayOfYear = clamp(cycle.DayOfYear, 1, 365);
         cycle.DayDurationSeconds = ReadFloat(record, 1.0f, 86400.0f);
         cycle.OrbitRadius = ReadFloat(record, 10.0f, 1000.0f);
         cycle.DayIntensity = ReadFloat(record, 0.0f, 20.0f);
@@ -95,7 +95,7 @@ bool SimulationConfiguration::TryLoad(const std::string& key, const std::string&
         // Settings saved before the mode selector used the full RT pipeline.
         rays.RenderMode = Raytracing::Mode::Full;
         record >> rays.Enabled >> rays.Shadows >> rays.AmbientOcclusion >> rays.Samples;
-        rays.Samples = std::clamp(rays.Samples, 1, 8);
+        rays.Samples = clamp(rays.Samples, 1, 8);
         rays.ShadowDistance = ReadFloat(record, 1.0f, 2000.0f);
         rays.AmbientRadius = ReadFloat(record, 0.05f, 10.0f);
         rays.NormalBias = ReadFloat(record, 0.001f, 0.1f);
@@ -109,7 +109,7 @@ bool SimulationConfiguration::TryLoad(const std::string& key, const std::string&
         int mode = -1;
         record >> mode;
         RequireValidRecord(record);
-        if (mode < 0 || mode > 1) throw std::invalid_argument("Invalid raytracing mode");
+        if (mode < 0 || mode > 1) throw invalid_argument("Invalid raytracing mode");
         Raytracing::GetSettings().RenderMode = static_cast<Raytracing::Mode>(mode);
         return true;
     }
@@ -118,7 +118,7 @@ bool SimulationConfiguration::TryLoad(const std::string& key, const std::string&
         int enabled = -1;
         record >> enabled;
         RequireValidRecord(record);
-        if (enabled != 0 && enabled != 1) throw std::invalid_argument("Invalid NRD setting");
+        if (enabled != 0 && enabled != 1) throw invalid_argument("Invalid NRD setting");
         Raytracing::GetSettings().Denoise = enabled != 0;
         return true;
     }
@@ -127,7 +127,7 @@ bool SimulationConfiguration::TryLoad(const std::string& key, const std::string&
         int enabled = -1;
         record >> enabled;
         RequireValidRecord(record);
-        if (enabled != 0 && enabled != 1) throw std::invalid_argument("Invalid reflection setting");
+        if (enabled != 0 && enabled != 1) throw invalid_argument("Invalid reflection setting");
         Raytracing::GetSettings().Reflections = enabled != 0;
         return true;
     }

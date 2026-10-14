@@ -17,6 +17,7 @@ void SetMaterial(RaytracingGeometry& geometry, EntityID entity, int modelTexture
         const auto& material = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity), slot);
         geometry.Roughness = material.Roughness;
         geometry.Metallic = material.Metallic;
+        geometry.CastShadow = MaterialSystem::CastsShadow(material);
         if (material.UseTexture)
         {
             geometry.TextureIndex = material.TextureID;
@@ -34,6 +35,17 @@ void SetMaterial(RaytracingGeometry& geometry, EntityID entity, int modelTexture
         geometry.TextureResidentMip = TextureManager::GetTextureResidentMip(geometry.TextureIndex);
     }
 }
+bool IsRayGeometryVisible(const MaterialComponent& material)
+{
+    float opacity = material.Alpha;
+    if (material.RuntimeHandle != 0)
+    {
+        opacity *= material.BaseColor.w;
+    }
+    return opacity > 0.0f &&
+        (!MaterialSystem::IsTransparentMaterial(material) || MaterialSystem::CastsShadow(material));
+}
+
 bool IsOpaqueCaster(EntityID entity)
 {
 	if (ComponentManager::HasComponent<MeshComponent>(entity) &&
@@ -49,14 +61,22 @@ bool IsOpaqueCaster(EntityID entity)
     }
     if (ComponentManager::HasComponent<MaterialComponent>(entity))
     {
-        const auto& material = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity));
-        return !MaterialSystem::IsTransparentMaterial(material);
+        const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+        const size_t count = max(size_t(1), source.MaterialSlots.size());
+        for (size_t slot = 0; slot < count; ++slot)
+        {
+            if (IsRayGeometryVisible(MaterialManager::Resolve(source, slot)))
+            {
+                return true;
+            }
+        }
+        return false;
     }
     return true;
 }
 
 template<typename Model>
-void AppendModel(std::vector<RaytracingGeometry>& geometry, EntityID entity, Model* model, bool deforming)
+void AppendModel(vector<RaytracingGeometry>& geometry, EntityID entity, Model* model, bool deforming)
 {
     if (!model || !IsOpaqueCaster(entity))
     {
@@ -66,6 +86,12 @@ void AppendModel(std::vector<RaytracingGeometry>& geometry, EntityID entity, Mod
     for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
     {
         const auto& mesh = model->GetMeshData(meshIndex);
+        if (ComponentManager::HasComponent<MaterialComponent>(entity) &&
+            !IsRayGeometryVisible(MaterialManager::Resolve(
+                ComponentManager::GetComponentUnchecked<MaterialComponent>(entity), meshIndex)))
+        {
+            continue;
+        }
         if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount < 3)
         {
             continue;
@@ -105,14 +131,14 @@ void AppendModel(std::vector<RaytracingGeometry>& geometry, EntityID entity, Mod
             entry.VertexState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
             entry.Deforming = true;
         }
-        geometry.push_back(std::move(entry));
+        geometry.push_back(move(entry));
     }
 }
 }
 
-std::vector<RaytracingGeometry> GatherRaytracingGeometry()
+vector<RaytracingGeometry> GatherRaytracingGeometry()
 {
-    std::vector<RaytracingGeometry> geometry;
+    vector<RaytracingGeometry> geometry;
     geometry.reserve(World::GetView<MeshComponent>().size());
     for (EntityID entity : World::GetView<MeshComponent, TransformComponent>())
     {
@@ -138,7 +164,7 @@ std::vector<RaytracingGeometry> GatherRaytracingGeometry()
             entry.VertexState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
             entry.Deforming = true;
         }
-        geometry.push_back(std::move(entry));
+        geometry.push_back(move(entry));
     }
     for (EntityID entity : World::GetView<StaticModelComponent, TransformComponent>())
     {

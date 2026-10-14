@@ -73,14 +73,14 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource)
 		return false;
 	}
 	*ppBlob = nullptr;
-	std::string key = csoPath;
-	std::replace(key.begin(), key.end(), '\\', '/');
-	const std::string leaf = std::filesystem::path(key).filename().string();
-	const bool scenePixelShader = leaf.find("PS") != std::string::npos && Raytracing::IsAvailable();
-	const bool sceneVertexShader = leaf.find("VS") != std::string::npos && Raytracing::IsAvailable();
-	const bool sceneGeometryShader = leaf.find("GS") != std::string::npos && Raytracing::IsAvailable();
+	string key = csoPath;
+	replace(key.begin(), key.end(), '\\', '/');
+	const string leaf = filesystem::path(key).filename().string();
+	const bool scenePixelShader = leaf.find("PS") != string::npos && Raytracing::IsAvailable();
+	const bool sceneVertexShader = leaf.find("VS") != string::npos && Raytracing::IsAvailable();
+	const bool sceneGeometryShader = leaf.find("GS") != string::npos && Raytracing::IsAvailable();
 	const bool compileModern = scenePixelShader || sceneVertexShader || sceneGeometryShader;
-	const std::string cacheKey = key + (compileModern ? ":DXR" : "");
+	const string cacheKey = key + (compileModern ? ":DXR" : "");
 
 	auto cached = g_ShaderBlobCache.find(cacheKey);
 	if (cached != g_ShaderBlobCache.end())
@@ -97,13 +97,13 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource)
 	HRESULT hr = E_FAIL;
 	if (compileModern)
 	{
-		std::string source = key;
+		string source = key;
 		const auto buildFolder = source.find("/build/");
-		if (buildFolder != std::string::npos) source.erase(buildFolder, 6);
-		source = std::filesystem::path(source).replace_extension(".hlsl").string();
-		if (std::filesystem::exists(source))
+		if (buildFolder != string::npos) source.erase(buildFolder, 6);
+		source = filesystem::path(source).replace_extension(".hlsl").string();
+		if (filesystem::exists(source))
 		{
-			const auto sourcePath = std::filesystem::path(source).wstring();
+			const auto sourcePath = filesystem::path(source).wstring();
 			const D3D_SHADER_MACRO defines[] = { { "SHADER_RAYTRACING", "1" }, {} };
 			ComPtr<ID3DBlob> errors;
 			hr = D3DCompileFromFile(sourcePath.c_str(), defines, D3D_COMPILE_STANDARD_FILE_INCLUDE,
@@ -153,7 +153,7 @@ static void ShaderLogToFile(const char* msg)
 bool ShaderPipelines::CreatePostProcessPipeline()
 {
 	ShaderLogToFile("PP: setup ranges\n");
-	CD3DX12_DESCRIPTOR_RANGE ranges[15];
+	CD3DX12_DESCRIPTOR_RANGE ranges[17];
 	ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 0);
 	ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6);
 	ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 7);
@@ -170,7 +170,9 @@ bool ShaderPipelines::CreatePostProcessPipeline()
 	ranges[12].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 31);
 	ranges[13].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 32);
 	ranges[14].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 33);
-	CD3DX12_ROOT_PARAMETER params[24];
+    ranges[15].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 35);
+    ranges[16].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 36);
+	CD3DX12_ROOT_PARAMETER params[26];
 	params[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[1].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 	params[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -196,6 +198,8 @@ bool ShaderPipelines::CreatePostProcessPipeline()
 	params[21].InitAsDescriptorTable(1, &ranges[13], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[22].InitAsConstants(28, 9, 0, D3D12_SHADER_VISIBILITY_PIXEL);
     params[23].InitAsDescriptorTable(1, &ranges[14], D3D12_SHADER_VISIBILITY_PIXEL);
+    params[24].InitAsDescriptorTable(1, &ranges[15], D3D12_SHADER_VISIBILITY_PIXEL);
+    params[25].InitAsDescriptorTable(1, &ranges[16], D3D12_SHADER_VISIBILITY_PIXEL);
 	CD3DX12_STATIC_SAMPLER_DESC samplers[3] {};
 	samplers[0] = CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
 

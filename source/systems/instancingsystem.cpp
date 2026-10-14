@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "materialmanager.h"
 #include "vertexdeformation.h"
 #include "instancingsystem.h"
 #include "gpudriven/gpudrivenrenderer.h"
@@ -103,7 +104,6 @@ struct BatchKeyHash
         size_t h = 0;
         auto hash_combine = [&h](auto&& v)
         {
-            using std::hash;
             h ^= hash<decay_t<decltype(v)>>{}(v) + 0x9e3779b9 + (h << 6) + (h >> 2);
         };
         hash_combine(key.Kind);
@@ -350,6 +350,17 @@ BatchKey InstancingSystem::MakeKey(
 
 bool InstancingSystem::CanInstance(EntityID entity)
 {
+    if (ComponentManager::HasComponent<MaterialComponent>(entity))
+    {
+        const auto& material = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity));
+        // Material-aware shadow pixels use the ordinary draw path.
+        if (MaterialSystem::IsTransparentMaterial(material) ||
+            MaterialSystem::ResolveShadowMode(material) != MaterialShadowMode::Opaque ||
+            material.AssetSurface == MaterialSurface::Masked || material.RuntimeHandle != 0)
+        {
+            return false;
+        }
+    }
     if (ComponentManager::HasComponent<MaterialComponent>(entity) &&
         !ComponentManager::GetComponentUnchecked<MaterialComponent>(entity).MaterialSlots.empty())
     {

@@ -26,7 +26,7 @@
 #if __cplusplus >= 201103L
 
 #if !defined(sscanf)
-#define sscanf std::sscanf
+#define sscanf sscanf
 #endif
 
 #endif //__cplusplus
@@ -54,9 +54,9 @@ static size_t const stackLimit_g =
 namespace Json {
 
 #if __cplusplus >= 201103L || (defined(_CPPLIB_VER) && _CPPLIB_VER >= 520)
-using CharReaderPtr = std::unique_ptr<CharReader>;
+using CharReaderPtr = unique_ptr<CharReader>;
 #else
-using CharReaderPtr = std::auto_ptr<CharReader>;
+using CharReaderPtr = auto_ptr<CharReader>;
 #endif
 
 // Implementation of class Features
@@ -79,7 +79,7 @@ Features Features::strictMode() {
 // ////////////////////////////////
 
 bool Reader::containsNewLine(Reader::Location begin, Reader::Location end) {
-  return std::any_of(begin, end, [](char b) { return b == '\n' || b == '\r'; });
+  return any_of(begin, end, [](char b) { return b == '\n' || b == '\r'; });
 }
 
 // Class Reader
@@ -89,7 +89,7 @@ Reader::Reader() : features_(Features::all()) {}
 
 Reader::Reader(const Features& features) : features_(features) {}
 
-bool Reader::parse(const std::string& document, Value& root,
+bool Reader::parse(const string& document, Value& root,
                    bool collectComments) {
   document_.assign(document.begin(), document.end());
   const char* begin = document_.c_str();
@@ -97,15 +97,15 @@ bool Reader::parse(const std::string& document, Value& root,
   return parse(begin, end, root, collectComments);
 }
 
-bool Reader::parse(std::istream& is, Value& root, bool collectComments) {
-  // std::istream_iterator<char> begin(is);
-  // std::istream_iterator<char> end;
+bool Reader::parse(istream& is, Value& root, bool collectComments) {
+  // istream_iterator<char> begin(is);
+  // istream_iterator<char> end;
   // Those would allow streamed input from a file, if parse() were a
   // template function.
 
   // Since String is reference-counted, this at least does not
   // create an extra copy.
-  String doc(std::istreambuf_iterator<char>(is), {});
+  String doc(istreambuf_iterator<char>(is), {});
   return parse(doc.data(), doc.data() + doc.size(), root, collectComments);
 }
 
@@ -589,11 +589,11 @@ bool Reader::decodeDouble(Token& token, Value& decoded) {
   double value = 0;
   IStringStream is(String(token.start_, token.end_));
   if (!(is >> value)) {
-    if (value == std::numeric_limits<double>::max())
-      value = std::numeric_limits<double>::infinity();
-    else if (value == std::numeric_limits<double>::lowest())
-      value = -std::numeric_limits<double>::infinity();
-    else if (!std::isinf(value))
+    if (value == numeric_limits<double>::max())
+      value = numeric_limits<double>::infinity();
+    else if (value == numeric_limits<double>::lowest())
+      value = -numeric_limits<double>::infinity();
+    else if (!isinf(value))
       return addError(
           "'" + String(token.start_, token.end_) + "' is not a number.", token);
   }
@@ -800,8 +800,8 @@ String Reader::getFormattedErrorMessages() const {
   return formattedMessage;
 }
 
-std::vector<Reader::StructuredError> Reader::getStructuredErrors() const {
-  std::vector<Reader::StructuredError> allErrors;
+vector<Reader::StructuredError> Reader::getStructuredErrors() const {
+  vector<Reader::StructuredError> allErrors;
   for (const auto& error : errors_) {
     Reader::StructuredError structured;
     structured.offset_start = error.token_.start_ - begin_;
@@ -882,7 +882,7 @@ public:
   bool parse(const char* beginDoc, const char* endDoc, Value& root,
              bool collectComments = true);
   String getFormattedErrorMessages() const;
-  std::vector<CharReader::StructuredError> getStructuredErrors() const;
+  vector<CharReader::StructuredError> getStructuredErrors() const;
 
 private:
   OurReader(OurReader const&);      // no impl
@@ -922,7 +922,7 @@ private:
     Location extra_;
   };
 
-  using Errors = std::deque<ErrorInfo>;
+  using Errors = deque<ErrorInfo>;
 
   bool readToken(Token& token);
   bool readTokenSkippingComments(Token& token);
@@ -963,7 +963,7 @@ private:
   static String normalizeEOL(Location begin, Location end);
   static bool containsNewLine(Location begin, Location end);
 
-  using Nodes = std::stack<Value*>;
+  using Nodes = stack<Value*>;
 
   Nodes nodes_{};
   Errors errors_{};
@@ -984,7 +984,7 @@ private:
 
 bool OurReader::containsNewLine(OurReader::Location begin,
                                 OurReader::Location end) {
-  return std::any_of(begin, end, [](char b) { return b == '\n' || b == '\r'; });
+  return any_of(begin, end, [](char b) { return b == '\n' || b == '\r'; });
 }
 
 OurReader::OurReader(OurFeatures const& features) : features_(features) {}
@@ -1082,19 +1082,19 @@ bool OurReader::readValue() {
     currentValue().setOffsetLimit(token.end_ - begin_);
   } break;
   case tokenNaN: {
-    Value v(std::numeric_limits<double>::quiet_NaN());
+    Value v(numeric_limits<double>::quiet_NaN());
     currentValue().swapPayload(v);
     currentValue().setOffsetStart(token.start_ - begin_);
     currentValue().setOffsetLimit(token.end_ - begin_);
   } break;
   case tokenPosInf: {
-    Value v(std::numeric_limits<double>::infinity());
+    Value v(numeric_limits<double>::infinity());
     currentValue().swapPayload(v);
     currentValue().setOffsetStart(token.start_ - begin_);
     currentValue().setOffsetLimit(token.end_ - begin_);
   } break;
   case tokenNegInf: {
-    Value v(-std::numeric_limits<double>::infinity());
+    Value v(-numeric_limits<double>::infinity());
     currentValue().swapPayload(v);
     currentValue().setOffsetStart(token.start_ - begin_);
     currentValue().setOffsetLimit(token.end_ - begin_);
@@ -1623,11 +1623,11 @@ bool OurReader::decodeDouble(Token& token, Value& decoded) {
   double value = 0;
   IStringStream is(String(token.start_, token.end_));
   if (!(is >> value)) {
-    if (value == std::numeric_limits<double>::max())
-      value = std::numeric_limits<double>::infinity();
-    else if (value == std::numeric_limits<double>::lowest())
-      value = -std::numeric_limits<double>::infinity();
-    else if (!std::isinf(value))
+    if (value == numeric_limits<double>::max())
+      value = numeric_limits<double>::infinity();
+    else if (value == numeric_limits<double>::lowest())
+      value = -numeric_limits<double>::infinity();
+    else if (!isinf(value))
       return addError(
           "'" + String(token.start_, token.end_) + "' is not a number.", token);
   }
@@ -1829,9 +1829,9 @@ String OurReader::getFormattedErrorMessages() const {
   return formattedMessage;
 }
 
-std::vector<CharReader::StructuredError>
+vector<CharReader::StructuredError>
 OurReader::getStructuredErrors() const {
-  std::vector<CharReader::StructuredError> allErrors;
+  vector<CharReader::StructuredError> allErrors;
   for (const auto& error : errors_) {
     CharReader::StructuredError structured;
     structured.offset_start = error.token_.start_ - begin_;
@@ -1847,7 +1847,7 @@ class OurCharReader : public CharReader {
 public:
   OurCharReader(bool collectComments, OurFeatures const& features)
       : CharReader(
-            std::unique_ptr<OurImpl>(new OurImpl(collectComments, features))) {}
+            unique_ptr<OurImpl>(new OurImpl(collectComments, features))) {}
 
 protected:
   class OurImpl : public Impl {
@@ -1864,7 +1864,7 @@ protected:
       return ok;
     }
 
-    std::vector<CharReader::StructuredError>
+    vector<CharReader::StructuredError>
     getStructuredErrors() const override {
       return reader_.getStructuredErrors();
     }
@@ -1899,7 +1899,7 @@ CharReader* CharReaderBuilder::newCharReader() const {
 }
 
 bool CharReaderBuilder::validate(Json::Value* invalid) const {
-  static const auto& valid_keys = *new std::set<String>{
+  static const auto& valid_keys = *new set<String>{
       "collectComments",
       "allowComments",
       "allowTrailingCommas",
@@ -1978,7 +1978,7 @@ void CharReaderBuilder::ecma404Mode(Json::Value* settings) {
   //! [CharReaderBuilderECMA404Mode]
 }
 
-std::vector<CharReader::StructuredError>
+vector<CharReader::StructuredError>
 CharReader::getStructuredErrors() const {
   return _impl->getStructuredErrors();
 }
@@ -1995,7 +1995,7 @@ bool parseFromStream(CharReader::Factory const& fact, IStream& sin, Value* root,
                      String* errs) {
   OStringStream ssin;
   ssin << sin.rdbuf();
-  String doc = std::move(ssin).str();
+  String doc = move(ssin).str();
   char const* begin = doc.data();
   char const* end = begin + doc.size();
   // Note that we do not actually need a null-terminator.

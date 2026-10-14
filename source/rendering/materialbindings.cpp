@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "transmittanceshadows.h"
 #include "materialbindings.h"
 #include "graphicsdevice.h"
 #include "componentmanager.h"
@@ -130,8 +131,10 @@ namespace
 		constants.SkinShadowScatter = material.SkinShadowScatter;
 		constants.CastShadowThreshold = material.CastShadowThreshold;
 		constants.CastShadowSoftness = material.CastShadowSoftness;
+        constants.Padding[1] = static_cast<float>(MaterialSystem::ResolveShadowMode(material));
+        constants.Padding[2] = material.ShadowCutoff;
 		constants.Transparent0 = XMFLOAT4(
-			max(material.IOR, 1.0001f),
+			max(material.IOR, 1.0f),
 			clamp(material.Transmission, 0.0f, 1.0f),
 			clamp(material.TransmissionRoughness, 0.0f, 1.0f),
 			max(material.RefractionStrength, 0.0f));
@@ -162,7 +165,8 @@ namespace
         };
         constants.AssetTextures = {textureOffset(material.MetallicRoughnessID),
             textureOffset(material.AOTextureID), textureOffset(material.EmissiveTextureID),
-            static_cast<uint32_t>(material.AssetSurface) | (static_cast<uint32_t>(material.AssetCull) << 2)};
+            static_cast<uint32_t>(material.AssetSurface) |
+            (static_cast<uint32_t>(material.DoubleSided ? MaterialCull::None : material.AssetCull) << 2)};
 		return constants;
 	}
 
@@ -240,7 +244,7 @@ GPUMaterialData MaterialBindings::BuildGpuSceneMaterial(const MaterialComponent&
     const auto constants = BuildPBRConstantsFromMaterial(material);
     static_assert(sizeof(constants) <= sizeof(result.ShadingParameters));
     result.ParameterVectorCount = (sizeof(constants) + 15) / 16;
-    std::memcpy(result.ShadingParameters.data(), &constants, sizeof(constants));
+    memcpy(result.ShadingParameters.data(), &constants, sizeof(constants));
     return result;
 }
 
@@ -349,11 +353,16 @@ uint64_t MaterialBindings::GetMaterialBatchHash(const MaterialComponent& materia
 	return hash;
 }
 
-void MaterialBindings::BindAssetSlot(EntityID entity, const MaterialComponent& material)
+void MaterialBindings::BindAssetSlot(EntityID entity, const MaterialComponent& material, int modelTexture)
 {
     ConstantBuffer3D constants;
     memcpy(&constants, FrameConstants::GetConstantBufferPtr() + entity * FrameConstants::g_kCB_ALIGNED_SIZE, sizeof(constants));
     constants.UseTexture = static_cast<int>(material.UseTexture);
+    const bool useModelTexture = material.RuntimeHandle == 0 && modelTexture >= 0;
+    if (useModelTexture)
+    {
+        constants.UseTexture = 1;
+    }
     constants.UseNormalMap = static_cast<int>(material.NormalMapID >= 0);
     constants.MaterialMode = static_cast<int>(material.ShaderClassMode);
     constants.ShaderClass = static_cast<int>(material.ShaderClass);
@@ -362,6 +371,19 @@ void MaterialBindings::BindAssetSlot(EntityID entity, const MaterialComponent& m
     constants.MaterialFresnel = material.Fresnel;
     constants.MaterialAlpha = material.Alpha;
     constants.MaterialIsTransparent = static_cast<int>(material.IsTransparent);
+    if (TransmittanceShadows::IsActive())
+    {
+        bool thinSheet = false;
+        if (ComponentManager::HasComponent<SpriteComponent>(entity))
+            thinSheet = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity).Is3D;
+        if (ComponentManager::HasComponent<MeshComponent>(entity))
+        {
+            const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+            const auto& extents = mesh.LocalBoundsExtents;
+            thinSheet |= mesh.HasLocalBounds && min(extents.x, min(extents.y, extents.z)) < 0.000001f;
+        }
+        if (thinSheet) constants.MaterialIsTransparent |= 2;
+    }
     m_CommandList->SetGraphicsRootDescriptorTable(0, FrameConstants::AllocateTransientConstantBuffer(constants));
     SetMaterial(entity, material);
     int base = TextureManager::GetDefaultTextureIndex();
@@ -369,6 +391,10 @@ void MaterialBindings::BindAssetSlot(EntityID entity, const MaterialComponent& m
     if (material.TextureID >= 0)
     {
         base = material.TextureID;
+    }
+    if (useModelTexture)
+    {
+        base = modelTexture;
     }
     if (material.NormalMapID >= 0)
     {

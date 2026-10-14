@@ -54,8 +54,8 @@ bool SunLightingTestEnabled()
     return GetEnvironmentVariableA("DX12_SUN_LIGHTING_TEST", value, sizeof(value)) && atoi(value) != 0;
 }
 EntityID g_TestSun = g_kINVALID_ENTITY;
-std::array<double, 5> g_SunRadiance{};
-std::array<std::array<double, 3>, 5> g_SunColors{};
+array<double, 5> g_SunRadiance{};
+array<array<double, 3>, 5> g_SunColors{};
 void BeforeSunLightingFrame(uint64_t frame)
 {
     g_FrameCount = frame + 1;
@@ -69,7 +69,7 @@ void BeforeSunLightingFrame(uint64_t frame)
     }
     if (frame == 0)
     {
-        std::vector<EntityID> removed;
+        vector<EntityID> removed;
         for (EntityID id : World::GetView<TransformComponent>())
         {
             if (ComponentManager::HasComponent<MeshComponent>(id) &&
@@ -157,14 +157,14 @@ void AfterSunLightingFrame(uint64_t frame)
     Check(compatible, "read sun regression HDR and PBR mask");
     if (!compatible) return;
     double sum = 0;
-    std::array<double, 3> channels{};
+    array<double, 3> channels{};
     uint32_t pixels = 0;
     for (uint32_t y = 0; y < image.Height; ++y)
     {
         auto* color = reinterpret_cast<const uint16_t*>(image.Bytes.data() + y * image.RowPitch);
         auto* mask = reinterpret_cast<const uint16_t*>(materials.Bytes.data() + y * materials.RowPitch);
         for (uint32_t x = 0; x < image.Width; ++x)
-            if (std::abs(RenderCapture::HalfToFloat(mask[x * 4 + 3]) - 11.f) < 0.1f)
+            if (abs(RenderCapture::HalfToFloat(mask[x * 4 + 3]) - 11.f) < 0.1f)
             {
                 sum += 0.2126 * RenderCapture::HalfToFloat(color[x * 4]) +
                     0.7152 * RenderCapture::HalfToFloat(color[x * 4 + 1]) +
@@ -224,20 +224,20 @@ void ValidateReflectionDenoising(const RenderCapture::TextureData& filtered)
             const UINT current = x * 4, previous = current - 4;
             const float distance = RenderCapture::HalfToFloat(output[current + 3]);
             const float previousDistance = RenderCapture::HalfToFloat(output[previous + 3]);
-            if (std::abs(distance) < 0.01f || std::abs(previousDistance) < 0.01f) continue;
+            if (abs(distance) < 0.01f || abs(previousDistance) < 0.01f) continue;
             const auto luminance = [&](UINT index)
             {
                 return 0.25f * RenderCapture::HalfToFloat(output[index]) +
                     0.5f * RenderCapture::HalfToFloat(output[index + 1]) +
                     0.25f * RenderCapture::HalfToFloat(output[index + 2]);
             };
-            rawVariation += std::abs(RenderCapture::HalfToFloat(raw[current]) - RenderCapture::HalfToFloat(raw[previous]));
-            filteredVariation += std::abs(luminance(current) - luminance(previous));
+            rawVariation += abs(RenderCapture::HalfToFloat(raw[current]) - RenderCapture::HalfToFloat(raw[previous]));
+            filteredVariation += abs(luminance(current) - luminance(previous));
             ++pairs;
         }
     }
     WriteGraphicsLog("Validation NRD reflection: neighbor pairs=%u rawVariation=%.6f filteredVariation=%.6f\n",
-        pairs, rawVariation / std::max(pairs, 1u), filteredVariation / std::max(pairs, 1u));
+        pairs, rawVariation / max(pairs, 1u), filteredVariation / max(pairs, 1u));
     Check(pairs > 100 && rawVariation > 0 && filteredVariation < rawVariation,
         "NRD reduces reflection high-frequency variation in the test scene");
 }
@@ -250,7 +250,7 @@ void ValidateVertexDeformation()
     if (!resolved) return;
     const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(g_Mover);
     const auto& motion = ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(g_Mover);
-    std::vector<uint8_t> current, previous;
+    vector<uint8_t> current, previous;
     const bool read = RenderCapture::ReadBuffer(view.CurrentResource,
         D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, view.CurrentView.SizeInBytes, current) &&
         RenderCapture::ReadBuffer(view.PreviousResource,
@@ -271,7 +271,7 @@ void ValidateVertexDeformation()
     settings.SpatialFrequency = motion.SpatialFrequency;
     settings.Seed = motion.Seed;
     bool positions = true, normals = true, attributes = true, moved = false;
-    const auto close = [](float a, float b, float tolerance) { return std::isfinite(a) && std::abs(a - b) < tolerance; };
+    const auto close = [](float a, float b, float tolerance) { return isfinite(a) && abs(a - b) < tolerance; };
     for (UINT index = 0; index < mesh.VertexCount; ++index)
     {
         const auto& base = static_cast<const Vertex*>(mapped)[index];
@@ -288,7 +288,7 @@ void ValidateVertexDeformation()
         normals &= close(now.Normal.x, normal.X, 0.02f) && close(now.Normal.y, normal.Y, 0.02f) && close(now.Normal.z, normal.Z, 0.02f);
         attributes &= memcmp(&now.Tex, &base.Tex, sizeof(base.Tex)) == 0 &&
             memcmp(&now.Color, &base.Color, sizeof(base.Color)) == 0;
-        moved |= std::abs(now.Pos.y - base.Pos.y) > 0.001f;
+        moved |= abs(now.Pos.y - base.Pos.y) > 0.001f;
     }
     const CD3DX12_RANGE noWrite(0, 0);
     mesh.VertexBuffer->Unmap(0, &noWrite);
@@ -327,7 +327,7 @@ void CreateTestScene()
                 ++count;
             }
         }
-        const std::string checkName = std::string("auto-registered startup entity created once: ") + name;
+        const string checkName = string("auto-registered startup entity created once: ") + name;
         Check(count == 1, checkName.c_str());
     }
 
@@ -375,16 +375,16 @@ void CreateTestScene()
     Check(ProceduralScene::LoadPreset("bin/validation/terrain.proc", restored) &&
         Procedural::BuildHeightMap(restored) == Procedural::BuildHeightMap(terrain), "load reproducible terrain preset");
     const auto before = restored;
-    std::ofstream invalid("bin/validation/invalid.proc");
+    ofstream invalid("bin/validation/invalid.proc");
     invalid << "PROCEDURAL_TERRAIN 1\n99 0 nan 100 0 0 0\n-1 0 0 0\n";
     invalid.close();
     Check(!ProceduralScene::LoadPreset("bin/validation/invalid.proc", restored) &&
         restored.Noise.Seed == before.Noise.Seed, "reject invalid preset without mutation");
-    std::ostringstream configuration;
+    ostringstream configuration;
     SimulationConfiguration::Save(configuration);
-    std::istringstream records(configuration.str());
-    std::string line;
-    while (std::getline(records, line))
+    istringstream records(configuration.str());
+    string line;
+    while (getline(records, line))
     {
         const size_t delimiter = line.find('=');
         Check(SimulationConfiguration::TryLoad(line.substr(0, delimiter), line.substr(delimiter + 1)), "simulation configuration roundtrip");
@@ -392,12 +392,12 @@ void CreateTestScene()
     for (auto mode : { Raytracing::Mode::ReflectionsOnly, Raytracing::Mode::Full })
     {
         Raytracing::GetSettings().RenderMode = mode;
-        std::ostringstream saved;
+        ostringstream saved;
         SimulationConfiguration::Save(saved);
         Raytracing::GetSettings().RenderMode = mode == Raytracing::Mode::Full ?
             Raytracing::Mode::ReflectionsOnly : Raytracing::Mode::Full;
-        std::istringstream reload(saved.str());
-        while (std::getline(reload, line))
+        istringstream reload(saved.str());
+        while (getline(reload, line))
         {
             const size_t delimiter = line.find('=');
             SimulationConfiguration::TryLoad(line.substr(0, delimiter), line.substr(delimiter + 1));
@@ -424,7 +424,7 @@ void ValidateRayTexture()
         {
             const float shadow = RenderCapture::HalfToFloat(values[column * 2]);
             const float ambient = RenderCapture::HalfToFloat(values[column * 2 + 1]);
-            finite &= std::isfinite(shadow) && std::isfinite(ambient) && shadow >= 0.0f && shadow <= 1.0f && ambient >= 0.0f && ambient <= 1.0f;
+            finite &= isfinite(shadow) && isfinite(ambient) && shadow >= 0.0f && shadow <= 1.0f && ambient >= 0.0f && ambient <= 1.0f;
             shadowed += shadow < 0.99f;
             occluded += ambient < 0.99f;
         }
@@ -469,7 +469,7 @@ void ValidateSkyBrightness(bool night)
         }
     }
     const float luminance = samples ? static_cast<float>(total / samples) : 0.0f;
-    Check(std::isfinite(luminance) && luminance > 0, "finite visible atmospheric sky");
+    Check(isfinite(luminance) && luminance > 0, "finite visible atmospheric sky");
     if (night)
     {
         Check(g_NoonSkyLuminance > luminance * 1.5f, "night sky is darker than noon");
@@ -524,7 +524,7 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
         {
             RendererSettings::SetUpscaleMode(UpscaleMode::Dlss);
         }
-        std::filesystem::create_directories("bin/validation");
+        filesystem::create_directories("bin/validation");
         CreateTestScene();
     }
     g_FrameCount = frame + 1;
@@ -605,7 +605,7 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
     if (frame == 40)
     {
         GraphicsDevice::WaitForGpuIdle();
-        std::vector<EntityID> removed;
+        vector<EntityID> removed;
         for (EntityID entity : World::GetView<MeshComponent>())
         {
             if (!ComponentManager::HasComponent<SunComponent>(entity) && !ComponentManager::HasComponent<CameraComponent>(entity))
@@ -698,12 +698,12 @@ void RenderingValidation::AfterFrame(uint64_t frame)
                     for (UINT x = 0; x < reflection.Width; ++x)
                     {
                         const float distance = RenderCapture::HalfToFloat(pixels[x * 4 + 3]);
-                        hits += std::abs(distance) > 0.01f;
+                        hits += abs(distance) > 0.01f;
                         offscreenHits += distance < -0.01f;
                         for (UINT c = 0; c < 3; ++c)
                         {
                             const float value = RenderCapture::HalfToFloat(pixels[x * 4 + c]);
-                            finite &= std::isfinite(value) && value >= 0;
+                            finite &= isfinite(value) && value >= 0;
                             bright += value > 0.005f;
                         }
                     }
@@ -735,7 +735,7 @@ void RenderingValidation::AfterFrame(uint64_t frame)
             {
                 const auto* values = reinterpret_cast<const float*>(shadowDepth.Bytes.data() + y * shadowDepth.RowPitch);
                 for (UINT x = 0; x < shadowDepth.Width; ++x)
-                    writtenDepth += std::isfinite(values[x]) && values[x] > 0.0f && values[x] < 1.0f;
+                    writtenDepth += isfinite(values[x]) && values[x] > 0.0f && values[x] < 1.0f;
             }
         }
         Check(hasRasterShadow && writtenDepth > 0, frame == 12 ?
@@ -821,7 +821,7 @@ void RenderingValidation::AfterFrame(uint64_t frame)
             const bool forcedDisabled = GetEnvironmentVariableA("DX12_DISABLE_DLSS", disabled, sizeof(disabled)) > 0 && atoi(disabled) != 0;
             Check(!DlssUpscaler::IsActive(), "unsupported DLSS uses raster upscale fallback");
             // A capability-positive device must not silently lose DLSS during evaluation.
-            Check(forcedDisabled || std::string(DlssUpscaler::GetStatus()).find("failed") == std::string::npos, "DLSS availability does not hide evaluation failure");
+            Check(forcedDisabled || string(DlssUpscaler::GetStatus()).find("failed") == string::npos, "DLSS availability does not hide evaluation failure");
         }
         const auto& timing = RenderProfiler::GetLatest();
         for (const auto& pass : timing.Passes)

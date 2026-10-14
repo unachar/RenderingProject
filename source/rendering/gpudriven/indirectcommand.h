@@ -29,7 +29,7 @@ inline uint32_t GpuDrivenCapacity(uint32_t current, uint32_t required)
     while (capacity < required)
     {
         if (capacity > UINT32_MAX / 2)
-            throw std::overflow_error("GPU driven capacity overflow");
+            throw overflow_error("GPU driven capacity overflow");
         capacity *= 2;
     }
     return capacity;
@@ -41,6 +41,6 @@ inline GPUDrivenGeometryData ReserveGpuDrivenGeometry(uint64_t vertices, uint64_
     // IA view byte sizes are UINT; vertex format is the existing 48-byte StaticModelVertex.
     if ((vertices + vertexCount) * 48 > UINT32_MAX || (indices + indexCount) * 4 > UINT32_MAX ||
         vertices + vertexCount > INT32_MAX || indices + indexCount > UINT32_MAX)
-        throw std::overflow_error("GPU driven geometry arena exceeds IA limits");
+        throw overflow_error("GPU driven geometry arena exceeds IA limits");
     return {static_cast<uint32_t>(indices), indexCount, static_cast<int32_t>(vertices), 1};
 }
