@@ -13,4 +13,5 @@ public:
     static void Shutdown();
     static ID3D12Resource* GetTarget();
     static void SetMesh(Mesh mesh);
+    static void SetLightIntensity(float intensity);
 };

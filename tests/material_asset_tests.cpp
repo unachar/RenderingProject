@@ -21,7 +21,7 @@ int main()
         std::filesystem::create_directories(root);
         MaterialAssetData authored;
         Check(authored.Roughness == 0.5f && authored.NormalScale == 1.0f, "PBR defaults");
-        authored.BaseColor = {0.2f, 0.3f, 0.4f, 1.0f};
+        authored.BaseColor = {0.2f, 0.3f, 0.4f, 0.35f};
         authored.Textures[1] = 0xfedcba9876543210ull;
         authored.EmissiveIntensity = 3.0f;
         authored.Surface = MaterialSurface::Transparent;

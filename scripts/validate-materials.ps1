@@ -25,8 +25,8 @@ try {
     }
     $env:DX12_FEATURE_SMOKE_TEST = '0'
     $env:DX12_VALIDATION_MODE = '1'
-    $env:DX12_STARTUP_SMOKE_FRAMES = '24'
-    if ($Transparency) { $env:DX12_STARTUP_SMOKE_FRAMES = '70' }
+    $env:DX12_STARTUP_SMOKE_FRAMES = '33'
+    if ($Transparency) { $env:DX12_STARTUP_SMOKE_FRAMES = '79' }
     $env:DX12_MATERIAL_ASSET_TEST = '1'
     $logPath = Join-Path $workspace 'init_log.txt'
     $initialLength = (Get-Item -LiteralPath $logPath).Length

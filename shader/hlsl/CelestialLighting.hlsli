@@ -3,7 +3,13 @@
 // A virtual full moon follows the opposite solar orbit. All passes share it.
 float3 VirtualMoonDirection()
 {
-    return -normalize(SkySunDirection.xyz);
+    const float lengthSquared = dot(SkySunDirection.xyz, SkySunDirection.xyz);
+    if (lengthSquared < 0.00000001f)
+    {
+        // Isolated material previews have no celestial light direction.
+        return float3(0.0f, -1.0f, 0.0f);
+    }
+    return -SkySunDirection.xyz * rsqrt(lengthSquared);
 }
 float3 VirtualMoonIrradiance()
 {

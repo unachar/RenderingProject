@@ -249,7 +249,23 @@ void ImGuiManager::DrawMaterialEditorWindow()
     }
     if (ImGui::CollapsingHeader("Base Color", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        changed |= ImGui::ColorEdit4("Color", editing.BaseColor.data());
+        changed |= ImGui::ColorEdit3("Color", editing.BaseColor.data());
+        float transparency = 1.0f - editing.BaseColor[3];
+        if (ImGui::SliderFloat("Transparency", &transparency, 0, 1))
+        {
+            editing.BaseColor[3] = 1.0f - transparency;
+            if (transparency > 0.0f)
+            {
+                editing.Surface = MaterialSurface::Transparent;
+                editing.DepthWrite = false;
+            }
+            changed = true;
+        }
+        ImGui::SetItemTooltip("0 = opaque, 1 = fully transparent. Increasing this value selects Transparent surface.");
+        const auto transparencyMinimum = ImGui::GetItemRectMin();
+        const auto transparencyMaximum = ImGui::GetItemRectMax();
+        MaterialValidation::CaptureDropTarget("Transparency", transparencyMinimum.x, transparencyMinimum.y,
+            transparencyMaximum.x, transparencyMaximum.y);
         changed |= DrawTextureSlot("Base Color", editing.Textures[0]);
     }
     if (ImGui::CollapsingHeader("Metallic / Roughness", ImGuiTreeNodeFlags_DefaultOpen))

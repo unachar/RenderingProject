@@ -10,6 +10,7 @@
 #include "texturemanager.h"
 #include "staticmodel.h"
 #include "imguimanager.h"
+#include "materialvalidation.h"
 #include <cmath>
 
 namespace
@@ -349,15 +350,22 @@ void MaterialPreview::DrawImage(AssetHandle material)
     }
     const auto available = ImGui::GetContentRegionAvail();
     const float side = min(available.x, available.y);
-    ImGui::Image(reinterpret_cast<ImTextureData*>(preview.GpuSrv().ptr), ImVec2(side, side));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
+    ImGui::ImageButton("##PreviewOrbit", reinterpret_cast<ImTextureData*>(preview.GpuSrv().ptr),
+        ImVec2(side, side), ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0));
+    ImGui::PopStyleVar();
+    const auto imageMinimum = ImGui::GetItemRectMin();
+    const auto imageMaximum = ImGui::GetItemRectMax();
+    MaterialValidation::CaptureDropTarget("Preview", imageMinimum.x, imageMinimum.y, imageMaximum.x, imageMaximum.y);
+    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+    {
+        const auto& input = ImGui::GetIO();
+        preview.Yaw += input.MouseDelta.x * 0.01f;
+        preview.Pitch = clamp(preview.Pitch + input.MouseDelta.y * 0.01f, -1.4f, 1.4f);
+    }
     if (ImGui::IsItemHovered())
     {
         auto& input = ImGui::GetIO();
-        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left))
-        {
-            preview.Yaw += input.MouseDelta.x * 0.01f;
-            preview.Pitch = clamp(preview.Pitch + input.MouseDelta.y * 0.01f, -1.4f, 1.4f);
-        }
         preview.Distance = clamp(preview.Distance - input.MouseWheel * 0.25f, 1.5f, 12.0f);
     }
     if (!preview.Error.empty())
@@ -402,6 +410,11 @@ void MaterialPreview::Render()
     lights[4] = {1, 0, 0, 0};
     lights[5] = lights[0];
     lights[5 + RendererState::g_kMAX_SHADER_LIGHTS] = lights[1];
+    // Match LightParams in common.hlsl: four vector arrays, then one matrix array.
+    constexpr size_t shadowDataOffset = 5 + 8 * RendererState::g_kMAX_SHADER_LIGHTS;
+    constexpr size_t flagsOffset = shadowDataOffset + RendererState::g_kMAX_SHADER_LIGHTS;
+    lights[shadowDataOffset] = {-1, 0, 0, 0}; // The studio light has no scene shadow map.
+    lights[flagsOffset] = {1, 1, 0, 0}; // Enable physical lighting in opaque and forward passes.
     commands->SetGraphicsRootConstantBufferView(2, preview.Lights->GetGPUVirtualAddress() + GraphicsDevice::GetFrameIndex() * constantBytes);
     // Zero shadow and ray flags for this isolated preview scene.
     const auto zeroAddress = preview.Lights->GetGPUVirtualAddress() + GraphicsDevice::GetFrameIndex() * constantBytes + constantBytes - 256;
@@ -423,6 +436,8 @@ void MaterialPreview::Render()
     constants.MaterialMetallic = material.Metallic;
     constants.MaterialRoughness = material.Roughness;
     constants.MaterialFresnel = material.Fresnel;
+    constants.MaterialAlpha = material.Alpha;
+    constants.ViewportSize = {static_cast<float>(previewSize), static_cast<float>(previewSize)};
     constants.MaterialIsTransparent = material.IsTransparent;
     commands->SetGraphicsRootDescriptorTable(0, FrameConstants::AllocateTransientConstantBuffer(constants));
     MaterialBindings::SetMaterial(g_kINVALID_ENTITY, material);
@@ -473,4 +488,9 @@ ID3D12Resource* MaterialPreview::GetTarget()
 void MaterialPreview::SetMesh(Mesh mesh)
 {
     preview.Shape = static_cast<int>(mesh);
+}
+
+void MaterialPreview::SetLightIntensity(float intensity)
+{
+    preview.LightIntensity = clamp(intensity, 0.0f, 5.0f);
 }

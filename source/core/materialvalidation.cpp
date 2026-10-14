@@ -26,6 +26,7 @@
 #include "atmosphere.h"
 #include "cloud/cloudrenderer.h"
 #include "lightingresources.h"
+#include <imgui_internal.h>
 #include <fstream>
 
 namespace
@@ -45,9 +46,15 @@ filesystem::path fixtureRoot;
 vector<filesystem::path> ownedFiles;
 array<RenderCapture::TextureData, 6> reference;
 RenderCapture::TextureData withNormal;
+float unlitPreviewBrightness = 0.0f;
 XMFLOAT2 inspectorDrop{};
 XMFLOAT2 normalDrop{};
 XMFLOAT2 revertButton{};
+XMFLOAT2 previewImage{};
+XMFLOAT2 transparencySlider{};
+ImVec2 previewWindowPosition{};
+RenderCapture::TextureData beforeOrbit;
+float savedPreviewAlpha = 1.0f;
 bool injectDrag = false;
 EntityID transparencyFixture = g_kINVALID_ENTITY;
 RenderCapture::TextureData opaqueLighting;
@@ -58,6 +65,36 @@ EntityID secondTransmissionCaster = g_kINVALID_ENTITY;
 EntityID transmissionReceiver = g_kINVALID_ENTITY;
 XMFLOAT3 receiverBeforeCaster{}, receiverBehindCaster{};
 void Check(bool passed, const char* message);
+
+float PreviewBrightness()
+{
+    RenderCapture::TextureData texture;
+    if (!RenderCapture::ReadTexture(MaterialPreview::GetTarget(), texture) ||
+        (texture.Format != DXGI_FORMAT_R16G16B16A16_FLOAT && texture.Format != DXGI_FORMAT_R8G8B8A8_UNORM))
+    {
+        Check(false, "capture preview lighting regression fixture");
+        return 0.0f;
+    }
+    float total = 0.0f;
+    UINT samples = 0;
+    for (UINT y = texture.Height / 3; y < texture.Height * 2 / 3; ++y)
+    {
+        const auto* row = texture.Bytes.data() + y * texture.RowPitch;
+        for (UINT x = texture.Width / 3; x < texture.Width * 2 / 3; ++x)
+        {
+            if (texture.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+            {
+                total += RenderCapture::HalfToFloat(reinterpret_cast<const uint16_t*>(row)[x * 4]);
+            }
+            else
+            {
+                total += row[x * 4] / 255.0f;
+            }
+            ++samples;
+        }
+    }
+    return total / max(samples, 1u);
+}
 
 XMFLOAT3 MinimumTransmission(UINT slice)
 {
@@ -550,8 +587,12 @@ bool MaterialValidation::Enabled()
 void MaterialValidation::BeforeFrame(uint64_t frame)
 {
     frames = frame + 1;
-    PrepareTransparencyFrame(frame);
-    PrepareTransmissionFrame(frame);
+    // Finish editor input tests before the transparency fixtures replace the scene and material.
+    if (frame >= 33)
+    {
+        PrepareTransparencyFrame(frame - 9);
+        PrepareTransmissionFrame(frame - 9);
+    }
     if (frame == 0)
     {
         RenderProfiler::SetWindowVisible(false);
@@ -600,6 +641,7 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         ownedFiles.emplace_back(path.wstring() + L".meta");
         handle = MaterialManager::Registry().Register(path, AssetType::Material, error);
         ImGuiManager::OpenMaterialAsset(handle);
+        MaterialPreview::SetLightIntensity(0.0f);
         first = MakeCube(-1.2f);
         second = MakeCube(1.2f);
         Check(MaterialManager::Assign(first, 0, handle) && MaterialManager::Assign(second, 0, handle), "assign shared material slots");
@@ -673,6 +715,7 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
     }
     if (frame == 2)
     {
+        MaterialPreview::SetLightIntensity(5.0f);
         auto editing = MaterialManager::GetRuntime(handle).Editing;
         const auto before = MaterialManager::GetRuntime(handle).Revision;
         editing.Roughness = 0.27f;
@@ -772,11 +815,22 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         editing.Roughness = 0.82f;
         MaterialManager::SetEditing(copyHandle, editing);
     }
+    if (frame == 31)
+    {
+        ImGuiManager::MaterialEditorUndo(false);
+    }
+    if (frame == 32)
+    {
+        ImGuiManager::MaterialEditorUndo(true);
+    }
 }
 
 void MaterialValidation::AfterFrame(uint64_t frame)
 {
-    CheckTransparencyFrame(frame);
+    if (frame >= 33)
+    {
+        CheckTransparencyFrame(frame - 9);
+    }
     const auto* firstInstance = GpuScene::GetInstance(GpuScene::GetEntityInstance(first));
     const auto* secondInstance = GpuScene::GetInstance(GpuScene::GetEntityInstance(second));
     if (frame == 1)
@@ -790,9 +844,12 @@ void MaterialValidation::AfterFrame(uint64_t frame)
     if (frame == 1)
     {
         constantEditPipelineCreations = PsoManager::GraphicsPipelineCreations();
+        unlitPreviewBrightness = PreviewBrightness();
     }
     if (frame == 3)
     {
+        Check(PreviewBrightness() > unlitPreviewBrightness + 0.015f,
+            "preview studio light increases rendered surface brightness");
         Check(firstInstance && firstInstance->MaterialIndex == gpuIndex, "constant edit updates GPU record in place");
         vector<uint8_t> records;
         Check(RenderCapture::ReadBuffer(GpuScene::MaterialBuffer(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
@@ -891,6 +948,51 @@ void MaterialValidation::AfterFrame(uint64_t frame)
     {
         Check(!MaterialManager::GetRuntime(copyHandle).Dirty && MaterialManager::GetRuntime(copyHandle).Editing.Roughness == 0.42f,
             "Revert toolbar discards unsaved changes");
+        if (const auto* window = ImGui::FindWindowByName("###MaterialAssetEditor"))
+        {
+            previewWindowPosition = window->Pos;
+        }
+    }
+    if (frame == 24)
+    {
+        Check(RenderCapture::ReadTexture(MaterialPreview::GetTarget(), beforeOrbit), "capture preview before orbit drag");
+    }
+    if (frame == 26)
+    {
+        const auto* window = ImGui::FindWindowByName("###MaterialAssetEditor");
+        Check(window && window->Pos.x == previewWindowPosition.x && window->Pos.y == previewWindowPosition.y,
+            "orbit drag keeps material editor window stationary");
+        RenderCapture::TextureData afterOrbit;
+        Check(RenderCapture::ReadTexture(MaterialPreview::GetTarget(), afterOrbit) &&
+            !EqualPixels(beforeOrbit, afterOrbit, 4), "orbit drag changes preview viewing angle");
+    }
+    if (frame == 28)
+    {
+        const auto& editing = MaterialManager::GetRuntime(copyHandle).Editing;
+        savedPreviewAlpha = editing.BaseColor[3];
+        Check(savedPreviewAlpha > 0.0f && savedPreviewAlpha < 1.0f &&
+            editing.Surface == MaterialSurface::Transparent && !editing.DepthWrite,
+            "transparency slider edits alpha and enables transparent rendering");
+        Check(RenderCapture::SaveTexturePng(MaterialPreview::GetTarget(), L"build/material-tests/preview-transparent.png"),
+            "capture transparent preview");
+    }
+    if (frame == 30)
+    {
+        MaterialAssetData saved;
+        string error;
+        Check(MaterialSerializer::Load(MaterialManager::Registry().Resolve(copyHandle), saved, error) &&
+            saved.BaseColor[3] == savedPreviewAlpha && saved.Surface == MaterialSurface::Transparent,
+            "Ctrl+S persists transparency from editor slider");
+    }
+    if (frame == 31)
+    {
+        Check(MaterialManager::GetRuntime(copyHandle).Editing.BaseColor[3] == 1.0f,
+            "Undo restores transparency slider edit");
+    }
+    if (frame == 32)
+    {
+        Check(MaterialManager::GetRuntime(copyHandle).Editing.BaseColor[3] == savedPreviewAlpha,
+            "Redo restores transparency slider edit");
     }
 }
 
@@ -913,6 +1015,14 @@ void MaterialValidation::CaptureDropTarget(const char* name, float left, float t
     {
         revertButton = center;
     }
+    else if (strcmp(name, "Preview") == 0)
+    {
+        previewImage = center;
+    }
+    else if (strcmp(name, "Transparency") == 0)
+    {
+        transparencySlider = center;
+    }
 }
 
 void MaterialValidation::BeforeEditorFrame()
@@ -923,6 +1033,29 @@ void MaterialValidation::BeforeEditorFrame()
     }
     injectDrag = false;
     const auto frame = frames - 1;
+    if (frame >= 24 && frame <= 28)
+    {
+        auto mouse = previewImage;
+        if (frame == 25 || frame == 26)
+        {
+            mouse.x += 40.0f;
+            mouse.y += 20.0f;
+        }
+        if (frame >= 27)
+        {
+            mouse = transparencySlider;
+        }
+        auto& input = ImGui::GetIO();
+        input.AddMousePosEvent(mouse.x, mouse.y);
+        input.AddMouseButtonEvent(ImGuiMouseButton_Left, frame == 24 || frame == 25 || frame == 27);
+        return;
+    }
+    if (frame == 29 || frame == 30)
+    {
+        ImGui::GetIO().AddKeyEvent(ImGuiMod_Ctrl, frame == 29);
+        ImGui::GetIO().AddKeyEvent(ImGuiKey_S, frame == 29);
+        return;
+    }
     if (frame == 18 || frame == 19)
     {
         ImGui::GetIO().AddKeyEvent(ImGuiMod_Ctrl, frame == 18);
@@ -986,7 +1119,7 @@ void MaterialValidation::InjectDragPayload()
 bool MaterialValidation::Finish()
 {
     GraphicsDevice::WaitForGpuIdle();
-    Check(frames >= 24, "complete material validation sequence");
+    Check(frames >= 33, "complete material validation sequence");
     failures += RenderCapture::ReportGraphicsErrors();
     for (const auto& path : ownedFiles)
     {
