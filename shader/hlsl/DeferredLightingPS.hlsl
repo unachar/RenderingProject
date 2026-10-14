@@ -1,3 +1,4 @@
+Texture2D<float4> MaterialEmissionAO : register(t33);
 #define SHADER_POSTPROCESS
 #define SHADER_3D
 #include "common.hlsl"
@@ -762,6 +763,7 @@ float4 main(PSInputPostProcess input) : SV_Target
 {
 
     const float PI = 3.14159265358979323846f;
+    float4 authoredEmissionAO = MaterialEmissionAO.SampleLevel(TextureSampler, input.TexCoord, 0);
     float4 material = MaterialTexture.Sample(TextureSampler, input.TexCoord);
     float shaderClass = material.a;
     bool background = shaderClass < -0.5f;
@@ -1026,7 +1028,7 @@ float4 main(PSInputPostProcess input) : SV_Target
             CelestialAtmosphereTransmission(position.y, moonDirection);
         pbrDirectLight += EvaluatePbrDirectLight(N, V, moonDirection, moonRadiance,
             albedo, material.rgb, shadowSoftness);
-        baseColor.rgb = pbrDirectLight + ambient;
+        baseColor.rgb = pbrDirectLight + ambient * authoredEmissionAO.a;
     }
 
 
@@ -1048,6 +1050,7 @@ float4 main(PSInputPostProcess input) : SV_Target
 		baseColor.rgb *= lerp(0.45f, 1.0f, rayAmbient);
 	}
 
+    baseColor.rgb += authoredEmissionAO.rgb;
     baseColor.rgb = baseColor.rgb * fogTransmittance + atmosphereMedia.rgb;
     baseColor.a = 1.0f;
     return baseColor;

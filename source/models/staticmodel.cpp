@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <unordered_set>
 #include "gpudriven/gpudrivenrenderer.h"
 #include "../../External/meshoptimizer/src/meshoptimizer.h"
 #define _CRT_SECURE_NO_WARNINGS
@@ -531,6 +532,22 @@ bool StaticModelResource::BuildLodIndexBuffers(
 
 bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 {
+    // The legacy OBJ importer combines every face into one section. Preserve its
+    // single-material behavior, but retain authored material sections via Assimp.
+    std::ifstream source(fileName);
+    std::unordered_set<std::string> sectionMaterials;
+    std::string sourceLine;
+    while (std::getline(source, sourceLine))
+    {
+        if (sourceLine.rfind("usemtl ", 0) == 0)
+        {
+            sectionMaterials.insert(sourceLine.substr(7));
+        }
+    }
+    if (sectionMaterials.size() > 1)
+    {
+        return LoadAssimpModel(fileName, device, false);
+    }
 	m_MaterialPath.clear();
 
 	ifstream ifs(fileName);

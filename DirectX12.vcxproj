@@ -1155,4 +1155,27 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
       <ObjectFileOutput>$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
     </FxCompile>
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\assets\materialasset.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClInclude Include="source\assets\materialasset.h" />
+    <ClCompile Include="source\assets\assetregistry.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClInclude Include="source\assets\assetregistry.h" />
+    <ClCompile Include="source\assets\materialmanager.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClInclude Include="source\assets\materialmanager.h" />
+    <ClCompile Include="External\RTXNS\external\donut\thirdparty\jsoncpp\src\lib_json\json_reader.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="External\RTXNS\external\donut\thirdparty\jsoncpp\src\lib_json\json_value.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="External\RTXNS\external\donut\thirdparty\jsoncpp\src\lib_json\json_writer.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\editor\editormaterialassets.cpp" />
+    <ClCompile Include="source\rendering\materialpreview.cpp" />
+    <ClInclude Include="source\rendering\materialpreview.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\core\materialvalidation.cpp" />
+    <ClInclude Include="source\core\materialvalidation.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\assets\materialscenereferences.cpp" />
+  </ItemGroup>
 </Project>

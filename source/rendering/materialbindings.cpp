@@ -4,6 +4,9 @@
 #include "componentmanager.h"
 #include "world.h"
 #include "materialsystem.h"
+#include "materialmanager.h"
+#include "frameconstants.h"
+#include "texturemanager.h"
 
 
 namespace
@@ -65,10 +68,15 @@ namespace
 		float SkinShadowScatter = 0.54f;
 		float CastShadowThreshold = 0.28f;
 		float CastShadowSoftness = 0.10f;
-		float Padding[3]{};
+        // HLSL starts the next float4 at a 16-byte boundary after float3 PBRPadding.
+		float Padding[4]{};
 		XMFLOAT4 Transparent0 = { 1.50f, 0.98f, 0.02f, 0.035f };
 		XMFLOAT4 Transparent1 = { 0.10f, 0.02f, 0.01f, 0.005f };
 		MaterialPartShaderConstants PartParams[kMaterialPartParamCount]{};
+        XMFLOAT4 AssetBaseColor{1, 1, 1, 1};
+        XMFLOAT4 AssetSurface{1, 1, 0, 0.5f}; // Normal scale, AO strength, enabled, alpha cutoff.
+        XMFLOAT4 AssetEmission{};
+        XMUINT4 AssetTextures{UINT32_MAX, UINT32_MAX, UINT32_MAX, 0}; // MR, AO, emissive, surface/cull flags.
 	};
 
 	void WriteMaterialPartConstants(PBRConstants& constants, int index, const MaterialPartParams& params)
@@ -136,6 +144,25 @@ namespace
 		{
 			WriteMaterialPartConstants(constants, i, material.PartParams[i]);
 		}
+        constants.AssetBaseColor = material.BaseColor;
+        constants.AssetSurface = {material.NormalScale, material.AOStrength, 0, material.AlphaCutoff};
+        if (material.RuntimeHandle != 0)
+        {
+            constants.AssetSurface.z = 1.0f;
+        }
+        constants.AssetEmission = {material.EmissiveColor.x, material.EmissiveColor.y,
+            material.EmissiveColor.z, material.EmissiveIntensity};
+        auto textureOffset = [](int descriptor)
+        {
+            if (descriptor < static_cast<int>(FrameConstants::g_kTEXTURE_SRV_START_INDEX))
+            {
+                return UINT32_MAX;
+            }
+            return static_cast<uint32_t>(descriptor) - FrameConstants::g_kTEXTURE_SRV_START_INDEX;
+        };
+        constants.AssetTextures = {textureOffset(material.MetallicRoughnessID),
+            textureOffset(material.AOTextureID), textureOffset(material.EmissiveTextureID),
+            static_cast<uint32_t>(material.AssetSurface) | (static_cast<uint32_t>(material.AssetCull) << 2)};
 		return constants;
 	}
 
@@ -201,7 +228,8 @@ namespace
 GPUMaterialData MaterialBindings::BuildGpuSceneMaterial(const MaterialComponent& material)
 {
     GPUMaterialData result{};
-    result.BaseColor.w = material.Alpha;
+    result.BaseColor = material.BaseColor;
+    result.BaseColor.w *= material.Alpha;
     result.Surface = XMFLOAT4(material.Metallic, material.Roughness, material.Fresnel, material.NormalBlend);
     result.AlbedoTextureIndex = material.TextureID >= 0 ? static_cast<uint32_t>(material.TextureID) : UINT32_MAX;
     result.NormalTextureIndex = material.NormalMapID >= 0 ? static_cast<uint32_t>(material.NormalMapID) : UINT32_MAX;
@@ -255,6 +283,40 @@ void MaterialBindings::SetMaterial(const EntityID entityID, const MaterialCompon
 	PBRConstants constants = BuildPBRConstantsFromMaterial(material);
 	static_assert(sizeof(constants) <= g_kPBR_CB_ALIGNED_SIZE,
 		"Material constants must fit within one per-entity frame slot");
+    static_assert(offsetof(PBRConstants, AssetBaseColor) == 146 * 16);
+    const auto textureHeap = FrameConstants::GetCbvHeap();
+    if (textureHeap)
+    {
+        m_CommandList->SetGraphicsRootDescriptorTable(18, CD3DX12_GPU_DESCRIPTOR_HANDLE(
+            textureHeap->GetGPUDescriptorHandleForHeapStart(), FrameConstants::g_kTEXTURE_SRV_START_INDEX,
+            FrameConstants::GetCbvIncrementSize()));
+    }
+    if (material.RuntimeHandle != 0)
+    {
+        auto& runtime = MaterialManager::GetRuntime(material.RuntimeHandle);
+        if (!runtime.Constants)
+        {
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+            const auto description = CD3DX12_RESOURCE_DESC::Buffer(g_kPBR_CB_ALIGNED_SIZE * g_kFRAME_COUNT);
+            if (FAILED(m_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&runtime.Constants))) ||
+                FAILED(runtime.Constants->Map(0, nullptr, reinterpret_cast<void**>(&runtime.MappedConstants))))
+            {
+                runtime.Error = "Failed to create material constant buffer";
+                runtime.Constants.Reset();
+                return;
+            }
+        }
+        const auto frame = GraphicsDevice::GetFrameIndex();
+        if (runtime.UploadedRevision[frame] != runtime.Revision)
+        {
+            memcpy(runtime.MappedConstants + frame * g_kPBR_CB_ALIGNED_SIZE, &constants, sizeof(constants));
+            runtime.UploadedRevision[frame] = runtime.Revision;
+        }
+        m_CommandList->SetGraphicsRootConstantBufferView(3,
+            runtime.Constants->GetGPUVirtualAddress() + frame * g_kPBR_CB_ALIGNED_SIZE);
+        return;
+    }
 
 	const UINT frameSlot = GraphicsDevice::GetFrameIndex() * g_kPBR_CB_SLOT_COUNT + slot;
 	auto* dst = static_cast<UINT8*>(m_pPBRCbvDataBegin) + frameSlot * g_kPBR_CB_ALIGNED_SIZE;
@@ -285,6 +347,43 @@ uint64_t MaterialBindings::GetMaterialBatchHash(const MaterialComponent& materia
 
 	hash ^= stateHash + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
 	return hash;
+}
+
+void MaterialBindings::BindAssetSlot(EntityID entity, const MaterialComponent& material)
+{
+    ConstantBuffer3D constants;
+    memcpy(&constants, FrameConstants::GetConstantBufferPtr() + entity * FrameConstants::g_kCB_ALIGNED_SIZE, sizeof(constants));
+    constants.UseTexture = static_cast<int>(material.UseTexture);
+    constants.UseNormalMap = static_cast<int>(material.NormalMapID >= 0);
+    constants.MaterialMode = static_cast<int>(material.ShaderClassMode);
+    constants.ShaderClass = static_cast<int>(material.ShaderClass);
+    constants.MaterialMetallic = material.Metallic;
+    constants.MaterialRoughness = material.Roughness;
+    constants.MaterialFresnel = material.Fresnel;
+    constants.MaterialAlpha = material.Alpha;
+    constants.MaterialIsTransparent = static_cast<int>(material.IsTransparent);
+    m_CommandList->SetGraphicsRootDescriptorTable(0, FrameConstants::AllocateTransientConstantBuffer(constants));
+    SetMaterial(entity, material);
+    int base = TextureManager::GetDefaultTextureIndex();
+    int normal = base;
+    if (material.TextureID >= 0)
+    {
+        base = material.TextureID;
+    }
+    if (material.NormalMapID >= 0)
+    {
+        normal = material.NormalMapID;
+    }
+    const auto heap = FrameConstants::GetCbvHeap()->GetGPUDescriptorHandleForHeapStart();
+    m_CommandList->SetGraphicsRootDescriptorTable(1, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap, base, FrameConstants::GetCbvIncrementSize()));
+    m_CommandList->SetGraphicsRootDescriptorTable(6, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap, normal, FrameConstants::GetCbvIncrementSize()));
+    for (int descriptor : {base, normal, material.MetallicRoughnessID, material.AOTextureID, material.EmissiveTextureID})
+    {
+        if (descriptor >= 0)
+        {
+            TextureManager::TouchTexture(descriptor);
+        }
+    }
 }
 
 void MaterialBindings::UpdateDeferredLightingMaterial()

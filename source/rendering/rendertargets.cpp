@@ -35,7 +35,7 @@ void RenderTargets::GetGBufferClearColor(UINT index, float outColor[4])
 	{
 		outColor[3] = -1.0f;
 	}
-	else if (index == static_cast<UINT>(GBufferType::ATMOSPHERE))
+	else if (index == static_cast<UINT>(GBufferType::ATMOSPHERE) || index == static_cast<UINT>(GBufferType::EMISSION_AO))
 	{
 		outColor[3] = 1.0f;
 	}

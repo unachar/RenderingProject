@@ -1,5 +1,6 @@
 #pragma once
 #include "ecs.h"
+#include "materialasset.h"
 #include "rendertypes.h"
 #include "light.h"
 #include "animationplayback.h"
@@ -245,6 +246,21 @@ struct MaterialPartParams
 
 struct MaterialComponent
 {
+    vector<AssetHandle> MaterialSlots;
+    AssetHandle MaterialSceneIdentity = 0;
+    AssetHandle RuntimeHandle = 0;
+    XMFLOAT4 BaseColor{1, 1, 1, 1};
+    float NormalScale = 1.0f;
+    float AOStrength = 1.0f;
+    XMFLOAT3 EmissiveColor{};
+    float EmissiveIntensity = 0.0f;
+    int MetallicRoughnessID = -1;
+    int AOTextureID = -1;
+    int EmissiveTextureID = -1;
+    MaterialSurface AssetSurface = MaterialSurface::Opaque;
+    MaterialCull AssetCull = MaterialCull::Back;
+    bool AssetDepthWrite = true;
+    float AlphaCutoff = 0.5f;
 	int TextureID = -1;
 	string TexturePath;
 	int NormalMapID = -1;

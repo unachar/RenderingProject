@@ -4,6 +4,7 @@ RWTexture2D<float4> OutNormal : register(u1);
 RWTexture2D<float> OutDepth : register(u2);
 RWTexture2D<float4> OutMaterial : register(u3);
 RWTexture2D<float4> OutShadow : register(u4);
+RWTexture2D<float4> OutEmissionAO : register(u5);
 
 cbuffer VisibilityConstants : register(b0)
 {
@@ -33,6 +34,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     uint2 pixel = dispatchThreadId.xy;
     if (any(pixel >= OutputExtent)) return;
 
+    OutEmissionAO[pixel] = float4(0, 0, 0, 1);
     uint4 payload = VisibilityBuffer.Load(int3(pixel, 0));
     if ((payload.w & 0x80000000u) == 0u)
     {

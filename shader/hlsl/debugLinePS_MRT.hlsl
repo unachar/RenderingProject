@@ -4,6 +4,7 @@
 GBufferOutput main(PSInputDebugLine input)
 {
     GBufferOutput output;
+    output.EmissionAO = float4(0, 0, 0, 1);
     output.Color = input.Color;
     output.Normal = MakeGBufferNormal(float3(0.0f, 1.0f, 0.0f));
     output.Depth = saturate(input.Position.z);

@@ -17,6 +17,8 @@ struct ShaderDescription
 	D3D_PRIMITIVE_TOPOLOGY topology{};
 	bool frontCounterClockwise{};
 	bool enableAlphaBlend{};
+    D3D12_CULL_MODE cullMode = D3D12_CULL_MODE_BACK;
+    bool depthWrite = true;
 
 
 	HWND hwnd{};

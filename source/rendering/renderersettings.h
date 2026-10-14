@@ -1,4 +1,5 @@
 #pragma once
+#include "materialasset.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -37,7 +38,9 @@ public:
 	static void SetFsrSharpness(float value) { SetValue(s_FsrSharpness, std::clamp(value, 0.0f, 2.0f)); }
 	static float GetNisSharpness() { return s_NisSharpness; }
 	static void SetNisSharpness(float value) { SetValue(s_NisSharpness, std::clamp(value, 0.0f, 1.0f)); }
-	static bool GetComputeGBufferEnabled() { return s_ComputeGBufferEnabled; }
+    // The packed visibility payload has no emission/AO channels. Use production raster
+    // GBuffer generation when the scene contains material assets; keep the user's option.
+	static bool GetComputeGBufferEnabled() { return s_ComputeGBufferEnabled && !SceneHasMaterialAssets(); }
 	static void SetComputeGBufferEnabled(bool value) { SetValue(s_ComputeGBufferEnabled, value); }
 	static bool GetSsaoEnabled() { return s_SsaoEnabled; }
 	static void SetSsaoEnabled(bool value) { SetValue(s_SsaoEnabled, value); }

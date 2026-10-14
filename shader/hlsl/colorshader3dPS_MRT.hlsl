@@ -28,6 +28,7 @@ GBufferOutput main(in PSInput3D In)
     clip(baseColor.a - 0.01f);
 
     GBufferOutput output;
+    output.EmissionAO = float4(0, 0, 0, 1);
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
     output.Depth = saturate(In.Position.z);

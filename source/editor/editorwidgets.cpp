@@ -478,6 +478,15 @@ namespace EditorWidgets
 			return true;
 		}
 
+		if (ComponentManager::HasComponent<MeshComponent>(entity))
+		{
+			const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+			if (!mesh.HasLocalBounds) return false;
+			center = mesh.LocalBoundsCenter;
+			extents = mesh.LocalBoundsExtents;
+			return true;
+		}
+
 		if (ComponentManager::HasComponent<SpriteComponent>(entity))
 		{
 			center = { 0.0f, 0.0f, 0.0f };

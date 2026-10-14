@@ -19,6 +19,7 @@
     <ClCompile>
       <AdditionalIncludeDirectories>
         $(MSBuildThisFileDirectory)source\assets;
+        $(MSBuildThisFileDirectory)External\RTXNS\external\donut\thirdparty\jsoncpp\include;
         $(MSBuildThisFileDirectory)source\core;
         $(MSBuildThisFileDirectory)source\ecs;
         $(MSBuildThisFileDirectory)source\editor;

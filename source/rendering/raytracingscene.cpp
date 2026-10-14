@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "materialmanager.h"
 #include "raytracingscene.h"
 #include "materialsystem.h"
 #include "world.h"
@@ -9,14 +10,21 @@
 
 namespace
 {
-void SetMaterial(RaytracingGeometry& geometry, EntityID entity, int modelTexture = -1)
+void SetMaterial(RaytracingGeometry& geometry, EntityID entity, int modelTexture = -1, size_t slot = 0)
 {
     if (ComponentManager::HasComponent<MaterialComponent>(entity))
     {
-        const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+        const auto& material = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity), slot);
         geometry.Roughness = material.Roughness;
         geometry.Metallic = material.Metallic;
-        if (material.UseTexture) geometry.TextureIndex = modelTexture >= 0 ? modelTexture : material.TextureID;
+        if (material.UseTexture)
+        {
+            geometry.TextureIndex = material.TextureID;
+            if (material.RuntimeHandle == 0 && modelTexture >= 0)
+            {
+                geometry.TextureIndex = modelTexture;
+            }
+        }
     }
     else geometry.TextureIndex = modelTexture;
     geometry.Texture = TextureManager::GetTextureResource(geometry.TextureIndex);
@@ -41,7 +49,7 @@ bool IsOpaqueCaster(EntityID entity)
     }
     if (ComponentManager::HasComponent<MaterialComponent>(entity))
     {
-        const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+        const auto& material = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity));
         return !MaterialSystem::IsTransparentMaterial(material);
     }
     return true;
@@ -88,7 +96,7 @@ void AppendModel(std::vector<RaytracingGeometry>& geometry, EntityID entity, Mod
             entry.IndexState = D3D12_RESOURCE_STATE_GENERIC_READ;
         }
         entry.World = transform.WorldMatrix;
-        SetMaterial(entry, entity, mesh.TextureIndex);
+        SetMaterial(entry, entity, mesh.TextureIndex, meshIndex);
         VertexDeformationView deformation;
         if (!deforming && VertexDeformation::TryResolveStaticMesh(entity, meshIndex, deformation))
         {

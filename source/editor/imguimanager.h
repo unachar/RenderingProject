@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "pch.h"
 #include "ecs.h"
+#include "materialasset.h"
 #include "componentmanager.h"
 #include <d3d12.h>
 #include <filesystem>
@@ -16,6 +17,7 @@ struct ID3D12DescriptorHeap;
 class ImGuiManager
 {
     friend class RenderingValidation;
+    friend class MaterialValidation;
 private:
 	inline static bool m_IsClosing = false;
 	inline static int m_renderMode = -1;
@@ -140,6 +142,14 @@ private:
 	static void DrawLogWindow();
 	static void DrawPerformanceWindow();
 	static void DrawMaterialEditorWindow();
+    static void DrawLegacyMaterialEditorWindow();
+    static void OpenMaterialAsset(AssetHandle handle);
+    static void DrawMaterialAssetSlots(EntityID entity);
+    static void DrawMaterialAssetClosePrompt();
+    static void MaterialEditorUndo(bool redo);
+    static bool MaterialEditorHasFocus();
+    static void AssignMaterialAsset(EntityID entity, size_t slot, AssetHandle handle);
+    static void DrawMaterialDropTarget();
 	static void DrawRimSettingsWindow();
 	static void DrawMeshOutlineWindow();
 	static void DrawMeshShadingWindow();

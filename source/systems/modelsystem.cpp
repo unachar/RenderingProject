@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "materialmanager.h"
 #include "meshshader/meshshaderrenderer.h"
 #include "modelsystem.h"
 #include "gpudriven/gpudrivenrenderer.h"
@@ -35,6 +36,15 @@
 		return material;
 	}
 
+    static const MaterialComponent& LegacyMaterialForEntity(EntityID entity)
+    {
+        if (ComponentManager::HasComponent<MaterialComponent>(entity))
+        {
+            return ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+        }
+        return DefaultMaterial();
+    }
+
 	static bool IsSkyEntity(EntityID entity)
 	{
 		return ComponentManager::HasComponent<NameComponent>(entity) &&
@@ -59,7 +69,7 @@
 			return true;
 		}
 
-		const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+		const auto& material = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity));
 		if (MaterialSystem::IsTransparentMaterial(material))
 		{
 			return false;
@@ -75,7 +85,7 @@
 			return false;
 		}
 
-		const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+		const auto& material = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity));
 		return material.ShaderClassMode == MaterialMode::Auto ||
 			(material.ShaderClassMode == MaterialMode::Manual &&
 				material.ShaderClass == ShaderClass::Toon);
@@ -412,14 +422,13 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			const MaterialComponent* material;
 			if (Registry::HasComponent(i, ComponentType::MATERIAL))
 			{
-				material = &ComponentManager::GetComponentUnchecked<MaterialComponent>(i);
+				material = &MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(i));
 			}
 			else
 			{
 				material = nullptr;
 			}
-			bool isTransparent = material && MaterialSystem::IsTransparentMaterial(*material);
-			if (isTransparent != drawTransparent)
+			if (!MaterialManager::HasSurfaceForPass(i, drawTransparent))
 			{
 				continue;
 			}
@@ -541,6 +550,7 @@ ID3D12PipelineState* lastPso = nullptr;
 			for (UINT m = 0; m < dc.model->GetMeshCount(); m++)
 			{
 				const MeshData& meshData = dc.model->GetMeshData(m);
+
 				if (!meshData.VertexBuffer)
 				{
 					continue;
@@ -597,7 +607,7 @@ ID3D12PipelineState* lastPso = nullptr;
 
 			const XMMATRIX world = XMLoadFloat4x4(
 				&ComponentManager::GetComponentUnchecked<TransformComponent>(dc.EntityID).WorldMatrix);
-			const bool indirectBaseDrawn = m_IndirectDraws && m_IndirectDraws->ExecutePrimary(
+			const bool indirectBaseDrawn = LegacyMaterialForEntity(dc.EntityID).MaterialSlots.empty() && m_IndirectDraws && m_IndirectDraws->ExecutePrimary(
 				pCommandList,
 				dc.model,
 				dc.EntityID,
@@ -611,21 +621,59 @@ ID3D12PipelineState* lastPso = nullptr;
 			for (UINT m = 0; m < dc.model->GetMeshCount(); m++)
 			{
 				const MeshData& meshData = dc.model->GetMeshData(m);
+                const auto& slotMaterial = MaterialManager::Resolve(
+                    LegacyMaterialForEntity(dc.EntityID), m);
+                ID3D12PipelineState* sectionPso = dc.pso;
+                if (MaterialSystem::IsTransparentMaterial(slotMaterial) != drawTransparent)
+                {
+                    continue;
+                }
 
-				if (meshData.TextureIndex >= 0)
+                if (!LegacyMaterialForEntity(dc.EntityID).MaterialSlots.empty())
+                {
+                    MaterialBindings::BindAssetSlot(dc.EntityID, slotMaterial);
+                }
+                if (slotMaterial.RuntimeHandle != 0)
+                {
+                    ShaderDescription sectionDescription{};
+                    sectionDescription.vsPath = GetModelVsPath(dc.EntityID);
+                    sectionDescription.psPath = GetModelPsPath(dc.EntityID);
+                    sectionDescription.isModel = true;
+                    sectionDescription.enableAlphaBlend = drawTransparent;
+                    sectionDescription.cullMode = D3D12_CULL_MODE_BACK;
+                    if (slotMaterial.AssetCull == MaterialCull::None)
+                    {
+                        sectionDescription.cullMode = D3D12_CULL_MODE_NONE;
+                    }
+                    else if (slotMaterial.AssetCull == MaterialCull::Front)
+                    {
+                        sectionDescription.cullMode = D3D12_CULL_MODE_FRONT;
+                    }
+                    sectionDescription.depthWrite = slotMaterial.AssetDepthWrite;
+                    auto* assetPso = PsoManager::GetOrCreateGraphicsPso(sectionDescription);
+                    if (assetPso)
+                    {
+                        sectionPso = assetPso;
+                    }
+                    pCommandList->SetPipelineState(sectionPso);
+                    lastPso = nullptr;
+                }
+
+
+				if (slotMaterial.RuntimeHandle == 0 && meshData.TextureIndex >= 0)
 				{
 					TextureManager::TouchTexture(meshData.TextureIndex);
 					CD3DX12_GPU_DESCRIPTOR_HANDLE meshSrvHandle(heapStart, meshData.TextureIndex, cbvIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, meshSrvHandle);
 				}
-				else
+				else if (slotMaterial.RuntimeHandle == 0)
 				{
 					CD3DX12_GPU_DESCRIPTOR_HANDLE entitySrvHandle(heapStart, dc.srvIndex, cbvIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, entitySrvHandle);
 				}
 				if (!indirectBaseDrawn && !occlusionPhaseTwo)
 				{
-					pCommandList->SetPipelineState(dc.pso);
+					pCommandList->SetPipelineState(sectionPso);
 					pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
 					pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 					pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
@@ -689,6 +737,7 @@ ID3D12PipelineState* lastPso = nullptr;
 			for (UINT m = 0; m < dc.model->GetMeshCount(); m++)
 			{
 				const MeshData& meshData = dc.model->GetMeshData(m);
+
 				if (!meshData.VertexBuffer)
 				{
 					continue;
@@ -744,14 +793,13 @@ ID3D12PipelineState* lastPso = nullptr;
 			const MaterialComponent* material;
 			if (Registry::HasComponent(i, ComponentType::MATERIAL))
 			{
-				material = &ComponentManager::GetComponentUnchecked<MaterialComponent>(i);
+				material = &MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(i));
 			}
 			else
 			{
 				material = nullptr;
 			}
-			bool isTransparent = material && MaterialSystem::IsTransparentMaterial(*material);
-			if (isTransparent != drawTransparent)
+			if (!MaterialManager::HasSurfaceForPass(i, drawTransparent))
 			{
 				continue;
 			}
@@ -891,7 +939,7 @@ ID3D12PipelineState* lastPso = nullptr;
 				&ComponentManager::GetComponentUnchecked<TransformComponent>(dc.EntityID).WorldMatrix);
 			const bool deforming = VertexDeformation::IsRequested(dc.EntityID);
 			const bool gpuBaseDrawn = !drawTransparent && GPUDrivenRenderer::HandlesEntity(dc.EntityID);
-			const bool indirectBaseDrawn = gpuBaseDrawn || (!deforming && !useMeshShaders && m_IndirectDraws && m_IndirectDraws->ExecutePrimary(
+			const bool indirectBaseDrawn = gpuBaseDrawn || (!deforming && LegacyMaterialForEntity(dc.EntityID).MaterialSlots.empty() && !useMeshShaders && m_IndirectDraws && m_IndirectDraws->ExecutePrimary(
 				pCommandList,
 				dc.model,
 				dc.EntityID,
@@ -905,17 +953,55 @@ ID3D12PipelineState* lastPso = nullptr;
 			for (UINT m = 0; m < dc.model->GetMeshCount(); m++)
 			{
 				const StaticMeshData& meshData = dc.model->GetMeshData(m);
+                const auto& slotMaterial = MaterialManager::Resolve(
+                    LegacyMaterialForEntity(dc.EntityID), m);
+                ID3D12PipelineState* sectionPso = dc.pso;
+                if (MaterialSystem::IsTransparentMaterial(slotMaterial) != drawTransparent)
+                {
+                    continue;
+                }
+
+                if (!LegacyMaterialForEntity(dc.EntityID).MaterialSlots.empty())
+                {
+                    MaterialBindings::BindAssetSlot(dc.EntityID, slotMaterial);
+                }
+                if (slotMaterial.RuntimeHandle != 0)
+                {
+                    ShaderDescription sectionDescription{};
+                    sectionDescription.vsPath = GetModelVsPath(dc.EntityID);
+                    sectionDescription.psPath = GetModelPsPath(dc.EntityID);
+                    sectionDescription.isModel = true;
+                    sectionDescription.enableAlphaBlend = drawTransparent;
+                    sectionDescription.cullMode = D3D12_CULL_MODE_BACK;
+                    if (slotMaterial.AssetCull == MaterialCull::None)
+                    {
+                        sectionDescription.cullMode = D3D12_CULL_MODE_NONE;
+                    }
+                    else if (slotMaterial.AssetCull == MaterialCull::Front)
+                    {
+                        sectionDescription.cullMode = D3D12_CULL_MODE_FRONT;
+                    }
+                    sectionDescription.depthWrite = slotMaterial.AssetDepthWrite;
+                    auto* assetPso = PsoManager::GetOrCreateGraphicsPso(sectionDescription);
+                    if (assetPso)
+                    {
+                        sectionPso = assetPso;
+                    }
+                    pCommandList->SetPipelineState(sectionPso);
+                    lastPso = nullptr;
+                }
+
 				VertexDeformationView deformation;
 				const auto vertexView = VertexDeformation::TryResolveStaticMesh(dc.EntityID, m, deformation) ?
 					deformation.CurrentView : meshData.VertexBufferView;
 
-				if (meshData.TextureIndex >= 0)
+				if (slotMaterial.RuntimeHandle == 0 && meshData.TextureIndex >= 0)
 				{
 					TextureManager::TouchTexture(meshData.TextureIndex);
 					CD3DX12_GPU_DESCRIPTOR_HANDLE meshSrvHandle(heapStart, meshData.TextureIndex, cbvIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, meshSrvHandle);
 				}
-				else
+				else if (slotMaterial.RuntimeHandle == 0)
 				{
 					CD3DX12_GPU_DESCRIPTOR_HANDLE entitySrvHandle(heapStart, dc.srvIndex, cbvIncrement);
 					pCommandList->SetGraphicsRootDescriptorTable(1, entitySrvHandle);
@@ -928,12 +1014,12 @@ ID3D12PipelineState* lastPso = nullptr;
 				geometry.ElementCount = meshData.IndexCount;
 				XMFLOAT3 localCenter = dc.model->GetAabbCenter(), localExtents = dc.model->GetAabbExtents();
 				VertexDeformation::TryGetLocalBounds(dc.EntityID, localCenter, localExtents);
-				const bool meshShaderDrawn = !gpuBaseDrawn && useMeshShaders && MeshShaderPipeline::Draw(
+				const bool meshShaderDrawn = !gpuBaseDrawn && slotMaterial.RuntimeHandle == 0 && useMeshShaders && MeshShaderPipeline::Draw(
 					pCommandList, geometry, localCenter, localExtents);
 
 				if (!meshShaderDrawn && !indirectBaseDrawn && !occlusionPhaseTwo)
 				{
-					pCommandList->SetPipelineState(dc.pso);
+					pCommandList->SetPipelineState(sectionPso);
 					pCommandList->IASetVertexBuffers(0, 1, &vertexView);
 					pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
 					pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);

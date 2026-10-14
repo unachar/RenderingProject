@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "materialmanager.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
 #include "graphicsdevice.h"
@@ -597,6 +598,12 @@ void ImGuiManager::SaveProjectSettings()
 
 void ImGuiManager::LoadProjectSettings()
 {
+    std::string materialError;
+    if (!MaterialManager::LoadSceneReferences("Save/scene_materials.json", materialError))
+    {
+        AddLog("Scene material load failed: %s", materialError.c_str());
+    }
+
 	ifstream stream("Save/project_environment.cfg");
 	if (!stream) return;
 	LocalHeightFog::Clear();

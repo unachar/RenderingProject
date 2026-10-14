@@ -114,6 +114,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			m_CommandList->OMSetRenderTargets(1, &targetRtv, FALSE, nullptr);
 			m_CommandList->SetPipelineState(pso);
 			m_CommandList->SetGraphicsRootSignature(m_PostProcessRootSignature.Get());
+            m_CommandList->SetGraphicsRootDescriptorTable(23, m_GBufferSrvHandles[static_cast<UINT>(GBufferType::EMISSION_AO)]);
 			Raytracing::BindLighting(m_CommandList.Get(), 17, 18);
 			m_CommandList->SetGraphicsRootDescriptorTable(19, Raytracing::GetReflectionSrv());
 			CloudRenderer::BindLighting(m_CommandList.Get(), m_FrameIndex);

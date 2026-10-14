@@ -1,4 +1,5 @@
-﻿#include "pch.h"
+#include "pch.h"
+#include "materialmanager.h"
 #include "materialsystem.h"
 #include "componentmanager.h"
 #include "modelmanager.h"
@@ -30,7 +31,7 @@ bool MaterialSystem::IsTransparent(EntityID entity)
 		return false;
 	}
 
-	return IsTransparentMaterial(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity));
+	return IsTransparentMaterial(MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity)));
 }
 
 bool MaterialSystem::IsReceivingPostProcess(EntityID entity)

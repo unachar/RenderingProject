@@ -4,6 +4,7 @@
 GBufferOutput main(PSInput3D input)
 {
     GBufferOutput output;
+    output.EmissionAO = float4(0, 0, 0, 1);
     output.Color = input.Diffuse;
     output.Normal = float4(0.0f, 0.0f, 0.0f, 1.0f);
     output.Depth = saturate(input.Position.z);

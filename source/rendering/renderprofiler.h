@@ -608,6 +608,11 @@ public:
         }
     }
 
+    static void SetWindowVisible(bool visible)
+    {
+        s_ShowWindow = visible;
+    }
+
     static void DrawImGuiWindow()
     {
         if ((GetAsyncKeyState(VK_F9) & 1) != 0)

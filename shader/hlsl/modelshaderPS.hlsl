@@ -64,31 +64,43 @@ float3 SampleEnvironmentLatLong(float3 dir, float roughness)
     return EnvironmentTexture.SampleLevel(g_SamplerState, uv, roughness * 8.0f).rgb;
 }
 
+#include "MaterialSurface.hlsli"
+
 float4 main(in PSInput3D In) : SV_Target
 {
     const float PI = 3.14159265358979323846f;
 
+    AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
     float4 baseColor = float4(In.Diffuse.rgb, In.Diffuse.a);
+    if (assetMaterial.Surface.z > 0.5f)
+    {
+        baseColor = float4(1, 1, 1, 1);
+    }
     if (UseTexture != 0)
     {
         baseColor *= g_Texture.Sample(g_SamplerState, In.TexCoord);
     }
+    float assetMetallic = mMetallic;
+    float assetRoughness = mRoughness;
+    float4 assetEmissionAO;
+    ApplyAssetMaterial(assetMaterial, In.TexCoord, g_SamplerState, baseColor, assetMetallic, assetRoughness, assetEmissionAO);
     baseColor.a *= saturate(MaterialAlpha);
+
 
     float3 surfaceNormal = In.Normal * ((FlipNormal != 0) ? -1.0f : 1.0f);
     if (UseNormalMap != 0)
     {
         float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
-        surfaceNormal = ApplyNormalMapCommon(surfaceNormal, In.WorldPos, In.TexCoord, tangentNormal);
+        surfaceNormal = ApplyNormalMapCommon(surfaceNormal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }
     surfaceNormal = SafeNormalizeCommon(surfaceNormal, float3(0.0f, 1.0f, 0.0f));
 
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
     bool usePartParams = MaterialMode != 1;
     float4 material = float4(
-        usePartParams ? partParams.Basic.x : mMetallic,
-        usePartParams ? partParams.Basic.y : mRoughness,
+        usePartParams ? partParams.Basic.x : assetMetallic,
+        usePartParams ? partParams.Basic.y : assetRoughness,
         usePartParams ? partParams.Basic.z : mFresnel,
         materialPartId);
     float4 shadowParams = usePartParams
@@ -116,7 +128,8 @@ float4 main(in PSInput3D In) : SV_Target
     ResolveLightAggregate(In.WorldPos, In.Position.xy, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend);
     float lightIntensity = LightColor.a;
 
-    if (transparent || btdf || bsdf)
+    const bool assetAlphaBlend = assetMaterial.Surface.z > 0.5f && (assetMaterial.Textures.w & 3u) == 2u;
+    if ((transparent || btdf || bsdf) && !assetAlphaBlend)
     {
         float3 N = SafeNormalizeCommon(surfaceNormal, float3(0.0f, 1.0f, 0.0f));
         float3 V = SafeNormalizeCommon(CameraPos - In.WorldPos, float3(0.0f, 0.0f, -1.0f));
@@ -330,6 +343,7 @@ float4 main(in PSInput3D In) : SV_Target
         baseColor.rgb = reflected + transmitted + envReflection + envTransmission * 0.5f;
     }
 
+    baseColor.rgb = baseColor.rgb * assetEmissionAO.a + assetEmissionAO.rgb;
     baseColor.rgb *= baseColor.a;
     return baseColor;
 }

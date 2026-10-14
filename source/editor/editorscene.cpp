@@ -99,6 +99,7 @@ void ImGuiManager::DrawSceneViewWindow()
 	D3D12_GPU_DESCRIPTOR_HANDLE handle = RenderTargets::GetEditorSceneSrvHandle();
 	ImGui::Image((ImTextureData*)handle.ptr, imageSize);
 	m_IsSceneViewHovered = ImGui::IsItemHovered();
+    DrawMaterialDropTarget();
 	VirtualGeometryDebug::DrawViewport(ImGui::GetWindowDrawList(),cursor,imageSize,m_SelectedEntity);
 	DrawTransformGizmo();
 	if (m_IsSceneViewHovered && fabsf(ImGui::GetIO().MouseWheel) > 0.001f)

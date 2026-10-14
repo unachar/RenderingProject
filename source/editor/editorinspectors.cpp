@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "materialmanager.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
 #include "camera.h"
@@ -120,13 +121,14 @@ void ImGuiManager::DrawInspectorWindow()
 	{
 		DrawLightInspector(m_SelectedEntity);
 	}
+	DrawMaterialAssetSlots(m_SelectedEntity);
 	DrawComponentInspector(m_SelectedEntity);
 
 	ImGui::TextUnformatted("右クリック: カメラ / 左クリック: 選択");
 	ImGui::End();
 }
 
-void ImGuiManager::DrawMaterialEditorWindow()
+void ImGuiManager::DrawLegacyMaterialEditorWindow()
 {
 	ImGui::SetNextWindowSize(ImVec2(380.0f, 560.0f), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin("マテリアルエディター", &m_ShowMaterialEditorWindow))
@@ -269,6 +271,13 @@ void ImGuiManager::DrawRimSettingsWindow()
 
 void ImGuiManager::DrawMaterialInspector(EntityID entity)
 {
+    if (ComponentManager::HasComponent<MaterialComponent>(entity) &&
+        !ComponentManager::GetComponentUnchecked<MaterialComponent>(entity).MaterialSlots.empty())
+    {
+        ImGui::TextWrapped("共有マテリアルはMaterials欄からアセットを開いて編集してください。");
+        return;
+    }
+
 	if (!ComponentManager::HasComponent<MaterialComponent>(entity))
 	{
 		return;
@@ -531,6 +540,22 @@ if (ImGui::Checkbox("テクスチャ使用", &useTexture))
 
 	if (ImGui::BeginDragDropTarget())
 	{
+        if (const auto* payload = ImGui::AcceptDragDropPayload(AssetPayloadType))
+        {
+            if (payload->DataSize == sizeof(AssetDragPayload))
+            {
+                const auto* asset = static_cast<const AssetDragPayload*>(payload->Data);
+                if (asset->Type == AssetType::Texture)
+                {
+                    const auto path = MaterialManager::Registry().Resolve(asset->Handle).generic_string();
+                    if (!path.empty())
+                    {
+                        BeginUndoCapture(entity, before);
+                        MaterialSystem::SetTexture(entity, path.c_str());
+                    }
+                }
+            }
+        }
 		if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
 		{
 			const char* path = static_cast<const char*>(payload->Data);

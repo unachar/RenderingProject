@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "materialmanager.h"
+#include "materialpreview.h"
 #include "cloud/cloudrenderer.h"
 #include "graphicslog.h"
 #include "shaderpipelines.h"
@@ -259,7 +261,9 @@ bool GraphicsDevice::Init(HWND hwnd)
 	meshHiZRanges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 22);
 	meshHiZRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 23);
 
-	CD3DX12_ROOT_PARAMETER rootParametersAll[18];
+    CD3DX12_DESCRIPTOR_RANGE assetTextures;
+    assetTextures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 512, 0, 1);
+	CD3DX12_ROOT_PARAMETER rootParametersAll[19];
 	rootParametersAll[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[1].InitAsDescriptorTable(1, &rangesTex[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -278,6 +282,7 @@ bool GraphicsDevice::Init(HWND hwnd)
 	rootParametersAll[15].InitAsDescriptorTable(1, &meshHiZRanges[1], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[16].InitAsShaderResourceView(25, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 	rootParametersAll[17].InitAsConstantBufferView(5, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    rootParametersAll[18].InitAsDescriptorTable(1, &assetTextures, D3D12_SHADER_VISIBILITY_PIXEL);
 
 	CD3DX12_STATIC_SAMPLER_DESC sampler {};
 
@@ -440,6 +445,7 @@ if (!ShaderPipelines::CreateModelPipeline())
 
 	WriteGraphicsLog("Step: TextureManager::Init\n");
 TextureManager::Init();
+    MaterialManager::Init();
 
 	WriteGraphicsLog("Step: CreatePostProcessPipeline\n");
 if (!ShaderPipelines::CreatePostProcessPipeline()) return false;
@@ -489,6 +495,8 @@ void GraphicsDevice::Uninit()
 
 	ImGuiManager::Uninit();
 
+	MaterialPreview::Shutdown();
+    MaterialManager::Shutdown();
 	TextureManager::Uninit();
 
 	if (m_ConstantBuffer)

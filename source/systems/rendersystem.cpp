@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "materialmanager.h"
 #include "vertexdeformation.h"
 #include "meshshaderpipeline.h"
 #include "rendersystem.h"
@@ -55,7 +56,7 @@
 			return true;
 		}
 
-		const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+		const auto& material = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity));
 		if (MaterialSystem::IsTransparentMaterial(material))
 		{
 			return false;
@@ -71,7 +72,7 @@
 			return false;
 		}
 
-		const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+		const auto& material = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity));
 		if (Registry::HasComponent(entity, ComponentType::MESH) &&
 			!Registry::HasComponent(entity, ComponentType::STATIC_MODEL) &&
 			!Registry::HasComponent(entity, ComponentType::ANIMATION_MODEL))
@@ -339,7 +340,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		const MaterialComponent* material;
 		if (Registry::HasComponent(i, ComponentType::MATERIAL))
 		{
-			material = &ComponentManager::GetComponentUnchecked<MaterialComponent>(i);
+			material = &MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(i));
 		}
 		else
 		{
@@ -371,6 +372,19 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				psoResource.psPath = GetSpritePsPath(i, true);
 				psoResource.isModel = true;
 				psoResource.enableAlphaBlend = drawTransparent;
+        if (material && material->RuntimeHandle != 0)
+        {
+            if (material->AssetCull == MaterialCull::None)
+            {
+                psoResource.cullMode = D3D12_CULL_MODE_NONE;
+            }
+            else if (material->AssetCull == MaterialCull::Front)
+            {
+                psoResource.cullMode = D3D12_CULL_MODE_FRONT;
+            }
+            psoResource.depthWrite = material->AssetDepthWrite;
+        }
+
 				ID3D12PipelineState* pso = PsoManager::GetOrCreateGraphicsPso(psoResource);
 				if (!pso)
 				{
@@ -445,6 +459,19 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			psoResource.psPath = GetSpritePsPath(i, false);
 			psoResource.isModel = false;
 			psoResource.enableAlphaBlend = drawTransparent;
+        if (material && material->RuntimeHandle != 0)
+        {
+            if (material->AssetCull == MaterialCull::None)
+            {
+                psoResource.cullMode = D3D12_CULL_MODE_NONE;
+            }
+            else if (material->AssetCull == MaterialCull::Front)
+            {
+                psoResource.cullMode = D3D12_CULL_MODE_FRONT;
+            }
+            psoResource.depthWrite = material->AssetDepthWrite;
+        }
+
 			ID3D12PipelineState* pso = PsoManager::GetOrCreateGraphicsPso(psoResource);
 			if (!pso)
 			{
@@ -537,7 +564,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		const MaterialComponent* material;
 		if (Registry::HasComponent(i, ComponentType::MATERIAL))
 		{
-			material = &ComponentManager::GetComponentUnchecked<MaterialComponent>(i);
+			material = &MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(i));
 		}
 		else
 		{
@@ -559,6 +586,19 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		psoResource.psPath = GetMeshPsPath(i);
 		psoResource.isModel = true;
 		psoResource.enableAlphaBlend = drawTransparent;
+        if (material && material->RuntimeHandle != 0)
+        {
+            if (material->AssetCull == MaterialCull::None)
+            {
+                psoResource.cullMode = D3D12_CULL_MODE_NONE;
+            }
+            else if (material->AssetCull == MaterialCull::Front)
+            {
+                psoResource.cullMode = D3D12_CULL_MODE_FRONT;
+            }
+            psoResource.depthWrite = material->AssetDepthWrite;
+        }
+
 		ID3D12PipelineState* pso = PsoManager::GetOrCreateGraphicsPso(psoResource);
 		if (!pso)
 		{
@@ -713,7 +753,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 				pCommandList->IASetVertexBuffers(0, 1, &dc.vbv);
 				bool meshShaderDrawn = false;
-				if (drawDeferredOpaque && dc.is3D && ComponentManager::HasComponent<MeshComponent>(dc.EntityID))
+				if (material.RuntimeHandle == 0 && drawDeferredOpaque && dc.is3D && ComponentManager::HasComponent<MeshComponent>(dc.EntityID))
 				{
 					const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(dc.EntityID);
 					VertexDeformationView deformation;

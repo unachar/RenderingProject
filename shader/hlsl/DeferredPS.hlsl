@@ -5,8 +5,11 @@
 #include "GPUDrivenOpaque.hlsli"
 #else
 Texture2D g_Texture : register(t0);
+Texture2D g_NormalTexture : register(t2);
 #endif
 SamplerState g_SamplerState : register(s0);
+
+#include "MaterialSurface.hlsli"
 
 GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
 {
@@ -14,6 +17,7 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     uint materialID = gSceneInstances[In.InstanceID].MaterialIndex;
     uint address = materialID * GPU_SCENE_MATERIAL_STRIDE;
     uint4 metadata = gSceneMaterials.Load4(address + 32u);
+    uint normalTextureIndex = metadata.y;
     if ((metadata.z & 4u) == 0 && !frontFace) discard;
     int UseTexture = (metadata.z & 1u) != 0;
     int FlipNormal = 0;
@@ -27,8 +31,17 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     float ShadowSoftness = LoadSceneMaterialVector(gSceneMaterials, materialID, 2u).x;
     float ShadowStrength = LoadSceneMaterialVector(gSceneMaterials, materialID, 2u).y;
 #endif
+#ifdef SHADER_GPU_DRIVEN
+    AssetMaterialParameters assetMaterial = LoadAssetMaterial(materialID);
+#else
+    AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
+#endif
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
+    if (assetMaterial.Surface.z > 0.5f)
+    {
+        baseColor = float4(1, 1, 1, 1);
+    }
     if (UseTexture != 0)
     {
 #ifdef SHADER_GPU_DRIVEN
@@ -38,11 +51,40 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
 #endif
     }
 
+    float assetMetallic = mMetallic;
+    float assetRoughness = mRoughness;
+    float4 assetEmissionAO;
+    ApplyAssetMaterial(assetMaterial, In.TexCoord, g_SamplerState, baseColor, assetMetallic, assetRoughness, assetEmissionAO);
     clip(baseColor.a - 0.01f);
 
     float3 normal = In.Normal.xyz * ((FlipNormal != 0) ? -1.0f : 1.0f);
 
+#ifdef SHADER_GPU_DRIVEN
+    bool hasNormalMap = normalTextureIndex != 0xffffffffu &&
+        normalTextureIndex >= TextureBase &&
+        normalTextureIndex - TextureBase < 512u;
+
+    // The default scene texture is not a flat normal map; never sample it as one.
+    [branch]
+    if (hasNormalMap)
+    {
+        uint textureIndex = SceneTextureIndex(normalTextureIndex);
+        float3 tangentNormal = gSceneTextures[NonUniformResourceIndex(textureIndex)]
+            .Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
+        normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
+    }
+
+#else
+    if (UseNormalMap != 0)
+    {
+        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
+        normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
+    }
+#endif
+    normal = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
+
     GBufferOutput output;
+    output.EmissionAO = assetEmissionAO;
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
 
@@ -56,8 +98,8 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
 #endif
     bool usePartParams = MaterialMode != 1;
-    output.Material.r = usePartParams ? partParams.Basic.x : mMetallic;
-    output.Material.g = usePartParams ? partParams.Basic.y : mRoughness;
+    output.Material.r = usePartParams ? partParams.Basic.x : assetMetallic;
+    output.Material.g = usePartParams ? partParams.Basic.y : assetRoughness;
     output.Material.b = usePartParams ? partParams.Basic.z : mFresnel;
     output.Material.a = materialPartId;
     output.Shadow.r = usePartParams ? partParams.Shadow0.x : ShadowThreshold;

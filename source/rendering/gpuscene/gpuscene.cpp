@@ -11,6 +11,8 @@
 #include "world.h"
 #include "modelmanager.h"
 #include "materialbindings.h"
+#include "materialmanager.h"
+#include "texturemanager.h"
 #include "graphicsdevice.h"
 #include "rendergraph.h"
 #include "renderprofiler.h"
@@ -31,6 +33,15 @@ struct SceneState
     std::array<std::vector<ComPtr<ID3D12Resource>>,GpuSceneBuffer::FrameCount> RetiredPrimitiveOwners;
     std::vector<uint32_t> FreePrimitiveMeshes;
     std::unordered_map<uint64_t, std::vector<uint32_t>> MeshLookup, MaterialLookup;
+    struct AssetMaterialRecord
+    {
+        uint32_t Index = 0;
+        uint64_t Revision = 0;
+        uint64_t PipelineRevision = 0;
+        std::unordered_set<uint32_t> Users;
+    };
+    std::unordered_map<AssetHandle, AssetMaterialRecord> AssetMaterials;
+    std::unordered_map<uint32_t, std::vector<AssetHandle>> EntityAssets;
     std::unordered_map<uint32_t, std::vector<GPUInstanceID>> Entities;
     std::vector<uint32_t> CpuOpaqueStatic;
     std::unordered_map<uint32_t, size_t> CpuOpaquePositions;
@@ -95,6 +106,16 @@ void RemoveEntity(uint32_t entity)
     GPUDrivenRenderer::TrackEntityTextures(entity, {});
     SetCpuOpaqueEntity(entity, false);
     auto &scene = Scene();
+    const auto assets = scene.EntityAssets.find(entity);
+    if (assets != scene.EntityAssets.end())
+    {
+        for (const auto handle : assets->second)
+        {
+            scene.AssetMaterials.at(handle).Users.erase(entity);
+        }
+        scene.EntityAssets.erase(assets);
+    }
+
     const auto found = scene.Entities.find(entity);
     if (found == scene.Entities.end())
     {
@@ -237,6 +258,11 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
         return;
     }
     const auto &transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+    for (const auto handle : scene.EntityAssets[entity])
+    {
+        scene.AssetMaterials.at(handle).Users.erase(entity);
+    }
+    scene.EntityAssets[entity].clear();
     const MaterialComponent defaultMaterial{};
     const auto &material = ComponentManager::HasComponent<MaterialComponent>(entity)
                                ? ComponentManager::GetComponentUnchecked<MaterialComponent>(entity)
@@ -307,13 +333,41 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
         }
         else
         {
-            auto gpuMaterial = MaterialBindings::BuildGpuSceneMaterial(material);
-            if (material.UseTexture && texture >= 0)
+            const auto& resolved = MaterialManager::Resolve(material, section);
+            auto gpuMaterial = MaterialBindings::BuildGpuSceneMaterial(resolved);
+            if (resolved.RuntimeHandle == 0 && material.UseTexture && texture >= 0)
             {
                 gpuMaterial.AlbedoTextureIndex = static_cast<uint32_t>(texture);
             }
-            instance.MaterialIndex =
-                RegisterShared(gpuMaterial, scene.Materials, scene.MaterialLookup, scene.NewMaterials);
+            if (resolved.RuntimeHandle != 0)
+            {
+                const auto handle = resolved.RuntimeHandle;
+                auto found = scene.AssetMaterials.find(handle);
+                if (found == scene.AssetMaterials.end())
+                {
+                    const auto index = static_cast<uint32_t>(scene.Materials.size());
+                    scene.Materials.push_back(gpuMaterial);
+                    scene.NewMaterials.push_back(index);
+                    const auto& runtime = MaterialManager::GetRuntime(handle);
+                    scene.AssetMaterials.emplace(handle, SceneState::AssetMaterialRecord{index,
+                        runtime.Revision, runtime.PipelineRevision, {}});
+                    instance.MaterialIndex = index;
+                }
+                else
+                {
+                    instance.MaterialIndex = found->second.Index;
+                }
+            }
+            else
+            {
+                instance.MaterialIndex = RegisterShared(gpuMaterial, scene.Materials, scene.MaterialLookup, scene.NewMaterials);
+            }
+        }
+        const auto assetHandle = MaterialManager::SlotHandle(material, section);
+        if (assetHandle != 0)
+        {
+            scene.AssetMaterials.at(assetHandle).Users.insert(entity);
+            scene.EntityAssets[entity].push_back(assetHandle);
         }
         if (section < ids.size())
         {
@@ -511,6 +565,18 @@ void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
     scene.RetiredPrimitiveOwners[frame].clear(); // This frame slot's fence completed before Execute.
     auto *device = GraphicsDevice::GetDevice();
     scene.Instances.SettlePreviousTransforms();
+    for (auto& [handle, record] : scene.AssetMaterials)
+    {
+        const auto& runtime = MaterialManager::GetRuntime(handle);
+        if (record.PipelineRevision != runtime.PipelineRevision)
+        {
+            for (const auto entity : record.Users)
+            {
+                GpuSceneChanges::Notify(entity, GpuSceneDirtyFlags::Material);
+            }
+            record.PipelineRevision = runtime.PipelineRevision;
+        }
+    }
     auto pending = std::move(GpuSceneChanges::Pending());
     GpuSceneChanges::Pending() = {};
     bool occluderChanged = pending.ResetScene || !pending.Destroyed.empty();
@@ -529,6 +595,11 @@ void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
             }
         }
         scene.Entities.clear();
+        scene.EntityAssets.clear();
+        for (auto& [handle, record] : scene.AssetMaterials)
+        {
+            record.Users.clear();
+        }
         scene.CpuOpaqueStatic.clear();
         scene.CpuOpaquePositions.clear();
     }
@@ -550,6 +621,23 @@ void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
     scene.Stats.InstanceSlots = static_cast<uint32_t>(scene.Instances.Data().size());
     scene.Stats.ActiveInstances = scene.Instances.ActiveCount();
     scene.Stats.Meshes = static_cast<uint32_t>(scene.Meshes.size());
+    for (auto& [handle, record] : scene.AssetMaterials)
+    {
+        const auto& runtime = MaterialManager::GetRuntime(handle);
+        for (const auto descriptor : runtime.TextureDescriptors)
+        {
+            if (descriptor >= 0)
+            {
+                TextureManager::TouchTexture(descriptor);
+            }
+        }
+        if (runtime.Revision != record.Revision)
+        {
+            scene.Materials[record.Index] = MaterialBindings::BuildGpuSceneMaterial(runtime.Binding);
+            scene.NewMaterials.push_back(record.Index);
+            record.Revision = runtime.Revision;
+        }
+    }
     scene.Stats.Materials = static_cast<uint32_t>(scene.Materials.size());
     scene.InstanceBuffer.BeginFrame(frame);
     scene.MeshBuffer.BeginFrame(frame);

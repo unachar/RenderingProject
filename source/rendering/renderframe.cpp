@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "materialpreview.h"
 #include "renderframe.h"
 #include "gpudriven/gpudrivenrenderer.h"
 #include "renderconfiguration.h"
@@ -45,6 +46,9 @@ void RenderFrame::BeginDraw()
 
 void RenderFrame::EndDraw()
 {
+    MaterialPreview::Render();
+    m_CommandList->RSSetViewports(1, &m_Viewport);
+    m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
 	if (m_CommandList)
 	{
 		CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(m_RtvHeap->GetCPUDescriptorHandleForHeapStart(), m_FrameIndex,

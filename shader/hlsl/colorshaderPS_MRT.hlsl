@@ -25,6 +25,7 @@ GBufferOutput main(PSInput2D input)
     }
 
     GBufferOutput output;
+    output.EmissionAO = float4(0, 0, 0, 1);
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
     output.Depth = 0.0f;

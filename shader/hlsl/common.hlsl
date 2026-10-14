@@ -11,6 +11,7 @@ struct GBufferOutput
     float4 Depth : SV_Target2;
     float4 Material : SV_Target3;
     float4 Shadow : SV_Target4;
+    float4 EmissionAO : SV_Target5;
 };
 
 struct PS_OUTPUT_GEOMETRY
@@ -20,6 +21,7 @@ struct PS_OUTPUT_GEOMETRY
     float4 Depth : SV_Target2;
     float4 Material : SV_Target3;
     float4 Shadow : SV_Target4;
+    float4 EmissionAO : SV_Target5;
 };
 
 struct PS_OUTPUT
@@ -380,7 +382,13 @@ float3 ApplyNormalMapCommon(float3 meshNormal, float3 worldPos, float2 texCoord,
     float invDet = rcp(lerp(1.0f, det, useTbn));
     float3 tangent = (dp1 * duv2.y - dp2 * duv1.y) * invDet;
     tangent = SafeNormalizeCommon(tangent - n * dot(n, tangent), float3(1.0f, 0.0f, 0.0f));
+    float3 uvBitangent = (dp2 * duv1.x - dp1 * duv2.x) * invDet;
     float3 bitangent = SafeNormalizeCommon(cross(n, tangent), float3(0.0f, 0.0f, 1.0f));
+    // Preserve tangent-space handedness for mirrored UVs and reflected transforms.
+    if (dot(bitangent, uvBitangent) < 0.0f)
+    {
+        bitangent = -bitangent;
+    }
     float3 mappedNormal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * n, n);
     return SafeNormalizeCommon(lerp(n, mappedNormal, useTbn), n);
 }
@@ -1095,6 +1103,10 @@ cbuffer PBRParams : register(b2)
     float4 Transparent0;
     float4 Transparent1;
     MaterialPartShaderParams PartParams[15];
+    float4 AssetBaseColor;
+    float4 AssetSurface;
+    float4 AssetEmission;
+    uint4 AssetTextures;
 };
 
 MaterialPartShaderParams ResolveMaterialPartParams(float materialPartId)

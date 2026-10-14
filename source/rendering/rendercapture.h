@@ -18,6 +18,7 @@ bool ReadTextureMip(ID3D12Resource* texture, TextureData& output, UINT mip,
 bool ReadBuffer(ID3D12Resource* buffer, D3D12_RESOURCE_STATES state, UINT64 bytes,
     std::vector<uint8_t>& output);
 bool SaveScenePng(const wchar_t* path);
+bool SaveTexturePng(ID3D12Resource* resource, const wchar_t* path);
 float HalfToFloat(uint16_t value);
 UINT ReportGraphicsErrors();
 }

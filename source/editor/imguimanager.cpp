@@ -1,4 +1,7 @@
 #include "pch.h"
+#include "materialmanager.h"
+#include "materialpreview.h"
+#include "materialvalidation.h"
 #include "cloud/cloudrenderer.h"
 #include "renderingvalidation.h"
 #include "imguimanager.h"
@@ -170,21 +173,36 @@ void ImGuiManager::Update()
 
 	ImGui_ImplDX12_NewFrame();
 	ImGui_ImplWin32_NewFrame();
+    MaterialValidation::BeforeEditorFrame();
 	ImGui::NewFrame();
+    MaterialValidation::InjectDragPayload();
 	ImGuizmo::BeginFrame();
 	DebugSystem::SetShowLightDebug(m_ShowLightDebug);
 
 	ImGuiIO& io = ImGui::GetIO();
 	if (!io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))
 	{
-		if (io.KeyShift) Redo();
-		else Undo();
+		if (io.KeyShift && MaterialEditorHasFocus()) MaterialEditorUndo(true);
+        else if (io.KeyShift) Redo();
+		else if (MaterialEditorHasFocus()) MaterialEditorUndo(false);
+        else Undo();
 	}
 	if (!io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, false))
 	{
-		Redo();
+		if (MaterialEditorHasFocus()) MaterialEditorUndo(true);
+        else Redo();
 	}
 
+    MaterialPreview::SetVisible(false);
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && !MaterialEditorHasFocus())
+    {
+        std::string error;
+        std::filesystem::create_directories("Save");
+        if (!MaterialManager::SaveSceneReferences("Save/scene_materials.json", error))
+        {
+            AddLog("Scene save failed: %s", error.c_str());
+        }
+    }
 	ProcessDroppedFiles();
 	const bool canSwitchGizmo =
 		!io.WantTextInput &&
@@ -222,6 +240,7 @@ void ImGuiManager::Update()
 	if (m_ShowLogWindow) DrawLogWindow();
 	if (m_ShowPerformanceWindow) DrawPerformanceWindow();
 	if (m_ShowMaterialEditorWindow) DrawMaterialEditorWindow();
+    DrawMaterialAssetClosePrompt();
 	if (m_ShowRimSettingsWindow) DrawRimSettingsWindow();
 	if (m_ShowMeshOutlineWindow) DrawMeshOutlineWindow();
 	if (m_ShowMeshShadingWindow) DrawMeshShadingWindow();
@@ -471,6 +490,19 @@ void ImGuiManager::DrawEditorMainMenu()
 		return;
 	}
 
+    if (ImGui::BeginMenu("ファイル"))
+    {
+        if (ImGui::MenuItem("シーンのマテリアル参照を保存", "Ctrl+S"))
+        {
+            std::string error;
+            std::filesystem::create_directories("Save");
+            if (!MaterialManager::SaveSceneReferences("Save/scene_materials.json", error))
+            {
+                AddLog("Scene save failed: %s", error.c_str());
+            }
+        }
+        ImGui::EndMenu();
+    }
 	if (ImGui::BeginMenu("編集"))
 	{
 		if (ImGui::MenuItem("元に戻す", "Ctrl+Z", false, !m_UndoStack.empty())) Undo();

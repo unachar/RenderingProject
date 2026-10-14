@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "materialmanager.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
 #include "materialsystem.h"
@@ -44,6 +45,11 @@ void ImGuiManager::DrawAssetBrowserWindow()
 	}
 	ImGui::EndDisabled();
 	ImGui::SameLine();
+	if (ImGui::Button("再スキャン"))
+    {
+        MaterialManager::Refresh();
+    }
+    ImGui::SameLine();
 	if (ImGui::Button("ルート"))
 	{
 		m_CurrentAssetDirectory = m_AssetRoot;
@@ -54,7 +60,10 @@ void ImGuiManager::DrawAssetBrowserWindow()
 	ImGui::TextWrapped("%s", m_CurrentAssetDirectory.generic_string().c_str());
 
 	static char folderName[128] = "NewFolder";
-	static char fileName[128] = "NewMaterial.txt";
+	static char fileName[128] = "NewMaterial.material";
+    static AssetHandle moveHandle = 0;
+    static char movePath[512]{};
+    bool moveRequested = false;
 	if (ImGui::BeginPopup("CreateAssetPopup"))
 	{
 		ImGui::InputText("フォルダ名", folderName, IM_ARRAYSIZE(folderName));
@@ -64,6 +73,16 @@ void ImGuiManager::DrawAssetBrowserWindow()
 		}
 		ImGui::Separator();
 		ImGui::InputText("ファイル名", fileName, IM_ARRAYSIZE(fileName));
+        if (ImGui::Button("Material作成"))
+        {
+            filesystem::path materialPath = m_CurrentAssetDirectory / fileName;
+            if (materialPath.extension() != ".material")
+            {
+                materialPath += ".material";
+            }
+            CreateAssetFile(materialPath);
+        }
+
 		if (ImGui::Button("ファイル作成") && fileName[0] != '\0')
 		{
 			const filesystem::path newPath = m_CurrentAssetDirectory / fileName;
@@ -117,7 +136,8 @@ void ImGuiManager::DrawAssetBrowserWindow()
 	vector<filesystem::directory_entry> entries;
 	for (const auto& entry : filesystem::directory_iterator(m_CurrentAssetDirectory, ec))
 	{
-		if (assetFilter.PassFilter(entry.path().filename().generic_string().c_str())) entries.push_back(entry);
+		if (entry.path().extension() != ".meta" && entry.path().extension() != ".tmp" &&
+            assetFilter.PassFilter(entry.path().filename().generic_string().c_str())) entries.push_back(entry);
 	}
 	if (ec) ImGui::TextWrapped("フォルダを読み込めません: %s", ec.message().c_str());
 	else if (entries.empty()) ImGui::TextWrapped("表示するアセットがありません。検索条件を変更するか、ファイルをドロップして取り込んでください。");
@@ -178,14 +198,26 @@ void ImGuiManager::DrawAssetBrowserWindow()
 					fileColor = ImVec4(0.4f, 0.9f, 0.5f, 1.0f);
 				else if (ext == ".fbx" || ext == ".obj")
 					fileColor = ImVec4(1.0f, 0.6f, 0.3f, 1.0f);
+				else if (ext == ".material")
+                    fileColor = ImVec4(0.2f, 0.8f, 0.95f, 1.0f);
 				else if (ext == ".hlsl" || ext == ".slang")
 					fileColor = ImVec4(0.8f, 0.4f, 1.0f, 1.0f);
 
-				ImDrawList* drawList = ImGui::GetWindowDrawList();
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                if (ext == ".material")
+                {
+                    drawList->AddCircleFilled(ImVec2(cursorPos.x + 8, cursorPos.y + 8), 7,
+                        ImGui::ColorConvertFloat4ToU32(fileColor));
+                    drawList->AddCircleFilled(ImVec2(cursorPos.x + 5, cursorPos.y + 5), 2,
+                        IM_COL32(215, 245, 255, 220));
+                }
+                else
+                {
 				drawList->AddRectFilled(cursorPos, ImVec2(cursorPos.x + iconSize.x - 2, cursorPos.y + iconSize.y), ImGui::ColorConvertFloat4ToU32(fileColor), 2.0f);
 				drawList->AddLine(ImVec2(cursorPos.x + 6, cursorPos.y + 2), ImVec2(cursorPos.x + 12, cursorPos.y + 2), ImGui::ColorConvertFloat4ToU32(ImVec4(1, 1, 1, 0.6f)), 1.0f);
 				drawList->AddLine(ImVec2(cursorPos.x + 6, cursorPos.y + 6), ImVec2(cursorPos.x + 12, cursorPos.y + 6), ImGui::ColorConvertFloat4ToU32(ImVec4(1, 1, 1, 0.6f)), 1.0f);
 				drawList->AddLine(ImVec2(cursorPos.x + 6, cursorPos.y + 10), ImVec2(cursorPos.x + 10, cursorPos.y + 10), ImGui::ColorConvertFloat4ToU32(ImVec4(1, 1, 1, 0.6f)), 1.0f);
+                }
 			}
 
 			ImGui::Dummy(iconSize);
@@ -199,7 +231,13 @@ void ImGuiManager::DrawAssetBrowserWindow()
 					m_CurrentAssetDirectory = path;
 					m_SelectedAssetPath.clear();
 				}
-				else if (IsTextureFile(path) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+				else if (AssetRegistry::Classify(path) == AssetType::Material && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                {
+                    string error;
+                    const auto handle = MaterialManager::Registry().Register(path, AssetType::Material, error);
+                    OpenMaterialAsset(handle);
+                }
+                else if (IsTextureFile(path) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 				{
 					const string relative = MakeRelativeAssetPath(path);
 					TextureManager::LoadTexture(relative.c_str());
@@ -229,8 +267,36 @@ void ImGuiManager::DrawAssetBrowserWindow()
 						AddLog("テクスチャ適用: %s", relative.c_str());
 					}
 				}
-				if (ImGui::MenuItem("削除"))
-				{
+				if (!isDir && AssetRegistry::Classify(path) == AssetType::Material)
+                {
+                    string error;
+                    const auto handle = MaterialManager::Registry().Register(path, AssetType::Material, error);
+                    if (ImGui::MenuItem("マテリアルを編集"))
+                    {
+                        OpenMaterialAsset(handle);
+                    }
+                    if (ImGui::MenuItem("Duplicate"))
+                    {
+                        auto copyPath = path.parent_path() / (path.stem().string() + "_Copy.material");
+                        unsigned int suffix = 1;
+                        while (filesystem::exists(copyPath))
+                        {
+                            copyPath = path.parent_path() / (path.stem().string() + "_Copy" + to_string(suffix++) + ".material");
+                        }
+                        if (!MaterialManager::Registry().Duplicate(handle, copyPath, error))
+                        {
+                            AddLog("Duplicate failed: %s", error.c_str());
+                        }
+                    }
+                    if (ImGui::MenuItem("Rename / Move"))
+                    {
+                        moveHandle = handle;
+                        strncpy_s(movePath, path.generic_string().c_str(), _TRUNCATE);
+                        moveRequested = true;
+                    }
+                }
+                if (ImGui::MenuItem("削除"))
+                {
 					pendingDeletePath = path;
 					deleteRequested = true;
 				}
@@ -240,7 +306,20 @@ void ImGuiManager::DrawAssetBrowserWindow()
 			if (!isDir && ImGui::BeginDragDropSource())
 			{
 				const string relative = MakeRelativeAssetPath(path);
-				ImGui::SetDragDropPayload("ASSET_PATH", relative.c_str(), relative.size() + 1);
+				const auto type = AssetRegistry::Classify(path);
+                if (type == AssetType::Material || type == AssetType::Texture)
+                {
+                    string error;
+                    const AssetDragPayload payload{MaterialManager::Registry().Register(path, type, error), type};
+                    if (payload.Handle != 0)
+                    {
+                        ImGui::SetDragDropPayload(AssetPayloadType, &payload, sizeof(payload));
+                    }
+                }
+                else
+                {
+                    ImGui::SetDragDropPayload("ASSET_PATH", relative.c_str(), relative.size() + 1);
+                }
 				ImGui::TextUnformatted(relative.c_str());
 				ImGui::EndDragDropSource();
 			}
@@ -249,6 +328,33 @@ void ImGuiManager::DrawAssetBrowserWindow()
 		}
 	}
 	ImGui::EndChild();
+    if (moveRequested)
+    {
+        ImGui::OpenPopup("Rename / Move Asset");
+    }
+    if (ImGui::BeginPopupModal("Rename / Move Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::InputText("Destination", movePath, sizeof(movePath));
+        if (ImGui::Button("Move"))
+        {
+            string error;
+            if (MaterialManager::Registry().Move(moveHandle, movePath, error))
+            {
+                MaterialManager::Refresh();
+                ImGui::CloseCurrentPopup();
+            }
+            else
+            {
+                AddLog("Move failed: %s", error.c_str());
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel"))
+        {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 	if (deleteRequested) ImGui::OpenPopup("アセットを削除");
 	if (ImGui::BeginPopupModal("アセットを削除", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 	{
@@ -258,6 +364,8 @@ void ImGuiManager::DrawAssetBrowserWindow()
 		if (ImGui::Button("削除する"))
 		{
 			DeleteAssetPath(pendingDeletePath);
+            filesystem::remove(pendingDeletePath.wstring() + L".meta", ec);
+            MaterialManager::Refresh();
 			m_SelectedAssetPath.clear();
 			pendingDeletePath.clear();
 			ImGui::CloseCurrentPopup();
@@ -335,6 +443,24 @@ void ImGuiManager::CreateAssetFile(const filesystem::path& path)
 		return;
 	}
 
+    if (AssetRegistry::Classify(path) == AssetType::Material)
+    {
+        string error;
+        if (MaterialSerializer::Save(path, MaterialAssetData{}, error))
+        {
+            const auto handle = MaterialManager::Registry().Register(path, AssetType::Material, error);
+            if (handle != 0)
+            {
+                AddLog("Material created: %s", path.generic_string().c_str());
+                OpenMaterialAsset(handle);
+            }
+        }
+        if (!error.empty())
+        {
+            AddLog("Material creation failed: %s", error.c_str());
+        }
+        return;
+    }
 	ofstream file(path);
 	if (!file)
 	{
@@ -342,16 +468,8 @@ void ImGuiManager::CreateAssetFile(const filesystem::path& path)
 		return;
 	}
 
-	string ext = path.extension().generic_string();
-	transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(tolower(c)); });
-	if (ext == ".material")
-	{
-		file << "{\n  \"type\": \"material\",\n  \"texture\": \"\"\n}\n";
-	}
-	else
-	{
-		file << "# 新規アセット\n";
-	}
+    file << "# 新規アセット\n";
+
 	AddLog("ファイル作成: %s", path.generic_string().c_str());
 }
 

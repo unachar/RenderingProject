@@ -140,7 +140,8 @@ void Initialize()
     for (uint32_t i = 0; i < 6; ++i)
         opaque[7 + i].InitAsShaderResourceView(33 + i);
     opaque[13].InitAsConstants(1, 6);
-    CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
+    CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_ANISOTROPIC);
+    sampler.MaxAnisotropy = 16;
     CD3DX12_ROOT_SIGNATURE_DESC opaqueDesc(14, opaque, 1, &sampler,
                                            D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
     Root(opaqueDesc, state.OpaqueRoot);
@@ -155,8 +156,8 @@ void Initialize()
         D3D12_CULL_MODE_NONE; // Mesh output applies single/double-sided policy per primitive.
     stream.Depth.Value = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
     stream.Depth.Value.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
-    stream.Targets.Value.NumRenderTargets = 5;
-    for (uint32_t i = 0; i < 5; ++i)
+    stream.Targets.Value.NumRenderTargets = RendererState::g_kGEOMETRY_GBUFFER_COUNT;
+    for (uint32_t i = 0; i < RendererState::g_kGEOMETRY_GBUFFER_COUNT; ++i)
         stream.Targets.Value.RTFormats[i] = RendererState::GetGBufferFormat(static_cast<GBufferType>(i));
     stream.DepthFormat.Value = DXGI_FORMAT_D32_FLOAT;
     stream.Samples.Value = {1, 0};
@@ -186,8 +187,8 @@ void Initialize()
     traditional.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
     traditional.BlendState = stream.Blend.Value;
     traditional.DepthStencilState = stream.Depth.Value;
-    traditional.NumRenderTargets = 5;
-    for (uint32_t i = 0; i < 5; ++i)
+    traditional.NumRenderTargets = RendererState::g_kGEOMETRY_GBUFFER_COUNT;
+    for (uint32_t i = 0; i < RendererState::g_kGEOMETRY_GBUFFER_COUNT; ++i)
         traditional.RTVFormats[i] = stream.Targets.Value.RTFormats[i];
     traditional.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     traditional.SampleDesc = {1, 0};

@@ -1,0 +1,474 @@
+#include "pch.h"
+#include "materialpreview.h"
+#include "materialmanager.h"
+#include "materialbindings.h"
+#include "frameconstants.h"
+#include "graphicsdevice.h"
+#include "shaderpipelines.h"
+#include "shaderdescription.h"
+#include "scenepasses.h"
+#include "texturemanager.h"
+#include "staticmodel.h"
+#include "imguimanager.h"
+#include <cmath>
+
+namespace
+{
+constexpr UINT previewSize = 512;
+constexpr UINT constantBytes = 32768; // Matches the production light buffer's reserved size.
+struct PreviewState : RendererState
+{
+    bool Visible = false;
+    AssetHandle Material = 0;
+    int Shape = 0;
+    float Yaw = 0.45f;
+    float Pitch = 0.2f;
+    float Distance = 4.5f;
+    float LightIntensity = 2.0f;
+    bool SceneEnvironment = false;
+    std::string Error;
+    ComPtr<ID3D12Resource> Target;
+    ComPtr<ID3D12Resource> Depth;
+    ComPtr<ID3D12DescriptorHeap> RTVHeap;
+    ComPtr<ID3D12DescriptorHeap> DSVHeap;
+    ComPtr<ID3D12Resource> Lights;
+    uint8_t* MappedLights = nullptr;
+    std::array<ComPtr<ID3D12Resource>, 3> Vertices;
+    std::array<D3D12_VERTEX_BUFFER_VIEW, 3> Views{};
+    std::array<UINT, 3> Counts{};
+    std::array<ComPtr<ID3D12PipelineState>, 12> Pipelines;
+    D3D12_CPU_DESCRIPTOR_HANDLE CpuSrv() const
+    {
+        return CD3DX12_CPU_DESCRIPTOR_HANDLE(FrameConstants::GetCbvHeap()->GetCPUDescriptorHandleForHeapStart(),
+            g_kMATERIAL_PREVIEW_SRV_INDEX, FrameConstants::GetCbvIncrementSize());
+    }
+    D3D12_GPU_DESCRIPTOR_HANDLE GpuSrv() const
+    {
+        return CD3DX12_GPU_DESCRIPTOR_HANDLE(FrameConstants::GetCbvHeap()->GetGPUDescriptorHandleForHeapStart(),
+            g_kMATERIAL_PREVIEW_SRV_INDEX, FrameConstants::GetCbvIncrementSize());
+    }
+    bool Initialize();
+    ID3D12PipelineState* Pipeline(const MaterialComponent& material);
+};
+PreviewState preview;
+
+StaticModelVertex Vertex(float x, float y, float z, float nx, float ny, float nz, float u, float v)
+{
+    return {{x, y, z}, {nx, ny, nz}, {u, v}, {1, 1, 1, 11}};
+}
+
+void Triangle(std::vector<StaticModelVertex>& vertices, StaticModelVertex first,
+    StaticModelVertex second, StaticModelVertex third)
+{
+    const auto edge1 = XMVectorSubtract(XMLoadFloat3(&second.Position), XMLoadFloat3(&first.Position));
+    const auto edge2 = XMVectorSubtract(XMLoadFloat3(&third.Position), XMLoadFloat3(&first.Position));
+    if (XMVectorGetX(XMVector3Dot(XMVector3Cross(edge1, edge2), XMLoadFloat3(&first.Normal))) < 0)
+    {
+        std::swap(second, third);
+    }
+    vertices.push_back(first);
+    vertices.push_back(second);
+    vertices.push_back(third);
+}
+
+std::vector<StaticModelVertex> MakeGeometry(int shape)
+{
+    std::vector<StaticModelVertex> vertices;
+    if (shape == 0)
+    {
+        auto sphereVertex = [](int latitude, int longitude)
+        {
+            const float u = longitude / 32.0f;
+            const float v = latitude / 16.0f;
+            const float angle = u * XM_2PI;
+            const float polar = v * XM_PI;
+            const float x = sinf(polar) * cosf(angle);
+            const float y = cosf(polar);
+            const float z = sinf(polar) * sinf(angle);
+            return Vertex(x, y, z, x, y, z, u, v);
+        };
+        for (int latitude = 0; latitude < 16; ++latitude)
+        {
+            for (int longitude = 0; longitude < 32; ++longitude)
+            {
+                const auto first = sphereVertex(latitude, longitude);
+                const auto second = sphereVertex(latitude + 1, longitude);
+                const auto third = sphereVertex(latitude + 1, longitude + 1);
+                const auto fourth = sphereVertex(latitude, longitude + 1);
+                Triangle(vertices, first, second, third);
+                Triangle(vertices, first, third, fourth);
+            }
+        }
+    }
+    else
+    {
+        const int faces = 6;
+        for (int face = 0; face < faces; ++face)
+        {
+            if (shape == 2 && face != 4)
+            {
+                continue;
+            }
+            const int axis = face / 2;
+            float direction = -1.0f;
+            if ((face & 1) != 0)
+            {
+                direction = 1.0f;
+            }
+            std::array<StaticModelVertex, 4> corners;
+            for (int corner = 0; corner < 4; ++corner)
+            {
+                float position[3]{};
+                float normal[3]{};
+                position[axis] = direction;
+                normal[axis] = direction;
+                position[(axis + 1) % 3] = ((corner & 1) != 0) ? 1.0f : -1.0f;
+                position[(axis + 2) % 3] = ((corner & 2) != 0) ? 1.0f : -1.0f;
+                if (shape == 2)
+                {
+                    position[axis] = 0;
+                }
+                corners[corner] = Vertex(position[0], position[1], position[2], normal[0], normal[1], normal[2],
+                    static_cast<float>(corner & 1), static_cast<float>((corner >> 1) & 1));
+            }
+            Triangle(vertices, corners[0], corners[1], corners[2]);
+            Triangle(vertices, corners[1], corners[3], corners[2]);
+        }
+    }
+    return vertices;
+}
+
+bool PreviewState::Initialize()
+{
+    if (Target)
+    {
+        return true;
+    }
+    auto* device = GraphicsDevice::GetDevice();
+    if (!device)
+    {
+        return false;
+    }
+    const auto defaultHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+    auto target = CD3DX12_RESOURCE_DESC::Tex2D(GetSceneColorFormat(), previewSize, previewSize, 1, 1, 1, 0,
+        D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+    D3D12_CLEAR_VALUE clear{};
+    clear.Format = target.Format;
+    clear.Color[0] = 0.12f;
+    clear.Color[1] = 0.13f;
+    clear.Color[2] = 0.16f;
+    clear.Color[3] = 1;
+    if (FAILED(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &target,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear, IID_PPV_ARGS(&Target))))
+    {
+        Error = "Failed to create material preview target";
+        return false;
+    }
+    target.Format = DXGI_FORMAT_D32_FLOAT;
+    target.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    clear.Format = target.Format;
+    clear.DepthStencil.Depth = 1;
+    if (FAILED(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &target,
+        D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear, IID_PPV_ARGS(&Depth))))
+    {
+        Error = "Failed to create preview depth";
+        Target.Reset();
+        return false;
+    }
+    D3D12_DESCRIPTOR_HEAP_DESC heap{};
+    heap.NumDescriptors = 1;
+    heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    if (FAILED(device->CreateDescriptorHeap(&heap, IID_PPV_ARGS(&RTVHeap))))
+    {
+        Target.Reset();
+        return false;
+    }
+    heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+    if (FAILED(device->CreateDescriptorHeap(&heap, IID_PPV_ARGS(&DSVHeap))))
+    {
+        Target.Reset();
+        return false;
+    }
+    device->CreateRenderTargetView(Target.Get(), nullptr, RTVHeap->GetCPUDescriptorHandleForHeapStart());
+    device->CreateDepthStencilView(Depth.Get(), nullptr, DSVHeap->GetCPUDescriptorHandleForHeapStart());
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = Target->GetDesc().Format;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Texture2D.MipLevels = 1;
+    device->CreateShaderResourceView(Target.Get(), &srv, CpuSrv());
+    const auto uploadHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+    const auto lightDescription = CD3DX12_RESOURCE_DESC::Buffer(constantBytes * g_kFRAME_COUNT);
+    if (FAILED(device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &lightDescription,
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&Lights))) ||
+        FAILED(Lights->Map(0, nullptr, reinterpret_cast<void**>(&MappedLights))))
+    {
+        Error = "Failed to create preview lighting constants";
+        Target.Reset();
+        return false;
+    }
+    memset(MappedLights, 0, constantBytes * g_kFRAME_COUNT);
+    for (int shape = 0; shape < 3; ++shape)
+    {
+        const auto vertices = MakeGeometry(shape);
+        const UINT bytes = static_cast<UINT>(vertices.size() * sizeof(StaticModelVertex));
+        const auto description = CD3DX12_RESOURCE_DESC::Buffer(bytes);
+        if (FAILED(device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &description,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&Vertices[shape]))))
+        {
+            Error = "Failed to create preview mesh";
+            Target.Reset();
+            return false;
+        }
+        void* mapped = nullptr;
+        if (FAILED(Vertices[shape]->Map(0, nullptr, &mapped)))
+        {
+            Target.Reset();
+            return false;
+        }
+        memcpy(mapped, vertices.data(), bytes);
+        Vertices[shape]->Unmap(0, nullptr);
+        Counts[shape] = static_cast<UINT>(vertices.size());
+        Views[shape] = {Vertices[shape]->GetGPUVirtualAddress(), bytes, sizeof(StaticModelVertex)};
+    }
+    return true;
+}
+
+ID3D12PipelineState* PreviewState::Pipeline(const MaterialComponent& material)
+{
+    size_t index = static_cast<size_t>(material.AssetCull);
+    if (!material.AssetDepthWrite)
+    {
+        index += 3;
+    }
+    if (material.IsTransparent)
+    {
+        index += 6;
+    }
+    if (Pipelines[index])
+    {
+        return Pipelines[index].Get();
+    }
+    ComPtr<ID3DBlob> vertex;
+    ComPtr<ID3DBlob> pixel;
+    ShaderDescription shader;
+    shader.csoPath = "shader/hlsl/build/modelshaderVS.cso";
+    shader.ppBlob = vertex.GetAddressOf();
+    if (!ShaderPipelines::LoadShaderBlob(shader))
+    {
+        Error = "Preview failed to load production vertex shader";
+        return nullptr;
+    }
+    shader.csoPath = "shader/hlsl/build/modelshaderPS.cso";
+    shader.ppBlob = pixel.GetAddressOf();
+    if (!ShaderPipelines::LoadShaderBlob(shader))
+    {
+        Error = "Preview failed to load production PBR shader";
+        return nullptr;
+    }
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC description{};
+    description.pRootSignature = ShaderPipelines::GetModelRootSignature();
+    description.VS = CD3DX12_SHADER_BYTECODE(vertex.Get());
+    description.PS = CD3DX12_SHADER_BYTECODE(pixel.Get());
+    description.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    if (material.AssetCull == MaterialCull::None)
+    {
+        description.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    }
+    else if (material.AssetCull == MaterialCull::Front)
+    {
+        description.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT;
+    }
+    description.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+    if (!material.AssetDepthWrite)
+    {
+        description.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    }
+    description.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+    if (material.IsTransparent)
+    {
+        auto& blend = description.BlendState.RenderTarget[0];
+        blend.BlendEnable = TRUE;
+        blend.SrcBlend = D3D12_BLEND_ONE;
+        blend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+        blend.SrcBlendAlpha = D3D12_BLEND_ONE;
+        blend.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+    }
+    description.SampleMask = UINT_MAX;
+    description.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    description.NumRenderTargets = 1;
+    description.RTVFormats[0] = GetSceneColorFormat();
+    description.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    description.SampleDesc.Count = 1;
+    const D3D12_INPUT_ELEMENT_DESC layout[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}};
+    description.InputLayout = {layout, 4};
+    if (FAILED(GraphicsDevice::GetDevice()->CreateGraphicsPipelineState(&description, IID_PPV_ARGS(&Pipelines[index]))))
+    {
+        Error = "Failed to create production preview PSO";
+        return nullptr;
+    }
+    return Pipelines[index].Get();
+}
+}
+
+void MaterialPreview::SetVisible(bool visible)
+{
+    preview.Visible = visible;
+}
+
+void MaterialPreview::DrawControls()
+{
+    ImGui::SetNextItemWidth(95);
+    ImGui::Combo("##PreviewMesh", &preview.Shape, "Sphere\0Cube\0Plane\0");
+    ImGui::SameLine();
+    if (ImGui::Button("Reset Camera"))
+    {
+        preview.Yaw = 0.45f;
+        preview.Pitch = 0.2f;
+        preview.Distance = 4.5f;
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(95);
+    ImGui::SliderFloat("Light", &preview.LightIntensity, 0, 5);
+    ImGui::SameLine();
+    ImGui::Checkbox("Scene IBL", &preview.SceneEnvironment);
+}
+
+void MaterialPreview::DrawImage(AssetHandle material)
+{
+    preview.Material = material;
+    preview.Visible = true;
+    if (!preview.Initialize())
+    {
+        ImGui::TextWrapped("%s", preview.Error.c_str());
+        return;
+    }
+    const auto available = ImGui::GetContentRegionAvail();
+    const float side = std::min(available.x, available.y);
+    ImGui::Image(reinterpret_cast<ImTextureData*>(preview.GpuSrv().ptr), ImVec2(side, side));
+    if (ImGui::IsItemHovered())
+    {
+        auto& input = ImGui::GetIO();
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+        {
+            preview.Yaw += input.MouseDelta.x * 0.01f;
+            preview.Pitch = std::clamp(preview.Pitch + input.MouseDelta.y * 0.01f, -1.4f, 1.4f);
+        }
+        preview.Distance = std::clamp(preview.Distance - input.MouseWheel * 0.25f, 1.5f, 12.0f);
+    }
+    if (!preview.Error.empty())
+    {
+        ImGui::TextWrapped("%s", preview.Error.c_str());
+    }
+}
+
+void MaterialPreview::Render()
+{
+    if (!preview.Visible || !preview.Material || !preview.Initialize())
+    {
+        return;
+    }
+    auto& runtime = MaterialManager::GetRuntime(preview.Material);
+    const auto& material = runtime.Binding;
+    auto* pipeline = preview.Pipeline(material);
+    if (!pipeline)
+    {
+        return;
+    }
+    auto* commands = GraphicsDevice::GetCommandList();
+    auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(preview.Target.Get(),
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    commands->ResourceBarrier(1, &barrier);
+    const auto rtv = preview.RTVHeap->GetCPUDescriptorHandleForHeapStart();
+    const auto dsv = preview.DSVHeap->GetCPUDescriptorHandleForHeapStart();
+    const float background[4] = {0.12f, 0.13f, 0.16f, 1};
+    commands->ClearRenderTargetView(rtv, background, 0, nullptr);
+    commands->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1, 0, 0, nullptr);
+    commands->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+    const D3D12_VIEWPORT viewport = {0, 0, previewSize, previewSize, 0, 1};
+    const D3D12_RECT scissor = {0, 0, previewSize, previewSize};
+    commands->RSSetViewports(1, &viewport);
+    commands->RSSetScissorRects(1, &scissor);
+    ScenePasses::BeginPass(ShaderPipelines::GetModelRootSignature(), D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    commands->SetPipelineState(pipeline);
+    auto* lights = reinterpret_cast<XMFLOAT4*>(preview.MappedLights + GraphicsDevice::GetFrameIndex() * constantBytes);
+    memset(lights, 0, constantBytes);
+    lights[0] = {-0.5f, 0.7f, -0.8f, 0};
+    lights[1] = {1.0f, 0.96f, 0.9f, preview.LightIntensity};
+    lights[4] = {1, 0, 0, 0};
+    lights[5] = lights[0];
+    lights[5 + RendererState::g_kMAX_SHADER_LIGHTS] = lights[1];
+    commands->SetGraphicsRootConstantBufferView(2, preview.Lights->GetGPUVirtualAddress() + GraphicsDevice::GetFrameIndex() * constantBytes);
+    // Zero shadow and ray flags for this isolated preview scene.
+    const auto zeroAddress = preview.Lights->GetGPUVirtualAddress() + GraphicsDevice::GetFrameIndex() * constantBytes + constantBytes - 256;
+    commands->SetGraphicsRootConstantBufferView(5, zeroAddress);
+    commands->SetGraphicsRootConstantBufferView(17, zeroAddress);
+    const XMFLOAT3 eye = {sinf(preview.Yaw) * cosf(preview.Pitch) * preview.Distance,
+        sinf(preview.Pitch) * preview.Distance, -cosf(preview.Yaw) * cosf(preview.Pitch) * preview.Distance};
+    ConstantBuffer3D constants;
+    constants.World = XMMatrixIdentity();
+    constants.View = XMMatrixTranspose(XMMatrixLookAtLH(XMLoadFloat3(&eye), XMVectorZero(), XMVectorSet(0, 1, 0, 0)));
+    constants.Projection = XMMatrixTranspose(XMMatrixPerspectiveFovLH(XM_PIDIV4, 1, 0.05f, 100));
+    constants.CameraPos = eye;
+    constants.UseTexture = material.UseTexture;
+    constants.UseNormalMap = material.NormalMapID >= 0;
+    constants.MaterialMode = 1;
+    constants.ShaderClass = static_cast<int>(ShaderClass::PBR);
+    constants.MaterialMetallic = material.Metallic;
+    constants.MaterialRoughness = material.Roughness;
+    constants.MaterialFresnel = material.Fresnel;
+    constants.MaterialIsTransparent = material.IsTransparent;
+    commands->SetGraphicsRootDescriptorTable(0, FrameConstants::AllocateTransientConstantBuffer(constants));
+    MaterialBindings::SetMaterial(g_kINVALID_ENTITY, material);
+    const auto heap = FrameConstants::GetCbvHeap()->GetGPUDescriptorHandleForHeapStart();
+    const auto increment = FrameConstants::GetCbvIncrementSize();
+    int albedo = TextureManager::GetDefaultTextureIndex();
+    int normal = albedo;
+    if (material.TextureID >= 0)
+    {
+        albedo = material.TextureID;
+    }
+    if (material.NormalMapID >= 0)
+    {
+        normal = material.NormalMapID;
+    }
+    commands->SetGraphicsRootDescriptorTable(1, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap, albedo, increment));
+    commands->SetGraphicsRootDescriptorTable(6, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap, normal, increment));
+    if (!preview.SceneEnvironment)
+    {
+        commands->SetGraphicsRootDescriptorTable(7, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap,
+            TextureManager::GetDefaultTextureIndex(), increment));
+    }
+    for (int texture : runtime.TextureDescriptors)
+    {
+        if (texture >= 0)
+        {
+            TextureManager::TouchTexture(texture);
+        }
+    }
+    commands->IASetVertexBuffers(0, 1, &preview.Views[preview.Shape]);
+    commands->IASetIndexBuffer(nullptr);
+    commands->DrawInstanced(preview.Counts[preview.Shape], 1, 0, 0);
+    barrier = CD3DX12_RESOURCE_BARRIER::Transition(preview.Target.Get(),
+        D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    commands->ResourceBarrier(1, &barrier);
+}
+
+void MaterialPreview::Shutdown()
+{
+    preview = PreviewState{};
+}
+
+ID3D12Resource* MaterialPreview::GetTarget()
+{
+    return preview.Target.Get();
+}
+
+void MaterialPreview::SetMesh(Mesh mesh)
+{
+    preview.Shape = static_cast<int>(mesh);
+}

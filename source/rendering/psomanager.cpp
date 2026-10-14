@@ -83,6 +83,7 @@ bool PsoManager::CreateGraphicsPipelineState(
 
 		return false;
 	}
+    ++s_GraphicsPipelineCreations;
 	return true;
 }
 
@@ -209,7 +210,7 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const ShaderDescription&
 	{
 		blendKind = "OPAQUE";
 	}
-	string key = resource.vsPath + resolvedPsPath + "|" + (geometryKind) + "|" + (passKind) + "|" + to_string(forwardRtvFormatVal) + "|" + (windingKind) + "|" + (blendKind);
+	string key = resource.vsPath + resolvedPsPath + "|" + (geometryKind) + "|" + (passKind) + "|" + to_string(forwardRtvFormatVal) + "|" + (windingKind) + "|" + (blendKind) + "|" + to_string(resource.cullMode) + "|" + to_string(resource.depthWrite);
 
 	auto it = m_PsoCache.find(key);
 	if (it != m_PsoCache.end())
@@ -274,6 +275,7 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const ShaderDescription&
 	psoDesc.PS = CD3DX12_SHADER_BYTECODE(psBlob.Get());
 	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
 	psoDesc.RasterizerState.FrontCounterClockwise = resource.frontCounterClockwise;
+    psoDesc.RasterizerState.CullMode = resource.cullMode;
 	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 	psoDesc.SampleMask = UINT_MAX;
 	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
@@ -356,6 +358,11 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const ShaderDescription&
 		rtBlend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 		psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 	}
+
+    if (!resource.depthWrite)
+    {
+        psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    }
 
 	ComPtr<ID3D12PipelineState> newPso{};
 	if (!CreateGraphicsPipelineState(psoDesc, "renderer", newPso))

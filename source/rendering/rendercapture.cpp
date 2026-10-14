@@ -129,8 +129,13 @@ float RenderCapture::HalfToFloat(uint16_t value)
 
 bool RenderCapture::SaveScenePng(const wchar_t* path)
 {
+    return SaveTexturePng(RenderTargets::GetEditorSceneResource(), path);
+}
+
+bool RenderCapture::SaveTexturePng(ID3D12Resource* resource, const wchar_t* path)
+{
     TextureData texture;
-    if (!ReadTexture(RenderTargets::GetEditorSceneResource(), texture) ||
+    if (!ReadTexture(resource, texture) ||
         (texture.Format != DXGI_FORMAT_R8G8B8A8_UNORM && texture.Format != DXGI_FORMAT_R16G16B16A16_FLOAT))
     {
         return false;

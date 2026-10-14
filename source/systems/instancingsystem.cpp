@@ -350,6 +350,11 @@ BatchKey InstancingSystem::MakeKey(
 
 bool InstancingSystem::CanInstance(EntityID entity)
 {
+    if (ComponentManager::HasComponent<MaterialComponent>(entity) &&
+        !ComponentManager::GetComponentUnchecked<MaterialComponent>(entity).MaterialSlots.empty())
+    {
+        return false;
+    }
 	// Different per-entity vertex fields cannot share the same instanced draw geometry.
 	if (VertexDeformation::IsRequested(entity)) return false;
 	if (ComponentManager::HasComponent<MeshComponent>(entity) &&

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "materialmanager.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
 #include "sun.h"
@@ -240,6 +241,7 @@ void ImGuiManager::Undo()
 	m_RedoStack.push_back(CaptureEntity(snapshot.Entity));
 	if (m_RedoStack.size() > 10) m_RedoStack.erase(m_RedoStack.begin());
 	ApplySnapshot(snapshot);
+    MaterialManager::NotifyAssignmentsChanged();
 	if (snapshot.WasAlive)
 	{
 		m_SelectedEntity = snapshot.Entity;
@@ -258,6 +260,7 @@ void ImGuiManager::Redo()
 	m_UndoStack.push_back(CaptureEntity(snapshot.Entity));
 	if (m_UndoStack.size() > 10) m_UndoStack.erase(m_UndoStack.begin());
 	ApplySnapshot(snapshot);
+    MaterialManager::NotifyAssignmentsChanged();
 	if (snapshot.WasAlive)
 	{
 		m_SelectedEntity = snapshot.Entity;

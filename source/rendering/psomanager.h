@@ -4,6 +4,10 @@
 class PsoManager : protected RendererState
 {
 public:
+    static uint64_t GraphicsPipelineCreations() { return s_GraphicsPipelineCreations; }
+private:
+    inline static uint64_t s_GraphicsPipelineCreations = 0;
+public:
 	static bool CreateGraphicsPipelineState(
 		const D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc,
 		const char* debugName,

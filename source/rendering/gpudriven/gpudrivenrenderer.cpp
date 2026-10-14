@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "materialmanager.h"
 #include "gpudrivenrenderer.h"
 #include "meshlets/meshletmanager.h"
 #include "meshshader/meshshaderrenderer.h"
@@ -138,7 +139,8 @@ void Initialize()
     opaque[4].InitAsDescriptorTable(1, &textures, D3D12_SHADER_VISIBILITY_PIXEL);
     opaque[5].InitAsConstants(3, 5);
     opaque[6].InitAsShaderResourceView(32, 0, D3D12_SHADER_VISIBILITY_PIXEL);
-    CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
+    CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_ANISOTROPIC);
+    sampler.MaxAnisotropy = 16;
     CD3DX12_ROOT_SIGNATURE_DESC opaqueDescription(_countof(opaque), opaque, 1, &sampler,
                                                   D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
     Root(device, opaqueDescription, state.OpaqueRoot);
@@ -163,8 +165,8 @@ void Initialize()
     pipeline.SampleMask = UINT_MAX;
     pipeline.SampleDesc.Count = 1;
     pipeline.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    pipeline.NumRenderTargets = 5;
-    for (uint32_t i = 0; i < 5; ++i) pipeline.RTVFormats[i] = RendererState::GetGBufferFormat(static_cast<GBufferType>(i));
+    pipeline.NumRenderTargets = RendererState::g_kGEOMETRY_GBUFFER_COUNT;
+    for (uint32_t i = 0; i < RendererState::g_kGEOMETRY_GBUFFER_COUNT; ++i) pipeline.RTVFormats[i] = RendererState::GetGBufferFormat(static_cast<GBufferType>(i));
     pipeline.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     Check(device->CreateGraphicsPipelineState(&pipeline, IID_PPV_ARGS(&state.OpaquePSO)));
     auto occluder = Shader("shader/hlsl/build/GPUOccluderPS.cso");
@@ -409,7 +411,22 @@ bool GPUDrivenRenderer::SupportsEntity(uint32_t entity)
     if (ComponentManager::HasComponent<NameComponent>(entity) &&
         ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky")
         return false;
-    const auto &material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+    const auto &component = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+    const auto &material = MaterialManager::Resolve(component);
+    for (size_t slot = 0; slot < MaterialManager::SlotCount(entity); ++slot)
+    {
+        const auto& section = MaterialManager::Resolve(component, slot);
+        const bool sectionPbr = section.ShaderClassMode == MaterialMode::Manual && section.ShaderClass == ShaderClass::PBR;
+        const bool sectionAutomatic = staticModel && section.ShaderClassMode == MaterialMode::Auto;
+        if ((!sectionPbr && !sectionAutomatic) || section.IsTransparent || section.Alpha < 1.0f)
+        {
+            return false;
+        }
+        if (section.RuntimeHandle != 0 && (!section.AssetDepthWrite || section.AssetCull == MaterialCull::Front))
+        {
+            return false;
+        }
+    }
     const bool manualPbr =
         material.ShaderClassMode == MaterialMode::Manual && material.ShaderClass == ShaderClass::PBR;
     const bool automaticModel = staticModel && material.ShaderClassMode == MaterialMode::Auto;
@@ -417,9 +434,6 @@ bool GPUDrivenRenderer::SupportsEntity(uint32_t entity)
         return false;
     if (automaticModel)
     {
-        // The GPU deferred shader does not yet reproduce the model normal-map path.
-        if (material.NormalMapID >= 0)
-            return false;
         const auto *model = ModelManager::GetStaticModel(
             ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId);
         if (!model)
