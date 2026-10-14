@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "materialmanager.h"
+#include "assetthumbnailmanager.h"
 #include "texturemanager.h"
 #include "modelmanager.h"
 #include "world.h"
@@ -94,10 +95,15 @@ MaterialRuntime& MaterialManager::GetRuntime(AssetHandle handle)
     return result;
 }
 
-void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAssetData& material)
+const MaterialRuntime* MaterialManager::FindRuntime(AssetHandle handle)
+{
+    const auto found = runtimes.find(handle);
+    return found == runtimes.end() ? nullptr : found->second.get();
+}
+
+MaterialComponent MaterialManager::BuildPreviewBinding(const MaterialAssetData& material, const array<int, 5>& descriptors)
 {
     MaterialComponent binding;
-    binding.RuntimeHandle = runtime.Handle;
     binding.ShaderClassMode = MaterialMode::Manual;
     binding.ShaderClass = ShaderClass::PBR;
     binding.BaseColor = XMFLOAT4(material.BaseColor.data());
@@ -120,6 +126,17 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
     binding.AbsorptionCoefficient = {material.AbsorptionCoefficient[0], material.AbsorptionCoefficient[1], material.AbsorptionCoefficient[2]};
     binding.DoubleSided = material.Cull == MaterialCull::None;
     binding.BaseSaturation = 1.0f;
+    binding.TextureID = descriptors[0];
+    binding.UseTexture = binding.TextureID >= 0;
+    binding.NormalMapID = descriptors[1];
+    binding.MetallicRoughnessID = descriptors[2];
+    binding.AOTextureID = descriptors[3];
+    binding.EmissiveTextureID = descriptors[4];
+    return binding;
+}
+
+void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAssetData& material)
+{
     array<int, 5> descriptors;
     descriptors.fill(-1);
     for (size_t slot = 0; slot < descriptors.size(); ++slot)
@@ -148,12 +165,8 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
             runtime.TexturePaths[slot].clear();
         }
     }
-    binding.TextureID = descriptors[0];
-    binding.UseTexture = binding.TextureID >= 0;
-    binding.NormalMapID = descriptors[1];
-    binding.MetallicRoughnessID = descriptors[2];
-    binding.AOTextureID = descriptors[3];
-    binding.EmissiveTextureID = descriptors[4];
+    auto binding = BuildPreviewBinding(material, descriptors);
+    binding.RuntimeHandle = runtime.Handle;
     // Revision changes invalidate only a shared material record and its frame constant buffers.
     if (runtime.Revision == 0 || runtime.Binding.BaseColor.x != binding.BaseColor.x ||
         runtime.BoundData != material || runtime.TextureDescriptors != descriptors)
@@ -202,6 +215,7 @@ bool MaterialManager::SetEditing(AssetHandle handle, const MaterialAssetData& ed
     UpdateBinding(runtime, editing);
     runtime.Editing = editing;
     runtime.Dirty = runtime.Editing != runtime.Saved;
+    AssetThumbnailManager::MarkDirty(handle);
     return true;
 }
 
@@ -220,6 +234,7 @@ bool MaterialManager::Save(AssetHandle handle)
     }
     runtime.Saved = runtime.Editing;
     runtime.Dirty = false;
+    AssetThumbnailManager::MarkDirty(handle);
     return true;
 }
 

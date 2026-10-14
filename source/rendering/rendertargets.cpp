@@ -519,11 +519,11 @@ void RenderTargets::ResizeScene(UINT width, UINT height)
 D3D12_CPU_DESCRIPTOR_HANDLE RenderTargets::GetImGuiCpuHandle()
 {
 	UINT cbvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-	return CD3DX12_CPU_DESCRIPTOR_HANDLE(m_CbvHeap->GetCPUDescriptorHandleForHeapStart(), RendererState::g_kENGINE_DESCRIPTOR_END + 1, cbvIncrement);
+	return CD3DX12_CPU_DESCRIPTOR_HANDLE(m_CbvHeap->GetCPUDescriptorHandleForHeapStart(), RendererState::g_kENGINE_DESCRIPTOR_END + 1 + RendererState::g_kTHUMBNAIL_DESCRIPTOR_COUNT, cbvIncrement);
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE RenderTargets::GetImGuiGpuHandle()
 {
 	UINT cbvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-	return CD3DX12_GPU_DESCRIPTOR_HANDLE(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), RendererState::g_kENGINE_DESCRIPTOR_END + 1, cbvIncrement);
+	return CD3DX12_GPU_DESCRIPTOR_HANDLE(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), RendererState::g_kENGINE_DESCRIPTOR_END + 1 + RendererState::g_kTHUMBNAIL_DESCRIPTOR_COUNT, cbvIncrement);
 }

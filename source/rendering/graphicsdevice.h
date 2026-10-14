@@ -28,5 +28,8 @@ public:
 	static bool CheckDeviceHealth(HRESULT operationResult, const char* operation);
 	static bool WaitForGpuIdle();
 	static ID3D12CommandQueue* GetCommandQueue() { return m_CommandQueue.Get(); }
+    static UINT64 GetPendingSubmissionFence() { return m_CurrentFenceValue + 1; }
+    static UINT64 GetCompletedFence() { return m_Fence ? m_Fence->GetCompletedValue() : 0; }
+    static ID3D12Resource* GetBackBuffer(UINT index) { return index < g_kFRAME_COUNT ? m_RenderTargets[index].Get() : nullptr; }
 };
 

@@ -50,6 +50,10 @@ AssetType AssetRegistry::Classify(const std::filesystem::path& path)
             return AssetType::Texture;
         }
     }
+    for (const char* mesh : {".obj", ".fbx", ".gltf", ".glb"})
+    {
+        if (extension == mesh) return AssetType::Mesh;
+    }
     return AssetType::Unknown;
 }
 
@@ -138,7 +142,7 @@ bool AssetRegistry::Refresh(std::string& error)
         }
         // Texture IDs are assigned when used or dragged. Scanning the project should
         // not create metadata for every imported texture that no material references.
-        if (type == AssetType::Texture &&
+        if ((type == AssetType::Texture || type == AssetType::Mesh) &&
             !std::filesystem::exists(iterator->path().wstring() + L".meta", filesystemError))
         {
             continue;

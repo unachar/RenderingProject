@@ -1094,4 +1094,20 @@
     <FxCompile Include="shader\hlsl\CloudRaymarchPS.hlsl" />
     <FxCompile Include="shader\hlsl\CloudCompositePS.hlsl" />
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\assets\thumbnailcache.cpp" />
+    <ClCompile Include="source\core\thumbnailvalidation.cpp" />
+    <ClInclude Include="source\core\thumbnailvalidation.h" />
+    <ClCompile Include="source\editor\assetthumbnailmanager.cpp" />
+    <ClCompile Include="source\rendering\editordescriptors.cpp" />
+    <ClCompile Include="source\rendering\thumbnailrenderer.cpp" />
+    <ClInclude Include="source\assets\thumbnailcache.h" />
+    <ClInclude Include="source\assets\thumbnailgeometry.h" />
+    <ClInclude Include="source\editor\assetthumbnailmanager.h" />
+    <ClInclude Include="source\rendering\editordescriptorpool.h" />
+    <ClInclude Include="source\rendering\editordescriptors.h" />
+    <ClInclude Include="source\rendering\thumbnailrenderer.h" />
+    <ClInclude Include="source\rendering\thumbnailpreviewcontext.h" />
+    <ClInclude Include="source\rendering\thumbnailmeshio.h" />
+  </ItemGroup>
 </Project>

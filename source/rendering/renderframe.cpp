@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "materialpreview.h"
+#include "assetthumbnailmanager.h"
 #include "renderframe.h"
 #include "gpudriven/gpudrivenrenderer.h"
 #include "renderconfiguration.h"
@@ -41,12 +42,15 @@ void RenderFrame::BeginDraw()
 	m_DynamicVertexOffset = 0;
 
 	SetDescriptorHeap();
+    static uint64_t editorFrame = 0;
+    AssetThumbnailManager::BeginFrame(++editorFrame);
 	ImGuiManager::Update();
 }
 
 void RenderFrame::EndDraw()
 {
     MaterialPreview::Render();
+    AssetThumbnailManager::ProcessGenerationBudget();
     m_CommandList->RSSetViewports(1, &m_Viewport);
     m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
 	if (m_CommandList)

@@ -5,7 +5,7 @@
 #include <string>
 
 using AssetHandle = uint64_t;
-enum class AssetType : uint32_t { Unknown, Material, Texture };
+enum class AssetType : uint32_t { Unknown, Material, Texture, Mesh };
 struct AssetDragPayload
 {
     AssetHandle Handle = 0;

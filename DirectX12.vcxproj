@@ -1190,4 +1190,33 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
   <ItemGroup>
     <ClCompile Include="source\assets\materialscenereferences.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\core\thumbnailvalidation.cpp" />
+    <ClInclude Include="source\core\thumbnailvalidation.h" />
+    <ClCompile Include="source\assets\thumbnailcache.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="source\editor\assetthumbnailmanager.cpp" />
+    <ClCompile Include="source\rendering\editordescriptors.cpp" />
+    <ClCompile Include="source\rendering\thumbnailrenderer.cpp" />
+    <ClInclude Include="source\assets\thumbnailcache.h" />
+    <ClInclude Include="source\assets\thumbnailgeometry.h" />
+    <ClInclude Include="source\editor\assetthumbnailmanager.h" />
+    <ClInclude Include="source\rendering\editordescriptorpool.h" />
+    <ClInclude Include="source\rendering\editordescriptors.h" />
+    <ClInclude Include="source\rendering\thumbnailrenderer.h" />
+    <ClInclude Include="source\rendering\thumbnailpreviewcontext.h" />
+    <ClInclude Include="source\rendering\thumbnailmeshio.h" />
+  </ItemGroup>
+  <!-- MSVC 14.51.36231 emits LNK1103 with optimized /GL + /Z7 records.
+       Keep /O2, and avoid only whole-program optimization on this affected toolset. -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64' and '$(VCToolsVersion)'=='14.51.36231'">
+    <WholeProgramOptimization>false</WholeProgramOptimization>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64' and '$(VCToolsVersion)'=='14.51.36231'">
+    <ClCompile>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
+    </ClCompile>
+    <Link>
+      <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
+    </Link>
+  </ItemDefinitionGroup>
 </Project>

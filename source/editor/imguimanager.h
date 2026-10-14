@@ -195,6 +195,13 @@ private:
 
 public:
 	static constexpr UINT kSrvDescriptorCount = 64;
+    inline static bool m_AssetBrowserStandalone = false;
+    static void SetAssetBrowserDirectory(const filesystem::path& directory, bool standalone = false)
+    {
+        m_CurrentAssetDirectory = directory;
+        m_ShowAssetBrowser = true;
+        m_AssetBrowserStandalone = standalone;
+    }
 	ImGuiManager() = delete;
 
 	static bool Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* commandQueue, int numFrames, DXGI_FORMAT rtvFormat, ID3D12DescriptorHeap* cbvHeap, D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle, D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle);

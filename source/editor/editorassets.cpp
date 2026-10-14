@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "materialmanager.h"
+#include "assetthumbnailmanager.h"
+#include "thumbnailvalidation.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
 #include "materialsystem.h"
@@ -20,7 +22,13 @@ using namespace EditorWidgets;
 
 void ImGuiManager::DrawAssetBrowserWindow()
 {
-	ImGui::SetNextWindowSize(ImVec2(720.0f, 260.0f), ImGuiCond_FirstUseEver);
+    if (m_AssetBrowserStandalone)
+    {
+        ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(40, 60), ImGuiCond_Once);
+        ImGui::SetNextWindowSize(ImVec2(1000, 480), ImGuiCond_Once);
+    }
+    else ImGui::SetNextWindowSize(ImVec2(720.0f, 260.0f), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin("プロジェクト", &m_ShowAssetBrowser))
 	{
 		ImGui::End();
@@ -91,7 +99,14 @@ void ImGuiManager::DrawAssetBrowserWindow()
 		ImGui::EndPopup();
 	}
 
-	static ImGuiTextFilter assetFilter;
+    int thumbnailSize = static_cast<int>(AssetThumbnailManager::Settings().Size);
+    ImGui::SetNextItemWidth(150);
+    if (ImGui::SliderInt("サムネイルサイズ", &thumbnailSize, 32, 256)) AssetThumbnailManager::Settings().Size = static_cast<UINT>(thumbnailSize);
+    ImGui::SameLine();
+    if (ImGui::Button("サムネイル更新")) AssetThumbnailManager::Refresh();
+    const float cellSize = static_cast<float>(thumbnailSize);
+    const float rowHeight = cellSize + ImGui::GetTextLineHeightWithSpacing() + 12.0f;
+    static ImGuiTextFilter assetFilter;
 	static filesystem::path pendingDeletePath;
 	bool deleteRequested = false;
 	DrawSearchField("AssetSearch", "ファイル名で検索...", assetFilter);
@@ -133,31 +148,68 @@ void ImGuiManager::DrawAssetBrowserWindow()
 		ImGui::EndDragDropTarget();
 	}
 
-	vector<filesystem::directory_entry> entries;
-	for (const auto& entry : filesystem::directory_iterator(m_CurrentAssetDirectory, ec))
-	{
-		if (entry.path().extension() != ".meta" && entry.path().extension() != ".tmp" &&
-            assetFilter.PassFilter(entry.path().filename().generic_string().c_str())) entries.push_back(entry);
-	}
-	if (ec) ImGui::TextWrapped("フォルダを読み込めません: %s", ec.message().c_str());
-	else if (entries.empty()) ImGui::TextWrapped("表示するアセットがありません。検索条件を変更するか、ファイルをドロップして取り込んでください。");
-	sort(entries.begin(), entries.end(), [](const auto& a, const auto& b)
-		{
-			if (a.is_directory() != b.is_directory())
-			{
-				return a.is_directory() > b.is_directory();
-			}
-			return a.path().filename().generic_string() < b.path().filename().generic_string();
-		});
+    static vector<filesystem::directory_entry> entries;
+    static unordered_map<string, AssetHandle> browserHandles;
+    static filesystem::path listedDirectory;
+    static string listedFilter;
+    static double nextScan = 0;
+    const string currentFilter = assetFilter.InputBuf;
+    if (listedDirectory != m_CurrentAssetDirectory || listedFilter != currentFilter || ImGui::GetTime() >= nextScan)
+    {
+        entries.clear();
+        browserHandles.clear();
+        listedDirectory = m_CurrentAssetDirectory;
+        listedFilter = currentFilter;
+        nextScan = ImGui::GetTime() + 0.5;
+        for (const auto& entry : filesystem::directory_iterator(m_CurrentAssetDirectory, ec))
+        {
+            if (entry.path().extension() != ".meta" && entry.path().extension() != ".tmp" &&
+                assetFilter.PassFilter(entry.path().filename().generic_string().c_str())) entries.push_back(entry);
+        }
+        sort(entries.begin(), entries.end(), [](const auto& a, const auto& b)
+        {
+            error_code firstError, secondError;
+            const bool firstDirectory = a.is_directory(firstError), secondDirectory = b.is_directory(secondError);
+            if (firstDirectory != secondDirectory) return firstDirectory > secondDirectory;
+            return a.path().filename().generic_string() < b.path().filename().generic_string();
+        });
+    }
+    if (ec) ImGui::TextWrapped("フォルダを読み込めません: %s", ec.message().c_str());
+    else if (entries.empty()) ImGui::TextWrapped("表示するアセットがありません。");
 
-	ImGuiListClipper clipper;
-	clipper.Begin(static_cast<int>(entries.size()));
+    if (!m_SelectedAssetPath.empty())
+    {
+        const auto selectedType = AssetRegistry::Classify(m_SelectedAssetPath);
+        if (selectedType != AssetType::Unknown)
+        {
+            auto& handle = browserHandles[m_SelectedAssetPath.generic_string()];
+            if (!handle)
+            {
+                string error;
+                handle = MaterialManager::Registry().Register(m_SelectedAssetPath, selectedType, error);
+            }
+            AssetThumbnailManager::Request(handle, ThumbnailPriority::Selected);
+        }
+    }
+    const int columnCount = std::clamp(static_cast<int>(ImGui::GetContentRegionAvail().x / (cellSize + 16.0f)), 1, 64);
+    if (ImGui::BeginTable("AssetGrid", columnCount, ImGuiTableFlags_SizingFixedSame))
+    {
+    for (int column = 0; column < columnCount; ++column) ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, cellSize + 8.0f);
+    ImGuiListClipper clipper;
+    clipper.Begin((static_cast<int>(entries.size()) + columnCount - 1) / columnCount, rowHeight + ImGui::GetStyle().CellPadding.y * 2.0f);
 	while (clipper.Step())
 	{
-		for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
-		{
+        for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
+        {
+            ImGui::TableNextRow(0, rowHeight);
+            for (int column = 0; column < columnCount; ++column)
+            {
+            const int i = row * columnCount + column;
+            if (i >= static_cast<int>(entries.size())) break;
+            ImGui::TableSetColumnIndex(column);
 			const filesystem::path path = entries[i].path();
-			const bool isDir = entries[i].is_directory();
+			const bool isDir = entries[i].is_directory(ec);
+            ec.clear();
 			const string fileName = path.filename().generic_string();
 			string displayName;
 			if (fileName.empty())
@@ -179,8 +231,11 @@ void ImGuiManager::DrawAssetBrowserWindow()
 
 			ImGui::PushID(itemId.c_str());
 
-			ImVec2 cursorPos = ImGui::GetCursorScreenPos();
+            const ImVec2 cellPosition = ImGui::GetCursorScreenPos();
+            ImVec2 cursorPos(cellPosition.x + (cellSize - 16.0f) * 0.5f, cellPosition.y + (cellSize - 16.0f) * 0.5f);
 			ImVec2 iconSize(16, 16);
+            const bool clicked = ImGui::Selectable("##AssetCell", selected, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(cellSize, rowHeight));
+            ThumbnailValidation::CaptureAssetCell(fileName.c_str(), cellPosition.x, cellPosition.y, selected);
 
 			if (isDir)
 			{
@@ -220,10 +275,34 @@ void ImGuiManager::DrawAssetBrowserWindow()
                 }
 			}
 
-			ImGui::Dummy(iconSize);
-			ImGui::SameLine(0.0f, 6.0f);
-
-			if (ImGui::Selectable(displayName.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick))
+            ThumbnailHandle thumbnail;
+            if (!isDir)
+            {
+                const auto type = AssetRegistry::Classify(path);
+                if (type != AssetType::Unknown)
+                {
+                    string error;
+                    const auto key = path.generic_string();
+                    auto& handle = browserHandles[key];
+                    if (!handle) handle = MaterialManager::Registry().Register(path, type, error);
+                    thumbnail = AssetThumbnailManager::Request(handle, selected ? ThumbnailPriority::Selected : ThumbnailPriority::Visible);
+                }
+            }
+            if (thumbnail.State == ThumbnailState::Ready && thumbnail.Image)
+            {
+                const auto size = FitThumbnail(thumbnail.Image->Width, thumbnail.Image->Height, cellSize);
+                const ImVec2 top(cellPosition.x + (cellSize - size.Width) * 0.5f, cellPosition.y + (cellSize - size.Height) * 0.5f);
+                // Draw on the cell without replacing the Selectable's interaction item.
+                ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(thumbnail.GetImGuiTextureID().ptr), top, ImVec2(top.x + size.Width, top.y + size.Height));
+            }
+            else if (thumbnail.State == ThumbnailState::Failed)
+                ImGui::GetWindowDrawList()->AddText(ImVec2(cellPosition.x + cellSize - 12, cellPosition.y), IM_COL32(255, 110, 90, 255), "!");
+            const ImVec2 labelPosition(cellPosition.x, cellPosition.y + cellSize + 4.0f);
+            ImGui::GetWindowDrawList()->PushClipRect(labelPosition, ImVec2(cellPosition.x + cellSize, labelPosition.y + ImGui::GetTextLineHeight()), true);
+            ImGui::GetWindowDrawList()->AddText(labelPosition, ImGui::GetColorU32(ImGuiCol_Text), displayName.c_str());
+            ImGui::GetWindowDrawList()->PopClipRect();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", displayName.c_str());
+            if (clicked)
 			{
 				m_SelectedAssetPath = path;
 				if (isDir && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
@@ -295,6 +374,13 @@ void ImGuiManager::DrawAssetBrowserWindow()
                         moveRequested = true;
                     }
                 }
+                if (!isDir && AssetRegistry::Classify(path) != AssetType::Unknown && AssetRegistry::Classify(path) != AssetType::Material && ImGui::MenuItem("Rename / Move"))
+                {
+                    string error;
+                    moveHandle = MaterialManager::Registry().Register(path, AssetRegistry::Classify(path), error);
+                    strncpy_s(movePath, path.generic_string().c_str(), _TRUNCATE);
+                    moveRequested = moveHandle != 0;
+                }
                 if (ImGui::MenuItem("削除"))
                 {
 					pendingDeletePath = path;
@@ -324,10 +410,13 @@ void ImGuiManager::DrawAssetBrowserWindow()
 				ImGui::EndDragDropSource();
 			}
 
-			ImGui::PopID();
-		}
-	}
-	ImGui::EndChild();
+            ImGui::PopID();
+            }
+        }
+    }
+    ImGui::EndTable();
+    }
+    ImGui::EndChild();
     if (moveRequested)
     {
         ImGui::OpenPopup("Rename / Move Asset");

@@ -261,6 +261,8 @@ public:
 	static_assert(g_kHIZ_DEBUG_UAV_INDEX <= g_kENGINE_DESCRIPTOR_END,
 		"The Hi-Z descriptor range exceeds the engine-owned descriptor range.");
 	static constexpr UINT g_kMAX_DYNAMIC_VERTICES = 65536;
+    static constexpr UINT g_kTHUMBNAIL_DESCRIPTOR_START = g_kENGINE_DESCRIPTOR_END + 1;
+    static constexpr UINT g_kTHUMBNAIL_DESCRIPTOR_COUNT = 512;
 
 	static DXGI_FORMAT GetSceneColorFormat() { return m_SceneColorFormat; }
 	static DXGI_FORMAT GetBackBufferFormat() { return m_BackBufferFormat; }

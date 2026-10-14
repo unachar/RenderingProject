@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "materialvalidation.h"
+#include "thumbnailvalidation.h"
 #include "cloud/cloudvalidation.h"
 #include "renderingvalidation.h"
 #include "meshlets/meshletvalidation.h"
@@ -490,6 +491,7 @@ bool RenderingValidation::IsEnabled()
 
 void RenderingValidation::BeforeFrame(uint64_t frame)
 {
+    if (ThumbnailValidation::Enabled()) { ThumbnailValidation::BeforeFrame(frame); return; }
     if (MaterialValidation::Enabled())
     {
         MaterialValidation::BeforeFrame(frame);
@@ -658,6 +660,7 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
 
 void RenderingValidation::AfterFrame(uint64_t frame)
 {
+    if (ThumbnailValidation::Enabled()) { ThumbnailValidation::AfterFrame(frame); return; }
     if (MaterialValidation::Enabled())
     {
         MaterialValidation::AfterFrame(frame);
@@ -849,6 +852,7 @@ void RenderingValidation::AfterFrame(uint64_t frame)
 
 bool RenderingValidation::Finish()
 {
+    if (ThumbnailValidation::Enabled()) return ThumbnailValidation::Finish();
     if (MaterialValidation::Enabled())
     {
         return MaterialValidation::Finish();

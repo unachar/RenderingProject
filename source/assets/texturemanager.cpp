@@ -690,6 +690,9 @@ void TextureManager::EndTextureLoading()
 		TextureManager::CreateShaderResourceView(resource.Get(), resource->GetDesc(), d.SrvIndex);
 		td.Resource = resource;
 		td.Streaming = move(streaming);
+        error_code timestampError;
+        const auto timestamp = filesystem::last_write_time(filesystem::u8path(d.Key), timestampError);
+        if (!timestampError) td.SourceTime = timestamp.time_since_epoch().count();
 		lock_guard<mutex> lock(g_TextureMutex);
 		m_Textures[d.Key] = td;
 	}
@@ -896,6 +899,17 @@ int TextureManager::LoadTexture(const char* fileName)
 	return LoadTexture(filesystem::u8path(fileName));
 }
 
+int TextureManager::FindLoadedTexture(const filesystem::path& path)
+{
+    lock_guard<mutex> lock(g_TextureMutex);
+    const auto found = m_Textures.find(MakeTextureCacheKey(path));
+    if (found == m_Textures.end()) return -1;
+    error_code error;
+    const auto modified = filesystem::last_write_time(path, error);
+    if (error || found->second.SourceTime != modified.time_since_epoch().count()) return -1;
+    return found->second.SrvIndex;
+}
+
 int TextureManager::LoadTexture(const filesystem::path& fileName)
 {
 	if (fileName.empty())
@@ -991,6 +1005,9 @@ int TextureManager::LoadTexture(const filesystem::path& fileName)
 	tData.Resource = resource;
 	tData.SrvIndex = srvIndex;
 	tData.Streaming = move(streaming);
+    error_code timestampError;
+    const auto timestamp = filesystem::last_write_time(fileName, timestampError);
+    if (!timestampError) tData.SourceTime = timestamp.time_since_epoch().count();
 	{
 		lock_guard<mutex> lock(g_TextureMutex);
 		m_Textures.emplace(key, tData);

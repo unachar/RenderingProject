@@ -328,6 +328,30 @@ void MaterialBindings::SetMaterial(const EntityID entityID, const MaterialCompon
 	m_CommandList->SetGraphicsRootConstantBufferView(3, GetPBRConstantBufferAddress(slot));
 }
 
+bool MaterialBindings::SetPreviewMaterial(const MaterialComponent& material, ID3D12Resource* buffer, UINT textureBase,
+    UINT partIndex, UINT partsPerFrame)
+{
+    if (!buffer) return false;
+    auto constants = BuildPBRConstantsFromMaterial(material);
+    constants.AssetSurface.z = 1.0f;
+    auto offset = [textureBase](int descriptor)
+    {
+        return descriptor >= static_cast<int>(textureBase) ? static_cast<uint32_t>(descriptor) - textureBase : UINT32_MAX;
+    };
+    constants.AssetTextures.x = offset(material.MetallicRoughnessID);
+    constants.AssetTextures.y = offset(material.AOTextureID);
+    constants.AssetTextures.z = offset(material.EmissiveTextureID);
+    uint8_t* mapped = nullptr;
+    if (FAILED(buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped)))) return false;
+    const auto frameOffset = (GraphicsDevice::GetFrameIndex() * partsPerFrame + partIndex) * g_kPBR_CB_ALIGNED_SIZE;
+    memcpy(mapped + frameOffset, &constants, sizeof(constants));
+    buffer->Unmap(0, nullptr);
+    m_CommandList->SetGraphicsRootConstantBufferView(3, buffer->GetGPUVirtualAddress() + frameOffset);
+    m_CommandList->SetGraphicsRootDescriptorTable(18, CD3DX12_GPU_DESCRIPTOR_HANDLE(
+        FrameConstants::GetCbvHeap()->GetGPUDescriptorHandleForHeapStart(), textureBase, FrameConstants::GetCbvIncrementSize()));
+    return true;
+}
+
 uint64_t MaterialBindings::GetMaterialBatchHash(const MaterialComponent& material)
 {
 	const PBRConstants constants = BuildPBRConstantsFromMaterial(material);

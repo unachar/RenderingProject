@@ -18,6 +18,7 @@ private:
 		ComPtr<ID3D12Resource> Resource{};
 		int SrvIndex = -1;
 		shared_ptr<TextureStreamingState> Streaming{};
+        int64_t SourceTime = 0;
 	};
 
 	static unordered_map<string, TextureData> m_Textures;
@@ -50,6 +51,7 @@ public:
 	static int GetErrorTextureIndex();
 	static bool GetTextureSize(int srvIndex, UINT& outWidth, UINT& outHeight);
 	static vector<TextureInfo> GetLoadedTextureInfos();
+    static int FindLoadedTexture(const filesystem::path& path);
 	static int LoadTextureUV(const char* fileName, SpriteComponent& sprite, const XMFLOAT4& uvRect);
 	static void TouchTexture(int srvIndex);
 	static void UpdateStreaming(ID3D12GraphicsCommandList* commandList);

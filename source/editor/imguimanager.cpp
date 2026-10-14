@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "thumbnailvalidation.h"
 #include "materialmanager.h"
 #include "materialpreview.h"
 #include "materialvalidation.h"
@@ -174,6 +175,7 @@ void ImGuiManager::Update()
 	ImGui_ImplDX12_NewFrame();
 	ImGui_ImplWin32_NewFrame();
     MaterialValidation::BeforeEditorFrame();
+    ThumbnailValidation::BeforeEditorFrame();
 	ImGui::NewFrame();
     MaterialValidation::InjectDragPayload();
 	ImGuizmo::BeginFrame();

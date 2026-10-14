@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "assetthumbnailmanager.h"
 #include "transmittanceshadows.h"
 #include "materialmanager.h"
 #include "materialpreview.h"
@@ -379,7 +380,7 @@ bool GraphicsDevice::Init(HWND hwnd)
 	}
 
 	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc {};
-	cbvHeapDesc.NumDescriptors = g_kENGINE_DESCRIPTOR_END + 1 + ImGuiManager::kSrvDescriptorCount;
+	cbvHeapDesc.NumDescriptors = g_kENGINE_DESCRIPTOR_END + 1 + g_kTHUMBNAIL_DESCRIPTOR_COUNT + ImGuiManager::kSrvDescriptorCount;
 	cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	WriteGraphicsLog("Step: CreateDescriptorHeap(CBV)\n");
@@ -512,6 +513,7 @@ void GraphicsDevice::Uninit()
 {
 	WaitForGpuIdle();
 
+    AssetThumbnailManager::Shutdown();
 	ImGuiManager::Uninit();
 
 	MaterialPreview::Shutdown();

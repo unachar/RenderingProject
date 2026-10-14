@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "materialpreview.h"
+#include "thumbnailpreviewcontext.h"
+#include "assets/thumbnailgeometry.h"
 #include "materialmanager.h"
 #include "materialbindings.h"
 #include "frameconstants.h"
@@ -19,6 +21,12 @@ constexpr UINT previewSize = 512;
 constexpr UINT constantBytes = 32768; // Matches the production light buffer's reserved size.
 struct PreviewState : RendererState
 {
+    UINT Size = previewSize;
+    UINT SrvIndex = g_kMATERIAL_PREVIEW_SRV_INDEX;
+    ComPtr<ID3D12Resource> PreviewConstants;
+    XMFLOAT3 Center{};
+    float Near = 0.05f;
+    float Far = 100.0f;
     bool Visible = false;
     AssetHandle Material = 0;
     int Shape = 0;
@@ -41,12 +49,12 @@ struct PreviewState : RendererState
     D3D12_CPU_DESCRIPTOR_HANDLE CpuSrv() const
     {
         return CD3DX12_CPU_DESCRIPTOR_HANDLE(FrameConstants::GetCbvHeap()->GetCPUDescriptorHandleForHeapStart(),
-            g_kMATERIAL_PREVIEW_SRV_INDEX, FrameConstants::GetCbvIncrementSize());
+            SrvIndex, FrameConstants::GetCbvIncrementSize());
     }
     D3D12_GPU_DESCRIPTOR_HANDLE GpuSrv() const
     {
         return CD3DX12_GPU_DESCRIPTOR_HANDLE(FrameConstants::GetCbvHeap()->GetGPUDescriptorHandleForHeapStart(),
-            g_kMATERIAL_PREVIEW_SRV_INDEX, FrameConstants::GetCbvIncrementSize());
+            SrvIndex, FrameConstants::GetCbvIncrementSize());
     }
     bool Initialize();
     ID3D12PipelineState* Pipeline(const MaterialComponent& material);
@@ -151,7 +159,7 @@ bool PreviewState::Initialize()
         return false;
     }
     const auto defaultHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    auto target = CD3DX12_RESOURCE_DESC::Tex2D(GetSceneColorFormat(), previewSize, previewSize, 1, 1, 1, 0,
+    auto target = CD3DX12_RESOURCE_DESC::Tex2D(GetSceneColorFormat(), Size, Size, 1, 1, 1, 0,
         D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
     D3D12_CLEAR_VALUE clear{};
     clear.Format = target.Format;
@@ -209,7 +217,8 @@ bool PreviewState::Initialize()
         return false;
     }
     memset(MappedLights, 0, constantBytes * g_kFRAME_COUNT);
-    for (int shape = 0; shape < 3; ++shape)
+    const int shapeCount = SrvIndex == g_kMATERIAL_PREVIEW_SRV_INDEX ? 3 : 1;
+    for (int shape = 0; shape < shapeCount; ++shape)
     {
         const auto vertices = MakeGeometry(shape);
         const UINT bytes = static_cast<UINT>(vertices.size() * sizeof(StaticModelVertex));
@@ -374,31 +383,28 @@ void MaterialPreview::DrawImage(AssetHandle material)
     }
 }
 
-void MaterialPreview::Render()
+namespace
 {
-    if (!preview.Visible || !preview.Material || !preview.Initialize())
-    {
-        return;
-    }
-    auto& runtime = MaterialManager::GetRuntime(preview.Material);
-    const auto& material = runtime.Binding;
+bool RenderPreview(PreviewState& preview, const MaterialComponent& material,
+    UINT firstVertex = 0, UINT vertexCount = 0, UINT partIndex = 0, UINT partCount = 1)
+{
     auto* pipeline = preview.Pipeline(material);
-    if (!pipeline)
-    {
-        return;
-    }
+    if (!pipeline) return false;
     auto* commands = GraphicsDevice::GetCommandList();
     auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(preview.Target.Get(),
         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    commands->ResourceBarrier(1, &barrier);
+    if (partIndex == 0) commands->ResourceBarrier(1, &barrier);
     const auto rtv = preview.RTVHeap->GetCPUDescriptorHandleForHeapStart();
     const auto dsv = preview.DSVHeap->GetCPUDescriptorHandleForHeapStart();
     const float background[4] = {0.12f, 0.13f, 0.16f, 1};
-    commands->ClearRenderTargetView(rtv, background, 0, nullptr);
-    commands->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1, 0, 0, nullptr);
+    if (partIndex == 0)
+    {
+        commands->ClearRenderTargetView(rtv, background, 0, nullptr);
+        commands->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1, 0, 0, nullptr);
+    }
     commands->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
-    const D3D12_VIEWPORT viewport = {0, 0, previewSize, previewSize, 0, 1};
-    const D3D12_RECT scissor = {0, 0, previewSize, previewSize};
+    const D3D12_VIEWPORT viewport = {0, 0, static_cast<float>(preview.Size), static_cast<float>(preview.Size), 0, 1};
+    const D3D12_RECT scissor = {0, 0, static_cast<LONG>(preview.Size), static_cast<LONG>(preview.Size)};
     commands->RSSetViewports(1, &viewport);
     commands->RSSetScissorRects(1, &scissor);
     ScenePasses::BeginPass(ShaderPipelines::GetModelRootSignature(), D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -422,12 +428,12 @@ void MaterialPreview::Render()
     commands->SetGraphicsRootConstantBufferView(17, zeroAddress);
     commands->SetGraphicsRootConstantBufferView(26, zeroAddress);
     commands->SetGraphicsRootConstantBufferView(27, zeroAddress);
-    const XMFLOAT3 eye = {sinf(preview.Yaw) * cosf(preview.Pitch) * preview.Distance,
-        sinf(preview.Pitch) * preview.Distance, -cosf(preview.Yaw) * cosf(preview.Pitch) * preview.Distance};
+    const XMFLOAT3 eye = {sinf(preview.Yaw) * cosf(preview.Pitch) * preview.Distance + preview.Center.x,
+        sinf(preview.Pitch) * preview.Distance + preview.Center.y, -cosf(preview.Yaw) * cosf(preview.Pitch) * preview.Distance + preview.Center.z};
     ConstantBuffer3D constants;
     constants.World = XMMatrixIdentity();
-    constants.View = XMMatrixTranspose(XMMatrixLookAtLH(XMLoadFloat3(&eye), XMVectorZero(), XMVectorSet(0, 1, 0, 0)));
-    constants.Projection = XMMatrixTranspose(XMMatrixPerspectiveFovLH(XM_PIDIV4, 1, 0.05f, 100));
+    constants.View = XMMatrixTranspose(XMMatrixLookAtLH(XMLoadFloat3(&eye), XMLoadFloat3(&preview.Center), XMVectorSet(0, 1, 0, 0)));
+    constants.Projection = XMMatrixTranspose(XMMatrixPerspectiveFovLH(XM_PIDIV4, 1, preview.Near, preview.Far));
     constants.CameraPos = eye;
     constants.UseTexture = material.UseTexture;
     constants.UseNormalMap = material.NormalMapID >= 0;
@@ -437,10 +443,23 @@ void MaterialPreview::Render()
     constants.MaterialRoughness = material.Roughness;
     constants.MaterialFresnel = material.Fresnel;
     constants.MaterialAlpha = material.Alpha;
-    constants.ViewportSize = {static_cast<float>(previewSize), static_cast<float>(previewSize)};
+    constants.ViewportSize = {static_cast<float>(preview.Size), static_cast<float>(preview.Size)};
     constants.MaterialIsTransparent = material.IsTransparent;
-    commands->SetGraphicsRootDescriptorTable(0, FrameConstants::AllocateTransientConstantBuffer(constants));
-    MaterialBindings::SetMaterial(g_kINVALID_ENTITY, material);
+    const auto drawConstants = FrameConstants::AllocateTransientConstantBuffer(constants);
+    if (!drawConstants.ptr)
+    {
+        preview.Error = "Preview frame constant budget exhausted";
+        const auto restore = CD3DX12_RESOURCE_BARRIER::Transition(preview.Target.Get(),
+            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        commands->ResourceBarrier(1, &restore);
+        return false;
+    }
+    commands->SetGraphicsRootDescriptorTable(0, drawConstants);
+    if (preview.PreviewConstants)
+    {
+        if (!MaterialBindings::SetPreviewMaterial(material, preview.PreviewConstants.Get(), RendererState::g_kTHUMBNAIL_DESCRIPTOR_START, partIndex, partCount)) return false;
+    }
+    else MaterialBindings::SetMaterial(g_kINVALID_ENTITY, material);
     const auto heap = FrameConstants::GetCbvHeap()->GetGPUDescriptorHandleForHeapStart();
     const auto increment = FrameConstants::GetCbvIncrementSize();
     int albedo = TextureManager::GetDefaultTextureIndex();
@@ -460,19 +479,26 @@ void MaterialPreview::Render()
         commands->SetGraphicsRootDescriptorTable(7, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap,
             TextureManager::GetDefaultTextureIndex(), increment));
     }
-    for (int texture : runtime.TextureDescriptors)
-    {
-        if (texture >= 0)
-        {
-            TextureManager::TouchTexture(texture);
-        }
-    }
     commands->IASetVertexBuffers(0, 1, &preview.Views[preview.Shape]);
     commands->IASetIndexBuffer(nullptr);
-    commands->DrawInstanced(preview.Counts[preview.Shape], 1, 0, 0);
+    commands->DrawInstanced(vertexCount ? vertexCount : preview.Counts[preview.Shape], 1, firstVertex, 0);
     barrier = CD3DX12_RESOURCE_BARRIER::Transition(preview.Target.Get(),
         D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    commands->ResourceBarrier(1, &barrier);
+    if (partIndex + 1 == partCount) commands->ResourceBarrier(1, &barrier);
+    return true;
+}
+
+}
+
+void MaterialPreview::Render()
+{
+    if (!preview.Visible || !preview.Material || !preview.Initialize()) return;
+    auto& runtime = MaterialManager::GetRuntime(preview.Material);
+    for (int texture : runtime.TextureDescriptors)
+    {
+        if (texture >= 0) TextureManager::TouchTexture(texture);
+    }
+    RenderPreview(preview, runtime.Binding);
 }
 
 void MaterialPreview::Shutdown()
@@ -493,4 +519,107 @@ void MaterialPreview::SetMesh(Mesh mesh)
 void MaterialPreview::SetLightIntensity(float intensity)
 {
     preview.LightIntensity = clamp(intensity, 0.0f, 5.0f);
+}
+
+struct ThumbnailPreviewContext::Impl
+{
+    PreviewState State;
+    bool GeometryUploaded = false;
+    UINT MaterialSlots = 1;
+};
+
+ThumbnailPreviewContext::ThumbnailPreviewContext() : m_Impl(std::make_unique<Impl>()) {}
+ThumbnailPreviewContext::~ThumbnailPreviewContext() = default;
+
+bool ThumbnailPreviewContext::Initialize(UINT size, UINT descriptorIndex)
+{
+    auto& state = m_Impl->State;
+    state.Size = size;
+    state.SrvIndex = descriptorIndex;
+    state.SceneEnvironment = false;
+    const auto sphereFit = FitThumbnailCamera(1.0f);
+    state.Distance = sphereFit.Distance;
+    state.Near = sphereFit.Near;
+    state.Far = sphereFit.Far;
+    if (!state.Initialize()) return false;
+    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+    const auto description = CD3DX12_RESOURCE_DESC::Buffer(RendererState::g_kPBR_CB_ALIGNED_SIZE * RendererState::g_kFRAME_COUNT);
+    return SUCCEEDED(GraphicsDevice::GetDevice()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
+        &description, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&state.PreviewConstants)));
+}
+
+bool ThumbnailPreviewContext::Render(const MaterialComponent& material, const std::vector<StaticModelVertex>& geometry,
+    const std::vector<ThumbnailPreviewPart>& parts)
+{
+    auto& state = m_Impl->State;
+    if (!geometry.empty() && !m_Impl->GeometryUploaded)
+    {
+        XMFLOAT3 low = geometry.front().Position;
+        XMFLOAT3 high = low;
+        for (const auto& vertex : geometry)
+        {
+            const auto p = vertex.Position;
+            if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) return false;
+            low = {std::min(low.x, p.x), std::min(low.y, p.y), std::min(low.z, p.z)};
+            high = {std::max(high.x, p.x), std::max(high.y, p.y), std::max(high.z, p.z)};
+        }
+        state.Center = {(low.x + high.x) * 0.5f, (low.y + high.y) * 0.5f, (low.z + high.z) * 0.5f};
+        const float x = (high.x - low.x) * 0.5f, y = (high.y - low.y) * 0.5f, z = (high.z - low.z) * 0.5f;
+        const auto fit = FitThumbnailCamera(std::sqrt(x*x + y*y + z*z));
+        if (!fit.Valid || geometry.size() > UINT_MAX / sizeof(StaticModelVertex)) return false;
+        state.Distance = fit.Distance;
+        state.Near = fit.Near;
+        state.Far = fit.Far;
+        const UINT bytes = static_cast<UINT>(geometry.size() * sizeof(StaticModelVertex));
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+        const auto description = CD3DX12_RESOURCE_DESC::Buffer(bytes);
+        state.Vertices[0].Reset();
+        if (FAILED(GraphicsDevice::GetDevice()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
+            &description, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&state.Vertices[0])))) return false;
+        void* mapped = nullptr;
+        if (FAILED(state.Vertices[0]->Map(0, nullptr, &mapped))) return false;
+        memcpy(mapped, geometry.data(), bytes);
+        state.Vertices[0]->Unmap(0, nullptr);
+        state.Views[0] = {state.Vertices[0]->GetGPUVirtualAddress(), bytes, sizeof(StaticModelVertex)};
+        state.Counts[0] = static_cast<UINT>(geometry.size());
+        m_Impl->GeometryUploaded = true;
+    }
+    if (parts.empty()) return RenderPreview(state, material);
+    const UINT count = static_cast<UINT>(parts.size());
+    if (m_Impl->MaterialSlots != count)
+    {
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+        const auto description = CD3DX12_RESOURCE_DESC::Buffer(RendererState::g_kPBR_CB_ALIGNED_SIZE * RendererState::g_kFRAME_COUNT * static_cast<UINT64>(count));
+        state.PreviewConstants.Reset();
+        if (FAILED(GraphicsDevice::GetDevice()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
+            &description, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&state.PreviewConstants)))) return false;
+        m_Impl->MaterialSlots = count;
+    }
+    // Resolve pipelines before recording any pass; a failed material cannot leave the target half rendered.
+    for (const auto& part : parts) if (!state.Pipeline(part.Material)) return false;
+    for (UINT index = 0; index < count; ++index)
+    {
+        const auto& part = parts[index];
+        if (!RenderPreview(state, part.Material, part.FirstVertex, part.VertexCount, index, count)) return false;
+    }
+    return true;
+}
+
+ID3D12Resource* ThumbnailPreviewContext::GetTarget() const { return m_Impl->State.Target.Get(); }
+uint64_t ThumbnailPreviewContext::MemoryBytes() const
+{
+    const auto& state = m_Impl->State;
+    uint64_t bytes = 0;
+    const auto add = [&bytes](const ComPtr<ID3D12Resource>& resource)
+    {
+        if (!resource) return;
+        const auto description = resource->GetDesc();
+        bytes += GraphicsDevice::GetDevice()->GetResourceAllocationInfo(0, 1, &description).SizeInBytes;
+    };
+    add(state.Target);
+    add(state.Depth);
+    add(state.Lights);
+    add(state.PreviewConstants);
+    for (const auto& buffer : state.Vertices) add(buffer);
+    return bytes;
 }

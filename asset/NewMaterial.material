@@ -11,9 +11,9 @@
     "baseColor" : 
     [
       1.0,
+      0.5058823823928833,
       1.0,
-      1.0,
-      1.0
+      0.0
     ],
     "emissiveColor" : 
     [
@@ -21,11 +21,11 @@
       0.046999998390674591,
       0.0
     ],
-    "emissiveIntensity" : 30.0,
+    "emissiveIntensity" : 0.0,
     "ior" : 5.7699999809265137,
     "metallic" : 1.0,
     "normalScale" : 8.0,
-    "roughness" : 0.0,
+    "roughness" : 0.94700002670288086,
     "thickness" : 4.0,
     "transmission" : 0.44900000095367432
   },
@@ -33,7 +33,7 @@
   {
     "alphaCutoff" : 0.0,
     "cullMode" : "Back",
-    "depthWrite" : true,
+    "depthWrite" : false,
     "shadowCutoff" : 0.5,
     "shadowMode" : "Auto"
   },

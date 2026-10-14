@@ -31,6 +31,8 @@ public:
     static void Shutdown();
     static void Refresh();
     static MaterialRuntime& GetRuntime(AssetHandle handle);
+    static const MaterialRuntime* FindRuntime(AssetHandle handle);
+    static MaterialComponent BuildPreviewBinding(const MaterialAssetData& material, const array<int, 5>& descriptors);
     static const MaterialComponent& Resolve(const MaterialComponent& legacy, size_t slot = 0);
     static AssetHandle SlotHandle(const MaterialComponent& material, size_t slot);
     static bool SetEditing(AssetHandle handle, const MaterialAssetData& editing);

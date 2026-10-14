@@ -99,3 +99,4 @@ imgui.ini
 /External/NRD/sdk/
 *.meshlets
 *.vgmesh
+/EditorCache/
