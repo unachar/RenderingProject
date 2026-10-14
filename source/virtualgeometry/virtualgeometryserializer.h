@@ -12,12 +12,12 @@ struct VirtualGeometryLoadLimits
 class VirtualGeometrySerializer
 {
 public:
-    static bool Encode(const VirtualGeometryAsset& asset, vector<uint8_t>& bytes, string& error);
-    static bool Decode(span<const uint8_t> bytes, VirtualGeometryAsset& asset, string& error,
+    static bool Encode(const VirtualGeometryAsset& asset, std::vector<uint8_t>& bytes, std::string& error);
+    static bool Decode(std::span<const uint8_t> bytes, VirtualGeometryAsset& asset, std::string& error,
         const VirtualGeometryLoadLimits& limits = {});
-    static bool Save(const filesystem::path& path, const VirtualGeometryAsset& asset, string& error);
-    static bool Load(const filesystem::path& path, VirtualGeometryAsset& asset, string& error,
+    static bool Save(const std::filesystem::path& path, const VirtualGeometryAsset& asset, std::string& error);
+    static bool Load(const std::filesystem::path& path, VirtualGeometryAsset& asset, std::string& error,
         const VirtualGeometryLoadLimits& limits = {});
     // FNV-1a 64: deterministic integrity/content fingerprint, not cryptographic authentication.
-    static uint64_t Hash(span<const uint8_t> bytes);
+    static uint64_t Hash(std::span<const uint8_t> bytes);
 };

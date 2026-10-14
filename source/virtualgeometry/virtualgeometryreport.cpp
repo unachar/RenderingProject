@@ -3,10 +3,10 @@
 #include <sstream>
 #include <locale>
 
-string VirtualGeometryReport::Text(const VirtualGeometryAsset& asset)
+std::string VirtualGeometryReport::Text(const VirtualGeometryAsset& asset)
 {
-    ostringstream output;
-    output.imbue(locale::classic());
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
     const auto& stats = asset.Stats;
     output << "Nanite-like Virtualized Geometry Phase 1\n"
         << "Name: " << asset.DebugName << "\nVersion: " << asset.Version
@@ -54,18 +54,18 @@ string VirtualGeometryReport::Text(const VirtualGeometryAsset& asset)
     return output.str();
 }
 
-bool VirtualGeometryReport::Save(const filesystem::path& path, const VirtualGeometryAsset& asset, string& error)
+bool VirtualGeometryReport::Save(const std::filesystem::path& path, const VirtualGeometryAsset& asset, std::string& error)
 {
     error.clear();
     try
     {
-        ofstream output(path);
-        output.exceptions(ios::badbit | ios::failbit);
+        std::ofstream output(path);
+        output.exceptions(std::ios::badbit | std::ios::failbit);
         output << Text(asset);
         output.close();
         return true;
     }
-    catch (const exception& exception)
+    catch (const std::exception& exception)
     {
         error = exception.what();
         return false;

@@ -14,18 +14,18 @@ struct RuntimeAsset
     uint64_t Key = 0;
     bool CacheHit = false;
     double BuildMilliseconds = 0;
-    filesystem::path CachePath;
-    string Error;
-    string HierarchyWarning;
+    std::filesystem::path CachePath;
+    std::string Error;
+    std::string HierarchyWarning;
 };
 struct Statistics
 {
     uint64_t CacheHits = 0, Builds = 0, SharedHits = 0, Failures = 0;
     double BuildMilliseconds = 0;
 };
-shared_ptr<const RuntimeAsset> Acquire(
-    span<const VirtualGeometryVertex> vertices, span<const uint32_t> indices, uint32_t materialId,
-    float materialPartId, const filesystem::path &cacheDirectory = "asset/virtualgeometry-cache");
+std::shared_ptr<const RuntimeAsset> Acquire(
+    std::span<const VirtualGeometryVertex> vertices, std::span<const uint32_t> indices, uint32_t materialId,
+    float materialPartId, const std::filesystem::path &cacheDirectory = "asset/virtualgeometry-cache");
 Statistics GetStatistics();
-vector<shared_ptr<const RuntimeAsset>> LiveAssets();
+std::vector<std::shared_ptr<const RuntimeAsset>> LiveAssets();
 } // namespace VirtualGeometryRuntime

@@ -7,36 +7,36 @@
 #include <sstream>
 #include <windows.h>
 
-string FormatAssetHandle(AssetHandle handle)
+std::string FormatAssetHandle(AssetHandle handle)
 {
-    ostringstream output;
-    output << "guid:" << hex << setw(16) << setfill('0') << handle;
+    std::ostringstream output;
+    output << "guid:" << std::hex << std::setw(16) << std::setfill('0') << handle;
     return output.str();
 }
 
-AssetHandle ParseAssetHandle(const string& text)
+AssetHandle ParseAssetHandle(const std::string& text)
 {
     if (text.size() != 21 || text.substr(0, 5) != "guid:")
     {
         return 0;
     }
     AssetHandle handle = 0;
-    const auto result = from_chars(text.data() + 5, text.data() + text.size(), handle, 16);
-    if (result.ec != errc{} || result.ptr != text.data() + text.size())
+    const auto result = std::from_chars(text.data() + 5, text.data() + text.size(), handle, 16);
+    if (result.ec != std::errc{} || result.ptr != text.data() + text.size())
     {
         return 0;
     }
     return handle;
 }
 
-bool WriteAssetFile(const filesystem::path& path, const string& contents, string& error)
+bool WriteAssetFile(const std::filesystem::path& path, const std::string& contents, std::string& error)
 {
     error.clear();
     auto temporary = path;
     temporary += ".tmp";
     {
-        ofstream stream(temporary, ios::binary | ios::trunc);
-        stream.write(contents.data(), static_cast<streamsize>(contents.size()));
+        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+        stream.write(contents.data(), static_cast<std::streamsize>(contents.size()));
         stream.flush();
         if (!stream)
         {
@@ -46,22 +46,22 @@ bool WriteAssetFile(const filesystem::path& path, const string& contents, string
     }
     if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
     {
-        error = "Failed to replace " + path.generic_string() + " (" + to_string(GetLastError()) + ")";
-        error_code ignored;
-        filesystem::remove(temporary, ignored);
+        error = "Failed to replace " + path.generic_string() + " (" + std::to_string(GetLastError()) + ")";
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
         return false;
     }
     return true;
 }
 
-bool MaterialSerializer::Validate(const MaterialAssetData& material, string& error)
+bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string& error)
 {
     error.clear();
     auto range = [&](float value, float minimum, float maximum, const char* property)
     {
-        if (!isfinite(value) || value < minimum || value > maximum)
+        if (!std::isfinite(value) || value < minimum || value > maximum)
         {
-            error = string("Invalid ") + property;
+            error = std::string("Invalid ") + property;
             return false;
         }
         return true;
@@ -106,7 +106,7 @@ bool MaterialSerializer::Validate(const MaterialAssetData& material, string& err
 namespace
 {
 constexpr const char* textureNames[] = {"baseColor", "normal", "metallicRoughness", "ao", "emissive"};
-bool ReadFloat(const Json::Value& object, const char* name, float& value, string& error)
+bool ReadFloat(const Json::Value& object, const char* name, float& value, std::string& error)
 {
     if (!object.isMember(name))
     {
@@ -114,14 +114,14 @@ bool ReadFloat(const Json::Value& object, const char* name, float& value, string
     }
     if (!object[name].isNumeric())
     {
-        error = string("Invalid ") + name + " property";
+        error = std::string("Invalid ") + name + " property";
         return false;
     }
     value = object[name].asFloat();
     return true;
 }
 template<size_t Count>
-bool ReadColor(const Json::Value& object, const char* name, array<float, Count>& color, string& error)
+bool ReadColor(const Json::Value& object, const char* name, std::array<float, Count>& color, std::string& error)
 {
     if (!object.isMember(name))
     {
@@ -130,14 +130,14 @@ bool ReadColor(const Json::Value& object, const char* name, array<float, Count>&
     const auto& array = object[name];
     if (!array.isArray() || array.size() != Count)
     {
-        error = string("Invalid ") + name + " array";
+        error = std::string("Invalid ") + name + " array";
         return false;
     }
     for (Json::ArrayIndex i = 0; i < Count; ++i)
     {
         if (!array[i].isNumeric())
         {
-            error = string("Invalid ") + name + " channel";
+            error = std::string("Invalid ") + name + " channel";
             return false;
         }
         color[i] = array[i].asFloat();
@@ -146,10 +146,10 @@ bool ReadColor(const Json::Value& object, const char* name, array<float, Count>&
 }
 }
 
-bool MaterialSerializer::Load(const filesystem::path& path, MaterialAssetData& material, string& error)
+bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetData& material, std::string& error)
 {
     error.clear();
-    ifstream stream(path, ios::binary);
+    std::ifstream stream(path, std::ios::binary);
     if (!stream)
     {
         error = "Failed to open " + path.generic_string();
@@ -181,7 +181,7 @@ bool MaterialSerializer::Load(const filesystem::path& path, MaterialAssetData& m
     {
         if (root.isMember(object) && !root[object].isObject())
         {
-            error = string("Invalid ") + object + " object";
+            error = std::string("Invalid ") + object + " object";
             return false;
         }
     }
@@ -277,14 +277,14 @@ bool MaterialSerializer::Load(const filesystem::path& path, MaterialAssetData& m
         }
         if (!reference.isString())
         {
-            error = string("Invalid texture reference: ") + textureNames[slot];
+            error = std::string("Invalid texture reference: ") + textureNames[slot];
             return false;
         }
         const auto text = reference.asString();
         result.Textures[slot] = ParseAssetHandle(text);
         if (result.Textures[slot] == 0 && text != FormatAssetHandle(0) && !text.empty())
         {
-            error = string("Invalid texture GUID: ") + textureNames[slot];
+            error = std::string("Invalid texture GUID: ") + textureNames[slot];
             return false;
         }
     }
@@ -296,7 +296,7 @@ bool MaterialSerializer::Load(const filesystem::path& path, MaterialAssetData& m
     return true;
 }
 
-bool MaterialSerializer::Save(const filesystem::path& path, const MaterialAssetData& material, string& error)
+bool MaterialSerializer::Save(const std::filesystem::path& path, const MaterialAssetData& material, std::string& error)
 {
     if (!Validate(material, error))
     {

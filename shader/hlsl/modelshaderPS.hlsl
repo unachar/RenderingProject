@@ -139,9 +139,18 @@ float4 main(in PSInput3D In) : SV_Target
         diffuse = light * baseColor.rgb / PI;
     }
 
+    // Share the legacy visibility query instead of inlining the full light loop per class.
+    float legacyShadowVisibility = 1.0f;
+    bool useLegacyBrdf = brdf && !(pbr || transparent || btdf || bsdf);
+    if (shadow || lit || useLegacyBrdf)
+    {
+        float3 shadowNormal = useLegacyBrdf ? normalize(surfaceNormal + 0.00001f) : surfaceNormal;
+        legacyShadowVisibility = SampleForwardDeferredShadowMap(In.WorldPos, shadowNormal, lightDir);
+    }
+
     if (shadow)
     {
-        float shadowVisibility = SampleForwardDeferredShadowMap(In.WorldPos, surfaceNormal, lightDir);
+        float shadowVisibility = legacyShadowVisibility;
         float castShadow = saturate(1.0f - shadowVisibility);
         float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
         float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
@@ -154,7 +163,7 @@ float4 main(in PSInput3D In) : SV_Target
 
     if (lit)
     {
-        float shadowVisibility = SampleForwardDeferredShadowMap(In.WorldPos, surfaceNormal, lightDir);
+        float shadowVisibility = legacyShadowVisibility;
         float castShadow = saturate(1.0f - shadowVisibility);
         float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
         float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
@@ -220,62 +229,10 @@ float4 main(in PSInput3D In) : SV_Target
         float3 F = F0 + (1.0f - F0) * FPower;
         float3 specularBRDF = (D * G * F) / max(4.0f * NdotLScalar * NdotV, 0.00001f);
         float3 diffuseBRDF = (1.0f - F) * (1.0f - metallic) * albedo / PI;
-        float shadowVisibility = SampleForwardDeferredShadowMap(In.WorldPos, N, L);
+        float shadowVisibility = legacyShadowVisibility;
         float3 directReflection = (diffuseBRDF + specularBRDF) * lightColor.rgb * lightIntensity * NdotLScalar * shadowVisibility;
         float3 envReflection = SampleEnvironmentLatLong(normalize(reflect(-V, N)), roughness) * F;
         baseColor.rgb = directReflection + envReflection;
-    }
-
-    if (btdf)
-    {
-        float3 N = normalize(surfaceNormal + 0.00001f);
-        float3 L = normalize(lightDir + 0.00001f);
-        float3 V = normalize(CameraPos - In.WorldPos + 0.00001f);
-        float roughness = clamp(material.g, 0.04f, 1.0f);
-        float transmission = saturate(1.0f - material.r) * lerp(0.35f, 1.0f, roughness);
-        float backNdotL = saturate(dot(-N, L));
-        float frontNdotV = saturate(dot(N, V));
-        float fresnel = pow(1.0f - frontNdotV, 5.0f);
-        float shadowVisibility = SampleForwardDeferredShadowMap(In.WorldPos, N, L);
-        float3 T = normalize(refract(-V, N, 1.0f / 1.45f));
-        float3 transmittedEnv = SampleEnvironmentLatLong(T, roughness);
-        float3 transmittedLight = baseColor.rgb * lightColor.rgb * lightIntensity * backNdotL * transmission * shadowVisibility;
-        float3 transmittedAmbient = baseColor.rgb * transmittedEnv * transmission * lerp(0.35f, 0.8f, fresnel);
-        baseColor.rgb = transmittedLight + transmittedAmbient;
-    }
-
-    if (bsdf)
-    {
-        float3 N = normalize(surfaceNormal + 0.00001f);
-        float3 L = normalize(lightDir + 0.00001f);
-        float3 V = normalize(CameraPos - In.WorldPos + 0.00001f);
-        float3 H = normalize(L + V + 0.00001f);
-        float NdotLScalar = saturate(dot(N, L));
-        float NdotV = saturate(dot(N, V));
-        float NdotH = saturate(dot(N, H));
-        float VdotH = saturate(dot(V, H));
-        float roughness = clamp(material.g, 0.04f, 1.0f);
-        float metallic = saturate(material.r);
-        float specularF0 = max(material.b, 0.04f);
-        float3 albedo = baseColor.rgb;
-        float3 F0 = lerp(float3(specularF0, specularF0, specularF0), albedo, metallic);
-        float a = roughness * roughness;
-        float a2 = a * a;
-        float d = NdotH * NdotH * (a2 - 1.0f) + 1.0f;
-        float D = a2 / max(PI * d * d, 0.00001f);
-        float k = ((roughness + 1.0f) * (roughness + 1.0f)) / 8.0f;
-        float G_L = NdotLScalar / max(NdotLScalar * (1.0f - k) + k, 0.00001f);
-        float G_V = NdotV / max(NdotV * (1.0f - k) + k, 0.00001f);
-        float G = G_L * G_V;
-        float3 F = F0 + (1.0f - F0) * pow(1.0f - VdotH, 5.0f);
-        float shadowVisibility = SampleForwardDeferredShadowMap(In.WorldPos, N, L);
-        float3 reflected = (((1.0f - F) * (1.0f - metallic) * albedo / PI) + ((D * G * F) / max(4.0f * NdotLScalar * NdotV, 0.00001f)))
-            * lightColor.rgb * lightIntensity * NdotLScalar * shadowVisibility;
-        float transmission = saturate(1.0f - metallic) * lerp(0.25f, 0.85f, roughness);
-        float3 transmitted = albedo * lightColor.rgb * lightIntensity * saturate(dot(-N, L)) * transmission * shadowVisibility;
-        float3 envReflection = SampleEnvironmentLatLong(normalize(reflect(-V, N)), roughness) * F;
-        float3 envTransmission = SampleEnvironmentLatLong(normalize(refract(-V, N, 1.0f / 1.45f)), roughness) * albedo * transmission;
-        baseColor.rgb = reflected + transmitted + envReflection + envTransmission * 0.5f;
     }
 
     baseColor.rgb = baseColor.rgb * assetEmissionAO.a + assetEmissionAO.rgb;

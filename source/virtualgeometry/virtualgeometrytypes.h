@@ -12,24 +12,24 @@ struct VirtualGeometryVertex
     float TexCoord[2]{};
     float Diffuse[4]{};
 };
-static_assert(is_standard_layout_v<VirtualGeometryVertex>);
+static_assert(std::is_standard_layout_v<VirtualGeometryVertex>);
 static_assert(sizeof(VirtualGeometryVertex) == 12 * sizeof(float));
 static_assert(offsetof(VirtualGeometryVertex, Normal) == 3 * sizeof(float));
 
 struct VirtualGeometrySphere
 {
-    array<float, 3> Center{};
+    std::array<float, 3> Center{};
     float Radius = 0;
 };
 struct VirtualGeometryAabb
 {
-    array<float, 3> Min{};
-    array<float, 3> Max{};
+    std::array<float, 3> Min{};
+    std::array<float, 3> Max{};
 };
 struct VirtualGeometryNormalCone
 {
-    array<float, 3> Axis{};
-    array<float, 3> Apex{};
+    std::array<float, 3> Axis{};
+    std::array<float, 3> Apex{};
     float Cutoff = 1;
 };
 struct VirtualGeometryCluster

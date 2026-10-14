@@ -38,7 +38,7 @@ struct NoiseLayer
 struct NoiseSettings : BasicNoiseSettings
 {
     int LayerCount = 2;
-    array<NoiseLayer, 5> Layers;
+    std::array<NoiseLayer, 5> Layers;
 };
 
 // Copy common values while preserving each layer's method and blend weight.
@@ -74,10 +74,10 @@ struct Vector3
 };
 
 float SampleNoise(float x, float y, const NoiseSettings& settings);
-vector<float> BuildHeightMap(const TerrainSettings& settings);
+std::vector<float> BuildHeightMap(const TerrainSettings& settings);
 Vector3 SampleMotion(MotionMethod method, double time, float speed,
     const Vector3& amplitude, uint32_t seed);
 bool TerrainSettingsEqual(const TerrainSettings& first, const TerrainSettings& second);
-bool WriteTerrainPreset(ostream& stream, const TerrainSettings& settings);
-bool ReadTerrainPreset(istream& stream, TerrainSettings& settings);
+bool WriteTerrainPreset(std::ostream& stream, const TerrainSettings& settings);
+bool ReadTerrainPreset(std::istream& stream, TerrainSettings& settings);
 }

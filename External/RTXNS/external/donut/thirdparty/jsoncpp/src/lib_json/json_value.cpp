@@ -17,7 +17,7 @@
 #include <sstream>
 #include <utility>
 
-// Provide implementation equivalent of snprintf for older _MSC compilers
+// Provide implementation equivalent of std::snprintf for older _MSC compilers
 #if defined(_MSC_VER) && _MSC_VER < 1900
 #include <stdarg.h>
 static int msvc_pre1900_c99_vsnprintf(char* outBuf, size_t size,
@@ -49,10 +49,10 @@ int JSON_API msvc_pre1900_c99_snprintf(char* outBuf, size_t size,
 
 namespace Json {
 template <typename T>
-static unique_ptr<T> cloneUnique(const unique_ptr<T>& p) {
-  unique_ptr<T> r;
+static std::unique_ptr<T> cloneUnique(const std::unique_ptr<T>& p) {
+  std::unique_ptr<T> r;
   if (p) {
-    r = unique_ptr<T>(new T(*p));
+    r = std::unique_ptr<T>(new T(*p));
   }
   return r;
 }
@@ -200,7 +200,7 @@ static inline void releaseStringValue(char* value, unsigned) { free(value); }
 namespace Json {
 
 #if JSON_USE_EXCEPTION
-Exception::Exception(String msg) : msg_(move(msg)) {}
+Exception::Exception(String msg) : msg_(std::move(msg)) {}
 Exception::~Exception() noexcept = default;
 char const* Exception::what() const noexcept { return msg_.c_str(); }
 RuntimeError::RuntimeError(String const& msg) : Exception(msg) {}
@@ -213,11 +213,11 @@ JSONCPP_NORETURN void throwLogicError(String const& msg) {
 }
 #else // !JSON_USE_EXCEPTION
 JSONCPP_NORETURN void throwRuntimeError(String const& msg) {
-  cerr << msg << endl;
+  std::cerr << msg << std::endl;
   abort();
 }
 JSONCPP_NORETURN void throwLogicError(String const& msg) {
-  cerr << msg << endl;
+  std::cerr << msg << std::endl;
   abort();
 }
 #endif
@@ -275,8 +275,8 @@ Value::CZString::~CZString() {
 }
 
 void Value::CZString::swap(CZString& other) {
-  swap(cstr_, other.cstr_);
-  swap(index_, other.index_);
+  std::swap(cstr_, other.cstr_);
+  std::swap(index_, other.index_);
 }
 
 Value::CZString& Value::CZString::operator=(const CZString& other) {
@@ -299,7 +299,7 @@ bool Value::CZString::operator<(const CZString& other) const {
   // Assume both are strings.
   unsigned this_len = this->storage_.length_;
   unsigned other_len = other.storage_.length_;
-  unsigned min_len = min<unsigned>(this_len, other_len);
+  unsigned min_len = std::min<unsigned>(this_len, other_len);
   JSON_ASSERT(this->cstr_ && other.cstr_);
   int comp = memcmp(this->cstr_, other.cstr_, min_len);
   if (comp < 0)
@@ -454,8 +454,8 @@ Value& Value::operator=(Value&& other) noexcept {
 }
 
 void Value::swapPayload(Value& other) {
-  swap(bits_, other.bits_);
-  swap(value_, other.value_);
+  std::swap(bits_, other.bits_);
+  std::swap(value_, other.value_);
 }
 
 void Value::copyPayload(const Value& other) {
@@ -465,9 +465,9 @@ void Value::copyPayload(const Value& other) {
 
 void Value::swap(Value& other) {
   swapPayload(other);
-  swap(comments_, other.comments_);
-  swap(start_, other.start_);
-  swap(limit_, other.limit_);
+  std::swap(comments_, other.comments_);
+  std::swap(start_, other.start_);
+  std::swap(limit_, other.limit_);
 }
 
 void Value::copy(const Value& other) {
@@ -514,7 +514,7 @@ bool Value::operator<(const Value& other) const {
                          &this_str);
     decodePrefixedString(other.isAllocated(), other.value_.string_, &other_len,
                          &other_str);
-    unsigned min_len = min<unsigned>(this_len, other_len);
+    unsigned min_len = std::min<unsigned>(this_len, other_len);
     JSON_ASSERT(this_str && other_str);
     int comp = memcmp(this_str, other_str, min_len);
     if (comp < 0)
@@ -813,7 +813,7 @@ bool Value::asBool() const {
     return value_.uint_ != 0;
   case realValue: {
     // According to JavaScript language zero or NaN is regarded as false
-    const auto value_classification = fpclassify(value_.real_);
+    const auto value_classification = std::fpclassify(value_.real_);
     return value_classification != FP_ZERO && value_classification != FP_NAN;
   }
   default:
@@ -1134,7 +1134,7 @@ Value& Value::append(Value&& value) {
   if (type() == nullValue) {
     *this = Value(arrayValue);
   }
-  return this->value_.map_->emplace(size(), move(value)).first->second;
+  return this->value_.map_->emplace(size(), std::move(value)).first->second;
 }
 
 bool Value::insert(ArrayIndex index, const Value& newValue) {
@@ -1149,9 +1149,9 @@ bool Value::insert(ArrayIndex index, Value&& newValue) {
     return false;
   }
   for (ArrayIndex i = length; i > index; i--) {
-    (*this)[i] = move((*this)[i - 1]);
+    (*this)[i] = std::move((*this)[i - 1]);
   }
-  (*this)[index] = move(newValue);
+  (*this)[index] = std::move(newValue);
   return true;
 }
 
@@ -1177,7 +1177,7 @@ bool Value::removeMember(const char* begin, const char* end, Value* removed) {
   if (it == value_.map_->end())
     return false;
   if (removed)
-    *removed = move(it->second);
+    *removed = std::move(it->second);
   value_.map_->erase(it);
   return true;
 }
@@ -1208,7 +1208,7 @@ bool Value::removeIndex(ArrayIndex index, Value* removed) {
     return false;
   }
   if (removed)
-    *removed = move(it->second);
+    *removed = std::move(it->second);
   ArrayIndex oldSize = size();
   // shift left all items left, into the place of the "removed"
   for (ArrayIndex i = index; i < (oldSize - 1); ++i) {
@@ -1378,7 +1378,7 @@ Value::Comments::Comments(const Comments& that)
     : ptr_{cloneUnique(that.ptr_)} {}
 
 Value::Comments::Comments(Comments&& that) noexcept
-    : ptr_{move(that.ptr_)} {}
+    : ptr_{std::move(that.ptr_)} {}
 
 Value::Comments& Value::Comments::operator=(const Comments& that) {
   ptr_ = cloneUnique(that.ptr_);
@@ -1386,7 +1386,7 @@ Value::Comments& Value::Comments::operator=(const Comments& that) {
 }
 
 Value::Comments& Value::Comments::operator=(Comments&& that) noexcept {
-  ptr_ = move(that.ptr_);
+  ptr_ = std::move(that.ptr_);
   return *this;
 }
 
@@ -1404,8 +1404,8 @@ void Value::Comments::set(CommentPlacement slot, String comment) {
   if (slot >= CommentPlacement::numberOfCommentPlacement)
     return;
   if (!ptr_)
-    ptr_ = unique_ptr<Array>(new Array());
-  (*ptr_)[slot] = move(comment);
+    ptr_ = std::unique_ptr<Array>(new Array());
+  (*ptr_)[slot] = std::move(comment);
 }
 
 void Value::setComment(String comment, CommentPlacement placement) {
@@ -1416,7 +1416,7 @@ void Value::setComment(String comment, CommentPlacement placement) {
   JSON_ASSERT_MESSAGE(
       comment.empty() || comment[0] == '/',
       "in Json::Value::setComment(): Comments must start with /");
-  comments_.set(placement, move(comment));
+  comments_.set(placement, std::move(comment));
 }
 
 bool Value::hasComment(CommentPlacement placement) const {
@@ -1507,7 +1507,7 @@ PathArgument::PathArgument(ArrayIndex index)
 
 PathArgument::PathArgument(const char* key) : key_(key), kind_(kindKey) {}
 
-PathArgument::PathArgument(String key) : key_(move(key)), kind_(kindKey) {}
+PathArgument::PathArgument(String key) : key_(std::move(key)), kind_(kindKey) {}
 
 // class Path
 // //////////////////////////////////////////////////////////////////

@@ -6,7 +6,7 @@
 
 AssetHandle GenerateAssetHandle()
 {
-    static mt19937_64 generator(random_device{}());
+    static std::mt19937_64 generator(std::random_device{}());
     AssetHandle handle = 0;
     while (handle == 0)
     {
@@ -15,15 +15,15 @@ AssetHandle GenerateAssetHandle()
     return handle;
 }
 
-AssetRegistry::AssetRegistry(const filesystem::path& root)
-    : m_Root(filesystem::weakly_canonical(filesystem::absolute(root)))
+AssetRegistry::AssetRegistry(const std::filesystem::path& root)
+    : m_Root(std::filesystem::weakly_canonical(std::filesystem::absolute(root)))
 {
 }
 
-bool AssetRegistry::Contains(const filesystem::path& path) const
+bool AssetRegistry::Contains(const std::filesystem::path& path) const
 {
-    error_code error;
-    const auto canonical = filesystem::weakly_canonical(path, error);
+    std::error_code error;
+    const auto canonical = std::filesystem::weakly_canonical(path, error);
     if (error)
     {
         return false;
@@ -32,12 +32,12 @@ bool AssetRegistry::Contains(const filesystem::path& path) const
     return !relative.empty() && *relative.begin() != "..";
 }
 
-AssetType AssetRegistry::Classify(const filesystem::path& path)
+AssetType AssetRegistry::Classify(const std::filesystem::path& path)
 {
-    string extension = path.extension().string();
-    transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char letter)
+    std::string extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char letter)
     {
-        return static_cast<char>(tolower(letter));
+        return static_cast<char>(std::tolower(letter));
     });
     if (extension == ".material")
     {
@@ -53,23 +53,23 @@ AssetType AssetRegistry::Classify(const filesystem::path& path)
     return AssetType::Unknown;
 }
 
-AssetHandle AssetRegistry::Register(const filesystem::path& path, AssetType type, string& error)
+AssetHandle AssetRegistry::Register(const std::filesystem::path& path, AssetType type, std::string& error)
 {
     error.clear();
-    const auto absolute = filesystem::absolute(path).lexically_normal();
-    error_code filesystemError;
-    if (!Contains(absolute) || !filesystem::is_regular_file(absolute, filesystemError) ||
+    const auto absolute = std::filesystem::absolute(path).lexically_normal();
+    std::error_code filesystemError;
+    if (!Contains(absolute) || !std::filesystem::is_regular_file(absolute, filesystemError) ||
         type == AssetType::Unknown || Classify(absolute) != type)
     {
         error = "Asset must be a supported file inside the project asset directory";
         return 0;
     }
-    const auto metadata = filesystem::path(absolute.wstring() + L".meta");
+    const auto metadata = std::filesystem::path(absolute.wstring() + L".meta");
     AssetHandle handle = 0;
-    if (filesystem::exists(metadata, filesystemError))
+    if (std::filesystem::exists(metadata, filesystemError))
     {
-        string reference;
-        ifstream stream(metadata);
+        std::string reference;
+        std::ifstream stream(metadata);
         stream >> reference;
         handle = ParseAssetHandle(reference);
         if (handle == 0)
@@ -101,11 +101,11 @@ AssetHandle AssetRegistry::Register(const filesystem::path& path, AssetType type
     return handle;
 }
 
-filesystem::path AssetRegistry::Resolve(AssetHandle handle) const
+std::filesystem::path AssetRegistry::Resolve(AssetHandle handle) const
 {
     const auto found = m_Entries.find(handle);
-    error_code error;
-    if (found == m_Entries.end() || !filesystem::is_regular_file(found->second.Path, error))
+    std::error_code error;
+    if (found == m_Entries.end() || !std::filesystem::is_regular_file(found->second.Path, error))
     {
         return {};
     }
@@ -122,14 +122,14 @@ AssetType AssetRegistry::TypeOf(AssetHandle handle) const
     return found->second.Type;
 }
 
-bool AssetRegistry::Refresh(string& error)
+bool AssetRegistry::Refresh(std::string& error)
 {
     m_Entries.clear();
     m_Collisions.clear();
     error.clear();
-    error_code filesystemError;
-    filesystem::recursive_directory_iterator iterator(m_Root, filesystemError);
-    for (const auto end = filesystem::recursive_directory_iterator(); iterator != end && !filesystemError; iterator.increment(filesystemError))
+    std::error_code filesystemError;
+    std::filesystem::recursive_directory_iterator iterator(m_Root, filesystemError);
+    for (const auto end = std::filesystem::recursive_directory_iterator(); iterator != end && !filesystemError; iterator.increment(filesystemError))
     {
         const auto type = Classify(iterator->path());
         if (type == AssetType::Unknown || !iterator->is_regular_file(filesystemError))
@@ -139,11 +139,11 @@ bool AssetRegistry::Refresh(string& error)
         // Texture IDs are assigned when used or dragged. Scanning the project should
         // not create metadata for every imported texture that no material references.
         if (type == AssetType::Texture &&
-            !filesystem::exists(iterator->path().wstring() + L".meta", filesystemError))
+            !std::filesystem::exists(iterator->path().wstring() + L".meta", filesystemError))
         {
             continue;
         }
-        string assetError;
+        std::string assetError;
         if (!Register(iterator->path(), type, assetError))
         {
             error += assetError + "\n";
@@ -156,54 +156,54 @@ bool AssetRegistry::Refresh(string& error)
     return error.empty();
 }
 
-bool AssetRegistry::Move(AssetHandle handle, const filesystem::path& destination, string& error)
+bool AssetRegistry::Move(AssetHandle handle, const std::filesystem::path& destination, std::string& error)
 {
     error.clear();
     const auto source = Resolve(handle);
-    const auto target = filesystem::absolute(destination).lexically_normal();
-    error_code filesystemError;
+    const auto target = std::filesystem::absolute(destination).lexically_normal();
+    std::error_code filesystemError;
     if (source.empty() || !Contains(target) || Classify(target) != TypeOf(handle) ||
-        filesystem::exists(target, filesystemError) || filesystem::exists(target.wstring() + L".meta", filesystemError))
+        std::filesystem::exists(target, filesystemError) || std::filesystem::exists(target.wstring() + L".meta", filesystemError))
     {
         error = "Invalid or occupied asset destination";
         return false;
     }
-    filesystem::create_directories(target.parent_path(), filesystemError);
+    std::filesystem::create_directories(target.parent_path(), filesystemError);
     if (!filesystemError)
     {
-        filesystem::rename(source, target, filesystemError);
+        std::filesystem::rename(source, target, filesystemError);
     }
     if (filesystemError)
     {
         error = filesystemError.message();
         return false;
     }
-    filesystem::rename(source.wstring() + L".meta", target.wstring() + L".meta", filesystemError);
+    std::filesystem::rename(source.wstring() + L".meta", target.wstring() + L".meta", filesystemError);
     if (filesystemError)
     {
         error = filesystemError.message();
-        error_code rollbackError;
-        filesystem::rename(target, source, rollbackError);
+        std::error_code rollbackError;
+        std::filesystem::rename(target, source, rollbackError);
         return false;
     }
     m_Entries.at(handle).Path = target;
     return true;
 }
 
-AssetHandle AssetRegistry::Duplicate(AssetHandle handle, const filesystem::path& destination, string& error)
+AssetHandle AssetRegistry::Duplicate(AssetHandle handle, const std::filesystem::path& destination, std::string& error)
 {
     error.clear();
     const auto source = Resolve(handle);
-    const auto target = filesystem::absolute(destination).lexically_normal();
+    const auto target = std::filesystem::absolute(destination).lexically_normal();
     const auto type = TypeOf(handle);
-    error_code filesystemError;
+    std::error_code filesystemError;
     if (source.empty() || !Contains(target) || Classify(target) != type ||
-        filesystem::exists(target.wstring() + L".meta", filesystemError))
+        std::filesystem::exists(target.wstring() + L".meta", filesystemError))
     {
         error = "Invalid duplicate destination";
         return 0;
     }
-    if (!filesystem::copy_file(source, target, filesystem::copy_options::none, filesystemError))
+    if (!std::filesystem::copy_file(source, target, std::filesystem::copy_options::none, filesystemError))
     {
         error = filesystemError.message();
         return 0;
@@ -211,7 +211,7 @@ AssetHandle AssetRegistry::Duplicate(AssetHandle handle, const filesystem::path&
     const auto copy = Register(target, type, error);
     if (!copy)
     {
-        filesystem::remove(target, filesystemError);
+        std::filesystem::remove(target, filesystemError);
     }
     return copy;
 }

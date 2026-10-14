@@ -78,10 +78,8 @@ intersecting geometry and ordering across separate backends remain limitations.
 
 ## Build Context
 
-This change was validated with a targeted Debug native build and the optical
-material roundtrip tests linked against the existing JSON objects. Concurrent,
-unrelated standard-namespace edits in the third-party JSON sources currently
-prevent their standalone clean compilation (including unqualified member swap
-calls). Those edits were preserved. A complete clean Debug/Release rebuild is
-therefore not claimed. GPU validation logs are under
-build/material-tests/transmittance-runtime-sm51.log and transmittance-runtime-sm65.log.
+The subsequent build-performance repair restored required standard-namespace
+qualifications in standalone sources and headers, including JSON. Release Build,
+Release Rebuild and fresh material unit tests now pass. See build-performance.md
+for timings and preserved optimization settings. Current regression logs are under
+build/build-time; earlier optical validation logs remain under build/material-tests.

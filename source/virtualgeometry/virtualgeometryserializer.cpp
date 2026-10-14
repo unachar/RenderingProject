@@ -53,29 +53,29 @@ namespace
 
     struct Directory
     {
-        array<uint64_t, SectionCount> Offsets{};
-        array<uint64_t, SectionCount> Counts{};
+        std::array<uint64_t, SectionCount> Offsets{};
+        std::array<uint64_t, SectionCount> Counts{};
     };
 
-    Directory ReadDirectory(span<const uint8_t> bytes, const VirtualGeometryLoadLimits& limits)
+    Directory ReadDirectory(std::span<const uint8_t> bytes, const VirtualGeometryLoadLimits& limits)
     {
         if (bytes.size() < HeaderBytes || bytes.size() > limits.MaxFileBytes)
         {
-            throw runtime_error("Invalid file size or file budget exceeded");
+            throw std::runtime_error("Invalid file size or file budget exceeded");
         }
         Reader header(bytes.first(HeaderBytes));
         if (header.U32() != Magic || header.U32() != VirtualGeometryConfig::AssetVersion)
         {
-            throw runtime_error("Invalid VGM1 magic or unsupported version");
+            throw std::runtime_error("Invalid VGM1 magic or unsupported version");
         }
         if (header.U64() != bytes.size())
         {
-            throw runtime_error("Virtual geometry file size mismatch");
+            throw std::runtime_error("Virtual geometry file size mismatch");
         }
         uint64_t checksum = header.U64();
         if (header.U32() != SectionCount || header.U32() != HeaderBytes)
         {
-            throw runtime_error("Invalid section directory");
+            throw std::runtime_error("Invalid section directory");
         }
         Directory directory;
         uint64_t end = HeaderBytes;
@@ -89,11 +89,11 @@ namespace
             if (offset != end || offset > bytes.size() || count >= VirtualGeometryConfig::InvalidIndex ||
                 count > (bytes.size() - offset) / Strides[section])
             {
-                throw runtime_error("Invalid section offset/count/range");
+                throw std::runtime_error("Invalid section offset/count/range");
             }
             if (decodedBytes > limits.MaxDecodedBytes || count > (limits.MaxDecodedBytes - decodedBytes) / memoryStrides[section])
             {
-                throw runtime_error("Virtual geometry decoded allocation budget exceeded");
+                throw std::runtime_error("Virtual geometry decoded allocation budget exceeded");
             }
             decodedBytes += count * memoryStrides[section];
             directory.Offsets[section] = offset;
@@ -104,17 +104,17 @@ namespace
         if (end != bytes.size() || directory.Counts[Levels] > VirtualGeometryConfig::MaxHierarchyLevels ||
             directory.Counts[Metadata] < 152 || directory.Counts[Clusters] == 0 || directory.Counts[Roots] == 0)
         {
-            throw runtime_error("Invalid payload layout/counts");
+            throw std::runtime_error("Invalid payload layout/counts");
         }
         // Cover offsets/counts too; hash excludes only the fixed 32-byte header.
         if (checksum != VirtualGeometrySerializer::Hash(bytes.subspan(32)))
         {
-            throw runtime_error("Virtual geometry checksum mismatch");
+            throw std::runtime_error("Virtual geometry checksum mismatch");
         }
         return directory;
     }
 
-    void DecodeSections(span<const uint8_t> bytes, const Directory& directory, VirtualGeometryAsset& asset)
+    void DecodeSections(std::span<const uint8_t> bytes, const Directory& directory, VirtualGeometryAsset& asset)
     {
         auto sectionReader = [&](Section section)
         {
@@ -123,10 +123,10 @@ namespace
         };
         auto metadata = sectionReader(Metadata);
         ReadMetadata(metadata, asset);
-        string error;
+        std::string error;
         if (!ValidateVirtualGeometryConfig(asset.Config, error))
         {
-            throw runtime_error(error);
+            throw std::runtime_error(error);
         }
         auto vertices = sectionReader(Vertices);
         asset.Vertices.resize(static_cast<size_t>(directory.Counts[Vertices]));
@@ -174,7 +174,7 @@ namespace
             group.MaxError = groups.F32();
         }
         groups.RequireEnd();
-        auto readIndices = [&](Section section, vector<uint32_t>& destination)
+        auto readIndices = [&](Section section, std::vector<uint32_t>& destination)
         {
             auto reader = sectionReader(section);
             destination.resize(static_cast<size_t>(directory.Counts[section]));
@@ -198,7 +198,7 @@ namespace
     }
 }
 
-uint64_t VirtualGeometrySerializer::Hash(span<const uint8_t> bytes)
+uint64_t VirtualGeometrySerializer::Hash(std::span<const uint8_t> bytes)
 {
     uint64_t hash = 14695981039346656037ull;
     for (uint8_t byte : bytes)
@@ -208,7 +208,7 @@ uint64_t VirtualGeometrySerializer::Hash(span<const uint8_t> bytes)
     return hash;
 }
 
-bool VirtualGeometrySerializer::Encode(const VirtualGeometryAsset& asset, vector<uint8_t>& bytes, string& error)
+bool VirtualGeometrySerializer::Encode(const VirtualGeometryAsset& asset, std::vector<uint8_t>& bytes, std::string& error)
 {
     error.clear();
     bytes.clear();
@@ -282,24 +282,24 @@ bool VirtualGeometrySerializer::Encode(const VirtualGeometryAsset& asset, vector
             header.U64(directory.Offsets[section]);
             header.U64(directory.Counts[section]);
         }
-        copy(header.Bytes.begin(), header.Bytes.end(), writer.Bytes.begin());
-        uint64_t checksum = Hash(span<const uint8_t>(writer.Bytes).subspan(32));
+        std::copy(header.Bytes.begin(), header.Bytes.end(), writer.Bytes.begin());
+        uint64_t checksum = Hash(std::span<const uint8_t>(writer.Bytes).subspan(32));
         for (uint32_t byte = 0; byte < 8; ++byte)
         {
             writer.Bytes[16 + byte] = static_cast<uint8_t>(checksum >> (byte * 8));
         }
-        bytes = move(writer.Bytes);
+        bytes = std::move(writer.Bytes);
         return true;
     }
-    catch (const exception& exception)
+    catch (const std::exception& exception)
     {
         error = exception.what();
         return false;
     }
 }
 
-bool VirtualGeometrySerializer::Decode(span<const uint8_t> bytes, VirtualGeometryAsset& asset,
-    string& error, const VirtualGeometryLoadLimits& limits)
+bool VirtualGeometrySerializer::Decode(std::span<const uint8_t> bytes, VirtualGeometryAsset& asset,
+    std::string& error, const VirtualGeometryLoadLimits& limits)
 {
     error.clear();
     try
@@ -311,67 +311,67 @@ bool VirtualGeometrySerializer::Decode(span<const uint8_t> bytes, VirtualGeometr
         {
             return false;
         }
-        asset = move(decoded); // Transactional: retain caller's old asset on failure.
+        asset = std::move(decoded); // Transactional: retain caller's old asset on failure.
         return true;
     }
-    catch (const exception& exception)
+    catch (const std::exception& exception)
     {
         error = exception.what();
         return false;
     }
 }
 
-bool VirtualGeometrySerializer::Save(const filesystem::path& path, const VirtualGeometryAsset& asset, string& error)
+bool VirtualGeometrySerializer::Save(const std::filesystem::path& path, const VirtualGeometryAsset& asset, std::string& error)
 {
-    vector<uint8_t> bytes;
+    std::vector<uint8_t> bytes;
     if (!Encode(asset, bytes, error))
     {
         return false;
     }
     try
     {
-        if (bytes.size() > static_cast<uint64_t>(numeric_limits<streamsize>::max()))
+        if (bytes.size() > static_cast<uint64_t>(std::numeric_limits<std::streamsize>::max()))
         {
-            throw runtime_error("Virtual geometry file exceeds stream addressing");
+            throw std::runtime_error("Virtual geometry file exceeds stream addressing");
         }
-        ofstream file(path, ios::binary | ios::trunc);
-        file.exceptions(ios::badbit | ios::failbit);
-        file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<streamsize>(bytes.size()));
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file.exceptions(std::ios::badbit | std::ios::failbit);
+        file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         file.close();
         return true;
     }
-    catch (const exception& exception)
+    catch (const std::exception& exception)
     {
         error = exception.what();
         return false;
     }
 }
 
-bool VirtualGeometrySerializer::Load(const filesystem::path& path, VirtualGeometryAsset& asset,
-    string& error, const VirtualGeometryLoadLimits& limits)
+bool VirtualGeometrySerializer::Load(const std::filesystem::path& path, VirtualGeometryAsset& asset,
+    std::string& error, const VirtualGeometryLoadLimits& limits)
 {
     error.clear();
     try
     {
-        ifstream file(path, ios::binary | ios::ate);
-        file.exceptions(ios::badbit | ios::failbit);
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
+        file.exceptions(std::ios::badbit | std::ios::failbit);
         auto position = file.tellg();
         if (position < 0)
         {
-            throw runtime_error("Cannot determine virtual geometry file size");
+            throw std::runtime_error("Cannot determine virtual geometry file size");
         }
         uint64_t size = static_cast<uint64_t>(position);
-        if (size < HeaderBytes || size > limits.MaxFileBytes || size > numeric_limits<size_t>::max() ||
-            size > static_cast<uint64_t>(numeric_limits<streamsize>::max()))
+        if (size < HeaderBytes || size > limits.MaxFileBytes || size > std::numeric_limits<size_t>::max() ||
+            size > static_cast<uint64_t>(std::numeric_limits<std::streamsize>::max()))
         {
-            throw runtime_error("Invalid virtual geometry file size or load budget exceeded");
+            throw std::runtime_error("Invalid virtual geometry file size or load budget exceeded");
         }
-        vector<uint8_t> bytes(static_cast<size_t>(size));
+        std::vector<uint8_t> bytes(static_cast<size_t>(size));
         file.seekg(0);
-        file.read(reinterpret_cast<char*>(bytes.data()), static_cast<streamsize>(size));
+        file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(size));
         return Decode(bytes, asset, error, limits);
     }
-    catch (const exception& exception)
+    catch (const std::exception& exception)
     {
         error = exception.what();
         return false;

@@ -291,7 +291,7 @@ float3 SampleSurfaceShadowMap(
         float fineInterior = 1.0f;
         bool hasFine = false;
 
-        [unroll]
+        [loop]
         for (int level = 0; level < 4; ++level)
         {
             if (level >= levelCount) break;
@@ -335,7 +335,7 @@ float3 SampleSurfaceShadowMap(
         float fineInterior = 1.0f;
         bool hasFine = false;
 
-        [unroll]
+        [loop]
         for (int level = 0; level < 4; ++level)
         {
             if (level >= levelCount) break;

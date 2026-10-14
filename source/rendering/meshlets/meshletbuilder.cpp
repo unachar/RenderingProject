@@ -28,7 +28,7 @@ float Dot(Position a, Position b)
 }
 float Length(Position a)
 {
-    return sqrt(Dot(a, a));
+    return std::sqrt(Dot(a, a));
 }
 Position Cross(Position a, Position b)
 {
@@ -36,29 +36,29 @@ Position Cross(Position a, Position b)
 }
 bool Finite(Position p)
 {
-    return isfinite(p.X) && isfinite(p.Y) && isfinite(p.Z);
+    return std::isfinite(p.X) && std::isfinite(p.Y) && std::isfinite(p.Z);
 }
 bool ConfigValid(BuildConfig c)
 {
     return c.MaxVertices >= 3 && c.MaxVertices <= 64 && c.MaxPrimitives >= 1 && c.MaxPrimitives <= 126 &&
            c.MeshletsPerCluster >= 1 && c.MeshletsPerCluster <= 256;
 }
-Bounds ComputeBounds(const Asset &asset, const Meshlet &meshlet, span<const Position> positions)
+Bounds ComputeBounds(const Asset &asset, const Meshlet &meshlet, std::span<const Position> positions)
 {
     Position minimum = positions[asset.Vertices[meshlet.VertexOffset]], maximum = minimum;
     for (uint32_t i = 0; i < meshlet.VertexCount; ++i)
     {
         auto p = positions[asset.Vertices[meshlet.VertexOffset + i]];
-        minimum = {min(minimum.X, p.X), min(minimum.Y, p.Y), min(minimum.Z, p.Z)};
-        maximum = {max(maximum.X, p.X), max(maximum.Y, p.Y), max(maximum.Z, p.Z)};
+        minimum = {std::min(minimum.X, p.X), std::min(minimum.Y, p.Y), std::min(minimum.Z, p.Z)};
+        maximum = {std::max(maximum.X, p.X), std::max(maximum.Y, p.Y), std::max(maximum.Z, p.Z)};
     }
     Bounds bounds;
     bounds.Center = Scale(Add(minimum, maximum), 0.5f);
     for (uint32_t i = 0; i < meshlet.VertexCount; ++i)
-        bounds.Radius = max(
+        bounds.Radius = std::max(
             bounds.Radius, Length(Sub(positions[asset.Vertices[meshlet.VertexOffset + i]], bounds.Center)));
-    bounds.Radius = nextafter(bounds.Radius, numeric_limits<float>::infinity());
-    vector<Position> normals;
+    bounds.Radius = std::nextafter(bounds.Radius, std::numeric_limits<float>::infinity());
+    std::vector<Position> normals;
     Position sum{};
     for (uint32_t i = 0; i < meshlet.PrimitiveCount; ++i)
     {
@@ -79,9 +79,9 @@ Bounds ComputeBounds(const Asset &asset, const Meshlet &meshlet, span<const Posi
         bounds.ConeAxis = Scale(sum, 1 / Length(sum));
         float cosine = 1;
         for (auto n : normals)
-            cosine = min(cosine, Dot(n, bounds.ConeAxis));
+            cosine = std::min(cosine, Dot(n, bounds.ConeAxis));
         if (cosine > 0.001f)
-            bounds.ConeCutoff = min(1.f, sqrt(max(0.f, 1 - cosine * cosine)) + 1e-5f);
+            bounds.ConeCutoff = std::min(1.f, std::sqrt(std::max(0.f, 1 - cosine * cosine)) + 1e-5f);
     }
     return bounds;
 }
@@ -111,40 +111,40 @@ uint64_t PayloadHash(const Asset &asset)
     consume(asset.Clusters);
     return hash;
 }
-template <class T> bool Write(ofstream &stream, const vector<T> &data)
+template <class T> bool Write(std::ofstream &stream, const std::vector<T> &data)
 {
-    stream.write(reinterpret_cast<const char *>(data.data()), streamsize(data.size() * sizeof(T)));
+    stream.write(reinterpret_cast<const char *>(data.data()), std::streamsize(data.size() * sizeof(T)));
     return bool(stream);
 }
-template <class T> bool Read(ifstream &stream, vector<T> &data, uint32_t count)
+template <class T> bool Read(std::ifstream &stream, std::vector<T> &data, uint32_t count)
 {
     data.resize(count);
-    stream.read(reinterpret_cast<char *>(data.data()), streamsize(data.size() * sizeof(T)));
+    stream.read(reinterpret_cast<char *>(data.data()), std::streamsize(data.size() * sizeof(T)));
     return bool(stream);
 }
 } // namespace
-void RefreshMeshletBounds(Asset &asset, span<const Position> positions)
+void RefreshMeshletBounds(Asset &asset, std::span<const Position> positions)
 {
     asset.Bounds.resize(asset.Meshlets.size());
     for (size_t i=0;i<asset.Meshlets.size();++i)
         asset.Bounds[i]=ComputeBounds(asset,asset.Meshlets[i],positions);
 }
-Asset Build(span<const Position> positions, span<const uint32_t> indices, BuildConfig config)
+Asset Build(std::span<const Position> positions, std::span<const uint32_t> indices, BuildConfig config)
 {
     if (!ConfigValid(config) || indices.size() % 3)
-        throw invalid_argument("Invalid meshlet build configuration/triangle list");
+        throw std::invalid_argument("Invalid meshlet build configuration/triangle list");
     if (indices.size() > UINT32_MAX || positions.size() > UINT32_MAX)
-        throw overflow_error("Meshlet geometry too large");
+        throw std::overflow_error("Meshlet geometry too large");
     for (auto p : positions)
         if (!Finite(p))
-            throw invalid_argument("Non-finite meshlet position");
+            throw std::invalid_argument("Non-finite meshlet position");
     for (auto index : indices)
         if (index >= positions.size())
-            throw out_of_range("Meshlet vertex index");
+            throw std::out_of_range("Meshlet vertex index");
     Asset asset;
     asset.Config = config;
     Meshlet current;
-    vector<uint32_t> local;
+    std::vector<uint32_t> local;
     auto finish = [&]() {
         if (!current.PrimitiveCount)
             return;
@@ -164,7 +164,7 @@ Asset Build(span<const Position> positions, span<const uint32_t> indices, BuildC
             bool earlier = false;
             for (uint32_t k = 0; k < j; ++k)
                 earlier |= indices[i + k] == indices[i + j];
-            if (!earlier && find(local.begin(), local.end(), indices[i + j]) == local.end())
+            if (!earlier && std::find(local.begin(), local.end(), indices[i + j]) == local.end())
                 ++extra;
         }
         if (current.PrimitiveCount >= config.MaxPrimitives || local.size() + extra > config.MaxVertices)
@@ -172,7 +172,7 @@ Asset Build(span<const Position> positions, span<const uint32_t> indices, BuildC
         uint32_t packed = 0;
         for (uint32_t j = 0; j < 3; ++j)
         {
-            auto found = find(local.begin(), local.end(), indices[i + j]);
+            auto found = std::find(local.begin(), local.end(), indices[i + j]);
             uint32_t index = static_cast<uint32_t>(found - local.begin());
             if (found == local.end())
                 local.push_back(indices[i + j]);
@@ -187,32 +187,32 @@ Asset Build(span<const Position> positions, span<const uint32_t> indices, BuildC
         Cluster cluster;
         cluster.MeshletOffset = first;
         cluster.MeshletCount =
-            min(config.MeshletsPerCluster, static_cast<uint32_t>(asset.Meshlets.size()) - first);
+            std::min(config.MeshletsPerCluster, static_cast<uint32_t>(asset.Meshlets.size()) - first);
         Position minimum = asset.Bounds[first].Center, maximum = minimum;
         for (uint32_t j = 0; j < cluster.MeshletCount; ++j)
         {
             const auto &b = asset.Bounds[first + j];
-            minimum = {min(minimum.X, b.Center.X - b.Radius), min(minimum.Y, b.Center.Y - b.Radius),
-                       min(minimum.Z, b.Center.Z - b.Radius)};
-            maximum = {max(maximum.X, b.Center.X + b.Radius), max(maximum.Y, b.Center.Y + b.Radius),
-                       max(maximum.Z, b.Center.Z + b.Radius)};
+            minimum = {std::min(minimum.X, b.Center.X - b.Radius), std::min(minimum.Y, b.Center.Y - b.Radius),
+                       std::min(minimum.Z, b.Center.Z - b.Radius)};
+            maximum = {std::max(maximum.X, b.Center.X + b.Radius), std::max(maximum.Y, b.Center.Y + b.Radius),
+                       std::max(maximum.Z, b.Center.Z + b.Radius)};
         }
         cluster.Bounds.Center = Scale(Add(minimum, maximum), 0.5f);
         for (uint32_t j = 0; j < cluster.MeshletCount; ++j)
         {
             const auto &b = asset.Bounds[first + j];
             cluster.Bounds.Radius =
-                max(cluster.Bounds.Radius, Length(Sub(b.Center, cluster.Bounds.Center)) + b.Radius);
+                std::max(cluster.Bounds.Radius, Length(Sub(b.Center, cluster.Bounds.Center)) + b.Radius);
         }
-        cluster.Bounds.Radius = nextafter(cluster.Bounds.Radius, numeric_limits<float>::infinity());
+        cluster.Bounds.Radius = std::nextafter(cluster.Bounds.Radius, std::numeric_limits<float>::infinity());
         asset.Clusters.push_back(cluster);
     }
-    string error;
+    std::string error;
     if (!Validate(asset, positions, error))
-        throw runtime_error(error);
+        throw std::runtime_error(error);
     return asset;
 }
-bool Validate(const Asset &asset, span<const Position> positions, string &error)
+bool Validate(const Asset &asset, std::span<const Position> positions, std::string &error)
 {
     auto fail = [&](const char *message) {
         error = message;
@@ -234,8 +234,8 @@ bool Validate(const Asset &asset, span<const Position> positions, string &error)
             uint64_t(m.VertexOffset) + m.VertexCount > asset.Vertices.size() ||
             uint64_t(m.PrimitiveOffset) + m.PrimitiveCount > asset.Primitives.size())
             return fail("Invalid meshlet range");
-        if (!Finite(b.Center) || !isfinite(b.Radius) || b.Radius < 0 || !Finite(b.ConeAxis) ||
-            !isfinite(b.ConeCutoff) || b.ConeCutoff < 0 || b.ConeCutoff > 1)
+        if (!Finite(b.Center) || !std::isfinite(b.Radius) || b.Radius < 0 || !Finite(b.ConeAxis) ||
+            !std::isfinite(b.ConeCutoff) || b.ConeCutoff < 0 || b.ConeCutoff > 1)
             return fail("Invalid bounds/cone");
         for (uint32_t i = 0; i < m.VertexCount; ++i)
         {
@@ -254,7 +254,7 @@ bool Validate(const Asset &asset, span<const Position> positions, string &error)
         }
         auto computed = ComputeBounds(asset, m, positions);
         if (b.ConeCutoff < 1 &&
-            (abs(Length(b.ConeAxis) - 1) > 1e-4f || Dot(b.ConeAxis, computed.ConeAxis) < 0.99999f ||
+            (std::abs(Length(b.ConeAxis) - 1) > 1e-4f || Dot(b.ConeAxis, computed.ConeAxis) < 0.99999f ||
              b.ConeCutoff + 1e-6f < computed.ConeCutoff))
             return fail("Unsafe normal cone");
         vertices += m.VertexCount;
@@ -268,7 +268,7 @@ bool Validate(const Asset &asset, span<const Position> positions, string &error)
         if (c.MeshletOffset != children || !c.MeshletCount ||
             c.MeshletCount > asset.Config.MeshletsPerCluster ||
             uint64_t(c.MeshletOffset) + c.MeshletCount > asset.Meshlets.size() || !Finite(c.Bounds.Center) ||
-            !isfinite(c.Bounds.Radius) || c.Bounds.Radius < 0 || c.Bounds.ConeCutoff != 1)
+            !std::isfinite(c.Bounds.Radius) || c.Bounds.Radius < 0 || c.Bounds.ConeCutoff != 1)
             return fail("Invalid cluster");
         for (uint32_t j = 0; j < c.MeshletCount; ++j)
         {
@@ -283,7 +283,7 @@ bool Validate(const Asset &asset, span<const Position> positions, string &error)
     error.clear();
     return true;
 }
-uint64_t GeometryKey(span<const Position> positions, span<const uint32_t> indices,
+uint64_t GeometryKey(std::span<const Position> positions, std::span<const uint32_t> indices,
                      BuildConfig config)
 {
     uint64_t hash = 14695981039346656037ull;
@@ -300,12 +300,12 @@ uint64_t GeometryKey(span<const Position> positions, span<const uint32_t> indice
     consume(indices.data(), indices.size_bytes());
     return hash;
 }
-bool Save(const filesystem::path &path, const Asset &asset, uint64_t key)
+bool Save(const std::filesystem::path &path, const Asset &asset, uint64_t key)
 {
     try
     {
         if (!path.parent_path().empty())
-            filesystem::create_directories(path.parent_path());
+            std::filesystem::create_directories(path.parent_path());
         Header header;
         header.Key = key;
         header.PayloadHash = PayloadHash(asset);
@@ -315,7 +315,7 @@ bool Save(const filesystem::path &path, const Asset &asset, uint64_t key)
         header.Counts[2] = static_cast<uint32_t>(asset.Primitives.size());
         header.Counts[3] = static_cast<uint32_t>(asset.Bounds.size());
         header.Counts[4] = static_cast<uint32_t>(asset.Clusters.size());
-        ofstream stream(path, ios::binary | ios::trunc);
+        std::ofstream stream(path, std::ios::binary | std::ios::trunc);
         stream.write(reinterpret_cast<const char *>(&header), sizeof(header));
         return Write(stream, asset.Meshlets) && Write(stream, asset.Vertices) &&
                Write(stream, asset.Primitives) && Write(stream, asset.Bounds) &&
@@ -326,11 +326,11 @@ bool Save(const filesystem::path &path, const Asset &asset, uint64_t key)
         return false;
     }
 }
-bool Load(const filesystem::path &path, Asset &asset, uint64_t key, span<const Position> positions)
+bool Load(const std::filesystem::path &path, Asset &asset, uint64_t key, std::span<const Position> positions)
 {
     try
     {
-        ifstream stream(path, ios::binary | ios::ate);
+        std::ifstream stream(path, std::ios::binary | std::ios::ate);
         if (!stream)
             return false;
         const auto bytes = stream.tellg();
@@ -354,10 +354,10 @@ bool Load(const filesystem::path &path, Asset &asset, uint64_t key, span<const P
             !Read(stream, loaded.Bounds, header.Counts[3]) ||
             !Read(stream, loaded.Clusters, header.Counts[4]))
             return false;
-        string error;
+        std::string error;
         if (PayloadHash(loaded) != header.PayloadHash || !Validate(loaded, positions, error))
             return false;
-        asset = move(loaded);
+        asset = std::move(loaded);
         return true;
     }
     catch (...)
@@ -365,9 +365,9 @@ bool Load(const filesystem::path &path, Asset &asset, uint64_t key, span<const P
         return false;
     }
 }
-array<uint32_t, 3> DispatchDimensions(uint32_t count)
+std::array<uint32_t, 3> DispatchDimensions(uint32_t count)
 {
-    const uint32_t x = min(count, 65535u);
+    const uint32_t x = std::min(count, 65535u);
     return {x, count ? static_cast<uint32_t>((uint64_t(count) + x - 1) / x) : 1u, 1u};
 }
 } // namespace Meshlets

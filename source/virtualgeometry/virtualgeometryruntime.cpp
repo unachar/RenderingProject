@@ -16,11 +16,11 @@ namespace VirtualGeometryRuntime
 {
 namespace
 {
-using VertexKey = array<uint32_t, 12>;
+using VertexKey = std::array<uint32_t, 12>;
 VertexKey KeyOf(const VirtualGeometryVertex &vertex)
 {
     VertexKey key;
-    memcpy(key.data(), &vertex, sizeof(vertex));
+    std::memcpy(key.data(), &vertex, sizeof(vertex));
     return key;
 }
 struct VertexHash
@@ -38,9 +38,9 @@ struct VertexHash
 };
 struct State
 {
-    mutex Mutex;
+    std::mutex Mutex;
     Statistics Stats;
-    unordered_map<string, weak_ptr<const RuntimeAsset>> Assets;
+    std::unordered_map<std::string, std::weak_ptr<const RuntimeAsset>> Assets;
 };
 State &Data()
 {
@@ -48,7 +48,7 @@ State &Data()
     return state;
 }
 
-uint64_t GeometryKey(span<const VirtualGeometryVertex> vertices, span<const uint32_t> indices,
+uint64_t GeometryKey(std::span<const VirtualGeometryVertex> vertices, std::span<const uint32_t> indices,
                      uint32_t material, float part)
 {
     uint64_t hash = 14695981039346656037ull;
@@ -73,9 +73,9 @@ uint64_t GeometryKey(span<const VirtualGeometryVertex> vertices, span<const uint
 }
 
 Meshlets::Asset ConvertLeaves(const VirtualGeometryAsset &hierarchy,
-                              span<const VirtualGeometryVertex> source)
+                              std::span<const VirtualGeometryVertex> source)
 {
-    unordered_map<VertexKey, uint32_t, VertexHash> original;
+    std::unordered_map<VertexKey, uint32_t, VertexHash> original;
     original.reserve(source.size());
     for (uint32_t i = 0; i < source.size(); ++i)
         original.try_emplace(KeyOf(source[i]), i);
@@ -86,14 +86,14 @@ Meshlets::Asset ConvertLeaves(const VirtualGeometryAsset &hierarchy,
         if (cluster.Level != 0)
             continue; // Parents contain newly simplified vertices.
         if (cluster.VertexCount > 64 || cluster.TriangleCount > 126)
-            throw runtime_error("VirtualGeometry cluster exceeds Mesh Shader limits");
+            throw std::runtime_error("VirtualGeometry cluster exceeds Mesh Shader limits");
         Meshlets::Meshlet meshlet{static_cast<uint32_t>(output.Vertices.size()), cluster.VertexCount,
                                   static_cast<uint32_t>(output.Primitives.size()), cluster.TriangleCount};
         for (uint32_t i = 0; i < cluster.VertexCount; ++i)
         {
             const auto found = original.find(KeyOf(hierarchy.Vertices.at(cluster.VertexOffset + i)));
             if (found == original.end())
-                throw runtime_error("VirtualGeometry leaf vertex does not match source attributes");
+                throw std::runtime_error("VirtualGeometry leaf vertex does not match source attributes");
             output.Vertices.push_back(found->second);
         }
         for (uint32_t i = 0; i < cluster.TriangleCount; ++i)
@@ -111,7 +111,7 @@ Meshlets::Asset ConvertLeaves(const VirtualGeometryAsset &hierarchy,
              {cluster.Cone.Axis[0], cluster.Cone.Axis[1], cluster.Cone.Axis[2]},
              cluster.Cone.Cutoff});
     }
-    vector<Meshlets::Position> positions;
+    std::vector<Meshlets::Position> positions;
     positions.reserve(source.size());
     for (const auto &vertex : source)
         positions.push_back({vertex.Position[0], vertex.Position[1], vertex.Position[2]});
@@ -121,7 +121,7 @@ Meshlets::Asset ConvertLeaves(const VirtualGeometryAsset &hierarchy,
     // Preserve conservative cluster spheres using union AABBs of child spheres.
     for (uint32_t first = 0; first < output.Meshlets.size(); first += 32)
     {
-        const uint32_t count = min(32u, static_cast<uint32_t>(output.Meshlets.size()) - first);
+        const uint32_t count = std::min(32u, static_cast<uint32_t>(output.Meshlets.size()) - first);
         float lower[3] = {INFINITY, INFINITY, INFINITY}, upper[3] = {-INFINITY, -INFINITY, -INFINITY};
         for (uint32_t i = first; i < first + count; ++i)
         {
@@ -129,8 +129,8 @@ Meshlets::Asset ConvertLeaves(const VirtualGeometryAsset &hierarchy,
             const float center[] = {bounds.Center.X, bounds.Center.Y, bounds.Center.Z};
             for (uint32_t axis = 0; axis < 3; ++axis)
             {
-                lower[axis] = min(lower[axis], center[axis] - bounds.Radius);
-                upper[axis] = max(upper[axis], center[axis] + bounds.Radius);
+                lower[axis] = std::min(lower[axis], center[axis] - bounds.Radius);
+                upper[axis] = std::max(upper[axis], center[axis] + bounds.Radius);
             }
         }
         Meshlets::Cluster cluster;
@@ -140,41 +140,41 @@ Meshlets::Asset ConvertLeaves(const VirtualGeometryAsset &hierarchy,
                                  (lower[2] + upper[2]) * 0.5f};
         const float x = (upper[0] - lower[0]) * 0.5f, y = (upper[1] - lower[1]) * 0.5f,
                     z = (upper[2] - lower[2]) * 0.5f;
-        cluster.Bounds.Radius = sqrt(x * x + y * y + z * z) + 1e-5f;
+        cluster.Bounds.Radius = std::sqrt(x * x + y * y + z * z) + 1e-5f;
         output.Clusters.push_back(cluster);
     }
-    string error;
+    std::string error;
     if (!Meshlets::Validate(output, positions, error))
-        throw runtime_error(error);
+        throw std::runtime_error(error);
     return output;
 }
 } // namespace
 
-shared_ptr<const RuntimeAsset> Acquire(span<const VirtualGeometryVertex> vertices,
-                                            span<const uint32_t> indices, uint32_t materialId,
-                                            float materialPartId, const filesystem::path &cacheDirectory)
+std::shared_ptr<const RuntimeAsset> Acquire(std::span<const VirtualGeometryVertex> vertices,
+                                            std::span<const uint32_t> indices, uint32_t materialId,
+                                            float materialPartId, const std::filesystem::path &cacheDirectory)
 {
     auto &state = Data();
-    lock_guard lock(state.Mutex);
-    auto asset = make_shared<RuntimeAsset>();
+    std::lock_guard lock(state.Mutex);
+    auto asset = std::make_shared<RuntimeAsset>();
     asset->Key = GeometryKey(vertices, indices, materialId, materialPartId);
-    ostringstream name;
-    name << hex << asset->Key << ".vgmesh";
+    std::ostringstream name;
+    name << std::hex << asset->Key << ".vgmesh";
     asset->CachePath = cacheDirectory / name.str();
-    const string identity = asset->CachePath.generic_string();
+    const std::string identity = asset->CachePath.generic_string();
     if (auto found = state.Assets.find(identity); found != state.Assets.end())
         if (auto shared = found->second.lock())
         {
             ++state.Stats.SharedHits;
             return shared;
         }
-    const auto begin = chrono::steady_clock::now();
+    const auto begin = std::chrono::steady_clock::now();
     try
     {
         VirtualGeometryBuildConfig config;
         config.MaxClusterVertices = 64;
         config.MaxClusterTriangles = 124;
-        string error;
+        std::string error;
         asset->CacheHit = VirtualGeometrySerializer::Load(asset->CachePath, asset->Hierarchy, error);
         if (asset->CacheHit)
         {
@@ -192,7 +192,7 @@ shared_ptr<const RuntimeAsset> Acquire(span<const VirtualGeometryVertex> vertice
                 {
                     asset->Meshlets = ConvertLeaves(loaded, vertices);
                 }
-                catch (const exception &)
+                catch (const std::exception &)
                 {
                     asset->CacheHit = false;
                 }
@@ -210,14 +210,14 @@ shared_ptr<const RuntimeAsset> Acquire(span<const VirtualGeometryVertex> vertice
                 result = VirtualGeometryBuilder::Build(vertices, indices, config, materialId);
             }
             if (!result)
-                throw runtime_error(result.Error);
-            asset->Hierarchy = move(result.Asset);
+                throw std::runtime_error(result.Error);
+            asset->Hierarchy = std::move(result.Asset);
             asset->Hierarchy.DebugName = name.str();
             asset->Hierarchy.SourceMaterialPartId = materialPartId;
             asset->Meshlets = ConvertLeaves(asset->Hierarchy, vertices);
             // Cache failure is non-fatal: the validated in-memory asset remains drawable.
-            error_code directoryError;
-            filesystem::create_directories(cacheDirectory, directoryError);
+            std::error_code directoryError;
+            std::filesystem::create_directories(cacheDirectory, directoryError);
             if (!directoryError)
                 VirtualGeometrySerializer::Save(asset->CachePath, asset->Hierarchy, error);
             ++state.Stats.Builds;
@@ -230,14 +230,14 @@ shared_ptr<const RuntimeAsset> Acquire(span<const VirtualGeometryVertex> vertice
                     "Cached leaf-only hierarchy; protected boundaries prevented simplification";
         }
     }
-    catch (const exception &error)
+    catch (const std::exception &error)
     {
         asset->Error = error.what();
         asset->Meshlets = {};
         ++state.Stats.Failures;
     }
     asset->BuildMilliseconds =
-        chrono::duration<double, milli>(chrono::steady_clock::now() - begin).count();
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
     state.Stats.BuildMilliseconds += asset->BuildMilliseconds;
     for (auto entry = state.Assets.begin(); entry != state.Assets.end();)
         if (entry->second.expired())
@@ -250,18 +250,18 @@ shared_ptr<const RuntimeAsset> Acquire(span<const VirtualGeometryVertex> vertice
 Statistics GetStatistics()
 {
     auto &state = Data();
-    lock_guard lock(state.Mutex);
+    std::lock_guard lock(state.Mutex);
     return state.Stats;
 }
-vector<shared_ptr<const RuntimeAsset>> LiveAssets()
+std::vector<std::shared_ptr<const RuntimeAsset>> LiveAssets()
 {
     auto &state = Data();
-    lock_guard lock(state.Mutex);
-    vector<shared_ptr<const RuntimeAsset>> result;
+    std::lock_guard lock(state.Mutex);
+    std::vector<std::shared_ptr<const RuntimeAsset>> result;
     for (const auto &[key, entry] : state.Assets)
         if (auto asset = entry.lock())
-            result.push_back(move(asset));
-    sort(result.begin(), result.end(), [](const auto &a, const auto &b) { return a->Key < b->Key; });
+            result.push_back(std::move(asset));
+    std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) { return a->Key < b->Key; });
     return result;
 }
 } // namespace VirtualGeometryRuntime

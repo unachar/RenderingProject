@@ -10,7 +10,7 @@ namespace VirtualGeometryInternal
     {
         if (value >= VirtualGeometryConfig::InvalidIndex)
         {
-            throw runtime_error("Virtual geometry exceeds 32-bit asset addressing");
+            throw std::runtime_error("Virtual geometry exceeds 32-bit asset addressing");
         }
         return static_cast<uint32_t>(value);
     }
@@ -21,14 +21,14 @@ namespace VirtualGeometryInternal
     }
 
     bool IsFiniteVertex(const VirtualGeometryVertex& vertex);
-    array<float, 12> VertexComponents(const VirtualGeometryVertex& vertex);
-    vector<uint32_t> CleanSource(
-        span<const VirtualGeometryVertex> vertices, span<const uint32_t> indices,
+    std::array<float, 12> VertexComponents(const VirtualGeometryVertex& vertex);
+    std::vector<uint32_t> CleanSource(
+        std::span<const VirtualGeometryVertex> vertices, std::span<const uint32_t> indices,
         VirtualGeometryBuildStats& stats);
-    vector<uint32_t> AppendClusters(
-        VirtualGeometryAsset& asset, span<const VirtualGeometryVertex> vertices,
-        span<const uint32_t> indices, uint32_t level, float error);
-    void BuildHierarchy(VirtualGeometryAsset& asset, vector<uint32_t> current);
+    std::vector<uint32_t> AppendClusters(
+        VirtualGeometryAsset& asset, std::span<const VirtualGeometryVertex> vertices,
+        std::span<const uint32_t> indices, uint32_t level, float error);
+    void BuildHierarchy(VirtualGeometryAsset& asset, std::vector<uint32_t> current);
     void UpdateStatistics(VirtualGeometryAsset& asset);
     VirtualGeometrySphere SphereFromAabb(const VirtualGeometryAabb& bounds);
 }

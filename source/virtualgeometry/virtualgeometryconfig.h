@@ -27,4 +27,4 @@ struct VirtualGeometryBuildConfig
     float BoundaryEpsilon = 1e-5f;
 };
 
-bool ValidateVirtualGeometryConfig(const VirtualGeometryBuildConfig& config, string& error);
+bool ValidateVirtualGeometryConfig(const VirtualGeometryBuildConfig& config, std::string& error);

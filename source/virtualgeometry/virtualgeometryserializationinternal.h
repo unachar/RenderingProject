@@ -15,7 +15,7 @@ namespace VirtualGeometrySerialization
     class Writer
     {
     public:
-        vector<uint8_t> Bytes;
+        std::vector<uint8_t> Bytes;
         void U32(uint32_t value)
         {
             for (uint32_t byte = 0; byte < 4; ++byte)
@@ -30,9 +30,9 @@ namespace VirtualGeometrySerialization
                 Bytes.push_back(static_cast<uint8_t>(value >> (byte * 8)));
             }
         }
-        void F32(float value) { U32(bit_cast<uint32_t>(value)); }
-        void F64(double value) { U64(bit_cast<uint64_t>(value)); }
-        void Float3(const array<float, 3>& value)
+        void F32(float value) { U32(std::bit_cast<uint32_t>(value)); }
+        void F64(double value) { U64(std::bit_cast<uint64_t>(value)); }
+        void Float3(const std::array<float, 3>& value)
         {
             for (float component : value)
             {
@@ -48,10 +48,10 @@ namespace VirtualGeometrySerialization
 
     class Reader
     {
-        span<const uint8_t> m_Bytes;
+        std::span<const uint8_t> m_Bytes;
         size_t m_Offset = 0;
     public:
-        explicit Reader(span<const uint8_t> bytes) : m_Bytes(bytes) {}
+        explicit Reader(std::span<const uint8_t> bytes) : m_Bytes(bytes) {}
         uint32_t U32()
         {
             uint32_t value = 0;
@@ -72,19 +72,19 @@ namespace VirtualGeometrySerialization
             }
             return value;
         }
-        float F32() { return bit_cast<float>(U32()); }
-        double F64() { return bit_cast<double>(U64()); }
-        span<const uint8_t> Take(size_t count)
+        float F32() { return std::bit_cast<float>(U32()); }
+        double F64() { return std::bit_cast<double>(U64()); }
+        std::span<const uint8_t> Take(size_t count)
         {
             if (count > m_Bytes.size() - m_Offset)
             {
-                throw runtime_error("Truncated virtual geometry section");
+                throw std::runtime_error("Truncated virtual geometry section");
             }
             auto result = m_Bytes.subspan(m_Offset, count);
             m_Offset += count;
             return result;
         }
-        array<float, 3> Float3() { return {F32(), F32(), F32()}; }
+        std::array<float, 3> Float3() { return {F32(), F32(), F32()}; }
         VirtualGeometrySphere Sphere()
         {
             VirtualGeometrySphere sphere;
@@ -96,7 +96,7 @@ namespace VirtualGeometrySerialization
         {
             if (m_Offset != m_Bytes.size())
             {
-                throw runtime_error("Unexpected trailing section data");
+                throw std::runtime_error("Unexpected trailing section data");
             }
         }
     };
