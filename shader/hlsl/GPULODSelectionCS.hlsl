@@ -8,7 +8,8 @@ void main(uint3 id : SV_DispatchThreadID)
     if (result.w != 1) return;
     GPUInstanceData instance = gInstances[slot];
     uint selected = 0;
-    if (EnableLOD != 0 && instance.LODGroupIndex < GroupCount)
+    bool native = NativeHierarchy != 0 && (instance.Flags & 16u) != 0;
+    if (EnableLOD != 0 && !native && instance.LODGroupIndex < GroupCount)
     {
         GPULODGroup group = gGroups[instance.LODGroupIndex];
         uint count = min(group.Count, 8u);

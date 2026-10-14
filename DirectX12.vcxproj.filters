@@ -1077,8 +1077,18 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="source\virtualgeometry\virtualgeometryruntime.h" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometryselection.h" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometrygpu.h" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometryresources.h" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometrytraversal.h" />
     <ClInclude Include="source\virtualgeometry\virtualgeometrydebug.h" />
     <ClCompile Include="source\virtualgeometry\virtualgeometryruntime.cpp" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometryselection.cpp" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometrygpu.cpp" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometryresources.cpp" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometrytraversal.cpp" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometryvalidation.cpp" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometryvalidation.h" />
     <ClCompile Include="source\virtualgeometry\virtualgeometrydebug.cpp" />
   </ItemGroup>
   <ItemGroup>

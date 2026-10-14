@@ -4,6 +4,7 @@
 #include "cloud/cloudvalidation.h"
 #include "renderingvalidation.h"
 #include "meshlets/meshletvalidation.h"
+#include "virtualgeometry/virtualgeometryvalidation.h"
 #include "gpudriven/gpudrivenvalidation.h"
 #include "gpuscene/gpuscenevalidation.h"
 #include "visibility/gpuvisibilityvalidation.h"
@@ -512,6 +513,7 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
         BeforeSunLightingFrame(frame);
         return;
     }
+    if (VirtualGeometryValidation::Enabled()) { VirtualGeometryValidation::BeforeFrame(frame); return; }
     if (MeshletValidation::Enabled()) { MeshletValidation::BeforeFrame(frame); return; }
     if (GPUVisibilityValidation::Enabled()) { GPUVisibilityValidation::BeforeFrame(frame); return; }
     if (GPUDrivenValidation::Enabled()) { GPUDrivenValidation::BeforeFrame(frame); return; }
@@ -668,6 +670,7 @@ void RenderingValidation::AfterFrame(uint64_t frame)
     }
     if (CloudValidation::Enabled()) { CloudValidation::AfterFrame(frame); return; }
     if (SunLightingTestEnabled()) { AfterSunLightingFrame(frame); return; }
+    if (VirtualGeometryValidation::Enabled()) { VirtualGeometryValidation::AfterFrame(frame); return; }
     if (MeshletValidation::Enabled()) { MeshletValidation::AfterFrame(frame); return; }
     if (GPUVisibilityValidation::Enabled()) { GPUVisibilityValidation::AfterFrame(frame); return; }
     if (GPUDrivenValidation::Enabled()) { GPUDrivenValidation::AfterFrame(frame); return; }
@@ -858,6 +861,7 @@ bool RenderingValidation::Finish()
         return MaterialValidation::Finish();
     }
     if (CloudValidation::Enabled()) return CloudValidation::Finish();
+    if (VirtualGeometryValidation::Enabled()) return VirtualGeometryValidation::Finish();
     if (MeshletValidation::Enabled()) return MeshletValidation::Finish();
     if (GPUVisibilityValidation::Enabled()) return GPUVisibilityValidation::Finish();
     if (GPUDrivenValidation::Enabled()) return GPUDrivenValidation::Finish();

@@ -31,7 +31,7 @@ struct GPUInstanceData
     DirectX::XMFLOAT4X4 PreviousWorld{};
     uint32_t MeshIndex = 0;
     uint32_t MaterialIndex = 0;
-    uint32_t Flags = 0; // bit 0: active; bit 1: frustum enabled; bit 2: GPU opaque eligible.
+    uint32_t Flags = 0; // bit 0: active; bit 1: frustum; bit 2: GPU opaque; bit 3: moving; bit 4: native hierarchy eligible.
     uint32_t Entity = UINT32_MAX;
     DirectX::XMFLOAT4 BoundsCenter{}; // World-space AABB.
     DirectX::XMFLOAT4 BoundsExtents{};
@@ -39,7 +39,8 @@ struct GPUInstanceData
     DirectX::XMFLOAT4 LocalExtents{};
     DirectX::XMFLOAT4 LodDistances{}; // Preserve existing component metadata; no new LOD selection.
     uint32_t LODGroupIndex = UINT32_MAX;
-    uint32_t VisibilityPadding[3]{};
+    uint32_t VirtualGeometryAssetIndex = UINT32_MAX;
+    uint32_t VisibilityPadding[2]{};
 };
 struct GPUMeshData
 {
@@ -69,6 +70,7 @@ struct GPUMaterialData
 };
 static_assert(sizeof(GPUInstanceData) == 240);
 static_assert(offsetof(GPUInstanceData, LODGroupIndex) == 224);
+static_assert(offsetof(GPUInstanceData, VirtualGeometryAssetIndex) == 228);
 static_assert(offsetof(GPUInstanceData, PreviousWorld) == 64);
 static_assert(offsetof(GPUInstanceData, MeshIndex) == 128);
 static_assert(offsetof(GPUInstanceData, BoundsCenter) == 144);

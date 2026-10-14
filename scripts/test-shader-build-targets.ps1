@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 [xml]$document = Get-Content -LiteralPath $TargetsPath
 $targets = @($document.Project.Target)
 $shaderTargets = @($targets | Where-Object Inputs)
-if ($shaderTargets.Count -ne 16) { throw 'Expected 16 individually tracked DXC shader outputs.' }
+if ($shaderTargets.Count -ne 22) { throw 'Expected 22 individually tracked DXC shader outputs.' }
 if (@($targets | Group-Object Name | Where-Object Count -gt 1).Count) { throw 'Duplicate target names.' }
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')) + '\'
 foreach ($target in $shaderTargets) {

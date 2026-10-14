@@ -10,6 +10,8 @@
 #include "occlusionculling.h"
 #include "renderprofiler.h"
 #include "shaderpipelines.h"
+#include "meshshader/meshshaderrenderer.h"
+#include "virtualgeometry/virtualgeometrytraversal.h"
 
 namespace GPUVisibility
 {
@@ -21,7 +23,7 @@ struct Constants
     uint32_t Slots = 0, Meshes = 0, Groups = 0, Levels = 0;
     uint32_t Occlusion = 0, LOD = 0, Reset = 0, Force = UINT32_MAX;
     float DepthBias = 0, LODBias = 0, Width = 1, Height = 1;
-    uint32_t Mips = 1, Debug = 0, Padding[2]{};
+    uint32_t Mips = 1, Debug = 0, NativeHierarchy = 0, Padding = 0;
 };
 static_assert(sizeof(Constants) == 256);
 struct FrameData
@@ -373,6 +375,8 @@ RenderGraph::ResourceHandle Prepare(RenderGraph &graph, RenderGraph::ResourceHan
     state.Parameters.Levels = static_cast<uint32_t>(state.Levels.size());
     state.Parameters.Occlusion = state.Options.Occlusion && state.UsableHistory;
     state.Parameters.LOD = state.Options.LOD;
+    state.Parameters.NativeHierarchy = MeshShaderRenderer::NativeReady() &&
+        VirtualGeometryTraversal::GetSettings().Enabled;
     state.Parameters.Reset = state.Reset || newHistory;
     state.Parameters.Force = static_cast<uint32_t>(state.Options.ForceLOD);
     state.Parameters.DepthBias = state.Options.DepthBias;

@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "virtualgeometrydebug.h"
+#include "virtualgeometrytraversal.h"
 #include "virtualgeometryruntime.h"
 #include "staticmodel.h"
 #include "modelmanager.h"
@@ -74,6 +75,30 @@ void DrawControls()
     auto &options = Settings();
     auto &visibility = GPUVisibility::GetSettings();
     auto &mesh = MeshShaderRenderer::GetSettings();
+    auto& native = VirtualGeometryTraversal::GetSettings();
+    ImGui::Text("Native hardware: %s / frame path: %s",MeshShaderRenderer::Supported() ? "supported" : "unsupported",
+        MeshShaderRenderer::IsActive() && VirtualGeometryTraversal::Active() && native.Enabled ? "active" : "inactive");
+    ImGui::Checkbox("Native hierarchy rendering",&native.Enabled);
+    ImGui::SliderFloat("Target Error Pixels",&native.TargetErrorPixels,0.1f,8.0f,"%.2f");
+    ImGui::SliderInt("Force Hierarchy Level (-1 = Auto)",&native.ForceHierarchyLevel,-1,31);
+    ImGui::Checkbox("Selected Hierarchy Level Colors",&native.LevelColors);
+    ImGui::Checkbox("Hierarchy Frustum Culling",&native.FrustumCulling);
+    ImGui::Checkbox("Hierarchy Cone Culling",&native.ConeCulling);
+    ImGui::Checkbox("Hierarchy Hi-Z Culling",&native.OcclusionCulling);
+    ImGui::Checkbox("Native GPU Statistics (synchronous debug capture)",&native.DebugReadback);
+    ImGui::Text("Native assets: %u / GPU memory %.2f MiB",VirtualGeometryResources::AssetCount(),
+        double(VirtualGeometryResources::MemoryBytes())/(1024*1024));
+    if (native.DebugReadback)
+    {
+        const auto& sample = VirtualGeometryTraversal::DebugCounters();
+        ImGui::Text("Selected clusters %u / triangles %u / native instances %u / capacity fallbacks %u",
+            sample[1],sample[6],sample[4],sample[3]);
+        for (uint32_t level = 0; level < 32; ++level)
+        {
+            if (sample[8+level]) ImGui::Text("Selected Level %u: %u clusters",level,sample[8+level]);
+        }
+    }
+    ImGui::TextDisabled("Streaming, hysteresis and raster binning: later phases");
     const auto stats = VirtualGeometryRuntime::GetStatistics();
     ImGui::Text("Cache hits %llu / shared %llu / builds %llu / failures %llu", stats.CacheHits,
                 stats.SharedHits, stats.Builds, stats.Failures);
@@ -125,7 +150,7 @@ void DrawControls()
     ImGui::Checkbox("Leaf triangle wireframe", &options.Wireframe);
     ImGui::SliderInt("Preview source Discrete LOD", &options.SourceLOD, 0, 4);
     ImGui::SliderInt("Preview hierarchy level", &options.HierarchyLevel, 0, 31);
-    ImGui::TextDisabled("Hierarchy preview is bounds only; rendering uses finest clusters.");
+    ImGui::TextDisabled("Bounds overlay is CPU preview; Native Level Colors shows actual selected geometry.");
     ImGui::TextDisabled("Culling overlays sample at most 4096 candidates; readback stalls GPU.");
     ImGui::Checkbox("Meshlet frustum##Nanite", &mesh.Frustum);
     ImGui::Checkbox("Meshlet occlusion##Nanite", &mesh.Occlusion);

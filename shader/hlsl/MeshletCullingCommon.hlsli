@@ -14,6 +14,7 @@ RWByteAddressBuffer Statistics : register(u2);
 RWByteAddressBuffer Arguments : register(u3);
 RWByteAddressBuffer FallbackCommands : register(u4);
 Texture2D<float> HiZ : register(t9);
+StructuredBuffer<uint> NativeSuccess : register(t10);
 cbuffer CullParameters : register(b0)
 {
     row_major float4x4 VP;

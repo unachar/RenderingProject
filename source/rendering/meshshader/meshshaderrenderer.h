@@ -18,6 +18,7 @@ const std::vector<std::array<uint32_t,4>>& DebugRecords();
 void QuerySupport(ID3D12Device *device);
 bool Supported();
 bool IsActive();
+bool NativeReady();
 void Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances, RenderGraph::ResourceHandle objects,
              RenderGraph::ResourceHandle count, RenderGraph::ResourceHandle commands,
              ID3D12Resource *objectResource, ID3D12Resource *countResource, ID3D12Resource *commandsResource,

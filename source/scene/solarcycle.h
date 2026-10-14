@@ -31,8 +31,8 @@ inline float WrapHours(double hours)
 // Local solar time; longitude, time zones and the equation of time are excluded.
 inline Position Calculate(float hours, float latitudeDegrees, int dayOfYear)
 {
-    const float latitude = clamp(latitudeDegrees, -89.0f, 89.0f) * Pi / 180.0f;
-    const float season = static_cast<float>(clamp(dayOfYear, 1, 365) - 81) / 365.0f;
+    const float latitude = std::clamp(latitudeDegrees, -89.0f, 89.0f) * Pi / 180.0f;
+    const float season = static_cast<float>(std::clamp(dayOfYear, 1, 365) - 81) / 365.0f;
     const float declination = 23.44f * Pi / 180.0f * sin(2.0f * Pi * season);
     const float hourAngle = (WrapHours(hours) - 12.0f) * Pi / 12.0f;
     Position result;
@@ -46,7 +46,7 @@ inline Position Calculate(float hours, float latitudeDegrees, int dayOfYear)
 
 inline float SmoothRange(float lower, float upper, float value)
 {
-    const float weight = clamp((value - lower) / (upper - lower), 0.0f, 1.0f);
+    const float weight = std::clamp((value - lower) / (upper - lower), 0.0f, 1.0f);
     return weight * weight * (3.0f - 2.0f * weight);
 }
 

@@ -17,6 +17,7 @@
 #include "rendergraph.h"
 #include "renderprofiler.h"
 #include "visibility/gpuvisibility.h"
+#include "virtualgeometry/virtualgeometryresources.h"
 #include <unordered_set>
 
 namespace
@@ -396,6 +397,10 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
                     const auto slot = ids[section - 1];
                     auto instance = scene.Instances.Data()[slot];
                     GPUDrivenRenderer::RegisterGeometry(instance.MeshIndex, mesh);
+                    if (mesh.VirtualGeometryLODs[0])
+                    {
+                        instance.VirtualGeometryAssetIndex = VirtualGeometryResources::Register(mesh.VirtualGeometryLODs[0]);
+                    }
                     if (ComponentManager::HasComponent<LODComponent>(entity))
                     {
                         const auto& lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
@@ -463,6 +468,10 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
             auto instance = scene.Instances.Data()[slot];
             const auto& source = *mesh.NaniteMesh;
             GPUDrivenRenderer::RegisterPrimitiveGeometry(instance.MeshIndex, source);
+            if (source.VirtualGeometryLODs[0])
+            {
+                instance.VirtualGeometryAssetIndex = VirtualGeometryResources::Register(source.VirtualGeometryLODs[0]);
+            }
             const bool hasSettings = ComponentManager::HasComponent<LODComponent>(entity);
             const auto settings = hasSettings ? ComponentManager::GetComponentUnchecked<LODComponent>(entity) : LODComponent{};
             // Generated geometry has no imported asset settings. Enable its generated
@@ -537,6 +546,15 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
         {
             auto instance = scene.Instances.Data()[id];
             instance.Flags = supported ? (instance.Flags | 4u) : (instance.Flags & ~4u);
+            instance.Flags &= ~16u;
+            const auto& gpuMaterial = scene.Materials.at(instance.MaterialIndex);
+            uint32_t surfaceFlags = 0;
+            memcpy(&surfaceFlags,&gpuMaterial.ShadingParameters[149].w,sizeof(surfaceFlags));
+            if (supported && instance.VirtualGeometryAssetIndex != UINT32_MAX && (instance.Flags & 8u) == 0 &&
+                (gpuMaterial.Flags & 6u) == 0 && (surfaceFlags & 15u) == 0)
+            {
+                instance.Flags |= 16u;
+            }
             scene.Instances.Update(id, instance);
         }
         // Auto models still use the CPU outline pass after their base geometry moves to Nanite.

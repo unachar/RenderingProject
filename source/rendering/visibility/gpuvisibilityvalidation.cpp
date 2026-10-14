@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "virtualgeometry/virtualgeometrytraversal.h"
 #include "gpuvisibilityvalidation.h"
 #include "camera.h"
 #include "daynightcycle.h"
@@ -265,6 +266,9 @@ bool GPUVisibilityValidation::Enabled()
 }
 void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
 {
+    // This suite exercises mesh-wide discrete LOD. Native continuous hierarchy
+    // selection is validated separately and deliberately bypasses this policy.
+    VirtualGeometryTraversal::GetSettings().Enabled = false;
     frameCount = frame + 1;
     if (!frame)
     {

@@ -11,10 +11,11 @@ void main(uint3 group:SV_GroupID, uint lane:SV_GroupIndex)
     Accepted=0;
     FallbackCommands.Store4(commandOffset,OriginalCommands.Load4(commandOffset));
     FallbackCommands.Store2(commandOffset+16,OriginalCommands.Load2(commandOffset+16));
+    if(NativeSuccess[object]!=0) FallbackCommands.Store(commandOffset+4,0);
     }
     uint4 selected=Objects[object];
     uint4 range=selected.y<MeshCount ? Ranges[selected.y] : uint4(0,0,0,0);
-    if(lane==0 && range.y!=0 && range.w!=0) {
+    if(lane==0 && NativeSuccess[object]==0 && range.y!=0 && range.w!=0) {
     uint first=Statistics.Load(0),observed;
     [allow_uav_condition] while(true)
     {

@@ -264,12 +264,16 @@ namespace
 }
 
 void TestVirtualGeometryRuntime();
+void TestVirtualGeometrySelection();
+void TestVirtualGeometryGPU();
 
 int main(int argc, char** argv)
 {
     try
     {
         TestVirtualGeometryRuntime();
+        TestVirtualGeometrySelection();
+        TestVirtualGeometryGPU();
         TestBadGeometry();
         TestRoundTrip(MakeCube(), "vg_cube", false);
         auto asset = TestRoundTrip(MakeGrid(80), "vg_medium", true);

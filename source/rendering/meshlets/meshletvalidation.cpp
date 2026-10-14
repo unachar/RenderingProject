@@ -21,6 +21,7 @@
 #include "proceduralscene.h"
 #include "virtualgeometry/virtualgeometrydebug.h"
 #include "virtualgeometry/virtualgeometryruntime.h"
+#include "virtualgeometry/virtualgeometrytraversal.h"
 #include <fstream>
 #include <filesystem>
 
@@ -289,6 +290,9 @@ void BeforeFrame(uint64_t frame)
     GPUVisibility::GetSettings().Occlusion = false;
     GPUVisibility::GetSettings().LOD = false;
     auto &options = MeshShaderRenderer::GetSettings();
+    // This suite compares legacy meshlets against full-resolution traditional
+    // geometry. Native hierarchy selection has its own oracle/acceptance suite.
+    VirtualGeometryTraversal::GetSettings().Enabled = false;
     options.Enabled = frame >= 3;
     options.Frustum = frame >= 6;
     options.Cone = frame >= 6;
@@ -793,8 +797,8 @@ void AfterFrame(uint64_t frame)
         auto& material = Entity(fixtures[0]).Get<MaterialComponent>();
         const auto originalNormalMap = material.NormalMapID;
         material.NormalMapID = 0;
-        Check(!GPUDrivenRenderer::SupportsEntity(fixtures[0]),
-            "Auto normal-mapped models retain traditional rendering");
+        Check(GPUDrivenRenderer::SupportsEntity(fixtures[0]),
+            "Auto normal-mapped models retain supported GPU material shading");
         material.NormalMapID = originalNormalMap;
     }
     if (frame == 149)

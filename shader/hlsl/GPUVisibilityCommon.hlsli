@@ -20,6 +20,6 @@ cbuffer VisibilityConstants : register(b0)
     uint Slots; uint MeshCount; uint GroupCount; uint LevelCount;
     uint EnableOcclusion; uint EnableLOD; uint ResetHistory; uint ForceLOD;
     float DepthBias; float LODBias; float2 HiZSize;
-    uint HiZMips; uint DebugMode; uint2 Padding;
+    uint HiZMips; uint DebugMode; uint NativeHierarchy; uint Padding;
 };
 #endif

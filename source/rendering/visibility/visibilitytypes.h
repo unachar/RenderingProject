@@ -31,28 +31,28 @@ struct GPULODGroup
 struct LODMetadata
 {
     uint32_t Count = 5;
-    array<float, MaxLODs> Thresholds{0.30f, 0.15f, 0.05f, 0.01f, 0, 0, 0, 0};
+    std::array<float, MaxLODs> Thresholds{0.30f, 0.15f, 0.05f, 0.01f, 0, 0, 0, 0};
     float Hysteresis = 0.1f;
-    array<string, MaxLODs> MeshPaths{}; // Empty uses the imported mesh's generated LOD.
+    std::array<std::string, MaxLODs> MeshPaths{}; // Empty uses the imported mesh's generated LOD.
 };
 struct Statistics
 {
     uint32_t Total = 0, FrustumCulled = 0, FrustumVisible = 0, Tested = 0;
     uint32_t Occluded = 0, FinalVisible = 0, Triangles = 0, IndexVertices = 0;
-    array<uint32_t, MaxLODs> LODCounts{};
+    std::array<uint32_t, MaxLODs> LODCounts{};
 };
 static_assert(sizeof(VisibleInstanceData) == 16 && sizeof(GPULODLevel) == 16 && sizeof(GPULODGroup) == 16);
 static_assert(sizeof(Statistics) == 64);
 
 // Half-open source coverage. Floor-sized D3D mips need the odd edge folded in.
-inline pair<uint32_t, uint32_t> ReductionRange(uint32_t pixel, uint32_t source, uint32_t destination)
+inline std::pair<uint32_t, uint32_t> ReductionRange(uint32_t pixel, uint32_t source, uint32_t destination)
 {
     return {pixel * source / destination, ((pixel + 1) * source + destination - 1) / destination};
 }
 inline uint32_t SelectLOD(float size, const LODMetadata &metadata, uint32_t previous)
 {
-    const uint32_t count = clamp(metadata.Count, 1u, MaxLODs);
-    if (!isfinite(size) || size < 0)
+    const uint32_t count = std::clamp(metadata.Count, 1u, MaxLODs);
+    if (!std::isfinite(size) || size < 0)
     {
         return 0;
     }
@@ -79,9 +79,9 @@ inline uint32_t SelectLOD(float size, const LODMetadata &metadata, uint32_t prev
     }
     return selected;
 }
-inline uint32_t FallbackLOD(uint32_t selected, const array<uint32_t, MaxLODs> &meshes)
+inline uint32_t FallbackLOD(uint32_t selected, const std::array<uint32_t, MaxLODs> &meshes)
 {
-    for (int level = static_cast<int>((min)(selected, MaxLODs - 1)); level >= 0; --level)
+    for (int level = static_cast<int>((std::min)(selected, MaxLODs - 1)); level >= 0; --level)
     {
         if (meshes[level] != InvalidID)
         {
@@ -92,7 +92,7 @@ inline uint32_t FallbackLOD(uint32_t selected, const array<uint32_t, MaxLODs> &m
 }
 inline bool ValidLOD(const LODMetadata &value)
 {
-    if (!value.Count || value.Count > MaxLODs || !isfinite(value.Hysteresis) || value.Hysteresis < 0 ||
+    if (!value.Count || value.Count > MaxLODs || !std::isfinite(value.Hysteresis) || value.Hysteresis < 0 ||
         value.Hysteresis > 0.5f)
     {
         return false;
@@ -101,7 +101,7 @@ inline bool ValidLOD(const LODMetadata &value)
     for (uint32_t i = 0; i < value.Count; ++i)
     {
         const float threshold = value.Thresholds[i];
-        if (!isfinite(threshold) || threshold < 0 || threshold > previous)
+        if (!std::isfinite(threshold) || threshold < 0 || threshold > previous)
         {
             return false;
         }
@@ -109,7 +109,7 @@ inline bool ValidLOD(const LODMetadata &value)
     }
     return true;
 }
-inline bool SaveLOD(ostream &stream, const LODMetadata &value)
+inline bool SaveLOD(std::ostream &stream, const LODMetadata &value)
 {
     if (!ValidLOD(value))
     {
@@ -122,14 +122,14 @@ inline bool SaveLOD(ostream &stream, const LODMetadata &value)
     }
     for (const auto &path : value.MeshPaths)
     {
-        stream << ' ' << quoted(path);
+        stream << ' ' << std::quoted(path);
     }
     stream << '\n';
     return bool(stream);
 }
-inline bool LoadLOD(istream &stream, LODMetadata &destination)
+inline bool LoadLOD(std::istream &stream, LODMetadata &destination)
 {
-    string magic;
+    std::string magic;
     uint32_t version = 0;
     LODMetadata value;
     if (!(stream >> magic >> version >> value.Count >> value.Hysteresis) || magic != "LOD" ||
@@ -148,7 +148,7 @@ inline bool LoadLOD(istream &stream, LODMetadata &destination)
     {
         for (auto &path : value.MeshPaths)
         {
-            if (!(stream >> quoted(path)))
+            if (!(stream >> std::quoted(path)))
             {
                 return false;
             }
