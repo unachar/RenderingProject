@@ -17,6 +17,10 @@ try {
     }
     & $dxc -T ms_6_5 -E main -O3 -Fo shader/hlsl/build/VirtualGeometryMS.cso shader/hlsl/VirtualGeometryMS.hlsl
     if ($LASTEXITCODE -ne 0) { throw 'Native Mesh Shader compilation failed.' }
+    & $dxc -T ms_6_5 -E main -O3 -Fo shader/hlsl/build/VirtualGeometryVelocityMS.cso shader/hlsl/VirtualGeometryVelocityMS.hlsl
+    if ($LASTEXITCODE -ne 0) { throw 'Native velocity Mesh Shader compilation failed.' }
+    & $dxc -T ps_6_0 -E main -O3 -Fo shader/hlsl/build/VirtualGeometryVelocityValidationPS.cso tests/virtualgeometry_velocity_validation_ps.hlsl
+    if ($LASTEXITCODE -ne 0) { throw 'Velocity validation pixel shader compilation failed.' }
     & $dxc -T ps_6_0 -E main -O3 -Fo shader/hlsl/build/VirtualGeometryValidationPS.cso tests/virtualgeometry_raster_validation_ps.hlsl
     if ($LASTEXITCODE -ne 0) { throw 'Validation pixel shader compilation failed.' }
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -50,7 +54,7 @@ try {
         foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
         try {
             $env:DX12_VIRTUAL_GEOMETRY_STRESS_TEST='1'
-            $env:DX12_STARTUP_SMOKE_FRAMES='36'
+            $env:DX12_STARTUP_SMOKE_FRAMES='180'
             $env:DX12_FEATURE_SMOKE_TEST='1'
             $env:DX12_VALIDATION_MODE='1'
             $env:DX12_DISABLE_DXR='1'

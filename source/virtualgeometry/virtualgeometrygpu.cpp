@@ -57,6 +57,17 @@ bool Fits(const std::vector<T>& existing, const std::vector<T>& added)
 {
     return existing.size() <= UINT32_MAX && added.size() <= UINT32_MAX - existing.size();
 }
+template<class T>
+void ReserveAppend(std::vector<T>& destination, size_t added)
+{
+    size_t required = destination.size()+added;
+    if (required <= destination.capacity())
+    {
+        return;
+    }
+    size_t grown = destination.capacity()+destination.capacity()/2;
+    destination.reserve(std::max(required,std::min(size_t(UINT32_MAX),grown)));
+}
 }
 
 bool Pack(const VirtualGeometryAsset& asset, PackedAsset& output, std::string& error)
@@ -153,12 +164,12 @@ bool Append(const PackedAsset& asset, PackedAsset& global, VirtualGeometryGPUAss
     {
         // Reserve every allocation before changing logical contents, so a
         // failed registration never exposes a partially appended asset.
-        global.Clusters.reserve(global.Clusters.size() + asset.Clusters.size());
-        global.Groups.reserve(global.Groups.size() + asset.Groups.size());
-        global.HierarchyIndices.reserve(global.HierarchyIndices.size() + asset.HierarchyIndices.size());
-        global.Roots.reserve(global.Roots.size() + asset.Roots.size());
-        global.Vertices.reserve(global.Vertices.size() + asset.Vertices.size());
-        global.Triangles.reserve(global.Triangles.size() + asset.Triangles.size());
+        ReserveAppend(global.Clusters,asset.Clusters.size());
+        ReserveAppend(global.Groups,asset.Groups.size());
+        ReserveAppend(global.HierarchyIndices,asset.HierarchyIndices.size());
+        ReserveAppend(global.Roots,asset.Roots.size());
+        ReserveAppend(global.Vertices,asset.Vertices.size());
+        ReserveAppend(global.Triangles,asset.Triangles.size());
         global.Clusters.insert(global.Clusters.end(), asset.Clusters.begin(), asset.Clusters.end());
         global.Groups.insert(global.Groups.end(), asset.Groups.begin(), asset.Groups.end());
         global.HierarchyIndices.insert(global.HierarchyIndices.end(), asset.HierarchyIndices.begin(), asset.HierarchyIndices.end());

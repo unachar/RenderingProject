@@ -2,6 +2,7 @@
 #include "virtualgeometryserializationinternal.h"
 #include "virtualgeometryserializer.h"
 #include <atomic>
+#include <algorithm>
 #include <bit>
 #include <fstream>
 #include <limits>
@@ -57,7 +58,8 @@ void ReadExact(std::ifstream& file, std::span<uint8_t> bytes)
 }
 }
 
-bool WriteAtomic(const std::filesystem::path& path, const VirtualGeometryPages::PagedAsset& asset, std::string& error)
+bool WriteGenerated(const std::filesystem::path& path, const VirtualGeometryGPU::PackedAsset& geometry,
+    std::span<const uint8_t> pinned, const PageGenerator& generate, std::string& error)
 {
     static std::atomic<uint64_t> sequence{0};
     auto temporary = path;
@@ -68,12 +70,10 @@ bool WriteAtomic(const std::filesystem::path& path, const VirtualGeometryPages::
 #endif
     try
     {
-        if (asset.Payloads.size() != asset.PinnedPages.size() ||
-            !VirtualGeometryPages::Validate(asset.Metadata, asset.PinnedPages, error))
+        if (!VirtualGeometryPages::Validate(geometry, pinned, error))
         {
             return false;
         }
-        const auto& geometry = asset.Metadata;
         Writer metadata;
         metadata.U32(uint32_t(geometry.Clusters.size()));
         metadata.U32(uint32_t(geometry.Groups.size()));
@@ -83,17 +83,20 @@ bool WriteAtomic(const std::filesystem::path& path, const VirtualGeometryPages::
         WriteRecords(metadata, geometry.Groups);
         WriteRecords(metadata, geometry.HierarchyIndices);
         WriteRecords(metadata, geometry.Roots);
-        uint64_t offset = HeaderBytes + metadata.Bytes.size() + asset.Payloads.size() * 24ull;
-        for (size_t page = 0; page < asset.Payloads.size(); ++page)
+        uint64_t offset = HeaderBytes + metadata.Bytes.size() + pinned.size() * 24ull;
+        std::vector<uint8_t> payload(VirtualGeometryPages::PageBytes);
+        std::vector<uint64_t> checksums;
+        for (uint32_t page = 0; page < pinned.size(); ++page)
         {
-            if (asset.Payloads[page].size() != VirtualGeometryPages::PageBytes)
+            if (!generate(page, payload, error))
             {
-                throw std::runtime_error("Invalid Page payload size");
+                throw std::runtime_error(error);
             }
             metadata.U64(offset);
             metadata.U32(VirtualGeometryPages::PageBytes);
-            metadata.U32(asset.PinnedPages[page]);
-            metadata.U64(VirtualGeometrySerializer::Hash(asset.Payloads[page]));
+            metadata.U32(pinned[page]);
+            checksums.push_back(VirtualGeometrySerializer::Hash(payload));
+            metadata.U64(checksums.back());
             offset += VirtualGeometryPages::PageBytes;
         }
         if (metadata.Bytes.size() > MaxMetadataBytes)
@@ -104,7 +107,7 @@ bool WriteAtomic(const std::filesystem::path& path, const VirtualGeometryPages::
         header.U32(Magic);
         header.U32(2);
         header.U32(VirtualGeometryPages::PageBytes);
-        header.U32(uint32_t(asset.Payloads.size()));
+        header.U32(uint32_t(pinned.size()));
         header.U64(offset);
         header.U64(metadata.Bytes.size());
         header.U64(VirtualGeometrySerializer::Hash(metadata.Bytes));
@@ -117,8 +120,12 @@ bool WriteAtomic(const std::filesystem::path& path, const VirtualGeometryPages::
         file.exceptions(std::ios::badbit | std::ios::failbit);
         file.write(reinterpret_cast<const char*>(header.Bytes.data()), header.Bytes.size());
         file.write(reinterpret_cast<const char*>(metadata.Bytes.data()), metadata.Bytes.size());
-        for (const auto& payload : asset.Payloads)
+        for (uint32_t page = 0; page < pinned.size(); ++page)
         {
+            if (!generate(page, payload, error) || VirtualGeometrySerializer::Hash(payload) != checksums[page])
+            {
+                throw std::runtime_error("Page generator failed or changed between passes: " + error);
+            }
             file.write(reinterpret_cast<const char*>(payload.data()), payload.size());
         }
         file.flush();
@@ -141,6 +148,26 @@ bool WriteAtomic(const std::filesystem::path& path, const VirtualGeometryPages::
         error = exception.what();
         return false;
     }
+}
+
+bool WriteAtomic(const std::filesystem::path& path, const VirtualGeometryPages::PagedAsset& asset, std::string& error)
+{
+    if (asset.Payloads.size() != asset.PinnedPages.size())
+    {
+        error = "Page payload/directory count mismatch";
+        return false;
+    }
+    return WriteGenerated(path, asset.Metadata, asset.PinnedPages,
+        [&](uint32_t page, std::span<uint8_t> payload, std::string& message)
+        {
+            if (asset.Payloads[page].size() != payload.size())
+            {
+                message = "Invalid Page payload size";
+                return false;
+            }
+            std::copy(asset.Payloads[page].begin(), asset.Payloads[page].end(), payload.begin());
+            return true;
+        }, error);
 }
 
 bool Open(const std::filesystem::path& path, PageManifest& output, std::string& error)

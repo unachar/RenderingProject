@@ -25,6 +25,7 @@ public:
     static void Prepare(RenderGraph& graph, RenderGraph::ResourceHandle instances, RenderGraph::ResourceHandle visibility,
                         uint32_t slots, uint32_t capacity, uint32_t meshes);
     static void Draw(ID3D12GraphicsCommandList* commands);
+    static void DrawSecondPass(ID3D12GraphicsCommandList* commands);
     static void DrawVelocity(ID3D12GraphicsCommandList* commands);
     static void BuildHiZ(ID3D12GraphicsCommandList* commands);
     static bool IsEnabled();

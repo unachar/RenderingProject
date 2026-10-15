@@ -1081,6 +1081,9 @@
     <ClInclude Include="source\virtualgeometry\virtualgeometrygpu.h" />
     <ClInclude Include="source\virtualgeometry\virtualgeometryresources.h" />
     <ClInclude Include="source\virtualgeometry\virtualgeometrytraversal.h" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometrytemporal.h" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometrybinning.h" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometrybinning.cpp" />
     <ClInclude Include="source\virtualgeometry\virtualgeometrydebug.h" />
     <ClCompile Include="source\virtualgeometry\virtualgeometryruntime.cpp" />
     <ClCompile Include="source\virtualgeometry\virtualgeometryselection.cpp" />
@@ -1119,5 +1122,25 @@
     <ClInclude Include="source\rendering\thumbnailrenderer.h" />
     <ClInclude Include="source\rendering\thumbnailpreviewcontext.h" />
     <ClInclude Include="source\rendering\thumbnailmeshio.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypages.cpp"><Filter>virtualgeometry</Filter></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypages.h"><Filter>virtualgeometry</Filter></ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypagecache.cpp"><Filter>virtualgeometry</Filter></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypagecache.h"><Filter>virtualgeometry</Filter></ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryresidency.cpp"><Filter>virtualgeometry</Filter></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryresidency.h"><Filter>virtualgeometry</Filter></ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypageio.cpp"><Filter>virtualgeometry</Filter></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypageio.h"><Filter>virtualgeometry</Filter></ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypagepool.cpp"><Filter>virtualgeometry</Filter></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypagepool.h"><Filter>virtualgeometry</Filter></ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrystreaming.cpp"><Filter>virtualgeometry</Filter></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrystreaming.h"><Filter>virtualgeometry</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypagestress.cpp"><Filter>virtualgeometry</Filter></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypagestress.h"><Filter>virtualgeometry</Filter></ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrystreamingvalidation.cpp"><Filter>virtualgeometry</Filter></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrystreamingvalidation.h"><Filter>virtualgeometry</Filter></ClInclude>
   </ItemGroup>
 </Project>

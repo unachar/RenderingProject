@@ -17,5 +17,6 @@ class GpuScene
     static ID3D12Resource *VisibilityBuffer();
     static const GpuSceneStatistics &Statistics();
     static const GPUInstanceData *GetInstance(GPUInstanceID id);
+    static uint64_t InstanceHistoryGeneration(GPUInstanceID id);
     static void DrawDebug();
 };

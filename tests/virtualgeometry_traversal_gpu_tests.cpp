@@ -43,8 +43,12 @@ struct Constants
     float ProjectionPixels = 10, TargetPixels = 1;
     int32_t ForceLevel = -1;
     uint32_t StateCapacity = 64;
+    uint32_t PageCount = 0, PageRequestCapacity = 65536, StreamingPadding[2]{};
+    uint32_t HistorySlots = 0, HistoryCapacity = 0, ResetHistory = 0, TwoPass = 0;
+    float HysteresisFraction = 0;
+    uint32_t HysteresisEnabled = 0, TemporalPhase = 0, TemporalPadding = 0;
 };
-static_assert(sizeof(Constants) == 208);
+static_assert(sizeof(Constants) == 256);
 template<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE Type,class T> struct alignas(void*) Subobject
 {
     D3D12_PIPELINE_STATE_SUBOBJECT_TYPE Tag = Type;
@@ -129,7 +133,7 @@ public:
         Check(m_Fence->SetEventOnCompletion(m_FenceValue,m_Event),"Set Hi-Z event");
         Require(WaitForSingleObject(m_Event,30000) == WAIT_OBJECT_0,"Hi-Z upload timed out");
         m_Device->CreateShaderResourceView(m_HiZ.Get(),&srv,m_Heap->GetCPUDescriptorHandleForHeapStart());
-        D3D12_ROOT_PARAMETER parameters[17]{};
+        D3D12_ROOT_PARAMETER parameters[29]{};
         for (uint32_t index = 0; index < 9; ++index)
         {
             parameters[index].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
@@ -147,8 +151,24 @@ public:
         parameters[15].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         parameters[15].DescriptorTable = {1,&range};
         parameters[16].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        parameters[17].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+        parameters[17].Descriptor.ShaderRegister = 10;
+        for (uint32_t index = 0; index < 3; ++index)
+        {
+            parameters[18+index].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+            parameters[18+index].Descriptor.ShaderRegister = 6+index;
+        }
+        parameters[21].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+        parameters[21].Descriptor.ShaderRegister = 9;
+        parameters[22].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+        parameters[22].Descriptor.ShaderRegister = 11;
+        for (uint32_t index = 0; index < 6; ++index)
+        {
+            parameters[23+index].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+            parameters[23+index].Descriptor.ShaderRegister = 10+index;
+        }
         D3D12_ROOT_SIGNATURE_DESC root{};
-        root.NumParameters = 17;
+        root.NumParameters = 29;
         root.pParameters = parameters;
         ComPtr<ID3DBlob> blob, error;
         Check(D3D12SerializeRootSignature(&root,D3D_ROOT_SIGNATURE_VERSION_1,&blob,&error),"Serialize root");
@@ -159,7 +179,8 @@ public:
     }
     ~Harness() { if (m_Event) CloseHandle(m_Event); }
 
-    void Run(const VirtualGeometryAsset& graph, Constants constants, bool eligible = true, bool masked = false, bool allCulled = false)
+    void Run(const VirtualGeometryAsset& graph, Constants constants, bool eligible = true, bool masked = false, bool allCulled = false,
+        const std::vector<uint8_t>& resident = {})
     {
         GPUInstanceData instance;
         DirectX::XMStoreFloat4x4(&instance.World,DirectX::XMMatrixIdentity());
@@ -179,6 +200,18 @@ public:
             cluster.ConeApex = {source.Cone.Apex[0],source.Cone.Apex[1],source.Cone.Apex[2],0};
             clusters.push_back(cluster);
         }
+        std::vector<uint32_t> clusterPages(clusters.size());
+        std::vector<std::array<uint32_t,4>> residency(std::max(size_t(1),resident.size()+7));
+        if (!resident.empty())
+        {
+            constants.PageCount = uint32_t(residency.size());
+            for (uint32_t index = 0; index < clusters.size(); ++index)
+            {
+                clusters[index].PageIndex = index;
+                clusterPages[index] = index;
+                residency[index+7] = {index,1,resident.at(index),0};
+            }
+        }
         std::vector<VirtualGeometryGPUGroup> groups;
         for (const auto& source : graph.Groups)
         {
@@ -193,6 +226,12 @@ public:
         asset.ClusterCount = uint32_t(clusters.size()); asset.GroupCount = uint32_t(groups.size());
         asset.RootCount = uint32_t(graph.RootClusters.size()); asset.Flags = 1;
         for (const auto& cluster : clusters) asset.Flags = std::max(asset.Flags,1u|(cluster.Level<<8));
+        if (!resident.empty())
+        {
+            asset.Flags |= 2u;
+            asset.VertexOffset = 7;
+            asset.TriangleOffset = uint32_t(resident.size());
+        }
         std::array<uint32_t,4> object{};
         uint32_t count = 1;
         std::array<uint32_t,656> material{};
@@ -203,12 +242,16 @@ public:
             Upload(graph.HierarchyIndices.data(),graph.HierarchyIndices.size()*4),Upload(graph.RootClusters.data(),graph.RootClusters.size()*4),
             Upload(&count,4),Upload(material.data(),sizeof(material))};
         auto constant = Upload(&constants,sizeof(constants));
-        std::array<ComPtr<ID3D12Resource>,6> outputs;
+        auto residencySource = Upload(residency.data(),residency.size()*16);
+        std::array<ComPtr<ID3D12Resource>,9> outputs;
         uint64_t visibleBytes = std::max(uint64_t(1024),uint64_t(constants.Capacity)*16);
         uint64_t sizes[] = {std::max(uint64_t(1024),uint64_t(constants.StateCapacity)*4),visibleBytes,1024,1024,1024,
-            std::max(uint64_t(1024),uint64_t(constants.StateCapacity)*4)};
-        for (uint32_t index = 0; index < 6; ++index) outputs[index] = Buffer(sizes[index],D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        auto readback = Buffer(2048+visibleBytes,D3D12_HEAP_TYPE_READBACK,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_FLAG_NONE);
+            std::max(uint64_t(1024),uint64_t(constants.StateCapacity)*4),1024,16ull+65536ull*4,1024};
+        for (uint32_t index = 0; index < 9; ++index) outputs[index] = Buffer(sizes[index],D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        // Legacy oracle cases disable temporal selection. Only the counter reset
+        // accesses these additional bindings in this harness.
+        auto temporal = Buffer(4096,D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        auto readback = Buffer(2048+visibleBytes+sizes[7]+1024,D3D12_HEAP_TYPE_READBACK,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_FLAG_NONE);
         Check(m_Allocator->Reset(),"Reset allocator");
         Check(m_List->Reset(m_Allocator.Get(),nullptr),"Reset list");
         m_List->SetComputeRootSignature(m_Root.Get());
@@ -218,7 +261,20 @@ public:
         for (uint32_t index = 0; index < 6; ++index) m_List->SetComputeRootUnorderedAccessView(9+index,outputs[index]->GetGPUVirtualAddress());
         m_List->SetComputeRootDescriptorTable(15,m_Heap->GetGPUDescriptorHandleForHeapStart());
         m_List->SetComputeRootConstantBufferView(16,constant->GetGPUVirtualAddress());
-        m_List->SetPipelineState(m_Reset.Get()); m_List->Dispatch(1,1,1); Barrier();
+        m_List->SetComputeRootShaderResourceView(17,residencySource->GetGPUVirtualAddress());
+        for (uint32_t index = 0; index < 3; ++index)
+        {
+            m_List->SetComputeRootUnorderedAccessView(18+index,outputs[6+index]->GetGPUVirtualAddress());
+        }
+        m_List->SetPipelineState(m_Reset.Get());
+        m_List->SetComputeRootUnorderedAccessView(21,temporal->GetGPUVirtualAddress());
+        m_List->SetComputeRootShaderResourceView(22,sources[0]->GetGPUVirtualAddress());
+        for (uint32_t index = 0; index < 6; ++index)
+        {
+            m_List->SetComputeRootUnorderedAccessView(23+index,temporal->GetGPUVirtualAddress());
+        }
+        m_List->Dispatch(std::max(1u,(((constants.PageCount+31)/32)+63)/64),1,1);
+        Barrier();
         m_List->SetPipelineState(m_Traverse.Get()); m_List->Dispatch(1,1,1); Barrier();
         m_List->SetPipelineState(m_Arguments.Get()); m_List->Dispatch(1,1,1); Barrier();
         const uint32_t copied[] = {2,4,1};
@@ -233,6 +289,14 @@ public:
             m_List->ResourceBarrier(1,&transition);
             m_List->CopyBufferRegion(readback.Get(),index*1024,outputs[copied[index]].Get(),0,index == 2 ? visibleBytes : 1024);
         }
+        for (uint32_t index : {7u,8u})
+        {
+            auto transition = CD3DX12_RESOURCE_BARRIER::Transition(outputs[index].Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_SOURCE);
+            m_List->ResourceBarrier(1,&transition);
+            uint64_t offset = 2048+visibleBytes;
+            if (index == 8) offset += sizes[7];
+            m_List->CopyBufferRegion(readback.Get(),offset,outputs[index].Get(),0,sizes[index]);
+        }
         Check(m_List->Close(),"Close compute list");
         ID3D12CommandList* command = m_List.Get();
         m_Queue->ExecuteCommandLists(1,&command);
@@ -241,7 +305,7 @@ public:
         Require(WaitForSingleObject(m_Event,30000) == WAIT_OBJECT_0,"GPU traversal timed out");
         Check(m_Device->GetDeviceRemovedReason(),"GPU device removed");
         void* bytes = nullptr;
-        D3D12_RANGE range{0,SIZE_T(2048+visibleBytes)};
+        D3D12_RANGE range{0,SIZE_T(2048+visibleBytes+sizes[7]+1024)};
         Check(readback->Map(0,&range,&bytes),"Map compute results");
         const auto* counters = static_cast<const uint32_t*>(bytes);
         const auto* success = reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(bytes)+1024);
@@ -253,9 +317,24 @@ public:
         settings.TargetErrorPixels = constants.TargetPixels;
         settings.ForceHierarchyLevel = constants.ForceLevel;
         auto reference = VirtualGeometrySelection::Select(graph,view,settings);
-        Require(reference.Error.empty(),reference.Error.c_str());
+        std::vector<uint32_t> expectedRequests;
+        if (!resident.empty())
+        {
+            auto streamed = VirtualGeometrySelection::SelectResident(graph,view,settings,clusterPages,resident);
+            reference.Clusters = streamed.Clusters;
+            reference.Error = streamed.Error;
+            expectedRequests = streamed.RequestedPages;
+            const auto* requested = reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(bytes)+2048+visibleBytes);
+            Require(requested[0] == expectedRequests.size(),"GPU Page request count mismatch");
+            Require(requested[1] == expectedRequests.size()-std::min(size_t(constants.PageRequestCapacity),expectedRequests.size()),"GPU request overflow mismatch");
+            for (uint32_t index = 0; index < std::min(requested[0],constants.PageRequestCapacity); ++index)
+            {
+                Require(std::find(expectedRequests.begin(),expectedRequests.end(),requested[4+index]-7) != expectedRequests.end(),"GPU requested an unreachable Page");
+            }
+        }
+        else Require(reference.Error.empty(),reference.Error.c_str());
         if (allCulled) reference.Clusters.clear();
-        bool expectedSuccess = eligible && !masked && constants.Enabled && constants.StateCapacity >= clusters.size() && constants.Capacity >= reference.Clusters.size();
+        bool expectedSuccess = reference.Error.empty() && eligible && !masked && constants.Enabled && constants.StateCapacity >= clusters.size() && constants.Capacity >= reference.Clusters.size();
         Require((success[0] != 0) == expectedSuccess,"GPU fallback routing mismatch");
         if (expectedSuccess)
         {
@@ -272,14 +351,14 @@ public:
         ++m_Cases;
     }
     uint32_t Cases() const { return m_Cases; }
-    void RasterNativeParent()
+    void RasterNativeParent(bool paged = false, bool velocity = false)
     {
         if (!m_MeshSupported)
         {
             std::cout << "SKIP: native raster requires Mesh Shader support\n";
             return;
         }
-        D3D12_ROOT_PARAMETER parameters[11]{};
+        D3D12_ROOT_PARAMETER parameters[13]{};
         parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         parameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         parameters[1].Constants = {6,0,1};
@@ -288,14 +367,22 @@ public:
             parameters[2+index].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
             parameters[2+index].Descriptor.ShaderRegister = 30+index;
         }
+        parameters[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+        parameters[11].Descriptor.ShaderRegister = 39;
+        D3D12_DESCRIPTOR_RANGE pageRange{};
+        pageRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        pageRange.NumDescriptors = 16384;
+        pageRange.RegisterSpace = 2;
+        parameters[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        parameters[12].DescriptorTable = {1,&pageRange};
         D3D12_ROOT_SIGNATURE_DESC rootDesc{};
-        rootDesc.NumParameters = 11; rootDesc.pParameters = parameters;
+        rootDesc.NumParameters = 13; rootDesc.pParameters = parameters;
         ComPtr<ID3DBlob> blob,error;
         Check(D3D12SerializeRootSignature(&rootDesc,D3D_ROOT_SIGNATURE_VERSION_1,&blob,&error),"Serialize native raster root");
         ComPtr<ID3D12RootSignature> root;
         Check(m_Device->CreateRootSignature(0,blob->GetBufferPointer(),blob->GetBufferSize(),IID_PPV_ARGS(&root)),"Create native raster root");
-        auto ms = ReadShader("VirtualGeometryMS");
-        auto ps = ReadShader("VirtualGeometryValidationPS");
+        auto ms = ReadShader(velocity ? "VirtualGeometryVelocityMS" : "VirtualGeometryMS");
+        auto ps = ReadShader(velocity ? "VirtualGeometryVelocityValidationPS" : "VirtualGeometryValidationPS");
         RasterStream stream;
         stream.Root.Value = root.Get();
         stream.MS.Value = {ms.data(),ms.size()}; stream.PS.Value = {ps.data(),ps.size()};
@@ -316,6 +403,7 @@ public:
         GPUInstanceData instance;
         DirectX::XMStoreFloat4x4(&instance.World,DirectX::XMMatrixIdentity());
         instance.PreviousWorld = instance.World;
+        if (velocity) DirectX::XMStoreFloat4x4(&instance.PreviousWorld,DirectX::XMMatrixTranslation(-0.2f,0,0));
         std::array<VirtualGeometryGPUCluster,2> clusters{};
         clusters[1].Level = 3;
         clusters[1].VertexOffset = 1; clusters[1].VertexCount = 3;
@@ -328,12 +416,44 @@ public:
         vertices[4].Position[0] = 0.7f; vertices[4].Position[1] = -0.7f;
         for (auto& vertex : vertices) { vertex.Position[2] = 0.5f; vertex.Normal[2] = -1; vertex.Diffuse[3] = 7; }
         const std::array<uint8_t,8> triangles{0,0,0,0,0,0,1,2};
+        std::vector<uint8_t> page(65536);
+        std::memcpy(page.data()+32,vertices.data()+2,3*sizeof(VirtualGeometryVertex));
+        page[200] = 0; page[201] = 1; page[202] = 2;
+        if (paged)
+        {
+            asset.Flags = 3;
+            asset.VertexOffset = 7;
+            asset.TriangleOffset = 4;
+            clusters[1].PageIndex = 3;
+            clusters[1].VertexOffset = 32;
+            clusters[1].TriangleOffset = 200;
+        }
+        std::array<std::array<uint32_t,4>,11> residency{};
+        residency[10] = {1,1,1,0};
+        auto residencySource = Upload(residency.data(),sizeof(residency));
+        auto pageSource = Upload(page.data(),page.size());
+        D3D12_DESCRIPTOR_HEAP_DESC pageHeapDescription{};
+        pageHeapDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        pageHeapDescription.NumDescriptors = 16384;
+        pageHeapDescription.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        ComPtr<ID3D12DescriptorHeap> pageHeap;
+        Check(m_Device->CreateDescriptorHeap(&pageHeapDescription,IID_PPV_ARGS(&pageHeap)),"Page raster heap");
+        D3D12_SHADER_RESOURCE_VIEW_DESC pageView{};
+        pageView.Format = DXGI_FORMAT_R32_TYPELESS;
+        pageView.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        pageView.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        pageView.Buffer.NumElements = 65536/4;
+        pageView.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
+        auto pageCpu = pageHeap->GetCPUDescriptorHandleForHeapStart();
+        pageCpu.ptr += m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        m_Device->CreateShaderResourceView(pageSource.Get(),&pageView,pageCpu);
         VisibleVirtualCluster selected;
         selected.ClusterIndex = 1;
         const std::array<uint32_t,2> counters{0,1};
         uint32_t dummy = 0;
+        std::array<uint32_t,16> dummyMaterial{};
         std::array<ComPtr<ID3D12Resource>,9> inputs{
-            Upload(&instance,sizeof(instance)),Upload(&dummy,4),Upload(&dummy,4),Upload(clusters.data(),sizeof(clusters)),
+            Upload(&instance,sizeof(instance)),Upload(dummyMaterial.data(),sizeof(dummyMaterial)),Upload(&dummy,4),Upload(clusters.data(),sizeof(clusters)),
             Upload(&asset,sizeof(asset)),Upload(triangles.data(),sizeof(triangles)),Upload(vertices.data(),sizeof(vertices)),
             Upload(&selected,sizeof(selected)),Upload(counters.data(),sizeof(counters))};
         std::array<float,128> matrices{};
@@ -359,6 +479,10 @@ public:
         Check(m_Allocator->Reset(),"Reset raster allocator");
         Check(m_List->Reset(m_Allocator.Get(),nullptr),"Reset raster list");
         m_List->SetGraphicsRootSignature(root.Get());
+        ID3D12DescriptorHeap* rasterHeap = pageHeap.Get();
+        m_List->SetDescriptorHeaps(1,&rasterHeap);
+        m_List->SetGraphicsRootShaderResourceView(11,residencySource->GetGPUVirtualAddress());
+        m_List->SetGraphicsRootDescriptorTable(12,pageHeap->GetGPUDescriptorHandleForHeapStart());
         m_List->SetGraphicsRootConstantBufferView(0,constants->GetGPUVirtualAddress());
         m_List->SetGraphicsRoot32BitConstant(1,1,0);
         for (uint32_t index = 0; index < 9; ++index) m_List->SetGraphicsRootShaderResourceView(2+index,inputs[index]->GetGPUVirtualAddress());
@@ -383,9 +507,20 @@ public:
         void* bytes = nullptr;
         D3D12_RANGE range{0,SIZE_T(byteCount)}; Check(readback->Map(0,&range,&bytes),"Map native raster");
         auto pixel = reinterpret_cast<const float*>(static_cast<const uint8_t*>(bytes)+64*footprint.Footprint.RowPitch+64*16);
-        Require(std::abs(pixel[0]-1) < 0.01f && std::abs(pixel[1]-0.9f) < 0.01f && std::abs(pixel[2]-0.1f) < 0.01f && pixel[3] == 1,
-            "Production native Mesh Shader failed to rasterize selected Level 3 color");
-        std::ofstream capture("bin/validation/virtualgeometry-phase6/native-level3.ppm",std::ios::binary);
+        if (velocity)
+        {
+            Require(std::abs(pixel[0]-0.2f) < 0.001f && std::abs(pixel[1]) < 0.001f && pixel[2] == 1 && pixel[3] == 1,
+                "Production native velocity differs from current/previous transform reference");
+        }
+        else
+        {
+            Require(std::abs(pixel[0]-1) < 0.01f && std::abs(pixel[1]-0.9f) < 0.01f && std::abs(pixel[2]-0.1f) < 0.01f && pixel[3] == 1,
+                "Production native Mesh Shader failed to rasterize selected Level 3 color");
+        }
+        std::string captureName = "native-level3";
+        if (velocity) captureName = "native-velocity";
+        if (paged) captureName += "-paged";
+        std::ofstream capture("bin/validation/virtualgeometry-phase6/"+captureName+".ppm",std::ios::binary);
         capture << "P6\n128 128\n255\n";
         for (uint32_t row = 0; row < 128; ++row)
         {
@@ -399,7 +534,8 @@ public:
             }
         }
         D3D12_RANGE written{0,0}; readback->Unmap(0,&written);
-        std::cout << "PASS: production native Mesh Shader rasterizes Level 3 with nonzero vertex/triangle offsets\n";
+        if (velocity) std::cout << "PASS: production native velocity raster matches transform reference, paged=" << paged << '\n';
+        else std::cout << "PASS: production native Mesh Shader rasterizes Level 3 with nonzero vertex/triangle offsets, paged=" << paged << '\n';
     }
 private:
     std::vector<char> ReadShader(const char* name)
@@ -468,6 +604,18 @@ int main(int argc,char** argv)
         Harness gpu(argc > 1 && std::string(argv[1]) == "--warp");
         auto graph = MakeSharedVirtualGeometryGraph();
         Constants constants;
+        constants.ForceLevel = 0;
+        for (uint32_t mask = 0; mask < 16; ++mask)
+        {
+            std::vector<uint8_t> resident(6,1);
+            for (uint32_t page = 0; page < 4; ++page) resident[page] = uint8_t((mask>>page)&1u);
+            gpu.Run(graph,constants,true,false,false,resident);
+        }
+        constants.PageRequestCapacity = 1;
+        gpu.Run(graph,constants,true,false,false,std::vector<uint8_t>{0,0,0,0,1,1});
+        constants.PageRequestCapacity = 65536;
+        gpu.Run(graph,constants,true,false,false,std::vector<uint8_t>{1,1,1,1,0,1});
+        constants.ForceLevel = -1;
         for (float scale : {0.5f,1.0f,2.5f,3.0f,10.0f,100.0f})
         {
             constants.ProjectionPixels = scale;
@@ -526,6 +674,9 @@ int main(int argc,char** argv)
         gpu.Run(graph,constants,true,false,true); // Root refinement rejects out-of-frustum groups.
         std::cout << "PASS: " << gpu.Cases() << " production GPU traversal/reference cases\n";
         gpu.RasterNativeParent();
+        gpu.RasterNativeParent(true);
+        gpu.RasterNativeParent(false,true);
+        gpu.RasterNativeParent(true,true);
         return 0;
     }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

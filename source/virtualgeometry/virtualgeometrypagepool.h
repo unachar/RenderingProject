@@ -15,6 +15,9 @@ public:
     uint64_t CompletedCopyFence() const;
     void Collect();
     ID3D12Resource* Resource(uint32_t slot) const;
+    void Release(uint32_t slot);
+    uint64_t MemoryBytes() const;
+    uint64_t UploadBytes() const { return m_Transfers.size() * 65536ull; }
     void Shutdown();
     ~PagePool();
 private:

@@ -48,6 +48,27 @@ public:
         uint64_t CullDispatches = 0;
     };
 
+    struct GeometryStreamingStatistics
+    {
+        uint64_t GpuRequests = 0, CpuRequests = 0, RequestOverflow = 0;
+        uint64_t DiskBytes = 0, SubmittedBytes = 0, CompletedBytes = 0;
+        uint64_t ResidentPages = 0, LoadingPages = 0, RequestedPages = 0, EvictedPages = 0;
+        uint64_t PoolBytes = 0, BudgetBytes = 0, StagingBytes = 0;
+        uint64_t MetadataBytes = 0, UploadBytes = 0;
+        double CpuMilliseconds = 0, IoMilliseconds = 0, CopyMilliseconds = 0;
+    };
+    struct GeometryTemporalStatistics
+    {
+        uint64_t FirstVisible = 0, Candidates = 0, SecondVisible = 0, LodTransitions = 0, CapacityFallbacks = 0;
+        uint64_t HistoryBytes = 0, CandidateBytes = 0;
+        bool HasSample = false;
+    };
+    struct GeometryBinningStatistics
+    {
+        std::array<uint32_t,3> ActiveBins{}, Clusters{}, OverflowClusters{}, InvalidMaterials{};
+        std::array<bool,3> HasSample{};
+        uint64_t BufferBytes = 0;
+    };
     struct FrameSnapshot
     {
         uint64_t Serial = 0;
@@ -56,6 +77,9 @@ public:
         bool GpuTimingValid = false;
         bool PipelineStatisticsValid = false;
         Counters Calls{};
+        GeometryStreamingStatistics Streaming{};
+        GeometryTemporalStatistics Temporal{};
+        GeometryBinningStatistics Binning{};
         D3D12_QUERY_DATA_PIPELINE_STATISTICS Pipeline{};
         vector<PassTiming> Passes;
     };
@@ -386,6 +410,21 @@ public:
         return s_HasLatest;
     }
 
+    static void RecordGeometryStreaming(const GeometryStreamingStatistics& value)
+    {
+        if (s_ActiveSlot)
+        {
+            s_ActiveSlot->Snapshot.Streaming = value;
+        }
+    }
+    static void RecordGeometryTemporal(const GeometryTemporalStatistics& value)
+    {
+        if (s_ActiveSlot) s_ActiveSlot->Snapshot.Temporal = value;
+    }
+    static void RecordGeometryBinning(const GeometryBinningStatistics& value)
+    {
+        if (s_ActiveSlot) s_ActiveSlot->Snapshot.Binning = value;
+    }
     static void BeginFrame(
         ID3D12Device* device,
         ID3D12CommandQueue* queue,
@@ -678,6 +717,34 @@ public:
 
         ImGui::SeparatorText("D3D12 API submissions");
         const Counters& calls = s_Latest.Calls;
+        const auto& streaming = s_Latest.Streaming;
+        const auto& temporal = s_Latest.Temporal;
+        const auto& binning = s_Latest.Binning;
+        const char* binPhases[] = {"First","Second","Velocity"};
+        for (uint32_t phase = 0; phase < 3; ++phase)
+        {
+            if (!binning.HasSample[phase]) continue;
+            ImGui::Text("Native %s material bins %u / clusters %u / shared overflow %u / invalid %u",binPhases[phase],
+                binning.ActiveBins[phase],binning.Clusters[phase],binning.OverflowClusters[phase],binning.InvalidMaterials[phase]);
+        }
+        ImGui::Text("Native material bin buffers %.2f MiB",double(binning.BufferBytes)/(1024*1024));
+        if (temporal.HasSample)
+        {
+            ImGui::Text("Native first / retest / recovered %llu / %llu / %llu, LOD transitions %llu, capacity fallbacks %llu",
+                temporal.FirstVisible,temporal.Candidates,temporal.SecondVisible,temporal.LodTransitions,temporal.CapacityFallbacks);
+        }
+        ImGui::Text("Native LOD history %.2f MiB / phase buffers %.2f MiB",
+            double(temporal.HistoryBytes)/(1024*1024),double(temporal.CandidateBytes)/(1024*1024));
+        ImGui::Text("Geometry requests GPU/CPU %llu / %llu (cumulative), overflow %llu",
+            streaming.GpuRequests,streaming.CpuRequests,streaming.RequestOverflow);
+        ImGui::Text("Geometry SSD / Copy submitted / completed %.2f / %.2f / %.2f MiB (cumulative)",
+            double(streaming.DiskBytes)/(1024*1024),double(streaming.SubmittedBytes)/(1024*1024),double(streaming.CompletedBytes)/(1024*1024));
+        ImGui::Text("Geometry VRAM reserved/budget %.2f / %.2f MiB, staging %.2f MiB",
+            double(streaming.PoolBytes)/(1024*1024),double(streaming.BudgetBytes)/(1024*1024),double(streaming.StagingBytes)/(1024*1024));
+        ImGui::Text("Geometry metadata buffers incl staging %.2f MiB / Page Copy upload heap %.2f MiB",
+            double(streaming.MetadataBytes)/(1024*1024),double(streaming.UploadBytes)/(1024*1024));
+        ImGui::Text("Geometry streaming CPU %.3f ms / I/O %.3f ms cumulative / latest Copy completion latency %.3f ms / Copy GPU N/A",
+            streaming.CpuMilliseconds,streaming.IoMilliseconds,streaming.CopyMilliseconds);
         if (ImGui::BeginTable("RenderProfilerCalls", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
         {
             auto row = [](const char* label, uint64_t value)

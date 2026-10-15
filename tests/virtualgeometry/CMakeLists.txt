@@ -15,6 +15,7 @@ add_executable(virtualgeometry_tests
     "${VG}/virtualgeometryresidency.cpp"
     "${ROOT}/tests/virtualgeometry_page_io_tests.cpp"
     "${VG}/virtualgeometrypageio.cpp"
+    "${VG}/virtualgeometrypagestress.cpp"
     "${VG}/virtualgeometrypages.cpp"
     "${VG}/virtualgeometrypagecache.cpp"
     "${VG}/virtualgeometryselection.cpp"

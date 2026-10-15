@@ -12,6 +12,8 @@
 
 **Execution:** 既存のNative実行方針を継承。このチャットで順次実装する。計画確認前には製品コードを書かない。
 
+**実行状況（2026-10-15）:** Task 1〜7を統合しCPU/GPU検証済み。Task 8の1億source triangle Release試験と3000万Debug試験が合格。10億は実機メモリ収容判定でSKIPとなり描画未検証。以下のcheckboxは元の実施項目であり、実際の達成範囲・代替検証・制約は `docs/virtualgeometry-phase7-validation.md` と実行ledgerに記録する。
+
 ## Global Constraints
 
 - Pageサイズ64 KiB。Clusterの頂点・三角形を同じPageに収め、Clusterを分割しない。

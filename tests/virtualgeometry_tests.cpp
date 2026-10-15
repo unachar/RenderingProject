@@ -1,4 +1,5 @@
 #include "virtualgeometry/virtualgeometrybuilder.h"
+#include "virtualgeometry/virtualgeometrypagestress.h"
 #include "virtualgeometry/virtualgeometryserializer.h"
 #include "virtualgeometry/virtualgeometryvalidator.h"
 #include "virtualgeometry/virtualgeometryreport.h"
@@ -275,6 +276,29 @@ int main(int argc, char** argv)
 {
     try
     {
+        if (argc == 4 && std::string_view(argv[1]) == "--generate-streaming")
+        {
+            std::filesystem::path directory(argv[2]);
+            uint64_t requested = std::stoull(argv[3]);
+            if (!requested || requested > 1000000000ull) throw std::runtime_error("Stress triangle range is 1..1000000000");
+            std::filesystem::create_directories(directory);
+            uint64_t count = (requested+VirtualGeometryPageStress::SourceTrianglesPerAsset-1)/VirtualGeometryPageStress::SourceTrianglesPerAsset;
+            uint64_t expectedBytes = count * 74ull * 1024 * 1024;
+            if (std::filesystem::space(directory).available < expectedBytes+8ull*1024*1024*1024)
+                throw std::runtime_error("Stress generation would leave less than 8 GiB free disk space");
+            for (uint64_t asset = 0; asset < count; ++asset)
+            {
+                auto path = directory/("asset-"+std::to_string(asset)+".vgp2");
+                VirtualGeometryPageCache::PageManifest manifest;
+                std::string error;
+                if (!VirtualGeometryPageCache::Open(path,manifest,error) &&
+                    !VirtualGeometryPageStress::Create(path,VirtualGeometryPageStress::LeavesPerAsset,manifest,error))
+                    throw std::runtime_error(error);
+                std::cout << "Generated asset " << asset+1 << '/' << count << ", disk bytes " << manifest.FileBytes << std::endl;
+            }
+            std::cout << "Source triangles " << count*VirtualGeometryPageStress::SourceTrianglesPerAsset << ", instances " << count << ", native assets " << count << '\n';
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--streaming-cpu")
         {
             TestVirtualGeometryPages();

@@ -381,7 +381,7 @@ bool GraphicsDevice::Init(HWND hwnd)
 	}
 
 	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc {};
-	cbvHeapDesc.NumDescriptors = g_kENGINE_DESCRIPTOR_END + 1 + g_kTHUMBNAIL_DESCRIPTOR_COUNT + ImGuiManager::kSrvDescriptorCount;
+	cbvHeapDesc.NumDescriptors = g_kENGINE_DESCRIPTOR_END + 1 + g_kTHUMBNAIL_DESCRIPTOR_COUNT + ImGuiManager::kSrvDescriptorCount + 16384;
 	cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	WriteGraphicsLog("Step: CreateDescriptorHeap(CBV)\n");

@@ -1,4 +1,5 @@
 #include "virtualgeometryselection.h"
+#include "virtualgeometrytemporal.h"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -80,16 +81,21 @@ bool ValidateLinks(const VirtualGeometryAsset& asset)
 }
 }
 
-static ResidentResult SelectInternal(const VirtualGeometryAsset& asset, const View& view, const Settings& settings,
-    std::span<const uint32_t> clusterPages, std::span<const uint8_t> residentPages)
+static TemporalResult SelectInternal(const VirtualGeometryAsset& asset, const View& view, const Settings& settings,
+    std::span<const uint32_t> clusterPages, std::span<const uint8_t> residentPages,
+    std::span<const uint8_t> previousRefine = {}, bool historyValid = false, float fraction = 0)
 {
     auto fail = [](const char* error)
     {
-        ResidentResult result;
+        TemporalResult result;
         result.Error = error;
         return result;
     };
     bool streaming = !clusterPages.empty();
+    if (historyValid && previousRefine.size() != asset.Groups.size())
+    {
+        return fail("Invalid LOD history size");
+    }
     if (!std::isfinite(view.WorldScale) || view.WorldScale <= 0 ||
         !std::isfinite(view.MinimumWorldScale) || view.MinimumWorldScale <= 0 || view.MinimumWorldScale > view.WorldScale ||
         !std::isfinite(view.ProjectionScalePixels) || view.ProjectionScalePixels <= 0 ||
@@ -132,6 +138,7 @@ static ResidentResult SelectInternal(const VirtualGeometryAsset& asset, const Vi
         return asset.Groups[first].Level < asset.Groups[second].Level;
     });
     std::vector<bool> refine(asset.Groups.size());
+    std::vector<uint8_t> desired(asset.Groups.size());
     for (uint32_t index : order)
     {
         const auto& group = asset.Groups[index];
@@ -147,7 +154,9 @@ static ResidentResult SelectInternal(const VirtualGeometryAsset& asset, const Vi
         double errorPixels = double(group.MaxError) * view.WorldScale * view.ProjectionScalePixels / distance;
         bool requested = settings.ForceHierarchyLevel >= 0
             ? group.Level >= uint32_t(settings.ForceHierarchyLevel)
-            : errorPixels > settings.TargetErrorPixels;
+            : VirtualGeometryTemporal::Refine(errorPixels, settings.TargetErrorPixels, fraction,
+                historyValid && previousRefine[index] != 0, historyValid);
+        desired[index] = uint8_t(requested);
         refine[index] = refine[index] || requested;
         if (!refine[index])
         {
@@ -169,7 +178,8 @@ static ResidentResult SelectInternal(const VirtualGeometryAsset& asset, const Vi
     {
         active[root] = true;
     }
-    ResidentResult result;
+    TemporalResult result;
+    result.DesiredRefine = std::move(desired);
     std::vector<uint8_t> requested(residentPages.size());
     for (auto entry = order.rbegin(); entry != order.rend(); ++entry)
     {
@@ -237,6 +247,18 @@ static ResidentResult SelectInternal(const VirtualGeometryAsset& asset, const Vi
 Result Select(const VirtualGeometryAsset& asset, const View& view, const Settings& settings)
 {
     return SelectInternal(asset, view, settings, {}, {});
+}
+TemporalResult SelectResidentTemporal(const VirtualGeometryAsset& asset, const View& view, const Settings& settings,
+    std::span<const uint32_t> clusterPages, std::span<const uint8_t> residentPages,
+    std::span<const uint8_t> previousRefine, bool historyValid, float fraction)
+{
+    if (clusterPages.empty())
+    {
+        TemporalResult result;
+        result.Error = "Empty Cluster to Page mapping";
+        return result;
+    }
+    return SelectInternal(asset, view, settings, clusterPages, residentPages, previousRefine, historyValid, fraction);
 }
 ResidentResult SelectResident(const VirtualGeometryAsset& asset, const View& view, const Settings& settings,
     std::span<const uint32_t> clusterPages, std::span<const uint8_t> residentPages)

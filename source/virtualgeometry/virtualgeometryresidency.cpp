@@ -8,16 +8,20 @@ namespace
 constexpr uint64_t PageBytes = 65536;
 constexpr uint64_t MaximumBudget = 1024ull * 1024 * 1024;
 }
-bool ResidencyManager::AddPages(std::span<const uint8_t> pinned, uint64_t budget)
+bool ResidencyManager::CanAddPages(std::span<const uint8_t> pinned, uint64_t budget) const
 {
     budget = std::min(budget, MaximumBudget);
-    uint64_t pinnedCount = std::count(pinned.begin(), pinned.end(), uint8_t(1));
-    for (const auto& page : m_Pages)
-    {
-        pinnedCount += page.Pinned;
-    }
+    uint64_t pinnedCount = m_PinnedPages+std::count(pinned.begin(), pinned.end(), uint8_t(1));
     if (pinnedCount > budget / PageBytes || pinned.size() > UINT32_MAX - m_Pages.size() ||
         std::any_of(pinned.begin(), pinned.end(), [](uint8_t value) { return value > 1; }))
+    {
+        return false;
+    }
+    return true;
+}
+bool ResidencyManager::AddPages(std::span<const uint8_t> pinned, uint64_t budget)
+{
+    if (!CanAddPages(pinned,budget))
     {
         return false;
     }
@@ -29,6 +33,7 @@ bool ResidencyManager::AddPages(std::span<const uint8_t> pinned, uint64_t budget
     {
         PageRecord page;
         page.Pinned = value != 0;
+        m_PinnedPages += page.Pinned;
         m_Pages.push_back(page);
         m_Snapshot.emplace_back();
     }
@@ -41,7 +46,7 @@ void ResidencyManager::SetBudget(uint64_t bytes)
 }
 uint64_t ResidencyManager::ReservedBytes() const
 {
-    return uint64_t(std::count_if(m_Slots.begin(), m_Slots.end(), [](PageId page) { return page != UINT32_MAX; })) * PageBytes;
+    return m_ReservedPages * PageBytes;
 }
 void ResidencyManager::Request(PageId page, uint64_t frame)
 {
@@ -66,14 +71,7 @@ std::optional<LoadTicket> ResidencyManager::BeginLoad(PageId page)
     // Preserve budget space for pinned pages that have not started loading.
     if (!m_Pages[page].Pinned)
     {
-        uint64_t unallocatedPinned = 0;
-        for (const auto& record : m_Pages)
-        {
-            if (record.Pinned && record.Slot == UINT32_MAX)
-            {
-                ++unallocatedPinned;
-            }
-        }
+        uint64_t unallocatedPinned = m_PinnedPages-m_AllocatedPinnedPages;
         if (ReservedBytes() + (unallocatedPinned + 1) * PageBytes > m_Budget)
         {
             return std::nullopt;
@@ -102,6 +100,8 @@ std::optional<LoadTicket> ResidencyManager::BeginLoad(PageId page)
     record.GraphicsFence = 0;
     record.State = PageState::Loading;
     m_Slots[slot] = page;
+    ++m_ReservedPages;
+    m_AllocatedPinnedPages += record.Pinned;
     return LoadTicket{page, slot, record.Generation};
 }
 bool ResidencyManager::Matches(const LoadTicket& ticket) const
@@ -117,7 +117,7 @@ void ResidencyManager::CompleteCopy(const LoadTicket& ticket, uint64_t fence)
         m_Pages[ticket.Page].CopyFence = fence;
     }
 }
-void ResidencyManager::Publish(uint64_t completedCopy)
+void ResidencyManager::Publish(uint64_t completedCopy, uint64_t frame)
 {
     for (PageId index = 0; index < m_Pages.size(); ++index)
     {
@@ -125,6 +125,7 @@ void ResidencyManager::Publish(uint64_t completedCopy)
         if (record.State == PageState::Loading && !record.Retiring && record.CopyFence && record.CopyFence <= completedCopy)
         {
             record.State = PageState::Resident;
+            record.LastUsed = std::max(record.LastUsed,frame);
             m_Snapshot[index] = {record.Slot, uint32_t(record.Generation), 1, 0};
         }
     }
@@ -181,6 +182,8 @@ void ResidencyManager::Collect(uint64_t completedGraphics, uint64_t completedCop
         if (record.Retiring && record.GraphicsFence <= completedGraphics && record.CopyFence <= completedCopy)
         {
             m_Slots[record.Slot] = UINT32_MAX;
+            --m_ReservedPages;
+            m_AllocatedPinnedPages -= record.Pinned;
             record.Slot = UINT32_MAX;
             record.Retiring = false;
             record.CopyFence = 0;
@@ -188,13 +191,13 @@ void ResidencyManager::Collect(uint64_t completedGraphics, uint64_t completedCop
         }
     }
 }
-std::optional<PageId> ResidencyManager::OldestEvictable() const
+std::optional<PageId> ResidencyManager::OldestEvictable(uint64_t olderThanFrame) const
 {
     std::optional<PageId> oldest;
     for (PageId page = 0; page < m_Pages.size(); ++page)
     {
         const auto& record = m_Pages[page];
-        if (!record.Pinned && !record.Retiring && record.State == PageState::Resident &&
+        if (!record.Pinned && !record.Retiring && record.State == PageState::Resident && record.LastUsed < olderThanFrame &&
             (!oldest || record.LastUsed < m_Pages[*oldest].LastUsed))
         {
             oldest = page;

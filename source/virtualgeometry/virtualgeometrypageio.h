@@ -43,6 +43,7 @@ private:
     std::deque<Job> m_Jobs;
     std::vector<PageIoCompletion> m_Completed;
     std::vector<LoadTicket> m_Cancelled;
+    std::vector<LoadTicket> m_Active;
     std::vector<std::thread> m_Workers;
     uint64_t m_ReservedBytes = 0;
     bool m_Stopping = false;

@@ -1,9 +1,13 @@
-param([string]$TargetsPath = (Join-Path $PSScriptRoot '..\Directory.Build.targets'))
+﻿param([string]$TargetsPath = (Join-Path $PSScriptRoot '..\Directory.Build.targets'))
 $ErrorActionPreference = 'Stop'
 [xml]$document = Get-Content -LiteralPath $TargetsPath
 $targets = @($document.Project.Target)
-$shaderTargets = @($targets | Where-Object Inputs)
-if ($shaderTargets.Count -ne 22) { throw 'Expected 22 individually tracked DXC shader outputs.' }
+$shaderTargets = @($targets | Where-Object { $_.Inputs -and $_.Name -ne 'CompileShadowCacheShaders' })
+$shadowCache = $targets | Where-Object Name -eq 'CompileShadowCacheShaders'
+if (@($shadowCache.Exec).Count -ne 2 -or @($shadowCache.Outputs.Split(';')).Count -ne 2) {
+    throw 'Shadow cache must track both vertex and pixel shader outputs.'
+}
+if ($shaderTargets.Count -ne 31) { throw 'Expected 31 individually tracked DXC shader outputs.' }
 if (@($targets | Group-Object Name | Where-Object Count -gt 1).Count) { throw 'Duplicate target names.' }
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')) + '\'
 foreach ($target in $shaderTargets) {

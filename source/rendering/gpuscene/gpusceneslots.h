@@ -8,6 +8,7 @@
 class GpuSceneSlots
 {
     vector<GPUInstanceData> m_Data;
+    vector<uint64_t> m_Generations;
     vector<GPUInstanceID> m_Free;
     vector<uint8_t> m_Dirty;
     vector<GPUInstanceID> m_Updates;
@@ -26,6 +27,7 @@ class GpuSceneSlots
             }
             id = static_cast<uint32_t>(m_Data.size());
             m_Data.push_back(data);
+            m_Generations.push_back(0);
             m_Dirty.push_back(0);
         }
         else
@@ -35,6 +37,7 @@ class GpuSceneSlots
             m_Data[id] = data;
         }
         m_Data[id].Flags |= 1u;
+        ++m_Generations[id];
         ++m_Active;
         MarkDirty(id);
         return id;
@@ -51,6 +54,7 @@ class GpuSceneSlots
         MarkDirty(id);
     }
     bool IsActive(GPUInstanceID id) const { return id < m_Data.size() && (m_Data[id].Flags & 1u); }
+    uint64_t Generation(GPUInstanceID id) const { return IsActive(id) ? m_Generations[id] : 0; }
     void Update(GPUInstanceID id, const GPUInstanceData &data)
     {
         if (!IsActive(id))
@@ -64,6 +68,11 @@ class GpuSceneSlots
         if (memcmp(&m_Data[id].World, &data.World, sizeof(data.World)) != 0)
         {
             m_Moving.push_back(id);
+        }
+        if (m_Data[id].MeshIndex != data.MeshIndex ||
+            m_Data[id].VirtualGeometryAssetIndex != data.VirtualGeometryAssetIndex)
+        {
+            ++m_Generations[id];
         }
         m_Data[id] = data;
         MarkDirty(id);

@@ -27,6 +27,13 @@ struct ResidentResult : Result
 {
     std::vector<uint32_t> RequestedPages;
 };
+struct TemporalResult : ResidentResult
+{
+    std::vector<uint8_t> DesiredRefine;
+};
+TemporalResult SelectResidentTemporal(const VirtualGeometryAsset& asset, const View& view, const Settings& settings,
+    std::span<const uint32_t> clusterPages, std::span<const uint8_t> residentPages,
+    std::span<const uint8_t> previousRefine, bool historyValid, float fraction);
 ResidentResult SelectResident(const VirtualGeometryAsset& asset, const View& view, const Settings& settings,
     std::span<const uint32_t> clusterPages, std::span<const uint8_t> residentPages);
 }

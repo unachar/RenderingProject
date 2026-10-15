@@ -13,6 +13,9 @@
 #include "rendercapture.h"
 #include "shaderpipelines.h"
 #include "virtualgeometry/virtualgeometrytraversal.h"
+#include "virtualgeometry/virtualgeometrystreaming.h"
+#include "virtualgeometry/virtualgeometrybinning.h"
+#include <unordered_set>
 
 namespace MeshShaderRenderer
 {
@@ -42,7 +45,9 @@ struct State
     ComPtr<ID3D12PipelineState> ResetPSO, ClusterPSO, CullPSO, DispatchPSO, OpaquePSO, FallbackPSO;
     ComPtr<ID3D12PipelineState> VelocityPSO, VelocityFallbackPSO;
     ComPtr<ID3D12PipelineState> NativeOpaquePSO, NativeVelocityPSO;
+    ComPtr<ID3D12PipelineState> NativeBinnedOpaquePSO, NativeBinnedVelocityPSO;
     ComPtr<ID3D12CommandSignature> MeshSignature, FallbackSignature;
+    ComPtr<ID3D12CommandSignature> MaterialBinSignature;
     array<Frame, GpuSceneBuffer::FrameCount> Frames;
     uint32_t FrameIndex = 0, ObjectCapacity = 0;
     ID3D12Resource *Objects = nullptr, *Count = nullptr, *Commands = nullptr;
@@ -132,7 +137,7 @@ void Initialize()
     cs("shader/hlsl/build/BuildMeshDispatchCS.cso", state.DispatchPSO);
     CD3DX12_DESCRIPTOR_RANGE textures;
     textures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, FrameConstants::g_kMAX_SRVS, 0, 1);
-    CD3DX12_ROOT_PARAMETER opaque[14];
+    CD3DX12_ROOT_PARAMETER opaque[17];
     opaque[0].InitAsConstants(1, 4);
     opaque[1].InitAsDescriptorTable(1, &cbv);
     opaque[2].InitAsShaderResourceView(30);
@@ -143,9 +148,14 @@ void Initialize()
     for (uint32_t i = 0; i < 6; ++i)
         opaque[7 + i].InitAsShaderResourceView(33 + i);
     opaque[13].InitAsConstants(1, 6);
+    CD3DX12_DESCRIPTOR_RANGE pages;
+    pages.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV,VirtualGeometryStreaming::MaximumSlots,0,2);
+    opaque[14].InitAsShaderResourceView(39);
+    opaque[15].InitAsDescriptorTable(1,&pages);
+    opaque[16].InitAsConstants(2,7);
     CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_ANISOTROPIC);
     sampler.MaxAnisotropy = 16;
-    CD3DX12_ROOT_SIGNATURE_DESC opaqueDesc(14, opaque, 1, &sampler,
+    CD3DX12_ROOT_SIGNATURE_DESC opaqueDesc(17, opaque, 1, &sampler,
                                            D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
     Root(opaqueDesc, state.OpaqueRoot);
     auto ms = Shader("shader/hlsl/build/MeshletMS.cso"), ps = Shader("shader/hlsl/build/MeshletOpaquePS.cso");
@@ -175,12 +185,29 @@ void Initialize()
     stream.MS.Value = {nativeMS->GetBufferPointer(),nativeMS->GetBufferSize()};
     stream.PS.Value = {nativePS->GetBufferPointer(),nativePS->GetBufferSize()};
     Check(device2->CreatePipelineState(&meshDesc,IID_PPV_ARGS(&state.NativeOpaquePSO)));
+    try
+    {
+        auto binnedMS = Shader("shader/hlsl/build/VirtualGeometryBinnedMS.cso");
+        stream.MS.Value = {binnedMS->GetBufferPointer(),binnedMS->GetBufferSize()};
+        Check(device2->CreatePipelineState(&meshDesc,IID_PPV_ARGS(&state.NativeBinnedOpaquePSO)));
+    }
+    catch (const std::exception& error)
+    {
+        WriteGraphicsLog("Native binned raster unavailable; original native path retained: %s\n",error.what());
+    }
     stream.MS.Value = {ms->GetBufferPointer(),ms->GetBufferSize()};
     stream.PS.Value = {ps->GetBufferPointer(),ps->GetBufferSize()};
     D3D12_INDIRECT_ARGUMENT_DESC meshArg{};
     meshArg.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH;
     D3D12_COMMAND_SIGNATURE_DESC signature{12, 1, &meshArg, 0};
     Check(device->CreateCommandSignature(&signature, nullptr, IID_PPV_ARGS(&state.MeshSignature)));
+    D3D12_INDIRECT_ARGUMENT_DESC binArgs[2]{};
+    binArgs[0].Type = D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT;
+    binArgs[0].Constant.RootParameterIndex = 16;
+    binArgs[0].Constant.Num32BitValuesToSet = 2;
+    binArgs[1].Type = D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH;
+    D3D12_COMMAND_SIGNATURE_DESC binSignature{20,2,binArgs,0};
+    Check(device->CreateCommandSignature(&binSignature,state.OpaqueRoot.Get(),IID_PPV_ARGS(&state.MaterialBinSignature)));
     // Fallback uses the same Pixel Shader and bindings, with zero index counts for routed objects.
     auto vs = Shader("shader/hlsl/build/MeshletFallbackVS.cso");
     const D3D12_INPUT_ELEMENT_DESC layout[] = {
@@ -227,6 +254,16 @@ void Initialize()
     auto nativeVelocity = Shader("shader/hlsl/build/VirtualGeometryVelocityMS.cso");
     stream.MS.Value = {nativeVelocity->GetBufferPointer(),nativeVelocity->GetBufferSize()};
     Check(device2->CreatePipelineState(&meshDesc,IID_PPV_ARGS(&state.NativeVelocityPSO)));
+    try
+    {
+        auto binnedVelocityMS = Shader("shader/hlsl/build/VirtualGeometryBinnedVelocityMS.cso");
+        stream.MS.Value = {binnedVelocityMS->GetBufferPointer(),binnedVelocityMS->GetBufferSize()};
+        Check(device2->CreatePipelineState(&meshDesc,IID_PPV_ARGS(&state.NativeBinnedVelocityPSO)));
+    }
+    catch (const std::exception& error)
+    {
+        WriteGraphicsLog("Native binned velocity unavailable; original native path retained: %s\n",error.what());
+    }
     traditional.VS = {velocityVS->GetBufferPointer(), velocityVS->GetBufferSize()};
     traditional.PS = stream.PS.Value;
     traditional.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
@@ -302,12 +339,15 @@ void QuerySupport(ID3D12Device *device)
 {
     auto &s = Data();
     D3D12_FEATURE_DATA_D3D12_OPTIONS7 options{};
+    D3D12_FEATURE_DATA_D3D12_OPTIONS bindings{};
     D3D12_FEATURE_DATA_SHADER_MODEL model{D3D_SHADER_MODEL_6_5};
     s.Supported =
         SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &options, sizeof(options))) &&
         options.MeshShaderTier != D3D12_MESH_SHADER_TIER_NOT_SUPPORTED &&
         SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &model, sizeof(model))) &&
         model.HighestShaderModel >= D3D_SHADER_MODEL_6_5;
+    s.Supported = s.Supported && SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS,&bindings,sizeof(bindings))) &&
+        bindings.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_2;
     s.Tier = options.MeshShaderTier;
     s.Reason = s.Supported ? "Nanite automatic static geometry rendering" : "Mesh Shader/SM6.5 unsupported; traditional rendering";
     char env[8]{};
@@ -344,7 +384,10 @@ void Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances, RenderGr
     auto &s = Data();
     s.Active = false;
     if (!s.Options.Enabled || !s.Supported || s.Failed)
+    {
+        VirtualGeometryTraversal::InvalidateHistory();
         return;
+    }
     try
     {
         Initialize();
@@ -376,6 +419,7 @@ void Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances, RenderGr
         prepare(f.Fallback, capacity, 24);
         MeshletManager::Prepare(graph, meshes);
         VirtualGeometryTraversal::Prepare(graph,{instances,objects,count,objectResource,countResource,capacity});
+        VirtualGeometryBinning::BeginFrame(s.NativeBinnedOpaquePSO.Get() && s.NativeBinnedVelocityPSO.Get());
     }
     catch (const exception &error)
     {
@@ -495,12 +539,15 @@ void Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances, RenderGr
         });
     s.Active = true;
 }
-static bool DrawPass(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices, bool velocity)
+static bool DrawPass(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices, bool velocity,
+    VirtualGeometryTraversal::RasterPhase phase)
 {
     auto &s = Data();
     if (!s.Active)
         return false;
     RenderGraph graph;
+    bool binning = VirtualGeometryBinning::Active();
+    VirtualGeometryBinning::Prepare(graph,phase);
     auto vertex = Import(graph, "Mesh Shader Global Vertices", vertices,
                          D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
     auto visible = Import(graph, "Mesh Shader Visible List", Current().Visible,
@@ -526,12 +573,18 @@ static bool DrawPass(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices, 
             Import(graph, "Mesh Shader Asset", *source, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
     GpuSceneBuffer* nativeSources[] = {&VirtualGeometryResources::ClusterBuffer(),&VirtualGeometryResources::AssetBuffer(),
         &VirtualGeometryResources::TriangleBuffer(),&VirtualGeometryResources::VertexBuffer(),
-        &VirtualGeometryTraversal::VisibleBuffer(),&VirtualGeometryTraversal::CounterBuffer()};
+        binning ? &VirtualGeometryBinning::VisibleBuffer() : &VirtualGeometryTraversal::VisibleBuffer(phase),
+        &VirtualGeometryTraversal::CounterBuffer(phase)};
     for (auto* source : nativeSources)
     {
         asset.push_back(Import(graph,"Native VirtualGeometry Raster Input",*source,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
     }
-    auto nativeArgs = Import(graph,"Native VirtualGeometry Dispatch",VirtualGeometryTraversal::ArgumentBuffer(),D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    auto& nativeArgumentBuffer = binning ? VirtualGeometryBinning::ArgumentBuffer() : VirtualGeometryTraversal::ArgumentBuffer(phase);
+    auto nativeArgs = Import(graph,"Native VirtualGeometry Dispatch",nativeArgumentBuffer,D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    RenderGraph::ResourceHandle binCount;
+    if (binning) binCount = Import(graph,"Native material bin count",VirtualGeometryBinning::CounterBuffer(),D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    asset.push_back(Import(graph,"Geometry Raster Residency",VirtualGeometryStreaming::ResidencyBuffer(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
+    for (auto handle : VirtualGeometryStreaming::PageHandles(graph)) asset.push_back(handle);
     graph.AddPass(
         velocity ? "Mesh Shader Velocity" : "Mesh Shader Opaque",
         [=](RenderGraph::PassBuilder &b) {
@@ -548,10 +601,11 @@ static bool DrawPass(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices, 
                 .Read(fallback, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT)
                 .Read(count, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
             b.Read(nativeArgs,D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+            if (binning) b.Read(binCount,D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
             for (auto handle : asset)
                 b.Read(handle, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         },
-        [&vertices, velocity](ID3D12GraphicsCommandList *commands) {
+        [&vertices, velocity, phase, binning](ID3D12GraphicsCommandList *commands) {
             auto &data = Data();
             RenderProfiler::ScopedEvent profile(velocity ? "Mesh Shader Velocity" : "Mesh Shader Opaque",
                                                 commands);
@@ -592,24 +646,41 @@ static bool DrawPass(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices, 
             for (uint32_t i = 0; i < 6; ++i)
                 commands->SetGraphicsRootShaderResourceView(7 + i, resources[i]->GetGPUVirtualAddress());
             commands->SetGraphicsRoot32BitConstant(13, data.Options.Colors, 0);
-            commands->SetPipelineState(velocity ? data.VelocityFallbackPSO.Get() : data.FallbackPSO.Get());
-            commands->ExecuteIndirect(data.FallbackSignature.Get(), data.ObjectCapacity,
-                                      Current().Fallback.Resource(), 0, data.Count, 0);
-            commands->SetPipelineState(velocity ? data.VelocityPSO.Get() : data.OpaquePSO.Get());
-            commands->ExecuteIndirect(data.MeshSignature.Get(), 1, Current().Arguments.Resource(), 0, nullptr,
-                                      0);
+            if (phase != VirtualGeometryTraversal::RasterPhase::Second)
+            {
+                commands->SetPipelineState(velocity ? data.VelocityFallbackPSO.Get() : data.FallbackPSO.Get());
+                commands->ExecuteIndirect(data.FallbackSignature.Get(), data.ObjectCapacity,
+                                          Current().Fallback.Resource(), 0, data.Count, 0);
+                commands->SetPipelineState(velocity ? data.VelocityPSO.Get() : data.OpaquePSO.Get());
+                commands->ExecuteIndirect(data.MeshSignature.Get(), 1, Current().Arguments.Resource(), 0, nullptr,0);
+            }
             ID3D12Resource* nativeResources[] = {VirtualGeometryResources::ClusterBuffer().Resource(),
                 VirtualGeometryResources::AssetBuffer().Resource(),VirtualGeometryResources::TriangleBuffer().Resource(),
-                VirtualGeometryResources::VertexBuffer().Resource(),VirtualGeometryTraversal::VisibleBuffer().Resource(),
-                VirtualGeometryTraversal::CounterBuffer().Resource()};
+                VirtualGeometryResources::VertexBuffer().Resource(),
+                binning ? VirtualGeometryBinning::VisibleBuffer().Resource() : VirtualGeometryTraversal::VisibleBuffer(phase).Resource(),
+                VirtualGeometryTraversal::CounterBuffer(phase).Resource()};
             for (uint32_t index = 0; index < 6; ++index)
             {
-                commands->SetGraphicsRootShaderResourceView(7+index,nativeResources[index]->GetGPUVirtualAddress());
+                uint64_t offset = index == 5 ? VirtualGeometryTraversal::CounterOffset(phase) : 0;
+                commands->SetGraphicsRootShaderResourceView(7+index,nativeResources[index]->GetGPUVirtualAddress()+offset);
             }
             commands->SetGraphicsRoot32BitConstant(13,VirtualGeometryTraversal::GetSettings().LevelColors,0);
-            commands->SetPipelineState(velocity ? data.NativeVelocityPSO.Get() : data.NativeOpaquePSO.Get());
+            commands->SetGraphicsRootShaderResourceView(14,VirtualGeometryStreaming::ResidencyBuffer().Resource()->GetGPUVirtualAddress());
+            commands->SetGraphicsRootDescriptorTable(15,VirtualGeometryStreaming::PageDescriptors());
+            commands->SetPipelineState(binning
+                ? (velocity ? data.NativeBinnedVelocityPSO.Get() : data.NativeBinnedOpaquePSO.Get())
+                : (velocity ? data.NativeVelocityPSO.Get() : data.NativeOpaquePSO.Get()));
             RenderProfiler::ScopedEvent nativeProfile(velocity ? "Nanite Velocity Mesh Shader" : "Nanite Mesh Shader",commands);
-            commands->ExecuteIndirect(data.MeshSignature.Get(),1,VirtualGeometryTraversal::ArgumentBuffer().Resource(),0,nullptr,0);
+            if (binning)
+            {
+                commands->ExecuteIndirect(data.MaterialBinSignature.Get(),VirtualGeometryBinning::MaximumCommands(),
+                    VirtualGeometryBinning::ArgumentBuffer().Resource(),0,VirtualGeometryBinning::CounterBuffer().Resource(),0);
+            }
+            else
+            {
+                commands->ExecuteIndirect(data.MeshSignature.Get(),1,VirtualGeometryTraversal::ArgumentBuffer(phase).Resource(),
+                    VirtualGeometryTraversal::ArgumentOffset(phase),nullptr,0);
+            }
         });
     if (!graph.Compile() || !graph.Execute(list))
         throw runtime_error(graph.GetLastError());
@@ -617,11 +688,17 @@ static bool DrawPass(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices, 
 }
 bool Draw(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices)
 {
-    return DrawPass(list, vertices, false);
+    return DrawPass(list, vertices, false,VirtualGeometryTraversal::RasterPhase::First);
+}
+bool DrawSecondPass(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices)
+{
+    VirtualGeometryTraversal::Retest(list);
+    if (!VirtualGeometryTraversal::TwoPassActive()) return false;
+    return DrawPass(list,vertices,false,VirtualGeometryTraversal::RasterPhase::Second);
 }
 bool DrawVelocity(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices)
 {
-    return DrawPass(list, vertices, true);
+    return DrawPass(list, vertices, true,VirtualGeometryTraversal::RasterPhase::Combined);
 }
 void DrawDebug()
 {
@@ -785,8 +862,88 @@ ID3D12Resource *StatisticsBuffer()
 {
     return Current().Counters.Resource();
 }
+NativeRoutingSample CaptureNativeRouting()
+{
+    NativeRoutingSample result;
+    auto fail = [&](const char* message)
+    {
+        result.Error = message;
+        return result;
+    };
+    auto read = [](GpuSceneBuffer& source,uint64_t bytes,std::vector<uint8_t>& output)
+    {
+        return RenderCapture::ReadBuffer(source.Resource(),source.State,bytes,output);
+    };
+    auto word = [](const std::vector<uint8_t>& bytes,size_t offset)
+    {
+        uint32_t value;
+        std::memcpy(&value,bytes.data()+offset,4);
+        return value;
+    };
+    std::vector<uint8_t> counters, records, success, fallback, legacyCounters, legacyRecords;
+    if (!read(VirtualGeometryTraversal::CounterBuffer(),256,counters)) return fail("Native counters unavailable");
+    result.SelectedClusters = word(counters,4);
+    result.LeafClusters = word(counters,32);
+    result.SuccessfulInstances = word(counters,16);
+    if (result.SelectedClusters > VirtualGeometryTraversal::VisibleBuffer().Capacity()) return fail("Native count exceeds capacity");
+    if (result.SelectedClusters && !read(VirtualGeometryTraversal::VisibleBuffer(),uint64_t(result.SelectedClusters)*16,records))
+        return fail("Native records unavailable");
+    std::unordered_set<uint64_t> selected;
+    std::unordered_set<uint32_t> nativeInstances;
+    const auto& assets = VirtualGeometryResources::AssetTable();
+    const auto& metadata = VirtualGeometryResources::Metadata();
+    std::vector<VisibleVirtualCluster> visible(result.SelectedClusters);
+    for (uint32_t index = 0; index < result.SelectedClusters; ++index)
+    {
+        std::memcpy(&visible[index],records.data()+size_t(index)*16,16);
+        const auto& record = visible[index];
+        if (record.Flags >= assets.size()) return fail("Native record asset out of range");
+        const auto& asset = assets[record.Flags];
+        if (record.ClusterIndex < asset.ClusterOffset || uint64_t(record.ClusterIndex) >= uint64_t(asset.ClusterOffset)+asset.ClusterCount)
+            return fail("Native record cluster outside asset");
+        uint64_t key = (uint64_t(record.InstanceIndex)<<32)|record.ClusterIndex;
+        if (!selected.insert(key).second) return fail("Duplicate native cluster record");
+        nativeInstances.insert(record.InstanceIndex);
+    }
+    for (const auto& record : visible)
+    {
+        const auto& asset = assets[record.Flags];
+        std::vector<uint32_t> queue{record.ClusterIndex};
+        std::unordered_set<uint32_t> visited;
+        for (size_t cursor = 0; cursor < queue.size(); ++cursor)
+        {
+            uint32_t group = metadata.Clusters[queue[cursor]].GroupIndex;
+            if (group == UINT32_MAX) continue;
+            const auto& node = metadata.Groups[asset.GroupOffset+group];
+            for (uint32_t parent = 0; parent < node.ParentCount; ++parent)
+            {
+                uint32_t ancestor = asset.ClusterOffset+metadata.HierarchyIndices[asset.HierarchyIndexOffset+node.FirstParent+parent];
+                uint64_t key = (uint64_t(record.InstanceIndex)<<32)|ancestor;
+                if (selected.contains(key)) return fail("Native parent and descendant selected together");
+                if (visited.insert(ancestor).second) queue.push_back(ancestor);
+            }
+        }
+    }
+    uint32_t capacity = Data().ObjectCapacity;
+    if (!read(VirtualGeometryTraversal::SuccessBuffer(),uint64_t(capacity)*4,success) ||
+        !read(Current().Fallback,uint64_t(capacity)*24,fallback)) return fail("Native fallback routing unavailable");
+    for (uint32_t object = 0; object < capacity; ++object)
+    {
+        if (word(success,size_t(object)*4) && word(fallback,size_t(object)*24+4)) return fail("Successful native object still has fallback draw indices");
+    }
+    if (!read(Current().Counters,64,legacyCounters)) return fail("Legacy counters unavailable");
+    uint32_t legacyCount = word(legacyCounters,4);
+    if (legacyCount > Current().Visible.Capacity()) return fail("Legacy count exceeds capacity");
+    if (legacyCount && !read(Current().Visible,uint64_t(legacyCount)*8,legacyRecords)) return fail("Legacy records unavailable");
+    for (uint32_t index = 0; index < legacyCount; ++index)
+    {
+        if (nativeInstances.contains(word(legacyRecords,size_t(index)*8))) return fail("Native instance also emitted legacy meshlets");
+    }
+    return result;
+}
 void Shutdown()
 {
+    VirtualGeometryBinning::Shutdown();
     VirtualGeometryTraversal::Shutdown();
     MeshletManager::Shutdown();
     Data() = {};

@@ -794,6 +794,10 @@ const GPUInstanceData *GpuScene::GetInstance(GPUInstanceID id)
 {
     return Scene().Instances.IsActive(id) ? &Scene().Instances.Data()[id] : nullptr;
 }
+uint64_t GpuScene::InstanceHistoryGeneration(GPUInstanceID id)
+{
+    return Scene().Instances.Generation(id);
+}
 void GpuScene::DrawDebug()
 {
     const auto &stats = Statistics();

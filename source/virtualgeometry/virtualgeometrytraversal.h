@@ -7,6 +7,8 @@ struct Settings
 {
     bool Enabled = true;
     float TargetErrorPixels = 1;
+    bool HysteresisEnabled = true, TwoPassOcclusion = true;
+    float HysteresisFraction = 0.1f;
     int ForceHierarchyLevel = -1;
     bool FrustumCulling = true, ConeCulling = true, OcclusionCulling = true;
     bool LevelColors = false, DebugReadback = false;
@@ -22,6 +24,23 @@ struct FrameInputs
 Settings& GetSettings();
 void Prepare(RenderGraph& graph, const FrameInputs& inputs);
 bool Active();
+enum class RasterPhase { First, Second, Combined };
+bool TwoPassActive();
+void InvalidateHistory();
+GpuSceneBuffer& VisibleBuffer(RasterPhase phase);
+GpuSceneBuffer& CounterBuffer(RasterPhase phase);
+GpuSceneBuffer& ArgumentBuffer(RasterPhase phase);
+uint64_t CounterOffset(RasterPhase phase);
+uint64_t ArgumentOffset(RasterPhase phase);
+void Retest(ID3D12GraphicsCommandList* commands);
+void RecordFeedback(RenderGraph& graph);
+struct TemporalStatistics
+{
+    uint32_t FirstVisible = 0, Candidates = 0, SecondVisible = 0, LodTransitions = 0, CapacityFallbacks = 0;
+    uint64_t HistoryBytes = 0, CandidateBytes = 0;
+    bool HasSample = false;
+};
+const TemporalStatistics& GetTemporalStatistics();
 GpuSceneBuffer& VisibleBuffer();
 GpuSceneBuffer& CounterBuffer();
 GpuSceneBuffer& ArgumentBuffer();

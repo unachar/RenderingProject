@@ -7,6 +7,10 @@ PageIo::PageIo(Reader reader) : m_Read(std::move(reader))
 {
     try
     {
+        m_Workers.reserve(4);
+        m_Active.reserve(4);
+        m_Completed.reserve(1024);
+        m_Cancelled.reserve(1024);
         for (uint32_t worker = 0; worker < 4; ++worker)
         {
             m_Workers.emplace_back([this] { Work(); });
@@ -37,7 +41,21 @@ bool PageIo::Submit(std::shared_ptr<const VirtualGeometryPageCache::PageManifest
 void PageIo::Cancel(LoadTicket ticket)
 {
     std::lock_guard lock(m_Mutex);
-    m_Cancelled.push_back(ticket);
+    for (auto& result : m_Completed)
+    {
+        if (result.Ticket == ticket)
+        {
+            result.Error = "Page read cancelled";
+            result.Payload.clear();
+            return;
+        }
+    }
+    bool active = std::find(m_Active.begin(),m_Active.end(),ticket) != m_Active.end();
+    bool queued = std::any_of(m_Jobs.begin(),m_Jobs.end(),[&](const Job& job) { return job.Ticket == ticket; });
+    if ((active || queued) && std::find(m_Cancelled.begin(),m_Cancelled.end(),ticket) == m_Cancelled.end())
+    {
+        m_Cancelled.push_back(ticket);
+    }
 }
 uint64_t PageIo::StagingBytes() const
 {
@@ -66,6 +84,7 @@ void PageIo::Work()
             }
             job = std::move(m_Jobs.front());
             m_Jobs.pop_front();
+            m_Active.push_back(job.Ticket);
         }
         PageIoCompletion result;
         result.Ticket = job.Ticket;
@@ -89,6 +108,8 @@ void PageIo::Work()
         result.Milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
         {
             std::lock_guard lock(m_Mutex);
+            auto active = std::find(m_Active.begin(),m_Active.end(),job.Ticket);
+            m_Active.erase(active);
             auto cancelled = std::find(m_Cancelled.begin(), m_Cancelled.end(), job.Ticket);
             if (cancelled != m_Cancelled.end())
             {

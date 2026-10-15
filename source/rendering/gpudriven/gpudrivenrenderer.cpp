@@ -25,6 +25,7 @@
 #include "graphicslog.h"
 #include "visibility/gpuvisibility.h"
 #include "virtualgeometry/virtualgeometrydebug.h"
+#include "virtualgeometry/virtualgeometrytraversal.h"
 #include "occlusionculling.h"
 #include <unordered_set>
 #include <unordered_map>
@@ -486,7 +487,11 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
     const bool compatible = state.Enabled && !state.Failed && CompatibleMode();
     if (compatible != state.PreviousCompatible) GPUVisibility::Invalidate("GPU/CPU path changed");
     state.PreviousCompatible = compatible;
-    if (!compatible) return;
+    if (!compatible)
+    {
+        VirtualGeometryTraversal::InvalidateHistory();
+        return;
+    }
     try { Initialize(); }
     catch (const exception& error)
     {
@@ -707,6 +712,13 @@ void GPUDrivenRenderer::BuildHiZ(ID3D12GraphicsCommandList* commands)
     OcclusionCulling::BuildTemporal(commands, OcclusionCulling::GetOccluderDepth(), OcclusionCulling::GetOccluderSrv());
 }
 
+void GPUDrivenRenderer::DrawSecondPass(ID3D12GraphicsCommandList* commands)
+{
+    if (Data().Active && MeshShaderRenderer::IsActive())
+    {
+        MeshShaderRenderer::DrawSecondPass(commands,Data().Vertices);
+    }
+}
 void GPUDrivenRenderer::DrawVelocity(ID3D12GraphicsCommandList* commands)
 {
     auto& state=Data();

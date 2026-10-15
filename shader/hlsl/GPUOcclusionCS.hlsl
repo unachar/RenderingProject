@@ -75,7 +75,10 @@ void main(uint3 id : SV_DispatchThreadID)
         bool stationary = all(instance.World[0] == instance.PreviousWorld[0]) && all(instance.World[1] == instance.PreviousWorld[1]) &&
             all(instance.World[2] == instance.PreviousWorld[2]) && all(instance.World[3] == instance.PreviousWorld[3]);
         float2 minimum, maximum; float nearest;
-        if (EnableOcclusion != 0 && stationary && (instance.Flags & 8u) == 0 && ProjectBounds(instance, minimum, maximum, nearest))
+        // Native traversal owns temporal occlusion and retains its own retest
+        // candidates. Removing the instance here would make recovery impossible.
+        bool native = NativeHierarchy != 0 && (instance.Flags & 16u) != 0;
+        if (!native && EnableOcclusion != 0 && stationary && (instance.Flags & 8u) == 0 && ProjectBounds(instance, minimum, maximum, nearest))
         {
             gStatistics.InterlockedAdd(12, 1, unused);
             if (Occluded(minimum, maximum, nearest))

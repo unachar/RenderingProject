@@ -38,17 +38,18 @@ class ResidencyManager
 {
 public:
     bool AddPages(std::span<const uint8_t> pinned, uint64_t budget);
+    bool CanAddPages(std::span<const uint8_t> pinned, uint64_t budget) const;
     void SetBudget(uint64_t bytes);
     void Request(PageId page, uint64_t frame);
     std::optional<LoadTicket> BeginLoad(PageId page);
     void CompleteCopy(const LoadTicket& ticket, uint64_t fence);
-    void Publish(uint64_t completedCopy);
+    void Publish(uint64_t completedCopy, uint64_t frame = 0);
     bool Retire(PageId page, uint64_t graphicsFence);
     void Cancel(const LoadTicket& ticket, uint64_t copyFence = 0);
     void Collect(uint64_t completedGraphics, uint64_t completedCopy);
     void MarkSnapshotUsed(uint64_t graphicsFence);
     void MarkUsed(PageId page, uint64_t frame);
-    std::optional<PageId> OldestEvictable() const;
+    std::optional<PageId> OldestEvictable(uint64_t olderThanFrame = UINT64_MAX) const;
     bool Matches(const LoadTicket& ticket) const;
     const std::vector<ResidencyEntry>& Snapshot() const { return m_Snapshot; }
     const std::vector<PageRecord>& Pages() const { return m_Pages; }
@@ -61,5 +62,8 @@ private:
     std::vector<PageId> m_Slots;
     std::vector<uint64_t> m_Generations;
     uint64_t m_Budget = 256ull * 1024 * 1024;
+    uint64_t m_ReservedPages = 0;
+    uint64_t m_PinnedPages = 0;
+    uint64_t m_AllocatedPinnedPages = 0;
 };
 }

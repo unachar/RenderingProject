@@ -1,6 +1,8 @@
 #include "virtualgeometrypagepool.h"
 #include <cstring>
 #include <stdexcept>
+#include <chrono>
+#include <thread>
 
 namespace VirtualGeometryStreaming
 {
@@ -118,12 +120,20 @@ void PagePool::Shutdown()
     if (m_Fence && m_Submitted && m_Fence->GetCompletedValue() < m_Submitted)
     {
         HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        bool waitingOnEvent = event && SUCCEEDED(m_Fence->SetEventOnCompletion(m_Submitted,event));
+        while (m_Fence->GetCompletedValue() < m_Submitted && SUCCEEDED(m_Device->GetDeviceRemovedReason()))
+        {
+            if (waitingOnEvent)
+            {
+                WaitForSingleObject(event,500);
+            }
+            else
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
         if (event)
         {
-            if (SUCCEEDED(m_Fence->SetEventOnCompletion(m_Submitted, event)))
-            {
-                WaitForSingleObject(event, 30000);
-            }
             CloseHandle(event);
         }
     }
@@ -133,6 +143,22 @@ void PagePool::Shutdown()
     m_Fence.Reset();
     m_Device.Reset();
     m_Submitted = 0;
+}
+void PagePool::Release(uint32_t slot)
+{
+    if (slot < m_Pages.size())
+    {
+        m_Pages[slot].Reset();
+    }
+}
+uint64_t PagePool::MemoryBytes() const
+{
+    uint64_t bytes = 0;
+    for (const auto& page : m_Pages)
+    {
+        if (page) bytes += 65536;
+    }
+    return bytes;
 }
 PagePool::~PagePool()
 {

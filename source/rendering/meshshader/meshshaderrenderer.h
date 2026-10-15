@@ -24,10 +24,18 @@ void Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances, RenderGr
              ID3D12Resource *objectResource, ID3D12Resource *countResource, ID3D12Resource *commandsResource,
              uint32_t capacity, uint32_t meshes);
 bool Draw(ID3D12GraphicsCommandList *commands, GpuSceneBuffer &globalVertices);
+bool DrawSecondPass(ID3D12GraphicsCommandList *commands, GpuSceneBuffer &globalVertices);
 bool DrawVelocity(ID3D12GraphicsCommandList *commands, GpuSceneBuffer &globalVertices);
 void DrawDebug();
 void EndFrame();
 ID3D12Resource *VisibleBuffer();
 ID3D12Resource *StatisticsBuffer();
+struct NativeRoutingSample
+{
+    uint32_t SelectedClusters = 0, LeafClusters = 0, SuccessfulInstances = 0;
+    std::string Error;
+};
+// Synchronous validation capture; never called by ordinary rendering.
+NativeRoutingSample CaptureNativeRouting();
 void Shutdown();
 } // namespace MeshShaderRenderer

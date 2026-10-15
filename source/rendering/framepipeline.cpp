@@ -146,6 +146,7 @@ void FramePipeline::Execute()
 					{
 						SystemManager::DrawSystem(RenderPass::OcclusionPhase2, false);
 					}
+					GPUDrivenRenderer::DrawSecondPass(passCommandList);
 					GPUDrivenRenderer::BuildHiZ(passCommandList);
 					ScenePasses::EndScenePass();
 					GPUDrivenRenderer::RecordOpaqueSubmission(chrono::duration<double, milli>(chrono::steady_clock::now() - submissionStart).count());

@@ -1,6 +1,6 @@
 # フェーズ7: Virtual Geometry Page Streaming
 
-状態: 2026-10-15に設計承認済み。実装計画は `docs/superpowers/plans/2026-10-15-virtualgeometry-phase7.md`。実装・実行検証は未着手。
+状態: 2026-10-15に設計承認・実装統合済み。実行結果と未検証条件は `docs/virtualgeometry-phase7-validation.md`、進捗は `docs/virtualgeometry-phase7-progress.md` を参照。10億triangleの描画検証は、このGPUの常駐metadata容量を超えるため未実施。
 
 ## 目的と完了条件
 

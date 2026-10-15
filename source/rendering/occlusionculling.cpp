@@ -6,6 +6,7 @@
 #include "rendererstate.h"
 #include "rendergraph.h"
 #include "renderprofiler.h"
+#include "virtualgeometry/virtualgeometrytraversal.h"
 
 static ComPtr<ID3D12Device> g_Device;
 static ComPtr<ID3D12DescriptorHeap> g_Heap;
@@ -232,7 +233,7 @@ bool OcclusionCulling::IsAvailable()
 
 void OcclusionCulling::BeginPhaseOne()
 {
-    g_Phase = static_cast<UINT>(!GPUDrivenRenderer::IsActive() && RendererSettings::GetTwoPhaseOcclusionEnabled() &&
+    g_Phase = static_cast<UINT>((!GPUDrivenRenderer::IsActive() || VirtualGeometryTraversal::TwoPassActive()) && RendererSettings::GetTwoPhaseOcclusionEnabled() &&
                                 IsAvailable());
     g_CurrentValid = false;
 }
@@ -347,6 +348,10 @@ void OcclusionCulling::InvalidateHistory()
 ID3D12Resource *OcclusionCulling::GetPreviousResource()
 {
     return g_HiZ[g_PreviousIndex].Get();
+}
+ID3D12Resource *OcclusionCulling::GetCurrentResource()
+{
+    return g_HiZ[g_CurrentIndex].Get();
 }
 ID3D12Resource *OcclusionCulling::GetOccluderDepth()
 {

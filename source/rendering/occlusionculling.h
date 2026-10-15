@@ -17,6 +17,7 @@ public:
 	static void BuildTemporal(ID3D12GraphicsCommandList* commands, ID3D12Resource* depth, D3D12_GPU_DESCRIPTOR_HANDLE depthSrv);
 	static void InvalidateHistory();
 	static ID3D12Resource* GetPreviousResource();
+	static ID3D12Resource* GetCurrentResource();
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetDebugMipSrv(UINT mip);
 	static void SetDebugPreview(UINT mip, bool enabled);
 	static ID3D12Resource* GetOccluderDepth();

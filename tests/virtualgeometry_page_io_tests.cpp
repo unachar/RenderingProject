@@ -57,21 +57,31 @@ void TestVirtualGeometryPageIo()
     delayed.Cancel({0, 0, 1});
     release.count_down();
     delayed.Shutdown();
+    delayed.Cancel({1,1,1});
     results = delayed.Poll();
     if (!pollWasEmpty || results.size() != 4 || delayed.StagingBytes() != 0)
     {
         throw std::runtime_error("Nonblocking poll or shutdown staging ownership failed");
     }
     bool cancelled = false;
+    bool completedCancellation = false;
     for (const auto& result : results)
     {
         if (result.Ticket.Page == 0)
         {
             cancelled = !result.Error.empty() && result.Payload.empty();
         }
+        if (result.Ticket.Page == 1)
+        {
+            completedCancellation = !result.Error.empty() && result.Payload.empty();
+        }
     }
     if (!cancelled)
     {
         throw std::runtime_error("Cancelled delayed I/O result was published");
+    }
+    if (!completedCancellation)
+    {
+        throw std::runtime_error("Cancellation between I/O completion and CPU collection was ignored");
     }
 }

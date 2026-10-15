@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "virtualgeometryvalidation.h"
 #include "virtualgeometrytraversal.h"
+#include "virtualgeometrystreaming.h"
 #include "world.h"
 #include "componentmanager.h"
 #include "modelmanager.h"
@@ -25,6 +26,8 @@ namespace VirtualGeometryValidation
 namespace
 {
 uint32_t failures = 0, fixture = UINT32_MAX, nearClusters = 0, farClusters = 0;
+uint64_t warmupStart = UINT64_MAX;
+bool completedChecks = false;
 std::vector<bool> leafCoverage;
 std::array<RenderCapture::TextureData, 4> nativeReference;
 constexpr std::array<GBufferType, 4> comparisonTargets = {
@@ -170,6 +173,13 @@ void BeforeFrame(uint64_t frame)
             Check(runtime && runtime->Error.empty() && runtime->Hierarchy.Levels.size() > 1,"fixture has drawable parent hierarchy");
         }
     }
+    if (warmupStart == UINT64_MAX && frame > 0 && VirtualGeometryStreaming::PageCount() > 0 &&
+        VirtualGeometryStreaming::GetStatistics().Resident == VirtualGeometryStreaming::PageCount())
+    {
+        warmupStart = frame;
+        WriteGraphicsLog("VirtualGeometry streaming warmup completed at frame %llu\n",frame);
+    }
+    frame = warmupStart == UINT64_MAX ? 0 : frame-warmupStart;
     RenderConfiguration::SetRenderMode(RenderMode::DEFERRED);
     RendererSettings::SetMeshShadersEnabled(false);
     RendererSettings::SetComputeGBufferEnabled(false);
@@ -216,6 +226,8 @@ void BeforeFrame(uint64_t frame)
 }
 void AfterFrame(uint64_t frame)
 {
+    if (warmupStart == UINT64_MAX) return;
+    frame -= warmupStart;
     if (frame == 3 || frame == 7 || frame == 11 || frame == 15)
     {
         Check(VirtualGeometryTraversal::Active(),"native traversal active in frame pipeline");
@@ -278,6 +290,7 @@ void AfterFrame(uint64_t frame)
     }
     if (frame == 35)
     {
+        completedChecks = true;
         Check(!GPUDrivenRenderer::SupportsEntity(fixture) && !GPUDrivenRenderer::HandlesEntity(fixture),
             "unsupported Unlit material uses traditional renderer");
         Check(HasVisibleCenterDepth(), "unsupported material retains visible center depth");
@@ -286,6 +299,7 @@ void AfterFrame(uint64_t frame)
 }
 bool Finish()
 {
+    Check(completedChecks,"all 36 acceptance stages executed after streaming warmup");
     CheckGraphicsErrors();
     WriteGraphicsLog("VirtualGeometry validation failures = %u\n",failures);
     return failures == 0;

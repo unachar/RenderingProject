@@ -1,6 +1,7 @@
 #pragma once
 #include "virtualgeometrypages.h"
 #include <filesystem>
+#include <functional>
 
 namespace VirtualGeometryPageCache
 {
@@ -20,6 +21,9 @@ struct PageManifest
     std::vector<PageEntry> Pages;
 };
 bool WriteAtomic(const std::filesystem::path& path, const VirtualGeometryPages::PagedAsset& asset, std::string& error);
+using PageGenerator = std::function<bool(uint32_t, std::span<uint8_t>, std::string&)>;
+bool WriteGenerated(const std::filesystem::path& path, const VirtualGeometryGPU::PackedAsset& metadata,
+    std::span<const uint8_t> pinned, const PageGenerator& generate, std::string& error);
 bool Open(const std::filesystem::path& path, PageManifest& output, std::string& error);
 bool ReadPage(const PageManifest& manifest, uint32_t page, std::span<uint8_t> bytes, std::string& error);
 }

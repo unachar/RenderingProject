@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <memory>
 #include <span>
+namespace VirtualGeometryPageCache { struct PageManifest; }
 
 namespace VirtualGeometryRuntime
 {
@@ -11,6 +12,7 @@ struct RuntimeAsset
 {
     VirtualGeometryAsset Hierarchy;
     Meshlets::Asset Meshlets;
+    std::shared_ptr<const VirtualGeometryPageCache::PageManifest> Pages;
     uint64_t Key = 0;
     bool CacheHit = false;
     double BuildMilliseconds = 0;

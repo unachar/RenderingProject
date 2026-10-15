@@ -1,8 +1,11 @@
 #include "virtualgeometry/virtualgeometrypages.h"
 #include "virtualgeometry/virtualgeometrypagecache.h"
 #include "virtualgeometry/virtualgeometrybuilder.h"
+#include "virtualgeometry/virtualgeometrypagestress.h"
+#include "virtualgeometry/virtualgeometryserializer.h"
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <stdexcept>
 
 void TestVirtualGeometryPages()
@@ -75,6 +78,27 @@ void TestVirtualGeometryPages()
         require(payload == packed.Payloads[page], "Disk page roundtrip");
     }
     require(!VirtualGeometryPageCache::ReadPage(manifest, UINT32_MAX, payload, error), "Invalid page accepted");
+    require(!VirtualGeometryPageCache::WriteGenerated(path,packed.Metadata,packed.PinnedPages,
+        [](uint32_t,std::span<uint8_t>,std::string& message)
+        {
+            message = "Injected generator failure";
+            return false;
+        },error),"Failed cache generation accepted");
+    require(VirtualGeometryPageCache::Open(path,manifest,error),"Failed generation replaced a valid cache");
+    {
+        std::ifstream input(path,std::ios::binary);
+        std::vector<uint8_t> damaged((std::istreambuf_iterator<char>(input)),std::istreambuf_iterator<char>());
+        input.close();
+        uint64_t directory = manifest.Pages[0].Offset-manifest.Pages.size()*24;
+        for (size_t byte = 0; byte < 8; ++byte) damaged[size_t(directory)+byte] = 255;
+        uint64_t checksum = VirtualGeometrySerializer::Hash(std::span<const uint8_t>(damaged).subspan(64,size_t(manifest.Pages[0].Offset-64)));
+        for (size_t byte = 0; byte < 8; ++byte) damaged[32+byte] = uint8_t(checksum>>(byte*8));
+        std::ofstream output(path,std::ios::binary|std::ios::trunc);
+        output.write(reinterpret_cast<const char*>(damaged.data()),damaged.size());
+    }
+    require(!VirtualGeometryPageCache::Open(path,manifest,error),"64-bit Page directory overflow accepted");
+    require(VirtualGeometryPageCache::WriteAtomic(path,packed,error),error);
+    require(VirtualGeometryPageCache::Open(path,manifest,error),error);
     {
         std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
         file.seekp(std::streamoff(manifest.Pages[0].Offset));
@@ -85,5 +109,10 @@ void TestVirtualGeometryPages()
     require(VirtualGeometryPageCache::WriteAtomic(path, packed, error), error);
     std::filesystem::resize_file(path, 12);
     require(!VirtualGeometryPageCache::Open(path, manifest, error), "Truncated header accepted");
+    std::filesystem::remove(path);
+    require(VirtualGeometryPageStress::Create(path,8,manifest,error),error);
+    require(manifest.Metadata.Clusters.size() == 9 && manifest.Metadata.Groups.size() == 1,"Generated hierarchy counts");
+    require(manifest.Metadata.Vertices.empty(),"Generated scene retained full RAM geometry");
+    require(!VirtualGeometryPageStress::Create(path,7,manifest,error),"Invalid generated leaf count accepted");
     std::filesystem::remove(path);
 }

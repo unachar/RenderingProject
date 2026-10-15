@@ -10,12 +10,25 @@ StructuredBuffer<uint> Roots : register(t6);
 ByteAddressBuffer ObjectCount : register(t7);
 ByteAddressBuffer Materials : register(t8);
 Texture2D<float> HiZ : register(t9);
+StructuredBuffer<uint4> Residency : register(t10);
 globallycoherent RWStructuredBuffer<uint> GroupStates : register(u0);
 RWStructuredBuffer<VisibleVirtualCluster> Visible : register(u1);
 RWByteAddressBuffer Statistics : register(u2);
 RWByteAddressBuffer Arguments : register(u3);
 RWStructuredBuffer<uint> Success : register(u4);
 RWStructuredBuffer<uint> TraversalQueue : register(u5);
+RWByteAddressBuffer PageRequestBits : register(u6);
+RWByteAddressBuffer PageRequests : register(u7);
+RWByteAddressBuffer PageUsage : register(u8);
+RWStructuredBuffer<uint> LodHistory : register(u9);
+// Generation low/high, asset, group base, group count, epoch, padding.
+StructuredBuffer<uint4> HistoryHeaders : register(t11);
+RWStructuredBuffer<VisibleVirtualCluster> FirstVisible : register(u10);
+RWStructuredBuffer<VisibleVirtualCluster> Deferred : register(u11);
+RWStructuredBuffer<VisibleVirtualCluster> SecondVisible : register(u12);
+RWStructuredBuffer<VisibleVirtualCluster> CombinedVisible : register(u13);
+RWByteAddressBuffer TemporalCounters : register(u14);
+RWByteAddressBuffer TemporalArguments : register(u15);
 cbuffer Parameters : register(b0)
 {
     row_major float4x4 VP;
@@ -27,6 +40,11 @@ cbuffer Parameters : register(b0)
     float ProjectionPixels, TargetPixels;
     int ForceLevel;
     uint StateCapacity;
+    uint PageCount, PageRequestCapacity;
+    uint2 StreamingPadding;
+    uint HistorySlots, HistoryCapacity, ResetHistory, TwoPass;
+    float HysteresisFraction;
+    uint HysteresisEnabled, TemporalPhase, TemporalPadding;
 };
 groupshared uint StateBase, QueueBase, QueueCount, QueueCursor, OutputBase, OutputCount, Accepted;
 groupshared uint CurrentClusters[64];
@@ -62,7 +80,7 @@ bool FrustumCull(float4 sphere)
 bool OcclusionCull(float4 sphere, GPUInstanceData instance)
 {
     if (EnableOcclusion == 0) return false;
-    for (uint row = 0; row < 4; ++row)
+    for (uint row = 0; row < 4 && TemporalPhase != 2; ++row)
     {
         if (!all(instance.World[row] == instance.PreviousWorld[row])) return false;
     }
@@ -71,7 +89,8 @@ bool OcclusionCull(float4 sphere, GPUInstanceData instance)
     for (uint corner = 0; corner < 8; ++corner)
     {
         float3 sign = float3((corner&1) ? 1 : -1, (corner&2) ? 1 : -1, (corner&4) ? 1 : -1);
-        float4 clip = mul(float4(sphere.xyz + sign*sphere.w, 1), PreviousVP);
+        float4 point = float4(sphere.xyz + sign*sphere.w, 1);
+        float4 clip = TemporalPhase == 2 ? mul(point, VP) : mul(point, PreviousVP);
         if (!all(isfinite(clip)) || clip.w <= 1e-5 || clip.z <= 0 || clip.z >= clip.w) return false;
         float3 ndc = clip.xyz / clip.w;
         float2 uv = ndc.xy * float2(0.5, -0.5) + 0.5;
@@ -134,7 +153,15 @@ bool Reserve(uint counter, uint amount, uint limit, out uint base)
 void Reset(uint3 id : SV_DispatchThreadID)
 {
     if (id.x < 64) Statistics.Store(id.x*4,0);
+    if (id.x < 192) TemporalCounters.Store(id.x*4,0);
+    if (ResetHistory != 0 && id.x < HistoryCapacity) LodHistory[id.x] = 0;
     if (id.x < ObjectCapacity) Success[id.x] = 0;
+    if (id.x == 0) PageRequests.Store4(0, uint4(0,0,0,0));
+    if (id.x < (PageCount+31)/32)
+    {
+        PageRequestBits.Store(id.x*4,0);
+        PageUsage.Store(id.x*4,0);
+    }
 }
 [numthreads(1,1,1)]
 void BuildArguments()
@@ -142,6 +169,144 @@ void BuildArguments()
     uint count = Statistics.Load(4);
     uint x = min(count,65535u);
     Arguments.Store3(0,uint3(x,count ? (count+x-1)/x : 1,1));
+}
+bool PageResident(VirtualGeometryGPUAsset asset, VirtualGeometryGPUCluster cluster)
+{
+    uint page = asset.VertexOffset + cluster.PageIndex;
+    bool resident = cluster.PageIndex < asset.TriangleOffset && page < PageCount && Residency[page].z != 0;
+    if (resident)
+    {
+        // Intermediate pages are dependencies of the cut even if their clusters
+        // are replaced. Keep their usage current to avoid eviction/refine loops.
+        uint unused;
+        PageUsage.InterlockedOr((page/32)*4,1u<<(page&31u),unused);
+    }
+    return resident;
+}
+void RequestPage(VirtualGeometryGPUAsset asset, VirtualGeometryGPUCluster cluster)
+{
+    uint page = asset.VertexOffset + cluster.PageIndex;
+    if (cluster.PageIndex >= asset.TriangleOffset || page >= PageCount) return;
+    uint previous;
+    uint mask = 1u << (page&31u);
+    PageRequestBits.InterlockedOr((page/32)*4,mask,previous);
+    if ((previous&mask) != 0) return;
+    uint offset;
+    PageRequests.InterlockedAdd(0,1,offset);
+    if (offset < PageRequestCapacity)
+    {
+        PageRequests.Store(16+offset*4,page);
+    }
+    else
+    {
+        PageRequests.InterlockedAdd(4,1,previous);
+    }
+}
+void ResidentCut(VirtualGeometryGPUAsset asset, GPUInstanceData instance, uint4 selected,
+    uint assetId, uint object, uint lane)
+{
+    for (uint index = lane; index < asset.ClusterCount; index += 64)
+    {
+        TraversalQueue[QueueBase+index] = 0;
+    }
+    AllMemoryBarrierWithGroupSync();
+    for (uint root = lane; root < asset.RootCount; root += 64)
+    {
+        uint index = Roots[asset.RootOffset+root];
+        if (!PageResident(asset,Clusters[asset.ClusterOffset+index]))
+        {
+            InterlockedAnd(Accepted,0);
+        }
+        TraversalQueue[QueueBase+index] = 1;
+    }
+    AllMemoryBarrierWithGroupSync();
+    if (Accepted == 0)
+    {
+        if (lane == 0) Stat(12);
+        return;
+    }
+    int height = int((asset.Flags>>8)&63u);
+    for (int level = height-1; level >= 0; --level)
+    {
+        for (uint index = lane; index < asset.GroupCount; index += 64)
+        {
+            VirtualGeometryGPUGroup node = Groups[asset.GroupOffset+index];
+            if (node.Level != uint(level) || (GroupStates[StateBase+index]&1u) == 0) continue;
+            bool active = true;
+            for (uint parent = 0; parent < node.ParentCount; ++parent)
+            {
+                uint cluster = Hierarchy[asset.HierarchyIndexOffset+node.FirstParent+parent];
+                active = active && TraversalQueue[QueueBase+cluster] == 1;
+            }
+            if (!active) continue;
+            float4 sphere = WorldSphere(node.Bounds,instance);
+            if ((EnableFrustum != 0 && FrustumCull(sphere)) || OcclusionCull(sphere,instance)) continue;
+            bool resident = true;
+            for (uint child = 0; child < node.ChildCount; ++child)
+            {
+                uint indexInAsset = Hierarchy[asset.HierarchyIndexOffset+node.FirstChild+child];
+                VirtualGeometryGPUCluster cluster = Clusters[asset.ClusterOffset+indexInAsset];
+                if (!PageResident(asset,cluster))
+                {
+                    resident = false;
+                    RequestPage(asset,cluster);
+                }
+            }
+            if (!resident) continue;
+            for (uint parent = 0; parent < node.ParentCount; ++parent)
+            {
+                uint cluster = Hierarchy[asset.HierarchyIndexOffset+node.FirstParent+parent];
+                TraversalQueue[QueueBase+cluster] = 0;
+            }
+            for (uint child = 0; child < node.ChildCount; ++child)
+            {
+                uint cluster = Hierarchy[asset.HierarchyIndexOffset+node.FirstChild+child];
+                TraversalQueue[QueueBase+cluster] = 1;
+            }
+        }
+        AllMemoryBarrierWithGroupSync();
+    }
+    for (uint index = lane; index < asset.ClusterCount; index += 64)
+    {
+        if (TraversalQueue[QueueBase+index] == 0) continue;
+        VirtualGeometryGPUCluster cluster = Clusters[asset.ClusterOffset+index];
+        float4 sphere = WorldSphere(cluster.Bounds,instance);
+        if ((EnableFrustum == 0 || !FrustumCull(sphere)) && !OcclusionCull(sphere,instance) && !ConeCull(cluster,instance))
+        {
+            TraversalQueue[QueueBase+index] = 2;
+            InterlockedAdd(OutputCount,1);
+        }
+        else Stat(20);
+    }
+    AllMemoryBarrierWithGroupSync();
+    if (lane == 0)
+    {
+        Accepted = Reserve(4,OutputCount,Capacity,OutputBase);
+        OutputCount = 0;
+        Success[object] = Accepted;
+        if (Accepted == 0) Stat(12);
+        else Stat(16);
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (Accepted == 0) return;
+    for (uint index = lane; index < asset.ClusterCount; index += 64)
+    {
+        if (TraversalQueue[QueueBase+index] != 2) continue;
+        uint offset;
+        InterlockedAdd(OutputCount,1,offset);
+        VisibleVirtualCluster record;
+        record.InstanceIndex = selected.x;
+        record.ClusterIndex = asset.ClusterOffset+index;
+        record.MaterialIndex = instance.MaterialIndex;
+        record.Flags = assetId;
+        Visible[OutputBase+offset] = record;
+        VirtualGeometryGPUCluster cluster = Clusters[record.ClusterIndex];
+        uint page = asset.VertexOffset+cluster.PageIndex;
+        uint unused;
+        PageUsage.InterlockedOr((page/32)*4,1u<<(page&31u),unused);
+        Stat(24,cluster.TriangleCount);
+        Stat(32+cluster.Level*4);
+    }
 }
 [numthreads(64,1,1)]
 void Traverse(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
@@ -177,7 +342,34 @@ void Traverse(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
         float4 sphere = WorldSphere(node.Bounds,instance);
         float distance = max(length(sphere.xyz-Camera.xyz)-sphere.w,1e-6);
         float errorPixels = node.MaxError*MaximumScale(instance)*ProjectionPixels/distance;
-        bool refine = ForceLevel >= 0 ? node.Level >= (uint)ForceLevel : errorPixels > TargetPixels;
+        float threshold = TargetPixels;
+        uint historyBase = 0, epoch = 0, previous = 0;
+        bool hasHistory = false;
+        if (HysteresisEnabled != 0 && selected.x < HistorySlots && ForceLevel < 0)
+        {
+            uint4 identity = HistoryHeaders[selected.x*2];
+            uint4 layout = HistoryHeaders[selected.x*2+1];
+            historyBase = identity.w;
+            epoch = layout.y;
+            hasHistory = identity.z == assetId && index < layout.x && historyBase < HistoryCapacity &&
+                index < HistoryCapacity-historyBase;
+            if (hasHistory)
+            {
+                previous = LodHistory[historyBase+index];
+                if ((previous>>1) == epoch && epoch != 0)
+                    threshold *= (previous&1u) != 0 ? 1-HysteresisFraction : 1+HysteresisFraction;
+            }
+        }
+        bool refine = ForceLevel >= 0 ? node.Level >= (uint)ForceLevel : errorPixels > threshold;
+        if (hasHistory)
+        {
+            LodHistory[historyBase+index] = (epoch<<1) | (refine ? 1u : 0u);
+            if ((previous>>1) == epoch && ((previous&1u) != 0) != refine)
+            {
+                uint unused;
+                TemporalCounters.InterlockedAdd(16,1,unused);
+            }
+        }
         GroupStates[StateBase+index] = refine ? 1u : 0u;
     }
     AllMemoryBarrierWithGroupSync();
@@ -200,6 +392,11 @@ void Traverse(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
             }
         }
         AllMemoryBarrierWithGroupSync();
+    }
+    if ((asset.Flags&2u) != 0)
+    {
+        ResidentCut(asset,instance,selected,assetId,object,lane);
+        return;
     }
     // Bit 1 marks generating groups already expanded, so shared roots enqueue
     // each child set once. Each cluster can enter the persistent queue once.
@@ -287,5 +484,53 @@ void Traverse(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
         VirtualGeometryGPUCluster cluster = Clusters[record.ClusterIndex];
         Stat(24,cluster.TriangleCount);
         Stat(32+cluster.Level*4);
+    }
+}
+
+// Full resident cuts are already bounded by Capacity before native routing is
+// published. Each partition has Capacity entries, so splitting cannot overflow.
+[numthreads(64,1,1)]
+void Partition(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= Statistics.Load(4)) return;
+    VisibleVirtualCluster record = Visible[id.x];
+    GPUInstanceData instance = Instances[record.InstanceIndex];
+    float4 sphere = WorldSphere(Clusters[record.ClusterIndex].Bounds,instance);
+    uint offset;
+    if (OcclusionCull(sphere,instance))
+    {
+        TemporalCounters.InterlockedAdd(0,1,offset);
+        Deferred[offset] = record;
+    }
+    else
+    {
+        TemporalCounters.InterlockedAdd(4,1,offset);
+        FirstVisible[offset] = record;
+        TemporalCounters.InterlockedAdd(516,1,offset);
+        CombinedVisible[offset] = record;
+    }
+}
+[numthreads(64,1,1)]
+void Retest(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= TemporalCounters.Load(0)) return;
+    VisibleVirtualCluster record = Deferred[id.x];
+    GPUInstanceData instance = Instances[record.InstanceIndex];
+    float4 sphere = WorldSphere(Clusters[record.ClusterIndex].Bounds,instance);
+    if (OcclusionCull(sphere,instance)) return;
+    uint offset;
+    TemporalCounters.InterlockedAdd(260,1,offset);
+    SecondVisible[offset] = record;
+    TemporalCounters.InterlockedAdd(516,1,offset);
+    CombinedVisible[offset] = record;
+}
+[numthreads(1,1,1)]
+void BuildTemporalArguments()
+{
+    for (uint phase = 0; phase < 3; ++phase)
+    {
+        uint count = TemporalCounters.Load(phase*256+4);
+        uint x = min(count,65535u);
+        TemporalArguments.Store3(phase*12,uint3(x,count ? (count+x-1)/max(x,1u) : 1,1));
     }
 }

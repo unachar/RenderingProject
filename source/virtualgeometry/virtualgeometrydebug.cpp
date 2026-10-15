@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "virtualgeometrydebug.h"
 #include "virtualgeometrytraversal.h"
+#include "virtualgeometrybinning.h"
+#include "virtualgeometrystreaming.h"
 #include "virtualgeometryruntime.h"
 #include "staticmodel.h"
 #include "modelmanager.h"
@@ -80,6 +82,18 @@ void DrawControls()
         MeshShaderRenderer::IsActive() && VirtualGeometryTraversal::Active() && native.Enabled ? "active" : "inactive");
     ImGui::Checkbox("Native hierarchy rendering",&native.Enabled);
     ImGui::SliderFloat("Target Error Pixels",&native.TargetErrorPixels,0.1f,8.0f,"%.2f");
+    ImGui::Checkbox("LOD hysteresis",&native.HysteresisEnabled);
+    ImGui::SliderFloat("LOD hysteresis width",&native.HysteresisFraction,0.0f,0.5f,"%.2f");
+    ImGui::Checkbox("Native two-pass occlusion",&native.TwoPassOcclusion);
+    const auto& temporal = VirtualGeometryTraversal::GetTemporalStatistics();
+    if (temporal.HasSample)
+    {
+        ImGui::Text("First %u / retest candidates %u / recovered %u / LOD transitions %u",
+            temporal.FirstVisible,temporal.Candidates,temporal.SecondVisible,temporal.LodTransitions);
+        ImGui::Text("Native capacity fallbacks %u",temporal.CapacityFallbacks);
+    }
+    ImGui::Text("LOD history %.2f MiB / phase lists %.2f MiB",
+        double(temporal.HistoryBytes)/(1024*1024),double(temporal.CandidateBytes)/(1024*1024));
     ImGui::SliderInt("Force Hierarchy Level (-1 = Auto)",&native.ForceHierarchyLevel,-1,31);
     ImGui::Checkbox("Selected Hierarchy Level Colors",&native.LevelColors);
     ImGui::Checkbox("Hierarchy Frustum Culling",&native.FrustumCulling);
@@ -98,7 +112,32 @@ void DrawControls()
             if (sample[8+level]) ImGui::Text("Selected Level %u: %u clusters",level,sample[8+level]);
         }
     }
-    ImGui::TextDisabled("Streaming, hysteresis and raster binning: later phases");
+    auto& streaming = VirtualGeometryStreaming::GetSettings();
+    const auto& pages = VirtualGeometryStreaming::GetStatistics();
+    int budgetMiB = int(streaming.BudgetMiB);
+    if (ImGui::SliderInt("Geometry VRAM Budget (MiB)",&budgetMiB,1,1024)) streaming.BudgetMiB = uint32_t(budgetMiB);
+    ImGui::Text("Pages Resident %llu / Requested %llu / Loading %llu / Evicted %llu",
+        pages.Resident,pages.Requested,pages.Loading,pages.Evicted);
+    ImGui::Text("Pinned %llu / evictions %llu / request overflow %llu / I/O errors %llu",
+        pages.Pinned,pages.Evictions,pages.RequestOverflow,pages.IoErrors);
+    ImGui::Text("Pool actual / reserved / target %.2f / %.2f / %.2f MiB / CPU staging %.2f MiB",
+        double(pages.PoolBytes)/(1024*1024),double(pages.ReservedBytes)/(1024*1024),double(pages.BudgetBytes)/(1024*1024),double(pages.StagingBytes)/(1024*1024));
+    auto& binning = VirtualGeometryBinning::GetSettings();
+    ImGui::Checkbox("Native material binning",&binning.Enabled);
+    int materialBins = int(binning.MaxMaterialBins);
+    if (ImGui::SliderInt("Exact material bins",&materialBins,1,65535)) binning.MaxMaterialBins = uint32_t(materialBins);
+    const auto& binStats = VirtualGeometryBinning::GetStatistics();
+    const char* phaseNames[] = {"First","Second","Velocity"};
+    for (uint32_t phase = 0; phase < 3; ++phase)
+    {
+        const auto& sample = binStats.Phases[phase];
+        if (!sample.HasSample) continue;
+        ImGui::Text("%s bins %u / clusters %u / shared overflow %u / invalid materials %u",phaseNames[phase],
+            sample.ActiveBins,sample.Clusters,sample.OverflowClusters,sample.InvalidMaterials);
+    }
+    ImGui::Text("Material bin buffers %.2f MiB",double(binStats.BufferBytes)/(1024*1024));
+    if (!VirtualGeometryBinning::UnavailableReason().empty())
+        ImGui::TextDisabled("%s",VirtualGeometryBinning::UnavailableReason().c_str());
     const auto stats = VirtualGeometryRuntime::GetStatistics();
     ImGui::Text("Cache hits %llu / shared %llu / builds %llu / failures %llu", stats.CacheHits,
                 stats.SharedHits, stats.Builds, stats.Failures);

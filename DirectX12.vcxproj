@@ -1038,6 +1038,9 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\virtualgeometry\virtualgeometrygpu.h" />
     <ClInclude Include="source\virtualgeometry\virtualgeometryresources.h" />
     <ClInclude Include="source\virtualgeometry\virtualgeometrytraversal.h" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometrytemporal.h" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometrybinning.h" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometrybinning.cpp" />
     <ClCompile Include="source\virtualgeometry\virtualgeometrytraversal.cpp" />
     <ClCompile Include="source\virtualgeometry\virtualgeometryvalidation.cpp" />
     <ClInclude Include="source\virtualgeometry\virtualgeometryvalidation.h" />
@@ -1229,4 +1232,24 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
     </Link>
   </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypages.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypages.h" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypagecache.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypagecache.h" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometryresidency.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryresidency.h" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypageio.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypageio.h" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypagepool.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypagepool.h" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometrystreaming.cpp"></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrystreaming.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypagestress.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypagestress.h" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometrystreamingvalidation.cpp"></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrystreamingvalidation.h" />
+  </ItemGroup>
 </Project>
