@@ -28,16 +28,18 @@ struct PageRecord
     PageState State = PageState::Evicted;
     bool Pinned = false;
     bool Retiring = false;
+    bool Predicted = false;
     uint32_t Slot = UINT32_MAX;
     uint64_t Generation = 0;
     uint64_t LastUsed = 0;
+    uint32_t Priority = 1;
     uint64_t GraphicsFence = 0;
     uint64_t CopyFence = 0;
 };
 class ResidencyManager
 {
 public:
-    bool AddPages(std::span<const uint8_t> pinned, uint64_t budget);
+    bool AddPages(std::span<const uint8_t> pinned, uint64_t budget, uint32_t priority = 1);
     bool CanAddPages(std::span<const uint8_t> pinned, uint64_t budget) const;
     void SetBudget(uint64_t bytes);
     void Request(PageId page, uint64_t frame);
@@ -49,6 +51,7 @@ public:
     void Collect(uint64_t completedGraphics, uint64_t completedCopy);
     void MarkSnapshotUsed(uint64_t graphicsFence);
     void MarkUsed(PageId page, uint64_t frame);
+    void MarkPredicted(PageId page, bool predicted);
     std::optional<PageId> OldestEvictable(uint64_t olderThanFrame = UINT64_MAX) const;
     bool Matches(const LoadTicket& ticket) const;
     const std::vector<ResidencyEntry>& Snapshot() const { return m_Snapshot; }

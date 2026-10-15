@@ -264,6 +264,7 @@ namespace
     }
 }
 
+void TestVirtualGeometryCompression();
 void TestVirtualGeometryRuntime();
 void TestVirtualGeometrySelection();
 void TestVirtualGeometryGPU();
@@ -276,6 +277,53 @@ int main(int argc, char** argv)
 {
     try
     {
+        if (argc == 3 && std::string_view(argv[1]) == "--compression-stress")
+        {
+            auto mesh = MakeGrid(710);
+            VirtualGeometryBuildConfig config;
+            config.MaxClusterVertices = 64;
+            config.MaxClusterTriangles = 124;
+            auto built = VirtualGeometryBuilder::Build(mesh.Vertices, mesh.Indices, config);
+            Check(bool(built), built.Error);
+            std::string error;
+            Check(VirtualGeometrySerializer::SaveEncoded(argv[2], built.Asset, error), error);
+            VirtualGeometryPageCache::PageManifest manifest;
+            Check(VirtualGeometrySerializer::LoadEncoded(argv[2], manifest, error), error);
+            std::vector<uint8_t> payload(VirtualGeometryPages::PageBytes);
+            for (uint32_t page = 0; page < manifest.Pages.size(); ++page)
+            {
+                Check(VirtualGeometryPageCache::ReadPage(manifest, page, payload, error), error);
+            }
+            std::cout << "Stress source triangles " << mesh.Indices.size()/3 << ", clusters " << manifest.Metadata.Clusters.size()
+                << ", encoded bytes " << manifest.Compression.EncodedBytes << ", raw bytes " << manifest.Compression.RawBytes << '\n';
+            return 0;
+        }
+        if (argc == 4 && std::string_view(argv[1]) == "--compression-benchmark")
+        {
+            VirtualGeometryAsset reference;
+            std::string error;
+            Check(VirtualGeometrySerializer::Load(argv[2], reference, error), error);
+            std::filesystem::path directory(argv[3]);
+            std::cout << "mode,raw_payload_bytes,payload_bytes,page_bytes,file_bytes,fallbacks\n";
+            for (bool enabled : {false, true})
+            {
+                VGCompressionSettings settings;
+                settings.Enabled = enabled;
+                VirtualGeometryPages::PagedAsset pages;
+                Check(VirtualGeometryPages::Build(reference, settings, pages, error), error);
+                const char* mode = "phase9-raw";
+                if (enabled)
+                {
+                    mode = "phase10-encoded";
+                }
+                auto path = directory / (std::string(mode) + ".vgmesh");
+                Check(VirtualGeometryPageCache::WriteAtomic(path, pages, error), error);
+                std::cout << mode << ',' << pages.Compression.RawBytes << ',' << pages.Compression.EncodedBytes << ','
+                    << uint64_t(pages.Payloads.size())*VirtualGeometryPages::PageBytes << ','
+                    << std::filesystem::file_size(path) << ',' << pages.Compression.FallbackCount << '\n';
+            }
+            return 0;
+        }
         if (argc == 4 && std::string_view(argv[1]) == "--generate-streaming")
         {
             std::filesystem::path directory(argv[2]);
@@ -308,6 +356,7 @@ int main(int argc, char** argv)
             std::cout << "PASS: Page cache, resident selection, residency, SSD I/O\n";
             return 0;
         }
+        TestVirtualGeometryCompression();
         TestVirtualGeometryRuntime();
         TestVirtualGeometrySelection();
         TestVirtualGeometryGPU();

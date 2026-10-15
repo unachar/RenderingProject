@@ -5,6 +5,7 @@
 #include "renderingvalidation.h"
 #include "meshlets/meshletvalidation.h"
 #include "virtualgeometry/virtualgeometryvalidation.h"
+#include "virtualgeometry/virtualgeometryproduction.h"
 #include "virtualgeometry/virtualgeometrystreamingvalidation.h"
 #include "gpudriven/gpudrivenvalidation.h"
 #include "gpuscene/gpuscenevalidation.h"
@@ -537,6 +538,11 @@ bool RenderingValidation::IsEnabled()
 
 void RenderingValidation::BeforeFrame(uint64_t frame)
 {
+    if (VirtualGeometryProduction::ValidationEnabled())
+    {
+        VirtualGeometryProduction::BeforeFrame(frame);
+        return;
+    }
     if (PlayRenderTestEnabled())
     {
         if (ShadowBenchmarkEnabled())
@@ -758,6 +764,12 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
 
 void RenderingValidation::AfterFrame(uint64_t frame)
 {
+    VirtualGeometryProduction::RecordBenchmark();
+    if (VirtualGeometryProduction::ValidationEnabled())
+    {
+        VirtualGeometryProduction::AfterFrame(frame);
+        return;
+    }
     if (PlayRenderTestEnabled())
     {
         if (ShadowBenchmarkEnabled()) { RecordShadowBenchmark(); return; }
@@ -1018,6 +1030,10 @@ void RenderingValidation::AfterFrame(uint64_t frame)
 
 bool RenderingValidation::Finish()
 {
+    if (VirtualGeometryProduction::ValidationEnabled())
+    {
+        return VirtualGeometryProduction::Finish();
+    }
     if (PlayRenderTestEnabled())
     {
         if (ShadowBenchmarkEnabled())

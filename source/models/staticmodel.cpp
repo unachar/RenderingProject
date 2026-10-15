@@ -16,6 +16,11 @@
 
 #include "main.h"
 #include "staticmodel.h"
+#include "virtualgeometry/virtualgeometrypagecache.h"
+#include "virtualgeometry/virtualgeometryresources.h"
+#include "materialmanager.h"
+#include <json/json.h>
+#include <iomanip>
 #include "meshlets/meshletmanager.h"
 #include "texturemanager.h"
 #include "materialpartresolver.h"
@@ -477,7 +482,16 @@ bool StaticModelResource::CreateDefaultBufferAndUpload(
 void StaticModelResource::LoadLODMetadata(const char* path)
 {
 	m_SourcePath = path;
-	ifstream file(m_SourcePath + ".lod");
+    std::string error;
+    const auto sourcePath = ModelPathFromUtf8(path);
+    if (!VirtualGeometryImport::Load(sourcePath, m_VGSettings, error))
+    {
+        m_VGSettings.Enabled = false;
+        Debug::Log("VirtualGeometry settings fallback: %s\n", error.c_str());
+    }
+    auto lodPath = sourcePath;
+    lodPath += ".lod";
+	ifstream file(lodPath);
 	if (file && !Visibility::LoadLOD(file, m_LODMetadata)) Debug::Log("Invalid LOD metadata: %s.lod\n", path);
 }
 
@@ -532,6 +546,7 @@ bool StaticModelResource::BuildLodIndexBuffers(
 
 bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 {
+    LoadLODMetadata(fileName);
     // The legacy OBJ importer combines every face into one section. Preserve its
     // single-material behavior, but retain authored material sections via Assimp.
     ifstream source(fileName);
@@ -850,6 +865,7 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 		return false;
 	}
 
+    meshData.VirtualGeometrySettings = m_VGSettings;
 	MeshletManager::BuildImportedMesh(meshData);
 	m_Meshes.push_back(move(meshData));
 
@@ -867,8 +883,388 @@ bool StaticModelResource::LoadFBX(const char* fileName, ID3D12Device* device, bo
 	return LoadAssimpModel(fileName, device, isConvert);
 }
 
+bool StaticModelResource::LoadVirtualGeometry(const char* fileName, ID3D12Device* device)
+{
+    try
+    {
+        LoadLODMetadata(fileName);
+        auto manifest = std::make_shared<VirtualGeometryPageCache::PageManifest>();
+        std::string error;
+        if (!device || !VirtualGeometryPageCache::Open(ModelPathFromUtf8(fileName), *manifest, error))
+        {
+            Debug::Log("VG import failed: %s\n", error.c_str());
+            return false;
+        }
+        manifest->StreamingPriority = m_VGSettings.StreamingPriority;
+        StaticMeshData mesh;
+        mesh.VirtualGeometryRootFallback = true;
+        mesh.MeshName = ModelPathToUtf8(ModelPathFromUtf8(fileName).stem());
+        mesh.VirtualGeometrySettings = m_VGSettings;
+        mesh.AppliedMaterialPartId = float(ShaderClass::PBR);
+        mesh.MaterialPartId = mesh.AppliedMaterialPartId;
+        // Only pinned roots are expanded for unsupported-device/shadow/picking fallback.
+        // Fine geometry remains encoded on disk and is never uploaded as a full vertex buffer.
+        std::vector<uint8_t> page(VirtualGeometryPages::PageBytes);
+        uint32_t lastPage = UINT32_MAX;
+        XMFLOAT3 lower{INFINITY,INFINITY,INFINITY}, upper{-INFINITY,-INFINITY,-INFINITY};
+        for (const auto root : manifest->Metadata.Roots)
+        {
+            const auto& cluster = manifest->Metadata.Clusters.at(root);
+            if (cluster.PageIndex != lastPage)
+            {
+                if (!VirtualGeometryPageCache::ReadPage(*manifest, cluster.PageIndex, page, error))
+                {
+                    Debug::Log("VG root fallback page failed: %s\n", error.c_str());
+                    return false;
+                }
+                lastPage = cluster.PageIndex;
+            }
+            if (mesh.CpuVertices.size()+cluster.VertexCount > UINT32_MAX ||
+                mesh.CpuIndices.size()+uint64_t(cluster.TriangleCount)*3 > UINT32_MAX)
+            {
+                return false;
+            }
+            const uint32_t first = static_cast<uint32_t>(mesh.CpuVertices.size());
+            const bool encoded = (cluster.Flags & VirtualGeometryCompression::ClusterFlag) != 0;
+            const auto payload = std::span<const uint8_t>(page).subspan(cluster.VertexOffset);
+            for (uint32_t index = 0; index < cluster.VertexCount; ++index)
+            {
+                StaticModelVertex vertex;
+                if (encoded)
+                {
+                    const auto decoded = VirtualGeometryCompression::DecodeVertexCPU(payload, index);
+                    vertex.Position = {decoded.Position[0],decoded.Position[1],decoded.Position[2]};
+                    vertex.Normal = {decoded.Normal[0],decoded.Normal[1],decoded.Normal[2]};
+                    if (!decoded.Texcoords.empty()) vertex.TexCoord = {decoded.Texcoords[0][0],decoded.Texcoords[0][1]};
+                    vertex.Diffuse = {decoded.Color[0],decoded.Color[1],decoded.Color[2],decoded.Color[3]};
+                }
+                else
+                {
+                    static_assert(sizeof(StaticModelVertex) == sizeof(VirtualGeometryVertex));
+                    memcpy(&vertex, payload.data()+size_t(index)*sizeof(StaticModelVertex), sizeof(vertex));
+                }
+                mesh.CpuVertices.push_back(vertex);
+            }
+            for (uint32_t triangle = 0; triangle < cluster.TriangleCount; ++triangle)
+            {
+                std::array<uint32_t,3> indices;
+                if (encoded)
+                {
+                    indices = VirtualGeometryCompression::LoadTriangleCPU(payload, triangle);
+                }
+                else
+                {
+                    const size_t offset = size_t(cluster.TriangleOffset)+size_t(triangle)*3;
+                    indices = {page.at(offset),page.at(offset+1),page.at(offset+2)};
+                }
+                for (const auto index : indices)
+                {
+                    if (index >= cluster.VertexCount) return false;
+                    mesh.CpuIndices.push_back(first+index);
+                }
+            }
+            lower.x = std::min(lower.x, cluster.Bounds[0]-cluster.Bounds[3]);
+            lower.y = std::min(lower.y, cluster.Bounds[1]-cluster.Bounds[3]);
+            lower.z = std::min(lower.z, cluster.Bounds[2]-cluster.Bounds[3]);
+            upper.x = std::max(upper.x, cluster.Bounds[0]+cluster.Bounds[3]);
+            upper.y = std::max(upper.y, cluster.Bounds[1]+cluster.Bounds[3]);
+            upper.z = std::max(upper.z, cluster.Bounds[2]+cluster.Bounds[3]);
+        }
+        if (mesh.CpuVertices.empty() || mesh.CpuIndices.empty() ||
+            mesh.CpuVertices.size() > UINT32_MAX/sizeof(StaticModelVertex) || mesh.CpuIndices.size() > UINT32_MAX/4)
+        {
+            return false;
+        }
+        mesh.VertexCount = static_cast<UINT>(mesh.CpuVertices.size());
+        mesh.IndexCount = static_cast<UINT>(mesh.CpuIndices.size());
+        const UINT vertexBytes = mesh.VertexCount*sizeof(StaticModelVertex), indexBytes = mesh.IndexCount*4;
+        if (!CreateDefaultBufferAndUpload(device, vertexBytes, mesh.CpuVertices.data(),
+                D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, "VG root vertex allocation failed", "VG root vertex", mesh.VertexBuffer) ||
+            !CreateDefaultBufferAndUpload(device, indexBytes, mesh.CpuIndices.data(),
+                D3D12_RESOURCE_STATE_INDEX_BUFFER, "VG root index allocation failed", "VG root index", mesh.IndexBuffer))
+        {
+            return false;
+        }
+        mesh.VertexBufferView = {mesh.VertexBuffer->GetGPUVirtualAddress(),vertexBytes,sizeof(StaticModelVertex)};
+        mesh.IndexBufferView = {mesh.IndexBuffer->GetGPUVirtualAddress(),indexBytes,DXGI_FORMAT_R32_UINT};
+        auto runtime = std::make_shared<VirtualGeometryRuntime::RuntimeAsset>();
+        runtime->Key = manifest->Identity;
+        runtime->CachePath = manifest->Path;
+        runtime->ImportSettings = m_VGSettings;
+        runtime->Hierarchy.Stats.SourceTriangles = manifest->SourceTriangles;
+        runtime->Hierarchy.Stats.SourceVertices = manifest->SourceVertices;
+        runtime->Hierarchy.Stats.TotalClusters = static_cast<uint32_t>(manifest->Metadata.Clusters.size());
+        runtime->Hierarchy.Stats.TotalGroups = static_cast<uint32_t>(manifest->Metadata.Groups.size());
+        for (const auto& cluster : manifest->Metadata.Clusters)
+        {
+            runtime->Hierarchy.Stats.HierarchyLevels = std::max(runtime->Hierarchy.Stats.HierarchyLevels,cluster.Level+1);
+        }
+        runtime->Pages = std::move(manifest);
+        mesh.VirtualGeometryLODs[0] = std::move(runtime);
+        m_AabbCenter = {(lower.x+upper.x)*0.5f,(lower.y+upper.y)*0.5f,(lower.z+upper.z)*0.5f};
+        m_AabbExtents = {(upper.x-lower.x)*0.5f,(upper.y-lower.y)*0.5f,(upper.z-lower.z)*0.5f};
+        m_Meshes.clear();
+        m_Meshes.push_back(std::move(mesh));
+        return true;
+    }
+    catch (const std::exception& error)
+    {
+        Debug::Log("VG import failed safely: %s\n", error.what());
+        return false;
+    }
+}
+
+namespace
+{
+uint64_t HashSourceFile(const std::filesystem::path& path)
+{
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return 0;
+    uint64_t hash = 14695981039346656037ull;
+    std::array<char,65536> bytes;
+    while (input)
+    {
+        input.read(bytes.data(), bytes.size());
+        for (std::streamsize index = 0; index < input.gcount(); ++index)
+        {
+            hash = (hash ^ static_cast<unsigned char>(bytes[index]))*1099511628211ull;
+        }
+    }
+    return input.bad() ? 0 : hash;
+}
+std::vector<std::filesystem::path> GeometryDependencies(const std::filesystem::path& source)
+{
+    std::vector<std::filesystem::path> paths{source};
+    std::string extension = source.extension().string();
+    std::transform(extension.begin(),extension.end(),extension.begin(),[](unsigned char letter)
+    {
+        return static_cast<char>(std::tolower(letter));
+    });
+    if (extension == ".gltf" || extension == ".glb")
+    {
+        std::ifstream input(source,std::ios::binary);
+        Json::Value document;
+        Json::CharReaderBuilder reader;
+        std::string error;
+        if (extension == ".glb")
+        {
+            std::array<uint32_t,5> header{};
+            input.read(reinterpret_cast<char*>(header.data()),sizeof(header));
+            if (!input || header[0] != 0x46546c67u || header[1] != 2 || header[4] != 0x4e4f534au ||
+                header[3] > 16u*1024*1024 || header[2] < sizeof(header) || header[3] > header[2]-sizeof(header)) return {};
+            std::string json(header[3],'\0');
+            if (!input.read(json.data(),json.size())) return {};
+            std::istringstream jsonStream(json);
+            if (!Json::parseFromStream(reader,jsonStream,&document,&error)) return {};
+        }
+        else if (!Json::parseFromStream(reader, input, &document, &error)) return {};
+        for (const auto& buffer : document["buffers"])
+        {
+            if (extension == ".glb" && !buffer.isMember("uri")) continue;
+            const auto uri = buffer["uri"].asString();
+            if (uri.rfind("data:",0) != 0)
+            {
+                // URI escapes require the importer; skip the fast cache rather than miss a dependency.
+                if (uri.empty() || uri.find('%') != std::string::npos) return {};
+                paths.push_back(source.parent_path()/std::filesystem::u8path(uri));
+            }
+        }
+    }
+    if (extension == ".obj")
+    {
+        std::ifstream input(source);
+        std::string line;
+        while (std::getline(input,line))
+        {
+            if (line.rfind("mtllib ",0) == 0)
+            {
+                paths.push_back(source.parent_path()/line.substr(7));
+            }
+        }
+    }
+    return paths;
+}
+}
+bool StaticModelResource::LoadDerivedVirtualGeometry(const char* fileName, ID3D12Device* device, bool convert)
+{
+    try
+    {
+        LoadLODMetadata(fileName);
+        if (!m_VGSettings.Enabled || GetGeometryRenderingMode() == GeometryRenderingMode::Legacy) return false;
+        char compressionOverride[8]{};
+        if (GetEnvironmentVariableA("DX12_VG_COMPRESSION_RAW",compressionOverride,sizeof(compressionOverride))) return false;
+        auto indexPath = ModelPathFromUtf8(fileName);
+        indexPath += ".vgderived";
+        std::ifstream input(indexPath);
+        Json::Value index;
+        Json::CharReaderBuilder reader;
+        std::string error;
+        if (!Json::parseFromStream(reader,input,&index,&error) || index["builder"].asUInt() != VirtualGeometryConfig::BuilderVersion ||
+            index["compression"].asUInt() != VirtualGeometryCompression::CompressionVersion || index["convert"].asBool() != convert ||
+            index["settings"].asString() != std::to_string(VirtualGeometryImport::SettingsKey(m_VGSettings))) return false;
+        const auto dependencies = GeometryDependencies(ModelPathFromUtf8(fileName));
+        if (dependencies.empty() || index["dependencies"].size() != dependencies.size()) return false;
+        for (Json::ArrayIndex entry = 0; entry < dependencies.size(); ++entry)
+        {
+            const auto hash = HashSourceFile(dependencies[entry]);
+            if (!hash || index["dependencies"][entry].asString() != std::to_string(hash)) return false;
+        }
+        if (!index["meshes"].isArray() || index["meshes"].empty() || index["meshes"].size() > 65536) return false;
+        const std::string originalSource = fileName;
+        const auto settings = m_VGSettings;
+        std::vector<StaticMeshData> meshes;
+        XMFLOAT3 lower{INFINITY,INFINITY,INFINITY}, upper{-INFINITY,-INFINITY,-INFINITY};
+        for (const auto& entry : index["meshes"])
+        {
+            const std::filesystem::path path = std::filesystem::u8path(entry["path"].asString());
+            const auto cache = std::filesystem::weakly_canonical("asset/virtualgeometry-cache");
+            const auto relative = std::filesystem::weakly_canonical(path).lexically_relative(cache);
+            if (relative.empty() || relative.is_absolute() || *relative.begin() == "..") return false;
+            if (!LoadVirtualGeometry(ModelPathToUtf8(path).c_str(),device)) return false;
+            auto mesh = std::move(m_Meshes.front());
+            mesh.MeshName = entry["name"].asString();
+            mesh.MaterialName = entry["material"].asString();
+            mesh.MaterialPartId = entry["part"].asFloat();
+            mesh.AppliedMaterialPartId = mesh.MaterialPartId;
+            mesh.VirtualGeometrySettings = settings;
+            auto runtime = std::make_shared<VirtualGeometryRuntime::RuntimeAsset>(*mesh.VirtualGeometryLODs[0]);
+            runtime->ImportSettings = settings;
+            mesh.VirtualGeometryLODs[0] = std::move(runtime);
+            if (!std::isfinite(mesh.MaterialPartId)) return false;
+            const auto texture = entry["texture"].asString();
+            if (!texture.empty()) mesh.TextureIndex = TextureManager::LoadTexture(std::filesystem::u8path(texture));
+            if (m_MaterialPath.empty() && !texture.empty()) m_MaterialPath = texture;
+            meshes.push_back(std::move(mesh));
+            lower.x = std::min(lower.x,m_AabbCenter.x-m_AabbExtents.x);
+            lower.y = std::min(lower.y,m_AabbCenter.y-m_AabbExtents.y);
+            lower.z = std::min(lower.z,m_AabbCenter.z-m_AabbExtents.z);
+            upper.x = std::max(upper.x,m_AabbCenter.x+m_AabbExtents.x);
+            upper.y = std::max(upper.y,m_AabbCenter.y+m_AabbExtents.y);
+            upper.z = std::max(upper.z,m_AabbCenter.z+m_AabbExtents.z);
+        }
+        m_Meshes = std::move(meshes);
+        m_AabbCenter = {(lower.x+upper.x)*0.5f,(lower.y+upper.y)*0.5f,(lower.z+upper.z)*0.5f};
+        m_AabbExtents = {(upper.x-lower.x)*0.5f,(upper.y-lower.y)*0.5f,(upper.z-lower.z)*0.5f};
+        LoadLODMetadata(originalSource.c_str());
+        m_UsesDerivedVG = true;
+        m_DerivedVGPublished = true;
+        CaptureSourceIdentity(ModelPathFromUtf8(originalSource.c_str()));
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false; // Any invalid cache falls through to the source importer.
+    }
+}
+void StaticModelResource::PublishDerivedVirtualGeometry(bool convert)
+{
+    if (m_DerivedVGPublished || m_Meshes.empty() || m_SourcePath.empty() ||
+        std::filesystem::path(m_SourcePath).extension() == ".vgmesh" ||
+        std::filesystem::path(m_SourcePath).extension() == ".vgp2") return;
+    try
+    {
+        for (const auto& mesh : m_Meshes)
+        {
+            const auto& runtime = mesh.VirtualGeometryLODs[0];
+            if (mesh.MaterialPartId != mesh.AppliedMaterialPartId) return;
+            if (!runtime || (!runtime->Pages && !VirtualGeometryResources::ManifestFor(runtime.get()))) return;
+        }
+        Json::Value index;
+        index["builder"] = VirtualGeometryConfig::BuilderVersion;
+        index["compression"] = VirtualGeometryCompression::CompressionVersion;
+        index["convert"] = convert;
+        index["settings"] = std::to_string(VirtualGeometryImport::SettingsKey(m_VGSettings));
+        const auto dependencies = GeometryDependencies(ModelPathFromUtf8(m_SourcePath.c_str()));
+        if (dependencies.empty()) return;
+        if (dependencies != m_VGDependencies || dependencies.size() != m_VGDependencyHashes.size()) return;
+        for (size_t dependency = 0; dependency < dependencies.size(); ++dependency)
+        {
+            const uint64_t hash = HashSourceFile(dependencies[dependency]);
+            if (!hash || hash != m_VGDependencyHashes[dependency]) return;
+            index["dependencies"].append(std::to_string(hash));
+        }
+        const auto textures = TextureManager::GetLoadedTextureInfos();
+        for (const auto& mesh : m_Meshes)
+        {
+            const auto& runtime = mesh.VirtualGeometryLODs[0];
+            const auto manifest = runtime ? (runtime->Pages ? runtime->Pages : VirtualGeometryResources::ManifestFor(runtime.get())) : nullptr;
+            if (!manifest) return;
+            std::string registryError;
+            MaterialManager::Registry().Register(manifest->Path,AssetType::Mesh,registryError);
+            Json::Value entry;
+            entry["path"] = manifest->Path.generic_string();
+            entry["name"] = mesh.MeshName;
+            entry["material"] = mesh.MaterialName;
+            entry["part"] = mesh.MaterialPartId;
+            if (mesh.TextureIndex >= 0)
+            {
+                bool found = false;
+                for (const auto& texture : textures)
+                {
+                    if (texture.SrvIndex == mesh.TextureIndex && std::filesystem::is_regular_file(std::filesystem::u8path(texture.Path)))
+                    {
+                        entry["texture"] = texture.Path;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    m_DerivedVGPublished = true; // Embedded textures need the original importer.
+                    return;
+                }
+            }
+            index["meshes"].append(entry);
+        }
+        auto path = ModelPathFromUtf8(m_SourcePath.c_str());
+        path += ".vgderived";
+        auto temporary = path;
+        temporary += ".tmp";
+        {
+            std::ofstream output(temporary);
+            output << index;
+            output.flush();
+            if (!output) return;
+        }
+        m_DerivedVGPublished = MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
+    }
+    catch (const std::exception& error)
+    {
+        Debug::Log("VG source index publication skipped: %s\n",error.what());
+    }
+}
+void StaticModelResource::CaptureSourceIdentity(const std::filesystem::path& path)
+{
+    try
+    {
+        m_VGDependencies = GeometryDependencies(path);
+    }
+    catch (const std::exception&)
+    {
+        m_VGDependencies.clear(); // Invalid dependency metadata must reach the normal importer as an error.
+    }
+    m_VGDependencyHashes.clear();
+    m_VGDependencyTimes.clear();
+    for (const auto& dependency : m_VGDependencies)
+    {
+        m_VGDependencyHashes.push_back(HashSourceFile(dependency));
+        std::error_code ec;
+        m_VGDependencyTimes.push_back(std::filesystem::last_write_time(dependency,ec));
+    }
+}
+bool StaticModelResource::SourceDependenciesChanged() const
+{
+    for (size_t index = 0; index < m_VGDependencies.size(); ++index)
+    {
+        std::error_code ec;
+        if (std::filesystem::last_write_time(m_VGDependencies[index],ec) != m_VGDependencyTimes[index]) return true;
+    }
+    return false;
+}
+
 bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* device, bool isConvert)
 {
+    LoadLODMetadata(fileName);
 	if (!device)
 	{
 		Debug::Log("ERROR: Invalid device for static model: %s\n", fileName);
@@ -1154,6 +1550,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 			releaseScene();
 			return false;
 		}
+        meshData.VirtualGeometrySettings = m_VGSettings;
 		MeshletManager::BuildImportedMesh(meshData);
 	m_Meshes.push_back(move(meshData));
 	}
@@ -1246,4 +1643,32 @@ void StaticModelResource::Uninit()
 {
 	m_Meshes.clear();
 	Clear();
+}
+
+bool StaticModelResource::PollVirtualGeometry()
+{
+    bool changed = false;
+    for (auto& mesh : m_Meshes)
+    {
+        changed = MeshletManager::PollImportedMesh(mesh) || changed;
+    }
+    return changed;
+}
+void StaticModelResource::RebuildVirtualGeometry(const VGImportSettings& settings)
+{
+    m_DerivedVGPublished = false;
+    m_VGSettings = settings;
+    for (auto& mesh : m_Meshes)
+    {
+        mesh.VirtualGeometrySettings = settings;
+        if (mesh.VirtualGeometryRootFallback && mesh.VirtualGeometryLODs[0] && mesh.VirtualGeometryLODs[0]->Pages)
+        {
+            auto runtime = std::make_shared<VirtualGeometryRuntime::RuntimeAsset>(*mesh.VirtualGeometryLODs[0]);
+            runtime->ImportSettings = settings;
+            mesh.VirtualGeometryLODs[0] = std::move(runtime);
+            continue; // Prebuilt pages retain their native hierarchy when runtime policy changes.
+        }
+        MeshletManager::BuildImportedMesh(mesh);
+        GPUDrivenRenderer::UpdateGeometry(mesh);
+    }
 }

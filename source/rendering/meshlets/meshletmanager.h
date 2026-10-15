@@ -6,6 +6,7 @@ struct StaticMeshData;
 namespace MeshletManager
 {
 void BuildImportedMesh(StaticMeshData &mesh);
+bool PollImportedMesh(StaticMeshData& mesh);
 void Register(uint32_t meshID, const Meshlets::Asset &asset, uint32_t baseVertex);
 void Replace(uint32_t meshID, const Meshlets::Asset &asset, uint32_t baseVertex);
 void Invalidate(uint32_t meshID);

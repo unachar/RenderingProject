@@ -4,6 +4,9 @@
 
 struct StaticMeshData;
 
+// Import eligibility only; runtime also checks material, deformation and device support.
+bool CanUseVirtualGeometry(const StaticMeshData& source, std::string& reason);
+
 class VirtualGeometryBuilder
 {
 public:

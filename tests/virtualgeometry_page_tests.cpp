@@ -4,6 +4,7 @@
 #include "virtualgeometry/virtualgeometrypagestress.h"
 #include "virtualgeometry/virtualgeometryserializer.h"
 #include <cstring>
+#include <cmath>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -53,14 +54,31 @@ void TestVirtualGeometryPages()
         const auto& source = built.Asset.Clusters[index];
         const auto& cluster = packed.Metadata.Clusters[index];
         const auto& page = packed.Payloads.at(cluster.PageIndex);
-        size_t vertexBytes = source.VertexCount * sizeof(VirtualGeometryVertex);
-        size_t triangleBytes = source.TriangleCount * 3;
-        require(cluster.VertexOffset + vertexBytes <= page.size(), "Vertex page overflow");
-        require((cluster.TriangleOffset + triangleBytes + 3) / 4 * 4 <= page.size(), "Triangle word overflow");
-        require(std::memcmp(page.data() + cluster.VertexOffset, built.Asset.Vertices.data() + source.VertexOffset, vertexBytes) == 0,
-            "Page vertex roundtrip");
-        require(std::memcmp(page.data() + cluster.TriangleOffset, built.Asset.TriangleIndices.data() + source.TriangleOffset, triangleBytes) == 0,
-            "Page triangle roundtrip");
+        auto encoded = std::span<const uint8_t>(page).subspan(cluster.VertexOffset, cluster.Padding);
+        require(VirtualGeometryCompression::Validate(encoded, cluster.VertexCount, cluster.TriangleCount, error), error);
+        for (uint32_t vertex = 0; vertex < cluster.VertexCount; ++vertex)
+        {
+            auto decoded = VirtualGeometryCompression::DecodeVertexCPU(encoded, vertex);
+            double squared = 0;
+            double sphereSquared = 0;
+            for (uint32_t axis = 0; axis < 3; ++axis)
+            {
+                double delta = double(decoded.Position[axis]) - built.Asset.Vertices[source.VertexOffset + vertex].Position[axis];
+                squared += delta * delta;
+                double sphereDelta = double(decoded.Position[axis]) - cluster.Bounds[axis];
+                sphereSquared += sphereDelta * sphereDelta;
+            }
+            require(std::sqrt(squared) <= VGCompressionSettings{}.MaxPositionError, "Page position error");
+            require(std::sqrt(sphereSquared) <= cluster.Bounds[3], "Decoded vertex outside conservative sphere");
+        }
+        for (uint32_t triangle = 0; triangle < cluster.TriangleCount; ++triangle)
+        {
+            auto decoded = VirtualGeometryCompression::LoadTriangleCPU(encoded, triangle);
+            for (uint32_t corner = 0; corner < 3; ++corner)
+            {
+                require(decoded[corner] == built.Asset.TriangleIndices[source.TriangleOffset + triangle*3 + corner], "Page index roundtrip");
+            }
+        }
     }
     for (uint32_t root : built.Asset.RootClusters)
     {
@@ -70,6 +88,16 @@ void TestVirtualGeometryPages()
     require(VirtualGeometryPageCache::WriteAtomic(path, packed, error), error);
     VirtualGeometryPageCache::PageManifest manifest;
     require(VirtualGeometryPageCache::Open(path, manifest, error), error);
+    require(manifest.Version == VirtualGeometryPageCache::FormatVersion::Production, "Production format version");
+    {
+        std::ifstream file(path, std::ios::binary);
+        std::vector<uint8_t> first((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        file.close();
+        require(VirtualGeometryPageCache::WriteAtomic(path, repeated, error), error);
+        std::ifstream secondFile(path, std::ios::binary);
+        std::vector<uint8_t> second((std::istreambuf_iterator<char>(secondFile)), std::istreambuf_iterator<char>());
+        require(first == second, "Encoded vgmesh output is not deterministic");
+    }
     require(manifest.Pages.size() == packed.Payloads.size(), "Cache page count");
     std::vector<uint8_t> payload(VirtualGeometryPages::PageBytes);
     for (uint32_t page = 0; page < manifest.Pages.size(); ++page)
@@ -97,6 +125,15 @@ void TestVirtualGeometryPages()
         output.write(reinterpret_cast<const char*>(damaged.data()),damaged.size());
     }
     require(!VirtualGeometryPageCache::Open(path,manifest,error),"64-bit Page directory overflow accepted");
+    require(VirtualGeometryPageCache::WriteAtomic(path,packed,error),error);
+    {
+        std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+        file.seekp(4);
+        const char unknownVersion[4] = {99, 0, 0, 0};
+        file.write(unknownVersion, 4);
+    }
+    require(!VirtualGeometryPageCache::Open(path,manifest,error) && error == "Unsupported VGMesh format version",
+        "Unknown format version not explicitly rejected");
     require(VirtualGeometryPageCache::WriteAtomic(path,packed,error),error);
     require(VirtualGeometryPageCache::Open(path,manifest,error),error);
     {

@@ -17,10 +17,13 @@ add_executable(virtualgeometry_tests
     "${VG}/virtualgeometrypageio.cpp"
     "${VG}/virtualgeometrypagestress.cpp"
     "${VG}/virtualgeometrypages.cpp"
+    "${VG}/virtualgeometrycompression.cpp"
+    "${ROOT}/tests/virtualgeometry_compression_tests.cpp"
     "${VG}/virtualgeometrypagecache.cpp"
     "${VG}/virtualgeometryselection.cpp"
     "${VG}/virtualgeometrygpu.cpp"
     "${VG}/virtualgeometryruntime.cpp"
+    "${VG}/virtualgeometryimport.cpp"
     "${ROOT}/source/rendering/meshlets/meshletbuilder.cpp"
     "${VG}/virtualgeometrybuilder.cpp"
     "${VG}/virtualgeometrygeometry.cpp"
@@ -46,3 +49,23 @@ endif()
 add_test(NAME virtualgeometry_phase1 COMMAND virtualgeometry_tests)
 add_test(NAME virtualgeometry_million COMMAND virtualgeometry_tests --million)
 set_tests_properties(virtualgeometry_million PROPERTIES LABELS stress)
+
+# Explicit opt-in target: the normal CPU test build does not compile or run D3D12 parity.
+if(WIN32)
+    add_executable(virtualgeometry_decoder_parity_tests EXCLUDE_FROM_ALL
+        "${ROOT}/tests/virtualgeometry_decoder_parity_tests.cpp"
+        "${VG}/virtualgeometrycompression.cpp")
+    target_include_directories(virtualgeometry_decoder_parity_tests PRIVATE "${ROOT}/source")
+    target_compile_features(virtualgeometry_decoder_parity_tests PRIVATE cxx_std_20)
+    target_link_libraries(virtualgeometry_decoder_parity_tests PRIVATE d3d12 dxgi)
+    set(PARITY_SHADER "${CMAKE_CURRENT_BINARY_DIR}/VirtualGeometryDecoderParity.cso")
+    set(PARITY_DXC "${ROOT}/packages/Microsoft.Direct3D.DXC.1.9.2602.24/build/native/bin/x64/dxc.exe")
+    add_custom_command(OUTPUT "${PARITY_SHADER}"
+        COMMAND "${PARITY_DXC}" -T cs_6_5 -E main -O3 -Fo "${PARITY_SHADER}"
+            "${ROOT}/tests/virtualgeometry_decoder_parity_cs.hlsl"
+        DEPENDS "${ROOT}/tests/virtualgeometry_decoder_parity_cs.hlsl"
+            "${ROOT}/shader/hlsl/VGGeometryDecode.hlsli"
+        VERBATIM)
+    add_custom_target(virtualgeometry_decoder_parity_shader DEPENDS "${PARITY_SHADER}")
+    add_dependencies(virtualgeometry_decoder_parity_tests virtualgeometry_decoder_parity_shader)
+endif()

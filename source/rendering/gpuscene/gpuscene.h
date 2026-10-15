@@ -18,5 +18,6 @@ class GpuScene
     static const GpuSceneStatistics &Statistics();
     static const GPUInstanceData *GetInstance(GPUInstanceID id);
     static uint64_t InstanceHistoryGeneration(GPUInstanceID id);
+    static uint32_t ResolveEntity(GPUInstanceID id, uint64_t generation);
     static void DrawDebug();
 };

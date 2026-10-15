@@ -183,19 +183,31 @@ bool PageResident(VirtualGeometryGPUAsset asset, VirtualGeometryGPUCluster clust
     }
     return resident;
 }
-void RequestPage(VirtualGeometryGPUAsset asset, VirtualGeometryGPUCluster cluster)
+void RequestPage(VirtualGeometryGPUAsset asset, VirtualGeometryGPUCluster cluster, bool predicted = false)
 {
     uint page = asset.VertexOffset + cluster.PageIndex;
     if (cluster.PageIndex >= asset.TriangleOffset || page >= PageCount) return;
     uint previous;
     uint mask = 1u << (page&31u);
+    if (predicted)
+    {
+        if (Residency[page].z != 0) return;
+        uint forecast;
+        PageRequests.InterlockedAdd(8,1,forecast);
+        if (forecast >= min(128u,PageRequestCapacity/8)) return;
+    }
+    else
+    {
+        // A later real request upgrades an earlier predicted append through this bit.
+        PageUsage.InterlockedOr((page/32)*4,mask,previous);
+    }
     PageRequestBits.InterlockedOr((page/32)*4,mask,previous);
     if ((previous&mask) != 0) return;
     uint offset;
     PageRequests.InterlockedAdd(0,1,offset);
     if (offset < PageRequestCapacity)
     {
-        PageRequests.Store(16+offset*4,page);
+        PageRequests.Store(16+offset*4,page | (predicted ? 0x80000000u : 0u));
     }
     else
     {
@@ -361,6 +373,18 @@ void Traverse(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
             }
         }
         bool refine = ForceLevel >= 0 ? node.Level >= (uint)ForceLevel : errorPixels > threshold;
+        if (StreamingPadding.y != 0 && !refine && (asset.Flags&2u) != 0)
+        {
+            uint packed = StreamingPadding.x;
+            float3 direction = normalize(float3(packed&1023u,(packed>>10)&1023u,(packed>>20)&1023u)/1023.0*2-1);
+            float predictedDistance = max(length(sphere.xyz-(Camera.xyz+direction*Camera.w))-sphere.w,1e-6);
+            float predictedError = node.MaxError*MaximumScale(instance)*ProjectionPixels/predictedDistance;
+            if (predictedError > threshold)
+            {
+                for (uint child = 0; child < node.ChildCount; ++child)
+                    RequestPage(asset,Clusters[asset.ClusterOffset+Hierarchy[asset.HierarchyIndexOffset+node.FirstChild+child]],true);
+            }
+        }
         if (hasHistory)
         {
             LodHistory[historyBase+index] = (epoch<<1) | (refine ? 1u : 0u);

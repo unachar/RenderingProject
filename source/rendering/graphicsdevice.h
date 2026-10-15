@@ -27,6 +27,7 @@ public:
 	static ID3D12GraphicsCommandList* GetCommandList() { return m_CommandList.Get(); }
 	static bool CheckDeviceHealth(HRESULT operationResult, const char* operation);
 	static bool WaitForGpuIdle();
+    static bool GpuBasedValidationEnabled();
 	static ID3D12CommandQueue* GetCommandQueue() { return m_CommandQueue.Get(); }
     static UINT64 GetPendingSubmissionFence() { return m_CurrentFenceValue + 1; }
     static UINT64 GetCompletedFence() { return m_Fence ? m_Fence->GetCompletedValue() : 0; }

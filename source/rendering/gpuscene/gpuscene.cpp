@@ -397,7 +397,7 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
                     const auto slot = ids[section - 1];
                     auto instance = scene.Instances.Data()[slot];
                     GPUDrivenRenderer::RegisterGeometry(instance.MeshIndex, mesh);
-                    if (mesh.VirtualGeometryLODs[0])
+                    if (mesh.VirtualGeometrySettings.Enabled && mesh.VirtualGeometryLODs[0])
                     {
                         instance.VirtualGeometryAssetIndex = VirtualGeometryResources::Register(mesh.VirtualGeometryLODs[0]);
                     }
@@ -468,7 +468,7 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
             auto instance = scene.Instances.Data()[slot];
             const auto& source = *mesh.NaniteMesh;
             GPUDrivenRenderer::RegisterPrimitiveGeometry(instance.MeshIndex, source);
-            if (source.VirtualGeometryLODs[0])
+            if (source.VirtualGeometrySettings.Enabled && source.VirtualGeometryLODs[0])
             {
                 instance.VirtualGeometryAssetIndex = VirtualGeometryResources::Register(source.VirtualGeometryLODs[0]);
             }
@@ -575,6 +575,7 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
 
 void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
 {
+    ModelManager::UpdateVirtualGeometry();
     GPUDrivenValidation::Trace("GPU Scene begin");
     GpuSceneValidation::BeforeScene();
     const auto start = chrono::steady_clock::now();
@@ -797,6 +798,20 @@ const GPUInstanceData *GpuScene::GetInstance(GPUInstanceID id)
 uint64_t GpuScene::InstanceHistoryGeneration(GPUInstanceID id)
 {
     return Scene().Instances.Generation(id);
+}
+uint32_t GpuScene::ResolveEntity(GPUInstanceID id, uint64_t generation)
+{
+    const auto* instance = GetInstance(id);
+    if (!instance || InstanceHistoryGeneration(id) != generation || !Registry::IsAlive(instance->Entity))
+    {
+        return UINT32_MAX;
+    }
+    const auto& destroyed = GpuSceneChanges::Pending().Destroyed;
+    if (std::find(destroyed.begin(),destroyed.end(),instance->Entity) != destroyed.end())
+    {
+        return UINT32_MAX;
+    }
+    return instance->Entity;
 }
 void GpuScene::DrawDebug()
 {

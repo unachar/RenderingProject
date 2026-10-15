@@ -133,13 +133,23 @@ void CollectFeedback()
         }
         const auto* values = static_cast<const uint32_t*>(mapped);
         uint32_t count = std::min(values[0], RequestCapacity);
+        const auto* usage = values + 4 + RequestCapacity;
         state.Stats.GpuRequests += values[0];
         state.Stats.RequestOverflow += values[1];
         for (uint32_t request = 0; request < count; ++request)
         {
-            uint32_t page = values[4 + request];
+            const uint32_t packed = values[4 + request];
+            uint32_t page = packed & 0x7fffffffu;
             if (page < frame.Pages)
             {
+                const bool predicted = (packed&0x80000000u) != 0 && (usage[page/32]&(1u<<(page%32))) == 0;
+                if (predicted) ++state.Stats.PrefetchRequests;
+                const auto& record = state.Manager.Pages()[page];
+                if (!predicted || (frame.Serial >= record.LastUsed &&
+                    (record.State == PageState::Evicted || record.State == PageState::Requested)))
+                {
+                    state.Manager.MarkPredicted(page,predicted);
+                }
                 if (state.Manager.Pages()[page].State == PageState::Evicted)
                 {
                     ++state.Stats.CpuRequests;
@@ -147,12 +157,12 @@ void CollectFeedback()
                 state.Manager.Request(page, frame.Serial);
             }
         }
-        const auto* usage = values + 4 + RequestCapacity;
         for (uint32_t page = 0; page < frame.Pages; ++page)
         {
             if ((usage[page / 32] & (1u << (page % 32))) != 0)
             {
                 state.Manager.MarkUsed(page, frame.Serial);
+                state.Manager.MarkPredicted(page,false);
             }
         }
         D3D12_RANGE noWrite{0, 0};
@@ -162,6 +172,37 @@ void CollectFeedback()
 }
 }
 Settings& GetSettings() { return Data().Options; }
+VGStreamingBudget GetBudget()
+{
+    const auto& settings = GetSettings();
+    return {uint64_t(settings.BudgetMiB)*1024*1024,uint64_t(settings.UploadMiBPerFrame)*1024*1024,
+        settings.MaxPageRequestsPerFrame};
+}
+bool InspectPage(uint32_t page, PageInfo& info)
+{
+    const auto& pages = Data().Manager.Pages();
+    if (page >= pages.size()) return false;
+    const auto& record = pages[page];
+    info = {static_cast<uint32_t>(record.State),record.Slot,record.Priority,record.LastUsed,record.Pinned,record.Retiring};
+    return true;
+}
+bool SetBudget(const VGStreamingBudget& budget, std::string& error)
+{
+    constexpr uint64_t mib = 1024*1024;
+    error.clear();
+    if (budget.MaxResidentMemory < mib || budget.MaxResidentMemory > 1024*mib ||
+        budget.MaxResidentMemory%mib || budget.MaxUploadBytesPerFrame > 64*mib ||
+        budget.MaxUploadBytesPerFrame%mib || budget.MaxPageRequestsPerFrame > RequestCapacity)
+    {
+        error = "VG budget exceeds page-pool limits or is not aligned to one MiB";
+        return false;
+    }
+    auto& settings = GetSettings();
+    settings.BudgetMiB = static_cast<uint32_t>(budget.MaxResidentMemory/mib);
+    settings.UploadMiBPerFrame = static_cast<uint32_t>(budget.MaxUploadBytesPerFrame/mib);
+    settings.MaxPageRequestsPerFrame = budget.MaxPageRequestsPerFrame;
+    return true;
+}
 const Statistics& GetStatistics() { return Data().Stats; }
 bool Supported() { Initialize(); return Data().Available; }
 uint32_t PageCount() { return Data().Manager.PageCount(); }
@@ -169,7 +210,7 @@ GpuSceneBuffer& ResidencyBuffer() { return Current().Residency; }
 GpuSceneBuffer& RequestBitsBuffer() { return Current().RequestBits; }
 GpuSceneBuffer& RequestBuffer() { return Current().Requests; }
 GpuSceneBuffer& UsageBuffer() { return Current().Usage; }
-uint32_t Register(std::shared_ptr<const VirtualGeometryPageCache::PageManifest> manifest)
+uint32_t Register(std::shared_ptr<const VirtualGeometryPageCache::PageManifest> manifest, uint32_t priority)
 {
     auto& state = Data();
     if (!manifest || !Supported())
@@ -178,7 +219,8 @@ uint32_t Register(std::shared_ptr<const VirtualGeometryPageCache::PageManifest> 
     }
     uint32_t base = state.Manager.PageCount();
     state.Sources.reserve(state.Sources.size() + manifest->Pages.size());
-    if (!state.Manager.AddPages(manifest->PinnedPages, uint64_t(state.Options.BudgetMiB) * 1024 * 1024))
+    const uint32_t effectivePriority = priority == UINT32_MAX ? manifest->StreamingPriority : priority;
+    if (!state.Manager.AddPages(manifest->PinnedPages, uint64_t(state.Options.BudgetMiB) * 1024 * 1024, effectivePriority))
     {
         return UINT32_MAX;
     }
@@ -228,7 +270,7 @@ void Prepare(RenderGraph& graph)
         state.Manager.Collect(GraphicsDevice::GetCompletedFence(), completedCopy);
         for (uint32_t slot : released) state.Pool->Release(slot);
         state.Options.BudgetMiB = std::clamp(state.Options.BudgetMiB, 1u, 1024u);
-        state.Options.UploadMiBPerFrame = std::clamp(state.Options.UploadMiBPerFrame, 1u, 64u);
+        state.Options.UploadMiBPerFrame = std::min(state.Options.UploadMiBPerFrame, 64u);
         state.Manager.SetBudget(uint64_t(state.Options.BudgetMiB) * 1024 * 1024);
         for (auto& result : state.Io->Poll())
         {
@@ -282,45 +324,61 @@ void Prepare(RenderGraph& graph)
         state.Manager.Publish(completedCopy,state.Serial);
         state.Stats.CompletedBytes += previouslyResident;
         bool waiting = state.Manager.ReservedBytes() > state.Manager.Budget();
-        for (uint32_t priority = 0; priority < 2; ++priority)
+        uint32_t submittedRequests = 0;
+        const uint32_t requestLimit = std::min(state.Options.MaxPageRequestsPerFrame, RequestCapacity);
+        std::vector<uint32_t> requestedPages;
+        for (uint32_t page = 0; page < state.Manager.PageCount(); ++page)
         {
-            for (uint32_t page = 0; page < state.Manager.PageCount(); ++page)
+            const auto& source = state.Sources[page];
+            const auto& record = state.Manager.Pages()[page];
+            if (record.Pinned && record.State == PageState::Evicted && source.RetryAfter <= Clock::now())
             {
-                const auto& source = state.Sources[page];
-                const auto& record = state.Manager.Pages()[page];
-                if (record.Pinned != (priority == 0)) continue;
-                if (record.Pinned && record.State == PageState::Evicted && source.RetryAfter <= Clock::now())
-                {
-                    state.Manager.Request(page, state.Serial);
-                }
-                if (state.Outstanding >= 128 || !state.Ready.empty() || record.State != PageState::Requested || source.RetryAfter > Clock::now())
-                {
-                    continue;
-                }
-                if (state.Manager.ReservedBytes()+65536 > state.Manager.Budget())
-                {
-                    waiting = true;
-                    break;
-                }
-                auto ticket = state.Manager.BeginLoad(page);
-                if (!ticket)
-                {
-                    waiting = true;
-                    continue;
-                }
-                if (state.Io->Submit(source.Manifest, *ticket, source.LocalPage))
-                {
-                    ++state.Outstanding;
-                }
-                else
-                {
-                    state.Manager.Cancel(*ticket);
-                }
+                state.Manager.Request(page,state.Serial);
             }
+            if (record.State == PageState::Requested && source.RetryAfter <= Clock::now())
+            {
+                requestedPages.push_back(page);
             }
+        }
+        std::sort(requestedPages.begin(),requestedPages.end(),[&](uint32_t left, uint32_t right)
+        {
+            const auto& a = state.Manager.Pages()[left];
+            const auto& b = state.Manager.Pages()[right];
+            if (a.Pinned != b.Pinned) return a.Pinned;
+            if (a.Predicted != b.Predicted) return !a.Predicted;
+            if (a.LastUsed != b.LastUsed) return a.LastUsed > b.LastUsed;
+            if (a.Priority != b.Priority) return a.Priority > b.Priority;
+            return left < right;
+        });
+        for (const uint32_t page : requestedPages)
+        {
+            const auto& source = state.Sources[page];
+            if (submittedRequests >= requestLimit || state.Outstanding >= 128 || !state.Ready.empty()) break;
+            if (state.Manager.ReservedBytes()+65536 > state.Manager.Budget())
+            {
+                waiting = true;
+                break;
+            }
+            auto ticket = state.Manager.BeginLoad(page);
+            if (!ticket)
+            {
+                waiting = true;
+                continue;
+            }
+            if (state.Io->Submit(source.Manifest,*ticket,source.LocalPage))
+            {
+                ++state.Outstanding;
+                ++submittedRequests;
+            }
+            else
+            {
+                state.Manager.Cancel(*ticket);
+            }
+        }
         if (waiting)
         {
-            auto oldest = state.Manager.OldestEvictable(state.Serial > 3 ? state.Serial-3 : 0);
+            const uint64_t protection = std::max(1u, state.Options.RecentlyUsedProtectionFrames);
+            auto oldest = state.Manager.OldestEvictable(state.Serial > protection ? state.Serial-protection : 0);
             if (oldest && state.Manager.Retire(*oldest, 0))
             {
                 ++state.Stats.Evictions;

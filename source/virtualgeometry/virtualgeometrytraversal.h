@@ -3,6 +3,11 @@
 
 namespace VirtualGeometryTraversal
 {
+enum class DebugView : uint32_t
+{
+    None, LOD, Cluster, Hierarchy, MaterialBin, Compression, PageResidency,
+    StreamingPriority, Occlusion, Overdraw, GeometryError, ObjectID
+};
 struct Settings
 {
     bool Enabled = true;
@@ -12,6 +17,10 @@ struct Settings
     int ForceHierarchyLevel = -1;
     bool FrustumCulling = true, ConeCulling = true, OcclusionCulling = true;
     bool LevelColors = false, DebugReadback = false;
+    DebugView View = DebugView::None;
+    bool AutoGrowBuffers = true;
+    bool PredictiveStreaming = true;
+    float PrefetchSeconds = 0.25f, MaxPrefetchDistance = 50.0f;
     uint32_t MaxSelectedClusters = 2000000, MaxGroupStates = 2000000;
 };
 struct FrameInputs
@@ -36,6 +45,7 @@ void Retest(ID3D12GraphicsCommandList* commands);
 void RecordFeedback(RenderGraph& graph);
 struct TemporalStatistics
 {
+    uint64_t SampleSerial = 0;
     uint32_t FirstVisible = 0, Candidates = 0, SecondVisible = 0, LodTransitions = 0, CapacityFallbacks = 0;
     uint64_t HistoryBytes = 0, CandidateBytes = 0;
     bool HasSample = false;

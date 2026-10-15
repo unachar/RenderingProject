@@ -32,6 +32,10 @@ public:
 
 	static AnimationModelResource* GetAnimModel(int modelId);
 	static StaticModelResource* GetStaticModel(int modelId);
+    static void UpdateVirtualGeometry();
+    static StaticModelResource* FindLoadedStaticModel(const std::filesystem::path& path);
+    static bool SaveVirtualGeometrySettings(const std::filesystem::path& path,
+        const VGImportSettings& settings, std::string& error);
 
 	static void Uninit();
 };

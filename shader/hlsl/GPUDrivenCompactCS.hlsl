@@ -16,8 +16,18 @@ void main(uint3 id : SV_DispatchThreadID)
     if ((instance.Flags & 5u) != 5u || visible.w != 1 || visible.y >= MeshCount) return;
     uint4 mesh = gGeometry[visible.y];
     if (mesh.w == 0 || mesh.y == 0) return;
-    uint target;
-    gCount.InterlockedAdd(0, 1, target);
-    // Capacity >= slot capacity guarantees this condition for every append.
-    if (target < Capacity) gVisible[target] = visible;
+    uint target = gCount.Load(0), observed;
+    for (;;)
+    {
+        if (target >= Capacity)
+        {
+            uint unused;
+            gCount.InterlockedAdd(4,1,unused);
+            return;
+        }
+        gCount.InterlockedCompareExchange(0,target,target+1,observed);
+        if (observed == target) break;
+        target = observed;
+    }
+    gVisible[target] = visible;
 }

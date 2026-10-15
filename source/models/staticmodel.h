@@ -51,6 +51,10 @@ struct StaticMeshData
 	vector<StaticModelVertex> CpuVertices{};
 	array<Meshlets::Asset, LodCount> MeshletLODs{};
 	array<shared_ptr<const VirtualGeometryRuntime::RuntimeAsset>, LodCount> VirtualGeometryLODs{};
+    VGImportSettings VirtualGeometrySettings;
+    array<shared_future<shared_ptr<const VirtualGeometryRuntime::RuntimeAsset>>, LodCount> VirtualGeometryBuilds{};
+    string VirtualGeometryBuildError;
+    bool VirtualGeometryRootFallback = false;
 	vector<uint32_t> CpuIndices{}; // Exact optimized LOD0 upload data; never reconstructed by GPU readback.
 	array<vector<uint32_t>, LodCount - 1> CpuLodIndices{};
 	array<vector<StaticModelVertex>, kToonOutlineModeCount> CpuTeoVerticesByMode{};
@@ -142,6 +146,12 @@ private:
 
 public:
 	bool LoadObj(const char* fileName, ID3D12Device* device);
+    bool LoadVirtualGeometry(const char* fileName, ID3D12Device* device);
+    bool LoadDerivedVirtualGeometry(const char* fileName, ID3D12Device* device, bool convert);
+    void PublishDerivedVirtualGeometry(bool convert);
+    bool UsesDerivedVirtualGeometry() const { return m_UsesDerivedVG; }
+    void CaptureSourceIdentity(const std::filesystem::path& path);
+    bool SourceDependenciesChanged() const;
 	bool LoadAssimpModel(const char* fileName, ID3D12Device* device, bool isConvert = true);
 	bool LoadFBX(const char* fileName, ID3D12Device* device, bool isConvert = true);
 	bool ApplyMeshShadingOverridePartIds(ID3D12Device* device, const vector<int>& overridePartIds);
@@ -154,7 +164,16 @@ public:
 	const Visibility::LODMetadata& GetLODMetadata() const { return m_LODMetadata; }
 	void SetLODMetadata(const Visibility::LODMetadata& value) { if (Visibility::ValidLOD(value)) m_LODMetadata = value; }
 	void LoadLODMetadata(const char* path);
+    bool PollVirtualGeometry();
+    void RebuildVirtualGeometry(const VGImportSettings& settings);
+    const VGImportSettings& GetVirtualGeometrySettings() const { return m_VGSettings; }
 
 	XMFLOAT3 GetAabbCenter() const { return m_AabbCenter; }
 	XMFLOAT3 GetAabbExtents() const { return m_AabbExtents; }
+private:
+    VGImportSettings m_VGSettings;
+    bool m_UsesDerivedVG = false, m_DerivedVGPublished = false;
+    vector<std::filesystem::path> m_VGDependencies;
+    vector<uint64_t> m_VGDependencyHashes;
+    vector<std::filesystem::file_time_type> m_VGDependencyTimes;
 };

@@ -6,6 +6,7 @@
 #include "editorwidgets.h"
 #include "materialsystem.h"
 #include "modelmanager.h"
+#include "virtualgeometry/virtualgeometrydebug.h"
 #include "texturemanager.h"
 #include "world.h"
 #include <fstream>
@@ -180,6 +181,10 @@ void ImGuiManager::DrawAssetBrowserWindow()
     if (!m_SelectedAssetPath.empty())
     {
         const auto selectedType = AssetRegistry::Classify(m_SelectedAssetPath);
+        if (selectedType == AssetType::Mesh)
+        {
+            VirtualGeometryDebug::DrawAssetInspector(m_SelectedAssetPath);
+        }
         if (selectedType != AssetType::Unknown)
         {
             auto& handle = browserHandles[m_SelectedAssetPath.generic_string()];
@@ -697,7 +702,7 @@ bool ImGuiManager::IsModelFile(const filesystem::path& path)
 {
 	string ext = path.extension().generic_string();
 	transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(tolower(c)); });
-	return ext == ".fbx" || ext == ".obj" || ext == ".vrm" || ext == ".pmx";
+	return ext == ".fbx" || ext == ".obj" || ext == ".vrm" || ext == ".pmx" || ext == ".gltf" || ext == ".glb" || ext == ".vgmesh";
 }
 
 string ImGuiManager::MakeRelativeAssetPath(const filesystem::path& path)

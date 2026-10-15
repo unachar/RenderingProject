@@ -11,6 +11,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "virtualgeometry/virtualgeometryconfig.h"
 
 
 class RenderProfiler final
@@ -72,6 +73,7 @@ public:
     struct FrameSnapshot
     {
         uint64_t Serial = 0;
+        uint32_t GeometryMode = 0;
         double CpuRenderMs = 0.0;
         double GpuRenderMs = 0.0;
         bool GpuTimingValid = false;
@@ -446,6 +448,7 @@ public:
         slot.GpuEvents.reserve(kMaxTimestampQueriesPerFrame / 2);
         slot.Snapshot = {};
         slot.Snapshot.Serial = ++s_FrameSerial;
+        slot.Snapshot.GeometryMode = static_cast<uint32_t>(GetGeometryRenderingMode());
 
         s_ActiveSlot = &slot;
         s_ActiveFrameIndex = frameIndex;

@@ -4,6 +4,10 @@
 #include "virtualgeometrybinning.h"
 #include "virtualgeometrystreaming.h"
 #include "virtualgeometryruntime.h"
+#include "virtualgeometryresources.h"
+#include "virtualgeometryproduction.h"
+#include "renderprofiler.h"
+#include "occlusionculling.h"
 #include "staticmodel.h"
 #include "modelmanager.h"
 #include "componentmanager.h"
@@ -16,6 +20,66 @@
 #include "visibility/gpuvisibility.h"
 #include "vertexdeformation.h"
 #include <functional>
+
+VGStatistics GetVGStatistics()
+{
+    VGStatistics result;
+    result.RegisteredAssets = VirtualGeometryResources::AssetCount();
+    result.RegisteredClusters = VirtualGeometryResources::RegisteredClusterCount();
+    const auto& streaming = VirtualGeometryStreaming::GetStatistics();
+    result.ResidentPages = streaming.Resident;
+    result.RequestedPages = streaming.Requested;
+    result.Evictions = streaming.Evictions;
+    result.ResidentAllocationBytes = streaming.PoolBytes;
+    result.BudgetBytes = streaming.BudgetBytes;
+    result.MetadataBytes = streaming.MetadataBytes;
+    result.SubmittedBytes = streaming.SubmittedBytes;
+    result.CompletedBytes = streaming.CompletedBytes;
+    result.IoErrors = streaming.IoErrors;
+    result.RequestOverflow = streaming.RequestOverflow;
+    const auto compression = VirtualGeometryResources::CompressionMetrics();
+    result.RawGeometryBytes = compression.RawBytes;
+    result.EncodedGeometryBytes = compression.EncodedBytes;
+    const auto& visibility = VirtualGeometryTraversal::GetTemporalStatistics();
+    result.HasVisibilitySample = visibility.HasSample && VirtualGeometryTraversal::Active() &&
+        MeshShaderRenderer::IsActive() && VirtualGeometryTraversal::GetSettings().Enabled &&
+        GetGeometryRenderingMode() != GeometryRenderingMode::Legacy;
+    result.VisibilitySampleSerial = visibility.SampleSerial;
+    result.FirstVisibleClusters = visibility.FirstVisible;
+    result.SecondVisibleClusters = visibility.SecondVisible;
+    result.CapacityFallbacks = visibility.CapacityFallbacks;
+    result.VisibleTriangles = VirtualGeometryTraversal::DebugCounters()[6];
+    const auto& sourceCounts = VirtualGeometryResources::SourceTriangleCounts();
+    for (const auto count : sourceCounts)
+    {
+        result.SourceTriangles += count;
+    }
+    result.SceneInstances = GpuScene::Statistics().ActiveInstances;
+    const auto& overflow = GPUDrivenRenderer::GetOverflowStatistics();
+    result.VisibleInstanceOverflow = overflow.VisibleInstanceOverflow;
+    result.InvalidIndirectCommands = overflow.InvalidIndirectCommands;
+    result.VisibleInstances = VirtualGeometryTraversal::DebugCounters()[4];
+    result.HasInstanceSample = result.HasVisibilitySample;
+    for (uint32_t slot = 0; slot < GpuScene::Statistics().InstanceSlots; ++slot)
+    {
+        const auto* instance = GpuScene::GetInstance(slot);
+        if (instance && (instance->Flags&16u) && instance->VirtualGeometryAssetIndex < sourceCounts.size())
+        {
+            ++result.Instances;
+            result.InstancedSourceTriangles += sourceCounts[instance->VirtualGeometryAssetIndex];
+        }
+    }
+    for (const auto& phase : VirtualGeometryBinning::GetStatistics().Phases)
+    {
+        if (phase.HasSample)
+        {
+            result.MaterialBinOverflow += phase.OverflowClusters;
+            result.InvalidMaterialRecords += phase.InvalidMaterials;
+            result.BinningRejectedClusters += phase.RejectedClusters;
+        }
+    }
+    return result;
+}
 
 namespace VirtualGeometryDebug
 {
@@ -72,12 +136,247 @@ const ImU32 LODColors[] = {IM_COL32(26, 255, 51, 255),  IM_COL32(26, 128, 255, 2
                            IM_COL32(255, 51, 179, 255), IM_COL32(204, 204, 204, 255)};
 } // namespace
 
+void DrawAssetInspector(const std::filesystem::path& path)
+{
+    if (!ImGui::CollapsingHeader("Virtual Geometry", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+    static std::filesystem::path selected;
+    static VGImportSettings settings;
+    static std::string error;
+    if (selected != path)
+    {
+        selected = path;
+        settings = {};
+        VirtualGeometryImport::Load(path, settings, error);
+    }
+    ImGui::PushID(path.generic_string().c_str());
+    ImGui::Checkbox("Enabled", &settings.Enabled);
+    ImGui::Checkbox("Build in background", &settings.BackgroundBuild);
+    int quality = static_cast<int>(settings.Quality);
+    if (ImGui::Combo("Build quality", &quality, "Low\0Medium\0High\0Production\0Custom\0"))
+    {
+        settings.Quality = static_cast<VGQuality>(quality);
+    }
+    ImGui::InputFloat("Position error (0 = Auto)", &settings.PositionError, 0, 0, "%.6f");
+    ImGui::InputFloat("LOD error (0 = Auto)", &settings.LODError);
+    int priority = static_cast<int>(settings.StreamingPriority);
+    if (ImGui::Combo("Streaming priority", &priority, "Low\0Normal\0High\0"))
+    {
+        settings.StreamingPriority = static_cast<uint32_t>(priority);
+    }
+    if (settings.Quality == VGQuality::Custom)
+    {
+        ImGui::SliderFloat("Simplification ratio", &settings.Custom.SimplificationRatio, 0.1f, 0.9f);
+        ImGui::SliderFloat("Normal weight", &settings.Custom.NormalWeight, 0, 4);
+        ImGui::SliderFloat("UV weight", &settings.Custom.TexCoordWeight, 0, 4);
+    }
+    if (ImGui::Button("Save and rebuild"))
+    {
+        ModelManager::SaveVirtualGeometrySettings(path, settings, error);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reload settings"))
+    {
+        VirtualGeometryImport::Load(path, settings, error);
+    }
+    auto* model = ModelManager::FindLoadedStaticModel(path);
+    if (!model)
+    {
+        ImGui::TextUnformatted("Status: not imported in this session");
+        if (ImGui::Button("Import mesh"))
+        {
+            const auto encoded = path.u8string();
+            const std::string source(reinterpret_cast<const char*>(encoded.data()),encoded.size());
+            ModelManager::LoadStaticModel(source.c_str());
+        }
+    }
+    else
+    {
+        uint64_t vertices = 0, triangles = 0, clusters = 0, groups = 0;
+        uint64_t rawBytes = 0, encodedBytes = 0, pages = 0, pinned = 0;
+        uint32_t levels = 0;
+        bool building = false;
+        for (uint32_t index = 0; index < model->GetMeshCount(); ++index)
+        {
+            const auto& mesh = model->GetMeshData(index);
+            building |= mesh.VirtualGeometryBuilds[0].valid();
+            const auto& asset = mesh.VirtualGeometryLODs[0];
+            if (asset && asset->Error.empty())
+            {
+                vertices += asset->Hierarchy.Stats.SourceVertices;
+                triangles += asset->Hierarchy.Stats.SourceTriangles;
+                clusters += asset->Hierarchy.Stats.TotalClusters;
+                groups += asset->Hierarchy.Stats.TotalGroups;
+                levels = std::max(levels, asset->Hierarchy.Stats.HierarchyLevels);
+                const auto manifest = asset->Pages ? asset->Pages : VirtualGeometryResources::ManifestFor(asset.get());
+                if (manifest)
+                {
+                    rawBytes += manifest->Compression.RawBytes;
+                    encodedBytes += manifest->Compression.EncodedBytes;
+                    pages += manifest->Pages.size();
+                    pinned += std::count(manifest->PinnedPages.begin(),manifest->PinnedPages.end(),uint8_t(1));
+                }
+            }
+            else
+            {
+                vertices += mesh.VertexCount;
+                triangles += mesh.IndexCount/3;
+            }
+            if (!mesh.VirtualGeometryBuildError.empty())
+            {
+                ImGui::TextWrapped("Fallback: %s", mesh.VirtualGeometryBuildError.c_str());
+            }
+        }
+        const char* status = "Legacy fallback";
+        if (building)
+        {
+            status = "Building (legacy mesh available)";
+        }
+        else if (clusters)
+        {
+            status = "Hierarchy built; streaming readiness is reported in the dashboard";
+        }
+        ImGui::TextWrapped("Status: %s", status);
+        ImGui::Text("Source vertices %llu / triangles %llu", vertices, triangles);
+        ImGui::Text("Clusters %llu / groups %llu / LOD levels %u", clusters, groups, levels);
+        ImGui::Text("Raw / encoded %.2f / %.2f MiB / streaming pages %llu",
+            double(rawBytes)/(1024*1024),double(encodedBytes)/(1024*1024),pages);
+        ImGui::Text("Pinned minimum %.2f MiB / resident upper estimate %.2f MiB",
+            double(pinned*VirtualGeometryPages::PageBytes)/(1024*1024),
+            double(std::min(pages*VirtualGeometryPages::PageBytes,VirtualGeometryStreaming::GetBudget().MaxResidentMemory))/(1024*1024));
+        if (rawBytes)
+        {
+            ImGui::Text("Encoded / raw %.1f%%",100.0*double(encodedBytes)/rawBytes);
+        }
+    }
+    if (!error.empty())
+    {
+        ImGui::TextWrapped("%s", error.c_str());
+    }
+    ImGui::PopID();
+}
+
 void DrawControls()
 {
+    const auto dashboard = GetVGStatistics();
+    ImGui::Text("VG instances %u / source triangles %llu / instanced source triangles %llu",
+        dashboard.Instances, dashboard.SourceTriangles, dashboard.InstancedSourceTriangles);
+    if (dashboard.HasInstanceSample) ImGui::Text("Visible instances %u",dashboard.VisibleInstances);
+    else ImGui::TextUnformatted("Visible instances: sample pending / GPU path inactive");
+    ImGui::Text("Clusters %llu / material overflow %llu / invalid materials %llu",
+        dashboard.RegisteredClusters, dashboard.MaterialBinOverflow, dashboard.InvalidMaterialRecords);
+    ImGui::Text("Overflow: instances %llu / indirect rejected %llu / binned clusters rejected %llu",
+        dashboard.VisibleInstanceOverflow,dashboard.InvalidIndirectCommands,dashboard.BinningRejectedClusters);
+    if (RenderProfiler::HasLatest() && ImGui::TreeNode("VG GPU timings"))
+    {
+        const auto& profile = RenderProfiler::GetLatest();
+        if (!profile.GpuTimingValid) ImGui::TextUnformatted("GPU timestamps unavailable");
+        for (const auto& pass : profile.Passes)
+        {
+            if (pass.Name.find("Nanite") != std::string::npos || pass.Name.find("Native") != std::string::npos ||
+                pass.Name.find("Compact Visible") != std::string::npos || pass.Name.find("material bin") != std::string::npos)
+            {
+                if (profile.GpuTimingValid) ImGui::Text("%s: %.3f ms",pass.Name.c_str(),pass.GpuMs);
+            }
+        }
+        ImGui::TextUnformatted("Geometry decode is included in native raster; traversal combines hierarchy and cluster work.");
+        ImGui::TreePop();
+    }
+    if (VirtualGeometryProduction::Recording())
+    {
+        if (ImGui::Button("Stop VG benchmark"))
+        {
+            VirtualGeometryProduction::EndBenchmark();
+        }
+    }
+    else if (ImGui::Button("Record VG benchmark"))
+    {
+        std::string error;
+        VirtualGeometryProduction::BeginBenchmark("build/virtualgeometry-phase11", error);
+    }
+    if (!VirtualGeometryProduction::LastError().empty())
+    {
+        ImGui::TextWrapped("%s", VirtualGeometryProduction::LastError().c_str());
+    }
     auto &options = Settings();
     auto &visibility = GPUVisibility::GetSettings();
     auto &mesh = MeshShaderRenderer::GetSettings();
     auto& native = VirtualGeometryTraversal::GetSettings();
+    int view = static_cast<int>(native.View);
+    if (ImGui::Combo("VG debug view", &view,
+        "None\0LOD\0Cluster\0Hierarchy\0Material bin\0Compression\0Page residency\0Streaming priority\0Occlusion\0Overdraw\0Geometry error\0Object ID\0"))
+    {
+        native.View = static_cast<VirtualGeometryTraversal::DebugView>(view);
+        native.LevelColors = false;
+    }
+    ImGui::Checkbox("Grow VG buffers from completed overflow feedback", &native.AutoGrowBuffers);
+    ImGui::Checkbox("Predictive page prefetch",&native.PredictiveStreaming);
+    ImGui::SliderFloat("Prefetch lookahead seconds",&native.PrefetchSeconds,0,1);
+    ImGui::Text("Prefetch requests %llu (cumulative)",VirtualGeometryStreaming::GetStatistics().PrefetchRequests);
+    if (native.View == VirtualGeometryTraversal::DebugView::Occlusion)
+    {
+        ImGui::TextUnformatted("Cyan: static selected geometry. Orange: moving geometry bypasses history occlusion.");
+        ImGui::Text("Deferred %u / recovered %u", VirtualGeometryTraversal::GetTemporalStatistics().Candidates,
+            VirtualGeometryTraversal::GetTemporalStatistics().SecondVisible);
+        if (OcclusionCulling::IsAvailable() && OcclusionCulling::GetMipCount())
+        {
+            const int maximum = static_cast<int>(OcclusionCulling::GetMipCount())-1;
+            visibility.HiZMip = std::clamp(visibility.HiZMip,0,maximum);
+            ImGui::SliderInt("VG Hi-Z mip",&visibility.HiZMip,0,maximum);
+            OcclusionCulling::SetDebugPreview(static_cast<uint32_t>(visibility.HiZMip),true);
+            ImGui::Image((ImTextureID)OcclusionCulling::GetDebugMipSrv(static_cast<uint32_t>(visibility.HiZMip)).ptr,ImVec2(320,180));
+        }
+    }
+    if (native.View == VirtualGeometryTraversal::DebugView::PageResidency ||
+        native.View == VirtualGeometryTraversal::DebugView::StreamingPriority)
+    {
+        if (ImGui::BeginTable("VG Page states",4,ImGuiTableFlags_ScrollY | ImGuiTableFlags_Borders,ImVec2(0,180)))
+        {
+            for (const auto* label : {"Page","State","Priority","Pinned"}) ImGui::TableSetupColumn(label);
+            ImGui::TableHeadersRow();
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>(std::min(VirtualGeometryStreaming::PageCount(),uint32_t(INT_MAX))));
+            while (clipper.Step())
+            {
+                for (int page = clipper.DisplayStart; page < clipper.DisplayEnd; ++page)
+                {
+                    VirtualGeometryStreaming::PageInfo info;
+                    if (!VirtualGeometryStreaming::InspectPage(static_cast<uint32_t>(page),info)) continue;
+                    constexpr const char* states[] = {"Evicted","Requested","Loading","Resident"};
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%d",page);
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(info.State < 4 ? states[info.State] : "Invalid");
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%u",info.Priority);
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(info.Pinned ? "yes" : "no");
+                }
+            }
+            ImGui::EndTable();
+        }
+    }
+    if (native.View == VirtualGeometryTraversal::DebugView::Overdraw)
+    {
+        ImGui::TextUnformatted("Additive coverage of selected clusters; disable occlusion to inspect hidden surfaces.");
+    }
+    int geometryMode = static_cast<int>(GetGeometryRenderingMode());
+    if (ImGui::Combo("Geometry rendering mode", &geometryMode, "Auto\0VirtualGeometry\0Legacy\0"))
+    {
+        GetGeometryRenderingMode() = static_cast<GeometryRenderingMode>(geometryMode);
+        if (GetGeometryRenderingMode() != GeometryRenderingMode::Legacy)
+        {
+            GPUDrivenRenderer::SetEnabled(true);
+            mesh.Enabled = true;
+            native.Enabled = true;
+        }
+        GPUVisibility::Invalidate("Geometry rendering mode changed");
+        VirtualGeometryTraversal::InvalidateHistory();
+    }
+    ImGui::TextUnformatted("Unsupported geometry always uses the fallback renderer.");
     ImGui::Text("Native hardware: %s / frame path: %s",MeshShaderRenderer::Supported() ? "supported" : "unsupported",
         MeshShaderRenderer::IsActive() && VirtualGeometryTraversal::Active() && native.Enabled ? "active" : "inactive");
     ImGui::Checkbox("Native hierarchy rendering",&native.Enabled);
@@ -113,7 +412,31 @@ void DrawControls()
         }
     }
     auto& streaming = VirtualGeometryStreaming::GetSettings();
+    int requestLimit = static_cast<int>(streaming.MaxPageRequestsPerFrame);
+    if (ImGui::SliderInt("Page requests per frame", &requestLimit, 1, 4096))
+    {
+        streaming.MaxPageRequestsPerFrame = static_cast<uint32_t>(requestLimit);
+    }
+    int protectionFrames = static_cast<int>(streaming.RecentlyUsedProtectionFrames);
+    if (ImGui::SliderInt("Recently used protection frames", &protectionFrames, 1, 120))
+    {
+        streaming.RecentlyUsedProtectionFrames = static_cast<uint32_t>(protectionFrames);
+    }
     const auto& pages = VirtualGeometryStreaming::GetStatistics();
+    const auto compression = VirtualGeometryResources::CompressionMetrics();
+    ImGui::TextUnformatted("Virtual Geometry Compression");
+    ImGui::Text("Encoded / reference raw %.2f / %.2f MiB",
+        double(compression.EncodedBytes)/(1024*1024), double(compression.RawBytes)/(1024*1024));
+    if (compression.RawBytes)
+    {
+        ImGui::Text("Encoded / raw %.1f%% / codec fallbacks %llu",
+            100.0*double(compression.EncodedBytes)/double(compression.RawBytes), compression.FallbackCount);
+    }
+    ImGui::Text("Resident Page allocation %.2f MiB / cumulative uploads %.2f MiB",
+        double(pages.Resident*VirtualGeometryPages::PageBytes)/(1024*1024), double(pages.SubmittedBytes)/(1024*1024));
+    ImGui::Text("Quantized meshes %llu / half UV streams %llu / Index8 %llu / Index16 %llu",
+        compression.PositionQuantized, compression.HalfUV, compression.Index8Clusters, compression.Index16Clusters);
+    ImGui::TextDisabled("GPU decode runs inside native raster; separate decode timing is not sampled.");
     int budgetMiB = int(streaming.BudgetMiB);
     if (ImGui::SliderInt("Geometry VRAM Budget (MiB)",&budgetMiB,1,1024)) streaming.BudgetMiB = uint32_t(budgetMiB);
     ImGui::Text("Pages Resident %llu / Requested %llu / Loading %llu / Evicted %llu",
@@ -127,6 +450,7 @@ void DrawControls()
     int materialBins = int(binning.MaxMaterialBins);
     if (ImGui::SliderInt("Exact material bins",&materialBins,1,65535)) binning.MaxMaterialBins = uint32_t(materialBins);
     const auto& binStats = VirtualGeometryBinning::GetStatistics();
+    ImGui::TextDisabled("Last completed material bin samples");
     const char* phaseNames[] = {"First","Second","Velocity"};
     for (uint32_t phase = 0; phase < 3; ++phase)
     {
@@ -141,7 +465,7 @@ void DrawControls()
     const auto stats = VirtualGeometryRuntime::GetStatistics();
     ImGui::Text("Cache hits %llu / shared %llu / builds %llu / failures %llu", stats.CacheHits,
                 stats.SharedHits, stats.Builds, stats.Failures);
-    ImGui::Text("Import/cache CPU time: %.2f ms (cumulative)", stats.BuildMilliseconds);
+    ImGui::Text("Import/cache elapsed time: %.2f ms (cumulative)", stats.BuildMilliseconds);
     ImGui::Text("Geometry arena %.2f MiB / frame upload %.2f KiB",
                 double(GPUDrivenRenderer::GeometryArenaBytes()) / (1024 * 1024),
                 double(GPUDrivenRenderer::GeometryUploadBytes()) / 1024);
@@ -231,6 +555,12 @@ void DrawControls()
             if (!asset->HierarchyWarning.empty())
                 ImGui::TextWrapped("Hierarchy: %s (leaf rendering available)",
                                    asset->HierarchyWarning.c_str());
+            const auto& sourceStats = asset->Hierarchy.Stats;
+            ImGui::Text("Source vertices %llu / triangles %llu", sourceStats.SourceVertices, sourceStats.SourceTriangles);
+            ImGui::Text("Clusters %u / hierarchy groups %u / LOD levels %u",
+                sourceStats.TotalClusters, sourceStats.TotalGroups, sourceStats.HierarchyLevels);
+            ImGui::Text("Builder version %u / CPU reference version %u / production-capable preset",
+                VirtualGeometryConfig::BuilderVersion, asset->Hierarchy.Version);
             if (ImGui::BeginTable(("Hierarchy##" + source->MeshName + to_string(asset->Key)).c_str(), 4))
             {
                 ImGui::TableSetupColumn("Level");

@@ -994,6 +994,8 @@
     <ClCompile Include="source\virtualgeometry\virtualgeometryserializer.cpp">
       <Filter>virtualgeometry</Filter>
     </ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryimport.cpp"><Filter>virtualgeometry</Filter></ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryproduction.cpp"><Filter>virtualgeometry</Filter></ClCompile>
     <ClCompile Include="source\virtualgeometry\virtualgeometrystaticmesh.cpp">
       <Filter>virtualgeometry</Filter>
     </ClCompile>
@@ -1021,6 +1023,8 @@
     <ClInclude Include="source\virtualgeometry\virtualgeometrybuilder.h">
       <Filter>virtualgeometry</Filter>
     </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryimport.h"><Filter>virtualgeometry</Filter></ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryproduction.h"><Filter>virtualgeometry</Filter></ClInclude>
     <ClInclude Include="source\virtualgeometry\virtualgeometryconfig.h">
       <Filter>virtualgeometry</Filter>
     </ClInclude>
@@ -1126,6 +1130,9 @@
   <ItemGroup>
     <ClCompile Include="source\virtualgeometry\virtualgeometrypages.cpp"><Filter>virtualgeometry</Filter></ClCompile>
     <ClInclude Include="source\virtualgeometry\virtualgeometrypages.h"><Filter>virtualgeometry</Filter></ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrycompression.cpp"><Filter>virtualgeometry</Filter></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrycompression.h"><Filter>virtualgeometry</Filter></ClInclude>
+    <None Include="shader\hlsl\VGGeometryDecode.hlsli" />
     <ClCompile Include="source\virtualgeometry\virtualgeometrypagecache.cpp"><Filter>virtualgeometry</Filter></ClCompile>
     <ClInclude Include="source\virtualgeometry\virtualgeometrypagecache.h"><Filter>virtualgeometry</Filter></ClInclude>
     <ClCompile Include="source\virtualgeometry\virtualgeometryresidency.cpp"><Filter>virtualgeometry</Filter></ClCompile>

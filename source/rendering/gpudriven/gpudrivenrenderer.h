@@ -11,6 +11,13 @@ namespace Meshlets { struct Asset; }
 class GPUDrivenRenderer
 {
 public:
+    struct OverflowStatistics
+    {
+        uint64_t VisibleInstanceOverflow = 0, InvalidIndirectCommands = 0;
+        uint32_t VisibleInstances = 0;
+        bool HasSample = false;
+    };
+    static const OverflowStatistics& GetOverflowStatistics();
     static void RegisterGeometry(uint32_t meshID, const StaticMeshData& mesh);
     static void RegisterPrimitiveGeometry(uint32_t meshID, const StaticMeshData& mesh,
                                           uint32_t lod = 0, uint32_t baseMeshID = UINT32_MAX);

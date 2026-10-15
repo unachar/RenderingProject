@@ -4,6 +4,7 @@
 #include "graphicslog.h"
 #include "virtualgeometrystreaming.h"
 #include "virtualgeometryruntime.h"
+#include "materialmanager.h"
 #include <future>
 #include <numeric>
 
@@ -26,6 +27,7 @@ struct State
     };
     VirtualGeometryGPU::PackedAsset Geometry;
     std::vector<VirtualGeometryGPUAsset> Table;
+    std::vector<uint64_t> SourceTriangles;
     std::vector<std::shared_ptr<const VirtualGeometryPageCache::PageManifest>> Manifests;
     std::vector<Pending> PendingAssets;
     std::unordered_map<const VirtualGeometryRuntime::RuntimeAsset*, uint32_t> Ids;
@@ -55,7 +57,9 @@ bool Install(uint32_t id, std::shared_ptr<const VirtualGeometryPageCache::PageMa
         WriteGraphicsLog("Geometry Page metadata registration failed: %s\n", error.c_str());
         return false;
     }
-    uint32_t pageBase = VirtualGeometryStreaming::Register(manifest);
+    const auto& owner = state.PendingAssets.at(id).Owner;
+    const uint32_t priority = owner ? owner->ImportSettings.StreamingPriority : manifest->StreamingPriority;
+    uint32_t pageBase = VirtualGeometryStreaming::Register(manifest,priority);
     if (pageBase == UINT32_MAX)
     {
         WriteGraphicsLog("Geometry Page admission failed: pinned pages exceed budget or device unsupported\n");
@@ -69,8 +73,24 @@ bool Install(uint32_t id, std::shared_ptr<const VirtualGeometryPageCache::PageMa
     table.VertexOffset = pageBase;
     table.TriangleOffset = uint32_t(manifest->Pages.size());
     table.Flags = (table.Flags | 2u) & ~1u;
+    table.Flags |= std::min(2u, priority)<<16;
     state.Table[id] = table;
+    state.SourceTriangles.resize(state.Table.size());
+    state.SourceTriangles[id] = 0;
+    for (const auto& cluster : manifest->Metadata.Clusters)
+    {
+        if (cluster.Level == 0)
+        {
+            state.SourceTriangles[id] += cluster.TriangleCount;
+        }
+    }
     state.Manifests[id] = std::move(manifest);
+    if (state.Manifests[id]->SourceTriangles)
+    {
+        state.SourceTriangles[id] = state.Manifests[id]->SourceTriangles;
+    }
+    std::string registryError;
+    MaterialManager::Registry().Register(state.Manifests[id]->Path, AssetType::Mesh, registryError);
     state.Dirty = true;
     return true;
 }
@@ -115,7 +135,13 @@ void PollPreparation()
             continue;
         }
         auto asset = pending.Owner;
-        pending.Work = std::async(std::launch::async, [asset, id]
+        auto compressionSettings = asset->CompressionSettings;
+        char rawMode[8]{};
+        if (GetEnvironmentVariableA("DX12_VG_COMPRESSION_RAW", rawMode, sizeof(rawMode)))
+        {
+            compressionSettings.Enabled = atoi(rawMode) == 0;
+        }
+        pending.Work = std::async(std::launch::async, [asset, compressionSettings]
         {
             State::Prepared result;
             try
@@ -125,16 +151,38 @@ void PollPreparation()
                 {
                     path = std::filesystem::path("asset/virtualgeometry-cache") / std::to_string(asset->Key);
                 }
-                path += "." + std::to_string(id) + ".vgp2";
+                // Stable content-keyed encoded cache; never overwrite the legacy CPU reference asset.
+                path += "." + std::to_string(VirtualGeometryCompression::SettingsKey(compressionSettings));
+                if (compressionSettings.Enabled)
+                {
+                    path += ".encoded.vgmesh";
+                }
+                else
+                {
+                    path += ".raw.vgmesh";
+                }
+                auto manifest = std::make_shared<VirtualGeometryPageCache::PageManifest>();
+                manifest->StreamingPriority = asset->ImportSettings.StreamingPriority;
+                if (VirtualGeometryPageCache::Open(path, *manifest, result.Error) &&
+                    manifest->Version == VirtualGeometryPageCache::FormatVersion::Production)
+                {
+                    manifest->StreamingPriority = asset->ImportSettings.StreamingPriority;
+                    result.Manifest = std::move(manifest);
+                    return result;
+                }
                 VirtualGeometryPages::PagedAsset packed;
-                if (!VirtualGeometryPages::Build(asset->Hierarchy, packed, result.Error) ||
+                if (!VirtualGeometryPages::Build(asset->Hierarchy, compressionSettings, packed, result.Error) ||
                     !VirtualGeometryPageCache::WriteAtomic(path, packed, result.Error))
                 {
                     return result;
                 }
-                auto manifest = std::make_shared<VirtualGeometryPageCache::PageManifest>();
+                for (const auto& reason : packed.CompressionFallbacks)
+                {
+                    WriteGraphicsLog("Geometry compression %s: %s\n", asset->Hierarchy.DebugName.c_str(), reason.c_str());
+                }
                 if (VirtualGeometryPageCache::Open(path, *manifest, result.Error))
                 {
+                    manifest->StreamingPriority = asset->ImportSettings.StreamingPriority;
                     result.Manifest = std::move(manifest);
                 }
             }
@@ -168,6 +216,13 @@ uint32_t Register(std::shared_ptr<const VirtualGeometryRuntime::RuntimeAsset> as
     state.Ids.emplace(asset.get(), id);
     state.Dirty = true;
     return id;
+}
+const std::vector<uint64_t>& SourceTriangleCounts() { return Data().SourceTriangles; }
+std::shared_ptr<const VirtualGeometryPageCache::PageManifest> ManifestFor(const VirtualGeometryRuntime::RuntimeAsset* asset)
+{
+    const auto& state = Data();
+    const auto found = state.Ids.find(asset);
+    return found == state.Ids.end() ? nullptr : state.Manifests.at(found->second);
 }
 uint32_t RegisterManifest(std::shared_ptr<const VirtualGeometryPageCache::PageManifest> manifest)
 {
@@ -246,6 +301,26 @@ uint32_t AssetCount() { return uint32_t(Data().Table.size()); }
 uint64_t RegisteredClusterCount() { return Data().Geometry.Clusters.size(); }
 const std::vector<VirtualGeometryGPUAsset>& AssetTable() { return Data().Table; }
 const VirtualGeometryGPU::PackedAsset& Metadata() { return Data().Geometry; }
+VirtualGeometryCompression::Metrics CompressionMetrics()
+{
+    VirtualGeometryCompression::Metrics total;
+    for (const auto& manifest : Data().Manifests)
+    {
+        if (!manifest)
+        {
+            continue;
+        }
+        const auto& metrics = manifest->Compression;
+        total.EncodedBytes += metrics.EncodedBytes;
+        total.RawBytes += metrics.RawBytes;
+        total.FallbackCount += metrics.FallbackCount;
+        total.PositionQuantized += metrics.PositionQuantized;
+        total.HalfUV += metrics.HalfUV;
+        total.Index8Clusters += metrics.Index8Clusters;
+        total.Index16Clusters += metrics.Index16Clusters;
+    }
+    return total;
+}
 GpuSceneBuffer& ClusterBuffer() { return Data().Clusters; }
 GpuSceneBuffer& GroupBuffer() { return Data().Groups; }
 GpuSceneBuffer& HierarchyIndexBuffer() { return Data().Hierarchy; }

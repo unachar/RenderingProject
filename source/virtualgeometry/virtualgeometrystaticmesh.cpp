@@ -4,13 +4,43 @@
 #include "staticmodel.h"
 #include <cmath>
 
+bool CanUseVirtualGeometry(const StaticMeshData& source, std::string& reason)
+{
+    reason.clear();
+    if (source.VertexCount == 0 || source.IndexCount < 3 || source.IndexCount % 3 != 0)
+    {
+        reason = "VirtualGeometry requires a non-empty triangle list";
+        return false;
+    }
+    if (source.CpuIndices.size() != source.IndexCount || source.CpuVertices.size() != source.VertexCount)
+    {
+        reason = "Static mesh is missing complete CPU LOD0 geometry";
+        return false;
+    }
+    for (const auto index : source.CpuIndices)
+    {
+        if (index >= source.VertexCount)
+        {
+            reason = "Static mesh index is outside the source vertex range";
+            return false;
+        }
+    }
+    if (!std::isfinite(source.AppliedMaterialPartId))
+    {
+        reason = "Static mesh has a non-finite material part ID";
+        return false;
+    }
+    return true;
+}
+
 VirtualGeometryBuildResult VirtualGeometryBuilder::Build(
     const StaticMeshData& source, const VirtualGeometryBuildConfig& config, uint32_t materialId)
 {
-    if (source.CpuIndices.size() != source.IndexCount || source.CpuVertices.size() != source.VertexCount)
+    std::string reason;
+    if (!CanUseVirtualGeometry(source, reason))
     {
         VirtualGeometryBuildResult result;
-        result.Error = "Static mesh is missing complete CPU LOD0 geometry";
+        result.Error = reason;
         return result;
     }
     if (!isfinite(source.AppliedMaterialPartId))

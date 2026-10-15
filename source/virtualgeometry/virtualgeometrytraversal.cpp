@@ -12,6 +12,7 @@
 #include "shaderpipelines.h"
 #include "virtualgeometrystreaming.h"
 #include "renderersettings.h"
+#include "world.h"
 #include <numeric>
 #include <cmath>
 
@@ -182,6 +183,14 @@ void PollTemporalStatistics()
             state.TemporalStats.SecondVisible = values[65];
             state.TemporalStats.CapacityFallbacks = values[195];
             state.TemporalStats.HasSample = true;
+            state.TemporalStats.SampleSerial = frame.SampleSerial;
+            std::copy_n(values+192, 64, state.Debug.begin());
+            if (state.Options.AutoGrowBuffers && state.TemporalStats.CapacityFallbacks != 0)
+            {
+                // Applied before BeginFrame/Ensure, using only fence-completed feedback.
+                state.Options.MaxSelectedClusters = static_cast<uint32_t>(std::min<uint64_t>(4000000, uint64_t(state.Options.MaxSelectedClusters)*2));
+                state.Options.MaxGroupStates = static_cast<uint32_t>(std::min<uint64_t>(4000000, uint64_t(state.Options.MaxGroupStates)*2));
+            }
             state.LatestSample = frame.SampleSerial;
         }
         D3D12_RANGE noWrite{0,0};
@@ -317,6 +326,29 @@ void Prepare(RenderGraph& graph, const FrameInputs& inputs)
     XMStoreFloat4x4(&p.VP,view*projection);
     XMStoreFloat4x4(&p.PreviousVP,XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix())*XMLoadFloat4x4(&GraphicsDevice::GetPreviousProjectionMatrix()));
     XMStoreFloat4(&p.Camera,XMMatrixInverse(nullptr,view).r[3]);
+    p.Camera.w = 0;
+    p.StreamingPadding[0] = p.StreamingPadding[1] = 0;
+    if (state.Options.PredictiveStreaming && !GPUVisibility::CameraCut() && state.Options.ForceHierarchyLevel < 0)
+    {
+        const auto currentWorld = XMMatrixInverse(nullptr,view);
+        const auto previousWorld = XMMatrixInverse(nullptr,XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix()));
+        const float seconds = static_cast<float>(std::clamp(World::GetFrameTimeMs()*0.001,0.001,0.1));
+        const auto velocity = (currentWorld.r[3]-previousWorld.r[3])/seconds;
+        const auto predictedOffset = velocity*std::clamp(state.Options.PrefetchSeconds,0.0f,2.0f) + currentWorld.r[2]*2.0f;
+        const float length = XMVectorGetX(XMVector3Length(predictedOffset));
+        if (std::isfinite(length) && length > 0.001f && std::isfinite(state.Options.MaxPrefetchDistance))
+        {
+            XMFLOAT3 direction;
+            XMStoreFloat3(&direction,XMVector3Normalize(predictedOffset));
+            auto pack = [](float value)
+            {
+                return static_cast<uint32_t>(std::clamp((value*0.5f+0.5f)*1023.0f,0.0f,1023.0f)+0.5f);
+            };
+            p.StreamingPadding[0] = pack(direction.x) | (pack(direction.y)<<10) | (pack(direction.z)<<20);
+            p.StreamingPadding[1] = 1;
+            p.Camera.w = std::min(length,std::max(0.0f,state.Options.MaxPrefetchDistance));
+        }
+    }
     XMFLOAT4X4 projectionValues;
     XMStoreFloat4x4(&projectionValues,projection);
     p.ProjectionPixels = 0.5f*float(GraphicsDevice::GetSceneHeight())*std::abs(projectionValues._22);

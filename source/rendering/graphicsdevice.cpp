@@ -30,11 +30,14 @@
 
 
 static bool g_DeviceRemovalLogged = false;
+static bool g_GpuBasedValidationEnabled = false;
+bool GraphicsDevice::GpuBasedValidationEnabled() { return g_GpuBasedValidationEnabled; }
 
 
 bool GraphicsDevice::Init(HWND hwnd)
 {
 	g_DeviceRemovalLogged = false;
+    g_GpuBasedValidationEnabled = false;
 	m_FrameIndex = 0;
 	m_FenceEvent = nullptr;
 	m_FrameLatencyWaitableObject = nullptr;
@@ -79,6 +82,7 @@ bool GraphicsDevice::Init(HWND hwnd)
 			if (SUCCEEDED(debugController.As(&validation)))
 			{
 				validation->SetEnableGPUBasedValidation(TRUE);
+                g_GpuBasedValidationEnabled = true;
 				WriteGraphicsLog("GPU Based Validation enabled\n");
 			}
 		}

@@ -114,7 +114,12 @@ void Poll()
             sample.Clusters = values[phase*8+1];
             sample.OverflowClusters = values[phase*8+2];
             sample.InvalidMaterials = values[phase*8+3];
+            sample.RejectedClusters = values[phase*8+4]+values[phase*8+6];
             sample.HasSample = true;
+            if (sample.OverflowClusters && Data().Options.MaxMaterialBins < 65535u)
+            {
+                Data().Options.MaxMaterialBins = std::min(65535u, Data().Options.MaxMaterialBins*2);
+            }
             state.SampleSerial[phase] = frame.Serial;
         }
         D3D12_RANGE noWrite{0,0};
@@ -167,7 +172,7 @@ void BeginFrame(bool rasterAvailable)
         };
         ensure(frame.Bins,state.ExactBins+1,16);
         ensure(frame.Visible,state.Capacity,16);
-        ensure(frame.Arguments,state.ExactBins+1,20);
+        ensure(frame.Arguments,state.ExactBins+1,sizeof(IndirectCommand));
         ensure(frame.Counters,8,4);
         if (!frame.Readback)
         {

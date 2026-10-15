@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "generator": "virtualgeometry_tests --generate-streaming <directory> <sourceTriangles>",
+  "runtimeImporter": "ModelManager::LoadStaticModel",
+  "scenes": [
+    {
+      "name": "VirtualGeometry Production 100M",
+      "requestedSourceTriangles": 100000000,
+      "datasetDirectory": "build/virtualgeometry-phase11/dataset-100000000",
+      "runner": "scripts/validate-virtualgeometry-phase11.ps1 -StressTriangles 100000000",
+      "cameraRoute": "Near / mid / far, sequential and shuffled asset traversal, camera cuts",
+      "streaming": "Pinned-root startup, bounded memory, delayed I/O, injected retry, eviction"
+    },
+    {
+      "name": "VirtualGeometry Production 1B",
+      "requestedSourceTriangles": 1000000000,
+      "datasetDirectory": "build/virtualgeometry-phase11/dataset-1000000000",
+      "runner": "scripts/validate-virtualgeometry-phase11.ps1 -StressTriangles 1000000000",
+      "cameraRoute": "Near / mid / far, sequential and shuffled asset traversal, camera cuts",
+      "streaming": "Pinned-root startup, bounded memory, delayed I/O, injected retry, eviction"
+    }
+  ],
+  "note": "Scene definitions only. Generation and execution have not been performed. Each generated asset contributes its own source geometry; counts are not produced solely by an instance multiplier."
+}

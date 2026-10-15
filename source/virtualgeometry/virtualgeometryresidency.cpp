@@ -1,5 +1,6 @@
 #include "virtualgeometryresidency.h"
 #include <algorithm>
+#include <tuple>
 
 namespace VirtualGeometryStreaming
 {
@@ -12,14 +13,14 @@ bool ResidencyManager::CanAddPages(std::span<const uint8_t> pinned, uint64_t bud
 {
     budget = std::min(budget, MaximumBudget);
     uint64_t pinnedCount = m_PinnedPages+std::count(pinned.begin(), pinned.end(), uint8_t(1));
-    if (pinnedCount > budget / PageBytes || pinned.size() > UINT32_MAX - m_Pages.size() ||
+    if (pinnedCount > budget / PageBytes || pinned.size() > 0x7fffffffull - m_Pages.size() ||
         std::any_of(pinned.begin(), pinned.end(), [](uint8_t value) { return value > 1; }))
     {
         return false;
     }
     return true;
 }
-bool ResidencyManager::AddPages(std::span<const uint8_t> pinned, uint64_t budget)
+bool ResidencyManager::AddPages(std::span<const uint8_t> pinned, uint64_t budget, uint32_t priority)
 {
     if (!CanAddPages(pinned,budget))
     {
@@ -33,6 +34,7 @@ bool ResidencyManager::AddPages(std::span<const uint8_t> pinned, uint64_t budget
     {
         PageRecord page;
         page.Pinned = value != 0;
+        page.Priority = std::min(2u, priority);
         m_PinnedPages += page.Pinned;
         m_Pages.push_back(page);
         m_Snapshot.emplace_back();
@@ -194,15 +196,23 @@ void ResidencyManager::Collect(uint64_t completedGraphics, uint64_t completedCop
 std::optional<PageId> ResidencyManager::OldestEvictable(uint64_t olderThanFrame) const
 {
     std::optional<PageId> oldest;
+    auto evictionOrder = [](const PageRecord& record)
+    {
+        return std::tuple{!record.Predicted,record.Priority,record.LastUsed};
+    };
     for (PageId page = 0; page < m_Pages.size(); ++page)
     {
         const auto& record = m_Pages[page];
         if (!record.Pinned && !record.Retiring && record.State == PageState::Resident && record.LastUsed < olderThanFrame &&
-            (!oldest || record.LastUsed < m_Pages[*oldest].LastUsed))
+            (!oldest || evictionOrder(record) < evictionOrder(m_Pages[*oldest])))
         {
             oldest = page;
         }
     }
     return oldest;
+}
+void ResidencyManager::MarkPredicted(PageId page, bool predicted)
+{
+    if (page < m_Pages.size()) m_Pages[page].Predicted = predicted;
 }
 }

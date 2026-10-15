@@ -96,21 +96,10 @@ void Setup()
             admissionProbe = std::make_shared<VirtualGeometryPageCache::PageManifest>(*manifest);
             std::fill(admissionProbe->PinnedPages.begin(),admissionProbe->PinnedPages.end(),uint8_t(1));
         }
-        auto modelPath = directory/("fallback-"+std::to_string(asset)+".obj");
-        {
-            std::ofstream file(modelPath);
-            file << "v -4 -4 0\nv -4 4 0\nv 4 -4 0\nv 4 4 0\nvn 0 0 -1\nf 1//1 2//1 3//1\nf 3//1 2//1 4//1\n";
-        }
-        int modelId = ModelManager::LoadStaticModel(modelPath.string().c_str(),false);
+        int modelId = ModelManager::LoadStaticModel(manifest->Path.string().c_str(),false);
         auto* model = ModelManager::GetStaticModel(modelId);
         if (!model || model->GetMeshCount() != 1) throw std::runtime_error("Streaming fallback mesh import failed");
-        auto runtime = std::make_shared<VirtualGeometryRuntime::RuntimeAsset>();
-        runtime->Key = asset+1;
-        runtime->Pages = std::move(manifest);
-        // Validation-only injection: source buffers remain a complete two-triangle
-        // coarse plane; native geometry comes exclusively from the disk manifest.
-        auto& mesh = const_cast<StaticMeshData&>(model->GetMeshData(0));
-        mesh.VirtualGeometryLODs[0] = runtime;
+        // Standard VG importer supplies pinned root fallback and the original Entity identity.
         Entity entity = World::CreateEntity();
         entity.Add<TransformComponent>().Add<StaticModelComponent>().Add<MaterialComponent>().Add<ShaderComponent>().Add<NameComponent>();
         entity.Get<NameComponent>().Name = "Streaming disk asset "+std::to_string(asset);
@@ -247,6 +236,12 @@ void AfterFrame(uint64_t frame)
 }
 bool Finish()
 {
+    Check(GraphicsDevice::WaitForGpuIdle(),"final graphics work completed");
+    char gpuValidation[8]{};
+    if (GetEnvironmentVariableA("DX12_GPU_BASED_VALIDATION",gpuValidation,sizeof(gpuValidation)) && atoi(gpuValidation))
+    {
+        Check(GraphicsDevice::GpuBasedValidationEnabled(),"requested GPU Based Validation actually enabled");
+    }
     const auto& stats = VirtualGeometryStreaming::GetStatistics();
     Check(readyFrame != UINT64_MAX,"all source assets reached native root residency");
     Check(comparisons >= 4,"repeated raster comparisons after camera teleports");

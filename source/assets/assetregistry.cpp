@@ -50,7 +50,7 @@ AssetType AssetRegistry::Classify(const std::filesystem::path& path)
             return AssetType::Texture;
         }
     }
-    for (const char* mesh : {".obj", ".fbx", ".gltf", ".glb"})
+    for (const char* mesh : {".obj", ".fbx", ".gltf", ".glb", ".vgmesh", ".vgp2"})
     {
         if (extension == mesh) return AssetType::Mesh;
     }

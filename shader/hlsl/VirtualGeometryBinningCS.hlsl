@@ -30,6 +30,11 @@ void Reset(uint3 id : SV_DispatchThreadID)
 [numthreads(64,1,1)]
 void Count(uint3 id : SV_DispatchThreadID)
 {
+    if (id.x == 0 && InputCounters.Load(4) > Capacity)
+    {
+        uint unused;
+        Counters.InterlockedAdd(16,InputCounters.Load(4)-Capacity,unused);
+    }
     if (id.x >= InputCount()) return;
     uint material = InputClusters[id.x].MaterialIndex;
     uint bin = MaterialBin(material);
@@ -47,9 +52,9 @@ void Prefix()
     uint offset = 0, active = 0;
     for (uint bin = 0; bin <= ExactMaterialBins; ++bin)
     {
-        uint count = Bins[bin].y;
+        uint count = min(Bins[bin].y,Capacity-offset);
         Bins[bin] = uint4(offset,count,0,bin < ExactMaterialBins ? bin : 0xffffffffu);
-        if (count != 0)
+        if (count != 0 && active <= ExactMaterialBins)
         {
             uint address = active*20;
             uint x = min(count,65535u);
@@ -71,5 +76,12 @@ void Scatter(uint3 id : SV_DispatchThreadID)
     uint bin = MaterialBin(record.MaterialIndex);
     uint cursor;
     InterlockedAdd(Bins[bin].z,1,cursor);
-    SortedClusters[Bins[bin].x+cursor] = record;
+    uint destination = Bins[bin].x+cursor;
+    if (cursor >= Bins[bin].y || Bins[bin].x >= Capacity || cursor >= Capacity-Bins[bin].x)
+    {
+        uint unused;
+        Counters.InterlockedAdd(24,1,unused);
+        return;
+    }
+    SortedClusters[destination] = record;
 }

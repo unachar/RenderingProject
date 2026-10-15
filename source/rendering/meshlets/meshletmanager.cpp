@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "meshletmanager.h"
+#include "virtualgeometry/virtualgeometrybuilder.h"
 #include "staticmodel.h"
 #include "graphicsdevice.h"
 #include "graphicslog.h"
@@ -34,6 +35,22 @@ State &Data()
 } // namespace
 void BuildImportedMesh(StaticMeshData &mesh)
 {
+    mesh.VirtualGeometryLODs = {};
+    mesh.MeshletLODs = {};
+    mesh.VirtualGeometryBuilds = {};
+    mesh.VirtualGeometryBuildError.clear();
+    if (!mesh.VirtualGeometrySettings.Enabled)
+    {
+        return;
+    }
+    std::string eligibilityReason;
+    if (!CanUseVirtualGeometry(mesh, eligibilityReason))
+    {
+        mesh.VirtualGeometryBuildError = eligibilityReason;
+        WriteGraphicsLog("VirtualGeometry import fallback (%s): %s\n",
+            mesh.MeshName.c_str(), eligibilityReason.c_str());
+        return;
+    }
     try
     {
         vector<VirtualGeometryVertex> vertices;
@@ -42,27 +59,75 @@ void BuildImportedMesh(StaticMeshData &mesh)
             vertices.push_back({{v.Position.x,v.Position.y,v.Position.z},
                 {v.Normal.x,v.Normal.y,v.Normal.z}, {v.TexCoord.x,v.TexCoord.y},
                 {v.Diffuse.x,v.Diffuse.y,v.Diffuse.z,v.Diffuse.w}});
-        mesh.VirtualGeometryLODs = {};
-        mesh.MeshletLODs = {};
         for (uint32_t lod = 0; lod < StaticMeshData::LodCount; ++lod)
         {
             const auto &indices = lod ? mesh.CpuLodIndices[lod - 1] : mesh.CpuIndices;
             if (indices.empty())
                 continue;
-            auto asset = VirtualGeometryRuntime::Acquire(vertices, indices, 0, mesh.AppliedMaterialPartId);
+            if (mesh.VirtualGeometrySettings.BackgroundBuild)
+            {
+                if (lod != 0)
+                {
+                    continue; // Native hierarchy replaces discrete LODs; legacy indices remain available.
+                }
+                mesh.VirtualGeometryBuilds[lod] = VirtualGeometryRuntime::AcquireAsync(
+                    std::move(vertices), indices, 0, mesh.AppliedMaterialPartId, mesh.VirtualGeometrySettings);
+                continue;
+            }
+            auto asset = VirtualGeometryRuntime::Acquire(vertices, indices, 0, mesh.AppliedMaterialPartId,
+                "asset/virtualgeometry-cache", mesh.VirtualGeometrySettings);
             mesh.VirtualGeometryLODs[lod] = asset;
             if (asset->Error.empty()) mesh.MeshletLODs[lod] = asset->Meshlets;
             else
             {
+                mesh.VirtualGeometryBuildError = asset->Error;
                 WriteGraphicsLog("Nanite import fallback (%s LOD%u): %s\n", mesh.MeshName.c_str(),lod,asset->Error.c_str());
             }
         }
     }
     catch (const exception &error)
     {
+        mesh.VirtualGeometryLODs = {};
         mesh.MeshletLODs = {};
+        mesh.VirtualGeometryBuildError = error.what();
         WriteGraphicsLog("Meshlet import fallback: %s\n", error.what());
     }
+}
+bool PollImportedMesh(StaticMeshData& mesh)
+{
+    bool changed = false;
+    for (uint32_t lod = 0; lod < StaticMeshData::LodCount; ++lod)
+    {
+        auto& pending = mesh.VirtualGeometryBuilds[lod];
+        if (!pending.valid() || pending.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        {
+            continue;
+        }
+        try
+        {
+            const auto asset = pending.get();
+            if (asset && asset->Error.empty())
+            {
+                mesh.VirtualGeometryLODs[lod] = asset;
+                mesh.MeshletLODs[lod] = asset->Meshlets;
+            }
+            else
+            {
+                mesh.VirtualGeometryBuildError = asset ? asset->Error : "No VirtualGeometry build result";
+            }
+        }
+        catch (const std::exception& error)
+        {
+            mesh.VirtualGeometryBuildError = error.what();
+        }
+        pending = {};
+        changed = true;
+    }
+    if (changed)
+    {
+        GPUDrivenRenderer::UpdateGeometry(mesh);
+    }
+    return changed;
 }
 void Register(uint32_t meshID, const Meshlets::Asset &asset, uint32_t baseVertex)
 {

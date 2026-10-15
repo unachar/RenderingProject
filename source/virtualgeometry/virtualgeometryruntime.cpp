@@ -1,6 +1,7 @@
 #include "virtualgeometryruntime.h"
 #include "virtualgeometrybuilder.h"
 #include "virtualgeometryserializer.h"
+#include "virtualgeometrypagecache.h"
 #include "virtualgeometryvalidator.h"
 #include <algorithm>
 #include <chrono>
@@ -11,6 +12,10 @@
 #include <sstream>
 #include <unordered_map>
 #include <stdexcept>
+#include <condition_variable>
+#include <deque>
+#include <thread>
+#include <cstdlib>
 
 namespace VirtualGeometryRuntime
 {
@@ -49,7 +54,7 @@ State &Data()
 }
 
 uint64_t GeometryKey(std::span<const VirtualGeometryVertex> vertices, std::span<const uint32_t> indices,
-                     uint32_t material, float part)
+                     uint32_t material, float part, const VGImportSettings& settings)
 {
     uint64_t hash = 14695981039346656037ull;
     auto consume = [&](const void *data, size_t size)
@@ -62,8 +67,18 @@ uint64_t GeometryKey(std::span<const VirtualGeometryVertex> vertices, std::span<
         }
     };
     // Bump integration version when the fixed build settings or remap contract change.
-    const uint32_t header[] = {VirtualGeometryConfig::AssetVersion, 2, 64, 124, material};
+    const uint32_t header[] = {VirtualGeometryConfig::AssetVersion, VirtualGeometryConfig::BuilderVersion, material};
     consume(header, sizeof(header));
+    // Hash fields explicitly: compiler padding must never affect derived data identity.
+    const auto config = settings.BuildConfig();
+    const uint64_t settingsKey = VirtualGeometryImport::SettingsKey(settings);
+    consume(&settingsKey, sizeof(settingsKey));
+    const uint32_t limits[] = {config.MaxClusterVertices, config.MaxClusterTriangles,
+        config.TargetClustersPerGroup, config.MaxHierarchyLevels};
+    consume(limits, sizeof(limits));
+    const float parameters[] = {config.SimplificationRatio, config.ConeWeight, config.NormalWeight,
+        config.TexCoordWeight, config.ColorWeight, config.TargetRelativeError, config.BoundaryEpsilon};
+    consume(parameters, sizeof(parameters));
     consume(&part, sizeof(part));
     const uint64_t counts[] = {vertices.size(), indices.size()};
     consume(counts, sizeof(counts));
@@ -152,12 +167,14 @@ Meshlets::Asset ConvertLeaves(const VirtualGeometryAsset &hierarchy,
 
 std::shared_ptr<const RuntimeAsset> Acquire(std::span<const VirtualGeometryVertex> vertices,
                                             std::span<const uint32_t> indices, uint32_t materialId,
-                                            float materialPartId, const std::filesystem::path &cacheDirectory)
+                                            float materialPartId, const std::filesystem::path &cacheDirectory,
+                                            const VGImportSettings& settings)
 {
     auto &state = Data();
-    std::lock_guard lock(state.Mutex);
+    std::unique_lock lock(state.Mutex);
     auto asset = std::make_shared<RuntimeAsset>();
-    asset->Key = GeometryKey(vertices, indices, materialId, materialPartId);
+    asset->ImportSettings = settings;
+    asset->Key = GeometryKey(vertices, indices, materialId, materialPartId, settings);
     std::ostringstream name;
     name << std::hex << asset->Key << ".vgmesh";
     asset->CachePath = cacheDirectory / name.str();
@@ -169,18 +186,33 @@ std::shared_ptr<const RuntimeAsset> Acquire(std::span<const VirtualGeometryVerte
             return shared;
         }
     const auto begin = std::chrono::steady_clock::now();
+    lock.unlock(); // Long CPU builds must not block inspector/statistics reads.
     try
     {
-        VirtualGeometryBuildConfig config;
-        config.MaxClusterVertices = 64;
-        config.MaxClusterTriangles = 124;
+        if (!settings.Enabled)
+        {
+            throw std::runtime_error("VirtualGeometry is disabled for this asset");
+        }
+        auto config = settings.BuildConfig();
+        float lower[3] = {INFINITY, INFINITY, INFINITY};
+        float upper[3] = {-INFINITY, -INFINITY, -INFINITY};
+        for (const auto& vertex : vertices)
+        {
+            for (uint32_t axis = 0; axis < 3; ++axis)
+            {
+                lower[axis] = std::min(lower[axis], vertex.Position[axis]);
+                upper[axis] = std::max(upper[axis], vertex.Position[axis]);
+            }
+        }
+        const float extent = std::max({upper[0]-lower[0], upper[1]-lower[1], upper[2]-lower[2]});
+        asset->CompressionSettings = settings.Compression(std::isfinite(extent) ? extent : 1.0f);
         std::string error;
         asset->CacheHit = VirtualGeometrySerializer::Load(asset->CachePath, asset->Hierarchy, error);
         if (asset->CacheHit)
         {
             const auto &loaded = asset->Hierarchy;
-            asset->CacheHit = loaded.Config.MaxClusterVertices == 64 &&
-                              loaded.Config.MaxClusterTriangles == 124 && loaded.DebugName == name.str() &&
+            asset->CacheHit = loaded.Config.MaxClusterVertices == config.MaxClusterVertices &&
+                              loaded.Config.MaxClusterTriangles == config.MaxClusterTriangles && loaded.DebugName == name.str() &&
                               loaded.SourceMaterialId == materialId &&
                               loaded.SourceMaterialPartId == materialPartId &&
                               loaded.Stats.SourceVertices == vertices.size() &&
@@ -220,24 +252,60 @@ std::shared_ptr<const RuntimeAsset> Acquire(std::span<const VirtualGeometryVerte
             std::filesystem::create_directories(cacheDirectory, directoryError);
             if (!directoryError)
                 VirtualGeometrySerializer::Save(asset->CachePath, asset->Hierarchy, error);
-            ++state.Stats.Builds;
         }
         else
         {
-            ++state.Stats.CacheHits;
             if (asset->Hierarchy.Config.MaxHierarchyLevels == 1)
                 asset->HierarchyWarning =
                     "Cached leaf-only hierarchy; protected boundaries prevented simplification";
+        }
+        // Finish the import product even when the asset has no scene instances yet.
+        auto compression = asset->CompressionSettings;
+        if (const char* raw = std::getenv("DX12_VG_COMPRESSION_RAW"))
+        {
+            compression.Enabled = std::atoi(raw) == 0;
+        }
+        auto pagePath = asset->CachePath;
+        pagePath += "."+std::to_string(VirtualGeometryCompression::SettingsKey(compression));
+        pagePath += compression.Enabled ? ".encoded.vgmesh" : ".raw.vgmesh";
+        auto manifest = std::make_shared<VirtualGeometryPageCache::PageManifest>();
+        if (!VirtualGeometryPageCache::Open(pagePath,*manifest,error) ||
+            manifest->Version != VirtualGeometryPageCache::FormatVersion::Production)
+        {
+            if (!VirtualGeometrySerializer::SaveEncoded(pagePath,asset->Hierarchy,error,compression) ||
+                !VirtualGeometryPageCache::Open(pagePath,*manifest,error))
+            {
+                // Preserve validated raw geometry when disk space or page encoding is unavailable.
+                asset->HierarchyWarning += " Page preparation deferred: "+error;
+                manifest.reset();
+            }
+        }
+        if (manifest)
+        {
+            manifest->StreamingPriority = settings.StreamingPriority;
+            asset->Pages = std::move(manifest);
         }
     }
     catch (const std::exception &error)
     {
         asset->Error = error.what();
         asset->Meshlets = {};
-        ++state.Stats.Failures;
     }
     asset->BuildMilliseconds =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+    lock.lock();
+    if (!asset->Error.empty())
+    {
+        ++state.Stats.Failures;
+    }
+    else if (asset->CacheHit)
+    {
+        ++state.Stats.CacheHits;
+    }
+    else
+    {
+        ++state.Stats.Builds;
+    }
     state.Stats.BuildMilliseconds += asset->BuildMilliseconds;
     for (auto entry = state.Assets.begin(); entry != state.Assets.end();)
         if (entry->second.expired())
@@ -246,6 +314,81 @@ std::shared_ptr<const RuntimeAsset> Acquire(std::span<const VirtualGeometryVerte
             ++entry;
     state.Assets[identity] = asset;
     return asset;
+}
+
+std::shared_future<std::shared_ptr<const RuntimeAsset>> AcquireAsync(
+    std::vector<VirtualGeometryVertex> vertices, std::vector<uint32_t> indices,
+    uint32_t materialId, float materialPartId, const VGImportSettings& settings)
+{
+    // A single worker bounds CPU/memory competition with import and page encoding.
+    struct BuildQueue
+    {
+        struct Job
+        {
+            uint64_t Bytes = 0;
+            std::packaged_task<std::shared_ptr<const RuntimeAsset>()> Work;
+        };
+        std::mutex Mutex;
+        std::condition_variable Wake;
+        std::deque<Job> Jobs;
+        uint64_t Bytes = 0;
+        bool Stopping = false;
+        std::thread Worker;
+        BuildQueue() : Worker([this]
+        {
+            for (;;)
+            {
+                std::unique_lock guard(Mutex);
+                Wake.wait(guard, [this] { return Stopping || !Jobs.empty(); });
+                if (Jobs.empty())
+                {
+                    return;
+                }
+                auto job = std::move(Jobs.front());
+                Jobs.pop_front();
+                guard.unlock();
+                job.Work();
+                guard.lock();
+                Bytes -= job.Bytes;
+            }
+        }) {}
+        ~BuildQueue()
+        {
+            {
+                std::lock_guard guard(Mutex);
+                Stopping = true;
+                Jobs.clear(); // Broken promises are handled by the main-thread publication path.
+            }
+            Wake.notify_one();
+            Worker.join();
+        }
+    };
+    Data(); // Runtime state must outlive the worker during process shutdown.
+    static BuildQueue queue;
+    const uint64_t bytes = uint64_t(vertices.size())*sizeof(VirtualGeometryVertex) + uint64_t(indices.size())*4;
+    std::unique_lock guard(queue.Mutex);
+    constexpr uint64_t queueBudget = 512ull*1024*1024;
+    if (bytes > queueBudget || queue.Bytes > queueBudget-bytes)
+    {
+        std::promise<std::shared_ptr<const RuntimeAsset>> rejected;
+        auto asset = std::make_shared<RuntimeAsset>();
+        asset->Error = "VirtualGeometry background queue memory budget exceeded; legacy rendering retained";
+        rejected.set_value(asset);
+        return rejected.get_future().share();
+    }
+    BuildQueue::Job job;
+    job.Bytes = bytes;
+    job.Work = std::packaged_task<std::shared_ptr<const RuntimeAsset>()>(
+        [vertices = std::move(vertices), indices = std::move(indices), materialId, materialPartId, settings]
+        {
+            return Acquire(vertices, indices, materialId, materialPartId, "asset/virtualgeometry-cache", settings);
+        });
+    auto future = job.Work.get_future().share();
+    queue.Bytes += bytes;
+    queue.Jobs.push_back(std::move(job));
+    guard.unlock();
+    queue.Wake.notify_one();
+    return future;
 }
 Statistics GetStatistics()
 {

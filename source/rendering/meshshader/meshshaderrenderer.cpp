@@ -46,6 +46,7 @@ struct State
     ComPtr<ID3D12PipelineState> VelocityPSO, VelocityFallbackPSO;
     ComPtr<ID3D12PipelineState> NativeOpaquePSO, NativeVelocityPSO;
     ComPtr<ID3D12PipelineState> NativeBinnedOpaquePSO, NativeBinnedVelocityPSO;
+    ComPtr<ID3D12PipelineState> NativeOverdrawPSO, NativeBinnedOverdrawPSO;
     ComPtr<ID3D12CommandSignature> MeshSignature, FallbackSignature;
     ComPtr<ID3D12CommandSignature> MaterialBinSignature;
     array<Frame, GpuSceneBuffer::FrameCount> Frames;
@@ -185,11 +186,37 @@ void Initialize()
     stream.MS.Value = {nativeMS->GetBufferPointer(),nativeMS->GetBufferSize()};
     stream.PS.Value = {nativePS->GetBufferPointer(),nativePS->GetBufferSize()};
     Check(device2->CreatePipelineState(&meshDesc,IID_PPV_ARGS(&state.NativeOpaquePSO)));
+    auto createOverdraw = [&](ComPtr<ID3D12PipelineState>& output)
+    {
+        const auto originalDepth = stream.Depth.Value;
+        const auto originalBlend = stream.Blend.Value;
+        stream.Depth.Value.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+        stream.Depth.Value.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+        stream.Blend.Value.IndependentBlendEnable = TRUE;
+        for (auto& target : stream.Blend.Value.RenderTarget)
+        {
+            target.RenderTargetWriteMask = 0;
+        }
+        auto& emission = stream.Blend.Value.RenderTarget[5];
+        emission.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN | D3D12_COLOR_WRITE_ENABLE_BLUE;
+        emission.BlendEnable = TRUE;
+        emission.SrcBlend = emission.DestBlend = D3D12_BLEND_ONE;
+        emission.BlendOp = D3D12_BLEND_OP_ADD;
+        emission.SrcBlendAlpha = D3D12_BLEND_ONE;
+        emission.DestBlendAlpha = D3D12_BLEND_ZERO;
+        emission.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        const auto result = device2->CreatePipelineState(&meshDesc,IID_PPV_ARGS(&output));
+        stream.Depth.Value = originalDepth;
+        stream.Blend.Value = originalBlend;
+        Check(result);
+    };
+    createOverdraw(state.NativeOverdrawPSO);
     try
     {
         auto binnedMS = Shader("shader/hlsl/build/VirtualGeometryBinnedMS.cso");
         stream.MS.Value = {binnedMS->GetBufferPointer(),binnedMS->GetBufferSize()};
         Check(device2->CreatePipelineState(&meshDesc,IID_PPV_ARGS(&state.NativeBinnedOpaquePSO)));
+        createOverdraw(state.NativeBinnedOverdrawPSO);
     }
     catch (const std::exception& error)
     {
@@ -206,7 +233,7 @@ void Initialize()
     binArgs[0].Constant.RootParameterIndex = 16;
     binArgs[0].Constant.Num32BitValuesToSet = 2;
     binArgs[1].Type = D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH;
-    D3D12_COMMAND_SIGNATURE_DESC binSignature{20,2,binArgs,0};
+    D3D12_COMMAND_SIGNATURE_DESC binSignature{sizeof(VirtualGeometryBinning::IndirectCommand),2,binArgs,0};
     Check(device->CreateCommandSignature(&binSignature,state.OpaqueRoot.Get(),IID_PPV_ARGS(&state.MaterialBinSignature)));
     // Fallback uses the same Pixel Shader and bindings, with zero index counts for routed objects.
     auto vs = Shader("shader/hlsl/build/MeshletFallbackVS.cso");
@@ -374,7 +401,8 @@ bool IsActive()
 bool NativeReady()
 {
     const auto& state = Data();
-    return state.Supported && state.Options.Enabled && !state.Failed && state.NativeOpaquePSO && state.NativeVelocityPSO;
+    return GetGeometryRenderingMode() != GeometryRenderingMode::Legacy && state.Supported &&
+        state.Options.Enabled && !state.Failed && state.NativeOpaquePSO && state.NativeVelocityPSO;
 }
 void Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances, RenderGraph::ResourceHandle objects,
              RenderGraph::ResourceHandle count, RenderGraph::ResourceHandle commands,
@@ -383,7 +411,7 @@ void Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances, RenderGr
 {
     auto &s = Data();
     s.Active = false;
-    if (!s.Options.Enabled || !s.Supported || s.Failed)
+    if (GetGeometryRenderingMode() == GeometryRenderingMode::Legacy || !s.Options.Enabled || !s.Supported || s.Failed)
     {
         VirtualGeometryTraversal::InvalidateHistory();
         return;
@@ -419,7 +447,9 @@ void Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances, RenderGr
         prepare(f.Fallback, capacity, 24);
         MeshletManager::Prepare(graph, meshes);
         VirtualGeometryTraversal::Prepare(graph,{instances,objects,count,objectResource,countResource,capacity});
-        VirtualGeometryBinning::BeginFrame(s.NativeBinnedOpaquePSO.Get() && s.NativeBinnedVelocityPSO.Get());
+        const bool overdraw = VirtualGeometryTraversal::GetSettings().View == VirtualGeometryTraversal::DebugView::Overdraw;
+        VirtualGeometryBinning::BeginFrame(s.NativeBinnedOpaquePSO.Get() && s.NativeBinnedVelocityPSO.Get() &&
+            (!overdraw || s.NativeBinnedOverdrawPSO.Get()));
     }
     catch (const exception &error)
     {
@@ -664,12 +694,22 @@ static bool DrawPass(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices, 
                 uint64_t offset = index == 5 ? VirtualGeometryTraversal::CounterOffset(phase) : 0;
                 commands->SetGraphicsRootShaderResourceView(7+index,nativeResources[index]->GetGPUVirtualAddress()+offset);
             }
-            commands->SetGraphicsRoot32BitConstant(13,VirtualGeometryTraversal::GetSettings().LevelColors,0);
+            const auto& visualization = VirtualGeometryTraversal::GetSettings();
+            uint32_t debugView = static_cast<uint32_t>(visualization.View);
+            if (!debugView && visualization.LevelColors)
+            {
+                debugView = static_cast<uint32_t>(VirtualGeometryTraversal::DebugView::LOD);
+            }
+            commands->SetGraphicsRoot32BitConstant(13,debugView,0);
             commands->SetGraphicsRootShaderResourceView(14,VirtualGeometryStreaming::ResidencyBuffer().Resource()->GetGPUVirtualAddress());
             commands->SetGraphicsRootDescriptorTable(15,VirtualGeometryStreaming::PageDescriptors());
             commands->SetPipelineState(binning
                 ? (velocity ? data.NativeBinnedVelocityPSO.Get() : data.NativeBinnedOpaquePSO.Get())
                 : (velocity ? data.NativeVelocityPSO.Get() : data.NativeOpaquePSO.Get()));
+            if (!velocity && visualization.View == VirtualGeometryTraversal::DebugView::Overdraw)
+            {
+                commands->SetPipelineState(binning ? data.NativeBinnedOverdrawPSO.Get() : data.NativeOverdrawPSO.Get());
+            }
             RenderProfiler::ScopedEvent nativeProfile(velocity ? "Nanite Velocity Mesh Shader" : "Nanite Mesh Shader",commands);
             if (binning)
             {

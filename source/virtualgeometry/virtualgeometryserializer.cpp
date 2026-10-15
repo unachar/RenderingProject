@@ -1,10 +1,29 @@
 #include "virtualgeometryserializer.h"
+#include "virtualgeometrypagecache.h"
 #include "virtualgeometryserializationinternal.h"
 #include "virtualgeometryinternal.h"
 #include "virtualgeometryvalidator.h"
 #include <array>
 #include <fstream>
 #include <limits>
+#include <atomic>
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+bool VirtualGeometrySerializer::SaveEncoded(const std::filesystem::path& path, const VirtualGeometryAsset& asset,
+    std::string& error, const VGCompressionSettings& settings, const VirtualGeometryCompression::Input& attributes)
+{
+    VirtualGeometryPages::PagedAsset pages;
+    return VirtualGeometryPages::Build(asset, attributes, settings, pages, error) && VirtualGeometryPageCache::WriteAtomic(path, pages, error);
+}
+
+bool VirtualGeometrySerializer::LoadEncoded(const std::filesystem::path& path,
+    VirtualGeometryPageCache::PageManifest& manifest, std::string& error)
+{
+    return VirtualGeometryPageCache::Open(path, manifest, error);
+}
 
 namespace
 {
@@ -64,9 +83,13 @@ namespace
             throw std::runtime_error("Invalid file size or file budget exceeded");
         }
         Reader header(bytes.first(HeaderBytes));
-        if (header.U32() != Magic || header.U32() != VirtualGeometryConfig::AssetVersion)
+        if (header.U32() != Magic)
         {
-            throw std::runtime_error("Invalid VGM1 magic or unsupported version");
+            throw std::runtime_error("Invalid VGM1 magic");
+        }
+        if (header.U32() != VirtualGeometryConfig::AssetVersion)
+        {
+            throw std::runtime_error("Unsupported VGMesh format version");
         }
         if (header.U64() != bytes.size())
         {
@@ -323,6 +346,13 @@ bool VirtualGeometrySerializer::Decode(std::span<const uint8_t> bytes, VirtualGe
 
 bool VirtualGeometrySerializer::Save(const std::filesystem::path& path, const VirtualGeometryAsset& asset, std::string& error)
 {
+    static std::atomic<uint64_t> sequence{0};
+    auto temporary = path;
+#ifdef _WIN32
+    temporary += ".tmp."+std::to_string(GetCurrentProcessId())+"."+std::to_string(++sequence);
+#else
+    temporary += ".tmp."+std::to_string(++sequence);
+#endif
     std::vector<uint8_t> bytes;
     if (!Encode(asset, bytes, error))
     {
@@ -334,14 +364,24 @@ bool VirtualGeometrySerializer::Save(const std::filesystem::path& path, const Vi
         {
             throw std::runtime_error("Virtual geometry file exceeds stream addressing");
         }
-        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
         file.exceptions(std::ios::badbit | std::ios::failbit);
         file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         file.close();
+#ifdef _WIN32
+        if (!MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        {
+            throw std::runtime_error("Cannot publish VirtualGeometry derived data");
+        }
+#else
+        std::filesystem::rename(temporary,path);
+#endif
         return true;
     }
     catch (const std::exception& exception)
     {
+        std::error_code ignored;
+        std::filesystem::remove(temporary,ignored);
         error = exception.what();
         return false;
     }

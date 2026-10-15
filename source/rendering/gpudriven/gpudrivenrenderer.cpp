@@ -36,6 +36,8 @@ constexpr uint32_t OpaqueInstanceFlag = 4;
 struct FrameBuffers
 {
     GpuSceneBuffer Visible, Count, Commands;
+    ComPtr<ID3D12Resource> Feedback;
+    uint64_t FeedbackFence = 0;
 };
 struct State
 {
@@ -69,6 +71,8 @@ struct State
     bool DebugReadback = false;
     uint32_t DebugCount = 0;
     vector<GPUIndirectDrawCommand> DebugCommands;
+    GPUDrivenRenderer::OverflowStatistics Overflow;
+    uint64_t LatestFeedbackFence = 0;
 };
 State& Data() { static State state; return state; }
 FrameBuffers& Frame() { return Data().Frames.at(Data().FrameIndex); }
@@ -481,10 +485,37 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
                                RenderGraph::ResourceHandle visibility, uint32_t slots, uint32_t capacity, uint32_t meshes)
 {
     auto& state = Data();
+    for (auto& pending : state.Frames)
+    {
+        if (!pending.FeedbackFence || pending.FeedbackFence > GraphicsDevice::GetCompletedFence()) continue;
+        D3D12_RANGE range{0,16};
+        void* mapped = nullptr;
+        if (SUCCEEDED(pending.Feedback->Map(0,&range,&mapped)))
+        {
+            const auto* counters = static_cast<const uint32_t*>(mapped);
+            state.Overflow.VisibleInstanceOverflow += counters[1];
+            state.Overflow.InvalidIndirectCommands += counters[2];
+            if (counters[1] || counters[2])
+            {
+                state.Failed = true;
+                WriteGraphicsLog("GPU Driven capacity/reference failure; regular mesh fallback retained\n");
+            }
+            if (pending.FeedbackFence > state.LatestFeedbackFence)
+            {
+                state.Overflow.VisibleInstances = counters[0];
+                state.Overflow.HasSample = true;
+                state.LatestFeedbackFence = pending.FeedbackFence;
+            }
+            D3D12_RANGE noWrite{0,0};
+            pending.Feedback->Unmap(0,&noWrite);
+        }
+        pending.FeedbackFence = 0;
+    }
     state.Active = false;
     state.Calls = 0;
     state.SubmissionMs = 0;
-    const bool compatible = state.Enabled && !state.Failed && CompatibleMode();
+    const bool compatible = GetGeometryRenderingMode() != GeometryRenderingMode::Legacy &&
+        state.Enabled && !state.Failed && CompatibleMode();
     if (compatible != state.PreviousCompatible) GPUVisibility::Invalidate("GPU/CPU path changed");
     state.PreviousCompatible = compatible;
     if (!compatible)
@@ -516,7 +547,18 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
     prepare(state.Geometry, meshes, sizeof(GPUDrivenGeometryData), L"GPU Driven Mesh Geometry");
     prepare(frame.Visible, capacity, sizeof(Visibility::VisibleInstanceData), L"GPU Driven Visible LOD Instances", true);
     prepare(frame.Commands, capacity, sizeof(GPUIndirectDrawCommand), L"GPU Driven Commands", true);
-    prepare(frame.Count, 1, 4, L"GPU Driven Count", true);
+    prepare(frame.Count, 4, 4, L"GPU Driven Count", true);
+    if (!frame.Feedback)
+    {
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
+        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(16);
+        if (FAILED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,
+            D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&frame.Feedback))))
+        {
+            state.Failed = true;
+            return;
+        }
+    }
     const uint64_t vertexBytes = state.Vertices.Stage(device, frameIndex, state.CpuVertices.data(), static_cast<uint32_t>(state.CpuVertices.size()), state.NewVertices);
     const uint64_t indexBytes = state.Indices.Stage(device, frameIndex, state.CpuIndices.data(), static_cast<uint32_t>(state.CpuIndices.size()), state.NewIndices);
     const uint64_t meshBytes = state.Geometry.Stage(device, frameIndex, state.CpuGeometry.data(), meshes, state.NewGeometry);
@@ -579,12 +621,21 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
     });
     graph.AddPass("Generate Indirect Commands", [=](RenderGraph::PassBuilder& builder) {
         builder.Read(instances, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE).Read(geometry, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
-            .Read(visible, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE).Read(count, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+            .Read(visible, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE).ReadWrite(count, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
             .Write(arguments, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }, [bindCompute](ID3D12GraphicsCommandList* list) {
         RenderProfiler::ScopedEvent profile("Generate Indirect Commands", list);
         bindCompute(list, true);
         list->Dispatch((Frame().Commands.Capacity() + 63) / 64, 1, 1);
+    });
+    graph.AddPass("GPU Driven overflow feedback", [=](RenderGraph::PassBuilder& builder)
+    {
+        builder.Read(count,D3D12_RESOURCE_STATE_COPY_SOURCE);
+    }, [](ID3D12GraphicsCommandList* commands)
+    {
+        auto& target = Frame();
+        commands->CopyBufferRegion(target.Feedback.Get(),0,target.Count.Resource(),0,16);
+        target.FeedbackFence = GraphicsDevice::GetPendingSubmissionFence();
     });
     MeshShaderRenderer::Prepare(graph, instances, visible, count, arguments, frame.Visible.Resource(), frame.Count.Resource(), frame.Commands.Resource(), frame.Commands.Capacity(), meshes);
     state.Active = true;
@@ -731,6 +782,7 @@ void GPUDrivenRenderer::DrawVelocity(ID3D12GraphicsCommandList* commands)
 }
 
 bool GPUDrivenRenderer::IsEnabled() { return Data().Enabled; }
+const GPUDrivenRenderer::OverflowStatistics& GPUDrivenRenderer::GetOverflowStatistics() { return Data().Overflow; }
 bool GPUDrivenRenderer::IsActive() { return Data().Active; }
 void GPUDrivenRenderer::SetEnabled(bool enabled) { Data().Enabled = enabled; }
 void GPUDrivenRenderer::Shutdown() { MeshShaderRenderer::Shutdown(); GPUVisibility::Shutdown(); Data() = {}; }

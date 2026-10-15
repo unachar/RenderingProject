@@ -1014,6 +1014,8 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="source\virtualgeometry\virtualgeometrystaticmesh.cpp" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometryimport.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryproduction.cpp" />
     <ClCompile Include="source\virtualgeometry\virtualgeometryvalidator.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -1052,6 +1054,8 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\virtualgeometry\virtualgeometryruntime.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClInclude Include="source\virtualgeometry\virtualgeometrybuilder.h" />
     <ClInclude Include="source\virtualgeometry\virtualgeometryconfig.h" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometryimport.h" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometryproduction.h" />
     <ClInclude Include="source\virtualgeometry\virtualgeometryinternal.h" />
     <ClInclude Include="source\virtualgeometry\virtualgeometryreport.h" />
     <ClInclude Include="source\virtualgeometry\virtualgeometryserializationinternal.h" />
@@ -1235,6 +1239,9 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
   <ItemGroup>
     <ClCompile Include="source\virtualgeometry\virtualgeometrypages.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClInclude Include="source\virtualgeometry\virtualgeometrypages.h" />
+    <ClCompile Include="source\virtualgeometry\virtualgeometrycompression.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrycompression.h" />
+    <None Include="shader\hlsl\VGGeometryDecode.hlsli" />
     <ClCompile Include="source\virtualgeometry\virtualgeometrypagecache.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClInclude Include="source\virtualgeometry\virtualgeometrypagecache.h" />
     <ClCompile Include="source\virtualgeometry\virtualgeometryresidency.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>

@@ -10,6 +10,8 @@ namespace VirtualGeometryConfig
     inline constexpr uint32_t MaxHierarchyLevels = 32;
     inline constexpr uint32_t InvalidIndex = UINT32_MAX;
     inline constexpr uint32_t AssetVersion = 1;
+    inline constexpr uint32_t BuilderVersion = 4;
+    inline constexpr uint32_t GeometryPageBytes = 64 * 1024;
 }
 
 struct VirtualGeometryBuildConfig
@@ -26,5 +28,31 @@ struct VirtualGeometryBuildConfig
     float TargetRelativeError = 1.0f;
     float BoundaryEpsilon = 1e-5f;
 };
+
+enum class GeometryRenderingMode
+{
+    Auto,
+    VirtualGeometry,
+    Legacy
+};
+
+// Shared by import and runtime. A forced VG request still falls back when unsupported.
+inline GeometryRenderingMode& GetGeometryRenderingMode()
+{
+    static GeometryRenderingMode mode = GeometryRenderingMode::Auto;
+    return mode;
+}
+
+namespace VGSettings
+{
+inline VirtualGeometryBuildConfig Production()
+{
+    VirtualGeometryBuildConfig config;
+    config.MaxClusterVertices = 64;
+    config.MaxClusterTriangles = 124;
+    config.TargetRelativeError = 0.01f;
+    return config;
+}
+}
 
 bool ValidateVirtualGeometryConfig(const VirtualGeometryBuildConfig& config, std::string& error);
