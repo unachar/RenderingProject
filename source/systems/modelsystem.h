@@ -173,7 +173,7 @@ private:
             {
                 if (skinnedModels.insert(model).second)
                 {
-                    model->DispatchGpuSkinning(ctx.commandList);
+                    model->DispatchGpuSkinning(ctx.commandList, false);
                     callbacks.restoreGraphicsState(ctx.commandList, ctx.pso);
                 }
             }
@@ -376,6 +376,7 @@ public:
     void Update() override { m_Backend.Update(); }
     void Draw(RenderPass renderPass, bool receivingPostProcessOnly) override
     {
+        m_Backend.SetIndirectDrawCache(&m_IndirectDraws);
         switch (renderPass)
         {
         case RenderPass::TransmittanceShadow:
@@ -384,7 +385,6 @@ public:
             break;
         case RenderPass::Velocity: DrawVelocity(); break;
         default:
-            m_Backend.SetIndirectDrawCache(&m_IndirectDraws);
             m_Backend.Draw(renderPass, receivingPostProcessOnly);
             break;
         }

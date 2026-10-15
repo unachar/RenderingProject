@@ -877,7 +877,7 @@ void InstancingSystem::ExecuteShadowBatches(const DrawContext& ctx, vector<Insta
     {
         if (batch.AnimatedModel && skinnedModels.insert(batch.AnimatedModel).second)
         {
-            batch.AnimatedModel->DispatchGpuSkinning(ctx.commandList);
+            batch.AnimatedModel->DispatchGpuSkinning(ctx.commandList, false);
             ctx.commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
             ctx.commandList->SetGraphicsRootConstantBufferView(5, LightingResources::GetCurrentShadowConstantBufferAddress());
             ctx.commandList->SetPipelineState(shadowPso);
@@ -1258,7 +1258,7 @@ void InstancingSystem::ExecuteMainBatches(const DrawContext& ctx, vector<Instanc
 
         if (batch.Kind == InstanceKind::AnimatedMesh && batch.AnimatedModel)
         {
-            batch.AnimatedModel->DispatchGpuSkinning(ctx.commandList);
+            batch.AnimatedModel->DispatchGpuSkinning(ctx.commandList, false);
             const auto ready = CD3DX12_RESOURCE_BARRIER::Transition(
                 batch.AnimatedModel->GetMeshData(batch.AnimatedMeshIndex).VertexBuffer.Get(),
                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);

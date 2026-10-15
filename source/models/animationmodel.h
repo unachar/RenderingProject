@@ -306,6 +306,7 @@ private:
 	vector<XMFLOAT4X4> m_BoneMatricesScratch{};
 	uint64_t m_SkinningVersion = 0;
 	uint64_t m_DispatchedSkinningVersion = UINT64_MAX;
+    uint64_t m_DispatchedOutlineSkinningVersion = UINT64_MAX;
 	string m_LastPoseAnimation1{};
 	string m_LastPoseAnimation2{};
 	float m_LastPoseFrame1 = 0.0f;
@@ -401,7 +402,7 @@ public:
 	void CommitPhysicsPose();
 
 	bool ApplyMeshShadingOverridePartIds(const vector<int>& overridePartIds);
-	void DispatchGpuSkinning(ID3D12GraphicsCommandList* pCommandList);
+	void DispatchGpuSkinning(ID3D12GraphicsCommandList* pCommandList, bool wantsOutlines = true);
 
 	void Uninit();
 

@@ -187,4 +187,12 @@
     <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
     <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T ps_6_0 -E main -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\VirtualGeometryOpaquePS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\VirtualGeometryOpaquePS.hlsl&quot;" />
   </Target>
+  <Target Name="CompileShadowCacheShaders" BeforeTargets="ClCompile"
+          Inputs="$(MSBuildThisFileDirectory)shader\hlsl\ShadowCacheCopy.hlsl;$(MSBuildThisFileFullPath)"
+          Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\ShadowCacheCopyVS.cso;$(MSBuildThisFileDirectory)shader\hlsl\build\ShadowCacheCopyPS.cso"
+          Condition="'$(Platform)' == 'x64'">
+    <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
+    <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T vs_6_0 -E VSMain -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\ShadowCacheCopyVS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\ShadowCacheCopy.hlsl&quot;" />
+    <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T ps_6_0 -E PSMain -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\ShadowCacheCopyPS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\ShadowCacheCopy.hlsl&quot;" />
+  </Target>
 </Project>

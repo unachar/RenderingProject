@@ -8,7 +8,11 @@ public:
 	static void BeginSpritePass();
 	static void BeginModelPass();
 	static void BeginLinePass();
-	static bool BeginShadowPass(UINT shadowIndex);
+    static bool PrepareStaticShadowCache();
+    static void ReleaseStaticShadowCache();
+    static bool RestoreStaticShadowDepth(UINT shadowIndex);
+	static bool BeginShadowPass(UINT shadowIndex, bool preserveDepth = false, bool stationaryTarget = false);
+    static void EndStaticShadowPass();
 	static void EndShadowPass();
 	static void EndShadowPassBatch();
 	static void BeginEditorSceneOverlayPass();

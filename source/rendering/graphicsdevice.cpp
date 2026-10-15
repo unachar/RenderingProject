@@ -23,6 +23,7 @@
 #include "graphicsdevice.h"
 #include "meshshader/meshshaderrenderer.h"
 #include "rendertargets.h"
+#include "scenepasses.h"
 #include "raytracing.h"
 #include "vertexdeformation.h"
 #include "dlssupscaler.h"
@@ -512,6 +513,7 @@ if (!ImGuiManager::Init(
 void GraphicsDevice::Uninit()
 {
 	WaitForGpuIdle();
+    ScenePasses::ReleaseStaticShadowCache();
 
     AssetThumbnailManager::Shutdown();
 	ImGuiManager::Uninit();

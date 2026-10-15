@@ -1,10 +1,11 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "animationmodel.h"
 #include "animationmath.h"
 #include "graphicsdevice.h"
 #include "shaderpipelines.h"
 #include "psomanager.h"
 #include "frameconstants.h"
+#include "skinningwork.h"
 
 
 using namespace AnimationMath;
@@ -212,16 +213,23 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 	return true;
 }
 
-void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCommandList)
+void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCommandList, bool wantsOutlines)
 {
+    const auto work = PlanSkinningWork(m_SkinningVersion, m_DispatchedSkinningVersion,
+        m_DispatchedOutlineSkinningVersion, wantsOutlines);
 	if (!pCommandList ||
 		!m_SkinningDescHeap ||
 		!ShaderPipelines::GetSkinningRootSignature() ||
 		!PsoManager::GetSkinningPso() ||
-		m_DispatchedSkinningVersion == m_SkinningVersion)
+        (!work.Base && !work.Outlines))
 	{
 		return;
 	}
+    // A material can enable outlines on a later frame without changing the pose.
+    // Upload the cached pose to this frame slot before generating only outlines.
+    const UINT boneFrame = GraphicsDevice::GetFrameIndex() % RendererState::g_kFRAME_COUNT;
+    if (!work.Base && work.Outlines && m_pBoneBufferMapped[boneFrame] && !m_BoneMatricesScratch.empty())
+        memcpy(m_pBoneBufferMapped[boneFrame], m_BoneMatricesScratch.data(), m_BoneMatricesScratch.size() * sizeof(XMFLOAT4X4));
 
 	pCommandList->SetComputeRootSignature(ShaderPipelines::GetSkinningRootSignature());
 	pCommandList->SetPipelineState(PsoManager::GetSkinningPso());
@@ -237,7 +245,7 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 	{
 		if (m_Meshes[m].VertexCount == 0) continue;
 
-		if (m_Meshes[m].PreviousVertexValid)
+		if (work.Base && m_Meshes[m].PreviousVertexValid)
 		{
 			D3D12_RESOURCE_BARRIER copyBarriers[2] =
 			{
@@ -266,33 +274,36 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 		CD3DX12_GPU_DESCRIPTOR_HANDLE uavOutputHandle(m_SkinningDescHeap->GetGPUDescriptorHandleForHeapStart(), m_Meshes[m].UavOutputVertexIndex, descSize);
 		pCommandList->SetComputeRootDescriptorTable(2, uavOutputHandle);
 
-		UINT threadGroups = (m_Meshes[m].VertexCount + kSkinningThreadGroupSize - 1) / kSkinningThreadGroupSize;
-		pCommandList->Dispatch(threadGroups, 1, 1);
-		D3D12_RESOURCE_BARRIER skinningUavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(m_Meshes[m].VertexBuffer.Get());
-		pCommandList->ResourceBarrier(1, &skinningUavBarrier);
-
-		if (!m_Meshes[m].PreviousVertexValid)
+		if (work.Base)
 		{
-			D3D12_RESOURCE_BARRIER previousToCopy = CD3DX12_RESOURCE_BARRIER::Transition(
-				m_Meshes[m].PreviousVertexBuffer.Get(),
-				D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
-			pCommandList->ResourceBarrier(1, &previousToCopy);
-			D3D12_RESOURCE_BARRIER toCopy = CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].VertexBuffer.Get(),
-				D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-			pCommandList->ResourceBarrier(1, &toCopy);
-			pCommandList->CopyResource(m_Meshes[m].PreviousVertexBuffer.Get(), m_Meshes[m].VertexBuffer.Get());
-			D3D12_RESOURCE_BARRIER ready[2] =
+			UINT threadGroups = (m_Meshes[m].VertexCount + kSkinningThreadGroupSize - 1) / kSkinningThreadGroupSize;
+			pCommandList->Dispatch(threadGroups, 1, 1);
+			D3D12_RESOURCE_BARRIER skinningUavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(m_Meshes[m].VertexBuffer.Get());
+			pCommandList->ResourceBarrier(1, &skinningUavBarrier);
+
+			if (!m_Meshes[m].PreviousVertexValid)
 			{
-				CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].VertexBuffer.Get(),
-					D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-				CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].PreviousVertexBuffer.Get(),
-					D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER)
-			};
-			pCommandList->ResourceBarrier(_countof(ready), ready);
-			m_Meshes[m].PreviousVertexValid = true;
+				D3D12_RESOURCE_BARRIER previousToCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+					m_Meshes[m].PreviousVertexBuffer.Get(),
+					D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+				pCommandList->ResourceBarrier(1, &previousToCopy);
+				D3D12_RESOURCE_BARRIER toCopy = CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].VertexBuffer.Get(),
+					D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+				pCommandList->ResourceBarrier(1, &toCopy);
+				pCommandList->CopyResource(m_Meshes[m].PreviousVertexBuffer.Get(), m_Meshes[m].VertexBuffer.Get());
+				D3D12_RESOURCE_BARRIER ready[2] =
+				{
+					CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].VertexBuffer.Get(),
+						D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+					CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].PreviousVertexBuffer.Get(),
+						D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER)
+				};
+				pCommandList->ResourceBarrier(_countof(ready), ready);
+				m_Meshes[m].PreviousVertexValid = true;
+			}
 		}
 
-		for (int mode = 0; mode < kToonOutlineModeCount; ++mode)
+		for (int mode = 0; work.Outlines && mode < kToonOutlineModeCount; ++mode)
 		{
 			if (m_Meshes[m].TeoVertexCounts[mode] == 0 ||
 				!m_Meshes[m].TeoInputVertexBuffers[mode] ||
@@ -326,5 +337,6 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
 		pCommandList->SetDescriptorHeaps(_countof(rendererHeaps), rendererHeaps);
 	}
 
-	m_DispatchedSkinningVersion = m_SkinningVersion;
+    if (work.Base) m_DispatchedSkinningVersion = m_SkinningVersion;
+    if (work.Outlines) m_DispatchedOutlineSkinningVersion = m_SkinningVersion;
 }

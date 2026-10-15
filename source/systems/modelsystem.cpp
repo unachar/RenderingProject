@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "transmittanceshadows.h"
 #include "materialmanager.h"
 #include "meshshader/meshshaderrenderer.h"
@@ -205,6 +205,9 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 		}
 
 		const bool transmission = renderPass == RenderPass::TransmittanceShadow;
+        char referenceValue[8]{};
+        GetEnvironmentVariableA("DX12_SHADOW_REFERENCE_DRAW", referenceValue, sizeof(referenceValue));
+        const bool referenceDraw = atoi(referenceValue) != 0;
 		ID3D12PipelineState* shadowPso = transmission ? TransmittanceShadows::GetPipelineState() : PsoManager::GetOrCreateShadowMapPso();
 		UINT8* pCbvDataBegin = FrameConstants::GetConstantBufferPtr();
 		ID3D12DescriptorHeap* cbvHeap = FrameConstants::GetCbvHeap();
@@ -242,7 +245,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			{
 				continue;
 			}
-			model->DispatchGpuSkinning(pCommandList);
+			model->DispatchGpuSkinning(pCommandList, referenceDraw);
 			for (UINT m = 0; m < model->GetMeshCount(); ++m)
 			{
 				const MeshData& meshData = model->GetMeshData(m);
@@ -265,6 +268,15 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			TransmittanceShadows::BindCurrentPass(pCommandList);
 			pCommandList->SetPipelineState(shadowPso);
 			writeShadowCb(i);
+			const auto& shadowMaterial = MaterialManager::Resolve(LegacyMaterialForEntity(i));
+            const bool indirectShadow = !transmission && m_IndirectDraws &&
+                !referenceDraw &&
+                LightingResources::IsCurrentShadowPassVirtualPage() &&
+                LegacyMaterialForEntity(i).MaterialSlots.empty() &&
+                MaterialSystem::ResolveShadowMode(shadowMaterial) == MaterialShadowMode::Opaque &&
+                m_IndirectDraws->ExecuteShadow(pCommandList, model, i,
+                    XMLoadFloat4x4(&ComponentManager::GetComponentUnchecked<TransformComponent>(i).WorldMatrix),
+                    LightingResources::GetCurrentShadowViewProjection(), shadowPso, true);
 			for (UINT m = 0; m < model->GetMeshCount(); ++m)
 			{
 				const MeshData& meshData = model->GetMeshData(m);
@@ -279,7 +291,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                 MaterialBindings::BindAssetSlot(i, slotMaterial, meshData.TextureIndex);
 				pCommandList->IASetVertexBuffers(0, 1, &meshData.VertexBufferView);
 				pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
-				pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
+				if (!indirectShadow)
+                {
+                    pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
+                }
 
 				D3D12_RESOURCE_BARRIER backBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
 					meshData.VertexBuffer.Get(),
@@ -305,6 +320,15 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			}
 
 			writeShadowCb(i);
+            const auto& shadowMaterial = MaterialManager::Resolve(LegacyMaterialForEntity(i));
+            const bool indirectShadow = !transmission && m_IndirectDraws &&
+                !referenceDraw &&
+                LightingResources::IsCurrentShadowPassVirtualPage() &&
+                !VertexDeformation::IsRequested(i) && LegacyMaterialForEntity(i).MaterialSlots.empty() &&
+                MaterialSystem::ResolveShadowMode(shadowMaterial) == MaterialShadowMode::Opaque &&
+                m_IndirectDraws->ExecuteShadow(pCommandList, model, i,
+                    XMLoadFloat4x4(&ComponentManager::GetComponentUnchecked<TransformComponent>(i).WorldMatrix),
+                    LightingResources::GetCurrentShadowViewProjection(), shadowPso, true);
 			for (UINT m = 0; m < model->GetMeshCount(); ++m)
 			{
 				const StaticMeshData& meshData = model->GetMeshData(m);
@@ -319,7 +343,10 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                 MaterialBindings::BindAssetSlot(i, slotMaterial, meshData.TextureIndex);
 				pCommandList->IASetVertexBuffers(0, 1, &vertexView);
 				pCommandList->IASetIndexBuffer(&meshData.IndexBufferView);
-				pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
+				if (!indirectShadow)
+                {
+                    pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
+                }
 			}
 		}
 		return;
@@ -358,7 +385,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 			AnimationModelResource* model = ModelManager::GetAnimModel(component.ModelId);
 			if (!model || !ComponentManager::HasComponent<TransformComponent>(entity)) continue;
 
-			model->DispatchGpuSkinning(commandList);
+			model->DispatchGpuSkinning(commandList, false);
 			commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
 			commandList->SetPipelineState(pso);
 			commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -572,7 +599,8 @@ ID3D12PipelineState* lastPso = nullptr;
 			{
 				continue;
 			}
-			dc.model->DispatchGpuSkinning(pCommandList);
+			const bool useToonOutlines = ShouldDrawToonOutline(dc.EntityID);
+			dc.model->DispatchGpuSkinning(pCommandList, useToonOutlines);
 			lastPso = nullptr;
 
 			barriers.clear();
@@ -590,7 +618,7 @@ ID3D12PipelineState* lastPso = nullptr;
 					D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
 					D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
 
-				for (int teoMode = 0; teoMode < kToonOutlineModeCount; ++teoMode)
+				for (int teoMode = 0; useToonOutlines && teoMode < kToonOutlineModeCount; ++teoMode)
 				{
 					if (!meshData.TeoVertexBuffers[teoMode])
 					{
@@ -708,7 +736,7 @@ ID3D12PipelineState* lastPso = nullptr;
 					pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
 				}
 
-				if (!occlusionPhaseTwo && outlinePso && ShouldDrawToonOutline(dc.EntityID) && ShouldDrawMeshToonOutline(material, m, meshData))
+				if (!occlusionPhaseTwo && outlinePso && useToonOutlines && ShouldDrawMeshToonOutline(material, m, meshData))
 				{
 					const float meshWidthScale = GetMeshToonOutlineWidthScale(material, m);
 					const int teoMode = GetTeoModeIndex(material);
@@ -777,7 +805,7 @@ ID3D12PipelineState* lastPso = nullptr;
 					D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
 					D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
 
-				for (int teoMode = 0; teoMode < kToonOutlineModeCount; ++teoMode)
+				for (int teoMode = 0; useToonOutlines && teoMode < kToonOutlineModeCount; ++teoMode)
 				{
 					if (!meshData.TeoVertexBuffers[teoMode])
 					{

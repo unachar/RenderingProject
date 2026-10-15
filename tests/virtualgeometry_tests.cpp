@@ -266,14 +266,31 @@ namespace
 void TestVirtualGeometryRuntime();
 void TestVirtualGeometrySelection();
 void TestVirtualGeometryGPU();
+void TestVirtualGeometryPages();
+void TestVirtualGeometryResidentSelection();
+void TestVirtualGeometryResidency();
+void TestVirtualGeometryPageIo();
 
 int main(int argc, char** argv)
 {
     try
     {
+        if (argc > 1 && std::string_view(argv[1]) == "--streaming-cpu")
+        {
+            TestVirtualGeometryPages();
+            TestVirtualGeometryResidentSelection();
+            TestVirtualGeometryResidency();
+            TestVirtualGeometryPageIo();
+            std::cout << "PASS: Page cache, resident selection, residency, SSD I/O\n";
+            return 0;
+        }
         TestVirtualGeometryRuntime();
         TestVirtualGeometrySelection();
         TestVirtualGeometryGPU();
+        TestVirtualGeometryPages();
+        TestVirtualGeometryResidentSelection();
+        TestVirtualGeometryResidency();
+        TestVirtualGeometryPageIo();
         TestBadGeometry();
         TestRoundTrip(MakeCube(), "vg_cube", false);
         auto asset = TestRoundTrip(MakeGrid(80), "vg_medium", true);

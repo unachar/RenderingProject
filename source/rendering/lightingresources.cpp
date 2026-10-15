@@ -23,6 +23,7 @@
 #include <climits>
 #include "frameconstants.h"
 #include "materialbindings.h"
+#include "shadowpageregions.h"
 
 namespace
 {
@@ -43,11 +44,14 @@ namespace
 		UINT Layer = 0;
 		UINT X = 0;
 		UINT Y = 0;
-		UINT Size = RendererState::g_kSHADOW_MAP_SIZE;
+		UINT Width = RendererState::g_kSHADOW_MAP_SIZE;
+		UINT Height = RendererState::g_kSHADOW_MAP_SIZE;
+		int LogicalPageX = 0, LogicalPageY = 0;
 		UINT VirtualLevel = 0;
 		bool ClearLayer = true;
 		bool VirtualPage = false;
 		bool NeedsRender = true;
+        bool StaticNeedsRender = true;
 	};
 	XMMATRIX g_ShadowLightViewProjections[RendererState::g_kMAX_SHADOW_LIGHTS]{};
 	XMFLOAT4 g_ShadowMapParams[RendererState::g_kMAX_SHADOW_LIGHTS]{};
@@ -67,6 +71,8 @@ namespace
 		int GlobalPageY = INT_MIN;
 		uint64_t ProjectionKey = 0;
 		uint64_t ContentKey = 0;
+        uint64_t StaticContentKey = 0;
+        bool StaticValid = false;
 		bool Valid = false;
 	};
 	VirtualShadowPhysicalPageCache g_VirtualShadowPageCache
@@ -77,6 +83,8 @@ namespace
 	float g_DirectionalShadowMode = 0.0f;
 	uint64_t g_PreviousVirtualShadowCacheKey = 0;
 	bool g_VirtualShadowCacheHit = false;
+    bool g_StaticShadowCacheAvailable = false;
+    LightingResources::ShadowCasterSubset g_ShadowCasterSubset = LightingResources::ShadowCasterSubset::All;
 	UINT g_CurrentShadowPassIndex = 0;
 	bool g_LightCacheValid = false;
 	uint64_t g_FrameSerial = 0;
@@ -239,8 +247,19 @@ namespace
 		constants.AtmosphereCamera = XMFLOAT4(cameraPosition.x, cameraPosition.y, cameraPosition.z, max(0.0f, min(1.0f, atmosphere.LightShaftBlur)));
 	}
 
+    bool IsMovingShadowCaster(EntityID entity)
+    {
+        if (ComponentManager::HasComponent<AnimationModelComponent>(entity) || VertexDeformation::IsRequested(entity))
+            return true;
+        const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+        return transform.HasPreviousWorld &&
+            memcmp(&transform.WorldMatrix, &transform.PreviousWorldMatrix, sizeof(transform.WorldMatrix)) != 0;
+    }
 	void RebuildLightCache()
 	{
+        char referenceValue[8]{};
+        GetEnvironmentVariableA("DX12_SHADOW_REFERENCE_DRAW", referenceValue, sizeof(referenceValue));
+        const bool referenceDraw = atoi(referenceValue) != 0;
 		g_CachedDirectionalLight = {};
 		g_CachedAnyLight = {};
 		g_CachedShadowLight = {};
@@ -389,8 +408,9 @@ namespace
 				virtualSceneKey *= 1099511628211ull;
 			}
 		};
-		const uint64_t settingsRevision = RendererSettings::GetRevision();
-		hashVirtualBytes(&settingsRevision, sizeof(settingsRevision));
+        // Projection keys and caster fingerprints below describe shadow depth.
+        // Unrelated renderer edits (upscale, post effects, cache toggle) must
+        // not evict stationary geometry from every shadow page.
 		if (g_CachedDirectionalLight.HasLight)
 		{
 			hashVirtualBytes(
@@ -420,7 +440,7 @@ namespace
 				pass.Layer = layer;
 				pass.X = 0;
 				pass.Y = 0;
-				pass.Size = RendererState::g_kSHADOW_MAP_SIZE;
+				pass.Width = pass.Height = RendererState::g_kSHADOW_MAP_SIZE;
 				pass.VirtualLevel = 0;
 				pass.ClearLayer = true;
 				pass.VirtualPage = false;
@@ -490,7 +510,8 @@ namespace
 						pageProjectionKey *= 1099511628211ull;
 					}
 
-					uint64_t pageContentKey = virtualSceneKey;
+                    uint64_t pageContentKey = virtualSceneKey;
+                    uint64_t staticContentKey = virtualSceneKey;
 					auto hashPageValue = [&](const void* data, size_t size)
 					{
 						const auto* bytes = static_cast<const uint8_t*>(data);
@@ -516,10 +537,25 @@ namespace
 							continue;
 						}
 						const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-						hashPageValue(&entity, sizeof(entity));
-						hashPageValue(&transform.Position, sizeof(transform.Position));
-						hashPageValue(&transform.Rotation, sizeof(transform.Rotation));
-						hashPageValue(&transform.Scale, sizeof(transform.Scale));
+                        uint64_t entityKey = 1469598103934665603ull;
+                        auto hashEntityValue = [&](const void* data, size_t size) {
+                            const auto* bytes = static_cast<const uint8_t*>(data);
+                            for (size_t i = 0; i < size; ++i) { entityKey ^= bytes[i]; entityKey *= 1099511628211ull; }
+                        };
+                        hashEntityValue(&entity, sizeof(entity));
+                        hashEntityValue(&transform.WorldMatrix, sizeof(transform.WorldMatrix));
+                        const bool movingCaster = IsMovingShadowCaster(entity);
+                        hashEntityValue(&movingCaster, sizeof(movingCaster));
+                        if (ComponentManager::HasComponent<MeshComponent>(entity))
+                        {
+                            const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+                            hashEntityValue(&mesh.GeometryHash, sizeof(mesh.GeometryHash));
+                        }
+                        if (ComponentManager::HasComponent<StaticModelComponent>(entity))
+                        {
+                            const auto model = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId;
+                            hashEntityValue(&model, sizeof(model));
+                        }
                         if (ComponentManager::HasComponent<MaterialComponent>(entity))
                         {
                             const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
@@ -527,32 +563,38 @@ namespace
                             for (size_t slot = 0; slot < count; ++slot)
                             {
                                 const auto& material = MaterialManager::Resolve(source, slot);
-                                hashPageValue(&material.Alpha, sizeof(material.Alpha));
-                                hashPageValue(&material.BaseColor.w, sizeof(material.BaseColor.w));
-                                hashPageValue(&material.ShadowMode, sizeof(material.ShadowMode));
-                                hashPageValue(&material.ShadowCutoff, sizeof(material.ShadowCutoff));
-                                hashPageValue(&material.IOR, sizeof(material.IOR));
-                                hashPageValue(&material.Transmission, sizeof(material.Transmission));
-                                hashPageValue(&material.Thickness, sizeof(material.Thickness));
-                                hashPageValue(&material.AbsorptionCoefficient, sizeof(material.AbsorptionCoefficient));
-                                hashPageValue(&material.BaseColor, sizeof(material.BaseColor));
-                                hashPageValue(&material.IsTransparent, sizeof(material.IsTransparent));
-                                hashPageValue(&material.AssetCull, sizeof(material.AssetCull));
-                                hashPageValue(&material.TextureID, sizeof(material.TextureID));
+                                hashEntityValue(&material.Alpha, sizeof(material.Alpha));
+                                hashEntityValue(&material.BaseColor.w, sizeof(material.BaseColor.w));
+                                hashEntityValue(&material.ShadowMode, sizeof(material.ShadowMode));
+                                hashEntityValue(&material.ShadowCutoff, sizeof(material.ShadowCutoff));
+                                hashEntityValue(&material.IOR, sizeof(material.IOR));
+                                hashEntityValue(&material.Transmission, sizeof(material.Transmission));
+                                hashEntityValue(&material.Thickness, sizeof(material.Thickness));
+                                hashEntityValue(&material.AbsorptionCoefficient, sizeof(material.AbsorptionCoefficient));
+                                hashEntityValue(&material.BaseColor, sizeof(material.BaseColor));
+                                hashEntityValue(&material.IsTransparent, sizeof(material.IsTransparent));
+                                hashEntityValue(&material.AssetCull, sizeof(material.AssetCull));
+                                hashEntityValue(&material.TextureID, sizeof(material.TextureID));
                                 if (material.RuntimeHandle != 0)
                                 {
                                     const auto revision = MaterialManager::GetRuntime(material.RuntimeHandle).Revision;
-                                    hashPageValue(&revision, sizeof(revision));
+                                    hashEntityValue(&revision, sizeof(revision));
                                 }
                             }
                         }
 						if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
 						{
 							const auto& animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
-							hashPageValue(&animation.CurrentTime, sizeof(animation.CurrentTime));
-							hashPageValue(&animation.BlendRate, sizeof(animation.BlendRate));
+							hashEntityValue(&animation.CurrentTime, sizeof(animation.CurrentTime));
+							hashEntityValue(&animation.BlendRate, sizeof(animation.BlendRate));
 						}
-					}
+                        hashPageValue(&entityKey, sizeof(entityKey));
+                        if (!movingCaster)
+                        {
+                            const auto* bytes = reinterpret_cast<const uint8_t*>(&entityKey);
+                            for (size_t i = 0; i < sizeof(entityKey); ++i) { staticContentKey ^= bytes[i]; staticContentKey *= 1099511628211ull; }
+                        }
+                    }
 
 					auto& cacheEntry = g_VirtualShadowPageCache[virtualLevel][physicalPageY][physicalPageX];
 					const bool cacheEnabled = RendererSettings::GetCacheVirtualShadowPages();
@@ -566,9 +608,11 @@ namespace
 					const UINT updatePeriod = 1u << virtualLevel;
 					const UINT updatePhase =
 						(physicalPageX + physicalPageY * pageGrid) % updatePeriod;
-					const bool contentUpdateDue =
-						updatePeriod == 1u ||
-						((g_FrameSerial + updatePhase) % updatePeriod) == 0u;
+                    // Refresh a clipmap's dirty pages together so adjacent pages
+                    // can share one draw. Offset far levels to avoid frame spikes.
+                    const bool contentUpdateDue = referenceDraw ?
+                        ((g_FrameSerial + updatePhase) % updatePeriod) == 0u :
+                        ShadowPages::UpdateDue(g_FrameSerial, virtualLevel);
 					const bool needsRender =
 						!cacheEnabled ||
 						!mappingMatches ||
@@ -580,11 +624,15 @@ namespace
 					pass.Layer = layer;
 					pass.X = physicalPageX * RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
 					pass.Y = physicalPageY * RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
-					pass.Size = RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
+					pass.Width = pass.Height = RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
+					pass.LogicalPageX = globalPageX;
+					pass.LogicalPageY = globalPageY;
 					pass.VirtualLevel = virtualLevel;
 					pass.ClearLayer = false;
 					pass.VirtualPage = true;
 					pass.NeedsRender = needsRender;
+                    pass.StaticNeedsRender = ShadowPages::NeedsStaticRefresh(cacheEnabled,
+                        mappingMatches && cacheEntry.StaticValid, cacheEntry.StaticContentKey == staticContentKey);
 
 					if (needsRender)
 					{
@@ -593,11 +641,44 @@ namespace
 						cacheEntry.GlobalPageY = globalPageY;
 						cacheEntry.ProjectionKey = pageProjectionKey;
 						cacheEntry.ContentKey = pageContentKey;
+                        cacheEntry.StaticContentKey = staticContentKey;
+                        cacheEntry.StaticValid = g_StaticShadowCacheAvailable;
 						cacheEntry.Valid = !Raytracing::UsesRaytracedShadows();
 					}
 				}
 			}
 		}
+        // Draw adjacent dirty pages as one atlas rectangle. Per-page cache keys
+        // remain independent; clean pages and ring seams are never overwritten.
+        for (UINT layer = 0; !referenceDraw && layer < g_ShadowLightCount; ++layer)
+        {
+            vector<ShadowPages::Tile> tiles;
+            const UINT pageSize = RendererState::g_kVIRTUAL_SHADOW_PAGE_SIZE;
+            for (UINT i = 0; i < g_ShadowRenderPassCount; ++i)
+            {
+                const auto& pass = g_ShadowRenderPasses[i];
+                if (pass.Layer == layer && pass.VirtualPage && pass.NeedsRender)
+                    tiles.push_back({pass.X / pageSize, pass.Y / pageSize,
+                        pass.LogicalPageX, pass.LogicalPageY, i});
+            }
+            const auto regions = ShadowPages::Merge(tiles);
+            for (const auto& region : regions)
+            {
+                auto& first = g_ShadowRenderPasses[region.First.Pass];
+                const XMMATRIX expand = XMMatrixTranslation(-float(region.Width - 1), float(region.Height - 1), 0) *
+                    XMMatrixScaling(1.0f / region.Width, 1.0f / region.Height, 1);
+                first.ViewProjection = XMMatrixTranspose(XMMatrixTranspose(first.ViewProjection) * expand);
+                first.Width = region.Width * pageSize;
+                first.Height = region.Height * pageSize;
+                for (const auto& tile : tiles)
+                    if (tile.Pass != region.First.Pass && tile.X >= region.First.X && tile.Y >= region.First.Y &&
+                        tile.X < region.First.X + region.Width && tile.Y < region.First.Y + region.Height)
+                    {
+                        first.StaticNeedsRender |= g_ShadowRenderPasses[tile.Pass].StaticNeedsRender;
+                        g_ShadowRenderPasses[tile.Pass].NeedsRender = false;
+                    }
+            }
+        }
 		g_LightCacheValid = true;
 	}
 
@@ -1733,9 +1814,35 @@ bool LightingResources::ShouldRenderShadowPass(UINT shadowIndex)
 bool LightingResources::ShouldDrawEntityInCurrentShadowPass(EntityID entity)
 {
 	if (!g_LightCacheValid) RebuildLightCache();
+    if (g_ShadowCasterSubset != ShadowCasterSubset::All &&
+        IsMovingShadowCaster(entity) != (g_ShadowCasterSubset == ShadowCasterSubset::Moving)) return false;
 	if (g_CurrentShadowPassIndex >= g_ShadowRenderPassCount) return true;
 	const ShadowRenderPass& pass = g_ShadowRenderPasses[g_CurrentShadowPassIndex];
 	return IsShadowCasterVisible(entity, pass.ViewProjection);
+}
+
+void LightingResources::SetShadowCasterSubset(ShadowCasterSubset subset) { g_ShadowCasterSubset = subset; }
+
+void LightingResources::SetStaticShadowCacheAvailable(bool available)
+{
+    if (g_StaticShadowCacheAvailable != available)
+    {
+        for (auto& pass : g_ShadowRenderPasses) pass.StaticNeedsRender = true;
+        for (auto& level : g_VirtualShadowPageCache)
+            for (auto& row : level)
+                for (auto& page : row) page.StaticValid = false;
+    }
+    g_StaticShadowCacheAvailable = available;
+}
+
+bool LightingResources::UseStaticShadowCache(UINT index)
+{
+    return g_StaticShadowCacheAvailable && index < g_ShadowRenderPassCount && g_ShadowRenderPasses[index].VirtualPage;
+}
+
+bool LightingResources::ShouldRenderStaticShadowPass(UINT index)
+{
+    return index < g_ShadowRenderPassCount && g_ShadowRenderPasses[index].StaticNeedsRender;
 }
 
 bool LightingResources::IsCurrentShadowPassVirtualPage()
@@ -1767,15 +1874,15 @@ bool LightingResources::GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_V
 	viewport = {};
 	viewport.TopLeftX = static_cast<float>(pass.X);
 	viewport.TopLeftY = static_cast<float>(pass.Y);
-	viewport.Width = static_cast<float>(pass.Size);
-	viewport.Height = static_cast<float>(pass.Size);
+	viewport.Width = static_cast<float>(pass.Width);
+	viewport.Height = static_cast<float>(pass.Height);
 	viewport.MinDepth = 0.0f;
 	viewport.MaxDepth = 1.0f;
 	scissor = {
 		static_cast<LONG>(pass.X),
 		static_cast<LONG>(pass.Y),
-		static_cast<LONG>(pass.X + pass.Size),
-		static_cast<LONG>(pass.Y + pass.Size) };
+		static_cast<LONG>(pass.X + pass.Width),
+		static_cast<LONG>(pass.Y + pass.Height) };
 	clearLayer = pass.ClearLayer;
 	return true;
 }

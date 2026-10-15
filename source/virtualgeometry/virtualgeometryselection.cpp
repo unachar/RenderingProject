@@ -80,9 +80,16 @@ bool ValidateLinks(const VirtualGeometryAsset& asset)
 }
 }
 
-Result Select(const VirtualGeometryAsset& asset, const View& view, const Settings& settings)
+static ResidentResult SelectInternal(const VirtualGeometryAsset& asset, const View& view, const Settings& settings,
+    std::span<const uint32_t> clusterPages, std::span<const uint8_t> residentPages)
 {
-    auto fail = [](const char* error) { return Result{{}, error}; };
+    auto fail = [](const char* error)
+    {
+        ResidentResult result;
+        result.Error = error;
+        return result;
+    };
+    bool streaming = !clusterPages.empty();
     if (!std::isfinite(view.WorldScale) || view.WorldScale <= 0 ||
         !std::isfinite(view.MinimumWorldScale) || view.MinimumWorldScale <= 0 || view.MinimumWorldScale > view.WorldScale ||
         !std::isfinite(view.ProjectionScalePixels) || view.ProjectionScalePixels <= 0 ||
@@ -95,6 +102,27 @@ Result Select(const VirtualGeometryAsset& asset, const View& view, const Setting
     if (!ValidateLinks(asset))
     {
         return fail("Invalid hierarchy selection graph");
+    }
+    if (streaming)
+    {
+        if (clusterPages.size() != asset.Clusters.size())
+        {
+            return fail("Invalid Cluster to Page mapping");
+        }
+        for (uint32_t page : clusterPages)
+        {
+            if (page >= residentPages.size())
+            {
+                return fail("Page mapping outside Residency Table");
+            }
+        }
+        for (uint32_t root : asset.RootClusters)
+        {
+            if (!residentPages[clusterPages[root]])
+            {
+                return fail("Missing resident root");
+            }
+        }
     }
 
     std::vector<uint32_t> order(asset.Groups.size());
@@ -141,6 +169,8 @@ Result Select(const VirtualGeometryAsset& asset, const View& view, const Setting
     {
         active[root] = true;
     }
+    ResidentResult result;
+    std::vector<uint8_t> requested(residentPages.size());
     for (auto entry = order.rbegin(); entry != order.rend(); ++entry)
     {
         uint32_t index = *entry;
@@ -149,12 +179,42 @@ Result Select(const VirtualGeometryAsset& asset, const View& view, const Setting
             continue;
         }
         const auto& group = asset.Groups[index];
+        bool parentsActive = true;
         for (uint32_t parent = 0; parent < group.ParentCount; ++parent)
         {
             if (!active[asset.HierarchyIndices[group.FirstParent + parent]])
             {
-                return fail("Incomplete group parent coverage");
+                parentsActive = false;
             }
+        }
+        if (!parentsActive)
+        {
+            if (streaming)
+            {
+                continue;
+            }
+            return fail("Incomplete group parent coverage");
+        }
+        bool childrenResident = true;
+        if (streaming)
+        {
+            for (uint32_t child = 0; child < group.ChildCount; ++child)
+            {
+                uint32_t page = clusterPages[asset.HierarchyIndices[group.FirstChild + child]];
+                if (!residentPages[page])
+                {
+                    childrenResident = false;
+                    if (!requested[page])
+                    {
+                        requested[page] = 1;
+                        result.RequestedPages.push_back(page);
+                    }
+                }
+            }
+        }
+        if (!childrenResident)
+        {
+            continue;
         }
         for (uint32_t parent = 0; parent < group.ParentCount; ++parent)
         {
@@ -165,7 +225,6 @@ Result Select(const VirtualGeometryAsset& asset, const View& view, const Setting
             active[asset.HierarchyIndices[group.FirstChild + child]] = true;
         }
     }
-    Result result;
     for (uint32_t cluster = 0; cluster < active.size(); ++cluster)
     {
         if (active[cluster])
@@ -174,5 +233,20 @@ Result Select(const VirtualGeometryAsset& asset, const View& view, const Setting
         }
     }
     return result;
+}
+Result Select(const VirtualGeometryAsset& asset, const View& view, const Settings& settings)
+{
+    return SelectInternal(asset, view, settings, {}, {});
+}
+ResidentResult SelectResident(const VirtualGeometryAsset& asset, const View& view, const Settings& settings,
+    std::span<const uint32_t> clusterPages, std::span<const uint8_t> residentPages)
+{
+    if (clusterPages.empty())
+    {
+        ResidentResult result;
+        result.Error = "Empty Cluster to Page mapping";
+        return result;
+    }
+    return SelectInternal(asset, view, settings, clusterPages, residentPages);
 }
 }

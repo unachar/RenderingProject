@@ -48,6 +48,50 @@ uint64_t g_FrameCount = 0;
 double g_PausedTime = 0;
 uint64_t g_OriginalTerrainHash = 0;
 double g_PreviousVertexTime = 0;
+array<RenderCapture::TextureData, 4> g_PlayShadowReference;
+bool g_PlayCacheEnabled = true;
+struct ShadowBenchmarkSample
+{
+    uint64_t Count = 0, Vertices = 0, Draws = 0, MaxVertices = 0;
+    double Gpu = 0, Cpu = 0, ShadowGpu = 0, FrameMs = 0;
+};
+array<ShadowBenchmarkSample, 3> g_ShadowBenchmark{};
+uint64_t g_ShadowBenchmarkSerial = 0;
+
+bool PlayRenderTestEnabled()
+{
+    char value[8]{};
+    GetEnvironmentVariableA("DX12_PLAY_RENDER_TEST", value, sizeof(value));
+    return atoi(value) != 0;
+}
+
+bool ShadowBenchmarkEnabled()
+{
+    char value[8]{};
+    GetEnvironmentVariableA("DX12_PLAY_RENDER_BENCH", value, sizeof(value));
+    return atoi(value) != 0;
+}
+
+void RecordShadowBenchmark()
+{
+    const auto& snapshot = RenderProfiler::GetLatest();
+    if (!snapshot.PipelineStatisticsValid || snapshot.Serial == g_ShadowBenchmarkSerial) return;
+    g_ShadowBenchmarkSerial = snapshot.Serial;
+    const uint64_t serial = snapshot.Serial;
+    const int phase = serial >= 27 && serial <= 75 ? 1 :
+        (serial >= 107 && serial <= 155 ? 2 : (serial >= 8 && serial <= 18 ? 0 : -1));
+    if (phase < 0) return;
+    auto& sample = g_ShadowBenchmark[phase];
+    ++sample.Count;
+    sample.Vertices += snapshot.Pipeline.IAVertices;
+    sample.MaxVertices = max(sample.MaxVertices, snapshot.Pipeline.IAVertices);
+    sample.Draws += snapshot.Calls.DrawCalls;
+    sample.Gpu += snapshot.GpuRenderMs;
+    sample.Cpu += snapshot.CpuRenderMs;
+    sample.FrameMs += World::GetFrameTimeMs();
+    for (const auto& pass : snapshot.Passes)
+        if (pass.Name == "Shadow") sample.ShadowGpu += pass.GpuMs;
+}
 void Check(bool passed, const char* name);
 
 bool SunLightingTestEnabled()
@@ -492,6 +536,56 @@ bool RenderingValidation::IsEnabled()
 
 void RenderingValidation::BeforeFrame(uint64_t frame)
 {
+    if (PlayRenderTestEnabled())
+    {
+        if (ShadowBenchmarkEnabled())
+        {
+            if (frame == 1)
+            {
+                World::SetVSyncEnabled(false);
+                World::SetFixedFrameRateEnabled(false);
+                Check(Raytracing::GetSettings().RenderMode == Raytracing::Mode::ReflectionsOnly &&
+                    RendererSettings::GetShadowMapMethod() == ShadowMapMethod::VirtualShadowMap,
+                    "VSM benchmark keeps reflections-only raytracing throughout");
+            }
+            if (frame == 20)
+            {
+                SetEnvironmentVariableA("DX12_SHADOW_REFERENCE_DRAW", "1");
+                ProjectManager::Play();
+            }
+            if (frame == 80)
+            {
+                ProjectManager::Stop();
+                SetEnvironmentVariableA("DX12_SHADOW_REFERENCE_DRAW", "0");
+            }
+            if (frame == 100) ProjectManager::Play();
+            if (frame == 160) ProjectManager::Stop();
+            return;
+        }
+        if (frame == 20) ProjectManager::Play();
+        if (frame == 46)
+        {
+            ProjectManager::TogglePause();
+            g_PlayCacheEnabled = RendererSettings::GetCacheVirtualShadowPages();
+            RendererSettings::SetCacheVirtualShadowPages(false);
+            SetEnvironmentVariableA("DX12_SHADOW_REFERENCE_DRAW", "1");
+        }
+        if (frame == 49) SetEnvironmentVariableA("DX12_SHADOW_REFERENCE_DRAW", nullptr);
+        if (frame == 52) RendererSettings::SetCacheVirtualShadowPages(true);
+        if (frame >= 52 && frame <= 60)
+        {
+            // Dirty moving-caster keys without changing the paused pose. This
+            // exercises stationary-depth reuse against the same reference image.
+            for (auto entity : World::GetView<AnimationModelComponent>())
+                ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).CurrentTime += 0.0001f;
+        }
+        if (frame == 65)
+        {
+            ProjectManager::Stop();
+            RendererSettings::SetCacheVirtualShadowPages(g_PlayCacheEnabled);
+        }
+        return;
+    }
     if (ThumbnailValidation::Enabled()) { ThumbnailValidation::BeforeFrame(frame); return; }
     if (MaterialValidation::Enabled())
     {
@@ -662,6 +756,72 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
 
 void RenderingValidation::AfterFrame(uint64_t frame)
 {
+    if (PlayRenderTestEnabled())
+    {
+        if (ShadowBenchmarkEnabled()) { RecordShadowBenchmark(); return; }
+        if (frame == 18 || frame == 45 || frame == 70)
+        {
+            const auto& snapshot = RenderProfiler::GetLatest();
+            WriteGraphicsLog("Play render frame %llu: draws=%llu indexed=%llu dispatch=%llu indirect=%llu IA=%llu VS=%llu GPU=%.3f\n",
+                frame, snapshot.Calls.DrawCalls, snapshot.Calls.IndexedDrawCalls,
+                snapshot.Calls.DispatchCalls, snapshot.Calls.ExecuteIndirectCalls,
+                snapshot.Pipeline.IAVertices, snapshot.Pipeline.VSInvocations, snapshot.GpuRenderMs);
+            for (const auto& pass : snapshot.Passes)
+                WriteGraphicsLog("Play render pass %s: draws=%llu\n", pass.Name.c_str(), pass.DrawCalls);
+            if (frame == 45)
+            {
+                Check(!Raytracing::UsesRaytracedShadows() && RendererSettings::GetShadowMapMethod() == ShadowMapMethod::VirtualShadowMap,
+                    "performance test keeps reflections-only raytracing and VSM shadows");
+                Check(snapshot.Calls.DrawCalls < 64, "play avoids per-mesh per-page shadow draws");
+                Check(snapshot.PipelineStatisticsValid && LightingResources::UseStaticShadowCache(0),
+                    "VSM pipeline statistics and stationary-depth reuse are active");
+            }
+        }
+        if (frame >= 57 && frame <= 61)
+        {
+            for (const auto& pass : RenderProfiler::GetLatest().Passes)
+                if (pass.Name == "Stationary Shadow Update")
+                    Check(pass.DrawCalls == 0, "moving-caster edits reuse stationary shadow depth");
+        }
+        if (frame == 48 || frame == 51 || frame == 61)
+        {
+            for (UINT layer = 0; layer < g_PlayShadowReference.size(); ++layer)
+            {
+                if (frame == 48)
+                {
+                    Check(RenderCapture::ReadTextureSlice(LightingResources::GetShadowMapResource(),
+                        g_PlayShadowReference[layer], layer), "capture reference shadow layer");
+                    continue;
+                }
+                RenderCapture::TextureData optimized;
+                Check(RenderCapture::ReadTextureSlice(LightingResources::GetShadowMapResource(), optimized, layer),
+                    "capture optimized shadow layer");
+                const auto& reference = g_PlayShadowReference[layer];
+                uint64_t changed = 0, populated = 0;
+                float maximumError = 0;
+                if (reference.Bytes.size() != optimized.Bytes.size() || reference.Bytes.empty())
+                {
+                    Check(false, "shadow comparison has equal nonempty dimensions");
+                    continue;
+                }
+                for (UINT y = 0; y < reference.Height; ++y)
+                    for (UINT x = 0; x < reference.Width; ++x)
+                    {
+                        float a, b;
+                        memcpy(&a, reference.Bytes.data() + y * reference.RowPitch + x * sizeof(float), sizeof(float));
+                        memcpy(&b, optimized.Bytes.data() + y * optimized.RowPitch + x * sizeof(float), sizeof(float));
+                        populated += a < 1.0f;
+                        const float error = abs(a - b);
+                        maximumError = max(maximumError, error);
+                        changed += error > 0.00001f;
+                    }
+                WriteGraphicsLog("Play shadow comparison frame=%llu layer=%u populated=%llu changed=%llu maxError=%.8f\n",
+                    frame, layer, populated, changed, maximumError);
+                Check(changed == 0, "merged and reference shadow depths match within 1e-5");
+            }
+        }
+        return;
+    }
     if (ThumbnailValidation::Enabled()) { ThumbnailValidation::AfterFrame(frame); return; }
     if (MaterialValidation::Enabled())
     {
@@ -855,6 +1015,32 @@ void RenderingValidation::AfterFrame(uint64_t frame)
 
 bool RenderingValidation::Finish()
 {
+    if (PlayRenderTestEnabled())
+    {
+        if (ShadowBenchmarkEnabled())
+        {
+            const char* names[] = {"edit", "reference-play", "optimized-play"};
+            for (size_t i = 0; i < g_ShadowBenchmark.size(); ++i)
+            {
+                const auto& sample = g_ShadowBenchmark[i];
+                Check(sample.Count >= (i == 0 ? 8u : 40u), "collect enough VSM benchmark samples");
+                if (sample.Count)
+                    WriteGraphicsLog("VSM benchmark %s: samples=%llu IA=%.0f maxIA=%llu draws=%.1f GPU=%.3f CPU=%.3f shadowGPU=%.3f frameMs=%.3f FPS=%.1f\n",
+                        names[i], sample.Count, double(sample.Vertices) / sample.Count, sample.MaxVertices,
+                        double(sample.Draws) / sample.Count, sample.Gpu / sample.Count, sample.Cpu / sample.Count,
+                        sample.ShadowGpu / sample.Count, sample.FrameMs / sample.Count,
+                        sample.FrameMs > 0 ? 1000.0 * sample.Count / sample.FrameMs : 0);
+            }
+            const auto& reference = g_ShadowBenchmark[1];
+            const auto& optimized = g_ShadowBenchmark[2];
+            Check(reference.Count && optimized.Count &&
+                double(optimized.Vertices) / optimized.Count < double(reference.Vertices) / reference.Count * 0.75,
+                "VSM live play reduces average IA vertex work by at least 25 percent");
+        }
+        g_Failures += RenderCapture::ReportGraphicsErrors();
+        WriteGraphicsLog("Play render failures = %u\n", g_Failures);
+        return g_Failures == 0;
+    }
     if (ThumbnailValidation::Enabled()) return ThumbnailValidation::Finish();
     if (MaterialValidation::Enabled())
     {

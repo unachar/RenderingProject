@@ -26,6 +26,7 @@ public:
         string Name;
         double CpuMs = 0.0;
         double GpuMs = 0.0;
+        uint64_t DrawCalls = 0;
     };
 
     struct Counters
@@ -326,6 +327,7 @@ public:
         UINT m_GpuToken = kInvalidGpuToken;
         Clock::time_point m_CpuBegin{};
         bool m_Active = false;
+        uint64_t m_DrawCallsBegin = 0;
 
     public:
         ScopedEvent(const char* name, ID3D12GraphicsCommandList* commandList)
@@ -336,6 +338,7 @@ public:
                 return;
             }
             m_Active = true;
+            m_DrawCallsBegin = ActiveSnapshot()->Calls.DrawCalls;
             m_CpuBegin = Clock::now();
             m_GpuToken = RenderProfiler::BeginGpuEvent(name, commandList);
         }
@@ -353,6 +356,8 @@ public:
             const double cpuMs = chrono::duration<double, milli>(
                 Clock::now() - m_CpuBegin).count();
             RenderProfiler::RecordCpuPass(m_Name, cpuMs);
+            FindOrCreatePass(*ActiveSnapshot(), m_Name).DrawCalls +=
+                ActiveSnapshot()->Calls.DrawCalls - m_DrawCallsBegin;
         }
     };
 
@@ -703,12 +708,13 @@ public:
         ImGui::SeparatorText("Pass timings");
         if (ImGui::BeginTable(
             "RenderProfilerPasses",
-            3,
+            4,
             ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
         {
             ImGui::TableSetupColumn("Pass");
             ImGui::TableSetupColumn("CPU ms");
             ImGui::TableSetupColumn("GPU ms");
+            ImGui::TableSetupColumn("Direct draws");
             ImGui::TableHeadersRow();
             for (const PassTiming& pass : s_Latest.Passes)
             {
@@ -723,6 +729,8 @@ public:
                 ImGui::Text("%.3f", pass.CpuMs);
                 ImGui::TableSetColumnIndex(2);
                 ImGui::Text("%.3f", pass.GpuMs);
+                ImGui::TableSetColumnIndex(3);
+                ImGui::Text("%llu", static_cast<unsigned long long>(pass.DrawCalls));
             }
             ImGui::EndTable();
         }

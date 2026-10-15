@@ -13,10 +13,127 @@
 #include "raytracing.h"
 #include "cloud/cloudrenderer.h"
 #include "screenspaceeffects.h"
+#include "graphicslog.h"
 
 namespace
 {
 bool g_VelocityDepthReadActive = false;
+ComPtr<ID3D12Resource> g_StationaryShadowDepth, g_StationaryShadowOwner;
+ComPtr<ID3D12DescriptorHeap> g_StationaryShadowDsv, g_StationaryShadowSrv;
+ComPtr<ID3D12RootSignature> g_ShadowCopyRoot;
+ComPtr<ID3D12PipelineState> g_ShadowCopyPso;
+}
+
+void ScenePasses::ReleaseStaticShadowCache()
+{
+    g_StationaryShadowDepth.Reset(); g_StationaryShadowOwner.Reset();
+    g_StationaryShadowDsv.Reset(); g_StationaryShadowSrv.Reset();
+    g_ShadowCopyRoot.Reset(); g_ShadowCopyPso.Reset();
+    LightingResources::SetStaticShadowCacheAvailable(false);
+}
+
+bool ScenePasses::PrepareStaticShadowCache()
+{
+    char reference[8]{};
+    GetEnvironmentVariableA("DX12_SHADOW_REFERENCE_DRAW", reference, sizeof(reference));
+    if (!m_Device || !m_ShadowDepthBuffer || atoi(reference) ||
+        RendererSettings::GetShadowMapMethod() != ShadowMapMethod::VirtualShadowMap || Raytracing::UsesRaytracedShadows())
+    {
+        LightingResources::SetStaticShadowCacheAvailable(false);
+        return false;
+    }
+    if (g_StationaryShadowDepth && g_StationaryShadowOwner.Get() == m_ShadowDepthBuffer.Get())
+    {
+        LightingResources::SetStaticShadowCacheAvailable(true);
+        return true;
+    }
+    ReleaseStaticShadowCache();
+    auto create = [&]() {
+        const auto description = m_ShadowDepthBuffer->GetDesc();
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        D3D12_CLEAR_VALUE clear{};
+        clear.Format = DXGI_FORMAT_D32_FLOAT; clear.DepthStencil.Depth = 1;
+        if (FAILED(m_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear, IID_PPV_ARGS(&g_StationaryShadowDepth)))) return false;
+        g_StationaryShadowDepth->SetName(L"Stationary VSM Depth Cache");
+        D3D12_DESCRIPTOR_HEAP_DESC descriptors{};
+        descriptors.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+        descriptors.NumDescriptors = description.DepthOrArraySize;
+        if (FAILED(m_Device->CreateDescriptorHeap(&descriptors, IID_PPV_ARGS(&g_StationaryShadowDsv)))) return false;
+        for (UINT layer = 0; layer < description.DepthOrArraySize; ++layer)
+        {
+            D3D12_DEPTH_STENCIL_VIEW_DESC view{};
+            view.Format = DXGI_FORMAT_D32_FLOAT; view.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
+            view.Texture2DArray.FirstArraySlice = layer; view.Texture2DArray.ArraySize = 1;
+            m_Device->CreateDepthStencilView(g_StationaryShadowDepth.Get(), &view,
+                CD3DX12_CPU_DESCRIPTOR_HANDLE(g_StationaryShadowDsv->GetCPUDescriptorHandleForHeapStart(), layer,
+                    m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV)));
+        }
+        descriptors.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        descriptors.NumDescriptors = 1; descriptors.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        if (FAILED(m_Device->CreateDescriptorHeap(&descriptors, IID_PPV_ARGS(&g_StationaryShadowSrv)))) return false;
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+        srv.Format = DXGI_FORMAT_R32_FLOAT; srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srv.Texture2DArray.ArraySize = description.DepthOrArraySize; srv.Texture2DArray.MipLevels = 1;
+        m_Device->CreateShaderResourceView(g_StationaryShadowDepth.Get(), &srv, g_StationaryShadowSrv->GetCPUDescriptorHandleForHeapStart());
+        CD3DX12_DESCRIPTOR_RANGE range;
+        range.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+        CD3DX12_ROOT_PARAMETER parameters[2];
+        parameters[0].InitAsDescriptorTable(1, &range);
+        parameters[1].InitAsConstants(1, 0);
+        CD3DX12_ROOT_SIGNATURE_DESC root(2, parameters);
+        ComPtr<ID3DBlob> serialized, errors, vs, ps;
+        if (FAILED(D3D12SerializeRootSignature(&root, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors)) ||
+            FAILED(m_Device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(&g_ShadowCopyRoot))) ||
+            FAILED(D3DReadFileToBlob(L"shader/hlsl/build/ShadowCacheCopyVS.cso", &vs)) ||
+            FAILED(D3DReadFileToBlob(L"shader/hlsl/build/ShadowCacheCopyPS.cso", &ps))) return false;
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+        pso.pRootSignature = g_ShadowCopyRoot.Get();
+        pso.VS = CD3DX12_SHADER_BYTECODE(vs.Get()); pso.PS = CD3DX12_SHADER_BYTECODE(ps.Get());
+        pso.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+        pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pso.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+        pso.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+        pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+        pso.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+        pso.SampleMask = UINT_MAX; pso.SampleDesc.Count = 1;
+        pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        return SUCCEEDED(m_Device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&g_ShadowCopyPso)));
+    };
+    if (!create())
+    {
+        ReleaseStaticShadowCache();
+        WriteGraphicsLog("Stationary VSM cache unavailable; using complete page redraw\n");
+        return false;
+    }
+    g_StationaryShadowOwner = m_ShadowDepthBuffer;
+    LightingResources::SetStaticShadowCacheAvailable(true);
+    return true;
+}
+
+void ScenePasses::EndStaticShadowPass()
+{
+    auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(g_StationaryShadowDepth.Get(),
+        D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    m_CommandList->ResourceBarrier(1, &barrier);
+}
+
+bool ScenePasses::RestoreStaticShadowDepth(UINT index)
+{
+    if (!g_StationaryShadowDepth || !BeginShadowPass(index, true)) return false;
+    UINT layer; D3D12_VIEWPORT viewport; D3D12_RECT scissor; bool clear;
+    if (!LightingResources::GetShadowPassInfo(index, layer, viewport, scissor, clear)) return false;
+    ID3D12DescriptorHeap* heaps[] = {g_StationaryShadowSrv.Get()};
+    m_CommandList->SetDescriptorHeaps(1, heaps);
+    m_CommandList->SetGraphicsRootSignature(g_ShadowCopyRoot.Get());
+    m_CommandList->SetPipelineState(g_ShadowCopyPso.Get());
+    m_CommandList->SetGraphicsRootDescriptorTable(0, g_StationaryShadowSrv->GetGPUDescriptorHandleForHeapStart());
+    m_CommandList->SetGraphicsRoot32BitConstant(1, layer, 0);
+    m_CommandList->DrawInstanced(3, 1, 0, 0);
+    heaps[0] = m_CbvHeap.Get();
+    m_CommandList->SetDescriptorHeaps(1, heaps);
+    return true;
 }
 
 
@@ -91,7 +208,7 @@ void ScenePasses::BeginLinePass()
 	BeginPass(m_ModelRootSignature.Get(), D3D_PRIMITIVE_TOPOLOGY_LINELIST);
 }
 
-bool ScenePasses::BeginShadowPass(UINT shadowIndex)
+bool ScenePasses::BeginShadowPass(UINT shadowIndex, bool preserveDepth, bool stationaryTarget)
 {
 	if (!m_CommandList || !m_ShadowDepthBuffer || !m_DsvHeap || shadowIndex >= LightingResources::GetShadowLightCount())
 	{
@@ -109,13 +226,21 @@ bool ScenePasses::BeginShadowPass(UINT shadowIndex)
 	}
 	const UINT dsvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 	CD3DX12_CPU_DESCRIPTOR_HANDLE shadowDsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), 1 + shadowLayer, dsvIncrement);
+    if (stationaryTarget)
+    {
+        if (!g_StationaryShadowDepth) return false;
+        auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(g_StationaryShadowDepth.Get(),
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        m_CommandList->ResourceBarrier(1, &barrier);
+        shadowDsvHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(g_StationaryShadowDsv->GetCPUDescriptorHandleForHeapStart(), shadowLayer, dsvIncrement);
+    }
 	m_CommandList->RSSetViewports(1, &shadowViewport);
 	m_CommandList->RSSetScissorRects(1, &shadowScissor);
-	if (clearShadowLayer)
+	if (!preserveDepth && clearShadowLayer)
 	{
 		m_CommandList->ClearDepthStencilView(shadowDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 	}
-	else
+	else if (!preserveDepth)
 	{
 
 		m_CommandList->ClearDepthStencilView(

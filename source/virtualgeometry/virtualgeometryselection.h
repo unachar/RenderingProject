@@ -1,5 +1,6 @@
 #pragma once
 #include "virtualgeometryasset.h"
+#include <span>
 
 namespace VirtualGeometrySelection
 {
@@ -22,4 +23,10 @@ struct Result
 };
 // CPU reference for validation; runtime selection is performed on the GPU.
 Result Select(const VirtualGeometryAsset& asset, const View& view, const Settings& settings);
+struct ResidentResult : Result
+{
+    std::vector<uint32_t> RequestedPages;
+};
+ResidentResult SelectResident(const VirtualGeometryAsset& asset, const View& view, const Settings& settings,
+    std::span<const uint32_t> clusterPages, std::span<const uint8_t> residentPages);
 }

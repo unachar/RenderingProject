@@ -4,6 +4,11 @@
 class LightingResources : protected RendererState
 {
 public:
+    enum class ShadowCasterSubset { All, Stationary, Moving };
+    static void SetShadowCasterSubset(ShadowCasterSubset subset);
+    static void SetStaticShadowCacheAvailable(bool available);
+    static bool UseStaticShadowCache(UINT shadowIndex);
+    static bool ShouldRenderStaticShadowPass(UINT shadowIndex);
 	struct LightGridStats
 	{
 		UINT AuthoredLights = 0;

@@ -20,6 +20,7 @@ void FramePipeline::Execute()
 {
 	ID3D12GraphicsCommandList* commandList = GraphicsDevice::GetCommandList();
     TransmittanceShadows::PrepareFrame();
+    ScenePasses::PrepareStaticShadowCache();
 	VertexDeformation::PrepareFrame(commandList, GraphicsDevice::GetFrameIndex());
 	MeshShaderPipeline::BeginFrame();
 	static RenderGraph graph;
@@ -66,6 +67,27 @@ void FramePipeline::Execute()
 						{
 							continue;
 						}
+                        if (LightingResources::UseStaticShadowCache(shadowIndex))
+                        {
+                            if (LightingResources::ShouldRenderStaticShadowPass(shadowIndex) &&
+                                ScenePasses::BeginShadowPass(shadowIndex, false, true))
+                            {
+                                RenderProfiler::ScopedEvent stationary("Stationary Shadow Update", passCommandList);
+                                LightingResources::SetShadowCasterSubset(LightingResources::ShadowCasterSubset::Stationary);
+                                SystemManager::DrawSystem(RenderPass::ShadowMap, false);
+                                ScenePasses::EndStaticShadowPass();
+                            }
+                            const bool restored = ScenePasses::RestoreStaticShadowDepth(shadowIndex);
+                            if (ScenePasses::BeginShadowPass(shadowIndex, restored))
+                            {
+                                LightingResources::SetShadowCasterSubset(restored ? LightingResources::ShadowCasterSubset::Moving :
+                                    LightingResources::ShadowCasterSubset::All);
+                                SystemManager::DrawSystem(RenderPass::ShadowMap, false);
+                                ScenePasses::EndShadowPass();
+                            }
+                            LightingResources::SetShadowCasterSubset(LightingResources::ShadowCasterSubset::All);
+                            continue;
+                        }
 						if (ScenePasses::BeginShadowPass(shadowIndex))
 						{
 							SystemManager::DrawSystem(RenderPass::ShadowMap, false);
