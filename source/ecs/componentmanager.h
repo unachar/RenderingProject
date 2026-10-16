@@ -44,6 +44,16 @@ struct MeshComponent
 	bool HasLocalBounds = false;
 	bool IsEnvironment = false;
 	shared_ptr<StaticMeshData> NaniteMesh;
+	// シーン保存用：プリミティブから作られたメッシュの再生成情報（0 = プリミティブ以外）
+	int PrimitiveType = 0;      // ObjectType
+	int PrimitiveColor = 0;     // Color
+	float PrimitiveRadius = 0.5f;
+	float PrimitiveHeight = 1.0f;
+	float PrimitiveWidth = 1.0f;
+	float PrimitiveDepth = 1.0f;
+	int PrimitiveSegments = 32;
+	int PrimitiveRings = 16;
+	int PrimitiveFaceDivisions = 1;
 };
 
 struct InputComponent
@@ -361,6 +371,10 @@ struct SpriteComponent
 	XMFLOAT3 LocalBoundsExtents{};
 	bool HasLocalBounds = false;
 	bool UsePostProcess = false;
+	// シーン保存用：スプライト形状の再生成情報（0 = 不明）
+	int SourceShape = 0;        // ShapeType
+	float SourceRadius = 0.5f;
+	int SourceColor = 0;        // Color
 };
 
 struct InstancingComponent

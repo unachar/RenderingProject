@@ -316,6 +316,11 @@ void ImGuiManager::DrawAssetBrowserWindow()
 					m_CurrentAssetDirectory = path;
 					m_SelectedAssetPath.clear();
 				}
+				else if (IsSceneFile(path) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+				{
+					// .scene のダブルクリックでシーンを切り替える（未保存なら確認ポップアップ）
+					RequestOpenScene(path);
+				}
 				else if (AssetRegistry::Classify(path) == AssetType::Material && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                 {
                     string error;
@@ -342,6 +347,10 @@ void ImGuiManager::DrawAssetBrowserWindow()
 				{
 					m_CurrentAssetDirectory = path;
 					m_SelectedAssetPath.clear();
+				}
+				if (!isDir && IsSceneFile(path) && ImGui::MenuItem("シーンを開く"))
+				{
+					RequestOpenScene(path);
 				}
 				if (!isDir && IsTextureFile(path) && ImGui::MenuItem("選択中にテクスチャ適用"))
 				{

@@ -17,11 +17,11 @@
     ],
     "emissiveColor" : 
     [
-      0.0,
-      0.0,
-      0.0
+      1.0,
+      1.0,
+      1.0
     ],
-    "emissiveIntensity" : 0.0,
+    "emissiveIntensity" : 9.866999626159668,
     "ior" : 1.5,
     "metallic" : 0.0,
     "normalScale" : 8.0,

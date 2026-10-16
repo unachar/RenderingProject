@@ -47,6 +47,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		return 0;
 	}
 
+	// ×ボタン / Alt+F4：未保存のシーンがあれば「保存しますか？」を出す
+	// （デバイスロスト時などにエンジンから送られる WM_CLOSE はそのまま閉じる）
+	if (uMsg == WM_SYSCOMMAND && (wParam & 0xFFF0) == SC_CLOSE)
+	{
+		ImGuiManager::RequestQuit();
+		return 0;
+	}
+
 	if (ImGuiManager::HandleWndProc(hwnd, uMsg, wParam, lParam))
 	{
 		return true;

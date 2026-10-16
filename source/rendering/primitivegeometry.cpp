@@ -454,6 +454,9 @@ void PrimitiveGeometry::CreateSpriteVertex(const VertexResource& vertexstruct)
 			);
 		};
 
+	spriteComponent.SourceShape = static_cast<int>(vertexstruct.shapetype);
+	spriteComponent.SourceRadius = vertexstruct.radius;
+	spriteComponent.SourceColor = static_cast<int>(vertexstruct.color);
 	vector<Vertex> vertices = CreateShapeVertices(vertexstruct.shapetype, vertexstruct.radius, vertexstruct.color, ApplyUv);
 
 	const UINT vertexBufferSize = static_cast<UINT>(sizeof(Vertex) * vertices.size());
@@ -601,7 +604,20 @@ void PrimitiveGeometry::CreateObjectVertex(const VertexResource& vertexstruct, c
 		if (vertexstruct.objectType != ObjectType::CAPSULE)
 			vertex.Normal = Normalize({ vertex.Normal.x / scale.x, vertex.Normal.y / scale.y, vertex.Normal.z / scale.z });
 	}
-	UploadVertices(vertexstruct.entityid, vertices);
+	if (UploadVertices(vertexstruct.entityid, vertices))
+	{
+		// シーン保存時に頂点ではなく作成パラメーターを書き出せるよう記録する
+		auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(vertexstruct.entityid);
+		mesh.PrimitiveType = static_cast<int>(vertexstruct.objectType);
+		mesh.PrimitiveColor = static_cast<int>(vertexstruct.color);
+		mesh.PrimitiveRadius = settings.Radius;
+		mesh.PrimitiveHeight = settings.Height;
+		mesh.PrimitiveWidth = settings.Width;
+		mesh.PrimitiveDepth = settings.Depth;
+		mesh.PrimitiveSegments = settings.Segments;
+		mesh.PrimitiveRings = settings.Rings;
+		mesh.PrimitiveFaceDivisions = settings.FaceDivisions;
+	}
 }
 
 bool PrimitiveGeometry::UploadVertices(EntityID entity, const vector<Vertex>& vertices)
@@ -614,6 +630,7 @@ bool PrimitiveGeometry::UploadVertices(EntityID entity, const vector<Vertex>& ve
     }
     const UINT byteSize = static_cast<UINT>(vertices.size() * sizeof(Vertex));
     auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+    mesh.PrimitiveType = 0; // 任意の頂点。プリミティブの場合は CreateObjectVertex が直後に設定し直す
     const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
     const auto description = CD3DX12_RESOURCE_DESC::Buffer(byteSize);
     ComPtr<ID3D12Resource> buffer;

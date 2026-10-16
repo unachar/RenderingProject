@@ -738,6 +738,17 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
         Camera::SetCameraPostProcess(static_cast<PostProcessType>(postProcess));
         matched = true;
     }
+    // 現在のシーン（次回起動時に開く）。日本語のパスも扱えるよう UTF-8 で保存する
+    if (output)
+    {
+        const auto scene = m_ScenePath.generic_u8string();
+        *output << "scene=" << string(scene.begin(), scene.end()) << '\n';
+    }
+    else if (key == "scene")
+    {
+        m_StartupScenePath = filesystem::u8path(value);
+        matched = true;
+    }
     if (output) *output << "asset_directory=" << m_CurrentAssetDirectory.generic_string() << '\n';
     else if (key == "asset_directory")
     {
@@ -960,5 +971,20 @@ void ImGuiManager::LoadProjectSettings()
 	}
     CloudRenderer::GetSettings().Validate();
     if (auto* physics = SystemManager::GetSystem<PhysicsSystem>()) physics->ResetSimulation();
+
+    // 前回開いていたシーンを開く（cfg の scene=）。見つからなければ既定シーンのまま
+    if (!m_StartupScenePath.empty())
+    {
+        error_code sceneError;
+        if (filesystem::exists(m_StartupScenePath, sceneError))
+        {
+            LoadScene(m_StartupScenePath);
+        }
+        else
+        {
+            AddLog("前回のシーンが見つかりません: %s", m_StartupScenePath.generic_string().c_str());
+        }
+        m_StartupScenePath.clear();
+    }
 
 }

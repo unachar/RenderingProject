@@ -174,10 +174,17 @@ void ImGuiManager::Update()
 	{
 		if (!RenderingValidation::IsEnabled())
 		{
-			LoadProjectSettings();
+			LoadProjectSettings(); // cfg に scene= があれば、ここでそのシーンを開く
 		}
 		m_ProjectSettingsLoaded = true;
+		if (!m_SceneTracking)
+		{
+			// 起動時の既定シーン（Untitled）。モデルの非同期読み込みが落ち着くまで基準を更新する
+			BeginSceneBaseline(5.0);
+		}
 	}
+	// シーンの切り替え・新規作成・終了は、描画前のこの位置でまとめて実行する
+	ProcessSceneAction();
 
 	ImGui_ImplDX12_NewFrame();
 	ImGui_ImplWin32_NewFrame();
@@ -203,14 +210,20 @@ void ImGuiManager::Update()
 	}
 
     MaterialPreview::SetVisible(false);
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && !MaterialEditorHasFocus())
+    // Ctrl+S：シーンを保存（未保存の新規シーンなら名前を付けて保存）、Ctrl+Shift+S：名前を付けて保存、Ctrl+N：新規シーン
+    if (!io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && !MaterialEditorHasFocus())
     {
+        SaveCurrentScene(io.KeyShift);
         string error;
         filesystem::create_directories("Save");
         if (!MaterialManager::SaveSceneReferences("Save/scene_materials.json", error))
         {
             AddLog("Scene save failed: %s", error.c_str());
         }
+    }
+    if (!io.WantTextInput && io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_N, false))
+    {
+        RequestNewScene();
     }
 	ProcessDroppedFiles();
 	const bool canSwitchGizmo =
@@ -441,7 +454,9 @@ void ImGuiManager::Update()
 		ImGui::End();
 	}
 
+	DrawScenePopups();
 	FinalizeUndoCaptureIfIdle();
+	UpdateSceneTracking();
 	static double nextSettingsSave = 0.0;
 	if (m_ProjectSettingsLoaded && !ProjectManager::IsPlaying() &&
 		!ImGui::IsAnyItemActive() && ImGui::GetTime() >= nextSettingsSave)
@@ -506,7 +521,9 @@ void ImGuiManager::DrawEditorMainMenu()
 
     if (ImGui::BeginMenu("ファイル"))
     {
-        if (ImGui::MenuItem("シーンのマテリアル参照を保存", "Ctrl+S"))
+        DrawSceneFileMenu();
+        ImGui::Separator();
+        if (ImGui::MenuItem("シーンのマテリアル参照を保存"))
         {
             string error;
             filesystem::create_directories("Save");
@@ -515,6 +532,8 @@ void ImGuiManager::DrawEditorMainMenu()
                 AddLog("Scene save failed: %s", error.c_str());
             }
         }
+        ImGui::Separator();
+        if (ImGui::MenuItem("終了", "Alt+F4")) RequestQuit();
         ImGui::EndMenu();
     }
 	if (ImGui::BeginMenu("編集"))

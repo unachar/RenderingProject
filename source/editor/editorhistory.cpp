@@ -213,6 +213,7 @@ void ImGuiManager::BeginUndoCapture(EntityID entity, const EntitySnapshot& befor
 {
 	if (entity == g_kINVALID_ENTITY || !Registry::IsAlive(entity)) return;
 	GpuSceneChanges::Notify(entity);
+	++m_EditRevision;
 	if (!m_HasPendingUndo) { m_PendingUndo = before; m_HasPendingUndo = true; }
 }
 
@@ -227,6 +228,7 @@ void ImGuiManager::FinalizeUndoCaptureIfIdle()
 void ImGuiManager::PushUndoSnapshot(const EntitySnapshot& snapshot)
 {
 	if (snapshot.Entity == g_kINVALID_ENTITY) return;
+	++m_EditRevision;
 	m_UndoStack.push_back(snapshot);
 	if (m_UndoStack.size() > 10) m_UndoStack.erase(m_UndoStack.begin());
 	m_RedoStack.clear();
@@ -238,6 +240,7 @@ void ImGuiManager::Undo()
 	if (m_UndoStack.empty()) return;
 	EntitySnapshot snapshot = m_UndoStack.back();
 	m_UndoStack.pop_back();
+	++m_EditRevision;
 	m_RedoStack.push_back(CaptureEntity(snapshot.Entity));
 	if (m_RedoStack.size() > 10) m_RedoStack.erase(m_RedoStack.begin());
 	ApplySnapshot(snapshot);
@@ -257,6 +260,7 @@ void ImGuiManager::Redo()
 	if (m_RedoStack.empty()) return;
 	EntitySnapshot snapshot = m_RedoStack.back();
 	m_RedoStack.pop_back();
+	++m_EditRevision;
 	m_UndoStack.push_back(CaptureEntity(snapshot.Entity));
 	if (m_UndoStack.size() > 10) m_UndoStack.erase(m_UndoStack.begin());
 	ApplySnapshot(snapshot);

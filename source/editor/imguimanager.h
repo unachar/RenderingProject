@@ -199,7 +199,54 @@ private:
 	static const char* GetEntityDisplayName(EntityID entity);
 	static const char* GetLightTypeName(LightType type);
 
+	// ---------------------------------------------------------------- シーンシステム（editorscene.cpp）
+	enum class SceneAction { None, Open, New, Quit };
+	inline static filesystem::path m_ScenePath;               // 空 = 未保存の新規シーン
+	inline static filesystem::path m_StartupScenePath;        // cfg の scene=
+	inline static uint64_t m_SceneSavedHash = 0;              // 最後に保存/読み込みした時点
+	inline static uint64_t m_SceneCurrentHash = 0;
+	inline static bool m_SceneTracking = false;
+	inline static double m_SceneNextHashTime = 0.0;
+	inline static double m_SceneSettleUntil = 0.0;
+	inline static uint64_t m_EditRevision = 0;                // Undoに積まれる編集のたびに増える
+	inline static uint64_t m_SceneSettleRevision = 0;
+	inline static SceneAction m_PendingSceneAction = SceneAction::None;
+	inline static filesystem::path m_PendingScenePath;
+	inline static bool m_ExecuteSceneAction = false;
+	inline static bool m_RequestSaveChangesPopup = false;
+	inline static bool m_RequestSaveAsPopup = false;
+	inline static bool m_ContinueAfterSaveAs = false;
+	inline static char m_SaveAsName[128] = "NewScene";
+	inline static char m_SaveAsDirectory[260] = "asset/Scenes";
+	inline static wstring m_LastWindowTitle;
+
+	static bool SceneTrackingAllowed();
+	static vector<EntityID> CollectSceneEntities();
+	static uint64_t ComputeSceneHash();
+	static string SerializeScene();
+	static bool SaveScene(const filesystem::path& path);
+	static bool LoadScene(const filesystem::path& path);
+	static void DestroySceneEntities();
+	static void CreateNewScene();
+	static void RebuildLoadedEntity(EntityID entity, const void* record);
+	static void BeginSceneBaseline(double settleSeconds);
+	static void UpdateSceneTracking();
+	static void ProcessSceneAction();
+	static void RequestSceneAction(SceneAction action, const filesystem::path& path = {});
+	static void SaveCurrentScene(bool saveAs);
+	static void DrawScenePopups();
+	static void DrawSceneFileMenu();
+	static bool IsSceneFile(const filesystem::path& path);
+	static string GetSceneDisplayName();
+
 public:
+	// シーン操作（未保存なら「保存しますか？」を出してから実行する）
+	static void RequestOpenScene(const filesystem::path& path) { RequestSceneAction(SceneAction::Open, path); }
+	static void RequestNewScene() { RequestSceneAction(SceneAction::New); }
+	static void RequestQuit();
+	static bool IsSceneDirty() { return m_SceneTracking && m_SceneCurrentHash != m_SceneSavedHash; }
+	static const filesystem::path& GetScenePath() { return m_ScenePath; }
+
 	static void SaveProjectSettings();
 	static constexpr UINT kSrvDescriptorCount = 64;
     inline static bool m_AssetBrowserStandalone = false;

@@ -109,9 +109,11 @@ void Game::Update()
 	World::Update();
 	Input::Update();
 
-	if (Input::IsKeyPress(VK_ESCAPE))
+	// Esc：終了（未保存のシーンがあれば確認）。文字入力中やポップアップ表示中は終了しない
+	if (Input::IsKeyPress(VK_ESCAPE) && !ImGui::GetIO().WantTextInput &&
+		!ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))
 	{
-		PostQuitMessage(0);
+		ImGuiManager::RequestQuit();
 	}
 
 	SystemManager::UpdateSystem();

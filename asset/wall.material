@@ -38,7 +38,7 @@
     "shadowMode" : "Auto"
   },
   "shader" : "PBR",
-  "surfaceType" : "Transparent",
+  "surfaceType" : "Opaque",
   "textures" : 
   {
     "ao" : "guid:0000000000000000",
