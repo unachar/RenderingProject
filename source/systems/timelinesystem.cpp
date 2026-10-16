@@ -178,22 +178,9 @@ TimeLineDirector& TimeLineSystem::CreateDirector()
 	return ref;
 }
 
-void TimeLineSystem::AddDirector(unique_ptr<TimeLineDirector> director)
-{
-	if (director)
-	{
-		m_Directors.push_back(move(director));
-	}
-}
-
 void TimeLineSystem::Clear()
 {
 	m_Directors.clear();
-}
-
-size_t TimeLineSystem::GetDirectorCount()
-{
-	return m_Directors.size();
 }
 
 XMFLOAT4 TimeLineSystem::ReadProperty(

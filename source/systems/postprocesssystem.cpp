@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "postprocesssystem.h"
 #include "componentmanager.h"
 #include "systemmanager.h"

@@ -51,7 +51,5 @@ public:
 	static CreateDesc MakeDefaultDesc(LightType type);
 	static EntityID Create(const CreateDesc& desc);
 	static EntityID Create(LightType type);
-	static EntityID CreateDefaultDirectional();
 	static const char* GetTypeName(LightType type);
-	static void AttachLightTimeLine(EntityID entity);
 };

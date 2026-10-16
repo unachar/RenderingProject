@@ -16,7 +16,6 @@ public:
 	static void EndShadowPass();
 	static void EndShadowPassBatch();
 	static void BeginEditorSceneOverlayPass();
-	static void PrepareTransparentSceneCopy();
     static void BeginHdrTransparentPass();
     static void EndHdrTransparentPass();
 	static void EndEditorSceneOverlayPass();

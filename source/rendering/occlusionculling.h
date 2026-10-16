@@ -26,8 +26,6 @@ public:
 	static constexpr D3D12_RESOURCE_STATES ReadState() { return D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE; }
 	static void EndFrame();
 	static UINT GetPhase();
-	static bool HasHierarchyForCurrentPhase();
-	static D3D12_GPU_DESCRIPTOR_HANDLE GetHierarchySrv();
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetPreviousSrv();
 	static D3D12_GPU_DESCRIPTOR_HANDLE GetCurrentSrv();
 	static bool HasPrevious();

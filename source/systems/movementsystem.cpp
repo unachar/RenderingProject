@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "movementsystem.h"
 #include "componentmanager.h"
 #include "world.h"

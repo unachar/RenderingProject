@@ -55,6 +55,22 @@ bool SystemManager::Init()
 	addSystem(make_unique<InstancingSystem>());
 	addSystem(make_unique<DebugSystem>());
 
+	// 再生中だけ動かすシステムの判定は、毎フレームRTTIで比較せず初期化時に1回だけ行う
+	m_PlayOnly.clear();
+	m_PlayOnly.reserve(m_Systems.size());
+	for (auto& system : m_Systems)
+	{
+		const type_index systemType(typeid(*system));
+		const bool playOnlySystem =
+			systemType == type_index(typeid(InputSystem)) ||
+			systemType == type_index(typeid(MovementSystem)) ||
+			systemType == type_index(typeid(CameraControlSystem)) ||
+			systemType == type_index(typeid(PostProcessInputSystem)) ||
+			systemType == type_index(typeid(TimeLineSystem)) ||
+			systemType == type_index(typeid(AnimationSystem));
+		m_PlayOnly.push_back(playOnlySystem ? 1u : 0u);
+	}
+
 	for (auto& system : m_Systems)
 	{
 		system->Init();
@@ -70,6 +86,7 @@ void SystemManager::Uninit()
 	}
 	m_Systems.clear();
 	m_SystemMap.clear();
+	m_PlayOnly.clear();
 }
 
 void SystemManager::UpdateSystem()
@@ -82,21 +99,14 @@ void SystemManager::UpdateSystem()
 		}
 		});
 
-	for (auto& system : m_Systems)
+	for (size_t index = 0; index < m_Systems.size(); ++index)
 	{
-		const type_index systemType(typeid(*system));
-		const bool playOnlySystem =
-			systemType == type_index(typeid(InputSystem)) ||
-			systemType == type_index(typeid(MovementSystem)) ||
-			systemType == type_index(typeid(CameraControlSystem)) ||
-			systemType == type_index(typeid(PostProcessInputSystem)) ||
-			systemType == type_index(typeid(TimeLineSystem)) ||
-			systemType == type_index(typeid(AnimationSystem));
-		if (playOnlySystem && !ProjectManager::IsSimulationRunning())
+		// 状態はシステムの途中で変わりうるので毎回読む（インライン比較なので軽い）
+		if (m_PlayOnly[index] && !ProjectManager::IsSimulationRunning())
 		{
 			continue;
 		}
-		system->Update();
+		m_Systems[index]->Update();
 	}
 
 	ComponentManager::ForEachComponent<TransformComponent>([](EntityID, TransformComponent& transform)

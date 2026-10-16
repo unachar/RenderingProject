@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "postprocessinputsystem.h"
 #include "componentmanager.h"
 #include "world.h"

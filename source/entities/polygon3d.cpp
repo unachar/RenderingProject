@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "polygon3d.h"
 #include "game.h"
 #include "texturemanager.h"

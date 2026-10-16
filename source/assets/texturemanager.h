@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "main.h"
 #include <string>
 #include <unordered_map>
@@ -52,7 +52,6 @@ public:
 	static bool GetTextureSize(int srvIndex, UINT& outWidth, UINT& outHeight);
 	static vector<TextureInfo> GetLoadedTextureInfos();
     static int FindLoadedTexture(const filesystem::path& path);
-	static int LoadTextureUV(const char* fileName, SpriteComponent& sprite, const XMFLOAT4& uvRect);
 	static void TouchTexture(int srvIndex);
 	static void UpdateStreaming(ID3D12GraphicsCommandList* commandList);
 	static bool IsReservedResourceStreamingSupported();

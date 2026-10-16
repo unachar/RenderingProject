@@ -154,11 +154,6 @@ void Animator::Pause(AnimationModelComponent& animation)
 	animation.IsPlaying = false;
 }
 
-void Animator::Resume(AnimationModelComponent& animation)
-{
-	animation.IsPlaying = true;
-}
-
 void Animator::SetSpeed(AnimationModelComponent& animation, float speed)
 {
 	animation.Speed = speed;

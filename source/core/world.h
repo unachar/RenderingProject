@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "componentmanager.h"
 #include <type_traits>
 
@@ -79,7 +79,6 @@ public:
 		return entity;
 	}
 
-	static Entity GetEntityByName(const string& name);
 
 	static void DestroyEntity(Entity entity)
 	{

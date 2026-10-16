@@ -259,7 +259,9 @@ void Prepare(RenderGraph& graph)
     {
         uint64_t completedCopy = state.Pool->CompletedCopyFence();
         state.Pool->Collect();
-        std::vector<uint32_t> released;
+        // 毎フレームの一時配列はstaticで使い回す（Prepareはメインスレッドからのみ呼ばれる）。
+        static std::vector<uint32_t> released;
+        released.clear();
         for (const auto& page : state.Manager.Pages())
         {
             if (page.Retiring && page.GraphicsFence <= GraphicsDevice::GetCompletedFence() && page.CopyFence <= completedCopy)
@@ -326,21 +328,25 @@ void Prepare(RenderGraph& graph)
         bool waiting = state.Manager.ReservedBytes() > state.Manager.Budget();
         uint32_t submittedRequests = 0;
         const uint32_t requestLimit = std::min(state.Options.MaxPageRequestsPerFrame, RequestCapacity);
-        std::vector<uint32_t> requestedPages;
+        static std::vector<uint32_t> requestedPages;
+        requestedPages.clear();
+        const auto requestNow = Clock::now(); // ページごとのClock::now()呼び出しをやめる
         for (uint32_t page = 0; page < state.Manager.PageCount(); ++page)
         {
             const auto& source = state.Sources[page];
             const auto& record = state.Manager.Pages()[page];
-            if (record.Pinned && record.State == PageState::Evicted && source.RetryAfter <= Clock::now())
+            if (record.Pinned && record.State == PageState::Evicted && source.RetryAfter <= requestNow)
             {
                 state.Manager.Request(page,state.Serial);
             }
-            if (record.State == PageState::Requested && source.RetryAfter <= Clock::now())
+            if (record.State == PageState::Requested && source.RetryAfter <= requestNow)
             {
                 requestedPages.push_back(page);
             }
         }
-        std::sort(requestedPages.begin(),requestedPages.end(),[&](uint32_t left, uint32_t right)
+        // 1フレームに発行できるのは requestLimit 件だけなので、全件ソートせず上位だけ並べる。
+        const size_t orderedCount = std::min<size_t>(requestedPages.size(), size_t(requestLimit) + 64);
+        std::partial_sort(requestedPages.begin(),requestedPages.begin()+orderedCount,requestedPages.end(),[&](uint32_t left, uint32_t right)
         {
             const auto& a = state.Manager.Pages()[left];
             const auto& b = state.Manager.Pages()[right];

@@ -7,6 +7,8 @@
 #include <string>
 #include <typeindex>
 #include <cstdint>
+#include <algorithm>
+#include <intrin.h>
 #include "rendering/gpuscene/gpuscenechanges.h"
 #include <windows.h>
 #include <DirectXMath.h>
@@ -73,24 +75,8 @@ public:
 	static void CreateComponent(EntityID entity, ComponentType type);
 	static void ClearComponent(EntityID entity, ComponentType type);
 	static void ResetComponents();
-	static ComponentTypeID GetRegisteredCount();
 };
 
-
-class EntityIterator
-{
-private:
-	uint32_t m_VectorIndex;
-	ComponentType m_BaseType;
-	ComponentMask m_Mask;
-public:
-	EntityIterator(uint32_t index, ComponentType baseType, ComponentMask mask);
-	void Advance();
-	bool operator!=(const EntityIterator& other) const { return m_VectorIndex != other.m_VectorIndex; }
-	bool operator==(const EntityIterator& other) const { return m_VectorIndex == other.m_VectorIndex; }
-	EntityIterator& operator++();
-	EntityID operator*() const;
-};
 
 class EntityView
 {
@@ -145,70 +131,91 @@ class Registry
 private:
 	static vector<EntityData> m_Entities;
 	static queue<EntityID> m_FreeList;
+	static vector<uint8_t> m_IsFree;          // 1 = FreeListに入っていて再利用可能（RestoreEntityでO(1)取り消し）
 	static uint32_t m_NextEntityId;
 	static vector<EntityID> m_ActiveEntities[g_kMAX_COMPONENTS];
 	static vector<int32_t> m_EntityToIndex[g_kMAX_COMPONENTS];
-	static uint64_t m_StructureVersion;
+	static uint64_t m_StructureVersion;       // 単調増加カウンター
+	static uint64_t m_TypeVersion[g_kMAX_COMPONENTS]; // 型ごとの最終変更番号
 
-	static void TouchStructure()
+	static void TouchType(ComponentTypeID type)
 	{
-		++m_StructureVersion;
-		if (m_StructureVersion == 0)
-		{
-			m_StructureVersion = 1;
-		}
+		m_TypeVersion[type] = ++m_StructureVersion;
 	}
 
-	static CachedEntityList GetCachedEntities(const ComponentMask& requiredMask, ComponentType baseType)
+	// マスクに含まれる型の最終変更番号の最大値。どれか1つでも変わればこの値も変わる。
+	static uint64_t MaskStamp(uint32_t mask)
+	{
+		uint64_t stamp = 0;
+		while (mask != 0)
+		{
+			unsigned long type = 0;
+			_BitScanForward(&type, mask);
+			mask &= mask - 1;
+			stamp = (std::max)(stamp, m_TypeVersion[type]);
+		}
+		return stamp;
+	}
+
+	// 複数型のクエリ結果。
+	// ・関係する型が変わった時だけ作り直す（無関係なコンポーネントの追加・削除では作り直さない）
+	// ・結果はEntityIDの昇順。追加・削除の履歴（swap-remove）に依存しない決定論的な反復順になる
+	// ・二重バッファ：反復中に同じクエリが作り直されても、直前に返した配列は壊さない
+	static CachedEntityList GetCachedEntities(uint32_t requiredMask)
 	{
 		struct QueryCacheEntry
 		{
-			uint64_t Version = 0;
-			vector<EntityID> Entities;
+			uint64_t Stamp = UINT64_MAX;
+			uint32_t Current = 0;
+			vector<EntityID> Buffers[2];
 		};
-
-		if (baseType.Value < g_kMAX_COMPONENTS && requiredMask.count() == 1)
-		{
-			return &m_ActiveEntities[baseType.Value];
-		}
-
-		static unordered_map<uint64_t, QueryCacheEntry> queryCache;
+		static unordered_map<uint32_t, QueryCacheEntry> queryCache;
 		if (queryCache.empty())
 		{
 			queryCache.reserve(64);
 		}
-		const uint64_t key =
-			(requiredMask.to_ullong() << 6) ^ static_cast<uint64_t>(baseType.Value);
-		QueryCacheEntry& entry = queryCache[key];
 
-		if (entry.Version == m_StructureVersion)
+		QueryCacheEntry& entry = queryCache[requiredMask];
+		const uint64_t stamp = MaskStamp(requiredMask);
+		if (entry.Stamp == stamp)
 		{
-			return &entry.Entities;
+			return &entry.Buffers[entry.Current];
 		}
 
-		auto& result = entry.Entities;
-		result.clear();
-		if (baseType.Value < g_kMAX_COMPONENTS)
+		// 最も要素数の少ない型の一覧を起点にする
+		uint32_t baseType = g_kMAX_COMPONENTS;
+		size_t baseSize = SIZE_MAX;
+		for (uint32_t bits = requiredMask; bits != 0; bits &= bits - 1)
 		{
-			const auto& activeList = m_ActiveEntities[baseType.Value];
+			unsigned long type = 0;
+			_BitScanForward(&type, bits);
+			if (m_ActiveEntities[type].size() < baseSize)
+			{
+				baseSize = m_ActiveEntities[type].size();
+				baseType = type;
+			}
+		}
+
+		entry.Current ^= 1u;
+		auto& result = entry.Buffers[entry.Current];
+		result.clear();
+		if (baseType < g_kMAX_COMPONENTS)
+		{
+			const auto& activeList = m_ActiveEntities[baseType];
 			result.reserve(activeList.size());
+			const ComponentMask required(requiredMask);
 			for (EntityID entity : activeList)
 			{
-				if (entity >= m_Entities.size())
-				{
-					continue;
-				}
-
 				const EntityData& data = m_Entities[entity];
-				if (data.IsAlive && (data.Mask & requiredMask) == requiredMask)
+				if (data.IsAlive && (data.Mask & required) == required)
 				{
 					result.push_back(entity);
 				}
 			}
+			sort(result.begin(), result.end());
 		}
-
-		entry.Version = m_StructureVersion;
-		return &entry.Entities;
+		entry.Stamp = stamp;
+		return &result;
 	}
 
 public:
@@ -236,24 +243,13 @@ public:
 	template<typename... ComponentTypes>
 	static EntityView GetEntitiesByType(ComponentTypes... types)
 	{
-		ComponentMask requiredMask;
-		(requiredMask.set(types), ...);
-		ComponentType bestType = ComponentType::MAX;
-		size_t bestSize = SIZE_MAX;
-		if constexpr (sizeof...(ComponentTypes) > 0)
+		uint32_t requiredMask = 0;
+		((requiredMask |= (types.Value < g_kMAX_COMPONENTS ? (1u << types.Value) : 0u)), ...);
+		if (requiredMask == 0)
 		{
-			ComponentType typeArr[] = { types... };
-			for (size_t i = 0; i < sizeof...(ComponentTypes); i++)
-			{
-				size_t listSize = m_ActiveEntities[typeArr[i]].size();
-				if (listSize < bestSize)
-				{
-					bestSize = listSize;
-					bestType = typeArr[i];
-				}
-			}
+			return EntityView(nullptr);
 		}
-		return EntityView(GetCachedEntities(requiredMask, bestType));
+		return EntityView(GetCachedEntities(requiredMask));
 	}
 
 	static void AddComponent(EntityID entity, ComponentType type)
@@ -265,7 +261,7 @@ public:
 			m_Entities[entity].Mask.set(type);
 			m_ActiveEntities[type].push_back(entity);
 			m_EntityToIndex[type][entity] = static_cast<int32_t>(m_ActiveEntities[type].size() - 1);
-			TouchStructure();
+			TouchType(type);
 			GpuSceneChanges::Notify(entity);
 		}
 	}
@@ -291,7 +287,7 @@ public:
 				m_ActiveEntities[type].pop_back();
 				m_EntityToIndex[type][entity] = -1;
 			}
-			TouchStructure();
+			TouchType(type);
 			GpuSceneChanges::Notify(entity);
 		}
 	}
@@ -308,34 +304,3 @@ public:
 		return m_Entities[entity].Mask.test(type);
 	}
 };
-
-inline EntityIterator::EntityIterator(uint32_t index, ComponentType baseType, ComponentMask mask)
-	: m_VectorIndex(index), m_BaseType(baseType), m_Mask(mask)
-{
-	Advance();
-}
-
-inline void EntityIterator::Advance()
-{
-	if (m_BaseType.Value == ComponentType::MAX) return;
-	const auto& activeList = Registry::GetActiveEntities(m_BaseType);
-	while (m_VectorIndex < activeList.size()) {
-		EntityID entity = activeList[m_VectorIndex];
-		const auto& entityData = Registry::GetEntities()[entity];
-		if (entityData.IsAlive && (entityData.Mask & m_Mask) == m_Mask) break;
-		m_VectorIndex++;
-	}
-}
-
-inline EntityIterator& EntityIterator::operator++()
-{
-	m_VectorIndex++;
-	Advance();
-	return *this;
-}
-
-inline EntityID EntityIterator::operator*() const
-{
-	if (m_BaseType.Value == ComponentType::MAX) return g_kINVALID_ENTITY;
-	return Registry::GetActiveEntities(m_BaseType)[m_VectorIndex];
-}

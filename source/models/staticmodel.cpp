@@ -877,12 +877,6 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 	return true;
 }
 
-bool StaticModelResource::LoadFBX(const char* fileName, ID3D12Device* device, bool isConvert)
-
-{
-	return LoadAssimpModel(fileName, device, isConvert);
-}
-
 bool StaticModelResource::LoadVirtualGeometry(const char* fileName, ID3D12Device* device)
 {
     try

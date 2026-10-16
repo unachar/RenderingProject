@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "primitivegeometry.h"
 #include "graphicsdevice.h"
 #include "componentmanager.h"

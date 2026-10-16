@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "transformmath.h"
 #include "sun.h"
 #include "world.h"
 #include "graphicsdevice.h"
@@ -7,11 +8,7 @@ namespace
 {
 	static XMMATRIX BuildWorldMatrix(const TransformComponent& transform)
 	{
-		return XMMatrixScaling(transform.Scale.x, transform.Scale.y, transform.Scale.z) *
-			XMMatrixRotationX(transform.Rotation.x) *
-			XMMatrixRotationY(transform.Rotation.y) *
-			XMMatrixRotationZ(transform.Rotation.z) *
-			XMMatrixTranslation(transform.Position.x, transform.Position.y, transform.Position.z);
+		return TransformMath::World(transform);
 	}
 
 	XMFLOAT3 NormalizeOr(const XMVECTOR& vector, const XMFLOAT3& fallback)
@@ -105,14 +102,6 @@ bool Sun::MigrateLegacyGeometryBeforeFrame()
 		ComponentManager::RemoveComponent(entity, ComponentType::MESH, ComponentType::MATERIAL);
 	}
 	return true;
-}
-
-void Sun::SyncAll()
-{
-	for (EntityID entity : World::GetView<SunComponent, TransformComponent, LightComponent>())
-	{
-		Sync(entity);
-	}
 }
 
 void Sun::Sync(EntityID entity)

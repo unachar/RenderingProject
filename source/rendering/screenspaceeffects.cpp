@@ -164,13 +164,6 @@
 		commandList->ResourceBarrier(1, &barrier);
 	}
 
-	void UavBarrier(ID3D12GraphicsCommandList* commandList, ID3D12Resource* resource)
-	{
-		auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(resource);
-		commandList->ResourceBarrier(1, &barrier);
-	}
-
-
 bool ScreenSpaceEffects::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UINT descriptorIncrement)
 {
 	Shutdown();

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "performancegovernor.h"
 #include "materialmanager.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
@@ -229,6 +230,8 @@ void ImGuiManager::DrawProjectSettingsWindow()
 		ImGui::BeginDisabled(!fixedRate);
 		if (ImGui::SliderInt("目標 FPS", &targetFps, 15, 360)) World::SetTargetFrameRate(targetFps);
 		ImGui::EndDisabled();
+		ImGui::SeparatorText("自動品質調整");
+		PerformanceGovernor::DrawImGui();
 	}
 
 	if (ImGui::CollapsingHeader("グラフィックス", ImGuiTreeNodeFlags_DefaultOpen))
@@ -592,7 +595,7 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("editor.ShowProjectSettingsWindow", m_ShowProjectSettingsWindow, 0, 1);
     field("editor.ShowPhysicsSettingsWindow", m_ShowPhysicsSettingsWindow, 0, 1);
     field("editor.ShowLightDebug", m_ShowLightDebug, 0, 1);
-    field("editor.gizmo", m_GizmoOperation, 0, 2);
+    field("editor.gizmo", m_GizmoOperation, 0, 3);
     field("editor.log_auto_scroll", m_LogAutoScroll, 0, 1);
     auto& thumbnails = AssetThumbnailManager::Settings();
     field("asset_thumbnail_size", thumbnails.Size, 32, 256);

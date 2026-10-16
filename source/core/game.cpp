@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 
 #include "game.h"
 #include "renderconfiguration.h"
@@ -19,6 +19,7 @@
 #include "entitybase.h"
 #include <unordered_set>
 #include "renderframe.h"
+#include "performancegovernor.h"
 
 vector<unique_ptr<EntityBase>>& Game::GetEntities()
 {
@@ -97,6 +98,7 @@ void Game::Run()
 {
 	RenderConfiguration::ApplyPendingRenderMode();
 	RenderConfiguration::ApplyPendingHdr();
+	PerformanceGovernor::Update();
 	RenderConfiguration::ApplyPendingResolutionScale();
 	Update();
 	Draw();

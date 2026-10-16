@@ -15,7 +15,6 @@ public:
     static ID3D12PipelineState* GetPipelineState();
     static D3D12_GPU_VIRTUAL_ADDRESS GetCurrentConstantBufferAddress();
     static ID3D12Resource* GetColorResource();
-    static ID3D12Resource* GetDepthResource();
     static void Shutdown();
 private:
     static bool CreateResources();

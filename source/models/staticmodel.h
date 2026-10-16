@@ -153,7 +153,6 @@ public:
     void CaptureSourceIdentity(const std::filesystem::path& path);
     bool SourceDependenciesChanged() const;
 	bool LoadAssimpModel(const char* fileName, ID3D12Device* device, bool isConvert = true);
-	bool LoadFBX(const char* fileName, ID3D12Device* device, bool isConvert = true);
 	bool ApplyMeshShadingOverridePartIds(ID3D12Device* device, const vector<int>& overridePartIds);
 	void Uninit();
 

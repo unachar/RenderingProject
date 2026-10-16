@@ -128,26 +128,6 @@ void RenderFrame::EndDraw()
 	World::WaitForFrameLimit();
 }
 
-void RenderFrame::BeginBackBufferPass()
-{
-	if (!m_CommandList || !m_RtvHeap || !m_DsvHeap || !m_Device) return;
-	m_IsSceneColorForwardPass = false;
-	if (m_DepthStencilState != D3D12_RESOURCE_STATE_DEPTH_WRITE)
-	{
-		D3D12_RESOURCE_BARRIER depthBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
-			m_DepthStencilBuffer.Get(),
-			m_DepthStencilState,
-			D3D12_RESOURCE_STATE_DEPTH_WRITE);
-		m_CommandList->ResourceBarrier(1, &depthBarrier);
-		m_DepthStencilState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-	}
-	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(m_RtvHeap->GetCPUDescriptorHandleForHeapStart(), m_FrameIndex, m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV));
-	CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
-	m_CommandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
-	m_CommandList->RSSetViewports(1, &m_FullViewport);
-	m_CommandList->RSSetScissorRects(1, &m_FullScissorRect);
-}
-
 void RenderFrame::SetDescriptorHeap()
 {
 	ID3D12DescriptorHeap* heaps[] = { m_CbvHeap.Get() };

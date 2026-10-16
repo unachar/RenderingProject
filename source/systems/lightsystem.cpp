@@ -42,14 +42,3 @@ void LightSystem::Update()
 		});
 }
 
-void LightSystem::SetPBRParam(EntityID entity, float metallic, float roughness, float fresnel)
-{
-	if (!Registry::IsAlive(entity) || !ComponentManager::HasComponent<LightComponent>(entity))
-	{
-		return;
-	}
-	auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-	light.Color.x = metallic;
-	light.Color.y = roughness;
-	light.Color.z = fresnel;
-}

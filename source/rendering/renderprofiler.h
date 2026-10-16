@@ -99,6 +99,7 @@ private:
     {
         bool Pending = false;
         bool PipelineQueryClosed = false;
+        bool PipelineQueryStarted = false;
         UINT TimestampQueryCount = 0;
         vector<GpuEvent> GpuEvents;
         FrameSnapshot Snapshot{};
@@ -125,7 +126,8 @@ private:
     static inline FrameSnapshot s_Latest{};
     static inline bool s_HasLatest = false;
     static inline bool s_Enabled = true;
-    static inline bool s_ShowWindow = true;
+    static inline bool s_ForcePipelineStatistics = false;
+    static inline bool s_ShowWindow = false; // 既定は非表示（F9で表示）。表示中だけパイプライン統計を取る
     static inline array<float, kHistoryLength> s_CpuHistory{};
     static inline array<float, kHistoryLength> s_GpuHistory{};
 
@@ -316,7 +318,7 @@ private:
                 pipelineOffset + sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS)
             };
             mapped = nullptr;
-            if (SUCCEEDED(s_PipelineStatisticsReadback->Map(
+            if (slot.PipelineQueryStarted && SUCCEEDED(s_PipelineStatisticsReadback->Map(
                 0,
                 &pipelineReadRange,
                 &mapped)) && mapped)
@@ -448,7 +450,9 @@ public:
         slot.GpuEvents.clear();
         slot.GpuEvents.reserve(kMaxTimestampQueriesPerFrame / 2);
         slot.Snapshot = {};
-        slot.PipelineQueryClosed = false;
+        // パイプライン統計クエリはフレーム全体を対象にするためGPU負荷が高い。ウィンドウ表示中だけ取る。
+        slot.PipelineQueryStarted = s_GpuResourcesReady && (s_ShowWindow || s_ForcePipelineStatistics);
+        slot.PipelineQueryClosed = !slot.PipelineQueryStarted;
         slot.Snapshot.Serial = ++s_FrameSerial;
         slot.Snapshot.GeometryMode = static_cast<uint32_t>(GetGeometryRenderingMode());
 
@@ -457,7 +461,7 @@ public:
         s_ActiveCommandList = commandList;
         s_CpuFrameBegin = Clock::now();
 
-        if (s_GpuResourcesReady)
+        if (slot.PipelineQueryStarted)
         {
             commandList->BeginQuery(
                 s_PipelineStatisticsHeap.Get(),
@@ -568,6 +572,7 @@ public:
                     static_cast<UINT64>(firstQuery) * sizeof(UINT64));
             }
 
+            if (s_ActiveSlot->PipelineQueryStarted)
             commandList->ResolveQueryData(
                 s_PipelineStatisticsHeap.Get(),
                 D3D12_QUERY_TYPE_PIPELINE_STATISTICS,
@@ -670,6 +675,12 @@ public:
         {
             snapshot->Calls.CullVisible += visibleCount;
         }
+    }
+
+    // 自動テスト・ベンチマークではパイプライン統計を常に取る。
+    static void SetPipelineStatisticsForced(bool forced)
+    {
+        s_ForcePipelineStatistics = forced;
     }
 
     static void SetWindowVisible(bool visible)

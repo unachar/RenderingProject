@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "envflags.h"
 #include "thumbnailvalidation.h"
 #include "materialmanager.h"
 #include "materialpreview.h"
@@ -155,8 +156,7 @@ void ImGuiManager::Uninit()
 
 void ImGuiManager::Update()
 {
-	char featureTest[8]{};
-	if (GetEnvironmentVariableA("DX12_FEATURE_SMOKE_TEST", featureTest, sizeof(featureTest)) > 0 && atoi(featureTest) != 0)
+	if (IsFeatureSmokeTestEnabled())
 	{
 		m_ShowProceduralWindow = true;
 		m_ShowRaytracingWindow = true;
@@ -220,9 +220,35 @@ void ImGuiManager::Update()
 		!ImGuizmo::IsUsing();
 	if (canSwitchGizmo)
 	{
-		if (ImGui::IsKeyPressed(ImGuiKey_Q, false)) m_GizmoOperation = 0;
-		if (ImGui::IsKeyPressed(ImGuiKey_W, false)) m_GizmoOperation = 1;
-		if (ImGui::IsKeyPressed(ImGuiKey_E, false)) m_GizmoOperation = 2;
+		// Unityと同じ割り当て
+		if (!io.KeyCtrl && !io.KeyAlt)
+		{
+			if (ImGui::IsKeyPressed(ImGuiKey_Q, false)) m_GizmoOperation = 3;
+			if (ImGui::IsKeyPressed(ImGuiKey_W, false)) m_GizmoOperation = 0;
+			if (ImGui::IsKeyPressed(ImGuiKey_E, false)) m_GizmoOperation = 1;
+			if (ImGui::IsKeyPressed(ImGuiKey_R, false)) m_GizmoOperation = 2;
+			if (ImGui::IsKeyPressed(ImGuiKey_X, false)) m_GizmoLocalSpace = !m_GizmoLocalSpace;
+		}
+	}
+	// Ctrl+D：複製（Unityと同じ）。入力中・ギズモ操作中・カメラ飛行中・マテリアルエディター操作中は無効
+	if (!io.WantTextInput && io.KeyCtrl && !io.KeyShift && !io.KeyAlt &&
+		!ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing() &&
+		!ImGui::IsMouseDown(ImGuiMouseButton_Right) && !MaterialEditorHasFocus() &&
+		ImGui::IsKeyPressed(ImGuiKey_D, false))
+	{
+		DuplicateSelectedEntity();
+	}
+	// Ctrl+P：再生/停止、Ctrl+Shift+P：一時停止（Unityと同じ）
+	if (!io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_P, false))
+	{
+		if (io.KeyShift)
+		{
+			if (ProjectManager::IsPlaying()) ProjectManager::TogglePause();
+		}
+		else
+		{
+			ProjectManager::TogglePlay();
+		}
 	}
 	if (canSwitchGizmo && !io.KeyCtrl && !io.KeyAlt &&
 		m_SelectedEntity != g_kINVALID_ENTITY &&
@@ -424,35 +450,6 @@ void ImGuiManager::Update()
 		nextSettingsSave = ImGui::GetTime() + 2.0;
 	}
 }
-void ImGuiManager::DrawSceneEditor()
-{
-ImGui::SeparatorText("セクション");
-
-	const char* selectedName = GetEntityDisplayName(m_SelectedEntity);
-	ImGui::Text("選択中: %s", selectedName);
-
-	if (m_SelectedEntity != g_kINVALID_ENTITY &&
-		Registry::IsAlive(m_SelectedEntity) &&
-		ComponentManager::HasComponent<TransformComponent>(m_SelectedEntity))
-	{
-		auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(m_SelectedEntity);
-		EntitySnapshot before = CaptureEntity(m_SelectedEntity);
-		bool changed = false;
-		changed |= DrawAxisFloat3("位置", transform.Position, 0.01f);
-		changed |= DrawAxisFloat3("回転", transform.Rotation, 0.01f);
-		changed |= DrawScaleAxisFloat3("スケール", transform.Scale, 0.01f, 0.001f, 100.0f);
-		if (changed)
-		{
-			BeginUndoCapture(m_SelectedEntity, before);
-			transform.WorldMatrix = {};
-			XMStoreFloat4x4(&transform.WorldMatrix, BuildWorldMatrix(transform));
-			transform.IsDirty = true;
-		}
-	}
-
-	ImGui::Text("Q/W/E: 移動 / 回転 / スケール（現在: %s）", GetGizmoOperationLabel(m_GizmoOperation));
-}
-
 void ImGuiManager::DrawDockSpace()
 {
 	ImGuiDockNodeFlags dockspaceFlags = ImGuiDockNodeFlags_PassthruCentralNode;
@@ -792,4 +789,62 @@ void ImGuiManager::StyleModernSlim()
 	style.ScrollbarRounding = 2.0f;
 	style.TabRounding = 2.0f;
 	style.WindowMenuButtonPosition = ImGuiDir_Right;
+
+	// ---- Unity（Dark/Pro スキン）に近い配色で上書きする ----
+	{
+		const ImVec4 panel(0.157f, 0.157f, 0.157f, 1.00f);      // #282828
+		const ImVec4 window(0.220f, 0.220f, 0.220f, 1.00f);     // #383838
+		const ImVec4 header(0.243f, 0.243f, 0.243f, 1.00f);     // #3E3E3E
+		const ImVec4 field(0.165f, 0.165f, 0.165f, 1.00f);      // #2A2A2A
+		const ImVec4 hover(0.270f, 0.270f, 0.270f, 1.00f);
+		const ImVec4 selection(0.172f, 0.365f, 0.529f, 1.00f);  // #2C5D87（Unityの選択色）
+		const ImVec4 accent(0.235f, 0.533f, 0.808f, 1.00f);
+		colors[ImGuiCol_Text] = ImVec4(0.824f, 0.824f, 0.824f, 1.00f);
+		colors[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.50f, 0.50f, 1.00f);
+		colors[ImGuiCol_WindowBg] = window;
+		colors[ImGuiCol_ChildBg] = window;
+		colors[ImGuiCol_PopupBg] = ImVec4(0.200f, 0.200f, 0.200f, 0.98f);
+		colors[ImGuiCol_Border] = ImVec4(0.098f, 0.098f, 0.098f, 1.00f);
+		colors[ImGuiCol_FrameBg] = field;
+		colors[ImGuiCol_FrameBgHovered] = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
+		colors[ImGuiCol_FrameBgActive] = ImVec4(0.130f, 0.130f, 0.130f, 1.00f);
+		colors[ImGuiCol_TitleBg] = panel;
+		colors[ImGuiCol_TitleBgActive] = panel;
+		colors[ImGuiCol_TitleBgCollapsed] = panel;
+		colors[ImGuiCol_MenuBarBg] = ImVec4(0.098f, 0.098f, 0.098f, 1.00f);
+		colors[ImGuiCol_ScrollbarBg] = window;
+		colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.37f, 0.37f, 0.37f, 1.00f);
+		colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.45f, 0.45f, 0.45f, 1.00f);
+		colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.52f, 0.52f, 0.52f, 1.00f);
+		colors[ImGuiCol_CheckMark] = ImVec4(0.85f, 0.85f, 0.85f, 1.00f);
+		colors[ImGuiCol_SliderGrab] = ImVec4(0.55f, 0.55f, 0.55f, 1.00f);
+		colors[ImGuiCol_SliderGrabActive] = accent;
+		colors[ImGuiCol_Button] = ImVec4(0.345f, 0.345f, 0.345f, 1.00f);     // #585858
+		colors[ImGuiCol_ButtonHovered] = ImVec4(0.404f, 0.404f, 0.404f, 1.00f);
+		colors[ImGuiCol_ButtonActive] = ImVec4(0.275f, 0.376f, 0.486f, 1.00f);
+		colors[ImGuiCol_Header] = selection;
+		colors[ImGuiCol_HeaderHovered] = hover;
+		colors[ImGuiCol_HeaderActive] = selection;
+		colors[ImGuiCol_Separator] = ImVec4(0.098f, 0.098f, 0.098f, 1.00f);
+		colors[ImGuiCol_SeparatorHovered] = accent;
+		colors[ImGuiCol_SeparatorActive] = accent;
+		colors[ImGuiCol_ResizeGrip] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+		colors[ImGuiCol_ResizeGripHovered] = accent;
+		colors[ImGuiCol_ResizeGripActive] = accent;
+		colors[ImGuiCol_Tab] = panel;
+		colors[ImGuiCol_TabHovered] = header;
+		colors[ImGuiCol_TabSelected] = window;
+		colors[ImGuiCol_TabSelectedOverline] = accent;
+		colors[ImGuiCol_TabDimmed] = panel;
+		colors[ImGuiCol_TabDimmedSelected] = header;
+		colors[ImGuiCol_DockingPreview] = ImVec4(accent.x, accent.y, accent.z, 0.6f);
+		colors[ImGuiCol_DockingEmptyBg] = panel;
+		colors[ImGuiCol_TextSelectedBg] = ImVec4(selection.x, selection.y, selection.z, 0.8f);
+		colors[ImGuiCol_NavCursor] = accent;
+		colors[ImGuiCol_TableHeaderBg] = header;
+		style.WindowRounding = 0.0f;
+		style.TabRounding = 0.0f;
+		style.FrameRounding = 2.0f;
+		style.FrameBorderSize = 0.0f;
+	}
 }

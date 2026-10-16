@@ -88,23 +88,6 @@ void AnimationModelResource::BuildPmxVertexMeshMap()
 		m_PmxBaseVertices.size(), mappedMeshVertices, preciseMappedMeshVertices);
 }
 
-float AnimationModelResource::SampleVmdMorph(const VmdAnimation* animation, const string& morphName, float timeSeconds) const
-{
-	if (!animation)
-	{
-		return 0.0f;
-	}
-
-	auto trackIt = animation->MorphTracks.find(morphName);
-	if (trackIt == animation->MorphTracks.end())
-	{
-		return 0.0f;
-	}
-
-	const float currentFrame = VmdToFrameTime(animation, timeSeconds);
-	return SampleVmdMorphTrack(&trackIt->second, currentFrame);
-}
-
 void AnimationModelResource::ApplyVmdMorphs(const VmdAnimation* animation, float currentFrame)
 {
 	if (!animation || m_PmxMorphs.empty())

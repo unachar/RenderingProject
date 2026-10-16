@@ -1,4 +1,5 @@
-﻿#include "pch.h"
+#include "pch.h"
+#include "envflags.h"
 #include "transmittanceshadows.h"
 #include "materialmanager.h"
 #include "meshshader/meshshaderrenderer.h"
@@ -205,9 +206,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 		}
 
 		const bool transmission = renderPass == RenderPass::TransmittanceShadow;
-        char referenceValue[8]{};
-        GetEnvironmentVariableA("DX12_SHADOW_REFERENCE_DRAW", referenceValue, sizeof(referenceValue));
-        const bool referenceDraw = atoi(referenceValue) != 0;
+        const bool referenceDraw = IsShadowReferenceDrawEnabled();
 		ID3D12PipelineState* shadowPso = transmission ? TransmittanceShadows::GetPipelineState() : PsoManager::GetOrCreateShadowMapPso();
 		UINT8* pCbvDataBegin = FrameConstants::GetConstantBufferPtr();
 		ID3D12DescriptorHeap* cbvHeap = FrameConstants::GetCbvHeap();

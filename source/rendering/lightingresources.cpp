@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "envflags.h"
 #include "transmittanceshadows.h"
 #include "materialmanager.h"
 #include "lightingresources.h"
@@ -96,44 +97,6 @@ namespace
 	ComPtr<ID3D12Resource> g_LightTileIndexBuffers[RendererState::g_kFRAME_COUNT];
 	uint32_t* g_LightTileIndexData[RendererState::g_kFRAME_COUNT]{};
 	LightingResources::LightGridStats g_LightGridStats{};
-
-	bool EnsureLightTileIndexBuffers(ID3D12Device* device)
-	{
-		if (!device)
-		{
-			return false;
-		}
-		const UINT64 bufferSize =
-			static_cast<UINT64>(RendererState::g_kMAX_LIGHT_TILE_COUNT) *
-			RendererState::g_kMAX_LIGHTS_PER_TILE * sizeof(uint32_t);
-		for (UINT frame = 0; frame < RendererState::g_kFRAME_COUNT; ++frame)
-		{
-			if (g_LightTileIndexBuffers[frame] && g_LightTileIndexData[frame])
-			{
-				continue;
-			}
-			auto heapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-			auto bufferDescription = CD3DX12_RESOURCE_DESC::Buffer(bufferSize);
-			if (FAILED(device->CreateCommittedResource(
-				&heapProperties,
-				D3D12_HEAP_FLAG_NONE,
-				&bufferDescription,
-				D3D12_RESOURCE_STATE_GENERIC_READ,
-				nullptr,
-				IID_PPV_ARGS(&g_LightTileIndexBuffers[frame]))))
-			{
-				return false;
-			}
-			g_LightTileIndexBuffers[frame]->SetName(L"LightTileIndexBuffer");
-			if (FAILED(g_LightTileIndexBuffers[frame]->Map(
-				0, nullptr, reinterpret_cast<void**>(&g_LightTileIndexData[frame]))))
-			{
-				g_LightTileIndexBuffers[frame].Reset();
-				return false;
-			}
-		}
-		return true;
-	}
 
 	struct LightConstants
 	{
@@ -257,9 +220,7 @@ namespace
     }
 	void RebuildLightCache()
 	{
-        char referenceValue[8]{};
-        GetEnvironmentVariableA("DX12_SHADOW_REFERENCE_DRAW", referenceValue, sizeof(referenceValue));
-        const bool referenceDraw = atoi(referenceValue) != 0;
+        const bool referenceDraw = IsShadowReferenceDrawEnabled();
 		g_CachedDirectionalLight = {};
 		g_CachedAnyLight = {};
 		g_CachedShadowLight = {};
@@ -288,14 +249,33 @@ namespace
 				static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION), 0.0f);
 		}
 
-		for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
+		// シャドウ付きライトの予算は先着順で消費されるため、
+		// 「平行光源 → カメラに近いローカルライト」の順に並べ替えてから処理する。
+		// （以前はEntity順だったため、遠くのライトが予算を使い切り、近くのライトの影が消えることがあった）
+		static vector<pair<float, EntityID>> orderedLights;
+		orderedLights.clear();
 		{
+			const XMFLOAT3 cameraPosition = GetActiveCameraPosition();
+			for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
+			{
+				const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
+				if (!light.IsActive || light.RenderMode != LightRenderMode::Physical) continue;
+				const auto& position = ComponentManager::GetComponentUnchecked<TransformComponent>(entity).Position;
+				const float dx = position.x - cameraPosition.x;
+				const float dy = position.y - cameraPosition.y;
+				const float dz = position.z - cameraPosition.z;
+				float key = dx * dx + dy * dy + dz * dz;
+				if (light.Type == LightType::Directional) key = -1.0f;
+				else if (light.Range > 0.0f && key > light.Range * light.Range) key += 1.0e12f; // 範囲外のライトは後回し
+				orderedLights.emplace_back(key, entity);
+			}
+			sort(orderedLights.begin(), orderedLights.end());
+		}
+		for (const auto& ordered : orderedLights)
+		{
+			const EntityID entity = ordered.second;
 			const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
 			const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-			if (!light.IsActive || light.RenderMode != LightRenderMode::Physical)
-			{
-				continue;
-			}
 
 			if (!g_CachedAnyLight.HasLight)
 			{
@@ -707,15 +687,6 @@ namespace
 		return g_CachedAnyLight;
 	}
 
-	const RuntimeLightState& GetCachedShadowLightState()
-	{
-		if (!g_LightCacheValid)
-		{
-			RebuildLightCache();
-		}
-		return g_CachedShadowLight;
-	}
-
 	static bool IsSkyEntity(EntityID entity)
 	{
 		return ComponentManager::HasComponent<NameComponent>(entity) &&
@@ -822,32 +793,36 @@ namespace
 			radius = max(XMVectorGetX(XMVector3Length(scaledExtents)), 0.05f);
 		}
 
-		const XMMATRIX viewProjection = XMMatrixTranspose(transposedViewProjection);
-		const XMVECTOR worldCenter = XMLoadFloat3(&center);
-		const XMVECTOR projectedCenter = XMVector3TransformCoord(worldCenter, viewProjection);
-		const float centerX = XMVectorGetX(projectedCenter);
-		const float centerY = XMVectorGetY(projectedCenter);
-		const float centerZ = XMVectorGetZ(projectedCenter);
-
-
-		float ndcRadiusX = 0.0f;
-		float ndcRadiusY = 0.0f;
-		float ndcRadiusZ = 0.0f;
-		const XMVECTOR axes[3] = {
-			XMVectorSet(radius, 0.0f, 0.0f, 0.0f),
-			XMVectorSet(0.0f, radius, 0.0f, 0.0f),
-			XMVectorSet(0.0f, 0.0f, radius, 0.0f) };
-		for (const XMVECTOR axis : axes)
+		// 視錐台の6平面と境界球の判定（以前は境界球の中心と3軸を射影していた：行列変換4回 → 内積6回）。
+		// 同じシャドウパス内では行列が変わらないので、平面は前回の結果を使い回す。
+		static XMMATRIX s_CachedMatrix = XMMatrixIdentity();
+		static XMVECTOR s_Planes[6]{};
+		static bool s_PlanesValid = false;
+		if (!s_PlanesValid || memcmp(&s_CachedMatrix, &transposedViewProjection, sizeof(XMMATRIX)) != 0)
 		{
-			const XMVECTOR projected = XMVector3TransformCoord(XMVectorAdd(worldCenter, axis), viewProjection);
-			ndcRadiusX += fabsf(XMVectorGetX(projected) - centerX);
-			ndcRadiusY += fabsf(XMVectorGetY(projected) - centerY);
-			ndcRadiusZ += fabsf(XMVectorGetZ(projected) - centerZ);
+			s_CachedMatrix = transposedViewProjection;
+			s_PlanesValid = true;
+			// transposedViewProjection の各行 = 元の行列の各列（clip = v * M）。
+			const XMVECTOR c0 = transposedViewProjection.r[0];
+			const XMVECTOR c1 = transposedViewProjection.r[1];
+			const XMVECTOR c2 = transposedViewProjection.r[2];
+			const XMVECTOR c3 = transposedViewProjection.r[3];
+			s_Planes[0] = XMPlaneNormalize(XMVectorAdd(c3, c0));      // 左
+			s_Planes[1] = XMPlaneNormalize(XMVectorSubtract(c3, c0)); // 右
+			s_Planes[2] = XMPlaneNormalize(XMVectorAdd(c3, c1));      // 下
+			s_Planes[3] = XMPlaneNormalize(XMVectorSubtract(c3, c1)); // 上
+			s_Planes[4] = XMPlaneNormalize(c2);                       // 近（D3Dのz=0）
+			s_Planes[5] = XMPlaneNormalize(XMVectorSubtract(c3, c2)); // 遠
 		}
-
-		return centerX + ndcRadiusX >= -1.0f && centerX - ndcRadiusX <= 1.0f &&
-			centerY + ndcRadiusY >= -1.0f && centerY - ndcRadiusY <= 1.0f &&
-			centerZ + ndcRadiusZ >= 0.0f && centerZ - ndcRadiusZ <= 1.0f;
+		const XMVECTOR worldCenter = XMVectorSetW(XMLoadFloat3(&center), 1.0f);
+		for (const XMVECTOR& plane : s_Planes)
+		{
+			if (XMVectorGetX(XMVector4Dot(plane, worldCenter)) < -radius)
+			{
+				return false;
+			}
+		}
+		return true;
 	}
 
 	void BuildShadowFocusBounds(XMVECTOR& outCenter, float& outRadius)
@@ -1507,8 +1482,9 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 		return true;
 	};
 
-	vector<VisibleLightCandidate> candidates;
-	candidates.reserve(64);
+	// 毎フレームの確保をなくすため使い回す（ライト更新はメインスレッドのみ）。
+	static vector<VisibleLightCandidate> candidates;
+	candidates.clear();
 	for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
 	{
 		++g_LightGridStats.AuthoredLights;
@@ -1559,7 +1535,8 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 		candidates.push_back(candidate);
 	}
 
-	stable_sort(candidates.begin(), candidates.end(),
+	// 比較の最後でEntityを使うため順序は一意。stable_sortは不要。
+	sort(candidates.begin(), candidates.end(),
 		[](const VisibleLightCandidate& lhs, const VisibleLightCandidate& rhs)
 		{
 			if (lhs.Light.RenderMode != rhs.Light.RenderMode)
@@ -1596,7 +1573,8 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 	const UINT volumetricLightBudget = min(
 		static_cast<UINT>(RendererSettings::GetVolumetricLightBudget()),
 		5u);
-	vector<VisibleLightCandidate> selectedCandidates;
+	static vector<VisibleLightCandidate> selectedCandidates;
+	selectedCandidates.clear();
 	selectedCandidates.reserve(screenLightBudget + decalLightBudget);
 	UINT selectedPhysicalLights = 0;
 	UINT selectedDecalLights = 0;
@@ -1620,7 +1598,8 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 	g_LightGridStats.GpuDecalLights = selectedDecalLights;
 	const auto suns = World::GetView<SunComponent, LightComponent>();
 	UINT enabledVolumetricLights = 0;
-	vector<LightInstanceBuilder::Input> lightInstances;
+	static vector<LightInstanceBuilder::Input> lightInstances;
+	lightInstances.clear();
 	lightInstances.reserve(lightCount);
 	for (UINT lightIndex = 0; lightIndex < lightCount; ++lightIndex)
 	{

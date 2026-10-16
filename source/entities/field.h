@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "entitybase.h"
 #include "game.h"
 class Field : public EntityBase

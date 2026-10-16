@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "inputsystem.h"
 #include "input.h"
 #include "componentmanager.h"

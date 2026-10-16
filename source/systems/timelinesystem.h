@@ -14,9 +14,7 @@ public:
 	void Uninit() override;
 
 	static TimeLineDirector& CreateDirector();
-	static void AddDirector(unique_ptr<TimeLineDirector> director);
 	static void Clear();
-	static size_t GetDirectorCount();
 	static void EvaluateComponent(TimelineComponent& timeline);
 	static XMFLOAT4 ReadProperty(
 		EntityID target,

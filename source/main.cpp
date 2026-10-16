@@ -9,6 +9,7 @@
 #include <shellapi.h>
 #include "renderconfiguration.h"
 #include "renderingvalidation.h"
+#include "performancegovernor.h"
 
 extern "C"
 {
@@ -181,6 +182,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 		return 1;
 	}
 
+	RenderProfiler::SetPipelineStatisticsForced(automatedRun);
+	// 自動テストは固定品質で比較するため、品質の自動調整を止める。
+	PerformanceGovernor::GetOptions().Enabled = !automatedRun;
 	WriteGraphicsLog("Step: Game::Init\n");
 	Game::Init();
 	WriteGraphicsLog("Step: Game::Create\n");

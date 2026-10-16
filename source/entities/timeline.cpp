@@ -356,19 +356,6 @@ void TransformTrack::Evaluate(float time, float previousTime, bool timeAdvanced)
 	}
 }
 
-EventTrack& EventTrack::AddEvent(float time, function<void()> callback)
-{
-	TimeLineEvent event;
-	event.Time = time;
-	event.Callback = move(callback);
-	m_Events.push_back(move(event));
-	sort(m_Events.begin(), m_Events.end(), [](const TimeLineEvent& a, const TimeLineEvent& b)
-		{
-			return a.Time < b.Time;
-		});
-	return *this;
-}
-
 void EventTrack::Evaluate(float time, float previousTime, bool timeAdvanced)
 {
 	if (!timeAdvanced)
@@ -410,14 +397,6 @@ TransformTrack& TimeLineAsset::AddTransformTrack(EntityID entity)
 	return ref;
 }
 
-EventTrack& TimeLineAsset::AddEventTrack()
-{
-	auto track = make_unique<EventTrack>();
-	EventTrack& ref = *track;
-	m_Tracks.push_back(move(track));
-	return ref;
-}
-
 void TimeLineAsset::Evaluate(float time, float previousTime, bool timeAdvanced)
 {
 	for (auto& track : m_Tracks)
@@ -447,15 +426,6 @@ TimeLineAsset& TimeLineDirector::CreateAsset()
 	m_CurrentTime = 0.0f;
 	m_PreviousTime = 0.0f;
 	return *m_Asset;
-}
-
-void TimeLineDirector::SetAsset(TimeLineAsset* asset)
-{
-	m_OwnedAsset.reset();
-	m_Asset = asset;
-	m_CurrentTime = 0.0f;
-	m_PreviousTime = 0.0f;
-	ResetAssetState();
 }
 
 void TimeLineDirector::Play()
@@ -544,11 +514,6 @@ void TimeLineDirector::SetLoop(bool loop)
 	{
 		m_WrapMode = TimeLineWrapMode::Once;
 	}
-}
-
-void TimeLineDirector::SetWrapMode(TimeLineWrapMode wrapMode)
-{
-	m_WrapMode = wrapMode;
 }
 
 void TimeLineDirector::SetTime(float time)

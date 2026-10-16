@@ -60,7 +60,6 @@ bool TransmittanceShadows::HasCasters() { return g_HasCasters; }
 bool TransmittanceShadows::IsActive() { return g_Active; }
 ID3D12PipelineState* TransmittanceShadows::GetPipelineState() { return g_Pso.Get(); }
 ID3D12Resource* TransmittanceShadows::GetColorResource() { return g_Color.Get(); }
-ID3D12Resource* TransmittanceShadows::GetDepthResource() { return g_Depth.Get(); }
 D3D12_GPU_VIRTUAL_ADDRESS TransmittanceShadows::GetCurrentConstantBufferAddress()
 {
     return g_Constants ? g_Constants->GetGPUVirtualAddress() + g_ConstantOffset : 0;

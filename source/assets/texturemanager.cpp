@@ -1272,10 +1272,3 @@ bool TextureManager::IsReservedResourceStreamingAvailable()
 	return g_ReservedResourcesSupported && g_ReservedResourceStreamingSafe;
 }
 
-int TextureManager::LoadTextureUV(const char* fileName, SpriteComponent& sprite, const XMFLOAT4& uvRect)
-{
-	sprite.UseUvTransform = true;
-	sprite.UvOffset = { uvRect.x, uvRect.y };
-	sprite.UvScale = { uvRect.z, uvRect.w };
-	return LoadTexture(fileName);
-}

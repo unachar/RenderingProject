@@ -596,8 +596,7 @@ void GpuScene::Execute(ID3D12GraphicsCommandList *commands)
             record.PipelineRevision = runtime.PipelineRevision;
         }
     }
-    auto pending = move(GpuSceneChanges::Pending());
-    GpuSceneChanges::Pending() = {};
+    auto pending = GpuSceneChanges::Take();
     bool occluderChanged = pending.ResetScene || !pending.Destroyed.empty();
     for (const auto& [entity, dirty] : pending.Changed)
         if (scene.Entities.contains(entity) || ComponentManager::HasComponent<StaticModelComponent>(entity)) occluderChanged = true;

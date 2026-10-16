@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "envflags.h"
 #include "transmittanceshadows.h"
 #include "scenepasses.h"
 #include "renderframe.h"
@@ -34,9 +35,7 @@ void ScenePasses::ReleaseStaticShadowCache()
 
 bool ScenePasses::PrepareStaticShadowCache()
 {
-    char reference[8]{};
-    GetEnvironmentVariableA("DX12_SHADOW_REFERENCE_DRAW", reference, sizeof(reference));
-    if (!m_Device || !m_ShadowDepthBuffer || atoi(reference) ||
+    if (!m_Device || !m_ShadowDepthBuffer || IsShadowReferenceDrawEnabled() ||
         RendererSettings::GetShadowMapMethod() != ShadowMapMethod::VirtualShadowMap || Raytracing::UsesRaytracedShadows())
     {
         LightingResources::SetStaticShadowCacheAvailable(false);
@@ -354,37 +353,6 @@ void ScenePasses::EndHdrTransparentPass()
         m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     }
     m_IsSceneColorForwardPass = false;
-}
-
-void ScenePasses::PrepareTransparentSceneCopy()
-{
-	if (!m_CommandList || !GetRenderTarget(RenderTargetType::EditorScene) || !m_TransparentSceneCopy)
-	{
-		return;
-	}
-
-	D3D12_RESOURCE_BARRIER toCopy[2]{};
-	toCopy[0] = CD3DX12_RESOURCE_BARRIER::Transition(
-		GetRenderTarget(RenderTargetType::EditorScene).Get(),
-		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-		D3D12_RESOURCE_STATE_COPY_SOURCE);
-	toCopy[1] = CD3DX12_RESOURCE_BARRIER::Transition(
-		m_TransparentSceneCopy.Get(),
-		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-		D3D12_RESOURCE_STATE_COPY_DEST);
-	m_CommandList->ResourceBarrier(_countof(toCopy), toCopy);
-	m_CommandList->CopyResource(m_TransparentSceneCopy.Get(), GetRenderTarget(RenderTargetType::EditorScene).Get());
-
-	D3D12_RESOURCE_BARRIER toShader[2]{};
-	toShader[0] = CD3DX12_RESOURCE_BARRIER::Transition(
-		GetRenderTarget(RenderTargetType::EditorScene).Get(),
-		D3D12_RESOURCE_STATE_COPY_SOURCE,
-		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-	toShader[1] = CD3DX12_RESOURCE_BARRIER::Transition(
-		m_TransparentSceneCopy.Get(),
-		D3D12_RESOURCE_STATE_COPY_DEST,
-		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-	m_CommandList->ResourceBarrier(_countof(toShader), toShader);
 }
 
 void ScenePasses::EndEditorSceneOverlayPass()

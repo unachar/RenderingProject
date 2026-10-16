@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "pch.h"
 #include "ecs.h"
 #include "materialasset.h"
@@ -59,7 +59,8 @@ private:
 	inline static bool m_HdrEnabled = false;
 	inline static bool m_ToneMapEnabled = true;
 	inline static float m_Exposure = 1.0f;
-	inline static int m_GizmoOperation = 0;
+	inline static int m_GizmoOperation = 0; // 0:移動 1:回転 2:スケール 3:ハンド
+	inline static bool m_GizmoLocalSpace = false;
 	inline static ImVec2 m_SceneViewPos = { 0.0f, 0.0f };
 	inline static ImVec2 m_SceneViewSize = { 1.0f, 1.0f };
 	inline static bool m_IsSceneViewHovered = false;
@@ -131,7 +132,6 @@ private:
 	static void DrawDockSpace();
 	static void DrawSceneViewWindow();
 	static void DrawTransformGizmo();
-	static void DrawSceneEditor();
 	static void DrawEditorMainMenu();
 	static void DrawHierarchyWindow();
 	static void DrawPrimitiveCreationMenu();
@@ -171,6 +171,8 @@ private:
 	static void DrawLightInspector(EntityID entity);
 	static void DrawComponentInspector(EntityID entity);
 	static void DeleteSelectedEntity();
+	static EntityID DuplicateSelectedEntity();
+	static string MakeDuplicateName(const string& sourceName);
 	static EntityID CreateLightEntity(LightType type);
 	static void ProcessDroppedFiles();
 	static void ImportAssetFile(const filesystem::path& sourcePath);

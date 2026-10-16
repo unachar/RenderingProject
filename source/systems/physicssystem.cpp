@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "transformmath.h"
 #include "physicssystem.h"
 #include "componentmanager.h"
 #include "projectmanager.h"
@@ -74,18 +75,12 @@
 
 	XMMATRIX BuildEntityWorld(const TransformComponent& transform)
 	{
-		return XMMatrixScaling(transform.Scale.x, transform.Scale.y, transform.Scale.z) *
-			XMMatrixRotationX(transform.Rotation.x) *
-			XMMatrixRotationY(transform.Rotation.y) *
-			XMMatrixRotationZ(transform.Rotation.z) *
-			XMMatrixTranslation(transform.Position.x, transform.Position.y, transform.Position.z);
+		return TransformMath::World(transform);
 	}
 
 	XMMATRIX BuildEntityRotation(const TransformComponent& transform)
 	{
-		return XMMatrixRotationX(transform.Rotation.x) *
-			XMMatrixRotationY(transform.Rotation.y) *
-			XMMatrixRotationZ(transform.Rotation.z);
+		return TransformMath::RotationXYZ(transform.Rotation);
 	}
 
 	PhysicsTransform DecomposePhysicsTransform(FXMMATRIX matrix)
@@ -113,8 +108,8 @@
 			XMLoadFloat3(&bodyTransform.Position),
 			entityWorldInverse);
 
-		const XMMATRIX entityRotationInverse =
-			XMMatrixInverse(&determinant, BuildEntityRotation(entityTransform));
+		// 回転行列は直交行列なので逆行列＝転置（一般の逆行列計算より速く、誤差も出ない）
+		const XMMATRIX entityRotationInverse = XMMatrixTranspose(BuildEntityRotation(entityTransform));
 		const XMMATRIX modelRotation =
 			XMMatrixRotationQuaternion(XMLoadFloat4(&bodyTransform.Rotation)) *
 			entityRotationInverse;
@@ -127,10 +122,7 @@
 
 	XMMATRIX BuildPmxTransform(const XMFLOAT3& rotation, const XMFLOAT3& position)
 	{
-		return XMMatrixRotationX(rotation.x) *
-			XMMatrixRotationY(rotation.y) *
-			XMMatrixRotationZ(rotation.z) *
-			XMMatrixTranslation(position.x, position.y, position.z);
+		return TransformMath::RotationTranslation(rotation, position);
 	}
 
 	XMFLOAT3 AbsoluteScale(const TransformComponent& transform)

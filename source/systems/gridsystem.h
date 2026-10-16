@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "systembase.h"
 
 class GridSystem : public SystemBase

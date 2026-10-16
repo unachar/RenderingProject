@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "debugsystem.h"
 #include "componentmanager.h"
 #include "graphicsdevice.h"
@@ -172,24 +172,6 @@ static void AppendConeLines(vector<DebugVertex>& vertices, const XMFLOAT3& posit
 	}
 }
 
-static void AppendConeSolid(vector<DebugVertex>& vertices, const XMFLOAT3& position, const XMFLOAT3& direction, float length, float radius, const XMFLOAT4& color)
-{
-	XMFLOAT3 right{}, up{};
-	BuildDirectionBasis(direction, right, up);
-	XMFLOAT3 coneCenter = Add3(position, Scale3(direction, length));
-	constexpr int kSegments = 36;
-	for (int i = 0; i < kSegments; ++i)
-	{
-		const float a0 = XM_2PI * static_cast<float>(i) / static_cast<float>(kSegments);
-		const float a1 = XM_2PI * static_cast<float>(i + 1) / static_cast<float>(kSegments);
-		XMFLOAT3 p0 = ConePoint(coneCenter, right, up, radius, a0);
-		XMFLOAT3 p1 = ConePoint(coneCenter, right, up, radius, a1);
-		vertices.push_back({ position, {0,1,0}, {0,0}, color });
-		vertices.push_back({ p0, {0,1,0}, {0,0}, color });
-		vertices.push_back({ p1, {0,1,0}, {0,0}, color });
-	}
-}
-
 static void AppendCylinderLines(vector<DebugVertex>& vertices, const XMFLOAT3& position, const XMFLOAT3& direction, float length, float radius, const XMFLOAT4& color)
 {
 	XMFLOAT3 end = Add3(position, Scale3(direction, length));
@@ -201,31 +183,6 @@ static void AppendCylinderLines(vector<DebugVertex>& vertices, const XMFLOAT3& p
 	{
 		const float angle = XM_PIDIV2 * static_cast<float>(i);
 		AppendLine(vertices, ConePoint(position, right, up, radius, angle), ConePoint(end, right, up, radius, angle), color);
-	}
-}
-
-static void AppendCylinderSolid(vector<DebugVertex>& vertices, const XMFLOAT3& position, const XMFLOAT3& direction, float length, float radius, const XMFLOAT4& color)
-{
-	XMFLOAT3 right{}, up{};
-	BuildDirectionBasis(direction, right, up);
-	XMFLOAT3 end = Add3(position, Scale3(direction, length));
-	constexpr int kSegments = 36;
-	for (int i = 0; i < kSegments; ++i)
-	{
-		const float a0 = XM_2PI * static_cast<float>(i) / static_cast<float>(kSegments);
-		const float a1 = XM_2PI * static_cast<float>(i + 1) / static_cast<float>(kSegments);
-		XMFLOAT3 p0 = ConePoint(position, right, up, radius, a0);
-		XMFLOAT3 p1 = ConePoint(position, right, up, radius, a1);
-		XMFLOAT3 e0 = ConePoint(end, right, up, radius, a0);
-		XMFLOAT3 e1 = ConePoint(end, right, up, radius, a1);
-
-		vertices.push_back({ p0, {0,1,0}, {0,0}, color });
-		vertices.push_back({ e0, {0,1,0}, {0,0}, color });
-		vertices.push_back({ e1, {0,1,0}, {0,0}, color });
-
-		vertices.push_back({ p0, {0,1,0}, {0,0}, color });
-		vertices.push_back({ e1, {0,1,0}, {0,0}, color });
-		vertices.push_back({ p1, {0,1,0}, {0,0}, color });
 	}
 }
 

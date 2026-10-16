@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "alicia.h"
 #include "game.h"
 #include "world.h"

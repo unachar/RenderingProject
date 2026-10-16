@@ -10,8 +10,8 @@
     "aoStrength" : 1.0,
     "baseColor" : 
     [
-      0.0,
       1.0,
+      0.0,
       1.0,
       1.0
     ],
@@ -24,8 +24,8 @@
     "emissiveIntensity" : 0.0,
     "ior" : 1.5,
     "metallic" : 0.0,
-    "normalScale" : 1.0,
-    "roughness" : 0.5,
+    "normalScale" : 8.0,
+    "roughness" : 1.0,
     "thickness" : 0.10000000149011612,
     "transmission" : 0.0
   },

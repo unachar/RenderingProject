@@ -286,7 +286,6 @@ private:
 	vector<TimeLineEvent> m_Events;
 
 public:
-	EventTrack& AddEvent(float time, function<void()> callback);
 	void Evaluate(float time, float previousTime, bool timeAdvanced) override;
 	void ResetState() override;
 };
@@ -449,7 +448,6 @@ public:
 	float GetDuration() const { return m_Duration; }
 
 	TransformTrack& AddTransformTrack(EntityID entity);
-	EventTrack& AddEventTrack();
 
 	template<typename TComponent>
 	ComponentPropertyTrack<TComponent>& AddComponentTrack(EntityID entity)
@@ -481,7 +479,6 @@ private:
 
 public:
 	TimeLineAsset& CreateAsset();
-	void SetAsset(TimeLineAsset* asset);
 	TimeLineAsset* GetAsset() { return m_Asset; }
 	const TimeLineAsset* GetAsset() const { return m_Asset; }
 
@@ -492,7 +489,6 @@ public:
 	void Update(float deltaTime);
 
 	void SetLoop(bool loop);
-	void SetWrapMode(TimeLineWrapMode wrapMode);
 	void SetSpeed(float speed) { m_Speed = speed; }
 	void SetTime(float time);
 

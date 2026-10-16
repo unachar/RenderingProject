@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "transformmath.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
 #include "modelmanager.h"
@@ -120,11 +121,7 @@ namespace EditorWidgets
 
 	XMMATRIX BuildWorldMatrix(const TransformComponent& transform)
 	{
-		return XMMatrixScaling(transform.Scale.x, transform.Scale.y, transform.Scale.z) *
-			XMMatrixRotationX(transform.Rotation.x) *
-			XMMatrixRotationY(transform.Rotation.y) *
-			XMMatrixRotationZ(transform.Rotation.z) *
-			XMMatrixTranslation(transform.Position.x, transform.Position.y, transform.Position.z);
+		return TransformMath::World(transform);
 	}
 
 	bool DrawAxisFloat3(const char* label, float* values, float speed, float minValue, float maxValue)

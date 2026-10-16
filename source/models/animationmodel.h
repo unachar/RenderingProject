@@ -350,15 +350,10 @@ private:
 	bool TryLoadEmbeddedTextureByIndex(const aiString& texPath, const char* modelName, int& outTexIndex) const;
 	bool TryLoadEmbeddedTextureByName(const aiString& texPath, const char* modelName, int& outTexIndex) const;
 	int ResolveMeshTextureIndex(const aiMesh* mesh, const char* fileName, const string& dirPath) const;
-	aiNodeAnim* FindNodeAnimChannel(aiAnimation* animation, const string& boneName) const;
 	aiNodeAnim* FindNodeAnimChannelCached(aiAnimation* animation, const string& boneName);
 	mutable unordered_map<const aiAnimation*, unordered_map<string, aiNodeAnim*>> m_NodeAnimChannelCache{};
 	uint32_t m_SkinningMatrixCount = 0;
-	void SampleNodeAnimation(aiAnimation* animation, aiNodeAnim* channel, float timeSeconds,
-		aiQuaternion& outRotation, aiVector3D& outPosition, aiVector3D& outScale) const;
 	bool LoadVmdAnimation(const char* fileName, const char* name);
-	void SampleVmdBone(const VmdAnimation* animation, const string& boneName, float timeSeconds,
-		aiQuaternion& outRotation, aiVector3D& outPosition) const;
 	void UpdateVmdBoneMatrices(const VmdAnimation* animation1, float frame1,
 		const VmdAnimation* animation2, float frame2, float blendRate);
 	void UpdateVmdBoneMatrices(const vector<AnimationPlaybackLayer>& animationLayers);
@@ -368,15 +363,12 @@ private:
 	void RebuildVmdLayeredRuntimeCache(const vector<AnimationPlaybackLayer>& animationLayers);
 	void InvalidatePmxRuntimeCache();
 	void RebuildPmxRuntimeCache();
-	bool LoadPmxIkData(const char* fileName);
 	void BuildPmxVertexMeshMap();
-	float SampleVmdMorph(const VmdAnimation* animation, const string& morphName, float timeSeconds) const;
 	void ApplyVmdMorphs(const VmdAnimation* animation, float currentFrame);
 	void ApplyVmdMorphLayers();
 	void ApplyActiveVmdMorphs();
 	void ApplyPmxOrderedTransforms(const VmdAnimation* animation, float currentFrame);
 	bool IsVmdIkEnabled(const VmdAnimation* animation, const string& ikBoneName, float currentFrame);
-	void ApplyPmxIk(const VmdAnimation* animation, float timeSeconds);
 
 	void CreateBone(aiNode* node);
 	void UpdateBoneMatrix(aiNode* node, aiMatrix4x4 matrix);

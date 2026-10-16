@@ -1,4 +1,5 @@
-﻿#include "pch.h"
+#include "pch.h"
+#include "transformmath.h"
 #include "transformsystem.h"
 #include "componentmanager.h"
 #include "world.h"
@@ -9,11 +10,7 @@ void TransformSystem::Update()
 		{
 		if (transform.IsDirty)
 		{
-			XMMATRIX world = XMMatrixScaling(transform.Scale.x, transform.Scale.y, transform.Scale.z) *
-				XMMatrixRotationX(transform.Rotation.x) *
-				XMMatrixRotationY(transform.Rotation.y) *
-				XMMatrixRotationZ(transform.Rotation.z) *
-				XMMatrixTranslation(transform.Position.x, transform.Position.y, transform.Position.z);
+			const XMMATRIX world = TransformMath::World(transform);
 			XMStoreFloat4x4(&transform.WorldMatrix, world);
 			transform.IsDirty = false;
             GpuSceneChanges::Notify(entity, GpuSceneDirtyFlags::Transform | GpuSceneDirtyFlags::Bounds);

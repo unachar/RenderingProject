@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "camerasystem.h"
 #include "componentmanager.h"
 #include "systemmanager.h"

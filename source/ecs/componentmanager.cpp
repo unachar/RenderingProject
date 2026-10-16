@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "componentmanager.h"
 
 bool ComponentManager::HasComponent(EntityID EntityID, ComponentType type)
@@ -21,12 +21,14 @@ void ComponentManager::ClearEntity(EntityID entity)
 		return;
 	}
 
-	for (ComponentTypeID type = 0; type < ComponentTypeRegistry::GetRegisteredCount(); ++type)
+	// 立っているビットだけを走査する
+	unsigned long bits = Registry::GetEntities()[entity].Mask.to_ulong();
+	while (bits != 0)
 	{
-		if (Registry::HasComponent(entity, ComponentType(type)))
-		{
-			ComponentTypeRegistry::ClearComponent(entity, ComponentType(type));
-		}
+		unsigned long type = 0;
+		_BitScanForward(&type, bits);
+		bits &= bits - 1;
+		ComponentTypeRegistry::ClearComponent(entity, ComponentType(static_cast<ComponentTypeID>(type)));
 	}
 }
 

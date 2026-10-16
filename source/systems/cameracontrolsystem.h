@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "systembase.h"
 #include "ecs.h"
 

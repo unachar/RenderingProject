@@ -404,27 +404,6 @@ UINT OcclusionCulling::GetPhase()
 {
     return g_Phase;
 }
-bool OcclusionCulling::HasHierarchyForCurrentPhase()
-{
-    if (g_Phase == 1u)
-    {
-        return g_PreviousValid;
-    }
-    return (g_Phase == 2u && g_CurrentValid);
-}
-D3D12_GPU_DESCRIPTOR_HANDLE OcclusionCulling::GetHierarchySrv()
-{
-    UINT index;
-    if (g_Phase == 2u)
-    {
-        index = g_CurrentIndex;
-    }
-    else
-    {
-        index = g_PreviousIndex;
-    }
-    return Gpu(RendererState::g_kHIZ_SRV_START_INDEX + index);
-}
 D3D12_GPU_DESCRIPTOR_HANDLE OcclusionCulling::GetPreviousSrv()
 {
     return Gpu(RendererState::g_kHIZ_SRV_START_INDEX + g_PreviousIndex);

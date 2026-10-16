@@ -528,9 +528,11 @@ inline ComponentType ComponentTypeRegistry::GetType()
 template<typename T>
 struct ComponentTypeTraits
 {
+	// 型ごとに1回だけ登録表を引き、以降はキャッシュ値を返す（HasComponent等で毎回ハッシュ検索しない）。
 	static ComponentType value()
 	{
-		return ComponentTypeRegistry::GetType<T>();
+		static const ComponentType type = ComponentTypeRegistry::GetType<T>();
+		return type;
 	}
 };
 

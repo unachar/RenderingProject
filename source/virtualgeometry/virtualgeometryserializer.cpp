@@ -21,12 +21,6 @@ bool VirtualGeometrySerializer::SaveEncoded(const std::filesystem::path& path, c
     return VirtualGeometryPages::Build(asset, attributes, settings, pages, error) && VirtualGeometryPageCache::WriteAtomic(path, pages, error);
 }
 
-bool VirtualGeometrySerializer::LoadEncoded(const std::filesystem::path& path,
-    VirtualGeometryPageCache::PageManifest& manifest, std::string& error)
-{
-    return VirtualGeometryPageCache::Open(path, manifest, error);
-}
-
 namespace
 {
     using namespace VirtualGeometrySerialization;
