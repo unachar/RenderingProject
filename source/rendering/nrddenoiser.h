@@ -2,7 +2,7 @@
 #include "pch.h"
 #include <memory>
 
-enum class NrdSignal { Shadow, Specular, AmbientOcclusion };
+enum class NrdSignal { Shadow, Specular, AmbientOcclusion, Diffuse };
 
 struct NrdTexture
 {

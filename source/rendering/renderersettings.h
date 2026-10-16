@@ -27,6 +27,8 @@ enum class UpscaleQuality : int
 	Custom
 };
 
+enum class GlobalIlluminationMode : int { Off, ScreenSpace, Realtime };
+
 class RendererSettings
 {
 public:
@@ -49,8 +51,13 @@ public:
 	static void SetSsaoRadius(float value) { SetValue(s_SsaoRadius, clamp(value, 0.1f, 4.0f)); }
 	static float GetSsaoPower() { return s_SsaoPower; }
 	static void SetSsaoPower(float value) { SetValue(s_SsaoPower, clamp(value, 0.25f, 4.0f)); }
-	static bool GetSsgiEnabled() { return s_SsgiEnabled; }
-	static void SetSsgiEnabled(bool value) { SetValue(s_SsgiEnabled, value); }
+	static bool GetSsgiEnabled() { return s_GiMode == GlobalIlluminationMode::ScreenSpace; }
+    static GlobalIlluminationMode GetGiMode() { return s_GiMode; }
+    static void SetGiMode(GlobalIlluminationMode value) { SetValue(s_GiMode, value); }
+    static bool GetRealtimeGiEnabled() { return s_GiMode == GlobalIlluminationMode::Realtime; }
+    static float GetGiDistance() { return s_GiDistance; }
+    static void SetGiDistance(float value) { SetValue(s_GiDistance, clamp(value, 1.0f, 200.0f)); }
+	static void SetSsgiEnabled(bool value) { SetGiMode(value ? GlobalIlluminationMode::ScreenSpace : GlobalIlluminationMode::Off); }
 	static float GetSsgiIntensity() { return s_SsgiIntensity; }
 	static void SetSsgiIntensity(float value) { SetValue(s_SsgiIntensity, clamp(value, 0.0f, 3.0f)); }
 	static bool GetRayBinningEnabled() { return s_RayBinningEnabled; }
@@ -218,7 +225,8 @@ private:
 	inline static bool s_SsaoEnabled = true;
 	inline static float s_SsaoRadius = 1.15f;
 	inline static float s_SsaoPower = 1.35f;
-	inline static bool s_SsgiEnabled = true;
+	inline static GlobalIlluminationMode s_GiMode = GlobalIlluminationMode::ScreenSpace;
+    inline static float s_GiDistance = 40.0f;
 	inline static float s_SsgiIntensity = 0.45f;
 	inline static bool s_RayBinningEnabled = true;
 	inline static bool s_TextureStreamingEnabled = true;

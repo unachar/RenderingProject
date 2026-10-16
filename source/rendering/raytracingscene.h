@@ -17,6 +17,10 @@ struct RaytracingGeometry
     ComPtr<ID3D12Resource> Texture;
     int TextureIndex = -1;
     UINT TextureResidentMip = 0;
+    XMFLOAT4 BaseColor{1, 1, 1, 1};
+    XMFLOAT4 Emission{};
+    ComPtr<ID3D12Resource> EmissionTexture;
+    UINT EmissionResidentMip = 0;
     float Roughness = 0.5f;
     float Metallic = 0.0f;
 };

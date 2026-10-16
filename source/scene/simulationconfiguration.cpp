@@ -48,6 +48,7 @@ void SimulationConfiguration::Save(ostream& stream)
         << rays.Samples << ' ' << rays.ShadowDistance << ' ' << rays.AmbientRadius << ' ' << rays.NormalBias << ' '
         << rays.SunAngularRadius << '\n';
     stream << "raytracing_denoise=" << rays.Denoise << '\n';
+    stream << "raytracing_denoiser_type=" << static_cast<int>(rays.RadianceDenoiser) << '\n';
     stream << "raytracing_reflections=" << rays.Reflections << '\n';
     stream << "raytracing_mode=" << static_cast<int>(rays.RenderMode) << '\n';
     stream << "atmosphere=" << air.Enabled << ' ' << air.PhysicalSky << ' ' << air.RayleighStrength << ' '
@@ -120,6 +121,18 @@ bool SimulationConfiguration::TryLoad(const string& key, const string& value)
         RequireValidRecord(record);
         if (enabled != 0 && enabled != 1) throw invalid_argument("Invalid NRD setting");
         Raytracing::GetSettings().Denoise = enabled != 0;
+        return true;
+    }
+    if (key == "raytracing_denoiser_type")
+    {
+        int type = -1;
+        record >> type;
+        RequireValidRecord(record);
+        if (type < 0 || type > 1)
+        {
+            throw invalid_argument("Invalid radiance denoiser type");
+        }
+        Raytracing::GetSettings().RadianceDenoiser = static_cast<Raytracing::DenoiserType>(type);
         return true;
     }
     if (key == "raytracing_reflections")

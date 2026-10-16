@@ -37,6 +37,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     bool background = shaderClass < -0.5f;
     bool transparent = IsMaterialClass(shaderClass, 0.0f);
 	float4 baseColor = BaseColorTexture.Load(gbufferPixel);
+    float3 giReflectance = baseColor.rgb * (1 - saturate(material.x));
 
 	if (transparent)
 	{
@@ -247,7 +248,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     }
 
 
-    baseColor.rgb = ApplySurfaceScreenEffects(baseColor.rgb, authoredEmissionAO.rgb, input.TexCoord);
+    baseColor.rgb = ApplySurfaceScreenEffects(baseColor.rgb, authoredEmissionAO.rgb, input.TexCoord, giReflectance);
     baseColor.a = 1.0f;
     return baseColor;
 }

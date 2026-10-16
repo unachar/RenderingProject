@@ -11,6 +11,10 @@
     <NrdSdkRoot>$(MSBuildThisFileDirectory)External\NRD\sdk\</NrdSdkRoot>
     <EnableNrd Condition="'$(EnableNrd)' == '' and '$(Platform)' == 'x64' and Exists('$(NrdSdkRoot)Include\NRD.h') and Exists('$(NrdSdkRoot)_Bin\$(Configuration)\NRD.lib') and Exists('$(NrdSdkRoot)_Build\_deps\shadermake-build\$(Configuration)\ShaderMakeBlob.lib')">true</EnableNrd>
     <EnableNrd Condition="'$(EnableNrd)' == ''">false</EnableNrd>
+    <OptixSdkRoot>$(MSBuildThisFileDirectory)External\OptiX\sdk\</OptixSdkRoot>
+    <CudaHeaderRoot>$(MSBuildThisFileDirectory)External\CUDA\sdk\include\</CudaHeaderRoot>
+    <EnableOptix Condition="'$(EnableOptix)' == '' and '$(Platform)' == 'x64' and Exists('$(OptixSdkRoot)include\optix.h') and Exists('$(CudaHeaderRoot)cuda.h')">true</EnableOptix>
+    <EnableOptix Condition="'$(EnableOptix)' == ''">false</EnableOptix>
   </PropertyGroup>
 
 
@@ -55,6 +59,13 @@
       <AdditionalLibraryDirectories>$(DlssSdkRoot)lib\Windows_x86_64\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>$(DlssLibrary);advapi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableOptix)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(OptixSdkRoot)include;$(CudaHeaderRoot);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_OPTIX=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
   </ItemDefinitionGroup>
 
   <ItemDefinitionGroup Condition="'$(EnableNrd)' == 'true' and '$(Platform)' == 'x64'">

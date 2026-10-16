@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props" Condition="Exists('packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props')" />
   <ItemGroup Label="ProjectConfigurations">
@@ -950,6 +950,10 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\procedural\proceduralscene.h" />
     <ClCompile Include="source\rendering\raytracing.cpp" />
     <ClCompile Include="source\rendering\nrddenoiser.cpp" />
+    <ClCompile Include="source\rendering\optixinterop.cpp" />
+    <ClCompile Include="source\rendering\optixdenoiser.cpp" />
+    <ClInclude Include="source\rendering\optixinterop.h" />
+    <ClInclude Include="source\rendering\optixdenoiser.h" />
     <ClCompile Include="source\rendering\rayreflections.cpp" />
     <ClInclude Include="source\rendering\rayreflections.h" />
     <ClInclude Include="source\rendering\raytracing.h" />
@@ -1202,6 +1206,8 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\core\materialvalidation.cpp" />
+    <ClCompile Include="source\core\givalidation.cpp" />
+    <ClInclude Include="source\core\givalidation.h" />
     <ClInclude Include="source\core\materialvalidation.h" />
   </ItemGroup>
   <ItemGroup>

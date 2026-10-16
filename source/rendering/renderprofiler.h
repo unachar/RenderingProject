@@ -98,6 +98,7 @@ private:
     struct FrameSlot
     {
         bool Pending = false;
+        bool PipelineQueryClosed = false;
         UINT TimestampQueryCount = 0;
         vector<GpuEvent> GpuEvents;
         FrameSnapshot Snapshot{};
@@ -322,7 +323,7 @@ private:
             {
                 snapshot.Pipeline = *reinterpret_cast<const D3D12_QUERY_DATA_PIPELINE_STATISTICS*>(
                     static_cast<const uint8_t*>(mapped) + pipelineOffset);
-                snapshot.PipelineStatisticsValid = true;
+                snapshot.PipelineStatisticsValid = !slot.PipelineQueryClosed;
                 const D3D12_RANGE noWrites{ 0, 0 };
                 s_PipelineStatisticsReadback->Unmap(0, &noWrites);
             }
@@ -447,6 +448,7 @@ public:
         slot.GpuEvents.clear();
         slot.GpuEvents.reserve(kMaxTimestampQueriesPerFrame / 2);
         slot.Snapshot = {};
+        slot.PipelineQueryClosed = false;
         slot.Snapshot.Serial = ++s_FrameSerial;
         slot.Snapshot.GeometryMode = static_cast<uint32_t>(GetGeometryRenderingMode());
 
@@ -463,6 +465,18 @@ public:
                 frameIndex);
         }
         s_FrameGpuToken = BeginGpuEvent("Frame", commandList);
+    }
+
+    static void PrepareCommandListSplit(ID3D12GraphicsCommandList* commandList)
+    {
+        if (s_ActiveSlot && s_GpuResourcesReady && !s_ActiveSlot->PipelineQueryClosed)
+        {
+            commandList->EndQuery(s_PipelineStatisticsHeap.Get(),
+                D3D12_QUERY_TYPE_PIPELINE_STATISTICS, s_ActiveFrameIndex);
+            // Pipeline statistics cannot span command-list resets. Timestamp pairs
+            // remain valid across the GPU-ordered D3D12/CUDA submissions.
+            s_ActiveSlot->PipelineQueryClosed = true;
+        }
     }
 
     static UINT BeginGpuEvent(const char* name, ID3D12GraphicsCommandList* commandList)
@@ -532,10 +546,13 @@ public:
 
         if (s_GpuResourcesReady)
         {
-            commandList->EndQuery(
-                s_PipelineStatisticsHeap.Get(),
-                D3D12_QUERY_TYPE_PIPELINE_STATISTICS,
-                s_ActiveFrameIndex);
+            if (!s_ActiveSlot->PipelineQueryClosed)
+            {
+                commandList->EndQuery(
+                    s_PipelineStatisticsHeap.Get(),
+                    D3D12_QUERY_TYPE_PIPELINE_STATISTICS,
+                    s_ActiveFrameIndex);
+            }
 
             const UINT firstQuery =
                 s_ActiveFrameIndex * kMaxTimestampQueriesPerFrame;

@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "transmittanceshadows.h"
 #include "materialvalidation.h"
+#include "givalidation.h"
 #include "materialmanager.h"
 #include "materialbindings.h"
 #include "materialpreview.h"
@@ -580,12 +581,23 @@ void CheckTransparencyFrame(uint64_t frame)
 
 bool MaterialValidation::Enabled()
 {
+    if (GiValidation::Enabled())
+    {
+        return true;
+    }
     char value[8]{};
     return GetEnvironmentVariableA("DX12_MATERIAL_ASSET_TEST", value, sizeof(value)) > 0 && atoi(value) != 0;
 }
 
 void MaterialValidation::BeforeFrame(uint64_t frame)
 {
+    if (GiValidation::Enabled())
+    {
+        ImGuiManager::m_ProjectSettingsLoaded = true;
+        ImGuiManager::m_ShowAdjustmentPanel = false;
+        GiValidation::BeforeFrame(frame);
+        return;
+    }
     frames = frame + 1;
     // Finish editor input tests before the transparency fixtures replace the scene and material.
     if (frame >= 33)
@@ -827,6 +839,11 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
 
 void MaterialValidation::AfterFrame(uint64_t frame)
 {
+    if (GiValidation::Enabled())
+    {
+        GiValidation::AfterFrame(frame);
+        return;
+    }
     if (frame >= 33)
     {
         CheckTransparencyFrame(frame - 9);
@@ -1027,6 +1044,10 @@ void MaterialValidation::CaptureDropTarget(const char* name, float left, float t
 
 void MaterialValidation::BeforeEditorFrame()
 {
+    if (GiValidation::Enabled())
+    {
+        return;
+    }
     if (!Enabled())
     {
         return;
@@ -1108,6 +1129,10 @@ void MaterialValidation::BeforeEditorFrame()
 
 void MaterialValidation::InjectDragPayload()
 {
+    if (GiValidation::Enabled())
+    {
+        return;
+    }
     if (Enabled() && injectDrag && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceExtern))
     {
         ImGui::SetDragDropPayload(AssetPayloadType, &uiPayload, sizeof(uiPayload));
@@ -1118,6 +1143,10 @@ void MaterialValidation::InjectDragPayload()
 
 bool MaterialValidation::Finish()
 {
+    if (GiValidation::Enabled())
+    {
+        return GiValidation::Finish();
+    }
     GraphicsDevice::WaitForGpuIdle();
     Check(frames >= 33, "complete material validation sequence");
     failures += RenderCapture::ReportGraphicsErrors();

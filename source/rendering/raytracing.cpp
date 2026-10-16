@@ -7,6 +7,8 @@
 #include "world.h"
 #include "nrddenoiser.h"
 #include "rayreflections.h"
+#include "optixdenoiser.h"
+#include "renderersettings.h"
 #include "rendertargets.h"
 #include "graphicsdevice.h"
 #include "materialmanager.h"
@@ -102,6 +104,7 @@ UINT g_InstanceCount = 0;
 UINT64 g_Serial = 0;
 bool g_Active = false;
 bool g_ReflectionsActive = false;
+bool g_GiActive = false;
 XMFLOAT4 g_SunDirection{};
 const char* g_Status = "未初期化";
 
@@ -597,6 +600,10 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
     }
     if (!RayReflections::Initialize(device, heap, increment))
         WriteGraphicsLog("DXR: reflection pipeline initialization failed\n");
+    if (!OptixDenoiser::Initialize(device))
+    {
+        WriteGraphicsLog("OptiX unavailable: %s\n", OptixDenoiser::GetStatus());
+    }
     WriteGraphicsLog("DXR: Tier 1.1 inline raytracing ready\n");
     return true;
 }
@@ -604,6 +611,7 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
 void Raytracing::Shutdown()
 {
     RayReflections::Shutdown();
+    OptixDenoiser::Shutdown();
     g_NrdSun.reset();
     g_NrdWidth = g_NrdHeight = g_NrdDispatchCount = 0;
     g_NrdHistoryValid = false;
@@ -621,6 +629,7 @@ void Raytracing::Shutdown()
     g_Heap.Reset();
     g_Active = false;
     g_ReflectionsActive = false;
+    g_GiActive = false;
     g_ShadowHistoryValid = false;
     g_AmbientHistoryValid = false;
     g_InstanceCount = 0;
@@ -632,6 +641,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
 {
     g_Active = false;
     g_ReflectionsActive = false;
+    g_GiActive = false;
     const bool shadowHistoryValid = g_ShadowHistoryValid;
     const bool ambientHistoryValid = g_AmbientHistoryValid;
     g_ShadowHistoryValid = false;
@@ -659,7 +669,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         }
     };
     updateLighting(false);
-    if (!IsAvailable() || !g_Settings.Enabled || (!UsesRaytracedShadows() && !UsesRaytracedAmbientOcclusion() && !g_Settings.Reflections) ||
+    if (!IsAvailable() || !g_Settings.Enabled || (!UsesRaytracedShadows() && !UsesRaytracedAmbientOcclusion() && !g_Settings.Reflections && !RendererSettings::GetRealtimeGiEnabled()) ||
         !commandList || !depth || !normal)
     {
         g_NrdHistoryValid = false;
@@ -827,13 +837,15 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     Transition(commandList, normal, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     g_Active = true;
     updateLighting(true);
-    if (g_Settings.Reflections)
+    if (g_Settings.Reflections || RendererSettings::GetRealtimeGiEnabled())
     {
         RenderProfiler::ScopedEvent reflectionProfile("DXR Reflections", commandList);
-        g_ReflectionsActive = RayReflections::Execute(commandList, frame.TopLevel.Get(), frame.SceneGeometry,
+        const bool radianceReady = RayReflections::Execute(commandList, frame.TopLevel.Get(), frame.SceneGeometry,
             nrdFrame, frame.Guides, g_Settings.Denoise);
+        g_ReflectionsActive = radianceReady && g_Settings.Reflections;
+        g_GiActive = radianceReady && RendererSettings::GetRealtimeGiEnabled() && RayReflections::IsGiActive();
     }
-    if (g_ReflectionsActive) g_NrdDispatchCount += RayReflections::GetDenoiserDispatchCount();
+    if (g_ReflectionsActive || g_GiActive) g_NrdDispatchCount += RayReflections::GetDenoiserDispatchCount();
     // Camera and motion history belongs to the scene, independently of enabled denoiser signals.
     g_PreviousNrdFrame = nrdFrame;
     g_NrdHistoryValid = true;
@@ -909,4 +921,10 @@ ID3D12Resource* Raytracing::GetResultResource()
 		return nullptr;
 	}
 	return g_Frames[g_FrameIndex].Result.Get();
+}
+
+bool Raytracing::IsGiActive() { return g_GiActive; }
+D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetGiSrv()
+{
+    return RayReflections::GetGiSrv(g_FrameIndex);
 }

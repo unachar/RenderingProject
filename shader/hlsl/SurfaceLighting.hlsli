@@ -815,6 +815,10 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
     ambientKD *= 1.0f - metallic;
 
     float3 ambientDiffuse = ambientKD * albedo * irradiance / ( 0.5f * PI);
+    if (HdrFlags.w > 1.5f && Flags.w > 0)
+    {
+        ambientDiffuse = 0;
+    }
     float3 ambientSpecular = envSpecular * F_IBL;
 
     float3 ambient = ambientDiffuse + ambientSpecular;
@@ -832,7 +836,7 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
         albedo, float3(surface.Metallic, surface.Roughness, surface.F0), shadowSoftness);
     return pbrDirectLight + ambient * surface.AO + surface.Emissive;
 }
-float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv)
+float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv, float3 diffuseReflectance)
 {
     // Isolated previews and forward-only scenes have no screen-space lighting history.
     if (Flags.w <= 0.0f)
@@ -850,7 +854,15 @@ float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv)
     {
         screenIndirect = DeinterleavedSSGI.SampleLevel(TextureSampler,screenUv,0).rgb;
     }
-	color = color * lerp(0.38f, 1.0f, ambientVisibility) + screenIndirect * saturate(color + 0.18f);
+	color *= lerp(0.38f, 1.0f, ambientVisibility);
+    if (HdrFlags.w > 1.5f)
+    {
+        color += screenIndirect * max(diffuseReflectance, 0) / 3.14159265f;
+    }
+    else
+    {
+        color += screenIndirect * saturate(color + 0.18f);
+    }
 	if (RaytracingFlags.x > 0.5f && RaytracingFlags.y > 0.5f)
 	{
 		float rayAmbient = RaytracedVisibility.SampleLevel(TextureSampler, screenUv, 0).g;

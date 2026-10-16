@@ -15,6 +15,18 @@ void SetMaterial(RaytracingGeometry& geometry, EntityID entity, int modelTexture
     if (ComponentManager::HasComponent<MaterialComponent>(entity))
     {
         const auto& material = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity), slot);
+        if (material.RuntimeHandle != 0)
+        {
+            geometry.BaseColor = material.BaseColor;
+            geometry.Emission = { material.EmissiveColor.x, material.EmissiveColor.y,
+                material.EmissiveColor.z, material.EmissiveIntensity };
+            geometry.EmissionTexture = TextureManager::GetTextureResource(material.EmissiveTextureID);
+            if (geometry.EmissionTexture)
+            {
+                TextureManager::TouchTexture(material.EmissiveTextureID);
+                geometry.EmissionResidentMip = TextureManager::GetTextureResidentMip(material.EmissiveTextureID);
+            }
+        }
         geometry.Roughness = material.Roughness;
         geometry.Metallic = material.Metallic;
         geometry.CastShadow = MaterialSystem::CastsShadow(material);

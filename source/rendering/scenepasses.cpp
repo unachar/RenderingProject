@@ -177,7 +177,7 @@ void ScenePasses::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_TO
     }
     CloudRenderer::BindForwardLighting(m_CommandList.Get(), m_FrameIndex);
     m_CommandList->SetGraphicsRootDescriptorTable(28, ScreenSpaceEffects::GetAoSrv());
-    m_CommandList->SetGraphicsRootDescriptorTable(29, ScreenSpaceEffects::GetGiSrv());
+    m_CommandList->SetGraphicsRootDescriptorTable(29, (Raytracing::IsGiActive() ? Raytracing::GetGiSrv() : ScreenSpaceEffects::GetGiSrv()));
     m_CommandList->SetGraphicsRootDescriptorTable(30, m_GBufferSrvHandles[static_cast<UINT>(GBufferType::ATMOSPHERE)]);
     TransmittanceShadows::BindLighting(m_CommandList.Get(), 31, 32);
 	if (m_TransparentSceneCopy)

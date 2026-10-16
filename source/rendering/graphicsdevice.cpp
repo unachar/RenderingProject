@@ -5,6 +5,8 @@
 #include "materialpreview.h"
 #include "cloud/cloudrenderer.h"
 #include "graphicslog.h"
+#include "renderprofiler.h"
+#include <cstdlib>
 #include "shaderpipelines.h"
 #include "shaderpaths.h"
 #include "world.h"
@@ -832,4 +834,31 @@ bool GraphicsDevice::WaitForGpuIdle()
 		WaitForSingleObject(m_FenceEvent, INFINITE);
 	}
 	return CheckDeviceHealth(S_OK, "GPU idle wait");
+}
+
+void GraphicsDevice::SubmitForExternalCompute()
+{
+    // Submit the pack dispatch so the external CUDA stream can wait on it.
+    // Do not reset the allocator: its earlier commands may still be executing.
+    RenderProfiler::PrepareCommandListSplit(m_CommandList.Get());
+    if (!CheckDeviceHealth(m_CommandList->Close(), "OptiX command list close"))
+    {
+        // Submission failure is fatal: callers cannot safely resume recording or
+        // reconstruct resource states from an unsubmitted, invalid command list.
+        WriteGraphicsLog("Fatal OptiX command-list close failure.\n");
+        std::abort();
+    }
+    ID3D12CommandList* lists[] = {m_CommandList.Get()};
+    m_CommandQueue->ExecuteCommandLists(1, lists);
+    if (!CheckDeviceHealth(m_CommandList->Reset(m_CommandAllocator[m_FrameIndex].Get(), nullptr), "OptiX command list reset"))
+    {
+        WriteGraphicsLog("Fatal OptiX command-list reset failure.\n");
+        std::abort();
+    }
+    // Reset invalidates graphics state. Restore the common scene raster state;
+    // downstream passes bind their own root signatures, PSOs, targets and tables.
+    m_CommandList->RSSetViewports(1, &m_Viewport);
+    m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
+    ID3D12DescriptorHeap* heaps[] = {m_CbvHeap.Get()};
+    m_CommandList->SetDescriptorHeaps(1, heaps);
 }

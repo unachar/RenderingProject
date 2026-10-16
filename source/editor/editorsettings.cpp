@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "materialmanager.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
@@ -17,6 +17,7 @@
 #include "simulationconfiguration.h"
 #include "raytracing.h"
 #include "nrddenoiser.h"
+#include "optixdenoiser.h"
 #include "assetthumbnailmanager.h"
 #include "camera.h"
 #include "configvalue.h"
@@ -191,9 +192,24 @@ void ImGuiManager::DrawProjectSettingsWindow()
 		ImGui::Checkbox("レイトレーシング AO", &rays.AmbientOcclusion);
 		ImGui::EndDisabled();
 		ImGui::Checkbox("レイトレーシング反射", &rays.Reflections);
-		ImGui::BeginDisabled(!NrdDenoiser::IsCompiled());
-		ImGui::Checkbox("NVIDIA NRD でノイズを除去", &rays.Denoise);
-		ImGui::EndDisabled();
+        ImGui::Checkbox("ノイズ除去を使用", &rays.Denoise);
+        ImGui::BeginDisabled(!rays.Denoise);
+        int denoiser = static_cast<int>(rays.RadianceDenoiser);
+        const char* denoisers[] = {"NVIDIA NRD", "NVIDIA OptiX AI (HDR)"};
+        if (ImGui::Combo("GI・反射デノイザー", &denoiser, denoisers, IM_ARRAYSIZE(denoisers)))
+        {
+            rays.RadianceDenoiser = static_cast<Raytracing::DenoiserType>(denoiser);
+        }
+        if (rays.RadianceDenoiser == Raytracing::DenoiserType::Optix)
+        {
+            ImGui::TextWrapped("%s", OptixDenoiser::GetStatus());
+            if (!OptixDenoiser::IsAvailable())
+            {
+                ImGui::TextWrapped("OptiXを使用できない場合はNRDへフォールバックします。");
+            }
+        }
+        ImGui::TextDisabled("影とAOはNRDを使用します");
+        ImGui::EndDisabled();
 		ImGui::EndDisabled();
 	}
 	if (ImGui::Button("プロジェクト設定を保存")) SaveProjectSettings();
@@ -283,14 +299,31 @@ void ImGuiManager::DrawProjectSettingsWindow()
 		if (ImGui::SliderFloat("AO 強度", &aoPower, 0.25f, 4.0f, "%.2f")) RendererSettings::SetSsaoPower(aoPower);
 		ImGui::EndDisabled();
 
-		bool ssgi = RendererSettings::GetSsgiEnabled();
-		if (ImGui::Checkbox("SSGI (4x4 Deinterleaved)", &ssgi)) RendererSettings::SetSsgiEnabled(ssgi);
-		ImGui::BeginDisabled(!ssgi);
-		float ssgiIntensity = RendererSettings::GetSsgiIntensity();
-		if (ImGui::SliderFloat("SSGI 強度", &ssgiIntensity, 0.0f, 3.0f, "%.2f")) RendererSettings::SetSsgiIntensity(ssgiIntensity);
-		bool rayBinning = RendererSettings::GetRayBinningEnabled();
-		if (ImGui::Checkbox("Ray Binning", &rayBinning)) RendererSettings::SetRayBinningEnabled(rayBinning);
-		ImGui::EndDisabled();
+        int giMode = static_cast<int>(RendererSettings::GetGiMode());
+        const char* giModes[] = { "Off", "SSGI", "Realtime GI (DXR)" };
+        if (ImGui::Combo("Global Illumination", &giMode, giModes, 3))
+        {
+            RendererSettings::SetGiMode(static_cast<GlobalIlluminationMode>(giMode));
+        }
+        ImGui::BeginDisabled(giMode == 0);
+        float giIntensity = RendererSettings::GetSsgiIntensity();
+        if (ImGui::SliderFloat("GI Intensity", &giIntensity, 0.0f, 3.0f, "%.2f"))
+        {
+            RendererSettings::SetSsgiIntensity(giIntensity);
+        }
+        if (RendererSettings::GetRealtimeGiEnabled())
+        {
+            float giDistance = RendererSettings::GetGiDistance();
+            if (ImGui::SliderFloat("GI Trace Distance", &giDistance, 1.0f, 200.0f, "%.1f"))
+            {
+                RendererSettings::SetGiDistance(giDistance);
+            }
+            if (!Raytracing::IsAvailable() || !Raytracing::GetSettings().Enabled)
+            {
+                ImGui::TextWrapped("Realtime GI requires DXR Tier 1.1 and enabled ray tracing.");
+            }
+        }
+        ImGui::EndDisabled();
 	}
 
 	if (ImGui::CollapsingHeader("照明予算", ImGuiTreeNodeFlags_DefaultOpen))
@@ -746,6 +779,8 @@ void ImGuiManager::SaveProjectSettings()
 	stream << "ssao_radius=" << RendererSettings::GetSsaoRadius() << '\n';
 	stream << "ssao_power=" << RendererSettings::GetSsaoPower() << '\n';
 	stream << "ssgi=" << (static_cast<int>(RendererSettings::GetSsgiEnabled())) << '\n';
+	stream << "gi_mode=" << static_cast<int>(RendererSettings::GetGiMode()) << '\n';
+    stream << "gi_distance=" << RendererSettings::GetGiDistance() << '\n';
 	stream << "ssgi_intensity=" << RendererSettings::GetSsgiIntensity() << '\n';
 	stream << "ray_binning=" << (static_cast<int>(RendererSettings::GetRayBinningEnabled())) << '\n';
 	stream << "anti_aliasing=" << static_cast<int>(RendererState::m_AntiAliasingMode) << '\n';
@@ -851,7 +886,9 @@ void ImGuiManager::LoadProjectSettings()
 			else if (key == "ssao_radius") RendererSettings::SetSsaoRadius(stof(value));
 			else if (key == "ssao_power") RendererSettings::SetSsaoPower(stof(value));
 			else if (key == "ssgi") RendererSettings::SetSsgiEnabled(stoi(value) != 0);
-			else if (key == "ssgi_intensity") RendererSettings::SetSsgiIntensity(stof(value));
+			else if (key == "gi_mode") RendererSettings::SetGiMode(static_cast<GlobalIlluminationMode>(clamp(stoi(value), 0, 2)));
+            else if (key == "gi_distance") RendererSettings::SetGiDistance(stof(value));
+            else if (key == "ssgi_intensity") RendererSettings::SetSsgiIntensity(stof(value));
 			else if (key == "ray_binning") RendererSettings::SetRayBinningEnabled(stoi(value) != 0);
 			else if (key == "anti_aliasing") RendererState::m_AntiAliasingMode = static_cast<AntiAliasingMode>(clamp(stoi(value), 0, static_cast<int>(AntiAliasingMode::COUNT) - 1));
 			else if (key == "hdr") { m_HdrEnabled = stoi(value) != 0; RenderConfiguration::SetHdr(m_HdrEnabled); }

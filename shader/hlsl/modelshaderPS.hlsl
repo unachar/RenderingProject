@@ -198,7 +198,7 @@ float4 main(in PSInput3D In) : SV_Target
         float2 screenUv = In.Position.xy / float2(max(width, 1u), max(height, 1u));
         float3 color = EvaluateSurfaceEnvironment(surface, viewDir, In.WorldPos,
             screenUv, shadowSoftness, directLight);
-        color = ApplySurfaceScreenEffects(color - surface.Emissive, surface.Emissive, screenUv);
+        color = ApplySurfaceScreenEffects(color - surface.Emissive, surface.Emissive, screenUv, surface.BaseColor * (1 - surface.Metallic));
         return float4(color * surface.Opacity, surface.Opacity);
     }
 

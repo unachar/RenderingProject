@@ -134,7 +134,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 					static_cast<float>(ImGuiManager::IsHdrEnabled()),
 					static_cast<float>(ImGuiManager::IsToneMapEnabled()),
 					static_cast<float>(RendererSettings::GetSsaoEnabled()),
-					static_cast<float>(RendererSettings::GetSsgiEnabled()));
+					(Raytracing::IsGiActive() ? 2.0f : static_cast<float>(RendererSettings::GetSsgiEnabled())));
 				params.BloomParams = XMFLOAT4(
 					bloomPass,
 					config.BloomThreshold,
@@ -192,7 +192,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 				m_CbvIncrementSize);
 			m_CommandList->SetGraphicsRootDescriptorTable(11, monitorSrvHandle);
 			m_CommandList->SetGraphicsRootDescriptorTable(12, ScreenSpaceEffects::GetAoSrv());
-			m_CommandList->SetGraphicsRootDescriptorTable(13, ScreenSpaceEffects::GetGiSrv());
+			m_CommandList->SetGraphicsRootDescriptorTable(13, (Raytracing::IsGiActive() ? Raytracing::GetGiSrv() : ScreenSpaceEffects::GetGiSrv()));
 			m_CommandList->SetGraphicsRootDescriptorTable(16, Raytracing::GetResultSrv());
 			const D3D12_GPU_VIRTUAL_ADDRESS volumetricLightAddress =
 				LightingResources::GetCurrentVolumetricLightIndexBufferAddress();

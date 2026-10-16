@@ -97,7 +97,8 @@ struct NrdDenoiser::Impl
         Height = height;
         const nrd::DenoiserDesc denoiser{ kIdentifier,
             signal == NrdSignal::Shadow ? nrd::Denoiser::SIGMA_SHADOW : signal == NrdSignal::Specular ?
-                nrd::Denoiser::REBLUR_SPECULAR : nrd::Denoiser::REBLUR_DIFFUSE_OCCLUSION };
+                nrd::Denoiser::REBLUR_SPECULAR : signal == NrdSignal::Diffuse ?
+                nrd::Denoiser::REBLUR_DIFFUSE : nrd::Denoiser::REBLUR_DIFFUSE_OCCLUSION };
         const nrd::InstanceCreationDesc creation{ {}, &denoiser, 1 };
         if (nrd::CreateInstance(creation, Instance) != nrd::Result::SUCCESS) return false;
         const auto& description = *nrd::GetInstanceDesc(*Instance);
@@ -164,7 +165,7 @@ struct NrdDenoiser::Impl
         if (!allocatePool(Permanent, description.permanentPool, L"NRD Permanent History") ||
             !allocatePool(Transient, description.transientPool, L"NRD Transient Pool") ||
             !CreateTexture(Output, Signal == NrdSignal::Shadow ? DXGI_FORMAT_R8_UNORM :
-                Signal == NrdSignal::Specular ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R16_UNORM,
+                (Signal == NrdSignal::Specular || Signal == NrdSignal::Diffuse) ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R16_UNORM,
                 1, L"NVIDIA NRD Denoised Signal")) return false;
         WriteGraphicsLog("NRD: %s %s initialized, extent=%ux%u pipelines=%u history=%u transient=%u\n",
             NrdDenoiser::GetVersion(), nrd::GetDenoiserString(denoiser.denoiser), Width, Height,
@@ -209,6 +210,18 @@ struct NrdDenoiser::Impl
             settings.lightDirection[2] = frame.LightDirection.z;
             if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS) return false;
         }
+        if (Signal == NrdSignal::Diffuse)
+        {
+            nrd::ReblurSettings settings;
+            settings.checkerboardMode = nrd::CheckerboardMode::BLACK;
+            // Keep a small spatial footprint after convergence, rather than exposing
+            // individual checkerboard samples around high contrast emissive objects.
+            settings.minBlurRadius = 2.0f;
+            settings.maxAccumulatedFrameNum = 16;
+            settings.maxFastAccumulatedFrameNum = 4;
+            settings.fireflySuppressorMinRelativeScale = 1.5f;
+            if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS) return false;
+        }
         if (Signal == NrdSignal::AmbientOcclusion)
         {
             nrd::ReblurSettings settings;
@@ -237,9 +250,11 @@ struct NrdDenoiser::Impl
             case nrd::ResourceType::IN_VIEWZ: return inputs.ViewZ.Resource;
             case nrd::ResourceType::IN_PENUMBRA:
             case nrd::ResourceType::IN_DIFF_HITDIST:
+            case nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST:
             case nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST: return inputs.NoisySignal.Resource;
             case nrd::ResourceType::OUT_SHADOW_TRANSLUCENCY:
             case nrd::ResourceType::OUT_DIFF_HITDIST:
+            case nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST:
             case nrd::ResourceType::OUT_SPEC_RADIANCE_HITDIST: return Output.Resource.Get();
             default: return nullptr;
             }

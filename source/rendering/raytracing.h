@@ -6,6 +6,7 @@ class Raytracing
 {
 public:
     enum class Mode { ReflectionsOnly, Full };
+    enum class DenoiserType { Nrd, Optix };
     struct Settings
     {
         Mode RenderMode = Mode::ReflectionsOnly;
@@ -14,6 +15,7 @@ public:
         bool AmbientOcclusion = true;
         bool Reflections = true;
         bool Denoise = true;
+        DenoiserType RadianceDenoiser = DenoiserType::Nrd;
         int Samples = 2;
         float ShadowDistance = 500.0f;
         float AmbientRadius = 1.5f;
@@ -40,6 +42,8 @@ public:
     static UINT GetDenoiserDispatchCount();
     static UINT GetAmbientDenoiserDispatchCount();
     static bool AreReflectionsActive();
+    static bool IsGiActive();
+    static D3D12_GPU_DESCRIPTOR_HANDLE GetGiSrv();
     static D3D12_GPU_DESCRIPTOR_HANDLE GetReflectionSrv();
     static D3D12_GPU_VIRTUAL_ADDRESS GetLightingConstantsAddress(UINT frameIndex);
     static void BeginLightList();
