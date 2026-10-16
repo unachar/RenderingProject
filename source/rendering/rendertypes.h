@@ -72,7 +72,12 @@ enum class ObjectType
 	CAPSULE,
 	CYLINDER,
 	PLANE,
-	QUAD
+	QUAD,
+	CIRCLE,
+	TRIANGLE,
+	CONE,
+	TETRAHEDRON,
+	TRIANGULAR_PRISM
 };
 
 enum class Color

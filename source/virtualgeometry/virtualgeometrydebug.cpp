@@ -85,14 +85,9 @@ namespace VirtualGeometryDebug
 {
 namespace
 {
-struct Options
+VirtualGeometryDebug::Preferences &Settings()
 {
-    bool HierarchyBounds = false, Wireframe = false, SelectedOnly = true;
-    int HierarchyLevel = 0, SourceLOD = 0, Limit = 512;
-};
-Options &Settings()
-{
-    static Options options;
+    static VirtualGeometryDebug::Preferences options;
     return options;
 }
 vector<const StaticMeshData *> Meshes(uint32_t entity)
@@ -257,6 +252,8 @@ void DrawAssetInspector(const std::filesystem::path& path)
     }
     ImGui::PopID();
 }
+
+Preferences& GetPreferences() { return Settings(); }
 
 void DrawControls()
 {

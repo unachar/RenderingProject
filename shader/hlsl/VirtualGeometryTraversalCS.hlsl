@@ -89,8 +89,8 @@ bool OcclusionCull(float4 sphere, GPUInstanceData instance)
     for (uint corner = 0; corner < 8; ++corner)
     {
         float3 sign = float3((corner&1) ? 1 : -1, (corner&2) ? 1 : -1, (corner&4) ? 1 : -1);
-        float4 point = float4(sphere.xyz + sign*sphere.w, 1);
-        float4 clip = TemporalPhase == 2 ? mul(point, VP) : mul(point, PreviousVP);
+        float4 Point = float4(sphere.xyz + sign*sphere.w, 1);
+        float4 clip = TemporalPhase == 2 ? mul(Point, VP) : mul(Point,PreviousVP);
         if (!all(isfinite(clip)) || clip.w <= 1e-5 || clip.z <= 0 || clip.z >= clip.w) return false;
         float3 ndc = clip.xyz / clip.w;
         float2 uv = ndc.xy * float2(0.5, -0.5) + 0.5;

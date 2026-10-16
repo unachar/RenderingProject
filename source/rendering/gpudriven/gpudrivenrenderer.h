@@ -36,6 +36,8 @@ public:
     static void DrawVelocity(ID3D12GraphicsCommandList* commands);
     static void BuildHiZ(ID3D12GraphicsCommandList* commands);
     static bool IsEnabled();
+    static bool GetDebugReadback();
+    static void SetDebugReadback(bool enabled);
     static bool IsActive();
     static void SetEnabled(bool enabled);
     static void DrawDebug();

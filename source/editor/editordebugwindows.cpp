@@ -351,7 +351,6 @@ void ImGuiManager::DrawAtmosphereWindow()
 void ImGuiManager::DrawLogWindow()
 {
 	static ImGuiTextFilter logFilter;
-	static bool autoScroll = true;
 	ImGui::SetNextWindowSize(ImVec2(620.0f, 220.0f), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin("ログ", &m_ShowLogWindow))
 	{
@@ -364,7 +363,7 @@ void ImGuiManager::DrawLogWindow()
 		m_Logs.clear();
 	}
 	ImGui::SameLine();
-	ImGui::Checkbox("末尾を追従", &autoScroll);
+	ImGui::Checkbox("末尾を追従", &m_LogAutoScroll);
 	DrawSearchField("LogSearch", "ログを検索...", logFilter);
 	ImGui::Separator();
 
@@ -386,7 +385,7 @@ void ImGuiManager::DrawLogWindow()
 			ImGui::TextUnformatted(m_Logs[visibleLogs[i]].c_str());
 		}
 	}
-	if (autoScroll && wasAtBottom)
+	if (m_LogAutoScroll && wasAtBottom)
 	{
 		ImGui::SetScrollHereY(1.0f);
 	}

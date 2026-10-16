@@ -131,6 +131,17 @@ void RenderConfiguration::Resize(UINT width, UINT height)
 			g_kFULL_DEPTH_READ_DSV_INDEX, m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV)));
 	m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 
+	// Resize replaces the depth resource; its shader view must follow it too.
+	// Hi-Z reads this descriptor during the native geometry second pass.
+	D3D12_SHADER_RESOURCE_VIEW_DESC depthSrvDesc{};
+	depthSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	depthSrvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+	depthSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	depthSrvDesc.Texture2D.MipLevels = 1;
+	const UINT srvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	m_Device->CreateShaderResourceView(m_DepthStencilBuffer.Get(), &depthSrvDesc,
+		CD3DX12_CPU_DESCRIPTOR_HANDLE(m_CbvHeap->GetCPUDescriptorHandleForHeapStart(), g_kDEPTH_SRV_INDEX, srvIncrement));
+
 	m_Width = width;
 	m_Height = height;
 	m_SceneWidth = sceneWidth;

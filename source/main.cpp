@@ -121,6 +121,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 	char startupSmokeValue[16]{};
 	GetEnvironmentVariableA("DX12_STARTUP_SMOKE_FRAMES", startupSmokeValue, static_cast<DWORD>(size(startupSmokeValue)));
 	const int startupSmokeFrames = (max)(0, atoi(startupSmokeValue));
+	char resizeSmokeValue[8]{};
+	GetEnvironmentVariableA("DX12_RESIZE_SMOKE_TEST", resizeSmokeValue, static_cast<DWORD>(size(resizeSmokeValue)));
+	const bool resizeSmoke = startupSmokeFrames > 0 && atoi(resizeSmokeValue) != 0;
 	const bool automatedRun = automatedBenchmark || IsPhysicsSmokeTest() || startupSmokeFrames > 0;
 	char exePath[MAX_PATH]{};
 	GetModuleFileNameA(nullptr, exePath, MAX_PATH);
@@ -215,6 +218,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 		}
 
 		if (completedFrames == 0) WriteGraphicsLog("Step: first frame begin\n");
+		if (resizeSmoke && (completedFrames == 8 || completedFrames == 40 ||
+			completedFrames == 72 || completedFrames == 104))
+		{
+			const UINT resizeWidths[] = {1919, 1200, 1920, 1200};
+			const UINT resizeHeights[] = {677, 600, 1080, 600};
+			const UINT step = static_cast<UINT>((completedFrames - 8) / 32);
+			WriteGraphicsLog("Resize smoke: frame=%llu extent=%ux%u\n", completedFrames,
+				resizeWidths[step], resizeHeights[step]);
+			RenderConfiguration::Resize(resizeWidths[step], resizeHeights[step]);
+		}
 		RenderingValidation::BeforeFrame(completedFrames);
 		Game::Run();
 		RenderingValidation::AfterFrame(completedFrames);

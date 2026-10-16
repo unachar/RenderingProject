@@ -13,7 +13,7 @@
       1.0,
       0.5058823823928833,
       1.0,
-      0.0
+      1.0
     ],
     "emissiveColor" : 
     [
@@ -25,7 +25,7 @@
     "ior" : 5.7699999809265137,
     "metallic" : 1.0,
     "normalScale" : 8.0,
-    "roughness" : 0.94700002670288086,
+    "roughness" : 0.0,
     "thickness" : 4.0,
     "transmission" : 0.44900000095367432
   },

@@ -1,6 +1,12 @@
 {
   "parameters" : 
   {
+    "absorptionCoefficient" : 
+    [
+      0.0,
+      0.0,
+      0.0
+    ],
     "aoStrength" : 1.0,
     "baseColor" : 
     [
@@ -16,9 +22,12 @@
       0.0
     ],
     "emissiveIntensity" : 0.0,
+    "ior" : 1.5,
     "metallic" : 0.0,
-    "normalScale" : 1.0,
-    "roughness" : 0.5
+    "normalScale" : 8.0,
+    "roughness" : 0.0,
+    "thickness" : 0.10000000149011612,
+    "transmission" : 0.0
   },
   "renderState" : 
   {
@@ -26,17 +35,17 @@
     "cullMode" : "Back",
     "depthWrite" : true,
     "shadowCutoff" : 0.5,
-    "shadowMode" : "Opaque"
+    "shadowMode" : "Auto"
   },
   "shader" : "PBR",
   "surfaceType" : "Opaque",
   "textures" : 
   {
     "ao" : "guid:0000000000000000",
-    "baseColor" : "guid:0000000000000000",
+    "baseColor" : "guid:c10f984bc75ee1f5",
     "emissive" : "guid:0000000000000000",
     "metallicRoughness" : "guid:0000000000000000",
-    "normal" : "guid:0000000000000000"
+    "normal" : "guid:3aef4484939a6ed9"
   },
   "version" : 1
 }

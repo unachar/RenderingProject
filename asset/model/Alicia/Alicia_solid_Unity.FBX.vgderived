@@ -1,0 +1,146 @@
+{
+	"builder" : 4,
+	"compression" : 1,
+	"convert" : true,
+	"dependencies" : 
+	[
+		"11848908857584250699"
+	],
+	"meshes" : 
+	[
+		{
+			"material" : "hair_psd",
+			"name" : "flonthair",
+			"part" : 1.0,
+			"path" : "asset/virtualgeometry-cache/458c3415588c1a52.vgmesh.11355682430331410548.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_hair.tga"
+		},
+		{
+			"material" : "hair_alpha",
+			"name" : "flonthair",
+			"part" : 1.0,
+			"path" : "asset/virtualgeometry-cache/1f43fa7ca10adae2.vgmesh.12472283109445502709.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_hair.tga"
+		},
+		{
+			"material" : "hair_psd",
+			"name" : "flonthair",
+			"part" : 1.0,
+			"path" : "asset/virtualgeometry-cache/f72b9e83292528ef.vgmesh.12674747786011855247.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_hair.tga"
+		},
+		{
+			"material" : "hair_alpha02",
+			"name" : "flonthair",
+			"part" : 1.0,
+			"path" : "asset/virtualgeometry-cache/7ba7f8b29942d45e.vgmesh.8365947407126286158.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_hair.tga"
+		},
+		{
+			"material" : "body_psd",
+			"name" : "body",
+			"part" : 3.0,
+			"path" : "asset/virtualgeometry-cache/861bda6c2550a566.vgmesh.5093015889932110825.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_body.tga"
+		},
+		{
+			"material" : "body_psd",
+			"name" : "body",
+			"part" : 3.0,
+			"path" : "asset/virtualgeometry-cache/61ee6541f7cf30da.vgmesh.10708638701776289883.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_body.tga"
+		},
+		{
+			"material" : "wear_psd",
+			"name" : "body",
+			"part" : 2.0,
+			"path" : "asset/virtualgeometry-cache/dccf65abd6b8d91c.vgmesh.16569209007991201117.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_wear.tga"
+		},
+		{
+			"material" : "body_psd",
+			"name" : "body",
+			"part" : 3.0,
+			"path" : "asset/virtualgeometry-cache/299b1c432ae840a2.vgmesh.1934571411602625866.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_body.tga"
+		},
+		{
+			"material" : "body_psd",
+			"name" : "Cylinder001",
+			"part" : 3.0,
+			"path" : "asset/virtualgeometry-cache/7b6215a0a8e864b1.vgmesh.1470775925111480695.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_body.tga"
+		},
+		{
+			"material" : "face_psd",
+			"name" : "face",
+			"part" : 3.0,
+			"path" : "asset/virtualgeometry-cache/a1d23aa19c588c59.vgmesh.15293426954669532409.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_face.tga"
+		},
+		{
+			"material" : "face_psd",
+			"name" : "face",
+			"part" : 3.0,
+			"path" : "asset/virtualgeometry-cache/632cea75cfee065f.vgmesh.2474434399710303631.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_face.tga"
+		},
+		{
+			"material" : "face_psd",
+			"name" : "face",
+			"part" : 3.0,
+			"path" : "asset/virtualgeometry-cache/325164288822a808.vgmesh.8370223651047307447.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_face.tga"
+		},
+		{
+			"material" : "eye_psd",
+			"name" : "eye",
+			"part" : 3.0,
+			"path" : "asset/virtualgeometry-cache/a095c6ce17130081.vgmesh.8048462798726839814.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_eye.tga"
+		},
+		{
+			"material" : "face_alpha02",
+			"name" : "other",
+			"part" : 2.0,
+			"path" : "asset/virtualgeometry-cache/ea06dae0a9aa238b.vgmesh.17103077130071698927.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_face.tga"
+		},
+		{
+			"material" : "other_alpha02",
+			"name" : "other",
+			"part" : 2.0,
+			"path" : "asset/virtualgeometry-cache/4393a538c1f5a333.vgmesh.10499468991950702762.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_other.tga"
+		},
+		{
+			"material" : "other_alpha05",
+			"name" : "other",
+			"part" : 2.0,
+			"path" : "asset/virtualgeometry-cache/b85479f84aae6d9a.vgmesh.13945235951886690414.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_other.tga"
+		},
+		{
+			"material" : "other_alpha07",
+			"name" : "other",
+			"part" : 2.0,
+			"path" : "asset/virtualgeometry-cache/d0c13f9a43397504.vgmesh.6698607273473749551.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_other.tga"
+		},
+		{
+			"material" : "other_alpha04",
+			"name" : "other",
+			"part" : 2.0,
+			"path" : "asset/virtualgeometry-cache/c8d06ae59545b3e5.vgmesh.1360619347914703119.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_other.tga"
+		},
+		{
+			"material" : "other_alpha07",
+			"name" : "other02",
+			"part" : 2.0,
+			"path" : "asset/virtualgeometry-cache/6cd87fc6335ff5c9.vgmesh.10217608835463575041.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\alicia\\alicia_other.tga"
+		}
+	],
+	"settings" : "16721141559523799466"
+}

@@ -7,6 +7,7 @@
 #include "rendertargets.h"
 #include "sun.h"
 #include "world.h"
+#include "primitivegeometry.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -19,6 +20,20 @@
 
 
 using namespace EditorWidgets;
+
+namespace
+{
+	struct PrimitiveCreationState
+	{
+		EntityID Entity = g_kINVALID_ENTITY;
+		ObjectType Type = ObjectType::NONE;
+		PrimitiveSettings Settings;
+		bool Open = false;
+		bool FocusRequested = false;
+		bool PendingUpdate = false;
+	};
+	PrimitiveCreationState primitiveCreation;
+}
 
 void ImGuiManager::DrawSceneViewWindow()
 {
@@ -53,12 +68,7 @@ void ImGuiManager::DrawSceneViewWindow()
 	const float lightToggleWidth = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("ライト可視化").x;
 	if (rowWidth + toolSpacing + lightToggleWidth <= toolbarWidth) ImGui::SameLine();
 	ImGui::Checkbox("ライト可視化", &m_ShowLightDebug);
-	if (ImGui::Button("Nanite / LOD")) ImGui::OpenPopup("NaniteDebugControls");
-	if (ImGui::BeginPopup("NaniteDebugControls"))
-	{
-		VirtualGeometryDebug::DrawControls();
-		ImGui::EndPopup();
-	}
+
 	ImGui::Separator();
 	const bool sceneFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 	if (sceneFocused && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() &&
@@ -237,6 +247,138 @@ void ImGuiManager::DrawTransformGizmo()
 	}
 }
 
+void ImGuiManager::DrawPrimitiveCreationMenu()
+{
+	struct PrimitiveEntry
+	{
+		const char* Label;
+		const char* Name;
+		ObjectType Type;
+	};
+	const PrimitiveEntry shapes2D[] = {
+		{ "円", "Circle", ObjectType::CIRCLE },
+		{ "四角", "Square", ObjectType::QUAD },
+		{ "三角", "Triangle", ObjectType::TRIANGLE }
+	};
+	const PrimitiveEntry shapes3D[] = {
+		{ "球", "Sphere", ObjectType::SPHERE },
+		{ "キューブ", "Cube", ObjectType::CUBE },
+		{ "カプセル", "Capsule", ObjectType::CAPSULE },
+		{ "円柱", "Cylinder", ObjectType::CYLINDER },
+		{ "円錐", "Cone", ObjectType::CONE },
+		{ "三角錐", "Tetrahedron", ObjectType::TETRAHEDRON },
+		{ "三角柱", "Triangular Prism", ObjectType::TRIANGULAR_PRISM },
+		{ "平面", "Plane", ObjectType::PLANE }
+	};
+	const auto drawEntries = [&](const auto& entries)
+	{
+		for (const auto& entry : entries)
+		{
+			if (!ImGui::MenuItem(entry.Label)) continue;
+			auto entity = World::CreateEntity()
+				.Add<TransformComponent>().Add<MeshComponent>()
+				.Add<MaterialComponent>().Add<NameComponent>();
+			entity.SetName(entry.Name);
+			auto& material = entity.Get<MaterialComponent>();
+			material.Metallic = 0.0f;
+			material.Roughness = 0.5f;
+			material.Fresnel = 0.04f;
+			material.ShaderClassMode = MaterialMode::Manual;
+			material.ShaderClass = ShaderClass::PBR;
+			material.UseTexture = false;
+			VertexResource resource{};
+			resource.entityid = entity.GetID();
+			resource.color = Color::WHITE;
+			resource.objectType = entry.Type;
+			PrimitiveSettings settings;
+			if (entry.Type == ObjectType::CAPSULE) settings.Rings = 8;
+			PrimitiveGeometry::CreateObjectVertex(resource, settings);
+			if (!entity.Get<MeshComponent>().VertexBuffer)
+			{
+				AddLog("シェイプ作成失敗: %s", entry.Name);
+				World::DestroyEntity(entity);
+				continue;
+			}
+			m_SelectedEntity = entity.GetID();
+			primitiveCreation = {};
+			primitiveCreation.Entity = m_SelectedEntity;
+			primitiveCreation.Type = entry.Type;
+			primitiveCreation.Settings = settings;
+			primitiveCreation.Open = true;
+			primitiveCreation.FocusRequested = true;
+			AddLog("シェイプ追加: %s #%u", entry.Name, m_SelectedEntity);
+		}
+	};
+	if (ImGui::BeginMenu("2Dオブジェクト"))
+	{
+		drawEntries(shapes2D);
+		ImGui::EndMenu();
+	}
+	if (ImGui::BeginMenu("3Dオブジェクト"))
+	{
+		drawEntries(shapes3D);
+		ImGui::EndMenu();
+	}
+}
+
+void ImGuiManager::DrawPrimitiveSettingsWindow()
+{
+	auto& state = primitiveCreation;
+	if (!state.Open) return;
+	if (m_SelectedEntity != state.Entity || !Registry::IsAlive(state.Entity) ||
+		!ComponentManager::HasComponent<MeshComponent>(state.Entity))
+	{
+		state = {};
+		return;
+	}
+	ImGui::SetNextWindowSize(ImVec2(310.0f, 0.0f), ImGuiCond_Appearing);
+	if (state.FocusRequested)
+	{
+		ImGui::SetNextWindowFocus();
+		state.FocusRequested = false;
+	}
+	if (ImGui::Begin("シェイプ作成設定", &state.Open, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::TextUnformatted(GetEntityDisplayName(state.Entity));
+		ImGui::Separator();
+		auto& settings = state.Settings;
+		const bool rectangular = state.Type == ObjectType::CUBE ||
+			state.Type == ObjectType::QUAD || state.Type == ObjectType::PLANE;
+		bool changed = false;
+		if (rectangular || state.Type == ObjectType::TRIANGLE ||
+			state.Type == ObjectType::TETRAHEDRON || state.Type == ObjectType::TRIANGULAR_PRISM)
+			changed |= ImGui::SliderInt("面の分割数", &settings.FaceDivisions, 1, 16, "%d", ImGuiSliderFlags_AlwaysClamp);
+		if (rectangular)
+			changed |= ImGui::DragFloat("幅", &settings.Width, 0.01f, 0.001f, 1000.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		else
+			changed |= ImGui::DragFloat("半径", &settings.Radius, 0.01f, 0.001f, 1000.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		if (state.Type != ObjectType::CIRCLE && state.Type != ObjectType::TRIANGLE &&
+			state.Type != ObjectType::SPHERE && state.Type != ObjectType::PLANE)
+			changed |= ImGui::DragFloat(state.Type == ObjectType::CAPSULE ? "円柱部分の高さ" : "高さ",
+				&settings.Height, 0.01f, 0.001f, 1000.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		if (state.Type == ObjectType::CUBE || state.Type == ObjectType::PLANE)
+			changed |= ImGui::DragFloat("奥行き", &settings.Depth, 0.01f, 0.001f, 1000.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		if (state.Type == ObjectType::CIRCLE || state.Type == ObjectType::SPHERE ||
+			state.Type == ObjectType::CAPSULE || state.Type == ObjectType::CYLINDER || state.Type == ObjectType::CONE)
+			changed |= ImGui::SliderInt("周方向の分割数", &settings.Segments, 3, 128, "%d", ImGuiSliderFlags_AlwaysClamp);
+		if (state.Type == ObjectType::SPHERE || state.Type == ObjectType::CAPSULE)
+			changed |= ImGui::SliderInt(state.Type == ObjectType::CAPSULE ? "半球の分割数" : "縦方向の分割数",
+				&settings.Rings, 2, 64, "%d", ImGuiSliderFlags_AlwaysClamp);
+		state.PendingUpdate |= changed;
+		if (ImGui::Button("完了")) state.Open = false;
+	}
+	ImGui::End();
+	if (state.PendingUpdate && !ImGui::IsAnyItemActive())
+	{
+		VertexResource resource{};
+		resource.entityid = state.Entity;
+		resource.objectType = state.Type;
+		resource.color = Color::WHITE;
+		PrimitiveGeometry::CreateObjectVertex(resource, state.Settings);
+		state.PendingUpdate = false;
+	}
+}
+
 void ImGuiManager::DrawHierarchyWindow()
 {
 	ImGui::SetNextWindowPos(ImVec2(8.0f, 32.0f), ImGuiCond_FirstUseEver);
@@ -266,6 +408,7 @@ void ImGuiManager::DrawHierarchyWindow()
 	}
 	if (ImGui::BeginPopup("HierarchyCreatePopup"))
 	{
+		DrawPrimitiveCreationMenu();
 		if (ImGui::MenuItem("GameCamera"))
 		{
 			int cameraNumber = 1;
@@ -328,6 +471,11 @@ void ImGuiManager::DrawHierarchyWindow()
 			m_SelectedEntity = entity;
 			if (ImGui::MenuItem("名前を変更", "F2", false, ComponentManager::HasComponent<NameComponent>(entity))) BeginRename(entity);
 			if (ImGui::MenuItem("削除", "Delete")) deleteRequested = true;
+			if (ImGui::BeginMenu("オブジェクトの作成"))
+			{
+				DrawPrimitiveCreationMenu();
+				ImGui::EndMenu();
+			}
 			ImGui::EndPopup();
 		}
 		ImGui::PopID();
@@ -335,6 +483,15 @@ void ImGuiManager::DrawHierarchyWindow()
 	if (visibleCount == 0)
 	{
 		ImGui::TextWrapped("表示するオブジェクトがありません。検索条件を変更するか、+ 作成から追加してください。");
+	}
+	if (ImGui::BeginPopupContextWindow("HierarchyBackgroundActions", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
+	{
+		if (ImGui::BeginMenu("オブジェクトの作成"))
+		{
+			DrawPrimitiveCreationMenu();
+			ImGui::EndMenu();
+		}
+		ImGui::EndPopup();
 	}
 	ImGui::EndChild();
 	if (deleteRequested) DeleteSelectedEntity();

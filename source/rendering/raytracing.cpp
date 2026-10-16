@@ -303,6 +303,7 @@ bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingG
 
 bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
 {
+    RenderProfiler::ScopedEvent profile("DXR Acceleration Structures", commandList);
     const auto geometry = GatherRaytracingGeometry();
     frame.SceneGeometry.clear();
     vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
@@ -606,7 +607,13 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     constants.Distances = { clamp(g_Settings.ShadowDistance, 1.0f, 2000.0f),
         clamp(g_Settings.AmbientRadius, 0.05f, 10.0f), clamp(g_Settings.NormalBias, 0.001f, 0.1f),
         clamp(g_Settings.SunAngularRadius, 0.0f, 0.05f) };
-    constants.Features = { static_cast<UINT>(UsesRaytracedShadows()), static_cast<UINT>(UsesRaytracedAmbientOcclusion()), 0, 0 };
+    constants.Features = { static_cast<UINT>(UsesRaytracedShadows()), static_cast<UINT>(UsesRaytracedAmbientOcclusion()),
+        static_cast<UINT>(NrdDenoiser::IsCompiled() && g_Settings.Denoise), 0 };
+    if (constants.Features.x == 0 && constants.Features.y == 0)
+    {
+        // Reflections still need the guides, but repeated unoccluded samples add no information.
+        constants.ExtentSamples.z = 1;
+    }
     XMStoreFloat4x4(&constants.WorldToView, XMMatrixTranspose(view));
     NrdFrame nrdFrame;
     XMStoreFloat4x4(&nrdFrame.View, view);
@@ -661,10 +668,14 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         commandList->SetComputeRootDescriptorTable(6, RenderTargets::GetGBufferSrvHandle(GBufferType::VELOCITY));
         commandList->SetComputeRootDescriptorTable(7, RenderTargets::GetGBufferSrvHandle(GBufferType::MATERIAL));
     }
-    commandList->Dispatch((frame.Width + 7) / 8, (frame.Height + 7) / 8, 1);
+    {
+        RenderProfiler::ScopedEvent traceProfile("DXR Shadow / AO Trace", commandList);
+        commandList->Dispatch((frame.Width + 7) / 8, (frame.Height + 7) / 8, 1);
+    }
     Transition(commandList, frame.Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     if (NrdDenoiser::IsCompiled())
     {
+        RenderProfiler::ScopedEvent denoiseProfile("DXR Shadow / AO Denoise and Compose", commandList);
         for (auto& guide : frame.Guides) Transition(commandList, guide.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         Transition(commandList, frame.AmbientGuide.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         Transition(commandList, velocity, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -732,8 +743,11 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     g_Active = true;
     updateLighting(true);
     if (g_Settings.Reflections)
+    {
+        RenderProfiler::ScopedEvent reflectionProfile("DXR Reflections", commandList);
         g_ReflectionsActive = RayReflections::Execute(commandList, frame.TopLevel.Get(), frame.SceneGeometry,
             nrdFrame, frame.Guides, g_Settings.Denoise);
+    }
     if (g_ReflectionsActive) g_NrdDispatchCount += RayReflections::GetDenoiserDispatchCount();
     // Camera and motion history belongs to the scene, independently of enabled denoiser signals.
     g_PreviousNrdFrame = nrdFrame;

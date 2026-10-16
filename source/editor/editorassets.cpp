@@ -103,6 +103,7 @@ void ImGuiManager::DrawAssetBrowserWindow()
     int thumbnailSize = static_cast<int>(AssetThumbnailManager::Settings().Size);
     ImGui::SetNextItemWidth(150);
     if (ImGui::SliderInt("サムネイルサイズ", &thumbnailSize, 32, 256)) AssetThumbnailManager::Settings().Size = static_cast<UINT>(thumbnailSize);
+    if (ImGui::IsItemDeactivatedAfterEdit()) SaveProjectSettings();
     ImGui::SameLine();
     if (ImGui::Button("サムネイル更新")) AssetThumbnailManager::Refresh();
     const float cellSize = static_cast<float>(thumbnailSize);

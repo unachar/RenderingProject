@@ -43,6 +43,7 @@ private:
 	inline static bool m_ShowTextureListWindow = false;
 	inline static bool m_ShowGBufferWindow = false;
 	inline static bool m_ShowLogWindow = false;
+	inline static bool m_LogAutoScroll = true;
 	inline static bool m_ShowPerformanceWindow = false;
 	inline static bool m_ShowMaterialEditorWindow = false;
 	inline static bool m_ShowRimSettingsWindow = false;
@@ -133,6 +134,8 @@ private:
 	static void DrawSceneEditor();
 	static void DrawEditorMainMenu();
 	static void DrawHierarchyWindow();
+	static void DrawPrimitiveCreationMenu();
+	static void DrawPrimitiveSettingsWindow();
 	static void DrawInspectorWindow();
 	static void DrawAssetBrowserWindow();
 	static void DrawRenderDebuggerWindow();
@@ -159,7 +162,8 @@ private:
 	static void DrawProjectSettingsWindow();
 	static void DrawPhysicsSettingsWindow();
 	static void LoadProjectSettings();
-	static void SaveProjectSettings();
+	static bool PersistentSettings(std::ostream* output, const string& key = {}, const string& value = {});
+	inline static string m_LastSavedProjectSettings;
 	static void DrawMaterialInspector(EntityID entity);
 	static void ApplyMeshShadingOverridesToModel(EntityID entity);
 	static void DrawToonMeshOutlineInspector(EntityID entity, bool embeddedInInspector = true);
@@ -194,6 +198,7 @@ private:
 	static const char* GetLightTypeName(LightType type);
 
 public:
+	static void SaveProjectSettings();
 	static constexpr UINT kSrvDescriptorCount = 64;
     inline static bool m_AssetBrowserStandalone = false;
     static void SetAssetBrowserDirectory(const filesystem::path& directory, bool standalone = false)

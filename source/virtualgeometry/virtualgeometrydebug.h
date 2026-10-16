@@ -25,6 +25,12 @@ struct VGStatistics
 VGStatistics GetVGStatistics();
 namespace VirtualGeometryDebug
 {
+struct Preferences
+{
+    bool HierarchyBounds = false, Wireframe = false, SelectedOnly = true;
+    int HierarchyLevel = 0, SourceLOD = 0, Limit = 512;
+};
+Preferences& GetPreferences();
 void DrawControls();
 void DrawAssetInspector(const std::filesystem::path& path);
 void DrawViewport(ImDrawList *draw, const ImVec2 &origin, const ImVec2 &size, uint32_t selectedEntity);

@@ -14,6 +14,7 @@
 #include "light.h"
 #include "projectmanager.h"
 #include "physicssystem.h"
+#include "imguimanager.h"
 
 #include "entitybase.h"
 #include <unordered_set>
@@ -81,6 +82,8 @@ void Game::Create()
 void Game::Uninit()
 {
 	GraphicsDevice::WaitForGpuIdle();
+	if (ProjectManager::IsPlaying()) ProjectManager::Stop();
+	ImGuiManager::SaveProjectSettings();
 	SystemManager::Uninit();
 	ModelManager::Uninit();
 	ComponentManager::Uninit();

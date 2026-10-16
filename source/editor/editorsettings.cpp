@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "materialmanager.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
@@ -17,6 +17,17 @@
 #include "simulationconfiguration.h"
 #include "raytracing.h"
 #include "nrddenoiser.h"
+#include "assetthumbnailmanager.h"
+#include "camera.h"
+#include "configvalue.h"
+#include "cloud/cloudrenderer.h"
+#include "virtualgeometry/virtualgeometrytraversal.h"
+#include "virtualgeometry/virtualgeometrystreaming.h"
+#include "virtualgeometry/virtualgeometrybinning.h"
+#include "virtualgeometry/virtualgeometrydebug.h"
+#include "meshshader/meshshaderrenderer.h"
+#include "visibility/gpuvisibility.h"
+#include "gpudriven/gpudrivenrenderer.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -516,8 +527,181 @@ void ImGuiManager::DrawProjectSettingsWindow()
 	ImGui::End();
 }
 
+bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const string& value)
+{
+    bool matched = false;
+    const auto field = [&](const char* name, auto& setting, long double low, long double high)
+    {
+        matched |= EditorConfig::Value(output, key, value, name, setting, low, high);
+    };
+    field("editor.ShowHierarchyWindow", m_ShowHierarchyWindow, 0, 1);
+    field("editor.ShowInspectorWindow", m_ShowInspectorWindow, 0, 1);
+    field("editor.ShowAdjustmentPanel", m_ShowAdjustmentPanel, 0, 1);
+    field("editor.ShowAssetBrowser", m_ShowAssetBrowser, 0, 1);
+    field("editor.ShowRenderDebugger", m_ShowRenderDebugger, 0, 1);
+    field("editor.ShowGpuSceneWindow", m_ShowGpuSceneWindow, 0, 1);
+    field("editor.ShowGpuDrivenWindow", m_ShowGpuDrivenWindow, 0, 1);
+    field("editor.ShowVisibilityWindow", m_ShowVisibilityWindow, 0, 1);
+    field("editor.ShowMeshShaderWindow", m_ShowMeshShaderWindow, 0, 1);
+    field("editor.ShowVirtualGeometryWindow", m_ShowVirtualGeometryWindow, 0, 1);
+    field("editor.ShowCloudWindow", m_ShowCloudWindow, 0, 1);
+    field("editor.ShowTextureListWindow", m_ShowTextureListWindow, 0, 1);
+    field("editor.ShowGBufferWindow", m_ShowGBufferWindow, 0, 1);
+    field("editor.ShowLogWindow", m_ShowLogWindow, 0, 1);
+    field("editor.ShowPerformanceWindow", m_ShowPerformanceWindow, 0, 1);
+    field("editor.ShowMaterialEditorWindow", m_ShowMaterialEditorWindow, 0, 1);
+    field("editor.ShowRimSettingsWindow", m_ShowRimSettingsWindow, 0, 1);
+    field("editor.ShowMeshOutlineWindow", m_ShowMeshOutlineWindow, 0, 1);
+    field("editor.ShowMeshShadingWindow", m_ShowMeshShadingWindow, 0, 1);
+    field("editor.ShowAtmosphereWindow", m_ShowAtmosphereWindow, 0, 1);
+    field("editor.ShowProceduralWindow", m_ShowProceduralWindow, 0, 1);
+    field("editor.ShowRaytracingWindow", m_ShowRaytracingWindow, 0, 1);
+    field("editor.ShowProjectSettingsWindow", m_ShowProjectSettingsWindow, 0, 1);
+    field("editor.ShowPhysicsSettingsWindow", m_ShowPhysicsSettingsWindow, 0, 1);
+    field("editor.ShowLightDebug", m_ShowLightDebug, 0, 1);
+    field("editor.gizmo", m_GizmoOperation, 0, 2);
+    field("editor.log_auto_scroll", m_LogAutoScroll, 0, 1);
+    auto& thumbnails = AssetThumbnailManager::Settings();
+    field("asset_thumbnail_size", thumbnails.Size, 32, 256);
+    field("asset_thumbnail_generations", thumbnails.MaxGenerationsPerFrame, 1, 64);
+    field("asset_thumbnail_memory", thumbnails.MemoryBudget, 1048576, 4294967296.0L);
+    field("asset_thumbnail_disk_cache", thumbnails.DiskCache, 0, 1);
+    auto& cloud = CloudRenderer::GetSettings();
+    field("cloud.Enabled", cloud.Enabled, 0, 1);
+    field("cloud.CastShadows", cloud.CastShadows, 0, 1);
+    field("cloud.BottomHeight", cloud.BottomHeight, -1000000, 1000000);
+    field("cloud.TopHeight", cloud.TopHeight, -1000000, 1000000);
+    field("cloud.Coverage", cloud.Coverage, -1000000, 1000000);
+    field("cloud.Density", cloud.Density, -1000000, 1000000);
+    field("cloud.BaseScale", cloud.BaseScale, -1000000, 1000000);
+    field("cloud.DetailScale", cloud.DetailScale, -1000000, 1000000);
+    field("cloud.DetailStrength", cloud.DetailStrength, -1000000, 1000000);
+    field("cloud.Extinction", cloud.Extinction, -1000000, 1000000);
+    field("cloud.PhaseG", cloud.PhaseG, -1000000, 1000000);
+    field("cloud.AmbientStrength", cloud.AmbientStrength, -1000000, 1000000);
+    field("cloud.PowderStrength", cloud.PowderStrength, -1000000, 1000000);
+    field("cloud.JitterStrength", cloud.JitterStrength, -1000000, 1000000);
+    field("cloud.WindX", cloud.WindX, -1000000, 1000000);
+    field("cloud.WindZ", cloud.WindZ, -1000000, 1000000);
+    field("cloud.WindSpeed", cloud.WindSpeed, -1000000, 1000000);
+    field("cloud.MaxTraceDistance", cloud.MaxTraceDistance, -1000000, 1000000);
+    field("cloud.ResolutionScale", cloud.ResolutionScale, -1000000, 1000000);
+    field("cloud.NoiseSlice", cloud.NoiseSlice, -1000000, 1000000);
+    field("cloud.ViewSteps", cloud.ViewSteps, -1, 10000000);
+    field("cloud.LightSteps", cloud.LightSteps, -1, 10000000);
+    field("cloud.Seed", cloud.Seed, 0, 4294967295);
+    field("cloud.Debug", cloud.Debug, 0, 7);
+    auto& nanite = VirtualGeometryTraversal::GetSettings();
+    field("nanite.Enabled", nanite.Enabled, 0, 1);
+    field("nanite.TargetErrorPixels", nanite.TargetErrorPixels, -1000000, 1000000);
+    field("nanite.HysteresisEnabled", nanite.HysteresisEnabled, 0, 1);
+    field("nanite.TwoPassOcclusion", nanite.TwoPassOcclusion, 0, 1);
+    field("nanite.HysteresisFraction", nanite.HysteresisFraction, -1000000, 1000000);
+    field("nanite.ForceHierarchyLevel", nanite.ForceHierarchyLevel, -1, 10000000);
+    field("nanite.FrustumCulling", nanite.FrustumCulling, 0, 1);
+    field("nanite.ConeCulling", nanite.ConeCulling, 0, 1);
+    field("nanite.OcclusionCulling", nanite.OcclusionCulling, 0, 1);
+    field("nanite.LevelColors", nanite.LevelColors, 0, 1);
+    field("nanite.DebugReadback", nanite.DebugReadback, 0, 1);
+    field("nanite.View", nanite.View, 0, 11);
+    field("nanite.AutoGrowBuffers", nanite.AutoGrowBuffers, 0, 1);
+    field("nanite.PredictiveStreaming", nanite.PredictiveStreaming, 0, 1);
+    field("nanite.PrefetchSeconds", nanite.PrefetchSeconds, -1000000, 1000000);
+    field("nanite.MaxPrefetchDistance", nanite.MaxPrefetchDistance, -1000000, 1000000);
+    field("nanite.MaxSelectedClusters", nanite.MaxSelectedClusters, 1, 10000000);
+    field("nanite.MaxGroupStates", nanite.MaxGroupStates, 1, 10000000);
+    auto& nanite_streaming = VirtualGeometryStreaming::GetSettings();
+    field("nanite_streaming.BudgetMiB", nanite_streaming.BudgetMiB, 1, 1024);
+    field("nanite_streaming.UploadMiBPerFrame", nanite_streaming.UploadMiBPerFrame, 0, 64);
+    field("nanite_streaming.MaxPageRequestsPerFrame", nanite_streaming.MaxPageRequestsPerFrame, 1, 65536);
+    field("nanite_streaming.RecentlyUsedProtectionFrames", nanite_streaming.RecentlyUsedProtectionFrames, 0, 1000);
+    auto& nanite_binning = VirtualGeometryBinning::GetSettings();
+    field("nanite_binning.Enabled", nanite_binning.Enabled, 0, 1);
+    field("nanite_binning.MaxMaterialBins", nanite_binning.MaxMaterialBins, 1, 65536);
+    auto& mesh_shader = MeshShaderRenderer::GetSettings();
+    field("mesh_shader.Enabled", mesh_shader.Enabled, 0, 1);
+    field("mesh_shader.Frustum", mesh_shader.Frustum, 0, 1);
+    field("mesh_shader.Cone", mesh_shader.Cone, 0, 1);
+    field("mesh_shader.Occlusion", mesh_shader.Occlusion, 0, 1);
+    field("mesh_shader.Clusters", mesh_shader.Clusters, 0, 1);
+    field("mesh_shader.Colors", mesh_shader.Colors, 0, 1);
+    field("mesh_shader.DebugReadback", mesh_shader.DebugReadback, 0, 1);
+    field("mesh_shader.MeshletBounds", mesh_shader.MeshletBounds, 0, 1);
+    field("mesh_shader.ClusterBounds", mesh_shader.ClusterBounds, 0, 1);
+    field("mesh_shader.ConeAxes", mesh_shader.ConeAxes, 0, 1);
+    field("mesh_shader.Bias", mesh_shader.Bias, -1000000, 1000000);
+    field("mesh_shader.MaxMeshlets", mesh_shader.MaxMeshlets, 1, 10000000);
+    auto& visibility = GPUVisibility::GetSettings();
+    field("visibility.Frustum", visibility.Frustum, 0, 1);
+    field("visibility.Occlusion", visibility.Occlusion, 0, 1);
+    field("visibility.LOD", visibility.LOD, 0, 1);
+    field("visibility.DebugReadback", visibility.DebugReadback, 0, 1);
+    field("visibility.Bounds", visibility.Bounds, 0, 1);
+    field("visibility.ScreenRectangles", visibility.ScreenRectangles, 0, 1);
+    field("visibility.FreezeCamera", visibility.FreezeCamera, 0, 1);
+    field("visibility.DepthBias", visibility.DepthBias, -1000000, 1000000);
+    field("visibility.LODBias", visibility.LODBias, -1000000, 1000000);
+    field("visibility.ForceLOD", visibility.ForceLOD, -1, 7);
+    field("visibility.DebugMode", visibility.DebugMode, 0, 16);
+    field("visibility.HiZMip", visibility.HiZMip, 0, 32);
+    if (auto* physics = SystemManager::GetSystem<PhysicsSystem>())
+    {
+        auto& settings = physics->GetSettings();
+        field("physics.FixedTimeStep", settings.FixedTimeStep, 0.001, 1);
+        field("physics.MaxSubSteps", settings.MaxSubSteps, 1, 32);
+        field("physics.MaxAccumulatedTime", settings.MaxAccumulatedTime, 0.001, 10);
+        field("physics.TimeScale", settings.TimeScale, 0, 10);
+        field("physics.Gravity.x", settings.Gravity.x, -100000, 100000);
+        field("physics.Gravity.y", settings.Gravity.y, -100000, 100000);
+        field("physics.Gravity.z", settings.Gravity.z, -100000, 100000);
+    }
+    int renderMode = static_cast<int>(RenderConfiguration::GetRequestedRenderMode());
+    if (EditorConfig::Value(output, key, value, "render_mode", renderMode, 0, 1))
+    {
+        RenderConfiguration::SetRenderMode(static_cast<RenderMode>(renderMode));
+        matched = true;
+    }
+    bool gpuDriven = GPUDrivenRenderer::IsEnabled();
+    if (EditorConfig::Value(output, key, value, "gpu_driven", gpuDriven))
+    {
+        GPUDrivenRenderer::SetEnabled(gpuDriven);
+        matched = true;
+    }
+    bool readback = GPUDrivenRenderer::GetDebugReadback();
+    if (EditorConfig::Value(output, key, value, "gpu_driven_debug_readback", readback))
+    {
+        GPUDrivenRenderer::SetDebugReadback(readback);
+        matched = true;
+    }
+    auto& overlay = VirtualGeometryDebug::GetPreferences();
+    field("nanite_overlay.HierarchyBounds", overlay.HierarchyBounds, 0, 1);
+    field("nanite_overlay.Wireframe", overlay.Wireframe, 0, 1);
+    field("nanite_overlay.SelectedOnly", overlay.SelectedOnly, 0, 1);
+    field("nanite_overlay.HierarchyLevel", overlay.HierarchyLevel, 0, 31);
+    field("nanite_overlay.SourceLOD", overlay.SourceLOD, 0, 4);
+    field("nanite_overlay.Limit", overlay.Limit, 16, 4096);
+    int postProcess = static_cast<int>(Camera::GetCameraPostProcess());
+    if (EditorConfig::Value(output, key, value, "camera_post_process", postProcess,
+        0, static_cast<int>(PostProcessType::COUNT) - 1))
+    {
+        Camera::SetCameraPostProcess(static_cast<PostProcessType>(postProcess));
+        matched = true;
+    }
+    if (output) *output << "asset_directory=" << m_CurrentAssetDirectory.generic_string() << '\n';
+    else if (key == "asset_directory")
+    {
+        const auto relative = filesystem::path(value).lexically_normal().lexically_relative(m_AssetRoot.lexically_normal());
+        error_code error;
+        if (!relative.empty() && *relative.begin() != ".." && filesystem::is_directory(value, error))
+            m_CurrentAssetDirectory = filesystem::path(value);
+        matched = true;
+    }
+    return matched;
+}
+
 void ImGuiManager::SaveProjectSettings()
 {
+	if (!m_ProjectSettingsLoaded || ProjectManager::IsPlaying()) return;
 	char validationMode[8]{};
 	if (GetEnvironmentVariableA("DX12_VALIDATION_MODE", validationMode, sizeof(validationMode)) > 0 && atoi(validationMode) != 0)
 	{
@@ -525,11 +709,11 @@ void ImGuiManager::SaveProjectSettings()
 	}
 	error_code ec;
 	filesystem::create_directories("Save", ec);
-	ofstream stream("Save/project_environment.cfg", ios::trunc);
-	if (!stream) return;
-	stream << fixed << setprecision(7);
+	ostringstream stream;
+	stream << setprecision(numeric_limits<float>::max_digits10);
 	stream << "version=1\n";
 	SimulationConfiguration::Save(stream);
+	PersistentSettings(&stream);
 	stream << "vsync=" << (static_cast<int>(World::IsVSyncEnabled())) << '\n';
 	stream << "fixed_fps=" << (static_cast<int>(World::IsFixedFrameRateEnabled())) << '\n';
 	stream << "target_fps=" << World::GetTargetFrameRate() << '\n';
@@ -538,7 +722,7 @@ void ImGuiManager::SaveProjectSettings()
 	stream << "upscale_quality=" << static_cast<int>(RendererSettings::GetUpscaleQuality()) << '\n';
 	stream << "fsr_sharpness=" << RendererSettings::GetFsrSharpness() << '\n';
 	stream << "nis_sharpness=" << RendererSettings::GetNisSharpness() << '\n';
-	stream << "compute_gbuffer=" << (static_cast<int>(RendererSettings::GetComputeGBufferEnabled())) << '\n';
+	stream << "compute_gbuffer=" << (static_cast<int>(RendererSettings::GetAuthoredComputeGBufferEnabled())) << '\n';
 	stream << "mesh_shaders=" << (static_cast<int>(RendererSettings::GetMeshShadersEnabled())) << '\n';
 	stream << "two_phase_occlusion=" << (static_cast<int>(RendererSettings::GetTwoPhaseOcclusionEnabled())) << '\n';
 	stream << "texture_streaming=" << (static_cast<int>(RendererSettings::GetTextureStreamingEnabled())) << '\n';
@@ -594,6 +778,21 @@ void ImGuiManager::SaveProjectSettings()
 			<< fog.Radius << ',' << fog.HeightFalloff << ',' << fog.Density << ','
 			<< fog.Color.x << ',' << fog.Color.y << ',' << fog.Color.z << '\n';
 	}
+
+    const string contents = stream.str();
+    if (contents == m_LastSavedProjectSettings) return;
+    const filesystem::path temporary = "Save/project_environment.cfg.tmp";
+    ofstream file(temporary, ios::binary | ios::trunc);
+    file << contents;
+    file.close();
+    if (!file || !MoveFileExW(temporary.c_str(), L"Save/project_environment.cfg",
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    {
+        AddLog("設定の保存に失敗しました: Save/project_environment.cfg");
+        return;
+    }
+    m_LastSavedProjectSettings = contents;
+
 }
 
 void ImGuiManager::LoadProjectSettings()
@@ -616,7 +815,7 @@ void ImGuiManager::LoadProjectSettings()
 		const string value = line.substr(separator + 1);
 		try
 		{
-			if (SimulationConfiguration::TryLoad(key, value))
+			if (PersistentSettings(nullptr, key, value) || SimulationConfiguration::TryLoad(key, value))
 			{
 				continue;
 			}
@@ -704,4 +903,7 @@ void ImGuiManager::LoadProjectSettings()
 			Debug::Log("環境設定の値を読み込めません: %s\n", line.c_str());
 		}
 	}
+    CloudRenderer::GetSettings().Validate();
+    if (auto* physics = SystemManager::GetSystem<PhysicsSystem>()) physics->ResetSimulation();
+
 }

@@ -61,6 +61,54 @@
     <Filter Include="utils">
       <UniqueIdentifier>{2a5822da-dfaf-4335-8d84-81453c68198b}</UniqueIdentifier>
     </Filter>
+    <Filter Include="shader\hlsl\gpudriven">
+      <UniqueIdentifier>{6bcfc77e-30fb-443f-a4b9-fe894bf78635}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="shader\hlsl\visibility">
+      <UniqueIdentifier>{8d381a01-f6b8-49f8-a0b4-5b0261c758d6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="resources">
+      <UniqueIdentifier>{846f31c0-2e58-4477-8af6-4780a92a2683}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="configuration">
+      <UniqueIdentifier>{fcbd72f2-4891-4b95-ac51-6a59ed2a0d08}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="procedural">
+      <UniqueIdentifier>{a898f62f-b0b9-4196-8d3b-e68fcde44685}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="shader\hlsl\atmosphere">
+      <UniqueIdentifier>{3ef0c69b-4441-4065-a32c-a35498085353}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="rendering\gpuscene">
+      <UniqueIdentifier>{ab9db7d1-fabc-4824-9feb-b3684b6ed686}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="shader\hlsl\gpuscene">
+      <UniqueIdentifier>{6f471bfb-4e5b-4629-8a51-5cf723727b37}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="rendering\gpudriven">
+      <UniqueIdentifier>{aa135596-6462-4bcb-b767-0e4f32a98e23}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="rendering\meshlets">
+      <UniqueIdentifier>{6fc3250a-3561-4302-83e3-b1bf8840f900}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="rendering\meshshader">
+      <UniqueIdentifier>{bfc77c32-4deb-4110-b1d5-f72247370fc2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="rendering\visibility">
+      <UniqueIdentifier>{c10deaa7-cba0-48e8-82ec-899bc007258c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="rendering\cloud">
+      <UniqueIdentifier>{0b47ce54-e4c3-4e97-afba-01fbae3d5449}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="shader\hlsl\clouds">
+      <UniqueIdentifier>{a2a90c77-1948-46fd-817c-53e10f13ec53}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="External\jsoncpp">
+      <UniqueIdentifier>{ece184a3-c8b3-4899-8058-3e8f64ff090a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="shader\hlsl\virtualgeometry">
+      <UniqueIdentifier>{2705ad98-8ccd-4175-aa94-c0db65a90de3}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="External\ImGUI\imgui.cpp">
@@ -156,7 +204,9 @@
     <ClCompile Include="source\systems\lightsystem.cpp">
       <Filter>systems</Filter>
     </ClCompile>
-    <ClCompile Include="source\main.cpp" />
+    <ClCompile Include="source\main.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
     <ClCompile Include="source\models\modelmanager.cpp">
       <Filter>models</Filter>
     </ClCompile>
@@ -172,7 +222,9 @@
     <ClCompile Include="source\rendering\shaderpaths.cpp">
       <Filter>rendering</Filter>
     </ClCompile>
-    <ClCompile Include="source\pch.cpp" />
+    <ClCompile Include="source\pch.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
     <ClCompile Include="source\entities\polygon.cpp">
       <Filter>entities</Filter>
     </ClCompile>
@@ -415,7 +467,9 @@
     <ClInclude Include="source\entities\cube.h">
       <Filter>entities</Filter>
     </ClInclude>
-    <ClInclude Include="source\d3dx12.h" />
+    <ClInclude Include="source\d3dx12.h">
+      <Filter>utils</Filter>
+    </ClInclude>
     <ClInclude Include="source\ecs\ecs.h">
       <Filter>ecs</Filter>
     </ClInclude>
@@ -437,7 +491,9 @@
     <ClInclude Include="source\systems\lightsystem.h">
       <Filter>systems</Filter>
     </ClInclude>
-    <ClInclude Include="source\main.h" />
+    <ClInclude Include="source\main.h">
+      <Filter>core</Filter>
+    </ClInclude>
     <ClInclude Include="source\models\materialpartresolver.h">
       <Filter>models</Filter>
     </ClInclude>
@@ -459,7 +515,9 @@
     <ClInclude Include="source\rendering\shaderpaths.h">
       <Filter>rendering</Filter>
     </ClInclude>
-    <ClInclude Include="source\pch.h" />
+    <ClInclude Include="source\pch.h">
+      <Filter>core</Filter>
+    </ClInclude>
     <ClInclude Include="source\entities\polygon.h">
       <Filter>entities</Filter>
     </ClInclude>
@@ -577,7 +635,9 @@
     <ClInclude Include="source\editor\imguimanager.h">
       <Filter>editor</Filter>
     </ClInclude>
-    <ClInclude Include="source\resource.h" />
+    <ClInclude Include="source\resource.h">
+      <Filter>resources</Filter>
+    </ClInclude>
     <ClInclude Include="External\ImGUI\imgui.h">
       <Filter>External\ImGUI</Filter>
     </ClInclude>
@@ -608,7 +668,9 @@
     <ClInclude Include="source\entities\xbot.h">
       <Filter>entities</Filter>
     </ClInclude>
-    <ClInclude Include="source\dxccompiler.h" />
+    <ClInclude Include="source\dxccompiler.h">
+      <Filter>utils</Filter>
+    </ClInclude>
     <ClInclude Include="source\editor\editorwidgets.h">
       <Filter>editor</Filter>
     </ClInclude>
@@ -720,7 +782,7 @@
       <Filter>shader\hlsl</Filter>
     </FxCompile>
     <FxCompile Include="shader\hlsl\GpuDrivenCullCS.hlsl">
-      <Filter>shader\hlsl</Filter>
+      <Filter>shader\hlsl\gpudriven</Filter>
     </FxCompile>
     <FxCompile Include="shader\hlsl\modellighingspeculerPS.hlsl">
       <Filter>shader\hlsl</Filter>
@@ -822,10 +884,10 @@
       <Filter>shader\hlsl</Filter>
     </FxCompile>
     <FxCompile Include="shader\hlsl\HiZCopyCS.hlsl">
-      <Filter>shader\hlsl</Filter>
+      <Filter>shader\hlsl\visibility</Filter>
     </FxCompile>
     <FxCompile Include="shader\hlsl\HiZReduceCS.hlsl">
-      <Filter>shader\hlsl</Filter>
+      <Filter>shader\hlsl\visibility</Filter>
     </FxCompile>
     <FxCompile Include="External\NVIDIAImageScaling\NIS_Main.hlsl">
       <Filter>External\NVIDIAImageScaling</Filter>
@@ -856,7 +918,9 @@
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="packages.config" />
+    <None Include="packages.config">
+      <Filter>configuration</Filter>
+    </None>
     <None Include="shader\hlsl\MeshVisibility.hlsl">
       <Filter>shader\hlsl</Filter>
     </None>
@@ -865,117 +929,129 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="source\app.rc" />
+    <ResourceCompile Include="source\app.rc">
+      <Filter>resources</Filter>
+    </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
-    <Filter Include="source\procedural" />
+    <Filter Include="source\procedural">
+      <Filter>core</Filter>
+    </Filter>
     <ClCompile Include="source\editor\editorprocedural.cpp">
-      <Filter>source\editor</Filter>
+      <Filter>editor</Filter>
     </ClCompile>
     <ClInclude Include="source\procedural\proceduralcomponents.h">
-      <Filter>source\procedural</Filter>
+      <Filter>procedural</Filter>
     </ClInclude>
     <ClCompile Include="source\procedural\proceduralmath.cpp">
-      <Filter>source\procedural</Filter>
+      <Filter>procedural</Filter>
     </ClCompile>
     <ClInclude Include="source\procedural\proceduralmath.h">
-      <Filter>source\procedural</Filter>
+      <Filter>procedural</Filter>
     </ClInclude>
     <ClCompile Include="source\procedural\proceduralscene.cpp">
-      <Filter>source\procedural</Filter>
+      <Filter>procedural</Filter>
     </ClCompile>
     <ClCompile Include="source\procedural\vertexdeformation.cpp">
-      <Filter>source\procedural</Filter>
+      <Filter>procedural</Filter>
     </ClCompile>
     <ClInclude Include="source\procedural\vertexdeformation.h">
-      <Filter>source\procedural</Filter>
+      <Filter>procedural</Filter>
     </ClInclude>
     <ClCompile Include="source\procedural\vertexdeformationmath.cpp">
-      <Filter>source\procedural</Filter>
+      <Filter>procedural</Filter>
     </ClCompile>
     <ClInclude Include="source\procedural\vertexdeformationmath.h">
-      <Filter>source\procedural</Filter>
+      <Filter>procedural</Filter>
     </ClInclude>
     <ClCompile Include="source\procedural\terrainediting.cpp">
-      <Filter>source\procedural</Filter>
+      <Filter>procedural</Filter>
     </ClCompile>
     <ClInclude Include="source\procedural\terrainediting.h">
-      <Filter>source\procedural</Filter>
+      <Filter>procedural</Filter>
     </ClInclude>
     <ClInclude Include="source\procedural\proceduralscene.h">
-      <Filter>source\procedural</Filter>
+      <Filter>procedural</Filter>
     </ClInclude>
     <ClCompile Include="source\rendering\raytracing.cpp">
-      <Filter>source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClCompile>
     <ClCompile Include="source\rendering\nrddenoiser.cpp">
-      <Filter>source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClCompile>
     <ClInclude Include="source\rendering\nrddenoiser.h">
-      <Filter>source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClInclude>
     <ClCompile Include="source\rendering\rayreflections.cpp">
-      <Filter>source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClCompile>
     <ClInclude Include="source\rendering\rayreflections.h">
-      <Filter>source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClInclude>
     <ClInclude Include="source\rendering\raytracing.h">
-      <Filter>source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClInclude>
     <ClCompile Include="source\rendering\raytracingscene.cpp">
-      <Filter>source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClCompile>
     <ClInclude Include="source\rendering\raytracingscene.h">
-      <Filter>source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClInclude>
     <ClCompile Include="source\scene\daynightcycle.cpp">
-      <Filter>source\scene</Filter>
+      <Filter>scene</Filter>
     </ClCompile>
     <ClInclude Include="source\scene\daynightcycle.h">
-      <Filter>source\scene</Filter>
+      <Filter>scene</Filter>
     </ClInclude>
     <ClInclude Include="source\scene\solarcycle.h">
-      <Filter>source\scene</Filter>
+      <Filter>scene</Filter>
     </ClInclude>
     <ClCompile Include="source\systems\proceduralsystem.cpp">
-      <Filter>source\systems</Filter>
+      <Filter>systems</Filter>
     </ClCompile>
     <ClInclude Include="source\systems\proceduralsystem.h">
-      <Filter>source\systems</Filter>
+      <Filter>systems</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\core\renderingvalidation.cpp">
-      <Filter>source\core</Filter>
+      <Filter>core</Filter>
     </ClCompile>
     <ClInclude Include="source\core\renderingvalidation.h">
-      <Filter>source\core</Filter>
+      <Filter>core</Filter>
     </ClInclude>
     <ClCompile Include="source\rendering\rendercapture.cpp">
-      <Filter>source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClCompile>
     <ClInclude Include="source\rendering\rendercapture.h">
-      <Filter>source\rendering</Filter>
+      <Filter>rendering</Filter>
     </ClInclude>
     <ClCompile Include="source\scene\simulationconfiguration.cpp">
-      <Filter>source\scene</Filter>
+      <Filter>scene</Filter>
     </ClCompile>
     <ClInclude Include="source\scene\simulationconfiguration.h">
-      <Filter>source\scene</Filter>
+      <Filter>scene</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="source\rendering\dlssupscaler.cpp" />
+    <ClCompile Include="source\rendering\dlssupscaler.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="source\rendering\dlssupscaler.h" />
+    <ClInclude Include="source\rendering\dlssupscaler.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <None Include="shader\hlsl\DlssPrepareCS.hlsl" />
+    <None Include="shader\hlsl\DlssPrepareCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
-    <Filter Include="virtualgeometry"><UniqueIdentifier>{df8c0a62-a668-479f-b760-3e681c1f7b94}</UniqueIdentifier></Filter>
+    <Filter Include="virtualgeometry">
+      <UniqueIdentifier>{df8c0a62-a668-479f-b760-3e681c1f7b94}</UniqueIdentifier>
+    </Filter>
     <ClCompile Include="source\virtualgeometry\virtualgeometrybuilder.cpp">
       <Filter>virtualgeometry</Filter>
     </ClCompile>
@@ -994,8 +1070,12 @@
     <ClCompile Include="source\virtualgeometry\virtualgeometryserializer.cpp">
       <Filter>virtualgeometry</Filter>
     </ClCompile>
-    <ClCompile Include="source\virtualgeometry\virtualgeometryimport.cpp"><Filter>virtualgeometry</Filter></ClCompile>
-    <ClCompile Include="source\virtualgeometry\virtualgeometryproduction.cpp"><Filter>virtualgeometry</Filter></ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryimport.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryproduction.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
     <ClCompile Include="source\virtualgeometry\virtualgeometrystaticmesh.cpp">
       <Filter>virtualgeometry</Filter>
     </ClCompile>
@@ -1023,8 +1103,12 @@
     <ClInclude Include="source\virtualgeometry\virtualgeometrybuilder.h">
       <Filter>virtualgeometry</Filter>
     </ClInclude>
-    <ClInclude Include="source\virtualgeometry\virtualgeometryimport.h"><Filter>virtualgeometry</Filter></ClInclude>
-    <ClInclude Include="source\virtualgeometry\virtualgeometryproduction.h"><Filter>virtualgeometry</Filter></ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryimport.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryproduction.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
     <ClInclude Include="source\virtualgeometry\virtualgeometryconfig.h">
       <Filter>virtualgeometry</Filter>
     </ClInclude>
@@ -1048,106 +1132,392 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="source\rendering\gpuscene\gpuscene.h" />
-    <ClInclude Include="source\rendering\gpuscene\gpuscenebuffer.h" />
-    <ClInclude Include="source\rendering\gpuscene\gpuscenechanges.h" />
-    <ClInclude Include="source\rendering\gpuscene\gpusceneslots.h" />
-    <ClInclude Include="source\rendering\gpuscene\gpuscenetypes.h" />
-    <ClCompile Include="source\rendering\gpuscene\gpuscene.cpp" />
-    <ClCompile Include="source\rendering\gpuscene\gpuscenebuffer.cpp" />
-    <ClInclude Include="shader\hlsl\GpuSceneCommon.hlsli" />
-    <FxCompile Include="shader\hlsl\GpuSceneCullCS.hlsl" />
+    <ClInclude Include="source\rendering\gpuscene\gpuscene.h">
+      <Filter>rendering\gpuscene</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\gpuscene\gpuscenebuffer.h">
+      <Filter>rendering\gpuscene</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\gpuscene\gpuscenechanges.h">
+      <Filter>rendering\gpuscene</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\gpuscene\gpusceneslots.h">
+      <Filter>rendering\gpuscene</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\gpuscene\gpuscenetypes.h">
+      <Filter>rendering\gpuscene</Filter>
+    </ClInclude>
+    <ClCompile Include="source\rendering\gpuscene\gpuscene.cpp">
+      <Filter>rendering\gpuscene</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\gpuscene\gpuscenebuffer.cpp">
+      <Filter>rendering\gpuscene</Filter>
+    </ClCompile>
+    <ClInclude Include="shader\hlsl\GpuSceneCommon.hlsli">
+      <Filter>shader\hlsl\gpuscene</Filter>
+    </ClInclude>
+    <FxCompile Include="shader\hlsl\GpuSceneCullCS.hlsl">
+      <Filter>shader\hlsl\gpuscene</Filter>
+    </FxCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="source\rendering\gpuscene\gpusceneculling.h" />
-    <ClCompile Include="source\rendering\gpuscene\gpusceneculling.cpp" />
+    <ClInclude Include="source\rendering\gpuscene\gpusceneculling.h">
+      <Filter>rendering\gpuscene</Filter>
+    </ClInclude>
+    <ClCompile Include="source\rendering\gpuscene\gpusceneculling.cpp">
+      <Filter>rendering\gpuscene</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="source\rendering\gpuscene\gpuscenevalidation.h" />
-    <ClCompile Include="source\rendering\gpuscene\gpuscenevalidation.cpp" />
+    <ClInclude Include="source\rendering\gpuscene\gpuscenevalidation.h">
+      <Filter>rendering\gpuscene</Filter>
+    </ClInclude>
+    <ClCompile Include="source\rendering\gpuscene\gpuscenevalidation.cpp">
+      <Filter>rendering\gpuscene</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="source\rendering\gpudriven\indirectcommand.h" />
-    <ClInclude Include="source\rendering\gpudriven\gpudrivenrenderer.h" />
-    <ClInclude Include="source\rendering\gpudriven\gpudrivenvalidation.h" />
-    <ClCompile Include="source\rendering\gpudriven\gpudrivenrenderer.cpp" />
-    <ClCompile Include="source\rendering\gpudriven\gpudrivenvalidation.cpp" />
-    <ClInclude Include="shader\hlsl\GPUDrivenOpaque.hlsli" />
-    <FxCompile Include="shader\hlsl\GPUDrivenResetCS.hlsl" />
-    <FxCompile Include="shader\hlsl\GPUDrivenCompactCS.hlsl" />
-    <FxCompile Include="shader\hlsl\GenerateIndirectCommandsCS.hlsl" />
-    <FxCompile Include="shader\hlsl\GPUDrivenOpaqueVS.hlsl" />
-    <FxCompile Include="shader\hlsl\GPUDrivenOpaquePS.hlsl" />
+    <ClInclude Include="source\rendering\gpudriven\indirectcommand.h">
+      <Filter>rendering\gpudriven</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\gpudriven\gpudrivenrenderer.h">
+      <Filter>rendering\gpudriven</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\gpudriven\gpudrivenvalidation.h">
+      <Filter>rendering\gpudriven</Filter>
+    </ClInclude>
+    <ClCompile Include="source\rendering\gpudriven\gpudrivenrenderer.cpp">
+      <Filter>rendering\gpudriven</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\gpudriven\gpudrivenvalidation.cpp">
+      <Filter>rendering\gpudriven</Filter>
+    </ClCompile>
+    <ClInclude Include="shader\hlsl\GPUDrivenOpaque.hlsli">
+      <Filter>shader\hlsl\gpudriven</Filter>
+    </ClInclude>
+    <FxCompile Include="shader\hlsl\GPUDrivenResetCS.hlsl">
+      <Filter>shader\hlsl\gpudriven</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GPUDrivenCompactCS.hlsl">
+      <Filter>shader\hlsl\gpudriven</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GenerateIndirectCommandsCS.hlsl">
+      <Filter>shader\hlsl\gpudriven</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GPUDrivenOpaqueVS.hlsl">
+      <Filter>shader\hlsl\gpudriven</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GPUDrivenOpaquePS.hlsl">
+      <Filter>shader\hlsl\gpudriven</Filter>
+    </FxCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="source\virtualgeometry\virtualgeometryruntime.h" />
-    <ClInclude Include="source\virtualgeometry\virtualgeometryselection.h" />
-    <ClInclude Include="source\virtualgeometry\virtualgeometrygpu.h" />
-    <ClInclude Include="source\virtualgeometry\virtualgeometryresources.h" />
-    <ClInclude Include="source\virtualgeometry\virtualgeometrytraversal.h" />
-    <ClInclude Include="source\virtualgeometry\virtualgeometrytemporal.h" />
-    <ClInclude Include="source\virtualgeometry\virtualgeometrybinning.h" />
-    <ClCompile Include="source\virtualgeometry\virtualgeometrybinning.cpp" />
-    <ClInclude Include="source\virtualgeometry\virtualgeometrydebug.h" />
-    <ClCompile Include="source\virtualgeometry\virtualgeometryruntime.cpp" />
-    <ClCompile Include="source\virtualgeometry\virtualgeometryselection.cpp" />
-    <ClCompile Include="source\virtualgeometry\virtualgeometrygpu.cpp" />
-    <ClCompile Include="source\virtualgeometry\virtualgeometryresources.cpp" />
-    <ClCompile Include="source\virtualgeometry\virtualgeometrytraversal.cpp" />
-    <ClCompile Include="source\virtualgeometry\virtualgeometryvalidation.cpp" />
-    <ClInclude Include="source\virtualgeometry\virtualgeometryvalidation.h" />
-    <ClCompile Include="source\virtualgeometry\virtualgeometrydebug.cpp" />
+    <ClInclude Include="source\virtualgeometry\virtualgeometryruntime.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryselection.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrygpu.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryresources.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrytraversal.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrytemporal.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrybinning.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrybinning.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrydebug.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryruntime.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryselection.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrygpu.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryresources.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrytraversal.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryvalidation.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryvalidation.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrydebug.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="source\rendering\cloud\cloudrenderer.cpp"><Filter>rendering</Filter></ClCompile>
-    <ClCompile Include="source\rendering\cloud\cloudvalidation.cpp"><Filter>rendering</Filter></ClCompile>
-    <ClInclude Include="source\rendering\cloud\cloudrenderer.h"><Filter>rendering</Filter></ClInclude>
-    <ClInclude Include="source\rendering\cloud\cloudsettings.h"><Filter>rendering</Filter></ClInclude>
-    <ClInclude Include="source\rendering\cloud\cloudvalidation.h"><Filter>rendering</Filter></ClInclude>
-    <None Include="shader\hlsl\CloudCommon.hlsli" />
-    <None Include="shader\hlsl\CloudNoise.hlsli" />
-    <FxCompile Include="shader\hlsl\GenerateCloudBaseNoiseCS.hlsl" />
-    <FxCompile Include="shader\hlsl\GenerateCloudDetailNoiseCS.hlsl" />
-    <FxCompile Include="shader\hlsl\CloudRaymarchPS.hlsl" />
-    <FxCompile Include="shader\hlsl\CloudCompositePS.hlsl" />
+    <ClCompile Include="source\rendering\cloud\cloudrenderer.cpp">
+      <Filter>rendering\cloud</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\cloud\cloudvalidation.cpp">
+      <Filter>rendering\cloud</Filter>
+    </ClCompile>
+    <ClInclude Include="source\rendering\cloud\cloudrenderer.h">
+      <Filter>rendering\cloud</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\cloud\cloudsettings.h">
+      <Filter>rendering\cloud</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\cloud\cloudvalidation.h">
+      <Filter>rendering\cloud</Filter>
+    </ClInclude>
+    <None Include="shader\hlsl\CloudCommon.hlsli">
+      <Filter>shader\hlsl\clouds</Filter>
+    </None>
+    <None Include="shader\hlsl\CloudNoise.hlsli">
+      <Filter>shader\hlsl\clouds</Filter>
+    </None>
+    <FxCompile Include="shader\hlsl\GenerateCloudBaseNoiseCS.hlsl">
+      <Filter>shader\hlsl\clouds</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GenerateCloudDetailNoiseCS.hlsl">
+      <Filter>shader\hlsl\clouds</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\CloudRaymarchPS.hlsl">
+      <Filter>shader\hlsl\clouds</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\CloudCompositePS.hlsl">
+      <Filter>shader\hlsl\clouds</Filter>
+    </FxCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="source\assets\thumbnailcache.cpp" />
-    <ClCompile Include="source\core\thumbnailvalidation.cpp" />
-    <ClInclude Include="source\core\thumbnailvalidation.h" />
-    <ClCompile Include="source\editor\assetthumbnailmanager.cpp" />
-    <ClCompile Include="source\rendering\editordescriptors.cpp" />
-    <ClCompile Include="source\rendering\thumbnailrenderer.cpp" />
-    <ClInclude Include="source\assets\thumbnailcache.h" />
-    <ClInclude Include="source\assets\thumbnailgeometry.h" />
-    <ClInclude Include="source\editor\assetthumbnailmanager.h" />
-    <ClInclude Include="source\rendering\editordescriptorpool.h" />
-    <ClInclude Include="source\rendering\editordescriptors.h" />
-    <ClInclude Include="source\rendering\thumbnailrenderer.h" />
-    <ClInclude Include="source\rendering\thumbnailpreviewcontext.h" />
-    <ClInclude Include="source\rendering\thumbnailmeshio.h" />
+    <ClCompile Include="source\assets\thumbnailcache.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClCompile Include="source\core\thumbnailvalidation.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClInclude Include="source\core\thumbnailvalidation.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClCompile Include="source\editor\assetthumbnailmanager.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\editordescriptors.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\thumbnailrenderer.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClInclude Include="source\assets\thumbnailcache.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="source\assets\thumbnailgeometry.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\assetthumbnailmanager.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\editordescriptorpool.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\editordescriptors.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\thumbnailrenderer.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\thumbnailpreviewcontext.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\thumbnailmeshio.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="source\virtualgeometry\virtualgeometrypages.cpp"><Filter>virtualgeometry</Filter></ClCompile>
-    <ClInclude Include="source\virtualgeometry\virtualgeometrypages.h"><Filter>virtualgeometry</Filter></ClInclude>
-    <ClCompile Include="source\virtualgeometry\virtualgeometrycompression.cpp"><Filter>virtualgeometry</Filter></ClCompile>
-    <ClInclude Include="source\virtualgeometry\virtualgeometrycompression.h"><Filter>virtualgeometry</Filter></ClInclude>
-    <None Include="shader\hlsl\VGGeometryDecode.hlsli" />
-    <ClCompile Include="source\virtualgeometry\virtualgeometrypagecache.cpp"><Filter>virtualgeometry</Filter></ClCompile>
-    <ClInclude Include="source\virtualgeometry\virtualgeometrypagecache.h"><Filter>virtualgeometry</Filter></ClInclude>
-    <ClCompile Include="source\virtualgeometry\virtualgeometryresidency.cpp"><Filter>virtualgeometry</Filter></ClCompile>
-    <ClInclude Include="source\virtualgeometry\virtualgeometryresidency.h"><Filter>virtualgeometry</Filter></ClInclude>
-    <ClCompile Include="source\virtualgeometry\virtualgeometrypageio.cpp"><Filter>virtualgeometry</Filter></ClCompile>
-    <ClInclude Include="source\virtualgeometry\virtualgeometrypageio.h"><Filter>virtualgeometry</Filter></ClInclude>
-    <ClCompile Include="source\virtualgeometry\virtualgeometrypagepool.cpp"><Filter>virtualgeometry</Filter></ClCompile>
-    <ClInclude Include="source\virtualgeometry\virtualgeometrypagepool.h"><Filter>virtualgeometry</Filter></ClInclude>
-    <ClCompile Include="source\virtualgeometry\virtualgeometrystreaming.cpp"><Filter>virtualgeometry</Filter></ClCompile>
-    <ClInclude Include="source\virtualgeometry\virtualgeometrystreaming.h"><Filter>virtualgeometry</Filter></ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypages.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypages.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrycompression.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrycompression.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <None Include="shader\hlsl\VGGeometryDecode.hlsli">
+      <Filter>shader\hlsl\virtualgeometry</Filter>
+    </None>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypagecache.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypagecache.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometryresidency.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometryresidency.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypageio.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypageio.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypagepool.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypagepool.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrystreaming.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrystreaming.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="source\virtualgeometry\virtualgeometrypagestress.cpp"><Filter>virtualgeometry</Filter></ClCompile>
-    <ClInclude Include="source\virtualgeometry\virtualgeometrypagestress.h"><Filter>virtualgeometry</Filter></ClInclude>
-    <ClCompile Include="source\virtualgeometry\virtualgeometrystreamingvalidation.cpp"><Filter>virtualgeometry</Filter></ClCompile>
-    <ClInclude Include="source\virtualgeometry\virtualgeometrystreamingvalidation.h"><Filter>virtualgeometry</Filter></ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrypagestress.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrypagestress.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+    <ClCompile Include="source\virtualgeometry\virtualgeometrystreamingvalidation.cpp">
+      <Filter>virtualgeometry</Filter>
+    </ClCompile>
+    <ClInclude Include="source\virtualgeometry\virtualgeometrystreamingvalidation.h">
+      <Filter>virtualgeometry</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="shader\hlsl\ShadowTransmissionPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\ShadowMapPS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </FxCompile>
+    <ClCompile Include="source\rendering\transmittanceshadows.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <None Include="shader\hlsl\VertexDeformationCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </None>
+    <None Include="shader\hlsl\RaytracingCS.hlsl">
+      <Filter>shader\hlsl</Filter>
+    </None>
+    <None Include="shader\hlsl\SkyAtmosphere.hlsli">
+      <Filter>shader\hlsl\atmosphere</Filter>
+    </None>
+    <None Include="shader\hlsl\CelestialLighting.hlsli">
+      <Filter>shader\hlsl\atmosphere</Filter>
+    </None>
+    <ClCompile Include="source\rendering\meshlets\meshletbuilder.cpp">
+      <Filter>rendering\meshlets</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\meshlets\meshletvalidation.cpp">
+      <Filter>rendering\meshlets</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\meshlets\meshletmanager.cpp">
+      <Filter>rendering\meshlets</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\meshshader\meshshaderrenderer.cpp">
+      <Filter>rendering\meshshader</Filter>
+    </ClCompile>
+    <ClInclude Include="source\rendering\visibility\visibilitytypes.h">
+      <Filter>rendering\visibility</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\visibility\gpuvisibility.h">
+      <Filter>rendering\visibility</Filter>
+    </ClInclude>
+    <ClCompile Include="source\rendering\visibility\gpuvisibility.cpp">
+      <Filter>rendering\visibility</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\visibility\gpuvisibilityvalidation.cpp">
+      <Filter>rendering\visibility</Filter>
+    </ClCompile>
+    <ClInclude Include="source\rendering\visibility\gpuvisibilityvalidation.h">
+      <Filter>rendering\visibility</Filter>
+    </ClInclude>
+    <FxCompile Include="shader\hlsl\GPUVisibilityResetCS.hlsl">
+      <Filter>shader\hlsl\visibility</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GPUOcclusionCS.hlsl">
+      <Filter>shader\hlsl\visibility</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GPULODSelectionCS.hlsl">
+      <Filter>shader\hlsl\visibility</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\GPUOccluderPS.hlsl">
+      <Filter>shader\hlsl\visibility</Filter>
+    </FxCompile>
+    <FxCompile Include="shader\hlsl\HiZDebugCS.hlsl">
+      <Filter>shader\hlsl\visibility</Filter>
+    </FxCompile>
+    <ClInclude Include="shader\hlsl\GPUVisibilityCommon.hlsli">
+      <Filter>shader\hlsl\visibility</Filter>
+    </ClInclude>
+    <None Include="shader\hlsl\CloudMedium.hlsli">
+      <Filter>shader\hlsl\clouds</Filter>
+    </None>
+    <ClCompile Include="source\assets\materialasset.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClInclude Include="source\assets\materialasset.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClCompile Include="source\assets\assetregistry.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClInclude Include="source\assets\assetregistry.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClCompile Include="source\assets\materialmanager.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
+    <ClInclude Include="source\assets\materialmanager.h">
+      <Filter>assets</Filter>
+    </ClInclude>
+    <ClCompile Include="External\RTXNS\external\donut\thirdparty\jsoncpp\src\lib_json\json_reader.cpp">
+      <Filter>External\jsoncpp</Filter>
+    </ClCompile>
+    <ClCompile Include="External\RTXNS\external\donut\thirdparty\jsoncpp\src\lib_json\json_value.cpp">
+      <Filter>External\jsoncpp</Filter>
+    </ClCompile>
+    <ClCompile Include="External\RTXNS\external\donut\thirdparty\jsoncpp\src\lib_json\json_writer.cpp">
+      <Filter>External\jsoncpp</Filter>
+    </ClCompile>
+    <ClCompile Include="source\editor\editormaterialassets.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rendering\materialpreview.cpp">
+      <Filter>rendering</Filter>
+    </ClCompile>
+    <ClInclude Include="source\rendering\materialpreview.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClCompile Include="source\core\materialvalidation.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClInclude Include="source\core\materialvalidation.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClCompile Include="source\assets\materialscenereferences.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

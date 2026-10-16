@@ -5,6 +5,7 @@
 #include "graphicsdevice.h"
 #include "graphicslog.h"
 #include "gpuscene/gpuscene.h"
+#include "gpudriven/gpudrivenrenderer.h"
 #include "visibility/gpuvisibility.h"
 #include <unordered_set>
 #include <sstream>

@@ -1,0 +1,20 @@
+{
+	"builder" : 4,
+	"compression" : 1,
+	"convert" : true,
+	"dependencies" : 
+	[
+		"2470344425674264903"
+	],
+	"meshes" : 
+	[
+		{
+			"material" : "base",
+			"name" : "base",
+			"part" : 1.0,
+			"path" : "asset/virtualgeometry-cache/8bf66c178d06ca4d.vgmesh.13698979436625670510.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\kacchatta_hone\\kacchatta_hone_base.jpg"
+		}
+	],
+	"settings" : "16721141559523799466"
+}

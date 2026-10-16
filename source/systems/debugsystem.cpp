@@ -409,7 +409,6 @@ void DebugSystem::InitDebugLinePso()
 
 void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
-#ifdef _DEBUG
 	if (renderPass == RenderPass::TransparentScene || renderPass == RenderPass::OverlayScene || renderPass == RenderPass::TransmittanceShadow || renderPass == RenderPass::ShadowMap ||
 		renderPass == RenderPass::Velocity || renderPass == RenderPass::OcclusionPhase2)
 	{
@@ -705,6 +704,5 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
 		SubmitDebugLines(pCommandList, lightLines);
 	}
-#endif
 }
 

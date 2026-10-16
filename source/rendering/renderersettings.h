@@ -41,6 +41,7 @@ public:
     // The packed visibility payload has no emission/AO channels. Use production raster
     // GBuffer generation when the scene contains material assets; keep the user's option.
 	static bool GetComputeGBufferEnabled() { return s_ComputeGBufferEnabled && !SceneHasMaterialAssets(); }
+	static bool GetAuthoredComputeGBufferEnabled() { return s_ComputeGBufferEnabled; }
 	static void SetComputeGBufferEnabled(bool value) { SetValue(s_ComputeGBufferEnabled, value); }
 	static bool GetSsaoEnabled() { return s_SsaoEnabled; }
 	static void SetSsaoEnabled(bool value) { SetValue(s_SsaoEnabled, value); }

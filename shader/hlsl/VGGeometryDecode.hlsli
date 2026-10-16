@@ -139,10 +139,10 @@ float4 VGDecodeColor(ByteAddressBuffer buffer, uint base, uint vertex)
     }
     return asfloat(buffer.Load4(address));
 }
-uint3 VGLoadTriangle(ByteAddressBuffer buffer, uint base, uint triangle)
+uint3 VGLoadTriangle(ByteAddressBuffer buffer, uint base, uint triangleIndex)
 {
     uint width = buffer.Load(base + 20u);
-    uint address = base + buffer.Load(base + 24u) + triangle*3u*width;
+    uint address = base + buffer.Load(base + 24u) + triangleIndex*3u*width;
     if (width == 1u)
     {
         return uint3(VGLoadU8(buffer, address), VGLoadU8(buffer, address + 1u), VGLoadU8(buffer, address + 2u));

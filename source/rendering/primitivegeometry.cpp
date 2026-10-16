@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "primitivegeometry.h"
 #include "graphicsdevice.h"
 #include "componentmanager.h"
@@ -113,7 +113,7 @@ namespace
 	}
 
 	template<typename ApplyUvFunc>
-	vector<Vertex> CreateShapeVertices(ShapeType shapeType, float radius, Color color, ApplyUvFunc applyUv)
+	vector<Vertex> CreateShapeVertices(ShapeType shapeType, float radius, Color color, ApplyUvFunc applyUv, int circleSegments = 32)
 	{
 		vector<Vertex> vertices;
 		const XMFLOAT4 vertexColor = GetVertexColor(color);
@@ -133,7 +133,7 @@ namespace
 			return vertices;
 		}
 
-		const int actualSides = GetShapeSideCount(shapeType);
+		const int actualSides = shapeType == ShapeType::CIRCLE ? circleSegments : GetShapeSideCount(shapeType);
 		const float angleStep = (2.0f * XM_PI) / actualSides;
 		const float rotationOffset = 0.0f;
 
@@ -256,6 +256,51 @@ namespace
 		}
 	}
 
+	vector<Vertex> SubdivideFaces(const vector<Vertex>& source, int divisions)
+	{
+		vector<Vertex> result;
+		result.reserve(source.size() * divisions * divisions);
+		for (size_t triangle = 0; triangle < source.size(); triangle += 3)
+		{
+			const Vertex& a = source[triangle];
+			const Vertex& b = source[triangle + 1];
+			const Vertex& c = source[triangle + 2];
+			const auto sample = [&](int row, int column)
+			{
+				const float u = float(row) / divisions;
+				const float v = float(column) / divisions;
+				const float w = 1.0f - u - v;
+				Vertex vertex;
+				vertex.Pos = { a.Pos.x*w + b.Pos.x*u + c.Pos.x*v,
+					a.Pos.y*w + b.Pos.y*u + c.Pos.y*v, a.Pos.z*w + b.Pos.z*u + c.Pos.z*v };
+				vertex.Normal = Normalize({ a.Normal.x*w + b.Normal.x*u + c.Normal.x*v,
+					a.Normal.y*w + b.Normal.y*u + c.Normal.y*v, a.Normal.z*w + b.Normal.z*u + c.Normal.z*v });
+				vertex.Tex = { a.Tex.x*w + b.Tex.x*u + c.Tex.x*v, a.Tex.y*w + b.Tex.y*u + c.Tex.y*v };
+				vertex.Color = { a.Color.x*w + b.Color.x*u + c.Color.x*v,
+					a.Color.y*w + b.Color.y*u + c.Color.y*v,
+					a.Color.z*w + b.Color.z*u + c.Color.z*v,
+					a.Color.w*w + b.Color.w*u + c.Color.w*v };
+				return vertex;
+			};
+			for (int row = 0; row < divisions; ++row)
+			{
+				for (int column = 0; column < divisions - row; ++column)
+				{
+					result.push_back(sample(row, column));
+					result.push_back(sample(row + 1, column));
+					result.push_back(sample(row, column + 1));
+					if (column < divisions - row - 1)
+					{
+						result.push_back(sample(row + 1, column));
+						result.push_back(sample(row + 1, column + 1));
+						result.push_back(sample(row, column + 1));
+					}
+				}
+			}
+		}
+		return result;
+	}
+
 	vector<Vertex> CreateQuadVertices(Color color)
 	{
 		vector<Vertex> vertices;
@@ -271,6 +316,30 @@ namespace
 		const XMFLOAT4 vertexColor = GetVertexColor(color);
 		const float h = 0.5f;
 		AddFace(vertices, vertexColor, { 0.0f, 1.0f, 0.0f }, { -h, 0.0f, -h }, { h, 0.0f, -h }, { h, 0.0f, h }, { -h, 0.0f, h });
+		return vertices;
+	}
+
+	vector<Vertex> CreatePyramidVertices(Color color, int sides)
+	{
+		vector<Vertex> vertices;
+		const auto vertexColor = GetVertexColor(color);
+		const XMFLOAT3 apex = { 0.0f, 0.5f, 0.0f };
+		const XMFLOAT3 center = { 0.0f, -0.5f, 0.0f };
+		for (int side = 0; side < sides; ++side)
+		{
+			const float angle0 = XM_2PI * side / sides;
+			const float angle1 = XM_2PI * (side + 1) / sides;
+			const XMFLOAT3 a = { 0.5f * sinf(angle0), -0.5f, 0.5f * cosf(angle0) };
+			const XMFLOAT3 b = { 0.5f * sinf(angle1), -0.5f, 0.5f * cosf(angle1) };
+			const auto normal = Normalize(Cross(Subtract(a, apex), Subtract(b, apex)));
+			AddTriangle(vertices, { apex, normal, { 0.5f, 0.0f }, vertexColor },
+				{ b, normal, { 1.0f, 1.0f }, vertexColor },
+				{ a, normal, { 0.0f, 1.0f }, vertexColor }, normal);
+			const XMFLOAT3 down = { 0.0f, -1.0f, 0.0f };
+			AddTriangle(vertices, { center, down, { 0.5f, 0.5f }, vertexColor },
+				{ a, down, { a.x + 0.5f, a.z + 0.5f }, vertexColor },
+				{ b, down, { b.x + 0.5f, b.z + 0.5f }, vertexColor }, down);
+		}
 		return vertices;
 	}
 
@@ -290,12 +359,10 @@ namespace
 		return vertices;
 	}
 
-	vector<Vertex> CreateSphereVertices(Color color)
+	vector<Vertex> CreateSphereVertices(Color color, int slices, int stacks)
 	{
 		vector<Vertex> vertices;
 		const XMFLOAT4 vertexColor = GetVertexColor(color);
-		const int stacks = 16;
-		const int slices = 32;
 		const float phiStep = XM_PI / stacks;
 
 		for (int stack = 0; stack < stacks; ++stack)
@@ -306,11 +373,10 @@ namespace
 		return vertices;
 	}
 
-	vector<Vertex> CreateCylinderVertices(Color color, bool includeCaps = true)
+	vector<Vertex> CreateCylinderVertices(Color color, int slices, bool includeCaps = true, bool flatSides = false)
 	{
 		vector<Vertex> vertices;
 		const XMFLOAT4 vertexColor = GetVertexColor(color);
-		const int slices = 32;
 		const float radius = 0.5f;
 		const float halfH = 0.5f;
 		const float thetaStep = (2.0f * XM_PI) / slices;
@@ -327,8 +393,10 @@ namespace
 			const XMFLOAT3 bottom1 = { n1.x * radius, -halfH, n1.z * radius };
 			const XMFLOAT3 sideOut = Normalize({ n0.x + n1.x, 0.0f, n0.z + n1.z });
 
-			AddTriangle(vertices, { top0, n0, { 0.0f, 0.0f }, vertexColor }, { top1, n1, { 1.0f, 0.0f }, vertexColor }, { bottom1, n1, { 1.0f, 1.0f }, vertexColor }, sideOut);
-			AddTriangle(vertices, { top0, n0, { 0.0f, 0.0f }, vertexColor }, { bottom1, n1, { 1.0f, 1.0f }, vertexColor }, { bottom0, n0, { 0.0f, 1.0f }, vertexColor }, sideOut);
+			const XMFLOAT3 normal0 = flatSides ? sideOut : n0;
+			const XMFLOAT3 normal1 = flatSides ? sideOut : n1;
+			AddTriangle(vertices, { top0, normal0, { 0.0f, 0.0f }, vertexColor }, { top1, normal1, { 1.0f, 0.0f }, vertexColor }, { bottom1, normal1, { 1.0f, 1.0f }, vertexColor }, sideOut);
+			AddTriangle(vertices, { top0, normal0, { 0.0f, 0.0f }, vertexColor }, { bottom1, normal1, { 1.0f, 1.0f }, vertexColor }, { bottom0, normal0, { 0.0f, 1.0f }, vertexColor }, sideOut);
 			if (includeCaps)
 			{
 				AddTriangle(vertices, { { 0.0f, halfH, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 0.5f, 0.5f }, vertexColor }, { top0, { 0.0f, 1.0f, 0.0f }, { 0.0f, 1.0f }, vertexColor }, { top1, { 0.0f, 1.0f, 0.0f }, { 1.0f, 1.0f }, vertexColor }, { 0.0f, 1.0f, 0.0f });
@@ -339,12 +407,10 @@ namespace
 		return vertices;
 	}
 
-	vector<Vertex> CreateCapsuleVertices(Color color)
+	vector<Vertex> CreateCapsuleVertices(Color color, int slices, int hemiStacks)
 	{
-		vector<Vertex> vertices = CreateCylinderVertices(color, false);
+		vector<Vertex> vertices = CreateCylinderVertices(color, slices, false);
 		const XMFLOAT4 vertexColor = GetVertexColor(color);
-		const int hemiStacks = 8;
-		const int slices = 32;
 		const float radius = 0.5f;
 		const float topCenterY = 0.5f;
 		const float bottomCenterY = -0.5f;
@@ -437,7 +503,7 @@ void PrimitiveGeometry::CreateSpriteVertex(const VertexResource& vertexstruct)
 	spriteComponent.HasLocalBounds = !vertices.empty();
 }
 
-void PrimitiveGeometry::CreateObjectVertex(const VertexResource& vertexstruct)
+void PrimitiveGeometry::CreateObjectVertex(const VertexResource& vertexstruct, const PrimitiveSettings& settings)
 {
 	if (vertexstruct.entityid >= g_kMAX_ENTITIES) return;
 
@@ -447,7 +513,8 @@ void PrimitiveGeometry::CreateObjectVertex(const VertexResource& vertexstruct)
 		return;
 	}
 
-	auto& meshComponent = ComponentManager::GetComponent<MeshComponent>(vertexstruct.entityid);
+	const int segments = std::clamp(settings.Segments, 3, 128);
+	const int rings = std::clamp(settings.Rings, 2, 64);
 
 	vector<Vertex> vertices;
 	switch (vertexstruct.objectType)
@@ -456,13 +523,13 @@ void PrimitiveGeometry::CreateObjectVertex(const VertexResource& vertexstruct)
 		vertices = CreateCubeVertices(vertexstruct.color);
 		break;
 	case ObjectType::SPHERE:
-		vertices = CreateSphereVertices(vertexstruct.color);
+		vertices = CreateSphereVertices(vertexstruct.color, segments, rings);
 		break;
 	case ObjectType::CAPSULE:
-		vertices = CreateCapsuleVertices(vertexstruct.color);
+		vertices = CreateCapsuleVertices(vertexstruct.color, segments, rings);
 		break;
 	case ObjectType::CYLINDER:
-		vertices = CreateCylinderVertices(vertexstruct.color);
+		vertices = CreateCylinderVertices(vertexstruct.color, segments);
 		break;
 	case ObjectType::PLANE:
 		vertices = CreatePlaneVertices(vertexstruct.color);
@@ -470,12 +537,70 @@ void PrimitiveGeometry::CreateObjectVertex(const VertexResource& vertexstruct)
 	case ObjectType::QUAD:
 		vertices = CreateQuadVertices(vertexstruct.color);
 		break;
+	case ObjectType::CIRCLE:
+	case ObjectType::TRIANGLE:
+		vertices = CreateShapeVertices(vertexstruct.objectType == ObjectType::CIRCLE
+			? ShapeType::CIRCLE : ShapeType::TRIANGLE, 0.5f, vertexstruct.color,
+			[](XMFLOAT2 uv) { return uv; }, segments);
+		break;
+	case ObjectType::CONE:
+		vertices = CreatePyramidVertices(vertexstruct.color, segments);
+		break;
+	case ObjectType::TETRAHEDRON:
+		vertices = CreatePyramidVertices(vertexstruct.color, 3);
+		break;
+	case ObjectType::TRIANGULAR_PRISM:
+		vertices = CreateCylinderVertices(vertexstruct.color, 3, true, true);
+		break;
 	case ObjectType::NONE:
 	default:
 		Debug::Log("ERROR: Unsupported ObjectType in CreateObjectVertex\n");
 		return;
 	}
 
+	const int divisions = std::clamp(settings.FaceDivisions, 1, 16);
+	if (divisions > 1 && (vertexstruct.objectType == ObjectType::CUBE ||
+		vertexstruct.objectType == ObjectType::QUAD || vertexstruct.objectType == ObjectType::PLANE ||
+		vertexstruct.objectType == ObjectType::TRIANGLE || vertexstruct.objectType == ObjectType::TETRAHEDRON ||
+		vertexstruct.objectType == ObjectType::TRIANGULAR_PRISM))
+	{
+		vertices = SubdivideFaces(vertices, divisions);
+	}
+
+	const float radius = std::clamp(settings.Radius, 0.001f, 1000.0f);
+	const float height = std::clamp(settings.Height, 0.001f, 1000.0f);
+	XMFLOAT3 scale = { radius * 2.0f, height, radius * 2.0f };
+	switch (vertexstruct.objectType)
+	{
+	case ObjectType::CIRCLE:
+	case ObjectType::TRIANGLE:
+	case ObjectType::SPHERE:
+		scale.y = radius * 2.0f;
+		break;
+	case ObjectType::CAPSULE:
+		// Height is the straight section; keep both end caps spherical.
+		for (auto& vertex : vertices)
+		{
+			const float center = vertex.Pos.y >= 0.0f ? 0.5f : -0.5f;
+			vertex.Pos.y = (vertex.Pos.y - center) * radius * 2.0f + center * height;
+		}
+		scale.y = 1.0f;
+		break;
+	case ObjectType::CUBE:
+	case ObjectType::QUAD:
+	case ObjectType::PLANE:
+		scale = { std::clamp(settings.Width, 0.001f, 1000.0f), height,
+			std::clamp(settings.Depth, 0.001f, 1000.0f) };
+		break;
+	default:
+		break;
+	}
+	for (auto& vertex : vertices)
+	{
+		vertex.Pos = { vertex.Pos.x * scale.x, vertex.Pos.y * scale.y, vertex.Pos.z * scale.z };
+		if (vertexstruct.objectType != ObjectType::CAPSULE)
+			vertex.Normal = Normalize({ vertex.Normal.x / scale.x, vertex.Normal.y / scale.y, vertex.Normal.z / scale.z });
+	}
 	UploadVertices(vertexstruct.entityid, vertices);
 }
 

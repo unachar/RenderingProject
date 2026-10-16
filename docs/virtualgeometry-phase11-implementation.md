@@ -1,6 +1,6 @@
 # Phase 11: Production Integration
 
-更新: 2026-10-16。Phase 11の統合コードを追加した。ユーザー指示により、C++ビルド、HLSLコンパイル、テスト、アプリ起動、Asset生成の実行、GPU検証、Benchmark採取は行っていない。**Acceptanceの合格やProduction Readyの実証を示す報告ではない。** Phase 9・10の既存ローカル変更は保持した。
+更新: 2026-10-16。Phase 11の統合コードを追加した。その後のコンパイル指示により、Debug / x64のC++ビルド・HLSLコンパイル・リンク成功を確認した。テスト、アプリ起動、Asset生成の実行、GPU検証、Benchmark採取は行っていない。**Acceptanceの合格やProduction Readyの実証を示す報告ではない。** Phase 9・10の既存ローカル変更は保持した。
 
 ## Import・Asset・Entity
 
@@ -47,11 +47,19 @@ Benchmarkは通常操作時の採取と、Readbackを含むValidation実行を�
 
 ## 制約と未確認事項
 
-- 全Acceptanceの合否、コンパイル可否、画面・Shadow・Depth・Motionの一致、100M / 1Bの安定性、D3D12 / GBV error 0、GPU Hang 0、実測性能は未確認。
+- 全Acceptanceの合否、Release構成のコンパイル可否、画面・Shadow・Depth・Motionの一致、100M / 1Bの安定性、D3D12 / GBV error 0、GPU Hang 0、実測性能は未確認。
 - 巨大Datasetそのものの生成と、実測Benchmark Reportの採取は行っていない。追加したのは生成／実行／記録のコードと入口である。
 - Legacy / Shadow fallback用Root proxyはSourceの最高詳細Geometryと同一ではない。Streaming開始時の表示維持と全量Upload回避のための粗いGeometryであり、特にShadow品質は実機で評価する必要がある。
 - 埋め込みTextureや解決できない依存URIでは、永続Indexの高速Importを使わず元のImporterへ戻す。Scene MetadataとLegacy fallback、CPU cacheを含む全体メモリが圧縮payloadと同率で減るとは主張しない。
 - Camera Velocity / Directionから予測位置を作り、現在可視なMesh内の近い将来の詳細PageをGPUでPrefetch要求する。予測は最大128要求／frameで制限し、実要求を先に処理する。実要求が予測要求と重なった場合は優先度を引き上げる。Camera Cutと強制LOD比較では予測を無効化する。画面外Instance全体を先読みするものではない。
-- 今回行う確認はコード・参照・Project登録・差分の静的確認のみ。ユーザーが求める実行検証の省略を、検証成功やPhase 11完了の宣言へ置き換えない。
+- Debug構成のコンパイル成功を、実行検証の成功やPhase 11完了の宣言へ置き換えない。
 
 最終静的確認: `git diff --check` は空白エラーなし。Project / filter XMLとStress定義JSONを読めること、新規C++ 2ファイルのCompile登録が各1件で実体があること、実行scriptの構文診断がないことを確認した。C++ / HLSLのコンパイルと実行を確認したものではない。
+
+追加コンパイル確認: Visual Studio 2026の開発環境で `MSBuild.exe DirectX12.sln /t:Build /p:Configuration=Debug /p:Platform=x64` が終了コード0。HLSL予約語 `triangle` との引数名衝突とMeshletManagerのGPUDrivenRendererヘッダー不足を修正した。PDBマネージャー不一致を回避するため、このビルドの環境変数 `_CL_=/Z7` を使用した。プロジェクト設定は変更していない。警告は残る。ログ: `phase11-compile-debug.log`。アプリは起動していない。
+
+### 後続のウィンドウ拡大不具合修正
+
+上記の未実行記録の後、最大化時の不具合調査のため限定的な実行確認を行った。`RenderConfiguration::Resize` がDepthリソースを再作成してもDepth SRVを更新せず、VirtualGeometryの2段階遮蔽判定で解放済みDepthを読んでGPUが停止していた。Depth再作成時にSRVも更新するよう修正した。
+
+`DX12_STARTUP_SMOKE_FRAMES=140` と `DX12_RESIZE_SMOKE_TEST=1` で起動すると、8 / 40 / 72 / 104フレーム目に1919×677 / 1200×600 / 1920×1080 / 1200×600へ変更する。修正前は1920×1080への変更後に `DXGI_ERROR_DEVICE_HUNG` で中断し、修正後はVirtualGeometry・2段階遮蔽判定・Ray Tracingを有効にした状態で終了コード0、140フレーム完走、Device Removedログ追加なしを確認した。Debug / x64ビルドも成功。ログ: `resize-debug-build.log`、`resize-after-fix.log`。これは共通Resize処理の確認であり、OSの最大化ボタンの直接操作やPhase 11全Acceptanceの検証ではない。

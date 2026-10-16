@@ -72,6 +72,14 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
 	{
 		io.IniFilename = nullptr;
 	}
+	else
+	{
+		error_code error;
+		filesystem::create_directories("Save", error);
+		io.IniFilename = "Save/editor_layout.cfg";
+		if (!filesystem::exists(io.IniFilename, error) && filesystem::exists("imgui.ini", error))
+			ImGui::LoadIniSettingsFromDisk("imgui.ini");
+	}
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 	io.ConfigDockingWithShift = false;
@@ -140,7 +148,6 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
 
 void ImGuiManager::Uninit()
 {
-	SaveProjectSettings();
 	ImGui_ImplDX12_Shutdown();
 	ImGui_ImplWin32_Shutdown();
 	ImGui::DestroyContext();
@@ -234,6 +241,7 @@ void ImGuiManager::Update()
 	DrawSceneViewWindow();
 	PickEntityFromMouse();
 	if (m_ShowHierarchyWindow) DrawHierarchyWindow();
+	DrawPrimitiveSettingsWindow();
 	if (m_ShowInspectorWindow) DrawInspectorWindow();
 	if (m_ShowAssetBrowser) DrawAssetBrowserWindow();
 	if (m_ShowRenderDebugger) DrawRenderDebuggerWindow();
@@ -408,6 +416,13 @@ void ImGuiManager::Update()
 	}
 
 	FinalizeUndoCaptureIfIdle();
+	static double nextSettingsSave = 0.0;
+	if (m_ProjectSettingsLoaded && !ProjectManager::IsPlaying() &&
+		!ImGui::IsAnyItemActive() && ImGui::GetTime() >= nextSettingsSave)
+	{
+		SaveProjectSettings();
+		nextSettingsSave = ImGui::GetTime() + 2.0;
+	}
 }
 void ImGuiManager::DrawSceneEditor()
 {

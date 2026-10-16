@@ -782,6 +782,8 @@ void GPUDrivenRenderer::DrawVelocity(ID3D12GraphicsCommandList* commands)
 }
 
 bool GPUDrivenRenderer::IsEnabled() { return Data().Enabled; }
+bool GPUDrivenRenderer::GetDebugReadback() { return Data().DebugReadback; }
+void GPUDrivenRenderer::SetDebugReadback(bool enabled) { Data().DebugReadback = enabled; }
 const GPUDrivenRenderer::OverflowStatistics& GPUDrivenRenderer::GetOverflowStatistics() { return Data().Overflow; }
 bool GPUDrivenRenderer::IsActive() { return Data().Active; }
 void GPUDrivenRenderer::SetEnabled(bool enabled) { Data().Enabled = enabled; }

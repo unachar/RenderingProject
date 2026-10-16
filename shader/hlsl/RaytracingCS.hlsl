@@ -89,6 +89,13 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
     float ambient = 0;
     float penumbra = 0;
     float ambientDistance = Distances.y;
+    // Only the denoiser consumes hit distances; binary visibility can stop at any hit.
+    bool needsHitDistance = false;
+#if USE_NRD
+    needsHitDistance = Features.z != 0;
+#endif
+    float3 sunTangent = Tangent(SunDirection.xyz);
+    float3 sunBitangent = cross(SunDirection.xyz, sunTangent);
     for (uint sample = 0; sample < ExtentSamples.z; ++sample)
     {
         uint seed = pixel.x + pixel.y * ExtentSamples.x + sample * 9781u + ExtentSamples.w * 104729u;
@@ -97,11 +104,9 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
         float2 disk = float2(cos(angle), sin(angle)) * radius;
         if (Features.x != 0 && SunDirection.w > 0.5f)
         {
-            float3 sunTangent = Tangent(SunDirection.xyz);
-            float3 sunBitangent = cross(SunDirection.xyz, sunTangent);
             float3 direction = normalize(SunDirection.xyz +
                 (sunTangent * disk.x + sunBitangent * disk.y) * Distances.w);
-            float hitDistance = TraceHitDistance(origin, direction, Distances.x, sample == 0);
+            float hitDistance = TraceHitDistance(origin, direction, Distances.x, needsHitDistance && sample == 0);
             shadow += hitDistance >= 65504.0f ? 1.0f : 0.0f;
 #if USE_NRD
             // SIGMA takes the penumbra of one stochastic ray, never averaged binary visibility.
@@ -117,7 +122,7 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
         if (Features.y != 0)
         {
             float3 direction = tangent * disk.x + bitangent * disk.y + normal * sqrt(1.0f - radius * radius);
-            float hitDistance = TraceHitDistance(origin, direction, Distances.y, sample == 0, 0x02);
+            float hitDistance = TraceHitDistance(origin, direction, Distances.y, needsHitDistance && sample == 0, 0x02);
             ambient += hitDistance >= 65504.0f ? 1.0f : 0.0f;
             if (sample == 0) ambientDistance = min(hitDistance, Distances.y);
         }
