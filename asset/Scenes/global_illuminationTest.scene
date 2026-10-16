@@ -2785,7 +2785,7 @@
         "direction" : 
         [
           0.689999998,
-          0.150000006,
+          -1.0,
           1.0
         ],
         "drawDebug" : true,
@@ -2795,8 +2795,8 @@
         "position" : 
         [
           1.83638918,
-          5.40874624,
-          0.103943557
+          4.65628624,
+          1.16462231
         ],
         "priority" : 0.0,
         "range" : 18.7000008,
@@ -2814,8 +2814,8 @@
         "position" : 
         [
           1.83638918,
-          5.40874624,
-          0.103943557
+          4.65628624,
+          1.16462231
         ],
         "rotation" : 
         [
@@ -3507,8 +3507,8 @@
         "position" : 
         [
           5.01714134,
-          5.324296,
-          3.88750219
+          0.539444566,
+          5.07654715
         ],
         "rotation" : 
         [
@@ -6376,6 +6376,699 @@
         "rimStrength" : 0.449999988,
         "rimThreshold" : 0.699999988,
         "roughness" : 0.5,
+        "sceneIdentity" : "guid:892ab190070c0e74",
+        "shaderClass" : 11,
+        "shaderClassMode" : 1,
+        "shadowCutoff" : 0.5,
+        "shadowMode" : 4,
+        "shadowSoftness" : 0.0450000018,
+        "shadowStrength" : 1.0,
+        "shadowThreshold" : 0.439999998,
+        "skinBacklightStrength" : 1.0,
+        "skinOilSpecularStrength" : 1.0,
+        "skinRimScatterStrength" : 1.0,
+        "skinScatterStrength" : 1.0,
+        "skinScatterWrap" : 0.419999987,
+        "skinShadowScatter" : 0.540000021,
+        "slots" : 
+        [
+          "guid:5089e9331030ef98"
+        ],
+        "specularStrength" : 0.349999994,
+        "specularThreshold" : 0.349999994,
+        "texture" : "",
+        "thickness" : 0.100000001,
+        "toonOutlineMode" : 0,
+        "toonOutlineScreenWidth" : 3.0,
+        "toonOutlineTeoWidthScale" : 1.0,
+        "toonOutlineWidth" : 0.0350000001,
+        "toonOutlineWidthMode" : 0,
+        "toonTeoMode" : 0,
+        "transmission" : 0.980000019,
+        "transmissionRoughness" : 0.0199999996,
+        "transparent" : false,
+        "useTexture" : false
+      },
+      "mesh" : 
+      {
+        "environment" : false,
+        "primitive" : 1,
+        "primitiveColor" : 1,
+        "primitiveDepth" : 1.0,
+        "primitiveFaceDivisions" : 1,
+        "primitiveHeight" : 1.0,
+        "primitiveRadius" : 0.5,
+        "primitiveRings" : 16,
+        "primitiveSegments" : 32,
+        "primitiveWidth" : 1.0
+      },
+      "name" : 
+      {
+        "name" : "Cube"
+      },
+      "transform" : 
+      {
+        "position" : 
+        [
+          3.96704459,
+          1.3195715,
+          2.29584575
+        ],
+        "rotation" : 
+        [
+          0.0,
+          -0.0,
+          0.0
+        ],
+        "scale" : 
+        [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id" : 12,
+      "material" : 
+      {
+        "absorption" : 
+        [
+          0.0199999996,
+          0.00999999978,
+          0.00499999989
+        ],
+        "alpha" : 1.0,
+        "alphaCutoff" : 0.5,
+        "aoStrength" : 1.0,
+        "assetCull" : 0,
+        "assetDepthWrite" : true,
+        "assetSurface" : 0,
+        "baseBrightness" : 1.0,
+        "baseColor" : 
+        [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "baseSaturation" : 1.20000005,
+        "castShadowSoftness" : 0.100000001,
+        "castShadowThreshold" : 0.280000001,
+        "doubleSided" : false,
+        "emissiveColor" : 
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "emissiveIntensity" : 0.0,
+        "fresnel" : 1.0,
+        "ior" : 1.5,
+        "kawaiiBlend" : 1.0,
+        "litStrength" : 1.0,
+        "meshOutlineOverrides" : [],
+        "meshOutlineWidthScales" : [],
+        "meshShadingOverrides" : [],
+        "metallic" : 0.0,
+        "midStrength" : 1.0,
+        "normalBias" : 0.0,
+        "normalBlend" : 0.0,
+        "normalMap" : "",
+        "normalScale" : 1.0,
+        "parts" : 
+        [
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          },
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          },
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          },
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          },
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          },
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          },
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          },
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          },
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          },
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          },
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          },
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          },
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          },
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          },
+          {
+            "baseBrightness" : 1.0,
+            "baseSaturation" : 1.20000005,
+            "castShadowSoftness" : 0.100000001,
+            "castShadowThreshold" : 0.280000001,
+            "fresnel" : 0.0399999991,
+            "kawaiiBlend" : 1.0,
+            "litStrength" : 1.0,
+            "metallic" : 0.0,
+            "midStrength" : 1.0,
+            "normalBias" : 0.0,
+            "normalBlend" : 0.0,
+            "rimAlbedoBlend" : 0.200000003,
+            "rimColor" : 
+            [
+              0.379999995,
+              0.479999989,
+              0.800000012
+            ],
+            "rimLightBlend" : 0.349999994,
+            "rimPower" : 1.0,
+            "rimSoftness" : 0.0549999997,
+            "rimStrength" : 0.449999988,
+            "rimThreshold" : 0.699999988,
+            "roughness" : 0.5,
+            "shadowSoftness" : 0.0450000018,
+            "shadowStrength" : 1.0,
+            "shadowThreshold" : 0.439999998,
+            "skinBacklightStrength" : 1.0,
+            "skinOilSpecularStrength" : 1.0,
+            "skinRimScatterStrength" : 1.0,
+            "skinScatterStrength" : 1.0,
+            "skinScatterWrap" : 0.419999987,
+            "skinShadowScatter" : 0.540000021,
+            "specularStrength" : 0.349999994,
+            "specularThreshold" : 0.349999994
+          }
+        ],
+        "receivingPostProcess" : true,
+        "refractionStrength" : 0.0350000001,
+        "rimAlbedoBlend" : 0.200000003,
+        "rimColor" : 
+        [
+          0.379999995,
+          0.479999989,
+          0.800000012
+        ],
+        "rimLightBlend" : 0.349999994,
+        "rimPower" : 1.0,
+        "rimSoftness" : 0.0549999997,
+        "rimStrength" : 0.449999988,
+        "rimThreshold" : 0.699999988,
+        "roughness" : 1.0,
         "sceneIdentity" : "guid:0000000000000000",
         "shaderClass" : 11,
         "shaderClassMode" : 1,
@@ -6421,15 +7114,15 @@
       },
       "name" : 
       {
-        "name" : "Cube"
+        "name" : "Cube (6)"
       },
       "transform" : 
       {
         "position" : 
         [
-          -5.08324003,
-          0.874496698,
-          -5.29955244
+          0.0,
+          10.4824295,
+          0.0
         ],
         "rotation" : 
         [
@@ -6439,9 +7132,9 @@
         ],
         "scale" : 
         [
-          1.0,
-          1.0,
-          1.0
+          12.9910793,
+          0.162457705,
+          13.4827919
         ]
       }
     }

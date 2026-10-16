@@ -22,4 +22,8 @@ public:
     static bool DidRestartHistory();
     static ID3D12Resource* GetResultResource();
     static ID3D12Resource* GetNoisyResource();
+    // Human readable state of the reflection / realtime GI pipeline (editor diagnostics).
+    static const char* GetStatus();
+    static const char* GetLastShaderError();
 };
+

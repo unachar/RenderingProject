@@ -65,7 +65,12 @@ cbuffer ReflectionConstants : register(b6)
 //   visibility ray, then writes the final irradiance for the denoiser.
 //   Reservoirs live at trace resolution (packed checkerboard columns when NRD is active).
 // ---------------------------------------------------------------------------------------------
-uint ReflectionHash(uint value); // defined below
+uint ReflectionHash(uint value)
+{
+    value ^= value >> 16; value *= 0x7feb352du;
+    value ^= value >> 15; value *= 0x846ca68bu;
+    return value ^ (value >> 16);
+}
 RWByteAddressBuffer ReservoirCurrent : register(u0, space8);
 RWByteAddressBuffer ReservoirHistory : register(u1, space8);
 Texture2D<float4> GiVelocity : register(t0, space8);
@@ -81,10 +86,17 @@ struct GiReservoir
     float3 VisibleNormal;
 };
 
+// Component-wise sign without a vector conditional (not valid in HLSL 2021).
+float2 OctSign(float2 v)
+{
+    return step(0.0f, v) * 2.0f - 1.0f;
+}
+
 uint PackOctahedral16(float3 n)
 {
     n /= max(abs(n.x) + abs(n.y) + abs(n.z), 0.000001f);
-    float2 e = n.z >= 0.0f ? n.xy : (1.0f - abs(n.yx)) * (n.xy >= 0.0f ? 1.0f : -1.0f);
+    float2 e = n.xy;
+    if (n.z < 0.0f) e = (1.0f - abs(n.yx)) * OctSign(n.xy);
     uint2 q = (uint2)round(saturate(e * 0.5f + 0.5f) * 65535.0f);
     return q.x | (q.y << 16);
 }
@@ -93,14 +105,15 @@ float3 UnpackOctahedral16(uint packed)
 {
     float2 e = float2(packed & 0xffffu, packed >> 16) / 65535.0f * 2.0f - 1.0f;
     float3 n = float3(e, 1.0f - abs(e.x) - abs(e.y));
-    if (n.z < 0.0f) n.xy = (1.0f - abs(n.yx)) * (n.xy >= 0.0f ? 1.0f : -1.0f);
+    if (n.z < 0.0f) n.xy = (1.0f - abs(n.yx)) * OctSign(n.xy);
     return normalize(n);
 }
 
 uint PackOctahedral8(float3 n)
 {
     n /= max(abs(n.x) + abs(n.y) + abs(n.z), 0.000001f);
-    float2 e = n.z >= 0.0f ? n.xy : (1.0f - abs(n.yx)) * (n.xy >= 0.0f ? 1.0f : -1.0f);
+    float2 e = n.xy;
+    if (n.z < 0.0f) e = (1.0f - abs(n.yx)) * OctSign(n.xy);
     uint2 q = (uint2)round(saturate(e * 0.5f + 0.5f) * 255.0f);
     return q.x | (q.y << 8);
 }
@@ -109,7 +122,7 @@ float3 UnpackOctahedral8(uint packed)
 {
     float2 e = float2(packed & 0xffu, (packed >> 8) & 0xffu) / 255.0f * 2.0f - 1.0f;
     float3 n = float3(e, 1.0f - abs(e.x) - abs(e.y));
-    if (n.z < 0.0f) n.xy = (1.0f - abs(n.yx)) * (n.xy >= 0.0f ? 1.0f : -1.0f);
+    if (n.z < 0.0f) n.xy = (1.0f - abs(n.yx)) * OctSign(n.xy);
     return normalize(n);
 }
 
@@ -274,12 +287,6 @@ void CacheInsert(float3 position, float3 normal, float3 irradiance)
     CacheAccumulation.InterlockedAdd(address + 12, 1u, ignored);
 }
 
-uint ReflectionHash(uint value)
-{
-    value ^= value >> 16; value *= 0x7feb352d;
-    value ^= value >> 15; value *= 0x846ca68b;
-    return value ^ (value >> 16);
-}
 
 // Bounded VNDF sampling as used by NVIDIA MathLib v11. Keeps reflection rays above the surface.
 // https://github.com/NVIDIA-RTX/MathLib/blob/aa432ad9a80691eb8c3ec4d576bbad5ac100fdc8/ml.hlsli
@@ -1004,3 +1011,4 @@ void ReSTIRSpatial(uint3 id : SV_DispatchThreadID)
     NoisyRadiance[storage] = float4(irradiance, hitDistance);
 #endif
 }
+

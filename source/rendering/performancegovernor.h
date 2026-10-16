@@ -40,6 +40,11 @@ public:
 		float DowngradeDelay = 0.20f;   // 予算超過がこの秒数続いたら段階を下げる
 		float UpgradeDelay = 2.0f;      // 余裕がこの秒数続いたら段階を戻す
 		float ResolutionDelay = 3.0f;   // 最下位段でこの秒数超過したら解像度を下げる
+		// false（既定）: ユーザーが ON にした機能（Realtime GI / RT反射 / RT AO / SSAO）は切り替えず、
+		// サンプル数・距離・ライト数などのコストだけを下げる。
+		// 以前は段階2で Realtime GI → SSGI、段階5で GI OFF に勝手に切り替えていたため、
+		// 目標FPSに届かない環境では「Realtime GI を ON にしても OFF と同じ」状態になっていた。
+		bool AllowFeatureToggles = false;
 	};
 
 	static Options& GetOptions() { return s_Options; }
@@ -158,6 +163,19 @@ public:
 		ImGui::Text("段階: %d (%s)   GPU: %.2f ms / 予算 %.2f ms", s_Tier, GetTierName(s_Tier), s_SmoothedMs, s_BudgetMs);
 		ImGui::Checkbox("解像度も下げてよい", &s_Options.AllowResolutionScaling);
 		ImGui::SliderFloat("GPU予算の割合", &s_Options.BudgetHeadroom, 0.6f, 1.0f, "%.2f");
+		if (ImGui::Checkbox("機能の自動OFFを許可（GI / RT反射 / AO）", &s_Options.AllowFeatureToggles))
+		{
+			Apply();
+		}
+		if (s_Tier > 0)
+		{
+			const Baseline now = ReadCurrent();
+			if (now.GiMode != s_Base.GiMode || now.RtReflections != s_Base.RtReflections ||
+				now.RtAmbientOcclusion != s_Base.RtAmbientOcclusion)
+			{
+				ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "自動調整で GI / RT 反射 / AO の一部を一時的に OFF にしています");
+			}
+		}
 		if (s_ResolutionReduced)
 		{
 			ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "解像度を一時的に下げています (%.2f)", RenderConfiguration::GetResolutionScale());
@@ -303,15 +321,20 @@ private:
 		static const float kShadowDist[kTierCount]   = { 1.0f, 0.75f, 0.5f, 0.35f, 0.25f, 0.2f };
 		v.RtSamples = (std::min)(s_Base.RtSamples, kSamples[t]);
 		v.RtShadowDistance = s_Base.RtShadowDistance * kShadowDist[t];
-		v.RtAmbientOcclusion = s_Base.RtAmbientOcclusion && t <= 2;
-		v.RtReflections = s_Base.RtReflections && t <= 3;
+		const bool toggles = s_Options.AllowFeatureToggles;
+		v.RtAmbientOcclusion = s_Base.RtAmbientOcclusion && (!toggles || t <= 2);
+		v.RtReflections = s_Base.RtReflections && (!toggles || t <= 3);
 		// レイトレ自体は切らない（RTシャドウ使用時に切るとラスターシャドウが走り、逆に重くなるため）。
 		v.RtEnabled = s_Base.RtEnabled;
 
 		// ---- 可変GI ----
 		static const float kGiDist[kTierCount] = { 1.0f, 0.8f, 0.6f, 0.45f, 0.35f, 0.25f };
 		v.GiDistance = (std::max)(1.0f, s_Base.GiDistance * kGiDist[t]);
-		if (s_Base.GiMode == GlobalIlluminationMode::Realtime)
+		if (!toggles)
+		{
+			v.GiMode = s_Base.GiMode;
+		}
+		else if (s_Base.GiMode == GlobalIlluminationMode::Realtime)
 		{
 			v.GiMode = t <= 1 ? GlobalIlluminationMode::Realtime :
 				(t <= 4 ? GlobalIlluminationMode::ScreenSpace : GlobalIlluminationMode::Off);
@@ -320,7 +343,7 @@ private:
 		{
 			v.GiMode = t <= 4 ? GlobalIlluminationMode::ScreenSpace : GlobalIlluminationMode::Off;
 		}
-		v.Ssao = s_Base.Ssao && t <= 4;
+		v.Ssao = s_Base.Ssao && (!toggles || t <= 4);
 
 		// ---- シャドウ ----
 		static const int kContact[kTierCount] = { 24, 12, 10, 8, 6, 4 };
@@ -388,4 +411,5 @@ private:
 		s_ResolutionReduced = false;
 	}
 };
+
 

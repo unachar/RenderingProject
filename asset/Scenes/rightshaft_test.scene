@@ -92,29 +92,31 @@
         "affectsForward" : true,
         "affectsOpaque" : true,
         "affectsVolumetrics" : true,
+        "areaHeight" : 1.0,
+        "areaWidth" : 1.0,
         "castShadow" : true,
         "color" : 
         [
           1.0,
-          0.915915132,
-          0.806347549,
+          0.83089608,
+          0.697463453,
           1.0
         ],
         "direction" : 
         [
-          -0.483306557,
-          0.553311706,
-          -0.678425312
+          -0.634409904,
+          0.458654493,
+          -0.622221887
         ],
         "drawDebug" : true,
         "innerAngle" : 18.0,
-        "intensity" : 8.32657909,
+        "intensity" : 15.2247429,
         "outerAngle" : 32.0,
         "position" : 
         [
-          -28.9983959,
-          33.1987038,
-          -40.7055206
+          -38.0645943,
+          27.5192699,
+          -37.333313
         ],
         "priority" : 0.0,
         "range" : 80.0,
@@ -142,9 +144,9 @@
       {
         "position" : 
         [
-          -28.9983959,
-          33.1987038,
-          -40.7055206
+          -38.0645943,
+          27.5192699,
+          -37.333313
         ],
         "rotation" : 
         [
@@ -858,6 +860,8 @@
         "affectsForward" : true,
         "affectsOpaque" : true,
         "affectsVolumetrics" : true,
+        "areaHeight" : 1.0,
+        "areaWidth" : 1.0,
         "castShadow" : true,
         "color" : 
         [
@@ -1536,7 +1540,7 @@
         "rimStrength" : 0.449999988,
         "rimThreshold" : 0.699999988,
         "roughness" : 0.5,
-        "sceneIdentity" : "guid:0000000000000000",
+        "sceneIdentity" : "guid:1625bc09d8a01aec",
         "shaderClass" : 11,
         "shaderClassMode" : 1,
         "shadowCutoff" : 0.5,
@@ -1550,7 +1554,10 @@
         "skinScatterStrength" : 1.0,
         "skinScatterWrap" : 0.419999987,
         "skinShadowScatter" : 0.540000021,
-        "slots" : [],
+        "slots" : 
+        [
+          "guid:5089e9331030ef98"
+        ],
         "specularStrength" : 0.349999994,
         "specularThreshold" : 0.349999994,
         "texture" : "",
@@ -1588,7 +1595,7 @@
         "position" : 
         [
           0.0,
-          0.380196542,
+          -0.373130143,
           -1.37653935
         ],
         "rotation" : 

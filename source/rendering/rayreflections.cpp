@@ -87,6 +87,9 @@ UINT g_ReservoirWidth = 0, g_ReservoirHeight = 0, g_ReservoirCurrent = 0;
 bool g_ReSTIRHistoryValid = false;
 RadianceCache g_Cache;
 bool g_CacheWasEnabled = false;
+// Diagnostics: why reflections / realtime GI are not running.
+const char* g_Status = "未初期化";
+string g_LastShaderError;
 array<FrameResources, kFrames> g_Frames;
 unique_ptr<NrdDenoiser> g_Denoiser, g_GiDenoiser;
 unique_ptr<OptixDenoiser> g_OptixGi, g_OptixReflections;
@@ -345,7 +348,13 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     const CD3DX12_ROOT_SIGNATURE_DESC root(16, parameters, 2, samplers);
     ComPtr<ID3DBlob> blob, errors;
     if (FAILED(D3D12SerializeRootSignature(&root, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)) ||
-        FAILED(device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&g_Root)))) return false;
+        FAILED(device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&g_Root))))
+    {
+        g_Status = "ルートシグネチャ作成失敗（反射 / Realtime GI 無効）";
+        if (errors) g_LastShaderError = static_cast<const char*>(errors->GetBufferPointer());
+        WriteGraphicsLog("DXR reflection root signature failed: %s\n", g_LastShaderError.c_str());
+        return false;
+    }
     const D3D_SHADER_MACRO defines[] = { { "USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0" }, {} };
     auto compile = [&](const char* entry, ComPtr<ID3D12PipelineState>& pipeline)
     {
@@ -353,24 +362,45 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
         if (FAILED(D3DCompileFromFile(L"shader/hlsl/RayReflectionsCS.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE,
             entry, "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors)))
         {
-            WriteGraphicsLog("DXR reflection shader failed: %s\n", errors ? static_cast<const char*>(errors->GetBufferPointer()) : entry);
+            g_LastShaderError = string(entry) + ": " + (errors ? static_cast<const char*>(errors->GetBufferPointer()) : "compile failed");
+            WriteGraphicsLog("DXR reflection shader failed: %s\n", g_LastShaderError.c_str());
             return false;
         }
         D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
         desc.pRootSignature = g_Root.Get(); desc.CS = CD3DX12_SHADER_BYTECODE(blob.Get());
-        return SUCCEEDED(device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&pipeline)));
+        if (SUCCEEDED(device->CreateComputePipelineState(&desc, IID_PPV_ARGS(pipeline.ReleaseAndGetAddressOf())))) return true;
+        g_LastShaderError = string(entry) + ": CreateComputePipelineState failed";
+        WriteGraphicsLog("DXR reflection pipeline failed: %s\n", entry);
+        return false;
     };
-    if (!CreateRadianceCache())
+    // Required pipelines first. The optional ones (radiance cache, ReSTIR) only disable their own
+    // feature on failure; previously a failure there also skipped Compose / ComposeDiffuse, which
+    // left a null pipeline bound in the NRD path while TraceDiffuse kept running.
+    const bool required = compile("main", g_Trace) && compile("TraceDiffuse", g_GiTrace) &&
+        compile("FilterDiffuse", g_GiFilter) &&
+        (!NrdDenoiser::IsCompiled() || (compile("Compose", g_Compose) && compile("ComposeDiffuse", g_GiCompose)));
+    if (!required)
     {
-        WriteGraphicsLog("Realtime GI radiance cache: allocation failed\n");
+        g_Trace.Reset(); g_GiTrace.Reset(); g_GiFilter.Reset(); g_Compose.Reset(); g_GiCompose.Reset();
+        g_Status = "RayReflectionsCS のコンパイル失敗（反射 / Realtime GI 無効）。ログを確認してください";
         return false;
     }
-    return compile("main", g_Trace) && compile("TraceDiffuse", g_GiTrace) &&
-        compile("FilterDiffuse", g_GiFilter) &&
-        compile("ResolveRadianceCache", g_CacheResolve) && compile("ClearRadianceCache", g_CacheClear) &&
-        compile("ReSTIRTemporal", g_ReSTIRTemporal) && compile("ReSTIRSpatial", g_ReSTIRSpatial) &&
-        (!NrdDenoiser::IsCompiled() || (compile("Compose", g_Compose) && compile("ComposeDiffuse", g_GiCompose)));
+    if (!CreateRadianceCache() || !compile("ResolveRadianceCache", g_CacheResolve) || !compile("ClearRadianceCache", g_CacheClear))
+    {
+        g_CacheResolve.Reset(); g_CacheClear.Reset(); g_Cache = {};
+        WriteGraphicsLog("Realtime GI radiance cache unavailable; continuing without it\n");
+    }
+    if (!compile("ReSTIRTemporal", g_ReSTIRTemporal) || !compile("ReSTIRSpatial", g_ReSTIRSpatial))
+    {
+        g_ReSTIRTemporal.Reset(); g_ReSTIRSpatial.Reset();
+        WriteGraphicsLog("ReSTIR GI unavailable; continuing without it\n");
+    }
+    g_Status = "準備完了";
+    return true;
 }
+
+const char* RayReflections::GetStatus() { return g_Status; }
+const char* RayReflections::GetLastShaderError() { return g_LastShaderError.c_str(); }
 
 void RayReflections::Shutdown()
 {
@@ -382,6 +412,7 @@ void RayReflections::Shutdown()
     g_GiCompose.Reset();
     g_GiFilter.Reset();
     g_CacheResolve.Reset();
+    g_Status = "未初期化";
     g_ReSTIRTemporal.Reset();
     g_ReSTIRSpatial.Reset();
     g_Reservoirs[0].Reset();
@@ -406,7 +437,9 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     g_Dispatches = 0;
     g_OptixGiActive = g_OptixReflectionActive = false;
     g_GiActive = false;
-    if (!commands || !scene || !g_Trace || geometry.empty()) return false;
+    if (!g_Trace || !g_GiTrace || !g_GiFilter) { g_Status = "パイプライン未作成（反射 / Realtime GI 無効）"; return false; }
+    if (!commands || !scene) { g_Status = "TLAS がありません"; return false; }
+    if (geometry.empty()) { g_Status = "レイトレース対象のメッシュがありません"; return false; }
     const UINT slot = nrdFrame.FrameIndex % kFrames;
     g_LastFrame = slot;
     auto* depth = RenderTargets::GetGBufferResource(GBufferType::DEPTH);
@@ -415,7 +448,12 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     if (!depth || !normal || !material) return false;
     const auto extent = depth->GetDesc();
     auto& frame = g_Frames[slot];
-    if (!EnsureFrame(frame, slot, static_cast<UINT>(extent.Width), extent.Height)) return false;
+    if (!EnsureFrame(frame, slot, static_cast<UINT>(extent.Width), extent.Height))
+    {
+        g_Status = "GI / 反射のテクスチャ確保に失敗";
+        return false;
+    }
+    g_Status = RendererSettings::GetRealtimeGiEnabled() ? "Realtime GI 準備中" : "反射のみ動作中";
     frame.Geometry = geometry;
     const UINT count = static_cast<UINT>((min)(geometry.size(), static_cast<size_t>(kMaximumMeshes)));
     vector<MeshConstants> meshes(count);
@@ -772,6 +810,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         }
         g_GiHistoryValid = temporalFiltered;
         g_GiActive = true;
+        g_Status = restir ? "Realtime GI 動作中（ReSTIR）" : "Realtime GI 動作中";
     }
     else
     {
@@ -806,5 +845,6 @@ D3D12_GPU_DESCRIPTOR_HANDLE RayReflections::GetGiSrv(UINT frameIndex)
     return Gpu(g_EngineHeap.Get(), kGiSrv + frameIndex % kFrames);
 }
 ID3D12Resource* RayReflections::GetGiResource() { return g_Frames[g_LastFrame].GiResult.Get(); }
+
 
 

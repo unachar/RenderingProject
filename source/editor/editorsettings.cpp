@@ -23,6 +23,7 @@
 #include "atmosphere.h"
 #include "simulationconfiguration.h"
 #include "raytracing.h"
+#include "rayreflections.h"
 #include "nrddenoiser.h"
 #include "optixdenoiser.h"
 #include "assetthumbnailmanager.h"
@@ -487,6 +488,17 @@ void ImGuiManager::DrawProjectSettingsWindow()
             {
                 ImGui::TextWrapped("Realtime GI requires DXR Tier 1.1 and enabled ray tracing.");
             }
+            // 動作状態の診断（ON にしても効かない時に原因を表示する）
+            const bool giRunning = Raytracing::IsGiActive();
+            ImGui::TextColored(giRunning ? ImVec4(0.4f, 0.9f, 0.4f, 1.0f) : ImVec4(1.0f, 0.55f, 0.3f, 1.0f),
+                "状態: %s", giRunning ? RayReflections::GetStatus() :
+                (!Raytracing::IsAvailable() ? Raytracing::GetStatus() :
+                 !Raytracing::GetSettings().Enabled ? "レイトレーシングが OFF です" : RayReflections::GetStatus()));
+            if (RayReflections::GetLastShaderError()[0] != '\0' && ImGui::TreeNode("シェーダーエラー"))
+            {
+                ImGui::TextWrapped("%s", RayReflections::GetLastShaderError());
+                ImGui::TreePop();
+            }
         }
         ImGui::EndDisabled();
 	}
@@ -768,6 +780,7 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("governor.DowngradeDelay", governor.DowngradeDelay, 0.0, 10.0);
     field("governor.UpgradeDelay", governor.UpgradeDelay, 0.1, 30.0);
     field("governor.ResolutionDelay", governor.ResolutionDelay, 0.1, 30.0);
+    field("governor.AllowFeatureToggles", governor.AllowFeatureToggles, 0, 1);
     // フロクセルフォグ / 自動露出 / モーションブラー / 被写界深度
     // 画質向上（renderquality.h）
     auto& rq = RenderQuality::Get();
@@ -1246,5 +1259,6 @@ void ImGuiManager::LoadProjectSettings()
     }
 
 }
+
 
 
