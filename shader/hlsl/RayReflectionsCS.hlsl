@@ -348,7 +348,7 @@ void TraceDiffuse(uint3 id : SV_DispatchThreadID)
         return;
     }
     float depth = ReflectionDepth.Load(int3(pixel, 0));
-    NoisyRadiance[id.xy] = 0;
+    NoisyRadiance[pixel] = 0;
     if (depth >= 0.99999f)
     {
         return;
@@ -389,9 +389,9 @@ void TraceDiffuse(uint3 id : SV_DispatchThreadID)
 #if USE_NRD
     float viewZ = abs(mul(float4(position, 1), ReflectionView).z);
     float normalizedDistance = REBLUR_FrontEnd_GetNormHitDist(hitDistance, viewZ, float3(3, 0.1f, 20), 1);
-    NoisyRadiance[id.xy] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(irradiance, normalizedDistance, true);
+    NoisyRadiance[pixel] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(irradiance, normalizedDistance, true);
 #else
-    NoisyRadiance[id.xy] = float4(irradiance, hitDistance);
+    NoisyRadiance[pixel] = float4(irradiance, hitDistance);
 #endif
 }
 
@@ -424,12 +424,7 @@ void FilterDiffuse(uint3 id : SV_DispatchThreadID)
             float depth = ReflectionDepth.Load(int3(samplePixel, 0));
             float3 normal = normalize(ReflectionNormal.Load(int3(samplePixel, 0)).xyz * 2 - 1);
             float weight = exp2(-abs(depth - centerDepth) * 10000 - float(x*x + y*y) * 0.25f) * pow(saturate(dot(normal, centerNormal)), 32);
-            int2 signalPixel = samplePixel;
-            if (GiParameters.z > 0.5f)
-            {
-                signalPixel.x /= 2;
-            }
-            float4 noisy = FilteredRadiance.Load(int3(signalPixel, 0));
+            float4 noisy = FilteredRadiance.Load(int3(samplePixel, 0));
 #if USE_NRD
             float3 sampleIrradiance = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(noisy).rgb;
 #else
@@ -459,9 +454,12 @@ void ComposeDiffuse(uint3 id : SV_DispatchThreadID)
         float weightSum = 0;
         // Remove residual checkerboard grain in the existing compose dispatch.
         // Geometry weights keep neighboring walls and silhouettes separate.
-        [unroll] for (int y = -1; y <= 1; ++y)
+        float3 centerIrradiance = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(
+            FilteredRadiance.Load(int3(id.xy, 0))).rgb;
+        float centerLuma = dot(centerIrradiance, float3(0.2126f, 0.7152f, 0.0722f));
+        [unroll] for (int y = -2; y <= 2; ++y)
         {
-            [unroll] for (int x = -1; x <= 1; ++x)
+            [unroll] for (int x = -2; x <= 2; ++x)
             {
                 int2 pixel = clamp(int2(id.xy) + int2(x, y), 0, int2(ReflectionExtent.xy) - 1);
                 float sampleDepth = ReflectionDepth.Load(int3(pixel, 0));
@@ -472,10 +470,13 @@ void ComposeDiffuse(uint3 id : SV_DispatchThreadID)
                 float3 sampleNormal = ReflectionNormal.Load(int3(pixel, 0)).xyz * 2 - 1;
                 float geometryWeight = saturate(1 - abs(sampleDepth - depth) / depthTolerance) *
                     pow(saturate(dot(normal, sampleNormal)), 32);
-                float spatialWeight = float((2 - abs(x)) * (2 - abs(y)));
-                float weight = geometryWeight * spatialWeight;
+                float spatialWeight = exp2(-float(x * x + y * y) * 0.35f);
                 float3 sampleIrradiance = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(
                     FilteredRadiance.Load(int3(pixel, 0))).rgb;
+                float sampleLuma = dot(sampleIrradiance, float3(0.2126f, 0.7152f, 0.0722f));
+                float lumaWeight = rcp(1.0f + abs(sampleLuma - centerLuma) /
+                    max(0.25f + centerLuma * 0.35f, 0.0001f));
+                float weight = geometryWeight * spatialWeight * lumaWeight;
                 irradiance += sampleIrradiance * weight;
                 weightSum += weight;
             }

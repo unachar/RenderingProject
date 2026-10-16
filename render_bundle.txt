@@ -3040,9 +3040,11 @@ void Game::Update()
 	World::Update();
 	Input::Update();
 
-	if (Input::IsKeyPress(VK_ESCAPE))
+	// Esc：終了（未保存のシーンがあれば確認）。文字入力中やポップアップ表示中は終了しない
+	if (Input::IsKeyPress(VK_ESCAPE) && !ImGui::GetIO().WantTextInput &&
+		!ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))
 	{
-		PostQuitMessage(0);
+		ImGuiManager::RequestQuit();
 	}
 
 	SystemManager::UpdateSystem();
@@ -6885,6 +6887,16 @@ struct MeshComponent
 	bool HasLocalBounds = false;
 	bool IsEnvironment = false;
 	shared_ptr<StaticMeshData> NaniteMesh;
+	// シーン保存用：プリミティブから作られたメッシュの再生成情報（0 = プリミティブ以外）
+	int PrimitiveType = 0;      // ObjectType
+	int PrimitiveColor = 0;     // Color
+	float PrimitiveRadius = 0.5f;
+	float PrimitiveHeight = 1.0f;
+	float PrimitiveWidth = 1.0f;
+	float PrimitiveDepth = 1.0f;
+	int PrimitiveSegments = 32;
+	int PrimitiveRings = 16;
+	int PrimitiveFaceDivisions = 1;
 };
 
 struct InputComponent
@@ -7202,6 +7214,10 @@ struct SpriteComponent
 	XMFLOAT3 LocalBoundsExtents{};
 	bool HasLocalBounds = false;
 	bool UsePostProcess = false;
+	// シーン保存用：スプライト形状の再生成情報（0 = 不明）
+	int SourceShape = 0;        // ShapeType
+	float SourceRadius = 0.5f;
+	int SourceColor = 0;        // Color
 };
 
 struct InstancingComponent
@@ -8884,6 +8900,11 @@ void ImGuiManager::DrawAssetBrowserWindow()
 					m_CurrentAssetDirectory = path;
 					m_SelectedAssetPath.clear();
 				}
+				else if (IsSceneFile(path) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+				{
+					// .scene のダブルクリックでシーンを切り替える（未保存なら確認ポップアップ）
+					RequestOpenScene(path);
+				}
 				else if (AssetRegistry::Classify(path) == AssetType::Material && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                 {
                     string error;
@@ -8910,6 +8931,10 @@ void ImGuiManager::DrawAssetBrowserWindow()
 				{
 					m_CurrentAssetDirectory = path;
 					m_SelectedAssetPath.clear();
+				}
+				if (!isDir && IsSceneFile(path) && ImGui::MenuItem("シーンを開く"))
+				{
+					RequestOpenScene(path);
 				}
 				if (!isDir && IsTextureFile(path) && ImGui::MenuItem("選択中にテクスチャ適用"))
 				{
@@ -9960,6 +9985,7 @@ void ImGuiManager::BeginUndoCapture(EntityID entity, const EntitySnapshot& befor
 {
 	if (entity == g_kINVALID_ENTITY || !Registry::IsAlive(entity)) return;
 	GpuSceneChanges::Notify(entity);
+	++m_EditRevision;
 	if (!m_HasPendingUndo) { m_PendingUndo = before; m_HasPendingUndo = true; }
 }
 
@@ -9974,6 +10000,7 @@ void ImGuiManager::FinalizeUndoCaptureIfIdle()
 void ImGuiManager::PushUndoSnapshot(const EntitySnapshot& snapshot)
 {
 	if (snapshot.Entity == g_kINVALID_ENTITY) return;
+	++m_EditRevision;
 	m_UndoStack.push_back(snapshot);
 	if (m_UndoStack.size() > 10) m_UndoStack.erase(m_UndoStack.begin());
 	m_RedoStack.clear();
@@ -9985,6 +10012,7 @@ void ImGuiManager::Undo()
 	if (m_UndoStack.empty()) return;
 	EntitySnapshot snapshot = m_UndoStack.back();
 	m_UndoStack.pop_back();
+	++m_EditRevision;
 	m_RedoStack.push_back(CaptureEntity(snapshot.Entity));
 	if (m_RedoStack.size() > 10) m_RedoStack.erase(m_RedoStack.begin());
 	ApplySnapshot(snapshot);
@@ -10004,6 +10032,7 @@ void ImGuiManager::Redo()
 	if (m_RedoStack.empty()) return;
 	EntitySnapshot snapshot = m_RedoStack.back();
 	m_RedoStack.pop_back();
+	++m_EditRevision;
 	m_UndoStack.push_back(CaptureEntity(snapshot.Entity));
 	if (m_UndoStack.size() > 10) m_UndoStack.erase(m_UndoStack.begin());
 	ApplySnapshot(snapshot);
@@ -12985,6 +13014,19 @@ void ImGuiManager::DrawRaytracingWindow()
 #include "pch.h"
 #include "editorscenenavigation.h"
 #include "imguimanager.h"
+#include <unordered_map>
+#include <json/json.h>
+#include "daynightcycle.h"
+#include "renderingvalidation.h"
+#include "projectmanager.h"
+#include "physicssystem.h"
+#include "systemmanager.h"
+#include "timelinesystem.h"
+#include "proceduralscene.h"
+#include "animator.h"
+#include "texturemanager.h"
+#include "modelmanager.h"
+#include "scenefile.h"
 #include "editorwidgets.h"
 #include "camera.h"
 #include "graphicsdevice.h"
@@ -13357,6 +13399,23 @@ void ImGuiManager::DrawHierarchyWindow()
 	{
 		ImGui::End();
 		return;
+	}
+
+	// Unityと同じく、先頭に現在のシーン名を表示（未保存の変更があれば「*」）
+	{
+		const string sceneLabel = GetSceneDisplayName() + (IsSceneDirty() ? "*" : "");
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.92f, 0.92f, 0.92f, 1.0f));
+		ImGui::TextUnformatted(sceneLabel.c_str());
+		ImGui::PopStyleColor();
+		if (ImGui::IsItemHovered())
+		{
+			ImGui::SetTooltip("%s", m_ScenePath.empty() ? "未保存のシーン（Ctrl+S で保存）" : m_ScenePath.generic_string().c_str());
+		}
+		if (ImGui::BeginPopupContextItem("SceneHeaderMenu"))
+		{
+			DrawSceneFileMenu();
+			ImGui::EndPopup();
+		}
 	}
 
 	const bool hierarchyFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
@@ -13897,6 +13956,739 @@ return "なし";
 	label += " #";
 	label += to_string(entity);
 	return label.c_str();
+}
+
+// ============================================================================
+// シーンシステム（Unity風）
+//  ・.scene（JSON）への保存 / 読み込み / 新規作成
+//  ・変更検知：保存対象と同じ項目からハッシュを作り、保存時のハッシュと比べる（0.25秒ごと）
+//  ・未保存のまま切り替える・終了するときは「保存しますか？」を出す
+//  ・cfg の scene= に現在のシーンを記録し、次回起動時に開く
+// ============================================================================
+namespace
+{
+	template<typename T>
+	void VisitLiveComponent(SceneFile::Archive& archive, const char* key, EntityID entity)
+	{
+		bool present = ComponentManager::HasComponent<T>(entity);
+		if (!present)
+		{
+			if (archive.Hashing())
+			{
+				const uint8_t none = 0;
+				archive.HashBytes(&none, 1);
+			}
+			return;
+		}
+		SceneFile::Component(archive, key, present, ComponentManager::GetComponentUnchecked<T>(entity));
+	}
+
+	// 書き込み / ハッシュ共通：1エンティティ分のコンポーネントを列挙する
+	void VisitLiveEntity(SceneFile::Archive& archive, EntityID entity)
+	{
+		// 昼夜サイクルが動かしている太陽の位置・光は、変更検知の対象から外す（保存はする）
+		bool drivenSun = false;
+		if (archive.Hashing() && ComponentManager::HasComponent<SunComponent>(entity))
+		{
+			const auto& cycle = DayNightCycle::GetSettings();
+			drivenSun = cycle.TimeDriven || cycle.AutomaticLighting;
+		}
+		VisitLiveComponent<NameComponent>(archive, "name", entity);
+		if (!drivenSun) VisitLiveComponent<TransformComponent>(archive, "transform", entity);
+		VisitLiveComponent<ShaderComponent>(archive, "shader", entity);
+		VisitLiveComponent<StaticModelComponent>(archive, "staticModel", entity);
+		VisitLiveComponent<AnimationModelComponent>(archive, "animationModel", entity);
+		if (!drivenSun) VisitLiveComponent<LightComponent>(archive, "light", entity);
+		VisitLiveComponent<SunComponent>(archive, "sun", entity);
+		VisitLiveComponent<ProceduralTerrainComponent>(archive, "terrain", entity);
+		VisitLiveComponent<ProceduralMotionComponent>(archive, "motion", entity);
+		VisitLiveComponent<MaterialComponent>(archive, "material", entity);
+		VisitLiveComponent<AABBComponent>(archive, "aabb", entity);
+		VisitLiveComponent<SpriteComponent>(archive, "sprite", entity);
+		VisitLiveComponent<MeshComponent>(archive, "mesh", entity);
+		VisitLiveComponent<CameraComponent>(archive, "camera", entity);
+		VisitLiveComponent<PostProcessComponent>(archive, "postProcess", entity);
+		VisitLiveComponent<InputComponent>(archive, "input", entity);
+		VisitLiveComponent<MoveComponent>(archive, "move", entity);
+		VisitLiveComponent<PhysicsComponent>(archive, "physics", entity);
+		VisitLiveComponent<TimelineComponent>(archive, "timeline", entity);
+		VisitLiveComponent<OBBComponent>(archive, "obb", entity);
+		VisitLiveComponent<LODComponent>(archive, "lod", entity);
+		VisitLiveComponent<InstancingComponent>(archive, "instancing", entity);
+
+		// プリミティブ・地形以外のメッシュは頂点そのものが形状。ハッシュでは頂点の代わりにジオメトリハッシュを使う
+		if (ComponentManager::HasComponent<MeshComponent>(entity) && !ComponentManager::HasComponent<ProceduralTerrainComponent>(entity))
+		{
+			auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+			if (mesh.PrimitiveType == 0)
+			{
+				if (archive.Hashing())
+				{
+					archive.HashBytes(&mesh.GeometryHash, sizeof(mesh.GeometryHash));
+				}
+				else if (archive.Writing() && mesh.NaniteMesh && !mesh.NaniteMesh->CpuVertices.empty())
+				{
+					vector<float> packed;
+					packed.reserve(mesh.NaniteMesh->CpuVertices.size() * 12);
+					for (const auto& vertex : mesh.NaniteMesh->CpuVertices)
+					{
+						for (float value : { vertex.Position.x, vertex.Position.y, vertex.Position.z,
+							vertex.Normal.x, vertex.Normal.y, vertex.Normal.z, vertex.TexCoord.x, vertex.TexCoord.y,
+							vertex.Diffuse.x, vertex.Diffuse.y, vertex.Diffuse.z, vertex.Diffuse.w })
+						{
+							packed.push_back(value);
+						}
+					}
+					string encoded = SceneFile::EncodeBase64(packed.data(), packed.size() * sizeof(float));
+					archive.Object("meshVertices", [&](SceneFile::Archive& v)
+					{
+						int floatsPerVertex = 12;
+						v("floatsPerVertex", floatsPerVertex);
+						v("data", encoded);
+					});
+				}
+			}
+		}
+	}
+
+	string ToUtf8(const filesystem::path& path)
+	{
+		const auto text = path.generic_u8string();
+		return string(text.begin(), text.end());
+	}
+
+	wstring Utf8ToWide(const string& text)
+	{
+		if (text.empty()) return {};
+		const int length = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0);
+		wstring result(static_cast<size_t>(max(length, 0)), L'\0');
+		if (length > 0) MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), result.data(), length);
+		return result;
+	}
+
+	// 作業フォルダからの相対パス（日本語を含むパスも壊さないよう path のまま扱う）
+	filesystem::path RelativeToWorkingDirectory(const filesystem::path& path)
+	{
+		error_code error;
+		const filesystem::path relative = filesystem::relative(path, filesystem::current_path(error), error);
+		return error || relative.empty() ? path.lexically_normal() : relative;
+	}
+
+	const char* kSaveChangesPopup = "シーンの変更を保存##SceneSaveChanges";
+	const char* kSaveAsPopup = "名前を付けて保存##SceneSaveAs";
+}
+
+bool ImGuiManager::SceneTrackingAllowed()
+{
+	if (RenderingValidation::IsEnabled()) return false;
+	char validationMode[8]{};
+	return !(GetEnvironmentVariableA("DX12_VALIDATION_MODE", validationMode, sizeof(validationMode)) > 0 && atoi(validationMode) != 0);
+}
+
+bool ImGuiManager::IsSceneFile(const filesystem::path& path)
+{
+	string extension = path.extension().generic_string();
+	transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(tolower(c)); });
+	return extension == SceneFile::kExtension;
+}
+
+string ImGuiManager::GetSceneDisplayName()
+{
+	return m_ScenePath.empty() ? string("Untitled") : ToUtf8(m_ScenePath.stem());
+}
+
+// シーンに属するエンティティ：Transformを持ち、エディターカメラではないもの（EntityID昇順）
+vector<EntityID> ImGuiManager::CollectSceneEntities()
+{
+	const EntityID editorCamera = Camera::GetEditorCameraEntity();
+	vector<EntityID> entities;
+	for (EntityID entity : World::GetView<TransformComponent>()) // EntityID昇順
+	{
+		if (entity != editorCamera) entities.push_back(entity);
+	}
+	return entities;
+}
+
+uint64_t ImGuiManager::ComputeSceneHash()
+{
+	uint64_t hash = 1469598103934665603ull;
+	const vector<EntityID> entities = CollectSceneEntities();
+	unordered_map<EntityID, EntityID> fileIds;
+	fileIds.reserve(entities.size());
+	for (size_t i = 0; i < entities.size(); ++i) fileIds[entities[i]] = static_cast<EntityID>(i);
+	SceneFile::Archive archive(hash);
+	archive.EntityMap = &fileIds;
+	const uint64_t count = entities.size();
+	archive.HashBytes(&count, sizeof(count));
+	for (EntityID entity : entities)
+	{
+		VisitLiveEntity(archive, entity);
+	}
+	return hash;
+}
+
+string ImGuiManager::SerializeScene()
+{
+	const vector<EntityID> entities = CollectSceneEntities();
+	unordered_map<EntityID, EntityID> fileIds;
+	fileIds.reserve(entities.size());
+	for (size_t i = 0; i < entities.size(); ++i) fileIds[entities[i]] = static_cast<EntityID>(i);
+
+	Json::Value root(Json::objectValue);
+	root["format"] = "DX12Scene";
+	root["version"] = SceneFile::kVersion;
+	root["entities"] = Json::Value(Json::arrayValue);
+	for (EntityID entity : entities)
+	{
+		Json::Value record(Json::objectValue);
+		record["id"] = fileIds[entity];
+		SceneFile::Archive archive(SceneFile::Mode::Write, record);
+		archive.EntityMap = &fileIds;
+		VisitLiveEntity(archive, entity);
+		root["entities"].append(record);
+	}
+	Json::StreamWriterBuilder writer;
+	writer["indentation"] = "  ";
+	writer["precision"] = 9; // float を往復で同じ値に戻せる桁数
+	return Json::writeString(writer, root);
+}
+
+bool ImGuiManager::SaveScene(const filesystem::path& path)
+{
+	if (ProjectManager::IsPlaying())
+	{
+		AddLog("再生中はシーンを保存できません。停止してから保存してください");
+		return false;
+	}
+	error_code error;
+	if (path.has_parent_path()) filesystem::create_directories(path.parent_path(), error);
+	const string contents = SerializeScene();
+	filesystem::path temporary = path;
+	temporary += L".tmp";
+	{
+		ofstream file(temporary, ios::binary | ios::trunc);
+		file << contents;
+		if (!file)
+		{
+			AddLog("シーンの保存に失敗しました: %s", ToUtf8(path).c_str());
+			return false;
+		}
+	}
+	if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+	{
+		filesystem::remove(temporary, error);
+		AddLog("シーンの保存に失敗しました: %s", ToUtf8(path).c_str());
+		return false;
+	}
+	m_ScenePath = RelativeToWorkingDirectory(path);
+	m_SceneSavedHash = ComputeSceneHash();
+	m_SceneCurrentHash = m_SceneSavedHash;
+	SaveProjectSettings(); // cfg の scene= を更新
+	AddLog("シーンを保存: %s", ToUtf8(m_ScenePath).c_str());
+	return true;
+}
+
+void ImGuiManager::DestroySceneEntities()
+{
+	GraphicsDevice::WaitForGpuIdle();
+	if (ProjectManager::IsPlaying()) ProjectManager::Stop();
+	CancelRename();
+	m_SelectedEntity = g_kINVALID_ENTITY;
+	m_LastPickCandidates.clear();
+	m_UndoStack.clear();
+	m_RedoStack.clear();
+	m_HasPendingUndo = false;
+	m_PendingUndo = {};
+	primitiveCreation = {};
+	// コードで作られたタイムライン（Director）は破棄するエンティティを参照しているため、一緒に破棄する
+	TimeLineSystem::Clear();
+	for (EntityID entity : CollectSceneEntities())
+	{
+		World::DestroyEntity(Entity(entity));
+	}
+}
+
+void ImGuiManager::RebuildLoadedEntity(EntityID entity, const void* recordPointer)
+{
+	const Json::Value& record = *static_cast<const Json::Value*>(recordPointer);
+
+	if (ComponentManager::HasComponent<StaticModelComponent>(entity))
+	{
+		auto& model = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
+		model.ModelId = model.ModelPath.empty() ? -1 : ModelManager::LoadStaticModel(model.ModelPath.c_str(), model.IsConvert);
+		if (model.ModelId < 0) AddLog("シーン: モデルを読み込めません: %s", model.ModelPath.c_str());
+		else if (!record.isMember("aabb") && ComponentManager::HasComponent<AABBComponent>(entity))
+		{
+			if (auto* resource = ModelManager::GetStaticModel(model.ModelId))
+			{
+				auto& bounds = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
+				bounds.Center = resource->GetAabbCenter();
+				bounds.Extents = resource->GetAabbExtents();
+			}
+		}
+	}
+
+	if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
+	{
+		auto& animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
+		animation.ModelId = animation.ModelPath.empty() ? -1 : ModelManager::LoadAnimModel(animation.ModelPath.c_str(), animation.IsConvert);
+		if (animation.ModelId < 0)
+		{
+			AddLog("シーン: アニメーションモデルを読み込めません: %s", animation.ModelPath.c_str());
+		}
+		else
+		{
+			const size_t count = min(animation.AnimationPaths.size(), animation.Animations.size());
+			for (size_t i = 0; i < count; ++i)
+			{
+				if (!ModelManager::LoadAnimation(animation.ModelId, animation.AnimationPaths[i].c_str(), animation.Animations[i].c_str()))
+				{
+					AddLog("シーン: アニメーションを読み込めません: %s", animation.AnimationPaths[i].c_str());
+				}
+			}
+			const bool playing = animation.IsPlaying;
+			vector<string> layers;
+			for (const auto& layer : animation.ActiveAnimationLayers) layers.push_back(layer.AnimationName);
+			if (playing && !layers.empty()) Animator::Play(animation, layers);
+			else if (playing && !animation.CurrentAnimation.empty()) Animator::Play(animation, animation.CurrentAnimation);
+		}
+	}
+
+	if (ComponentManager::HasComponent<MeshComponent>(entity))
+	{
+		auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+		if (ComponentManager::HasComponent<ProceduralTerrainComponent>(entity))
+		{
+			const auto settings = ComponentManager::GetComponentUnchecked<ProceduralTerrainComponent>(entity).Settings;
+			if (ProceduralScene::GenerateTerrain(settings, entity) == g_kINVALID_ENTITY) AddLog("シーン: 地形を生成できません");
+		}
+		else if (mesh.PrimitiveType != 0)
+		{
+			VertexResource resource{};
+			resource.entityid = entity;
+			resource.objectType = static_cast<ObjectType>(mesh.PrimitiveType);
+			resource.color = static_cast<Color>(mesh.PrimitiveColor);
+			PrimitiveSettings settings;
+			settings.Radius = mesh.PrimitiveRadius;
+			settings.Height = mesh.PrimitiveHeight;
+			settings.Width = mesh.PrimitiveWidth;
+			settings.Depth = mesh.PrimitiveDepth;
+			settings.Segments = mesh.PrimitiveSegments;
+			settings.Rings = mesh.PrimitiveRings;
+			settings.FaceDivisions = mesh.PrimitiveFaceDivisions;
+			PrimitiveGeometry::CreateObjectVertex(resource, settings);
+		}
+		else if (record.isMember("meshVertices") && record["meshVertices"]["data"].isString())
+		{
+			vector<uint8_t> bytes;
+			const int floatsPerVertex = record["meshVertices"].get("floatsPerVertex", 12).asInt();
+			if (floatsPerVertex == 12 && SceneFile::DecodeBase64(record["meshVertices"]["data"].asString(), bytes) &&
+				bytes.size() % (12 * sizeof(float)) == 0)
+			{
+				vector<Vertex> vertices(bytes.size() / (12 * sizeof(float)));
+				const float* f = reinterpret_cast<const float*>(bytes.data());
+				for (size_t i = 0; i < vertices.size(); ++i, f += 12)
+				{
+					vertices[i].Pos = { f[0], f[1], f[2] };
+					vertices[i].Normal = { f[3], f[4], f[5] };
+					vertices[i].Tex = { f[6], f[7] };
+					vertices[i].Color = { f[8], f[9], f[10], f[11] };
+				}
+				if (!PrimitiveGeometry::UploadVertices(entity, vertices)) AddLog("シーン: メッシュを復元できません #%u", entity);
+			}
+		}
+	}
+
+	if (ComponentManager::HasComponent<SpriteComponent>(entity))
+	{
+		const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
+		if (sprite.SourceShape != 0)
+		{
+			VertexResource resource{};
+			resource.entityid = entity;
+			resource.shapetype = static_cast<ShapeType>(sprite.SourceShape);
+			resource.radius = sprite.SourceRadius;
+			resource.color = static_cast<Color>(sprite.SourceColor);
+			PrimitiveGeometry::CreateSpriteVertex(resource);
+		}
+	}
+
+	if (ComponentManager::HasComponent<MaterialComponent>(entity))
+	{
+		auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+		if (!material.TexturePath.empty()) material.TextureID = TextureManager::LoadTexture(material.TexturePath.c_str());
+		else if (material.UseTexture) material.TextureID = TextureManager::GetDefaultTextureIndex();
+		if (!material.NormalMapPath.empty()) material.NormalMapID = TextureManager::LoadNormalTexture(material.NormalMapPath.c_str());
+		if (!material.MeshShadingOverrides.empty()) ApplyMeshShadingOverridesToModel(entity);
+	}
+
+	if (ComponentManager::HasComponent<CameraComponent>(entity))
+	{
+		const auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(entity);
+		if (camera.IsGameCamera && camera.IsMainGameCamera) Camera::SetMainGameCamera(entity);
+	}
+	GpuSceneChanges::Notify(entity);
+}
+
+bool ImGuiManager::LoadScene(const filesystem::path& path)
+{
+	ifstream stream(path, ios::binary);
+	if (!stream)
+	{
+		AddLog("シーンを開けません: %s", ToUtf8(path).c_str());
+		return false;
+	}
+	Json::Value root;
+	Json::CharReaderBuilder reader;
+	string parseError;
+	if (!Json::parseFromStream(reader, stream, &root, &parseError) || !root.isObject() ||
+		root.get("format", "").asString() != "DX12Scene" || !root["entities"].isArray())
+	{
+		AddLog("シーンファイルが不正です: %s %s", ToUtf8(path).c_str(), parseError.c_str());
+		return false;
+	}
+	if (root.get("version", 0).asInt() > SceneFile::kVersion)
+	{
+		AddLog("新しい形式のシーンです（version %d）。読める項目だけ読み込みます", root["version"].asInt());
+	}
+	const Json::Value& records = root["entities"];
+	if (records.size() + CollectSceneEntities().size() > g_kMAX_ENTITIES)
+	{
+		AddLog("シーンのエンティティ数が上限を超えています");
+		return false;
+	}
+
+	DestroySceneEntities();
+
+	// 1回目：ID を確保（カメラの追従対象やタイムラインの参照を付け替えるため）
+	unordered_map<EntityID, EntityID> idMap;
+	vector<EntityID> created(records.size(), g_kINVALID_ENTITY);
+	for (Json::ArrayIndex i = 0; i < records.size(); ++i)
+	{
+		const EntityID entity = World::CreateEntity().GetID();
+		created[i] = entity;
+		const EntityID fileId = records[i].get("id", i).asUInt();
+		idMap[fileId] = entity;
+	}
+
+	// 2回目：コンポーネントを復元 → 実行時リソースを作り直す
+	for (Json::ArrayIndex i = 0; i < records.size(); ++i)
+	{
+		const EntityID entity = created[i];
+		if (entity == g_kINVALID_ENTITY) continue;
+		Json::Value record = records[i];
+		EntitySnapshot snapshot{};
+		snapshot.Entity = entity;
+		snapshot.WasAlive = true;
+		SceneFile::Archive archive(SceneFile::Mode::Read, record);
+		archive.EntityMap = &idMap;
+		SceneFile::Component(archive, "name", snapshot.HasName, snapshot.Name);
+		SceneFile::Component(archive, "transform", snapshot.HasTransform, snapshot.Transform);
+		SceneFile::Component(archive, "shader", snapshot.HasShader, snapshot.Shader);
+		SceneFile::Component(archive, "staticModel", snapshot.HasStaticModel, snapshot.StaticModel);
+		SceneFile::Component(archive, "animationModel", snapshot.HasAnimationModel, snapshot.AnimationModel);
+		SceneFile::Component(archive, "light", snapshot.HasLight, snapshot.Light);
+		SceneFile::Component(archive, "sun", snapshot.HasSun, snapshot.Sun);
+		SceneFile::Component(archive, "terrain", snapshot.HasProceduralTerrain, snapshot.ProceduralTerrain);
+		SceneFile::Component(archive, "motion", snapshot.HasProceduralMotion, snapshot.ProceduralMotion);
+		SceneFile::Component(archive, "material", snapshot.HasMaterial, snapshot.Material);
+		SceneFile::Component(archive, "aabb", snapshot.HasAabb, snapshot.Aabb);
+		SceneFile::Component(archive, "sprite", snapshot.HasSprite, snapshot.Sprite);
+		SceneFile::Component(archive, "mesh", snapshot.HasMesh, snapshot.Mesh);
+		SceneFile::Component(archive, "camera", snapshot.HasCamera, snapshot.Camera);
+		SceneFile::Component(archive, "postProcess", snapshot.HasPostProcess, snapshot.PostProcess);
+		SceneFile::Component(archive, "input", snapshot.HasInput, snapshot.Input);
+		SceneFile::Component(archive, "move", snapshot.HasMove, snapshot.Move);
+		SceneFile::Component(archive, "physics", snapshot.HasPhysics, snapshot.Physics);
+		SceneFile::Component(archive, "timeline", snapshot.HasTimeline, snapshot.Timeline);
+		SceneFile::Component(archive, "obb", snapshot.HasObb, snapshot.Obb);
+		SceneFile::Component(archive, "lod", snapshot.HasLod, snapshot.Lod);
+		if (!snapshot.HasTransform)
+		{
+			snapshot.HasTransform = true; // シーンのエンティティは必ずTransformを持つ
+		}
+		snapshot.Transform.IsDirty = true;
+		snapshot.Transform.HasPreviousWorld = false;
+		ApplySnapshot(snapshot);
+
+		bool hasInstancing = false;
+		InstancingComponent instancing{};
+		SceneFile::Component(archive, "instancing", hasInstancing, instancing);
+		if (hasInstancing)
+		{
+			ComponentManager::AddComponent(entity, ComponentType::INSTANCING);
+			ComponentManager::GetComponentUnchecked<InstancingComponent>(entity) = instancing;
+		}
+		RebuildLoadedEntity(entity, &record);
+	}
+
+	if (auto* physics = SystemManager::GetSystem<PhysicsSystem>()) physics->ResetSimulation();
+	MaterialManager::NotifyAssignmentsChanged();
+	m_ScenePath = RelativeToWorkingDirectory(path);
+	BeginSceneBaseline(3.0);
+	SaveProjectSettings();
+	AddLog("シーンを開きました: %s（%u エンティティ）", ToUtf8(m_ScenePath).c_str(), records.size());
+	return true;
+}
+
+// 新規シーン：Unityと同じく「Main Camera」と平行光源（太陽）だけを置く
+void ImGuiManager::CreateNewScene()
+{
+	DestroySceneEntities();
+	Camera::CreateGameCamera("Main Camera", { 0.0f, 1.0f, -10.0f }, { 0.0f, 1.0f, 0.0f }, XM_PIDIV4, true);
+	Sun::CreateDefault();
+	if (auto* physics = SystemManager::GetSystem<PhysicsSystem>()) physics->ResetSimulation();
+	MaterialManager::NotifyAssignmentsChanged();
+	m_ScenePath.clear();
+	BeginSceneBaseline(1.5);
+	SaveProjectSettings();
+	AddLog("新しいシーンを作成しました");
+}
+
+void ImGuiManager::BeginSceneBaseline(double settleSeconds)
+{
+	m_SceneTracking = SceneTrackingAllowed();
+	if (!m_SceneTracking) return;
+	m_SceneSavedHash = ComputeSceneHash();
+	m_SceneCurrentHash = m_SceneSavedHash;
+	m_SceneSettleUntil = ImGui::GetTime() + settleSeconds;
+	m_SceneSettleRevision = m_EditRevision;
+	m_SceneNextHashTime = 0.0;
+}
+
+// 毎フレーム（Update の最後）。0.25秒ごとにハッシュを取り直す。
+void ImGuiManager::UpdateSceneTracking()
+{
+	if (m_SceneTracking && !ProjectManager::IsPlaying())
+	{
+		const double now = ImGui::GetTime();
+		if (now >= m_SceneNextHashTime)
+		{
+			m_SceneNextHashTime = now + 0.25;
+			m_SceneCurrentHash = ComputeSceneHash();
+			// 読み込み直後はモデルの非同期読み込みや太陽の同期で値が落ち着くまで、ユーザーの編集がなければ基準を更新する
+			if (now < m_SceneSettleUntil && m_EditRevision == m_SceneSettleRevision && !ImGui::IsAnyItemActive())
+			{
+				m_SceneSavedHash = m_SceneCurrentHash;
+			}
+		}
+	}
+
+	// ウィンドウタイトル：「DirectX12Window - シーン名*」
+	string title = "DirectX12Window - " + GetSceneDisplayName() + (IsSceneDirty() ? "*" : "");
+	if (ProjectManager::IsPlaying()) title += "  [再生中]";
+	const wstring wideTitle = Utf8ToWide(title);
+	if (wideTitle != m_LastWindowTitle)
+	{
+		ImGuiViewport* viewport = ImGui::GetMainViewport();
+		HWND hwnd = viewport ? static_cast<HWND>(viewport->PlatformHandleRaw) : nullptr;
+		if (!hwnd && viewport) hwnd = static_cast<HWND>(viewport->PlatformHandle);
+		if (hwnd && SetWindowTextW(hwnd, wideTitle.c_str())) m_LastWindowTitle = wideTitle;
+	}
+}
+
+void ImGuiManager::RequestSceneAction(SceneAction action, const filesystem::path& path)
+{
+	if (m_PendingSceneAction != SceneAction::None && !m_ExecuteSceneAction)
+	{
+		return; // 確認中
+	}
+	if (ProjectManager::IsPlaying())
+	{
+		ProjectManager::Stop(); // Unityと同じく、シーン操作の前に再生を止める（編集時の状態に戻る）
+	}
+	m_PendingSceneAction = action;
+	m_PendingScenePath = path;
+	if (IsSceneDirty())
+	{
+		m_RequestSaveChangesPopup = true;
+	}
+	else
+	{
+		m_ExecuteSceneAction = true;
+	}
+}
+
+void ImGuiManager::RequestQuit()
+{
+	if (!IsSceneDirty())
+	{
+		PostQuitMessage(0);
+		return;
+	}
+	RequestSceneAction(SceneAction::Quit);
+}
+
+// Update の先頭（ImGui::NewFrame の前）で呼ぶ。描画中ではないのでエンティティを安全に作り直せる。
+void ImGuiManager::ProcessSceneAction()
+{
+	if (!m_ExecuteSceneAction) return;
+	const SceneAction action = m_PendingSceneAction;
+	const filesystem::path path = m_PendingScenePath;
+	m_ExecuteSceneAction = false;
+	m_PendingSceneAction = SceneAction::None;
+	m_PendingScenePath.clear();
+	switch (action)
+	{
+	case SceneAction::Open:
+		LoadScene(path);
+		break;
+	case SceneAction::New:
+		CreateNewScene();
+		break;
+	case SceneAction::Quit:
+		m_SceneTracking = false;
+		PostQuitMessage(0);
+		break;
+	default:
+		break;
+	}
+}
+
+void ImGuiManager::SaveCurrentScene(bool saveAs)
+{
+	if (ProjectManager::IsPlaying())
+	{
+		AddLog("再生中はシーンを保存できません。停止してから保存してください");
+		return;
+	}
+	if (saveAs || m_ScenePath.empty())
+	{
+		const string name = m_ScenePath.empty() ? string("NewScene") : ToUtf8(m_ScenePath.stem());
+		snprintf(m_SaveAsName, sizeof(m_SaveAsName), "%s", name.c_str());
+		const string directory = m_ScenePath.empty() ? string("asset/Scenes") : ToUtf8(m_ScenePath.parent_path());
+		snprintf(m_SaveAsDirectory, sizeof(m_SaveAsDirectory), "%s", directory.c_str());
+		m_RequestSaveAsPopup = true;
+		return;
+	}
+	SaveScene(m_ScenePath);
+}
+
+void ImGuiManager::DrawSceneFileMenu()
+{
+	const bool playing = ProjectManager::IsPlaying();
+	if (ImGui::MenuItem("新規シーン", "Ctrl+N")) RequestNewScene();
+	if (ImGui::BeginMenu("シーンを開く"))
+	{
+		// asset 以下の .scene を一覧表示（メニューを開いている間だけ走査）
+		vector<filesystem::path> scenes;
+		error_code error;
+		for (filesystem::recursive_directory_iterator it(m_AssetRoot, filesystem::directory_options::skip_permission_denied, error), end;
+			!error && it != end && scenes.size() < 200; it.increment(error))
+		{
+			if (it->is_regular_file(error) && IsSceneFile(it->path())) scenes.push_back(it->path());
+		}
+		sort(scenes.begin(), scenes.end());
+		if (scenes.empty()) ImGui::TextDisabled("asset フォルダに .scene がありません");
+		for (const auto& scene : scenes)
+		{
+			const string label = ToUtf8(scene.lexically_relative(m_AssetRoot));
+			const bool current = !m_ScenePath.empty() && filesystem::equivalent(scene, m_ScenePath, error);
+			if (ImGui::MenuItem(label.c_str(), nullptr, current)) RequestOpenScene(scene);
+		}
+		ImGui::EndMenu();
+	}
+	ImGui::Separator();
+	if (ImGui::MenuItem("保存", "Ctrl+S", false, !playing)) SaveCurrentScene(false);
+	if (ImGui::MenuItem("名前を付けて保存...", "Ctrl+Shift+S", false, !playing)) SaveCurrentScene(true);
+}
+
+void ImGuiManager::DrawScenePopups()
+{
+	if (m_RequestSaveChangesPopup)
+	{
+		ImGui::OpenPopup(kSaveChangesPopup);
+		m_RequestSaveChangesPopup = false;
+	}
+	if (m_RequestSaveAsPopup)
+	{
+		ImGui::OpenPopup(kSaveAsPopup);
+		m_RequestSaveAsPopup = false;
+	}
+
+	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	if (ImGui::BeginPopupModal(kSaveChangesPopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::Text("シーン「%s」に保存されていない変更があります。", GetSceneDisplayName().c_str());
+		ImGui::Text("変更を保存しますか？");
+		ImGui::TextDisabled("保存しないと、変更は失われます。");
+		ImGui::Spacing();
+		if (ImGui::Button("保存", ImVec2(110.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Enter, false))
+		{
+			ImGui::CloseCurrentPopup();
+			if (m_ScenePath.empty())
+			{
+				m_ContinueAfterSaveAs = true;
+				SaveCurrentScene(true);
+			}
+			else if (SaveScene(m_ScenePath))
+			{
+				m_ExecuteSceneAction = true;
+			}
+			else
+			{
+				m_PendingSceneAction = SceneAction::None;
+			}
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("保存しない", ImVec2(110.0f, 0.0f)))
+		{
+			ImGui::CloseCurrentPopup();
+			m_ExecuteSceneAction = true;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("キャンセル", ImVec2(110.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+		{
+			ImGui::CloseCurrentPopup();
+			m_PendingSceneAction = SceneAction::None;
+			m_PendingScenePath.clear();
+		}
+		ImGui::EndPopup();
+	}
+
+	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	if (ImGui::BeginPopupModal(kSaveAsPopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::SetNextItemWidth(360.0f);
+		ImGui::InputText("フォルダ", m_SaveAsDirectory, sizeof(m_SaveAsDirectory));
+		ImGui::SetNextItemWidth(360.0f);
+		if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+		const bool enter = ImGui::InputText("ファイル名", m_SaveAsName, sizeof(m_SaveAsName), ImGuiInputTextFlags_EnterReturnsTrue);
+		string name = m_SaveAsName;
+		while (!name.empty() && (name.back() == ' ' || name.back() == '.')) name.pop_back();
+		filesystem::path target = filesystem::u8path(m_SaveAsDirectory) / filesystem::u8path(name);
+		if (!IsSceneFile(target)) target += SceneFile::kExtension;
+		const bool validName = !name.empty() && name.find_first_of("\\/:*?\"<>|") == string::npos;
+		error_code error;
+		const bool exists = validName && filesystem::exists(target, error);
+		ImGui::TextDisabled("保存先: %s", ToUtf8(target).c_str());
+		if (!validName) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "ファイル名に使えない文字が含まれています");
+		else if (exists) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "同じ名前のシーンがあります。上書きします");
+		ImGui::Spacing();
+		ImGui::BeginDisabled(!validName);
+		if (ImGui::Button(exists ? "上書き保存" : "保存", ImVec2(120.0f, 0.0f)) || (enter && validName))
+		{
+			if (SaveScene(target))
+			{
+				ImGui::CloseCurrentPopup();
+				if (m_ContinueAfterSaveAs) m_ExecuteSceneAction = true;
+				m_ContinueAfterSaveAs = false;
+			}
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		if (ImGui::Button("キャンセル", ImVec2(120.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+		{
+			ImGui::CloseCurrentPopup();
+			if (m_ContinueAfterSaveAs)
+			{
+				m_PendingSceneAction = SceneAction::None;
+				m_PendingScenePath.clear();
+			}
+			m_ContinueAfterSaveAs = false;
+		}
+		ImGui::EndPopup();
+	}
 }
 
 ===== FILE: source\editor\editorscenenavigation.h =====
@@ -14857,6 +15649,17 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
         Camera::SetCameraPostProcess(static_cast<PostProcessType>(postProcess));
         matched = true;
     }
+    // 現在のシーン（次回起動時に開く）。日本語のパスも扱えるよう UTF-8 で保存する
+    if (output)
+    {
+        const auto scene = m_ScenePath.generic_u8string();
+        *output << "scene=" << string(scene.begin(), scene.end()) << '\n';
+    }
+    else if (key == "scene")
+    {
+        m_StartupScenePath = filesystem::u8path(value);
+        matched = true;
+    }
     if (output) *output << "asset_directory=" << m_CurrentAssetDirectory.generic_string() << '\n';
     else if (key == "asset_directory")
     {
@@ -15079,6 +15882,21 @@ void ImGuiManager::LoadProjectSettings()
 	}
     CloudRenderer::GetSettings().Validate();
     if (auto* physics = SystemManager::GetSystem<PhysicsSystem>()) physics->ResetSimulation();
+
+    // 前回開いていたシーンを開く（cfg の scene=）。見つからなければ既定シーンのまま
+    if (!m_StartupScenePath.empty())
+    {
+        error_code sceneError;
+        if (filesystem::exists(m_StartupScenePath, sceneError))
+        {
+            LoadScene(m_StartupScenePath);
+        }
+        else
+        {
+            AddLog("前回のシーンが見つかりません: %s", m_StartupScenePath.generic_string().c_str());
+        }
+        m_StartupScenePath.clear();
+    }
 
 }
 
@@ -15836,10 +16654,17 @@ void ImGuiManager::Update()
 	{
 		if (!RenderingValidation::IsEnabled())
 		{
-			LoadProjectSettings();
+			LoadProjectSettings(); // cfg に scene= があれば、ここでそのシーンを開く
 		}
 		m_ProjectSettingsLoaded = true;
+		if (!m_SceneTracking)
+		{
+			// 起動時の既定シーン（Untitled）。モデルの非同期読み込みが落ち着くまで基準を更新する
+			BeginSceneBaseline(5.0);
+		}
 	}
+	// シーンの切り替え・新規作成・終了は、描画前のこの位置でまとめて実行する
+	ProcessSceneAction();
 
 	ImGui_ImplDX12_NewFrame();
 	ImGui_ImplWin32_NewFrame();
@@ -15865,14 +16690,20 @@ void ImGuiManager::Update()
 	}
 
     MaterialPreview::SetVisible(false);
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && !MaterialEditorHasFocus())
+    // Ctrl+S：シーンを保存（未保存の新規シーンなら名前を付けて保存）、Ctrl+Shift+S：名前を付けて保存、Ctrl+N：新規シーン
+    if (!io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && !MaterialEditorHasFocus())
     {
+        SaveCurrentScene(io.KeyShift);
         string error;
         filesystem::create_directories("Save");
         if (!MaterialManager::SaveSceneReferences("Save/scene_materials.json", error))
         {
             AddLog("Scene save failed: %s", error.c_str());
         }
+    }
+    if (!io.WantTextInput && io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_N, false))
+    {
+        RequestNewScene();
     }
 	ProcessDroppedFiles();
 	const bool canSwitchGizmo =
@@ -16103,7 +16934,9 @@ void ImGuiManager::Update()
 		ImGui::End();
 	}
 
+	DrawScenePopups();
 	FinalizeUndoCaptureIfIdle();
+	UpdateSceneTracking();
 	static double nextSettingsSave = 0.0;
 	if (m_ProjectSettingsLoaded && !ProjectManager::IsPlaying() &&
 		!ImGui::IsAnyItemActive() && ImGui::GetTime() >= nextSettingsSave)
@@ -16168,7 +17001,9 @@ void ImGuiManager::DrawEditorMainMenu()
 
     if (ImGui::BeginMenu("ファイル"))
     {
-        if (ImGui::MenuItem("シーンのマテリアル参照を保存", "Ctrl+S"))
+        DrawSceneFileMenu();
+        ImGui::Separator();
+        if (ImGui::MenuItem("シーンのマテリアル参照を保存"))
         {
             string error;
             filesystem::create_directories("Save");
@@ -16177,6 +17012,8 @@ void ImGuiManager::DrawEditorMainMenu()
                 AddLog("Scene save failed: %s", error.c_str());
             }
         }
+        ImGui::Separator();
+        if (ImGui::MenuItem("終了", "Alt+F4")) RequestQuit();
         ImGui::EndMenu();
     }
 	if (ImGui::BeginMenu("編集"))
@@ -16713,7 +17550,54 @@ private:
 	static const char* GetEntityDisplayName(EntityID entity);
 	static const char* GetLightTypeName(LightType type);
 
+	// ---------------------------------------------------------------- シーンシステム（editorscene.cpp）
+	enum class SceneAction { None, Open, New, Quit };
+	inline static filesystem::path m_ScenePath;               // 空 = 未保存の新規シーン
+	inline static filesystem::path m_StartupScenePath;        // cfg の scene=
+	inline static uint64_t m_SceneSavedHash = 0;              // 最後に保存/読み込みした時点
+	inline static uint64_t m_SceneCurrentHash = 0;
+	inline static bool m_SceneTracking = false;
+	inline static double m_SceneNextHashTime = 0.0;
+	inline static double m_SceneSettleUntil = 0.0;
+	inline static uint64_t m_EditRevision = 0;                // Undoに積まれる編集のたびに増える
+	inline static uint64_t m_SceneSettleRevision = 0;
+	inline static SceneAction m_PendingSceneAction = SceneAction::None;
+	inline static filesystem::path m_PendingScenePath;
+	inline static bool m_ExecuteSceneAction = false;
+	inline static bool m_RequestSaveChangesPopup = false;
+	inline static bool m_RequestSaveAsPopup = false;
+	inline static bool m_ContinueAfterSaveAs = false;
+	inline static char m_SaveAsName[128] = "NewScene";
+	inline static char m_SaveAsDirectory[260] = "asset/Scenes";
+	inline static wstring m_LastWindowTitle;
+
+	static bool SceneTrackingAllowed();
+	static vector<EntityID> CollectSceneEntities();
+	static uint64_t ComputeSceneHash();
+	static string SerializeScene();
+	static bool SaveScene(const filesystem::path& path);
+	static bool LoadScene(const filesystem::path& path);
+	static void DestroySceneEntities();
+	static void CreateNewScene();
+	static void RebuildLoadedEntity(EntityID entity, const void* record);
+	static void BeginSceneBaseline(double settleSeconds);
+	static void UpdateSceneTracking();
+	static void ProcessSceneAction();
+	static void RequestSceneAction(SceneAction action, const filesystem::path& path = {});
+	static void SaveCurrentScene(bool saveAs);
+	static void DrawScenePopups();
+	static void DrawSceneFileMenu();
+	static bool IsSceneFile(const filesystem::path& path);
+	static string GetSceneDisplayName();
+
 public:
+	// シーン操作（未保存なら「保存しますか？」を出してから実行する）
+	static void RequestOpenScene(const filesystem::path& path) { RequestSceneAction(SceneAction::Open, path); }
+	static void RequestNewScene() { RequestSceneAction(SceneAction::New); }
+	static void RequestQuit();
+	static bool IsSceneDirty() { return m_SceneTracking && m_SceneCurrentHash != m_SceneSavedHash; }
+	static const filesystem::path& GetScenePath() { return m_ScenePath; }
+
 	static void SaveProjectSettings();
 	static constexpr UINT kSrvDescriptorCount = 64;
     inline static bool m_AssetBrowserStandalone = false;
@@ -18898,6 +19782,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			}
 		}
 		DragFinish(drop);
+		return 0;
+	}
+
+	// ×ボタン / Alt+F4：未保存のシーンがあれば「保存しますか？」を出す
+	// （デバイスロスト時などにエンジンから送られる WM_CLOSE はそのまま閉じる）
+	if (uMsg == WM_SYSCOMMAND && (wParam & 0xFFF0) == SC_CLOSE)
+	{
+		ImGuiManager::RequestQuit();
 		return 0;
 	}
 
@@ -48940,6 +49832,9 @@ void PrimitiveGeometry::CreateSpriteVertex(const VertexResource& vertexstruct)
 			);
 		};
 
+	spriteComponent.SourceShape = static_cast<int>(vertexstruct.shapetype);
+	spriteComponent.SourceRadius = vertexstruct.radius;
+	spriteComponent.SourceColor = static_cast<int>(vertexstruct.color);
 	vector<Vertex> vertices = CreateShapeVertices(vertexstruct.shapetype, vertexstruct.radius, vertexstruct.color, ApplyUv);
 
 	const UINT vertexBufferSize = static_cast<UINT>(sizeof(Vertex) * vertices.size());
@@ -49087,7 +49982,20 @@ void PrimitiveGeometry::CreateObjectVertex(const VertexResource& vertexstruct, c
 		if (vertexstruct.objectType != ObjectType::CAPSULE)
 			vertex.Normal = Normalize({ vertex.Normal.x / scale.x, vertex.Normal.y / scale.y, vertex.Normal.z / scale.z });
 	}
-	UploadVertices(vertexstruct.entityid, vertices);
+	if (UploadVertices(vertexstruct.entityid, vertices))
+	{
+		// シーン保存時に頂点ではなく作成パラメーターを書き出せるよう記録する
+		auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(vertexstruct.entityid);
+		mesh.PrimitiveType = static_cast<int>(vertexstruct.objectType);
+		mesh.PrimitiveColor = static_cast<int>(vertexstruct.color);
+		mesh.PrimitiveRadius = settings.Radius;
+		mesh.PrimitiveHeight = settings.Height;
+		mesh.PrimitiveWidth = settings.Width;
+		mesh.PrimitiveDepth = settings.Depth;
+		mesh.PrimitiveSegments = settings.Segments;
+		mesh.PrimitiveRings = settings.Rings;
+		mesh.PrimitiveFaceDivisions = settings.FaceDivisions;
+	}
 }
 
 bool PrimitiveGeometry::UploadVertices(EntityID entity, const vector<Vertex>& vertices)
@@ -49100,6 +50008,7 @@ bool PrimitiveGeometry::UploadVertices(EntityID entity, const vector<Vertex>& ve
     }
     const UINT byteSize = static_cast<UINT>(vertices.size() * sizeof(Vertex));
     auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+    mesh.PrimitiveType = 0; // 任意の頂点。プリミティブの場合は CreateObjectVertex が直後に設定し直す
     const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
     const auto description = CD3DX12_RESOURCE_DESC::Buffer(byteSize);
     ComPtr<ID3D12Resource> buffer;
@@ -61221,6 +62130,734 @@ public:
 	static EntityID Create(LightType type);
 	static const char* GetTypeName(LightType type);
 };
+
+===== FILE: source\scene\scenefile.h =====
+#pragma once
+// ============================================================================
+// SceneFile : .scene ファイル（JSON）の読み書きとシーンの変更検知用ハッシュ。ヘッダーのみ。
+//
+//  1つの「項目の列挙関数（Visit）」を、書き込み／読み込み／ハッシュの3通りに使う。
+//  そのため、保存する項目と変更検知の対象が必ず一致する。
+//  ・読み込みでキーがない・型が違う場合は既定値のまま（古いファイルや手書き編集に強い）
+//  ・実行時にしか意味のない値（GPUバッファ、テクスチャID、行列、再生位置など）は保存しない
+// ============================================================================
+#include "componentmanager.h"
+#include "physicscomponent.h"
+#include "timelinecomponent.h"
+#include "proceduralcomponents.h"
+#include "materialasset.h"
+#include <json/json.h>
+#include <type_traits>
+#include <unordered_map>
+#include <string>
+#include <vector>
+#include <array>
+#include <cstring>
+
+namespace SceneFile
+{
+	inline constexpr int kVersion = 1;
+	inline constexpr const char* kExtension = ".scene";
+
+	// ---------------------------------------------------------------- Base64（メッシュ頂点の保存用）
+	inline std::string EncodeBase64(const void* data, size_t size)
+	{
+		static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+		const auto* bytes = static_cast<const uint8_t*>(data);
+		std::string out;
+		out.reserve((size + 2) / 3 * 4);
+		size_t i = 0;
+		for (; i + 2 < size; i += 3)
+		{
+			const uint32_t v = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+			out.push_back(table[(v >> 18) & 63]);
+			out.push_back(table[(v >> 12) & 63]);
+			out.push_back(table[(v >> 6) & 63]);
+			out.push_back(table[v & 63]);
+		}
+		if (i < size)
+		{
+			uint32_t v = bytes[i] << 16;
+			if (i + 1 < size) v |= bytes[i + 1] << 8;
+			out.push_back(table[(v >> 18) & 63]);
+			out.push_back(table[(v >> 12) & 63]);
+			out.push_back(i + 1 < size ? table[(v >> 6) & 63] : '=');
+			out.push_back('=');
+		}
+		return out;
+	}
+
+	inline bool DecodeBase64(const std::string& text, std::vector<uint8_t>& out)
+	{
+		auto value = [](char c) -> int
+		{
+			if (c >= 'A' && c <= 'Z') return c - 'A';
+			if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+			if (c >= '0' && c <= '9') return c - '0' + 52;
+			if (c == '+') return 62;
+			if (c == '/') return 63;
+			return -1;
+		};
+		out.clear();
+		if (text.size() % 4 != 0) return false;
+		out.reserve(text.size() / 4 * 3);
+		for (size_t i = 0; i < text.size(); i += 4)
+		{
+			int v[4];
+			for (int k = 0; k < 4; ++k)
+			{
+				v[k] = text[i + k] == '=' ? 0 : value(text[i + k]);
+				if (v[k] < 0) return false;
+			}
+			const uint32_t n = (v[0] << 18) | (v[1] << 12) | (v[2] << 6) | v[3];
+			out.push_back(static_cast<uint8_t>(n >> 16));
+			if (text[i + 2] != '=') out.push_back(static_cast<uint8_t>(n >> 8));
+			if (text[i + 3] != '=') out.push_back(static_cast<uint8_t>(n));
+		}
+		return true;
+	}
+
+	// ---------------------------------------------------------------- 3モード共通のアーカイブ
+	enum class Mode { Write, Read, Hash };
+
+	class Archive
+	{
+	public:
+		// Write/Read 用
+		Archive(Mode mode, Json::Value& node) : m_Mode(mode), m_Node(&node) {}
+		// Hash 用
+		explicit Archive(uint64_t& hash) : m_Mode(Mode::Hash), m_Hash(&hash) {}
+
+		Mode GetMode() const { return m_Mode; }
+		bool Writing() const { return m_Mode == Mode::Write; }
+		bool Reading() const { return m_Mode == Mode::Read; }
+		bool Hashing() const { return m_Mode == Mode::Hash; }
+
+		// エンティティ参照（EntityID）の付け替え。保存時：実ID→ファイル内番号、読み込み時：ファイル内番号→新ID
+		const std::unordered_map<EntityID, EntityID>* EntityMap = nullptr;
+
+		template<typename T>
+		void operator()(const char* key, T& value)
+		{
+			if (m_Mode == Mode::Hash)
+			{
+				HashValue(key, value);
+				return;
+			}
+			if (m_Mode == Mode::Write)
+			{
+				(*m_Node)[key] = ToJson(value);
+				return;
+			}
+			if (m_Node->isObject() && m_Node->isMember(key))
+			{
+				FromJson((*m_Node)[key], value);
+			}
+		}
+
+		// エンティティ参照
+		void Entity(const char* key, EntityID& entity)
+		{
+			EntityID mapped = entity;
+			if (m_Mode != Mode::Read)
+			{
+				mapped = Map(entity);
+				if (m_Mode == Mode::Hash) { HashBytes(&mapped, sizeof(mapped)); return; }
+				(*m_Node)[key] = mapped == g_kINVALID_ENTITY ? Json::Value(-1) : Json::Value(static_cast<Json::UInt>(mapped));
+				return;
+			}
+			if (!m_Node->isMember(key)) return;
+			const Json::Value& v = (*m_Node)[key];
+			entity = (v.isInt() && v.asInt() < 0) || !v.isUInt() ? g_kINVALID_ENTITY : Map(static_cast<EntityID>(v.asUInt()));
+		}
+
+		// 子オブジェクト
+		template<typename Function>
+		void Object(const char* key, Function&& function)
+		{
+			if (m_Mode == Mode::Hash) { HashString(key); function(*this); return; }
+			if (m_Mode == Mode::Write)
+			{
+				Json::Value child(Json::objectValue);
+				Archive sub(Mode::Write, child);
+				sub.EntityMap = EntityMap;
+				function(sub);
+				(*m_Node)[key] = child;
+				return;
+			}
+			if (!m_Node->isMember(key) || !(*m_Node)[key].isObject()) return;
+			Json::Value& child = (*m_Node)[key];
+			Archive sub(Mode::Read, child);
+			sub.EntityMap = EntityMap;
+			function(sub);
+		}
+
+		// 構造体の配列（vector）
+		template<typename T, typename Function>
+		void Array(const char* key, std::vector<T>& items, Function&& function)
+		{
+			if (m_Mode == Mode::Hash)
+			{
+				uint64_t count = items.size();
+				HashBytes(&count, sizeof(count));
+				for (auto& item : items) function(*this, item);
+				return;
+			}
+			if (m_Mode == Mode::Write)
+			{
+				Json::Value list(Json::arrayValue);
+				for (auto& item : items)
+				{
+					Json::Value child(Json::objectValue);
+					Archive sub(Mode::Write, child);
+					sub.EntityMap = EntityMap;
+					function(sub, item);
+					list.append(child);
+				}
+				(*m_Node)[key] = list;
+				return;
+			}
+			if (!m_Node->isMember(key) || !(*m_Node)[key].isArray()) return;
+			Json::Value& list = (*m_Node)[key];
+			items.clear();
+			items.resize(list.size());
+			for (Json::ArrayIndex i = 0; i < list.size(); ++i)
+			{
+				if (!list[i].isObject()) continue;
+				Archive sub(Mode::Read, list[i]);
+				sub.EntityMap = EntityMap;
+				function(sub, items[i]);
+			}
+		}
+
+		// 固定長配列の構造体
+		template<typename T, size_t N, typename Function>
+		void FixedArray(const char* key, T (&items)[N], Function&& function)
+		{
+			if (m_Mode == Mode::Hash) { for (auto& item : items) function(*this, item); return; }
+			if (m_Mode == Mode::Write)
+			{
+				Json::Value list(Json::arrayValue);
+				for (auto& item : items)
+				{
+					Json::Value child(Json::objectValue);
+					Archive sub(Mode::Write, child);
+					function(sub, item);
+					list.append(child);
+				}
+				(*m_Node)[key] = list;
+				return;
+			}
+			if (!m_Node->isMember(key) || !(*m_Node)[key].isArray()) return;
+			Json::Value& list = (*m_Node)[key];
+			for (Json::ArrayIndex i = 0; i < list.size() && i < N; ++i)
+			{
+				if (!list[i].isObject()) continue;
+				Archive sub(Mode::Read, list[i]);
+				function(sub, items[i]);
+			}
+		}
+
+		void HashBytes(const void* data, size_t size)
+		{
+			const auto* bytes = static_cast<const uint8_t*>(data);
+			uint64_t h = *m_Hash;
+			for (size_t i = 0; i < size; ++i) { h ^= bytes[i]; h *= 1099511628211ull; }
+			*m_Hash = h;
+		}
+		void HashString(const std::string& text)
+		{
+			uint64_t size = text.size();
+			HashBytes(&size, sizeof(size));
+			HashBytes(text.data(), text.size());
+		}
+
+	private:
+		Mode m_Mode;
+		Json::Value* m_Node = nullptr;
+		uint64_t* m_Hash = nullptr;
+
+		EntityID Map(EntityID entity) const
+		{
+			if (entity == g_kINVALID_ENTITY || !EntityMap) return entity;
+			const auto it = EntityMap->find(entity);
+			return it == EntityMap->end() ? g_kINVALID_ENTITY : it->second;
+		}
+
+		// ---- ハッシュ
+		template<typename T>
+		void HashValue(const char*, T& value)
+		{
+			if constexpr (std::is_same_v<T, std::string>) HashString(value);
+			else if constexpr (std::is_same_v<T, std::vector<std::string>>) { for (auto& s : value) HashString(s); uint64_t n = value.size(); HashBytes(&n, sizeof(n)); }
+			else if constexpr (std::is_same_v<T, std::vector<float>>) { uint64_t n = value.size(); HashBytes(&n, sizeof(n)); if (n) HashBytes(value.data(), n * sizeof(float)); }
+			else if constexpr (std::is_same_v<T, std::vector<AssetHandle>>) { uint64_t n = value.size(); HashBytes(&n, sizeof(n)); if (n) HashBytes(value.data(), n * sizeof(AssetHandle)); }
+			else if constexpr (is_enum_vector<T>::value) { uint64_t n = value.size(); HashBytes(&n, sizeof(n)); for (auto& e : value) { int i = static_cast<int>(e); HashBytes(&i, sizeof(i)); } }
+			else if constexpr (is_std_array<T>::value) { for (auto& e : value) HashValue(nullptr, e); }
+			else if constexpr (std::is_same_v<T, bool>) { uint8_t b = value ? 1 : 0; HashBytes(&b, 1); }
+			else
+			{
+				static_assert(std::is_trivially_copyable_v<T>, "unsupported scene field type");
+				HashBytes(&value, sizeof(T));
+			}
+		}
+
+		// ---- 型ごとの JSON 変換
+		template<typename T> struct is_std_array : std::false_type {};
+		template<typename U, size_t N> struct is_std_array<std::array<U, N>> : std::true_type {};
+		template<typename T> struct is_enum_vector : std::false_type {};
+		template<typename U> struct is_enum_vector<std::vector<U>> : std::bool_constant<std::is_enum_v<U>> {};
+
+		static Json::Value Vec(std::initializer_list<float> values)
+		{
+			Json::Value list(Json::arrayValue);
+			for (float v : values) list.append(v);
+			return list;
+		}
+
+		template<typename T>
+		static Json::Value ToJson(const T& value)
+		{
+			if constexpr (std::is_same_v<T, bool>) return Json::Value(value);
+			else if constexpr (std::is_same_v<T, std::string>) return Json::Value(value);
+			else if constexpr (std::is_enum_v<T>) return Json::Value(static_cast<int>(value));
+			else if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>) return Json::Value(static_cast<double>(value));
+			else if constexpr (std::is_same_v<T, uint64_t>) return Json::Value(FormatAssetHandle(value));
+			else if constexpr (std::is_integral_v<T> && std::is_signed_v<T>) return Json::Value(static_cast<Json::Int64>(value));
+			else if constexpr (std::is_integral_v<T>) return Json::Value(static_cast<Json::UInt64>(value));
+			else if constexpr (std::is_same_v<T, XMFLOAT2>) return Vec({ value.x, value.y });
+			else if constexpr (std::is_same_v<T, XMFLOAT3>) return Vec({ value.x, value.y, value.z });
+			else if constexpr (std::is_same_v<T, XMFLOAT4>) return Vec({ value.x, value.y, value.z, value.w });
+			else if constexpr (std::is_same_v<T, std::vector<AssetHandle>>)
+			{
+				Json::Value list(Json::arrayValue);
+				for (auto handle : value) list.append(FormatAssetHandle(handle));
+				return list;
+			}
+			else if constexpr (is_std_array<T>::value || std::is_same_v<T, std::vector<std::string>> ||
+				std::is_same_v<T, std::vector<float>> || is_enum_vector<T>::value)
+			{
+				Json::Value list(Json::arrayValue);
+				for (const auto& item : value) list.append(ToJson(item));
+				return list;
+			}
+			else
+			{
+				static_assert(sizeof(T) == 0, "unsupported scene field type");
+			}
+		}
+
+		static bool ReadFloats(const Json::Value& v, float* out, Json::ArrayIndex count)
+		{
+			if (!v.isArray() || v.size() != count) return false;
+			for (Json::ArrayIndex i = 0; i < count; ++i) if (!v[i].isNumeric()) return false;
+			for (Json::ArrayIndex i = 0; i < count; ++i) out[i] = v[i].asFloat();
+			return true;
+		}
+
+		template<typename T>
+		static void FromJson(const Json::Value& v, T& value)
+		{
+			if constexpr (std::is_same_v<T, bool>) { if (v.isBool()) value = v.asBool(); else if (v.isNumeric()) value = v.asInt() != 0; }
+			else if constexpr (std::is_same_v<T, std::string>) { if (v.isString()) value = v.asString(); }
+			else if constexpr (std::is_enum_v<T>) { if (v.isNumeric()) value = static_cast<T>(v.asInt()); }
+			else if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>) { if (v.isNumeric()) value = static_cast<T>(v.asDouble()); }
+			else if constexpr (std::is_same_v<T, uint64_t>) { if (v.isString()) value = ParseAssetHandle(v.asString()); else if (v.isNumeric()) value = v.asUInt64(); }
+			else if constexpr (std::is_integral_v<T> && std::is_signed_v<T>) { if (v.isNumeric()) value = static_cast<T>(v.asInt64()); }
+			else if constexpr (std::is_integral_v<T>) { if (v.isNumeric()) value = static_cast<T>(v.asUInt64()); }
+			else if constexpr (std::is_same_v<T, XMFLOAT2>) { float f[2]; if (ReadFloats(v, f, 2)) value = { f[0], f[1] }; }
+			else if constexpr (std::is_same_v<T, XMFLOAT3>) { float f[3]; if (ReadFloats(v, f, 3)) value = { f[0], f[1], f[2] }; }
+			else if constexpr (std::is_same_v<T, XMFLOAT4>) { float f[4]; if (ReadFloats(v, f, 4)) value = { f[0], f[1], f[2], f[3] }; }
+			else if constexpr (std::is_same_v<T, std::vector<AssetHandle>>)
+			{
+				if (!v.isArray()) return;
+				value.clear();
+				for (const auto& item : v) if (item.isString()) value.push_back(ParseAssetHandle(item.asString()));
+			}
+			else if constexpr (is_std_array<T>::value)
+			{
+				if (!v.isArray()) return;
+				for (Json::ArrayIndex i = 0; i < v.size() && i < value.size(); ++i) FromJson(v[i], value[i]);
+			}
+			else if constexpr (std::is_same_v<T, std::vector<std::string>> || std::is_same_v<T, std::vector<float>> || is_enum_vector<T>::value)
+			{
+				if (!v.isArray()) return;
+				value.clear();
+				value.resize(v.size());
+				for (Json::ArrayIndex i = 0; i < v.size(); ++i) FromJson(v[i], value[i]);
+			}
+			else
+			{
+				static_assert(sizeof(T) == 0, "unsupported scene field type");
+			}
+		}
+	};
+
+	// ---------------------------------------------------------------- コンポーネントごとの項目
+	inline void Visit(Archive& a, NameComponent& c) { a("name", c.Name); }
+
+	inline void Visit(Archive& a, TransformComponent& c)
+	{
+		a("position", c.Position);
+		a("rotation", c.Rotation);
+		a("scale", c.Scale);
+	}
+
+	inline void Visit(Archive& a, ShaderComponent& c)
+	{
+		a("vs", c.VsPath);
+		a("ps", c.PsPath);
+	}
+
+	inline void Visit(Archive& a, StaticModelComponent& c)
+	{
+		a("path", c.ModelPath);
+		a("convert", c.IsConvert);
+	}
+
+	inline void Visit(Archive& a, AnimationModelComponent& c)
+	{
+		a("path", c.ModelPath);
+		a("convert", c.IsConvert);
+		a("animationPaths", c.AnimationPaths);
+		a("animations", c.Animations);
+		a("current", c.CurrentAnimation);
+		a("next", c.NextAnimation);
+		a("blendRate", c.BlendRate);
+		a("speed", c.Speed);
+		a("playing", c.IsPlaying);
+		a.Array("layers", c.ActiveAnimationLayers, [](Archive& s, AnimationPlaybackLayer& layer) { s("name", layer.AnimationName); });
+	}
+
+	inline void Visit(Archive& a, LightComponent& c)
+	{
+		a("type", c.Type);
+		a("renderMode", c.RenderMode);
+		a("position", c.Position);
+		a("color", c.Color);
+		a("intensity", c.Intensity);
+		a("range", c.Range);
+		a("direction", c.Direction);
+		a("outerAngle", c.OuterAngle);
+		a("innerAngle", c.InnerAngle);
+		a("volumeDensity", c.VolumeDensity);
+		a("volumeShape", c.VolumeShape);
+		a("active", c.IsActive);
+		a("drawDebug", c.DrawDebug);
+		a("affectsOpaque", c.AffectsOpaque);
+		a("affectsForward", c.AffectsForward);
+		a("affectsVolumetrics", c.AffectsVolumetrics);
+		a("castShadow", c.CastShadow);
+		a("priority", c.Priority);
+	}
+
+	inline void Visit(Archive& a, SunComponent& c)
+	{
+		a("target", c.Target);
+		a("visualRadius", c.VisualRadius);
+		a("syncDirectionalLight", c.SyncDirectionalLight);
+	}
+
+	inline void VisitBasicNoise(Archive& a, Procedural::BasicNoiseSettings& n)
+	{
+		a("method", n.Method);
+		a("seed", n.Seed);
+		a("frequency", n.Frequency);
+		a("octaves", n.Octaves);
+		a("persistence", n.Persistence);
+		a("lacunarity", n.Lacunarity);
+		a("warpStrength", n.WarpStrength);
+	}
+
+	inline void Visit(Archive& a, ProceduralTerrainComponent& c)
+	{
+		auto& s = c.Settings;
+		a("resolution", s.Resolution);
+		a("size", s.Size);
+		a("height", s.Height);
+		a("baseHeight", s.BaseHeight);
+		a.Object("noise", [&](Archive& n)
+		{
+			VisitBasicNoise(n, s.Noise);
+			n("layerCount", s.Noise.LayerCount);
+			std::vector<Procedural::NoiseLayer> layers(s.Noise.Layers.begin(), s.Noise.Layers.end());
+			n.Array("layers", layers, [](Archive& l, Procedural::NoiseLayer& layer)
+			{
+				VisitBasicNoise(l, layer.Noise);
+				l("weight", layer.Weight);
+			});
+			if (n.Reading())
+			{
+				for (size_t i = 0; i < layers.size() && i < s.Noise.Layers.size(); ++i) s.Noise.Layers[i] = layers[i];
+			}
+		});
+	}
+
+	inline void Visit(Archive& a, ProceduralMotionComponent& c)
+	{
+		a("target", c.Target);
+		a("method", c.Method);
+		a("origin", c.Origin);
+		a("amplitude", c.Amplitude);
+		a("speed", c.Speed);
+		a("spatialFrequency", c.SpatialFrequency);
+		a("seed", c.Seed);
+		a("enabled", c.Enabled);
+		a("previewInEditor", c.PreviewInEditor);
+	}
+
+	inline void VisitPart(Archive& a, MaterialPartParams& p)
+	{
+		a("metallic", p.Metallic); a("roughness", p.Roughness); a("fresnel", p.Fresnel);
+		a("normalBlend", p.NormalBlend); a("normalBias", p.NormalBias);
+		a("baseSaturation", p.BaseSaturation); a("baseBrightness", p.BaseBrightness);
+		a("shadowThreshold", p.ShadowThreshold); a("shadowSoftness", p.ShadowSoftness); a("shadowStrength", p.ShadowStrength);
+		a("midStrength", p.MidStrength); a("litStrength", p.LitStrength);
+		a("rimStrength", p.RimStrength); a("rimThreshold", p.RimThreshold); a("rimSoftness", p.RimSoftness); a("rimPower", p.RimPower);
+		a("rimColor", p.RimColor); a("rimAlbedoBlend", p.RimAlbedoBlend); a("rimLightBlend", p.RimLightBlend);
+		a("specularStrength", p.SpecularStrength); a("specularThreshold", p.SpecularThreshold); a("kawaiiBlend", p.KawaiiBlend);
+		a("skinScatterStrength", p.SkinScatterStrength); a("skinScatterWrap", p.SkinScatterWrap);
+		a("skinBacklightStrength", p.SkinBacklightStrength); a("skinRimScatterStrength", p.SkinRimScatterStrength);
+		a("skinOilSpecularStrength", p.SkinOilSpecularStrength); a("skinShadowScatter", p.SkinShadowScatter);
+		a("castShadowThreshold", p.CastShadowThreshold); a("castShadowSoftness", p.CastShadowSoftness);
+	}
+
+	inline void Visit(Archive& a, MaterialComponent& c)
+	{
+		a("slots", c.MaterialSlots);
+		a("sceneIdentity", c.MaterialSceneIdentity);
+		a("baseColor", c.BaseColor);
+		a("normalScale", c.NormalScale);
+		a("aoStrength", c.AOStrength);
+		a("emissiveColor", c.EmissiveColor);
+		a("emissiveIntensity", c.EmissiveIntensity);
+		a("assetSurface", c.AssetSurface);
+		a("assetCull", c.AssetCull);
+		a("assetDepthWrite", c.AssetDepthWrite);
+		a("alphaCutoff", c.AlphaCutoff);
+		a("texture", c.TexturePath);
+		a("normalMap", c.NormalMapPath);
+		a("metallic", c.Metallic); a("roughness", c.Roughness); a("fresnel", c.Fresnel);
+		a("normalBlend", c.NormalBlend); a("normalBias", c.NormalBias);
+		a("baseSaturation", c.BaseSaturation); a("baseBrightness", c.BaseBrightness);
+		a("shadowThreshold", c.ShadowThreshold); a("shadowSoftness", c.ShadowSoftness); a("shadowStrength", c.ShadowStrength);
+		a("midStrength", c.MidStrength); a("litStrength", c.LitStrength);
+		a("rimStrength", c.RimStrength); a("rimThreshold", c.RimThreshold); a("rimSoftness", c.RimSoftness); a("rimPower", c.RimPower);
+		a("rimColor", c.RimColor); a("rimAlbedoBlend", c.RimAlbedoBlend); a("rimLightBlend", c.RimLightBlend);
+		a("specularStrength", c.SpecularStrength); a("specularThreshold", c.SpecularThreshold); a("kawaiiBlend", c.KawaiiBlend);
+		a("skinScatterStrength", c.SkinScatterStrength); a("skinScatterWrap", c.SkinScatterWrap);
+		a("skinBacklightStrength", c.SkinBacklightStrength); a("skinRimScatterStrength", c.SkinRimScatterStrength);
+		a("skinOilSpecularStrength", c.SkinOilSpecularStrength); a("skinShadowScatter", c.SkinShadowScatter);
+		a("castShadowThreshold", c.CastShadowThreshold); a("castShadowSoftness", c.CastShadowSoftness);
+		a.FixedArray("parts", c.PartParams, [](Archive& s, MaterialPartParams& p) { VisitPart(s, p); });
+		a("shaderClassMode", c.ShaderClassMode);
+		a("shaderClass", c.ShaderClass);
+		a("toonOutlineWidth", c.ToonOutlineWidth);
+		a("toonOutlineScreenWidth", c.ToonOutlineScreenWidth);
+		a("toonOutlineMode", c.ToonOutlineRenderMode);
+		a("toonOutlineWidthMode", c.ToonOutlineWidthModeSetting);
+		a("toonTeoMode", c.ToonTeoRenderMode);
+		a("toonOutlineTeoWidthScale", c.ToonOutlineTeoWidthScale);
+		a("meshOutlineOverrides", c.ToonMeshOutlineOverrides);
+		a("meshOutlineWidthScales", c.ToonMeshOutlineWidthScales);
+		a("meshShadingOverrides", c.MeshShadingOverrides);
+		a("alpha", c.Alpha);
+		a("shadowMode", c.ShadowMode);
+		a("shadowCutoff", c.ShadowCutoff);
+		a("ior", c.IOR);
+		a("transmission", c.Transmission);
+		a("transmissionRoughness", c.TransmissionRoughness);
+		a("refractionStrength", c.RefractionStrength);
+		a("thickness", c.Thickness);
+		a("absorption", c.AbsorptionCoefficient);
+		a("transparent", c.IsTransparent);
+		a("doubleSided", c.DoubleSided);
+		a("receivingPostProcess", c.ReceivingPostProcess);
+		a("useTexture", c.UseTexture);
+	}
+
+	inline void Visit(Archive& a, AABBComponent& c)
+	{
+		a("min", c.Min); a("max", c.Max); a("center", c.Center); a("extents", c.Extents); a("drawDebug", c.DrawDebug);
+	}
+
+	inline void Visit(Archive& a, OBBComponent& c)
+	{
+		a("center", c.Center); a("extents", c.Extents);
+		a("axisX", c.Axes[0]); a("axisY", c.Axes[1]); a("axisZ", c.Axes[2]);
+		a("drawDebug", c.DrawDebug);
+	}
+
+	// メッシュの形状情報（頂点そのものは呼び出し側で追加する）
+	inline void Visit(Archive& a, MeshComponent& c)
+	{
+		a("environment", c.IsEnvironment);
+		a("primitive", c.PrimitiveType);
+		if (c.PrimitiveType != 0 || a.Reading())
+		{
+			a("primitiveColor", c.PrimitiveColor);
+			a("primitiveRadius", c.PrimitiveRadius);
+			a("primitiveHeight", c.PrimitiveHeight);
+			a("primitiveWidth", c.PrimitiveWidth);
+			a("primitiveDepth", c.PrimitiveDepth);
+			a("primitiveSegments", c.PrimitiveSegments);
+			a("primitiveRings", c.PrimitiveRings);
+			a("primitiveFaceDivisions", c.PrimitiveFaceDivisions);
+		}
+	}
+
+	inline void Visit(Archive& a, SpriteComponent& c)
+	{
+		a("is3D", c.Is3D);
+		a("useUvTransform", c.UseUvTransform);
+		a("uvOffset", c.UvOffset);
+		a("uvScale", c.UvScale);
+		a("usePostProcess", c.UsePostProcess);
+		a("shape", c.SourceShape);
+		a("radius", c.SourceRadius);
+		a("color", c.SourceColor);
+	}
+
+	inline void Visit(Archive& a, CameraComponent& c)
+	{
+		a("position", c.Position);
+		a("target", c.Target);
+		a("fov", c.Fov);
+		a("near", c.NearClip);
+		a("far", c.FarClip);
+		a("postProcess", c.EnablePostProcess);
+		a("gameCamera", c.IsGameCamera);
+		a("mainGameCamera", c.IsMainGameCamera);
+		a("userControl", c.AllowUserControl);
+		a("priority", c.Priority);
+		a.Entity("lockOnTarget", c.LockOnTarget);
+		a("lockOnOffset", c.LockOnOffset);
+	}
+
+	inline void Visit(Archive& a, PostProcessComponent& c)
+	{
+		a("type", c.Type);
+		a("intensity", c.Intensity);
+		a("bloomThreshold", c.BloomThreshold);
+		a("bloomSoftKnee", c.BloomSoftKnee);
+		a("bloomRadius", c.BloomRadius);
+	}
+
+	inline void Visit(Archive& a, InputComponent& c) { a("active", c.IsActive); }
+
+	inline void Visit(Archive& a, MoveComponent& c)
+	{
+		a("direction", c.Direction);
+		a("speed", c.Speed);
+		a("cameraRelative", c.UseCameraRelativeMovement);
+		a("canMove", c.CanMove);
+		a("rotationSpeed", c.RotationSpeed);
+	}
+
+	inline void Visit(Archive& a, PhysicsComponent& c)
+	{
+		a("usePhysics", c.UsePhysics);
+		a("usePhysicsBone", c.UsePhysicsBone);
+		a("engine", c.UsePhysicsEngine);
+		a("bodyType", c.BodyType);
+		a("shape", c.Shape);
+		a("colliderRole", c.ColliderRole);
+		a("colliderCenter", c.ColliderCenter);
+		a("colliderSize", c.ColliderSize);
+		a("sphereRadius", c.SphereRadius);
+		a("capsuleRadius", c.CapsuleRadius);
+		a("capsuleHeight", c.CapsuleHeight);
+		a("velocity", c.Velocity);
+		a("angularVelocity", c.AngularVelocity);
+		a("mass", c.Mass);
+		a("friction", c.Friction);
+		a("restitution", c.Restitution);
+		a("linearDamping", c.LinearDamping);
+		a("angularDamping", c.AngularDamping);
+		a("gravityFactor", c.GravityFactor);
+		a("useGravity", c.UseGravity);
+		a("continuousCollision", c.EnableContinuousCollision);
+		a("allowSleeping", c.AllowSleeping);
+		a("pmxMassScale", c.PmxMassScale);
+		a("pmxDampingScale", c.PmxDampingScale);
+		a("pmxStiffnessScale", c.PmxStiffnessScale);
+		a("pmxColliderScale", c.PmxColliderScale);
+		a("collisionLayer", c.CollisionLayer);
+		a("collisionMask", c.CollisionMask);
+	}
+
+	inline void Visit(Archive& a, TimelineComponent& c)
+	{
+		a("duration", c.Duration);
+		a("speed", c.Speed);
+		a("playOnAwake", c.PlayOnAwake);
+		a("loop", c.Loop);
+		a.Array("tracks", c.Tracks, [](Archive& t, TimelineTrackData& track)
+		{
+			t("name", track.Name);
+			t.Entity("target", track.Target);
+			t("property", track.Property);
+			t("enabled", track.Enabled);
+			t("hasDefault", track.HasDefaultValue);
+			t("default", track.DefaultValue);
+			t.Array("clips", track.Clips, [](Archive& k, TimelineClipData& clip)
+			{
+				k("name", clip.Name);
+				k("start", clip.StartTime);
+				k("duration", clip.Duration);
+				k("blendIn", clip.BlendIn);
+				k("blendOut", clip.BlendOut);
+				k("enabled", clip.Enabled);
+				k.Array("keys", clip.Keys, [](Archive& f, TimelineKeyframe& key)
+				{
+					f("time", key.Time);
+					f("value", key.Value);
+					f("interpolation", key.Interpolation);
+				});
+			});
+		});
+	}
+
+	inline void Visit(Archive& a, LODComponent& c)
+	{
+		a("use", c.UseLOD);
+		a("lod1", c.Lod1Distance);
+		a("lod2", c.Lod2Distance);
+		a("useAssetSettings", c.UseAssetSettings);
+		a("count", c.ScreenLOD.Count);
+		a("thresholds", c.ScreenLOD.Thresholds);
+		a("hysteresis", c.ScreenLOD.Hysteresis);
+		a("meshPaths", c.ScreenLOD.MeshPaths);
+	}
+
+	inline void Visit(Archive& a, InstancingComponent& c)
+	{
+		a("use", c.UseInstancing);
+		a("frustumCulling", c.EnableFrustumCulling);
+		a("group", c.GroupId);
+	}
+
+	// コンポーネント1つを「キー名の子オブジェクト」として読み書きする。
+	// present: 書き込み/ハッシュ時はコンポーネントの有無、読み込み時は「ファイルにあったか」を返す。
+	template<typename T>
+	inline void Component(Archive& a, const char* key, bool& present, T& component)
+	{
+		if (a.Hashing())
+		{
+			uint8_t flag = present ? 1 : 0;
+			a.HashBytes(&flag, 1);
+			if (present) a.Object(key, [&](Archive& s) { Visit(s, component); });
+			return;
+		}
+		if (a.Writing())
+		{
+			if (present) a.Object(key, [&](Archive& s) { Visit(s, component); });
+			return;
+		}
+		present = false;
+		a.Object(key, [&](Archive& s) { present = true; Visit(s, component); });
+	}
+}
 
 ===== FILE: source\scene\simulationconfiguration.cpp =====
 #include "pch.h"

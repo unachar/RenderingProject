@@ -213,13 +213,18 @@ struct NrdDenoiser::Impl
         if (Signal == NrdSignal::Diffuse)
         {
             nrd::ReblurSettings settings;
-            settings.checkerboardMode = nrd::CheckerboardMode::BLACK;
-            // Keep a small spatial footprint after convergence, rather than exposing
-            // individual checkerboard samples around high contrast emissive objects.
-            settings.minBlurRadius = 2.0f;
-            settings.maxAccumulatedFrameNum = 16;
-            settings.maxFastAccumulatedFrameNum = 4;
-            settings.fireflySuppressorMinRelativeScale = 1.5f;
+            // TraceDiffuse alternates the populated checkerboard parity every frame. NRD must
+            // receive the same parity or valid one-ray samples are interpreted as missing data.
+            settings.checkerboardMode = (frame.Sequence & 1u) != 0u ?
+                nrd::CheckerboardMode::WHITE : nrd::CheckerboardMode::BLACK;
+            settings.minBlurRadius = 3.0f;
+            settings.maxBlurRadius = 36.0f;
+            settings.maxAccumulatedFrameNum = 32;
+            settings.maxFastAccumulatedFrameNum = 6;
+            settings.historyFixFrameNum = 4;
+            settings.stabilizationStrength = 1.0f;
+            settings.enableAntifirefly = true;
+            settings.fireflySuppressorMinRelativeScale = 1.25f;
             if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS) return false;
         }
         if (Signal == NrdSignal::AmbientOcclusion)
