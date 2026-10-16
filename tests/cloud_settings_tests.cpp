@@ -5,6 +5,41 @@
 
 int main()
 {
+    CloudSettings layered;
+    assert(layered.LayerCount == 1);
+    assert(layered.Layer(0).LayerEnabled);
+    assert(layered.AddLayer());
+    layered.Layer(0).BottomHeight = 10;
+    layered.Layer(0).TopHeight = 30;
+    layered.Layer(1).BottomHeight = 40;
+    layered.Layer(1).TopHeight = 50;
+    layered.Layer(1).Density = 0.25f;
+    layered.Validate();
+    assert(layered.Layer(0).TopHeight == 30);
+    assert(layered.Layer(1).BottomHeight == 40);
+    assert(layered.Layer(1).Density == 0.25f);
+    layered.Layer(1).TopHeight = 39;
+    layered.Layer(1).BaseScale = std::numeric_limits<float>::quiet_NaN();
+    layered.Validate();
+    assert(layered.Layer(1).TopHeight > 40);
+    assert(std::isfinite(layered.Layer(1).BaseScale));
+    assert(layered.AddLayer());
+    assert(layered.AddLayer());
+    assert(!layered.AddLayer());
+    layered.Layer(2).Density = 2.5f;
+    assert(layered.RemoveLayer(1));
+    assert(layered.Layer(1).Density == 2.5f);
+    assert(layered.RemoveLayer(0));
+    assert(layered.Density == 2.5f);
+    assert(layered.RemoveLayer(0));
+    assert(!layered.RemoveLayer(0));
+    layered.LayerCount = 99;
+    layered.Validate();
+    assert(layered.LayerCount == CloudSettings::MaxLayers);
+    layered.LayerCount = 0;
+    layered.Validate();
+    assert(layered.LayerCount == 1);
+
     CloudSettings settings;
     settings.Coverage = -1;
     settings.TopHeight = settings.BottomHeight;

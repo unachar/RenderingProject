@@ -64,7 +64,7 @@ try {
     if ($process.ExitCode -ne 0 -or $runLog -notmatch 'Play render failures = 0' -or -not $sequenceComplete) {
         throw "Play rendering validation failed. See $results/$Configuration.log"
     }
-    $runLog -split "`n" | Where-Object { $_ -match 'Play render frame|Play shadow comparison|Play render failures|VSM benchmark ' }
+    $runLog -split "`n" | Where-Object { $_ -match 'Play render frame|Play shadow comparison|Play render failures|VSM benchmark |Render benchmark ' }
 } finally {
     foreach ($name in $environmentNames) { [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process') }
     Pop-Location

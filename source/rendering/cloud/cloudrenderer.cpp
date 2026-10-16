@@ -17,6 +17,14 @@ constexpr UINT kDetailUav = kDescriptorStart + 3;
 constexpr UINT kFrameSrv = kDescriptorStart + 4;
 constexpr D3D12_RESOURCE_STATES kRead = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 
+struct LayerConstants
+{
+    XMFLOAT4 Layer;
+    XMFLOAT4 Shape;
+    XMFLOAT4 Wind;
+};
+static_assert(sizeof(LayerConstants) == 48);
+
 struct alignas(16) Constants
 {
     XMFLOAT4 Layer;
@@ -26,9 +34,11 @@ struct alignas(16) Constants
     XMUINT4 Quality;
     XMFLOAT4 Extent;
     XMFLOAT4 Trace;
+    LayerConstants AdditionalLayers[CloudSettings::MaxLayers - 1];
 };
-static_assert(sizeof(Constants) == 112 && offsetof(Constants, Quality) == 64 && offsetof(Constants, Trace) == 96);
-constexpr UINT kConstantStride = 256;
+static_assert(sizeof(Constants) == 256 && offsetof(Constants, Quality) == 64 && offsetof(Constants, Trace) == 96);
+static_assert(offsetof(Constants, AdditionalLayers) == 112);
+constexpr UINT kConstantStride = (sizeof(Constants) + 255) & ~255u;
 
 struct FrameResources
 {
@@ -222,6 +232,15 @@ bool CloudRenderer::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap,
     device->CreateShaderResourceView(nullptr, &nullVolume, Cpu(kBaseSrv));
     device->CreateShaderResourceView(nullptr, &nullVolume, Cpu(kDetailSrv));
 
+    // A zeroed CBV remains valid when a later cloud pipeline or noise allocation fails.
+    const auto upload = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+    const auto buffer = CD3DX12_RESOURCE_DESC::Buffer(kConstantStride * kFrames);
+    if (FAILED(device->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buffer,
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g_Constants)))) return false;
+    const D3D12_RANGE noReads{ 0, 0 };
+    if (FAILED(g_Constants->Map(0, &noReads, reinterpret_cast<void**>(&g_Mapped)))) return false;
+    memset(g_Mapped, 0, kConstantStride * kFrames);
+
     CD3DX12_DESCRIPTOR_RANGE ranges[6];
     CD3DX12_ROOT_PARAMETER params[9];
     for (UINT i = 0; i < 6; ++i)
@@ -254,12 +273,6 @@ bool CloudRenderer::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap,
         WriteGraphicsLog("Cloud: initialization failed; rendering disabled.\n");
         return false;
     }
-    const auto upload = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-    const auto buffer = CD3DX12_RESOURCE_DESC::Buffer(kConstantStride * kFrames);
-    if (FAILED(device->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buffer,
-        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g_Constants)))) return false;
-    const D3D12_RANGE noReads{ 0, 0 };
-    if (FAILED(g_Constants->Map(0, &noReads, reinterpret_cast<void**>(&g_Mapped)))) return false;
     g_BaseNoise->SetName(L"Periodic Cloud Base Noise");
     g_DetailNoise->SetName(L"Periodic Cloud Detail Noise");
     g_Available = true;
@@ -321,14 +334,32 @@ void CloudRenderer::PrepareLighting(ID3D12GraphicsCommandList* commands, UINT fr
         g_WindZ += g_Settings.WindZ / length * g_Settings.WindSpeed * delta;
     }
     Constants constants{};
-    constants.Layer = { g_Settings.BottomHeight, g_Settings.TopHeight, g_Settings.Coverage, g_Settings.Density };
+    float firstCoverage = 0;
+    if (g_Settings.LayerEnabled)
+    {
+        firstCoverage = g_Settings.Coverage;
+    }
+    constants.Layer = { g_Settings.BottomHeight, g_Settings.TopHeight, firstCoverage, g_Settings.Density };
     constants.Shape = { g_Settings.BaseScale, g_Settings.DetailScale, g_Settings.DetailStrength, g_Settings.Extinction };
     constants.Lighting = { g_Settings.PhaseG, g_Settings.AmbientStrength, g_Settings.PowderStrength, g_Settings.JitterStrength };
     auto wrapped = [](double offset) { return static_cast<float>(offset - floor(offset)); };
     constants.Wind = { wrapped(g_WindX * g_Settings.BaseScale), wrapped(g_WindZ * g_Settings.BaseScale),
         wrapped(g_WindX * g_Settings.DetailScale * 1.15), wrapped(g_WindZ * g_Settings.DetailScale * 1.15) };
+    for (int index = 1; index < g_Settings.LayerCount; ++index)
+    {
+        const auto& layer = g_Settings.Layer(index);
+        if (!layer.LayerEnabled)
+        {
+            continue;
+        }
+        auto& target = constants.AdditionalLayers[index - 1];
+        target.Layer = { layer.BottomHeight, layer.TopHeight, layer.Coverage, layer.Density };
+        target.Shape = { layer.BaseScale, layer.DetailScale, layer.DetailStrength, 0 };
+        target.Wind = { wrapped(g_WindX * layer.BaseScale), wrapped(g_WindZ * layer.BaseScale),
+            wrapped(g_WindX * layer.DetailScale * 1.15), wrapped(g_WindZ * layer.DetailScale * 1.15) };
+    }
     constants.Quality = { static_cast<UINT>(g_Settings.ViewSteps), static_cast<UINT>(g_Settings.LightSteps),
-        static_cast<UINT>(g_Settings.Debug), g_Settings.Seed };
+        static_cast<UINT>(g_Settings.Debug), static_cast<UINT>(g_Settings.LayerCount) };
     constants.Extent = { static_cast<float>(width), static_cast<float>(height), static_cast<float>(cloudWidth), static_cast<float>(cloudHeight) };
     constants.Trace = { g_Settings.MaxTraceDistance, g_Settings.NoiseSlice, static_cast<float>(g_Settings.Enabled), static_cast<float>(g_Settings.CastShadows) };
     memcpy(g_Mapped + index * kConstantStride, &constants, sizeof(constants));
@@ -339,9 +370,11 @@ void CloudRenderer::BindLighting(ID3D12GraphicsCommandList* commands, UINT frame
     if (!commands || !g_Heap) return;
     commands->SetGraphicsRootDescriptorTable(20, Gpu(kBaseSrv));
     commands->SetGraphicsRootDescriptorTable(21, Gpu(kDetailSrv));
-    const Constants disabled{};
-    const void* constants = g_Available ? static_cast<const void*>(g_Mapped + (frameIndex % kFrames) * kConstantStride) : static_cast<const void*>(&disabled);
-    commands->SetGraphicsRoot32BitConstants(22, sizeof(Constants) / sizeof(UINT), constants, 0);
+    if (g_Constants)
+    {
+        commands->SetGraphicsRootConstantBufferView(22,
+            g_Constants->GetGPUVirtualAddress() + (frameIndex % kFrames) * kConstantStride);
+    }
 }
 
 void CloudRenderer::BindForwardLighting(ID3D12GraphicsCommandList* commands, UINT frameIndex)
@@ -412,15 +445,44 @@ void CloudRenderer::DrawDebugUI()
     ImGui::Checkbox("Enable clouds", &g_Settings.Enabled);
     ImGui::Checkbox("Cloud shadows", &g_Settings.CastShadows);
     if (!g_Available) ImGui::TextUnformatted("Cloud pipelines unavailable");
-    if (ImGui::TreeNode("Shape"))
+    if (ImGui::TreeNodeEx("Layers", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::SliderFloat("Coverage", &g_Settings.Coverage, 0, 1);
-        ImGui::SliderFloat("Density", &g_Settings.Density, 0, 10);
-        ImGui::DragFloat("Bottom Height", &g_Settings.BottomHeight, 0.5f);
-        ImGui::DragFloat("Top Height", &g_Settings.TopHeight, 0.5f);
-        ImGui::DragFloat("Base Scale", &g_Settings.BaseScale, 0.0001f, 0.00001f, 1, "%.5f");
-        ImGui::DragFloat("Detail Scale", &g_Settings.DetailScale, 0.0001f, 0.00001f, 4, "%.5f");
-        ImGui::SliderFloat("Detail Strength", &g_Settings.DetailStrength, 0, 1);
+        int removeIndex = -1;
+        for (int index = 0; index < g_Settings.LayerCount; ++index)
+        {
+            auto& layer = g_Settings.Layer(index);
+            ImGui::PushID(index);
+            if (ImGui::TreeNodeEx("Layer", ImGuiTreeNodeFlags_DefaultOpen, "Layer %d", index + 1))
+            {
+                ImGui::Checkbox("Enabled", &layer.LayerEnabled);
+                ImGui::DragFloat("Bottom Height", &layer.BottomHeight, 0.5f);
+                ImGui::DragFloat("Top Height", &layer.TopHeight, 0.5f);
+                ImGui::SliderFloat("Coverage", &layer.Coverage, 0, 1);
+                ImGui::SliderFloat("Density", &layer.Density, 0, 10);
+                ImGui::DragFloat("Base Scale", &layer.BaseScale, 0.0001f, 0.00001f, 1, "%.5f");
+                ImGui::DragFloat("Detail Scale", &layer.DetailScale, 0.0001f, 0.00001f, 4, "%.5f");
+                ImGui::SliderFloat("Detail Strength", &layer.DetailStrength, 0, 1);
+                ImGui::BeginDisabled(g_Settings.LayerCount <= 1);
+                if (ImGui::Button("Remove layer"))
+                {
+                    removeIndex = index;
+                }
+                ImGui::EndDisabled();
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+        if (removeIndex >= 0)
+        {
+            g_Settings.RemoveLayer(removeIndex);
+        }
+        ImGui::BeginDisabled(g_Settings.LayerCount >= CloudSettings::MaxLayers);
+        if (ImGui::Button("Add layer"))
+        {
+            g_Settings.AddLayer();
+        }
+        ImGui::EndDisabled();
+        ImGui::TextWrapped("Height sets thickness; density sets transparency. Wind and lighting are shared.");
         ImGui::TreePop();
     }
     if (ImGui::TreeNode("Wind"))
@@ -462,7 +524,7 @@ void CloudRenderer::DrawDebugUI()
     if (ImGui::Combo("Debug View", &debug, "Normal\0Density\0Transmittance\0Lighting\0Cloud Depth\0Step Count\0Base Noise Slice\0Detail Noise Slice\0"))
         g_Settings.Debug = static_cast<CloudDebug>(debug);
     int preset = -1;
-    if (ImGui::Combo("Preset", &preset, "Clear\0Fair\0Cloudy\0Overcast\0Storm\0")) g_Settings.ApplyPreset(static_cast<CloudPreset>(preset));
+    if (ImGui::Combo("Layer 1 preset", &preset, "Clear\0Fair\0Cloudy\0Overcast\0Storm\0")) g_Settings.ApplyPreset(static_cast<CloudPreset>(preset));
     const auto& timing = RenderProfiler::GetLatest();
     if (!timing.GpuTimingValid) ImGui::TextUnformatted("GPU timing pending");
     else for (const auto& pass : timing.Passes)

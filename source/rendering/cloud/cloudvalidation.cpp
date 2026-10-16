@@ -24,6 +24,11 @@ UINT g_LastFrame = 0;
 uint64_t g_NoiseHash = 0;
 double g_InitialOpacity = 0;
 double g_InitialRadiance = 0;
+double g_LowerLayerOpacity = 0;
+double g_UpperLayerOpacity = 0;
+double g_TwoLayerOpacity = 0;
+double g_ShadowedReceiverRadiance = 0;
+double g_ShadowedCloudOpacity = 0;
 double g_ConnectedSunRadiance = 0;
 RenderCapture::TextureData g_ConnectedSunCloud;
 EntityID g_UnrelatedDirectional = g_kINVALID_ENTITY;
@@ -266,8 +271,86 @@ void CloudValidation::BeforeFrame(uint64_t frame)
             for (auto id : World::GetView<SunComponent, LightComponent>())
                 ComponentManager::GetComponentUnchecked<LightComponent>(id).IsActive = false;
     }
+    if (frame >= 316)
+    {
+        // Keep these views deterministic and independent of the celestial-lighting cases.
+        DayNightCycle::GetSettings().AutomaticLighting = false;
+        DayNightCycle::GetSettings().TimeDriven = false;
+        for (auto id : World::GetView<SunComponent, LightComponent>())
+        {
+            ComponentManager::GetComponentUnchecked<LightComponent>(id).IsActive = true;
+        }
+        if (Registry::IsAlive(g_UnrelatedDirectional))
+        {
+            ComponentManager::GetComponentUnchecked<LightComponent>(g_UnrelatedDirectional).IsActive = false;
+        }
+        settings.LayerCount = 2;
+        settings.BottomHeight = 10;
+        settings.TopHeight = 30;
+        settings.Coverage = 1;
+        settings.Density = 0.6f;
+        settings.DetailStrength = 0;
+        settings.JitterStrength = 0;
+        auto& upper = settings.Layer(1);
+        upper.BottomHeight = 40;
+        upper.TopHeight = 50;
+        upper.Coverage = 1;
+        upper.Density = 0.4f;
+        upper.DetailStrength = 0;
+        view.Target = { 0.001f, 100, -8 };
+        const UINT layerScenario = static_cast<UINT>((frame - 316) / 4);
+        if (layerScenario == 0)
+        {
+            upper.LayerEnabled = false;
+        }
+        else if (layerScenario == 1)
+        {
+            settings.LayerEnabled = false;
+        }
+        else if (layerScenario == 3)
+        {
+            settings.LayerEnabled = false;
+            upper.LayerEnabled = false;
+        }
+        else if (layerScenario == 4)
+        {
+            transform.Position.y = 35;
+            view.Target = { 0, 35, 40 };
+        }
+        else if (layerScenario == 5)
+        {
+            transform.Position.y = 60;
+            view.Target = { 0.001f, 0, -8 };
+            // Reverse height order to exercise sorting for downward rays.
+            std::swap(settings.Layer(0), settings.Layer(1));
+        }
+        else if (layerScenario == 6)
+        {
+            upper.TopHeight = upper.BottomHeight + 0.01f;
+            upper.Density = 10;
+            settings.LayerEnabled = false;
+        }
+        else if (layerScenario == 7)
+        {
+            settings.LayerCount = 4;
+            settings.Layer(2) = upper;
+            settings.Layer(2).BottomHeight = 20;
+            settings.Layer(2).TopHeight = 45;
+            settings.Layer(3) = upper;
+            settings.Layer(3).BottomHeight = 70;
+            settings.Layer(3).TopHeight = 80;
+        }
+        else if (layerScenario >= 8)
+        {
+            settings.LayerEnabled = false;
+            upper.Density = 4;
+            settings.Extinction = 0.3f;
+            settings.CastShadows = layerScenario == 8;
+            view.Target = { 0, 12, 40 };
+        }
+    }
     if (frame == 0) Check(CloudRenderer::IsAvailable(), "cloud pipelines initialize");
-    if (frame >= 308)
+    if (frame >= 308 && frame < 316)
     {
         auto& cycle = DayNightCycle::GetSettings();
         cycle.Running = false;
@@ -341,6 +424,105 @@ void CloudValidation::AfterFrame(uint64_t frame)
         }
     }
     Check(valid, "finite nonnegative scattering and transmittance in [0,1]");
+    if (frame >= 316)
+    {
+        const UINT layerScenario = static_cast<UINT>((frame - 316) / 4);
+        if (layerScenario == 0)
+        {
+            g_LowerLayerOpacity = opacity;
+            Check(opacity > 1, "lower layer remains visible with upper layer disabled");
+        }
+        else if (layerScenario == 1)
+        {
+            g_UpperLayerOpacity = opacity;
+            Check(opacity > 1, "upper layer renders independently with lower layer disabled");
+        }
+        else if (layerScenario == 2)
+        {
+            g_TwoLayerOpacity = opacity;
+            Check(opacity > g_LowerLayerOpacity && opacity > g_UpperLayerOpacity,
+                "two separated layers both contribute optical depth");
+        }
+        else if (layerScenario == 3)
+        {
+            Check(opacity == 0 && radiance == 0, "all disabled layers transmit scene exactly");
+        }
+        else if (layerScenario == 4)
+        {
+            bool clearGap = true;
+            for (UINT y = cloud.Height / 2 - 1; y <= cloud.Height / 2; ++y)
+            {
+                const auto* pixels = reinterpret_cast<const uint16_t*>(cloud.Bytes.data() + y * cloud.RowPitch);
+                for (UINT x = 0; x < cloud.Width; ++x)
+                {
+                    clearGap &= RenderCapture::HalfToFloat(pixels[x * 4 + 3]) == 1;
+                }
+            }
+            Check(clearGap, "horizontal rays in gap between layers stay clear");
+        }
+        else if (layerScenario == 5)
+        {
+            Check(opacity > 1, "unsorted layers render from above");
+        }
+        else if (layerScenario == 6)
+        {
+            Check(opacity > 0, "isolated extremely thin upper layer is sampled");
+        }
+        else if (layerScenario == 7)
+        {
+            Check(opacity > g_TwoLayerOpacity, "four layers including overlaps contribute density");
+        }
+        if (layerScenario >= 8)
+        {
+            RenderCapture::TextureData scene;
+            RenderCapture::TextureData material;
+            const bool read = RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), scene) &&
+                RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::MATERIAL), material);
+            const bool compatible = read && scene.Format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
+                material.Format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
+                scene.Width == material.Width && scene.Height == material.Height;
+            Check(compatible, "read HDR surface receivers for upper-layer shadow comparison");
+            double receiverRadiance = 0;
+            if (compatible)
+            {
+                for (UINT y = 0; y < scene.Height; ++y)
+                {
+                    const auto* pixels = reinterpret_cast<const uint16_t*>(scene.Bytes.data() + y * scene.RowPitch);
+                    const auto* materials = reinterpret_cast<const uint16_t*>(material.Bytes.data() + y * material.RowPitch);
+                    for (UINT x = 0; x < scene.Width; ++x)
+                    {
+                        if (RenderCapture::HalfToFloat(materials[x * 4 + 3]) < -0.5f)
+                        {
+                            continue;
+                        }
+                        for (UINT channel = 0; channel < 3; ++channel)
+                        {
+                            receiverRadiance += RenderCapture::HalfToFloat(pixels[x * 4 + channel]);
+                        }
+                    }
+                }
+            }
+            if (layerScenario == 8)
+            {
+                g_ShadowedReceiverRadiance = receiverRadiance;
+                g_ShadowedCloudOpacity = opacity;
+            }
+            else
+            {
+                Check(receiverRadiance > g_ShadowedReceiverRadiance + 0.01,
+                    "upper layer alone casts shadows on surface receivers");
+                Check(opacity == g_ShadowedCloudOpacity,
+                    "upper-layer shadow toggle preserves cloud optical depth");
+            }
+        }
+        if (layerScenario == 2 || layerScenario == 5 || layerScenario == 7)
+        {
+            wchar_t path[128]{};
+            swprintf_s(path, L"bin/validation/cloud-layers-%u.png", layerScenario);
+            Check(RenderCapture::SaveScenePng(path), "capture layered clouds");
+        }
+        return;
+    }
     if (frame >= 308)
     {
         Check(opacity > 1 && radiance > 0, "celestial lighting produces visible cloud scattering");
@@ -422,7 +604,7 @@ void CloudValidation::AfterFrame(uint64_t frame)
 }
 bool CloudValidation::Finish()
 {
-    Check(g_LastFrame >= 315, "complete cloud validation including sunset and moonlight");
+    Check(g_LastFrame >= 355, "complete cloud validation including four-layer clouds");
     Check(g_SawGpuTiming, "cloud GPU timestamps available");
     const char* qualityNames[] = { "Low", "Medium", "High" };
     array<double, 3> medians{};

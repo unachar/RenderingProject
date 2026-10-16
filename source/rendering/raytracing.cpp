@@ -235,7 +235,70 @@ bool EnsureDenoiser(FrameResources& frame)
     return true;
 }
 
-bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingGeometry& geometry, BottomLevel& level)
+// Each BLAS owns its scratch allocation, so independent builds can overlap.
+// Restore geometry states even if allocation of a later BLAS fails.
+class GeometryReadBatch
+{
+public:
+    explicit GeometryReadBatch(ID3D12GraphicsCommandList* commandList) : m_CommandList(commandList) {}
+
+    void Add(ID3D12Resource* resource, D3D12_RESOURCE_STATES state)
+    {
+        if (!resource || state == D3D12_RESOURCE_STATE_GENERIC_READ ||
+            state == D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE ||
+            !m_Resources.emplace(resource, state).second)
+        {
+            return;
+        }
+        m_ReadBarriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
+            resource, state, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
+        m_FinishBarriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
+            resource, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, state));
+    }
+
+    void Begin()
+    {
+        if (!m_ReadBarriers.empty())
+        {
+            m_CommandList->ResourceBarrier(static_cast<UINT>(m_ReadBarriers.size()), m_ReadBarriers.data());
+        }
+    }
+
+    void PrepareUpdate(ID3D12Resource* result)
+    {
+        // Raster lighting may query this frame slot's previous TLAS before
+        // Execute updates its BLASes. Finish those reads before refitting.
+        if (result)
+        {
+            m_ReadBarriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(result));
+        }
+    }
+
+    void CompleteBuild(ID3D12Resource* result)
+    {
+        m_FinishBarriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(result));
+    }
+
+    void Finish()
+    {
+        if (!m_FinishBarriers.empty())
+        {
+            m_CommandList->ResourceBarrier(static_cast<UINT>(m_FinishBarriers.size()), m_FinishBarriers.data());
+            m_FinishBarriers.clear();
+        }
+    }
+
+    ~GeometryReadBatch() { Finish(); }
+
+private:
+    ID3D12GraphicsCommandList* m_CommandList;
+    map<ID3D12Resource*, D3D12_RESOURCE_STATES> m_Resources;
+    vector<D3D12_RESOURCE_BARRIER> m_ReadBarriers;
+    vector<D3D12_RESOURCE_BARRIER> m_FinishBarriers;
+};
+
+bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingGeometry& geometry,
+    BottomLevel& level, GeometryReadBatch& geometryReads)
 {
     level.LastSeen = g_Serial;
     if (level.Result && (!geometry.Deforming || level.LastBuilt == g_Serial))
@@ -287,14 +350,9 @@ bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingG
         build.Inputs.Flags |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE;
         build.SourceAccelerationStructureData = build.DestAccelerationStructureData;
     }
-    Transition(commandList, geometry.Vertices.Get(), geometry.VertexState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    Transition(commandList, geometry.Indices.Get(), geometry.IndexState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     // Upload heaps remain GENERIC_READ: it already includes NON_PIXEL_SHADER_RESOURCE.
     commandList->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
-    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(level.Result.Get());
-    commandList->ResourceBarrier(1, &barrier);
-    Transition(commandList, geometry.Vertices.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, geometry.VertexState);
-    Transition(commandList, geometry.Indices.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, geometry.IndexState);
+    geometryReads.CompleteBuild(level.Result.Get());
     level.Vertices = geometry.Vertices;
     level.Indices = geometry.Indices;
     level.LastBuilt = g_Serial;
@@ -308,6 +366,31 @@ bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
     frame.SceneGeometry.clear();
     vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
     instances.reserve((min)(geometry.size(), static_cast<size_t>(kMaximumInstances)));
+    GeometryReadBatch geometryReads(commandList);
+    // Match the instance limit and validity checks below. Cached static BLASes
+    // need no input transitions; shared vertex/index resources transition once.
+    size_t accepted = 0;
+    for (const auto& entry : geometry)
+    {
+        if (accepted >= kMaximumInstances || entry.VertexView.StrideInBytes < sizeof(XMFLOAT3))
+        {
+            continue;
+        }
+        ++accepted;
+        const GeometryKey key(entry.VertexView.BufferLocation, entry.IndexView.BufferLocation,
+            entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes);
+        const auto bottom = frame.Geometry.find(key);
+        if (bottom == frame.Geometry.end() || !bottom->second.Result || entry.Deforming)
+        {
+            geometryReads.Add(entry.Vertices.Get(), entry.VertexState);
+            geometryReads.Add(entry.Indices.Get(), entry.IndexState);
+            if (bottom != frame.Geometry.end())
+            {
+                geometryReads.PrepareUpdate(bottom->second.Result.Get());
+            }
+        }
+    }
+    geometryReads.Begin();
     for (const auto& entry : geometry)
     {
         if (instances.size() >= kMaximumInstances || entry.VertexView.StrideInBytes < sizeof(XMFLOAT3))
@@ -317,7 +400,7 @@ bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
         const GeometryKey key(entry.VertexView.BufferLocation, entry.IndexView.BufferLocation,
             entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes);
         BottomLevel& bottom = frame.Geometry[key];
-        if (!BuildBottomLevel(commandList, entry, bottom))
+        if (!BuildBottomLevel(commandList, entry, bottom, geometryReads))
         {
             return false;
         }
@@ -333,6 +416,8 @@ bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
         instances.push_back(instance);
         frame.SceneGeometry.push_back(entry);
     }
+    // All BLAS writes must be visible before TLAS construction and ray queries.
+    geometryReads.Finish();
     for (auto iterator = frame.Geometry.begin(); iterator != frame.Geometry.end();)
     {
         if (iterator->second.LastSeen != g_Serial)

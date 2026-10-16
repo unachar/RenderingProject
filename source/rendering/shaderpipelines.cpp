@@ -196,7 +196,7 @@ bool ShaderPipelines::CreatePostProcessPipeline()
 
 	params[20].InitAsDescriptorTable(1, &ranges[12], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[21].InitAsDescriptorTable(1, &ranges[13], D3D12_SHADER_VISIBILITY_PIXEL);
-	params[22].InitAsConstants(28, 9, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+	params[22].InitAsConstantBufferView(9, 0, D3D12_SHADER_VISIBILITY_PIXEL);
     params[23].InitAsDescriptorTable(1, &ranges[14], D3D12_SHADER_VISIBILITY_PIXEL);
     params[24].InitAsDescriptorTable(1, &ranges[15], D3D12_SHADER_VISIBILITY_PIXEL);
     params[25].InitAsDescriptorTable(1, &ranges[16], D3D12_SHADER_VISIBILITY_PIXEL);

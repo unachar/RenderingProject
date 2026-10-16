@@ -576,6 +576,21 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("cloud.BaseScale", cloud.BaseScale, -1000000, 1000000);
     field("cloud.DetailScale", cloud.DetailScale, -1000000, 1000000);
     field("cloud.DetailStrength", cloud.DetailStrength, -1000000, 1000000);
+    field("cloud.LayerCount", cloud.LayerCount, 1, CloudSettings::MaxLayers);
+    field("cloud.LayerEnabled", cloud.LayerEnabled, 0, 1);
+    for (int index = 1; index < CloudSettings::MaxLayers; ++index)
+    {
+        auto& layer = cloud.Layer(index);
+        const string prefix = "cloud.Layer" + std::to_string(index + 1) + ".";
+        field((prefix + "Enabled").c_str(), layer.LayerEnabled, 0, 1);
+        field((prefix + "BottomHeight").c_str(), layer.BottomHeight, -1000000, 1000000);
+        field((prefix + "TopHeight").c_str(), layer.TopHeight, -1000000, 1000000);
+        field((prefix + "Coverage").c_str(), layer.Coverage, -1000000, 1000000);
+        field((prefix + "Density").c_str(), layer.Density, -1000000, 1000000);
+        field((prefix + "BaseScale").c_str(), layer.BaseScale, -1000000, 1000000);
+        field((prefix + "DetailScale").c_str(), layer.DetailScale, -1000000, 1000000);
+        field((prefix + "DetailStrength").c_str(), layer.DetailStrength, -1000000, 1000000);
+    }
     field("cloud.Extinction", cloud.Extinction, -1000000, 1000000);
     field("cloud.PhaseG", cloud.PhaseG, -1000000, 1000000);
     field("cloud.AmbientStrength", cloud.AmbientStrength, -1000000, 1000000);

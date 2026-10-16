@@ -4,6 +4,20 @@
 
 `dev_main` のDeferred HDRパイプラインへ、一層のWorld Spaceボリュームクラウドを追加した。外部Cloud Shape Textureは使用しない。既存の変更との干渉を避けるため、初期状態はOFF。
 
+## 複数の雲層（2026-10-16）
+
+Procedural Cloud の **Layers** で最大4層を設定できる。**Add layer** で追加し、各層の **Remove layer** で削除する（最低1層）。各層の Enabled、Bottom Height / Top Height、Coverage、Density、Base / Detail Scale、Detail Strength を個別に調整する。
+
+例えば、Layer 1 を高さ10〜30・Density 1、Layer 2 を高さ40〜50・Density 0.4にすると、厚い下層と透ける薄い上層を混在させられる。高さはWorld Yで、幅が幾何的な厚み、Densityが濃さを決める。風、消散係数、照明、品質、Seedは共通。Layer 1 presetは1層目だけに作用する。追加直後の層は直前の上端から10離れた、厚さ10の雲になる。
+
+旧保存データの単層設定は1層目としてそのまま読み込む。追加層の個数・有効状態・形状設定も保存する。層の配列順と高度順は独立し、重ねた層の密度は加算する。模様は層ごとの固定オフセットで変化する。
+
+視線と光線は高度帯との交差区間を距離順に並べ、重なりを統合して積分する。離れた層の間をサンプリングせず、各区間にView / Light Stepsを確保するため、薄い孤立層もサンプルする。雲同士の陰影と地表の雲影は同じ全層密度を使う。有効な層・交差区間が増えるとGPU負荷も増える。特に厚い層に完全に重なる極薄層は統合区間のサンプル間隔に依存するため、必要ならView / Light Stepsを増やす。
+
+CPU/HLSL定数は256 bytesで一致させ、Deferred側もroot CBVを使用する。以下の112 bytes・単層・MVP対象外に関する記述は初期実装の記録。
+
+複数層の自動検証は356フレームで、下層のみ、上層のみ、両層、全層無効、層間の水平視線、高度順を逆にした見下ろし、厚さ0.01の単独上層、重なる4層、上層だけによる地表の雲影を比較する。Debug版は356フレームを完走し、全ケース成功、D3D12 Error 0、追加Resource / Descriptor / Barrier Warning 0を確認した。既存のReadback / Scene Clear Warningは481件を別枠で計数する。GPU Based Validationでも356フレーム・全ケース成功・D3D12 Error 0・追加Warning 0を確認した。ただし既存の間接描画による状態追跡制限（ID 1044）があり、無制約のGBV検証を保証するものではない。Release版とEditor UIの手動操作は今回未検証。
+
 ## 使用方法
 
 Editorの描画設定にある **Procedural Cloud** を開き、**Enable clouds** をONにする。Deferred RenderingとHDR Sceneを使用する。

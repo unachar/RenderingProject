@@ -56,6 +56,8 @@ struct ShadowBenchmarkSample
 {
     uint64_t Count = 0, Vertices = 0, Draws = 0, MaxVertices = 0;
     double Gpu = 0, Cpu = 0, ShadowGpu = 0, FrameMs = 0;
+    vector<RenderProfiler::PassTiming> PassTotals;
+    uint64_t GpuSamples = 0;
 };
 array<ShadowBenchmarkSample, 3> g_ShadowBenchmark{};
 uint64_t g_ShadowBenchmarkSerial = 0;
@@ -91,8 +93,27 @@ void RecordShadowBenchmark()
     sample.Gpu += snapshot.GpuRenderMs;
     sample.Cpu += snapshot.CpuRenderMs;
     sample.FrameMs += World::GetFrameTimeMs();
-    for (const auto& pass : snapshot.Passes)
-        if (pass.Name == "Shadow") sample.ShadowGpu += pass.GpuMs;
+    if (snapshot.GpuTimingValid)
+    {
+        ++sample.GpuSamples;
+        for (const auto& pass : snapshot.Passes)
+        {
+            if (pass.Name == "Shadow")
+            {
+                sample.ShadowGpu += pass.GpuMs;
+            }
+            auto total = find_if(sample.PassTotals.begin(), sample.PassTotals.end(),
+                [&](const auto& entry) { return entry.Name == pass.Name; });
+            if (total == sample.PassTotals.end())
+            {
+                sample.PassTotals.push_back({pass.Name});
+                total = prev(sample.PassTotals.end());
+            }
+            total->CpuMs += pass.CpuMs;
+            total->GpuMs += pass.GpuMs;
+            total->DrawCalls += pass.DrawCalls;
+        }
+    }
 }
 void Check(bool passed, const char* name);
 
@@ -1049,6 +1070,14 @@ bool RenderingValidation::Finish()
                         double(sample.Draws) / sample.Count, sample.Gpu / sample.Count, sample.Cpu / sample.Count,
                         sample.ShadowGpu / sample.Count, sample.FrameMs / sample.Count,
                         sample.FrameMs > 0 ? 1000.0 * sample.Count / sample.FrameMs : 0);
+                Check(sample.GpuSamples == sample.Count, "benchmark has valid GPU timestamps for every sample");
+                for (const auto& pass : sample.PassTotals)
+                {
+                    WriteGraphicsLog("Render benchmark %s pass [%s]: samples=%llu GPU=%.4f CPU=%.4f draws=%.2f\n",
+                        names[i], pass.Name.c_str(), sample.GpuSamples,
+                        pass.GpuMs / sample.GpuSamples, pass.CpuMs / sample.GpuSamples,
+                        double(pass.DrawCalls) / sample.GpuSamples);
+                }
             }
             const auto& reference = g_ShadowBenchmark[1];
             const auto& optimized = g_ShadowBenchmark[2];

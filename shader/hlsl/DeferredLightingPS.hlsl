@@ -29,12 +29,14 @@ float4 main(PSInputPostProcess input) : SV_Target
 {
 
     const float PI = 3.14159265358979323846f;
-    float4 authoredEmissionAO = MaterialEmissionAO.SampleLevel(TextureSampler, input.TexCoord, 0);
-    float4 material = MaterialTexture.Sample(TextureSampler, input.TexCoord);
+    // Lighting runs at GBuffer resolution. Integer fetches preserve material
+    // classes and avoid filtering work for these per-pixel attributes.
+    const int3 gbufferPixel = int3(int2(input.Position.xy), 0);
+    float4 material = MaterialTexture.Load(gbufferPixel);
     float shaderClass = material.a;
     bool background = shaderClass < -0.5f;
     bool transparent = IsMaterialClass(shaderClass, 0.0f);
-	float4 baseColor = BaseColorTexture.Sample(TextureSampler, input.TexCoord);
+	float4 baseColor = BaseColorTexture.Load(gbufferPixel);
 
 	if (transparent)
 	{
@@ -72,12 +74,12 @@ float4 main(PSInputPostProcess input) : SV_Target
 		return baseColor;
 	}
 
-	float4 normal = NormalTexture.Sample(TextureSampler, input.TexCoord);
-	float depth = DepthTexture.Sample(TextureSampler, input.TexCoord);
+	float4 normal = NormalTexture.Load(gbufferPixel);
+	float depth = DepthTexture.Load(gbufferPixel);
 	float3 position = ReconstructPostProcessWorldPositionCommon(input.TexCoord, depth);
     float3 positionDx = ddx(position);
     float3 positionDy = ddy(position);
-	float4 shadowParams = ShadowGBufferTexture.Sample(TextureSampler, input.TexCoord);
+	float4 shadowParams = ShadowGBufferTexture.Load(gbufferPixel);
 
 
     float shadowThreshold = shadowParams.r;
@@ -168,67 +170,73 @@ float4 main(PSInputPostProcess input) : SV_Target
         float3 pageColor = frac(pageHash + float3(0.0f, 0.333f, 0.667f));
         return float4(pageColor, 1.0f);
     }
-    float lightIntensity = LightColor.a;
-
-
-    float Roughness = material.g;
-
-    float3 NdotL = saturate(dot(surfaceNormal, lightDir));
-    float3 environmentColor = EnvironmentTexture.SampleLevel(TextureSampler, input.TexCoord, Roughness * 10.0f).rgb;
-    NdotL += lightIntensity;
-
-
-    float3 diffuse = 0.0f;
+    [branch]
+    if (shadow || toon || lit)
     {
-        float3 light = lightColor.rgb * saturate(dot(lightDir, surfaceNormal));
+        float lightIntensity = LightColor.a;
 
-        float2 iblTexcoord;
-        iblTexcoord.x = -atan2(surfaceNormal.x, surfaceNormal.z) / (PI * 2);
-        iblTexcoord.y = asin(surfaceNormal.y) / PI;
-        light += EnvironmentTexture.SampleLevel(TextureSampler, iblTexcoord, Roughness  * 10.0f).rgb * 6;
-        diffuse = light * baseColor.rgb / PI;
+
+        float Roughness = material.g;
+
+        float3 NdotL = saturate(dot(surfaceNormal, lightDir));
+        float3 environmentColor = EnvironmentTexture.SampleLevel(TextureSampler, input.TexCoord, Roughness * 10.0f).rgb;
+        NdotL += lightIntensity;
+
+
+        float3 diffuse = 0.0f;
+        {
+            float3 light = lightColor.rgb * saturate(dot(lightDir, surfaceNormal));
+
+            float2 iblTexcoord;
+            iblTexcoord.x = -atan2(surfaceNormal.x, surfaceNormal.z) / (PI * 2);
+            iblTexcoord.y = asin(surfaceNormal.y) / PI;
+            light += EnvironmentTexture.SampleLevel(TextureSampler, iblTexcoord, Roughness  * 10.0f).rgb * 6;
+            diffuse = light * baseColor.rgb / PI;
+        }
+
+        if(shadow)
+        {
+            float castShadow = saturate(1.0f - aggregateShadowVisibility);
+            float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
+            float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
+            float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
+            float3 lightTint = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
+            float3 shadowTint = saturate(float3(0.015f, 0.014f, 0.017f) + environmentColor * 0.16f + lightTint * 0.025f);
+            float3 litColor = baseColor.rgb * (0.12f + NdotL * (0.22f + lightColor.rgb * 0.72f));
+            baseColor.rgb = lerp(litColor, baseColor.rgb * shadowTint - 0.08f, shadowDensity);
+        }
+
+        if(toon)
+        {
+            float castShadow = saturate(1.0f - aggregateShadowVisibility);
+            float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
+            float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
+            float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
+            float selfShadowMask = smoothstep(shadowThreshold - shadowSoftness, shadowThreshold + shadowSoftness, castShadow);
+            shadowDensity = saturate(max(shadowDensity, selfShadowMask * shadowStrength * lerp(0.20f, 0.85f, lightShadowPower)));
+            float3 lightTint = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
+            float3 shadowTint = saturate(float3(0.018f, 0.016f, 0.020f) + environmentColor + lightTint * 0.025f);
+            float3 litColor = baseColor.rgb * (lightColor.rgb * 0.72f + NdotL);
+            baseColor.rgb = diffuse * lerp(litColor, litColor * shadowTint, shadowDensity);
+        }
+
+        if(lit)
+        {
+            float castShadow = saturate(1.0f - aggregateShadowVisibility);
+            float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
+            float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
+            float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
+            float selfShadowMask = smoothstep(shadowThreshold - shadowSoftness, shadowThreshold + shadowSoftness, castShadow);
+            shadowDensity = saturate(max(shadowDensity, selfShadowMask * shadowStrength * lerp(0.20f, 0.85f, lightShadowPower)));
+            float3 lightTint = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
+            float3 shadowTint = saturate(float3(0.018f, 0.016f, 0.020f) + environmentColor + lightTint * 0.025f);
+            float3 litColor = baseColor.rgb * (lightColor.rgb * 0.72f + NdotL);
+            baseColor.rgb = diffuse * lerp(litColor, litColor * shadowTint, shadowDensity);
+        }
+
     }
 
-    if(shadow)
-    {
-        float castShadow = saturate(1.0f - aggregateShadowVisibility);
-        float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
-        float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
-        float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
-        float3 lightTint = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
-        float3 shadowTint = saturate(float3(0.015f, 0.014f, 0.017f) + environmentColor * 0.16f + lightTint * 0.025f);
-        float3 litColor = baseColor.rgb * (0.12f + NdotL * (0.22f + lightColor.rgb * 0.72f));
-        baseColor.rgb = lerp(litColor, baseColor.rgb * shadowTint - 0.08f, shadowDensity);
-    }
-
-    if(toon)
-    {
-        float castShadow = saturate(1.0f - aggregateShadowVisibility);
-        float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
-        float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
-        float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
-        float selfShadowMask = smoothstep(shadowThreshold - shadowSoftness, shadowThreshold + shadowSoftness, castShadow);
-        shadowDensity = saturate(max(shadowDensity, selfShadowMask * shadowStrength * lerp(0.20f, 0.85f, lightShadowPower)));
-        float3 lightTint = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
-        float3 shadowTint = saturate(float3(0.018f, 0.016f, 0.020f) + environmentColor + lightTint * 0.025f);
-        float3 litColor = baseColor.rgb * (lightColor.rgb * 0.72f + NdotL);
-        baseColor.rgb = diffuse * lerp(litColor, litColor * shadowTint, shadowDensity);
-    }
-
-    if(lit)
-    {
-        float castShadow = saturate(1.0f - aggregateShadowVisibility);
-        float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
-        float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
-        float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
-        float selfShadowMask = smoothstep(shadowThreshold - shadowSoftness, shadowThreshold + shadowSoftness, castShadow);
-        shadowDensity = saturate(max(shadowDensity, selfShadowMask * shadowStrength * lerp(0.20f, 0.85f, lightShadowPower)));
-        float3 lightTint = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
-        float3 shadowTint = saturate(float3(0.018f, 0.016f, 0.020f) + environmentColor + lightTint * 0.025f);
-        float3 litColor = baseColor.rgb * (lightColor.rgb * 0.72f + NdotL);
-        baseColor.rgb = diffuse * lerp(litColor, litColor * shadowTint, shadowDensity);
-    }
-
+    float4 authoredEmissionAO = MaterialEmissionAO.Load(gbufferPixel);
     if (pbr)
     {
         SurfaceData surface = BuildLightingSurface(baseColor, surfaceNormal, material.rgb, authoredEmissionAO);
