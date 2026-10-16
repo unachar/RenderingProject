@@ -62,3 +62,4 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
             VolumetricLightIndices[destination] = instance.Metadata.x;
     }
 }
+

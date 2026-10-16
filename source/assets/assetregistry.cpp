@@ -219,3 +219,4 @@ AssetHandle AssetRegistry::Duplicate(AssetHandle handle, const std::filesystem::
     }
     return copy;
 }
+

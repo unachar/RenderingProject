@@ -10,3 +10,4 @@ public:
     static bool Finish();
     static void Trace(const char* stage);
 };
+

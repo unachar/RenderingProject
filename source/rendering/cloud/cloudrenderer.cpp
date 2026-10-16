@@ -532,3 +532,4 @@ void CloudRenderer::DrawDebugUI()
             ImGui::Text("%s: %.3f ms", pass.Name.c_str(), pass.GpuMs);
     g_Settings.Validate();
 }
+

@@ -49,3 +49,4 @@ public:
 private:
     static void UpdateBinding(MaterialRuntime& runtime, const MaterialAssetData& material);
 };
+

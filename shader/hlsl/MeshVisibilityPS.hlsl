@@ -32,3 +32,4 @@ uint4 PSMain(PSInput3D input) : SV_Target0
         usePart ? part.Shadow0.y : ShadowSoftness,
         usePart ? part.Shadow0.z : ShadowStrength);
 }
+

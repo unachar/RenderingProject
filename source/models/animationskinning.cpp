@@ -340,3 +340,4 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
     if (work.Base) m_DispatchedSkinningVersion = m_SkinningVersion;
     if (work.Outlines) m_DispatchedOutlineSkinningVersion = m_SkinningVersion;
 }
+

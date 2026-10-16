@@ -31,3 +31,4 @@ void main(uint3 id : SV_DispatchThreadID)
     }
     gVisible[target] = visible;
 }
+

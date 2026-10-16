@@ -16,3 +16,4 @@ void main(uint3 id:SV_DispatchThreadID)
     item.z=1; Candidates[index]=item;
     MeshletRecord meshlet=Meshlets[item.y]; Stat(28,meshlet.VertexCount); Stat(32,meshlet.PrimitiveCount);
 }
+

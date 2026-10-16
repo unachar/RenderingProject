@@ -415,3 +415,4 @@ StaticModelResource* ModelManager::FindLoadedStaticModel(const std::filesystem::
     }
     return nullptr;
 }
+

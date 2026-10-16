@@ -53,3 +53,4 @@ public:
     static void RecordOpaqueSubmission(double milliseconds);
     static void TrackEntityTextures(uint32_t entity, const vector<uint32_t>& descriptors);
 };
+

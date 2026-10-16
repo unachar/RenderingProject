@@ -1,5 +1,11 @@
 #include "pch.h"
 #include "performancegovernor.h"
+#include "advancedeffects.h"
+#include "atmospherelut.h"
+#include "renderquality.h"
+#include "transparencyeffects.h"
+#include "pbrluts.h"
+#include "asynccompute.h"
 #include "materialmanager.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
@@ -309,11 +315,156 @@ void ImGuiManager::DrawProjectSettingsWindow()
             RendererSettings::SetGiMode(static_cast<GlobalIlluminationMode>(giMode));
         }
         ImGui::BeginDisabled(giMode == 0);
-        float giIntensity = RendererSettings::GetSsgiIntensity();
-        if (ImGui::SliderFloat("GI Intensity", &giIntensity, 0.0f, 3.0f, "%.2f"))
+        if (RendererSettings::GetRealtimeGiEnabled())
         {
-            RendererSettings::SetSsgiIntensity(giIntensity);
+            // 物理ベースの放射照度なので 1.0 がエネルギー保存（SSGI の強度とは別管理）
+            float rtGiIntensity = RendererSettings::GetRealtimeGiIntensity();
+            if (ImGui::SliderFloat("GI Intensity", &rtGiIntensity, 0.0f, 3.0f, "%.2f"))
+            {
+                RendererSettings::SetRealtimeGiIntensity(rtGiIntensity);
+            }
         }
+        else
+        {
+            float giIntensity = RendererSettings::GetSsgiIntensity();
+            if (ImGui::SliderFloat("GI Intensity", &giIntensity, 0.0f, 3.0f, "%.2f"))
+            {
+                RendererSettings::SetSsgiIntensity(giIntensity);
+            }
+        }
+        ImGui::EndDisabled();
+
+        {
+            auto& rq = RenderQuality::Get();
+            ImGui::SeparatorText("PBR / Lights");
+            ImGui::BeginDisabled(!PbrLuts::IsAvailable());
+            ImGui::Checkbox("多重散乱エネルギー補償 (DFG LUT)", &rq.EnergyCompensation);
+            ImGui::Checkbox("矩形エリアライト (LTC)", &rq.AreaLights);
+            ImGui::EndDisabled();
+            if (!PbrLuts::IsAvailable()) ImGui::TextDisabled("LUT 未初期化: 解析近似にフォールバック");
+
+            ImGui::SeparatorText("Tone Mapping / Color Grading");
+            int toneMapper = static_cast<int>(rq.Tonemapper);
+            if (ImGui::Combo("トーンマッパー", &toneMapper, "ACES (従来の近似)\0AgX\0ACES Fitted (RRT+ODT)\0Khronos PBR Neutral\0"))
+                rq.Tonemapper = static_cast<ToneMapper>(toneMapper);
+            ImGui::BeginDisabled(rq.Tonemapper != ToneMapper::AgX);
+            ImGui::Checkbox("AgX Punchy", &rq.AgXPunchy);
+            ImGui::EndDisabled();
+            ImGui::SliderFloat("コントラスト", &rq.Contrast, 0.5f, 2.0f, "%.2f");
+            ImGui::SliderFloat("彩度", &rq.Saturation, 0.0f, 2.0f, "%.2f");
+            ImGui::SliderFloat("自然な彩度", &rq.Vibrance, -1.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("色温度", &rq.Temperature, -1.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("色かぶり", &rq.Tint, -1.0f, 1.0f, "%.2f");
+            ImGui::DragFloat3("Lift", &rq.Lift.x, 0.005f, -0.5f, 0.5f, "%.3f");
+            ImGui::DragFloat3("Gamma", &rq.Gamma.x, 0.005f, 0.2f, 3.0f, "%.3f");
+            ImGui::DragFloat3("Gain", &rq.Gain.x, 0.005f, 0.0f, 3.0f, "%.3f");
+            if (ImGui::Button("グレーディングをリセット"))
+            {
+                rq.Contrast = rq.Saturation = 1.0f; rq.Vibrance = rq.Temperature = rq.Tint = 0.0f;
+                rq.Lift = { 0, 0, 0 }; rq.Gamma = { 1, 1, 1 }; rq.Gain = { 1, 1, 1 };
+            }
+
+            ImGui::SeparatorText("Bloom / Lens");
+            ImGui::BeginDisabled(!AdvancedEffects::IsAvailable());
+            ImGui::Checkbox("デュアルフィルタ ブルーム", &rq.DualBloom);
+            ImGui::BeginDisabled(!rq.DualBloom);
+            ImGui::SliderFloat("ブルーム強度", &rq.BloomIntensity, 0.0f, 0.3f, "%.3f");
+            ImGui::SliderFloat("しきい値 (0=物理ベース)", &rq.BloomThreshold, 0.0f, 8.0f, "%.2f");
+            ImGui::SliderFloat("広がり", &rq.BloomRadius, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderInt("段数", &rq.BloomLevels, 2, 8);
+            ImGui::EndDisabled();
+            ImGui::Checkbox("レンズフレア", &rq.LensFlare);
+            ImGui::BeginDisabled(!rq.LensFlare);
+            ImGui::SliderFloat("フレア強度", &rq.LensFlareIntensity, 0.0f, 2.0f, "%.2f");
+            ImGui::SliderFloat("ハロー", &rq.LensFlareHalo, 0.0f, 2.0f, "%.2f");
+            ImGui::EndDisabled();
+            ImGui::EndDisabled();
+            ImGui::SliderFloat("ビネット", &rq.Vignette, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("ビネットの柔らかさ", &rq.VignetteSmoothness, 0.01f, 1.0f, "%.2f");
+            ImGui::SliderFloat("色収差 (px)", &rq.ChromaticAberration, 0.0f, 8.0f, "%.1f");
+            ImGui::SliderFloat("フィルムグレイン", &rq.FilmGrain, 0.0f, 1.0f, "%.2f");
+
+            ImGui::SeparatorText("Weather");
+            ImGui::Checkbox("天候を有効化", &rq.WeatherEnabled);
+            ImGui::BeginDisabled(!rq.WeatherEnabled);
+            ImGui::SliderFloat("雨", &rq.RainIntensity, 0.0f, 1.0f, "%.2f");
+            ImGui::Checkbox("雨量に応じて濡れ・水たまりを変化", &rq.AutoWetness);
+            ImGui::SliderFloat("濡れ", &rq.Wetness, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("水たまり", &rq.Puddles, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("積雪", &rq.Snow, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("降雪", &rq.SnowFall, 0.0f, 1.0f, "%.2f");
+            ImGui::DragFloat("風 X", &rq.WindX, 0.01f, -5.0f, 5.0f, "%.2f");
+            ImGui::DragFloat("風 Z", &rq.WindZ, 0.01f, -5.0f, 5.0f, "%.2f");
+            ImGui::TextDisabled("現在: 濡れ %.2f / 水たまり %.2f", RenderQuality::GetEffectiveWetness(), RenderQuality::GetEffectivePuddles());
+            ImGui::EndDisabled();
+
+            ImGui::SeparatorText("Transparency");
+            ImGui::Checkbox("OIT (Weighted Blended)", &rq.OrderIndependentTransparency);
+            if (rq.OrderIndependentTransparency && !TransparencyEffects::IsOitActive())
+                ImGui::TextDisabled("OIT は HDR（RGBA16F）時のみ有効です");
+            ImGui::Checkbox("RT 屈折 (Transmission > 0 の透明マテリアル)", &rq.RaytracedRefraction);
+
+            ImGui::SeparatorText("ReSTIR GI");
+            ImGui::Checkbox("ReSTIR GI (時間・空間リサンプリング)", &rq.ReSTIRGI);
+            ImGui::BeginDisabled(!rq.ReSTIRGI);
+            ImGui::SliderInt("時間方向の履歴上限 M", &rq.ReSTIRTemporalMaxM, 1, 64);
+            ImGui::SliderInt("空間サンプル数", &rq.ReSTIRSpatialSamples, 0, 8);
+            ImGui::SliderFloat("空間半径 (px)", &rq.ReSTIRSpatialRadius, 4.0f, 48.0f, "%.0f");
+            ImGui::Checkbox("空間再利用の可視性チェック", &rq.ReSTIRSpatialVisibility);
+            ImGui::EndDisabled();
+        }
+
+        ImGui::SeparatorText("Sky Atmosphere LUT / Async Compute");
+        auto& skyLut = AtmosphereLut::GetSettings();
+        ImGui::BeginDisabled(!AtmosphereLut::IsAvailable());
+        ImGui::Checkbox("大気 LUT", &skyLut.Enabled);
+        ImGui::BeginDisabled(!skyLut.Enabled);
+        ImGui::SliderFloat("多重散乱", &skyLut.MultipleScattering, 0.0f, 2.0f, "%.2f");
+        ImGui::SliderFloat("地表アルベド", &skyLut.GroundAlbedo, 0.0f, 1.0f, "%.2f");
+        ImGui::EndDisabled();
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(!AsyncCompute::IsAvailable());
+        ImGui::Checkbox("非同期コンピュート", &AsyncCompute::Enabled());
+        ImGui::EndDisabled();
+        ImGui::TextDisabled("LUT 生成: %s", !AtmosphereLut::IsAvailable() ? "無効（解析的な空）" :
+            AtmosphereLut::WasBuiltAsync() ? "Compute キュー（非同期）" : "Graphics キュー");
+
+        auto& advanced = AdvancedEffects::GetSettings();
+        ImGui::SeparatorText("Volumetric Fog (Froxel)");
+        ImGui::Checkbox("フロクセル ボリュームフォグ", &advanced.FroxelFog);
+        ImGui::BeginDisabled(!advanced.FroxelFog);
+        ImGui::SliderInt("奥行き分割数", &advanced.FroxelSliceCount, 16, 128);
+        ImGui::SliderInt("タイルサイズ (px)", &advanced.FroxelTileSize, 4, 32);
+        ImGui::SliderFloat("フォグ距離", &advanced.FogFar, 10.0f, 500.0f, "%.0f m");
+        ImGui::SliderFloat("散乱の強さ", &advanced.FogScattering, 0.0f, 4.0f, "%.2f");
+        ImGui::SliderFloat("環境光の散乱", &advanced.FogAmbient, 0.0f, 4.0f, "%.2f");
+        ImGui::SliderFloat("時間方向の蓄積", &advanced.FogHistoryWeight, 0.0f, 0.97f, "%.2f");
+        ImGui::TextDisabled("大気設定と局所フォグを使用。光芒の影はDXR有効時のみ");
+        ImGui::EndDisabled();
+
+        ImGui::SeparatorText("Auto Exposure");
+        ImGui::Checkbox("自動露出 (ヒストグラム)", &advanced.AutoExposure);
+        ImGui::BeginDisabled(!advanced.AutoExposure);
+        ImGui::SliderFloat("露出補正 (EV)", &advanced.ExposureCompensation, -5.0f, 5.0f, "%.2f");
+        ImGui::DragFloatRange2("EV 範囲", &advanced.ExposureMinEv, &advanced.ExposureMaxEv, 0.1f, -16.0f, 16.0f, "%.1f");
+        ImGui::SliderFloat("順応速度", &advanced.ExposureSpeed, 0.1f, 10.0f, "%.2f");
+        ImGui::TextDisabled("手動の「露光」は自動露出に乗算されます");
+        ImGui::EndDisabled();
+
+        ImGui::SeparatorText("Motion Blur / Depth of Field");
+        ImGui::Checkbox("モーションブラー", &advanced.MotionBlur);
+        ImGui::BeginDisabled(!advanced.MotionBlur);
+        ImGui::SliderFloat("シャッター", &advanced.MotionBlurShutter, 0.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("最大長 (px)", &advanced.MotionBlurMaxPixels, 4.0f, 64.0f, "%.0f");
+        ImGui::SliderInt("サンプル数", &advanced.MotionBlurSamples, 4, 16);
+        ImGui::EndDisabled();
+        ImGui::Checkbox("被写界深度", &advanced.DepthOfField);
+        ImGui::BeginDisabled(!advanced.DepthOfField);
+        ImGui::DragFloat("焦点距離", &advanced.FocusDistance, 0.05f, 0.05f, 1000.0f, "%.2f m");
+        ImGui::DragFloat("ピント範囲", &advanced.FocusRange, 0.05f, 0.0f, 1000.0f, "%.2f m");
+        ImGui::SliderFloat("最大ボケ (px)", &advanced.MaxBlurPixels, 1.0f, 32.0f, "%.1f");
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(giMode == 0);
         if (RendererSettings::GetRealtimeGiEnabled())
         {
             float giDistance = RendererSettings::GetGiDistance();
@@ -321,6 +472,17 @@ void ImGuiManager::DrawProjectSettingsWindow()
             {
                 RendererSettings::SetGiDistance(giDistance);
             }
+            bool radianceCache = RendererSettings::GetGiRadianceCacheEnabled();
+            if (ImGui::Checkbox("放射キャッシュ（多重バウンス）", &radianceCache))
+                RendererSettings::SetGiRadianceCacheEnabled(radianceCache);
+            ImGui::BeginDisabled(!radianceCache);
+            float cacheCell = RendererSettings::GetGiRadianceCacheCellSize();
+            if (ImGui::SliderFloat("キャッシュセルサイズ", &cacheCell, 0.05f, 1.0f, "%.2f m"))
+                RendererSettings::SetGiRadianceCacheCellSize(cacheCell);
+            int cacheHistory = RendererSettings::GetGiRadianceCacheHistory();
+            if (ImGui::SliderInt("キャッシュ履歴フレーム", &cacheHistory, 4, 128))
+                RendererSettings::SetGiRadianceCacheHistory(cacheHistory);
+            ImGui::EndDisabled();
             if (!Raytracing::IsAvailable() || !Raytracing::GetSettings().Enabled)
             {
                 ImGui::TextWrapped("Realtime GI requires DXR Tier 1.1 and enabled ray tracing.");
@@ -597,6 +759,92 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("editor.ShowLightDebug", m_ShowLightDebug, 0, 1);
     field("editor.gizmo", m_GizmoOperation, 0, 3);
     field("editor.log_auto_scroll", m_LogAutoScroll, 0, 1);
+    // 自動品質調整（可変レイトレーシング / 可変GI など）の設定
+    auto& governor = PerformanceGovernor::GetOptions();
+    field("governor.Enabled", governor.Enabled, 0, 1);
+    field("governor.AllowResolutionScaling", governor.AllowResolutionScaling, 0, 1);
+    field("governor.BudgetHeadroom", governor.BudgetHeadroom, 0.6, 1.0);
+    field("governor.UpgradeMargin", governor.UpgradeMargin, 0.3, 0.95);
+    field("governor.DowngradeDelay", governor.DowngradeDelay, 0.0, 10.0);
+    field("governor.UpgradeDelay", governor.UpgradeDelay, 0.1, 30.0);
+    field("governor.ResolutionDelay", governor.ResolutionDelay, 0.1, 30.0);
+    // フロクセルフォグ / 自動露出 / モーションブラー / 被写界深度
+    // 画質向上（renderquality.h）
+    auto& rq = RenderQuality::Get();
+    field("quality.EnergyCompensation", rq.EnergyCompensation, 0, 1);
+    field("quality.AreaLights", rq.AreaLights, 0, 1);
+    int toneMapper = static_cast<int>(rq.Tonemapper);
+    if (EditorConfig::Value(output, key, value, "quality.Tonemapper", toneMapper, 0, 3))
+    {
+        rq.Tonemapper = static_cast<ToneMapper>(toneMapper);
+        matched = true;
+    }
+    field("quality.AgXPunchy", rq.AgXPunchy, 0, 1);
+    field("quality.Contrast", rq.Contrast, 0, 4);
+    field("quality.Saturation", rq.Saturation, 0, 4);
+    field("quality.Vibrance", rq.Vibrance, -1, 1);
+    field("quality.Temperature", rq.Temperature, -1, 1);
+    field("quality.Tint", rq.Tint, -1, 1);
+    field("quality.Lift.r", rq.Lift.x, -1, 1); field("quality.Lift.g", rq.Lift.y, -1, 1); field("quality.Lift.b", rq.Lift.z, -1, 1);
+    field("quality.Gamma.r", rq.Gamma.x, 0.05, 4); field("quality.Gamma.g", rq.Gamma.y, 0.05, 4); field("quality.Gamma.b", rq.Gamma.z, 0.05, 4);
+    field("quality.Gain.r", rq.Gain.x, 0, 4); field("quality.Gain.g", rq.Gain.y, 0, 4); field("quality.Gain.b", rq.Gain.z, 0, 4);
+    field("quality.Vignette", rq.Vignette, 0, 1);
+    field("quality.VignetteSmoothness", rq.VignetteSmoothness, 0.01, 1);
+    field("quality.ChromaticAberration", rq.ChromaticAberration, 0, 16);
+    field("quality.FilmGrain", rq.FilmGrain, 0, 1);
+    field("quality.DualBloom", rq.DualBloom, 0, 1);
+    field("quality.BloomIntensity", rq.BloomIntensity, 0, 1);
+    field("quality.BloomThreshold", rq.BloomThreshold, 0, 100);
+    field("quality.BloomRadius", rq.BloomRadius, 0, 1);
+    field("quality.BloomLevels", rq.BloomLevels, 2, 8);
+    field("quality.LensFlare", rq.LensFlare, 0, 1);
+    field("quality.LensFlareIntensity", rq.LensFlareIntensity, 0, 10);
+    field("quality.LensFlareHalo", rq.LensFlareHalo, 0, 10);
+    field("quality.WeatherEnabled", rq.WeatherEnabled, 0, 1);
+    field("quality.RainIntensity", rq.RainIntensity, 0, 1);
+    field("quality.Wetness", rq.Wetness, 0, 1);
+    field("quality.Puddles", rq.Puddles, 0, 1);
+    field("quality.Snow", rq.Snow, 0, 1);
+    field("quality.SnowFall", rq.SnowFall, 0, 1);
+    field("quality.WindX", rq.WindX, -10, 10);
+    field("quality.WindZ", rq.WindZ, -10, 10);
+    field("quality.AutoWetness", rq.AutoWetness, 0, 1);
+    field("quality.OIT", rq.OrderIndependentTransparency, 0, 1);
+    field("quality.RaytracedRefraction", rq.RaytracedRefraction, 0, 1);
+    field("quality.ReSTIRGI", rq.ReSTIRGI, 0, 1);
+    field("quality.ReSTIRTemporalMaxM", rq.ReSTIRTemporalMaxM, 1, 64);
+    field("quality.ReSTIRSpatialSamples", rq.ReSTIRSpatialSamples, 0, 16);
+    field("quality.ReSTIRSpatialRadius", rq.ReSTIRSpatialRadius, 1, 64);
+    field("quality.ReSTIRSpatialVisibility", rq.ReSTIRSpatialVisibility, 0, 1);
+    auto& skyLut = AtmosphereLut::GetSettings();
+    field("atmosphere_lut.Enabled", skyLut.Enabled, 0, 1);
+    field("atmosphere_lut.MultipleScattering", skyLut.MultipleScattering, 0, 4);
+    field("atmosphere_lut.GroundAlbedo", skyLut.GroundAlbedo, 0, 1);
+    field("async_compute.Enabled", AsyncCompute::Enabled(), 0, 1);
+    auto& advanced = AdvancedEffects::GetSettings();
+    field("advanced.FroxelFog", advanced.FroxelFog, 0, 1);
+    field("advanced.FroxelSliceCount", advanced.FroxelSliceCount, 16, 128);
+    field("advanced.FroxelTileSize", advanced.FroxelTileSize, 4, 32);
+    field("advanced.FogNear", advanced.FogNear, 0.05, 10);
+    field("advanced.FogFar", advanced.FogFar, 5, 2000);
+    field("advanced.FogHistoryWeight", advanced.FogHistoryWeight, 0, 0.97);
+    field("advanced.FogScattering", advanced.FogScattering, 0, 10);
+    field("advanced.FogAmbient", advanced.FogAmbient, 0, 10);
+    field("advanced.AutoExposure", advanced.AutoExposure, 0, 1);
+    field("advanced.ExposureCompensation", advanced.ExposureCompensation, -10, 10);
+    field("advanced.ExposureMinEv", advanced.ExposureMinEv, -16, 16);
+    field("advanced.ExposureMaxEv", advanced.ExposureMaxEv, -16, 16);
+    field("advanced.ExposureSpeed", advanced.ExposureSpeed, 0.01, 20);
+    field("advanced.ExposureLowPercent", advanced.ExposureLowPercent, 0, 0.99);
+    field("advanced.ExposureHighPercent", advanced.ExposureHighPercent, 0.01, 1);
+    field("advanced.MotionBlur", advanced.MotionBlur, 0, 1);
+    field("advanced.MotionBlurShutter", advanced.MotionBlurShutter, 0, 2);
+    field("advanced.MotionBlurMaxPixels", advanced.MotionBlurMaxPixels, 1, 128);
+    field("advanced.MotionBlurSamples", advanced.MotionBlurSamples, 2, 32);
+    field("advanced.DepthOfField", advanced.DepthOfField, 0, 1);
+    field("advanced.FocusDistance", advanced.FocusDistance, 0.05, 10000);
+    field("advanced.FocusRange", advanced.FocusRange, 0, 10000);
+    field("advanced.MaxBlurPixels", advanced.MaxBlurPixels, 1, 48);
     auto& thumbnails = AssetThumbnailManager::Settings();
     field("asset_thumbnail_size", thumbnails.Size, 32, 256);
     field("asset_thumbnail_generations", thumbnails.MaxGenerationsPerFrame, 1, 64);
@@ -774,12 +1022,14 @@ void ImGuiManager::SaveProjectSettings()
 	ostringstream stream;
 	stream << setprecision(numeric_limits<float>::max_digits10);
 	stream << "version=1\n";
+	// 自動品質調整で一時的に下げている値ではなく、ユーザーの設定値（基準値）を保存する
+	PerformanceGovernor::ScopedPersistBaseline persistBaseline;
 	SimulationConfiguration::Save(stream);
 	PersistentSettings(&stream);
 	stream << "vsync=" << (static_cast<int>(World::IsVSyncEnabled())) << '\n';
 	stream << "fixed_fps=" << (static_cast<int>(World::IsFixedFrameRateEnabled())) << '\n';
 	stream << "target_fps=" << World::GetTargetFrameRate() << '\n';
-	stream << "resolution_scale=" << RenderConfiguration::GetResolutionScale() << '\n';
+	stream << "resolution_scale=" << PerformanceGovernor::GetPersistentResolutionScale() << '\n';
 	stream << "upscale_mode=" << static_cast<int>(RendererSettings::GetUpscaleMode()) << '\n';
 	stream << "upscale_quality=" << static_cast<int>(RendererSettings::GetUpscaleQuality()) << '\n';
 	stream << "fsr_sharpness=" << RendererSettings::GetFsrSharpness() << '\n';
@@ -796,6 +1046,10 @@ void ImGuiManager::SaveProjectSettings()
 	stream << "gi_mode=" << static_cast<int>(RendererSettings::GetGiMode()) << '\n';
     stream << "gi_distance=" << RendererSettings::GetGiDistance() << '\n';
 	stream << "ssgi_intensity=" << RendererSettings::GetSsgiIntensity() << '\n';
+	stream << "realtime_gi_intensity=" << RendererSettings::GetRealtimeGiIntensity() << '\n';
+	stream << "gi_radiance_cache=" << static_cast<int>(RendererSettings::GetGiRadianceCacheEnabled()) << '\n';
+	stream << "gi_radiance_cache_cell=" << RendererSettings::GetGiRadianceCacheCellSize() << '\n';
+	stream << "gi_radiance_cache_history=" << RendererSettings::GetGiRadianceCacheHistory() << '\n';
 	stream << "ray_binning=" << (static_cast<int>(RendererSettings::GetRayBinningEnabled())) << '\n';
 	stream << "anti_aliasing=" << static_cast<int>(RendererState::m_AntiAliasingMode) << '\n';
 	stream << "hdr=" << (static_cast<int>(m_HdrEnabled)) << '\n';
@@ -903,6 +1157,10 @@ void ImGuiManager::LoadProjectSettings()
 			else if (key == "gi_mode") RendererSettings::SetGiMode(static_cast<GlobalIlluminationMode>(clamp(stoi(value), 0, 2)));
             else if (key == "gi_distance") RendererSettings::SetGiDistance(stof(value));
             else if (key == "ssgi_intensity") RendererSettings::SetSsgiIntensity(stof(value));
+            else if (key == "realtime_gi_intensity") RendererSettings::SetRealtimeGiIntensity(stof(value));
+            else if (key == "gi_radiance_cache") RendererSettings::SetGiRadianceCacheEnabled(stoi(value) != 0);
+            else if (key == "gi_radiance_cache_cell") RendererSettings::SetGiRadianceCacheCellSize(stof(value));
+            else if (key == "gi_radiance_cache_history") RendererSettings::SetGiRadianceCacheHistory(stoi(value));
 			else if (key == "ray_binning") RendererSettings::SetRayBinningEnabled(stoi(value) != 0);
 			else if (key == "anti_aliasing") RendererState::m_AntiAliasingMode = static_cast<AntiAliasingMode>(clamp(stoi(value), 0, static_cast<int>(AntiAliasingMode::COUNT) - 1));
 			else if (key == "hdr") { m_HdrEnabled = stoi(value) != 0; RenderConfiguration::SetHdr(m_HdrEnabled); }
@@ -988,3 +1246,5 @@ void ImGuiManager::LoadProjectSettings()
     }
 
 }
+
+

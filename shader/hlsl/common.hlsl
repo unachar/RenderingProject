@@ -959,6 +959,22 @@ void ResolveSingleLightCommon(
             volumeScatter = shapeMask * density * 0.55f;
         }
     }
+
+    if (lightType == 4)
+    {
+        // Rect area light: centre-point approximation for non-PBR paths, shadows, GI and fog.
+        // PBR surfaces evaluate the full rectangle with LTC (SurfaceLighting.hlsli).
+        float3 toLight = lightPositionTypeData.xyz - worldPos;
+        float distanceToLight = length(toLight);
+        lightDir = SafeNormalizeCommon(toLight, lightDir);
+        float rangeFade = saturate(1.0f - distanceToLight / lightRange);
+        float3 emitNormal = SafeNormalizeCommon(lightDirectionData.xyz, float3(0.0f, -1.0f, 0.0f));
+        float emitterCosine = saturate(dot(-lightDir, emitNormal));
+        float area = max(lightExtraData.x, 0.01f) * max(lightExtraData.y, 0.01f);
+        // Small sources behave like a point light of the same total power.
+        attenuation = rangeFade * rangeFade * emitterCosine * saturate(area);
+        volumeScatter = 0.0f;
+    }
 }
 
 void ResolveLightCommon(float3 worldPos, out float3 lightDir, out float attenuation, out float volumeScatter)
@@ -1246,6 +1262,18 @@ cbuffer PostProcessParams : register(b0)
     float4x4 PPViewProjection;
     float4 RaytracingFlags;
     float4 RaytracingSunDirection;
+    // RenderQuality (renderquality.h)
+    float4 GradeParams0;   // tonemapper, contrast, saturation, vibrance
+    float4 GradeParams1;   // temperature, tint, AgX punchy, -
+    float4 GradeLift;
+    float4 GradeGamma;
+    float4 GradeGain;
+    float4 LensParams0;    // vignette, vignette smoothness, chromatic aberration px, film grain
+    float4 LensParams1;    // time, frame, -, -
+    float4 WeatherParams0; // wetness, puddles, snow, rain
+    float4 WeatherParams1; // snowfall, wind x, wind z, -
+    float4 QualityFlags;   // energy compensation, area lights, OIT active, RT refraction
+    float4 QualityReserved;
 };
 
 float3 ReconstructPostProcessViewRayCommon(float2 uv)
@@ -1256,17 +1284,23 @@ float3 ReconstructPostProcessViewRayCommon(float2 uv)
     return SafeNormalizeCommon(worldFar.xyz - PPCameraPos.xyz, float3(0.0f, 0.0f, 1.0f));
 }
 
+#include "ToneMapping.hlsli"
+
+// Exposure -> scene-referred grading -> tone mapper -> display-referred grading.
+// The output stays linear (the swap chain / sRGB conversion is unchanged).
 float3 ApplyHdrOutput(float3 color)
 {
     float exposure = Flags.x;
-    float enableACES = HdrFlags.y;
+    float enableToneMap = HdrFlags.y;
     if (exposure > 0.001f)
     {
         color *= exposure;
     }
-    if (enableACES > 0.5f)
+    color = GradeSceneLinear(max(color, 0.0f));
+    if (enableToneMap > 0.5f)
     {
-        color = ACESToneMap(color);
+        color = ApplyToneMapper(color);
+        color = GradeDisplay(color);
     }
     return color;
 }
@@ -1396,3 +1430,5 @@ float3 ReconstructPostProcessWorldPositionCommon(float2 uv, float depth)
 }
 
 #endif
+
+

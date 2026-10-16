@@ -78,3 +78,4 @@ void main(uint3 id : SV_DispatchThreadID)
     gStatistics.InterlockedAdd(28, gGeometry[result.y].y, unused);
     gStatistics.InterlockedAdd(32 + selected * 4, 1, unused);
 }
+

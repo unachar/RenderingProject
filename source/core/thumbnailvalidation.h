@@ -11,3 +11,4 @@ public:
     static void BeforeEditorFrame();
     static void CaptureAssetCell(const char* fileName, float x, float y, bool selected);
 };
+

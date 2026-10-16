@@ -24,3 +24,4 @@ namespace EditorWidgets
 	void ApplyLightEntityToRuntime(EntityID entity);
 	void RefreshLightEntityName(EntityID entity, LightType type);
 }
+

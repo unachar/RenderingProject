@@ -730,3 +730,4 @@ string ImGuiManager::MakeRelativeAssetPath(const filesystem::path& path)
 	}
 	return relative.generic_string();
 }
+

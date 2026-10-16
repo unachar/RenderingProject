@@ -37,3 +37,4 @@ private:
 	static void BuildPyramid(ID3D12GraphicsCommandList* commands, ID3D12Resource* depth,
 		D3D12_GPU_DESCRIPTOR_HANDLE srv, D3D12_RESOURCE_STATES depthState);
 };
+

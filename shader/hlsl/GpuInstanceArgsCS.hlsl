@@ -25,3 +25,4 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         IndirectArguments.Store(baseOffset + 16, 0);
     }
 }
+

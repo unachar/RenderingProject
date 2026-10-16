@@ -42,3 +42,4 @@ private:
     struct Slot { State State = State::Free; uint64_t Fence = 0; };
     std::vector<Slot> m_Slots;
 };
+

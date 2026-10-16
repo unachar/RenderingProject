@@ -455,3 +455,4 @@ uint32_t GpuSceneValidation::Failures()
 {
     return failures;
 }
+

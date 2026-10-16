@@ -11,3 +11,4 @@ void main(uint3 id : SV_DispatchThreadID)
     float shade = pow(saturate(1 - depth), 0.25f);
     Destination[id.xy] = float4(shade.xxx, 1);
 }
+

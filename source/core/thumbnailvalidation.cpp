@@ -291,3 +291,4 @@ bool ThumbnailValidation::Finish()
     MaterialManager::Refresh();
     return complete && failures == 0;
 }
+

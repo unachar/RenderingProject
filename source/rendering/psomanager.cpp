@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "transparencyeffects.h"
 #include "psomanager.h"
 #include "shaderpipelines.h"
 #include "graphicsdevice.h"
@@ -211,6 +212,12 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const ShaderDescription&
 		blendKind = "OPAQUE";
 	}
 	string key = resource.vsPath + resolvedPsPath + "|" + (geometryKind) + "|" + (passKind) + "|" + to_string(forwardRtvFormatVal) + "|" + (windingKind) + "|" + (blendKind) + "|" + to_string(resource.cullMode) + "|" + to_string(resource.depthWrite);
+	// Weighted blended OIT: the transparent pass binds (accumulation, revealage) instead of the scene.
+	const bool oitPass = TransparencyEffects::IsOitPassActive() && !useDeferredMrt && !visibilityPass;
+	if (oitPass)
+	{
+		key += "|OIT";
+	}
 
 	auto it = m_PsoCache.find(key);
 	if (it != m_PsoCache.end())
@@ -363,6 +370,44 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const ShaderDescription&
     {
         psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
     }
+	if (oitPass)
+	{
+		// The transparent pass binds (scene, OIT accumulation, OIT revealage).
+		// modelshaderPS writes the weighted blended OIT outputs (SV_Target1/2) and leaves the
+		// scene untouched; every other shader keeps blending into the scene as before.
+		const bool oitShader = resolvedPsPath.find("modelshaderPS.cso") != string::npos;
+		psoDesc.NumRenderTargets = 3;
+		psoDesc.RTVFormats[0] = GetForwardRtvFormat();
+		psoDesc.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		psoDesc.RTVFormats[2] = TransparencyEffects::GetRevealFormat();
+		psoDesc.BlendState.IndependentBlendEnable = TRUE;
+		auto& accum = psoDesc.BlendState.RenderTarget[1];
+		auto& reveal = psoDesc.BlendState.RenderTarget[2];
+		accum = CD3DX12_BLEND_DESC(D3D12_DEFAULT).RenderTarget[0];
+		reveal = CD3DX12_BLEND_DESC(D3D12_DEFAULT).RenderTarget[0];
+		if (oitShader)
+		{
+			psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = 0;
+			// sum(premultiplied colour * w, alpha * w)
+			accum.BlendEnable = TRUE;
+			accum.SrcBlend = accum.DestBlend = D3D12_BLEND_ONE;
+			accum.SrcBlendAlpha = accum.DestBlendAlpha = D3D12_BLEND_ONE;
+			accum.BlendOp = accum.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+			// prod(1 - alpha)
+			reveal.BlendEnable = TRUE;
+			reveal.SrcBlend = D3D12_BLEND_ZERO;
+			reveal.DestBlend = D3D12_BLEND_INV_SRC_COLOR;
+			reveal.SrcBlendAlpha = D3D12_BLEND_ZERO;
+			reveal.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+			reveal.BlendOp = reveal.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+			psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+		}
+		else
+		{
+			accum.RenderTargetWriteMask = 0;
+			reveal.RenderTargetWriteMask = 0;
+		}
+	}
 
 	ComPtr<ID3D12PipelineState> newPso{};
 	if (!CreateGraphicsPipelineState(psoDesc, "renderer", newPso))
@@ -412,7 +457,9 @@ ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso(bool enableAlphaBlend
 	{
 		outlineBlendKind = "OPAQUE";
 	}
-	const string key = string("TOON_OUTLINE|") + (outlinePassKind) + "|" + to_string(forwardRtvFmt) + "|" + (outlineBlendKind);
+	const bool outlineOit = TransparencyEffects::IsOitPassActive() && !useDeferredMrt && !visibilityPass;
+	const string key = string("TOON_OUTLINE|") + (outlinePassKind) + "|" + to_string(forwardRtvFmt) + "|" + (outlineBlendKind) +
+		(outlineOit ? "|OIT" : "");
 	auto it = m_PsoCache.find(key);
 	if (it != m_PsoCache.end())
 	{
@@ -519,6 +566,17 @@ ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso(bool enableAlphaBlend
 	}
 	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 	psoDesc.SampleDesc.Count = 1;
+	if (outlineOit)
+	{
+		// Outlines keep blending into the scene target; the OIT targets are not written.
+		psoDesc.NumRenderTargets = 3;
+		psoDesc.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		psoDesc.RTVFormats[2] = TransparencyEffects::GetRevealFormat();
+		psoDesc.BlendState.IndependentBlendEnable = TRUE;
+		psoDesc.BlendState.RenderTarget[1] = CD3DX12_BLEND_DESC(D3D12_DEFAULT).RenderTarget[0];
+		psoDesc.BlendState.RenderTarget[1].RenderTargetWriteMask = 0;
+		psoDesc.BlendState.RenderTarget[2] = psoDesc.BlendState.RenderTarget[1];
+	}
 
 	ComPtr<ID3D12PipelineState> pso;
 	if (!CreateGraphicsPipelineState(psoDesc, "toon outline", pso))
@@ -983,3 +1041,5 @@ ID3D12PipelineState* PsoManager::GetPostProcessPso(PostProcessType type)
 	}
 	return psoIt->second.Get();
 }
+
+

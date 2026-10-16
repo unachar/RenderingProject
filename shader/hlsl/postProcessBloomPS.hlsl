@@ -45,7 +45,7 @@ float3 SampleBlurredBloom(float2 uv)
 
 float4 main(PSInputPostProcess input) : SV_TARGET
 {
-    const float3 scene = SceneTexture.Sample( TextureSampler,input.TexCoord).rgb;
+    const float3 scene = SampleWithChromaticAberration(SceneTexture, TextureSampler, input.TexCoord);
 
     const float3 bloom = SampleBlurredBloom(input.TexCoord);
 
@@ -53,5 +53,7 @@ float4 main(PSInputPostProcess input) : SV_TARGET
     
     const float3 result = scene + bloom * intensity;
 
-    return float4(ApplyHdrOutput(result),1.0f);
+    return float4(ApplyLensOutput(ApplyHdrOutput(result), input.TexCoord, input.Position.xy), 1.0f);
 }
+
+

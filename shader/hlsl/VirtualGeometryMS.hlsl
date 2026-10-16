@@ -195,3 +195,4 @@ void main(uint3 group : SV_GroupID, uint lane : SV_GroupIndex,
         primitiveOutput[primitiveIndex].Cull = dot(cross(points[1]-points[0],points[2]-points[0]),points[0]) >= 0;
     }
 }
+

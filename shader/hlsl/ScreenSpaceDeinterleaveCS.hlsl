@@ -37,3 +37,4 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     OutLighting[uint3(deinterleavedPixel, slice)] =
         EffectParams.w > 0.5f ? PreviousLighting.Load(int3(pixel, 0)) : 0.0f;
 }
+

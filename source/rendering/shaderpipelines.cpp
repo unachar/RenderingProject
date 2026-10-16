@@ -153,7 +153,7 @@ static void ShaderLogToFile(const char* msg)
 bool ShaderPipelines::CreatePostProcessPipeline()
 {
 	ShaderLogToFile("PP: setup ranges\n");
-	CD3DX12_DESCRIPTOR_RANGE ranges[17];
+	CD3DX12_DESCRIPTOR_RANGE ranges[19];
 	ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 0);
 	ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6);
 	ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 7);
@@ -172,7 +172,9 @@ bool ShaderPipelines::CreatePostProcessPipeline()
 	ranges[14].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 33);
     ranges[15].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 35);
     ranges[16].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 36);
-	CD3DX12_ROOT_PARAMETER params[26];
+    ranges[17].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 40); // atmosphere sky view LUT (scatter, transmission)
+    ranges[18].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 42); // LTC matrix, LTC amplitude / DFG
+	CD3DX12_ROOT_PARAMETER params[28];
 	params[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[1].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 	params[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -200,7 +202,9 @@ bool ShaderPipelines::CreatePostProcessPipeline()
     params[23].InitAsDescriptorTable(1, &ranges[14], D3D12_SHADER_VISIBILITY_PIXEL);
     params[24].InitAsDescriptorTable(1, &ranges[15], D3D12_SHADER_VISIBILITY_PIXEL);
     params[25].InitAsDescriptorTable(1, &ranges[16], D3D12_SHADER_VISIBILITY_PIXEL);
-	CD3DX12_STATIC_SAMPLER_DESC samplers[3] {};
+    params[26].InitAsDescriptorTable(1, &ranges[17], D3D12_SHADER_VISIBILITY_PIXEL);
+    params[27].InitAsDescriptorTable(1, &ranges[18], D3D12_SHADER_VISIBILITY_PIXEL);
+	CD3DX12_STATIC_SAMPLER_DESC samplers[4] {};
 	samplers[0] = CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
 
 
@@ -217,6 +221,9 @@ bool ShaderPipelines::CreatePostProcessPipeline()
 	samplers[2] = CD3DX12_STATIC_SAMPLER_DESC(3, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
 		D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP);
 	samplers[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	samplers[3] = CD3DX12_STATIC_SAMPLER_DESC(4, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP);
+	samplers[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	CD3DX12_ROOT_SIGNATURE_DESC rsDesc(_countof(params), params, _countof(samplers), samplers, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
 	ComPtr<ID3DBlob> rsBlob, errBlob;
@@ -319,3 +326,5 @@ bool ShaderPipelines::CreatePostProcessPipeline()
 	ShaderLogToFile("PP: done\n");
 	return true;
 }
+
+

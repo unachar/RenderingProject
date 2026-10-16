@@ -20,3 +20,4 @@ inline bool IsFeatureSmokeTestEnabled()
 	static const bool enabled = ReadEnvironmentFlagOnce("DX12_FEATURE_SMOKE_TEST");
 	return enabled;
 }
+

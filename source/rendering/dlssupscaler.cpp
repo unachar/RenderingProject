@@ -413,3 +413,4 @@ bool DlssUpscaler::Execute(ID3D12GraphicsCommandList* commands, UINT frameIndex,
     return false;
 #endif
 }
+

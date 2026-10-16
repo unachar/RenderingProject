@@ -2,6 +2,11 @@ Texture2D<float4> MaterialEmissionAO : register(t33);
 #define SHADER_POSTPROCESS
 #define SHADER_3D
 #include "common.hlsl"
+// Physical sky from the atmosphere LUT (bound at root parameter 26, t40/t41, clamp sampler s4).
+#define SKY_LUT 1
+#define SKY_LUT_SCATTER_REGISTER t40
+#define SKY_LUT_TRANSMISSION_REGISTER t41
+#define SKY_LUT_SAMPLER_REGISTER s4
 #include "SkyAtmosphere.hlsli"
 #include "CloudMedium.hlsli"
 #pragma warning(disable: 4000)
@@ -23,7 +28,10 @@ Texture2D<float4> RaytracedReflections : register(t17);
 SamplerState TextureSampler : register(s0);
 SamplerComparisonState ShadowSampler : register(s1);
 
+// DFG / LTC tables (root parameter 27: t42, t43).
+#define SURFACE_PBR_LUTS 1
 #include "SurfaceLighting.hlsli"
+#include "WeatherSurface.hlsli"
 
 float4 main(PSInputPostProcess input) : SV_Target
 {
@@ -96,6 +104,12 @@ float4 main(PSInputPostProcess input) : SV_Target
     float rangeBlend;
     float aggregateShadowVisibility;
     float3 surfaceNormal = DecodeGBufferNormal(normal.xyz);
+    if (pbr)
+    {
+        // Extended material model (shadow GBuffer alpha) and weather on PBR surfaces.
+        g_ShadingModel = DecodeShadingModel(shadowParams.a);
+        ApplyWeatherToSurface(position, surfaceNormal, baseColor.rgb, material.rgb);
+    }
     float3 viewDir = SafeNormalizeCommon(PPCameraPos.xyz - position, surfaceNormal);
     float3 pbrDirectLight;
     int materialShadowFilterRadius =
@@ -252,3 +266,5 @@ float4 main(PSInputPostProcess input) : SV_Target
     baseColor.a = 1.0f;
     return baseColor;
 }
+
+

@@ -48,3 +48,4 @@ void Alicia::Create()
 
 	Game::RegisterEntity(this);
 }
+

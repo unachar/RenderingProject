@@ -58,7 +58,70 @@ float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 ligh
     return visibility;
 }
 
-float4 main(in PSInput3D In) : SV_Target
+// ---------------------------------------------------------------------------------------------
+// Refraction (RenderQuality: RaytracedRefraction). The refracted ray is traced against the scene
+// TLAS (inline RayQuery) to find the surface behind the transparent object; its colour is taken
+// from the opaque scene copy (t3) at the projected hit position. Without DXR the hit distance is
+// estimated from the opaque depth buffer.
+// ---------------------------------------------------------------------------------------------
+float3 ReconstructForwardWorld(float2 uv, float depth)
+{
+    float4 world = mul(float4(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f, depth, 1.0f), PPInvViewProjection);
+    return world.xyz / max(abs(world.w), 0.000001f);
+}
+
+float3 SampleRefractedScene(float3 position, float3 direction, float distance)
+{
+    float3 target = position + direction * distance;
+    float2 uv;
+    if (ProjectWorldToScreenCommon(target, uv) && all(uv > 0.0f) && all(uv < 1.0f))
+    {
+        return SceneColorTexture.SampleLevel(g_SamplerState, uv, 0).rgb;
+    }
+    return EvaluatePhysicalSky(direction, 0.002f);
+}
+
+float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, float3 viewDir, float2 screenUv,
+    out float pathLength)
+{
+    float eta = 1.0f / max(surface.IOR, 1.0001f);
+    float3 entering = refract(-viewDir, normal, eta);
+    if (dot(entering, entering) < 0.0001f) entering = reflect(-viewDir, normal);
+    entering = normalize(entering);
+    // Thin shells (thickness ~0) leave in the original direction; solids keep the bent ray.
+    float thickness = max(surface.Thickness, 0.0f);
+    float solid = saturate(thickness * 4.0f);
+    float3 exitDirection = normalize(lerp(-viewDir, entering, solid));
+    float3 exitPosition = position + entering * thickness;
+    pathLength = thickness;
+    float hitDistance = 100.0f;
+    bool traced = false;
+#ifdef SHADER_RAYTRACING
+    if (SceneRayFlags.z > 0.5f)
+    {
+        RayDesc ray;
+        ray.Origin = exitPosition + exitDirection * 0.01f;
+        ray.Direction = exitDirection;
+        ray.TMin = 0.001f;
+        ray.TMax = 200.0f;
+        RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
+        query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
+        while (query.Proceed()) { }
+        hitDistance = query.CommittedStatus() != COMMITTED_NOTHING ? query.CommittedRayT() : 1000.0f;
+        traced = true;
+    }
+#endif
+    if (!traced)
+    {
+        // Screen space estimate: distance to the opaque surface behind this pixel.
+        float opaqueDepth = DepthTexture.SampleLevel(g_SamplerState, screenUv, 0);
+        float3 opaquePosition = ReconstructForwardWorld(screenUv, opaqueDepth);
+        hitDistance = opaqueDepth >= 0.9999f ? 1000.0f : max(length(opaquePosition - position) - thickness, 0.05f);
+    }
+    return SampleRefractedScene(exitPosition, exitDirection, hitDistance);
+}
+
+float4 ShadeForward(in PSInput3D In)
 {
     const float PI = 3.14159265358979323846f;
 
@@ -199,7 +262,21 @@ float4 main(in PSInput3D In) : SV_Target
         float3 color = EvaluateSurfaceEnvironment(surface, viewDir, In.WorldPos,
             screenUv, shadowSoftness, directLight);
         color = ApplySurfaceScreenEffects(color - surface.Emissive, surface.Emissive, screenUv, surface.BaseColor * (1 - surface.Metallic));
-        return float4(color * surface.Opacity, surface.Opacity);
+        float3 premultiplied = color * surface.Opacity;
+        float coverage = surface.Opacity;
+        if (QualityFlags.w > 0.5f && surface.Transmission > 0.001f && surface.Opacity < 0.999f)
+        {
+            float pathLength;
+            float3 refracted = ComputeRefraction(surface, In.WorldPos, surfaceNormal, viewDir, screenUv, pathLength);
+            float f0 = pow((surface.IOR - 1.0f) / (surface.IOR + 1.0f), 2.0f);
+            float fresnel = f0 + (1.0f - f0) * pow(1.0f - saturate(dot(surfaceNormal, viewDir)), 5.0f);
+            // Beer-Lambert absorption inside the medium, tinted by the base colour.
+            float3 transmittance = exp(-surface.AbsorptionColor * pathLength) * lerp(1.0f, surface.BaseColor, 0.5f);
+            float refractive = (1.0f - surface.Opacity) * surface.Transmission;
+            premultiplied += refractive * (1.0f - fresnel) * transmittance * refracted;
+            coverage = surface.Opacity + refractive;
+        }
+        return float4(premultiplied, saturate(coverage));
     }
 
     if (brdf)
@@ -238,4 +315,31 @@ float4 main(in PSInput3D In) : SV_Target
     baseColor.rgb = baseColor.rgb * assetEmissionAO.a + assetEmissionAO.rgb;
     baseColor.rgb *= baseColor.a;
     return baseColor;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Output: SV_Target0 premultiplied colour (all ordinary passes).
+// During the OIT transparent pass the PSO masks target 0 and blends SV_Target1/2 into the
+// weighted blended OIT accumulation / revealage targets (McGuire & Bavoil 2013).
+// Passes with a single render target ignore SV_Target1/2.
+// ---------------------------------------------------------------------------------------------
+struct ForwardOutput
+{
+    float4 Color : SV_Target0;
+    float4 Accumulation : SV_Target1;
+    float4 Revealage : SV_Target2;
+};
+
+ForwardOutput main(in PSInput3D In)
+{
+    float4 premultiplied = ShadeForward(In);
+    ForwardOutput output;
+    output.Color = premultiplied;
+    float alpha = saturate(premultiplied.a);
+    float viewDistance = length(In.WorldPos - CameraPos);
+    // Eq. (7): distance based weight, robust for 0.1 .. 500 m.
+    float weight = alpha * clamp(0.03f / (0.00001f + pow(viewDistance / 200.0f, 4.0f)), 0.01f, 3000.0f);
+    output.Accumulation = float4(premultiplied.rgb, alpha) * weight;
+    output.Revealage = alpha.xxxx;
+    return output;
 }

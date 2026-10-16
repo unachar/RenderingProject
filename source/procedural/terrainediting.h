@@ -27,3 +27,4 @@ private:
     bool m_PendingChanges = false;
 };
 }
+

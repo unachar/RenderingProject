@@ -11,3 +11,4 @@ inline SkinningWork PlanSkinningWork(uint64_t pose, uint64_t basePose, uint64_t 
 {
     return {pose != basePose, wantsOutlines && pose != outlinePose};
 }
+

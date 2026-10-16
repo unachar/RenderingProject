@@ -23,3 +23,4 @@ cbuffer VisibilityConstants : register(b0)
     uint HiZMips; uint DebugMode; uint NativeHierarchy; uint Padding;
 };
 #endif
+

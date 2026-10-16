@@ -11,3 +11,4 @@ void main(PSInput3D input)
     // Textured meshes may contain alpha-tested coverage. Dynamic objects cannot be temporal occluders.
     if ((flags & 1u) != 0 || (instance.Flags & 8u) != 0) discard;
 }
+

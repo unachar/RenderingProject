@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "transparencyeffects.h"
 #include "envflags.h"
 #include "transmittanceshadows.h"
 #include "scenepasses.h"
@@ -337,13 +338,25 @@ void ScenePasses::BeginHdrTransparentPass()
         m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV));
     m_IsDeferredGeometryPass = false;
     m_IsSceneColorForwardPass = true;
-    m_CommandList->OMSetRenderTargets(1, &GetRenderTargetRtvHandle(RenderTargetType::Scene), FALSE, &dsv);
+    // OIT binds its accumulation / revealage targets instead of the scene; it also copies the
+    // opaque scene for ray traced refraction.
+    if (!TransparencyEffects::BeginTransparentPass(m_CommandList.Get(), GetRenderTarget(RenderTargetType::Scene).Get(),
+        GetRenderTargetRtvHandle(RenderTargetType::Scene), m_TransparentSceneCopy.Get(), dsv))
+    {
+        m_CommandList->OMSetRenderTargets(1, &GetRenderTargetRtvHandle(RenderTargetType::Scene), FALSE, &dsv);
+    }
     m_CommandList->RSSetViewports(1, &m_Viewport);
     m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
 }
 
 void ScenePasses::EndHdrTransparentPass()
 {
+    if (TransparencyEffects::IsOitPassActive())
+    {
+        TransparencyEffects::EndTransparentPass(m_CommandList.Get(), GetRenderTargetRtvHandle(RenderTargetType::Scene),
+            m_Viewport, m_ScissorRect);
+        RenderFrame::SetDescriptorHeap();
+    }
     auto* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
     auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(depth,
         D3D12_RESOURCE_STATE_DEPTH_READ, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -789,3 +802,5 @@ void ScenePasses::EndVelocityBuffer()
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 	m_CommandList->ResourceBarrier(1, &toVelocitySrv);
 }
+
+

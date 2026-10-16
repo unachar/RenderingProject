@@ -85,3 +85,4 @@ void Scatter(uint3 id : SV_DispatchThreadID)
     }
     SortedClusters[destination] = record;
 }
+

@@ -8,3 +8,4 @@ void main()
     uint x=min(count,65535u),y=count?(count+x-1)/x:1;
     Arguments.Store3(0,uint3(x,y,1));
 }
+

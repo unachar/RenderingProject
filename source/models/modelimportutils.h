@@ -85,3 +85,4 @@
 		return aiImportFileFromMemory(
 			bytes.data(), static_cast<unsigned int>(bytes.size()), flags, formatHint);
 	}
+

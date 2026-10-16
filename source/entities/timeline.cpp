@@ -548,3 +548,4 @@ void TimeLineDirector::ResetAssetState()
 		m_Asset->ResetState();
 	}
 }
+

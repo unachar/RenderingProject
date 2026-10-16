@@ -16,3 +16,4 @@ uint4 main(PSInput3D input) : SV_Target0
         0.05f,
         1.0f);
 }
+

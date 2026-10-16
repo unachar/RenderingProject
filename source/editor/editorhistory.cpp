@@ -274,3 +274,4 @@ void ImGuiManager::Redo()
 		m_SelectedEntity = g_kINVALID_ENTITY;
 	}
 }
+

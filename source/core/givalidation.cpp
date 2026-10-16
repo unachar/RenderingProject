@@ -174,6 +174,7 @@ void GiValidation::BeforeFrame(uint64_t frame)
         camera.LockOnTarget = g_kINVALID_ENTITY;
         RendererSettings::SetGiMode(GlobalIlluminationMode::Realtime);
         RendererSettings::SetSsgiIntensity(1);
+        RendererSettings::SetRealtimeGiIntensity(1);
         RendererSettings::SetSsaoEnabled(false);
         RendererSettings::SetMeshShadersEnabled(false);
         GPUDrivenRenderer::SetEnabled(false);
@@ -377,3 +378,4 @@ bool GiValidation::Finish()
     WriteGraphicsLog("GI validation failures = %u\n", failures);
     return failures == 0;
 }
+

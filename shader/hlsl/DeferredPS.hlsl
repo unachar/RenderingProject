@@ -105,7 +105,7 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     output.Shadow.r = usePartParams ? partParams.Shadow0.x : ShadowThreshold;
     output.Shadow.g = usePartParams ? partParams.Shadow0.y : ShadowSoftness;
     output.Shadow.b = usePartParams ? partParams.Shadow0.z : ShadowStrength;
-    output.Shadow.a = 1.0f;
+    output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
     output.Color.a = 1.0f;
 #ifdef SHADER_GPU_DRIVEN
     if (VisibilityDebugMode != 0)
@@ -118,3 +118,5 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
 #endif
     return output;
 }
+
+

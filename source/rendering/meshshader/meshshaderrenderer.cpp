@@ -989,3 +989,4 @@ void Shutdown()
     Data() = {};
 }
 } // namespace MeshShaderRenderer
+

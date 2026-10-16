@@ -6,3 +6,4 @@ float4 main(PSInputDebugLine input) : SV_TARGET
 
     return input.Color;
 }
+

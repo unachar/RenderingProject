@@ -232,3 +232,4 @@ bool OptixDenoiser::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource*
     Transition(commands, noisy, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     return denoised;
 }
+

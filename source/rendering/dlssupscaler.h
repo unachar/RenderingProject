@@ -20,3 +20,4 @@ public:
         ID3D12Resource* depth, ID3D12Resource* velocity, D3D12_GPU_DESCRIPTOR_HANDLE velocitySrv,
         ID3D12Resource* output, D3D12_GPU_DESCRIPTOR_HANDLE outputUav);
 };
+

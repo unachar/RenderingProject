@@ -1622,9 +1622,9 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 		constants.LightPositionTypes[lightIndex] = XMFLOAT4(
 			candidate.Position.x, candidate.Position.y, candidate.Position.z,
 			static_cast<float>(light.Type));
-		constants.LightExtras[lightIndex] = XMFLOAT4(
-			cosf(innerRad), cosf(outerRad), light.VolumeDensity,
-			static_cast<float>(light.VolumeShape));
+		constants.LightExtras[lightIndex] = light.Type == LightType::Rect
+			? XMFLOAT4(max(light.AreaWidth, 0.01f), max(light.AreaHeight, 0.01f), light.VolumeDensity, 0.0f)
+			: XMFLOAT4(cosf(innerRad), cosf(outerRad), light.VolumeDensity, static_cast<float>(light.VolumeShape));
 		const bool enableVolumetrics = light.RenderMode == LightRenderMode::Physical &&
 			light.AffectsVolumetrics &&
 			light.VolumeDensity > 0.0001f &&
@@ -1865,3 +1865,5 @@ bool LightingResources::GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_V
 	clearLayer = pass.ClearLayer;
 	return true;
 }
+
+

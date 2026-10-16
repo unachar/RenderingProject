@@ -334,3 +334,4 @@ bool ReadTerrainPreset(std::istream& stream, TerrainSettings& settings)
     return true;
 }
 }
+

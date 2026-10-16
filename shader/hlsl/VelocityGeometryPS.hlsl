@@ -29,3 +29,4 @@ float4 main(VelocityInput input, bool frontFace : SV_IsFrontFace) : SV_Target
     float2 previousUv = previousNdc * float2(0.5f, -0.5f) + 0.5f;
     return EncodeVelocity(currentUv - previousUv);
 }
+

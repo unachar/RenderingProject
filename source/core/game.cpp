@@ -136,3 +136,4 @@ void Game::Draw()
 	RenderProfiler::EndFrame(GraphicsDevice::GetCommandList());
 	RenderFrame::EndDraw();
 }
+

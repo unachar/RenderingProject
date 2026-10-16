@@ -338,3 +338,4 @@ bool MaterialManager::LoadSceneReferences(const filesystem::path& path, string& 
     NotifyAssignmentsChanged();
     return true;
 }
+

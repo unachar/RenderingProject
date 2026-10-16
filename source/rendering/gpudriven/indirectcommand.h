@@ -44,3 +44,4 @@ inline GPUDrivenGeometryData ReserveGpuDrivenGeometry(uint64_t vertices, uint64_
         throw overflow_error("GPU driven geometry arena exceeds IA limits");
     return {static_cast<uint32_t>(indices), indexCount, static_cast<int32_t>(vertices), 1};
 }
+

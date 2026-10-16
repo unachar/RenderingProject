@@ -28,3 +28,4 @@ public:
     static ID3D12Resource* GetBaseNoiseResource();
     static UINT GetNoiseGenerationCount();
 };
+

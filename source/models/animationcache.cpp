@@ -329,3 +329,4 @@ void AnimationModelResource::InvalidateAnimationPoseCache()
 	m_HasCachedLayeredPose = false;
 	m_UseLayeredVmdIk = false;
 }
+

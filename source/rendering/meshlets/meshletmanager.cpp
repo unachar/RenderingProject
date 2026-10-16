@@ -344,3 +344,4 @@ void Shutdown()
     Data() = {};
 }
 } // namespace MeshletManager
+

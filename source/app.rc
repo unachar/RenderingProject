@@ -1,3 +1,4 @@
 #include "resource.h"
 
 IDI_APP_ICON ICON "..\\asset\\texture\\neko.ico"
+

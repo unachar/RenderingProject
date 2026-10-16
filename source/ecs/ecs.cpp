@@ -174,3 +174,4 @@ void Registry::DestroyEntity(EntityID entity)
 
     World::UnregisterName(entity);
 }
+

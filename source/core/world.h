@@ -118,3 +118,4 @@ inline Entity& Entity::SetName(const string& name)
 	return *this;
 }
 
+

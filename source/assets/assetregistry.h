@@ -25,3 +25,4 @@ private:
     std::unordered_set<AssetHandle> m_Collisions;
     bool Contains(const std::filesystem::path& path) const;
 };
+

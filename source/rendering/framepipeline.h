@@ -5,3 +5,4 @@ class FramePipeline
 public:
 	static void Execute();
 };
+

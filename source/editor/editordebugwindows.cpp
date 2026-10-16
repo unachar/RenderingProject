@@ -450,3 +450,4 @@ void ImGuiManager::DrawMeshShadingWindow()
 	DrawMeshShadingInspector(m_SelectedEntity, false);
 	ImGui::End();
 }
+

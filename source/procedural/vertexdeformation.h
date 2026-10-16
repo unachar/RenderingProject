@@ -25,3 +25,4 @@ public:
     static void Shutdown();
     static UINT GetDispatchCount();
 };
+

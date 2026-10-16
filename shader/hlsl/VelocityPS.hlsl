@@ -44,3 +44,4 @@ float4 main(PSInputPostProcess input) : SV_Target
     float2 previousUv = previousNdc * float2(0.5f, -0.5f) + 0.5f;
     return EncodeVelocity(input.TexCoord - previousUv);
 }
+

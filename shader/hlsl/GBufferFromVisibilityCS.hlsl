@@ -66,3 +66,4 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     OutMaterial[pixel] = float4(metallic, roughness, fresnel, materialPart);
     OutShadow[pixel] = float4(shadowThreshold, shadowSoftness, packedColor.a, 1.0f);
 }
+

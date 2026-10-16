@@ -142,3 +142,4 @@ struct CloudSettings : CloudLayerSettings
         Debug = static_cast<CloudDebug>(std::clamp(static_cast<int>(Debug), 0, 7));
     }
 };
+

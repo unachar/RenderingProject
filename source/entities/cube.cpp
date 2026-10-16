@@ -80,3 +80,4 @@ void Cube::Create()
 
 	Game::RegisterEntity(this);
 }
+

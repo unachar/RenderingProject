@@ -19,3 +19,4 @@ Vector3 DeformNormal(const Vector3& basePosition, const Vector3& baseNormal,
 Vector3 GetDeformationBoundsPadding(const VertexMotionSettings& settings);
 bool VertexMotionSettingsEqual(const VertexMotionSettings& first, const VertexMotionSettings& second);
 }
+

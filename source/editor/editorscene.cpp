@@ -1677,3 +1677,4 @@ void ImGuiManager::DrawScenePopups()
 		ImGui::EndPopup();
 	}
 }
+

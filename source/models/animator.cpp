@@ -212,3 +212,4 @@ void Animator::Update(AnimationModelComponent& animation, const string& currentA
 
 	Update(animation, deltaTime);
 }
+

@@ -33,7 +33,7 @@
   {
     "alphaCutoff" : 0.5,
     "cullMode" : "Back",
-    "depthWrite" : false,
+    "depthWrite" : true,
     "shadowCutoff" : 0.5,
     "shadowMode" : "Auto"
   },

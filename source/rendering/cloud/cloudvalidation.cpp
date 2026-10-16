@@ -662,3 +662,4 @@ bool CloudValidation::Finish()
     WriteGraphicsLog("Validation: cloud failures = %u\n", g_Failures);
     return g_Failures == 0;
 }
+

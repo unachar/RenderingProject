@@ -10,3 +10,4 @@ float4 main(PSInputPostProcess input) : SV_TARGET
 	color.a = 1.0f;
     return color;
 }
+

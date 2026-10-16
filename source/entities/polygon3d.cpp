@@ -56,3 +56,4 @@ void Polygon3D::Create()
 	Game::RegisterEntity(this);
 }
 
+

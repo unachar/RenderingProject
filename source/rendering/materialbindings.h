@@ -15,3 +15,4 @@ public:
 	static ID3D12Resource* GetPBRCB() { return m_PBRConstantBuffer.Get(); }
 	static void UpdateDeferredLightingMaterial();
 };
+

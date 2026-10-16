@@ -15,3 +15,4 @@ public:
     static void SetMesh(Mesh mesh);
     static void SetLightIntensity(float intensity);
 };
+

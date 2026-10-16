@@ -234,3 +234,4 @@ bool MeshShaderPipeline::Draw(ID3D12GraphicsCommandList* commandList, const Geom
 	if (!barriers.empty()) commandList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
 	return true;
 }
+

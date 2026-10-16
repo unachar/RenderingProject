@@ -846,3 +846,4 @@ void GpuScene::DrawDebug()
         ImGui::TreePop();
     }
 }
+

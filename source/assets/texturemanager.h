@@ -73,3 +73,4 @@ public:
 	static bool ExecuteCommandListAndSync(ID3D12GraphicsCommandList* cmdList, bool closeList = true);
 };
 
+

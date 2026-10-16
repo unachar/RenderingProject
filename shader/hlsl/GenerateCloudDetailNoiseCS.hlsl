@@ -7,3 +7,4 @@ void main(uint3 id : SV_DispatchThreadID)
     if (any(id >= Extent)) return;
     OutputNoise[id] = WorleyFbm((float3(id) + 0.5) / Extent, Seed + 127);
 }
+

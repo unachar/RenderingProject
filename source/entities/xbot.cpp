@@ -75,3 +75,4 @@ void XBot::Create()
 	Game::RegisterEntity(this);
 }
 
+

@@ -27,3 +27,4 @@ float TraceSceneShadow(float3 position, float3 normal, float3 lightDirection, fl
 #endif
 
 #endif
+

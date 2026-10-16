@@ -57,3 +57,4 @@ public:
 	static bool IsSimulationRunning() { return s_State == ProjectPlayState::Playing; }
 	static uint64_t GetPlaySession() { return s_PlaySession; }
 };
+

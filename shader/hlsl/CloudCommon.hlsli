@@ -114,3 +114,4 @@ CloudOutput MarchCloud(float2 uv, float2 pixel)
     return output;
 }
 #endif
+

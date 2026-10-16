@@ -595,3 +595,4 @@ bool SampleVmdIkTrackCached(const vector<VmdIkKeyframe>* keys, float currentFram
 	}
 	return (nextIt - 1)->Enable;
 }
+

@@ -23,3 +23,4 @@ public:
 	static void Update(AnimationModelComponent& animation, float deltaTime);
 	static void Update(AnimationModelComponent& animation, const string& currentAnimation, const string& nextAnimation, float deltaTime);
 };
+

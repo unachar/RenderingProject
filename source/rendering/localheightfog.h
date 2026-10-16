@@ -44,3 +44,4 @@ public:
 private:
 	inline static vector<LocalHeightFogVolume> s_Volumes{};
 };
+

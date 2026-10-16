@@ -19,3 +19,4 @@ public:
     static UINT Available();
     static void Shutdown();
 };
+

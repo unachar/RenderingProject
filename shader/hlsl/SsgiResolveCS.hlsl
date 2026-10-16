@@ -20,3 +20,4 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float3 color = DeinterleavedIndirect.Load(int4(dePixel, slice, 0)).rgb;
     OutIndirect[pixel] = float4(color, 1.0f);
 }
+

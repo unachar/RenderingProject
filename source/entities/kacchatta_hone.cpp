@@ -42,3 +42,4 @@ void KacchattaHone::Create()
 
 	Game::RegisterEntity(this);
 }
+

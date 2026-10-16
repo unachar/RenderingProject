@@ -143,3 +143,4 @@ bool VertexMotionSettingsEqual(const VertexMotionSettings& first, const VertexMo
         first.Speed == second.Speed && first.SpatialFrequency == second.SpatialFrequency && first.Seed == second.Seed;
 }
 }
+

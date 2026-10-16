@@ -24,3 +24,4 @@ public:
 	static D3D12_GPU_VIRTUAL_ADDRESS GetTileIndexAddress(UINT frameIndex);
 	static D3D12_GPU_VIRTUAL_ADDRESS GetVolumetricIndexAddress(UINT frameIndex);
 };
+

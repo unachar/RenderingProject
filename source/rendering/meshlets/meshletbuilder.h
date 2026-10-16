@@ -54,3 +54,4 @@ bool Save(const std::filesystem::path &path, const Asset &asset, uint64_t key);
 bool Load(const std::filesystem::path &path, Asset &asset, uint64_t key, std::span<const Position> positions);
 std::array<uint32_t, 3> DispatchDimensions(uint32_t count);
 } // namespace Meshlets
+

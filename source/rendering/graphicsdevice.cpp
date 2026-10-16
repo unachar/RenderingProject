@@ -1,4 +1,9 @@
 #include "pch.h"
+#include "advancedeffects.h"
+#include "asynccompute.h"
+#include "atmospherelut.h"
+#include "pbrluts.h"
+#include "transparencyeffects.h"
 #include "assetthumbnailmanager.h"
 #include "transmittanceshadows.h"
 #include "materialmanager.h"
@@ -483,6 +488,13 @@ if (!ShaderPipelines::CreatePostProcessPipeline()) return false;
 	ScreenSpaceEffects::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	CloudRenderer::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	Raytracing::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	AsyncCompute::Initialize(m_Device.Get());
+	PbrLuts::WriteNullDescriptors(m_Device.Get(), m_CbvHeap.Get());
+	PbrLuts::Initialize(m_Device.Get(), m_CommandQueue.Get(), m_CbvHeap.Get());
+	TransparencyEffects::Initialize(m_Device.Get(), m_CbvHeap.Get());
+	AtmosphereLut::Initialize(m_Device.Get(), m_CbvHeap.Get());
+	if (!AdvancedEffects::Initialize(m_Device.Get(), m_CbvHeap.Get()))
+		WriteGraphicsLog("WARNING: AdvancedEffects unavailable (froxel fog / auto exposure / MB / DOF disabled)\n");
 	DlssUpscaler::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	OcclusionCulling::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	MeshShaderPipeline::Initialize(m_Device.Get(), ShaderPipelines::GetModelRootSignature());
@@ -564,6 +576,11 @@ void GraphicsDevice::Uninit()
 	VisibilityBuffer::Shutdown();
 	ScreenSpaceEffects::Shutdown();
 	CloudRenderer::Shutdown();
+	AdvancedEffects::Shutdown();
+	AtmosphereLut::Shutdown();
+	TransparencyEffects::Shutdown();
+	PbrLuts::Shutdown();
+	AsyncCompute::Shutdown();
 	Raytracing::Shutdown();
 	VertexDeformation::Shutdown();
 	DlssUpscaler::Shutdown();
@@ -862,3 +879,5 @@ void GraphicsDevice::SubmitForExternalCompute()
     ID3D12DescriptorHeap* heaps[] = {m_CbvHeap.Get()};
     m_CommandList->SetDescriptorHeaps(1, heaps);
 }
+
+

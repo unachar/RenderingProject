@@ -65,3 +65,4 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     indirect = weightSum > 1.0e-4f ? indirect / weightSum : 0.0f;
     OutIndirect[uint3(dePixel, slice)] = float4(max(indirect, 0.0f) * EffectParams.z, 1.0f);
 }
+

@@ -176,3 +176,4 @@ private:
     vector<uint64_t> m_VGDependencyHashes;
     vector<std::filesystem::file_time_type> m_VGDependencyTimes;
 };
+

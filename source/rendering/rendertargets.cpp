@@ -253,8 +253,10 @@ bool RenderTargets::CreateSceneRenderTarget()
 		GetRenderTarget(type)->SetName(kRenderTargetNames[i]);
 	}
 
+	// Same extent as the scene target: it receives a CopyResource of the opaque scene
+	// before the transparent pass (refraction source).
 	auto transparentCopyDesc = CD3DX12_RESOURCE_DESC::Tex2D(
-		m_SceneColorFormat, m_Width, m_Height, 1, 1, 1, 0,
+		m_SceneColorFormat, m_SceneWidth, m_SceneHeight, 1, 1, 1, 0,
 		D3D12_RESOURCE_FLAG_NONE);
 	HRESULT hr = m_Device->CreateCommittedResource(
 		&heapProps, D3D12_HEAP_FLAG_NONE, &transparentCopyDesc,
@@ -527,3 +529,5 @@ D3D12_GPU_DESCRIPTOR_HANDLE RenderTargets::GetImGuiGpuHandle()
 	UINT cbvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 	return CD3DX12_GPU_DESCRIPTOR_HANDLE(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), RendererState::g_kENGINE_DESCRIPTOR_END + 1 + RendererState::g_kTHUMBNAIL_DESCRIPTOR_COUNT, cbvIncrement);
 }
+
+

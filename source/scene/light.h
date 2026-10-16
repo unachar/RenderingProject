@@ -8,7 +8,8 @@ enum class LightType
 	Directional = 0,
 	Point,
 	Spot,
-	Volume
+	Volume,
+	Rect // 矩形エリアライト（LTC）
 };
 
 enum class LightRenderMode
@@ -53,3 +54,5 @@ public:
 	static EntityID Create(LightType type);
 	static const char* GetTypeName(LightType type);
 };
+
+

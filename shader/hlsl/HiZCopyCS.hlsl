@@ -15,3 +15,4 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (any(pixel >= DestinationExtent)) return;
     Destination[pixel] = SourceDepth.Load(int3(pixel, 0));
 }
+

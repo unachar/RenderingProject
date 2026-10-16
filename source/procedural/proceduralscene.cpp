@@ -159,3 +159,4 @@ bool ProceduralScene::LoadPreset(const char* path, Procedural::TerrainSettings& 
     ifstream file(path);
     return Procedural::ReadTerrainPreset(file, settings);
 }
+

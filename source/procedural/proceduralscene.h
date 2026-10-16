@@ -14,3 +14,4 @@ public:
     static bool SavePreset(const char* path, const Procedural::TerrainSettings& settings);
     static bool LoadPreset(const char* path, Procedural::TerrainSettings& settings);
 };
+

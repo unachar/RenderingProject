@@ -69,3 +69,4 @@ struct VmdTrackSampleCursor
 	bool SampleVmdIkTrack(const vector<VmdIkKeyframe>* keys, float currentFrame);
 	bool SampleVmdIkTrackCached(const vector<VmdIkKeyframe>* keys, float currentFrame,
 		VmdTrackSampleCursor& cursor);
+

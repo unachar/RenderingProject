@@ -54,3 +54,4 @@ float WorleyFbm(float3 uv, uint seed)
     return PeriodicWorley(uv, 4, seed) * 0.625 +
         PeriodicWorley(uv, 8, seed + 1) * 0.25 + PeriodicWorley(uv, 16, seed + 2) * 0.125;
 }
+

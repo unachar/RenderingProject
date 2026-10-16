@@ -81,3 +81,4 @@ bool TerrainSettingsEqual(const TerrainSettings& first, const TerrainSettings& s
 bool WriteTerrainPreset(std::ostream& stream, const TerrainSettings& settings);
 bool ReadTerrainPreset(std::istream& stream, TerrainSettings& settings);
 }
+

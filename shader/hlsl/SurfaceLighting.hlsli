@@ -525,6 +525,103 @@ float SampleDistanceFieldShadow(float3 worldPos, float3 normal, float3 lightDir)
 }
 
 // Radiance already includes this light's intensity, attenuation and visibility.
+// =============================================================================================
+// Render quality extensions
+//   ・DFG LUT / multiple scattering GGX energy compensation (Fdez-Aguera 2019, Kulla-Conty)
+//   ・Extended material models: clear coat, sheen (cloth), skin, hair, anisotropic GGX
+//   ・Rect area lights with LTC (Heitz et al. 2016)
+// =============================================================================================
+#ifdef SURFACE_PBR_LUTS
+Texture2D<float4> LtcMatrixLut : register(t42);
+Texture2D<float2> LtcAmplitudeLut : register(t43);
+#ifdef SKY_LUT
+#define PbrLutSampler SkyLutSampler // same clamp sampler (s4)
+#else
+SamplerState PbrLutSampler : register(s4);
+#endif
+#endif
+
+static const uint kShadingStandard = 0u;
+static const uint kShadingClearCoat = 1u;
+static const uint kShadingSheen = 2u;
+static const uint kShadingSkin = 3u;
+static const uint kShadingHair = 4u;
+static const uint kShadingAnisotropic = 5u;
+
+struct ShadingModelData
+{
+    uint Model;
+    float Strength;
+};
+// Set by the deferred lighting pass per pixel (decoded from the shadow GBuffer alpha).
+static ShadingModelData g_ShadingModel = { 0u, 0.0f };
+
+ShadingModelData DecodeShadingModel(float encoded)
+{
+    uint value = (uint)round(saturate(encoded) * 255.0f);
+    ShadingModelData data;
+    data.Model = value >> 5u;
+    data.Strength = (value & 31u) / 31.0f;
+    return data;
+}
+
+bool QualityEnergyCompensation()
+{
+    return QualityFlags.x > 0.5f;
+}
+
+float2 PbrLutUv(float NdotV, float roughness)
+{
+    return (float2(sqrt(saturate(1.0f - NdotV)), saturate(roughness)) * 63.0f + 0.5f) / 64.0f;
+}
+
+// Split sum DFG: returns (A, B) with  Fss*Ess = F0 * A + B  and  Ess = A + B.
+float2 SampleDfg(float NdotV, float roughness)
+{
+#ifdef SURFACE_PBR_LUTS
+    float2 amplitude = LtcAmplitudeLut.SampleLevel(PbrLutSampler, PbrLutUv(NdotV, roughness), 0);
+    return float2(amplitude.x - amplitude.y, amplitude.y);
+#else
+    // Karis 2014 analytic fit (forward / no LUT).
+    const float4 c0 = float4(-1.0f, -0.0275f, -0.572f, 0.022f);
+    const float4 c1 = float4(1.0f, 0.0425f, 1.04f, -0.04f);
+    float4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28f * NdotV)) * r.x + r.y;
+    return float2(-1.04f, 1.04f) * a004 + r.zw;
+#endif
+}
+
+// Multiplier restoring the energy lost by single scattering microfacet models.
+float3 SpecularEnergyCompensation(float3 F0, float NdotV, float roughness)
+{
+    if (!QualityEnergyCompensation()) return 1.0f;
+    float2 dfg = SampleDfg(NdotV, roughness);
+    float Ess = max(dfg.x + dfg.y, 0.05f);
+    return 1.0f + F0 * (1.0f / Ess - 1.0f);
+}
+
+float3 SurfaceTangent(float3 N)
+{
+    // Strands / brushed direction follow the world up axis projected on the surface.
+    float3 up = abs(N.y) < 0.99f ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
+    return SafeNormalizeCommon(up - N * dot(N, up), float3(1.0f, 0.0f, 0.0f));
+}
+
+float DistributionCharlie(float NdotH, float roughness)
+{
+    float alpha = max(roughness * roughness, 0.0001f);
+    float invAlpha = 1.0f / alpha;
+    float sin2 = max(1.0f - NdotH * NdotH, 0.0078125f);
+    return (2.0f + invAlpha) * pow(sin2, invAlpha * 0.5f) / (2.0f * 3.14159265f);
+}
+
+float KajiyaKaySpecular(float3 T, float3 H, float exponent)
+{
+    float TdotH = dot(T, H);
+    float sinTH = sqrt(max(1.0f - TdotH * TdotH, 0.0f));
+    return smoothstep(-1.0f, 0.0f, TdotH) * pow(sinTH, exponent);
+}
+
 float3 EvaluatePbrDirectLight(
     float3 N, float3 V, float3 L, float3 radiance,
     float3 albedo, float3 materialData, float shadowSoftness)
@@ -563,8 +660,36 @@ float3 EvaluatePbrDirectLight(
 
     float3 F = F0 + (1.0f - F0) * oneMinusVdotH5;
 
+    const uint model = g_ShadingModel.Model;
+    const float strength = g_ShadingModel.Strength;
+    if (model == kShadingAnisotropic && strength > 0.0f)
+    {
+        // Anisotropic GGX (Burley 2012) along the surface tangent.
+        float3 T = SurfaceTangent(N);
+        float3 B = cross(N, T);
+        float aspect = sqrt(1.0f - 0.9f * strength);
+        float at = max(a / aspect, 0.002f);
+        float ab = max(a * aspect, 0.002f);
+        float TdotH = dot(T, H);
+        float BdotH = dot(B, H);
+        float denominator = TdotH * TdotH / (at * at) + BdotH * BdotH / (ab * ab) + NdotH * NdotH;
+        D = 1.0f / max(PI * at * ab * denominator * denominator, 0.00001f);
+    }
+    if (model == kShadingSkin && strength > 0.0f)
+    {
+        // Two lobe skin specular (Jimenez / d'Eon): sharp oil layer + broad epidermis.
+        float roughA = max(roughness * 0.75f, 0.04f);
+        float roughB = min(roughness * 1.35f, 1.0f);
+        float aA = roughA * roughA, aB = roughB * roughB;
+        float dA = NdotH * NdotH * (aA * aA - 1.0f) + 1.0f;
+        float dB = NdotH * NdotH * (aB * aB - 1.0f) + 1.0f;
+        float twoLobe = 0.85f * aA * aA / max(PI * dA * dA, 0.00001f) + 0.15f * aB * aB / max(PI * dB * dB, 0.00001f);
+        D = lerp(D, twoLobe, strength);
+    }
+
     float3 specularBRDF = D * G * F;
     specularBRDF /= max(4.0f * NdotLScalar * NdotV, 0.00001f);
+    specularBRDF *= SpecularEnergyCompensation(F0, NdotV, roughness);
 
     float3 kS = F;
     float3 kD = 1.0f - kS;
@@ -581,7 +706,158 @@ float3 EvaluatePbrDirectLight(
 
     wrappedNdotL = wrappedNdotL * wrappedNdotL * (3.0f - 2.0f * wrappedNdotL);
 
-    return (diffuseBRDF * wrappedNdotL + specularBRDF * NdotLScalar) * radiance;
+    float3 diffuseTerm = diffuseBRDF * wrappedNdotL;
+    float3 specularTerm = specularBRDF * NdotLScalar;
+    float3 extra = 0.0f;
+
+    if (model == kShadingSkin && strength > 0.0f)
+    {
+        // Pre-integrated style scattering: per channel wrap (red scatters farthest) keeps the
+        // terminator soft and reddish; normalised so total energy is preserved.
+        float3 wrap = float3(0.55f, 0.22f, 0.16f) * strength;
+        float3 scattered = saturate((rawNdotL + wrap) / (1.0f + wrap)) / (1.0f + wrap);
+        diffuseTerm = diffuseBRDF * lerp(wrappedNdotL.xxx, scattered, strength);
+        // Thin regions (ears, fingers): light transmitted from behind.
+        float3 transmitDirection = SafeNormalizeCommon(L + N * 0.35f, L);
+        float transmission = pow(saturate(dot(V, -transmitDirection)), 4.0f) * saturate(-rawNdotL + 0.3f);
+        extra += albedo * float3(1.0f, 0.35f, 0.22f) * transmission * strength * 0.35f;
+    }
+    else if (model == kShadingHair && strength > 0.0f)
+    {
+        // Kajiya-Kay with two shifted lobes (Scheuermann 2004): white primary, tinted secondary.
+        float3 T = SurfaceTangent(N);
+        float exponent = clamp(2.0f / max(a * a, 0.0004f), 4.0f, 512.0f);
+        float primary = KajiyaKaySpecular(SafeNormalizeCommon(T + N * -0.08f, T), H, exponent);
+        float secondary = KajiyaKaySpecular(SafeNormalizeCommon(T + N * 0.12f, T), H, exponent * 0.25f);
+        float3 hairSpecular = (F * primary + albedo * secondary * 0.6f) * NdotLScalar * 0.25f;
+        specularTerm = lerp(specularTerm, hairSpecular, strength);
+        // Strands scatter light around the terminator.
+        diffuseTerm = lerp(diffuseTerm, albedo / PI * saturate(rawNdotL * 0.75f + 0.25f) * (1.0f - metallic), strength);
+    }
+    else if (model == kShadingSheen && strength > 0.0f)
+    {
+        // Cloth sheen: Charlie distribution with the Neubelt visibility term.
+        float sheenVisibility = 1.0f / max(4.0f * (NdotLScalar + NdotV - NdotLScalar * NdotV), 0.00001f);
+        float3 sheenColor = lerp(float3(1.0f, 1.0f, 1.0f), albedo, 0.5f) * strength;
+        extra += sheenColor * DistributionCharlie(NdotH, roughness) * sheenVisibility * NdotLScalar;
+        diffuseTerm *= 1.0f - 0.25f * strength;
+    }
+    else if (model == kShadingClearCoat && strength > 0.0f)
+    {
+        // Clear coat: polyurethane layer, IOR 1.5, fixed low roughness, Kelemen visibility.
+        const float coatAlpha = 0.06f * 0.06f;
+        float dc = NdotH * NdotH * (coatAlpha * coatAlpha - 1.0f) + 1.0f;
+        float coatD = coatAlpha * coatAlpha / max(PI * dc * dc, 0.00001f);
+        float coatV = 0.25f / max(VdotH * VdotH, 0.0001f);
+        float coatF = (0.04f + 0.96f * oneMinusVdotH5) * strength;
+        diffuseTerm *= 1.0f - coatF;
+        specularTerm *= 1.0f - coatF;
+        extra += (coatD * coatV * coatF * NdotLScalar).xxx;
+    }
+
+    return (diffuseTerm + specularTerm + extra) * radiance;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Rect area light, LTC (Heitz 2016). Horizon clipping + Hill's edge integral.
+// ---------------------------------------------------------------------------------------------
+void RectLightBasis(float3 emitNormal, out float3 right, out float3 up)
+{
+    float3 axis = abs(emitNormal.y) > 0.99f ? float3(1.0f, 0.0f, 0.0f) : float3(0.0f, 1.0f, 0.0f);
+    right = normalize(cross(axis, emitNormal));
+    up = cross(emitNormal, right);
+}
+
+float3 LtcIntegrateEdgeVector(float3 v1, float3 v2)
+{
+    float x = dot(v1, v2);
+    float y = abs(x);
+    float a = 0.8543985f + (0.4965155f + 0.0145206f * y) * y;
+    float b = 3.4175940f + (4.1616724f + y) * y;
+    float v = a / b;
+    float thetaOverSin = x > 0.0f ? v : 0.5f * rsqrt(max(1.0f - x * x, 1e-7f)) - v;
+    return cross(v1, v2) * thetaOverSin;
+}
+
+void LtcClipQuadToHorizon(inout float3 L[5], out int n)
+{
+    int config = 0;
+    if (L[0].z > 0.0f) config += 1;
+    if (L[1].z > 0.0f) config += 2;
+    if (L[2].z > 0.0f) config += 4;
+    if (L[3].z > 0.0f) config += 8;
+    n = 0;
+    if (config == 1) { n = 3; L[1] = -L[1].z * L[0] + L[0].z * L[1]; L[2] = -L[3].z * L[0] + L[0].z * L[3]; }
+    else if (config == 2) { n = 3; L[0] = -L[0].z * L[1] + L[1].z * L[0]; L[2] = -L[2].z * L[1] + L[1].z * L[2]; }
+    else if (config == 3) { n = 4; L[2] = -L[2].z * L[1] + L[1].z * L[2]; L[3] = -L[3].z * L[0] + L[0].z * L[3]; }
+    else if (config == 4) { n = 3; L[0] = -L[3].z * L[2] + L[2].z * L[3]; L[1] = -L[1].z * L[2] + L[2].z * L[1]; }
+    else if (config == 6) { n = 4; L[0] = -L[0].z * L[1] + L[1].z * L[0]; L[3] = -L[3].z * L[2] + L[2].z * L[3]; }
+    else if (config == 7) { n = 5; L[4] = -L[3].z * L[0] + L[0].z * L[3]; L[3] = -L[3].z * L[2] + L[2].z * L[3]; }
+    else if (config == 8) { n = 3; L[0] = -L[0].z * L[3] + L[3].z * L[0]; L[1] = -L[2].z * L[3] + L[3].z * L[2]; L[2] = L[3]; }
+    else if (config == 9) { n = 4; L[1] = -L[1].z * L[0] + L[0].z * L[1]; L[2] = -L[2].z * L[3] + L[3].z * L[2]; }
+    else if (config == 11) { n = 5; L[4] = L[3]; L[3] = -L[2].z * L[3] + L[3].z * L[2]; L[2] = -L[2].z * L[1] + L[1].z * L[2]; }
+    else if (config == 12) { n = 4; L[1] = -L[1].z * L[2] + L[2].z * L[1]; L[0] = -L[0].z * L[3] + L[3].z * L[0]; }
+    else if (config == 13) { n = 5; L[4] = L[3]; L[3] = L[2]; L[2] = -L[1].z * L[2] + L[2].z * L[1]; L[1] = -L[1].z * L[0] + L[0].z * L[1]; }
+    else if (config == 14) { n = 5; L[4] = -L[0].z * L[3] + L[3].z * L[0]; L[0] = -L[0].z * L[1] + L[1].z * L[0]; }
+    else if (config == 15) { n = 4; }
+    if (n == 3) L[3] = L[0];
+    if (n == 4) L[4] = L[0];
+}
+
+// Cosine weighted integral (form factor) of the quad transformed by minv.
+float LtcEvaluateQuad(float3 N, float3 V, float3 P, float3x3 minv, float3 corners[4])
+{
+    float3 T1 = SafeNormalizeCommon(V - N * dot(V, N), SurfaceTangent(N));
+    float3 T2 = cross(N, T1);
+    float3x3 transform = mul(minv, float3x3(T1, T2, N));
+    float3 L[5];
+    L[0] = mul(transform, corners[0] - P);
+    L[1] = mul(transform, corners[1] - P);
+    L[2] = mul(transform, corners[2] - P);
+    L[3] = mul(transform, corners[3] - P);
+    L[4] = L[3];
+    int n;
+    LtcClipQuadToHorizon(L, n);
+    if (n == 0) return 0.0f;
+    L[0] = normalize(L[0]);
+    L[1] = normalize(L[1]);
+    L[2] = normalize(L[2]);
+    L[3] = normalize(L[3]);
+    L[4] = normalize(L[4]);
+    float sum = LtcIntegrateEdgeVector(L[0], L[1]).z + LtcIntegrateEdgeVector(L[1], L[2]).z +
+        LtcIntegrateEdgeVector(L[2], L[3]).z;
+    if (n >= 4) sum += LtcIntegrateEdgeVector(L[3], L[4]).z;
+    if (n == 5) sum += LtcIntegrateEdgeVector(L[4], L[0]).z;
+    return abs(sum) / (2.0f * 3.14159265f);
+}
+
+// Returns outgoing radiance for emitter radiance 1 (diffuse + specular, standard GGX).
+float3 EvaluateRectLightLtc(float3 N, float3 V, float3 P, float3 center, float3 emitNormal,
+    float width, float height, float3 albedo, float3 materialData)
+{
+    if (dot(P - center, emitNormal) <= 0.0f) return 0.0f; // one sided emitter
+    float3 right, up;
+    RectLightBasis(emitNormal, right, up);
+    right *= width * 0.5f;
+    up *= height * 0.5f;
+    float3 corners[4] = { center + right + up, center + right - up, center - right - up, center - right + up };
+    float metallic = saturate(materialData.r);
+    float roughness = clamp(materialData.g, 0.04f, 1.0f);
+    float specularF0 = max(materialData.b, 0.04f);
+    float3 F0 = lerp(specularF0.xxx, albedo, metallic);
+    float NdotV = saturate(dot(N, V));
+    float diffuse = LtcEvaluateQuad(N, V, P, float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1), corners);
+    float3 specular = 0.0f;
+#ifdef SURFACE_PBR_LUTS
+    float2 uv = PbrLutUv(NdotV, roughness);
+    float4 t1 = LtcMatrixLut.SampleLevel(PbrLutSampler, uv, 0);
+    float2 t2 = LtcAmplitudeLut.SampleLevel(PbrLutSampler, uv, 0);
+    float3x3 minv = float3x3(t1.x, 0.0f, t1.y, 0.0f, 1.0f, 0.0f, t1.z, 0.0f, t1.w);
+    float3 FssEss = F0 * (t2.x - t2.y) + t2.y;
+    specular = LtcEvaluateQuad(N, V, P, minv, corners) * FssEss * SpecularEnergyCompensation(F0, NdotV, roughness);
+#endif
+    float3 kD = (1.0f - F0) * (1.0f - metallic);
+    return albedo * kD * diffuse + specular;
 }
 
 void ResolveSurfaceLightAggregateShadowed(
@@ -717,8 +993,26 @@ void ResolveSurfaceLightAggregateShadowed(
 
         if (evaluatePbr)
         {
-            pbrDirectLight += EvaluatePbrDirectLight(
-                normal, viewDir, singleDir, singleColor, albedo, materialData, shadowSoftness);
+#ifdef SURFACE_PBR_LUTS
+            const bool rectLight = !decalLight && LightPositionTypes[i].w > 3.5f && QualityFlags.y > 0.5f;
+#else
+            const bool rectLight = false;
+#endif
+            [branch]
+            if (rectLight)
+            {
+                float3 toCenter = LightPositionTypes[i].xyz - worldPos;
+                float rangeFade = saturate(1.0f - length(toCenter) / max(LightDirections[i].w, 0.01f));
+                float3 emitterRadiance = authoredLightColor * lightIntensityValue * shadowVisibility * rangeFade * rangeFade;
+                pbrDirectLight += EvaluateRectLightLtc(normal, viewDir, worldPos, LightPositionTypes[i].xyz,
+                    SafeNormalizeCommon(LightDirections[i].xyz, float3(0.0f, -1.0f, 0.0f)),
+                    LightExtras[i].x, LightExtras[i].y, albedo, materialData) * emitterRadiance;
+            }
+            else
+            {
+                pbrDirectLight += EvaluatePbrDirectLight(
+                    normal, viewDir, singleDir, singleColor, albedo, materialData, shadowSoftness);
+            }
         }
 
         float weight = max(dot(authoredLightColor * lightIntensityValue, float3(0.299f, 0.587f, 0.114f)), 0.0001f) * singleAttenuation;
@@ -810,8 +1104,21 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
     );
 
     float3 F_IBL = F0 + (roughnessF0Max - F0) * oneMinusNdotV5;
-
+    float3 specularWeight = F_IBL;
     float3 ambientKD = 1.0f - F_IBL;
+    if (QualityEnergyCompensation())
+    {
+        // Split sum DFG + multiple scattering (Fdez-Aguera 2019): rough surfaces no longer lose
+        // the energy of multiply scattered light, diffuse gets exactly the remaining energy.
+        float2 dfg = SampleDfg(NdotV, roughness);
+        float3 FssEss = F0 * dfg.x + dfg.y;
+        float Ess = dfg.x + dfg.y;
+        float Ems = 1.0f - Ess;
+        float3 Favg = F0 + (1.0f - F0) / 21.0f;
+        float3 Fms = FssEss * Favg / max(1.0f - Ems * Favg, 0.0001f);
+        specularWeight = FssEss + Fms * Ems;
+        ambientKD = 1.0f - specularWeight;
+    }
     ambientKD *= 1.0f - metallic;
 
     float3 ambientDiffuse = ambientKD * albedo * irradiance / ( 0.5f * PI);
@@ -819,9 +1126,33 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
     {
         ambientDiffuse = 0;
     }
-    float3 ambientSpecular = envSpecular * F_IBL;
+    // Specular occlusion (Lagarde & de Rousiers 2014): derives the occlusion of the reflection
+    // lobe from the material AO, roughness and view angle instead of applying AO uniformly.
+    // Rough surfaces converge to AO, smooth surfaces at grazing angles keep their reflection.
+    float materialAo = saturate(surface.AO);
+    float specularOcclusion = saturate(pow(max(NdotV + materialAo, 0.0f),
+        exp2(-16.0f * roughness - 1.0f)) - 1.0f + materialAo);
+    float3 ambientSpecular = envSpecular * specularWeight;
+    const uint model = g_ShadingModel.Model;
+    const float modelStrength = g_ShadingModel.Strength;
+    if (model == kShadingClearCoat && modelStrength > 0.0f)
+    {
+        float coatF = (0.04f + 0.96f * oneMinusNdotV5) * modelStrength;
+        float3 coatEnvironment = EnvironmentTexture.SampleLevel(TextureSampler, reflectionUV, 0.06f * maxMip).rgb;
+#ifdef SHADER_RAYTRACING
+        if (RaytracingFlags.w > 0.5f) coatEnvironment = envSpecular;
+#endif
+        ambientDiffuse *= 1.0f - coatF;
+        ambientSpecular = ambientSpecular * (1.0f - coatF) + coatEnvironment * coatF;
+    }
+    else if (model == kShadingSheen && modelStrength > 0.0f)
+    {
+        // Approximate directional albedo of the Charlie sheen lobe.
+        float sheenAlbedo = lerp(0.12f, 0.35f, roughness) * (1.0f - NdotV * 0.5f);
+        ambientSpecular += irradiance * lerp(1.0f, albedo, 0.5f) * sheenAlbedo * modelStrength;
+    }
 
-    float3 ambient = ambientDiffuse + ambientSpecular;
+    float3 ambient = ambientDiffuse * materialAo + ambientSpecular * specularOcclusion;
 
     if (SkyParameters.x > 0.5f)
     {
@@ -834,7 +1165,7 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
         CelestialAtmosphereTransmission(worldPosition.y, moonDirection);
     pbrDirectLight += EvaluatePbrDirectLight(N, V, moonDirection, moonRadiance,
         albedo, float3(surface.Metallic, surface.Roughness, surface.F0), shadowSoftness);
-    return pbrDirectLight + ambient * surface.AO + surface.Emissive;
+    return pbrDirectLight + ambient + surface.Emissive;
 }
 float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv, float3 diffuseReflectance)
 {
@@ -855,19 +1186,25 @@ float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv,
         screenIndirect = DeinterleavedSSGI.SampleLevel(TextureSampler,screenUv,0).rgb;
     }
 	color *= lerp(0.38f, 1.0f, ambientVisibility);
+    float rayAmbientFactor = 1.0f;
+	if (RaytracingFlags.x > 0.5f && RaytracingFlags.y > 0.5f)
+	{
+		float rayAmbient = RaytracedVisibility.SampleLevel(TextureSampler, screenUv, 0).g;
+		rayAmbientFactor = lerp(0.45f, 1.0f, rayAmbient);
+	}
     if (HdrFlags.w > 1.5f)
     {
+        // Ray traced GI already contains its own visibility (every bounce ray is occluded by
+        // the scene). Applying the AO term on top darkened exactly the regions that should
+        // receive bounce light, e.g. the underside of an object resting above a lit floor.
+        color *= rayAmbientFactor;
         color += screenIndirect * max(diffuseReflectance, 0) / 3.14159265f;
     }
     else
     {
         color += screenIndirect * saturate(color + 0.18f);
+        color *= rayAmbientFactor;
     }
-	if (RaytracingFlags.x > 0.5f && RaytracingFlags.y > 0.5f)
-	{
-		float rayAmbient = RaytracedVisibility.SampleLevel(TextureSampler, screenUv, 0).g;
-		color *= lerp(0.45f, 1.0f, rayAmbient);
-	}
 
     color += emissive;
     float4 atmosphereMedia = AtmosphereTexture.SampleLevel(TextureSampler, screenUv, 0);
@@ -875,3 +1212,5 @@ float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv,
     return color;
 }
 #endif
+
+

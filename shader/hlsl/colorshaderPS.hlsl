@@ -29,3 +29,4 @@ float4 main(PSInput2D input) : SV_Target
     color.rgb *= color.a;
     return color;
 }
+

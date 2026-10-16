@@ -3,165 +3,6 @@
   [
     {
       "id" : 0,
-      "light" : 
-      {
-        "active" : true,
-        "affectsForward" : true,
-        "affectsOpaque" : true,
-        "affectsVolumetrics" : true,
-        "castShadow" : true,
-        "color" : 
-        [
-          1.0,
-          0.949999988,
-          0.850000024,
-          1.0
-        ],
-        "direction" : 
-        [
-          -0.0922335237,
-          0.662570894,
-          -0.74329865
-        ],
-        "drawDebug" : true,
-        "innerAngle" : 18.0,
-        "intensity" : 8.86866951,
-        "outerAngle" : 32.0,
-        "position" : 
-        [
-          -5.53401089,
-          39.7542496,
-          -44.5979156
-        ],
-        "priority" : 0.0,
-        "range" : 80.0,
-        "renderMode" : 0,
-        "type" : 0,
-        "volumeDensity" : 0.219999999,
-        "volumeShape" : 0
-      },
-      "name" : 
-      {
-        "name" : "Sun"
-      },
-      "sun" : 
-      {
-        "syncDirectionalLight" : true,
-        "target" : 
-        [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "visualRadius" : 2.5
-      },
-      "transform" : 
-      {
-        "position" : 
-        [
-          -5.53401089,
-          39.7542496,
-          -44.5979156
-        ],
-        "rotation" : 
-        [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "scale" : 
-        [
-          1.0,
-          1.0,
-          1.0
-        ]
-      }
-    },
-    {
-      "camera" : 
-      {
-        "far" : 1000.0,
-        "fov" : 0.785398185,
-        "gameCamera" : true,
-        "lockOnOffset" : 
-        [
-          0.0,
-          4.0,
-          0.0
-        ],
-        "lockOnTarget" : -1,
-        "mainGameCamera" : true,
-        "near" : 0.100000001,
-        "position" : 
-        [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "postProcess" : true,
-        "priority" : 0,
-        "target" : 
-        [
-          0.0,
-          3.0,
-          0.0
-        ],
-        "userControl" : true
-      },
-      "id" : 1,
-      "input" : 
-      {
-        "active" : true
-      },
-      "move" : 
-      {
-        "cameraRelative" : true,
-        "canMove" : true,
-        "direction" : 
-        [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "rotationSpeed" : 0.0199999996,
-        "speed" : 0.100000001
-      },
-      "name" : 
-      {
-        "name" : "GameCamera"
-      },
-      "postProcess" : 
-      {
-        "bloomRadius" : 1.0,
-        "bloomSoftKnee" : 0.5,
-        "bloomThreshold" : 2.0,
-        "intensity" : 1.0,
-        "type" : 5
-      },
-      "transform" : 
-      {
-        "position" : 
-        [
-          5.0,
-          4.0,
-          -10.0
-        ],
-        "rotation" : 
-        [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "scale" : 
-        [
-          1.0,
-          1.0,
-          1.0
-        ]
-      }
-    },
-    {
-      "id" : 2,
       "material" : 
       {
         "absorption" : 
@@ -848,7 +689,7 @@
       }
     },
     {
-      "id" : 3,
+      "id" : 1,
       "material" : 
       {
         "absorption" : 
@@ -1592,7 +1433,7 @@
         "playing" : true,
         "speed" : 1.0
       },
-      "id" : 4,
+      "id" : 2,
       "material" : 
       {
         "absorption" : 
@@ -2325,7 +2166,7 @@
       }
     },
     {
-      "id" : 5,
+      "id" : 3,
       "material" : 
       {
         "absorption" : 
@@ -2945,7 +2786,7 @@
         "rimStrength" : 0.449999988,
         "rimThreshold" : 0.699999988,
         "roughness" : 1.0,
-        "sceneIdentity" : "guid:0000000000000000",
+        "sceneIdentity" : "guid:d98828a206573a55",
         "shaderClass" : 11,
         "shaderClassMode" : 1,
         "shadowCutoff" : 0.5,
@@ -2959,7 +2800,10 @@
         "skinScatterStrength" : 1.0,
         "skinScatterWrap" : 0.419999987,
         "skinShadowScatter" : 0.540000021,
-        "slots" : [],
+        "slots" : 
+        [
+          "guid:c836d7b64ed898d7"
+        ],
         "specularStrength" : 0.349999994,
         "specularThreshold" : 0.349999994,
         "texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\kacchatta_hone\\kacchatta_hone_base.jpg",
@@ -3063,7 +2907,7 @@
       }
     },
     {
-      "id" : 6,
+      "id" : 4,
       "material" : 
       {
         "absorption" : 
@@ -3683,7 +3527,7 @@
         "rimStrength" : 0.449999988,
         "rimThreshold" : 0.699999988,
         "roughness" : 0.5,
-        "sceneIdentity" : "guid:0000000000000000",
+        "sceneIdentity" : "guid:2d879da5ca68c8bf",
         "shaderClass" : 11,
         "shaderClassMode" : 1,
         "shadowCutoff" : 0.5,
@@ -3697,7 +3541,10 @@
         "skinScatterStrength" : 1.0,
         "skinScatterWrap" : 0.419999987,
         "skinShadowScatter" : 0.540000021,
-        "slots" : [],
+        "slots" : 
+        [
+          "guid:03cd3aac4f704e71"
+        ],
         "specularStrength" : 0.349999994,
         "specularThreshold" : 0.349999994,
         "texture" : "",
@@ -3734,14 +3581,14 @@
       {
         "position" : 
         [
-          -3.0,
-          6.0,
-          0.0
+          7.04234982,
+          0.524187207,
+          -3.63503265
         ],
         "rotation" : 
         [
           0.0,
-          0.0,
+          -0.0,
           0.0
         ],
         "scale" : 
@@ -3781,7 +3628,38 @@
           0.0
         ]
       },
-      "id" : 7,
+      "id" : 5,
+      "lod" : 
+      {
+        "count" : 5,
+        "hysteresis" : 0.100000001,
+        "lod1" : 12.0,
+        "lod2" : 28.0,
+        "meshPaths" : 
+        [
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "thresholds" : 
+        [
+          0.300000012,
+          0.150000006,
+          0.0500000007,
+          0.00999999978,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "use" : false,
+        "useAssetSettings" : true
+      },
       "material" : 
       {
         "absorption" : 
@@ -4505,7 +4383,7 @@
           0.0
         ]
       },
-      "id" : 8,
+      "id" : 6,
       "material" : 
       {
         "absorption" : 
@@ -5255,7 +5133,7 @@
         "playing" : true,
         "speed" : 1.0
       },
-      "id" : 9,
+      "id" : 7,
       "instancing" : 
       {
         "frustumCulling" : true,
@@ -5970,6 +5848,301 @@
           0.00999999978,
           0.00999999978,
           0.00999999978
+        ]
+      }
+    },
+    {
+      "id" : 8,
+      "light" : 
+      {
+        "active" : true,
+        "affectsForward" : true,
+        "affectsOpaque" : true,
+        "affectsVolumetrics" : true,
+        "areaHeight" : 1.0,
+        "areaWidth" : 1.0,
+        "castShadow" : true,
+        "color" : 
+        [
+          1.0,
+          0.627747238,
+          0.43729037,
+          1.0
+        ],
+        "direction" : 
+        [
+          0.797084033,
+          0.296606958,
+          -0.526005149
+        ],
+        "drawDebug" : true,
+        "innerAngle" : 18.0,
+        "intensity" : 6.69407606,
+        "outerAngle" : 32.0,
+        "position" : 
+        [
+          47.8250389,
+          17.7964172,
+          -31.5603085
+        ],
+        "priority" : 0.0,
+        "range" : 80.0,
+        "renderMode" : 0,
+        "type" : 0,
+        "volumeDensity" : 0.219999999,
+        "volumeShape" : 0
+      },
+      "name" : 
+      {
+        "name" : "Sun"
+      },
+      "sun" : 
+      {
+        "syncDirectionalLight" : true,
+        "target" : 
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "visualRadius" : 2.5
+      },
+      "transform" : 
+      {
+        "position" : 
+        [
+          47.8250389,
+          17.7964172,
+          -31.5603085
+        ],
+        "rotation" : 
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale" : 
+        [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "camera" : 
+      {
+        "far" : 1000.0,
+        "fov" : 0.785398185,
+        "gameCamera" : true,
+        "lockOnOffset" : 
+        [
+          0.0,
+          4.0,
+          0.0
+        ],
+        "lockOnTarget" : -1,
+        "mainGameCamera" : true,
+        "near" : 0.100000001,
+        "position" : 
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "postProcess" : true,
+        "priority" : 0,
+        "target" : 
+        [
+          0.0,
+          3.0,
+          0.0
+        ],
+        "userControl" : true
+      },
+      "id" : 9,
+      "input" : 
+      {
+        "active" : true
+      },
+      "move" : 
+      {
+        "cameraRelative" : true,
+        "canMove" : true,
+        "direction" : 
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotationSpeed" : 0.0199999996,
+        "speed" : 0.100000001
+      },
+      "name" : 
+      {
+        "name" : "GameCamera"
+      },
+      "postProcess" : 
+      {
+        "bloomRadius" : 1.0,
+        "bloomSoftKnee" : 0.5,
+        "bloomThreshold" : 2.0,
+        "intensity" : 1.0,
+        "type" : 5
+      },
+      "transform" : 
+      {
+        "position" : 
+        [
+          5.0,
+          4.0,
+          -10.0
+        ],
+        "rotation" : 
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale" : 
+        [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id" : 10,
+      "light" : 
+      {
+        "active" : true,
+        "affectsForward" : true,
+        "affectsOpaque" : true,
+        "affectsVolumetrics" : true,
+        "areaHeight" : 1.0,
+        "areaWidth" : 1.0,
+        "castShadow" : true,
+        "color" : 
+        [
+          1.0,
+          0.959999979,
+          0.879999995,
+          1.0
+        ],
+        "direction" : 
+        [
+          0.0,
+          -0.755689085,
+          0.654930532
+        ],
+        "drawDebug" : true,
+        "innerAngle" : 18.0,
+        "intensity" : 20.0,
+        "outerAngle" : 32.0,
+        "position" : 
+        [
+          1.11948133,
+          5.4201684,
+          -4.54684734
+        ],
+        "priority" : 0.0,
+        "range" : 8.0,
+        "renderMode" : 0,
+        "type" : 2,
+        "volumeDensity" : 0.0,
+        "volumeShape" : 0
+      },
+      "name" : 
+      {
+        "name" : "Spot Light"
+      },
+      "transform" : 
+      {
+        "position" : 
+        [
+          1.11948133,
+          5.4201684,
+          -4.54684734
+        ],
+        "rotation" : 
+        [
+          0.0,
+          -0.0,
+          0.0
+        ],
+        "scale" : 
+        [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id" : 11,
+      "light" : 
+      {
+        "active" : true,
+        "affectsForward" : true,
+        "affectsOpaque" : true,
+        "affectsVolumetrics" : true,
+        "areaHeight" : 1.0,
+        "areaWidth" : 1.0,
+        "castShadow" : true,
+        "color" : 
+        [
+          1.0,
+          0.959999979,
+          0.879999995,
+          1.0
+        ],
+        "direction" : 
+        [
+          0.0,
+          -0.755689085,
+          0.654930532
+        ],
+        "drawDebug" : true,
+        "innerAngle" : 18.0,
+        "intensity" : 17.1900005,
+        "outerAngle" : 32.0,
+        "position" : 
+        [
+          -0.0699637532,
+          2.5,
+          -2.0
+        ],
+        "priority" : 0.0,
+        "range" : 27.25,
+        "renderMode" : 0,
+        "type" : 1,
+        "volumeDensity" : 0.0,
+        "volumeShape" : 0
+      },
+      "name" : 
+      {
+        "name" : "Point Light"
+      },
+      "transform" : 
+      {
+        "position" : 
+        [
+          -0.0699637532,
+          2.5,
+          -2.0
+        ],
+        "rotation" : 
+        [
+          0.0,
+          -0.0,
+          0.0
+        ],
+        "scale" : 
+        [
+          1.0,
+          1.0,
+          1.0
         ]
       }
     }

@@ -1447,3 +1447,4 @@ void AnimationModelResource::Uninit()
 	m_Animation.clear();
 	m_VmdAnimations.clear();
 }
+

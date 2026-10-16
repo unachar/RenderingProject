@@ -35,3 +35,4 @@ public:
     static ID3D12Resource* GetBackBuffer(UINT index) { return index < g_kFRAME_COUNT ? m_RenderTargets[index].Get() : nullptr; }
 };
 
+

@@ -408,6 +408,8 @@ namespace SceneFile
 		a("innerAngle", c.InnerAngle);
 		a("volumeDensity", c.VolumeDensity);
 		a("volumeShape", c.VolumeShape);
+		a("areaWidth", c.AreaWidth);
+		a("areaHeight", c.AreaHeight);
 		a("active", c.IsActive);
 		a("drawDebug", c.DrawDebug);
 		a("affectsOpaque", c.AffectsOpaque);
@@ -724,3 +726,5 @@ namespace SceneFile
 		a.Object(key, [&](Archive& s) { present = true; Visit(s, component); });
 	}
 }
+
+

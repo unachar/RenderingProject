@@ -1272,3 +1272,4 @@ bool TextureManager::IsReservedResourceStreamingAvailable()
 	return g_ReservedResourcesSupported && g_ReservedResourceStreamingSafe;
 }
 
+

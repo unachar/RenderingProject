@@ -104,3 +104,4 @@ void main(uint3 group : SV_GroupID, uint thread : SV_GroupIndex)
     CurrentVertices.Store4(address + 32, color);
     PreviousVertices.Store4(address + 32, color);
 }
+

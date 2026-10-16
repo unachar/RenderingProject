@@ -230,3 +230,4 @@ void FramePipeline::Execute()
 		Debug::Log("ERROR: Frame RenderGraph execution failed: %s\n", graph.GetLastError().c_str());
 	}
 }
+

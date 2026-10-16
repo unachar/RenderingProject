@@ -164,6 +164,15 @@ public:
 		}
 	}
 
+	// ---- 設定保存 ----
+	// 自動調整で一時的に下げた値を cfg に保存すると、次回起動時にそれが「ユーザー設定」になり
+	// 品質が下がったまま戻らなくなる。保存中だけユーザーの基準値に戻し、保存後に適用値へ戻す。
+	// 解像度は再確保を伴うため一時的にも書き換えず、保存値だけ基準値にする。
+	static float GetPersistentResolutionScale()
+	{
+		return s_ResolutionReduced ? s_Base.ResolutionScale : RenderConfiguration::GetResolutionScale();
+	}
+
 private:
 	struct Baseline
 	{
@@ -184,6 +193,32 @@ private:
 		int CloudSteps = 64;
 		float ResolutionScale = 1.0f;
 	};
+
+public:
+	class ScopedPersistBaseline
+	{
+	public:
+		ScopedPersistBaseline()
+		{
+			if (!s_BaselineCaptured) return;
+			AbsorbUserChanges(); // 直前にUIで変えた値を先に基準値へ取り込む
+			if (s_Tier == 0) return;
+			m_Saved = s_Applied;
+			Write(s_Base);
+			m_Active = true;
+		}
+		~ScopedPersistBaseline()
+		{
+			if (m_Active) Write(m_Saved);
+		}
+		ScopedPersistBaseline(const ScopedPersistBaseline&) = delete;
+		ScopedPersistBaseline& operator=(const ScopedPersistBaseline&) = delete;
+	private:
+		Baseline m_Saved{};
+		bool m_Active = false;
+	};
+
+private:
 
 	static inline Options s_Options{};
 	static inline Baseline s_Base{};
@@ -353,3 +388,4 @@ private:
 		s_ResolutionReduced = false;
 	}
 };
+

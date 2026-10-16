@@ -26,3 +26,4 @@ uint4 main(PSInput2D input) : SV_Target0
         baseColor.rgb, normal, 0.0f, 0.0f, 0.5f, 0.04f,
         materialPartId, 0.5f, 0.05f, 1.0f);
 }
+

@@ -50,3 +50,4 @@ uint4 PackVisibilityPayload(
 }
 
 #endif
+

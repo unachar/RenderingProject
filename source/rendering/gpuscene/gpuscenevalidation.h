@@ -9,3 +9,4 @@ bool UseLegacyCulling();
 void RecordModelCull(bool resident);
 uint32_t Failures();
 } // namespace GpuSceneValidation
+

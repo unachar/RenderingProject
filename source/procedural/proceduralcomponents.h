@@ -21,3 +21,4 @@ struct ProceduralMotionComponent
     bool Enabled = true;
     bool PreviewInEditor = false;
 };
+

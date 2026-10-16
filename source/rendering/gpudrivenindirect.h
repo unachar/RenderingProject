@@ -874,3 +874,4 @@ public:
         m_InitializationAttempted = false;
     }
 };
+

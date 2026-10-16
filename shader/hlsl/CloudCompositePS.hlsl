@@ -26,3 +26,4 @@ float4 main(PSInputPostProcess input) : SV_Target0
         return MarchCloud(input.TexCoord, input.Position.xy).Color;
     return cloud / totalWeight;
 }
+

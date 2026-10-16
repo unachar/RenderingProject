@@ -302,3 +302,4 @@ void VertexDeformation::Shutdown()
     g_Revision = 0;
 }
 UINT VertexDeformation::GetDispatchCount() { return g_Dispatches; }
+

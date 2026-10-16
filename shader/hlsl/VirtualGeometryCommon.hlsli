@@ -43,3 +43,4 @@ float3 VirtualGeometryLevelColor(uint level)
     return (level & 1u) != 0 ? float3(0.9, 0.1, 0.15) : float3(0.7, 0.1, 0.9);
 }
 #endif
+

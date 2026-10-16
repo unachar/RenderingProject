@@ -11,3 +11,4 @@ void main(uint3 id : SV_DispatchThreadID)
     float billows = 1 - WorleyFbm(uv, Seed + 71);
     OutputNoise[id] = saturate(perlin * 0.65 + billows * 0.35);
 }
+

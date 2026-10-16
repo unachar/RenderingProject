@@ -213,3 +213,4 @@ namespace EditorSceneNavigation
 		drawList->AddText(ImVec2(boxMin.x + 6.0f, boxMin.y + 5.0f + lineHeight * 2.0f), IM_COL32(180, 180, 180, 255), line2);
 	}
 }
+

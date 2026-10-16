@@ -37,3 +37,4 @@ class GpuSceneBuffer
     uint32_t m_Stride = 0;
     bool m_NeedsFullUpload = false;
 };
+

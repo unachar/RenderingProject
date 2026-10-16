@@ -623,3 +623,4 @@ uint64_t ThumbnailPreviewContext::MemoryBytes() const
     for (const auto& buffer : state.Vertices) add(buffer);
     return bytes;
 }
+

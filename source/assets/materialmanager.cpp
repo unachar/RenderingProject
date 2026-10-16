@@ -123,6 +123,8 @@ MaterialComponent MaterialManager::BuildPreviewBinding(const MaterialAssetData& 
     binding.IOR = material.IOR;
     binding.Transmission = material.Transmission;
     binding.Thickness = material.Thickness;
+    binding.ShadingModel = material.ShadingModel;
+    binding.ShadingStrength = material.ShadingStrength;
     binding.AbsorptionCoefficient = {material.AbsorptionCoefficient[0], material.AbsorptionCoefficient[1], material.AbsorptionCoefficient[2]};
     binding.DoubleSided = material.Cull == MaterialCull::None;
     binding.BaseSaturation = 1.0f;
@@ -346,4 +348,6 @@ void MaterialManager::NotifyAssignmentsChanged()
         }
     }
 }
+
+
 

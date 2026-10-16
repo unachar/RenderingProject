@@ -260,3 +260,4 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
     output.Diffuse = input.Diffuse;
     g_OutputVertices[vertexIndex] = output;
 }
+

@@ -39,3 +39,4 @@ struct NativeRoutingSample
 NativeRoutingSample CaptureNativeRouting();
 void Shutdown();
 } // namespace MeshShaderRenderer
+

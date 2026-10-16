@@ -30,3 +30,4 @@ void EditorDescriptors::Retire(UINT index)
 void EditorDescriptors::Collect() { pool.Collect(GraphicsDevice::GetCompletedFence()); }
 UINT EditorDescriptors::Available() { return pool.Available(); }
 void EditorDescriptors::Shutdown() { pool = EditorDescriptorPool(RendererState::g_kTHUMBNAIL_DESCRIPTOR_COUNT); }
+

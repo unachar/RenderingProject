@@ -291,6 +291,19 @@ void ImGuiManager::DrawMaterialEditorWindow()
         changed |= ImGui::SliderFloat("Intensity", &editing.EmissiveIntensity, 0, 30);
         changed |= DrawTextureSlot("Emission", editing.Textures[4]);
     }
+    if (ImGui::CollapsingHeader("Shading Model", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        int model = static_cast<int>(editing.ShadingModel);
+        if (ImGui::Combo("Model", &model, "Standard\0Clear Coat\0Sheen (Cloth)\0Skin\0Hair\0Anisotropic\0"))
+        {
+            editing.ShadingModel = static_cast<uint32_t>(model);
+            changed = true;
+        }
+        ImGui::BeginDisabled(editing.ShadingModel == 0);
+        changed |= ImGui::SliderFloat("Model Strength", &editing.ShadingStrength, 0, 1);
+        ImGui::EndDisabled();
+        ImGui::TextDisabled("ClearCoat=塗装の層 / Sheen=布の光沢 / Skin=肌の散乱 / Hair=髪のハイライト / Anisotropic=ヘアライン金属");
+    }
     if (ImGui::CollapsingHeader("Advanced"))
     {
         int cull = static_cast<int>(editing.Cull);
@@ -576,3 +589,5 @@ void ImGuiManager::DrawMaterialDropTarget()
         ImGui::EndPopup();
     }
 }
+
+

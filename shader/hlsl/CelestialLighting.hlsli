@@ -39,3 +39,4 @@ float3 CelestialAtmosphereTransmission(float altitude, float3 direction)
     return exp(-rayleigh * depth.x - mie * depth.y);
 }
 #endif
+

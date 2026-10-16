@@ -70,3 +70,4 @@ void Unpack(uint3 id : SV_DispatchThreadID)
     }
     Result[id.xy] = float4(min(max(radiance * Parameters.x, 0), 65504), alpha);
 }
+

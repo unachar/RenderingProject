@@ -16,3 +16,4 @@ float main(PSInputPostProcess input) : SV_Depth
         uint2(width - 1, height - 1));
     return LowResDepth.Load(int3(pixel, 0));
 }
+

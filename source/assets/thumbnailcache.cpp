@@ -89,3 +89,4 @@ const ThumbnailRecord* ThumbnailCache::Find(AssetHandle handle) const
     const auto found = m_Records.find(handle);
     return found == m_Records.end() ? nullptr : &found->second;
 }
+

@@ -36,3 +36,4 @@ bool Value(std::ostream* output, const std::string& key, const std::string& text
     return true;
 }
 }
+

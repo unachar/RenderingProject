@@ -432,3 +432,4 @@ UINT OcclusionCulling::GetMipCount()
 {
     return g_MipCount;
 }
+

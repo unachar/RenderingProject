@@ -44,3 +44,4 @@ void TerrainEditState::MarkApplied(double now)
     m_NextApplyTime = now + interval;
 }
 }
+

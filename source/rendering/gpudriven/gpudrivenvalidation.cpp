@@ -330,3 +330,4 @@ bool GPUDrivenValidation::Finish()
     WriteGraphicsLog("GPU Driven validation failures = %u\n", failures);
     return failures == 0;
 }
+

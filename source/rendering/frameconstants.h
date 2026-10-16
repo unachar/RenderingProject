@@ -55,3 +55,4 @@ public:
 	}
 	static UINT GetCbvIncrementSize() { return m_CbvIncrementSize; }
 };
+

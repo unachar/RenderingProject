@@ -15,3 +15,4 @@ PSInput3D main(VSInput3D input)
     output.CameraPos = CameraPos;
     return output;
 }
+

@@ -111,3 +111,4 @@ class GpuSceneSlots
     const vector<GPUInstanceData> &Data() const { return m_Data; }
     const vector<GPUInstanceID> &Updates() const { return m_Updates; }
 };
+

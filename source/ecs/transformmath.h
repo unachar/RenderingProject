@@ -46,3 +46,4 @@ namespace TransformMath
 		return World(transform.Position, transform.Rotation, transform.Scale);
 	}
 }
+

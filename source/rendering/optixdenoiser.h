@@ -18,3 +18,4 @@ private:
     struct Impl;
     unique_ptr<Impl> m_Impl;
 };
+

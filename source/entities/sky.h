@@ -7,3 +7,4 @@ class Sky : public EntityBase
 public:
 	void Create() override;
 };
+

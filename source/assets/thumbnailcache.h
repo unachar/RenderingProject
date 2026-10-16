@@ -45,3 +45,4 @@ private:
     uint64_t m_Sequence = 0;
     uint64_t m_Revision = 0;
 };
+

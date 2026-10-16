@@ -69,6 +69,17 @@ void ApplyAssetMaterial(AssetMaterialParameters material, float2 uv, SamplerStat
     }
 }
 
+// Extended shading model for the deferred pass, stored in the shadow GBuffer alpha (8 bit):
+// bits 5-7 model, bits 0-4 strength. Packed on the CPU in Textures.w bits 4-6 / 8-15.
+float EncodeShadingModel(AssetMaterialParameters material, float fallback)
+{
+    if (material.Surface.z < 0.5f) return fallback;
+    uint model = (material.Textures.w >> 4u) & 7u;
+    uint strength = (material.Textures.w >> 8u) & 255u;
+    uint packed = (model << 5u) | ((strength * 31u + 127u) / 255u);
+    return packed / 255.0f;
+}
+
 float3 ScaleAssetNormal(float3 tangentNormal, AssetMaterialParameters material)
 {
     if (material.Surface.z > 0.5f)
@@ -78,3 +89,5 @@ float3 ScaleAssetNormal(float3 tangentNormal, AssetMaterialParameters material)
     return normalize(tangentNormal);
 }
 #endif
+
+

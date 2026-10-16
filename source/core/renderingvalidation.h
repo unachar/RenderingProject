@@ -9,3 +9,4 @@ public:
     static void AfterFrame(uint64_t frame);
     static bool Finish();
 };
+

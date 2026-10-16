@@ -18,3 +18,4 @@ PSInput3D main(VSInput3D input)
     output.InstanceID = GPUInstanceID;
     return output;
 }
+

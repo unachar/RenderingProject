@@ -848,3 +848,4 @@ void AnimationModelResource::UpdateBoneMatrices(
 		highestPriorityLayer.AnimationName.c_str(), highestPriorityLayer.CurrentTime,
 		highestPriorityLayer.AnimationName.c_str(), highestPriorityLayer.CurrentTime, 0.0f);
 }
+

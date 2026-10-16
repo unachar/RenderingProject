@@ -46,3 +46,4 @@ void main(uint3 localThreadId : SV_GroupThreadID, uint3 groupId : SV_GroupID)
     position.x -= 8u;
     RunEasu(position);
 }
+

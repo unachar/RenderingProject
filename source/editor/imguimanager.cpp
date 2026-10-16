@@ -867,3 +867,4 @@ void ImGuiManager::StyleModernSlim()
 		style.FrameBorderSize = 0.0f;
 	}
 }
+

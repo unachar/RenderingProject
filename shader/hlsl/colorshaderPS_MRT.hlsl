@@ -34,3 +34,4 @@ GBufferOutput main(PSInput2D input)
     output.Shadow = 0.0f;
     return output;
 }
+

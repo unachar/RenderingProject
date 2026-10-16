@@ -325,3 +325,4 @@
 	{
 		BuildTeoMesh(sourceVertices, sourceIndices, outVertices, outIndices, GetToonOutlinePreset(mode));
 	}
+

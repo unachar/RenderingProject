@@ -67,3 +67,4 @@ struct TimelineComponent
 	uint64_t LastPlaySession = 0;
 	vector<TimelineTrackData> Tracks{};
 };
+

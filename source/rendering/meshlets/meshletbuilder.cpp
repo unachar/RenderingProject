@@ -371,3 +371,4 @@ std::array<uint32_t, 3> DispatchDimensions(uint32_t count)
     return {x, count ? static_cast<uint32_t>((uint64_t(count) + x - 1) / x) : 1u, 1u};
 }
 } // namespace Meshlets
+

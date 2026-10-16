@@ -26,3 +26,4 @@ void main(uint3 id : SV_DispatchThreadID)
     gCommands.Store4(offset, uint4(instanceID, mesh.y, 1, mesh.x));
     gCommands.Store2(offset + 16u, uint2(mesh.z, 0));
 }
+

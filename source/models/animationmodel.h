@@ -410,3 +410,4 @@ public:
 	const vector<PmxJointData>& GetPmxJoints() const { return m_PmxJoints; }
 	bool HasPmxPhysics() const { return !m_PmxRigidBodies.empty(); }
 };
+

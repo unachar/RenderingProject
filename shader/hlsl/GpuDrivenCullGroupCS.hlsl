@@ -163,3 +163,4 @@ void main(uint3 groupId : SV_GroupID,
     CopyCommand(commandIndex * CommandStrideBytes,
                 visibleIndex * CommandStrideBytes);
 }
+

@@ -1328,3 +1328,4 @@
 		gpuVertex.SdefR0 = XMFLOAT4(sourceVertex.SdefR0.x, sourceVertex.SdefR0.y, sourceVertex.SdefR0.z, 0.0f);
 		gpuVertex.SdefR1 = XMFLOAT4(sourceVertex.SdefR1.x, sourceVertex.SdefR1.y, sourceVertex.SdefR1.z, 0.0f);
 	}
+

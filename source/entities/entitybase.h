@@ -7,3 +7,4 @@ public:
 
     virtual void Create() = 0;
 };
+

@@ -1125,7 +1125,7 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 	auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
 	EntitySnapshot before = CaptureEntity(entity);
 	bool changed = false;
-	const char* lightTypes[] = { "Directional", "Point", "Spot", "Volume" };
+	const char* lightTypes[] = { "Directional", "Point", "Spot", "Volume", "Rect (エリア)" };
 	int typeIndex = static_cast<int>(light.Type);
 	if (ImGui::Combo("ライトタイプ", &typeIndex, lightTypes, IM_ARRAYSIZE(lightTypes)))
 	{
@@ -1173,6 +1173,12 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 		changed |= ImGui::DragFloat("外角", &light.OuterAngle, 0.2f, light.InnerAngle + 0.1f, 89.5f);
 	}
 
+	if (light.Type == LightType::Rect)
+	{
+		// 発光面は「ライト方向」を法線とする片面の矩形（LTC で評価）。
+		changed |= ImGui::DragFloat("幅", &light.AreaWidth, 0.01f, 0.01f, 50.0f, "%.2f m");
+		changed |= ImGui::DragFloat("高さ", &light.AreaHeight, 0.01f, 0.01f, 50.0f, "%.2f m");
+	}
 	if (light.Type == LightType::Volume)
 	{
 		const char* volumeShapes[] = { "円錐", "円柱" };
@@ -2032,3 +2038,5 @@ ImGui::Text("メッシュ: %s", statusText4);
 		ImGui::Checkbox("ポストプロセス使用", &sprite.UsePostProcess);
 	}
 }
+
+

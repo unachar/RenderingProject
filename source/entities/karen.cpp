@@ -73,3 +73,4 @@ void Karen::Create()
 
 	Game::RegisterEntity(this);
 }
+

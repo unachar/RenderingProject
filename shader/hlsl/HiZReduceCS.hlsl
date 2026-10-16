@@ -26,3 +26,4 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
             depth = max(depth, SourceDepth.Load(int3(x, y, SourceMip)));
     Destination[pixel] = depth;
 }
+

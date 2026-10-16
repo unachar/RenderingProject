@@ -268,6 +268,8 @@ struct MaterialComponent
     int AOTextureID = -1;
     int EmissiveTextureID = -1;
     MaterialSurface AssetSurface = MaterialSurface::Opaque;
+    uint32_t ShadingModel = 0;      // see MaterialAssetData::ShadingModel
+    float ShadingStrength = 1.0f;
     MaterialCull AssetCull = MaterialCull::Back;
     bool AssetDepthWrite = true;
     float AlphaCutoff = 0.5f;
@@ -406,6 +408,8 @@ struct LightComponent
 	float InnerAngle = 0.0f;
 	float VolumeDensity = 0.0f;
 	int VolumeShape = 0;
+	float AreaWidth = 1.0f;  // Rect light extent (metres)
+	float AreaHeight = 1.0f;
 	bool IsActive = true;
 	bool DrawDebug = false;
 	bool AffectsOpaque = true;
@@ -678,3 +682,5 @@ public:
 		Registry::RemoveComponent(entity, types...);
 	}
 };
+
+

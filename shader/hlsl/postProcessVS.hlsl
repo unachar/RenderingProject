@@ -12,3 +12,4 @@ PSInputPostProcess main(uint vertexId : SV_VertexID)
 
     return output;
 }
+

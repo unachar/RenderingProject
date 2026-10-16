@@ -60,6 +60,17 @@ public:
 	static void SetSsgiEnabled(bool value) { SetGiMode(value ? GlobalIlluminationMode::ScreenSpace : GlobalIlluminationMode::Off); }
 	static float GetSsgiIntensity() { return s_SsgiIntensity; }
 	static void SetSsgiIntensity(float value) { SetValue(s_SsgiIntensity, clamp(value, 0.0f, 3.0f)); }
+	// Ray traced GI is a physically based irradiance estimate; it uses its own scale (1 = energy
+	// conserving) instead of the screen-space GI strength, which was tuned for SSGI.
+	static float GetRealtimeGiIntensity() { return s_RealtimeGiIntensity; }
+	static void SetRealtimeGiIntensity(float value) { SetValue(s_RealtimeGiIntensity, clamp(value, 0.0f, 3.0f)); }
+	// World-space irradiance cache for multi-bounce realtime GI.
+	static bool GetGiRadianceCacheEnabled() { return s_GiRadianceCacheEnabled; }
+	static void SetGiRadianceCacheEnabled(bool value) { SetValue(s_GiRadianceCacheEnabled, value); }
+	static float GetGiRadianceCacheCellSize() { return s_GiRadianceCacheCellSize; }
+	static void SetGiRadianceCacheCellSize(float value) { SetValue(s_GiRadianceCacheCellSize, clamp(value, 0.05f, 2.0f)); }
+	static int GetGiRadianceCacheHistory() { return s_GiRadianceCacheHistory; }
+	static void SetGiRadianceCacheHistory(int value) { SetValue(s_GiRadianceCacheHistory, clamp(value, 1, 128)); }
 	static bool GetRayBinningEnabled() { return s_RayBinningEnabled; }
 	static void SetRayBinningEnabled(bool value) { SetValue(s_RayBinningEnabled, value); }
 	static bool GetTextureStreamingEnabled() { return s_TextureStreamingEnabled; }
@@ -228,6 +239,10 @@ private:
 	inline static GlobalIlluminationMode s_GiMode = GlobalIlluminationMode::ScreenSpace;
     inline static float s_GiDistance = 40.0f;
 	inline static float s_SsgiIntensity = 0.45f;
+	inline static float s_RealtimeGiIntensity = 1.0f;
+	inline static bool s_GiRadianceCacheEnabled = true;
+	inline static float s_GiRadianceCacheCellSize = 0.25f;
+	inline static int s_GiRadianceCacheHistory = 32;
 	inline static bool s_RayBinningEnabled = true;
 	inline static bool s_TextureStreamingEnabled = true;
 	inline static bool s_ReservedResourcesEnabled = true;
@@ -261,3 +276,4 @@ private:
 	inline static int s_ShadowLightBudget = 4;
 	inline static uint64_t s_Revision = 1;
 };
+

@@ -193,3 +193,4 @@ void ProjectManager::TogglePause()
 		s_State = ProjectPlayState::Playing;
 	}
 }
+

@@ -25,3 +25,4 @@ MaterialPartShaderParams LoadGpuDrivenPart(uint material, float partID)
     part.Skin1 = LoadSceneMaterialVector(gSceneMaterials, material, first + 8);
     return part;
 }
+

@@ -538,6 +538,7 @@ namespace EditorWidgets
 		case LightType::Point: typeName = "Point"; break;
 		case LightType::Spot: typeName = "Spot"; break;
 		case LightType::Volume: typeName = "Volume"; break;
+		case LightType::Rect: typeName = "Rect Area"; break;
 		}
 		name.Name = string(typeName) + " Light";
 		World::RegisterName(entity, name.Name);
@@ -545,3 +546,5 @@ namespace EditorWidgets
 
 
 }
+
+

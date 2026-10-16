@@ -25,6 +25,11 @@
 #include "occlusionculling.h"
 #include "materialbindings.h"
 #include "systemmanager.h"
+#include "advancedeffects.h"
+#include "atmospherelut.h"
+#include "renderquality.h"
+#include "pbrluts.h"
+#include "transparencyeffects.h"
 
 
 namespace
@@ -39,6 +44,7 @@ struct PostProcessConstants
 	XMFLOAT4X4 PPViewProjection{};
 	XMFLOAT4 RaytracingFlags{};
 	XMFLOAT4 RaytracingSunDirection{};
+	XMFLOAT4 Quality[11]{}; // RenderQuality::Pack
 };
 
 static_assert(sizeof(PostProcessConstants) <= RendererState::g_kPP_CB_ALIGNED_SIZE);
@@ -85,6 +91,21 @@ void PostProcessPass::UpdateCameraConstants()
 	constants.PPCameraPos = { position.x, position.y, position.z, 1.0f };
 	XMStoreFloat4x4(&constants.PPInvViewProjection, XMMatrixTranspose(XMMatrixInverse(nullptr, view * projection)));
 	XMStoreFloat4x4(&constants.PPViewProjection, XMMatrixTranspose(view * projection));
+	// Quality / grading / weather block: copied into every fullscreen pass slot and read by
+	// forward shading through the same slot-0 binding (b6).
+	static float s_QualityTime = 0.0f;
+	static unsigned s_QualityFrame = 0;
+	const float deltaTime = World::GetRawDeltaTime();
+	s_QualityTime = fmodf(s_QualityTime + deltaTime, 3600.0f);
+	RenderQuality::Tick(deltaTime);
+	RenderQuality::Pack(constants.Quality, s_QualityTime, ++s_QualityFrame,
+		TransparencyEffects::IsOitActive(), TransparencyEffects::IsRefractionActive());
+	if (!PbrLuts::IsAvailable())
+	{
+		// Energy compensation and LTC specular need the tables.
+		constants.Quality[9].x = 0.0f;
+		constants.Quality[9].y = 0.0f;
+	}
 	memcpy(m_pPostProcessCbvDataBegin + GetPostProcessFrameOffset(), &constants, sizeof(constants));
 }
 
@@ -121,6 +142,8 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			Raytracing::BindLighting(m_CommandList.Get(), 17, 18);
 			m_CommandList->SetGraphicsRootDescriptorTable(19, Raytracing::GetReflectionSrv());
 			CloudRenderer::BindLighting(m_CommandList.Get(), m_FrameIndex);
+			m_CommandList->SetGraphicsRootDescriptorTable(26, AtmosphereLut::GetGraphicsSrv());
+			m_CommandList->SetGraphicsRootDescriptorTable(27, PbrLuts::GetSrv());
 
 			RenderFrame::SetDescriptorHeap();
 
@@ -221,7 +244,10 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 		return;
 	}
 
-	ID3D12PipelineState* postProcessPso = PsoManager::GetPostProcessPso(config.Type);
+	// The dual filter bloom (AdvancedEffects) already added bloom in HDR; avoid doubling it.
+	const bool dualBloomReplacesLegacy = config.Type == PostProcessType::BLOOM && AdvancedEffects::IsDualBloomActive();
+	ID3D12PipelineState* postProcessPso = PsoManager::GetPostProcessPso(
+		dualBloomReplacesLegacy ? PostProcessType::NONE : config.Type);
 
 	if (m_RenderMode == RenderMode::DEFERRED)
 	{
@@ -259,6 +285,9 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			static_cast<LONG>(atmosphereDesc.Height));
 		m_CommandList->RSSetViewports(1, &atmosphereViewport);
 		m_CommandList->RSSetScissorRects(1, &atmosphereScissor);
+		// The froxel volume replaces the per-pixel atmosphere ray march (the cleared target
+		// means: no in-scattering, transmittance 1). It is applied after lighting instead.
+		if (!AdvancedEffects::IsFroxelFogActive())
 		{
 			RenderProfiler::ScopedEvent profile("Atmosphere", m_CommandList.Get());
 			DrawFullscreenPass(
@@ -324,6 +353,13 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 		m_CommandList->ResourceBarrier(1, &toSceneSrv);
 		ScreenSpaceEffects::CaptureHistory(m_CommandList.Get(), GetRenderTarget(RenderTargetType::Scene).Get());
+		// Froxel fog, auto exposure, motion blur, DOF, dual filter bloom, lens flare and
+		// rain / snow on the linear HDR scene (before tone mapping).
+		AdvancedEffects::SetBloomRequested(config.Type == PostProcessType::BLOOM);
+		AdvancedEffects::Execute(m_CommandList.Get(), GetRenderTarget(RenderTargetType::Scene).Get(),
+			m_GBufferTargets[static_cast<UINT>(GBufferType::DEPTH)].Get(),
+			m_GBufferTargets[static_cast<UINT>(GBufferType::VELOCITY)].Get(), m_FrameIndex);
+		RenderFrame::SetDescriptorHeap();
 	}
 
     if (m_RenderMode != RenderMode::DEFERRED)
@@ -346,7 +382,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 
 	const UINT bloomIndex = static_cast<UINT>(GBufferType::BLOOM);
 	const bool useBloomBuffer =
-		config.Type == PostProcessType::BLOOM &&
+		config.Type == PostProcessType::BLOOM && !dualBloomReplacesLegacy &&
 		m_RenderMode == RenderMode::DEFERRED &&
 		m_GBufferTargets[bloomIndex];
 	if (useBloomBuffer)
@@ -876,3 +912,5 @@ void PostProcessPass::ApplyAntiAliasing()
 		m_CommandList->ResourceBarrier(1, &toEditorFinalSrv);
 	}
 }
+
+

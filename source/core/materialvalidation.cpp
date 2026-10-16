@@ -1160,3 +1160,4 @@ bool MaterialValidation::Finish()
     WriteGraphicsLog("Material validation failures = %u\n", failures);
     return failures == 0;
 }
+

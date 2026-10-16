@@ -48,3 +48,4 @@ public:
 	static ID3D12Resource* GetShadowCB() { return m_ShadowConstantBuffer.Get(); }
     static ID3D12Resource* GetShadowMapResource() { return m_ShadowDepthBuffer.Get(); }
 };
+

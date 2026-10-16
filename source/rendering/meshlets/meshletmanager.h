@@ -23,3 +23,4 @@ GpuSceneBuffer &RangeBuffer();
 uint64_t MemoryBytes();
 void Shutdown();
 } // namespace MeshletManager
+

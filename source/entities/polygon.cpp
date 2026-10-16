@@ -38,3 +38,4 @@ void Polygon::Create()
 
 	PrimitiveGeometry::CreateSpriteVertex(vertexResource);
 }
+

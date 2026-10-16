@@ -497,3 +497,4 @@ public:
 	float GetSpeed() const { return m_Speed; }
 	TimeLineWrapMode GetWrapMode() const { return m_WrapMode; }
 };
+

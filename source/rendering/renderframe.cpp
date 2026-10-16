@@ -9,6 +9,7 @@
 #include "texturemanager.h"
 #include "imguimanager.h"
 #include "world.h"
+#include "atmospherelut.h"
 
 
 void RenderFrame::BeginDraw()
@@ -22,6 +23,9 @@ void RenderFrame::BeginDraw()
 	m_CommandAllocator[m_FrameIndex]->Reset();
 	m_CommandList->Reset(m_CommandAllocator[m_FrameIndex].Get(), nullptr);
 	TextureManager::UpdateStreaming(m_CommandList.Get());
+	// Sky LUTs for this frame: recorded and submitted on the async compute queue right away so
+	// they overlap with the previous frame's graphics work; the graphics queue waits on the GPU.
+	AtmosphereLut::Update(m_CommandList.Get(), m_CommandQueue.Get(), m_FrameIndex);
 
 	m_CommandList->RSSetViewports(1, &m_Viewport);
 	m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
@@ -133,3 +137,4 @@ void RenderFrame::SetDescriptorHeap()
 	ID3D12DescriptorHeap* heaps[] = { m_CbvHeap.Get() };
 	m_CommandList->SetDescriptorHeaps(_countof(heaps), heaps);
 }
+

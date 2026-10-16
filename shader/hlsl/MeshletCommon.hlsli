@@ -5,3 +5,4 @@ struct MeshletRecord { uint VertexOffset, VertexCount, PrimitiveOffset, Primitiv
 struct MeshletBounds { float3 Center; float Radius; float3 ConeAxis; float ConeCutoff; };
 struct ClusterRecord { uint Offset, Count; uint2 Padding; MeshletBounds Bounds; };
 #endif
+

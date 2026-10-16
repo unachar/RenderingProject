@@ -87,3 +87,4 @@ void GpuSceneCulling::ExecuteCulling(ID3D12GraphicsCommandList *commands, ID3D12
     commands->SetComputeRoot32BitConstants(4, 20, &constants, 0);
     commands->Dispatch((slots + 63) / 64, 1, 1);
 }
+

@@ -18,3 +18,4 @@ constexpr uint32_t PageSize(uint32_t meshlets, uint32_t first, uint32_t limit = 
     return remaining < limit ? remaining : limit;
 }
 }
+

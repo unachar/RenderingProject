@@ -43,3 +43,4 @@ void main(uint3 dispatch : SV_DispatchThreadID)
     }
     Visibility[id] = !EnableFrustum || !(instance.Flags & 2u) || outside == 0 ? 1u : 0u;
 }
+

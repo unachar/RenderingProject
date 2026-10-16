@@ -88,3 +88,4 @@ inline PendingChanges Take()
     return result;
 }
 } // namespace GpuSceneChanges
+

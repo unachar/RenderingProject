@@ -273,3 +273,4 @@ public:
 	static float GetExposure() { return m_Exposure; }
 };
 
+

@@ -70,3 +70,4 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     else
         Lod2Instances[destination] = output;
 }
+

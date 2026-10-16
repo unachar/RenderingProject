@@ -38,3 +38,4 @@ void Moca::Create()
 
 	Game::RegisterEntity(this);
 }
+

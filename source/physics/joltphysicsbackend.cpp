@@ -585,3 +585,4 @@ unique_ptr<IPhysicsBackend> CreateJoltPhysicsBackend()
 {
 	return make_unique<JoltPhysicsBackend>();
 }
+

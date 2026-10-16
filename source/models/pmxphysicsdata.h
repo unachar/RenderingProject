@@ -40,3 +40,4 @@ struct PmxJointData
 	DirectX::XMFLOAT3 LinearSpring{};
 	DirectX::XMFLOAT3 AngularSpring{};
 };
+

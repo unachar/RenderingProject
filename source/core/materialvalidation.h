@@ -11,3 +11,4 @@ public:
     static void InjectDragPayload();
     static void CaptureDropTarget(const char* name, float left, float top, float right, float bottom);
 };
+

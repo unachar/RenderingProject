@@ -42,3 +42,4 @@ void main(in PSInput3D In, out float4 outDiffuse : SV_Target)
     lit += lightColor * volumeScatter;
     outDiffuse = float4(lit * baseColor.a, baseColor.a);
 }
+

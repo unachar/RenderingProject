@@ -85,39 +85,30 @@ float3 EvaluateCelestialSky(float3 direction, float angularFootprint)
     return (stars + distantSky) * max(SkyParameters.w, 0.0f);
 }
 
-float3 EvaluatePhysicalSky(float3 direction, float angularFootprint)
+// Analytic single scattering ray march (reference / fallback when the LUT is unavailable).
+void MarchPhysicalSky(float3 direction, float3 origin, float3 sun, float endDistance,
+    int viewSteps, int sunSteps, out float3 sky, out float3 viewTransmission)
 {
-    direction = normalize(direction);
     const float groundRadius = 6360000.0f;
     const float atmosphereRadius = 6460000.0f;
-    float3 origin = float3(0, groundRadius + max(AtmosphereCamera.y, 2.0f), 0);
-    float3 sun = normalize(SkySunDirection.xyz);
-    float endDistance = max(SkySphereIntersection(origin, direction, atmosphereRadius).y, 0.0f);
-    float groundDistance = SkySphereIntersection(origin, direction, groundRadius).x;
-    bool hitsGround = groundDistance > 0.0f;
-    if (hitsGround)
-    {
-        endDistance = min(endDistance, groundDistance);
-    }
     float densityScale = max(AtmosphereParams0.w, 0.0f) / 0.36f;
     float3 betaRayleigh = float3(5.8e-6f, 13.5e-6f, 33.1e-6f) * max(AtmosphereParams0.y, 0.0f) / 0.42f * densityScale;
     float3 betaMie = 21e-6f * max(AtmosphereParams0.z, 0.0f) / 0.075f * densityScale;
-    float stepDistance = endDistance / 16.0f;
+    float stepDistance = endDistance / (float)viewSteps;
     float2 viewOpticalDepth = 0;
     float3 rayleigh = 0;
     float3 mie = 0;
     [loop]
-    for (int stepIndex = 0; stepIndex < 16; ++stepIndex)
+    for (int stepIndex = 0; stepIndex < viewSteps; ++stepIndex)
     {
         float3 position = origin + direction * ((stepIndex + 0.5f) * stepDistance);
         float2 localDepth = SkyDensity(position) * stepDistance;
         viewOpticalDepth += localDepth * 0.5f;
         if (SkySphereIntersection(position, sun, groundRadius).x <= 0.0f)
         {
-            float sunStep = max(SkySphereIntersection(position, sun, atmosphereRadius).y, 0.0f) / 4.0f;
+            float sunStep = max(SkySphereIntersection(position, sun, atmosphereRadius).y, 0.0f) / (float)sunSteps;
             float2 sunOpticalDepth = 0;
-            [unroll]
-            for (int sample = 0; sample < 4; ++sample)
+            for (int sample = 0; sample < sunSteps; ++sample)
             {
                 sunOpticalDepth += SkyDensity(position + sun * ((sample + 0.5f) * sunStep)) * sunStep;
             }
@@ -130,10 +121,64 @@ float3 EvaluatePhysicalSky(float3 direction, float angularFootprint)
     }
     float cosine = dot(direction, sun);
     float rayleighPhase = 3.0f / (16.0f * 3.14159265f) * (1.0f + cosine * cosine);
-    float3 sky = (rayleigh * betaRayleigh * rayleighPhase + mie * betaMie *
-        HenyeyGreensteinCommon(cosine, AtmosphereParams1.z)) * max(SkyParameters.z, 0.0f);
-    float3 viewTransmission = exp(-betaRayleigh * viewOpticalDepth.x - betaMie * viewOpticalDepth.y);
-    if (!hitsGround && sun.y > -0.01f)
+    sky = rayleigh * betaRayleigh * rayleighPhase + mie * betaMie * HenyeyGreensteinCommon(cosine, AtmosphereParams1.z);
+    viewTransmission = exp(-betaRayleigh * viewOpticalDepth.x - betaMie * viewOpticalDepth.y);
+}
+
+#ifdef SKY_LUT
+// Sky view LUT (AtmosphereLutCS.hlsl). The consumer defines the registers:
+//   SKY_LUT_SCATTER_REGISTER, SKY_LUT_TRANSMISSION_REGISTER, SKY_LUT_SAMPLER_REGISTER.
+// A null descriptor (LUT disabled / not built yet) reads alpha 0 -> analytic fallback.
+#include "AtmosphereLutCommon.hlsli"
+Texture2D<float4> SkyViewScatterLut : register(SKY_LUT_SCATTER_REGISTER);
+Texture2D<float4> SkyViewTransmissionLut : register(SKY_LUT_TRANSMISSION_REGISTER);
+SamplerState SkyLutSampler : register(SKY_LUT_SAMPLER_REGISTER);
+
+bool SampleSkyViewLut(float3 direction, float3 sun, float viewHeight, out float3 sky, out float3 viewTransmission)
+{
+    float2 uv = SkyViewLutUv(direction, sun, viewHeight);
+    float4 scatter = SkyViewScatterLut.SampleLevel(SkyLutSampler, uv, 0);
+    sky = scatter.rgb;
+    viewTransmission = SkyViewTransmissionLut.SampleLevel(SkyLutSampler, uv, 0).rgb;
+    return scatter.a > 0.5f;
+}
+#endif
+
+// includeDiscs = false removes the sun and moon discs. Diffuse GI rays use it: both discs are
+// already lit directly, and their tiny solid angle turns into rare, very bright samples that
+// no temporal denoiser can hide (sparkling / flicker). Their irradiance share is negligible.
+// viewSteps / sunSteps select the analytic fallback quality. With SKY_LUT the scattering and
+// view transmission come from the sky view LUT (one bilinear fetch instead of ~80 density
+// evaluations); discs, stars, moon, ground and airglow are evaluated per pixel as before.
+float3 EvaluatePhysicalSkySteps(float3 direction, float angularFootprint, bool includeDiscs,
+    int viewSteps, int sunSteps)
+{
+    direction = normalize(direction);
+    const float groundRadius = 6360000.0f;
+    const float atmosphereRadius = 6460000.0f;
+    float3 origin = float3(0, groundRadius + max(AtmosphereCamera.y, 2.0f), 0);
+    float3 sun = normalize(SkySunDirection.xyz);
+    float groundDistance = SkySphereIntersection(origin, direction, groundRadius).x;
+    bool hitsGround = groundDistance > 0.0f;
+    float3 sky = 0;
+    float3 viewTransmission = 1;
+    bool fromLut = false;
+#ifdef SKY_LUT
+    fromLut = SampleSkyViewLut(direction, sun, origin.y, sky, viewTransmission);
+#endif
+    [branch]
+    if (!fromLut)
+    {
+        float endDistance = max(SkySphereIntersection(origin, direction, atmosphereRadius).y, 0.0f);
+        if (hitsGround)
+        {
+            endDistance = min(endDistance, groundDistance);
+        }
+        MarchPhysicalSky(direction, origin, sun, endDistance, viewSteps, sunSteps, sky, viewTransmission);
+    }
+    sky *= max(SkyParameters.z, 0.0f);
+    float cosine = dot(direction, sun);
+    if (includeDiscs && !hitsGround && sun.y > -0.01f)
     {
         sky += smoothstep(cos(0.0052f), cos(0.0042f), cosine) * viewTransmission * max(SkyParameters.z, 0.0f) * 4.0f;
     }
@@ -154,11 +199,25 @@ float3 EvaluatePhysicalSky(float3 direction, float angularFootprint)
         float disc = smoothstep(cos(discRadius + discEdge), cos(max(discRadius - discEdge, 0.00001)), moonCosine);
         float3 moonLight = VirtualMoonIrradiance();
         float halo = 0.008 / max(1.0 - moonCosine + 0.008, 0.008);
-        sky += moonLight * (disc * 120 + halo * halo * 0.8) * viewTransmission;
+        sky += moonLight * ((includeDiscs ? disc * 120 : 0) + halo * halo * 0.8) * viewTransmission;
         // Airglow is emitted inside the atmosphere rather than extinguished as distant starlight.
         sky += float3(0.006f, 0.010f, 0.024f) * lerp(0.2f, 1.0f, smoothstep(0.0f, 0.12f, direction.y));
     }
     return max(sky, 0.0f);
+}
+
+// Reference quality (unchanged output): visible sky, mirror reflections.
+float3 EvaluatePhysicalSky(float3 direction, float angularFootprint, bool includeDiscs = true)
+{
+    return EvaluatePhysicalSkySteps(direction, angularFootprint, includeDiscs, 16, 4);
+}
+
+// Reduced quality for low frequency terms (diffuse sky lighting of secondary hits, GI sky
+// rays). Single scattering is smooth along the ray; 8 / 2 steps differ by a few percent at
+// the horizon only, and those terms are further filtered by the denoiser. ~4x cheaper.
+float3 EvaluatePhysicalSkyFast(float3 direction, float angularFootprint, bool includeDiscs = true)
+{
+    return EvaluatePhysicalSkySteps(direction, angularFootprint, includeDiscs, 8, 2);
 }
 
 #ifndef SKY_COMPUTE
@@ -168,3 +227,4 @@ float3 EvaluateSkyAtmosphere(float3 direction)
     return EvaluatePhysicalSky(direction, angularFootprint);
 }
 #endif
+

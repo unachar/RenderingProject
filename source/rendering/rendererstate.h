@@ -174,7 +174,8 @@ public:
 
 
 	static constexpr UINT g_kCB_ALIGNED_SIZE = (sizeof(ConstantBuffer3D) + 255) & ~255;
-	static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * 56 + 255) & ~255;
+	// 56 floats of camera/HDR data + 11 float4 of quality settings (renderquality.h).
+	static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * (56 + 44) + 255) & ~255;
 	static constexpr UINT g_kPP_CB_SLOTS_PER_FRAME = 32;
 	static UINT GetPostProcessFrameOffset() { return m_FrameIndex * g_kPP_CB_SLOTS_PER_FRAME * g_kPP_CB_ALIGNED_SIZE; }
 	static constexpr UINT g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES = 16;
@@ -258,6 +259,17 @@ public:
 	// Reserved after DXR/NRD/reflection bindings in the existing engine heap.
 	static constexpr UINT g_kCLOUD_DESCRIPTOR_START = g_kHIZ_MIP_SRV_START_INDEX + 2 * g_kHIZ_MAX_MIPS + 48;
 	static_assert(g_kCLOUD_DESCRIPTOR_START + 4 + 2 * g_kFRAME_COUNT <= g_kENGINE_DESCRIPTOR_END);
+	// Atmosphere LUT: (sky scattering, sky transmission) per frame slot + one null pair.
+	static constexpr UINT g_kATMOSPHERE_LUT_DESCRIPTOR_START = g_kCLOUD_DESCRIPTOR_START + 16;
+	static constexpr UINT g_kATMOSPHERE_LUT_DESCRIPTOR_COUNT = 2 * g_kFRAME_COUNT + 2;
+	static_assert(g_kCLOUD_DESCRIPTOR_START + 4 + 2 * g_kFRAME_COUNT <= g_kATMOSPHERE_LUT_DESCRIPTOR_START);
+	static_assert(g_kATMOSPHERE_LUT_DESCRIPTOR_START + g_kATMOSPHERE_LUT_DESCRIPTOR_COUNT <= g_kMATERIAL_PREVIEW_SRV_INDEX,
+		"Atmosphere LUT descriptors overlap the material preview range");
+	// Render quality resources: DFG LUT, LTC tables, OIT accumulation / revealage, bloom.
+	static constexpr UINT g_kQUALITY_DESCRIPTOR_START = g_kATMOSPHERE_LUT_DESCRIPTOR_START + g_kATMOSPHERE_LUT_DESCRIPTOR_COUNT + 8;
+	static constexpr UINT g_kQUALITY_DESCRIPTOR_COUNT = 16;
+	static_assert(g_kQUALITY_DESCRIPTOR_START + g_kQUALITY_DESCRIPTOR_COUNT <= g_kMATERIAL_PREVIEW_SRV_INDEX,
+		"Render quality descriptors overlap the material preview range");
 	static_assert(g_kHIZ_DEBUG_UAV_INDEX <= g_kENGINE_DESCRIPTOR_END,
 		"The Hi-Z descriptor range exceeds the engine-owned descriptor range.");
 	static constexpr UINT g_kMAX_DYNAMIC_VERTICES = 65536;
@@ -285,3 +297,5 @@ public:
 	static UINT m_DynamicVertexOffset;
 	static UINT m_TransientCbSlot;
 };
+
+

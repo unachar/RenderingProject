@@ -4,3 +4,4 @@ void main(uint3 id : SV_DispatchThreadID)
 {
     gCount.Store4(0, 0);
 }
+

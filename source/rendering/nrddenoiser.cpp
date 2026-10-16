@@ -41,6 +41,60 @@ struct Texture
     D3D12_RESOURCE_STATES State = D3D12_RESOURCE_STATE_COMMON;
 };
 
+// ---------------------------------------------------------------------------------------------
+// REBLUR tuning. Optional members are assigned only when the linked NRD headers declare them,
+// so the same source builds against neighbouring 4.x SDK revisions without silent misuse.
+// ---------------------------------------------------------------------------------------------
+// Hit distance normalisation shared with RayReflectionsCS.hlsl (REBLUR_FrontEnd_GetNormHitDist).
+constexpr float kHitDistanceA = 3.0f;
+constexpr float kHitDistanceB = 0.1f;
+constexpr float kHitDistanceC = 20.0f;
+
+// Realtime GI: one checkerboard ray per two pixels (0.5 rpp). Stability is obtained from a long,
+// clamped history instead of a wide spatial blur, so geometry edges are not smeared.
+constexpr uint32_t kGiMaxAccumulatedFrames = 40;     // ~0.33 s at 120 fps, anti-lag shortens it on change
+constexpr uint32_t kGiMaxFastAccumulatedFrames = 8;  // fast history used for clamping / anti-lag
+constexpr uint32_t kGiMaxStabilizedFrames = 63;      // REBLUR_MAX_HISTORY_FRAME_NUM
+constexpr float kGiMinBlurRadius = 2.0f;             // post-convergence footprint (pixels)
+constexpr float kGiMaxBlurRadius = 32.0f;            // footprint while history is short (pixels)
+constexpr float kGiPrepassBlurRadius = 40.0f;        // pre-pass also resolves the checkerboard holes
+constexpr float kGiFireflyRelativeScale = 1.5f;
+
+template <class Settings>
+void ApplyHitDistance(Settings& settings, float a, float b, float c)
+{
+    settings.hitDistanceParameters.A = a;
+    settings.hitDistanceParameters.B = b;
+    settings.hitDistanceParameters.C = c;
+}
+
+template <class Settings>
+void EnableAntiFirefly(Settings& settings)
+{
+    if constexpr (requires(Settings& value) { value.enableAntiFirefly = true; })
+        settings.enableAntiFirefly = true;
+}
+
+template <class Settings>
+void ConfigureStableDiffuse(Settings& settings)
+{
+    // TraceDiffuse writes the traced half of each row PACKED into [0, width/2) and alternates the
+    // populated parity with CommonSettings::frameIndex. NRD expects exactly this layout:
+    // "has data" pixels are read from (x >> 1, y), the others are reconstructed in the pre-pass.
+    settings.checkerboardMode = nrd::CheckerboardMode::BLACK;
+    ApplyHitDistance(settings, kHitDistanceA, kHitDistanceB, kHitDistanceC);
+    settings.maxAccumulatedFrameNum = kGiMaxAccumulatedFrames;
+    settings.maxFastAccumulatedFrameNum = kGiMaxFastAccumulatedFrames;
+    settings.minBlurRadius = kGiMinBlurRadius;
+    settings.maxBlurRadius = kGiMaxBlurRadius;
+    settings.fireflySuppressorMinRelativeScale = kGiFireflyRelativeScale;
+    if constexpr (requires(Settings& value) { value.maxStabilizedFrameNum = 1u; })
+        settings.maxStabilizedFrameNum = kGiMaxStabilizedFrames;
+    if constexpr (requires(Settings& value) { value.diffusePrepassBlurRadius = 1.0f; })
+        settings.diffusePrepassBlurRadius = kGiPrepassBlurRadius;
+    EnableAntiFirefly(settings);
+}
+
 void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource,
     D3D12_RESOURCE_STATES& state, D3D12_RESOURCE_STATES target)
 {
@@ -212,19 +266,20 @@ struct NrdDenoiser::Impl
         }
         if (Signal == NrdSignal::Diffuse)
         {
+            // The parity must stay FIXED. NRD already alternates it internally with frameIndex
+            // (= frame.Sequence, the same value TraceDiffuse uses), flipping BLACK/WHITE per frame
+            // would make NRD read the empty half of the checkerboard.
             nrd::ReblurSettings settings;
-            // TraceDiffuse alternates the populated checkerboard parity every frame. NRD must
-            // receive the same parity or valid one-ray samples are interpreted as missing data.
-            settings.checkerboardMode = (frame.Sequence & 1u) != 0u ?
-                nrd::CheckerboardMode::WHITE : nrd::CheckerboardMode::BLACK;
-            settings.minBlurRadius = 3.0f;
-            settings.maxBlurRadius = 36.0f;
-            settings.maxAccumulatedFrameNum = 32;
-            settings.maxFastAccumulatedFrameNum = 6;
-            settings.historyFixFrameNum = 4;
-            settings.stabilizationStrength = 1.0f;
-            settings.enableAntifirefly = true;
-            settings.fireflySuppressorMinRelativeScale = 1.25f;
+            ConfigureStableDiffuse(settings);
+            if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS) return false;
+        }
+        if (Signal == NrdSignal::Specular)
+        {
+            // Defaults are kept (full-resolution input, no checkerboard). Only isolated
+            // outliers are suppressed so that reflections do not sparkle frame to frame.
+            nrd::ReblurSettings settings;
+            ApplyHitDistance(settings, kHitDistanceA, kHitDistanceB, kHitDistanceC);
+            EnableAntiFirefly(settings);
             if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS) return false;
         }
         if (Signal == NrdSignal::AmbientOcclusion)
@@ -403,3 +458,4 @@ const char* NrdDenoiser::GetVersion()
     return "SDK 未導入";
 #endif
 }
+

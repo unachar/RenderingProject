@@ -11,3 +11,4 @@ float PSMain(float4 position : SV_Position) : SV_Depth
 {
     return StationaryDepth.Load(int4(int2(position.xy), Layer, 0));
 }
+

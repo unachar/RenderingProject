@@ -15,3 +15,4 @@ float4 main(PSInputPostProcess input) : SV_TARGET
     result.a = 1.0f;
     return result;
 }
+

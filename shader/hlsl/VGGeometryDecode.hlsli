@@ -168,3 +168,4 @@ VGDecodedVertex VGDecodeVertex(ByteAddressBuffer buffer, uint base, uint vertex)
     return result;
 }
 #endif
+

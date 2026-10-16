@@ -124,3 +124,4 @@ void main(uint3 groupId : SV_GroupID, uint lane : SV_GroupIndex)
     }
     RayOrder[tileIndex * 64u + destination] = valid ? (pixel.y * FullExtent.x + pixel.x) : 0xffffffffu;
 }
+

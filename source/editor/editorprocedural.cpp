@@ -343,3 +343,4 @@ void ImGuiManager::DrawRaytracingWindow()
     ImGui::TextWrapped("アップスケーラーは環境設定から選択できます。");
     ImGui::End();
 }
+

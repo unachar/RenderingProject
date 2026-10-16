@@ -190,36 +190,42 @@ bool EnsureOutput(FrameResources& frame, UINT width, UINT height)
     return true;
 }
 
+// NRD guides are written and consumed inside one command list, and NRD keeps its own copy of
+// the previous normal/viewZ. One shared set therefore replaces the former per-frame-slot copies
+// (5 full-resolution textures x 3 slots -> x 1). Each slot keeps a reference to the set it
+// recorded with, so a resize never releases textures that an in-flight frame still uses.
+array<ComPtr<ID3D12Resource>, 5> g_SharedGuides;
+
+bool EnsureSharedGuide(UINT index, DXGI_FORMAT format, UINT width, UINT height)
+{
+    auto& guide = g_SharedGuides[index];
+    if (guide && guide->GetDesc().Width == width && guide->GetDesc().Height == height) return true;
+    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+    const auto description = CD3DX12_RESOURCE_DESC::Tex2D(format, width, height,
+        1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    ComPtr<ID3D12Resource> created;
+    if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&created)))) return false;
+    created->SetName(index < 4 ? L"NRD Primary Surface Guide (shared)" : L"NRD Ambient Guide (shared)");
+    guide = move(created);
+    return true;
+}
+
 bool EnsureDenoiser(FrameResources& frame)
 {
     if (!NrdDenoiser::IsCompiled() || !g_ComposeShadow) return false;
     constexpr DXGI_FORMAT formats[] = { DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_R10G10B10A2_UNORM,
-        DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R16_FLOAT };
-    for (UINT index = 0; index < frame.Guides.size(); ++index)
+        DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R16_FLOAT, DXGI_FORMAT_R16_FLOAT };
+    for (UINT index = 0; index < 5; ++index)
     {
-        auto& guide = frame.Guides[index];
-        if (guide && guide->GetDesc().Width == frame.Width && guide->GetDesc().Height == frame.Height) continue;
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-        const auto description = CD3DX12_RESOURCE_DESC::Tex2D(formats[index], frame.Width, frame.Height,
-            1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(guide.ReleaseAndGetAddressOf())))) return false;
-        guide->SetName(L"NRD Primary Surface Guide");
+        if (!EnsureSharedGuide(index, formats[index], frame.Width, frame.Height)) return false;
+        auto& slotGuide = index < 4 ? frame.Guides[index] : frame.AmbientGuide;
+        if (slotGuide == g_SharedGuides[index]) continue;
+        slotGuide = g_SharedGuides[index];
         D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
         uav.Format = formats[index];
         uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-        g_Device->CreateUnorderedAccessView(guide.Get(), nullptr, &uav, Cpu(kGuideUavStart + g_FrameIndex * 5 + index));
-    }
-    if (!frame.AmbientGuide || frame.AmbientGuide->GetDesc().Width != frame.Width || frame.AmbientGuide->GetDesc().Height != frame.Height)
-    {
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-        const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16_FLOAT, frame.Width, frame.Height,
-            1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(frame.AmbientGuide.ReleaseAndGetAddressOf())))) return false;
-        D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
-        uav.Format = desc.Format; uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-        g_Device->CreateUnorderedAccessView(frame.AmbientGuide.Get(), nullptr, &uav, Cpu(kGuideUavStart + g_FrameIndex * 5 + 4));
+        g_Device->CreateUnorderedAccessView(slotGuide.Get(), nullptr, &uav, Cpu(kGuideUavStart + g_FrameIndex * 5 + index));
     }
     if (!g_NrdSun || g_NrdWidth != frame.Width || g_NrdHeight != frame.Height)
     {
@@ -620,6 +626,7 @@ void Raytracing::Shutdown()
     g_ComposeAmbient.Reset();
     g_NrdAmbient.reset();
     g_Frames = {};
+    g_SharedGuides = {};
     g_Constants.Reset();
     g_LightingConstants.Reset();
     g_LightShadowFlags = {};
@@ -704,6 +711,16 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         clamp(g_Settings.SunAngularRadius, 0.0f, 0.05f) };
     constants.Features = { static_cast<UINT>(UsesRaytracedShadows()), static_cast<UINT>(UsesRaytracedAmbientOcclusion()),
         static_cast<UINT>(NrdDenoiser::IsCompiled() && g_Settings.Denoise), 0 };
+    // With NRD active, SIGMA consumes only the first stochastic sun ray and REBLUR only the first
+    // AO hit distance; ComposeShadow / ComposeAmbient then overwrite the averaged visibility.
+    // Extra samples are wasted rays, so trace one while both histories are known to be valid
+    // (the averaged multi-sample result is still used during the first frame / any fallback).
+    const bool shadowDenoised = !UsesRaytracedShadows() || g_SunDirection.w <= 0.5f || shadowHistoryValid;
+    const bool ambientDenoised = !UsesRaytracedAmbientOcclusion() || ambientHistoryValid;
+    if (constants.Features.z != 0 && shadowDenoised && ambientDenoised)
+    {
+        constants.ExtentSamples.z = 1;
+    }
     if (constants.Features.x == 0 && constants.Features.y == 0)
     {
         // Reflections still need the guides, but repeated unoccluded samples add no information.
@@ -891,6 +908,11 @@ D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetResultSrv() { return Gpu(g_Active ? k
 XMFLOAT4 Raytracing::GetSunDirection() { return g_SunDirection; }
 UINT Raytracing::GetInstanceCount() { return g_InstanceCount; }
 UINT Raytracing::GetDenoiserDispatchCount() { return g_NrdDispatchCount; }
+D3D12_GPU_VIRTUAL_ADDRESS Raytracing::GetSceneAddress()
+{
+    const auto& frame = g_Frames[g_FrameIndex];
+    return g_Active && frame.TopLevel ? frame.TopLevel->GetGPUVirtualAddress() : 0;
+}
 UINT Raytracing::GetAmbientDenoiserDispatchCount() { return g_AmbientDispatchCount; }
 bool Raytracing::AreReflectionsActive() { return g_ReflectionsActive; }
 D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetReflectionSrv()
@@ -928,3 +950,4 @@ D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetGiSrv()
 {
     return RayReflections::GetGiSrv(g_FrameIndex);
 }
+

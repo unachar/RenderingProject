@@ -21,3 +21,4 @@ class GpuScene
     static uint32_t ResolveEntity(GPUInstanceID id, uint64_t generation);
     static void DrawDebug();
 };
+

@@ -70,3 +70,4 @@ inline bool FindNodeGlobalMatrix(aiNode* node, const string& boneName, const aiM
 	return false;
 }
 }
+

@@ -93,3 +93,4 @@ struct GpuSceneStatistics
     uint64_t BufferMemoryBytes = 0;
     double UpdateCpuMilliseconds = 0;
 };
+

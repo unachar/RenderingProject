@@ -166,7 +166,10 @@ namespace
         constants.AssetTextures = {textureOffset(material.MetallicRoughnessID),
             textureOffset(material.AOTextureID), textureOffset(material.EmissiveTextureID),
             static_cast<uint32_t>(material.AssetSurface) |
-            (static_cast<uint32_t>(material.DoubleSided ? MaterialCull::None : material.AssetCull) << 2)};
+            (static_cast<uint32_t>(material.DoubleSided ? MaterialCull::None : material.AssetCull) << 2) |
+            // Extended shading model (MaterialSurface.hlsli: EncodeShadingModel): bits 4-6 model, 8-15 strength.
+            ((min(material.ShadingModel, 7u) & 7u) << 4) |
+            (static_cast<uint32_t>(clamp(material.ShadingStrength, 0.0f, 1.0f) * 255.0f + 0.5f) << 8)};
 		return constants;
 	}
 
@@ -446,3 +449,5 @@ void MaterialBindings::UpdateDeferredLightingMaterial()
 		memcpy(pbrDst, &pbrConstants, sizeof(pbrConstants));
 	}
 }
+
+

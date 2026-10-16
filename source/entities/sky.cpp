@@ -43,3 +43,4 @@ void Sky::Create()
 
 	Game::RegisterEntity(this);
 }
+

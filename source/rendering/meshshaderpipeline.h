@@ -37,3 +37,4 @@ public:
 		const XMFLOAT3& localCenter,
 		const XMFLOAT3& localExtents);
 };
+

@@ -34,3 +34,4 @@ public:
     static uint64_t CacheHits();
     static uint64_t LastCacheKey(AssetHandle guid);
 };
+

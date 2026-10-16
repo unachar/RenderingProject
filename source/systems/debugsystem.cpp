@@ -206,6 +206,23 @@ static void AppendLightLines(vector<DebugVertex>& vertices, const TransformCompo
 	}
 
 	const float range = max(light.Range, 0.1f);
+	if (light.Type == LightType::Rect)
+	{
+		// Same basis as the shader (SurfaceLighting.hlsli: RectLightBasis).
+		XMVECTOR normal = XMVector3Normalize(XMLoadFloat3(&direction));
+		XMVECTOR up = fabsf(XMVectorGetY(normal)) > 0.99f ? XMVectorSet(1, 0, 0, 0) : XMVectorSet(0, 1, 0, 0);
+		XMVECTOR right = XMVector3Normalize(XMVector3Cross(up, normal));
+		XMVECTOR upAxis = XMVector3Cross(normal, right);
+		XMFLOAT3 r, u;
+		XMStoreFloat3(&r, XMVectorScale(right, light.AreaWidth * 0.5f));
+		XMStoreFloat3(&u, XMVectorScale(upAxis, light.AreaHeight * 0.5f));
+		const XMFLOAT3 corners[4] = {
+			Add3(Add3(position, r), u), Add3(Add3(position, r), Scale3(u, -1.0f)),
+			Add3(Add3(position, Scale3(r, -1.0f)), Scale3(u, -1.0f)), Add3(Add3(position, Scale3(r, -1.0f)), u) };
+		for (int corner = 0; corner < 4; ++corner) AppendLine(vertices, corners[corner], corners[(corner + 1) % 4], color);
+		AppendLine(vertices, position, Add3(position, Scale3(direction, 0.5f)), color);
+		return;
+	}
 	if (light.Type == LightType::Point)
 	{
 		AppendCircle(vertices, position, range, 0, color);
@@ -662,4 +679,6 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		SubmitDebugLines(pCommandList, lightLines);
 	}
 }
+
+
 

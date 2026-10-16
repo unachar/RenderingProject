@@ -304,3 +304,4 @@ public:
 		return m_Entities[entity].Mask.test(type);
 	}
 };
+

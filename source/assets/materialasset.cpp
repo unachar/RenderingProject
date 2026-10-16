@@ -88,7 +88,8 @@ bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string
         !range(material.AlphaCutoff, 0, 1, "alphaCutoff") ||
         !range(material.ShadowCutoff, 0, 1, "shadowCutoff") ||
         !range(material.IOR, 1, 10, "ior") || !range(material.Transmission, 0, 1, "transmission") ||
-        !range(material.Thickness, 0, 65504, "thickness"))
+        !range(material.Thickness, 0, 65504, "thickness") ||
+        !range(material.ShadingStrength, 0, 1, "shadingStrength"))
     {
         return false;
     }
@@ -197,9 +198,19 @@ bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetDa
         !ReadFloat(parameters, "ior", result.IOR, error) ||
         !ReadFloat(parameters, "transmission", result.Transmission, error) ||
         !ReadFloat(parameters, "thickness", result.Thickness, error) ||
+        !ReadFloat(parameters, "shadingStrength", result.ShadingStrength, error) ||
         !ReadColor(parameters, "absorptionCoefficient", result.AbsorptionCoefficient, error))
     {
         return false;
+    }
+    if (parameters.isMember("shadingModel"))
+    {
+        if (!parameters["shadingModel"].isUInt() || parameters["shadingModel"].asUInt() > 5u)
+        {
+            error = "Invalid shadingModel property";
+            return false;
+        }
+        result.ShadingModel = parameters["shadingModel"].asUInt();
     }
     if (root.isMember("surfaceType"))
     {
@@ -335,6 +346,8 @@ bool MaterialSerializer::Save(const std::filesystem::path& path, const MaterialA
     parameters["ior"] = material.IOR;
     parameters["transmission"] = material.Transmission;
     parameters["thickness"] = material.Thickness;
+    parameters["shadingModel"] = material.ShadingModel;
+    parameters["shadingStrength"] = material.ShadingStrength;
     for (float value : material.AbsorptionCoefficient) parameters["absorptionCoefficient"].append(value);
     parameters["roughness"] = material.Roughness;
     parameters["normalScale"] = material.NormalScale;
@@ -348,3 +361,5 @@ bool MaterialSerializer::Save(const std::filesystem::path& path, const MaterialA
     writer["indentation"] = "  ";
     return WriteAssetFile(path, Json::writeString(writer, root), error);
 }
+
+

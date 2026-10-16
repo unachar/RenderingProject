@@ -172,3 +172,4 @@ void ComposeShadow(uint3 dispatchId : SV_DispatchThreadID)
     Visibility[pixel] = visibility;
 }
 #endif
+

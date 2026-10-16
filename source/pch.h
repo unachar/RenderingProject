@@ -93,3 +93,4 @@ public:
 	ResourceBarrier(NumBarriers, pBarriers), \
 	RenderProfiler::RecordResourceBarriers(static_cast<UINT>(NumBarriers))
 #endif
+

@@ -87,3 +87,4 @@ void main(uint3 id : SV_DispatchThreadID)
     }
     gResult[slot] = result;
 }
+

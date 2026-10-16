@@ -234,3 +234,4 @@ float CloudSunVisibility(float3 position)
 }
 
 #endif
+

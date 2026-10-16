@@ -441,3 +441,4 @@ void AssetThumbnailManager::Shutdown()
     ThumbnailRenderer::Shutdown();
     EditorDescriptors::Shutdown();
 }
+

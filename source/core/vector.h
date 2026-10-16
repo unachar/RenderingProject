@@ -176,3 +176,4 @@ public:
 	static const Vector3 Zero() { return Vector3(0.f, 0.f, 0.f); }
 };
 
+

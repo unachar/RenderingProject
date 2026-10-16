@@ -974,3 +974,4 @@ float4 main(PSInputPostProcess input) : SV_Target
         participatingMedia,
         localFog.Transmittance);
 }
+

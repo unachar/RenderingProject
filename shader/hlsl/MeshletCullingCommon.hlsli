@@ -88,3 +88,4 @@ bool OcclusionCull(float4 sphere,GPUInstanceData instance)
     { float depth=HiZ.Load(int3(x,y,mip)); if(!isfinite(depth)) return false; farthest=max(farthest,depth); }
     return nearest>farthest+max(Bias,0);
 }
+

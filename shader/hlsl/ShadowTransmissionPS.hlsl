@@ -47,3 +47,4 @@ float4 main(float4 position : SV_POSITION, float2 uv : TEXCOORD,
     float3 transmission = saturate(Transparent0.y) * (1.0f - saturate(metallic)) * slab;
     return float4(saturate(lerp(1.0f, transmission, opacity)), 1.0f);
 }
+

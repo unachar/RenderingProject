@@ -26,3 +26,4 @@ ShadowVertexOutput main(VSInput3D input)
         normalize(mul(input.Normal, normalMatrix) / determinant) : normalize(input.Normal);
     return output;
 }
+

@@ -53,3 +53,4 @@ float4 LoadSceneMaterialVector(ByteAddressBuffer materials, uint materialId, uin
     return asfloat(materials.Load4(materialId * GPU_SCENE_MATERIAL_STRIDE + 64u + vectorIndex * 16u));
 }
 #endif
+

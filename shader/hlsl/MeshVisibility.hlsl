@@ -188,3 +188,4 @@ void MSMain(
     outputVertices[outputBase + 2u] = BuildMeshVertex(LoadMeshIndex(firstIndex + outputBase + 2u));
     outputTriangles[threadIndex] = uint3(outputBase, outputBase + 1u, outputBase + 2u);
 }
+

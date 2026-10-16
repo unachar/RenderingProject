@@ -16,3 +16,4 @@ VelocityOutput main(VSInput3D input)
     output.PreviousClip=mul(mul(float4(input.Position,1),instance.PreviousWorld),PreviousViewProjection);
     return output;
 }
+

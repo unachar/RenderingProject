@@ -60,3 +60,4 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float visibility = 1.0f - saturate(coveredSectors * 0.55f + horizonStrength * 0.45f);
     OutOcclusion[pixel] = pow(saturate(visibility), EffectParams.y);
 }
+

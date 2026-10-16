@@ -42,6 +42,9 @@ struct MaterialAssetData
     float Transmission = 0.0f;
     float Thickness = 0.1f;
     std::array<float, 3> AbsorptionCoefficient{0, 0, 0};
+    // Extended shading model: 0 Standard, 1 ClearCoat, 2 Sheen (cloth), 3 Skin, 4 Hair, 5 Anisotropic.
+    uint32_t ShadingModel = 0;
+    float ShadingStrength = 1.0f;
     bool operator==(const MaterialAssetData&) const = default;
 };
 
@@ -55,3 +58,5 @@ public:
 
 // Atomically replaces a file in the same directory; an unsuccessful write leaves its destination intact.
 bool WriteAssetFile(const std::filesystem::path& path, const std::string& contents, std::string& error);
+
+

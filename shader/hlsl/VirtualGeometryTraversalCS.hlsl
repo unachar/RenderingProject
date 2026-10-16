@@ -558,3 +558,4 @@ void BuildTemporalArguments()
         TemporalArguments.Store3(phase*12,uint3(x,count ? (count+x-1)/max(x,1u) : 1,1));
     }
 }
+

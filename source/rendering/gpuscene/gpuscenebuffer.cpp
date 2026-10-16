@@ -145,3 +145,4 @@ uint64_t GpuSceneBuffer::MemoryBytes() const
     }
     return bytes;
 }
+

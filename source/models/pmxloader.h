@@ -93,3 +93,4 @@
 		uint32_t meshIndex,
 		uint32_t vertexIndex,
 		GpuSkinVertex& gpuVertex);
+

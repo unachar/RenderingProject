@@ -58,3 +58,4 @@ void ComponentManager::ReportMissingComponentError(EntityID entity, const char* 
 	MessageBoxW(nullptr, buf, L"ECS Component Missing Error", MB_OK | MB_ICONERROR);
 }
 
+

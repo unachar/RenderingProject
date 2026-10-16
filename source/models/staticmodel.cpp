@@ -1666,3 +1666,4 @@ void StaticModelResource::RebuildVirtualGeometry(const VGImportSettings& setting
         GPUDrivenRenderer::UpdateGeometry(mesh);
     }
 }
+

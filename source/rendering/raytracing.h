@@ -46,7 +46,10 @@ public:
     static D3D12_GPU_DESCRIPTOR_HANDLE GetGiSrv();
     static D3D12_GPU_DESCRIPTOR_HANDLE GetReflectionSrv();
     static D3D12_GPU_VIRTUAL_ADDRESS GetLightingConstantsAddress(UINT frameIndex);
+    // TLAS built by Execute() this frame (0 when ray tracing did not run).
+    static D3D12_GPU_VIRTUAL_ADDRESS GetSceneAddress();
     static void BeginLightList();
     static void SetLightShadowFlag(UINT index, bool castShadow);
     static void BindLighting(ID3D12GraphicsCommandList* commandList, UINT sceneRootIndex, UINT constantsRootIndex);
 };
+

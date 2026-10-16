@@ -1111,3 +1111,4 @@ bool RenderingValidation::Finish()
     WriteGraphicsLog("Validation: feature smoke failures = %u\n", g_Failures);
     return g_Failures == 0;
 }
+

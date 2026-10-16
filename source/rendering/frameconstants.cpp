@@ -18,3 +18,4 @@ D3D12_GPU_DESCRIPTOR_HANDLE FrameConstants::AllocateTransientConstantBuffer(cons
 	memcpy(frameCbvDataBegin + (slot * g_kCB_ALIGNED_SIZE), data, bytes);
 	return GetConstantBufferHandle(slot);
 }
+

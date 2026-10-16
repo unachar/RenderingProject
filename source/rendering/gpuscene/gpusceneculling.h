@@ -14,3 +14,4 @@ class GpuSceneCulling
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_Root;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> m_Pipeline;
 };
+

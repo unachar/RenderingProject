@@ -244,3 +244,4 @@ void World::SetTargetFrameRate(int fps)
     m_TargetFrameRate = max(1, min(fps, 360));
 }
 
+

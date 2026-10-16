@@ -15,3 +15,4 @@ void WriteGraphicsLog(const char* format, ...)
 	va_end(arguments);
 	fclose(fp);
 }
+

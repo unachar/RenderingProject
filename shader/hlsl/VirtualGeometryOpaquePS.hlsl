@@ -13,3 +13,4 @@ GBufferOutput main(PSInput3D input, bool frontFace : SV_IsFrontFace)
     }
     return output;
 }
+

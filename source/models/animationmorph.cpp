@@ -874,3 +874,4 @@ void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* anima
 		}
 	}
 }
+
