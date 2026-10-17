@@ -247,6 +247,7 @@ void ImGuiManager::Update()
 	if (!io.WantTextInput && io.KeyCtrl && !io.KeyShift && !io.KeyAlt &&
 		!ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing() &&
 		!ImGui::IsMouseDown(ImGuiMouseButton_Right) && !MaterialEditorHasFocus() &&
+		!m_AssetBrowserFocused && // アセットブラウザでの Ctrl+D はアセットの複製
 		ImGui::IsKeyPressed(ImGuiKey_D, false))
 	{
 		DuplicateSelectedEntity();
@@ -267,6 +268,7 @@ void ImGuiManager::Update()
 		m_SelectedEntity != g_kINVALID_ENTITY &&
 		Registry::IsAlive(m_SelectedEntity) &&
 		ComponentManager::HasComponent<NameComponent>(m_SelectedEntity) &&
+		!m_AssetBrowserFocused && // アセットブラウザにフォーカスがある間の F2 はアセットのリネーム
 		ImGui::IsKeyPressed(ImGuiKey_F2, false))
 	{
 		BeginRename(m_SelectedEntity);
@@ -867,4 +869,5 @@ void ImGuiManager::StyleModernSlim()
 		style.FrameBorderSize = 0.0f;
 	}
 }
+
 

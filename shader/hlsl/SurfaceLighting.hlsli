@@ -832,8 +832,8 @@ float LtcEvaluateQuad(float3 N, float3 V, float3 P, float3x3 minv, float3 corner
 }
 
 // Returns outgoing radiance for emitter radiance 1 (diffuse + specular, standard GGX).
-float3 EvaluateRectLightLtc(float3 N, float3 V, float3 P, float3 center, float3 emitNormal,
-    float width, float height, float3 albedo, float3 materialData)
+float3 EvaluateRectLightLtcTinted(float3 N, float3 V, float3 P, float3 center, float3 emitNormal,
+    float width, float height, float3 albedo, float3 materialData, float3 diffuseTint, float3 specularTint)
 {
     if (dot(P - center, emitNormal) <= 0.0f) return 0.0f; // one sided emitter
     float3 right, up;
@@ -857,8 +857,329 @@ float3 EvaluateRectLightLtc(float3 N, float3 V, float3 P, float3 center, float3 
     specular = LtcEvaluateQuad(N, V, P, minv, corners) * FssEss * SpecularEnergyCompensation(F0, NdotV, roughness);
 #endif
     float3 kD = (1.0f - F0) * (1.0f - metallic);
-    return albedo * kD * diffuse + specular;
+    return albedo * kD * diffuse * diffuseTint + specular * specularTint;
 }
+
+float3 EvaluateRectLightLtc(float3 N, float3 V, float3 P, float3 center, float3 emitNormal,
+    float width, float height, float3 albedo, float3 materialData)
+{
+    return EvaluateRectLightLtcTinted(N, V, P, center, emitNormal, width, height, albedo, materialData, 1.0f, 1.0f);
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// MegaLights M7：テクスチャ付き矩形ライト
+//   Rect の Extra.w = テクスチャ番号 + 1（エンジンのテクスチャ SRV の並び。0 = なし）
+//   LTC の解析解に掛ける色を、拡散は法線方向・鏡面は反射方向が発光面と交わる点のテクスチャで近似する
+//   （Heitz 2016 の textured LTC の簡易版。ミップは距離と粗さから決める）
+// ---------------------------------------------------------------------------------------------
+#ifdef MEGALIGHTS_LIGHT_TEXTURES
+Texture2D<float4> MegaLightTextures[512] : register(t0, space5);
+
+float3 MLSampleRectTexture(uint textureIndex, float3 center, float3 emitNormal, float width, float height,
+    float3 origin, float3 direction, float footprint)
+{
+    float3 right, up;
+    RectLightBasis(emitNormal, right, up);
+    // 発光面との交点（交わらないときは面への最近点）
+    const float denominator = dot(direction, -emitNormal);
+    float3 hit = origin + direction * max(dot(origin - center, emitNormal) / max(denominator, 1.0e-4f), 0.0f);
+    if (denominator <= 1.0e-4f) hit = origin - emitNormal * dot(origin - center, emitNormal);
+    const float2 uv = saturate(float2(dot(hit - center, right) / max(width, 1.0e-3f), -dot(hit - center, up) / max(height, 1.0e-3f)) + 0.5f);
+    uint textureWidth, textureHeight, mipCount;
+    MegaLightTextures[NonUniformResourceIndex(textureIndex)].GetDimensions(0, textureWidth, textureHeight, mipCount);
+    const float texels = footprint / max(max(width, height), 1.0e-3f) * (float)max(textureWidth, textureHeight);
+    const float lod = clamp(log2(max(texels, 1.0f)), 0.0f, (float)max(mipCount, 1u) - 1.0f);
+    return MegaLightTextures[NonUniformResourceIndex(textureIndex)].SampleLevel(TextureSampler, uv, lod).rgb;
+}
+
+float3 MLRectTextureMean(uint textureIndex)
+{
+    uint textureWidth, textureHeight, mipCount;
+    MegaLightTextures[NonUniformResourceIndex(textureIndex)].GetDimensions(0, textureWidth, textureHeight, mipCount);
+    return MegaLightTextures[NonUniformResourceIndex(textureIndex)].SampleLevel(TextureSampler, float2(0.5f, 0.5f), (float)max(mipCount, 1u) - 1.0f).rgb;
+}
+#endif
+// ---------------------------------------------------------------------------------------------
+// 1 ライト分の評価（従来のライトループの本体を関数化。結果は acc に加算）
+//   cbIndex >= 0 : LightParams 配列のライト。シャドウマップ / VSM / DXR 影 / コンタクト影 / 雲影は従来どおり
+//   cbIndex <  0 : MegaLights グリッドのローカルライト
+//   sampleWeight      : 寄与に掛ける重み（M2 では 1/(N·p)。それ以外は 1）
+//   visibilityOverride: >= 0 なら影の計算をせずこの可視率を使う（M2 の影レイ / リファレンス）
+// ---------------------------------------------------------------------------------------------
+struct SurfaceLightAccumulator
+{
+    float3 PbrDirect;
+    float3 DirSum;
+    float3 ColorSum;
+    float WeightSum;
+    float MaxAttenuation;
+    float VolumeSum;
+    float RangeSum;
+    float ShadowSum;
+};
+
+void AccumulateSurfaceLight(
+    int cbIndex,
+    float4 lightDirection,
+    float4 lightPositionType,
+    float4 lightExtra,
+    float4 lightColorData,
+    bool decalLight,
+    bool gridCastShadow,
+    float sampleWeight,
+    float visibilityOverride,
+    float3 worldPos,
+    float3 worldPosDx,
+    float3 worldPosDy,
+    float3 normal,
+    float2 pixelPosition,
+    int shadowFilterRadius,
+    bool evaluatePbr,
+    float3 viewDir,
+    float3 albedo,
+    float3 materialData,
+    float shadowSoftness,
+    float3 monitorColor,
+    inout SurfaceLightAccumulator acc)
+{
+        float3 singleDir;
+        float singleAttenuation;
+        float singleVolume;
+        ResolveSingleLightCommon(worldPos, lightDirection, lightPositionType, lightExtra, singleDir, singleAttenuation, singleVolume);
+
+		float lightIntensityValue = max(lightColorData.a, 0.0f);
+		[branch]
+		if (singleAttenuation <= 0.000001f || lightIntensityValue <= 0.000001f)
+		{
+			return;
+		}
+
+        float3 shadowVisibility = 1.0f;
+        [branch]
+        if (visibilityOverride >= 0.0f)
+        {
+            // MegaLights M2 / リファレンス：影レイの結果（可視率）が与えられている
+            shadowVisibility = visibilityOverride;
+        }
+        else if (cbIndex >= 0)
+        {
+            const int i = cbIndex;
+            shadowVisibility = decalLight
+    			? 1.0f
+    			: SampleSurfaceShadowMap(
+                    i,
+                    worldPos,
+                    worldPosDx,
+                    worldPosDy,
+                    normal,
+                    singleDir,
+                    shadowFilterRadius);
+
+    		const bool directionalShadow =
+    			LightPositionTypes[i].w < 0.5f && LightShadowData[i].x >= -0.5f;
+            float contactVisibility = !decalLight && directionalShadow
+                ? SampleContactShadow(worldPos, normal, singleDir)
+                : 1.0f;
+#ifdef SHADER_RAYTRACING
+            if (SceneRayFlags.x > 0.5f) contactVisibility = 1.0f;
+#endif
+            shadowVisibility *= lerp(1.0f, contactVisibility, 0.45f);
+    		const bool useRayShadow = !decalLight && directionalShadow &&
+    			RaytracingFlags.x > 0.5f && RaytracingFlags.z > 0.5f &&
+    			RaytracingSunDirection.w > 0.5f && dot(singleDir, RaytracingSunDirection.xyz) > 0.999f;
+    		if (useRayShadow)
+    		{
+    			uint rayWidth;
+    			uint rayHeight;
+    			RaytracedVisibility.GetDimensions(rayWidth, rayHeight);
+    			shadowVisibility = RaytracedVisibility.SampleLevel(TextureSampler, pixelPosition / float2(rayWidth, rayHeight), 0).r;
+    		}
+    		bool useLegacyDistanceShadow = !useRayShadow && !decalLight && directionalShadow;
+#ifdef SHADER_RAYTRACING
+            useLegacyDistanceShadow = useLegacyDistanceShadow && SceneRayFlags.x < 0.5f;
+#endif
+    		if (useLegacyDistanceShadow)
+    		{
+    			shadowVisibility *= SampleDistanceFieldShadow(worldPos, normal, singleDir);
+    		}
+            // Apply after raster/DXR visibility so neither path can overwrite cloud extinction.
+            if (!decalLight && i == CloudSunIndex())
+                shadowVisibility *= CloudSunVisibility(worldPos);
+        }
+#ifdef SHADER_RAYTRACING
+        else if (gridCastShadow && SceneRayFlags.x > 0.5f && SceneRayFlags.z > 0.5f)
+        {
+            // MegaLights M1 グリッドのライト：DXR 影モードならライト中心へ影のレイを 1 本
+            const float maximumDistance = min(length(lightPositionType.xyz - worldPos), SceneRayParameters.x);
+            shadowVisibility = TraceSceneShadow(worldPos, normal, singleDir, maximumDistance);
+        }
+#endif
+        float3 authoredLightColor = max(lightColorData.rgb, float3(0.0f, 0.0f, 0.0f));
+#ifdef MEGALIGHTS_LIGHT_TEXTURES
+        // M7：テクスチャ付き矩形ライト。非 PBR の陰影・平均ライトにはテクスチャの平均色を使う
+        const uint lightTexture = (cbIndex < 0 && lightPositionType.w > 3.5f) ? (uint)round(lightExtra.w) : 0u;
+        float3 textureMean = 1.0f;
+        if (lightTexture != 0u)
+        {
+            textureMean = max(MLRectTextureMean(lightTexture - 1u), 1.0e-4f);
+            authoredLightColor *= textureMean;
+        }
+#endif
+		if (decalLight)
+		{
+
+			authoredLightColor *= monitorColor;
+		}
+        float3 singleColor = authoredLightColor * lightIntensityValue * singleAttenuation * shadowVisibility;
+        if (!decalLight)
+		{
+			singleColor = ApplyAtmosphereToLightCommon(worldPos, singleDir, singleColor, singleVolume);
+		}
+
+        if (evaluatePbr)
+        {
+#ifdef SURFACE_PBR_LUTS
+            const bool rectLight = !decalLight && lightPositionType.w > 3.5f && QualityFlags.y > 0.5f;
+#else
+            const bool rectLight = false;
+#endif
+            [branch]
+            if (rectLight)
+            {
+                float3 toCenter = lightPositionType.xyz - worldPos;
+                float rangeFade = saturate(1.0f - length(toCenter) / max(lightDirection.w, 0.01f));
+                float3 emitterRadiance = authoredLightColor * lightIntensityValue * shadowVisibility * rangeFade * rangeFade;
+                const float3 emitNormal = SafeNormalizeCommon(lightDirection.xyz, float3(0.0f, -1.0f, 0.0f));
+                float3 diffuseTint = 1.0f;
+                float3 specularTint = 1.0f;
+#ifdef MEGALIGHTS_LIGHT_TEXTURES
+                if (lightTexture != 0u)
+                {
+                    // 平均色は emitterRadiance に入っているので、ここでは平均との比を掛ける
+                    const float distance = length(toCenter);
+                    const float roughness = clamp(materialData.g, 0.04f, 1.0f);
+                    diffuseTint = MLSampleRectTexture(lightTexture - 1u, lightPositionType.xyz, emitNormal, lightExtra.x, lightExtra.y,
+                        worldPos, normal, distance * 2.0f) / textureMean;
+                    specularTint = MLSampleRectTexture(lightTexture - 1u, lightPositionType.xyz, emitNormal, lightExtra.x, lightExtra.y,
+                        worldPos, reflect(-viewDir, normal), distance * roughness * roughness * 2.0f) / textureMean;
+                }
+#endif
+                acc.PbrDirect += sampleWeight * EvaluateRectLightLtcTinted(normal, viewDir, worldPos, lightPositionType.xyz,
+                    emitNormal, lightExtra.x, lightExtra.y, albedo, materialData, diffuseTint, specularTint) * emitterRadiance;
+            }
+            else
+            {
+                acc.PbrDirect += sampleWeight * EvaluatePbrDirectLight(
+                    normal, viewDir, singleDir, singleColor, albedo, materialData, shadowSoftness);
+            }
+        }
+
+        float weight = max(dot(authoredLightColor * lightIntensityValue, float3(0.299f, 0.587f, 0.114f)), 0.0001f) * singleAttenuation * sampleWeight;
+        acc.DirSum += singleDir * weight;
+        acc.ColorSum += singleColor * sampleWeight;
+        acc.WeightSum += weight;
+        acc.MaxAttenuation = max(acc.MaxAttenuation, singleAttenuation);
+        float visibilityLuminance = dot(shadowVisibility, float3(0.2126f, 0.7152f, 0.0722f));
+        acc.VolumeSum += singleVolume * lightIntensityValue * visibilityLuminance;
+        acc.RangeSum += saturate((max(lightDirection.w, 1.0f) - 1.0f) / 7.0f) * weight;
+        acc.ShadowSum += visibilityLuminance * weight;
+}
+
+#if defined(MEGALIGHTS_GRID) && !defined(MEGALIGHTS_FORWARD)
+// ---------------------------------------------------------------------------------------------
+// MegaLights M2 / M3（ディファードのみ）
+// ---------------------------------------------------------------------------------------------
+void MLAccumulateSampleSet(uint2 samplePixel, float weight,
+    float3 worldPos, float3 worldPosDx, float3 worldPosDy, float3 normal, float2 pixelPosition, int shadowFilterRadius,
+    float3 viewDir, float3 albedo, float3 materialData, float shadowSoftness, float3 monitorColor,
+    inout SurfaceLightAccumulator acc)
+{
+    const uint sampleCount = MLStochastic.y;
+    const uint sampleBase = MLSampleBase(samplePixel);
+    const float scale = weight / (float)max(sampleCount, 1u);
+    [loop]
+    for (uint sampleIndex = 0u; sampleIndex < sampleCount; ++sampleIndex)
+    {
+        const uint4 lightSample = MegaLightSamples[sampleBase + sampleIndex];
+        if ((lightSample.x & ML_SAMPLE_VALID) == 0u) continue;
+        const MegaLightData sampledLight = MegaLightBuffer[lightSample.x & ML_SAMPLE_INDEX];
+        const float visibility = (lightSample.x & ML_SAMPLE_VISIBLE) != 0u ? 1.0f : 0.0f;
+        AccumulateSurfaceLight(-1, sampledLight.DirectionRange, sampledLight.PositionType, sampledLight.Extra,
+            sampledLight.Color, false, false, asfloat(lightSample.y) * scale, visibility,
+            worldPos, worldPosDx, worldPosDy, normal, pixelPosition, shadowFilterRadius, true,
+            viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
+    }
+}
+
+// N 個のサンプルを 1/(N·p) の重みと影レイの可視率で評価（ML6）
+//   半解像度：このピクセルを囲む 2x2 のサンプル空間のピクセルを、深度・法線が近いものだけ重み付きで使う。
+//   各サンプルはこのピクセルの位置・法線・材質で評価し直す（選択確率と可視率は代表ピクセルのもの = 近似）
+void MLAccumulateStochasticSamples(
+    float3 worldPos, float3 worldPosDx, float3 worldPosDy, float3 normal, float2 pixelPosition, int shadowFilterRadius,
+    float3 viewDir, float3 albedo, float3 materialData, float shadowSoftness, float3 monitorColor,
+    inout SurfaceLightAccumulator acc)
+{
+    const uint2 pixel = uint2(pixelPosition);
+    if (MLSampleScale() == 1u)
+    {
+        MLAccumulateSampleSet(pixel, 1.0f, worldPos, worldPosDx, worldPosDy, normal, pixelPosition, shadowFilterRadius,
+            viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
+        return;
+    }
+    const float viewZ = mul(float4(worldPos, 1.0f), MLWorldToView).z;
+    // サンプルの代表ピクセルを基準にした双線形の位置
+    const uint2 offsets[4] = { uint2(0u, 0u), uint2(1u, 1u), uint2(1u, 0u), uint2(0u, 1u) };
+    const float2 position = (float2(pixel) - float2(offsets[MLSampleGrid.w & 3u])) * 0.5f;
+    const int2 base = int2(floor(position));
+    const float2 f = position - float2(base);
+    float weights[4];
+    uint2 candidates[4];
+    float weightSum = 0.0f;
+    [unroll]
+    for (uint index = 0u; index < 4u; ++index)
+    {
+        const int2 c = base + int2(index & 1u, index >> 1u);
+        weights[index] = 0.0f;
+        candidates[index] = uint2(clamp(c, int2(0, 0), int2(MLSampleGrid.xy) - 1));
+        if (any(c < 0) || any(c >= int2(MLSampleGrid.xy))) continue;
+        const uint2 q = MLSampleToScreen(candidates[index]);
+        const float qDepth = DepthTexture.Load(int3(q, 0));
+        if (!MLIsGeometryDepth(qDepth)) continue;
+        const float relative = abs(MLViewZFromDepth(qDepth) - viewZ) / max(viewZ, 1.0e-3f);
+        const float3 qNormal = DecodeGBufferNormal(NormalTexture.Load(int3(q, 0)).xyz);
+        const float bilinear = ((index & 1u) ? f.x : 1.0f - f.x) * ((index >> 1u) ? f.y : 1.0f - f.y);
+        weights[index] = (bilinear + 1.0e-3f) * saturate(1.0f - relative / 0.05f) * pow(saturate(dot(qNormal, normal)), 16.0f);
+        weightSum += weights[index];
+    }
+    if (weightSum <= 1.0e-5f)
+    {
+        // 近いサンプルが無い（細い物体・境界）：このピクセルを含むサンプルだけを使う
+        MLAccumulateSampleSet(MLScreenToSample(pixel), 1.0f, worldPos, worldPosDx, worldPosDy, normal, pixelPosition,
+            shadowFilterRadius, viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
+        return;
+    }
+    [loop]
+    for (uint candidate = 0u; candidate < 4u; ++candidate)
+    {
+        if (weights[candidate] <= 0.0f) continue;
+        MLAccumulateSampleSet(candidates[candidate], weights[candidate] / weightSum, worldPos, worldPosDx, worldPosDy, normal,
+            pixelPosition, shadowFilterRadius, viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
+    }
+}
+
+// デモジュレーション係数：拡散アルベド + 鏡面の方向アルベド（DFG の split sum）
+//   デノイズはこれで割った値（照明だけ）をぼかし、ディファードで掛け戻す → テクスチャの模様がぼけない
+float3 MLRemodulation(float3 N, float3 V, float3 albedo, float3 materialData)
+{
+    const float metallic = saturate(materialData.r);
+    const float roughness = clamp(materialData.g, 0.04f, 1.0f);
+    const float3 F0 = lerp(max(materialData.b, 0.04f).xxx, albedo, metallic);
+    const float2 dfg = SampleDfg(saturate(dot(N, V)), roughness);
+    const float3 reflectance = albedo * (1.0f - metallic) + F0 * dfg.x + dfg.y;
+    return max(reflectance, 0.02f);
+}
+#endif // MEGALIGHTS_GRID && !MEGALIGHTS_FORWARD
 
 void ResolveSurfaceLightAggregateShadowed(
     float3 worldPos,
@@ -889,13 +1210,15 @@ void ResolveSurfaceLightAggregateShadowed(
     aggregateShadowVisibility = 1.0f;
 
     int count = min((int)round(LightCount.x), MAX_SHADER_LIGHTS);
-    float3 dirSum = float3(0.0f, 0.0f, 0.0f);
-    float3 colorSum = float3(0.0f, 0.0f, 0.0f);
-    float weightSum = 0.0f;
-    float maxAttenuation = 0.0f;
-    float volumeSum = 0.0f;
-    float rangeSum = 0.0f;
-    float shadowSum = 0.0f;
+    SurfaceLightAccumulator acc = (SurfaceLightAccumulator)0;
+#ifdef MEGALIGHTS_GRID
+#ifdef MEGALIGHTS_FORWARD
+    // M7：Forward / 半透明（グリッドが Forward 用に構築されたフレームだけ）
+    const bool gridActive = MLForwardGridActive() && g_MLCellIndex != ML_INVALID_CELL;
+#else
+    const bool gridActive = MLGridActive() && g_MLCellIndex != ML_INVALID_CELL;
+#endif
+#endif
 
     bool useLightGrid = HasLightTileGridCommon();
     uint tileBase = useLightGrid ? LightTileBaseCommon(pixelPosition) : 0u;
@@ -923,110 +1246,82 @@ void ResolveSurfaceLightAggregateShadowed(
         {
             continue;
         }
-
-        int i = (int)lightIndex;
-        float3 singleDir;
-        float singleAttenuation;
-        float singleVolume;
-        ResolveSingleLightCommon(worldPos, LightDirections[i], LightPositionTypes[i], LightExtras[i], singleDir, singleAttenuation, singleVolume);
-
-		float lightIntensityValue = max(LightColors[i].a, 0.0f);
-		[branch]
-		if (singleAttenuation <= 0.000001f || lightIntensityValue <= 0.000001f)
-		{
-			continue;
-		}
-
-		const bool decalLight = LightFlags[i].w >= 0.5f;
-        float3 shadowVisibility = decalLight
-			? 1.0f
-			: SampleSurfaceShadowMap(
-                i,
-                worldPos,
-                worldPosDx,
-                worldPosDy,
-                normal,
-                singleDir,
-                shadowFilterRadius);
-
-		const bool directionalShadow =
-			LightPositionTypes[i].w < 0.5f && LightShadowData[i].x >= -0.5f;
-        float contactVisibility = !decalLight && directionalShadow
-            ? SampleContactShadow(worldPos, normal, singleDir)
-            : 1.0f;
-#ifdef SHADER_RAYTRACING
-        if (SceneRayFlags.x > 0.5f) contactVisibility = 1.0f;
-#endif
-        shadowVisibility *= lerp(1.0f, contactVisibility, 0.45f);
-		const bool useRayShadow = !decalLight && directionalShadow &&
-			RaytracingFlags.x > 0.5f && RaytracingFlags.z > 0.5f &&
-			RaytracingSunDirection.w > 0.5f && dot(singleDir, RaytracingSunDirection.xyz) > 0.999f;
-		if (useRayShadow)
-		{
-			uint rayWidth;
-			uint rayHeight;
-			RaytracedVisibility.GetDimensions(rayWidth, rayHeight);
-			shadowVisibility = RaytracedVisibility.SampleLevel(TextureSampler, pixelPosition / float2(rayWidth, rayHeight), 0).r;
-		}
-		bool useLegacyDistanceShadow = !useRayShadow && !decalLight && directionalShadow;
-#ifdef SHADER_RAYTRACING
-        useLegacyDistanceShadow = useLegacyDistanceShadow && SceneRayFlags.x < 0.5f;
-#endif
-		if (useLegacyDistanceShadow)
-		{
-			shadowVisibility *= SampleDistanceFieldShadow(worldPos, normal, singleDir);
-		}
-        // Apply after raster/DXR visibility so neither path can overwrite cloud extinction.
-        if (!decalLight && i == CloudSunIndex())
-            shadowVisibility *= CloudSunVisibility(worldPos);
-        float3 authoredLightColor = max(LightColors[i].rgb, float3(0.0f, 0.0f, 0.0f));
-		if (decalLight)
-		{
-
-			authoredLightColor *= monitorColor;
-		}
-        float3 singleColor = authoredLightColor * lightIntensityValue * singleAttenuation * shadowVisibility;
-        if (!decalLight)
-		{
-			singleColor = ApplyAtmosphereToLightCommon(worldPos, singleDir, singleColor, singleVolume);
-		}
-
-        if (evaluatePbr)
+#ifdef MEGALIGHTS_GRID
+        // LightFlags.x == 2 : 不透明面はグリッドが受け持つ（グリッドが有効なフレームだけ二重評価を避ける）
+        if (gridActive && LightFlags[lightIndex].x > 1.5f)
         {
-#ifdef SURFACE_PBR_LUTS
-            const bool rectLight = !decalLight && LightPositionTypes[i].w > 3.5f && QualityFlags.y > 0.5f;
-#else
-            const bool rectLight = false;
-#endif
-            [branch]
-            if (rectLight)
-            {
-                float3 toCenter = LightPositionTypes[i].xyz - worldPos;
-                float rangeFade = saturate(1.0f - length(toCenter) / max(LightDirections[i].w, 0.01f));
-                float3 emitterRadiance = authoredLightColor * lightIntensityValue * shadowVisibility * rangeFade * rangeFade;
-                pbrDirectLight += EvaluateRectLightLtc(normal, viewDir, worldPos, LightPositionTypes[i].xyz,
-                    SafeNormalizeCommon(LightDirections[i].xyz, float3(0.0f, -1.0f, 0.0f)),
-                    LightExtras[i].x, LightExtras[i].y, albedo, materialData) * emitterRadiance;
-            }
-            else
-            {
-                pbrDirectLight += EvaluatePbrDirectLight(
-                    normal, viewDir, singleDir, singleColor, albedo, materialData, shadowSoftness);
-            }
+            continue;
         }
+#endif
 
-        float weight = max(dot(authoredLightColor * lightIntensityValue, float3(0.299f, 0.587f, 0.114f)), 0.0001f) * singleAttenuation;
-        dirSum += singleDir * weight;
-        colorSum += singleColor;
-        weightSum += weight;
-        maxAttenuation = max(maxAttenuation, singleAttenuation);
-        float visibilityLuminance = dot(shadowVisibility, float3(0.2126f, 0.7152f, 0.0722f));
-        volumeSum += singleVolume * lightIntensityValue * visibilityLuminance;
-        rangeSum += saturate((max(LightDirections[i].w, 1.0f) - 1.0f) / 7.0f) * weight;
-        shadowSum += visibilityLuminance * weight;
+        AccumulateSurfaceLight((int)lightIndex, LightDirections[lightIndex], LightPositionTypes[lightIndex],
+            LightExtras[lightIndex], LightColors[lightIndex], LightFlags[lightIndex].w >= 0.5f, false, 1.0f, -1.0f,
+            worldPos, worldPosDx, worldPosDy, normal, pixelPosition, shadowFilterRadius, evaluatePbr,
+            viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
     }
 
-    if (count <= 0)
+    uint gridLightCount = 0u;
+#ifdef MEGALIGHTS_GRID
+    [branch]
+    if (gridActive)
+    {
+        const uint2 cell = MegaLightCells[g_MLCellIndex];
+        gridLightCount = cell.y;
+#ifndef MEGALIGHTS_FORWARD
+        [branch]
+        if (evaluatePbr && MLDenoisedActive())
+        {
+            // MegaLights M3：ML6 の結果（デモジュレート済み）をデノイズしたものに、材質の反射率を掛け戻す
+            const uint2 denoisePixel = min(uint2(pixelPosition), MLScreen.xy - 1u);
+            const float4 denoised = MegaLightDenoised[denoisePixel.y * MLScreen.x + denoisePixel.x];
+            acc.PbrDirect += max(denoised.rgb, 0.0f) * MLRemodulation(normal, viewDir, albedo, materialData);
+        }
+        else if (evaluatePbr && MLStochasticActive())
+        {
+            // MegaLights M2（ML6）：ML3 で選んだ N 個のサンプルだけを 1/(N·p) の重みで評価する（不偏推定）
+            MLAccumulateStochasticSamples(worldPos, worldPosDx, worldPosDy, normal, pixelPosition, shadowFilterRadius,
+                viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
+        }
+        else
+#endif
+        {
+            // MegaLights M1：このピクセルのセル（16px タイル × 奥行きスライス）に入っているローカルライトを全評価
+            //（M7 の Forward / 半透明もここ。Forward に影響しないライトは飛ばす）
+#ifdef MEGALIGHTS_FORWARD
+            const bool reference = false;
+#else
+            const bool reference = evaluatePbr && MLReferenceActive();
+#endif
+            [loop]
+            for (uint gridIteration = 0u; gridIteration < cell.y; ++gridIteration)
+            {
+                const MegaLightData gridLight = MegaLightBuffer[MegaLightIndices[cell.x + gridIteration]];
+#ifdef MEGALIGHTS_FORWARD
+                if (!MLLightAffectsForward(gridLight)) continue;
+                const float visibility = -1.0f;
+#else
+                const float visibility = reference
+                    ? MLReferenceVisibility(gridLight, worldPos, normal, uint2(pixelPosition), gridIteration)
+                    : -1.0f;
+#endif
+                AccumulateSurfaceLight(-1, gridLight.DirectionRange, gridLight.PositionType, gridLight.Extra, gridLight.Color,
+                    false, MLLightCastsShadow(gridLight), 1.0f, visibility,
+                    worldPos, worldPosDx, worldPosDy, normal, pixelPosition, shadowFilterRadius, evaluatePbr,
+                    viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
+            }
+        }
+    }
+#endif
+    pbrDirectLight = acc.PbrDirect;
+    const float3 dirSum = acc.DirSum;
+    const float3 colorSum = acc.ColorSum;
+    const float weightSum = acc.WeightSum;
+    const float maxAttenuation = acc.MaxAttenuation;
+    const float volumeSum = acc.VolumeSum;
+    const float rangeSum = acc.RangeSum;
+    const float shadowSum = acc.ShadowSum;
+
+    if (count <= 0 && gridLightCount == 0u)
     {
         float legacyVolume = 0.0f;
         ResolveLightCommon(worldPos, lightDir, attenuation, legacyVolume);
@@ -1212,5 +1507,6 @@ float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv,
     return color;
 }
 #endif
+
 
 

@@ -24,7 +24,29 @@ float TraceSceneShadow(float3 position, float3 normal, float3 lightDirection, fl
     while (query.Proceed()) { }
     return query.CommittedStatus() == COMMITTED_NOTHING ? 1.0f : 0.0f;
 }
+
+// 始点（面上の点）から終点（ライト上の点）までの影レイ。MegaLights のリファレンス・M2 と同じ式
+//（MegaLightsSampleCS.hlsl の MLTraceSegment と一致させる）
+float TraceSceneSegment(float3 position, float3 normal, float3 target)
+{
+    if (SceneRayFlags.z < 0.5f) return 1.0f;
+    const float bias = clamp(SceneRayParameters.y, 0.001f, 0.1f);
+    const float3 origin = position + normal * bias;
+    const float3 segment = target - origin;
+    const float distance = length(segment);
+    if (distance <= bias * 2.0f) return 1.0f;
+    RayDesc ray;
+    ray.Origin = origin;
+    ray.Direction = segment / distance;
+    ray.TMin = bias * 0.25f;
+    ray.TMax = max(distance - bias, ray.TMin + 0.001f);
+    RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_FORCE_OPAQUE> query;
+    query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0x01, ray);
+    while (query.Proceed()) { }
+    return query.CommittedStatus() == COMMITTED_NOTHING ? 1.0f : 0.0f;
+}
 #endif
 
 #endif
+
 

@@ -91,6 +91,7 @@ unique_ptr<NrdDenoiser> g_NrdAmbient;
 UINT g_NrdWidth = 0, g_NrdHeight = 0, g_NrdDispatchCount = 0;
 UINT g_AmbientDispatchCount = 0;
 NrdFrame g_PreviousNrdFrame;
+uint64_t g_GuideSerial = 0;
 bool g_NrdHistoryValid = false;
 bool g_ShadowHistoryValid = false;
 bool g_AmbientHistoryValid = false;
@@ -866,6 +867,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     // Camera and motion history belongs to the scene, independently of enabled denoiser signals.
     g_PreviousNrdFrame = nrdFrame;
     g_NrdHistoryValid = true;
+    g_GuideSerial = g_Serial;
 	if (g_Serial == 1)
 	{
 		WriteGraphicsLog("DXR: first dispatch, instances=%u extent=%ux%u\n", g_InstanceCount, frame.Width, frame.Height);
@@ -908,6 +910,19 @@ D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetResultSrv() { return Gpu(g_Active ? k
 XMFLOAT4 Raytracing::GetSunDirection() { return g_SunDirection; }
 UINT Raytracing::GetInstanceCount() { return g_InstanceCount; }
 UINT Raytracing::GetDenoiserDispatchCount() { return g_NrdDispatchCount; }
+bool Raytracing::GetNrdGuides(ID3D12Resource* guides[3], NrdFrame& frame, uint64_t& serial)
+{
+    if (!guides || !g_Active || !NrdDenoiser::IsCompiled() || g_GuideSerial == 0) return false;
+    for (UINT index = 0; index < 3; ++index)
+    {
+        if (!g_SharedGuides[index]) return false;
+        guides[index] = g_SharedGuides[index].Get();
+    }
+    frame = g_PreviousNrdFrame;
+    serial = g_GuideSerial;
+    return true;
+}
+
 D3D12_GPU_VIRTUAL_ADDRESS Raytracing::GetSceneAddress()
 {
     const auto& frame = g_Frames[g_FrameIndex];
@@ -950,4 +965,5 @@ D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetGiSrv()
 {
     return RayReflections::GetGiSrv(g_FrameIndex);
 }
+
 

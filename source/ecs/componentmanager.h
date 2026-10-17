@@ -416,6 +416,9 @@ struct LightComponent
 	bool AffectsForward = true;
 	bool AffectsVolumetrics = false;
 	bool CastShadow = false;
+	bool AllowMegaLights = true; // ディファード時、MegaLights のクラスターグリッドで評価してよい（Point / Spot / Rect）
+	float SourceRadius = 0.0f;   // Point / Spot の発光球の半径（m）。MegaLights の影レイでソフトシャドウになる
+	string AreaTexturePath;      // Rect の発光面のテクスチャ（MegaLights M7。空 = 単色）
 	float Priority = 0.0f;
 	LightRenderMode RenderMode = LightRenderMode::Physical;
 
@@ -682,5 +685,6 @@ public:
 		Registry::RemoveComponent(entity, types...);
 	}
 };
+
 
 

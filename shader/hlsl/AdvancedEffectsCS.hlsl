@@ -27,6 +27,7 @@ cbuffer AdvancedConstants : register(b0)
     float4 LocalFogData0[16];        // position, radius
     float4 LocalFogData1[16];        // height falloff, density, shape (1 sphere), enabled
     float4 LocalFogColor[16];
+    uint4 MegaLightsFog;             // x: MegaLights のグリッドを使う, y: フロクセルあたりのサンプル数
 };
 
 struct FogLight
@@ -54,6 +55,13 @@ RWTexture2D<float4> PostAOut : register(u2);
 RWTexture2D<float4> PostBOut : register(u3);
 RWStructuredBuffer<uint> Histogram : register(u4);
 RWStructuredBuffer<float> ExposureState : register(u5); // 0 exposure, 1 average luminance, 2 initialized
+
+// ---- MegaLights M6：フロクセルのローカルライト（グリッドのセルから確率的に選ぶ）
+#define MEGALIGHTS_CB_REGISTER b1
+#include "MegaLightsCommon.hlsli"
+StructuredBuffer<MegaLightData> FogMegaLights : register(t12);
+StructuredBuffer<uint2> FogMegaLightCells : register(t13);
+StructuredBuffer<uint> FogMegaLightIndices : register(t14);
 
 SamplerState LinearClamp : register(s0);
 SamplerState PointClamp : register(s1);
@@ -140,6 +148,85 @@ void EvaluateMedium(float3 position, out float globalDensity, out float3 localEm
 }
 
 // ---------------------------------------------------------------------------------------------
+// MegaLights M6：フロクセルのローカルライト
+//   セル（16px タイル × スライス）のライトから、影なしの寄与（輝度）に比例して N 個選び、
+//   影を落とすライトだけ影レイを飛ばして 1/p で重み付けする（不偏）。ノイズはフロクセルの時間方向の履歴で減る。
+//   従来の FogLights（上限 32）にはグリッドに載っていないライト（太陽・シャドウマップ持ち・Volume など）だけが入る。
+// ---------------------------------------------------------------------------------------------
+float3 MegaLightFogContribution(MegaLightData light, float3 position, float3 viewToCamera, float globalDensity,
+    float3 scatterAlbedo, float3 mieAlbedo, out float3 toLight, out float lightDistance)
+{
+    float3 offset = light.PositionType.xyz - position;
+    lightDistance = length(offset);
+    toLight = offset / max(lightDistance, 0.0001f);
+    float fade = saturate(1 - lightDistance / max(light.DirectionRange.w, 0.01f));
+    float attenuation = fade * fade;
+    if ((int)round(light.PositionType.w) == 2)
+    {
+        float spotCosine = dot(-toLight, normalize(light.DirectionRange.xyz));
+        attenuation *= smoothstep(light.Extra.y, light.Extra.x, spotCosine);
+    }
+    if (attenuation <= 0.00001f) return 0;
+    float cosine = dot(toLight, viewToCamera);
+    float3 phase = scatterAlbedo * (0.0596831f * (1 + cosine * cosine)) + mieAlbedo * HenyeyGreenstein(cosine, FogMedium1.z);
+    // FogInject の従来ライトと同じ式（大気の媒質 + ライト自身のボリューム密度）
+    float3 response = phase * globalDensity * FogMedium0.w + 0.16f * max(light.Extra.z, 0.0f) * 0.0795775f;
+    return response * max(light.Color.rgb, 0.0f) * max(light.Flags.w, 0.0f) * attenuation;
+}
+
+float3 MegaLightsFogScattering(uint3 id, float3 position, float3 viewToCamera, float globalDensity, float3 scatterAlbedo, float3 mieAlbedo)
+{
+    if (MegaLightsFog.x == 0u || !MLGridActive()) return 0;
+    float3 view = mul(float4(position, 1.0f), MLWorldToView).xyz;
+    if (view.z <= MLDepth.z) return 0;
+    float2 pixel = MLViewToPixel(view);
+    if (any(pixel < 0.0f) || any(pixel >= float2(MLScreen.xy))) return 0;
+    uint2 tile = min(uint2(pixel) / ML_TILE_SIZE, MLGrid.xy - 1u);
+    uint2 cell = FogMegaLightCells[MLCellIndex(tile, MLSliceFromViewZ(view.z))];
+    if (cell.y == 0u) return 0;
+
+    const uint sampleCount = clamp(MegaLightsFog.y, 1u, 4u);
+    const uint seed = MLSeed(id.xy + uint2(0u, id.z * 4099u), Extent.z, 0x464f47u);
+    uint picks[4] = { 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu };
+    float pickWeights[4] = { 0, 0, 0, 0 };
+    float weightSum = 0;
+    [loop] for (uint i = 0u; i < cell.y; ++i)
+    {
+        const uint lightIndex = FogMegaLightIndices[cell.x + i];
+        float3 toLight;
+        float lightDistance;
+        const float w = dot(MegaLightFogContribution(FogMegaLights[lightIndex], position, viewToCamera, globalDensity,
+            scatterAlbedo, mieAlbedo, toLight, lightDistance), float3(0.2126f, 0.7152f, 0.0722f));
+        if (w <= 0.0f) continue;
+        weightSum += w;
+        [unroll] for (uint k = 0u; k < 4u; ++k)
+        {
+            if (k >= sampleCount) break;
+            if (MLRandom(seed + k * 0x9e3779b9u + i * 0x85ebca6bu) * weightSum < w)
+            {
+                picks[k] = lightIndex;
+                pickWeights[k] = w;
+            }
+        }
+    }
+    if (weightSum <= 0.0f) return 0;
+    float3 result = 0;
+    [unroll] for (uint k = 0u; k < 4u; ++k)
+    {
+        if (k >= sampleCount || picks[k] == 0xffffffffu) continue;
+        const MegaLightData light = FogMegaLights[picks[k]];
+        float3 toLight;
+        float lightDistance;
+        float3 contribution = MegaLightFogContribution(light, position, viewToCamera, globalDensity, scatterAlbedo, mieAlbedo,
+            toLight, lightDistance);
+        float visibility = MLLightCastsShadow(light) ? TraceVisibility(position, toLight, lightDistance - 0.05f) : 1.0f;
+        // p = w / Σw（寄与が 0 のライトは選ばれないが、そもそも寄与 0 なので不偏）
+        result += contribution * visibility * (weightSum / pickWeights[k]);
+    }
+    return result / (float)sampleCount;
+}
+
+// ---------------------------------------------------------------------------------------------
 // 1. Froxel injection: medium + lighting per froxel, temporally reprojected.
 // ---------------------------------------------------------------------------------------------
 [numthreads(8, 8, 1)]
@@ -206,6 +293,7 @@ void FogInject(uint3 id : SV_DispatchThreadID)
         }
         scattering += response * incident * visibility * FogMedium1.w;
     }
+    scattering += MegaLightsFogScattering(id, position, viewToCamera, globalDensity, scatterAlbedo, mieAlbedo) * FogMedium1.w;
     // Cheap multiple scattering / sky ambient so shadowed fog is not pitch black.
     scattering += FogAmbientColor.rgb * FogRayleighColor.w * globalDensity * FogMedium0.w;
 
@@ -450,4 +538,5 @@ void DepthOfField(uint3 id : SV_DispatchThreadID)
     }
     PostAOut[id.xy] = float4(sum / weightSum, center.a);
 }
+
 

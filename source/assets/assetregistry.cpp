@@ -16,8 +16,26 @@ AssetHandle GenerateAssetHandle()
 }
 
 AssetRegistry::AssetRegistry(const std::filesystem::path& root)
-    : m_Root(std::filesystem::weakly_canonical(std::filesystem::absolute(root)))
+    : m_RootSpec(root)
 {
+}
+
+const std::filesystem::path& AssetRegistry::Root() const
+{
+    std::error_code error;
+    const auto base = std::filesystem::current_path(error);
+    if (m_Root.empty() || base != m_RootBase)
+    {
+        m_RootBase = base;
+        const auto absolute = m_RootSpec.is_absolute() ? m_RootSpec : base / m_RootSpec;
+        std::error_code canonicalError;
+        m_Root = std::filesystem::weakly_canonical(absolute, canonicalError);
+        if (canonicalError || m_Root.empty())
+        {
+            m_Root = absolute.lexically_normal();
+        }
+    }
+    return m_Root;
 }
 
 bool AssetRegistry::Contains(const std::filesystem::path& path) const
@@ -28,8 +46,8 @@ bool AssetRegistry::Contains(const std::filesystem::path& path) const
     {
         return false;
     }
-    const auto relative = canonical.lexically_relative(m_Root);
-    return !relative.empty() && *relative.begin() != "..";
+    const auto relative = canonical.lexically_relative(Root());
+    return !relative.empty() && *relative.begin() != ".." && *relative.begin() != ".";
 }
 
 AssetType AssetRegistry::Classify(const std::filesystem::path& path)
@@ -132,7 +150,7 @@ bool AssetRegistry::Refresh(std::string& error)
     m_Collisions.clear();
     error.clear();
     std::error_code filesystemError;
-    std::filesystem::recursive_directory_iterator iterator(m_Root, filesystemError);
+    std::filesystem::recursive_directory_iterator iterator(Root(), filesystemError);
     for (const auto end = std::filesystem::recursive_directory_iterator(); iterator != end && !filesystemError; iterator.increment(filesystemError))
     {
         const auto type = Classify(iterator->path());
@@ -219,4 +237,5 @@ AssetHandle AssetRegistry::Duplicate(AssetHandle handle, const std::filesystem::
     }
     return copy;
 }
+
 

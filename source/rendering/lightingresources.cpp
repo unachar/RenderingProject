@@ -20,6 +20,7 @@
 #include "renderersettings.h"
 #include "localheightfog.h"
 #include "lightinstancebuilder.h"
+#include "megalights.h"
 #include <limits>
 #include <climits>
 #include "frameconstants.h"
@@ -1558,6 +1559,68 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 			return lhs.Entity < rhs.Entity;
 		});
 
+	// ---- MegaLights：画面内のローカルライトをクラスターグリッド用のバッファへ（予算・160 灯の制限なし）
+	//   ・シャドウマップを持つライト / ディレクショナル / Volume / Decal は従来の経路
+	//   ・グリッドに載せたライトは、定数バッファ側で LightFlags.x = 2（不透明面はグリッドが評価）にする
+	//   ・同じフレームで 2 回目の呼び出し（強度違いなど）では振り分けを変えない
+	static vector<uint8_t> megaLightEntities(g_kMAX_ENTITIES, 0);
+	static vector<EntityID> megaLightMarked;
+	if (MegaLights::BeginFrame(GraphicsDevice::GetFrameIndex(), g_FrameSerial))
+	{
+		for (EntityID entity : megaLightMarked) megaLightEntities[entity] = 0;
+		megaLightMarked.clear();
+		if (MegaLights::IsEnabled())
+		{
+			for (const VisibleLightCandidate& candidate : candidates)
+			{
+				const LightComponent& light = candidate.Light;
+				const bool local = light.Type == LightType::Point || light.Type == LightType::Spot || light.Type == LightType::Rect;
+				if (!local || !light.AllowMegaLights || !light.AffectsOpaque ||
+					light.RenderMode != LightRenderMode::Physical || light.Intensity <= 0.0f ||
+					candidate.Entity >= g_kMAX_ENTITIES || FindShadowLightIndex(candidate.Entity) >= 0)
+				{
+					continue;
+				}
+				const XMFLOAT3 direction = NormalizeFloat3(light.Direction, { 0.0f, 1.0f, -1.0f });
+				const float innerRad = light.InnerAngle * XM_PI / 180.0f;
+				const float outerRad = light.OuterAngle * XM_PI / 180.0f;
+				MegaLights::GpuLight gpuLight{};
+				gpuLight.PositionType = XMFLOAT4(candidate.Position.x, candidate.Position.y, candidate.Position.z,
+					static_cast<float>(light.Type));
+				gpuLight.DirectionRange = XMFLOAT4(direction.x, direction.y, direction.z, light.Range);
+				gpuLight.Color = XMFLOAT4(light.Color.x, light.Color.y, light.Color.z, deferredLightStrength * light.Intensity);
+				gpuLight.Extra = light.Type == LightType::Rect
+					? XMFLOAT4(max(light.AreaWidth, 0.01f), max(light.AreaHeight, 0.01f), light.VolumeDensity, 0.0f)
+					: XMFLOAT4(cosf(innerRad), cosf(outerRad), light.VolumeDensity, static_cast<float>(light.VolumeShape));
+				const float sourceRadius = light.Type == LightType::Rect ? 0.0f : clamp(light.SourceRadius, 0.0f, max(light.Range, 0.0f));
+				// x：bit0 影を落とす / bit1 Forward（半透明）に影響（M7）
+				const float lightBits = (light.CastShadow ? 1.0f : 0.0f) + (light.AffectsForward ? 2.0f : 0.0f);
+				gpuLight.Flags = XMFLOAT4(lightBits, sourceRadius, 0.0f, 0.0f);
+				// M7：Rect のテクスチャ（Extra.w = テクスチャ番号 + 1。番号はエンジンのテクスチャ SRV の先頭から）
+				if (light.Type == LightType::Rect && !light.AreaTexturePath.empty())
+				{
+					static unordered_map<string, int> areaTextureCache;
+					auto found = areaTextureCache.find(light.AreaTexturePath);
+					if (found == areaTextureCache.end())
+					{
+						found = areaTextureCache.emplace(light.AreaTexturePath, TextureManager::LoadTexture(light.AreaTexturePath.c_str())).first;
+					}
+					const int relative = found->second - static_cast<int>(FrameConstants::g_kTEXTURE_SRV_START_INDEX);
+					if (relative >= 0 && relative < static_cast<int>(FrameConstants::g_kMAX_SRVS))
+					{
+						gpuLight.Extra.w = static_cast<float>(relative + 1);
+					}
+				}
+				const uint32_t entityKey = static_cast<uint32_t>(candidate.Entity);
+				memcpy(&gpuLight.Flags.z, &entityKey, sizeof(entityKey)); // M4：可視ライトハッシュのキー（フレーム間で不変）
+				gpuLight.Flags.w = max(light.Intensity, 0.0f); // M6：フォグ用（ディファードの強度係数を掛けない強度）
+				if (!MegaLights::AddLight(candidate.Entity, gpuLight)) continue;
+				megaLightEntities[candidate.Entity] = 1;
+				megaLightMarked.push_back(candidate.Entity);
+			}
+		}
+	}
+
 	const UINT screenLightBudget = min(
 		static_cast<UINT>(RendererSettings::GetScreenLightBudget()),
 		g_kMAX_SHADER_LIGHTS);
@@ -1634,6 +1697,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 			++enabledVolumetricLights;
 		}
 		const bool decal = light.RenderMode == LightRenderMode::Decal;
+		const bool inMegaLightGrid = candidate.Entity < g_kMAX_ENTITIES && megaLightEntities[candidate.Entity] != 0;
 		UINT slotBegin;
 		if (decal)
 		{
@@ -1652,6 +1716,11 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 		{
 			slotEnd = physicalTileLightBudget;
 		}
+		// グリッドが不透明面を受け持ち、Forward にも影響しないライトはタイルの枠を使わない（他のライトに枠を譲る）
+		if (inMegaLightGrid && !light.AffectsForward)
+		{
+			slotEnd = slotBegin;
+		}
 		if (light.AffectsOpaque || light.AffectsForward || enableVolumetrics)
 		{
 			LightInstanceBuilder::Input instance{};
@@ -1663,7 +1732,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 			lightInstances.push_back(instance);
 		}
 		constants.LightFlags[lightIndex] = XMFLOAT4(
-			static_cast<float>(light.AffectsOpaque),
+			light.AffectsOpaque ? (inMegaLightGrid ? 2.0f : 1.0f) : 0.0f,
 			static_cast<float>(light.AffectsForward),
 			static_cast<float>(enableVolumetrics),
 			static_cast<float>(light.RenderMode));
@@ -1865,5 +1934,6 @@ bool LightingResources::GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_V
 	clearLayer = pass.ClearLayer;
 	return true;
 }
+
 
 

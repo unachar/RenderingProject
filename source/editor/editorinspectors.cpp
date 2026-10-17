@@ -1162,6 +1162,21 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 	ImGui::BeginDisabled(light.RenderMode != LightRenderMode::Physical);
 	changed |= ImGui::Checkbox("影を描画", &light.CastShadow);
 	ImGui::EndDisabled();
+	if (light.Type == LightType::Point || light.Type == LightType::Spot || light.Type == LightType::Rect)
+	{
+		ImGui::BeginDisabled(light.RenderMode != LightRenderMode::Physical);
+		changed |= ImGui::Checkbox("MegaLights を許可", &light.AllowMegaLights);
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("環境設定で MegaLights が有効なとき、不透明面をクラスターライトグリッドで評価します。\n"
+				"シャドウマップを割り当てられたライトは従来の経路のままです。");
+		if (light.Type != LightType::Rect)
+		{
+			changed |= ImGui::DragFloat("ソース半径", &light.SourceRadius, 0.005f, 0.0f, 5.0f, "%.3f m");
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("MegaLights（M2 / リファレンス）の影レイで、発光球の大きさに応じたソフトシャドウになります。");
+		}
+	}
 	changed |= ImGui::ColorEdit3("色", &light.Color.x);
 	changed |= ImGui::DragFloat("ライト強度", &light.Intensity, 0.01f, 0.0f, 20.0f);
 	changed |= ImGui::DragFloat("範囲", &light.Range, 0.05f, 0.1f, 100.0f);
@@ -1178,6 +1193,43 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 		// 発光面は「ライト方向」を法線とする片面の矩形（LTC で評価）。
 		changed |= ImGui::DragFloat("幅", &light.AreaWidth, 0.01f, 0.01f, 50.0f, "%.2f m");
 		changed |= ImGui::DragFloat("高さ", &light.AreaHeight, 0.01f, 0.01f, 50.0f, "%.2f m");
+		// MegaLights M7：発光面のテクスチャ（アセットブラウザからテクスチャをドロップ）
+		char areaTexture[260]{};
+		strncpy_s(areaTexture, light.AreaTexturePath.c_str(), _TRUNCATE);
+		if (ImGui::InputText("発光テクスチャ", areaTexture, sizeof(areaTexture), ImGuiInputTextFlags_EnterReturnsTrue))
+		{
+			light.AreaTexturePath = areaTexture;
+			changed = true;
+		}
+		if (ImGui::BeginDragDropTarget())
+		{
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetPayloadType))
+			{
+				AssetDragPayload asset{};
+				if (payload->DataSize == sizeof(asset))
+				{
+					memcpy(&asset, payload->Data, sizeof(asset));
+					const filesystem::path resolved = MaterialManager::Registry().Resolve(asset.Handle);
+					if (asset.Type == AssetType::Texture && !resolved.empty())
+					{
+						light.AreaTexturePath = MakeRelativeAssetPath(resolved);
+						changed = true;
+					}
+				}
+			}
+			ImGui::EndDragDropTarget();
+		}
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("MegaLights のグリッドで評価するとき、矩形ライトの発光面にテクスチャを貼ります（M7）。");
+		if (!light.AreaTexturePath.empty())
+		{
+			ImGui::SameLine();
+			if (ImGui::SmallButton("X##AreaTexture"))
+			{
+				light.AreaTexturePath.clear();
+				changed = true;
+			}
+		}
 	}
 	if (light.Type == LightType::Volume)
 	{
@@ -2038,5 +2090,6 @@ ImGui::Text("メッシュ: %s", statusText4);
 		ImGui::Checkbox("ポストプロセス使用", &sprite.UsePostProcess);
 	}
 }
+
 
 

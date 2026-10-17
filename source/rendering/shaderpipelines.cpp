@@ -174,7 +174,10 @@ bool ShaderPipelines::CreatePostProcessPipeline()
     ranges[16].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 36);
     ranges[17].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 40); // atmosphere sky view LUT (scatter, transmission)
     ranges[18].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 42); // LTC matrix, LTC amplitude / DFG
-	CD3DX12_ROOT_PARAMETER params[28];
+	// 38：MegaLights M7 のライトのテクスチャ（エンジンのテクスチャ SRV 512 個、t0 space5）
+	CD3DX12_DESCRIPTOR_RANGE megaLightTextures;
+	megaLightTextures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 512, 0, 5);
+	CD3DX12_ROOT_PARAMETER params[39];
 	params[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
 	params[1].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 	params[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -204,6 +207,22 @@ bool ShaderPipelines::CreatePostProcessPipeline()
     params[25].InitAsDescriptorTable(1, &ranges[16], D3D12_SHADER_VISIBILITY_PIXEL);
     params[26].InitAsDescriptorTable(1, &ranges[17], D3D12_SHADER_VISIBILITY_PIXEL);
     params[27].InitAsDescriptorTable(1, &ranges[18], D3D12_SHADER_VISIBILITY_PIXEL);
+    // MegaLights（DeferredLightingPS）
+    //   M1: ライトバッファ / セル / セル内ライト / グリッド定数
+    params[28].InitAsShaderResourceView(44, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    params[29].InitAsShaderResourceView(45, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    params[30].InitAsShaderResourceView(46, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    params[31].InitAsConstantBufferView(10, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    //   M2: サンプル / 累積（検証・ピクセルシェーダーから書く）/ リファレンス（検証）
+    params[32].InitAsShaderResourceView(47, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    params[33].InitAsUnorderedAccessView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    params[34].InitAsShaderResourceView(48, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    //   M3: ML6 の生の結果（MegaLightsShadePS が書く）/ デノイズ済み
+    params[35].InitAsUnorderedAccessView(2, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    params[36].InitAsShaderResourceView(49, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    //   M4: 可視ライトハッシュ（デバッグ表示用）
+    params[37].InitAsShaderResourceView(50, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    params[38].InitAsDescriptorTable(1, &megaLightTextures, D3D12_SHADER_VISIBILITY_PIXEL);
 	CD3DX12_STATIC_SAMPLER_DESC samplers[4] {};
 	samplers[0] = CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
 
@@ -326,5 +345,6 @@ bool ShaderPipelines::CreatePostProcessPipeline()
 	ShaderLogToFile("PP: done\n");
 	return true;
 }
+
 
 

@@ -22,6 +22,7 @@
 #include "renderquality.h"
 #include "componentmanager.h"
 #include "light.h"
+#include "megalights.h"
 #include <algorithm>
 #include <cmath>
 
@@ -79,18 +80,23 @@ public:
 		CD3DX12_DESCRIPTOR_RANGE ranges[2];
 		ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kSrvCount, 0);
 		ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, kUavCount, 0);
-		CD3DX12_ROOT_PARAMETER parameters[5];
+		// 5〜8：MegaLights（M6）のグリッド定数 / ライト / セル / セル内ライト（フロクセルのローカルライト）
+		CD3DX12_ROOT_PARAMETER parameters[9];
 		parameters[0].InitAsConstantBufferView(0);
 		parameters[1].InitAsDescriptorTable(1, &ranges[0]);
 		parameters[2].InitAsDescriptorTable(1, &ranges[1]);
 		parameters[3].InitAsShaderResourceView(10);
 		parameters[4].InitAsShaderResourceView(11);
+		parameters[5].InitAsConstantBufferView(1);
+		parameters[6].InitAsShaderResourceView(12);
+		parameters[7].InitAsShaderResourceView(13);
+		parameters[8].InitAsShaderResourceView(14);
 		CD3DX12_STATIC_SAMPLER_DESC samplers[2] = {
 			CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
 				D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP),
 			CD3DX12_STATIC_SAMPLER_DESC(1, D3D12_FILTER_MIN_MAG_MIP_POINT,
 				D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP) };
-		const CD3DX12_ROOT_SIGNATURE_DESC root(5, parameters, 2, samplers);
+		const CD3DX12_ROOT_SIGNATURE_DESC root(_countof(parameters), parameters, 2, samplers);
 		ComPtr<ID3DBlob> blob, errors;
 		if (FAILED(D3D12SerializeRootSignature(&root, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)) ||
 			FAILED(device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&s_Root))))
@@ -183,6 +189,8 @@ public:
 		const UINT slot = frameIndex % kFrames;
 		++s_Frame;
 		const UINT current = s_Frame & 1u;
+		// M6：グリッドがフォグ用に構築されていれば、グリッドのライトはフォグでも MegaLights が受け持つ
+		s_MegaLightsFog = fog && MegaLights::IsVolumetricGridActive();
 		const UINT lightCount = UploadLights(slot);
 		UploadConstants(slot, lightCount, fog, exposure, motionBlur, dof);
 		WriteDescriptors(slot, scene, depth, velocity ? velocity : depth, current);
@@ -198,6 +206,7 @@ public:
 		// The TLAS slot is only read when FogMieColor.w (shadows available) is set.
 		commands->SetComputeRootShaderResourceView(3, tlas ? tlas : lights);
 		commands->SetComputeRootShaderResourceView(4, lights);
+		MegaLights::BindFogCompute(commands, 5, 6, 7, 8, s_Constants->GetGPUVirtualAddress() + slot * kConstantStride, lights);
 
 		constexpr D3D12_RESOURCE_STATES kRead = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 		vector<D3D12_RESOURCE_BARRIER> begin;
@@ -292,6 +301,7 @@ private:
 		XMFLOAT4 ExposureParams, ExposureLimits, MotionBlurParams, DofParams;
 		XMUINT4 Features;
 		XMFLOAT4 LocalFogData0[kMaxLocalFog], LocalFogData1[kMaxLocalFog], LocalFogColor[kMaxLocalFog];
+		XMUINT4 MegaLightsFog; // x: MegaLights のグリッドを使う, y: フロクセルあたりのサンプル数
 	};
 	static constexpr UINT kConstantStride = (sizeof(Constants) + 255u) & ~255u;
 	static constexpr UINT kLightStride = (sizeof(FogLight) * kMaxLights + 255u) & ~255u;
@@ -308,6 +318,7 @@ private:
 	static inline UINT s_Increment = 0, s_Width = 0, s_Height = 0, s_Frame = 0;
 	static inline DXGI_FORMAT s_Format = DXGI_FORMAT_UNKNOWN;
 	static inline XMUINT3 s_FroxelExtent{};
+	static inline bool s_MegaLightsFog = false;
 	static inline bool s_FogHistoryValid = false, s_ExposureReset = true;
 	static inline XMFLOAT4X4 s_PrevViewProjection{};
 	static inline XMFLOAT3 s_PrevCamera{};
@@ -687,6 +698,7 @@ private:
 			if (count >= kMaxLights) break;
 			const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
 			if (!light.IsActive || light.RenderMode != LightRenderMode::Physical || light.Intensity <= 0.0f) continue;
+			if (s_MegaLightsFog && MegaLights::IsEntityInGrid(entity)) continue; // M6：MegaLights 側で評価
 			const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
 			XMFLOAT3 direction;
 			XMStoreFloat3(&direction, XMVector3Normalize(XMLoadFloat3(&light.Direction)));
@@ -752,6 +764,7 @@ private:
 				static_cast<float>(volume.Shape), static_cast<float>(volume.Enabled) };
 			constants.LocalFogColor[index] = { volume.Color.x, volume.Color.y, volume.Color.z, 0.0f };
 		}
+		constants.MegaLightsFog = { s_MegaLightsFog ? 1u : 0u, static_cast<UINT>(MegaLights::GetFogSamples()), 0u, 0u };
 		const float minLog = -10.0f, maxLog = 6.0f;
 		constants.ExposureParams = { minLog, maxLog - minLog, settings.ExposureCompensation, (std::max)(0.01f, settings.ExposureSpeed) };
 		const float lowPercent = std::clamp(settings.ExposureLowPercent, 0.0f, 0.99f);
@@ -776,4 +789,5 @@ private:
 		}
 	}
 };
+
 

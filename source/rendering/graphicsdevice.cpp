@@ -27,6 +27,7 @@
 #include "meshshaderpipeline.h"
 #include "gpuscene/gpuscene.h"
 #include "lightinstancebuilder.h"
+#include "megalights.h"
 #include "graphicsdevice.h"
 #include "meshshader/meshshaderrenderer.h"
 #include "rendertargets.h"
@@ -283,7 +284,13 @@ bool GraphicsDevice::Init(HWND hwnd)
     {
         forwardResources[index].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, forwardRegisters[index]);
     }
-	CD3DX12_ROOT_PARAMETER rootParametersAll[34];
+	// 34, 35：MegaLights M7（Forward / 半透明のグリッド：t44〜t46 + b10、ライトのテクスチャ：t0 space5）
+	CD3DX12_DESCRIPTOR_RANGE megaLightRanges[2];
+	megaLightRanges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 44);
+	megaLightRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 10);
+	CD3DX12_DESCRIPTOR_RANGE megaLightTextures;
+	megaLightTextures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 512, 0, 5);
+	CD3DX12_ROOT_PARAMETER rootParametersAll[36];
 	rootParametersAll[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[1].InitAsDescriptorTable(1, &rangesTex[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -313,6 +320,8 @@ bool GraphicsDevice::Init(HWND hwnd)
     {
         rootParametersAll[21 + index].InitAsDescriptorTable(1, &forwardResources[index], D3D12_SHADER_VISIBILITY_PIXEL);
     }
+    rootParametersAll[34].InitAsDescriptorTable(2, megaLightRanges, D3D12_SHADER_VISIBILITY_PIXEL);
+    rootParametersAll[35].InitAsDescriptorTable(1, &megaLightTextures, D3D12_SHADER_VISIBILITY_PIXEL);
 
 	CD3DX12_STATIC_SAMPLER_DESC sampler {};
 
@@ -392,7 +401,9 @@ bool GraphicsDevice::Init(HWND hwnd)
 	}
 
 	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc {};
-	cbvHeapDesc.NumDescriptors = g_kENGINE_DESCRIPTOR_END + 1 + g_kTHUMBNAIL_DESCRIPTOR_COUNT + ImGuiManager::kSrvDescriptorCount + 16384;
+	// 末尾に MegaLights（M7：Forward 用のグリッドのディスクリプタ）の領域を追加
+	cbvHeapDesc.NumDescriptors = g_kENGINE_DESCRIPTOR_END + 1 + g_kTHUMBNAIL_DESCRIPTOR_COUNT + ImGuiManager::kSrvDescriptorCount + 16384 +
+		MegaLights::kEngineHeapDescriptors;
 	cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	WriteGraphicsLog("Step: CreateDescriptorHeap(CBV)\n");
@@ -500,6 +511,10 @@ if (!ShaderPipelines::CreatePostProcessPipeline()) return false;
 	MeshShaderPipeline::Initialize(m_Device.Get(), ShaderPipelines::GetModelRootSignature());
 	MeshShaderRenderer::QuerySupport(m_Device.Get());
 	LightInstanceBuilder::Initialize(m_Device.Get());
+	if (!MegaLights::Initialize(m_Device.Get()))
+		WriteGraphicsLog("WARNING: MegaLights unavailable (clustered light grid disabled)\n");
+	MegaLights::SetEngineHeap(m_CbvHeap.Get(),
+		g_kENGINE_DESCRIPTOR_END + 1 + g_kTHUMBNAIL_DESCRIPTOR_COUNT + ImGuiManager::kSrvDescriptorCount + 16384);
 
 	WriteGraphicsLog("Step: CreateSceneRenderTarget\n");
 if (!RenderTargets::CreateSceneRenderTarget()) return false;
@@ -588,6 +603,7 @@ void GraphicsDevice::Uninit()
 	GpuScene::Shutdown();
 	MeshShaderPipeline::Shutdown();
 	LightInstanceBuilder::Shutdown();
+	MegaLights::Shutdown();
     RenderTargets::ReleaseGBufferResources();
 	m_SceneRenderTarget.Reset();
 	m_PostProcessRenderTarget.Reset();
@@ -879,5 +895,6 @@ void GraphicsDevice::SubmitForExternalCompute()
     ID3D12DescriptorHeap* heaps[] = {m_CbvHeap.Get()};
     m_CommandList->SetDescriptorHeaps(1, heaps);
 }
+
 
 

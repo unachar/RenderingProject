@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pch.h"
+#include "nrddenoiser.h"
 
 class Raytracing
 {
@@ -48,8 +49,12 @@ public:
     static D3D12_GPU_VIRTUAL_ADDRESS GetLightingConstantsAddress(UINT frameIndex);
     // TLAS built by Execute() this frame (0 when ray tracing did not run).
     static D3D12_GPU_VIRTUAL_ADDRESS GetSceneAddress();
+    // NRD の共有ガイド（Motion / NormalRoughness / ViewZ。PIXEL_SHADER_RESOURCE）とカメラ情報。
+    // serial は最後にガイドを書いた Execute の番号（同じフレームのものかを呼び出し側で判定する）
+    static bool GetNrdGuides(ID3D12Resource* guides[3], NrdFrame& frame, uint64_t& serial);
     static void BeginLightList();
     static void SetLightShadowFlag(UINT index, bool castShadow);
     static void BindLighting(ID3D12GraphicsCommandList* commandList, UINT sceneRootIndex, UINT constantsRootIndex);
 };
+
 

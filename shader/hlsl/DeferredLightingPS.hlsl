@@ -28,12 +28,58 @@ Texture2D<float4> RaytracedReflections : register(t17);
 SamplerState TextureSampler : register(s0);
 SamplerComparisonState ShadowSampler : register(s1);
 
+// MegaLights（ルート引数 28〜34）
+//   M1: t44 ライト / t45 セル / t46 セル内ライト / b10 定数
+//   M2: t47 サンプル / u1 累積（検証）/ t48 リファレンス（検証）
+//   M3: u2 ML6 の生の結果 / t49 デノイズ済み（ルート引数 35, 36）
+#define MEGALIGHTS_GRID 1
+#define MEGALIGHTS_CB_REGISTER b10
+#include "MegaLightsCommon.hlsli"
+StructuredBuffer<MegaLightData> MegaLightBuffer : register(t44);
+StructuredBuffer<uint2> MegaLightCells : register(t45);
+StructuredBuffer<uint> MegaLightIndices : register(t46);
+StructuredBuffer<uint4> MegaLightSamples : register(t47);
+RWStructuredBuffer<float4> MegaLightAccumulation : register(u1);
+StructuredBuffer<float4> MegaLightReference : register(t48);
+//   M3: u2 ML6 の結果（デモジュレート済み・MegaLightsShadePS が書く）/ t49 デノイズ済み
+RWStructuredBuffer<float4> MegaLightRaw : register(u2);
+StructuredBuffer<float4> MegaLightDenoised : register(t49);
+//   M4: t50 可視ライトハッシュ（このフレームに作ったもの。デバッグ表示用。ルート引数 37）
+StructuredBuffer<uint4> MegaLightHash : register(t50);
+static uint g_MLCellIndex = ML_INVALID_CELL;
+
+// リファレンス：ライト全体の平均可視率を、面上の層別点への影レイで求める（毎フレーム回転 → 累積で収束）
+float MLReferenceVisibility(MegaLightData light, float3 worldPos, float3 normal, uint2 pixel, uint lightOrdinal)
+{
+    if (!MLLightCastsShadow(light)) return 1.0f;
+#ifdef SHADER_RAYTRACING
+    const bool area = (int)round(light.PositionType.w) == 4 || light.Flags.y > 1.0e-4f;
+    const uint requested = area ? clamp((uint)MLStochasticParams.w, 1u, 64u) : 1u;
+    const uint side = max((uint)floor(sqrt((float)requested) + 0.001f), 1u);
+    const uint seed = MLSeed(pixel, MLStochastic.z, 0x5245u + lightOrdinal * 7919u);
+    const float2 jitter = float2(MLRandom(seed), MLRandom(seed ^ 0x9e3779b9u));
+    float visible = 0.0f;
+    [loop]
+    for (uint index = 0u; index < side * side; ++index)
+    {
+        const float2 uv = (float2(index % side, index / side) + jitter) / (float)side;
+        visible += TraceSceneSegment(worldPos, normal, MLLightSamplePoint(light, worldPos, uv));
+    }
+    return visible / (float)(side * side);
+#else
+    return -1.0f;
+#endif
+}
+
+// M7：テクスチャ付き矩形ライト（ルート引数 38：エンジンのテクスチャ SRV 512 個, t0 space5）
+#define MEGALIGHTS_LIGHT_TEXTURES 1
+
 // DFG / LTC tables (root parameter 27: t42, t43).
 #define SURFACE_PBR_LUTS 1
 #include "SurfaceLighting.hlsli"
 #include "WeatherSurface.hlsli"
 
-float4 main(PSInputPostProcess input) : SV_Target
+float4 ShadeDeferred(PSInputPostProcess input)
 {
 
     const float PI = 3.14159265358979323846f;
@@ -267,4 +313,188 @@ float4 main(PSInputPostProcess input) : SV_Target
     return baseColor;
 }
 
+// ---------------------------------------------------------------------------------------------
+// MegaLights：セルの決定 → ライティング → 検証用の累積 → デバッグ表示
+// ---------------------------------------------------------------------------------------------
+float MLDebugLuminance(float3 color)
+{
+    return dot(color, float3(0.2126f, 0.7152f, 0.0722f));
+}
 
+float4 main(PSInputPostProcess input) : SV_Target
+{
+    const uint2 pixel = uint2(input.Position.xy);
+    // グリッド構築（MegaLightsGridCS）・M2 のサンプリングと同じ深度・同じ式でセルを決める
+    g_MLCellIndex = MLCellIndexFromDepth(pixel, DepthTexture.Load(int3(pixel, 0)));
+    float4 color = ShadeDeferred(input);
+    [branch]
+    if (!MLGridActive() || any(pixel >= MLScreen.xy))
+    {
+        return color;
+    }
+
+    // 検証：静止時の累積平均（前フレームまでの平均 + このフレーム）
+    const uint linearIndex = pixel.y * MLScreen.x + pixel.x;
+    float4 mean = color;
+    [branch]
+    if ((MLStochastic.x & ML_FLAG_ACCUMULATE) != 0u)
+    {
+        const float frames = (float)MLStochastic.w;
+        const float4 previous = MegaLightAccumulation[linearIndex];
+        mean = frames < 0.5f ? color : previous + (color - previous) / (frames + 1.0f);
+        MegaLightAccumulation[linearIndex] = mean;
+    }
+
+    const uint debugView = MLCounts.y;
+    [branch]
+    if (debugView == 0u)
+    {
+        return color;
+    }
+    float3 debugColor = color.rgb;
+    bool overlay = true;
+    if (debugView == 1u || debugView == 2u)
+    {
+        if (g_MLCellIndex == ML_INVALID_CELL) return color;
+        if (debugView == 1u)
+        {
+            const uint cellLights = MegaLightCells[g_MLCellIndex].y;
+            debugColor = cellLights == 0u ? float3(0.02f, 0.02f, 0.04f) : MLHeatmap((float)cellLights / max(MLDepth2.z, 1.0f));
+        }
+        else
+        {
+            const uint slice = g_MLCellIndex / (MLGrid.x * MLGrid.y);
+            debugColor = frac((float)slice * float3(0.61803f, 0.41421f, 0.27183f) + float3(0.1f, 0.4f, 0.7f));
+        }
+        const uint2 tilePixel = pixel % ML_TILE_SIZE;
+        const float gridLine = (tilePixel.x == 0u || tilePixel.y == 0u) ? 0.35f : 0.0f;
+        return float4(lerp(color.rgb, debugColor, 0.75f) * (1.0f - gridLine), color.a);
+    }
+    if (debugView >= 3u && debugView <= 5u)
+    {
+        // M2 のサンプル：3 = 選ばれたライト, 4 = 可視率, 5 = 1/p
+        if (!MLStochasticActive()) return color;
+        const uint sampleBase = MLSampleBase(MLScreenToSample(pixel));
+        uint valid = 0u, traced = 0u, visible = 0u, firstLight = 0xffffffffu;
+        float maxInvPdf = 0.0f;
+        for (uint k = 0u; k < MLStochastic.y; ++k)
+        {
+            const uint4 lightSample = MegaLightSamples[sampleBase + k];
+            if ((lightSample.x & ML_SAMPLE_VALID) == 0u) continue;
+            ++valid;
+            if (firstLight == 0xffffffffu) firstLight = lightSample.x & ML_SAMPLE_INDEX;
+            if ((lightSample.x & ML_SAMPLE_TRACE) != 0u)
+            {
+                ++traced;
+                visible += (lightSample.x & ML_SAMPLE_VISIBLE) != 0u ? 1u : 0u;
+            }
+            maxInvPdf = max(maxInvPdf, asfloat(lightSample.y));
+        }
+        if (valid == 0u) return color;
+        if (debugView == 3u)
+        {
+            debugColor = frac((float)MLHash(firstLight) * (1.0f / 4294967296.0f) * float3(1.0f, 7.0f, 31.0f) + float3(0.1f, 0.35f, 0.6f));
+        }
+        else if (debugView == 4u)
+        {
+            debugColor = traced == 0u ? float3(0.2f, 0.4f, 1.0f) : ((float)visible / (float)traced).xxx;
+        }
+        else
+        {
+            debugColor = MLHeatmap(log2(max(maxInvPdf, 1.0f)) / log2(max(MLStochasticParams.z, 2.0f)));
+        }
+    }
+    else if (debugView == 9u)
+    {
+        // M5：影レイの処理の内訳（緑 = スクリーントレースで遮蔽を確定, 橙 = ワールドトレース, 青 = 影レイ不要）
+        if (!MLStochasticActive()) return color;
+        const uint sampleBase = MLSampleBase(MLScreenToSample(pixel));
+        float3 mix = 0.0f;
+        uint valid = 0u;
+        for (uint k = 0u; k < MLStochastic.y; ++k)
+        {
+            const uint flags = MegaLightSamples[sampleBase + k].x;
+            if ((flags & ML_SAMPLE_VALID) == 0u) continue;
+            ++valid;
+            if ((flags & ML_SAMPLE_SCREEN) != 0u) mix += float3(0.15f, 0.95f, 0.3f);
+            else if ((flags & ML_SAMPLE_TRACE) != 0u) mix += float3(1.0f, 0.55f, 0.1f);
+            else mix += float3(0.2f, 0.4f, 1.0f);
+        }
+        if (valid == 0u) return color;
+        debugColor = mix / (float)valid;
+    }
+    else if (debugView == 8u)
+    {
+        // M4：可視ライトハッシュの埋まり具合（128bit 中の立っているビット数。8x8 タイル）
+        if (!MLStochasticActive()) return color;
+        const uint occupancy = MLHashOccupancy(MegaLightHash[MLHashTileIndex(pixel)]);
+        debugColor = occupancy == 0u ? float3(0.02f, 0.02f, 0.04f) : MLHeatmap((float)occupancy / 64.0f);
+        const uint2 tilePixel = pixel % ML_HASH_TILE;
+        if (tilePixel.x == 0u || tilePixel.y == 0u) debugColor *= 0.6f;
+    }
+    else if (debugView == 6u)
+    {
+        // 累積平均そのもの
+        if ((MLStochastic.x & ML_FLAG_ACCUMULATE) == 0u) return color;
+        return float4(mean.rgb, color.a);
+    }
+    else if (debugView == 7u)
+    {
+        // リファレンスとの差（輝度の相対誤差 × 10 をヒートマップ）
+        if ((MLStochastic.x & ML_FLAG_HAS_REF) == 0u) return color;
+        const float reference = MLDebugLuminance(MegaLightReference[linearIndex].rgb);
+        const float difference = abs(MLDebugLuminance(mean.rgb) - reference);
+        debugColor = MLHeatmap(10.0f * difference / max(reference, 0.05f));
+        overlay = false;
+    }
+    else
+    {
+        return color;
+    }
+    return float4(overlay ? lerp(color.rgb, debugColor, 0.8f) : debugColor, color.a);
+}
+
+// ---------------------------------------------------------------------------------------------
+// MegaLights M3：ML6（サンプルのシェーディング）だけを行い、デモジュレートして MegaLightRaw に書く
+//   ディファードライティングの直前に、同じルートシグネチャ・同じ定数で描画する（カラー書き込みなし）。
+//   材質の準備（シェーディングモデル・天候）は ShadeDeferred と同じ順序で行うこと。
+//   a = 1: デノイズ対象のピクセル（PBR 面でセルが有効）, a = 0: 対象外
+// ---------------------------------------------------------------------------------------------
+float4 MegaLightsShadePS(PSInputPostProcess input) : SV_Target
+{
+    const uint2 pixel = uint2(input.Position.xy);
+    if (!MLStochasticActive() || any(pixel >= MLScreen.xy)) return 0.0f;
+    const uint linearIndex = pixel.y * MLScreen.x + pixel.x;
+    const int3 gbufferPixel = int3(pixel, 0);
+    float4 material = MaterialTexture.Load(gbufferPixel);
+    const float depth = DepthTexture.Load(gbufferPixel);
+    g_MLCellIndex = MLCellIndexFromDepth(pixel, depth);
+    float4 result = 0.0f;
+    [branch]
+    if (g_MLCellIndex != ML_INVALID_CELL && IsMaterialClass(material.a, 11.0f))
+    {
+        float4 baseColor = BaseColorTexture.Load(gbufferPixel);
+        const float3 position = ReconstructPostProcessWorldPositionCommon(input.TexCoord, depth);
+        float3 surfaceNormal = DecodeGBufferNormal(NormalTexture.Load(gbufferPixel).xyz);
+        const float4 shadowParams = ShadowGBufferTexture.Load(gbufferPixel);
+        g_ShadingModel = DecodeShadingModel(shadowParams.a);
+        ApplyWeatherToSurface(position, surfaceNormal, baseColor.rgb, material.rgb);
+        const float3 viewDir = SafeNormalizeCommon(PPCameraPos.xyz - position, surfaceNormal);
+        SurfaceLightAccumulator acc = (SurfaceLightAccumulator)0;
+        MLAccumulateStochasticSamples(position, 0.0f, 0.0f, surfaceNormal, input.Position.xy, 1, viewDir,
+            baseColor.rgb, material.rgb, max(shadowParams.g, 0.0001f), float3(1.0f, 1.0f, 1.0f), acc);
+        const float3 lighting = acc.PbrDirect / MLRemodulation(surfaceNormal, viewDir, baseColor.rgb, material.rgb);
+        // a = 1 + ヒット距離（最も近いサンプルのライトまで）。M3 は a >= 0.5 を対象の印に、M6 の NRD は距離に使う
+        float hitDistance = 1.0e4f;
+        const uint sampleBase = MLSampleBase(MLScreenToSample(pixel));
+        for (uint k = 0u; k < MLStochastic.y; ++k)
+        {
+            const uint4 lightSample = MegaLightSamples[sampleBase + k];
+            if ((lightSample.x & ML_SAMPLE_VALID) == 0u) continue;
+            hitDistance = min(hitDistance, length(MegaLightBuffer[lightSample.x & ML_SAMPLE_INDEX].PositionType.xyz - position));
+        }
+        result = float4(all(isfinite(lighting)) ? lighting : 0.0f, 1.0f + hitDistance);
+    }
+    MegaLightRaw[linearIndex] = result;
+    return 0.0f;
+}

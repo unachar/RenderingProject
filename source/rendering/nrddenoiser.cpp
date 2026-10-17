@@ -151,7 +151,7 @@ struct NrdDenoiser::Impl
         Height = height;
         const nrd::DenoiserDesc denoiser{ kIdentifier,
             signal == NrdSignal::Shadow ? nrd::Denoiser::SIGMA_SHADOW : signal == NrdSignal::Specular ?
-                nrd::Denoiser::REBLUR_SPECULAR : signal == NrdSignal::Diffuse ?
+                nrd::Denoiser::REBLUR_SPECULAR : (signal == NrdSignal::Diffuse || signal == NrdSignal::MegaLights) ?
                 nrd::Denoiser::REBLUR_DIFFUSE : nrd::Denoiser::REBLUR_DIFFUSE_OCCLUSION };
         const nrd::InstanceCreationDesc creation{ {}, &denoiser, 1 };
         if (nrd::CreateInstance(creation, Instance) != nrd::Result::SUCCESS) return false;
@@ -219,7 +219,7 @@ struct NrdDenoiser::Impl
         if (!allocatePool(Permanent, description.permanentPool, L"NRD Permanent History") ||
             !allocatePool(Transient, description.transientPool, L"NRD Transient Pool") ||
             !CreateTexture(Output, Signal == NrdSignal::Shadow ? DXGI_FORMAT_R8_UNORM :
-                (Signal == NrdSignal::Specular || Signal == NrdSignal::Diffuse) ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R16_UNORM,
+                (Signal == NrdSignal::Specular || Signal == NrdSignal::Diffuse || Signal == NrdSignal::MegaLights) ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R16_UNORM,
                 1, L"NVIDIA NRD Denoised Signal")) return false;
         WriteGraphicsLog("NRD: %s %s initialized, extent=%ux%u pipelines=%u history=%u transient=%u\n",
             NrdDenoiser::GetVersion(), nrd::GetDenoiserString(denoiser.denoiser), Width, Height,
@@ -271,6 +271,15 @@ struct NrdDenoiser::Impl
             // would make NRD read the empty half of the checkerboard.
             nrd::ReblurSettings settings;
             ConfigureStableDiffuse(settings);
+            if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS) return false;
+        }
+        if (Signal == NrdSignal::MegaLights)
+        {
+            // MegaLights の直接光（デモジュレート済み・フル解像度・全ピクセル）。チェッカーボードなし。
+            // ヒット距離はシェーディング点からライト上の点までの距離（MegaLightsNrdCS.hlsl と同じ正規化）
+            nrd::ReblurSettings settings;
+            ApplyHitDistance(settings, kHitDistanceA, kHitDistanceB, kHitDistanceC);
+            EnableAntiFirefly(settings);
             if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS) return false;
         }
         if (Signal == NrdSignal::Specular)
@@ -458,4 +467,5 @@ const char* NrdDenoiser::GetVersion()
     return "SDK 未導入";
 #endif
 }
+
 

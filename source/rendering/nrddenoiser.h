@@ -2,7 +2,7 @@
 #include "pch.h"
 #include <memory>
 
-enum class NrdSignal { Shadow, Specular, AmbientOcclusion, Diffuse };
+enum class NrdSignal { Shadow, Specular, AmbientOcclusion, Diffuse, MegaLights }; // MegaLights: REBLUR_DIFFUSE（チェッカーボードなし）
 
 struct NrdTexture
 {
@@ -54,4 +54,5 @@ private:
     struct Impl;
     unique_ptr<Impl> m_Impl;
 };
+
 

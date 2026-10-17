@@ -5,6 +5,7 @@
 #include "componentmanager.h"
 #include <d3d12.h>
 #include <filesystem>
+#include <unordered_set>
 #include <imgui.h>
 #include <imgui_impl_dx12.h>
 #include <imgui_impl_win32.h>
@@ -178,6 +179,48 @@ private:
 	static void ImportAssetFile(const filesystem::path& sourcePath);
 	static void CreateAssetFile(const filesystem::path& path);
 	static void DeleteAssetPath(const filesystem::path& path);
+	// ---- アセットブラウザ：作成 / D&D移動
+	static filesystem::path MakeUniqueAssetPath(const filesystem::path& directory, const filesystem::path& stem, const filesystem::path& extension);
+	static void CreateMaterialAsset(const filesystem::path& directory);
+	static void CreateSceneAsset(const filesystem::path& directory);
+	static bool IsInsideAssetRoot(const filesystem::path& path);
+	static bool MoveAssetPath(const filesystem::path& source, const filesystem::path& destinationDirectory);
+	static void AcceptAssetMoveDrop(const filesystem::path& destinationDirectory);
+	static void BeginAssetDragSource(const filesystem::path& path, bool isDirectory);
+	static void DrawAssetCreateMenuItems(const filesystem::path& directory);
+	inline static bool m_AssetBrowserRescan = false;
+	// ---- アセットブラウザ：F2 リネーム
+	static void BeginAssetRename(const filesystem::path& path);
+	static void DrawAssetRenameField(const filesystem::path& path, bool isDirectory, const ImVec2& position, float width);
+	static bool RenameAssetPath(const filesystem::path& source, const string& newNameUtf8, bool isDirectory);
+	static bool RelocateAssetPath(const filesystem::path& from, const filesystem::path& target, bool isDirectory, const char* verb);
+	inline static filesystem::path m_RenamingAssetPath;
+	inline static char m_AssetRenameBuffer[256]{};
+	inline static int m_AssetRenameFrames = 0;
+	inline static bool m_AssetBrowserFocused = false;
+	// ---- アセットブラウザ：複数選択（Ctrl / Shift クリック、範囲選択、Ctrl+A など）
+	//  m_SelectedAssetPath は「フォーカス項目（最後に操作した項目）」。複数選択は m_SelectedAssetPaths。
+	//  不変条件：m_SelectedAssetPath が空 ⇔ 選択なし、m_SelectedAssetPath は必ず選択に含まれる。
+	inline static vector<filesystem::path> m_SelectedAssetPaths;
+	inline static unordered_set<wstring> m_SelectedAssetKeys;
+	inline static filesystem::path m_AssetSelectionAnchor;     // Shift 範囲選択の起点
+	inline static vector<filesystem::path> m_AssetClipboard;   // Ctrl+C / Ctrl+X
+	inline static bool m_AssetClipboardCut = false;
+	inline static vector<filesystem::path> m_DraggedAssetPaths; // 複数ドラッグ中の項目
+	inline static filesystem::path m_LastRelocatedAssetPath;   // 直近の移動 / リネーム先
+	static wstring AssetSelectionKey(const filesystem::path& path);
+	static bool IsAssetSelected(const filesystem::path& path);
+	static void ClearAssetSelection();
+	static void SelectAssetOnly(const filesystem::path& path);
+	static void AddAssetToSelection(const filesystem::path& path);
+	static void RemoveAssetFromSelection(const filesystem::path& path);
+	static void SyncAssetSelection();
+	static vector<filesystem::path> GetSelectedAssetPaths();
+	static void CopyAssetsToClipboard(bool cut);
+	static void PasteAssetClipboard(const filesystem::path& destinationDirectory);
+	static void DuplicateSelectedAssets();
+	static bool CopyAssetPath(const filesystem::path& source, const filesystem::path& destinationDirectory, filesystem::path* outTarget);
+	static void OpenAssetItem(const filesystem::path& path);
 	static void PlaceAssetInScene(const filesystem::path& path, const ImVec2& sceneMouse);
 	static bool GetSceneViewRay(const ImVec2& sceneMouse, XMVECTOR& outOrigin, XMVECTOR& outDirection);
 	static bool IsTextureFile(const filesystem::path& path);
@@ -272,5 +315,7 @@ public:
 	static bool IsToneMapEnabled() { return m_ToneMapEnabled; }
 	static float GetExposure() { return m_Exposure; }
 };
+
+
 
 

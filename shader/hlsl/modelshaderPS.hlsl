@@ -40,6 +40,16 @@ SamplerState LightingSampler : register(s4);
 #define ShadowMapTexture g_ShadowMap
 #define ShadowSampler g_ShadowSampler
 #define TextureSampler LightingSampler
+// MegaLights M7：Forward / 半透明もクラスターライトグリッドで評価（ルート引数 34：t44〜t46 + b10、35：ライトのテクスチャ）
+#define MEGALIGHTS_GRID 1
+#define MEGALIGHTS_FORWARD 1
+#define MEGALIGHTS_LIGHT_TEXTURES 1
+#define MEGALIGHTS_CB_REGISTER b10
+#include "MegaLightsCommon.hlsli"
+StructuredBuffer<MegaLightData> MegaLightBuffer : register(t44);
+StructuredBuffer<uint2> MegaLightCells : register(t45);
+StructuredBuffer<uint> MegaLightIndices : register(t46);
+static uint g_MLCellIndex = ML_INVALID_CELL;
 #include "SurfaceLighting.hlsli"
 
 float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 lightDir)
@@ -51,6 +61,7 @@ float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 ligh
     float volume;
     float rangeBlend;
     float visibility;
+    g_MLCellIndex = MLCellIndexFromWorld(worldPos);
     ResolveSurfaceLightAggregateShadowed(worldPos, ddx(worldPos), ddy(worldPos), normal,
         WorldToScreenUV(worldPos).xy * ViewportSize, clamp((int)round(VirtualShadowGlobal.z), 0, 3),
         false, normal, 0.0f, 0.0f, 0.0f, directLight, aggregateDirection, aggregateColor,
@@ -251,6 +262,7 @@ float4 ShadeForward(in PSInput3D In)
         float visibility;
         int filterRadius = clamp((int)round(lerp(max(VirtualShadowGlobal.z, 1.0f),
             3.0f, saturate(shadowSoftness * 2.0f))), 1, 3);
+        g_MLCellIndex = MLCellIndexFromWorld(In.WorldPos);
         ResolveSurfaceLightAggregateShadowed(In.WorldPos, ddx(In.WorldPos), ddy(In.WorldPos),
             surfaceNormal, In.Position.xy, filterRadius, true, viewDir, surface.BaseColor,
             material.rgb, shadowSoftness, directLight, lightDir, lightColor,
@@ -343,3 +355,4 @@ ForwardOutput main(in PSInput3D In)
     output.Revealage = alpha.xxxx;
     return output;
 }
+

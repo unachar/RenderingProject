@@ -3,6 +3,7 @@
 #include "advancedeffects.h"
 #include "atmospherelut.h"
 #include "renderquality.h"
+#include "megalights.h"
 #include "transparencyeffects.h"
 #include "pbrluts.h"
 #include "asynccompute.h"
@@ -343,6 +344,204 @@ void ImGuiManager::DrawProjectSettingsWindow()
             ImGui::Checkbox("矩形エリアライト (LTC)", &rq.AreaLights);
             ImGui::EndDisabled();
             if (!PbrLuts::IsAvailable()) ImGui::TextDisabled("LUT 未初期化: 解析近似にフォールバック");
+
+            ImGui::SeparatorText("MegaLights");
+            {
+                auto& mega = MegaLights::GetSettings();
+                const auto& stats = MegaLights::GetStats();
+                ImGui::BeginDisabled(!MegaLights::IsAvailable());
+                ImGui::Checkbox("MegaLights グリッドを使う", &mega.Enabled);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("ディファード時、Point / Spot / Rect ライトを 16px タイル × 32 スライスのセルごとに評価します。\n"
+                        "タイルあたり 8 灯・画面 160 灯の制限を受けません（最大 %u 灯）。\n"
+                        "シャドウマップを持つライトは従来の経路のままです。", MegaLights::kMaxLights);
+                ImGui::BeginDisabled(!mega.Enabled);
+
+                const char* modes[] = { "M1: 全ライトを評価", "M2: 確率的サンプリング + 影レイ", "リファレンス（検証用・重い）" };
+                ImGui::Combo("評価方式", &mega.EvaluationMode, modes, IM_ARRAYSIZE(modes));
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("M2 / リファレンスは PBR 面のみ（Toon / Lit などは M1 のまま）。レイトレーシングの TLAS が必要です。\n"
+                        "M2 はデノイズ前なのでノイズが乗るのが正常です（M3 でデノイズ）。");
+                ImGui::BeginDisabled(mega.EvaluationMode != 1);
+                int sppIndex = mega.SamplesPerPixel >= 4 ? 2 : mega.SamplesPerPixel >= 2 ? 1 : 0;
+                const char* sppNames[] = { "1", "2", "4" };
+                if (ImGui::Combo("サンプル数 / ピクセル", &sppIndex, sppNames, IM_ARRAYSIZE(sppNames)))
+                    mega.SamplesPerPixel = 1 << sppIndex;
+                ImGui::Checkbox("半解像度サンプリング", &mega.HalfResolution);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("サンプル（選択・影レイ）を画面の 1/2 で作り、2x2 の近傍を深度・法線で重み付けして使います。\n"
+                        "サンプルと影レイが 1/4 になる代わりに、細い物体や境界で影がにじみます（近似。RMSE の検証はオフで）。");
+                ImGui::SliderFloat("一様混合率 α", &mega.UniformMix, 0.01f, 1.0f, "%.2f");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("見積もりに比例した選択に、一様な選択を混ぜる割合。\n見積もりが外れたライトでも選ばれる確率が 0 にならない（不偏性を保つ）。");
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(mega.EvaluationMode != 2);
+                ImGui::SliderInt("リファレンスの影レイ数", &mega.ReferenceRays, 1, 64);
+                ImGui::EndDisabled();
+
+                ImGui::BeginDisabled(mega.EvaluationMode != 1);
+                ImGui::Checkbox("可視ライトハッシュでガイド (M4)", &mega.Guide);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("8x8 タイルごとに前フレームで影レイが通ったライトを覚え、遮られているライトを選びにくくします。\n"
+                        "確率に入れているので偏りは出ません（リファレンスとの RMSE で確認できます）。");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("ハッシュをリセット")) MegaLights::RequestHashReset();
+                ImGui::BeginDisabled(!mega.Guide);
+                ImGui::SliderFloat("載っていないライトの重み", &mega.GuideMinWeight, 0.01f, 1.0f, "%.2f");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("小さいほど遮られたライトに無駄なレイを使わないが、遮りが外れたときの反応が遅くなる（0 にはできない）。");
+                ImGui::SliderFloat("ハッシュを残す確率", &mega.GuideKeep, 0.0f, 1.0f, "%.3f");
+                ImGui::EndDisabled();
+                ImGui::EndDisabled();
+
+                ImGui::BeginDisabled(mega.EvaluationMode != 1);
+                ImGui::Checkbox("スクリーントレース (M5)", &mega.ScreenTrace);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("ワールドトレースの前に深度バッファを短くマーチし、遮蔽が見つかったサンプルはレイを飛ばしません。\n"
+                        "TLAS にない細部の接地影も拾えます。厚みの仮定による近似なので、RMSE の検証はオフで行ってください。");
+                if (mega.ScreenTrace && ImGui::TreeNode("スクリーントレースの詳細"))
+                {
+                    ImGui::SliderInt("ステップ数", &mega.ScreenTraceSteps, 1, 32);
+                    ImGui::SliderFloat("最大距離 (px)", &mega.ScreenTraceMaxPixels, 4.0f, 512.0f, "%.0f");
+                    ImGui::SliderFloat("厚み (m)", &mega.ScreenTraceThickness, 0.01f, 2.0f, "%.2f");
+                    ImGui::SliderFloat("自己遮蔽よけ (px)", &mega.ScreenTraceSelfPixels, 0.0f, 8.0f, "%.1f");
+                    ImGui::TreePop();
+                }
+                ImGui::EndDisabled();
+
+                ImGui::BeginDisabled(mega.EvaluationMode != 1 || !MegaLights::IsDenoiseAvailable());
+                ImGui::Checkbox("デノイズ (M3)", &mega.Denoise);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("時間方向の蓄積 + À-Trous（SVGF 方式）。照明を材質の反射率で割ってからぼかすので、テクスチャはぼけません。\n"
+                        "検証（RMSE）はデノイズを切って行ってください（デノイズは偏りを持ちます）。");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("履歴をリセット")) MegaLights::RequestHistoryReset();
+                {
+                    const char* denoisers[] = { "自前 (SVGF)", "NRD (REBLUR)" };
+                    ImGui::BeginDisabled(!mega.Denoise);
+                    ImGui::Combo("デノイザー (M6)", &mega.Denoiser, denoisers, IM_ARRAYSIZE(denoisers));
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("NRD は NVIDIA NRD が組み込まれたビルドで、レイトレーシングが NRD のガイドを書いているときに使えます。\n"
+                            "使えないフレームは自動で自前（SVGF）に戻ります。");
+                }
+                if (mega.Denoise && mega.Denoiser == 0 && ImGui::TreeNode("デノイズの詳細"))
+                {
+                    ImGui::SliderInt("À-Trous の回数", &mega.DenoiseIterations, 0, 5);
+                    ImGui::SliderInt("履歴の上限 (フレーム)", &mega.MaxHistory, 1, 128);
+                    ImGui::SliderInt("ライト変化時の履歴の上限", &mega.AntiLagHistory, 1, 32);
+                    ImGui::Checkbox("ファイアフライ抑制", &mega.FireflySuppression);
+                    ImGui::Checkbox("1 回目の結果を履歴へ戻す", &mega.HistoryFeedback);
+                    ImGui::SliderFloat("色の最小ブレンド率", &mega.AlphaMin, 0.01f, 1.0f, "%.3f");
+                    ImGui::SliderFloat("モーメントの最小ブレンド率", &mega.MomentsAlphaMin, 0.01f, 1.0f, "%.3f");
+                    ImGui::SliderFloat("履歴の深度許容 (相対)", &mega.DepthTolerance, 0.005f, 0.5f, "%.3f");
+                    ImGui::SliderFloat("履歴の法線許容 (cos)", &mega.NormalThreshold, 0.0f, 0.999f, "%.3f");
+                    ImGui::SliderFloat("法線の鋭さ", &mega.PhiNormal, 1.0f, 256.0f, "%.0f");
+                    ImGui::SliderFloat("輝度の許容 (σ)", &mega.PhiLuminance, 0.5f, 32.0f, "%.1f");
+                    ImGui::SliderFloat("平面距離の許容 (px)", &mega.PhiPlane, 0.1f, 16.0f, "%.1f");
+                    ImGui::TreePop();
+                }
+                ImGui::EndDisabled();
+
+                const char* debugViews[] = { "なし", "セルのライト数", "奥行きスライス", "選ばれたライト (M2)",
+                    "可視率 (M2)", "1/p (M2)", "累積平均", "リファレンスとの差", "可視ライトハッシュ (M4)", "影レイの内訳 (M5)" };
+                ImGui::Combo("デバッグ表示##MegaLights", &mega.DebugView, debugViews, IM_ARRAYSIZE(debugViews));
+                ImGui::BeginDisabled(mega.DebugView != 1);
+                ImGui::SliderInt("ヒートマップ上限", &mega.HeatmapMax, 4, 256);
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(mega.DebugView != 5);
+                ImGui::SliderFloat("1/p の表示上限", &mega.InvPdfDisplayMax, 2.0f, 4096.0f, "%.0f", ImGuiSliderFlags_Logarithmic);
+                ImGui::EndDisabled();
+                ImGui::SliderFloat("スライス分割の奥行き (m)", &mega.SliceFar, 20.0f, 5000.0f, "%.0f", ImGuiSliderFlags_Logarithmic);
+                ImGui::Checkbox("半透明 / Forward にも使う (M7)", &mega.Translucency);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("半透明（OIT / Forward）の面も、セルのライトを全評価します（タイル 8 灯・画面 160 灯の制限なし）。\n"
+                        "グリッドをジオメトリの手前の空間まで構築します。");
+                ImGui::Checkbox("フロクセルフォグにも使う (M6)", &mega.VolumetricFog);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("フロクセルフォグのローカルライトをグリッドから確率的に選びます（フォグのライト上限 32 灯を撤廃）。\n"
+                        "グリッドをジオメトリの手前の空間まで構築するので、グリッドの構築は少し重くなります。");
+                ImGui::BeginDisabled(!mega.VolumetricFog);
+                ImGui::SliderInt("フロクセルあたりのサンプル数", &mega.FogSamples, 1, 4);
+                ImGui::EndDisabled();
+
+                if (ImGui::TreeNode("検証（累積・リファレンス比較）"))
+                {
+                    ImGui::BeginDisabled(!MegaLights::IsStochasticAvailable());
+                    ImGui::Checkbox("静止時に累積する", &mega.Accumulate);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("リセット")) MegaLights::RequestAccumulationReset();
+                    ImGui::BeginDisabled(!mega.Accumulate || stats.AccumulatedFrames == 0);
+                    if (ImGui::Button("現在の累積をリファレンスとして保存")) MegaLights::RequestSaveReference();
+                    ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    ImGui::BeginDisabled(!stats.HasReference);
+                    if (ImGui::Button("破棄")) MegaLights::ClearReference();
+                    ImGui::EndDisabled();
+                    ImGui::EndDisabled();
+                    ImGui::TextDisabled("累積 %u フレーム / リファレンス %s", stats.AccumulatedFrames, stats.HasReference ? "あり" : "なし");
+                    if (stats.HasReference && stats.ErrorValid)
+                    {
+                        const bool pass = stats.RelativeRmse < 0.01;
+                        ImGui::TextColored(pass ? ImVec4(0.4f, 1.0f, 0.5f, 1.0f) : ImVec4(1.0f, 0.75f, 0.3f, 1.0f),
+                            "相対 RMSE（輝度）: %.3f%%（%u フレーム時点）", stats.RelativeRmse * 100.0, stats.ErrorFrames);
+                    }
+                    ImGui::TextWrapped("手順: 評価方式を「リファレンス」→ 累積 → 保存 → 「M2」に切り替え → 累積して RMSE を確認。"
+                        "カメラ・ライトを動かすと累積は自動でリセットされます（オブジェクトの移動は「リセット」）。");
+                    ImGui::TreePop();
+                }
+                ImGui::EndDisabled();
+                ImGui::EndDisabled();
+                if (!MegaLights::IsAvailable())
+                {
+                    ImGui::TextDisabled("初期化失敗（graphics ログを確認）");
+                }
+                else if (mega.Enabled)
+                {
+                    const char* activeNames[] = { "M1", "M2", "リファレンス" };
+                    ImGui::TextDisabled("現在: %s%s%s", activeNames[static_cast<int>(stats.ActiveMode)],
+                        stats.FallbackReason ? " ← " : "", stats.FallbackReason ? stats.FallbackReason : "");
+                    if (stats.ActiveMode == MegaLights::Mode::Stochastic)
+                    {
+                        ImGui::TextDisabled("サンプル %u / ピクセル・%ux%u（%s, バッファ %.1f MB）", stats.SamplesPerPixel,
+                            stats.SampleWidth, stats.SampleHeight, stats.SampleScale > 1 ? "半解像度" : "フル解像度", stats.SampleBufferMB);
+                        if (stats.TraceStatsValid)
+                        {
+                            const double tileRatio = stats.TotalTiles ? 100.0 * stats.ActiveTiles / stats.TotalTiles : 0.0;
+                            const double screenRatio = stats.TraceRequests ? 100.0 * stats.ScreenHits / stats.TraceRequests : 0.0;
+                            ImGui::TextDisabled("対象タイル %u / %u (%.0f%%)", stats.ActiveTiles, stats.TotalTiles, tileRatio);
+                            ImGui::TextDisabled("影レイ要求 %u → スクリーンで確定 %u (%.0f%%) / ワールド %u",
+                                stats.TraceRequests, stats.ScreenHits, screenRatio, stats.WorldTraces);
+                        }
+                        ImGui::TextDisabled("ガイド: %s（ハッシュ %ux%u タイル）",
+                            stats.Guided ? "ON" : (mega.Guide ? "準備中（次のフレームから）" : "OFF"), stats.HashTilesX, stats.HashTilesY);
+                        if (stats.Denoised)
+                        {
+                            ImGui::TextDisabled("デノイズ: %s（バッファ %.1f MB）%s%s", stats.DenoiserUsed ? stats.DenoiserUsed : "ON",
+                                stats.DenoiseBufferMB, stats.AntiLag ? " / ライト変化" : "", stats.HistoryReset ? " / 履歴リセット" : "");
+                            if (mega.Denoiser == 1 && stats.NrdFallback)
+                                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "NRD: %s", stats.NrdFallback);
+                        }
+                        else if (stats.DenoiseFallback)
+                            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "デノイズ: %s", stats.DenoiseFallback);
+                    }
+                    if (!MegaLights::IsStochasticAvailable())
+                        ImGui::TextDisabled("M2 シェーダーの初期化に失敗（graphics ログを確認）");
+                    ImGui::TextDisabled("半透明 / Forward: %s", stats.ForwardGrid ? "MegaLights" : "従来（タイル 8 灯）");
+                    ImGui::TextDisabled("フォグ: %s", stats.VolumetricGrid ? "MegaLights（視錐台全体のグリッド）" :
+                        (mega.VolumetricFog ? "フロクセルフォグが無効" : "従来（上限 32 灯）"));
+                    ImGui::TextDisabled("グリッドのライト %u 灯%s / グリッド %ux%ux%u",
+                        stats.SubmittedLights, stats.DroppedLights > 0 ? "（上限超過あり）" : "",
+                        stats.TilesX, stats.TilesY, stats.Slices);
+                    ImGui::TextDisabled("リスト使用量 細 %u / %u・粗 %u / %u、セル最大 %u 灯",
+                        stats.FineIndices, MegaLights::kFineCapacity, stats.CoarseIndices, MegaLights::kCoarseCapacity,
+                        stats.MaxLightsPerCell);
+                    if (stats.OverflowCells > 0)
+                        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.3f, 1.0f), "リスト容量不足: %u セルで欠けあり", stats.OverflowCells);
+                    if (stats.DroppedLights > 0)
+                        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.3f, 1.0f), "%u 灯が上限 %u を超えたため従来の経路", stats.DroppedLights, MegaLights::kMaxLights);
+                }
+            }
 
             ImGui::SeparatorText("Tone Mapping / Color Grading");
             int toneMapper = static_cast<int>(rq.Tonemapper);
@@ -786,6 +985,43 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     auto& rq = RenderQuality::Get();
     field("quality.EnergyCompensation", rq.EnergyCompensation, 0, 1);
     field("quality.AreaLights", rq.AreaLights, 0, 1);
+    // MegaLights（megalights.h）
+    auto& megaLights = MegaLights::GetSettings();
+    field("megalights.Enabled", megaLights.Enabled, 0, 1);
+    field("megalights.DebugView", megaLights.DebugView, 0, 9);
+    field("megalights.SliceFar", megaLights.SliceFar, 20.0, 5000.0);
+    field("megalights.HeatmapMax", megaLights.HeatmapMax, 1, 256);
+    field("megalights.EvaluationMode", megaLights.EvaluationMode, 0, 2);
+    field("megalights.SamplesPerPixel", megaLights.SamplesPerPixel, 1, 4);
+    field("megalights.UniformMix", megaLights.UniformMix, 0.001, 1.0);
+    field("megalights.ReferenceRays", megaLights.ReferenceRays, 1, 64);
+    field("megalights.InvPdfDisplayMax", megaLights.InvPdfDisplayMax, 2.0, 4096.0);
+    field("megalights.Guide", megaLights.Guide, 0, 1);
+    field("megalights.GuideMinWeight", megaLights.GuideMinWeight, 0.001, 1.0);
+    field("megalights.GuideKeep", megaLights.GuideKeep, 0.0, 1.0);
+    field("megalights.HalfResolution", megaLights.HalfResolution, 0, 1);
+    field("megalights.Translucency", megaLights.Translucency, 0, 1);
+    field("megalights.Denoiser", megaLights.Denoiser, 0, 1);
+    field("megalights.VolumetricFog", megaLights.VolumetricFog, 0, 1);
+    field("megalights.FogSamples", megaLights.FogSamples, 1, 4);
+    field("megalights.ScreenTrace", megaLights.ScreenTrace, 0, 1);
+    field("megalights.ScreenTraceSteps", megaLights.ScreenTraceSteps, 1, 64);
+    field("megalights.ScreenTraceMaxPixels", megaLights.ScreenTraceMaxPixels, 1.0, 1024.0);
+    field("megalights.ScreenTraceThickness", megaLights.ScreenTraceThickness, 0.001, 10.0);
+    field("megalights.ScreenTraceSelfPixels", megaLights.ScreenTraceSelfPixels, 0.0, 16.0);
+    field("megalights.Denoise", megaLights.Denoise, 0, 1);
+    field("megalights.DenoiseIterations", megaLights.DenoiseIterations, 0, 5);
+    field("megalights.MaxHistory", megaLights.MaxHistory, 1, 256);
+    field("megalights.AntiLagHistory", megaLights.AntiLagHistory, 1, 256);
+    field("megalights.FireflySuppression", megaLights.FireflySuppression, 0, 1);
+    field("megalights.HistoryFeedback", megaLights.HistoryFeedback, 0, 1);
+    field("megalights.AlphaMin", megaLights.AlphaMin, 0.001, 1.0);
+    field("megalights.MomentsAlphaMin", megaLights.MomentsAlphaMin, 0.001, 1.0);
+    field("megalights.DepthTolerance", megaLights.DepthTolerance, 0.001, 1.0);
+    field("megalights.NormalThreshold", megaLights.NormalThreshold, -1.0, 1.0);
+    field("megalights.PhiNormal", megaLights.PhiNormal, 1.0, 256.0);
+    field("megalights.PhiLuminance", megaLights.PhiLuminance, 0.1, 100.0);
+    field("megalights.PhiPlane", megaLights.PhiPlane, 0.05, 100.0);
     int toneMapper = static_cast<int>(rq.Tonemapper);
     if (EditorConfig::Value(output, key, value, "quality.Tonemapper", toneMapper, 0, 3))
     {
@@ -1259,6 +1495,7 @@ void ImGuiManager::LoadProjectSettings()
     }
 
 }
+
 
 
 

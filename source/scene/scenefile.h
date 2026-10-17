@@ -416,6 +416,9 @@ namespace SceneFile
 		a("affectsForward", c.AffectsForward);
 		a("affectsVolumetrics", c.AffectsVolumetrics);
 		a("castShadow", c.CastShadow);
+		a("allowMegaLights", c.AllowMegaLights);
+		a("sourceRadius", c.SourceRadius);
+		a("areaTexture", c.AreaTexturePath);
 		a("priority", c.Priority);
 	}
 
@@ -726,5 +729,6 @@ namespace SceneFile
 		a.Object(key, [&](Archive& s) { present = true; Visit(s, component); });
 	}
 }
+
 
 

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "megalights.h"
 #include "transparencyeffects.h"
 #include "envflags.h"
 #include "transmittanceshadows.h"
@@ -190,6 +191,9 @@ void ScenePasses::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_TO
 	{
 		m_CommandList->SetGraphicsRootShaderResourceView(10, lightTileAddress);
 	}
+	// MegaLights M7：Forward / 半透明のグリッドとライトのテクスチャ
+	MegaLights::BindForward(m_CommandList.Get(), 34, 35, CD3DX12_GPU_DESCRIPTOR_HANDLE(
+		m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), RendererState::g_kTEXTURE_SRV_START_INDEX, m_CbvIncrementSize));
 	m_CommandList->IASetPrimitiveTopology(topology);
 }
 
@@ -802,5 +806,6 @@ void ScenePasses::EndVelocityBuffer()
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 	m_CommandList->ResourceBarrier(1, &toVelocitySrv);
 }
+
 
 

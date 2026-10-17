@@ -1409,6 +1409,13 @@ bool ImGuiManager::LoadScene(const filesystem::path& path)
 		RebuildLoadedEntity(entity, &record);
 	}
 
+	// アセットブラウザの「シーン作成」で作った空シーン：新規シーンと同じ既定のカメラと太陽を置く
+	if (records.size() == 0 && root.get("createDefaults", false).asBool())
+	{
+		Camera::CreateGameCamera("Main Camera", { 0.0f, 1.0f, -10.0f }, { 0.0f, 1.0f, 0.0f }, XM_PIDIV4, true);
+		Sun::CreateDefault();
+	}
+
 	if (auto* physics = SystemManager::GetSystem<PhysicsSystem>()) physics->ResetSimulation();
 	MaterialManager::NotifyAssignmentsChanged();
 	m_ScenePath = RelativeToWorkingDirectory(path);
@@ -1677,4 +1684,5 @@ void ImGuiManager::DrawScenePopups()
 		ImGui::EndPopup();
 	}
 }
+
 

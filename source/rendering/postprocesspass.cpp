@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "megalights.h"
 #include "transmittanceshadows.h"
 #include "cloud/cloudrenderer.h"
 #include "raytracing.h"
@@ -144,6 +145,9 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			CloudRenderer::BindLighting(m_CommandList.Get(), m_FrameIndex);
 			m_CommandList->SetGraphicsRootDescriptorTable(26, AtmosphereLut::GetGraphicsSrv());
 			m_CommandList->SetGraphicsRootDescriptorTable(27, PbrLuts::GetSrv());
+			MegaLights::BindGraphics(m_CommandList.Get(), 28, 29, 30, 31, 32, 33, 34, 35, 36, 37);
+			m_CommandList->SetGraphicsRootDescriptorTable(38, CD3DX12_GPU_DESCRIPTOR_HANDLE(
+				m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), RendererState::g_kTEXTURE_SRV_START_INDEX, m_CbvIncrementSize));
 
 			RenderFrame::SetDescriptorHeap();
 
@@ -317,8 +321,54 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)],
 			m_GBufferSrvHandles[static_cast<UINT>(GBufferType::NORMAL)],
 			m_FrameIndex);
+		// MegaLights：GBuffer の深度からクラスターライトグリッドを構築し、M2 ならライトのサンプリングと影レイまで行う
+		//（ライトの収集はライト定数の更新時。TLAS は上の Raytracing::Execute で構築済み）
+		{
+			LightingResources::UpdateLightConstantBuffer(1.35f);
+			ID3D12Resource* const megaLightGBuffer[MegaLights::kBuildGBufferCount] = {
+				m_GBufferTargets[static_cast<UINT>(GBufferType::BASE_COLOR)].Get(),
+				m_GBufferTargets[static_cast<UINT>(GBufferType::NORMAL)].Get(),
+				m_GBufferTargets[static_cast<UINT>(GBufferType::DEPTH)].Get(),
+				m_GBufferTargets[static_cast<UINT>(GBufferType::MATERIAL)].Get(),
+				m_GBufferTargets[static_cast<UINT>(GBufferType::SHADOW)].Get(),
+				m_GBufferTargets[static_cast<UINT>(GBufferType::VELOCITY)].Get() };
+			MegaLights::Build(m_CommandList.Get(), m_CbvHeap.Get(), megaLightGBuffer,
+				m_GBufferSrvHandles[static_cast<UINT>(GBufferType::BASE_COLOR)],
+				m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)],
+				AdvancedEffects::IsFroxelFogActive());
+		}
 		m_CommandList->ResourceBarrier(1, &toSceneRt);
 		m_CommandList->ClearRenderTargetView(GetRenderTargetRtvHandle(RenderTargetType::Scene), m_kSceneClearColor, 0, nullptr);
+
+		// MegaLights M3：ML6 の結果をデモジュレートして書き出し（カラーは書かない）→ デノイズ。
+		// ディファードライティングはデノイズ済みの照明に材質の反射率を掛け戻して使う
+		if (MegaLights::WantsShadePass())
+		{
+			RenderProfiler::ScopedEvent megaLightsProfile("MegaLights Shade", m_CommandList.Get());
+			ID3D12PipelineState* megaLightsShadePso = MegaLights::GetShadePso(m_PostProcessRootSignature.Get(), m_SceneColorFormat);
+			if (megaLightsShadePso)
+			{
+				MegaLights::BeginShade(m_CommandList.Get());
+				DrawFullscreenPass(
+					megaLightsShadePso,
+					GetRenderTargetRtvHandle(RenderTargetType::Scene),
+					m_GBufferSrvHandles[static_cast<UINT>(GBufferType::BASE_COLOR)],
+					1.0f,
+					1.0f,
+					1.35f,
+					m_GBufferSrvHandles[atmosphereIndex]);
+				ID3D12Resource* const megaLightsDenoiseGBuffer[3] = {
+					m_GBufferTargets[static_cast<UINT>(GBufferType::NORMAL)].Get(),
+					m_GBufferTargets[static_cast<UINT>(GBufferType::DEPTH)].Get(),
+					m_GBufferTargets[static_cast<UINT>(GBufferType::VELOCITY)].Get() };
+				MegaLights::Denoise(m_CommandList.Get(), m_CbvHeap.Get(), megaLightsDenoiseGBuffer,
+					m_GBufferSrvHandles[static_cast<UINT>(GBufferType::BASE_COLOR)]);
+			}
+			else
+			{
+				MegaLights::CancelDenoise();
+			}
+		}
 
 		{
 			RenderProfiler::ScopedEvent profile("Deferred Lighting", m_CommandList.Get());
@@ -912,5 +962,6 @@ void PostProcessPass::ApplyAntiAliasing()
 		m_CommandList->ResourceBarrier(1, &toEditorFinalSrv);
 	}
 }
+
 
 
