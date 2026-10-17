@@ -4,6 +4,8 @@
 #include "renderprofiler.h"
 
 #include <cstddef>
+#include <cmath>
+#include <algorithm>
 
 #define A_CPU 1
 #include "../../External/FidelityFX-FSR/ffx_a.h"
@@ -285,9 +287,17 @@ bool SpatialUpscaler::IsScaleSupported(
 	}
 
 
+	// NIS 1 段は最大 2 倍。それ以上（内部解像度 50% 未満）は 2 倍以下の段を重ねる（最大 3 段 = 8 倍 → 20% まで対応）
 	return inputWidth <= outputWidth && inputHeight <= outputHeight &&
-		static_cast<uint64_t>(inputWidth) * 2u >= outputWidth &&
-		static_cast<uint64_t>(inputHeight) * 2u >= outputHeight;
+		NisPassCount(inputWidth, inputHeight, outputWidth, outputHeight) <= 3;
+}
+
+UINT SpatialUpscaler::NisPassCount(UINT inputWidth, UINT inputHeight, UINT outputWidth, UINT outputHeight)
+{
+	if (inputWidth == 0 || inputHeight == 0) return 0;
+	const double ratio = (std::max)(static_cast<double>(outputWidth) / inputWidth, static_cast<double>(outputHeight) / inputHeight);
+	if (ratio <= 2.0) return 1;
+	return static_cast<UINT>(ceil(log2(ratio) - 1.0e-6));
 }
 
 bool SpatialUpscaler::Execute(
@@ -299,8 +309,21 @@ bool SpatialUpscaler::Execute(
 	UINT inputHeight,
 	UINT outputWidth,
 	UINT outputHeight,
-	UpscaleMode mode)
+	UpscaleMode mode,
+	ID3D12Resource* input,
+	D3D12_GPU_DESCRIPTOR_HANDLE outputSrv)
 {
+	// 入力テクスチャの実サイズ（ビューポートより大きいことがある。正しい UV 計算に必要）
+	UINT inputTextureWidth = inputWidth, inputTextureHeight = inputHeight;
+	if (input)
+	{
+		const auto inputDesc = input->GetDesc();
+		inputTextureWidth = (std::max)(static_cast<UINT>(inputDesc.Width), inputWidth);
+		inputTextureHeight = (std::max)(inputDesc.Height, inputHeight);
+	}
+	const auto outputDesc = output ? output->GetDesc() : D3D12_RESOURCE_DESC{};
+	const UINT outputTextureWidth = (std::max)(static_cast<UINT>(outputDesc.Width), outputWidth);
+	const UINT outputTextureHeight = (std::max)(outputDesc.Height, outputHeight);
 	if (!commandList || !output || !g_RootSignature || !IsAvailable(mode) ||
 		!IsScaleSupported(mode, inputWidth, inputHeight, outputWidth, outputHeight)) return false;
 	ID3D12DescriptorHeap* heaps[] = { g_DescriptorHeap.Get() };
@@ -317,8 +340,8 @@ bool SpatialUpscaler::Execute(
 			constants.Const3,
 			static_cast<float>(inputWidth),
 			static_cast<float>(inputHeight),
-			static_cast<float>(inputWidth),
-			static_cast<float>(inputHeight),
+			static_cast<float>(inputTextureWidth),
+			static_cast<float>(inputTextureHeight),
 			static_cast<float>(outputWidth),
 			static_cast<float>(outputHeight));
 		constants.DispatchInfo[0] = outputWidth;
@@ -355,24 +378,87 @@ bool SpatialUpscaler::Execute(
 
 	if (mode == UpscaleMode::Nis)
 	{
-		NISConfig config{};
-		if (!NVScalerUpdateConfig(
-			config,
-			RendererSettings::GetNisSharpness(),
-			0, 0, inputWidth, inputHeight, inputWidth, inputHeight,
-			0, 0, outputWidth, outputHeight, outputWidth, outputHeight,
-			NISHDRMode::None))
-		{
-			return false;
-		}
+		// NIS は 1 段最大 2 倍。50% 未満は段を重ねる（各段の倍率を等しく = r^(1/n)。偏った 2 倍 + 端数よりにじみが少ない）
+		//   ・シャープネスは最後の段だけ（途中で掛けるとハロー・リンギングが段ごとに増幅される）
+		//   ・低解像度ほど元の情報が少ないので、最後の段のシャープネスを少し強める（上限 1）
+		//   ・中間は FSR のスクラッチ（出力サイズ）と出力そのものを交互に使う（ビューポートで範囲を指定）
+		const UINT passes = NisPassCount(inputWidth, inputHeight, outputWidth, outputHeight);
+		if (passes == 0 || passes > 3 || (passes == 3 && outputSrv.ptr == 0)) return false;
+		const float userSharpness = RendererSettings::GetNisSharpness();
+		const double ratioX = static_cast<double>(outputWidth) / inputWidth;
+		const double ratioY = static_cast<double>(outputHeight) / inputHeight;
+		const float scaleBoost = static_cast<float>((std::min)(ratioX, ratioY));
+		const float finalSharpness = (std::min)(1.0f, userSharpness * (passes > 1 ? 1.0f + 0.1f * (scaleBoost - 2.0f) : 1.0f));
+
 		commandList->SetPipelineState(g_NisPso.Get());
-		commandList->SetComputeRootDescriptorTable(0, inputSrv);
-		commandList->SetComputeRootDescriptorTable(1, outputUav);
 		commandList->SetComputeRootDescriptorTable(2, GpuHandle(RendererState::g_kNIS_COEF_SCALE_SRV_INDEX));
 		commandList->SetComputeRootDescriptorTable(3, GpuHandle(RendererState::g_kNIS_COEF_USM_SRV_INDEX));
-		commandList->SetComputeRoot32BitConstants(4, kNisConfigDwordCount, &config, 0);
-		commandList->Dispatch((outputWidth + 31u) / 32u, (outputHeight + 23u) / 24u, 1);
+
+		struct Surface { D3D12_GPU_DESCRIPTOR_HANDLE Srv, Uav; UINT TextureWidth, TextureHeight; ID3D12Resource* Resource; };
+		const Surface source{ inputSrv, {}, inputTextureWidth, inputTextureHeight, input };
+		const Surface scratch{ GpuHandle(RendererState::g_kFSR_SCRATCH_SRV_INDEX), GpuHandle(RendererState::g_kFSR_SCRATCH_UAV_INDEX),
+			g_OutputWidth, g_OutputHeight, g_FsrScratch.Get() };
+		const Surface target{ outputSrv, outputUav, outputTextureWidth, outputTextureHeight, output };
+		if (passes > 1 && (!g_FsrScratch || g_OutputWidth < outputWidth || g_OutputHeight < outputHeight)) return false;
+		// 最後が出力になるように逆算：3 段 = 出力 → スクラッチ → 出力、2 段 = スクラッチ → 出力
+		const Surface* chain[4] = { &source, nullptr, nullptr, nullptr };
+		if (passes == 2) { chain[1] = &scratch; chain[2] = &target; }
+		else if (passes == 3) { chain[1] = &target; chain[2] = &scratch; chain[3] = &target; }
+		else chain[1] = &target;
+
+		D3D12_RESOURCE_STATES outputState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+		D3D12_RESOURCE_STATES scratchState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+		auto setState = [&](ID3D12Resource* resource, D3D12_RESOURCE_STATES target)
+		{
+			D3D12_RESOURCE_STATES* current = resource == output ? &outputState :
+				(resource && resource == g_FsrScratch.Get()) ? &scratchState : nullptr;
+			if (!current) return; // 入力は呼び出し側が管理
+			if (*current == target)
+			{
+				if (target == D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+				{
+					D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::UAV(resource);
+					commandList->ResourceBarrier(1, &barrier);
+				}
+				return;
+			}
+			D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, *current, target);
+			commandList->ResourceBarrier(1, &barrier);
+			*current = target;
+		};
+		UINT currentWidth = inputWidth, currentHeight = inputHeight;
+		for (UINT pass = 0; pass < passes; ++pass)
+		{
+			const bool last = pass + 1 == passes;
+			const double t = static_cast<double>(pass + 1) / passes;
+			const UINT nextWidth = last ? outputWidth : (std::min)(outputWidth, static_cast<UINT>(ceil(inputWidth * pow(ratioX, t))));
+			const UINT nextHeight = last ? outputHeight : (std::min)(outputHeight, static_cast<UINT>(ceil(inputHeight * pow(ratioY, t))));
+			const Surface& from = *chain[pass];
+			const Surface& to = *chain[pass + 1];
+			NISConfig config{};
+			if (!NVScalerUpdateConfig(config, last ? finalSharpness : 0.0f,
+				0, 0, currentWidth, currentHeight, from.TextureWidth, from.TextureHeight,
+				0, 0, nextWidth, nextHeight, to.TextureWidth, to.TextureHeight,
+				NISHDRMode::None))
+			{
+				return false;
+			}
+			// 状態：入力 = NON_PIXEL（呼び出し側）、出力 = UAV（呼び出し側）、スクラッチ = NON_PIXEL（FSR と共通の前提）
+			//   読む側を NON_PIXEL、書く側を UAV にそろえる
+			setState(from.Resource, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+			setState(to.Resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+			commandList->SetComputeRootDescriptorTable(0, from.Srv);
+			commandList->SetComputeRootDescriptorTable(1, to.Uav);
+			commandList->SetComputeRoot32BitConstants(4, kNisConfigDwordCount, &config, 0);
+			commandList->Dispatch((nextWidth + 31u) / 32u, (nextHeight + 23u) / 24u, 1);
+			currentWidth = nextWidth;
+			currentHeight = nextHeight;
+		}
+		// 呼び出し時の状態に戻す（出力 = UAV、スクラッチ = NON_PIXEL）
+		setState(output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+		setState(g_FsrScratch.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 		return true;
 	}
 	return false;
 }
+

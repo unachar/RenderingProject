@@ -6,6 +6,8 @@
 //   4. FineCull       : 細セル（1 タイル × 1 スライス）ごとに粗リストだけを判定 → 細リスト
 //   ・ジオメトリが無いセルは判定しない（深度による 2.5D カリング）
 //   ・セル内のライトはインデックス昇順（並びが決定論的になり、加算順も毎フレーム同じ）
+//   ・ライトのオクルージョン：不透明面がある細セルに入ったライトを LightVisibleBits に立てる（CPU が読み戻して、
+//     見えている面に届かないライトをシャドウマップ・定数バッファの割り当てから外す）
 //   実行時に DXC（cs_6_5）でコンパイルする。.vcxproj への追加は不要。
 // =============================================================================================
 #define MEGALIGHTS_CB_REGISTER b0
@@ -17,31 +19,38 @@
 Texture2D<float> SceneDepth : register(t0);
 StructuredBuffer<MegaLightData> Lights : register(t1);
 
-RWStructuredBuffer<uint>  TileSliceMasks : register(u0);
+RWStructuredBuffer<uint2> TileSliceMasks : register(u0); // x: 判定するスライス（フォグ・半透明用に手前も含む）, y: 不透明面のあるスライス
 RWStructuredBuffer<uint2> CoarseCells    : register(u1);
 RWStructuredBuffer<uint>  CoarseIndices  : register(u2);
 RWStructuredBuffer<uint2> FineCells      : register(u3);
 RWStructuredBuffer<uint>  FineIndices    : register(u4);
 RWByteAddressBuffer       Counters       : register(u5); // 0: 粗の使用数, 4: 細の使用数, 8: あふれたセル数, 12: セル内の最大ライト数
+RWByteAddressBuffer       LightVisibleBits : register(u6); // 4096 bit：見えている不透明面に届くライト
 
 uint CoarseCellIndex(uint3 coarse)
 {
     return (coarse.z * MLScreen.w + coarse.y) * MLScreen.z + coarse.x;
 }
 
-[numthreads(1, 1, 1)]
-void ClearCounters()
+[numthreads(128, 1, 1)]
+void ClearCounters(uint groupIndex : SV_GroupIndex)
 {
-    Counters.Store4(0, uint4(0u, 0u, 0u, 0u));
+    if (groupIndex == 0u) Counters.Store4(0, uint4(0u, 0u, 0u, 0u));
+    LightVisibleBits.Store(groupIndex * 4u, 0u);
 }
 
 // --------------------------------------------------------------------------------------------
 groupshared uint gs_TileMask;
+groupshared uint gs_GeometryMask;
 
 [numthreads(16, 16, 1)]
 void TileSliceMask(uint3 groupId : SV_GroupID, uint3 pixel : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 {
-    if (groupIndex == 0u) gs_TileMask = 0u;
+    if (groupIndex == 0u)
+    {
+        gs_TileMask = 0u;
+        gs_GeometryMask = 0u;
+    }
     GroupMemoryBarrierWithGroupSync();
     const bool volumetric = (MLGrid.w & ML_GRID_VOLUMETRIC) != 0u;
     if (all(pixel.xy < MLScreen.xy))
@@ -61,6 +70,7 @@ void TileSliceMask(uint3 groupId : SV_GroupID, uint3 pixel : SV_DispatchThreadID
             uint sliceHigh = MLSliceFromViewZ(viewZ * 1.001f);
             uint first = min(slice, sliceLow);
             uint last = max(slice, sliceHigh);
+            InterlockedOr(gs_GeometryMask, ((2u << (last - first)) - 1u) << first);
             // M6（フォグ用）：カメラから面までのスライスはすべてフォグとして見える
             if (volumetric) first = 0u;
             uint bits = last >= 31u && first == 0u ? 0xffffffffu : ((2u << (last - first)) - 1u) << first;
@@ -68,7 +78,7 @@ void TileSliceMask(uint3 groupId : SV_GroupID, uint3 pixel : SV_DispatchThreadID
         }
     }
     GroupMemoryBarrierWithGroupSync();
-    if (groupIndex == 0u) TileSliceMasks[groupId.y * MLGrid.x + groupId.x] = gs_TileMask;
+    if (groupIndex == 0u) TileSliceMasks[groupId.y * MLGrid.x + groupId.x] = uint2(gs_TileMask, gs_GeometryMask);
 }
 
 // --------------------------------------------------------------------------------------------
@@ -90,7 +100,7 @@ void CoarseCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
     if (groupIndex < ML_COARSE_TILES * ML_COARSE_TILES)
     {
         uint2 tile = coarse.xy * ML_COARSE_TILES + uint2(groupIndex % ML_COARSE_TILES, groupIndex / ML_COARSE_TILES);
-        if (all(tile < MLGrid.xy)) InterlockedOr(gs_CoarseMask, TileSliceMasks[tile.y * MLGrid.x + tile.x]);
+        if (all(tile < MLGrid.xy)) InterlockedOr(gs_CoarseMask, TileSliceMasks[tile.y * MLGrid.x + tile.x].x);
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -169,6 +179,7 @@ void CoarseCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
 // 粗セル 1 つ = 4x4 タイル × 4 スライス = 64 細セル = 64 スレッド
 groupshared float4 gs_Spheres[ML_FINE_CHUNK];
 groupshared uint gs_Ids[ML_FINE_CHUNK];
+groupshared uint gs_Visible[ML_MAX_LIGHTS / 32u];
 
 [numthreads(64, 1, 1)]
 void FineCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
@@ -177,11 +188,16 @@ void FineCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
     const uint2 tile = coarse.xy * ML_COARSE_TILES + uint2(groupIndex % ML_COARSE_TILES, (groupIndex / ML_COARSE_TILES) % ML_COARSE_TILES);
     const uint slice = coarse.z * ML_COARSE_SLICES + groupIndex / (ML_COARSE_TILES * ML_COARSE_TILES);
     const bool valid = all(tile < MLGrid.xy) && slice < MLGrid.z;
+    for (uint clearWord = groupIndex; clearWord < ML_MAX_LIGHTS / 32u; clearWord += 64u) gs_Visible[clearWord] = 0u;
     bool occupied = false;
+    bool geometry = false;
     if (valid && coarseCell.y > 0u)
     {
-        occupied = ((TileSliceMasks[tile.y * MLGrid.x + tile.x] >> slice) & 1u) != 0u;
+        const uint2 masks = TileSliceMasks[tile.y * MLGrid.x + tile.x];
+        occupied = ((masks.x >> slice) & 1u) != 0u;
+        geometry = ((masks.y >> slice) & 1u) != 0u;
     }
+    GroupMemoryBarrierWithGroupSync();
     float3 boundsMin = 0.0f;
     float3 boundsMax = 0.0f;
     if (occupied) MLCellBounds(tile, tile, slice, slice, boundsMin, boundsMax);
@@ -202,7 +218,9 @@ void FineCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
         {
             for (uint k = 0u; k < chunk; ++k)
             {
-                count += MLSphereIntersectsAabb(gs_Spheres[k], boundsMin, boundsMax) ? 1u : 0u;
+                if (!MLSphereIntersectsAabb(gs_Spheres[k], boundsMin, boundsMax)) continue;
+                ++count;
+                if (geometry) InterlockedOr(gs_Visible[gs_Ids[k] >> 5u], 1u << (gs_Ids[k] & 31u));
             }
         }
         GroupMemoryBarrierWithGroupSync();
@@ -247,4 +265,12 @@ void FineCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
     }
 
     if (valid) FineCells[MLCellIndex(tile, slice)] = uint2(offset, stored);
+    // このグループで見えたライトをまとめて書き出す（アトミックは語ごとに 1 回）
+    GroupMemoryBarrierWithGroupSync();
+    for (uint word = groupIndex; word < ML_MAX_LIGHTS / 32u; word += 64u)
+    {
+        const uint bits = gs_Visible[word];
+        if (bits != 0u) LightVisibleBits.InterlockedOr(word * 4u, bits);
+    }
 }
+

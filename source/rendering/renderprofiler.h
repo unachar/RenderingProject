@@ -18,7 +18,7 @@ class RenderProfiler final
 {
 public:
     static constexpr UINT kFrameCount = 3;
-    static constexpr UINT kMaxTimestampQueriesPerFrame = 128;
+    static constexpr UINT kMaxTimestampQueriesPerFrame = 1024; // 128 では内訳の計測で枠が尽き、後半のパスの GPU 時間が 0 と表示されていた
     static constexpr UINT kInvalidGpuToken = UINT_MAX;
     static constexpr size_t kHistoryLength = 180;
 
@@ -855,3 +855,4 @@ public:
         ImGui::End();
     }
 };
+

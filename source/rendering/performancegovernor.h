@@ -394,7 +394,7 @@ private:
 
 	static void ReduceResolution()
 	{
-		const float target = (std::max)(0.5f, s_Base.ResolutionScale * 0.8f);
+		const float target = (std::max)(0.35f, s_Base.ResolutionScale * 0.8f); // NIS も多段で 50% 未満に対応したため
 		if (target < RenderConfiguration::GetResolutionScale() - 0.01f)
 		{
 			RenderConfiguration::SetResolutionScale(target);
@@ -411,5 +411,6 @@ private:
 		s_ResolutionReduced = false;
 	}
 };
+
 
 

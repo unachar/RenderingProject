@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "cpuculling.h"
 #include "gpuscene.h"
 #include "gpuscenechanges.h"
 #include "gpusceneslots.h"
@@ -401,9 +402,11 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
                     {
                         instance.VirtualGeometryAssetIndex = VirtualGeometryResources::Register(mesh.VirtualGeometryLODs[0]);
                     }
-                    if (ComponentManager::HasComponent<LODComponent>(entity))
+                    // 自動 LOD：LOD コンポーネントが無いモデルも、インポート時に生成した LOD を画面サイズで切り替える
+                    const bool hasLodComponent = ComponentManager::HasComponent<LODComponent>(entity);
+                    if (hasLodComponent || RenderCulling::GetSettings().AutoLod)
                     {
-                        const auto& lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
+                        const LODComponent lod = hasLodComponent ? ComponentManager::GetComponentUnchecked<LODComponent>(entity) : LODComponent{ true };
                         if (lod.UseLOD)
                         {
                             array<uint32_t, Visibility::MaxLODs> lodMeshes;
@@ -846,4 +849,5 @@ void GpuScene::DrawDebug()
         ImGui::TreePop();
     }
 }
+
 

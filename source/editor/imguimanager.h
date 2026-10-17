@@ -268,6 +268,7 @@ private:
 	static uint64_t ComputeSceneHash();
 	static string SerializeScene();
 	static bool SaveScene(const filesystem::path& path);
+	static void PollPendingSceneSave(bool wait);
 	static bool LoadScene(const filesystem::path& path);
 	static void DestroySceneEntities();
 	static void CreateNewScene();
@@ -315,6 +316,7 @@ public:
 	static bool IsToneMapEnabled() { return m_ToneMapEnabled; }
 	static float GetExposure() { return m_Exposure; }
 };
+
 
 
 

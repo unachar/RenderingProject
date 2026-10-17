@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "cpuculling.h"
 #include "rayreflections.h"
 #include "raytracing.h"
 #include "rendererstate.h"
@@ -74,6 +75,10 @@ struct FrameResources
     ComPtr<ID3D12Resource> Meshes, Lights, Emitters, Constants, Noisy, Result, GiNoisy, GiResult;
     // Keep sampled resources alive until this frame slot's fence completes.
     vector<RaytracingGeometry> Geometry;
+    // 負荷削減：メッシュごとの SRV（頂点 / インデックス / テクスチャ / 発光）が前回と同じなら作り直さない
+    //（参照を保持するので、解放されたアドレスに別のリソースが入って同じポインタになることはない）
+    struct DescriptorRecord { ComPtr<ID3D12Resource> Vertices, Indices, Texture, Emission; UINT TextureMip = 0; UINT EmissionMip = 0; bool Valid = false; };
+    vector<DescriptorRecord> Descriptors;
     UINT Width = 0, Height = 0;
 };
 ComPtr<ID3D12Device> g_Device;
@@ -101,6 +106,8 @@ uint64_t g_GiEmissionSignature = 0;
 constexpr UINT kGiEmissionRestartQuietFrames = 8;
 UINT g_GiEmissionStableFrames = kGiEmissionRestartQuietFrames;
 UINT g_Increment = 0, g_Width = 0, g_Height = 0, g_Dispatches = 0;
+bool g_ReflectionCheckerboard = false; // このフレームの反射を半分のピクセルでトレースした
+bool g_DenoiserCheckerboard = false;   // 作成済みの反射デノイザーのモード
 UINT g_LastFrame = 0;
 bool g_HistoryValid = false;
 
@@ -180,6 +187,7 @@ bool EnsureFrame(FrameResources& frame, UINT slot, UINT width, UINT height)
         desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         desc.NumDescriptors = kEmissionDescriptors + kMaximumMeshes;
         if (FAILED(g_Device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&frame.Heap)))) return false;
+        frame.Descriptors.clear(); // 新しいヒープは中身が空
     }
     if (!EnsureUpload(frame.Constants, 512)) return false;
     if (g_Shared.Width != width || g_Shared.Height != height)
@@ -458,7 +466,9 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     const UINT count = static_cast<UINT>((min)(geometry.size(), static_cast<size_t>(kMaximumMeshes)));
     vector<MeshConstants> meshes(count);
     vector<UINT> emitters;
-    map<ID3D12Resource*, D3D12_RESOURCE_STATES> sampledResources;
+    unordered_map<ID3D12Resource*, D3D12_RESOURCE_STATES> sampledResources;
+    sampledResources.reserve(count / 2 + 16);
+    if (frame.Descriptors.size() < count) frame.Descriptors.resize(count);
     sampledResources.emplace(depth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     sampledResources.emplace(normal, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     sampledResources.emplace(material, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -488,19 +498,32 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         {
             emitters.push_back(i);
         }
-        TextureSrv(geometry.EmissionTexture.Get(), Cpu(frame.Heap.Get(), kEmissionDescriptors + i), geometry.EmissionResidentMip);
+        auto& record = frame.Descriptors[i];
+        const UINT emissionMip = static_cast<UINT>(geometry.EmissionResidentMip);
+        const UINT textureMip = static_cast<UINT>(geometry.TextureResidentMip);
+        if (!record.Valid || record.Emission.Get() != geometry.EmissionTexture.Get() || record.EmissionMip != emissionMip)
+            TextureSrv(geometry.EmissionTexture.Get(), Cpu(frame.Heap.Get(), kEmissionDescriptors + i), geometry.EmissionResidentMip);
         if (geometry.EmissionTexture)
         {
             sampledResources.emplace(geometry.EmissionTexture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         }
-        BufferSrv(geometry.Vertices.Get(), Cpu(frame.Heap.Get(), kVertexDescriptors + i));
-        BufferSrv(geometry.Indices.Get(), Cpu(frame.Heap.Get(), kIndexDescriptors + i));
-        if (geometry.Texture)
+        if (!record.Valid || record.Vertices.Get() != geometry.Vertices.Get())
+            BufferSrv(geometry.Vertices.Get(), Cpu(frame.Heap.Get(), kVertexDescriptors + i));
+        if (!record.Valid || record.Indices.Get() != geometry.Indices.Get())
+            BufferSrv(geometry.Indices.Get(), Cpu(frame.Heap.Get(), kIndexDescriptors + i));
+        if (!record.Valid || record.Texture.Get() != geometry.Texture.Get() || record.TextureMip != textureMip)
         {
-            TextureSrv(geometry.Texture.Get(), Cpu(frame.Heap.Get(), kTextureDescriptors + i), geometry.TextureResidentMip);
-            sampledResources.emplace(geometry.Texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            if (geometry.Texture) TextureSrv(geometry.Texture.Get(), Cpu(frame.Heap.Get(), kTextureDescriptors + i), geometry.TextureResidentMip);
+            else TextureSrv(nullptr, Cpu(frame.Heap.Get(), kTextureDescriptors + i));
         }
-        else TextureSrv(nullptr, Cpu(frame.Heap.Get(), kTextureDescriptors + i));
+        if (geometry.Texture) sampledResources.emplace(geometry.Texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        record.Vertices = geometry.Vertices;
+        record.Indices = geometry.Indices;
+        record.Texture = geometry.Texture;
+        record.Emission = geometry.EmissionTexture;
+        record.TextureMip = textureMip;
+        record.EmissionMip = emissionMip;
+        record.Valid = true;
         sampledResources.emplace(geometry.Vertices.Get(), geometry.VertexState);
         if (geometry.Indices) sampledResources.emplace(geometry.Indices.Get(), geometry.IndexState);
     }
@@ -511,11 +534,36 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     FrameConstants constants;
     vector<ReflectionLight> lights;
     lights.reserve(RendererState::g_kMAX_SHADER_LIGHTS);
-    for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
+    // 負荷削減：反射・GI のヒット点で評価するライトは上限 160 灯。以前は ECS の並び順で先頭から取っていたので、
+    // ライトが多いシーンでは遠いライトが枠を使い切っていた。カメラから近い（影響範囲の表面までの距離が短い）順に選ぶ
+    static vector<pair<float, EntityID>> reflectionCandidates;
+    reflectionCandidates.clear();
+    {
+        const XMVECTOR cameraPosition = XMMatrixInverse(nullptr, XMLoadFloat4x4(&nrdFrame.View)).r[3];
+        for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
+        {
+            const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
+            if (!light.IsActive || !light.AffectsOpaque || light.RenderMode != LightRenderMode::Physical || light.Intensity <= 0) continue;
+            float key = -1.0f;
+            if (light.Type != LightType::Directional)
+            {
+                const auto& position = ComponentManager::GetComponentUnchecked<TransformComponent>(entity).Position;
+                key = (std::max)(XMVectorGetX(XMVector3Length(XMVectorSubtract(XMLoadFloat3(&position), cameraPosition))) - light.Range, 0.0f);
+            }
+            reflectionCandidates.emplace_back(key, entity);
+        }
+        // 負荷削減：ヒット点ではライトをループで全評価するので、灯数がそのまま反射 / GI のコストになる
+        const size_t hitLights = static_cast<size_t>(std::clamp(RenderCulling::GetSettings().RayHitLights, 1,
+            static_cast<int>(RendererState::g_kMAX_SHADER_LIGHTS)));
+        if (reflectionCandidates.size() > hitLights)
+        {
+            nth_element(reflectionCandidates.begin(), reflectionCandidates.begin() + hitLights, reflectionCandidates.end());
+            reflectionCandidates.resize(hitLights);
+        }
+    }
+    for (const auto& [distanceKey, entity] : reflectionCandidates)
     {
         const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-        if (!light.IsActive || !light.AffectsOpaque || light.RenderMode != LightRenderMode::Physical || light.Intensity <= 0) continue;
-        if (lights.size() >= RendererState::g_kMAX_SHADER_LIGHTS) break;
         const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
         XMFLOAT3 direction;
         XMStoreFloat3(&direction, XMVector3Normalize(XMLoadFloat3(&light.Direction)));
@@ -589,7 +637,13 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     if (!restir || nrdFrame.ResetHistory) g_ReSTIRHistoryValid = restir && g_ReSTIRHistoryValid && !nrdFrame.ResetHistory;
     constants.ReSTIRParameters = { restir ? 1.0f : 0.0f, static_cast<float>(std::clamp(quality.ReSTIRTemporalMaxM, 1, 64)),
         static_cast<float>(std::clamp(quality.ReSTIRSpatialSamples, 0, 16)), std::clamp(quality.ReSTIRSpatialRadius, 1.0f, 64.0f) };
-    constants.ReSTIRState = { g_ReSTIRHistoryValid ? 1u : 0u, reservoirWidth, quality.ReSTIRSpatialVisibility ? 1u : 0u, 0u };
+    // 反射の半解像度（チェッカーボード）：NRD で復元できるときだけ
+    const bool reflectionCheckerboard = RenderCulling::GetSettings().ReflectionCheckerboard && !useOptix && denoise &&
+        NrdDenoiser::IsCompiled() && guides[0] && guides[1] && guides[2];
+    g_ReflectionCheckerboard = reflectionCheckerboard;
+    constants.ReSTIRState = { g_ReSTIRHistoryValid ? 1u : 0u, reservoirWidth, quality.ReSTIRSpatialVisibility ? 1u : 0u,
+        static_cast<UINT>(std::clamp(RenderCulling::GetSettings().ReflectionRoughnessCutoff, 0.0f, 1.0f) * 1000.0f + 0.5f) |
+        (reflectionCheckerboard ? 0x10000u : 0u) };
     constants.CacheParameters = { cacheEnabled ? 1.0f : 0.0f, RendererSettings::GetGiRadianceCacheCellSize(),
         static_cast<float>(kCacheCapacity), static_cast<float>(RendererSettings::GetGiRadianceCacheHistory()) };
     if (!Upload(frame.Constants.Get(), &constants, sizeof(constants))) return false;
@@ -659,7 +713,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     {
         Transition(commands, frame.Noisy.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         Transition(commands, frame.Result.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        bind(g_Trace.Get()); commands->Dispatch((frame.Width + 7) / 8, (frame.Height + 7) / 8, 1);
+        bind(g_Trace.Get());
+        commands->Dispatch(((g_ReflectionCheckerboard ? (frame.Width + 1) / 2 : frame.Width) + 7) / 8, (frame.Height + 7) / 8, 1);
         Transition(commands, frame.Noisy.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         Transition(commands, frame.Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         // NRD owns a separate heap and restores these four input states.
@@ -675,13 +730,15 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         }
         else if (denoise && NrdDenoiser::IsCompiled() && guides[0] && guides[1] && guides[2])
         {
-            if (!g_Denoiser || g_Width != frame.Width || g_Height != frame.Height)
+            if (!g_Denoiser || g_Width != frame.Width || g_Height != frame.Height || g_DenoiserCheckerboard != g_ReflectionCheckerboard)
             {
                 if (GraphicsDevice::WaitForGpuIdle())
                 {
                     auto created = make_unique<NrdDenoiser>();
-                    if (created->Initialize(g_Device.Get(), NrdSignal::Specular, frame.Width, frame.Height))
-                    { g_Denoiser = move(created); g_Width = frame.Width; g_Height = frame.Height; g_HistoryValid = false; }
+                    if (created->Initialize(g_Device.Get(), g_ReflectionCheckerboard ? NrdSignal::SpecularCheckerboard : NrdSignal::Specular,
+                        frame.Width, frame.Height))
+                    { g_Denoiser = move(created); g_Width = frame.Width; g_Height = frame.Height; g_HistoryValid = false;
+                      g_DenoiserCheckerboard = g_ReflectionCheckerboard; }
                 }
             }
             NrdFrame temporalFrame = nrdFrame;
@@ -845,6 +902,8 @@ D3D12_GPU_DESCRIPTOR_HANDLE RayReflections::GetGiSrv(UINT frameIndex)
     return Gpu(g_EngineHeap.Get(), kGiSrv + frameIndex % kFrames);
 }
 ID3D12Resource* RayReflections::GetGiResource() { return g_Frames[g_LastFrame].GiResult.Get(); }
+
+
 
 
 

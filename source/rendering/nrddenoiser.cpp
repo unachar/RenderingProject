@@ -150,7 +150,7 @@ struct NrdDenoiser::Impl
         Width = width;
         Height = height;
         const nrd::DenoiserDesc denoiser{ kIdentifier,
-            signal == NrdSignal::Shadow ? nrd::Denoiser::SIGMA_SHADOW : signal == NrdSignal::Specular ?
+            signal == NrdSignal::Shadow ? nrd::Denoiser::SIGMA_SHADOW : (signal == NrdSignal::Specular || signal == NrdSignal::SpecularCheckerboard) ?
                 nrd::Denoiser::REBLUR_SPECULAR : (signal == NrdSignal::Diffuse || signal == NrdSignal::MegaLights) ?
                 nrd::Denoiser::REBLUR_DIFFUSE : nrd::Denoiser::REBLUR_DIFFUSE_OCCLUSION };
         const nrd::InstanceCreationDesc creation{ {}, &denoiser, 1 };
@@ -219,7 +219,7 @@ struct NrdDenoiser::Impl
         if (!allocatePool(Permanent, description.permanentPool, L"NRD Permanent History") ||
             !allocatePool(Transient, description.transientPool, L"NRD Transient Pool") ||
             !CreateTexture(Output, Signal == NrdSignal::Shadow ? DXGI_FORMAT_R8_UNORM :
-                (Signal == NrdSignal::Specular || Signal == NrdSignal::Diffuse || Signal == NrdSignal::MegaLights) ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R16_UNORM,
+                (Signal == NrdSignal::Specular || Signal == NrdSignal::SpecularCheckerboard || Signal == NrdSignal::Diffuse || Signal == NrdSignal::MegaLights) ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R16_UNORM,
                 1, L"NVIDIA NRD Denoised Signal")) return false;
         WriteGraphicsLog("NRD: %s %s initialized, extent=%ux%u pipelines=%u history=%u transient=%u\n",
             NrdDenoiser::GetVersion(), nrd::GetDenoiserString(denoiser.denoiser), Width, Height,
@@ -278,6 +278,16 @@ struct NrdDenoiser::Impl
             // MegaLights の直接光（デモジュレート済み・フル解像度・全ピクセル）。チェッカーボードなし。
             // ヒット距離はシェーディング点からライト上の点までの距離（MegaLightsNrdCS.hlsl と同じ正規化）
             nrd::ReblurSettings settings;
+            ApplyHitDistance(settings, kHitDistanceA, kHitDistanceB, kHitDistanceC);
+            EnableAntiFirefly(settings);
+            if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS) return false;
+        }
+        if (Signal == NrdSignal::SpecularCheckerboard)
+        {
+            // 反射の半分のピクセルだけをトレース（RayReflectionsCS main：(x >> 1, y) に詰めて格納）。
+            // パリティは frameIndex で NRD が交互に切り替えるので、モードは BLACK に固定する（GI と同じ）
+            nrd::ReblurSettings settings;
+            settings.checkerboardMode = nrd::CheckerboardMode::BLACK;
             ApplyHitDistance(settings, kHitDistanceA, kHitDistanceB, kHitDistanceC);
             EnableAntiFirefly(settings);
             if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS) return false;
@@ -467,5 +477,6 @@ const char* NrdDenoiser::GetVersion()
     return "SDK 未導入";
 #endif
 }
+
 
 

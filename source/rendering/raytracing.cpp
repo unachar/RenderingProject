@@ -881,6 +881,17 @@ bool Raytracing::UsesRaytracedShadows()
     {
         return false;
     }
+    // 負荷削減：全マテリアルの走査はフレームに 1 回だけ（以前は呼ばれるたびに走査しており、
+    // 呼び出し元のライトのループと合わせて「影付きライト数 × マテリアル数」になっていた）
+    static uint64_t cachedFence = UINT64_MAX;
+    static bool cachedResult = true;
+    static size_t cachedMaterialCount = 0;
+    const uint64_t fence = GraphicsDevice::GetPendingSubmissionFence();
+    const size_t materialCount = World::GetView<MaterialComponent>().size();
+    if (fence == cachedFence && materialCount == cachedMaterialCount) return cachedResult;
+    cachedFence = fence;
+    cachedMaterialCount = materialCount;
+    cachedResult = true;
     // The current inline ray query forces opaque geometry. Cutout shadows use
     // the material-aware raster pass until the ray path can evaluate texture alpha.
     for (EntityID entity : World::GetView<MaterialComponent>())
@@ -893,6 +904,7 @@ bool Raytracing::UsesRaytracedShadows()
             if ((MaterialSystem::ResolveShadowMode(material) == MaterialShadowMode::AlphaTest ||
                 MaterialSystem::ResolveShadowMode(material) == MaterialShadowMode::Transmittance) && MaterialSystem::CastsShadow(material))
             {
+                cachedResult = false;
                 return false;
             }
         }
@@ -965,5 +977,6 @@ D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetGiSrv()
 {
     return RayReflections::GetGiSrv(g_FrameIndex);
 }
+
 
 

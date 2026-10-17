@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "renderprofiler.h"
 #include "megalights.h"
 #include "transparencyeffects.h"
 #include "envflags.h"
@@ -141,8 +142,15 @@ bool ScenePasses::RestoreStaticShadowDepth(UINT index)
 void ScenePasses::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_TOPOLOGY topology)
 {
 	if (!m_CommandList) return;
-	LightingResources::UpdateLightConstantBuffer(1.35f);
-	LightingResources::UpdateShadowConstantBuffer();
+	{
+		// 内訳の計測（フレーム最初の呼び出しだけ重い：ライトの収集と影のキャッシュ再構築）
+		RenderProfiler::ScopedEvent profile("BeginPass: Light Constants", m_CommandList.Get());
+		LightingResources::UpdateLightConstantBuffer(1.35f);
+	}
+	{
+		RenderProfiler::ScopedEvent profile("BeginPass: Shadow Constants", m_CommandList.Get());
+		LightingResources::UpdateShadowConstantBuffer();
+	}
 	m_CommandList->SetGraphicsRootSignature(rootSignature);
 	Raytracing::BindLighting(m_CommandList.Get(), 16, 17);
 	if (m_LightConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(2, LightingResources::GetCurrentLightConstantBufferAddress());
@@ -806,6 +814,7 @@ void ScenePasses::EndVelocityBuffer()
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 	m_CommandList->ResourceBarrier(1, &toVelocitySrv);
 }
+
 
 
 

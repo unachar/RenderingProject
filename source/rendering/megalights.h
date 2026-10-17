@@ -206,7 +206,9 @@ public:
 				D3D12_RESOURCE_STATE_COMMON, L"MegaLights Fine Indices") ||
 			!CreateBuffer(s_Counters, 16, D3D12_HEAP_TYPE_DEFAULT, uav,
 				D3D12_RESOURCE_STATE_COMMON, L"MegaLights Counters") ||
-			!CreateBuffer(s_Readback, 16 * kFrames, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_FLAG_NONE,
+			!CreateBuffer(s_LightVisible, kLightVisibleBytes, D3D12_HEAP_TYPE_DEFAULT, uav,
+				D3D12_RESOURCE_STATE_COMMON, L"MegaLights Light Visibility") ||
+			!CreateBuffer(s_Readback, kReadbackStride * kFrames, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_FLAG_NONE,
 				D3D12_RESOURCE_STATE_COPY_DEST, L"MegaLights Readback"))
 		{
 			WriteGraphicsLog("MegaLights: grid buffers failed\n");
@@ -267,6 +269,13 @@ public:
 	}
 
 	// 追加できたら true（このライトの不透明面ライティングはグリッドが受け持つ）
+	// ライトのオクルージョン（GPU の判定を読み戻した結果）：数フレーム続けて「見えている不透明面に届かない」ライト
+	static bool IsLightOccluded(EntityID entity)
+	{
+		return entity < s_OccludedFrames.size() && s_OccludedFrames[entity] >= kOcclusionFrames;
+	}
+	static UINT GetOccludedLightCount() { return s_OccludedCount; }
+
 	static bool IsEntityInGrid(EntityID entity)
 	{
 		return s_HasSerial && entity < s_EntityInGrid.size() && s_EntityInGrid[entity] != 0;
@@ -400,6 +409,7 @@ public:
 		Transition(barriers, s_FineCells.Get(), s_FineCellsState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 		Transition(barriers, s_FineIndices.Get(), s_FineIndicesState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 		Transition(barriers, s_Counters.Get(), s_CountersState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+		Transition(barriers, s_LightVisible.Get(), s_LightVisibleState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 		commands->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
 
 		ID3D12DescriptorHeap* heaps[] = { heap };
@@ -414,12 +424,13 @@ public:
 		commands->SetComputeRootUnorderedAccessView(6, s_FineCells->GetGPUVirtualAddress());
 		commands->SetComputeRootUnorderedAccessView(7, s_FineIndices->GetGPUVirtualAddress());
 		commands->SetComputeRootUnorderedAccessView(8, s_Counters->GetGPUVirtualAddress());
+		commands->SetComputeRootUnorderedAccessView(9, s_LightVisible->GetGPUVirtualAddress());
 
 		commands->SetPipelineState(s_ClearCounters.Get());
 		commands->Dispatch(1, 1, 1);
 		commands->SetPipelineState(s_TileSliceMask.Get());
 		commands->Dispatch(tilesX, tilesY, 1);
-		UavBarrier(commands, { s_Counters.Get(), s_TileMasks.Get() });
+		UavBarrier(commands, { s_Counters.Get(), s_TileMasks.Get(), s_LightVisible.Get() });
 		commands->SetPipelineState(s_CoarseCull.Get());
 		commands->Dispatch(coarseX, coarseY, coarseZ);
 		UavBarrier(commands, { s_Counters.Get(), s_CoarseCells.Get(), s_CoarseIndices.Get() });
@@ -431,9 +442,12 @@ public:
 		Transition(barriers, s_FineCells.Get(), s_FineCellsState, bothRead);
 		Transition(barriers, s_FineIndices.Get(), s_FineIndicesState, bothRead);
 		Transition(barriers, s_Counters.Get(), s_CountersState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+		Transition(barriers, s_LightVisible.Get(), s_LightVisibleState, D3D12_RESOURCE_STATE_COPY_SOURCE);
 		if (accumulate) Transition(barriers, s_Accumulation.Get(), s_AccumulationState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 		commands->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
-		commands->CopyBufferRegion(s_Readback.Get(), slot * 16, s_Counters.Get(), 0, 16);
+		commands->CopyBufferRegion(s_Readback.Get(), slot * kReadbackStride, s_Counters.Get(), 0, 16);
+		commands->CopyBufferRegion(s_Readback.Get(), slot * kReadbackStride + 16, s_LightVisible.Get(), 0, kLightVisibleBytes);
+		s_SlotLights[slot] = s_EntityMarked; // 読み戻し時にライトの番号 → Entity を引くため
 		s_ReadbackPending[slot] = true;
 
 		// ---- M2：ML3 ライトの選択 → ML5 影レイ
@@ -1205,11 +1219,11 @@ private:
 	{
 		CD3DX12_DESCRIPTOR_RANGE depthRange;
 		depthRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
-		CD3DX12_ROOT_PARAMETER parameters[9];
+		CD3DX12_ROOT_PARAMETER parameters[10];
 		parameters[0].InitAsConstantBufferView(0);
 		parameters[1].InitAsShaderResourceView(1);
 		parameters[2].InitAsDescriptorTable(1, &depthRange);
-		for (UINT uav = 0; uav < 6; ++uav) parameters[3 + uav].InitAsUnorderedAccessView(uav);
+		for (UINT uav = 0; uav < 7; ++uav) parameters[3 + uav].InitAsUnorderedAccessView(uav);
 		if (!CreateRootSignature(device, CD3DX12_ROOT_SIGNATURE_DESC(_countof(parameters), parameters, 0, nullptr), s_Root) ||
 			!CompileEntries(device, L"shader/hlsl/MegaLightsGridCS.hlsl", s_Root.Get(), {
 				{ "ClearCounters", &s_ClearCounters }, { "TileSliceMask", &s_TileSliceMask },
@@ -1399,7 +1413,7 @@ private:
 		if (tiles > s_TileCapacity)
 		{
 			Retire(s_TileMasks);
-			if (!CreateBuffer(s_TileMasks, sizeof(UINT) * tiles, D3D12_HEAP_TYPE_DEFAULT, uav,
+			if (!CreateBuffer(s_TileMasks, sizeof(UINT) * 2 * tiles, D3D12_HEAP_TYPE_DEFAULT, uav,
 				D3D12_RESOURCE_STATE_COMMON, L"MegaLights Tile Slice Masks")) { s_TileCapacity = 0; return false; }
 			s_TileMasksState = D3D12_RESOURCE_STATE_COMMON;
 			s_TileCapacity = tiles;
@@ -1613,11 +1627,24 @@ private:
 		}
 		if (s_Readback && s_ReadbackPending[s_Slot])
 		{
-			const CD3DX12_RANGE range(s_Slot * 16, s_Slot * 16 + 16);
+			const CD3DX12_RANGE range(s_Slot * kReadbackStride, s_Slot * kReadbackStride + 16 + kLightVisibleBytes);
 			UINT* mapped = nullptr;
 			if (SUCCEEDED(s_Readback->Map(0, &range, reinterpret_cast<void**>(&mapped))))
 			{
-				const UINT* values = reinterpret_cast<const UINT*>(reinterpret_cast<const BYTE*>(mapped) + s_Slot * 16);
+				const UINT* values = reinterpret_cast<const UINT*>(reinterpret_cast<const BYTE*>(mapped) + s_Slot * kReadbackStride);
+				// ライトのオクルージョン：見えなかったライトのカウンタを進め、見えたら 0 に
+				const UINT* visible = values + 4;
+				const auto& lights = s_SlotLights[s_Slot];
+				s_OccludedCount = 0;
+				for (size_t index = 0; index < lights.size() && index < kMaxLights; ++index)
+				{
+					const EntityID entity = lights[index];
+					if (entity >= s_OccludedFrames.size()) s_OccludedFrames.resize(static_cast<size_t>(entity) + 1, 0);
+					const bool seen = ((visible[index >> 5] >> (index & 31)) & 1u) != 0u;
+					uint8_t& frames = s_OccludedFrames[entity];
+					frames = seen ? 0 : static_cast<uint8_t>((std::min)(frames + 1, 255));
+					if (frames >= kOcclusionFrames) ++s_OccludedCount;
+				}
 				s_Stats.CoarseIndices = values[0];
 				s_Stats.FineIndices = values[1];
 				s_Stats.OverflowCells = values[2];
@@ -1744,6 +1771,11 @@ private:
 		s_FineCells.Reset();
 		s_FineIndices.Reset();
 		s_Counters.Reset();
+		s_LightVisible.Reset();
+		s_LightVisibleState = D3D12_RESOURCE_STATE_COMMON;
+		for (auto& lights : s_SlotLights) lights.clear();
+		s_OccludedFrames.clear();
+		s_OccludedCount = 0;
 		s_Readback.Reset();
 		s_Samples.Reset();
 		s_Accumulation.Reset();
@@ -1781,6 +1813,15 @@ private:
 	static inline ComPtr<ID3D12PipelineState> s_SampleLights, s_ScreenTrace, s_WorldTrace, s_ErrorReduce;
 	static inline ComPtr<ID3D12Resource> s_Constants, s_LightUpload, s_Dummy;
 	static inline ComPtr<ID3D12Resource> s_TileMasks, s_CoarseCells, s_CoarseIndices, s_FineCells, s_FineIndices, s_Counters, s_Readback;
+	// ---- ライトのオクルージョン
+	static constexpr UINT kLightVisibleBytes = 4096 / 8;
+	static constexpr UINT kReadbackStride = 1024;
+	static constexpr uint8_t kOcclusionFrames = 3; // この回数続けて見えなければ「隠れている」
+	static inline ComPtr<ID3D12Resource> s_LightVisible;
+	static inline D3D12_RESOURCE_STATES s_LightVisibleState = D3D12_RESOURCE_STATE_COMMON;
+	static inline vector<EntityID> s_SlotLights[kFrames];
+	static inline vector<uint8_t> s_OccludedFrames;
+	static inline UINT s_OccludedCount = 0;
 	static inline ComPtr<ID3D12Resource> s_Samples, s_Accumulation, s_Reference, s_Partials;
 	static inline ComPtr<ID3D12Resource> s_PartialReadback[kFrames];
 	static inline D3D12_RESOURCE_STATES s_TileMasksState = D3D12_RESOURCE_STATE_COMMON;
@@ -1890,3 +1931,4 @@ private:
 	static inline UINT s_EngineHeapStart = 0, s_EngineIncrement = 0;
 	static inline UINT s_SampleWidth = 0, s_SampleHeight = 0, s_SampleScale = 1;
 };
+

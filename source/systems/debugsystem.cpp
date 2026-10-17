@@ -428,21 +428,7 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 	auto aabbEntities = World::GetView<AABBComponent>();
 	auto obbEntities = World::GetView<OBBComponent>();
-	unordered_map<EntityID, TransformComponent*> transformMap;
-	unordered_set<EntityID> meshEntitiesSet;
-
-	auto transformEntities = World::GetView<TransformComponent>();
-	for (EntityID i : transformEntities)
-	{
-		transformMap.emplace(i, &ComponentManager::GetComponent<TransformComponent>(i));
-	}
-
-	auto meshEntities = World::GetView<MeshComponent>();
-	for (EntityID i : meshEntities)
-	{
-		meshEntitiesSet.insert(i);
-	}
-
+	// 負荷削減：毎フレーム全エンティティの表を作らず、必要な物だけ直接引く
 	auto lightEntities = World::GetView<LightComponent, TransformComponent>();
 	if (aabbEntities.empty() && obbEntities.empty() && lightEntities.empty())
 	{
@@ -464,10 +450,9 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		}
 
 		XMMATRIX world = XMMatrixIdentity();
-		auto transformIt = transformMap.find(i);
-		if (transformIt != transformMap.end())
+		if (ComponentManager::HasComponent<TransformComponent>(i))
 		{
-			world = XMLoadFloat4x4(&transformIt->second->WorldMatrix);
+			world = XMLoadFloat4x4(&ComponentManager::GetComponentUnchecked<TransformComponent>(i).WorldMatrix);
 		}
 
 		ConstantBuffer3D cb{};
@@ -488,7 +473,7 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			{ c.x + e.x, c.y + e.y, c.z + e.z }, { c.x - e.x, c.y + e.y, c.z + e.z }
 		};
 
-		if (meshEntitiesSet.count(i) > 0)
+		if (ComponentManager::HasComponent<MeshComponent>(i))
 		{
 			pCommandList->SetPipelineState(solidPso);
 			ScenePasses::BeginModelPass();
@@ -560,10 +545,9 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		const auto& obb = ComponentManager::GetComponent<OBBComponent>(i);
 
 		XMMATRIX world = XMMatrixIdentity();
-		auto transformIt = transformMap.find(i);
-		if (transformIt != transformMap.end())
+		if (ComponentManager::HasComponent<TransformComponent>(i))
 		{
-			world = XMLoadFloat4x4(&transformIt->second->WorldMatrix);
+			world = XMLoadFloat4x4(&ComponentManager::GetComponentUnchecked<TransformComponent>(i).WorldMatrix);
 		}
 
 		ConstantBuffer3D cb{};
@@ -584,7 +568,7 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			{ c.x + e.x, c.y + e.y, c.z + e.z }, { c.x - e.x, c.y + e.y, c.z + e.z }
 		};
 
-		if (meshEntitiesSet.count(i) > 0)
+		if (ComponentManager::HasComponent<MeshComponent>(i))
 		{
 			pCommandList->SetPipelineState(solidPso);
 			ScenePasses::BeginModelPass();
@@ -679,6 +663,7 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		SubmitDebugLines(pCommandList, lightLines);
 	}
 }
+
 
 
 

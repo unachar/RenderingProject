@@ -138,8 +138,15 @@ void CameraSystem::Update()
 		}
 		else if (RendererState::m_AntiAliasingMode == AntiAliasingMode::TAA)
 		{
-			float haltonX = Halton(RendererState::m_TaaFrameIndex, 2);
-			float haltonY = Halton(RendererState::m_TaaFrameIndex, 3);
+			// ジッター列の長さを内部解像度に合わせる（DLSS の推奨と同じ 8 × 拡大率²）。
+			// 低い内部解像度では 1 出力ピクセルを埋めるのに多くの位相が必要で、短い列だと遠景が埋まらずちらつく。
+			// フレーム番号をそのまま使うと、0 番（ジッター 0）が混ざったり位相の偏りが続いたりするので 1 からの周期にする
+			const float upscale = (std::max)(1.0f,
+				static_cast<float>(GraphicsDevice::GetWidth()) / (std::max)(static_cast<float>(GraphicsDevice::GetSceneWidth()), 1.0f));
+			const UINT phaseCount = static_cast<UINT>(std::clamp(8.0f * upscale * upscale, 8.0f, 128.0f));
+			const int phase = static_cast<int>(RendererState::m_TaaFrameIndex % phaseCount) + 1;
+			float haltonX = Halton(phase, 2);
+			float haltonY = Halton(phase, 3);
 
 			float jitterX = (haltonX - 0.5f) * 2.0f /
 				max((float)GraphicsDevice::GetSceneWidth(), 1.0f);
@@ -155,3 +162,4 @@ void CameraSystem::Update()
 	}
 	previousActiveCamera = activeCamera;
 }
+

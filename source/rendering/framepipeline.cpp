@@ -139,16 +139,24 @@ void FramePipeline::Execute()
 				{
 					RenderProfiler::ScopedEvent profile("GBuffer / Opaque", passCommandList);
 					const auto submissionStart = chrono::steady_clock::now();
-					ScenePasses::BeginScenePass();
-					GPUDrivenRenderer::Draw(passCommandList);
-					if (!GPUDrivenValidation::IsGpuValidationRun()) SystemManager::DrawSystem(RenderPass::PrimaryScene, false);
-					if (ScenePasses::BuildOcclusionHierarchyAndBeginPhaseTwo())
+					// 内訳を計測（GBuffer の CPU 時間がどこで使われているかを特定するため）
+					{ RenderProfiler::ScopedEvent p("GBuffer: Begin", passCommandList); ScenePasses::BeginScenePass(); }
+					{ RenderProfiler::ScopedEvent p("GBuffer: GPU Driven Draw", passCommandList); GPUDrivenRenderer::Draw(passCommandList); }
+					if (!GPUDrivenValidation::IsGpuValidationRun())
 					{
+						RenderProfiler::ScopedEvent p("GBuffer: Systems (CPU path)", passCommandList);
+						SystemManager::DrawSystem(RenderPass::PrimaryScene, false);
+					}
+					bool phaseTwo = false;
+					{ RenderProfiler::ScopedEvent p("GBuffer: Occlusion Hierarchy", passCommandList); phaseTwo = ScenePasses::BuildOcclusionHierarchyAndBeginPhaseTwo(); }
+					if (phaseTwo)
+					{
+						RenderProfiler::ScopedEvent p("GBuffer: Systems Phase 2", passCommandList);
 						SystemManager::DrawSystem(RenderPass::OcclusionPhase2, false);
 					}
-					GPUDrivenRenderer::DrawSecondPass(passCommandList);
-					GPUDrivenRenderer::BuildHiZ(passCommandList);
-					ScenePasses::EndScenePass();
+					{ RenderProfiler::ScopedEvent p("GBuffer: GPU Driven Phase 2", passCommandList); GPUDrivenRenderer::DrawSecondPass(passCommandList); }
+					{ RenderProfiler::ScopedEvent p("GBuffer: Build HiZ", passCommandList); GPUDrivenRenderer::BuildHiZ(passCommandList); }
+					{ RenderProfiler::ScopedEvent p("GBuffer: End", passCommandList); ScenePasses::EndScenePass(); }
 					GPUDrivenRenderer::RecordOpaqueSubmission(chrono::duration<double, milli>(chrono::steady_clock::now() - submissionStart).count());
 				});
 
@@ -230,4 +238,5 @@ void FramePipeline::Execute()
 		Debug::Log("ERROR: Frame RenderGraph execution failed: %s\n", graph.GetLastError().c_str());
 	}
 }
+
 

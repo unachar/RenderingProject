@@ -46,26 +46,77 @@ void Count(uint3 id : SV_DispatchThreadID)
 
 // At most 4096 exact bins by default. One ordered scan creates compact commands
 // without CPU readback or an entry for every empty material in the scene.
-[numthreads(1,1,1)]
-void Prefix()
+// 負荷削減：以前は 1 スレッドで全ビン（約 4097）を順番に処理しており GPU 1.8ms かかっていた。
+// 1 グループ 1024 スレッドの並列スキャン（オフセットとアクティブ数の 2 回）に変更。結果（順序・値）は同じ。
+//   クランプ：「クランプ済みの累積」= min(生の累積, Capacity) なので、生の累積から直接求められる
+#define PREFIX_THREADS 1024
+groupshared uint gs_Scan[PREFIX_THREADS];
+
+uint ExclusiveScan(uint value, uint thread)
 {
-    uint offset = 0, active = 0;
-    for (uint bin = 0; bin <= ExactMaterialBins; ++bin)
+    gs_Scan[thread] = value;
+    GroupMemoryBarrierWithGroupSync();
+    [unroll] for (uint stride = 1; stride < PREFIX_THREADS; stride <<= 1)
     {
-        uint count = min(Bins[bin].y,Capacity-offset);
-        Bins[bin] = uint4(offset,count,0,bin < ExactMaterialBins ? bin : 0xffffffffu);
-        if (count != 0 && active <= ExactMaterialBins)
+        uint add = thread >= stride ? gs_Scan[thread - stride] : 0;
+        GroupMemoryBarrierWithGroupSync();
+        gs_Scan[thread] += add;
+        GroupMemoryBarrierWithGroupSync();
+    }
+    uint inclusive = gs_Scan[thread];
+    GroupMemoryBarrierWithGroupSync();
+    return inclusive - value;
+}
+
+[numthreads(PREFIX_THREADS,1,1)]
+void Prefix(uint thread : SV_GroupIndex)
+{
+    const uint binCount = ExactMaterialBins + 1;
+    const uint perThread = (binCount + PREFIX_THREADS - 1) / PREFIX_THREADS;
+    const uint first = min(thread * perThread, binCount);
+    const uint last = min(first + perThread, binCount);
+
+    // 1) 生の個数の累積
+    uint rawSum = 0;
+    for (uint bin = first; bin < last; ++bin) rawSum += Bins[bin].y;
+    uint rawOffset = ExclusiveScan(rawSum, thread);
+
+    // 2) クランプ済みの個数と、このスレッドのアクティブ（個数 > 0）なビン数
+    uint activeLocal = 0;
+    uint running = rawOffset;
+    for (uint bin2 = first; bin2 < last; ++bin2)
+    {
+        uint count = Bins[bin2].y;
+        uint clamped = min(running + count, Capacity) - min(running, Capacity);
+        activeLocal += clamped != 0 ? 1u : 0u;
+        running += count;
+    }
+    uint activeOffset = ExclusiveScan(activeLocal, thread);
+
+    // 3) 書き込み（以前と同じ並び・同じ値）
+    running = rawOffset;
+    uint active = activeOffset;
+    for (uint bin3 = first; bin3 < last; ++bin3)
+    {
+        uint raw = Bins[bin3].y;
+        uint offset = min(running, Capacity);
+        uint count = min(running + raw, Capacity) - offset;
+        Bins[bin3] = uint4(offset, count, 0, bin3 < ExactMaterialBins ? bin3 : 0xffffffffu);
+        if (count != 0)
         {
-            uint address = active*20;
-            uint x = min(count,65535u);
-            Commands.Store2(address,uint2(offset,count));
-            Commands.Store3(address+8,uint3(x,(count+x-1)/x,1));
+            uint address = active * 20;
+            uint x = min(count, 65535u);
+            Commands.Store2(address, uint2(offset, count));
+            Commands.Store3(address + 8, uint3(x, (count + x - 1) / x, 1));
             ++active;
         }
-        offset += count;
+        running += raw;
     }
-    Counters.Store(0,active);
-    Counters.Store(4,offset);
+    if (thread == PREFIX_THREADS - 1)
+    {
+        Counters.Store(0, active);
+        Counters.Store(4, min(running, Capacity));
+    }
 }
 
 [numthreads(64,1,1)]
@@ -85,4 +136,5 @@ void Scatter(uint3 id : SV_DispatchThreadID)
     }
     SortedClusters[destination] = record;
 }
+
 

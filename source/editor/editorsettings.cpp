@@ -4,6 +4,7 @@
 #include "atmospherelut.h"
 #include "renderquality.h"
 #include "megalights.h"
+#include "cpuculling.h"
 #include "transparencyeffects.h"
 #include "pbrluts.h"
 #include "asynccompute.h"
@@ -344,6 +345,47 @@ void ImGuiManager::DrawProjectSettingsWindow()
             ImGui::Checkbox("矩形エリアライト (LTC)", &rq.AreaLights);
             ImGui::EndDisabled();
             if (!PbrLuts::IsAvailable()) ImGui::TextDisabled("LUT 未初期化: 解析近似にフォールバック");
+
+            ImGui::SeparatorText("負荷削減（カリング / LOD）");
+            {
+                auto& culling = RenderCulling::GetSettings();
+                const auto& cullStats = RenderCulling::GetStats();
+                ImGui::Checkbox("オブジェクトの視錐台カリング", &culling.ObjectFrustumCulling);
+                ImGui::Checkbox("小さいオブジェクトを描かない", &culling.ObjectSizeCulling);
+                ImGui::BeginDisabled(!culling.ObjectSizeCulling);
+                ImGui::SliderFloat("最小サイズ (px)", &culling.MinObjectPixels, 0.25f, 8.0f, "%.2f");
+                ImGui::EndDisabled();
+                ImGui::SliderFloat("描画距離 (m, 0 = 無制限)", &culling.MaxDrawDistance, 0.0f, 2000.0f, "%.0f");
+                ImGui::Checkbox("静止物の Velocity を省く", &culling.StaticVelocitySkip);
+                ImGui::Checkbox("自動 LOD（LOD 未設定のモデルにも適用）", &culling.AutoLod);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("GPU 駆動の描画で、インポート時に生成した LOD を画面サイズで切り替えます。\n切り替えはモデルの再読み込み / シーンを開き直したときに反映されます。");
+                ImGui::Checkbox("同じ形のプリミティブを共有", &culling.SharePrimitiveGeometry);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("シーンを開き直したときに反映されます。");
+                ImGui::Checkbox("ライトの視錐台カリング", &culling.LightFrustumCulling);
+                ImGui::Checkbox("ライトの距離 / サイズ カリング", &culling.LightDistanceCulling);
+                ImGui::BeginDisabled(!culling.LightDistanceCulling);
+                ImGui::SliderFloat("ライトの最大距離 (m)", &culling.LightMaxDistance, 0.0f, 2000.0f, "%.0f");
+                ImGui::SliderFloat("ライトの最小サイズ (px)", &culling.LightMinPixels, 0.0f, 32.0f, "%.1f");
+                ImGui::EndDisabled();
+                ImGui::Checkbox("ライトのオクルージョンカリング", &culling.LightOcclusionCulling);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("MegaLights のグリッド（GPU）で「見えている不透明面に届かない」と判定されたライトを、\n"
+                        "シャドウマップと定数バッファの割り当てから外します（MegaLights 有効時）。");
+                ImGui::Checkbox("DXR 影モードではローカルライトのシャドウマップを描かない", &culling.SkipRayTracedShadowMaps);
+                ImGui::SliderFloat("反射レイの粗さ上限", &culling.ReflectionRoughnessCutoff, 0.2f, 1.0f, "%.2f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("これより粗い面は反射レイを飛ばさず空で近似（1.0 で無効）");
+                ImGui::SliderInt("反射 / GI のヒット点のライト数", &culling.RayHitLights, 4, 160);
+                ImGui::Checkbox("反射を半解像度（チェッカーボード）でトレース", &culling.ReflectionCheckerboard);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("反射レイを半分のピクセルだけ飛ばし、NRD が残りを復元します（NRD 使用時のみ）。");
+                ImGui::TextDisabled("オブジェクト: 判定 %u / 視錐台外 %u / 小さい・遠い %u / Velocity 省略 %u",
+                    cullStats.ObjectsTested, cullStats.ObjectsFrustumCulled, cullStats.ObjectsSizeCulled, cullStats.VelocitySkipped);
+                ImGui::TextDisabled("ライト: 判定 %u / 視錐台外 %u / 遠い・小さい %u / 隠れている %u（GPU 判定 %u）",
+                    cullStats.LightsTested, cullStats.LightsFrustumCulled, cullStats.LightsDistanceCulled, cullStats.LightsOccluded,
+                    MegaLights::GetOccludedLightCount());
+                ImGui::TextDisabled("省いたシャドウマップ: %u", cullStats.ShadowMapsSkipped);
+            }
 
             ImGui::SeparatorText("MegaLights");
             {
@@ -985,6 +1027,24 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     auto& rq = RenderQuality::Get();
     field("quality.EnergyCompensation", rq.EnergyCompensation, 0, 1);
     field("quality.AreaLights", rq.AreaLights, 0, 1);
+    // 負荷削減（cpuculling.h）
+    auto& culling = RenderCulling::GetSettings();
+    field("culling.ObjectFrustum", culling.ObjectFrustumCulling, 0, 1);
+    field("culling.ObjectSize", culling.ObjectSizeCulling, 0, 1);
+    field("culling.MinObjectPixels", culling.MinObjectPixels, 0.0, 64.0);
+    field("culling.MaxDrawDistance", culling.MaxDrawDistance, 0.0, 100000.0);
+    field("culling.StaticVelocitySkip", culling.StaticVelocitySkip, 0, 1);
+    field("culling.AutoLod", culling.AutoLod, 0, 1);
+    field("culling.SharePrimitiveGeometry", culling.SharePrimitiveGeometry, 0, 1);
+    field("culling.LightFrustum", culling.LightFrustumCulling, 0, 1);
+    field("culling.LightDistance", culling.LightDistanceCulling, 0, 1);
+    field("culling.LightMaxDistance", culling.LightMaxDistance, 0.0, 100000.0);
+    field("culling.LightMinPixels", culling.LightMinPixels, 0.0, 64.0);
+    field("culling.LightOcclusion", culling.LightOcclusionCulling, 0, 1);
+    field("culling.SkipRayTracedShadowMaps", culling.SkipRayTracedShadowMaps, 0, 1);
+    field("culling.ReflectionRoughnessCutoff", culling.ReflectionRoughnessCutoff, 0.0, 1.0);
+    field("culling.RayHitLights", culling.RayHitLights, 1, 160);
+    field("culling.ReflectionCheckerboard", culling.ReflectionCheckerboard, 0, 1);
     // MegaLights（megalights.h）
     auto& megaLights = MegaLights::GetSettings();
     field("megalights.Enabled", megaLights.Enabled, 0, 1);
@@ -1495,6 +1555,8 @@ void ImGuiManager::LoadProjectSettings()
     }
 
 }
+
+
 
 
 

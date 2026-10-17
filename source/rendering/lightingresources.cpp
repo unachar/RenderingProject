@@ -21,6 +21,9 @@
 #include "localheightfog.h"
 #include "lightinstancebuilder.h"
 #include "megalights.h"
+#include "cpuculling.h"
+#include "renderprofiler.h"
+#include <optional>
 #include <limits>
 #include <climits>
 #include "frameconstants.h"
@@ -272,6 +275,7 @@ namespace
 			}
 			sort(orderedLights.begin(), orderedLights.end());
 		}
+		const bool rayTracedShadows = Raytracing::UsesRaytracedShadows(); // ループの外で 1 回だけ
 		for (const auto& ordered : orderedLights)
 		{
 			const EntityID entity = ordered.second;
@@ -293,7 +297,20 @@ namespace
 			const UINT shadowLightBudget = min(
 				static_cast<UINT>(RendererSettings::GetShadowLightBudget()),
 				RendererState::g_kMAX_SHADOW_LIGHTS);
-			if (light.CastShadow && g_ShadowLightCount < shadowLightBudget)
+			// 負荷削減：ローカルライトのシャドウマップを作らない場合
+			//   ・DXR 影モード：SampleSurfaceShadowMap はレイトレースした影を返すので、シャドウマップは読まれない
+			//   ・視錐台外 / 遠い / 小さい / 見えている面に届かない（MegaLights の GPU 判定）ライト
+			bool skipShadowMap = false;
+			if (light.CastShadow && light.Type != LightType::Directional)
+			{
+				const auto& culling = RenderCulling::GetSettings();
+				skipShadowMap =
+					(culling.SkipRayTracedShadowMaps && rayTracedShadows) ||
+					RenderCulling::LightWeight(transform.Position, light.Range, false) <= 0.0f ||
+					(culling.LightOcclusionCulling && MegaLights::IsLightOccluded(entity));
+				if (skipShadowMap) ++RenderCulling::MutableStats().ShadowMapsSkipped;
+			}
+			if (light.CastShadow && !skipShadowMap && g_ShadowLightCount < shadowLightBudget)
 			{
 				RuntimeLightState shadowLight{};
 				shadowLight.Component = light;
@@ -406,6 +423,73 @@ namespace
 		}
 		g_VirtualShadowCacheHit = g_DirectionalShadowMode == 1.0f;
 
+		// キャスターごとのキー（ページのキャッシュ判定用）。DXR 影モードではページを描かないので作らない
+		struct CasterKey { EntityID Entity; uint64_t Key; bool Moving; };
+		static vector<CasterKey> casterKeys;
+		casterKeys.clear();
+		const bool skipCasterKeys = g_DirectionalShadowMode != 1.0f || Raytracing::UsesRaytracedShadows() ||
+			!RendererSettings::GetCacheVirtualShadowPages();
+		if (!skipCasterKeys)
+		{
+			for (EntityID entity : World::GetView<TransformComponent>())
+			{
+				if (!IsShadowBoundsEntity(entity)) continue;
+				const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+                        uint64_t entityKey = 1469598103934665603ull;
+                        auto hashEntityValue = [&](const void* data, size_t size) {
+                            const auto* bytes = static_cast<const uint8_t*>(data);
+                            for (size_t i = 0; i < size; ++i) { entityKey ^= bytes[i]; entityKey *= 1099511628211ull; }
+                        };
+                        hashEntityValue(&entity, sizeof(entity));
+                        hashEntityValue(&transform.WorldMatrix, sizeof(transform.WorldMatrix));
+                        const bool movingCaster = IsMovingShadowCaster(entity);
+                        hashEntityValue(&movingCaster, sizeof(movingCaster));
+                        if (ComponentManager::HasComponent<MeshComponent>(entity))
+                        {
+                            const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+                            hashEntityValue(&mesh.GeometryHash, sizeof(mesh.GeometryHash));
+                        }
+                        if (ComponentManager::HasComponent<StaticModelComponent>(entity))
+                        {
+                            const auto model = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId;
+                            hashEntityValue(&model, sizeof(model));
+                        }
+                        if (ComponentManager::HasComponent<MaterialComponent>(entity))
+                        {
+                            const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+                            const size_t count = max(size_t(1), source.MaterialSlots.size());
+                            for (size_t slot = 0; slot < count; ++slot)
+                            {
+                                const auto& material = MaterialManager::Resolve(source, slot);
+                                hashEntityValue(&material.Alpha, sizeof(material.Alpha));
+                                hashEntityValue(&material.BaseColor.w, sizeof(material.BaseColor.w));
+                                hashEntityValue(&material.ShadowMode, sizeof(material.ShadowMode));
+                                hashEntityValue(&material.ShadowCutoff, sizeof(material.ShadowCutoff));
+                                hashEntityValue(&material.IOR, sizeof(material.IOR));
+                                hashEntityValue(&material.Transmission, sizeof(material.Transmission));
+                                hashEntityValue(&material.Thickness, sizeof(material.Thickness));
+                                hashEntityValue(&material.AbsorptionCoefficient, sizeof(material.AbsorptionCoefficient));
+                                hashEntityValue(&material.BaseColor, sizeof(material.BaseColor));
+                                hashEntityValue(&material.IsTransparent, sizeof(material.IsTransparent));
+                                hashEntityValue(&material.AssetCull, sizeof(material.AssetCull));
+                                hashEntityValue(&material.TextureID, sizeof(material.TextureID));
+                                if (material.RuntimeHandle != 0)
+                                {
+                                    const auto revision = MaterialManager::GetRuntime(material.RuntimeHandle).Revision;
+                                    hashEntityValue(&revision, sizeof(revision));
+                                }
+                            }
+                        }
+						if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
+						{
+							const auto& animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
+							hashEntityValue(&animation.CurrentTime, sizeof(animation.CurrentTime));
+							hashEntityValue(&animation.BlendRate, sizeof(animation.BlendRate));
+						}
+				casterKeys.push_back({ entity, entityKey, movingCaster });
+			}
+		}
+
 		for (UINT layer = 0;
 			layer < g_ShadowLightCount && g_ShadowRenderPassCount < RendererState::g_kMAX_SHADOW_PASSES;
 			++layer)
@@ -510,72 +594,23 @@ namespace
 					hashPageValue(&pageViewProjection, sizeof(pageViewProjection));
 
 
-					for (EntityID entity : World::GetView<TransformComponent>())
+					// 負荷削減：キャスターのキーはフレームに 1 回だけ作り（下の CasterKeys）、ページごとには
+					// 「このページに入るか」の判定と 8 バイトの合成だけを行う。
+					// 以前はページ（最大 64）× 全エンティティでワールド行列とマテリアルを毎回バイト単位でハッシュしており、
+					// 数千オブジェクトのシーンで 1 フレーム数十 ms かかっていた
+					if (!skipCasterKeys)
 					{
-						if (!IsShadowBoundsEntity(entity) ||
-							!IsShadowCasterVisible(entity, pageViewProjection))
+						for (const CasterKey& caster : casterKeys)
 						{
-							continue;
+							if (!IsShadowCasterVisible(caster.Entity, pageViewProjection)) continue;
+							hashPageValue(&caster.Key, sizeof(caster.Key));
+							if (!caster.Moving)
+							{
+								const auto* bytes = reinterpret_cast<const uint8_t*>(&caster.Key);
+								for (size_t i = 0; i < sizeof(caster.Key); ++i) { staticContentKey ^= bytes[i]; staticContentKey *= 1099511628211ull; }
+							}
 						}
-						const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-                        uint64_t entityKey = 1469598103934665603ull;
-                        auto hashEntityValue = [&](const void* data, size_t size) {
-                            const auto* bytes = static_cast<const uint8_t*>(data);
-                            for (size_t i = 0; i < size; ++i) { entityKey ^= bytes[i]; entityKey *= 1099511628211ull; }
-                        };
-                        hashEntityValue(&entity, sizeof(entity));
-                        hashEntityValue(&transform.WorldMatrix, sizeof(transform.WorldMatrix));
-                        const bool movingCaster = IsMovingShadowCaster(entity);
-                        hashEntityValue(&movingCaster, sizeof(movingCaster));
-                        if (ComponentManager::HasComponent<MeshComponent>(entity))
-                        {
-                            const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
-                            hashEntityValue(&mesh.GeometryHash, sizeof(mesh.GeometryHash));
-                        }
-                        if (ComponentManager::HasComponent<StaticModelComponent>(entity))
-                        {
-                            const auto model = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId;
-                            hashEntityValue(&model, sizeof(model));
-                        }
-                        if (ComponentManager::HasComponent<MaterialComponent>(entity))
-                        {
-                            const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
-                            const size_t count = max(size_t(1), source.MaterialSlots.size());
-                            for (size_t slot = 0; slot < count; ++slot)
-                            {
-                                const auto& material = MaterialManager::Resolve(source, slot);
-                                hashEntityValue(&material.Alpha, sizeof(material.Alpha));
-                                hashEntityValue(&material.BaseColor.w, sizeof(material.BaseColor.w));
-                                hashEntityValue(&material.ShadowMode, sizeof(material.ShadowMode));
-                                hashEntityValue(&material.ShadowCutoff, sizeof(material.ShadowCutoff));
-                                hashEntityValue(&material.IOR, sizeof(material.IOR));
-                                hashEntityValue(&material.Transmission, sizeof(material.Transmission));
-                                hashEntityValue(&material.Thickness, sizeof(material.Thickness));
-                                hashEntityValue(&material.AbsorptionCoefficient, sizeof(material.AbsorptionCoefficient));
-                                hashEntityValue(&material.BaseColor, sizeof(material.BaseColor));
-                                hashEntityValue(&material.IsTransparent, sizeof(material.IsTransparent));
-                                hashEntityValue(&material.AssetCull, sizeof(material.AssetCull));
-                                hashEntityValue(&material.TextureID, sizeof(material.TextureID));
-                                if (material.RuntimeHandle != 0)
-                                {
-                                    const auto revision = MaterialManager::GetRuntime(material.RuntimeHandle).Revision;
-                                    hashEntityValue(&revision, sizeof(revision));
-                                }
-                            }
-                        }
-						if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
-						{
-							const auto& animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
-							hashEntityValue(&animation.CurrentTime, sizeof(animation.CurrentTime));
-							hashEntityValue(&animation.BlendRate, sizeof(animation.BlendRate));
-						}
-                        hashPageValue(&entityKey, sizeof(entityKey));
-                        if (!movingCaster)
-                        {
-                            const auto* bytes = reinterpret_cast<const uint8_t*>(&entityKey);
-                            for (size_t i = 0; i < sizeof(entityKey); ++i) { staticContentKey ^= bytes[i]; staticContentKey *= 1099511628211ull; }
-                        }
-                    }
+					}
 
 					auto& cacheEntry = g_VirtualShadowPageCache[virtualLevel][physicalPageY][physicalPageX];
 					const bool cacheEnabled = RendererSettings::GetCacheVirtualShadowPages();
@@ -694,7 +729,7 @@ namespace
 			ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky";
 	}
 
-	bool IsShadowBoundsEntity(EntityID entity)
+	bool ComputeShadowBoundsEntity(EntityID entity)
 	{
 		if (!Registry::IsAlive(entity) ||
 			!ComponentManager::HasComponent<TransformComponent>(entity) ||
@@ -765,10 +800,33 @@ namespace
 		IncludeBoundsPoint(XMVectorAdd(center, extent), boundsMin, boundsMax, hasBounds);
 	}
 
-	bool IsShadowCasterVisible(EntityID entity, const XMMATRIX& transposedViewProjection)
-	{
-		if (!IsShadowBoundsEntity(entity)) return false;
+	// 負荷削減：キャスター判定（マテリアル解決・名前比較・頂点変形の検索）と境界球はフレームに 1 回だけ計算する。
+	// 以前は影のページ（最大 64）・シャドウパス・距離場など、呼ばれるたびにエンティティごとに計算していた
+	struct ShadowBoundsCache { uint64_t Serial = UINT64_MAX; bool Caster = false; XMFLOAT3 Center{}; float Radius = 0.0f; };
+	vector<ShadowBoundsCache> g_ShadowBoundsCache;
 
+	void ComputeCasterSphere(EntityID entity, XMFLOAT3& center, float& radius);
+
+	const ShadowBoundsCache& GetShadowBounds(EntityID entity)
+	{
+		if (entity >= g_ShadowBoundsCache.size()) g_ShadowBoundsCache.resize(static_cast<size_t>(entity) + 1);
+		ShadowBoundsCache& entry = g_ShadowBoundsCache[entity];
+		if (entry.Serial != g_FrameSerial)
+		{
+			entry.Serial = g_FrameSerial;
+			entry.Caster = ComputeShadowBoundsEntity(entity);
+			if (entry.Caster) ComputeCasterSphere(entity, entry.Center, entry.Radius);
+		}
+		return entry;
+	}
+
+	bool IsShadowBoundsEntity(EntityID entity)
+	{
+		return GetShadowBounds(entity).Caster;
+	}
+
+	void ComputeCasterSphere(EntityID entity, XMFLOAT3& outCenter, float& outRadius)
+	{
 		const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
 		XMFLOAT3 center = transform.Position;
 		float radius = max(max(fabsf(transform.Scale.x), fabsf(transform.Scale.y)),
@@ -793,6 +851,16 @@ namespace
 			const XMVECTOR scaledExtents = XMVectorMultiply(XMLoadFloat3(&localExtents), XMLoadFloat3(&transform.Scale));
 			radius = max(XMVectorGetX(XMVector3Length(scaledExtents)), 0.05f);
 		}
+		outCenter = center;
+		outRadius = radius;
+	}
+
+	bool IsShadowCasterVisible(EntityID entity, const XMMATRIX& transposedViewProjection)
+	{
+		const ShadowBoundsCache& bounds = GetShadowBounds(entity);
+		if (!bounds.Caster) return false;
+		const XMFLOAT3 center = bounds.Center;
+		const float radius = bounds.Radius;
 
 		// 視錐台の6平面と境界球の判定（以前は境界球の中心と3軸を射影していた：行列変換4回 → 内積6回）。
 		// 同じシャドウパス内では行列が変わらないので、平面は前回の結果を使い回す。
@@ -1160,6 +1228,8 @@ namespace
 void LightingResources::BeginFrame()
 {
 	++g_FrameSerial;
+	// カメラの視錐台・画面サイズの判定を 1 フレーム 1 回だけ準備（オブジェクト・ライトのカリングで共有）
+	RenderCulling::BeginFrame(g_FrameSerial);
 	g_LightCacheValid = false;
 	m_TransientCbSlot = 0;
 }
@@ -1263,7 +1333,11 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 	}
 
 
+	ID3D12GraphicsCommandList* profileList = GraphicsDevice::GetCommandList();
+	std::optional<RenderProfiler::ScopedEvent> profileStep;
+	profileStep.emplace("Lights: Shadow Cache Rebuild", profileList);
 	const RuntimeLightState& directionalLight = GetCachedLightState(true);
+	profileStep.emplace("Lights: Distance Field / Fog", profileList);
 	const RuntimeLightState* runtimeLightSelection = nullptr;
 	if (directionalLight.HasLight)
 	{
@@ -1393,6 +1467,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 		constants.LightExtra = XMFLOAT4(cosf(18.0f * XM_PI / 180.0f), cosf(32.0f * XM_PI / 180.0f), 0.35f, 0.0f);
 	}
 
+	profileStep.emplace("Lights: Collect / Sort", profileList);
 	struct VisibleLightCandidate
 	{
 		EntityID Entity = g_kINVALID_ENTITY;
@@ -1504,9 +1579,13 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 		}
 
 		const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+		// 負荷削減：ライトの視錐台カリング（球 × 6 平面）と距離・画面サイズの LOD（境界でフェード）
+		const float cullWeight = RenderCulling::LightWeight(transform.Position, light.Range, light.Type == LightType::Directional);
+		if (cullWeight <= 0.0f) continue;
 		VisibleLightCandidate candidate{};
 		candidate.Entity = entity;
 		candidate.Light = light;
+		candidate.Light.Intensity *= cullWeight;
 		candidate.Position = transform.Position;
 		candidate.Directional = light.Type == LightType::Directional;
 		if (!calculateTileBounds(light, transform.Position,
@@ -1559,6 +1638,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 			return lhs.Entity < rhs.Entity;
 		});
 
+	profileStep.emplace("Lights: MegaLights Upload", profileList);
 	// ---- MegaLights：画面内のローカルライトをクラスターグリッド用のバッファへ（予算・160 灯の制限なし）
 	//   ・シャドウマップを持つライト / ディレクショナル / Volume / Decal は従来の経路
 	//   ・グリッドに載せたライトは、定数バッファ側で LightFlags.x = 2（不透明面はグリッドが評価）にする
@@ -1621,6 +1701,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 		}
 	}
 
+	profileStep.emplace("Lights: Constant Buffer / Tile Grid", profileList);
 	const UINT screenLightBudget = min(
 		static_cast<UINT>(RendererSettings::GetScreenLightBudget()),
 		g_kMAX_SHADER_LIGHTS);
@@ -1641,8 +1722,18 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 	selectedCandidates.reserve(screenLightBudget + decalLightBudget);
 	UINT selectedPhysicalLights = 0;
 	UINT selectedDecalLights = 0;
+	UINT occludedSkipped = 0;
 	for (const VisibleLightCandidate& candidate : candidates)
 	{
+		// 負荷削減：グリッドに載っていて、見えている面に届かない（GPU 判定）ライトは定数バッファの枠を使わない
+		//（グリッドは毎フレーム全ライトで作り直すので、見えるようになれば次の読み戻しで戻る）
+		if (RenderCulling::GetSettings().LightOcclusionCulling && !candidate.Light.AffectsVolumetrics &&
+			candidate.Entity < g_kMAX_ENTITIES && megaLightEntities[candidate.Entity] != 0 &&
+			MegaLights::IsLightOccluded(candidate.Entity))
+		{
+			++occludedSkipped;
+			continue;
+		}
 		if (candidate.Light.RenderMode == LightRenderMode::Physical)
 		{
 			if (selectedPhysicalLights >= screenLightBudget) continue;
@@ -1655,6 +1746,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 		}
 		selectedCandidates.push_back(candidate);
 	}
+	RenderCulling::MutableStats().LightsOccluded = occludedSkipped;
 	const UINT lightCount = static_cast<UINT>(selectedCandidates.size());
 	g_LightGridStats.GpuVisibleLights = lightCount;
 	g_LightGridStats.GpuPhysicalLights = selectedPhysicalLights;
@@ -1717,7 +1809,9 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 			slotEnd = physicalTileLightBudget;
 		}
 		// グリッドが不透明面を受け持ち、Forward にも影響しないライトはタイルの枠を使わない（他のライトに枠を譲る）
-		if (inMegaLightGrid && !light.AffectsForward)
+		// M7 で半透明 / Forward もグリッドで評価するなら、グリッドのライトは 2D タイルに入れない
+		//（以前は Forward に影響する全ライトをタイルへ詰めており、2000 灯でタイル構築が GPU 約 1.7ms）
+		if (inMegaLightGrid && (!light.AffectsForward || MegaLights::GetSettings().Translucency))
 		{
 			slotEnd = slotBegin;
 		}
@@ -1934,6 +2028,7 @@ bool LightingResources::GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_V
 	clearLayer = pass.ClearLayer;
 	return true;
 }
+
 
 
 

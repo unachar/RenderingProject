@@ -513,8 +513,10 @@ if (!ShaderPipelines::CreatePostProcessPipeline()) return false;
 	LightInstanceBuilder::Initialize(m_Device.Get());
 	if (!MegaLights::Initialize(m_Device.Get()))
 		WriteGraphicsLog("WARNING: MegaLights unavailable (clustered light grid disabled)\n");
+	// ヒープの末尾 16384 個は VirtualGeometry のページ（PageDescriptors が NumDescriptors - MaximumSlots から使う）。
+	// MegaLights の領域はその手前に置く（以前は末尾に置いていたため、最後の 12 ページの記述子と重なっていた）
 	MegaLights::SetEngineHeap(m_CbvHeap.Get(),
-		g_kENGINE_DESCRIPTOR_END + 1 + g_kTHUMBNAIL_DESCRIPTOR_COUNT + ImGuiManager::kSrvDescriptorCount + 16384);
+		g_kENGINE_DESCRIPTOR_END + 1 + g_kTHUMBNAIL_DESCRIPTOR_COUNT + ImGuiManager::kSrvDescriptorCount);
 
 	WriteGraphicsLog("Step: CreateSceneRenderTarget\n");
 if (!RenderTargets::CreateSceneRenderTarget()) return false;
@@ -895,6 +897,7 @@ void GraphicsDevice::SubmitForExternalCompute()
     ID3D12DescriptorHeap* heaps[] = {m_CbvHeap.Get()};
     m_CommandList->SetDescriptorHeaps(1, heaps);
 }
+
 
 
 

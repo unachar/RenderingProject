@@ -5,6 +5,7 @@
 #include "staticmodel.h"
 #include "meshlets/meshletmanager.h"
 #include "gpudriven/gpudrivenrenderer.h"
+#include "cpuculling.h"
 #include <numeric>
 #include "../../External/meshoptimizer/src/meshoptimizer.h"
 
@@ -620,6 +621,39 @@ void PrimitiveGeometry::CreateObjectVertex(const VertexResource& vertexstruct, c
 	}
 }
 
+namespace
+{
+	// 負荷削減：同じ形（頂点が完全に一致）のプリミティブは頂点バッファと LOD / メッシュレットを共有する。
+	//   ・GPU 駆動のメッシュ表・DXR の BLAS（頂点バッファのアドレスで共有）・メモリが形の種類数ぶんで済む
+	//   ・共有中のものを編集すると use_count > 1 なので書き換えずに新しく作る（他のエンティティに影響しない）
+	static_assert(sizeof(Vertex) == sizeof(StaticModelVertex), "primitive vertex layout must match the shared CPU copy");
+	unordered_map<uint64_t, vector<weak_ptr<StaticMeshData>>>& SharedPrimitiveGeometry()
+	{
+		static unordered_map<uint64_t, vector<weak_ptr<StaticMeshData>>> cache;
+		return cache;
+	}
+
+	shared_ptr<StaticMeshData> FindSharedPrimitive(uint64_t hash, const vector<Vertex>& vertices)
+	{
+		auto found = SharedPrimitiveGeometry().find(hash);
+		if (found == SharedPrimitiveGeometry().end()) return nullptr;
+		auto& entries = found->second;
+		shared_ptr<StaticMeshData> match;
+		for (auto it = entries.begin(); it != entries.end();)
+		{
+			auto entry = it->lock();
+			if (!entry) { it = entries.erase(it); continue; }
+			if (!match && entry->VertexBuffer && entry->CpuVertices.size() == vertices.size() &&
+				memcmp(entry->CpuVertices.data(), vertices.data(), vertices.size() * sizeof(Vertex)) == 0)
+			{
+				match = entry;
+			}
+			++it;
+		}
+		return match;
+	}
+}
+
 bool PrimitiveGeometry::UploadVertices(EntityID entity, const vector<Vertex>& vertices)
 {
     ID3D12Device* device = GraphicsDevice::GetDevice();
@@ -633,6 +667,24 @@ bool PrimitiveGeometry::UploadVertices(EntityID entity, const vector<Vertex>& ve
     mesh.PrimitiveType = 0; // 任意の頂点。プリミティブの場合は CreateObjectVertex が直後に設定し直す
     const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
     const auto description = CD3DX12_RESOURCE_DESC::Buffer(byteSize);
+    // 同じ形がすでにあれば共有して終わり
+    const uint64_t sharedHash = HashGeometry(vertices.data(), byteSize);
+    const bool shareGeometry = RenderCulling::GetSettings().SharePrimitiveGeometry;
+    if (shareGeometry && vertices.size() % 3 == 0)
+    {
+        if (auto shared = FindSharedPrimitive(sharedHash, vertices); shared && shared != mesh.NaniteMesh)
+        {
+            mesh.VertexBuffer = shared->VertexBuffer;
+            mesh.VertexBufferView = shared->VertexBufferView;
+            mesh.VertexCount = shared->VertexCount;
+            mesh.GeometryHash = sharedHash;
+            CalculateGeometryBounds(vertices, mesh.LocalBoundsCenter, mesh.LocalBoundsExtents);
+            mesh.HasLocalBounds = true;
+            mesh.NaniteMesh = move(shared);
+            GpuSceneChanges::Notify(entity, GpuSceneDirtyFlags::Mesh | GpuSceneDirtyFlags::Bounds);
+            return true;
+        }
+    }
     ComPtr<ID3D12Resource> buffer;
     const bool reuse = mesh.NaniteMesh && mesh.NaniteMesh.use_count()==1 &&
         mesh.VertexBuffer && mesh.VertexCount==vertices.size() && GraphicsDevice::WaitForGpuIdle();
@@ -675,9 +727,11 @@ bool PrimitiveGeometry::UploadVertices(EntityID entity, const vector<Vertex>& ve
         iota(source->CpuIndices.begin(),source->CpuIndices.end(),0u);
         BuildPrimitiveLODs(*source);
         MeshletManager::BuildImportedMesh(*source);
+        if (shareGeometry) SharedPrimitiveGeometry()[sharedHash].push_back(source);
         mesh.NaniteMesh=move(source);
     }
     else mesh.NaniteMesh.reset();
     GpuSceneChanges::Notify(entity, GpuSceneDirtyFlags::Mesh | GpuSceneDirtyFlags::Bounds);
     return true;
 }
+

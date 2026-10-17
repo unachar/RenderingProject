@@ -779,6 +779,10 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			{
 				upscalerLabel = "FSR 1 EASU + RCAS";
 			}
+			else if (SpatialUpscaler::NisPassCount(m_SceneWidth, m_SceneHeight, m_Width, m_Height) > 1)
+			{
+				upscalerLabel = "NVIDIA Image Scaling (multi-pass)";
+			}
 			else
 			{
 				upscalerLabel = "NVIDIA Image Scaling";
@@ -795,7 +799,9 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 				m_SceneHeight,
 				m_Width,
 				m_Height,
-				upscaleMode);
+				upscaleMode,
+				upscaleSource,
+				GetRenderTargetSrvHandle(RenderTargetType::EditorScene));
 		}
 		barriers[0] = CD3DX12_RESOURCE_BARRIER::Transition(
 			upscaleSource,
@@ -962,6 +968,7 @@ void PostProcessPass::ApplyAntiAliasing()
 		m_CommandList->ResourceBarrier(1, &toEditorFinalSrv);
 	}
 }
+
 
 
 

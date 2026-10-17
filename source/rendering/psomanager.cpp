@@ -126,12 +126,65 @@ bool PsoManager::CreateComputePipelineState(
 	return true;
 }
 
+namespace
+{
+	// 負荷削減：描画ごとの PSO 検索で毎回文字列キーを組み立てないための前段キャッシュ
+	//（入力と、結果を左右する状態だけからハッシュを作る。m_PsoCache が空になったら捨てる）
+	struct FastPsoKey
+	{
+		uint64_t Vs = 0, Ps = 0;
+		uint32_t Flags = 0, Format = 0;
+		bool operator==(const FastPsoKey& other) const
+		{
+			return Vs == other.Vs && Ps == other.Ps && Flags == other.Flags && Format == other.Format;
+		}
+	};
+	struct FastPsoKeyHash
+	{
+		size_t operator()(const FastPsoKey& key) const noexcept
+		{
+			return static_cast<size_t>(key.Vs * 0x9e3779b97f4a7c15ull ^ (key.Ps + 0x632be59bd9b4e019ull) ^
+				(static_cast<uint64_t>(key.Flags) << 32) ^ key.Format);
+		}
+	};
+	uint64_t HashPath(const char* path)
+	{
+		uint64_t hash = 1469598103934665603ull;
+		if (path) for (const char* c = path; *c; ++c) { hash ^= static_cast<unsigned char>(*c); hash *= 1099511628211ull; }
+		return hash;
+	}
+	unordered_map<FastPsoKey, ID3D12PipelineState*, FastPsoKeyHash>& FastPsoCache()
+	{
+		static unordered_map<FastPsoKey, ID3D12PipelineState*, FastPsoKeyHash> cache;
+		return cache;
+	}
+}
+
 ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const ShaderDescription& resource)
 {
 	const bool requestDeferredScene = (m_RenderMode == RenderMode::DEFERRED && m_IsDeferredGeometryPass);
 	const bool visibilityPass = requestDeferredScene &&
 		RendererSettings::GetComputeGBufferEnabled() &&
 		VisibilityBuffer::IsAvailable();
+	auto& fastCache = FastPsoCache();
+	if (m_PsoCache.empty()) fastCache.clear();
+	FastPsoKey fastKey;
+	fastKey.Vs = HashPath(resource.vsPath);
+	fastKey.Ps = HashPath(resource.psPath);
+	fastKey.Flags = (resource.isModel ? 1u : 0u) | (resource.frontCounterClockwise ? 2u : 0u) |
+		(resource.enableAlphaBlend ? 4u : 0u) | (resource.depthWrite ? 8u : 0u) |
+		(requestDeferredScene ? 16u : 0u) | (visibilityPass ? 32u : 0u) |
+		(TransparencyEffects::IsOitPassActive() ? 64u : 0u) |
+		(static_cast<uint32_t>(m_RenderMode) << 8) | (static_cast<uint32_t>(resource.cullMode) << 16);
+	fastKey.Format = static_cast<uint32_t>(GetForwardRtvFormat());
+	if (const auto fast = fastCache.find(fastKey); fast != fastCache.end()) return fast->second;
+	ID3D12PipelineState* created = GetOrCreateGraphicsPsoSlow(resource, requestDeferredScene, visibilityPass);
+	if (created) fastCache[fastKey] = created;
+	return created;
+}
+
+ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPsoSlow(const ShaderDescription& resource, bool requestDeferredScene, bool visibilityPass)
+{
 	string resolvedPsPath;
 	if (visibilityPass)
 	{
@@ -1041,5 +1094,6 @@ ID3D12PipelineState* PsoManager::GetPostProcessPso(PostProcessType type)
 	}
 	return psoIt->second.Get();
 }
+
 
 

@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "spatialupscaler.h"
+#include "graphicsdevice.h"
 #include "transformmath.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
@@ -50,11 +52,7 @@ namespace EditorWidgets
 		{
 			RendererSettings::SetUpscaleMode(static_cast<UpscaleMode>(mode));
 			RendererState::m_TaaFrameIndex = 0;
-			if (mode == static_cast<int>(UpscaleMode::Nis) && RenderConfiguration::GetResolutionScale() < 0.5f)
-			{
-				RenderConfiguration::SetResolutionScale(0.5f);
-				RendererSettings::SetUpscaleQuality(UpscaleQuality::Custom);
-			}
+			// NIS は 50% 未満を多段（1 段 2 倍まで）で処理するので、FSR と同じ 20% まで下げられる
 		}
 
 		const bool vendorUpscaler = mode != static_cast<int>(UpscaleMode::Bilateral);
@@ -78,15 +76,7 @@ namespace EditorWidgets
 		float resolutionScale = RenderConfiguration::GetResolutionScale();
 		int resolutionPercent = static_cast<int>(roundf(resolutionScale * 100.0f));
 		ImGui::BeginDisabled(vendorUpscaler && quality != UpscaleQuality::Custom);
-		int minimumResolutionPercent;
-		if (mode == static_cast<int>(UpscaleMode::Nis))
-		{
-			minimumResolutionPercent = 50;
-		}
-		else
-		{
-			minimumResolutionPercent = 25;
-		}
+		const int minimumResolutionPercent = 20; // FSR / NIS（50% 未満は多段）/ Bilateral 共通
 		if (ImGui::SliderInt("内部解像度", &resolutionPercent, minimumResolutionPercent, 100, "%d%%"))
 		{
 			RenderConfiguration::SetResolutionScale(static_cast<float>(resolutionPercent) / 100.0f);
@@ -110,7 +100,12 @@ namespace EditorWidgets
 			{
 				RendererSettings::SetNisSharpness(sharpness);
 			}
-			ImGui::TextDisabled("6-tap scaler + directional sharpening / 50-100%% / 入力に FXAA を自動適用");
+			const UINT nisPasses = SpatialUpscaler::NisPassCount(
+				max(static_cast<UINT>(roundf(GraphicsDevice::GetWidth() * RenderConfiguration::GetResolutionScale())), 1u),
+				max(static_cast<UINT>(roundf(GraphicsDevice::GetHeight() * RenderConfiguration::GetResolutionScale())), 1u),
+				GraphicsDevice::GetWidth(), GraphicsDevice::GetHeight());
+			ImGui::TextDisabled("6-tap scaler + directional sharpening / 20-100%% / 入力に FXAA を自動適用");
+			ImGui::TextDisabled("現在 %u 段（1 段 2 倍まで。シャープネスは最後の段だけ・倍率に応じて補正）", nisPasses);
 		}
 		else if (mode == static_cast<int>(UpscaleMode::Dlss))
 		{
@@ -546,5 +541,6 @@ namespace EditorWidgets
 
 
 }
+
 
 

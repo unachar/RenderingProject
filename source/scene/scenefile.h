@@ -19,6 +19,9 @@
 #include <vector>
 #include <array>
 #include <cstring>
+#include <charconv>
+#include <cmath>
+#include <cstdio>
 
 namespace SceneFile
 {
@@ -84,7 +87,8 @@ namespace SceneFile
 	}
 
 	// ---------------------------------------------------------------- 3モード共通のアーカイブ
-	enum class Mode { Write, Read, Hash };
+	// Stream：Json::Value を作らず、文字列へ直接 JSON を書き出す（保存の高速化。出力は Write と同じ JSON として読める）
+	enum class Mode { Write, Read, Hash, Stream };
 
 	class Archive
 	{
@@ -93,9 +97,11 @@ namespace SceneFile
 		Archive(Mode mode, Json::Value& node) : m_Mode(mode), m_Node(&node) {}
 		// Hash 用
 		explicit Archive(uint64_t& hash) : m_Mode(Mode::Hash), m_Hash(&hash) {}
+		// Stream 用：呼び出し側が '{' を書いてから渡し、終わったら '}' を書く
+		explicit Archive(std::string& out) : m_Mode(Mode::Stream), m_Out(&out) {}
 
 		Mode GetMode() const { return m_Mode; }
-		bool Writing() const { return m_Mode == Mode::Write; }
+		bool Writing() const { return m_Mode == Mode::Write || m_Mode == Mode::Stream; }
 		bool Reading() const { return m_Mode == Mode::Read; }
 		bool Hashing() const { return m_Mode == Mode::Hash; }
 
@@ -108,6 +114,12 @@ namespace SceneFile
 			if (m_Mode == Mode::Hash)
 			{
 				HashValue(key, value);
+				return;
+			}
+			if (m_Mode == Mode::Stream)
+			{
+				StreamKey(key);
+				StreamValue(value);
 				return;
 			}
 			if (m_Mode == Mode::Write)
@@ -129,6 +141,13 @@ namespace SceneFile
 			{
 				mapped = Map(entity);
 				if (m_Mode == Mode::Hash) { HashBytes(&mapped, sizeof(mapped)); return; }
+				if (m_Mode == Mode::Stream)
+				{
+					StreamKey(key);
+					if (mapped == g_kINVALID_ENTITY) m_Out->append("-1");
+					else StreamInteger(static_cast<uint64_t>(mapped));
+					return;
+				}
 				(*m_Node)[key] = mapped == g_kINVALID_ENTITY ? Json::Value(-1) : Json::Value(static_cast<Json::UInt>(mapped));
 				return;
 			}
@@ -142,6 +161,16 @@ namespace SceneFile
 		void Object(const char* key, Function&& function)
 		{
 			if (m_Mode == Mode::Hash) { HashString(key); function(*this); return; }
+			if (m_Mode == Mode::Stream)
+			{
+				StreamKey(key);
+				m_Out->push_back('{');
+				Archive sub(*m_Out);
+				sub.EntityMap = EntityMap;
+				function(sub);
+				m_Out->push_back('}');
+				return;
+			}
 			if (m_Mode == Mode::Write)
 			{
 				Json::Value child(Json::objectValue);
@@ -167,6 +196,11 @@ namespace SceneFile
 				uint64_t count = items.size();
 				HashBytes(&count, sizeof(count));
 				for (auto& item : items) function(*this, item);
+				return;
+			}
+			if (m_Mode == Mode::Stream)
+			{
+				StreamList(key, items.begin(), items.end(), function, EntityMap);
 				return;
 			}
 			if (m_Mode == Mode::Write)
@@ -201,6 +235,11 @@ namespace SceneFile
 		void FixedArray(const char* key, T (&items)[N], Function&& function)
 		{
 			if (m_Mode == Mode::Hash) { for (auto& item : items) function(*this, item); return; }
+			if (m_Mode == Mode::Stream)
+			{
+				StreamList(key, std::begin(items), std::end(items), function, nullptr);
+				return;
+			}
 			if (m_Mode == Mode::Write)
 			{
 				Json::Value list(Json::arrayValue);
@@ -242,6 +281,134 @@ namespace SceneFile
 		Mode m_Mode;
 		Json::Value* m_Node = nullptr;
 		uint64_t* m_Hash = nullptr;
+		std::string* m_Out = nullptr;
+		bool m_HasField = false; // Stream：このオブジェクトに 1 つ以上書いたか（',' の要否）
+
+		// ---- Stream（直接書き出し）
+		template<typename Iterator, typename Function>
+		void StreamList(const char* key, Iterator first, Iterator last, Function& function,
+			const std::unordered_map<EntityID, EntityID>* map)
+		{
+			StreamKey(key);
+			m_Out->push_back('[');
+			bool firstItem = true;
+			for (auto it = first; it != last; ++it)
+			{
+				if (!firstItem) m_Out->push_back(',');
+				firstItem = false;
+				m_Out->push_back('{');
+				Archive sub(*m_Out);
+				sub.EntityMap = map;
+				function(sub, *it);
+				m_Out->push_back('}');
+			}
+			m_Out->push_back(']');
+		}
+
+		void StreamKey(const char* key)
+		{
+			if (m_HasField) m_Out->push_back(',');
+			m_HasField = true;
+			StreamString(key);
+			m_Out->push_back(':');
+		}
+
+		void StreamString(const char* text, size_t length)
+		{
+			std::string& out = *m_Out;
+			out.push_back('"');
+			for (size_t i = 0; i < length; ++i)
+			{
+				const unsigned char c = static_cast<unsigned char>(text[i]);
+				switch (c)
+				{
+				case '"': out.append("\\\""); break;
+				case '\\': out.append("\\\\"); break;
+				case '\n': out.append("\\n"); break;
+				case '\r': out.append("\\r"); break;
+				case '\t': out.append("\\t"); break;
+				default:
+					if (c < 0x20)
+					{
+						char buffer[8];
+						const int written = snprintf(buffer, sizeof(buffer), "\\u%04x", c);
+						out.append(buffer, static_cast<size_t>(written));
+					}
+					else out.push_back(static_cast<char>(c)); // UTF-8 はそのまま
+				}
+			}
+			out.push_back('"');
+		}
+		void StreamString(const char* text) { StreamString(text, std::strlen(text)); }
+		void StreamString(const std::string& text) { StreamString(text.data(), text.size()); }
+
+		void StreamInteger(uint64_t value)
+		{
+			char buffer[32];
+			const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+			m_Out->append(buffer, result.ptr);
+		}
+		void StreamInteger(int64_t value)
+		{
+			char buffer[32];
+			const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+			m_Out->append(buffer, result.ptr);
+		}
+		void StreamFloat(double value)
+		{
+			if (!std::isfinite(value)) { m_Out->push_back('0'); return; }
+			// 最短の往復表現（float は float として最短。読み込み時に同じ値に戻る）
+			char buffer[64];
+			const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+			m_Out->append(buffer, result.ptr);
+		}
+		void StreamFloat(float value)
+		{
+			if (!std::isfinite(value)) { m_Out->push_back('0'); return; }
+			char buffer[64];
+			const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+			m_Out->append(buffer, result.ptr);
+		}
+
+		template<typename T>
+		void StreamValue(const T& value)
+		{
+			if constexpr (std::is_same_v<T, bool>) m_Out->append(value ? "true" : "false");
+			else if constexpr (std::is_same_v<T, std::string>) StreamString(value);
+			else if constexpr (std::is_enum_v<T>) StreamInteger(static_cast<int64_t>(value));
+			else if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>) StreamFloat(value);
+			else if constexpr (std::is_same_v<T, uint64_t>) StreamString(FormatAssetHandle(value));
+			else if constexpr (std::is_integral_v<T> && std::is_signed_v<T>) StreamInteger(static_cast<int64_t>(value));
+			else if constexpr (std::is_integral_v<T>) StreamInteger(static_cast<uint64_t>(value));
+			else if constexpr (std::is_same_v<T, XMFLOAT2>) StreamFloats({ value.x, value.y });
+			else if constexpr (std::is_same_v<T, XMFLOAT3>) StreamFloats({ value.x, value.y, value.z });
+			else if constexpr (std::is_same_v<T, XMFLOAT4>) StreamFloats({ value.x, value.y, value.z, value.w });
+			else if constexpr (std::is_same_v<T, std::vector<AssetHandle>>)
+			{
+				m_Out->push_back('[');
+				for (size_t i = 0; i < value.size(); ++i) { if (i) m_Out->push_back(','); StreamString(FormatAssetHandle(value[i])); }
+				m_Out->push_back(']');
+			}
+			else if constexpr (is_std_array<T>::value || std::is_same_v<T, std::vector<std::string>> ||
+				std::is_same_v<T, std::vector<float>> || is_enum_vector<T>::value)
+			{
+				m_Out->push_back('[');
+				bool first = true;
+				for (const auto& item : value) { if (!first) m_Out->push_back(','); first = false; StreamValue(item); }
+				m_Out->push_back(']');
+			}
+			else
+			{
+				static_assert(sizeof(T) == 0, "unsupported scene field type");
+			}
+		}
+		void StreamFloats(std::initializer_list<float> values)
+		{
+			m_Out->push_back('[');
+			bool first = true;
+			for (float v : values) { if (!first) m_Out->push_back(','); first = false; StreamFloat(v); }
+			m_Out->push_back(']');
+		}
 
 		EntityID Map(EntityID entity) const
 		{
@@ -729,6 +896,7 @@ namespace SceneFile
 		a.Object(key, [&](Archive& s) { present = true; Visit(s, component); });
 	}
 }
+
 
 
 

@@ -29,7 +29,12 @@ public:
 		UINT inputHeight,
 		UINT outputWidth,
 		UINT outputHeight,
-		UpscaleMode mode);
+		UpscaleMode mode,
+		ID3D12Resource* input = nullptr,                         // 入力テクスチャ（実サイズを NIS / FSR に渡すため）
+		D3D12_GPU_DESCRIPTOR_HANDLE outputSrv = D3D12_GPU_DESCRIPTOR_HANDLE{}); // 出力の SRV（NIS の 3 段以上で中間に使う）
+
+	// NIS の段数（1 段は最大 2 倍まで）
+	static UINT NisPassCount(UINT inputWidth, UINT inputHeight, UINT outputWidth, UINT outputHeight);
 
 private:
 	static bool CreateRootSignature();
@@ -38,3 +43,4 @@ private:
 	static D3D12_CPU_DESCRIPTOR_HANDLE CpuHandle(UINT index);
 	static D3D12_GPU_DESCRIPTOR_HANDLE GpuHandle(UINT index);
 };
+

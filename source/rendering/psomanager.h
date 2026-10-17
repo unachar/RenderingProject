@@ -18,6 +18,7 @@ public:
 		ComPtr<ID3D12PipelineState>& outPso);
 
 	static ID3D12PipelineState* GetOrCreateGraphicsPso(const ShaderDescription& resource);
+	static ID3D12PipelineState* GetOrCreateGraphicsPsoSlow(const ShaderDescription& resource, bool requestDeferredScene, bool visibilityPass);
 	static ID3D12PipelineState* GetOrCreateToonOutlinePso(bool enableAlphaBlend = false);
 	static ID3D12PipelineState* GetOrCreateShadowMapPso();
 	static ID3D12PipelineState* GetOrCreateShadowMapInstancedPso();
@@ -42,3 +43,4 @@ public:
 	static ID3D12PipelineState* GetTaaBlendPso() { return m_TaaBlendPso.Get(); }
 	static ID3D12PipelineState* GetSkinningPso() { return m_SkinningPso.Get(); }
 };
+

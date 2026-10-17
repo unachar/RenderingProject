@@ -25,6 +25,11 @@
 #include "renderconfiguration.h"
 #include "gpudriven/gpudrivenrenderer.h"
 #include "meshshader/meshshaderrenderer.h"
+#include "cpuculling.h"
+#include "renderprofiler.h"
+#include <optional>
+#include <chrono>
+#include "graphicslog.h"
 
 
 	static const MaterialComponent& DefaultMaterial()
@@ -168,6 +173,8 @@
 	}
 
 
+static UINT s_MeshShaderDraws = 0;
+
 void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
 	const bool occlusionPhaseTwo = renderPass == RenderPass::OcclusionPhase2;
@@ -262,9 +269,19 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		auto draw = [&](EntityID entity, const D3D12_VERTEX_BUFFER_VIEW& vbv, UINT vertexCount)
 			{
 				if (!ComponentManager::HasComponent<TransformComponent>(entity) || vbv.BufferLocation == 0) return;
+				const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+				// 負荷削減：動いていない物は全画面のカメラ Velocity と同じ値になるので描かない
+				//（安い判定を先に。マテリアル解決・インスタンシング判定は残った物だけ）
+				if (RenderCulling::GetSettings().StaticVelocitySkip && transform.HasPreviousWorld &&
+					memcmp(&transform.WorldMatrix, &transform.PreviousWorldMatrix, sizeof(transform.WorldMatrix)) == 0 &&
+					!VertexDeformation::IsRequested(entity))
+				{
+					++RenderCulling::MutableStats().VelocitySkipped;
+					return;
+				}
+				if (!RenderCulling::IsEntityVisible(entity)) return;
 				if (MaterialSystem::IsTransparent(entity)) return;
 				if (InstancingSystem::CanInstance(entity) && !InstancingSystem::IsEntityVisible(entity)) return;
-				const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
 				ConstantBuffer3D cb{};
 				cb.World = XMMatrixTranspose(XMLoadFloat4x4(&transform.WorldMatrix));
 				cb.View = XMMatrixTranspose(view);
@@ -316,6 +333,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	}
 
 	ScenePasses::BeginSpritePass();
+	// 内訳の計測：収集（マテリアル解決・PSO 検索・定数書き込み）と提出（コマンド記録）
+	std::optional<RenderProfiler::ScopedEvent> collectProfile;
+	collectProfile.emplace(drawDeferredOpaque ? "RenderSystem: Collect (opaque)" : "RenderSystem: Collect", pCommandList);
 
 	UINT8* pCbvDataBegin = FrameConstants::GetConstantBufferPtr();
 	if (!pCbvDataBegin)
@@ -340,6 +360,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	const XMMATRIX transposedProj = XMMatrixTranspose(projMat);
 	const float sceneAspectRatio = GraphicsDevice::GetSceneAspectRatio();
 	const int defaultTextureIndex = TextureManager::GetDefaultTextureIndex();
+	XMFLOAT3 cameraPosition = { 0.0f, 0.0f, 5.0f };
+	if (Registry::HasComponent(Camera::GetCameraEntity(), ComponentType::TRANSFORM))
+		cameraPosition = ComponentManager::GetComponentUnchecked<TransformComponent>(Camera::GetCameraEntity()).Position;
 	const int defaultNormalIndex = TextureManager::GetDefaultTextureIndex();
 
 	for (EntityID i : spriteEntities)
@@ -379,8 +402,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					continue;
 				}
 				if (InstancingSystem::CanInstance(i)) continue;
+				// 負荷削減：視錐台・画面サイズのカリング（ルートの再設定は描画の直前に 1 回だけ）
+				if (!RenderCulling::IsEntityVisible(i)) continue;
 
-				ScenePasses::BeginModelPass();
 				ShaderDescription psoResource{};
 				psoResource.vsPath = GetSpriteVsPath(i, true);
 				psoResource.psPath = GetSpritePsPath(i, true);
@@ -419,15 +443,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				cb3D.UseTexture = 0;
 
 
-				EntityID cameraEntity = Camera::GetCameraEntity();
-				if (Registry::HasComponent(cameraEntity, ComponentType::TRANSFORM))
-				{
-					cb3D.CameraPos = ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
-				}
-				else
-				{
-					cb3D.CameraPos = { 0.0f, 0.0f, 5.0f };
-				}
+				cb3D.CameraPos = cameraPosition;
 
 				int srvIndex = defaultTextureIndex;
 				int normalSrvIndex = defaultNormalIndex;
@@ -472,7 +488,6 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				continue;
 			}
 
-			ScenePasses::BeginSpritePass();
 			ShaderDescription psoResource{};
 			psoResource.vsPath = GetSpriteVsPath(i, false);
 			psoResource.psPath = GetSpritePsPath(i, false);
@@ -582,6 +597,8 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			continue;
 		}
 		if (InstancingSystem::CanInstance(i)) continue;
+		// 負荷削減：視錐台・画面サイズのカリング
+		if (!RenderCulling::IsEntityVisible(i)) continue;
 
 		bool isReceiving = MaterialSystem::IsReceivingPostProcess(i);
 		const MaterialComponent* material;
@@ -603,7 +620,6 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			continue;
 		}
 
-		ScenePasses::BeginModelPass();
 		ShaderDescription psoResource{};
 		psoResource.vsPath = GetMeshVsPath(i);
 		psoResource.psPath = GetMeshPsPath(i);
@@ -636,15 +652,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		cb3D.Projection = transposedProj;
 		cb3D.UseTexture = 0;
 
-		EntityID cameraEntity = Camera::GetCameraEntity();
-		if (Registry::HasComponent(cameraEntity, ComponentType::TRANSFORM))
-		{
-			cb3D.CameraPos = ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
-		}
-		else
-		{
-			cb3D.CameraPos = { 0.0f, 0.0f, 5.0f };
-		}
+		cb3D.CameraPos = cameraPosition;
 
 		int srvIndex = defaultTextureIndex;
 		int normalSrvIndex = defaultNormalIndex;
@@ -722,6 +730,8 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 	sortDrawCalls(m_SpriteDrawCalls);
 	sortDrawCalls(m_ModelDrawCalls);
+	collectProfile.reset();
+	RenderProfiler::ScopedEvent submitProfile(drawDeferredOpaque ? "RenderSystem: Submit (opaque)" : "RenderSystem: Submit", pCommandList);
 
 	auto heapStart = pCbvHeap->GetGPUDescriptorHandleForHeapStart();
 
@@ -789,6 +799,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					XMFLOAT3 center = mesh.LocalBoundsCenter, extents = mesh.LocalBoundsExtents;
 					VertexDeformation::TryGetLocalBounds(dc.EntityID, center, extents);
 					meshShaderDrawn = MeshShaderPipeline::Draw(pCommandList, geometry, center, extents);
+					++s_MeshShaderDraws;
 				}
 				if (meshShaderDrawn) lastPso = nullptr;
 				else if (!occlusionPhaseTwo) pCommandList->DrawInstanced(dc.vertexCount, 1, 0, 0);
@@ -814,4 +825,14 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		ScenePasses::BeginModelPass();
 		submitDrawCalls(m_ModelDrawCalls);
 	}
+	// 何件がこの CPU 経路に来ているか（GPU 駆動が受け持てていない物の数）。ログに 1 秒ごと
+	static auto lastLog = chrono::steady_clock::now();
+	if (drawDeferredOpaque && chrono::steady_clock::now() - lastLog > chrono::seconds(1))
+	{
+		lastLog = chrono::steady_clock::now();
+		WriteGraphicsLog("RenderSystem(CPU path): sprites=%zu models=%zu meshShaderDraws=%u gpuDriven=%d\n",
+			m_SpriteDrawCalls.size(), m_ModelDrawCalls.size(), s_MeshShaderDraws, GPUDrivenRenderer::IsActive() ? 1 : 0);
+	}
+	s_MeshShaderDraws = 0;
 }
+

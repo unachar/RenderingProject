@@ -53,7 +53,7 @@ cbuffer ReflectionConstants : register(b6)
     float4 GiParameters; // distance, intensity, checkerboard enabled, emissive mesh count
     float4 CacheParameters; // enabled, base cell size (m), capacity, max history frames
     float4 ReSTIRParameters; // enabled, max temporal M, spatial sample count, spatial radius (px)
-    uint4 ReSTIRState;       // history valid, reservoir width (traced columns), spatial visibility, -
+    uint4 ReSTIRState;       // history valid, reservoir width (traced columns), spatial visibility, 反射レイの粗さ上限 × 1000
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -429,6 +429,12 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
         }
         return radiance;
     }
+    float shadowRandom = ((ReflectionHash(randomSeed ^ 0x5bd1e995u) >> 8) + 0.5f) / 16777216.0f;
+    float shadowTotalWeight = 0;
+    float shadowSelectedWeight = 0;
+    float3 shadowSelectedContribution = 0;
+    float3 shadowSelectedDirection = 0;
+    float shadowSelectedRange = 0;
     [loop] for (int i = 0; i < count; ++i)
     {
         ReflectionLight light = ReflectionLights[i];
@@ -451,14 +457,35 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
         float3 contribution = response * light.Color.rgb * max(light.Color.a, 0) * cosine * attenuation;
         // Same result, but no shadow ray for lights that cannot change the pixel.
         if (all(contribution < 0.000001f)) continue;
-        float shadow = 1;
-        if (light.Flags.x != 0)
+        if (light.Flags.x == 0)
         {
-            float range = light.PositionType.w < 0.5f ? SceneRayParameters.x :
-                min(length(light.PositionType.xyz - position), SceneRayParameters.x);
-            shadow = TraceSceneShadow(position, normal, direction, range);
+            radiance += contribution; // 影を落とさないライトはそのまま足す（レイ不要）
+            continue;
         }
-        radiance += contribution * shadow;
+        // 負荷削減：影を落とすライトは「寄与に比例して 1 灯選び、影のレイは 1 本だけ」（重み付きリザーバー、不偏）。
+        // 以前はライトごとに影のレイを飛ばしていたので、ライトが多いと反射のコストがライト数に比例していた
+        float weight = dot(contribution, float3(0.2126f, 0.7152f, 0.0722f));
+        if (weight <= 0.0000001f) continue;
+        shadowTotalWeight += weight;
+        float probability = weight / shadowTotalWeight;
+        if (shadowRandom < probability)
+        {
+            shadowRandom /= probability;
+            shadowSelectedWeight = weight;
+            shadowSelectedContribution = contribution;
+            shadowSelectedDirection = direction;
+            shadowSelectedRange = light.PositionType.w < 0.5f ? SceneRayParameters.x :
+                min(length(light.PositionType.xyz - position), SceneRayParameters.x);
+        }
+        else
+        {
+            shadowRandom = (shadowRandom - probability) / max(1 - probability, 0.000001f);
+        }
+    }
+    if (shadowSelectedWeight > 0)
+    {
+        float shadow = TraceSceneShadow(position, normal, shadowSelectedDirection, shadowSelectedRange);
+        radiance += shadowSelectedContribution * (shadow * shadowTotalWeight / shadowSelectedWeight);
     }
     return radiance;
 }
@@ -474,12 +501,26 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
+    // 負荷削減：NRD がある場合は半分のピクセル（チェッカーボード）だけトレースし、NRD が残りを復元する
+    //（GI の TraceDiffuse と同じ詰め方：トレースしたピクセルを (x >> 1, y) に格納。NRD の CheckerboardMode::BLACK）
+    uint2 storage = id.xy;
     uint2 pixel = id.xy;
-    if (any(pixel >= ReflectionExtent.xy)) return;
+    const bool checkerboard = (ReSTIRState.w & 0x10000u) != 0u;
+    if (checkerboard)
+    {
+        pixel.x = 2 * pixel.x + ((pixel.y + ReflectionExtent.z) & 1u);
+        if (storage.y >= ReflectionExtent.y || storage.x >= (ReflectionExtent.x + 1) / 2) return;
+        if (pixel.x >= ReflectionExtent.x)
+        {
+            NoisyRadiance[storage] = 0;
+            return;
+        }
+    }
+    else if (any(pixel >= ReflectionExtent.xy)) return;
     float depth = ReflectionDepth.Load(int3(pixel, 0));
     if (depth >= 0.99999f)
     {
-        NoisyRadiance[pixel] = 0;
+        NoisyRadiance[storage] = 0;
         ReflectionRadiance[pixel] = 0;
         return;
     }
@@ -491,6 +532,21 @@ void main(uint3 id : SV_DispatchThreadID)
     float roughness = clamp(ReflectionMaterial.Load(int3(pixel, 0)).y, 0.02f, 1);
     uint seed = ReflectionHash(pixel.x + pixel.y * ReflectionExtent.x + ReflectionExtent.z * 104729u);
     float2 random = float2((seed & 0xffff) + 0.5f, (seed >> 16) + 0.5f) / 65536;
+    // 負荷削減：粗い面は反射レイを飛ばさず空（環境）で近似する（ローブが広く、レイ 1 本ではほぼノイズにしかならない）
+    const float roughnessCutoff = (ReSTIRState.w & 0xffffu) / 1000.0f;
+    if (roughnessCutoff < 0.999f && roughness > roughnessCutoff)
+    {
+        float3 skyRadiance = EvaluatePhysicalSkyFast(reflect(-view, normal), max(0.001f, roughness * 0.02f));
+        ReflectionRadiance[pixel] = float4(skyRadiance, 0);
+#if USE_NRD
+        float viewZCut = abs(mul(float4(position, 1), ReflectionView).z);
+        NoisyRadiance[storage] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(skyRadiance,
+            REBLUR_FrontEnd_GetNormHitDist(65504, viewZCut, float3(3, 0.1f, 20), roughness), true);
+#else
+        NoisyRadiance[storage] = float4(skyRadiance, 65504);
+#endif
+        return;
+    }
     float alpha = roughness * roughness;
     float3 halfVector = SampleVisibleGgx(view, normal, roughness, random);
     float3 direction = reflect(-view, halfVector);
@@ -511,7 +567,7 @@ void main(uint3 id : SV_DispatchThreadID)
         hit = query.CommittedStatus() != COMMITTED_NOTHING;
         hitDistance = hit ? query.CommittedRayT() : 65504;
         radiance = hit ? ShadeReflectionHit(query.CommittedInstanceID(), query.CommittedPrimitiveIndex(),
-            query.CommittedTriangleBarycentrics(), ray.Origin + direction * hitDistance, direction) :
+            query.CommittedTriangleBarycentrics(), ray.Origin + direction * hitDistance, direction, false, seed * 7919u + 17u) :
             EvaluatePhysicalSky(direction, max(0.001f, roughness * 0.02f));
         // Smith masking and the bounded-lobe probability after dividing by the sampling density.
         float masking = 2 * nDotL / (nDotL + sqrt(alpha * alpha + (1 - alpha * alpha) * nDotL * nDotL));
@@ -530,9 +586,9 @@ void main(uint3 id : SV_DispatchThreadID)
 #if USE_NRD
     float viewZ = abs(mul(float4(position, 1), ReflectionView).z);
     float normalizedDistance = REBLUR_FrontEnd_GetNormHitDist(hitDistance, viewZ, float3(3, 0.1f, 20), roughness);
-    NoisyRadiance[pixel] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(radiance, normalizedDistance, true);
+    NoisyRadiance[storage] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(radiance, normalizedDistance, true);
 #else
-    NoisyRadiance[pixel] = float4(radiance, hitDistance);
+    NoisyRadiance[storage] = float4(radiance, hitDistance);
 #endif
 }
 
@@ -1011,4 +1067,6 @@ void ReSTIRSpatial(uint3 id : SV_DispatchThreadID)
     NoisyRadiance[storage] = float4(irradiance, hitDistance);
 #endif
 }
+
+
 

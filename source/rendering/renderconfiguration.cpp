@@ -238,7 +238,7 @@ void RenderConfiguration::SetHdr(bool enabled)
 
 void RenderConfiguration::SetResolutionScale(float scale)
 {
-	const float clampedScale = clamp(scale, 0.25f, 1.0f);
+	const float clampedScale = clamp(scale, 0.20f, 1.0f); // FSR / NIS（多段）とも 20% まで
 	if (fabsf(GetResolutionScale() - clampedScale) < 0.0001f)
 	{
 		return;
@@ -357,3 +357,4 @@ void RenderConfiguration::ApplyPendingHdr()
 	m_TaaBlendPso.Reset();
 	PsoManager::CreateAaPsos();
 }
+

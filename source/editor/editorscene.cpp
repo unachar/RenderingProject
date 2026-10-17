@@ -25,6 +25,10 @@
 #include "materialmanager.h"
 #include "gpuscene/gpuscenechanges.h"
 #include <fstream>
+#include <future>
+#include <thread>
+#include <mutex>
+#include <chrono>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
@@ -1114,30 +1118,227 @@ uint64_t ImGuiManager::ComputeSceneHash()
 	return hash;
 }
 
+namespace
+{
+	// 高速保存：Json::Value の木を作らず、文字列へ直接書き出す（Archive の Stream モード）
+	string StreamSceneJson(const vector<EntityID>& entities, const unordered_map<EntityID, EntityID>& fileIds,
+		void (*visit)(SceneFile::Archive&, EntityID))
+	{
+		string out;
+		out.reserve(entities.size() * 640 + 256);
+		out.append("{\"format\":\"DX12Scene\",\"version\":");
+		out.append(to_string(SceneFile::kVersion));
+		out.append(",\"entities\":[");
+		for (size_t index = 0; index < entities.size(); ++index)
+		{
+			if (index) out.push_back(',');
+			out.append("{\"id\":");
+			out.append(to_string(fileIds.at(entities[index])));
+			string body;
+			SceneFile::Archive archive(body);
+			archive.EntityMap = &fileIds;
+			visit(archive, entities[index]);
+			if (!body.empty())
+			{
+				out.push_back(',');
+				out.append(body);
+			}
+			out.push_back('}');
+			out.push_back('\n'); // 1 エンティティ 1 行（差分ツールで見やすく）
+		}
+		out.append("]}\n");
+		return out;
+	}
+
+	// ---- 決定論的な差分保存
+	//   出力は「シーンの状態」だけで決まる（同じ状態なら毎回バイト単位で同じファイル。キャッシュの有無・スレッド数に依存しない）
+	//   ・エンティティは EntityID 昇順、ファイル内 ID は 0 からの連番、キーは Visit の順、数値は最短往復表現
+	//   ・エンティティごとの書き出し結果を、内容のハッシュ（参照先のファイル内 ID も含む）をキーに再利用する
+	//   ・並列に作ってもエンティティの順に連結するので、出力は 1 スレッドと同じ
+	//   ・昼夜サイクルが動かす太陽はハッシュが位置を見ないので、毎回書き出す
+	struct EntityRecordCache
+	{
+		uint64_t Hash = 0;
+		EntityID FileId = 0;
+		bool Valid = false;
+		string Body; // {"id":N, の後ろから } の手前まで（コンポーネント部分）
+	};
+	vector<EntityRecordCache> g_RecordCache;
+	constexpr uint64_t kRecordFormat = 1; // 書き出し形式を変えたら上げる（古いキャッシュを使わない）
+
+	bool IsDrivenSun(EntityID entity)
+	{
+		if (!ComponentManager::HasComponent<SunComponent>(entity)) return false;
+		const auto& cycle = DayNightCycle::GetSettings();
+		return cycle.TimeDriven || cycle.AutomaticLighting;
+	}
+
+	uint64_t HashEntityRecord(EntityID entity, EntityID fileId, const unordered_map<EntityID, EntityID>& fileIds)
+	{
+		uint64_t hash = 1469598103934665603ull ^ (kRecordFormat * 0x9e3779b97f4a7c15ull);
+		SceneFile::Archive archive(hash);
+		archive.EntityMap = &fileIds;
+		archive.HashBytes(&fileId, sizeof(fileId));
+		VisitLiveEntity(archive, entity);
+		return hash;
+	}
+
+	void StreamEntityBody(EntityID entity, const unordered_map<EntityID, EntityID>& fileIds, string& out)
+	{
+		out.clear();
+		SceneFile::Archive archive(out);
+		archive.EntityMap = &fileIds;
+		VisitLiveEntity(archive, entity);
+	}
+
+	struct DeterministicSaveStats { size_t Reused = 0, Written = 0; };
+
+	string StreamSceneDeterministic(const vector<EntityID>& entities, const unordered_map<EntityID, EntityID>& fileIds,
+		DeterministicSaveStats& stats)
+	{
+		// キャッシュは EntityID で引く（並列に書くので先に大きさを確保する）
+		EntityID maxEntity = 0;
+		for (EntityID entity : entities) maxEntity = (std::max)(maxEntity, entity);
+		if (g_RecordCache.size() <= maxEntity) g_RecordCache.resize(static_cast<size_t>(maxEntity) + 1);
+
+		// エンティティを塊に分けて並列に処理（各塊は自分の担当エンティティのキャッシュだけを読み書きする）
+		const size_t count = entities.size();
+		const size_t workers = (std::max)(size_t(1), (std::min)(size_t(std::thread::hardware_concurrency()), count / 256 + 1));
+		vector<size_t> reused(workers, 0);
+		auto work = [&](size_t worker)
+		{
+			const size_t first = count * worker / workers, last = count * (worker + 1) / workers;
+			for (size_t index = first; index < last; ++index)
+			{
+				const EntityID entity = entities[index];
+				const EntityID fileId = static_cast<EntityID>(index);
+				auto& cache = g_RecordCache[entity];
+				if (IsDrivenSun(entity))
+				{
+					StreamEntityBody(entity, fileIds, cache.Body);
+					cache.Valid = false;
+					continue;
+				}
+				const uint64_t hash = HashEntityRecord(entity, fileId, fileIds);
+				if (cache.Valid && cache.Hash == hash && cache.FileId == fileId)
+				{
+					++reused[worker];
+					continue;
+				}
+				StreamEntityBody(entity, fileIds, cache.Body);
+				cache.Hash = hash;
+				cache.FileId = fileId;
+				cache.Valid = true;
+			}
+		};
+		vector<std::future<void>> tasks;
+		for (size_t worker = 1; worker < workers; ++worker) tasks.push_back(std::async(std::launch::async, work, worker));
+		work(0);
+		for (auto& task : tasks) task.get();
+		for (size_t value : reused) stats.Reused += value;
+		stats.Written = count - stats.Reused;
+
+		// エンティティの順に連結（ここが出力の順序を決める唯一の場所）
+		size_t total = 64;
+		for (EntityID entity : entities) total += g_RecordCache[entity].Body.size() + 24;
+		string out;
+		out.reserve(total);
+		out.append("{\"format\":\"DX12Scene\",\"version\":");
+		out.append(to_string(SceneFile::kVersion));
+		out.append(",\"entities\":[");
+		for (size_t index = 0; index < count; ++index)
+		{
+			if (index) out.push_back(',');
+			out.append("{\"id\":");
+			out.append(to_string(index));
+			const string& body = g_RecordCache[entities[index]].Body;
+			if (!body.empty())
+			{
+				out.push_back(',');
+				out.append(body);
+			}
+			out.push_back('}');
+			out.push_back('\n');
+		}
+		out.append("]}\n");
+		return out;
+	}
+
+	// ---- 非同期保存（文字列化 + 一時ファイル + 置き換え）
+	struct SaveResult { bool Success = false; string Path; double Milliseconds = 0.0; };
+	std::future<SaveResult> g_PendingSave;
+	std::mutex g_SaveFileMutex; // 同じファイルへの書き込みを直列化
+	// 変更判定のハッシュを複数フレームに分けて計算する（以前は 0.25 秒ごとに全エンティティを 1 フレームで処理し、
+	// 数千オブジェクトのシーンで定期的にフレームが引っかかっていた）
+	struct IncrementalSceneHash
+	{
+		vector<EntityID> Entities;
+		unordered_map<EntityID, EntityID> FileIds;
+		uint64_t Hash = 0;
+		size_t Next = 0;
+		bool Active = false;
+	};
+	IncrementalSceneHash g_TrackingHash;
+	bool g_SavedHashPending = false;
+	uint64_t g_SavedHashRevision = 0;
+	constexpr size_t kHashEntitiesPerFrame = 768;
+
+	SaveResult WriteSceneFile(string contents, filesystem::path path, string displayPath)
+	{
+		const auto begin = std::chrono::steady_clock::now();
+		SaveResult result;
+		result.Path = std::move(displayPath);
+		std::lock_guard<std::mutex> lock(g_SaveFileMutex);
+		error_code error;
+		filesystem::path temporary = path;
+		temporary += L".tmp";
+		{
+			ofstream file(temporary, ios::binary | ios::trunc);
+			file.write(contents.data(), static_cast<streamsize>(contents.size()));
+			if (!file) return result;
+		}
+		// 置き換えは原子的（途中で落ちても古いファイルか新しいファイルのどちらかが残る）。
+		// WRITE_THROUGH（ディスクへの物理書き出し待ち）は数百 ms〜秒かかるので使わない
+		if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
+		{
+			filesystem::remove(temporary, error);
+			return result;
+		}
+		result.Success = true;
+		result.Milliseconds = std::chrono::duration<double, milli>(std::chrono::steady_clock::now() - begin).count();
+		return result;
+	}
+
+	void VisitLiveEntityThunk(SceneFile::Archive& archive, EntityID entity)
+	{
+		VisitLiveEntity(archive, entity);
+	}
+}
+
 string ImGuiManager::SerializeScene()
 {
 	const vector<EntityID> entities = CollectSceneEntities();
 	unordered_map<EntityID, EntityID> fileIds;
 	fileIds.reserve(entities.size());
 	for (size_t i = 0; i < entities.size(); ++i) fileIds[entities[i]] = static_cast<EntityID>(i);
+	return StreamSceneJson(entities, fileIds, VisitLiveEntityThunk);
+}
 
-	Json::Value root(Json::objectValue);
-	root["format"] = "DX12Scene";
-	root["version"] = SceneFile::kVersion;
-	root["entities"] = Json::Value(Json::arrayValue);
-	for (EntityID entity : entities)
+// 保存中の非同期書き込みが終わっていればログを出す（毎フレーム）。wait = true なら終わるまで待つ
+void ImGuiManager::PollPendingSceneSave(bool wait)
+{
+	if (!g_PendingSave.valid()) return;
+	if (!wait && g_PendingSave.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+	const SaveResult result = g_PendingSave.get();
+	if (result.Success)
 	{
-		Json::Value record(Json::objectValue);
-		record["id"] = fileIds[entity];
-		SceneFile::Archive archive(SceneFile::Mode::Write, record);
-		archive.EntityMap = &fileIds;
-		VisitLiveEntity(archive, entity);
-		root["entities"].append(record);
+		AddLog("シーンを保存: %s（書き込み %.0f ms・バックグラウンド）", result.Path.c_str(), result.Milliseconds);
 	}
-	Json::StreamWriterBuilder writer;
-	writer["indentation"] = "  ";
-	writer["precision"] = 9; // float を往復で同じ値に戻せる桁数
-	return Json::writeString(writer, root);
+	else
+	{
+		AddLog("シーンの保存に失敗しました: %s", result.Path.c_str());
+		m_SceneSavedHash = 0; // 未保存（*）に戻す
+	}
 }
 
 bool ImGuiManager::SaveScene(const filesystem::path& path)
@@ -1147,36 +1348,46 @@ bool ImGuiManager::SaveScene(const filesystem::path& path)
 		AddLog("再生中はシーンを保存できません。停止してから保存してください");
 		return false;
 	}
+	// 負荷削減：メインスレッドでは ECS の読み取り（JSON の木を作る）と変更判定のハッシュだけを行い、
+	// 文字列化・ファイル書き込み・ディスクへの書き出し待ちは別スレッドで行う（以前は全部メインスレッドで数秒止まっていた）
+	const auto begin = std::chrono::steady_clock::now();
+	PollPendingSceneSave(true); // 前の保存が残っていれば先に終わらせる（順序を守る）
 	error_code error;
 	if (path.has_parent_path()) filesystem::create_directories(path.parent_path(), error);
-	const string contents = SerializeScene();
-	filesystem::path temporary = path;
-	temporary += L".tmp";
+	const vector<EntityID> entities = CollectSceneEntities();
+	unordered_map<EntityID, EntityID> fileIds;
+	fileIds.reserve(entities.size());
+	for (size_t i = 0; i < entities.size(); ++i) fileIds[entities[i]] = static_cast<EntityID>(i);
+	DeterministicSaveStats saveStats;
+	string contents = StreamSceneDeterministic(entities, fileIds, saveStats);
+	// 検証（環境変数 DX12_VERIFY_SAVE=1）：キャッシュを使わない書き出しとバイト単位で比較
+	char verify[8]{};
+	if (GetEnvironmentVariableA("DX12_VERIFY_SAVE", verify, sizeof(verify)) > 0 && atoi(verify) != 0)
 	{
-		ofstream file(temporary, ios::binary | ios::trunc);
-		file << contents;
-		if (!file)
-		{
-			AddLog("シーンの保存に失敗しました: %s", ToUtf8(path).c_str());
-			return false;
-		}
-	}
-	if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-	{
-		filesystem::remove(temporary, error);
-		AddLog("シーンの保存に失敗しました: %s", ToUtf8(path).c_str());
-		return false;
+		const string reference = StreamSceneJson(entities, fileIds, VisitLiveEntityThunk);
+		AddLog(reference == contents ? "保存の検証: 一致（%zu bytes）" : "保存の検証: 不一致！（%zu bytes）", contents.size());
 	}
 	m_ScenePath = RelativeToWorkingDirectory(path);
-	m_SceneSavedHash = ComputeSceneHash();
-	m_SceneCurrentHash = m_SceneSavedHash;
+	g_PendingSave = std::async(std::launch::async, WriteSceneFile, std::move(contents), path, ToUtf8(m_ScenePath));
+	// 変更判定の基準は、保存直後から始める分割ハッシュの結果を使う（ここで全エンティティをハッシュしない）。
+	// 結果が出るまでは「保存済み」と表示し、その間に編集されたら基準を更新しない（= 未保存 * に戻る）
+	g_SavedHashPending = true;
+	g_SavedHashRevision = m_EditRevision;
+	g_TrackingHash.Active = false;
+	m_SceneNextHashTime = 0.0;
+	m_SceneSavedHash = m_SceneCurrentHash;
 	SaveProjectSettings(); // cfg の scene= を更新
-	AddLog("シーンを保存: %s", ToUtf8(m_ScenePath).c_str());
+	AddLog("シーンを保存中: %s（メインスレッド %.0f ms・再利用 %zu / 書き出し %zu）", ToUtf8(m_ScenePath).c_str(),
+		std::chrono::duration<double, milli>(std::chrono::steady_clock::now() - begin).count(),
+		saveStats.Reused, saveStats.Written);
 	return true;
 }
 
 void ImGuiManager::DestroySceneEntities()
 {
+	PollPendingSceneSave(true);      // 書き込み中の保存を終わらせてから
+	g_TrackingHash.Active = false;   // 途中の変更判定は捨てる（エンティティが入れ替わるため）
+	g_RecordCache.clear();           // 別のシーンの書き出し結果は使わない（ハッシュで弾かれるが、メモリを解放する）
 	GraphicsDevice::WaitForGpuIdle();
 	if (ProjectManager::IsPlaying()) ProjectManager::Stop();
 	CancelRename();
@@ -1451,15 +1662,55 @@ void ImGuiManager::BeginSceneBaseline(double settleSeconds)
 }
 
 // 毎フレーム（Update の最後）。0.25秒ごとにハッシュを取り直す。
+
 void ImGuiManager::UpdateSceneTracking()
 {
+	PollPendingSceneSave(false);
 	if (m_SceneTracking && !ProjectManager::IsPlaying())
 	{
 		const double now = ImGui::GetTime();
-		if (now >= m_SceneNextHashTime)
+		auto& tracking = g_TrackingHash;
+		if (!tracking.Active && now >= m_SceneNextHashTime)
 		{
-			m_SceneNextHashTime = now + 0.25;
-			m_SceneCurrentHash = ComputeSceneHash();
+			// 新しい周回を始める（ComputeSceneHash と同じ順序・同じ内容）
+			tracking.Entities = CollectSceneEntities();
+			tracking.FileIds.clear();
+			tracking.FileIds.reserve(tracking.Entities.size());
+			for (size_t i = 0; i < tracking.Entities.size(); ++i) tracking.FileIds[tracking.Entities[i]] = static_cast<EntityID>(i);
+			tracking.Hash = 1469598103934665603ull;
+			SceneFile::Archive start(tracking.Hash);
+			const uint64_t count = tracking.Entities.size();
+			start.HashBytes(&count, sizeof(count));
+			tracking.Next = 0;
+			tracking.Active = true;
+		}
+		bool completed = false;
+		if (tracking.Active)
+		{
+			SceneFile::Archive archive(tracking.Hash);
+			archive.EntityMap = &tracking.FileIds;
+			const size_t end = (std::min)(tracking.Entities.size(), tracking.Next + kHashEntitiesPerFrame);
+			for (; tracking.Next < end; ++tracking.Next)
+			{
+				const EntityID entity = tracking.Entities[tracking.Next];
+				if (Registry::IsAlive(entity)) VisitLiveEntity(archive, entity);
+			}
+			if (tracking.Next >= tracking.Entities.size())
+			{
+				tracking.Active = false;
+				completed = true;
+				m_SceneNextHashTime = now + 0.25;
+			}
+		}
+		if (completed)
+		{
+			m_SceneCurrentHash = tracking.Hash;
+			if (g_SavedHashPending)
+			{
+				// 保存後、編集が無ければこの値が保存した内容のハッシュ
+				if (m_EditRevision == g_SavedHashRevision) m_SceneSavedHash = tracking.Hash;
+				g_SavedHashPending = false;
+			}
 			// 読み込み直後はモデルの非同期読み込みや太陽の同期で値が落ち着くまで、ユーザーの編集がなければ基準を更新する
 			if (now < m_SceneSettleUntil && m_EditRevision == m_SceneSettleRevision && !ImGui::IsAnyItemActive())
 			{
@@ -1684,5 +1935,6 @@ void ImGuiManager::DrawScenePopups()
 		ImGui::EndPopup();
 	}
 }
+
 
 

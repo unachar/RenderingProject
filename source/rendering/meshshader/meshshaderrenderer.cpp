@@ -614,7 +614,11 @@ static bool DrawPass(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices, 
     RenderGraph::ResourceHandle binCount;
     if (binning) binCount = Import(graph,"Native material bin count",VirtualGeometryBinning::CounterBuffer(),D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
     asset.push_back(Import(graph,"Geometry Raster Residency",VirtualGeometryStreaming::ResidencyBuffer(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
-    for (auto handle : VirtualGeometryStreaming::PageHandles(graph)) asset.push_back(handle);
+    // 負荷削減：常駐ページ（数千個の 64KB バッファ）を毎パス RenderGraph に登録しない。
+    //   以前は FindImportedResource の線形探索（ページ数の 2 乗）と、ページごとの遷移バリア 2 回 × 3 パス
+    //   （1 回目 / 2 回目 / Velocity）で GBuffer の CPU 時間の大半を使っていた。
+    //   ページはコピーキューで書かれ、直接キューでは常に COMMON のバッファ。バッファは COMMON から
+    //   読み取り状態へ暗黙に昇格し、ExecuteCommandLists の終わりに COMMON へ戻るので、明示的な遷移は不要
     graph.AddPass(
         velocity ? "Mesh Shader Velocity" : "Mesh Shader Opaque",
         [=](RenderGraph::PassBuilder &b) {
@@ -989,4 +993,5 @@ void Shutdown()
     Data() = {};
 }
 } // namespace MeshShaderRenderer
+
 

@@ -1,5 +1,8 @@
 #include "pch.h"
 #include "systemmanager.h"
+#include "renderprofiler.h"
+#include "graphicsdevice.h"
+#include <typeinfo>
 #include "framepipeline.h"
 #include "componentmanager.h"
 #include "world.h"
@@ -131,3 +134,4 @@ void SystemManager::RenderFlow()
 {
 	FramePipeline::Execute();
 }
+

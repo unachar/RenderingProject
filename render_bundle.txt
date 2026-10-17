@@ -14377,6 +14377,10 @@ void ImGuiManager::DrawRaytracingWindow()
 #include "materialmanager.h"
 #include "gpuscene/gpuscenechanges.h"
 #include <fstream>
+#include <future>
+#include <thread>
+#include <mutex>
+#include <chrono>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
@@ -15466,30 +15470,227 @@ uint64_t ImGuiManager::ComputeSceneHash()
 	return hash;
 }
 
+namespace
+{
+	// 高速保存：Json::Value の木を作らず、文字列へ直接書き出す（Archive の Stream モード）
+	string StreamSceneJson(const vector<EntityID>& entities, const unordered_map<EntityID, EntityID>& fileIds,
+		void (*visit)(SceneFile::Archive&, EntityID))
+	{
+		string out;
+		out.reserve(entities.size() * 640 + 256);
+		out.append("{\"format\":\"DX12Scene\",\"version\":");
+		out.append(to_string(SceneFile::kVersion));
+		out.append(",\"entities\":[");
+		for (size_t index = 0; index < entities.size(); ++index)
+		{
+			if (index) out.push_back(',');
+			out.append("{\"id\":");
+			out.append(to_string(fileIds.at(entities[index])));
+			string body;
+			SceneFile::Archive archive(body);
+			archive.EntityMap = &fileIds;
+			visit(archive, entities[index]);
+			if (!body.empty())
+			{
+				out.push_back(',');
+				out.append(body);
+			}
+			out.push_back('}');
+			out.push_back('\n'); // 1 エンティティ 1 行（差分ツールで見やすく）
+		}
+		out.append("]}\n");
+		return out;
+	}
+
+	// ---- 決定論的な差分保存
+	//   出力は「シーンの状態」だけで決まる（同じ状態なら毎回バイト単位で同じファイル。キャッシュの有無・スレッド数に依存しない）
+	//   ・エンティティは EntityID 昇順、ファイル内 ID は 0 からの連番、キーは Visit の順、数値は最短往復表現
+	//   ・エンティティごとの書き出し結果を、内容のハッシュ（参照先のファイル内 ID も含む）をキーに再利用する
+	//   ・並列に作ってもエンティティの順に連結するので、出力は 1 スレッドと同じ
+	//   ・昼夜サイクルが動かす太陽はハッシュが位置を見ないので、毎回書き出す
+	struct EntityRecordCache
+	{
+		uint64_t Hash = 0;
+		EntityID FileId = 0;
+		bool Valid = false;
+		string Body; // {"id":N, の後ろから } の手前まで（コンポーネント部分）
+	};
+	vector<EntityRecordCache> g_RecordCache;
+	constexpr uint64_t kRecordFormat = 1; // 書き出し形式を変えたら上げる（古いキャッシュを使わない）
+
+	bool IsDrivenSun(EntityID entity)
+	{
+		if (!ComponentManager::HasComponent<SunComponent>(entity)) return false;
+		const auto& cycle = DayNightCycle::GetSettings();
+		return cycle.TimeDriven || cycle.AutomaticLighting;
+	}
+
+	uint64_t HashEntityRecord(EntityID entity, EntityID fileId, const unordered_map<EntityID, EntityID>& fileIds)
+	{
+		uint64_t hash = 1469598103934665603ull ^ (kRecordFormat * 0x9e3779b97f4a7c15ull);
+		SceneFile::Archive archive(hash);
+		archive.EntityMap = &fileIds;
+		archive.HashBytes(&fileId, sizeof(fileId));
+		VisitLiveEntity(archive, entity);
+		return hash;
+	}
+
+	void StreamEntityBody(EntityID entity, const unordered_map<EntityID, EntityID>& fileIds, string& out)
+	{
+		out.clear();
+		SceneFile::Archive archive(out);
+		archive.EntityMap = &fileIds;
+		VisitLiveEntity(archive, entity);
+	}
+
+	struct DeterministicSaveStats { size_t Reused = 0, Written = 0; };
+
+	string StreamSceneDeterministic(const vector<EntityID>& entities, const unordered_map<EntityID, EntityID>& fileIds,
+		DeterministicSaveStats& stats)
+	{
+		// キャッシュは EntityID で引く（並列に書くので先に大きさを確保する）
+		EntityID maxEntity = 0;
+		for (EntityID entity : entities) maxEntity = (std::max)(maxEntity, entity);
+		if (g_RecordCache.size() <= maxEntity) g_RecordCache.resize(static_cast<size_t>(maxEntity) + 1);
+
+		// エンティティを塊に分けて並列に処理（各塊は自分の担当エンティティのキャッシュだけを読み書きする）
+		const size_t count = entities.size();
+		const size_t workers = (std::max)(size_t(1), (std::min)(size_t(std::thread::hardware_concurrency()), count / 256 + 1));
+		vector<size_t> reused(workers, 0);
+		auto work = [&](size_t worker)
+		{
+			const size_t first = count * worker / workers, last = count * (worker + 1) / workers;
+			for (size_t index = first; index < last; ++index)
+			{
+				const EntityID entity = entities[index];
+				const EntityID fileId = static_cast<EntityID>(index);
+				auto& cache = g_RecordCache[entity];
+				if (IsDrivenSun(entity))
+				{
+					StreamEntityBody(entity, fileIds, cache.Body);
+					cache.Valid = false;
+					continue;
+				}
+				const uint64_t hash = HashEntityRecord(entity, fileId, fileIds);
+				if (cache.Valid && cache.Hash == hash && cache.FileId == fileId)
+				{
+					++reused[worker];
+					continue;
+				}
+				StreamEntityBody(entity, fileIds, cache.Body);
+				cache.Hash = hash;
+				cache.FileId = fileId;
+				cache.Valid = true;
+			}
+		};
+		vector<std::future<void>> tasks;
+		for (size_t worker = 1; worker < workers; ++worker) tasks.push_back(std::async(std::launch::async, work, worker));
+		work(0);
+		for (auto& task : tasks) task.get();
+		for (size_t value : reused) stats.Reused += value;
+		stats.Written = count - stats.Reused;
+
+		// エンティティの順に連結（ここが出力の順序を決める唯一の場所）
+		size_t total = 64;
+		for (EntityID entity : entities) total += g_RecordCache[entity].Body.size() + 24;
+		string out;
+		out.reserve(total);
+		out.append("{\"format\":\"DX12Scene\",\"version\":");
+		out.append(to_string(SceneFile::kVersion));
+		out.append(",\"entities\":[");
+		for (size_t index = 0; index < count; ++index)
+		{
+			if (index) out.push_back(',');
+			out.append("{\"id\":");
+			out.append(to_string(index));
+			const string& body = g_RecordCache[entities[index]].Body;
+			if (!body.empty())
+			{
+				out.push_back(',');
+				out.append(body);
+			}
+			out.push_back('}');
+			out.push_back('\n');
+		}
+		out.append("]}\n");
+		return out;
+	}
+
+	// ---- 非同期保存（文字列化 + 一時ファイル + 置き換え）
+	struct SaveResult { bool Success = false; string Path; double Milliseconds = 0.0; };
+	std::future<SaveResult> g_PendingSave;
+	std::mutex g_SaveFileMutex; // 同じファイルへの書き込みを直列化
+	// 変更判定のハッシュを複数フレームに分けて計算する（以前は 0.25 秒ごとに全エンティティを 1 フレームで処理し、
+	// 数千オブジェクトのシーンで定期的にフレームが引っかかっていた）
+	struct IncrementalSceneHash
+	{
+		vector<EntityID> Entities;
+		unordered_map<EntityID, EntityID> FileIds;
+		uint64_t Hash = 0;
+		size_t Next = 0;
+		bool Active = false;
+	};
+	IncrementalSceneHash g_TrackingHash;
+	bool g_SavedHashPending = false;
+	uint64_t g_SavedHashRevision = 0;
+	constexpr size_t kHashEntitiesPerFrame = 768;
+
+	SaveResult WriteSceneFile(string contents, filesystem::path path, string displayPath)
+	{
+		const auto begin = std::chrono::steady_clock::now();
+		SaveResult result;
+		result.Path = std::move(displayPath);
+		std::lock_guard<std::mutex> lock(g_SaveFileMutex);
+		error_code error;
+		filesystem::path temporary = path;
+		temporary += L".tmp";
+		{
+			ofstream file(temporary, ios::binary | ios::trunc);
+			file.write(contents.data(), static_cast<streamsize>(contents.size()));
+			if (!file) return result;
+		}
+		// 置き換えは原子的（途中で落ちても古いファイルか新しいファイルのどちらかが残る）。
+		// WRITE_THROUGH（ディスクへの物理書き出し待ち）は数百 ms〜秒かかるので使わない
+		if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
+		{
+			filesystem::remove(temporary, error);
+			return result;
+		}
+		result.Success = true;
+		result.Milliseconds = std::chrono::duration<double, milli>(std::chrono::steady_clock::now() - begin).count();
+		return result;
+	}
+
+	void VisitLiveEntityThunk(SceneFile::Archive& archive, EntityID entity)
+	{
+		VisitLiveEntity(archive, entity);
+	}
+}
+
 string ImGuiManager::SerializeScene()
 {
 	const vector<EntityID> entities = CollectSceneEntities();
 	unordered_map<EntityID, EntityID> fileIds;
 	fileIds.reserve(entities.size());
 	for (size_t i = 0; i < entities.size(); ++i) fileIds[entities[i]] = static_cast<EntityID>(i);
+	return StreamSceneJson(entities, fileIds, VisitLiveEntityThunk);
+}
 
-	Json::Value root(Json::objectValue);
-	root["format"] = "DX12Scene";
-	root["version"] = SceneFile::kVersion;
-	root["entities"] = Json::Value(Json::arrayValue);
-	for (EntityID entity : entities)
+// 保存中の非同期書き込みが終わっていればログを出す（毎フレーム）。wait = true なら終わるまで待つ
+void ImGuiManager::PollPendingSceneSave(bool wait)
+{
+	if (!g_PendingSave.valid()) return;
+	if (!wait && g_PendingSave.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+	const SaveResult result = g_PendingSave.get();
+	if (result.Success)
 	{
-		Json::Value record(Json::objectValue);
-		record["id"] = fileIds[entity];
-		SceneFile::Archive archive(SceneFile::Mode::Write, record);
-		archive.EntityMap = &fileIds;
-		VisitLiveEntity(archive, entity);
-		root["entities"].append(record);
+		AddLog("シーンを保存: %s（書き込み %.0f ms・バックグラウンド）", result.Path.c_str(), result.Milliseconds);
 	}
-	Json::StreamWriterBuilder writer;
-	writer["indentation"] = "  ";
-	writer["precision"] = 9; // float を往復で同じ値に戻せる桁数
-	return Json::writeString(writer, root);
+	else
+	{
+		AddLog("シーンの保存に失敗しました: %s", result.Path.c_str());
+		m_SceneSavedHash = 0; // 未保存（*）に戻す
+	}
 }
 
 bool ImGuiManager::SaveScene(const filesystem::path& path)
@@ -15499,36 +15700,46 @@ bool ImGuiManager::SaveScene(const filesystem::path& path)
 		AddLog("再生中はシーンを保存できません。停止してから保存してください");
 		return false;
 	}
+	// 負荷削減：メインスレッドでは ECS の読み取り（JSON の木を作る）と変更判定のハッシュだけを行い、
+	// 文字列化・ファイル書き込み・ディスクへの書き出し待ちは別スレッドで行う（以前は全部メインスレッドで数秒止まっていた）
+	const auto begin = std::chrono::steady_clock::now();
+	PollPendingSceneSave(true); // 前の保存が残っていれば先に終わらせる（順序を守る）
 	error_code error;
 	if (path.has_parent_path()) filesystem::create_directories(path.parent_path(), error);
-	const string contents = SerializeScene();
-	filesystem::path temporary = path;
-	temporary += L".tmp";
+	const vector<EntityID> entities = CollectSceneEntities();
+	unordered_map<EntityID, EntityID> fileIds;
+	fileIds.reserve(entities.size());
+	for (size_t i = 0; i < entities.size(); ++i) fileIds[entities[i]] = static_cast<EntityID>(i);
+	DeterministicSaveStats saveStats;
+	string contents = StreamSceneDeterministic(entities, fileIds, saveStats);
+	// 検証（環境変数 DX12_VERIFY_SAVE=1）：キャッシュを使わない書き出しとバイト単位で比較
+	char verify[8]{};
+	if (GetEnvironmentVariableA("DX12_VERIFY_SAVE", verify, sizeof(verify)) > 0 && atoi(verify) != 0)
 	{
-		ofstream file(temporary, ios::binary | ios::trunc);
-		file << contents;
-		if (!file)
-		{
-			AddLog("シーンの保存に失敗しました: %s", ToUtf8(path).c_str());
-			return false;
-		}
-	}
-	if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-	{
-		filesystem::remove(temporary, error);
-		AddLog("シーンの保存に失敗しました: %s", ToUtf8(path).c_str());
-		return false;
+		const string reference = StreamSceneJson(entities, fileIds, VisitLiveEntityThunk);
+		AddLog(reference == contents ? "保存の検証: 一致（%zu bytes）" : "保存の検証: 不一致！（%zu bytes）", contents.size());
 	}
 	m_ScenePath = RelativeToWorkingDirectory(path);
-	m_SceneSavedHash = ComputeSceneHash();
-	m_SceneCurrentHash = m_SceneSavedHash;
+	g_PendingSave = std::async(std::launch::async, WriteSceneFile, std::move(contents), path, ToUtf8(m_ScenePath));
+	// 変更判定の基準は、保存直後から始める分割ハッシュの結果を使う（ここで全エンティティをハッシュしない）。
+	// 結果が出るまでは「保存済み」と表示し、その間に編集されたら基準を更新しない（= 未保存 * に戻る）
+	g_SavedHashPending = true;
+	g_SavedHashRevision = m_EditRevision;
+	g_TrackingHash.Active = false;
+	m_SceneNextHashTime = 0.0;
+	m_SceneSavedHash = m_SceneCurrentHash;
 	SaveProjectSettings(); // cfg の scene= を更新
-	AddLog("シーンを保存: %s", ToUtf8(m_ScenePath).c_str());
+	AddLog("シーンを保存中: %s（メインスレッド %.0f ms・再利用 %zu / 書き出し %zu）", ToUtf8(m_ScenePath).c_str(),
+		std::chrono::duration<double, milli>(std::chrono::steady_clock::now() - begin).count(),
+		saveStats.Reused, saveStats.Written);
 	return true;
 }
 
 void ImGuiManager::DestroySceneEntities()
 {
+	PollPendingSceneSave(true);      // 書き込み中の保存を終わらせてから
+	g_TrackingHash.Active = false;   // 途中の変更判定は捨てる（エンティティが入れ替わるため）
+	g_RecordCache.clear();           // 別のシーンの書き出し結果は使わない（ハッシュで弾かれるが、メモリを解放する）
 	GraphicsDevice::WaitForGpuIdle();
 	if (ProjectManager::IsPlaying()) ProjectManager::Stop();
 	CancelRename();
@@ -15803,15 +16014,55 @@ void ImGuiManager::BeginSceneBaseline(double settleSeconds)
 }
 
 // 毎フレーム（Update の最後）。0.25秒ごとにハッシュを取り直す。
+
 void ImGuiManager::UpdateSceneTracking()
 {
+	PollPendingSceneSave(false);
 	if (m_SceneTracking && !ProjectManager::IsPlaying())
 	{
 		const double now = ImGui::GetTime();
-		if (now >= m_SceneNextHashTime)
+		auto& tracking = g_TrackingHash;
+		if (!tracking.Active && now >= m_SceneNextHashTime)
 		{
-			m_SceneNextHashTime = now + 0.25;
-			m_SceneCurrentHash = ComputeSceneHash();
+			// 新しい周回を始める（ComputeSceneHash と同じ順序・同じ内容）
+			tracking.Entities = CollectSceneEntities();
+			tracking.FileIds.clear();
+			tracking.FileIds.reserve(tracking.Entities.size());
+			for (size_t i = 0; i < tracking.Entities.size(); ++i) tracking.FileIds[tracking.Entities[i]] = static_cast<EntityID>(i);
+			tracking.Hash = 1469598103934665603ull;
+			SceneFile::Archive start(tracking.Hash);
+			const uint64_t count = tracking.Entities.size();
+			start.HashBytes(&count, sizeof(count));
+			tracking.Next = 0;
+			tracking.Active = true;
+		}
+		bool completed = false;
+		if (tracking.Active)
+		{
+			SceneFile::Archive archive(tracking.Hash);
+			archive.EntityMap = &tracking.FileIds;
+			const size_t end = (std::min)(tracking.Entities.size(), tracking.Next + kHashEntitiesPerFrame);
+			for (; tracking.Next < end; ++tracking.Next)
+			{
+				const EntityID entity = tracking.Entities[tracking.Next];
+				if (Registry::IsAlive(entity)) VisitLiveEntity(archive, entity);
+			}
+			if (tracking.Next >= tracking.Entities.size())
+			{
+				tracking.Active = false;
+				completed = true;
+				m_SceneNextHashTime = now + 0.25;
+			}
+		}
+		if (completed)
+		{
+			m_SceneCurrentHash = tracking.Hash;
+			if (g_SavedHashPending)
+			{
+				// 保存後、編集が無ければこの値が保存した内容のハッシュ
+				if (m_EditRevision == g_SavedHashRevision) m_SceneSavedHash = tracking.Hash;
+				g_SavedHashPending = false;
+			}
 			// 読み込み直後はモデルの非同期読み込みや太陽の同期で値が落ち着くまで、ユーザーの編集がなければ基準を更新する
 			if (now < m_SceneSettleUntil && m_EditRevision == m_SceneSettleRevision && !ImGui::IsAnyItemActive())
 			{
@@ -16036,6 +16287,7 @@ void ImGuiManager::DrawScenePopups()
 		ImGui::EndPopup();
 	}
 }
+
 
 
 
@@ -16264,6 +16516,7 @@ namespace EditorSceneNavigation
 #include "atmospherelut.h"
 #include "renderquality.h"
 #include "megalights.h"
+#include "cpuculling.h"
 #include "transparencyeffects.h"
 #include "pbrluts.h"
 #include "asynccompute.h"
@@ -16604,6 +16857,47 @@ void ImGuiManager::DrawProjectSettingsWindow()
             ImGui::Checkbox("矩形エリアライト (LTC)", &rq.AreaLights);
             ImGui::EndDisabled();
             if (!PbrLuts::IsAvailable()) ImGui::TextDisabled("LUT 未初期化: 解析近似にフォールバック");
+
+            ImGui::SeparatorText("負荷削減（カリング / LOD）");
+            {
+                auto& culling = RenderCulling::GetSettings();
+                const auto& cullStats = RenderCulling::GetStats();
+                ImGui::Checkbox("オブジェクトの視錐台カリング", &culling.ObjectFrustumCulling);
+                ImGui::Checkbox("小さいオブジェクトを描かない", &culling.ObjectSizeCulling);
+                ImGui::BeginDisabled(!culling.ObjectSizeCulling);
+                ImGui::SliderFloat("最小サイズ (px)", &culling.MinObjectPixels, 0.25f, 8.0f, "%.2f");
+                ImGui::EndDisabled();
+                ImGui::SliderFloat("描画距離 (m, 0 = 無制限)", &culling.MaxDrawDistance, 0.0f, 2000.0f, "%.0f");
+                ImGui::Checkbox("静止物の Velocity を省く", &culling.StaticVelocitySkip);
+                ImGui::Checkbox("自動 LOD（LOD 未設定のモデルにも適用）", &culling.AutoLod);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("GPU 駆動の描画で、インポート時に生成した LOD を画面サイズで切り替えます。\n切り替えはモデルの再読み込み / シーンを開き直したときに反映されます。");
+                ImGui::Checkbox("同じ形のプリミティブを共有", &culling.SharePrimitiveGeometry);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("シーンを開き直したときに反映されます。");
+                ImGui::Checkbox("ライトの視錐台カリング", &culling.LightFrustumCulling);
+                ImGui::Checkbox("ライトの距離 / サイズ カリング", &culling.LightDistanceCulling);
+                ImGui::BeginDisabled(!culling.LightDistanceCulling);
+                ImGui::SliderFloat("ライトの最大距離 (m)", &culling.LightMaxDistance, 0.0f, 2000.0f, "%.0f");
+                ImGui::SliderFloat("ライトの最小サイズ (px)", &culling.LightMinPixels, 0.0f, 32.0f, "%.1f");
+                ImGui::EndDisabled();
+                ImGui::Checkbox("ライトのオクルージョンカリング", &culling.LightOcclusionCulling);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("MegaLights のグリッド（GPU）で「見えている不透明面に届かない」と判定されたライトを、\n"
+                        "シャドウマップと定数バッファの割り当てから外します（MegaLights 有効時）。");
+                ImGui::Checkbox("DXR 影モードではローカルライトのシャドウマップを描かない", &culling.SkipRayTracedShadowMaps);
+                ImGui::SliderFloat("反射レイの粗さ上限", &culling.ReflectionRoughnessCutoff, 0.2f, 1.0f, "%.2f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("これより粗い面は反射レイを飛ばさず空で近似（1.0 で無効）");
+                ImGui::SliderInt("反射 / GI のヒット点のライト数", &culling.RayHitLights, 4, 160);
+                ImGui::Checkbox("反射を半解像度（チェッカーボード）でトレース", &culling.ReflectionCheckerboard);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("反射レイを半分のピクセルだけ飛ばし、NRD が残りを復元します（NRD 使用時のみ）。");
+                ImGui::TextDisabled("オブジェクト: 判定 %u / 視錐台外 %u / 小さい・遠い %u / Velocity 省略 %u",
+                    cullStats.ObjectsTested, cullStats.ObjectsFrustumCulled, cullStats.ObjectsSizeCulled, cullStats.VelocitySkipped);
+                ImGui::TextDisabled("ライト: 判定 %u / 視錐台外 %u / 遠い・小さい %u / 隠れている %u（GPU 判定 %u）",
+                    cullStats.LightsTested, cullStats.LightsFrustumCulled, cullStats.LightsDistanceCulled, cullStats.LightsOccluded,
+                    MegaLights::GetOccludedLightCount());
+                ImGui::TextDisabled("省いたシャドウマップ: %u", cullStats.ShadowMapsSkipped);
+            }
 
             ImGui::SeparatorText("MegaLights");
             {
@@ -17245,6 +17539,24 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     auto& rq = RenderQuality::Get();
     field("quality.EnergyCompensation", rq.EnergyCompensation, 0, 1);
     field("quality.AreaLights", rq.AreaLights, 0, 1);
+    // 負荷削減（cpuculling.h）
+    auto& culling = RenderCulling::GetSettings();
+    field("culling.ObjectFrustum", culling.ObjectFrustumCulling, 0, 1);
+    field("culling.ObjectSize", culling.ObjectSizeCulling, 0, 1);
+    field("culling.MinObjectPixels", culling.MinObjectPixels, 0.0, 64.0);
+    field("culling.MaxDrawDistance", culling.MaxDrawDistance, 0.0, 100000.0);
+    field("culling.StaticVelocitySkip", culling.StaticVelocitySkip, 0, 1);
+    field("culling.AutoLod", culling.AutoLod, 0, 1);
+    field("culling.SharePrimitiveGeometry", culling.SharePrimitiveGeometry, 0, 1);
+    field("culling.LightFrustum", culling.LightFrustumCulling, 0, 1);
+    field("culling.LightDistance", culling.LightDistanceCulling, 0, 1);
+    field("culling.LightMaxDistance", culling.LightMaxDistance, 0.0, 100000.0);
+    field("culling.LightMinPixels", culling.LightMinPixels, 0.0, 64.0);
+    field("culling.LightOcclusion", culling.LightOcclusionCulling, 0, 1);
+    field("culling.SkipRayTracedShadowMaps", culling.SkipRayTracedShadowMaps, 0, 1);
+    field("culling.ReflectionRoughnessCutoff", culling.ReflectionRoughnessCutoff, 0.0, 1.0);
+    field("culling.RayHitLights", culling.RayHitLights, 1, 160);
+    field("culling.ReflectionCheckerboard", culling.ReflectionCheckerboard, 0, 1);
     // MegaLights（megalights.h）
     auto& megaLights = MegaLights::GetSettings();
     field("megalights.Enabled", megaLights.Enabled, 0, 1);
@@ -17760,8 +18072,12 @@ void ImGuiManager::LoadProjectSettings()
 
 
 
+
+
 ===== FILE: source\editor\editorwidgets.cpp =====
 #include "pch.h"
+#include "spatialupscaler.h"
+#include "graphicsdevice.h"
 #include "transformmath.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
@@ -17813,11 +18129,7 @@ namespace EditorWidgets
 		{
 			RendererSettings::SetUpscaleMode(static_cast<UpscaleMode>(mode));
 			RendererState::m_TaaFrameIndex = 0;
-			if (mode == static_cast<int>(UpscaleMode::Nis) && RenderConfiguration::GetResolutionScale() < 0.5f)
-			{
-				RenderConfiguration::SetResolutionScale(0.5f);
-				RendererSettings::SetUpscaleQuality(UpscaleQuality::Custom);
-			}
+			// NIS は 50% 未満を多段（1 段 2 倍まで）で処理するので、FSR と同じ 20% まで下げられる
 		}
 
 		const bool vendorUpscaler = mode != static_cast<int>(UpscaleMode::Bilateral);
@@ -17841,15 +18153,7 @@ namespace EditorWidgets
 		float resolutionScale = RenderConfiguration::GetResolutionScale();
 		int resolutionPercent = static_cast<int>(roundf(resolutionScale * 100.0f));
 		ImGui::BeginDisabled(vendorUpscaler && quality != UpscaleQuality::Custom);
-		int minimumResolutionPercent;
-		if (mode == static_cast<int>(UpscaleMode::Nis))
-		{
-			minimumResolutionPercent = 50;
-		}
-		else
-		{
-			minimumResolutionPercent = 25;
-		}
+		const int minimumResolutionPercent = 20; // FSR / NIS（50% 未満は多段）/ Bilateral 共通
 		if (ImGui::SliderInt("内部解像度", &resolutionPercent, minimumResolutionPercent, 100, "%d%%"))
 		{
 			RenderConfiguration::SetResolutionScale(static_cast<float>(resolutionPercent) / 100.0f);
@@ -17873,7 +18177,12 @@ namespace EditorWidgets
 			{
 				RendererSettings::SetNisSharpness(sharpness);
 			}
-			ImGui::TextDisabled("6-tap scaler + directional sharpening / 50-100%% / 入力に FXAA を自動適用");
+			const UINT nisPasses = SpatialUpscaler::NisPassCount(
+				max(static_cast<UINT>(roundf(GraphicsDevice::GetWidth() * RenderConfiguration::GetResolutionScale())), 1u),
+				max(static_cast<UINT>(roundf(GraphicsDevice::GetHeight() * RenderConfiguration::GetResolutionScale())), 1u),
+				GraphicsDevice::GetWidth(), GraphicsDevice::GetHeight());
+			ImGui::TextDisabled("6-tap scaler + directional sharpening / 20-100%% / 入力に FXAA を自動適用");
+			ImGui::TextDisabled("現在 %u 段（1 段 2 倍まで。シャープネスは最後の段だけ・倍率に応じて補正）", nisPasses);
 		}
 		else if (mode == static_cast<int>(UpscaleMode::Dlss))
 		{
@@ -18309,6 +18618,7 @@ namespace EditorWidgets
 
 
 }
+
 
 
 
@@ -19487,6 +19797,7 @@ private:
 	static uint64_t ComputeSceneHash();
 	static string SerializeScene();
 	static bool SaveScene(const filesystem::path& path);
+	static void PollPendingSceneSave(bool wait);
 	static bool LoadScene(const filesystem::path& path);
 	static void DestroySceneEntities();
 	static void CreateNewScene();
@@ -19534,6 +19845,7 @@ public:
 	static bool IsToneMapEnabled() { return m_ToneMapEnabled; }
 	static float GetExposure() { return m_Exposure; }
 };
+
 
 
 
@@ -37229,6 +37541,232 @@ public:
 };
 
 
+===== FILE: source\rendering\cpuculling.h =====
+#pragma once
+// =============================================================================================
+// RenderCulling : CPU 側のカリングと負荷削減の設定（ヘッダーのみ。.vcxproj への追加不要）
+//   ・オブジェクト：視錐台カリング（ワールド AABB × 6 平面）、画面サイズカリング（投影半径が小さいもの）、
+//     描画距離カリング。結果はフレームごとにエンティティ単位でキャッシュ（同じフレームの複数パスで再計算しない）
+//   ・ライト：視錐台カリング（球 × 6 平面）、距離・画面サイズによるライトの LOD（境界でフェードして飛ばない）
+//   ・GPU 駆動の経路（GPUVisibility）はもともと GPU で視錐台 / オクルージョン / LOD を行う。
+//     ここは GPU 駆動で扱えない物（半透明・Forward・スプライト・GPU 駆動オフ時）と Velocity・ライトが対象
+// =============================================================================================
+#include "pch.h"
+#include "camera.h"
+#include "componentmanager.h"
+#include "graphicsdevice.h"
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
+class RenderCulling final
+{
+public:
+	struct Settings
+	{
+		bool ObjectFrustumCulling = true;
+		bool ObjectSizeCulling = true;
+		float MinObjectPixels = 1.5f;     // 投影した境界球の半径（ピクセル）がこれ未満なら描かない
+		float MaxDrawDistance = 0.0f;     // 0 = 無制限
+		bool StaticVelocitySkip = true;   // 動いていない物は Velocity のジオメトリパスを省く（カメラの動きは全画面パスで出ている）
+		bool AutoLod = false;             // LOD コンポーネントの無いモデルにも自動生成 LOD を使う（GPU 駆動）。悪化の切り分け中のため既定 OFF
+		bool SharePrimitiveGeometry = false; // 同じ形のプリミティブで頂点 / LOD を共有。悪化の切り分け中のため既定 OFF
+		// ライト
+		bool LightFrustumCulling = true;
+		bool LightDistanceCulling = true;
+		float LightMaxDistance = 250.0f;  // これより遠いローカルライトは使わない（手前 15% でフェード）
+		float LightMinPixels = 2.0f;      // 影響範囲の投影半径（ピクセル）がこれ未満のローカルライトは使わない
+		bool LightOcclusionCulling = true; // MegaLights の GPU 結果で、見えている面に届かないライトを後回しにする
+		bool SkipRayTracedShadowMaps = true; // DXR 影モードでは使われないローカルライトのシャドウマップを描かない
+		// GPU（反射 / GI）
+		float ReflectionRoughnessCutoff = 0.5f;  // これより粗い面は反射レイを飛ばさず環境（空）で近似
+		int RayHitLights = 32;
+		bool ReflectionCheckerboard = true;      // 反射レイを半分のピクセルだけ飛ばし NRD で復元（NRD 使用時）                   // 反射 / GI のヒット点で評価するライト数（カメラに近い順）
+	};
+
+	struct Stats
+	{
+		UINT ObjectsTested = 0, ObjectsFrustumCulled = 0, ObjectsSizeCulled = 0;
+		UINT VelocitySkipped = 0;
+		UINT LightsTested = 0, LightsFrustumCulled = 0, LightsDistanceCulled = 0, LightsOccluded = 0;
+		UINT ShadowMapsSkipped = 0;
+	};
+
+	static Settings& GetSettings() { return s_Settings; }
+	static const Stats& GetStats() { return s_LastStats; }
+	static Stats& MutableStats() { return s_Stats; }
+
+	// フレームの最初（カメラ確定後）に 1 回。2 回目以降は同じフレームなら何もしない
+	static void BeginFrame(uint64_t frameSerial)
+	{
+		if (s_HasFrame && frameSerial == s_FrameSerial) return;
+		s_HasFrame = true;
+		s_FrameSerial = frameSerial;
+		++s_Stamp;
+		s_LastStats = s_Stats;
+		s_Stats = {};
+		XMMATRIX view = XMMatrixIdentity(), projection = XMMatrixIdentity();
+		Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
+		XMFLOAT4X4 p;
+		XMStoreFloat4x4(&p, projection);
+		const XMMATRIX inverseView = XMMatrixInverse(nullptr, view);
+		XMStoreFloat3(&s_CameraPosition, inverseView.r[3]);
+		ExtractPlanes(view * projection);
+		// 投影半径（ピクセル）= radius * scale / distance
+		const float height = static_cast<float>((std::max)(GraphicsDevice::GetSceneHeight(), 1u));
+		s_PixelScale = 0.5f * height * fabsf(p._22);
+	}
+
+	// ローカル AABB（center / extents）とワールド行列 → 見えるか（フレーム内キャッシュ）
+	static bool IsObjectVisible(EntityID entity, const XMFLOAT4X4& world, const XMFLOAT3& center, const XMFLOAT3& extents)
+	{
+		if (entity >= s_ObjectStamp.size())
+		{
+			s_ObjectStamp.resize(static_cast<size_t>(entity) + 1, 0);
+			s_ObjectVisible.resize(static_cast<size_t>(entity) + 1, 1);
+		}
+		if (s_ObjectStamp[entity] == s_Stamp) return s_ObjectVisible[entity] != 0;
+		s_ObjectStamp[entity] = s_Stamp;
+		const bool visible = TestObject(world, center, extents);
+		s_ObjectVisible[entity] = visible ? 1 : 0;
+		return visible;
+	}
+
+	// メッシュ / スプライトの境界（MeshComponent のローカル境界 → AABBComponent → 無ければ常に可視）
+	static bool IsEntityVisible(EntityID entity)
+	{
+		if (!ComponentManager::HasComponent<TransformComponent>(entity)) return true;
+		const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+		if (ComponentManager::HasComponent<MeshComponent>(entity))
+		{
+			const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+			if (mesh.HasLocalBounds) return IsObjectVisible(entity, transform.WorldMatrix, mesh.LocalBoundsCenter, mesh.LocalBoundsExtents);
+		}
+		if (ComponentManager::HasComponent<AABBComponent>(entity))
+		{
+			const auto& bounds = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
+			if (bounds.Extents.x > 0.0f || bounds.Extents.y > 0.0f || bounds.Extents.z > 0.0f)
+				return IsObjectVisible(entity, transform.WorldMatrix, bounds.Center, bounds.Extents);
+		}
+		return true;
+	}
+
+	// ライト：0 = 使わない、(0, 1] = 強度に掛ける係数（距離フェード）
+	static float LightWeight(const XMFLOAT3& position, float range, bool directional)
+	{
+		if (directional) return 1.0f;
+		++s_Stats.LightsTested;
+		const float radius = (std::max)(range, 0.01f);
+		const XMVECTOR center = XMLoadFloat3(&position);
+		if (s_Settings.LightFrustumCulling)
+		{
+			for (const XMFLOAT4& plane : s_Planes)
+			{
+				if (XMVectorGetX(XMPlaneDotCoord(XMLoadFloat4(&plane), center)) < -radius)
+				{
+					++s_Stats.LightsFrustumCulled;
+					return 0.0f;
+				}
+			}
+		}
+		if (!s_Settings.LightDistanceCulling) return 1.0f;
+		const float distance = XMVectorGetX(XMVector3Length(XMVectorSubtract(center, XMLoadFloat3(&s_CameraPosition))));
+		const float surface = (std::max)(distance - radius, 0.0f); // 影響範囲の表面までの距離
+		if (surface > 0.0f && radius * s_PixelScale / (std::max)(distance, 0.01f) < s_Settings.LightMinPixels)
+		{
+			++s_Stats.LightsDistanceCulled;
+			return 0.0f;
+		}
+		const float maxDistance = s_Settings.LightMaxDistance;
+		if (maxDistance <= 0.0f) return 1.0f;
+		if (surface >= maxDistance)
+		{
+			++s_Stats.LightsDistanceCulled;
+			return 0.0f;
+		}
+		const float fadeStart = maxDistance * 0.85f;
+		return surface <= fadeStart ? 1.0f : 1.0f - (surface - fadeStart) / (maxDistance - fadeStart);
+	}
+
+	static const XMFLOAT3& CameraPosition() { return s_CameraPosition; }
+
+private:
+	static void ExtractPlanes(const XMMATRIX& viewProjection)
+	{
+		XMFLOAT4X4 m;
+		XMStoreFloat4x4(&m, viewProjection);
+		// 行ベクトル（DirectXMath）用の Gribb-Hartmann。z は 0..1（逆 Z でも near / far の順が入れ替わるだけ）
+		const XMFLOAT4 planes[6] = {
+			{ m._14 + m._11, m._24 + m._21, m._34 + m._31, m._44 + m._41 },
+			{ m._14 - m._11, m._24 - m._21, m._34 - m._31, m._44 - m._41 },
+			{ m._14 + m._12, m._24 + m._22, m._34 + m._32, m._44 + m._42 },
+			{ m._14 - m._12, m._24 - m._22, m._34 - m._32, m._44 - m._42 },
+			{ m._13, m._23, m._33, m._43 },
+			{ m._14 - m._13, m._24 - m._23, m._34 - m._33, m._44 - m._43 } };
+		for (int index = 0; index < 6; ++index)
+			XMStoreFloat4(&s_Planes[index], XMPlaneNormalize(XMLoadFloat4(&planes[index])));
+	}
+
+	static bool TestObject(const XMFLOAT4X4& worldMatrix, const XMFLOAT3& center, const XMFLOAT3& extents)
+	{
+		++s_Stats.ObjectsTested;
+		// ローカル AABB → ワールド AABB（中心と |M| × extents）
+		const XMMATRIX world = XMLoadFloat4x4(&worldMatrix);
+		const XMVECTOR worldCenter = XMVector3TransformCoord(XMLoadFloat3(&center), world);
+		XMFLOAT4X4 m;
+		XMStoreFloat4x4(&m, world);
+		const XMFLOAT3 e = extents;
+		const XMFLOAT3 worldExtents = {
+			fabsf(m._11) * e.x + fabsf(m._21) * e.y + fabsf(m._31) * e.z,
+			fabsf(m._12) * e.x + fabsf(m._22) * e.y + fabsf(m._32) * e.z,
+			fabsf(m._13) * e.x + fabsf(m._23) * e.y + fabsf(m._33) * e.z };
+		if (s_Settings.ObjectFrustumCulling)
+		{
+			for (const XMFLOAT4& plane : s_Planes)
+			{
+				const float distance = XMVectorGetX(XMPlaneDotCoord(XMLoadFloat4(&plane), worldCenter));
+				const float projected = fabsf(plane.x) * worldExtents.x + fabsf(plane.y) * worldExtents.y + fabsf(plane.z) * worldExtents.z;
+				if (distance < -projected)
+				{
+					++s_Stats.ObjectsFrustumCulled;
+					return false;
+				}
+			}
+		}
+		if (s_Settings.ObjectSizeCulling || s_Settings.MaxDrawDistance > 0.0f)
+		{
+			const float radius = sqrtf(worldExtents.x * worldExtents.x + worldExtents.y * worldExtents.y + worldExtents.z * worldExtents.z);
+			const float distance = XMVectorGetX(XMVector3Length(XMVectorSubtract(worldCenter, XMLoadFloat3(&s_CameraPosition))));
+			if (distance > radius)
+			{
+				if (s_Settings.MaxDrawDistance > 0.0f && distance - radius > s_Settings.MaxDrawDistance)
+				{
+					++s_Stats.ObjectsSizeCulled;
+					return false;
+				}
+				if (s_Settings.ObjectSizeCulling && radius * s_PixelScale / distance < s_Settings.MinObjectPixels)
+				{
+					++s_Stats.ObjectsSizeCulled;
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	static inline Settings s_Settings{};
+	static inline Stats s_Stats{}, s_LastStats{};
+	static inline XMFLOAT4 s_Planes[6]{};
+	static inline XMFLOAT3 s_CameraPosition{};
+	static inline float s_PixelScale = 500.0f;
+	static inline uint32_t s_Stamp = 0;
+	static inline uint64_t s_FrameSerial = 0;
+	static inline bool s_HasFrame = false;
+	static inline std::vector<uint32_t> s_ObjectStamp;
+	static inline std::vector<uint8_t> s_ObjectVisible;
+};
+
+
 ===== FILE: source\rendering\dlssupscaler.cpp =====
 #include "pch.h"
 #include "dlssupscaler.h"
@@ -38028,16 +38566,24 @@ void FramePipeline::Execute()
 				{
 					RenderProfiler::ScopedEvent profile("GBuffer / Opaque", passCommandList);
 					const auto submissionStart = chrono::steady_clock::now();
-					ScenePasses::BeginScenePass();
-					GPUDrivenRenderer::Draw(passCommandList);
-					if (!GPUDrivenValidation::IsGpuValidationRun()) SystemManager::DrawSystem(RenderPass::PrimaryScene, false);
-					if (ScenePasses::BuildOcclusionHierarchyAndBeginPhaseTwo())
+					// 内訳を計測（GBuffer の CPU 時間がどこで使われているかを特定するため）
+					{ RenderProfiler::ScopedEvent p("GBuffer: Begin", passCommandList); ScenePasses::BeginScenePass(); }
+					{ RenderProfiler::ScopedEvent p("GBuffer: GPU Driven Draw", passCommandList); GPUDrivenRenderer::Draw(passCommandList); }
+					if (!GPUDrivenValidation::IsGpuValidationRun())
 					{
+						RenderProfiler::ScopedEvent p("GBuffer: Systems (CPU path)", passCommandList);
+						SystemManager::DrawSystem(RenderPass::PrimaryScene, false);
+					}
+					bool phaseTwo = false;
+					{ RenderProfiler::ScopedEvent p("GBuffer: Occlusion Hierarchy", passCommandList); phaseTwo = ScenePasses::BuildOcclusionHierarchyAndBeginPhaseTwo(); }
+					if (phaseTwo)
+					{
+						RenderProfiler::ScopedEvent p("GBuffer: Systems Phase 2", passCommandList);
 						SystemManager::DrawSystem(RenderPass::OcclusionPhase2, false);
 					}
-					GPUDrivenRenderer::DrawSecondPass(passCommandList);
-					GPUDrivenRenderer::BuildHiZ(passCommandList);
-					ScenePasses::EndScenePass();
+					{ RenderProfiler::ScopedEvent p("GBuffer: GPU Driven Phase 2", passCommandList); GPUDrivenRenderer::DrawSecondPass(passCommandList); }
+					{ RenderProfiler::ScopedEvent p("GBuffer: Build HiZ", passCommandList); GPUDrivenRenderer::BuildHiZ(passCommandList); }
+					{ RenderProfiler::ScopedEvent p("GBuffer: End", passCommandList); ScenePasses::EndScenePass(); }
 					GPUDrivenRenderer::RecordOpaqueSubmission(chrono::duration<double, milli>(chrono::steady_clock::now() - submissionStart).count());
 				});
 
@@ -38119,6 +38665,7 @@ void FramePipeline::Execute()
 		Debug::Log("ERROR: Frame RenderGraph execution failed: %s\n", graph.GetLastError().c_str());
 	}
 }
+
 
 
 ===== FILE: source\rendering\framepipeline.h =====
@@ -40355,6 +40902,7 @@ public:
 
 ===== FILE: source\rendering\gpuscene\gpuscene.cpp =====
 #include "pch.h"
+#include "cpuculling.h"
 #include "gpuscene.h"
 #include "gpuscenechanges.h"
 #include "gpusceneslots.h"
@@ -40757,9 +41305,11 @@ void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
                     {
                         instance.VirtualGeometryAssetIndex = VirtualGeometryResources::Register(mesh.VirtualGeometryLODs[0]);
                     }
-                    if (ComponentManager::HasComponent<LODComponent>(entity))
+                    // 自動 LOD：LOD コンポーネントが無いモデルも、インポート時に生成した LOD を画面サイズで切り替える
+                    const bool hasLodComponent = ComponentManager::HasComponent<LODComponent>(entity);
+                    if (hasLodComponent || RenderCulling::GetSettings().AutoLod)
                     {
-                        const auto& lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
+                        const LODComponent lod = hasLodComponent ? ComponentManager::GetComponentUnchecked<LODComponent>(entity) : LODComponent{ true };
                         if (lod.UseLOD)
                         {
                             array<uint32_t, Visibility::MaxLODs> lodMeshes;
@@ -41202,6 +41752,7 @@ void GpuScene::DrawDebug()
         ImGui::TreePop();
     }
 }
+
 
 
 ===== FILE: source\rendering\gpuscene\gpuscene.h =====
@@ -42830,8 +43381,10 @@ if (!ShaderPipelines::CreatePostProcessPipeline()) return false;
 	LightInstanceBuilder::Initialize(m_Device.Get());
 	if (!MegaLights::Initialize(m_Device.Get()))
 		WriteGraphicsLog("WARNING: MegaLights unavailable (clustered light grid disabled)\n");
+	// ヒープの末尾 16384 個は VirtualGeometry のページ（PageDescriptors が NumDescriptors - MaximumSlots から使う）。
+	// MegaLights の領域はその手前に置く（以前は末尾に置いていたため、最後の 12 ページの記述子と重なっていた）
 	MegaLights::SetEngineHeap(m_CbvHeap.Get(),
-		g_kENGINE_DESCRIPTOR_END + 1 + g_kTHUMBNAIL_DESCRIPTOR_COUNT + ImGuiManager::kSrvDescriptorCount + 16384);
+		g_kENGINE_DESCRIPTOR_END + 1 + g_kTHUMBNAIL_DESCRIPTOR_COUNT + ImGuiManager::kSrvDescriptorCount);
 
 	WriteGraphicsLog("Step: CreateSceneRenderTarget\n");
 if (!RenderTargets::CreateSceneRenderTarget()) return false;
@@ -43216,6 +43769,7 @@ void GraphicsDevice::SubmitForExternalCompute()
 
 
 
+
 ===== FILE: source\rendering\graphicsdevice.h =====
 #pragma once
 #include "rendererstate.h"
@@ -43306,6 +43860,9 @@ void WriteGraphicsLog(const char* format, ...);
 #include "localheightfog.h"
 #include "lightinstancebuilder.h"
 #include "megalights.h"
+#include "cpuculling.h"
+#include "renderprofiler.h"
+#include <optional>
 #include <limits>
 #include <climits>
 #include "frameconstants.h"
@@ -43557,6 +44114,7 @@ namespace
 			}
 			sort(orderedLights.begin(), orderedLights.end());
 		}
+		const bool rayTracedShadows = Raytracing::UsesRaytracedShadows(); // ループの外で 1 回だけ
 		for (const auto& ordered : orderedLights)
 		{
 			const EntityID entity = ordered.second;
@@ -43578,7 +44136,20 @@ namespace
 			const UINT shadowLightBudget = min(
 				static_cast<UINT>(RendererSettings::GetShadowLightBudget()),
 				RendererState::g_kMAX_SHADOW_LIGHTS);
-			if (light.CastShadow && g_ShadowLightCount < shadowLightBudget)
+			// 負荷削減：ローカルライトのシャドウマップを作らない場合
+			//   ・DXR 影モード：SampleSurfaceShadowMap はレイトレースした影を返すので、シャドウマップは読まれない
+			//   ・視錐台外 / 遠い / 小さい / 見えている面に届かない（MegaLights の GPU 判定）ライト
+			bool skipShadowMap = false;
+			if (light.CastShadow && light.Type != LightType::Directional)
+			{
+				const auto& culling = RenderCulling::GetSettings();
+				skipShadowMap =
+					(culling.SkipRayTracedShadowMaps && rayTracedShadows) ||
+					RenderCulling::LightWeight(transform.Position, light.Range, false) <= 0.0f ||
+					(culling.LightOcclusionCulling && MegaLights::IsLightOccluded(entity));
+				if (skipShadowMap) ++RenderCulling::MutableStats().ShadowMapsSkipped;
+			}
+			if (light.CastShadow && !skipShadowMap && g_ShadowLightCount < shadowLightBudget)
 			{
 				RuntimeLightState shadowLight{};
 				shadowLight.Component = light;
@@ -43691,6 +44262,73 @@ namespace
 		}
 		g_VirtualShadowCacheHit = g_DirectionalShadowMode == 1.0f;
 
+		// キャスターごとのキー（ページのキャッシュ判定用）。DXR 影モードではページを描かないので作らない
+		struct CasterKey { EntityID Entity; uint64_t Key; bool Moving; };
+		static vector<CasterKey> casterKeys;
+		casterKeys.clear();
+		const bool skipCasterKeys = g_DirectionalShadowMode != 1.0f || Raytracing::UsesRaytracedShadows() ||
+			!RendererSettings::GetCacheVirtualShadowPages();
+		if (!skipCasterKeys)
+		{
+			for (EntityID entity : World::GetView<TransformComponent>())
+			{
+				if (!IsShadowBoundsEntity(entity)) continue;
+				const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+                        uint64_t entityKey = 1469598103934665603ull;
+                        auto hashEntityValue = [&](const void* data, size_t size) {
+                            const auto* bytes = static_cast<const uint8_t*>(data);
+                            for (size_t i = 0; i < size; ++i) { entityKey ^= bytes[i]; entityKey *= 1099511628211ull; }
+                        };
+                        hashEntityValue(&entity, sizeof(entity));
+                        hashEntityValue(&transform.WorldMatrix, sizeof(transform.WorldMatrix));
+                        const bool movingCaster = IsMovingShadowCaster(entity);
+                        hashEntityValue(&movingCaster, sizeof(movingCaster));
+                        if (ComponentManager::HasComponent<MeshComponent>(entity))
+                        {
+                            const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+                            hashEntityValue(&mesh.GeometryHash, sizeof(mesh.GeometryHash));
+                        }
+                        if (ComponentManager::HasComponent<StaticModelComponent>(entity))
+                        {
+                            const auto model = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId;
+                            hashEntityValue(&model, sizeof(model));
+                        }
+                        if (ComponentManager::HasComponent<MaterialComponent>(entity))
+                        {
+                            const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+                            const size_t count = max(size_t(1), source.MaterialSlots.size());
+                            for (size_t slot = 0; slot < count; ++slot)
+                            {
+                                const auto& material = MaterialManager::Resolve(source, slot);
+                                hashEntityValue(&material.Alpha, sizeof(material.Alpha));
+                                hashEntityValue(&material.BaseColor.w, sizeof(material.BaseColor.w));
+                                hashEntityValue(&material.ShadowMode, sizeof(material.ShadowMode));
+                                hashEntityValue(&material.ShadowCutoff, sizeof(material.ShadowCutoff));
+                                hashEntityValue(&material.IOR, sizeof(material.IOR));
+                                hashEntityValue(&material.Transmission, sizeof(material.Transmission));
+                                hashEntityValue(&material.Thickness, sizeof(material.Thickness));
+                                hashEntityValue(&material.AbsorptionCoefficient, sizeof(material.AbsorptionCoefficient));
+                                hashEntityValue(&material.BaseColor, sizeof(material.BaseColor));
+                                hashEntityValue(&material.IsTransparent, sizeof(material.IsTransparent));
+                                hashEntityValue(&material.AssetCull, sizeof(material.AssetCull));
+                                hashEntityValue(&material.TextureID, sizeof(material.TextureID));
+                                if (material.RuntimeHandle != 0)
+                                {
+                                    const auto revision = MaterialManager::GetRuntime(material.RuntimeHandle).Revision;
+                                    hashEntityValue(&revision, sizeof(revision));
+                                }
+                            }
+                        }
+						if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
+						{
+							const auto& animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
+							hashEntityValue(&animation.CurrentTime, sizeof(animation.CurrentTime));
+							hashEntityValue(&animation.BlendRate, sizeof(animation.BlendRate));
+						}
+				casterKeys.push_back({ entity, entityKey, movingCaster });
+			}
+		}
+
 		for (UINT layer = 0;
 			layer < g_ShadowLightCount && g_ShadowRenderPassCount < RendererState::g_kMAX_SHADOW_PASSES;
 			++layer)
@@ -43795,72 +44433,23 @@ namespace
 					hashPageValue(&pageViewProjection, sizeof(pageViewProjection));
 
 
-					for (EntityID entity : World::GetView<TransformComponent>())
+					// 負荷削減：キャスターのキーはフレームに 1 回だけ作り（下の CasterKeys）、ページごとには
+					// 「このページに入るか」の判定と 8 バイトの合成だけを行う。
+					// 以前はページ（最大 64）× 全エンティティでワールド行列とマテリアルを毎回バイト単位でハッシュしており、
+					// 数千オブジェクトのシーンで 1 フレーム数十 ms かかっていた
+					if (!skipCasterKeys)
 					{
-						if (!IsShadowBoundsEntity(entity) ||
-							!IsShadowCasterVisible(entity, pageViewProjection))
+						for (const CasterKey& caster : casterKeys)
 						{
-							continue;
+							if (!IsShadowCasterVisible(caster.Entity, pageViewProjection)) continue;
+							hashPageValue(&caster.Key, sizeof(caster.Key));
+							if (!caster.Moving)
+							{
+								const auto* bytes = reinterpret_cast<const uint8_t*>(&caster.Key);
+								for (size_t i = 0; i < sizeof(caster.Key); ++i) { staticContentKey ^= bytes[i]; staticContentKey *= 1099511628211ull; }
+							}
 						}
-						const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-                        uint64_t entityKey = 1469598103934665603ull;
-                        auto hashEntityValue = [&](const void* data, size_t size) {
-                            const auto* bytes = static_cast<const uint8_t*>(data);
-                            for (size_t i = 0; i < size; ++i) { entityKey ^= bytes[i]; entityKey *= 1099511628211ull; }
-                        };
-                        hashEntityValue(&entity, sizeof(entity));
-                        hashEntityValue(&transform.WorldMatrix, sizeof(transform.WorldMatrix));
-                        const bool movingCaster = IsMovingShadowCaster(entity);
-                        hashEntityValue(&movingCaster, sizeof(movingCaster));
-                        if (ComponentManager::HasComponent<MeshComponent>(entity))
-                        {
-                            const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
-                            hashEntityValue(&mesh.GeometryHash, sizeof(mesh.GeometryHash));
-                        }
-                        if (ComponentManager::HasComponent<StaticModelComponent>(entity))
-                        {
-                            const auto model = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId;
-                            hashEntityValue(&model, sizeof(model));
-                        }
-                        if (ComponentManager::HasComponent<MaterialComponent>(entity))
-                        {
-                            const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
-                            const size_t count = max(size_t(1), source.MaterialSlots.size());
-                            for (size_t slot = 0; slot < count; ++slot)
-                            {
-                                const auto& material = MaterialManager::Resolve(source, slot);
-                                hashEntityValue(&material.Alpha, sizeof(material.Alpha));
-                                hashEntityValue(&material.BaseColor.w, sizeof(material.BaseColor.w));
-                                hashEntityValue(&material.ShadowMode, sizeof(material.ShadowMode));
-                                hashEntityValue(&material.ShadowCutoff, sizeof(material.ShadowCutoff));
-                                hashEntityValue(&material.IOR, sizeof(material.IOR));
-                                hashEntityValue(&material.Transmission, sizeof(material.Transmission));
-                                hashEntityValue(&material.Thickness, sizeof(material.Thickness));
-                                hashEntityValue(&material.AbsorptionCoefficient, sizeof(material.AbsorptionCoefficient));
-                                hashEntityValue(&material.BaseColor, sizeof(material.BaseColor));
-                                hashEntityValue(&material.IsTransparent, sizeof(material.IsTransparent));
-                                hashEntityValue(&material.AssetCull, sizeof(material.AssetCull));
-                                hashEntityValue(&material.TextureID, sizeof(material.TextureID));
-                                if (material.RuntimeHandle != 0)
-                                {
-                                    const auto revision = MaterialManager::GetRuntime(material.RuntimeHandle).Revision;
-                                    hashEntityValue(&revision, sizeof(revision));
-                                }
-                            }
-                        }
-						if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
-						{
-							const auto& animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
-							hashEntityValue(&animation.CurrentTime, sizeof(animation.CurrentTime));
-							hashEntityValue(&animation.BlendRate, sizeof(animation.BlendRate));
-						}
-                        hashPageValue(&entityKey, sizeof(entityKey));
-                        if (!movingCaster)
-                        {
-                            const auto* bytes = reinterpret_cast<const uint8_t*>(&entityKey);
-                            for (size_t i = 0; i < sizeof(entityKey); ++i) { staticContentKey ^= bytes[i]; staticContentKey *= 1099511628211ull; }
-                        }
-                    }
+					}
 
 					auto& cacheEntry = g_VirtualShadowPageCache[virtualLevel][physicalPageY][physicalPageX];
 					const bool cacheEnabled = RendererSettings::GetCacheVirtualShadowPages();
@@ -43979,7 +44568,7 @@ namespace
 			ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky";
 	}
 
-	bool IsShadowBoundsEntity(EntityID entity)
+	bool ComputeShadowBoundsEntity(EntityID entity)
 	{
 		if (!Registry::IsAlive(entity) ||
 			!ComponentManager::HasComponent<TransformComponent>(entity) ||
@@ -44050,10 +44639,33 @@ namespace
 		IncludeBoundsPoint(XMVectorAdd(center, extent), boundsMin, boundsMax, hasBounds);
 	}
 
-	bool IsShadowCasterVisible(EntityID entity, const XMMATRIX& transposedViewProjection)
-	{
-		if (!IsShadowBoundsEntity(entity)) return false;
+	// 負荷削減：キャスター判定（マテリアル解決・名前比較・頂点変形の検索）と境界球はフレームに 1 回だけ計算する。
+	// 以前は影のページ（最大 64）・シャドウパス・距離場など、呼ばれるたびにエンティティごとに計算していた
+	struct ShadowBoundsCache { uint64_t Serial = UINT64_MAX; bool Caster = false; XMFLOAT3 Center{}; float Radius = 0.0f; };
+	vector<ShadowBoundsCache> g_ShadowBoundsCache;
 
+	void ComputeCasterSphere(EntityID entity, XMFLOAT3& center, float& radius);
+
+	const ShadowBoundsCache& GetShadowBounds(EntityID entity)
+	{
+		if (entity >= g_ShadowBoundsCache.size()) g_ShadowBoundsCache.resize(static_cast<size_t>(entity) + 1);
+		ShadowBoundsCache& entry = g_ShadowBoundsCache[entity];
+		if (entry.Serial != g_FrameSerial)
+		{
+			entry.Serial = g_FrameSerial;
+			entry.Caster = ComputeShadowBoundsEntity(entity);
+			if (entry.Caster) ComputeCasterSphere(entity, entry.Center, entry.Radius);
+		}
+		return entry;
+	}
+
+	bool IsShadowBoundsEntity(EntityID entity)
+	{
+		return GetShadowBounds(entity).Caster;
+	}
+
+	void ComputeCasterSphere(EntityID entity, XMFLOAT3& outCenter, float& outRadius)
+	{
 		const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
 		XMFLOAT3 center = transform.Position;
 		float radius = max(max(fabsf(transform.Scale.x), fabsf(transform.Scale.y)),
@@ -44078,6 +44690,16 @@ namespace
 			const XMVECTOR scaledExtents = XMVectorMultiply(XMLoadFloat3(&localExtents), XMLoadFloat3(&transform.Scale));
 			radius = max(XMVectorGetX(XMVector3Length(scaledExtents)), 0.05f);
 		}
+		outCenter = center;
+		outRadius = radius;
+	}
+
+	bool IsShadowCasterVisible(EntityID entity, const XMMATRIX& transposedViewProjection)
+	{
+		const ShadowBoundsCache& bounds = GetShadowBounds(entity);
+		if (!bounds.Caster) return false;
+		const XMFLOAT3 center = bounds.Center;
+		const float radius = bounds.Radius;
 
 		// 視錐台の6平面と境界球の判定（以前は境界球の中心と3軸を射影していた：行列変換4回 → 内積6回）。
 		// 同じシャドウパス内では行列が変わらないので、平面は前回の結果を使い回す。
@@ -44445,6 +45067,8 @@ namespace
 void LightingResources::BeginFrame()
 {
 	++g_FrameSerial;
+	// カメラの視錐台・画面サイズの判定を 1 フレーム 1 回だけ準備（オブジェクト・ライトのカリングで共有）
+	RenderCulling::BeginFrame(g_FrameSerial);
 	g_LightCacheValid = false;
 	m_TransientCbSlot = 0;
 }
@@ -44548,7 +45172,11 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 	}
 
 
+	ID3D12GraphicsCommandList* profileList = GraphicsDevice::GetCommandList();
+	std::optional<RenderProfiler::ScopedEvent> profileStep;
+	profileStep.emplace("Lights: Shadow Cache Rebuild", profileList);
 	const RuntimeLightState& directionalLight = GetCachedLightState(true);
+	profileStep.emplace("Lights: Distance Field / Fog", profileList);
 	const RuntimeLightState* runtimeLightSelection = nullptr;
 	if (directionalLight.HasLight)
 	{
@@ -44678,6 +45306,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 		constants.LightExtra = XMFLOAT4(cosf(18.0f * XM_PI / 180.0f), cosf(32.0f * XM_PI / 180.0f), 0.35f, 0.0f);
 	}
 
+	profileStep.emplace("Lights: Collect / Sort", profileList);
 	struct VisibleLightCandidate
 	{
 		EntityID Entity = g_kINVALID_ENTITY;
@@ -44789,9 +45418,13 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 		}
 
 		const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+		// 負荷削減：ライトの視錐台カリング（球 × 6 平面）と距離・画面サイズの LOD（境界でフェード）
+		const float cullWeight = RenderCulling::LightWeight(transform.Position, light.Range, light.Type == LightType::Directional);
+		if (cullWeight <= 0.0f) continue;
 		VisibleLightCandidate candidate{};
 		candidate.Entity = entity;
 		candidate.Light = light;
+		candidate.Light.Intensity *= cullWeight;
 		candidate.Position = transform.Position;
 		candidate.Directional = light.Type == LightType::Directional;
 		if (!calculateTileBounds(light, transform.Position,
@@ -44844,6 +45477,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 			return lhs.Entity < rhs.Entity;
 		});
 
+	profileStep.emplace("Lights: MegaLights Upload", profileList);
 	// ---- MegaLights：画面内のローカルライトをクラスターグリッド用のバッファへ（予算・160 灯の制限なし）
 	//   ・シャドウマップを持つライト / ディレクショナル / Volume / Decal は従来の経路
 	//   ・グリッドに載せたライトは、定数バッファ側で LightFlags.x = 2（不透明面はグリッドが評価）にする
@@ -44906,6 +45540,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 		}
 	}
 
+	profileStep.emplace("Lights: Constant Buffer / Tile Grid", profileList);
 	const UINT screenLightBudget = min(
 		static_cast<UINT>(RendererSettings::GetScreenLightBudget()),
 		g_kMAX_SHADER_LIGHTS);
@@ -44926,8 +45561,18 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 	selectedCandidates.reserve(screenLightBudget + decalLightBudget);
 	UINT selectedPhysicalLights = 0;
 	UINT selectedDecalLights = 0;
+	UINT occludedSkipped = 0;
 	for (const VisibleLightCandidate& candidate : candidates)
 	{
+		// 負荷削減：グリッドに載っていて、見えている面に届かない（GPU 判定）ライトは定数バッファの枠を使わない
+		//（グリッドは毎フレーム全ライトで作り直すので、見えるようになれば次の読み戻しで戻る）
+		if (RenderCulling::GetSettings().LightOcclusionCulling && !candidate.Light.AffectsVolumetrics &&
+			candidate.Entity < g_kMAX_ENTITIES && megaLightEntities[candidate.Entity] != 0 &&
+			MegaLights::IsLightOccluded(candidate.Entity))
+		{
+			++occludedSkipped;
+			continue;
+		}
 		if (candidate.Light.RenderMode == LightRenderMode::Physical)
 		{
 			if (selectedPhysicalLights >= screenLightBudget) continue;
@@ -44940,6 +45585,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 		}
 		selectedCandidates.push_back(candidate);
 	}
+	RenderCulling::MutableStats().LightsOccluded = occludedSkipped;
 	const UINT lightCount = static_cast<UINT>(selectedCandidates.size());
 	g_LightGridStats.GpuVisibleLights = lightCount;
 	g_LightGridStats.GpuPhysicalLights = selectedPhysicalLights;
@@ -45002,7 +45648,9 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 			slotEnd = physicalTileLightBudget;
 		}
 		// グリッドが不透明面を受け持ち、Forward にも影響しないライトはタイルの枠を使わない（他のライトに枠を譲る）
-		if (inMegaLightGrid && !light.AffectsForward)
+		// M7 で半透明 / Forward もグリッドで評価するなら、グリッドのライトは 2D タイルに入れない
+		//（以前は Forward に影響する全ライトをタイルへ詰めており、2000 灯でタイル構築が GPU 約 1.7ms）
+		if (inMegaLightGrid && (!light.AffectsForward || MegaLights::GetSettings().Translucency))
 		{
 			slotEnd = slotBegin;
 		}
@@ -45219,6 +45867,7 @@ bool LightingResources::GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_V
 	clearLayer = pass.ClearLayer;
 	return true;
 }
+
 
 
 
@@ -49963,7 +50612,9 @@ public:
 				D3D12_RESOURCE_STATE_COMMON, L"MegaLights Fine Indices") ||
 			!CreateBuffer(s_Counters, 16, D3D12_HEAP_TYPE_DEFAULT, uav,
 				D3D12_RESOURCE_STATE_COMMON, L"MegaLights Counters") ||
-			!CreateBuffer(s_Readback, 16 * kFrames, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_FLAG_NONE,
+			!CreateBuffer(s_LightVisible, kLightVisibleBytes, D3D12_HEAP_TYPE_DEFAULT, uav,
+				D3D12_RESOURCE_STATE_COMMON, L"MegaLights Light Visibility") ||
+			!CreateBuffer(s_Readback, kReadbackStride * kFrames, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_FLAG_NONE,
 				D3D12_RESOURCE_STATE_COPY_DEST, L"MegaLights Readback"))
 		{
 			WriteGraphicsLog("MegaLights: grid buffers failed\n");
@@ -50024,6 +50675,13 @@ public:
 	}
 
 	// 追加できたら true（このライトの不透明面ライティングはグリッドが受け持つ）
+	// ライトのオクルージョン（GPU の判定を読み戻した結果）：数フレーム続けて「見えている不透明面に届かない」ライト
+	static bool IsLightOccluded(EntityID entity)
+	{
+		return entity < s_OccludedFrames.size() && s_OccludedFrames[entity] >= kOcclusionFrames;
+	}
+	static UINT GetOccludedLightCount() { return s_OccludedCount; }
+
 	static bool IsEntityInGrid(EntityID entity)
 	{
 		return s_HasSerial && entity < s_EntityInGrid.size() && s_EntityInGrid[entity] != 0;
@@ -50157,6 +50815,7 @@ public:
 		Transition(barriers, s_FineCells.Get(), s_FineCellsState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 		Transition(barriers, s_FineIndices.Get(), s_FineIndicesState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 		Transition(barriers, s_Counters.Get(), s_CountersState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+		Transition(barriers, s_LightVisible.Get(), s_LightVisibleState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 		commands->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
 
 		ID3D12DescriptorHeap* heaps[] = { heap };
@@ -50171,12 +50830,13 @@ public:
 		commands->SetComputeRootUnorderedAccessView(6, s_FineCells->GetGPUVirtualAddress());
 		commands->SetComputeRootUnorderedAccessView(7, s_FineIndices->GetGPUVirtualAddress());
 		commands->SetComputeRootUnorderedAccessView(8, s_Counters->GetGPUVirtualAddress());
+		commands->SetComputeRootUnorderedAccessView(9, s_LightVisible->GetGPUVirtualAddress());
 
 		commands->SetPipelineState(s_ClearCounters.Get());
 		commands->Dispatch(1, 1, 1);
 		commands->SetPipelineState(s_TileSliceMask.Get());
 		commands->Dispatch(tilesX, tilesY, 1);
-		UavBarrier(commands, { s_Counters.Get(), s_TileMasks.Get() });
+		UavBarrier(commands, { s_Counters.Get(), s_TileMasks.Get(), s_LightVisible.Get() });
 		commands->SetPipelineState(s_CoarseCull.Get());
 		commands->Dispatch(coarseX, coarseY, coarseZ);
 		UavBarrier(commands, { s_Counters.Get(), s_CoarseCells.Get(), s_CoarseIndices.Get() });
@@ -50188,9 +50848,12 @@ public:
 		Transition(barriers, s_FineCells.Get(), s_FineCellsState, bothRead);
 		Transition(barriers, s_FineIndices.Get(), s_FineIndicesState, bothRead);
 		Transition(barriers, s_Counters.Get(), s_CountersState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+		Transition(barriers, s_LightVisible.Get(), s_LightVisibleState, D3D12_RESOURCE_STATE_COPY_SOURCE);
 		if (accumulate) Transition(barriers, s_Accumulation.Get(), s_AccumulationState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 		commands->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
-		commands->CopyBufferRegion(s_Readback.Get(), slot * 16, s_Counters.Get(), 0, 16);
+		commands->CopyBufferRegion(s_Readback.Get(), slot * kReadbackStride, s_Counters.Get(), 0, 16);
+		commands->CopyBufferRegion(s_Readback.Get(), slot * kReadbackStride + 16, s_LightVisible.Get(), 0, kLightVisibleBytes);
+		s_SlotLights[slot] = s_EntityMarked; // 読み戻し時にライトの番号 → Entity を引くため
 		s_ReadbackPending[slot] = true;
 
 		// ---- M2：ML3 ライトの選択 → ML5 影レイ
@@ -50962,11 +51625,11 @@ private:
 	{
 		CD3DX12_DESCRIPTOR_RANGE depthRange;
 		depthRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
-		CD3DX12_ROOT_PARAMETER parameters[9];
+		CD3DX12_ROOT_PARAMETER parameters[10];
 		parameters[0].InitAsConstantBufferView(0);
 		parameters[1].InitAsShaderResourceView(1);
 		parameters[2].InitAsDescriptorTable(1, &depthRange);
-		for (UINT uav = 0; uav < 6; ++uav) parameters[3 + uav].InitAsUnorderedAccessView(uav);
+		for (UINT uav = 0; uav < 7; ++uav) parameters[3 + uav].InitAsUnorderedAccessView(uav);
 		if (!CreateRootSignature(device, CD3DX12_ROOT_SIGNATURE_DESC(_countof(parameters), parameters, 0, nullptr), s_Root) ||
 			!CompileEntries(device, L"shader/hlsl/MegaLightsGridCS.hlsl", s_Root.Get(), {
 				{ "ClearCounters", &s_ClearCounters }, { "TileSliceMask", &s_TileSliceMask },
@@ -51156,7 +51819,7 @@ private:
 		if (tiles > s_TileCapacity)
 		{
 			Retire(s_TileMasks);
-			if (!CreateBuffer(s_TileMasks, sizeof(UINT) * tiles, D3D12_HEAP_TYPE_DEFAULT, uav,
+			if (!CreateBuffer(s_TileMasks, sizeof(UINT) * 2 * tiles, D3D12_HEAP_TYPE_DEFAULT, uav,
 				D3D12_RESOURCE_STATE_COMMON, L"MegaLights Tile Slice Masks")) { s_TileCapacity = 0; return false; }
 			s_TileMasksState = D3D12_RESOURCE_STATE_COMMON;
 			s_TileCapacity = tiles;
@@ -51370,11 +52033,24 @@ private:
 		}
 		if (s_Readback && s_ReadbackPending[s_Slot])
 		{
-			const CD3DX12_RANGE range(s_Slot * 16, s_Slot * 16 + 16);
+			const CD3DX12_RANGE range(s_Slot * kReadbackStride, s_Slot * kReadbackStride + 16 + kLightVisibleBytes);
 			UINT* mapped = nullptr;
 			if (SUCCEEDED(s_Readback->Map(0, &range, reinterpret_cast<void**>(&mapped))))
 			{
-				const UINT* values = reinterpret_cast<const UINT*>(reinterpret_cast<const BYTE*>(mapped) + s_Slot * 16);
+				const UINT* values = reinterpret_cast<const UINT*>(reinterpret_cast<const BYTE*>(mapped) + s_Slot * kReadbackStride);
+				// ライトのオクルージョン：見えなかったライトのカウンタを進め、見えたら 0 に
+				const UINT* visible = values + 4;
+				const auto& lights = s_SlotLights[s_Slot];
+				s_OccludedCount = 0;
+				for (size_t index = 0; index < lights.size() && index < kMaxLights; ++index)
+				{
+					const EntityID entity = lights[index];
+					if (entity >= s_OccludedFrames.size()) s_OccludedFrames.resize(static_cast<size_t>(entity) + 1, 0);
+					const bool seen = ((visible[index >> 5] >> (index & 31)) & 1u) != 0u;
+					uint8_t& frames = s_OccludedFrames[entity];
+					frames = seen ? 0 : static_cast<uint8_t>((std::min)(frames + 1, 255));
+					if (frames >= kOcclusionFrames) ++s_OccludedCount;
+				}
 				s_Stats.CoarseIndices = values[0];
 				s_Stats.FineIndices = values[1];
 				s_Stats.OverflowCells = values[2];
@@ -51501,6 +52177,11 @@ private:
 		s_FineCells.Reset();
 		s_FineIndices.Reset();
 		s_Counters.Reset();
+		s_LightVisible.Reset();
+		s_LightVisibleState = D3D12_RESOURCE_STATE_COMMON;
+		for (auto& lights : s_SlotLights) lights.clear();
+		s_OccludedFrames.clear();
+		s_OccludedCount = 0;
 		s_Readback.Reset();
 		s_Samples.Reset();
 		s_Accumulation.Reset();
@@ -51538,6 +52219,15 @@ private:
 	static inline ComPtr<ID3D12PipelineState> s_SampleLights, s_ScreenTrace, s_WorldTrace, s_ErrorReduce;
 	static inline ComPtr<ID3D12Resource> s_Constants, s_LightUpload, s_Dummy;
 	static inline ComPtr<ID3D12Resource> s_TileMasks, s_CoarseCells, s_CoarseIndices, s_FineCells, s_FineIndices, s_Counters, s_Readback;
+	// ---- ライトのオクルージョン
+	static constexpr UINT kLightVisibleBytes = 4096 / 8;
+	static constexpr UINT kReadbackStride = 1024;
+	static constexpr uint8_t kOcclusionFrames = 3; // この回数続けて見えなければ「隠れている」
+	static inline ComPtr<ID3D12Resource> s_LightVisible;
+	static inline D3D12_RESOURCE_STATES s_LightVisibleState = D3D12_RESOURCE_STATE_COMMON;
+	static inline vector<EntityID> s_SlotLights[kFrames];
+	static inline vector<uint8_t> s_OccludedFrames;
+	static inline UINT s_OccludedCount = 0;
 	static inline ComPtr<ID3D12Resource> s_Samples, s_Accumulation, s_Reference, s_Partials;
 	static inline ComPtr<ID3D12Resource> s_PartialReadback[kFrames];
 	static inline D3D12_RESOURCE_STATES s_TileMasksState = D3D12_RESOURCE_STATE_COMMON;
@@ -51647,6 +52337,7 @@ private:
 	static inline UINT s_EngineHeapStart = 0, s_EngineIncrement = 0;
 	static inline UINT s_SampleWidth = 0, s_SampleHeight = 0, s_SampleScale = 1;
 };
+
 
 ===== FILE: source\rendering\meshdispatch.h =====
 #pragma once
@@ -54098,7 +54789,11 @@ static bool DrawPass(ID3D12GraphicsCommandList *list, GpuSceneBuffer &vertices, 
     RenderGraph::ResourceHandle binCount;
     if (binning) binCount = Import(graph,"Native material bin count",VirtualGeometryBinning::CounterBuffer(),D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
     asset.push_back(Import(graph,"Geometry Raster Residency",VirtualGeometryStreaming::ResidencyBuffer(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
-    for (auto handle : VirtualGeometryStreaming::PageHandles(graph)) asset.push_back(handle);
+    // 負荷削減：常駐ページ（数千個の 64KB バッファ）を毎パス RenderGraph に登録しない。
+    //   以前は FindImportedResource の線形探索（ページ数の 2 乗）と、ページごとの遷移バリア 2 回 × 3 パス
+    //   （1 回目 / 2 回目 / Velocity）で GBuffer の CPU 時間の大半を使っていた。
+    //   ページはコピーキューで書かれ、直接キューでは常に COMMON のバッファ。バッファは COMMON から
+    //   読み取り状態へ暗黙に昇格し、ExecuteCommandLists の終わりに COMMON へ戻るので、明示的な遷移は不要
     graph.AddPass(
         velocity ? "Mesh Shader Velocity" : "Mesh Shader Opaque",
         [=](RenderGraph::PassBuilder &b) {
@@ -54473,6 +55168,7 @@ void Shutdown()
     Data() = {};
 }
 } // namespace MeshShaderRenderer
+
 
 
 ===== FILE: source\rendering\meshshader\meshshaderrenderer.h =====
@@ -54953,7 +55649,7 @@ struct NrdDenoiser::Impl
         Width = width;
         Height = height;
         const nrd::DenoiserDesc denoiser{ kIdentifier,
-            signal == NrdSignal::Shadow ? nrd::Denoiser::SIGMA_SHADOW : signal == NrdSignal::Specular ?
+            signal == NrdSignal::Shadow ? nrd::Denoiser::SIGMA_SHADOW : (signal == NrdSignal::Specular || signal == NrdSignal::SpecularCheckerboard) ?
                 nrd::Denoiser::REBLUR_SPECULAR : (signal == NrdSignal::Diffuse || signal == NrdSignal::MegaLights) ?
                 nrd::Denoiser::REBLUR_DIFFUSE : nrd::Denoiser::REBLUR_DIFFUSE_OCCLUSION };
         const nrd::InstanceCreationDesc creation{ {}, &denoiser, 1 };
@@ -55022,7 +55718,7 @@ struct NrdDenoiser::Impl
         if (!allocatePool(Permanent, description.permanentPool, L"NRD Permanent History") ||
             !allocatePool(Transient, description.transientPool, L"NRD Transient Pool") ||
             !CreateTexture(Output, Signal == NrdSignal::Shadow ? DXGI_FORMAT_R8_UNORM :
-                (Signal == NrdSignal::Specular || Signal == NrdSignal::Diffuse || Signal == NrdSignal::MegaLights) ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R16_UNORM,
+                (Signal == NrdSignal::Specular || Signal == NrdSignal::SpecularCheckerboard || Signal == NrdSignal::Diffuse || Signal == NrdSignal::MegaLights) ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R16_UNORM,
                 1, L"NVIDIA NRD Denoised Signal")) return false;
         WriteGraphicsLog("NRD: %s %s initialized, extent=%ux%u pipelines=%u history=%u transient=%u\n",
             NrdDenoiser::GetVersion(), nrd::GetDenoiserString(denoiser.denoiser), Width, Height,
@@ -55081,6 +55777,16 @@ struct NrdDenoiser::Impl
             // MegaLights の直接光（デモジュレート済み・フル解像度・全ピクセル）。チェッカーボードなし。
             // ヒット距離はシェーディング点からライト上の点までの距離（MegaLightsNrdCS.hlsl と同じ正規化）
             nrd::ReblurSettings settings;
+            ApplyHitDistance(settings, kHitDistanceA, kHitDistanceB, kHitDistanceC);
+            EnableAntiFirefly(settings);
+            if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS) return false;
+        }
+        if (Signal == NrdSignal::SpecularCheckerboard)
+        {
+            // 反射の半分のピクセルだけをトレース（RayReflectionsCS main：(x >> 1, y) に詰めて格納）。
+            // パリティは frameIndex で NRD が交互に切り替えるので、モードは BLACK に固定する（GI と同じ）
+            nrd::ReblurSettings settings;
+            settings.checkerboardMode = nrd::CheckerboardMode::BLACK;
             ApplyHitDistance(settings, kHitDistanceA, kHitDistanceB, kHitDistanceC);
             EnableAntiFirefly(settings);
             if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS) return false;
@@ -55273,12 +55979,13 @@ const char* NrdDenoiser::GetVersion()
 
 
 
+
 ===== FILE: source\rendering\nrddenoiser.h =====
 #pragma once
 #include "pch.h"
 #include <memory>
 
-enum class NrdSignal { Shadow, Specular, AmbientOcclusion, Diffuse, MegaLights }; // MegaLights: REBLUR_DIFFUSE（チェッカーボードなし）
+enum class NrdSignal { Shadow, Specular, AmbientOcclusion, Diffuse, MegaLights, SpecularCheckerboard }; // MegaLights: REBLUR_DIFFUSE（チェッカーボードなし）
 
 struct NrdTexture
 {
@@ -55330,6 +56037,7 @@ private:
     struct Impl;
     unique_ptr<Impl> m_Impl;
 };
+
 
 
 
@@ -57214,7 +57922,7 @@ private:
 
 	static void ReduceResolution()
 	{
-		const float target = (std::max)(0.5f, s_Base.ResolutionScale * 0.8f);
+		const float target = (std::max)(0.35f, s_Base.ResolutionScale * 0.8f); // NIS も多段で 50% 未満に対応したため
 		if (target < RenderConfiguration::GetResolutionScale() - 0.01f)
 		{
 			RenderConfiguration::SetResolutionScale(target);
@@ -57231,6 +57939,7 @@ private:
 		s_ResolutionReduced = false;
 	}
 };
+
 
 
 
@@ -58016,6 +58725,10 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			{
 				upscalerLabel = "FSR 1 EASU + RCAS";
 			}
+			else if (SpatialUpscaler::NisPassCount(m_SceneWidth, m_SceneHeight, m_Width, m_Height) > 1)
+			{
+				upscalerLabel = "NVIDIA Image Scaling (multi-pass)";
+			}
 			else
 			{
 				upscalerLabel = "NVIDIA Image Scaling";
@@ -58032,7 +58745,9 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 				m_SceneHeight,
 				m_Width,
 				m_Height,
-				upscaleMode);
+				upscaleMode,
+				upscaleSource,
+				GetRenderTargetSrvHandle(RenderTargetType::EditorScene));
 		}
 		barriers[0] = CD3DX12_RESOURCE_BARRIER::Transition(
 			upscaleSource,
@@ -58203,6 +58918,7 @@ void PostProcessPass::ApplyAntiAliasing()
 
 
 
+
 ===== FILE: source\rendering\postprocesspass.h =====
 #pragma once
 #include "rendertargets.h"
@@ -58223,6 +58939,7 @@ public:
 #include "staticmodel.h"
 #include "meshlets/meshletmanager.h"
 #include "gpudriven/gpudrivenrenderer.h"
+#include "cpuculling.h"
 #include <numeric>
 #include "../../External/meshoptimizer/src/meshoptimizer.h"
 
@@ -58838,6 +59555,39 @@ void PrimitiveGeometry::CreateObjectVertex(const VertexResource& vertexstruct, c
 	}
 }
 
+namespace
+{
+	// 負荷削減：同じ形（頂点が完全に一致）のプリミティブは頂点バッファと LOD / メッシュレットを共有する。
+	//   ・GPU 駆動のメッシュ表・DXR の BLAS（頂点バッファのアドレスで共有）・メモリが形の種類数ぶんで済む
+	//   ・共有中のものを編集すると use_count > 1 なので書き換えずに新しく作る（他のエンティティに影響しない）
+	static_assert(sizeof(Vertex) == sizeof(StaticModelVertex), "primitive vertex layout must match the shared CPU copy");
+	unordered_map<uint64_t, vector<weak_ptr<StaticMeshData>>>& SharedPrimitiveGeometry()
+	{
+		static unordered_map<uint64_t, vector<weak_ptr<StaticMeshData>>> cache;
+		return cache;
+	}
+
+	shared_ptr<StaticMeshData> FindSharedPrimitive(uint64_t hash, const vector<Vertex>& vertices)
+	{
+		auto found = SharedPrimitiveGeometry().find(hash);
+		if (found == SharedPrimitiveGeometry().end()) return nullptr;
+		auto& entries = found->second;
+		shared_ptr<StaticMeshData> match;
+		for (auto it = entries.begin(); it != entries.end();)
+		{
+			auto entry = it->lock();
+			if (!entry) { it = entries.erase(it); continue; }
+			if (!match && entry->VertexBuffer && entry->CpuVertices.size() == vertices.size() &&
+				memcmp(entry->CpuVertices.data(), vertices.data(), vertices.size() * sizeof(Vertex)) == 0)
+			{
+				match = entry;
+			}
+			++it;
+		}
+		return match;
+	}
+}
+
 bool PrimitiveGeometry::UploadVertices(EntityID entity, const vector<Vertex>& vertices)
 {
     ID3D12Device* device = GraphicsDevice::GetDevice();
@@ -58851,6 +59601,24 @@ bool PrimitiveGeometry::UploadVertices(EntityID entity, const vector<Vertex>& ve
     mesh.PrimitiveType = 0; // 任意の頂点。プリミティブの場合は CreateObjectVertex が直後に設定し直す
     const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
     const auto description = CD3DX12_RESOURCE_DESC::Buffer(byteSize);
+    // 同じ形がすでにあれば共有して終わり
+    const uint64_t sharedHash = HashGeometry(vertices.data(), byteSize);
+    const bool shareGeometry = RenderCulling::GetSettings().SharePrimitiveGeometry;
+    if (shareGeometry && vertices.size() % 3 == 0)
+    {
+        if (auto shared = FindSharedPrimitive(sharedHash, vertices); shared && shared != mesh.NaniteMesh)
+        {
+            mesh.VertexBuffer = shared->VertexBuffer;
+            mesh.VertexBufferView = shared->VertexBufferView;
+            mesh.VertexCount = shared->VertexCount;
+            mesh.GeometryHash = sharedHash;
+            CalculateGeometryBounds(vertices, mesh.LocalBoundsCenter, mesh.LocalBoundsExtents);
+            mesh.HasLocalBounds = true;
+            mesh.NaniteMesh = move(shared);
+            GpuSceneChanges::Notify(entity, GpuSceneDirtyFlags::Mesh | GpuSceneDirtyFlags::Bounds);
+            return true;
+        }
+    }
     ComPtr<ID3D12Resource> buffer;
     const bool reuse = mesh.NaniteMesh && mesh.NaniteMesh.use_count()==1 &&
         mesh.VertexBuffer && mesh.VertexCount==vertices.size() && GraphicsDevice::WaitForGpuIdle();
@@ -58893,12 +59661,14 @@ bool PrimitiveGeometry::UploadVertices(EntityID entity, const vector<Vertex>& ve
         iota(source->CpuIndices.begin(),source->CpuIndices.end(),0u);
         BuildPrimitiveLODs(*source);
         MeshletManager::BuildImportedMesh(*source);
+        if (shareGeometry) SharedPrimitiveGeometry()[sharedHash].push_back(source);
         mesh.NaniteMesh=move(source);
     }
     else mesh.NaniteMesh.reset();
     GpuSceneChanges::Notify(entity, GpuSceneDirtyFlags::Mesh | GpuSceneDirtyFlags::Bounds);
     return true;
 }
+
 
 ===== FILE: source\rendering\primitivegeometry.h =====
 #pragma once
@@ -59052,12 +59822,65 @@ bool PsoManager::CreateComputePipelineState(
 	return true;
 }
 
+namespace
+{
+	// 負荷削減：描画ごとの PSO 検索で毎回文字列キーを組み立てないための前段キャッシュ
+	//（入力と、結果を左右する状態だけからハッシュを作る。m_PsoCache が空になったら捨てる）
+	struct FastPsoKey
+	{
+		uint64_t Vs = 0, Ps = 0;
+		uint32_t Flags = 0, Format = 0;
+		bool operator==(const FastPsoKey& other) const
+		{
+			return Vs == other.Vs && Ps == other.Ps && Flags == other.Flags && Format == other.Format;
+		}
+	};
+	struct FastPsoKeyHash
+	{
+		size_t operator()(const FastPsoKey& key) const noexcept
+		{
+			return static_cast<size_t>(key.Vs * 0x9e3779b97f4a7c15ull ^ (key.Ps + 0x632be59bd9b4e019ull) ^
+				(static_cast<uint64_t>(key.Flags) << 32) ^ key.Format);
+		}
+	};
+	uint64_t HashPath(const char* path)
+	{
+		uint64_t hash = 1469598103934665603ull;
+		if (path) for (const char* c = path; *c; ++c) { hash ^= static_cast<unsigned char>(*c); hash *= 1099511628211ull; }
+		return hash;
+	}
+	unordered_map<FastPsoKey, ID3D12PipelineState*, FastPsoKeyHash>& FastPsoCache()
+	{
+		static unordered_map<FastPsoKey, ID3D12PipelineState*, FastPsoKeyHash> cache;
+		return cache;
+	}
+}
+
 ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const ShaderDescription& resource)
 {
 	const bool requestDeferredScene = (m_RenderMode == RenderMode::DEFERRED && m_IsDeferredGeometryPass);
 	const bool visibilityPass = requestDeferredScene &&
 		RendererSettings::GetComputeGBufferEnabled() &&
 		VisibilityBuffer::IsAvailable();
+	auto& fastCache = FastPsoCache();
+	if (m_PsoCache.empty()) fastCache.clear();
+	FastPsoKey fastKey;
+	fastKey.Vs = HashPath(resource.vsPath);
+	fastKey.Ps = HashPath(resource.psPath);
+	fastKey.Flags = (resource.isModel ? 1u : 0u) | (resource.frontCounterClockwise ? 2u : 0u) |
+		(resource.enableAlphaBlend ? 4u : 0u) | (resource.depthWrite ? 8u : 0u) |
+		(requestDeferredScene ? 16u : 0u) | (visibilityPass ? 32u : 0u) |
+		(TransparencyEffects::IsOitPassActive() ? 64u : 0u) |
+		(static_cast<uint32_t>(m_RenderMode) << 8) | (static_cast<uint32_t>(resource.cullMode) << 16);
+	fastKey.Format = static_cast<uint32_t>(GetForwardRtvFormat());
+	if (const auto fast = fastCache.find(fastKey); fast != fastCache.end()) return fast->second;
+	ID3D12PipelineState* created = GetOrCreateGraphicsPsoSlow(resource, requestDeferredScene, visibilityPass);
+	if (created) fastCache[fastKey] = created;
+	return created;
+}
+
+ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPsoSlow(const ShaderDescription& resource, bool requestDeferredScene, bool visibilityPass)
+{
 	string resolvedPsPath;
 	if (visibilityPass)
 	{
@@ -59970,6 +60793,7 @@ ID3D12PipelineState* PsoManager::GetPostProcessPso(PostProcessType type)
 
 
 
+
 ===== FILE: source\rendering\psomanager.h =====
 #pragma once
 #include "shaderdescription.h"
@@ -59991,6 +60815,7 @@ public:
 		ComPtr<ID3D12PipelineState>& outPso);
 
 	static ID3D12PipelineState* GetOrCreateGraphicsPso(const ShaderDescription& resource);
+	static ID3D12PipelineState* GetOrCreateGraphicsPsoSlow(const ShaderDescription& resource, bool requestDeferredScene, bool visibilityPass);
 	static ID3D12PipelineState* GetOrCreateToonOutlinePso(bool enableAlphaBlend = false);
 	static ID3D12PipelineState* GetOrCreateShadowMapPso();
 	static ID3D12PipelineState* GetOrCreateShadowMapInstancedPso();
@@ -60016,8 +60841,10 @@ public:
 	static ID3D12PipelineState* GetSkinningPso() { return m_SkinningPso.Get(); }
 };
 
+
 ===== FILE: source\rendering\rayreflections.cpp =====
 #include "pch.h"
+#include "cpuculling.h"
 #include "rayreflections.h"
 #include "raytracing.h"
 #include "rendererstate.h"
@@ -60093,6 +60920,10 @@ struct FrameResources
     ComPtr<ID3D12Resource> Meshes, Lights, Emitters, Constants, Noisy, Result, GiNoisy, GiResult;
     // Keep sampled resources alive until this frame slot's fence completes.
     vector<RaytracingGeometry> Geometry;
+    // 負荷削減：メッシュごとの SRV（頂点 / インデックス / テクスチャ / 発光）が前回と同じなら作り直さない
+    //（参照を保持するので、解放されたアドレスに別のリソースが入って同じポインタになることはない）
+    struct DescriptorRecord { ComPtr<ID3D12Resource> Vertices, Indices, Texture, Emission; UINT TextureMip = 0; UINT EmissionMip = 0; bool Valid = false; };
+    vector<DescriptorRecord> Descriptors;
     UINT Width = 0, Height = 0;
 };
 ComPtr<ID3D12Device> g_Device;
@@ -60120,6 +60951,8 @@ uint64_t g_GiEmissionSignature = 0;
 constexpr UINT kGiEmissionRestartQuietFrames = 8;
 UINT g_GiEmissionStableFrames = kGiEmissionRestartQuietFrames;
 UINT g_Increment = 0, g_Width = 0, g_Height = 0, g_Dispatches = 0;
+bool g_ReflectionCheckerboard = false; // このフレームの反射を半分のピクセルでトレースした
+bool g_DenoiserCheckerboard = false;   // 作成済みの反射デノイザーのモード
 UINT g_LastFrame = 0;
 bool g_HistoryValid = false;
 
@@ -60199,6 +61032,7 @@ bool EnsureFrame(FrameResources& frame, UINT slot, UINT width, UINT height)
         desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         desc.NumDescriptors = kEmissionDescriptors + kMaximumMeshes;
         if (FAILED(g_Device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&frame.Heap)))) return false;
+        frame.Descriptors.clear(); // 新しいヒープは中身が空
     }
     if (!EnsureUpload(frame.Constants, 512)) return false;
     if (g_Shared.Width != width || g_Shared.Height != height)
@@ -60477,7 +61311,9 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     const UINT count = static_cast<UINT>((min)(geometry.size(), static_cast<size_t>(kMaximumMeshes)));
     vector<MeshConstants> meshes(count);
     vector<UINT> emitters;
-    map<ID3D12Resource*, D3D12_RESOURCE_STATES> sampledResources;
+    unordered_map<ID3D12Resource*, D3D12_RESOURCE_STATES> sampledResources;
+    sampledResources.reserve(count / 2 + 16);
+    if (frame.Descriptors.size() < count) frame.Descriptors.resize(count);
     sampledResources.emplace(depth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     sampledResources.emplace(normal, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     sampledResources.emplace(material, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -60507,19 +61343,32 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         {
             emitters.push_back(i);
         }
-        TextureSrv(geometry.EmissionTexture.Get(), Cpu(frame.Heap.Get(), kEmissionDescriptors + i), geometry.EmissionResidentMip);
+        auto& record = frame.Descriptors[i];
+        const UINT emissionMip = static_cast<UINT>(geometry.EmissionResidentMip);
+        const UINT textureMip = static_cast<UINT>(geometry.TextureResidentMip);
+        if (!record.Valid || record.Emission.Get() != geometry.EmissionTexture.Get() || record.EmissionMip != emissionMip)
+            TextureSrv(geometry.EmissionTexture.Get(), Cpu(frame.Heap.Get(), kEmissionDescriptors + i), geometry.EmissionResidentMip);
         if (geometry.EmissionTexture)
         {
             sampledResources.emplace(geometry.EmissionTexture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         }
-        BufferSrv(geometry.Vertices.Get(), Cpu(frame.Heap.Get(), kVertexDescriptors + i));
-        BufferSrv(geometry.Indices.Get(), Cpu(frame.Heap.Get(), kIndexDescriptors + i));
-        if (geometry.Texture)
+        if (!record.Valid || record.Vertices.Get() != geometry.Vertices.Get())
+            BufferSrv(geometry.Vertices.Get(), Cpu(frame.Heap.Get(), kVertexDescriptors + i));
+        if (!record.Valid || record.Indices.Get() != geometry.Indices.Get())
+            BufferSrv(geometry.Indices.Get(), Cpu(frame.Heap.Get(), kIndexDescriptors + i));
+        if (!record.Valid || record.Texture.Get() != geometry.Texture.Get() || record.TextureMip != textureMip)
         {
-            TextureSrv(geometry.Texture.Get(), Cpu(frame.Heap.Get(), kTextureDescriptors + i), geometry.TextureResidentMip);
-            sampledResources.emplace(geometry.Texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            if (geometry.Texture) TextureSrv(geometry.Texture.Get(), Cpu(frame.Heap.Get(), kTextureDescriptors + i), geometry.TextureResidentMip);
+            else TextureSrv(nullptr, Cpu(frame.Heap.Get(), kTextureDescriptors + i));
         }
-        else TextureSrv(nullptr, Cpu(frame.Heap.Get(), kTextureDescriptors + i));
+        if (geometry.Texture) sampledResources.emplace(geometry.Texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        record.Vertices = geometry.Vertices;
+        record.Indices = geometry.Indices;
+        record.Texture = geometry.Texture;
+        record.Emission = geometry.EmissionTexture;
+        record.TextureMip = textureMip;
+        record.EmissionMip = emissionMip;
+        record.Valid = true;
         sampledResources.emplace(geometry.Vertices.Get(), geometry.VertexState);
         if (geometry.Indices) sampledResources.emplace(geometry.Indices.Get(), geometry.IndexState);
     }
@@ -60530,11 +61379,36 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     FrameConstants constants;
     vector<ReflectionLight> lights;
     lights.reserve(RendererState::g_kMAX_SHADER_LIGHTS);
-    for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
+    // 負荷削減：反射・GI のヒット点で評価するライトは上限 160 灯。以前は ECS の並び順で先頭から取っていたので、
+    // ライトが多いシーンでは遠いライトが枠を使い切っていた。カメラから近い（影響範囲の表面までの距離が短い）順に選ぶ
+    static vector<pair<float, EntityID>> reflectionCandidates;
+    reflectionCandidates.clear();
+    {
+        const XMVECTOR cameraPosition = XMMatrixInverse(nullptr, XMLoadFloat4x4(&nrdFrame.View)).r[3];
+        for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
+        {
+            const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
+            if (!light.IsActive || !light.AffectsOpaque || light.RenderMode != LightRenderMode::Physical || light.Intensity <= 0) continue;
+            float key = -1.0f;
+            if (light.Type != LightType::Directional)
+            {
+                const auto& position = ComponentManager::GetComponentUnchecked<TransformComponent>(entity).Position;
+                key = (std::max)(XMVectorGetX(XMVector3Length(XMVectorSubtract(XMLoadFloat3(&position), cameraPosition))) - light.Range, 0.0f);
+            }
+            reflectionCandidates.emplace_back(key, entity);
+        }
+        // 負荷削減：ヒット点ではライトをループで全評価するので、灯数がそのまま反射 / GI のコストになる
+        const size_t hitLights = static_cast<size_t>(std::clamp(RenderCulling::GetSettings().RayHitLights, 1,
+            static_cast<int>(RendererState::g_kMAX_SHADER_LIGHTS)));
+        if (reflectionCandidates.size() > hitLights)
+        {
+            nth_element(reflectionCandidates.begin(), reflectionCandidates.begin() + hitLights, reflectionCandidates.end());
+            reflectionCandidates.resize(hitLights);
+        }
+    }
+    for (const auto& [distanceKey, entity] : reflectionCandidates)
     {
         const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-        if (!light.IsActive || !light.AffectsOpaque || light.RenderMode != LightRenderMode::Physical || light.Intensity <= 0) continue;
-        if (lights.size() >= RendererState::g_kMAX_SHADER_LIGHTS) break;
         const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
         XMFLOAT3 direction;
         XMStoreFloat3(&direction, XMVector3Normalize(XMLoadFloat3(&light.Direction)));
@@ -60608,7 +61482,13 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     if (!restir || nrdFrame.ResetHistory) g_ReSTIRHistoryValid = restir && g_ReSTIRHistoryValid && !nrdFrame.ResetHistory;
     constants.ReSTIRParameters = { restir ? 1.0f : 0.0f, static_cast<float>(std::clamp(quality.ReSTIRTemporalMaxM, 1, 64)),
         static_cast<float>(std::clamp(quality.ReSTIRSpatialSamples, 0, 16)), std::clamp(quality.ReSTIRSpatialRadius, 1.0f, 64.0f) };
-    constants.ReSTIRState = { g_ReSTIRHistoryValid ? 1u : 0u, reservoirWidth, quality.ReSTIRSpatialVisibility ? 1u : 0u, 0u };
+    // 反射の半解像度（チェッカーボード）：NRD で復元できるときだけ
+    const bool reflectionCheckerboard = RenderCulling::GetSettings().ReflectionCheckerboard && !useOptix && denoise &&
+        NrdDenoiser::IsCompiled() && guides[0] && guides[1] && guides[2];
+    g_ReflectionCheckerboard = reflectionCheckerboard;
+    constants.ReSTIRState = { g_ReSTIRHistoryValid ? 1u : 0u, reservoirWidth, quality.ReSTIRSpatialVisibility ? 1u : 0u,
+        static_cast<UINT>(std::clamp(RenderCulling::GetSettings().ReflectionRoughnessCutoff, 0.0f, 1.0f) * 1000.0f + 0.5f) |
+        (reflectionCheckerboard ? 0x10000u : 0u) };
     constants.CacheParameters = { cacheEnabled ? 1.0f : 0.0f, RendererSettings::GetGiRadianceCacheCellSize(),
         static_cast<float>(kCacheCapacity), static_cast<float>(RendererSettings::GetGiRadianceCacheHistory()) };
     if (!Upload(frame.Constants.Get(), &constants, sizeof(constants))) return false;
@@ -60678,7 +61558,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     {
         Transition(commands, frame.Noisy.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         Transition(commands, frame.Result.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        bind(g_Trace.Get()); commands->Dispatch((frame.Width + 7) / 8, (frame.Height + 7) / 8, 1);
+        bind(g_Trace.Get());
+        commands->Dispatch(((g_ReflectionCheckerboard ? (frame.Width + 1) / 2 : frame.Width) + 7) / 8, (frame.Height + 7) / 8, 1);
         Transition(commands, frame.Noisy.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         Transition(commands, frame.Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         // NRD owns a separate heap and restores these four input states.
@@ -60694,13 +61575,15 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         }
         else if (denoise && NrdDenoiser::IsCompiled() && guides[0] && guides[1] && guides[2])
         {
-            if (!g_Denoiser || g_Width != frame.Width || g_Height != frame.Height)
+            if (!g_Denoiser || g_Width != frame.Width || g_Height != frame.Height || g_DenoiserCheckerboard != g_ReflectionCheckerboard)
             {
                 if (GraphicsDevice::WaitForGpuIdle())
                 {
                     auto created = make_unique<NrdDenoiser>();
-                    if (created->Initialize(g_Device.Get(), NrdSignal::Specular, frame.Width, frame.Height))
-                    { g_Denoiser = move(created); g_Width = frame.Width; g_Height = frame.Height; g_HistoryValid = false; }
+                    if (created->Initialize(g_Device.Get(), g_ReflectionCheckerboard ? NrdSignal::SpecularCheckerboard : NrdSignal::Specular,
+                        frame.Width, frame.Height))
+                    { g_Denoiser = move(created); g_Width = frame.Width; g_Height = frame.Height; g_HistoryValid = false;
+                      g_DenoiserCheckerboard = g_ReflectionCheckerboard; }
                 }
             }
             NrdFrame temporalFrame = nrdFrame;
@@ -60864,6 +61747,8 @@ D3D12_GPU_DESCRIPTOR_HANDLE RayReflections::GetGiSrv(UINT frameIndex)
     return Gpu(g_EngineHeap.Get(), kGiSrv + frameIndex % kFrames);
 }
 ID3D12Resource* RayReflections::GetGiResource() { return g_Frames[g_LastFrame].GiResult.Get(); }
+
+
 
 
 
@@ -61783,6 +62668,17 @@ bool Raytracing::UsesRaytracedShadows()
     {
         return false;
     }
+    // 負荷削減：全マテリアルの走査はフレームに 1 回だけ（以前は呼ばれるたびに走査しており、
+    // 呼び出し元のライトのループと合わせて「影付きライト数 × マテリアル数」になっていた）
+    static uint64_t cachedFence = UINT64_MAX;
+    static bool cachedResult = true;
+    static size_t cachedMaterialCount = 0;
+    const uint64_t fence = GraphicsDevice::GetPendingSubmissionFence();
+    const size_t materialCount = World::GetView<MaterialComponent>().size();
+    if (fence == cachedFence && materialCount == cachedMaterialCount) return cachedResult;
+    cachedFence = fence;
+    cachedMaterialCount = materialCount;
+    cachedResult = true;
     // The current inline ray query forces opaque geometry. Cutout shadows use
     // the material-aware raster pass until the ray path can evaluate texture alpha.
     for (EntityID entity : World::GetView<MaterialComponent>())
@@ -61795,6 +62691,7 @@ bool Raytracing::UsesRaytracedShadows()
             if ((MaterialSystem::ResolveShadowMode(material) == MaterialShadowMode::AlphaTest ||
                 MaterialSystem::ResolveShadowMode(material) == MaterialShadowMode::Transmittance) && MaterialSystem::CastsShadow(material))
             {
+                cachedResult = false;
                 return false;
             }
         }
@@ -61867,6 +62764,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetGiSrv()
 {
     return RayReflections::GetGiSrv(g_FrameIndex);
 }
+
 
 
 
@@ -62662,7 +63560,7 @@ void RenderConfiguration::SetHdr(bool enabled)
 
 void RenderConfiguration::SetResolutionScale(float scale)
 {
-	const float clampedScale = clamp(scale, 0.25f, 1.0f);
+	const float clampedScale = clamp(scale, 0.20f, 1.0f); // FSR / NIS（多段）とも 20% まで
 	if (fabsf(GetResolutionScale() - clampedScale) < 0.0001f)
 	{
 		return;
@@ -62781,6 +63679,7 @@ void RenderConfiguration::ApplyPendingHdr()
 	m_TaaBlendPso.Reset();
 	PsoManager::CreateAaPsos();
 }
+
 
 ===== FILE: source\rendering\renderconfiguration.h =====
 #pragma once
@@ -64250,7 +65149,7 @@ class RenderProfiler final
 {
 public:
     static constexpr UINT kFrameCount = 3;
-    static constexpr UINT kMaxTimestampQueriesPerFrame = 128;
+    static constexpr UINT kMaxTimestampQueriesPerFrame = 1024; // 128 では内訳の計測で枠が尽き、後半のパスの GPU 時間が 0 と表示されていた
     static constexpr UINT kInvalidGpuToken = UINT_MAX;
     static constexpr size_t kHistoryLength = 180;
 
@@ -65087,6 +65986,7 @@ public:
         ImGui::End();
     }
 };
+
 
 ===== FILE: source\rendering\renderquality.h =====
 #pragma once
@@ -65975,6 +66875,7 @@ struct VertexResource
 
 ===== FILE: source\rendering\scenepasses.cpp =====
 #include "pch.h"
+#include "renderprofiler.h"
 #include "megalights.h"
 #include "transparencyeffects.h"
 #include "envflags.h"
@@ -66117,8 +67018,15 @@ bool ScenePasses::RestoreStaticShadowDepth(UINT index)
 void ScenePasses::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_TOPOLOGY topology)
 {
 	if (!m_CommandList) return;
-	LightingResources::UpdateLightConstantBuffer(1.35f);
-	LightingResources::UpdateShadowConstantBuffer();
+	{
+		// 内訳の計測（フレーム最初の呼び出しだけ重い：ライトの収集と影のキャッシュ再構築）
+		RenderProfiler::ScopedEvent profile("BeginPass: Light Constants", m_CommandList.Get());
+		LightingResources::UpdateLightConstantBuffer(1.35f);
+	}
+	{
+		RenderProfiler::ScopedEvent profile("BeginPass: Shadow Constants", m_CommandList.Get());
+		LightingResources::UpdateShadowConstantBuffer();
+	}
 	m_CommandList->SetGraphicsRootSignature(rootSignature);
 	Raytracing::BindLighting(m_CommandList.Get(), 16, 17);
 	if (m_LightConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(2, LightingResources::GetCurrentLightConstantBufferAddress());
@@ -66782,6 +67690,7 @@ void ScenePasses::EndVelocityBuffer()
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 	m_CommandList->ResourceBarrier(1, &toVelocitySrv);
 }
+
 
 
 
@@ -67818,6 +68727,8 @@ inline std::vector<Region> Merge(const std::vector<Tile>& tiles)
 #include "renderprofiler.h"
 
 #include <cstddef>
+#include <cmath>
+#include <algorithm>
 
 #define A_CPU 1
 #include "../../External/FidelityFX-FSR/ffx_a.h"
@@ -68099,9 +69010,17 @@ bool SpatialUpscaler::IsScaleSupported(
 	}
 
 
+	// NIS 1 段は最大 2 倍。それ以上（内部解像度 50% 未満）は 2 倍以下の段を重ねる（最大 3 段 = 8 倍 → 20% まで対応）
 	return inputWidth <= outputWidth && inputHeight <= outputHeight &&
-		static_cast<uint64_t>(inputWidth) * 2u >= outputWidth &&
-		static_cast<uint64_t>(inputHeight) * 2u >= outputHeight;
+		NisPassCount(inputWidth, inputHeight, outputWidth, outputHeight) <= 3;
+}
+
+UINT SpatialUpscaler::NisPassCount(UINT inputWidth, UINT inputHeight, UINT outputWidth, UINT outputHeight)
+{
+	if (inputWidth == 0 || inputHeight == 0) return 0;
+	const double ratio = (std::max)(static_cast<double>(outputWidth) / inputWidth, static_cast<double>(outputHeight) / inputHeight);
+	if (ratio <= 2.0) return 1;
+	return static_cast<UINT>(ceil(log2(ratio) - 1.0e-6));
 }
 
 bool SpatialUpscaler::Execute(
@@ -68113,8 +69032,21 @@ bool SpatialUpscaler::Execute(
 	UINT inputHeight,
 	UINT outputWidth,
 	UINT outputHeight,
-	UpscaleMode mode)
+	UpscaleMode mode,
+	ID3D12Resource* input,
+	D3D12_GPU_DESCRIPTOR_HANDLE outputSrv)
 {
+	// 入力テクスチャの実サイズ（ビューポートより大きいことがある。正しい UV 計算に必要）
+	UINT inputTextureWidth = inputWidth, inputTextureHeight = inputHeight;
+	if (input)
+	{
+		const auto inputDesc = input->GetDesc();
+		inputTextureWidth = (std::max)(static_cast<UINT>(inputDesc.Width), inputWidth);
+		inputTextureHeight = (std::max)(inputDesc.Height, inputHeight);
+	}
+	const auto outputDesc = output ? output->GetDesc() : D3D12_RESOURCE_DESC{};
+	const UINT outputTextureWidth = (std::max)(static_cast<UINT>(outputDesc.Width), outputWidth);
+	const UINT outputTextureHeight = (std::max)(outputDesc.Height, outputHeight);
 	if (!commandList || !output || !g_RootSignature || !IsAvailable(mode) ||
 		!IsScaleSupported(mode, inputWidth, inputHeight, outputWidth, outputHeight)) return false;
 	ID3D12DescriptorHeap* heaps[] = { g_DescriptorHeap.Get() };
@@ -68131,8 +69063,8 @@ bool SpatialUpscaler::Execute(
 			constants.Const3,
 			static_cast<float>(inputWidth),
 			static_cast<float>(inputHeight),
-			static_cast<float>(inputWidth),
-			static_cast<float>(inputHeight),
+			static_cast<float>(inputTextureWidth),
+			static_cast<float>(inputTextureHeight),
 			static_cast<float>(outputWidth),
 			static_cast<float>(outputHeight));
 		constants.DispatchInfo[0] = outputWidth;
@@ -68169,27 +69101,90 @@ bool SpatialUpscaler::Execute(
 
 	if (mode == UpscaleMode::Nis)
 	{
-		NISConfig config{};
-		if (!NVScalerUpdateConfig(
-			config,
-			RendererSettings::GetNisSharpness(),
-			0, 0, inputWidth, inputHeight, inputWidth, inputHeight,
-			0, 0, outputWidth, outputHeight, outputWidth, outputHeight,
-			NISHDRMode::None))
-		{
-			return false;
-		}
+		// NIS は 1 段最大 2 倍。50% 未満は段を重ねる（各段の倍率を等しく = r^(1/n)。偏った 2 倍 + 端数よりにじみが少ない）
+		//   ・シャープネスは最後の段だけ（途中で掛けるとハロー・リンギングが段ごとに増幅される）
+		//   ・低解像度ほど元の情報が少ないので、最後の段のシャープネスを少し強める（上限 1）
+		//   ・中間は FSR のスクラッチ（出力サイズ）と出力そのものを交互に使う（ビューポートで範囲を指定）
+		const UINT passes = NisPassCount(inputWidth, inputHeight, outputWidth, outputHeight);
+		if (passes == 0 || passes > 3 || (passes == 3 && outputSrv.ptr == 0)) return false;
+		const float userSharpness = RendererSettings::GetNisSharpness();
+		const double ratioX = static_cast<double>(outputWidth) / inputWidth;
+		const double ratioY = static_cast<double>(outputHeight) / inputHeight;
+		const float scaleBoost = static_cast<float>((std::min)(ratioX, ratioY));
+		const float finalSharpness = (std::min)(1.0f, userSharpness * (passes > 1 ? 1.0f + 0.1f * (scaleBoost - 2.0f) : 1.0f));
+
 		commandList->SetPipelineState(g_NisPso.Get());
-		commandList->SetComputeRootDescriptorTable(0, inputSrv);
-		commandList->SetComputeRootDescriptorTable(1, outputUav);
 		commandList->SetComputeRootDescriptorTable(2, GpuHandle(RendererState::g_kNIS_COEF_SCALE_SRV_INDEX));
 		commandList->SetComputeRootDescriptorTable(3, GpuHandle(RendererState::g_kNIS_COEF_USM_SRV_INDEX));
-		commandList->SetComputeRoot32BitConstants(4, kNisConfigDwordCount, &config, 0);
-		commandList->Dispatch((outputWidth + 31u) / 32u, (outputHeight + 23u) / 24u, 1);
+
+		struct Surface { D3D12_GPU_DESCRIPTOR_HANDLE Srv, Uav; UINT TextureWidth, TextureHeight; ID3D12Resource* Resource; };
+		const Surface source{ inputSrv, {}, inputTextureWidth, inputTextureHeight, input };
+		const Surface scratch{ GpuHandle(RendererState::g_kFSR_SCRATCH_SRV_INDEX), GpuHandle(RendererState::g_kFSR_SCRATCH_UAV_INDEX),
+			g_OutputWidth, g_OutputHeight, g_FsrScratch.Get() };
+		const Surface target{ outputSrv, outputUav, outputTextureWidth, outputTextureHeight, output };
+		if (passes > 1 && (!g_FsrScratch || g_OutputWidth < outputWidth || g_OutputHeight < outputHeight)) return false;
+		// 最後が出力になるように逆算：3 段 = 出力 → スクラッチ → 出力、2 段 = スクラッチ → 出力
+		const Surface* chain[4] = { &source, nullptr, nullptr, nullptr };
+		if (passes == 2) { chain[1] = &scratch; chain[2] = &target; }
+		else if (passes == 3) { chain[1] = &target; chain[2] = &scratch; chain[3] = &target; }
+		else chain[1] = &target;
+
+		D3D12_RESOURCE_STATES outputState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+		D3D12_RESOURCE_STATES scratchState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+		auto setState = [&](ID3D12Resource* resource, D3D12_RESOURCE_STATES target)
+		{
+			D3D12_RESOURCE_STATES* current = resource == output ? &outputState :
+				(resource && resource == g_FsrScratch.Get()) ? &scratchState : nullptr;
+			if (!current) return; // 入力は呼び出し側が管理
+			if (*current == target)
+			{
+				if (target == D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+				{
+					D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::UAV(resource);
+					commandList->ResourceBarrier(1, &barrier);
+				}
+				return;
+			}
+			D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, *current, target);
+			commandList->ResourceBarrier(1, &barrier);
+			*current = target;
+		};
+		UINT currentWidth = inputWidth, currentHeight = inputHeight;
+		for (UINT pass = 0; pass < passes; ++pass)
+		{
+			const bool last = pass + 1 == passes;
+			const double t = static_cast<double>(pass + 1) / passes;
+			const UINT nextWidth = last ? outputWidth : (std::min)(outputWidth, static_cast<UINT>(ceil(inputWidth * pow(ratioX, t))));
+			const UINT nextHeight = last ? outputHeight : (std::min)(outputHeight, static_cast<UINT>(ceil(inputHeight * pow(ratioY, t))));
+			const Surface& from = *chain[pass];
+			const Surface& to = *chain[pass + 1];
+			NISConfig config{};
+			if (!NVScalerUpdateConfig(config, last ? finalSharpness : 0.0f,
+				0, 0, currentWidth, currentHeight, from.TextureWidth, from.TextureHeight,
+				0, 0, nextWidth, nextHeight, to.TextureWidth, to.TextureHeight,
+				NISHDRMode::None))
+			{
+				return false;
+			}
+			// 状態：入力 = NON_PIXEL（呼び出し側）、出力 = UAV（呼び出し側）、スクラッチ = NON_PIXEL（FSR と共通の前提）
+			//   読む側を NON_PIXEL、書く側を UAV にそろえる
+			setState(from.Resource, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+			setState(to.Resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+			commandList->SetComputeRootDescriptorTable(0, from.Srv);
+			commandList->SetComputeRootDescriptorTable(1, to.Uav);
+			commandList->SetComputeRoot32BitConstants(4, kNisConfigDwordCount, &config, 0);
+			commandList->Dispatch((nextWidth + 31u) / 32u, (nextHeight + 23u) / 24u, 1);
+			currentWidth = nextWidth;
+			currentHeight = nextHeight;
+		}
+		// 呼び出し時の状態に戻す（出力 = UAV、スクラッチ = NON_PIXEL）
+		setState(output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+		setState(g_FsrScratch.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 		return true;
 	}
 	return false;
 }
+
 
 ===== FILE: source\rendering\spatialupscaler.h =====
 #pragma once
@@ -68223,7 +69218,12 @@ public:
 		UINT inputHeight,
 		UINT outputWidth,
 		UINT outputHeight,
-		UpscaleMode mode);
+		UpscaleMode mode,
+		ID3D12Resource* input = nullptr,                         // 入力テクスチャ（実サイズを NIS / FSR に渡すため）
+		D3D12_GPU_DESCRIPTOR_HANDLE outputSrv = D3D12_GPU_DESCRIPTOR_HANDLE{}); // 出力の SRV（NIS の 3 段以上で中間に使う）
+
+	// NIS の段数（1 段は最大 2 倍まで）
+	static UINT NisPassCount(UINT inputWidth, UINT inputHeight, UINT outputWidth, UINT outputHeight);
 
 private:
 	static bool CreateRootSignature();
@@ -68232,6 +69232,7 @@ private:
 	static D3D12_CPU_DESCRIPTOR_HANDLE CpuHandle(UINT index);
 	static D3D12_GPU_DESCRIPTOR_HANDLE GpuHandle(UINT index);
 };
+
 
 ===== FILE: source\rendering\thumbnailmeshio.h =====
 #pragma once
@@ -71829,6 +72830,9 @@ public:
 #include <vector>
 #include <array>
 #include <cstring>
+#include <charconv>
+#include <cmath>
+#include <cstdio>
 
 namespace SceneFile
 {
@@ -71894,7 +72898,8 @@ namespace SceneFile
 	}
 
 	// ---------------------------------------------------------------- 3モード共通のアーカイブ
-	enum class Mode { Write, Read, Hash };
+	// Stream：Json::Value を作らず、文字列へ直接 JSON を書き出す（保存の高速化。出力は Write と同じ JSON として読める）
+	enum class Mode { Write, Read, Hash, Stream };
 
 	class Archive
 	{
@@ -71903,9 +72908,11 @@ namespace SceneFile
 		Archive(Mode mode, Json::Value& node) : m_Mode(mode), m_Node(&node) {}
 		// Hash 用
 		explicit Archive(uint64_t& hash) : m_Mode(Mode::Hash), m_Hash(&hash) {}
+		// Stream 用：呼び出し側が '{' を書いてから渡し、終わったら '}' を書く
+		explicit Archive(std::string& out) : m_Mode(Mode::Stream), m_Out(&out) {}
 
 		Mode GetMode() const { return m_Mode; }
-		bool Writing() const { return m_Mode == Mode::Write; }
+		bool Writing() const { return m_Mode == Mode::Write || m_Mode == Mode::Stream; }
 		bool Reading() const { return m_Mode == Mode::Read; }
 		bool Hashing() const { return m_Mode == Mode::Hash; }
 
@@ -71918,6 +72925,12 @@ namespace SceneFile
 			if (m_Mode == Mode::Hash)
 			{
 				HashValue(key, value);
+				return;
+			}
+			if (m_Mode == Mode::Stream)
+			{
+				StreamKey(key);
+				StreamValue(value);
 				return;
 			}
 			if (m_Mode == Mode::Write)
@@ -71939,6 +72952,13 @@ namespace SceneFile
 			{
 				mapped = Map(entity);
 				if (m_Mode == Mode::Hash) { HashBytes(&mapped, sizeof(mapped)); return; }
+				if (m_Mode == Mode::Stream)
+				{
+					StreamKey(key);
+					if (mapped == g_kINVALID_ENTITY) m_Out->append("-1");
+					else StreamInteger(static_cast<uint64_t>(mapped));
+					return;
+				}
 				(*m_Node)[key] = mapped == g_kINVALID_ENTITY ? Json::Value(-1) : Json::Value(static_cast<Json::UInt>(mapped));
 				return;
 			}
@@ -71952,6 +72972,16 @@ namespace SceneFile
 		void Object(const char* key, Function&& function)
 		{
 			if (m_Mode == Mode::Hash) { HashString(key); function(*this); return; }
+			if (m_Mode == Mode::Stream)
+			{
+				StreamKey(key);
+				m_Out->push_back('{');
+				Archive sub(*m_Out);
+				sub.EntityMap = EntityMap;
+				function(sub);
+				m_Out->push_back('}');
+				return;
+			}
 			if (m_Mode == Mode::Write)
 			{
 				Json::Value child(Json::objectValue);
@@ -71977,6 +73007,11 @@ namespace SceneFile
 				uint64_t count = items.size();
 				HashBytes(&count, sizeof(count));
 				for (auto& item : items) function(*this, item);
+				return;
+			}
+			if (m_Mode == Mode::Stream)
+			{
+				StreamList(key, items.begin(), items.end(), function, EntityMap);
 				return;
 			}
 			if (m_Mode == Mode::Write)
@@ -72011,6 +73046,11 @@ namespace SceneFile
 		void FixedArray(const char* key, T (&items)[N], Function&& function)
 		{
 			if (m_Mode == Mode::Hash) { for (auto& item : items) function(*this, item); return; }
+			if (m_Mode == Mode::Stream)
+			{
+				StreamList(key, std::begin(items), std::end(items), function, nullptr);
+				return;
+			}
 			if (m_Mode == Mode::Write)
 			{
 				Json::Value list(Json::arrayValue);
@@ -72052,6 +73092,134 @@ namespace SceneFile
 		Mode m_Mode;
 		Json::Value* m_Node = nullptr;
 		uint64_t* m_Hash = nullptr;
+		std::string* m_Out = nullptr;
+		bool m_HasField = false; // Stream：このオブジェクトに 1 つ以上書いたか（',' の要否）
+
+		// ---- Stream（直接書き出し）
+		template<typename Iterator, typename Function>
+		void StreamList(const char* key, Iterator first, Iterator last, Function& function,
+			const std::unordered_map<EntityID, EntityID>* map)
+		{
+			StreamKey(key);
+			m_Out->push_back('[');
+			bool firstItem = true;
+			for (auto it = first; it != last; ++it)
+			{
+				if (!firstItem) m_Out->push_back(',');
+				firstItem = false;
+				m_Out->push_back('{');
+				Archive sub(*m_Out);
+				sub.EntityMap = map;
+				function(sub, *it);
+				m_Out->push_back('}');
+			}
+			m_Out->push_back(']');
+		}
+
+		void StreamKey(const char* key)
+		{
+			if (m_HasField) m_Out->push_back(',');
+			m_HasField = true;
+			StreamString(key);
+			m_Out->push_back(':');
+		}
+
+		void StreamString(const char* text, size_t length)
+		{
+			std::string& out = *m_Out;
+			out.push_back('"');
+			for (size_t i = 0; i < length; ++i)
+			{
+				const unsigned char c = static_cast<unsigned char>(text[i]);
+				switch (c)
+				{
+				case '"': out.append("\\\""); break;
+				case '\\': out.append("\\\\"); break;
+				case '\n': out.append("\\n"); break;
+				case '\r': out.append("\\r"); break;
+				case '\t': out.append("\\t"); break;
+				default:
+					if (c < 0x20)
+					{
+						char buffer[8];
+						const int written = snprintf(buffer, sizeof(buffer), "\\u%04x", c);
+						out.append(buffer, static_cast<size_t>(written));
+					}
+					else out.push_back(static_cast<char>(c)); // UTF-8 はそのまま
+				}
+			}
+			out.push_back('"');
+		}
+		void StreamString(const char* text) { StreamString(text, std::strlen(text)); }
+		void StreamString(const std::string& text) { StreamString(text.data(), text.size()); }
+
+		void StreamInteger(uint64_t value)
+		{
+			char buffer[32];
+			const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+			m_Out->append(buffer, result.ptr);
+		}
+		void StreamInteger(int64_t value)
+		{
+			char buffer[32];
+			const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+			m_Out->append(buffer, result.ptr);
+		}
+		void StreamFloat(double value)
+		{
+			if (!std::isfinite(value)) { m_Out->push_back('0'); return; }
+			// 最短の往復表現（float は float として最短。読み込み時に同じ値に戻る）
+			char buffer[64];
+			const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+			m_Out->append(buffer, result.ptr);
+		}
+		void StreamFloat(float value)
+		{
+			if (!std::isfinite(value)) { m_Out->push_back('0'); return; }
+			char buffer[64];
+			const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+			m_Out->append(buffer, result.ptr);
+		}
+
+		template<typename T>
+		void StreamValue(const T& value)
+		{
+			if constexpr (std::is_same_v<T, bool>) m_Out->append(value ? "true" : "false");
+			else if constexpr (std::is_same_v<T, std::string>) StreamString(value);
+			else if constexpr (std::is_enum_v<T>) StreamInteger(static_cast<int64_t>(value));
+			else if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>) StreamFloat(value);
+			else if constexpr (std::is_same_v<T, uint64_t>) StreamString(FormatAssetHandle(value));
+			else if constexpr (std::is_integral_v<T> && std::is_signed_v<T>) StreamInteger(static_cast<int64_t>(value));
+			else if constexpr (std::is_integral_v<T>) StreamInteger(static_cast<uint64_t>(value));
+			else if constexpr (std::is_same_v<T, XMFLOAT2>) StreamFloats({ value.x, value.y });
+			else if constexpr (std::is_same_v<T, XMFLOAT3>) StreamFloats({ value.x, value.y, value.z });
+			else if constexpr (std::is_same_v<T, XMFLOAT4>) StreamFloats({ value.x, value.y, value.z, value.w });
+			else if constexpr (std::is_same_v<T, std::vector<AssetHandle>>)
+			{
+				m_Out->push_back('[');
+				for (size_t i = 0; i < value.size(); ++i) { if (i) m_Out->push_back(','); StreamString(FormatAssetHandle(value[i])); }
+				m_Out->push_back(']');
+			}
+			else if constexpr (is_std_array<T>::value || std::is_same_v<T, std::vector<std::string>> ||
+				std::is_same_v<T, std::vector<float>> || is_enum_vector<T>::value)
+			{
+				m_Out->push_back('[');
+				bool first = true;
+				for (const auto& item : value) { if (!first) m_Out->push_back(','); first = false; StreamValue(item); }
+				m_Out->push_back(']');
+			}
+			else
+			{
+				static_assert(sizeof(T) == 0, "unsupported scene field type");
+			}
+		}
+		void StreamFloats(std::initializer_list<float> values)
+		{
+			m_Out->push_back('[');
+			bool first = true;
+			for (float v : values) { if (!first) m_Out->push_back(','); first = false; StreamFloat(v); }
+			m_Out->push_back(']');
+		}
 
 		EntityID Map(EntityID entity) const
 		{
@@ -72539,6 +73707,7 @@ namespace SceneFile
 		a.Object(key, [&](Archive& s) { present = true; Visit(s, component); });
 	}
 }
+
 
 
 
@@ -73288,8 +74457,15 @@ void CameraSystem::Update()
 		}
 		else if (RendererState::m_AntiAliasingMode == AntiAliasingMode::TAA)
 		{
-			float haltonX = Halton(RendererState::m_TaaFrameIndex, 2);
-			float haltonY = Halton(RendererState::m_TaaFrameIndex, 3);
+			// ジッター列の長さを内部解像度に合わせる（DLSS の推奨と同じ 8 × 拡大率²）。
+			// 低い内部解像度では 1 出力ピクセルを埋めるのに多くの位相が必要で、短い列だと遠景が埋まらずちらつく。
+			// フレーム番号をそのまま使うと、0 番（ジッター 0）が混ざったり位相の偏りが続いたりするので 1 からの周期にする
+			const float upscale = (std::max)(1.0f,
+				static_cast<float>(GraphicsDevice::GetWidth()) / (std::max)(static_cast<float>(GraphicsDevice::GetSceneWidth()), 1.0f));
+			const UINT phaseCount = static_cast<UINT>(std::clamp(8.0f * upscale * upscale, 8.0f, 128.0f));
+			const int phase = static_cast<int>(RendererState::m_TaaFrameIndex % phaseCount) + 1;
+			float haltonX = Halton(phase, 2);
+			float haltonY = Halton(phase, 3);
 
 			float jitterX = (haltonX - 0.5f) * 2.0f /
 				max((float)GraphicsDevice::GetSceneWidth(), 1.0f);
@@ -73305,6 +74481,7 @@ void CameraSystem::Update()
 	}
 	previousActiveCamera = activeCamera;
 }
+
 
 ===== FILE: source\systems\camerasystem.h =====
 #pragma once
@@ -73748,21 +74925,7 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 	auto aabbEntities = World::GetView<AABBComponent>();
 	auto obbEntities = World::GetView<OBBComponent>();
-	unordered_map<EntityID, TransformComponent*> transformMap;
-	unordered_set<EntityID> meshEntitiesSet;
-
-	auto transformEntities = World::GetView<TransformComponent>();
-	for (EntityID i : transformEntities)
-	{
-		transformMap.emplace(i, &ComponentManager::GetComponent<TransformComponent>(i));
-	}
-
-	auto meshEntities = World::GetView<MeshComponent>();
-	for (EntityID i : meshEntities)
-	{
-		meshEntitiesSet.insert(i);
-	}
-
+	// 負荷削減：毎フレーム全エンティティの表を作らず、必要な物だけ直接引く
 	auto lightEntities = World::GetView<LightComponent, TransformComponent>();
 	if (aabbEntities.empty() && obbEntities.empty() && lightEntities.empty())
 	{
@@ -73784,10 +74947,9 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		}
 
 		XMMATRIX world = XMMatrixIdentity();
-		auto transformIt = transformMap.find(i);
-		if (transformIt != transformMap.end())
+		if (ComponentManager::HasComponent<TransformComponent>(i))
 		{
-			world = XMLoadFloat4x4(&transformIt->second->WorldMatrix);
+			world = XMLoadFloat4x4(&ComponentManager::GetComponentUnchecked<TransformComponent>(i).WorldMatrix);
 		}
 
 		ConstantBuffer3D cb{};
@@ -73808,7 +74970,7 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			{ c.x + e.x, c.y + e.y, c.z + e.z }, { c.x - e.x, c.y + e.y, c.z + e.z }
 		};
 
-		if (meshEntitiesSet.count(i) > 0)
+		if (ComponentManager::HasComponent<MeshComponent>(i))
 		{
 			pCommandList->SetPipelineState(solidPso);
 			ScenePasses::BeginModelPass();
@@ -73880,10 +75042,9 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		const auto& obb = ComponentManager::GetComponent<OBBComponent>(i);
 
 		XMMATRIX world = XMMatrixIdentity();
-		auto transformIt = transformMap.find(i);
-		if (transformIt != transformMap.end())
+		if (ComponentManager::HasComponent<TransformComponent>(i))
 		{
-			world = XMLoadFloat4x4(&transformIt->second->WorldMatrix);
+			world = XMLoadFloat4x4(&ComponentManager::GetComponentUnchecked<TransformComponent>(i).WorldMatrix);
 		}
 
 		ConstantBuffer3D cb{};
@@ -73904,7 +75065,7 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			{ c.x + e.x, c.y + e.y, c.z + e.z }, { c.x - e.x, c.y + e.y, c.z + e.z }
 		};
 
-		if (meshEntitiesSet.count(i) > 0)
+		if (ComponentManager::HasComponent<MeshComponent>(i))
 		{
 			pCommandList->SetPipelineState(solidPso);
 			ScenePasses::BeginModelPass();
@@ -73999,6 +75160,7 @@ void DebugSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		SubmitDebugLines(pCommandList, lightLines);
 	}
 }
+
 
 
 
@@ -78791,6 +79953,11 @@ public:
 #include "renderconfiguration.h"
 #include "gpudriven/gpudrivenrenderer.h"
 #include "meshshader/meshshaderrenderer.h"
+#include "cpuculling.h"
+#include "renderprofiler.h"
+#include <optional>
+#include <chrono>
+#include "graphicslog.h"
 
 
 	static const MaterialComponent& DefaultMaterial()
@@ -78934,6 +80101,8 @@ public:
 	}
 
 
+static UINT s_MeshShaderDraws = 0;
+
 void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
 	const bool occlusionPhaseTwo = renderPass == RenderPass::OcclusionPhase2;
@@ -79028,9 +80197,19 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		auto draw = [&](EntityID entity, const D3D12_VERTEX_BUFFER_VIEW& vbv, UINT vertexCount)
 			{
 				if (!ComponentManager::HasComponent<TransformComponent>(entity) || vbv.BufferLocation == 0) return;
+				const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+				// 負荷削減：動いていない物は全画面のカメラ Velocity と同じ値になるので描かない
+				//（安い判定を先に。マテリアル解決・インスタンシング判定は残った物だけ）
+				if (RenderCulling::GetSettings().StaticVelocitySkip && transform.HasPreviousWorld &&
+					memcmp(&transform.WorldMatrix, &transform.PreviousWorldMatrix, sizeof(transform.WorldMatrix)) == 0 &&
+					!VertexDeformation::IsRequested(entity))
+				{
+					++RenderCulling::MutableStats().VelocitySkipped;
+					return;
+				}
+				if (!RenderCulling::IsEntityVisible(entity)) return;
 				if (MaterialSystem::IsTransparent(entity)) return;
 				if (InstancingSystem::CanInstance(entity) && !InstancingSystem::IsEntityVisible(entity)) return;
-				const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
 				ConstantBuffer3D cb{};
 				cb.World = XMMatrixTranspose(XMLoadFloat4x4(&transform.WorldMatrix));
 				cb.View = XMMatrixTranspose(view);
@@ -79082,6 +80261,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	}
 
 	ScenePasses::BeginSpritePass();
+	// 内訳の計測：収集（マテリアル解決・PSO 検索・定数書き込み）と提出（コマンド記録）
+	std::optional<RenderProfiler::ScopedEvent> collectProfile;
+	collectProfile.emplace(drawDeferredOpaque ? "RenderSystem: Collect (opaque)" : "RenderSystem: Collect", pCommandList);
 
 	UINT8* pCbvDataBegin = FrameConstants::GetConstantBufferPtr();
 	if (!pCbvDataBegin)
@@ -79106,6 +80288,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 	const XMMATRIX transposedProj = XMMatrixTranspose(projMat);
 	const float sceneAspectRatio = GraphicsDevice::GetSceneAspectRatio();
 	const int defaultTextureIndex = TextureManager::GetDefaultTextureIndex();
+	XMFLOAT3 cameraPosition = { 0.0f, 0.0f, 5.0f };
+	if (Registry::HasComponent(Camera::GetCameraEntity(), ComponentType::TRANSFORM))
+		cameraPosition = ComponentManager::GetComponentUnchecked<TransformComponent>(Camera::GetCameraEntity()).Position;
 	const int defaultNormalIndex = TextureManager::GetDefaultTextureIndex();
 
 	for (EntityID i : spriteEntities)
@@ -79145,8 +80330,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					continue;
 				}
 				if (InstancingSystem::CanInstance(i)) continue;
+				// 負荷削減：視錐台・画面サイズのカリング（ルートの再設定は描画の直前に 1 回だけ）
+				if (!RenderCulling::IsEntityVisible(i)) continue;
 
-				ScenePasses::BeginModelPass();
 				ShaderDescription psoResource{};
 				psoResource.vsPath = GetSpriteVsPath(i, true);
 				psoResource.psPath = GetSpritePsPath(i, true);
@@ -79185,15 +80371,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				cb3D.UseTexture = 0;
 
 
-				EntityID cameraEntity = Camera::GetCameraEntity();
-				if (Registry::HasComponent(cameraEntity, ComponentType::TRANSFORM))
-				{
-					cb3D.CameraPos = ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
-				}
-				else
-				{
-					cb3D.CameraPos = { 0.0f, 0.0f, 5.0f };
-				}
+				cb3D.CameraPos = cameraPosition;
 
 				int srvIndex = defaultTextureIndex;
 				int normalSrvIndex = defaultNormalIndex;
@@ -79238,7 +80416,6 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 				continue;
 			}
 
-			ScenePasses::BeginSpritePass();
 			ShaderDescription psoResource{};
 			psoResource.vsPath = GetSpriteVsPath(i, false);
 			psoResource.psPath = GetSpritePsPath(i, false);
@@ -79348,6 +80525,8 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			continue;
 		}
 		if (InstancingSystem::CanInstance(i)) continue;
+		// 負荷削減：視錐台・画面サイズのカリング
+		if (!RenderCulling::IsEntityVisible(i)) continue;
 
 		bool isReceiving = MaterialSystem::IsReceivingPostProcess(i);
 		const MaterialComponent* material;
@@ -79369,7 +80548,6 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 			continue;
 		}
 
-		ScenePasses::BeginModelPass();
 		ShaderDescription psoResource{};
 		psoResource.vsPath = GetMeshVsPath(i);
 		psoResource.psPath = GetMeshPsPath(i);
@@ -79402,15 +80580,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		cb3D.Projection = transposedProj;
 		cb3D.UseTexture = 0;
 
-		EntityID cameraEntity = Camera::GetCameraEntity();
-		if (Registry::HasComponent(cameraEntity, ComponentType::TRANSFORM))
-		{
-			cb3D.CameraPos = ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
-		}
-		else
-		{
-			cb3D.CameraPos = { 0.0f, 0.0f, 5.0f };
-		}
+		cb3D.CameraPos = cameraPosition;
 
 		int srvIndex = defaultTextureIndex;
 		int normalSrvIndex = defaultNormalIndex;
@@ -79488,6 +80658,8 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
 	sortDrawCalls(m_SpriteDrawCalls);
 	sortDrawCalls(m_ModelDrawCalls);
+	collectProfile.reset();
+	RenderProfiler::ScopedEvent submitProfile(drawDeferredOpaque ? "RenderSystem: Submit (opaque)" : "RenderSystem: Submit", pCommandList);
 
 	auto heapStart = pCbvHeap->GetGPUDescriptorHandleForHeapStart();
 
@@ -79555,6 +80727,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 					XMFLOAT3 center = mesh.LocalBoundsCenter, extents = mesh.LocalBoundsExtents;
 					VertexDeformation::TryGetLocalBounds(dc.EntityID, center, extents);
 					meshShaderDrawn = MeshShaderPipeline::Draw(pCommandList, geometry, center, extents);
+					++s_MeshShaderDraws;
 				}
 				if (meshShaderDrawn) lastPso = nullptr;
 				else if (!occlusionPhaseTwo) pCommandList->DrawInstanced(dc.vertexCount, 1, 0, 0);
@@ -79580,7 +80753,17 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 		ScenePasses::BeginModelPass();
 		submitDrawCalls(m_ModelDrawCalls);
 	}
+	// 何件がこの CPU 経路に来ているか（GPU 駆動が受け持てていない物の数）。ログに 1 秒ごと
+	static auto lastLog = chrono::steady_clock::now();
+	if (drawDeferredOpaque && chrono::steady_clock::now() - lastLog > chrono::seconds(1))
+	{
+		lastLog = chrono::steady_clock::now();
+		WriteGraphicsLog("RenderSystem(CPU path): sprites=%zu models=%zu meshShaderDraws=%u gpuDriven=%d\n",
+			m_SpriteDrawCalls.size(), m_ModelDrawCalls.size(), s_MeshShaderDraws, GPUDrivenRenderer::IsActive() ? 1 : 0);
+	}
+	s_MeshShaderDraws = 0;
 }
+
 
 ===== FILE: source\systems\rendersystem.h =====
 #pragma once
@@ -79646,6 +80829,9 @@ public:
 ===== FILE: source\systems\systemmanager.cpp =====
 #include "pch.h"
 #include "systemmanager.h"
+#include "renderprofiler.h"
+#include "graphicsdevice.h"
+#include <typeinfo>
 #include "framepipeline.h"
 #include "componentmanager.h"
 #include "world.h"
@@ -79777,6 +80963,7 @@ void SystemManager::RenderFlow()
 {
 	FramePipeline::Execute();
 }
+
 
 ===== FILE: source\systems\systemmanager.h =====
 #pragma once
@@ -97268,6 +98455,8 @@ void ATrous(uint3 dispatch : SV_DispatchThreadID)
 //   4. FineCull       : 細セル（1 タイル × 1 スライス）ごとに粗リストだけを判定 → 細リスト
 //   ・ジオメトリが無いセルは判定しない（深度による 2.5D カリング）
 //   ・セル内のライトはインデックス昇順（並びが決定論的になり、加算順も毎フレーム同じ）
+//   ・ライトのオクルージョン：不透明面がある細セルに入ったライトを LightVisibleBits に立てる（CPU が読み戻して、
+//     見えている面に届かないライトをシャドウマップ・定数バッファの割り当てから外す）
 //   実行時に DXC（cs_6_5）でコンパイルする。.vcxproj への追加は不要。
 // =============================================================================================
 #define MEGALIGHTS_CB_REGISTER b0
@@ -97279,31 +98468,38 @@ void ATrous(uint3 dispatch : SV_DispatchThreadID)
 Texture2D<float> SceneDepth : register(t0);
 StructuredBuffer<MegaLightData> Lights : register(t1);
 
-RWStructuredBuffer<uint>  TileSliceMasks : register(u0);
+RWStructuredBuffer<uint2> TileSliceMasks : register(u0); // x: 判定するスライス（フォグ・半透明用に手前も含む）, y: 不透明面のあるスライス
 RWStructuredBuffer<uint2> CoarseCells    : register(u1);
 RWStructuredBuffer<uint>  CoarseIndices  : register(u2);
 RWStructuredBuffer<uint2> FineCells      : register(u3);
 RWStructuredBuffer<uint>  FineIndices    : register(u4);
 RWByteAddressBuffer       Counters       : register(u5); // 0: 粗の使用数, 4: 細の使用数, 8: あふれたセル数, 12: セル内の最大ライト数
+RWByteAddressBuffer       LightVisibleBits : register(u6); // 4096 bit：見えている不透明面に届くライト
 
 uint CoarseCellIndex(uint3 coarse)
 {
     return (coarse.z * MLScreen.w + coarse.y) * MLScreen.z + coarse.x;
 }
 
-[numthreads(1, 1, 1)]
-void ClearCounters()
+[numthreads(128, 1, 1)]
+void ClearCounters(uint groupIndex : SV_GroupIndex)
 {
-    Counters.Store4(0, uint4(0u, 0u, 0u, 0u));
+    if (groupIndex == 0u) Counters.Store4(0, uint4(0u, 0u, 0u, 0u));
+    LightVisibleBits.Store(groupIndex * 4u, 0u);
 }
 
 // --------------------------------------------------------------------------------------------
 groupshared uint gs_TileMask;
+groupshared uint gs_GeometryMask;
 
 [numthreads(16, 16, 1)]
 void TileSliceMask(uint3 groupId : SV_GroupID, uint3 pixel : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 {
-    if (groupIndex == 0u) gs_TileMask = 0u;
+    if (groupIndex == 0u)
+    {
+        gs_TileMask = 0u;
+        gs_GeometryMask = 0u;
+    }
     GroupMemoryBarrierWithGroupSync();
     const bool volumetric = (MLGrid.w & ML_GRID_VOLUMETRIC) != 0u;
     if (all(pixel.xy < MLScreen.xy))
@@ -97323,6 +98519,7 @@ void TileSliceMask(uint3 groupId : SV_GroupID, uint3 pixel : SV_DispatchThreadID
             uint sliceHigh = MLSliceFromViewZ(viewZ * 1.001f);
             uint first = min(slice, sliceLow);
             uint last = max(slice, sliceHigh);
+            InterlockedOr(gs_GeometryMask, ((2u << (last - first)) - 1u) << first);
             // M6（フォグ用）：カメラから面までのスライスはすべてフォグとして見える
             if (volumetric) first = 0u;
             uint bits = last >= 31u && first == 0u ? 0xffffffffu : ((2u << (last - first)) - 1u) << first;
@@ -97330,7 +98527,7 @@ void TileSliceMask(uint3 groupId : SV_GroupID, uint3 pixel : SV_DispatchThreadID
         }
     }
     GroupMemoryBarrierWithGroupSync();
-    if (groupIndex == 0u) TileSliceMasks[groupId.y * MLGrid.x + groupId.x] = gs_TileMask;
+    if (groupIndex == 0u) TileSliceMasks[groupId.y * MLGrid.x + groupId.x] = uint2(gs_TileMask, gs_GeometryMask);
 }
 
 // --------------------------------------------------------------------------------------------
@@ -97352,7 +98549,7 @@ void CoarseCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
     if (groupIndex < ML_COARSE_TILES * ML_COARSE_TILES)
     {
         uint2 tile = coarse.xy * ML_COARSE_TILES + uint2(groupIndex % ML_COARSE_TILES, groupIndex / ML_COARSE_TILES);
-        if (all(tile < MLGrid.xy)) InterlockedOr(gs_CoarseMask, TileSliceMasks[tile.y * MLGrid.x + tile.x]);
+        if (all(tile < MLGrid.xy)) InterlockedOr(gs_CoarseMask, TileSliceMasks[tile.y * MLGrid.x + tile.x].x);
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -97431,6 +98628,7 @@ void CoarseCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
 // 粗セル 1 つ = 4x4 タイル × 4 スライス = 64 細セル = 64 スレッド
 groupshared float4 gs_Spheres[ML_FINE_CHUNK];
 groupshared uint gs_Ids[ML_FINE_CHUNK];
+groupshared uint gs_Visible[ML_MAX_LIGHTS / 32u];
 
 [numthreads(64, 1, 1)]
 void FineCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
@@ -97439,11 +98637,16 @@ void FineCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
     const uint2 tile = coarse.xy * ML_COARSE_TILES + uint2(groupIndex % ML_COARSE_TILES, (groupIndex / ML_COARSE_TILES) % ML_COARSE_TILES);
     const uint slice = coarse.z * ML_COARSE_SLICES + groupIndex / (ML_COARSE_TILES * ML_COARSE_TILES);
     const bool valid = all(tile < MLGrid.xy) && slice < MLGrid.z;
+    for (uint clearWord = groupIndex; clearWord < ML_MAX_LIGHTS / 32u; clearWord += 64u) gs_Visible[clearWord] = 0u;
     bool occupied = false;
+    bool geometry = false;
     if (valid && coarseCell.y > 0u)
     {
-        occupied = ((TileSliceMasks[tile.y * MLGrid.x + tile.x] >> slice) & 1u) != 0u;
+        const uint2 masks = TileSliceMasks[tile.y * MLGrid.x + tile.x];
+        occupied = ((masks.x >> slice) & 1u) != 0u;
+        geometry = ((masks.y >> slice) & 1u) != 0u;
     }
+    GroupMemoryBarrierWithGroupSync();
     float3 boundsMin = 0.0f;
     float3 boundsMax = 0.0f;
     if (occupied) MLCellBounds(tile, tile, slice, slice, boundsMin, boundsMax);
@@ -97464,7 +98667,9 @@ void FineCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
         {
             for (uint k = 0u; k < chunk; ++k)
             {
-                count += MLSphereIntersectsAabb(gs_Spheres[k], boundsMin, boundsMax) ? 1u : 0u;
+                if (!MLSphereIntersectsAabb(gs_Spheres[k], boundsMin, boundsMax)) continue;
+                ++count;
+                if (geometry) InterlockedOr(gs_Visible[gs_Ids[k] >> 5u], 1u << (gs_Ids[k] & 31u));
             }
         }
         GroupMemoryBarrierWithGroupSync();
@@ -97509,7 +98714,15 @@ void FineCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
     }
 
     if (valid) FineCells[MLCellIndex(tile, slice)] = uint2(offset, stored);
+    // このグループで見えたライトをまとめて書き出す（アトミックは語ごとに 1 回）
+    GroupMemoryBarrierWithGroupSync();
+    for (uint word = groupIndex; word < ML_MAX_LIGHTS / 32u; word += 64u)
+    {
+        const uint bits = gs_Visible[word];
+        if (bits != 0u) LightVisibleBits.InterlockedOr(word * 4u, bits);
+    }
 }
+
 
 ===== FILE: shader\hlsl\MegaLightsNrdCS.hlsl =====
 // =============================================================================================
@@ -99796,7 +101009,7 @@ cbuffer ReflectionConstants : register(b6)
     float4 GiParameters; // distance, intensity, checkerboard enabled, emissive mesh count
     float4 CacheParameters; // enabled, base cell size (m), capacity, max history frames
     float4 ReSTIRParameters; // enabled, max temporal M, spatial sample count, spatial radius (px)
-    uint4 ReSTIRState;       // history valid, reservoir width (traced columns), spatial visibility, -
+    uint4 ReSTIRState;       // history valid, reservoir width (traced columns), spatial visibility, 反射レイの粗さ上限 × 1000
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -100172,6 +101385,12 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
         }
         return radiance;
     }
+    float shadowRandom = ((ReflectionHash(randomSeed ^ 0x5bd1e995u) >> 8) + 0.5f) / 16777216.0f;
+    float shadowTotalWeight = 0;
+    float shadowSelectedWeight = 0;
+    float3 shadowSelectedContribution = 0;
+    float3 shadowSelectedDirection = 0;
+    float shadowSelectedRange = 0;
     [loop] for (int i = 0; i < count; ++i)
     {
         ReflectionLight light = ReflectionLights[i];
@@ -100194,14 +101413,35 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
         float3 contribution = response * light.Color.rgb * max(light.Color.a, 0) * cosine * attenuation;
         // Same result, but no shadow ray for lights that cannot change the pixel.
         if (all(contribution < 0.000001f)) continue;
-        float shadow = 1;
-        if (light.Flags.x != 0)
+        if (light.Flags.x == 0)
         {
-            float range = light.PositionType.w < 0.5f ? SceneRayParameters.x :
-                min(length(light.PositionType.xyz - position), SceneRayParameters.x);
-            shadow = TraceSceneShadow(position, normal, direction, range);
+            radiance += contribution; // 影を落とさないライトはそのまま足す（レイ不要）
+            continue;
         }
-        radiance += contribution * shadow;
+        // 負荷削減：影を落とすライトは「寄与に比例して 1 灯選び、影のレイは 1 本だけ」（重み付きリザーバー、不偏）。
+        // 以前はライトごとに影のレイを飛ばしていたので、ライトが多いと反射のコストがライト数に比例していた
+        float weight = dot(contribution, float3(0.2126f, 0.7152f, 0.0722f));
+        if (weight <= 0.0000001f) continue;
+        shadowTotalWeight += weight;
+        float probability = weight / shadowTotalWeight;
+        if (shadowRandom < probability)
+        {
+            shadowRandom /= probability;
+            shadowSelectedWeight = weight;
+            shadowSelectedContribution = contribution;
+            shadowSelectedDirection = direction;
+            shadowSelectedRange = light.PositionType.w < 0.5f ? SceneRayParameters.x :
+                min(length(light.PositionType.xyz - position), SceneRayParameters.x);
+        }
+        else
+        {
+            shadowRandom = (shadowRandom - probability) / max(1 - probability, 0.000001f);
+        }
+    }
+    if (shadowSelectedWeight > 0)
+    {
+        float shadow = TraceSceneShadow(position, normal, shadowSelectedDirection, shadowSelectedRange);
+        radiance += shadowSelectedContribution * (shadow * shadowTotalWeight / shadowSelectedWeight);
     }
     return radiance;
 }
@@ -100217,12 +101457,26 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
+    // 負荷削減：NRD がある場合は半分のピクセル（チェッカーボード）だけトレースし、NRD が残りを復元する
+    //（GI の TraceDiffuse と同じ詰め方：トレースしたピクセルを (x >> 1, y) に格納。NRD の CheckerboardMode::BLACK）
+    uint2 storage = id.xy;
     uint2 pixel = id.xy;
-    if (any(pixel >= ReflectionExtent.xy)) return;
+    const bool checkerboard = (ReSTIRState.w & 0x10000u) != 0u;
+    if (checkerboard)
+    {
+        pixel.x = 2 * pixel.x + ((pixel.y + ReflectionExtent.z) & 1u);
+        if (storage.y >= ReflectionExtent.y || storage.x >= (ReflectionExtent.x + 1) / 2) return;
+        if (pixel.x >= ReflectionExtent.x)
+        {
+            NoisyRadiance[storage] = 0;
+            return;
+        }
+    }
+    else if (any(pixel >= ReflectionExtent.xy)) return;
     float depth = ReflectionDepth.Load(int3(pixel, 0));
     if (depth >= 0.99999f)
     {
-        NoisyRadiance[pixel] = 0;
+        NoisyRadiance[storage] = 0;
         ReflectionRadiance[pixel] = 0;
         return;
     }
@@ -100234,6 +101488,21 @@ void main(uint3 id : SV_DispatchThreadID)
     float roughness = clamp(ReflectionMaterial.Load(int3(pixel, 0)).y, 0.02f, 1);
     uint seed = ReflectionHash(pixel.x + pixel.y * ReflectionExtent.x + ReflectionExtent.z * 104729u);
     float2 random = float2((seed & 0xffff) + 0.5f, (seed >> 16) + 0.5f) / 65536;
+    // 負荷削減：粗い面は反射レイを飛ばさず空（環境）で近似する（ローブが広く、レイ 1 本ではほぼノイズにしかならない）
+    const float roughnessCutoff = (ReSTIRState.w & 0xffffu) / 1000.0f;
+    if (roughnessCutoff < 0.999f && roughness > roughnessCutoff)
+    {
+        float3 skyRadiance = EvaluatePhysicalSkyFast(reflect(-view, normal), max(0.001f, roughness * 0.02f));
+        ReflectionRadiance[pixel] = float4(skyRadiance, 0);
+#if USE_NRD
+        float viewZCut = abs(mul(float4(position, 1), ReflectionView).z);
+        NoisyRadiance[storage] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(skyRadiance,
+            REBLUR_FrontEnd_GetNormHitDist(65504, viewZCut, float3(3, 0.1f, 20), roughness), true);
+#else
+        NoisyRadiance[storage] = float4(skyRadiance, 65504);
+#endif
+        return;
+    }
     float alpha = roughness * roughness;
     float3 halfVector = SampleVisibleGgx(view, normal, roughness, random);
     float3 direction = reflect(-view, halfVector);
@@ -100254,7 +101523,7 @@ void main(uint3 id : SV_DispatchThreadID)
         hit = query.CommittedStatus() != COMMITTED_NOTHING;
         hitDistance = hit ? query.CommittedRayT() : 65504;
         radiance = hit ? ShadeReflectionHit(query.CommittedInstanceID(), query.CommittedPrimitiveIndex(),
-            query.CommittedTriangleBarycentrics(), ray.Origin + direction * hitDistance, direction) :
+            query.CommittedTriangleBarycentrics(), ray.Origin + direction * hitDistance, direction, false, seed * 7919u + 17u) :
             EvaluatePhysicalSky(direction, max(0.001f, roughness * 0.02f));
         // Smith masking and the bounded-lobe probability after dividing by the sampling density.
         float masking = 2 * nDotL / (nDotL + sqrt(alpha * alpha + (1 - alpha * alpha) * nDotL * nDotL));
@@ -100273,9 +101542,9 @@ void main(uint3 id : SV_DispatchThreadID)
 #if USE_NRD
     float viewZ = abs(mul(float4(position, 1), ReflectionView).z);
     float normalizedDistance = REBLUR_FrontEnd_GetNormHitDist(hitDistance, viewZ, float3(3, 0.1f, 20), roughness);
-    NoisyRadiance[pixel] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(radiance, normalizedDistance, true);
+    NoisyRadiance[storage] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(radiance, normalizedDistance, true);
 #else
-    NoisyRadiance[pixel] = float4(radiance, hitDistance);
+    NoisyRadiance[storage] = float4(radiance, hitDistance);
 #endif
 }
 
@@ -100754,6 +102023,8 @@ void ReSTIRSpatial(uint3 id : SV_DispatchThreadID)
     NoisyRadiance[storage] = float4(irradiance, hitDistance);
 #endif
 }
+
+
 
 
 ===== FILE: shader\hlsl\RaytracingCS.hlsl =====
@@ -103352,6 +104623,16 @@ float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv,
 #define SHADER_POSTPROCESS
 #include "common.hlsl"
 
+// =============================================================================================
+// TAA（ちらつき対策版）
+//   ・動きベクトルは 3x3 で最も手前の深度のピクセルのものを使う（細い物・輪郭の取りこぼしによる履歴の引きずり防止）
+//   ・履歴は Catmull-Rom（5 タップ）で読む（双線形で読むたびに履歴がぼけ、ぼけを補うシャープ処理でちらつく、の悪循環を断つ）
+//   ・近傍は YCoCg の平均 ± γσ（分散クリップ）。min/max の箱でクランプすると、遠くの 1px 未満の物が
+//     ジッターのたびに箱の外へ出て履歴が捨てられ、点滅する。分散クリップは平均へ向けて線分で切るので安定
+//   ・静止していて履歴とよく合うピクセルほど γ を広げ、履歴を長く使う（遠景のちらつき対策の本体）
+//   ・輝度による重み付け（Karis）：明るい 1px が履歴を支配して明滅するのを抑える
+//   定数・ルート引数は従来と同じ
+// =============================================================================================
 Texture2D<float4> CurrentColor : register(t0);
 Texture2D<float4> HistoryColor : register(t1);
 Texture2D<float> DepthBuffer : register(t2);
@@ -103366,44 +104647,124 @@ cbuffer AaConstants : register(b4)
     float HistoryValid;
 };
 
+float3 RgbToYCoCg(float3 c)
+{
+    return float3(0.25f * c.r + 0.5f * c.g + 0.25f * c.b, 0.5f * c.r - 0.5f * c.b, -0.25f * c.r + 0.5f * c.g - 0.25f * c.b);
+}
+
+float3 YCoCgToRgb(float3 c)
+{
+    return float3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z);
+}
+
+// 輝度の逆数で重み付け（HDR の明るい点の支配を抑える）
+float LumaWeight(float3 ycocg)
+{
+    return 1.0f / (1.0f + max(ycocg.x, 0.0f));
+}
+
+// Catmull-Rom を双線形 5 回で（Jimenez 2016）
+float3 SampleHistoryCatmullRom(float2 uv, float2 textureSize)
+{
+    const float2 position = uv * textureSize;
+    const float2 center = floor(position - 0.5f) + 0.5f;
+    const float2 f = position - center;
+    const float2 f2 = f * f;
+    const float2 f3 = f2 * f;
+    const float2 w0 = -0.5f * f3 + f2 - 0.5f * f;
+    const float2 w1 = 1.5f * f3 - 2.5f * f2 + 1.0f;
+    const float2 w2 = -1.5f * f3 + 2.0f * f2 + 0.5f * f;
+    const float2 w3 = 0.5f * f3 - 0.5f * f2;
+    const float2 w12 = w1 + w2;
+    const float2 texel = 1.0f / textureSize;
+    const float2 uv0 = (center - 1.0f) * texel;
+    const float2 uv3 = (center + 2.0f) * texel;
+    const float2 uv12 = (center + w2 / w12) * texel;
+    float3 result = 0.0f;
+    float weight = 0.0f;
+    float w;
+    w = w12.x * w0.y;  result += HistoryColor.SampleLevel(LinearSampler, float2(uv12.x, uv0.y), 0).rgb * w;  weight += w;
+    w = w0.x * w12.y;  result += HistoryColor.SampleLevel(LinearSampler, float2(uv0.x, uv12.y), 0).rgb * w;  weight += w;
+    w = w12.x * w12.y; result += HistoryColor.SampleLevel(LinearSampler, float2(uv12.x, uv12.y), 0).rgb * w; weight += w;
+    w = w3.x * w12.y;  result += HistoryColor.SampleLevel(LinearSampler, float2(uv3.x, uv12.y), 0).rgb * w;  weight += w;
+    w = w12.x * w3.y;  result += HistoryColor.SampleLevel(LinearSampler, float2(uv12.x, uv3.y), 0).rgb * w;  weight += w;
+    return max(result / max(weight, 1.0e-4f), 0.0f);
+}
+
+// 平均へ向かう線分で AABB にクリップ（クランプより色ずれが少ない）
+float3 ClipToAabb(float3 history, float3 center, float3 extents)
+{
+    const float3 offset = history - center;
+    const float3 unit = abs(offset / max(extents, 1.0e-4f));
+    const float maxUnit = max(unit.x, max(unit.y, unit.z));
+    return maxUnit > 1.0f ? center + offset / maxUnit : history;
+}
+
 float4 main(PSInputPostProcess input) : SV_TARGET
 {
-	float2 uv = input.TexCoord;
-	float4 current = CurrentColor.SampleLevel(LinearSampler, uv, 0);
+    const int2 pixel = int2(input.Position.xy);
+    const float2 uv = input.TexCoord;
+    const float2 textureSize = 1.0f / max(RcpFrame, 1.0e-6f);
+    const int2 maxPixel = int2(textureSize) - 1;
 
-    float2 velocity = VelocityBuffer.SampleLevel(LinearSampler, uv, 0).ba;
-    float2 historyUv = uv - velocity;
-    bool historyInBounds = all(historyUv >= 0.0f) && all(historyUv <= 1.0f);
-
-    float3 neighborhoodMin = current.rgb;
-    float3 neighborhoodMax = current.rgb;
+    // ---- 近傍の統計（YCoCg・輝度重み付き）と、最も手前のピクセル
+    const float3 currentRgb = CurrentColor.Load(int3(pixel, 0)).rgb;
+    const float3 current = RgbToYCoCg(currentRgb);
+    float3 moment1 = 0.0f, moment2 = 0.0f;
+    float closestDepth = 2.0f;
+    int2 closestPixel = pixel;
     [unroll]
     for (int y = -1; y <= 1; ++y)
     {
         [unroll]
         for (int x = -1; x <= 1; ++x)
         {
-            float2 sampleUv = saturate(uv + float2(x, y) * RcpFrame);
-			float3 sampleColor = CurrentColor.SampleLevel(LinearSampler, sampleUv, 0).rgb;
-            neighborhoodMin = min(neighborhoodMin, sampleColor);
-            neighborhoodMax = max(neighborhoodMax, sampleColor);
+            const int2 neighbor = clamp(pixel + int2(x, y), int2(0, 0), maxPixel);
+            const float3 sampleColor = RgbToYCoCg(CurrentColor.Load(int3(neighbor, 0)).rgb);
+            moment1 += sampleColor;
+            moment2 += sampleColor * sampleColor;
+            const float depth = DepthBuffer.Load(int3(neighbor, 0));
+            if (depth < closestDepth)
+            {
+                closestDepth = depth;
+                closestPixel = neighbor;
+            }
         }
     }
+    const float3 mean = moment1 / 9.0f;
+    const float3 sigma = sqrt(max(moment2 / 9.0f - mean * mean, 0.0f));
 
-    float3 history = HistoryColor.SampleLevel(LinearSampler, saturate(historyUv), 0).rgb;
-    history = clamp(history, neighborhoodMin, neighborhoodMax);
+    // ---- 履歴
+    const float2 velocity = VelocityBuffer.Load(int3(closestPixel, 0)).ba;
+    const float2 historyUv = uv - velocity;
+    const bool historyInBounds = all(historyUv >= 0.0f) && all(historyUv <= 1.0f);
+    float3 history = RgbToYCoCg(SampleHistoryCatmullRom(historyUv, textureSize));
 
-    float motionPixels = length(velocity / max(RcpFrame, 0.000001f));
-    float motionConfidence = saturate(1.0f - motionPixels / 32.0f);
-    float historyWeight = BlendFactor * motionConfidence;
+    // 動きが小さい（静止に近い）ほど、クリップの幅 γ を広げて履歴を長く保つ
+    const float motionPixels = length(velocity * textureSize);
+    const float stillness = saturate(1.0f - motionPixels / 2.0f);
+    const float gamma = lerp(1.0f, 1.75f, stillness);
+    const float3 boxMin = min(mean - gamma * sigma, current);
+    const float3 boxMax = max(mean + gamma * sigma, current);
+    const float3 clipped = ClipToAabb(history, (boxMin + boxMax) * 0.5f, (boxMax - boxMin) * 0.5f);
+    // クリップで大きく動いた（= 履歴が合っていない）ほど、今のフレームを強く使う
+    const float rejection = saturate(length(clipped - history) / max(clipped.x + 0.05f, 0.05f));
+    history = clipped;
+
+    // ---- 混合率：基本は BlendFactor。静止なら長い履歴（最大 0.96）、速い動きや不一致では短く
+    const float motionConfidence = saturate(1.0f - motionPixels / 32.0f);
+    float historyWeight = lerp(BlendFactor, 0.96f, stillness) * motionConfidence * (1.0f - 0.5f * rejection);
     historyWeight *= HistoryValid * (historyInBounds ? 1.0f : 0.0f);
 
-    float4 result;
-    result.rgb = lerp(current.rgb, history, historyWeight);
-    result.a = 1.0f;
-    return result;
-}
+    // 輝度重み付きで混ぜる（明るい点の明滅を抑える）
+    const float currentWeight = (1.0f - historyWeight) * LumaWeight(current);
+    const float historyWeightL = historyWeight * LumaWeight(history);
+    const float3 resolved = (current * currentWeight + history * historyWeightL) / max(currentWeight + historyWeightL, 1.0e-5f);
 
+    float3 rgb = YCoCgToRgb(resolved);
+    rgb = all(isfinite(rgb)) ? max(rgb, 0.0f) : currentRgb;
+    return float4(rgb, 1.0f);
+}
 
 ===== FILE: shader\hlsl\ToneMapping.hlsli =====
 #ifndef TONE_MAPPING_HLSLI
@@ -104167,26 +105528,77 @@ void Count(uint3 id : SV_DispatchThreadID)
 
 // At most 4096 exact bins by default. One ordered scan creates compact commands
 // without CPU readback or an entry for every empty material in the scene.
-[numthreads(1,1,1)]
-void Prefix()
+// 負荷削減：以前は 1 スレッドで全ビン（約 4097）を順番に処理しており GPU 1.8ms かかっていた。
+// 1 グループ 1024 スレッドの並列スキャン（オフセットとアクティブ数の 2 回）に変更。結果（順序・値）は同じ。
+//   クランプ：「クランプ済みの累積」= min(生の累積, Capacity) なので、生の累積から直接求められる
+#define PREFIX_THREADS 1024
+groupshared uint gs_Scan[PREFIX_THREADS];
+
+uint ExclusiveScan(uint value, uint thread)
 {
-    uint offset = 0, active = 0;
-    for (uint bin = 0; bin <= ExactMaterialBins; ++bin)
+    gs_Scan[thread] = value;
+    GroupMemoryBarrierWithGroupSync();
+    [unroll] for (uint stride = 1; stride < PREFIX_THREADS; stride <<= 1)
     {
-        uint count = min(Bins[bin].y,Capacity-offset);
-        Bins[bin] = uint4(offset,count,0,bin < ExactMaterialBins ? bin : 0xffffffffu);
-        if (count != 0 && active <= ExactMaterialBins)
+        uint add = thread >= stride ? gs_Scan[thread - stride] : 0;
+        GroupMemoryBarrierWithGroupSync();
+        gs_Scan[thread] += add;
+        GroupMemoryBarrierWithGroupSync();
+    }
+    uint inclusive = gs_Scan[thread];
+    GroupMemoryBarrierWithGroupSync();
+    return inclusive - value;
+}
+
+[numthreads(PREFIX_THREADS,1,1)]
+void Prefix(uint thread : SV_GroupIndex)
+{
+    const uint binCount = ExactMaterialBins + 1;
+    const uint perThread = (binCount + PREFIX_THREADS - 1) / PREFIX_THREADS;
+    const uint first = min(thread * perThread, binCount);
+    const uint last = min(first + perThread, binCount);
+
+    // 1) 生の個数の累積
+    uint rawSum = 0;
+    for (uint bin = first; bin < last; ++bin) rawSum += Bins[bin].y;
+    uint rawOffset = ExclusiveScan(rawSum, thread);
+
+    // 2) クランプ済みの個数と、このスレッドのアクティブ（個数 > 0）なビン数
+    uint activeLocal = 0;
+    uint running = rawOffset;
+    for (uint bin2 = first; bin2 < last; ++bin2)
+    {
+        uint count = Bins[bin2].y;
+        uint clamped = min(running + count, Capacity) - min(running, Capacity);
+        activeLocal += clamped != 0 ? 1u : 0u;
+        running += count;
+    }
+    uint activeOffset = ExclusiveScan(activeLocal, thread);
+
+    // 3) 書き込み（以前と同じ並び・同じ値）
+    running = rawOffset;
+    uint active = activeOffset;
+    for (uint bin3 = first; bin3 < last; ++bin3)
+    {
+        uint raw = Bins[bin3].y;
+        uint offset = min(running, Capacity);
+        uint count = min(running + raw, Capacity) - offset;
+        Bins[bin3] = uint4(offset, count, 0, bin3 < ExactMaterialBins ? bin3 : 0xffffffffu);
+        if (count != 0)
         {
-            uint address = active*20;
-            uint x = min(count,65535u);
-            Commands.Store2(address,uint2(offset,count));
-            Commands.Store3(address+8,uint3(x,(count+x-1)/x,1));
+            uint address = active * 20;
+            uint x = min(count, 65535u);
+            Commands.Store2(address, uint2(offset, count));
+            Commands.Store3(address + 8, uint3(x, (count + x - 1) / x, 1));
             ++active;
         }
-        offset += count;
+        running += raw;
     }
-    Counters.Store(0,active);
-    Counters.Store(4,offset);
+    if (thread == PREFIX_THREADS - 1)
+    {
+        Counters.Store(0, active);
+        Counters.Store(4, min(running, Capacity));
+    }
 }
 
 [numthreads(64,1,1)]
@@ -104206,6 +105618,7 @@ void Scatter(uint3 id : SV_DispatchThreadID)
     }
     SortedClusters[destination] = record;
 }
+
 
 
 ===== FILE: shader\hlsl\VirtualGeometryCommon.hlsli =====
