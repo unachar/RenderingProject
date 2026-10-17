@@ -671,6 +671,9 @@
     <ClInclude Include="source\dxccompiler.h">
       <Filter>utils</Filter>
     </ClInclude>
+    <ClInclude Include="source\dxcshadercache.h">
+      <Filter>utils</Filter>
+    </ClInclude>
     <ClInclude Include="source\editor\editorwidgets.h">
       <Filter>editor</Filter>
     </ClInclude>

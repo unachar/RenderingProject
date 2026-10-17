@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include "dxcshadercache.h"
 
 #pragma comment(lib, "dxcompiler.lib")
 
@@ -306,6 +307,16 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
         arguments.push_back(argument.c_str());
     }
 
+    const auto cachePath = DxcShaderCache::CachePath(state.Compiler.Get(), state.IncludeHandler.Get(),
+        sourceBuffer, arguments);
+    vector<char> cachedObject;
+    string cachedDiagnostics;
+    if (DxcShaderCache::Load(cachePath, cachedObject, cachedDiagnostics))
+    {
+        SetDiagnosticBlob(cachedDiagnostics, errorMessages);
+        return CreateLegacyBlob(cachedObject.data(), cachedObject.size(), code);
+    }
+
     ComPtr<IDxcResult> compileResult;
     result = state.Compiler->Compile(
         &sourceBuffer,
@@ -358,5 +369,6 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
         return FAILED(result) ? result : E_FAIL;
     }
 
+    DxcShaderCache::Store(cachePath, object->GetBufferPointer(), object->GetBufferSize(), diagnostics);
     return CreateLegacyBlob(object->GetBufferPointer(), object->GetBufferSize(), code);
 }

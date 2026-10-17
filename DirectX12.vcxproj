@@ -884,6 +884,7 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
   <Import Project="External\slang\Slang.targets" />
   <ItemGroup>
     <ClInclude Include="source\dxccompiler.h" />
+    <ClInclude Include="source\dxcshadercache.h" />
     <ClCompile Include="source\editor\editorassets.cpp" />
     <ClCompile Include="source\editor\editordebugwindows.cpp" />
     <ClCompile Include="source\editor\editorhistory.cpp" />

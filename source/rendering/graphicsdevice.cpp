@@ -495,22 +495,36 @@ if (!ShaderPipelines::CreatePostProcessPipeline()) return false;
 
 	WriteGraphicsLog("Step: SpatialUpscaler::Initialize\n");
 	SpatialUpscaler::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	WriteGraphicsLog("Step: VisibilityBuffer::Initialize\n");
 	VisibilityBuffer::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	WriteGraphicsLog("Step: ScreenSpaceEffects::Initialize\n");
 	ScreenSpaceEffects::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	WriteGraphicsLog("Step: CloudRenderer::Initialize\n");
 	CloudRenderer::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	WriteGraphicsLog("Step: Raytracing::Initialize\n");
 	Raytracing::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	WriteGraphicsLog("Step: AsyncCompute::Initialize\n");
 	AsyncCompute::Initialize(m_Device.Get());
 	PbrLuts::WriteNullDescriptors(m_Device.Get(), m_CbvHeap.Get());
+	WriteGraphicsLog("Step: PbrLuts::Initialize\n");
 	PbrLuts::Initialize(m_Device.Get(), m_CommandQueue.Get(), m_CbvHeap.Get());
+	WriteGraphicsLog("Step: TransparencyEffects::Initialize\n");
 	TransparencyEffects::Initialize(m_Device.Get(), m_CbvHeap.Get());
+	WriteGraphicsLog("Step: AtmosphereLut::Initialize\n");
 	AtmosphereLut::Initialize(m_Device.Get(), m_CbvHeap.Get());
+	WriteGraphicsLog("Step: AdvancedEffects::Initialize\n");
 	if (!AdvancedEffects::Initialize(m_Device.Get(), m_CbvHeap.Get()))
 		WriteGraphicsLog("WARNING: AdvancedEffects unavailable (froxel fog / auto exposure / MB / DOF disabled)\n");
+	WriteGraphicsLog("Step: DlssUpscaler::Initialize\n");
 	DlssUpscaler::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	WriteGraphicsLog("Step: OcclusionCulling::Initialize\n");
 	OcclusionCulling::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	WriteGraphicsLog("Step: MeshShaderPipeline::Initialize\n");
 	MeshShaderPipeline::Initialize(m_Device.Get(), ShaderPipelines::GetModelRootSignature());
 	MeshShaderRenderer::QuerySupport(m_Device.Get());
+	WriteGraphicsLog("Step: LightInstanceBuilder::Initialize\n");
 	LightInstanceBuilder::Initialize(m_Device.Get());
+	WriteGraphicsLog("Step: MegaLights::Initialize\n");
 	if (!MegaLights::Initialize(m_Device.Get()))
 		WriteGraphicsLog("WARNING: MegaLights unavailable (clustered light grid disabled)\n");
 	// ヒープの末尾 16384 個は VirtualGeometry のページ（PageDescriptors が NumDescriptors - MaximumSlots から使う）。

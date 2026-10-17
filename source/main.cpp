@@ -153,6 +153,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 	{
 		SetCurrentDirectoryW(runtimeRoot.c_str());
 	}
+	WriteGraphicsLog("Step: WinMain begin\n");
 
 	const char className[] = "DX12AI_WindowClass";
 	WNDCLASSA wc = { 0 };
@@ -182,6 +183,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 		SendMessage(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(appIcon));
 	}
 	ShowWindow(hwnd, nCmdShow);
+	WriteGraphicsLog("Step: window shown\n");
 	DragAcceptFiles(hwnd, TRUE);
 
 	if (!GraphicsDevice::Init(hwnd))
