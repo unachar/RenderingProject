@@ -2,168 +2,7 @@
   "entities" : 
   [
     {
-      "camera" : 
-      {
-        "far" : 1000.0,
-        "fov" : 0.785398185,
-        "gameCamera" : true,
-        "lockOnOffset" : 
-        [
-          0.0,
-          4.0,
-          0.0
-        ],
-        "lockOnTarget" : -1,
-        "mainGameCamera" : true,
-        "near" : 0.100000001,
-        "position" : 
-        [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "postProcess" : true,
-        "priority" : 0,
-        "target" : 
-        [
-          0.0,
-          1.0,
-          0.0
-        ],
-        "userControl" : true
-      },
       "id" : 0,
-      "input" : 
-      {
-        "active" : true
-      },
-      "move" : 
-      {
-        "cameraRelative" : true,
-        "canMove" : true,
-        "direction" : 
-        [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "rotationSpeed" : 0.0199999996,
-        "speed" : 0.100000001
-      },
-      "name" : 
-      {
-        "name" : "Main Camera"
-      },
-      "postProcess" : 
-      {
-        "bloomRadius" : 1.0,
-        "bloomSoftKnee" : 0.5,
-        "bloomThreshold" : 2.0,
-        "intensity" : 1.0,
-        "type" : 5
-      },
-      "transform" : 
-      {
-        "position" : 
-        [
-          0.0,
-          1.0,
-          -10.0
-        ],
-        "rotation" : 
-        [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "scale" : 
-        [
-          1.0,
-          1.0,
-          1.0
-        ]
-      }
-    },
-    {
-      "id" : 1,
-      "light" : 
-      {
-        "active" : true,
-        "affectsForward" : true,
-        "affectsOpaque" : true,
-        "affectsVolumetrics" : true,
-        "areaHeight" : 1.0,
-        "areaWidth" : 1.0,
-        "castShadow" : true,
-        "color" : 
-        [
-          1.0,
-          0.83089608,
-          0.697463453,
-          1.0
-        ],
-        "direction" : 
-        [
-          -0.634409904,
-          0.458654493,
-          -0.622221887
-        ],
-        "drawDebug" : true,
-        "innerAngle" : 18.0,
-        "intensity" : 15.2247429,
-        "outerAngle" : 32.0,
-        "position" : 
-        [
-          -38.0645943,
-          27.5192699,
-          -37.333313
-        ],
-        "priority" : 0.0,
-        "range" : 80.0,
-        "renderMode" : 0,
-        "type" : 0,
-        "volumeDensity" : 0.219999999,
-        "volumeShape" : 0
-      },
-      "name" : 
-      {
-        "name" : "Sun"
-      },
-      "sun" : 
-      {
-        "syncDirectionalLight" : true,
-        "target" : 
-        [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "visualRadius" : 2.5
-      },
-      "transform" : 
-      {
-        "position" : 
-        [
-          -38.0645943,
-          27.5192699,
-          -37.333313
-        ],
-        "rotation" : 
-        [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "scale" : 
-        [
-          1.0,
-          1.0,
-          1.0
-        ]
-      }
-    },
-    {
-      "id" : 2,
       "material" : 
       {
         "absorption" : 
@@ -853,7 +692,7 @@
       }
     },
     {
-      "id" : 3,
+      "id" : 1,
       "light" : 
       {
         "active" : true,
@@ -920,7 +759,7 @@
       }
     },
     {
-      "id" : 4,
+      "id" : 2,
       "material" : 
       {
         "absorption" : 
@@ -1595,8 +1434,8 @@
         "position" : 
         [
           0.0,
-          -0.373130143,
-          -1.37653935
+          1.50041938,
+          -1.31973326
         ],
         "rotation" : 
         [
@@ -1607,6 +1446,167 @@
         "scale" : 
         [
           10.7342167,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id" : 3,
+      "light" : 
+      {
+        "active" : true,
+        "affectsForward" : true,
+        "affectsOpaque" : true,
+        "affectsVolumetrics" : true,
+        "areaHeight" : 1.0,
+        "areaWidth" : 1.0,
+        "castShadow" : true,
+        "color" : 
+        [
+          1.0,
+          0.949999988,
+          0.850000024,
+          1.0
+        ],
+        "direction" : 
+        [
+          0.0524043292,
+          0.665175915,
+          -0.74484545
+        ],
+        "drawDebug" : true,
+        "innerAngle" : 18.0,
+        "intensity" : 8.03985119,
+        "outerAngle" : 32.0,
+        "position" : 
+        [
+          3.14425945,
+          39.910553,
+          -44.6907234
+        ],
+        "priority" : 0.0,
+        "range" : 80.0,
+        "renderMode" : 0,
+        "type" : 0,
+        "volumeDensity" : 0.219999999,
+        "volumeShape" : 0
+      },
+      "name" : 
+      {
+        "name" : "Sun"
+      },
+      "sun" : 
+      {
+        "syncDirectionalLight" : true,
+        "target" : 
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "visualRadius" : 2.5
+      },
+      "transform" : 
+      {
+        "position" : 
+        [
+          3.14425945,
+          39.910553,
+          -44.6907234
+        ],
+        "rotation" : 
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale" : 
+        [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "camera" : 
+      {
+        "far" : 1000.0,
+        "fov" : 0.785398185,
+        "gameCamera" : true,
+        "lockOnOffset" : 
+        [
+          0.0,
+          4.0,
+          0.0
+        ],
+        "lockOnTarget" : -1,
+        "mainGameCamera" : true,
+        "near" : 0.100000001,
+        "position" : 
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "postProcess" : true,
+        "priority" : 0,
+        "target" : 
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "userControl" : true
+      },
+      "id" : 4,
+      "input" : 
+      {
+        "active" : true
+      },
+      "move" : 
+      {
+        "cameraRelative" : true,
+        "canMove" : true,
+        "direction" : 
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotationSpeed" : 0.0199999996,
+        "speed" : 0.100000001
+      },
+      "name" : 
+      {
+        "name" : "Main Camera"
+      },
+      "postProcess" : 
+      {
+        "bloomRadius" : 1.0,
+        "bloomSoftKnee" : 0.5,
+        "bloomThreshold" : 2.0,
+        "intensity" : 1.0,
+        "type" : 5
+      },
+      "transform" : 
+      {
+        "position" : 
+        [
+          0.0,
+          1.0,
+          -10.0
+        ],
+        "rotation" : 
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale" : 
+        [
+          1.0,
           1.0,
           1.0
         ]

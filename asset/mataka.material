@@ -25,7 +25,9 @@
     "ior" : 1.5,
     "metallic" : 0.0,
     "normalScale" : 1.0,
-    "roughness" : 0.19099999964237213,
+    "roughness" : 1.0,
+    "shadingModel" : 0,
+    "shadingStrength" : 1.0,
     "thickness" : 0.10000000149011612,
     "transmission" : 0.0
   },
