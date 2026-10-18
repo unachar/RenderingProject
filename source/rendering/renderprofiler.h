@@ -7,11 +7,14 @@
 
 #include <array>
 #include <chrono>
+#include <functional>
 #include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
 #include "virtualgeometry/virtualgeometryconfig.h"
+#include "rendermeasurement.h"
+#include "raytelemetry.h"
 
 
 class RenderProfiler final
@@ -22,12 +25,27 @@ public:
     static constexpr UINT kInvalidGpuToken = UINT_MAX;
     static constexpr size_t kHistoryLength = 180;
 
+    enum class ValidationFault : uint32_t { None, ExhaustQueries, UnclosedScope, OutOfOrderEnd };
+
     struct PassTiming
     {
         string Name;
         double CpuMs = 0.0;
         double GpuMs = 0.0;
         uint64_t DrawCalls = 0;
+        double GpuExclusiveMs = 0.0;
+        uint32_t GpuSamples = 0;
+        uint32_t GpuExclusiveSamples = 0;
+        uint32_t GpuEvents = 0;
+    };
+
+    struct GpuEventTiming
+    {
+        string Name;
+        RenderMeasurement::EventInterval Interval;
+        uint32_t Depth = 0;
+        std::optional<double> InclusiveMs;
+        std::optional<double> ExclusiveMs;
     };
 
     struct Counters
@@ -75,6 +93,8 @@ public:
         uint64_t Serial = 0;
         uint32_t GeometryMode = 0;
         double CpuRenderMs = 0.0;
+        double CpuFrameMs = std::numeric_limits<double>::quiet_NaN();
+        double FrameIntervalMs = std::numeric_limits<double>::quiet_NaN();
         double GpuRenderMs = 0.0;
         bool GpuTimingValid = false;
         bool PipelineStatisticsValid = false;
@@ -84,6 +104,10 @@ public:
         GeometryBinningStatistics Binning{};
         D3D12_QUERY_DATA_PIPELINE_STATISTICS Pipeline{};
         vector<PassTiming> Passes;
+        vector<GpuEventTiming> GpuEvents;
+        uint32_t DroppedGpuEvents = 0;
+        ValidationFault InjectedFault = ValidationFault::None;
+        RayTelemetry::Counts Rays;
     };
 
 private:
@@ -93,6 +117,9 @@ private:
         UINT BeginLocalQuery = 0;
         UINT EndLocalQuery = 0;
         bool Ended = false;
+        UINT ParentId = RenderMeasurement::NoParent;
+        UINT Depth = 0;
+        bool ScopeCompleted = false;
     };
 
     struct FrameSlot
@@ -106,6 +133,8 @@ private:
     };
 
     using Clock = chrono::steady_clock;
+    static inline Clock::time_point s_LastCpuFrameEnd{};
+    static inline uint64_t s_LastCpuFrameSerial = 0;
 
     static inline Microsoft::WRL::ComPtr<ID3D12QueryHeap> s_TimestampHeap{};
     static inline Microsoft::WRL::ComPtr<ID3D12Resource> s_TimestampReadback{};
@@ -120,6 +149,8 @@ private:
     static inline UINT s_ActiveFrameIndex = 0;
     static inline ID3D12GraphicsCommandList* s_ActiveCommandList = nullptr;
     static inline UINT s_FrameGpuToken = kInvalidGpuToken;
+    static inline vector<UINT> s_OpenGpuEvents;
+    static inline ValidationFault s_ValidationFault = ValidationFault::None;
     static inline Clock::time_point s_CpuFrameBegin{};
     static inline uint64_t s_FrameSerial = 0;
 
@@ -268,6 +299,7 @@ private:
         }
 
         FrameSnapshot snapshot = slot.Snapshot;
+        snapshot.Rays = RayTelemetry::Data().Consume(frameIndex, snapshot.Serial);
 
         if (s_GpuResourcesReady && slot.TimestampQueryCount > 0)
         {
@@ -282,25 +314,52 @@ private:
             {
                 const auto* timestamps = reinterpret_cast<const UINT64*>(
                     static_cast<const uint8_t*>(mapped) + byteOffset);
-                for (const GpuEvent& event : slot.GpuEvents)
+                vector<RenderMeasurement::EventInterval> intervals;
+                intervals.reserve(slot.GpuEvents.size());
+                for (UINT index = 0; index < slot.GpuEvents.size(); ++index)
                 {
-                    if (!event.Ended ||
-                        event.BeginLocalQuery >= slot.TimestampQueryCount ||
-                        event.EndLocalQuery >= slot.TimestampQueryCount)
+                    const GpuEvent& event = slot.GpuEvents[index];
+                    RenderMeasurement::EventInterval interval;
+                    interval.Id = index;
+                    interval.ParentId = event.ParentId;
+                    // This profiler currently timestamps the ordered direct queue only.
+                    interval.QueueId = 0;
+                    if (event.Ended && event.ScopeCompleted &&
+                        event.BeginLocalQuery < slot.TimestampQueryCount &&
+                        event.EndLocalQuery < slot.TimestampQueryCount)
                     {
-                        continue;
+                        interval.Begin = timestamps[event.BeginLocalQuery];
+                        interval.End = timestamps[event.EndLocalQuery];
+                        interval.Valid = interval.End >= interval.Begin;
                     }
-                    const UINT64 begin = timestamps[event.BeginLocalQuery];
-                    const UINT64 end = timestamps[event.EndLocalQuery];
-                    if (end < begin)
+                    intervals.push_back(interval);
+                }
+                for (UINT index = 0; index < intervals.size(); ++index)
+                {
+                    const GpuEvent& event = slot.GpuEvents[index];
+                    const auto& interval = intervals[index];
+                    GpuEventTiming timing{event.Name, interval, event.Depth, {}, {}};
+                    PassTiming& pass = FindOrCreatePass(snapshot, event.Name);
+                    ++pass.GpuEvents;
+                    if (!interval.Valid)
                     {
+                        snapshot.GpuEvents.push_back(move(timing));
                         continue;
                     }
                     const double milliseconds =
-                        static_cast<double>(end - begin) * 1000.0 /
+                        static_cast<double>(interval.End - interval.Begin) * 1000.0 /
                         static_cast<double>(s_TimestampFrequency);
-                    PassTiming& pass = FindOrCreatePass(snapshot, event.Name);
+                    timing.InclusiveMs = milliseconds;
                     pass.GpuMs += milliseconds;
+                    ++pass.GpuSamples;
+                    const double exclusiveTicks = RenderMeasurement::ExclusiveTicks(interval, intervals);
+                    if (std::isfinite(exclusiveTicks) && snapshot.DroppedGpuEvents == 0)
+                    {
+                        timing.ExclusiveMs = exclusiveTicks * 1000.0 / s_TimestampFrequency;
+                        pass.GpuExclusiveMs += *timing.ExclusiveMs;
+                        ++pass.GpuExclusiveSamples;
+                    }
+                    snapshot.GpuEvents.push_back(move(timing));
                     if (event.Name == "Frame")
                     {
                         snapshot.GpuRenderMs = milliseconds;
@@ -334,7 +393,8 @@ private:
         s_Latest = move(snapshot);
         s_HasLatest = true;
         PushHistory(s_CpuHistory, static_cast<float>(s_Latest.CpuRenderMs));
-        PushHistory(s_GpuHistory, static_cast<float>(s_Latest.GpuRenderMs));
+        if (s_Latest.GpuTimingValid)
+            PushHistory(s_GpuHistory, static_cast<float>(s_Latest.GpuRenderMs));
         slot.Pending = false;
     }
 
@@ -357,6 +417,7 @@ public:
         Clock::time_point m_CpuBegin{};
         bool m_Active = false;
         uint64_t m_DrawCallsBegin = 0;
+        uint64_t m_FrameSerial = 0;
 
     public:
         ScopedEvent(const char* name, ID3D12GraphicsCommandList* commandList)
@@ -367,6 +428,7 @@ public:
                 return;
             }
             m_Active = true;
+            m_FrameSerial = ActiveSnapshot()->Serial;
             m_DrawCallsBegin = ActiveSnapshot()->Calls.DrawCalls;
             m_CpuBegin = Clock::now();
             m_GpuToken = RenderProfiler::BeginGpuEvent(name, commandList);
@@ -377,10 +439,18 @@ public:
 
         ~ScopedEvent()
         {
+            Finish();
+        }
+
+        void Finish()
+        {
             if (!m_Active)
             {
                 return;
             }
+            m_Active = false;
+            if (!ActiveSnapshot() || ActiveSnapshot()->Serial != m_FrameSerial)
+                return;
             RenderProfiler::EndGpuEvent(m_GpuToken, m_CommandList);
             const double cpuMs = chrono::duration<double, milli>(
                 Clock::now() - m_CpuBegin).count();
@@ -403,6 +473,42 @@ public:
     static bool IsEnabled()
     {
         return s_Enabled;
+    }
+
+    static uint64_t GetFrameSerial() { return s_FrameSerial; }
+
+    static void RecordCpuFrameTime(uint64_t serial, double milliseconds)
+    {
+        const auto now = Clock::now();
+        for (auto& slot : s_FrameSlots)
+        {
+            if (!slot.Pending || slot.Snapshot.Serial != serial) continue;
+            slot.Snapshot.CpuFrameMs = milliseconds;
+            if (s_LastCpuFrameSerial != 0 && serial == s_LastCpuFrameSerial + 1)
+                slot.Snapshot.FrameIntervalMs = chrono::duration<double, milli>(now - s_LastCpuFrameEnd).count();
+            s_LastCpuFrameEnd = now;
+            s_LastCpuFrameSerial = serial;
+            break;
+        }
+    }
+
+    // Caller must first wait for all direct-queue submissions to finish.
+    static void DrainCompletedFrames(const std::function<void(const FrameSnapshot&)>& visitor)
+    {
+        if (IsFrameActive()) return;
+        for (UINT index = 0; index < kFrameCount; ++index)
+        {
+            if (!s_FrameSlots[index].Pending) continue;
+            ConsumeCompletedSlot(index);
+            visitor(s_Latest);
+        }
+    }
+
+    // Used only by the GPU validation fixture, before BeginFrame. Physical query
+    // heap capacity is unchanged; the fault is part of the resolved frame record.
+    static void SetValidationFault(ValidationFault fault)
+    {
+        if (!IsFrameActive()) s_ValidationFault = fault;
     }
 
     static const FrameSnapshot& GetLatest()
@@ -449,7 +555,9 @@ public:
         slot.TimestampQueryCount = 0;
         slot.GpuEvents.clear();
         slot.GpuEvents.reserve(kMaxTimestampQueriesPerFrame / 2);
+        s_OpenGpuEvents.clear();
         slot.Snapshot = {};
+        slot.Snapshot.InjectedFault = s_ValidationFault;
         // パイプライン統計クエリはフレーム全体を対象にするためGPU負荷が高い。ウィンドウ表示中だけ取る。
         slot.PipelineQueryStarted = s_GpuResourcesReady && (s_ShowWindow || s_ForcePipelineStatistics);
         slot.PipelineQueryClosed = !slot.PipelineQueryStarted;
@@ -469,6 +577,15 @@ public:
                 frameIndex);
         }
         s_FrameGpuToken = BeginGpuEvent("Frame", commandList);
+        if (s_ValidationFault == ValidationFault::UnclosedScope)
+            BeginGpuEvent("Validation Unclosed", commandList);
+        if (s_ValidationFault == ValidationFault::OutOfOrderEnd)
+        {
+            const UINT parent = BeginGpuEvent("Validation Parent", commandList);
+            BeginGpuEvent("Validation Child", commandList);
+            EndGpuEvent(parent, commandList);
+        }
+        RayTelemetry::Data().BeginFrame(device, commandList, slot.Snapshot.Serial, frameIndex, RayTelemetry::Requested());
     }
 
     static void PrepareCommandListSplit(ID3D12GraphicsCommandList* commandList)
@@ -485,9 +602,11 @@ public:
 
     static UINT BeginGpuEvent(const char* name, ID3D12GraphicsCommandList* commandList)
     {
+        const UINT queryLimit = s_ValidationFault == ValidationFault::ExhaustQueries ? 2u : kMaxTimestampQueriesPerFrame;
         if (!s_ActiveSlot || !s_GpuResourcesReady || !commandList || !name ||
-            s_ActiveSlot->TimestampQueryCount + 2 > kMaxTimestampQueriesPerFrame)
+            s_ActiveSlot->TimestampQueryCount + 2 > queryLimit)
         {
+            if (s_ActiveSlot) ++s_ActiveSlot->Snapshot.DroppedGpuEvents;
             return kInvalidGpuToken;
         }
 
@@ -501,8 +620,12 @@ public:
             D3D12_QUERY_TYPE_TIMESTAMP,
             absoluteBegin);
 
-        s_ActiveSlot->GpuEvents.push_back({ name, beginLocal, endLocal, false });
-        return static_cast<UINT>(s_ActiveSlot->GpuEvents.size() - 1);
+        const UINT parent = s_OpenGpuEvents.empty() ? RenderMeasurement::NoParent : s_OpenGpuEvents.back();
+        const UINT depth = static_cast<UINT>(s_OpenGpuEvents.size());
+        const UINT token = static_cast<UINT>(s_ActiveSlot->GpuEvents.size());
+        s_ActiveSlot->GpuEvents.push_back({ name, beginLocal, endLocal, false, parent, depth, false });
+        s_OpenGpuEvents.push_back(token);
+        return token;
     }
 
     static void EndGpuEvent(UINT token, ID3D12GraphicsCommandList* commandList)
@@ -525,6 +648,9 @@ public:
             D3D12_QUERY_TYPE_TIMESTAMP,
             absoluteEnd);
         event.Ended = true;
+        event.ScopeCompleted = !s_OpenGpuEvents.empty() && s_OpenGpuEvents.back() == token;
+        const auto open = find(s_OpenGpuEvents.begin(), s_OpenGpuEvents.end(), token);
+        if (open != s_OpenGpuEvents.end()) s_OpenGpuEvents.erase(open);
     }
 
     static void RecordCpuPass(const char* name, double milliseconds)
@@ -543,8 +669,18 @@ public:
         {
             return;
         }
+        RayTelemetry::Data().EndFrame(commandList);
 
+        // ResolveQueryData must never include an unwritten end query. Close leaked
+        // scopes for query safety, but keep their measurements explicitly invalid.
+        while (!s_OpenGpuEvents.empty() && s_OpenGpuEvents.back() != s_FrameGpuToken)
+        {
+            const UINT token = s_OpenGpuEvents.back();
+            EndGpuEvent(token, commandList);
+            s_ActiveSlot->GpuEvents[token].ScopeCompleted = false;
+        }
         EndGpuEvent(s_FrameGpuToken, commandList);
+        s_OpenGpuEvents.clear();
         s_ActiveSlot->Snapshot.CpuRenderMs =
             chrono::duration<double, milli>(Clock::now() - s_CpuFrameBegin).count();
 
@@ -707,6 +843,23 @@ public:
         }
 
         ImGui::Checkbox("計測を有効化", &s_Enabled);
+        ImGui::Checkbox("Count DXR rays (extra GPU work)", &RayTelemetry::Requested());
+        if (RayTelemetry::Requested())
+        {
+            const auto& counts = s_Latest.Rays;
+            if (counts.ProviderKnown(RayTelemetry::Radiance))
+                ImGui::Text("Reflection %llu / GI %llu / bounce visibility %llu / ReSTIR visibility %llu",
+                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_REFLECTION]),
+                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_GI]),
+                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_RADIANCE_SHADOW]),
+                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_RESTIR_VISIBILITY]));
+            else ImGui::TextDisabled("Radiance ray count unavailable");
+            if (counts.ProviderKnown(RayTelemetry::ShadowAo))
+                ImGui::Text("Shadow %llu / AO %llu", static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_SHADOW]),
+                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_AO]));
+            else ImGui::TextDisabled("Shadow/AO ray count unavailable");
+            ImGui::TextDisabled("Partial DXR source coverage; total ray count unavailable.");
+        }
         ImGui::SameLine();
         ImGui::TextDisabled("GPU結果はフレームリング分遅延します");
 
@@ -804,14 +957,19 @@ public:
         }
 
         ImGui::SeparatorText("Pass timings");
+        ImGui::TextDisabled("GPU history contains valid frame samples only.");
+        ImGui::TextDisabled("Inclusive rows overlap; GPU self excludes same-queue children.");
+        if (s_Latest.DroppedGpuEvents != 0)
+            ImGui::TextDisabled("GPU events unavailable: %u", s_Latest.DroppedGpuEvents);
         if (ImGui::BeginTable(
             "RenderProfilerPasses",
-            4,
+            5,
             ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
         {
             ImGui::TableSetupColumn("Pass");
-            ImGui::TableSetupColumn("CPU ms");
-            ImGui::TableSetupColumn("GPU ms");
+            ImGui::TableSetupColumn("CPU incl ms");
+            ImGui::TableSetupColumn("GPU incl ms");
+            ImGui::TableSetupColumn("GPU self ms");
             ImGui::TableSetupColumn("Direct draws");
             ImGui::TableHeadersRow();
             for (const PassTiming& pass : s_Latest.Passes)
@@ -826,8 +984,14 @@ public:
                 ImGui::TableSetColumnIndex(1);
                 ImGui::Text("%.3f", pass.CpuMs);
                 ImGui::TableSetColumnIndex(2);
-                ImGui::Text("%.3f", pass.GpuMs);
+                if (RenderMeasurement::IsGpuTimingComplete(pass.GpuEvents, pass.GpuSamples, s_Latest.DroppedGpuEvents))
+                    ImGui::Text("%.3f", pass.GpuMs);
+                else ImGui::TextUnformatted("N/A");
                 ImGui::TableSetColumnIndex(3);
+                if (RenderMeasurement::IsGpuTimingComplete(pass.GpuEvents, pass.GpuExclusiveSamples, s_Latest.DroppedGpuEvents))
+                    ImGui::Text("%.3f", pass.GpuExclusiveMs);
+                else ImGui::TextUnformatted("N/A");
+                ImGui::TableSetColumnIndex(4);
                 ImGui::Text("%llu", static_cast<unsigned long long>(pass.DrawCalls));
             }
             ImGui::EndTable();

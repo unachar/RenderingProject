@@ -4,6 +4,7 @@
 #include "graphicsdevice.h"
 #include "graphicslog.h"
 #include "rendererstate.h"
+#include "renderprofiler.h"
 
 namespace
 {
@@ -208,13 +209,19 @@ bool OptixDenoiser::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource*
         commands->SetComputeRootDescriptorTable(1, gpu(0));
         commands->SetComputeRootDescriptorTable(2, gpu(4));
     };
+    RenderProfiler::ScopedEvent packProfile(preserveHitDistance ? "DXR Reflections OptiX Pack" : "Realtime GI OptiX Pack", commands);
     Transition(commands, noisy, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     Transition(commands, shared, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     bind(g_Pack.Get());
     commands->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
     Transition(commands, shared, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+    packProfile.Finish();
+    // The timestamp spans the ordered direct-queue wait for CUDA. It measures
+    // frame latency including interop, rather than CUDA kernel execution alone.
+    RenderProfiler::ScopedEvent denoiseProfile(preserveHitDistance ? "DXR Reflections Denoise (OptiX wait)" : "Realtime GI Denoise (OptiX wait)", commands);
     GraphicsDevice::SubmitForExternalCompute();
     const bool denoised = m_Impl->Interop.Enqueue(GraphicsDevice::GetCommandQueue(), slot);
+    denoiseProfile.Finish();
     if (!denoised)
     {
         g_RuntimeFailed = true;
@@ -222,6 +229,7 @@ bool OptixDenoiser::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource*
     }
     if (denoised)
     {
+        RenderProfiler::ScopedEvent composeProfile(preserveHitDistance ? "DXR Reflections Compose" : "Realtime GI Compose", commands);
         Transition(commands, shared, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         Transition(commands, result, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         bind(g_Unpack.Get());

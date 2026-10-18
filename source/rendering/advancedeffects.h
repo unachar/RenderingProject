@@ -9,6 +9,8 @@
 //   ヘッダーのみで完結（.vcxproj への追加不要）。シェーダーは実行時に DXC でコンパイルする。
 // =============================================================================================
 #include "pch.h"
+#include "rendergraph.h"
+#include "envflags.h"
 #include "rendererstate.h"
 #include "renderprofiler.h"
 #include "raytracing.h"
@@ -50,6 +52,7 @@ public:
 		float ExposureHighPercent = 0.95f;
 		// モーションブラー
 		bool MotionBlur = false;
+        bool HalfResolutionLens = false;
 		float MotionBlurShutter = 0.5f;   // シャッター角 180度 = 0.5
 		float MotionBlurMaxPixels = 32.0f;
 		int MotionBlurSamples = 8;
@@ -68,6 +71,7 @@ public:
 	static void SetBloomRequested(bool requested) { s_BloomRequested = requested; }
 	static bool IsFroxelFogActive() { return s_Available && s_Settings.FroxelFog; }
 	static float GetLastExposure() { return s_LastExposureShown; }
+    static bool IsHalfResolutionLensActive() { return s_HalfActive; }
 
 	static bool Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engineHeap)
 	{
@@ -77,11 +81,13 @@ public:
 		s_EngineHeap = engineHeap;
 		s_Increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-		CD3DX12_DESCRIPTOR_RANGE ranges[2];
+		CD3DX12_DESCRIPTOR_RANGE ranges[4];
 		ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kSrvCount, 0);
 		ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, kUavCount, 0);
 		// 5〜8：MegaLights（M6）のグリッド定数 / ライト / セル / セル内ライト（フロクセルのローカルライト）
-		CD3DX12_ROOT_PARAMETER parameters[9];
+		ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV,2,0,11);
+        ranges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV,2,0,11);
+        CD3DX12_ROOT_PARAMETER parameters[12];
 		parameters[0].InitAsConstantBufferView(0);
 		parameters[1].InitAsDescriptorTable(1, &ranges[0]);
 		parameters[2].InitAsDescriptorTable(1, &ranges[1]);
@@ -91,6 +97,8 @@ public:
 		parameters[6].InitAsShaderResourceView(12);
 		parameters[7].InitAsShaderResourceView(13);
 		parameters[8].InitAsShaderResourceView(14);
+        parameters[9].InitAsDescriptorTable(1,&ranges[2]); parameters[10].InitAsDescriptorTable(1,&ranges[3]);
+        parameters[11].InitAsConstants(4,2);
 		CD3DX12_STATIC_SAMPLER_DESC samplers[2] = {
 			CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
 				D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP),
@@ -149,7 +157,9 @@ public:
 	}
 
 	static void Shutdown()
-	{
+    {
+        s_HalfLens[0].Reset(); s_HalfLens[1].Reset(); s_ResolveHalf.Reset(); s_DofHalf.Reset(); s_UpsampleLens.Reset();
+        s_HalfWidth=s_HalfHeight=0; s_HalfFormat=DXGI_FORMAT_UNKNOWN; s_HalfTried=s_HalfActive=false; s_Transient.Reset(); s_AliasActive=false;
 		s_Available = false;
 		s_Root.Reset(); s_Heap.Reset();
 		s_FogInject.Reset(); s_FogIntegrate.Reset(); s_Composite.Reset(); s_HistogramClear.Reset();
@@ -186,6 +196,8 @@ public:
 		const auto sceneDesc = scene->GetDesc();
 		if (!EnsureTargets(static_cast<UINT>(sceneDesc.Width), sceneDesc.Height, sceneDesc.Format)) return;
 
+        const bool halfLens=s_Settings.HalfResolutionLens && (motionBlur||dof) && EnsureHalfLens();
+        s_HalfActive=halfLens;
 		const UINT slot = frameIndex % kFrames;
 		++s_Frame;
 		const UINT current = s_Frame & 1u;
@@ -234,6 +246,7 @@ public:
 		Barrier(commands, s_PostA.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kRead);
 		if (exposure)
 		{
+            if(s_AliasActive)s_Transient.Activate(0,commands);
 			commands->SetPipelineState(s_HistogramClear.Get());
 			commands->Dispatch(1, 1, 1);
 			UavBarrier(commands, s_Histogram.Get());
@@ -245,11 +258,35 @@ public:
 			UavBarrier(commands, s_Exposure.Get());
 			s_ExposureReset = false;
 		}
+        if(s_AliasActive)s_Transient.Activate(1,commands);
+        ID3D12Resource* result=s_PostB.Get();
+        if(halfLens)
+        {
+            RenderProfiler::ScopedEvent profile("Half resolution MB / DOF",commands);
+            const UINT parameters[]={s_HalfWidth,s_HalfHeight,dof?1u:0u,0};
+            commands->SetComputeRoot32BitConstants(11,4,parameters,0);
+            commands->SetComputeRootDescriptorTable(9,Gpu(slot*kDescriptorsPerFrame+kHalfSrvOffset));
+            commands->SetComputeRootDescriptorTable(10,Gpu(slot*kDescriptorsPerFrame+kHalfUavOffset));
+            Barrier(commands,s_HalfLens[0].Get(),kRead,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commands->SetPipelineState(s_ResolveHalf.Get()); commands->Dispatch((s_HalfWidth+7)/8,(s_HalfHeight+7)/8,1);
+            Barrier(commands,s_HalfLens[0].Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,kRead);
+            if(dof)
+            {
+                Barrier(commands,s_HalfLens[1].Get(),kRead,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                commands->SetPipelineState(s_DofHalf.Get()); commands->Dispatch((s_HalfWidth+7)/8,(s_HalfHeight+7)/8,1);
+                Barrier(commands,s_HalfLens[1].Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,kRead);
+            }
+            Barrier(commands,s_PostB.Get(),kRead,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commands->SetPipelineState(s_UpsampleLens.Get()); commands->Dispatch(groupsX,groupsY,1);
+            Barrier(commands,s_PostB.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,kRead);
+        }
+        else
+        {
 		Barrier(commands, s_PostB.Get(), kRead, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 		commands->SetPipelineState(s_Resolve.Get());
 		commands->Dispatch(groupsX, groupsY, 1);
 		Barrier(commands, s_PostB.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kRead);
-		ID3D12Resource* result = s_PostB.Get();
+		result = s_PostB.Get();
 		if (dof)
 		{
 			Barrier(commands, s_PostA.Get(), kRead, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -258,6 +295,8 @@ public:
 			Barrier(commands, s_PostA.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kRead);
 			result = s_PostA.Get();
 		}
+        }
+
 		if (bloomPass && EnsureBloomTargets())
 		{
 			result = ExecuteBloom(commands, slot, result, depth, dualBloom);
@@ -284,7 +323,8 @@ private:
 	static constexpr UINT kFrames = RendererState::g_kFRAME_COUNT;
 	static constexpr UINT kSrvCount = 10;  // t0..t9 (t8, t9 reserved)
 	static constexpr UINT kUavCount = 6;   // u0..u5
-	static constexpr UINT kDescriptorsPerFrame = kSrvCount + kUavCount;
+	static constexpr UINT kHalfSrvOffset=kSrvCount+kUavCount,kHalfUavOffset=kHalfSrvOffset+2;
+    static constexpr UINT kDescriptorsPerFrame=kHalfUavOffset+2;
 	static constexpr UINT kMaxLights = 32;
 	static constexpr UINT kMaxLocalFog = 16;
 
@@ -596,7 +636,40 @@ private:
 		return true;
 	}
 
-	static bool EnsureTargets(UINT width, UINT height, DXGI_FORMAT format)
+	static inline TransientArena s_Transient;
+    static inline bool s_AliasActive=false;
+    static inline ComPtr<ID3D12Resource> s_HalfLens[2];
+    static inline ComPtr<ID3D12PipelineState> s_ResolveHalf,s_DofHalf,s_UpsampleLens;
+    static inline UINT s_HalfWidth=0,s_HalfHeight=0;
+    static inline DXGI_FORMAT s_HalfFormat=DXGI_FORMAT_UNKNOWN;
+    static inline bool s_HalfTried=false,s_HalfActive=false;
+    static bool EnsureHalfLens()
+    {
+        if(!s_HalfTried)
+        {
+            s_HalfTried=true;
+            auto compile=[](const char* entry,ComPtr<ID3D12PipelineState>& pso)
+            {
+                ComPtr<ID3DBlob> code,errors;
+                if(FAILED(D3DCompileFromFile(L"shader/hlsl/AdvancedEffectsCS.hlsl",nullptr,D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                    entry,"cs_6_5",D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code,&errors)))
+                { WriteGraphicsLog("Half lens %s: %s\n",entry,errors?static_cast<const char*>(errors->GetBufferPointer()):""); return false; }
+                D3D12_COMPUTE_PIPELINE_STATE_DESC d{}; d.pRootSignature=s_Root.Get(); d.CS={code->GetBufferPointer(),code->GetBufferSize()};
+                return SUCCEEDED(s_Device->CreateComputePipelineState(&d,IID_PPV_ARGS(&pso)));
+            };
+            if(!compile("ResolveHalf",s_ResolveHalf)||!compile("DofHalf",s_DofHalf)||!compile("UpsampleLens",s_UpsampleLens))
+            { s_ResolveHalf.Reset(); s_DofHalf.Reset(); s_UpsampleLens.Reset(); }
+        }
+        if(!s_ResolveHalf||!s_DofHalf||!s_UpsampleLens) return false;
+        const UINT width=(s_Width+1)/2,height=(s_Height+1)/2;
+        if(s_HalfLens[0]&&s_HalfLens[1]&&s_HalfWidth==width&&s_HalfHeight==height&&s_HalfFormat==s_Format) return true;
+        if(!GraphicsDevice::WaitForGpuIdle()) return false;
+        ComPtr<ID3D12Resource> a,b;
+        const auto desc=CD3DX12_RESOURCE_DESC::Tex2D(s_Format,width,height,1,1);
+        if(!CreateTexture(a,desc,L"Half Motion Blur")||!CreateTexture(b,desc,L"Half DOF")) return false;
+        s_HalfLens[0]=a; s_HalfLens[1]=b; s_HalfWidth=width; s_HalfHeight=height; s_HalfFormat=s_Format; return true;
+    }
+    static bool EnsureTargets(UINT width, UINT height, DXGI_FORMAT format)
 	{
 		const UINT tile = static_cast<UINT>(std::clamp(s_Settings.FroxelTileSize, 4, 32));
 		const XMUINT3 froxels = { (std::max)(1u, (width + tile - 1) / tile), (std::max)(1u, (height + tile - 1) / tile),
@@ -611,6 +684,21 @@ private:
 			const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(format, width, height, 1, 1);
 			if (!CreateTexture(s_PostA, desc, L"AdvancedEffects Post A") ||
 				!CreateTexture(s_PostB, desc, L"AdvancedEffects Post B")) return false;
+            static const bool alias=ReadEnvironmentFlagOnce("DX12_TRANSIENT_ALIAS");
+            s_AliasActive=false;s_Transient.Reset();
+            if(alias)
+            {
+                RenderGraph graph;
+                auto histogramDesc=CD3DX12_RESOURCE_DESC::Buffer(64*sizeof(UINT),D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+                auto postDesc=desc;postDesc.Flags=D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+                const auto histogram=graph.CreateTransientResource("Exposure histogram",histogramDesc,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                const auto post=graph.CreateTransientResource("Lens post output",postDesc,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE|D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                graph.AddPass("Histogram",[&](auto& b){b.Write(histogram,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);},[](auto*){});
+                graph.AddPass("Exposure",[&](auto& b){b.Read(histogram,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);},[](auto*){});
+                graph.AddPass("Lens output",[&](auto& b){b.Write(post,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);},[](auto*){});
+                if(graph.Compile()&&graph.AllocateTransients(s_Device.Get(),s_Transient))
+                {s_Histogram=graph.GetResource(histogram);s_PostB=graph.GetResource(post);s_AliasActive=true;}
+            }
 			s_Width = width; s_Height = height; s_Format = format;
 		}
 		if (froxelChanged)
@@ -641,6 +729,15 @@ private:
 			desc.Texture2D.MipLevels = 1;
 			s_Device->CreateShaderResourceView(resource, &desc, Cpu(base + index));
 		};
+        for(UINT index=0;index<2;++index)
+        {
+            auto* resource=s_HalfActive?s_HalfLens[index].Get():nullptr;
+            D3D12_SHADER_RESOURCE_VIEW_DESC srv{}; srv.Format=s_Format; srv.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
+            srv.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING; srv.Texture2D.MipLevels=1;
+            s_Device->CreateShaderResourceView(resource,&srv,Cpu(base+kHalfSrvOffset+index));
+            D3D12_UNORDERED_ACCESS_VIEW_DESC uav{}; uav.Format=s_Format; uav.ViewDimension=D3D12_UAV_DIMENSION_TEXTURE2D;
+            s_Device->CreateUnorderedAccessView(resource,nullptr,&uav,Cpu(base+kHalfUavOffset+index));
+        }
 		const auto srv3D = [&](ID3D12Resource* resource, UINT index)
 		{
 			D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
@@ -789,5 +886,6 @@ private:
 		}
 	}
 };
+
 
 

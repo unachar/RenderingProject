@@ -662,6 +662,24 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         Check(&left == &right && left.NormalMapID >= 0, "one shared runtime and resolved normal descriptor");
         Check(!MaterialManager::Assign(Camera::GetCameraEntity(), 0, handle), "reject camera material drop");
         Check(!MaterialManager::Assign(first, 1, handle), "reject out-of-range material slot");
+        auto sprite = World::CreateEntity().Add<TransformComponent>().Add<SpriteComponent>().Add<MaterialComponent>();
+        sprite.Get<SpriteComponent>().Is3D = true;
+        VertexResource spriteGeometry{};
+        spriteGeometry.entityid = sprite.GetID();
+        spriteGeometry.shapetype = ShapeType::QUAD;
+        spriteGeometry.radius = .5f;
+        spriteGeometry.color = Color::WHITE;
+        PrimitiveGeometry::CreateSpriteVertex(spriteGeometry);
+        Check(MaterialManager::SlotCount(sprite.GetID()) == 1 && MaterialManager::Assign(sprite.GetID(), 0, handle),
+            "legacy world-space sprite accepts material asset");
+        const auto& spriteMaterial = MaterialManager::Resolve(sprite.Get<MaterialComponent>());
+        Check(spriteMaterial.RuntimeHandle == handle && spriteMaterial.NormalMapID == left.NormalMapID,
+            "world-space sprite resolves shared textures and normal map");
+        Check(!MaterialManager::Assign(sprite.GetID(), 1, handle), "sprite rejects extra material slots");
+        sprite.Get<SpriteComponent>().Is3D = false;
+        Check(!MaterialManager::IsRenderable(sprite.GetID()) && !MaterialManager::Assign(sprite.GetID(), 0, handle),
+            "screen-space sprite keeps separate material policy");
+        World::DestroyEntity(sprite);
         const auto copy = fixtureRoot / "Brick_Copy.material";
         copyHandle = MaterialManager::Registry().Duplicate(handle, copy, error);
         ownedFiles.push_back(copy);

@@ -32,6 +32,7 @@ public:
     static void Prepare(RenderGraph& graph, RenderGraph::ResourceHandle instances, RenderGraph::ResourceHandle visibility,
                         uint32_t slots, uint32_t capacity, uint32_t meshes);
     static void Draw(ID3D12GraphicsCommandList* commands);
+    static bool ResolveVisibility(ID3D12GraphicsCommandList* commands,D3D12_GPU_DESCRIPTOR_HANDLE visibility,UINT width,UINT height);
     static void DrawSecondPass(ID3D12GraphicsCommandList* commands);
     static void DrawVelocity(ID3D12GraphicsCommandList* commands);
     static void BuildHiZ(ID3D12GraphicsCommandList* commands);
@@ -53,4 +54,5 @@ public:
     static void RecordOpaqueSubmission(double milliseconds);
     static void TrackEntityTextures(uint32_t entity, const vector<uint32_t>& descriptors);
 };
+
 

@@ -1,4 +1,9 @@
 #include "pch.h"
+#include "envflags.h"
+#include "camera.h"
+#include "temporalhistorycontext.h"
+#include <type_traits>
+#include <map>
 #include "materialmanager.h"
 #include "raytracingscene.h"
 #include "materialsystem.h"
@@ -143,6 +148,38 @@ void AppendModel(vector<RaytracingGeometry>& geometry, EntityID entity, Model* m
             entry.VertexState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
             entry.Deforming = true;
         }
+        if constexpr(std::is_same_v<std::decay_t<decltype(mesh)>,StaticMeshData>)
+        {
+            static const bool rayLod=ReadEnvironmentFlagOnce("DX12_DXR_LOD"),rayProxy=ReadEnvironmentFlagOnce("DX12_DXR_PROXY");
+            const auto camera=Camera::GetCameraEntity();
+            if(!entry.Deforming && (rayLod||rayProxy) && ComponentManager::HasComponent<TransformComponent>(camera))
+            {
+                const auto& eye=ComponentManager::GetComponentUnchecked<TransformComponent>(camera).Position;
+                const XMMATRIX world=XMLoadFloat4x4(&entry.World);
+                const float distance=XMVectorGetX(XMVector3Length(XMVector3TransformCoord(XMLoadFloat3(&mesh.RayCenter),world)-XMLoadFloat3(&eye)));
+                const float scale=(std::max)({XMVectorGetX(XMVector3Length(world.r[0])),XMVectorGetX(XMVector3Length(world.r[1])),XMVectorGetX(XMVector3Length(world.r[2]))});
+                const bool important=entry.Roughness<.2f||entry.Emission.w>.001f||mesh.RayRadius*scale/(std::max)(distance,1.f)>.08f;
+                UINT lod=rayLod?(distance>140?3:distance>70?2:distance>35?1:0):0; if(important) lod=0;
+                using Key=tuple<EntityID,UINT,UINT64>; static map<Key,UINT> previous;
+                const Key key(entity,meshIndex,mesh.VertexBufferView.BufferLocation); const auto old=previous.find(key);
+                if(!important && old!=previous.end() && old->second<=3 && old->second!=lod)
+                {
+                    const UINT level=(std::max)(lod,old->second);
+                    if(level) { const float boundary=35.f*float(1u<<(level-1)); if(abs(distance-boundary)<boundary*.12f) lod=old->second; }
+                }
+                UINT selected=0;
+                if(rayProxy&&!important&&distance>200&&mesh.RayProxyVertices&&mesh.RayProxyIndices)
+                {
+                    entry.Vertices=mesh.RayProxyVertices; entry.Indices=mesh.RayProxyIndices; entry.VertexView=mesh.RayProxyVertexView; entry.IndexView=mesh.RayProxyIndexView;
+                    entry.VertexState=D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER; entry.IndexState=D3D12_RESOURCE_STATE_INDEX_BUFFER;
+                    entry.IndexCount=36; entry.Texture.Reset(); entry.TextureIndex=-1; entry.EmissionTexture.Reset(); selected=4;
+                }
+                else if(lod&&mesh.RayLodBuffers[lod-1])
+                { entry.Indices=mesh.RayLodBuffers[lod-1]; entry.IndexView=mesh.RayLodViews[lod-1]; entry.IndexCount=mesh.RayLodCounts[lod-1]; entry.IndexState=D3D12_RESOURCE_STATE_INDEX_BUFFER; selected=lod; }
+                if(old!=previous.end()&&old->second!=selected) TemporalHistory::Context::NotifyLodChanged();
+                if(previous.size()>65536) previous.clear(); previous[key]=selected;
+            }
+        }
         geometry.push_back(move(entry));
     }
 }
@@ -190,3 +227,4 @@ vector<RaytracingGeometry> GatherRaytracingGeometry()
     }
     return geometry;
 }
+

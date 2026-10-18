@@ -38,7 +38,11 @@ float4 SampleAssetTexture(uint index, float2 uv, SamplerState materialSampler, f
     {
         return fallback;
     }
+#ifdef SHADER_VISIBILITY_RESOLVE
+    return ASSET_TEXTURE_HEAP[NonUniformResourceIndex(index)].SampleGrad(materialSampler,uv,VisibilityUvDx,VisibilityUvDy);
+#else
     return ASSET_TEXTURE_HEAP[NonUniformResourceIndex(index)].Sample(materialSampler, uv);
+#endif
 }
 
 void ApplyAssetMaterial(AssetMaterialParameters material, float2 uv, SamplerState materialSampler,
@@ -60,7 +64,9 @@ void ApplyAssetMaterial(AssetMaterialParameters material, float2 uv, SamplerStat
     const uint surface = material.Textures.w & 3u;
     if (surface == 1u)
     {
+#ifndef SHADER_VISIBILITY_RESOLVE
         clip(color.a - material.Surface.w);
+#endif
         color.a = 1.0f;
     }
     else if (surface == 0u)
@@ -89,5 +95,6 @@ float3 ScaleAssetNormal(float3 tangentNormal, AssetMaterialParameters material)
     return normalize(tangentNormal);
 }
 #endif
+
 
 

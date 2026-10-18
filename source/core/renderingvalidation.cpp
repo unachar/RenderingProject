@@ -8,6 +8,7 @@
 #include "virtualgeometry/virtualgeometryproduction.h"
 #include "virtualgeometry/virtualgeometrystreamingvalidation.h"
 #include "gpudriven/gpudrivenvalidation.h"
+#include "gpudriven/gpudrivenrenderer.h"
 #include "gpuscene/gpuscenevalidation.h"
 #include "visibility/gpuvisibilityvalidation.h"
 #include "rendercapture.h"
@@ -17,6 +18,7 @@
 #include "renderconfiguration.h"
 #include "raytracing.h"
 #include "dlssupscaler.h"
+#include "temporalupscaler.h"
 #include "renderersettings.h"
 #include "imguimanager.h"
 #include "renderprofiler.h"
@@ -47,6 +49,8 @@ EntityID g_Mover = g_kINVALID_ENTITY;
 UINT g_Failures = 0;
 float g_NoonSkyLuminance = 0.0f;
 uint64_t g_FrameCount = 0;
+bool g_GpuDrivenBeforeMeshFixture = true;
+UINT g_TsrJitterBeforeDraw = 0;
 double g_PausedTime = 0;
 uint64_t g_OriginalTerrainHash = 0;
 double g_PreviousVertexTime = 0;
@@ -61,6 +65,8 @@ struct ShadowBenchmarkSample
 };
 array<ShadowBenchmarkSample, 3> g_ShadowBenchmark{};
 uint64_t g_ShadowBenchmarkSerial = 0;
+uint32_t g_ProfilerFaultMask = 0;
+uint64_t g_ProfilerFaultSerial = 0;
 
 bool PlayRenderTestEnabled()
 {
@@ -282,33 +288,127 @@ void ValidateReflectionDenoising(const RenderCapture::TextureData& filtered)
     // NRD's input Y channel is 0.25 R + 0.5 G + 0.25 B. Compare the same luminance
     // in the composed RGB output. Neighbor differences measure high-frequency variation;
     // skip background and hit/miss boundaries so silhouettes do not dominate this fixture.
+    // Packed inputs compare traced neighbors in both axes; checkerboard spacing is two pixels.
     double rawVariation = 0, filteredVariation = 0;
     UINT pairs = 0;
+    const auto layout = RayReflections::GetReflectionSamplingLayout();
+    const UINT storageWidth = RenderMeasurement::TraceStorageWidth(filtered.Width, layout.Checkerboard);
+    const UINT pixelStep = layout.Checkerboard ? 2u : 1u;
     for (UINT y = 0; y < filtered.Height; ++y)
     {
         const auto* raw = reinterpret_cast<const uint16_t*>(noisy.Bytes.data() + y * noisy.RowPitch);
         const auto* output = reinterpret_cast<const uint16_t*>(filtered.Bytes.data() + y * filtered.RowPitch);
-        for (UINT x = 1; x < filtered.Width; ++x)
+        for (UINT storageX = 0; storageX < storageWidth; ++storageX)
         {
-            const UINT current = x * 4, previous = current - 4;
-            const float distance = RenderCapture::HalfToFloat(output[current + 3]);
-            const float previousDistance = RenderCapture::HalfToFloat(output[previous + 3]);
-            if (abs(distance) < 0.01f || abs(previousDistance) < 0.01f) continue;
-            const auto luminance = [&](UINT index)
+            const UINT x = RenderMeasurement::TracePixelX(storageX, y, layout.Sequence, layout.Checkerboard);
+            if (x >= filtered.Width) continue;
+            const UINT current = x * 4;
+            const UINT rawCurrent = storageX * 4;
+            const auto accumulatePair = [&](const uint16_t* otherRaw, const uint16_t* otherOutput,
+                UINT otherRawIndex, UINT otherOutputIndex)
             {
-                return 0.25f * RenderCapture::HalfToFloat(output[index]) +
-                    0.5f * RenderCapture::HalfToFloat(output[index + 1]) +
-                    0.25f * RenderCapture::HalfToFloat(output[index + 2]);
+                const float distance = RenderCapture::HalfToFloat(output[current + 3]);
+                const float otherDistance = RenderCapture::HalfToFloat(otherOutput[otherOutputIndex + 3]);
+                if (abs(distance) < 0.01f || abs(otherDistance) < 0.01f) return;
+                const auto luminance = [](const uint16_t* color)
+                {
+                    return 0.25f * RenderCapture::HalfToFloat(color[0]) +
+                        0.5f * RenderCapture::HalfToFloat(color[1]) +
+                        0.25f * RenderCapture::HalfToFloat(color[2]);
+                };
+                rawVariation += abs(RenderCapture::HalfToFloat(raw[rawCurrent]) - RenderCapture::HalfToFloat(otherRaw[otherRawIndex]));
+                filteredVariation += abs(luminance(output + current) - luminance(otherOutput + otherOutputIndex));
+                ++pairs;
             };
-            rawVariation += abs(RenderCapture::HalfToFloat(raw[current]) - RenderCapture::HalfToFloat(raw[previous]));
-            filteredVariation += abs(luminance(current) - luminance(previous));
-            ++pairs;
+            if (storageX > 0)
+                accumulatePair(raw, output, rawCurrent - 4, (x - pixelStep) * 4);
+            if (y >= pixelStep)
+            {
+                const auto* previousRaw = reinterpret_cast<const uint16_t*>(noisy.Bytes.data() + (y - pixelStep) * noisy.RowPitch);
+                const auto* previousOutput = reinterpret_cast<const uint16_t*>(filtered.Bytes.data() + (y - pixelStep) * filtered.RowPitch);
+                accumulatePair(previousRaw, previousOutput, rawCurrent, current);
+            }
         }
     }
     WriteGraphicsLog("Validation NRD reflection: neighbor pairs=%u rawVariation=%.6f filteredVariation=%.6f\n",
         pairs, rawVariation / max(pairs, 1u), filteredVariation / max(pairs, 1u));
     Check(pairs > 100 && rawVariation > 0 && filteredVariation < rawVariation,
         "NRD reduces reflection high-frequency variation in the test scene");
+}
+
+void ValidateProfilerIntervals()
+{
+    const auto& snapshot = RenderProfiler::GetLatest();
+    Check(snapshot.GpuTimingValid && !snapshot.GpuEvents.empty(), "profiler resolves GPU frame intervals");
+    bool hierarchyValid = snapshot.DroppedGpuEvents == 0;
+    bool selfTimeValid = true;
+    for (const auto& event : snapshot.GpuEvents)
+    {
+        if (event.Interval.ParentId != RenderMeasurement::NoParent)
+        {
+            const auto parent = find_if(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(),
+                [&](const auto& candidate) { return candidate.Interval.Id == event.Interval.ParentId; });
+            hierarchyValid &= parent != snapshot.GpuEvents.end() && parent->Depth + 1 == event.Depth;
+        }
+        selfTimeValid &= event.InclusiveMs.has_value() && event.ExclusiveMs.has_value();
+        if (event.InclusiveMs && event.ExclusiveMs)
+            selfTimeValid &= *event.ExclusiveMs >= 0 && *event.ExclusiveMs <= *event.InclusiveMs + 1e-6;
+    }
+    Check(hierarchyValid, "profiler records valid parent IDs without dropped GPU events");
+    Check(selfTimeValid, "profiler self times exclude children without exceeding inclusive time");
+}
+
+void ValidateProfilerFaults()
+{
+    const auto& snapshot = RenderProfiler::GetLatest();
+    if (snapshot.InjectedFault == RenderProfiler::ValidationFault::None || snapshot.Serial == g_ProfilerFaultSerial)
+        return;
+    g_ProfilerFaultSerial = snapshot.Serial;
+    g_ProfilerFaultMask |= 1u << (static_cast<uint32_t>(snapshot.InjectedFault) - 1u);
+    Check(snapshot.GpuTimingValid, "profiler fault preserves independent Frame GPU timing");
+    if (snapshot.InjectedFault == RenderProfiler::ValidationFault::ExhaustQueries)
+    {
+        Check(snapshot.DroppedGpuEvents > 0, "profiler reports timestamp exhaustion");
+        const bool noInventedSelf = all_of(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(),
+            [](const auto& event) { return !event.ExclusiveMs; });
+        Check(noInventedSelf, "timestamp exhaustion makes exclusive measurements unavailable");
+    }
+    else
+    {
+        const auto invalid = count_if(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(),
+            [](const auto& event) { return !event.Interval.Valid; });
+        Check(invalid >= 1, "profiler marks leaked or out-of-order scopes invalid");
+        const auto frame = find_if(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(),
+            [](const auto& event) { return event.Name == "Frame"; });
+        Check(frame != snapshot.GpuEvents.end() && !frame->ExclusiveMs,
+            "invalid direct child prevents an invented Frame self time");
+    }
+}
+
+void ValidateRayTelemetry(bool expectReflectionRays)
+{
+    if (!RayTelemetry::Requested()) return;
+    const bool idle = GraphicsDevice::WaitForGpuIdle();
+    Check(idle, "ray telemetry readback fence completes");
+    if (!idle) return;
+    const auto counts = RayTelemetry::Data().ConsumeCurrent(RenderProfiler::GetFrameSerial());
+    Check(counts.Valid, "ray telemetry readback has the current frame serial");
+    Check(counts.ProviderKnown(RayTelemetry::Radiance) && counts.ProviderKnown(RayTelemetry::ShadowAo),
+        "active radiance and shadow/AO shaders provide measured counters");
+    if (expectReflectionRays && Raytracing::AreReflectionsActive())
+        Check(counts.Rays[RAY_TELEMETRY_REFLECTION] > 0, "reflection primary rays are counted at TraceRayInline");
+    if (Raytracing::UsesRaytracedAmbientOcclusion())
+        Check(counts.Rays[RAY_TELEMETRY_AO] > 0, "AO rays are counted by the actual ray-tracing shader");
+    if (!Raytracing::UsesRaytracedShadows() && !Raytracing::UsesRaytracedAmbientOcclusion())
+        Check(counts.Rays[RAY_TELEMETRY_SHADOW] == 0 && counts.Rays[RAY_TELEMETRY_AO] == 0,
+            "guides-only dispatch counts zero shadow/AO rays");
+    if (!Raytracing::IsAvailable())
+        Check(counts.Rays[RAY_TELEMETRY_REFLECTION] == 0 && counts.Rays[RAY_TELEMETRY_GI] == 0,
+            "DXR-disabled fallback measures zero primary radiance rays");
+    Check(!counts.AllSourcesCovered, "partial DXR telemetry does not claim a total");
+    WriteGraphicsLog("Ray telemetry serial=%llu reflection=%llu gi=%llu visibility=%llu restir=%llu shadow=%llu ao=%llu active=%u measured=%u\n",
+        counts.Serial, counts.Rays[0], counts.Rays[1], counts.Rays[2], counts.Rays[3], counts.Rays[4], counts.Rays[5],
+        counts.ActiveProviders, counts.MeasuredProviders);
 }
 
 void ValidateVertexDeformation()
@@ -644,6 +744,16 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
     {
         return;
     }
+    if (frame == 41)
+    {
+        Check(RenderProfiler::BeginGpuEvent("Outside Frame", GraphicsDevice::GetCommandList()) == RenderProfiler::kInvalidGpuToken,
+            "profiler ignores events started outside a recording frame");
+        RenderProfiler::SetValidationFault(RenderProfiler::ValidationFault::ExhaustQueries);
+    }
+    if (frame == 43) RenderProfiler::SetValidationFault(RenderProfiler::ValidationFault::UnclosedScope);
+    if (frame == 45) RenderProfiler::SetValidationFault(RenderProfiler::ValidationFault::OutOfOrderEnd);
+    if (frame == 42 || frame == 44 || frame == 46)
+        RenderProfiler::SetValidationFault(RenderProfiler::ValidationFault::None);
     if (frame == 0)
     {
         char startup[8]{};
@@ -656,6 +766,21 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
     }
     g_FrameCount = frame + 1;
     const float hours[] = { 6.0f, 12.0f, 18.0f, 0.0f };
+    if (frame == 32)
+    {
+        GPUDrivenRenderer::SetEnabled(g_GpuDrivenBeforeMeshFixture);
+        TemporalUpscaler::SetInputTaaEnabled(false);
+        RendererSettings::SetUpscaleMode(UpscaleMode::Tsr);
+        RenderConfiguration::SetResolutionScale(.2f);
+    }
+    if (frame == 36)
+    {
+        TemporalUpscaler::SetInputTaaEnabled(false);
+        RendererSettings::SetUpscaleMode(UpscaleMode::Bilateral);
+        RenderConfiguration::SetResolutionScale(1.f);
+    }
+    if (frame == 34) TemporalUpscaler::SetInputTaaEnabled(true);
+    if (frame >= 33 && frame <= 35) g_TsrJitterBeforeDraw = RendererState::m_TaaFrameIndex;
     DayNightCycle::GetSettings().Running = false;
     DayNightCycle::GetSettings().DayOfYear = 81;
     DayNightCycle::SetTime(hours[(frame / 8) % 4]);
@@ -709,6 +834,10 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
         ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(g_Mover).Enabled = false;
     if (frame == 30)
     {
+        // This fixture specifically verifies mesh-shader page offsets. The GPU
+        // Driven indexed route can otherwise consume the terrain before it runs.
+        g_GpuDrivenBeforeMeshFixture = GPUDrivenRenderer::IsEnabled();
+        GPUDrivenRenderer::SetEnabled(false);
         auto terrain = ComponentManager::GetComponentUnchecked<ProceduralTerrainComponent>(g_Terrain).Settings;
         terrain.Resolution = 256;
         Check(ProceduralScene::GenerateTerrain(terrain, g_Terrain) == g_Terrain, "generate large terrain for mesh shader validation");
@@ -875,6 +1004,9 @@ void RenderingValidation::AfterFrame(uint64_t frame)
     {
         return;
     }
+    ValidateProfilerFaults();
+    if (frame == 5 || frame == 13) ValidateRayTelemetry(frame == 13);
+    if (frame == 53) Check(g_ProfilerFaultMask == 7, "profiler resolves all three injected GPU fault fixtures");
     if (frame == 15)
     {
         Check(ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(g_Mover).Time > 0.0, "Play advances motion");
@@ -920,7 +1052,11 @@ void RenderingValidation::AfterFrame(uint64_t frame)
             Check(Raytracing::GetDenoiserDispatchCount() > 0, "actual NVIDIA NRD SIGMA dispatch sequence");
         ValidateSkyBrightness(false);
     }
-    if (frame == 31) ValidateSkyBrightness(true);
+    if (frame == 31)
+    {
+        ValidateSkyBrightness(true);
+        if (RenderProfiler::IsEnabled()) ValidateProfilerIntervals();
+    }
     if ((frame == 12 || frame == 13) && Raytracing::IsAvailable())
     {
         Check(Raytracing::AreReflectionsActive(), "reflection-only mode remains active");
@@ -996,6 +1132,13 @@ void RenderingValidation::AfterFrame(uint64_t frame)
     if (frame == 33)
     {
         Check(!Raytracing::IsActive(), "DXR off uses raster fallback");
+        Check(TemporalUpscaler::HasValidHistory(), "Custom TSR renders with 20% input");
+    }
+    if (frame >= 33 && frame <= 35)
+    {
+        Check(RendererState::m_TaaFrameIndex == g_TsrJitterBeforeDraw + 1,
+            frame == 33 ? "TSR jitter advances without TAA history" : "input TAA plus TSR advances jitter exactly once");
+        Check(TemporalUpscaler::HasValidHistory(), "TSR history survives input-TAA mode switch");
     }
     if (frame == 37 && Raytracing::IsAvailable())
     {

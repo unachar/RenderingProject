@@ -1,13 +1,15 @@
 param(
     [ValidateSet('Debug','Release')][string]$Configuration = 'Debug',
     [switch]$SkipBuild,
+    [switch]$RayTelemetry,
     [switch]$Spatial,
     [switch]$Optix,
-    [switch]$NoNrdSdk
+    [switch]$NoNrdSdk,
+    [switch]$Celestial
 )
 $ErrorActionPreference = 'Stop'
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$environmentNames = @('_CL_', 'DX12_GI_TEST', 'DX12_VALIDATION_MODE', 'DX12_STARTUP_SMOKE_FRAMES', 'DX12_FEATURE_SMOKE_TEST', 'DX12_MATERIAL_ASSET_TEST')
+$environmentNames = @('_CL_', 'DX12_GI_TEST', 'DX12_VALIDATION_MODE', 'DX12_STARTUP_SMOKE_FRAMES', 'DX12_FEATURE_SMOKE_TEST', 'DX12_MATERIAL_ASSET_TEST', 'DX12_RAY_TELEMETRY')
 $previousEnvironment = @{}
 $savedFiles = @{}
 foreach ($name in $environmentNames) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
@@ -31,9 +33,10 @@ try {
             throw 'GI build failed. See build/gi-tests/build.log'
         }
     }
-    $env:DX12_GI_TEST = if ($Optix) { '3' } elseif ($Spatial) { '2' } else { '1' }
+    $env:DX12_GI_TEST = if ($Celestial) { '5' } elseif ($Optix) { '3' } elseif ($Spatial) { '2' } else { '1' }
     $env:DX12_VALIDATION_MODE = '1'
-    $env:DX12_STARTUP_SMOKE_FRAMES = '218'
+    $env:DX12_RAY_TELEMETRY = [string][int]$RayTelemetry.IsPresent
+    $env:DX12_STARTUP_SMOKE_FRAMES = if ($Celestial) { '120' } else { '218' }
     $env:DX12_FEATURE_SMOKE_TEST = '0'
     $env:DX12_MATERIAL_ASSET_TEST = '0'
     $logPath = Join-Path $workspace 'init_log.txt'
@@ -54,13 +57,13 @@ try {
         $reader.Dispose()
     }
     finally { $stream.Dispose() }
-    $suffix = if ($Optix) { 'optix' } elseif ($NoNrdSdk) { 'fallback' } elseif ($Spatial) { 'spatial' } else { 'nrd' }
+    $suffix = if ($Celestial) { 'celestial' } elseif ($Optix) { 'optix' } elseif ($NoNrdSdk) { 'fallback' } elseif ($Spatial) { 'spatial' } else { 'nrd' }
     Set-Content -LiteralPath "build/gi-tests/validation-$Configuration-$suffix.log" -Value $runLog -Encoding utf8
     $captureDirectory = "build/gi-tests/$suffix-captures"
     New-Item -ItemType Directory -Force $captureDirectory | Out-Null
     Get-ChildItem -LiteralPath 'build/gi-tests' -Filter '*.png' -File |
         Copy-Item -Destination $captureDirectory -Force
-    $runLog -split "`n" | Select-String 'GI validation:|GI receiver|GI temporal noise|GI validation failures|D3D12 ERROR|shader failed'
+    $runLog -split "`n" | Select-String 'GI validation:|GI receiver|GI temporal noise|GI validation failures|Celestial|D3D12 ERROR|shader failed'
     if ($process.ExitCode -ne 0 -or $runLog -notmatch 'GI validation failures = 0') {
         throw "GI runtime validation failed (exit $($process.ExitCode))."
     }

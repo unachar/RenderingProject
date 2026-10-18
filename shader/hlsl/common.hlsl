@@ -1,6 +1,7 @@
-
-
-
+#ifdef SHADER_VISIBILITY_RESOLVE
+static float2 VisibilityUvDx,VisibilityUvDy;
+static float3 VisibilityWorldDx,VisibilityWorldDy;
+#endif
 #pragma warning(disable: 4000)
 #include "SceneRayShadow.hlsli"
 
@@ -375,10 +376,15 @@ float3 SafeNormalizeCommon(float3 value, float3 fallback)
 float3 ApplyNormalMapCommon(float3 meshNormal, float3 worldPos, float2 texCoord, float3 tangentNormal)
 {
     float3 n = SafeNormalizeCommon(meshNormal, float3(0.0f, 1.0f, 0.0f));
+#ifdef SHADER_VISIBILITY_RESOLVE
+    float3 dp1=VisibilityWorldDx,dp2=VisibilityWorldDy;
+    float2 duv1=VisibilityUvDx,duv2=VisibilityUvDy;
+#else
     float3 dp1 = ddx(worldPos);
     float3 dp2 = ddy(worldPos);
     float2 duv1 = ddx(texCoord);
     float2 duv2 = ddy(texCoord);
+#endif
 
     float det = duv1.x * duv2.y - duv1.y * duv2.x;
     float useTbn = (abs(det) >= 0.000000000000000001f) ? 1.0f : 0.0f;
@@ -1152,10 +1158,15 @@ float3 SafeNormalizeCommon(float3 value, float3 fallback)
 float3 ApplyNormalMapCommon(float3 meshNormal, float3 worldPos, float2 texCoord, float3 tangentNormal)
 {
     float3 n = SafeNormalizeCommon(meshNormal, float3(0.0f, 0.0f, -1.0f));
+#ifdef SHADER_VISIBILITY_RESOLVE
+    float3 dp1=VisibilityWorldDx,dp2=VisibilityWorldDy;
+    float2 duv1=VisibilityUvDx,duv2=VisibilityUvDy;
+#else
     float3 dp1 = ddx(worldPos);
     float3 dp2 = ddy(worldPos);
     float2 duv1 = ddx(texCoord);
     float2 duv2 = ddy(texCoord);
+#endif
 
     float det = duv1.x * duv2.y - duv1.y * duv2.x;
     float useTbn = (abs(det) >= 0.0000000000000000001f) ? 1.0f : 0.0f;
@@ -1430,5 +1441,6 @@ float3 ReconstructPostProcessWorldPositionCommon(float2 uv, float depth)
 }
 
 #endif
+
 
 

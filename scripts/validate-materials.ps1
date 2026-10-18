@@ -7,9 +7,14 @@ $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudi
 $developerCommand = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
 $environmentNames = @('_CL_', 'DX12_FEATURE_SMOKE_TEST', 'DX12_VALIDATION_MODE', 'DX12_STARTUP_SMOKE_FRAMES', 'DX12_MATERIAL_ASSET_TEST')
 $previousEnvironment = @{}
+$savedSettings = @{}
 foreach ($name in $environmentNames) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 Push-Location -LiteralPath $workspace
 try {
+    foreach ($relative in @('Save/project_environment.cfg','Save/editor_layout.cfg','imgui.ini')) {
+        $path = Join-Path $workspace $relative
+        $savedSettings[$path] = if (Test-Path -LiteralPath $path) { ,([IO.File]::ReadAllBytes($path)) } else { $null }
+    }
     & (Join-Path $PSScriptRoot 'test-material-assets.ps1') -Configuration $Configuration
     if (-not $SkipBuild) {
         $env:_CL_ = '/Z7'
@@ -53,6 +58,13 @@ try {
     Write-Output "Material runtime ${Configuration}: PASS"
 }
 finally {
+    foreach ($path in $savedSettings.Keys) {
+        if ($null -ne $savedSettings[$path]) {
+            $restorePath = "$path.material-restore"
+            [IO.File]::WriteAllBytes($restorePath, $savedSettings[$path])
+            Move-Item -LiteralPath $restorePath -Destination $path -Force
+        } elseif (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path }
+    }
     foreach ($name in $environmentNames) { [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process') }
     Pop-Location
 }

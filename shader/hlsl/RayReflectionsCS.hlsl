@@ -13,6 +13,7 @@
 #include "../../External/NRD/sdk/Shaders/NRD.hlsli"
 #endif
 
+#include "RayTelemetry.hlsli"
 Texture2D<float> ReflectionDepth : register(t1);
 Texture2D<float4> ReflectionNormal : register(t2);
 Texture2D<float4> ReflectionMaterial : register(t3);
@@ -53,9 +54,16 @@ cbuffer ReflectionConstants : register(b6)
     float4 GiParameters; // distance, intensity, checkerboard enabled, emissive mesh count
     float4 CacheParameters; // enabled, base cell size (m), capacity, max history frames
     float4 ReSTIRParameters; // enabled, max temporal M, spatial sample count, spatial radius (px)
+    float4x4 AdaptivePreviousViewProjection;
+    float4 AdaptiveSampling;
     uint4 ReSTIRState;       // history valid, reservoir width (traced columns), spatial visibility, 反射レイの粗さ上限 × 1000
+    float4 ReflectionStability;
 };
+#include "../../source/rendering/stablesampling.h"
 
+Texture2D<float4> AdaptiveRadiance:register(t0,space10);
+Texture2D<float4> AdaptiveGuide:register(t1,space10);
+RWTexture2D<float4> AdaptiveGuideOut:register(u0,space10);
 // ---------------------------------------------------------------------------------------------
 // ReSTIR GI (Ouyang et al. 2021): resampled importance sampling of the secondary bounce.
 //   Each traced pixel stores a reservoir (sample point, its normal and outgoing radiance, weight W,
@@ -209,7 +217,8 @@ bool ReSTIRVisiblePoint(uint2 pixel, out float3 position, out float3 normal, out
 // ---------------------------------------------------------------------------------------------
 RWByteAddressBuffer CacheKeys : register(u0, space7);
 RWByteAddressBuffer CacheAccumulation : register(u1, space7); // uint4: rgb fixed point, sample count
-RWStructuredBuffer<float4> CacheResolved : register(u2, space7); // rgb irradiance, history frames
+struct CacheValue { float4 Signal; float4 Distance; };
+RWStructuredBuffer<CacheValue> CacheResolved : register(u2, space7); // rgb irradiance, history frames
 RWByteAddressBuffer CacheAges : register(u3, space7);
 static const float kCacheScale = 256.0f;        // fixed point scale of the accumulation
 static const float kCacheMaxIrradiance = 256.0f;
@@ -238,9 +247,9 @@ void CacheCell(float3 position, float3 normal, out uint key, out uint bucket)
     bucket = CacheHash(hash ^ 0x9e3779b9u) & ((uint)CacheParameters.z - 1u);
 }
 
-bool CacheLookup(float3 position, float3 normal, out float3 irradiance)
+bool CacheLookupSignal(float3 position,float3 normal,out float3 irradiance,out float hitDistance)
 {
-    irradiance = 0;
+    irradiance=0; hitDistance=0;
     if (CacheParameters.x < 0.5f) return false;
     uint key, bucket;
     CacheCell(position, normal, key, bucket);
@@ -250,15 +259,17 @@ bool CacheLookup(float3 position, float3 normal, out float3 irradiance)
         uint slot = (bucket + probe) & mask;
         if (CacheKeys.Load(slot * 4) == key)
         {
-            float4 resolved = CacheResolved[slot];
+            float4 resolved=CacheResolved[slot].Signal; hitDistance=CacheResolved[slot].Distance.x;
             irradiance = resolved.rgb;
-            return resolved.w > 0;
+            return resolved.w>0 && CacheAges.Load(slot*4)<=8u && all(isfinite(resolved)) && isfinite(hitDistance);
         }
     }
     return false;
 }
 
-void CacheInsert(float3 position, float3 normal, float3 irradiance)
+bool CacheLookup(float3 position,float3 normal,out float3 irradiance) { float distance; return CacheLookupSignal(position,normal,irradiance,distance); }
+
+void CacheInsert(float3 position,float3 normal,float3 irradiance,float hitDistance)
 {
     if (CacheParameters.x < 0.5f || any(isnan(irradiance)) || any(isinf(irradiance))) return;
     uint key, bucket;
@@ -279,12 +290,13 @@ void CacheInsert(float3 position, float3 normal, float3 irradiance)
     }
     if (found < 0) return; // neighbourhood full: the sample is simply not cached
     uint3 value = (uint3)(min(max(irradiance, 0), kCacheMaxIrradiance) * kCacheScale + 0.5f);
-    uint address = (uint)found * 16;
+    uint address = (uint)found * 32;
     uint ignored;
     CacheAccumulation.InterlockedAdd(address + 0, value.x, ignored);
     CacheAccumulation.InterlockedAdd(address + 4, value.y, ignored);
     CacheAccumulation.InterlockedAdd(address + 8, value.z, ignored);
     CacheAccumulation.InterlockedAdd(address + 12, 1u, ignored);
+    CacheAccumulation.InterlockedMax(address+16,asuint(clamp(hitDistance,0,65504)),ignored);
 }
 
 
@@ -336,6 +348,7 @@ float TraceBounceVisibility(float3 position, float3 normal, float3 direction, fl
     ray.TMin = SceneRayParameters.y * 0.25f;
     ray.TMax = max(distance - SceneRayParameters.y, ray.TMin + 0.001f);
     RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+    CountTelemetryRay(RAY_TELEMETRY_RADIANCE_SHADOW);
     query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0x01, ray);
     while (query.Proceed()) { }
     return query.CommittedStatus() == COMMITTED_NOTHING ? 1 : 0;
@@ -498,6 +511,33 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
         surfaceDiffuse, surfaceNormal);
 }
 
+bool AdaptiveReflection(uint2 pixel,float depth,float3 position,float3 normal,float roughness,out float4 signal)
+{
+    signal=0; if(AdaptiveSampling.x<.5||AdaptiveSampling.y<.5||roughness<AdaptiveSampling.z) return false;
+    uint period=roughness>.55?4u:2u; if(((pixel.x+pixel.y*2u+ReflectionExtent.z)%period)==0) return false;
+    float2 motion=GiVelocity.Load(int3(pixel,0)).zw;
+    if(!all(isfinite(motion))||length(motion*ReflectionExtent.xy)>.5) return false;
+    float tolerance=max(2e-5,abs(1-depth)*.005);
+    [unroll] for(uint i=0;i<4;++i)
+    {
+        int2 offset=i==0?int2(1,0):i==1?int2(-1,0):i==2?int2(0,1):int2(0,-1);
+        int2 p=clamp(int2(pixel)+offset,0,int2(ReflectionExtent.xy)-1);
+        if(abs(ReflectionDepth.Load(int3(p,0))-depth)>tolerance) return false;
+        if(dot(normalize(ReflectionNormal.Load(int3(p,0)).xyz*2-1),normal)<.995) return false;
+    }
+    float4 previous=mul(float4(position,1),AdaptivePreviousViewProjection); if(previous.w<=0) return false;
+    float3 ndc=previous.xyz/previous.w; float2 uv=ndc.xy*float2(.5,-.5)+.5;
+    if(any(uv<=0)||any(uv>=1)||ndc.z<0||ndc.z>1) return false;
+    uint2 old=min(uint2(uv*ReflectionExtent.xy),ReflectionExtent.xy-1); float4 guide=AdaptiveGuide.Load(int3(old,0));
+    if(abs(guide.w-ndc.z)>tolerance||dot(guide.xyz,normal)<.995) return false;
+    signal=AdaptiveRadiance.Load(int3(old,0)); return all(isfinite(signal))&&all(signal.rgb>=0);
+}
+[numthreads(8,8,1)]
+void CaptureAdaptiveGuide(uint3 id:SV_DispatchThreadID)
+{
+    if(any(id.xy>=ReflectionExtent.xy)) return;
+    AdaptiveGuideOut[id.xy]=float4(normalize(ReflectionNormal.Load(int3(id.xy,0)).xyz*2-1),ReflectionDepth.Load(int3(id.xy,0)));
+}
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
@@ -530,6 +570,20 @@ void main(uint3 id : SV_DispatchThreadID)
     float3 normal = normalize(ReflectionNormal.Load(int3(pixel, 0)).xyz * 2 - 1);
     float3 view = normalize(ReflectionCamera.xyz - position);
     float roughness = clamp(ReflectionMaterial.Load(int3(pixel, 0)).y, 0.02f, 1);
+    float4 adaptiveSignal;
+    if(AdaptiveReflection(pixel,depth,position,normal,roughness,adaptiveSignal))
+    {
+        ReflectionRadiance[pixel]=adaptiveSignal; float distance=abs(adaptiveSignal.w)>0?abs(adaptiveSignal.w):65504;
+#if USE_NRD
+        float viewZ=abs(mul(float4(position,1),ReflectionView).z);
+        float normalized=REBLUR_FrontEnd_GetNormHitDist(distance,viewZ,float3(3,.1,20),roughness);
+        NoisyRadiance[storage]=REBLUR_FrontEnd_PackRadianceAndNormHitDist(adaptiveSignal.rgb,normalized,true);
+#else
+        NoisyRadiance[storage]=float4(adaptiveSignal.rgb,distance);
+#endif
+        return;
+    }
+
     uint seed = ReflectionHash(pixel.x + pixel.y * ReflectionExtent.x + ReflectionExtent.z * 104729u);
     float2 random = float2((seed & 0xffff) + 0.5f, (seed >> 16) + 0.5f) / 65536;
     // 負荷削減：粗い面は反射レイを飛ばさず空（環境）で近似する（ローブが広く、レイ 1 本ではほぼノイズにしかならない）
@@ -562,6 +616,7 @@ void main(uint3 id : SV_DispatchThreadID)
     if (nDotL > 0)
     {
         RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
+        CountTelemetryRay(RAY_TELEMETRY_REFLECTION);
         query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
         while (query.Proceed()) { }
         hit = query.CommittedStatus() != COMMITTED_NOTHING;
@@ -609,23 +664,31 @@ void Compose(uint3 id : SV_DispatchThreadID)
 
 // One triangle sampled uniformly on one emissive mesh. Area and inverse-square falloff
 // turn authored radiance into incident irradiance; the visibility ray prevents wall leaks.
-float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed)
+float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2 pixel, bool checkerboard)
 {
     uint emitterCount = uint(GiParameters.w);
     if (emitterCount == 0)
     {
         return 0;
     }
-    uint instance = EmissiveMeshes[ReflectionHash(seed) % emitterCount];
+    uint sequence = PixelSampleIndex(ReflectionExtent.z, checkerboard);
+    SamplePair selection = SampleSequence(pixel.x, pixel.y, sequence, 1u);
+    uint emitterIndex = ReflectionStability.x > .5 ? min(uint(selection.x * emitterCount), emitterCount - 1) : ReflectionHash(seed) % emitterCount;
+    uint instance = EmissiveMeshes[emitterIndex];
     ReflectionGeometry mesh = ReflectionMeshes[instance];
     uint triangleCount = mesh.Surface.x;
     if (triangleCount == 0)
     {
         return 0;
     }
-    uint primitive = ReflectionHash(seed + 1) % triangleCount;
+    uint primitive = ReflectionStability.x > .5 ? min(uint(selection.y * triangleCount), triangleCount - 1) : ReflectionHash(seed + 1) % triangleCount;
     uint random = ReflectionHash(seed + 2);
     float2 sample = float2((random & 65535) + 0.5f, (random >> 16) + 0.5f) / 65536;
+    if (ReflectionStability.x > .5)
+    {
+        SamplePair sequenceSample = SampleSequence(pixel.x, pixel.y, sequence, 2u);
+        sample = float2(sequenceSample.x, sequenceSample.y);
+    }
     float root = sqrt(sample.x);
     float3 weights = float3(1 - root, root * (1 - sample.y), root * sample.y);
     float3 vertices[3];
@@ -666,6 +729,7 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed)
     ray.TMin = SceneRayParameters.y * 0.25f;
     ray.TMax = max(length(biasedOffset) - SceneRayParameters.y, ray.TMin);
     RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+    CountTelemetryRay(RAY_TELEMETRY_RADIANCE_SHADOW);
     query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
     while (query.Proceed()) { }
     if (query.CommittedStatus() != COMMITTED_NOTHING)
@@ -720,8 +784,36 @@ void TraceDiffuse(uint3 id : SV_DispatchThreadID)
     float4 world = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, depth, 1), ReflectionInvViewProjection);
     float3 position = world.xyz / world.w;
     float3 normal = normalize(ReflectionNormal.Load(int3(pixel, 0)).xyz * 2 - 1);
+    uint period=max(1u,(uint)AdaptiveSampling.w);
+    if(period>1 && ((ReflectionHash(pixel.x+pixel.y*ReflectionExtent.x)+ReflectionExtent.z)%period)!=0)
+    {
+        float2 motion=GiVelocity.Load(int3(pixel,0)).zw; float3 cached; float cachedDistance;
+        bool stable=all(isfinite(motion)) && length(motion*ReflectionExtent.xy)<.25;
+        [unroll] for(uint i=0;i<4;++i)
+        {
+            int2 offset=i==0?int2(1,0):i==1?int2(-1,0):i==2?int2(0,1):int2(0,-1);
+            int2 p=clamp(int2(pixel)+offset,0,int2(ReflectionExtent.xy)-1);
+            stable=stable && abs(ReflectionDepth.Load(int3(p,0))-depth)<max(2e-5,abs(1-depth)*.005) && dot(normalize(ReflectionNormal.Load(int3(p,0)).xyz*2-1),normal)>.995;
+        }
+        if(stable && CacheLookupSignal(position,normal,cached,cachedDistance))
+        {
+#if USE_NRD
+            float viewZ=abs(mul(float4(position,1),ReflectionView).z);
+            float normalized=REBLUR_FrontEnd_GetNormHitDist(cachedDistance,viewZ,float3(3,.1,20),1);
+            NoisyRadiance[storage]=REBLUR_FrontEnd_PackRadianceAndNormHitDist(cached,normalized,true);
+#else
+            NoisyRadiance[storage]=float4(cached,cachedDistance);
+#endif
+            return;
+        }
+    }
     uint seed = ReflectionHash(pixel.x + pixel.y * ReflectionExtent.x + ReflectionExtent.z * 104729u);
     float2 random = float2((seed & 65535) + 0.5f, (seed >> 16) + 0.5f) / 65536;
+    if (ReflectionStability.x > .5)
+    {
+        SamplePair sequenceSample = SampleSequence(pixel.x, pixel.y, PixelSampleIndex(ReflectionExtent.z, checkerboard), 0u);
+        random = float2(sequenceSample.x, sequenceSample.y);
+    }
     float radius = sqrt(random.x);
     float angle = 6.2831853f * random.y;
     float3 tangent = normalize(cross(abs(normal.y) < 0.95f ? float3(0,1,0) : float3(1,0,0), normal));
@@ -732,6 +824,7 @@ void TraceDiffuse(uint3 id : SV_DispatchThreadID)
     ray.TMin = SceneRayParameters.y * 0.25f;
     ray.TMax = GiParameters.x;
     RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
+    CountTelemetryRay(RAY_TELEMETRY_GI);
     query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
     while (query.Proceed()) { }
     float hitDistance = ray.TMax;
@@ -758,10 +851,10 @@ void TraceDiffuse(uint3 id : SV_DispatchThreadID)
         // Sun / moon discs are excluded: direct light already covers them (see SkyAtmosphere.hlsli).
         incoming = EvaluatePhysicalSkyFast(direction, 0.01f, false);
     }
-    float3 emissiveIrradiance = SampleEmissiveIrradiance(position, normal, seed + 17);
+    float3 emissiveIrradiance = SampleEmissiveIrradiance(position, normal, seed + 17, pixel, checkerboard);
     float3 irradiance = incoming * 3.14159265f + emissiveIrradiance;
     irradiance = min(max(irradiance, 0), 65504);
-    CacheInsert(position, normal, irradiance);
+    CacheInsert(position, normal, irradiance,hitDistance);
     if (ReSTIRParameters.x > 0.5f)
     {
         // Initial candidate: source pdf = cos / pi, target = lum(L) * cos  ->  w = lum(L) * pi.
@@ -898,16 +991,18 @@ void ResolveRadianceCache(uint3 id : SV_DispatchThreadID)
     if (slot >= (uint)CacheParameters.z) return;
     uint key = CacheKeys.Load(slot * 4);
     if (key == 0u) return;
-    uint4 accumulated = CacheAccumulation.Load4(slot * 16);
+    uint4 accumulated = CacheAccumulation.Load4(slot * 32);
     if (accumulated.w > 0u)
     {
         float3 average = float3(accumulated.xyz) / (kCacheScale * accumulated.w);
-        float4 resolved = CacheResolved[slot];
+        float4 resolved=CacheResolved[slot].Signal;
         float history = min(resolved.w + 1.0f, max(CacheParameters.w, 1.0f));
         resolved.rgb = lerp(resolved.rgb, average, 1.0f / history);
         resolved.w = history;
-        CacheResolved[slot] = resolved;
-        CacheAccumulation.Store4(slot * 16, uint4(0, 0, 0, 0));
+        CacheResolved[slot].Signal=resolved;
+        CacheResolved[slot].Distance=float4(asfloat(CacheAccumulation.Load(slot*32+16)),0,0,0);
+        CacheAccumulation.Store4(slot*32,uint4(0,0,0,0));
+    CacheAccumulation.Store4(slot*32+16,uint4(0,0,0,0));
         CacheAges.Store(slot * 4, 0u);
         return;
     }
@@ -915,7 +1010,7 @@ void ResolveRadianceCache(uint3 id : SV_DispatchThreadID)
     if (age > kCacheMaxAge)
     {
         CacheKeys.Store(slot * 4, 0u);
-        CacheResolved[slot] = 0;
+        CacheResolved[slot]=(CacheValue)0;
         age = 0u;
     }
     CacheAges.Store(slot * 4, age);
@@ -927,8 +1022,9 @@ void ClearRadianceCache(uint3 id : SV_DispatchThreadID)
     uint slot = id.x;
     if (slot >= (uint)CacheParameters.z) return;
     CacheKeys.Store(slot * 4, 0u);
-    CacheAccumulation.Store4(slot * 16, uint4(0, 0, 0, 0));
-    CacheResolved[slot] = 0;
+    CacheAccumulation.Store4(slot*32,uint4(0,0,0,0));
+    CacheAccumulation.Store4(slot*32+16,uint4(0,0,0,0));
+    CacheResolved[slot]=(CacheValue)0;
     CacheAges.Store(slot * 4, 0u);
 }
 
@@ -1052,6 +1148,7 @@ void ReSTIRSpatial(uint3 id : SV_DispatchThreadID)
         ray.TMin = SceneRayParameters.y * 0.25f;
         ray.TMax = max(sampleDistance - SceneRayParameters.y * 2.0f, ray.TMin + 0.001f);
         RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+        CountTelemetryRay(RAY_TELEMETRY_RESTIR_VISIBILITY);
         query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
         while (query.Proceed()) { }
         if (query.CommittedStatus() != COMMITTED_NOTHING) W = 0.0f;
@@ -1067,6 +1164,7 @@ void ReSTIRSpatial(uint3 id : SV_DispatchThreadID)
     NoisyRadiance[storage] = float4(irradiance, hitDistance);
 #endif
 }
+
 
 
 

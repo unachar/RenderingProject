@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "temporalupscaler.h"
 #include "megalights.h"
 #include "transmittanceshadows.h"
 #include "cloud/cloudrenderer.h"
@@ -31,10 +32,15 @@
 #include "renderquality.h"
 #include "pbrluts.h"
 #include "transparencyeffects.h"
+#include "temporalhistorycontext.h"
 
 
 namespace
 {
+TemporalHistory::State g_PreviousTaaState;
+TemporalHistory::State g_CurrentTaaState;
+bool g_TaaHistoryValid = false;
+bool g_CanReuseTaaHistory = false;
 struct PostProcessConstants
 {
 	XMFLOAT4 Flags{};
@@ -53,6 +59,7 @@ static_assert(sizeof(PostProcessConstants) <= RendererState::g_kPP_CB_ALIGNED_SI
 UpscaleMode ResolveUpscaleMode(UINT inputWidth, UINT inputHeight, UINT outputWidth, UINT outputHeight)
 {
 	UpscaleMode mode = RendererSettings::GetUpscaleMode();
+    if(mode==UpscaleMode::Tsr)return mode;
 	if (mode == UpscaleMode::Dlss)
 	{
 		return DlssUpscaler::IsRequested() ? UpscaleMode::Dlss : UpscaleMode::Bilateral;
@@ -112,6 +119,15 @@ void PostProcessPass::UpdateCameraConstants()
 
 void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 {
+    const uint64_t historyConfiguration = static_cast<uint64_t>(m_AntiAliasingMode) |
+        (static_cast<uint64_t>(ResolveUpscaleMode(m_SceneWidth, m_SceneHeight, m_Width, m_Height)) << 8) |
+        (uint64_t(TemporalUpscaler::IsInputTaaEnabled()) << 16);
+    g_CurrentTaaState = TemporalHistory::Context::Capture(Camera::GetCameraEntity(), m_SceneWidth, m_SceneHeight,
+        historyConfiguration, ImGuiManager::GetExposure());
+    // The camera has already used this frame's jitter. History validity must not
+    // rewind that sequence, especially when TSR owns its own color history.
+    g_CanReuseTaaHistory = TemporalHistory::Evaluate(
+        g_PreviousTaaState, g_CurrentTaaState, g_TaaHistoryValid).CanReuse;
 	UpdateCameraConstants();
 	UINT nextConstantSlot = 1; // Slot zero holds the frame camera data used by velocity and AA.
 	auto DrawFullscreenPass = [&](ID3D12PipelineState* pso, D3D12_CPU_DESCRIPTOR_HANDLE targetRtv,
@@ -536,11 +552,12 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 	D3D12_GPU_DESCRIPTOR_HANDLE upscaleSourceSrv = GetRenderTargetSrvHandle(RenderTargetType::PostProcess);
 	ID3D12Resource* upscaleSource = GetRenderTarget(RenderTargetType::PostProcess).Get();
 
-	if (needsUpscale && upscaleMode != UpscaleMode::Bilateral && upscaleMode != UpscaleMode::Dlss &&
+    const bool tsrInputTaa = upscaleMode == UpscaleMode::Tsr && TemporalUpscaler::IsInputTaaEnabled();
+	if (needsUpscale && (upscaleMode != UpscaleMode::Tsr || tsrInputTaa) && upscaleMode != UpscaleMode::Bilateral && upscaleMode != UpscaleMode::Dlss &&
 		GetRenderTarget(RenderTargetType::PreUpscaleAa))
 	{
 		const bool useTaa =
-			m_AntiAliasingMode == AntiAliasingMode::TAA &&
+			(m_AntiAliasingMode == AntiAliasingMode::TAA || tsrInputTaa) &&
 			GetRenderTarget(RenderTargetType::PreUpscaleAaHistory);
 		ID3D12PipelineState* aaPso;
 		if (useTaa)
@@ -601,7 +618,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 				constants[16] = 0.90f;
 				constants[17] = 1.0f / max(static_cast<float>(m_SceneWidth), 1.0f);
 				constants[18] = 1.0f / max(static_cast<float>(m_SceneHeight), 1.0f);
-				constants[19] = static_cast<float>(m_TaaFrameIndex > 0);
+				constants[19] = static_cast<float>(g_CanReuseTaaHistory);
 				m_CommandList->SetGraphicsRoot32BitConstants(4, 20, constants, 0);
 			}
 			else
@@ -650,7 +667,10 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 						D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
 				};
 				m_CommandList->ResourceBarrier(_countof(toShaderRead), toShaderRead);
-				++m_TaaFrameIndex;
+                // TSR advances the shared camera jitter once after reconstruction.
+                if (!tsrInputTaa) ++m_TaaFrameIndex;
+                g_PreviousTaaState = g_CurrentTaaState;
+                g_TaaHistoryValid = true;
 			}
 			else
 			{
@@ -665,6 +685,17 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 		}
 	}
 
+    bool tsrRendered=false;
+    if(upscaleMode==UpscaleMode::Tsr)
+    {
+        tsrRendered = TemporalUpscaler::Execute(m_CommandList.Get(), m_FrameIndex, upscaleSource,
+            m_GBufferTargets[static_cast<UINT>(GBufferType::DEPTH)].Get(),
+            m_GBufferTargets[static_cast<UINT>(GBufferType::VELOCITY)].Get(),
+            TransparencyEffects::GetReactiveRevealage(),
+            GetRenderTarget(RenderTargetType::EditorScene).Get(), ImGuiManager::GetExposure());
+        ++m_TaaFrameIndex; RenderFrame::SetDescriptorHeap();
+    }
+    else TemporalUpscaler::Invalidate();
 	bool dlssRendered = false;
 	if (needsUpscale && upscaleMode == UpscaleMode::Dlss)
 	{
@@ -695,7 +726,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 		}
 	}
 
-	if (dlssRendered)
+	if (dlssRendered||tsrRendered)
 	{
 		// DLSS has already produced the display-resolution image and antialiasing.
 	}
@@ -724,7 +755,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 		m_CommandList->ResourceBarrier(_countof(barriers), barriers);
 	}
-	else if (upscaleMode == UpscaleMode::Bilateral || upscaleMode == UpscaleMode::Dlss)
+	else if (upscaleMode == UpscaleMode::Bilateral || upscaleMode == UpscaleMode::Dlss || upscaleMode == UpscaleMode::Tsr)
 	{
 		D3D12_RESOURCE_BARRIER editorToRt = CD3DX12_RESOURCE_BARRIER::Transition(
 			GetRenderTarget(RenderTargetType::EditorScene).Get(),
@@ -820,6 +851,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 
 void PostProcessPass::ApplyAntiAliasing()
 {
+    if(TemporalUpscaler::IsRequested())return;
 	if (!m_AaRenderTarget || !m_AaRootSignature)
 		return;
 
@@ -902,7 +934,7 @@ void PostProcessPass::ApplyAntiAliasing()
 		cbData[16] = 0.90f;
 		cbData[17] = 1.0f / (float)m_Width;
 		cbData[18] = 1.0f / (float)m_Height;
-		cbData[19] = static_cast<float>(m_TaaFrameIndex > 0);
+		cbData[19] = static_cast<float>(g_CanReuseTaaHistory);
 		m_CommandList->SetGraphicsRoot32BitConstants(4, 20, cbData, 0);
 	}
 
@@ -926,6 +958,8 @@ void PostProcessPass::ApplyAntiAliasing()
 	if (mode == AntiAliasingMode::TAA)
 	{
 		m_TaaFrameIndex++;
+    g_PreviousTaaState = g_CurrentTaaState;
+    g_TaaHistoryValid = true;
 
 		D3D12_RESOURCE_BARRIER toHistoryCopyDest = CD3DX12_RESOURCE_BARRIER::Transition(
 			m_AaRenderTarget.Get(),
@@ -968,6 +1002,7 @@ void PostProcessPass::ApplyAntiAliasing()
 		m_CommandList->ResourceBarrier(1, &toEditorFinalSrv);
 	}
 }
+
 
 
 

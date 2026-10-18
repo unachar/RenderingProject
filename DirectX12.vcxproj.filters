@@ -722,6 +722,15 @@
     <ClInclude Include="source\rendering\renderprofiler.h">
       <Filter>rendering</Filter>
     </ClInclude>
+    <ClInclude Include="source\rendering\rendermeasurement.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\temporalhistory.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\temporalhistorycontext.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
     <ClInclude Include="source\rendering\rendertargets.h">
       <Filter>rendering</Filter>
     </ClInclude>
@@ -1020,6 +1029,24 @@
     <ClCompile Include="source\core\renderingvalidation.cpp">
       <Filter>core</Filter>
     </ClCompile>
+    <ClCompile Include="source\core\renderbenchmark.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClInclude Include="source\core\renderbenchmark.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\rendermeasurementwindow.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\raytelemetry.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\raytelemetrydata.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\raytelemetrylayout.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
     <ClInclude Include="source\core\renderingvalidation.h">
       <Filter>core</Filter>
     </ClInclude>

@@ -232,6 +232,22 @@ struct NrdDenoiser::Impl
         Dispatches = 0;
         if (!commands || !inputs.Motion.Resource || !inputs.NormalRoughness.Resource ||
             !inputs.ViewZ.Resource || !inputs.NoisySignal.Resource) return false;
+        const auto matchesExtent = [&](ID3D12Resource* resource, UINT minimumWidth)
+        {
+            const auto description = resource->GetDesc();
+            return description.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
+                description.Width >= minimumWidth && description.Width <= Width &&
+                description.Height == Height && description.DepthOrArraySize == 1;
+        };
+        const bool checkerboard = Signal == NrdSignal::Diffuse || Signal == NrdSignal::SpecularCheckerboard;
+        const UINT signalWidth = checkerboard ? (Width + 1) / 2 : Width;
+        if (!matchesExtent(inputs.Motion.Resource, Width) || !matchesExtent(inputs.NormalRoughness.Resource, Width) ||
+            !matchesExtent(inputs.ViewZ.Resource, Width) || !matchesExtent(inputs.NoisySignal.Resource, signalWidth))
+        {
+            WriteGraphicsLog("NRD: input extent contract rejected signal=%u expected=%ux%u packedMinimum=%u sequence=%u\n",
+                static_cast<UINT>(Signal), Width, Height, signalWidth, frame.Sequence);
+            return false;
+        }
         if (abs(frame.Jitter.x) > 0.5f || abs(frame.Jitter.y) > 0.5f ||
             abs(frame.PreviousJitter.x) > 0.5f || abs(frame.PreviousJitter.y) > 0.5f)
         {
@@ -251,10 +267,21 @@ struct NrdDenoiser::Impl
         common.cameraJitterPrev[0] = frame.PreviousJitter.x;
         common.cameraJitterPrev[1] = frame.PreviousJitter.y;
         common.frameIndex = frame.Sequence;
+        // NRD otherwise uses its private wall clock, changing checkerboard resolve
+        // and anti-lag weights even for an identical recorded input sequence.
+        common.timeDeltaBetweenFrames = frame.StableProfile ? 1000.f / 60.f : 0.f;
+        common.motionVectorScale[0] = common.motionVectorScale[1] = 1.f;
+        common.motionVectorScale[2] = 0.f;
+        common.isMotionVectorInWorldSpace = false;
+        common.disocclusionThreshold = frame.StableProfile ? .015f : .01f;
         common.denoisingRange = frame.Range;
         common.accumulationMode = FirstFrame ? nrd::AccumulationMode::CLEAR_AND_RESTART :
             (frame.ResetHistory || frame.Sequence - LastSequence != 1u) ?
                 nrd::AccumulationMode::RESTART : nrd::AccumulationMode::CONTINUE;
+        if (FirstFrame || frame.ResetHistory)
+            WriteGraphicsLog("NRD contract: signal=%u extent=%ux%u noisyWidth=%llu checkerboard=%u stable=%u dtMs=%.6f reset=%u sequence=%u\n",
+                static_cast<UINT>(Signal), Width, Height, static_cast<unsigned long long>(inputs.NoisySignal.Resource->GetDesc().Width),
+                checkerboard, frame.StableProfile, common.timeDeltaBetweenFrames, frame.HistoryResetReasons, frame.Sequence);
         if (nrd::SetCommonSettings(*Instance, common) != nrd::Result::SUCCESS) return false;
         if (Signal == NrdSignal::Shadow)
         {
@@ -262,6 +289,11 @@ struct NrdDenoiser::Impl
             settings.lightDirection[0] = frame.LightDirection.x;
             settings.lightDirection[1] = frame.LightDirection.y;
             settings.lightDirection[2] = frame.LightDirection.z;
+            if (frame.StableProfile)
+            {
+                settings.maxStabilizedFrameNum = 7;
+                settings.planeDistanceSensitivity = .025f;
+            }
             if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS) return false;
         }
         if (Signal == NrdSignal::Diffuse)
@@ -271,6 +303,11 @@ struct NrdDenoiser::Impl
             // would make NRD read the empty half of the checkerboard.
             nrd::ReblurSettings settings;
             ConfigureStableDiffuse(settings);
+            if (frame.StableProfile)
+            {
+                settings.maxAccumulatedFrameNum = 63;
+                settings.fastHistoryClampingSigmaScale = 2.5f;
+            }
             if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS) return false;
         }
         if (Signal == NrdSignal::MegaLights)

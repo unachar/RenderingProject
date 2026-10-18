@@ -95,6 +95,7 @@ public:
 		return s_Available && RenderQuality::Get().OrderIndependentTransparency &&
 			RendererState::GetSceneColorFormat() == DXGI_FORMAT_R16G16B16A16_FLOAT;
 	}
+    static ID3D12Resource* GetReactiveRevealage() { return IsOitActive()?s_Reveal.Get():nullptr; }
 	static bool IsRefractionActive() { return RenderQuality::Get().RaytracedRefraction; }
 
 	// Called with the scene target bound as RENDER_TARGET. Returns true if the OIT targets
@@ -219,3 +220,4 @@ private:
 		return true;
 	}
 };
+

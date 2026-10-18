@@ -292,6 +292,7 @@ public:
 	static const filesystem::path& GetScenePath() { return m_ScenePath; }
 
 	static void SaveProjectSettings();
+    static string SerializeProjectSettings();
 	static constexpr UINT kSrvDescriptorCount = 64;
     inline static bool m_AssetBrowserStandalone = false;
     static void SetAssetBrowserDirectory(const filesystem::path& directory, bool standalone = false)

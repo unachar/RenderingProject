@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "world.h"
+#include "renderbenchmark.h"
 
 float World::m_DeltaTime = 0.0f;
 float World::m_RawDeltaTime = 0.0f;
@@ -196,11 +197,13 @@ void World::WaitForFrameLimit()
 
 float World::GetDeltaTime()
 {
+    if (RenderBenchmark::IsEnabled()) return 1.0f / 60.0f;
     return m_DeltaTime;
 }
 
 float World::GetRawDeltaTime()
 {
+    if (RenderBenchmark::IsEnabled()) return 1.0f / 60.0f;
     return m_RawDeltaTime;
 }
 

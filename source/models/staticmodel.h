@@ -21,6 +21,14 @@ struct StaticModelVertex
 struct StaticMeshData
 {
 	static constexpr UINT LodCount = 5;
+    static constexpr UINT RayLodCount=3;
+    array<ComPtr<ID3D12Resource>,RayLodCount> RayLodBuffers{};
+    array<D3D12_INDEX_BUFFER_VIEW,RayLodCount> RayLodViews{};
+    array<UINT,RayLodCount> RayLodCounts{};
+    ComPtr<ID3D12Resource> RayProxyVertices,RayProxyIndices;
+    D3D12_VERTEX_BUFFER_VIEW RayProxyVertexView{};
+    D3D12_INDEX_BUFFER_VIEW RayProxyIndexView{};
+    XMFLOAT3 RayCenter{}; float RayRadius=0;
 	ComPtr<ID3D12Resource> VertexBuffer{};
 	ComPtr<ID3D12Resource> IndexBuffer{};
 	array<ComPtr<ID3D12Resource>, LodCount - 1> LodIndexBuffers{};
@@ -176,4 +184,5 @@ private:
     vector<uint64_t> m_VGDependencyHashes;
     vector<std::filesystem::file_time_type> m_VGDependencyTimes;
 };
+
 

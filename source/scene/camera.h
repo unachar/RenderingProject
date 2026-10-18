@@ -8,6 +8,8 @@ private:
 	inline static EntityID m_EditorCameraEntity = g_kINVALID_ENTITY;
 	inline static EntityID m_GameCameraEntity = g_kINVALID_ENTITY;
 public:
+    // Call after a same-camera teleport/cut; ordinary movement is reprojected.
+    static void NotifyCut();
 	static void Create(
 		XMFLOAT3 target = { 0.0f, 3.f, 0.0f },
 		float fov = XM_PIDIV4);

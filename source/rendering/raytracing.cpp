@@ -13,6 +13,8 @@
 #include "graphicsdevice.h"
 #include "materialmanager.h"
 #include "materialsystem.h"
+#include "temporalhistorycontext.h"
+#include "raytelemetry.h"
 #include <map>
 #include <tuple>
 
@@ -30,7 +32,7 @@ static_assert(kFallbackSrv < RendererState::g_kENGINE_DESCRIPTOR_END, "DXR descr
 constexpr UINT kConstantStride = 256;
 constexpr UINT kMaximumInstances = 16384;
 
-using GeometryKey = tuple<UINT64, UINT64, UINT, UINT, UINT>;
+using GeometryKey = tuple<UINT64, UINT64, UINT, UINT, UINT, UINT>;
 
 struct BottomLevel
 {
@@ -68,6 +70,7 @@ struct Constants
     XMUINT4 Features;
     XMFLOAT4X4 WorldToView;
     XMFLOAT4 Jitter;
+    XMFLOAT4 Stability;
 };
 struct LightingConstants
 {
@@ -84,6 +87,8 @@ ComPtr<ID3D12Device5> g_Device;
 ComPtr<ID3D12DescriptorHeap> g_Heap;
 ComPtr<ID3D12RootSignature> g_RootSignature;
 ComPtr<ID3D12PipelineState> g_Pipeline;
+ComPtr<ID3D12PipelineState> g_TelemetryPipeline;
+bool g_TelemetryPipelineTried = false;
 ComPtr<ID3D12PipelineState> g_ComposeShadow;
 ComPtr<ID3D12PipelineState> g_ComposeAmbient;
 unique_ptr<NrdDenoiser> g_NrdSun;
@@ -91,6 +96,7 @@ unique_ptr<NrdDenoiser> g_NrdAmbient;
 UINT g_NrdWidth = 0, g_NrdHeight = 0, g_NrdDispatchCount = 0;
 UINT g_AmbientDispatchCount = 0;
 NrdFrame g_PreviousNrdFrame;
+TemporalHistory::State g_PreviousTemporalState;
 uint64_t g_GuideSerial = 0;
 bool g_NrdHistoryValid = false;
 bool g_ShadowHistoryValid = false;
@@ -369,6 +375,30 @@ bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingG
     return true;
 }
 
+bool EnsureTelemetryPipeline()
+{
+    if (!g_TelemetryPipelineTried)
+    {
+        g_TelemetryPipelineTried = true;
+        const D3D_SHADER_MACRO defines[] = {{"USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0"},
+            {"ENABLE_RAY_TELEMETRY", "1"}, {}};
+        ComPtr<ID3DBlob> shader, errors;
+        const HRESULT result = D3DCompileFromFile(L"shader/hlsl/RaytracingCS.hlsl", defines,
+            D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &shader, &errors);
+        if (SUCCEEDED(result))
+        {
+            D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
+            desc.pRootSignature = g_RootSignature.Get();
+            desc.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
+            g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&g_TelemetryPipeline));
+        }
+        if (!g_TelemetryPipeline)
+            WriteGraphicsLog("Ray telemetry: shadow/AO counter variant unavailable: %s\n",
+                errors ? static_cast<const char*>(errors->GetBufferPointer()) : "pipeline creation failed");
+    }
+    return g_TelemetryPipeline != nullptr;
+}
+
 bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
 {
     RenderProfiler::ScopedEvent profile("DXR Acceleration Structures", commandList);
@@ -388,7 +418,7 @@ bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
         }
         ++accepted;
         const GeometryKey key(entry.VertexView.BufferLocation, entry.IndexView.BufferLocation,
-            entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes);
+            entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,static_cast<UINT>(entry.IndexView.Format));
         const auto bottom = frame.Geometry.find(key);
         if (bottom == frame.Geometry.end() || !bottom->second.Result || entry.Deforming)
         {
@@ -408,7 +438,7 @@ bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
             continue;
         }
         const GeometryKey key(entry.VertexView.BufferLocation, entry.IndexView.BufferLocation,
-            entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes);
+            entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,static_cast<UINT>(entry.IndexView.Format));
         BottomLevel& bottom = frame.Geometry[key];
         if (!BuildBottomLevel(commandList, entry, bottom, geometryReads))
         {
@@ -548,7 +578,7 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
     ranges[5].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4);
     ranges[6].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 5);
     ranges[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6);
-    CD3DX12_ROOT_PARAMETER parameters[10];
+    CD3DX12_ROOT_PARAMETER parameters[11];
     parameters[0].InitAsShaderResourceView(0);
     for (UINT index = 0; index < 3; ++index)
     {
@@ -556,7 +586,8 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
     }
     parameters[4].InitAsConstantBufferView(0);
     for (UINT index = 3; index < 8; ++index) parameters[index + 2].InitAsDescriptorTable(1, &ranges[index]);
-    const CD3DX12_ROOT_SIGNATURE_DESC rootDescription(10, parameters);
+    parameters[10].InitAsUnorderedAccessView(0, 9);
+    const CD3DX12_ROOT_SIGNATURE_DESC rootDescription(11, parameters);
     ComPtr<ID3DBlob> serialized;
     ComPtr<ID3DBlob> errors;
     if (FAILED(D3D12SerializeRootSignature(&rootDescription, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors)) ||
@@ -617,6 +648,8 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
 
 void Raytracing::Shutdown()
 {
+    g_TelemetryPipeline.Reset();
+    g_TelemetryPipelineTried = false;
     RayReflections::Shutdown();
     OptixDenoiser::Shutdown();
     g_NrdSun.reset();
@@ -706,6 +739,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     Constants constants{};
     XMStoreFloat4x4(&constants.InvViewProjection, XMMatrixTranspose(XMMatrixInverse(nullptr, view * projection)));
     constants.SunDirection = g_SunDirection;
+    constants.Stability = {g_Settings.StableSampling ? 1.f : 0.f, 0, 0, 0};
     constants.ExtentSamples = { frame.Width, frame.Height, static_cast<UINT>(clamp(g_Settings.Samples, 1, 8)), static_cast<UINT>(g_Serial) };
     constants.Distances = { clamp(g_Settings.ShadowDistance, 1.0f, 2000.0f),
         clamp(g_Settings.AmbientRadius, 0.05f, 10.0f), clamp(g_Settings.NormalBias, 0.001f, 0.1f),
@@ -739,11 +773,29 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     nrdFrame.LightDirection = { g_SunDirection.x, g_SunDirection.y, g_SunDirection.z };
     nrdFrame.FrameIndex = g_FrameIndex;
     nrdFrame.Sequence = static_cast<UINT>(g_Serial);
+    nrdFrame.StableProfile = g_Settings.StableNrdProfile;
     nrdFrame.Range = 2000.0f;
     nrdFrame.AmbientRadius = constants.Distances.y;
     if (ComponentManager::HasComponent<CameraComponent>(cameraEntity))
         nrdFrame.Range = (max)(ComponentManager::GetComponentUnchecked<CameraComponent>(cameraEntity).FarClip, 1.0f);
     nrdFrame.ResetHistory = !g_NrdHistoryValid;
+    const uint64_t historyConfiguration = static_cast<uint64_t>(g_Settings.RenderMode) |
+        (static_cast<uint64_t>(g_Settings.Reflections) << 8) |
+        (static_cast<uint64_t>(g_Settings.Denoise) << 9) |
+        (static_cast<uint64_t>(RendererSettings::GetRealtimeGiEnabled()) << 10) |
+        (static_cast<uint64_t>(g_Settings.RadianceDenoiser) << 16) |
+        (static_cast<uint64_t>(g_Settings.StableNrdProfile) << 20) |
+        (static_cast<uint64_t>(g_Settings.StableSampling) << 21);
+    const auto temporalState = TemporalHistory::Context::Capture(cameraEntity, frame.Width, frame.Height, historyConfiguration);
+    const auto historyDecision = TemporalHistory::Evaluate(g_PreviousTemporalState, temporalState, g_NrdHistoryValid);
+    nrdFrame.HistoryResetReasons = historyDecision.Reasons;
+    nrdFrame.ResetHistory |= !historyDecision.CanReuse;
+    if (nrdFrame.ResetHistory)
+    {
+        nrdFrame.PreviousView = nrdFrame.View;
+        nrdFrame.PreviousProjection = nrdFrame.Projection;
+        nrdFrame.PreviousJitter = nrdFrame.Jitter;
+    }
     constants.Jitter = { nrdFrame.Jitter.x, nrdFrame.Jitter.y, nrdFrame.PreviousJitter.x, nrdFrame.PreviousJitter.y };
     memcpy(&constants.Features.w, &nrdFrame.Range, sizeof(float));
     void* mapped = nullptr;
@@ -769,7 +821,10 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     ID3D12DescriptorHeap* heaps[] = { g_Heap.Get() };
     commandList->SetDescriptorHeaps(1, heaps);
     commandList->SetComputeRootSignature(g_RootSignature.Get());
-    commandList->SetPipelineState(g_Pipeline.Get());
+    const bool instrumented = RayTelemetry::IsCollecting() && EnsureTelemetryPipeline();
+    RayTelemetry::Data().RecordProvider(RayTelemetry::ShadowAo, instrumented);
+    commandList->SetPipelineState(instrumented ? g_TelemetryPipeline.Get() : g_Pipeline.Get());
+    if (instrumented) commandList->SetComputeRootUnorderedAccessView(10, RayTelemetry::Data().Address());
     commandList->SetComputeRootShaderResourceView(0, frame.TopLevel->GetGPUVirtualAddress());
     commandList->SetComputeRootDescriptorTable(1, depthSrv);
     commandList->SetComputeRootDescriptorTable(2, normalSrv);
@@ -857,7 +912,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     updateLighting(true);
     if (g_Settings.Reflections || RendererSettings::GetRealtimeGiEnabled())
     {
-        RenderProfiler::ScopedEvent reflectionProfile("DXR Reflections", commandList);
+        RenderProfiler::ScopedEvent reflectionProfile("DXR Radiance (Reflections / GI)", commandList);
         const bool radianceReady = RayReflections::Execute(commandList, frame.TopLevel.Get(), frame.SceneGeometry,
             nrdFrame, frame.Guides, g_Settings.Denoise);
         g_ReflectionsActive = radianceReady && g_Settings.Reflections;
@@ -866,6 +921,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     if (g_ReflectionsActive || g_GiActive) g_NrdDispatchCount += RayReflections::GetDenoiserDispatchCount();
     // Camera and motion history belongs to the scene, independently of enabled denoiser signals.
     g_PreviousNrdFrame = nrdFrame;
+    g_PreviousTemporalState = temporalState;
     g_NrdHistoryValid = true;
     g_GuideSerial = g_Serial;
 	if (g_Serial == 1)
@@ -977,6 +1033,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetGiSrv()
 {
     return RayReflections::GetGiSrv(g_FrameIndex);
 }
+
 
 
 

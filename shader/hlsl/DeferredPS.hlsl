@@ -18,7 +18,9 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     uint address = materialID * GPU_SCENE_MATERIAL_STRIDE;
     uint4 metadata = gSceneMaterials.Load4(address + 32u);
     uint normalTextureIndex = metadata.y;
+#ifndef SHADER_VISIBILITY_RESOLVE
     if ((metadata.z & 4u) == 0 && !frontFace) discard;
+#endif
     int UseTexture = (metadata.z & 1u) != 0;
     int FlipNormal = 0;
     int ShaderClass = metadata.w;
@@ -45,7 +47,11 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     if (UseTexture != 0)
     {
 #ifdef SHADER_GPU_DRIVEN
+#ifdef SHADER_VISIBILITY_RESOLVE
+        baseColor *= gSceneTextures[NonUniformResourceIndex(SceneTextureIndex(metadata.x))].SampleGrad(g_SamplerState,In.TexCoord,VisibilityUvDx,VisibilityUvDy);
+#else
         baseColor *= gSceneTextures[NonUniformResourceIndex(SceneTextureIndex(metadata.x))].Sample(g_SamplerState, In.TexCoord);
+#endif
 #else
         baseColor *= g_Texture.Sample(g_SamplerState, In.TexCoord);
 #endif
@@ -55,7 +61,9 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     float assetRoughness = mRoughness;
     float4 assetEmissionAO;
     ApplyAssetMaterial(assetMaterial, In.TexCoord, g_SamplerState, baseColor, assetMetallic, assetRoughness, assetEmissionAO);
+#ifndef SHADER_VISIBILITY_RESOLVE
     clip(baseColor.a - 0.01f);
+#endif
 
     float3 normal = In.Normal.xyz * ((FlipNormal != 0) ? -1.0f : 1.0f);
 
@@ -69,8 +77,12 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     if (hasNormalMap)
     {
         uint textureIndex = SceneTextureIndex(normalTextureIndex);
+#ifdef SHADER_VISIBILITY_RESOLVE
+        float3 tangentNormal=gSceneTextures[NonUniformResourceIndex(textureIndex)].SampleGrad(g_SamplerState,In.TexCoord,VisibilityUvDx,VisibilityUvDy).xyz*2-1;
+#else
         float3 tangentNormal = gSceneTextures[NonUniformResourceIndex(textureIndex)]
             .Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
+#endif
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }
 
@@ -118,5 +130,6 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
 #endif
     return output;
 }
+
 
 

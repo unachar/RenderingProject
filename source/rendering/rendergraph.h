@@ -1,6 +1,7 @@
 #pragma once
 
 #include <d3d12.h>
+#include "transientarena.h"
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -10,6 +11,7 @@
 class RenderGraph
 {
 public:
+    enum class Queue { Graphics,Compute };
 	struct ResourceHandle
 	{
 		static constexpr uint32_t InvalidIndex = UINT32_MAX;
@@ -80,6 +82,10 @@ public:
 		const SetupCallback& setup,
 		const ExecuteCallback& execute);
 
+    void SetLastPassQueue(Queue queue) { if(!m_Passes.empty())m_Passes.back().QueueType=queue; }
+    ResourceHandle CreateTransientResource(const char* name,const D3D12_RESOURCE_DESC& desc,D3D12_RESOURCE_STATES initial=D3D12_RESOURCE_STATE_COMMON);
+    bool AllocateTransients(ID3D12Device* device,TransientArena& arena);
+    ID3D12Resource* GetResource(ResourceHandle handle) const { return handle.Index<m_Resources.size()?m_Resources[handle.Index].Resource:nullptr; }
 	bool Compile();
 	bool Execute(ID3D12GraphicsCommandList* commandList);
 	void Reset();
@@ -89,6 +95,8 @@ public:
 	const vector<uint32_t>& GetExecutionOrder() const { return m_ExecutionOrder; }
 
 private:
+    friend class RenderGraphQueueExecutor;
+    TransientArena* m_Arena=nullptr;
 	struct Usage
 	{
 		ResourceHandle Resource;
@@ -98,6 +106,7 @@ private:
 
 	struct ResourceRecord
 	{
+        bool Transient=false; D3D12_RESOURCE_DESC Desc{}; UINT ArenaIndex=UINT_MAX;
 		string Name;
 		ID3D12Resource* Resource = nullptr;
 		D3D12_RESOURCE_STATES InitialState = D3D12_RESOURCE_STATE_COMMON;
@@ -109,6 +118,7 @@ private:
 
 	struct PassRecord
 	{
+        Queue QueueType=Queue::Graphics;
 		string Name;
 		vector<Usage> Usages;
 		vector<uint32_t> Dependencies;
@@ -128,3 +138,4 @@ private:
 	string m_LastError;
 	bool m_IsCompiled = false;
 };
+

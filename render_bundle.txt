@@ -2999,6 +2999,8 @@ inline ThumbnailCameraFit FitThumbnailCamera(float radius)
 #include "input.h"
 #include "graphicsdevice.h"
 #include "shaderpipelines.h"
+#include "renderprofiler.h"
+#include <chrono>
 
 #include "systemmanager.h"
 #include "modelmanager.h"
@@ -3088,12 +3090,20 @@ void Game::Uninit()
 
 void Game::Run()
 {
+    const uint64_t previousSerial = RenderProfiler::GetFrameSerial();
+    const auto frameBegin = std::chrono::steady_clock::now();
 	RenderConfiguration::ApplyPendingRenderMode();
 	RenderConfiguration::ApplyPendingHdr();
 	PerformanceGovernor::Update();
 	RenderConfiguration::ApplyPendingResolutionScale();
 	Update();
 	Draw();
+    if (RenderProfiler::GetFrameSerial() != previousSerial)
+    {
+        const double milliseconds = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - frameBegin).count();
+        RenderProfiler::RecordCpuFrameTime(RenderProfiler::GetFrameSerial(), milliseconds);
+    }
 }
 
 void Game::Update()
@@ -3115,17 +3125,10 @@ void Game::Draw()
 {
 	RenderFrame::BeginDraw();
 
-	RenderProfiler::BeginFrame(
-		GraphicsDevice::GetDevice(),
-		GraphicsDevice::GetCommandQueue(),
-		GraphicsDevice::GetCommandList(),
-		GraphicsDevice::GetFrameIndex());
-
 	RenderProfiler::DrawImGuiWindow();
 
 	SystemManager::RenderFlow();
 
-	RenderProfiler::EndFrame(GraphicsDevice::GetCommandList());
 	RenderFrame::EndDraw();
 }
 
@@ -3188,6 +3191,7 @@ public:
 #include "optixdenoiser.h"
 #include "rendercapture.h"
 #include "renderprofiler.h"
+#include "graphicsdevice.h"
 #include "graphicslog.h"
 #include "imguimanager.h"
 #include "gpudriven/gpudrivenrenderer.h"
@@ -3462,13 +3466,23 @@ void GiValidation::AfterFrame(uint64_t frame)
         WriteGraphicsLog("GI receiver frame=%llu rgb=(%.6f,%.6f,%.6f)\n", frame, signal.x, signal.y, signal.z);
         for (const auto& pass : RenderProfiler::GetLatest().Passes)
         {
-            if (pass.Name == "Realtime GI Trace and Filter")
+            if (pass.Name.rfind("Realtime GI", 0) == 0)
             {
-                WriteGraphicsLog("GI timing frame=%llu gpu=%.3fms cpu=%.3fms\n", frame, pass.GpuMs, pass.CpuMs);
+                WriteGraphicsLog("GI timing frame=%llu pass=%s gpu=%.3fms cpu=%.3fms\n", frame, pass.Name.c_str(), pass.GpuMs, pass.CpuMs);
             }
         }
         if (frame == 23)
         {
+            if (RayTelemetry::Requested())
+            {
+                const bool idle = GraphicsDevice::WaitForGpuIdle();
+                Check(idle, "GI ray telemetry fence completes");
+                const auto counts = idle ? RayTelemetry::Data().ConsumeCurrent(RenderProfiler::GetFrameSerial()) : RayTelemetry::Counts{};
+                Check(counts.ProviderKnown(RayTelemetry::Radiance) && counts.Rays[RAY_TELEMETRY_GI] > 0,
+                    "GI primary rays are measured in the actual diffuse shader");
+                WriteGraphicsLog("GI ray telemetry serial=%llu primary=%llu visibility=%llu restir=%llu\n", counts.Serial,
+                    counts.Rays[RAY_TELEMETRY_GI], counts.Rays[RAY_TELEMETRY_RADIANCE_SHADOW], counts.Rays[RAY_TELEMETRY_RESTIR_VISIBILITY]);
+            }
             if (Raytracing::GetSettings().RadianceDenoiser == Raytracing::DenoiserType::Optix)
             {
                 Check(RayReflections::IsOptixGiActive(), "OptiX AI denoises GI on GPU");
@@ -4860,6 +4874,349 @@ public:
 };
 
 
+===== FILE: source\core\renderbenchmark.cpp =====
+#include "pch.h"
+#include "renderbenchmark.h"
+#include "rendermeasurementwindow.h"
+#include "renderprofiler.h"
+#include "graphicsdevice.h"
+#include "renderconfiguration.h"
+#include "performancegovernor.h"
+#include "imguimanager.h"
+#include "projectmanager.h"
+#include "componentmanager.h"
+#include "world.h"
+#include "camera.h"
+#include "daynightcycle.h"
+#include "raytracing.h"
+#include "nrddenoiser.h"
+#include "graphicslog.h"
+#include "rendercapture.h"
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <unordered_map>
+#include <cctype>
+
+namespace
+{
+struct Metadata
+{
+    uint64_t SceneSignature = 0;
+    uint64_t LocalUsage = 0;
+    uint64_t LocalBudget = 0;
+    bool MemoryValid = false;
+    UINT InputWidth = 0, InputHeight = 0, OutputWidth = 0, OutputHeight = 0;
+};
+std::unique_ptr<RenderMeasurement::Window> g_Window;
+std::unordered_map<uint64_t, Metadata> g_Metadata;
+std::filesystem::path g_Directory;
+std::ofstream g_Frames, g_Passes;
+ComPtr<IDXGIAdapter3> g_Adapter;
+uint32_t g_Warmup = 120, g_Measured = 600;
+uint64_t g_FirstSerial = 0;
+uint64_t g_LastRecorded = 0;
+XMFLOAT3 g_CameraOrigin{}, g_CameraTarget{};
+bool g_Failed = false;
+bool g_SettingsCaptured = false;
+
+uint32_t ReadCount(const char* name, uint32_t fallback, uint32_t minimum)
+{
+    char value[32]{};
+    if (!GetEnvironmentVariableA(name, value, sizeof(value))) return fallback;
+    char* end = nullptr;
+    const unsigned long parsed = strtoul(value, &end, 10);
+    if (!end || *end || parsed < minimum || parsed > 100000)
+        throw std::runtime_error(std::string("Invalid benchmark count: ") + name);
+    return static_cast<uint32_t>(parsed);
+}
+
+void Hash(uint64_t& hash, const void* data, size_t bytes)
+{
+    const auto* input = static_cast<const uint8_t*>(data);
+    for (size_t index = 0; index < bytes; ++index)
+    {
+        hash ^= input[index];
+        hash *= 1099511628211ull;
+    }
+}
+
+uint64_t SceneSignature()
+{
+    uint64_t hash = 14695981039346656037ull;
+    for (EntityID entity : World::GetView<TransformComponent>())
+    {
+        const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+        Hash(hash, &entity, sizeof(entity));
+        Hash(hash, &transform.Position, sizeof(transform.Position));
+        Hash(hash, &transform.Rotation, sizeof(transform.Rotation));
+        Hash(hash, &transform.Scale, sizeof(transform.Scale));
+    }
+    return hash;
+}
+
+void Nullable(std::ostream& stream, const std::optional<double>& value)
+{
+    if (value && std::isfinite(*value)) stream << *value;
+    else stream << "null";
+}
+
+void CsvName(std::ostream& stream, const std::string& name)
+{
+    stream << '"';
+    for (char c : name)
+    {
+        if (c == '"') stream << '"';
+        stream << c;
+    }
+    stream << '"';
+}
+
+void Initialize()
+{
+    g_Warmup = ReadCount("DX12_RENDER_BENCHMARK_WARMUP", 120, 2);
+    g_Measured = ReadCount("DX12_RENDER_BENCHMARK_SAMPLES", 600, 2);
+    char label[128]{};
+    GetEnvironmentVariableA("DX12_RENDER_BENCHMARK_RUN", label, sizeof(label));
+    std::string name = label[0] ? label : "run-" + std::to_string(GetCurrentProcessId());
+    if (!std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_'; }))
+        throw std::runtime_error("Benchmark run ID must be a simple directory name");
+    g_Directory = std::filesystem::path("bin/validation/render-benchmark") / name;
+    if (std::filesystem::exists(g_Directory)) throw std::runtime_error("Benchmark run directory already exists");
+    std::filesystem::create_directories(g_Directory);
+    g_Frames.open(g_Directory / "frames.csv");
+    g_Passes.open(g_Directory / "passes.csv");
+    g_Frames << std::setprecision(17);
+    g_Passes << std::setprecision(17);
+    g_Frames << "Serial,FrameIndex,FrameMs,CpuFrameMs,CpuRenderMs,GpuMs,GpuValid,SceneSignature,InputWidth,InputHeight,OutputWidth,OutputHeight,ProcessLocalUsageBytes,LocalBudgetBytes,ManagedAllocationBytes,RayCount,HistoryRejectionRate,ReflectionRays,GiRays,RadianceShadowRays,ReSTIRVisibilityRays,ShadowRays,AoRays,RayTelemetryValid,RayActiveProviders,RayMeasuredProviders\n";
+    g_Passes << "Serial,Name,CpuInclusiveMs,GpuInclusiveMs,GpuExclusiveMs,Events,ValidGpuEvents,DroppedGpuEvents\n";
+    if (!g_Frames || !g_Passes) throw std::runtime_error("Cannot open benchmark output files");
+    ComPtr<IDXGIFactory4> factory;
+    if (SUCCEEDED(CreateDXGIFactory2(0, IID_PPV_ARGS(&factory))))
+        factory->EnumAdapterByLuid(GraphicsDevice::GetDevice()->GetAdapterLuid(), IID_PPV_ARGS(&g_Adapter));
+    std::ofstream metadata(g_Directory / "metadata.txt");
+    metadata << "scenario=startup-camera-path-v1\nfixed_step_seconds=0.016666666666666666\nwarmup=" << g_Warmup
+        << "\nsamples=" << g_Measured << "\ndxr=" << Raytracing::IsAvailable() << "\nnrd=" << NrdDenoiser::IsCompiled() << '\n';
+    metadata << "requested_input_width=384\nrequested_input_height=216\nrequested_output_width=1280\nrequested_output_height=720\n";
+    metadata << "gpu_scope=direct-frame-commands\n";
+    metadata << "ray_telemetry_requested=" << RayTelemetry::Requested() << "\nray_telemetry_scope=radiance-and-shadow-ao\n";
+    metadata << "final_capture=png\n";
+#ifdef _DEBUG
+    metadata << "configuration=Debug\n";
+#else
+    metadata << "configuration=Release\n";
+#endif
+    const LUID luid = GraphicsDevice::GetDevice()->GetAdapterLuid();
+    metadata << "adapter_luid_high=" << luid.HighPart << "\nadapter_luid_low=" << luid.LowPart << '\n';
+    if (g_Adapter)
+    {
+        DXGI_ADAPTER_DESC1 desc{};
+        if (SUCCEEDED(g_Adapter->GetDesc1(&desc)))
+            metadata << "vendor_id=" << desc.VendorId << "\ndevice_id=" << desc.DeviceId << "\ndedicated_video_bytes=" << desc.DedicatedVideoMemory << '\n';
+    }
+    World::SetVSyncEnabled(false);
+    World::SetFixedFrameRateEnabled(false);
+    PerformanceGovernor::GetOptions().Enabled = false;
+    if (ProjectManager::IsPlaying()) ProjectManager::Stop();
+    auto& cycle = DayNightCycle::GetSettings();
+    cycle.Running = false;
+    cycle.PreviewInEditor = false;
+    RenderConfiguration::Resize(1280, 720);
+    RenderConfiguration::SetResolutionScale(0.3f);
+    const auto camera = Camera::GetCameraEntity();
+    g_CameraOrigin = ComponentManager::GetComponentUnchecked<TransformComponent>(camera).Position;
+    g_CameraTarget = ComponentManager::GetComponentUnchecked<CameraComponent>(camera).Target;
+    g_FirstSerial = RenderProfiler::GetFrameSerial() + 1;
+    g_Window = std::make_unique<RenderMeasurement::Window>(g_FirstSerial, g_Warmup, g_Measured);
+}
+
+void Record(const RenderProfiler::FrameSnapshot& snapshot)
+{
+    if (!g_Window || snapshot.Serial == g_LastRecorded) return;
+    g_LastRecorded = snapshot.Serial;
+    const RenderMeasurement::Sample sample{snapshot.Serial, snapshot.FrameIntervalMs, snapshot.CpuFrameMs,
+        snapshot.GpuRenderMs, snapshot.GpuTimingValid};
+    if (!g_Window->Record(sample)) return;
+    const auto found = g_Metadata.find(snapshot.Serial);
+    if (found == g_Metadata.end())
+    {
+        g_Failed = true;
+        return;
+    }
+    const auto& metadata = found->second;
+    g_Frames << sample.Serial << ',' << sample.Serial - g_FirstSerial << ',' << sample.FrameMs << ',' << sample.CpuMs
+        << ',' << snapshot.CpuRenderMs << ',';
+    Nullable(g_Frames, sample.GpuValid ? std::optional<double>(sample.GpuMs) : std::nullopt);
+    g_Frames << ',' << sample.GpuValid << ',' << metadata.SceneSignature << ',' << metadata.InputWidth << ','
+        << metadata.InputHeight << ',' << metadata.OutputWidth << ',' << metadata.OutputHeight << ',';
+    if (metadata.MemoryValid) g_Frames << metadata.LocalUsage << ',' << metadata.LocalBudget;
+    else g_Frames << "null,null";
+    // Other DXR sources and internal NRD rejection are still unavailable.
+    g_Frames << ",null,null,null";
+    for (UINT channel = RAY_TELEMETRY_REFLECTION; channel <= RAY_TELEMETRY_AO; ++channel)
+    {
+        const uint32_t provider = channel <= RAY_TELEMETRY_RESTIR_VISIBILITY ? RayTelemetry::Radiance : RayTelemetry::ShadowAo;
+        g_Frames << ',';
+        if (snapshot.Rays.ProviderKnown(provider)) g_Frames << snapshot.Rays.Rays[channel];
+        else g_Frames << "null";
+    }
+    g_Frames << ',' << snapshot.Rays.Valid << ',' << snapshot.Rays.ActiveProviders << ',' << snapshot.Rays.MeasuredProviders << '\n';
+    for (const auto& pass : snapshot.Passes)
+    {
+        g_Passes << sample.Serial << ',';
+        CsvName(g_Passes, pass.Name);
+        g_Passes << ',' << pass.CpuMs << ',';
+        Nullable(g_Passes, RenderMeasurement::IsGpuTimingComplete(pass.GpuEvents, pass.GpuSamples, snapshot.DroppedGpuEvents)
+            ? std::optional<double>(pass.GpuMs) : std::nullopt);
+        g_Passes << ',';
+        Nullable(g_Passes, RenderMeasurement::IsGpuTimingComplete(pass.GpuEvents, pass.GpuExclusiveSamples, snapshot.DroppedGpuEvents)
+            ? std::optional<double>(pass.GpuExclusiveMs) : std::nullopt);
+        g_Passes << ',' << pass.GpuEvents << ',' << pass.GpuSamples << ',' << snapshot.DroppedGpuEvents << '\n';
+    }
+}
+}
+
+bool RenderBenchmark::IsEnabled()
+{
+    static const bool enabled = [] {
+        char value[8]{};
+        return GetEnvironmentVariableA("DX12_RENDER_BENCHMARK", value, sizeof(value)) > 0 && atoi(value) != 0;
+    }();
+    return enabled;
+}
+
+void RenderBenchmark::BeforeFrame(uint64_t frame)
+{
+    if (!IsEnabled() || g_Failed) return;
+    try
+    {
+        if (!g_Window) Initialize();
+        // The editor loads persisted settings on its first UI frame. Reapply
+        // benchmark conditions after that load and reject any measured drift.
+        World::SetVSyncEnabled(false);
+        World::SetFixedFrameRateEnabled(false);
+        PerformanceGovernor::GetOptions().Enabled = false;
+        RenderProfiler::SetEnabled(true);
+        RenderConfiguration::SetResolutionScale(0.3f);
+        auto& cycle = DayNightCycle::GetSettings();
+        cycle.Running = false;
+        cycle.PreviewInEditor = false;
+        if (frame == 1)
+        {
+            if (ProjectManager::IsPlaying()) ProjectManager::Stop();
+            g_CameraOrigin = ComponentManager::GetComponentUnchecked<TransformComponent>(Camera::GetCameraEntity()).Position;
+            g_CameraTarget = ComponentManager::GetComponentUnchecked<CameraComponent>(Camera::GetCameraEntity()).Target;
+            RenderConfiguration::Resize(1280, 720);
+        }
+        auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(Camera::GetCameraEntity());
+        auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(Camera::GetCameraEntity());
+        transform.Position = g_CameraOrigin;
+        transform.Position.x += 2.0f * std::sin(static_cast<float>(frame) / 120.0f);
+        transform.IsDirty = true;
+        camera.Target = g_CameraTarget;
+        camera.AllowUserControl = false;
+        camera.LockOnTarget = g_kINVALID_ENTITY;
+        if (frame + 1 == g_Warmup)
+        {
+            std::ofstream settings(g_Directory / "settings.cfg", std::ios::binary);
+            settings << ImGuiManager::SerializeProjectSettings();
+            g_SettingsCaptured = static_cast<bool>(settings);
+        }
+    }
+    catch (const std::exception& error)
+    {
+        g_Failed = true;
+        WriteGraphicsLog("Render benchmark: %s\n", error.what());
+    }
+}
+
+void RenderBenchmark::AfterFrame()
+{
+    if (!IsEnabled() || g_Failed || !g_Window) return;
+    Metadata metadata;
+    metadata.SceneSignature = SceneSignature();
+    metadata.InputWidth = GraphicsDevice::GetSceneWidth();
+    metadata.InputHeight = GraphicsDevice::GetSceneHeight();
+    metadata.OutputWidth = GraphicsDevice::GetWidth();
+    metadata.OutputHeight = GraphicsDevice::GetHeight();
+    if (RenderProfiler::GetFrameSerial() >= g_FirstSerial + g_Warmup &&
+        (metadata.InputWidth != 384 || metadata.InputHeight != 216 || metadata.OutputWidth != 1280 || metadata.OutputHeight != 720))
+    {
+        g_Failed = true;
+        WriteGraphicsLog("Render benchmark: resolution drift, input=%ux%u output=%ux%u\n", metadata.InputWidth,
+            metadata.InputHeight, metadata.OutputWidth, metadata.OutputHeight);
+    }
+    if (g_Adapter)
+    {
+        DXGI_QUERY_VIDEO_MEMORY_INFO info{};
+        metadata.MemoryValid = SUCCEEDED(g_Adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info));
+        if (metadata.MemoryValid)
+        {
+            metadata.LocalUsage = info.CurrentUsage;
+            metadata.LocalBudget = info.Budget;
+        }
+    }
+    g_Metadata[RenderProfiler::GetFrameSerial()] = metadata;
+    if (RenderProfiler::HasLatest()) Record(RenderProfiler::GetLatest());
+    if (RenderProfiler::GetFrameSerial() == g_FirstSerial + g_Warmup + g_Measured - 1)
+    {
+        const auto capture = g_Directory / "final.png";
+        if (!RenderCapture::SaveScenePng(capture.c_str()))
+        {
+            g_Failed = true;
+            WriteGraphicsLog("Render benchmark: final scene capture failed\n");
+        }
+    }
+}
+
+bool RenderBenchmark::Finish()
+{
+    if (!IsEnabled()) return true;
+    if (!g_Window || !GraphicsDevice::WaitForGpuIdle()) return false;
+    RenderProfiler::DrainCompletedFrames(Record);
+    const auto summary = RenderMeasurement::Summarize(g_Window->Samples());
+    const bool complete = !g_Failed && g_SettingsCaptured && g_Window->Complete() &&
+        summary.FrameSamples == g_Measured && summary.CpuSamples == g_Measured && summary.GpuSamples == g_Measured;
+    std::ofstream output(g_Directory / "summary.json");
+    output << std::setprecision(17) << "{\"complete\":" << (complete ? "true" : "false") << ",\"frames\":" << summary.FrameSamples
+        << ",\"gpuSamples\":" << summary.GpuSamples << ",\"frameMeanMs\":";
+    Nullable(output, summary.FrameMeanMs);
+    output << ",\"cpuFrameMeanMs\":";
+    Nullable(output, summary.CpuMeanMs);
+    output << ",\"gpuMeanMs\":";
+    Nullable(output, summary.GpuMeanMs);
+    output << ",\"lowOnePercentFps\":";
+    Nullable(output, summary.LowOnePercentFps);
+    output << "}\n";
+    g_Frames.close();
+    g_Passes.close();
+    output.close();
+    const bool written = g_Frames.good() && g_Passes.good() && output.good();
+    WriteGraphicsLog("Render benchmark: complete=%u frames=%zu GPU=%zu path=%s\n",
+        complete && written, summary.FrameSamples, summary.GpuSamples, g_Directory.string().c_str());
+    return complete && written;
+}
+
+bool RenderBenchmark::ShouldStop(uint64_t completedFrames)
+{
+    return IsEnabled() && (g_Failed || completedFrames >= static_cast<uint64_t>(g_Warmup) + g_Measured);
+}
+
+===== FILE: source\core\renderbenchmark.h =====
+#pragma once
+#include <cstdint>
+
+class RenderProfiler;
+
+namespace RenderBenchmark
+{
+bool IsEnabled();
+void BeforeFrame(uint64_t frame);
+void AfterFrame();
+bool ShouldStop(uint64_t completedFrames);
+bool Finish();
+}
+
 ===== FILE: source\core\renderingvalidation.cpp =====
 #include "pch.h"
 #include "materialvalidation.h"
@@ -4924,6 +5281,8 @@ struct ShadowBenchmarkSample
 };
 array<ShadowBenchmarkSample, 3> g_ShadowBenchmark{};
 uint64_t g_ShadowBenchmarkSerial = 0;
+uint32_t g_ProfilerFaultMask = 0;
+uint64_t g_ProfilerFaultSerial = 0;
 
 bool PlayRenderTestEnabled()
 {
@@ -5145,33 +5504,127 @@ void ValidateReflectionDenoising(const RenderCapture::TextureData& filtered)
     // NRD's input Y channel is 0.25 R + 0.5 G + 0.25 B. Compare the same luminance
     // in the composed RGB output. Neighbor differences measure high-frequency variation;
     // skip background and hit/miss boundaries so silhouettes do not dominate this fixture.
+    // Packed inputs compare traced neighbors in both axes; checkerboard spacing is two pixels.
     double rawVariation = 0, filteredVariation = 0;
     UINT pairs = 0;
+    const auto layout = RayReflections::GetReflectionSamplingLayout();
+    const UINT storageWidth = RenderMeasurement::TraceStorageWidth(filtered.Width, layout.Checkerboard);
+    const UINT pixelStep = layout.Checkerboard ? 2u : 1u;
     for (UINT y = 0; y < filtered.Height; ++y)
     {
         const auto* raw = reinterpret_cast<const uint16_t*>(noisy.Bytes.data() + y * noisy.RowPitch);
         const auto* output = reinterpret_cast<const uint16_t*>(filtered.Bytes.data() + y * filtered.RowPitch);
-        for (UINT x = 1; x < filtered.Width; ++x)
+        for (UINT storageX = 0; storageX < storageWidth; ++storageX)
         {
-            const UINT current = x * 4, previous = current - 4;
-            const float distance = RenderCapture::HalfToFloat(output[current + 3]);
-            const float previousDistance = RenderCapture::HalfToFloat(output[previous + 3]);
-            if (abs(distance) < 0.01f || abs(previousDistance) < 0.01f) continue;
-            const auto luminance = [&](UINT index)
+            const UINT x = RenderMeasurement::TracePixelX(storageX, y, layout.Sequence, layout.Checkerboard);
+            if (x >= filtered.Width) continue;
+            const UINT current = x * 4;
+            const UINT rawCurrent = storageX * 4;
+            const auto accumulatePair = [&](const uint16_t* otherRaw, const uint16_t* otherOutput,
+                UINT otherRawIndex, UINT otherOutputIndex)
             {
-                return 0.25f * RenderCapture::HalfToFloat(output[index]) +
-                    0.5f * RenderCapture::HalfToFloat(output[index + 1]) +
-                    0.25f * RenderCapture::HalfToFloat(output[index + 2]);
+                const float distance = RenderCapture::HalfToFloat(output[current + 3]);
+                const float otherDistance = RenderCapture::HalfToFloat(otherOutput[otherOutputIndex + 3]);
+                if (abs(distance) < 0.01f || abs(otherDistance) < 0.01f) return;
+                const auto luminance = [](const uint16_t* color)
+                {
+                    return 0.25f * RenderCapture::HalfToFloat(color[0]) +
+                        0.5f * RenderCapture::HalfToFloat(color[1]) +
+                        0.25f * RenderCapture::HalfToFloat(color[2]);
+                };
+                rawVariation += abs(RenderCapture::HalfToFloat(raw[rawCurrent]) - RenderCapture::HalfToFloat(otherRaw[otherRawIndex]));
+                filteredVariation += abs(luminance(output + current) - luminance(otherOutput + otherOutputIndex));
+                ++pairs;
             };
-            rawVariation += abs(RenderCapture::HalfToFloat(raw[current]) - RenderCapture::HalfToFloat(raw[previous]));
-            filteredVariation += abs(luminance(current) - luminance(previous));
-            ++pairs;
+            if (storageX > 0)
+                accumulatePair(raw, output, rawCurrent - 4, (x - pixelStep) * 4);
+            if (y >= pixelStep)
+            {
+                const auto* previousRaw = reinterpret_cast<const uint16_t*>(noisy.Bytes.data() + (y - pixelStep) * noisy.RowPitch);
+                const auto* previousOutput = reinterpret_cast<const uint16_t*>(filtered.Bytes.data() + (y - pixelStep) * filtered.RowPitch);
+                accumulatePair(previousRaw, previousOutput, rawCurrent, current);
+            }
         }
     }
     WriteGraphicsLog("Validation NRD reflection: neighbor pairs=%u rawVariation=%.6f filteredVariation=%.6f\n",
         pairs, rawVariation / max(pairs, 1u), filteredVariation / max(pairs, 1u));
     Check(pairs > 100 && rawVariation > 0 && filteredVariation < rawVariation,
         "NRD reduces reflection high-frequency variation in the test scene");
+}
+
+void ValidateProfilerIntervals()
+{
+    const auto& snapshot = RenderProfiler::GetLatest();
+    Check(snapshot.GpuTimingValid && !snapshot.GpuEvents.empty(), "profiler resolves GPU frame intervals");
+    bool hierarchyValid = snapshot.DroppedGpuEvents == 0;
+    bool selfTimeValid = true;
+    for (const auto& event : snapshot.GpuEvents)
+    {
+        if (event.Interval.ParentId != RenderMeasurement::NoParent)
+        {
+            const auto parent = find_if(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(),
+                [&](const auto& candidate) { return candidate.Interval.Id == event.Interval.ParentId; });
+            hierarchyValid &= parent != snapshot.GpuEvents.end() && parent->Depth + 1 == event.Depth;
+        }
+        selfTimeValid &= event.InclusiveMs.has_value() && event.ExclusiveMs.has_value();
+        if (event.InclusiveMs && event.ExclusiveMs)
+            selfTimeValid &= *event.ExclusiveMs >= 0 && *event.ExclusiveMs <= *event.InclusiveMs + 1e-6;
+    }
+    Check(hierarchyValid, "profiler records valid parent IDs without dropped GPU events");
+    Check(selfTimeValid, "profiler self times exclude children without exceeding inclusive time");
+}
+
+void ValidateProfilerFaults()
+{
+    const auto& snapshot = RenderProfiler::GetLatest();
+    if (snapshot.InjectedFault == RenderProfiler::ValidationFault::None || snapshot.Serial == g_ProfilerFaultSerial)
+        return;
+    g_ProfilerFaultSerial = snapshot.Serial;
+    g_ProfilerFaultMask |= 1u << (static_cast<uint32_t>(snapshot.InjectedFault) - 1u);
+    Check(snapshot.GpuTimingValid, "profiler fault preserves independent Frame GPU timing");
+    if (snapshot.InjectedFault == RenderProfiler::ValidationFault::ExhaustQueries)
+    {
+        Check(snapshot.DroppedGpuEvents > 0, "profiler reports timestamp exhaustion");
+        const bool noInventedSelf = all_of(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(),
+            [](const auto& event) { return !event.ExclusiveMs; });
+        Check(noInventedSelf, "timestamp exhaustion makes exclusive measurements unavailable");
+    }
+    else
+    {
+        const auto invalid = count_if(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(),
+            [](const auto& event) { return !event.Interval.Valid; });
+        Check(invalid >= 1, "profiler marks leaked or out-of-order scopes invalid");
+        const auto frame = find_if(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(),
+            [](const auto& event) { return event.Name == "Frame"; });
+        Check(frame != snapshot.GpuEvents.end() && !frame->ExclusiveMs,
+            "invalid direct child prevents an invented Frame self time");
+    }
+}
+
+void ValidateRayTelemetry(bool expectReflectionRays)
+{
+    if (!RayTelemetry::Requested()) return;
+    const bool idle = GraphicsDevice::WaitForGpuIdle();
+    Check(idle, "ray telemetry readback fence completes");
+    if (!idle) return;
+    const auto counts = RayTelemetry::Data().ConsumeCurrent(RenderProfiler::GetFrameSerial());
+    Check(counts.Valid, "ray telemetry readback has the current frame serial");
+    Check(counts.ProviderKnown(RayTelemetry::Radiance) && counts.ProviderKnown(RayTelemetry::ShadowAo),
+        "active radiance and shadow/AO shaders provide measured counters");
+    if (expectReflectionRays && Raytracing::AreReflectionsActive())
+        Check(counts.Rays[RAY_TELEMETRY_REFLECTION] > 0, "reflection primary rays are counted at TraceRayInline");
+    if (Raytracing::UsesRaytracedAmbientOcclusion())
+        Check(counts.Rays[RAY_TELEMETRY_AO] > 0, "AO rays are counted by the actual ray-tracing shader");
+    if (!Raytracing::UsesRaytracedShadows() && !Raytracing::UsesRaytracedAmbientOcclusion())
+        Check(counts.Rays[RAY_TELEMETRY_SHADOW] == 0 && counts.Rays[RAY_TELEMETRY_AO] == 0,
+            "guides-only dispatch counts zero shadow/AO rays");
+    if (!Raytracing::IsAvailable())
+        Check(counts.Rays[RAY_TELEMETRY_REFLECTION] == 0 && counts.Rays[RAY_TELEMETRY_GI] == 0,
+            "DXR-disabled fallback measures zero primary radiance rays");
+    Check(!counts.AllSourcesCovered, "partial DXR telemetry does not claim a total");
+    WriteGraphicsLog("Ray telemetry serial=%llu reflection=%llu gi=%llu visibility=%llu restir=%llu shadow=%llu ao=%llu active=%u measured=%u\n",
+        counts.Serial, counts.Rays[0], counts.Rays[1], counts.Rays[2], counts.Rays[3], counts.Rays[4], counts.Rays[5],
+        counts.ActiveProviders, counts.MeasuredProviders);
 }
 
 void ValidateVertexDeformation()
@@ -5507,6 +5960,16 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
     {
         return;
     }
+    if (frame == 41)
+    {
+        Check(RenderProfiler::BeginGpuEvent("Outside Frame", GraphicsDevice::GetCommandList()) == RenderProfiler::kInvalidGpuToken,
+            "profiler ignores events started outside a recording frame");
+        RenderProfiler::SetValidationFault(RenderProfiler::ValidationFault::ExhaustQueries);
+    }
+    if (frame == 43) RenderProfiler::SetValidationFault(RenderProfiler::ValidationFault::UnclosedScope);
+    if (frame == 45) RenderProfiler::SetValidationFault(RenderProfiler::ValidationFault::OutOfOrderEnd);
+    if (frame == 42 || frame == 44 || frame == 46)
+        RenderProfiler::SetValidationFault(RenderProfiler::ValidationFault::None);
     if (frame == 0)
     {
         char startup[8]{};
@@ -5738,6 +6201,9 @@ void RenderingValidation::AfterFrame(uint64_t frame)
     {
         return;
     }
+    ValidateProfilerFaults();
+    if (frame == 5 || frame == 13) ValidateRayTelemetry(frame == 13);
+    if (frame == 53) Check(g_ProfilerFaultMask == 7, "profiler resolves all three injected GPU fault fixtures");
     if (frame == 15)
     {
         Check(ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(g_Mover).Time > 0.0, "Play advances motion");
@@ -5783,7 +6249,11 @@ void RenderingValidation::AfterFrame(uint64_t frame)
             Check(Raytracing::GetDenoiserDispatchCount() > 0, "actual NVIDIA NRD SIGMA dispatch sequence");
         ValidateSkyBrightness(false);
     }
-    if (frame == 31) ValidateSkyBrightness(true);
+    if (frame == 31)
+    {
+        ValidateSkyBrightness(true);
+        if (RenderProfiler::IsEnabled()) ValidateProfilerIntervals();
+    }
     if ((frame == 12 || frame == 13) && Raytracing::IsAvailable())
     {
         Check(Raytracing::AreReflectionsActive(), "reflection-only mode remains active");
@@ -6486,6 +6956,7 @@ public:
 ===== FILE: source\core\world.cpp =====
 #include "pch.h"
 #include "world.h"
+#include "renderbenchmark.h"
 
 float World::m_DeltaTime = 0.0f;
 float World::m_RawDeltaTime = 0.0f;
@@ -6682,11 +7153,13 @@ void World::WaitForFrameLimit()
 
 float World::GetDeltaTime()
 {
+    if (RenderBenchmark::IsEnabled()) return 1.0f / 60.0f;
     return m_DeltaTime;
 }
 
 float World::GetRawDeltaTime()
 {
+    if (RenderBenchmark::IsEnabled()) return 1.0f / 60.0f;
     return m_RawDeltaTime;
 }
 
@@ -6854,6 +7327,164 @@ inline Entity& Entity::SetName(const string& name)
 }
 
 
+
+===== FILE: source\dxcshadercache.h =====
+#pragma once
+
+#include <cstdint>
+#include <array>
+#include <cstdlib>
+#include <cwchar>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
+
+// Preprocessed source includes the actual transitive include contents. Hash it
+// with the compiler arguments and compiler binary identity before reusing DXIL.
+namespace DxcShaderCache
+{
+inline uint64_t Hash(const void* data, size_t size, uint64_t hash = 14695981039346656037ull)
+{
+    const auto* bytes = static_cast<const unsigned char*>(data);
+    for (size_t index = 0; index < size; ++index)
+    {
+        hash ^= bytes[index];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+inline std::wstring CompilerIdentity()
+{
+    wchar_t modulePath[MAX_PATH]{};
+    if (!GetModuleFileNameW(GetModuleHandleW(L"dxcompiler.dll"), modulePath, MAX_PATH))
+    {
+        return {};
+    }
+    std::ifstream stream(modulePath, std::ios::binary);
+    if (!stream)
+    {
+        return {};
+    }
+    uint64_t hash = 14695981039346656037ull;
+    std::array<char, 65536> buffer;
+    while (stream)
+    {
+        stream.read(buffer.data(), buffer.size());
+        hash = Hash(buffer.data(), static_cast<size_t>(stream.gcount()), hash);
+    }
+    if (!stream.eof())
+    {
+        return {};
+    }
+    return std::to_wstring(hash);
+}
+
+inline std::filesystem::path CachePath(IDxcCompiler3* compiler, IDxcIncludeHandler* includes,
+    const DxcBuffer& source, const std::vector<LPCWSTR>& arguments)
+{
+    char disabled[8]{};
+    if (GetEnvironmentVariableA("DX12_DISABLE_SHADER_CACHE", disabled, sizeof(disabled)) > 0 && atoi(disabled))
+    {
+        return {};
+    }
+    static const std::wstring identity = CompilerIdentity();
+    if (identity.empty())
+    {
+        return {};
+    }
+    auto preprocessArguments = arguments;
+    preprocessArguments.push_back(L"-P");
+    Microsoft::WRL::ComPtr<IDxcResult> result;
+    HRESULT status = E_FAIL;
+    if (FAILED(compiler->Compile(&source, preprocessArguments.data(),
+        static_cast<UINT32>(preprocessArguments.size()), includes, IID_PPV_ARGS(&result))) ||
+        !result || FAILED(result->GetStatus(&status)) || FAILED(status))
+    {
+        return {};
+    }
+    Microsoft::WRL::ComPtr<IDxcBlobUtf8> preprocessed;
+    if (FAILED(result->GetOutput(DXC_OUT_HLSL, IID_PPV_ARGS(&preprocessed), nullptr)) || !preprocessed)
+    {
+        return {};
+    }
+    uint64_t hash = Hash(identity.data(), identity.size() * sizeof(wchar_t));
+    hash = Hash(source.Ptr, source.Size, hash);
+    for (const wchar_t* argument : arguments)
+    {
+        hash = Hash(argument, (wcslen(argument) + 1) * sizeof(wchar_t), hash);
+    }
+    hash = Hash(preprocessed->GetBufferPointer(), preprocessed->GetBufferSize(), hash);
+    Microsoft::WRL::ComPtr<IDxcBlobUtf8> diagnostics;
+    if (SUCCEEDED(result->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&diagnostics), nullptr)) && diagnostics)
+    {
+        hash = Hash(diagnostics->GetBufferPointer(), diagnostics->GetBufferSize(), hash);
+    }
+    return std::filesystem::path("EditorCache/Shaders") / (std::to_string(hash) + ".bin");
+}
+
+inline bool Load(const std::filesystem::path& path, std::vector<char>& object, std::string& diagnostics)
+{
+    if (path.empty())
+    {
+        return false;
+    }
+    std::ifstream stream(path, std::ios::binary | std::ios::ate);
+    // Bound allocations and reject truncated/old cache formats before reading.
+    constexpr uint64_t magic = 0x3143584443484143ull;
+    uint64_t header[4]{};
+    const auto fileSize = stream.tellg();
+    stream.seekg(0);
+    stream.read(reinterpret_cast<char*>(header), sizeof(header));
+    if (!stream || header[0] != magic || header[1] > 64 * 1024 * 1024 ||
+        header[2] > 1024 * 1024 || fileSize != sizeof(header) + header[1] + header[2])
+    {
+        return false;
+    }
+    object.resize(static_cast<size_t>(header[1]));
+    diagnostics.resize(static_cast<size_t>(header[2]));
+    stream.read(object.data(), static_cast<std::streamsize>(object.size()));
+    stream.read(diagnostics.data(), static_cast<std::streamsize>(diagnostics.size()));
+    return stream && !object.empty() &&
+        Hash(diagnostics.data(), diagnostics.size(), Hash(object.data(), object.size())) == header[3];
+}
+
+inline void Store(const std::filesystem::path& path, const void* object, size_t size, const std::string& diagnostics)
+{
+    if (path.empty())
+    {
+        return;
+    }
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+    if (error)
+    {
+        return;
+    }
+    const auto temporary = path.wstring() + L"." + std::to_wstring(GetCurrentProcessId()) + L"." +
+        std::to_wstring(GetCurrentThreadId()) + L".tmp";
+    {
+        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+        const uint64_t header[] = {0x3143584443484143ull, size, diagnostics.size(),
+            Hash(diagnostics.data(), diagnostics.size(), Hash(object, size))};
+        stream.write(reinterpret_cast<const char*>(header), sizeof(header));
+        stream.write(static_cast<const char*>(object), static_cast<std::streamsize>(size));
+        stream.write(diagnostics.data(), static_cast<std::streamsize>(diagnostics.size()));
+        stream.close();
+        if (stream.fail())
+        {
+            std::filesystem::remove(temporary, error);
+            return;
+        }
+    }
+    // Readers see either a complete file or a cache miss, including across processes.
+    if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
+    {
+        std::filesystem::remove(temporary, error);
+    }
+}
+}
 
 ===== FILE: source\ecs\componentmanager.cpp =====
 #include "pch.h"
@@ -11038,6 +11669,7 @@ void ImGuiManager::DrawMeshShadingWindow()
 #include "sun.h"
 #include "world.h"
 #include "graphicsdevice.h"
+#include "temporalhistorycontext.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -11052,6 +11684,13 @@ using namespace EditorWidgets;
 
 namespace
 {
+    void PublishHistoryChange(bool lightChanged, bool lodChanged)
+    {
+        TemporalHistory::Context::NotifySceneChanged();
+        if (lightChanged) TemporalHistory::Context::NotifyLightingChanged();
+        if (lodChanged) TemporalHistory::Context::NotifyLodChanged();
+    }
+
 	template<typename T>
 	void RestoreSnapshotComponent(EntityID entity, const T& component)
 	{
@@ -11189,6 +11828,7 @@ void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
 	{
 		return;
 	}
+    PublishHistoryChange(snapshot.HasLight, snapshot.HasLod);
 	if (snapshot.Entity == g_kINVALID_ENTITY) return;
 	if (!snapshot.WasAlive)
 	{
@@ -11245,6 +11885,9 @@ void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
 void ImGuiManager::BeginUndoCapture(EntityID entity, const EntitySnapshot& before)
 {
 	if (entity == g_kINVALID_ENTITY || !Registry::IsAlive(entity)) return;
+    // Explicit authoring edits invalidate history; simulation movement never
+    // enters this transaction path and continues through normal reprojection.
+    PublishHistoryChange(before.HasLight, before.HasLod);
 	GpuSceneChanges::Notify(entity);
 	++m_EditRevision;
 	if (!m_HasPendingUndo) { m_PendingUndo = before; m_HasPendingUndo = true; }
@@ -11261,6 +11904,7 @@ void ImGuiManager::FinalizeUndoCaptureIfIdle()
 void ImGuiManager::PushUndoSnapshot(const EntitySnapshot& snapshot)
 {
 	if (snapshot.Entity == g_kINVALID_ENTITY) return;
+    PublishHistoryChange(snapshot.HasLight, snapshot.HasLod);
 	++m_EditRevision;
 	m_UndoStack.push_back(snapshot);
 	if (m_UndoStack.size() > 10) m_UndoStack.erase(m_UndoStack.begin());
@@ -17830,16 +18474,8 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     return matched;
 }
 
-void ImGuiManager::SaveProjectSettings()
+string ImGuiManager::SerializeProjectSettings()
 {
-	if (!m_ProjectSettingsLoaded || ProjectManager::IsPlaying()) return;
-	char validationMode[8]{};
-	if (GetEnvironmentVariableA("DX12_VALIDATION_MODE", validationMode, sizeof(validationMode)) > 0 && atoi(validationMode) != 0)
-	{
-		return;
-	}
-	error_code ec;
-	filesystem::create_directories("Save", ec);
 	ostringstream stream;
 	stream << setprecision(numeric_limits<float>::max_digits10);
 	stream << "version=1\n";
@@ -17918,7 +18554,18 @@ void ImGuiManager::SaveProjectSettings()
 			<< fog.Color.x << ',' << fog.Color.y << ',' << fog.Color.z << '\n';
 	}
 
-    const string contents = stream.str();
+    return stream.str();
+}
+
+void ImGuiManager::SaveProjectSettings()
+{
+    if (!m_ProjectSettingsLoaded || ProjectManager::IsPlaying()) return;
+    char validationMode[8]{};
+    if (GetEnvironmentVariableA("DX12_VALIDATION_MODE", validationMode, sizeof(validationMode)) > 0 && atoi(validationMode) != 0)
+        return;
+    error_code ec;
+    filesystem::create_directories("Save", ec);
+    const string contents = SerializeProjectSettings();
     if (contents == m_LastSavedProjectSettings) return;
     const filesystem::path temporary = "Save/project_environment.cfg.tmp";
     ofstream file(temporary, ios::binary | ios::trunc);
@@ -19821,6 +20468,7 @@ public:
 	static const filesystem::path& GetScenePath() { return m_ScenePath; }
 
 	static void SaveProjectSettings();
+    static string SerializeProjectSettings();
 	static constexpr UINT kSrvDescriptorCount = 64;
     inline static bool m_AssetBrowserStandalone = false;
     static void SetAssetBrowserDirectory(const filesystem::path& directory, bool standalone = false)
@@ -22002,6 +22650,7 @@ public:
 #include "renderconfiguration.h"
 #include "renderingvalidation.h"
 #include "performancegovernor.h"
+#include "renderbenchmark.h"
 
 extern "C"
 {
@@ -22119,13 +22768,18 @@ static bool IsPhysicsSmokeTest()
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
 	const bool automatedBenchmark = IsAutomatedBenchmark();
+    char rayTelemetry[8]{};
+    GetEnvironmentVariableA("DX12_RAY_TELEMETRY", rayTelemetry, sizeof(rayTelemetry));
+    RayTelemetry::SetEnabled(atoi(rayTelemetry) != 0);
 	char startupSmokeValue[16]{};
 	GetEnvironmentVariableA("DX12_STARTUP_SMOKE_FRAMES", startupSmokeValue, static_cast<DWORD>(size(startupSmokeValue)));
 	const int startupSmokeFrames = (max)(0, atoi(startupSmokeValue));
 	char resizeSmokeValue[8]{};
 	GetEnvironmentVariableA("DX12_RESIZE_SMOKE_TEST", resizeSmokeValue, static_cast<DWORD>(size(resizeSmokeValue)));
 	const bool resizeSmoke = startupSmokeFrames > 0 && atoi(resizeSmokeValue) != 0;
-	const bool automatedRun = automatedBenchmark || IsPhysicsSmokeTest() || startupSmokeFrames > 0;
+    const bool renderingBenchmark = RenderBenchmark::IsEnabled();
+    if (renderingBenchmark) SetEnvironmentVariableA("DX12_VALIDATION_MODE", "1");
+	const bool automatedRun = automatedBenchmark || renderingBenchmark || IsPhysicsSmokeTest() || startupSmokeFrames > 0;
 	char exePath[MAX_PATH]{};
 	GetModuleFileNameA(nullptr, exePath, MAX_PATH);
 
@@ -22145,6 +22799,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 	{
 		SetCurrentDirectoryW(runtimeRoot.c_str());
 	}
+	WriteGraphicsLog("Step: WinMain begin\n");
 
 	const char className[] = "DX12AI_WindowClass";
 	WNDCLASSA wc = { 0 };
@@ -22174,6 +22829,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 		SendMessage(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(appIcon));
 	}
 	ShowWindow(hwnd, nCmdShow);
+	WriteGraphicsLog("Step: window shown\n");
 	DragAcceptFiles(hwnd, TRUE);
 
 	if (!GraphicsDevice::Init(hwnd))
@@ -22183,6 +22839,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 	}
 
 	RenderProfiler::SetPipelineStatisticsForced(automatedRun);
+    if (renderingBenchmark) RenderProfiler::SetEnabled(true);
 	// 自動テストは固定品質で比較するため、品質の自動調整を止める。
 	PerformanceGovernor::GetOptions().Enabled = !automatedRun;
 	WriteGraphicsLog("Step: Game::Init\n");
@@ -22232,14 +22889,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 				resizeWidths[step], resizeHeights[step]);
 			RenderConfiguration::Resize(resizeWidths[step], resizeHeights[step]);
 		}
-		RenderingValidation::BeforeFrame(completedFrames);
+        if (renderingBenchmark) RenderBenchmark::BeforeFrame(completedFrames);
+        else RenderingValidation::BeforeFrame(completedFrames);
 		Game::Run();
-		RenderingValidation::AfterFrame(completedFrames);
+        if (renderingBenchmark) RenderBenchmark::AfterFrame();
+        else RenderingValidation::AfterFrame(completedFrames);
 		if (completedFrames == 0) WriteGraphicsLog("Step: first frame complete\n");
 		++completedFrames;
+        if (RenderBenchmark::ShouldStop(completedFrames)) PostQuitMessage(0);
 		if (startupSmokeFrames > 0 && completedFrames >= static_cast<UINT64>(startupSmokeFrames)) PostQuitMessage(0);
 	}
-	const bool featuresPassed = RenderingValidation::Finish();
+    const bool featuresPassed = renderingBenchmark ? RenderBenchmark::Finish() : RenderingValidation::Finish();
 	Game::Uninit();
 	if (!featuresPassed)
 	{
@@ -41976,6 +42636,7 @@ class GpuSceneBuffer
 ===== FILE: source\rendering\gpuscene\gpuscenechanges.h =====
 #pragma once
 #include "gpuscenetypes.h"
+#include "../temporalhistorycontext.h"
 #include <algorithm>
 #include <utility>
 #include <vector>
@@ -42046,6 +42707,7 @@ inline void ClearSlots(const ChangeList &changed)
 }
 inline void Reset()
 {
+    TemporalHistory::Context::NotifySceneChanged();
     ClearSlots(Pending().Changed);
     Pending() = {};
     Pending().ResetScene = true;
@@ -43363,22 +44025,36 @@ if (!ShaderPipelines::CreatePostProcessPipeline()) return false;
 
 	WriteGraphicsLog("Step: SpatialUpscaler::Initialize\n");
 	SpatialUpscaler::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	WriteGraphicsLog("Step: VisibilityBuffer::Initialize\n");
 	VisibilityBuffer::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	WriteGraphicsLog("Step: ScreenSpaceEffects::Initialize\n");
 	ScreenSpaceEffects::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	WriteGraphicsLog("Step: CloudRenderer::Initialize\n");
 	CloudRenderer::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	WriteGraphicsLog("Step: Raytracing::Initialize\n");
 	Raytracing::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	WriteGraphicsLog("Step: AsyncCompute::Initialize\n");
 	AsyncCompute::Initialize(m_Device.Get());
 	PbrLuts::WriteNullDescriptors(m_Device.Get(), m_CbvHeap.Get());
+	WriteGraphicsLog("Step: PbrLuts::Initialize\n");
 	PbrLuts::Initialize(m_Device.Get(), m_CommandQueue.Get(), m_CbvHeap.Get());
+	WriteGraphicsLog("Step: TransparencyEffects::Initialize\n");
 	TransparencyEffects::Initialize(m_Device.Get(), m_CbvHeap.Get());
+	WriteGraphicsLog("Step: AtmosphereLut::Initialize\n");
 	AtmosphereLut::Initialize(m_Device.Get(), m_CbvHeap.Get());
+	WriteGraphicsLog("Step: AdvancedEffects::Initialize\n");
 	if (!AdvancedEffects::Initialize(m_Device.Get(), m_CbvHeap.Get()))
 		WriteGraphicsLog("WARNING: AdvancedEffects unavailable (froxel fog / auto exposure / MB / DOF disabled)\n");
+	WriteGraphicsLog("Step: DlssUpscaler::Initialize\n");
 	DlssUpscaler::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	WriteGraphicsLog("Step: OcclusionCulling::Initialize\n");
 	OcclusionCulling::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+	WriteGraphicsLog("Step: MeshShaderPipeline::Initialize\n");
 	MeshShaderPipeline::Initialize(m_Device.Get(), ShaderPipelines::GetModelRootSignature());
 	MeshShaderRenderer::QuerySupport(m_Device.Get());
+	WriteGraphicsLog("Step: LightInstanceBuilder::Initialize\n");
 	LightInstanceBuilder::Initialize(m_Device.Get());
+	WriteGraphicsLog("Step: MegaLights::Initialize\n");
 	if (!MegaLights::Initialize(m_Device.Get()))
 		WriteGraphicsLog("WARNING: MegaLights unavailable (clustered light grid disabled)\n");
 	// ヒープの末尾 16384 個は VirtualGeometry のページ（PageDescriptors が NumDescriptors - MaximumSlots から使う）。
@@ -43416,6 +44092,7 @@ if (!ImGuiManager::Init(
 void GraphicsDevice::Uninit()
 {
 	WaitForGpuIdle();
+    RayTelemetry::Data().Shutdown();
     ScenePasses::ReleaseStaticShadowCache();
 
     AssetThumbnailManager::Shutdown();
@@ -43813,6 +44490,8 @@ public:
 ===== FILE: source\rendering\graphicslog.cpp =====
 #include "pch.h"
 #include "graphicslog.h"
+#include <chrono>
+#include <cstdlib>
 
 void WriteGraphicsLog(const char* format, ...)
 {
@@ -43824,6 +44503,18 @@ void WriteGraphicsLog(const char* format, ...)
 	}
 	va_list arguments;
 	va_start(arguments, format);
+	static const auto start = std::chrono::steady_clock::now();
+	static const bool startupTiming = []
+	{
+		char value[8]{};
+		return GetEnvironmentVariableA("DX12_STARTUP_TIMING", value, sizeof(value)) > 0 && atoi(value) != 0;
+	}();
+	if (startupTiming)
+	{
+		const double elapsed = std::chrono::duration<double, std::milli>(
+			std::chrono::steady_clock::now() - start).count();
+		fprintf(fp, "[startup %.3f ms] ", elapsed);
+	}
 	vfprintf(fp, format, arguments);
 	va_end(arguments);
 	fclose(fp);
@@ -56015,6 +56706,7 @@ struct NrdFrame
     float Range = 2000.0f;
     float AmbientRadius = 1.5f;
     bool ResetHistory = false;
+    uint32_t HistoryResetReasons = 0; // TemporalHistory::Reason bit mask from the shared contract.
 };
 
 // Native D3D12 integration of NVIDIA NRD. Each signal/light owns its temporal history.
@@ -56527,6 +57219,7 @@ private:
 #include "graphicsdevice.h"
 #include "graphicslog.h"
 #include "rendererstate.h"
+#include "renderprofiler.h"
 
 namespace
 {
@@ -56731,13 +57424,19 @@ bool OptixDenoiser::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource*
         commands->SetComputeRootDescriptorTable(1, gpu(0));
         commands->SetComputeRootDescriptorTable(2, gpu(4));
     };
+    RenderProfiler::ScopedEvent packProfile(preserveHitDistance ? "DXR Reflections OptiX Pack" : "Realtime GI OptiX Pack", commands);
     Transition(commands, noisy, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     Transition(commands, shared, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     bind(g_Pack.Get());
     commands->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
     Transition(commands, shared, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+    packProfile.Finish();
+    // The timestamp spans the ordered direct-queue wait for CUDA. It measures
+    // frame latency including interop, rather than CUDA kernel execution alone.
+    RenderProfiler::ScopedEvent denoiseProfile(preserveHitDistance ? "DXR Reflections Denoise (OptiX wait)" : "Realtime GI Denoise (OptiX wait)", commands);
     GraphicsDevice::SubmitForExternalCompute();
     const bool denoised = m_Impl->Interop.Enqueue(GraphicsDevice::GetCommandQueue(), slot);
+    denoiseProfile.Finish();
     if (!denoised)
     {
         g_RuntimeFailed = true;
@@ -56745,6 +57444,7 @@ bool OptixDenoiser::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource*
     }
     if (denoised)
     {
+        RenderProfiler::ScopedEvent composeProfile(preserveHitDistance ? "DXR Reflections Compose" : "Realtime GI Compose", commands);
         Transition(commands, shared, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         Transition(commands, result, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         bind(g_Unpack.Get());
@@ -57977,10 +58677,14 @@ private:
 #include "renderquality.h"
 #include "pbrluts.h"
 #include "transparencyeffects.h"
+#include "temporalhistorycontext.h"
 
 
 namespace
 {
+TemporalHistory::State g_PreviousTaaState;
+TemporalHistory::State g_CurrentTaaState;
+bool g_TaaHistoryValid = false;
 struct PostProcessConstants
 {
 	XMFLOAT4 Flags{};
@@ -58058,6 +58762,12 @@ void PostProcessPass::UpdateCameraConstants()
 
 void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 {
+    const uint64_t historyConfiguration = static_cast<uint64_t>(m_AntiAliasingMode) |
+        (static_cast<uint64_t>(ResolveUpscaleMode(m_SceneWidth, m_SceneHeight, m_Width, m_Height)) << 8);
+    g_CurrentTaaState = TemporalHistory::Context::Capture(Camera::GetCameraEntity(), m_SceneWidth, m_SceneHeight,
+        historyConfiguration, ImGuiManager::GetExposure());
+    if (!TemporalHistory::Evaluate(g_PreviousTaaState, g_CurrentTaaState, g_TaaHistoryValid).CanReuse)
+        m_TaaFrameIndex = 0;
 	UpdateCameraConstants();
 	UINT nextConstantSlot = 1; // Slot zero holds the frame camera data used by velocity and AA.
 	auto DrawFullscreenPass = [&](ID3D12PipelineState* pso, D3D12_CPU_DESCRIPTOR_HANDLE targetRtv,
@@ -58597,6 +59307,8 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 				};
 				m_CommandList->ResourceBarrier(_countof(toShaderRead), toShaderRead);
 				++m_TaaFrameIndex;
+                g_PreviousTaaState = g_CurrentTaaState;
+                g_TaaHistoryValid = true;
 			}
 			else
 			{
@@ -58872,6 +59584,8 @@ void PostProcessPass::ApplyAntiAliasing()
 	if (mode == AntiAliasingMode::TAA)
 	{
 		m_TaaFrameIndex++;
+    g_PreviousTaaState = g_CurrentTaaState;
+    g_TaaHistoryValid = true;
 
 		D3D12_RESOURCE_BARRIER toHistoryCopyDest = CD3DX12_RESOURCE_BARRIER::Transition(
 			m_AaRenderTarget.Get(),
@@ -60857,6 +61571,7 @@ public:
 #include "optixdenoiser.h"
 #include "atmospherelut.h"
 #include "renderquality.h"
+#include "raytelemetry.h"
 #include <map>
 #include <algorithm>
 
@@ -60931,6 +61646,8 @@ ComPtr<ID3D12DescriptorHeap> g_EngineHeap;
 ComPtr<ID3D12RootSignature> g_Root;
 ComPtr<ID3D12PipelineState> g_Trace, g_Compose, g_GiTrace, g_GiCompose, g_GiFilter, g_CacheResolve, g_CacheClear;
 ComPtr<ID3D12PipelineState> g_ReSTIRTemporal, g_ReSTIRSpatial;
+ComPtr<ID3D12PipelineState> g_TraceTelemetry, g_GiTraceTelemetry, g_ReSTIRSpatialTelemetry;
+bool g_TelemetryPipelinesTried = false;
 // ReSTIR GI reservoirs (32 bytes per traced pixel), ping-pong between current and history.
 ComPtr<ID3D12Resource> g_Reservoirs[2];
 UINT g_ReservoirWidth = 0, g_ReservoirHeight = 0, g_ReservoirCurrent = 0;
@@ -60955,6 +61672,7 @@ bool g_ReflectionCheckerboard = false; // このフレームの反射を半分�
 bool g_DenoiserCheckerboard = false;   // 作成済みの反射デノイザーのモード
 UINT g_LastFrame = 0;
 bool g_HistoryValid = false;
+RayReflections::SamplingLayout g_ReflectionSampling;
 
 D3D12_CPU_DESCRIPTOR_HANDLE Cpu(ID3D12DescriptorHeap* heap, UINT index)
 {
@@ -61160,6 +61878,45 @@ void CacheBarrier(ID3D12GraphicsCommandList* commands)
         CD3DX12_RESOURCE_BARRIER::UAV(g_Cache.Resolved.Get()), CD3DX12_RESOURCE_BARRIER::UAV(g_Cache.Ages.Get()) };
     commands->ResourceBarrier(4, barriers);
 }
+bool CompileRadiancePipeline(const char* entry, ComPtr<ID3D12PipelineState>& pipeline, bool telemetry = false)
+{
+    const D3D_SHADER_MACRO defines[] = {
+        {"USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0"},
+        {"ENABLE_RAY_TELEMETRY", telemetry ? "1" : "0"}, {}};
+    ComPtr<ID3DBlob> blob, errors;
+    if (FAILED(D3DCompileFromFile(L"shader/hlsl/RayReflectionsCS.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+        entry, "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors)))
+    {
+        g_LastShaderError = string(entry) + ": " + (errors ? static_cast<const char*>(errors->GetBufferPointer()) : "compile failed");
+        WriteGraphicsLog("DXR reflection shader failed (telemetry=%u): %s\n", static_cast<UINT>(telemetry), g_LastShaderError.c_str());
+        return false;
+    }
+    D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
+    desc.pRootSignature = g_Root.Get();
+    desc.CS = CD3DX12_SHADER_BYTECODE(blob.Get());
+    if (SUCCEEDED(g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(pipeline.ReleaseAndGetAddressOf())))) return true;
+    g_LastShaderError = string(entry) + ": CreateComputePipelineState failed";
+    return false;
+}
+
+bool EnsureTelemetryPipelines()
+{
+    if (!g_TelemetryPipelinesTried)
+    {
+        g_TelemetryPipelinesTried = true;
+        if (!CompileRadiancePipeline("main", g_TraceTelemetry, true) ||
+            !CompileRadiancePipeline("TraceDiffuse", g_GiTraceTelemetry, true) ||
+            (g_ReSTIRSpatial && !CompileRadiancePipeline("ReSTIRSpatial", g_ReSTIRSpatialTelemetry, true)))
+        {
+            g_TraceTelemetry.Reset();
+            g_GiTraceTelemetry.Reset();
+            g_ReSTIRSpatialTelemetry.Reset();
+            WriteGraphicsLog("Ray telemetry: radiance counter variant unavailable; keeping normal shaders\n");
+        }
+    }
+    return g_TraceTelemetry && g_GiTraceTelemetry;
+}
+
 void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource,
     D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
 {
@@ -61180,7 +61937,7 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     ranges[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 4, 0, 7); // radiance cache
     ranges[8].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0, 8, 0); // ReSTIR reservoirs
     ranges[9].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 8, 2); // velocity
-    CD3DX12_ROOT_PARAMETER parameters[16];
+    CD3DX12_ROOT_PARAMETER parameters[17];
     parameters[0].InitAsShaderResourceView(25);
     parameters[1].InitAsShaderResourceView(0);
     parameters[2].InitAsConstantBufferView(6);
@@ -61193,12 +61950,13 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     parameters[13].InitAsDescriptorTable(1, &ranges[6]);
     parameters[14].InitAsDescriptorTable(1, &ranges[7]);
     parameters[15].InitAsDescriptorTable(2, &ranges[8]);
+    parameters[16].InitAsUnorderedAccessView(0, 9);
     const CD3DX12_STATIC_SAMPLER_DESC samplers[2] = {
         CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
             D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP),
         CD3DX12_STATIC_SAMPLER_DESC(1, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
             D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP) };
-    const CD3DX12_ROOT_SIGNATURE_DESC root(16, parameters, 2, samplers);
+    const CD3DX12_ROOT_SIGNATURE_DESC root(17, parameters, 2, samplers);
     ComPtr<ID3DBlob> blob, errors;
     if (FAILED(D3D12SerializeRootSignature(&root, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)) ||
         FAILED(device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&g_Root))))
@@ -61208,23 +61966,9 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
         WriteGraphicsLog("DXR reflection root signature failed: %s\n", g_LastShaderError.c_str());
         return false;
     }
-    const D3D_SHADER_MACRO defines[] = { { "USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0" }, {} };
     auto compile = [&](const char* entry, ComPtr<ID3D12PipelineState>& pipeline)
     {
-        blob.Reset(); errors.Reset();
-        if (FAILED(D3DCompileFromFile(L"shader/hlsl/RayReflectionsCS.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-            entry, "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors)))
-        {
-            g_LastShaderError = string(entry) + ": " + (errors ? static_cast<const char*>(errors->GetBufferPointer()) : "compile failed");
-            WriteGraphicsLog("DXR reflection shader failed: %s\n", g_LastShaderError.c_str());
-            return false;
-        }
-        D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
-        desc.pRootSignature = g_Root.Get(); desc.CS = CD3DX12_SHADER_BYTECODE(blob.Get());
-        if (SUCCEEDED(device->CreateComputePipelineState(&desc, IID_PPV_ARGS(pipeline.ReleaseAndGetAddressOf())))) return true;
-        g_LastShaderError = string(entry) + ": CreateComputePipelineState failed";
-        WriteGraphicsLog("DXR reflection pipeline failed: %s\n", entry);
-        return false;
+        return CompileRadiancePipeline(entry, pipeline);
     };
     // Required pipelines first. The optional ones (radiance cache, ReSTIR) only disable their own
     // feature on failure; previously a failure there also skipped Compose / ComposeDiffuse, which
@@ -61257,6 +62001,10 @@ const char* RayReflections::GetLastShaderError() { return g_LastShaderError.c_st
 
 void RayReflections::Shutdown()
 {
+    g_TraceTelemetry.Reset();
+    g_GiTraceTelemetry.Reset();
+    g_ReSTIRSpatialTelemetry.Reset();
+    g_TelemetryPipelinesTried = false;
     g_OptixGi.reset();
     g_OptixReflections.reset();
     g_OptixGiActive = g_OptixReflectionActive = false;
@@ -61287,6 +62035,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     const vector<RaytracingGeometry>& geometry, const NrdFrame& nrdFrame,
     const array<ComPtr<ID3D12Resource>, 4>& guides, bool denoise)
 {
+    RenderProfiler::ScopedEvent preparationProfile("DXR Radiance Setup", commands);
     g_Dispatches = 0;
     g_OptixGiActive = g_OptixReflectionActive = false;
     g_GiActive = false;
@@ -61307,6 +62056,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         return false;
     }
     g_Status = RendererSettings::GetRealtimeGiEnabled() ? "Realtime GI 準備中" : "反射のみ動作中";
+    const bool instrumented = RayTelemetry::IsCollecting() && EnsureTelemetryPipelines();
+    RayTelemetry::Data().RecordProvider(RayTelemetry::Radiance, instrumented);
     frame.Geometry = geometry;
     const UINT count = static_cast<UINT>((min)(geometry.size(), static_cast<size_t>(kMaximumMeshes)));
     vector<MeshConstants> meshes(count);
@@ -61486,6 +62237,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     const bool reflectionCheckerboard = RenderCulling::GetSettings().ReflectionCheckerboard && !useOptix && denoise &&
         NrdDenoiser::IsCompiled() && guides[0] && guides[1] && guides[2];
     g_ReflectionCheckerboard = reflectionCheckerboard;
+    g_ReflectionSampling = {frame.Width, frame.Height, nrdFrame.Sequence, reflectionCheckerboard};
     constants.ReSTIRState = { g_ReSTIRHistoryValid ? 1u : 0u, reservoirWidth, quality.ReSTIRSpatialVisibility ? 1u : 0u,
         static_cast<UINT>(std::clamp(RenderCulling::GetSettings().ReflectionRoughnessCutoff, 0.0f, 1.0f) * 1000.0f + 0.5f) |
         (reflectionCheckerboard ? 0x10000u : 0u) };
@@ -61553,15 +62305,20 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         commands->SetComputeRootDescriptorTable(13, Gpu(frame.Heap.Get(), kSkyLutDescriptors));
         commands->SetComputeRootDescriptorTable(14, Gpu(frame.Heap.Get(), kCacheDescriptors));
         commands->SetComputeRootDescriptorTable(15, Gpu(frame.Heap.Get(), kReSTIRDescriptors));
+        if (instrumented) commands->SetComputeRootUnorderedAccessView(16, RayTelemetry::Data().Address());
     };
+    preparationProfile.Finish();
     if (Raytracing::GetSettings().Reflections)
     {
+        RenderProfiler::ScopedEvent reflectionProfile("DXR Reflections", commands);
+        RenderProfiler::ScopedEvent traceProfile("DXR Reflections Trace", commands);
         Transition(commands, frame.Noisy.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         Transition(commands, frame.Result.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        bind(g_Trace.Get());
+        bind(instrumented ? g_TraceTelemetry.Get() : g_Trace.Get());
         commands->Dispatch(((g_ReflectionCheckerboard ? (frame.Width + 1) / 2 : frame.Width) + 7) / 8, (frame.Height + 7) / 8, 1);
         Transition(commands, frame.Noisy.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         Transition(commands, frame.Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        traceProfile.Finish();
         // NRD owns a separate heap and restores these four input states.
         if (useOptix)
         {
@@ -61589,8 +62346,15 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
             NrdFrame temporalFrame = nrdFrame;
             temporalFrame.ResetHistory = temporalFrame.ResetHistory || !g_HistoryValid;
             NrdInputs inputs{ {guides[0].Get()}, {guides[1].Get()}, {guides[2].Get()}, {frame.Noisy.Get()} };
-            if (g_Denoiser && g_Width == frame.Width && g_Height == frame.Height && g_Denoiser->Execute(commands, inputs, temporalFrame))
+            bool filtered = false;
             {
+                RenderProfiler::ScopedEvent denoiseProfile("DXR Reflections Denoise", commands);
+                filtered = g_Denoiser && g_Width == frame.Width && g_Height == frame.Height &&
+                    g_Denoiser->Execute(commands, inputs, temporalFrame);
+            }
+            if (filtered)
+            {
+                RenderProfiler::ScopedEvent composeProfile("DXR Reflections Compose", commands);
                 TextureSrv(g_Denoiser->GetOutput(), Cpu(frame.Heap.Get(), 3));
                 Transition(commands, g_Denoiser->GetOutput(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 Transition(commands, frame.Result.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -61605,7 +62369,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     }
     if (RendererSettings::GetRealtimeGiEnabled())
     {
-        RenderProfiler::ScopedEvent profile("Realtime GI Trace and Filter", commands);
+        RenderProfiler::ScopedEvent profile("Realtime GI", commands);
+        RenderProfiler::ScopedEvent traceProfile("Realtime GI Trace", commands);
         Transition(commands, frame.GiNoisy.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         Transition(commands, frame.GiResult.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         if (cacheEnabled && g_Cache.NeedsClear)
@@ -61615,7 +62380,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
             CacheBarrier(commands);
             g_Cache.NeedsClear = false;
         }
-        bind(g_GiTrace.Get());
+        bind(instrumented ? g_GiTraceTelemetry.Get() : g_GiTrace.Get());
         commands->SetComputeRootDescriptorTable(5, Gpu(frame.Heap.Get(), 8));
         commands->SetComputeRootDescriptorTable(6, Gpu(frame.Heap.Get(), 6));
         UINT traceWidth = frame.Width;
@@ -61634,7 +62399,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
             commands->SetPipelineState(g_ReSTIRTemporal.Get());
             commands->Dispatch((reservoirWidth + 7) / 8, (frame.Height + 7) / 8, 1);
             commands->ResourceBarrier(2, uav);
-            commands->SetPipelineState(g_ReSTIRSpatial.Get());
+            commands->SetPipelineState(instrumented ? g_ReSTIRSpatialTelemetry.Get() : g_ReSTIRSpatial.Get());
             commands->Dispatch((reservoirWidth + 7) / 8, (frame.Height + 7) / 8, 1);
             commands->ResourceBarrier(2, uav);
             // This frame's temporal reservoirs become next frame's history.
@@ -61651,6 +62416,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         }
         Transition(commands, frame.GiNoisy.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         Transition(commands, frame.GiResult.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        traceProfile.Finish();
         bool filtered = false;
         bool temporalFiltered = false;
         if (useOptix)
@@ -61681,9 +62447,15 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
             NrdFrame temporalFrame = nrdFrame;
             temporalFrame.ResetHistory |= !g_GiHistoryValid;
             NrdInputs inputs{ {guides[0].Get()}, {guides[1].Get()}, {guides[2].Get()}, {frame.GiNoisy.Get()} };
-            if (g_GiDenoiser && g_GiWidth == frame.Width && g_GiHeight == frame.Height &&
-                g_GiDenoiser->Execute(commands, inputs, temporalFrame))
+            bool nrdFiltered = false;
             {
+                RenderProfiler::ScopedEvent denoiseProfile("Realtime GI Denoise", commands);
+                nrdFiltered = g_GiDenoiser && g_GiWidth == frame.Width && g_GiHeight == frame.Height &&
+                    g_GiDenoiser->Execute(commands, inputs, temporalFrame);
+            }
+            if (nrdFiltered)
+            {
+                RenderProfiler::ScopedEvent composeProfile("Realtime GI Compose", commands);
                 TextureSrv(g_GiDenoiser->GetOutput(), Cpu(frame.Heap.Get(), 11));
                 Transition(commands, g_GiDenoiser->GetOutput(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 Transition(commands, frame.GiResult.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -61700,6 +62472,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         }
         if (!filtered)
         {
+            // The spatial fallback combines filtering and composition in one dispatch.
+            RenderProfiler::ScopedEvent spatialProfile("Realtime GI Spatial Denoise / Compose", commands);
             TextureSrv(frame.GiNoisy.Get(), Cpu(frame.Heap.Get(), 11));
             Transition(commands, frame.GiNoisy.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             Transition(commands, frame.GiResult.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -61727,6 +62501,10 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
 D3D12_GPU_DESCRIPTOR_HANDLE RayReflections::GetResultSrv(UINT frameIndex)
 {
     return Gpu(g_EngineHeap.Get(), kResultSrv + frameIndex % kFrames);
+}
+RayReflections::SamplingLayout RayReflections::GetReflectionSamplingLayout()
+{
+    return g_ReflectionSampling;
 }
 UINT RayReflections::GetDenoiserDispatchCount() { return g_Dispatches; }
 bool RayReflections::DidRestartHistory() { return g_Denoiser && g_Denoiser->DidRestartHistory(); }
@@ -61763,6 +62541,14 @@ ID3D12Resource* RayReflections::GetGiResource() { return g_Frames[g_LastFrame].G
 class RayReflections
 {
 public:
+    struct SamplingLayout
+    {
+        UINT Width = 0;
+        UINT Height = 0;
+        UINT Sequence = 0;
+        bool Checkerboard = false;
+    };
+    static SamplingLayout GetReflectionSamplingLayout();
     static bool IsGiActive();
     static bool IsOptixGiActive();
     static bool IsOptixReflectionActive();
@@ -61784,6 +62570,219 @@ public:
 };
 
 
+===== FILE: source\rendering\raytelemetry.h =====
+#pragma once
+#include "raytelemetrydata.h"
+#include <d3d12.h>
+#include <wrl.h>
+#include <cstring>
+
+namespace RayTelemetry
+{
+class Collector final
+{
+public:
+    static constexpr UINT FrameCount = 3;
+    static constexpr UINT Bytes = RAY_TELEMETRY_CHANNEL_COUNT * 2 * sizeof(uint32_t);
+
+    bool BeginFrame(ID3D12Device* device, ID3D12GraphicsCommandList* commands,
+        uint64_t serial, UINT slot, bool requested)
+    {
+        m_Collecting = false;
+        if (slot >= FrameCount || !device || !commands) return false;
+        if (m_Device != device)
+        {
+            m_Frames = {};
+            m_Zero.Reset();
+            m_Device = device;
+        }
+        m_Slot = slot;
+        auto& frame = m_Frames[slot];
+        frame.Serial = serial;
+        frame.Requested = requested;
+        frame.Submitted = false;
+        frame.Active = frame.Measured = 0;
+        if (!requested) return false;
+        if (!frame.Buffer && !CreateBuffer(device, frame.Buffer, D3D12_HEAP_TYPE_DEFAULT,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)) return false;
+        if (!frame.Readback && !CreateBuffer(device, frame.Readback, D3D12_HEAP_TYPE_READBACK,
+            D3D12_RESOURCE_STATE_COPY_DEST)) return false;
+        if (!m_Zero)
+        {
+            if (!CreateBuffer(device, m_Zero, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ)) return false;
+            void* mapped = nullptr;
+            const D3D12_RANGE noRead{0, 0};
+            if (FAILED(m_Zero->Map(0, &noRead, &mapped))) { m_Zero.Reset(); return false; }
+            const std::array<uint32_t, RAY_TELEMETRY_CHANNEL_COUNT * 2> zero{};
+            std::memcpy(mapped, zero.data(), Bytes);
+            m_Zero->Unmap(0, nullptr);
+        }
+        Transition(commands, frame.Buffer.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+        commands->CopyBufferRegion(frame.Buffer.Get(), 0, m_Zero.Get(), 0, Bytes);
+        Transition(commands, frame.Buffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        m_Collecting = true;
+        return true;
+    }
+
+    bool IsCollecting() const { return m_Collecting; }
+    D3D12_GPU_VIRTUAL_ADDRESS Address() const
+    {
+        return m_Collecting ? m_Frames[m_Slot].Buffer->GetGPUVirtualAddress() : 0;
+    }
+
+    void RecordProvider(uint32_t provider, bool instrumented)
+    {
+        if (!m_Collecting) return;
+        auto& frame = m_Frames[m_Slot];
+        frame.Active |= provider;
+        if (instrumented) frame.Measured |= provider;
+    }
+
+    void EndFrame(ID3D12GraphicsCommandList* commands)
+    {
+        if (!m_Collecting || !commands) return;
+        auto& frame = m_Frames[m_Slot];
+        Transition(commands, frame.Buffer.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        commands->CopyBufferRegion(frame.Readback.Get(), 0, frame.Buffer.Get(), 0, Bytes);
+        Transition(commands, frame.Buffer.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        frame.Submitted = true;
+        m_Collecting = false;
+    }
+
+    // The renderer's frame-slot fence must have completed before this call.
+    Counts Consume(UINT slot, uint64_t serial) const
+    {
+        Counts unavailable;
+        unavailable.Serial = serial;
+        if (slot >= FrameCount) return unavailable;
+        const auto& frame = m_Frames[slot];
+        unavailable.Requested = frame.Requested;
+        if (!frame.Submitted || !frame.Requested || frame.Serial != serial) return unavailable;
+        void* mapped = nullptr;
+        const D3D12_RANGE read{0, Bytes};
+        if (FAILED(frame.Readback->Map(0, &read, &mapped)) || !mapped) return unavailable;
+        std::array<uint32_t, RAY_TELEMETRY_CHANNEL_COUNT * 2> words;
+        std::memcpy(words.data(), mapped, Bytes);
+        const D3D12_RANGE noWrites{0, 0};
+        frame.Readback->Unmap(0, &noWrites);
+        return Decode(words, frame.Serial, serial, frame.Requested, frame.Active, frame.Measured);
+    }
+
+    Counts ConsumeCurrent(uint64_t serial) const { return Consume(m_Slot, serial); }
+
+    void Shutdown()
+    {
+        m_Frames = {};
+        m_Zero.Reset();
+        m_Device = nullptr;
+        m_Collecting = false;
+    }
+
+private:
+    struct Frame
+    {
+        Microsoft::WRL::ComPtr<ID3D12Resource> Buffer, Readback;
+        uint64_t Serial = 0;
+        uint32_t Active = 0, Measured = 0;
+        bool Requested = false, Submitted = false;
+    };
+    std::array<Frame, FrameCount> m_Frames;
+    Microsoft::WRL::ComPtr<ID3D12Resource> m_Zero;
+    ID3D12Device* m_Device = nullptr;
+    UINT m_Slot = 0;
+    bool m_Collecting = false;
+
+    static bool CreateBuffer(ID3D12Device* device, Microsoft::WRL::ComPtr<ID3D12Resource>& buffer,
+        D3D12_HEAP_TYPE type, D3D12_RESOURCE_STATES state, D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE)
+    {
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = type;
+        heap.CreationNodeMask = heap.VisibleNodeMask = 1;
+        D3D12_RESOURCE_DESC desc{};
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        desc.Width = Bytes;
+        desc.Height = desc.DepthOrArraySize = desc.MipLevels = 1;
+        desc.SampleDesc.Count = 1;
+        desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        desc.Flags = flags;
+        return SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, state,
+            nullptr, IID_PPV_ARGS(buffer.ReleaseAndGetAddressOf())));
+    }
+
+    static void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource,
+        D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
+    {
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource = resource;
+        barrier.Transition.StateBefore = before;
+        barrier.Transition.StateAfter = after;
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        commands->ResourceBarrier(1, &barrier);
+    }
+};
+
+inline Collector& Data() { static Collector collector; return collector; }
+inline bool& Requested() { static bool enabled = false; return enabled; }
+inline void SetEnabled(bool enabled) { Requested() = enabled; }
+inline bool IsCollecting() { return Data().IsCollecting(); }
+}
+
+===== FILE: source\rendering\raytelemetrydata.h =====
+#pragma once
+#include "raytelemetrylayout.h"
+#include <array>
+#include <cstdint>
+
+namespace RayTelemetry
+{
+enum Provider : uint32_t { Radiance = 1u, ShadowAo = 2u };
+
+struct Counts
+{
+    uint64_t Serial = 0;
+    std::array<uint64_t, RAY_TELEMETRY_CHANNEL_COUNT> Rays{};
+    uint32_t ActiveProviders = 0;
+    uint32_t MeasuredProviders = 0;
+    bool Requested = false;
+    bool Valid = false;
+    bool AllSourcesCovered = false;
+
+    bool ProviderKnown(uint32_t provider) const
+    {
+        return Valid && (ActiveProviders & provider & ~MeasuredProviders) == 0;
+    }
+};
+
+inline Counts Decode(const std::array<uint32_t, RAY_TELEMETRY_CHANNEL_COUNT * 2>& words,
+    uint64_t storedSerial, uint64_t expectedSerial, bool requested, uint32_t active, uint32_t measured)
+{
+    Counts counts;
+    counts.Serial = expectedSerial;
+    counts.Requested = requested;
+    counts.ActiveProviders = active;
+    counts.MeasuredProviders = measured;
+    counts.Valid = requested && storedSerial == expectedSerial;
+    if (counts.Valid)
+        for (size_t channel = 0; channel < counts.Rays.size(); ++channel)
+            counts.Rays[channel] = uint64_t(words[channel * 2]) | (uint64_t(words[channel * 2 + 1]) << 32);
+    return counts;
+}
+}
+
+===== FILE: source\rendering\raytelemetrylayout.h =====
+#pragma once
+#define RAY_TELEMETRY_REFLECTION 0
+#define RAY_TELEMETRY_GI 1
+#define RAY_TELEMETRY_RADIANCE_SHADOW 2
+#define RAY_TELEMETRY_RESTIR_VISIBILITY 3
+#define RAY_TELEMETRY_SHADOW 4
+#define RAY_TELEMETRY_AO 5
+#define RAY_TELEMETRY_FOG 6
+#define RAY_TELEMETRY_MEGALIGHTS 7
+#define RAY_TELEMETRY_FORWARD 8
+#define RAY_TELEMETRY_CHANNEL_COUNT 9
+
 ===== FILE: source\rendering\raytracing.cpp =====
 #include "pch.h"
 #include "raytracing.h"
@@ -61800,6 +62799,8 @@ public:
 #include "graphicsdevice.h"
 #include "materialmanager.h"
 #include "materialsystem.h"
+#include "temporalhistorycontext.h"
+#include "raytelemetry.h"
 #include <map>
 #include <tuple>
 
@@ -61871,6 +62872,8 @@ ComPtr<ID3D12Device5> g_Device;
 ComPtr<ID3D12DescriptorHeap> g_Heap;
 ComPtr<ID3D12RootSignature> g_RootSignature;
 ComPtr<ID3D12PipelineState> g_Pipeline;
+ComPtr<ID3D12PipelineState> g_TelemetryPipeline;
+bool g_TelemetryPipelineTried = false;
 ComPtr<ID3D12PipelineState> g_ComposeShadow;
 ComPtr<ID3D12PipelineState> g_ComposeAmbient;
 unique_ptr<NrdDenoiser> g_NrdSun;
@@ -61878,6 +62881,7 @@ unique_ptr<NrdDenoiser> g_NrdAmbient;
 UINT g_NrdWidth = 0, g_NrdHeight = 0, g_NrdDispatchCount = 0;
 UINT g_AmbientDispatchCount = 0;
 NrdFrame g_PreviousNrdFrame;
+TemporalHistory::State g_PreviousTemporalState;
 uint64_t g_GuideSerial = 0;
 bool g_NrdHistoryValid = false;
 bool g_ShadowHistoryValid = false;
@@ -62156,6 +63160,30 @@ bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingG
     return true;
 }
 
+bool EnsureTelemetryPipeline()
+{
+    if (!g_TelemetryPipelineTried)
+    {
+        g_TelemetryPipelineTried = true;
+        const D3D_SHADER_MACRO defines[] = {{"USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0"},
+            {"ENABLE_RAY_TELEMETRY", "1"}, {}};
+        ComPtr<ID3DBlob> shader, errors;
+        const HRESULT result = D3DCompileFromFile(L"shader/hlsl/RaytracingCS.hlsl", defines,
+            D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &shader, &errors);
+        if (SUCCEEDED(result))
+        {
+            D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
+            desc.pRootSignature = g_RootSignature.Get();
+            desc.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
+            g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&g_TelemetryPipeline));
+        }
+        if (!g_TelemetryPipeline)
+            WriteGraphicsLog("Ray telemetry: shadow/AO counter variant unavailable: %s\n",
+                errors ? static_cast<const char*>(errors->GetBufferPointer()) : "pipeline creation failed");
+    }
+    return g_TelemetryPipeline != nullptr;
+}
+
 bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
 {
     RenderProfiler::ScopedEvent profile("DXR Acceleration Structures", commandList);
@@ -62335,7 +63363,7 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
     ranges[5].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4);
     ranges[6].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 5);
     ranges[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6);
-    CD3DX12_ROOT_PARAMETER parameters[10];
+    CD3DX12_ROOT_PARAMETER parameters[11];
     parameters[0].InitAsShaderResourceView(0);
     for (UINT index = 0; index < 3; ++index)
     {
@@ -62343,7 +63371,8 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
     }
     parameters[4].InitAsConstantBufferView(0);
     for (UINT index = 3; index < 8; ++index) parameters[index + 2].InitAsDescriptorTable(1, &ranges[index]);
-    const CD3DX12_ROOT_SIGNATURE_DESC rootDescription(10, parameters);
+    parameters[10].InitAsUnorderedAccessView(0, 9);
+    const CD3DX12_ROOT_SIGNATURE_DESC rootDescription(11, parameters);
     ComPtr<ID3DBlob> serialized;
     ComPtr<ID3DBlob> errors;
     if (FAILED(D3D12SerializeRootSignature(&rootDescription, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors)) ||
@@ -62404,6 +63433,8 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
 
 void Raytracing::Shutdown()
 {
+    g_TelemetryPipeline.Reset();
+    g_TelemetryPipelineTried = false;
     RayReflections::Shutdown();
     OptixDenoiser::Shutdown();
     g_NrdSun.reset();
@@ -62531,6 +63562,21 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     if (ComponentManager::HasComponent<CameraComponent>(cameraEntity))
         nrdFrame.Range = (max)(ComponentManager::GetComponentUnchecked<CameraComponent>(cameraEntity).FarClip, 1.0f);
     nrdFrame.ResetHistory = !g_NrdHistoryValid;
+    const uint64_t historyConfiguration = static_cast<uint64_t>(g_Settings.RenderMode) |
+        (static_cast<uint64_t>(g_Settings.Reflections) << 8) |
+        (static_cast<uint64_t>(g_Settings.Denoise) << 9) |
+        (static_cast<uint64_t>(RendererSettings::GetRealtimeGiEnabled()) << 10) |
+        (static_cast<uint64_t>(g_Settings.RadianceDenoiser) << 16);
+    const auto temporalState = TemporalHistory::Context::Capture(cameraEntity, frame.Width, frame.Height, historyConfiguration);
+    const auto historyDecision = TemporalHistory::Evaluate(g_PreviousTemporalState, temporalState, g_NrdHistoryValid);
+    nrdFrame.HistoryResetReasons = historyDecision.Reasons;
+    nrdFrame.ResetHistory |= !historyDecision.CanReuse;
+    if (nrdFrame.ResetHistory)
+    {
+        nrdFrame.PreviousView = nrdFrame.View;
+        nrdFrame.PreviousProjection = nrdFrame.Projection;
+        nrdFrame.PreviousJitter = nrdFrame.Jitter;
+    }
     constants.Jitter = { nrdFrame.Jitter.x, nrdFrame.Jitter.y, nrdFrame.PreviousJitter.x, nrdFrame.PreviousJitter.y };
     memcpy(&constants.Features.w, &nrdFrame.Range, sizeof(float));
     void* mapped = nullptr;
@@ -62556,7 +63602,10 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     ID3D12DescriptorHeap* heaps[] = { g_Heap.Get() };
     commandList->SetDescriptorHeaps(1, heaps);
     commandList->SetComputeRootSignature(g_RootSignature.Get());
-    commandList->SetPipelineState(g_Pipeline.Get());
+    const bool instrumented = RayTelemetry::IsCollecting() && EnsureTelemetryPipeline();
+    RayTelemetry::Data().RecordProvider(RayTelemetry::ShadowAo, instrumented);
+    commandList->SetPipelineState(instrumented ? g_TelemetryPipeline.Get() : g_Pipeline.Get());
+    if (instrumented) commandList->SetComputeRootUnorderedAccessView(10, RayTelemetry::Data().Address());
     commandList->SetComputeRootShaderResourceView(0, frame.TopLevel->GetGPUVirtualAddress());
     commandList->SetComputeRootDescriptorTable(1, depthSrv);
     commandList->SetComputeRootDescriptorTable(2, normalSrv);
@@ -62644,7 +63693,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     updateLighting(true);
     if (g_Settings.Reflections || RendererSettings::GetRealtimeGiEnabled())
     {
-        RenderProfiler::ScopedEvent reflectionProfile("DXR Reflections", commandList);
+        RenderProfiler::ScopedEvent reflectionProfile("DXR Radiance (Reflections / GI)", commandList);
         const bool radianceReady = RayReflections::Execute(commandList, frame.TopLevel.Get(), frame.SceneGeometry,
             nrdFrame, frame.Guides, g_Settings.Denoise);
         g_ReflectionsActive = radianceReady && g_Settings.Reflections;
@@ -62653,6 +63702,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     if (g_ReflectionsActive || g_GiActive) g_NrdDispatchCount += RayReflections::GetDenoiserDispatchCount();
     // Camera and motion history belongs to the scene, independently of enabled denoiser signals.
     g_PreviousNrdFrame = nrdFrame;
+    g_PreviousTemporalState = temporalState;
     g_NrdHistoryValid = true;
     g_GuideSerial = g_Serial;
 	if (g_Serial == 1)
@@ -64442,10 +65492,13 @@ public:
 #include "imguimanager.h"
 #include "world.h"
 #include "atmospherelut.h"
+#include "temporalhistorycontext.h"
+#include "renderprofiler.h"
 
 
 void RenderFrame::BeginDraw()
 {
+    TemporalHistory::Context::BeginFrame(m_Width, m_Height);
 	if (m_FrameLatencyWaitableObject)
 	{
 		WaitForSingleObjectEx(m_FrameLatencyWaitableObject, 1000, TRUE);
@@ -64454,6 +65507,7 @@ void RenderFrame::BeginDraw()
 
 	m_CommandAllocator[m_FrameIndex]->Reset();
 	m_CommandList->Reset(m_CommandAllocator[m_FrameIndex].Get(), nullptr);
+    RenderProfiler::BeginFrame(m_Device.Get(), m_CommandQueue.Get(), m_CommandList.Get(), m_FrameIndex);
 	TextureManager::UpdateStreaming(m_CommandList.Get());
 	// Sky LUTs for this frame: recorded and submitted on the async compute queue right away so
 	// they overlap with the previous frame's graphics work; the graphics queue waits on the GPU.
@@ -64516,6 +65570,7 @@ void RenderFrame::EndDraw()
 
 	m_CommandList->ResourceBarrier(1, &barrier);
 
+    RenderProfiler::EndFrame(m_CommandList.Get());
 	const HRESULT closeHr = m_CommandList->Close();
 	if (!GraphicsDevice::CheckDeviceHealth(closeHr, "Command list close"))
 	{
@@ -65128,6 +66183,210 @@ private:
 	bool m_IsCompiled = false;
 };
 
+===== FILE: source\rendering\rendermeasurement.h =====
+#pragma once
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <limits>
+#include <optional>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+namespace RenderMeasurement
+{
+inline constexpr uint32_t NoParent = UINT32_MAX;
+
+inline bool IsGpuTimingComplete(uint32_t events, uint32_t resolvedEvents, uint32_t droppedEvents)
+{
+    return events != 0 && resolvedEvents == events && droppedEvents == 0;
+}
+
+inline uint32_t TraceStorageWidth(uint32_t width, bool checkerboard)
+{
+    return checkerboard ? width / 2 + width % 2 : width;
+}
+
+// Matches BLACK checkerboard packing in RayReflectionsCS.hlsl. The final
+// column of an odd-sized image can map outside the image and must be skipped.
+inline uint32_t TracePixelX(uint32_t storageX, uint32_t y, uint32_t sequence, bool checkerboard)
+{
+    return checkerboard ? storageX * 2 + ((y ^ sequence) & 1u) : storageX;
+}
+
+struct Sample
+{
+    uint64_t Serial = 0;
+    double FrameMs = 0.0;
+    double CpuMs = 0.0;
+    double GpuMs = 0.0;
+    bool GpuValid = false;
+};
+
+struct Summary
+{
+    size_t FrameSamples = 0;
+    size_t CpuSamples = 0;
+    size_t GpuSamples = 0;
+    size_t DuplicateSamples = 0;
+    std::optional<double> FrameMeanMs;
+    std::optional<double> CpuMeanMs;
+    std::optional<double> GpuMeanMs;
+    std::optional<double> LowOnePercentFps;
+};
+
+inline Summary Summarize(const std::vector<Sample>& samples)
+{
+    Summary result;
+    std::unordered_set<uint64_t> serials;
+    std::vector<double> frameTimes;
+    long double frameTotal = 0.0;
+    long double cpuTotal = 0.0;
+    long double gpuTotal = 0.0;
+    for (const Sample& sample : samples)
+    {
+        if (!serials.insert(sample.Serial).second)
+        {
+            ++result.DuplicateSamples;
+            continue;
+        }
+        if (std::isfinite(sample.FrameMs) && sample.FrameMs > 0.0)
+        {
+            frameTimes.push_back(sample.FrameMs);
+            frameTotal += sample.FrameMs;
+        }
+        if (std::isfinite(sample.CpuMs) && sample.CpuMs >= 0.0)
+        {
+            cpuTotal += sample.CpuMs;
+            ++result.CpuSamples;
+        }
+        if (sample.GpuValid && std::isfinite(sample.GpuMs) && sample.GpuMs >= 0.0)
+        {
+            gpuTotal += sample.GpuMs;
+            ++result.GpuSamples;
+        }
+    }
+    result.FrameSamples = frameTimes.size();
+    if (!frameTimes.empty())
+    {
+        result.FrameMeanMs = static_cast<double>(frameTotal / frameTimes.size());
+        std::sort(frameTimes.begin(), frameTimes.end(), std::greater<double>());
+        const size_t slowCount = frameTimes.size() / 100 + (frameTimes.size() % 100 != 0 ? 1 : 0);
+        long double slowTotal = 0.0;
+        for (size_t index = 0; index < slowCount; ++index)
+            slowTotal += frameTimes[index];
+        result.LowOnePercentFps = static_cast<double>(1000.0L * slowCount / slowTotal);
+    }
+    if (result.CpuSamples != 0)
+        result.CpuMeanMs = static_cast<double>(cpuTotal / result.CpuSamples);
+    if (result.GpuSamples != 0)
+        result.GpuMeanMs = static_cast<double>(gpuTotal / result.GpuSamples);
+    return result;
+}
+
+struct EventInterval
+{
+    uint32_t Id = 0;
+    uint32_t ParentId = NoParent;
+    uint32_t QueueId = 0;
+    uint64_t Begin = 0;
+    uint64_t End = 0;
+    bool Valid = false;
+};
+
+// Exclusive time is defined only within one queue. Child intervals are merged
+// before subtraction, so overlapping siblings and grandchildren are not charged twice.
+inline double ExclusiveTicks(const EventInterval& parent, const std::vector<EventInterval>& events)
+{
+    const double unavailable = std::numeric_limits<double>::quiet_NaN();
+    if (!parent.Valid || parent.End < parent.Begin)
+        return unavailable;
+
+    std::vector<std::pair<uint64_t, uint64_t>> children;
+    for (const EventInterval& event : events)
+    {
+        if (event.ParentId != parent.Id || event.QueueId != parent.QueueId)
+            continue;
+        if (!event.Valid || event.End < event.Begin)
+            return unavailable;
+        const uint64_t begin = (std::max)(parent.Begin, event.Begin);
+        const uint64_t end = (std::min)(parent.End, event.End);
+        if (end > begin)
+            children.emplace_back(begin, end);
+    }
+    std::sort(children.begin(), children.end());
+    uint64_t covered = 0;
+    uint64_t rangeBegin = 0;
+    uint64_t rangeEnd = 0;
+    for (const auto& child : children)
+    {
+        if (child.first > rangeEnd)
+        {
+            covered += rangeEnd - rangeBegin;
+            rangeBegin = child.first;
+            rangeEnd = child.second;
+        }
+        else
+        {
+            rangeEnd = (std::max)(rangeEnd, child.second);
+        }
+    }
+    covered += rangeEnd - rangeBegin;
+    return static_cast<double>(parent.End - parent.Begin - covered);
+}
+}
+
+===== FILE: source\rendering\rendermeasurementwindow.h =====
+#pragma once
+#include "rendermeasurement.h"
+
+namespace RenderMeasurement
+{
+// Completed GPU frames may arrive late or out of order. The captured CPU values
+// travel in the same frame record; no timing is taken from the readback frame.
+class Window final
+{
+public:
+    Window(uint64_t firstSerial, uint32_t warmupFrames, uint32_t measuredFrames)
+        : m_FirstSerial(firstSerial), m_Warmup(warmupFrames), m_Samples(measuredFrames)
+    {
+    }
+
+    bool Record(const Sample& sample)
+    {
+        if (sample.Serial < m_FirstSerial) return false;
+        const uint64_t relative = sample.Serial - m_FirstSerial;
+        if (relative < m_Warmup) return false;
+        const uint64_t index = relative - m_Warmup;
+        if (index >= m_Samples.size() || m_Samples[static_cast<size_t>(index)]) return false;
+        m_Samples[static_cast<size_t>(index)] = sample;
+        ++m_Recorded;
+        return true;
+    }
+
+    bool Complete() const { return m_Recorded == m_Samples.size(); }
+
+    std::vector<Sample> Samples() const
+    {
+        std::vector<Sample> samples;
+        samples.reserve(m_Recorded);
+        for (const auto& sample : m_Samples)
+            if (sample) samples.push_back(*sample);
+        return samples;
+    }
+
+private:
+    uint64_t m_FirstSerial;
+    uint32_t m_Warmup;
+    size_t m_Recorded = 0;
+    std::vector<std::optional<Sample>> m_Samples;
+};
+}
+
 ===== FILE: source\rendering\renderprofiler.h =====
 #pragma once
 
@@ -65138,11 +66397,14 @@ private:
 
 #include <array>
 #include <chrono>
+#include <functional>
 #include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
 #include "virtualgeometry/virtualgeometryconfig.h"
+#include "rendermeasurement.h"
+#include "raytelemetry.h"
 
 
 class RenderProfiler final
@@ -65153,12 +66415,27 @@ public:
     static constexpr UINT kInvalidGpuToken = UINT_MAX;
     static constexpr size_t kHistoryLength = 180;
 
+    enum class ValidationFault : uint32_t { None, ExhaustQueries, UnclosedScope, OutOfOrderEnd };
+
     struct PassTiming
     {
         string Name;
         double CpuMs = 0.0;
         double GpuMs = 0.0;
         uint64_t DrawCalls = 0;
+        double GpuExclusiveMs = 0.0;
+        uint32_t GpuSamples = 0;
+        uint32_t GpuExclusiveSamples = 0;
+        uint32_t GpuEvents = 0;
+    };
+
+    struct GpuEventTiming
+    {
+        string Name;
+        RenderMeasurement::EventInterval Interval;
+        uint32_t Depth = 0;
+        std::optional<double> InclusiveMs;
+        std::optional<double> ExclusiveMs;
     };
 
     struct Counters
@@ -65206,6 +66483,8 @@ public:
         uint64_t Serial = 0;
         uint32_t GeometryMode = 0;
         double CpuRenderMs = 0.0;
+        double CpuFrameMs = std::numeric_limits<double>::quiet_NaN();
+        double FrameIntervalMs = std::numeric_limits<double>::quiet_NaN();
         double GpuRenderMs = 0.0;
         bool GpuTimingValid = false;
         bool PipelineStatisticsValid = false;
@@ -65215,6 +66494,10 @@ public:
         GeometryBinningStatistics Binning{};
         D3D12_QUERY_DATA_PIPELINE_STATISTICS Pipeline{};
         vector<PassTiming> Passes;
+        vector<GpuEventTiming> GpuEvents;
+        uint32_t DroppedGpuEvents = 0;
+        ValidationFault InjectedFault = ValidationFault::None;
+        RayTelemetry::Counts Rays;
     };
 
 private:
@@ -65224,6 +66507,9 @@ private:
         UINT BeginLocalQuery = 0;
         UINT EndLocalQuery = 0;
         bool Ended = false;
+        UINT ParentId = RenderMeasurement::NoParent;
+        UINT Depth = 0;
+        bool ScopeCompleted = false;
     };
 
     struct FrameSlot
@@ -65237,6 +66523,8 @@ private:
     };
 
     using Clock = chrono::steady_clock;
+    static inline Clock::time_point s_LastCpuFrameEnd{};
+    static inline uint64_t s_LastCpuFrameSerial = 0;
 
     static inline Microsoft::WRL::ComPtr<ID3D12QueryHeap> s_TimestampHeap{};
     static inline Microsoft::WRL::ComPtr<ID3D12Resource> s_TimestampReadback{};
@@ -65251,6 +66539,8 @@ private:
     static inline UINT s_ActiveFrameIndex = 0;
     static inline ID3D12GraphicsCommandList* s_ActiveCommandList = nullptr;
     static inline UINT s_FrameGpuToken = kInvalidGpuToken;
+    static inline vector<UINT> s_OpenGpuEvents;
+    static inline ValidationFault s_ValidationFault = ValidationFault::None;
     static inline Clock::time_point s_CpuFrameBegin{};
     static inline uint64_t s_FrameSerial = 0;
 
@@ -65399,6 +66689,7 @@ private:
         }
 
         FrameSnapshot snapshot = slot.Snapshot;
+        snapshot.Rays = RayTelemetry::Data().Consume(frameIndex, snapshot.Serial);
 
         if (s_GpuResourcesReady && slot.TimestampQueryCount > 0)
         {
@@ -65413,25 +66704,52 @@ private:
             {
                 const auto* timestamps = reinterpret_cast<const UINT64*>(
                     static_cast<const uint8_t*>(mapped) + byteOffset);
-                for (const GpuEvent& event : slot.GpuEvents)
+                vector<RenderMeasurement::EventInterval> intervals;
+                intervals.reserve(slot.GpuEvents.size());
+                for (UINT index = 0; index < slot.GpuEvents.size(); ++index)
                 {
-                    if (!event.Ended ||
-                        event.BeginLocalQuery >= slot.TimestampQueryCount ||
-                        event.EndLocalQuery >= slot.TimestampQueryCount)
+                    const GpuEvent& event = slot.GpuEvents[index];
+                    RenderMeasurement::EventInterval interval;
+                    interval.Id = index;
+                    interval.ParentId = event.ParentId;
+                    // This profiler currently timestamps the ordered direct queue only.
+                    interval.QueueId = 0;
+                    if (event.Ended && event.ScopeCompleted &&
+                        event.BeginLocalQuery < slot.TimestampQueryCount &&
+                        event.EndLocalQuery < slot.TimestampQueryCount)
                     {
-                        continue;
+                        interval.Begin = timestamps[event.BeginLocalQuery];
+                        interval.End = timestamps[event.EndLocalQuery];
+                        interval.Valid = interval.End >= interval.Begin;
                     }
-                    const UINT64 begin = timestamps[event.BeginLocalQuery];
-                    const UINT64 end = timestamps[event.EndLocalQuery];
-                    if (end < begin)
+                    intervals.push_back(interval);
+                }
+                for (UINT index = 0; index < intervals.size(); ++index)
+                {
+                    const GpuEvent& event = slot.GpuEvents[index];
+                    const auto& interval = intervals[index];
+                    GpuEventTiming timing{event.Name, interval, event.Depth, {}, {}};
+                    PassTiming& pass = FindOrCreatePass(snapshot, event.Name);
+                    ++pass.GpuEvents;
+                    if (!interval.Valid)
                     {
+                        snapshot.GpuEvents.push_back(move(timing));
                         continue;
                     }
                     const double milliseconds =
-                        static_cast<double>(end - begin) * 1000.0 /
+                        static_cast<double>(interval.End - interval.Begin) * 1000.0 /
                         static_cast<double>(s_TimestampFrequency);
-                    PassTiming& pass = FindOrCreatePass(snapshot, event.Name);
+                    timing.InclusiveMs = milliseconds;
                     pass.GpuMs += milliseconds;
+                    ++pass.GpuSamples;
+                    const double exclusiveTicks = RenderMeasurement::ExclusiveTicks(interval, intervals);
+                    if (std::isfinite(exclusiveTicks) && snapshot.DroppedGpuEvents == 0)
+                    {
+                        timing.ExclusiveMs = exclusiveTicks * 1000.0 / s_TimestampFrequency;
+                        pass.GpuExclusiveMs += *timing.ExclusiveMs;
+                        ++pass.GpuExclusiveSamples;
+                    }
+                    snapshot.GpuEvents.push_back(move(timing));
                     if (event.Name == "Frame")
                     {
                         snapshot.GpuRenderMs = milliseconds;
@@ -65465,7 +66783,8 @@ private:
         s_Latest = move(snapshot);
         s_HasLatest = true;
         PushHistory(s_CpuHistory, static_cast<float>(s_Latest.CpuRenderMs));
-        PushHistory(s_GpuHistory, static_cast<float>(s_Latest.GpuRenderMs));
+        if (s_Latest.GpuTimingValid)
+            PushHistory(s_GpuHistory, static_cast<float>(s_Latest.GpuRenderMs));
         slot.Pending = false;
     }
 
@@ -65488,6 +66807,7 @@ public:
         Clock::time_point m_CpuBegin{};
         bool m_Active = false;
         uint64_t m_DrawCallsBegin = 0;
+        uint64_t m_FrameSerial = 0;
 
     public:
         ScopedEvent(const char* name, ID3D12GraphicsCommandList* commandList)
@@ -65498,6 +66818,7 @@ public:
                 return;
             }
             m_Active = true;
+            m_FrameSerial = ActiveSnapshot()->Serial;
             m_DrawCallsBegin = ActiveSnapshot()->Calls.DrawCalls;
             m_CpuBegin = Clock::now();
             m_GpuToken = RenderProfiler::BeginGpuEvent(name, commandList);
@@ -65508,10 +66829,18 @@ public:
 
         ~ScopedEvent()
         {
+            Finish();
+        }
+
+        void Finish()
+        {
             if (!m_Active)
             {
                 return;
             }
+            m_Active = false;
+            if (!ActiveSnapshot() || ActiveSnapshot()->Serial != m_FrameSerial)
+                return;
             RenderProfiler::EndGpuEvent(m_GpuToken, m_CommandList);
             const double cpuMs = chrono::duration<double, milli>(
                 Clock::now() - m_CpuBegin).count();
@@ -65534,6 +66863,42 @@ public:
     static bool IsEnabled()
     {
         return s_Enabled;
+    }
+
+    static uint64_t GetFrameSerial() { return s_FrameSerial; }
+
+    static void RecordCpuFrameTime(uint64_t serial, double milliseconds)
+    {
+        const auto now = Clock::now();
+        for (auto& slot : s_FrameSlots)
+        {
+            if (!slot.Pending || slot.Snapshot.Serial != serial) continue;
+            slot.Snapshot.CpuFrameMs = milliseconds;
+            if (s_LastCpuFrameSerial != 0 && serial == s_LastCpuFrameSerial + 1)
+                slot.Snapshot.FrameIntervalMs = chrono::duration<double, milli>(now - s_LastCpuFrameEnd).count();
+            s_LastCpuFrameEnd = now;
+            s_LastCpuFrameSerial = serial;
+            break;
+        }
+    }
+
+    // Caller must first wait for all direct-queue submissions to finish.
+    static void DrainCompletedFrames(const std::function<void(const FrameSnapshot&)>& visitor)
+    {
+        if (IsFrameActive()) return;
+        for (UINT index = 0; index < kFrameCount; ++index)
+        {
+            if (!s_FrameSlots[index].Pending) continue;
+            ConsumeCompletedSlot(index);
+            visitor(s_Latest);
+        }
+    }
+
+    // Used only by the GPU validation fixture, before BeginFrame. Physical query
+    // heap capacity is unchanged; the fault is part of the resolved frame record.
+    static void SetValidationFault(ValidationFault fault)
+    {
+        if (!IsFrameActive()) s_ValidationFault = fault;
     }
 
     static const FrameSnapshot& GetLatest()
@@ -65580,7 +66945,9 @@ public:
         slot.TimestampQueryCount = 0;
         slot.GpuEvents.clear();
         slot.GpuEvents.reserve(kMaxTimestampQueriesPerFrame / 2);
+        s_OpenGpuEvents.clear();
         slot.Snapshot = {};
+        slot.Snapshot.InjectedFault = s_ValidationFault;
         // パイプライン統計クエリはフレーム全体を対象にするためGPU負荷が高い。ウィンドウ表示中だけ取る。
         slot.PipelineQueryStarted = s_GpuResourcesReady && (s_ShowWindow || s_ForcePipelineStatistics);
         slot.PipelineQueryClosed = !slot.PipelineQueryStarted;
@@ -65600,6 +66967,15 @@ public:
                 frameIndex);
         }
         s_FrameGpuToken = BeginGpuEvent("Frame", commandList);
+        if (s_ValidationFault == ValidationFault::UnclosedScope)
+            BeginGpuEvent("Validation Unclosed", commandList);
+        if (s_ValidationFault == ValidationFault::OutOfOrderEnd)
+        {
+            const UINT parent = BeginGpuEvent("Validation Parent", commandList);
+            BeginGpuEvent("Validation Child", commandList);
+            EndGpuEvent(parent, commandList);
+        }
+        RayTelemetry::Data().BeginFrame(device, commandList, slot.Snapshot.Serial, frameIndex, RayTelemetry::Requested());
     }
 
     static void PrepareCommandListSplit(ID3D12GraphicsCommandList* commandList)
@@ -65616,9 +66992,11 @@ public:
 
     static UINT BeginGpuEvent(const char* name, ID3D12GraphicsCommandList* commandList)
     {
+        const UINT queryLimit = s_ValidationFault == ValidationFault::ExhaustQueries ? 2u : kMaxTimestampQueriesPerFrame;
         if (!s_ActiveSlot || !s_GpuResourcesReady || !commandList || !name ||
-            s_ActiveSlot->TimestampQueryCount + 2 > kMaxTimestampQueriesPerFrame)
+            s_ActiveSlot->TimestampQueryCount + 2 > queryLimit)
         {
+            if (s_ActiveSlot) ++s_ActiveSlot->Snapshot.DroppedGpuEvents;
             return kInvalidGpuToken;
         }
 
@@ -65632,8 +67010,12 @@ public:
             D3D12_QUERY_TYPE_TIMESTAMP,
             absoluteBegin);
 
-        s_ActiveSlot->GpuEvents.push_back({ name, beginLocal, endLocal, false });
-        return static_cast<UINT>(s_ActiveSlot->GpuEvents.size() - 1);
+        const UINT parent = s_OpenGpuEvents.empty() ? RenderMeasurement::NoParent : s_OpenGpuEvents.back();
+        const UINT depth = static_cast<UINT>(s_OpenGpuEvents.size());
+        const UINT token = static_cast<UINT>(s_ActiveSlot->GpuEvents.size());
+        s_ActiveSlot->GpuEvents.push_back({ name, beginLocal, endLocal, false, parent, depth, false });
+        s_OpenGpuEvents.push_back(token);
+        return token;
     }
 
     static void EndGpuEvent(UINT token, ID3D12GraphicsCommandList* commandList)
@@ -65656,6 +67038,9 @@ public:
             D3D12_QUERY_TYPE_TIMESTAMP,
             absoluteEnd);
         event.Ended = true;
+        event.ScopeCompleted = !s_OpenGpuEvents.empty() && s_OpenGpuEvents.back() == token;
+        const auto open = find(s_OpenGpuEvents.begin(), s_OpenGpuEvents.end(), token);
+        if (open != s_OpenGpuEvents.end()) s_OpenGpuEvents.erase(open);
     }
 
     static void RecordCpuPass(const char* name, double milliseconds)
@@ -65674,8 +67059,18 @@ public:
         {
             return;
         }
+        RayTelemetry::Data().EndFrame(commandList);
 
+        // ResolveQueryData must never include an unwritten end query. Close leaked
+        // scopes for query safety, but keep their measurements explicitly invalid.
+        while (!s_OpenGpuEvents.empty() && s_OpenGpuEvents.back() != s_FrameGpuToken)
+        {
+            const UINT token = s_OpenGpuEvents.back();
+            EndGpuEvent(token, commandList);
+            s_ActiveSlot->GpuEvents[token].ScopeCompleted = false;
+        }
         EndGpuEvent(s_FrameGpuToken, commandList);
+        s_OpenGpuEvents.clear();
         s_ActiveSlot->Snapshot.CpuRenderMs =
             chrono::duration<double, milli>(Clock::now() - s_CpuFrameBegin).count();
 
@@ -65838,6 +67233,23 @@ public:
         }
 
         ImGui::Checkbox("計測を有効化", &s_Enabled);
+        ImGui::Checkbox("Count DXR rays (extra GPU work)", &RayTelemetry::Requested());
+        if (RayTelemetry::Requested())
+        {
+            const auto& counts = s_Latest.Rays;
+            if (counts.ProviderKnown(RayTelemetry::Radiance))
+                ImGui::Text("Reflection %llu / GI %llu / bounce visibility %llu / ReSTIR visibility %llu",
+                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_REFLECTION]),
+                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_GI]),
+                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_RADIANCE_SHADOW]),
+                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_RESTIR_VISIBILITY]));
+            else ImGui::TextDisabled("Radiance ray count unavailable");
+            if (counts.ProviderKnown(RayTelemetry::ShadowAo))
+                ImGui::Text("Shadow %llu / AO %llu", static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_SHADOW]),
+                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_AO]));
+            else ImGui::TextDisabled("Shadow/AO ray count unavailable");
+            ImGui::TextDisabled("Partial DXR source coverage; total ray count unavailable.");
+        }
         ImGui::SameLine();
         ImGui::TextDisabled("GPU結果はフレームリング分遅延します");
 
@@ -65935,14 +67347,19 @@ public:
         }
 
         ImGui::SeparatorText("Pass timings");
+        ImGui::TextDisabled("GPU history contains valid frame samples only.");
+        ImGui::TextDisabled("Inclusive rows overlap; GPU self excludes same-queue children.");
+        if (s_Latest.DroppedGpuEvents != 0)
+            ImGui::TextDisabled("GPU events unavailable: %u", s_Latest.DroppedGpuEvents);
         if (ImGui::BeginTable(
             "RenderProfilerPasses",
-            4,
+            5,
             ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
         {
             ImGui::TableSetupColumn("Pass");
-            ImGui::TableSetupColumn("CPU ms");
-            ImGui::TableSetupColumn("GPU ms");
+            ImGui::TableSetupColumn("CPU incl ms");
+            ImGui::TableSetupColumn("GPU incl ms");
+            ImGui::TableSetupColumn("GPU self ms");
             ImGui::TableSetupColumn("Direct draws");
             ImGui::TableHeadersRow();
             for (const PassTiming& pass : s_Latest.Passes)
@@ -65957,8 +67374,14 @@ public:
                 ImGui::TableSetColumnIndex(1);
                 ImGui::Text("%.3f", pass.CpuMs);
                 ImGui::TableSetColumnIndex(2);
-                ImGui::Text("%.3f", pass.GpuMs);
+                if (RenderMeasurement::IsGpuTimingComplete(pass.GpuEvents, pass.GpuSamples, s_Latest.DroppedGpuEvents))
+                    ImGui::Text("%.3f", pass.GpuMs);
+                else ImGui::TextUnformatted("N/A");
                 ImGui::TableSetColumnIndex(3);
+                if (RenderMeasurement::IsGpuTimingComplete(pass.GpuEvents, pass.GpuExclusiveSamples, s_Latest.DroppedGpuEvents))
+                    ImGui::Text("%.3f", pass.GpuExclusiveMs);
+                else ImGui::TextUnformatted("N/A");
+                ImGui::TableSetColumnIndex(4);
                 ImGui::Text("%llu", static_cast<unsigned long long>(pass.DrawCalls));
             }
             ImGui::EndTable();
@@ -69234,6 +70657,121 @@ private:
 };
 
 
+===== FILE: source\rendering\temporalhistory.h =====
+#pragma once
+
+#include <cmath>
+#include <cstdint>
+#include <limits>
+
+namespace TemporalHistory
+{
+enum Reason : uint32_t
+{
+    None = 0,
+    FirstFrame = 1u << 0,
+    FrameGap = 1u << 1,
+    CameraChanged = 1u << 2,
+    ResolutionChanged = 1u << 3,
+    SceneChanged = 1u << 4,
+    LightingChanged = 1u << 5,
+    LodChanged = 1u << 6,
+    ExposureChanged = 1u << 7,
+    ConfigurationChanged = 1u << 8,
+    SignalChanged = 1u << 9
+};
+
+struct State
+{
+    uint64_t Serial = 0;
+    uint64_t CameraId = 0;
+    uint64_t CameraCutGeneration = 0;
+    uint64_t SceneGeneration = 0;
+    uint64_t LightingGeneration = 0;
+    uint64_t LodGeneration = 0;
+    uint64_t ConfigurationKey = 0;
+    uint32_t InputWidth = 0;
+    uint32_t InputHeight = 0;
+    uint32_t OutputWidth = 0;
+    uint32_t OutputHeight = 0;
+    double Exposure = 1.0;
+    bool CameraCut = false;
+};
+
+struct Decision
+{
+    uint32_t Reasons = None;
+    bool CanReuse = false;
+};
+
+// Uncompensated exposure or a topology change invalidates the whole signal.
+// Ordinary camera/object movement is reprojected by the caller and does not
+// increment a generation. Local rejection requires a separate per-pixel test.
+inline Decision Evaluate(const State& previous, const State& current, bool valid)
+{
+    uint32_t reasons = valid ? None : FirstFrame;
+    if (valid && (previous.Serial == (std::numeric_limits<uint64_t>::max)() ||
+        current.Serial != previous.Serial + 1))
+        reasons |= FrameGap;
+    if (previous.CameraId != current.CameraId || current.CameraCut ||
+        previous.CameraCutGeneration != current.CameraCutGeneration)
+        reasons |= CameraChanged;
+    if (current.InputWidth == 0 || current.InputHeight == 0 ||
+        current.OutputWidth == 0 || current.OutputHeight == 0 ||
+        previous.InputWidth != current.InputWidth || previous.InputHeight != current.InputHeight ||
+        previous.OutputWidth != current.OutputWidth || previous.OutputHeight != current.OutputHeight)
+        reasons |= ResolutionChanged;
+    if (previous.SceneGeneration != current.SceneGeneration) reasons |= SceneChanged;
+    if (previous.LightingGeneration != current.LightingGeneration) reasons |= LightingChanged;
+    if (previous.LodGeneration != current.LodGeneration) reasons |= LodChanged;
+    if (!std::isfinite(previous.Exposure) || !std::isfinite(current.Exposure) ||
+        previous.Exposure <= 0.0 || current.Exposure <= 0.0 || previous.Exposure != current.Exposure)
+        reasons |= ExposureChanged;
+    if (previous.ConfigurationKey != current.ConfigurationKey) reasons |= ConfigurationChanged;
+    return {reasons, reasons == None};
+}
+}
+
+===== FILE: source\rendering\temporalhistorycontext.h =====
+#pragma once
+#include "temporalhistory.h"
+
+namespace TemporalHistory
+{
+// Render-thread context. Generations are persistent and never consumed by an
+// effect, so TAA, reflections and GI all observe the same edit independently.
+class Context final
+{
+public:
+    static void BeginFrame(uint32_t outputWidth, uint32_t outputHeight)
+    {
+        ++s_Frame.Serial;
+        s_Frame.OutputWidth = outputWidth;
+        s_Frame.OutputHeight = outputHeight;
+    }
+
+    static State Capture(uint64_t cameraId, uint32_t inputWidth, uint32_t inputHeight,
+        uint64_t configurationKey, double exposure = 1.0)
+    {
+        State state = s_Frame;
+        state.CameraId = cameraId;
+        state.InputWidth = inputWidth;
+        state.InputHeight = inputHeight;
+        state.ConfigurationKey = configurationKey;
+        state.Exposure = exposure;
+        return state;
+    }
+
+    static void NotifySceneChanged() { ++s_Frame.SceneGeneration; }
+    static void NotifyLightingChanged() { ++s_Frame.LightingGeneration; }
+    static void NotifyLodChanged() { ++s_Frame.LodGeneration; }
+    static void NotifyCameraCut() { ++s_Frame.CameraCutGeneration; }
+
+private:
+    static inline State s_Frame;
+};
+}
+
 ===== FILE: source\rendering\thumbnailmeshio.h =====
 #pragma once
 #include <cfileio.h>
@@ -71961,6 +73499,12 @@ public:
 #include "world.h"
 #include "componentmanager.h"
 #include "projectmanager.h"
+#include "temporalhistorycontext.h"
+
+void Camera::NotifyCut()
+{
+    TemporalHistory::Context::NotifyCameraCut();
+}
 
 
 	bool IsCameraEntity(EntityID entity)
@@ -72273,6 +73817,8 @@ private:
 	inline static EntityID m_EditorCameraEntity = g_kINVALID_ENTITY;
 	inline static EntityID m_GameCameraEntity = g_kINVALID_ENTITY;
 public:
+    // Call after a same-camera teleport/cut; ordinary movement is reprojected.
+    static void NotifyCut();
 	static void Create(
 		XMFLOAT3 target = { 0.0f, 3.f, 0.0f },
 		float fov = XM_PIDIV4);
@@ -100969,6 +102515,7 @@ void main(uint3 groupId : SV_GroupID, uint lane : SV_GroupIndex)
 #include "../../External/NRD/sdk/Shaders/NRD.hlsli"
 #endif
 
+#include "RayTelemetry.hlsli"
 Texture2D<float> ReflectionDepth : register(t1);
 Texture2D<float4> ReflectionNormal : register(t2);
 Texture2D<float4> ReflectionMaterial : register(t3);
@@ -101292,6 +102839,7 @@ float TraceBounceVisibility(float3 position, float3 normal, float3 direction, fl
     ray.TMin = SceneRayParameters.y * 0.25f;
     ray.TMax = max(distance - SceneRayParameters.y, ray.TMin + 0.001f);
     RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+    CountTelemetryRay(RAY_TELEMETRY_RADIANCE_SHADOW);
     query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0x01, ray);
     while (query.Proceed()) { }
     return query.CommittedStatus() == COMMITTED_NOTHING ? 1 : 0;
@@ -101518,6 +103066,7 @@ void main(uint3 id : SV_DispatchThreadID)
     if (nDotL > 0)
     {
         RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
+        CountTelemetryRay(RAY_TELEMETRY_REFLECTION);
         query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
         while (query.Proceed()) { }
         hit = query.CommittedStatus() != COMMITTED_NOTHING;
@@ -101622,6 +103171,7 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed)
     ray.TMin = SceneRayParameters.y * 0.25f;
     ray.TMax = max(length(biasedOffset) - SceneRayParameters.y, ray.TMin);
     RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+    CountTelemetryRay(RAY_TELEMETRY_RADIANCE_SHADOW);
     query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
     while (query.Proceed()) { }
     if (query.CommittedStatus() != COMMITTED_NOTHING)
@@ -101688,6 +103238,7 @@ void TraceDiffuse(uint3 id : SV_DispatchThreadID)
     ray.TMin = SceneRayParameters.y * 0.25f;
     ray.TMax = GiParameters.x;
     RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
+    CountTelemetryRay(RAY_TELEMETRY_GI);
     query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
     while (query.Proceed()) { }
     float hitDistance = ray.TMax;
@@ -102008,6 +103559,7 @@ void ReSTIRSpatial(uint3 id : SV_DispatchThreadID)
         ray.TMin = SceneRayParameters.y * 0.25f;
         ray.TMax = max(sampleDistance - SceneRayParameters.y * 2.0f, ray.TMin + 0.001f);
         RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+        CountTelemetryRay(RAY_TELEMETRY_RESTIR_VISIBILITY);
         query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
         while (query.Proceed()) { }
         if (query.CommittedStatus() != COMMITTED_NOTHING) W = 0.0f;
@@ -102026,6 +103578,30 @@ void ReSTIRSpatial(uint3 id : SV_DispatchThreadID)
 
 
 
+
+===== FILE: shader\hlsl\RayTelemetry.hlsli =====
+#ifndef RAY_TELEMETRY_INCLUDED
+#define RAY_TELEMETRY_INCLUDED
+#include "../../source/rendering/raytelemetrylayout.h"
+#ifndef ENABLE_RAY_TELEMETRY
+#define ENABLE_RAY_TELEMETRY 0
+#endif
+#if ENABLE_RAY_TELEMETRY
+RWByteAddressBuffer RayTelemetryCounters : register(u0, space9);
+void CountTelemetryRay(uint channel)
+{
+    uint original;
+    RayTelemetryCounters.InterlockedAdd(channel * 8, 1, original);
+    if (original == 0xffffffffu)
+    {
+        uint ignored;
+        RayTelemetryCounters.InterlockedAdd(channel * 8 + 4, 1, ignored);
+    }
+}
+#else
+void CountTelemetryRay(uint channel) { }
+#endif
+#endif
 
 ===== FILE: shader\hlsl\RaytracingCS.hlsl =====
 RaytracingAccelerationStructure Scene : register(t0);
@@ -102072,8 +103648,9 @@ float3 Tangent(float3 normal)
     return normalize(cross(axis, normal));
 }
 
+#include "RayTelemetry.hlsli"
 float TraceHitDistance(float3 origin, float3 direction, float distance, bool closest = false,
-    uint visibilityMask = 0x01)
+    uint visibilityMask = 0x01, uint telemetryChannel = RAY_TELEMETRY_SHADOW)
 {
     RayDesc ray;
     ray.Origin = origin;
@@ -102081,6 +103658,7 @@ float TraceHitDistance(float3 origin, float3 direction, float distance, bool clo
     ray.TMin = Distances.z * 0.25f;
     ray.TMax = distance;
     RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
+    CountTelemetryRay(telemetryChannel);
     query.TraceRayInline(Scene, closest ? RAY_FLAG_NONE : RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
         visibilityMask, ray);
     while (query.Proceed()) { }
@@ -102152,7 +103730,7 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
         if (Features.y != 0)
         {
             float3 direction = tangent * disk.x + bitangent * disk.y + normal * sqrt(1.0f - radius * radius);
-            float hitDistance = TraceHitDistance(origin, direction, Distances.y, needsHitDistance && sample == 0, 0x02);
+            float hitDistance = TraceHitDistance(origin, direction, Distances.y, needsHitDistance && sample == 0, 0x02, RAY_TELEMETRY_AO);
             ambient += hitDistance >= 65504.0f ? 1.0f : 0.0f;
             if (sample == 0) ambientDistance = min(hitDistance, Distances.y);
         }

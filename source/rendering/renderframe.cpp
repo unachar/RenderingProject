@@ -10,10 +10,13 @@
 #include "imguimanager.h"
 #include "world.h"
 #include "atmospherelut.h"
+#include "temporalhistorycontext.h"
+#include "renderprofiler.h"
 
 
 void RenderFrame::BeginDraw()
 {
+    TemporalHistory::Context::BeginFrame(m_Width, m_Height);
 	if (m_FrameLatencyWaitableObject)
 	{
 		WaitForSingleObjectEx(m_FrameLatencyWaitableObject, 1000, TRUE);
@@ -22,6 +25,7 @@ void RenderFrame::BeginDraw()
 
 	m_CommandAllocator[m_FrameIndex]->Reset();
 	m_CommandList->Reset(m_CommandAllocator[m_FrameIndex].Get(), nullptr);
+    RenderProfiler::BeginFrame(m_Device.Get(), m_CommandQueue.Get(), m_CommandList.Get(), m_FrameIndex);
 	TextureManager::UpdateStreaming(m_CommandList.Get());
 	// Sky LUTs for this frame: recorded and submitted on the async compute queue right away so
 	// they overlap with the previous frame's graphics work; the graphics queue waits on the GPU.
@@ -84,6 +88,7 @@ void RenderFrame::EndDraw()
 
 	m_CommandList->ResourceBarrier(1, &barrier);
 
+    RenderProfiler::EndFrame(m_CommandList.Get());
 	const HRESULT closeHr = m_CommandList->Close();
 	if (!GraphicsDevice::CheckDeviceHealth(closeHr, "Command list close"))
 	{

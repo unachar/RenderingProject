@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "persistentpsocache.h"
 #include "transparencyeffects.h"
 #include "psomanager.h"
 #include "shaderpipelines.h"
@@ -15,7 +16,7 @@ bool PsoManager::CreateGraphicsPipelineState(
 	ComPtr<ID3D12PipelineState>& outPso)
 {
 	outPso.Reset();
-	HRESULT hr = m_Device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&outPso));
+	HRESULT hr = PersistentPsoCache::Graphics(m_Device.Get(),desc,outPso);
 	if (FAILED(hr))
 	{
 		HRESULT removedReason;
@@ -94,7 +95,7 @@ bool PsoManager::CreateComputePipelineState(
 	ComPtr<ID3D12PipelineState>& outPso)
 {
 	outPso.Reset();
-	HRESULT hr = m_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&outPso));
+	HRESULT hr = PersistentPsoCache::Compute(m_Device.Get(),desc,outPso);
 	if (FAILED(hr))
 	{
 		HRESULT removedReason;
@@ -1094,6 +1095,7 @@ ID3D12PipelineState* PsoManager::GetPostProcessPso(PostProcessType type)
 	}
 	return psoIt->second.Get();
 }
+
 
 
 

@@ -203,6 +203,8 @@ void ImGuiManager::DrawProjectSettingsWindow()
 		ImGui::EndDisabled();
 		ImGui::Checkbox("レイトレーシング反射", &rays.Reflections);
         ImGui::Checkbox("ノイズ除去を使用", &rays.Denoise);
+        ImGui::Checkbox("NRDの時間・安定化設定を固定", &rays.StableNrdProfile);
+        ImGui::Checkbox("GI・影の低偏差サンプリング", &rays.StableSampling);
         ImGui::BeginDisabled(!rays.Denoise);
         int denoiser = static_cast<int>(rays.RadianceDenoiser);
         const char* denoisers[] = {"NVIDIA NRD", "NVIDIA OptiX AI (HDR)"};
@@ -694,6 +696,7 @@ void ImGuiManager::DrawProjectSettingsWindow()
         ImGui::EndDisabled();
 
         ImGui::SeparatorText("Motion Blur / Depth of Field");
+        ImGui::Checkbox("MB / DOF 半解像度", &advanced.HalfResolutionLens);
         ImGui::Checkbox("モーションブラー", &advanced.MotionBlur);
         ImGui::BeginDisabled(!advanced.MotionBlur);
         ImGui::SliderFloat("シャッター", &advanced.MotionBlurShutter, 0.0f, 1.0f, "%.2f");
@@ -981,6 +984,9 @@ void ImGuiManager::DrawProjectSettingsWindow()
 bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const string& value)
 {
     bool matched = false;
+    auto& temporalRays = Raytracing::GetSettings();
+    matched |= EditorConfig::Value(output, key, value, "ray.StableNrdProfile", temporalRays.StableNrdProfile, 0, 1);
+    matched |= EditorConfig::Value(output, key, value, "ray.StableSampling", temporalRays.StableSampling, 0, 1);
     const auto field = [&](const char* name, auto& setting, long double low, long double high)
     {
         matched |= EditorConfig::Value(output, key, value, name, setting, low, high);
@@ -1146,6 +1152,7 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("advanced.ExposureSpeed", advanced.ExposureSpeed, 0.01, 20);
     field("advanced.ExposureLowPercent", advanced.ExposureLowPercent, 0, 0.99);
     field("advanced.ExposureHighPercent", advanced.ExposureHighPercent, 0.01, 1);
+    field("advanced.HalfResolutionLens", advanced.HalfResolutionLens, 0, 1);
     field("advanced.MotionBlur", advanced.MotionBlur, 0, 1);
     field("advanced.MotionBlurShutter", advanced.MotionBlurShutter, 0, 2);
     field("advanced.MotionBlurMaxPixels", advanced.MotionBlurMaxPixels, 1, 128);
@@ -1318,16 +1325,8 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     return matched;
 }
 
-void ImGuiManager::SaveProjectSettings()
+string ImGuiManager::SerializeProjectSettings()
 {
-	if (!m_ProjectSettingsLoaded || ProjectManager::IsPlaying()) return;
-	char validationMode[8]{};
-	if (GetEnvironmentVariableA("DX12_VALIDATION_MODE", validationMode, sizeof(validationMode)) > 0 && atoi(validationMode) != 0)
-	{
-		return;
-	}
-	error_code ec;
-	filesystem::create_directories("Save", ec);
 	ostringstream stream;
 	stream << setprecision(numeric_limits<float>::max_digits10);
 	stream << "version=1\n";
@@ -1406,7 +1405,18 @@ void ImGuiManager::SaveProjectSettings()
 			<< fog.Color.x << ',' << fog.Color.y << ',' << fog.Color.z << '\n';
 	}
 
-    const string contents = stream.str();
+    return stream.str();
+}
+
+void ImGuiManager::SaveProjectSettings()
+{
+    if (!m_ProjectSettingsLoaded || ProjectManager::IsPlaying()) return;
+    char validationMode[8]{};
+    if (GetEnvironmentVariableA("DX12_VALIDATION_MODE", validationMode, sizeof(validationMode)) > 0 && atoi(validationMode) != 0)
+        return;
+    error_code ec;
+    filesystem::create_directories("Save", ec);
+    const string contents = SerializeProjectSettings();
     if (contents == m_LastSavedProjectSettings) return;
     const filesystem::path temporary = "Save/project_environment.cfg.tmp";
     ofstream file(temporary, ios::binary | ios::trunc);
@@ -1450,7 +1460,7 @@ void ImGuiManager::LoadProjectSettings()
 			else if (key == "fixed_fps") World::SetFixedFrameRateEnabled(stoi(value) != 0);
 			else if (key == "target_fps") World::SetTargetFrameRate(stoi(value));
 			else if (key == "resolution_scale") RenderConfiguration::SetResolutionScale(stof(value));
-			else if (key == "upscale_mode") RendererSettings::SetUpscaleMode(static_cast<UpscaleMode>(clamp(stoi(value), 0, 3)));
+			else if (key == "upscale_mode") RendererSettings::SetUpscaleMode(static_cast<UpscaleMode>(clamp(stoi(value), 0, 4)));
 			else if (key == "upscale_quality") RendererSettings::SetUpscaleQuality(static_cast<UpscaleQuality>(clamp(stoi(value), 0, 4)));
 			else if (key == "fsr_sharpness") RendererSettings::SetFsrSharpness(stof(value));
 			else if (key == "nis_sharpness") RendererSettings::SetNisSharpness(stof(value));
@@ -1555,6 +1565,7 @@ void ImGuiManager::LoadProjectSettings()
     }
 
 }
+
 
 
 

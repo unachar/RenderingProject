@@ -7,6 +7,14 @@
 class RayReflections
 {
 public:
+    struct SamplingLayout
+    {
+        UINT Width = 0;
+        UINT Height = 0;
+        UINT Sequence = 0;
+        bool Checkerboard = false;
+    };
+    static SamplingLayout GetReflectionSamplingLayout();
     static bool IsGiActive();
     static bool IsOptixGiActive();
     static bool IsOptixReflectionActive();

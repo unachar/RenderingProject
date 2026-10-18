@@ -5,6 +5,7 @@
 #include "sun.h"
 #include "world.h"
 #include "graphicsdevice.h"
+#include "temporalhistorycontext.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -19,6 +20,13 @@ using namespace EditorWidgets;
 
 namespace
 {
+    void PublishHistoryChange(bool lightChanged, bool lodChanged)
+    {
+        TemporalHistory::Context::NotifySceneChanged();
+        if (lightChanged) TemporalHistory::Context::NotifyLightingChanged();
+        if (lodChanged) TemporalHistory::Context::NotifyLodChanged();
+    }
+
 	template<typename T>
 	void RestoreSnapshotComponent(EntityID entity, const T& component)
 	{
@@ -156,6 +164,7 @@ void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
 	{
 		return;
 	}
+    PublishHistoryChange(snapshot.HasLight, snapshot.HasLod);
 	if (snapshot.Entity == g_kINVALID_ENTITY) return;
 	if (!snapshot.WasAlive)
 	{
@@ -212,6 +221,9 @@ void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
 void ImGuiManager::BeginUndoCapture(EntityID entity, const EntitySnapshot& before)
 {
 	if (entity == g_kINVALID_ENTITY || !Registry::IsAlive(entity)) return;
+    // Explicit authoring edits invalidate history; simulation movement never
+    // enters this transaction path and continues through normal reprojection.
+    PublishHistoryChange(before.HasLight, before.HasLod);
 	GpuSceneChanges::Notify(entity);
 	++m_EditRevision;
 	if (!m_HasPendingUndo) { m_PendingUndo = before; m_HasPendingUndo = true; }
@@ -228,6 +240,7 @@ void ImGuiManager::FinalizeUndoCaptureIfIdle()
 void ImGuiManager::PushUndoSnapshot(const EntitySnapshot& snapshot)
 {
 	if (snapshot.Entity == g_kINVALID_ENTITY) return;
+    PublishHistoryChange(snapshot.HasLight, snapshot.HasLod);
 	++m_EditRevision;
 	m_UndoStack.push_back(snapshot);
 	if (m_UndoStack.size() > 10) m_UndoStack.erase(m_UndoStack.begin());

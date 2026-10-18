@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "temporalupscaler.h"
 #include "advancedeffects.h"
 #include "asynccompute.h"
 #include "atmospherelut.h"
@@ -562,6 +563,7 @@ if (!ImGuiManager::Init(
 void GraphicsDevice::Uninit()
 {
 	WaitForGpuIdle();
+    RayTelemetry::Data().Shutdown();
     ScenePasses::ReleaseStaticShadowCache();
 
     AssetThumbnailManager::Shutdown();
@@ -608,6 +610,7 @@ void GraphicsDevice::Uninit()
 	ScreenSpaceEffects::Shutdown();
 	CloudRenderer::Shutdown();
 	AdvancedEffects::Shutdown();
+	TemporalUpscaler::Shutdown();
 	AtmosphereLut::Shutdown();
 	TransparencyEffects::Shutdown();
 	PbrLuts::Shutdown();
@@ -911,6 +914,7 @@ void GraphicsDevice::SubmitForExternalCompute()
     ID3D12DescriptorHeap* heaps[] = {m_CbvHeap.Get()};
     m_CommandList->SetDescriptorHeaps(1, heaps);
 }
+
 
 
 

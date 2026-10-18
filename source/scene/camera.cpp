@@ -3,6 +3,12 @@
 #include "world.h"
 #include "componentmanager.h"
 #include "projectmanager.h"
+#include "temporalhistorycontext.h"
+
+void Camera::NotifyCut()
+{
+    TemporalHistory::Context::NotifyCameraCut();
+}
 
 
 	bool IsCameraEntity(EntityID entity)

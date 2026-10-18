@@ -457,10 +457,9 @@ float CurrentExposure()
 // ---------------------------------------------------------------------------------------------
 // 5. Resolve: motion blur + exposure, PostA -> PostB.
 // ---------------------------------------------------------------------------------------------
-[numthreads(8, 8, 1)]
-void Resolve(uint3 id : SV_DispatchThreadID)
+float4 ResolvePixel(uint3 id)
 {
-    if (any(id.xy >= Extent.xy)) return;
+    if (any(id.xy >= Extent.xy)) return 0;
     float4 center = PostA[id.xy];
     float3 color = center.rgb;
     if (Features.z != 0)
@@ -493,7 +492,7 @@ void Resolve(uint3 id : SV_DispatchThreadID)
             color = sum / weightSum;
         }
     }
-    PostBOut[id.xy] = float4(color * CurrentExposure(), center.a);
+    return float4(color * CurrentExposure(), center.a);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -507,14 +506,24 @@ float CircleOfConfusion(float2 uv, float depth)
     return blur * DofParams.z; // pixels
 }
 
-[numthreads(8, 8, 1)]
-void DepthOfField(uint3 id : SV_DispatchThreadID)
+Texture2D<float4> HalfResolveInput:register(t0,space11);
+Texture2D<float4> HalfDofInput:register(t1,space11);
+RWTexture2D<float4> HalfResolveOutput:register(u0,space11);
+RWTexture2D<float4> HalfDofOutput:register(u1,space11);
+cbuffer HalfLensConstants:register(b2) { uint HalfWidth,HalfHeight,HalfHasDof,HalfPadding; };
+static bool UseHalfDofSource=false;
+float4 DofSource(int2 pixel)
 {
-    if (any(id.xy >= Extent.xy)) return;
+    if(UseHalfDofSource) return HalfResolveInput.Load(int3(clamp(pixel/2,0,int2(HalfWidth,HalfHeight)-1),0));
+    return PostB.Load(int3(pixel,0));
+}
+float4 DepthOfFieldPixel(uint3 id)
+{
+    if (any(id.xy >= Extent.xy)) return 0;
     float2 uv = (id.xy + 0.5f) / Extent.xy;
     float centerDepth = SceneDepth[id.xy];
     float centerCoc = CircleOfConfusion(uv, centerDepth);
-    float4 center = PostB[id.xy];
+    float4 center = DofSource(int2(id.xy));
     float searchRadius = DofParams.z;
     float centerWeight = 1 / max(centerCoc * centerCoc, 1);
     float3 sum = center.rgb * centerWeight;
@@ -533,10 +542,54 @@ void DepthOfField(uint3 id : SV_DispatchThreadID)
         // centre are limited by the centre's blur so a sharp foreground stays sharp.
         float coverage = sampleDepth > centerDepth ? min(sampleCoc, centerCoc) : sampleCoc;
         float weight = saturate(coverage - radius + 1) / max(coverage * coverage, 1);
-        sum += PostB[samplePixel].rgb * weight;
+        sum += DofSource(samplePixel).rgb * weight;
         weightSum += weight;
     }
-    PostAOut[id.xy] = float4(sum / weightSum, center.a);
+    return float4(sum / weightSum, center.a);
 }
 
 
+
+
+[numthreads(8,8,1)]
+void Resolve(uint3 id:SV_DispatchThreadID) { if(all(id.xy<uint2(Extent.xy))) PostBOut[id.xy]=ResolvePixel(id); }
+
+[numthreads(8,8,1)]
+void DepthOfField(uint3 id:SV_DispatchThreadID) { if(all(id.xy<uint2(Extent.xy))) PostAOut[id.xy]=DepthOfFieldPixel(id); }
+
+[numthreads(8,8,1)]
+void ResolveHalf(uint3 id:SV_DispatchThreadID)
+{
+    if(id.x>=HalfWidth || id.y>=HalfHeight) return;
+    HalfResolveOutput[id.xy]=ResolvePixel(uint3(min(id.xy*2+1,uint2(Extent.xy)-1),0));
+}
+[numthreads(8,8,1)]
+void DofHalf(uint3 id:SV_DispatchThreadID)
+{
+    if(id.x>=HalfWidth || id.y>=HalfHeight) return;
+    UseHalfDofSource=true;
+    HalfDofOutput[id.xy]=DepthOfFieldPixel(uint3(min(id.xy*2+1,uint2(Extent.xy)-1),0));
+}
+[numthreads(8,8,1)]
+void UpsampleLens(uint3 id:SV_DispatchThreadID)
+{
+    if(any(id.xy>=uint2(Extent.xy))) return;
+    float depth=SceneDepth[id.xy]; float2 position=(float2(id.xy)-1)*.5;
+    int2 base=int2(floor(position)); float2 fraction=frac(position);
+    float4 sum=0; float weights=0;
+    [unroll] for(uint y=0;y<2;++y) [unroll] for(uint x=0;x<2;++x)
+    {
+        int2 low=clamp(base+int2(x,y),0,int2(HalfWidth,HalfHeight)-1);
+        uint2 full=min(uint2(low)*2+1,uint2(Extent.xy)-1);
+        float geometry=exp2(-abs(SceneDepth[full]-depth)/max(2e-5,abs(1-depth)*.02));
+        float2 spatial=lerp(1-fraction,fraction,float2(x,y));
+        float weight=spatial.x*spatial.y*geometry;
+        float4 color=HalfHasDof!=0?HalfDofInput.Load(int3(low,0)):HalfResolveInput.Load(int3(low,0));
+        sum+=color*weight; weights+=weight;
+    }
+    float4 full=PostA.Load(int3(id.xy,0)); full.rgb*=CurrentExposure();
+    float motion=Features.z!=0?length(SceneVelocity[id.xy].zw*Extent.xy*MotionBlurParams.x):0;
+    float coc=HalfHasDof!=0?CircleOfConfusion((id.xy+.5)/Extent.xy,depth):0;
+    float blend=saturate(max(motion,coc)-.5);
+    PostBOut[id.xy]=weights>1e-5?lerp(full,sum/weights,blend):full;
+}

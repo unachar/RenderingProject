@@ -24,8 +24,10 @@
     "emissiveIntensity" : 0.0,
     "ior" : 1.5,
     "metallic" : 0.0,
-    "normalScale" : 1.0,
+    "normalScale" : 0.88899999856948853,
     "roughness" : 1.0,
+    "shadingModel" : 0,
+    "shadingStrength" : 1.0,
     "thickness" : 0.10000000149011612,
     "transmission" : 0.0
   },
@@ -33,7 +35,7 @@
   {
     "alphaCutoff" : 0.5,
     "cullMode" : "Back",
-    "depthWrite" : true,
+    "depthWrite" : false,
     "shadowCutoff" : 0.5,
     "shadowMode" : "Auto"
   },
@@ -42,7 +44,7 @@
   "textures" : 
   {
     "ao" : "guid:0000000000000000",
-    "baseColor" : "guid:0000000000000000",
+    "baseColor" : "guid:710210e8ac921b30",
     "emissive" : "guid:0000000000000000",
     "metallicRoughness" : "guid:0000000000000000",
     "normal" : "guid:bb5ff3e6905ea43c"

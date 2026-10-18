@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "temporalupscaler.h"
 #include "camerasystem.h"
 #include "componentmanager.h"
 #include "systemmanager.h"
@@ -130,7 +131,11 @@ void CameraSystem::Update()
 		XMMATRIX proj = XMMatrixPerspectiveFovLH(
 			cam.Fov, aspectRatio, cam.NearClip, cam.FarClip);
 
-		if (isActive && DlssUpscaler::IsRequested())
+        if(isActive&&TemporalUpscaler::IsRequested())
+        {
+            const auto jitter=TemporalUpscaler::Jitter(); proj.r[2].m128_f32[0]+=jitter.x*2.f/(std::max)(1u,GraphicsDevice::GetSceneWidth()); proj.r[2].m128_f32[1]-=jitter.y*2.f/(std::max)(1u,GraphicsDevice::GetSceneHeight());
+        }
+        else if (isActive && DlssUpscaler::IsRequested())
 		{
 			const XMFLOAT2 jitter = DlssUpscaler::GetJitter();
 			proj.r[2].m128_f32[0] -= jitter.x * 2.0f / GraphicsDevice::GetSceneWidth();
@@ -162,4 +167,5 @@ void CameraSystem::Update()
 	}
 	previousActiveCamera = activeCamera;
 }
+
 

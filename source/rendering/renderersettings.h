@@ -15,7 +15,8 @@ enum class UpscaleMode : int
 	Bilateral = 0,
 	Fsr1,
 	Nis,
-	Dlss
+	Dlss,
+    Tsr
 };
 
 enum class UpscaleQuality : int
@@ -276,4 +277,5 @@ private:
 	inline static int s_ShadowLightBudget = 4;
 	inline static uint64_t s_Revision = 1;
 };
+
 

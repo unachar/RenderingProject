@@ -31,7 +31,9 @@ struct NrdFrame
     UINT Sequence = 0;   // consecutive temporal frame number
     float Range = 2000.0f;
     float AmbientRadius = 1.5f;
+    bool StableProfile = false; // Opt-in per owner: fixed 60 Hz denoiser reference, independent of wall-clock timing.
     bool ResetHistory = false;
+    uint32_t HistoryResetReasons = 0; // TemporalHistory::Reason bit mask from the shared contract.
 };
 
 // Native D3D12 integration of NVIDIA NRD. Each signal/light owns its temporal history.

@@ -12,6 +12,8 @@
 //   ヘッダーのみで完結（.vcxproj への追加不要）。
 // =============================================================================================
 #include "pch.h"
+#include "rendergraphqueueexecutor.h"
+#include "envflags.h"
 #include "rendererstate.h"
 #include "renderprofiler.h"
 #include "asynccompute.h"
@@ -136,6 +138,7 @@ public:
 
 	static void ReleaseResources()
 	{
+        s_GraphExecutor.reset();
 		AsyncCompute::WaitIdle();
 		s_Available = false;
 		s_Valid = false;
@@ -183,11 +186,8 @@ public:
 		const bool buildTransmittance = !s_TransmittanceBuilt;
 		const bool buildMultiScatter = buildTransmittance || signature != s_LastSignature;
 
-		ID3D12GraphicsCommandList* list = AsyncCompute::Begin(slot);
-		const bool async = list != nullptr;
-		if (!async) list = graphicsList;
-		if (!list) return;
-
+        auto recordLuts=[&](ID3D12GraphicsCommandList* list,bool async)
+        {
 		ID3D12DescriptorHeap* heaps[] = { s_Heap.Get() };
 		list->SetDescriptorHeaps(1, heaps);
 		list->SetComputeRootSignature(s_Root.Get());
@@ -229,6 +229,25 @@ public:
 				CD3DX12_RESOURCE_BARRIER::Transition(s_SkyTransmission[slot].Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kShaderRead) };
 			list->ResourceBarrier(2, toRead);
 		}
+
+        };
+        static const bool graphQueue=ReadEnvironmentFlagOnce("DX12_RENDERGRAPH_ASYNC");
+        if(graphQueue)
+        {
+            if(!s_GraphExecutor)
+            {
+                s_GraphExecutor=std::make_unique<RenderGraphQueueExecutor>();
+                if(!s_GraphExecutor->Initialize(s_Device.Get(),graphicsQueue)){s_GraphExecutor.reset();return;}
+            }
+            RenderGraph graph;
+            graph.AddPass("Atmosphere LUT compute",[](RenderGraph::PassBuilder&){},[&](ID3D12GraphicsCommandList* list){recordLuts(list,true);});
+            graph.SetLastPassQueue(RenderGraph::Queue::Compute);
+            if(!graph.Compile()||!s_GraphExecutor->Execute(graph,slot)){s_Valid=false;return;}
+            s_TransmittanceBuilt=true;s_LastSignature=signature;s_Slot=slot;s_Valid=true;s_LastAsync=true;return;
+        }
+        ID3D12GraphicsCommandList* list=AsyncCompute::Begin(slot);
+        const bool async=list!=nullptr;if(!async)list=graphicsList;if(!list)return;
+        recordLuts(list,async);
 
 		if (async)
 		{
@@ -282,6 +301,7 @@ public:
 	}
 
 private:
+    static inline std::unique_ptr<RenderGraphQueueExecutor> s_GraphExecutor;
 	static constexpr UINT kFrames = RendererState::g_kFRAME_COUNT;
 	static constexpr UINT kRegionSize = 5;   // t0, t1, u0, u1, u2
 	static constexpr UINT kRegionCount = 2 + kFrames;
@@ -390,3 +410,4 @@ private:
 		list->ResourceBarrier(1, &barrier);
 	}
 };
+

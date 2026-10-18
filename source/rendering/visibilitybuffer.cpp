@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "gpudriven/gpudrivenrenderer.h"
 #include "visibilitybuffer.h"
 #include "rendererstate.h"
 
@@ -81,7 +82,9 @@ void VisibilityBuffer::GenerateGBuffer(
 	UINT width,
 	UINT height)
 {
-	if (!commandList || !IsAvailable() || width == 0 || height == 0) return;
+    if(!commandList||!width||!height) return;
+    if(GPUDrivenRenderer::ResolveVisibility(commandList,visibilitySrv,width,height)) return;
+    if(!IsAvailable()) return;
 	ID3D12DescriptorHeap* heaps[] = { g_VisibilityDescriptorHeap.Get() };
 	commandList->SetDescriptorHeaps(_countof(heaps), heaps);
 	commandList->SetComputeRootSignature(g_VisibilityRootSignature.Get());
@@ -97,3 +100,4 @@ void VisibilityBuffer::GenerateGBuffer(
 	commandList->SetComputeRoot32BitConstants(2, 4, constants, 0);
 	commandList->Dispatch((width + 7u) / 8u, (height + 3u) / 4u, 1);
 }
+

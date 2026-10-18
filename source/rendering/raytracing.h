@@ -16,6 +16,8 @@ public:
         bool AmbientOcclusion = true;
         bool Reflections = true;
         bool Denoise = true;
+        bool StableNrdProfile = true;
+        bool StableSampling = true;
         DenoiserType RadianceDenoiser = DenoiserType::Nrd;
         int Samples = 2;
         float ShadowDistance = 500.0f;

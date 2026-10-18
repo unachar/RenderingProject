@@ -7,6 +7,8 @@
 #include "input.h"
 #include "graphicsdevice.h"
 #include "shaderpipelines.h"
+#include "renderprofiler.h"
+#include <chrono>
 
 #include "systemmanager.h"
 #include "modelmanager.h"
@@ -96,12 +98,20 @@ void Game::Uninit()
 
 void Game::Run()
 {
+    const uint64_t previousSerial = RenderProfiler::GetFrameSerial();
+    const auto frameBegin = std::chrono::steady_clock::now();
 	RenderConfiguration::ApplyPendingRenderMode();
 	RenderConfiguration::ApplyPendingHdr();
 	PerformanceGovernor::Update();
 	RenderConfiguration::ApplyPendingResolutionScale();
 	Update();
 	Draw();
+    if (RenderProfiler::GetFrameSerial() != previousSerial)
+    {
+        const double milliseconds = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - frameBegin).count();
+        RenderProfiler::RecordCpuFrameTime(RenderProfiler::GetFrameSerial(), milliseconds);
+    }
 }
 
 void Game::Update()
@@ -123,17 +133,10 @@ void Game::Draw()
 {
 	RenderFrame::BeginDraw();
 
-	RenderProfiler::BeginFrame(
-		GraphicsDevice::GetDevice(),
-		GraphicsDevice::GetCommandQueue(),
-		GraphicsDevice::GetCommandList(),
-		GraphicsDevice::GetFrameIndex());
-
 	RenderProfiler::DrawImGuiWindow();
 
 	SystemManager::RenderFlow();
 
-	RenderProfiler::EndFrame(GraphicsDevice::GetCommandList());
 	RenderFrame::EndDraw();
 }
 

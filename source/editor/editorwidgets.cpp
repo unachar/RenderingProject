@@ -9,6 +9,7 @@
 #include "renderconfiguration.h"
 #include "renderersettings.h"
 #include "dlssupscaler.h"
+#include "temporalupscaler.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -45,7 +46,7 @@ namespace EditorWidgets
 
 	void DrawUpscaleControls()
 	{
-		const char* modes[] = { "Bilateral", "AMD FidelityFX FSR 1", "NVIDIA Image Scaling", "NVIDIA DLSS Super Resolution" };
+		const char* modes[] = { "Bilateral", "AMD FidelityFX FSR 1", "NVIDIA Image Scaling", "NVIDIA DLSS Super Resolution", "Custom TSR" };
 		int mode = static_cast<int>(RendererSettings::GetUpscaleMode());
 		ImGui::SetNextItemWidth(-1.0f);
 		if (ImGui::Combo("アップスケーラー", &mode, modes, IM_ARRAYSIZE(modes)))
@@ -55,6 +56,26 @@ namespace EditorWidgets
 			// NIS は 50% 未満を多段（1 段 2 倍まで）で処理するので、FSR と同じ 20% まで下げられる
 		}
 
+        if (mode == static_cast<int>(UpscaleMode::Tsr))
+        {
+            bool detailStability = TemporalUpscaler::IsDetailStabilityEnabled();
+            bool planarDepth = TemporalUpscaler::IsPlanarDepthEnabled();
+            bool thinGeometry = TemporalUpscaler::IsThinGeometryEnabled();
+            if (ImGui::Checkbox("遠方の細い物体を安定化", &thinGeometry))
+                TemporalUpscaler::SetThinGeometryEnabled(thinGeometry);
+            if (ImGui::Checkbox("浅い角度の平面履歴を安定化", &planarDepth))
+                TemporalUpscaler::SetPlanarDepthEnabled(planarDepth);
+            if (ImGui::Checkbox("細部のちらつき抑制", &detailStability))
+                TemporalUpscaler::SetDetailStabilityEnabled(detailStability);
+            bool subpixelAA = TemporalUpscaler::IsSubpixelAAEnabled();
+            if (ImGui::Checkbox("斜め輪郭の時間AA", &subpixelAA))
+                TemporalUpscaler::SetSubpixelAAEnabled(subpixelAA);
+            bool inputTaa = TemporalUpscaler::IsInputTaaEnabled();
+            if (ImGui::Checkbox("入力TAA + TSR（比較用）", &inputTaa))
+                TemporalUpscaler::SetInputTaaEnabled(inputTaa);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("NISと同じ入力TAAをTSRの前に適用します。ぼけ・残像・GPU負荷を比較してください。");
+        }
 		const bool vendorUpscaler = mode != static_cast<int>(UpscaleMode::Bilateral);
 		UpscaleQuality quality = RendererSettings::GetUpscaleQuality();
 		if (vendorUpscaler)
@@ -541,6 +562,7 @@ namespace EditorWidgets
 
 
 }
+
 
 
 

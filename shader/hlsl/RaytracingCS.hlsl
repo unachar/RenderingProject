@@ -24,7 +24,9 @@ cbuffer RaytracingConstants : register(b0)
     uint4 Features;
     float4x4 WorldToView;
     float4 Jitter; // current and previous sample jitter, in pixels
+    float4 Stability;
 };
+#include "../../source/rendering/stablesampling.h"
 
 float Random(uint value)
 {
@@ -42,8 +44,9 @@ float3 Tangent(float3 normal)
     return normalize(cross(axis, normal));
 }
 
+#include "RayTelemetry.hlsli"
 float TraceHitDistance(float3 origin, float3 direction, float distance, bool closest = false,
-    uint visibilityMask = 0x01)
+    uint visibilityMask = 0x01, uint telemetryChannel = RAY_TELEMETRY_SHADOW)
 {
     RayDesc ray;
     ray.Origin = origin;
@@ -51,6 +54,7 @@ float TraceHitDistance(float3 origin, float3 direction, float distance, bool clo
     ray.TMin = Distances.z * 0.25f;
     ray.TMax = distance;
     RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
+    CountTelemetryRay(telemetryChannel);
     query.TraceRayInline(Scene, closest ? RAY_FLAG_NONE : RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
         visibilityMask, ray);
     while (query.Proceed()) { }
@@ -104,8 +108,17 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
         float2 disk = float2(cos(angle), sin(angle)) * radius;
         if (Features.x != 0 && SunDirection.w > 0.5f)
         {
+            float2 shadowDisk = disk;
+            if (Stability.x > .5)
+            {
+                // SIGMA benefits from a short, repeatable temporal pattern. The
+                // first ray's phase is independent of the fallback sample count.
+                SamplePair sequenceSample = SampleSequence(pixel.x, pixel.y, (ExtentSamples.w & 7u) + sample * 8u, 3u);
+                float shadowAngle = sequenceSample.y * 6.28318530718f;
+                shadowDisk = float2(cos(shadowAngle), sin(shadowAngle)) * sqrt(sequenceSample.x);
+            }
             float3 direction = normalize(SunDirection.xyz +
-                (sunTangent * disk.x + sunBitangent * disk.y) * Distances.w);
+                (sunTangent * shadowDisk.x + sunBitangent * shadowDisk.y) * Distances.w);
             float hitDistance = TraceHitDistance(origin, direction, Distances.x, needsHitDistance && sample == 0);
             shadow += hitDistance >= 65504.0f ? 1.0f : 0.0f;
 #if USE_NRD
@@ -121,8 +134,17 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
         }
         if (Features.y != 0)
         {
-            float3 direction = tangent * disk.x + bitangent * disk.y + normal * sqrt(1.0f - radius * radius);
-            float hitDistance = TraceHitDistance(origin, direction, Distances.y, needsHitDistance && sample == 0, 0x02);
+            float2 ambientDisk = disk;
+            float ambientRadius = radius;
+            if (Stability.x > .5)
+            {
+                SamplePair sequenceSample = SampleSequence(pixel.x, pixel.y, ExtentSamples.w, 4u + sample);
+                float ambientAngle = sequenceSample.y * 6.28318530718f;
+                ambientRadius = sqrt(sequenceSample.x);
+                ambientDisk = float2(cos(ambientAngle), sin(ambientAngle)) * ambientRadius;
+            }
+            float3 direction = tangent * ambientDisk.x + bitangent * ambientDisk.y + normal * sqrt(1.0f - ambientRadius * ambientRadius);
+            float hitDistance = TraceHitDistance(origin, direction, Distances.y, needsHitDistance && sample == 0, 0x02, RAY_TELEMETRY_AO);
             ambient += hitDistance >= 65504.0f ? 1.0f : 0.0f;
             if (sample == 0) ambientDistance = min(hitDistance, Distances.y);
         }

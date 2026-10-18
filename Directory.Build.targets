@@ -1,5 +1,8 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <RayTelemetryShaderInputs>$(MSBuildThisFileDirectory)shader\hlsl\RayTelemetry.hlsli;$(MSBuildThisFileDirectory)source\rendering\raytelemetrylayout.h;$(MSBuildThisFileDirectory)source\rendering\stablesampling.h</RayTelemetryShaderInputs>
+  </PropertyGroup>
 
 
 
@@ -57,7 +60,7 @@
           Condition="'$(Platform)' == 'x64'" />
 
   <Target Name="CompileRaytracingShaderRaytracingCS"
-          Inputs="$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl;$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props"
+          Inputs="$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl;$(RayTelemetryShaderInputs);$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props"
           Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\RaytracingCS.cso"
           Condition="'$(Platform)' == 'x64'">
     <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
@@ -68,21 +71,21 @@
           Condition="'$(EnableNrd)' == 'true' and '$(Platform)' == 'x64'" />
 
   <Target Name="CompileNrdRaytracingShadersRaytracingNrdCS"
-          Inputs="$(MSBuildThisFileDirectory)External\NRD\sdk\Shaders\NRD.hlsli;$(MSBuildThisFileDirectory)External\NRD\sdk\Shaders\NRDConfig.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl;$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props"
+          Inputs="$(MSBuildThisFileDirectory)External\NRD\sdk\Shaders\NRD.hlsli;$(MSBuildThisFileDirectory)External\NRD\sdk\Shaders\NRDConfig.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl;$(RayTelemetryShaderInputs);$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props"
           Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\RaytracingNrdCS.cso"
           Condition="'$(EnableNrd)' == 'true' and '$(Platform)' == 'x64'">
     <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
     <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T cs_6_5 -E main -D USE_NRD=1 -HV 2021 -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\RaytracingNrdCS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl&quot;" />
   </Target>
   <Target Name="CompileNrdRaytracingShadersNrdComposeShadowCS"
-          Inputs="$(MSBuildThisFileDirectory)External\NRD\sdk\Shaders\NRD.hlsli;$(MSBuildThisFileDirectory)External\NRD\sdk\Shaders\NRDConfig.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl;$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props"
+          Inputs="$(MSBuildThisFileDirectory)External\NRD\sdk\Shaders\NRD.hlsli;$(MSBuildThisFileDirectory)External\NRD\sdk\Shaders\NRDConfig.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl;$(RayTelemetryShaderInputs);$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props"
           Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\NrdComposeShadowCS.cso"
           Condition="'$(EnableNrd)' == 'true' and '$(Platform)' == 'x64'">
     <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
     <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T cs_6_5 -E ComposeShadow -D USE_NRD=1 -HV 2021 -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\NrdComposeShadowCS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl&quot;" />
   </Target>
   <Target Name="CompileNrdRaytracingShadersNrdComposeAmbientCS"
-          Inputs="$(MSBuildThisFileDirectory)External\NRD\sdk\Shaders\NRD.hlsli;$(MSBuildThisFileDirectory)External\NRD\sdk\Shaders\NRDConfig.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl;$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props"
+          Inputs="$(MSBuildThisFileDirectory)External\NRD\sdk\Shaders\NRD.hlsli;$(MSBuildThisFileDirectory)External\NRD\sdk\Shaders\NRDConfig.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl;$(RayTelemetryShaderInputs);$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props"
           Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\NrdComposeAmbientCS.cso"
           Condition="'$(EnableNrd)' == 'true' and '$(Platform)' == 'x64'">
     <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />

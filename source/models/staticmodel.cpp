@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "envflags.h"
 #include <unordered_set>
 #include "gpudriven/gpudrivenrenderer.h"
 #include "../../External/meshoptimizer/src/meshoptimizer.h"
@@ -541,6 +542,47 @@ bool StaticModelResource::BuildLodIndexBuffers(
 		meshData.LodIndexCounts[lod] = static_cast<UINT>(resultCount);
 		meshData.CpuLodIndices[lod].assign(lodIndices.begin(), lodIndices.end());
 	}
+
+    static const bool rayLod=ReadEnvironmentFlagOnce("DX12_DXR_LOD"),rayProxy=ReadEnvironmentFlagOnce("DX12_DXR_PROXY");
+    if(rayLod||rayProxy)
+    {
+        constexpr float ratios[]={.65f,.3f,.1f},errors[]={.005f,.015f,.04f};
+        for(UINT lod=0;lod<StaticMeshData::RayLodCount;++lod)
+        {
+            vector<unsigned int> simplified(indices.size());
+            const size_t target=(std::max)(size_t(3),size_t(indices.size()*ratios[lod])/3*3);
+            const size_t count=meshopt_simplify(simplified.data(),indices.data(),indices.size(),reinterpret_cast<const float*>(vertices.data()),vertices.size(),sizeof(StaticModelVertex),target,errors[lod],meshopt_SimplifyRegularize);
+            if(count<3||count>=indices.size()) continue;
+            simplified.resize(count); meshopt_optimizeVertexCache(simplified.data(),simplified.data(),count,vertices.size());
+            const UINT bytes=static_cast<UINT>(count*sizeof(unsigned int));
+            if(!CreateDefaultBufferAndUpload(device,bytes,simplified.data(),D3D12_RESOURCE_STATE_INDEX_BUFFER,"Ray LOD allocation failed\n","ray LOD",meshData.RayLodBuffers[lod])) continue;
+            meshData.RayLodViews[lod]={meshData.RayLodBuffers[lod]->GetGPUVirtualAddress(),bytes,DXGI_FORMAT_R32_UINT}; meshData.RayLodCounts[lod]=static_cast<UINT>(count);
+        }
+        XMFLOAT3 lo=vertices.front().Position,hi=lo;
+        for(const auto& v:vertices)
+        {
+            lo.x=(std::min)(lo.x,v.Position.x); lo.y=(std::min)(lo.y,v.Position.y); lo.z=(std::min)(lo.z,v.Position.z);
+            hi.x=(std::max)(hi.x,v.Position.x); hi.y=(std::max)(hi.y,v.Position.y); hi.z=(std::max)(hi.z,v.Position.z);
+        }
+        meshData.RayCenter={(lo.x+hi.x)*.5f,(lo.y+hi.y)*.5f,(lo.z+hi.z)*.5f};
+        meshData.RayRadius=.5f*sqrtf((hi.x-lo.x)*(hi.x-lo.x)+(hi.y-lo.y)*(hi.y-lo.y)+(hi.z-lo.z)*(hi.z-lo.z));
+        if(rayProxy && meshData.RayRadius>1e-5f)
+        {
+            vector<StaticModelVertex> proxy(8);
+            for(UINT corner=0;corner<8;++corner)
+            {
+                auto& v=proxy[corner]; v.Position={(corner&1)?hi.x:lo.x,(corner&2)?hi.y:lo.y,(corner&4)?hi.z:lo.z};
+                XMStoreFloat3(&v.Normal,XMVector3Normalize(XMLoadFloat3(&v.Position)-XMLoadFloat3(&meshData.RayCenter))); v.Diffuse={1,1,1,1};
+            }
+            const unsigned int box[]={0,2,3,0,3,1,4,5,7,4,7,6,0,1,5,0,5,4,2,6,7,2,7,3,0,4,6,0,6,2,1,3,7,1,7,5};
+            if(CreateDefaultBufferAndUpload(device,UINT(proxy.size()*sizeof(StaticModelVertex)),proxy.data(),D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,"Ray proxy allocation failed\n","ray proxy vertices",meshData.RayProxyVertices) &&
+                CreateDefaultBufferAndUpload(device,sizeof(box),box,D3D12_RESOURCE_STATE_INDEX_BUFFER,"Ray proxy allocation failed\n","ray proxy indices",meshData.RayProxyIndices))
+            {
+                meshData.RayProxyVertexView={meshData.RayProxyVertices->GetGPUVirtualAddress(),UINT(proxy.size()*sizeof(StaticModelVertex)),sizeof(StaticModelVertex)};
+                meshData.RayProxyIndexView={meshData.RayProxyIndices->GetGPUVirtualAddress(),sizeof(box),DXGI_FORMAT_R32_UINT};
+            }
+        }
+    }
 	return true;
 }
 
@@ -1666,4 +1708,5 @@ void StaticModelResource::RebuildVirtualGeometry(const VGImportSettings& setting
         GPUDrivenRenderer::UpdateGeometry(mesh);
     }
 }
+
 

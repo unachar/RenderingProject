@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "envflags.h"
 #include "cpuculling.h"
 #include "rayreflections.h"
 #include "raytracing.h"
@@ -12,6 +13,7 @@
 #include "optixdenoiser.h"
 #include "atmospherelut.h"
 #include "renderquality.h"
+#include "raytelemetry.h"
 #include <map>
 #include <algorithm>
 
@@ -55,7 +57,10 @@ struct FrameConstants
     XMFLOAT4 GiParameters{};
     XMFLOAT4 CacheParameters{}; // enabled, base cell size, capacity, max history frames
     XMFLOAT4 ReSTIRParameters{}; // enabled, max temporal M, spatial samples, spatial radius
+    XMFLOAT4X4 AdaptivePreviousViewProjection{};
+    XMFLOAT4 AdaptiveSampling{};
     XMUINT4 ReSTIRState{};       // history valid, reservoir width, spatial visibility, -
+    XMFLOAT4 Stability{};
 };
 struct ReflectionLight
 {
@@ -64,6 +69,12 @@ struct ReflectionLight
 };
 static_assert(sizeof(ReflectionLight) == 80);
 static_assert(sizeof(MeshConstants) == 208 && sizeof(FrameConstants) <= 512);
+ComPtr<ID3D12Resource> g_AdaptiveRadiance,g_AdaptiveGuide;
+ComPtr<ID3D12PipelineState> g_AdaptiveCapture;
+bool g_AdaptiveValid=false,g_BudgetValid=false;
+uint64_t g_AdaptiveSignature=0,g_BudgetSignature=0;
+UINT g_AdaptiveSequence=0,g_BudgetSequence=0;
+
 struct RadianceCache
 {
     ComPtr<ID3D12Resource> Keys, Accumulation, Resolved, Ages;
@@ -82,10 +93,24 @@ struct FrameResources
     UINT Width = 0, Height = 0;
 };
 ComPtr<ID3D12Device> g_Device;
+bool EnsureAdaptiveHistory(UINT width,UINT height)
+{
+    if(g_AdaptiveRadiance && g_AdaptiveRadiance->GetDesc().Width==width && g_AdaptiveRadiance->GetDesc().Height==height) return true;
+    if(!GraphicsDevice::WaitForGpuIdle()) return false;
+    g_AdaptiveValid=false; ComPtr<ID3D12Resource> a,b;
+    const auto heap=CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+    const auto radiance=CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT,width,height,1,1);
+    const auto guide=CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT,width,height,1,1,1,0,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    if(FAILED(g_Device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&radiance,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,nullptr,IID_PPV_ARGS(&a))) ||
+        FAILED(g_Device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&guide,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,nullptr,IID_PPV_ARGS(&b)))) return false;
+    g_AdaptiveRadiance=a; g_AdaptiveGuide=b; return true;
+}
 ComPtr<ID3D12DescriptorHeap> g_EngineHeap;
 ComPtr<ID3D12RootSignature> g_Root;
 ComPtr<ID3D12PipelineState> g_Trace, g_Compose, g_GiTrace, g_GiCompose, g_GiFilter, g_CacheResolve, g_CacheClear;
 ComPtr<ID3D12PipelineState> g_ReSTIRTemporal, g_ReSTIRSpatial;
+ComPtr<ID3D12PipelineState> g_TraceTelemetry, g_GiTraceTelemetry, g_ReSTIRSpatialTelemetry;
+bool g_TelemetryPipelinesTried = false;
 // ReSTIR GI reservoirs (32 bytes per traced pixel), ping-pong between current and history.
 ComPtr<ID3D12Resource> g_Reservoirs[2];
 UINT g_ReservoirWidth = 0, g_ReservoirHeight = 0, g_ReservoirCurrent = 0;
@@ -110,6 +135,7 @@ bool g_ReflectionCheckerboard = false; // このフレームの反射を半分�
 bool g_DenoiserCheckerboard = false;   // 作成済みの反射デノイザーのモード
 UINT g_LastFrame = 0;
 bool g_HistoryValid = false;
+RayReflections::SamplingLayout g_ReflectionSampling;
 
 D3D12_CPU_DESCRIPTOR_HANDLE Cpu(ID3D12DescriptorHeap* heap, UINT index)
 {
@@ -283,8 +309,8 @@ bool CreateRadianceCache()
     };
     g_Cache.NeedsClear = true;
     return create(g_Cache.Keys, kCacheCapacity * 4ull, L"GI Radiance Cache Keys") &&
-        create(g_Cache.Accumulation, kCacheCapacity * 16ull, L"GI Radiance Cache Accumulation") &&
-        create(g_Cache.Resolved, kCacheCapacity * 16ull, L"GI Radiance Cache Resolved") &&
+        create(g_Cache.Accumulation, kCacheCapacity * 32ull, L"GI Radiance Cache Accumulation") &&
+        create(g_Cache.Resolved, kCacheCapacity * 32ull, L"GI Radiance Cache Resolved") &&
         create(g_Cache.Ages, kCacheCapacity * 4ull, L"GI Radiance Cache Ages");
 }
 void WriteCacheDescriptors(ID3D12DescriptorHeap* heap)
@@ -304,7 +330,7 @@ void WriteCacheDescriptors(ID3D12DescriptorHeap* heap)
     structured.Format = DXGI_FORMAT_UNKNOWN;
     structured.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
     structured.Buffer.NumElements = kCacheCapacity;
-    structured.Buffer.StructureByteStride = 16;
+    structured.Buffer.StructureByteStride = 32;
     g_Device->CreateUnorderedAccessView(g_Cache.Resolved.Get(), nullptr, &structured, Cpu(heap, kCacheDescriptors + 2));
     raw(g_Cache.Ages.Get(), 3);
 }
@@ -315,6 +341,45 @@ void CacheBarrier(ID3D12GraphicsCommandList* commands)
         CD3DX12_RESOURCE_BARRIER::UAV(g_Cache.Resolved.Get()), CD3DX12_RESOURCE_BARRIER::UAV(g_Cache.Ages.Get()) };
     commands->ResourceBarrier(4, barriers);
 }
+bool CompileRadiancePipeline(const char* entry, ComPtr<ID3D12PipelineState>& pipeline, bool telemetry = false)
+{
+    const D3D_SHADER_MACRO defines[] = {
+        {"USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0"},
+        {"ENABLE_RAY_TELEMETRY", telemetry ? "1" : "0"}, {}};
+    ComPtr<ID3DBlob> blob, errors;
+    if (FAILED(D3DCompileFromFile(L"shader/hlsl/RayReflectionsCS.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+        entry, "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors)))
+    {
+        g_LastShaderError = string(entry) + ": " + (errors ? static_cast<const char*>(errors->GetBufferPointer()) : "compile failed");
+        WriteGraphicsLog("DXR reflection shader failed (telemetry=%u): %s\n", static_cast<UINT>(telemetry), g_LastShaderError.c_str());
+        return false;
+    }
+    D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
+    desc.pRootSignature = g_Root.Get();
+    desc.CS = CD3DX12_SHADER_BYTECODE(blob.Get());
+    if (SUCCEEDED(g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(pipeline.ReleaseAndGetAddressOf())))) return true;
+    g_LastShaderError = string(entry) + ": CreateComputePipelineState failed";
+    return false;
+}
+
+bool EnsureTelemetryPipelines()
+{
+    if (!g_TelemetryPipelinesTried)
+    {
+        g_TelemetryPipelinesTried = true;
+        if (!CompileRadiancePipeline("main", g_TraceTelemetry, true) ||
+            !CompileRadiancePipeline("TraceDiffuse", g_GiTraceTelemetry, true) ||
+            (g_ReSTIRSpatial && !CompileRadiancePipeline("ReSTIRSpatial", g_ReSTIRSpatialTelemetry, true)))
+        {
+            g_TraceTelemetry.Reset();
+            g_GiTraceTelemetry.Reset();
+            g_ReSTIRSpatialTelemetry.Reset();
+            WriteGraphicsLog("Ray telemetry: radiance counter variant unavailable; keeping normal shaders\n");
+        }
+    }
+    return g_TraceTelemetry && g_GiTraceTelemetry;
+}
+
 void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource,
     D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
 {
@@ -327,7 +392,7 @@ void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource,
 bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engineHeap, UINT increment)
 {
     g_Device = device; g_EngineHeap = engineHeap; g_Increment = increment;
-    CD3DX12_DESCRIPTOR_RANGE ranges[10];
+    CD3DX12_DESCRIPTOR_RANGE ranges[12];
     ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 1);
     ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0);
     for (UINT i = 2; i < 6; ++i) ranges[i].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kMaximumMeshes, 0, i - 1);
@@ -335,7 +400,8 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     ranges[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 4, 0, 7); // radiance cache
     ranges[8].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0, 8, 0); // ReSTIR reservoirs
     ranges[9].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 8, 2); // velocity
-    CD3DX12_ROOT_PARAMETER parameters[16];
+    ranges[10].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV,2,0,10); ranges[11].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV,1,0,10);
+    CD3DX12_ROOT_PARAMETER parameters[19];
     parameters[0].InitAsShaderResourceView(25);
     parameters[1].InitAsShaderResourceView(0);
     parameters[2].InitAsConstantBufferView(6);
@@ -348,12 +414,14 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     parameters[13].InitAsDescriptorTable(1, &ranges[6]);
     parameters[14].InitAsDescriptorTable(1, &ranges[7]);
     parameters[15].InitAsDescriptorTable(2, &ranges[8]);
+    parameters[16].InitAsUnorderedAccessView(0, 9);
+    parameters[17].InitAsDescriptorTable(1,&ranges[10]); parameters[18].InitAsDescriptorTable(1,&ranges[11]);
     const CD3DX12_STATIC_SAMPLER_DESC samplers[2] = {
         CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
             D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP),
         CD3DX12_STATIC_SAMPLER_DESC(1, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
             D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP) };
-    const CD3DX12_ROOT_SIGNATURE_DESC root(16, parameters, 2, samplers);
+    const CD3DX12_ROOT_SIGNATURE_DESC root(19, parameters, 2, samplers);
     ComPtr<ID3DBlob> blob, errors;
     if (FAILED(D3D12SerializeRootSignature(&root, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)) ||
         FAILED(device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&g_Root))))
@@ -363,27 +431,14 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
         WriteGraphicsLog("DXR reflection root signature failed: %s\n", g_LastShaderError.c_str());
         return false;
     }
-    const D3D_SHADER_MACRO defines[] = { { "USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0" }, {} };
     auto compile = [&](const char* entry, ComPtr<ID3D12PipelineState>& pipeline)
     {
-        blob.Reset(); errors.Reset();
-        if (FAILED(D3DCompileFromFile(L"shader/hlsl/RayReflectionsCS.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-            entry, "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors)))
-        {
-            g_LastShaderError = string(entry) + ": " + (errors ? static_cast<const char*>(errors->GetBufferPointer()) : "compile failed");
-            WriteGraphicsLog("DXR reflection shader failed: %s\n", g_LastShaderError.c_str());
-            return false;
-        }
-        D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
-        desc.pRootSignature = g_Root.Get(); desc.CS = CD3DX12_SHADER_BYTECODE(blob.Get());
-        if (SUCCEEDED(device->CreateComputePipelineState(&desc, IID_PPV_ARGS(pipeline.ReleaseAndGetAddressOf())))) return true;
-        g_LastShaderError = string(entry) + ": CreateComputePipelineState failed";
-        WriteGraphicsLog("DXR reflection pipeline failed: %s\n", entry);
-        return false;
+        return CompileRadiancePipeline(entry, pipeline);
     };
     // Required pipelines first. The optional ones (radiance cache, ReSTIR) only disable their own
     // feature on failure; previously a failure there also skipped Compose / ComposeDiffuse, which
     // left a null pipeline bound in the NRD path while TraceDiffuse kept running.
+    compile("CaptureAdaptiveGuide",g_AdaptiveCapture);
     const bool required = compile("main", g_Trace) && compile("TraceDiffuse", g_GiTrace) &&
         compile("FilterDiffuse", g_GiFilter) &&
         (!NrdDenoiser::IsCompiled() || (compile("Compose", g_Compose) && compile("ComposeDiffuse", g_GiCompose)));
@@ -412,6 +467,12 @@ const char* RayReflections::GetLastShaderError() { return g_LastShaderError.c_st
 
 void RayReflections::Shutdown()
 {
+    g_AdaptiveRadiance.Reset(); g_AdaptiveGuide.Reset(); g_AdaptiveCapture.Reset(); g_AdaptiveValid=g_BudgetValid=false;
+
+    g_TraceTelemetry.Reset();
+    g_GiTraceTelemetry.Reset();
+    g_ReSTIRSpatialTelemetry.Reset();
+    g_TelemetryPipelinesTried = false;
     g_OptixGi.reset();
     g_OptixReflections.reset();
     g_OptixGiActive = g_OptixReflectionActive = false;
@@ -442,6 +503,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     const vector<RaytracingGeometry>& geometry, const NrdFrame& nrdFrame,
     const array<ComPtr<ID3D12Resource>, 4>& guides, bool denoise)
 {
+    RenderProfiler::ScopedEvent preparationProfile("DXR Radiance Setup", commands);
     g_Dispatches = 0;
     g_OptixGiActive = g_OptixReflectionActive = false;
     g_GiActive = false;
@@ -462,6 +524,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         return false;
     }
     g_Status = RendererSettings::GetRealtimeGiEnabled() ? "Realtime GI 準備中" : "反射のみ動作中";
+    const bool instrumented = RayTelemetry::IsCollecting() && EnsureTelemetryPipelines();
+    RayTelemetry::Data().RecordProvider(RayTelemetry::Radiance, instrumented);
     frame.Geometry = geometry;
     const UINT count = static_cast<UINT>((min)(geometry.size(), static_cast<size_t>(kMaximumMeshes)));
     vector<MeshConstants> meshes(count);
@@ -591,6 +655,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     XMStoreFloat4(&constants.Camera, XMMatrixInverse(nullptr, view).r[3]);
     constants.Camera.w = nrdFrame.Range;
     constants.Extent = { frame.Width, frame.Height, nrdFrame.Sequence, static_cast<UINT>(lights.size()) };
+    constants.Stability = {Raytracing::GetSettings().StableSampling ? 1.f : 0.f, 0, 0, 0};
     // Motion guides cannot detect a change in emitted radiance on a stationary mesh.
     // Restart only this signal when the emissive material or emitter transform changes.
     uint64_t emissionSignature = 14695981039346656037ull;
@@ -641,11 +706,39 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     const bool reflectionCheckerboard = RenderCulling::GetSettings().ReflectionCheckerboard && !useOptix && denoise &&
         NrdDenoiser::IsCompiled() && guides[0] && guides[1] && guides[2];
     g_ReflectionCheckerboard = reflectionCheckerboard;
+    g_ReflectionSampling = {frame.Width, frame.Height, nrdFrame.Sequence, reflectionCheckerboard};
     constants.ReSTIRState = { g_ReSTIRHistoryValid ? 1u : 0u, reservoirWidth, quality.ReSTIRSpatialVisibility ? 1u : 0u,
         static_cast<UINT>(std::clamp(RenderCulling::GetSettings().ReflectionRoughnessCutoff, 0.0f, 1.0f) * 1000.0f + 0.5f) |
         (reflectionCheckerboard ? 0x10000u : 0u) };
     constants.CacheParameters = { cacheEnabled ? 1.0f : 0.0f, RendererSettings::GetGiRadianceCacheCellSize(),
         static_cast<float>(kCacheCapacity), static_cast<float>(RendererSettings::GetGiRadianceCacheHistory()) };
+    static const bool adaptiveRequested=ReadEnvironmentFlagOnce("DX12_ADAPTIVE_REFLECTIONS");
+    static const bool budgetRequested=ReadEnvironmentFlagOnce("DX12_GI_UPDATE_BUDGET");
+    const bool adaptive=adaptiveRequested && velocity && g_AdaptiveCapture && Raytracing::GetSettings().Reflections && EnsureAdaptiveHistory(frame.Width,frame.Height);
+    uint64_t signature=1469598103934665603ull;
+    for(const auto& entry:geometry)
+    {
+        HashEmission(signature,&entry.World,sizeof(entry.World)); HashEmission(signature,&entry.BaseColor,sizeof(entry.BaseColor));
+        HashEmission(signature,&entry.Emission,sizeof(entry.Emission)); HashEmission(signature,&entry.Roughness,sizeof(entry.Roughness)); HashEmission(signature,&entry.Metallic,sizeof(entry.Metallic));
+        HashEmission(signature,&entry.VertexView,sizeof(entry.VertexView)); HashEmission(signature,&entry.IndexView,sizeof(entry.IndexView));
+        const auto texture=entry.Texture.Get(); const auto emission=entry.EmissionTexture.Get();
+        HashEmission(signature,&texture,sizeof(texture)); HashEmission(signature,&emission,sizeof(emission));
+        HashEmission(signature,&entry.TextureResidentMip,sizeof(entry.TextureResidentMip));
+        if(entry.Deforming) HashEmission(signature,&nrdFrame.Sequence,sizeof(nrdFrame.Sequence));
+    }
+    if(!lights.empty()) HashEmission(signature,lights.data(),lights.size()*sizeof(ReflectionLight));
+    HashEmission(signature,&nrdFrame.LightDirection,sizeof(nrdFrame.LightDirection));
+    const bool reuse=adaptive && g_AdaptiveValid && !nrdFrame.ResetHistory && g_AdaptiveSignature==signature && nrdFrame.Sequence==g_AdaptiveSequence+1u;
+    const bool budget=budgetRequested && cacheEnabled && !restir && velocity && g_BudgetValid && !nrdFrame.ResetHistory && g_BudgetSignature==signature && nrdFrame.Sequence==g_BudgetSequence+1u;
+    if(budgetRequested && cacheEnabled && (!g_BudgetValid || g_BudgetSignature!=signature || nrdFrame.ResetHistory)) g_Cache.NeedsClear=true;
+    constants.AdaptiveSampling={adaptive?1.f:0.f,reuse?1.f:0.f,.2f,budget?4.f:1.f};
+    g_BudgetSignature=signature; g_BudgetSequence=nrdFrame.Sequence; g_BudgetValid=budgetRequested && cacheEnabled && !restir;
+    XMFLOAT4X4 previousProjection=nrdFrame.PreviousProjection;
+    previousProjection._31=-nrdFrame.PreviousJitter.x*2/frame.Width; previousProjection._32=nrdFrame.PreviousJitter.y*2/frame.Height;
+    XMStoreFloat4x4(&constants.AdaptivePreviousViewProjection,XMMatrixTranspose(XMLoadFloat4x4(&nrdFrame.PreviousView)*XMLoadFloat4x4(&previousProjection)));
+    TextureSrv(adaptive?g_AdaptiveRadiance.Get():nullptr,Cpu(frame.Heap.Get(),14)); TextureSrv(adaptive?g_AdaptiveGuide.Get():nullptr,Cpu(frame.Heap.Get(),15));
+    D3D12_UNORDERED_ACCESS_VIEW_DESC guide{}; guide.Format=DXGI_FORMAT_R32G32B32A32_FLOAT; guide.ViewDimension=D3D12_UAV_DIMENSION_TEXTURE2D;
+    g_Device->CreateUnorderedAccessView(adaptive?g_AdaptiveGuide.Get():nullptr,nullptr,&guide,Cpu(frame.Heap.Get(),23));
     if (!Upload(frame.Constants.Get(), &constants, sizeof(constants))) return false;
     for (auto [resource, state] : sampledResources)
         if ((state & D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE) == 0)
@@ -688,6 +781,12 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         }
         TextureSrv(nullptr, Cpu(frame.Heap.Get(), kReSTIRDescriptors + 2));
     }
+    TextureSrv(velocity,Cpu(frame.Heap.Get(),22));
+    if(adaptive)
+    {
+        Transition(commands,g_AdaptiveRadiance.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        Transition(commands,g_AdaptiveGuide.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    }
     auto bind = [&](ID3D12PipelineState* pipeline)
     {
         ID3D12DescriptorHeap* heaps[] = { frame.Heap.Get() }; commands->SetDescriptorHeaps(1, heaps);
@@ -708,15 +807,21 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         commands->SetComputeRootDescriptorTable(13, Gpu(frame.Heap.Get(), kSkyLutDescriptors));
         commands->SetComputeRootDescriptorTable(14, Gpu(frame.Heap.Get(), kCacheDescriptors));
         commands->SetComputeRootDescriptorTable(15, Gpu(frame.Heap.Get(), kReSTIRDescriptors));
+        commands->SetComputeRootDescriptorTable(17,Gpu(frame.Heap.Get(),14)); commands->SetComputeRootDescriptorTable(18,Gpu(frame.Heap.Get(),23));
+        if (instrumented) commands->SetComputeRootUnorderedAccessView(16, RayTelemetry::Data().Address());
     };
+    preparationProfile.Finish();
     if (Raytracing::GetSettings().Reflections)
     {
+        RenderProfiler::ScopedEvent reflectionProfile("DXR Reflections", commands);
+        RenderProfiler::ScopedEvent traceProfile("DXR Reflections Trace", commands);
         Transition(commands, frame.Noisy.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         Transition(commands, frame.Result.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        bind(g_Trace.Get());
+        bind(instrumented ? g_TraceTelemetry.Get() : g_Trace.Get());
         commands->Dispatch(((g_ReflectionCheckerboard ? (frame.Width + 1) / 2 : frame.Width) + 7) / 8, (frame.Height + 7) / 8, 1);
         Transition(commands, frame.Noisy.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         Transition(commands, frame.Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        traceProfile.Finish();
         // NRD owns a separate heap and restores these four input states.
         if (useOptix)
         {
@@ -744,8 +849,15 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
             NrdFrame temporalFrame = nrdFrame;
             temporalFrame.ResetHistory = temporalFrame.ResetHistory || !g_HistoryValid;
             NrdInputs inputs{ {guides[0].Get()}, {guides[1].Get()}, {guides[2].Get()}, {frame.Noisy.Get()} };
-            if (g_Denoiser && g_Width == frame.Width && g_Height == frame.Height && g_Denoiser->Execute(commands, inputs, temporalFrame))
+            bool filtered = false;
             {
+                RenderProfiler::ScopedEvent denoiseProfile("DXR Reflections Denoise", commands);
+                filtered = g_Denoiser && g_Width == frame.Width && g_Height == frame.Height &&
+                    g_Denoiser->Execute(commands, inputs, temporalFrame);
+            }
+            if (filtered)
+            {
+                RenderProfiler::ScopedEvent composeProfile("DXR Reflections Compose", commands);
                 TextureSrv(g_Denoiser->GetOutput(), Cpu(frame.Heap.Get(), 3));
                 Transition(commands, g_Denoiser->GetOutput(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 Transition(commands, frame.Result.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -760,7 +872,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     }
     if (RendererSettings::GetRealtimeGiEnabled())
     {
-        RenderProfiler::ScopedEvent profile("Realtime GI Trace and Filter", commands);
+        RenderProfiler::ScopedEvent profile("Realtime GI", commands);
+        RenderProfiler::ScopedEvent traceProfile("Realtime GI Trace", commands);
         Transition(commands, frame.GiNoisy.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         Transition(commands, frame.GiResult.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         if (cacheEnabled && g_Cache.NeedsClear)
@@ -770,7 +883,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
             CacheBarrier(commands);
             g_Cache.NeedsClear = false;
         }
-        bind(g_GiTrace.Get());
+        bind(instrumented ? g_GiTraceTelemetry.Get() : g_GiTrace.Get());
         commands->SetComputeRootDescriptorTable(5, Gpu(frame.Heap.Get(), 8));
         commands->SetComputeRootDescriptorTable(6, Gpu(frame.Heap.Get(), 6));
         UINT traceWidth = frame.Width;
@@ -789,7 +902,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
             commands->SetPipelineState(g_ReSTIRTemporal.Get());
             commands->Dispatch((reservoirWidth + 7) / 8, (frame.Height + 7) / 8, 1);
             commands->ResourceBarrier(2, uav);
-            commands->SetPipelineState(g_ReSTIRSpatial.Get());
+            commands->SetPipelineState(instrumented ? g_ReSTIRSpatialTelemetry.Get() : g_ReSTIRSpatial.Get());
             commands->Dispatch((reservoirWidth + 7) / 8, (frame.Height + 7) / 8, 1);
             commands->ResourceBarrier(2, uav);
             // This frame's temporal reservoirs become next frame's history.
@@ -806,6 +919,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         }
         Transition(commands, frame.GiNoisy.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         Transition(commands, frame.GiResult.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        traceProfile.Finish();
         bool filtered = false;
         bool temporalFiltered = false;
         if (useOptix)
@@ -836,9 +950,15 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
             NrdFrame temporalFrame = nrdFrame;
             temporalFrame.ResetHistory |= !g_GiHistoryValid;
             NrdInputs inputs{ {guides[0].Get()}, {guides[1].Get()}, {guides[2].Get()}, {frame.GiNoisy.Get()} };
-            if (g_GiDenoiser && g_GiWidth == frame.Width && g_GiHeight == frame.Height &&
-                g_GiDenoiser->Execute(commands, inputs, temporalFrame))
+            bool nrdFiltered = false;
             {
+                RenderProfiler::ScopedEvent denoiseProfile("Realtime GI Denoise", commands);
+                nrdFiltered = g_GiDenoiser && g_GiWidth == frame.Width && g_GiHeight == frame.Height &&
+                    g_GiDenoiser->Execute(commands, inputs, temporalFrame);
+            }
+            if (nrdFiltered)
+            {
+                RenderProfiler::ScopedEvent composeProfile("Realtime GI Compose", commands);
                 TextureSrv(g_GiDenoiser->GetOutput(), Cpu(frame.Heap.Get(), 11));
                 Transition(commands, g_GiDenoiser->GetOutput(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 Transition(commands, frame.GiResult.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -855,6 +975,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         }
         if (!filtered)
         {
+            // The spatial fallback combines filtering and composition in one dispatch.
+            RenderProfiler::ScopedEvent spatialProfile("Realtime GI Spatial Denoise / Compose", commands);
             TextureSrv(frame.GiNoisy.Get(), Cpu(frame.Heap.Get(), 11));
             Transition(commands, frame.GiNoisy.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             Transition(commands, frame.GiResult.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -873,6 +995,19 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     {
         g_GiHistoryValid = false;
     }
+    if(adaptive)
+    {
+        Transition(commands,g_AdaptiveGuide.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        bind(g_AdaptiveCapture.Get()); commands->Dispatch((frame.Width+7)/8,(frame.Height+7)/8,1);
+        Transition(commands,g_AdaptiveGuide.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        Transition(commands,g_AdaptiveRadiance.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COPY_DEST);
+        Transition(commands,frame.Result.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COPY_SOURCE);
+        commands->CopyResource(g_AdaptiveRadiance.Get(),frame.Result.Get());
+        Transition(commands,frame.Result.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        Transition(commands,g_AdaptiveRadiance.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        g_AdaptiveSignature=signature; g_AdaptiveSequence=nrdFrame.Sequence; g_AdaptiveValid=true;
+    }
+    else g_AdaptiveValid=false;
     for (auto [resource, state] : sampledResources)
         if ((state & D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE) == 0)
             Transition(commands, resource, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, state);
@@ -882,6 +1017,10 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
 D3D12_GPU_DESCRIPTOR_HANDLE RayReflections::GetResultSrv(UINT frameIndex)
 {
     return Gpu(g_EngineHeap.Get(), kResultSrv + frameIndex % kFrames);
+}
+RayReflections::SamplingLayout RayReflections::GetReflectionSamplingLayout()
+{
+    return g_ReflectionSampling;
 }
 UINT RayReflections::GetDenoiserDispatchCount() { return g_Dispatches; }
 bool RayReflections::DidRestartHistory() { return g_Denoiser && g_Denoiser->DidRestartHistory(); }
@@ -902,6 +1041,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE RayReflections::GetGiSrv(UINT frameIndex)
     return Gpu(g_EngineHeap.Get(), kGiSrv + frameIndex % kFrames);
 }
 ID3D12Resource* RayReflections::GetGiResource() { return g_Frames[g_LastFrame].GiResult.Get(); }
+
 
 
 

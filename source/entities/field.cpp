@@ -46,7 +46,7 @@ void Field::Create()
 	material.Fresnel = 0.04f;
 
 	material.ShaderClassMode = MaterialMode::Manual;
-	material.ShaderClass = ShaderClass::PBR;
+	material.ShaderClass = ShaderClass::Lit;
 
 	VertexResource vertexResource{};
 	vertexResource.entityid = entity.GetID();

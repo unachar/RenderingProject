@@ -258,7 +258,9 @@ bool MaterialManager::IsRenderable(EntityID entity)
     return ::Registry::IsAlive(entity) && ComponentManager::HasComponent<MaterialComponent>(entity) &&
         (ComponentManager::HasComponent<StaticModelComponent>(entity) ||
          ComponentManager::HasComponent<AnimationModelComponent>(entity) ||
-         ComponentManager::HasComponent<MeshComponent>(entity));
+         ComponentManager::HasComponent<MeshComponent>(entity) ||
+         (ComponentManager::HasComponent<SpriteComponent>(entity) &&
+          ComponentManager::GetComponentUnchecked<SpriteComponent>(entity).Is3D));
 }
 
 void MaterialManager::Discard(AssetHandle handle)

@@ -1,5 +1,6 @@
 #pragma once
 #include "gpuscenetypes.h"
+#include "../temporalhistorycontext.h"
 #include <algorithm>
 #include <utility>
 #include <vector>
@@ -70,6 +71,7 @@ inline void ClearSlots(const ChangeList &changed)
 }
 inline void Reset()
 {
+    TemporalHistory::Context::NotifySceneChanged();
     ClearSlots(Pending().Changed);
     Pending() = {};
     Pending().ResetScene = true;

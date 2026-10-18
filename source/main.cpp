@@ -10,6 +10,7 @@
 #include "renderconfiguration.h"
 #include "renderingvalidation.h"
 #include "performancegovernor.h"
+#include "renderbenchmark.h"
 
 extern "C"
 {
@@ -127,13 +128,18 @@ static bool IsPhysicsSmokeTest()
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
 	const bool automatedBenchmark = IsAutomatedBenchmark();
+    char rayTelemetry[8]{};
+    GetEnvironmentVariableA("DX12_RAY_TELEMETRY", rayTelemetry, sizeof(rayTelemetry));
+    RayTelemetry::SetEnabled(atoi(rayTelemetry) != 0);
 	char startupSmokeValue[16]{};
 	GetEnvironmentVariableA("DX12_STARTUP_SMOKE_FRAMES", startupSmokeValue, static_cast<DWORD>(size(startupSmokeValue)));
 	const int startupSmokeFrames = (max)(0, atoi(startupSmokeValue));
 	char resizeSmokeValue[8]{};
 	GetEnvironmentVariableA("DX12_RESIZE_SMOKE_TEST", resizeSmokeValue, static_cast<DWORD>(size(resizeSmokeValue)));
 	const bool resizeSmoke = startupSmokeFrames > 0 && atoi(resizeSmokeValue) != 0;
-	const bool automatedRun = automatedBenchmark || IsPhysicsSmokeTest() || startupSmokeFrames > 0;
+    const bool renderingBenchmark = RenderBenchmark::IsEnabled();
+    if (renderingBenchmark) SetEnvironmentVariableA("DX12_VALIDATION_MODE", "1");
+	const bool automatedRun = automatedBenchmark || renderingBenchmark || IsPhysicsSmokeTest() || startupSmokeFrames > 0;
 	char exePath[MAX_PATH]{};
 	GetModuleFileNameA(nullptr, exePath, MAX_PATH);
 
@@ -193,6 +199,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 	}
 
 	RenderProfiler::SetPipelineStatisticsForced(automatedRun);
+    if (renderingBenchmark) RenderProfiler::SetEnabled(true);
 	// 自動テストは固定品質で比較するため、品質の自動調整を止める。
 	PerformanceGovernor::GetOptions().Enabled = !automatedRun;
 	WriteGraphicsLog("Step: Game::Init\n");
@@ -242,14 +249,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 				resizeWidths[step], resizeHeights[step]);
 			RenderConfiguration::Resize(resizeWidths[step], resizeHeights[step]);
 		}
-		RenderingValidation::BeforeFrame(completedFrames);
+        if (renderingBenchmark) RenderBenchmark::BeforeFrame(completedFrames);
+        else RenderingValidation::BeforeFrame(completedFrames);
 		Game::Run();
-		RenderingValidation::AfterFrame(completedFrames);
+        if (renderingBenchmark) RenderBenchmark::AfterFrame();
+        else RenderingValidation::AfterFrame(completedFrames);
 		if (completedFrames == 0) WriteGraphicsLog("Step: first frame complete\n");
 		++completedFrames;
+        if (RenderBenchmark::ShouldStop(completedFrames)) PostQuitMessage(0);
 		if (startupSmokeFrames > 0 && completedFrames >= static_cast<UINT64>(startupSmokeFrames)) PostQuitMessage(0);
 	}
-	const bool featuresPassed = RenderingValidation::Finish();
+    const bool featuresPassed = renderingBenchmark ? RenderBenchmark::Finish() : RenderingValidation::Finish();
 	Game::Uninit();
 	if (!featuresPassed)
 	{

@@ -3,6 +3,7 @@ param(
     [switch]$SkipBuild,
     [switch]$SkipFallback,
     [switch]$NoDlssSdk,
+    [switch]$RayTelemetry,
     [switch]$NoNrdSdk
 )
 
@@ -23,7 +24,7 @@ $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudi
 if (-not $installation) { throw 'Visual Studio C++ tools are required.' }
 $developerCommand = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
 $environmentNames = @('_CL_', 'DX12_FEATURE_SMOKE_TEST', 'DX12_STARTUP_SMOKE_FRAMES',
-    'DX12_VALIDATION_MODE', 'DX12_VALIDATION_DLSS_STARTUP', 'DX12_DISABLE_DXR', 'DX12_DISABLE_DLSS', 'DX12_VALIDATION_MESH_PAGE_LIMIT')
+    'DX12_VALIDATION_MODE', 'DX12_VALIDATION_DLSS_STARTUP', 'DX12_DISABLE_DXR', 'DX12_DISABLE_DLSS', 'DX12_VALIDATION_MESH_PAGE_LIMIT', 'DX12_RAY_TELEMETRY')
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) {
     $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -35,6 +36,7 @@ function Invoke-DeveloperCommand([string]$Command, [string]$Name) {
 }
 
 function Invoke-SmokeTest([string]$Name, [bool]$DisableFeatures) {
+    $env:DX12_RAY_TELEMETRY = [string][int]$RayTelemetry.IsPresent
     $env:DX12_DISABLE_DXR = [int]$DisableFeatures
     $env:DX12_DISABLE_DLSS = [int]$DisableFeatures
     $env:DX12_FEATURE_SMOKE_TEST = '1'

@@ -305,6 +305,7 @@ bool RenderGraph::Execute(ID3D12GraphicsCommandList* commandList)
 	for (const uint32_t passIndex : m_ExecutionOrder)
 	{
 		PassRecord& pass = m_Passes[passIndex];
+        if(m_Arena)for(const auto& usage:pass.Usages) { const auto& resource=m_Resources[usage.Resource.Index]; if(resource.Transient)m_Arena->Activate(resource.ArenaIndex,commandList); }
 		vector<D3D12_RESOURCE_BARRIER> barriers;
 		barriers.reserve(pass.Usages.size());
 
@@ -395,6 +396,7 @@ bool RenderGraph::Execute(ID3D12GraphicsCommandList* commandList)
 
 void RenderGraph::Reset()
 {
+    m_Arena=nullptr;
 	m_Resources.clear();
 	m_Passes.clear();
 	m_ExecutionOrder.clear();
@@ -408,4 +410,30 @@ bool RenderGraph::Fail(const string& message)
 	m_IsCompiled = false;
 	Debug::Log("ERROR: %s\n", message.c_str());
 	return false;
+}
+
+
+RenderGraph::ResourceHandle RenderGraph::CreateTransientResource(const char* name,const D3D12_RESOURCE_DESC& desc,D3D12_RESOURCE_STATES initial)
+{
+    auto handle=CreateLogicalResource(name);auto& resource=m_Resources[handle.Index];resource.Transient=true;resource.AutomaticBarriers=true;resource.Desc=desc;resource.InitialState=initial;return handle;
+}
+bool RenderGraph::AllocateTransients(ID3D12Device* device,TransientArena& arena)
+{
+    if(!m_IsCompiled)return Fail("Compile before allocating transients");
+    std::vector<TransientArena::Request> requests;
+    for(auto& resource:m_Resources)resource.ArenaIndex=UINT_MAX;
+    for(UINT resourceIndex=0;resourceIndex<m_Resources.size();++resourceIndex)
+    {
+        auto& resource=m_Resources[resourceIndex];if(!resource.Transient)continue;
+        UINT first=UINT_MAX,last=0;bool initialized=false;
+        for(UINT order=0;order<m_ExecutionOrder.size();++order)for(const auto& usage:m_Passes[m_ExecutionOrder[order]].Usages)
+            if(usage.Resource.Index==resourceIndex)
+            { if(first==UINT_MAX){first=order;initialized=usage.AccessMode!=Access::Read;}last=order; }
+        if(first==UINT_MAX)continue;
+        if(!initialized)return Fail("Transient resource must be written before reading: "+resource.Name);
+        resource.ArenaIndex=UINT(requests.size());requests.push_back({resource.Desc,resource.InitialState,first,last});
+    }
+    if(!arena.Build(device,requests))return Fail("Transient arena allocation failed");
+    for(auto& resource:m_Resources)if(resource.Transient&&resource.ArenaIndex!=UINT_MAX)resource.Resource=arena.Get(resource.ArenaIndex);
+    m_Arena=&arena;return true;
 }

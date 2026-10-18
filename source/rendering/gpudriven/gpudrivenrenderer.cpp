@@ -17,6 +17,8 @@
 #include "frameconstants.h"
 #include "shaderpipelines.h"
 #include "psomanager.h"
+#include "persistentpsocache.h"
+#include "envflags.h"
 #include "componentmanager.h"
 #include "vertexdeformation.h"
 #include "texturemanager.h"
@@ -65,6 +67,7 @@ struct State
     ComPtr<ID3D12RootSignature> ComputeRoot, OpaqueRoot, ResetRoot;
     ComPtr<ID3D12PipelineState> ResetPSO, CompactPSO, GeneratePSO, OpaquePSO, OccluderPSO;
     ComPtr<ID3D12CommandSignature> Signature;
+    ComPtr<ID3D12PipelineState> VisibilityPSO,VisibilityResolvePSO,IndexedVelocityPSO;
     uint32_t Slots = 0, Meshes = 0, Calls = 0, FrameIndex = 0;
     double SubmissionMs = 0;
     double CpuOpaqueMs = 0, GpuOpaqueMs = 0;
@@ -136,14 +139,18 @@ void Initialize()
     CD3DX12_DESCRIPTOR_RANGE constants, textures;
     constants.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
     textures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, FrameConstants::g_kMAX_SRVS, 0, 1);
-    CD3DX12_ROOT_PARAMETER opaque[7];
+    CD3DX12_ROOT_PARAMETER opaque[12];
     opaque[0].InitAsConstants(1, 4); // This index is part of the command signature contract.
     opaque[1].InitAsDescriptorTable(1, &constants);
     opaque[2].InitAsShaderResourceView(30);
     opaque[3].InitAsShaderResourceView(31);
-    opaque[4].InitAsDescriptorTable(1, &textures, D3D12_SHADER_VISIBILITY_PIXEL);
-    opaque[5].InitAsConstants(3, 5);
-    opaque[6].InitAsShaderResourceView(32, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    opaque[4].InitAsDescriptorTable(1, &textures);
+    opaque[5].InitAsConstants(4, 5);
+    opaque[6].InitAsShaderResourceView(32);
+    opaque[7].InitAsShaderResourceView(33); opaque[8].InitAsShaderResourceView(34); opaque[9].InitAsShaderResourceView(35);
+    CD3DX12_DESCRIPTOR_RANGE visibilityInput,gbufferOutput;
+    visibilityInput.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV,1,36); gbufferOutput.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV,RendererState::g_kGEOMETRY_GBUFFER_COUNT,0);
+    opaque[10].InitAsDescriptorTable(1,&visibilityInput); opaque[11].InitAsDescriptorTable(1,&gbufferOutput);
     CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_ANISOTROPIC);
     sampler.MaxAnisotropy = 16;
     CD3DX12_ROOT_SIGNATURE_DESC opaqueDescription(_countof(opaque), opaque, 1, &sampler,
@@ -174,6 +181,38 @@ void Initialize()
     for (uint32_t i = 0; i < RendererState::g_kGEOMETRY_GBUFFER_COUNT; ++i) pipeline.RTVFormats[i] = RendererState::GetGBufferFormat(static_cast<GBufferType>(i));
     pipeline.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     Check(device->CreateGraphicsPipelineState(&pipeline, IID_PPV_ARGS(&state.OpaquePSO)));
+    auto compile=[](const wchar_t* file,const char* target,ComPtr<ID3DBlob>& code)
+    {
+        ComPtr<ID3DBlob> errors;
+        const HRESULT hr=D3DCompileFromFile(file,nullptr,D3D_COMPILE_STANDARD_FILE_INCLUDE,"main",target,D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code,&errors);
+        if(FAILED(hr)&&errors) WriteGraphicsLog("GPU visibility shader: %s\n",static_cast<const char*>(errors->GetBufferPointer())); return SUCCEEDED(hr);
+    };
+    {
+        ComPtr<ID3DBlob> ps, cs, visibilityVS, velocityVS, velocityPS;
+        // Runtime SM6 shaders cannot share a graphics PSO with the legacy SM5 CSOs.
+        if (compile(L"shader/hlsl/GPUDrivenOpaqueVS.hlsl", "vs_6_5", visibilityVS) &&
+            compile(L"shader/hlsl/GPUDrivenVisibilityPS.hlsl", "ps_6_5", ps) &&
+            compile(L"shader/hlsl/GPUDrivenVisibilityResolveCS.hlsl", "cs_6_5", cs))
+        {
+            auto p = pipeline; p.NumRenderTargets = 1; for (auto& format : p.RTVFormats) format = DXGI_FORMAT_UNKNOWN;
+            p.VS = {visibilityVS->GetBufferPointer(), visibilityVS->GetBufferSize()};
+            p.RTVFormats[0] = RendererState::GetGBufferFormat(GBufferType::VISIBILITY); p.PS = { ps->GetBufferPointer(),ps->GetBufferSize() };
+            PersistentPsoCache::Graphics(device, p, state.VisibilityPSO);
+            D3D12_COMPUTE_PIPELINE_STATE_DESC c{}; c.pRootSignature = state.OpaqueRoot.Get(); c.CS = { cs->GetBufferPointer(),cs->GetBufferSize() };
+            PersistentPsoCache::Compute(device, c, state.VisibilityResolvePSO);
+        }
+        if (compile(L"shader/hlsl/GPUDrivenVelocityVS.hlsl", "vs_6_5", velocityVS) &&
+            compile(L"shader/hlsl/VelocityGeometryPS.hlsl", "ps_6_5", velocityPS))
+        {
+            auto p = pipeline;
+            p.VS = {velocityVS->GetBufferPointer(), velocityVS->GetBufferSize()};
+            p.PS = {velocityPS->GetBufferPointer(), velocityPS->GetBufferSize()};
+            p.NumRenderTargets = 1; for (auto& format : p.RTVFormats) format = DXGI_FORMAT_UNKNOWN;
+            p.RTVFormats[0] = RendererState::GetGBufferFormat(GBufferType::VELOCITY); p.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO; p.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+            PersistentPsoCache::Graphics(device, p, state.IndexedVelocityPSO);
+        }
+    }
+
     auto occluder = Shader("shader/hlsl/build/GPUOccluderPS.cso");
     pipeline.PS = {occluder->GetBufferPointer(), occluder->GetBufferSize()};
     // Omit back-facing occluders conservatively; the depth-only shader has no material face test.
@@ -208,7 +247,7 @@ RenderGraph::ResourceHandle Import(RenderGraph& graph, const char* name, GpuScen
 }
 bool CompatibleMode()
 {
-    return RenderConfiguration::GetRenderMode() == RenderMode::DEFERRED && !RendererSettings::GetComputeGBufferEnabled();
+    return RenderConfiguration::GetRenderMode() == RenderMode::DEFERRED;
 }
 } // namespace
 
@@ -530,6 +569,7 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
         WriteGraphicsLog("GPU Driven CPU fallback: %s\n", error.what());
         return;
     }
+    if(RendererSettings::GetComputeGBufferEnabled() && (!state.VisibilityPSO||!state.VisibilityResolvePSO||!state.IndexedVelocityPSO)) return;
     auto* device = GraphicsDevice::GetDevice();
     const uint32_t frameIndex = GraphicsDevice::GetFrameIndex();
     state.FrameIndex = frameIndex;
@@ -637,7 +677,8 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
         commands->CopyBufferRegion(target.Feedback.Get(),0,target.Count.Resource(),0,16);
         target.FeedbackFence = GraphicsDevice::GetPendingSubmissionFence();
     });
-    MeshShaderRenderer::Prepare(graph, instances, visible, count, arguments, frame.Visible.Resource(), frame.Count.Resource(), frame.Commands.Resource(), frame.Commands.Capacity(), meshes);
+    if(!RendererSettings::GetComputeGBufferEnabled())
+        MeshShaderRenderer::Prepare(graph, instances, visible, count, arguments, frame.Visible.Resource(), frame.Count.Resource(), frame.Commands.Resource(), frame.Commands.Capacity(), meshes);
     state.Active = true;
     for (const auto& [texture, users] : state.TextureUsers)
         if (users) TextureManager::TouchTexture(static_cast<int>(texture));
@@ -649,7 +690,7 @@ void GPUDrivenRenderer::Draw(ID3D12GraphicsCommandList* commands)
     if (!state.Active) return;
     if (state.CpuVertices.empty() || state.CpuIndices.empty()) return;
     const auto start = chrono::steady_clock::now();
-    if (MeshShaderRenderer::IsActive())
+    if (MeshShaderRenderer::IsActive() && !RendererSettings::GetComputeGBufferEnabled())
     {
         const D3D12_VERTEX_BUFFER_VIEW vb{state.Vertices.Resource()->GetGPUVirtualAddress(), static_cast<UINT>(state.CpuVertices.size() * sizeof(StaticModelVertex)), sizeof(StaticModelVertex)};
         const D3D12_INDEX_BUFFER_VIEW ib{state.Indices.Resource()->GetGPUVirtualAddress(), static_cast<UINT>(state.CpuIndices.size() * 4), DXGI_FORMAT_R32_UINT};
@@ -686,7 +727,7 @@ void GPUDrivenRenderer::Draw(ID3D12GraphicsCommandList* commands)
         ID3D12DescriptorHeap* heap = FrameConstants::GetCbvHeap();
         list->SetDescriptorHeaps(1, &heap);
         list->SetGraphicsRootSignature(data.OpaqueRoot.Get());
-        list->SetPipelineState(data.OpaquePSO.Get());
+        list->SetPipelineState(RendererSettings::GetComputeGBufferEnabled()?data.VisibilityPSO.Get():data.OpaquePSO.Get());
         ConstantBuffer3D constants{};
         XMMATRIX view, projection;
         Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
@@ -765,20 +806,27 @@ void GPUDrivenRenderer::BuildHiZ(ID3D12GraphicsCommandList* commands)
 
 void GPUDrivenRenderer::DrawSecondPass(ID3D12GraphicsCommandList* commands)
 {
-    if (Data().Active && MeshShaderRenderer::IsActive())
+    if (Data().Active && MeshShaderRenderer::IsActive() && !RendererSettings::GetComputeGBufferEnabled())
     {
         MeshShaderRenderer::DrawSecondPass(commands,Data().Vertices);
     }
 }
 void GPUDrivenRenderer::DrawVelocity(ID3D12GraphicsCommandList* commands)
 {
-    auto& state=Data();
-    if(!state.Active||!MeshShaderRenderer::IsActive()) return;
+    auto& state=Data(); if(!state.Active||!commands) return;
     const D3D12_VERTEX_BUFFER_VIEW vb{state.Vertices.Resource()->GetGPUVirtualAddress(),static_cast<UINT>(state.CpuVertices.size()*sizeof(StaticModelVertex)),sizeof(StaticModelVertex)};
     const D3D12_INDEX_BUFFER_VIEW ib{state.Indices.Resource()->GetGPUVirtualAddress(),static_cast<UINT>(state.CpuIndices.size()*4),DXGI_FORMAT_R32_UINT};
-    commands->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    commands->IASetVertexBuffers(0,1,&vb); commands->IASetIndexBuffer(&ib);
-    MeshShaderRenderer::DrawVelocity(commands,state.Vertices);
+    commands->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST); commands->IASetVertexBuffers(0,1,&vb); commands->IASetIndexBuffer(&ib);
+    if(MeshShaderRenderer::IsActive()&&!RendererSettings::GetComputeGBufferEnabled()) { MeshShaderRenderer::DrawVelocity(commands,state.Vertices); return; }
+    if(!state.IndexedVelocityPSO) return;
+    ID3D12DescriptorHeap* heap=FrameConstants::GetCbvHeap(); commands->SetDescriptorHeaps(1,&heap);
+    commands->SetGraphicsRootSignature(state.OpaqueRoot.Get()); commands->SetPipelineState(state.IndexedVelocityPSO.Get());
+    ConstantBuffer3D constants{}; XMMATRIX view,projection; Camera::GetCameraMatrices(Camera::GetCameraEntity(),view,projection);
+    constants.View=XMMatrixTranspose(view); constants.Projection=XMMatrixTranspose(projection);
+    constants.PreviousViewProjection=XMMatrixTranspose(XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix())*XMLoadFloat4x4(&GraphicsDevice::GetPreviousProjectionMatrix()));
+    commands->SetGraphicsRootDescriptorTable(1,FrameConstants::AllocateTransientConstantBuffer(constants));
+    commands->SetGraphicsRootShaderResourceView(2,GpuScene::InstanceBuffer()->GetGPUVirtualAddress());
+    commands->ExecuteIndirect(state.Signature.Get(),Frame().Commands.Capacity(),Frame().Commands.Resource(),0,Frame().Count.Resource(),0);
 }
 
 bool GPUDrivenRenderer::IsEnabled() { return Data().Enabled; }
@@ -830,7 +878,7 @@ void GPUDrivenRenderer::DrawDebug()
         GPUVisibility::Invalidate("Geometry path changed");
     }
     ImGui::Text("Opaque path: %s", state.Active ? "GPU Driven" : "CPU fallback");
-    if (state.Enabled && !CompatibleMode()) ImGui::TextUnformatted("Requires Deferred mode with Compute GBuffer disabled.");
+    if (state.Enabled && !CompatibleMode()) ImGui::TextUnformatted("Requires Deferred mode.");
     if (state.Failed) ImGui::TextUnformatted("Pipeline initialization failed; see init_log.txt");
     ImGui::Text("ExecuteIndirect calls: %u", state.Calls);
     ImGui::Text("Max command capacity: %u", Frame().Commands.Capacity());
@@ -882,3 +930,27 @@ void GPUDrivenRenderer::EndFrame()
     }
 }
 
+
+
+bool GPUDrivenRenderer::ResolveVisibility(ID3D12GraphicsCommandList* commands,D3D12_GPU_DESCRIPTOR_HANDLE visibility,UINT width,UINT height)
+{
+    auto& data=Data(); if(!commands||!data.Active||!data.VisibilityResolvePSO||!width||!height) return false;
+    auto transition=[&](GpuSceneBuffer& buffer,D3D12_RESOURCE_STATES after) { if(buffer.State!=after) { const auto b=CD3DX12_RESOURCE_BARRIER::Transition(buffer.Resource(),buffer.State,after); commands->ResourceBarrier(1,&b); buffer.State=after; } };
+    const auto vs=data.Vertices.State,is=data.Indices.State;
+    transition(data.Vertices,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE); transition(data.Indices,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    ID3D12DescriptorHeap* heap=FrameConstants::GetCbvHeap(); commands->SetDescriptorHeaps(1,&heap);
+    commands->SetComputeRootSignature(data.OpaqueRoot.Get()); commands->SetPipelineState(data.VisibilityResolvePSO.Get());
+    ConstantBuffer3D constants{}; XMMATRIX view,projection; Camera::GetCameraMatrices(Camera::GetCameraEntity(),view,projection);
+    constants.View=XMMatrixTranspose(view); constants.Projection=XMMatrixTranspose(projection);
+    const auto entity=Camera::GetCameraEntity(); if(ComponentManager::HasComponent<TransformComponent>(entity)) constants.CameraPos=ComponentManager::GetComponentUnchecked<TransformComponent>(entity).Position;
+    commands->SetComputeRootDescriptorTable(1,FrameConstants::AllocateTransientConstantBuffer(constants));
+    commands->SetComputeRootShaderResourceView(2,GpuScene::InstanceBuffer()->GetGPUVirtualAddress()); commands->SetComputeRootShaderResourceView(3,GpuScene::MaterialBuffer()->GetGPUVirtualAddress());
+    commands->SetComputeRootShaderResourceView(6,GPUVisibility::ResultBuffer()->GetGPUVirtualAddress());
+    commands->SetComputeRootShaderResourceView(7,data.Vertices.Resource()->GetGPUVirtualAddress()); commands->SetComputeRootShaderResourceView(8,data.Indices.Resource()->GetGPUVirtualAddress()); commands->SetComputeRootShaderResourceView(9,data.Geometry.Resource()->GetGPUVirtualAddress());
+    commands->SetComputeRootDescriptorTable(4,CD3DX12_GPU_DESCRIPTOR_HANDLE(heap->GetGPUDescriptorHandleForHeapStart(),FrameConstants::g_kTEXTURE_SRV_START_INDEX,FrameConstants::GetCbvIncrementSize()));
+    static const bool rate=ReadEnvironmentFlagOnce("DX12_MATERIAL_SHADING_RATE");
+    const UINT limits[]={FrameConstants::g_kTEXTURE_SRV_START_INDEX,static_cast<UINT>(TextureManager::GetDefaultTextureIndex())-FrameConstants::g_kTEXTURE_SRV_START_INDEX,static_cast<UINT>(GPUVisibility::GetSettings().DebugMode),rate?1u:0u};
+    commands->SetComputeRoot32BitConstants(5,4,limits,0); commands->SetComputeRootDescriptorTable(10,visibility);
+    commands->SetComputeRootDescriptorTable(11,CD3DX12_GPU_DESCRIPTOR_HANDLE(heap->GetGPUDescriptorHandleForHeapStart(),RendererState::g_kGBUFFER_UAV_START_INDEX,FrameConstants::GetCbvIncrementSize()));
+    commands->Dispatch((width+15)/16,(height+15)/16,1); transition(data.Vertices,vs); transition(data.Indices,is); return true;
+}

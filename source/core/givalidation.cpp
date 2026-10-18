@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "givalidation.h"
+#include "temporallightingvalidation.h"
+#include "celestialocclusionvalidation.h"
 #include "world.h"
 #include "camera.h"
 #include "primitivegeometry.h"
@@ -10,6 +12,7 @@
 #include "optixdenoiser.h"
 #include "rendercapture.h"
 #include "renderprofiler.h"
+#include "graphicsdevice.h"
 #include "graphicslog.h"
 #include "imguimanager.h"
 #include "gpudriven/gpudrivenrenderer.h"
@@ -120,6 +123,8 @@ bool GiValidation::Enabled()
 
 void GiValidation::BeforeFrame(uint64_t frame)
 {
+    if (CelestialOcclusionValidation::Enabled()) { CelestialOcclusionValidation::BeforeFrame(frame); return; }
+    if (TemporalLightingValidation::Enabled()) { TemporalLightingValidation::BeforeFrame(frame); return; }
     lastFrame = frame;
     if (frame == 0)
     {
@@ -259,6 +264,8 @@ void GiValidation::BeforeFrame(uint64_t frame)
 
 void GiValidation::AfterFrame(uint64_t frame)
 {
+    if (CelestialOcclusionValidation::Enabled()) { CelestialOcclusionValidation::AfterFrame(frame); return; }
+    if (TemporalLightingValidation::Enabled()) { TemporalLightingValidation::AfterFrame(frame); return; }
     if (frame >= 12 && frame <= 23)
     {
         SampleReceiver(true);
@@ -284,13 +291,23 @@ void GiValidation::AfterFrame(uint64_t frame)
         WriteGraphicsLog("GI receiver frame=%llu rgb=(%.6f,%.6f,%.6f)\n", frame, signal.x, signal.y, signal.z);
         for (const auto& pass : RenderProfiler::GetLatest().Passes)
         {
-            if (pass.Name == "Realtime GI Trace and Filter")
+            if (pass.Name.rfind("Realtime GI", 0) == 0)
             {
-                WriteGraphicsLog("GI timing frame=%llu gpu=%.3fms cpu=%.3fms\n", frame, pass.GpuMs, pass.CpuMs);
+                WriteGraphicsLog("GI timing frame=%llu pass=%s gpu=%.3fms cpu=%.3fms\n", frame, pass.Name.c_str(), pass.GpuMs, pass.CpuMs);
             }
         }
         if (frame == 23)
         {
+            if (RayTelemetry::Requested())
+            {
+                const bool idle = GraphicsDevice::WaitForGpuIdle();
+                Check(idle, "GI ray telemetry fence completes");
+                const auto counts = idle ? RayTelemetry::Data().ConsumeCurrent(RenderProfiler::GetFrameSerial()) : RayTelemetry::Counts{};
+                Check(counts.ProviderKnown(RayTelemetry::Radiance) && counts.Rays[RAY_TELEMETRY_GI] > 0,
+                    "GI primary rays are measured in the actual diffuse shader");
+                WriteGraphicsLog("GI ray telemetry serial=%llu primary=%llu visibility=%llu restir=%llu\n", counts.Serial,
+                    counts.Rays[RAY_TELEMETRY_GI], counts.Rays[RAY_TELEMETRY_RADIANCE_SHADOW], counts.Rays[RAY_TELEMETRY_RESTIR_VISIBILITY]);
+            }
             if (Raytracing::GetSettings().RadianceDenoiser == Raytracing::DenoiserType::Optix)
             {
                 Check(RayReflections::IsOptixGiActive(), "OptiX AI denoises GI on GPU");
@@ -365,6 +382,8 @@ void GiValidation::AfterFrame(uint64_t frame)
 
 bool GiValidation::Finish()
 {
+    if (CelestialOcclusionValidation::Enabled()) return CelestialOcclusionValidation::Finish();
+    if (TemporalLightingValidation::Enabled()) return TemporalLightingValidation::Finish();
     Check(lastFrame >= 215, "complete dynamic GI sequence");
     failures += RenderCapture::ReportGraphicsErrors();
     // Only files created by this fixture are removed; preserve unexpected contents.
