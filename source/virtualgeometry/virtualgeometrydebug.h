@@ -3,6 +3,7 @@
 #include <filesystem>
 struct ImDrawList;
 struct ImVec2;
+
 // CPU snapshot; GPU visibility fields are valid only when HasVisibilitySample is true.
 struct VGStatistics
 {
@@ -22,7 +23,9 @@ struct VGStatistics
     uint32_t FirstVisibleClusters = 0, SecondVisibleClusters = 0, CapacityFallbacks = 0;
     bool HasVisibilitySample = false;
 };
+
 VGStatistics GetVGStatistics();
+
 namespace VirtualGeometryDebug
 {
 struct Preferences
@@ -30,8 +33,9 @@ struct Preferences
     bool HierarchyBounds = false, Wireframe = false, SelectedOnly = true;
     int HierarchyLevel = 0, SourceLOD = 0, Limit = 512;
 };
+
 Preferences& GetPreferences();
 void DrawControls();
 void DrawAssetInspector(const std::filesystem::path& path);
-void DrawViewport(ImDrawList *draw, const ImVec2 &origin, const ImVec2 &size, uint32_t selectedEntity);
+void DrawViewport(ImDrawList* draw, const ImVec2& origin, const ImVec2& size, uint32_t selectedEntity);
 } // namespace VirtualGeometryDebug

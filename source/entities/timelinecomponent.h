@@ -7,64 +7,63 @@
 
 enum class TimelineProperty : int
 {
-	TransformPosition = 0,
-	TransformRotation,
-	TransformScale,
-	CameraTarget,
-	CameraFov,
-	CameraNearClip,
-	CameraFarClip,
-	CameraLockOnOffset,
-	PostProcessIntensity,
+    TransformPosition = 0,
+    TransformRotation,
+    TransformScale,
+    CameraTarget,
+    CameraFov,
+    CameraNearClip,
+    CameraFarClip,
+    CameraLockOnOffset,
+    PostProcessIntensity,
 };
 
 enum class TimelineInterpolation : int
 {
-	Step = 0,
-	Linear,
-	EaseIn,
-	EaseOut,
-	EaseInOut,
+    Step = 0,
+    Linear,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
 };
 
 struct TimelineKeyframe
 {
-	float Time = 0.0f;
-	DirectX::XMFLOAT4 Value = { 0, 0, 0, 0 };
-	TimelineInterpolation Interpolation = TimelineInterpolation::Linear;
+    float Time = 0.0f;
+    DirectX::XMFLOAT4 Value = {0, 0, 0, 0};
+    TimelineInterpolation Interpolation = TimelineInterpolation::Linear;
 };
 
 struct TimelineClipData
 {
-	string Name = "Clip";
-	float StartTime = 0.0f;
-	float Duration = 1.0f;
-	float BlendIn = 0.0f;
-	float BlendOut = 0.0f;
-	bool Enabled = true;
-	vector<TimelineKeyframe> Keys{};
+    string Name = "Clip";
+    float StartTime = 0.0f;
+    float Duration = 1.0f;
+    float BlendIn = 0.0f;
+    float BlendOut = 0.0f;
+    bool Enabled = true;
+    vector<TimelineKeyframe> Keys{};
 };
 
 struct TimelineTrackData
 {
-	string Name = "Track";
-	EntityID Target = g_kINVALID_ENTITY;
-	TimelineProperty Property = TimelineProperty::TransformPosition;
-	bool Enabled = true;
-	bool HasDefaultValue = false;
-	DirectX::XMFLOAT4 DefaultValue = { 0, 0, 0, 0 };
-	vector<TimelineClipData> Clips{};
+    string Name = "Track";
+    EntityID Target = g_kINVALID_ENTITY;
+    TimelineProperty Property = TimelineProperty::TransformPosition;
+    bool Enabled = true;
+    bool HasDefaultValue = false;
+    DirectX::XMFLOAT4 DefaultValue = {0, 0, 0, 0};
+    vector<TimelineClipData> Clips{};
 };
 
 struct TimelineComponent
 {
-	float Duration = 5.0f;
-	float CurrentTime = 0.0f;
-	float Speed = 1.0f;
-	bool PlayOnAwake = true;
-	bool Loop = false;
-	bool IsPlaying = false;
-	uint64_t LastPlaySession = 0;
-	vector<TimelineTrackData> Tracks{};
+    float Duration = 5.0f;
+    float CurrentTime = 0.0f;
+    float Speed = 1.0f;
+    bool PlayOnAwake = true;
+    bool Loop = false;
+    bool IsPlaying = false;
+    uint64_t LastPlaySession = 0;
+    vector<TimelineTrackData> Tracks{};
 };
-

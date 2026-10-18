@@ -38,6 +38,7 @@ struct CudaDriver
     CUDA_ENTRY(cuWaitExternalSemaphoresAsync)
     CUDA_ENTRY(cuSignalExternalSemaphoresAsync)
 #undef CUDA_ENTRY
+
     bool Load()
     {
         module = LoadLibraryExW(L"nvcuda.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -45,7 +46,12 @@ struct CudaDriver
         {
             return false;
         }
-#define CUDA_LOAD(name, symbol) name = reinterpret_cast<decltype(name)>(GetProcAddress(module, symbol)); if (!name) { return false; }
+#define CUDA_LOAD(name, symbol)                                                                                        \
+    name = reinterpret_cast<decltype(name)>(GetProcAddress(module, symbol));                                           \
+    if (!name)                                                                                                         \
+    {                                                                                                                  \
+        return false;                                                                                                  \
+    }
         CUDA_LOAD(cuInit, "cuInit")
         CUDA_LOAD(cuDeviceGetCount, "cuDeviceGetCount")
         CUDA_LOAD(cuDeviceGet, "cuDeviceGet")
@@ -70,6 +76,7 @@ struct CudaDriver
         return true;
     }
 };
+
 CudaDriver driver;
 ComPtr<ID3D12Device> device;
 CUdevice cudaDevice = 0;
@@ -86,9 +93,11 @@ bool Fail(const char* operation, int code)
     WriteGraphicsLog("OptiX: %s\n", status.c_str());
     return false;
 }
+
 struct ContextScope
 {
     bool active = false;
+
     ContextScope()
     {
         if (context)
@@ -96,6 +105,7 @@ struct ContextScope
             active = driver.cuCtxPushCurrent(context) == CUDA_SUCCESS;
         }
     }
+
     ~ContextScope()
     {
         if (active)
@@ -105,6 +115,7 @@ struct ContextScope
         }
     }
 };
+
 bool Cuda(CUresult result, const char* operation)
 {
     if (result != CUDA_SUCCESS)
@@ -113,6 +124,7 @@ bool Cuda(CUresult result, const char* operation)
     }
     return true;
 }
+
 bool Optix(OptixResult result, const char* operation)
 {
     if (result != OPTIX_SUCCESS)
@@ -121,7 +133,7 @@ bool Optix(OptixResult result, const char* operation)
     }
     return true;
 }
-}
+} // namespace
 
 struct OptixInterop::Impl
 {
@@ -131,6 +143,7 @@ struct OptixInterop::Impl
         CUexternalMemory memory = nullptr;
         CUdeviceptr pointer = 0;
     };
+
     static std::vector<Impl*> instances;
     std::vector<Slot> slots;
     ComPtr<ID3D12Fence> fence;
@@ -150,11 +163,13 @@ struct OptixInterop::Impl
     {
         instances.push_back(this);
     }
+
     ~Impl()
     {
         Release();
         instances.erase(std::remove(instances.begin(), instances.end(), this), instances.end());
     }
+
     void Release()
     {
         if (!context)
@@ -211,18 +226,21 @@ struct OptixInterop::Impl
         height = 0;
         fenceValue = 0;
     }
+
     bool CreateWorkspace(UINT newWidth, UINT newHeight)
     {
         OptixDenoiserOptions options = {};
         options.guideAlbedo = 1;
         options.guideNormal = 1;
         options.denoiseAlpha = OPTIX_DENOISER_ALPHA_MODE_COPY;
-        if (!Optix(optixDenoiserCreate(optixContext, OPTIX_DENOISER_MODEL_KIND_HDR, &options, &denoiser), "create HDR denoiser"))
+        if (!Optix(optixDenoiserCreate(optixContext, OPTIX_DENOISER_MODEL_KIND_HDR, &options, &denoiser),
+                   "create HDR denoiser"))
         {
             return false;
         }
         OptixDenoiserSizes sizes = {};
-        if (!Optix(optixDenoiserComputeMemoryResources(denoiser, newWidth, newHeight, &sizes), "query denoiser workspace"))
+        if (!Optix(optixDenoiserComputeMemoryResources(denoiser, newWidth, newHeight, &sizes),
+                   "query denoiser workspace"))
         {
             return false;
         }
@@ -234,7 +252,8 @@ struct OptixInterop::Impl
         {
             return false;
         }
-        if (!Optix(optixDenoiserSetup(denoiser, stream, newWidth, newHeight, state, stateBytes, scratch, scratchBytes), "set up denoiser"))
+        if (!Optix(optixDenoiserSetup(denoiser, stream, newWidth, newHeight, state, stateBytes, scratch, scratchBytes),
+                   "set up denoiser"))
         {
             return false;
         }
@@ -263,6 +282,7 @@ struct OptixInterop::Impl
         planeBytes = static_cast<size_t>(width) * height * 16;
         return true;
     }
+
     bool CreateSlot(UINT index)
     {
         if (slots.size() <= index)
@@ -281,8 +301,9 @@ struct OptixInterop::Impl
         description.SampleDesc.Count = 1;
         description.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         description.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-        HRESULT result = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_SHARED, &description,
-            D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&slot.buffer));
+        HRESULT result =
+            device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_SHARED, &description, D3D12_RESOURCE_STATE_COMMON,
+                                            nullptr, IID_PPV_ARGS(&slot.buffer));
         if (FAILED(result))
         {
             return Fail("create shared image buffer", result);
@@ -306,8 +327,10 @@ struct OptixInterop::Impl
         }
         CUDA_EXTERNAL_MEMORY_BUFFER_DESC mapping = {};
         mapping.size = planeBytes * 4;
-        return Cuda(driver.cuExternalMemoryGetMappedBuffer(&slot.pointer, slot.memory, &mapping), "map shared image buffer");
+        return Cuda(driver.cuExternalMemoryGetMappedBuffer(&slot.pointer, slot.memory, &mapping),
+                    "map shared image buffer");
     }
+
     OptixImage2D Image(CUdeviceptr pointer) const
     {
         OptixImage2D image = {};
@@ -320,9 +343,11 @@ struct OptixInterop::Impl
         return image;
     }
 };
+
 std::vector<OptixInterop::Impl*> OptixInterop::Impl::instances;
 
 OptixInterop::OptixInterop() : impl(std::make_unique<Impl>()) {}
+
 OptixInterop::~OptixInterop() = default;
 
 bool OptixInterop::Initialize(ID3D12Device* graphicsDevice)
@@ -401,6 +426,7 @@ bool OptixInterop::Initialize(ID3D12Device* graphicsDevice)
     WriteGraphicsLog("OptiX: %s\n", status.c_str());
     return true;
 }
+
 void OptixInterop::Shutdown()
 {
     available = false;
@@ -445,8 +471,16 @@ void OptixInterop::Shutdown()
         driver = {};
     }
 }
-bool OptixInterop::IsAvailable() { return available; }
-const char* OptixInterop::GetStatus() { return status.c_str(); }
+
+bool OptixInterop::IsAvailable()
+{
+    return available;
+}
+
+const char* OptixInterop::GetStatus()
+{
+    return status.c_str();
+}
 
 bool OptixInterop::Ensure(UINT width, UINT height, UINT frameIndex)
 {
@@ -479,6 +513,7 @@ bool OptixInterop::Ensure(UINT width, UINT height, UINT frameIndex)
     }
     return true;
 }
+
 ID3D12Resource* OptixInterop::GetSharedBuffer(UINT frameIndex) const
 {
     if (frameIndex >= impl->slots.size())
@@ -487,6 +522,7 @@ ID3D12Resource* OptixInterop::GetSharedBuffer(UINT frameIndex) const
     }
     return impl->slots[frameIndex].buffer.Get();
 }
+
 bool OptixInterop::Enqueue(ID3D12CommandQueue* queue, UINT frameIndex)
 {
     if (!available || !queue || frameIndex >= impl->slots.size() || !impl->slots[frameIndex].pointer)
@@ -521,12 +557,14 @@ bool OptixInterop::Enqueue(ID3D12CommandQueue* queue, UINT frameIndex)
     guides.albedo = impl->Image(pointer + impl->planeBytes * 2);
     OptixDenoiserParams parameters = {};
     parameters.hdrIntensity = impl->intensity;
-    bool denoised = Optix(optixDenoiserComputeIntensity(impl->denoiser, stream, &layer.input,
-        impl->intensity, impl->scratch, impl->scratchBytes), "compute HDR intensity");
+    bool denoised = Optix(optixDenoiserComputeIntensity(impl->denoiser, stream, &layer.input, impl->intensity,
+                                                        impl->scratch, impl->scratchBytes),
+                          "compute HDR intensity");
     if (denoised)
     {
-        denoised = Optix(optixDenoiserInvoke(impl->denoiser, stream, &parameters, impl->state,
-            impl->stateBytes, &guides, &layer, 1, 0, 0, impl->scratch, impl->scratchBytes), "invoke HDR denoiser");
+        denoised = Optix(optixDenoiserInvoke(impl->denoiser, stream, &parameters, impl->state, impl->stateBytes,
+                                             &guides, &layer, 1, 0, 0, impl->scratch, impl->scratchBytes),
+                         "invoke HDR denoiser");
     }
     CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS signal = {};
     signal.params.fence.value = finishedValue;
@@ -547,17 +585,43 @@ bool OptixInterop::Enqueue(ID3D12CommandQueue* queue, UINT frameIndex)
     return denoised;
 }
 #else
-struct OptixInterop::Impl {};
+struct OptixInterop::Impl
+{
+};
+
 OptixInterop::OptixInterop() : impl(std::make_unique<Impl>()) {}
+
 OptixInterop::~OptixInterop() = default;
-bool OptixInterop::Initialize(ID3D12Device*) { return false; }
+
+bool OptixInterop::Initialize(ID3D12Device*)
+{
+    return false;
+}
+
 void OptixInterop::Shutdown() {}
-bool OptixInterop::IsAvailable() { return false; }
-const char* OptixInterop::GetStatus() { return "OptiX support was not enabled in this build"; }
-bool OptixInterop::Ensure(UINT, UINT, UINT) { return false; }
-ID3D12Resource* OptixInterop::GetSharedBuffer(UINT) const { return nullptr; }
-bool OptixInterop::Enqueue(ID3D12CommandQueue*, UINT) { return false; }
+
+bool OptixInterop::IsAvailable()
+{
+    return false;
+}
+
+const char* OptixInterop::GetStatus()
+{
+    return "OptiX support was not enabled in this build";
+}
+
+bool OptixInterop::Ensure(UINT, UINT, UINT)
+{
+    return false;
+}
+
+ID3D12Resource* OptixInterop::GetSharedBuffer(UINT) const
+{
+    return nullptr;
+}
+
+bool OptixInterop::Enqueue(ID3D12CommandQueue*, UINT)
+{
+    return false;
+}
 #endif
-
-
-

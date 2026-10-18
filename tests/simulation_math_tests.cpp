@@ -19,7 +19,7 @@ void Check(bool passed, const char* message)
         std::exit(1);
     }
 }
-}
+} // namespace
 
 int main()
 {
@@ -29,7 +29,9 @@ int main()
     // The new method must produce a usable signal before testing its controls.
     bool compositeHasSignal = false;
     for (int sample = 1; sample < 20; ++sample)
+    {
         compositeHasSignal |= SampleNoise(sample * 1.37f, -3.79f, composite) != 0.0f;
+    }
     Check(compositeHasSignal, "composite noise produces a non-flat signal");
     composite.Layers[0].Noise.Method = NoiseMethod::Value;
     composite.Layers[0].Weight = 1.0f;
@@ -42,7 +44,7 @@ int main()
     static_cast<BasicNoiseSettings&>(single) = composite.Layers[1].Noise;
     const float secondSample = SampleNoise(3.71f, -2.19f, single);
     Check(std::abs(SampleNoise(3.71f, -2.19f, composite) - (firstSample + 3.0f * secondSample) / 4.0f) < 1e-6f,
-        "composite respects individual methods, seeds and blend weights");
+          "composite respects individual methods, seeds and blend weights");
     composite.Layers[0].Weight = 0.0f;
     Check(SampleNoise(3.71f, -2.19f, composite) == secondSample, "zero weight excludes a layer");
     composite.Layers[1].Weight = 0.0f;
@@ -54,7 +56,7 @@ int main()
     static_cast<BasicNoiseSettings&>(single) = composite.Layers[4].Noise;
     composite.Layers[2].Weight = composite.Layers[3].Weight = 0.0f;
     Check(SampleNoise(3.71f, -2.19f, composite) == SampleNoise(3.71f, -2.19f, single),
-        "fifth layer participates in composition");
+          "fifth layer participates in composition");
     composite.LayerCount = 2;
     Check(SampleNoise(3.71f, -2.19f, composite) == 0.0f, "inactive layers do not affect noise");
     composite.Seed = 123;
@@ -65,11 +67,14 @@ int main()
     composite.WarpStrength = 2.3f;
     ApplyCommonNoiseParameters(composite);
     for (const auto& layer : composite.Layers)
+    {
         Check(layer.Noise.Seed == 123 && layer.Noise.Frequency == 0.17f && layer.Noise.Octaves == 3 &&
-            layer.Noise.Persistence == 0.7f && layer.Noise.Lacunarity == 3.0f && layer.Noise.WarpStrength == 2.3f,
-            "bulk apply copies every common parameter including inactive layers");
-    Check(composite.Layers[0].Noise.Method == NoiseMethod::Value && composite.Layers[1].Noise.Method == NoiseMethod::Worley &&
-        composite.Layers[4].Weight == 2.0f, "bulk apply preserves layer methods and weights");
+                  layer.Noise.Persistence == 0.7f && layer.Noise.Lacunarity == 3.0f && layer.Noise.WarpStrength == 2.3f,
+              "bulk apply copies every common parameter including inactive layers");
+    }
+    Check(composite.Layers[0].Noise.Method == NoiseMethod::Value &&
+              composite.Layers[1].Noise.Method == NoiseMethod::Worley && composite.Layers[4].Weight == 2.0f,
+          "bulk apply preserves layer methods and weights");
     TerrainSettings compositeTerrain;
     compositeTerrain.Noise = composite;
     compositeTerrain.Noise.LayerCount = 5;
@@ -78,14 +83,16 @@ int main()
     Check(WriteTerrainPreset(preset, compositeTerrain), "save composite preset");
     TerrainSettings restored;
     Check(ReadTerrainPreset(preset, restored) && TerrainSettingsEqual(compositeTerrain, restored) &&
-        BuildHeightMap(compositeTerrain) == BuildHeightMap(restored), "preset restores individual and common parameters exactly");
+              BuildHeightMap(compositeTerrain) == BuildHeightMap(restored),
+          "preset restores individual and common parameters exactly");
     std::stringstream legacy("PROCEDURAL_TERRAIN 1\n5 907 0.08 5 0.5 2 1.5\n64 40 5 -2\n");
-    Check(ReadTerrainPreset(legacy, restored) && restored.Noise.Method == NoiseMethod::DomainWarp && restored.Noise.Seed == 907,
-        "legacy presets remain readable");
+    Check(ReadTerrainPreset(legacy, restored) && restored.Noise.Method == NoiseMethod::DomainWarp &&
+              restored.Noise.Seed == 907,
+          "legacy presets remain readable");
     std::stringstream invalid("PROCEDURAL_TERRAIN 2\n6 42 0.08 5 0.5 2 1.5\n64 40 5 -2\n6\n");
     const auto beforeInvalid = restored;
     Check(!ReadTerrainPreset(invalid, restored) && TerrainSettingsEqual(beforeInvalid, restored),
-        "invalid layer count rejects preset without changing current settings");
+          "invalid layer count rejects preset without changing current settings");
     for (int method = 0; method < 6; ++method)
     {
         NoiseSettings settings;
@@ -109,7 +116,7 @@ int main()
     perlin.Method = NoiseMethod::Perlin;
     perlin.Frequency = 1.0f;
     Check(std::abs(SampleNoise(-0.00001f, 0.37f, perlin) - SampleNoise(0.00001f, 0.37f, perlin)) < 0.001f,
-        "Perlin continuous across negative lattice boundary");
+          "Perlin continuous across negative lattice boundary");
     Check(SampleNoise(std::numeric_limits<float>::infinity(), 0.0f, perlin) == 0.0f, "invalid noise coordinate");
 
     TerrainSettings terrain;
@@ -120,7 +127,7 @@ int main()
     for (float height : heights)
     {
         Check(height >= terrain.BaseHeight - terrain.Height && height <= terrain.BaseHeight + terrain.Height,
-            "terrain height limits");
+              "terrain height limits");
     }
     terrain.Height = 0.0f;
     for (float height : BuildHeightMap(terrain))
@@ -138,7 +145,7 @@ int main()
     Check(evening.East < -0.99f && std::abs(evening.Up) < 0.0001f, "sunset in west");
     Check(night.Up < -0.99f && SolarCycle::Daylight(night.Up) == 0.0f, "night daylight is zero");
     Check(SolarCycle::Calculate(12.0f, 35.0f, 172).Up > SolarCycle::Calculate(12.0f, 35.0f, 355).Up,
-        "summer sun higher than winter");
+          "summer sun higher than winter");
     for (int hour = 0; hour < 24; ++hour)
     {
         const auto sun = SolarCycle::Calculate(static_cast<float>(hour), 35.0f, 172);
@@ -147,10 +154,11 @@ int main()
     }
     for (int method = 0; method < 3; ++method)
     {
-        const auto origin = SampleMotion(static_cast<MotionMethod>(method), 0.0, 0.2f, { 2.0f, 3.0f, 4.0f }, 42);
+        const auto origin = SampleMotion(static_cast<MotionMethod>(method), 0.0, 0.2f, {2.0f, 3.0f, 4.0f}, 42);
         Check(origin.X == 0.0f && origin.Y == 0.0f && origin.Z == 0.0f, "motion starts at authored origin");
-        const auto sample = SampleMotion(static_cast<MotionMethod>(method), 123456.5, 0.2f, { 2.0f, 3.0f, 4.0f }, 42);
-        Check(std::isfinite(sample.X) && std::isfinite(sample.Y) && std::isfinite(sample.Z), "long-running finite motion");
+        const auto sample = SampleMotion(static_cast<MotionMethod>(method), 123456.5, 0.2f, {2.0f, 3.0f, 4.0f}, 42);
+        Check(std::isfinite(sample.X) && std::isfinite(sample.Y) && std::isfinite(sample.Z),
+              "long-running finite motion");
     }
     std::printf("PASS: %d simulation checks\n", g_Checks);
 }

@@ -13,10 +13,12 @@ namespace Visibility
 {
 inline constexpr uint32_t InvalidID = UINT32_MAX;
 inline constexpr uint32_t MaxLODs = 8;
+
 struct VisibleInstanceData
 {
     uint32_t InstanceID, SelectedMeshID, SelectedLOD, State;
 };
+
 struct GPULODLevel
 {
     uint32_t MeshIndex = InvalidID;
@@ -24,10 +26,12 @@ struct GPULODLevel
     float Hysteresis = 0.1f;
     uint32_t Padding = 0;
 };
+
 struct GPULODGroup
 {
     uint32_t Offset = 0, Count = 0, Padding[2]{};
 };
+
 struct LODMetadata
 {
     uint32_t Count = 5;
@@ -35,12 +39,14 @@ struct LODMetadata
     float Hysteresis = 0.1f;
     std::array<std::string, MaxLODs> MeshPaths{}; // Empty uses the imported mesh's generated LOD.
 };
+
 struct Statistics
 {
     uint32_t Total = 0, FrustumCulled = 0, FrustumVisible = 0, Tested = 0;
     uint32_t Occluded = 0, FinalVisible = 0, Triangles = 0, IndexVertices = 0;
     std::array<uint32_t, MaxLODs> LODCounts{};
 };
+
 static_assert(sizeof(VisibleInstanceData) == 16 && sizeof(GPULODLevel) == 16 && sizeof(GPULODGroup) == 16);
 static_assert(sizeof(Statistics) == 64);
 
@@ -49,7 +55,8 @@ inline std::pair<uint32_t, uint32_t> ReductionRange(uint32_t pixel, uint32_t sou
 {
     return {pixel * source / destination, ((pixel + 1) * source + destination - 1) / destination};
 }
-inline uint32_t SelectLOD(float size, const LODMetadata &metadata, uint32_t previous)
+
+inline uint32_t SelectLOD(float size, const LODMetadata& metadata, uint32_t previous)
 {
     const uint32_t count = std::clamp(metadata.Count, 1u, MaxLODs);
     if (!std::isfinite(size) || size < 0)
@@ -79,7 +86,8 @@ inline uint32_t SelectLOD(float size, const LODMetadata &metadata, uint32_t prev
     }
     return selected;
 }
-inline uint32_t FallbackLOD(uint32_t selected, const std::array<uint32_t, MaxLODs> &meshes)
+
+inline uint32_t FallbackLOD(uint32_t selected, const std::array<uint32_t, MaxLODs>& meshes)
 {
     for (int level = static_cast<int>((std::min)(selected, MaxLODs - 1)); level >= 0; --level)
     {
@@ -90,7 +98,8 @@ inline uint32_t FallbackLOD(uint32_t selected, const std::array<uint32_t, MaxLOD
     }
     return InvalidID;
 }
-inline bool ValidLOD(const LODMetadata &value)
+
+inline bool ValidLOD(const LODMetadata& value)
 {
     if (!value.Count || value.Count > MaxLODs || !std::isfinite(value.Hysteresis) || value.Hysteresis < 0 ||
         value.Hysteresis > 0.5f)
@@ -109,7 +118,8 @@ inline bool ValidLOD(const LODMetadata &value)
     }
     return true;
 }
-inline bool SaveLOD(std::ostream &stream, const LODMetadata &value)
+
+inline bool SaveLOD(std::ostream& stream, const LODMetadata& value)
 {
     if (!ValidLOD(value))
     {
@@ -120,14 +130,15 @@ inline bool SaveLOD(std::ostream &stream, const LODMetadata &value)
     {
         stream << ' ' << threshold;
     }
-    for (const auto &path : value.MeshPaths)
+    for (const auto& path : value.MeshPaths)
     {
         stream << ' ' << std::quoted(path);
     }
     stream << '\n';
     return bool(stream);
 }
-inline bool LoadLOD(std::istream &stream, LODMetadata &destination)
+
+inline bool LoadLOD(std::istream& stream, LODMetadata& destination)
 {
     std::string magic;
     uint32_t version = 0;
@@ -137,7 +148,7 @@ inline bool LoadLOD(std::istream &stream, LODMetadata &destination)
     {
         return false;
     }
-    for (float &threshold : value.Thresholds)
+    for (float& threshold : value.Thresholds)
     {
         if (!(stream >> threshold))
         {
@@ -146,7 +157,7 @@ inline bool LoadLOD(std::istream &stream, LODMetadata &destination)
     }
     if (version == 2)
     {
-        for (auto &path : value.MeshPaths)
+        for (auto& path : value.MeshPaths)
         {
             if (!(stream >> std::quoted(path)))
             {

@@ -12,7 +12,8 @@ void ThrowIfFailed(HRESULT result)
         throw runtime_error("GPU scene buffer allocation/map failed");
     }
 }
-ComPtr<ID3D12Resource> CreateBuffer(ID3D12Device *device, uint64_t bytes, D3D12_HEAP_TYPE heapType,
+
+ComPtr<ID3D12Resource> CreateBuffer(ID3D12Device* device, uint64_t bytes, D3D12_HEAP_TYPE heapType,
                                     D3D12_RESOURCE_STATES state, D3D12_RESOURCE_FLAGS flags)
 {
     ComPtr<ID3D12Resource> resource;
@@ -30,7 +31,7 @@ void GpuSceneBuffer::BeginFrame(uint32_t frame)
     m_Copies.clear();
 }
 
-bool GpuSceneBuffer::Ensure(ID3D12Device *device, uint32_t count, uint32_t stride, uint32_t frame, const wchar_t *name,
+bool GpuSceneBuffer::Ensure(ID3D12Device* device, uint32_t count, uint32_t stride, uint32_t frame, const wchar_t* name,
                             bool unorderedAccess)
 {
     if (m_Resource && count <= m_Capacity)
@@ -62,7 +63,7 @@ bool GpuSceneBuffer::Ensure(ID3D12Device *device, uint32_t count, uint32_t strid
     return true;
 }
 
-uint64_t GpuSceneBuffer::Stage(ID3D12Device *device, uint32_t frame, const void *data, uint32_t count,
+uint64_t GpuSceneBuffer::Stage(ID3D12Device* device, uint32_t frame, const void* data, uint32_t count,
                                span<const uint32_t> changes)
 {
     m_Copies.clear();
@@ -86,11 +87,11 @@ uint64_t GpuSceneBuffer::Stage(ID3D12Device *device, uint32_t frame, const void 
                                        D3D12_RESOURCE_FLAG_NONE);
         m_UploadBytes[frame] = capacity;
     }
-    void *mapped = nullptr;
+    void* mapped = nullptr;
     const D3D12_RANGE noRead{0, 0};
     ThrowIfFailed(m_Upload[frame]->Map(0, &noRead, &mapped));
-    const auto *source = static_cast<const uint8_t *>(data);
-    auto *destination = static_cast<uint8_t *>(mapped);
+    const auto* source = static_cast<const uint8_t*>(data);
+    auto* destination = static_cast<uint8_t*>(mapped);
     if (m_NeedsFullUpload)
     {
         memcpy(destination, source, static_cast<size_t>(bytes));
@@ -120,9 +121,9 @@ uint64_t GpuSceneBuffer::Stage(ID3D12Device *device, uint32_t frame, const void 
     return bytes;
 }
 
-void GpuSceneBuffer::Copy(ID3D12GraphicsCommandList *commands, uint32_t frame) const
+void GpuSceneBuffer::Copy(ID3D12GraphicsCommandList* commands, uint32_t frame) const
 {
-    for (const auto &range : m_Copies)
+    for (const auto& range : m_Copies)
     {
         commands->CopyBufferRegion(m_Resource.Get(), range.Destination, m_Upload.at(frame).Get(), range.Source,
                                    range.Size);
@@ -136,13 +137,12 @@ uint64_t GpuSceneBuffer::MemoryBytes() const
     {
         bytes += upload;
     }
-    for (const auto &frame : m_Retired)
+    for (const auto& frame : m_Retired)
     {
-        for (const auto &resource : frame)
+        for (const auto& resource : frame)
         {
             bytes += resource->GetDesc().Width;
         }
     }
     return bytes;
 }
-

@@ -4,6 +4,6 @@
 
 class CameraControlSystem : public SystemBase
 {
-public:
+  public:
     void Update() override;
 };

@@ -5,9 +5,20 @@ namespace VirtualGeometryTraversal
 {
 enum class DebugView : uint32_t
 {
-    None, LOD, Cluster, Hierarchy, MaterialBin, Compression, PageResidency,
-    StreamingPriority, Occlusion, Overdraw, GeometryError, ObjectID
+    None,
+    LOD,
+    Cluster,
+    Hierarchy,
+    MaterialBin,
+    Compression,
+    PageResidency,
+    StreamingPriority,
+    Occlusion,
+    Overdraw,
+    GeometryError,
+    ObjectID
 };
+
 struct Settings
 {
     bool Enabled = true;
@@ -23,6 +34,7 @@ struct Settings
     float PrefetchSeconds = 0.25f, MaxPrefetchDistance = 50.0f;
     uint32_t MaxSelectedClusters = 2000000, MaxGroupStates = 2000000;
 };
+
 struct FrameInputs
 {
     RenderGraph::ResourceHandle Instances, Objects, Count;
@@ -30,10 +42,16 @@ struct FrameInputs
     ID3D12Resource* CountResource = nullptr;
     uint32_t ObjectCapacity = 0;
 };
+
 Settings& GetSettings();
 void Prepare(RenderGraph& graph, const FrameInputs& inputs);
 bool Active();
-enum class RasterPhase { First, Second, Combined };
+enum class RasterPhase
+{
+    First,
+    Second,
+    Combined
+};
 bool TwoPassActive();
 void InvalidateHistory();
 GpuSceneBuffer& VisibleBuffer(RasterPhase phase);
@@ -43,6 +61,7 @@ uint64_t CounterOffset(RasterPhase phase);
 uint64_t ArgumentOffset(RasterPhase phase);
 void Retest(ID3D12GraphicsCommandList* commands);
 void RecordFeedback(RenderGraph& graph);
+
 struct TemporalStatistics
 {
     uint64_t SampleSerial = 0;
@@ -50,6 +69,7 @@ struct TemporalStatistics
     uint64_t HistoryBytes = 0, CandidateBytes = 0;
     bool HasSample = false;
 };
+
 const TemporalStatistics& GetTemporalStatistics();
 GpuSceneBuffer& VisibleBuffer();
 GpuSceneBuffer& CounterBuffer();
@@ -58,4 +78,4 @@ GpuSceneBuffer& SuccessBuffer();
 const std::array<uint32_t, 64>& DebugCounters();
 void EndFrame();
 void Shutdown();
-}
+} // namespace VirtualGeometryTraversal

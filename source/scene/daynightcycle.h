@@ -4,7 +4,7 @@
 
 class DayNightCycle
 {
-public:
+  public:
     struct Settings
     {
         bool TimeDriven = false;

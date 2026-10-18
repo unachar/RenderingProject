@@ -5,192 +5,203 @@
 
 void ProjectManager::Init()
 {
-	s_State = ProjectPlayState::Edit;
-	s_RuntimeSnapshots.clear();
-	s_PlaySession = 0;
+    s_State = ProjectPlayState::Edit;
+    s_RuntimeSnapshots.clear();
+    s_PlaySession = 0;
 }
 
 void ProjectManager::Uninit()
 {
-	s_RuntimeSnapshots.clear();
-	s_State = ProjectPlayState::Edit;
+    s_RuntimeSnapshots.clear();
+    s_State = ProjectPlayState::Edit;
 }
 
 void ProjectManager::CaptureRuntimeState()
 {
-	s_EditorDayNight = DayNightCycle::GetSettings();
-	s_RuntimeSnapshots.clear();
-	const auto& entities = Registry::GetEntities();
-	for (EntityID entity = 0; entity < static_cast<EntityID>(entities.size()); ++entity)
-	{
-		if (!entities[entity].IsAlive)
-		{
-			continue;
-		}
+    s_EditorDayNight = DayNightCycle::GetSettings();
+    s_RuntimeSnapshots.clear();
+    const auto& entities = Registry::GetEntities();
+    for (EntityID entity = 0; entity < static_cast<EntityID>(entities.size()); ++entity)
+    {
+        if (!entities[entity].IsAlive)
+        {
+            continue;
+        }
 
-		RuntimeSnapshot snapshot{};
-		snapshot.Entity = entity;
-		snapshot.HasTransform = ComponentManager::HasComponent<TransformComponent>(entity);
-		if (snapshot.HasTransform)
-		{
-			snapshot.Transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-		}
-		snapshot.HasAnimation = ComponentManager::HasComponent<AnimationModelComponent>(entity);
-		if (snapshot.HasAnimation)
-		{
-			snapshot.Animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
-		}
-		snapshot.HasCamera = ComponentManager::HasComponent<CameraComponent>(entity);
-		if (snapshot.HasCamera)
-			snapshot.Camera = ComponentManager::GetComponentUnchecked<CameraComponent>(entity);
-		snapshot.HasPostProcess = ComponentManager::HasComponent<PostProcessComponent>(entity);
-		if (snapshot.HasPostProcess)
-			snapshot.PostProcess = ComponentManager::GetComponentUnchecked<PostProcessComponent>(entity);
-		snapshot.HasTimeline = ComponentManager::HasComponent<TimelineComponent>(entity);
-		if (snapshot.HasTimeline)
-			snapshot.Timeline = ComponentManager::GetComponentUnchecked<TimelineComponent>(entity);
-		snapshot.HasProceduralMotion = ComponentManager::HasComponent<ProceduralMotionComponent>(entity);
-		if (snapshot.HasProceduralMotion)
-		{
-			snapshot.ProceduralMotion = ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(entity);
-		}
-		snapshot.HasLight = ComponentManager::HasComponent<LightComponent>(entity);
-		if (snapshot.HasLight)
-		{
-			snapshot.Light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-		}
-		s_RuntimeSnapshots.push_back(move(snapshot));
-	}
+        RuntimeSnapshot snapshot{};
+        snapshot.Entity = entity;
+        snapshot.HasTransform = ComponentManager::HasComponent<TransformComponent>(entity);
+        if (snapshot.HasTransform)
+        {
+            snapshot.Transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+        }
+        snapshot.HasAnimation = ComponentManager::HasComponent<AnimationModelComponent>(entity);
+        if (snapshot.HasAnimation)
+        {
+            snapshot.Animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
+        }
+        snapshot.HasCamera = ComponentManager::HasComponent<CameraComponent>(entity);
+        if (snapshot.HasCamera)
+        {
+            snapshot.Camera = ComponentManager::GetComponentUnchecked<CameraComponent>(entity);
+        }
+        snapshot.HasPostProcess = ComponentManager::HasComponent<PostProcessComponent>(entity);
+        if (snapshot.HasPostProcess)
+        {
+            snapshot.PostProcess = ComponentManager::GetComponentUnchecked<PostProcessComponent>(entity);
+        }
+        snapshot.HasTimeline = ComponentManager::HasComponent<TimelineComponent>(entity);
+        if (snapshot.HasTimeline)
+        {
+            snapshot.Timeline = ComponentManager::GetComponentUnchecked<TimelineComponent>(entity);
+        }
+        snapshot.HasProceduralMotion = ComponentManager::HasComponent<ProceduralMotionComponent>(entity);
+        if (snapshot.HasProceduralMotion)
+        {
+            snapshot.ProceduralMotion = ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(entity);
+        }
+        snapshot.HasLight = ComponentManager::HasComponent<LightComponent>(entity);
+        if (snapshot.HasLight)
+        {
+            snapshot.Light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
+        }
+        s_RuntimeSnapshots.push_back(move(snapshot));
+    }
 }
 
 void ProjectManager::RestoreRuntimeState()
 {
-	DayNightCycle::GetSettings() = s_EditorDayNight;
-	for (const RuntimeSnapshot& snapshot : s_RuntimeSnapshots)
-	{
-		if (!Registry::IsAlive(snapshot.Entity))
-		{
-			continue;
-		}
-		if (snapshot.HasTransform && ComponentManager::HasComponent<TransformComponent>(snapshot.Entity))
-		{
-			auto restored = snapshot.Transform;
-			restored.IsDirty = true;
-			ComponentManager::GetComponentUnchecked<TransformComponent>(snapshot.Entity) = restored;
-		}
-		if (snapshot.HasProceduralMotion && ComponentManager::HasComponent<ProceduralMotionComponent>(snapshot.Entity))
-		{
-			ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(snapshot.Entity) = snapshot.ProceduralMotion;
-		}
-		else if (!snapshot.HasProceduralMotion && ComponentManager::HasComponent<ProceduralMotionComponent>(snapshot.Entity))
-		{
-			ComponentManager::RemoveComponent(snapshot.Entity, ComponentType::PROCEDURAL_MOTION);
-		}
-		if (snapshot.HasLight && ComponentManager::HasComponent<LightComponent>(snapshot.Entity))
-		{
-			ComponentManager::GetComponentUnchecked<LightComponent>(snapshot.Entity) = snapshot.Light;
-		}
-		if (snapshot.HasAnimation && ComponentManager::HasComponent<AnimationModelComponent>(snapshot.Entity))
-		{
-			ComponentManager::GetComponentUnchecked<AnimationModelComponent>(snapshot.Entity) = snapshot.Animation;
-			AnimationModelResource* model = ModelManager::GetAnimModel(snapshot.Animation.ModelId);
-			if (!model)
-			{
-				continue;
-			}
+    DayNightCycle::GetSettings() = s_EditorDayNight;
+    for (const RuntimeSnapshot& snapshot : s_RuntimeSnapshots)
+    {
+        if (!Registry::IsAlive(snapshot.Entity))
+        {
+            continue;
+        }
+        if (snapshot.HasTransform && ComponentManager::HasComponent<TransformComponent>(snapshot.Entity))
+        {
+            auto restored = snapshot.Transform;
+            restored.IsDirty = true;
+            ComponentManager::GetComponentUnchecked<TransformComponent>(snapshot.Entity) = restored;
+        }
+        if (snapshot.HasProceduralMotion && ComponentManager::HasComponent<ProceduralMotionComponent>(snapshot.Entity))
+        {
+            ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(snapshot.Entity) =
+                snapshot.ProceduralMotion;
+        }
+        else if (!snapshot.HasProceduralMotion &&
+                 ComponentManager::HasComponent<ProceduralMotionComponent>(snapshot.Entity))
+        {
+            ComponentManager::RemoveComponent(snapshot.Entity, ComponentType::PROCEDURAL_MOTION);
+        }
+        if (snapshot.HasLight && ComponentManager::HasComponent<LightComponent>(snapshot.Entity))
+        {
+            ComponentManager::GetComponentUnchecked<LightComponent>(snapshot.Entity) = snapshot.Light;
+        }
+        if (snapshot.HasAnimation && ComponentManager::HasComponent<AnimationModelComponent>(snapshot.Entity))
+        {
+            ComponentManager::GetComponentUnchecked<AnimationModelComponent>(snapshot.Entity) = snapshot.Animation;
+            AnimationModelResource* model = ModelManager::GetAnimModel(snapshot.Animation.ModelId);
+            if (!model)
+            {
+                continue;
+            }
 
-
-			model->InvalidateAnimationPoseCache();
-			if (!snapshot.Animation.ActiveAnimationLayers.empty())
-			{
-				model->UpdateBoneMatrices(snapshot.Animation.ActiveAnimationLayers);
-			}
-			else if (!snapshot.Animation.CurrentAnimation.empty())
-			{
-				const string* nextAnimationSelection = nullptr;
-				if (snapshot.Animation.NextAnimation.empty())
-				{
-					nextAnimationSelection = &(snapshot.Animation.CurrentAnimation);
-				}
-				else
-				{
-					nextAnimationSelection = &(snapshot.Animation.NextAnimation);
-				}
-				const string& nextAnimation = *nextAnimationSelection;
-				float nextTime;
-				if (snapshot.Animation.NextAnimation.empty())
-				{
-					nextTime = snapshot.Animation.CurrentTime;
-				}
-				else
-				{
-					nextTime = snapshot.Animation.NextTime;
-				}
-				model->UpdateBoneMatrices(
-					snapshot.Animation.CurrentAnimation.c_str(), snapshot.Animation.CurrentTime,
-					nextAnimation.c_str(), nextTime, snapshot.Animation.BlendRate);
-			}
-			else
-			{
-				model->ResetBoneMatricesToBindPose();
-			}
-		}
-		if (snapshot.HasCamera && ComponentManager::HasComponent<CameraComponent>(snapshot.Entity))
-			ComponentManager::GetComponentUnchecked<CameraComponent>(snapshot.Entity) = snapshot.Camera;
-		if (snapshot.HasPostProcess && ComponentManager::HasComponent<PostProcessComponent>(snapshot.Entity))
-			ComponentManager::GetComponentUnchecked<PostProcessComponent>(snapshot.Entity) = snapshot.PostProcess;
-		if (snapshot.HasTimeline && ComponentManager::HasComponent<TimelineComponent>(snapshot.Entity))
-			ComponentManager::GetComponentUnchecked<TimelineComponent>(snapshot.Entity) = snapshot.Timeline;
-	}
-	s_RuntimeSnapshots.clear();
+            model->InvalidateAnimationPoseCache();
+            if (!snapshot.Animation.ActiveAnimationLayers.empty())
+            {
+                model->UpdateBoneMatrices(snapshot.Animation.ActiveAnimationLayers);
+            }
+            else if (!snapshot.Animation.CurrentAnimation.empty())
+            {
+                const string* nextAnimationSelection = nullptr;
+                if (snapshot.Animation.NextAnimation.empty())
+                {
+                    nextAnimationSelection = &(snapshot.Animation.CurrentAnimation);
+                }
+                else
+                {
+                    nextAnimationSelection = &(snapshot.Animation.NextAnimation);
+                }
+                const string& nextAnimation = *nextAnimationSelection;
+                float nextTime;
+                if (snapshot.Animation.NextAnimation.empty())
+                {
+                    nextTime = snapshot.Animation.CurrentTime;
+                }
+                else
+                {
+                    nextTime = snapshot.Animation.NextTime;
+                }
+                model->UpdateBoneMatrices(snapshot.Animation.CurrentAnimation.c_str(), snapshot.Animation.CurrentTime,
+                                          nextAnimation.c_str(), nextTime, snapshot.Animation.BlendRate);
+            }
+            else
+            {
+                model->ResetBoneMatricesToBindPose();
+            }
+        }
+        if (snapshot.HasCamera && ComponentManager::HasComponent<CameraComponent>(snapshot.Entity))
+        {
+            ComponentManager::GetComponentUnchecked<CameraComponent>(snapshot.Entity) = snapshot.Camera;
+        }
+        if (snapshot.HasPostProcess && ComponentManager::HasComponent<PostProcessComponent>(snapshot.Entity))
+        {
+            ComponentManager::GetComponentUnchecked<PostProcessComponent>(snapshot.Entity) = snapshot.PostProcess;
+        }
+        if (snapshot.HasTimeline && ComponentManager::HasComponent<TimelineComponent>(snapshot.Entity))
+        {
+            ComponentManager::GetComponentUnchecked<TimelineComponent>(snapshot.Entity) = snapshot.Timeline;
+        }
+    }
+    s_RuntimeSnapshots.clear();
 }
 
 void ProjectManager::Play()
 {
-	if (s_State != ProjectPlayState::Edit)
-	{
-		return;
-	}
-	CaptureRuntimeState();
-	++s_PlaySession;
-	if (s_PlaySession == 0)
-	{
-		s_PlaySession = 1;
-	}
-	s_State = ProjectPlayState::Playing;
+    if (s_State != ProjectPlayState::Edit)
+    {
+        return;
+    }
+    CaptureRuntimeState();
+    ++s_PlaySession;
+    if (s_PlaySession == 0)
+    {
+        s_PlaySession = 1;
+    }
+    s_State = ProjectPlayState::Playing;
 }
 
 void ProjectManager::Stop()
 {
-	if (s_State == ProjectPlayState::Edit)
-	{
-		return;
-	}
-	RestoreRuntimeState();
-	s_State = ProjectPlayState::Edit;
+    if (s_State == ProjectPlayState::Edit)
+    {
+        return;
+    }
+    RestoreRuntimeState();
+    s_State = ProjectPlayState::Edit;
 }
 
 void ProjectManager::TogglePlay()
 {
-	if (s_State == ProjectPlayState::Edit)
-	{
-		Play();
-	}
-	else
-	{
-		Stop();
-	}
+    if (s_State == ProjectPlayState::Edit)
+    {
+        Play();
+    }
+    else
+    {
+        Stop();
+    }
 }
 
 void ProjectManager::TogglePause()
 {
-	if (s_State == ProjectPlayState::Playing)
-	{
-		s_State = ProjectPlayState::Paused;
-	}
-	else if (s_State == ProjectPlayState::Paused)
-	{
-		s_State = ProjectPlayState::Playing;
-	}
+    if (s_State == ProjectPlayState::Playing)
+    {
+        s_State = ProjectPlayState::Paused;
+    }
+    else if (s_State == ProjectPlayState::Paused)
+    {
+        s_State = ProjectPlayState::Playing;
+    }
 }
-

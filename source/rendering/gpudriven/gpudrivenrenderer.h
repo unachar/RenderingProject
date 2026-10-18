@@ -6,33 +6,40 @@
 
 struct StaticMeshData;
 class RenderGraph;
-namespace Meshlets { struct Asset; }
+
+namespace Meshlets
+{
+struct Asset;
+}
 
 class GPUDrivenRenderer
 {
-public:
+  public:
     struct OverflowStatistics
     {
         uint64_t VisibleInstanceOverflow = 0, InvalidIndirectCommands = 0;
         uint32_t VisibleInstances = 0;
         bool HasSample = false;
     };
+
     static const OverflowStatistics& GetOverflowStatistics();
     static void RegisterGeometry(uint32_t meshID, const StaticMeshData& mesh);
-    static void RegisterPrimitiveGeometry(uint32_t meshID, const StaticMeshData& mesh,
-                                          uint32_t lod = 0, uint32_t baseMeshID = UINT32_MAX);
+    static void RegisterPrimitiveGeometry(uint32_t meshID, const StaticMeshData& mesh, uint32_t lod = 0,
+                                          uint32_t baseMeshID = UINT32_MAX);
     static void ReleasePrimitiveGeometry(uint32_t meshID);
     static uint64_t GeometryArenaBytes();
     static uint64_t GeometryUploadBytes();
-    static void RegisterLODGeometry(uint32_t meshID, uint32_t baseMeshID, const vector<uint32_t>& indices, const Meshlets::Asset* meshlets = nullptr);
+    static void RegisterLODGeometry(uint32_t meshID, uint32_t baseMeshID, const vector<uint32_t>& indices,
+                                    const Meshlets::Asset* meshlets = nullptr);
     static void UpdateGeometry(const StaticMeshData& mesh);
     static bool GeometryReady(uint32_t meshID);
     static bool SupportsEntity(uint32_t entity);
     static bool HandlesEntity(uint32_t entity);
-    static void Prepare(RenderGraph& graph, RenderGraph::ResourceHandle instances, RenderGraph::ResourceHandle visibility,
-                        uint32_t slots, uint32_t capacity, uint32_t meshes);
+    static void Prepare(RenderGraph& graph, RenderGraph::ResourceHandle instances,
+                        RenderGraph::ResourceHandle visibility, uint32_t slots, uint32_t capacity, uint32_t meshes);
     static void Draw(ID3D12GraphicsCommandList* commands);
-    static bool ResolveVisibility(ID3D12GraphicsCommandList* commands,D3D12_GPU_DESCRIPTOR_HANDLE visibility,UINT width,UINT height);
+    static bool ResolveVisibility(ID3D12GraphicsCommandList* commands, D3D12_GPU_DESCRIPTOR_HANDLE visibility,
+                                  UINT width, UINT height);
     static void DrawSecondPass(ID3D12GraphicsCommandList* commands);
     static void DrawVelocity(ID3D12GraphicsCommandList* commands);
     static void BuildHiZ(ID3D12GraphicsCommandList* commands);
@@ -54,5 +61,3 @@ public:
     static void RecordOpaqueSubmission(double milliseconds);
     static void TrackEntityTextures(uint32_t entity, const vector<uint32_t>& descriptors);
 };
-
-

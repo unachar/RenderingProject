@@ -12,6 +12,7 @@ struct VirtualGeometryVertex
     float TexCoord[2]{};
     float Diffuse[4]{};
 };
+
 static_assert(std::is_standard_layout_v<VirtualGeometryVertex>);
 static_assert(sizeof(VirtualGeometryVertex) == 12 * sizeof(float));
 static_assert(offsetof(VirtualGeometryVertex, Normal) == 3 * sizeof(float));
@@ -21,17 +22,20 @@ struct VirtualGeometrySphere
     std::array<float, 3> Center{};
     float Radius = 0;
 };
+
 struct VirtualGeometryAabb
 {
     std::array<float, 3> Min{};
     std::array<float, 3> Max{};
 };
+
 struct VirtualGeometryNormalCone
 {
     std::array<float, 3> Axis{};
     std::array<float, 3> Apex{};
     float Cutoff = 1;
 };
+
 struct VirtualGeometryCluster
 {
     uint32_t VertexOffset = 0;
@@ -47,6 +51,7 @@ struct VirtualGeometryCluster
     VirtualGeometryNormalCone Cone;
     float LodError = 0;
 };
+
 struct VirtualGeometryClusterGroup
 {
     uint32_t Level = 0; // Child level.
@@ -58,12 +63,14 @@ struct VirtualGeometryClusterGroup
     float MinError = 0;
     float MaxError = 0;
 };
+
 struct VirtualGeometryLevelStats
 {
     uint32_t Clusters = 0;
     uint64_t Triangles = 0;
     uint64_t Vertices = 0;
 };
+
 struct VirtualGeometryBuildStats
 {
     uint64_t SourceVertices = 0;

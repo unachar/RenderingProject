@@ -23,7 +23,7 @@ CD3DX12_VIEWPORT RendererState::m_Viewport;
 CD3DX12_VIEWPORT RendererState::m_FullViewport;
 CD3DX12_RECT RendererState::m_FullScissorRect;
 CD3DX12_RECT RendererState::m_ScissorRect;
-UINT64 RendererState::m_FenceValues[g_kFRAME_COUNT] = { 0, 0, 0 };
+UINT64 RendererState::m_FenceValues[g_kFRAME_COUNT] = {0, 0, 0};
 UINT64 RendererState::m_CurrentFenceValue = 0;
 UINT RendererState::m_FrameIndex = 0;
 UINT RendererState::m_Width = 0;
@@ -122,5 +122,3 @@ CD3DX12_GPU_DESCRIPTOR_HANDLE RendererState::m_AaSrvHandle;
 XMFLOAT4X4 RendererState::m_PrevViewMatrix = {};
 XMFLOAT4X4 RendererState::m_PrevProjMatrix = {};
 UINT RendererState::m_TaaFrameIndex = 0;
-
-

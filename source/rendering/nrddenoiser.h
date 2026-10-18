@@ -2,7 +2,15 @@
 #include "pch.h"
 #include <memory>
 
-enum class NrdSignal { Shadow, Specular, AmbientOcclusion, Diffuse, MegaLights, SpecularCheckerboard }; // MegaLights: REBLUR_DIFFUSE（チェッカーボードなし）
+enum class NrdSignal
+{
+    Shadow,
+    Specular,
+    AmbientOcclusion,
+    Diffuse,
+    MegaLights,
+    SpecularCheckerboard
+}; // MegaLights: REBLUR_DIFFUSE（チェッカーボードなし）
 
 struct NrdTexture
 {
@@ -40,7 +48,7 @@ struct NrdFrame
 // Execute restores input states; the result is returned in PIXEL_SHADER_RESOURCE state.
 class NrdDenoiser
 {
-public:
+  public:
     NrdDenoiser();
     ~NrdDenoiser();
     NrdDenoiser(const NrdDenoiser&) = delete;
@@ -52,10 +60,8 @@ public:
     bool DidRestartHistory() const;
     static bool IsCompiled();
     static const char* GetVersion();
-private:
+
+  private:
     struct Impl;
     unique_ptr<Impl> m_Impl;
 };
-
-
-

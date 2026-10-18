@@ -13,7 +13,10 @@ std::string ThumbnailCacheFileName(AssetHandle handle)
 
 ThumbnailDimensions FitThumbnail(uint32_t width, uint32_t height, float size)
 {
-    if (!width || !height || !std::isfinite(size) || size <= 0) return {};
+    if (!width || !height || !std::isfinite(size) || size <= 0)
+    {
+        return {};
+    }
     const float scale = size / static_cast<float>(std::max(width, height));
     return {width * scale, height * scale};
 }
@@ -21,8 +24,14 @@ ThumbnailDimensions FitThumbnail(uint32_t width, uint32_t height, float size)
 const ThumbnailRecord& ThumbnailCache::Request(AssetHandle handle, ThumbnailPriority priority)
 {
     auto& record = m_Records[handle];
-    if (record.LastUsedFrame != m_Frame) record.Priority = priority;
-    else record.Priority = std::min(record.Priority, priority);
+    if (record.LastUsedFrame != m_Frame)
+    {
+        record.Priority = priority;
+    }
+    else
+    {
+        record.Priority = std::min(record.Priority, priority);
+    }
     record.LastUsedFrame = m_Frame;
     if (record.State == ThumbnailState::Unloaded || record.State == ThumbnailState::Dirty)
     {
@@ -36,7 +45,10 @@ const ThumbnailRecord& ThumbnailCache::Request(AssetHandle handle, ThumbnailPrio
 void ThumbnailCache::MarkDirty(AssetHandle handle)
 {
     const auto found = m_Records.find(handle);
-    if (found == m_Records.end()) return;
+    if (found == m_Records.end())
+    {
+        return;
+    }
     auto& record = found->second;
     record.Revision = ++m_Revision;
     record.State = record.LastUsedFrame == m_Frame ? ThumbnailState::Queued : ThumbnailState::Dirty;
@@ -44,7 +56,10 @@ void ThumbnailCache::MarkDirty(AssetHandle handle)
     record.NextAttemptFrame = 0;
 }
 
-void ThumbnailCache::Remove(AssetHandle handle) { m_Records.erase(handle); }
+void ThumbnailCache::Remove(AssetHandle handle)
+{
+    m_Records.erase(handle);
+}
 
 std::optional<ThumbnailTicket> ThumbnailCache::TakeNext()
 {
@@ -52,14 +67,24 @@ std::optional<ThumbnailTicket> ThumbnailCache::TakeNext()
     for (auto current = m_Records.begin(); current != m_Records.end(); ++current)
     {
         const auto& record = current->second;
-        if (record.State != ThumbnailState::Queued || record.NextAttemptFrame > m_Frame) continue;
+        if (record.State != ThumbnailState::Queued || record.NextAttemptFrame > m_Frame)
+        {
+            continue;
+        }
         const auto priority = record.LastUsedFrame == m_Frame ? record.Priority : ThumbnailPriority::Background;
-        const auto bestPriority = best == m_Records.end() || best->second.LastUsedFrame != m_Frame ?
-            ThumbnailPriority::Background : best->second.Priority;
+        const auto bestPriority = best == m_Records.end() || best->second.LastUsedFrame != m_Frame
+                                      ? ThumbnailPriority::Background
+                                      : best->second.Priority;
         if (best == m_Records.end() || priority < bestPriority ||
-            (priority == bestPriority && record.Sequence < best->second.Sequence)) best = current;
+            (priority == bestPriority && record.Sequence < best->second.Sequence))
+        {
+            best = current;
+        }
     }
-    if (best == m_Records.end()) return std::nullopt;
+    if (best == m_Records.end())
+    {
+        return std::nullopt;
+    }
     best->second.State = ThumbnailState::Generating;
     return ThumbnailTicket{best->first, best->second.Revision};
 }
@@ -68,7 +93,10 @@ bool ThumbnailCache::Complete(const ThumbnailTicket& ticket, bool success)
 {
     const auto found = m_Records.find(ticket.Handle);
     if (found == m_Records.end() || found->second.Revision != ticket.Revision ||
-        found->second.State != ThumbnailState::Generating) return false;
+        found->second.State != ThumbnailState::Generating)
+    {
+        return false;
+    }
     found->second.State = success ? ThumbnailState::Ready : ThumbnailState::Failed;
     return true;
 }
@@ -77,7 +105,10 @@ bool ThumbnailCache::Defer(const ThumbnailTicket& ticket, uint64_t delayFrames)
 {
     const auto found = m_Records.find(ticket.Handle);
     if (found == m_Records.end() || found->second.Revision != ticket.Revision ||
-        found->second.State != ThumbnailState::Generating) return false;
+        found->second.State != ThumbnailState::Generating)
+    {
+        return false;
+    }
     found->second.State = ThumbnailState::Queued;
     found->second.Sequence = ++m_Sequence;
     found->second.NextAttemptFrame = m_Frame + delayFrames;
@@ -89,4 +120,3 @@ const ThumbnailRecord* ThumbnailCache::Find(AssetHandle handle) const
     const auto found = m_Records.find(handle);
     return found == m_Records.end() ? nullptr : &found->second;
 }
-

@@ -5,7 +5,11 @@
 
 namespace RayTelemetry
 {
-enum Provider : uint32_t { Radiance = 1u, ShadowAo = 2u };
+enum Provider : uint32_t
+{
+    Radiance = 1u,
+    ShadowAo = 2u
+};
 
 struct Counts
 {
@@ -23,8 +27,8 @@ struct Counts
     }
 };
 
-inline Counts Decode(const std::array<uint32_t, RAY_TELEMETRY_CHANNEL_COUNT * 2>& words,
-    uint64_t storedSerial, uint64_t expectedSerial, bool requested, uint32_t active, uint32_t measured)
+inline Counts Decode(const std::array<uint32_t, RAY_TELEMETRY_CHANNEL_COUNT * 2>& words, uint64_t storedSerial,
+                     uint64_t expectedSerial, bool requested, uint32_t active, uint32_t measured)
 {
     Counts counts;
     counts.Serial = expectedSerial;
@@ -33,8 +37,12 @@ inline Counts Decode(const std::array<uint32_t, RAY_TELEMETRY_CHANNEL_COUNT * 2>
     counts.MeasuredProviders = measured;
     counts.Valid = requested && storedSerial == expectedSerial;
     if (counts.Valid)
+    {
         for (size_t channel = 0; channel < counts.Rays.size(); ++channel)
+        {
             counts.Rays[channel] = uint64_t(words[channel * 2]) | (uint64_t(words[channel * 2 + 1]) << 32);
+        }
+    }
     return counts;
 }
-}
+} // namespace RayTelemetry

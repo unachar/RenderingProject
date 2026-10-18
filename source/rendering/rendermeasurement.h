@@ -92,13 +92,19 @@ inline Summary Summarize(const std::vector<Sample>& samples)
         const size_t slowCount = frameTimes.size() / 100 + (frameTimes.size() % 100 != 0 ? 1 : 0);
         long double slowTotal = 0.0;
         for (size_t index = 0; index < slowCount; ++index)
+        {
             slowTotal += frameTimes[index];
+        }
         result.LowOnePercentFps = static_cast<double>(1000.0L * slowCount / slowTotal);
     }
     if (result.CpuSamples != 0)
+    {
         result.CpuMeanMs = static_cast<double>(cpuTotal / result.CpuSamples);
+    }
     if (result.GpuSamples != 0)
+    {
         result.GpuMeanMs = static_cast<double>(gpuTotal / result.GpuSamples);
+    }
     return result;
 }
 
@@ -118,19 +124,27 @@ inline double ExclusiveTicks(const EventInterval& parent, const std::vector<Even
 {
     const double unavailable = std::numeric_limits<double>::quiet_NaN();
     if (!parent.Valid || parent.End < parent.Begin)
+    {
         return unavailable;
+    }
 
     std::vector<std::pair<uint64_t, uint64_t>> children;
     for (const EventInterval& event : events)
     {
         if (event.ParentId != parent.Id || event.QueueId != parent.QueueId)
+        {
             continue;
+        }
         if (!event.Valid || event.End < event.Begin)
+        {
             return unavailable;
+        }
         const uint64_t begin = (std::max)(parent.Begin, event.Begin);
         const uint64_t end = (std::min)(parent.End, event.End);
         if (end > begin)
+        {
             children.emplace_back(begin, end);
+        }
     }
     std::sort(children.begin(), children.end());
     uint64_t covered = 0;
@@ -152,4 +166,4 @@ inline double ExclusiveTicks(const EventInterval& parent, const std::vector<Even
     covered += rangeEnd - rangeBegin;
     return static_cast<double>(parent.End - parent.Begin - covered);
 }
-}
+} // namespace RenderMeasurement

@@ -43,8 +43,9 @@ int main()
         for (auto mode : {MaterialShadowMode::Auto, MaterialShadowMode::Transmittance, MaterialShadowMode::Opaque})
         {
             authored.ShadowMode = mode;
-            Check(MaterialSerializer::Save(path, authored, error) && MaterialSerializer::Load(path, loaded, error) && loaded == authored,
-                "optical shadow modes roundtrip");
+            Check(MaterialSerializer::Save(path, authored, error) && MaterialSerializer::Load(path, loaded, error) &&
+                      loaded == authored,
+                  "optical shadow modes roundtrip");
         }
         auto invalidOptics = authored;
         invalidOptics.AbsorptionCoefficient[0] = -0.01f;
@@ -75,7 +76,8 @@ int main()
         const auto moved = root / "Environment" / "Wall.material";
         Check(registry.Move(handle, moved, error), error.c_str());
         registry.Refresh(error);
-        Check(registry.Resolve(handle) == std::filesystem::absolute(moved).lexically_normal(), "move preserves identity");
+        Check(registry.Resolve(handle) == std::filesystem::absolute(moved).lexically_normal(),
+              "move preserves identity");
         AssetRegistry reopened(root);
         Check(reopened.Refresh(error), error.c_str());
         Check(reopened.Resolve(handle) == registry.Resolve(handle), "identity survives registry restart");
@@ -85,7 +87,8 @@ int main()
         Check(MaterialSerializer::Load(copy, loaded, error) && loaded == authored, "duplicate preserves contents");
         const auto collision = root / "Collision.material";
         std::filesystem::copy_file(moved, collision, std::filesystem::copy_options::overwrite_existing);
-        std::filesystem::copy_file(moved.string() + ".meta", collision.string() + ".meta", std::filesystem::copy_options::overwrite_existing);
+        std::filesystem::copy_file(moved.string() + ".meta", collision.string() + ".meta",
+                                   std::filesystem::copy_options::overwrite_existing);
         Check(!registry.Refresh(error), "duplicate metadata is reported");
         Check(registry.Resolve(handle).empty(), "ambiguous handles do not silently select an asset");
         // Leave the fixture reusable without recursively removing any directory.

@@ -3,8 +3,6 @@
 
 class GridSystem : public SystemBase
 {
-public:
+  public:
     void Draw(RenderPass renderPass, bool receivingPostProcessOnly) override;
 };
-
-

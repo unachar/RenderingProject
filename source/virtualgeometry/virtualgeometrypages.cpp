@@ -12,8 +12,7 @@ namespace VirtualGeometryPages
 {
 bool Validate(const VirtualGeometryGPU::PackedAsset& metadata, std::span<const uint8_t> pinned, std::string& error)
 {
-    auto fail = [&](const char* message)
-    {
+    auto fail = [&](const char* message) {
         error = message;
         return false;
     };
@@ -42,15 +41,17 @@ bool Validate(const VirtualGeometryGPU::PackedAsset& metadata, std::span<const u
         }
         if (group.Level >= 31 || !group.ChildCount || !group.ParentCount ||
             uint64_t(group.FirstChild) + group.ChildCount > metadata.HierarchyIndices.size() ||
-            uint64_t(group.FirstParent) + group.ParentCount > metadata.HierarchyIndices.size() ||
-            !finiteBounds || !std::isfinite(group.MaxError) || !std::isfinite(group.MinError) || group.MinError < 0 || group.MaxError < group.MinError)
+            uint64_t(group.FirstParent) + group.ParentCount > metadata.HierarchyIndices.size() || !finiteBounds ||
+            !std::isfinite(group.MaxError) || !std::isfinite(group.MinError) || group.MinError < 0 ||
+            group.MaxError < group.MinError)
         {
             return fail("Invalid paged group range/error");
         }
         for (uint32_t child = 0; child < group.ChildCount; ++child)
         {
             uint32_t cluster = metadata.HierarchyIndices[group.FirstChild + child];
-            if (cluster >= consumers.size() || consumers[cluster] != UINT32_MAX || metadata.Clusters[cluster].Level != group.Level)
+            if (cluster >= consumers.size() || consumers[cluster] != UINT32_MAX ||
+                metadata.Clusters[cluster].Level != group.Level)
             {
                 return fail("Invalid paged child link");
             }
@@ -59,7 +60,8 @@ bool Validate(const VirtualGeometryGPU::PackedAsset& metadata, std::span<const u
         for (uint32_t parent = 0; parent < group.ParentCount; ++parent)
         {
             uint32_t cluster = metadata.HierarchyIndices[group.FirstParent + parent];
-            if (cluster >= producers.size() || producers[cluster] != UINT32_MAX || metadata.Clusters[cluster].Level != group.Level + 1)
+            if (cluster >= producers.size() || producers[cluster] != UINT32_MAX ||
+                metadata.Clusters[cluster].Level != group.Level + 1)
             {
                 return fail("Invalid paged parent link");
             }
@@ -84,19 +86,21 @@ bool Validate(const VirtualGeometryGPU::PackedAsset& metadata, std::span<const u
         }
         bool encoded = (cluster.Flags & VirtualGeometryCompression::ClusterFlag) != 0;
         uint64_t vertexEnd = uint64_t(cluster.VertexOffset) + uint64_t(cluster.VertexCount) * 48;
-        uint64_t triangleEnd = (uint64_t(cluster.TriangleOffset) + uint64_t(cluster.TriangleCount) * 3 + 3) & ~uint64_t(3);
+        uint64_t triangleEnd =
+            (uint64_t(cluster.TriangleOffset) + uint64_t(cluster.TriangleCount) * 3 + 3) & ~uint64_t(3);
         bool invalidLayout = vertexEnd > PageBytes || triangleEnd > PageBytes || cluster.TriangleOffset < vertexEnd;
         if (encoded)
         {
             uint64_t end = uint64_t(cluster.VertexOffset) + cluster.Padding;
             invalidLayout = cluster.Padding < VirtualGeometryCompression::HeaderBytes || cluster.Padding % 4 ||
-                end > PageBytes || cluster.TriangleOffset < cluster.VertexOffset + VirtualGeometryCompression::HeaderBytes ||
-                cluster.TriangleOffset >= end;
+                            end > PageBytes ||
+                            cluster.TriangleOffset < cluster.VertexOffset + VirtualGeometryCompression::HeaderBytes ||
+                            cluster.TriangleOffset >= end;
         }
         if (!cluster.VertexCount || cluster.VertexCount > 64 || !cluster.TriangleCount || cluster.TriangleCount > 124 ||
             cluster.PageIndex >= pinned.size() || cluster.VertexOffset % 4 || cluster.TriangleOffset % 4 ||
-            invalidLayout || !finiteBounds || cluster.Level >= 32 ||
-            cluster.GroupIndex != consumers[index] || cluster.GeneratingGroupIndex != producers[index] ||
+            invalidLayout || !finiteBounds || cluster.Level >= 32 || cluster.GroupIndex != consumers[index] ||
+            cluster.GeneratingGroupIndex != producers[index] ||
             bool(roots[index]) != (consumers[index] == UINT32_MAX) ||
             (cluster.Level != 0 && producers[index] == UINT32_MAX) || (roots[index] && !pinned[cluster.PageIndex]))
         {
@@ -112,13 +116,14 @@ bool Build(const VirtualGeometryAsset& asset, PagedAsset& output, std::string& e
     return Build(asset, VGCompressionSettings{}, output, error);
 }
 
-bool Build(const VirtualGeometryAsset& asset, const VGCompressionSettings& settings, PagedAsset& output, std::string& error)
+bool Build(const VirtualGeometryAsset& asset, const VGCompressionSettings& settings, PagedAsset& output,
+           std::string& error)
 {
     return Build(asset, VirtualGeometryCompression::Input{}, settings, output, error);
 }
 
 bool Build(const VirtualGeometryAsset& asset, const VirtualGeometryCompression::Input& attributes,
-    const VGCompressionSettings& settings, PagedAsset& output, std::string& error)
+           const VGCompressionSettings& settings, PagedAsset& output, std::string& error)
 {
     output = {};
     try
@@ -156,8 +161,7 @@ bool Build(const VirtualGeometryAsset& asset, const VirtualGeometryCompression::
         }
         std::vector<uint32_t> order(asset.Clusters.size());
         std::iota(order.begin(), order.end(), 0u);
-        std::stable_sort(order.begin(), order.end(), [&](uint32_t first, uint32_t second)
-        {
+        std::stable_sort(order.begin(), order.end(), [&](uint32_t first, uint32_t second) {
             return roots[first] > roots[second];
         });
         uint32_t rawStride = 48;
@@ -170,7 +174,8 @@ bool Build(const VirtualGeometryAsset& asset, const VirtualGeometryCompression::
                 {
                     rawStride += 8;
                 }
-                else if (stream.Attribute == VirtualGeometryCompression::Tangent || stream.Attribute == VirtualGeometryCompression::Color)
+                else if (stream.Attribute == VirtualGeometryCompression::Tangent ||
+                         stream.Attribute == VirtualGeometryCompression::Color)
                 {
                     rawStride += 16;
                 }
@@ -193,7 +198,8 @@ bool Build(const VirtualGeometryAsset& asset, const VirtualGeometryCompression::
                 indices.push_back(asset.TriangleIndices[source.TriangleOffset + triangle]);
             }
             std::vector<uint8_t> payload;
-            if (settings.Enabled && !VirtualGeometryCompression::EncodeCluster(input, plan, source.VertexOffset, source.VertexCount, indices, payload, error))
+            if (settings.Enabled && !VirtualGeometryCompression::EncodeCluster(
+                                        input, plan, source.VertexOffset, source.VertexCount, indices, payload, error))
             {
                 error = asset.DebugName + " cluster " + std::to_string(index) + ": " + error;
                 return false;
@@ -247,8 +253,8 @@ bool Build(const VirtualGeometryAsset& asset, const VirtualGeometryCompression::
             uint32_t indexOffset = source.VertexCount * 48;
             if (settings.Enabled)
             {
-                indexOffset = uint32_t(payload[24]) | (uint32_t(payload[25]) << 8) |
-                    (uint32_t(payload[26]) << 16) | (uint32_t(payload[27]) << 24);
+                indexOffset = uint32_t(payload[24]) | (uint32_t(payload[25]) << 8) | (uint32_t(payload[26]) << 16) |
+                              (uint32_t(payload[27]) << 24);
                 target.Flags |= VirtualGeometryCompression::ClusterFlag;
                 target.Padding = total;
             }
@@ -274,9 +280,11 @@ bool Build(const VirtualGeometryAsset& asset, const VirtualGeometryCompression::
             if (plan.PositionError > 0)
             {
                 target.Cone[3] = 1;
-                target.LodError = std::nextafter(target.LodError + plan.PositionError, std::numeric_limits<float>::infinity());
+                target.LodError =
+                    std::nextafter(target.LodError + plan.PositionError, std::numeric_limits<float>::infinity());
             }
-            result.Compression.RawBytes += uint64_t(source.VertexCount)*rawStride + uint64_t(source.TriangleCount)*3;
+            result.Compression.RawBytes +=
+                uint64_t(source.VertexCount) * rawStride + uint64_t(source.TriangleCount) * 3;
             result.Compression.EncodedBytes += total;
             if (!settings.Enabled || (settings.AllowIndex8 && source.VertexCount <= 256))
             {
@@ -295,8 +303,10 @@ bool Build(const VirtualGeometryAsset& asset, const VirtualGeometryCompression::
             // Group spheres already cover all descendant source vertices.
             if (plan.PositionError > 0)
             {
-                group.Bounds[3] = std::nextafter(group.Bounds[3] + plan.PositionError, std::numeric_limits<float>::infinity());
-                group.MaxError = std::nextafter(group.MaxError + plan.PositionError, std::numeric_limits<float>::infinity());
+                group.Bounds[3] =
+                    std::nextafter(group.Bounds[3] + plan.PositionError, std::numeric_limits<float>::infinity());
+                group.MaxError =
+                    std::nextafter(group.MaxError + plan.PositionError, std::numeric_limits<float>::infinity());
             }
         }
         result.Metadata.Vertices = {};
@@ -315,4 +325,4 @@ bool Build(const VirtualGeometryAsset& asset, const VirtualGeometryCompression::
         return false;
     }
 }
-}
+} // namespace VirtualGeometryPages

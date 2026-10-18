@@ -8,27 +8,26 @@
 
 void PostProcessSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 {
-	if (renderPass != RenderPass::PrimaryScene || receivingPostProcessOnly)
-	{
-		return;
-	}
+    if (renderPass != RenderPass::PrimaryScene || receivingPostProcessOnly)
+    {
+        return;
+    }
 
-	const EntityID cameraEntity = Camera::GetCameraEntity();
-	if (cameraEntity == g_kINVALID_ENTITY ||
-		!ComponentManager::HasComponent<CameraComponent>(cameraEntity) ||
-		!ComponentManager::HasComponent<PostProcessComponent>(cameraEntity))
-	{
-		return;
-	}
+    const EntityID cameraEntity = Camera::GetCameraEntity();
+    if (cameraEntity == g_kINVALID_ENTITY || !ComponentManager::HasComponent<CameraComponent>(cameraEntity) ||
+        !ComponentManager::HasComponent<PostProcessComponent>(cameraEntity))
+    {
+        return;
+    }
 
-	auto& camera = ComponentManager::GetComponent<CameraComponent>(cameraEntity);
-	auto& postProcess = ComponentManager::GetComponent<PostProcessComponent>(cameraEntity);
+    auto& camera = ComponentManager::GetComponent<CameraComponent>(cameraEntity);
+    auto& postProcess = ComponentManager::GetComponent<PostProcessComponent>(cameraEntity);
 
-	PostProcessComponent effectivePostProcess = postProcess;
-	if (!camera.EnablePostProcess)
-	{
-		effectivePostProcess.Type = PostProcessType::NONE;
-	}
- 
+    PostProcessComponent effectivePostProcess = postProcess;
+    if (!camera.EnablePostProcess)
+    {
+        effectivePostProcess.Type = PostProcessType::NONE;
+    }
+
     PostProcessPass::ApplyPostProcess(effectivePostProcess);
- }
+}

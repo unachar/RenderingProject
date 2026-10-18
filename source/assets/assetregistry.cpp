@@ -15,10 +15,7 @@ AssetHandle GenerateAssetHandle()
     return handle;
 }
 
-AssetRegistry::AssetRegistry(const std::filesystem::path& root)
-    : m_RootSpec(root)
-{
-}
+AssetRegistry::AssetRegistry(const std::filesystem::path& root) : m_RootSpec(root) {}
 
 const std::filesystem::path& AssetRegistry::Root() const
 {
@@ -53,8 +50,7 @@ bool AssetRegistry::Contains(const std::filesystem::path& path) const
 AssetType AssetRegistry::Classify(const std::filesystem::path& path)
 {
     std::string extension = path.extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char letter)
-    {
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char letter) {
         return static_cast<char>(std::tolower(letter));
     });
     if (extension == ".material")
@@ -70,7 +66,10 @@ AssetType AssetRegistry::Classify(const std::filesystem::path& path)
     }
     for (const char* mesh : {".obj", ".fbx", ".gltf", ".glb", ".vgmesh", ".vgp2"})
     {
-        if (extension == mesh) return AssetType::Mesh;
+        if (extension == mesh)
+        {
+            return AssetType::Mesh;
+        }
     }
     return AssetType::Unknown;
 }
@@ -151,7 +150,8 @@ bool AssetRegistry::Refresh(std::string& error)
     error.clear();
     std::error_code filesystemError;
     std::filesystem::recursive_directory_iterator iterator(Root(), filesystemError);
-    for (const auto end = std::filesystem::recursive_directory_iterator(); iterator != end && !filesystemError; iterator.increment(filesystemError))
+    for (const auto end = std::filesystem::recursive_directory_iterator(); iterator != end && !filesystemError;
+         iterator.increment(filesystemError))
     {
         const auto type = Classify(iterator->path());
         if (type == AssetType::Unknown || !iterator->is_regular_file(filesystemError))
@@ -185,7 +185,8 @@ bool AssetRegistry::Move(AssetHandle handle, const std::filesystem::path& destin
     const auto target = std::filesystem::absolute(destination).lexically_normal();
     std::error_code filesystemError;
     if (source.empty() || !Contains(target) || Classify(target) != TypeOf(handle) ||
-        std::filesystem::exists(target, filesystemError) || std::filesystem::exists(target.wstring() + L".meta", filesystemError))
+        std::filesystem::exists(target, filesystemError) ||
+        std::filesystem::exists(target.wstring() + L".meta", filesystemError))
     {
         error = "Invalid or occupied asset destination";
         return false;
@@ -237,5 +238,3 @@ AssetHandle AssetRegistry::Duplicate(AssetHandle handle, const std::filesystem::
     }
     return copy;
 }
-
-

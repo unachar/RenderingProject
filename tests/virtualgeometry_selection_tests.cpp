@@ -65,7 +65,7 @@ void ExpectCut(const VirtualGeometrySelection::Result& result, std::vector<uint3
     std::sort(expected.begin(), expected.end());
     Check(actual == expected, "Incorrect hierarchy cut or duplicate coverage");
 }
-}
+} // namespace
 
 void TestVirtualGeometrySelection()
 {

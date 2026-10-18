@@ -4,6 +4,6 @@
 
 class MovementSystem : public SystemBase
 {
-public:
+  public:
     void Update() override;
 };

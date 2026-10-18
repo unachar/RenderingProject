@@ -150,7 +150,8 @@ void World::WaitForFrameLimit()
         }
     }
 
-    const long long period = static_cast<long long>(static_cast<double>(m_Frequency) / static_cast<double>(m_TargetFrameRate));
+    const long long period =
+        static_cast<long long>(static_cast<double>(m_Frequency) / static_cast<double>(m_TargetFrameRate));
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     if (s_NextDeadline == 0 || now.QuadPart - s_NextDeadline > period)
@@ -176,7 +177,8 @@ void World::WaitForFrameLimit()
         {
             const long long sleepTicks = remaining - spinTicks;
             LARGE_INTEGER due;
-            due.QuadPart = -static_cast<long long>(static_cast<double>(sleepTicks) * 10000000.0 / static_cast<double>(m_Frequency));
+            due.QuadPart = -static_cast<long long>(static_cast<double>(sleepTicks) * 10000000.0 /
+                                                   static_cast<double>(m_Frequency));
             if (due.QuadPart < 0 && SetWaitableTimer(s_Timer, &due, 0, nullptr, nullptr, FALSE))
             {
                 WaitForSingleObject(s_Timer, 1000);
@@ -197,13 +199,19 @@ void World::WaitForFrameLimit()
 
 float World::GetDeltaTime()
 {
-    if (RenderBenchmark::IsEnabled()) return 1.0f / 60.0f;
+    if (RenderBenchmark::IsEnabled())
+    {
+        return 1.0f / 60.0f;
+    }
     return m_DeltaTime;
 }
 
 float World::GetRawDeltaTime()
 {
-    if (RenderBenchmark::IsEnabled()) return 1.0f / 60.0f;
+    if (RenderBenchmark::IsEnabled())
+    {
+        return 1.0f / 60.0f;
+    }
     return m_RawDeltaTime;
 }
 
@@ -246,5 +254,3 @@ void World::SetTargetFrameRate(int fps)
 {
     m_TargetFrameRate = max(1, min(fps, 360));
 }
-
-

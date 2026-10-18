@@ -1,8 +1,9 @@
 #pragma once
 #include <cstdint>
+
 class GPUDrivenValidation
 {
-public:
+  public:
     static bool Enabled();
     static bool IsGpuValidationRun();
     static void BeforeFrame(uint64_t frame);
@@ -10,4 +11,3 @@ public:
     static bool Finish();
     static void Trace(const char* stage);
 };
-

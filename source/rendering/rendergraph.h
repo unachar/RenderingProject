@@ -7,135 +7,148 @@
 #include <string>
 #include <vector>
 
-
 class RenderGraph
 {
-public:
-    enum class Queue { Graphics,Compute };
-	struct ResourceHandle
-	{
-		static constexpr uint32_t InvalidIndex = UINT32_MAX;
-		uint32_t Index = InvalidIndex;
+  public:
+    enum class Queue
+    {
+        Graphics,
+        Compute
+    };
 
-		bool IsValid() const { return Index != InvalidIndex; }
-	};
+    struct ResourceHandle
+    {
+        static constexpr uint32_t InvalidIndex = UINT32_MAX;
+        uint32_t Index = InvalidIndex;
 
-	enum class Access : uint8_t
-	{
-		Read,
-		Write,
-		ReadWrite
-	};
+        bool IsValid() const
+        {
+            return Index != InvalidIndex;
+        }
+    };
 
-	struct ImportedResource
-	{
-		const char* Name = nullptr;
-		ID3D12Resource* Resource = nullptr;
-		D3D12_RESOURCE_STATES InitialState = D3D12_RESOURCE_STATE_COMMON;
-		D3D12_RESOURCE_STATES FinalState = D3D12_RESOURCE_STATE_COMMON;
-		bool HasFinalState = false;
-		bool AutomaticBarriers = true;
-		UINT Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-	};
+    enum class Access : uint8_t
+    {
+        Read,
+        Write,
+        ReadWrite
+    };
 
-	class PassBuilder
-	{
-	public:
-		PassBuilder& Read(
-			ResourceHandle resource,
-			D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON);
-		PassBuilder& Write(
-			ResourceHandle resource,
-			D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON);
-		PassBuilder& ReadWrite(
-			ResourceHandle resource,
-			D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON);
+    struct ImportedResource
+    {
+        const char* Name = nullptr;
+        ID3D12Resource* Resource = nullptr;
+        D3D12_RESOURCE_STATES InitialState = D3D12_RESOURCE_STATE_COMMON;
+        D3D12_RESOURCE_STATES FinalState = D3D12_RESOURCE_STATE_COMMON;
+        bool HasFinalState = false;
+        bool AutomaticBarriers = true;
+        UINT Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    };
 
-	private:
-		friend class RenderGraph;
-		PassBuilder(RenderGraph& graph, uint32_t passIndex)
-			: m_Graph(graph), m_PassIndex(passIndex)
-		{
-		}
+    class PassBuilder
+    {
+      public:
+        PassBuilder& Read(ResourceHandle resource, D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON);
+        PassBuilder& Write(ResourceHandle resource, D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON);
+        PassBuilder& ReadWrite(ResourceHandle resource, D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON);
 
-		PassBuilder& Use(
-			ResourceHandle resource,
-			D3D12_RESOURCE_STATES state,
-			Access access);
+      private:
+        friend class RenderGraph;
 
-		RenderGraph& m_Graph;
-		uint32_t m_PassIndex;
-	};
+        PassBuilder(RenderGraph& graph, uint32_t passIndex) : m_Graph(graph), m_PassIndex(passIndex) {}
 
-	using SetupCallback = function<void(PassBuilder&)>;
-	using ExecuteCallback = function<void(ID3D12GraphicsCommandList*)>;
+        PassBuilder& Use(ResourceHandle resource, D3D12_RESOURCE_STATES state, Access access);
 
+        RenderGraph& m_Graph;
+        uint32_t m_PassIndex;
+    };
 
-	ResourceHandle CreateLogicalResource(const char* name);
+    using SetupCallback = function<void(PassBuilder&)>;
+    using ExecuteCallback = function<void(ID3D12GraphicsCommandList*)>;
 
+    ResourceHandle CreateLogicalResource(const char* name);
 
-	ResourceHandle ImportResource(const ImportedResource& resource);
-	ResourceHandle FindImportedResource(ID3D12Resource* resource) const;
+    ResourceHandle ImportResource(const ImportedResource& resource);
+    ResourceHandle FindImportedResource(ID3D12Resource* resource) const;
 
-	void AddPass(
-		const char* name,
-		const SetupCallback& setup,
-		const ExecuteCallback& execute);
+    void AddPass(const char* name, const SetupCallback& setup, const ExecuteCallback& execute);
 
-    void SetLastPassQueue(Queue queue) { if(!m_Passes.empty())m_Passes.back().QueueType=queue; }
-    ResourceHandle CreateTransientResource(const char* name,const D3D12_RESOURCE_DESC& desc,D3D12_RESOURCE_STATES initial=D3D12_RESOURCE_STATE_COMMON);
-    bool AllocateTransients(ID3D12Device* device,TransientArena& arena);
-    ID3D12Resource* GetResource(ResourceHandle handle) const { return handle.Index<m_Resources.size()?m_Resources[handle.Index].Resource:nullptr; }
-	bool Compile();
-	bool Execute(ID3D12GraphicsCommandList* commandList);
-	void Reset();
+    void SetLastPassQueue(Queue queue)
+    {
+        if (!m_Passes.empty())
+        {
+            m_Passes.back().QueueType = queue;
+        }
+    }
 
-	const string& GetLastError() const { return m_LastError; }
-	size_t GetPassCount() const { return m_Passes.size(); }
-	const vector<uint32_t>& GetExecutionOrder() const { return m_ExecutionOrder; }
+    ResourceHandle CreateTransientResource(const char* name, const D3D12_RESOURCE_DESC& desc,
+                                           D3D12_RESOURCE_STATES initial = D3D12_RESOURCE_STATE_COMMON);
+    bool AllocateTransients(ID3D12Device* device, TransientArena& arena);
 
-private:
+    ID3D12Resource* GetResource(ResourceHandle handle) const
+    {
+        return handle.Index < m_Resources.size() ? m_Resources[handle.Index].Resource : nullptr;
+    }
+
+    bool Compile();
+    bool Execute(ID3D12GraphicsCommandList* commandList);
+    void Reset();
+
+    const string& GetLastError() const
+    {
+        return m_LastError;
+    }
+
+    size_t GetPassCount() const
+    {
+        return m_Passes.size();
+    }
+
+    const vector<uint32_t>& GetExecutionOrder() const
+    {
+        return m_ExecutionOrder;
+    }
+
+  private:
     friend class RenderGraphQueueExecutor;
-    TransientArena* m_Arena=nullptr;
-	struct Usage
-	{
-		ResourceHandle Resource;
-		D3D12_RESOURCE_STATES State = D3D12_RESOURCE_STATE_COMMON;
-		Access AccessMode = Access::Read;
-	};
+    TransientArena* m_Arena = nullptr;
 
-	struct ResourceRecord
-	{
-        bool Transient=false; D3D12_RESOURCE_DESC Desc{}; UINT ArenaIndex=UINT_MAX;
-		string Name;
-		ID3D12Resource* Resource = nullptr;
-		D3D12_RESOURCE_STATES InitialState = D3D12_RESOURCE_STATE_COMMON;
-		D3D12_RESOURCE_STATES FinalState = D3D12_RESOURCE_STATE_COMMON;
-		bool HasFinalState = false;
-		bool AutomaticBarriers = true;
-		UINT Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-	};
+    struct Usage
+    {
+        ResourceHandle Resource;
+        D3D12_RESOURCE_STATES State = D3D12_RESOURCE_STATE_COMMON;
+        Access AccessMode = Access::Read;
+    };
 
-	struct PassRecord
-	{
-        Queue QueueType=Queue::Graphics;
-		string Name;
-		vector<Usage> Usages;
-		vector<uint32_t> Dependencies;
-		ExecuteCallback Execute;
-	};
+    struct ResourceRecord
+    {
+        bool Transient = false;
+        D3D12_RESOURCE_DESC Desc{};
+        UINT ArenaIndex = UINT_MAX;
+        string Name;
+        ID3D12Resource* Resource = nullptr;
+        D3D12_RESOURCE_STATES InitialState = D3D12_RESOURCE_STATE_COMMON;
+        D3D12_RESOURCE_STATES FinalState = D3D12_RESOURCE_STATE_COMMON;
+        bool HasFinalState = false;
+        bool AutomaticBarriers = true;
+        UINT Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    };
 
-	void AddUsage(
-		uint32_t passIndex,
-		ResourceHandle resource,
-		D3D12_RESOURCE_STATES state,
-		Access access);
-	bool Fail(const string& message);
+    struct PassRecord
+    {
+        Queue QueueType = Queue::Graphics;
+        string Name;
+        vector<Usage> Usages;
+        vector<uint32_t> Dependencies;
+        ExecuteCallback Execute;
+    };
 
-	vector<ResourceRecord> m_Resources;
-	vector<PassRecord> m_Passes;
-	vector<uint32_t> m_ExecutionOrder;
-	string m_LastError;
-	bool m_IsCompiled = false;
+    void AddUsage(uint32_t passIndex, ResourceHandle resource, D3D12_RESOURCE_STATES state, Access access);
+    bool Fail(const string& message);
+
+    vector<ResourceRecord> m_Resources;
+    vector<PassRecord> m_Passes;
+    vector<uint32_t> m_ExecutionOrder;
+    string m_LastError;
+    bool m_IsCompiled = false;
 };
-

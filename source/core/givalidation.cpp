@@ -45,7 +45,11 @@ void Check(bool passed, const char* message)
 
 EntityID Cube(XMFLOAT3 position, XMFLOAT3 scale, AssetHandle material)
 {
-    auto entity = World::CreateEntity().Add<TransformComponent>().Add<MeshComponent>().Add<MaterialComponent>().Add<NameComponent>();
+    auto entity = World::CreateEntity()
+                      .Add<TransformComponent>()
+                      .Add<MeshComponent>()
+                      .Add<MaterialComponent>()
+                      .Add<NameComponent>();
     entity.SetName("GI validation fixture");
     entity.Get<TransformComponent>().Position = position;
     entity.Get<TransformComponent>().Scale = scale;
@@ -79,8 +83,9 @@ XMFLOAT3 SampleReceiver(bool measureNoise = false)
     Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
     const XMFLOAT3 receiver{0, -0.89f, 0};
     XMFLOAT3 pixel;
-    XMStoreFloat3(&pixel, XMVector3Project(XMLoadFloat3(&receiver), 0, 0,
-        static_cast<float>(image.Width), static_cast<float>(image.Height), 0, 1, projection, view, XMMatrixIdentity()));
+    XMStoreFloat3(&pixel,
+                  XMVector3Project(XMLoadFloat3(&receiver), 0, 0, static_cast<float>(image.Width),
+                                   static_cast<float>(image.Height), 0, 1, projection, view, XMMatrixIdentity()));
     XMFLOAT3 sum{};
     UINT samples = 0;
     for (int y = -4; y <= 4; ++y)
@@ -113,7 +118,7 @@ XMFLOAT3 SampleReceiver(bool measureNoise = false)
     }
     return {sum.x / divisor, sum.y / divisor, sum.z / divisor};
 }
-}
+} // namespace
 
 bool GiValidation::Enabled()
 {
@@ -123,8 +128,16 @@ bool GiValidation::Enabled()
 
 void GiValidation::BeforeFrame(uint64_t frame)
 {
-    if (CelestialOcclusionValidation::Enabled()) { CelestialOcclusionValidation::BeforeFrame(frame); return; }
-    if (TemporalLightingValidation::Enabled()) { TemporalLightingValidation::BeforeFrame(frame); return; }
+    if (CelestialOcclusionValidation::Enabled())
+    {
+        CelestialOcclusionValidation::BeforeFrame(frame);
+        return;
+    }
+    if (TemporalLightingValidation::Enabled())
+    {
+        TemporalLightingValidation::BeforeFrame(frame);
+        return;
+    }
     lastFrame = frame;
     if (frame == 0)
     {
@@ -264,8 +277,16 @@ void GiValidation::BeforeFrame(uint64_t frame)
 
 void GiValidation::AfterFrame(uint64_t frame)
 {
-    if (CelestialOcclusionValidation::Enabled()) { CelestialOcclusionValidation::AfterFrame(frame); return; }
-    if (TemporalLightingValidation::Enabled()) { TemporalLightingValidation::AfterFrame(frame); return; }
+    if (CelestialOcclusionValidation::Enabled())
+    {
+        CelestialOcclusionValidation::AfterFrame(frame);
+        return;
+    }
+    if (TemporalLightingValidation::Enabled())
+    {
+        TemporalLightingValidation::AfterFrame(frame);
+        return;
+    }
     if (frame >= 12 && frame <= 23)
     {
         SampleReceiver(true);
@@ -282,7 +303,8 @@ void GiValidation::AfterFrame(uint64_t frame)
         }
         mean /= noiseSum.size();
         const double relativeNoise = sqrt(variance / noiseSum.size()) / max(mean, 0.00001);
-        WriteGraphicsLog("GI temporal noise: relative_rms=%.6f frames=%u pixels=%zu\n", relativeNoise, noiseFrames, noiseSum.size());
+        WriteGraphicsLog("GI temporal noise: relative_rms=%.6f frames=%u pixels=%zu\n", relativeNoise, noiseFrames,
+                         noiseSum.size());
     }
     if (frame == 23 || frame == 47 || frame == 71 || frame == 95)
     {
@@ -293,7 +315,8 @@ void GiValidation::AfterFrame(uint64_t frame)
         {
             if (pass.Name.rfind("Realtime GI", 0) == 0)
             {
-                WriteGraphicsLog("GI timing frame=%llu pass=%s gpu=%.3fms cpu=%.3fms\n", frame, pass.Name.c_str(), pass.GpuMs, pass.CpuMs);
+                WriteGraphicsLog("GI timing frame=%llu pass=%s gpu=%.3fms cpu=%.3fms\n", frame, pass.Name.c_str(),
+                                 pass.GpuMs, pass.CpuMs);
             }
         }
         if (frame == 23)
@@ -302,11 +325,14 @@ void GiValidation::AfterFrame(uint64_t frame)
             {
                 const bool idle = GraphicsDevice::WaitForGpuIdle();
                 Check(idle, "GI ray telemetry fence completes");
-                const auto counts = idle ? RayTelemetry::Data().ConsumeCurrent(RenderProfiler::GetFrameSerial()) : RayTelemetry::Counts{};
+                const auto counts = idle ? RayTelemetry::Data().ConsumeCurrent(RenderProfiler::GetFrameSerial())
+                                         : RayTelemetry::Counts{};
                 Check(counts.ProviderKnown(RayTelemetry::Radiance) && counts.Rays[RAY_TELEMETRY_GI] > 0,
-                    "GI primary rays are measured in the actual diffuse shader");
-                WriteGraphicsLog("GI ray telemetry serial=%llu primary=%llu visibility=%llu restir=%llu\n", counts.Serial,
-                    counts.Rays[RAY_TELEMETRY_GI], counts.Rays[RAY_TELEMETRY_RADIANCE_SHADOW], counts.Rays[RAY_TELEMETRY_RESTIR_VISIBILITY]);
+                      "GI primary rays are measured in the actual diffuse shader");
+                WriteGraphicsLog("GI ray telemetry serial=%llu primary=%llu visibility=%llu restir=%llu\n",
+                                 counts.Serial, counts.Rays[RAY_TELEMETRY_GI],
+                                 counts.Rays[RAY_TELEMETRY_RADIANCE_SHADOW],
+                                 counts.Rays[RAY_TELEMETRY_RESTIR_VISIBILITY]);
             }
             if (Raytracing::GetSettings().RadianceDenoiser == Raytracing::DenoiserType::Optix)
             {
@@ -316,7 +342,9 @@ void GiValidation::AfterFrame(uint64_t frame)
             Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
             const auto sourcePosition = ComponentManager::GetComponentUnchecked<TransformComponent>(emitter).Position;
             XMFLOAT4 clip;
-            XMStoreFloat4(&clip, XMVector4Transform(XMVectorSet(sourcePosition.x, sourcePosition.y, sourcePosition.z, 1), view * projection));
+            XMStoreFloat4(&clip,
+                          XMVector4Transform(XMVectorSet(sourcePosition.x, sourcePosition.y, sourcePosition.z, 1),
+                                             view * projection));
             Check(clip.y > clip.w, "emitter is outside camera frustum");
             redSignal = signal;
             Check(signal.x > signal.y + 0.05f, "offscreen red emission illuminates receiver");
@@ -326,7 +354,7 @@ void GiValidation::AfterFrame(uint64_t frame)
         {
             greenSignal = signal;
             Check(signal.y > redSignal.y + 0.1f && signal.x < redSignal.x * 0.3f,
-                "emission color edits update GI without stale red history");
+                  "emission color edits update GI without stale red history");
             RenderCapture::SaveScenePng(L"build/gi-tests/green.png");
         }
         if (frame == 71)
@@ -345,11 +373,12 @@ void GiValidation::AfterFrame(uint64_t frame)
     }
     if (frame == 105)
     {
-        Check(Raytracing::IsGiActive() && Raytracing::AreReflectionsActive(), "GI and reflections coexist after mode switch");
+        Check(Raytracing::IsGiActive() && Raytracing::AreReflectionsActive(),
+              "GI and reflections coexist after mode switch");
         if (Raytracing::GetSettings().RadianceDenoiser == Raytracing::DenoiserType::Optix)
         {
             Check(RayReflections::IsOptixGiActive() && RayReflections::IsOptixReflectionActive(),
-                "OptiX AI denoises GI and reflections in one frame");
+                  "OptiX AI denoises GI and reflections in one frame");
         }
     }
     if (frame == 135)
@@ -376,18 +405,26 @@ void GiValidation::AfterFrame(uint64_t frame)
     }
     if (frame == 215 && optixValidation)
     {
-        Check(Raytracing::IsGiActive() && RayReflections::IsOptixGiActive(), "switch NRD back to OptiX during rendering");
+        Check(Raytracing::IsGiActive() && RayReflections::IsOptixGiActive(),
+              "switch NRD back to OptiX during rendering");
     }
 }
 
 bool GiValidation::Finish()
 {
-    if (CelestialOcclusionValidation::Enabled()) return CelestialOcclusionValidation::Finish();
-    if (TemporalLightingValidation::Enabled()) return TemporalLightingValidation::Finish();
+    if (CelestialOcclusionValidation::Enabled())
+    {
+        return CelestialOcclusionValidation::Finish();
+    }
+    if (TemporalLightingValidation::Enabled())
+    {
+        return TemporalLightingValidation::Finish();
+    }
     Check(lastFrame >= 215, "complete dynamic GI sequence");
     failures += RenderCapture::ReportGraphicsErrors();
     // Only files created by this fixture are removed; preserve unexpected contents.
-    for (const char* name : {"Receiver.material", "Receiver.material.meta", "Emitter.material", "Emitter.material.meta", "Blue.tga", "Blue.tga.meta"})
+    for (const char* name : {"Receiver.material", "Receiver.material.meta", "Emitter.material", "Emitter.material.meta",
+                             "Blue.tga", "Blue.tga.meta"})
     {
         error_code error;
         filesystem::remove(fixtureRoot / name, error);
@@ -397,4 +434,3 @@ bool GiValidation::Finish()
     WriteGraphicsLog("GI validation failures = %u\n", failures);
     return failures == 0;
 }
-

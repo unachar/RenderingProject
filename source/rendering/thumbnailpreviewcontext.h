@@ -12,15 +12,16 @@ struct ThumbnailPreviewPart
 
 class ThumbnailPreviewContext
 {
-public:
+  public:
     ThumbnailPreviewContext();
     ~ThumbnailPreviewContext();
     bool Initialize(UINT size, UINT descriptorIndex);
     bool Render(const MaterialComponent& material, const std::vector<StaticModelVertex>& geometry = {},
-        const std::vector<ThumbnailPreviewPart>& parts = {});
+                const std::vector<ThumbnailPreviewPart>& parts = {});
     ID3D12Resource* GetTarget() const;
     uint64_t MemoryBytes() const;
-private:
+
+  private:
     struct Impl;
     std::unique_ptr<Impl> m_Impl;
 };

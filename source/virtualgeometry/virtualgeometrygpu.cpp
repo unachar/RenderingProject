@@ -46,29 +46,30 @@ uint32_t AssetRegistry::Register(std::shared_ptr<const VirtualGeometryRuntime::R
         return UINT32_MAX;
     }
 }
+
 namespace
 {
 std::array<float, 4> Sphere(const VirtualGeometrySphere& sphere)
 {
     return {sphere.Center[0], sphere.Center[1], sphere.Center[2], sphere.Radius};
 }
-template<class T>
-bool Fits(const std::vector<T>& existing, const std::vector<T>& added)
+
+template <class T> bool Fits(const std::vector<T>& existing, const std::vector<T>& added)
 {
     return existing.size() <= UINT32_MAX && added.size() <= UINT32_MAX - existing.size();
 }
-template<class T>
-void ReserveAppend(std::vector<T>& destination, size_t added)
+
+template <class T> void ReserveAppend(std::vector<T>& destination, size_t added)
 {
-    size_t required = destination.size()+added;
+    size_t required = destination.size() + added;
     if (required <= destination.capacity())
     {
         return;
     }
-    size_t grown = destination.capacity()+destination.capacity()/2;
-    destination.reserve(std::max(required,std::min(size_t(UINT32_MAX),grown)));
+    size_t grown = destination.capacity() + destination.capacity() / 2;
+    destination.reserve(std::max(required, std::min(size_t(UINT32_MAX), grown)));
 }
-}
+} // namespace
 
 bool Pack(const VirtualGeometryAsset& asset, PackedAsset& output, std::string& error)
 {
@@ -83,7 +84,7 @@ bool Pack(const VirtualGeometryAsset& asset, PackedAsset& output, std::string& e
         result.Clusters.reserve(asset.Clusters.size());
         for (const auto& cluster : asset.Clusters)
         {
-            if (cluster.VertexCount > 64 || cluster.TriangleCount > 124 || asset.Vertices.size() > UINT32_MAX/48)
+            if (cluster.VertexCount > 64 || cluster.TriangleCount > 124 || asset.Vertices.size() > UINT32_MAX / 48)
             {
                 error = "Native VirtualGeometry exceeds Mesh Shader limits";
                 return false;
@@ -138,7 +139,7 @@ bool Append(const PackedAsset& asset, PackedAsset& global, VirtualGeometryGPUAss
         !Fits(global.HierarchyIndices, asset.HierarchyIndices) || !Fits(global.Roots, asset.Roots) ||
         !Fits(global.Vertices, asset.Vertices) || !Fits(global.Triangles, asset.Triangles) ||
         global.Triangles.size() % 4 != 0 || asset.Triangles.size() % 4 != 0 ||
-        uint64_t(global.Vertices.size())+asset.Vertices.size() > UINT32_MAX/48)
+        uint64_t(global.Vertices.size()) + asset.Vertices.size() > UINT32_MAX / 48)
     {
         error = "Native VirtualGeometry global range overflow/alignment failure";
         return false;
@@ -157,22 +158,23 @@ bool Append(const PackedAsset& asset, PackedAsset& global, VirtualGeometryGPUAss
     uint32_t maximumLevel = 0;
     for (const auto& cluster : asset.Clusters)
     {
-        maximumLevel = std::max(maximumLevel,cluster.Level);
+        maximumLevel = std::max(maximumLevel, cluster.Level);
     }
     entry.Flags = 1u | (maximumLevel << 8);
     try
     {
         // Reserve every allocation before changing logical contents, so a
         // failed registration never exposes a partially appended asset.
-        ReserveAppend(global.Clusters,asset.Clusters.size());
-        ReserveAppend(global.Groups,asset.Groups.size());
-        ReserveAppend(global.HierarchyIndices,asset.HierarchyIndices.size());
-        ReserveAppend(global.Roots,asset.Roots.size());
-        ReserveAppend(global.Vertices,asset.Vertices.size());
-        ReserveAppend(global.Triangles,asset.Triangles.size());
+        ReserveAppend(global.Clusters, asset.Clusters.size());
+        ReserveAppend(global.Groups, asset.Groups.size());
+        ReserveAppend(global.HierarchyIndices, asset.HierarchyIndices.size());
+        ReserveAppend(global.Roots, asset.Roots.size());
+        ReserveAppend(global.Vertices, asset.Vertices.size());
+        ReserveAppend(global.Triangles, asset.Triangles.size());
         global.Clusters.insert(global.Clusters.end(), asset.Clusters.begin(), asset.Clusters.end());
         global.Groups.insert(global.Groups.end(), asset.Groups.begin(), asset.Groups.end());
-        global.HierarchyIndices.insert(global.HierarchyIndices.end(), asset.HierarchyIndices.begin(), asset.HierarchyIndices.end());
+        global.HierarchyIndices.insert(global.HierarchyIndices.end(), asset.HierarchyIndices.begin(),
+                                       asset.HierarchyIndices.end());
         global.Roots.insert(global.Roots.end(), asset.Roots.begin(), asset.Roots.end());
         global.Vertices.insert(global.Vertices.end(), asset.Vertices.begin(), asset.Vertices.end());
         global.Triangles.insert(global.Triangles.end(), asset.Triangles.begin(), asset.Triangles.end());
@@ -186,4 +188,4 @@ bool Append(const PackedAsset& asset, PackedAsset& global, VirtualGeometryGPUAss
         return false;
     }
 }
-}
+} // namespace VirtualGeometryGPU

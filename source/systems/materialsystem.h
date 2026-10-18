@@ -7,7 +7,7 @@ enum class MaterialShadowMode : uint32_t;
 
 class MaterialSystem : public SystemBase
 {
-public:
+  public:
     void Update() override;
 
     static bool IsReceivingPostProcess(EntityID entity);
@@ -17,7 +17,5 @@ public:
     static bool CastsShadowInPass(const MaterialComponent& material, bool transmission);
     static bool IsTransparent(EntityID entity);
     static bool SetTexture(EntityID entity, const char* texturePath);
-	static bool SetPBRParameters(EntityID entity, float metallic, float roughness, float fresnel);
+    static bool SetPBRParameters(EntityID entity, float metallic, float roughness, float fresnel);
 };
-
-

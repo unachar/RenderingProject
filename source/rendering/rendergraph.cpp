@@ -4,436 +4,456 @@
 #include <limits>
 #include <queue>
 
-
 namespace
 {
-	bool IsWriteAccess(RenderGraph::Access access)
-	{
-		return access == RenderGraph::Access::Write ||
-			access == RenderGraph::Access::ReadWrite;
-	}
-
-	RenderGraph::Access MergeAccess(RenderGraph::Access left, RenderGraph::Access right)
-	{
-		if (left == right)
-		{
-			return left;
-		}
-		return RenderGraph::Access::ReadWrite;
-	}
-
-	void AddUniqueDependency(vector<uint32_t>& dependencies, uint32_t dependency)
-	{
-		if (find(dependencies.begin(), dependencies.end(), dependency) ==
-			dependencies.end())
-		{
-			dependencies.push_back(dependency);
-		}
-	}
+bool IsWriteAccess(RenderGraph::Access access)
+{
+    return access == RenderGraph::Access::Write || access == RenderGraph::Access::ReadWrite;
 }
 
-RenderGraph::PassBuilder& RenderGraph::PassBuilder::Read(
-	ResourceHandle resource,
-	D3D12_RESOURCE_STATES state)
+RenderGraph::Access MergeAccess(RenderGraph::Access left, RenderGraph::Access right)
 {
-	return Use(resource, state, Access::Read);
+    if (left == right)
+    {
+        return left;
+    }
+    return RenderGraph::Access::ReadWrite;
 }
 
-RenderGraph::PassBuilder& RenderGraph::PassBuilder::Write(
-	ResourceHandle resource,
-	D3D12_RESOURCE_STATES state)
+void AddUniqueDependency(vector<uint32_t>& dependencies, uint32_t dependency)
 {
-	return Use(resource, state, Access::Write);
+    if (find(dependencies.begin(), dependencies.end(), dependency) == dependencies.end())
+    {
+        dependencies.push_back(dependency);
+    }
+}
+} // namespace
+
+RenderGraph::PassBuilder& RenderGraph::PassBuilder::Read(ResourceHandle resource, D3D12_RESOURCE_STATES state)
+{
+    return Use(resource, state, Access::Read);
 }
 
-RenderGraph::PassBuilder& RenderGraph::PassBuilder::ReadWrite(
-	ResourceHandle resource,
-	D3D12_RESOURCE_STATES state)
+RenderGraph::PassBuilder& RenderGraph::PassBuilder::Write(ResourceHandle resource, D3D12_RESOURCE_STATES state)
 {
-	return Use(resource, state, Access::ReadWrite);
+    return Use(resource, state, Access::Write);
 }
 
-RenderGraph::PassBuilder& RenderGraph::PassBuilder::Use(
-	ResourceHandle resource,
-	D3D12_RESOURCE_STATES state,
-	Access access)
+RenderGraph::PassBuilder& RenderGraph::PassBuilder::ReadWrite(ResourceHandle resource, D3D12_RESOURCE_STATES state)
 {
-	m_Graph.AddUsage(m_PassIndex, resource, state, access);
-	return *this;
+    return Use(resource, state, Access::ReadWrite);
+}
+
+RenderGraph::PassBuilder& RenderGraph::PassBuilder::Use(ResourceHandle resource, D3D12_RESOURCE_STATES state,
+                                                        Access access)
+{
+    m_Graph.AddUsage(m_PassIndex, resource, state, access);
+    return *this;
 }
 
 RenderGraph::ResourceHandle RenderGraph::CreateLogicalResource(const char* name)
 {
-	ImportedResource resource{};
-	resource.Name = name;
-	resource.AutomaticBarriers = false;
-	return ImportResource(resource);
+    ImportedResource resource{};
+    resource.Name = name;
+    resource.AutomaticBarriers = false;
+    return ImportResource(resource);
 }
 
 RenderGraph::ResourceHandle RenderGraph::ImportResource(const ImportedResource& resource)
 {
-	ResourceRecord record{};
-	if (resource.Name)
-	{
-		record.Name = resource.Name;
-	}
-	else
-	{
-		record.Name = "Unnamed Resource";
-	}
-	record.Resource = resource.Resource;
-	record.InitialState = resource.InitialState;
-	record.FinalState = resource.FinalState;
-	record.HasFinalState = resource.HasFinalState;
-	record.AutomaticBarriers = resource.AutomaticBarriers && resource.Resource != nullptr;
-	record.Subresource = resource.Subresource;
+    ResourceRecord record{};
+    if (resource.Name)
+    {
+        record.Name = resource.Name;
+    }
+    else
+    {
+        record.Name = "Unnamed Resource";
+    }
+    record.Resource = resource.Resource;
+    record.InitialState = resource.InitialState;
+    record.FinalState = resource.FinalState;
+    record.HasFinalState = resource.HasFinalState;
+    record.AutomaticBarriers = resource.AutomaticBarriers && resource.Resource != nullptr;
+    record.Subresource = resource.Subresource;
 
-	const ResourceHandle handle{ static_cast<uint32_t>(m_Resources.size()) };
-	m_Resources.push_back(move(record));
-	m_IsCompiled = false;
-	return handle;
+    const ResourceHandle handle{static_cast<uint32_t>(m_Resources.size())};
+    m_Resources.push_back(move(record));
+    m_IsCompiled = false;
+    return handle;
 }
 
 RenderGraph::ResourceHandle RenderGraph::FindImportedResource(ID3D12Resource* resource) const
 {
-    if (!resource) return {};
+    if (!resource)
+    {
+        return {};
+    }
     for (uint32_t i = 0; i < m_Resources.size(); ++i)
+    {
         if (m_Resources[i].Resource == resource &&
             m_Resources[i].Subresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES)
+        {
             return {i};
+        }
+    }
     return {};
 }
 
-void RenderGraph::AddPass(
-	const char* name,
-	const SetupCallback& setup,
-	const ExecuteCallback& execute)
+void RenderGraph::AddPass(const char* name, const SetupCallback& setup, const ExecuteCallback& execute)
 {
-	PassRecord pass{};
-	if (name)
-	{
-		pass.Name = name;
-	}
-	else
-	{
-		pass.Name = "Unnamed Pass";
-	}
-	pass.Execute = execute;
+    PassRecord pass{};
+    if (name)
+    {
+        pass.Name = name;
+    }
+    else
+    {
+        pass.Name = "Unnamed Pass";
+    }
+    pass.Execute = execute;
 
-	const uint32_t passIndex = static_cast<uint32_t>(m_Passes.size());
-	m_Passes.push_back(move(pass));
-	m_IsCompiled = false;
+    const uint32_t passIndex = static_cast<uint32_t>(m_Passes.size());
+    m_Passes.push_back(move(pass));
+    m_IsCompiled = false;
 
-	if (setup)
-	{
-		PassBuilder builder(*this, passIndex);
-		setup(builder);
-	}
+    if (setup)
+    {
+        PassBuilder builder(*this, passIndex);
+        setup(builder);
+    }
 }
 
-void RenderGraph::AddUsage(
-	uint32_t passIndex,
-	ResourceHandle resource,
-	D3D12_RESOURCE_STATES state,
-	Access access)
+void RenderGraph::AddUsage(uint32_t passIndex, ResourceHandle resource, D3D12_RESOURCE_STATES state, Access access)
 {
-	if (passIndex >= m_Passes.size())
-	{
-		Fail("RenderGraph pass builder referenced an invalid pass.");
-		return;
-	}
-	if (!resource.IsValid() || resource.Index >= m_Resources.size())
-	{
-		Fail("RenderGraph pass '" + m_Passes[passIndex].Name +
-			"' referenced an invalid resource.");
-		return;
-	}
+    if (passIndex >= m_Passes.size())
+    {
+        Fail("RenderGraph pass builder referenced an invalid pass.");
+        return;
+    }
+    if (!resource.IsValid() || resource.Index >= m_Resources.size())
+    {
+        Fail("RenderGraph pass '" + m_Passes[passIndex].Name + "' referenced an invalid resource.");
+        return;
+    }
 
-	auto& usages = m_Passes[passIndex].Usages;
-	auto existing = find_if(
-		usages.begin(),
-		usages.end(),
-		[resource](const Usage& usage)
-		{
-			return usage.Resource.Index == resource.Index;
-		});
-	if (existing != usages.end())
-	{
-		if (existing->State != state)
-		{
-			Fail(
-				"RenderGraph pass '" + m_Passes[passIndex].Name +
-				"' uses resource '" + m_Resources[resource.Index].Name +
-				"' in multiple states.");
-			return;
-		}
-		existing->AccessMode = MergeAccess(existing->AccessMode, access);
-		return;
-	}
+    auto& usages = m_Passes[passIndex].Usages;
+    auto existing = find_if(usages.begin(), usages.end(), [resource](const Usage& usage) {
+        return usage.Resource.Index == resource.Index;
+    });
+    if (existing != usages.end())
+    {
+        if (existing->State != state)
+        {
+            Fail("RenderGraph pass '" + m_Passes[passIndex].Name + "' uses resource '" +
+                 m_Resources[resource.Index].Name + "' in multiple states.");
+            return;
+        }
+        existing->AccessMode = MergeAccess(existing->AccessMode, access);
+        return;
+    }
 
-	usages.push_back({ resource, state, access });
+    usages.push_back({resource, state, access});
 }
 
 bool RenderGraph::Compile()
 {
-	if (!m_LastError.empty())
-	{
-		return false;
-	}
+    if (!m_LastError.empty())
+    {
+        return false;
+    }
 
-	m_ExecutionOrder.clear();
-	for (auto& pass : m_Passes)
-	{
-		pass.Dependencies.clear();
-		if (!pass.Execute)
-		{
-			return Fail("RenderGraph pass '" + pass.Name + "' has no execute callback.");
-		}
-	}
+    m_ExecutionOrder.clear();
+    for (auto& pass : m_Passes)
+    {
+        pass.Dependencies.clear();
+        if (!pass.Execute)
+        {
+            return Fail("RenderGraph pass '" + pass.Name + "' has no execute callback.");
+        }
+    }
 
-	const uint32_t invalidPass = numeric_limits<uint32_t>::max();
-	vector<uint32_t> lastWriter(m_Resources.size(), invalidPass);
-	vector<vector<uint32_t>> readers(m_Resources.size());
+    const uint32_t invalidPass = numeric_limits<uint32_t>::max();
+    vector<uint32_t> lastWriter(m_Resources.size(), invalidPass);
+    vector<vector<uint32_t>> readers(m_Resources.size());
 
-	for (uint32_t passIndex = 0; passIndex < m_Passes.size(); ++passIndex)
-	{
-		auto& pass = m_Passes[passIndex];
-		for (const Usage& usage : pass.Usages)
-		{
-			const uint32_t resourceIndex = usage.Resource.Index;
-			if (resourceIndex >= m_Resources.size())
-			{
-				return Fail("RenderGraph contains an invalid resource handle.");
-			}
+    for (uint32_t passIndex = 0; passIndex < m_Passes.size(); ++passIndex)
+    {
+        auto& pass = m_Passes[passIndex];
+        for (const Usage& usage : pass.Usages)
+        {
+            const uint32_t resourceIndex = usage.Resource.Index;
+            if (resourceIndex >= m_Resources.size())
+            {
+                return Fail("RenderGraph contains an invalid resource handle.");
+            }
 
-			if (lastWriter[resourceIndex] != invalidPass)
-			{
-				AddUniqueDependency(pass.Dependencies, lastWriter[resourceIndex]);
-			}
+            if (lastWriter[resourceIndex] != invalidPass)
+            {
+                AddUniqueDependency(pass.Dependencies, lastWriter[resourceIndex]);
+            }
 
-			if (IsWriteAccess(usage.AccessMode))
-			{
-				for (const uint32_t reader : readers[resourceIndex])
-				{
-					AddUniqueDependency(pass.Dependencies, reader);
-				}
-				readers[resourceIndex].clear();
-				lastWriter[resourceIndex] = passIndex;
-			}
-			else
-			{
-				readers[resourceIndex].push_back(passIndex);
-			}
-		}
-	}
+            if (IsWriteAccess(usage.AccessMode))
+            {
+                for (const uint32_t reader : readers[resourceIndex])
+                {
+                    AddUniqueDependency(pass.Dependencies, reader);
+                }
+                readers[resourceIndex].clear();
+                lastWriter[resourceIndex] = passIndex;
+            }
+            else
+            {
+                readers[resourceIndex].push_back(passIndex);
+            }
+        }
+    }
 
-	vector<uint32_t> indegree(m_Passes.size(), 0);
-	vector<vector<uint32_t>> outgoing(m_Passes.size());
-	for (uint32_t passIndex = 0; passIndex < m_Passes.size(); ++passIndex)
-	{
-		indegree[passIndex] = static_cast<uint32_t>(
-			m_Passes[passIndex].Dependencies.size());
-		for (const uint32_t dependency : m_Passes[passIndex].Dependencies)
-		{
-			if (dependency >= m_Passes.size() || dependency == passIndex)
-			{
-				return Fail("RenderGraph generated an invalid pass dependency.");
-			}
-			outgoing[dependency].push_back(passIndex);
-		}
-	}
+    vector<uint32_t> indegree(m_Passes.size(), 0);
+    vector<vector<uint32_t>> outgoing(m_Passes.size());
+    for (uint32_t passIndex = 0; passIndex < m_Passes.size(); ++passIndex)
+    {
+        indegree[passIndex] = static_cast<uint32_t>(m_Passes[passIndex].Dependencies.size());
+        for (const uint32_t dependency : m_Passes[passIndex].Dependencies)
+        {
+            if (dependency >= m_Passes.size() || dependency == passIndex)
+            {
+                return Fail("RenderGraph generated an invalid pass dependency.");
+            }
+            outgoing[dependency].push_back(passIndex);
+        }
+    }
 
-	priority_queue<uint32_t, vector<uint32_t>, greater<uint32_t>> ready;
-	for (uint32_t passIndex = 0; passIndex < m_Passes.size(); ++passIndex)
-	{
-		if (indegree[passIndex] == 0)
-		{
-			ready.push(passIndex);
-		}
-	}
+    priority_queue<uint32_t, vector<uint32_t>, greater<uint32_t>> ready;
+    for (uint32_t passIndex = 0; passIndex < m_Passes.size(); ++passIndex)
+    {
+        if (indegree[passIndex] == 0)
+        {
+            ready.push(passIndex);
+        }
+    }
 
-	while (!ready.empty())
-	{
-		const uint32_t passIndex = ready.top();
-		ready.pop();
-		m_ExecutionOrder.push_back(passIndex);
-		for (const uint32_t dependent : outgoing[passIndex])
-		{
-			if (--indegree[dependent] == 0)
-			{
-				ready.push(dependent);
-			}
-		}
-	}
+    while (!ready.empty())
+    {
+        const uint32_t passIndex = ready.top();
+        ready.pop();
+        m_ExecutionOrder.push_back(passIndex);
+        for (const uint32_t dependent : outgoing[passIndex])
+        {
+            if (--indegree[dependent] == 0)
+            {
+                ready.push(dependent);
+            }
+        }
+    }
 
-	if (m_ExecutionOrder.size() != m_Passes.size())
-	{
-		return Fail("RenderGraph contains a dependency cycle.");
-	}
+    if (m_ExecutionOrder.size() != m_Passes.size())
+    {
+        return Fail("RenderGraph contains a dependency cycle.");
+    }
 
-	m_IsCompiled = true;
-	return true;
+    m_IsCompiled = true;
+    return true;
 }
 
 bool RenderGraph::Execute(ID3D12GraphicsCommandList* commandList)
 {
-	if (!m_IsCompiled)
-	{
-		return Fail("RenderGraph::Execute called before a successful Compile.");
-	}
+    if (!m_IsCompiled)
+    {
+        return Fail("RenderGraph::Execute called before a successful Compile.");
+    }
 
-	bool needsCommandList = false;
-	for (const ResourceRecord& resource : m_Resources)
-	{
-		needsCommandList = needsCommandList ||
-			(resource.Resource != nullptr && resource.AutomaticBarriers);
-	}
-	if (needsCommandList && !commandList)
-	{
-		return Fail("RenderGraph automatic barriers require a command list.");
-	}
+    bool needsCommandList = false;
+    for (const ResourceRecord& resource : m_Resources)
+    {
+        needsCommandList = needsCommandList || (resource.Resource != nullptr && resource.AutomaticBarriers);
+    }
+    if (needsCommandList && !commandList)
+    {
+        return Fail("RenderGraph automatic barriers require a command list.");
+    }
 
-	vector<D3D12_RESOURCE_STATES> states;
-	states.reserve(m_Resources.size());
-	for (const ResourceRecord& resource : m_Resources)
-	{
-		states.push_back(resource.InitialState);
-	}
-	vector<bool> previousUavAccess(m_Resources.size(), false);
-	vector<bool> previousUavWrite(m_Resources.size(), false);
+    vector<D3D12_RESOURCE_STATES> states;
+    states.reserve(m_Resources.size());
+    for (const ResourceRecord& resource : m_Resources)
+    {
+        states.push_back(resource.InitialState);
+    }
+    vector<bool> previousUavAccess(m_Resources.size(), false);
+    vector<bool> previousUavWrite(m_Resources.size(), false);
 
-	for (const uint32_t passIndex : m_ExecutionOrder)
-	{
-		PassRecord& pass = m_Passes[passIndex];
-        if(m_Arena)for(const auto& usage:pass.Usages) { const auto& resource=m_Resources[usage.Resource.Index]; if(resource.Transient)m_Arena->Activate(resource.ArenaIndex,commandList); }
-		vector<D3D12_RESOURCE_BARRIER> barriers;
-		barriers.reserve(pass.Usages.size());
+    for (const uint32_t passIndex : m_ExecutionOrder)
+    {
+        PassRecord& pass = m_Passes[passIndex];
+        if (m_Arena)
+        {
+            for (const auto& usage : pass.Usages)
+            {
+                const auto& resource = m_Resources[usage.Resource.Index];
+                if (resource.Transient)
+                {
+                    m_Arena->Activate(resource.ArenaIndex, commandList);
+                }
+            }
+        }
+        vector<D3D12_RESOURCE_BARRIER> barriers;
+        barriers.reserve(pass.Usages.size());
 
-		for (const Usage& usage : pass.Usages)
-		{
-			const uint32_t resourceIndex = usage.Resource.Index;
-			const ResourceRecord& resource = m_Resources[resourceIndex];
-			if (!resource.Resource || !resource.AutomaticBarriers)
-			{
-				continue;
-			}
+        for (const Usage& usage : pass.Usages)
+        {
+            const uint32_t resourceIndex = usage.Resource.Index;
+            const ResourceRecord& resource = m_Resources[resourceIndex];
+            if (!resource.Resource || !resource.AutomaticBarriers)
+            {
+                continue;
+            }
 
-			if (states[resourceIndex] != usage.State)
-			{
-				barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
-					resource.Resource,
-					states[resourceIndex],
-					usage.State,
-					resource.Subresource));
-				states[resourceIndex] = usage.State;
-				previousUavAccess[resourceIndex] = false;
-				previousUavWrite[resourceIndex] = false;
-			}
-			else if (
-				previousUavAccess[resourceIndex] &&
-				(previousUavWrite[resourceIndex] ||
-					IsWriteAccess(usage.AccessMode)) &&
-				(usage.State & D3D12_RESOURCE_STATE_UNORDERED_ACCESS) != 0)
-			{
-				barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(resource.Resource));
-				previousUavAccess[resourceIndex] = false;
-				previousUavWrite[resourceIndex] = false;
-			}
-		}
+            if (states[resourceIndex] != usage.State)
+            {
+                barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(resource.Resource, states[resourceIndex],
+                                                                        usage.State, resource.Subresource));
+                states[resourceIndex] = usage.State;
+                previousUavAccess[resourceIndex] = false;
+                previousUavWrite[resourceIndex] = false;
+            }
+            else if (previousUavAccess[resourceIndex] &&
+                     (previousUavWrite[resourceIndex] || IsWriteAccess(usage.AccessMode)) &&
+                     (usage.State & D3D12_RESOURCE_STATE_UNORDERED_ACCESS) != 0)
+            {
+                barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(resource.Resource));
+                previousUavAccess[resourceIndex] = false;
+                previousUavWrite[resourceIndex] = false;
+            }
+        }
 
-		if (!barriers.empty())
-		{
-			commandList->ResourceBarrier(
-				static_cast<UINT>(barriers.size()),
-				barriers.data());
-		}
+        if (!barriers.empty())
+        {
+            commandList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+        }
 
-		pass.Execute(commandList);
+        pass.Execute(commandList);
 
-		for (const Usage& usage : pass.Usages)
-		{
-			const uint32_t resourceIndex = usage.Resource.Index;
-			const ResourceRecord& resource = m_Resources[resourceIndex];
-			if (!resource.Resource || !resource.AutomaticBarriers)
-			{
-				continue;
-			}
-			previousUavAccess[resourceIndex] =
-				(usage.State & D3D12_RESOURCE_STATE_UNORDERED_ACCESS) != 0;
-			previousUavWrite[resourceIndex] =
-				previousUavAccess[resourceIndex] &&
-				IsWriteAccess(usage.AccessMode);
-		}
-	}
+        for (const Usage& usage : pass.Usages)
+        {
+            const uint32_t resourceIndex = usage.Resource.Index;
+            const ResourceRecord& resource = m_Resources[resourceIndex];
+            if (!resource.Resource || !resource.AutomaticBarriers)
+            {
+                continue;
+            }
+            previousUavAccess[resourceIndex] = (usage.State & D3D12_RESOURCE_STATE_UNORDERED_ACCESS) != 0;
+            previousUavWrite[resourceIndex] = previousUavAccess[resourceIndex] && IsWriteAccess(usage.AccessMode);
+        }
+    }
 
-	vector<D3D12_RESOURCE_BARRIER> finalBarriers;
-	finalBarriers.reserve(m_Resources.size());
-	for (uint32_t resourceIndex = 0; resourceIndex < m_Resources.size(); ++resourceIndex)
-	{
-		const ResourceRecord& resource = m_Resources[resourceIndex];
-		if (!resource.Resource ||
-			!resource.AutomaticBarriers ||
-			!resource.HasFinalState ||
-			states[resourceIndex] == resource.FinalState)
-		{
-			continue;
-		}
-		finalBarriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
-			resource.Resource,
-			states[resourceIndex],
-			resource.FinalState,
-			resource.Subresource));
-	}
-	if (!finalBarriers.empty())
-	{
-		commandList->ResourceBarrier(
-			static_cast<UINT>(finalBarriers.size()),
-			finalBarriers.data());
-	}
+    vector<D3D12_RESOURCE_BARRIER> finalBarriers;
+    finalBarriers.reserve(m_Resources.size());
+    for (uint32_t resourceIndex = 0; resourceIndex < m_Resources.size(); ++resourceIndex)
+    {
+        const ResourceRecord& resource = m_Resources[resourceIndex];
+        if (!resource.Resource || !resource.AutomaticBarriers || !resource.HasFinalState ||
+            states[resourceIndex] == resource.FinalState)
+        {
+            continue;
+        }
+        finalBarriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(resource.Resource, states[resourceIndex],
+                                                                     resource.FinalState, resource.Subresource));
+    }
+    if (!finalBarriers.empty())
+    {
+        commandList->ResourceBarrier(static_cast<UINT>(finalBarriers.size()), finalBarriers.data());
+    }
 
-	return true;
+    return true;
 }
 
 void RenderGraph::Reset()
 {
-    m_Arena=nullptr;
-	m_Resources.clear();
-	m_Passes.clear();
-	m_ExecutionOrder.clear();
-	m_LastError.clear();
-	m_IsCompiled = false;
+    m_Arena = nullptr;
+    m_Resources.clear();
+    m_Passes.clear();
+    m_ExecutionOrder.clear();
+    m_LastError.clear();
+    m_IsCompiled = false;
 }
 
 bool RenderGraph::Fail(const string& message)
 {
-	m_LastError = message;
-	m_IsCompiled = false;
-	Debug::Log("ERROR: %s\n", message.c_str());
-	return false;
+    m_LastError = message;
+    m_IsCompiled = false;
+    Debug::Log("ERROR: %s\n", message.c_str());
+    return false;
 }
 
-
-RenderGraph::ResourceHandle RenderGraph::CreateTransientResource(const char* name,const D3D12_RESOURCE_DESC& desc,D3D12_RESOURCE_STATES initial)
+RenderGraph::ResourceHandle RenderGraph::CreateTransientResource(const char* name, const D3D12_RESOURCE_DESC& desc,
+                                                                 D3D12_RESOURCE_STATES initial)
 {
-    auto handle=CreateLogicalResource(name);auto& resource=m_Resources[handle.Index];resource.Transient=true;resource.AutomaticBarriers=true;resource.Desc=desc;resource.InitialState=initial;return handle;
+    auto handle = CreateLogicalResource(name);
+    auto& resource = m_Resources[handle.Index];
+    resource.Transient = true;
+    resource.AutomaticBarriers = true;
+    resource.Desc = desc;
+    resource.InitialState = initial;
+    return handle;
 }
-bool RenderGraph::AllocateTransients(ID3D12Device* device,TransientArena& arena)
+
+bool RenderGraph::AllocateTransients(ID3D12Device* device, TransientArena& arena)
 {
-    if(!m_IsCompiled)return Fail("Compile before allocating transients");
-    std::vector<TransientArena::Request> requests;
-    for(auto& resource:m_Resources)resource.ArenaIndex=UINT_MAX;
-    for(UINT resourceIndex=0;resourceIndex<m_Resources.size();++resourceIndex)
+    if (!m_IsCompiled)
     {
-        auto& resource=m_Resources[resourceIndex];if(!resource.Transient)continue;
-        UINT first=UINT_MAX,last=0;bool initialized=false;
-        for(UINT order=0;order<m_ExecutionOrder.size();++order)for(const auto& usage:m_Passes[m_ExecutionOrder[order]].Usages)
-            if(usage.Resource.Index==resourceIndex)
-            { if(first==UINT_MAX){first=order;initialized=usage.AccessMode!=Access::Read;}last=order; }
-        if(first==UINT_MAX)continue;
-        if(!initialized)return Fail("Transient resource must be written before reading: "+resource.Name);
-        resource.ArenaIndex=UINT(requests.size());requests.push_back({resource.Desc,resource.InitialState,first,last});
+        return Fail("Compile before allocating transients");
     }
-    if(!arena.Build(device,requests))return Fail("Transient arena allocation failed");
-    for(auto& resource:m_Resources)if(resource.Transient&&resource.ArenaIndex!=UINT_MAX)resource.Resource=arena.Get(resource.ArenaIndex);
-    m_Arena=&arena;return true;
+    std::vector<TransientArena::Request> requests;
+    for (auto& resource : m_Resources)
+    {
+        resource.ArenaIndex = UINT_MAX;
+    }
+    for (UINT resourceIndex = 0; resourceIndex < m_Resources.size(); ++resourceIndex)
+    {
+        auto& resource = m_Resources[resourceIndex];
+        if (!resource.Transient)
+        {
+            continue;
+        }
+        UINT first = UINT_MAX, last = 0;
+        bool initialized = false;
+        for (UINT order = 0; order < m_ExecutionOrder.size(); ++order)
+        {
+            for (const auto& usage : m_Passes[m_ExecutionOrder[order]].Usages)
+            {
+                if (usage.Resource.Index == resourceIndex)
+                {
+                    if (first == UINT_MAX)
+                    {
+                        first = order;
+                        initialized = usage.AccessMode != Access::Read;
+                    }
+                    last = order;
+                }
+            }
+        }
+        if (first == UINT_MAX)
+        {
+            continue;
+        }
+        if (!initialized)
+        {
+            return Fail("Transient resource must be written before reading: " + resource.Name);
+        }
+        resource.ArenaIndex = UINT(requests.size());
+        requests.push_back({resource.Desc, resource.InitialState, first, last});
+    }
+    if (!arena.Build(device, requests))
+    {
+        return Fail("Transient arena allocation failed");
+    }
+    for (auto& resource : m_Resources)
+    {
+        if (resource.Transient && resource.ArenaIndex != UINT_MAX)
+        {
+            resource.Resource = arena.Get(resource.ArenaIndex);
+        }
+    }
+    m_Arena = &arena;
+    return true;
 }

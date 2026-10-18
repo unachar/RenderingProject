@@ -22,15 +22,16 @@ struct Constants
     XMUINT4 ExtentFlags{};
     XMFLOAT4 Parameters{};
 };
+
 static_assert(sizeof(Constants) <= 256);
 
-void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource,
-    D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
+void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
+                D3D12_RESOURCE_STATES after)
 {
     const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, before, after);
     commands->ResourceBarrier(1, &barrier);
 }
-}
+} // namespace
 
 struct OptixDenoiser::Impl
 {
@@ -45,7 +46,8 @@ struct OptixDenoiser::Impl
             const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
             const auto desc = CD3DX12_RESOURCE_DESC::Buffer(256 * kFrames);
             if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&ConstantBuffer))))
+                                                         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                         IID_PPV_ARGS(&ConstantBuffer))))
             {
                 return false;
             }
@@ -66,6 +68,7 @@ struct OptixDenoiser::Impl
 };
 
 OptixDenoiser::OptixDenoiser() : m_Impl(make_unique<Impl>()) {}
+
 OptixDenoiser::~OptixDenoiser() = default;
 
 bool OptixDenoiser::Initialize(ID3D12Device* device)
@@ -91,14 +94,14 @@ bool OptixDenoiser::Initialize(ID3D12Device* device)
     {
         return false;
     }
-    const auto compile = [&](const char* entry, ComPtr<ID3D12PipelineState>& pipeline)
-    {
+    const auto compile = [&](const char* entry, ComPtr<ID3D12PipelineState>& pipeline) {
         blob.Reset();
         errors.Reset();
         if (FAILED(D3DCompileFromFile(L"shader/hlsl/OptixDenoiserCS.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-            entry, "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors)))
+                                      entry, "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors)))
         {
-            WriteGraphicsLog("OptiX packing shader failed: %s\n", errors ? static_cast<const char*>(errors->GetBufferPointer()) : entry);
+            WriteGraphicsLog("OptiX packing shader failed: %s\n",
+                             errors ? static_cast<const char*>(errors->GetBufferPointer()) : entry);
             return false;
         }
         D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
@@ -117,10 +120,12 @@ void OptixDenoiser::Shutdown()
     g_Device.Reset();
     OptixInterop::Shutdown();
 }
+
 bool OptixDenoiser::IsAvailable()
 {
     return !g_RuntimeFailed && OptixInterop::IsAvailable() && g_Pack && g_Unpack;
 }
+
 const char* OptixDenoiser::GetStatus()
 {
     if (g_RuntimeFailed)
@@ -134,9 +139,9 @@ const char* OptixDenoiser::GetStatus()
     return OptixInterop::GetStatus();
 }
 
-bool OptixDenoiser::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource* noisy,
-    ID3D12Resource* depth, ID3D12Resource* normal, ID3D12Resource* result,
-    const NrdFrame& frame, bool nrdPacked, bool preserveHitDistance, float intensity)
+bool OptixDenoiser::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource* noisy, ID3D12Resource* depth,
+                            ID3D12Resource* normal, ID3D12Resource* result, const NrdFrame& frame, bool nrdPacked,
+                            bool preserveHitDistance, float intensity)
 {
     if (!IsAvailable() || !commands || !noisy || !depth || !normal || !result)
     {
@@ -154,8 +159,12 @@ bool OptixDenoiser::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource*
     }
     auto* shared = m_Impl->Interop.GetSharedBuffer(slot);
     auto* heap = m_Impl->Heaps[slot].Get();
-    const auto cpu = [&](UINT index) { return CD3DX12_CPU_DESCRIPTOR_HANDLE(heap->GetCPUDescriptorHandleForHeapStart(), index, g_Increment); };
-    const auto gpu = [&](UINT index) { return CD3DX12_GPU_DESCRIPTOR_HANDLE(heap->GetGPUDescriptorHandleForHeapStart(), index, g_Increment); };
+    const auto cpu = [&](UINT index) {
+        return CD3DX12_CPU_DESCRIPTOR_HANDLE(heap->GetCPUDescriptorHandleForHeapStart(), index, g_Increment);
+    };
+    const auto gpu = [&](UINT index) {
+        return CD3DX12_GPU_DESCRIPTOR_HANDLE(heap->GetGPUDescriptorHandleForHeapStart(), index, g_Increment);
+    };
     array<ID3D12Resource*, 3> textures{noisy, depth, normal};
     for (UINT index = 0; index < textures.size(); ++index)
     {
@@ -200,8 +209,7 @@ bool OptixDenoiser::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource*
     }
     memcpy(static_cast<uint8_t*>(mapped) + 256 * slot, &constants, sizeof(constants));
     m_Impl->ConstantBuffer->Unmap(0, nullptr);
-    const auto bind = [&](ID3D12PipelineState* pipeline)
-    {
+    const auto bind = [&](ID3D12PipelineState* pipeline) {
         commands->SetDescriptorHeaps(1, &heap);
         commands->SetComputeRootSignature(g_Root.Get());
         commands->SetPipelineState(pipeline);
@@ -209,8 +217,10 @@ bool OptixDenoiser::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource*
         commands->SetComputeRootDescriptorTable(1, gpu(0));
         commands->SetComputeRootDescriptorTable(2, gpu(4));
     };
-    RenderProfiler::ScopedEvent packProfile(preserveHitDistance ? "DXR Reflections OptiX Pack" : "Realtime GI OptiX Pack", commands);
-    Transition(commands, noisy, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    RenderProfiler::ScopedEvent packProfile(
+        preserveHitDistance ? "DXR Reflections OptiX Pack" : "Realtime GI OptiX Pack", commands);
+    Transition(commands, noisy, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     Transition(commands, shared, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     bind(g_Pack.Get());
     commands->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
@@ -218,7 +228,8 @@ bool OptixDenoiser::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource*
     packProfile.Finish();
     // The timestamp spans the ordered direct-queue wait for CUDA. It measures
     // frame latency including interop, rather than CUDA kernel execution alone.
-    RenderProfiler::ScopedEvent denoiseProfile(preserveHitDistance ? "DXR Reflections Denoise (OptiX wait)" : "Realtime GI Denoise (OptiX wait)", commands);
+    RenderProfiler::ScopedEvent denoiseProfile(
+        preserveHitDistance ? "DXR Reflections Denoise (OptiX wait)" : "Realtime GI Denoise (OptiX wait)", commands);
     GraphicsDevice::SubmitForExternalCompute();
     const bool denoised = m_Impl->Interop.Enqueue(GraphicsDevice::GetCommandQueue(), slot);
     denoiseProfile.Finish();
@@ -229,7 +240,8 @@ bool OptixDenoiser::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource*
     }
     if (denoised)
     {
-        RenderProfiler::ScopedEvent composeProfile(preserveHitDistance ? "DXR Reflections Compose" : "Realtime GI Compose", commands);
+        RenderProfiler::ScopedEvent composeProfile(
+            preserveHitDistance ? "DXR Reflections Compose" : "Realtime GI Compose", commands);
         Transition(commands, shared, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         Transition(commands, result, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         bind(g_Unpack.Get());
@@ -237,7 +249,7 @@ bool OptixDenoiser::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource*
         Transition(commands, result, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         Transition(commands, shared, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON);
     }
-    Transition(commands, noisy, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    Transition(commands, noisy, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     return denoised;
 }
-

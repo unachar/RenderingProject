@@ -33,8 +33,8 @@ bool CanUseVirtualGeometry(const StaticMeshData& source, std::string& reason)
     return true;
 }
 
-VirtualGeometryBuildResult VirtualGeometryBuilder::Build(
-    const StaticMeshData& source, const VirtualGeometryBuildConfig& config, uint32_t materialId)
+VirtualGeometryBuildResult VirtualGeometryBuilder::Build(const StaticMeshData& source,
+                                                         const VirtualGeometryBuildConfig& config, uint32_t materialId)
 {
     std::string reason;
     if (!CanUseVirtualGeometry(source, reason))

@@ -41,12 +41,12 @@ size_t CacheEntries()
 }
 
 ComPtr<ID3DBlob> Compile(const char* entry = "main", const D3D_SHADER_MACRO* defines = nullptr,
-    UINT flags = D3DCOMPILE_OPTIMIZATION_LEVEL3)
+                         UINT flags = D3DCOMPILE_OPTIMIZATION_LEVEL3)
 {
     ComPtr<ID3DBlob> code;
     ComPtr<ID3DBlob> errors;
-    const HRESULT result = DxcCompileFromFileCompat(L"test.hlsl", defines,
-        D3D_COMPILE_STANDARD_FILE_INCLUDE, entry, "cs_6_0", flags, 0, &code, &errors);
+    const HRESULT result = DxcCompileFromFileCompat(L"test.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry,
+                                                    "cs_6_0", flags, 0, &code, &errors);
     if (FAILED(result) && errors)
     {
         cerr << static_cast<const char*>(errors->GetBufferPointer());
@@ -54,7 +54,7 @@ ComPtr<ID3DBlob> Compile(const char* entry = "main", const D3D_SHADER_MACRO* def
     Check(SUCCEEDED(result) && code, "shader compilation failed");
     return code;
 }
-}
+} // namespace
 
 int main(int argc, char** argv)
 {
@@ -66,16 +66,16 @@ int main(int argc, char** argv)
             Compile();
             return 0;
         }
-        const auto directory = filesystem::absolute("bin/validation/shader-cache-tests") /
-            to_string(GetCurrentProcessId());
+        const auto directory =
+            filesystem::absolute("bin/validation/shader-cache-tests") / to_string(GetCurrentProcessId());
         filesystem::create_directories(directory);
         filesystem::current_path(directory);
         Write("value.hlsli", "#define VALUE 1\n");
         Write("nested.hlsli", "#include \"value.hlsli\"\n");
         Write("test.hlsl", "#include \"nested.hlsli\"\n#ifndef SCALE\n#define SCALE 1\n#endif\n"
-            "RWStructuredBuffer<uint> output : register(u0);\n"
-            "[numthreads(1,1,1)] void main() { output[0] = VALUE * SCALE; }\n"
-            "[numthreads(1,1,1)] void alternate() { output[0] = VALUE + SCALE; }\n");
+                           "RWStructuredBuffer<uint> output : register(u0);\n"
+                           "[numthreads(1,1,1)] void main() { output[0] = VALUE * SCALE; }\n"
+                           "[numthreads(1,1,1)] void alternate() { output[0] = VALUE + SCALE; }\n");
         auto cold = Compile();
         Check(CacheEntries() == 1, "cold compile must persist one shader cache entry");
         const auto cacheFile = filesystem::directory_iterator("EditorCache/Shaders")->path();
@@ -85,8 +85,8 @@ int main(int argc, char** argv)
         Check(CacheEntries() == 1, "identical compilation must reuse its cache entry");
         Check(filesystem::last_write_time(cacheFile) == savedTime, "cache hit must skip compilation and rewriting");
         Check(cold->GetBufferSize() == warm->GetBufferSize() &&
-            memcmp(cold->GetBufferPointer(), warm->GetBufferPointer(), cold->GetBufferSize()) == 0,
-            "cached DXIL must match compiled DXIL");
+                  memcmp(cold->GetBufferPointer(), warm->GetBufferPointer(), cold->GetBufferSize()) == 0,
+              "cached DXIL must match compiled DXIL");
 
         wchar_t executable[MAX_PATH]{};
         GetModuleFileNameW(nullptr, executable, MAX_PATH);
@@ -94,8 +94,9 @@ int main(int argc, char** argv)
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
         PROCESS_INFORMATION process{};
-        Check(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
-            nullptr, nullptr, &startup, &process), "second cache reader process must start");
+        Check(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr,
+                             &startup, &process),
+              "second cache reader process must start");
         const DWORD wait = WaitForSingleObject(process.hProcess, 30000);
         if (wait != WAIT_OBJECT_0)
         {
@@ -137,8 +138,8 @@ int main(int argc, char** argv)
         filesystem::remove("value.hlsli");
         ComPtr<ID3DBlob> code;
         ComPtr<ID3DBlob> errors;
-        const HRESULT missing = DxcCompileFromFileCompat(L"test.hlsl", nullptr,
-            D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", "cs_6_0", 0, 0, &code, &errors);
+        const HRESULT missing = DxcCompileFromFileCompat(L"test.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                                                         "main", "cs_6_0", 0, 0, &code, &errors);
         Check(FAILED(missing) && !code && errors, "missing include must fail rather than reuse stale DXIL");
         cout << "PASS: persistent shader cache, nested includes, variants, corruption and missing dependencies\n";
         return 0;

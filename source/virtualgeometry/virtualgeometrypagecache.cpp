@@ -17,14 +17,22 @@ namespace VirtualGeometryPageCache
 {
 namespace
 {
-using VirtualGeometrySerialization::Writer;
 using VirtualGeometrySerialization::Reader;
+using VirtualGeometrySerialization::Writer;
 constexpr uint32_t Magic = 0x32504756; // VGP2
 constexpr uint32_t HeaderBytes = 64;
 constexpr uint64_t MaxMetadataBytes = 512ull * 1024 * 1024;
 
-void WriteValue(Writer& writer, uint32_t value) { writer.U32(value); }
-void ReadValue(Reader& reader, uint32_t& value) { value = reader.U32(); }
+void WriteValue(Writer& writer, uint32_t value)
+{
+    writer.U32(value);
+}
+
+void ReadValue(Reader& reader, uint32_t& value)
+{
+    value = reader.U32();
+}
+
 void WriteValue(Writer& writer, const VirtualGeometryGPUCluster& value)
 {
     writer.U32(value.VertexOffset);
@@ -52,6 +60,7 @@ void WriteValue(Writer& writer, const VirtualGeometryGPUCluster& value)
         writer.F32(component);
     }
 }
+
 void ReadValue(Reader& reader, VirtualGeometryGPUCluster& value)
 {
     value.VertexOffset = reader.U32();
@@ -79,6 +88,7 @@ void ReadValue(Reader& reader, VirtualGeometryGPUCluster& value)
         component = reader.F32();
     }
 }
+
 void WriteValue(Writer& writer, const VirtualGeometryGPUGroup& value)
 {
     writer.U32(value.FirstChild);
@@ -99,6 +109,7 @@ void WriteValue(Writer& writer, const VirtualGeometryGPUGroup& value)
         writer.U32(component);
     }
 }
+
 void ReadValue(Reader& reader, VirtualGeometryGPUGroup& value)
 {
     value.FirstChild = reader.U32();
@@ -119,16 +130,16 @@ void ReadValue(Reader& reader, VirtualGeometryGPUGroup& value)
         component = reader.U32();
     }
 }
-template<class T>
-void WriteRecords(Writer& writer, const std::vector<T>& values)
+
+template <class T> void WriteRecords(Writer& writer, const std::vector<T>& values)
 {
     for (const auto& value : values)
     {
         WriteValue(writer, value);
     }
 }
-template<class T>
-void ReadRecords(Reader& reader, std::vector<T>& values, uint32_t count, uint32_t wireStride)
+
+template <class T> void ReadRecords(Reader& reader, std::vector<T>& values, uint32_t count, uint32_t wireStride)
 {
     auto source = reader.Take(size_t(count) * wireStride);
     Reader records(source);
@@ -139,6 +150,7 @@ void ReadRecords(Reader& reader, std::vector<T>& values, uint32_t count, uint32_
     }
     records.RequireEnd();
 }
+
 void WriteMetrics(Writer& writer, const VirtualGeometryCompression::Metrics& value)
 {
     writer.U64(value.EncodedBytes);
@@ -149,6 +161,7 @@ void WriteMetrics(Writer& writer, const VirtualGeometryCompression::Metrics& val
     writer.U64(value.Index8Clusters);
     writer.U64(value.Index16Clusters);
 }
+
 void ReadMetrics(Reader& reader, VirtualGeometryCompression::Metrics& value)
 {
     value.EncodedBytes = reader.U64();
@@ -159,6 +172,7 @@ void ReadMetrics(Reader& reader, VirtualGeometryCompression::Metrics& value)
     value.Index8Clusters = reader.U64();
     value.Index16Clusters = reader.U64();
 }
+
 void ReadExact(std::ifstream& file, std::span<uint8_t> bytes)
 {
     if (!file.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(bytes.size())))
@@ -166,11 +180,12 @@ void ReadExact(std::ifstream& file, std::span<uint8_t> bytes)
         throw std::runtime_error("Truncated Page cache");
     }
 }
-}
+} // namespace
 
 bool WriteGenerated(const std::filesystem::path& path, const VirtualGeometryGPU::PackedAsset& geometry,
-    std::span<const uint8_t> pinned, const PageGenerator& generate, std::string& error,
-    const VirtualGeometryCompression::Metrics& compression, uint64_t sourceTriangles, uint64_t sourceVertices)
+                    std::span<const uint8_t> pinned, const PageGenerator& generate, std::string& error,
+                    const VirtualGeometryCompression::Metrics& compression, uint64_t sourceTriangles,
+                    uint64_t sourceVertices)
 {
     static std::atomic<uint64_t> sequence{0};
     auto temporary = path;
@@ -194,8 +209,7 @@ bool WriteGenerated(const std::filesystem::path& path, const VirtualGeometryGPU:
         WriteRecords(metadata, geometry.Groups);
         WriteRecords(metadata, geometry.HierarchyIndices);
         WriteRecords(metadata, geometry.Roots);
-        bool encoded = std::any_of(geometry.Clusters.begin(), geometry.Clusters.end(), [](const auto& cluster)
-        {
+        bool encoded = std::any_of(geometry.Clusters.begin(), geometry.Clusters.end(), [](const auto& cluster) {
             return (cluster.Flags & VirtualGeometryCompression::ClusterFlag) != 0;
         });
         if (sourceTriangles == 0 || sourceVertices == 0)
@@ -209,8 +223,14 @@ bool WriteGenerated(const std::filesystem::path& path, const VirtualGeometryGPU:
                     vertices += cluster.VertexCount;
                 }
             }
-            if (sourceTriangles == 0) sourceTriangles = triangles;
-            if (sourceVertices == 0) sourceVertices = vertices;
+            if (sourceTriangles == 0)
+            {
+                sourceTriangles = triangles;
+            }
+            if (sourceVertices == 0)
+            {
+                sourceVertices = vertices;
+            }
         }
         bool extended = true; // Production containers always carry metrics and version metadata.
         if (extended)
@@ -295,9 +315,9 @@ bool WriteAtomic(const std::filesystem::path& path, const VirtualGeometryPages::
         error = "Page payload/directory count mismatch";
         return false;
     }
-    return WriteGenerated(path, asset.Metadata, asset.PinnedPages,
-        [&](uint32_t page, std::span<uint8_t> payload, std::string& message)
-        {
+    return WriteGenerated(
+        path, asset.Metadata, asset.PinnedPages,
+        [&](uint32_t page, std::span<uint8_t> payload, std::string& message) {
             if (asset.Payloads[page].size() != payload.size())
             {
                 message = "Invalid Page payload size";
@@ -305,7 +325,8 @@ bool WriteAtomic(const std::filesystem::path& path, const VirtualGeometryPages::
             }
             std::copy(asset.Payloads[page].begin(), asset.Payloads[page].end(), payload.begin());
             return true;
-        }, error, asset.Compression, asset.SourceTriangles, asset.SourceVertices);
+        },
+        error, asset.Compression, asset.SourceTriangles, asset.SourceVertices);
 }
 
 bool Open(const std::filesystem::path& path, PageManifest& output, std::string& error)
@@ -345,8 +366,8 @@ bool Open(const std::filesystem::path& path, PageManifest& output, std::string& 
         {
             throw std::runtime_error("VGMesh builder/codec version requires asset rebuild");
         }
-        if (!pageCount || declaredFileBytes != fileBytes || fileBytes < HeaderBytes ||
-            metadataBytes < 16 || metadataBytes > MaxMetadataBytes || metadataBytes > fileBytes - HeaderBytes ||
+        if (!pageCount || declaredFileBytes != fileBytes || fileBytes < HeaderBytes || metadataBytes < 16 ||
+            metadataBytes > MaxMetadataBytes || metadataBytes > fileBytes - HeaderBytes ||
             uint64_t(pageCount) * 24 > metadataBytes ||
             uint64_t(pageCount) * VirtualGeometryPages::PageBytes != fileBytes - HeaderBytes - metadataBytes)
         {
@@ -406,12 +427,14 @@ bool Open(const std::filesystem::path& path, PageManifest& output, std::string& 
         for (uint32_t index = 0; index < result.Metadata.Clusters.size(); ++index)
         {
             const auto& cluster = result.Metadata.Clusters[index];
-            if (version == uint32_t(FormatVersion::Production) && (cluster.Flags & VirtualGeometryCompression::ClusterFlag) &&
+            if (version == uint32_t(FormatVersion::Production) &&
+                (cluster.Flags & VirtualGeometryCompression::ClusterFlag) &&
                 compressionVersion != VirtualGeometryCompression::CompressionVersion)
             {
                 throw std::runtime_error("Compressed VGMesh requires matching codec version");
             }
-            if (version == uint32_t(FormatVersion::Streaming) && (cluster.Flags & VirtualGeometryCompression::ClusterFlag))
+            if (version == uint32_t(FormatVersion::Streaming) &&
+                (cluster.Flags & VirtualGeometryCompression::ClusterFlag))
             {
                 throw std::runtime_error("Compressed cluster in legacy Page format");
             }
@@ -437,7 +460,8 @@ bool ReadPage(const PageManifest& manifest, uint32_t page, std::span<uint8_t> by
             throw std::runtime_error("Invalid Page read range");
         }
         const auto& entry = manifest.Pages[page];
-        if (entry.Size != bytes.size() || entry.Offset > manifest.FileBytes || entry.Size > manifest.FileBytes - entry.Offset ||
+        if (entry.Size != bytes.size() || entry.Offset > manifest.FileBytes ||
+            entry.Size > manifest.FileBytes - entry.Offset ||
             entry.Offset > uint64_t(std::numeric_limits<std::streamoff>::max()))
         {
             throw std::runtime_error("Page file offset overflow");
@@ -460,9 +484,10 @@ bool ReadPage(const PageManifest& manifest, uint32_t page, std::span<uint8_t> by
             {
                 if (cluster.VertexOffset > bytes.size() || cluster.Padding > bytes.size() - cluster.VertexOffset ||
                     !VirtualGeometryCompression::Validate(bytes.subspan(cluster.VertexOffset, cluster.Padding),
-                        cluster.VertexCount, cluster.TriangleCount, error))
+                                                          cluster.VertexCount, cluster.TriangleCount, error))
                 {
-                    throw std::runtime_error(manifest.Path.string() + " cluster " + std::to_string(index) + ": " + error);
+                    throw std::runtime_error(manifest.Path.string() + " cluster " + std::to_string(index) + ": " +
+                                             error);
                 }
             }
         }
@@ -475,4 +500,4 @@ bool ReadPage(const PageManifest& manifest, uint32_t page, std::span<uint8_t> by
         return false;
     }
 }
-}
+} // namespace VirtualGeometryPageCache

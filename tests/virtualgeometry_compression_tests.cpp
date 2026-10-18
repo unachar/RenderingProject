@@ -8,6 +8,7 @@
 namespace
 {
 using namespace VirtualGeometryCompression;
+
 void Require(bool condition, const std::string& message)
 {
     if (!condition)
@@ -15,28 +16,30 @@ void Require(bool condition, const std::string& message)
         throw std::runtime_error("Compression: " + message);
     }
 }
+
 std::vector<VirtualGeometryVertex> MakeVertices(float scale, float offset)
 {
     std::vector<VirtualGeometryVertex> vertices(64);
     for (uint32_t index = 0; index < vertices.size(); ++index)
     {
         auto& vertex = vertices[index];
-        vertex.Position[0] = offset + scale*float(index % 8)/7;
-        vertex.Position[1] = offset + scale*float(index / 8)/7;
+        vertex.Position[0] = offset + scale * float(index % 8) / 7;
+        vertex.Position[1] = offset + scale * float(index / 8) / 7;
         vertex.Position[2] = offset; // Flat mesh with a degenerate axis.
         vertex.Normal[2] = 1;
-        vertex.TexCoord[0] = float(index % 8)/7;
-        vertex.TexCoord[1] = -float(index / 8)/7;
+        vertex.TexCoord[0] = float(index % 8) / 7;
+        vertex.TexCoord[1] = -float(index / 8) / 7;
         std::fill(std::begin(vertex.Diffuse), std::end(vertex.Diffuse), 1.0f);
     }
     return vertices;
 }
+
 void PositionCases()
 {
     std::string error;
     for (float scale : {1.0f, 1e8f, 1e-12f, 0.0f})
     {
-        auto vertices = MakeVertices(scale, -scale*0.5f);
+        auto vertices = MakeVertices(scale, -scale * 0.5f);
         Input input;
         input.Vertices = vertices;
         Plan plan;
@@ -55,14 +58,15 @@ void PositionCases()
             for (uint32_t axis = 0; axis < 3; ++axis)
             {
                 double delta = double(decoded.Position[axis]) - vertices[vertex].Position[axis];
-                squared += delta*delta;
+                squared += delta * delta;
             }
             Require(std::sqrt(squared) <= settings.MaxPositionError, "position error");
             Require(decoded.Position[2] == vertices[vertex].Position[2], "zero extent axis changed");
         }
         if (scale == 1e8f)
         {
-            Require(plan.Streams[0].Encoding == Codec::Float32 && !plan.FallbackReasons.empty(), "large grid did not fall back");
+            Require(plan.Streams[0].Encoding == Codec::Float32 && !plan.FallbackReasons.empty(),
+                    "large grid did not fall back");
         }
         auto truncated = bytes;
         truncated.pop_back();
@@ -71,11 +75,13 @@ void PositionCases()
         std::fill(damaged.begin() + 64, damaged.begin() + 68, uint8_t(255));
         Require(!Validate(damaged, 64, 1, error), "invalid stream offset accepted");
         damaged = bytes;
-        uint32_t indexOffset = uint32_t(bytes[24]) | (uint32_t(bytes[25]) << 8) | (uint32_t(bytes[26]) << 16) | (uint32_t(bytes[27]) << 24);
+        uint32_t indexOffset = uint32_t(bytes[24]) | (uint32_t(bytes[25]) << 8) | (uint32_t(bytes[26]) << 16) |
+                               (uint32_t(bytes[27]) << 24);
         damaged[indexOffset] = 255;
         Require(!Validate(damaged, 64, 1, error), "invalid triangle accepted");
     }
 }
+
 void BoundaryAndAttributes()
 {
     auto vertices = MakeVertices(1, -0.5f);
@@ -110,14 +116,16 @@ void BoundaryAndAttributes()
     Require(!plan.FallbackReasons.empty(), "UV fallback missing");
     input.HasColor = false;
     Require(Select(input, {}, plan, error), error);
-    Require(std::none_of(plan.Streams.begin(), plan.Streams.end(), [](const auto& stream)
-    {
-        return stream.Attribute == Color;
-    }), "absent color allocated a stream");
+    Require(std::none_of(plan.Streams.begin(), plan.Streams.end(),
+                         [](const auto& stream) {
+                             return stream.Attribute == Color;
+                         }),
+            "absent color allocated a stream");
     vertices[0].TexCoord[0] = std::numeric_limits<float>::infinity();
     input.Texcoords.clear();
     Require(!Select(input, {}, plan, error), "nonfinite input accepted");
 }
+
 void IndexCases()
 {
     std::string error;
@@ -140,14 +148,15 @@ void IndexCases()
         Require(LoadTriangleCPU(bytes, 0) == std::array<uint32_t, 3>{0, count - 1, 1}, "index roundtrip");
     }
 }
+
 void NormalCases()
 {
     auto vertices = MakeVertices(1, 0);
     for (uint32_t index = 0; index < vertices.size(); ++index)
     {
-        vertices[index].Normal[0] = std::cos(float(index)*0.7f);
-        vertices[index].Normal[1] = std::sin(float(index)*0.7f);
-        vertices[index].Normal[2] = std::cos(float(index)*0.31f);
+        vertices[index].Normal[0] = std::cos(float(index) * 0.7f);
+        vertices[index].Normal[1] = std::sin(float(index) * 0.7f);
+        vertices[index].Normal[2] = std::cos(float(index) * 0.31f);
     }
     Input input;
     input.Vertices = vertices;
@@ -161,22 +170,24 @@ void NormalCases()
     {
         auto decoded = DecodeVertexCPU(bytes, index);
         const auto& normal = vertices[index].Normal;
-        double length = std::sqrt(double(normal[0])*normal[0] + double(normal[1])*normal[1] + double(normal[2])*normal[2]);
+        double length =
+            std::sqrt(double(normal[0]) * normal[0] + double(normal[1]) * normal[1] + double(normal[2]) * normal[2]);
         double squared = 0;
         for (uint32_t axis = 0; axis < 3; ++axis)
         {
-            double delta = normal[axis]/length - decoded.Normal[axis];
-            squared += delta*delta;
+            double delta = normal[axis] / length - decoded.Normal[axis];
+            squared += delta * delta;
         }
-        Require(2*std::asin(std::min(1.0, std::sqrt(squared)*0.5)) <= VGCompressionSettings{}.MaxNormalAngularError,
-            "oct normal angular error in both hemispheres");
+        Require(2 * std::asin(std::min(1.0, std::sqrt(squared) * 0.5)) <= VGCompressionSettings{}.MaxNormalAngularError,
+                "oct normal angular error in both hemispheres");
     }
     VGCompressionSettings exact;
     exact.MaxNormalAngularError = 0;
     Require(Select(input, exact, plan, error), error);
     Require(plan.Streams[1].Encoding == Codec::Float32, "normal precision fallback");
 }
-}
+} // namespace
+
 void TestVirtualGeometryCompression()
 {
     PositionCases();

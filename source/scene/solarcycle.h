@@ -37,10 +37,8 @@ inline Position Calculate(float hours, float latitudeDegrees, int dayOfYear)
     const float hourAngle = (WrapHours(hours) - 12.0f) * Pi / 12.0f;
     Position result;
     result.East = -cos(declination) * sin(hourAngle);
-    result.Up = sin(latitude) * sin(declination) +
-        cos(latitude) * cos(declination) * cos(hourAngle);
-    result.North = cos(latitude) * sin(declination) -
-        sin(latitude) * cos(declination) * cos(hourAngle);
+    result.Up = sin(latitude) * sin(declination) + cos(latitude) * cos(declination) * cos(hourAngle);
+    result.North = cos(latitude) * sin(declination) - sin(latitude) * cos(declination) * cos(hourAngle);
     return result;
 }
 
@@ -54,4 +52,4 @@ inline float Daylight(float sunHeight)
 {
     return SmoothRange(-0.08f, 0.16f, sunHeight);
 }
-}
+} // namespace SolarCycle

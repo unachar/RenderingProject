@@ -28,14 +28,16 @@ vector<Vertex> BuildTerrainVertices(const Procedural::TerrainSettings& settings)
             const int right = (min)(column + 1, resolution);
             const int lower = (max)(row - 1, 0);
             const int upper = (min)(row + 1, resolution);
-            const float slopeX = (heights[row * side + right] - heights[row * side + left]) / ((right - left) * spacing);
-            const float slopeZ = (heights[upper * side + column] - heights[lower * side + column]) / ((upper - lower) * spacing);
+            const float slopeX =
+                (heights[row * side + right] - heights[row * side + left]) / ((right - left) * spacing);
+            const float slopeZ =
+                (heights[upper * side + column] - heights[lower * side + column]) / ((upper - lower) * spacing);
             Vertex& vertex = lattice[row * side + column];
-            vertex.Pos = { column * spacing - size * 0.5f, heights[row * side + column], row * spacing - size * 0.5f };
+            vertex.Pos = {column * spacing - size * 0.5f, heights[row * side + column], row * spacing - size * 0.5f};
             XMStoreFloat3(&vertex.Normal, XMVector3Normalize(XMVectorSet(-slopeX, 1.0f, -slopeZ, 0.0f)));
-            vertex.Tex = { static_cast<float>(column) / resolution, static_cast<float>(row) / resolution };
+            vertex.Tex = {static_cast<float>(column) / resolution, static_cast<float>(row) / resolution};
             const float rock = clamp((1.0f - vertex.Normal.y) * 3.0f, 0.0f, 1.0f);
-            vertex.Color = { 0.16f + rock * 0.32f, 0.36f + rock * 0.10f, 0.11f + rock * 0.31f, 1.0f };
+            vertex.Color = {0.16f + rock * 0.32f, 0.36f + rock * 0.10f, 0.11f + rock * 0.31f, 1.0f};
         }
     }
     vector<Vertex> vertices;
@@ -56,15 +58,22 @@ vector<Vertex> BuildTerrainVertices(const Procedural::TerrainSettings& settings)
     }
     return vertices;
 }
+} // namespace
+
+bool ProceduralScene::GetLiveUpdate()
+{
+    return g_LiveUpdate;
 }
 
-bool ProceduralScene::GetLiveUpdate() { return g_LiveUpdate; }
-void ProceduralScene::SetLiveUpdate(bool enabled) { g_LiveUpdate = enabled; }
+void ProceduralScene::SetLiveUpdate(bool enabled)
+{
+    g_LiveUpdate = enabled;
+}
 
 EntityID ProceduralScene::GenerateTerrain(const Procedural::TerrainSettings& settings, EntityID target)
 {
-    const bool replace = Registry::IsAlive(target) &&
-        ComponentManager::HasComponent<ProceduralTerrainComponent>(target);
+    const bool replace =
+        Registry::IsAlive(target) && ComponentManager::HasComponent<ProceduralTerrainComponent>(target);
     if (replace && !GraphicsDevice::WaitForGpuIdle())
     {
         return g_kINVALID_ENTITY;
@@ -72,14 +81,18 @@ EntityID ProceduralScene::GenerateTerrain(const Procedural::TerrainSettings& set
     Entity entity(target);
     if (!replace)
     {
-        entity = World::CreateEntity().Add<NameComponent>().Add<TransformComponent>()
-            .Add<MeshComponent>().Add<MaterialComponent>().Add<ProceduralTerrainComponent>();
+        entity = World::CreateEntity()
+                     .Add<NameComponent>()
+                     .Add<TransformComponent>()
+                     .Add<MeshComponent>()
+                     .Add<MaterialComponent>()
+                     .Add<ProceduralTerrainComponent>();
         if (!entity.IsValid())
         {
             return g_kINVALID_ENTITY;
         }
         entity.SetName("Procedural Terrain " + to_string(entity.GetID()));
-		XMStoreFloat4x4(&entity.Get<TransformComponent>().WorldMatrix, XMMatrixIdentity());
+        XMStoreFloat4x4(&entity.Get<TransformComponent>().WorldMatrix, XMMatrixIdentity());
         auto& material = entity.Get<MaterialComponent>();
         material.ShaderClassMode = MaterialMode::Manual;
         material.ShaderClass = ShaderClass::PBR;
@@ -125,10 +138,11 @@ void ProceduralScene::UpdateMotion(float deltaTime)
         {
             continue;
         }
-        const auto offset = Procedural::SampleMotion(motion.Method, motion.Time, motion.Speed,
-            { motion.Amplitude.x, motion.Amplitude.y, motion.Amplitude.z }, motion.Seed);
+        const auto offset =
+            Procedural::SampleMotion(motion.Method, motion.Time, motion.Speed,
+                                     {motion.Amplitude.x, motion.Amplitude.y, motion.Amplitude.z}, motion.Seed);
         auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-        transform.Position = { motion.Origin.x + offset.X, motion.Origin.y + offset.Y, motion.Origin.z + offset.Z };
+        transform.Position = {motion.Origin.x + offset.X, motion.Origin.y + offset.Y, motion.Origin.z + offset.Z};
         transform.IsDirty = true;
     }
 }
@@ -159,4 +173,3 @@ bool ProceduralScene::LoadPreset(const char* path, Procedural::TerrainSettings& 
     ifstream file(path);
     return Procedural::ReadTerrainPreset(file, settings);
 }
-

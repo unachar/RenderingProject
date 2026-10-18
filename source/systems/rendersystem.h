@@ -8,7 +8,7 @@ struct MaterialComponent;
 
 class RenderSystem : public SystemBase
 {
-private:
+  private:
     struct DrawCall
     {
         EntityID EntityID;
@@ -21,11 +21,10 @@ private:
         const MaterialComponent* material;
         float cameraDepth;
     };
+
     vector<DrawCall> m_SpriteDrawCalls;
     vector<DrawCall> m_ModelDrawCalls;
 
-public:
+  public:
     void Draw(RenderPass renderPass, bool receivingPostProcessOnly) override;
 };
-
-

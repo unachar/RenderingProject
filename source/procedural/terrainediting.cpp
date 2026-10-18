@@ -5,7 +5,8 @@ namespace Procedural
 bool TerrainEditState::SynchronizeSelection(uint32_t target, const TerrainSettings* appliedSettings)
 {
     const bool selectionChanged = target != m_Target;
-    const bool settingsChangedExternally = appliedSettings && !TerrainSettingsEqual(*appliedSettings, m_AppliedSettings);
+    const bool settingsChangedExternally =
+        appliedSettings && !TerrainSettingsEqual(*appliedSettings, m_AppliedSettings);
     if (!selectionChanged && !settingsChangedExternally)
     {
         return false;
@@ -43,5 +44,4 @@ void TerrainEditState::MarkApplied(double now)
     }
     m_NextApplyTime = now + interval;
 }
-}
-
+} // namespace Procedural

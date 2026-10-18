@@ -9,7 +9,10 @@ namespace
 {
 void Check(bool condition, const char* message)
 {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+    {
+        throw std::runtime_error(message);
+    }
 }
 
 bool Near(double actual, double expected)
@@ -24,7 +27,9 @@ void TestSummary()
     Check(!empty.FrameMeanMs && !empty.LowOnePercentFps, "empty measurements are unavailable");
     std::vector<Sample> samples;
     for (uint64_t serial = 1; serial <= 100; ++serial)
+    {
         samples.push_back({serial, 10.0, 4.0, 5.0, true});
+    }
     samples.back().FrameMs = 100.0;
     samples.back().GpuValid = false;
     samples.push_back(samples.front());
@@ -32,7 +37,7 @@ void TestSummary()
     samples.push_back({102, 0.0, 0.0, std::numeric_limits<double>::infinity(), true});
     const auto result = Summarize(samples);
     Check(result.FrameSamples == 100 && result.CpuSamples == 101 && result.GpuSamples == 99,
-        "each timing channel has its own valid count");
+          "each timing channel has its own valid count");
     Check(result.DuplicateSamples == 1, "duplicate serial is not counted twice");
     Check(Near(*result.FrameMeanMs, 10.9) && Near(*result.LowOnePercentFps, 10.0), "slowest one percent");
     Check(Near(*result.GpuMeanMs, 5.0), "missing GPU result is not zero");
@@ -40,7 +45,9 @@ void TestSummary()
     Check(Near(*Summarize({{1, 20.0, 0.0, 0.0, true}}).GpuMeanMs, 0.0), "valid zero duration is retained");
     samples.clear();
     for (uint64_t serial = 1; serial <= 101; ++serial)
+    {
         samples.push_back({serial, serial == 101 ? 100.0 : 10.0, 0.0, 0.0, false});
+    }
     Check(Near(*Summarize(samples).LowOnePercentFps, 1000.0 / 55.0), "one percent rounds upward");
 }
 
@@ -99,12 +106,12 @@ void TestDelayedMeasurementWindow()
     Check(!window.Record({15, 10, 2, 3, true}), "drain frames are not measured");
     const auto samples = window.Samples();
     Check(samples.size() == 3 && samples.front().Serial == 12 && samples.back().Serial == 14,
-        "measurement results are returned in serial order");
+          "measurement results are returned in serial order");
     Check(Summarize(samples).GpuSamples == 2, "missing GPU value does not enter mean");
     Window empty(1, 0, 0);
     Check(empty.Complete() && empty.Samples().empty(), "zero-length capture is bounded");
 }
-}
+} // namespace
 
 int main()
 {

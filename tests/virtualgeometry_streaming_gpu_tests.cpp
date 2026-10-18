@@ -11,6 +11,7 @@
 #include "virtualgeometry/virtualgeometrypagepool.h"
 
 using Microsoft::WRL::ComPtr;
+
 namespace
 {
 void Check(HRESULT result, const char* message)
@@ -20,6 +21,7 @@ void Check(HRESULT result, const char* message)
         throw std::runtime_error(message);
     }
 }
+
 void Require(bool condition, const char* message)
 {
     if (!condition)
@@ -27,7 +29,8 @@ void Require(bool condition, const char* message)
         throw std::runtime_error(message);
     }
 }
-}
+} // namespace
+
 int main(int argc, char** argv)
 {
     try
@@ -45,27 +48,32 @@ int main(int argc, char** argv)
         if (argc == 3 && std::string(argv[1]) == "--admission")
         {
             uint64_t triangles = std::stoull(argv[2]);
-            uint64_t assets = (triangles+1638399)/1638400;
-            auto capacity = [](uint64_t count)
-            {
+            uint64_t assets = (triangles + 1638399) / 1638400;
+            auto capacity = [](uint64_t count) {
                 uint64_t result = 1024;
-                while (result < count) result *= 2;
+                while (result < count)
+                {
+                    result *= 2;
+                }
                 return result;
             };
-            uint64_t metadataBytes = capacity(assets*37449)*96+capacity(assets*4681)*64+
-                capacity(assets*42129)*4+capacity(assets)*52;
-            uint64_t renderingReserve = 768ull*1024*1024;
-            uint64_t required = metadataBytes+renderingReserve+assets*65536;
+            uint64_t metadataBytes = capacity(assets * 37449) * 96 + capacity(assets * 4681) * 64 +
+                                     capacity(assets * 42129) * 4 + capacity(assets) * 52;
+            uint64_t renderingReserve = 768ull * 1024 * 1024;
+            uint64_t required = metadataBytes + renderingReserve + assets * 65536;
             ComPtr<IDXGIAdapter3> memoryAdapter;
-            Check(adapter.As(&memoryAdapter),"Query memory adapter");
+            Check(adapter.As(&memoryAdapter), "Query memory adapter");
             DXGI_QUERY_VIDEO_MEMORY_INFO memory{};
-            Check(memoryAdapter->QueryVideoMemoryInfo(0,DXGI_MEMORY_SEGMENT_GROUP_LOCAL,&memory),"Query VRAM budget");
-            uint64_t available = memory.Budget > memory.CurrentUsage ? memory.Budget-memory.CurrentUsage : 0;
+            Check(memoryAdapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &memory),
+                  "Query VRAM budget");
+            uint64_t available = memory.Budget > memory.CurrentUsage ? memory.Budget - memory.CurrentUsage : 0;
             std::cout << "Stress admission: requested triangles=" << triangles << ", metadata bytes=" << metadataBytes
-                << ", required with frame reserve=" << required << ", available VRAM budget=" << available << '\n';
+                      << ", required with frame reserve=" << required << ", available VRAM budget=" << available
+                      << '\n';
             if (required > available)
             {
-                std::cout << "SKIP: scene metadata and frame reserve exceed available VRAM; geometry streaming cannot page resident hierarchy metadata\n";
+                std::cout
+                    << "SKIP: scene metadata and frame reserve exceed available VRAM; geometry streaming cannot page resident hierarchy metadata\n";
                 return 78;
             }
             std::cout << "PASS: stress scene memory admission\n";
@@ -83,7 +91,7 @@ int main(int argc, char** argv)
         Check(device->CreateDescriptorHeap(&heapDescription, IID_PPV_ARGS(&heap)), "Page descriptor heap");
         VirtualGeometryStreaming::PagePool pool;
         pool.Initialize(device.Get(), heap->GetCPUDescriptorHandleForHeapStart(),
-            device->GetDescriptorHandleIncrementSize(heapDescription.Type));
+                        device->GetDescriptorHandleIncrementSize(heapDescription.Type));
         VirtualGeometryStreaming::ResidencyManager residency;
         Require(residency.AddPages(std::vector<uint8_t>{1, 0}, 2 * 65536), "Page admission");
         residency.Request(0, 1);
@@ -119,14 +127,18 @@ int main(int argc, char** argv)
         buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         ComPtr<ID3D12Resource> readback;
         Check(device->CreateCommittedResource(&readbackHeap, D3D12_HEAP_FLAG_NONE, &buffer,
-            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readback)), "Readback buffer");
+                                              D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readback)),
+              "Readback buffer");
         ComPtr<ID3D12CommandQueue> graphics;
         D3D12_COMMAND_QUEUE_DESC queueDescription{};
         Check(device->CreateCommandQueue(&queueDescription, IID_PPV_ARGS(&graphics)), "Graphics queue");
         ComPtr<ID3D12CommandAllocator> allocator;
         ComPtr<ID3D12GraphicsCommandList> commands;
-        Check(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)), "Graphics allocator");
-        Check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&commands)), "Graphics list");
+        Check(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)),
+              "Graphics allocator");
+        Check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr,
+                                        IID_PPV_ARGS(&commands)),
+              "Graphics list");
         commands->CopyBufferRegion(readback.Get(), 0, pool.Resource(ticket->Slot), 0, 65536);
         Check(commands->Close(), "Close readback");
         ID3D12CommandList* list = commands.Get();
@@ -147,82 +159,80 @@ int main(int argc, char** argv)
         D3D12_RANGE noWrite{0, 0};
         readback->Unmap(0, &noWrite);
         Require(matches, "Page byte comparison differs");
-        auto waitCopy = [&](uint64_t value)
-        {
-            auto limit = std::chrono::steady_clock::now()+std::chrono::seconds(20);
+        auto waitCopy = [&](uint64_t value) {
+            auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(20);
             while (pool.CompletedCopyFence() < value && std::chrono::steady_clock::now() < limit)
             {
                 std::this_thread::yield();
             }
-            Require(pool.CompletedCopyFence() >= value,"Replacement Copy timed out");
+            Require(pool.CompletedCopyFence() >= value, "Replacement Copy timed out");
         };
-        auto waitGraphics = [&](uint64_t value)
-        {
-            HANDLE completion = CreateEventW(nullptr,FALSE,FALSE,nullptr);
-            Require(completion != nullptr,"Retirement event");
-            Check(fence->SetEventOnCompletion(value,completion),"Retirement fence event");
-            DWORD completed = WaitForSingleObject(completion,20000);
+        auto waitGraphics = [&](uint64_t value) {
+            HANDLE completion = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            Require(completion != nullptr, "Retirement event");
+            Check(fence->SetEventOnCompletion(value, completion), "Retirement fence event");
+            DWORD completed = WaitForSingleObject(completion, 20000);
             CloseHandle(completion);
-            Require(completed == WAIT_OBJECT_0,"Retirement graphics timeout");
+            Require(completed == WAIT_OBJECT_0, "Retirement graphics timeout");
         };
-        Require(residency.AddPages(std::vector<uint8_t>{0},2*65536),"Replacement Page registration");
-        residency.Request(1,2);
+        Require(residency.AddPages(std::vector<uint8_t>{0}, 2 * 65536), "Replacement Page registration");
+        residency.Request(1, 2);
         auto child = residency.BeginLoad(1);
-        Require(bool(child),"Child slot reservation");
-        std::vector<uint8_t> childBytes(65536,0xa5);
-        uint64_t childCopy = pool.Submit(*child,childBytes);
-        residency.CompleteCopy(*child,childCopy);
+        Require(bool(child), "Child slot reservation");
+        std::vector<uint8_t> childBytes(65536, 0xa5);
+        uint64_t childCopy = pool.Submit(*child, childBytes);
+        residency.CompleteCopy(*child, childCopy);
         waitCopy(childCopy);
         residency.Publish(pool.CompletedCopyFence());
         ComPtr<ID3D12Fence> gate;
-        Check(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&gate)),"Incomplete graphics gate");
-        Check(graphics->Wait(gate.Get(),1),"Block graphics before its Page read");
-        Check(allocator->Reset(),"Reset retirement allocator");
-        Check(commands->Reset(allocator.Get(),nullptr),"Reset retirement commands");
-        commands->CopyBufferRegion(readback.Get(),0,pool.Resource(child->Slot),0,65536);
-        Check(commands->Close(),"Close retirement read");
+        Check(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&gate)), "Incomplete graphics gate");
+        Check(graphics->Wait(gate.Get(), 1), "Block graphics before its Page read");
+        Check(allocator->Reset(), "Reset retirement allocator");
+        Check(commands->Reset(allocator.Get(), nullptr), "Reset retirement commands");
+        commands->CopyBufferRegion(readback.Get(), 0, pool.Resource(child->Slot), 0, 65536);
+        Check(commands->Close(), "Close retirement read");
         list = commands.Get();
-        graphics->ExecuteCommandLists(1,&list);
-        Check(graphics->Signal(fence.Get(),2),"Signal pending graphics read");
+        graphics->ExecuteCommandLists(1, &list);
+        Check(graphics->Signal(fence.Get(), 2), "Signal pending graphics read");
         residency.MarkSnapshotUsed(2);
-        Require(residency.Retire(1,2),"Start child retirement");
-        residency.Request(2,3);
-        residency.Collect(fence->GetCompletedValue(),pool.CompletedCopyFence());
-        Require(!residency.BeginLoad(2),"Reused Page while graphics queue was blocked");
-        Require(pool.Resource(child->Slot) != nullptr,"Released Page before its queued graphics read");
-        Check(gate->Signal(1),"Release graphics gate");
+        Require(residency.Retire(1, 2), "Start child retirement");
+        residency.Request(2, 3);
+        residency.Collect(fence->GetCompletedValue(), pool.CompletedCopyFence());
+        Require(!residency.BeginLoad(2), "Reused Page while graphics queue was blocked");
+        Require(pool.Resource(child->Slot) != nullptr, "Released Page before its queued graphics read");
+        Check(gate->Signal(1), "Release graphics gate");
         waitGraphics(2);
-        Check(readback->Map(0,&range,&mapped),"Map old-generation read");
-        matches = std::memcmp(mapped,childBytes.data(),childBytes.size()) == 0;
-        readback->Unmap(0,&noWrite);
-        Require(matches,"Old graphics frame saw replacement bytes");
-        residency.Collect(fence->GetCompletedValue(),pool.CompletedCopyFence());
+        Check(readback->Map(0, &range, &mapped), "Map old-generation read");
+        matches = std::memcmp(mapped, childBytes.data(), childBytes.size()) == 0;
+        readback->Unmap(0, &noWrite);
+        Require(matches, "Old graphics frame saw replacement bytes");
+        residency.Collect(fence->GetCompletedValue(), pool.CompletedCopyFence());
         pool.Release(child->Slot);
-        Require(pool.MemoryBytes() == 65536,"Retired physical Page memory retained");
+        Require(pool.MemoryBytes() == 65536, "Retired physical Page memory retained");
         auto replacement = residency.BeginLoad(2);
         Require(replacement && replacement->Slot == child->Slot && replacement->Generation != child->Generation,
-            "Safe retired slot did not advance generation");
-        std::vector<uint8_t> replacementBytes(65536,0x5a);
-        uint64_t replacementCopy = pool.Submit(*replacement,replacementBytes);
-        residency.CompleteCopy(*replacement,replacementCopy);
-        residency.CompleteCopy(*child,childCopy);
-        residency.Publish(replacementCopy-1);
-        Require(residency.Snapshot()[2].Flags == 0,"Stale completion published new generation early");
+                "Safe retired slot did not advance generation");
+        std::vector<uint8_t> replacementBytes(65536, 0x5a);
+        uint64_t replacementCopy = pool.Submit(*replacement, replacementBytes);
+        residency.CompleteCopy(*replacement, replacementCopy);
+        residency.CompleteCopy(*child, childCopy);
+        residency.Publish(replacementCopy - 1);
+        Require(residency.Snapshot()[2].Flags == 0, "Stale completion published new generation early");
         waitCopy(replacementCopy);
         residency.Publish(pool.CompletedCopyFence());
-        Require(residency.Snapshot()[2].Flags == 1,"Replacement did not become Resident");
-        Check(allocator->Reset(),"Reset replacement allocator");
-        Check(commands->Reset(allocator.Get(),nullptr),"Reset replacement read");
-        commands->CopyBufferRegion(readback.Get(),0,pool.Resource(replacement->Slot),0,65536);
-        Check(commands->Close(),"Close replacement read");
+        Require(residency.Snapshot()[2].Flags == 1, "Replacement did not become Resident");
+        Check(allocator->Reset(), "Reset replacement allocator");
+        Check(commands->Reset(allocator.Get(), nullptr), "Reset replacement read");
+        commands->CopyBufferRegion(readback.Get(), 0, pool.Resource(replacement->Slot), 0, 65536);
+        Check(commands->Close(), "Close replacement read");
         list = commands.Get();
-        graphics->ExecuteCommandLists(1,&list);
-        Check(graphics->Signal(fence.Get(),3),"Signal replacement read");
+        graphics->ExecuteCommandLists(1, &list);
+        Check(graphics->Signal(fence.Get(), 3), "Signal replacement read");
         waitGraphics(3);
-        Check(readback->Map(0,&range,&mapped),"Map replacement bytes");
-        matches = std::memcmp(mapped,replacementBytes.data(),replacementBytes.size()) == 0;
-        readback->Unmap(0,&noWrite);
-        Require(matches,"Replacement generation byte mismatch");
+        Check(readback->Map(0, &range, &mapped), "Map replacement bytes");
+        matches = std::memcmp(mapped, replacementBytes.data(), replacementBytes.size()) == 0;
+        readback->Unmap(0, &noWrite);
+        Require(matches, "Replacement generation byte mismatch");
         pool.Shutdown();
         uint64_t errors = 0;
         for (uint64_t index = 0; index < info->GetNumStoredMessages(); ++index)
@@ -239,7 +249,8 @@ int main(int argc, char** argv)
             }
         }
         Require(errors == 0, "D3D12 Copy/graphics validation errors");
-        std::cout << "PASS: production Copy Queue, publication fence, blocked-graphics retirement/reuse, replacement bytes, D3D12 errors=0\n";
+        std::cout
+            << "PASS: production Copy Queue, publication fence, blocked-graphics retirement/reuse, replacement bytes, D3D12 errors=0\n";
         return 0;
     }
     catch (const std::exception& exception)

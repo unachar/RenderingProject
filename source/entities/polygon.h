@@ -3,9 +3,6 @@
 
 class Polygon
 {
-public:
+  public:
     static void Create();
 };
-
-
-

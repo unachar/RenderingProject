@@ -18,6 +18,7 @@ struct MaterialEdit
     AssetHandle Handle = 0;
     MaterialAssetData Before;
 };
+
 AssetHandle openMaterial = 0;
 AssetHandle requestedMaterial = 0;
 bool closeRequested = false;
@@ -66,12 +67,14 @@ bool DrawTextureSlot(const char* label, AssetHandle& handle)
     ImGui::Button(name.c_str(), ImVec2(-40, 0));
     const auto textureMinimum = ImGui::GetItemRectMin();
     const auto textureMaximum = ImGui::GetItemRectMax();
-    MaterialValidation::CaptureDropTarget(label, textureMinimum.x, textureMinimum.y, textureMaximum.x, textureMaximum.y);
+    MaterialValidation::CaptureDropTarget(label, textureMinimum.x, textureMinimum.y, textureMaximum.x,
+                                          textureMaximum.y);
     if (MaterialValidation::Enabled() && strcmp(label, "Normal") == 0 && ImGui::GetDragDropPayload())
     {
         WriteGraphicsLog("Material UI trace: Normal rect=%.1f,%.1f..%.1f,%.1f hovered=%d mouse=%.1f,%.1f\n",
-            textureMinimum.x, textureMinimum.y, textureMaximum.x, textureMaximum.y,
-            ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem), ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y);
+                         textureMinimum.x, textureMinimum.y, textureMaximum.x, textureMaximum.y,
+                         ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem),
+                         ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y);
     }
     bool changed = false;
     if (ImGui::BeginDragDropTarget())
@@ -110,7 +113,7 @@ void FinishMaterialEdit()
         pendingEdit = false;
     }
 }
-}
+} // namespace
 
 void ImGuiManager::OpenMaterialAsset(AssetHandle handle)
 {
@@ -262,11 +265,12 @@ void ImGuiManager::DrawMaterialEditorWindow()
             }
             changed = true;
         }
-        ImGui::SetItemTooltip("Coverage transparency, not optical transmission. For glass use Transmission=1 and Transparency=0.");
+        ImGui::SetItemTooltip(
+            "Coverage transparency, not optical transmission. For glass use Transmission=1 and Transparency=0.");
         const auto transparencyMinimum = ImGui::GetItemRectMin();
         const auto transparencyMaximum = ImGui::GetItemRectMax();
         MaterialValidation::CaptureDropTarget("Transparency", transparencyMinimum.x, transparencyMinimum.y,
-            transparencyMaximum.x, transparencyMaximum.y);
+                                              transparencyMaximum.x, transparencyMaximum.y);
         changed |= DrawTextureSlot("Base Color", editing.Textures[0]);
     }
     if (ImGui::CollapsingHeader("Metallic / Roughness", ImGuiTreeNodeFlags_DefaultOpen))
@@ -288,7 +292,8 @@ void ImGuiManager::DrawMaterialEditorWindow()
     }
     if (ImGui::CollapsingHeader("Emission"))
     {
-        changed |= ImGui::ColorEdit3("Emission Color", editing.EmissiveColor.data(), ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
+        changed |= ImGui::ColorEdit3("Emission Color", editing.EmissiveColor.data(),
+                                     ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
         changed |= ImGui::SliderFloat("Intensity", &editing.EmissiveIntensity, 0, 30);
         changed |= DrawTextureSlot("Emission", editing.Textures[4]);
     }
@@ -303,7 +308,8 @@ void ImGuiManager::DrawMaterialEditorWindow()
         ImGui::BeginDisabled(editing.ShadingModel == 0);
         changed |= ImGui::SliderFloat("Model Strength", &editing.ShadingStrength, 0, 1);
         ImGui::EndDisabled();
-        ImGui::TextDisabled("ClearCoat=塗装の層 / Sheen=布の光沢 / Skin=肌の散乱 / Hair=髪のハイライト / Anisotropic=ヘアライン金属");
+        ImGui::TextDisabled(
+            "ClearCoat=塗装の層 / Sheen=布の光沢 / Skin=肌の散乱 / Hair=髪のハイライト / Anisotropic=ヘアライン金属");
     }
     if (ImGui::CollapsingHeader("Advanced"))
     {
@@ -328,8 +334,9 @@ void ImGuiManager::DrawMaterialEditorWindow()
         ImGui::Text("Handle: %s", FormatAssetHandle(openMaterial).c_str());
         ImGui::Text("Runtime revision: %llu", runtime.Revision);
     }
-    const bool opticsChanged = MaterialOpticsUI::Draw(editing.IOR, editing.Transmission, editing.Roughness,
-        editing.TransmissionRoughness, editing.Thickness, editing.AbsorptionCoefficient.data());
+    const bool opticsChanged =
+        MaterialOpticsUI::Draw(editing.IOR, editing.Transmission, editing.Roughness, editing.TransmissionRoughness,
+                               editing.Thickness, editing.AbsorptionCoefficient.data());
     changed |= opticsChanged;
     if (editing.Transmission > 0.0f)
     {
@@ -477,11 +484,13 @@ void ImGuiManager::DrawMaterialDropTarget()
     if (MaterialValidation::Enabled() && ImGui::GetDragDropPayload())
     {
         WriteGraphicsLog("Material UI trace: Scene hovered=%d mouse=%.1f,%.1f\n",
-            ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem), ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y);
+                         ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem),
+                         ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y);
         const auto& context = *ImGui::GetCurrentContext();
         WriteGraphicsLog("Material UI trace: hoveredWindow=%s sceneRect=%.1f,%.1f..%.1f,%.1f\n",
-            context.HoveredWindow ? context.HoveredWindow->Name : "none", context.LastItemData.Rect.Min.x,
-            context.LastItemData.Rect.Min.y, context.LastItemData.Rect.Max.x, context.LastItemData.Rect.Max.y);
+                         context.HoveredWindow ? context.HoveredWindow->Name : "none", context.LastItemData.Rect.Min.x,
+                         context.LastItemData.Rect.Min.y, context.LastItemData.Rect.Max.x,
+                         context.LastItemData.Rect.Max.y);
     }
     if (ImGui::BeginDragDropTarget())
     {
@@ -517,7 +526,8 @@ void ImGuiManager::DrawMaterialDropTarget()
                     }
                     BoundingOrientedBox local(center, extents, XMFLOAT4(0, 0, 0, 1));
                     BoundingOrientedBox world;
-                    local.Transform(world, EditorWidgets::BuildWorldMatrix(ComponentManager::GetComponentUnchecked<TransformComponent>(entity)));
+                    local.Transform(world, EditorWidgets::BuildWorldMatrix(
+                                               ComponentManager::GetComponentUnchecked<TransformComponent>(entity)));
                     float distance;
                     if (world.Intersects(origin, direction, distance) && distance < nearest)
                     {
@@ -529,7 +539,7 @@ void ImGuiManager::DrawMaterialDropTarget()
             if (MaterialValidation::Enabled())
             {
                 WriteGraphicsLog("Material UI trace: picked=%u renderable=%d delivery=%d\n", target,
-                    MaterialManager::IsRenderable(target), payload->IsDelivery());
+                                 MaterialManager::IsRenderable(target), payload->IsDelivery());
             }
             if (MaterialManager::IsRenderable(target))
             {
@@ -542,7 +552,8 @@ void ImGuiManager::DrawMaterialDropTarget()
                     XMMATRIX view;
                     XMMATRIX projection;
                     Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
-                    const auto world = EditorWidgets::BuildWorldMatrix(ComponentManager::GetComponentUnchecked<TransformComponent>(target));
+                    const auto world = EditorWidgets::BuildWorldMatrix(
+                        ComponentManager::GetComponentUnchecked<TransformComponent>(target));
                     ImVec2 minimum(FLT_MAX, FLT_MAX);
                     ImVec2 maximum(-FLT_MAX, -FLT_MAX);
                     for (int corner = 0; corner < 8; ++corner)
@@ -552,7 +563,8 @@ void ImGuiManager::DrawMaterialDropTarget()
                         const float z = center.z + ((corner & 4) ? extents.z : -extents.z);
                         XMFLOAT3 screen;
                         XMStoreFloat3(&screen, XMVector3Project(XMVectorSet(x, y, z, 1), m_SceneViewPos.x,
-                            m_SceneViewPos.y, m_SceneViewSize.x, m_SceneViewSize.y, 0, 1, projection, view, world));
+                                                                m_SceneViewPos.y, m_SceneViewSize.x, m_SceneViewSize.y,
+                                                                0, 1, projection, view, world));
                         minimum.x = min(minimum.x, screen.x);
                         minimum.y = min(minimum.y, screen.y);
                         maximum.x = max(maximum.x, screen.x);

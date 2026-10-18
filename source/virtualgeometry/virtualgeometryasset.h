@@ -24,5 +24,9 @@ struct VirtualGeometryBuildResult
 {
     VirtualGeometryAsset Asset;
     std::string Error;
-    explicit operator bool() const { return Error.empty(); }
+
+    explicit operator bool() const
+    {
+        return Error.empty();
+    }
 };

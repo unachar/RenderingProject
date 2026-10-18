@@ -14,7 +14,11 @@ struct ThumbnailSourceImage
     std::unique_ptr<DirectX::ScratchImage> Decoded;
     std::vector<uint8_t> Encoded;
     std::string Identity;
-    std::string IdentityKey() const { return Identity.empty() ? Path.lexically_normal().generic_string() : Identity; }
+
+    std::string IdentityKey() const
+    {
+        return Identity.empty() ? Path.lexically_normal().generic_string() : Identity;
+    }
 };
 
 struct ThumbnailPrepared
@@ -24,6 +28,7 @@ struct ThumbnailPrepared
     MaterialAssetData Material;
     std::array<ThumbnailSourceImage, 5> Textures;
     std::vector<StaticModelVertex> Geometry;
+
     struct MeshPart
     {
         MaterialAssetData Material;
@@ -31,6 +36,7 @@ struct ThumbnailPrepared
         UINT FirstVertex = 0;
         UINT VertexCount = 0;
     };
+
     std::vector<MeshPart> MeshParts;
     std::vector<std::pair<std::filesystem::path, uint64_t>> SourceDependencies;
     uint64_t Key = 0;
@@ -57,12 +63,16 @@ struct ThumbnailGpuImage
     uint64_t Bytes = 0;
     UINT Width = 0;
     UINT Height = 0;
-    D3D12_GPU_DESCRIPTOR_HANDLE Srv() const { return Descriptor ? Descriptor->Gpu : BorrowedDescriptor; }
+
+    D3D12_GPU_DESCRIPTOR_HANDLE Srv() const
+    {
+        return Descriptor ? Descriptor->Gpu : BorrowedDescriptor;
+    }
 };
 
 class ThumbnailRenderer
 {
-public:
+  public:
     static ThumbnailPrepared Prepare(ThumbnailPrepared input);
     static std::shared_ptr<ThumbnailGpuImage> Generate(ThumbnailPrepared& input);
     static uint64_t SourceRevision(const std::filesystem::path& path);

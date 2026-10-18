@@ -3,6 +3,6 @@
 
 class ProceduralSystem final : public SystemBase
 {
-public:
+  public:
     void Update() override;
 };

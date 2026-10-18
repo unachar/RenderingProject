@@ -7,8 +7,7 @@
 
 void TestVirtualGeometryGPU()
 {
-    auto check = [](bool condition, const char* message)
-    {
+    auto check = [](bool condition, const char* message) {
         if (!condition)
         {
             throw std::runtime_error(message);
@@ -33,7 +32,8 @@ void TestVirtualGeometryGPU()
     check(packed.Clusters.size() == built.Asset.Clusters.size(), "Lost hierarchy clusters");
     check(packed.Triangles.size() % 4 == 0, "Byte buffer is not padded");
     check(std::memcmp(packed.Vertices.data(), built.Asset.Vertices.data(),
-        packed.Vertices.size() * sizeof(VirtualGeometryVertex)) == 0, "Changed native vertex attributes");
+                      packed.Vertices.size() * sizeof(VirtualGeometryVertex)) == 0,
+          "Changed native vertex attributes");
     for (size_t offset = 0; offset < built.Asset.TriangleIndices.size(); ++offset)
     {
         uint32_t word = 0;
@@ -74,9 +74,9 @@ void TestVirtualGeometryGPU()
         for (uint32_t x = 0; x <= size; ++x)
         {
             VirtualGeometryVertex vertex;
-            vertex.Position[0] = float(x)/size;
-            vertex.Position[1] = float(y)/size;
-            vertex.Position[2] = 0.1f*std::sin(float(x)*0.3f)*std::cos(float(y)*0.2f);
+            vertex.Position[0] = float(x) / size;
+            vertex.Position[1] = float(y) / size;
+            vertex.Position[2] = 0.1f * std::sin(float(x) * 0.3f) * std::cos(float(y) * 0.2f);
             vertex.Normal[2] = 1;
             vertex.Diffuse[3] = 7;
             vertices.push_back(vertex);
@@ -86,25 +86,27 @@ void TestVirtualGeometryGPU()
     {
         for (uint32_t x = 0; x < size; ++x)
         {
-            uint32_t a = y*(size+1)+x, b = a+1, c = a+size+1, d = c+1;
-            curvedIndices.insert(curvedIndices.end(),{a,c,b,b,c,d});
+            uint32_t a = y * (size + 1) + x, b = a + 1, c = a + size + 1, d = c + 1;
+            curvedIndices.insert(curvedIndices.end(), {a, c, b, b, c, d});
         }
     }
     VirtualGeometryBuildConfig config;
     config.MaxClusterVertices = 64;
     config.MaxClusterTriangles = 124;
-    built = VirtualGeometryBuilder::Build(vertices,curvedIndices,config);
-    check(bool(built) && built.Asset.Levels.size() > 1,"Packing fixture must contain parent geometry");
-    check(VirtualGeometryGPU::Pack(built.Asset,packed,error),error.c_str());
-    check(packed.Clusters.size() == built.Asset.Clusters.size(),"Parent cluster upload incomplete");
+    built = VirtualGeometryBuilder::Build(vertices, curvedIndices, config);
+    check(bool(built) && built.Asset.Levels.size() > 1, "Packing fixture must contain parent geometry");
+    check(VirtualGeometryGPU::Pack(built.Asset, packed, error), error.c_str());
+    check(packed.Clusters.size() == built.Asset.Clusters.size(), "Parent cluster upload incomplete");
     for (size_t index = 0; index < packed.Clusters.size(); ++index)
     {
-        check(packed.Clusters[index].Level == built.Asset.Clusters[index].Level,"Wrong uploaded hierarchy level");
-        check(packed.Clusters[index].VertexOffset == built.Asset.Clusters[index].VertexOffset,"Parent vertex remapped to leaf");
+        check(packed.Clusters[index].Level == built.Asset.Clusters[index].Level, "Wrong uploaded hierarchy level");
+        check(packed.Clusters[index].VertexOffset == built.Asset.Clusters[index].VertexOffset,
+              "Parent vertex remapped to leaf");
     }
-    check(std::memcmp(packed.Vertices.data(),built.Asset.Vertices.data(),packed.Vertices.size()*sizeof(VirtualGeometryVertex)) == 0,
-        "Changed parent geometry attributes");
+    check(std::memcmp(packed.Vertices.data(), built.Asset.Vertices.data(),
+                      packed.Vertices.size() * sizeof(VirtualGeometryVertex)) == 0,
+          "Changed parent geometry attributes");
     global = {};
-    check(VirtualGeometryGPU::Append(packed,global,first,error),error.c_str());
-    check((first.Flags>>8) == built.Asset.Levels.size()-1,"GPU hierarchy depth metadata mismatch");
+    check(VirtualGeometryGPU::Append(packed, global, first, error), error.c_str());
+    check((first.Flags >> 8) == built.Asset.Levels.size() - 1, "GPU hierarchy depth metadata mismatch");
 }

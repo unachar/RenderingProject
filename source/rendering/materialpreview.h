@@ -4,8 +4,13 @@ struct ID3D12Resource;
 
 class MaterialPreview
 {
-public:
-    enum class Mesh { Sphere, Cube, Plane };
+  public:
+    enum class Mesh
+    {
+        Sphere,
+        Cube,
+        Plane
+    };
     static void SetVisible(bool visible);
     static void DrawControls();
     static void DrawImage(AssetHandle material);
@@ -15,4 +20,3 @@ public:
     static void SetMesh(Mesh mesh);
     static void SetLightIntensity(float intensity);
 };
-

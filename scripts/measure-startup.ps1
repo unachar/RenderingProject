@@ -1,6 +1,8 @@
 param(
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [ValidateRange(1, 10)][int]$Runs = 1,
+    [ValidateRange(1, 10000)][int]$Frames = 3,
+    [string]$Scene,
     [switch]$DisableShaderCache,
     [switch]$DisableDxr,
     [ValidatePattern('^[a-zA-Z0-9_-]+$')][string]$Label = 'startup'
@@ -24,14 +26,31 @@ foreach ($name in @('project_environment.cfg', 'editor_layout.cfg', 'scene_mater
 }
 try {
     $env:DX12_STARTUP_TIMING = '1'
-    $env:DX12_STARTUP_SMOKE_FRAMES = '3'
+    $env:DX12_STARTUP_SMOKE_FRAMES = [string]$Frames
     $env:DX12_VALIDATION_MODE = '0'
     $env:DX12_DISABLE_SHADER_CACHE = [int][bool]$DisableShaderCache
     $env:DX12_DISABLE_DXR = [int][bool]$DisableDxr
+    if ($Scene) {
+        $scenePath = Join-Path $workspace $Scene
+        if (-not (Test-Path -LiteralPath $scenePath -PathType Leaf)) {
+            throw "Scene does not exist: $Scene"
+        }
+        $settingsPath = Join-Path $workspace 'Save/project_environment.cfg'
+        $settings = [IO.File]::ReadAllText($settingsPath)
+        $settings = [regex]::Replace($settings, '(?m)^scene=.*$', "scene=$Scene")
+        $temporarySettingsPath = "$settingsPath.startup-settings"
+        [IO.File]::WriteAllText($temporarySettingsPath, $settings, [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporarySettingsPath -Destination $settingsPath -Force
+    }
     for ($run = 1; $run -le $Runs; ++$run) {
         $logPath = Join-Path $workspace 'init_log.txt'
         $offset = 0
         if (Test-Path $logPath) { $offset = (Get-Item $logPath).Length }
+        $deviceLogPath = Join-Path $workspace 'device_removed.log'
+        $deviceLogLength = 0
+        if (Test-Path -LiteralPath $deviceLogPath) {
+            $deviceLogLength = (Get-Item -LiteralPath $deviceLogPath).Length
+        }
         $process = Start-Process -FilePath (Join-Path $workspace "bin/x64/$Configuration/DirectX12.exe") `
             -WorkingDirectory $workspace -WindowStyle Hidden -PassThru
         try {
@@ -53,13 +72,23 @@ try {
             if ($process.ExitCode -ne 0 -or $runLog -notmatch 'startup smoke test complete; shutdown complete') {
                 throw "Startup smoke failed (exit $($process.ExitCode)). See $destination"
             }
+            if ((Test-Path -LiteralPath $deviceLogPath) -and
+                (Get-Item -LiteralPath $deviceLogPath).Length -ne $deviceLogLength) {
+                throw "GPU submission failed during startup. See $deviceLogPath"
+            }
             $shown = [regex]::Match($runLog, '\[startup ([\d.]+) ms\] Step: window shown')
             $ready = [regex]::Match($runLog, '\[startup ([\d.]+) ms\] Step: first frame complete')
             if (-not $shown.Success -or -not $ready.Success) { throw "Missing startup timings: $destination" }
             $culture = [Globalization.CultureInfo]::InvariantCulture
             $duration = [double]::Parse($ready.Groups[1].Value, $culture) -
                 [double]::Parse($shown.Groups[1].Value, $culture)
-            [pscustomobject]@{ Run = $run; WindowToFirstFrameMs = [math]::Round($duration, 1); Log = $destination }
+            [pscustomobject]@{
+                Run = $run
+                Frames = $Frames
+                Scene = $Scene
+                WindowToFirstFrameMs = [math]::Round($duration, 1)
+                Log = $destination
+            }
         }
         finally {
             if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit() }
@@ -68,7 +97,12 @@ try {
     }
 }
 finally {
-    foreach ($path in $settingsBackup.Keys) { [IO.File]::WriteAllBytes($path, $settingsBackup[$path]) }
+    foreach ($path in $settingsBackup.Keys) {
+        # The editor or an IDE may still map the original file after the process exits.
+        $restorePath = "$path.startup-restore"
+        [IO.File]::WriteAllBytes($restorePath, $settingsBackup[$path])
+        Move-Item -LiteralPath $restorePath -Destination $path -Force
+    }
     foreach ($name in $names) {
         [Environment]::SetEnvironmentVariable($name, $environmentBackup[$name], 'Process')
     }

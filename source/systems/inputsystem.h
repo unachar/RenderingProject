@@ -3,8 +3,6 @@
 
 class InputSystem : public SystemBase
 {
-public:
+  public:
     void Update() override;
 };
-
-

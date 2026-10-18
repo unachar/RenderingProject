@@ -3,7 +3,7 @@
 
 class ThumbnailValidation
 {
-public:
+  public:
     static bool Enabled();
     static void BeforeFrame(uint64_t frame);
     static void AfterFrame(uint64_t frame);
@@ -11,4 +11,3 @@ public:
     static void BeforeEditorFrame();
     static void CaptureAssetCell(const char* fileName, float x, float y, bool selected);
 };
-

@@ -3,7 +3,6 @@
 #include "componentmanager.h"
 #include "world.h"
 
-
 vector<EntityData> Registry::m_Entities;
 vector<EntityID> Registry::m_ActiveEntities[g_kMAX_COMPONENTS];
 vector<int32_t> Registry::m_EntityToIndex[g_kMAX_COMPONENTS];
@@ -19,21 +18,21 @@ unordered_map<type_index, ComponentTypeID>& ComponentTypeRegistry::TypeIds()
     return typeIds;
 }
 
-vector<void(*)(EntityID)>& ComponentTypeRegistry::CreateCallbacks()
+vector<void (*)(EntityID)>& ComponentTypeRegistry::CreateCallbacks()
 {
-    static vector<void(*)(EntityID)> createCallbacks;
+    static vector<void (*)(EntityID)> createCallbacks;
     return createCallbacks;
 }
 
-vector<void(*)(EntityID)>& ComponentTypeRegistry::ClearCallbacks()
+vector<void (*)(EntityID)>& ComponentTypeRegistry::ClearCallbacks()
 {
-    static vector<void(*)(EntityID)> clearCallbacks;
+    static vector<void (*)(EntityID)> clearCallbacks;
     return clearCallbacks;
 }
 
-vector<void(*)()>& ComponentTypeRegistry::ResetCallbacks()
+vector<void (*)()>& ComponentTypeRegistry::ResetCallbacks()
 {
-    static vector<void(*)()> resetCallbacks;
+    static vector<void (*)()> resetCallbacks;
     return resetCallbacks;
 }
 
@@ -68,7 +67,6 @@ void ComponentTypeRegistry::ResetComponents()
         reset();
     }
 }
-
 
 void Registry::Init()
 {
@@ -174,4 +172,3 @@ void Registry::DestroyEntity(EntityID entity)
 
     World::UnregisterName(entity);
 }
-

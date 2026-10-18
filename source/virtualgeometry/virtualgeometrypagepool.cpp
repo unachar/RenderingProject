@@ -15,6 +15,7 @@ void Check(HRESULT result)
         throw std::runtime_error("Geometry Page Copy Queue operation failed");
     }
 }
+
 Microsoft::WRL::ComPtr<ID3D12Resource> Buffer(ID3D12Device* device, D3D12_HEAP_TYPE type, D3D12_RESOURCE_STATES state)
 {
     D3D12_HEAP_PROPERTIES heap{};
@@ -27,10 +28,12 @@ Microsoft::WRL::ComPtr<ID3D12Resource> Buffer(ID3D12Device* device, D3D12_HEAP_T
     description.SampleDesc.Count = 1;
     description.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     Microsoft::WRL::ComPtr<ID3D12Resource> resource;
-    Check(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, state, nullptr, IID_PPV_ARGS(&resource)));
+    Check(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, state, nullptr,
+                                          IID_PPV_ARGS(&resource)));
     return resource;
 }
-}
+} // namespace
+
 void PagePool::Initialize(ID3D12Device* device, D3D12_CPU_DESCRIPTOR_HANDLE descriptors, uint32_t increment)
 {
     if (m_Device)
@@ -45,6 +48,7 @@ void PagePool::Initialize(ID3D12Device* device, D3D12_CPU_DESCRIPTOR_HANDLE desc
     Check(device->CreateCommandQueue(&description, IID_PPV_ARGS(&m_Queue)));
     Check(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_Fence)));
 }
+
 uint64_t PagePool::Submit(LoadTicket ticket, std::span<const uint8_t> payload)
 {
     if (!m_Device || payload.size() != 65536 || ticket.Slot >= 16384 || ticket.Generation > UINT32_MAX)
@@ -62,7 +66,8 @@ uint64_t PagePool::Submit(LoadTicket ticket, std::span<const uint8_t> payload)
     std::memcpy(mapped, payload.data(), payload.size());
     transfer.Upload->Unmap(0, nullptr);
     Check(m_Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY, IID_PPV_ARGS(&transfer.Allocator)));
-    Check(m_Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COPY, transfer.Allocator.Get(), nullptr, IID_PPV_ARGS(&transfer.Commands)));
+    Check(m_Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COPY, transfer.Allocator.Get(), nullptr,
+                                      IID_PPV_ARGS(&transfer.Commands)));
     transfer.Commands->CopyBufferRegion(page.Get(), 0, transfer.Upload.Get(), 0, 65536);
     Check(transfer.Commands->Close());
     transfer.Fence = ++m_Submitted;
@@ -86,6 +91,7 @@ uint64_t PagePool::Submit(LoadTicket ticket, std::span<const uint8_t> payload)
     m_Device->CreateShaderResourceView(page.Get(), &view, descriptor);
     return m_Submitted;
 }
+
 uint64_t PagePool::CompletedCopyFence() const
 {
     if (!m_Fence)
@@ -99,6 +105,7 @@ uint64_t PagePool::CompletedCopyFence() const
     }
     return completed;
 }
+
 void PagePool::Collect()
 {
     uint64_t completed = CompletedCopyFence();
@@ -107,6 +114,7 @@ void PagePool::Collect()
         m_Transfers.pop_front();
     }
 }
+
 ID3D12Resource* PagePool::Resource(uint32_t slot) const
 {
     if (slot >= m_Pages.size())
@@ -115,17 +123,18 @@ ID3D12Resource* PagePool::Resource(uint32_t slot) const
     }
     return m_Pages[slot].Get();
 }
+
 void PagePool::Shutdown()
 {
     if (m_Fence && m_Submitted && m_Fence->GetCompletedValue() < m_Submitted)
     {
         HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-        bool waitingOnEvent = event && SUCCEEDED(m_Fence->SetEventOnCompletion(m_Submitted,event));
+        bool waitingOnEvent = event && SUCCEEDED(m_Fence->SetEventOnCompletion(m_Submitted, event));
         while (m_Fence->GetCompletedValue() < m_Submitted && SUCCEEDED(m_Device->GetDeviceRemovedReason()))
         {
             if (waitingOnEvent)
             {
-                WaitForSingleObject(event,500);
+                WaitForSingleObject(event, 500);
             }
             else
             {
@@ -144,6 +153,7 @@ void PagePool::Shutdown()
     m_Device.Reset();
     m_Submitted = 0;
 }
+
 void PagePool::Release(uint32_t slot)
 {
     if (slot < m_Pages.size())
@@ -151,17 +161,22 @@ void PagePool::Release(uint32_t slot)
         m_Pages[slot].Reset();
     }
 }
+
 uint64_t PagePool::MemoryBytes() const
 {
     uint64_t bytes = 0;
     for (const auto& page : m_Pages)
     {
-        if (page) bytes += 65536;
+        if (page)
+        {
+            bytes += 65536;
+        }
     }
     return bytes;
 }
+
 PagePool::~PagePool()
 {
     Shutdown();
 }
-}
+} // namespace VirtualGeometryStreaming

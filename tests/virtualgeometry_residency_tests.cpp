@@ -4,8 +4,7 @@
 void TestVirtualGeometryResidency()
 {
     using namespace VirtualGeometryStreaming;
-    auto require = [](bool condition, const char* message)
-    {
+    auto require = [](bool condition, const char* message) {
         if (!condition)
         {
             throw std::runtime_error(message);
@@ -38,7 +37,8 @@ void TestVirtualGeometryResidency()
     manager.Collect(7, 3);
     auto replacement = manager.BeginLoad(2);
     require(bool(replacement), "Safe slot not reclaimed");
-    require(replacement->Slot == child->Slot && replacement->Generation != child->Generation, "Slot generation unchanged");
+    require(replacement->Slot == child->Slot && replacement->Generation != child->Generation,
+            "Slot generation unchanged");
     manager.CompleteCopy(*child, 8);
     manager.Publish(8);
     require(manager.Snapshot()[2].Flags == 0, "Stale completion published replacement");

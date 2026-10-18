@@ -13,7 +13,9 @@ PageIo::PageIo(Reader reader) : m_Read(std::move(reader))
         m_Cancelled.reserve(1024);
         for (uint32_t worker = 0; worker < 4; ++worker)
         {
-            m_Workers.emplace_back([this] { Work(); });
+            m_Workers.emplace_back([this] {
+                Work();
+            });
         }
     }
     catch (...)
@@ -22,11 +24,14 @@ PageIo::PageIo(Reader reader) : m_Read(std::move(reader))
         throw;
     }
 }
+
 PageIo::~PageIo()
 {
     Shutdown();
 }
-bool PageIo::Submit(std::shared_ptr<const VirtualGeometryPageCache::PageManifest> manifest, LoadTicket ticket, uint32_t localPage)
+
+bool PageIo::Submit(std::shared_ptr<const VirtualGeometryPageCache::PageManifest> manifest, LoadTicket ticket,
+                    uint32_t localPage)
 {
     std::lock_guard lock(m_Mutex);
     if (m_Stopping || !manifest || localPage >= manifest->Pages.size() || m_ReservedBytes + 65536 > 64ull * 1024 * 1024)
@@ -38,6 +43,7 @@ bool PageIo::Submit(std::shared_ptr<const VirtualGeometryPageCache::PageManifest
     m_Ready.notify_one();
     return true;
 }
+
 void PageIo::Cancel(LoadTicket ticket)
 {
     std::lock_guard lock(m_Mutex);
@@ -50,18 +56,22 @@ void PageIo::Cancel(LoadTicket ticket)
             return;
         }
     }
-    bool active = std::find(m_Active.begin(),m_Active.end(),ticket) != m_Active.end();
-    bool queued = std::any_of(m_Jobs.begin(),m_Jobs.end(),[&](const Job& job) { return job.Ticket == ticket; });
-    if ((active || queued) && std::find(m_Cancelled.begin(),m_Cancelled.end(),ticket) == m_Cancelled.end())
+    bool active = std::find(m_Active.begin(), m_Active.end(), ticket) != m_Active.end();
+    bool queued = std::any_of(m_Jobs.begin(), m_Jobs.end(), [&](const Job& job) {
+        return job.Ticket == ticket;
+    });
+    if ((active || queued) && std::find(m_Cancelled.begin(), m_Cancelled.end(), ticket) == m_Cancelled.end())
     {
         m_Cancelled.push_back(ticket);
     }
 }
+
 uint64_t PageIo::StagingBytes() const
 {
     std::lock_guard lock(m_Mutex);
     return m_ReservedBytes;
 }
+
 std::vector<PageIoCompletion> PageIo::Poll()
 {
     std::lock_guard lock(m_Mutex);
@@ -70,6 +80,7 @@ std::vector<PageIoCompletion> PageIo::Poll()
     m_ReservedBytes -= result.size() * 65536ull;
     return result;
 }
+
 void PageIo::Work()
 {
     while (true)
@@ -77,7 +88,9 @@ void PageIo::Work()
         Job job;
         {
             std::unique_lock lock(m_Mutex);
-            m_Ready.wait(lock, [&] { return m_Stopping || !m_Jobs.empty(); });
+            m_Ready.wait(lock, [&] {
+                return m_Stopping || !m_Jobs.empty();
+            });
             if (m_Jobs.empty())
             {
                 return;
@@ -105,10 +118,11 @@ void PageIo::Work()
         {
             result.Error = exception.what();
         }
-        result.Milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+        result.Milliseconds =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
         {
             std::lock_guard lock(m_Mutex);
-            auto active = std::find(m_Active.begin(),m_Active.end(),job.Ticket);
+            auto active = std::find(m_Active.begin(), m_Active.end(), job.Ticket);
             m_Active.erase(active);
             auto cancelled = std::find(m_Cancelled.begin(), m_Cancelled.end(), job.Ticket);
             if (cancelled != m_Cancelled.end())
@@ -124,6 +138,7 @@ void PageIo::Work()
         }
     }
 }
+
 void PageIo::Shutdown()
 {
     {
@@ -140,4 +155,4 @@ void PageIo::Shutdown()
     }
     m_Workers.clear();
 }
-}
+} // namespace VirtualGeometryStreaming

@@ -18,6 +18,7 @@
 #include "renderquality.h"
 #include <map>
 #include <tuple>
+#include <unordered_set>
 
 namespace
 {
@@ -52,13 +53,16 @@ struct GlassMesh
     XMFLOAT4 BaseColor{}, Emission{}, Optical{}, Absorption{}, OpticalExtra{};
     XMUINT4 Flags{}; // medium id, texture present, triangle count, reserved
 };
+
 static_assert(sizeof(GlassMesh) == 240);
+
 struct GlassDescriptorRecord
 {
     ComPtr<ID3D12Resource> Vertices, Indices, Texture;
     UINT ResidentMip = UINT_MAX;
     bool Valid = false;
 };
+
 struct FrameResources
 {
     array<ComPtr<ID3D12Resource>, 4> Guides;
@@ -75,6 +79,7 @@ struct FrameResources
     bool GlassReady = false;
     bool GlassReading = false;
     vector<D3D12_RESOURCE_BARRIER> GlassRestore;
+    unordered_set<ID3D12Resource*> GlassSkinnedVertices;
     // A scene SRV can already reference the previous TLAS earlier in this same
     // command list. Keep replaced resources until this frame's fence is reused.
     vector<ComPtr<ID3D12Resource>> Retired;
@@ -92,12 +97,14 @@ struct Constants
     XMFLOAT4 Jitter;
     XMFLOAT4 Stability;
 };
+
 struct LightingConstants
 {
     XMFLOAT4 Flags{};
     XMFLOAT4 Parameters{};
     array<XMUINT4, 160> Lights{};
 };
+
 constexpr UINT kLightingStride = (sizeof(LightingConstants) + 255u) & ~255u;
 array<XMUINT4, 160> g_LightShadowFlags{};
 ComPtr<ID3D12Resource> g_LightingConstants;
@@ -145,8 +152,8 @@ D3D12_GPU_DESCRIPTOR_HANDLE Gpu(UINT index)
     return CD3DX12_GPU_DESCRIPTOR_HANDLE(g_Heap->GetGPUDescriptorHandleForHeapStart(), index, g_Increment);
 }
 
-bool EnsureBuffer(ComPtr<ID3D12Resource>& resource, UINT64 bytes,
-    D3D12_HEAP_TYPE heapType, D3D12_RESOURCE_STATES state, const wchar_t* name)
+bool EnsureBuffer(ComPtr<ID3D12Resource>& resource, UINT64 bytes, D3D12_HEAP_TYPE heapType, D3D12_RESOURCE_STATES state,
+                  const wchar_t* name)
 {
     bytes = (bytes + 255ull) & ~255ull;
     if (resource && resource->GetDesc().Width >= bytes)
@@ -161,21 +168,24 @@ bool EnsureBuffer(ComPtr<ID3D12Resource>& resource, UINT64 bytes,
     }
     const auto description = CD3DX12_RESOURCE_DESC::Buffer(bytes, flags);
     ComPtr<ID3D12Resource> created;
-    const HRESULT result = g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
-        &description, state, nullptr, IID_PPV_ARGS(&created));
+    const HRESULT result = g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, state, nullptr,
+                                                             IID_PPV_ARGS(&created));
     if (FAILED(result))
     {
         Debug::Log("DXR: buffer allocation failed (0x%08X)\n", static_cast<unsigned int>(result));
         return false;
     }
     created->SetName(name);
-    if (resource) g_Frames[g_FrameIndex].Retired.push_back(resource);
+    if (resource)
+    {
+        g_Frames[g_FrameIndex].Retired.push_back(resource);
+    }
     resource = move(created);
     return true;
 }
 
-void Transition(ID3D12GraphicsCommandList* commandList, ID3D12Resource* resource,
-    D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
+void Transition(ID3D12GraphicsCommandList* commandList, ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
+                D3D12_RESOURCE_STATES after)
 {
     if (resource && before != after && before != D3D12_RESOURCE_STATE_GENERIC_READ &&
         after != D3D12_RESOURCE_STATE_GENERIC_READ)
@@ -192,11 +202,12 @@ bool EnsureOutput(FrameResources& frame, UINT width, UINT height)
         return true;
     }
     const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    const auto description = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16_FLOAT,
-        width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    const auto description = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16_FLOAT, width, height, 1, 1, 1, 0,
+                                                          D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     ComPtr<ID3D12Resource> created;
     if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
-        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&created))))
+                                                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+                                                 IID_PPV_ARGS(&created))))
     {
         return false;
     }
@@ -226,13 +237,20 @@ array<ComPtr<ID3D12Resource>, 5> g_SharedGuides;
 bool EnsureSharedGuide(UINT index, DXGI_FORMAT format, UINT width, UINT height)
 {
     auto& guide = g_SharedGuides[index];
-    if (guide && guide->GetDesc().Width == width && guide->GetDesc().Height == height) return true;
+    if (guide && guide->GetDesc().Width == width && guide->GetDesc().Height == height)
+    {
+        return true;
+    }
     const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    const auto description = CD3DX12_RESOURCE_DESC::Tex2D(format, width, height,
-        1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    const auto description =
+        CD3DX12_RESOURCE_DESC::Tex2D(format, width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     ComPtr<ID3D12Resource> created;
     if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
-        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&created)))) return false;
+                                                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+                                                 IID_PPV_ARGS(&created))))
+    {
+        return false;
+    }
     created->SetName(index < 4 ? L"NRD Primary Surface Guide (shared)" : L"NRD Ambient Guide (shared)");
     guide = move(created);
     return true;
@@ -240,28 +258,47 @@ bool EnsureSharedGuide(UINT index, DXGI_FORMAT format, UINT width, UINT height)
 
 bool EnsureDenoiser(FrameResources& frame)
 {
-    if (!NrdDenoiser::IsCompiled() || !g_ComposeShadow) return false;
-    constexpr DXGI_FORMAT formats[] = { DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_R10G10B10A2_UNORM,
-        DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R16_FLOAT, DXGI_FORMAT_R16_FLOAT };
+    if (!NrdDenoiser::IsCompiled() || !g_ComposeShadow)
+    {
+        return false;
+    }
+    constexpr DXGI_FORMAT formats[] = {DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R32_FLOAT,
+                                       DXGI_FORMAT_R16_FLOAT, DXGI_FORMAT_R16_FLOAT};
     for (UINT index = 0; index < 5; ++index)
     {
-        if (!EnsureSharedGuide(index, formats[index], frame.Width, frame.Height)) return false;
+        if (!EnsureSharedGuide(index, formats[index], frame.Width, frame.Height))
+        {
+            return false;
+        }
         auto& slotGuide = index < 4 ? frame.Guides[index] : frame.AmbientGuide;
-        if (slotGuide == g_SharedGuides[index]) continue;
+        if (slotGuide == g_SharedGuides[index])
+        {
+            continue;
+        }
         slotGuide = g_SharedGuides[index];
         D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
         uav.Format = formats[index];
         uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-        g_Device->CreateUnorderedAccessView(slotGuide.Get(), nullptr, &uav, Cpu(kGuideUavStart + g_FrameIndex * 5 + index));
+        g_Device->CreateUnorderedAccessView(slotGuide.Get(), nullptr, &uav,
+                                            Cpu(kGuideUavStart + g_FrameIndex * 5 + index));
     }
     if (!g_NrdSun || g_NrdWidth != frame.Width || g_NrdHeight != frame.Height)
     {
         // Histories are shared across queued frames; retire them only after the queue has completed.
-        if (!GraphicsDevice::WaitForGpuIdle()) return false;
+        if (!GraphicsDevice::WaitForGpuIdle())
+        {
+            return false;
+        }
         auto created = make_unique<NrdDenoiser>();
-        if (!created->Initialize(g_Device.Get(), NrdSignal::Shadow, frame.Width, frame.Height)) return false;
+        if (!created->Initialize(g_Device.Get(), NrdSignal::Shadow, frame.Width, frame.Height))
+        {
+            return false;
+        }
         auto ambient = make_unique<NrdDenoiser>();
-        if (!ambient->Initialize(g_Device.Get(), NrdSignal::AmbientOcclusion, frame.Width, frame.Height)) return false;
+        if (!ambient->Initialize(g_Device.Get(), NrdSignal::AmbientOcclusion, frame.Width, frame.Height))
+        {
+            return false;
+        }
         g_NrdSun = move(created);
         g_NrdAmbient = move(ambient);
         g_NrdWidth = frame.Width;
@@ -275,21 +312,20 @@ bool EnsureDenoiser(FrameResources& frame)
 // Restore geometry states even if allocation of a later BLAS fails.
 class GeometryReadBatch
 {
-public:
+  public:
     explicit GeometryReadBatch(ID3D12GraphicsCommandList* commandList) : m_CommandList(commandList) {}
 
     void Add(ID3D12Resource* resource, D3D12_RESOURCE_STATES state)
     {
         if (!resource || state == D3D12_RESOURCE_STATE_GENERIC_READ ||
-            state == D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE ||
-            !m_Resources.emplace(resource, state).second)
+            state == D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE || !m_Resources.emplace(resource, state).second)
         {
             return;
         }
-        m_ReadBarriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
-            resource, state, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
-        m_FinishBarriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
-            resource, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, state));
+        m_ReadBarriers.push_back(
+            CD3DX12_RESOURCE_BARRIER::Transition(resource, state, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
+        m_FinishBarriers.push_back(
+            CD3DX12_RESOURCE_BARRIER::Transition(resource, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, state));
     }
 
     void Begin()
@@ -324,17 +360,20 @@ public:
         }
     }
 
-    ~GeometryReadBatch() { Finish(); }
+    ~GeometryReadBatch()
+    {
+        Finish();
+    }
 
-private:
+  private:
     ID3D12GraphicsCommandList* m_CommandList;
     map<ID3D12Resource*, D3D12_RESOURCE_STATES> m_Resources;
     vector<D3D12_RESOURCE_BARRIER> m_ReadBarriers;
     vector<D3D12_RESOURCE_BARRIER> m_FinishBarriers;
 };
 
-bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingGeometry& geometry,
-    BottomLevel& level, GeometryReadBatch& geometryReads)
+bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingGeometry& geometry, BottomLevel& level,
+                      GeometryReadBatch& geometryReads)
 {
     level.LastSeen = g_Serial;
     if (level.Result && (!geometry.Deforming || level.LastBuilt == g_Serial))
@@ -364,16 +403,16 @@ bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingG
     if (geometry.Deforming)
     {
         inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE |
-            D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
+                       D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
     }
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes{};
     g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &sizes);
     const bool update = geometry.Deforming && level.Result;
     if (sizes.ResultDataMaxSizeInBytes == 0 ||
         !EnsureBuffer(level.Result, sizes.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
-            D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene BLAS") ||
+                      D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene BLAS") ||
         !EnsureBuffer(level.Scratch, (max)(sizes.ScratchDataSizeInBytes, sizes.UpdateScratchDataSizeInBytes),
-            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"BLAS Scratch"))
+                      D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"BLAS Scratch"))
     {
         return false;
     }
@@ -400,11 +439,12 @@ bool EnsureTelemetryPipeline()
     if (!g_TelemetryPipelineTried)
     {
         g_TelemetryPipelineTried = true;
-        const D3D_SHADER_MACRO defines[] = {{"USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0"},
-            {"ENABLE_RAY_TELEMETRY", "1"}, {}};
+        const D3D_SHADER_MACRO defines[] = {
+            {"USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0"}, {"ENABLE_RAY_TELEMETRY", "1"}, {}};
         ComPtr<ID3DBlob> shader, errors;
-        const HRESULT result = D3DCompileFromFile(L"shader/hlsl/RaytracingCS.hlsl", defines,
-            D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &shader, &errors);
+        const HRESULT result =
+            D3DCompileFromFile(L"shader/hlsl/RaytracingCS.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, "main",
+                               "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &shader, &errors);
         if (SUCCEEDED(result))
         {
             D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
@@ -413,8 +453,11 @@ bool EnsureTelemetryPipeline()
             g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&g_TelemetryPipeline));
         }
         if (!g_TelemetryPipeline)
+        {
             WriteGraphicsLog("Ray telemetry: shadow/AO counter variant unavailable: %s\n",
-                errors ? static_cast<const char*>(errors->GetBufferPointer()) : "pipeline creation failed");
+                             errors ? static_cast<const char*>(errors->GetBufferPointer())
+                                    : "pipeline creation failed");
+        }
     }
     return g_TelemetryPipeline != nullptr;
 }
@@ -423,75 +466,112 @@ UINT GlassTableIndex(UINT slot)
 {
     return RendererState::g_kGLASS_DESCRIPTOR_START + slot * RendererState::g_kGLASS_FRAME_DESCRIPTORS;
 }
+
 bool BuildGlassMetadata(FrameResources& frame)
 {
     frame.GlassReady = false;
     const UINT count = static_cast<UINT>(frame.SceneGeometry.size());
     if (!count || !EnsureBuffer(frame.GlassMetadata, count * sizeof(GlassMesh), D3D12_HEAP_TYPE_UPLOAD,
-        D3D12_RESOURCE_STATE_GENERIC_READ, L"Glass mesh metadata")) return false;
+                                D3D12_RESOURCE_STATE_GENERIC_READ, L"Glass mesh metadata"))
+    {
+        return false;
+    }
     const UINT start = GlassTableIndex(g_FrameIndex);
-    void* data = nullptr; D3D12_RANGE noRead{0,0};
-    if (FAILED(frame.GlassMetadata->Map(0,&noRead,&data))) return false;
+    void* data = nullptr;
+    D3D12_RANGE noRead{0, 0};
+    if (FAILED(frame.GlassMetadata->Map(0, &noRead, &data)))
+    {
+        return false;
+    }
     auto* meshes = static_cast<GlassMesh*>(data);
     frame.GlassDescriptors.resize(count);
-    for (UINT i=0;i<count;++i)
+    for (UINT i = 0; i < count; ++i)
     {
         const auto& g = frame.SceneGeometry[i];
         GlassMesh m{};
         XMMATRIX world = XMLoadFloat4x4(&g.World);
-        XMStoreFloat4x4(&m.World,XMMatrixTranspose(world));
-        XMStoreFloat4x4(&m.NormalToWorld,XMMatrixInverse(nullptr,world));
+        XMStoreFloat4x4(&m.World, XMMatrixTranspose(world));
+        XMStoreFloat4x4(&m.NormalToWorld, XMMatrixInverse(nullptr, world));
         m.Layout = {g.VertexView.StrideInBytes,
-            g.Indices ? (g.IndexView.Format == DXGI_FORMAT_R16_UINT ? 16u : 32u) : 0u,
-            static_cast<UINT>(g.VertexView.BufferLocation-g.Vertices->GetGPUVirtualAddress()),
-            g.Indices ? static_cast<UINT>(g.IndexView.BufferLocation-g.Indices->GetGPUVirtualAddress()) : 0u};
-        m.BaseColor=g.BaseColor; m.Emission=g.Emission;
-        m.Optical={g.IOR,g.Transmission,g.Roughness,g.Metallic};
-        m.Absorption={g.Absorption.x,g.Absorption.y,g.Absorption.z,g.Thickness};
-        m.OpticalExtra={g.TransmissionRoughness,g.Fresnel,0,0};
-        m.Flags={g.MediumID,static_cast<UINT>(g.Texture!=nullptr),
-            g.Indices ? g.IndexCount/3 : g.VertexView.SizeInBytes/g.VertexView.StrideInBytes/3,static_cast<UINT>(g.UsesAssetMaterial)};
-        meshes[i]=m;
+                    g.Indices ? (g.IndexView.Format == DXGI_FORMAT_R16_UINT ? 16u : 32u) : 0u,
+                    static_cast<UINT>(g.VertexView.BufferLocation - g.Vertices->GetGPUVirtualAddress()),
+                    g.Indices ? static_cast<UINT>(g.IndexView.BufferLocation - g.Indices->GetGPUVirtualAddress()) : 0u};
+        m.BaseColor = g.BaseColor;
+        m.Emission = g.Emission;
+        m.Optical = {g.IOR, g.Transmission, g.Roughness, g.Metallic};
+        m.Absorption = {g.Absorption.x, g.Absorption.y, g.Absorption.z, g.Thickness};
+        m.OpticalExtra = {g.TransmissionRoughness, g.Fresnel, 0, 0};
+        m.Flags = {g.MediumID, static_cast<UINT>(g.Texture != nullptr),
+                   g.Indices ? g.IndexCount / 3 : g.VertexView.SizeInBytes / g.VertexView.StrideInBytes / 3,
+                   static_cast<UINT>(g.UsesAssetMaterial)};
+        meshes[i] = m;
         D3D12_SHADER_RESOURCE_VIEW_DESC raw{};
-        raw.ViewDimension=D3D12_SRV_DIMENSION_BUFFER; raw.Format=DXGI_FORMAT_R32_TYPELESS;
-        raw.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        raw.Buffer.Flags=D3D12_BUFFER_SRV_FLAG_RAW;
-        raw.Buffer.NumElements=static_cast<UINT>(g.Vertices->GetDesc().Width/4);
+        raw.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        raw.Format = DXGI_FORMAT_R32_TYPELESS;
+        raw.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        raw.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
+        raw.Buffer.NumElements = static_cast<UINT>(g.Vertices->GetDesc().Width / 4);
         auto& cached = frame.GlassDescriptors[i];
-        if (!cached.Valid || cached.Vertices.Get()!=g.Vertices.Get())
-            g_Device->CreateShaderResourceView(g.Vertices.Get(),&raw,Cpu(start+1+i));
-        raw.Buffer.NumElements=g.Indices ? static_cast<UINT>(g.Indices->GetDesc().Width/4) : 1;
-        if (!cached.Valid || cached.Indices.Get()!=g.Indices.Get())
-            g_Device->CreateShaderResourceView(g.Indices.Get(),&raw,Cpu(start+1+kMaximumInstances+i));
+        if (!cached.Valid || cached.Vertices.Get() != g.Vertices.Get())
+        {
+            g_Device->CreateShaderResourceView(g.Vertices.Get(), &raw, Cpu(start + 1 + i));
+        }
+        raw.Buffer.NumElements = g.Indices ? static_cast<UINT>(g.Indices->GetDesc().Width / 4) : 1;
+        if (!cached.Valid || cached.Indices.Get() != g.Indices.Get())
+        {
+            g_Device->CreateShaderResourceView(g.Indices.Get(), &raw, Cpu(start + 1 + kMaximumInstances + i));
+        }
         D3D12_SHADER_RESOURCE_VIEW_DESC tex{};
-        tex.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
-        tex.Format=g.Texture ? g.Texture->GetDesc().Format : DXGI_FORMAT_R8G8B8A8_UNORM;
-        tex.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        tex.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        tex.Format = g.Texture ? g.Texture->GetDesc().Format : DXGI_FORMAT_R8G8B8A8_UNORM;
+        tex.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         switch (tex.Format)
         {
-        case DXGI_FORMAT_R32_TYPELESS: tex.Format=DXGI_FORMAT_R32_FLOAT; break;
-        case DXGI_FORMAT_R8G8B8A8_TYPELESS: tex.Format=DXGI_FORMAT_R8G8B8A8_UNORM; break;
-        case DXGI_FORMAT_B8G8R8A8_TYPELESS: tex.Format=DXGI_FORMAT_B8G8R8A8_UNORM; break;
-        case DXGI_FORMAT_BC1_TYPELESS: tex.Format=DXGI_FORMAT_BC1_UNORM; break;
-        case DXGI_FORMAT_BC2_TYPELESS: tex.Format=DXGI_FORMAT_BC2_UNORM; break;
-        case DXGI_FORMAT_BC3_TYPELESS: tex.Format=DXGI_FORMAT_BC3_UNORM; break;
-        case DXGI_FORMAT_BC7_TYPELESS: tex.Format=DXGI_FORMAT_BC7_UNORM; break;
-        default: break;
+        case DXGI_FORMAT_R32_TYPELESS:
+            tex.Format = DXGI_FORMAT_R32_FLOAT;
+            break;
+        case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+            tex.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            break;
+        case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+            tex.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            break;
+        case DXGI_FORMAT_BC1_TYPELESS:
+            tex.Format = DXGI_FORMAT_BC1_UNORM;
+            break;
+        case DXGI_FORMAT_BC2_TYPELESS:
+            tex.Format = DXGI_FORMAT_BC2_UNORM;
+            break;
+        case DXGI_FORMAT_BC3_TYPELESS:
+            tex.Format = DXGI_FORMAT_BC3_UNORM;
+            break;
+        case DXGI_FORMAT_BC7_TYPELESS:
+            tex.Format = DXGI_FORMAT_BC7_UNORM;
+            break;
+        default:
+            break;
         }
-        tex.Texture2D.MipLevels=g.Texture ? g.Texture->GetDesc().MipLevels : 1;
-        tex.Texture2D.ResourceMinLODClamp=static_cast<float>(g.TextureResidentMip);
-        if (!cached.Valid || cached.Texture.Get()!=g.Texture.Get() || cached.ResidentMip!=g.TextureResidentMip)
-            g_Device->CreateShaderResourceView(g.Texture.Get(),&tex,Cpu(start+1+2*kMaximumInstances+i));
-        cached.Vertices=g.Vertices; cached.Indices=g.Indices; cached.Texture=g.Texture;
-        cached.ResidentMip=g.TextureResidentMip; cached.Valid=true;
+        tex.Texture2D.MipLevels = g.Texture ? g.Texture->GetDesc().MipLevels : 1;
+        tex.Texture2D.ResourceMinLODClamp = static_cast<float>(g.TextureResidentMip);
+        if (!cached.Valid || cached.Texture.Get() != g.Texture.Get() || cached.ResidentMip != g.TextureResidentMip)
+        {
+            g_Device->CreateShaderResourceView(g.Texture.Get(), &tex, Cpu(start + 1 + 2 * kMaximumInstances + i));
+        }
+        cached.Vertices = g.Vertices;
+        cached.Indices = g.Indices;
+        cached.Texture = g.Texture;
+        cached.ResidentMip = g.TextureResidentMip;
+        cached.Valid = true;
     }
-    frame.GlassMetadata->Unmap(0,nullptr);
+    frame.GlassMetadata->Unmap(0, nullptr);
     D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-    srv.ViewDimension=D3D12_SRV_DIMENSION_BUFFER; srv.Format=DXGI_FORMAT_UNKNOWN;
-    srv.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srv.Buffer.NumElements=count; srv.Buffer.StructureByteStride=sizeof(GlassMesh);
-    g_Device->CreateShaderResourceView(frame.GlassMetadata.Get(),&srv,Cpu(start));
-    frame.GlassReady=true;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+    srv.Format = DXGI_FORMAT_UNKNOWN;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Buffer.NumElements = count;
+    srv.Buffer.StructureByteStride = sizeof(GlassMesh);
+    g_Device->CreateShaderResourceView(frame.GlassMetadata.Get(), &srv, Cpu(start));
+    frame.GlassReady = true;
     return true;
 }
 
@@ -515,7 +595,8 @@ bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
         }
         ++accepted;
         const GeometryKey key(entry.VertexView.BufferLocation, entry.IndexView.BufferLocation,
-            entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,static_cast<UINT>(entry.IndexView.Format));
+                              entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,
+                              static_cast<UINT>(entry.IndexView.Format));
         const auto bottom = frame.Geometry.find(key);
         if (bottom == frame.Geometry.end() || !bottom->second.Result || entry.Deforming)
         {
@@ -535,7 +616,8 @@ bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
             continue;
         }
         const GeometryKey key(entry.VertexView.BufferLocation, entry.IndexView.BufferLocation,
-            entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,static_cast<UINT>(entry.IndexView.Format));
+                              entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,
+                              static_cast<UINT>(entry.IndexView.Format));
         BottomLevel& bottom = frame.Geometry[key];
         if (!BuildBottomLevel(commandList, entry, bottom, geometryReads))
         {
@@ -562,10 +644,22 @@ bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
         if (iterator->second.LastSeen != g_Serial)
         {
             const auto& bottom = iterator->second;
-            if (bottom.Result) frame.Retired.push_back(bottom.Result);
-            if (bottom.Scratch) frame.Retired.push_back(bottom.Scratch);
-            if (bottom.Vertices) frame.Retired.push_back(bottom.Vertices);
-            if (bottom.Indices) frame.Retired.push_back(bottom.Indices);
+            if (bottom.Result)
+            {
+                frame.Retired.push_back(bottom.Result);
+            }
+            if (bottom.Scratch)
+            {
+                frame.Retired.push_back(bottom.Scratch);
+            }
+            if (bottom.Vertices)
+            {
+                frame.Retired.push_back(bottom.Vertices);
+            }
+            if (bottom.Indices)
+            {
+                frame.Retired.push_back(bottom.Indices);
+            }
             iterator = frame.Geometry.erase(iterator);
         }
         else
@@ -579,7 +673,7 @@ bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
         return false;
     }
     if (!EnsureBuffer(frame.Instances, instances.size() * sizeof(instances.front()), D3D12_HEAP_TYPE_UPLOAD,
-        D3D12_RESOURCE_STATE_GENERIC_READ, L"TLAS Instance Descriptions"))
+                      D3D12_RESOURCE_STATE_GENERIC_READ, L"TLAS Instance Descriptions"))
     {
         return false;
     }
@@ -600,9 +694,9 @@ bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes{};
     g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &sizes);
     if (!EnsureBuffer(frame.TopLevel, sizes.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
-        D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene TLAS") ||
+                      D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene TLAS") ||
         !EnsureBuffer(frame.Scratch, sizes.ScratchDataSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"TLAS Scratch"))
+                      D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"TLAS Scratch"))
     {
         return false;
     }
@@ -622,31 +716,35 @@ void FindSunDirection()
     for (EntityID entity : World::GetView<SunComponent, LightComponent>())
     {
         const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-        if (light.Type == LightType::Directional && light.RenderMode == LightRenderMode::Physical &&
-            light.IsActive && light.CastShadow && light.AffectsOpaque && light.Intensity > 0.0f)
+        if (light.Type == LightType::Directional && light.RenderMode == LightRenderMode::Physical && light.IsActive &&
+            light.CastShadow && light.AffectsOpaque && light.Intensity > 0.0f)
         {
             XMFLOAT3 direction;
             XMStoreFloat3(&direction, XMVector3Normalize(XMLoadFloat3(&light.Direction)));
-            g_SunDirection = { direction.x, direction.y, direction.z, 1.0f };
+            g_SunDirection = {direction.x, direction.y, direction.z, 1.0f};
             return;
         }
     }
 }
-}
+} // namespace
 
 bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UINT increment)
 {
     Shutdown();
     g_Heap = heap;
     g_Increment = increment;
-    if (!device || !heap || increment == 0) return false;
-    for (UINT slot=0;slot<kFrameCount;++slot)
+    if (!device || !heap || increment == 0)
+    {
+        return false;
+    }
+    for (UINT slot = 0; slot < kFrameCount; ++slot)
     {
         D3D12_SHADER_RESOURCE_VIEW_DESC empty{};
-        empty.ViewDimension=D3D12_SRV_DIMENSION_BUFFER;
-        empty.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        empty.Buffer.NumElements=1; empty.Buffer.StructureByteStride=sizeof(GlassMesh);
-        device->CreateShaderResourceView(nullptr,&empty,Cpu(GlassTableIndex(slot)));
+        empty.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        empty.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        empty.Buffer.NumElements = 1;
+        empty.Buffer.StructureByteStride = sizeof(GlassMesh);
+        device->CreateShaderResourceView(nullptr, &empty, Cpu(GlassTableIndex(slot)));
     }
     if (!device || !heap || increment == 0)
     {
@@ -656,28 +754,35 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
     // on raster-only devices. Supply a valid zero-filled CB before DXR probing.
     const auto lightingHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
     const auto lightingDescription = CD3DX12_RESOURCE_DESC::Buffer(kLightingStride * kFrameCount);
-    if (FAILED(device->CreateCommittedResource(&lightingHeap, D3D12_HEAP_FLAG_NONE,
-        &lightingDescription, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g_LightingConstants)))) return false;
+    if (FAILED(device->CreateCommittedResource(&lightingHeap, D3D12_HEAP_FLAG_NONE, &lightingDescription,
+                                               D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                               IID_PPV_ARGS(&g_LightingConstants))))
+    {
+        return false;
+    }
     void* rasterLightingData = nullptr;
-    D3D12_RANGE lightingNoRead{0,0};
-    if (FAILED(g_LightingConstants->Map(0,&lightingNoRead,&rasterLightingData))) return false;
-    memset(rasterLightingData,0,kLightingStride*kFrameCount);
-    g_LightingConstants->Unmap(0,nullptr);
+    D3D12_RANGE lightingNoRead{0, 0};
+    if (FAILED(g_LightingConstants->Map(0, &lightingNoRead, &rasterLightingData)))
+    {
+        return false;
+    }
+    memset(rasterLightingData, 0, kLightingStride * kFrameCount);
+    g_LightingConstants->Unmap(0, nullptr);
     D3D12_SHADER_RESOURCE_VIEW_DESC fallback{};
     fallback.Format = DXGI_FORMAT_R16G16_FLOAT;
     fallback.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     fallback.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     fallback.Texture2D.MipLevels = 1;
     device->CreateShaderResourceView(nullptr, &fallback, Cpu(kFallbackSrv));
-	char disabled[8]{};
-	if (GetEnvironmentVariableA("DX12_DISABLE_DXR", disabled, sizeof(disabled)) > 0 && atoi(disabled) != 0)
-	{
-		g_Status = "検証設定で DXR を無効にしています";
-		WriteGraphicsLog("DXR: disabled by validation override; raster fallback\n");
-		return false;
-	}
+    char disabled[8]{};
+    if (GetEnvironmentVariableA("DX12_DISABLE_DXR", disabled, sizeof(disabled)) > 0 && atoi(disabled) != 0)
+    {
+        g_Status = "検証設定で DXR を無効にしています";
+        WriteGraphicsLog("DXR: disabled by validation override; raster fallback\n");
+        return false;
+    }
     D3D12_FEATURE_DATA_D3D12_OPTIONS5 options{};
-    D3D12_FEATURE_DATA_SHADER_MODEL shaderModel{ D3D_SHADER_MODEL_6_5 };
+    D3D12_FEATURE_DATA_SHADER_MODEL shaderModel{D3D_SHADER_MODEL_6_5};
     if (FAILED(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options, sizeof(options))) ||
         options.RaytracingTier < D3D12_RAYTRACING_TIER_1_1 ||
         FAILED(device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &shaderModel, sizeof(shaderModel))) ||
@@ -704,21 +809,25 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
         parameters[index + 1].InitAsDescriptorTable(1, &ranges[index]);
     }
     parameters[4].InitAsConstantBufferView(0);
-    for (UINT index = 3; index < 8; ++index) parameters[index + 2].InitAsDescriptorTable(1, &ranges[index]);
+    for (UINT index = 3; index < 8; ++index)
+    {
+        parameters[index + 2].InitAsDescriptorTable(1, &ranges[index]);
+    }
     parameters[10].InitAsUnorderedAccessView(0, 9);
     const CD3DX12_ROOT_SIGNATURE_DESC rootDescription(11, parameters);
     ComPtr<ID3DBlob> serialized;
     ComPtr<ID3DBlob> errors;
     if (FAILED(D3D12SerializeRootSignature(&rootDescription, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors)) ||
         FAILED(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
-            IID_PPV_ARGS(&g_RootSignature))))
+                                           IID_PPV_ARGS(&g_RootSignature))))
     {
         g_Status = "DXR root signature 作成失敗";
         return false;
     }
     ComPtr<ID3DBlob> shader;
-    if (FAILED(D3DReadFileToBlob(NrdDenoiser::IsCompiled() ?
-        L"shader/hlsl/build/RaytracingNrdCS.cso" : L"shader/hlsl/build/RaytracingCS.cso", &shader)))
+    if (FAILED(D3DReadFileToBlob(NrdDenoiser::IsCompiled() ? L"shader/hlsl/build/RaytracingNrdCS.cso"
+                                                           : L"shader/hlsl/build/RaytracingCS.cso",
+                                 &shader)))
     {
         g_Status = "RaytracingCS.cso がありません";
         return false;
@@ -728,9 +837,9 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
     pipeline.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
     if (FAILED(device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&g_Pipeline))) ||
         !EnsureBuffer(g_Constants, kConstantStride * kFrameCount, D3D12_HEAP_TYPE_UPLOAD,
-            D3D12_RESOURCE_STATE_GENERIC_READ, L"Raytracing Frame Constants") ||
+                      D3D12_RESOURCE_STATE_GENERIC_READ, L"Raytracing Frame Constants") ||
         !EnsureBuffer(g_LightingConstants, kLightingStride * kFrameCount, D3D12_HEAP_TYPE_UPLOAD,
-            D3D12_RESOURCE_STATE_GENERIC_READ, L"Scene Ray Lighting Constants"))
+                      D3D12_RESOURCE_STATE_GENERIC_READ, L"Scene Ray Lighting Constants"))
     {
         g_Pipeline.Reset();
         g_Status = "DXR pipeline 作成失敗";
@@ -739,24 +848,38 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
     if (NrdDenoiser::IsCompiled())
     {
         shader.Reset();
-        if (FAILED(D3DReadFileToBlob(L"shader/hlsl/build/NrdComposeShadowCS.cso", &shader))) return false;
+        if (FAILED(D3DReadFileToBlob(L"shader/hlsl/build/NrdComposeShadowCS.cso", &shader)))
+        {
+            return false;
+        }
         pipeline.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
-        if (FAILED(device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&g_ComposeShadow)))) return false;
+        if (FAILED(device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&g_ComposeShadow))))
+        {
+            return false;
+        }
         shader.Reset();
-        if (FAILED(D3DReadFileToBlob(L"shader/hlsl/build/NrdComposeAmbientCS.cso", &shader))) return false;
+        if (FAILED(D3DReadFileToBlob(L"shader/hlsl/build/NrdComposeAmbientCS.cso", &shader)))
+        {
+            return false;
+        }
         pipeline.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
-        if (FAILED(device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&g_ComposeAmbient)))) return false;
+        if (FAILED(device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&g_ComposeAmbient))))
+        {
+            return false;
+        }
     }
     g_Status = "DXR Tier 1.1 対応";
     void* lightingData = nullptr;
-    D3D12_RANGE noRead{ 0, 0 };
+    D3D12_RANGE noRead{0, 0};
     if (SUCCEEDED(g_LightingConstants->Map(0, &noRead, &lightingData)))
     {
         memset(lightingData, 0, kLightingStride * kFrameCount);
         g_LightingConstants->Unmap(0, nullptr);
     }
     if (!RayReflections::Initialize(device, heap, increment))
+    {
         WriteGraphicsLog("DXR: reflection pipeline initialization failed\n");
+    }
     if (!OptixDenoiser::Initialize(device))
     {
         WriteGraphicsLog("OptiX unavailable: %s\n", OptixDenoiser::GetStatus());
@@ -797,7 +920,7 @@ void Raytracing::Shutdown()
 }
 
 void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource* depth, ID3D12Resource* normal,
-    D3D12_GPU_DESCRIPTOR_HANDLE depthSrv, D3D12_GPU_DESCRIPTOR_HANDLE normalSrv, UINT frameIndex)
+                         D3D12_GPU_DESCRIPTOR_HANDLE depthSrv, D3D12_GPU_DESCRIPTOR_HANDLE normalSrv, UINT frameIndex)
 {
     g_Active = false;
     g_ReflectionsActive = false;
@@ -811,17 +934,22 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     g_InstanceCount = 0;
     g_FrameIndex = frameIndex % kFrameCount;
     g_Frames[g_FrameIndex].Retired.clear();
-    auto updateLighting = [&](bool sceneReady)
-    {
-        if (!g_LightingConstants) return;
+    auto updateLighting = [&](bool sceneReady) {
+        if (!g_LightingConstants)
+        {
+            return;
+        }
         LightingConstants lighting{};
-        lighting.Flags = { static_cast<float>(UsesRaytracedShadows()),
-            static_cast<float>(UsesRaytracedShadows()), static_cast<float>(sceneReady), sceneReady && g_Frames[g_FrameIndex].GlassReady ? static_cast<float>(g_Frames[g_FrameIndex].SceneGeometry.size()) : 0.0f };
-        lighting.Parameters = { clamp(g_Settings.ShadowDistance, 1.0f, 2000.0f),
-            clamp(g_Settings.NormalBias, 0.001f, 0.1f), 0.0f, 0.0f };
+        lighting.Flags = {static_cast<float>(UsesRaytracedShadows()), static_cast<float>(UsesRaytracedShadows()),
+                          static_cast<float>(sceneReady),
+                          sceneReady && g_Frames[g_FrameIndex].GlassReady
+                              ? static_cast<float>(g_Frames[g_FrameIndex].SceneGeometry.size())
+                              : 0.0f};
+        lighting.Parameters = {clamp(g_Settings.ShadowDistance, 1.0f, 2000.0f),
+                               clamp(g_Settings.NormalBias, 0.001f, 0.1f), 0.0f, 0.0f};
         lighting.Lights = g_LightShadowFlags;
         void* mapped = nullptr;
-        D3D12_RANGE noRead{ 0, 0 };
+        D3D12_RANGE noRead{0, 0};
         if (SUCCEEDED(g_LightingConstants->Map(0, &noRead, &mapped)))
         {
             memcpy(static_cast<BYTE*>(mapped) + g_FrameIndex * kLightingStride, &lighting, sizeof(lighting));
@@ -829,7 +957,9 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         }
     };
     updateLighting(false);
-    if (!IsAvailable() || !g_Settings.Enabled || (!UsesRaytracedShadows() && !UsesRaytracedAmbientOcclusion() && !g_Settings.Reflections && !RendererSettings::GetRealtimeGiEnabled() && !RenderQuality::Get().RaytracedRefraction) ||
+    if (!IsAvailable() || !g_Settings.Enabled ||
+        (!UsesRaytracedShadows() && !UsesRaytracedAmbientOcclusion() && !g_Settings.Reflections &&
+         !RendererSettings::GetRealtimeGiEnabled() && !RenderQuality::Get().RaytracedRefraction) ||
         !commandList || !depth || !normal)
     {
         g_NrdHistoryValid = false;
@@ -847,11 +977,17 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     }
     FindSunDirection();
     const EntityID cameraEntity = Camera::GetCameraEntity();
-    if (cameraEntity != g_NrdCamera) g_NrdHistoryValid = false;
+    if (cameraEntity != g_NrdCamera)
+    {
+        g_NrdHistoryValid = false;
+    }
     g_NrdCamera = cameraEntity;
     // The NRD-enabled trace shader always produces its four guides, even when denoising is switched off.
     const bool guidesReady = !NrdDenoiser::IsCompiled() || EnsureDenoiser(frame);
-    if (!guidesReady) return;
+    if (!guidesReady)
+    {
+        return;
+    }
     XMMATRIX view;
     XMMATRIX projection;
     Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
@@ -859,12 +995,13 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     XMStoreFloat4x4(&constants.InvViewProjection, XMMatrixTranspose(XMMatrixInverse(nullptr, view * projection)));
     constants.SunDirection = g_SunDirection;
     constants.Stability = {g_Settings.StableSampling ? 1.f : 0.f, 0, 0, 0};
-    constants.ExtentSamples = { frame.Width, frame.Height, static_cast<UINT>(clamp(g_Settings.Samples, 1, 8)), static_cast<UINT>(g_Serial) };
-    constants.Distances = { clamp(g_Settings.ShadowDistance, 1.0f, 2000.0f),
-        clamp(g_Settings.AmbientRadius, 0.05f, 10.0f), clamp(g_Settings.NormalBias, 0.001f, 0.1f),
-        clamp(g_Settings.SunAngularRadius, 0.0f, 0.05f) };
-    constants.Features = { static_cast<UINT>(UsesRaytracedShadows()), static_cast<UINT>(UsesRaytracedAmbientOcclusion()),
-        static_cast<UINT>(NrdDenoiser::IsCompiled() && g_Settings.Denoise), 0 };
+    constants.ExtentSamples = {frame.Width, frame.Height, static_cast<UINT>(clamp(g_Settings.Samples, 1, 8)),
+                               static_cast<UINT>(g_Serial)};
+    constants.Distances = {clamp(g_Settings.ShadowDistance, 1.0f, 2000.0f),
+                           clamp(g_Settings.AmbientRadius, 0.05f, 10.0f), clamp(g_Settings.NormalBias, 0.001f, 0.1f),
+                           clamp(g_Settings.SunAngularRadius, 0.0f, 0.05f)};
+    constants.Features = {static_cast<UINT>(UsesRaytracedShadows()), static_cast<UINT>(UsesRaytracedAmbientOcclusion()),
+                          static_cast<UINT>(NrdDenoiser::IsCompiled() && g_Settings.Denoise), 0};
     // With NRD active, SIGMA consumes only the first stochastic sun ray and REBLUR only the first
     // AO hit distance; ComposeShadow / ComposeAmbient then overwrite the averaged visibility.
     // Extra samples are wasted rays, so trace one while both histories are known to be valid
@@ -884,28 +1021,31 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     NrdFrame nrdFrame;
     XMStoreFloat4x4(&nrdFrame.View, view);
     XMStoreFloat4x4(&nrdFrame.Projection, projection);
-    nrdFrame.Jitter = { -nrdFrame.Projection._31 * frame.Width * 0.5f, nrdFrame.Projection._32 * frame.Height * 0.5f };
+    nrdFrame.Jitter = {-nrdFrame.Projection._31 * frame.Width * 0.5f, nrdFrame.Projection._32 * frame.Height * 0.5f};
     nrdFrame.Projection._31 = nrdFrame.Projection._32 = 0;
     nrdFrame.PreviousView = g_NrdHistoryValid ? g_PreviousNrdFrame.View : nrdFrame.View;
     nrdFrame.PreviousProjection = g_NrdHistoryValid ? g_PreviousNrdFrame.Projection : nrdFrame.Projection;
     nrdFrame.PreviousJitter = g_NrdHistoryValid ? g_PreviousNrdFrame.Jitter : nrdFrame.Jitter;
-    nrdFrame.LightDirection = { g_SunDirection.x, g_SunDirection.y, g_SunDirection.z };
+    nrdFrame.LightDirection = {g_SunDirection.x, g_SunDirection.y, g_SunDirection.z};
     nrdFrame.FrameIndex = g_FrameIndex;
     nrdFrame.Sequence = static_cast<UINT>(g_Serial);
     nrdFrame.StableProfile = g_Settings.StableNrdProfile;
     nrdFrame.Range = 2000.0f;
     nrdFrame.AmbientRadius = constants.Distances.y;
     if (ComponentManager::HasComponent<CameraComponent>(cameraEntity))
+    {
         nrdFrame.Range = (max)(ComponentManager::GetComponentUnchecked<CameraComponent>(cameraEntity).FarClip, 1.0f);
+    }
     nrdFrame.ResetHistory = !g_NrdHistoryValid;
     const uint64_t historyConfiguration = static_cast<uint64_t>(g_Settings.RenderMode) |
-        (static_cast<uint64_t>(g_Settings.Reflections) << 8) |
-        (static_cast<uint64_t>(g_Settings.Denoise) << 9) |
-        (static_cast<uint64_t>(RendererSettings::GetRealtimeGiEnabled()) << 10) |
-        (static_cast<uint64_t>(g_Settings.RadianceDenoiser) << 16) |
-        (static_cast<uint64_t>(g_Settings.StableNrdProfile) << 20) |
-        (static_cast<uint64_t>(g_Settings.StableSampling) << 21);
-    const auto temporalState = TemporalHistory::Context::Capture(cameraEntity, frame.Width, frame.Height, historyConfiguration);
+                                          (static_cast<uint64_t>(g_Settings.Reflections) << 8) |
+                                          (static_cast<uint64_t>(g_Settings.Denoise) << 9) |
+                                          (static_cast<uint64_t>(RendererSettings::GetRealtimeGiEnabled()) << 10) |
+                                          (static_cast<uint64_t>(g_Settings.RadianceDenoiser) << 16) |
+                                          (static_cast<uint64_t>(g_Settings.StableNrdProfile) << 20) |
+                                          (static_cast<uint64_t>(g_Settings.StableSampling) << 21);
+    const auto temporalState =
+        TemporalHistory::Context::Capture(cameraEntity, frame.Width, frame.Height, historyConfiguration);
     const auto historyDecision = TemporalHistory::Evaluate(g_PreviousTemporalState, temporalState, g_NrdHistoryValid);
     nrdFrame.HistoryResetReasons = historyDecision.Reasons;
     nrdFrame.ResetHistory |= !historyDecision.CanReuse;
@@ -915,7 +1055,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         nrdFrame.PreviousProjection = nrdFrame.Projection;
         nrdFrame.PreviousJitter = nrdFrame.Jitter;
     }
-    constants.Jitter = { nrdFrame.Jitter.x, nrdFrame.Jitter.y, nrdFrame.PreviousJitter.x, nrdFrame.PreviousJitter.y };
+    constants.Jitter = {nrdFrame.Jitter.x, nrdFrame.Jitter.y, nrdFrame.PreviousJitter.x, nrdFrame.PreviousJitter.y};
     memcpy(&constants.Features.w, &nrdFrame.Range, sizeof(float));
     void* mapped = nullptr;
     const CD3DX12_RANGE noRead(0, 0);
@@ -925,30 +1065,44 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     }
     memcpy(static_cast<BYTE*>(mapped) + g_FrameIndex * kConstantStride, &constants, sizeof(constants));
     g_Constants->Unmap(0, nullptr);
-    Transition(commandList, depth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    Transition(commandList, normal, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    Transition(commandList, frame.Result.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Transition(commandList, depth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    Transition(commandList, normal, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    Transition(commandList, frame.Result.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+               D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     ID3D12Resource* velocity = RenderTargets::GetGBufferResource(GBufferType::VELOCITY);
     ID3D12Resource* material = RenderTargets::GetGBufferResource(GBufferType::MATERIAL);
     if (NrdDenoiser::IsCompiled())
     {
-        for (auto& guide : frame.Guides) Transition(commandList, guide.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        Transition(commandList, frame.AmbientGuide.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        Transition(commandList, velocity, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        Transition(commandList, material, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        for (auto& guide : frame.Guides)
+        {
+            Transition(commandList, guide.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        }
+        Transition(commandList, frame.AmbientGuide.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                   D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        Transition(commandList, velocity, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                   D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        Transition(commandList, material, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                   D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     }
-    ID3D12DescriptorHeap* heaps[] = { g_Heap.Get() };
+    ID3D12DescriptorHeap* heaps[] = {g_Heap.Get()};
     commandList->SetDescriptorHeaps(1, heaps);
     commandList->SetComputeRootSignature(g_RootSignature.Get());
     const bool instrumented = RayTelemetry::IsCollecting() && EnsureTelemetryPipeline();
     RayTelemetry::Data().RecordProvider(RayTelemetry::ShadowAo, instrumented);
     commandList->SetPipelineState(instrumented ? g_TelemetryPipeline.Get() : g_Pipeline.Get());
-    if (instrumented) commandList->SetComputeRootUnorderedAccessView(10, RayTelemetry::Data().Address());
+    if (instrumented)
+    {
+        commandList->SetComputeRootUnorderedAccessView(10, RayTelemetry::Data().Address());
+    }
     commandList->SetComputeRootShaderResourceView(0, frame.TopLevel->GetGPUVirtualAddress());
     commandList->SetComputeRootDescriptorTable(1, depthSrv);
     commandList->SetComputeRootDescriptorTable(2, normalSrv);
     commandList->SetComputeRootDescriptorTable(3, Gpu(kUavStart + g_FrameIndex));
-    commandList->SetComputeRootConstantBufferView(4, g_Constants->GetGPUVirtualAddress() + g_FrameIndex * kConstantStride);
+    commandList->SetComputeRootConstantBufferView(4,
+                                                  g_Constants->GetGPUVirtualAddress() + g_FrameIndex * kConstantStride);
     if (NrdDenoiser::IsCompiled())
     {
         commandList->SetComputeRootDescriptorTable(5, Gpu(kGuideUavStart + g_FrameIndex * 5));
@@ -959,23 +1113,38 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         RenderProfiler::ScopedEvent traceProfile("DXR Shadow / AO Trace", commandList);
         commandList->Dispatch((frame.Width + 7) / 8, (frame.Height + 7) / 8, 1);
     }
-    Transition(commandList, frame.Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    Transition(commandList, frame.Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     if (NrdDenoiser::IsCompiled())
     {
         RenderProfiler::ScopedEvent denoiseProfile("DXR Shadow / AO Denoise and Compose", commandList);
-        for (auto& guide : frame.Guides) Transition(commandList, guide.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        Transition(commandList, frame.AmbientGuide.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        Transition(commandList, velocity, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        Transition(commandList, material, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        for (auto& guide : frame.Guides)
+        {
+            Transition(commandList, guide.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        }
+        Transition(commandList, frame.AmbientGuide.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        Transition(commandList, velocity, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        Transition(commandList, material, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         const bool denoise = g_Settings.Denoise && UsesRaytracedShadows() && g_SunDirection.w > 0.5f;
         NrdFrame sunFrame = nrdFrame;
         sunFrame.ResetHistory |= !shadowHistoryValid;
         const auto& oldDirection = g_PreviousNrdFrame.LightDirection;
         const float directionSimilarity = oldDirection.x * nrdFrame.LightDirection.x +
-            oldDirection.y * nrdFrame.LightDirection.y + oldDirection.z * nrdFrame.LightDirection.z;
-        if (directionSimilarity < 0.99f) sunFrame.ResetHistory = true;
-        if (denoise && g_NrdSun->Execute(commandList,
-            { { frame.Guides[0].Get() }, { frame.Guides[1].Get() }, { frame.Guides[2].Get() }, { frame.Guides[3].Get() } }, sunFrame))
+                                          oldDirection.y * nrdFrame.LightDirection.y +
+                                          oldDirection.z * nrdFrame.LightDirection.z;
+        if (directionSimilarity < 0.99f)
+        {
+            sunFrame.ResetHistory = true;
+        }
+        if (denoise &&
+            g_NrdSun->Execute(
+                commandList,
+                {{frame.Guides[0].Get()}, {frame.Guides[1].Get()}, {frame.Guides[2].Get()}, {frame.Guides[3].Get()}},
+                sunFrame))
         {
             g_NrdDispatchCount = g_NrdSun->GetDispatchCount();
             g_ShadowHistoryValid = true;
@@ -990,66 +1159,96 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
             commandList->SetPipelineState(g_ComposeShadow.Get());
             commandList->SetComputeRootDescriptorTable(1, depthSrv);
             commandList->SetComputeRootDescriptorTable(3, Gpu(kUavStart + g_FrameIndex));
-            commandList->SetComputeRootConstantBufferView(4, g_Constants->GetGPUVirtualAddress() + g_FrameIndex * kConstantStride);
+            commandList->SetComputeRootConstantBufferView(4, g_Constants->GetGPUVirtualAddress() +
+                                                                 g_FrameIndex * kConstantStride);
             commandList->SetComputeRootDescriptorTable(8, Gpu(kNrdShadowSrvStart + g_FrameIndex));
-            Transition(commandList, g_NrdSun->GetOutput(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            Transition(commandList, frame.Result.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            Transition(commandList, g_NrdSun->GetOutput(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            Transition(commandList, frame.Result.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             commandList->Dispatch((frame.Width + 7) / 8, (frame.Height + 7) / 8, 1);
-            Transition(commandList, frame.Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-            Transition(commandList, g_NrdSun->GetOutput(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-            if (g_Serial == 1) WriteGraphicsLog("NRD: SIGMA GPU dispatches=%u\n", g_NrdDispatchCount);
+            Transition(commandList, frame.Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            Transition(commandList, g_NrdSun->GetOutput(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            if (g_Serial == 1)
+            {
+                WriteGraphicsLog("NRD: SIGMA GPU dispatches=%u\n", g_NrdDispatchCount);
+            }
         }
         NrdFrame ambientFrame = nrdFrame;
         ambientFrame.ResetHistory |= !ambientHistoryValid;
-        if (g_Settings.Denoise && UsesRaytracedAmbientOcclusion() && g_NrdAmbient->Execute(commandList,
-            { { frame.Guides[0].Get() }, { frame.Guides[1].Get() }, { frame.Guides[2].Get() }, { frame.AmbientGuide.Get() } }, ambientFrame))
+        if (g_Settings.Denoise && UsesRaytracedAmbientOcclusion() &&
+            g_NrdAmbient->Execute(
+                commandList,
+                {{frame.Guides[0].Get()}, {frame.Guides[1].Get()}, {frame.Guides[2].Get()}, {frame.AmbientGuide.Get()}},
+                ambientFrame))
         {
             g_AmbientDispatchCount = g_NrdAmbient->GetDispatchCount();
             g_AmbientHistoryValid = true;
             g_NrdDispatchCount += g_AmbientDispatchCount;
             D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-            srv.Format = DXGI_FORMAT_R16_UNORM; srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-            srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING; srv.Texture2D.MipLevels = 1;
-            g_Device->CreateShaderResourceView(g_NrdAmbient->GetOutput(), &srv, Cpu(kNrdAmbientSrvStart + g_FrameIndex));
+            srv.Format = DXGI_FORMAT_R16_UNORM;
+            srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srv.Texture2D.MipLevels = 1;
+            g_Device->CreateShaderResourceView(g_NrdAmbient->GetOutput(), &srv,
+                                               Cpu(kNrdAmbientSrvStart + g_FrameIndex));
             commandList->SetDescriptorHeaps(1, heaps);
-            commandList->SetComputeRootSignature(g_RootSignature.Get()); commandList->SetPipelineState(g_ComposeAmbient.Get());
+            commandList->SetComputeRootSignature(g_RootSignature.Get());
+            commandList->SetPipelineState(g_ComposeAmbient.Get());
             commandList->SetComputeRootDescriptorTable(1, depthSrv);
             commandList->SetComputeRootDescriptorTable(3, Gpu(kUavStart + g_FrameIndex));
-            commandList->SetComputeRootConstantBufferView(4, g_Constants->GetGPUVirtualAddress() + g_FrameIndex * kConstantStride);
+            commandList->SetComputeRootConstantBufferView(4, g_Constants->GetGPUVirtualAddress() +
+                                                                 g_FrameIndex * kConstantStride);
             commandList->SetComputeRootDescriptorTable(9, Gpu(kNrdAmbientSrvStart + g_FrameIndex));
-            Transition(commandList, g_NrdAmbient->GetOutput(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            Transition(commandList, frame.Result.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            Transition(commandList, g_NrdAmbient->GetOutput(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            Transition(commandList, frame.Result.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             commandList->Dispatch((frame.Width + 7) / 8, (frame.Height + 7) / 8, 1);
-            Transition(commandList, frame.Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-            Transition(commandList, g_NrdAmbient->GetOutput(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            Transition(commandList, frame.Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            Transition(commandList, g_NrdAmbient->GetOutput(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         }
         commandList->SetDescriptorHeaps(1, heaps);
     }
-    Transition(commandList, depth, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    Transition(commandList, normal, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    Transition(commandList, depth, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    Transition(commandList, normal, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     g_Active = true;
     updateLighting(true);
     if (g_Settings.Reflections || RendererSettings::GetRealtimeGiEnabled())
     {
         RenderProfiler::ScopedEvent reflectionProfile("DXR Radiance (Reflections / GI)", commandList);
         const bool radianceReady = RayReflections::Execute(commandList, frame.TopLevel.Get(), frame.SceneGeometry,
-            nrdFrame, frame.Guides, g_Settings.Denoise);
+                                                           nrdFrame, frame.Guides, g_Settings.Denoise);
         g_ReflectionsActive = radianceReady && g_Settings.Reflections;
         g_GiActive = radianceReady && RendererSettings::GetRealtimeGiEnabled() && RayReflections::IsGiActive();
     }
-    if (g_ReflectionsActive || g_GiActive) g_NrdDispatchCount += RayReflections::GetDenoiserDispatchCount();
+    if (g_ReflectionsActive || g_GiActive)
+    {
+        g_NrdDispatchCount += RayReflections::GetDenoiserDispatchCount();
+    }
     // Camera and motion history belongs to the scene, independently of enabled denoiser signals.
     g_PreviousNrdFrame = nrdFrame;
     g_PreviousTemporalState = temporalState;
     g_NrdHistoryValid = true;
     g_GuideSerial = g_Serial;
-	if (g_Serial == 1)
-	{
-		WriteGraphicsLog("DXR: first dispatch, instances=%u extent=%ux%u\n", g_InstanceCount, frame.Width, frame.Height);
-	}
+    if (g_Serial == 1)
+    {
+        WriteGraphicsLog("DXR: first dispatch, instances=%u extent=%ux%u\n", g_InstanceCount, frame.Width,
+                         frame.Height);
+    }
 }
 
-bool Raytracing::IsAvailable() { return g_Pipeline != nullptr; }
+bool Raytracing::IsAvailable()
+{
+    return g_Pipeline != nullptr;
+}
+
 bool Raytracing::UsesRaytracedShadows()
 {
     if (!IsAvailable() || !g_Settings.Enabled || g_Settings.RenderMode != Mode::Full || !g_Settings.Shadows)
@@ -1063,7 +1262,10 @@ bool Raytracing::UsesRaytracedShadows()
     static size_t cachedMaterialCount = 0;
     const uint64_t fence = GraphicsDevice::GetPendingSubmissionFence();
     const size_t materialCount = World::GetView<MaterialComponent>().size();
-    if (fence == cachedFence && materialCount == cachedMaterialCount) return cachedResult;
+    if (fence == cachedFence && materialCount == cachedMaterialCount)
+    {
+        return cachedResult;
+    }
     cachedFence = fence;
     cachedMaterialCount = materialCount;
     cachedResult = true;
@@ -1077,7 +1279,8 @@ bool Raytracing::UsesRaytracedShadows()
         {
             const auto& material = MaterialManager::Resolve(source, slot);
             if ((MaterialSystem::ResolveShadowMode(material) == MaterialShadowMode::AlphaTest ||
-                MaterialSystem::ResolveShadowMode(material) == MaterialShadowMode::Transmittance) && MaterialSystem::CastsShadow(material))
+                 MaterialSystem::ResolveShadowMode(material) == MaterialShadowMode::Transmittance) &&
+                MaterialSystem::CastsShadow(material))
             {
                 cachedResult = false;
                 return false;
@@ -1086,23 +1289,59 @@ bool Raytracing::UsesRaytracedShadows()
     }
     return true;
 }
+
 bool Raytracing::UsesRaytracedAmbientOcclusion()
 {
     return IsAvailable() && g_Settings.Enabled && g_Settings.RenderMode == Mode::Full && g_Settings.AmbientOcclusion;
 }
-bool Raytracing::IsActive() { return g_Active; }
-const char* Raytracing::GetStatus() { return g_Status; }
-Raytracing::Settings& Raytracing::GetSettings() { return g_Settings; }
-D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetResultSrv() { return Gpu(g_Active ? kSrvStart + g_FrameIndex : kFallbackSrv); }
-XMFLOAT4 Raytracing::GetSunDirection() { return g_SunDirection; }
-UINT Raytracing::GetInstanceCount() { return g_InstanceCount; }
-UINT Raytracing::GetDenoiserDispatchCount() { return g_NrdDispatchCount; }
+
+bool Raytracing::IsActive()
+{
+    return g_Active;
+}
+
+const char* Raytracing::GetStatus()
+{
+    return g_Status;
+}
+
+Raytracing::Settings& Raytracing::GetSettings()
+{
+    return g_Settings;
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetResultSrv()
+{
+    return Gpu(g_Active ? kSrvStart + g_FrameIndex : kFallbackSrv);
+}
+
+XMFLOAT4 Raytracing::GetSunDirection()
+{
+    return g_SunDirection;
+}
+
+UINT Raytracing::GetInstanceCount()
+{
+    return g_InstanceCount;
+}
+
+UINT Raytracing::GetDenoiserDispatchCount()
+{
+    return g_NrdDispatchCount;
+}
+
 bool Raytracing::GetNrdGuides(ID3D12Resource* guides[3], NrdFrame& frame, uint64_t& serial)
 {
-    if (!guides || !g_Active || !NrdDenoiser::IsCompiled() || g_GuideSerial == 0) return false;
+    if (!guides || !g_Active || !NrdDenoiser::IsCompiled() || g_GuideSerial == 0)
+    {
+        return false;
+    }
     for (UINT index = 0; index < 3; ++index)
     {
-        if (!g_SharedGuides[index]) return false;
+        if (!g_SharedGuides[index])
+        {
+            return false;
+        }
         guides[index] = g_SharedGuides[index].Get();
     }
     frame = g_PreviousNrdFrame;
@@ -1115,72 +1354,146 @@ D3D12_GPU_VIRTUAL_ADDRESS Raytracing::GetSceneAddress()
     const auto& frame = g_Frames[g_FrameIndex];
     return g_Active && frame.TopLevel ? frame.TopLevel->GetGPUVirtualAddress() : 0;
 }
-UINT Raytracing::GetAmbientDenoiserDispatchCount() { return g_AmbientDispatchCount; }
-bool Raytracing::AreReflectionsActive() { return g_ReflectionsActive; }
+
+UINT Raytracing::GetAmbientDenoiserDispatchCount()
+{
+    return g_AmbientDispatchCount;
+}
+
+bool Raytracing::AreReflectionsActive()
+{
+    return g_ReflectionsActive;
+}
+
 D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetReflectionSrv()
 {
     return g_ReflectionsActive ? RayReflections::GetResultSrv(g_FrameIndex) : GetResultSrv();
 }
+
 D3D12_GPU_VIRTUAL_ADDRESS Raytracing::GetLightingConstantsAddress(UINT frameIndex)
 {
-    return g_LightingConstants ? g_LightingConstants->GetGPUVirtualAddress() + (frameIndex % kFrameCount) * kLightingStride : 0;
-}
-void Raytracing::BeginLightList() { g_LightShadowFlags = {}; }
-void Raytracing::SetLightShadowFlag(UINT index, bool castShadow)
-{
-    if (index < g_LightShadowFlags.size()) g_LightShadowFlags[index].x = static_cast<UINT>(castShadow);
-}
-void Raytracing::BindGlass(ID3D12GraphicsCommandList* commands)
-{
-    if (commands && g_Heap) commands->SetGraphicsRootDescriptorTable(36,Gpu(GlassTableIndex(GraphicsDevice::GetFrameIndex()%kFrameCount)));
-}
-void Raytracing::BeginGlassRead(ID3D12GraphicsCommandList* commands)
-{
-    auto& frame=g_Frames[GraphicsDevice::GetFrameIndex()%kFrameCount];
-    if (!commands || !g_Active || !frame.GlassReady || frame.GlassReading) return;
-    frame.GlassRestore.clear();
-    vector<D3D12_RESOURCE_BARRIER> before;
-    map<ID3D12Resource*,D3D12_RESOURCE_STATES> resources;
-    for (const auto& g:frame.SceneGeometry)
-    {
-        if (g.Vertices) resources.emplace(g.Vertices.Get(),g.VertexState);
-        if (g.Indices) resources.emplace(g.Indices.Get(),g.IndexState);
-    }
-    for (const auto& item:resources)
-    {
-        if ((item.second & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)!=0) continue;
-        auto target=static_cast<D3D12_RESOURCE_STATES>(item.second | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        before.push_back(CD3DX12_RESOURCE_BARRIER::Transition(item.first,item.second,target));
-        frame.GlassRestore.push_back(CD3DX12_RESOURCE_BARRIER::Transition(item.first,target,item.second));
-    }
-    if (!before.empty()) commands->ResourceBarrier(static_cast<UINT>(before.size()),before.data());
-    frame.GlassReading=true;
-}
-void Raytracing::EndGlassRead(ID3D12GraphicsCommandList* commands)
-{
-    auto& frame=g_Frames[GraphicsDevice::GetFrameIndex()%kFrameCount];
-    if (!commands || !frame.GlassReading) return;
-    if (!frame.GlassRestore.empty()) commands->ResourceBarrier(static_cast<UINT>(frame.GlassRestore.size()),frame.GlassRestore.data());
-    frame.GlassRestore.clear(); frame.GlassReading=false;
-}
-void Raytracing::BindLighting(ID3D12GraphicsCommandList* commands, UINT sceneIndex, UINT constantsIndex)
-{
-    if (!commands || !g_LightingConstants) return;
-    const UINT slot = GraphicsDevice::GetFrameIndex() % kFrameCount;
-    commands->SetGraphicsRootShaderResourceView(sceneIndex,
-        g_Frames[slot].TopLevel ? g_Frames[slot].TopLevel->GetGPUVirtualAddress() : 0);
-    commands->SetGraphicsRootConstantBufferView(constantsIndex, g_LightingConstants->GetGPUVirtualAddress() + slot * kLightingStride);
-}
-ID3D12Resource* Raytracing::GetResultResource()
-{
-	if (!g_Active)
-	{
-		return nullptr;
-	}
-	return g_Frames[g_FrameIndex].Result.Get();
+    return g_LightingConstants
+               ? g_LightingConstants->GetGPUVirtualAddress() + (frameIndex % kFrameCount) * kLightingStride
+               : 0;
 }
 
-bool Raytracing::IsGiActive() { return g_GiActive; }
+void Raytracing::BeginLightList()
+{
+    g_LightShadowFlags = {};
+}
+
+void Raytracing::SetLightShadowFlag(UINT index, bool castShadow)
+{
+    if (index < g_LightShadowFlags.size())
+    {
+        g_LightShadowFlags[index].x = static_cast<UINT>(castShadow);
+    }
+}
+
+void Raytracing::BindGlass(ID3D12GraphicsCommandList* commands)
+{
+    if (commands && g_Heap)
+    {
+        commands->SetGraphicsRootDescriptorTable(36,
+                                                 Gpu(GlassTableIndex(GraphicsDevice::GetFrameIndex() % kFrameCount)));
+    }
+}
+
+void Raytracing::BeginGlassRead(ID3D12GraphicsCommandList* commands)
+{
+    auto& frame = g_Frames[GraphicsDevice::GetFrameIndex() % kFrameCount];
+    if (!commands || !g_Active || !frame.GlassReady || frame.GlassReading)
+    {
+        return;
+    }
+    frame.GlassRestore.clear();
+    frame.GlassSkinnedVertices.clear();
+    vector<D3D12_RESOURCE_BARRIER> before;
+    map<ID3D12Resource*, D3D12_RESOURCE_STATES> resources;
+    for (const auto& g : frame.SceneGeometry)
+    {
+        if (g.Vertices)
+        {
+            resources.emplace(g.Vertices.Get(), g.VertexState);
+        }
+        if (g.Indices)
+        {
+            resources.emplace(g.Indices.Get(), g.IndexState);
+        }
+    }
+    for (const auto& [resource, originalState] : resources)
+    {
+        if ((originalState & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) != 0)
+        {
+            continue;
+        }
+        auto readState = static_cast<D3D12_RESOURCE_STATES>(originalState | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        if (originalState == D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+        {
+            // UAV writes cannot be combined with shader reads. Keep skinned vertices
+            // readable by both rasterization and glass until this pass finishes.
+            readState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            frame.GlassSkinnedVertices.insert(resource);
+        }
+        before.push_back(CD3DX12_RESOURCE_BARRIER::Transition(resource, originalState, readState));
+        frame.GlassRestore.push_back(CD3DX12_RESOURCE_BARRIER::Transition(resource, readState, originalState));
+    }
+    if (!before.empty())
+    {
+        commands->ResourceBarrier(static_cast<UINT>(before.size()), before.data());
+    }
+    frame.GlassReading = true;
+}
+
+bool Raytracing::IsReadingSkinnedVerticesForGlass(ID3D12Resource* resource)
+{
+    const auto& frame = g_Frames[GraphicsDevice::GetFrameIndex() % kFrameCount];
+    return frame.GlassReading && frame.GlassSkinnedVertices.contains(resource);
+}
+
+void Raytracing::EndGlassRead(ID3D12GraphicsCommandList* commands)
+{
+    auto& frame = g_Frames[GraphicsDevice::GetFrameIndex() % kFrameCount];
+    if (!commands || !frame.GlassReading)
+    {
+        return;
+    }
+    if (!frame.GlassRestore.empty())
+    {
+        commands->ResourceBarrier(static_cast<UINT>(frame.GlassRestore.size()), frame.GlassRestore.data());
+    }
+    frame.GlassRestore.clear();
+    frame.GlassSkinnedVertices.clear();
+    frame.GlassReading = false;
+}
+
+void Raytracing::BindLighting(ID3D12GraphicsCommandList* commands, UINT sceneIndex, UINT constantsIndex)
+{
+    if (!commands || !g_LightingConstants)
+    {
+        return;
+    }
+    const UINT slot = GraphicsDevice::GetFrameIndex() % kFrameCount;
+    commands->SetGraphicsRootShaderResourceView(
+        sceneIndex, g_Frames[slot].TopLevel ? g_Frames[slot].TopLevel->GetGPUVirtualAddress() : 0);
+    commands->SetGraphicsRootConstantBufferView(constantsIndex,
+                                                g_LightingConstants->GetGPUVirtualAddress() + slot * kLightingStride);
+}
+
+ID3D12Resource* Raytracing::GetResultResource()
+{
+    if (!g_Active)
+    {
+        return nullptr;
+    }
+    return g_Frames[g_FrameIndex].Result.Get();
+}
+
+bool Raytracing::IsGiActive()
+{
+    return g_GiActive;
+}
+
 D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetGiSrv()
 {
     return RayReflections::GetGiSrv(g_FrameIndex);

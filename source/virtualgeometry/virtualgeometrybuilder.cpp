@@ -4,9 +4,9 @@
 #include <chrono>
 #include <algorithm>
 
-VirtualGeometryBuildResult VirtualGeometryBuilder::Build(
-    std::span<const VirtualGeometryVertex> vertices, std::span<const uint32_t> indices,
-    const VirtualGeometryBuildConfig& config, uint32_t materialId)
+VirtualGeometryBuildResult VirtualGeometryBuilder::Build(std::span<const VirtualGeometryVertex> vertices,
+                                                         std::span<const uint32_t> indices,
+                                                         const VirtualGeometryBuildConfig& config, uint32_t materialId)
 {
     VirtualGeometryBuildResult result;
     if (!ValidateVirtualGeometryConfig(config, result.Error))
@@ -34,8 +34,8 @@ VirtualGeometryBuildResult VirtualGeometryBuilder::Build(
             result.Asset = {};
             return result;
         }
-        asset.Stats.BuildMilliseconds = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - start).count();
+        asset.Stats.BuildMilliseconds =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     }
     catch (const std::exception& exception)
     {
@@ -72,8 +72,9 @@ void VirtualGeometryInternal::UpdateStatistics(VirtualGeometryAsset& asset)
     stats.AverageTrianglesPerCluster = double(triangles) / stats.TotalClusters;
     stats.AverageVerticesPerCluster = double(vertices) / stats.TotalClusters;
     stats.RawMemoryBytes = uint64_t(asset.Vertices.size()) * sizeof(VirtualGeometryVertex) +
-        asset.TriangleIndices.size() + uint64_t(asset.Clusters.size()) * sizeof(VirtualGeometryCluster) +
-        uint64_t(asset.Groups.size()) * sizeof(VirtualGeometryClusterGroup) +
-        uint64_t(asset.HierarchyIndices.size() + asset.RootClusters.size()) * sizeof(uint32_t) +
-        uint64_t(asset.Levels.size()) * sizeof(VirtualGeometryLevelStats);
+                           asset.TriangleIndices.size() +
+                           uint64_t(asset.Clusters.size()) * sizeof(VirtualGeometryCluster) +
+                           uint64_t(asset.Groups.size()) * sizeof(VirtualGeometryClusterGroup) +
+                           uint64_t(asset.HierarchyIndices.size() + asset.RootClusters.size()) * sizeof(uint32_t) +
+                           uint64_t(asset.Levels.size()) * sizeof(VirtualGeometryLevelStats);
 }

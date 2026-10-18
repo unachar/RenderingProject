@@ -13,7 +13,7 @@ struct ProceduralMotionComponent
     Procedural::MotionTarget Target = Procedural::MotionTarget::Object;
     Procedural::MotionMethod Method = Procedural::MotionMethod::Wave;
     DirectX::XMFLOAT3 Origin{};
-    DirectX::XMFLOAT3 Amplitude = { 0.0f, 2.0f, 0.0f };
+    DirectX::XMFLOAT3 Amplitude = {0.0f, 2.0f, 0.0f};
     float Speed = 0.2f;
     float SpatialFrequency = 0.3f;
     uint32_t Seed = 42;
@@ -21,4 +21,3 @@ struct ProceduralMotionComponent
     bool Enabled = true;
     bool PreviewInEditor = false;
 };
-

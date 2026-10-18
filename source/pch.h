@@ -28,25 +28,25 @@ using namespace std;
 
 class Debug
 {
-public:
-	static void Log(const char* logtext, ...)
-	{
-		char text[1024];
-		va_list textList;
-		va_start(textList, logtext);
-		vsnprintf(text, sizeof(text), logtext, textList);
-		va_end(textList);
+  public:
+    static void Log(const char* logtext, ...)
+    {
+        char text[1024];
+        va_list textList;
+        va_start(textList, logtext);
+        vsnprintf(text, sizeof(text), logtext, textList);
+        va_end(textList);
 
-		wchar_t wideText[1024];
-		const int wideLength = MultiByteToWideChar(CP_UTF8, 0, text, -1, wideText, static_cast<int>(size(wideText)));
-		if (wideLength > 0)
-		{
-			OutputDebugStringW(wideText);
-			return;
-		}
+        wchar_t wideText[1024];
+        const int wideLength = MultiByteToWideChar(CP_UTF8, 0, text, -1, wideText, static_cast<int>(size(wideText)));
+        if (wideLength > 0)
+        {
+            OutputDebugStringW(wideText);
+            return;
+        }
 
-		OutputDebugStringA(text);
-	}
+        OutputDebugStringA(text);
+    }
 };
 
 #if defined(RENDERINGPROJECT_USE_DXC) && RENDERINGPROJECT_USE_DXC
@@ -58,39 +58,38 @@ public:
 #include "renderprofiler.h"
 
 #ifndef RENDERINGPROJECT_DISABLE_RENDER_CALL_INSTRUMENTATION
-#define DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation) \
-	DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation), \
-	RenderProfiler::RecordDraw(static_cast<UINT>(InstanceCount), false)
+#define DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation)               \
+    DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation),                  \
+        RenderProfiler::RecordDraw(static_cast<UINT>(InstanceCount), false)
 
-#define DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation) \
-	DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation), \
-	RenderProfiler::RecordDraw(static_cast<UINT>(InstanceCount), true)
+#define DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation,             \
+                             StartInstanceLocation)                                                                    \
+    DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation,                 \
+                         StartInstanceLocation),                                                                       \
+        RenderProfiler::RecordDraw(static_cast<UINT>(InstanceCount), true)
 
-#define Dispatch(ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ) \
-	Dispatch(ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ), \
-	RenderProfiler::RecordDispatch( \
-		static_cast<UINT>(ThreadGroupCountX), \
-		static_cast<UINT>(ThreadGroupCountY), \
-		static_cast<UINT>(ThreadGroupCountZ))
+#define Dispatch(ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ)                                              \
+    Dispatch(ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ),                                                 \
+        RenderProfiler::RecordDispatch(static_cast<UINT>(ThreadGroupCountX), static_cast<UINT>(ThreadGroupCountY),     \
+                                       static_cast<UINT>(ThreadGroupCountZ))
 
-#define ExecuteIndirect(pCommandSignature, MaxCommandCount, pArgumentBuffer, ArgumentBufferOffset, pCountBuffer, CountBufferOffset) \
-	ExecuteIndirect(pCommandSignature, MaxCommandCount, pArgumentBuffer, ArgumentBufferOffset, pCountBuffer, CountBufferOffset), \
-	RenderProfiler::RecordExecuteIndirect(static_cast<UINT>(MaxCommandCount)), \
-	RenderProfiler::RecordCullCandidates(static_cast<UINT>(MaxCommandCount))
+#define ExecuteIndirect(pCommandSignature, MaxCommandCount, pArgumentBuffer, ArgumentBufferOffset, pCountBuffer,       \
+                        CountBufferOffset)                                                                             \
+    ExecuteIndirect(pCommandSignature, MaxCommandCount, pArgumentBuffer, ArgumentBufferOffset, pCountBuffer,           \
+                    CountBufferOffset),                                                                                \
+        RenderProfiler::RecordExecuteIndirect(static_cast<UINT>(MaxCommandCount)),                                     \
+        RenderProfiler::RecordCullCandidates(static_cast<UINT>(MaxCommandCount))
 
-#define SetPipelineState(pPipelineState) \
-	SetPipelineState(pPipelineState), RenderProfiler::RecordPipelineStateBind()
+#define SetPipelineState(pPipelineState) SetPipelineState(pPipelineState), RenderProfiler::RecordPipelineStateBind()
 
-#define SetGraphicsRootDescriptorTable(RootParameterIndex, BaseDescriptor) \
-	SetGraphicsRootDescriptorTable(RootParameterIndex, BaseDescriptor), \
-	RenderProfiler::RecordGraphicsDescriptorTableBind()
+#define SetGraphicsRootDescriptorTable(RootParameterIndex, BaseDescriptor)                                             \
+    SetGraphicsRootDescriptorTable(RootParameterIndex, BaseDescriptor),                                                \
+        RenderProfiler::RecordGraphicsDescriptorTableBind()
 
-#define SetComputeRootDescriptorTable(RootParameterIndex, BaseDescriptor) \
-	SetComputeRootDescriptorTable(RootParameterIndex, BaseDescriptor), \
-	RenderProfiler::RecordComputeDescriptorTableBind()
+#define SetComputeRootDescriptorTable(RootParameterIndex, BaseDescriptor)                                              \
+    SetComputeRootDescriptorTable(RootParameterIndex, BaseDescriptor),                                                 \
+        RenderProfiler::RecordComputeDescriptorTableBind()
 
-#define ResourceBarrier(NumBarriers, pBarriers) \
-	ResourceBarrier(NumBarriers, pBarriers), \
-	RenderProfiler::RecordResourceBarriers(static_cast<UINT>(NumBarriers))
+#define ResourceBarrier(NumBarriers, pBarriers)                                                                        \
+    ResourceBarrier(NumBarriers, pBarriers), RenderProfiler::RecordResourceBarriers(static_cast<UINT>(NumBarriers))
 #endif
-

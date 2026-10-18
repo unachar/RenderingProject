@@ -28,7 +28,8 @@ void TestVirtualGeometryPageIo()
         results = io.Poll();
         std::this_thread::yield();
     }
-    if (results.size() != 1 || !results[0].Error.empty() || results[0].Payload != expected || results[0].ReadBytes != 65536)
+    if (results.size() != 1 || !results[0].Error.empty() || results[0].Payload != expected ||
+        results[0].ReadBytes != 65536)
     {
         throw std::runtime_error("SSD Page bytes/read count mismatch");
     }
@@ -37,8 +38,7 @@ void TestVirtualGeometryPageIo()
 
     std::latch started(4);
     std::latch release(1);
-    PageIo delayed([&](const auto&, uint32_t, std::span<uint8_t> bytes, std::string&)
-    {
+    PageIo delayed([&](const auto&, uint32_t, std::span<uint8_t> bytes, std::string&) {
         started.count_down();
         release.wait();
         std::fill(bytes.begin(), bytes.end(), 7);
@@ -57,7 +57,7 @@ void TestVirtualGeometryPageIo()
     delayed.Cancel({0, 0, 1});
     release.count_down();
     delayed.Shutdown();
-    delayed.Cancel({1,1,1});
+    delayed.Cancel({1, 1, 1});
     results = delayed.Poll();
     if (!pollWasEmpty || results.size() != 4 || delayed.StagingBytes() != 0)
     {

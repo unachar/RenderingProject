@@ -3,19 +3,19 @@
 
 D3D12_GPU_DESCRIPTOR_HANDLE FrameConstants::AllocateTransientConstantBuffer(const ConstantBuffer3D& constants)
 {
-	return AllocateTransientConstantBuffer(&constants, sizeof(constants));
+    return AllocateTransientConstantBuffer(&constants, sizeof(constants));
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE FrameConstants::AllocateTransientConstantBuffer(const void* data, size_t bytes)
 {
-	UINT8* frameCbvDataBegin = GetConstantBufferPtr();
-	if (!data || bytes > g_kCB_ALIGNED_SIZE || !frameCbvDataBegin || !m_CbvHeap || m_TransientCbSlot >= g_kTRANSIENT_CB_SLOT_COUNT)
-	{
-		return {};
-	}
+    UINT8* frameCbvDataBegin = GetConstantBufferPtr();
+    if (!data || bytes > g_kCB_ALIGNED_SIZE || !frameCbvDataBegin || !m_CbvHeap ||
+        m_TransientCbSlot >= g_kTRANSIENT_CB_SLOT_COUNT)
+    {
+        return {};
+    }
 
-	const UINT slot = g_kTRANSIENT_CB_START_INDEX + m_TransientCbSlot++;
-	memcpy(frameCbvDataBegin + (slot * g_kCB_ALIGNED_SIZE), data, bytes);
-	return GetConstantBufferHandle(slot);
+    const UINT slot = g_kTRANSIENT_CB_START_INDEX + m_TransientCbSlot++;
+    memcpy(frameCbvDataBegin + (slot * g_kCB_ALIGNED_SIZE), data, bytes);
+    return GetConstantBufferHandle(slot);
 }
-

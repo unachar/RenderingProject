@@ -16,10 +16,17 @@ VirtualGeometryBuildConfig VGImportSettings::BuildConfig() const
     auto config = Quality == VGQuality::Custom ? Custom : VGSettings::Production();
     switch (Quality)
     {
-    case VGQuality::Low: config.TargetRelativeError = 0.1f; break;
-    case VGQuality::Medium: config.TargetRelativeError = 0.05f; break;
-    case VGQuality::High: config.TargetRelativeError = 0.02f; break;
-    default: break;
+    case VGQuality::Low:
+        config.TargetRelativeError = 0.1f;
+        break;
+    case VGQuality::Medium:
+        config.TargetRelativeError = 0.05f;
+        break;
+    case VGQuality::High:
+        config.TargetRelativeError = 0.02f;
+        break;
+    default:
+        break;
     }
     if (LODError > 0)
     {
@@ -30,13 +37,15 @@ VirtualGeometryBuildConfig VGImportSettings::BuildConfig() const
     config.MaxClusterTriangles = std::min(config.MaxClusterTriangles, 124u);
     return config;
 }
+
 VGCompressionSettings VGImportSettings::Compression(float sourceExtent) const
 {
     VGCompressionSettings settings;
-    settings.MaxPositionError = PositionError > 0 ? PositionError :
-        std::clamp(sourceExtent * 0.00001f, 0.000001f, 0.001f);
+    settings.MaxPositionError =
+        PositionError > 0 ? PositionError : std::clamp(sourceExtent * 0.00001f, 0.000001f, 0.001f);
     return settings;
 }
+
 namespace VirtualGeometryImport
 {
 namespace
@@ -47,31 +56,35 @@ std::filesystem::path Sidecar(const std::filesystem::path& source)
     path += ".vgsettings";
     return path;
 }
+
 std::string Encode(const VGImportSettings& settings)
 {
     std::ostringstream output;
     output.imbue(std::locale::classic());
-    output << std::setprecision(9) << "VGSETTINGS 1\n" << settings.Enabled << ' ' << settings.BackgroundBuild << ' '
-        << static_cast<uint32_t>(settings.Quality) << ' ' << settings.PositionError << ' ' << settings.LODError
-        << ' ' << settings.StreamingPriority << '\n';
+    output << std::setprecision(9) << "VGSETTINGS 1\n"
+           << settings.Enabled << ' ' << settings.BackgroundBuild << ' ' << static_cast<uint32_t>(settings.Quality)
+           << ' ' << settings.PositionError << ' ' << settings.LODError << ' ' << settings.StreamingPriority << '\n';
     const auto& c = settings.Custom;
     output << c.MaxClusterTriangles << ' ' << c.MaxClusterVertices << ' ' << c.TargetClustersPerGroup << ' '
-        << c.MaxHierarchyLevels << ' ' << c.SimplificationRatio << ' ' << c.ConeWeight << ' ' << c.NormalWeight
-        << ' ' << c.TexCoordWeight << ' ' << c.ColorWeight << ' ' << c.TargetRelativeError << ' ' << c.BoundaryEpsilon << '\n';
+           << c.MaxHierarchyLevels << ' ' << c.SimplificationRatio << ' ' << c.ConeWeight << ' ' << c.NormalWeight
+           << ' ' << c.TexCoordWeight << ' ' << c.ColorWeight << ' ' << c.TargetRelativeError << ' '
+           << c.BoundaryEpsilon << '\n';
     return output.str();
 }
+
 bool Valid(const VGImportSettings& settings, std::string& error)
 {
     if (settings.Quality > VGQuality::Custom || settings.StreamingPriority > 2 ||
-        !std::isfinite(settings.PositionError) || settings.PositionError < 0 ||
-        !std::isfinite(settings.LODError) || settings.LODError < 0)
+        !std::isfinite(settings.PositionError) || settings.PositionError < 0 || !std::isfinite(settings.LODError) ||
+        settings.LODError < 0)
     {
         error = "Invalid VirtualGeometry import settings";
         return false;
     }
     return ValidateVirtualGeometryConfig(settings.BuildConfig(), error);
 }
-}
+} // namespace
+
 bool Load(const std::filesystem::path& source, VGImportSettings& settings, std::string& error)
 {
     error.clear();
@@ -89,10 +102,10 @@ bool Load(const std::filesystem::path& source, VGImportSettings& settings, std::
     uint32_t version = 0, quality = 0;
     auto& c = parsed.Custom;
     if (!(input >> magic >> version) || magic != "VGSETTINGS" || version != 1 ||
-        !(input >> parsed.Enabled >> parsed.BackgroundBuild >> quality >> parsed.PositionError >> parsed.LODError
-            >> parsed.StreamingPriority >> c.MaxClusterTriangles >> c.MaxClusterVertices >> c.TargetClustersPerGroup
-            >> c.MaxHierarchyLevels >> c.SimplificationRatio >> c.ConeWeight >> c.NormalWeight >> c.TexCoordWeight
-            >> c.ColorWeight >> c.TargetRelativeError >> c.BoundaryEpsilon))
+        !(input >> parsed.Enabled >> parsed.BackgroundBuild >> quality >> parsed.PositionError >> parsed.LODError >>
+          parsed.StreamingPriority >> c.MaxClusterTriangles >> c.MaxClusterVertices >> c.TargetClustersPerGroup >>
+          c.MaxHierarchyLevels >> c.SimplificationRatio >> c.ConeWeight >> c.NormalWeight >> c.TexCoordWeight >>
+          c.ColorWeight >> c.TargetRelativeError >> c.BoundaryEpsilon))
     {
         error = "Invalid or truncated VirtualGeometry settings: " + path.generic_string();
         return false;
@@ -105,6 +118,7 @@ bool Load(const std::filesystem::path& source, VGImportSettings& settings, std::
     settings = parsed;
     return true;
 }
+
 bool Save(const std::filesystem::path& source, const VGImportSettings& settings, std::string& error)
 {
     error.clear();
@@ -142,6 +156,7 @@ bool Save(const std::filesystem::path& source, const VGImportSettings& settings,
 #endif
     return true;
 }
+
 uint64_t SettingsKey(const VGImportSettings& settings)
 {
     uint64_t hash = 14695981039346656037ull;
@@ -151,4 +166,4 @@ uint64_t SettingsKey(const VGImportSettings& settings)
     }
     return hash;
 }
-}
+} // namespace VirtualGeometryImport

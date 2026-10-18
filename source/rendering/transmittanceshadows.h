@@ -4,7 +4,7 @@
 // Depth-peeled thin dielectric sheets, stored separately from opaque occluders.
 class TransmittanceShadows : protected RendererState
 {
-public:
+  public:
     static void PrepareFrame();
     static bool HasCasters();
     static bool IsActive();
@@ -16,6 +16,7 @@ public:
     static D3D12_GPU_VIRTUAL_ADDRESS GetCurrentConstantBufferAddress();
     static ID3D12Resource* GetColorResource();
     static void Shutdown();
-private:
+
+  private:
     static bool CreateResources();
 };

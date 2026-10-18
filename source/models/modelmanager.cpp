@@ -24,153 +24,144 @@ struct SourceWatch
     std::filesystem::file_time_type Source{}, Settings{}, Lod{};
     bool Convert = true;
 };
+
 std::unordered_map<int, SourceWatch> sourceWatches;
+
 struct RetiredModel
 {
     uint64_t Fence = 0;
     std::unique_ptr<StaticModelResource> Model;
 };
+
 std::vector<RetiredModel> retiredModels;
+
 std::filesystem::file_time_type Stamp(const std::filesystem::path& path)
 {
     std::error_code ec;
     return std::filesystem::last_write_time(path, ec);
 }
+
 SourceWatch Watch(const std::string& path, bool convert)
 {
-    return {Stamp(std::filesystem::u8path(path)), Stamp(std::filesystem::u8path(path+".vgsettings")),
-        Stamp(std::filesystem::u8path(path+".lod")), convert};
+    return {Stamp(std::filesystem::u8path(path)), Stamp(std::filesystem::u8path(path + ".vgsettings")),
+            Stamp(std::filesystem::u8path(path + ".lod")), convert};
 }
-}
+} // namespace
 
 vector<unique_ptr<AnimationModelResource>> ModelManager::m_AnimModels;
 vector<unique_ptr<StaticModelResource>> ModelManager::m_StaticModels;
 unordered_map<string, int> ModelManager::m_AnimModelCache;
 unordered_map<string, int> ModelManager::m_StaticModelCache;
 
+string GetLowerExtension(const char* fileName)
+{
+    if (!fileName)
+    {
+        return {};
+    }
+    string extension = filesystem::path(fileName).extension().string();
+    transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character) {
+        return static_cast<char>(tolower(character));
+    });
+    return extension;
+}
 
-	string GetLowerExtension(const char* fileName)
-	{
-		const char* statusText;
-		if (fileName)
-		{
-			statusText = fileName;
-		}
-		else
-		{
-			statusText = "";
-		}
-		string ext = filesystem::path(statusText).extension().string();
-		transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c)
-			{
-				return static_cast<char>(tolower(c));
-			});
-		return ext;
-	}
-
-	string MakeModelCacheKey(const char* fileName, bool isConvert)
-	{
-		const char* statusTextValue;
-		if (fileName)
-		{
-			statusTextValue = fileName;
-		}
-		else
-		{
-			statusTextValue = "";
-		}
-		const char* statusText3;
-		if (isConvert)
-		{
-			statusText3 = "|convert";
-		}
-		else
-		{
-			statusText3 = "|raw";
-		}
-        std::error_code ec;
-        const auto canonical = std::filesystem::weakly_canonical(std::filesystem::u8path(statusTextValue),ec);
-        const auto encoded = canonical.generic_u8string();
-        std::string identity = ec ? std::string(statusTextValue) :
-            std::string(reinterpret_cast<const char*>(encoded.data()),encoded.size());
-        std::transform(identity.begin(),identity.end(),identity.begin(),[](unsigned char letter)
-        {
-            return static_cast<char>(std::tolower(letter));
-        });
-		return identity + statusText3;
-	}
-
+string MakeModelCacheKey(const char* fileName, bool isConvert)
+{
+    const char* sourcePath = fileName;
+    if (!sourcePath)
+    {
+        sourcePath = "";
+    }
+    const char* conversionSuffix = "|raw";
+    if (isConvert)
+    {
+        conversionSuffix = "|convert";
+    }
+    std::error_code pathError;
+    const auto canonicalPath = std::filesystem::weakly_canonical(std::filesystem::u8path(sourcePath), pathError);
+    std::string identity = sourcePath;
+    if (!pathError)
+    {
+        const auto encodedPath = canonicalPath.generic_u8string();
+        identity.assign(reinterpret_cast<const char*>(encodedPath.data()), encodedPath.size());
+    }
+    std::transform(identity.begin(), identity.end(), identity.begin(), [](unsigned char letter) {
+        return static_cast<char>(std::tolower(letter));
+    });
+    return identity + conversionSuffix;
+}
 
 int ModelManager::LoadAnimModel(const char* fileName, bool isConvert)
 {
-	string key = MakeModelCacheKey(fileName, isConvert);
-	auto it = m_AnimModelCache.find(key);
-	if (it != m_AnimModelCache.end())
-	{
-		return it->second;
-	}
-	int id = LoadAnimModelDetailed(fileName, isConvert).ModelId;
+    string key = MakeModelCacheKey(fileName, isConvert);
+    auto it = m_AnimModelCache.find(key);
+    if (it != m_AnimModelCache.end())
+    {
+        return it->second;
+    }
+    int id = LoadAnimModelDetailed(fileName, isConvert).ModelId;
 
-	if (id >= 0)
-	{
-		m_AnimModelCache[key] = id;
-	}
-	return id;
+    if (id >= 0)
+    {
+        m_AnimModelCache[key] = id;
+    }
+    return id;
 }
 
 int ModelManager::LoadStaticModel(const char* fileName, bool isConvert)
 {
-	string key = MakeModelCacheKey(fileName, isConvert);
-	auto it = m_StaticModelCache.find(key);
-	if (it != m_StaticModelCache.end())
-	{
-		return it->second;
-	}
-	int id = LoadStaticModelDetailed(fileName, isConvert).ModelId;
-	if (id >= 0)
-	{
-		m_StaticModelCache[key] = id;
-	}
-	return id;
+    string key = MakeModelCacheKey(fileName, isConvert);
+    auto it = m_StaticModelCache.find(key);
+    if (it != m_StaticModelCache.end())
+    {
+        return it->second;
+    }
+    int id = LoadStaticModelDetailed(fileName, isConvert).ModelId;
+    if (id >= 0)
+    {
+        m_StaticModelCache[key] = id;
+    }
+    return id;
 }
 
 ModelManager::LoadModelResult ModelManager::LoadAnimModelDetailed(const char* fileName, bool isConvert)
 {
-	LoadModelResult result{};
-	auto start = chrono::high_resolution_clock::now();
+    LoadModelResult result{};
+    auto start = chrono::high_resolution_clock::now();
 
-	TextureManager::BeginTextureLoading();
-	auto model = make_unique<AnimationModelResource>();
-	if (!model->Load(fileName, GraphicsDevice::GetDevice(), isConvert))
-	{
-		TextureManager::EndTextureLoading();
-		auto end = chrono::high_resolution_clock::now();
-		result.ElapsedMs = chrono::duration<double, milli>(end - start).count();
-		result.Error = "Animation model load failed";
-		Debug::Log("Anim model load failed: %s (%.2f ms)\n", fileName, result.ElapsedMs);
-		return result;
-	}
+    TextureManager::BeginTextureLoading();
+    auto model = make_unique<AnimationModelResource>();
+    if (!model->Load(fileName, GraphicsDevice::GetDevice(), isConvert))
+    {
+        TextureManager::EndTextureLoading();
+        auto end = chrono::high_resolution_clock::now();
+        result.ElapsedMs = chrono::duration<double, milli>(end - start).count();
+        result.Error = "Animation model load failed";
+        Debug::Log("Anim model load failed: %s (%.2f ms)\n", fileName, result.ElapsedMs);
+        return result;
+    }
 
-	result.ModelId = (int)m_AnimModels.size();
-	m_AnimModels.push_back(move(model));
-	TextureManager::EndTextureLoading();
+    result.ModelId = (int)m_AnimModels.size();
+    m_AnimModels.push_back(move(model));
+    TextureManager::EndTextureLoading();
 
-	auto end = chrono::high_resolution_clock::now();
-	result.ElapsedMs = chrono::duration<double, milli>(end - start).count();
-	result.Succeeded = true;
-	Debug::Log("Anim model loaded: %s (id=%d, %.2f ms)\n", fileName, result.ModelId, result.ElapsedMs);
-	return result;
+    auto end = chrono::high_resolution_clock::now();
+    result.ElapsedMs = chrono::duration<double, milli>(end - start).count();
+    result.Succeeded = true;
+    Debug::Log("Anim model loaded: %s (id=%d, %.2f ms)\n", fileName, result.ModelId, result.ElapsedMs);
+    return result;
 }
 
 ModelManager::LoadModelResult ModelManager::LoadStaticModelDetailed(const char* fileName, bool isConvert)
 {
-	LoadModelResult result{};
-	auto start = chrono::high_resolution_clock::now();
+    LoadModelResult result{};
+    auto start = chrono::high_resolution_clock::now();
 
-	TextureManager::BeginTextureLoading();
-	auto model = make_unique<StaticModelResource>();
-	const string ext = GetLowerExtension(fileName);
-	bool loaded = false;
+    TextureManager::BeginTextureLoading();
+    auto model = make_unique<StaticModelResource>();
+    const string ext = GetLowerExtension(fileName);
+    bool loaded = false;
     auto derived = make_unique<StaticModelResource>();
     if (derived->LoadDerivedVirtualGeometry(fileName, GraphicsDevice::GetDevice(), isConvert))
     {
@@ -186,98 +177,98 @@ ModelManager::LoadModelResult ModelManager::LoadStaticModelDetailed(const char* 
     }
     if (loaded)
     {
-        Debug::Log("Static model uses encoded derived geometry: %s\n",fileName);
+        Debug::Log("Static model uses encoded derived geometry: %s\n", fileName);
     }
-	else if (ext == ".obj")
-	{
-		loaded = model->LoadObj(fileName, GraphicsDevice::GetDevice());
-	}
+    else if (ext == ".obj")
+    {
+        loaded = model->LoadObj(fileName, GraphicsDevice::GetDevice());
+    }
     else if (ext == ".vgmesh" || ext == ".vgp2")
     {
         loaded = model->LoadVirtualGeometry(fileName, GraphicsDevice::GetDevice());
     }
-	else if (ext == ".fbx" || ext == ".vrm" || ext == ".pmx" || ext == ".gltf" || ext == ".glb")
-	{
-		loaded = model->LoadAssimpModel(fileName, GraphicsDevice::GetDevice(), isConvert);
-	}
-	else
-	{
-		Debug::Log("ERROR: Unsupported static model extension: %s\n", fileName);
-	}
+    else if (ext == ".fbx" || ext == ".vrm" || ext == ".pmx" || ext == ".gltf" || ext == ".glb")
+    {
+        loaded = model->LoadAssimpModel(fileName, GraphicsDevice::GetDevice(), isConvert);
+    }
+    else
+    {
+        Debug::Log("ERROR: Unsupported static model extension: %s\n", fileName);
+    }
 
-	if (!loaded)
-	{
-		TextureManager::EndTextureLoading();
-		auto end = chrono::high_resolution_clock::now();
-		result.ElapsedMs = chrono::duration<double, milli>(end - start).count();
-		result.Error = "Static model load failed";
-		Debug::Log("Static model load failed: %s (%.2f ms)\n", fileName, result.ElapsedMs);
-		return result;
-	}
+    if (!loaded)
+    {
+        TextureManager::EndTextureLoading();
+        auto end = chrono::high_resolution_clock::now();
+        result.ElapsedMs = chrono::duration<double, milli>(end - start).count();
+        result.Error = "Static model load failed";
+        Debug::Log("Static model load failed: %s (%.2f ms)\n", fileName, result.ElapsedMs);
+        return result;
+    }
 
-	result.ModelId = (int)m_StaticModels.size();
-	model->LoadLODMetadata(fileName);
+    result.ModelId = (int)m_StaticModels.size();
+    model->LoadLODMetadata(fileName);
     std::string registryError;
     MaterialManager::Registry().Register(std::filesystem::u8path(fileName), AssetType::Mesh, registryError);
-	m_StaticModels.push_back(move(model));
+    m_StaticModels.push_back(move(model));
     sourceWatches[result.ModelId] = Watch(fileName, isConvert);
-	TextureManager::EndTextureLoading();
+    TextureManager::EndTextureLoading();
 
-	auto end = chrono::high_resolution_clock::now();
-	result.ElapsedMs = chrono::duration<double, milli>(end - start).count();
-	result.Succeeded = true;
-	Debug::Log("Static model loaded: %s (id=%d, %.2f ms)\n", fileName, result.ModelId, result.ElapsedMs);
-	return result;
+    auto end = chrono::high_resolution_clock::now();
+    result.ElapsedMs = chrono::duration<double, milli>(end - start).count();
+    result.Succeeded = true;
+    Debug::Log("Static model loaded: %s (id=%d, %.2f ms)\n", fileName, result.ModelId, result.ElapsedMs);
+    return result;
 }
 
 bool ModelManager::LoadAnimation(int modelId, const char* fileName, const char* name)
 {
-	if (modelId >= 0 && modelId < (int)m_AnimModels.size())
-	{
-		return m_AnimModels[modelId]->LoadAnimation(fileName, name);
-	}
-	return false;
+    if (modelId >= 0 && modelId < (int)m_AnimModels.size())
+    {
+        return m_AnimModels[modelId]->LoadAnimation(fileName, name);
+    }
+    return false;
 }
 
 AnimationModelResource* ModelManager::GetAnimModel(int modelId)
 {
-	if (modelId >= 0 && modelId < (int)m_AnimModels.size())
-	{
-		return m_AnimModels[modelId].get();
-	}
-	return nullptr;
+    if (modelId >= 0 && modelId < (int)m_AnimModels.size())
+    {
+        return m_AnimModels[modelId].get();
+    }
+    return nullptr;
 }
 
 StaticModelResource* ModelManager::GetStaticModel(int modelId)
 {
-	if (modelId >= 0 && modelId < (int)m_StaticModels.size())
-	{
-		return m_StaticModels[modelId].get();
-	}
-	return nullptr;
+    if (modelId >= 0 && modelId < (int)m_StaticModels.size())
+    {
+        return m_StaticModels[modelId].get();
+    }
+    return nullptr;
 }
 
 void ModelManager::Uninit()
 {
-	for (auto& model : m_AnimModels)
-	{
-		model->Uninit();
-	}
-	m_AnimModels.clear();
-	m_AnimModelCache.clear();
+    for (auto& model : m_AnimModels)
+    {
+        model->Uninit();
+    }
+    m_AnimModels.clear();
+    m_AnimModelCache.clear();
 
-	for (auto& model : m_StaticModels)
-	{
-		model->Uninit();
-	}
-	m_StaticModels.clear();
-	m_StaticModelCache.clear();
+    for (auto& model : m_StaticModels)
+    {
+        model->Uninit();
+    }
+    m_StaticModels.clear();
+    m_StaticModelCache.clear();
     sourceWatches.clear();
     retiredModels.clear();
 }
 
-bool ModelManager::SaveVirtualGeometrySettings(const std::filesystem::path& path,
-    const VGImportSettings& settings, std::string& error)
+bool ModelManager::SaveVirtualGeometrySettings(const std::filesystem::path& path, const VGImportSettings& settings,
+                                               std::string& error)
 {
     if (!VirtualGeometryImport::Save(path, settings, error))
     {
@@ -297,10 +288,13 @@ bool ModelManager::SaveVirtualGeometrySettings(const std::filesystem::path& path
     }
     return true;
 }
+
 void ModelManager::UpdateVirtualGeometry()
 {
     const auto completed = GraphicsDevice::GetCompletedFence();
-    std::erase_if(retiredModels, [completed](const auto& item) { return item.Fence <= completed; });
+    std::erase_if(retiredModels, [completed](const auto& item) {
+        return item.Fence <= completed;
+    });
     static auto nextScan = std::chrono::steady_clock::now();
     if (std::chrono::steady_clock::now() >= nextScan)
     {
@@ -309,8 +303,9 @@ void ModelManager::UpdateVirtualGeometry()
         for (const auto& [id, previous] : sourceWatches)
         {
             bool requiresOriginal = GetGeometryRenderingMode() == GeometryRenderingMode::Legacy ||
-                !MeshShaderRenderer::Supported() || RenderConfiguration::GetRenderMode() != RenderMode::DEFERRED ||
-                RendererSettings::GetComputeGBufferEnabled();
+                                    !MeshShaderRenderer::Supported() ||
+                                    RenderConfiguration::GetRenderMode() != RenderMode::DEFERRED ||
+                                    RendererSettings::GetComputeGBufferEnabled();
             if (m_StaticModels.at(id)->UsesDerivedVirtualGeometry() && !requiresOriginal)
             {
                 for (auto entity : World::GetView<StaticModelComponent>())
@@ -324,8 +319,8 @@ void ModelManager::UpdateVirtualGeometry()
                 }
             }
             const auto current = Watch(m_StaticModels.at(id)->GetSourcePath(), previous.Convert);
-            if (current.Source != previous.Source || current.Settings != previous.Settings || current.Lod != previous.Lod ||
-                m_StaticModels.at(id)->SourceDependenciesChanged() ||
+            if (current.Source != previous.Source || current.Settings != previous.Settings ||
+                current.Lod != previous.Lod || m_StaticModels.at(id)->SourceDependenciesChanged() ||
                 (requiresOriginal && m_StaticModels.at(id)->UsesDerivedVirtualGeometry()))
             {
                 reloads.push_back(id);
@@ -347,11 +342,17 @@ void ModelManager::UpdateVirtualGeometry()
             {
                 // A compatibility fallback must bypass the derived-cache fast import.
                 const auto previousMode = GetGeometryRenderingMode();
+
                 struct RestoreMode
                 {
                     GeometryRenderingMode Value;
-                    ~RestoreMode() { GetGeometryRenderingMode() = Value; }
+
+                    ~RestoreMode()
+                    {
+                        GetGeometryRenderingMode() = Value;
+                    }
                 } restore{previousMode};
+
                 GetGeometryRenderingMode() = GeometryRenderingMode::Legacy;
                 const auto replacement = LoadStaticModelDetailed(path.c_str(), convert);
                 GetGeometryRenderingMode() = previousMode;
@@ -403,6 +404,7 @@ void ModelManager::UpdateVirtualGeometry()
         }
     }
 }
+
 StaticModelResource* ModelManager::FindLoadedStaticModel(const std::filesystem::path& path)
 {
     for (const auto& model : m_StaticModels)
@@ -415,4 +417,3 @@ StaticModelResource* ModelManager::FindLoadedStaticModel(const std::filesystem::
     }
     return nullptr;
 }
-

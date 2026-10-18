@@ -32,11 +32,13 @@ static D3D12_CPU_DESCRIPTOR_HANDLE Cpu(UINT index)
 {
     return CD3DX12_CPU_DESCRIPTOR_HANDLE(g_Heap->GetCPUDescriptorHandleForHeapStart(), index, g_Increment);
 }
+
 static D3D12_GPU_DESCRIPTOR_HANDLE Gpu(UINT index)
 {
     return CD3DX12_GPU_DESCRIPTOR_HANDLE(g_Heap->GetGPUDescriptorHandleForHeapStart(), index, g_Increment);
 }
-static bool LoadPipeline(const wchar_t *path, ComPtr<ID3D12PipelineState> &output)
+
+static bool LoadPipeline(const wchar_t* path, ComPtr<ID3D12PipelineState>& output)
 {
     ComPtr<ID3DBlob> shader;
     if (FAILED(D3DReadFileToBlob(path, &shader)))
@@ -49,7 +51,7 @@ static bool LoadPipeline(const wchar_t *path, ComPtr<ID3D12PipelineState> &outpu
     return SUCCEEDED(g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&output)));
 }
 
-bool OcclusionCulling::Initialize(ID3D12Device *device, ID3D12DescriptorHeap *heap, UINT descriptorIncrement)
+bool OcclusionCulling::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UINT descriptorIncrement)
 {
     Shutdown();
     if (!device || !heap || descriptorIncrement == 0)
@@ -73,7 +75,7 @@ bool OcclusionCulling::Initialize(ID3D12Device *device, ID3D12DescriptorHeap *he
     {
         if (errors)
         {
-            Debug::Log("Hi-Z root signature: %s\n", static_cast<const char *>(errors->GetBufferPointer()));
+            Debug::Log("Hi-Z root signature: %s\n", static_cast<const char*>(errors->GetBufferPointer()));
         }
         return false;
     }
@@ -233,12 +235,12 @@ bool OcclusionCulling::IsAvailable()
 
 void OcclusionCulling::BeginPhaseOne()
 {
-    g_Phase = static_cast<UINT>((!GPUDrivenRenderer::IsActive() || VirtualGeometryTraversal::TwoPassActive()) && RendererSettings::GetTwoPhaseOcclusionEnabled() &&
-                                IsAvailable());
+    g_Phase = static_cast<UINT>((!GPUDrivenRenderer::IsActive() || VirtualGeometryTraversal::TwoPassActive()) &&
+                                RendererSettings::GetTwoPhaseOcclusionEnabled() && IsAvailable());
     g_CurrentValid = false;
 }
 
-void OcclusionCulling::BuildCurrent(ID3D12GraphicsCommandList *commands, ID3D12Resource *depth)
+void OcclusionCulling::BuildCurrent(ID3D12GraphicsCommandList* commands, ID3D12Resource* depth)
 {
     if (!commands || !depth || g_Phase != 1u || !IsAvailable())
     {
@@ -252,13 +254,13 @@ void OcclusionCulling::BuildCurrent(ID3D12GraphicsCommandList *commands, ID3D12R
     BuildPyramid(commands, depth, srv, D3D12_RESOURCE_STATE_COPY_SOURCE);
 }
 
-void OcclusionCulling::BuildTemporal(ID3D12GraphicsCommandList *commands, ID3D12Resource *depth,
+void OcclusionCulling::BuildTemporal(ID3D12GraphicsCommandList* commands, ID3D12Resource* depth,
                                      D3D12_GPU_DESCRIPTOR_HANDLE srv)
 {
     BuildPyramid(commands, depth, srv, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 }
 
-void OcclusionCulling::BuildPyramid(ID3D12GraphicsCommandList *commands, ID3D12Resource *depth,
+void OcclusionCulling::BuildPyramid(ID3D12GraphicsCommandList* commands, ID3D12Resource* depth,
                                     D3D12_GPU_DESCRIPTOR_HANDLE srv, D3D12_RESOURCE_STATES depthState)
 {
     if (!commands || !depth || !IsAvailable())
@@ -288,12 +290,12 @@ void OcclusionCulling::BuildPyramid(ID3D12GraphicsCommandList *commands, ID3D12R
         const auto write = mips[mip];
         graph.AddPass(
             "Hi-Z Mip Generation",
-            [=](RenderGraph::PassBuilder &builder) {
+            [=](RenderGraph::PassBuilder& builder) {
                 builder.Read(read, mip == 0 ? D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE : ReadState())
                     .Write(write, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             },
-            [=](ID3D12GraphicsCommandList *list) {
-                ID3D12DescriptorHeap *heap = g_Heap.Get();
+            [=](ID3D12GraphicsCommandList* list) {
+                ID3D12DescriptorHeap* heap = g_Heap.Get();
                 list->SetDescriptorHeaps(1, &heap);
                 list->SetComputeRootSignature(g_RootSignature.Get());
                 list->SetPipelineState(mip == 0 ? g_CopyPso.Get() : g_ReducePso.Get());
@@ -319,10 +321,10 @@ void OcclusionCulling::BuildPyramid(ID3D12GraphicsCommandList *commands, ID3D12R
         const UINT mip = min(g_DebugMip, g_MipCount - 1);
         graph.AddPass(
             "Hi-Z Debug Preview",
-            [=](RenderGraph::PassBuilder &builder) {
+            [=](RenderGraph::PassBuilder& builder) {
                 builder.Read(mips[mip], ReadState()).Write(preview, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             },
-            [=](ID3D12GraphicsCommandList *list) {
+            [=](ID3D12GraphicsCommandList* list) {
                 list->SetComputeRootSignature(g_RootSignature.Get());
                 list->SetPipelineState(g_DebugPso.Get());
                 list->SetComputeRootDescriptorTable(0, Gpu(RendererState::g_kHIZ_MIP_SRV_START_INDEX +
@@ -345,26 +347,32 @@ void OcclusionCulling::InvalidateHistory()
 {
     g_PreviousValid = false;
 }
-ID3D12Resource *OcclusionCulling::GetPreviousResource()
+
+ID3D12Resource* OcclusionCulling::GetPreviousResource()
 {
     return g_HiZ[g_PreviousIndex].Get();
 }
-ID3D12Resource *OcclusionCulling::GetCurrentResource()
+
+ID3D12Resource* OcclusionCulling::GetCurrentResource()
 {
     return g_HiZ[g_CurrentIndex].Get();
 }
-ID3D12Resource *OcclusionCulling::GetOccluderDepth()
+
+ID3D12Resource* OcclusionCulling::GetOccluderDepth()
 {
     return g_OccluderDepth.Get();
 }
+
 D3D12_CPU_DESCRIPTOR_HANDLE OcclusionCulling::GetOccluderDsv()
 {
     return g_OccluderDsv->GetCPUDescriptorHandleForHeapStart();
 }
+
 D3D12_GPU_DESCRIPTOR_HANDLE OcclusionCulling::GetOccluderSrv()
 {
     return Gpu(RendererState::g_kHIZ_SOURCE_SRV_INDEX);
 }
+
 D3D12_GPU_DESCRIPTOR_HANDLE OcclusionCulling::GetDebugMipSrv(UINT mip)
 {
     if (g_DebugReady)
@@ -374,6 +382,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE OcclusionCulling::GetDebugMipSrv(UINT mip)
     return Gpu(RendererState::g_kHIZ_MIP_SRV_START_INDEX + g_PreviousIndex * RendererState::g_kHIZ_MAX_MIPS +
                min(mip, g_MipCount - 1));
 }
+
 void OcclusionCulling::SetDebugPreview(UINT mip, bool enabled)
 {
     g_DebugMip = mip;
@@ -404,32 +413,38 @@ UINT OcclusionCulling::GetPhase()
 {
     return g_Phase;
 }
+
 D3D12_GPU_DESCRIPTOR_HANDLE OcclusionCulling::GetPreviousSrv()
 {
     return Gpu(RendererState::g_kHIZ_SRV_START_INDEX + g_PreviousIndex);
 }
+
 D3D12_GPU_DESCRIPTOR_HANDLE OcclusionCulling::GetCurrentSrv()
 {
     return Gpu(RendererState::g_kHIZ_SRV_START_INDEX + g_CurrentIndex);
 }
+
 bool OcclusionCulling::HasPrevious()
 {
     return g_PreviousValid;
 }
+
 bool OcclusionCulling::HasCurrent()
 {
     return g_CurrentValid;
 }
+
 UINT OcclusionCulling::GetWidth()
 {
     return g_Width;
 }
+
 UINT OcclusionCulling::GetHeight()
 {
     return g_Height;
 }
+
 UINT OcclusionCulling::GetMipCount()
 {
     return g_MipCount;
 }
-

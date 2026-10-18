@@ -7,6 +7,7 @@
 namespace VirtualGeometryStreaming
 {
 using PageId = uint32_t;
+
 struct LoadTicket
 {
     PageId Page = UINT32_MAX;
@@ -14,7 +15,14 @@ struct LoadTicket
     uint64_t Generation = 0;
     bool operator==(const LoadTicket&) const = default;
 };
-enum class PageState : uint8_t { Evicted, Requested, Loading, Resident };
+enum class PageState : uint8_t
+{
+    Evicted,
+    Requested,
+    Loading,
+    Resident
+};
+
 struct ResidencyEntry
 {
     uint32_t Slot = UINT32_MAX;
@@ -22,7 +30,9 @@ struct ResidencyEntry
     uint32_t Flags = 0;
     uint32_t Padding = 0;
 };
+
 static_assert(sizeof(ResidencyEntry) == 16);
+
 struct PageRecord
 {
     PageState State = PageState::Evicted;
@@ -36,9 +46,10 @@ struct PageRecord
     uint64_t GraphicsFence = 0;
     uint64_t CopyFence = 0;
 };
+
 class ResidencyManager
 {
-public:
+  public:
     bool AddPages(std::span<const uint8_t> pinned, uint64_t budget, uint32_t priority = 1);
     bool CanAddPages(std::span<const uint8_t> pinned, uint64_t budget) const;
     void SetBudget(uint64_t bytes);
@@ -54,12 +65,30 @@ public:
     void MarkPredicted(PageId page, bool predicted);
     std::optional<PageId> OldestEvictable(uint64_t olderThanFrame = UINT64_MAX) const;
     bool Matches(const LoadTicket& ticket) const;
-    const std::vector<ResidencyEntry>& Snapshot() const { return m_Snapshot; }
-    const std::vector<PageRecord>& Pages() const { return m_Pages; }
-    uint32_t PageCount() const { return uint32_t(m_Pages.size()); }
+
+    const std::vector<ResidencyEntry>& Snapshot() const
+    {
+        return m_Snapshot;
+    }
+
+    const std::vector<PageRecord>& Pages() const
+    {
+        return m_Pages;
+    }
+
+    uint32_t PageCount() const
+    {
+        return uint32_t(m_Pages.size());
+    }
+
     uint64_t ReservedBytes() const;
-    uint64_t Budget() const { return m_Budget; }
-private:
+
+    uint64_t Budget() const
+    {
+        return m_Budget;
+    }
+
+  private:
     std::vector<PageRecord> m_Pages;
     std::vector<ResidencyEntry> m_Snapshot;
     std::vector<PageId> m_Slots;
@@ -69,4 +98,4 @@ private:
     uint64_t m_PinnedPages = 0;
     uint64_t m_AllocatedPinnedPages = 0;
 };
-}
+} // namespace VirtualGeometryStreaming

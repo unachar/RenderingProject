@@ -25,7 +25,7 @@ struct MaterialRuntime
 
 class MaterialManager
 {
-public:
+  public:
     static AssetRegistry& Registry();
     static void Init();
     static void Shutdown();
@@ -46,7 +46,7 @@ public:
     static void NotifyAssignmentsChanged();
     static bool SaveSceneReferences(const filesystem::path& path, string& error);
     static bool LoadSceneReferences(const filesystem::path& path, string& error);
-private:
+
+  private:
     static void UpdateBinding(MaterialRuntime& runtime, const MaterialAssetData& material);
 };
-

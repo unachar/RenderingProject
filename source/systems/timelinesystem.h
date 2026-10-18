@@ -6,18 +6,15 @@
 
 class TimeLineSystem : public SystemBase
 {
-private:
-	static vector<unique_ptr<TimeLineDirector>> m_Directors;
+  private:
+    static vector<unique_ptr<TimeLineDirector>> m_Directors;
 
-public:
-	void Update() override;
-	void Uninit() override;
+  public:
+    void Update() override;
+    void Uninit() override;
 
-	static TimeLineDirector& CreateDirector();
-	static void Clear();
-	static void EvaluateComponent(TimelineComponent& timeline);
-	static XMFLOAT4 ReadProperty(
-		EntityID target,
-		TimelineProperty property,
-		bool* valid = nullptr);
+    static TimeLineDirector& CreateDirector();
+    static void Clear();
+    static void EvaluateComponent(TimelineComponent& timeline);
+    static XMFLOAT4 ReadProperty(EntityID target, TimelineProperty property, bool* valid = nullptr);
 };

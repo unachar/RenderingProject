@@ -32,7 +32,7 @@ void RequireValidRecord(istream& stream)
         throw invalid_argument("Unexpected simulation setting field");
     }
 }
-}
+} // namespace
 
 void SimulationConfiguration::Save(ostream& stream)
 {
@@ -41,21 +41,21 @@ void SimulationConfiguration::Save(ostream& stream)
     const auto& air = Atmosphere::GetParameters();
     stream << "procedural_live_update=" << ProceduralScene::GetLiveUpdate() << '\n';
     stream << "sun_cycle=" << cycle.TimeDriven << ' ' << cycle.Running << ' ' << cycle.PreviewInEditor << ' '
-        << cycle.AutomaticLighting << ' ' << cycle.Hours << ' ' << cycle.Latitude << ' ' << cycle.DayOfYear << ' '
-        << cycle.DayDurationSeconds << ' ' << cycle.OrbitRadius << ' ' << cycle.DayIntensity << ' '
-        << cycle.SkyIntensity << ' ' << cycle.StarBrightness << '\n';
+           << cycle.AutomaticLighting << ' ' << cycle.Hours << ' ' << cycle.Latitude << ' ' << cycle.DayOfYear << ' '
+           << cycle.DayDurationSeconds << ' ' << cycle.OrbitRadius << ' ' << cycle.DayIntensity << ' '
+           << cycle.SkyIntensity << ' ' << cycle.StarBrightness << '\n';
     stream << "raytracing=" << rays.Enabled << ' ' << rays.Shadows << ' ' << rays.AmbientOcclusion << ' '
-        << rays.Samples << ' ' << rays.ShadowDistance << ' ' << rays.AmbientRadius << ' ' << rays.NormalBias << ' '
-        << rays.SunAngularRadius << '\n';
+           << rays.Samples << ' ' << rays.ShadowDistance << ' ' << rays.AmbientRadius << ' ' << rays.NormalBias << ' '
+           << rays.SunAngularRadius << '\n';
     stream << "raytracing_denoise=" << rays.Denoise << '\n';
     stream << "raytracing_denoiser_type=" << static_cast<int>(rays.RadianceDenoiser) << '\n';
     stream << "raytracing_reflections=" << rays.Reflections << '\n';
     stream << "raytracing_mode=" << static_cast<int>(rays.RenderMode) << '\n';
     stream << "atmosphere=" << air.Enabled << ' ' << air.PhysicalSky << ' ' << air.RayleighStrength << ' '
-        << air.MieStrength << ' ' << air.Density << ' ' << air.HeightFalloff << ' ' << air.Extinction << ' '
-        << air.MieG << ' ' << air.DistanceScale << ' ' << air.LightShaftStrength << ' ' << air.LightShaftBlur << ' '
-        << air.AmbientStrength << ' ' << air.RayleighColor.x << ' ' << air.RayleighColor.y << ' ' << air.RayleighColor.z << ' '
-        << air.MieColor.x << ' ' << air.MieColor.y << ' ' << air.MieColor.z << '\n';
+           << air.MieStrength << ' ' << air.Density << ' ' << air.HeightFalloff << ' ' << air.Extinction << ' '
+           << air.MieG << ' ' << air.DistanceScale << ' ' << air.LightShaftStrength << ' ' << air.LightShaftBlur << ' '
+           << air.AmbientStrength << ' ' << air.RayleighColor.x << ' ' << air.RayleighColor.y << ' '
+           << air.RayleighColor.z << ' ' << air.MieColor.x << ' ' << air.MieColor.y << ' ' << air.MieColor.z << '\n';
 }
 
 bool SimulationConfiguration::TryLoad(const string& key, const string& value)
@@ -110,7 +110,10 @@ bool SimulationConfiguration::TryLoad(const string& key, const string& value)
         int mode = -1;
         record >> mode;
         RequireValidRecord(record);
-        if (mode < 0 || mode > 1) throw invalid_argument("Invalid raytracing mode");
+        if (mode < 0 || mode > 1)
+        {
+            throw invalid_argument("Invalid raytracing mode");
+        }
         Raytracing::GetSettings().RenderMode = static_cast<Raytracing::Mode>(mode);
         return true;
     }
@@ -119,7 +122,10 @@ bool SimulationConfiguration::TryLoad(const string& key, const string& value)
         int enabled = -1;
         record >> enabled;
         RequireValidRecord(record);
-        if (enabled != 0 && enabled != 1) throw invalid_argument("Invalid NRD setting");
+        if (enabled != 0 && enabled != 1)
+        {
+            throw invalid_argument("Invalid NRD setting");
+        }
         Raytracing::GetSettings().Denoise = enabled != 0;
         return true;
     }
@@ -140,7 +146,10 @@ bool SimulationConfiguration::TryLoad(const string& key, const string& value)
         int enabled = -1;
         record >> enabled;
         RequireValidRecord(record);
-        if (enabled != 0 && enabled != 1) throw invalid_argument("Invalid reflection setting");
+        if (enabled != 0 && enabled != 1)
+        {
+            throw invalid_argument("Invalid reflection setting");
+        }
         Raytracing::GetSettings().Reflections = enabled != 0;
         return true;
     }

@@ -50,24 +50,42 @@ struct Decision
 inline Decision Evaluate(const State& previous, const State& current, bool valid)
 {
     uint32_t reasons = valid ? None : FirstFrame;
-    if (valid && (previous.Serial == (std::numeric_limits<uint64_t>::max)() ||
-        current.Serial != previous.Serial + 1))
+    if (valid && (previous.Serial == (std::numeric_limits<uint64_t>::max)() || current.Serial != previous.Serial + 1))
+    {
         reasons |= FrameGap;
+    }
     if (previous.CameraId != current.CameraId || current.CameraCut ||
         previous.CameraCutGeneration != current.CameraCutGeneration)
+    {
         reasons |= CameraChanged;
-    if (current.InputWidth == 0 || current.InputHeight == 0 ||
-        current.OutputWidth == 0 || current.OutputHeight == 0 ||
+    }
+    if (current.InputWidth == 0 || current.InputHeight == 0 || current.OutputWidth == 0 || current.OutputHeight == 0 ||
         previous.InputWidth != current.InputWidth || previous.InputHeight != current.InputHeight ||
         previous.OutputWidth != current.OutputWidth || previous.OutputHeight != current.OutputHeight)
+    {
         reasons |= ResolutionChanged;
-    if (previous.SceneGeneration != current.SceneGeneration) reasons |= SceneChanged;
-    if (previous.LightingGeneration != current.LightingGeneration) reasons |= LightingChanged;
-    if (previous.LodGeneration != current.LodGeneration) reasons |= LodChanged;
-    if (!std::isfinite(previous.Exposure) || !std::isfinite(current.Exposure) ||
-        previous.Exposure <= 0.0 || current.Exposure <= 0.0 || previous.Exposure != current.Exposure)
+    }
+    if (previous.SceneGeneration != current.SceneGeneration)
+    {
+        reasons |= SceneChanged;
+    }
+    if (previous.LightingGeneration != current.LightingGeneration)
+    {
+        reasons |= LightingChanged;
+    }
+    if (previous.LodGeneration != current.LodGeneration)
+    {
+        reasons |= LodChanged;
+    }
+    if (!std::isfinite(previous.Exposure) || !std::isfinite(current.Exposure) || previous.Exposure <= 0.0 ||
+        current.Exposure <= 0.0 || previous.Exposure != current.Exposure)
+    {
         reasons |= ExposureChanged;
-    if (previous.ConfigurationKey != current.ConfigurationKey) reasons |= ConfigurationChanged;
+    }
+    if (previous.ConfigurationKey != current.ConfigurationKey)
+    {
+        reasons |= ConfigurationChanged;
+    }
     return {reasons, reasons == None};
 }
-}
+} // namespace TemporalHistory

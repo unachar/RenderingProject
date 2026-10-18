@@ -5,19 +5,23 @@
 
 void Check(bool valid, const char* message)
 {
-    if (!valid) throw std::runtime_error(message);
+    if (!valid)
+    {
+        throw std::runtime_error(message);
+    }
 }
+
 int main()
 {
     try
     {
         constexpr float pi = 3.14159265f;
         Check(std::abs(GiResampling::GiGuideAcceptance(.5f, pi / .5f) - 1) < 1e-6f,
-            "cosine-distributed guides must be accepted");
+              "cosine-distributed guides must be accepted");
         Check(std::abs(GiResampling::GiGuideAcceptance(.5f, pi / 5) - .1f) < 1e-6f,
-            "overrepresented radiance guides need BRDF probability correction");
+              "overrepresented radiance guides need BRDF probability correction");
         Check(GiResampling::GiGuideAcceptance(.5f, 100) == 1 && GiResampling::GiGuideAcceptance(.5f, 0) == 0,
-            "guide acceptance must remain a bounded probability");
+              "guide acceptance must remain a bounded probability");
         // A mapping that doubles solid angle doubles its integration weight.
         const auto expanded = GiResampling::GiSpatialReuseWeights(3, 2, 4, 2);
         Check(expanded.Selection == 48, "solid-angle expansion must multiply the sample weight");

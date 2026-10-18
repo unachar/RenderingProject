@@ -2,7 +2,6 @@
 
 class FramePipeline
 {
-public:
-	static void Execute();
+  public:
+    static void Execute();
 };
-

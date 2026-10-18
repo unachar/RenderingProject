@@ -4,6 +4,6 @@
 
 class PostProcessInputSystem : public SystemBase
 {
-public:
+  public:
     void Update() override;
 };

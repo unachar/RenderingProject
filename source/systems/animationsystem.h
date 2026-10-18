@@ -3,8 +3,6 @@
 
 class AnimationSystem : public SystemBase
 {
-public:
-	void Update() override;
+  public:
+    void Update() override;
 };
-
-

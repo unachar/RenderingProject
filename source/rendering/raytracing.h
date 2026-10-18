@@ -5,9 +5,18 @@
 
 class Raytracing
 {
-public:
-    enum class Mode { ReflectionsOnly, Full };
-    enum class DenoiserType { Nrd, Optix };
+  public:
+    enum class Mode
+    {
+        ReflectionsOnly,
+        Full
+    };
+    enum class DenoiserType
+    {
+        Nrd,
+        Optix
+    };
+
     struct Settings
     {
         Mode RenderMode = Mode::ReflectionsOnly;
@@ -28,10 +37,8 @@ public:
 
     static bool Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UINT increment);
     static void Shutdown();
-    static void Execute(ID3D12GraphicsCommandList* commandList,
-        ID3D12Resource* depth, ID3D12Resource* normal,
-        D3D12_GPU_DESCRIPTOR_HANDLE depthSrv, D3D12_GPU_DESCRIPTOR_HANDLE normalSrv,
-        UINT frameIndex);
+    static void Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource* depth, ID3D12Resource* normal,
+                        D3D12_GPU_DESCRIPTOR_HANDLE depthSrv, D3D12_GPU_DESCRIPTOR_HANDLE normalSrv, UINT frameIndex);
     static bool IsAvailable();
     static bool UsesRaytracedShadows();
     static bool UsesRaytracedAmbientOcclusion();
@@ -58,6 +65,7 @@ public:
     static void SetLightShadowFlag(UINT index, bool castShadow);
     static void BindGlass(ID3D12GraphicsCommandList* commandList);
     static void BeginGlassRead(ID3D12GraphicsCommandList* commandList);
+    static bool IsReadingSkinnedVerticesForGlass(ID3D12Resource* resource);
     static void EndGlassRead(ID3D12GraphicsCommandList* commandList);
     static void BindLighting(ID3D12GraphicsCommandList* commandList, UINT sceneRootIndex, UINT constantsRootIndex);
 };

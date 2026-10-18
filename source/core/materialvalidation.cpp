@@ -108,24 +108,34 @@ XMFLOAT3 MinimumTransmission(UINT slice)
     XMFLOAT3 minimum{1, 1, 1};
     std::vector<uint8_t> resident(texture.Width * texture.Height, 0);
     const float scale = static_cast<float>(texture.Width) /
-        static_cast<float>(LightingResources::GetShadowMapResource()->GetDesc().Width);
+                        static_cast<float>(LightingResources::GetShadowMapResource()->GetDesc().Width);
     for (UINT pass = 0; pass < LightingResources::GetShadowLightCount(); ++pass)
     {
         UINT layer;
         D3D12_VIEWPORT viewport;
         D3D12_RECT rect;
         bool clearLayer;
-        if (!LightingResources::GetShadowPassInfo(pass, layer, viewport, rect, clearLayer) || layer != slice / 4) continue;
+        if (!LightingResources::GetShadowPassInfo(pass, layer, viewport, rect, clearLayer) || layer != slice / 4)
+        {
+            continue;
+        }
         for (UINT y = static_cast<UINT>(rect.top * scale); y < static_cast<UINT>(rect.bottom * scale); ++y)
+        {
             for (UINT x = static_cast<UINT>(rect.left * scale); x < static_cast<UINT>(rect.right * scale); ++x)
+            {
                 resident[y * texture.Width + x] = 1;
+            }
+        }
     }
     for (UINT y = 0; y < texture.Height; ++y)
     {
         const auto* pixels = reinterpret_cast<const uint16_t*>(texture.Bytes.data() + y * texture.RowPitch);
         for (UINT x = 0; x < texture.Width; ++x)
         {
-            if (!resident[y * texture.Width + x]) continue;
+            if (!resident[y * texture.Width + x])
+            {
+                continue;
+            }
             minimum.x = min(minimum.x, RenderCapture::HalfToFloat(pixels[x * 4]));
             minimum.y = min(minimum.y, RenderCapture::HalfToFloat(pixels[x * 4 + 1]));
             minimum.z = min(minimum.z, RenderCapture::HalfToFloat(pixels[x * 4 + 2]));
@@ -133,6 +143,7 @@ XMFLOAT3 MinimumTransmission(UINT slice)
     }
     return minimum;
 }
+
 void Check(bool passed, const char* message);
 
 void CheckShadowDepth(bool expectedOcclusion)
@@ -157,9 +168,10 @@ void CheckShadowDepth(bool expectedOcclusion)
             }
         }
     }
-    Check(occluded == expectedOcclusion, expectedOcclusion ?
-        "material shadow caster writes depth" : "disabled or clipped material writes no shadow depth");
+    Check(occluded == expectedOcclusion, expectedOcclusion ? "material shadow caster writes depth"
+                                                           : "disabled or clipped material writes no shadow depth");
 }
+
 AssetDragPayload uiPayload;
 
 void Check(bool passed, const char* message)
@@ -173,7 +185,12 @@ void Check(bool passed, const char* message)
 
 EntityID MakeCube(float x)
 {
-    auto entity = World::CreateEntity().Add<TransformComponent>().Add<MeshComponent>().Add<MaterialComponent>().Add<NameComponent>().Add<LODComponent>();
+    auto entity = World::CreateEntity()
+                      .Add<TransformComponent>()
+                      .Add<MeshComponent>()
+                      .Add<MaterialComponent>()
+                      .Add<NameComponent>()
+                      .Add<LODComponent>();
     entity.SetName("Material fixture");
     auto& transform = entity.Get<TransformComponent>();
     transform.Position = {x, 0, 0};
@@ -234,7 +251,7 @@ bool EqualPixels(const RenderCapture::TextureData& left, const RenderCapture::Te
     for (UINT row = 0; row < left.Height; ++row)
     {
         if (memcmp(left.Bytes.data() + row * left.RowPitch, right.Bytes.data() + row * right.RowPitch,
-            left.Width * pixelBytes) != 0)
+                   left.Width * pixelBytes) != 0)
         {
             return false;
         }
@@ -304,7 +321,7 @@ void PrepareTransparencyFrame(uint64_t frame)
         editing.ShadowMode = MaterialShadowMode::Opaque;
         MaterialManager::SetEditing(copyHandle, editing);
         Check(!MaterialSystem::CastsShadow(MaterialManager::GetRuntime(copyHandle).Binding),
-            "opacity zero suppresses opaque shadow casting");
+              "opacity zero suppresses opaque shadow casting");
     }
     if (frame == 30)
     {
@@ -375,7 +392,10 @@ void PrepareTransparencyFrame(uint64_t frame)
 
 void PrepareTransmissionFrame(uint64_t frame)
 {
-    if (frame < 46 || (frame & 1) != 0) return;
+    if (frame < 46 || (frame & 1) != 0)
+    {
+        return;
+    }
     auto editing = MaterialManager::GetRuntime(copyHandle).Editing;
     if (frame == 46)
     {
@@ -394,9 +414,18 @@ void PrepareTransmissionFrame(uint64_t frame)
             light.Direction = {0, 1, 0};
         }
     }
-    if (frame == 48) editing.Transmission = 1;
-    if (frame == 50) editing.AbsorptionCoefficient = {2, 0.5f, 0};
-    if (frame == 52) editing.Thickness = 1;
+    if (frame == 48)
+    {
+        editing.Transmission = 1;
+    }
+    if (frame == 50)
+    {
+        editing.AbsorptionCoefficient = {2, 0.5f, 0};
+    }
+    if (frame == 52)
+    {
+        editing.Thickness = 1;
+    }
     if (frame == 54)
     {
         secondTransmissionCaster = MakeCube(0);
@@ -405,10 +434,16 @@ void PrepareTransmissionFrame(uint64_t frame)
         transform.IsDirty = true;
         MaterialManager::Assign(secondTransmissionCaster, 0, copyHandle);
     }
-    if (frame == 56) editing.BaseColor[3] = 0;
+    if (frame == 56)
+    {
+        editing.BaseColor[3] = 0;
+    }
     if (frame == 58 || frame == 62)
     {
-        if (frame == 58) World::DestroyEntity(Entity(secondTransmissionCaster));
+        if (frame == 58)
+        {
+            World::DestroyEntity(Entity(secondTransmissionCaster));
+        }
         editing.BaseColor[3] = 1;
         editing.Transmission = 1;
         editing.ShadowMode = MaterialShadowMode::Transmittance;
@@ -419,13 +454,19 @@ void PrepareTransmissionFrame(uint64_t frame)
         receiver.Alpha = 1;
         receiver.IsTransparent = false;
     }
-    if (frame == 60 || frame == 64) editing.ShadowMode = MaterialShadowMode::None;
+    if (frame == 60 || frame == 64)
+    {
+        editing.ShadowMode = MaterialShadowMode::None;
+    }
     if (frame == 66)
     {
         editing.ShadowMode = MaterialShadowMode::Transmittance;
         RendererSettings::SetShadowMapMethod(ShadowMapMethod::VirtualShadowMap);
     }
-    if (frame == 68) editing.AbsorptionCoefficient = {0, 0, 0};
+    if (frame == 68)
+    {
+        editing.AbsorptionCoefficient = {0, 0, 0};
+    }
     MaterialManager::SetEditing(copyHandle, editing);
 }
 
@@ -442,14 +483,16 @@ XMFLOAT3 ReadReceiverLight()
     auto position = ComponentManager::GetComponentUnchecked<TransformComponent>(transmissionReceiver).Position;
     position.y += 0.05f;
     XMFLOAT3 pixel;
-    XMStoreFloat3(&pixel, XMVector3Project(XMLoadFloat3(&position), 0, 0,
-        static_cast<float>(scene.Width), static_cast<float>(scene.Height), 0, 1, projection, view, XMMatrixIdentity()));
+    XMStoreFloat3(&pixel,
+                  XMVector3Project(XMLoadFloat3(&position), 0, 0, static_cast<float>(scene.Width),
+                                   static_cast<float>(scene.Height), 0, 1, projection, view, XMMatrixIdentity()));
     if (pixel.x < 0 || pixel.x >= scene.Width || pixel.y < 0 || pixel.y >= scene.Height)
     {
         Check(false, "receiver sample is in view");
         return {};
     }
-    const auto* rgb = reinterpret_cast<const uint16_t*>(scene.Bytes.data() + static_cast<UINT>(pixel.y) * scene.RowPitch + static_cast<UINT>(pixel.x) * 8);
+    const auto* rgb = reinterpret_cast<const uint16_t*>(
+        scene.Bytes.data() + static_cast<UINT>(pixel.y) * scene.RowPitch + static_cast<UINT>(pixel.x) * 8);
     return {RenderCapture::HalfToFloat(rgb[0]), RenderCapture::HalfToFloat(rgb[1]), RenderCapture::HalfToFloat(rgb[2])};
 }
 
@@ -462,31 +505,33 @@ void CheckTransparencyFrame(uint64_t frame)
     if (frame == 43)
     {
         Check(RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), shadowedReceiver),
-            "capture transparent receiver with material shadow");
-        RenderCapture::SaveTexturePng(RenderTargets::GetSceneResource(), L"build/material-tests/transparency-shadow.png");
+              "capture transparent receiver with material shadow");
+        RenderCapture::SaveTexturePng(RenderTargets::GetSceneResource(),
+                                      L"build/material-tests/transparency-shadow.png");
     }
     if (frame == 45)
     {
         RenderCapture::TextureData unshadowed;
         Check(RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), unshadowed) &&
-            !EqualPixels(shadowedReceiver, unshadowed, 8), "Forward transparent receiver responds to shared shadow visibility");
+                  !EqualPixels(shadowedReceiver, unshadowed, 8),
+              "Forward transparent receiver responds to shared shadow visibility");
     }
     if (frame == 25)
     {
         Check(RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), opaqueLighting),
-            "capture Deferred PBR reference");
+              "capture Deferred PBR reference");
         RenderCapture::SaveTexturePng(RenderTargets::GetSceneResource(),
-            L"build/material-tests/transparency-deferred.png");
+                                      L"build/material-tests/transparency-deferred.png");
     }
     if (frame == 27)
     {
         RenderCapture::TextureData forward;
         bool captured = RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), forward);
-        Check(captured && forward.Format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
-            forward.Width == opaqueLighting.Width && forward.Height == opaqueLighting.Height,
-            "capture Forward opacity-one HDR result");
-        if (captured && forward.Format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
-            forward.Width == opaqueLighting.Width && forward.Height == opaqueLighting.Height)
+        Check(captured && forward.Format == DXGI_FORMAT_R16G16B16A16_FLOAT && forward.Width == opaqueLighting.Width &&
+                  forward.Height == opaqueLighting.Height,
+              "capture Forward opacity-one HDR result");
+        if (captured && forward.Format == DXGI_FORMAT_R16G16B16A16_FLOAT && forward.Width == opaqueLighting.Width &&
+            forward.Height == opaqueLighting.Height)
         {
             double errorSum = 0;
             double referenceSum = 0;
@@ -494,8 +539,10 @@ void CheckTransparencyFrame(uint64_t frame)
             {
                 for (UINT column = 0; column < forward.Width; ++column)
                 {
-                    auto* expected = reinterpret_cast<const uint16_t*>(opaqueLighting.Bytes.data() + row * opaqueLighting.RowPitch + column * 8);
-                    auto* actual = reinterpret_cast<const uint16_t*>(forward.Bytes.data() + row * forward.RowPitch + column * 8);
+                    auto* expected = reinterpret_cast<const uint16_t*>(opaqueLighting.Bytes.data() +
+                                                                       row * opaqueLighting.RowPitch + column * 8);
+                    auto* actual =
+                        reinterpret_cast<const uint16_t*>(forward.Bytes.data() + row * forward.RowPitch + column * 8);
                     for (UINT channel = 0; channel < 3; ++channel)
                     {
                         const float referenceValue = RenderCapture::HalfToFloat(expected[channel]);
@@ -509,25 +556,25 @@ void CheckTransparencyFrame(uint64_t frame)
             Check(relativeError < 0.02, "Deferred / Forward HDR lighting agrees within two percent");
         }
         RenderCapture::SaveTexturePng(RenderTargets::GetSceneResource(),
-            L"build/material-tests/transparency-forward.png");
+                                      L"build/material-tests/transparency-forward.png");
     }
     if (frame == 29)
     {
         Check(RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), invisibleLighting),
-            "capture zero-opacity with emission");
+              "capture zero-opacity with emission");
     }
     if (frame == 31)
     {
         RenderCapture::TextureData absent;
         Check(RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), absent) &&
-            EqualPixels(invisibleLighting, absent, 8), "opacity zero equals no draw pixel-for-pixel");
+                  EqualPixels(invisibleLighting, absent, 8),
+              "opacity zero equals no draw pixel-for-pixel");
         Check(!EqualPixels(opaqueLighting, absent, 8), "lighting comparison contains a visible material fixture");
     }
     if (frame == 47)
     {
         const auto t = MinimumTransmission(0);
-        Check(fabs(t.x - 0.5f) < 0.002f && fabs(t.y - 0.5f) < 0.002f,
-            "half coverage transmits half the source light");
+        Check(fabs(t.x - 0.5f) < 0.002f && fabs(t.y - 0.5f) < 0.002f, "half coverage transmits half the source light");
         CheckShadowDepth(false);
         Check(!Raytracing::UsesRaytracedShadows(), "transparent casters use material-aware raster shadows");
     }
@@ -540,13 +587,13 @@ void CheckTransparencyFrame(uint64_t frame)
     {
         thinTransmission = MinimumTransmission(0);
         Check(thinTransmission.x < thinTransmission.y && thinTransmission.y < thinTransmission.z,
-            "RGB absorption produces colored transmissive shadows");
+              "RGB absorption produces colored transmissive shadows");
     }
     if (frame == 53)
     {
         const auto t = MinimumTransmission(0);
         Check(t.x < thinTransmission.x && t.y < thinTransmission.y && fabs(t.z - thinTransmission.z) < 0.002f,
-            "increasing thickness absorbs more light without changing nonabsorbing wavelengths");
+              "increasing thickness absorbs more light without changing nonabsorbing wavelengths");
     }
     if (frame == 55)
     {
@@ -554,30 +601,47 @@ void CheckTransparencyFrame(uint64_t frame)
         const auto secondLayer = MinimumTransmission(1);
         const auto emptyLayer = MinimumTransmission(2);
         Check(firstLayer.x < 0.9f && secondLayer.x < 0.9f && emptyLayer.x == 1,
-            "depth peeling captures two entries without double-counting exits");
-        Check(RenderCapture::SaveScenePng(L"build/material-tests/transmission-overlap.png"), "capture colored transparent shadow scene");
+              "depth peeling captures two entries without double-counting exits");
+        Check(RenderCapture::SaveScenePng(L"build/material-tests/transmission-overlap.png"),
+              "capture colored transparent shadow scene");
     }
-    if (frame == 57) Check(!TransmittanceShadows::HasCasters(), "zero opacity bypasses transmissive shadow rendering");
-    if (frame == 59) receiverBeforeCaster = ReadReceiverLight();
+    if (frame == 57)
+    {
+        Check(!TransmittanceShadows::HasCasters(), "zero opacity bypasses transmissive shadow rendering");
+    }
+    if (frame == 59)
+    {
+        receiverBeforeCaster = ReadReceiverLight();
+    }
     if (frame == 61)
     {
         const auto unshadowed = ReadReceiverLight();
         Check(receiverBeforeCaster.x > 0 && fabs(receiverBeforeCaster.x - unshadowed.x) < 0.002f &&
-            fabs(receiverBeforeCaster.y - unshadowed.y) < 0.002f, "objects behind a receiver do not attenuate its light");
+                  fabs(receiverBeforeCaster.y - unshadowed.y) < 0.002f,
+              "objects behind a receiver do not attenuate its light");
     }
-    if (frame == 63) receiverBehindCaster = ReadReceiverLight();
+    if (frame == 63)
+    {
+        receiverBehindCaster = ReadReceiverLight();
+    }
     if (frame == 65)
     {
         const auto unshadowed = ReadReceiverLight();
         Check(unshadowed.x > receiverBehindCaster.x + 0.01f && unshadowed.y > receiverBehindCaster.y + 0.01f,
-            "Deferred receiver radiance includes optical shadow transmission");
+              "Deferred receiver radiance includes optical shadow transmission");
         Check(fabs(unshadowed.z - receiverBehindCaster.z) < max(0.01f, unshadowed.z * 0.15f),
-            "nonabsorbing blue light remains transmitted apart from Fresnel reflection");
+              "nonabsorbing blue light remains transmitted apart from Fresnel reflection");
     }
-    if (frame == 67) Check(MinimumTransmission(0).x < 0.9f, "virtual shadow pages contain RGB transmission");
-    if (frame == 69) Check(MinimumTransmission(0).x > 0.9f, "optical parameter edits invalidate virtual shadow pages");
+    if (frame == 67)
+    {
+        Check(MinimumTransmission(0).x < 0.9f, "virtual shadow pages contain RGB transmission");
+    }
+    if (frame == 69)
+    {
+        Check(MinimumTransmission(0).x > 0.9f, "optical parameter edits invalidate virtual shadow pages");
+    }
 }
-}
+} // namespace
 
 bool MaterialValidation::Enabled()
 {
@@ -643,7 +707,8 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         authored.Roughness = 0.7f;
         authored.Metallic = 0.6f;
         authored.AOStrength = 0.8f;
-        authored.Textures = {surfaceTextureHandle, normalHandle, surfaceTextureHandle, surfaceTextureHandle, surfaceTextureHandle};
+        authored.Textures = {surfaceTextureHandle, normalHandle, surfaceTextureHandle, surfaceTextureHandle,
+                             surfaceTextureHandle};
         authored.Textures[1] = normalHandle;
         authored.EmissiveColor = {0.2f, 0.1f, 0.02f};
         authored.EmissiveIntensity = 0.4f;
@@ -656,9 +721,11 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         MaterialPreview::SetLightIntensity(0.0f);
         first = MakeCube(-1.2f);
         second = MakeCube(1.2f);
-        Check(MaterialManager::Assign(first, 0, handle) && MaterialManager::Assign(second, 0, handle), "assign shared material slots");
+        Check(MaterialManager::Assign(first, 0, handle) && MaterialManager::Assign(second, 0, handle),
+              "assign shared material slots");
         const auto& left = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(first));
-        const auto& right = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(second));
+        const auto& right =
+            MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(second));
         Check(&left == &right && left.NormalMapID >= 0, "one shared runtime and resolved normal descriptor");
         Check(!MaterialManager::Assign(Camera::GetCameraEntity(), 0, handle), "reject camera material drop");
         Check(!MaterialManager::Assign(first, 1, handle), "reject out-of-range material slot");
@@ -671,14 +738,14 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         spriteGeometry.color = Color::WHITE;
         PrimitiveGeometry::CreateSpriteVertex(spriteGeometry);
         Check(MaterialManager::SlotCount(sprite.GetID()) == 1 && MaterialManager::Assign(sprite.GetID(), 0, handle),
-            "legacy world-space sprite accepts material asset");
+              "legacy world-space sprite accepts material asset");
         const auto& spriteMaterial = MaterialManager::Resolve(sprite.Get<MaterialComponent>());
         Check(spriteMaterial.RuntimeHandle == handle && spriteMaterial.NormalMapID == left.NormalMapID,
-            "world-space sprite resolves shared textures and normal map");
+              "world-space sprite resolves shared textures and normal map");
         Check(!MaterialManager::Assign(sprite.GetID(), 1, handle), "sprite rejects extra material slots");
         sprite.Get<SpriteComponent>().Is3D = false;
         Check(!MaterialManager::IsRenderable(sprite.GetID()) && !MaterialManager::Assign(sprite.GetID(), 0, handle),
-            "screen-space sprite keeps separate material policy");
+              "screen-space sprite keeps separate material policy");
         World::DestroyEntity(sprite);
         const auto copy = fixtureRoot / "Brick_Copy.material";
         copyHandle = MaterialManager::Registry().Duplicate(handle, copy, error);
@@ -687,43 +754,57 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         Check(copyHandle != 0 && copyHandle != handle, "duplicate material has independent identity");
         ImGuiManager::AssignMaterialAsset(first, 0, copyHandle);
         ImGuiManager::Undo();
-        Check(MaterialManager::SlotHandle(ComponentManager::GetComponentUnchecked<MaterialComponent>(first), 0) == handle, "Undo restores assignment");
+        Check(MaterialManager::SlotHandle(ComponentManager::GetComponentUnchecked<MaterialComponent>(first), 0) ==
+                  handle,
+              "Undo restores assignment");
         ImGuiManager::Redo();
-        Check(MaterialManager::SlotHandle(ComponentManager::GetComponentUnchecked<MaterialComponent>(first), 0) == copyHandle, "Redo reapplies assignment");
+        Check(MaterialManager::SlotHandle(ComponentManager::GetComponentUnchecked<MaterialComponent>(first), 0) ==
+                  copyHandle,
+              "Redo reapplies assignment");
         MaterialManager::Assign(first, 0, handle);
         Check(MaterialManager::SaveSceneReferences("build/material-tests/scene.json", error), "scene references saved");
         MaterialManager::Assign(second, 0, copyHandle);
         Check(MaterialManager::LoadSceneReferences("build/material-tests/scene.json", error) &&
-            MaterialManager::SlotHandle(ComponentManager::GetComponentUnchecked<MaterialComponent>(second), 0) == handle, "scene GUID reference roundtrip");
+                  MaterialManager::SlotHandle(ComponentManager::GetComponentUnchecked<MaterialComponent>(second), 0) ==
+                      handle,
+              "scene GUID reference roundtrip");
         const auto moved = fixtureRoot / "Wall.material";
         Check(MaterialManager::Registry().Move(handle, moved, error), "rename/move preserves material GUID");
         ownedFiles.push_back(moved);
         ownedFiles.emplace_back(moved.wstring() + L".meta");
-        Check(MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(first)).RuntimeHandle == handle, "scene reference survives rename");
+        Check(
+            MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(first)).RuntimeHandle ==
+                handle,
+            "scene reference survives rename");
         const auto meshPath = fixtureRoot / "sections.obj";
         const auto mtlPath = fixtureRoot / "sections.mtl";
-        ofstream(meshPath) << "mtllib sections.mtl\nv -1 -1 0\nv 0 1 0\nv 1 -1 0\nv 2 -1 0\nv 3 1 0\nv 4 -1 0\nusemtl One\nf 1 2 3\nusemtl Two\nf 4 5 6\n";
+        ofstream(meshPath)
+            << "mtllib sections.mtl\nv -1 -1 0\nv 0 1 0\nv 1 -1 0\nv 2 -1 0\nv 3 1 0\nv 4 -1 0\nusemtl One\nf 1 2 3\nusemtl Two\nf 4 5 6\n";
         ofstream(mtlPath) << "newmtl One\nKd 1 1 1\nnewmtl Two\nKd 0.5 1 1\n";
         ownedFiles.push_back(meshPath);
         ownedFiles.push_back(mtlPath);
-        auto entity = World::CreateEntity().Add<TransformComponent>().Add<StaticModelComponent>().Add<MaterialComponent>();
+        auto entity =
+            World::CreateEntity().Add<TransformComponent>().Add<StaticModelComponent>().Add<MaterialComponent>();
         multi = entity.GetID();
-        entity.Get<StaticModelComponent>().ModelId = ModelManager::LoadStaticModel(meshPath.generic_string().c_str(), false);
+        entity.Get<StaticModelComponent>().ModelId =
+            ModelManager::LoadStaticModel(meshPath.generic_string().c_str(), false);
         entity.Get<TransformComponent>().Position = {0, 100, 0};
         Check(MaterialManager::SlotCount(multi) == 2, "multi-submesh exposes two slots");
         MaterialManager::Assign(multi, 0, handle);
         MaterialManager::Assign(multi, 1, copyHandle);
         Check(MaterialManager::SlotHandle(entity.Get<MaterialComponent>(), 0) == handle &&
-            MaterialManager::SlotHandle(entity.Get<MaterialComponent>(), 1) == copyHandle, "slot assignment is isolated");
+                  MaterialManager::SlotHandle(entity.Get<MaterialComponent>(), 1) == copyHandle,
+              "slot assignment is isolated");
         auto baseline = World::CreateEntity().Add<TransformComponent>().Add<StaticModelComponent>();
         baseline.Get<StaticModelComponent>().ModelId = entity.Get<StaticModelComponent>().ModelId;
         baseline.Get<TransformComponent>().Position = {0, 200, 0};
-        Check(MaterialManager::HasSurfaceForPass(baseline.GetID(), false), "model without MaterialComponent keeps its default material");
+        Check(MaterialManager::HasSurfaceForPass(baseline.GetID(), false),
+              "model without MaterialComponent keeps its default material");
         MaterialManager::Assign(multi, 1, 0);
         entity.Get<MaterialComponent>().IsTransparent = true;
         entity.Get<MaterialComponent>().Alpha = 0.4f;
         Check(MaterialManager::HasSurfaceForPass(multi, false) && MaterialManager::HasSurfaceForPass(multi, true),
-            "mixed opaque asset and transparent legacy slots route to both passes");
+              "mixed opaque asset and transparent legacy slots route to both passes");
         Check(!GPUDrivenRenderer::SupportsEntity(multi), "mixed transparent model uses per-section CPU fallback");
         Raytracing::GetSettings().Enabled = false;
         DayNightCycle::GetSettings().Running = false;
@@ -750,13 +831,17 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         const auto before = MaterialManager::GetRuntime(handle).Revision;
         editing.Roughness = 0.27f;
         Check(MaterialManager::SetEditing(handle, editing), "real-time parameter edit");
-        Check(MaterialManager::GetRuntime(handle).Revision == before + 1 && MaterialManager::GetRuntime(handle).Dirty, "dirty state and runtime revision");
-        Check(MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(second)).Roughness == 0.27f, "edit reflected in every shared entity");
+        Check(MaterialManager::GetRuntime(handle).Revision == before + 1 && MaterialManager::GetRuntime(handle).Dirty,
+              "dirty state and runtime revision");
+        Check(MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(second)).Roughness ==
+                  0.27f,
+              "edit reflected in every shared entity");
         Check(MaterialManager::GetRuntime(copyHandle).Editing.Roughness == 0.7f, "duplicate remains independent");
         Check(MaterialManager::Save(handle) && !MaterialManager::GetRuntime(handle).Dirty, "Save clears dirty state");
         editing.Roughness = 0.9f;
         MaterialManager::SetEditing(handle, editing);
-        Check(MaterialManager::Revert(handle) && MaterialManager::GetRuntime(handle).Editing.Roughness == 0.27f, "Revert restores disk state and shared runtime");
+        Check(MaterialManager::Revert(handle) && MaterialManager::GetRuntime(handle).Editing.Roughness == 0.27f,
+              "Revert restores disk state and shared runtime");
     }
     if (frame == 4)
     {
@@ -777,7 +862,8 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         error_code ignored;
         filesystem::remove(MaterialManager::Registry().Resolve(handle), ignored);
         MaterialManager::Refresh();
-        const auto& fallback = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(first));
+        const auto& fallback =
+            MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(first));
         Check(fallback.Roughness == 0.5f && fallback.NormalMapID < 0, "missing material uses default runtime");
         MaterialManager::Discard(handle);
         Check(!MaterialManager::GetRuntime(handle).Dirty, "missing dirty material can be discarded");
@@ -787,7 +873,11 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         ImGuiManager::m_ShowMaterialEditorWindow = false;
         const auto identity = ComponentManager::GetComponentUnchecked<MaterialComponent>(first).MaterialSceneIdentity;
         World::DestroyEntity(Entity(first));
-        auto unrelated = World::CreateEntity().Add<TransformComponent>().Add<MeshComponent>().Add<MaterialComponent>().Add<NameComponent>();
+        auto unrelated = World::CreateEntity()
+                             .Add<TransformComponent>()
+                             .Add<MeshComponent>()
+                             .Add<MaterialComponent>()
+                             .Add<NameComponent>();
         unrelated.SetName("Unrelated fixture");
         unrelated.Get<TransformComponent>().Position = {0, 300, 0};
         VertexResource unrelatedMesh;
@@ -796,7 +886,8 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         unrelatedMesh.color = Color::WHITE;
         PrimitiveGeometry::CreateObjectVertex(unrelatedMesh);
         string error;
-        Check(MaterialManager::LoadSceneReferences("build/material-tests/scene.json", error), "restore scene references after entity destruction");
+        Check(MaterialManager::LoadSceneReferences("build/material-tests/scene.json", error),
+              "restore scene references after entity destruction");
         bool restored = false;
         for (EntityID entity : World::GetView<MaterialComponent>())
         {
@@ -808,12 +899,14 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         }
         Check(restored, "saved primitive geometry and stable material reference recreate an entity");
         Check(unrelated.Get<NameComponent>().Name == "Unrelated fixture" &&
-            unrelated.Get<MaterialComponent>().MaterialSlots.empty(), "scene restore never overwrites an unrelated reused entity ID");
-        ofstream("build/material-tests/bad-scene.json") <<
-            "{\"version\":1,\"entities\":[{\"entity\":0,\"materialSlots\":[\"bad-guid\"]}]}";
+                  unrelated.Get<MaterialComponent>().MaterialSlots.empty(),
+              "scene restore never overwrites an unrelated reused entity ID");
+        ofstream("build/material-tests/bad-scene.json")
+            << "{\"version\":1,\"entities\":[{\"entity\":0,\"materialSlots\":[\"bad-guid\"]}]}";
         Check(!MaterialManager::LoadSceneReferences("build/material-tests/bad-scene.json", error) &&
-            MaterialManager::SlotHandle(ComponentManager::GetComponentUnchecked<MaterialComponent>(second), 0) == handle,
-            "invalid scene GUID is rejected before altering assignments");
+                  MaterialManager::SlotHandle(ComponentManager::GetComponentUnchecked<MaterialComponent>(second), 0) ==
+                      handle,
+              "invalid scene GUID is rejected before altering assignments");
     }
     if (frame == 12)
     {
@@ -833,8 +926,9 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         filesystem::remove(MaterialManager::Registry().Resolve(surfaceTextureHandle), ignored);
         MaterialManager::Refresh();
         const auto& binding = MaterialManager::GetRuntime(copyHandle).Binding;
-        Check(!binding.UseTexture && binding.MetallicRoughnessID < 0 && binding.AOTextureID < 0 && binding.EmissiveTextureID < 0,
-            "missing textures safely use all slot fallbacks");
+        Check(!binding.UseTexture && binding.MetallicRoughnessID < 0 && binding.AOTextureID < 0 &&
+                  binding.EmissiveTextureID < 0,
+              "missing textures safely use all slot fallbacks");
         auto editing = MaterialManager::GetRuntime(copyHandle).Editing;
         editing.Roughness = 0.42f;
         MaterialManager::SetEditing(copyHandle, editing);
@@ -870,7 +964,8 @@ void MaterialValidation::AfterFrame(uint64_t frame)
     const auto* secondInstance = GpuScene::GetInstance(GpuScene::GetEntityInstance(second));
     if (frame == 1)
     {
-        Check(firstInstance && secondInstance && firstInstance->MaterialIndex == secondInstance->MaterialIndex, "shared GPU material index");
+        Check(firstInstance && secondInstance && firstInstance->MaterialIndex == secondInstance->MaterialIndex,
+              "shared GPU material index");
         if (firstInstance)
         {
             gpuIndex = firstInstance->MaterialIndex;
@@ -884,23 +979,27 @@ void MaterialValidation::AfterFrame(uint64_t frame)
     if (frame == 3)
     {
         Check(PreviewBrightness() > unlitPreviewBrightness + 0.015f,
-            "preview studio light increases rendered surface brightness");
+              "preview studio light increases rendered surface brightness");
         Check(firstInstance && firstInstance->MaterialIndex == gpuIndex, "constant edit updates GPU record in place");
         vector<uint8_t> records;
         Check(RenderCapture::ReadBuffer(GpuScene::MaterialBuffer(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-            uint64_t(GpuScene::Statistics().Materials) * sizeof(GPUMaterialData), records), "read shared GPU material");
+                                        uint64_t(GpuScene::Statistics().Materials) * sizeof(GPUMaterialData), records),
+              "read shared GPU material");
         if (gpuIndex != UINT32_MAX && records.size() >= (uint64_t(gpuIndex) + 1) * sizeof(GPUMaterialData))
         {
             GPUMaterialData material;
             memcpy(&material, records.data() + gpuIndex * sizeof(GPUMaterialData), sizeof(material));
-            Check(material.Surface.y == 0.27f && material.NormalTextureIndex != UINT32_MAX, "GPU record contains updated roughness and normal");
+            Check(material.Surface.y == 0.27f && material.NormalTextureIndex != UINT32_MAX,
+                  "GPU record contains updated roughness and normal");
         }
         for (uint32_t target = 0; target < reference.size(); ++target)
         {
-            Check(RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(static_cast<GBufferType>(target)), reference[target]), "capture CPU GBuffer");
+            Check(RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(static_cast<GBufferType>(target)),
+                                             reference[target]),
+                  "capture CPU GBuffer");
         }
         Check(PsoManager::GraphicsPipelineCreations() == constantEditPipelineCreations,
-            "constant edit does not create graphics pipelines");
+              "constant edit does not create graphics pipelines");
         Check(GpuScene::Statistics().InstanceUploadedBytes == 0, "shared constant edit uploads no entity instances");
         withNormal = reference[1];
         bool verifiedSurfaceChannels = false;
@@ -910,18 +1009,21 @@ void MaterialValidation::AfterFrame(uint64_t frame)
         {
             for (UINT column = 0; column < materialTexture.Width; ++column)
             {
-                const auto* materialPixel = reinterpret_cast<const uint16_t*>(materialTexture.Bytes.data() + row * materialTexture.RowPitch + column * 8);
+                const auto* materialPixel = reinterpret_cast<const uint16_t*>(
+                    materialTexture.Bytes.data() + row * materialTexture.RowPitch + column * 8);
                 if (RenderCapture::HalfToFloat(materialPixel[3]) == static_cast<float>(ShaderClass::PBR))
                 {
-                    const auto* emissionPixel = reinterpret_cast<const uint16_t*>(emissionTexture.Bytes.data() + row * emissionTexture.RowPitch + column * 8);
+                    const auto* emissionPixel = reinterpret_cast<const uint16_t*>(
+                        emissionTexture.Bytes.data() + row * emissionTexture.RowPitch + column * 8);
                     const float expectedMetallic = 0.6f * (64.0f / 255.0f);
                     const float expectedRoughness = 0.27f * (128.0f / 255.0f);
                     const float expectedAO = 0.2f + 0.8f * (64.0f / 255.0f);
                     Check(abs(RenderCapture::HalfToFloat(materialPixel[0]) - expectedMetallic) < 0.001f &&
-                        abs(RenderCapture::HalfToFloat(materialPixel[1]) - expectedRoughness) < 0.001f,
-                        "metallic R and roughness G channels modulate scalar parameters");
+                              abs(RenderCapture::HalfToFloat(materialPixel[1]) - expectedRoughness) < 0.001f,
+                          "metallic R and roughness G channels modulate scalar parameters");
                     Check(abs(RenderCapture::HalfToFloat(emissionPixel[3]) - expectedAO) < 0.001f &&
-                        RenderCapture::HalfToFloat(emissionPixel[0]) > 0.015f, "AO strength and textured emission reach production GBuffer");
+                              RenderCapture::HalfToFloat(emissionPixel[0]) > 0.015f,
+                          "AO strength and textured emission reach production GBuffer");
                     verifiedSurfaceChannels = true;
                     break;
                 }
@@ -929,8 +1031,9 @@ void MaterialValidation::AfterFrame(uint64_t frame)
         }
         Check(verifiedSurfaceChannels, "material texture validation covers rendered pixels");
         RenderCapture::SaveScenePng(L"build/material-tests/cpu.png");
-        Check(MaterialPreview::GetTarget() && RenderCapture::SaveTexturePng(MaterialPreview::GetTarget(),
-            L"build/material-tests/preview.png"), "production material preview renders");
+        Check(MaterialPreview::GetTarget() &&
+                  RenderCapture::SaveTexturePng(MaterialPreview::GetTarget(), L"build/material-tests/preview.png"),
+              "production material preview renders");
     }
     if (frame == 5)
     {
@@ -938,7 +1041,8 @@ void MaterialValidation::AfterFrame(uint64_t frame)
         for (uint32_t target = 0; target < reference.size(); ++target)
         {
             RenderCapture::TextureData gpu;
-            Check(RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(static_cast<GBufferType>(target)), gpu), "capture GPU GBuffer");
+            Check(RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(static_cast<GBufferType>(target)), gpu),
+                  "capture GPU GBuffer");
             UINT pixelBytes = 4;
             if (target == 3 || target == 5)
             {
@@ -947,42 +1051,49 @@ void MaterialValidation::AfterFrame(uint64_t frame)
             Check(EqualPixels(reference[target], gpu, pixelBytes), "GPULOD ON/OFF material GBuffer parity");
         }
         RenderCapture::SaveScenePng(L"build/material-tests/gpulod.png");
-        Check(RenderCapture::SaveTexturePng(MaterialPreview::GetTarget(), L"build/material-tests/preview-cube.png"), "preview Cube uses production material");
+        Check(RenderCapture::SaveTexturePng(MaterialPreview::GetTarget(), L"build/material-tests/preview-cube.png"),
+              "preview Cube uses production material");
     }
     if (frame == 7)
     {
-        Check(RenderCapture::SaveTexturePng(MaterialPreview::GetTarget(), L"build/material-tests/preview-plane.png"), "preview Plane uses production material");
+        Check(RenderCapture::SaveTexturePng(MaterialPreview::GetTarget(), L"build/material-tests/preview-plane.png"),
+              "preview Plane uses production material");
         RenderCapture::TextureData flat;
         Check(RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::NORMAL), flat) &&
-            !EqualPixels(withNormal, flat, 4), "normal texture visibly changes GBuffer normals");
+                  !EqualPixels(withNormal, flat, 4),
+              "normal texture visibly changes GBuffer normals");
     }
     if (frame == 11)
     {
-        Check(MaterialManager::SlotHandle(ComponentManager::GetComponentUnchecked<MaterialComponent>(second), 0) == copyHandle,
-            "Viewport UI accepts material drag/drop on picked entity");
+        Check(MaterialManager::SlotHandle(ComponentManager::GetComponentUnchecked<MaterialComponent>(second), 0) ==
+                  copyHandle,
+              "Viewport UI accepts material drag/drop on picked entity");
     }
     if (frame == 14)
     {
-        Check(MaterialManager::SlotHandle(ComponentManager::GetComponentUnchecked<MaterialComponent>(second), 0) == copyHandle,
-            "Inspector UI accepts material drag/drop on selected slot");
+        Check(MaterialManager::SlotHandle(ComponentManager::GetComponentUnchecked<MaterialComponent>(second), 0) ==
+                  copyHandle,
+              "Inspector UI accepts material drag/drop on selected slot");
     }
     if (frame == 17)
     {
         Check(MaterialManager::GetRuntime(copyHandle).Editing.Textures[1] == normalTextureHandle,
-            "Material Editor UI accepts texture drag/drop");
+              "Material Editor UI accepts texture drag/drop");
     }
     if (frame == 19)
     {
         MaterialAssetData saved;
         string error;
         Check(!MaterialManager::GetRuntime(copyHandle).Dirty &&
-            MaterialSerializer::Load(MaterialManager::Registry().Resolve(copyHandle), saved, error) && saved.Roughness == 0.42f,
-            "Ctrl+S saves the focused material editor to disk");
+                  MaterialSerializer::Load(MaterialManager::Registry().Resolve(copyHandle), saved, error) &&
+                  saved.Roughness == 0.42f,
+              "Ctrl+S saves the focused material editor to disk");
     }
     if (frame == 23)
     {
-        Check(!MaterialManager::GetRuntime(copyHandle).Dirty && MaterialManager::GetRuntime(copyHandle).Editing.Roughness == 0.42f,
-            "Revert toolbar discards unsaved changes");
+        Check(!MaterialManager::GetRuntime(copyHandle).Dirty &&
+                  MaterialManager::GetRuntime(copyHandle).Editing.Roughness == 0.42f,
+              "Revert toolbar discards unsaved changes");
         if (const auto* window = ImGui::FindWindowByName("###MaterialAssetEditor"))
         {
             previewWindowPosition = window->Pos;
@@ -990,44 +1101,47 @@ void MaterialValidation::AfterFrame(uint64_t frame)
     }
     if (frame == 24)
     {
-        Check(RenderCapture::ReadTexture(MaterialPreview::GetTarget(), beforeOrbit), "capture preview before orbit drag");
+        Check(RenderCapture::ReadTexture(MaterialPreview::GetTarget(), beforeOrbit),
+              "capture preview before orbit drag");
     }
     if (frame == 26)
     {
         const auto* window = ImGui::FindWindowByName("###MaterialAssetEditor");
         Check(window && window->Pos.x == previewWindowPosition.x && window->Pos.y == previewWindowPosition.y,
-            "orbit drag keeps material editor window stationary");
+              "orbit drag keeps material editor window stationary");
         RenderCapture::TextureData afterOrbit;
         Check(RenderCapture::ReadTexture(MaterialPreview::GetTarget(), afterOrbit) &&
-            !EqualPixels(beforeOrbit, afterOrbit, 4), "orbit drag changes preview viewing angle");
+                  !EqualPixels(beforeOrbit, afterOrbit, 4),
+              "orbit drag changes preview viewing angle");
     }
     if (frame == 28)
     {
         const auto& editing = MaterialManager::GetRuntime(copyHandle).Editing;
         savedPreviewAlpha = editing.BaseColor[3];
-        Check(savedPreviewAlpha > 0.0f && savedPreviewAlpha < 1.0f &&
-            editing.Surface == MaterialSurface::Transparent && !editing.DepthWrite,
-            "transparency slider edits alpha and enables transparent rendering");
-        Check(RenderCapture::SaveTexturePng(MaterialPreview::GetTarget(), L"build/material-tests/preview-transparent.png"),
-            "capture transparent preview");
+        Check(savedPreviewAlpha > 0.0f && savedPreviewAlpha < 1.0f && editing.Surface == MaterialSurface::Transparent &&
+                  !editing.DepthWrite,
+              "transparency slider edits alpha and enables transparent rendering");
+        Check(RenderCapture::SaveTexturePng(MaterialPreview::GetTarget(),
+                                            L"build/material-tests/preview-transparent.png"),
+              "capture transparent preview");
     }
     if (frame == 30)
     {
         MaterialAssetData saved;
         string error;
         Check(MaterialSerializer::Load(MaterialManager::Registry().Resolve(copyHandle), saved, error) &&
-            saved.BaseColor[3] == savedPreviewAlpha && saved.Surface == MaterialSurface::Transparent,
-            "Ctrl+S persists transparency from editor slider");
+                  saved.BaseColor[3] == savedPreviewAlpha && saved.Surface == MaterialSurface::Transparent,
+              "Ctrl+S persists transparency from editor slider");
     }
     if (frame == 31)
     {
         Check(MaterialManager::GetRuntime(copyHandle).Editing.BaseColor[3] == 1.0f,
-            "Undo restores transparency slider edit");
+              "Undo restores transparency slider edit");
     }
     if (frame == 32)
     {
         Check(MaterialManager::GetRuntime(copyHandle).Editing.BaseColor[3] == savedPreviewAlpha,
-            "Redo restores transparency slider edit");
+              "Redo restores transparency slider edit");
     }
 }
 
@@ -1115,10 +1229,10 @@ void MaterialValidation::BeforeEditorFrame()
         Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
         const auto& position = ComponentManager::GetComponentUnchecked<TransformComponent>(second).Position;
         XMFLOAT3 projected;
-        XMStoreFloat3(&projected, XMVector3Project(XMLoadFloat3(&position),
-            ImGuiManager::m_SceneViewPos.x, ImGuiManager::m_SceneViewPos.y,
-            ImGuiManager::m_SceneViewSize.x, ImGuiManager::m_SceneViewSize.y, 0, 1,
-            projection, view, XMMatrixIdentity()));
+        XMStoreFloat3(&projected,
+                      XMVector3Project(XMLoadFloat3(&position), ImGuiManager::m_SceneViewPos.x,
+                                       ImGuiManager::m_SceneViewPos.y, ImGuiManager::m_SceneViewSize.x,
+                                       ImGuiManager::m_SceneViewSize.y, 0, 1, projection, view, XMMatrixIdentity()));
         mouse = {projected.x, projected.y};
         uiPayload = {copyHandle, AssetType::Material};
     }
@@ -1141,8 +1255,8 @@ void MaterialValidation::BeforeEditorFrame()
     input.AddMousePosEvent(mouse.x, mouse.y);
     input.AddMouseButtonEvent(ImGuiMouseButton_Left, held);
     injectDrag = held;
-    WriteGraphicsLog("Material UI trace: frame=%llu mouse=%.1f,%.1f held=%d type=%u\n",
-        frame, mouse.x, mouse.y, held, static_cast<unsigned>(uiPayload.Type));
+    WriteGraphicsLog("Material UI trace: frame=%llu mouse=%.1f,%.1f held=%d type=%u\n", frame, mouse.x, mouse.y, held,
+                     static_cast<unsigned>(uiPayload.Type));
 }
 
 void MaterialValidation::InjectDragPayload()
@@ -1178,4 +1292,3 @@ bool MaterialValidation::Finish()
     WriteGraphicsLog("Material validation failures = %u\n", failures);
     return failures == 0;
 }
-

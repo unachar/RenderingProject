@@ -43,7 +43,7 @@ XMFLOAT3 ReadVector(const Json::Value& vector)
 bool ValidHandle(const Json::Value& reference)
 {
     return reference.isString() &&
-        (ParseAssetHandle(reference.asString()) != 0 || reference.asString() == FormatAssetHandle(0));
+           (ParseAssetHandle(reference.asString()) != 0 || reference.asString() == FormatAssetHandle(0));
 }
 
 bool ValidateRecord(const Json::Value& record)
@@ -74,8 +74,8 @@ bool ValidateRecord(const Json::Value& record)
             }
         }
     }
-    if (record.isMember("modelPath") && (!record["modelPath"].isString() || !record["animated"].isBool() ||
-        !record["convert"].isBool()))
+    if (record.isMember("modelPath") &&
+        (!record["modelPath"].isString() || !record["animated"].isBool() || !record["convert"].isBool()))
     {
         return false;
     }
@@ -109,18 +109,21 @@ bool MatchesSavedSource(const Json::Value& record, EntityID entity)
         if (record["animated"].asBool())
         {
             return ComponentManager::HasComponent<AnimationModelComponent>(entity) &&
-                ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelPath == record["modelPath"].asString();
+                   ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelPath ==
+                       record["modelPath"].asString();
         }
         return ComponentManager::HasComponent<StaticModelComponent>(entity) &&
-            ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelPath == record["modelPath"].asString();
+               ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelPath ==
+                   record["modelPath"].asString();
     }
     if (!record["meshSignature"].isString() || !ComponentManager::HasComponent<MeshComponent>(entity))
     {
         return false;
     }
-    return FormatAssetHandle(ComponentManager::GetComponentUnchecked<MeshComponent>(entity).GeometryHash) == record["meshSignature"].asString();
+    return FormatAssetHandle(ComponentManager::GetComponentUnchecked<MeshComponent>(entity).GeometryHash) ==
+           record["meshSignature"].asString();
 }
-}
+} // namespace
 
 bool MaterialManager::SaveSceneReferences(const filesystem::path& path, string& error)
 {
@@ -176,9 +179,9 @@ bool MaterialManager::SaveSceneReferences(const filesystem::path& path, string& 
                 for (const auto& vertex : mesh.NaniteMesh->CpuVertices)
                 {
                     Json::Value encoded(Json::arrayValue);
-                    for (float number : {vertex.Position.x, vertex.Position.y, vertex.Position.z,
-                        vertex.Normal.x, vertex.Normal.y, vertex.Normal.z, vertex.TexCoord.x, vertex.TexCoord.y,
-                        vertex.Diffuse.x, vertex.Diffuse.y, vertex.Diffuse.z, vertex.Diffuse.w})
+                    for (float number : {vertex.Position.x, vertex.Position.y, vertex.Position.z, vertex.Normal.x,
+                                         vertex.Normal.y, vertex.Normal.z, vertex.TexCoord.x, vertex.TexCoord.y,
+                                         vertex.Diffuse.x, vertex.Diffuse.y, vertex.Diffuse.z, vertex.Diffuse.w})
                     {
                         encoded.append(number);
                     }
@@ -208,8 +211,8 @@ bool MaterialManager::LoadSceneReferences(const filesystem::path& path, string& 
     Json::Value root;
     Json::CharReaderBuilder reader;
     reader["rejectDupKeys"] = true;
-    if (!Json::parseFromStream(reader, stream, &root, &error) || root["version"] != 1 ||
-        !root["entities"].isArray() || root["entities"].size() > g_kMAX_ENTITIES)
+    if (!Json::parseFromStream(reader, stream, &root, &error) || root["version"] != 1 || !root["entities"].isArray() ||
+        root["entities"].size() > g_kMAX_ENTITIES)
     {
         error = "Invalid scene material reference file: " + error;
         return false;
@@ -231,7 +234,8 @@ bool MaterialManager::LoadSceneReferences(const filesystem::path& path, string& 
         {
             for (EntityID candidate : World::GetView<MaterialComponent>())
             {
-                if (ComponentManager::GetComponentUnchecked<MaterialComponent>(candidate).MaterialSceneIdentity == identity)
+                if (ComponentManager::GetComponentUnchecked<MaterialComponent>(candidate).MaterialSceneIdentity ==
+                    identity)
                 {
                     entity = candidate;
                     break;
@@ -261,7 +265,8 @@ bool MaterialManager::LoadSceneReferences(const filesystem::path& path, string& 
         }
         if (entity == g_kINVALID_ENTITY)
         {
-            auto restored = World::CreateEntity().Add<TransformComponent>().Add<MaterialComponent>().Add<NameComponent>();
+            auto restored =
+                World::CreateEntity().Add<TransformComponent>().Add<MaterialComponent>().Add<NameComponent>();
             if (!restored.IsValid())
             {
                 error = "Scene entity capacity exceeded";
@@ -295,10 +300,11 @@ bool MaterialManager::LoadSceneReferences(const filesystem::path& path, string& 
                 vector<Vertex> vertices;
                 for (const auto& encoded : record["vertices"])
                 {
-                    vertices.push_back({{encoded[0].asFloat(), encoded[1].asFloat(), encoded[2].asFloat()},
-                        {encoded[3].asFloat(), encoded[4].asFloat(), encoded[5].asFloat()},
-                        {encoded[6].asFloat(), encoded[7].asFloat()},
-                        {encoded[8].asFloat(), encoded[9].asFloat(), encoded[10].asFloat(), encoded[11].asFloat()}});
+                    vertices.push_back(
+                        {{encoded[0].asFloat(), encoded[1].asFloat(), encoded[2].asFloat()},
+                         {encoded[3].asFloat(), encoded[4].asFloat(), encoded[5].asFloat()},
+                         {encoded[6].asFloat(), encoded[7].asFloat()},
+                         {encoded[8].asFloat(), encoded[9].asFloat(), encoded[10].asFloat(), encoded[11].asFloat()}});
                 }
                 if (!PrimitiveGeometry::UploadVertices(entity, vertices))
                 {
@@ -338,4 +344,3 @@ bool MaterialManager::LoadSceneReferences(const filesystem::path& path, string& 
     NotifyAssignmentsChanged();
     return true;
 }
-

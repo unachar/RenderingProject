@@ -10,8 +10,9 @@
 
 namespace
 {
-const char* kNoiseNames[] = { "Perlin", "Value", "Worley (Cellular)", "fBm", "Ridged fBm", "Domain Warp", "Composite / 複合ノイズ" };
-const char* kMotionNames[] = { "Wave / 波", "Orbit / 軌道", "Noise / ゆらぎ" };
+const char* kNoiseNames[] = {"Perlin",     "Value",       "Worley (Cellular)",     "fBm",
+                             "Ridged fBm", "Domain Warp", "Composite / 複合ノイズ"};
+const char* kMotionNames[] = {"Wave / 波", "Orbit / 軌道", "Noise / ゆらぎ"};
 
 bool DrawNoiseParameters(Procedural::BasicNoiseSettings& noise)
 {
@@ -38,7 +39,7 @@ void DrawNoisePreview(const Procedural::TerrainSettings& settings, bool changed)
     }
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const ImVec2 available = ImGui::GetContentRegionAvail();
-    const float extent = (max)(0.0f, (min)({ available.x, available.y, 240.0f }));
+    const float extent = (max)(0.0f, (min)({available.x, available.y, 240.0f}));
     const float cell = extent / side;
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     for (int row = 0; row < side; ++row)
@@ -48,12 +49,12 @@ void DrawNoisePreview(const Procedural::TerrainSettings& settings, bool changed)
             const float height = preview[row * side + column];
             const ImU32 color = ImGui::ColorConvertFloat4ToU32(ImVec4(height, height, height, 1.0f));
             drawList->AddRectFilled(ImVec2(origin.x + column * cell, origin.y + row * cell),
-                ImVec2(origin.x + (column + 1) * cell, origin.y + (row + 1) * cell), color);
+                                    ImVec2(origin.x + (column + 1) * cell, origin.y + (row + 1) * cell), color);
         }
     }
     ImGui::Dummy(ImVec2(extent, extent));
 }
-}
+} // namespace
 
 void ImGuiManager::DrawProceduralWindow()
 {
@@ -74,9 +75,11 @@ void ImGuiManager::DrawProceduralWindow()
         if (ImGui::BeginTabItem("地形・マップ"))
         {
             const bool selectedTerrain = Registry::IsAlive(m_SelectedEntity) &&
-                ComponentManager::HasComponent<ProceduralTerrainComponent>(m_SelectedEntity);
-            const auto* selectedSettings = selectedTerrain ?
-                &ComponentManager::GetComponentUnchecked<ProceduralTerrainComponent>(m_SelectedEntity).Settings : nullptr;
+                                         ComponentManager::HasComponent<ProceduralTerrainComponent>(m_SelectedEntity);
+            const auto* selectedSettings =
+                selectedTerrain
+                    ? &ComponentManager::GetComponentUnchecked<ProceduralTerrainComponent>(m_SelectedEntity).Settings
+                    : nullptr;
             const bool synchronized = terrainEdit.SynchronizeSelection(
                 selectedTerrain ? m_SelectedEntity : Procedural::TerrainEditState::InvalidTarget, selectedSettings);
             if (synchronized && selectedTerrain)
@@ -116,7 +119,8 @@ void ImGuiManager::DrawProceduralWindow()
                     if (ImGui::TreeNodeEx("Layer", ImGuiTreeNodeFlags_DefaultOpen, "ノイズ %d", index + 1))
                     {
                         int layerMethod = static_cast<int>(layer.Noise.Method);
-                        changed |= ImGui::Combo("ノイズの種類", &layerMethod, kNoiseNames, IM_ARRAYSIZE(kNoiseNames) - 1);
+                        changed |=
+                            ImGui::Combo("ノイズの種類", &layerMethod, kNoiseNames, IM_ARRAYSIZE(kNoiseNames) - 1);
                         layer.Noise.Method = static_cast<Procedural::NoiseMethod>(layerMethod);
                         changed |= ImGui::SliderFloat("合成比率", &layer.Weight, 0.0f, 5.0f);
                         changed |= DrawNoiseParameters(layer.Noise);
@@ -165,7 +169,8 @@ void ImGuiManager::DrawProceduralWindow()
             }
             if (ImGui::Button("選択した地形の設定を取得"))
             {
-                settings = ComponentManager::GetComponentUnchecked<ProceduralTerrainComponent>(m_SelectedEntity).Settings;
+                settings =
+                    ComponentManager::GetComponentUnchecked<ProceduralTerrainComponent>(m_SelectedEntity).Settings;
                 changed = true;
             }
             ImGui::EndDisabled();
@@ -206,8 +211,8 @@ void ImGuiManager::DrawProceduralWindow()
             }
             ImGui::EndChild();
             ImGui::SameLine();
-            ImGui::BeginChild("TerrainPreview", ImVec2(previewWidth, contentSize.y),
-                ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            ImGui::BeginChild("TerrainPreview", ImVec2(previewWidth, contentSize.y), ImGuiChildFlags_None,
+                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
             ImGui::SeparatorText("ノイズプレビュー");
             DrawNoisePreview(settings, changed);
             ImGui::EndChild();
@@ -216,7 +221,7 @@ void ImGuiManager::DrawProceduralWindow()
         if (ImGui::BeginTabItem("動き"))
         {
             const bool selected = Registry::IsAlive(m_SelectedEntity) &&
-                ComponentManager::HasComponent<TransformComponent>(m_SelectedEntity);
+                                  ComponentManager::HasComponent<TransformComponent>(m_SelectedEntity);
             if (!selected)
             {
                 ImGui::TextWrapped("動かしたいオブジェクトをヒエラルキーで選択してください。");
@@ -228,7 +233,8 @@ void ImGuiManager::DrawProceduralWindow()
                     const auto before = CaptureEntity(m_SelectedEntity);
                     ComponentManager::AddComponent(m_SelectedEntity, ComponentType::PROCEDURAL_MOTION);
                     auto& motion = ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(m_SelectedEntity);
-                    motion.Origin = ComponentManager::GetComponentUnchecked<TransformComponent>(m_SelectedEntity).Position;
+                    motion.Origin =
+                        ComponentManager::GetComponentUnchecked<TransformComponent>(m_SelectedEntity).Position;
                     PushUndoSnapshot(before);
                 }
             }
@@ -237,16 +243,25 @@ void ImGuiManager::DrawProceduralWindow()
                 ImGui::Text("対象: %s", GetEntityDisplayName(m_SelectedEntity));
                 auto& motion = ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(m_SelectedEntity);
                 const auto before = CaptureEntity(m_SelectedEntity);
-                const bool vertexSupported = !ComponentManager::HasComponent<AnimationModelComponent>(m_SelectedEntity) &&
+                const bool vertexSupported =
+                    !ComponentManager::HasComponent<AnimationModelComponent>(m_SelectedEntity) &&
                     (ComponentManager::HasComponent<MeshComponent>(m_SelectedEntity) ||
-                        ComponentManager::HasComponent<StaticModelComponent>(m_SelectedEntity));
+                     ComponentManager::HasComponent<StaticModelComponent>(m_SelectedEntity));
                 int target = static_cast<int>(motion.Target);
                 bool targetChanged = false;
                 if (ImGui::BeginCombo("動かす対象", target == 0 ? "オブジェクト全体" : "メッシュの頂点"))
                 {
-                    if (ImGui::Selectable("オブジェクト全体", target == 0)) { target = 0; targetChanged = true; }
+                    if (ImGui::Selectable("オブジェクト全体", target == 0))
+                    {
+                        target = 0;
+                        targetChanged = true;
+                    }
                     ImGui::BeginDisabled(!vertexSupported);
-                    if (ImGui::Selectable("メッシュの頂点", target == 1)) { target = 1; targetChanged = true; }
+                    if (ImGui::Selectable("メッシュの頂点", target == 1))
+                    {
+                        target = 1;
+                        targetChanged = true;
+                    }
                     ImGui::EndDisabled();
                     ImGui::EndCombo();
                 }
@@ -257,10 +272,12 @@ void ImGuiManager::DrawProceduralWindow()
                 }
                 if (motion.Target == Procedural::MotionTarget::MeshVertices && !vertexSupported)
                 {
-                    ImGui::TextWrapped("頂点モードは生成地形・プリミティブ・静的モデルに対応しています。この対象はオブジェクト全体のモードを使用してください。");
+                    ImGui::TextWrapped(
+                        "頂点モードは生成地形・プリミティブ・静的モデルに対応しています。この対象はオブジェクト全体のモードを使用してください。");
                 }
                 int method = static_cast<int>(motion.Method);
-                bool changed = ImGui::Combo("動きの手法", &method, kMotionNames, IM_ARRAYSIZE(kMotionNames)) || targetChanged;
+                bool changed =
+                    ImGui::Combo("動きの手法", &method, kMotionNames, IM_ARRAYSIZE(kMotionNames)) || targetChanged;
                 motion.Method = static_cast<Procedural::MotionMethod>(method);
                 changed |= ImGui::Checkbox("有効", &motion.Enabled);
                 changed |= ImGui::Checkbox("編集画面でプレビュー", &motion.PreviewInEditor);
@@ -292,14 +309,15 @@ void ImGuiManager::DrawProceduralWindow()
                     motion.PreviewInEditor = true;
                 }
                 ImGui::TextWrapped("Play で再生、Pause で一時停止、Stop で Play 前の状態へ戻ります。");
-                ImGui::TextWrapped("物理を使う対象は Kinematic にしてください。Static / Dynamic は物理の位置を優先して動きを停止します。");
+                ImGui::TextWrapped(
+                    "物理を使う対象は Kinematic にしてください。Static / Dynamic は物理の位置を優先して動きを停止します。");
             }
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
     }
-    ImGui::BeginChild("ProceduralStatus", ImVec2(0.0f, statusHeight),
-        ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::BeginChild("ProceduralStatus", ImVec2(0.0f, statusHeight), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::TextWrapped("%s", status.c_str());
     ImGui::EndChild();
     ImGui::End();
@@ -319,9 +337,11 @@ void ImGuiManager::DrawRaytracingWindow()
     auto& settings = Raytracing::GetSettings();
     ImGui::Checkbox("レイトレーシングを有効にする", &settings.Enabled);
     int mode = static_cast<int>(settings.RenderMode);
-    const char* modes[] = { "反射のみ", "フルレイトレーシング" };
+    const char* modes[] = {"反射のみ", "フルレイトレーシング"};
     if (ImGui::Combo("描画モード", &mode, modes, IM_ARRAYSIZE(modes)))
+    {
         settings.RenderMode = static_cast<Raytracing::Mode>(mode);
+    }
     ImGui::BeginDisabled(settings.RenderMode == Raytracing::Mode::ReflectionsOnly);
     ImGui::Checkbox("全ライトの影", &settings.Shadows);
     ImGui::Checkbox("環境遮蔽 (AO)", &settings.AmbientOcclusion);
@@ -337,10 +357,10 @@ void ImGuiManager::DrawRaytracingWindow()
     ImGui::SliderFloat("表面からのオフセット", &settings.NormalBias, 0.001f, 0.1f, "%.3f m");
     ImGui::SliderFloat("太陽の角半径", &settings.SunAngularRadius, 0.0f, 0.05f, "%.4f rad");
     ImGui::EndDisabled();
-    ImGui::TextWrapped("反射のみ: 影は環境設定の ShadowMap / Virtual ShadowMap を使用。フル: 反射・影・AO をレイトレーシングで描画します。透明面は対象外です。");
+    ImGui::TextWrapped(
+        "反射のみ: 影は環境設定の ShadowMap / Virtual ShadowMap を使用。フル: 反射・影・AO をレイトレーシングで描画します。透明面は対象外です。");
     ImGui::Separator();
     ImGui::TextWrapped("DLSS: %s", DlssUpscaler::GetStatus());
     ImGui::TextWrapped("アップスケーラーは環境設定から選択できます。");
     ImGui::End();
 }
-

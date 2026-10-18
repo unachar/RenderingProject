@@ -26,428 +26,412 @@
 #include <DirectXCollision.h>
 #include <ImGuizmo.h>
 
-
-
 using namespace EditorWidgets;
 
 void ImGuiManager::DrawPerformanceWindow()
 {
-	ImGui::SetNextWindowSize(ImVec2(260.0f, 150.0f), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("パフォーマンス", &m_ShowPerformanceWindow, ImGuiWindowFlags_AlwaysAutoResize))
-	{
-		ImGui::End();
-		return;
-	}
+    ImGui::SetNextWindowSize(ImVec2(260.0f, 150.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("パフォーマンス", &m_ShowPerformanceWindow, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::End();
+        return;
+    }
 
-	ImGui::Text("FPS: %.1f", World::GetFrameRate());
-	DrawFpsMeter();
-	ImGui::Text("Frame: %.2f ms", World::GetFrameTimeMs());
-	ImGui::Separator();
-	const LightingResources::LightGridStats& lightStats =
-		LightingResources::GetLightGridStats();
-	ImGui::Text("Lights: authored %u / screen %u / GPU %u",
-		lightStats.AuthoredLights,
-		lightStats.OnScreenLights,
-		lightStats.GpuVisibleLights);
-	ImGui::Text("Physical %u / Decal %u",
-		lightStats.GpuPhysicalLights,
-		lightStats.GpuDecalLights);
-	ImGui::Text("Tiles: %ux%u / overlap %u of %u",
-		lightStats.TileCountX,
-		lightStats.TileCountY,
-		lightStats.MaxLightsPerTile,
-		RendererSettings::GetTileLightBudget() +
-		RendererSettings::GetDecalTileLightBudget());
-	ImGui::Text("Geometry GBuffer: %u bit/pixel",
-		RendererState::g_kGEOMETRY_GBUFFER_BITS_PER_PIXEL);
-	ImGui::Text("Volumetric %u / shadowed %u / overflow %u",
-		lightStats.VolumetricLights,
-		lightStats.ShadowedLights,
-		lightStats.OverflowedTileAssignments);
-	if (lightStats.OverflowedTileAssignments > 0)
-	{
-		ImGui::TextColored(
-			ImVec4(1.0f, 0.45f, 0.20f, 1.0f),
-			"ライト重複予算を超過しています");
-	}
-	ImGui::Separator();
+    ImGui::Text("FPS: %.1f", World::GetFrameRate());
+    DrawFpsMeter();
+    ImGui::Text("Frame: %.2f ms", World::GetFrameTimeMs());
+    ImGui::Separator();
+    const LightingResources::LightGridStats& lightStats = LightingResources::GetLightGridStats();
+    ImGui::Text("Lights: authored %u / screen %u / GPU %u", lightStats.AuthoredLights, lightStats.OnScreenLights,
+                lightStats.GpuVisibleLights);
+    ImGui::Text("Physical %u / Decal %u", lightStats.GpuPhysicalLights, lightStats.GpuDecalLights);
+    ImGui::Text("Tiles: %ux%u / overlap %u of %u", lightStats.TileCountX, lightStats.TileCountY,
+                lightStats.MaxLightsPerTile,
+                RendererSettings::GetTileLightBudget() + RendererSettings::GetDecalTileLightBudget());
+    ImGui::Text("Geometry GBuffer: %u bit/pixel", RendererState::g_kGEOMETRY_GBUFFER_BITS_PER_PIXEL);
+    ImGui::Text("Volumetric %u / shadowed %u / overflow %u", lightStats.VolumetricLights, lightStats.ShadowedLights,
+                lightStats.OverflowedTileAssignments);
+    if (lightStats.OverflowedTileAssignments > 0)
+    {
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.20f, 1.0f), "ライト重複予算を超過しています");
+    }
+    ImGui::Separator();
 
-	bool vsyncEnabled = World::IsVSyncEnabled();
-	if (ImGui::Checkbox("垂直同期", &vsyncEnabled))
-	{
-		World::SetVSyncEnabled(vsyncEnabled);
-	}
+    bool vsyncEnabled = World::IsVSyncEnabled();
+    if (ImGui::Checkbox("垂直同期", &vsyncEnabled))
+    {
+        World::SetVSyncEnabled(vsyncEnabled);
+    }
 
-	bool fixedFrameRateEnabled = World::IsFixedFrameRateEnabled();
-	if (ImGui::Checkbox("FPS固定", &fixedFrameRateEnabled))
-	{
-		World::SetFixedFrameRateEnabled(fixedFrameRateEnabled);
-	}
+    bool fixedFrameRateEnabled = World::IsFixedFrameRateEnabled();
+    if (ImGui::Checkbox("FPS固定", &fixedFrameRateEnabled))
+    {
+        World::SetFixedFrameRateEnabled(fixedFrameRateEnabled);
+    }
 
-	int targetFrameRate = World::GetTargetFrameRate();
-	ImGui::BeginDisabled(!fixedFrameRateEnabled);
-	ImGui::SetNextItemWidth(120.0f);
-	if (ImGui::SliderInt("目標FPS", &targetFrameRate, 15, 360))
-	{
-		World::SetTargetFrameRate(targetFrameRate);
-	}
-	ImGui::EndDisabled();
+    int targetFrameRate = World::GetTargetFrameRate();
+    ImGui::BeginDisabled(!fixedFrameRateEnabled);
+    ImGui::SetNextItemWidth(120.0f);
+    if (ImGui::SliderInt("目標FPS", &targetFrameRate, 15, 360))
+    {
+        World::SetTargetFrameRate(targetFrameRate);
+    }
+    ImGui::EndDisabled();
 
-	ImGui::End();
+    ImGui::End();
 }
 
 void ImGuiManager::DrawRenderDebuggerWindow()
 {
-	ImGui::SetNextWindowSize(ImVec2(420.0f, 360.0f), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("描画概要", &m_ShowRenderDebugger))
-	{
-		ImGui::End();
-		return;
-	}
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 360.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("描画概要", &m_ShowRenderDebugger))
+    {
+        ImGui::End();
+        return;
+    }
 
-	const char* statusText;
-	if (RenderConfiguration::GetRenderMode() == RenderMode::DEFERRED)
-	{
-		statusText = "ディファード";
-	}
-	else
-	{
-		statusText = "フォワード";
-	}
-	ImGui::Text("描画モード: %s", statusText);
-	ImGui::Text("画面: %u x %u", GraphicsDevice::GetSceneWidth(), GraphicsDevice::GetSceneHeight());
-	ImGui::End();
+    const char* statusText;
+    if (RenderConfiguration::GetRenderMode() == RenderMode::DEFERRED)
+    {
+        statusText = "ディファード";
+    }
+    else
+    {
+        statusText = "フォワード";
+    }
+    ImGui::Text("描画モード: %s", statusText);
+    ImGui::Text("画面: %u x %u", GraphicsDevice::GetSceneWidth(), GraphicsDevice::GetSceneHeight());
+    ImGui::End();
 }
 
 void ImGuiManager::DrawRenderFeatureWindows()
 {
-	const struct FeatureWindow
-	{
-		const char* Title;
-		bool* IsOpen;
-		void (*DrawContent)();
-	} windows[] =
-	{
-		{ "GPU Scene", &m_ShowGpuSceneWindow, GpuScene::DrawDebug },
-		{ "GPU Driven Rendering", &m_ShowGpuDrivenWindow, GPUDrivenRenderer::DrawDebug },
-		{ "Visibility", &m_ShowVisibilityWindow, GPUVisibility::DrawDebug },
-		{ "Mesh Shader", &m_ShowMeshShaderWindow, MeshShaderRenderer::DrawDebug },
-		{ "Nanite / LOD", &m_ShowVirtualGeometryWindow, VirtualGeometryDebug::DrawControls },
-		{ "プロシージャルクラウド", &m_ShowCloudWindow, CloudRenderer::DrawDebugUI },
-		{ "テクスチャ一覧", &m_ShowTextureListWindow, DrawTextureListContent },
-	};
+    const struct FeatureWindow
+    {
+        const char* Title;
+        bool* IsOpen;
+        void (*DrawContent)();
+    } windows[] = {
+        {"GPU Scene", &m_ShowGpuSceneWindow, GpuScene::DrawDebug},
+        {"GPU Driven Rendering", &m_ShowGpuDrivenWindow, GPUDrivenRenderer::DrawDebug},
+        {"Visibility", &m_ShowVisibilityWindow, GPUVisibility::DrawDebug},
+        {"Mesh Shader", &m_ShowMeshShaderWindow, MeshShaderRenderer::DrawDebug},
+        {"Nanite / LOD", &m_ShowVirtualGeometryWindow, VirtualGeometryDebug::DrawControls},
+        {"プロシージャルクラウド", &m_ShowCloudWindow, CloudRenderer::DrawDebugUI},
+        {"テクスチャ一覧", &m_ShowTextureListWindow, DrawTextureListContent},
+    };
 
-	for (const auto& window : windows)
-	{
-		if (!*window.IsOpen) continue;
-		ImGui::SetNextWindowSize(ImVec2(520.0f, 560.0f), ImGuiCond_FirstUseEver);
-		if (ImGui::Begin(window.Title, window.IsOpen))
-		{
-			window.DrawContent();
-		}
-		ImGui::End();
-	}
+    for (const auto& window : windows)
+    {
+        if (!*window.IsOpen)
+        {
+            continue;
+        }
+        ImGui::SetNextWindowSize(ImVec2(520.0f, 560.0f), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin(window.Title, window.IsOpen))
+        {
+            window.DrawContent();
+        }
+        ImGui::End();
+    }
 }
 
 void ImGuiManager::DrawTextureListContent()
 {
-	vector<TextureManager::TextureInfo> textures = TextureManager::GetLoadedTextureInfos();
-	ImGuiListClipper clipper;
-	clipper.Begin(static_cast<int>(textures.size()));
-	while (clipper.Step())
-	{
-		for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
-		{
-			const auto& tex = textures[i];
-			ImGui::Text("#%d %ux%u %s", tex.SrvIndex, tex.Width, tex.Height, tex.Path.c_str());
-		}
-	}
+    vector<TextureManager::TextureInfo> textures = TextureManager::GetLoadedTextureInfos();
+    ImGuiListClipper clipper;
+    clipper.Begin(static_cast<int>(textures.size()));
+    while (clipper.Step())
+    {
+        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
+        {
+            const auto& tex = textures[i];
+            ImGui::Text("#%d %ux%u %s", tex.SrvIndex, tex.Width, tex.Height, tex.Path.c_str());
+        }
+    }
 }
 
 void ImGuiManager::DrawGBufferWindow()
 {
-	ImGui::SetNextWindowSize(ImVec2(700.0f, 560.0f), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("Gバッファ", &m_ShowGBufferWindow))
-	{
-		ImGui::End();
-		return;
-	}
+    ImGui::SetNextWindowSize(ImVec2(700.0f, 560.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Gバッファ", &m_ShowGBufferWindow))
+    {
+        ImGui::End();
+        return;
+    }
 
-	if (RenderMode::DEFERRED != RenderConfiguration::GetRenderMode())
-	{
-		ImGui::TextUnformatted("ディファードモードのみ");
-		ImGui::End();
-		return;
-	}
+    if (RenderMode::DEFERRED != RenderConfiguration::GetRenderMode())
+    {
+        ImGui::TextUnformatted("ディファードモードのみ");
+        ImGui::End();
+        return;
+    }
 
-	ImGui::BeginChild("GBufferPreview", ImVec2(0, 0), true);
+    ImGui::BeginChild("GBufferPreview", ImVec2(0, 0), true);
 
-	const ImVec2 previewSize(320.0f, 180.0f);
-	const float cellSpacing = 12.0f;
-	const int columns = 2;
-	const struct
-	{
-		const char* Label;
-		GBufferType Type;
-	}
-	cells[] =
-	{
-		{ "ベースカラー",     GBufferType::BASE_COLOR },
-		{ "法線",       GBufferType::NORMAL },
-		{ "深度",       GBufferType::DEPTH },
-		{ "マテリアル", GBufferType::MATERIAL },
-		{ "影", GBufferType::SHADOW },
-		{ "大気", GBufferType::ATMOSPHERE },
-		{ "ベロシティ", GBufferType::VELOCITY },
-		{ "ブルーム", GBufferType::BLOOM },
-	};
+    const ImVec2 previewSize(320.0f, 180.0f);
+    const float cellSpacing = 12.0f;
+    const int columns = 2;
 
-	const int cellCount = int(size(cells));
-	const int rowCount = (cellCount + columns - 1) / columns;
-	for (int row = 0; row < rowCount; ++row)
-	{
-		for (int col = 0; col < columns; ++col)
-		{
-			const int index = row * columns + col;
-			if (index >= cellCount)
-			{
-				break;
-			}
+    const struct
+    {
+        const char* Label;
+        GBufferType Type;
+    } cells[] = {
+        {"ベースカラー", GBufferType::BASE_COLOR}, {"法線", GBufferType::NORMAL},    {"深度", GBufferType::DEPTH},
+        {"マテリアル", GBufferType::MATERIAL},     {"影", GBufferType::SHADOW},      {"大気", GBufferType::ATMOSPHERE},
+        {"ベロシティ", GBufferType::VELOCITY},     {"ブルーム", GBufferType::BLOOM},
+    };
 
-			ImGui::BeginGroup();
-			ImGui::TextUnformatted(cells[index].Label);
-			ImGui::Image(
-				ImTextureID(RenderTargets::GetGBufferSrvHandle(cells[index].Type).ptr),
-				previewSize);
-			ImGui::EndGroup();
+    const int cellCount = int(size(cells));
+    const int rowCount = (cellCount + columns - 1) / columns;
+    for (int row = 0; row < rowCount; ++row)
+    {
+        for (int col = 0; col < columns; ++col)
+        {
+            const int index = row * columns + col;
+            if (index >= cellCount)
+            {
+                break;
+            }
 
-			if (col < columns - 1 && index + 1 < cellCount)
-			{
-				ImGui::SameLine(0.0f, cellSpacing);
-			}
-		}
+            ImGui::BeginGroup();
+            ImGui::TextUnformatted(cells[index].Label);
+            ImGui::Image(ImTextureID(RenderTargets::GetGBufferSrvHandle(cells[index].Type).ptr), previewSize);
+            ImGui::EndGroup();
 
-		if (row < rowCount - 1)
-		{
-			ImGui::Dummy(ImVec2(0.0f, cellSpacing));
-		}
-	}
+            if (col < columns - 1 && index + 1 < cellCount)
+            {
+                ImGui::SameLine(0.0f, cellSpacing);
+            }
+        }
 
-	ImGui::EndChild();
-	ImGui::End();
+        if (row < rowCount - 1)
+        {
+            ImGui::Dummy(ImVec2(0.0f, cellSpacing));
+        }
+    }
+
+    ImGui::EndChild();
+    ImGui::End();
 }
 
 void ImGuiManager::DrawAtmosphereWindow()
 {
-	ImGui::SetNextWindowSize(ImVec2(470.0f, 680.0f), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("大気シミュレーション", &m_ShowAtmosphereWindow))
-	{
-		ImGui::End();
-		return;
-	}
+    ImGui::SetNextWindowSize(ImVec2(470.0f, 680.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("大気シミュレーション", &m_ShowAtmosphereWindow))
+    {
+        ImGui::End();
+        return;
+    }
 
-	AtmosphereParameters& atmosphere = Atmosphere::GetMutableParameters();
-	ImGui::Checkbox("有効", &atmosphere.Enabled);
-	ImGui::Checkbox("太陽の位置から空を描画", &atmosphere.PhysicalSky);
-	ImGui::SeparatorText("時間帯と太陽");
-	auto& cycle = DayNightCycle::GetSettings();
-	bool cycleChanged = ImGui::Checkbox("時刻から太陽の位置を計算", &cycle.TimeDriven);
-	cycleChanged |= ImGui::SliderFloat("太陽時", &cycle.Hours, 0.0f, 24.0f, "%.2f 時");
-	ImGui::Checkbox("時間を進める", &cycle.Running);
-	ImGui::Checkbox("編集画面でも時間を進める", &cycle.PreviewInEditor);
-	cycleChanged |= ImGui::SliderFloat("1日の長さ", &cycle.DayDurationSeconds, 10.0f, 1200.0f, "%.0f 秒");
-	cycleChanged |= ImGui::SliderFloat("緯度", &cycle.Latitude, -89.0f, 89.0f, "%.1f 度");
-	cycleChanged |= ImGui::SliderInt("年の何日目", &cycle.DayOfYear, 1, 365);
-	cycleChanged |= ImGui::Checkbox("太陽の色と明るさを自動調整", &cycle.AutomaticLighting);
-	cycleChanged |= ImGui::SliderFloat("昼の太陽強度", &cycle.DayIntensity, 0.0f, 20.0f);
-	ImGui::SliderFloat("空の強度", &cycle.SkyIntensity, 0.0f, 30.0f);
-	ImGui::SliderFloat("星の明るさ", &cycle.StarBrightness, 0.0f, 1.0f);
-	const char* presets[] = { "朝", "昼", "夕方", "夜" };
-	const float hours[] = { 6.0f, 12.0f, 18.0f, 0.0f };
-	for (int preset = 0; preset < 4; ++preset)
-	{
-		if (preset > 0)
-		{
-			ImGui::SameLine();
-		}
-		if (ImGui::Button(presets[preset]))
-		{
-			DayNightCycle::SetTime(hours[preset]);
-			cycleChanged = true;
-		}
-	}
-	if (cycleChanged)
-	{
-		DayNightCycle::Update(0.0f);
-	}
-	ImGui::Text("太陽高度: %.1f 度 / 昼光: %.2f",
-		asinf(clamp(DayNightCycle::GetSunDirection().y, -1.0f, 1.0f)) * 180.0f / SolarCycle::Pi,
-		DayNightCycle::GetDaylight());
-	ImGui::TextWrapped("太陽時は太陽の位置を基準とする時刻です。時刻制御をオフにすると Sun を直接配置できます。");
-	ImGui::SeparatorText("散乱");
-	ImGui::SliderFloat("Rayleigh強度", &atmosphere.RayleighStrength, 0.0f, 4.0f, "%.3f");
-	ImGui::SliderFloat("Mie強度", &atmosphere.MieStrength, 0.0f, 2.0f, "%.3f");
-	ImGui::SliderFloat("大気密度", &atmosphere.Density, 0.0f, 3.0f, "%.3f");
-	ImGui::SliderFloat("高度減衰", &atmosphere.HeightFalloff, 0.0f, 1.0f, "%.3f");
-	ImGui::SliderFloat("消散", &atmosphere.Extinction, 0.0f, 2.0f, "%.3f");
-	ImGui::SliderFloat("Mie g", &atmosphere.MieG, -0.95f, 0.95f, "%.3f");
-	ImGui::SliderFloat("距離スケール", &atmosphere.DistanceScale, 0.001f, 0.25f, "%.3f");
-	ImGui::SliderFloat("ライトシャフト強度", &atmosphere.LightShaftStrength, 0.0f, 4.0f, "%.3f");
-	ImGui::SliderFloat("ライトシャフトぼかし", &atmosphere.LightShaftBlur, 0.0f, 1.0f, "%.3f");
-	ImGui::SliderFloat("環境散乱", &atmosphere.AmbientStrength, 0.0f, 1.0f, "%.3f");
+    AtmosphereParameters& atmosphere = Atmosphere::GetMutableParameters();
+    ImGui::Checkbox("有効", &atmosphere.Enabled);
+    ImGui::Checkbox("太陽の位置から空を描画", &atmosphere.PhysicalSky);
+    ImGui::SeparatorText("時間帯と太陽");
+    auto& cycle = DayNightCycle::GetSettings();
+    bool cycleChanged = ImGui::Checkbox("時刻から太陽の位置を計算", &cycle.TimeDriven);
+    cycleChanged |= ImGui::SliderFloat("太陽時", &cycle.Hours, 0.0f, 24.0f, "%.2f 時");
+    ImGui::Checkbox("時間を進める", &cycle.Running);
+    ImGui::Checkbox("編集画面でも時間を進める", &cycle.PreviewInEditor);
+    cycleChanged |= ImGui::SliderFloat("1日の長さ", &cycle.DayDurationSeconds, 10.0f, 1200.0f, "%.0f 秒");
+    cycleChanged |= ImGui::SliderFloat("緯度", &cycle.Latitude, -89.0f, 89.0f, "%.1f 度");
+    cycleChanged |= ImGui::SliderInt("年の何日目", &cycle.DayOfYear, 1, 365);
+    cycleChanged |= ImGui::Checkbox("太陽の色と明るさを自動調整", &cycle.AutomaticLighting);
+    cycleChanged |= ImGui::SliderFloat("昼の太陽強度", &cycle.DayIntensity, 0.0f, 20.0f);
+    ImGui::SliderFloat("空の強度", &cycle.SkyIntensity, 0.0f, 30.0f);
+    ImGui::SliderFloat("星の明るさ", &cycle.StarBrightness, 0.0f, 1.0f);
+    const char* presets[] = {"朝", "昼", "夕方", "夜"};
+    const float hours[] = {6.0f, 12.0f, 18.0f, 0.0f};
+    for (int preset = 0; preset < 4; ++preset)
+    {
+        if (preset > 0)
+        {
+            ImGui::SameLine();
+        }
+        if (ImGui::Button(presets[preset]))
+        {
+            DayNightCycle::SetTime(hours[preset]);
+            cycleChanged = true;
+        }
+    }
+    if (cycleChanged)
+    {
+        DayNightCycle::Update(0.0f);
+    }
+    ImGui::Text("太陽高度: %.1f 度 / 昼光: %.2f",
+                asinf(clamp(DayNightCycle::GetSunDirection().y, -1.0f, 1.0f)) * 180.0f / SolarCycle::Pi,
+                DayNightCycle::GetDaylight());
+    ImGui::TextWrapped("太陽時は太陽の位置を基準とする時刻です。時刻制御をオフにすると Sun を直接配置できます。");
+    ImGui::SeparatorText("散乱");
+    ImGui::SliderFloat("Rayleigh強度", &atmosphere.RayleighStrength, 0.0f, 4.0f, "%.3f");
+    ImGui::SliderFloat("Mie強度", &atmosphere.MieStrength, 0.0f, 2.0f, "%.3f");
+    ImGui::SliderFloat("大気密度", &atmosphere.Density, 0.0f, 3.0f, "%.3f");
+    ImGui::SliderFloat("高度減衰", &atmosphere.HeightFalloff, 0.0f, 1.0f, "%.3f");
+    ImGui::SliderFloat("消散", &atmosphere.Extinction, 0.0f, 2.0f, "%.3f");
+    ImGui::SliderFloat("Mie g", &atmosphere.MieG, -0.95f, 0.95f, "%.3f");
+    ImGui::SliderFloat("距離スケール", &atmosphere.DistanceScale, 0.001f, 0.25f, "%.3f");
+    ImGui::SliderFloat("ライトシャフト強度", &atmosphere.LightShaftStrength, 0.0f, 4.0f, "%.3f");
+    ImGui::SliderFloat("ライトシャフトぼかし", &atmosphere.LightShaftBlur, 0.0f, 1.0f, "%.3f");
+    ImGui::SliderFloat("環境散乱", &atmosphere.AmbientStrength, 0.0f, 1.0f, "%.3f");
 
-	ImGui::SeparatorText("色");
-	ImGui::ColorEdit3("Rayleigh色", &atmosphere.RayleighColor.x);
-	ImGui::ColorEdit3("Mie色", &atmosphere.MieColor.x);
+    ImGui::SeparatorText("色");
+    ImGui::ColorEdit3("Rayleigh色", &atmosphere.RayleighColor.x);
+    ImGui::ColorEdit3("Mie色", &atmosphere.MieColor.x);
 
-	ImGui::SeparatorText("Sun");
-	EntityID firstSun = g_kINVALID_ENTITY;
-	for (EntityID entity : World::GetView<SunComponent>())
-	{
-		firstSun = entity;
-		break;
-	}
+    ImGui::SeparatorText("Sun");
+    EntityID firstSun = g_kINVALID_ENTITY;
+    for (EntityID entity : World::GetView<SunComponent>())
+    {
+        firstSun = entity;
+        break;
+    }
 
-	if (firstSun == g_kINVALID_ENTITY)
-	{
-		if (ImGui::Button("Sunを作成"))
-		{
-			m_SelectedEntity = Sun::CreateDefault();
-		}
-	}
-	else
-	{
-		auto& sun = ComponentManager::GetComponentUnchecked<SunComponent>(firstSun);
-		auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(firstSun);
-		EntitySnapshot before = CaptureEntity(firstSun);
-		bool sunChanged = false;
-		ImGui::Text("Sun Entity: %s", GetEntityDisplayName(firstSun));
-		if (DrawAxisFloat3("位置", transform.Position, 0.1f))
-		{
-			transform.IsDirty = true;
-			sunChanged = true;
-		}
-		sunChanged |= DrawAxisFloat3("注視点", sun.Target, 0.1f);
-		sunChanged |= ImGui::Checkbox("Directional同期", &sun.SyncDirectionalLight);
-		if (sunChanged)
-		{
-			BeginUndoCapture(firstSun, before);
-			Sun::Sync(firstSun);
-		}
-		if (ImGui::Button("Sunを選択"))
-		{
-			m_SelectedEntity = firstSun;
-		}
-	}
+    if (firstSun == g_kINVALID_ENTITY)
+    {
+        if (ImGui::Button("Sunを作成"))
+        {
+            m_SelectedEntity = Sun::CreateDefault();
+        }
+    }
+    else
+    {
+        auto& sun = ComponentManager::GetComponentUnchecked<SunComponent>(firstSun);
+        auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(firstSun);
+        EntitySnapshot before = CaptureEntity(firstSun);
+        bool sunChanged = false;
+        ImGui::Text("Sun Entity: %s", GetEntityDisplayName(firstSun));
+        if (DrawAxisFloat3("位置", transform.Position, 0.1f))
+        {
+            transform.IsDirty = true;
+            sunChanged = true;
+        }
+        sunChanged |= DrawAxisFloat3("注視点", sun.Target, 0.1f);
+        sunChanged |= ImGui::Checkbox("Directional同期", &sun.SyncDirectionalLight);
+        if (sunChanged)
+        {
+            BeginUndoCapture(firstSun, before);
+            Sun::Sync(firstSun);
+        }
+        if (ImGui::Button("Sunを選択"))
+        {
+            m_SelectedEntity = firstSun;
+        }
+    }
 
-	if (ImGui::Button("大気をリセット"))
-	{
-		Atmosphere::Reset();
-	}
+    if (ImGui::Button("大気をリセット"))
+    {
+        Atmosphere::Reset();
+    }
 
-	ImGui::End();
+    ImGui::End();
 }
 
 void ImGuiManager::DrawLogWindow()
 {
-	static ImGuiTextFilter logFilter;
-	ImGui::SetNextWindowSize(ImVec2(620.0f, 220.0f), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("ログ", &m_ShowLogWindow))
-	{
-		ImGui::End();
-		return;
-	}
+    static ImGuiTextFilter logFilter;
+    ImGui::SetNextWindowSize(ImVec2(620.0f, 220.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("ログ", &m_ShowLogWindow))
+    {
+        ImGui::End();
+        return;
+    }
 
-	if (ImGui::Button("クリア"))
-	{
-		m_Logs.clear();
-	}
-	ImGui::SameLine();
-	ImGui::Checkbox("末尾を追従", &m_LogAutoScroll);
-	DrawSearchField("LogSearch", "ログを検索...", logFilter);
-	ImGui::Separator();
+    if (ImGui::Button("クリア"))
+    {
+        m_Logs.clear();
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("末尾を追従", &m_LogAutoScroll);
+    DrawSearchField("LogSearch", "ログを検索...", logFilter);
+    ImGui::Separator();
 
-	vector<int> visibleLogs;
-	for (int i = 0; i < static_cast<int>(m_Logs.size()); ++i)
-	{
-		if (logFilter.PassFilter(m_Logs[i].c_str())) visibleLogs.push_back(i);
-	}
-	ImGui::TextDisabled("%d / %d 件", static_cast<int>(visibleLogs.size()), static_cast<int>(m_Logs.size()));
-	ImGui::BeginChild("LogScroll", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
-	const bool wasAtBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f;
-	if (visibleLogs.empty()) ImGui::TextUnformatted("表示するログがありません。");
-	ImGuiListClipper clipper;
-	clipper.Begin(static_cast<int>(visibleLogs.size()));
-	while (clipper.Step())
-	{
-		for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
-		{
-			ImGui::TextUnformatted(m_Logs[visibleLogs[i]].c_str());
-		}
-	}
-	if (m_LogAutoScroll && wasAtBottom)
-	{
-		ImGui::SetScrollHereY(1.0f);
-	}
-	ImGui::EndChild();
-	ImGui::End();
+    vector<int> visibleLogs;
+    for (int i = 0; i < static_cast<int>(m_Logs.size()); ++i)
+    {
+        if (logFilter.PassFilter(m_Logs[i].c_str()))
+        {
+            visibleLogs.push_back(i);
+        }
+    }
+    ImGui::TextDisabled("%d / %d 件", static_cast<int>(visibleLogs.size()), static_cast<int>(m_Logs.size()));
+    ImGui::BeginChild("LogScroll", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+    const bool wasAtBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f;
+    if (visibleLogs.empty())
+    {
+        ImGui::TextUnformatted("表示するログがありません。");
+    }
+    ImGuiListClipper clipper;
+    clipper.Begin(static_cast<int>(visibleLogs.size()));
+    while (clipper.Step())
+    {
+        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
+        {
+            ImGui::TextUnformatted(m_Logs[visibleLogs[i]].c_str());
+        }
+    }
+    if (m_LogAutoScroll && wasAtBottom)
+    {
+        ImGui::SetScrollHereY(1.0f);
+    }
+    ImGui::EndChild();
+    ImGui::End();
 }
 
 void ImGuiManager::DrawMeshOutlineWindow()
 {
-	ImGui::SetNextWindowSize(ImVec2(760.0f, 420.0f), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("メッシュ単位のアウトライン", &m_ShowMeshOutlineWindow))
-	{
-		ImGui::End();
-		return;
-	}
+    ImGui::SetNextWindowSize(ImVec2(760.0f, 420.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("メッシュ単位のアウトライン", &m_ShowMeshOutlineWindow))
+    {
+        ImGui::End();
+        return;
+    }
 
-	if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
-	{
-		ImGui::TextUnformatted("オブジェクト未選択");
-		ImGui::End();
-		return;
-	}
+    if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
+    {
+        ImGui::TextUnformatted("オブジェクト未選択");
+        ImGui::End();
+        return;
+    }
 
-	ImGui::Text("選択中: %s", GetEntityDisplayName(m_SelectedEntity));
-	ImGui::Separator();
-	if (!IsModelMaterialEntity(m_SelectedEntity))
-	{
-		ImGui::TextUnformatted("メッシュ付きモデルを選択してください");
-		ImGui::End();
-		return;
-	}
+    ImGui::Text("選択中: %s", GetEntityDisplayName(m_SelectedEntity));
+    ImGui::Separator();
+    if (!IsModelMaterialEntity(m_SelectedEntity))
+    {
+        ImGui::TextUnformatted("メッシュ付きモデルを選択してください");
+        ImGui::End();
+        return;
+    }
 
-	DrawToonMeshOutlineInspector(m_SelectedEntity, false);
-	ImGui::End();
+    DrawToonMeshOutlineInspector(m_SelectedEntity, false);
+    ImGui::End();
 }
 
 void ImGuiManager::DrawMeshShadingWindow()
 {
-	ImGui::SetNextWindowSize(ImVec2(760.0f, 420.0f), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("メッシュ単位のシェーディング", &m_ShowMeshShadingWindow))
-	{
-		ImGui::End();
-		return;
-	}
+    ImGui::SetNextWindowSize(ImVec2(760.0f, 420.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("メッシュ単位のシェーディング", &m_ShowMeshShadingWindow))
+    {
+        ImGui::End();
+        return;
+    }
 
-	if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
-	{
-		ImGui::TextUnformatted("オブジェクト未選択");
-		ImGui::End();
-		return;
-	}
+    if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
+    {
+        ImGui::TextUnformatted("オブジェクト未選択");
+        ImGui::End();
+        return;
+    }
 
-	ImGui::Text("選択中: %s", GetEntityDisplayName(m_SelectedEntity));
-	ImGui::Separator();
-	if (!IsModelMaterialEntity(m_SelectedEntity))
-	{
-		ImGui::TextUnformatted("メッシュ付きモデルを選択してください");
-		ImGui::End();
-		return;
-	}
+    ImGui::Text("選択中: %s", GetEntityDisplayName(m_SelectedEntity));
+    ImGui::Separator();
+    if (!IsModelMaterialEntity(m_SelectedEntity))
+    {
+        ImGui::TextUnformatted("メッシュ付きモデルを選択してください");
+        ImGui::End();
+        return;
+    }
 
-	DrawMeshShadingInspector(m_SelectedEntity, false);
-	ImGui::End();
+    DrawMeshShadingInspector(m_SelectedEntity, false);
+    ImGui::End();
 }
-

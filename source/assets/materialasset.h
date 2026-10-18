@@ -5,22 +5,55 @@
 #include <string>
 
 using AssetHandle = uint64_t;
-enum class AssetType : uint32_t { Unknown, Material, Texture, Mesh };
+enum class AssetType : uint32_t
+{
+    Unknown,
+    Material,
+    Texture,
+    Mesh
+};
+
 struct AssetDragPayload
 {
     AssetHandle Handle = 0;
     AssetType Type = AssetType::Unknown;
 };
+
 inline constexpr char AssetPayloadType[] = "ASSET_HANDLE";
 std::string FormatAssetHandle(AssetHandle handle);
 AssetHandle GenerateAssetHandle();
 AssetHandle ParseAssetHandle(const std::string& text);
 bool SceneHasMaterialAssets();
 
-enum class MaterialSurface : uint32_t { Opaque, Masked, Transparent };
-enum class MaterialShadowMode : uint32_t { None, Opaque, AlphaTest, Transmittance, Auto };
-enum class MaterialCull : uint32_t { Back, None, Front };
-enum class MaterialTextureSlot : uint32_t { BaseColor, Normal, MetallicRoughness, AO, Emissive, Count };
+enum class MaterialSurface : uint32_t
+{
+    Opaque,
+    Masked,
+    Transparent
+};
+enum class MaterialShadowMode : uint32_t
+{
+    None,
+    Opaque,
+    AlphaTest,
+    Transmittance,
+    Auto
+};
+enum class MaterialCull : uint32_t
+{
+    Back,
+    None,
+    Front
+};
+enum class MaterialTextureSlot : uint32_t
+{
+    BaseColor,
+    Normal,
+    MetallicRoughness,
+    AO,
+    Emissive,
+    Count
+};
 
 struct MaterialAssetData
 {
@@ -51,7 +84,7 @@ struct MaterialAssetData
 
 class MaterialSerializer
 {
-public:
+  public:
     static bool Validate(const MaterialAssetData& material, std::string& error);
     static bool Load(const std::filesystem::path& path, MaterialAssetData& material, std::string& error);
     static bool Save(const std::filesystem::path& path, const MaterialAssetData& material, std::string& error);

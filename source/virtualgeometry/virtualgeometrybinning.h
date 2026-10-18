@@ -10,23 +10,28 @@ struct IndirectCommand
     uint32_t FirstCluster = 0, ClusterCount = 0;
     D3D12_DISPATCH_MESH_ARGUMENTS Dispatch{};
 };
+
 static_assert(sizeof(IndirectCommand) == 20);
+
 struct Settings
 {
     bool Enabled = true;
     uint32_t MaxMaterialBins = 4096;
 };
+
 struct PhaseStatistics
 {
     uint32_t ActiveBins = 0, Clusters = 0, OverflowClusters = 0, InvalidMaterials = 0;
     uint32_t RejectedClusters = 0;
     bool HasSample = false;
 };
+
 struct Statistics
 {
-    std::array<PhaseStatistics,3> Phases;
+    std::array<PhaseStatistics, 3> Phases;
     uint64_t BufferBytes = 0;
 };
+
 Settings& GetSettings();
 const Statistics& GetStatistics();
 const std::string& UnavailableReason();
@@ -38,4 +43,4 @@ GpuSceneBuffer& ArgumentBuffer();
 GpuSceneBuffer& CounterBuffer();
 uint32_t MaximumCommands();
 void Shutdown();
-}
+} // namespace VirtualGeometryBinning

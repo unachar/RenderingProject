@@ -13,14 +13,17 @@ int main()
     std::string error;
     assert(Validate(asset, positions, error));
     std::vector<uint32_t> reconstructed;
-    for (auto &meshlet : asset.Meshlets)
+    for (auto& meshlet : asset.Meshlets)
+    {
         for (uint32_t i = 0; i < meshlet.PrimitiveCount; ++i)
         {
             uint32_t triangle = asset.Primitives.at(meshlet.PrimitiveOffset + i);
             for (uint32_t j = 0; j < 3; ++j)
-                reconstructed.push_back(
-                    asset.Vertices.at(meshlet.VertexOffset + ((triangle >> (j * 8)) & 255)));
+            {
+                reconstructed.push_back(asset.Vertices.at(meshlet.VertexOffset + ((triangle >> (j * 8)) & 255)));
+            }
         }
+    }
     assert(reconstructed == indices);
     assert(asset.Bounds[0].ConeCutoff >= 0 && asset.Bounds[0].ConeCutoff < 0.01f);
     auto invalid = asset;
@@ -74,15 +77,13 @@ int main()
     assert(Save(path, planar, key));
     const auto payloadBytes = planar.Meshlets.size() * sizeof(Meshlet) +
                               (planar.Vertices.size() + planar.Primitives.size()) * sizeof(uint32_t) +
-                              planar.Bounds.size() * sizeof(Bounds) +
-                              planar.Clusters.size() * sizeof(Cluster);
+                              planar.Bounds.size() * sizeof(Bounds) + planar.Clusters.size() * sizeof(Cluster);
     const auto primitiveOffset = std::filesystem::file_size(path) - payloadBytes +
-                                 planar.Meshlets.size() * sizeof(Meshlet) +
-                                 planar.Vertices.size() * sizeof(uint32_t);
+                                 planar.Meshlets.size() * sizeof(Meshlet) + planar.Vertices.size() * sizeof(uint32_t);
     {
         std::fstream stream(path, std::ios::binary | std::ios::in | std::ios::out);
         stream.seekp(primitiveOffset + sizeof(uint32_t));
-        stream.write(reinterpret_cast<const char *>(&planar.Primitives[0]), sizeof(uint32_t));
+        stream.write(reinterpret_cast<const char*>(&planar.Primitives[0]), sizeof(uint32_t));
     }
     assert(!Load(path, loaded, key, positions));
     {

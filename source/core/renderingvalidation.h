@@ -3,10 +3,9 @@
 
 class RenderingValidation
 {
-public:
+  public:
     static bool IsEnabled();
     static void BeforeFrame(uint64_t frame);
     static void AfterFrame(uint64_t frame);
     static bool Finish();
 };
-

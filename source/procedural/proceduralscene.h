@@ -5,7 +5,7 @@
 
 class ProceduralScene
 {
-public:
+  public:
     static EntityID GenerateTerrain(const Procedural::TerrainSettings& settings, EntityID target = g_kINVALID_ENTITY);
     static void UpdateMotion(float deltaTime);
     static void ResetMotion(EntityID entity);
@@ -14,4 +14,3 @@ public:
     static bool SavePreset(const char* path, const Procedural::TerrainSettings& settings);
     static bool LoadPreset(const char* path, Procedural::TerrainSettings& settings);
 };
-

@@ -75,10 +75,8 @@ struct Vector3
 
 float SampleNoise(float x, float y, const NoiseSettings& settings);
 std::vector<float> BuildHeightMap(const TerrainSettings& settings);
-Vector3 SampleMotion(MotionMethod method, double time, float speed,
-    const Vector3& amplitude, uint32_t seed);
+Vector3 SampleMotion(MotionMethod method, double time, float speed, const Vector3& amplitude, uint32_t seed);
 bool TerrainSettingsEqual(const TerrainSettings& first, const TerrainSettings& second);
 bool WriteTerrainPreset(std::ostream& stream, const TerrainSettings& settings);
 bool ReadTerrainPreset(std::istream& stream, TerrainSettings& settings);
-}
-
+} // namespace Procedural

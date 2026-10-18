@@ -3,9 +3,31 @@
 #include <cmath>
 #include <cstdint>
 
-enum class CloudQuality { Low, Medium, High };
-enum class CloudPreset { Clear, Fair, Cloudy, Overcast, Storm };
-enum class CloudDebug { Normal, Density, Transmittance, Lighting, Depth, Steps, BaseNoise, DetailNoise };
+enum class CloudQuality
+{
+    Low,
+    Medium,
+    High
+};
+enum class CloudPreset
+{
+    Clear,
+    Fair,
+    Cloudy,
+    Overcast,
+    Storm
+};
+enum class CloudDebug
+{
+    Normal,
+    Density,
+    Transmittance,
+    Lighting,
+    Depth,
+    Steps,
+    BaseNoise,
+    DetailNoise
+};
 
 // The inherited first layer preserves the existing settings and validation API.
 struct CloudLayerSettings
@@ -21,8 +43,7 @@ struct CloudLayerSettings
 
     void ValidateLayer()
     {
-        auto bounded = [](float value, float fallback, float low, float high)
-        {
+        auto bounded = [](float value, float fallback, float low, float high) {
             return std::clamp(std::isfinite(value) ? value : fallback, low, high);
         };
         BottomHeight = bounded(BottomHeight, 20, -10000, 10000);
@@ -107,8 +128,8 @@ struct CloudSettings : CloudLayerSettings
 
     void ApplyPreset(CloudPreset preset)
     {
-        constexpr float coverage[] = { 0.0f, 0.35f, 0.6f, 0.95f, 1.0f };
-        constexpr float density[] = { 1.0f, 0.7f, 1.0f, 1.4f, 2.0f };
+        constexpr float coverage[] = {0.0f, 0.35f, 0.6f, 0.95f, 1.0f};
+        constexpr float density[] = {1.0f, 0.7f, 1.0f, 1.4f, 2.0f};
         const int index = std::clamp(static_cast<int>(preset), 0, 4);
         Coverage = coverage[index];
         Density = density[index];
@@ -116,8 +137,7 @@ struct CloudSettings : CloudLayerSettings
 
     void Validate()
     {
-        auto bounded = [](float value, float fallback, float low, float high)
-        {
+        auto bounded = [](float value, float fallback, float low, float high) {
             return std::clamp(std::isfinite(value) ? value : fallback, low, high);
         };
         LayerCount = std::clamp(LayerCount, 1, MaxLayers);
@@ -142,4 +162,3 @@ struct CloudSettings : CloudLayerSettings
         Debug = static_cast<CloudDebug>(std::clamp(static_cast<int>(Debug), 0, 7));
     }
 };
-

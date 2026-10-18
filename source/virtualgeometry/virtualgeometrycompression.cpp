@@ -12,17 +12,24 @@ namespace
 {
 using VirtualGeometrySerialization::Writer;
 using Vec3 = std::array<float, 3>;
+
 std::string AttributeName(uint32_t semantic)
 {
     switch (semantic)
     {
-    case Position: return "Position";
-    case Normal: return "Normal";
-    case Tangent: return "Tangent";
-    case Color: return "Color";
-    default: return "UV" + std::to_string(semantic - Texcoord0);
+    case Position:
+        return "Position";
+    case Normal:
+        return "Normal";
+    case Tangent:
+        return "Tangent";
+    case Color:
+        return "Color";
+    default:
+        return "UV" + std::to_string(semantic - Texcoord0);
     }
 }
+
 uint32_t Read(std::span<const uint8_t> bytes, size_t offset, uint32_t width = 4)
 {
     if (offset > bytes.size() || width > bytes.size() - offset)
@@ -36,10 +43,12 @@ uint32_t Read(std::span<const uint8_t> bytes, size_t offset, uint32_t width = 4)
     }
     return value;
 }
+
 float ReadFloat(std::span<const uint8_t> bytes, size_t offset)
 {
     return std::bit_cast<float>(Read(bytes, offset));
 }
+
 void Put(std::vector<uint8_t>& bytes, size_t offset, uint32_t value, uint32_t width = 4)
 {
     if (offset > bytes.size() || width > bytes.size() - offset)
@@ -51,6 +60,7 @@ void Put(std::vector<uint8_t>& bytes, size_t offset, uint32_t value, uint32_t wi
         bytes[offset + byte] = uint8_t(value >> (8 * byte));
     }
 }
+
 float Sign(float value)
 {
     if (value < 0)
@@ -59,9 +69,10 @@ float Sign(float value)
     }
     return 1;
 }
+
 Vec3 Normalize(Vec3 value)
 {
-    double length = std::sqrt(double(value[0])*value[0] + double(value[1])*value[1] + double(value[2])*value[2]);
+    double length = std::sqrt(double(value[0]) * value[0] + double(value[1]) * value[1] + double(value[2]) * value[2]);
     if (!std::isfinite(length) || length <= 1e-30)
     {
         return {0, 1, 0};
@@ -72,6 +83,7 @@ Vec3 Normalize(Vec3 value)
     }
     return value;
 }
+
 float Angle(Vec3 first, Vec3 second)
 {
     first = Normalize(first);
@@ -85,6 +97,7 @@ float Angle(Vec3 first, Vec3 second)
     }
     return float(2 * std::asin(std::min(1.0, std::sqrt(squared) * 0.5)));
 }
+
 uint32_t PackOct(Vec3 normal)
 {
     normal = Normalize(normal);
@@ -101,11 +114,13 @@ uint32_t PackOct(Vec3 normal)
     uint16_t packedY = uint16_t(int16_t(std::lround(std::clamp(y, -1.0f, 1.0f) * 32767)));
     return uint32_t(packedX) | (uint32_t(packedY) << 16);
 }
+
 int32_t Signed(uint32_t value, uint32_t bits)
 {
     uint32_t signBit = 1u << (bits - 1);
     return int32_t(value & (signBit - 1)) - int32_t(value & signBit);
 }
+
 Vec3 UnpackOct(uint32_t packed)
 {
     float x = std::max(-1.0f, float(Signed(packed & 65535, 16)) / 32767);
@@ -119,6 +134,7 @@ Vec3 UnpackOct(uint32_t packed)
     }
     return Normalize({x, y, z});
 }
+
 uint32_t PackTangent(const std::array<float, 4>& tangent)
 {
     Vec3 direction = Normalize({tangent[0], tangent[1], tangent[2]});
@@ -133,16 +149,17 @@ uint32_t PackTangent(const std::array<float, 4>& tangent)
     }
     return packed;
 }
+
 Vec3 UnpackTangent(uint32_t packed)
 {
-    return Normalize({float(Signed(packed & 1023, 10)) / 511,
-        float(Signed((packed >> 10) & 1023, 10)) / 511,
-        float(Signed((packed >> 20) & 1023, 10)) / 511});
+    return Normalize({float(Signed(packed & 1023, 10)) / 511, float(Signed((packed >> 10) & 1023, 10)) / 511,
+                      float(Signed((packed >> 20) & 1023, 10)) / 511});
 }
+
 Vec3 Orthogonalize(Vec3 tangent, Vec3 normal)
 {
     normal = Normalize(normal);
-    float dot = tangent[0]*normal[0] + tangent[1]*normal[1] + tangent[2]*normal[2];
+    float dot = tangent[0] * normal[0] + tangent[1] * normal[1] + tangent[2] * normal[2];
     for (uint32_t axis = 0; axis < 3; ++axis)
     {
         tangent[axis] -= dot * normal[axis];
@@ -154,11 +171,12 @@ Vec3 Orthogonalize(Vec3 tangent, Vec3 normal)
         {
             helper = {0, 1, 0};
         }
-        tangent = {helper[1]*normal[2]-helper[2]*normal[1],
-            helper[2]*normal[0]-helper[0]*normal[2], helper[0]*normal[1]-helper[1]*normal[0]};
+        tangent = {helper[1] * normal[2] - helper[2] * normal[1], helper[2] * normal[0] - helper[0] * normal[2],
+                   helper[0] * normal[1] - helper[1] * normal[0]};
     }
     return Normalize(tangent);
 }
+
 // IEEE binary16, round to nearest even. Shared wire representation with HLSL f16tof32.
 uint16_t ToHalf(float value)
 {
@@ -184,6 +202,7 @@ uint16_t ToHalf(float value)
     uint32_t rounded = mantissa + 0xfff + ((mantissa >> 13) & 1);
     return uint16_t(sign | ((uint32_t(exponent) << 10) + (rounded >> 13)));
 }
+
 float FromHalf(uint16_t value)
 {
     uint32_t sign = uint32_t(value & 0x8000) << 16;
@@ -204,6 +223,7 @@ float FromHalf(uint16_t value)
     }
     return std::bit_cast<float>(sign | ((exponent + 112) << 23) | (mantissa << 13));
 }
+
 uint32_t Components(uint32_t semantic)
 {
     if (semantic >= Texcoord0)
@@ -216,6 +236,7 @@ uint32_t Components(uint32_t semantic)
     }
     return 3;
 }
+
 uint32_t Stride(const Stream& stream)
 {
     if (stream.Encoding == Codec::Float32)
@@ -228,6 +249,7 @@ uint32_t Stride(const Stream& stream)
     }
     return 4;
 }
+
 std::array<float, 4> Attribute(const Input& input, uint32_t index, uint32_t semantic)
 {
     if (index >= input.Vertices.size())
@@ -267,6 +289,7 @@ std::array<float, 4> Attribute(const Input& input, uint32_t index, uint32_t sema
     const auto& uv = stream[index];
     return {uv[0], uv[1], 0, 0};
 }
+
 uint16_t Quantize(float value, float origin, float step)
 {
     if (step == 0)
@@ -275,27 +298,29 @@ uint16_t Quantize(float value, float origin, float step)
     }
     return uint16_t(std::round(std::clamp((double(value) - origin) / step, 0.0, 65535.0)));
 }
+
 float DecodePosition(float origin, float step, uint32_t quantized)
 {
     // GPU uses precise multiply/add, preventing an FMA-specific CPU/GPU boundary difference.
     volatile float delta = float(quantized) * step;
     return origin + delta;
 }
+
 void EncodeAttribute(std::vector<uint8_t>& bytes, uint32_t address, const Stream& stream,
-    const std::array<float, 4>& value, const Plan& plan)
+                     const std::array<float, 4>& value, const Plan& plan)
 {
     switch (stream.Encoding)
     {
     case Codec::Float32:
         for (uint32_t component = 0; component < Components(stream.Attribute); ++component)
         {
-            Put(bytes, address + component*4, std::bit_cast<uint32_t>(value[component]));
+            Put(bytes, address + component * 4, std::bit_cast<uint32_t>(value[component]));
         }
         break;
     case Codec::UNorm16x3:
         for (uint32_t axis = 0; axis < 3; ++axis)
         {
-            Put(bytes, address + axis*2, Quantize(value[axis], plan.Origin[axis], plan.Step[axis]), 2);
+            Put(bytes, address + axis * 2, Quantize(value[axis], plan.Origin[axis], plan.Step[axis]), 2);
         }
         break;
     case Codec::OctSnorm16x2:
@@ -310,12 +335,12 @@ void EncodeAttribute(std::vector<uint8_t>& bytes, uint32_t address, const Stream
     case Codec::UNorm8x4:
         for (uint32_t component = 0; component < 4; ++component)
         {
-            Put(bytes, address + component, uint32_t(std::lround(std::clamp(value[component], 0.0f, 1.0f)*255)), 1);
+            Put(bytes, address + component, uint32_t(std::lround(std::clamp(value[component], 0.0f, 1.0f) * 255)), 1);
         }
         break;
     }
 }
-}
+} // namespace
 
 IndexCodec SelectIndexCodec(uint32_t vertexCount, bool allow8)
 {
@@ -370,7 +395,7 @@ bool Select(const Input& input, const VGCompressionSettings& settings, Plan& out
             }
         }
         for (float threshold : {settings.MaxPositionError, settings.MaxNormalAngularError,
-            settings.MaxTangentAngularError, settings.MaxTexcoordError})
+                                settings.MaxTangentAngularError, settings.MaxTexcoordError})
         {
             if (!std::isfinite(threshold) || threshold < 0)
             {
@@ -416,7 +441,8 @@ bool Select(const Input& input, const VGCompressionSettings& settings, Plan& out
                 {
                     if (!std::isfinite(value[component]))
                     {
-                        throw std::runtime_error("Nonfinite " + AttributeName(stream.Attribute) + " at vertex " + std::to_string(index));
+                        throw std::runtime_error("Nonfinite " + AttributeName(stream.Attribute) + " at vertex " +
+                                                 std::to_string(index));
                     }
                 }
             }
@@ -430,9 +456,9 @@ bool Select(const Input& input, const VGCompressionSettings& settings, Plan& out
         for (uint32_t axis = 0; axis < 3; ++axis)
         {
             plan.Step[axis] = float((double(maximum[axis]) - plan.Origin[axis]) / 65535.0);
-            double endpoint = double(plan.Origin[axis]) + double(plan.Step[axis])*65535;
+            double endpoint = double(plan.Origin[axis]) + double(plan.Step[axis]) * 65535;
             validGrid &= std::isfinite(plan.Step[axis]) && std::abs(endpoint) <= std::numeric_limits<float>::max() &&
-                double(plan.Step[axis])*65535 <= std::numeric_limits<float>::max();
+                         double(plan.Step[axis]) * 65535 <= std::numeric_limits<float>::max();
         }
         for (auto& stream : plan.Streams)
         {
@@ -477,9 +503,9 @@ bool Select(const Input& input, const VGCompressionSettings& settings, Plan& out
                     for (uint32_t axis = 0; axis < 3; ++axis)
                     {
                         float decoded = DecodePosition(plan.Origin[axis], plan.Step[axis],
-                            Quantize(value[axis], plan.Origin[axis], plan.Step[axis]));
+                                                       Quantize(value[axis], plan.Origin[axis], plan.Step[axis]));
                         double delta = double(value[axis]) - decoded;
-                        squared += delta*delta;
+                        squared += delta * delta;
                     }
                     float distance = float(std::sqrt(squared));
                     plan.PositionError = std::max(plan.PositionError, distance);
@@ -487,7 +513,9 @@ bool Select(const Input& input, const VGCompressionSettings& settings, Plan& out
                 }
                 else if (stream.Attribute == Normal)
                 {
-                    accurate &= Angle({value[0], value[1], value[2]}, UnpackOct(PackOct({value[0], value[1], value[2]}))) <= settings.MaxNormalAngularError;
+                    accurate &=
+                        Angle({value[0], value[1], value[2]}, UnpackOct(PackOct({value[0], value[1], value[2]}))) <=
+                        settings.MaxNormalAngularError;
                 }
                 else if (stream.Attribute == Tangent)
                 {
@@ -506,7 +534,8 @@ bool Select(const Input& input, const VGCompressionSettings& settings, Plan& out
                         }
                     }
                     accurate &= Angle(Orthogonalize({value[0], value[1], value[2]}, normal),
-                        Orthogonalize(UnpackTangent(PackTangent(value)), decodedNormal)) <= settings.MaxTangentAngularError;
+                                      Orthogonalize(UnpackTangent(PackTangent(value)), decodedNormal)) <=
+                                settings.MaxTangentAngularError;
                 }
                 else if (stream.Attribute >= Texcoord0)
                 {
@@ -515,7 +544,7 @@ bool Select(const Input& input, const VGCompressionSettings& settings, Plan& out
                     {
                         float decoded = FromHalf(ToHalf(value[component]));
                         double delta = double(value[component]) - decoded;
-                        squared += delta*delta;
+                        squared += delta * delta;
                         accurate &= std::abs(value[component]) <= 65504 && std::isfinite(decoded);
                     }
                     accurate &= std::sqrt(squared) <= settings.MaxTexcoordError;
@@ -531,7 +560,8 @@ bool Select(const Input& input, const VGCompressionSettings& settings, Plan& out
             if (!accurate)
             {
                 stream.Encoding = Codec::Float32;
-                plan.FallbackReasons.push_back(AttributeName(stream.Attribute) + ": codec error/range exceeded; Float32 fallback");
+                plan.FallbackReasons.push_back(AttributeName(stream.Attribute) +
+                                               ": codec error/range exceeded; Float32 fallback");
             }
         }
         Stream* normalStream = nullptr;
@@ -548,7 +578,8 @@ bool Select(const Input& input, const VGCompressionSettings& settings, Plan& out
             }
         }
         // A full precision tangent can still lose angular accuracy when projected onto a packed normal.
-        if (normalStream && tangentStream && normalStream->Encoding == Codec::OctSnorm16x2 && tangentStream->Encoding == Codec::Float32)
+        if (normalStream && tangentStream && normalStream->Encoding == Codec::OctSnorm16x2 &&
+            tangentStream->Encoding == Codec::Float32)
         {
             bool accurate = true;
             for (uint32_t index = 0; index < input.Vertices.size(); ++index)
@@ -557,7 +588,8 @@ bool Select(const Input& input, const VGCompressionSettings& settings, Plan& out
                 auto sourceTangent = Attribute(input, index, Tangent);
                 Vec3 normal{sourceNormal[0], sourceNormal[1], sourceNormal[2]};
                 Vec3 tangent{sourceTangent[0], sourceTangent[1], sourceTangent[2]};
-                accurate &= Angle(Orthogonalize(tangent, normal), Orthogonalize(tangent, UnpackOct(PackOct(normal)))) <= settings.MaxTangentAngularError;
+                accurate &= Angle(Orthogonalize(tangent, normal), Orthogonalize(tangent, UnpackOct(PackOct(normal)))) <=
+                            settings.MaxTangentAngularError;
             }
             if (!accurate)
             {
@@ -582,7 +614,7 @@ bool Select(const Input& input, const VGCompressionSettings& settings, Plan& out
 }
 
 bool EncodeCluster(const Input& input, const Plan& plan, uint32_t firstVertex, uint32_t vertexCount,
-    std::span<const uint32_t> indices, std::vector<uint8_t>& output, std::string& error)
+                   std::span<const uint32_t> indices, std::vector<uint8_t>& output, std::string& error)
 {
     try
     {
@@ -608,17 +640,17 @@ bool EncodeCluster(const Input& input, const Plan& plan, uint32_t firstVertex, u
         header.U32(uint32_t(plan.Streams.size()));
         header.Float3(plan.Origin);
         header.Float3(plan.Step);
-        uint32_t offset = HeaderBytes + uint32_t(plan.Streams.size())*16;
+        uint32_t offset = HeaderBytes + uint32_t(plan.Streams.size()) * 16;
         for (const auto& stream : plan.Streams)
         {
             header.U32(stream.Attribute);
             header.U32(uint32_t(stream.Encoding));
             header.U32(offset);
             header.U32(Stride(stream));
-            offset = (offset + Stride(stream)*vertexCount + 3) & ~3u;
+            offset = (offset + Stride(stream) * vertexCount + 3) & ~3u;
         }
         uint32_t indexOffset = offset;
-        uint64_t total = (uint64_t(offset) + uint64_t(indices.size())*width + 3) & ~uint64_t(3);
+        uint64_t total = (uint64_t(offset) + uint64_t(indices.size()) * width + 3) & ~uint64_t(3);
         if (total > VirtualGeometryConfig::GeometryPageBytes)
         {
             throw std::runtime_error("Compressed cluster exceeds existing Streaming Page size");
@@ -630,10 +662,11 @@ bool EncodeCluster(const Input& input, const Plan& plan, uint32_t firstVertex, u
         for (uint32_t streamIndex = 0; streamIndex < plan.Streams.size(); ++streamIndex)
         {
             const auto& stream = plan.Streams[streamIndex];
-            uint32_t start = Read(bytes, HeaderBytes + streamIndex*16 + 8);
+            uint32_t start = Read(bytes, HeaderBytes + streamIndex * 16 + 8);
             for (uint32_t vertex = 0; vertex < vertexCount; ++vertex)
             {
-                EncodeAttribute(bytes, start + vertex*Stride(stream), stream, Attribute(input, firstVertex + vertex, stream.Attribute), plan);
+                EncodeAttribute(bytes, start + vertex * Stride(stream), stream,
+                                Attribute(input, firstVertex + vertex, stream.Attribute), plan);
             }
         }
         for (size_t index = 0; index < indices.size(); ++index)
@@ -642,9 +675,9 @@ bool EncodeCluster(const Input& input, const Plan& plan, uint32_t firstVertex, u
             {
                 throw std::runtime_error("Compressed cluster index exceeds VertexCount");
             }
-            Put(bytes, indexOffset + index*width, indices[index], width);
+            Put(bytes, indexOffset + index * width, indices[index], width);
         }
-        if (!Validate(bytes, vertexCount, uint32_t(indices.size()/3), error))
+        if (!Validate(bytes, vertexCount, uint32_t(indices.size() / 3), error))
         {
             return false;
         }
@@ -657,7 +690,7 @@ bool EncodeCluster(const Input& input, const Plan& plan, uint32_t firstVertex, u
             for (uint32_t axis = 0; axis < 3; ++axis)
             {
                 double delta = double(decoded.Position[axis]) - source.Position[axis];
-                squared += delta*delta;
+                squared += delta * delta;
             }
             if (!std::isfinite(squared) || std::sqrt(squared) > plan.Settings.MaxPositionError)
             {
@@ -689,44 +722,45 @@ bool Validate(std::span<const uint8_t> bytes, uint32_t vertices, uint32_t triang
         uint32_t count = Read(bytes, 28);
         uint32_t indexOffset = Read(bytes, 24);
         if ((width != 1 && width != 2) || (width == 1 && vertices > 256) || !count || count > 28 ||
-            HeaderBytes + uint64_t(count)*16 > bytes.size())
+            HeaderBytes + uint64_t(count) * 16 > bytes.size())
         {
             throw std::runtime_error("Invalid compressed stream/index directory");
         }
         for (uint32_t axis = 0; axis < 3; ++axis)
         {
-            float origin = ReadFloat(bytes, 32 + axis*4);
-            float step = ReadFloat(bytes, 44 + axis*4);
-            double end = double(origin) + double(step)*65535;
-            if (!std::isfinite(origin) || !std::isfinite(step) || step < 0 ||
-                end > std::numeric_limits<float>::max() || end < -std::numeric_limits<float>::max() ||
-                double(step)*65535 > std::numeric_limits<float>::max())
+            float origin = ReadFloat(bytes, 32 + axis * 4);
+            float step = ReadFloat(bytes, 44 + axis * 4);
+            double end = double(origin) + double(step) * 65535;
+            if (!std::isfinite(origin) || !std::isfinite(step) || step < 0 || end > std::numeric_limits<float>::max() ||
+                end < -std::numeric_limits<float>::max() || double(step) * 65535 > std::numeric_limits<float>::max())
             {
                 throw std::runtime_error("Invalid global quantization grid");
             }
         }
-        uint64_t end = HeaderBytes + count*16;
+        uint64_t end = HeaderBytes + count * 16;
         uint32_t mask = 0;
         uint32_t previous = 0;
         for (uint32_t index = 0; index < count; ++index)
         {
-            uint32_t descriptor = HeaderBytes + index*16;
+            uint32_t descriptor = HeaderBytes + index * 16;
             uint32_t semantic = Read(bytes, descriptor);
             Codec codec = Codec(Read(bytes, descriptor + 4));
             uint32_t offset = Read(bytes, descriptor + 8);
             uint32_t stride = Read(bytes, descriptor + 12);
             bool supported = codec == Codec::Float32 || (semantic == Position && codec == Codec::UNorm16x3) ||
-                (semantic == Normal && codec == Codec::OctSnorm16x2) || (semantic == Tangent && codec == Codec::Snorm1010102) ||
-                (semantic == Color && codec == Codec::UNorm8x4) || (semantic >= Texcoord0 && codec == Codec::Float16x2);
-            if (semantic >= 32 || (semantic > Color && semantic < Texcoord0) ||
-                (!index && semantic != Position) || (index && semantic <= previous) || !supported ||
-                stride != Stride({semantic, codec}) || offset != end || offset % 4)
+                             (semantic == Normal && codec == Codec::OctSnorm16x2) ||
+                             (semantic == Tangent && codec == Codec::Snorm1010102) ||
+                             (semantic == Color && codec == Codec::UNorm8x4) ||
+                             (semantic >= Texcoord0 && codec == Codec::Float16x2);
+            if (semantic >= 32 || (semantic > Color && semantic < Texcoord0) || (!index && semantic != Position) ||
+                (index && semantic <= previous) || !supported || stride != Stride({semantic, codec}) || offset != end ||
+                offset % 4)
             {
                 throw std::runtime_error("Invalid compressed attribute descriptor");
             }
             previous = semantic;
             mask |= 1u << semantic;
-            end = (uint64_t(offset) + uint64_t(vertices)*stride + 3) & ~uint64_t(3);
+            end = (uint64_t(offset) + uint64_t(vertices) * stride + 3) & ~uint64_t(3);
             if (end > bytes.size())
             {
                 throw std::runtime_error("Compressed attribute outside Page payload");
@@ -737,7 +771,7 @@ bool Validate(std::span<const uint8_t> bytes, uint32_t vertices, uint32_t triang
                 {
                     for (uint32_t component = 0; component < Components(semantic); ++component)
                     {
-                        if (!std::isfinite(ReadFloat(bytes, offset + vertex*stride + component*4)))
+                        if (!std::isfinite(ReadFloat(bytes, offset + vertex * stride + component * 4)))
                         {
                             throw std::runtime_error("Nonfinite compressed Float32 attribute");
                         }
@@ -748,7 +782,7 @@ bool Validate(std::span<const uint8_t> bytes, uint32_t vertices, uint32_t triang
             {
                 for (uint32_t vertex = 0; vertex < vertices; ++vertex)
                 {
-                    uint32_t packed = Read(bytes, offset + vertex*stride);
+                    uint32_t packed = Read(bytes, offset + vertex * stride);
                     if ((packed & 0x7c00) == 0x7c00 || (packed & 0x7c000000) == 0x7c000000)
                     {
                         throw std::runtime_error("Nonfinite compressed half UV");
@@ -756,14 +790,14 @@ bool Validate(std::span<const uint8_t> bytes, uint32_t vertices, uint32_t triang
                 }
             }
         }
-        uint64_t expectedEnd = (end + uint64_t(triangles)*3*width + 3) & ~uint64_t(3);
+        uint64_t expectedEnd = (end + uint64_t(triangles) * 3 * width + 3) & ~uint64_t(3);
         if (mask != Read(bytes, 16) || indexOffset != end || expectedEnd != bytes.size())
         {
             throw std::runtime_error("Invalid compressed index range/attribute mask");
         }
-        for (uint64_t index = 0; index < uint64_t(triangles)*3; ++index)
+        for (uint64_t index = 0; index < uint64_t(triangles) * 3; ++index)
         {
-            if (Read(bytes, indexOffset + size_t(index)*width, width) >= vertices)
+            if (Read(bytes, indexOffset + size_t(index) * width, width) >= vertices)
             {
                 throw std::runtime_error("Compressed triangle index out of range");
             }
@@ -792,23 +826,24 @@ DecodedVertex DecodeVertexCPU(std::span<const uint8_t> bytes, uint32_t vertexInd
     }
     for (uint32_t index = 0; index < count; ++index)
     {
-        uint32_t descriptor = HeaderBytes + index*16;
+        uint32_t descriptor = HeaderBytes + index * 16;
         uint32_t semantic = Read(bytes, descriptor);
         Codec codec = Codec(Read(bytes, descriptor + 4));
-        size_t address = Read(bytes, descriptor + 8) + size_t(vertexIndex)*Read(bytes, descriptor + 12);
+        size_t address = Read(bytes, descriptor + 8) + size_t(vertexIndex) * Read(bytes, descriptor + 12);
         std::array<float, 4> value{};
         if (codec == Codec::Float32)
         {
             for (uint32_t component = 0; component < Components(semantic); ++component)
             {
-                value[component] = ReadFloat(bytes, address + component*4);
+                value[component] = ReadFloat(bytes, address + component * 4);
             }
         }
         else if (codec == Codec::UNorm16x3)
         {
             for (uint32_t axis = 0; axis < 3; ++axis)
             {
-                value[axis] = DecodePosition(ReadFloat(bytes, 32 + axis*4), ReadFloat(bytes, 44 + axis*4), Read(bytes, address + axis*2, 2));
+                value[axis] = DecodePosition(ReadFloat(bytes, 32 + axis * 4), ReadFloat(bytes, 44 + axis * 4),
+                                             Read(bytes, address + axis * 2, 2));
             }
         }
         else if (codec == Codec::OctSnorm16x2)
@@ -882,8 +917,9 @@ std::array<uint32_t, 3> LoadTriangleCPU(std::span<const uint8_t> bytes, uint32_t
     {
         throw std::runtime_error("Unsupported index codec");
     }
-    size_t address = Read(bytes, 24) + size_t(triangleIndex)*3*width;
-    std::array<uint32_t, 3> result{Read(bytes, address, width), Read(bytes, address + width, width), Read(bytes, address + width*2, width)};
+    size_t address = Read(bytes, 24) + size_t(triangleIndex) * 3 * width;
+    std::array<uint32_t, 3> result{Read(bytes, address, width), Read(bytes, address + width, width),
+                                   Read(bytes, address + width * 2, width)};
     for (uint32_t index : result)
     {
         if (index >= Read(bytes, 8))
@@ -893,4 +929,4 @@ std::array<uint32_t, 3> LoadTriangleCPU(std::span<const uint8_t> bytes, uint32_t
     }
     return result;
 }
-}
+} // namespace VirtualGeometryCompression

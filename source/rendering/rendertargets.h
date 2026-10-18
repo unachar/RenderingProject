@@ -5,12 +5,12 @@
 
 enum class RenderTargetType
 {
-	Scene,
-	PostProcess,
-	PreUpscaleAa,
-	PreUpscaleAaHistory,
-	EditorScene,
-	Count
+    Scene,
+    PostProcess,
+    PreUpscaleAa,
+    PreUpscaleAaHistory,
+    EditorScene,
+    Count
 };
 
 constexpr size_t kRenderTargetCount = static_cast<size_t>(RenderTargetType::Count);
@@ -20,51 +20,84 @@ using RenderTargetGpuHandleArray = array<D3D12_GPU_DESCRIPTOR_HANDLE, kRenderTar
 
 class RenderTargets : protected RendererState
 {
-protected:
-	static void GetGBufferClearColor(UINT index, float outColor[4]);
+  protected:
+    static void GetGBufferClearColor(UINT index, float outColor[4]);
 
-	inline static RenderTargetResourceArray m_RenderTargetResources{};
-	inline static RenderTargetCpuHandleArray m_RenderTargetRtvHandles{};
-	inline static RenderTargetGpuHandleArray m_RenderTargetSrvHandles{};
+    inline static RenderTargetResourceArray m_RenderTargetResources{};
+    inline static RenderTargetCpuHandleArray m_RenderTargetRtvHandles{};
+    inline static RenderTargetGpuHandleArray m_RenderTargetSrvHandles{};
 
-	static constexpr size_t ToIndex(RenderTargetType type)
-	{
-		return static_cast<size_t>(type);
-	}
+    static constexpr size_t ToIndex(RenderTargetType type)
+    {
+        return static_cast<size_t>(type);
+    }
 
-	static ComPtr<ID3D12Resource>& GetRenderTarget(RenderTargetType type)
-	{
-		return m_RenderTargetResources[ToIndex(type)];
-	}
+    static ComPtr<ID3D12Resource>& GetRenderTarget(RenderTargetType type)
+    {
+        return m_RenderTargetResources[ToIndex(type)];
+    }
 
-	static D3D12_CPU_DESCRIPTOR_HANDLE& GetRenderTargetRtvHandle(RenderTargetType type)
-	{
-		return m_RenderTargetRtvHandles[ToIndex(type)];
-	}
+    static D3D12_CPU_DESCRIPTOR_HANDLE& GetRenderTargetRtvHandle(RenderTargetType type)
+    {
+        return m_RenderTargetRtvHandles[ToIndex(type)];
+    }
 
-	static D3D12_GPU_DESCRIPTOR_HANDLE& GetRenderTargetSrvHandle(RenderTargetType type)
-	{
-		return m_RenderTargetSrvHandles[ToIndex(type)];
-	}
+    static D3D12_GPU_DESCRIPTOR_HANDLE& GetRenderTargetSrvHandle(RenderTargetType type)
+    {
+        return m_RenderTargetSrvHandles[ToIndex(type)];
+    }
 
-public:
-	using RendererState::GetSceneColorFormat;
-	using RendererState::GetGBufferFormat;
+  public:
+    using RendererState::GetGBufferFormat;
+    using RendererState::GetSceneColorFormat;
 
-	static bool CreateDepthBuffer();
-	static bool CreateShadowDepthBuffer();
-	static bool CreateSceneRenderTarget();
-	static void ReleaseGBufferResources();
+    static bool CreateDepthBuffer();
+    static bool CreateShadowDepthBuffer();
+    static bool CreateSceneRenderTarget();
+    static void ReleaseGBufferResources();
 
-	static void ResizeScene(UINT width, UINT height);
-	static D3D12_GPU_DESCRIPTOR_HANDLE GetSceneSrvHandle() { return GetRenderTargetSrvHandle(RenderTargetType::Scene); }
-	static D3D12_GPU_DESCRIPTOR_HANDLE GetEditorSceneSrvHandle() { return GetRenderTargetSrvHandle(RenderTargetType::EditorScene); }
-	static ID3D12Resource* GetSceneResource() { return GetRenderTarget(RenderTargetType::Scene).Get(); }
-	static ID3D12Resource* GetEditorSceneResource() { return GetRenderTarget(RenderTargetType::EditorScene).Get(); }
-	static D3D12_GPU_DESCRIPTOR_HANDLE GetGBufferSrvHandle(GBufferType type) { return m_GBufferSrvHandles[static_cast<UINT>(type)]; }
-	static ID3D12Resource* GetGBufferResource(GBufferType type) { return m_GBufferTargets[static_cast<UINT>(type)].Get(); }
-	static D3D12_GPU_DESCRIPTOR_HANDLE GetAtmosphereSrvHandle() { return GetGBufferSrvHandle(GBufferType::ATMOSPHERE); }
-	static ID3D12Resource* GetShadowDepthResource() { return m_ShadowDepthBuffer.Get(); }
-	static D3D12_CPU_DESCRIPTOR_HANDLE GetImGuiCpuHandle();
-	static D3D12_GPU_DESCRIPTOR_HANDLE GetImGuiGpuHandle();
+    static void ResizeScene(UINT width, UINT height);
+
+    static D3D12_GPU_DESCRIPTOR_HANDLE GetSceneSrvHandle()
+    {
+        return GetRenderTargetSrvHandle(RenderTargetType::Scene);
+    }
+
+    static D3D12_GPU_DESCRIPTOR_HANDLE GetEditorSceneSrvHandle()
+    {
+        return GetRenderTargetSrvHandle(RenderTargetType::EditorScene);
+    }
+
+    static ID3D12Resource* GetSceneResource()
+    {
+        return GetRenderTarget(RenderTargetType::Scene).Get();
+    }
+
+    static ID3D12Resource* GetEditorSceneResource()
+    {
+        return GetRenderTarget(RenderTargetType::EditorScene).Get();
+    }
+
+    static D3D12_GPU_DESCRIPTOR_HANDLE GetGBufferSrvHandle(GBufferType type)
+    {
+        return m_GBufferSrvHandles[static_cast<UINT>(type)];
+    }
+
+    static ID3D12Resource* GetGBufferResource(GBufferType type)
+    {
+        return m_GBufferTargets[static_cast<UINT>(type)].Get();
+    }
+
+    static D3D12_GPU_DESCRIPTOR_HANDLE GetAtmosphereSrvHandle()
+    {
+        return GetGBufferSrvHandle(GBufferType::ATMOSPHERE);
+    }
+
+    static ID3D12Resource* GetShadowDepthResource()
+    {
+        return m_ShadowDepthBuffer.Get();
+    }
+
+    static D3D12_CPU_DESCRIPTOR_HANDLE GetImGuiCpuHandle();
+    static D3D12_GPU_DESCRIPTOR_HANDLE GetImGuiGpuHandle();
 };

@@ -33,7 +33,8 @@ vector<RenderCapture::TextureData> reference;
 array<string, 8> meshPaths;
 ofstream measurements;
 vector<EntityID> buildings;
-void Check(bool success, const char *description)
+
+void Check(bool success, const char* description)
 {
     WriteGraphicsLog("GPU Visibility validation: %s %s\n", success ? "PASS" : "FAIL", description);
     if (!success)
@@ -41,7 +42,8 @@ void Check(bool success, const char *description)
         ++failures;
     }
 }
-void WriteGrid(const string &path, uint32_t subdivisions, uint32_t sections = 1)
+
+void WriteGrid(const string& path, uint32_t subdivisions, uint32_t sections = 1)
 {
     ofstream file(path);
     if (sections > 1)
@@ -78,6 +80,7 @@ void WriteGrid(const string &path, uint32_t subdivisions, uint32_t sections = 1)
         }
     }
 }
+
 EntityID Create(uint32_t index, bool isWall = false)
 {
     Entity entity = World::CreateEntity();
@@ -88,23 +91,24 @@ EntityID Create(uint32_t index, bool isWall = false)
     }
     entity.Add<TransformComponent>().Add<StaticModelComponent>().Add<MaterialComponent>().Add<LODComponent>();
     entity.Get<StaticModelComponent>().ModelId = isWall ? wallMeshID : meshID;
-    auto &transform = entity.Get<TransformComponent>();
+    auto& transform = entity.Get<TransformComponent>();
     transform.Position =
         isWall ? XMFLOAT3(0, 0, 0)
                : XMFLOAT3(float(index % 100) * 0.08f - 3.96f, float((index / 100) % 100) * 0.08f - 3.96f, 5);
     transform.Scale = isWall ? XMFLOAT3(20, 20, 1) : XMFLOAT3(0.035f, 0.035f, 0.035f);
-    auto &material = entity.Get<MaterialComponent>();
+    auto& material = entity.Get<MaterialComponent>();
     material.ShaderClassMode = MaterialMode::Manual;
     material.ShaderClass = ShaderClass::PBR;
     material.UseTexture = false;
     material.IsTransparent = false;
     material.Alpha = 1;
-    auto &lod = entity.Get<LODComponent>();
+    auto& lod = entity.Get<LODComponent>();
     lod.UseLOD = !isWall;
     lod.UseAssetSettings = false;
     lod.ScreenLOD.MeshPaths = meshPaths;
     return entity.GetID();
 }
+
 void Grow(uint32_t count)
 {
     while (fixtures.size() < count)
@@ -112,6 +116,7 @@ void Grow(uint32_t count)
         fixtures.push_back(Create(static_cast<uint32_t>(fixtures.size())));
     }
 }
+
 void Clear()
 {
     for (auto entity : fixtures)
@@ -136,6 +141,7 @@ void Clear()
     }
     wall = UINT32_MAX;
 }
+
 void Capture(bool compare)
 {
     vector<RenderCapture::TextureData> image(2);
@@ -155,8 +161,8 @@ void Capture(bool compare)
     bool dimensions = reference.size() == image.size();
     for (size_t i = 0; dimensions && i < image.size(); ++i)
     {
-        const auto &a = reference[i];
-        const auto &b = image[i];
+        const auto& a = reference[i];
+        const auto& b = image[i];
         dimensions &= a.Width == b.Width && a.Height == b.Height && a.Format == b.Format;
         if (!dimensions)
         {
@@ -166,8 +172,8 @@ void Capture(bool compare)
         {
             for (uint32_t x = 0; x < a.Width; ++x)
             {
-                const auto *first = a.Bytes.data() + y * a.RowPitch + x * 4;
-                const auto *second = b.Bytes.data() + y * b.RowPitch + x * 4;
+                const auto* first = a.Bytes.data() + y * a.RowPitch + x * 4;
+                const auto* second = b.Bytes.data() + y * b.RowPitch + x * 4;
                 if (i == 1)
                 {
                     float da, db;
@@ -186,6 +192,7 @@ void Capture(bool compare)
     WriteGraphicsLog("GPU Visibility image comparison: differences=%llu covered=%llu\n", differences, covered);
     Check(dimensions && differences == 0 && covered > 0, "occlusion OFF/ON image equivalence");
 }
+
 Visibility::Statistics ReadStats()
 {
     vector<uint8_t> bytes;
@@ -202,6 +209,7 @@ Visibility::Statistics ReadStats()
           "visibility counter conservation");
     return stats;
 }
+
 void ValidateSelectedCommands(uint32_t expectedLOD)
 {
     vector<uint8_t> counter, visible, commands, geometry;
@@ -245,25 +253,28 @@ void ValidateSelectedCommands(uint32_t expectedLOD)
     }
     Check(valid, "Indirect commands use exact selected LOD mesh geometry");
 }
+
 void SetHysteresisCamera(float screenSize)
 {
-    const auto *mesh = ModelManager::GetStaticModel(meshID);
+    const auto* mesh = ModelManager::GetStaticModel(meshID);
     const auto extents = mesh->GetAabbExtents();
     const float radius = sqrtf(extents.x * extents.x + extents.y * extents.y + extents.z * extents.z);
     const auto camera = Camera::GetCameraEntity();
-    auto &data = ComponentManager::GetComponentUnchecked<CameraComponent>(camera);
-    auto &transform = ComponentManager::GetComponentUnchecked<TransformComponent>(camera);
+    auto& data = ComponentManager::GetComponentUnchecked<CameraComponent>(camera);
+    auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(camera);
     const float focal = data.ProjectionMatrix._22;
     transform.Position = {0, 0, -(radius + radius * focal / screenSize)};
     transform.IsDirty = true;
     data.Target = {0, 0, 0};
 }
 } // namespace
+
 bool GPUVisibilityValidation::Enabled()
 {
     char value[8]{};
     return GetEnvironmentVariableA("DX12_GPU_VISIBILITY_STRESS_TEST", value, sizeof(value)) && atoi(value) != 0;
 }
+
 void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
 {
     // This suite exercises mesh-wide discrete LOD. Native continuous hierarchy
@@ -312,7 +323,7 @@ void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
     Raytracing::GetSettings().Enabled = false;
     DayNightCycle::GetSettings().Running = false;
     GPUDrivenRenderer::SetEnabled(true);
-    auto &settings = GPUVisibility::GetSettings();
+    auto& settings = GPUVisibility::GetSettings();
     settings.Frustum = true;
     settings.Occlusion = frame == 0 || frame >= 10;
     settings.LOD = frame >= 52;
@@ -320,8 +331,8 @@ void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
     settings.DebugMode = 0;
     settings.ForceLOD = -1;
     const auto cameraID = Camera::GetCameraEntity();
-    auto &camera = ComponentManager::GetComponentUnchecked<CameraComponent>(cameraID);
-    auto &transform = ComponentManager::GetComponentUnchecked<TransformComponent>(cameraID);
+    auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(cameraID);
+    auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(cameraID);
     transform.Position = {0, 0, -12};
     transform.IsDirty = true;
     camera.Target = {0, 0, 5};
@@ -359,7 +370,7 @@ void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
     {
         Clear();
         Grow(1);
-        auto &object = Entity(fixtures[0]).Get<TransformComponent>();
+        auto& object = Entity(fixtures[0]).Get<TransformComponent>();
         object.Position = {0, 0, 0};
         object.Scale = {1, 1, 1};
         object.IsDirty = true;
@@ -391,7 +402,7 @@ void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
         const auto path = "build/visibility/city-" + to_string(sections) + ".obj";
         WriteGrid(path, 2, sections);
         meshID = ModelManager::LoadStaticModel(path.c_str(), false);
-        auto *city = ModelManager::GetStaticModel(meshID);
+        auto* city = ModelManager::GetStaticModel(meshID);
         Check(city && city->LoadAssimpModel(path.c_str(), GraphicsDevice::GetDevice(), false) &&
                   city->GetMeshCount() == sections,
               "import independent city mesh sections");
@@ -402,7 +413,7 @@ void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
         {
             const auto id = Create(building, true);
             buildings.push_back(id);
-            auto &object = Entity(id).Get<TransformComponent>();
+            auto& object = Entity(id).Get<TransformComponent>();
             object.Position = {float(building % 4) * 1.8f - 2.7f, float(building / 4) * 2.4f - 2.4f, 0};
             object.Scale = {0.5f, 0.8f, 1};
             object.IsDirty = true;
@@ -439,6 +450,7 @@ void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
         OcclusionCulling::SetDebugPreview(frame == 135 ? 3u : 0u, true);
     }
 }
+
 void GPUVisibilityValidation::AfterFrame(uint64_t frame)
 {
     if (frame == 0 || !GPUDrivenRenderer::IsActive())
@@ -499,9 +511,9 @@ void GPUVisibilityValidation::AfterFrame(uint64_t frame)
     {
         const auto stats = ReadStats();
         Check(stats.Total >= (frame < 125 ? 50000u : 100000u), "large scene instance capacity");
-        const auto &profiler = RenderProfiler::GetLatest();
+        const auto& profiler = RenderProfiler::GetLatest();
         double cull = 0, lod = 0, opaque = 0, hiz = 0;
-        for (const auto &pass : profiler.Passes)
+        for (const auto& pass : profiler.Passes)
         {
             if (pass.Name == "GPU Scene Culling" || pass.Name == "Occlusion Culling")
             {
@@ -520,7 +532,7 @@ void GPUVisibilityValidation::AfterFrame(uint64_t frame)
                 hiz += pass.GpuMs;
             }
         }
-        const char *mode = frame == 106 ? "Frustum" : frame == 114 ? "Frustum+Occlusion" : "Frustum+Occlusion+LOD";
+        const char* mode = frame == 106 ? "Frustum" : frame == 114 ? "Frustum+Occlusion" : "Frustum+Occlusion+LOD";
         measurements << frame << ',' << mode << ',' << stats.Total << ',' << stats.FrustumVisible << ','
                      << stats.Occluded << ',' << stats.FinalVisible << ',' << stats.Triangles << ','
                      << stats.IndexVertices << ',' << profiler.GpuRenderMs << ',' << profiler.Pipeline.VSInvocations
@@ -542,8 +554,8 @@ void GPUVisibilityValidation::AfterFrame(uint64_t frame)
         }
         for (uint32_t level = 1; valid && level < mips.size(); ++level)
         {
-            const auto &source = mips[level - 1];
-            const auto &destination = mips[level];
+            const auto& source = mips[level - 1];
+            const auto& destination = mips[level];
             for (uint32_t y = 0; y < destination.Height && valid; ++y)
             {
                 for (uint32_t x = 0; x < destination.Width; ++x)
@@ -573,6 +585,7 @@ void GPUVisibilityValidation::AfterFrame(uint64_t frame)
               "GPU odd-resolution pyramid matches CPU max reduction at every mip");
     }
 }
+
 bool GPUVisibilityValidation::Finish()
 {
     GraphicsDevice::WaitForGpuIdle();

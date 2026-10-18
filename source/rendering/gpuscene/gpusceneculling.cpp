@@ -6,7 +6,7 @@
 #include "renderprofiler.h"
 #include "visibility/gpuvisibility.h"
 
-void GpuSceneCulling::Prepare(ID3D12Device *device, uint32_t slots, uint32_t frame)
+void GpuSceneCulling::Prepare(ID3D12Device* device, uint32_t slots, uint32_t frame)
 {
     Visibility.BeginFrame(frame);
     Visibility.Ensure(device, slots, sizeof(uint32_t), frame, L"GPU Scene Visibility", true);
@@ -49,29 +49,33 @@ void GpuSceneCulling::Prepare(ID3D12Device *device, uint32_t slots, uint32_t fra
     }
 }
 
-void GpuSceneCulling::ExecuteCulling(ID3D12GraphicsCommandList *commands, ID3D12Resource *instances,
-                                     ID3D12Resource *meshes, ID3D12Resource *materials, uint32_t slots,
+void GpuSceneCulling::ExecuteCulling(ID3D12GraphicsCommandList* commands, ID3D12Resource* instances,
+                                     ID3D12Resource* meshes, ID3D12Resource* materials, uint32_t slots,
                                      uint32_t meshCount, uint32_t materialCount)
 {
     if (!slots)
     {
         return;
     }
+
     struct Constants
     {
         XMFLOAT4X4 ViewProjection;
         uint32_t Slots, Meshes, Materials, EnableFrustum;
     } constants{};
+
     static_assert(sizeof(constants) == 80);
     XMStoreFloat4x4(&constants.ViewProjection, XMMatrixIdentity());
     const EntityID camera = Camera::GetCameraEntity();
     if (camera != g_kINVALID_ENTITY && ComponentManager::HasComponent<CameraComponent>(camera))
     {
-        const auto &data = ComponentManager::GetComponentUnchecked<CameraComponent>(camera);
+        const auto& data = ComponentManager::GetComponentUnchecked<CameraComponent>(camera);
         XMStoreFloat4x4(&constants.ViewProjection,
                         XMLoadFloat4x4(&data.ViewMatrix) * XMLoadFloat4x4(&data.ProjectionMatrix));
         if (GPUVisibility::GetSettings().FreezeCamera)
-            constants.ViewProjection=GPUVisibility::CullingViewProjection();
+        {
+            constants.ViewProjection = GPUVisibility::CullingViewProjection();
+        }
         constants.EnableFrustum = GPUVisibility::GetSettings().Frustum ? 1 : 0;
     }
     constants.Slots = slots;
@@ -87,4 +91,3 @@ void GpuSceneCulling::ExecuteCulling(ID3D12GraphicsCommandList *commands, ID3D12
     commands->SetComputeRoot32BitConstants(4, 20, &constants, 0);
     commands->Dispatch((slots + 63) / 64, 1, 1);
 }
-

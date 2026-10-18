@@ -2,9 +2,8 @@
 
 class EntityBase
 {
-public:
+  public:
     virtual ~EntityBase() = default;
 
     virtual void Create() = 0;
 };
-

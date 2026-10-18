@@ -4,7 +4,6 @@
 
 struct AnimationPlaybackLayer
 {
-	string AnimationName{};
-	float CurrentTime = 0.0f;
+    string AnimationName{};
+    float CurrentTime = 0.0f;
 };
-

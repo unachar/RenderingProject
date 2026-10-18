@@ -16,7 +16,7 @@ class GpuSceneSlots
     uint32_t m_Active = 0;
 
   public:
-    GPUInstanceID Register(const GPUInstanceData &data)
+    GPUInstanceID Register(const GPUInstanceData& data)
     {
         GPUInstanceID id;
         if (m_Free.empty())
@@ -42,6 +42,7 @@ class GpuSceneSlots
         MarkDirty(id);
         return id;
     }
+
     void Remove(GPUInstanceID id)
     {
         if (!IsActive(id))
@@ -53,9 +54,18 @@ class GpuSceneSlots
         --m_Active;
         MarkDirty(id);
     }
-    bool IsActive(GPUInstanceID id) const { return id < m_Data.size() && (m_Data[id].Flags & 1u); }
-    uint64_t Generation(GPUInstanceID id) const { return IsActive(id) ? m_Generations[id] : 0; }
-    void Update(GPUInstanceID id, const GPUInstanceData &data)
+
+    bool IsActive(GPUInstanceID id) const
+    {
+        return id < m_Data.size() && (m_Data[id].Flags & 1u);
+    }
+
+    uint64_t Generation(GPUInstanceID id) const
+    {
+        return IsActive(id) ? m_Generations[id] : 0;
+    }
+
+    void Update(GPUInstanceID id, const GPUInstanceData& data)
     {
         if (!IsActive(id))
         {
@@ -77,13 +87,13 @@ class GpuSceneSlots
         m_Data[id] = data;
         MarkDirty(id);
     }
+
     void SettlePreviousTransforms()
     {
         // One follow-up update clears velocity on the first stationary frame after a move.
         for (GPUInstanceID id : m_Moving)
         {
-            if (IsActive(id) &&
-                memcmp(&m_Data[id].PreviousWorld, &m_Data[id].World, sizeof(m_Data[id].World)) != 0)
+            if (IsActive(id) && memcmp(&m_Data[id].PreviousWorld, &m_Data[id].World, sizeof(m_Data[id].World)) != 0)
             {
                 m_Data[id].PreviousWorld = m_Data[id].World;
                 MarkDirty(id);
@@ -91,6 +101,7 @@ class GpuSceneSlots
         }
         m_Moving.clear();
     }
+
     void MarkDirty(GPUInstanceID id)
     {
         if (!m_Dirty.at(id))
@@ -99,6 +110,7 @@ class GpuSceneSlots
             m_Updates.push_back(id);
         }
     }
+
     void ClearUpdates()
     {
         for (GPUInstanceID id : m_Updates)
@@ -107,8 +119,19 @@ class GpuSceneSlots
         }
         m_Updates.clear();
     }
-    uint32_t ActiveCount() const { return m_Active; }
-    const vector<GPUInstanceData> &Data() const { return m_Data; }
-    const vector<GPUInstanceID> &Updates() const { return m_Updates; }
-};
 
+    uint32_t ActiveCount() const
+    {
+        return m_Active;
+    }
+
+    const vector<GPUInstanceData>& Data() const
+    {
+        return m_Data;
+    }
+
+    const vector<GPUInstanceID>& Updates() const
+    {
+        return m_Updates;
+    }
+};

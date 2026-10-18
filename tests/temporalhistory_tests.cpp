@@ -8,7 +8,10 @@ namespace
 {
 void Check(bool condition, const char* message)
 {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+    {
+        throw std::runtime_error(message);
+    }
 }
 
 void TestHistory()
@@ -25,8 +28,7 @@ void TestHistory()
     current.Serial = 11;
     Check(Evaluate(previous, current, true).CanReuse, "continuous camera movement has no reset flag");
     Check(Evaluate(previous, current, false).Reasons == FirstFrame, "invalid previous history");
-    const auto expectReason = [&](State value, uint32_t reason, const char* message)
-    {
+    const auto expectReason = [&](State value, uint32_t reason, const char* message) {
         const auto decision = Evaluate(previous, value, true);
         Check(!decision.CanReuse && (decision.Reasons & reason) != 0, message);
     };
@@ -92,16 +94,16 @@ void TestSharedContext()
     current = Context::Capture(4, 600, 300, 1);
     Check((Evaluate(beforeCut, current, true).Reasons & CameraChanged) != 0, "same-camera cut generation");
     Check(Context::Capture(4, 600, 300, 1).CameraCutGeneration == current.CameraCutGeneration,
-        "notification is not consumed by the first effect");
+          "notification is not consumed by the first effect");
     Context::NotifyLightingChanged();
     Context::NotifyLodChanged();
     Context::BeginFrame(2001, 1000);
     current = Context::Capture(4, 600, 300, 1);
     const auto reasons = Evaluate(beforeCut, current, true).Reasons;
     Check((reasons & LightingChanged) && (reasons & LodChanged) && (reasons & ResolutionChanged),
-        "independent generations and output extent reach all effects");
+          "independent generations and output extent reach all effects");
 }
-}
+} // namespace
 
 int main()
 {

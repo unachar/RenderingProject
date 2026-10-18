@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+
 namespace GpuSceneValidation
 {
 void BeforeFrame(uint64_t frame);
@@ -9,4 +10,3 @@ bool UseLegacyCulling();
 void RecordModelCull(bool resident);
 uint32_t Failures();
 } // namespace GpuSceneValidation
-

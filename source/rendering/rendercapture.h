@@ -13,13 +13,11 @@ struct TextureData
 };
 
 bool ReadTexture(ID3D12Resource* texture, TextureData& output);
-bool ReadTextureMip(ID3D12Resource* texture, TextureData& output, UINT mip,
-    D3D12_RESOURCE_STATES state);
+bool ReadTextureMip(ID3D12Resource* texture, TextureData& output, UINT mip, D3D12_RESOURCE_STATES state);
 bool ReadTextureSlice(ID3D12Resource* texture, TextureData& output, UINT slice);
-bool ReadBuffer(ID3D12Resource* buffer, D3D12_RESOURCE_STATES state, UINT64 bytes,
-    vector<uint8_t>& output);
+bool ReadBuffer(ID3D12Resource* buffer, D3D12_RESOURCE_STATES state, UINT64 bytes, vector<uint8_t>& output);
 bool SaveScenePng(const wchar_t* path);
 bool SaveTexturePng(ID3D12Resource* resource, const wchar_t* path);
 float HalfToFloat(uint16_t value);
 UINT ReportGraphicsErrors();
-}
+} // namespace RenderCapture

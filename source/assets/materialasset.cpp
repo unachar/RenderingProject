@@ -57,8 +57,7 @@ bool WriteAssetFile(const std::filesystem::path& path, const std::string& conten
 bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string& error)
 {
     error.clear();
-    auto range = [&](float value, float minimum, float maximum, const char* property)
-    {
+    auto range = [&](float value, float minimum, float maximum, const char* property) {
         if (!std::isfinite(value) || value < minimum || value > maximum)
         {
             error = std::string("Invalid ") + property;
@@ -80,22 +79,23 @@ bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string
             return false;
         }
     }
-    if (!range(material.Metallic, 0, 1, "metallic") ||
-        !range(material.Roughness, 0, 1, "roughness") ||
-        !range(material.NormalScale, 0, 8, "normalScale") ||
-        !range(material.AOStrength, 0, 1, "aoStrength") ||
+    if (!range(material.Metallic, 0, 1, "metallic") || !range(material.Roughness, 0, 1, "roughness") ||
+        !range(material.NormalScale, 0, 8, "normalScale") || !range(material.AOStrength, 0, 1, "aoStrength") ||
         !range(material.EmissiveIntensity, 0, 65504, "emissiveIntensity") ||
-        !range(material.AlphaCutoff, 0, 1, "alphaCutoff") ||
-        !range(material.ShadowCutoff, 0, 1, "shadowCutoff") ||
+        !range(material.AlphaCutoff, 0, 1, "alphaCutoff") || !range(material.ShadowCutoff, 0, 1, "shadowCutoff") ||
         !range(material.IOR, 1, 10, "ior") || !range(material.Transmission, 0, 1, "transmission") ||
         !range(material.TransmissionRoughness, 0, 1, "transmissionRoughness") ||
-        !range(material.Thickness, 0, 65504, "thickness") ||
-        !range(material.ShadingStrength, 0, 1, "shadingStrength"))
+        !range(material.Thickness, 0, 65504, "thickness") || !range(material.ShadingStrength, 0, 1, "shadingStrength"))
     {
         return false;
     }
     for (float channel : material.AbsorptionCoefficient)
-        if (!range(channel, 0, 65504, "absorptionCoefficient")) return false;
+    {
+        if (!range(channel, 0, 65504, "absorptionCoefficient"))
+        {
+            return false;
+        }
+    }
     if (material.Surface > MaterialSurface::Transparent || material.Cull > MaterialCull::Front ||
         material.ShadowMode > MaterialShadowMode::Auto)
     {
@@ -108,6 +108,7 @@ bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string
 namespace
 {
 constexpr const char* textureNames[] = {"baseColor", "normal", "metallicRoughness", "ao", "emissive"};
+
 bool ReadFloat(const Json::Value& object, const char* name, float& value, std::string& error)
 {
     if (!object.isMember(name))
@@ -122,7 +123,8 @@ bool ReadFloat(const Json::Value& object, const char* name, float& value, std::s
     value = object[name].asFloat();
     return true;
 }
-template<size_t Count>
+
+template <size_t Count>
 bool ReadColor(const Json::Value& object, const char* name, std::array<float, Count>& color, std::string& error)
 {
     if (!object.isMember(name))
@@ -146,7 +148,7 @@ bool ReadColor(const Json::Value& object, const char* name, std::array<float, Co
     }
     return true;
 }
-}
+} // namespace
 
 bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetData& material, std::string& error)
 {
@@ -242,8 +244,14 @@ bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetDa
         {
             result.ShadowMode = MaterialShadowMode::AlphaTest;
         }
-        else if (mode == "Opaque") result.ShadowMode = MaterialShadowMode::Opaque;
-        else if (mode == "Transmittance") result.ShadowMode = MaterialShadowMode::Transmittance;
+        else if (mode == "Opaque")
+        {
+            result.ShadowMode = MaterialShadowMode::Opaque;
+        }
+        else if (mode == "Transmittance")
+        {
+            result.ShadowMode = MaterialShadowMode::Transmittance;
+        }
         else if (mode != "Auto")
         {
             error = "Invalid shadowMode";
@@ -351,7 +359,10 @@ bool MaterialSerializer::Save(const std::filesystem::path& path, const MaterialA
     parameters["thickness"] = material.Thickness;
     parameters["shadingModel"] = material.ShadingModel;
     parameters["shadingStrength"] = material.ShadingStrength;
-    for (float value : material.AbsorptionCoefficient) parameters["absorptionCoefficient"].append(value);
+    for (float value : material.AbsorptionCoefficient)
+    {
+        parameters["absorptionCoefficient"].append(value);
+    }
     parameters["roughness"] = material.Roughness;
     parameters["normalScale"] = material.NormalScale;
     parameters["aoStrength"] = material.AOStrength;

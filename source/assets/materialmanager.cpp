@@ -14,7 +14,7 @@ namespace
 unordered_map<AssetHandle, unique_ptr<MaterialRuntime>> runtimes;
 AssetRegistry registry;
 bool sceneHasAssets = false;
-}
+} // namespace
 
 bool SceneHasMaterialAssets()
 {
@@ -101,7 +101,8 @@ const MaterialRuntime* MaterialManager::FindRuntime(AssetHandle handle)
     return found == runtimes.end() ? nullptr : found->second.get();
 }
 
-MaterialComponent MaterialManager::BuildPreviewBinding(const MaterialAssetData& material, const array<int, 5>& descriptors)
+MaterialComponent MaterialManager::BuildPreviewBinding(const MaterialAssetData& material,
+                                                       const array<int, 5>& descriptors)
 {
     MaterialComponent binding;
     binding.ShaderClassMode = MaterialMode::Manual;
@@ -131,7 +132,8 @@ MaterialComponent MaterialManager::BuildPreviewBinding(const MaterialAssetData& 
     binding.Thickness = material.Thickness;
     binding.ShadingModel = material.ShadingModel;
     binding.ShadingStrength = material.ShadingStrength;
-    binding.AbsorptionCoefficient = {material.AbsorptionCoefficient[0], material.AbsorptionCoefficient[1], material.AbsorptionCoefficient[2]};
+    binding.AbsorptionCoefficient = {material.AbsorptionCoefficient[0], material.AbsorptionCoefficient[1],
+                                     material.AbsorptionCoefficient[2]};
     binding.DoubleSided = material.Cull == MaterialCull::None;
     binding.BaseSaturation = 1.0f;
     binding.TextureID = descriptors[0];
@@ -154,7 +156,8 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
         {
             const auto previousHandle = runtime.Editing.Textures[slot];
             const auto previousPath = runtime.TexturePaths[slot];
-            if (previousHandle == material.Textures[slot] && previousPath == path && runtime.TextureDescriptors[slot] >= 0)
+            if (previousHandle == material.Textures[slot] && previousPath == path &&
+                runtime.TextureDescriptors[slot] >= 0)
             {
                 descriptors[slot] = runtime.TextureDescriptors[slot];
             }
@@ -176,15 +179,16 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
     auto binding = BuildPreviewBinding(material, descriptors);
     binding.RuntimeHandle = runtime.Handle;
     // Revision changes invalidate only a shared material record and its frame constant buffers.
-    if (runtime.Revision == 0 || runtime.Binding.BaseColor.x != binding.BaseColor.x ||
-        runtime.BoundData != material || runtime.TextureDescriptors != descriptors)
+    if (runtime.Revision == 0 || runtime.Binding.BaseColor.x != binding.BaseColor.x || runtime.BoundData != material ||
+        runtime.TextureDescriptors != descriptors)
     {
         if (runtime.Revision == 0 || runtime.BoundData.Cull != material.Cull ||
             runtime.BoundData.Surface != material.Surface || runtime.BoundData.DepthWrite != material.DepthWrite ||
             runtime.Binding.IsTransparent != binding.IsTransparent ||
             (material.Surface == MaterialSurface::Masked && (runtime.BoundData.AlphaCutoff != material.AlphaCutoff ||
-                runtime.BoundData.BaseColor[3] != material.BaseColor[3] || runtime.BoundData.Textures[0] != material.Textures[0] ||
-                runtime.TextureDescriptors[0] != descriptors[0])))
+                                                             runtime.BoundData.BaseColor[3] != material.BaseColor[3] ||
+                                                             runtime.BoundData.Textures[0] != material.Textures[0] ||
+                                                             runtime.TextureDescriptors[0] != descriptors[0])))
         {
             ++runtime.PipelineRevision;
         }
@@ -263,11 +267,11 @@ bool MaterialManager::Revert(AssetHandle handle)
 bool MaterialManager::IsRenderable(EntityID entity)
 {
     return ::Registry::IsAlive(entity) && ComponentManager::HasComponent<MaterialComponent>(entity) &&
-        (ComponentManager::HasComponent<StaticModelComponent>(entity) ||
-         ComponentManager::HasComponent<AnimationModelComponent>(entity) ||
-         ComponentManager::HasComponent<MeshComponent>(entity) ||
-         (ComponentManager::HasComponent<SpriteComponent>(entity) &&
-          ComponentManager::GetComponentUnchecked<SpriteComponent>(entity).Is3D));
+           (ComponentManager::HasComponent<StaticModelComponent>(entity) ||
+            ComponentManager::HasComponent<AnimationModelComponent>(entity) ||
+            ComponentManager::HasComponent<MeshComponent>(entity) ||
+            (ComponentManager::HasComponent<SpriteComponent>(entity) &&
+             ComponentManager::GetComponentUnchecked<SpriteComponent>(entity).Is3D));
 }
 
 void MaterialManager::Discard(AssetHandle handle)
@@ -307,7 +311,8 @@ size_t MaterialManager::SlotCount(EntityID entity)
     }
     if (ComponentManager::HasComponent<StaticModelComponent>(entity))
     {
-        const auto* model = ModelManager::GetStaticModel(ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId);
+        const auto* model =
+            ModelManager::GetStaticModel(ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId);
         if (model)
         {
             return model->GetMeshCount();
@@ -315,7 +320,8 @@ size_t MaterialManager::SlotCount(EntityID entity)
     }
     if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
     {
-        const auto* model = ModelManager::GetAnimModel(ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelId);
+        const auto* model = ModelManager::GetAnimModel(
+            ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelId);
         if (model)
         {
             return model->GetMeshCount();
@@ -334,8 +340,9 @@ bool MaterialManager::Assign(EntityID entity, size_t slot, AssetHandle handle)
     auto& component = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
     component.MaterialSlots.resize(SlotCount(entity));
     component.MaterialSlots[slot] = handle;
-    if (all_of(component.MaterialSlots.begin(), component.MaterialSlots.end(), [](AssetHandle assigned)
-        { return assigned == 0; }))
+    if (all_of(component.MaterialSlots.begin(), component.MaterialSlots.end(), [](AssetHandle assigned) {
+            return assigned == 0;
+        }))
     {
         component.MaterialSlots.clear();
     }
@@ -350,7 +357,9 @@ void MaterialManager::NotifyAssignmentsChanged()
     for (EntityID entity : World::GetView<MaterialComponent>())
     {
         const auto& slots = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity).MaterialSlots;
-        if (any_of(slots.begin(), slots.end(), [](AssetHandle handle) { return handle != 0; }))
+        if (any_of(slots.begin(), slots.end(), [](AssetHandle handle) {
+                return handle != 0;
+            }))
         {
             sceneHasAssets = true;
             return;

@@ -16,16 +16,22 @@
 #include "rendermeasurement.h"
 #include "raytelemetry.h"
 
-
 class RenderProfiler final
 {
-public:
+  public:
     static constexpr UINT kFrameCount = 3;
-    static constexpr UINT kMaxTimestampQueriesPerFrame = 1024; // 128 では内訳の計測で枠が尽き、後半のパスの GPU 時間が 0 と表示されていた
+    static constexpr UINT kMaxTimestampQueriesPerFrame =
+        1024; // 128 では内訳の計測で枠が尽き、後半のパスの GPU 時間が 0 と表示されていた
     static constexpr UINT kInvalidGpuToken = UINT_MAX;
     static constexpr size_t kHistoryLength = 180;
 
-    enum class ValidationFault : uint32_t { None, ExhaustQueries, UnclosedScope, OutOfOrderEnd };
+    enum class ValidationFault : uint32_t
+    {
+        None,
+        ExhaustQueries,
+        UnclosedScope,
+        OutOfOrderEnd
+    };
 
     struct PassTiming
     {
@@ -76,18 +82,21 @@ public:
         uint64_t MetadataBytes = 0, UploadBytes = 0;
         double CpuMilliseconds = 0, IoMilliseconds = 0, CopyMilliseconds = 0;
     };
+
     struct GeometryTemporalStatistics
     {
         uint64_t FirstVisible = 0, Candidates = 0, SecondVisible = 0, LodTransitions = 0, CapacityFallbacks = 0;
         uint64_t HistoryBytes = 0, CandidateBytes = 0;
         bool HasSample = false;
     };
+
     struct GeometryBinningStatistics
     {
-        std::array<uint32_t,3> ActiveBins{}, Clusters{}, OverflowClusters{}, InvalidMaterials{};
-        std::array<bool,3> HasSample{};
+        std::array<uint32_t, 3> ActiveBins{}, Clusters{}, OverflowClusters{}, InvalidMaterials{};
+        std::array<bool, 3> HasSample{};
         uint64_t BufferBytes = 0;
     };
+
     struct FrameSnapshot
     {
         uint64_t Serial = 0;
@@ -110,7 +119,7 @@ public:
         RayTelemetry::Counts Rays;
     };
 
-private:
+  private:
     struct GpuEvent
     {
         string Name;
@@ -190,20 +199,13 @@ private:
         return properties;
     }
 
-    static bool CreateReadbackBuffer(
-        ID3D12Device* device,
-        UINT64 sizeInBytes,
-        Microsoft::WRL::ComPtr<ID3D12Resource>& output)
+    static bool CreateReadbackBuffer(ID3D12Device* device, UINT64 sizeInBytes,
+                                     Microsoft::WRL::ComPtr<ID3D12Resource>& output)
     {
         const D3D12_HEAP_PROPERTIES heap = ReadbackHeapProperties();
         const D3D12_RESOURCE_DESC description = BufferDescription(sizeInBytes);
         return SUCCEEDED(device->CreateCommittedResource(
-            &heap,
-            D3D12_HEAP_FLAG_NONE,
-            &description,
-            D3D12_RESOURCE_STATE_COPY_DEST,
-            nullptr,
-            IID_PPV_ARGS(&output)));
+            &heap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&output)));
     }
 
     static bool EnsureGpuResources(ID3D12Device* device, ID3D12CommandQueue* queue)
@@ -228,15 +230,12 @@ private:
         timestampDescription.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
         timestampDescription.Count = kFrameCount * kMaxTimestampQueriesPerFrame;
         timestampDescription.NodeMask = 0;
-        if (FAILED(device->CreateQueryHeap(
-            &timestampDescription,
-            IID_PPV_ARGS(&s_TimestampHeap))))
+        if (FAILED(device->CreateQueryHeap(&timestampDescription, IID_PPV_ARGS(&s_TimestampHeap))))
         {
             return false;
         }
 
-        const UINT64 timestampBytes =
-            static_cast<UINT64>(timestampDescription.Count) * sizeof(UINT64);
+        const UINT64 timestampBytes = static_cast<UINT64>(timestampDescription.Count) * sizeof(UINT64);
         if (!CreateReadbackBuffer(device, timestampBytes, s_TimestampReadback))
         {
             return false;
@@ -246,15 +245,12 @@ private:
         pipelineDescription.Type = D3D12_QUERY_HEAP_TYPE_PIPELINE_STATISTICS;
         pipelineDescription.Count = kFrameCount;
         pipelineDescription.NodeMask = 0;
-        if (FAILED(device->CreateQueryHeap(
-            &pipelineDescription,
-            IID_PPV_ARGS(&s_PipelineStatisticsHeap))))
+        if (FAILED(device->CreateQueryHeap(&pipelineDescription, IID_PPV_ARGS(&s_PipelineStatisticsHeap))))
         {
             return false;
         }
 
-        const UINT64 pipelineBytes =
-            static_cast<UINT64>(kFrameCount) * sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS);
+        const UINT64 pipelineBytes = static_cast<UINT64>(kFrameCount) * sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS);
         if (!CreateReadbackBuffer(device, pipelineBytes, s_PipelineStatisticsReadback))
         {
             return false;
@@ -277,7 +273,7 @@ private:
                 return pass;
             }
         }
-        snapshot.Passes.push_back({ name });
+        snapshot.Passes.push_back({name});
         return snapshot.Passes.back();
     }
 
@@ -303,17 +299,15 @@ private:
 
         if (s_GpuResourcesReady && slot.TimestampQueryCount > 0)
         {
-            const UINT64 firstQuery =
-                static_cast<UINT64>(frameIndex) * kMaxTimestampQueriesPerFrame;
+            const UINT64 firstQuery = static_cast<UINT64>(frameIndex) * kMaxTimestampQueriesPerFrame;
             const UINT64 byteOffset = firstQuery * sizeof(UINT64);
-            const UINT64 byteSize =
-                static_cast<UINT64>(slot.TimestampQueryCount) * sizeof(UINT64);
-            D3D12_RANGE readRange{ byteOffset, byteOffset + byteSize };
+            const UINT64 byteSize = static_cast<UINT64>(slot.TimestampQueryCount) * sizeof(UINT64);
+            D3D12_RANGE readRange{byteOffset, byteOffset + byteSize};
             void* mapped = nullptr;
             if (SUCCEEDED(s_TimestampReadback->Map(0, &readRange, &mapped)) && mapped)
             {
-                const auto* timestamps = reinterpret_cast<const UINT64*>(
-                    static_cast<const uint8_t*>(mapped) + byteOffset);
+                const auto* timestamps =
+                    reinterpret_cast<const UINT64*>(static_cast<const uint8_t*>(mapped) + byteOffset);
                 vector<RenderMeasurement::EventInterval> intervals;
                 intervals.reserve(slot.GpuEvents.size());
                 for (UINT index = 0; index < slot.GpuEvents.size(); ++index)
@@ -324,8 +318,7 @@ private:
                     interval.ParentId = event.ParentId;
                     // This profiler currently timestamps the ordered direct queue only.
                     interval.QueueId = 0;
-                    if (event.Ended && event.ScopeCompleted &&
-                        event.BeginLocalQuery < slot.TimestampQueryCount &&
+                    if (event.Ended && event.ScopeCompleted && event.BeginLocalQuery < slot.TimestampQueryCount &&
                         event.EndLocalQuery < slot.TimestampQueryCount)
                     {
                         interval.Begin = timestamps[event.BeginLocalQuery];
@@ -346,9 +339,8 @@ private:
                         snapshot.GpuEvents.push_back(move(timing));
                         continue;
                     }
-                    const double milliseconds =
-                        static_cast<double>(interval.End - interval.Begin) * 1000.0 /
-                        static_cast<double>(s_TimestampFrequency);
+                    const double milliseconds = static_cast<double>(interval.End - interval.Begin) * 1000.0 /
+                                                static_cast<double>(s_TimestampFrequency);
                     timing.InclusiveMs = milliseconds;
                     pass.GpuMs += milliseconds;
                     ++pass.GpuSamples;
@@ -366,26 +358,22 @@ private:
                         snapshot.GpuTimingValid = true;
                     }
                 }
-                const D3D12_RANGE noWrites{ 0, 0 };
+                const D3D12_RANGE noWrites{0, 0};
                 s_TimestampReadback->Unmap(0, &noWrites);
             }
 
             const UINT64 pipelineOffset =
                 static_cast<UINT64>(frameIndex) * sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS);
-            D3D12_RANGE pipelineReadRange{
-                pipelineOffset,
-                pipelineOffset + sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS)
-            };
+            D3D12_RANGE pipelineReadRange{pipelineOffset,
+                                          pipelineOffset + sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS)};
             mapped = nullptr;
-            if (slot.PipelineQueryStarted && SUCCEEDED(s_PipelineStatisticsReadback->Map(
-                0,
-                &pipelineReadRange,
-                &mapped)) && mapped)
+            if (slot.PipelineQueryStarted &&
+                SUCCEEDED(s_PipelineStatisticsReadback->Map(0, &pipelineReadRange, &mapped)) && mapped)
             {
                 snapshot.Pipeline = *reinterpret_cast<const D3D12_QUERY_DATA_PIPELINE_STATISTICS*>(
                     static_cast<const uint8_t*>(mapped) + pipelineOffset);
                 snapshot.PipelineStatisticsValid = !slot.PipelineQueryClosed;
-                const D3D12_RANGE noWrites{ 0, 0 };
+                const D3D12_RANGE noWrites{0, 0};
                 s_PipelineStatisticsReadback->Unmap(0, &noWrites);
             }
         }
@@ -394,7 +382,9 @@ private:
         s_HasLatest = true;
         PushHistory(s_CpuHistory, static_cast<float>(s_Latest.CpuRenderMs));
         if (s_Latest.GpuTimingValid)
+        {
             PushHistory(s_GpuHistory, static_cast<float>(s_Latest.GpuRenderMs));
+        }
         slot.Pending = false;
     }
 
@@ -407,10 +397,10 @@ private:
         return nullptr;
     }
 
-public:
+  public:
     class ScopedEvent final
     {
-    private:
+      private:
         const char* m_Name = nullptr;
         ID3D12GraphicsCommandList* m_CommandList = nullptr;
         UINT m_GpuToken = kInvalidGpuToken;
@@ -419,9 +409,8 @@ public:
         uint64_t m_DrawCallsBegin = 0;
         uint64_t m_FrameSerial = 0;
 
-    public:
-        ScopedEvent(const char* name, ID3D12GraphicsCommandList* commandList)
-            : m_Name(name), m_CommandList(commandList)
+      public:
+        ScopedEvent(const char* name, ID3D12GraphicsCommandList* commandList) : m_Name(name), m_CommandList(commandList)
         {
             if (!RenderProfiler::IsFrameActive() || !name)
             {
@@ -450,10 +439,11 @@ public:
             }
             m_Active = false;
             if (!ActiveSnapshot() || ActiveSnapshot()->Serial != m_FrameSerial)
+            {
                 return;
+            }
             RenderProfiler::EndGpuEvent(m_GpuToken, m_CommandList);
-            const double cpuMs = chrono::duration<double, milli>(
-                Clock::now() - m_CpuBegin).count();
+            const double cpuMs = chrono::duration<double, milli>(Clock::now() - m_CpuBegin).count();
             RenderProfiler::RecordCpuPass(m_Name, cpuMs);
             FindOrCreatePass(*ActiveSnapshot(), m_Name).DrawCalls +=
                 ActiveSnapshot()->Calls.DrawCalls - m_DrawCallsBegin;
@@ -475,17 +465,25 @@ public:
         return s_Enabled;
     }
 
-    static uint64_t GetFrameSerial() { return s_FrameSerial; }
+    static uint64_t GetFrameSerial()
+    {
+        return s_FrameSerial;
+    }
 
     static void RecordCpuFrameTime(uint64_t serial, double milliseconds)
     {
         const auto now = Clock::now();
         for (auto& slot : s_FrameSlots)
         {
-            if (!slot.Pending || slot.Snapshot.Serial != serial) continue;
+            if (!slot.Pending || slot.Snapshot.Serial != serial)
+            {
+                continue;
+            }
             slot.Snapshot.CpuFrameMs = milliseconds;
             if (s_LastCpuFrameSerial != 0 && serial == s_LastCpuFrameSerial + 1)
+            {
                 slot.Snapshot.FrameIntervalMs = chrono::duration<double, milli>(now - s_LastCpuFrameEnd).count();
+            }
             s_LastCpuFrameEnd = now;
             s_LastCpuFrameSerial = serial;
             break;
@@ -495,10 +493,16 @@ public:
     // Caller must first wait for all direct-queue submissions to finish.
     static void DrainCompletedFrames(const std::function<void(const FrameSnapshot&)>& visitor)
     {
-        if (IsFrameActive()) return;
+        if (IsFrameActive())
+        {
+            return;
+        }
         for (UINT index = 0; index < kFrameCount; ++index)
         {
-            if (!s_FrameSlots[index].Pending) continue;
+            if (!s_FrameSlots[index].Pending)
+            {
+                continue;
+            }
             ConsumeCompletedSlot(index);
             visitor(s_Latest);
         }
@@ -508,7 +512,10 @@ public:
     // heap capacity is unchanged; the fault is part of the resolved frame record.
     static void SetValidationFault(ValidationFault fault)
     {
-        if (!IsFrameActive()) s_ValidationFault = fault;
+        if (!IsFrameActive())
+        {
+            s_ValidationFault = fault;
+        }
     }
 
     static const FrameSnapshot& GetLatest()
@@ -528,19 +535,25 @@ public:
             s_ActiveSlot->Snapshot.Streaming = value;
         }
     }
+
     static void RecordGeometryTemporal(const GeometryTemporalStatistics& value)
     {
-        if (s_ActiveSlot) s_ActiveSlot->Snapshot.Temporal = value;
+        if (s_ActiveSlot)
+        {
+            s_ActiveSlot->Snapshot.Temporal = value;
+        }
     }
+
     static void RecordGeometryBinning(const GeometryBinningStatistics& value)
     {
-        if (s_ActiveSlot) s_ActiveSlot->Snapshot.Binning = value;
+        if (s_ActiveSlot)
+        {
+            s_ActiveSlot->Snapshot.Binning = value;
+        }
     }
-    static void BeginFrame(
-        ID3D12Device* device,
-        ID3D12CommandQueue* queue,
-        ID3D12GraphicsCommandList* commandList,
-        UINT frameIndex)
+
+    static void BeginFrame(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12GraphicsCommandList* commandList,
+                           UINT frameIndex)
     {
         if (!s_Enabled || !commandList)
         {
@@ -571,29 +584,29 @@ public:
 
         if (slot.PipelineQueryStarted)
         {
-            commandList->BeginQuery(
-                s_PipelineStatisticsHeap.Get(),
-                D3D12_QUERY_TYPE_PIPELINE_STATISTICS,
-                frameIndex);
+            commandList->BeginQuery(s_PipelineStatisticsHeap.Get(), D3D12_QUERY_TYPE_PIPELINE_STATISTICS, frameIndex);
         }
         s_FrameGpuToken = BeginGpuEvent("Frame", commandList);
         if (s_ValidationFault == ValidationFault::UnclosedScope)
+        {
             BeginGpuEvent("Validation Unclosed", commandList);
+        }
         if (s_ValidationFault == ValidationFault::OutOfOrderEnd)
         {
             const UINT parent = BeginGpuEvent("Validation Parent", commandList);
             BeginGpuEvent("Validation Child", commandList);
             EndGpuEvent(parent, commandList);
         }
-        RayTelemetry::Data().BeginFrame(device, commandList, slot.Snapshot.Serial, frameIndex, RayTelemetry::Requested());
+        RayTelemetry::Data().BeginFrame(device, commandList, slot.Snapshot.Serial, frameIndex,
+                                        RayTelemetry::Requested());
     }
 
     static void PrepareCommandListSplit(ID3D12GraphicsCommandList* commandList)
     {
         if (s_ActiveSlot && s_GpuResourcesReady && !s_ActiveSlot->PipelineQueryClosed)
         {
-            commandList->EndQuery(s_PipelineStatisticsHeap.Get(),
-                D3D12_QUERY_TYPE_PIPELINE_STATISTICS, s_ActiveFrameIndex);
+            commandList->EndQuery(s_PipelineStatisticsHeap.Get(), D3D12_QUERY_TYPE_PIPELINE_STATISTICS,
+                                  s_ActiveFrameIndex);
             // Pipeline statistics cannot span command-list resets. Timestamp pairs
             // remain valid across the GPU-ordered D3D12/CUDA submissions.
             s_ActiveSlot->PipelineQueryClosed = true;
@@ -602,36 +615,36 @@ public:
 
     static UINT BeginGpuEvent(const char* name, ID3D12GraphicsCommandList* commandList)
     {
-        const UINT queryLimit = s_ValidationFault == ValidationFault::ExhaustQueries ? 2u : kMaxTimestampQueriesPerFrame;
+        const UINT queryLimit =
+            s_ValidationFault == ValidationFault::ExhaustQueries ? 2u : kMaxTimestampQueriesPerFrame;
         if (!s_ActiveSlot || !s_GpuResourcesReady || !commandList || !name ||
             s_ActiveSlot->TimestampQueryCount + 2 > queryLimit)
         {
-            if (s_ActiveSlot) ++s_ActiveSlot->Snapshot.DroppedGpuEvents;
+            if (s_ActiveSlot)
+            {
+                ++s_ActiveSlot->Snapshot.DroppedGpuEvents;
+            }
             return kInvalidGpuToken;
         }
 
         const UINT beginLocal = s_ActiveSlot->TimestampQueryCount++;
         const UINT endLocal = s_ActiveSlot->TimestampQueryCount++;
-        const UINT absoluteBegin =
-            s_ActiveFrameIndex * kMaxTimestampQueriesPerFrame + beginLocal;
-		commandList->SetMarker(0, name, static_cast<UINT>(strlen(name)));
-        commandList->EndQuery(
-            s_TimestampHeap.Get(),
-            D3D12_QUERY_TYPE_TIMESTAMP,
-            absoluteBegin);
+        const UINT absoluteBegin = s_ActiveFrameIndex * kMaxTimestampQueriesPerFrame + beginLocal;
+        commandList->SetMarker(0, name, static_cast<UINT>(strlen(name)));
+        commandList->EndQuery(s_TimestampHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, absoluteBegin);
 
         const UINT parent = s_OpenGpuEvents.empty() ? RenderMeasurement::NoParent : s_OpenGpuEvents.back();
         const UINT depth = static_cast<UINT>(s_OpenGpuEvents.size());
         const UINT token = static_cast<UINT>(s_ActiveSlot->GpuEvents.size());
-        s_ActiveSlot->GpuEvents.push_back({ name, beginLocal, endLocal, false, parent, depth, false });
+        s_ActiveSlot->GpuEvents.push_back({name, beginLocal, endLocal, false, parent, depth, false});
         s_OpenGpuEvents.push_back(token);
         return token;
     }
 
     static void EndGpuEvent(UINT token, ID3D12GraphicsCommandList* commandList)
     {
-        if (!s_ActiveSlot || !s_GpuResourcesReady || !commandList ||
-            token == kInvalidGpuToken || token >= s_ActiveSlot->GpuEvents.size())
+        if (!s_ActiveSlot || !s_GpuResourcesReady || !commandList || token == kInvalidGpuToken ||
+            token >= s_ActiveSlot->GpuEvents.size())
         {
             return;
         }
@@ -641,16 +654,15 @@ public:
         {
             return;
         }
-        const UINT absoluteEnd =
-            s_ActiveFrameIndex * kMaxTimestampQueriesPerFrame + event.EndLocalQuery;
-        commandList->EndQuery(
-            s_TimestampHeap.Get(),
-            D3D12_QUERY_TYPE_TIMESTAMP,
-            absoluteEnd);
+        const UINT absoluteEnd = s_ActiveFrameIndex * kMaxTimestampQueriesPerFrame + event.EndLocalQuery;
+        commandList->EndQuery(s_TimestampHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, absoluteEnd);
         event.Ended = true;
         event.ScopeCompleted = !s_OpenGpuEvents.empty() && s_OpenGpuEvents.back() == token;
         const auto open = find(s_OpenGpuEvents.begin(), s_OpenGpuEvents.end(), token);
-        if (open != s_OpenGpuEvents.end()) s_OpenGpuEvents.erase(open);
+        if (open != s_OpenGpuEvents.end())
+        {
+            s_OpenGpuEvents.erase(open);
+        }
     }
 
     static void RecordCpuPass(const char* name, double milliseconds)
@@ -681,42 +693,32 @@ public:
         }
         EndGpuEvent(s_FrameGpuToken, commandList);
         s_OpenGpuEvents.clear();
-        s_ActiveSlot->Snapshot.CpuRenderMs =
-            chrono::duration<double, milli>(Clock::now() - s_CpuFrameBegin).count();
+        s_ActiveSlot->Snapshot.CpuRenderMs = chrono::duration<double, milli>(Clock::now() - s_CpuFrameBegin).count();
 
         if (s_GpuResourcesReady)
         {
             if (!s_ActiveSlot->PipelineQueryClosed)
             {
-                commandList->EndQuery(
-                    s_PipelineStatisticsHeap.Get(),
-                    D3D12_QUERY_TYPE_PIPELINE_STATISTICS,
-                    s_ActiveFrameIndex);
+                commandList->EndQuery(s_PipelineStatisticsHeap.Get(), D3D12_QUERY_TYPE_PIPELINE_STATISTICS,
+                                      s_ActiveFrameIndex);
             }
 
-            const UINT firstQuery =
-                s_ActiveFrameIndex * kMaxTimestampQueriesPerFrame;
+            const UINT firstQuery = s_ActiveFrameIndex * kMaxTimestampQueriesPerFrame;
             const UINT queryCount = s_ActiveSlot->TimestampQueryCount;
             if (queryCount > 0)
             {
-                commandList->ResolveQueryData(
-                    s_TimestampHeap.Get(),
-                    D3D12_QUERY_TYPE_TIMESTAMP,
-                    firstQuery,
-                    queryCount,
-                    s_TimestampReadback.Get(),
-                    static_cast<UINT64>(firstQuery) * sizeof(UINT64));
+                commandList->ResolveQueryData(s_TimestampHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, firstQuery, queryCount,
+                                              s_TimestampReadback.Get(),
+                                              static_cast<UINT64>(firstQuery) * sizeof(UINT64));
             }
 
             if (s_ActiveSlot->PipelineQueryStarted)
-            commandList->ResolveQueryData(
-                s_PipelineStatisticsHeap.Get(),
-                D3D12_QUERY_TYPE_PIPELINE_STATISTICS,
-                s_ActiveFrameIndex,
-                1,
-                s_PipelineStatisticsReadback.Get(),
-                static_cast<UINT64>(s_ActiveFrameIndex) *
-                    sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS));
+            {
+                commandList->ResolveQueryData(s_PipelineStatisticsHeap.Get(), D3D12_QUERY_TYPE_PIPELINE_STATISTICS,
+                                              s_ActiveFrameIndex, 1, s_PipelineStatisticsReadback.Get(),
+                                              static_cast<UINT64>(s_ActiveFrameIndex) *
+                                                  sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS));
+            }
         }
 
         s_ActiveSlot->Pending = true;
@@ -748,8 +750,7 @@ public:
             return;
         }
         ++snapshot->Calls.DispatchCalls;
-        snapshot->Calls.DispatchThreadGroups +=
-            static_cast<uint64_t>(x) * y * z;
+        snapshot->Calls.DispatchThreadGroups += static_cast<uint64_t>(x) * y * z;
     }
 
     static void RecordExecuteIndirect(UINT maxCommandCount)
@@ -848,16 +849,26 @@ public:
         {
             const auto& counts = s_Latest.Rays;
             if (counts.ProviderKnown(RayTelemetry::Radiance))
+            {
                 ImGui::Text("Reflection %llu / GI %llu / bounce visibility %llu / ReSTIR visibility %llu",
-                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_REFLECTION]),
-                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_GI]),
-                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_RADIANCE_SHADOW]),
-                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_RESTIR_VISIBILITY]));
-            else ImGui::TextDisabled("Radiance ray count unavailable");
+                            static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_REFLECTION]),
+                            static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_GI]),
+                            static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_RADIANCE_SHADOW]),
+                            static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_RESTIR_VISIBILITY]));
+            }
+            else
+            {
+                ImGui::TextDisabled("Radiance ray count unavailable");
+            }
             if (counts.ProviderKnown(RayTelemetry::ShadowAo))
+            {
                 ImGui::Text("Shadow %llu / AO %llu", static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_SHADOW]),
-                    static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_AO]));
-            else ImGui::TextDisabled("Shadow/AO ray count unavailable");
+                            static_cast<unsigned long long>(counts.Rays[RAY_TELEMETRY_AO]));
+            }
+            else
+            {
+                ImGui::TextDisabled("Shadow/AO ray count unavailable");
+            }
             ImGui::TextDisabled("Partial DXR source coverage; total ray count unavailable.");
         }
         ImGui::SameLine();
@@ -880,65 +891,59 @@ public:
             ImGui::TextUnformatted("GPU Render: 利用不可");
         }
 
-        ImGui::PlotLines(
-            "CPU ms",
-            s_CpuHistory.data(),
-            static_cast<int>(s_CpuHistory.size()),
-            0,
-            nullptr,
-            0.0f,
-            40.0f,
-            ImVec2(0.0f, 55.0f));
-        ImGui::PlotLines(
-            "GPU ms",
-            s_GpuHistory.data(),
-            static_cast<int>(s_GpuHistory.size()),
-            0,
-            nullptr,
-            0.0f,
-            40.0f,
-            ImVec2(0.0f, 55.0f));
+        ImGui::PlotLines("CPU ms", s_CpuHistory.data(), static_cast<int>(s_CpuHistory.size()), 0, nullptr, 0.0f, 40.0f,
+                         ImVec2(0.0f, 55.0f));
+        ImGui::PlotLines("GPU ms", s_GpuHistory.data(), static_cast<int>(s_GpuHistory.size()), 0, nullptr, 0.0f, 40.0f,
+                         ImVec2(0.0f, 55.0f));
 
         ImGui::SeparatorText("D3D12 API submissions");
         const Counters& calls = s_Latest.Calls;
         const auto& streaming = s_Latest.Streaming;
         const auto& temporal = s_Latest.Temporal;
         const auto& binning = s_Latest.Binning;
-        const char* binPhases[] = {"First","Second","Velocity"};
+        const char* binPhases[] = {"First", "Second", "Velocity"};
         for (uint32_t phase = 0; phase < 3; ++phase)
         {
-            if (!binning.HasSample[phase]) continue;
-            ImGui::Text("Native %s material bins %u / clusters %u / shared overflow %u / invalid %u",binPhases[phase],
-                binning.ActiveBins[phase],binning.Clusters[phase],binning.OverflowClusters[phase],binning.InvalidMaterials[phase]);
+            if (!binning.HasSample[phase])
+            {
+                continue;
+            }
+            ImGui::Text("Native %s material bins %u / clusters %u / shared overflow %u / invalid %u", binPhases[phase],
+                        binning.ActiveBins[phase], binning.Clusters[phase], binning.OverflowClusters[phase],
+                        binning.InvalidMaterials[phase]);
         }
-        ImGui::Text("Native material bin buffers %.2f MiB",double(binning.BufferBytes)/(1024*1024));
+        ImGui::Text("Native material bin buffers %.2f MiB", double(binning.BufferBytes) / (1024 * 1024));
         if (temporal.HasSample)
         {
-            ImGui::Text("Native first / retest / recovered %llu / %llu / %llu, LOD transitions %llu, capacity fallbacks %llu",
-                temporal.FirstVisible,temporal.Candidates,temporal.SecondVisible,temporal.LodTransitions,temporal.CapacityFallbacks);
+            ImGui::Text(
+                "Native first / retest / recovered %llu / %llu / %llu, LOD transitions %llu, capacity fallbacks %llu",
+                temporal.FirstVisible, temporal.Candidates, temporal.SecondVisible, temporal.LodTransitions,
+                temporal.CapacityFallbacks);
         }
         ImGui::Text("Native LOD history %.2f MiB / phase buffers %.2f MiB",
-            double(temporal.HistoryBytes)/(1024*1024),double(temporal.CandidateBytes)/(1024*1024));
-        ImGui::Text("Geometry requests GPU/CPU %llu / %llu (cumulative), overflow %llu",
-            streaming.GpuRequests,streaming.CpuRequests,streaming.RequestOverflow);
+                    double(temporal.HistoryBytes) / (1024 * 1024), double(temporal.CandidateBytes) / (1024 * 1024));
+        ImGui::Text("Geometry requests GPU/CPU %llu / %llu (cumulative), overflow %llu", streaming.GpuRequests,
+                    streaming.CpuRequests, streaming.RequestOverflow);
         ImGui::Text("Geometry SSD / Copy submitted / completed %.2f / %.2f / %.2f MiB (cumulative)",
-            double(streaming.DiskBytes)/(1024*1024),double(streaming.SubmittedBytes)/(1024*1024),double(streaming.CompletedBytes)/(1024*1024));
+                    double(streaming.DiskBytes) / (1024 * 1024), double(streaming.SubmittedBytes) / (1024 * 1024),
+                    double(streaming.CompletedBytes) / (1024 * 1024));
         ImGui::Text("Geometry VRAM reserved/budget %.2f / %.2f MiB, staging %.2f MiB",
-            double(streaming.PoolBytes)/(1024*1024),double(streaming.BudgetBytes)/(1024*1024),double(streaming.StagingBytes)/(1024*1024));
+                    double(streaming.PoolBytes) / (1024 * 1024), double(streaming.BudgetBytes) / (1024 * 1024),
+                    double(streaming.StagingBytes) / (1024 * 1024));
         ImGui::Text("Geometry metadata buffers incl staging %.2f MiB / Page Copy upload heap %.2f MiB",
-            double(streaming.MetadataBytes)/(1024*1024),double(streaming.UploadBytes)/(1024*1024));
-        ImGui::Text("Geometry streaming CPU %.3f ms / I/O %.3f ms cumulative / latest Copy completion latency %.3f ms / Copy GPU N/A",
-            streaming.CpuMilliseconds,streaming.IoMilliseconds,streaming.CopyMilliseconds);
+                    double(streaming.MetadataBytes) / (1024 * 1024), double(streaming.UploadBytes) / (1024 * 1024));
+        ImGui::Text(
+            "Geometry streaming CPU %.3f ms / I/O %.3f ms cumulative / latest Copy completion latency %.3f ms / Copy GPU N/A",
+            streaming.CpuMilliseconds, streaming.IoMilliseconds, streaming.CopyMilliseconds);
         if (ImGui::BeginTable("RenderProfilerCalls", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
         {
-            auto row = [](const char* label, uint64_t value)
-                {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(label);
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::Text("%llu", static_cast<unsigned long long>(value));
-                };
+            auto row = [](const char* label, uint64_t value) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(label);
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%llu", static_cast<unsigned long long>(value));
+            };
             row("Draw calls", calls.DrawCalls);
             row("Indexed draw calls", calls.IndexedDrawCalls);
             row("Drawn instances", calls.DrawnInstances);
@@ -960,11 +965,11 @@ public:
         ImGui::TextDisabled("GPU history contains valid frame samples only.");
         ImGui::TextDisabled("Inclusive rows overlap; GPU self excludes same-queue children.");
         if (s_Latest.DroppedGpuEvents != 0)
+        {
             ImGui::TextDisabled("GPU events unavailable: %u", s_Latest.DroppedGpuEvents);
-        if (ImGui::BeginTable(
-            "RenderProfilerPasses",
-            5,
-            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+        }
+        if (ImGui::BeginTable("RenderProfilerPasses", 5,
+                              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
         {
             ImGui::TableSetupColumn("Pass");
             ImGui::TableSetupColumn("CPU incl ms");
@@ -985,12 +990,23 @@ public:
                 ImGui::Text("%.3f", pass.CpuMs);
                 ImGui::TableSetColumnIndex(2);
                 if (RenderMeasurement::IsGpuTimingComplete(pass.GpuEvents, pass.GpuSamples, s_Latest.DroppedGpuEvents))
+                {
                     ImGui::Text("%.3f", pass.GpuMs);
-                else ImGui::TextUnformatted("N/A");
+                }
+                else
+                {
+                    ImGui::TextUnformatted("N/A");
+                }
                 ImGui::TableSetColumnIndex(3);
-                if (RenderMeasurement::IsGpuTimingComplete(pass.GpuEvents, pass.GpuExclusiveSamples, s_Latest.DroppedGpuEvents))
+                if (RenderMeasurement::IsGpuTimingComplete(pass.GpuEvents, pass.GpuExclusiveSamples,
+                                                           s_Latest.DroppedGpuEvents))
+                {
                     ImGui::Text("%.3f", pass.GpuExclusiveMs);
-                else ImGui::TextUnformatted("N/A");
+                }
+                else
+                {
+                    ImGui::TextUnformatted("N/A");
+                }
                 ImGui::TableSetColumnIndex(4);
                 ImGui::Text("%llu", static_cast<unsigned long long>(pass.DrawCalls));
             }
@@ -1006,9 +1022,8 @@ public:
             ImGui::Text("VS invocations: %llu", static_cast<unsigned long long>(statistics.VSInvocations));
             ImGui::Text("PS invocations: %llu", static_cast<unsigned long long>(statistics.PSInvocations));
             ImGui::Text("GS invocations: %llu", static_cast<unsigned long long>(statistics.GSInvocations));
-            ImGui::Text("Clipping input/output: %llu / %llu",
-                static_cast<unsigned long long>(statistics.CInvocations),
-                static_cast<unsigned long long>(statistics.CPrimitives));
+            ImGui::Text("Clipping input/output: %llu / %llu", static_cast<unsigned long long>(statistics.CInvocations),
+                        static_cast<unsigned long long>(statistics.CPrimitives));
             ImGui::Text("CS invocations: %llu", static_cast<unsigned long long>(statistics.CSInvocations));
         }
         else
@@ -1019,4 +1034,3 @@ public:
         ImGui::End();
     }
 };
-

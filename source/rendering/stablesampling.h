@@ -9,7 +9,11 @@ using SampleUint = std::uint32_t;
 typedef uint SampleUint;
 #endif
 
-struct SamplePair { float x; float y; };
+struct SamplePair
+{
+    float x;
+    float y;
+};
 
 inline SampleUint SampleHash(SampleUint value)
 {
@@ -39,8 +43,16 @@ inline SamplePair SampleSequence(SampleUint x, SampleUint y, SampleUint index, S
     // Emitter/triangle choice and barycentric coordinates are a single 4D
     // integration problem. Reusing an R2 pair with a shifted scramble would
     // correlate the selected triangle with the sampled part of its surface.
-    if (domain == 1u) { frequencyX = .856674884f; frequencyY = .733891856f; }
-    if (domain == 2u) { frequencyX = .628706722f; frequencyY = .538597257f; }
+    if (domain == 1u)
+    {
+        frequencyX = .856674884f;
+        frequencyY = .733891856f;
+    }
+    if (domain == 2u)
+    {
+        frequencyX = .628706722f;
+        frequencyY = .538597257f;
+    }
     SamplePair result;
     result.x = SampleFraction(float(scramble & 65535u) / 65536.0f + phase * frequencyX);
     result.y = SampleFraction(float(scramble >> 16) / 65536.0f + phase * frequencyY);

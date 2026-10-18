@@ -1,15 +1,21 @@
 #include "../source/editor/configvalue.h"
 #include <iostream>
 
-enum class View { First, Second };
+enum class View
+{
+    First,
+    Second
+};
 
 int main()
 {
     int checks = 0;
-    const auto check = [&](bool passed)
-    {
+    const auto check = [&](bool passed) {
         ++checks;
-        if (!passed) throw std::runtime_error("Editor configuration regression");
+        if (!passed)
+        {
+            throw std::runtime_error("Editor configuration regression");
+        }
     };
     unsigned int size = 192;
     std::ostringstream saved;
@@ -18,11 +24,17 @@ int main()
     check(saved.str() == "asset_thumbnail_size=192\n");
     check(EditorConfig::Value(nullptr, "asset_thumbnail_size", "192", "asset_thumbnail_size", size, 32, 256));
     check(size == 192);
-    for (const char* invalid : { "31", "257", "nan", "inf", "192 extra", "", "64.5" })
+    for (const char* invalid : {"31", "257", "nan", "inf", "192 extra", "", "64.5"})
     {
         bool rejected = false;
-        try { EditorConfig::Value(nullptr, "size", invalid, "size", size, 32, 256); }
-        catch (const std::invalid_argument&) { rejected = true; }
+        try
+        {
+            EditorConfig::Value(nullptr, "size", invalid, "size", size, 32, 256);
+        }
+        catch (const std::invalid_argument&)
+        {
+            rejected = true;
+        }
         check(rejected && size == 192);
     }
     check(!EditorConfig::Value(nullptr, "future_key", "invalid", "size", size, 32, 256));

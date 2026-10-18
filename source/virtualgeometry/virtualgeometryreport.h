@@ -4,7 +4,7 @@
 
 class VirtualGeometryReport
 {
-public:
+  public:
     static std::string Text(const VirtualGeometryAsset& asset);
     static bool Save(const std::filesystem::path& path, const VirtualGeometryAsset& asset, std::string& error);
 };

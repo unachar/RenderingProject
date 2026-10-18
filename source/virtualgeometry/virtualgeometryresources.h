@@ -13,7 +13,8 @@ bool Ready(uint32_t asset);
 uint32_t AssetCount();
 uint64_t RegisteredClusterCount();
 const std::vector<uint64_t>& SourceTriangleCounts();
-std::shared_ptr<const VirtualGeometryPageCache::PageManifest> ManifestFor(const VirtualGeometryRuntime::RuntimeAsset* asset);
+std::shared_ptr<const VirtualGeometryPageCache::PageManifest> ManifestFor(
+    const VirtualGeometryRuntime::RuntimeAsset* asset);
 const std::vector<VirtualGeometryGPUAsset>& AssetTable();
 const VirtualGeometryGPU::PackedAsset& Metadata();
 VirtualGeometryCompression::Metrics CompressionMetrics();
@@ -26,4 +27,4 @@ GpuSceneBuffer& TriangleBuffer();
 GpuSceneBuffer& AssetBuffer();
 uint64_t MemoryBytes();
 void Shutdown();
-}
+} // namespace VirtualGeometryResources

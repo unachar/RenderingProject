@@ -20,12 +20,13 @@ void SetMaterial(RaytracingGeometry& geometry, EntityID entity, int modelTexture
     geometry.MediumID = static_cast<UINT>(entity);
     if (ComponentManager::HasComponent<MaterialComponent>(entity))
     {
-        const auto& material = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity), slot);
+        const auto& material =
+            MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity), slot);
         if (material.RuntimeHandle != 0)
         {
             geometry.BaseColor = material.BaseColor;
-            geometry.Emission = { material.EmissiveColor.x, material.EmissiveColor.y,
-                material.EmissiveColor.z, material.EmissiveIntensity };
+            geometry.Emission = {material.EmissiveColor.x, material.EmissiveColor.y, material.EmissiveColor.z,
+                                 material.EmissiveIntensity};
             geometry.EmissionTexture = TextureManager::GetTextureResource(material.EmissiveTextureID);
             if (geometry.EmissionTexture)
             {
@@ -39,13 +40,13 @@ void SetMaterial(RaytracingGeometry& geometry, EntityID entity, int modelTexture
         geometry.Thickness = material.Thickness;
         geometry.TransmissionRoughness = material.TransmissionRoughness;
         geometry.Fresnel = material.Fresnel;
-        geometry.Emission = material.RuntimeHandle != 0
-            ? XMFLOAT4{material.EmissiveColor.x,material.EmissiveColor.y,material.EmissiveColor.z,material.EmissiveIntensity}
-            : XMFLOAT4{0,0,0,0};
+        geometry.Emission = material.RuntimeHandle != 0 ? XMFLOAT4{material.EmissiveColor.x, material.EmissiveColor.y,
+                                                                   material.EmissiveColor.z, material.EmissiveIntensity}
+                                                        : XMFLOAT4{0, 0, 0, 0};
         // Raster ignores primitive vertex color for material assets and ignores
         // AssetBaseColor for legacy vertex-colored draws. Preserve that rule.
         geometry.UsesAssetMaterial = material.RuntimeHandle != 0;
-        geometry.BaseColor = geometry.UsesAssetMaterial ? material.BaseColor : XMFLOAT4{1,1,1,1};
+        geometry.BaseColor = geometry.UsesAssetMaterial ? material.BaseColor : XMFLOAT4{1, 1, 1, 1};
         geometry.BaseColor.w *= material.Alpha;
         geometry.Roughness = material.Roughness;
         geometry.Metallic = material.Metallic;
@@ -59,7 +60,10 @@ void SetMaterial(RaytracingGeometry& geometry, EntityID entity, int modelTexture
             }
         }
     }
-    else geometry.TextureIndex = modelTexture;
+    else
+    {
+        geometry.TextureIndex = modelTexture;
+    }
     geometry.Texture = TextureManager::GetTextureResource(geometry.TextureIndex);
     if (geometry.Texture)
     {
@@ -67,6 +71,7 @@ void SetMaterial(RaytracingGeometry& geometry, EntityID entity, int modelTexture
         geometry.TextureResidentMip = TextureManager::GetTextureResidentMip(geometry.TextureIndex);
     }
 }
+
 bool IsRayGeometryVisible(const MaterialComponent& material)
 {
     float opacity = material.Alpha;
@@ -74,17 +79,17 @@ bool IsRayGeometryVisible(const MaterialComponent& material)
     {
         opacity *= material.BaseColor.w;
     }
-    return opacity > 0.0f &&
-        (!MaterialSystem::IsTransparentMaterial(material) || MaterialSystem::CastsShadow(material) || material.Transmission > 0.001f);
+    return opacity > 0.0f && (!MaterialSystem::IsTransparentMaterial(material) ||
+                              MaterialSystem::CastsShadow(material) || material.Transmission > 0.001f);
 }
 
 bool IsOpaqueCaster(EntityID entity)
 {
-	if (ComponentManager::HasComponent<MeshComponent>(entity) &&
-		ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
-	{
-		return false;
-	}
+    if (ComponentManager::HasComponent<MeshComponent>(entity) &&
+        ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
+    {
+        return false;
+    }
     if (ComponentManager::HasComponent<SunComponent>(entity) ||
         ComponentManager::HasComponent<SpriteComponent>(entity) ||
         ComponentManager::HasComponent<CameraComponent>(entity))
@@ -107,7 +112,7 @@ bool IsOpaqueCaster(EntityID entity)
     return true;
 }
 
-template<typename Model>
+template <typename Model>
 void AppendModel(vector<RaytracingGeometry>& geometry, EntityID entity, Model* model, bool deforming)
 {
     if (!model || !IsOpaqueCaster(entity))
@@ -163,42 +168,82 @@ void AppendModel(vector<RaytracingGeometry>& geometry, EntityID entity, Model* m
             entry.VertexState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
             entry.Deforming = true;
         }
-        if constexpr(std::is_same_v<std::decay_t<decltype(mesh)>,StaticMeshData>)
+        if constexpr (std::is_same_v<std::decay_t<decltype(mesh)>, StaticMeshData>)
         {
-            static const bool rayLod=ReadEnvironmentFlagOnce("DX12_DXR_LOD"),rayProxy=ReadEnvironmentFlagOnce("DX12_DXR_PROXY");
-            const auto camera=Camera::GetCameraEntity();
-            if(entry.Transmission <= 0.001f && !entry.Deforming && (rayLod||rayProxy) && ComponentManager::HasComponent<TransformComponent>(camera))
+            static const bool rayLod = ReadEnvironmentFlagOnce("DX12_DXR_LOD"),
+                              rayProxy = ReadEnvironmentFlagOnce("DX12_DXR_PROXY");
+            const auto camera = Camera::GetCameraEntity();
+            if (entry.Transmission <= 0.001f && !entry.Deforming && (rayLod || rayProxy) &&
+                ComponentManager::HasComponent<TransformComponent>(camera))
             {
-                const auto& eye=ComponentManager::GetComponentUnchecked<TransformComponent>(camera).Position;
-                const XMMATRIX world=XMLoadFloat4x4(&entry.World);
-                const float distance=XMVectorGetX(XMVector3Length(XMVector3TransformCoord(XMLoadFloat3(&mesh.RayCenter),world)-XMLoadFloat3(&eye)));
-                const float scale=(std::max)({XMVectorGetX(XMVector3Length(world.r[0])),XMVectorGetX(XMVector3Length(world.r[1])),XMVectorGetX(XMVector3Length(world.r[2]))});
-                const bool important=entry.Roughness<.2f||entry.Emission.w>.001f||mesh.RayRadius*scale/(std::max)(distance,1.f)>.08f;
-                UINT lod=rayLod?(distance>140?3:distance>70?2:distance>35?1:0):0; if(important) lod=0;
-                using Key=tuple<EntityID,UINT,UINT64>; static map<Key,UINT> previous;
-                const Key key(entity,meshIndex,mesh.VertexBufferView.BufferLocation); const auto old=previous.find(key);
-                if(!important && old!=previous.end() && old->second<=3 && old->second!=lod)
+                const auto& eye = ComponentManager::GetComponentUnchecked<TransformComponent>(camera).Position;
+                const XMMATRIX world = XMLoadFloat4x4(&entry.World);
+                const float distance = XMVectorGetX(XMVector3Length(
+                    XMVector3TransformCoord(XMLoadFloat3(&mesh.RayCenter), world) - XMLoadFloat3(&eye)));
+                const float scale =
+                    (std::max)({XMVectorGetX(XMVector3Length(world.r[0])), XMVectorGetX(XMVector3Length(world.r[1])),
+                                XMVectorGetX(XMVector3Length(world.r[2]))});
+                const bool important = entry.Roughness < .2f || entry.Emission.w > .001f ||
+                                       mesh.RayRadius * scale / (std::max)(distance, 1.f) > .08f;
+                UINT lod = rayLod ? (distance > 140 ? 3 : distance > 70 ? 2 : distance > 35 ? 1 : 0) : 0;
+                if (important)
                 {
-                    const UINT level=(std::max)(lod,old->second);
-                    if(level) { const float boundary=35.f*float(1u<<(level-1)); if(abs(distance-boundary)<boundary*.12f) lod=old->second; }
+                    lod = 0;
                 }
-                UINT selected=0;
-                if(rayProxy&&!important&&distance>200&&mesh.RayProxyVertices&&mesh.RayProxyIndices)
+                using Key = tuple<EntityID, UINT, UINT64>;
+                static map<Key, UINT> previous;
+                const Key key(entity, meshIndex, mesh.VertexBufferView.BufferLocation);
+                const auto old = previous.find(key);
+                if (!important && old != previous.end() && old->second <= 3 && old->second != lod)
                 {
-                    entry.Vertices=mesh.RayProxyVertices; entry.Indices=mesh.RayProxyIndices; entry.VertexView=mesh.RayProxyVertexView; entry.IndexView=mesh.RayProxyIndexView;
-                    entry.VertexState=D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER; entry.IndexState=D3D12_RESOURCE_STATE_INDEX_BUFFER;
-                    entry.IndexCount=36; entry.Texture.Reset(); entry.TextureIndex=-1; entry.EmissionTexture.Reset(); selected=4;
+                    const UINT level = (std::max)(lod, old->second);
+                    if (level)
+                    {
+                        const float boundary = 35.f * float(1u << (level - 1));
+                        if (abs(distance - boundary) < boundary * .12f)
+                        {
+                            lod = old->second;
+                        }
+                    }
                 }
-                else if(lod&&mesh.RayLodBuffers[lod-1])
-                { entry.Indices=mesh.RayLodBuffers[lod-1]; entry.IndexView=mesh.RayLodViews[lod-1]; entry.IndexCount=mesh.RayLodCounts[lod-1]; entry.IndexState=D3D12_RESOURCE_STATE_INDEX_BUFFER; selected=lod; }
-                if(old!=previous.end()&&old->second!=selected) TemporalHistory::Context::NotifyLodChanged();
-                if(previous.size()>65536) previous.clear(); previous[key]=selected;
+                UINT selected = 0;
+                if (rayProxy && !important && distance > 200 && mesh.RayProxyVertices && mesh.RayProxyIndices)
+                {
+                    entry.Vertices = mesh.RayProxyVertices;
+                    entry.Indices = mesh.RayProxyIndices;
+                    entry.VertexView = mesh.RayProxyVertexView;
+                    entry.IndexView = mesh.RayProxyIndexView;
+                    entry.VertexState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+                    entry.IndexState = D3D12_RESOURCE_STATE_INDEX_BUFFER;
+                    entry.IndexCount = 36;
+                    entry.Texture.Reset();
+                    entry.TextureIndex = -1;
+                    entry.EmissionTexture.Reset();
+                    selected = 4;
+                }
+                else if (lod && mesh.RayLodBuffers[lod - 1])
+                {
+                    entry.Indices = mesh.RayLodBuffers[lod - 1];
+                    entry.IndexView = mesh.RayLodViews[lod - 1];
+                    entry.IndexCount = mesh.RayLodCounts[lod - 1];
+                    entry.IndexState = D3D12_RESOURCE_STATE_INDEX_BUFFER;
+                    selected = lod;
+                }
+                if (old != previous.end() && old->second != selected)
+                {
+                    TemporalHistory::Context::NotifyLodChanged();
+                }
+                if (previous.size() > 65536)
+                {
+                    previous.clear();
+                }
+                previous[key] = selected;
             }
         }
         geometry.push_back(move(entry));
     }
 }
-}
+} // namespace
 
 vector<RaytracingGeometry> GatherRaytracingGeometry()
 {

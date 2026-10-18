@@ -5,7 +5,7 @@
 // Each instance owns one signal's shared images and denoiser workspace.
 class OptixInterop
 {
-public:
+  public:
     OptixInterop();
     ~OptixInterop();
     OptixInterop(const OptixInterop&) = delete;
@@ -17,8 +17,8 @@ public:
     bool Ensure(UINT width, UINT height, UINT frameIndex);
     ID3D12Resource* GetSharedBuffer(UINT frameIndex) const;
     bool Enqueue(ID3D12CommandQueue* queue, UINT frameIndex);
-private:
+
+  private:
     struct Impl;
     std::unique_ptr<Impl> impl;
 };
-

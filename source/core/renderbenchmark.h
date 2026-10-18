@@ -10,4 +10,4 @@ void BeforeFrame(uint64_t frame);
 void AfterFrame();
 bool ShouldStop(uint64_t completedFrames);
 bool Finish();
-}
+} // namespace RenderBenchmark

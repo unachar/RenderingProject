@@ -30,14 +30,23 @@ EntityID roof = g_kINVALID_ENTITY, sun = g_kINVALID_ENTITY;
 array<double, Cases> brightness{};
 array<UINT, Cases> samples{};
 array<double, Cases> reflectionBrightness{}, giBrightness{};
+
 void Check(bool valid, const char* message)
 {
-    if (!valid) ++failures;
+    if (!valid)
+    {
+        ++failures;
+    }
     WriteGraphicsLog("Celestial occlusion: %s %s\n", valid ? "PASS" : "FAIL", message);
 }
+
 EntityID Cube(XMFLOAT3 position, XMFLOAT3 scale)
 {
-    auto entity = World::CreateEntity().Add<TransformComponent>().Add<MeshComponent>().Add<MaterialComponent>().Add<NameComponent>();
+    auto entity = World::CreateEntity()
+                      .Add<TransformComponent>()
+                      .Add<MeshComponent>()
+                      .Add<MaterialComponent>()
+                      .Add<NameComponent>();
     entity.SetName("Closed PBR room fixture");
     auto& transform = entity.Get<TransformComponent>();
     transform.Position = position;
@@ -55,6 +64,7 @@ EntityID Cube(XMFLOAT3 position, XMFLOAT3 scale)
     PrimitiveGeometry::CreateObjectVertex(geometry);
     return entity.GetID();
 }
+
 float Luminance(const RenderCapture::TextureData& image, UINT x, UINT y)
 {
     const auto* row = image.Bytes.data() + y * image.RowPitch;
@@ -62,7 +72,7 @@ float Luminance(const RenderCapture::TextureData& image, UINT x, UINT y)
     {
         const auto* pixel = reinterpret_cast<const uint16_t*>(row) + 4 * x;
         return .2126f * RenderCapture::HalfToFloat(pixel[0]) + .7152f * RenderCapture::HalfToFloat(pixel[1]) +
-            .0722f * RenderCapture::HalfToFloat(pixel[2]);
+               .0722f * RenderCapture::HalfToFloat(pixel[2]);
     }
     if (image.Format == DXGI_FORMAT_R8G8B8A8_UNORM)
     {
@@ -72,22 +82,35 @@ float Luminance(const RenderCapture::TextureData& image, UINT x, UINT y)
     Check(false, "supported HDR scene format");
     return 0;
 }
-}
+} // namespace
+
 bool CelestialOcclusionValidation::Enabled()
 {
     char mode[8]{};
     return GetEnvironmentVariableA("DX12_GI_TEST", mode, sizeof(mode)) && atoi(mode) == 5;
 }
+
 void CelestialOcclusionValidation::BeforeFrame(uint64_t frame)
 {
     lastFrame = frame;
-    if (frame >= FramesPerCase * Cases) return;
+    if (frame >= FramesPerCase * Cases)
+    {
+        return;
+    }
     if (frame == 0)
     {
         vector<EntityID> remove;
         for (EntityID entity : World::GetView<TransformComponent>())
-            if (!ComponentManager::HasComponent<CameraComponent>(entity)) remove.push_back(entity);
-        for (EntityID entity : remove) World::DestroyEntity(Entity(entity));
+        {
+            if (!ComponentManager::HasComponent<CameraComponent>(entity))
+            {
+                remove.push_back(entity);
+            }
+        }
+        for (EntityID entity : remove)
+        {
+            World::DestroyEntity(Entity(entity));
+        }
         Cube({0, -1, 0}, {8, .1f, 8});
         roof = Cube({0, 3, 0}, {8.4f, .2f, 8.4f});
         Cube({-4, 1, 0}, {.2f, 4, 8.4f});
@@ -151,13 +174,20 @@ void CelestialOcclusionValidation::BeforeFrame(uint64_t frame)
         auto& roofTransform = ComponentManager::GetComponentUnchecked<TransformComponent>(roof);
         roofTransform.Position = {phase == 2 || phase == 3 || phase == 7 || phase == 9 ? 30.f : 0.f, 3, 0};
         roofTransform.IsDirty = true;
-        if (phase >= 6) DayNightCycle::Update(0);
+        if (phase >= 6)
+        {
+            DayNightCycle::Update(0);
+        }
         Camera::NotifyCut();
     }
 }
+
 void CelestialOcclusionValidation::AfterFrame(uint64_t frame)
 {
-    if (frame >= FramesPerCase * Cases || frame % FramesPerCase < 20) return;
+    if (frame >= FramesPerCase * Cases || frame % FramesPerCase < 20)
+    {
+        return;
+    }
     const UINT phase = UINT(frame / FramesPerCase);
     RenderCapture::TextureData image;
     if (!RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), image))
@@ -169,30 +199,39 @@ void CelestialOcclusionValidation::AfterFrame(uint64_t frame)
     RenderCapture::TextureData reflections, gi;
     if (phase >= 6 && Raytracing::IsAvailable())
     {
-        Check(RenderCapture::ReadTexture(RayReflections::GetResultResource(), reflections), "capture secondary reflections");
+        Check(RenderCapture::ReadTexture(RayReflections::GetResultResource(), reflections),
+              "capture secondary reflections");
         Check(RenderCapture::ReadTexture(RayReflections::GetGiResource(), gi), "capture diffuse GI");
     }
     Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
     for (int z = -4; z <= 4; ++z)
-    for (int x = -4; x <= 4; ++x)
     {
-        XMFLOAT3 pixel;
-        XMStoreFloat3(&pixel, XMVector3Project(XMVectorSet(x * .2f, -.95f, z * .2f, 1),
-            0, 0, float(image.Width), float(image.Height), 0, 1, projection, view, XMMatrixIdentity()));
-        if (pixel.x < 0 || pixel.x >= image.Width || pixel.y < 0 || pixel.y >= image.Height) continue;
-        brightness[phase] += Luminance(image, UINT(pixel.x), UINT(pixel.y));
-        if (reflections.Width && gi.Width)
+        for (int x = -4; x <= 4; ++x)
         {
-            reflectionBrightness[phase] += Luminance(reflections,
-                UINT(pixel.x * reflections.Width / image.Width), UINT(pixel.y * reflections.Height / image.Height));
-            giBrightness[phase] += Luminance(gi,
-                UINT(pixel.x * gi.Width / image.Width), UINT(pixel.y * gi.Height / image.Height));
+            XMFLOAT3 pixel;
+            XMStoreFloat3(&pixel, XMVector3Project(XMVectorSet(x * .2f, -.95f, z * .2f, 1), 0, 0, float(image.Width),
+                                                   float(image.Height), 0, 1, projection, view, XMMatrixIdentity()));
+            if (pixel.x < 0 || pixel.x >= image.Width || pixel.y < 0 || pixel.y >= image.Height)
+            {
+                continue;
+            }
+            brightness[phase] += Luminance(image, UINT(pixel.x), UINT(pixel.y));
+            if (reflections.Width && gi.Width)
+            {
+                reflectionBrightness[phase] += Luminance(reflections, UINT(pixel.x * reflections.Width / image.Width),
+                                                         UINT(pixel.y * reflections.Height / image.Height));
+                giBrightness[phase] +=
+                    Luminance(gi, UINT(pixel.x * gi.Width / image.Width), UINT(pixel.y * gi.Height / image.Height));
+            }
+            ++samples[phase];
         }
-        ++samples[phase];
     }
     if (frame % FramesPerCase == FramesPerCase - 1)
+    {
         RenderCapture::SaveScenePng((L"build/celestial-occlusion/" + to_wstring(phase) + L".png").c_str());
+    }
 }
+
 bool CelestialOcclusionValidation::Finish()
 {
     ofstream report("build/celestial-occlusion/summary.csv");
@@ -203,17 +242,25 @@ bool CelestialOcclusionValidation::Finish()
         brightness[phase] /= (std::max)(samples[phase], 1u);
         reflectionBrightness[phase] /= (std::max)(samples[phase], 1u);
         giBrightness[phase] /= (std::max)(samples[phase], 1u);
-        report << phase << ',' << brightness[phase] << ',' << samples[phase] << ','
-            << reflectionBrightness[phase] << ',' << giBrightness[phase] << '\n';
-        WriteGraphicsLog("Celestial receiver: case=%u luminance=%.7f samples=%u\n", phase, brightness[phase], samples[phase]);
-        if (phase >= 6) WriteGraphicsLog("Celestial secondary: case=%u reflection=%.7f GI=%.7f\n",
-            phase, reflectionBrightness[phase], giBrightness[phase]);
+        report << phase << ',' << brightness[phase] << ',' << samples[phase] << ',' << reflectionBrightness[phase]
+               << ',' << giBrightness[phase] << '\n';
+        WriteGraphicsLog("Celestial receiver: case=%u luminance=%.7f samples=%u\n", phase, brightness[phase],
+                         samples[phase]);
+        if (phase >= 6)
+        {
+            WriteGraphicsLog("Celestial secondary: case=%u reflection=%.7f GI=%.7f\n", phase,
+                             reflectionBrightness[phase], giBrightness[phase]);
+        }
     }
     const double moonContrast = brightness[2] - brightness[0];
     if (Raytracing::IsAvailable())
+    {
         Check(moonContrast > .005, "open roof admits moonlight above constant environment");
+    }
     else
+    {
         Check(moonContrast < .002, "no unshadowed virtual moon without a visibility provider");
+    }
     const double sunContrast = brightness[3] - brightness[5];
     Check(sunContrast > .05, "open roof admits sunlight above environment-only control");
     const double allowedMoonLeak = (std::max)(.002, moonContrast * .1);

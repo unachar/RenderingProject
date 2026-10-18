@@ -12,11 +12,10 @@ struct EditorDescriptorLease
 
 class EditorDescriptors
 {
-public:
+  public:
     static std::shared_ptr<EditorDescriptorLease> Allocate();
     static void Retire(UINT index);
     static void Collect();
     static UINT Available();
     static void Shutdown();
 };
-

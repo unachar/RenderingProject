@@ -15,4 +15,4 @@ inline bool Refine(double errorPixels, float targetPixels, float fraction, bool 
     }
     return errorPixels > threshold;
 }
-}
+} // namespace VirtualGeometryTemporal

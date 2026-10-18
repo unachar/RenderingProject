@@ -13,152 +13,138 @@
 
 #pragma comment(lib, "dxcompiler.lib")
 
+using Microsoft::WRL::ComPtr;
 
+struct CompilerState
+{
+    ComPtr<IDxcUtils> Utils;
+    ComPtr<IDxcCompiler3> Compiler;
+    ComPtr<IDxcIncludeHandler> IncludeHandler;
+    HRESULT Status = E_FAIL;
 
-
-
-
-    using Microsoft::WRL::ComPtr;
-
-    struct CompilerState
+    CompilerState()
     {
-        ComPtr<IDxcUtils> Utils;
-        ComPtr<IDxcCompiler3> Compiler;
-        ComPtr<IDxcIncludeHandler> IncludeHandler;
-        HRESULT Status = E_FAIL;
-
-        CompilerState()
-        {
-            Status = DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&Utils));
-            if (FAILED(Status))
-            {
-                return;
-            }
-
-            Status = DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&Compiler));
-            if (FAILED(Status))
-            {
-                return;
-            }
-
-            Status = Utils->CreateDefaultIncludeHandler(&IncludeHandler);
-        }
-    };
-
-    inline CompilerState& GetCompilerState()
-    {
-        static CompilerState state;
-        return state;
-    }
-
-    inline wstring ToWide(const char* text)
-    {
-        if (!text)
-        {
-            return {};
-        }
-
-        const int length = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
-        if (length <= 1)
-        {
-            return {};
-        }
-
-        wstring output(static_cast<size_t>(length), L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, text, -1, output.data(), length);
-        output.pop_back();
-        return output;
-    }
-
-    inline wstring PromoteLegacyProfile(const char* target)
-    {
-        wstring profile = ToWide(target);
-        const size_t legacyMarker = profile.find(L"_5_");
-        if (legacyMarker != wstring::npos)
-        {
-            const size_t stageEnd = profile.find(L'_');
-            if (stageEnd != wstring::npos)
-            {
-                profile = profile.substr(0, stageEnd + 1) + L"6_0";
-            }
-        }
-        return profile;
-    }
-
-    inline HRESULT CreateLegacyBlob(const void* data, SIZE_T size, ID3DBlob** output)
-    {
-        if (!output)
-        {
-            return E_POINTER;
-        }
-        *output = nullptr;
-
-        ComPtr<ID3DBlob> blob;
-        HRESULT result = D3DCreateBlob(size, &blob);
-        if (FAILED(result))
-        {
-            return result;
-        }
-
-        if (size > 0 && data)
-        {
-            memcpy(blob->GetBufferPointer(), data, size);
-        }
-        *output = blob.Detach();
-        return S_OK;
-    }
-
-    inline void SetDiagnosticBlob(const string& diagnostics, ID3DBlob** output)
-    {
-        if (!output)
-        {
-            return;
-        }
-        *output = nullptr;
-
-        if (diagnostics.empty())
+        Status = DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&Utils));
+        if (FAILED(Status))
         {
             return;
         }
 
-        ComPtr<ID3DBlob> blob;
-        if (FAILED(D3DCreateBlob(diagnostics.size() + 1, &blob)))
+        Status = DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&Compiler));
+        if (FAILED(Status))
         {
             return;
         }
 
-        memcpy(blob->GetBufferPointer(), diagnostics.c_str(), diagnostics.size() + 1);
-        *output = blob.Detach();
+        Status = Utils->CreateDefaultIncludeHandler(&IncludeHandler);
     }
+};
 
-    inline void AddArgument(vector<wstring>& storage, const wchar_t* value)
+inline CompilerState& GetCompilerState()
+{
+    static CompilerState state;
+    return state;
+}
+
+inline wstring ToWide(const char* text)
+{
+    if (!text)
     {
-        storage.emplace_back(value);
+        return {};
     }
 
-    inline void AddArgument(vector<wstring>& storage, const wstring& value)
+    const int length = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
+    if (length <= 1)
     {
-        storage.emplace_back(value);
+        return {};
     }
 
+    wstring output(static_cast<size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, output.data(), length);
+    output.pop_back();
+    return output;
+}
+
+inline wstring PromoteLegacyProfile(const char* target)
+{
+    wstring profile = ToWide(target);
+    const size_t legacyMarker = profile.find(L"_5_");
+    if (legacyMarker != wstring::npos)
+    {
+        const size_t stageEnd = profile.find(L'_');
+        if (stageEnd != wstring::npos)
+        {
+            profile = profile.substr(0, stageEnd + 1) + L"6_0";
+        }
+    }
+    return profile;
+}
+
+inline HRESULT CreateLegacyBlob(const void* data, SIZE_T size, ID3DBlob** output)
+{
+    if (!output)
+    {
+        return E_POINTER;
+    }
+    *output = nullptr;
+
+    ComPtr<ID3DBlob> blob;
+    HRESULT result = D3DCreateBlob(size, &blob);
+    if (FAILED(result))
+    {
+        return result;
+    }
+
+    if (size > 0 && data)
+    {
+        memcpy(blob->GetBufferPointer(), data, size);
+    }
+    *output = blob.Detach();
+    return S_OK;
+}
+
+inline void SetDiagnosticBlob(const string& diagnostics, ID3DBlob** output)
+{
+    if (!output)
+    {
+        return;
+    }
+    *output = nullptr;
+
+    if (diagnostics.empty())
+    {
+        return;
+    }
+
+    ComPtr<ID3DBlob> blob;
+    if (FAILED(D3DCreateBlob(diagnostics.size() + 1, &blob)))
+    {
+        return;
+    }
+
+    memcpy(blob->GetBufferPointer(), diagnostics.c_str(), diagnostics.size() + 1);
+    *output = blob.Detach();
+}
+
+inline void AddArgument(vector<wstring>& storage, const wchar_t* value)
+{
+    storage.emplace_back(value);
+}
+
+inline void AddArgument(vector<wstring>& storage, const wstring& value)
+{
+    storage.emplace_back(value);
+}
 
 inline bool DxcRuntimeCompilerIsAvailable()
 {
     return SUCCEEDED(GetCompilerState().Status);
 }
 
-inline HRESULT WINAPI DxcCompileFromFileCompat(
-    LPCWSTR fileName,
-    const D3D_SHADER_MACRO* defines,
-    ID3DInclude* includeHandler,
-    LPCSTR entryPoint,
-    LPCSTR target,
-    UINT flags1,
-    UINT ,
-    ID3DBlob** code,
-    ID3DBlob** errorMessages)
+inline HRESULT WINAPI DxcCompileFromFileCompat(LPCWSTR fileName, const D3D_SHADER_MACRO* defines,
+                                               ID3DInclude* includeHandler, LPCSTR entryPoint, LPCSTR target,
+                                               UINT flags1, UINT, ID3DBlob** code, ID3DBlob** errorMessages)
 {
-
 
     if (code)
     {
@@ -176,9 +162,8 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
 
     if (includeHandler && includeHandler != D3D_COMPILE_STANDARD_FILE_INCLUDE)
     {
-        SetDiagnosticBlob(
-            "DXC: custom ID3DInclude handlers are not supported by the compatibility adapter.\n",
-            errorMessages);
+        SetDiagnosticBlob("DXC: custom ID3DInclude handlers are not supported by the compatibility adapter.\n",
+                          errorMessages);
         return E_NOTIMPL;
     }
 
@@ -229,9 +214,7 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
         AddArgument(argumentStorage, sourcePath.parent_path().wstring());
     }
 
-    AddArgument(
-        argumentStorage,
-        (flags1 & D3DCOMPILE_PACK_MATRIX_ROW_MAJOR) != 0 ? L"-Zpr" : L"-Zpc");
+    AddArgument(argumentStorage, (flags1 & D3DCOMPILE_PACK_MATRIX_ROW_MAJOR) != 0 ? L"-Zpr" : L"-Zpc");
 
     if ((flags1 & D3DCOMPILE_DEBUG) != 0)
     {
@@ -307,8 +290,8 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
         arguments.push_back(argument.c_str());
     }
 
-    const auto cachePath = DxcShaderCache::CachePath(state.Compiler.Get(), state.IncludeHandler.Get(),
-        sourceBuffer, arguments);
+    const auto cachePath =
+        DxcShaderCache::CachePath(state.Compiler.Get(), state.IncludeHandler.Get(), sourceBuffer, arguments);
     vector<char> cachedObject;
     string cachedDiagnostics;
     if (DxcShaderCache::Load(cachePath, cachedObject, cachedDiagnostics))
@@ -318,12 +301,8 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
     }
 
     ComPtr<IDxcResult> compileResult;
-    result = state.Compiler->Compile(
-        &sourceBuffer,
-        arguments.data(),
-        static_cast<UINT32>(arguments.size()),
-        state.IncludeHandler.Get(),
-        IID_PPV_ARGS(&compileResult));
+    result = state.Compiler->Compile(&sourceBuffer, arguments.data(), static_cast<UINT32>(arguments.size()),
+                                     state.IncludeHandler.Get(), IID_PPV_ARGS(&compileResult));
     if (FAILED(result) || !compileResult)
     {
         SetDiagnosticBlob("DXC: IDxcCompiler3::Compile failed.\n", errorMessages);
@@ -332,15 +311,10 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
 
     string diagnostics;
     ComPtr<IDxcBlobUtf8> diagnosticsBlob;
-    if (SUCCEEDED(compileResult->GetOutput(
-        DXC_OUT_ERRORS,
-        IID_PPV_ARGS(&diagnosticsBlob),
-        nullptr)) &&
+    if (SUCCEEDED(compileResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&diagnosticsBlob), nullptr)) &&
         diagnosticsBlob && diagnosticsBlob->GetStringLength() > 0)
     {
-        diagnostics.assign(
-            diagnosticsBlob->GetStringPointer(),
-            diagnosticsBlob->GetStringLength());
+        diagnostics.assign(diagnosticsBlob->GetStringPointer(), diagnosticsBlob->GetStringLength());
     }
     SetDiagnosticBlob(diagnostics, errorMessages);
 
@@ -356,10 +330,7 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(
     }
 
     ComPtr<IDxcBlob> object;
-    result = compileResult->GetOutput(
-        DXC_OUT_OBJECT,
-        IID_PPV_ARGS(&object),
-        nullptr);
+    result = compileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&object), nullptr);
     if (FAILED(result) || !object)
     {
         if (diagnostics.empty())

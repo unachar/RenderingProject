@@ -4,7 +4,10 @@
 
 void Check(bool value, const char* message)
 {
-    if (!value) throw std::runtime_error(message);
+    if (!value)
+    {
+        throw std::runtime_error(message);
+    }
 }
 
 int main()
@@ -22,7 +25,8 @@ int main()
         Check(!Decode(words, 11, 12, true, Radiance, Radiance).Valid, "different serial cannot reuse readback");
         Check(!Decode(words, 11, 11, false, 0, 0).Valid, "disabled measurement is unavailable");
         const auto partial = Decode(words, 11, 11, true, Radiance | ShadowAo, Radiance);
-        Check(partial.ProviderKnown(Radiance) && !partial.ProviderKnown(ShadowAo), "missing shader variant stays unavailable");
+        Check(partial.ProviderKnown(Radiance) && !partial.ProviderKnown(ShadowAo),
+              "missing shader variant stays unavailable");
         Check(!counts.AllSourcesCovered, "partial provider coverage is not a total ray count");
         std::cout << "raytelemetry tests: PASS\n";
         return 0;

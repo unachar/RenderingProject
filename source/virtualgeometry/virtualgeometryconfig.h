@@ -4,15 +4,15 @@
 
 namespace VirtualGeometryConfig
 {
-    inline constexpr uint32_t MaxClusterTriangles = 128;
-    inline constexpr uint32_t MaxClusterVertices = 256;
-    inline constexpr uint32_t TargetClustersPerGroup = 8;
-    inline constexpr uint32_t MaxHierarchyLevels = 32;
-    inline constexpr uint32_t InvalidIndex = UINT32_MAX;
-    inline constexpr uint32_t AssetVersion = 1;
-    inline constexpr uint32_t BuilderVersion = 4;
-    inline constexpr uint32_t GeometryPageBytes = 64 * 1024;
-}
+inline constexpr uint32_t MaxClusterTriangles = 128;
+inline constexpr uint32_t MaxClusterVertices = 256;
+inline constexpr uint32_t TargetClustersPerGroup = 8;
+inline constexpr uint32_t MaxHierarchyLevels = 32;
+inline constexpr uint32_t InvalidIndex = UINT32_MAX;
+inline constexpr uint32_t AssetVersion = 1;
+inline constexpr uint32_t BuilderVersion = 4;
+inline constexpr uint32_t GeometryPageBytes = 64 * 1024;
+} // namespace VirtualGeometryConfig
 
 struct VirtualGeometryBuildConfig
 {
@@ -53,6 +53,6 @@ inline VirtualGeometryBuildConfig Production()
     config.TargetRelativeError = 0.01f;
     return config;
 }
-}
+} // namespace VGSettings
 
 bool ValidateVirtualGeometryConfig(const VirtualGeometryBuildConfig& config, std::string& error);

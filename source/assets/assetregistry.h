@@ -5,12 +5,13 @@
 
 class AssetRegistry
 {
-public:
+  public:
     struct Entry
     {
         std::filesystem::path Path;
         AssetType Type = AssetType::Unknown;
     };
+
     explicit AssetRegistry(const std::filesystem::path& root = "asset");
     AssetHandle Register(const std::filesystem::path& path, AssetType type, std::string& error);
     std::filesystem::path Resolve(AssetHandle handle) const;
@@ -21,7 +22,8 @@ public:
     static AssetType Classify(const std::filesystem::path& path);
     // ルート（asset フォルダ）の絶対パス。作業フォルダが変わったら取り直す。
     const std::filesystem::path& Root() const;
-private:
+
+  private:
     // グローバル変数として WinMain より前に構築されるため、構築時点の作業フォルダで
     // ルートを固定すると、main.cpp の SetCurrentDirectoryW 後に別フォルダを指してしまう。
     // 指定値だけ保持し、絶対パスは使用時に解決する。
@@ -32,5 +34,3 @@ private:
     std::unordered_set<AssetHandle> m_Collisions;
     bool Contains(const std::filesystem::path& path) const;
 };
-
-

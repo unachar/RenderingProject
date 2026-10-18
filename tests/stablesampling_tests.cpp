@@ -5,8 +5,12 @@
 
 void Check(bool condition, const char* message)
 {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+    {
+        throw std::runtime_error(message);
+    }
 }
+
 int main()
 {
     try
@@ -23,7 +27,8 @@ int main()
                 sumX += sample.x;
                 sumY += sample.y;
                 Check(StableSampling::PixelSampleIndex(index * 2, true) == index &&
-                    StableSampling::PixelSampleIndex(index * 2 + 1, true) == index, "both checkerboard parities cover the whole sequence");
+                          StableSampling::PixelSampleIndex(index * 2 + 1, true) == index,
+                      "both checkerboard parities cover the whole sequence");
             }
             Check(std::abs(sumX / 256 - .5) < .015 && std::abs(sumY / 256 - .5) < .015, "no hemisphere-domain bias");
             const auto first = StableSampling::SampleSequence(pixel, pixel * 7, 0, 3);
@@ -38,12 +43,20 @@ int main()
             {
                 const auto selection = StableSampling::SampleSequence(pixel, 9, index, 1);
                 const auto coordinates = StableSampling::SampleSequence(pixel, 9, index, 2);
-                if (selection.x < .5f) { sumU += coordinates.x; ++countU; }
-                if (selection.y < .5f) { sumV += coordinates.y; ++countV; }
+                if (selection.x < .5f)
+                {
+                    sumU += coordinates.x;
+                    ++countU;
+                }
+                if (selection.y < .5f)
+                {
+                    sumV += coordinates.y;
+                    ++countV;
+                }
             }
             Check(countU > 1900 && countV > 1900, "selection domain coverage");
             Check(std::abs(sumU / countU - .5) < .03 && std::abs(sumV / countV - .5) < .03,
-                "emitter and triangle selection must not bias barycentric coordinates");
+                  "emitter and triangle selection must not bias barycentric coordinates");
         }
         std::cout << "stable sampling tests: PASS\n";
         return 0;

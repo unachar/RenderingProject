@@ -18,7 +18,12 @@ namespace
 {
 struct State
 {
-    struct Entry { Meshlets::Asset Asset; uint32_t BaseVertex = 0; };
+    struct Entry
+    {
+        Meshlets::Asset Asset;
+        uint32_t BaseVertex = 0;
+    };
+
     unordered_map<uint32_t, Entry> Entries;
     Meshlets::Asset Data;
     vector<Meshlets::Range> Ranges;
@@ -28,13 +33,15 @@ struct State
     bool Rebuild = false;
     uint32_t PreviousActive = UINT32_MAX;
 };
-State &Data()
+
+State& Data()
 {
     static State state;
     return state;
 }
 } // namespace
-void BuildImportedMesh(StaticMeshData &mesh)
+
+void BuildImportedMesh(StaticMeshData& mesh)
 {
     mesh.VirtualGeometryLODs = {};
     mesh.MeshletLODs = {};
@@ -48,23 +55,28 @@ void BuildImportedMesh(StaticMeshData &mesh)
     if (!CanUseVirtualGeometry(mesh, eligibilityReason))
     {
         mesh.VirtualGeometryBuildError = eligibilityReason;
-        WriteGraphicsLog("VirtualGeometry import fallback (%s): %s\n",
-            mesh.MeshName.c_str(), eligibilityReason.c_str());
+        WriteGraphicsLog("VirtualGeometry import fallback (%s): %s\n", mesh.MeshName.c_str(),
+                         eligibilityReason.c_str());
         return;
     }
     try
     {
         vector<VirtualGeometryVertex> vertices;
         vertices.reserve(mesh.CpuVertices.size());
-        for (const auto &v : mesh.CpuVertices)
-            vertices.push_back({{v.Position.x,v.Position.y,v.Position.z},
-                {v.Normal.x,v.Normal.y,v.Normal.z}, {v.TexCoord.x,v.TexCoord.y},
-                {v.Diffuse.x,v.Diffuse.y,v.Diffuse.z,v.Diffuse.w}});
+        for (const auto& v : mesh.CpuVertices)
+        {
+            vertices.push_back({{v.Position.x, v.Position.y, v.Position.z},
+                                {v.Normal.x, v.Normal.y, v.Normal.z},
+                                {v.TexCoord.x, v.TexCoord.y},
+                                {v.Diffuse.x, v.Diffuse.y, v.Diffuse.z, v.Diffuse.w}});
+        }
         for (uint32_t lod = 0; lod < StaticMeshData::LodCount; ++lod)
         {
-            const auto &indices = lod ? mesh.CpuLodIndices[lod - 1] : mesh.CpuIndices;
+            const auto& indices = lod ? mesh.CpuLodIndices[lod - 1] : mesh.CpuIndices;
             if (indices.empty())
+            {
                 continue;
+            }
             if (mesh.VirtualGeometrySettings.BackgroundBuild)
             {
                 if (lod != 0)
@@ -76,17 +88,21 @@ void BuildImportedMesh(StaticMeshData &mesh)
                 continue;
             }
             auto asset = VirtualGeometryRuntime::Acquire(vertices, indices, 0, mesh.AppliedMaterialPartId,
-                "asset/virtualgeometry-cache", mesh.VirtualGeometrySettings);
+                                                         "asset/virtualgeometry-cache", mesh.VirtualGeometrySettings);
             mesh.VirtualGeometryLODs[lod] = asset;
-            if (asset->Error.empty()) mesh.MeshletLODs[lod] = asset->Meshlets;
+            if (asset->Error.empty())
+            {
+                mesh.MeshletLODs[lod] = asset->Meshlets;
+            }
             else
             {
                 mesh.VirtualGeometryBuildError = asset->Error;
-                WriteGraphicsLog("Nanite import fallback (%s LOD%u): %s\n", mesh.MeshName.c_str(),lod,asset->Error.c_str());
+                WriteGraphicsLog("Nanite import fallback (%s LOD%u): %s\n", mesh.MeshName.c_str(), lod,
+                                 asset->Error.c_str());
             }
         }
     }
-    catch (const exception &error)
+    catch (const exception& error)
     {
         mesh.VirtualGeometryLODs = {};
         mesh.MeshletLODs = {};
@@ -94,6 +110,7 @@ void BuildImportedMesh(StaticMeshData &mesh)
         WriteGraphicsLog("Meshlet import fallback: %s\n", error.what());
     }
 }
+
 bool PollImportedMesh(StaticMeshData& mesh)
 {
     bool changed = false;
@@ -130,27 +147,33 @@ bool PollImportedMesh(StaticMeshData& mesh)
     }
     return changed;
 }
-void Register(uint32_t meshID, const Meshlets::Asset &asset, uint32_t baseVertex)
+
+void Register(uint32_t meshID, const Meshlets::Asset& asset, uint32_t baseVertex)
 {
-    auto &state = Data();
+    auto& state = Data();
     if (state.Ranges.size() <= meshID)
     {
         state.Ranges.resize(size_t(meshID) + 1);
         state.Dirty = true; // Upload new zero ranges even when a legacy asset has no meshlets.
     }
     if (state.DisabledRanges.contains(meshID) || state.Ranges[meshID].MeshletCount || asset.Meshlets.empty())
+    {
         return;
+    }
     state.Entries[meshID] = {asset, baseVertex};
-    auto &data = state.Data;
+    auto& data = state.Data;
     const uint64_t limits[] = {
         data.Meshlets.size() + asset.Meshlets.size(), data.Vertices.size() + asset.Vertices.size(),
         data.Primitives.size() + asset.Primitives.size(), data.Clusters.size() + asset.Clusters.size()};
     for (auto limit : limits)
+    {
         if (limit > UINT32_MAX)
+        {
             throw overflow_error("Global meshlet range overflow");
-    Meshlets::Range range{
-        static_cast<uint32_t>(data.Meshlets.size()), static_cast<uint32_t>(asset.Meshlets.size()),
-        static_cast<uint32_t>(data.Clusters.size()), static_cast<uint32_t>(asset.Clusters.size())};
+        }
+    }
+    Meshlets::Range range{static_cast<uint32_t>(data.Meshlets.size()), static_cast<uint32_t>(asset.Meshlets.size()),
+                          static_cast<uint32_t>(data.Clusters.size()), static_cast<uint32_t>(asset.Clusters.size())};
     uint32_t vertexOffset = static_cast<uint32_t>(data.Vertices.size()),
              primitiveOffset = static_cast<uint32_t>(data.Primitives.size());
     for (auto meshlet : asset.Meshlets)
@@ -162,7 +185,9 @@ void Register(uint32_t meshID, const Meshlets::Asset &asset, uint32_t baseVertex
     for (auto vertex : asset.Vertices)
     {
         if (uint64_t(baseVertex) + vertex > UINT32_MAX)
+        {
             throw overflow_error("Meshlet global vertex overflow");
+        }
         data.Vertices.push_back(baseVertex + vertex);
     }
     data.Primitives.insert(data.Primitives.end(), asset.Primitives.begin(), asset.Primitives.end());
@@ -175,27 +200,32 @@ void Register(uint32_t meshID, const Meshlets::Asset &asset, uint32_t baseVertex
     state.Ranges[meshID] = range;
     state.Dirty = true;
 }
-void Replace(uint32_t meshID, const Meshlets::Asset &asset, uint32_t baseVertex)
+
+void Replace(uint32_t meshID, const Meshlets::Asset& asset, uint32_t baseVertex)
 {
-    auto &state = Data();
+    auto& state = Data();
     state.DisabledRanges.erase(meshID);
     state.Entries[meshID] = {asset, baseVertex};
     state.Rebuild = true;
     state.Dirty = true;
 }
+
 void Invalidate(uint32_t meshID)
 {
     if (meshID < Data().Ranges.size())
     {
         if (Data().Ranges[meshID].MeshletCount)
+        {
             Data().DisabledRanges[meshID] = Data().Ranges[meshID];
+        }
         Data().Ranges[meshID] = {};
         Data().Dirty = true;
     }
 }
+
 void RestoreForValidation(uint32_t meshID)
 {
-    auto &state = Data();
+    auto& state = Data();
     const auto found = state.DisabledRanges.find(meshID);
     if (found != state.DisabledRanges.end())
     {
@@ -204,24 +234,31 @@ void RestoreForValidation(uint32_t meshID)
         state.Dirty = true;
     }
 }
-void Prepare(RenderGraph &graph, uint32_t meshes)
+
+void Prepare(RenderGraph& graph, uint32_t meshes)
 {
-    auto &state = Data();
+    auto& state = Data();
     if (state.Dirty || state.PreviousActive != GpuScene::Statistics().ActiveInstances)
     {
         state.PreviousActive = GpuScene::Statistics().ActiveInstances;
         unordered_set<uint32_t> used, groups;
         for (uint32_t slot = 0; slot < GpuScene::Statistics().InstanceSlots; ++slot)
         {
-            const auto *instance = GpuScene::GetInstance(slot);
+            const auto* instance = GpuScene::GetInstance(slot);
             if (!instance || !(instance->Flags & 1u))
+            {
                 continue;
+            }
             used.insert(instance->MeshIndex);
             groups.insert(instance->LODGroupIndex);
         }
         for (auto group : groups)
+        {
             for (auto id : GPUVisibility::LODMeshes(group))
+            {
                 used.insert(id);
+            }
+        }
         for (auto it = state.Entries.begin(); it != state.Entries.end();)
         {
             if (!used.contains(it->first))
@@ -231,7 +268,9 @@ void Prepare(RenderGraph &graph, uint32_t meshes)
                 state.Rebuild = true;
             }
             else
+            {
                 ++it;
+            }
         }
     }
     if (state.Rebuild)
@@ -242,19 +281,27 @@ void Prepare(RenderGraph &graph, uint32_t meshes)
         state.Data = {};
         state.Ranges.assign(max(size_t(meshes), state.Ranges.size()), {});
         vector<uint32_t> ids;
-        for (const auto &[id, entry] : entries)
+        for (const auto& [id, entry] : entries)
+        {
             ids.push_back(id);
+        }
         sort(ids.begin(), ids.end());
         for (auto id : ids)
         {
-            const auto &entry = entries.at(id);
+            const auto& entry = entries.at(id);
             if (!state.DisabledRanges.contains(id))
+            {
                 Register(id, entry.Asset, entry.BaseVertex);
+            }
         }
         // Disabled assets retain source data for validation restore.
         for (auto id : ids)
+        {
             if (state.DisabledRanges.contains(id))
+            {
                 state.Entries[id] = move(entries.at(id));
+            }
+        }
         state.Rebuild = false;
         state.Dirty = true;
     }
@@ -264,11 +311,11 @@ void Prepare(RenderGraph &graph, uint32_t meshes)
         state.Dirty = true;
     }
     const uint32_t frame = GraphicsDevice::GetFrameIndex();
-    auto upload = [&](GpuSceneBuffer &buffer, const auto &values, const char *name) {
+    auto upload = [&](GpuSceneBuffer& buffer, const auto& values, const char* name) {
         using Element = typename decay_t<decltype(values)>::value_type;
         buffer.BeginFrame(frame);
-        bool resized = buffer.Ensure(GraphicsDevice::GetDevice(), static_cast<uint32_t>(values.size()),
-                                     sizeof(Element), frame, L"Global Meshlet Asset");
+        bool resized = buffer.Ensure(GraphicsDevice::GetDevice(), static_cast<uint32_t>(values.size()), sizeof(Element),
+                                     frame, L"Global Meshlet Asset");
         vector<uint32_t> changes;
         if (state.Dirty || resized)
         {
@@ -287,10 +334,15 @@ void Prepare(RenderGraph &graph, uint32_t meshes)
         auto handle = graph.ImportResource(input);
         if (bytes)
         {
-            auto *target = &buffer;
+            auto* target = &buffer;
             graph.AddPass(
-                name, [=](RenderGraph::PassBuilder &b) { b.Write(handle, D3D12_RESOURCE_STATE_COPY_DEST); },
-                [=](ID3D12GraphicsCommandList *list) { target->Copy(list, frame); });
+                name,
+                [=](RenderGraph::PassBuilder& b) {
+                    b.Write(handle, D3D12_RESOURCE_STATE_COPY_DEST);
+                },
+                [=](ID3D12GraphicsCommandList* list) {
+                    target->Copy(list, frame);
+                });
         }
     };
     upload(state.Meshlets, state.Data.Meshlets, "Global Meshlet Upload");
@@ -301,47 +353,56 @@ void Prepare(RenderGraph &graph, uint32_t meshes)
     upload(state.Range, state.Ranges, "Meshlet Range Upload");
     state.Dirty = false;
 }
-const vector<Meshlets::Range> &Ranges()
+
+const vector<Meshlets::Range>& Ranges()
 {
     return Data().Ranges;
 }
-const Meshlets::Asset &AssetData()
+
+const Meshlets::Asset& AssetData()
 {
     return Data().Data;
 }
-GpuSceneBuffer &MeshletBuffer()
+
+GpuSceneBuffer& MeshletBuffer()
 {
     return Data().Meshlets;
 }
-GpuSceneBuffer &VertexBuffer()
+
+GpuSceneBuffer& VertexBuffer()
 {
     return Data().Vertices;
 }
-GpuSceneBuffer &PrimitiveBuffer()
+
+GpuSceneBuffer& PrimitiveBuffer()
 {
     return Data().Primitives;
 }
-GpuSceneBuffer &BoundsBuffer()
+
+GpuSceneBuffer& BoundsBuffer()
 {
     return Data().Bounds;
 }
-GpuSceneBuffer &ClusterBuffer()
+
+GpuSceneBuffer& ClusterBuffer()
 {
     return Data().Clusters;
 }
-GpuSceneBuffer &RangeBuffer()
+
+GpuSceneBuffer& RangeBuffer()
 {
     return Data().Range;
 }
+
 uint64_t MemoryBytes()
 {
-    auto &s = Data();
-    return s.Meshlets.MemoryBytes() + s.Vertices.MemoryBytes() + s.Primitives.MemoryBytes() +
-           s.Bounds.MemoryBytes() + s.Clusters.MemoryBytes() + s.Range.MemoryBytes();
+    auto& s = Data();
+    return s.Meshlets.MemoryBytes() + s.Vertices.MemoryBytes() + s.Primitives.MemoryBytes() + s.Bounds.MemoryBytes() +
+           s.Clusters.MemoryBytes() + s.Range.MemoryBytes();
 }
+
 void Shutdown()
 {
     Data() = {};
 }
 } // namespace MeshletManager
-

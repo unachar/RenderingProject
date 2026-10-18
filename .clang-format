@@ -1,0 +1,16 @@
+BasedOnStyle: Microsoft
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 120
+SortIncludes: Never
+BreakStringLiterals: false
+InsertBraces: true
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: None
+SeparateDefinitionBlocks: Always
+PointerAlignment: Left
+ReferenceAlignment: Left

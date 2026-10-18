@@ -50,8 +50,8 @@ inline std::wstring CompilerIdentity()
     return std::to_wstring(hash);
 }
 
-inline std::filesystem::path CachePath(IDxcCompiler3* compiler, IDxcIncludeHandler* includes,
-    const DxcBuffer& source, const std::vector<LPCWSTR>& arguments)
+inline std::filesystem::path CachePath(IDxcCompiler3* compiler, IDxcIncludeHandler* includes, const DxcBuffer& source,
+                                       const std::vector<LPCWSTR>& arguments)
 {
     char disabled[8]{};
     if (GetEnvironmentVariableA("DX12_DISABLE_SHADER_CACHE", disabled, sizeof(disabled)) > 0 && atoi(disabled))
@@ -67,8 +67,8 @@ inline std::filesystem::path CachePath(IDxcCompiler3* compiler, IDxcIncludeHandl
     preprocessArguments.push_back(L"-P");
     Microsoft::WRL::ComPtr<IDxcResult> result;
     HRESULT status = E_FAIL;
-    if (FAILED(compiler->Compile(&source, preprocessArguments.data(),
-        static_cast<UINT32>(preprocessArguments.size()), includes, IID_PPV_ARGS(&result))) ||
+    if (FAILED(compiler->Compile(&source, preprocessArguments.data(), static_cast<UINT32>(preprocessArguments.size()),
+                                 includes, IID_PPV_ARGS(&result))) ||
         !result || FAILED(result->GetStatus(&status)) || FAILED(status))
     {
         return {};
@@ -106,8 +106,8 @@ inline bool Load(const std::filesystem::path& path, std::vector<char>& object, s
     const auto fileSize = stream.tellg();
     stream.seekg(0);
     stream.read(reinterpret_cast<char*>(header), sizeof(header));
-    if (!stream || header[0] != magic || header[1] > 64 * 1024 * 1024 ||
-        header[2] > 1024 * 1024 || fileSize != sizeof(header) + header[1] + header[2])
+    if (!stream || header[0] != magic || header[1] > 64 * 1024 * 1024 || header[2] > 1024 * 1024 ||
+        fileSize != sizeof(header) + header[1] + header[2])
     {
         return false;
     }
@@ -116,7 +116,7 @@ inline bool Load(const std::filesystem::path& path, std::vector<char>& object, s
     stream.read(object.data(), static_cast<std::streamsize>(object.size()));
     stream.read(diagnostics.data(), static_cast<std::streamsize>(diagnostics.size()));
     return stream && !object.empty() &&
-        Hash(diagnostics.data(), diagnostics.size(), Hash(object.data(), object.size())) == header[3];
+           Hash(diagnostics.data(), diagnostics.size(), Hash(object.data(), object.size())) == header[3];
 }
 
 inline void Store(const std::filesystem::path& path, const void* object, size_t size, const std::string& diagnostics)
@@ -132,11 +132,11 @@ inline void Store(const std::filesystem::path& path, const void* object, size_t 
         return;
     }
     const auto temporary = path.wstring() + L"." + std::to_wstring(GetCurrentProcessId()) + L"." +
-        std::to_wstring(GetCurrentThreadId()) + L".tmp";
+                           std::to_wstring(GetCurrentThreadId()) + L".tmp";
     {
         std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
         const uint64_t header[] = {0x3143584443484143ull, size, diagnostics.size(),
-            Hash(diagnostics.data(), diagnostics.size(), Hash(object, size))};
+                                   Hash(diagnostics.data(), diagnostics.size(), Hash(object, size))};
         stream.write(reinterpret_cast<const char*>(header), sizeof(header));
         stream.write(static_cast<const char*>(object), static_cast<std::streamsize>(size));
         stream.write(diagnostics.data(), static_cast<std::streamsize>(diagnostics.size()));
@@ -153,4 +153,4 @@ inline void Store(const std::filesystem::path& path, const void* object, size_t 
         std::filesystem::remove(temporary, error);
     }
 }
-}
+} // namespace DxcShaderCache

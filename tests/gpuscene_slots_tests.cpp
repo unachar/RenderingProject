@@ -3,13 +3,14 @@
 #include <iostream>
 #include <stdexcept>
 
-void Check(bool condition, const char *message)
+void Check(bool condition, const char* message)
 {
     if (!condition)
     {
         throw std::runtime_error(message);
     }
 }
+
 int main()
 {
     try
@@ -59,7 +60,7 @@ int main()
         std::cout << "PASS: GPU scene 10000 slots, dirty updates, temporal settle and ID reuse\n";
         return 0;
     }
-    catch (const std::exception &exception)
+    catch (const std::exception& exception)
     {
         std::cerr << exception.what() << '\n';
         return 1;

@@ -6,8 +6,8 @@
 
 namespace VirtualGeometryPageStress
 {
-bool Create(const std::filesystem::path& path, uint32_t leafCount,
-    VirtualGeometryPageCache::PageManifest& manifest, std::string& error)
+bool Create(const std::filesystem::path& path, uint32_t leafCount, VirtualGeometryPageCache::PageManifest& manifest,
+            std::string& error)
 {
     // Every subtree is a contiguous strip of the same plane. Its coarse grid
     // covers exactly the same rectangle as all eight children together.
@@ -21,11 +21,15 @@ bool Create(const std::filesystem::path& path, uint32_t leafCount,
         error = "Stress asset leaf count must be a power of eight, 8..32768";
         return false;
     }
-    struct Strip { uint32_t First, Count; };
+
+    struct Strip
+    {
+        uint32_t First, Count;
+    };
+
     VirtualGeometryGPU::PackedAsset metadata;
     std::vector<Strip> strips;
-    auto appendCluster = [&](Strip strip, uint32_t level)
-    {
+    auto appendCluster = [&](Strip strip, uint32_t level) {
         VirtualGeometryGPUCluster cluster;
         cluster.VertexCount = 36;
         cluster.TriangleCount = 50;
@@ -33,7 +37,7 @@ bool Create(const std::filesystem::path& path, uint32_t leafCount,
         float first = -4 + 8 * (float(strip.First) / leafCount);
         float width = 8 * (float(strip.Count) / leafCount);
         cluster.Bounds = {first + width * 0.5f, 0, 0, std::sqrt(16 + width * width * 0.25f)};
-        cluster.Cone = {0,0,-1,1};
+        cluster.Cone = {0, 0, -1, 1};
         cluster.LodError = float(level);
         metadata.Clusters.push_back(cluster);
         strips.push_back(strip);
@@ -41,7 +45,7 @@ bool Create(const std::filesystem::path& path, uint32_t leafCount,
     std::vector<uint32_t> current;
     for (uint32_t leaf = 0; leaf < leafCount; ++leaf)
     {
-        appendCluster({leaf,1},0);
+        appendCluster({leaf, 1}, 0);
         current.push_back(leaf);
     }
     uint32_t level = 0;
@@ -57,19 +61,19 @@ bool Create(const std::filesystem::path& path, uint32_t leafCount,
             group.ChildCount = 8;
             for (uint32_t offset = 0; offset < 8; ++offset)
             {
-                uint32_t child = current[begin+offset];
+                uint32_t child = current[begin + offset];
                 metadata.Clusters[child].GroupIndex = groupIndex;
                 metadata.HierarchyIndices.push_back(child);
             }
             uint32_t parent = uint32_t(metadata.Clusters.size());
             auto strip = strips[current[begin]];
             strip.Count *= 8;
-            appendCluster(strip,level+1);
+            appendCluster(strip, level + 1);
             metadata.Clusters.back().GeneratingGroupIndex = groupIndex;
             group.FirstParent = uint32_t(metadata.HierarchyIndices.size());
             group.ParentCount = 1;
             group.Bounds = metadata.Clusters.back().Bounds;
-            group.MaxError = float(level+1);
+            group.MaxError = float(level + 1);
             metadata.HierarchyIndices.push_back(parent);
             metadata.Groups.push_back(group);
             parents.push_back(parent);
@@ -79,8 +83,8 @@ bool Create(const std::filesystem::path& path, uint32_t leafCount,
     }
     metadata.Roots = current;
     std::vector<uint32_t> order(metadata.Clusters.size());
-    std::iota(order.begin(),order.end(),0u);
-    std::reverse(order.begin(),order.end());
+    std::iota(order.begin(), order.end(), 0u);
+    std::reverse(order.begin(), order.end());
     std::vector<std::vector<uint32_t>> pageClusters;
     std::vector<uint8_t> pinned;
     uint32_t used = 65536;
@@ -88,7 +92,7 @@ bool Create(const std::filesystem::path& path, uint32_t leafCount,
     for (uint32_t index : order)
     {
         bool root = index == current[0];
-        if (1880 > 65536-used || root != wasPinned)
+        if (1880 > 65536 - used || root != wasPinned)
         {
             pageClusters.emplace_back();
             pinned.push_back(uint8_t(root));
@@ -96,16 +100,16 @@ bool Create(const std::filesystem::path& path, uint32_t leafCount,
         }
         wasPinned = root;
         auto& cluster = metadata.Clusters[index];
-        cluster.PageIndex = uint32_t(pageClusters.size()-1);
+        cluster.PageIndex = uint32_t(pageClusters.size() - 1);
         cluster.VertexOffset = used;
-        cluster.TriangleOffset = used+36*48;
+        cluster.TriangleOffset = used + 36 * 48;
         pageClusters.back().push_back(index);
         used += 1880;
     }
-    bool saved = VirtualGeometryPageCache::WriteGenerated(path,metadata,pinned,
-        [&](uint32_t page, std::span<uint8_t> payload, std::string&)
-        {
-            std::fill(payload.begin(),payload.end(),0);
+    bool saved = VirtualGeometryPageCache::WriteGenerated(
+        path, metadata, pinned,
+        [&](uint32_t page, std::span<uint8_t> payload, std::string&) {
+            std::fill(payload.begin(), payload.end(), 0);
             for (uint32_t index : pageClusters[page])
             {
                 const auto& cluster = metadata.Clusters[index];
@@ -117,11 +121,11 @@ bool Create(const std::filesystem::path& path, uint32_t leafCount,
                     for (uint32_t x = 0; x < 6; ++x)
                     {
                         VirtualGeometryVertex vertex;
-                        vertex.Position[0] = first+width*(float(x)/5);
-                        vertex.Position[1] = -4+8*(float(y)/5);
+                        vertex.Position[0] = first + width * (float(x) / 5);
+                        vertex.Position[1] = -4 + 8 * (float(y) / 5);
                         vertex.Normal[2] = -1;
-                        std::fill(std::begin(vertex.Diffuse),std::end(vertex.Diffuse),1.0f);
-                        std::memcpy(payload.data()+cluster.VertexOffset+(y*6+x)*48,&vertex,48);
+                        std::fill(std::begin(vertex.Diffuse), std::end(vertex.Diffuse), 1.0f);
+                        std::memcpy(payload.data() + cluster.VertexOffset + (y * 6 + x) * 48, &vertex, 48);
                     }
                 }
                 uint32_t triangle = cluster.TriangleOffset;
@@ -129,16 +133,21 @@ bool Create(const std::filesystem::path& path, uint32_t leafCount,
                 {
                     for (uint8_t x = 0; x < 5; ++x)
                     {
-                        uint8_t firstVertex = uint8_t(y*6+x);
-                        const uint8_t indices[] = {firstVertex,uint8_t(firstVertex+6),uint8_t(firstVertex+1),
-                            uint8_t(firstVertex+1),uint8_t(firstVertex+6),uint8_t(firstVertex+7)};
-                        std::memcpy(payload.data()+triangle,indices,6);
+                        uint8_t firstVertex = uint8_t(y * 6 + x);
+                        const uint8_t indices[] = {firstVertex,
+                                                   uint8_t(firstVertex + 6),
+                                                   uint8_t(firstVertex + 1),
+                                                   uint8_t(firstVertex + 1),
+                                                   uint8_t(firstVertex + 6),
+                                                   uint8_t(firstVertex + 7)};
+                        std::memcpy(payload.data() + triangle, indices, 6);
                         triangle += 6;
                     }
                 }
             }
             return true;
-        },error);
-    return saved && VirtualGeometryPageCache::Open(path,manifest,error);
+        },
+        error);
+    return saved && VirtualGeometryPageCache::Open(path, manifest, error);
 }
-}
+} // namespace VirtualGeometryPageStress

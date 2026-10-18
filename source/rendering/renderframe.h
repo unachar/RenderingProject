@@ -3,8 +3,8 @@
 
 class RenderFrame : protected RenderTargets
 {
-public:
-	static void BeginDraw();
-	static void SetDescriptorHeap();
-	static void EndDraw();
+  public:
+    static void BeginDraw();
+    static void SetDescriptorHeap();
+    static void EndDraw();
 };

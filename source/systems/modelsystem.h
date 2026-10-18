@@ -23,7 +23,7 @@ struct MaterialComponent;
 
 class ModelDrawBackend final : public SystemBase
 {
-private:
+  private:
     struct AnimDrawCall
     {
         EntityID EntityID;
@@ -34,6 +34,7 @@ private:
         const MaterialComponent* material;
         float cameraDepth;
     };
+
     struct StaticDrawCall
     {
         EntityID EntityID;
@@ -44,18 +45,23 @@ private:
         const MaterialComponent* material;
         float cameraDepth;
     };
+
     vector<AnimDrawCall> m_AnimDrawCalls;
     vector<StaticDrawCall> m_StaticDrawCalls;
     GpuDrivenIndirectDrawCache* m_IndirectDraws = nullptr;
 
-public:
-    void SetIndirectDrawCache(GpuDrivenIndirectDrawCache* cache) { m_IndirectDraws = cache; }
+  public:
+    void SetIndirectDrawCache(GpuDrivenIndirectDrawCache* cache)
+    {
+        m_IndirectDraws = cache;
+    }
+
     void Draw(RenderPass renderPass, bool receivingPostProcessOnly) override;
 };
 
 class ModelSystem final : public SystemBase
 {
-private:
+  private:
     ModelDrawBackend m_Backend{};
     GpuDrivenIndirectDrawCache m_IndirectDraws{};
 
@@ -68,40 +74,49 @@ private:
         bool shadowPass = false;
     };
 
-    template<typename ModelResource, typename MeshDataType>
-    struct ModelCallbacks
+    template <typename ModelResource, typename MeshDataType> struct ModelCallbacks
     {
-        void(*restoreGraphicsState)(ID3D12GraphicsCommandList*, ID3D12PipelineState*);
+        void (*restoreGraphicsState)(ID3D12GraphicsCommandList*, ID3D12PipelineState*);
         function<void(EntityID, void*)> writeConstants;
-        function<bool(ID3D12GraphicsCommandList*, const ModelResource*, EntityID, const XMMATRIX&, const XMMATRIX&, ID3D12PipelineState*, bool)> executeIndirect;
-        function<void(ID3D12GraphicsCommandList*, const ModelResource*, EntityID, const XMMATRIX&, ID3D12PipelineState*)> fallbackDraw;
+        function<bool(ID3D12GraphicsCommandList*, const ModelResource*, EntityID, const XMMATRIX&, const XMMATRIX&,
+                      ID3D12PipelineState*, bool)>
+            executeIndirect;
+        function<void(ID3D12GraphicsCommandList*, const ModelResource*, EntityID, const XMMATRIX&,
+                      ID3D12PipelineState*)>
+            fallbackDraw;
         function<bool(const ModelResource*, UINT, const MeshDataType&)> shouldTransitionMesh;
     };
+
     static bool IsSkyEntity(EntityID entity)
     {
         return ComponentManager::HasComponent<NameComponent>(entity) &&
-            ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky";
+               ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky";
     }
 
     static bool ShouldCastShadow(EntityID entity)
     {
         if (ComponentManager::HasComponent<MeshComponent>(entity) &&
             ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
+        {
             return false;
+        }
         if (IsSkyEntity(entity) || ComponentManager::HasComponent<LightComponent>(entity))
+        {
             return false;
+        }
         if (!Registry::HasComponent(entity, ComponentType::MATERIAL))
+        {
             return true;
+        }
         const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
         if (MaterialSystem::IsTransparentMaterial(material))
+        {
             return false;
-        return !(material.ShaderClassMode == MaterialMode::Manual &&
-            material.ShaderClass == ShaderClass::Shadow);
+        }
+        return !(material.ShaderClassMode == MaterialMode::Manual && material.ShaderClass == ShaderClass::Shadow);
     }
 
-    static void SubmitBarriers(
-        ID3D12GraphicsCommandList* commandList,
-        const vector<D3D12_RESOURCE_BARRIER>& barriers)
+    static void SubmitBarriers(ID3D12GraphicsCommandList* commandList, const vector<D3D12_RESOURCE_BARRIER>& barriers)
     {
         if (commandList && !barriers.empty())
         {
@@ -109,36 +124,32 @@ private:
         }
     }
 
-    static void RestoreShadowGraphicsState(
-        ID3D12GraphicsCommandList* commandList,
-        ID3D12PipelineState* shadowPso)
+    static void RestoreShadowGraphicsState(ID3D12GraphicsCommandList* commandList, ID3D12PipelineState* shadowPso)
     {
         commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
         if (LightingResources::GetShadowCB())
         {
-            commandList->SetGraphicsRootConstantBufferView(
-                5, LightingResources::GetCurrentShadowConstantBufferAddress());
+            commandList->SetGraphicsRootConstantBufferView(5,
+                                                           LightingResources::GetCurrentShadowConstantBufferAddress());
         }
         commandList->SetPipelineState(shadowPso);
         commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     }
 
-    static void RestoreVelocityGraphicsState(
-        ID3D12GraphicsCommandList* commandList,
-        ID3D12PipelineState* velocityPso)
+    static void RestoreVelocityGraphicsState(ID3D12GraphicsCommandList* commandList, ID3D12PipelineState* velocityPso)
     {
         commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
         commandList->SetPipelineState(velocityPso);
         commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     }
 
-    template<typename ModelComponent, typename ModelResource, typename MeshDataType>
-    void DrawModels(
-        const ModelDrawContext& ctx,
-        const ModelCallbacks<ModelResource, MeshDataType>& callbacks)
+    template <typename ModelComponent, typename ModelResource, typename MeshDataType>
+    void DrawModels(const ModelDrawContext& ctx, const ModelCallbacks<ModelResource, MeshDataType>& callbacks)
     {
         if (!ctx.commandList || !ctx.pso)
+        {
             return;
+        }
 
         callbacks.restoreGraphicsState(ctx.commandList, ctx.pso);
 
@@ -149,13 +160,21 @@ private:
         {
             const auto& component = ComponentManager::GetComponentUnchecked<ModelComponent>(entity);
             if (component.ModelId < 0)
+            {
                 continue;
+            }
 
             constexpr bool isAnimated = is_same_v<ModelComponent, AnimationModelComponent>;
-            if (ctx.shadowPass && (!ShouldCastShadow(entity) || !LightingResources::ShouldDrawEntityInCurrentShadowPass(entity)))
+            if (ctx.shadowPass &&
+                (!ShouldCastShadow(entity) || !LightingResources::ShouldDrawEntityInCurrentShadowPass(entity)))
+            {
                 continue;
-            if (InstancingSystem::CanInstance(entity) || (InstancingSystem::CanInstance(entity) && !InstancingSystem::IsEntityVisible(entity)))
+            }
+            if (InstancingSystem::CanInstance(entity) ||
+                (InstancingSystem::CanInstance(entity) && !InstancingSystem::IsEntityVisible(entity)))
+            {
                 continue;
+            }
 
             ModelResource* model;
             if constexpr (isAnimated)
@@ -167,7 +186,9 @@ private:
                 model = ModelManager::GetStaticModel(component.ModelId);
             }
             if (!model)
+            {
                 continue;
+            }
 
             if constexpr (isAnimated)
             {
@@ -186,8 +207,7 @@ private:
                 if (isAnimated && callbacks.shouldTransitionMesh(model, meshIndex, mesh))
                 {
                     barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
-                        mesh.VertexBuffer.Get(),
-                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                        mesh.VertexBuffer.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                         D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER));
                 }
             }
@@ -196,7 +216,8 @@ private:
             const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
             const XMMATRIX world = XMLoadFloat4x4(&transform.WorldMatrix);
             callbacks.writeConstants(entity, ctx.commandList);
-            if (!callbacks.executeIndirect(ctx.commandList, model, entity, world, ctx.viewProjection, ctx.pso, ctx.cpuCulledVirtualPage))
+            if (!callbacks.executeIndirect(ctx.commandList, model, entity, world, ctx.viewProjection, ctx.pso,
+                                           ctx.cpuCulledVirtualPage))
             {
                 callbacks.restoreGraphicsState(ctx.commandList, ctx.pso);
                 callbacks.fallbackDraw(ctx.commandList, model, entity, world, ctx.pso);
@@ -209,8 +230,7 @@ private:
                 if (isAnimated && callbacks.shouldTransitionMesh(model, meshIndex, mesh))
                 {
                     barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(
-                        mesh.VertexBuffer.Get(),
-                        D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
+                        mesh.VertexBuffer.Get(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
                 }
             }
@@ -225,15 +245,16 @@ private:
         UINT8* constantBufferBegin = FrameConstants::GetConstantBufferPtr();
         ID3D12DescriptorHeap* cbvHeap = FrameConstants::GetCbvHeap();
         if (!commandList || !shadowPso || !constantBufferBegin || !cbvHeap)
+        {
             return;
+        }
 
-        ID3D12DescriptorHeap* heaps[] = { cbvHeap };
+        ID3D12DescriptorHeap* heaps[] = {cbvHeap};
         commandList->SetDescriptorHeaps(_countof(heaps), heaps);
         const XMMATRIX lightViewProjection = LightingResources::GetCurrentShadowViewProjection();
         const bool cpuCulledVirtualPage = LightingResources::IsCurrentShadowPassVirtualPage();
 
-        auto writeShadowConstants = [](EntityID entity, void* cmdList)
-        {
+        auto writeShadowConstants = [](EntityID entity, void* cmdList) {
             auto* cl = static_cast<ID3D12GraphicsCommandList*>(cmdList);
             auto* cbBegin = FrameConstants::GetConstantBufferPtr();
             const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
@@ -244,23 +265,35 @@ private:
             cl->SetGraphicsRootDescriptorTable(0, FrameConstants::GetConstantBufferHandle(entity));
         };
 
-        ModelDrawContext ctx{ commandList, shadowPso, lightViewProjection, cpuCulledVirtualPage, true };
+        ModelDrawContext ctx{commandList, shadowPso, lightViewProjection, cpuCulledVirtualPage, true};
         ModelCallbacks<AnimationModelResource, MeshData> animCallbacks{
-            [](auto cl, auto ps) { RestoreShadowGraphicsState(cl, ps); },
+            [](auto cl, auto ps) {
+                RestoreShadowGraphicsState(cl, ps);
+            },
             writeShadowConstants,
-            [this](auto cl, auto model, auto entity, auto world, auto vp, auto ps, auto cpu) 
-            { return m_IndirectDraws.ExecuteShadow(cl, model, entity, world, vp, ps, cpu); },
-            [this](auto cl, auto model, auto entity, auto world, auto ps) { DrawAnimFallback(cl, model, entity, world, ps); },
-            [](auto model, auto idx, auto mesh) { return mesh.VertexBuffer != nullptr; }
-        };
+            [this](auto cl, auto model, auto entity, auto world, auto vp, auto ps, auto cpu) {
+                return m_IndirectDraws.ExecuteShadow(cl, model, entity, world, vp, ps, cpu);
+            },
+            [this](auto cl, auto model, auto entity, auto world, auto ps) {
+                DrawAnimFallback(cl, model, entity, world, ps);
+            },
+            [](auto model, auto idx, auto mesh) {
+                return mesh.VertexBuffer != nullptr;
+            }};
         ModelCallbacks<StaticModelResource, StaticMeshData> staticCallbacks{
-            [](auto cl, auto ps) { RestoreShadowGraphicsState(cl, ps); },
+            [](auto cl, auto ps) {
+                RestoreShadowGraphicsState(cl, ps);
+            },
             writeShadowConstants,
-            [this](auto cl, auto model, auto entity, auto world, auto vp, auto ps, auto cpu)
-            { return m_IndirectDraws.ExecuteShadow(cl, model, entity, world, vp, ps, cpu); },
-            [this](auto cl, auto model, auto entity, auto world, auto ps) { DrawStaticFallback(cl, model, entity, world, ps); },
-            [](auto model, auto idx, auto mesh) { return mesh.VertexBuffer != nullptr; }
-        };
+            [this](auto cl, auto model, auto entity, auto world, auto vp, auto ps, auto cpu) {
+                return m_IndirectDraws.ExecuteShadow(cl, model, entity, world, vp, ps, cpu);
+            },
+            [this](auto cl, auto model, auto entity, auto world, auto ps) {
+                DrawStaticFallback(cl, model, entity, world, ps);
+            },
+            [](auto model, auto idx, auto mesh) {
+                return mesh.VertexBuffer != nullptr;
+            }};
 
         DrawModels<AnimationModelComponent, AnimationModelResource, MeshData>(ctx, animCallbacks);
         DrawModels<StaticModelComponent, StaticModelResource, StaticMeshData>(ctx, staticCallbacks);
@@ -271,18 +304,18 @@ private:
         ID3D12GraphicsCommandList* commandList = GraphicsDevice::GetCommandList();
         ID3D12PipelineState* velocityPso = PsoManager::GetVelocityGeometryPso();
         if (!commandList || !velocityPso)
+        {
             return;
+        }
 
         XMMATRIX view = XMMatrixIdentity();
         XMMATRIX projection = XMMatrixIdentity();
         Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
         const XMMATRIX viewProjection = view * projection;
-        const XMMATRIX previousViewProjection =
-            XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix()) *
-            XMLoadFloat4x4(&GraphicsDevice::GetPreviousProjectionMatrix());
+        const XMMATRIX previousViewProjection = XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix()) *
+                                                XMLoadFloat4x4(&GraphicsDevice::GetPreviousProjectionMatrix());
 
-        auto setConstants = [=](EntityID entity, void* cmdList)
-        {
+        auto setConstants = [=](EntityID entity, void* cmdList) {
             auto* cl = static_cast<ID3D12GraphicsCommandList*>(cmdList);
             const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
             ConstantBuffer3D constants{};
@@ -294,86 +327,123 @@ private:
             cl->SetGraphicsRootDescriptorTable(0, FrameConstants::AllocateTransientConstantBuffer(constants));
         };
 
-        ModelDrawContext ctx{ commandList, velocityPso, viewProjection, false };
+        ModelDrawContext ctx{commandList, velocityPso, viewProjection, false};
         ModelCallbacks<AnimationModelResource, MeshData> animCallbacks{
-            [](auto cl, auto ps) { RestoreVelocityGraphicsState(cl, ps); },
+            [](auto cl, auto ps) {
+                RestoreVelocityGraphicsState(cl, ps);
+            },
             setConstants,
-            [this](auto cl, auto model, auto entity, auto world, auto vp, auto ps, auto)
-            { return m_IndirectDraws.ExecuteVelocity(cl, model, entity, world, vp, ps); },
-            [this](auto cl, auto model, auto entity, auto world, auto ps) { DrawAnimVelocityFallback(cl, model, entity, world, ps); },
-            [](auto model, auto idx, auto mesh) { return mesh.VertexBuffer && mesh.PreviousVertexValid; }
-        };
+            [this](auto cl, auto model, auto entity, auto world, auto vp, auto ps, auto) {
+                return m_IndirectDraws.ExecuteVelocity(cl, model, entity, world, vp, ps);
+            },
+            [this](auto cl, auto model, auto entity, auto world, auto ps) {
+                DrawAnimVelocityFallback(cl, model, entity, world, ps);
+            },
+            [](auto model, auto idx, auto mesh) {
+                return mesh.VertexBuffer && mesh.PreviousVertexValid;
+            }};
         ModelCallbacks<StaticModelResource, StaticMeshData> staticCallbacks{
-            [](auto cl, auto ps) { RestoreVelocityGraphicsState(cl, ps); },
+            [](auto cl, auto ps) {
+                RestoreVelocityGraphicsState(cl, ps);
+            },
             setConstants,
-            [this](auto cl, auto model, auto entity, auto world, auto vp, auto ps, auto)
-            { return m_IndirectDraws.ExecuteVelocity(cl, model, entity, world, vp, ps); },
-            [this](auto cl, auto model, auto entity, auto world, auto ps) { DrawStaticVelocityFallback(cl, model, entity, world, ps); },
-            [](auto model, auto idx, auto mesh) { return mesh.VertexBuffer && mesh.IndexBuffer && mesh.IndexCount > 0; }
-        };
+            [this](auto cl, auto model, auto entity, auto world, auto vp, auto ps, auto) {
+                return m_IndirectDraws.ExecuteVelocity(cl, model, entity, world, vp, ps);
+            },
+            [this](auto cl, auto model, auto entity, auto world, auto ps) {
+                DrawStaticVelocityFallback(cl, model, entity, world, ps);
+            },
+            [](auto model, auto idx, auto mesh) {
+                return mesh.VertexBuffer && mesh.IndexBuffer && mesh.IndexCount > 0;
+            }};
 
         DrawModels<AnimationModelComponent, AnimationModelResource, MeshData>(ctx, animCallbacks);
         DrawModels<StaticModelComponent, StaticModelResource, StaticMeshData>(ctx, staticCallbacks);
     }
 
-    static void DrawAnimFallback(ID3D12GraphicsCommandList* cmdList, const AnimationModelResource* model, EntityID, const XMMATRIX&, ID3D12PipelineState* pso)
+    static void DrawAnimFallback(ID3D12GraphicsCommandList* cmdList, const AnimationModelResource* model, EntityID,
+                                 const XMMATRIX&, ID3D12PipelineState* pso)
     {
         for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
         {
             const MeshData& mesh = model->GetMeshData(meshIndex);
             if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount == 0)
+            {
                 continue;
+            }
             cmdList->IASetVertexBuffers(0, 1, &mesh.VertexBufferView);
             cmdList->IASetIndexBuffer(&mesh.IndexBufferView);
             cmdList->DrawIndexedInstanced(mesh.IndexCount, 1, 0, 0, 0);
         }
     }
 
-    static void DrawStaticFallback(ID3D12GraphicsCommandList* cmdList, const StaticModelResource* model, EntityID, const XMMATRIX&, ID3D12PipelineState* pso)
+    static void DrawStaticFallback(ID3D12GraphicsCommandList* cmdList, const StaticModelResource* model, EntityID,
+                                   const XMMATRIX&, ID3D12PipelineState* pso)
     {
         for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
         {
             const StaticMeshData& mesh = model->GetMeshData(meshIndex);
             if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount == 0)
+            {
                 continue;
+            }
             cmdList->IASetVertexBuffers(0, 1, &mesh.VertexBufferView);
             cmdList->IASetIndexBuffer(&mesh.IndexBufferView);
             cmdList->DrawIndexedInstanced(mesh.IndexCount, 1, 0, 0, 0);
         }
     }
 
-    static void DrawAnimVelocityFallback(ID3D12GraphicsCommandList* cmdList, const AnimationModelResource* model, EntityID, const XMMATRIX&, ID3D12PipelineState* pso)
+    static void DrawAnimVelocityFallback(ID3D12GraphicsCommandList* cmdList, const AnimationModelResource* model,
+                                         EntityID, const XMMATRIX&, ID3D12PipelineState* pso)
     {
         for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
         {
             const MeshData& mesh = model->GetMeshData(meshIndex);
             if (!mesh.VertexBuffer || !mesh.IndexBuffer || !mesh.PreviousVertexValid || mesh.IndexCount == 0)
+            {
                 continue;
-            D3D12_VERTEX_BUFFER_VIEW views[2] = { mesh.VertexBufferView, mesh.PreviousVertexBufferView };
+            }
+            D3D12_VERTEX_BUFFER_VIEW views[2] = {mesh.VertexBufferView, mesh.PreviousVertexBufferView};
             cmdList->IASetVertexBuffers(0, _countof(views), views);
             cmdList->IASetIndexBuffer(&mesh.IndexBufferView);
             cmdList->DrawIndexedInstanced(mesh.IndexCount, 1, 0, 0, 0);
         }
     }
 
-    static void DrawStaticVelocityFallback(ID3D12GraphicsCommandList* cmdList, const StaticModelResource* model, EntityID, const XMMATRIX&, ID3D12PipelineState* pso)
+    static void DrawStaticVelocityFallback(ID3D12GraphicsCommandList* cmdList, const StaticModelResource* model,
+                                           EntityID, const XMMATRIX&, ID3D12PipelineState* pso)
     {
         for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
         {
             const StaticMeshData& mesh = model->GetMeshData(meshIndex);
             if (!mesh.VertexBuffer || !mesh.IndexBuffer || mesh.IndexCount == 0)
+            {
                 continue;
-            D3D12_VERTEX_BUFFER_VIEW views[2] = { mesh.VertexBufferView, mesh.VertexBufferView };
+            }
+            D3D12_VERTEX_BUFFER_VIEW views[2] = {mesh.VertexBufferView, mesh.VertexBufferView};
             cmdList->IASetVertexBuffers(0, _countof(views), views);
             cmdList->IASetIndexBuffer(&mesh.IndexBufferView);
             cmdList->DrawIndexedInstanced(mesh.IndexCount, 1, 0, 0, 0);
         }
     }
 
-public:
-    void Init() override { m_Backend.Init(); }
-    void Uninit() override { m_IndirectDraws.Reset(); m_Backend.Uninit(); }
-    void Update() override { m_Backend.Update(); }
+  public:
+    void Init() override
+    {
+        m_Backend.Init();
+    }
+
+    void Uninit() override
+    {
+        m_IndirectDraws.Reset();
+        m_Backend.Uninit();
+    }
+
+    void Update() override
+    {
+        m_Backend.Update();
+    }
+
     void Draw(RenderPass renderPass, bool receivingPostProcessOnly) override
     {
         m_Backend.SetIndirectDrawCache(&m_IndirectDraws);
@@ -383,7 +453,9 @@ public:
         case RenderPass::ShadowMap:
             m_Backend.Draw(renderPass, receivingPostProcessOnly);
             break;
-        case RenderPass::Velocity: DrawVelocity(); break;
+        case RenderPass::Velocity:
+            DrawVelocity();
+            break;
         default:
             m_Backend.Draw(renderPass, receivingPostProcessOnly);
             break;

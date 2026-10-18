@@ -7,7 +7,7 @@ namespace TemporalHistory
 // effect, so TAA, reflections and GI all observe the same edit independently.
 class Context final
 {
-public:
+  public:
     static void BeginFrame(uint32_t outputWidth, uint32_t outputHeight)
     {
         ++s_Frame.Serial;
@@ -15,8 +15,8 @@ public:
         s_Frame.OutputHeight = outputHeight;
     }
 
-    static State Capture(uint64_t cameraId, uint32_t inputWidth, uint32_t inputHeight,
-        uint64_t configurationKey, double exposure = 1.0)
+    static State Capture(uint64_t cameraId, uint32_t inputWidth, uint32_t inputHeight, uint64_t configurationKey,
+                         double exposure = 1.0)
     {
         State state = s_Frame;
         state.CameraId = cameraId;
@@ -27,12 +27,27 @@ public:
         return state;
     }
 
-    static void NotifySceneChanged() { ++s_Frame.SceneGeneration; }
-    static void NotifyLightingChanged() { ++s_Frame.LightingGeneration; }
-    static void NotifyLodChanged() { ++s_Frame.LodGeneration; }
-    static void NotifyCameraCut() { ++s_Frame.CameraCutGeneration; }
+    static void NotifySceneChanged()
+    {
+        ++s_Frame.SceneGeneration;
+    }
 
-private:
+    static void NotifyLightingChanged()
+    {
+        ++s_Frame.LightingGeneration;
+    }
+
+    static void NotifyLodChanged()
+    {
+        ++s_Frame.LodGeneration;
+    }
+
+    static void NotifyCameraCut()
+    {
+        ++s_Frame.CameraCutGeneration;
+    }
+
+  private:
     static inline State s_Frame;
 };
-}
+} // namespace TemporalHistory

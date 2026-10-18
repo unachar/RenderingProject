@@ -20,6 +20,7 @@ enum class GpuSceneDirtyFlags : uint32_t
     Bounds = 8,
     All = 15
 };
+
 inline GpuSceneDirtyFlags operator|(GpuSceneDirtyFlags first, GpuSceneDirtyFlags second)
 {
     return static_cast<GpuSceneDirtyFlags>(static_cast<uint32_t>(first) | static_cast<uint32_t>(second));
@@ -31,7 +32,8 @@ struct GPUInstanceData
     DirectX::XMFLOAT4X4 PreviousWorld{};
     uint32_t MeshIndex = 0;
     uint32_t MaterialIndex = 0;
-    uint32_t Flags = 0; // bit 0: active; bit 1: frustum; bit 2: GPU opaque; bit 3: moving; bit 4: native hierarchy eligible.
+    uint32_t Flags =
+        0; // bit 0: active; bit 1: frustum; bit 2: GPU opaque; bit 3: moving; bit 4: native hierarchy eligible.
     uint32_t Entity = UINT32_MAX;
     DirectX::XMFLOAT4 BoundsCenter{}; // World-space AABB.
     DirectX::XMFLOAT4 BoundsExtents{};
@@ -42,6 +44,7 @@ struct GPUInstanceData
     uint32_t VirtualGeometryAssetIndex = UINT32_MAX;
     uint32_t VisibilityPadding[2]{};
 };
+
 struct GPUMeshData
 {
     uint32_t VertexAddressLow = 0;
@@ -55,6 +58,7 @@ struct GPUMeshData
     DirectX::XMFLOAT4 BoundsCenter{};
     DirectX::XMFLOAT4 BoundsExtents{};
 };
+
 struct GPUMaterialData
 {
     DirectX::XMFLOAT4 BaseColor{1, 1, 1, 1};
@@ -68,6 +72,7 @@ struct GPUMaterialData
     uint32_t Padding[2]{};
     array<DirectX::XMFLOAT4, GpuSceneMaterialParameterVectors> ShadingParameters{};
 };
+
 static_assert(sizeof(GPUInstanceData) == 240);
 static_assert(offsetof(GPUInstanceData, LODGroupIndex) == 224);
 static_assert(offsetof(GPUInstanceData, VirtualGeometryAssetIndex) == 228);
@@ -93,4 +98,3 @@ struct GpuSceneStatistics
     uint64_t BufferMemoryBytes = 0;
     double UpdateCpuMilliseconds = 0;
 };
-

@@ -25,7 +25,9 @@ struct Constants
     float DepthBias = 0, LODBias = 0, Width = 1, Height = 1;
     uint32_t Mips = 1, Debug = 0, NativeHierarchy = 0, Padding = 0;
 };
+
 static_assert(sizeof(Constants) == 256);
+
 struct FrameData
 {
     GpuSceneBuffer Result, Counters;
@@ -33,6 +35,7 @@ struct FrameData
     bool Pending = false;
     uint32_t RecordCount = 0;
 };
+
 struct State
 {
     Settings Options;
@@ -50,21 +53,24 @@ struct State
     bool PreviousOcclusion = false, PreviousLOD = true, CameraFrozen = false;
     int PreviousForce = -1;
     float PreviousBias = 0;
-    const char *Reason = "First frame";
+    const char* Reason = "First frame";
     Visibility::Statistics Latest;
-    bool HasSample=false;
+    bool HasSample = false;
     vector<Visibility::VisibleInstanceData> DebugRecords;
 };
-State &Data()
+
+State& Data()
 {
     static State state;
     return state;
 }
-FrameData &Frame()
+
+FrameData& Frame()
 {
     return Data().Frames.at(Data().FrameIndex);
 }
-RenderGraph::ResourceHandle Import(RenderGraph &graph, const char *name, GpuSceneBuffer &buffer)
+
+RenderGraph::ResourceHandle Import(RenderGraph& graph, const char* name, GpuSceneBuffer& buffer)
 {
     RenderGraph::ImportedResource resource{};
     resource.Name = name;
@@ -75,9 +81,10 @@ RenderGraph::ResourceHandle Import(RenderGraph &graph, const char *name, GpuScen
     buffer.State = resource.FinalState;
     return graph.ImportResource(resource);
 }
+
 void Initialize()
 {
-    auto &state = Data();
+    auto& state = Data();
     if (state.Root)
     {
         return;
@@ -97,14 +104,14 @@ void Initialize()
     parameters[9].InitAsDescriptorTable(1, &constants);
     CD3DX12_ROOT_SIGNATURE_DESC description(_countof(parameters), parameters);
     ComPtr<ID3DBlob> blob, errors;
-    auto *device = GraphicsDevice::GetDevice();
+    auto* device = GraphicsDevice::GetDevice();
     if (FAILED(D3D12SerializeRootSignature(&description, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)) ||
         FAILED(
             device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&state.Root))))
     {
         throw runtime_error("GPU visibility root signature failed");
     }
-    auto pipeline = [&](const char *path, ComPtr<ID3D12PipelineState> &output) {
+    auto pipeline = [&](const char* path, ComPtr<ID3D12PipelineState>& output) {
         ComPtr<ID3DBlob> shader;
         ShaderDescription input{};
         input.csoPath = path;
@@ -125,7 +132,8 @@ void Initialize()
     pipeline("shader/hlsl/build/GPUOcclusionCS.cso", state.OcclusionPSO);
     pipeline("shader/hlsl/build/GPULODSelectionCS.cso", state.LODPSO);
 }
-void AllocateReadback(ComPtr<ID3D12Resource> &resource, uint64_t bytes)
+
+void AllocateReadback(ComPtr<ID3D12Resource>& resource, uint64_t bytes)
 {
     if (resource)
     {
@@ -139,19 +147,20 @@ void AllocateReadback(ComPtr<ID3D12Resource> &resource, uint64_t bytes)
         throw runtime_error("GPU visibility debug readback allocation failed");
     }
 }
-void ConsumeReadback(FrameData &frame)
+
+void ConsumeReadback(FrameData& frame)
 {
     if (!frame.Pending)
     {
         return;
     }
     // Prepare runs after this frame slot's fence; no wait or per-frame allocation.
-    void *mapped = nullptr;
+    void* mapped = nullptr;
     D3D12_RANGE range{0, sizeof(Visibility::Statistics)};
     if (SUCCEEDED(frame.Readback->Map(0, &range, &mapped)))
     {
         memcpy(&Data().Latest, mapped, sizeof(Visibility::Statistics));
-        Data().HasSample=true;
+        Data().HasSample = true;
         const D3D12_RANGE noWrite{0, 0};
         frame.Readback->Unmap(0, &noWrite);
     }
@@ -161,7 +170,7 @@ void ConsumeReadback(FrameData &frame)
         range.End = size_t(frame.RecordCount) * sizeof(Visibility::VisibleInstanceData);
         if (SUCCEEDED(frame.RecordReadback->Map(0, &range, &mapped)))
         {
-            auto *records = static_cast<Visibility::VisibleInstanceData *>(mapped);
+            auto* records = static_cast<Visibility::VisibleInstanceData*>(mapped);
             Data().DebugRecords.assign(records, records + frame.RecordCount);
             const D3D12_RANGE noWrite{0, 0};
             frame.RecordReadback->Unmap(0, &noWrite);
@@ -169,10 +178,11 @@ void ConsumeReadback(FrameData &frame)
     }
     frame.Pending = false;
 }
-void Bind(ID3D12GraphicsCommandList *list, ID3D12Resource *geometry)
+
+void Bind(ID3D12GraphicsCommandList* list, ID3D12Resource* geometry)
 {
-    auto &data = Data();
-    ID3D12DescriptorHeap *heap = FrameConstants::GetCbvHeap();
+    auto& data = Data();
+    ID3D12DescriptorHeap* heap = FrameConstants::GetCbvHeap();
     list->SetDescriptorHeaps(1, &heap);
     list->SetComputeRootSignature(data.Root.Get());
     list->SetComputeRootShaderResourceView(0, GpuScene::InstanceBuffer()->GetGPUVirtualAddress());
@@ -193,36 +203,42 @@ void Bind(ID3D12GraphicsCommandList *list, ID3D12Resource *geometry)
     list->SetComputeRootDescriptorTable(9, cbv);
 }
 } // namespace
-Settings &GetSettings()
+
+Settings& GetSettings()
 {
     return Data().Options;
 }
+
 DirectX::XMFLOAT4X4 CullingViewProjection()
 {
     XMFLOAT4X4 result;
-    const auto& p=Data().Parameters;
-    XMStoreFloat4x4(&result,XMLoadFloat4x4(&p.View)*XMLoadFloat4x4(&p.Projection));
+    const auto& p = Data().Parameters;
+    XMStoreFloat4x4(&result, XMLoadFloat4x4(&p.View) * XMLoadFloat4x4(&p.Projection));
     return result;
 }
+
 vector<uint32_t> LODMeshes(uint32_t id)
 {
-    const auto& state=Data();
+    const auto& state = Data();
     vector<uint32_t> result;
-    if (id<state.Groups.size())
+    if (id < state.Groups.size())
     {
-        const auto& group=state.Groups[id];
-        for (uint32_t i=0;i<group.Count;++i) result.push_back(state.Levels[group.Offset+i].MeshIndex);
+        const auto& group = state.Groups[id];
+        for (uint32_t i = 0; i < group.Count; ++i)
+        {
+            result.push_back(state.Levels[group.Offset + i].MeshIndex);
+        }
     }
     return result;
 }
-uint32_t RegisterLODGroup(const array<uint32_t, Visibility::MaxLODs> &meshes,
-                          const Visibility::LODMetadata &metadata)
+
+uint32_t RegisterLODGroup(const array<uint32_t, Visibility::MaxLODs>& meshes, const Visibility::LODMetadata& metadata)
 {
     if (!Visibility::ValidLOD(metadata))
     {
         return Visibility::InvalidID;
     }
-    auto &state = Data();
+    auto& state = Data();
     array<Visibility::GPULODLevel, Visibility::MaxLODs> levels{};
     for (uint32_t i = 0; i < metadata.Count; ++i)
     {
@@ -230,7 +246,7 @@ uint32_t RegisterLODGroup(const array<uint32_t, Visibility::MaxLODs> &meshes,
     }
     for (uint32_t id = 0; id < state.Groups.size(); ++id)
     {
-        const auto &group = state.Groups[id];
+        const auto& group = state.Groups[id];
         if (group.Count == metadata.Count &&
             memcmp(state.Levels.data() + group.Offset, levels.data(), metadata.Count * sizeof(levels[0])) == 0)
         {
@@ -247,24 +263,29 @@ uint32_t RegisterLODGroup(const array<uint32_t, Visibility::MaxLODs> &meshes,
     }
     return id;
 }
-void Invalidate(const char *reason)
+
+void Invalidate(const char* reason)
 {
     Data().Reset = true;
     Data().UsableHistory = false;
     Data().Reason = reason;
     OcclusionCulling::InvalidateHistory();
 }
+
 void PrepareCamera()
 {
-    auto &state = Data();
+    auto& state = Data();
     if (state.Options.FreezeCamera && state.CameraFrozen)
     {
         // Frozen view is not compatible with Hi-Z captured from the live camera.
-        state.UsableHistory=false;
+        state.UsableHistory = false;
         return;
     }
-    if (state.CameraFrozen) Invalidate("Culling camera released");
-    state.CameraFrozen=state.Options.FreezeCamera;
+    if (state.CameraFrozen)
+    {
+        Invalidate("Culling camera released");
+    }
+    state.CameraFrozen = state.Options.FreezeCamera;
     if (OcclusionCulling::GetWidth() != GraphicsDevice::GetSceneWidth() ||
         OcclusionCulling::GetHeight() != GraphicsDevice::GetSceneHeight())
     {
@@ -312,24 +333,26 @@ void PrepareCamera()
         state.Reason = "Camera moved (LOD history retained)";
     }
     state.Parameters.PreviousViewProjection = state.PreviousVP;
-    state.UsableHistory = !state.Options.FreezeCamera && !state.Reset && OcclusionCulling::HasPrevious() && !state.Cut && !viewChanged;
+    state.UsableHistory =
+        !state.Options.FreezeCamera && !state.Reset && OcclusionCulling::HasPrevious() && !state.Cut && !viewChanged;
     state.PreviousView = state.Parameters.View;
     state.PreviousProjection = state.Parameters.Projection;
     XMStoreFloat4x4(&state.PreviousVP, view * projection);
     state.PreviousCamera = camera;
     state.HaveCamera = true;
 }
-RenderGraph::ResourceHandle Prepare(RenderGraph &graph, RenderGraph::ResourceHandle instances,
+
+RenderGraph::ResourceHandle Prepare(RenderGraph& graph, RenderGraph::ResourceHandle instances,
                                     RenderGraph::ResourceHandle frustum, RenderGraph::ResourceHandle geometry,
-                                    ID3D12Resource *geometryResource, uint32_t slots, uint32_t capacity,
+                                    ID3D12Resource* geometryResource, uint32_t slots, uint32_t capacity,
                                     uint32_t meshCount)
 {
     Initialize();
-    auto &state = Data();
+    auto& state = Data();
     state.FrameIndex = GraphicsDevice::GetFrameIndex();
-    auto &frame = Frame();
+    auto& frame = Frame();
     ConsumeReadback(frame);
-    auto prepare = [&](GpuSceneBuffer &buffer, uint32_t count, uint32_t stride, const wchar_t *name, bool uav) {
+    auto prepare = [&](GpuSceneBuffer& buffer, uint32_t count, uint32_t stride, const wchar_t* name, bool uav) {
         buffer.BeginFrame(state.FrameIndex);
         return buffer.Ensure(GraphicsDevice::GetDevice(), count, stride, state.FrameIndex, name, uav);
     };
@@ -353,7 +376,7 @@ RenderGraph::ResourceHandle Prepare(RenderGraph &graph, RenderGraph::ResourceHan
     {
         graph.AddPass(
             "LOD Metadata Upload",
-            [=](RenderGraph::PassBuilder &builder) {
+            [=](RenderGraph::PassBuilder& builder) {
                 if (groupBytes)
                 {
                     builder.Write(groups, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -363,8 +386,8 @@ RenderGraph::ResourceHandle Prepare(RenderGraph &graph, RenderGraph::ResourceHan
                     builder.Write(levels, D3D12_RESOURCE_STATE_COPY_DEST);
                 }
             },
-            [](ID3D12GraphicsCommandList *list) {
-                auto &data = Data();
+            [](ID3D12GraphicsCommandList* list) {
+                auto& data = Data();
                 data.GroupBuffer.Copy(list, data.FrameIndex);
                 data.LevelBuffer.Copy(list, data.FrameIndex);
             });
@@ -375,8 +398,8 @@ RenderGraph::ResourceHandle Prepare(RenderGraph &graph, RenderGraph::ResourceHan
     state.Parameters.Levels = static_cast<uint32_t>(state.Levels.size());
     state.Parameters.Occlusion = state.Options.Occlusion && state.UsableHistory;
     state.Parameters.LOD = state.Options.LOD;
-    state.Parameters.NativeHierarchy = MeshShaderRenderer::NativeReady() &&
-        VirtualGeometryTraversal::GetSettings().Enabled;
+    state.Parameters.NativeHierarchy =
+        MeshShaderRenderer::NativeReady() && VirtualGeometryTraversal::GetSettings().Enabled;
     state.Parameters.Reset = state.Reset || newHistory;
     state.Parameters.Force = static_cast<uint32_t>(state.Options.ForceLOD);
     state.Parameters.DepthBias = state.Options.DepthBias;
@@ -386,8 +409,10 @@ RenderGraph::ResourceHandle Prepare(RenderGraph &graph, RenderGraph::ResourceHan
     state.Parameters.Mips = (max)(OcclusionCulling::GetMipCount(), 1u);
     graph.AddPass(
         "Visibility Counter Reset",
-        [=](RenderGraph::PassBuilder &builder) { builder.Write(counters, D3D12_RESOURCE_STATE_UNORDERED_ACCESS); },
-        [](ID3D12GraphicsCommandList *list) {
+        [=](RenderGraph::PassBuilder& builder) {
+            builder.Write(counters, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        },
+        [](ID3D12GraphicsCommandList* list) {
             list->SetComputeRootSignature(Data().Root.Get());
             list->SetPipelineState(Data().ResetPSO.Get());
             list->SetComputeRootUnorderedAccessView(8, Frame().Counters.Resource()->GetGPUVirtualAddress());
@@ -405,7 +430,7 @@ RenderGraph::ResourceHandle Prepare(RenderGraph &graph, RenderGraph::ResourceHan
     }
     graph.AddPass(
         "GPU Occlusion Culling",
-        [=](RenderGraph::PassBuilder &builder) {
+        [=](RenderGraph::PassBuilder& builder) {
             builder.Read(instances, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
                 .Read(frustum, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
                 .Read(geometry, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
@@ -417,7 +442,7 @@ RenderGraph::ResourceHandle Prepare(RenderGraph &graph, RenderGraph::ResourceHan
                 builder.Read(hierarchy, OcclusionCulling::ReadState());
             }
         },
-        [geometryResource](ID3D12GraphicsCommandList *list) {
+        [geometryResource](ID3D12GraphicsCommandList* list) {
             RenderProfiler::ScopedEvent profile("Occlusion Culling", list);
             Bind(list, geometryResource);
             list->SetPipelineState(Data().OcclusionPSO.Get());
@@ -428,7 +453,7 @@ RenderGraph::ResourceHandle Prepare(RenderGraph &graph, RenderGraph::ResourceHan
         });
     graph.AddPass(
         "GPU LOD Selection",
-        [=](RenderGraph::PassBuilder &builder) {
+        [=](RenderGraph::PassBuilder& builder) {
             builder.Read(instances, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
                 .Read(geometry, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
                 .Read(groups, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
@@ -437,7 +462,7 @@ RenderGraph::ResourceHandle Prepare(RenderGraph &graph, RenderGraph::ResourceHan
                 .ReadWrite(history, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
                 .ReadWrite(counters, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         },
-        [geometryResource](ID3D12GraphicsCommandList *list) {
+        [geometryResource](ID3D12GraphicsCommandList* list) {
             RenderProfiler::ScopedEvent profile("LOD Selection", list);
             Bind(list, geometryResource);
             list->SetPipelineState(Data().LODPSO.Get());
@@ -456,15 +481,15 @@ RenderGraph::ResourceHandle Prepare(RenderGraph &graph, RenderGraph::ResourceHan
         }
         graph.AddPass(
             "Visibility Debug Readback",
-            [=](RenderGraph::PassBuilder &builder) {
+            [=](RenderGraph::PassBuilder& builder) {
                 builder.Read(counters, D3D12_RESOURCE_STATE_COPY_SOURCE);
                 if (records)
                 {
                     builder.Read(result, D3D12_RESOURCE_STATE_COPY_SOURCE);
                 }
             },
-            [records](ID3D12GraphicsCommandList *list) {
-                auto &buffers = Frame();
+            [records](ID3D12GraphicsCommandList* list) {
+                auto& buffers = Frame();
                 list->CopyBufferRegion(buffers.Readback.Get(), 0, buffers.Counters.Resource(), 0,
                                        sizeof(Visibility::Statistics));
                 if (records)
@@ -479,31 +504,41 @@ RenderGraph::ResourceHandle Prepare(RenderGraph &graph, RenderGraph::ResourceHan
     state.Reset = false;
     return result;
 }
-ID3D12Resource *ResultBuffer()
+
+ID3D12Resource* ResultBuffer()
 {
     return Frame().Result.Resource();
 }
-ID3D12Resource *StatisticsBuffer()
+
+ID3D12Resource* StatisticsBuffer()
 {
     return Frame().Counters.Resource();
 }
-const Visibility::Statistics &LatestStatistics()
+
+const Visibility::Statistics& LatestStatistics()
 {
     return Data().Latest;
 }
-bool HasStatisticsSample() { return Data().HasSample; }
+
+bool HasStatisticsSample()
+{
+    return Data().HasSample;
+}
+
 bool HistoryValid()
 {
     return Data().UsableHistory;
 }
+
 bool CameraCut()
 {
     return Data().Cut;
 }
+
 void DrawDebug()
 {
-    auto &state = Data();
-    auto &options = state.Options;
+    auto& state = Data();
+    auto& options = state.Options;
     ImGui::Checkbox("Enable Frustum Culling", &options.Frustum);
     ImGui::Checkbox("Enable Hi-Z Occlusion", &options.Occlusion);
     ImGui::Checkbox("Enable GPU LOD", &options.LOD);
@@ -530,7 +565,7 @@ void DrawDebug()
     }
     if (options.DebugReadback)
     {
-        const auto &stats = state.Latest;
+        const auto& stats = state.Latest;
         ImGui::Text("Total %u / Frustum culled %u / Frustum visible %u", stats.Total, stats.FrustumCulled,
                     stats.FrustumVisible);
         ImGui::Text("Occlusion tested %u / Culled %u / Final visible %u", stats.Tested, stats.Occluded,
@@ -541,7 +576,7 @@ void DrawDebug()
             ImGui::Text("LOD%u: %u", i, stats.LODCounts[i]);
         }
     }
-    for (const auto &pass : RenderProfiler::GetLatest().Passes)
+    for (const auto& pass : RenderProfiler::GetLatest().Passes)
     {
         if (pass.Name == "Hi-Z Build" || pass.Name == "GPU Scene Culling" || pass.Name == "Occlusion Culling" ||
             pass.Name == "LOD Selection" || pass.Name == "Generate Indirect Commands" ||
@@ -553,18 +588,18 @@ void DrawDebug()
     ImGui::TextDisabled("Bounds preview shows up to 4096 instance slots; cyan visible, red frustum, orange occluded.");
     if (options.Bounds || options.ScreenRectangles)
     {
-        ImDrawList *draw = ImGui::GetWindowDrawList();
+        ImDrawList* draw = ImGui::GetWindowDrawList();
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         const ImVec2 extent(320, 180);
         draw->AddRect(origin, ImVec2(origin.x + extent.x, origin.y + extent.y), IM_COL32(100, 100, 100, 255));
         XMMATRIX vp = XMLoadFloat4x4(&state.Parameters.View) * XMLoadFloat4x4(&state.Parameters.Projection);
-        for (const auto &record : state.DebugRecords)
+        for (const auto& record : state.DebugRecords)
         {
             if (!record.State)
             {
                 continue;
             }
-            const auto *instance = GpuScene::GetInstance(record.InstanceID);
+            const auto* instance = GpuScene::GetInstance(record.InstanceID);
             if (!instance)
             {
                 continue;
@@ -574,8 +609,8 @@ void DrawDebug()
             float minX = 1, minY = 1, maxX = 0, maxY = 0;
             for (uint32_t i = 0; i < 8; ++i)
             {
-                const auto &c = instance->BoundsCenter;
-                const auto &e = instance->BoundsExtents;
+                const auto& c = instance->BoundsCenter;
+                const auto& e = instance->BoundsExtents;
                 XMFLOAT4 clip;
                 XMStoreFloat4(&clip,
                               XMVector4Transform(XMVectorSet(c.x + ((i & 1) ? e.x : -e.x), c.y + ((i & 2) ? e.y : -e.y),
@@ -622,6 +657,7 @@ void DrawDebug()
         ImGui::Dummy(extent);
     }
 }
+
 void Shutdown()
 {
     Data() = {};

@@ -4,8 +4,7 @@
 
 class LightSystem : public SystemBase
 {
-public:
-	void Init() override;
-	void Update() override;
+  public:
+    void Init() override;
+    void Update() override;
 };
-

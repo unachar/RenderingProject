@@ -25,9 +25,29 @@ inline constexpr uint32_t CompressionVersion = 1;
 inline constexpr uint32_t ClusterFlag = 0x10000;
 inline constexpr uint32_t PayloadMagic = 0x31434756; // VGC1
 inline constexpr uint32_t HeaderBytes = 56;
-enum class Codec : uint32_t { Float32, UNorm16x3, OctSnorm16x2, Snorm1010102, Float16x2, UNorm8x4 };
-enum Semantic : uint32_t { Position = 0, Normal = 1, Tangent = 2, Color = 3, Texcoord0 = 8 };
-enum class IndexCodec : uint32_t { UInt8 = 1, UInt16 = 2 };
+enum class Codec : uint32_t
+{
+    Float32,
+    UNorm16x3,
+    OctSnorm16x2,
+    Snorm1010102,
+    Float16x2,
+    UNorm8x4
+};
+
+enum Semantic : uint32_t
+{
+    Position = 0,
+    Normal = 1,
+    Tangent = 2,
+    Color = 3,
+    Texcoord0 = 8
+};
+enum class IndexCodec : uint32_t
+{
+    UInt8 = 1,
+    UInt16 = 2
+};
 
 struct Input
 {
@@ -39,11 +59,13 @@ struct Input
     bool HasTexcoord = true;
     bool HasColor = true;
 };
+
 struct Stream
 {
     uint32_t Attribute = Position;
     Codec Encoding = Codec::Float32;
 };
+
 struct Plan
 {
     std::array<float, 3> Origin{};
@@ -53,6 +75,7 @@ struct Plan
     VGCompressionSettings Settings;
     float PositionError = 0;
 };
+
 struct DecodedVertex
 {
     std::array<float, 3> Position{};
@@ -61,6 +84,7 @@ struct DecodedVertex
     std::array<float, 4> Color{1, 1, 1, 1};
     std::vector<std::array<float, 2>> Texcoords;
 };
+
 struct Metrics
 {
     uint64_t EncodedBytes = 0;
@@ -71,13 +95,14 @@ struct Metrics
     uint64_t Index8Clusters = 0;
     uint64_t Index16Clusters = 0;
 };
+
 IndexCodec SelectIndexCodec(uint32_t vertexCount, bool allow8);
 uint64_t SettingsKey(const VGCompressionSettings& settings);
 bool Select(const Input& input, const VGCompressionSettings& settings, Plan& plan, std::string& error);
 bool EncodeCluster(const Input& input, const Plan& plan, uint32_t firstVertex, uint32_t vertexCount,
-    std::span<const uint32_t> indices, std::vector<uint8_t>& payload, std::string& error);
+                   std::span<const uint32_t> indices, std::vector<uint8_t>& payload, std::string& error);
 // Structural validation never expands geometry; used before an encoded Page reaches the GPU.
 bool Validate(std::span<const uint8_t> payload, uint32_t vertices, uint32_t triangles, std::string& error);
 DecodedVertex DecodeVertexCPU(std::span<const uint8_t> payload, uint32_t vertexIndex);
 std::array<uint32_t, 3> LoadTriangleCPU(std::span<const uint8_t> payload, uint32_t triangleIndex);
-}
+} // namespace VirtualGeometryCompression

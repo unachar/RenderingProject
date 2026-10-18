@@ -8,7 +8,11 @@ struct ThumbnailHandle
     ThumbnailState State = ThumbnailState::Unloaded;
     uint64_t Revision = 0;
     std::shared_ptr<ThumbnailGpuImage> Image;
-    D3D12_GPU_DESCRIPTOR_HANDLE GetImGuiTextureID() const { return Image ? Image->Srv() : D3D12_GPU_DESCRIPTOR_HANDLE{}; }
+
+    D3D12_GPU_DESCRIPTOR_HANDLE GetImGuiTextureID() const
+    {
+        return Image ? Image->Srv() : D3D12_GPU_DESCRIPTOR_HANDLE{};
+    }
 };
 
 struct ThumbnailSettings
@@ -21,7 +25,7 @@ struct ThumbnailSettings
 
 class AssetThumbnailManager
 {
-public:
+  public:
     static ThumbnailHandle Request(AssetHandle guid, ThumbnailPriority priority = ThumbnailPriority::Visible);
     static void MarkDirty(AssetHandle guid);
     static void Remove(AssetHandle guid);
@@ -34,4 +38,3 @@ public:
     static uint64_t CacheHits();
     static uint64_t LastCacheKey(AssetHandle guid);
 };
-
