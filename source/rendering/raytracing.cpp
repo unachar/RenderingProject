@@ -15,6 +15,7 @@
 #include "materialsystem.h"
 #include "temporalhistorycontext.h"
 #include "raytelemetry.h"
+#include "renderquality.h"
 #include <map>
 #include <tuple>
 
@@ -30,7 +31,7 @@ constexpr UINT kNrdAmbientSrvStart = kNrdShadowSrvStart + kFrameCount;
 static_assert(kNrdAmbientSrvStart + kFrameCount <= RendererState::g_kENGINE_DESCRIPTOR_END);
 static_assert(kFallbackSrv < RendererState::g_kENGINE_DESCRIPTOR_END, "DXR descriptor range exceeds engine heap");
 constexpr UINT kConstantStride = 256;
-constexpr UINT kMaximumInstances = 16384;
+constexpr UINT kMaximumInstances = RendererState::g_kGLASS_MAX_MESHES;
 
 using GeometryKey = tuple<UINT64, UINT64, UINT, UINT, UINT, UINT>;
 
@@ -44,6 +45,20 @@ struct BottomLevel
     UINT64 LastBuilt = 0;
 };
 
+struct GlassMesh
+{
+    XMFLOAT4X4 World{}, NormalToWorld{};
+    XMUINT4 Layout{};
+    XMFLOAT4 BaseColor{}, Emission{}, Optical{}, Absorption{}, OpticalExtra{};
+    XMUINT4 Flags{}; // medium id, texture present, triangle count, reserved
+};
+static_assert(sizeof(GlassMesh) == 240);
+struct GlassDescriptorRecord
+{
+    ComPtr<ID3D12Resource> Vertices, Indices, Texture;
+    UINT ResidentMip = UINT_MAX;
+    bool Valid = false;
+};
 struct FrameResources
 {
     array<ComPtr<ID3D12Resource>, 4> Guides;
@@ -55,6 +70,11 @@ struct FrameResources
     ComPtr<ID3D12Resource> Result;
     UINT Width = 0;
     vector<RaytracingGeometry> SceneGeometry;
+    ComPtr<ID3D12Resource> GlassMetadata;
+    vector<GlassDescriptorRecord> GlassDescriptors;
+    bool GlassReady = false;
+    bool GlassReading = false;
+    vector<D3D12_RESOURCE_BARRIER> GlassRestore;
     // A scene SRV can already reference the previous TLAS earlier in this same
     // command list. Keep replaced resources until this frame's fence is reused.
     vector<ComPtr<ID3D12Resource>> Retired;
@@ -399,10 +419,87 @@ bool EnsureTelemetryPipeline()
     return g_TelemetryPipeline != nullptr;
 }
 
+UINT GlassTableIndex(UINT slot)
+{
+    return RendererState::g_kGLASS_DESCRIPTOR_START + slot * RendererState::g_kGLASS_FRAME_DESCRIPTORS;
+}
+bool BuildGlassMetadata(FrameResources& frame)
+{
+    frame.GlassReady = false;
+    const UINT count = static_cast<UINT>(frame.SceneGeometry.size());
+    if (!count || !EnsureBuffer(frame.GlassMetadata, count * sizeof(GlassMesh), D3D12_HEAP_TYPE_UPLOAD,
+        D3D12_RESOURCE_STATE_GENERIC_READ, L"Glass mesh metadata")) return false;
+    const UINT start = GlassTableIndex(g_FrameIndex);
+    void* data = nullptr; D3D12_RANGE noRead{0,0};
+    if (FAILED(frame.GlassMetadata->Map(0,&noRead,&data))) return false;
+    auto* meshes = static_cast<GlassMesh*>(data);
+    frame.GlassDescriptors.resize(count);
+    for (UINT i=0;i<count;++i)
+    {
+        const auto& g = frame.SceneGeometry[i];
+        GlassMesh m{};
+        XMMATRIX world = XMLoadFloat4x4(&g.World);
+        XMStoreFloat4x4(&m.World,XMMatrixTranspose(world));
+        XMStoreFloat4x4(&m.NormalToWorld,XMMatrixInverse(nullptr,world));
+        m.Layout = {g.VertexView.StrideInBytes,
+            g.Indices ? (g.IndexView.Format == DXGI_FORMAT_R16_UINT ? 16u : 32u) : 0u,
+            static_cast<UINT>(g.VertexView.BufferLocation-g.Vertices->GetGPUVirtualAddress()),
+            g.Indices ? static_cast<UINT>(g.IndexView.BufferLocation-g.Indices->GetGPUVirtualAddress()) : 0u};
+        m.BaseColor=g.BaseColor; m.Emission=g.Emission;
+        m.Optical={g.IOR,g.Transmission,g.Roughness,g.Metallic};
+        m.Absorption={g.Absorption.x,g.Absorption.y,g.Absorption.z,g.Thickness};
+        m.OpticalExtra={g.TransmissionRoughness,g.Fresnel,0,0};
+        m.Flags={g.MediumID,static_cast<UINT>(g.Texture!=nullptr),
+            g.Indices ? g.IndexCount/3 : g.VertexView.SizeInBytes/g.VertexView.StrideInBytes/3,static_cast<UINT>(g.UsesAssetMaterial)};
+        meshes[i]=m;
+        D3D12_SHADER_RESOURCE_VIEW_DESC raw{};
+        raw.ViewDimension=D3D12_SRV_DIMENSION_BUFFER; raw.Format=DXGI_FORMAT_R32_TYPELESS;
+        raw.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        raw.Buffer.Flags=D3D12_BUFFER_SRV_FLAG_RAW;
+        raw.Buffer.NumElements=static_cast<UINT>(g.Vertices->GetDesc().Width/4);
+        auto& cached = frame.GlassDescriptors[i];
+        if (!cached.Valid || cached.Vertices.Get()!=g.Vertices.Get())
+            g_Device->CreateShaderResourceView(g.Vertices.Get(),&raw,Cpu(start+1+i));
+        raw.Buffer.NumElements=g.Indices ? static_cast<UINT>(g.Indices->GetDesc().Width/4) : 1;
+        if (!cached.Valid || cached.Indices.Get()!=g.Indices.Get())
+            g_Device->CreateShaderResourceView(g.Indices.Get(),&raw,Cpu(start+1+kMaximumInstances+i));
+        D3D12_SHADER_RESOURCE_VIEW_DESC tex{};
+        tex.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
+        tex.Format=g.Texture ? g.Texture->GetDesc().Format : DXGI_FORMAT_R8G8B8A8_UNORM;
+        tex.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        switch (tex.Format)
+        {
+        case DXGI_FORMAT_R32_TYPELESS: tex.Format=DXGI_FORMAT_R32_FLOAT; break;
+        case DXGI_FORMAT_R8G8B8A8_TYPELESS: tex.Format=DXGI_FORMAT_R8G8B8A8_UNORM; break;
+        case DXGI_FORMAT_B8G8R8A8_TYPELESS: tex.Format=DXGI_FORMAT_B8G8R8A8_UNORM; break;
+        case DXGI_FORMAT_BC1_TYPELESS: tex.Format=DXGI_FORMAT_BC1_UNORM; break;
+        case DXGI_FORMAT_BC2_TYPELESS: tex.Format=DXGI_FORMAT_BC2_UNORM; break;
+        case DXGI_FORMAT_BC3_TYPELESS: tex.Format=DXGI_FORMAT_BC3_UNORM; break;
+        case DXGI_FORMAT_BC7_TYPELESS: tex.Format=DXGI_FORMAT_BC7_UNORM; break;
+        default: break;
+        }
+        tex.Texture2D.MipLevels=g.Texture ? g.Texture->GetDesc().MipLevels : 1;
+        tex.Texture2D.ResourceMinLODClamp=static_cast<float>(g.TextureResidentMip);
+        if (!cached.Valid || cached.Texture.Get()!=g.Texture.Get() || cached.ResidentMip!=g.TextureResidentMip)
+            g_Device->CreateShaderResourceView(g.Texture.Get(),&tex,Cpu(start+1+2*kMaximumInstances+i));
+        cached.Vertices=g.Vertices; cached.Indices=g.Indices; cached.Texture=g.Texture;
+        cached.ResidentMip=g.TextureResidentMip; cached.Valid=true;
+    }
+    frame.GlassMetadata->Unmap(0,nullptr);
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.ViewDimension=D3D12_SRV_DIMENSION_BUFFER; srv.Format=DXGI_FORMAT_UNKNOWN;
+    srv.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Buffer.NumElements=count; srv.Buffer.StructureByteStride=sizeof(GlassMesh);
+    g_Device->CreateShaderResourceView(frame.GlassMetadata.Get(),&srv,Cpu(start));
+    frame.GlassReady=true;
+    return true;
+}
+
 bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
 {
     RenderProfiler::ScopedEvent profile("DXR Acceleration Structures", commandList);
     const auto geometry = GatherRaytracingGeometry();
+    frame.GlassReady = false;
     frame.SceneGeometry.clear();
     vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
     instances.reserve((min)(geometry.size(), static_cast<size_t>(kMaximumInstances)));
@@ -450,12 +547,14 @@ bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
         memcpy(instance.Transform, &transform, sizeof(instance.Transform));
         instance.InstanceID = static_cast<UINT>(instances.size());
         // Bit zero is shadow visibility; bit one remains available to AO and reflections.
-        instance.InstanceMask = entry.CastShadow ? 3 : 2;
+        // Glass has its own visibility bit. Existing AO/GI queries retain opaque semantics.
+        instance.InstanceMask = entry.Transmission > 0.001f ? 4 : (entry.CastShadow ? 3 : 2);
         instance.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
         instance.AccelerationStructure = bottom.Result->GetGPUVirtualAddress();
         instances.push_back(instance);
         frame.SceneGeometry.push_back(entry);
     }
+    BuildGlassMetadata(frame);
     // All BLAS writes must be visible before TLAS construction and ray queries.
     geometryReads.Finish();
     for (auto iterator = frame.Geometry.begin(); iterator != frame.Geometry.end();)
@@ -540,10 +639,30 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
     Shutdown();
     g_Heap = heap;
     g_Increment = increment;
+    if (!device || !heap || increment == 0) return false;
+    for (UINT slot=0;slot<kFrameCount;++slot)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC empty{};
+        empty.ViewDimension=D3D12_SRV_DIMENSION_BUFFER;
+        empty.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        empty.Buffer.NumElements=1; empty.Buffer.StructureByteStride=sizeof(GlassMesh);
+        device->CreateShaderResourceView(nullptr,&empty,Cpu(GlassTableIndex(slot)));
+    }
     if (!device || !heap || increment == 0)
     {
         return false;
     }
+    // The material pixel shader also reads the preview discriminator in b5
+    // on raster-only devices. Supply a valid zero-filled CB before DXR probing.
+    const auto lightingHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+    const auto lightingDescription = CD3DX12_RESOURCE_DESC::Buffer(kLightingStride * kFrameCount);
+    if (FAILED(device->CreateCommittedResource(&lightingHeap, D3D12_HEAP_FLAG_NONE,
+        &lightingDescription, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g_LightingConstants)))) return false;
+    void* rasterLightingData = nullptr;
+    D3D12_RANGE lightingNoRead{0,0};
+    if (FAILED(g_LightingConstants->Map(0,&lightingNoRead,&rasterLightingData))) return false;
+    memset(rasterLightingData,0,kLightingStride*kFrameCount);
+    g_LightingConstants->Unmap(0,nullptr);
     D3D12_SHADER_RESOURCE_VIEW_DESC fallback{};
     fallback.Format = DXGI_FORMAT_R16G16_FLOAT;
     fallback.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -697,7 +816,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         if (!g_LightingConstants) return;
         LightingConstants lighting{};
         lighting.Flags = { static_cast<float>(UsesRaytracedShadows()),
-            static_cast<float>(UsesRaytracedShadows()), static_cast<float>(sceneReady), 0.0f };
+            static_cast<float>(UsesRaytracedShadows()), static_cast<float>(sceneReady), sceneReady && g_Frames[g_FrameIndex].GlassReady ? static_cast<float>(g_Frames[g_FrameIndex].SceneGeometry.size()) : 0.0f };
         lighting.Parameters = { clamp(g_Settings.ShadowDistance, 1.0f, 2000.0f),
             clamp(g_Settings.NormalBias, 0.001f, 0.1f), 0.0f, 0.0f };
         lighting.Lights = g_LightShadowFlags;
@@ -710,7 +829,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         }
     };
     updateLighting(false);
-    if (!IsAvailable() || !g_Settings.Enabled || (!UsesRaytracedShadows() && !UsesRaytracedAmbientOcclusion() && !g_Settings.Reflections && !RendererSettings::GetRealtimeGiEnabled()) ||
+    if (!IsAvailable() || !g_Settings.Enabled || (!UsesRaytracedShadows() && !UsesRaytracedAmbientOcclusion() && !g_Settings.Reflections && !RendererSettings::GetRealtimeGiEnabled() && !RenderQuality::Get().RaytracedRefraction) ||
         !commandList || !depth || !normal)
     {
         g_NrdHistoryValid = false;
@@ -1011,6 +1130,39 @@ void Raytracing::SetLightShadowFlag(UINT index, bool castShadow)
 {
     if (index < g_LightShadowFlags.size()) g_LightShadowFlags[index].x = static_cast<UINT>(castShadow);
 }
+void Raytracing::BindGlass(ID3D12GraphicsCommandList* commands)
+{
+    if (commands && g_Heap) commands->SetGraphicsRootDescriptorTable(36,Gpu(GlassTableIndex(GraphicsDevice::GetFrameIndex()%kFrameCount)));
+}
+void Raytracing::BeginGlassRead(ID3D12GraphicsCommandList* commands)
+{
+    auto& frame=g_Frames[GraphicsDevice::GetFrameIndex()%kFrameCount];
+    if (!commands || !g_Active || !frame.GlassReady || frame.GlassReading) return;
+    frame.GlassRestore.clear();
+    vector<D3D12_RESOURCE_BARRIER> before;
+    map<ID3D12Resource*,D3D12_RESOURCE_STATES> resources;
+    for (const auto& g:frame.SceneGeometry)
+    {
+        if (g.Vertices) resources.emplace(g.Vertices.Get(),g.VertexState);
+        if (g.Indices) resources.emplace(g.Indices.Get(),g.IndexState);
+    }
+    for (const auto& item:resources)
+    {
+        if ((item.second & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)!=0) continue;
+        auto target=static_cast<D3D12_RESOURCE_STATES>(item.second | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        before.push_back(CD3DX12_RESOURCE_BARRIER::Transition(item.first,item.second,target));
+        frame.GlassRestore.push_back(CD3DX12_RESOURCE_BARRIER::Transition(item.first,target,item.second));
+    }
+    if (!before.empty()) commands->ResourceBarrier(static_cast<UINT>(before.size()),before.data());
+    frame.GlassReading=true;
+}
+void Raytracing::EndGlassRead(ID3D12GraphicsCommandList* commands)
+{
+    auto& frame=g_Frames[GraphicsDevice::GetFrameIndex()%kFrameCount];
+    if (!commands || !frame.GlassReading) return;
+    if (!frame.GlassRestore.empty()) commands->ResourceBarrier(static_cast<UINT>(frame.GlassRestore.size()),frame.GlassRestore.data());
+    frame.GlassRestore.clear(); frame.GlassReading=false;
+}
 void Raytracing::BindLighting(ID3D12GraphicsCommandList* commands, UINT sceneIndex, UINT constantsIndex)
 {
     if (!commands || !g_LightingConstants) return;
@@ -1033,7 +1185,3 @@ D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetGiSrv()
 {
     return RayReflections::GetGiSrv(g_FrameIndex);
 }
-
-
-
-

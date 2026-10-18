@@ -291,7 +291,12 @@ bool GraphicsDevice::Init(HWND hwnd)
 	megaLightRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 10);
 	CD3DX12_DESCRIPTOR_RANGE megaLightTextures;
 	megaLightTextures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 512, 0, 5);
-	CD3DX12_ROOT_PARAMETER rootParametersAll[36];
+	CD3DX12_DESCRIPTOR_RANGE glassRanges[4];
+    glassRanges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 12);
+    glassRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, g_kGLASS_MAX_MESHES, 1, 12);
+    glassRanges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, g_kGLASS_MAX_MESHES, 0, 13);
+    glassRanges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, g_kGLASS_MAX_MESHES, 0, 14);
+    CD3DX12_ROOT_PARAMETER rootParametersAll[37];
 	rootParametersAll[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[1].InitAsDescriptorTable(1, &rangesTex[0], D3D12_SHADER_VISIBILITY_ALL);
 	rootParametersAll[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -323,6 +328,7 @@ bool GraphicsDevice::Init(HWND hwnd)
     }
     rootParametersAll[34].InitAsDescriptorTable(2, megaLightRanges, D3D12_SHADER_VISIBILITY_PIXEL);
     rootParametersAll[35].InitAsDescriptorTable(1, &megaLightTextures, D3D12_SHADER_VISIBILITY_PIXEL);
+    rootParametersAll[36].InitAsDescriptorTable(4, glassRanges, D3D12_SHADER_VISIBILITY_PIXEL);
 
 	CD3DX12_STATIC_SAMPLER_DESC sampler {};
 
@@ -504,6 +510,10 @@ if (!ShaderPipelines::CreatePostProcessPipeline()) return false;
 	CloudRenderer::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
 	WriteGraphicsLog("Step: Raytracing::Initialize\n");
 	Raytracing::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
+    // ShaderPipelines selects SM6 / inline visibility from Raytracing availability.
+    // Build deferred lighting only after that capability is known, before any frame.
+    WriteGraphicsLog("Step: CreateDeferredLightingPipeline\n");
+    if (!PsoManager::CreateDeferredLightingPipeline()) return false;
 	WriteGraphicsLog("Step: AsyncCompute::Initialize\n");
 	AsyncCompute::Initialize(m_Device.Get());
 	PbrLuts::WriteNullDescriptors(m_Device.Get(), m_CbvHeap.Get());
@@ -914,8 +924,3 @@ void GraphicsDevice::SubmitForExternalCompute()
     ID3D12DescriptorHeap* heaps[] = {m_CbvHeap.Get()};
     m_CommandList->SetDescriptorHeaps(1, heaps);
 }
-
-
-
-
-

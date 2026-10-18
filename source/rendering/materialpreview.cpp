@@ -13,6 +13,7 @@
 #include "staticmodel.h"
 #include "imguimanager.h"
 #include "materialvalidation.h"
+#include "rendererstate.h"
 #include <cmath>
 
 namespace
@@ -41,11 +42,13 @@ struct PreviewState : RendererState
     ComPtr<ID3D12DescriptorHeap> RTVHeap;
     ComPtr<ID3D12DescriptorHeap> DSVHeap;
     ComPtr<ID3D12Resource> Lights;
+    ComPtr<ID3D12Resource> OpticsGlobals;
+    uint8_t* MappedOpticsGlobals = nullptr;
     uint8_t* MappedLights = nullptr;
     array<ComPtr<ID3D12Resource>, 3> Vertices;
     array<D3D12_VERTEX_BUFFER_VIEW, 3> Views{};
     array<UINT, 3> Counts{};
-    array<ComPtr<ID3D12PipelineState>, 12> Pipelines;
+    array<ComPtr<ID3D12PipelineState>, 24> Pipelines;
     D3D12_CPU_DESCRIPTOR_HANDLE CpuSrv() const
     {
         return CD3DX12_CPU_DESCRIPTOR_HANDLE(FrameConstants::GetCbvHeap()->GetCPUDescriptorHandleForHeapStart(),
@@ -217,6 +220,17 @@ bool PreviewState::Initialize()
         return false;
     }
     memset(MappedLights, 0, constantBytes * g_kFRAME_COUNT);
+    // b5 contains flags, parameters and 160 light flags: 2592 bytes, aligned to 2816.
+    const auto opticsDescription = CD3DX12_RESOURCE_DESC::Buffer(2816 * g_kFRAME_COUNT);
+    if (FAILED(device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &opticsDescription,
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&OpticsGlobals))) ||
+        FAILED(OpticsGlobals->Map(0, nullptr, reinterpret_cast<void**>(&MappedOpticsGlobals))))
+    {
+        Error = "Failed to create material optics preview constants";
+        Target.Reset();
+        return false;
+    }
+    memset(MappedOpticsGlobals, 0, 2816 * g_kFRAME_COUNT);
     const int shapeCount = SrvIndex == g_kMATERIAL_PREVIEW_SRV_INDEX ? 3 : 1;
     for (int shape = 0; shape < shapeCount; ++shape)
     {
@@ -255,6 +269,7 @@ ID3D12PipelineState* PreviewState::Pipeline(const MaterialComponent& material)
     {
         index += 6;
     }
+    if (SrvIndex == g_kMATERIAL_PREVIEW_SRV_INDEX && material.Transmission > 0.0f) index += 12;
     if (Pipelines[index])
     {
         return Pipelines[index].Get();
@@ -293,6 +308,11 @@ ID3D12PipelineState* PreviewState::Pipeline(const MaterialComponent& material)
     if (!material.AssetDepthWrite || material.IsTransparent)
     {
         description.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    }
+    if (SrvIndex == g_kMATERIAL_PREVIEW_SRV_INDEX && material.Transmission > 0.0f)
+    {
+        description.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+        description.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
     }
     description.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
     if (material.IsTransparent)
@@ -345,7 +365,12 @@ void MaterialPreview::DrawControls()
     ImGui::SetNextItemWidth(95);
     ImGui::SliderFloat("Light", &preview.LightIntensity, 0, 5);
     ImGui::SameLine();
+    const bool glassMaterial = preview.Material != 0 &&
+        MaterialManager::GetRuntime(preview.Material).Binding.Transmission > 0.0f;
+    ImGui::BeginDisabled(glassMaterial);
     ImGui::Checkbox("Scene IBL", &preview.SceneEnvironment);
+    ImGui::EndDisabled();
+    if (glassMaterial) ImGui::SetItemTooltip("IBL is disabled for transmissive glass. Direct lighting and refracted background remain enabled.");
 }
 
 void MaterialPreview::DrawImage(AssetHandle material)
@@ -425,7 +450,12 @@ bool RenderPreview(PreviewState& preview, const MaterialComponent& material,
     // Zero shadow and ray flags for this isolated preview scene.
     const auto zeroAddress = preview.Lights->GetGPUVirtualAddress() + GraphicsDevice::GetFrameIndex() * constantBytes + constantBytes - 256;
     commands->SetGraphicsRootConstantBufferView(5, zeroAddress);
-    commands->SetGraphicsRootConstantBufferView(17, zeroAddress);
+    auto* optics = reinterpret_cast<XMFLOAT4*>(preview.MappedOpticsGlobals + GraphicsDevice::GetFrameIndex() * 2816);
+    memset(optics, 0, 2816);
+    if (preview.SrvIndex == RendererState::g_kMATERIAL_PREVIEW_SRV_INDEX)
+        optics[1] = {preview.SceneEnvironment && material.Transmission <= 0.0f ? 1.0f : 0.0f, preview.LightIntensity,
+            static_cast<float>(preview.Shape + 1), 1.0f};
+    commands->SetGraphicsRootConstantBufferView(17, preview.OpticsGlobals->GetGPUVirtualAddress() + GraphicsDevice::GetFrameIndex() * 2816);
     commands->SetGraphicsRootConstantBufferView(26, zeroAddress);
     commands->SetGraphicsRootConstantBufferView(27, zeroAddress);
     const XMFLOAT3 eye = {sinf(preview.Yaw) * cosf(preview.Pitch) * preview.Distance + preview.Center.x,
@@ -474,7 +504,7 @@ bool RenderPreview(PreviewState& preview, const MaterialComponent& material,
     }
     commands->SetGraphicsRootDescriptorTable(1, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap, albedo, increment));
     commands->SetGraphicsRootDescriptorTable(6, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap, normal, increment));
-    if (!preview.SceneEnvironment)
+    if (!preview.SceneEnvironment || material.Transmission > 0.0f)
     {
         commands->SetGraphicsRootDescriptorTable(7, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap,
             TextureManager::GetDefaultTextureIndex(), increment));
@@ -619,8 +649,8 @@ uint64_t ThumbnailPreviewContext::MemoryBytes() const
     add(state.Target);
     add(state.Depth);
     add(state.Lights);
+    add(state.OpticsGlobals);
     add(state.PreviewConstants);
     for (const auto& buffer : state.Vertices) add(buffer);
     return bytes;
 }
-

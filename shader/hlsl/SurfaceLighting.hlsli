@@ -637,7 +637,7 @@ float3 EvaluatePbrDirectLight(
 
     float metallic = saturate(materialData.r);
     float roughness = clamp(materialData.g, 0.04f, 1.0f);
-    float specularF0 = max(materialData.b, 0.04f);
+    float specularF0 = saturate(materialData.b);
 
     float3 F0 = lerp(float3(specularF0, specularF0, specularF0), albedo, metallic);
 
@@ -843,7 +843,7 @@ float3 EvaluateRectLightLtcTinted(float3 N, float3 V, float3 P, float3 center, f
     float3 corners[4] = { center + right + up, center + right - up, center - right - up, center - right + up };
     float metallic = saturate(materialData.r);
     float roughness = clamp(materialData.g, 0.04f, 1.0f);
-    float specularF0 = max(materialData.b, 0.04f);
+    float specularF0 = saturate(materialData.b);
     float3 F0 = lerp(specularF0.xxx, albedo, metallic);
     float NdotV = saturate(dot(N, V));
     float diffuse = LtcEvaluateQuad(N, V, P, float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1), corners);
@@ -965,7 +965,14 @@ void AccumulateSurfaceLight(
         else if (cbIndex >= 0)
         {
             const int i = cbIndex;
-            shadowVisibility = decalLight
+            const bool directionalShadow =
+                LightPositionTypes[i].w < 0.5f && SceneLightCastsShadowCommon(i, LightShadowData[i].x >= -0.5f);
+            const bool useRayShadow = !decalLight && directionalShadow &&
+                RaytracingFlags.x > 0.5f && RaytracingFlags.z > 0.5f &&
+                RaytracingSunDirection.w > 0.5f && dot(singleDir, RaytracingSunDirection.xyz) > 0.999f;
+            // The primary sun already has a denoised visibility texture. Do not
+            // issue an inline ray whose result would immediately be overwritten.
+            shadowVisibility = decalLight || useRayShadow
     			? 1.0f
     			: SampleSurfaceShadowMap(
                     i,
@@ -976,8 +983,6 @@ void AccumulateSurfaceLight(
                     singleDir,
                     shadowFilterRadius);
 
-    		const bool directionalShadow =
-    			LightPositionTypes[i].w < 0.5f && LightShadowData[i].x >= -0.5f;
             float contactVisibility = !decalLight && directionalShadow
                 ? SampleContactShadow(worldPos, normal, singleDir)
                 : 1.0f;
@@ -985,9 +990,6 @@ void AccumulateSurfaceLight(
             if (SceneRayFlags.x > 0.5f) contactVisibility = 1.0f;
 #endif
             shadowVisibility *= lerp(1.0f, contactVisibility, 0.45f);
-    		const bool useRayShadow = !decalLight && directionalShadow &&
-    			RaytracingFlags.x > 0.5f && RaytracingFlags.z > 0.5f &&
-    			RaytracingSunDirection.w > 0.5f && dot(singleDir, RaytracingSunDirection.xyz) > 0.999f;
     		if (useRayShadow)
     		{
     			uint rayWidth;
@@ -1174,7 +1176,7 @@ float3 MLRemodulation(float3 N, float3 V, float3 albedo, float3 materialData)
 {
     const float metallic = saturate(materialData.r);
     const float roughness = clamp(materialData.g, 0.04f, 1.0f);
-    const float3 F0 = lerp(max(materialData.b, 0.04f).xxx, albedo, metallic);
+    const float3 F0 = lerp(saturate(materialData.b).xxx, albedo, metallic);
     const float2 dfg = SampleDfg(saturate(dot(N, V)), roughness);
     const float3 reflectance = albedo * (1.0f - metallic) + F0 * dfg.x + dfg.y;
     return max(reflectance, 0.02f);
@@ -1355,6 +1357,17 @@ void ResolveSurfaceLightAggregateShadowed(
     aggregateShadowVisibility = saturate(shadowSum / weightSum);
 }
 
+float VirtualMoonSurfaceVisibility(float3 worldPosition, float3 normal, float3 direction)
+{
+#ifdef SHADER_RAYTRACING
+    if (SceneRayFlags.y > .5f && SceneRayFlags.z > .5f)
+        return TraceSceneShadow(worldPosition, normal, direction, SceneRayParameters.x);
+#endif
+    // No authored shadow map belongs to the virtual moon. Without a valid
+    // visibility provider it remains a sky disc, not an unoccluded surface light.
+    return 0;
+}
+
 float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 worldPosition,
     float2 screenUv, float shadowSoftness, float3 pbrDirectLight)
 {
@@ -1364,7 +1377,7 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
     float NdotV = saturate(dot(N, V));
     float metallic = saturate(surface.Metallic);
     float roughness = clamp(surface.Roughness, 0.04f, 1.0f);
-    float specularF0 = max(surface.F0, 0.04f);
+    float specularF0 = saturate(surface.F0);
     float3 albedo = surface.BaseColor;
     float3 F0 = lerp(float3(specularF0, specularF0, specularF0), albedo, metallic);
 
@@ -1458,8 +1471,13 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
         CloudSolarTransmittance(worldPosition, moonDirection) : 1;
     float3 moonRadiance = VirtualMoonIrradiance() * moonVisibility *
         CelestialAtmosphereTransmission(worldPosition.y, moonDirection);
-    pbrDirectLight += EvaluatePbrDirectLight(N, V, moonDirection, moonRadiance,
-        albedo, float3(surface.Metallic, surface.Roughness, surface.F0), shadowSoftness);
+    [branch]
+    if (any(moonRadiance > 1e-6))
+    {
+        moonRadiance *= VirtualMoonSurfaceVisibility(worldPosition, N, moonDirection);
+        pbrDirectLight += EvaluatePbrDirectLight(N, V, moonDirection, moonRadiance,
+            albedo, float3(surface.Metallic, surface.Roughness, surface.F0), shadowSoftness);
+    }
     return pbrDirectLight + ambient + surface.Emissive;
 }
 float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv, float3 diffuseReflectance)
@@ -1507,6 +1525,3 @@ float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv,
     return color;
 }
 #endif
-
-
-

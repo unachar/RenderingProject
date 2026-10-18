@@ -212,6 +212,18 @@ void main(uint3 id : SV_DispatchThreadID)
     }
     // A jittered silhouette legitimately differs from the accumulated coverage.
     // Only color outside the current neighborhood signals an unexplained change.
+    bool stablePlane = subpixelAA && Parameters.w > .5 && footprintTolerance > 0 &&
+        motionPixels < .25 && reactive == 0 && sigma.x < max(abs(mean.x), .05) * .15;
+    if (stablePlane)
+    {
+        // A flat neighborhood has almost no spatial variance. Clipping to that
+        // zero-width box forwards weak GI noise instead of accumulating it.
+        // Allow a small absolute/relative tolerance on verified stationary planes.
+        // Large lighting changes remain bounded by the current frame's box.
+        float3 noiseAllowance = float3(.001, .002, .002) + .003 * abs(mean);
+        minimumColor -= noiseAllowance;
+        maximumColor += noiseAllowance;
+    }
     float3 clippedHistory = clamp(ToY(history.rgb), minimumColor, maximumColor);
     clippedHistory = lerp(clippedHistory, ToY(history.rgb), detailProtection);
     float neighborhoodReaction = saturate(abs(ToY(history.rgb).x - clippedHistory.x) / max(abs(clippedHistory.x), .05));
@@ -225,6 +237,7 @@ void main(uint3 id : SV_DispatchThreadID)
     float2 sampleDistance = ((float2(pixel) + .5) / Extent.xy - source) * Extent.zw;
     float sampleConfidence = exp2(-.5 * dot(sampleDistance, sampleDistance));
     float currentWeight = lerp(.08, .002 + .1 * sampleConfidence, stillness);
+    if (stablePlane) currentWeight *= .5;
     currentWeight *= lerp(1, .25, detailLock);
     float weight = (1 - currentWeight) * (1 - reactive) * exp2(-motionPixels * .04);
     float3 temporalSample = lerp(current.rgb, Color.Load(int3(pixel, 0)).rgb, stillness);

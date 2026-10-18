@@ -324,7 +324,7 @@ struct MaterialComponent
     float ShadowCutoff = 0.5f;
 
 	float IOR = 1.50f;
-	float Transmission = 0.98f;
+	float Transmission = 0.0f;
 	float TransmissionRoughness = 0.02f;
 	float RefractionStrength = 0.035f;
 	float Thickness = 0.10f;
@@ -685,6 +685,3 @@ public:
 		Registry::RemoveComponent(entity, types...);
 	}
 };
-
-
-

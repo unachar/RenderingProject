@@ -23,6 +23,14 @@ struct RaytracingGeometry
     UINT EmissionResidentMip = 0;
     float Roughness = 0.5f;
     float Metallic = 0.0f;
+    UINT MediumID = 0;
+    float IOR = 1.5f;
+    float Transmission = 0.0f;
+    float TransmissionRoughness = 0.02f;
+    float Fresnel = 0.04f;
+    bool UsesAssetMaterial = false;
+    XMFLOAT3 Absorption{};
+    float Thickness = 0.01f;
 };
 
 vector<RaytracingGeometry> GatherRaytracingGeometry();

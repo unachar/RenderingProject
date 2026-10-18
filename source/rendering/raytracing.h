@@ -56,7 +56,8 @@ public:
     static bool GetNrdGuides(ID3D12Resource* guides[3], NrdFrame& frame, uint64_t& serial);
     static void BeginLightList();
     static void SetLightShadowFlag(UINT index, bool castShadow);
+    static void BindGlass(ID3D12GraphicsCommandList* commandList);
+    static void BeginGlassRead(ID3D12GraphicsCommandList* commandList);
+    static void EndGlassRead(ID3D12GraphicsCommandList* commandList);
     static void BindLighting(ID3D12GraphicsCommandList* commandList, UINT sceneRootIndex, UINT constantsRootIndex);
 };
-
-

@@ -35,7 +35,7 @@ public:
 		bool LightOcclusionCulling = true; // MegaLights の GPU 結果で、見えている面に届かないライトを後回しにする
 		bool SkipRayTracedShadowMaps = true; // DXR 影モードでは使われないローカルライトのシャドウマップを描かない
 		// GPU（反射 / GI）
-		float ReflectionRoughnessCutoff = 0.5f;  // これより粗い面は反射レイを飛ばさず環境（空）で近似
+		float ReflectionRoughnessCutoff = 0.5f;  // これより粗い面は遮蔽確認のみ行い、見えている空で近似
 		int RayHitLights = 32;
 		bool ReflectionCheckerboard = true;      // 反射レイを半分のピクセルだけ飛ばし NRD で復元（NRD 使用時）                   // 反射 / GI のヒット点で評価するライト数（カメラに近い順）
 	};

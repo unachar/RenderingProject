@@ -4,6 +4,7 @@
 #include "camera.h"
 #include "sun.h"
 #include "daynightcycle.h"
+#include "atmosphere.h"
 #include "primitivegeometry.h"
 #include "renderconfiguration.h"
 #include "renderersettings.h"
@@ -11,6 +12,8 @@
 #include "renderquality.h"
 #include "advancedeffects.h"
 #include "raytracing.h"
+#include "rayreflections.h"
+#include "cpuculling.h"
 #include "rendertargets.h"
 #include "rendercapture.h"
 #include "graphicslog.h"
@@ -20,12 +23,13 @@
 
 namespace
 {
-constexpr UINT FramesPerCase = 24, Cases = 5;
+constexpr UINT FramesPerCase = 24, Cases = 12;
 UINT failures = 0;
 uint64_t lastFrame = 0;
 EntityID roof = g_kINVALID_ENTITY, sun = g_kINVALID_ENTITY;
 array<double, Cases> brightness{};
 array<UINT, Cases> samples{};
+array<double, Cases> reflectionBrightness{}, giBrightness{};
 void Check(bool valid, const char* message)
 {
     if (!valid) ++failures;
@@ -124,18 +128,30 @@ void CelestialOcclusionValidation::BeforeFrame(uint64_t frame)
     rays.Reflections = rays.AmbientOcclusion = false;
     rays.RenderMode = Raytracing::Mode::Full;
     const UINT phase = UINT(frame / FramesPerCase);
+    if (phase >= 6)
+    {
+        // Exercise the actual secondary lighting paths, with the authored Sun disabled.
+        rays.Reflections = true;
+        Atmosphere::GetMutableParameters().Enabled = true;
+        Atmosphere::GetMutableParameters().PhysicalSky = true;
+        RendererSettings::SetRealtimeGiIntensity(1);
+        RenderCulling::GetSettings().ReflectionRoughnessCutoff = phase < 8 ? 1.f : .5f;
+        DayNightCycle::SetTime(phase == 10 ? 8.f : phase == 11 ? 16.f : 12.f);
+    }
     if (frame % FramesPerCase == 0)
     {
         auto& sunTransform = ComponentManager::GetComponentUnchecked<TransformComponent>(sun);
-        sunTransform.Position = {0, phase == 0 || phase == 3 ? 20.f : -20.f, 0};
+        sunTransform.Position = {0, phase == 0 || phase == 3 || phase == 5 ? 20.f : -20.f, 0};
         sunTransform.IsDirty = true;
         auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(sun);
         light.Intensity = 5;
         light.Color = {1, 1, 1, 1};
-        light.IsActive = light.CastShadow = true;
+        light.IsActive = phase < 5;
+        light.CastShadow = true;
         auto& roofTransform = ComponentManager::GetComponentUnchecked<TransformComponent>(roof);
-        roofTransform.Position = {phase == 2 || phase == 3 ? 30.f : 0.f, 3, 0};
+        roofTransform.Position = {phase == 2 || phase == 3 || phase == 7 || phase == 9 ? 30.f : 0.f, 3, 0};
         roofTransform.IsDirty = true;
+        if (phase >= 6) DayNightCycle::Update(0);
         Camera::NotifyCut();
     }
 }
@@ -150,6 +166,12 @@ void CelestialOcclusionValidation::AfterFrame(uint64_t frame)
         return;
     }
     XMMATRIX view, projection;
+    RenderCapture::TextureData reflections, gi;
+    if (phase >= 6 && Raytracing::IsAvailable())
+    {
+        Check(RenderCapture::ReadTexture(RayReflections::GetResultResource(), reflections), "capture secondary reflections");
+        Check(RenderCapture::ReadTexture(RayReflections::GetGiResource(), gi), "capture diffuse GI");
+    }
     Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
     for (int z = -4; z <= 4; ++z)
     for (int x = -4; x <= 4; ++x)
@@ -159,6 +181,13 @@ void CelestialOcclusionValidation::AfterFrame(uint64_t frame)
             0, 0, float(image.Width), float(image.Height), 0, 1, projection, view, XMMatrixIdentity()));
         if (pixel.x < 0 || pixel.x >= image.Width || pixel.y < 0 || pixel.y >= image.Height) continue;
         brightness[phase] += Luminance(image, UINT(pixel.x), UINT(pixel.y));
+        if (reflections.Width && gi.Width)
+        {
+            reflectionBrightness[phase] += Luminance(reflections,
+                UINT(pixel.x * reflections.Width / image.Width), UINT(pixel.y * reflections.Height / image.Height));
+            giBrightness[phase] += Luminance(gi,
+                UINT(pixel.x * gi.Width / image.Width), UINT(pixel.y * gi.Height / image.Height));
+        }
         ++samples[phase];
     }
     if (frame % FramesPerCase == FramesPerCase - 1)
@@ -167,20 +196,41 @@ void CelestialOcclusionValidation::AfterFrame(uint64_t frame)
 bool CelestialOcclusionValidation::Finish()
 {
     ofstream report("build/celestial-occlusion/summary.csv");
-    report << "case,hdr_luminance,samples\n";
+    report << "case,hdr_luminance,samples,reflection_luminance,gi_luminance\n";
     for (UINT phase = 0; phase < Cases; ++phase)
     {
         Check(samples[phase] >= 200, "sufficient receiver samples");
         brightness[phase] /= (std::max)(samples[phase], 1u);
-        report << phase << ',' << brightness[phase] << ',' << samples[phase] << '\n';
+        reflectionBrightness[phase] /= (std::max)(samples[phase], 1u);
+        giBrightness[phase] /= (std::max)(samples[phase], 1u);
+        report << phase << ',' << brightness[phase] << ',' << samples[phase] << ','
+            << reflectionBrightness[phase] << ',' << giBrightness[phase] << '\n';
         WriteGraphicsLog("Celestial receiver: case=%u luminance=%.7f samples=%u\n", phase, brightness[phase], samples[phase]);
+        if (phase >= 6) WriteGraphicsLog("Celestial secondary: case=%u reflection=%.7f GI=%.7f\n",
+            phase, reflectionBrightness[phase], giBrightness[phase]);
     }
     const double moonContrast = brightness[2] - brightness[0];
-    Check(moonContrast > .005, "open roof admits moonlight above constant environment");
-    Check(brightness[3] > .05, "open roof admits sunlight");
-    Check(abs(brightness[1] - brightness[0]) < (std::max)(.002, moonContrast * .1), "closed roof blocks moonlight");
-    Check(abs(brightness[4] - brightness[0]) < (std::max)(.002, moonContrast * .1), "closing roof blocks moonlight again");
-    Check(brightness[0] < brightness[3] * .1, "closed roof blocks sunlight");
+    if (Raytracing::IsAvailable())
+        Check(moonContrast > .005, "open roof admits moonlight above constant environment");
+    else
+        Check(moonContrast < .002, "no unshadowed virtual moon without a visibility provider");
+    const double sunContrast = brightness[3] - brightness[5];
+    Check(sunContrast > .05, "open roof admits sunlight above environment-only control");
+    const double allowedMoonLeak = (std::max)(.002, moonContrast * .1);
+    Check(brightness[1] <= brightness[0] + allowedMoonLeak, "closed roof blocks moonlight");
+    Check(brightness[4] <= brightness[0] + allowedMoonLeak, "closing roof blocks moonlight again");
+    Check(abs(brightness[0] - brightness[5]) < (std::max)(.002, sunContrast * .1), "closed roof blocks sunlight");
+    if (Raytracing::IsAvailable())
+    {
+        for (UINT phase : {6u, 8u, 10u, 11u})
+        {
+            Check(reflectionBrightness[phase] < .002, "closed room blocks secondary sky reflection with Sun inactive");
+            Check(giBrightness[phase] < .002, "closed room blocks sky GI with Sun inactive");
+        }
+        Check(reflectionBrightness[7] > .005, "open roof admits traced sky reflection with Sun inactive");
+        Check(reflectionBrightness[9] > .005, "open roof admits rough sky reflection with Sun inactive");
+        Check(giBrightness[9] > .005, "open roof admits sky GI with Sun inactive");
+    }
     Check(lastFrame >= FramesPerCase * Cases - 1, "complete sun movement and roof sequence");
     failures += RenderCapture::ReportGraphicsErrors();
     WriteGraphicsLog("GI validation failures = %u\n", failures);

@@ -25,6 +25,7 @@ public:
 
 	static bool CreateSkinningPso();
 	static bool CreatePostProcessPipelines();
+    static bool CreateDeferredLightingPipeline();
 	static bool CreateAtmospherePso();
 	static bool CreateUpscalePso();
 	static bool CreateUpscaleDepthPso();

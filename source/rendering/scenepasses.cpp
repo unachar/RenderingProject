@@ -153,6 +153,7 @@ void ScenePasses::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_TO
 	}
 	m_CommandList->SetGraphicsRootSignature(rootSignature);
 	Raytracing::BindLighting(m_CommandList.Get(), 16, 17);
+    Raytracing::BindGlass(m_CommandList.Get());
 	if (m_LightConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(2, LightingResources::GetCurrentLightConstantBufferAddress());
 	if (m_PBRConstantBuffer) m_CommandList->SetGraphicsRootConstantBufferView(3, MaterialBindings::GetPBRConstantBufferAddress());
 	if (m_ShadowDepthBuffer)
@@ -336,14 +337,15 @@ void ScenePasses::BeginEditorSceneOverlayPass()
 
 void ScenePasses::BeginHdrTransparentPass()
 {
+    Raytracing::BeginGlassRead(m_CommandList.Get());
     m_UseLowResDepth = m_RenderMode == RenderMode::DEFERRED && m_LowResDepthBuffer != nullptr;
     auto* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
     D3D12_RESOURCE_STATES depthState = m_UseLowResDepth ? D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE : m_DepthStencilState;
-    auto depthBarrier = CD3DX12_RESOURCE_BARRIER::Transition(depth, depthState, D3D12_RESOURCE_STATE_DEPTH_READ);
+    auto depthBarrier = CD3DX12_RESOURCE_BARRIER::Transition(depth, depthState, static_cast<D3D12_RESOURCE_STATES>(D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
     m_CommandList->ResourceBarrier(1, &depthBarrier);
     if (!m_UseLowResDepth)
     {
-        m_DepthStencilState = D3D12_RESOURCE_STATE_DEPTH_READ;
+        m_DepthStencilState = static_cast<D3D12_RESOURCE_STATES>(D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     }
     UINT depthIndex = m_UseLowResDepth ? g_kLOW_DEPTH_READ_DSV_INDEX : g_kFULL_DEPTH_READ_DSV_INDEX;
     CD3DX12_CPU_DESCRIPTOR_HANDLE dsv(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), depthIndex,
@@ -363,6 +365,7 @@ void ScenePasses::BeginHdrTransparentPass()
 
 void ScenePasses::EndHdrTransparentPass()
 {
+    Raytracing::EndGlassRead(m_CommandList.Get());
     if (TransparencyEffects::IsOitPassActive())
     {
         TransparencyEffects::EndTransparentPass(m_CommandList.Get(), GetRenderTargetRtvHandle(RenderTargetType::Scene),
@@ -371,7 +374,7 @@ void ScenePasses::EndHdrTransparentPass()
     }
     auto* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
     auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(depth,
-        D3D12_RESOURCE_STATE_DEPTH_READ, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        static_cast<D3D12_RESOURCE_STATES>(D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     m_CommandList->ResourceBarrier(1, &barrier);
     if (!m_UseLowResDepth)
     {
@@ -814,7 +817,3 @@ void ScenePasses::EndVelocityBuffer()
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 	m_CommandList->ResourceBarrier(1, &toVelocitySrv);
 }
-
-
-
-

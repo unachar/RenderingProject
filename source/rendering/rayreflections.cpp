@@ -557,7 +557,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         {
             triangleCount = geometry.VertexView.SizeInBytes / geometry.VertexView.StrideInBytes / 3;
         }
-        mesh.Surface = { triangleCount, static_cast<UINT>(geometry.EmissionTexture != nullptr), 0, 0 };
+        mesh.Surface = { triangleCount, static_cast<UINT>(geometry.EmissionTexture != nullptr), 0, static_cast<UINT>(geometry.UsesAssetMaterial) };
         if (geometry.Emission.w > 0 && (geometry.Emission.x > 0 || geometry.Emission.y > 0 || geometry.Emission.z > 0))
         {
             emitters.push_back(i);
@@ -1041,9 +1041,4 @@ D3D12_GPU_DESCRIPTOR_HANDLE RayReflections::GetGiSrv(UINT frameIndex)
     return Gpu(g_EngineHeap.Get(), kGiSrv + frameIndex % kFrames);
 }
 ID3D12Resource* RayReflections::GetGiResource() { return g_Frames[g_LastFrame].GiResult.Get(); }
-
-
-
-
-
-
+ID3D12Resource* RayReflections::GetGiNoisyResource() { return g_Frames[g_LastFrame].GiNoisy.Get(); }

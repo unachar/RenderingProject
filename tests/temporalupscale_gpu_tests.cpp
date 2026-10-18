@@ -69,15 +69,17 @@ int main(int argc, char** argv)
 {
     try
     {
+        const bool giFlow = argc > 1 && std::string(argv[1]).find("gi-flow") != std::string::npos;
+        const bool slowFlow = giFlow && std::string(argv[1]).find("slow") != std::string::npos;
         const bool planarFixture = argc > 1 && std::string(argv[1]).find("plane") != std::string::npos;
         const bool thinGeometry = argc > 1 && std::string(argv[1]).find("geometry") != std::string::npos;
         const bool slowCamera = thinGeometry && std::string(argv[1]).find("moving") != std::string::npos;
         const bool thinSafety = thinGeometry && std::string(argv[1]).find("safety") != std::string::npos;
         const bool fineDetail = argc > 1 && (std::string(argv[1]).find("--detail") == 0 || planarFixture || thinGeometry);
         const bool dimDetail = fineDetail && std::string(argv[1]).find("dim") != std::string::npos;
-        const bool stabilizeDetail = argc == 1 || (fineDetail && (planarFixture || thinGeometry || std::string(argv[1]).find("stable") != std::string::npos));
+        const bool stabilizeDetail = argc == 1 || (giFlow && std::string(argv[1]).find("stable") != std::string::npos) || (fineDetail && (planarFixture || thinGeometry || std::string(argv[1]).find("stable") != std::string::npos));
         const float detailScale = dimDetail ? .08f / .98f : 1.f;
-        const bool subpixelAA = argc == 1 || fineDetail;
+        const bool subpixelAA = argc == 1 || fineDetail || giFlow;
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
         Check(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0,
@@ -147,6 +149,7 @@ int main(int argc, char** argv)
             }
             if (thinSafety && frame == 160) constants.Parameters[1] = 1;
             if (thinSafety && frame == 161) constants.Parameters[0] = 0;
+            if (giFlow && frame == 163) constants.Parameters[0] = 1;
             constants.Parameters[2] = subpixelAA ? 1.f : 0.f;
             constants.Parameters[3] = stabilizeDetail ? 1.f : 0.f;
             constants.Reconstruction[0] = !planarFixture || std::string(argv[1]).find("stable") != std::string::npos ? 1.f : 0.f;
@@ -174,6 +177,17 @@ int main(int argc, char** argv)
                 if (slowCamera && frame > 0) inputVelocity[pixel * 4 + 2] += .1f / OutputWidth;
                 inputVelocity[pixel * 4 + 3] = jitterY - previousY;
                 if (foreground && frame > 163 && !fineDetail) inputVelocity[pixel * 4 + 3] += 2.f / OutputHeight;
+                if (giFlow)
+                {
+                    const float red = frame < 160 ? .15f + .002f * std::sin(frame * (slowFlow ? .17f : 1.7f)) :
+                        frame == 160 ? .35f : frame == 161 ? .07f : frame == 162 ? .11f : .21f;
+                    inputColor[pixel * 4] = red;
+                    inputColor[pixel * 4 + 1] = .03f;
+                    inputColor[pixel * 4 + 2] = .02f;
+                    inputDepth[pixel] = .5f;
+                    inputVelocity[pixel * 4 + 3] = jitterY - previousY;
+                    if (frame == 163) inputVelocity[pixel * 4 + 3] += 2.f / OutputHeight;
+                }
             }
             std::fill(revealage.begin(), revealage.end(), frame == 162 || (thinSafety && frame == 160) ? 0.f : 1.f);
             context->UpdateSubresource(color.Resource.Get(), 0, nullptr, inputColor.data(), InputWidth * 16, 0);
@@ -201,7 +215,24 @@ int main(int argc, char** argv)
                 for (UINT x = 0; x < OutputWidth; ++x) resolved[y * OutputWidth + x] = row[x * 4];
             }
             context->Unmap(staging.Get(), 0);
-            if (fineDetail && frame >= 160)
+            if (giFlow)
+            {
+                const UINT center = OutputWidth * (OutputHeight / 2) + OutputWidth / 2;
+                if (frame >= 128 && frame < 160)
+                {
+                    const double delta = resolved[center] - last[center];
+                    shimmer += delta * delta;
+                    error += (resolved[center] - .15) * (resolved[center] - .15);
+                    ++samples;
+                }
+                if (frame >= 160 && frame <= 163)
+                {
+                    const float expected = frame == 160 ? .35f : frame == 161 ? .07f : frame == 162 ? .11f : .21f;
+                    Require(std::abs(resolved[center] - expected) < (frame == 160 ? .006f : .0001f),
+                        "GI stability retains lighting changes, resets, reactive pixels or motion");
+                }
+            }
+            else if (fineDetail && frame >= 160)
             {
                 if (thinSafety && (frame == 160 || frame == 161))
                 {
@@ -276,6 +307,13 @@ int main(int argc, char** argv)
             previousY = jitterY;
         }
         const double rmse = std::sqrt(error / samples), temporal = std::sqrt(shimmer / samples);
+        if (giFlow)
+        {
+            std::cout << "GI flow: temporal RMS=" << temporal << "; bias RMSE=" << rmse << '\n';
+            if (stabilizeDetail) Require(temporal < (slowFlow ? .00008 : .0004) && rmse < .001, "weak GI changes bypass temporal accumulation");
+            else Require(temporal > (slowFlow ? .00015 : .001), "baseline must reproduce weak GI flicker");
+            return 0;
+        }
         std::cout << (dimDetail ? "Dim " : "") << (fineDetail ? (stabilizeDetail ? "Stable detail" : "Baseline detail") : subpixelAA ? "Subpixel AA" : "Legacy TSR")
             << " 20% diagonal: coverage RMSE=" << rmse << "; temporal RMS=" << temporal << '\n';
         if (fineDetail)

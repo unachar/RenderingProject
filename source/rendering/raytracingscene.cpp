@@ -17,6 +17,7 @@ namespace
 {
 void SetMaterial(RaytracingGeometry& geometry, EntityID entity, int modelTexture = -1, size_t slot = 0)
 {
+    geometry.MediumID = static_cast<UINT>(entity);
     if (ComponentManager::HasComponent<MaterialComponent>(entity))
     {
         const auto& material = MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity), slot);
@@ -32,6 +33,20 @@ void SetMaterial(RaytracingGeometry& geometry, EntityID entity, int modelTexture
                 geometry.EmissionResidentMip = TextureManager::GetTextureResidentMip(material.EmissiveTextureID);
             }
         }
+        geometry.IOR = material.IOR;
+        geometry.Transmission = MaterialSystem::IsTransparentMaterial(material) ? material.Transmission : 0.0f;
+        geometry.Absorption = material.AbsorptionCoefficient;
+        geometry.Thickness = material.Thickness;
+        geometry.TransmissionRoughness = material.TransmissionRoughness;
+        geometry.Fresnel = material.Fresnel;
+        geometry.Emission = material.RuntimeHandle != 0
+            ? XMFLOAT4{material.EmissiveColor.x,material.EmissiveColor.y,material.EmissiveColor.z,material.EmissiveIntensity}
+            : XMFLOAT4{0,0,0,0};
+        // Raster ignores primitive vertex color for material assets and ignores
+        // AssetBaseColor for legacy vertex-colored draws. Preserve that rule.
+        geometry.UsesAssetMaterial = material.RuntimeHandle != 0;
+        geometry.BaseColor = geometry.UsesAssetMaterial ? material.BaseColor : XMFLOAT4{1,1,1,1};
+        geometry.BaseColor.w *= material.Alpha;
         geometry.Roughness = material.Roughness;
         geometry.Metallic = material.Metallic;
         geometry.CastShadow = MaterialSystem::CastsShadow(material);
@@ -60,7 +75,7 @@ bool IsRayGeometryVisible(const MaterialComponent& material)
         opacity *= material.BaseColor.w;
     }
     return opacity > 0.0f &&
-        (!MaterialSystem::IsTransparentMaterial(material) || MaterialSystem::CastsShadow(material));
+        (!MaterialSystem::IsTransparentMaterial(material) || MaterialSystem::CastsShadow(material) || material.Transmission > 0.001f);
 }
 
 bool IsOpaqueCaster(EntityID entity)
@@ -152,7 +167,7 @@ void AppendModel(vector<RaytracingGeometry>& geometry, EntityID entity, Model* m
         {
             static const bool rayLod=ReadEnvironmentFlagOnce("DX12_DXR_LOD"),rayProxy=ReadEnvironmentFlagOnce("DX12_DXR_PROXY");
             const auto camera=Camera::GetCameraEntity();
-            if(!entry.Deforming && (rayLod||rayProxy) && ComponentManager::HasComponent<TransformComponent>(camera))
+            if(entry.Transmission <= 0.001f && !entry.Deforming && (rayLod||rayProxy) && ComponentManager::HasComponent<TransformComponent>(camera))
             {
                 const auto& eye=ComponentManager::GetComponentUnchecked<TransformComponent>(camera).Position;
                 const XMMATRIX world=XMLoadFloat4x4(&entry.World);
@@ -227,4 +242,3 @@ vector<RaytracingGeometry> GatherRaytracingGeometry()
     }
     return geometry;
 }
-

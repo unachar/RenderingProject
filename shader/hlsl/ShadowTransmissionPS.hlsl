@@ -1,6 +1,7 @@
 #define SHADER_3D
 #include "common.hlsl"
 #include "MaterialSurface.hlsli"
+#include "PhysicalGlass.hlsli"
 
 Texture2D<float4> BaseTexture : register(t0);
 Texture2DArray<float> PreviousPeelDepth : register(t29);
@@ -33,18 +34,12 @@ float4 main(float4 position : SV_POSITION, float2 uv : TEXCOORD,
     cosIncident = max(abs(cosIncident), 0.0001f);
     float eta = max(Transparent0.x, 1.0f);
     float cosTransmitted = sqrt(max(0.0f, 1.0f - (1.0f - cosIncident * cosIncident) / (eta * eta)));
-    float rs = (cosIncident - eta * cosTransmitted) / max(cosIncident + eta * cosTransmitted, 0.0001f);
-    float rp = (eta * cosIncident - cosTransmitted) / max(eta * cosIncident + cosTransmitted, 0.0001f);
-    float fresnel = saturate(0.5f * (rs * rs + rp * rp));
-    float thickness = max(Transparent1.x, 0.0f);
-    float pathLength = thickness / max(cosTransmitted, 0.0001f);
-    float3 absorption = max(Transparent1.yzw, 0.0f);
-    // Base color is transmission tint at the authored normal-incidence thickness.
-    float3 tintAbsorption = -log(clamp(color.rgb, 0.0001f, 1.0f)) / max(thickness, 0.0001f);
-    float3 beer = exp(-(absorption + tintAbsorption) * pathLength);
-    float3 slab = (1.0f - fresnel) * (1.0f - fresnel) * beer /
-        max(1.0f - fresnel * fresnel * beer * beer, 0.0001f);
+    float fresnel = GlassFresnel(cosIncident,1.0f,eta);
+    float thickness = max(Transparent1.x,0.0f);
+    float pathLength = thickness / max(cosTransmitted,0.0001f);
+    float3 beer = GlassBeer(color.rgb,Transparent1.yzw,thickness,pathLength);
+    float3 reflected,slab;
+    GlassSlabWeights(fresnel,beer,reflected,slab);
     float3 transmission = saturate(Transparent0.y) * (1.0f - saturate(metallic)) * slab;
     return float4(saturate(lerp(1.0f, transmission, opacity)), 1.0f);
 }
-

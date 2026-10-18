@@ -18,6 +18,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Temporal upscale GPU tests failed.' }
     & ./bin/validation/temporalupscale_gpu_tests.exe --detail-baseline
     if ($LASTEXITCODE -ne 0) { throw 'Detail baseline fixture failed.' }
+    & ./bin/validation/temporalupscale_gpu_tests.exe --gi-flow-baseline
+    if ($LASTEXITCODE -ne 0) { throw 'GI flow baseline failed.' }
+    & ./bin/validation/temporalupscale_gpu_tests.exe --gi-flow-stable
+    if ($LASTEXITCODE -ne 0) { throw 'GI flow stability failed.' }
+    & ./bin/validation/temporalupscale_gpu_tests.exe --gi-flow-slow-baseline
+    if ($LASTEXITCODE -ne 0) { throw 'Slow GI flow baseline failed.' }
+    & ./bin/validation/temporalupscale_gpu_tests.exe --gi-flow-slow-stable
+    if ($LASTEXITCODE -ne 0) { throw 'Slow GI flow stability failed.' }
     & ./bin/validation/temporalupscale_gpu_tests.exe --detail-stable
     if ($LASTEXITCODE -ne 0) { throw 'Detail stability fixture failed.' }
     & ./bin/validation/temporalupscale_gpu_tests.exe --detail-dim-baseline

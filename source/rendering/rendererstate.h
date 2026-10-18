@@ -255,7 +255,11 @@ public:
     static constexpr UINT g_kTRANSMITTANCE_SHADOW_LAYERS = 4;
     static constexpr UINT g_kTRANSMITTANCE_SHADOW_SIZE = 512;
     static constexpr UINT g_kTRANSMITTANCE_SHADOW_SRV_START = g_kMATERIAL_PREVIEW_SRV_INDEX + 2;
-    static constexpr UINT g_kENGINE_DESCRIPTOR_END = g_kTRANSMITTANCE_SHADOW_SRV_START + 2 + g_kTRANSMITTANCE_SHADOW_LAYERS * g_kMAX_SHADOW_LIGHTS;
+    // Per-frame glass tables: mesh metadata, raw vertices, raw indices, base textures.
+    static constexpr UINT g_kGLASS_MAX_MESHES = 16384;
+    static constexpr UINT g_kGLASS_FRAME_DESCRIPTORS = 1 + 3 * g_kGLASS_MAX_MESHES;
+    static constexpr UINT g_kGLASS_DESCRIPTOR_START = g_kTRANSMITTANCE_SHADOW_SRV_START + 3 + g_kTRANSMITTANCE_SHADOW_LAYERS * g_kMAX_SHADOW_LIGHTS;
+    static constexpr UINT g_kENGINE_DESCRIPTOR_END = g_kGLASS_DESCRIPTOR_START + g_kFRAME_COUNT * g_kGLASS_FRAME_DESCRIPTORS - 1;
 	// Reserved after DXR/NRD/reflection bindings in the existing engine heap.
 	static constexpr UINT g_kCLOUD_DESCRIPTOR_START = g_kHIZ_MIP_SRV_START_INDEX + 2 * g_kHIZ_MAX_MIPS + 48;
 	static_assert(g_kCLOUD_DESCRIPTOR_START + 4 + 2 * g_kFRAME_COUNT <= g_kENGINE_DESCRIPTOR_END);
@@ -293,9 +297,7 @@ public:
 public:
 	static ComPtr<ID3D12Resource> m_DynamicVertexBuffer;
 	static D3D12_VERTEX_BUFFER_VIEW m_DynamicVertexBufferView;
-	static Vertex* m_pDynamicVertexDataBegin;
+	static struct Vertex* m_pDynamicVertexDataBegin;
 	static UINT m_DynamicVertexOffset;
 	static UINT m_TransientCbSlot;
 };
-
-

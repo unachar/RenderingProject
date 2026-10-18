@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "imguimanager.h"
 #include "materialmanager.h"
+#include "materialopticsui.h"
 #include "materialpreview.h"
 #include "materialvalidation.h"
 #include "graphicslog.h"
@@ -251,7 +252,7 @@ void ImGuiManager::DrawMaterialEditorWindow()
     {
         changed |= ImGui::ColorEdit3("Color", editing.BaseColor.data());
         float transparency = 1.0f - editing.BaseColor[3];
-        if (ImGui::SliderFloat("Transparency", &transparency, 0, 1))
+        if (ImGui::SliderFloat("Coverage Transparency", &transparency, 0, 1))
         {
             editing.BaseColor[3] = 1.0f - transparency;
             if (transparency > 0.0f)
@@ -261,7 +262,7 @@ void ImGuiManager::DrawMaterialEditorWindow()
             }
             changed = true;
         }
-        ImGui::SetItemTooltip("0 = opaque, 1 = fully transparent. Increasing this value selects Transparent surface.");
+        ImGui::SetItemTooltip("Coverage transparency, not optical transmission. For glass use Transmission=1 and Transparency=0.");
         const auto transparencyMinimum = ImGui::GetItemRectMin();
         const auto transparencyMaximum = ImGui::GetItemRectMax();
         MaterialValidation::CaptureDropTarget("Transparency", transparencyMinimum.x, transparencyMinimum.y,
@@ -325,14 +326,21 @@ void ImGuiManager::DrawMaterialEditorWindow()
             changed |= ImGui::SliderFloat("Shadow Cutoff", &editing.ShadowCutoff, 0, 1);
         }
         ImGui::Text("Handle: %s", FormatAssetHandle(openMaterial).c_str());
-        if (editing.Surface == MaterialSurface::Transparent || editing.ShadowMode == MaterialShadowMode::Transmittance)
-        {
-            changed |= ImGui::SliderFloat("Transmission", &editing.Transmission, 0, 1);
-            changed |= ImGui::DragFloat("IOR", &editing.IOR, 0.01f, 1, 10);
-            changed |= ImGui::DragFloat("Thickness", &editing.Thickness, 0.01f, 0, 65504);
-            changed |= ImGui::DragFloat3("Absorption / world unit", editing.AbsorptionCoefficient.data(), 0.01f, 0, 65504);
-        }
         ImGui::Text("Runtime revision: %llu", runtime.Revision);
+    }
+    const bool opticsChanged = MaterialOpticsUI::Draw(editing.IOR, editing.Transmission, editing.Roughness,
+        editing.TransmissionRoughness, editing.Thickness, editing.AbsorptionCoefficient.data());
+    changed |= opticsChanged;
+    if (editing.Transmission > 0.0f)
+    {
+        // Render-state routing only. Never replace authored color/roughness/IOR.
+        if (editing.Surface != MaterialSurface::Transparent || editing.DepthWrite)
+        {
+            editing.Surface = MaterialSurface::Transparent;
+            editing.DepthWrite = false;
+            changed = true;
+        }
+        ImGui::TextDisabled("Optical transmission: Transparent path, depth write disabled.");
     }
     if (changed)
     {
@@ -589,5 +597,3 @@ void ImGuiManager::DrawMaterialDropTarget()
         ImGui::EndPopup();
     }
 }
-
-

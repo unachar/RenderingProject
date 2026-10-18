@@ -20,6 +20,7 @@ public:
     static bool IsOptixReflectionActive();
     static D3D12_GPU_DESCRIPTOR_HANDLE GetGiSrv(UINT frameIndex);
     static ID3D12Resource* GetGiResource();
+    static ID3D12Resource* GetGiNoisyResource();
     static bool Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engineHeap, UINT increment);
     static void Shutdown();
     static bool Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource* scene,

@@ -1,13 +1,16 @@
 param(
     [ValidateSet('Debug','Release')][string]$Configuration = 'Release',
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$Flow,
+    [switch]$Focused
 )
 $ErrorActionPreference = 'Stop'
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $savedFiles = @{}
 $savedEnvironment = @{}
 $names = @('DX12_GI_TEST','DX12_VALIDATION_MODE','DX12_STARTUP_SMOKE_FRAMES','DX12_FEATURE_SMOKE_TEST',
-    'DX12_TEMPORAL_RUN','DX12_TEMPORAL_STABLE_NRD','DX12_TEMPORAL_STABLE_SAMPLING','DX12_TEMPORAL_PLANAR_DEPTH','_CL_')
+    'DX12_TEMPORAL_RUN','DX12_TEMPORAL_STABLE_NRD','DX12_TEMPORAL_STABLE_SAMPLING','DX12_TEMPORAL_PLANAR_DEPTH',
+    'DX12_TEMPORAL_CACHE','DX12_TEMPORAL_RESTIR','DX12_TEMPORAL_NO_NRD','DX12_TEMPORAL_FLOW','_CL_')
 $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')
 function Restore-Settings {
     foreach ($path in $savedFiles.Keys) {
@@ -36,17 +39,26 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Build failed; see build/temporal-lighting/build.log.' }
     }
     $runs = @{}
-    foreach ($profile in @('legacy','fixed','sampled','stable','replay')) {
+    $profiles = if ($Flow) { @('raw','cache','restir','both','stable','replay') } else { @('legacy','fixed','sampled','stable','replay') }
+    if ($Focused) {
+        if (-not $Flow) { throw '-Focused requires -Flow.' }
+        $profiles = @('both','stable','replay')
+    }
+    foreach ($profile in $profiles) {
         Restore-Settings
         $run = "$stamp-$profile"
         $env:DX12_GI_TEST = '4'
         $env:DX12_VALIDATION_MODE = '1'
-        $env:DX12_STARTUP_SMOKE_FRAMES = '512'
+        $env:DX12_STARTUP_SMOKE_FRAMES = if ($Flow) { '1792' } else { '512' }
         $env:DX12_FEATURE_SMOKE_TEST = '0'
         $env:DX12_TEMPORAL_RUN = $run
         $env:DX12_TEMPORAL_STABLE_NRD = [string][int]($profile -ne 'legacy')
-        $env:DX12_TEMPORAL_STABLE_SAMPLING = [string][int]($profile -in @('sampled','stable','replay'))
-        $env:DX12_TEMPORAL_PLANAR_DEPTH = [string][int]($profile -in @('stable','replay'))
+        $env:DX12_TEMPORAL_STABLE_SAMPLING = [string][int]($Flow -or $profile -in @('sampled','stable','replay'))
+        $env:DX12_TEMPORAL_PLANAR_DEPTH = [string][int]($Flow -or $profile -in @('stable','replay'))
+        $env:DX12_TEMPORAL_FLOW = [string][int]$Flow.IsPresent
+        $env:DX12_TEMPORAL_CACHE = [string][int]($Flow -and $profile -in @('cache','both','stable','replay'))
+        $env:DX12_TEMPORAL_RESTIR = [string][int]($Flow -and $profile -in @('restir','both','stable','replay'))
+        $env:DX12_TEMPORAL_NO_NRD = [string][int]($Flow -and $profile -notin @('stable','replay'))
         $initial = (Get-Item init_log.txt).Length
         $process = Start-Process -FilePath "bin/x64/$Configuration/DirectX12.exe" -WorkingDirectory $workspace -WindowStyle Hidden -PassThru
         if (-not $process.WaitForExit(240000)) { $process.Kill(); throw "$profile exceeded 240 seconds." }
@@ -64,9 +76,10 @@ try {
         Write-Output "$profile`: PASS; $directory"
     }
     $report = @()
-    foreach ($profile in @('legacy','fixed','sampled','stable','replay')) {
+    foreach ($profile in $profiles) {
         foreach ($row in (Import-Csv (Join-Path $runs[$profile] 'summary.csv'))) {
-            if ([int]$row.frames -ne 32) { throw 'Missing temporal sample window.' }
+            $expectedFrames = if ($Flow) { 64 } else { 32 }
+            if ([int]$row.frames -ne $expectedFrames) { throw 'Missing temporal sample window.' }
             $row | Add-Member -NotePropertyName profile -NotePropertyValue $profile
             $report += $row
         }

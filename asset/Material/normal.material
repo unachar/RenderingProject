@@ -33,7 +33,7 @@
   },
   "renderState" : 
   {
-    "alphaCutoff" : 0.5,
+    "alphaCutoff" : 0.3529999852180481,
     "cullMode" : "Back",
     "depthWrite" : false,
     "shadowCutoff" : 0.5,

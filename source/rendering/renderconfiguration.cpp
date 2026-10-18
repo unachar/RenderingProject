@@ -342,6 +342,7 @@ void RenderConfiguration::ApplyPendingHdr()
 	}
 
 	PsoManager::CreatePostProcessPipelines();
+    PsoManager::CreateDeferredLightingPipeline();
 	PsoManager::CreateAtmospherePso();
 
 	m_UpscaleBilateralPso.Reset();

@@ -56,7 +56,7 @@ float TraceHitDistance(float3 origin, float3 direction, float distance, bool clo
     RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
     CountTelemetryRay(telemetryChannel);
     query.TraceRayInline(Scene, closest ? RAY_FLAG_NONE : RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-        visibilityMask, ray);
+        visibilityMask & 0x03u, ray);
     while (query.Proceed()) { }
     return query.CommittedStatus() == COMMITTED_NOTHING ? 65504.0f : query.CommittedRayT();
 }
@@ -194,4 +194,3 @@ void ComposeShadow(uint3 dispatchId : SV_DispatchThreadID)
     Visibility[pixel] = visibility;
 }
 #endif
-

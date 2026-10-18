@@ -1,5 +1,6 @@
 #define SHADER_3D
 #define SHADER_FORWARD_LIGHTING
+#define SHADER_MATERIAL_OPTICS_PREVIEW
 #include "common.hlsl"
 
 Texture2D g_Texture : register(t0);
@@ -51,6 +52,7 @@ StructuredBuffer<uint2> MegaLightCells : register(t45);
 StructuredBuffer<uint> MegaLightIndices : register(t46);
 static uint g_MLCellIndex = ML_INVALID_CELL;
 #include "SurfaceLighting.hlsli"
+#include "PhysicalGlass.hlsli"
 
 float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 lightDir)
 {
@@ -78,62 +80,149 @@ float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 ligh
 float3 ReconstructForwardWorld(float2 uv, float depth)
 {
     float4 world = mul(float4(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f, depth, 1.0f), PPInvViewProjection);
-    return world.xyz / max(abs(world.w), 0.000001f);
+    float safeW=abs(world.w)>1e-6f ? world.w : (world.w<0 ? -1e-6f : 1e-6f);
+    return world.xyz/safeW;
 }
 
-float3 SampleRefractedScene(float3 position, float3 direction, float distance)
+// A depth-validated screen-space fallback. The opaque copy cannot represent
+// hidden/off-screen surfaces or additional transparent layers.
+float3 SampleGlassBackground(float2 uv, float roughness)
 {
-    float3 target = position + direction * distance;
+    uint sceneWidth,sceneHeight;
+    SceneColorTexture.GetDimensions(sceneWidth,sceneHeight);
+    float2 texel=1.0f/float2(max(sceneWidth,1u),max(sceneHeight,1u));
+    float2 radius = texel * (saturate(roughness) * saturate(roughness) * 24.0f);
+    float2 lo = texel * 0.5f, hi = 1.0f - lo;
+    float3 c = SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv, lo, hi), 0).rgb * 0.5f;
+    c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv+float2(radius.x,0),lo,hi),0).rgb * 0.125f;
+    c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv-float2(radius.x,0),lo,hi),0).rgb * 0.125f;
+    c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv+float2(0,radius.y),lo,hi),0).rgb * 0.125f;
+    c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv-float2(0,radius.y),lo,hi),0).rgb * 0.125f;
+    return c;
+}
+// A visible sky/background already rendered into the scene is not an IBL
+// lighting term. Reuse it only when this ray projects onto background depth.
+// Off-screen misses stay black; never substitute an environment map.
+float3 SampleGlassVisibleBackground(float3 origin,float3 direction,float roughness)
+{
     float2 uv;
-    if (ProjectWorldToScreenCommon(target, uv) && all(uv > 0.0f) && all(uv < 1.0f))
+    if (!ProjectWorldToScreenCommon(origin+direction*2000.0f,uv) || any(uv<=0) || any(uv>=1)) return 0.0f;
+    uint width,height,depthWidth,depthHeight;
+    SceneColorTexture.GetDimensions(width,height);
+    DepthTexture.GetDimensions(depthWidth,depthHeight);
+    float2 extent=float2(max(width,1u),max(height,1u));
+    float2 pixel=uv*extent-0.5f;
+    int2 base=(int2)floor(pixel);
+    float2 fraction=frac(pixel);
+    float3 sum=0; float weightSum=0;
+    [unroll] for(uint y=0;y<2;++y)
+    [unroll] for(uint x=0;x<2;++x)
     {
-        return SceneColorTexture.SampleLevel(g_SamplerState, uv, 0).rgb;
+        int2 p=clamp(base+int2(x,y),int2(0,0),int2(width,height)-1);
+        float2 tapUv=(float2(p)+0.5f)/extent;
+        int2 dp=clamp((int2)(tapUv*float2(depthWidth,depthHeight)),int2(0,0),int2(depthWidth,depthHeight)-1);
+        float depth=DepthTexture.Load(int3(dp,0));
+        float weight=(x==0 ? 1-fraction.x : fraction.x)*(y==0 ? 1-fraction.y : fraction.y);
+        if (depth>=0.9999f)
+        {
+            sum+=SceneColorTexture.Load(int3(p,0)).rgb*weight;
+            weightSum+=weight;
+        }
     }
-    return EvaluatePhysicalSky(direction, 0.002f);
+    return weightSum>1e-5f ? sum/weightSum : 0.0f;
 }
 
 float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, float3 viewDir, float2 screenUv,
     out float pathLength)
 {
-    float eta = 1.0f / max(surface.IOR, 1.0001f);
-    float3 entering = refract(-viewDir, normal, eta);
-    if (dot(entering, entering) < 0.0001f) entering = reflect(-viewDir, normal);
+    float3 N = dot(normal, viewDir) >= 0.0f ? normal : -normal;
+    float eta = 1.0f / max(surface.IOR, 1.0f);
+    float3 incident = -viewDir;
+    float3 entering = refract(incident, N, eta);
+    if (dot(entering,entering) < 1e-8f) { pathLength=0; return 0.0f; }
     entering = normalize(entering);
-    // Thin shells (thickness ~0) leave in the original direction; solids keep the bent ray.
     float thickness = max(surface.Thickness, 0.0f);
-    float solid = saturate(thickness * 4.0f);
-    float3 exitDirection = normalize(lerp(-viewDir, entering, solid));
-    float3 exitPosition = position + entering * thickness;
-    pathLength = thickness;
-    float hitDistance = 100.0f;
-    bool traced = false;
+    pathLength = thickness / max(abs(dot(entering,N)), 1e-4f);
+    // The second interface is parallel to the first. Refraction at both
+    // interfaces restores the incident direction, with a lateral displacement.
+    float3 exitPosition = position + entering * pathLength;
+    float3 exitDirection = refract(entering, N, max(surface.IOR,1.0f));
+    exitDirection = SafeNormalizeCommon(exitDirection, incident);
+    float roughness = saturate(Transparent0.z);
 #ifdef SHADER_RAYTRACING
-    if (SceneRayFlags.z > 0.5f)
+    if (QualityFlags.w > 0.5f && SceneRayFlags.z > 0.5f)
     {
         RayDesc ray;
-        ray.Origin = exitPosition + exitDirection * 0.01f;
-        ray.Direction = exitDirection;
-        ray.TMin = 0.001f;
-        ray.TMax = 200.0f;
+        ray.Origin = exitPosition + exitDirection * 0.001f;
+        ray.Direction = exitDirection; ray.TMin = 0.001f; ray.TMax = 200.0f;
         RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
-        query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
+        query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0x03, ray);
         while (query.Proceed()) { }
-        hitDistance = query.CommittedStatus() != COMMITTED_NOTHING ? query.CommittedRayT() : 1000.0f;
-        traced = true;
+        if (query.CommittedStatus() != COMMITTED_NOTHING)
+        {
+            float3 hit = ray.Origin + exitDirection * query.CommittedRayT();
+            float2 uv;
+            if (ProjectWorldToScreenCommon(hit,uv) && all(uv>0) && all(uv<1))
+            {
+                float d = DepthTexture.SampleLevel(g_SamplerState,uv,0);
+                float3 visible = ReconstructForwardWorld(uv,d);
+                if (d < 0.9999f && length(visible-hit) < max(0.05f,length(hit-CameraPos)*0.01f))
+                    return SampleGlassBackground(uv,roughness);
+            }
+        }
     }
 #endif
-    if (!traced)
+    float previous = 0.0f;
+    [loop] for (uint step=0; step<32; ++step)
     {
-        // Screen space estimate: distance to the opaque surface behind this pixel.
-        float opaqueDepth = DepthTexture.SampleLevel(g_SamplerState, screenUv, 0);
-        float3 opaquePosition = ReconstructForwardWorld(screenUv, opaqueDepth);
-        hitDistance = opaqueDepth >= 0.9999f ? 1000.0f : max(length(opaquePosition - position) - thickness, 0.05f);
+        float distance = 0.025f * (exp2((step+1)*0.40f)-1.0f);
+        float3 p = exitPosition + exitDirection*distance;
+        float2 uv;
+        if (!ProjectWorldToScreenCommon(p,uv) || any(uv<=0) || any(uv>=1)) break;
+        float depth = DepthTexture.SampleLevel(g_SamplerState,uv,0);
+        if (depth < 0.9999f)
+        {
+            float3 opaque = ReconstructForwardWorld(uv,depth);
+            float delta = length(p-CameraPos)-length(opaque-CameraPos);
+            if (delta >= 0.0f)
+            {
+                float low=previous, high=distance;
+                [unroll] for (uint j=0;j<5;++j)
+                {
+                    float mid=(low+high)*0.5f;
+                    float3 q=exitPosition+exitDirection*mid;
+                    float2 quv;
+                    if (!ProjectWorldToScreenCommon(q,quv) || any(quv<=0) || any(quv>=1)) { high=mid; continue; }
+                    float qd=DepthTexture.SampleLevel(g_SamplerState,quv,0);
+                    float3 qw=ReconstructForwardWorld(quv,qd);
+                    if (qd<0.9999f && length(q-CameraPos)>=length(qw-CameraPos)) high=mid;
+                    else low=mid;
+                }
+                float3 hit=exitPosition+exitDirection*high;
+                float2 huv;
+                if (ProjectWorldToScreenCommon(hit,huv) && all(huv>0) && all(huv<1))
+                {
+                    float hd=DepthTexture.SampleLevel(g_SamplerState,huv,0);
+                    float3 hw=ReconstructForwardWorld(huv,hd);
+                    if (hd<0.9999f && length(hw-hit)<max(0.1f,length(hit-CameraPos)*0.02f))
+                        return SampleGlassBackground(huv,roughness);
+                }
+                break;
+            }
+        }
+        previous=distance;
     }
-    return SampleRefractedScene(exitPosition, exitDirection, hitDistance);
+    return SampleGlassVisibleBackground(exitPosition,exitDirection,roughness);
 }
+
+#include "GeometryGlass.hlsli"
+#include "MaterialOpticsPreview.hlsli"
 
 float4 ShadeForward(in PSInput3D In)
 {
+    float3 glassIncident=SafeNormalizeCommon(In.WorldPos-CameraPos,float3(0,0,1));
+    float3 glassRayDx=ddx(glassIncident);
+    float3 glassRayDy=ddy(glassIncident);
     const float PI = 3.14159265358979323846f;
 
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
@@ -200,7 +289,9 @@ float4 ShadeForward(in PSInput3D In)
     float roughnessParam = material.g;
     float f0 = material.b;
     float3 NdotL = saturate(dot(surfaceNormal, lightDir));
-    float3 environmentColor = EnvironmentTexture.SampleLevel(g_SamplerState, In.TexCoord, roughnessParam * 10.0f).rgb;
+    float3 environmentColor = 0.0f;
+    if (Transparent0.y <= 0.0f)
+        environmentColor = EnvironmentTexture.SampleLevel(g_SamplerState, In.TexCoord, roughnessParam * 10.0f).rgb;
     NdotL += lightIntensity;
 
     float3 diffuse = 0.0f;
@@ -209,7 +300,8 @@ float4 ShadeForward(in PSInput3D In)
         float2 iblTexcoord;
         iblTexcoord.x = -atan2(surfaceNormal.x, surfaceNormal.z) / (PI * 2);
         iblTexcoord.y = asin(surfaceNormal.y) / PI;
-        light += EnvironmentTexture.SampleLevel(g_SamplerState, iblTexcoord, roughnessParam * 10.0f).rgb * 6;
+        if (Transparent0.y <= 0.0f)
+            light += EnvironmentTexture.SampleLevel(g_SamplerState, iblTexcoord, roughnessParam * 10.0f).rgb * 6;
         diffuse = light * baseColor.rgb / PI;
     }
 
@@ -254,10 +346,21 @@ float4 ShadeForward(in PSInput3D In)
     {
         SurfaceData surface = BuildLightingSurface(baseColor, surfaceNormal, material.rgb, assetEmissionAO);
         surface.Transmission = saturate(Transparent0.y);
-        surface.IOR = max(Transparent0.x, 1.0001f);
+        surface.IOR = max(Transparent0.x, 1.0f);
         surface.Thickness = max(Transparent1.x, 0.0f);
         surface.AbsorptionColor = max(Transparent1.yzw, 0.0f);
+        if (surface.Transmission > 0.0f)
+        {
+            float ratio = (surface.IOR - 1.0f) / (surface.IOR + 1.0f);
+            surface.F0 = ratio * ratio;
+            material.b = surface.F0;
+        }
         float3 viewDir = SafeNormalizeCommon(CameraPos - In.WorldPos, surfaceNormal);
+        if (SceneRayParameters.w > 0.5f && (surface.Transmission > 0.0f || g_ShadingModel.Model == 0u))
+        {
+            float3 previewColor = EvaluateMaterialOpticsPreview(surface,In.WorldPos,viewDir);
+            return float4(previewColor*surface.Opacity,surface.Opacity);
+        }
         float3 directLight;
         float visibility;
         int filterRadius = clamp((int)round(lerp(max(VirtualShadowGlobal.z, 1.0f),
@@ -269,24 +372,56 @@ float4 ShadeForward(in PSInput3D In)
             lightAttenuation, volumeScatter, rangeBlend, visibility);
         uint width;
         uint height;
-        ForwardBaseColor.GetDimensions(width, height);
+        SceneColorTexture.GetDimensions(width, height);
         float2 screenUv = In.Position.xy / float2(max(width, 1u), max(height, 1u));
-        float3 color = EvaluateSurfaceEnvironment(surface, viewDir, In.WorldPos,
-            screenUv, shadowSoftness, directLight);
-        color = ApplySurfaceScreenEffects(color - surface.Emissive, surface.Emissive, screenUv, surface.BaseColor * (1 - surface.Metallic));
+        // Glass receives direct light only. Do not run environment lighting,
+        // screen-space GI or reflection-probe contributions on its base lobe.
+        const bool glassMaterial = surface.Transmission > 0.0f;
+        float3 color;
+        if (glassMaterial)
+            color = directLight + surface.Emissive;
+        else
+        {
+            color = EvaluateSurfaceEnvironment(surface, viewDir, In.WorldPos,
+                screenUv, shadowSoftness, directLight);
+            color = ApplySurfaceScreenEffects(color - surface.Emissive, surface.Emissive,
+                screenUv, surface.BaseColor * (1 - surface.Metallic));
+        }
         float3 premultiplied = color * surface.Opacity;
         float coverage = surface.Opacity;
-        if (QualityFlags.w > 0.5f && surface.Transmission > 0.001f && surface.Opacity < 0.999f)
+        // Transmission is a BSDF lobe weight, not (1-alpha). Alpha is
+        // geometric coverage, so a fully covered glass surface may use alpha=1.
+        float glassWeight = surface.Transmission * (1.0f-saturate(surface.Metallic));
+        if (glassWeight > 0.001f)
         {
+#ifdef SHADER_RAYTRACING
+            float3 geometryRadiance; bool ownsPixel;
+            if (TraceGeometryGlass(In.WorldPos,viewDir,glassRayDx,glassRayDy,geometryRadiance,ownsPixel))
+            {
+                // Only the nearest raster layer owns the complete traced path.
+                if (!ownsPixel) clip(-1.0f);
+                return float4(geometryRadiance*surface.Opacity,surface.Opacity);
+            }
+#endif
+            float3 N = dot(surfaceNormal,viewDir)>=0 ? surfaceNormal : -surfaceNormal;
             float pathLength;
-            float3 refracted = ComputeRefraction(surface, In.WorldPos, surfaceNormal, viewDir, screenUv, pathLength);
-            float f0 = pow((surface.IOR - 1.0f) / (surface.IOR + 1.0f), 2.0f);
-            float fresnel = f0 + (1.0f - f0) * pow(1.0f - saturate(dot(surfaceNormal, viewDir)), 5.0f);
-            // Beer-Lambert absorption inside the medium, tinted by the base colour.
-            float3 transmittance = exp(-surface.AbsorptionColor * pathLength) * lerp(1.0f, surface.BaseColor, 0.5f);
-            float refractive = (1.0f - surface.Opacity) * surface.Transmission;
-            premultiplied += refractive * (1.0f - fresnel) * transmittance * refracted;
-            coverage = surface.Opacity + refractive;
+            float3 background = ComputeRefraction(surface,In.WorldPos,N,viewDir,screenUv,pathLength);
+            float F = GlassFresnel(dot(N,viewDir),1.0f,surface.IOR);
+            float3 beer = GlassBeer(surface.BaseColor,surface.AbsorptionColor,surface.Thickness,pathLength);
+            float3 R,T; GlassSlabWeights(F,beer,R,T);
+            // Fresnel still removes reflected energy from transmission;
+            // environment reflection is intentionally disabled for glass.
+            // Evaluate the existing clustered/direct-light specular path with
+            // zero diffuse albedo and the dielectric F0 derived from IOR.
+            float f0 = pow((surface.IOR-1.0f)/(surface.IOR+1.0f),2.0f);
+            float3 specularDirect, glassLightDir, glassLightColor;
+            float glassAttenuation, glassVolume, glassRange, glassVisibility;
+            ResolveSurfaceLightAggregateShadowed(In.WorldPos,ddx(In.WorldPos),ddy(In.WorldPos),
+                N,In.Position.xy,filterRadius,true,viewDir,0.0f,
+                float3(0.0f,surface.Roughness,f0),shadowSoftness,specularDirect,glassLightDir,
+                glassLightColor,glassAttenuation,glassVolume,glassRange,glassVisibility);
+            float3 glassColor = specularDirect + T*background + surface.Emissive;
+            premultiplied = lerp(color,glassColor,glassWeight) * surface.Opacity;
         }
         return float4(premultiplied, saturate(coverage));
     }
@@ -355,4 +490,3 @@ ForwardOutput main(in PSInput3D In)
     output.Revealage = alpha.xxxx;
     return output;
 }
-

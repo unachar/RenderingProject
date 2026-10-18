@@ -88,6 +88,7 @@ bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string
         !range(material.AlphaCutoff, 0, 1, "alphaCutoff") ||
         !range(material.ShadowCutoff, 0, 1, "shadowCutoff") ||
         !range(material.IOR, 1, 10, "ior") || !range(material.Transmission, 0, 1, "transmission") ||
+        !range(material.TransmissionRoughness, 0, 1, "transmissionRoughness") ||
         !range(material.Thickness, 0, 65504, "thickness") ||
         !range(material.ShadingStrength, 0, 1, "shadingStrength"))
     {
@@ -197,6 +198,7 @@ bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetDa
         !ReadFloat(renderState, "shadowCutoff", result.ShadowCutoff, error) ||
         !ReadFloat(parameters, "ior", result.IOR, error) ||
         !ReadFloat(parameters, "transmission", result.Transmission, error) ||
+        !ReadFloat(parameters, "transmissionRoughness", result.TransmissionRoughness, error) ||
         !ReadFloat(parameters, "thickness", result.Thickness, error) ||
         !ReadFloat(parameters, "shadingStrength", result.ShadingStrength, error) ||
         !ReadColor(parameters, "absorptionCoefficient", result.AbsorptionCoefficient, error))
@@ -345,6 +347,7 @@ bool MaterialSerializer::Save(const std::filesystem::path& path, const MaterialA
     parameters["metallic"] = material.Metallic;
     parameters["ior"] = material.IOR;
     parameters["transmission"] = material.Transmission;
+    parameters["transmissionRoughness"] = material.TransmissionRoughness;
     parameters["thickness"] = material.Thickness;
     parameters["shadingModel"] = material.ShadingModel;
     parameters["shadingStrength"] = material.ShadingStrength;
@@ -361,5 +364,3 @@ bool MaterialSerializer::Save(const std::filesystem::path& path, const MaterialA
     writer["indentation"] = "  ";
     return WriteAssetFile(path, Json::writeString(writer, root), error);
 }
-
-

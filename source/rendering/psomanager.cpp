@@ -843,7 +843,11 @@ bool PsoManager::CreatePostProcessPipelines()
 	CreatePPPSO("shader\\hlsl\\build\\postProcessBloomPS.cso", PostProcessType::BLOOM);
 	if (!CreatePPPSO("shader\\hlsl\\build\\postProcessBloomPS.cso", PostProcessType::BLOOM,
 		GetGBufferFormat(GBufferType::BLOOM), &m_BloomExtractPso)) return false;
+	return true;
+}
 
+bool PsoManager::CreateDeferredLightingPipeline()
+{
 	ShaderDescription resource{};
 	resource.vsPath = "shader\\hlsl\\build\\postProcessVS.cso";
 	resource.psPath = "shader\\hlsl\\build\\DeferredLightingPS.cso";

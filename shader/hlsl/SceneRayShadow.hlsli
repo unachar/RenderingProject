@@ -1,14 +1,17 @@
 #ifndef SCENE_RAY_SHADOW_HLSLI
 #define SCENE_RAY_SHADOW_HLSLI
 
-#ifdef SHADER_RAYTRACING
-RaytracingAccelerationStructure LightingScene : register(t25);
+#if defined(SHADER_RAYTRACING) || defined(SHADER_MATERIAL_OPTICS_PREVIEW)
 cbuffer SceneRayGlobals : register(b5)
 {
-    float4 SceneRayFlags; // RT shadow mode, shadow enable, TLAS ready, reserved
-    float4 SceneRayParameters; // maximum range, normal bias, reserved
+    float4 SceneRayFlags; // RT shadow mode, shadow enable, TLAS ready, glass metadata instance count
+    float4 SceneRayParameters; // maximum range, normal bias, preview shape, preview enabled
     uint4 SceneShadowLights[160];
 };
+#endif
+
+#ifdef SHADER_RAYTRACING
+RaytracingAccelerationStructure LightingScene : register(t25);
 
 float TraceSceneShadow(float3 position, float3 normal, float3 lightDirection, float maximumDistance)
 {
@@ -48,5 +51,3 @@ float TraceSceneSegment(float3 position, float3 normal, float3 target)
 #endif
 
 #endif
-
-

@@ -1,0 +1,25 @@
+# Colored GI temporal stability
+
+The user reported flowing red indirect light even with NRD disabled. Disabling NRD does not disable ReSTIR temporal/spatial reuse, the world-space radiance cache, the spatial fallback filter, or TSR/TAA. The investigation therefore captures the GI signal before denoising as well as the composed GI and final output.
+
+## Producer changes
+
+- Correct the spatial ReSTIR weight: the solid-angle Jacobian multiplies the candidate's selection weight. It must not divide that weight or modify the selected target used for normalization. The old inverse factor amplified nearly tangent reconnections. The production shader and C++ regression use the same small math header.
+- Filter the selected reservoir's hit distance with BRDF/PDF acceptance (`saturate(cosine * inversePdf / pi)`). The selected distance is correlated with radiance importance and cannot be supplied directly as an in-lobe geometry guide. Rejected guides use the existing fresh cosine-weighted primary GI ray's distance, without another trace. The acceptance uses a separate deterministic random domain. RGB radiance is unaffected by this guide decision.
+- On verified stationary opaque planes, TSR's detail-stability option now permits a small absolute/relative history-clipping tolerance and halves the current sample's blend weight. The former box collapsed to the current frame on spatially flat regions, forwarding weak GI variations even when the input variance improved. The allowed error remains bounded by the current frame. Depth rejection, motion, reactive pixels and reset paths keep their existing behavior. This adds no spatial blur or history resource.
+
+The cache algorithm, luminance proposal target, reservoir history limit and NRD filter parameters remain unchanged. Maximum-channel importance and a shorter producer history were investigated but not adopted: lower raw variance did not consistently improve the final output. A denoiser-only parameter change is not presented as the solution.
+
+The weight/normalization policy was checked against [NVIDIA's spatial ReSTIR implementation](https://github.com/NVIDIA-RTX/RTXDI-Library/blob/main/Include/Rtxdi/GI/SpatialResampling.hlsli). The geometry-guide requirement is described in [NRD's input requirements](https://github.com/NVIDIA-RTX/NRD/blob/master/README.md). No NVIDIA implementation was copied.
+
+## Repeatable measurement
+
+`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/measure-temporal-lighting.ps1 -Flow`
+
+The full matrix isolates raw GI, cache only, ReSTIR only, both, NRD enabled, and an exact replay. `-Focused` runs both/NRD/replay for adoption comparisons. The fixture is a closed room with red/green walls, a white receiver and blockers, and a stationary analytic point light. The colored walls are not emissive: their contribution must come from actual bounced light rather than the separately sampled emitter shortcut. The authored Sun is disabled. Output1280x720, internal371x209 at29%, fixed cameras/quality, cache cell1m/history4. Four cases cover TSR and NIS+TAA at normal/grazing views. Each case warms384frames, then records64frames, allowing the63-frame NRD history to settle. Settings snapshots are restored by the wrapper.
+
+The CSV records red-channel pre-NRD mean/RMS and spatially coherent variation, composed-GI mean/RMS, final-output luminance mean/RMS, and whole-frame GPU/CPU timings. Raw REBLUR YCoCg is decoded before measuring. Hashes include the valid packed checkerboard region and exclude unused columns. The receiver must remain within a measurable, unsaturated output range. Short warmup and saturated pilot captures are diagnostic data, not final-output adoption evidence. GPU readbacks inflate CPU frame times; these runs do not establish gameplay CPU performance or1% lows.
+
+`scripts/test-gi-resampling.ps1` rejects the former inverse Jacobian/incorrect normalization, including nearly tangent reconnections. It also checks canonical cosine-guide acceptance, reduced acceptance for overrepresented radiance samples, and probability bounds. `scripts/test-stablesampling.ps1` checks deterministic sampling and checkerboard progression. No additional rays, textures or sampling-density layout are introduced by the producer changes.
+
+The new20% TSR shader regression reproduces a uniform red GI fluctuation of amplitude.002. Before the TSR change, both baseline and enabled stability produce temporal RMS.00214543, failing the new stability assertion. With bounded planar history clipping and accumulation, RMS becomes.0000300832 (98.6% reduction), bias RMSE.0000540683. A slower fluctuation changes from RMS.00024136 to.0000326512 (86.5% reduction), bias RMSE.00013831. A hard lighting change must recover within.006, and reset/reactive/moving cases within.0001. All17 GPU cases pass, including existing diagonal, fine/dim strand, grazing-plane and distant geometry safety cases. Plane eligibility uses relative spatial variance so it remains meaningful across exposure levels. These isolated tests are distinct from the full-scene comparison below.

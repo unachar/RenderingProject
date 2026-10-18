@@ -113,15 +113,21 @@ MaterialComponent MaterialManager::BuildPreviewBinding(const MaterialAssetData& 
     binding.AOStrength = material.AOStrength;
     binding.EmissiveColor = XMFLOAT3(material.EmissiveColor.data());
     binding.EmissiveIntensity = material.EmissiveIntensity;
-    binding.AssetSurface = material.Surface;
-    binding.IsTransparent = material.Surface == MaterialSurface::Transparent;
+    // Optical transmission selects the transparent render path even when an
+    // older asset still stores Opaque. Alpha remains independent coverage.
+    const bool opticalTransmission = material.Transmission > 0.0f;
+    binding.AssetSurface = opticalTransmission ? MaterialSurface::Transparent : material.Surface;
+    binding.IsTransparent = binding.AssetSurface == MaterialSurface::Transparent;
     binding.AssetCull = material.Cull;
-    binding.AssetDepthWrite = material.DepthWrite;
+    binding.AssetDepthWrite = binding.IsTransparent ? false : material.DepthWrite;
     binding.AlphaCutoff = material.AlphaCutoff;
     binding.ShadowMode = material.ShadowMode;
     binding.ShadowCutoff = material.ShadowCutoff;
     binding.IOR = material.IOR;
     binding.Transmission = material.Transmission;
+    binding.TransmissionRoughness = material.TransmissionRoughness;
+    const float dielectric = (material.IOR - 1.0f) / (material.IOR + 1.0f);
+    binding.Fresnel = dielectric * dielectric;
     binding.Thickness = material.Thickness;
     binding.ShadingModel = material.ShadingModel;
     binding.ShadingStrength = material.ShadingStrength;
@@ -175,6 +181,7 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
     {
         if (runtime.Revision == 0 || runtime.BoundData.Cull != material.Cull ||
             runtime.BoundData.Surface != material.Surface || runtime.BoundData.DepthWrite != material.DepthWrite ||
+            runtime.Binding.IsTransparent != binding.IsTransparent ||
             (material.Surface == MaterialSurface::Masked && (runtime.BoundData.AlphaCutoff != material.AlphaCutoff ||
                 runtime.BoundData.BaseColor[3] != material.BaseColor[3] || runtime.BoundData.Textures[0] != material.Textures[0] ||
                 runtime.TextureDescriptors[0] != descriptors[0])))
@@ -350,6 +357,3 @@ void MaterialManager::NotifyAssignmentsChanged()
         }
     }
 }
-
-
-

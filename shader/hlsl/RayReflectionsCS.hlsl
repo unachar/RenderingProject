@@ -60,6 +60,7 @@ cbuffer ReflectionConstants : register(b6)
     float4 ReflectionStability;
 };
 #include "../../source/rendering/stablesampling.h"
+#include "../../source/rendering/giresampling.h"
 
 Texture2D<float4> AdaptiveRadiance:register(t0,space10);
 Texture2D<float4> AdaptiveGuide:register(t1,space10);
@@ -160,19 +161,19 @@ GiReservoir LoadReservoir(RWByteAddressBuffer buffer, uint index)
     return r;
 }
 
-float ReSTIRLuminance(float3 c)
+float ReSTIRImportance(float3 c)
 {
-    return dot(c, float3(0.2126f, 0.7152f, 0.0722f));
+    return GiRadianceImportance(c.r, c.g, c.b);
 }
 
-// Target function at a visible point: luminance of the unshadowed cosine weighted radiance.
+// A chroma-aware target avoids starving red/blue paths when reusing colored bounces.
 float ReSTIRTarget(GiReservoir r, float3 position, float3 normal)
 {
     float3 direction = r.Position - position;
     float distance = length(direction);
     if (distance < 0.0001f) return 0.0f;
     float cosine = saturate(dot(normal, direction / distance));
-    return ReSTIRLuminance(r.Radiance) * cosine;
+    return ReSTIRImportance(r.Radiance) * cosine;
 }
 
 float ReSTIRRandom(inout uint state)
@@ -354,6 +355,24 @@ float TraceBounceVisibility(float3 position, float3 normal, float3 direction, fl
     return query.CommittedStatus() == COMMITTED_NOTHING ? 1 : 0;
 }
 
+float3 SampleVisibleReflectionSky(float3 position, float3 normal, float3 direction,
+    float angularFootprint, bool includeDiscs)
+{
+    // An environment lookup represents a ray miss. Test all reflection geometry,
+    // including objects with authored cast-shadow disabled, before looking up the sky.
+    RayDesc ray;
+    ray.Origin = position + normal * SceneRayParameters.y;
+    ray.Direction = direction;
+    ray.TMin = SceneRayParameters.y * 0.25f;
+    ray.TMax = SceneRayParameters.x;
+    RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+    CountTelemetryRay(RAY_TELEMETRY_REFLECTION);
+    query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0x03, ray);
+    while (query.Proceed()) { }
+    if (query.CommittedStatus() != COMMITTED_NOTHING) return 0;
+    return EvaluatePhysicalSkyFast(direction, angularFootprint, includeDiscs);
+}
+
 float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, float3 position, float3 incoming,
     bool diffuseOnly, uint randomSeed, out float3 surfaceDiffuse, out float3 surfaceNormal)
 {
@@ -372,6 +391,8 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
     }
     normal = normalize(mul(float4(normal, 0), mesh.NormalToWorld).xyz);
     if (dot(normal, incoming) > 0) normal = -normal;
+    // Match modelshaderPS: shared material assets ignore vertex RGB.
+    if ((mesh.Surface.w & 1u) != 0u) albedo = 1.0f;
     if (mesh.Material.z > 0.5f)
         albedo *= SceneTextures[NonUniformResourceIndex(instance)].SampleLevel(MaterialSampler, uv, 0).rgb;
     albedo *= mesh.BaseColor.rgb;
@@ -387,11 +408,11 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
     float3 radiance = 0;
     if (!diffuseOnly)
     {
-        // Diffuse GI bounces skip both atmosphere marches (the result was discarded anyway).
-        // Secondary-hit sky terms (diffuse sky light and second-order reflection) use the
-        // reduced step atmosphere; the directly reflected sky in main() keeps full quality.
-        radiance = diffuse * EvaluatePhysicalSkyFast(normal, 0.01f) * 0.12f +
-            skyFresnel * EvaluatePhysicalSkyFast(reflect(incoming, normal), max(0.001f, roughness * 0.02f)) +
+        // Retain the cheap secondary environment approximation only where sky is visible.
+        // Solar/lunar discs belong to direct light, not the diffuse ambient approximation.
+        radiance = diffuse * SampleVisibleReflectionSky(position, normal, normal, 0.01f, false) * 0.12f +
+            skyFresnel * SampleVisibleReflectionSky(position, normal, reflect(incoming, normal),
+                max(0.001f, roughness * 0.02f), true) +
             SampleEmission(instance, uv);
     }
     int count = (int)ReflectionExtent.w;
@@ -586,11 +607,12 @@ void main(uint3 id : SV_DispatchThreadID)
 
     uint seed = ReflectionHash(pixel.x + pixel.y * ReflectionExtent.x + ReflectionExtent.z * 104729u);
     float2 random = float2((seed & 0xffff) + 0.5f, (seed >> 16) + 0.5f) / 65536;
-    // 負荷削減：粗い面は反射レイを飛ばさず空（環境）で近似する（ローブが広く、レイ 1 本ではほぼノイズにしかならない）
+    // Rough surfaces skip hit shading, but still require a visibility ray before using sky.
     const float roughnessCutoff = (ReSTIRState.w & 0xffffu) / 1000.0f;
     if (roughnessCutoff < 0.999f && roughness > roughnessCutoff)
     {
-        float3 skyRadiance = EvaluatePhysicalSkyFast(reflect(-view, normal), max(0.001f, roughness * 0.02f));
+        float3 skyRadiance = SampleVisibleReflectionSky(position, normal, reflect(-view, normal),
+            max(0.001f, roughness * 0.02f), true);
         ReflectionRadiance[pixel] = float4(skyRadiance, 0);
 #if USE_NRD
         float viewZCut = abs(mul(float4(position, 1), ReflectionView).z);
@@ -617,7 +639,7 @@ void main(uint3 id : SV_DispatchThreadID)
     {
         RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
         CountTelemetryRay(RAY_TELEMETRY_REFLECTION);
-        query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
+        query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0x03, ray);
         while (query.Proceed()) { }
         hit = query.CommittedStatus() != COMMITTED_NOTHING;
         hitDistance = hit ? query.CommittedRayT() : 65504;
@@ -730,7 +752,7 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2
     ray.TMax = max(length(biasedOffset) - SceneRayParameters.y, ray.TMin);
     RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
     CountTelemetryRay(RAY_TELEMETRY_RADIANCE_SHADOW);
-    query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
+    query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0x03, ray);
     while (query.Proceed()) { }
     if (query.CommittedStatus() != COMMITTED_NOTHING)
     {
@@ -825,7 +847,7 @@ void TraceDiffuse(uint3 id : SV_DispatchThreadID)
     ray.TMax = GiParameters.x;
     RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
     CountTelemetryRay(RAY_TELEMETRY_GI);
-    query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
+    query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0x03, ray);
     while (query.Proceed()) { }
     float hitDistance = ray.TMax;
     float3 incoming = 0;
@@ -857,13 +879,13 @@ void TraceDiffuse(uint3 id : SV_DispatchThreadID)
     CacheInsert(position, normal, irradiance,hitDistance);
     if (ReSTIRParameters.x > 0.5f)
     {
-        // Initial candidate: source pdf = cos / pi, target = lum(L) * cos  ->  w = lum(L) * pi.
+        // Initial candidate: source pdf = cos / pi, target = importance(L) * cos.
         GiReservoir reservoir;
         bool hit = query.CommittedStatus() != COMMITTED_NOTHING;
         reservoir.Position = hit ? ray.Origin + direction * hitDistance : position + direction * 10000.0f;
         reservoir.Normal = secondaryNormal; // needed for the Jacobian of spatial reuse
         reservoir.Radiance = min(max(incoming, 0.0f), 65504.0f);
-        float target = ReSTIRLuminance(reservoir.Radiance) * saturate(dot(normal, direction));
+        float target = ReSTIRImportance(reservoir.Radiance) * saturate(dot(normal, direction));
         reservoir.M = 1.0f;
         reservoir.W = target > 0.0f ? 3.14159265f / max(saturate(dot(normal, direction)), 0.0001f) : 0.0f;
         reservoir.VisibleDepth = abs(mul(float4(position, 1), ReflectionView).z);
@@ -1125,8 +1147,10 @@ void ReSTIRSpatial(uint3 id : SV_DispatchThreadID)
         if (!ReSTIRVisiblePoint(ReSTIRStorageToPixel(uint2(neighbourStorage)), neighbourPosition, neighbourNormal, neighbourDepth)) continue;
         float jacobian = ReSTIRJacobian(neighbour, neighbourPosition, position);
         if (jacobian <= 0.0f) continue;
-        float target = ReSTIRTarget(neighbour, position, normal) / jacobian;
-        float weight = target * neighbour.W * neighbour.M;
+        GiReuseWeights reuse = GiSpatialReuseWeights(ReSTIRTarget(neighbour, position, normal),
+            neighbour.W, neighbour.M, jacobian);
+        float target = reuse.Target;
+        float weight = reuse.Selection;
         weightSum += weight;
         totalM += neighbour.M;
         if (weight > 0.0f && ReSTIRRandom(state) * weightSum < weight)
@@ -1149,14 +1173,20 @@ void ReSTIRSpatial(uint3 id : SV_DispatchThreadID)
         ray.TMax = max(sampleDistance - SceneRayParameters.y * 2.0f, ray.TMin + 0.001f);
         RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
         CountTelemetryRay(RAY_TELEMETRY_RESTIR_VISIBILITY);
-        query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0xff, ray);
+        query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0x03, ray);
         while (query.Proceed()) { }
         if (query.CommittedStatus() != COMMITTED_NOTHING) W = 0.0f;
     }
     float3 irradiance = result.Radiance * saturate(dot(normal, direction)) * W;
     float4 emissive = NoisyRadiance[storage]; // (emitter irradiance, primary hit distance) from TraceDiffuse
     irradiance = min(max(irradiance + emissive.rgb, 0.0f), 65504.0f);
-    float hitDistance = min(sampleDistance, GiParameters.x);
+    // Filter the reservoir guide through the cosine BRDF distribution. Bright
+    // samples are overrepresented by RIS; their distances cannot be used as-is.
+    // Rejected guides fall back to the fresh in-lobe primary ray, without a new trace.
+    float guideAcceptance = GiGuideAcceptance(saturate(dot(normal, direction)), W);
+    uint guideState = ReflectionHash(index * 60013u + ReflectionExtent.z * 196613u);
+    float hitDistance = ReSTIRRandom(guideState) < guideAcceptance ?
+        min(sampleDistance, GiParameters.x) : clamp(emissive.w, 0.0f, GiParameters.x);
 #if USE_NRD
     float normalizedDistance = REBLUR_FrontEnd_GetNormHitDist(hitDistance, viewDepth, float3(3, 0.1f, 20), 1);
     NoisyRadiance[storage] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(irradiance, normalizedDistance, true);
@@ -1164,7 +1194,3 @@ void ReSTIRSpatial(uint3 id : SV_DispatchThreadID)
     NoisyRadiance[storage] = float4(irradiance, hitDistance);
 #endif
 }
-
-
-
-
