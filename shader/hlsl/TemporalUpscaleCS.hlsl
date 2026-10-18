@@ -17,6 +17,69 @@ cbuffer Constants : register(b0)
     float4x4 InvCurrent, Previous;
     float4 Reconstruction; // Planar depth, thin geometry, reserved zw.
 };
+#ifndef TSR_USE_SHARED_TILE
+#define TSR_USE_SHARED_TILE 1
+#endif
+#define TSR_TILE_WIDTH 12
+#if TSR_USE_SHARED_TILE
+groupshared float4 CurrentTileColor[TSR_TILE_WIDTH * TSR_TILE_WIDTH];
+groupshared float CurrentTileDepth[TSR_TILE_WIDTH * TSR_TILE_WIDTH];
+groupshared int2 CurrentTileOrigin;
+int CurrentTileStart(float first, float inputSize)
+{
+    return clamp((int)floor(first - .5) - 1, 0, (int)inputSize - 1);
+}
+int CurrentTileEnd(float last, float inputSize)
+{
+    return clamp((int)floor(last - .5) + 2, 0, (int)inputSize - 1);
+}
+void PrepareCurrentTile(uint2 group, uint lane)
+{
+    // 8x8 output pixels need at most 12x12 input texels, including the
+    // bicubic and 3x3 halos. Downscaling keeps the original direct-load path.
+    if (all(Extent.xy <= Extent.zw))
+    {
+        float2 first = ((float2(group * 8) + .5) / Extent.zw + Jitter.xy) * Extent.xy;
+        float2 last = ((float2(group * 8 + 7) + .5) / Extent.zw + Jitter.xy) * Extent.xy;
+        int2 origin = int2(CurrentTileStart(first.x, Extent.x), CurrentTileStart(first.y, Extent.y));
+        int2 end = int2(CurrentTileEnd(last.x, Extent.x), CurrentTileEnd(last.y, Extent.y));
+        uint2 size = uint2(end - origin + 1);
+        if (lane == 0) CurrentTileOrigin = origin;
+        for (uint index = lane; index < size.x * size.y; index += 64)
+        {
+            uint2 local = uint2(index % size.x, index / size.x);
+            int2 pixel = origin + int2(local);
+            uint slot = local.y * TSR_TILE_WIDTH + local.x;
+            CurrentTileColor[slot] = Color.Load(int3(pixel, 0));
+            CurrentTileDepth[slot] = Depth.Load(int3(pixel, 0));
+        }
+        // This group-uniform barrier must precede the partial-group return.
+        GroupMemoryBarrierWithGroupSync();
+    }
+}
+#endif
+float4 LoadCurrentColor(int2 pixel)
+{
+#if TSR_USE_SHARED_TILE
+    if (all(Extent.xy <= Extent.zw))
+    {
+        int2 local = pixel - CurrentTileOrigin;
+        return CurrentTileColor[local.y * TSR_TILE_WIDTH + local.x];
+    }
+#endif
+    return Color.Load(int3(pixel, 0));
+}
+float LoadCurrentDepth(int2 pixel)
+{
+#if TSR_USE_SHARED_TILE
+    if (all(Extent.xy <= Extent.zw))
+    {
+        int2 local = pixel - CurrentTileOrigin;
+        return CurrentTileDepth[local.y * TSR_TILE_WIDTH + local.x];
+    }
+#endif
+    return Depth.Load(int3(pixel, 0));
+}
 float3 ToY(float3 c) { return float3(dot(c,float3(.25,.5,.25)),c.r-c.b,c.g-(c.r+c.b)*.5); }
 float3 FromY(float3 c) { return float3(c.x+c.y*.5-c.z*.5,c.x+c.z*.5,c.x-c.y*.5-c.z*.5); }
 float Cubic(float x) { x=abs(x); return x<1?(1.5*x-2.5)*x*x+1:x<2?((-.5*x+2.5)*x-4)*x+2:0; }
@@ -32,7 +95,7 @@ float4 Reconstruct(float2 uv)
     {
         float weight = Cubic(x - fraction.x) * Cubic(y - fraction.y);
         int2 pixel = clamp(base + int2(x, y), 0, int2(Extent.xy) - 1);
-        sum += Color.Load(int3(pixel, 0)) * weight;
+        sum += LoadCurrentColor(pixel) * weight;
         weights += weight;
     }
     return max(sum / max(weights, 1e-5), 0);
@@ -56,15 +119,18 @@ bool HistoryDepthMatches(float2 uv, float expectedDepth, float footprintToleranc
     return difference <= tolerance;
 }
 [numthreads(8,8,1)]
-void main(uint3 id : SV_DispatchThreadID)
+void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
 {
+#if TSR_USE_SHARED_TILE
+    PrepareCurrentTile(group.xy, lane);
+#endif
     if (any(id.xy >= uint2(Extent.zw))) return;
     float2 uv = (id.xy + .5) / Extent.zw;
     float2 source = uv + Jitter.xy;
     int2 pixel = clamp(int2(source * Extent.xy), 0, int2(Extent.xy) - 1);
     float4 current = Reconstruct(source);
     float currentLuma = dot(current.rgb, float3(.2126, .7152, .0722));
-    float depth = Depth.Load(int3(pixel, 0));
+    float depth = LoadCurrentDepth(pixel);
     OutputDepth[id.xy] = depth;
     OutputDetail[id.xy] = float2(currentLuma, 0);
     // Every rejection path below keeps spatial reconstruction as its fallback.
@@ -80,7 +146,7 @@ void main(uint3 id : SV_DispatchThreadID)
     [unroll] for (int x = -1; x <= 1; ++x)
     {
         int2 neighbor = clamp(pixel + int2(x, y), 0, int2(Extent.xy) - 1);
-        float neighborDepth = Depth.Load(int3(neighbor, 0));
+        float neighborDepth = LoadCurrentDepth(neighbor);
         if (x == -1 && y == 0) cardinalDepth.x = neighborDepth;
         if (x == 1 && y == 0) cardinalDepth.y = neighborDepth;
         if (x == 0 && y == -1) cardinalDepth.z = neighborDepth;
@@ -90,7 +156,7 @@ void main(uint3 id : SV_DispatchThreadID)
             nearest = neighborDepth;
             velocityPixel = neighbor;
         }
-        float3 color = ToY(Color.Load(int3(neighbor, 0)).rgb);
+        float3 color = ToY(LoadCurrentColor(neighbor).rgb);
         if (x == -1 && y == 0) cardinalLuma.x = color.x;
         if (x == 1 && y == 0) cardinalLuma.y = color.x;
         if (x == 0 && y == -1) cardinalLuma.z = color.x;
@@ -189,7 +255,7 @@ void main(uint3 id : SV_DispatchThreadID)
         float direction = sign(previousDetail.y);
         if (relativeChange > .05)
         {
-            float centerLuma = ToY(Color.Load(int3(pixel, 0)).rgb).x;
+            float centerLuma = ToY(LoadCurrentColor(pixel).rgb).x;
             float horizontalRidge = (centerLuma - cardinalLuma.x) * (centerLuma - cardinalLuma.y);
             float verticalRidge = (centerLuma - cardinalLuma.z) * (centerLuma - cardinalLuma.w);
             // Use local contrast so a strand in shadow can seed the same lock as
@@ -240,6 +306,7 @@ void main(uint3 id : SV_DispatchThreadID)
     if (stablePlane) currentWeight *= .5;
     currentWeight *= lerp(1, .25, detailLock);
     float weight = (1 - currentWeight) * (1 - reactive) * exp2(-motionPixels * .04);
-    float3 temporalSample = lerp(current.rgb, Color.Load(int3(pixel, 0)).rgb, stillness);
+    float3 temporalSample = lerp(current.rgb, LoadCurrentColor(pixel).rgb, stillness);
     Output[id.xy] = float4(lerp(temporalSample, FromY(clippedHistory), weight), current.a);
 }
+

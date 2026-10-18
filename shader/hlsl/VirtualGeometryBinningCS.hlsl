@@ -56,14 +56,22 @@ uint ExclusiveScan(uint value, uint thread)
 {
     gs_Scan[thread] = value;
     GroupMemoryBarrierWithGroupSync();
+    // Brent-Kung inclusive scan: disjoint readers/writers within each stage.
+    // 2036 shared additions instead of 10240, with no wave-size assumptions.
     [unroll] for (uint stride = 1; stride < PREFIX_THREADS; stride <<= 1)
     {
-        uint add = thread >= stride ? gs_Scan[thread - stride] : 0;
+        uint index = (thread + 1) * (stride << 1) - 1;
+        if (index < PREFIX_THREADS) gs_Scan[index] += gs_Scan[index - stride];
         GroupMemoryBarrierWithGroupSync();
-        gs_Scan[thread] += add;
+    }
+    [unroll] for (uint stride = PREFIX_THREADS >> 2; stride > 0; stride >>= 1)
+    {
+        uint index = (thread + 1) * (stride << 1) - 1;
+        if (index + stride < PREFIX_THREADS) gs_Scan[index + stride] += gs_Scan[index];
         GroupMemoryBarrierWithGroupSync();
     }
     uint inclusive = gs_Scan[thread];
+    // Every lane must finish reading before the next scan reuses this array.
     GroupMemoryBarrierWithGroupSync();
     return inclusive - value;
 }
@@ -136,5 +144,6 @@ void Scatter(uint3 id : SV_DispatchThreadID)
     }
     SortedClusters[destination] = record;
 }
+
 
 
