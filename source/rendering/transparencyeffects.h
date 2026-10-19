@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================================
-// TransparencyEffects
+// 透明描画の効果（TransparencyEffects）
 //   ・Weighted Blended OIT（McGuire & Bavoil 2013）
 //       透明パス中は (Scene, Accum RGBA16F 加算, Revealage R16F 乗算) の 3 枚をバインドし、
 //       modelshaderPS は OIT の 2 枚へ、その他のシェーダーは従来通りシーンへ描画する。
@@ -69,8 +69,8 @@ class TransparencyEffects final
         desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
         auto& blend = desc.BlendState.RenderTarget[0];
         blend.BlendEnable = TRUE;
-        blend.SrcBlend = D3D12_BLEND_SRC_ALPHA;      // average colour * (1 - revealage)
-        blend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA; // background * revealage
+        blend.SrcBlend = D3D12_BLEND_SRC_ALPHA;      // 平均色 * (1 - revealage)
+        blend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA; // 背景 * revealage
         blend.BlendOp = D3D12_BLEND_OP_ADD;
         blend.SrcBlendAlpha = D3D12_BLEND_ONE;
         blend.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
@@ -105,7 +105,7 @@ class TransparencyEffects final
         s_Width = s_Height = 0;
     }
 
-    // Read by PsoManager while the transparent pass records draws.
+    // 半透明パスの描画記録中に PsoManager が読む。
     static bool IsOitPassActive()
     {
         return s_OitPass;
@@ -132,8 +132,8 @@ class TransparencyEffects final
         return RenderQuality::Get().RaytracedRefraction;
     }
 
-    // Called with the scene target bound as RENDER_TARGET. Returns true if the OIT targets
-    // were bound (the caller must not rebind the scene target).
+    // シーンターゲットを RENDER_TARGET としてバインドした状態で呼ぶ。OIT ターゲットを
+    // バインドした場合は true を返す（呼び出し側はシーンを再バインドしないこと）。
     static bool BeginTransparentPass(ID3D12GraphicsCommandList* commands, ID3D12Resource* scene,
                                      D3D12_CPU_DESCRIPTOR_HANDLE sceneRtv, ID3D12Resource* sceneCopy,
                                      D3D12_CPU_DESCRIPTOR_HANDLE dsv)
@@ -143,7 +143,7 @@ class TransparencyEffects final
         {
             return false;
         }
-        // Opaque scene for refraction (same extent and format as the scene target).
+        // 屈折用の不透明シーン（シーンターゲットと同じ大きさ・形式）。
         if (IsRefractionActive() && sceneCopy && sceneCopy->GetDesc().Width == scene->GetDesc().Width &&
             sceneCopy->GetDesc().Height == scene->GetDesc().Height &&
             sceneCopy->GetDesc().Format == scene->GetDesc().Format)
@@ -177,13 +177,13 @@ class TransparencyEffects final
         const D3D12_CPU_DESCRIPTOR_HANDLE rtvs[3] = {sceneRtv, Rtv(0), Rtv(1)};
         commands->ClearRenderTargetView(rtvs[1], accumClear, 0, nullptr);
         commands->ClearRenderTargetView(rtvs[2], revealClear, 0, nullptr);
-        // RT0 scene (non OIT shaders), RT1 accumulation, RT2 revealage.
+        // RT0 はシーン（OIT 以外のシェーダー）、RT1 は蓄積値、RT2 は透過残率。
         commands->OMSetRenderTargets(3, rtvs, FALSE, &dsv);
         s_OitPass = true;
         return true;
     }
 
-    // Composites the OIT targets over the scene target (left bound as RENDER_TARGET).
+    // OIT ターゲットをシーンに合成し、シーンは RENDER_TARGET としてバインドしたままにする。
     static void EndTransparentPass(ID3D12GraphicsCommandList* commands, D3D12_CPU_DESCRIPTOR_HANDLE sceneRtv,
                                    const D3D12_VIEWPORT& viewport, const D3D12_RECT& scissor)
     {
@@ -213,7 +213,7 @@ class TransparencyEffects final
     }
 
   private:
-    static constexpr UINT kSrvIndex = RendererState::g_kQUALITY_DESCRIPTOR_START + 3; // accum, reveal
+    static constexpr UINT kSrvIndex = RendererState::g_kQUALITY_DESCRIPTOR_START + 3; // 蓄積値、透過残率
 
     static inline bool s_Available = false, s_OitPass = false;
     static inline UINT s_Increment = 0, s_Width = 0, s_Height = 0;

@@ -23,679 +23,683 @@
 
 namespace
 {
-struct SceneState
-{
-    GpuSceneSlots Instances;
-    vector<GPUMeshData> Meshes;
-    vector<GPUMaterialData> Materials;
-    vector<uint32_t> NewMeshes, NewMaterials;
-    vector<ComPtr<ID3D12Resource>> GeometryOwners;
-    unordered_map<uint32_t, ComPtr<ID3D12Resource>> PrimitiveOwners;
-    unordered_map<uint32_t, array<uint32_t, StaticMeshData::LodCount - 1>> PrimitiveLODs;
-    array<vector<ComPtr<ID3D12Resource>>, GpuSceneBuffer::FrameCount> RetiredPrimitiveOwners;
-    vector<uint32_t> FreePrimitiveMeshes;
-    unordered_map<uint64_t, vector<uint32_t>> MeshLookup, MaterialLookup;
-
-    struct AssetMaterialRecord
+    struct SceneState
     {
-        uint32_t Index = 0;
-        uint64_t Revision = 0;
-        uint64_t PipelineRevision = 0;
-        unordered_set<uint32_t> Users;
+        GpuSceneSlots Instances;
+        vector<GPUMeshData> Meshes;
+        vector<GPUMaterialData> Materials;
+        vector<uint32_t> NewMeshes, NewMaterials;
+        vector<ComPtr<ID3D12Resource>> GeometryOwners;
+        unordered_map<uint32_t, ComPtr<ID3D12Resource>> PrimitiveOwners;
+        unordered_map<uint32_t, array<uint32_t, StaticMeshData::LodCount - 1>> PrimitiveLODs;
+        array<vector<ComPtr<ID3D12Resource>>, GpuSceneBuffer::FrameCount> RetiredPrimitiveOwners;
+        vector<uint32_t> FreePrimitiveMeshes;
+        unordered_map<uint64_t, vector<uint32_t>> MeshLookup, MaterialLookup;
+
+        struct AssetMaterialRecord
+        {
+            uint32_t Index = 0;
+            uint64_t Revision = 0;
+            uint64_t PipelineRevision = 0;
+            unordered_set<uint32_t> Users;
+        };
+
+        unordered_map<AssetHandle, AssetMaterialRecord> AssetMaterials;
+        unordered_map<uint32_t, vector<AssetHandle>> EntityAssets;
+        unordered_map<uint32_t, vector<GPUInstanceID>> Entities;
+        vector<uint32_t> CpuOpaqueStatic;
+        unordered_map<uint32_t, size_t> CpuOpaquePositions;
+        GpuSceneBuffer InstanceBuffer, MeshBuffer, MaterialBuffer;
+        GpuSceneCulling Culling;
+        GpuSceneStatistics Stats;
     };
 
-    unordered_map<AssetHandle, AssetMaterialRecord> AssetMaterials;
-    unordered_map<uint32_t, vector<AssetHandle>> EntityAssets;
-    unordered_map<uint32_t, vector<GPUInstanceID>> Entities;
-    vector<uint32_t> CpuOpaqueStatic;
-    unordered_map<uint32_t, size_t> CpuOpaquePositions;
-    GpuSceneBuffer InstanceBuffer, MeshBuffer, MaterialBuffer;
-    GpuSceneCulling Culling;
-    GpuSceneStatistics Stats;
-};
-
-SceneState& Scene()
-{
-    static SceneState state;
-    return state;
-}
-
-uint64_t Hash(const void* data, size_t size)
-{
-    uint64_t hash = 1469598103934665603ull;
-    const auto* bytes = static_cast<const uint8_t*>(data);
-    for (size_t i = 0; i < size; ++i)
+    SceneState& Scene()
     {
-        hash = (hash ^ bytes[i]) * 1099511628211ull;
+        static SceneState state;
+        return state;
     }
-    return hash;
-}
 
-template <typename T>
-uint32_t RegisterShared(const T& data, vector<T>& records, unordered_map<uint64_t, vector<uint32_t>>& lookup,
-                        vector<uint32_t>& changes)
-{
-    auto& matches = lookup[Hash(&data, sizeof(data))];
-    for (uint32_t id : matches)
+    uint64_t Hash(const void* data, size_t size)
     {
-        if (memcmp(&records[id], &data, sizeof(data)) == 0)
+        uint64_t hash = 1469598103934665603ull;
+        const auto* bytes = static_cast<const uint8_t*>(data);
+        for (size_t i = 0; i < size; ++i)
         {
-            return id;
+            hash = (hash ^ bytes[i]) * 1099511628211ull;
+        }
+        return hash;
+    }
+
+    template <typename T>
+    uint32_t RegisterShared(const T& data, vector<T>& records, unordered_map<uint64_t, vector<uint32_t>>& lookup,
+                            vector<uint32_t>& changes)
+    {
+        auto& matches = lookup[Hash(&data, sizeof(data))];
+        for (uint32_t id : matches)
+        {
+            if (memcmp(&records[id], &data, sizeof(data)) == 0)
+            {
+                return id;
+            }
+        }
+        const uint32_t id = static_cast<uint32_t>(records.size());
+        records.push_back(data);
+        matches.push_back(id);
+        changes.push_back(id);
+        return id;
+    }
+
+    void SetCpuOpaqueEntity(uint32_t entity, bool include)
+    {
+        auto& scene = Scene();
+        const auto position = scene.CpuOpaquePositions.find(entity);
+        if (include && position == scene.CpuOpaquePositions.end())
+        {
+            scene.CpuOpaquePositions[entity] = scene.CpuOpaqueStatic.size();
+            scene.CpuOpaqueStatic.push_back(entity);
+        }
+        else if (!include && position != scene.CpuOpaquePositions.end())
+        {
+            const size_t index = position->second;
+            const uint32_t moved = scene.CpuOpaqueStatic.back();
+            scene.CpuOpaqueStatic[index] = moved;
+            scene.CpuOpaquePositions[moved] = index;
+            scene.CpuOpaqueStatic.pop_back();
+            scene.CpuOpaquePositions.erase(entity);
         }
     }
-    const uint32_t id = static_cast<uint32_t>(records.size());
-    records.push_back(data);
-    matches.push_back(id);
-    changes.push_back(id);
-    return id;
-}
 
-void SetCpuOpaqueEntity(uint32_t entity, bool include)
-{
-    auto& scene = Scene();
-    const auto position = scene.CpuOpaquePositions.find(entity);
-    if (include && position == scene.CpuOpaquePositions.end())
+    void RemoveEntity(uint32_t entity)
     {
-        scene.CpuOpaquePositions[entity] = scene.CpuOpaqueStatic.size();
-        scene.CpuOpaqueStatic.push_back(entity);
-    }
-    else if (!include && position != scene.CpuOpaquePositions.end())
-    {
-        const size_t index = position->second;
-        const uint32_t moved = scene.CpuOpaqueStatic.back();
-        scene.CpuOpaqueStatic[index] = moved;
-        scene.CpuOpaquePositions[moved] = index;
-        scene.CpuOpaqueStatic.pop_back();
-        scene.CpuOpaquePositions.erase(entity);
-    }
-}
+        GPUDrivenRenderer::TrackEntityTextures(entity, {});
+        SetCpuOpaqueEntity(entity, false);
+        auto& scene = Scene();
+        const auto assets = scene.EntityAssets.find(entity);
+        if (assets != scene.EntityAssets.end())
+        {
+            for (const auto handle : assets->second)
+            {
+                if (auto material = scene.AssetMaterials.find(handle); material != scene.AssetMaterials.end())
+                {
+                    material->second.Users.erase(entity);
+                }
+            }
+            scene.EntityAssets.erase(assets);
+        }
 
-void RemoveEntity(uint32_t entity)
-{
-    GPUDrivenRenderer::TrackEntityTextures(entity, {});
-    SetCpuOpaqueEntity(entity, false);
-    auto& scene = Scene();
-    const auto assets = scene.EntityAssets.find(entity);
-    if (assets != scene.EntityAssets.end())
+        const auto found = scene.Entities.find(entity);
+        if (found == scene.Entities.end())
+        {
+            return;
+        }
+        for (GPUInstanceID id : found->second)
+        {
+            scene.Instances.Remove(id);
+        }
+        scene.Entities.erase(found);
+    }
+
+    uint32_t RegisterMesh(ID3D12Resource* vertices, ID3D12Resource* indices, uint32_t vertexCount, uint32_t indexCount,
+                          const XMFLOAT3& center, const XMFLOAT3& extents, bool retain = true)
     {
-        for (const auto handle : assets->second)
+        auto& scene = Scene();
+        GPUMeshData mesh{};
+        const uint64_t vertexAddress = vertices ? vertices->GetGPUVirtualAddress() : 0;
+        const uint64_t indexAddress = indices ? indices->GetGPUVirtualAddress() : 0;
+        mesh.VertexAddressLow = static_cast<uint32_t>(vertexAddress);
+        mesh.VertexAddressHigh = static_cast<uint32_t>(vertexAddress >> 32);
+        mesh.IndexAddressLow = static_cast<uint32_t>(indexAddress);
+        mesh.IndexAddressHigh = static_cast<uint32_t>(indexAddress >> 32);
+        mesh.VertexCount = vertexCount;
+        mesh.IndexCount = indexCount;
+        mesh.BoundsCenter = XMFLOAT4(center.x, center.y, center.z, 1);
+        mesh.BoundsExtents = XMFLOAT4(extents.x, extents.y, extents.z, 0);
+        const size_t oldCount = scene.Meshes.size();
+        const uint32_t id = RegisterShared(mesh, scene.Meshes, scene.MeshLookup, scene.NewMeshes);
+        if (retain && scene.Meshes.size() != oldCount)
+        {
+            if (vertices)
+            {
+                scene.GeometryOwners.emplace_back(vertices);
+            }
+            if (indices)
+            {
+                scene.GeometryOwners.emplace_back(indices);
+            }
+        }
+        return id;
+    }
+
+    void RemoveMeshLookup(uint32_t id)
+    {
+        auto& scene = Scene();
+        const auto key = Hash(&scene.Meshes.at(id), sizeof(GPUMeshData));
+        auto found = scene.MeshLookup.find(key);
+        if (found == scene.MeshLookup.end())
+        {
+            return;
+        }
+        erase(found->second, id);
+        if (found->second.empty())
+        {
+            scene.MeshLookup.erase(found);
+        }
+    }
+
+    uint32_t RegisterPrimitiveMesh(uint32_t entity, ID3D12Resource* vertices, uint32_t vertexCount,
+                                   const XMFLOAT3& center, const XMFLOAT3& extents)
+    {
+        auto& scene = Scene();
+        uint32_t reusable = UINT32_MAX;
+        if (const auto previous = scene.Entities.find(entity);
+            previous != scene.Entities.end() && !previous->second.empty())
+        {
+            const auto old = scene.Instances.Data()[previous->second.front()].MeshIndex;
+            uint32_t references = 0;
+            if (scene.PrimitiveOwners.contains(old))
+            {
+                for (const auto& instance : scene.Instances.Data())
+                {
+                    if ((instance.Flags & 1u) && instance.MeshIndex == old)
+                    {
+                        ++references;
+                    }
+                }
+            }
+            if (references == 1)
+            {
+                reusable = old;
+            }
+        }
+        GPUMeshData record{};
+        const auto address = vertices->GetGPUVirtualAddress();
+        record.VertexAddressLow = uint32_t(address);
+        record.VertexAddressHigh = uint32_t(address >> 32);
+        record.VertexCount = vertexCount;
+        record.BoundsCenter = XMFLOAT4(center.x, center.y, center.z, 1);
+        record.BoundsExtents = XMFLOAT4(extents.x, extents.y, extents.z, 0);
+        const auto key = Hash(&record, sizeof(record));
+        if (const auto existing = scene.MeshLookup.find(key); existing != scene.MeshLookup.end())
+        {
+            for (auto id : existing->second)
+            {
+                if (memcmp(&scene.Meshes[id], &record, sizeof(record)) == 0)
+                {
+                    return id;
+                }
+            }
+        }
+        if (reusable == UINT32_MAX && !scene.FreePrimitiveMeshes.empty())
+        {
+            reusable = scene.FreePrimitiveMeshes.back();
+            scene.FreePrimitiveMeshes.pop_back();
+        }
+        if (reusable != UINT32_MAX)
+        {
+            RemoveMeshLookup(reusable);
+            if (auto old = scene.PrimitiveOwners.find(reusable); old != scene.PrimitiveOwners.end())
+            {
+                scene.RetiredPrimitiveOwners[GraphicsDevice::GetFrameIndex()].push_back(move(old->second));
+            }
+            scene.Meshes[reusable] = record;
+            scene.MeshLookup[key].push_back(reusable);
+            scene.NewMeshes.push_back(reusable);
+        }
+        else
+        {
+            reusable = RegisterMesh(vertices, nullptr, vertexCount, 0, center, extents, false);
+        }
+        scene.PrimitiveOwners[reusable] = vertices;
+        return reusable;
+    }
+
+    void RetireUnusedPrimitiveMeshes()
+    {
+        auto& scene = Scene();
+        unordered_set<uint32_t> used;
+        for (const auto& instance : scene.Instances.Data())
+        {
+            if (instance.Flags & 1u)
+            {
+                used.insert(instance.MeshIndex);
+            }
+        }
+        for (auto it = scene.PrimitiveLODs.begin(); it != scene.PrimitiveLODs.end();)
+        {
+            if (used.contains(it->first))
+            {
+                for (auto id : it->second)
+                {
+                    if (id != UINT32_MAX)
+                    {
+                        used.insert(id);
+                    }
+                }
+                ++it;
+            }
+            else
+            {
+                it = scene.PrimitiveLODs.erase(it);
+            }
+        }
+        for (auto it = scene.PrimitiveOwners.begin(); it != scene.PrimitiveOwners.end();)
+        {
+            if (used.contains(it->first))
+            {
+                ++it;
+                continue;
+            }
+            const auto id = it->first;
+            scene.RetiredPrimitiveOwners[GraphicsDevice::GetFrameIndex()].push_back(move(it->second));
+            RemoveMeshLookup(id);
+            scene.Meshes[id] = {};
+            scene.NewMeshes.push_back(id);
+            scene.FreePrimitiveMeshes.push_back(id);
+            GPUDrivenRenderer::ReleasePrimitiveGeometry(id);
+            it = scene.PrimitiveOwners.erase(it);
+        }
+    }
+
+    void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
+    {
+        auto& scene = Scene();
+        if (!Registry::IsAlive(entity) || !ComponentManager::HasComponent<TransformComponent>(entity))
+        {
+            RemoveEntity(entity);
+            return;
+        }
+        const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+        for (const auto handle : scene.EntityAssets[entity])
         {
             if (auto material = scene.AssetMaterials.find(handle); material != scene.AssetMaterials.end())
             {
                 material->second.Users.erase(entity);
             }
         }
-        scene.EntityAssets.erase(assets);
-    }
-
-    const auto found = scene.Entities.find(entity);
-    if (found == scene.Entities.end())
-    {
-        return;
-    }
-    for (GPUInstanceID id : found->second)
-    {
-        scene.Instances.Remove(id);
-    }
-    scene.Entities.erase(found);
-}
-
-uint32_t RegisterMesh(ID3D12Resource* vertices, ID3D12Resource* indices, uint32_t vertexCount, uint32_t indexCount,
-                      const XMFLOAT3& center, const XMFLOAT3& extents, bool retain = true)
-{
-    auto& scene = Scene();
-    GPUMeshData mesh{};
-    const uint64_t vertexAddress = vertices ? vertices->GetGPUVirtualAddress() : 0;
-    const uint64_t indexAddress = indices ? indices->GetGPUVirtualAddress() : 0;
-    mesh.VertexAddressLow = static_cast<uint32_t>(vertexAddress);
-    mesh.VertexAddressHigh = static_cast<uint32_t>(vertexAddress >> 32);
-    mesh.IndexAddressLow = static_cast<uint32_t>(indexAddress);
-    mesh.IndexAddressHigh = static_cast<uint32_t>(indexAddress >> 32);
-    mesh.VertexCount = vertexCount;
-    mesh.IndexCount = indexCount;
-    mesh.BoundsCenter = XMFLOAT4(center.x, center.y, center.z, 1);
-    mesh.BoundsExtents = XMFLOAT4(extents.x, extents.y, extents.z, 0);
-    const size_t oldCount = scene.Meshes.size();
-    const uint32_t id = RegisterShared(mesh, scene.Meshes, scene.MeshLookup, scene.NewMeshes);
-    if (retain && scene.Meshes.size() != oldCount)
-    {
-        if (vertices)
-        {
-            scene.GeometryOwners.emplace_back(vertices);
-        }
-        if (indices)
-        {
-            scene.GeometryOwners.emplace_back(indices);
-        }
-    }
-    return id;
-}
-
-void RemoveMeshLookup(uint32_t id)
-{
-    auto& scene = Scene();
-    const auto key = Hash(&scene.Meshes.at(id), sizeof(GPUMeshData));
-    auto found = scene.MeshLookup.find(key);
-    if (found == scene.MeshLookup.end())
-    {
-        return;
-    }
-    erase(found->second, id);
-    if (found->second.empty())
-    {
-        scene.MeshLookup.erase(found);
-    }
-}
-
-uint32_t RegisterPrimitiveMesh(uint32_t entity, ID3D12Resource* vertices, uint32_t vertexCount, const XMFLOAT3& center,
-                               const XMFLOAT3& extents)
-{
-    auto& scene = Scene();
-    uint32_t reusable = UINT32_MAX;
-    if (const auto previous = scene.Entities.find(entity);
-        previous != scene.Entities.end() && !previous->second.empty())
-    {
-        const auto old = scene.Instances.Data()[previous->second.front()].MeshIndex;
-        uint32_t references = 0;
-        if (scene.PrimitiveOwners.contains(old))
-        {
-            for (const auto& instance : scene.Instances.Data())
+        scene.EntityAssets[entity].clear();
+        const MaterialComponent defaultMaterial{};
+        const auto& material = ComponentManager::HasComponent<MaterialComponent>(entity)
+                                   ? ComponentManager::GetComponentUnchecked<MaterialComponent>(entity)
+                                   : defaultMaterial;
+        auto& ids = scene.Entities[entity];
+        size_t section = 0;
+        auto append = [&](ID3D12Resource* vertices, ID3D12Resource* indices, uint32_t vertexCount, uint32_t indexCount,
+                          XMFLOAT3 center, XMFLOAT3 extents, int texture, bool primitive = false) {
+            if (!vertices || !vertexCount)
             {
-                if ((instance.Flags & 1u) && instance.MeshIndex == old)
-                {
-                    ++references;
-                }
+                return;
             }
-        }
-        if (references == 1)
-        {
-            reusable = old;
-        }
-    }
-    GPUMeshData record{};
-    const auto address = vertices->GetGPUVirtualAddress();
-    record.VertexAddressLow = uint32_t(address);
-    record.VertexAddressHigh = uint32_t(address >> 32);
-    record.VertexCount = vertexCount;
-    record.BoundsCenter = XMFLOAT4(center.x, center.y, center.z, 1);
-    record.BoundsExtents = XMFLOAT4(extents.x, extents.y, extents.z, 0);
-    const auto key = Hash(&record, sizeof(record));
-    if (const auto existing = scene.MeshLookup.find(key); existing != scene.MeshLookup.end())
-    {
-        for (auto id : existing->second)
-        {
-            if (memcmp(&scene.Meshes[id], &record, sizeof(record)) == 0)
+            const XMFLOAT3 meshCenter = center;
+            const XMFLOAT3 meshExtents = extents;
+            if (ComponentManager::HasComponent<AABBComponent>(entity))
             {
-                return id;
+                const auto& bounds = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
+                center = bounds.Center;
+                extents = bounds.Extents;
             }
-        }
-    }
-    if (reusable == UINT32_MAX && !scene.FreePrimitiveMeshes.empty())
-    {
-        reusable = scene.FreePrimitiveMeshes.back();
-        scene.FreePrimitiveMeshes.pop_back();
-    }
-    if (reusable != UINT32_MAX)
-    {
-        RemoveMeshLookup(reusable);
-        if (auto old = scene.PrimitiveOwners.find(reusable); old != scene.PrimitiveOwners.end())
-        {
-            scene.RetiredPrimitiveOwners[GraphicsDevice::GetFrameIndex()].push_back(move(old->second));
-        }
-        scene.Meshes[reusable] = record;
-        scene.MeshLookup[key].push_back(reusable);
-        scene.NewMeshes.push_back(reusable);
-    }
-    else
-    {
-        reusable = RegisterMesh(vertices, nullptr, vertexCount, 0, center, extents, false);
-    }
-    scene.PrimitiveOwners[reusable] = vertices;
-    return reusable;
-}
-
-void RetireUnusedPrimitiveMeshes()
-{
-    auto& scene = Scene();
-    unordered_set<uint32_t> used;
-    for (const auto& instance : scene.Instances.Data())
-    {
-        if (instance.Flags & 1u)
-        {
-            used.insert(instance.MeshIndex);
-        }
-    }
-    for (auto it = scene.PrimitiveLODs.begin(); it != scene.PrimitiveLODs.end();)
-    {
-        if (used.contains(it->first))
-        {
-            for (auto id : it->second)
+            GPUInstanceData instance{};
+            instance.Entity = entity;
+            instance.Flags = 3;
+            if (section < ids.size())
             {
-                if (id != UINT32_MAX)
-                {
-                    used.insert(id);
-                }
+                instance.Flags |= scene.Instances.Data()[ids[section]].Flags & 4u;
             }
-            ++it;
-        }
-        else
-        {
-            it = scene.PrimitiveLODs.erase(it);
-        }
-    }
-    for (auto it = scene.PrimitiveOwners.begin(); it != scene.PrimitiveOwners.end();)
-    {
-        if (used.contains(it->first))
-        {
-            ++it;
-            continue;
-        }
-        const auto id = it->first;
-        scene.RetiredPrimitiveOwners[GraphicsDevice::GetFrameIndex()].push_back(move(it->second));
-        RemoveMeshLookup(id);
-        scene.Meshes[id] = {};
-        scene.NewMeshes.push_back(id);
-        scene.FreePrimitiveMeshes.push_back(id);
-        GPUDrivenRenderer::ReleasePrimitiveGeometry(id);
-        it = scene.PrimitiveOwners.erase(it);
-    }
-}
-
-void UpdateEntity(uint32_t entity, GpuSceneDirtyFlags dirty)
-{
-    auto& scene = Scene();
-    if (!Registry::IsAlive(entity) || !ComponentManager::HasComponent<TransformComponent>(entity))
-    {
-        RemoveEntity(entity);
-        return;
-    }
-    const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-    for (const auto handle : scene.EntityAssets[entity])
-    {
-        if (auto material = scene.AssetMaterials.find(handle); material != scene.AssetMaterials.end())
-        {
-            material->second.Users.erase(entity);
-        }
-    }
-    scene.EntityAssets[entity].clear();
-    const MaterialComponent defaultMaterial{};
-    const auto& material = ComponentManager::HasComponent<MaterialComponent>(entity)
-                               ? ComponentManager::GetComponentUnchecked<MaterialComponent>(entity)
-                               : defaultMaterial;
-    auto& ids = scene.Entities[entity];
-    size_t section = 0;
-    auto append = [&](ID3D12Resource* vertices, ID3D12Resource* indices, uint32_t vertexCount, uint32_t indexCount,
-                      XMFLOAT3 center, XMFLOAT3 extents, int texture, bool primitive = false) {
-        if (!vertices || !vertexCount)
-        {
-            return;
-        }
-        const XMFLOAT3 meshCenter = center;
-        const XMFLOAT3 meshExtents = extents;
-        if (ComponentManager::HasComponent<AABBComponent>(entity))
-        {
-            const auto& bounds = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
-            center = bounds.Center;
-            extents = bounds.Extents;
-        }
-        GPUInstanceData instance{};
-        instance.Entity = entity;
-        instance.Flags = 3;
-        if (section < ids.size())
-        {
-            instance.Flags |= scene.Instances.Data()[ids[section]].Flags & 4u;
-        }
-        instance.World = transform.WorldMatrix;
-        instance.PreviousWorld = section < ids.size() ? scene.Instances.Data()[ids[section]].World : instance.World;
-        // Material-only edits must preserve the temporal state of a moving instance.
-        if (section < ids.size() &&
-            memcmp(&instance.World, &scene.Instances.Data()[ids[section]].World, sizeof(instance.World)) == 0)
-        {
-            instance.PreviousWorld = scene.Instances.Data()[ids[section]].PreviousWorld;
-        }
-        instance.LocalCenter = XMFLOAT4(meshCenter.x, meshCenter.y, meshCenter.z, 1);
-        instance.LocalExtents = XMFLOAT4(meshExtents.x, meshExtents.y, meshExtents.z, 0);
-        const XMMATRIX world = XMLoadFloat4x4(&instance.World);
-        XMFLOAT3 worldCenter;
-        XMStoreFloat3(&worldCenter, XMVector3TransformCoord(XMLoadFloat3(&center), world));
-        const auto& matrix = instance.World;
-        instance.BoundsCenter = XMFLOAT4(worldCenter.x, worldCenter.y, worldCenter.z, 1);
-        instance.BoundsExtents =
-            XMFLOAT4(abs(matrix._11) * extents.x + abs(matrix._21) * extents.y + abs(matrix._31) * extents.z,
-                     abs(matrix._12) * extents.x + abs(matrix._22) * extents.y + abs(matrix._32) * extents.z,
-                     abs(matrix._13) * extents.x + abs(matrix._23) * extents.y + abs(matrix._33) * extents.z, 0);
-        if (ComponentManager::HasComponent<InstancingComponent>(entity) &&
-            !ComponentManager::GetComponentUnchecked<InstancingComponent>(entity).EnableFrustumCulling)
-        {
-            instance.Flags &= ~2u;
-        }
-        if (ComponentManager::HasComponent<LODComponent>(entity))
-        {
-            const auto& lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
-            instance.LodDistances = XMFLOAT4(lod.Lod1Distance, lod.Lod2Distance, lod.UseLOD ? 1.0f : 0.0f, 0);
-        }
-        const bool existing = section < ids.size();
-        const uint32_t flags = static_cast<uint32_t>(dirty);
-        if (existing && !(flags & static_cast<uint32_t>(GpuSceneDirtyFlags::Mesh | GpuSceneDirtyFlags::Bounds)))
-        {
-            instance.MeshIndex = scene.Instances.Data()[ids[section]].MeshIndex;
-        }
-        else
-        {
-            instance.MeshIndex =
-                primitive ? RegisterPrimitiveMesh(entity, vertices, vertexCount, meshCenter, meshExtents)
-                          : RegisterMesh(vertices, indices, vertexCount, indexCount, meshCenter, meshExtents);
-        }
-        if (existing && !(flags & static_cast<uint32_t>(GpuSceneDirtyFlags::Material | GpuSceneDirtyFlags::Mesh)))
-        {
-            instance.MaterialIndex = scene.Instances.Data()[ids[section]].MaterialIndex;
-        }
-        else
-        {
-            const auto& resolved = MaterialManager::Resolve(material, section);
-            auto gpuMaterial = MaterialBindings::BuildGpuSceneMaterial(resolved);
-            if (resolved.RuntimeHandle == 0 && material.UseTexture && texture >= 0)
+            instance.World = transform.WorldMatrix;
+            instance.PreviousWorld = section < ids.size() ? scene.Instances.Data()[ids[section]].World : instance.World;
+            // マテリアルだけの編集では、移動中インスタンスの時間状態を維持する。
+            if (section < ids.size() &&
+                memcmp(&instance.World, &scene.Instances.Data()[ids[section]].World, sizeof(instance.World)) == 0)
             {
-                gpuMaterial.AlbedoTextureIndex = static_cast<uint32_t>(texture);
+                instance.PreviousWorld = scene.Instances.Data()[ids[section]].PreviousWorld;
             }
-            if (resolved.RuntimeHandle != 0)
+            instance.LocalCenter = XMFLOAT4(meshCenter.x, meshCenter.y, meshCenter.z, 1);
+            instance.LocalExtents = XMFLOAT4(meshExtents.x, meshExtents.y, meshExtents.z, 0);
+            const XMMATRIX world = XMLoadFloat4x4(&instance.World);
+            XMFLOAT3 worldCenter;
+            XMStoreFloat3(&worldCenter, XMVector3TransformCoord(XMLoadFloat3(&center), world));
+            const auto& matrix = instance.World;
+            instance.BoundsCenter = XMFLOAT4(worldCenter.x, worldCenter.y, worldCenter.z, 1);
+            instance.BoundsExtents =
+                XMFLOAT4(abs(matrix._11) * extents.x + abs(matrix._21) * extents.y + abs(matrix._31) * extents.z,
+                         abs(matrix._12) * extents.x + abs(matrix._22) * extents.y + abs(matrix._32) * extents.z,
+                         abs(matrix._13) * extents.x + abs(matrix._23) * extents.y + abs(matrix._33) * extents.z, 0);
+            if (ComponentManager::HasComponent<InstancingComponent>(entity) &&
+                !ComponentManager::GetComponentUnchecked<InstancingComponent>(entity).EnableFrustumCulling)
             {
-                const auto handle = resolved.RuntimeHandle;
-                auto found = scene.AssetMaterials.find(handle);
-                if (found == scene.AssetMaterials.end())
-                {
-                    const auto index = static_cast<uint32_t>(scene.Materials.size());
-                    scene.Materials.push_back(gpuMaterial);
-                    scene.NewMaterials.push_back(index);
-                    const auto& runtime = MaterialManager::GetRuntime(handle);
-                    scene.AssetMaterials.emplace(
-                        handle, SceneState::AssetMaterialRecord{index, runtime.Revision, runtime.PipelineRevision, {}});
-                    instance.MaterialIndex = index;
-                }
-                else
-                {
-                    instance.MaterialIndex = found->second.Index;
-                }
+                instance.Flags &= ~2u;
+            }
+            if (ComponentManager::HasComponent<LODComponent>(entity))
+            {
+                const auto& lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
+                instance.LodDistances = XMFLOAT4(lod.Lod1Distance, lod.Lod2Distance, lod.UseLOD ? 1.0f : 0.0f, 0);
+            }
+            const bool existing = section < ids.size();
+            const uint32_t flags = static_cast<uint32_t>(dirty);
+            if (existing && !(flags & static_cast<uint32_t>(GpuSceneDirtyFlags::Mesh | GpuSceneDirtyFlags::Bounds)))
+            {
+                instance.MeshIndex = scene.Instances.Data()[ids[section]].MeshIndex;
             }
             else
             {
-                instance.MaterialIndex =
-                    RegisterShared(gpuMaterial, scene.Materials, scene.MaterialLookup, scene.NewMaterials);
+                instance.MeshIndex =
+                    primitive ? RegisterPrimitiveMesh(entity, vertices, vertexCount, meshCenter, meshExtents)
+                              : RegisterMesh(vertices, indices, vertexCount, indexCount, meshCenter, meshExtents);
             }
-        }
-        const auto assetHandle = MaterialManager::SlotHandle(material, section);
-        if (assetHandle != 0)
-        {
-            // SlotHandle can outlive a failed/removed runtime material while a scene is
-            // being rebuilt.  Do not use at(): a stale handle must not terminate loading.
-            if (auto asset = scene.AssetMaterials.find(assetHandle); asset != scene.AssetMaterials.end())
+            if (existing && !(flags & static_cast<uint32_t>(GpuSceneDirtyFlags::Material | GpuSceneDirtyFlags::Mesh)))
             {
-                asset->second.Users.insert(entity);
-                scene.EntityAssets[entity].push_back(assetHandle);
+                instance.MaterialIndex = scene.Instances.Data()[ids[section]].MaterialIndex;
             }
-        }
-        if (section < ids.size())
-        {
-            scene.Instances.Update(ids[section], instance);
-        }
-        else
-        {
-            ids.push_back(scene.Instances.Register(instance));
-        }
-        ++section;
-    };
-    if (ComponentManager::HasComponent<StaticModelComponent>(entity))
-    {
-        auto* model =
-            ModelManager::GetStaticModel(ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId);
-        if (model)
-        {
-            for (UINT i = 0; i < model->GetMeshCount(); ++i)
+            else
             {
-                const auto& mesh = model->GetMeshData(i);
-                const size_t before = section;
-                append(mesh.VertexBuffer.Get(), mesh.IndexBuffer.Get(), mesh.VertexCount, mesh.IndexCount,
-                       model->GetAabbCenter(), model->GetAabbExtents(), mesh.TextureIndex);
-                if (section > before)
+                const auto& resolved = MaterialManager::Resolve(material, section);
+                auto gpuMaterial = MaterialBindings::BuildGpuSceneMaterial(resolved);
+                if (resolved.RuntimeHandle == 0 && material.UseTexture && texture >= 0)
                 {
-                    const auto slot = ids[section - 1];
-                    auto instance = scene.Instances.Data()[slot];
-                    GPUDrivenRenderer::RegisterGeometry(instance.MeshIndex, mesh);
-                    if (mesh.VirtualGeometrySettings.Enabled && mesh.VirtualGeometryLODs[0])
+                    gpuMaterial.AlbedoTextureIndex = static_cast<uint32_t>(texture);
+                }
+                if (resolved.RuntimeHandle != 0)
+                {
+                    const auto handle = resolved.RuntimeHandle;
+                    auto found = scene.AssetMaterials.find(handle);
+                    if (found == scene.AssetMaterials.end())
                     {
-                        instance.VirtualGeometryAssetIndex =
-                            VirtualGeometryResources::Register(mesh.VirtualGeometryLODs[0]);
+                        const auto index = static_cast<uint32_t>(scene.Materials.size());
+                        scene.Materials.push_back(gpuMaterial);
+                        scene.NewMaterials.push_back(index);
+                        const auto& runtime = MaterialManager::GetRuntime(handle);
+                        scene.AssetMaterials.emplace(
+                            handle,
+                            SceneState::AssetMaterialRecord{index, runtime.Revision, runtime.PipelineRevision, {}});
+                        instance.MaterialIndex = index;
                     }
-                    // 自動 LOD：LOD コンポーネントが無いモデルも、インポート時に生成した LOD を画面サイズで切り替える
-                    const bool hasLodComponent = ComponentManager::HasComponent<LODComponent>(entity);
-                    if (hasLodComponent || RenderCulling::GetSettings().AutoLod)
+                    else
                     {
-                        const LODComponent lod = hasLodComponent
-                                                     ? ComponentManager::GetComponentUnchecked<LODComponent>(entity)
-                                                     : LODComponent{true};
-                        if (lod.UseLOD)
+                        instance.MaterialIndex = found->second.Index;
+                    }
+                }
+                else
+                {
+                    instance.MaterialIndex =
+                        RegisterShared(gpuMaterial, scene.Materials, scene.MaterialLookup, scene.NewMaterials);
+                }
+            }
+            const auto assetHandle = MaterialManager::SlotHandle(material, section);
+            if (assetHandle != 0)
+            {
+                // シーン再構築中、失敗・削除された実行時マテリアルより SlotHandle が長く残ることがある。
+                // 古いハンドルで読み込みを終了させないよう、at() は使わない。
+                if (auto asset = scene.AssetMaterials.find(assetHandle); asset != scene.AssetMaterials.end())
+                {
+                    asset->second.Users.insert(entity);
+                    scene.EntityAssets[entity].push_back(assetHandle);
+                }
+            }
+            if (section < ids.size())
+            {
+                scene.Instances.Update(ids[section], instance);
+            }
+            else
+            {
+                ids.push_back(scene.Instances.Register(instance));
+            }
+            ++section;
+        };
+        if (ComponentManager::HasComponent<StaticModelComponent>(entity))
+        {
+            auto* model = ModelManager::GetStaticModel(
+                ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId);
+            if (model)
+            {
+                for (UINT i = 0; i < model->GetMeshCount(); ++i)
+                {
+                    const auto& mesh = model->GetMeshData(i);
+                    const size_t before = section;
+                    append(mesh.VertexBuffer.Get(), mesh.IndexBuffer.Get(), mesh.VertexCount, mesh.IndexCount,
+                           model->GetAabbCenter(), model->GetAabbExtents(), mesh.TextureIndex);
+                    if (section > before)
+                    {
+                        const auto slot = ids[section - 1];
+                        auto instance = scene.Instances.Data()[slot];
+                        GPUDrivenRenderer::RegisterGeometry(instance.MeshIndex, mesh);
+                        if (mesh.VirtualGeometrySettings.Enabled && mesh.VirtualGeometryLODs[0])
                         {
-                            array<uint32_t, Visibility::MaxLODs> lodMeshes;
-                            lodMeshes.fill(Visibility::InvalidID);
-                            lodMeshes[0] = instance.MeshIndex;
-                            const auto& metadata = lod.UseAssetSettings ? model->GetLODMetadata() : lod.ScreenLOD;
-                            for (uint32_t level = 1; level < metadata.Count && level < Visibility::MaxLODs; ++level)
+                            instance.VirtualGeometryAssetIndex =
+                                VirtualGeometryResources::Register(mesh.VirtualGeometryLODs[0]);
+                        }
+                        // 自動 LOD：LOD コンポーネントが無いモデルも、インポート時に生成した LOD
+                        // を画面サイズで切り替える
+                        const bool hasLodComponent = ComponentManager::HasComponent<LODComponent>(entity);
+                        if (hasLodComponent || RenderCulling::GetSettings().AutoLod)
+                        {
+                            const LODComponent lod = hasLodComponent
+                                                         ? ComponentManager::GetComponentUnchecked<LODComponent>(entity)
+                                                         : LODComponent{true};
+                            if (lod.UseLOD)
                             {
-                                if (!metadata.MeshPaths[level].empty())
+                                array<uint32_t, Visibility::MaxLODs> lodMeshes;
+                                lodMeshes.fill(Visibility::InvalidID);
+                                lodMeshes[0] = instance.MeshIndex;
+                                const auto& metadata = lod.UseAssetSettings ? model->GetLODMetadata() : lod.ScreenLOD;
+                                for (uint32_t level = 1; level < metadata.Count && level < Visibility::MaxLODs; ++level)
                                 {
-                                    auto* alternative = ModelManager::GetStaticModel(
-                                        ModelManager::LoadStaticModel(metadata.MeshPaths[level].c_str(), false));
-                                    if (!alternative || alternative->GetMeshCount() != model->GetMeshCount())
+                                    if (!metadata.MeshPaths[level].empty())
+                                    {
+                                        auto* alternative = ModelManager::GetStaticModel(
+                                            ModelManager::LoadStaticModel(metadata.MeshPaths[level].c_str(), false));
+                                        if (!alternative || alternative->GetMeshCount() != model->GetMeshCount())
+                                        {
+                                            continue;
+                                        }
+                                        // 元の境界は、選択可能な全 LOD を覆う必要がある。
+                                        const auto c = model->GetAabbCenter(), e = model->GetAabbExtents();
+                                        const auto ac = alternative->GetAabbCenter(),
+                                                   ae = alternative->GetAabbExtents();
+                                        if (abs(ac.x - c.x) + ae.x > e.x + 0.0001f ||
+                                            abs(ac.y - c.y) + ae.y > e.y + 0.0001f ||
+                                            abs(ac.z - c.z) + ae.z > e.z + 0.0001f)
+                                        {
+                                            continue;
+                                        }
+                                        const auto& alternativeMesh = alternative->GetMeshData(i);
+                                        const auto meshID = RegisterMesh(
+                                            alternativeMesh.VertexBuffer.Get(), alternativeMesh.IndexBuffer.Get(),
+                                            alternativeMesh.VertexCount, alternativeMesh.IndexCount, ac, ae);
+                                        GPUDrivenRenderer::RegisterGeometry(meshID, alternativeMesh);
+                                        if (GPUDrivenRenderer::GeometryReady(meshID))
+                                        {
+                                            lodMeshes[level] = meshID;
+                                        }
+                                        continue;
+                                    }
+                                    if (level >= StaticMeshData::LodCount)
                                     {
                                         continue;
                                     }
-                                    // Original bounds must cover every selectable LOD.
-                                    const auto c = model->GetAabbCenter(), e = model->GetAabbExtents();
-                                    const auto ac = alternative->GetAabbCenter(), ae = alternative->GetAabbExtents();
-                                    if (abs(ac.x - c.x) + ae.x > e.x + 0.0001f ||
-                                        abs(ac.y - c.y) + ae.y > e.y + 0.0001f ||
-                                        abs(ac.z - c.z) + ae.z > e.z + 0.0001f)
+                                    const auto& indices = mesh.CpuLodIndices[level - 1];
+                                    if (indices.empty())
                                     {
                                         continue;
                                     }
-                                    const auto& alternativeMesh = alternative->GetMeshData(i);
-                                    const auto meshID = RegisterMesh(
-                                        alternativeMesh.VertexBuffer.Get(), alternativeMesh.IndexBuffer.Get(),
-                                        alternativeMesh.VertexCount, alternativeMesh.IndexCount, ac, ae);
-                                    GPUDrivenRenderer::RegisterGeometry(meshID, alternativeMesh);
+                                    const auto meshID =
+                                        RegisterMesh(mesh.VertexBuffer.Get(), mesh.LodIndexBuffers[level - 1].Get(),
+                                                     mesh.VertexCount, static_cast<uint32_t>(indices.size()),
+                                                     model->GetAabbCenter(), model->GetAabbExtents());
+                                    GPUDrivenRenderer::RegisterLODGeometry(meshID, instance.MeshIndex, indices,
+                                                                           &mesh.MeshletLODs[level]);
                                     if (GPUDrivenRenderer::GeometryReady(meshID))
                                     {
                                         lodMeshes[level] = meshID;
                                     }
-                                    continue;
                                 }
-                                if (level >= StaticMeshData::LodCount)
-                                {
-                                    continue;
-                                }
-                                const auto& indices = mesh.CpuLodIndices[level - 1];
-                                if (indices.empty())
-                                {
-                                    continue;
-                                }
-                                const auto meshID =
-                                    RegisterMesh(mesh.VertexBuffer.Get(), mesh.LodIndexBuffers[level - 1].Get(),
-                                                 mesh.VertexCount, static_cast<uint32_t>(indices.size()),
-                                                 model->GetAabbCenter(), model->GetAabbExtents());
-                                GPUDrivenRenderer::RegisterLODGeometry(meshID, instance.MeshIndex, indices,
-                                                                       &mesh.MeshletLODs[level]);
-                                if (GPUDrivenRenderer::GeometryReady(meshID))
-                                {
-                                    lodMeshes[level] = meshID;
-                                }
+                                instance.LODGroupIndex = GPUVisibility::RegisterLODGroup(lodMeshes, metadata);
                             }
-                            instance.LODGroupIndex = GPUVisibility::RegisterLODGroup(lodMeshes, metadata);
                         }
+                        if (ComponentManager::HasComponent<ProceduralMotionComponent>(entity) &&
+                            ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(entity).Enabled)
+                        {
+                            instance.Flags |= 8u;
+                        }
+                        scene.Instances.Update(slot, instance);
                     }
-                    if (ComponentManager::HasComponent<ProceduralMotionComponent>(entity) &&
-                        ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(entity).Enabled)
-                    {
-                        instance.Flags |= 8u;
-                    }
-                    scene.Instances.Update(slot, instance);
                 }
             }
         }
-    }
-    else if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
-    {
-        auto* model = ModelManager::GetAnimModel(
-            ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelId);
-        if (model)
+        else if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
         {
-            for (UINT i = 0; i < model->GetMeshCount(); ++i)
+            auto* model = ModelManager::GetAnimModel(
+                ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelId);
+            if (model)
             {
-                const auto& mesh = model->GetMeshData(i);
-                append(mesh.VertexBuffer.Get(), mesh.IndexBuffer.Get(), mesh.VertexCount, mesh.IndexCount,
-                       model->GetAabbCenter(), model->GetAabbExtents(), mesh.TextureIndex);
-            }
-        }
-    }
-    else if (ComponentManager::HasComponent<MeshComponent>(entity))
-    {
-        const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
-        append(mesh.VertexBuffer.Get(), nullptr, mesh.VertexCount, 0, mesh.LocalBoundsCenter, mesh.LocalBoundsExtents,
-               -1, mesh.NaniteMesh != nullptr);
-        if (mesh.NaniteMesh && !ids.empty())
-        {
-            const auto slot = ids.back();
-            auto instance = scene.Instances.Data()[slot];
-            const auto& source = *mesh.NaniteMesh;
-            GPUDrivenRenderer::RegisterPrimitiveGeometry(instance.MeshIndex, source);
-            if (source.VirtualGeometrySettings.Enabled && source.VirtualGeometryLODs[0])
-            {
-                instance.VirtualGeometryAssetIndex = VirtualGeometryResources::Register(source.VirtualGeometryLODs[0]);
-            }
-            const bool hasSettings = ComponentManager::HasComponent<LODComponent>(entity);
-            const auto settings =
-                hasSettings ? ComponentManager::GetComponentUnchecked<LODComponent>(entity) : LODComponent{};
-            // Generated geometry has no imported asset settings. Enable its generated
-            // levels by default, while honoring an explicitly attached LOD component.
-            if (!hasSettings || settings.UseLOD)
-            {
-                auto [entry, inserted] = scene.PrimitiveLODs.try_emplace(instance.MeshIndex);
-                if (inserted)
+                for (UINT i = 0; i < model->GetMeshCount(); ++i)
                 {
-                    entry->second.fill(UINT32_MAX);
+                    const auto& mesh = model->GetMeshData(i);
+                    append(mesh.VertexBuffer.Get(), mesh.IndexBuffer.Get(), mesh.VertexCount, mesh.IndexCount,
+                           model->GetAabbCenter(), model->GetAabbExtents(), mesh.TextureIndex);
                 }
-                array<uint32_t, Visibility::MaxLODs> lodMeshes;
-                lodMeshes.fill(UINT32_MAX);
-                lodMeshes[0] = instance.MeshIndex;
-                const auto metadata = settings.UseAssetSettings ? Visibility::LODMetadata{} : settings.ScreenLOD;
-                for (uint32_t level = 1; level < StaticMeshData::LodCount; ++level)
-                {
-                    const auto& indices = source.CpuLodIndices[level - 1];
-                    auto& id = entry->second[level - 1];
-                    if (indices.empty())
-                    {
-                        if (id != UINT32_MAX)
-                        {
-                            GPUDrivenRenderer::ReleasePrimitiveGeometry(id);
-                        }
-                        continue;
-                    }
-                    if (id == UINT32_MAX)
-                    {
-                        if (!scene.FreePrimitiveMeshes.empty())
-                        {
-                            id = scene.FreePrimitiveMeshes.back();
-                            scene.FreePrimitiveMeshes.pop_back();
-                        }
-                        else
-                        {
-                            id = static_cast<uint32_t>(scene.Meshes.size());
-                            scene.Meshes.emplace_back();
-                        }
-                    }
-                    auto record = scene.Meshes[instance.MeshIndex];
-                    record.IndexCount = static_cast<uint32_t>(indices.size());
-                    if (memcmp(&scene.Meshes[id], &record, sizeof(record)) != 0)
-                    {
-                        scene.Meshes[id] = record;
-                        scene.NewMeshes.push_back(id);
-                    }
-                    scene.PrimitiveOwners[id] = mesh.VertexBuffer;
-                    GPUDrivenRenderer::RegisterPrimitiveGeometry(id, source, level, instance.MeshIndex);
-                    if (GPUDrivenRenderer::GeometryReady(id))
-                    {
-                        lodMeshes[level] = id;
-                    }
-                }
-                instance.LODGroupIndex = GPUVisibility::RegisterLODGroup(lodMeshes, metadata);
             }
-            scene.Instances.Update(slot, instance);
         }
-    }
-    else if (ComponentManager::HasComponent<SpriteComponent>(entity))
-    {
-        const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
-        if (sprite.Is3D)
+        else if (ComponentManager::HasComponent<MeshComponent>(entity))
         {
-            append(sprite.VertexBuffer.Get(), nullptr, sprite.VertexCount, 0, sprite.LocalBoundsCenter,
-                   sprite.LocalBoundsExtents, -1);
-        }
-    }
-    while (ids.size() > section)
-    {
-        scene.Instances.Remove(ids.back());
-        ids.pop_back();
-    }
-    if (ids.empty())
-    {
-        scene.Entities.erase(entity);
-        SetCpuOpaqueEntity(entity, ComponentManager::HasComponent<StaticModelComponent>(entity));
-        GPUDrivenRenderer::TrackEntityTextures(entity, {});
-    }
-    else
-    {
-        bool supported = GPUDrivenRenderer::SupportsEntity(entity);
-        for (auto id : ids)
-        {
-            supported &= GPUDrivenRenderer::GeometryReady(scene.Instances.Data()[id].MeshIndex);
-        }
-        for (auto id : ids)
-        {
-            auto instance = scene.Instances.Data()[id];
-            instance.Flags = supported ? (instance.Flags | 4u) : (instance.Flags & ~4u);
-            instance.Flags &= ~16u;
-            const auto& gpuMaterial = scene.Materials.at(instance.MaterialIndex);
-            uint32_t surfaceFlags = 0;
-            memcpy(&surfaceFlags, &gpuMaterial.ShadingParameters[149].w, sizeof(surfaceFlags));
-            if (supported && instance.VirtualGeometryAssetIndex != UINT32_MAX && (instance.Flags & 8u) == 0 &&
-                (gpuMaterial.Flags & 6u) == 0 && (surfaceFlags & 15u) == 0)
+            const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+            append(mesh.VertexBuffer.Get(), nullptr, mesh.VertexCount, 0, mesh.LocalBoundsCenter,
+                   mesh.LocalBoundsExtents, -1, mesh.NaniteMesh != nullptr);
+            if (mesh.NaniteMesh && !ids.empty())
             {
-                instance.Flags |= 16u;
+                const auto slot = ids.back();
+                auto instance = scene.Instances.Data()[slot];
+                const auto& source = *mesh.NaniteMesh;
+                GPUDrivenRenderer::RegisterPrimitiveGeometry(instance.MeshIndex, source);
+                if (source.VirtualGeometrySettings.Enabled && source.VirtualGeometryLODs[0])
+                {
+                    instance.VirtualGeometryAssetIndex =
+                        VirtualGeometryResources::Register(source.VirtualGeometryLODs[0]);
+                }
+                const bool hasSettings = ComponentManager::HasComponent<LODComponent>(entity);
+                const auto settings =
+                    hasSettings ? ComponentManager::GetComponentUnchecked<LODComponent>(entity) : LODComponent{};
+                // 生成ジオメトリにはインポートアセット設定がない。生成レベルは既定で有効にしつつ、
+                // 明示的に付けられた LOD コンポーネントの設定を尊重する。
+                if (!hasSettings || settings.UseLOD)
+                {
+                    auto [entry, inserted] = scene.PrimitiveLODs.try_emplace(instance.MeshIndex);
+                    if (inserted)
+                    {
+                        entry->second.fill(UINT32_MAX);
+                    }
+                    array<uint32_t, Visibility::MaxLODs> lodMeshes;
+                    lodMeshes.fill(UINT32_MAX);
+                    lodMeshes[0] = instance.MeshIndex;
+                    const auto metadata = settings.UseAssetSettings ? Visibility::LODMetadata{} : settings.ScreenLOD;
+                    for (uint32_t level = 1; level < StaticMeshData::LodCount; ++level)
+                    {
+                        const auto& indices = source.CpuLodIndices[level - 1];
+                        auto& id = entry->second[level - 1];
+                        if (indices.empty())
+                        {
+                            if (id != UINT32_MAX)
+                            {
+                                GPUDrivenRenderer::ReleasePrimitiveGeometry(id);
+                            }
+                            continue;
+                        }
+                        if (id == UINT32_MAX)
+                        {
+                            if (!scene.FreePrimitiveMeshes.empty())
+                            {
+                                id = scene.FreePrimitiveMeshes.back();
+                                scene.FreePrimitiveMeshes.pop_back();
+                            }
+                            else
+                            {
+                                id = static_cast<uint32_t>(scene.Meshes.size());
+                                scene.Meshes.emplace_back();
+                            }
+                        }
+                        auto record = scene.Meshes[instance.MeshIndex];
+                        record.IndexCount = static_cast<uint32_t>(indices.size());
+                        if (memcmp(&scene.Meshes[id], &record, sizeof(record)) != 0)
+                        {
+                            scene.Meshes[id] = record;
+                            scene.NewMeshes.push_back(id);
+                        }
+                        scene.PrimitiveOwners[id] = mesh.VertexBuffer;
+                        GPUDrivenRenderer::RegisterPrimitiveGeometry(id, source, level, instance.MeshIndex);
+                        if (GPUDrivenRenderer::GeometryReady(id))
+                        {
+                            lodMeshes[level] = id;
+                        }
+                    }
+                    instance.LODGroupIndex = GPUVisibility::RegisterLODGroup(lodMeshes, metadata);
+                }
+                scene.Instances.Update(slot, instance);
             }
-            scene.Instances.Update(id, instance);
         }
-        // Auto models still use the CPU outline pass after their base geometry moves to Nanite.
-        SetCpuOpaqueEntity(entity, ComponentManager::HasComponent<StaticModelComponent>(entity) &&
-                                       (!supported || material.ShaderClassMode == MaterialMode::Auto));
-        vector<uint32_t> textures;
-        if (supported)
+        else if (ComponentManager::HasComponent<SpriteComponent>(entity))
         {
+            const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
+            if (sprite.Is3D)
+            {
+                append(sprite.VertexBuffer.Get(), nullptr, sprite.VertexCount, 0, sprite.LocalBoundsCenter,
+                       sprite.LocalBoundsExtents, -1);
+            }
+        }
+        while (ids.size() > section)
+        {
+            scene.Instances.Remove(ids.back());
+            ids.pop_back();
+        }
+        if (ids.empty())
+        {
+            scene.Entities.erase(entity);
+            SetCpuOpaqueEntity(entity, ComponentManager::HasComponent<StaticModelComponent>(entity));
+            GPUDrivenRenderer::TrackEntityTextures(entity, {});
+        }
+        else
+        {
+            bool supported = GPUDrivenRenderer::SupportsEntity(entity);
             for (auto id : ids)
             {
-                const auto& material = scene.Materials[scene.Instances.Data()[id].MaterialIndex];
-                if ((material.Flags & 1u) && material.AlbedoTextureIndex != UINT32_MAX)
+                supported &= GPUDrivenRenderer::GeometryReady(scene.Instances.Data()[id].MeshIndex);
+            }
+            for (auto id : ids)
+            {
+                auto instance = scene.Instances.Data()[id];
+                instance.Flags = supported ? (instance.Flags | 4u) : (instance.Flags & ~4u);
+                instance.Flags &= ~16u;
+                const auto& gpuMaterial = scene.Materials.at(instance.MaterialIndex);
+                uint32_t surfaceFlags = 0;
+                memcpy(&surfaceFlags, &gpuMaterial.ShadingParameters[149].w, sizeof(surfaceFlags));
+                if (supported && instance.VirtualGeometryAssetIndex != UINT32_MAX && (instance.Flags & 8u) == 0 &&
+                    (gpuMaterial.Flags & 6u) == 0 && (surfaceFlags & 15u) == 0)
                 {
-                    textures.push_back(material.AlbedoTextureIndex);
+                    instance.Flags |= 16u;
                 }
-                if (material.NormalTextureIndex != UINT32_MAX)
+                scene.Instances.Update(id, instance);
+            }
+            // 自動モデルは基本形状が Nanite に移った後も、CPU の輪郭線パスを使う。
+            SetCpuOpaqueEntity(entity, ComponentManager::HasComponent<StaticModelComponent>(entity) &&
+                                           (!supported || material.ShaderClassMode == MaterialMode::Auto));
+            vector<uint32_t> textures;
+            if (supported)
+            {
+                for (auto id : ids)
                 {
-                    textures.push_back(material.NormalTextureIndex);
+                    const auto& material = scene.Materials[scene.Instances.Data()[id].MaterialIndex];
+                    if ((material.Flags & 1u) && material.AlbedoTextureIndex != UINT32_MAX)
+                    {
+                        textures.push_back(material.AlbedoTextureIndex);
+                    }
+                    if (material.NormalTextureIndex != UINT32_MAX)
+                    {
+                        textures.push_back(material.NormalTextureIndex);
+                    }
                 }
             }
+            GPUDrivenRenderer::TrackEntityTextures(entity, textures);
         }
-        GPUDrivenRenderer::TrackEntityTextures(entity, textures);
     }
-}
-} // namespace
+} // 名前空間
 
 void GpuScene::Execute(ID3D12GraphicsCommandList* commands)
 {
@@ -705,7 +709,7 @@ void GpuScene::Execute(ID3D12GraphicsCommandList* commands)
     const auto start = chrono::steady_clock::now();
     auto& scene = Scene();
     const uint32_t frame = GraphicsDevice::GetFrameIndex();
-    scene.RetiredPrimitiveOwners[frame].clear(); // This frame slot's fence completed before Execute.
+    scene.RetiredPrimitiveOwners[frame].clear(); // このフレームスロットのフェンスは Execute 前に完了している。
     auto* device = GraphicsDevice::GetDevice();
     scene.Instances.SettlePreviousTransforms();
     for (auto& [handle, record] : scene.AssetMaterials)

@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================================
-// MegaLights
+// 多数のライトを処理する描画機能（MegaLights）
 //   M1：ライトバッファ + クラスター（フロクセル）ライトグリッド（ML0 / ML1）
 //   M2：確率的ライトサンプリング（ML3）+ 影レイ（ML5）。シェーディング（ML6）は DeferredLightingPS
 //       ・検証用：リファレンスモード（全ライト × 面上の複数点の影レイ）、静止時の累積平均、RMSE
@@ -51,11 +51,11 @@ class MegaLights final
                               // 累積平均, 7: リファレンスとの差
         float SliceFar = 500.0f; // スライス分割の奥行き上限（m）。これより奥は最後のスライスにまとめる
         int HeatmapMax = 32;     // ライト数ヒートマップの上限
-        // ---- M2
+        // ---- M2段階
         int EvaluationMode = static_cast<int>(Mode::Deterministic);
         int SamplesPerPixel = 2;     // 1 / 2 / 4（解像度に応じて自動で下げる）
         bool HalfResolution = false; // 半解像度サンプリング（サンプル数・影レイが 1/4）
-        // ---- M7
+        // ---- M7段階
         bool Translucency = true; // Forward / 半透明もグリッドで評価する（グリッドを視錐台全体で構築）
         float UniformMix = 0.1f;  // 一様選択の混合率 α（見積もりが外れても確率を 0 にしない）
         int ReferenceRays = 16;   // リファレンスの影レイ数（面光源・球ライト）
@@ -67,7 +67,7 @@ class MegaLights final
             0.1f;                 // ハッシュに載っていないライトの重み（0 より大きく。遮られがちなライトも時々調べる）
         float GuideKeep = 0.875f; // 前フレームのハッシュのビットを残す確率（1 - 減衰）
         // ---- M5（スクリーントレース）
-        // ---- M6
+        // ---- M6段階
         int Denoiser = 0;          // 0: 自前（SVGF）, 1: NRD（REBLUR）。NRD が使えなければ自前に戻す
         bool VolumetricFog = true; // フロクセルフォグのローカルライトを MegaLights で評価する
         int FogSamples = 2;        // フロクセルあたりのライトサンプル数（1〜4）
@@ -100,7 +100,7 @@ class MegaLights final
         UINT CoarseIndices = 0, FineIndices = 0; // 数フレーム前の GPU 実測
         UINT OverflowCells = 0, MaxLightsPerCell = 0;
         bool Built = false;
-        // ---- M2
+        // ---- M2段階
         Mode ActiveMode = Mode::Deterministic; // このフレームに実際に使った評価方式
         const char* FallbackReason = nullptr;  // 要求した方式が使えなかった理由
         UINT SamplesPerPixel = 0;
@@ -110,13 +110,13 @@ class MegaLights final
         bool ErrorValid = false;
         double RelativeRmse = 0.0; // sqrt(Σ(acc - ref)² / Σref²)（輝度）
         UINT ErrorFrames = 0;      // RMSE を測ったときの累積フレーム数
-        // ---- M3
+        // ---- M3段階
         bool Denoised = false;
         bool AntiLag = false;
         bool HistoryReset = false;
         double DenoiseBufferMB = 0.0;
         const char* DenoiseFallback = nullptr;
-        // ---- M4
+        // ---- M4段階
         bool Guided = false;    // このフレームのサンプリングでハッシュを使った
         bool HashValid = false; // 前フレームのハッシュが使える
         UINT HashTilesX = 0, HashTilesY = 0;
@@ -126,7 +126,7 @@ class MegaLights final
         UINT ScreenHits = 0;    // スクリーントレースで遮蔽が見つかった（ワールドトレース不要）
         UINT WorldTraces = 0;   // ワールドトレースしたサンプル
         bool TraceStatsValid = false;
-        // ---- M6
+        // ---- M6段階
         const char* DenoiserUsed = nullptr; // このフレームに使ったデノイザー
         const char* NrdFallback = nullptr;
         bool VolumetricGrid = false; // フォグ用にグリッドを視錐台全体で構築した
@@ -380,7 +380,7 @@ class MegaLights final
     }
 
     // ---- GPU：グリッドの構築 + M2 のサンプリング（GBuffer 完成後・TLAS 構築後・ディファードライティングの前）
-    //   gbuffer: BaseColor, Normal, Depth, Material, Shadow, Velocity（PIXEL_SHADER_RESOURCE
+    //   Gバッファー：基本色、法線、深度、材質、影、速度（PIXEL_SHADER_RESOURCE
     //   で渡す。終了時に同じ状態へ戻す） gbufferTable: ポストプロセスと同じ GBuffer の SRV テーブル（BaseColor から 8
     //   個連続。Velocity は 8 番目）
     static constexpr UINT kBuildGBufferCount = 6;
@@ -415,7 +415,7 @@ class MegaLights final
             return false;
         }
 
-        // ---- M2：このフレームの評価方式を決める
+        // ---- M2段階：このフレームの評価方式を決める
         const Mode requested = static_cast<Mode>(std::clamp(s_Settings.EvaluationMode, 0, 2));
         const D3D12_GPU_VIRTUAL_ADDRESS scene = Raytracing::GetSceneAddress();
         Mode mode = requested;
@@ -447,7 +447,7 @@ class MegaLights final
                 samplesPerPixel = 0;
             }
         }
-        // ---- M3：デノイズするか
+        // ---- M3段階：デノイズするか
         bool denoise = false;
         s_Stats.DenoiseFallback = nullptr;
         if (mode == Mode::Stochastic && s_Settings.Denoise)
@@ -465,7 +465,7 @@ class MegaLights final
                 denoise = true;
             }
         }
-        // ---- M4：可視ライトハッシュ（前フレームの分を読み、今フレームの分を作る）
+        // ---- M4段階：可視ライトハッシュ（前フレームの分を読み、今フレームの分を作る）
         const UINT hashTilesX = (width + 7) / 8, hashTilesY = (height + 7) / 8;
         bool guide = false;
         bool hashBuild = false;
@@ -574,7 +574,7 @@ class MegaLights final
         s_SlotLights[slot] = s_EntityMarked; // 読み戻し時にライトの番号 → Entity を引くため
         s_ReadbackPending[slot] = true;
 
-        // ---- M2：ML3 ライトの選択 → ML5 影レイ
+        // ---- M2段階：ML3 ライトの選択 → ML5 影レイ
         if (sampling)
         {
             RenderProfiler::ScopedEvent sampleProfile("MegaLights Sample + Trace", commands);
@@ -760,7 +760,7 @@ class MegaLights final
                                                     hashReady ? s_HashDisplay->GetGPUVirtualAddress() : lights);
     }
 
-    // ---- M6：フロクセルフォグ（AdvancedEffects）から
+    // ---- M6段階：フロクセルフォグ（AdvancedEffects）から
     // このフレームのグリッドがフォグ用に構築されている（= グリッドのライトはフォグ側でも MegaLights が受け持つ）
     static bool IsVolumetricGridActive()
     {
@@ -795,7 +795,7 @@ class MegaLights final
         return active;
     }
 
-    // ---- M7：Forward / 半透明（モデルのルートシグネチャ）
+    // ---- M7段階：Forward / 半透明（モデルのルートシグネチャ）
     // エンジンのディスクリプタヒープ内の MegaLights 用の領域（フレームごとに t44, t45, t46, b10）
     static constexpr UINT kForwardDescriptorsPerFrame = 4;
     static constexpr UINT kEngineHeapDescriptors = kForwardDescriptorsPerFrame * kFrames;
@@ -828,7 +828,7 @@ class MegaLights final
         commands->SetGraphicsRootDescriptorTable(texturesParameter, textureTable);
     }
 
-    // ---- M3：ディファードの直前に呼ぶ
+    // ---- M3段階：ディファードの直前に呼ぶ
     static bool WantsShadePass()
     {
         return s_SlotBuilt[s_Slot] && s_SlotSampled[s_Slot] && s_SlotDenoise[s_Slot];
@@ -940,7 +940,7 @@ class MegaLights final
         s_DenoiseResetRequested = false;
         s_Stats.NrdFallback = nullptr;
 
-        // ---- M6：NRD（REBLUR）
+        // ---- M6段階：NRD（REBLUR）
         if (s_Settings.Denoiser == 1)
         {
             if (DenoiseNrd(commands, historyValid))
@@ -1020,7 +1020,7 @@ class MegaLights final
         commands->SetPipelineState(s_Temporal.Get());
         commands->Dispatch(groupsX, groupsY, 1);
 
-        // À-Trous：A → B → A ...
+        // À-Trousフィルターの交互参照：A → B → A…
         const int iterations = std::clamp(s_Settings.DenoiseIterations, 0, 5);
         bool inputIsA = true;
         commands->SetPipelineState(s_ATrous.Get());
@@ -1093,11 +1093,11 @@ class MegaLights final
         XMUINT4 Grid;
         XMUINT4 Counts;
         XMUINT4 Screen;
-        // ---- M2
+        // ---- M2段階
         XMUINT4 Stochastic;        // フラグ, N, フレーム番号, 累積フレーム数
         XMFLOAT4 StochasticParams; // α, 法線バイアス, 1/p の表示上限, リファレンスの影レイ数
         XMFLOAT4X4 ViewToWorld;
-        // ---- M5
+        // ---- M5段階
         XMFLOAT4 ScreenTrace; // ステップ数, 最大距離（px）, 厚み（m）, 自己遮蔽よけ（px）
         XMUINT4 SampleGrid;   // サンプル空間の幅, 高さ, 縮小率, 代表ピクセルの回転
     };
@@ -1121,7 +1121,7 @@ class MegaLights final
     static_assert(sizeof(DenoiseConstants) == 64, "DenoiseConstants layout mismatch");
 
     // M3 のルートシグネチャ：0 b0 / 1 b1（定数 16）/ 2 テーブル t8〜t15（GBuffer）/ 3 t0 / 4 t1 / 5 t2 / 6 u0 / 7 u1 /
-    // 8 u2
+    // インデックス8：書き込み先レジスターu2
     static bool CreateDenoisePipelines(ID3D12Device* device)
     {
         CD3DX12_DESCRIPTOR_RANGE gbufferRange;
@@ -1150,7 +1150,7 @@ class MegaLights final
         return true;
     }
 
-    // ---- M6：NRD の入出力パス
+    // ---- M6段階：NRD の入出力パス
     // ルート：0 b0 / 1 t0 Raw / 2 テーブル t1〜t2（ViewZ ガイド, NRD 出力）/ 3 テーブル u0（NRD 入力）/ 4 u1
     // デノイズ済み
     static bool CreateNrdPipelines(ID3D12Device* device)
@@ -1748,7 +1748,18 @@ class MegaLights final
     {
         UINT requested =
             static_cast<UINT>(std::clamp(s_Settings.SamplesPerPixel, 1, static_cast<int>(kMaxSamplesPerPixel)));
-        requested = requested >= 4 ? 4u : requested >= 2 ? 2u : 1u;
+        if (requested >= 4)
+        {
+            requested = 4;
+        }
+        else if (requested >= 2)
+        {
+            requested = 2;
+        }
+        else
+        {
+            requested = 1;
+        }
         const UINT64 perSample = static_cast<UINT64>(width) * height * 16ull;
         while (requested > 1 && perSample * requested > kSampleBudgetBytes)
         {
@@ -2127,9 +2138,12 @@ class MegaLights final
             const float zAtOne = fabsf(1.0f - p._33) > 1.0e-6f ? p._43 / (1.0f - p._33) : 1.0e6f;
             const bool reversed = zAtZero > zAtOne;
             const float nearZ = (std::max)(0.001f, reversed ? zAtOne : zAtZero);
-            const float farZ =
-                (std::max)(nearZ * 2.0f,
-                           std::isfinite(reversed ? zAtZero : zAtOne) ? (reversed ? zAtZero : zAtOne) : 1.0e6f);
+            float farPlaneDistance = reversed ? zAtZero : zAtOne;
+            if (!std::isfinite(farPlaneDistance))
+            {
+                farPlaneDistance = 1.0e6f;
+            }
+            const float farZ = (std::max)(nearZ * 2.0f, farPlaneDistance);
             const float sliceFar = std::clamp(s_Settings.SliceFar, nearZ * 4.0f, farZ);
             constants.Depth = {p._33, p._43, nearZ, static_cast<float>(kSlices) / logf(sliceFar / nearZ)};
             constants.Depth2 = {reversed ? 0.0f : 1.0f, farZ, static_cast<float>((std::max)(s_Settings.HeatmapMax, 1)),
@@ -2301,7 +2315,7 @@ class MegaLights final
     static inline UINT s_ReferenceWidth = 0, s_ReferenceHeight = 0;
     static inline bool s_ResetRequested = false;
     static inline bool s_SaveReferenceRequested = false;
-    // ---- M3
+    // ---- M3段階
     static inline bool s_DenoiseAvailable = false;
     static inline bool s_ShadeFailed = false;
     static inline ComPtr<ID3D12RootSignature> s_DenoiseRoot;
@@ -2328,7 +2342,7 @@ class MegaLights final
     static inline uint64_t s_PreviousLightHash = 0;
     static inline XMFLOAT4 s_PreviousViewZRow = {0.0f, 0.0f, 1.0f, 0.0f};
     static inline bool s_SlotDenoise[kFrames]{};
-    // ---- M4
+    // ---- M4段階
     static inline bool s_HashAvailable = false;
     static inline ComPtr<ID3D12PipelineState> s_BuildHash;
     static inline ComPtr<ID3D12Resource> s_Hash[2];
@@ -2341,7 +2355,7 @@ class MegaLights final
     static inline uint64_t s_HashLastFrame = 0;
     static inline EntityID s_HashCamera = g_kINVALID_ENTITY;
     static inline bool s_SlotHash[kFrames]{};
-    // ---- M5
+    // ---- M5段階
     static inline ComPtr<ID3D12PipelineState> s_ClearTraceCounters, s_ClassifyTiles, s_ArgsTiles, s_ArgsTrace,
         s_ArgsWorld;
     static inline ComPtr<ID3D12CommandSignature> s_DispatchSignature;
@@ -2355,7 +2369,7 @@ class MegaLights final
     static inline UINT64 s_TileListCapacity = 0;
     static inline bool s_TraceReadbackPending[kFrames]{};
     static inline UINT s_TraceTotalTiles[kFrames]{};
-    // ---- M6
+    // ---- M6段階
     static constexpr UINT kNrdDescriptorsPerFrame = 3;
     static inline bool s_NrdAvailable = false;
     static inline ComPtr<ID3D12RootSignature> s_NrdRoot;

@@ -227,7 +227,7 @@ static void AppendLightLines(vector<DebugVertex>& vertices, const TransformCompo
     const float range = max(light.Range, 0.1f);
     if (light.Type == LightType::Rect)
     {
-        // Same basis as the shader (SurfaceLighting.hlsli: RectLightBasis).
+        // シェーダーと同じ基底（SurfaceLighting.hlsli の RectLightBasis）。
         XMVECTOR normal = XMVector3Normalize(XMLoadFloat3(&direction));
         XMVECTOR up = fabsf(XMVectorGetY(normal)) > 0.99f ? XMVectorSet(1, 0, 0, 0) : XMVectorSet(0, 1, 0, 0);
         XMVECTOR right = XMVector3Normalize(XMVector3Cross(up, normal));

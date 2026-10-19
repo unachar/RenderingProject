@@ -26,8 +26,8 @@ void RenderFrame::BeginDraw()
     m_CommandList->Reset(m_CommandAllocator[m_FrameIndex].Get(), nullptr);
     RenderProfiler::BeginFrame(m_Device.Get(), m_CommandQueue.Get(), m_CommandList.Get(), m_FrameIndex);
     TextureManager::UpdateStreaming(m_CommandList.Get());
-    // Sky LUTs for this frame: recorded and submitted on the async compute queue right away so
-    // they overlap with the previous frame's graphics work; the graphics queue waits on the GPU.
+    // このフレームの空 LUT は直ちに非同期コンピュートキューへ記録・送信し、前フレームの
+    // グラフィックス処理と重ねる。グラフィックスキューは GPU 上で完了を待つ。
     AtmosphereLut::Update(m_CommandList.Get(), m_CommandQueue.Get(), m_FrameIndex);
 
     m_CommandList->RSSetViewports(1, &m_Viewport);

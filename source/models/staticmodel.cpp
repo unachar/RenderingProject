@@ -45,42 +45,42 @@ static const char* GetAssimpTextureTypeName(aiTextureType type)
 {
     switch (type)
     {
-    case aiTextureType_DIFFUSE:
-        return "DIFFUSE";
-    case aiTextureType_SPECULAR:
-        return "SPECULAR";
-    case aiTextureType_AMBIENT:
-        return "AMBIENT";
-    case aiTextureType_EMISSIVE:
-        return "EMISSIVE";
-    case aiTextureType_HEIGHT:
-        return "HEIGHT";
-    case aiTextureType_NORMALS:
-        return "NORMALS";
-    case aiTextureType_SHININESS:
-        return "SHININESS";
-    case aiTextureType_OPACITY:
-        return "OPACITY";
-    case aiTextureType_DISPLACEMENT:
-        return "DISPLACEMENT";
-    case aiTextureType_LIGHTMAP:
-        return "LIGHTMAP";
-    case aiTextureType_REFLECTION:
-        return "REFLECTION";
-    case aiTextureType_BASE_COLOR:
-        return "BASE_COLOR";
-    case aiTextureType_NORMAL_CAMERA:
-        return "NORMAL_CAMERA";
-    case aiTextureType_EMISSION_COLOR:
-        return "EMISSION_COLOR";
-    case aiTextureType_METALNESS:
-        return "METALNESS";
-    case aiTextureType_DIFFUSE_ROUGHNESS:
-        return "DIFFUSE_ROUGHNESS";
-    case aiTextureType_AMBIENT_OCCLUSION:
-        return "AMBIENT_OCCLUSION";
-    default:
-        return "UNKNOWN";
+        case aiTextureType_DIFFUSE:
+            return "DIFFUSE";
+        case aiTextureType_SPECULAR:
+            return "SPECULAR";
+        case aiTextureType_AMBIENT:
+            return "AMBIENT";
+        case aiTextureType_EMISSIVE:
+            return "EMISSIVE";
+        case aiTextureType_HEIGHT:
+            return "HEIGHT";
+        case aiTextureType_NORMALS:
+            return "NORMALS";
+        case aiTextureType_SHININESS:
+            return "SHININESS";
+        case aiTextureType_OPACITY:
+            return "OPACITY";
+        case aiTextureType_DISPLACEMENT:
+            return "DISPLACEMENT";
+        case aiTextureType_LIGHTMAP:
+            return "LIGHTMAP";
+        case aiTextureType_REFLECTION:
+            return "REFLECTION";
+        case aiTextureType_BASE_COLOR:
+            return "BASE_COLOR";
+        case aiTextureType_NORMAL_CAMERA:
+            return "NORMAL_CAMERA";
+        case aiTextureType_EMISSION_COLOR:
+            return "EMISSION_COLOR";
+        case aiTextureType_METALNESS:
+            return "METALNESS";
+        case aiTextureType_DIFFUSE_ROUGHNESS:
+            return "DIFFUSE_ROUGHNESS";
+        case aiTextureType_AMBIENT_OCCLUSION:
+            return "AMBIENT_OCCLUSION";
+        default:
+            return "UNKNOWN";
     }
 }
 
@@ -173,7 +173,7 @@ static void LogAssimpModelInfo(const aiScene* scene, const char* fileName, const
     Debug::Log("==== end %s model import info ====\n", modelKind);
 }
 
-// OBJ / MTL statement argument: the rest of the line, trimmed. File names may contain spaces.
+// OBJ / MTL 文の引数は、行の残りを前後の空白を除いて取得する。ファイル名には空白を許す。
 static string ObjStatementArgument(const string& line, size_t keywordLength)
 {
     string value = line.size() > keywordLength ? line.substr(keywordLength) : string();
@@ -185,7 +185,7 @@ static string ObjStatementArgument(const string& line, size_t keywordLength)
 static unordered_map<string, MtlData> ParseMtl(const string& mtlFilePath)
 {
     unordered_map<string, MtlData> materials;
-    // UTF-8 path (Japanese folder / file names).
+    // 日本語のフォルダ名やファイル名を扱う UTF-8 パス。
     ifstream ifs(ModelPathFromUtf8(mtlFilePath.c_str()));
     if (!ifs)
     {
@@ -210,7 +210,9 @@ static unordered_map<string, MtlData> ParseMtl(const string& mtlFilePath)
         else if (!currentMtl.empty() && line.rfind("Kd ", 0) == 0)
         {
             istringstream iss(line.substr(3));
-            float r, g, b;
+            float r;
+            float g;
+            float b;
             if (iss >> r >> g >> b)
             {
                 materials[currentMtl].Kd = XMFLOAT4(r, g, b, 1.0f);
@@ -218,7 +220,7 @@ static unordered_map<string, MtlData> ParseMtl(const string& mtlFilePath)
         }
         else if (!currentMtl.empty() && line.rfind("map_Kd ", 0) == 0)
         {
-            // Options such as "-bm 1" are not supported; take the trailing file name.
+            // "-bm 1" などのオプションは未対応。末尾のファイル名を使う。
             const string path = ObjStatementArgument(line, 7);
             if (!path.empty())
             {
@@ -610,8 +612,8 @@ bool StaticModelResource::BuildLodIndexBuffers(ID3D12Device* device, const vecto
 bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 {
     LoadLODMetadata(fileName);
-    // The legacy OBJ importer combines every face into one section. Preserve its
-    // single-material behavior, but retain authored material sections via Assimp.
+    // 旧 OBJ インポーターは全ポリゴンを単一セクションにまとめる。その単一マテリアルの
+    // 動作を保持しつつ、Assimp 経由では設定済みのマテリアルセクションを保持する。
     const filesystem::path objPath = ModelPathFromUtf8(fileName);
     ifstream source(objPath);
     unordered_set<string> sectionMaterials;
@@ -642,8 +644,8 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 
     unordered_map<string, MtlData> materialMap;
     XMFLOAT4 currentKd = {1.0f, 1.0f, 1.0f, 1.0f};
-    // Optional per-vertex colour extension "v x y z r g b" (Blender, MeshLab, Procedural Studio).
-    // Indexed like positions; multiplied with the material Kd.
+    // 任意の頂点色拡張 "v x y z r g b"（Blender、MeshLab、Procedural Studio）。
+    // 位置と同じインデックスを使い、マテリアルの Kd と乗算する。
     vector<XMFLOAT3> vertexColors;
     bool hasVertexColors = false;
 
@@ -656,8 +658,8 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
         {
             const string mtlName = ObjStatementArgument(line, 7);
             const auto dir = objPath.parent_path();
-            const filesystem::path mtlPath = dir.empty() ? ModelPathFromUtf8(mtlName.c_str())
-                                                         : dir / ModelPathFromUtf8(mtlName.c_str());
+            const filesystem::path mtlPath =
+                dir.empty() ? ModelPathFromUtf8(mtlName.c_str()) : dir / ModelPathFromUtf8(mtlName.c_str());
 
             materialMap = ParseMtl(ModelPathToUtf8(mtlPath));
 
@@ -725,7 +727,7 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
                 tokens.push_back(tok);
             }
 
-            // Polygons of any size (fan triangulated). Negative indices are relative to the current end.
+            // 任意の頂点数のポリゴンを扇状に三角形化する。負のインデックスは現在の末尾が基準。
             thread_local vector<unsigned int> vi, ti, ni;
             vi.assign(tokens.size(), 0);
             ti.assign(tokens.size(), 0);
@@ -741,7 +743,9 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
             int count = 0;
             for (auto& t : tokens)
             {
-                int v = 0, tc = 0, n = 0;
+                int v = 0;
+                int tc = 0;
+                int n = 0;
                 if (sscanf_s(t.c_str(), "%d/%d/%d", &v, &tc, &n) == 3)
                 {
                 }
@@ -1001,8 +1005,8 @@ bool StaticModelResource::LoadVirtualGeometry(const char* fileName, ID3D12Device
         mesh.VirtualGeometrySettings = m_VGSettings;
         mesh.AppliedMaterialPartId = float(ShaderClass::PBR);
         mesh.MaterialPartId = mesh.AppliedMaterialPartId;
-        // Only pinned roots are expanded for unsupported-device/shadow/picking fallback.
-        // Fine geometry remains encoded on disk and is never uploaded as a full vertex buffer.
+        // 非対応デバイス・影・ピッキングの代替経路では、常駐固定されたルートだけを展開する。
+        // 詳細ジオメトリはディスク上の符号化状態を保ち、完全な頂点バッファとしてはアップロードしない。
         std::vector<uint8_t> page(VirtualGeometryPages::PageBytes);
         uint32_t lastPage = UINT32_MAX;
         XMFLOAT3 lower{INFINITY, INFINITY, INFINITY}, upper{-INFINITY, -INFINITY, -INFINITY};
@@ -1123,100 +1127,101 @@ bool StaticModelResource::LoadVirtualGeometry(const char* fileName, ID3D12Device
 
 namespace
 {
-uint64_t HashSourceFile(const std::filesystem::path& path)
-{
-    std::ifstream input(path, std::ios::binary);
-    if (!input)
+    uint64_t HashSourceFile(const std::filesystem::path& path)
     {
-        return 0;
-    }
-    uint64_t hash = 14695981039346656037ull;
-    std::array<char, 65536> bytes;
-    while (input)
-    {
-        input.read(bytes.data(), bytes.size());
-        for (std::streamsize index = 0; index < input.gcount(); ++index)
+        std::ifstream input(path, std::ios::binary);
+        if (!input)
         {
-            hash = (hash ^ static_cast<unsigned char>(bytes[index])) * 1099511628211ull;
+            return 0;
         }
+        uint64_t hash = 14695981039346656037ull;
+        std::array<char, 65536> bytes;
+        while (input)
+        {
+            input.read(bytes.data(), bytes.size());
+            for (std::streamsize index = 0; index < input.gcount(); ++index)
+            {
+                hash = (hash ^ static_cast<unsigned char>(bytes[index])) * 1099511628211ull;
+            }
+        }
+        return input.bad() ? 0 : hash;
     }
-    return input.bad() ? 0 : hash;
-}
 
-std::vector<std::filesystem::path> GeometryDependencies(const std::filesystem::path& source)
-{
-    std::vector<std::filesystem::path> paths{source};
-    std::string extension = source.extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char letter) {
-        return static_cast<char>(std::tolower(letter));
-    });
-    if (extension == ".gltf" || extension == ".glb")
+    std::vector<std::filesystem::path> GeometryDependencies(const std::filesystem::path& source)
     {
-        std::ifstream input(source, std::ios::binary);
-        Json::Value document;
-        Json::CharReaderBuilder reader;
-        std::string error;
-        if (extension == ".glb")
+        std::vector<std::filesystem::path> paths{source};
+        std::string extension = source.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char letter) {
+            return static_cast<char>(std::tolower(letter));
+        });
+        if (extension == ".gltf" || extension == ".glb")
         {
-            std::array<uint32_t, 5> header{};
-            input.read(reinterpret_cast<char*>(header.data()), sizeof(header));
-            if (!input || header[0] != 0x46546c67u || header[1] != 2 || header[4] != 0x4e4f534au ||
-                header[3] > 16u * 1024 * 1024 || header[2] < sizeof(header) || header[3] > header[2] - sizeof(header))
+            std::ifstream input(source, std::ios::binary);
+            Json::Value document;
+            Json::CharReaderBuilder reader;
+            std::string error;
+            if (extension == ".glb")
             {
-                return {};
-            }
-            std::string json(header[3], '\0');
-            if (!input.read(json.data(), json.size()))
-            {
-                return {};
-            }
-            std::istringstream jsonStream(json);
-            if (!Json::parseFromStream(reader, jsonStream, &document, &error))
-            {
-                return {};
-            }
-        }
-        else if (!Json::parseFromStream(reader, input, &document, &error))
-        {
-            return {};
-        }
-        for (const auto& buffer : document["buffers"])
-        {
-            if (extension == ".glb" && !buffer.isMember("uri"))
-            {
-                continue;
-            }
-            const auto uri = buffer["uri"].asString();
-            if (uri.rfind("data:", 0) != 0)
-            {
-                // URI escapes require the importer; skip the fast cache rather than miss a dependency.
-                if (uri.empty() || uri.find('%') != std::string::npos)
+                std::array<uint32_t, 5> header{};
+                input.read(reinterpret_cast<char*>(header.data()), sizeof(header));
+                if (!input || header[0] != 0x46546c67u || header[1] != 2 || header[4] != 0x4e4f534au ||
+                    header[3] > 16u * 1024 * 1024 || header[2] < sizeof(header) ||
+                    header[3] > header[2] - sizeof(header))
                 {
                     return {};
                 }
-                paths.push_back(source.parent_path() / std::filesystem::u8path(uri));
+                std::string json(header[3], '\0');
+                if (!input.read(json.data(), json.size()))
+                {
+                    return {};
+                }
+                std::istringstream jsonStream(json);
+                if (!Json::parseFromStream(reader, jsonStream, &document, &error))
+                {
+                    return {};
+                }
             }
-        }
-    }
-    if (extension == ".obj")
-    {
-        std::ifstream input(source);
-        std::string line;
-        while (std::getline(input, line))
-        {
-            if (line.rfind("mtllib ", 0) == 0)
+            else if (!Json::parseFromStream(reader, input, &document, &error))
             {
-                // Trimmed (CRLF files) UTF-8 name; a stale '\r' made the dependency hash fail every load.
-                paths.push_back(source.parent_path() / ModelPathFromUtf8(ObjStatementArgument(line, 7).c_str()));
+                return {};
+            }
+            for (const auto& buffer : document["buffers"])
+            {
+                if (extension == ".glb" && !buffer.isMember("uri"))
+                {
+                    continue;
+                }
+                const auto uri = buffer["uri"].asString();
+                if (uri.rfind("data:", 0) != 0)
+                {
+                    // URI エスケープにはインポーターが必要。依存関係を見落とさないよう高速キャッシュを使わない。
+                    if (uri.empty() || uri.find('%') != std::string::npos)
+                    {
+                        return {};
+                    }
+                    paths.push_back(source.parent_path() / std::filesystem::u8path(uri));
+                }
             }
         }
+        if (extension == ".obj")
+        {
+            std::ifstream input(source);
+            std::string line;
+            while (std::getline(input, line))
+            {
+                if (line.rfind("mtllib ", 0) == 0)
+                {
+                    // CRLF ファイルの UTF-8 名から前後の空白を除く。残った '\r' が毎回依存ハッシュを不一致にしていた。
+                    paths.push_back(source.parent_path() / ModelPathFromUtf8(ObjStatementArgument(line, 7).c_str()));
+                }
+            }
+        }
+        return paths;
     }
-    return paths;
 }
-} // namespace
 
-// Bump when the source importers change what they put into vertices (2: OBJ / Assimp vertex colours).
-// Derived virtual geometry caches written by older importers are rebuilt from the source.
+// 元インポーターの頂点生成内容を変更したら更新する（2: OBJ / Assimp の頂点色）。
+// 旧インポーターが作成した派生仮想ジオメトリキャッシュはソースから再構築する。
 constexpr unsigned kSourceImporterRevision = 2;
 
 bool StaticModelResource::LoadDerivedVirtualGeometry(const char* fileName, ID3D12Device* device, bool convert)
@@ -1323,7 +1328,7 @@ bool StaticModelResource::LoadDerivedVirtualGeometry(const char* fileName, ID3D1
     }
     catch (const std::exception&)
     {
-        return false; // Any invalid cache falls through to the source importer.
+        return false; // キャッシュが不正なら、いずれの場合もソースのインポーターへ進む。
     }
 }
 
@@ -1406,7 +1411,7 @@ void StaticModelResource::PublishDerivedVirtualGeometry(bool convert)
                 }
                 if (!found)
                 {
-                    m_DerivedVGPublished = true; // Embedded textures need the original importer.
+                    m_DerivedVGPublished = true; // 埋め込みテクスチャは元のインポーターが必要。
                     return;
                 }
             }
@@ -1442,7 +1447,7 @@ void StaticModelResource::CaptureSourceIdentity(const std::filesystem::path& pat
     }
     catch (const std::exception&)
     {
-        m_VGDependencies.clear(); // Invalid dependency metadata must reach the normal importer as an error.
+        m_VGDependencies.clear(); // 依存メタデータの不正は、通常のインポーターへエラーとして伝える。
     }
     m_VGDependencyHashes.clear();
     m_VGDependencyTimes.clear();
@@ -1585,8 +1590,8 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
             vertex.Diffuse = meshDiffuse;
             if (objVertexColors && mesh->HasVertexColors(0))
             {
-                // OBJ "v x y z r g b" (multi-material OBJs come through Assimp). Limited to OBJ: FBX / VRM
-                // files often carry unused (black) colour sets that would darken existing assets.
+                // OBJ の "v x y z r g b"（複数マテリアルの OBJ は Assimp 経由）。OBJ だけを対象にする。
+                // FBX / VRM には未使用の黒い頂点色が含まれることが多く、適用すると既存アセットが暗くなる。
                 const aiColor4D& color = mesh->mColors[0][v];
                 vertex.Diffuse.x *= color.r;
                 vertex.Diffuse.y *= color.g;
@@ -1882,10 +1887,9 @@ void StaticModelResource::RebuildVirtualGeometry(const VGImportSettings& setting
             auto runtime = std::make_shared<VirtualGeometryRuntime::RuntimeAsset>(*mesh.VirtualGeometryLODs[0]);
             runtime->ImportSettings = settings;
             mesh.VirtualGeometryLODs[0] = std::move(runtime);
-            continue; // Prebuilt pages retain their native hierarchy when runtime policy changes.
+            continue; // 実行時の方針が変わっても、事前構築したページは固有の階層を保持する。
         }
         MeshletManager::BuildImportedMesh(mesh);
         GPUDrivenRenderer::UpdateGeometry(mesh);
     }
 }
-

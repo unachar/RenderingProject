@@ -25,187 +25,189 @@
 
 namespace
 {
-vector<EntityID> fixtures;
-int modelID = -1;
-uint32_t failures = 0;
-uint64_t frames = 0;
-vector<RenderCapture::TextureData> reference;
-vector<double> cpuTimes, gpuTimes;
+    vector<EntityID> fixtures;
+    int modelID = -1;
+    uint32_t failures = 0;
+    uint64_t frames = 0;
+    vector<RenderCapture::TextureData> reference;
+    vector<double> cpuTimes, gpuTimes;
 
-bool GpuValidation()
-{
-    char value[8]{};
-    return GetEnvironmentVariableA("DX12_GPU_BASED_VALIDATION", value, sizeof(value)) && atoi(value) != 0;
-}
+    bool GpuValidation()
+    {
+        char value[8]{};
+        return GetEnvironmentVariableA("DX12_GPU_BASED_VALIDATION", value, sizeof(value)) && atoi(value) != 0;
+    }
 
-void Check(bool result, const char* name)
-{
-    WriteGraphicsLog("GPU Driven validation: %s %s\n", result ? "PASS" : "FAIL", name);
-    if (!result)
+    void Check(bool result, const char* name)
     {
-        ++failures;
-    }
-}
-
-EntityID Create(size_t index)
-{
-    Entity entity = World::CreateEntity();
-    if (!entity.IsValid())
-    {
-        Check(false, "fixture capacity");
-        return g_kINVALID_ENTITY;
-    }
-    entity.Add<TransformComponent>().Add<StaticModelComponent>().Add<MaterialComponent>();
-    entity.Add<ShaderComponent>().Add<NameComponent>().Add<ProceduralMotionComponent>();
-    entity.Get<NameComponent>().Name = "GPU fixture";
-    entity.Get<ProceduralMotionComponent>().Enabled = false;
-    entity.Get<StaticModelComponent>().ModelId = modelID;
-    auto& transform = entity.Get<TransformComponent>();
-    transform.Position = {float(index % 100) * 0.08f - 4, float((index / 100) % 100) * 0.08f - 4,
-                          float(index / 10000) * 0.2f};
-    transform.Scale = {0.035f, 0.035f, 0.035f};
-    auto& material = entity.Get<MaterialComponent>();
-    material.ShaderClassMode = MaterialMode::Manual;
-    material.ShaderClass = ShaderClass::PBR;
-    material.UseTexture = true;
-    material.TextureID = index % 2 ? TextureManager::GetDefaultTextureIndex() : TextureManager::GetErrorTextureIndex();
-    material.Metallic = float(index % 5) * 0.2f;
-    material.Roughness = 0.2f + float(index % 4) * 0.15f;
-    return entity.GetID();
-}
-
-void Grow(size_t count)
-{
-    while (fixtures.size() < count)
-    {
-        fixtures.push_back(Create(fixtures.size()));
-    }
-}
-
-void Capture(bool compare)
-{
-    vector<RenderCapture::TextureData> images(5);
-    bool read = true;
-    for (uint32_t i = 0; i < 5; ++i)
-    {
-        read &= RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(static_cast<GBufferType>(i)), images[i]);
-    }
-    Check(read, "capture GBuffer");
-    if (!read)
-    {
-        return;
-    }
-    if (!compare)
-    {
-        reference = move(images);
-        return;
-    }
-    bool match = reference.size() == images.size();
-    uint64_t compared = 0, different = 0, covered = 0;
-    for (size_t i = 0; i < images.size() && match; ++i)
-    {
-        const auto& a = reference[i];
-        const auto& b = images[i];
-        match &= a.Width == b.Width && a.Height == b.Height && a.Format == b.Format;
-        if (!match)
+        WriteGraphicsLog("GPU Driven validation: %s %s\n", result ? "PASS" : "FAIL", name);
+        if (!result)
         {
-            break;
+            ++failures;
         }
-        const uint32_t pixelBytes = i == 3 ? 8 : 4;
-        for (uint32_t y = 0; y < a.Height; ++y)
+    }
+
+    EntityID Create(size_t index)
+    {
+        Entity entity = World::CreateEntity();
+        if (!entity.IsValid())
         {
-            for (uint32_t x = 0; x < a.Width; ++x)
+            Check(false, "fixture capacity");
+            return g_kINVALID_ENTITY;
+        }
+        entity.Add<TransformComponent>().Add<StaticModelComponent>().Add<MaterialComponent>();
+        entity.Add<ShaderComponent>().Add<NameComponent>().Add<ProceduralMotionComponent>();
+        entity.Get<NameComponent>().Name = "GPU fixture";
+        entity.Get<ProceduralMotionComponent>().Enabled = false;
+        entity.Get<StaticModelComponent>().ModelId = modelID;
+        auto& transform = entity.Get<TransformComponent>();
+        transform.Position = {float(index % 100) * 0.08f - 4, float((index / 100) % 100) * 0.08f - 4,
+                              float(index / 10000) * 0.2f};
+        transform.Scale = {0.035f, 0.035f, 0.035f};
+        auto& material = entity.Get<MaterialComponent>();
+        material.ShaderClassMode = MaterialMode::Manual;
+        material.ShaderClass = ShaderClass::PBR;
+        material.UseTexture = true;
+        material.TextureID =
+            index % 2 ? TextureManager::GetDefaultTextureIndex() : TextureManager::GetErrorTextureIndex();
+        material.Metallic = float(index % 5) * 0.2f;
+        material.Roughness = 0.2f + float(index % 4) * 0.15f;
+        return entity.GetID();
+    }
+
+    void Grow(size_t count)
+    {
+        while (fixtures.size() < count)
+        {
+            fixtures.push_back(Create(fixtures.size()));
+        }
+    }
+
+    void Capture(bool compare)
+    {
+        vector<RenderCapture::TextureData> images(5);
+        bool read = true;
+        for (uint32_t i = 0; i < 5; ++i)
+        {
+            read &=
+                RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(static_cast<GBufferType>(i)), images[i]);
+        }
+        Check(read, "capture GBuffer");
+        if (!read)
+        {
+            return;
+        }
+        if (!compare)
+        {
+            reference = move(images);
+            return;
+        }
+        bool match = reference.size() == images.size();
+        uint64_t compared = 0, different = 0, covered = 0;
+        for (size_t i = 0; i < images.size() && match; ++i)
+        {
+            const auto& a = reference[i];
+            const auto& b = images[i];
+            match &= a.Width == b.Width && a.Height == b.Height && a.Format == b.Format;
+            if (!match)
             {
-                const auto* pa = a.Bytes.data() + y * a.RowPitch + x * pixelBytes;
-                const auto* pb = b.Bytes.data() + y * b.RowPitch + x * pixelBytes;
-                if (i == 2)
+                break;
+            }
+            const uint32_t pixelBytes = i == 3 ? 8 : 4;
+            for (uint32_t y = 0; y < a.Height; ++y)
+            {
+                for (uint32_t x = 0; x < a.Width; ++x)
                 {
-                    float da, db;
-                    memcpy(&da, pa, 4);
-                    memcpy(&db, pb, 4);
-                    different += abs(da - db) > 0.00001f;
-                    covered += da < 0.999f && da > 0.0f;
+                    const auto* pa = a.Bytes.data() + y * a.RowPitch + x * pixelBytes;
+                    const auto* pb = b.Bytes.data() + y * b.RowPitch + x * pixelBytes;
+                    if (i == 2)
+                    {
+                        float da, db;
+                        memcpy(&da, pa, 4);
+                        memcpy(&db, pb, 4);
+                        different += abs(da - db) > 0.00001f;
+                        covered += da < 0.999f && da > 0.0f;
+                    }
+                    else
+                    {
+                        different += memcmp(pa, pb, pixelBytes) != 0;
+                    }
+                    ++compared;
                 }
-                else
-                {
-                    different += memcmp(pa, pb, pixelBytes) != 0;
-                }
-                ++compared;
             }
         }
+        WriteGraphicsLog("GPU Driven GBuffer comparison: different=%llu pixels=%llu covered=%llu\n", different,
+                         compared, covered);
+        Check(match && different == 0 && covered > 0, "CPU/GPU transform/material/texture/normal GBuffer match");
     }
-    WriteGraphicsLog("GPU Driven GBuffer comparison: different=%llu pixels=%llu covered=%llu\n", different, compared,
-                     covered);
-    Check(match && different == 0 && covered > 0, "CPU/GPU transform/material/texture/normal GBuffer match");
-}
 
-void ValidateCommands()
-{
-    const auto& stats = GpuScene::Statistics();
-    vector<uint8_t> counts, visibility, commands, geometry;
-    bool read =
-        RenderCapture::ReadBuffer(GPUDrivenRenderer::CountBuffer(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, 4, counts);
-    read &= RenderCapture::ReadBuffer(GpuScene::VisibilityBuffer(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                                      uint64_t(stats.InstanceSlots) * 4, visibility);
-    read &=
-        RenderCapture::ReadBuffer(GPUDrivenRenderer::GeometryBuffer(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                                  uint64_t(stats.Meshes) * sizeof(GPUDrivenGeometryData), geometry);
-    Check(read, "read debug count/visibility/geometry");
-    if (!read)
+    void ValidateCommands()
     {
-        return;
-    }
-    uint32_t count = 0;
-    memcpy(&count, counts.data(), 4);
-    unordered_set<uint32_t> expected;
-    const auto* flags = reinterpret_cast<const uint32_t*>(visibility.data());
-    for (EntityID entity : fixtures)
-    {
-        for (auto id : GpuScene::GetEntityInstances(entity))
+        const auto& stats = GpuScene::Statistics();
+        vector<uint8_t> counts, visibility, commands, geometry;
+        bool read = RenderCapture::ReadBuffer(GPUDrivenRenderer::CountBuffer(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
+                                              4, counts);
+        read &= RenderCapture::ReadBuffer(GpuScene::VisibilityBuffer(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                                          uint64_t(stats.InstanceSlots) * 4, visibility);
+        read &= RenderCapture::ReadBuffer(GPUDrivenRenderer::GeometryBuffer(),
+                                          D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                                          uint64_t(stats.Meshes) * sizeof(GPUDrivenGeometryData), geometry);
+        Check(read, "read debug count/visibility/geometry");
+        if (!read)
         {
-            const auto* instance = GpuScene::GetInstance(id);
-            if (instance && (instance->Flags & 5u) == 5u && flags[id])
+            return;
+        }
+        uint32_t count = 0;
+        memcpy(&count, counts.data(), 4);
+        unordered_set<uint32_t> expected;
+        const auto* flags = reinterpret_cast<const uint32_t*>(visibility.data());
+        for (EntityID entity : fixtures)
+        {
+            for (auto id : GpuScene::GetEntityInstances(entity))
             {
-                expected.insert(id);
+                const auto* instance = GpuScene::GetInstance(id);
+                if (instance && (instance->Flags & 5u) == 5u && flags[id])
+                {
+                    expected.insert(id);
+                }
             }
         }
-    }
-    Check(count == expected.size() && count <= GPUDrivenRenderer::CommandCapacity(),
-          "GPU count equals compact visible instances without overflow");
-    if (count > GPUDrivenRenderer::CommandCapacity())
-    {
-        return;
-    }
-    if (count)
-    {
-        read = RenderCapture::ReadBuffer(GPUDrivenRenderer::CommandBuffer(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
-                                         uint64_t(count) * sizeof(GPUIndirectDrawCommand), commands);
-    }
-    bool valid = read;
-    const auto* meshes = reinterpret_cast<const GPUDrivenGeometryData*>(geometry.data());
-    for (uint32_t i = 0; i < count && valid; ++i)
-    {
-        GPUIndirectDrawCommand command{};
-        memcpy(&command, commands.data() + size_t(i) * sizeof(command), sizeof(command));
-        const auto* instance = GpuScene::GetInstance(command.InstanceID);
-        valid &= instance && expected.erase(command.InstanceID) == 1;
-        if (!valid)
+        Check(count == expected.size() && count <= GPUDrivenRenderer::CommandCapacity(),
+              "GPU count equals compact visible instances without overflow");
+        if (count > GPUDrivenRenderer::CommandCapacity())
         {
-            break;
+            return;
         }
-        const auto& mesh = meshes[instance->MeshIndex];
-        valid &= command.Draw.IndexCountPerInstance == mesh.IndexCount &&
-                 command.Draw.StartIndexLocation == mesh.StartIndex &&
-                 command.Draw.BaseVertexLocation == mesh.BaseVertex && command.Draw.InstanceCount == 1 &&
-                 command.Draw.StartInstanceLocation == 0;
+        if (count)
+        {
+            read = RenderCapture::ReadBuffer(GPUDrivenRenderer::CommandBuffer(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
+                                             uint64_t(count) * sizeof(GPUIndirectDrawCommand), commands);
+        }
+        bool valid = read;
+        const auto* meshes = reinterpret_cast<const GPUDrivenGeometryData*>(geometry.data());
+        for (uint32_t i = 0; i < count && valid; ++i)
+        {
+            GPUIndirectDrawCommand command{};
+            memcpy(&command, commands.data() + size_t(i) * sizeof(command), sizeof(command));
+            const auto* instance = GpuScene::GetInstance(command.InstanceID);
+            valid &= instance && expected.erase(command.InstanceID) == 1;
+            if (!valid)
+            {
+                break;
+            }
+            const auto& mesh = meshes[instance->MeshIndex];
+            valid &= command.Draw.IndexCountPerInstance == mesh.IndexCount &&
+                     command.Draw.StartIndexLocation == mesh.StartIndex &&
+                     command.Draw.BaseVertexLocation == mesh.BaseVertex && command.Draw.InstanceCount == 1 &&
+                     command.Draw.StartInstanceLocation == 0;
+        }
+        Check(valid && expected.empty(), "GPU commands have unique live Instance IDs and exact mesh arguments");
+        Check(GPUDrivenRenderer::ExecuteCalls() == 1, "Opaque submission uses one ExecuteIndirect");
+        WriteGraphicsLog("GPU Driven frame: fixtures=%zu visible=%u commands=%u capacity=%u submission=%.4f ms\n",
+                         fixtures.size(), count, count, GPUDrivenRenderer::CommandCapacity(),
+                         GPUDrivenRenderer::SubmissionMilliseconds());
     }
-    Check(valid && expected.empty(), "GPU commands have unique live Instance IDs and exact mesh arguments");
-    Check(GPUDrivenRenderer::ExecuteCalls() == 1, "Opaque submission uses one ExecuteIndirect");
-    WriteGraphicsLog("GPU Driven frame: fixtures=%zu visible=%u commands=%u capacity=%u submission=%.4f ms\n",
-                     fixtures.size(), count, count, GPUDrivenRenderer::CommandCapacity(),
-                     GPUDrivenRenderer::SubmissionMilliseconds());
-}
-} // namespace
+} // 名前空間
 
 bool GPUDrivenValidation::Enabled()
 {
@@ -377,8 +379,8 @@ void GPUDrivenValidation::BeforeFrame(uint64_t frame)
     }
     if (frame == 72)
     {
-        // 10,000 entities with five material sections exercise 50,000 static mesh
-        // instances without changing the existing 16,384-entity ECS contract.
+        // 5つのマテリアル区画を持つ1万エンティティで、5万の静的メッシュインスタンスを検証する。
+        // 既存の ECS の16384エンティティ制限は変更しない。
         Grow(10000);
         ofstream obj("build/gpudriven/fixture-sections.obj");
         ofstream mtl("build/gpudriven/fixture-sections.mtl");
@@ -386,8 +388,8 @@ void GPUDrivenValidation::BeforeFrame(uint64_t frame)
         for (uint32_t i = 0; i < 5; ++i)
         {
             mtl << "newmtl Section" << i << "\nKd " << (0.2f + i * 0.15f) << " 1 1\n";
-            // Keep sections and adjacent entities disjoint. Coplanar overlapping
-            // materials otherwise make an unsorted opaque draw order observable.
+            // 区画と隣接エンティティは重ならないようにする。同一平面でマテリアルが重なると、
+            // 未ソートの不透明描画の順序が結果に現れてしまう。
             const float x = -0.7f + float(i) * 0.35f;
             obj << "v " << x - 0.12f << " -0.8 0\nv " << x << " 0.8 0\nv " << x + 0.12f << " -0.8 0\n";
             obj << "usemtl Section" << i << "\nf " << i * 3 + 1 << ' ' << i * 3 + 2 << ' ' << i * 3 + 3 << '\n';
@@ -427,7 +429,7 @@ void GPUDrivenValidation::AfterFrame(uint64_t frame)
     {
         if (pass.Name == "GBuffer / Opaque")
         {
-            // GetLatest has frame-slot latency; keep only settled samples within each window.
+            // GetLatest はフレームスロット分遅れるため、各区間内で安定したサンプルだけを使う。
             if (frame >= 20 && frame < 24)
             {
                 cpuTimes.push_back(pass.CpuMs);

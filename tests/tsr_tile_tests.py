@@ -1,6 +1,6 @@
-"""Check production TSR tile bounds against every spatial tap on the CPU.
+"""本番のTSRタイルの範囲が、すべての空間サンプル位置を含むことをCPUで検証する。
 
-This is address/coverage verification, not a GPU image-equivalence test.
+アドレスと範囲の検証を行う。GPUの出力画像の一致は検証しない。
 """
 import os
 from pathlib import Path
@@ -32,7 +32,7 @@ int main() {
     uint64_t taps = 0;
     for (int input : {1, 2, 3, 7, 8, 9, 32, 97, 384, 1920}) {
         for (int output : {1, 3, 7, 8, 9, 32, 160, 721, 1920, 3840}) {
-            if (input > output) continue; // Production falls back to direct loads for downscaling.
+            if (input > output) continue; // 本番では、縮小時に直接読み込みへ切り替える。
             for (int test = 0; test < 128; ++test) {
                 float jitter = test == 0 ? 0.f : test == 1 ? -.5f / input : test == 2 ? .5f / input :
                     (float(random() % 2001) / 2000.f - .5f) / input;
@@ -52,7 +52,7 @@ int main() {
                         texel = clamp(texel, 0, input - 1);
                         if (texel < first || texel > last)
                             throw std::runtime_error("a production spatial tap falls outside the tile");
-                        // Copying a texel by its local offset must retain its exact address.
+                        // ローカルオフセットでテクセルをコピーしても、元のアドレスを正確に維持する。
                         if (first + (texel - first) != texel) throw std::runtime_error("cache address changed");
                         ++taps;
                     };

@@ -14,11 +14,9 @@ float4 main(PSInputPostProcess input) : SV_TARGET
     float totalWeight = 0.0f;
     float4 result = 0.0f;
 
-    [unroll]
-    for (int x = -1; x <= 1; ++x)
+    [unroll] for (int x = -1; x <= 1; ++x)
     {
-        [unroll]
-        for (int y = -1; y <= 1; ++y)
+        [unroll] for (int y = -1; y <= 1; ++y)
         {
             float2 sampleUV = input.TexCoord + float2(x, y) * step;
             float depthSample = LowResDepth.SampleLevel(LinearSampler, sampleUV, 0);
@@ -29,8 +27,7 @@ float4 main(PSInputPostProcess input) : SV_TARGET
         }
     }
 
-	result /= max(totalWeight, 0.001f);
-	result.a = 1.0f;
+    result /= max(totalWeight, 0.001f);
+    result.a = 1.0f;
     return result;
 }
-

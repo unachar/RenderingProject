@@ -15,198 +15,216 @@ using Microsoft::WRL::ComPtr;
 
 namespace
 {
-constexpr UINT InputWidth = 32, InputHeight = 24;
-constexpr UINT OutputWidth = 160, OutputHeight = 120;
+    constexpr UINT InputWidth = 32, InputHeight = 24;
+    constexpr UINT OutputWidth = 160, OutputHeight = 120;
 
-void Require(bool condition, const char* message)
-{
-    if (!condition)
+    void Require(bool condition, const char* message)
     {
-        throw std::runtime_error(message);
-    }
-}
-
-void Check(HRESULT result, const char* message)
-{
-    Require(SUCCEEDED(result), message);
-}
-
-struct Texture
-{
-    ComPtr<ID3D11Texture2D> Resource;
-    ComPtr<ID3D11ShaderResourceView> Srv;
-    ComPtr<ID3D11UnorderedAccessView> Uav;
-};
-
-Texture MakeTexture(ID3D11Device* device, UINT width, UINT height, bool scalar, bool writable, bool pair = false)
-{
-    D3D11_TEXTURE2D_DESC desc{};
-    desc.Width = width;
-    desc.Height = height;
-    desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
-    desc.Format = pair ? DXGI_FORMAT_R16G16_FLOAT : scalar ? DXGI_FORMAT_R32_FLOAT : DXGI_FORMAT_R32G32B32A32_FLOAT;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | (writable ? D3D11_BIND_UNORDERED_ACCESS : 0);
-    Texture texture;
-    Check(device->CreateTexture2D(&desc, nullptr, &texture.Resource), "create texture");
-    Check(device->CreateShaderResourceView(texture.Resource.Get(), nullptr, &texture.Srv), "create SRV");
-    if (writable)
-    {
-        Check(device->CreateUnorderedAccessView(texture.Resource.Get(), nullptr, &texture.Uav), "create UAV");
-    }
-    return texture;
-}
-
-float Halton(UINT phase, UINT base)
-{
-    float value = 0, fraction = 1;
-    while (phase)
-    {
-        fraction /= base;
-        value += fraction * (phase % base);
-        phase /= base;
-    }
-    return value - .5f;
-}
-
-struct Constants
-{
-    float Extent[4] = {InputWidth, InputHeight, OutputWidth, OutputHeight};
-    float Jitter[4]{};
-    float Parameters[4]{};
-    float InvCurrent[16]{};
-    float Previous[16]{};
-    float Reconstruction[4]{};
-
-    Constants()
-    {
-        for (UINT i = 0; i < 4; ++i)
+        if (!condition)
         {
-            InvCurrent[i * 5] = Previous[i * 5] = 1;
+            throw std::runtime_error(message);
         }
     }
-};
 
-void VerifyCacheParity(ID3D11Device* device, ID3D11DeviceContext* context)
-{
-    std::array<ComPtr<ID3D11ComputeShader>, 2> shaders;
-    for (UINT variant = 0; variant < 2; ++variant)
+    void Check(HRESULT result, const char* message)
     {
-        const D3D_SHADER_MACRO defines[] = {{"TSR_USE_SHARED_TILE", variant == 0 ? "0" : "1"}, {nullptr, nullptr}};
-        ComPtr<ID3DBlob> code, errors;
-        const auto compiled = D3DCompileFromFile(L"shader/hlsl/TemporalUpscaleCS.hlsl", defines,
-            D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
-        if (FAILED(compiled) && errors) std::cerr << static_cast<const char*>(errors->GetBufferPointer());
-        Check(compiled, "compile cache parity variant");
-        Check(device->CreateComputeShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, &shaders[variant]),
-              "create cache parity shader");
+        Require(SUCCEEDED(result), message);
     }
-    D3D11_BUFFER_DESC bufferDesc{};
-    bufferDesc.ByteWidth = sizeof(Constants);
-    bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    ComPtr<ID3D11Buffer> buffer;
-    Check(device->CreateBuffer(&bufferDesc, nullptr, &buffer), "create cache parity constants");
-    context->CSSetConstantBuffers(0, 1, buffer.GetAddressOf());
-    D3D11_SAMPLER_DESC samplerDesc{};
-    samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-    samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-    samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-    ComPtr<ID3D11SamplerState> sampler;
-    Check(device->CreateSamplerState(&samplerDesc, &sampler), "create cache parity sampler");
-    context->CSSetSamplers(0, 1, sampler.GetAddressOf());
-    // Include partial groups, 1px inputs, native, anisotropic and downscale fallbacks.
-    const UINT sizes[][4] = {{1, 1, 1, 1}, {1, 3, 17, 19}, {32, 24, 159, 119},
-        {97, 71, 97, 71}, {33, 17, 71, 65}, {32, 24, 17, 13}, {32, 12, 17, 25}};
-    UINT comparisons = 0;
-    for (const auto& size : sizes)
+
+    struct Texture
     {
-        auto color = MakeTexture(device, size[0], size[1], false, false);
-        auto depth = MakeTexture(device, size[0], size[1], true, false);
-        auto velocity = MakeTexture(device, size[0], size[1], false, false);
-        auto reveal = MakeTexture(device, size[0], size[1], true, false);
-        auto history = MakeTexture(device, size[2], size[3], false, false);
-        auto historyDepth = MakeTexture(device, size[2], size[3], true, false);
-        auto detail = MakeTexture(device, size[2], size[3], false, false, true);
-        std::array<std::array<Texture, 3>, 2> output;
-        std::array<std::array<ComPtr<ID3D11Texture2D>, 3>, 2> readback;
+        ComPtr<ID3D11Texture2D> Resource;
+        ComPtr<ID3D11ShaderResourceView> Srv;
+        ComPtr<ID3D11UnorderedAccessView> Uav;
+    };
+
+    Texture MakeTexture(ID3D11Device* device, UINT width, UINT height, bool scalar, bool writable, bool pair = false)
+    {
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = width;
+        desc.Height = height;
+        desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
+        desc.Format = pair ? DXGI_FORMAT_R16G16_FLOAT : scalar ? DXGI_FORMAT_R32_FLOAT : DXGI_FORMAT_R32G32B32A32_FLOAT;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | (writable ? D3D11_BIND_UNORDERED_ACCESS : 0);
+        Texture texture;
+        Check(device->CreateTexture2D(&desc, nullptr, &texture.Resource), "create texture");
+        Check(device->CreateShaderResourceView(texture.Resource.Get(), nullptr, &texture.Srv), "create SRV");
+        if (writable)
+        {
+            Check(device->CreateUnorderedAccessView(texture.Resource.Get(), nullptr, &texture.Uav), "create UAV");
+        }
+        return texture;
+    }
+
+    float Halton(UINT phase, UINT base)
+    {
+        float value = 0, fraction = 1;
+        while (phase)
+        {
+            fraction /= base;
+            value += fraction * (phase % base);
+            phase /= base;
+        }
+        return value - .5f;
+    }
+
+    struct Constants
+    {
+        float Extent[4] = {InputWidth, InputHeight, OutputWidth, OutputHeight};
+        float Jitter[4]{};
+        float Parameters[4]{};
+        float InvCurrent[16]{};
+        float Previous[16]{};
+        float Reconstruction[4]{};
+
+        Constants()
+        {
+            for (UINT i = 0; i < 4; ++i)
+            {
+                InvCurrent[i * 5] = Previous[i * 5] = 1;
+            }
+        }
+    };
+
+    void VerifyCacheParity(ID3D11Device* device, ID3D11DeviceContext* context)
+    {
+        std::array<ComPtr<ID3D11ComputeShader>, 2> shaders;
         for (UINT variant = 0; variant < 2; ++variant)
         {
-            output[variant][0] = MakeTexture(device, size[2], size[3], false, true);
-            output[variant][1] = MakeTexture(device, size[2], size[3], true, true);
-            output[variant][2] = MakeTexture(device, size[2], size[3], false, true, true);
-            for (UINT channel = 0; channel < 3; ++channel)
+            const D3D_SHADER_MACRO defines[] = {{"TSR_USE_SHARED_TILE", variant == 0 ? "0" : "1"}, {nullptr, nullptr}};
+            ComPtr<ID3DBlob> code, errors;
+            const auto compiled =
+                D3DCompileFromFile(L"shader/hlsl/TemporalUpscaleCS.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                                   "main", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
+            if (FAILED(compiled) && errors)
             {
-                D3D11_TEXTURE2D_DESC desc{};
-                output[variant][channel].Resource->GetDesc(&desc);
-                desc.BindFlags = 0;
-                desc.Usage = D3D11_USAGE_STAGING;
-                desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-                Check(device->CreateTexture2D(&desc, nullptr, &readback[variant][channel]), "create parity readback");
+                std::cerr << static_cast<const char*>(errors->GetBufferPointer());
             }
+            Check(compiled, "compile cache parity variant");
+            Check(device->CreateComputeShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr,
+                                              &shaders[variant]),
+                  "create cache parity shader");
         }
-        const UINT inputPixels = size[0] * size[1], outputPixels = size[2] * size[3];
-        std::vector<float> colors(inputPixels * 4), depths(inputPixels, .5f), velocities(inputPixels * 4, 0);
-        std::vector<float> revealage(inputPixels, 1), oldColors(outputPixels * 4, .25f), oldDepths(outputPixels, .5f);
-        std::vector<uint32_t> oldDetail(outputPixels, 0); // R16G16_FLOAT zero.
-        for (UINT i = 0; i < inputPixels; ++i)
+        D3D11_BUFFER_DESC bufferDesc{};
+        bufferDesc.ByteWidth = sizeof(Constants);
+        bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        ComPtr<ID3D11Buffer> buffer;
+        Check(device->CreateBuffer(&bufferDesc, nullptr, &buffer), "create cache parity constants");
+        context->CSSetConstantBuffers(0, 1, buffer.GetAddressOf());
+        D3D11_SAMPLER_DESC samplerDesc{};
+        samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+        ComPtr<ID3D11SamplerState> sampler;
+        Check(device->CreateSamplerState(&samplerDesc, &sampler), "create cache parity sampler");
+        context->CSSetSamplers(0, 1, sampler.GetAddressOf());
+        // 端数のあるグループ、1ピクセル入力、等倍、縦横比が異なる拡大、縮小時の代替処理を含める。
+        const UINT sizes[][4] = {{1, 1, 1, 1},     {1, 3, 17, 19},   {32, 24, 159, 119}, {97, 71, 97, 71},
+                                 {33, 17, 71, 65}, {32, 24, 17, 13}, {32, 12, 17, 25}};
+        UINT comparisons = 0;
+        for (const auto& size : sizes)
         {
-            colors[i * 4] = float((i * 13) % 257) / 32;
-            colors[i * 4 + 1] = float((i * 29) % 251) / 64;
-            colors[i * 4 + 2] = float((i * 47) % 241) / 128;
-            colors[i * 4 + 3] = 1;
-        }
-        context->UpdateSubresource(color.Resource.Get(), 0, nullptr, colors.data(), size[0] * 16, 0);
-        context->UpdateSubresource(depth.Resource.Get(), 0, nullptr, depths.data(), size[0] * 4, 0);
-        context->UpdateSubresource(velocity.Resource.Get(), 0, nullptr, velocities.data(), size[0] * 16, 0);
-        context->UpdateSubresource(reveal.Resource.Get(), 0, nullptr, revealage.data(), size[0] * 4, 0);
-        context->UpdateSubresource(history.Resource.Get(), 0, nullptr, oldColors.data(), size[2] * 16, 0);
-        context->UpdateSubresource(historyDepth.Resource.Get(), 0, nullptr, oldDepths.data(), size[2] * 4, 0);
-        context->UpdateSubresource(detail.Resource.Get(), 0, nullptr, oldDetail.data(), size[2] * 4, 0);
-        for (UINT frame = 0; frame < 16; ++frame)
-        {
-            Constants constants;
-            for (UINT i = 0; i < 4; ++i) constants.Extent[i] = static_cast<float>(size[i]);
-            constants.Jitter[0] = Halton(frame + 1, 2) / static_cast<float>(size[0]);
-            constants.Jitter[1] = Halton(frame + 1, 3) / static_cast<float>(size[1]);
-            constants.Parameters[0] = frame == 0 ? 0.f : 1.f;
-            constants.Parameters[2] = constants.Parameters[3] = 1;
-            constants.Reconstruction[0] = constants.Reconstruction[1] = 1;
-            context->UpdateSubresource(buffer.Get(), 0, nullptr, &constants, 0, 0);
-            ID3D11ShaderResourceView* srvs[] = {color.Srv.Get(), depth.Srv.Get(), velocity.Srv.Get(), history.Srv.Get(),
-                historyDepth.Srv.Get(), reveal.Srv.Get(), detail.Srv.Get()};
+            auto color = MakeTexture(device, size[0], size[1], false, false);
+            auto depth = MakeTexture(device, size[0], size[1], true, false);
+            auto velocity = MakeTexture(device, size[0], size[1], false, false);
+            auto reveal = MakeTexture(device, size[0], size[1], true, false);
+            auto history = MakeTexture(device, size[2], size[3], false, false);
+            auto historyDepth = MakeTexture(device, size[2], size[3], true, false);
+            auto detail = MakeTexture(device, size[2], size[3], false, false, true);
+            std::array<std::array<Texture, 3>, 2> output;
+            std::array<std::array<ComPtr<ID3D11Texture2D>, 3>, 2> readback;
             for (UINT variant = 0; variant < 2; ++variant)
             {
-                context->CSSetShader(shaders[variant].Get(), nullptr, 0);
-                context->CSSetShaderResources(0, 7, srvs);
-                ID3D11UnorderedAccessView* uavs[] = {output[variant][0].Uav.Get(), output[variant][1].Uav.Get(), output[variant][2].Uav.Get()};
-                context->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);
-                context->Dispatch((size[2] + 7) / 8, (size[3] + 7) / 8, 1);
-                ID3D11ShaderResourceView* noSrvs[7]{};
-                ID3D11UnorderedAccessView* noUavs[3]{};
-                context->CSSetShaderResources(0, 7, noSrvs);
-                context->CSSetUnorderedAccessViews(0, 3, noUavs, nullptr);
+                output[variant][0] = MakeTexture(device, size[2], size[3], false, true);
+                output[variant][1] = MakeTexture(device, size[2], size[3], true, true);
+                output[variant][2] = MakeTexture(device, size[2], size[3], false, true, true);
                 for (UINT channel = 0; channel < 3; ++channel)
-                    context->CopyResource(readback[variant][channel].Get(), output[variant][channel].Resource.Get());
+                {
+                    D3D11_TEXTURE2D_DESC desc{};
+                    output[variant][channel].Resource->GetDesc(&desc);
+                    desc.BindFlags = 0;
+                    desc.Usage = D3D11_USAGE_STAGING;
+                    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+                    Check(device->CreateTexture2D(&desc, nullptr, &readback[variant][channel]),
+                          "create parity readback");
+                }
             }
-            for (UINT channel = 0; channel < 3; ++channel)
+            const UINT inputPixels = size[0] * size[1], outputPixels = size[2] * size[3];
+            std::vector<float> colors(inputPixels * 4), depths(inputPixels, .5f), velocities(inputPixels * 4, 0);
+            std::vector<float> revealage(inputPixels, 1), oldColors(outputPixels * 4, .25f),
+                oldDepths(outputPixels, .5f);
+            std::vector<uint32_t> oldDetail(outputPixels, 0); // R16G16_FLOAT形式のゼロ値。
+            for (UINT i = 0; i < inputPixels; ++i)
             {
-                D3D11_MAPPED_SUBRESOURCE a{}, b{};
-                Check(context->Map(readback[0][channel].Get(), 0, D3D11_MAP_READ, 0, &a), "map direct TSR output");
-                Check(context->Map(readback[1][channel].Get(), 0, D3D11_MAP_READ, 0, &b), "map tiled TSR output");
-                bool equal = true;
-                const size_t rowBytes = size_t(size[2]) * (channel == 0 ? 16u : 4u);
-                for (UINT y = 0; y < size[3]; ++y)
-                    equal = equal && std::memcmp(static_cast<const char*>(a.pData) + size_t(y) * a.RowPitch,
-                        static_cast<const char*>(b.pData) + size_t(y) * b.RowPitch, rowBytes) == 0;
-                context->Unmap(readback[0][channel].Get(), 0);
-                context->Unmap(readback[1][channel].Get(), 0);
-                Require(equal, "tiled TSR differs bitwise from direct loads (color/depth/detail)");
-                ++comparisons;
+                colors[i * 4] = float((i * 13) % 257) / 32;
+                colors[i * 4 + 1] = float((i * 29) % 251) / 64;
+                colors[i * 4 + 2] = float((i * 47) % 241) / 128;
+                colors[i * 4 + 3] = 1;
+            }
+            context->UpdateSubresource(color.Resource.Get(), 0, nullptr, colors.data(), size[0] * 16, 0);
+            context->UpdateSubresource(depth.Resource.Get(), 0, nullptr, depths.data(), size[0] * 4, 0);
+            context->UpdateSubresource(velocity.Resource.Get(), 0, nullptr, velocities.data(), size[0] * 16, 0);
+            context->UpdateSubresource(reveal.Resource.Get(), 0, nullptr, revealage.data(), size[0] * 4, 0);
+            context->UpdateSubresource(history.Resource.Get(), 0, nullptr, oldColors.data(), size[2] * 16, 0);
+            context->UpdateSubresource(historyDepth.Resource.Get(), 0, nullptr, oldDepths.data(), size[2] * 4, 0);
+            context->UpdateSubresource(detail.Resource.Get(), 0, nullptr, oldDetail.data(), size[2] * 4, 0);
+            for (UINT frame = 0; frame < 16; ++frame)
+            {
+                Constants constants;
+                for (UINT i = 0; i < 4; ++i)
+                {
+                    constants.Extent[i] = static_cast<float>(size[i]);
+                }
+                constants.Jitter[0] = Halton(frame + 1, 2) / static_cast<float>(size[0]);
+                constants.Jitter[1] = Halton(frame + 1, 3) / static_cast<float>(size[1]);
+                constants.Parameters[0] = frame == 0 ? 0.f : 1.f;
+                constants.Parameters[2] = constants.Parameters[3] = 1;
+                constants.Reconstruction[0] = constants.Reconstruction[1] = 1;
+                context->UpdateSubresource(buffer.Get(), 0, nullptr, &constants, 0, 0);
+                ID3D11ShaderResourceView* srvs[] = {color.Srv.Get(),   depth.Srv.Get(),        velocity.Srv.Get(),
+                                                    history.Srv.Get(), historyDepth.Srv.Get(), reveal.Srv.Get(),
+                                                    detail.Srv.Get()};
+                for (UINT variant = 0; variant < 2; ++variant)
+                {
+                    context->CSSetShader(shaders[variant].Get(), nullptr, 0);
+                    context->CSSetShaderResources(0, 7, srvs);
+                    ID3D11UnorderedAccessView* uavs[] = {output[variant][0].Uav.Get(), output[variant][1].Uav.Get(),
+                                                         output[variant][2].Uav.Get()};
+                    context->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);
+                    context->Dispatch((size[2] + 7) / 8, (size[3] + 7) / 8, 1);
+                    ID3D11ShaderResourceView* noSrvs[7]{};
+                    ID3D11UnorderedAccessView* noUavs[3]{};
+                    context->CSSetShaderResources(0, 7, noSrvs);
+                    context->CSSetUnorderedAccessViews(0, 3, noUavs, nullptr);
+                    for (UINT channel = 0; channel < 3; ++channel)
+                    {
+                        context->CopyResource(readback[variant][channel].Get(),
+                                              output[variant][channel].Resource.Get());
+                    }
+                }
+                for (UINT channel = 0; channel < 3; ++channel)
+                {
+                    D3D11_MAPPED_SUBRESOURCE a{}, b{};
+                    Check(context->Map(readback[0][channel].Get(), 0, D3D11_MAP_READ, 0, &a), "map direct TSR output");
+                    Check(context->Map(readback[1][channel].Get(), 0, D3D11_MAP_READ, 0, &b), "map tiled TSR output");
+                    bool equal = true;
+                    const size_t rowBytes = size_t(size[2]) * (channel == 0 ? 16u : 4u);
+                    for (UINT y = 0; y < size[3]; ++y)
+                    {
+                        equal = equal &&
+                                std::memcmp(static_cast<const char*>(a.pData) + size_t(y) * a.RowPitch,
+                                            static_cast<const char*>(b.pData) + size_t(y) * b.RowPitch, rowBytes) == 0;
+                    }
+                    context->Unmap(readback[0][channel].Get(), 0);
+                    context->Unmap(readback[1][channel].Get(), 0);
+                    Require(equal, "tiled TSR differs bitwise from direct loads (color/depth/detail)");
+                    ++comparisons;
+                }
             }
         }
+        std::cout << "TSR direct/tiled GPU parity: " << comparisons << " channel comparisons passed\n";
     }
-    std::cout << "TSR direct/tiled GPU parity: " << comparisons << " channel comparisons passed\n";
-}
-} // namespace
+} // 無名名前空間
 
 int main(int argc, char** argv)
 {
@@ -296,7 +314,7 @@ int main(int argc, char** argv)
             constants.Jitter[1] = jitterY;
             constants.Jitter[2] = previousX;
             constants.Jitter[3] = previousY;
-            // Last frames exercise object removal, a camera cut, then transparency.
+            // 最後の数フレームで、物体の削除、カメラの切り替え、透明描画を順に検証する。
             constants.Parameters[0] = frame > 0 && frame != 161 && frame != 163 ? 1.f : 0.f;
             constants.Parameters[1] = frame == 162 ? 1.f : 0.f;
             if (fineDetail)
@@ -336,7 +354,7 @@ int main(int argc, char** argv)
                     float value = frame == 161 ? .7f : frame == 162 ? .4f : foreground ? 1.f : .02f;
                     if (fineDetail)
                     {
-                        // One output-pixel-wide slanted strand on a continuous surface.
+                        // 連続した面の上に、出力の1ピクセル幅の斜めの細線を置く。
                         value = frame < 160 && std::abs(worldX - (.27f * worldY + .37f)) < .5f / OutputWidth
                                     ? .02f + .98f * detailScale
                                     : .02f;
@@ -444,7 +462,7 @@ int main(int argc, char** argv)
                     }
                     Require(maximumError < .0001f, "thin geometry history survives reactive rejection or reset");
                 }
-                // A persistent signal change at unchanged depth must release the lock.
+                // 深度が変わらなくても、信号の変化が続く場合はロックを解除する。
                 if (frame == 175)
                 {
                     float maximumError = 0;
@@ -465,8 +483,8 @@ int main(int argc, char** argv)
                     {
                         const float edge =
                             (.3f * (x + .5f) / OutputWidth + .31f) * OutputHeight + float(frame - 163) * 2;
-                        // Bicubic fallback spans two input texels (10 output pixels),
-                        // plus a jittered input sample's half-texel displacement.
+                        // バイキュービックの代替処理は入力の2テクセル分（出力の10ピクセル分）に広がり、
+                        // さらに、ジッター付き入力サンプルの半テクセル分のずれが加わる。
                         if (std::abs(y + .5f - edge) <= 13)
                         {
                             continue;
@@ -485,7 +503,7 @@ int main(int argc, char** argv)
             {
                 const float expected = frame == 160 ? .02f : frame == 161 ? .7f : .4f;
                 float maximumError = 0;
-                // Newly exposed background must not retain the removed object's color.
+                // 新しく見えるようになった背景に、削除した物体の色を残さない。
                 for (UINT y = OutputHeight - 20; y < OutputHeight - 5; ++y)
                 {
                     for (UINT x = 5; x < OutputWidth - 5; ++x)
@@ -508,7 +526,7 @@ int main(int argc, char** argv)
                         {
                             continue;
                         }
-                        // Box-filtered analytic coverage, integrated over 32 horizontal samples.
+                        // 水平方向の32サンプルを積分し、ボックスフィルターによる解析的な被覆率を求める。
                         float coverage = 0;
                         for (UINT sub = 0; sub < 32; ++sub)
                         {
@@ -609,4 +627,3 @@ int main(int argc, char** argv)
         return 1;
     }
 }
-

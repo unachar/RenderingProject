@@ -28,11 +28,12 @@ float3 DecodeOctahedron(float2 encoded)
     return normalize(normal);
 }
 
-[numthreads(8, 4, 1)]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID)
-{
+[numthreads(8, 4, 1)] void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     uint2 pixel = dispatchThreadId.xy;
-    if (any(pixel >= OutputExtent)) return;
+    if (any(pixel >= OutputExtent))
+    {
+        return;
+    }
 
     OutEmissionAO[pixel] = float4(0, 0, 0, 1);
     uint4 payload = VisibilityBuffer.Load(int3(pixel, 0));
@@ -46,11 +47,9 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         return;
     }
 
-    float4 packedColor = float4(
-        payload.x & 0xffu,
-        (payload.x >> 8u) & 0xffu,
-        (payload.x >> 16u) & 0xffu,
-        (payload.x >> 24u) & 0xffu) / 255.0f;
+    float4 packedColor =
+        float4(payload.x & 0xffu, (payload.x >> 8u) & 0xffu, (payload.x >> 16u) & 0xffu, (payload.x >> 24u) & 0xffu) /
+        255.0f;
     float3 normal = DecodeOctahedron(UnpackUnorm16x2(payload.y));
     float depth = (payload.z & 0xffffu) / 65535.0f;
     float metallic = ((payload.z >> 16u) & 0xffu) / 255.0f;
@@ -66,4 +65,3 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     OutMaterial[pixel] = float4(metallic, roughness, fresnel, materialPart);
     OutShadow[pixel] = float4(shadowThreshold, shadowSoftness, packedColor.a, 1.0f);
 }
-

@@ -91,7 +91,7 @@ int main()
                                    std::filesystem::copy_options::overwrite_existing);
         Check(!registry.Refresh(error), "duplicate metadata is reported");
         Check(registry.Resolve(handle).empty(), "ambiguous handles do not silently select an asset");
-        // Leave the fixture reusable without recursively removing any directory.
+        // ディレクトリを再帰削除せず、テスト用データを再利用できる状態に戻す。
         std::filesystem::remove(collision);
         std::filesystem::remove(collision.string() + ".meta");
         std::cout << "Material asset tests: PASS\n";

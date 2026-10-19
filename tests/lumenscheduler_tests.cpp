@@ -30,7 +30,10 @@ int main()
     {
         auto frame = scheduler.Prepare(inputs, 1, 1);
         assert(frame.Updates.size() <= 1);
-        for (auto work : frame.Updates) visited[work.Slot] = true;
+        for (auto work : frame.Updates)
+        {
+            visited[work.Slot] = true;
+        }
     }
     assert(visited[0] && visited[1] && visited[2]);
     assert(scheduler.Prepare(inputs, 0, 0).Updates.empty());
@@ -53,13 +56,19 @@ int main()
     assert(!CanReuseSurfaceLighting(104, 80, 104, true));
     Scheduler animated(3);
     std::vector<Input> changing{{1, 1, 1}, {2, 1, 2}, {3, 1, 3}};
-    for (int i = 0; i < 3; ++i) animated.Prepare(changing, 1, 1);
+    for (int i = 0; i < 3; ++i)
+    {
+        animated.Prepare(changing, 1, 1);
+    }
     std::vector<bool> updated(3);
     for (int i = 0; i < 12; ++i)
     {
         ++changing[2].Revision;
         const auto schedule = animated.Prepare(changing, 1, 1);
-        for (auto work : schedule.Updates) updated[work.Instance] = true;
+        for (auto work : schedule.Updates)
+        {
+            updated[work.Instance] = true;
+        }
     }
     assert(updated[0] && updated[1] && updated[2]);
     std::cout << "Lumen scheduler: all tests passed\n";

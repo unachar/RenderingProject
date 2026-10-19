@@ -4,46 +4,48 @@
 // MegaLights 共通定義
 //   M1 : クラスター（フロクセル）ライトグリッド
 //   M2 : 確率的ライトサンプリング（ライト上の点の取り方・乱数・サンプルの詰め方）
-//        半解像度：サンプル空間（MLSampleGrid）は画面の 1/2。各サンプルは 2x2 の代表ピクセル（毎フレーム回転）の GBuffer で作る
+//        半解像度：サンプル空間（MLSampleGrid）は画面の 1/2。各サンプルは 2x2 の代表ピクセル（毎フレーム回転）の
+//        GBuffer で作る
 //   M7 : 半透明（Forward / OIT）からのグリッド参照、テクスチャ付き矩形ライト
 //   ・CPU 側の定義は source/rendering/megalights.h（レイアウトを必ず一致させる）
 //   ・include する側で MEGALIGHTS_CB_REGISTER を定義してから include する
 // =============================================================================================
 
-#define ML_TILE_SIZE      16u
-#define ML_MAX_SLICES     32u
-#define ML_COARSE_TILES   4u
-#define ML_COARSE_SLICES  4u
-#define ML_INVALID_CELL   0xffffffffu
+#define ML_TILE_SIZE 16u
+#define ML_MAX_SLICES 32u
+#define ML_COARSE_TILES 4u
+#define ML_COARSE_SLICES 4u
+#define ML_INVALID_CELL 0xffffffffu
 
 // MLStochastic.x のビット
-#define ML_FLAG_STOCHASTIC  1u   // M2 のサンプルがこのフレームに作られている
-#define ML_FLAG_REFERENCE   2u   // リファレンス（全ライト × 面上の複数点の影レイ）
-#define ML_FLAG_ACCUMULATE  4u   // 静止時の累積平均
-#define ML_FLAG_HAS_REF     8u   // リファレンス画像を保存済み
-#define ML_FLAG_DENOISED    16u  // M3：ディファードは ML6 の代わりにデノイズ済みの結果を使う
-#define ML_FLAG_GUIDE       32u  // M4：前フレームの可視ライトハッシュでサンプリングを導く
-#define ML_GRID_FORWARD     (1u << 17) // MLGrid.w：Forward / 半透明もグリッドで評価する（M7）
-#define ML_GRID_VOLUMETRIC  (1u << 16) // MLGrid.w：フォグ用に視錐台全体（ジオメトリの手前のスライスも）を構築
-#define ML_FLAG_SCREEN_TRACE 64u // M5：ワールドトレースの前にスクリーントレース（深度バッファ）で遮蔽を探す
+#define ML_FLAG_STOCHASTIC 1u         // M2 のサンプルがこのフレームに作られている
+#define ML_FLAG_REFERENCE 2u          // リファレンス（全ライト × 面上の複数点の影レイ）
+#define ML_FLAG_ACCUMULATE 4u         // 静止時の累積平均
+#define ML_FLAG_HAS_REF 8u            // リファレンス画像を保存済み
+#define ML_FLAG_DENOISED 16u          // M3：ディファードは ML6 の代わりにデノイズ済みの結果を使う
+#define ML_FLAG_GUIDE 32u             // M4：前フレームの可視ライトハッシュでサンプリングを導く
+#define ML_GRID_FORWARD (1u << 17)    // MLGrid.w：Forward / 半透明もグリッドで評価する（M7）
+#define ML_GRID_VOLUMETRIC (1u << 16) // MLGrid.w：フォグ用に視錐台全体（ジオメトリの手前のスライスも）を構築
+#define ML_FLAG_SCREEN_TRACE 64u      // M5：ワールドトレースの前にスクリーントレース（深度バッファ）で遮蔽を探す
 
 // サンプル（uint4）x のビット
-#define ML_SAMPLE_VALID     0x00010000u
-#define ML_SAMPLE_TRACE     0x00020000u  // 影レイが必要（CastShadow）
-#define ML_SAMPLE_VISIBLE   0x00040000u  // 影レイの結果：見える（TRACE でなければ常に見える扱い）
-#define ML_SAMPLE_SCREEN    0x00080000u  // M5：スクリーントレースで遮蔽が見つかった（ワールドトレースしていない）
-#define ML_SAMPLE_INDEX     0x0000ffffu
+#define ML_SAMPLE_VALID 0x00010000u
+#define ML_SAMPLE_TRACE 0x00020000u   // 影レイが必要（CastShadow）
+#define ML_SAMPLE_VISIBLE 0x00040000u // 影レイの結果：見える（TRACE でなければ常に見える扱い）
+#define ML_SAMPLE_SCREEN 0x00080000u  // M5：スクリーントレースで遮蔽が見つかった（ワールドトレースしていない）
+#define ML_SAMPLE_INDEX 0x0000ffffu
 
 #define ML_PI 3.14159265359f
 
 // 80 byte。xyzw の意味は LightParams の配列（LightPositionTypes など）と同じ。
 struct MegaLightData
 {
-    float4 PositionType;    // xyz: 位置, w: LightType（1 Point / 2 Spot / 4 Rect）
-    float4 DirectionRange;  // xyz: 方向, w: 範囲
-    float4 Color;           // rgb: 色, a: 強度（ディファード強度係数込み）
-    float4 Extra;           // Spot: cos(内角), cos(外角), 密度, 形状 / Rect: 幅, 高さ, 密度, 0
-    float4 Flags;           // x: bit0 影を落とす / bit1 Forward に影響（M7）, y: ソース半径, z: Entity ID（asuint。M4）, w: 強度（M6 フォグ）
+    float4 PositionType;   // xyz: 位置, w: LightType（1 Point / 2 Spot / 4 Rect）
+    float4 DirectionRange; // xyz: 方向, w: 範囲
+    float4 Color;          // rgb: 色, a: 強度（ディファード強度係数込み）
+    float4 Extra;          // Spot: cos(内角), cos(外角), 密度, 形状 / Rect: 幅, 高さ, 密度, 0
+    float4 Flags; // x: bit0 影を落とす / bit1 Forward に影響（M7）, y: ソース半径, z: Entity ID（asuint。M4）, w:
+                  // 強度（M6 フォグ）
     // Rect の Extra.w：テクスチャ番号 + 1（0 = なし。M7）
 };
 
@@ -53,20 +55,20 @@ struct MegaLightData
 
 cbuffer MegaLightGridConstants : register(MEGALIGHTS_CB_REGISTER)
 {
-    float4x4 MLWorldToView;  // mul(float4(world, 1), MLWorldToView)
-    float4   MLProjection;   // _11, _22, _31, _32（ジッター込み）
-    float4   MLDepth;        // _33, _43, near, スライス係数（slices / log(sliceFar / near)）
-    float4   MLDepth2;       // 遠平面の NDC 深度, 実際の遠平面距離, ヒートマップ上限, 0
-    uint4    MLGrid;         // タイル数 X, タイル数 Y, スライス数, 有効（このフレームに構築済み）
-    uint4    MLCounts;       // ライト数, デバッグ表示, 細グリッドの容量, 粗グリッドの容量
-    uint4    MLScreen;       // 幅, 高さ, 粗セル数 X, 粗セル数 Y
-    // ---- M2
-    uint4    MLStochastic;   // フラグ, サンプル数 N, フレーム番号, 累積フレーム数
-    float4   MLStochasticParams; // 一様混合率 α, 影レイの法線バイアス, 1/p の表示上限, リファレンスの影レイ数
-    float4x4 MLViewToWorld;  // mul(float4(view, 1), MLViewToWorld)
-    // ---- M5
-    float4   MLScreenTrace;  // 最大ステップ数, 最大距離（ピクセル）, 厚み（m）, 自己遮蔽を避ける距離（ピクセル）
-    uint4    MLSampleGrid;   // サンプル空間の幅, 高さ, 縮小率（1 / 2）, 代表ピクセルの回転（0..3）
+    float4x4 MLWorldToView; // mul(float4(world, 1), MLWorldToView)
+    float4 MLProjection;    // _11, _22, _31, _32（ジッター込み）
+    float4 MLDepth;         // _33, _43, near, スライス係数（slices / log(sliceFar / near)）
+    float4 MLDepth2;        // 遠平面の NDC 深度, 実際の遠平面距離, ヒートマップ上限, 0
+    uint4 MLGrid;           // タイル数 X, タイル数 Y, スライス数, 有効（このフレームに構築済み）
+    uint4 MLCounts;         // ライト数, デバッグ表示, 細グリッドの容量, 粗グリッドの容量
+    uint4 MLScreen;         // 幅, 高さ, 粗セル数 X, 粗セル数 Y
+    // ---- M2 段階
+    uint4 MLStochastic;        // フラグ, サンプル数 N, フレーム番号, 累積フレーム数
+    float4 MLStochasticParams; // 一様混合率 α, 影レイの法線バイアス, 1/p の表示上限, リファレンスの影レイ数
+    float4x4 MLViewToWorld;    // mul(float4(view, 1), MLViewToWorld)
+    // ---- M5 段階
+    float4 MLScreenTrace; // 最大ステップ数, 最大距離（ピクセル）, 厚み（m）, 自己遮蔽を避ける距離（ピクセル）
+    uint4 MLSampleGrid;   // サンプル空間の幅, 高さ, 縮小率（1 / 2）, 代表ピクセルの回転（0..3）
 };
 
 bool MLLightCastsShadow(MegaLightData light)
@@ -89,8 +91,11 @@ uint MLSampleScale()
 uint2 MLSampleToScreen(uint2 samplePixel)
 {
     const uint scale = MLSampleScale();
-    if (scale == 1u) return samplePixel;
-    const uint2 offsets[4] = { uint2(0u, 0u), uint2(1u, 1u), uint2(1u, 0u), uint2(0u, 1u) };
+    if (scale == 1u)
+    {
+        return samplePixel;
+    }
+    const uint2 offsets[4] = {uint2(0u, 0u), uint2(1u, 1u), uint2(1u, 0u), uint2(0u, 1u)};
     return min(samplePixel * scale + offsets[MLSampleGrid.w & 3u], MLScreen.xy - 1u);
 }
 
@@ -109,7 +114,6 @@ bool MLForwardGridActive()
 {
     return MLGridActive() && (MLGrid.w & ML_GRID_FORWARD) != 0u;
 }
-
 
 bool MLStochasticActive()
 {
@@ -147,7 +151,10 @@ uint MLSliceFromViewZ(float viewZ)
 // スライス s の手前側の距離。最後のスライスの奥は実際の遠平面まで含める。
 float MLSliceNearZ(uint slice)
 {
-    if (slice >= MLGrid.z) return MLDepth2.y;
+    if (slice >= MLGrid.z)
+    {
+        return MLDepth2.y;
+    }
     return MLDepth.z * exp((float)slice / MLDepth.w);
 }
 
@@ -160,7 +167,10 @@ uint MLCellIndex(uint2 tile, uint slice)
 // 構築側（MegaLightsGridCS の TileSliceMask）・M2 のサンプリング・ディファードで同じ入力・同じ式を使うこと。
 uint MLCellIndexFromDepth(uint2 pixel, float depth)
 {
-    if (!MLGridActive() || !MLIsGeometryDepth(depth)) return ML_INVALID_CELL;
+    if (!MLGridActive() || !MLIsGeometryDepth(depth))
+    {
+        return ML_INVALID_CELL;
+    }
     uint2 tile = min(pixel / ML_TILE_SIZE, MLGrid.xy - 1u);
     return MLCellIndex(tile, MLSliceFromViewZ(MLViewZFromDepth(depth)));
 }
@@ -168,13 +178,23 @@ uint MLCellIndexFromDepth(uint2 pixel, float depth)
 // ビュー Z から直接セルを求める（Forward / 半透明。GBuffer の深度を使わない）
 uint MLCellIndexFromWorld(float3 worldPos)
 {
-    if (!MLGridActive()) return ML_INVALID_CELL;
+    if (!MLGridActive())
+    {
+        return ML_INVALID_CELL;
+    }
     const float3 view = mul(float4(worldPos, 1.0f), MLWorldToView).xyz;
-    if (view.z <= MLDepth.z) return ML_INVALID_CELL;
+    if (view.z <= MLDepth.z)
+    {
+        return ML_INVALID_CELL;
+    }
     const float invZ = 1.0f / view.z;
-    const float2 ndc = float2(MLProjection.x * view.x * invZ + MLProjection.z, MLProjection.y * view.y * invZ + MLProjection.w);
+    const float2 ndc =
+        float2(MLProjection.x * view.x * invZ + MLProjection.z, MLProjection.y * view.y * invZ + MLProjection.w);
     const float2 pixel = float2((ndc.x * 0.5f + 0.5f) * MLScreen.x, (0.5f - ndc.y * 0.5f) * MLScreen.y);
-    if (any(pixel < 0.0f) || any(pixel >= float2(MLScreen.xy))) return ML_INVALID_CELL;
+    if (any(pixel < 0.0f) || any(pixel >= float2(MLScreen.xy)))
+    {
+        return ML_INVALID_CELL;
+    }
     const uint2 tile = min(uint2(pixel) / ML_TILE_SIZE, MLGrid.xy - 1u);
     return MLCellIndex(tile, MLSliceFromViewZ(view.z));
 }
@@ -184,7 +204,8 @@ float3 MLWorldPositionFromDepth(uint2 pixel, float depth)
 {
     float viewZ = MLViewZFromDepth(depth);
     float2 ndc = float2((pixel.x + 0.5f) / MLScreen.x * 2.0f - 1.0f, 1.0f - (pixel.y + 0.5f) / MLScreen.y * 2.0f);
-    float3 view = float3((ndc.x - MLProjection.z) / MLProjection.x * viewZ, (ndc.y - MLProjection.w) / MLProjection.y * viewZ, viewZ);
+    float3 view = float3((ndc.x - MLProjection.z) / MLProjection.x * viewZ,
+                         (ndc.y - MLProjection.w) / MLProjection.y * viewZ, viewZ);
     return mul(float4(view, 1.0f), MLViewToWorld).xyz;
 }
 
@@ -192,7 +213,8 @@ float3 MLWorldPositionFromDepth(uint2 pixel, float depth)
 float2 MLViewToPixel(float3 view)
 {
     const float invZ = 1.0f / max(view.z, 1.0e-4f);
-    const float2 ndc = float2(MLProjection.x * view.x * invZ + MLProjection.z, MLProjection.y * view.y * invZ + MLProjection.w);
+    const float2 ndc =
+        float2(MLProjection.x * view.x * invZ + MLProjection.z, MLProjection.y * view.y * invZ + MLProjection.w);
     return float2((ndc.x * 0.5f + 0.5f) * MLScreen.x, (0.5f - ndc.y * 0.5f) * MLScreen.y);
 }
 
@@ -226,7 +248,8 @@ uint MLSampleBase(uint2 samplePixel)
 }
 
 // タイル範囲 [tileMin, tileMax] × スライス範囲 [sliceMin, sliceMax] を囲むビュー空間 AABB
-void MLCellBounds(uint2 tileMin, uint2 tileMax, uint sliceMin, uint sliceMax, out float3 boundsMin, out float3 boundsMax)
+void MLCellBounds(uint2 tileMin, uint2 tileMax, uint sliceMin, uint sliceMax, out float3 boundsMin,
+                  out float3 boundsMax)
 {
     float z0 = MLSliceNearZ(sliceMin);
     float z1 = MLSliceNearZ(sliceMax + 1u);
@@ -264,8 +287,14 @@ float3 MLHeatmap(float value)
     float3 mid = float3(0.10f, 0.85f, 0.35f);
     float3 warm = float3(1.00f, 0.85f, 0.10f);
     float3 hot = float3(1.00f, 0.15f, 0.10f);
-    if (t < 0.33f) return lerp(cold, mid, t / 0.33f);
-    if (t < 0.66f) return lerp(mid, warm, (t - 0.33f) / 0.33f);
+    if (t < 0.33f)
+    {
+        return lerp(cold, mid, t / 0.33f);
+    }
+    if (t < 0.66f)
+    {
+        return lerp(mid, warm, (t - 0.33f) / 0.33f);
+    }
     return lerp(warm, hot, (t - 0.66f) / 0.34f);
 }
 
@@ -317,7 +346,10 @@ float3 MLLightSamplePoint(MegaLightData light, float3 worldPos, float2 uv)
     const float radius = max(light.Flags.y, 0.0f);
     float3 toCenter = center - worldPos;
     const float distance = length(toCenter);
-    if (radius <= 1.0e-4f || distance <= radius * 1.001f) return center;
+    if (radius <= 1.0e-4f || distance <= radius * 1.001f)
+    {
+        return center;
+    }
     toCenter /= distance;
     const float sinMax2 = saturate((radius * radius) / (distance * distance));
     const float cosMax = sqrt(1.0f - sinMax2);

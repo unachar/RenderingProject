@@ -4,9 +4,13 @@ $ErrorActionPreference = 'Stop'
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-if (-not $installation) { throw 'Visual Studio C++ tools are required.' }
+if (-not $installation) {
+    throw 'Visual Studio C++ tools are required.'
+}
 $cmake = Join-Path $installation 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
-if (-not (Test-Path -LiteralPath $cmake)) { $cmake = (Get-Command cmake.exe).Source }
+if (-not (Test-Path -LiteralPath $cmake)) {
+    $cmake = (Get-Command cmake.exe).Source
+}
 $ctest = Join-Path (Split-Path $cmake) 'ctest.exe'
 $buildDirectory = Join-Path $workspace 'build\virtualgeometry'
 $resultsDirectory = Join-Path $workspace 'bin\validation\virtualgeometry'
@@ -28,7 +32,9 @@ try {
     foreach ($configuration in @('Debug','Release')) {
         Invoke-Checked $cmake @('--build',$buildDirectory,'--config',$configuration,'--parallel','4') (Join-Path $resultsDirectory "build-$configuration.log")
         $testArguments = @('--test-dir',$buildDirectory,'-C',$configuration,'--output-on-failure','-V')
-        if ($configuration -eq 'Debug' -or $SkipMillion) { $testArguments += @('-LE','stress') }
+        if ($configuration -eq 'Debug' -or $SkipMillion) {
+            $testArguments += @('-LE','stress')
+        }
         Invoke-Checked $ctest $testArguments (Join-Path $resultsDirectory "tests-$configuration.log")
     }
 }

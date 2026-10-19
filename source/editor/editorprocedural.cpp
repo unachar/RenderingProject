@@ -10,51 +10,51 @@
 
 namespace
 {
-const char* kNoiseNames[] = {"Perlin",     "Value",       "Worley (Cellular)",     "fBm",
-                             "Ridged fBm", "Domain Warp", "Composite / 複合ノイズ"};
-const char* kMotionNames[] = {"Wave / 波", "Orbit / 軌道", "Noise / ゆらぎ"};
+    const char* kNoiseNames[] = {"Perlin",     "Value",       "Worley (Cellular)",     "fBm",
+                                 "Ridged fBm", "Domain Warp", "Composite / 複合ノイズ"};
+    const char* kMotionNames[] = {"Wave / 波", "Orbit / 軌道", "Noise / ゆらぎ"};
 
-bool DrawNoiseParameters(Procedural::BasicNoiseSettings& noise)
-{
-    bool changed = ImGui::InputScalar("Seed", ImGuiDataType_U32, &noise.Seed);
-    changed |= ImGui::SliderFloat("周波数", &noise.Frequency, 0.005f, 0.5f, "%.3f");
-    changed |= ImGui::SliderInt("オクターブ", &noise.Octaves, 1, 8);
-    changed |= ImGui::SliderFloat("振幅の減衰", &noise.Persistence, 0.0f, 1.0f);
-    changed |= ImGui::SliderFloat("周波数の倍率", &noise.Lacunarity, 1.0f, 4.0f);
-    changed |= ImGui::SliderFloat("Warp 強度", &noise.WarpStrength, 0.0f, 10.0f);
-    return changed;
-}
-
-void DrawNoisePreview(const Procedural::TerrainSettings& settings, bool changed)
-{
-    constexpr int side = 48;
-    static vector<float> preview;
-    if (changed || preview.empty())
+    bool DrawNoiseParameters(Procedural::BasicNoiseSettings& noise)
     {
-        auto previewSettings = settings;
-        previewSettings.Resolution = side - 1;
-        previewSettings.Height = 0.5f;
-        previewSettings.BaseHeight = 0.5f;
-        preview = Procedural::BuildHeightMap(previewSettings);
+        bool changed = ImGui::InputScalar("Seed", ImGuiDataType_U32, &noise.Seed);
+        changed |= ImGui::SliderFloat("周波数", &noise.Frequency, 0.005f, 0.5f, "%.3f");
+        changed |= ImGui::SliderInt("オクターブ", &noise.Octaves, 1, 8);
+        changed |= ImGui::SliderFloat("振幅の減衰", &noise.Persistence, 0.0f, 1.0f);
+        changed |= ImGui::SliderFloat("周波数の倍率", &noise.Lacunarity, 1.0f, 4.0f);
+        changed |= ImGui::SliderFloat("Warp 強度", &noise.WarpStrength, 0.0f, 10.0f);
+        return changed;
     }
-    const ImVec2 origin = ImGui::GetCursorScreenPos();
-    const ImVec2 available = ImGui::GetContentRegionAvail();
-    const float extent = (max)(0.0f, (min)({available.x, available.y, 240.0f}));
-    const float cell = extent / side;
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    for (int row = 0; row < side; ++row)
+
+    void DrawNoisePreview(const Procedural::TerrainSettings& settings, bool changed)
     {
-        for (int column = 0; column < side; ++column)
+        constexpr int side = 48;
+        static vector<float> preview;
+        if (changed || preview.empty())
         {
-            const float height = preview[row * side + column];
-            const ImU32 color = ImGui::ColorConvertFloat4ToU32(ImVec4(height, height, height, 1.0f));
-            drawList->AddRectFilled(ImVec2(origin.x + column * cell, origin.y + row * cell),
-                                    ImVec2(origin.x + (column + 1) * cell, origin.y + (row + 1) * cell), color);
+            auto previewSettings = settings;
+            previewSettings.Resolution = side - 1;
+            previewSettings.Height = 0.5f;
+            previewSettings.BaseHeight = 0.5f;
+            preview = Procedural::BuildHeightMap(previewSettings);
         }
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        const ImVec2 available = ImGui::GetContentRegionAvail();
+        const float extent = (max)(0.0f, (min)({available.x, available.y, 240.0f}));
+        const float cell = extent / side;
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        for (int row = 0; row < side; ++row)
+        {
+            for (int column = 0; column < side; ++column)
+            {
+                const float height = preview[row * side + column];
+                const ImU32 color = ImGui::ColorConvertFloat4ToU32(ImVec4(height, height, height, 1.0f));
+                drawList->AddRectFilled(ImVec2(origin.x + column * cell, origin.y + row * cell),
+                                        ImVec2(origin.x + (column + 1) * cell, origin.y + (row + 1) * cell), color);
+            }
+        }
+        ImGui::Dummy(ImVec2(extent, extent));
     }
-    ImGui::Dummy(ImVec2(extent, extent));
 }
-} // namespace
 
 void ImGuiManager::DrawProceduralWindow()
 {

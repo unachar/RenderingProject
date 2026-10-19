@@ -6,24 +6,24 @@
 
 namespace
 {
-static XMMATRIX BuildWorldMatrix(const TransformComponent& transform)
-{
-    return TransformMath::World(transform);
-}
-
-XMFLOAT3 NormalizeOr(const XMVECTOR& vector, const XMFLOAT3& fallback)
-{
-    if (XMVectorGetX(XMVector3LengthSq(vector)) <= 0.000001f)
+    static XMMATRIX BuildWorldMatrix(const TransformComponent& transform)
     {
-        return fallback;
+        return TransformMath::World(transform);
     }
 
-    XMFLOAT3 result{};
-    XMStoreFloat3(&result, XMVector3Normalize(vector));
-    return result;
-}
+    XMFLOAT3 NormalizeOr(const XMVECTOR& vector, const XMFLOAT3& fallback)
+    {
+        if (XMVectorGetX(XMVector3LengthSq(vector)) <= 0.000001f)
+        {
+            return fallback;
+        }
 
-} // namespace
+        XMFLOAT3 result{};
+        XMStoreFloat3(&result, XMVector3Normalize(vector));
+        return result;
+    }
+
+}
 
 EntityID Sun::CreateDefault()
 {
@@ -86,8 +86,8 @@ bool Sun::MigrateLegacyGeometryBeforeFrame()
         return true;
     }
 
-    // The mesh owns a vertex buffer that earlier frames may still reference.
-    // A queue fence cannot protect commands in a frame that is still being recorded.
+    // メッシュの頂点バッファは、過去のフレームがまだ参照している場合がある。
+    // まだ記録中のフレームのコマンドは、キューのフェンスでは保護できない。
     if (!GraphicsDevice::WaitForGpuIdle())
     {
         return false;
@@ -121,7 +121,7 @@ void Sun::Sync(EntityID entity)
     const XMVECTOR sunPosition = XMLoadFloat3(&transform.Position);
     const XMVECTOR target = XMLoadFloat3(&sun.Target);
     light.Type = LightType::Directional;
-    // The renderer stores the direction from the target towards the sun.
+    // レンダラーは注視先から太陽へ向かう方向を保存する。
     light.Direction = NormalizeOr(XMVectorSubtract(sunPosition, target), {0.0f, 0.9701425f, -0.2425356f});
     light.Range = max(light.Range, 1.0f);
     light.Position = transform.Position;

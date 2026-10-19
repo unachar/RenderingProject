@@ -7,11 +7,17 @@ $developerCommand = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
 New-Item -ItemType Directory -Force -Path (Join-Path $workspace 'build/thumbnail-tests') | Out-Null
 Copy-Item -LiteralPath (Join-Path $workspace 'External/dll/assimp/assimp-vc143-mt.dll') -Destination (Join-Path $workspace 'build/thumbnail-tests/assimp-vc143-mt.dll')
 $flags = '/Od /RTC1 /MDd'
-if ($Configuration -eq 'Release') { $flags = '/O2 /MD' }
+if ($Configuration -eq 'Release') {
+    $flags = '/O2 /MD'
+}
 $command = '"{0}" -no_logo -arch=amd64 -host_arch=amd64 && cl /nologo /std:c++20 /EHsc /W4 /utf-8 {1} /I source /I assimp tests\thumbnail_mesh_io_tests.cpp External\lib\assimp-vc143-mt.lib /Fe:build\thumbnail-tests\mesh-io-{2}.exe /Fo:build\thumbnail-tests\ && build\thumbnail-tests\mesh-io-{2}.exe' -f $developerCommand, $flags, $Configuration
 Push-Location -LiteralPath $workspace
 try {
     & $env:ComSpec /d /c $command
-    if ($LASTEXITCODE) { throw 'Thumbnail mesh I/O tests failed.' }
+    if ($LASTEXITCODE) {
+        throw 'Thumbnail mesh I/O tests failed.'
+    }
 }
-finally { Pop-Location }
+finally {
+    Pop-Location
+}

@@ -1,7 +1,8 @@
 #ifndef GPU_SCENE_COMMON_INCLUDED
 #define GPU_SCENE_COMMON_INCLUDED
-// Byte strides and offsets are asserted in gpuscenetypes.h. All matrices use
-// DirectXMath's row-vector convention, including StructuredBuffer members.
+
+// バイト単位のストライドとオフセットは gpuscenetypes.h で検証する。全行列は
+// StructuredBuffer のメンバーも含め、DirectXMath の行ベクトル規約を使う。
 struct GPUInstanceData
 {
     row_major float4x4 World;
@@ -19,6 +20,7 @@ struct GPUInstanceData
     uint VirtualGeometryAssetIndex;
     uint2 VisibilityPadding;
 };
+
 struct GPUMeshData
 {
     uint VertexAddressLow;
@@ -32,6 +34,7 @@ struct GPUMeshData
     float4 BoundsCenter;
     float4 BoundsExtents;
 };
+
 struct GPUMaterialData
 {
     float4 BaseColor;
@@ -45,12 +48,13 @@ struct GPUMaterialData
     uint2 Padding;
     float4 ShadingParameters[160];
 };
-// SM 5.1 limits a StructuredBuffer element to 2048 bytes. The existing
-// material has 15 part overrides, so its 2624-byte cache uses raw SRV access.
+
+// SM 5.1 の StructuredBuffer 要素は 2048 バイトまで。既存のマテリアルには
+// 15 個のパーツ上書きがあり、2624 バイトのキャッシュを生の SRV アクセスで扱う。
 #define GPU_SCENE_MATERIAL_STRIDE 2624u
+
 float4 LoadSceneMaterialVector(ByteAddressBuffer materials, uint materialId, uint vectorIndex)
 {
     return asfloat(materials.Load4(materialId * GPU_SCENE_MATERIAL_STRIDE + 64u + vectorIndex * 16u));
 }
 #endif
-

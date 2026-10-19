@@ -13,4 +13,3 @@ GBufferOutput main(PSInputDebugLine input)
     output.Shadow = 0.0f;
     return output;
 }
-

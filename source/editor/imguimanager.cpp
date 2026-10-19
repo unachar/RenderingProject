@@ -41,7 +41,7 @@
 #include "graphicslog.h"
 
 #include "editorwidgets.h"
-#include <imgui_internal.h> // DockBuilder is supplied by the bundled docking branch.
+#include <imgui_internal.h> // DockBuilder は同梱の docking ブランチで提供される。
 
 using namespace EditorWidgets;
 
@@ -49,17 +49,17 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 namespace
 {
-// ImGui 1.92 may keep multiple atlas textures alive during font atlas growth.
-struct ImGuiSrvPool
-{
-    D3D12_CPU_DESCRIPTOR_HANDLE CpuStart{};
-    D3D12_GPU_DESCRIPTOR_HANDLE GpuStart{};
-    UINT Increment = 0;
-    array<bool, ImGuiManager::kSrvDescriptorCount> Used{};
-};
+    // ImGui 1.92 はフォントアトラスの拡張中に複数のアトラステクスチャを保持する場合がある。
+    struct ImGuiSrvPool
+    {
+        D3D12_CPU_DESCRIPTOR_HANDLE CpuStart{};
+        D3D12_GPU_DESCRIPTOR_HANDLE GpuStart{};
+        UINT Increment = 0;
+        array<bool, ImGuiManager::kSrvDescriptorCount> Used{};
+    };
 
-ImGuiSrvPool g_ImGuiSrvPool;
-} // namespace
+    ImGuiSrvPool g_ImGuiSrvPool;
+}
 
 bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* commandQueue, int numFrames,
                         DXGI_FORMAT rtvFormat, ID3D12DescriptorHeap* cbvHeap, D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle,
@@ -134,7 +134,7 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
             return;
         }
         WriteGraphicsLog("ERROR: ImGui SRV descriptor pool exhausted\n");
-        // The backend has no allocation-failure return path. Never overwrite a live SRV.
+        // バックエンドには確保失敗を返す経路がないため、使用中の SRV を上書きしない。
         abort();
     };
     initInfo.SrvDescriptorFreeFn = [](ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE cpu,
@@ -656,7 +656,8 @@ void ImGuiManager::DrawEditorMainMenu()
         ImGui::MenuItem("リム設定", nullptr, &m_ShowRimSettingsWindow);
         ImGui::MenuItem("大気シミュレーション", nullptr, &m_ShowAtmosphereWindow);
         ImGui::MenuItem("プロシージャルエディター", nullptr, &m_ShowProceduralWindow);
-        ImGui::MenuItem("プロシージャルスタジオ (テクスチャ / モデル / フラクタル)", nullptr, &m_ShowProceduralStudioWindow);
+        ImGui::MenuItem("プロシージャルスタジオ (テクスチャ / モデル / フラクタル)", nullptr,
+                        &m_ShowProceduralStudioWindow);
         ImGui::MenuItem("レイトレーシング", nullptr, &m_ShowRaytracingWindow);
         ImGui::Separator();
         ImGui::MenuItem("メッシュ単位のアウトライン", nullptr, &m_ShowMeshOutlineWindow);
@@ -958,4 +959,3 @@ void ImGuiManager::StyleModernSlim()
         style.FrameBorderSize = 0.0f;
     }
 }
-

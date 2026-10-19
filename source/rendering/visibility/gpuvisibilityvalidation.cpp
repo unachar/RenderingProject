@@ -24,250 +24,252 @@
 
 namespace
 {
-vector<EntityID> fixtures;
-EntityID wall = UINT32_MAX;
-int meshID = -1, wallMeshID = -1;
-uint32_t failures = 0;
-uint64_t frameCount = 0;
-vector<RenderCapture::TextureData> reference;
-array<string, 8> meshPaths;
-ofstream measurements;
-vector<EntityID> buildings;
+    vector<EntityID> fixtures;
+    EntityID wall = UINT32_MAX;
+    int meshID = -1, wallMeshID = -1;
+    uint32_t failures = 0;
+    uint64_t frameCount = 0;
+    vector<RenderCapture::TextureData> reference;
+    array<string, 8> meshPaths;
+    ofstream measurements;
+    vector<EntityID> buildings;
 
-void Check(bool success, const char* description)
-{
-    WriteGraphicsLog("GPU Visibility validation: %s %s\n", success ? "PASS" : "FAIL", description);
-    if (!success)
+    void Check(bool success, const char* description)
     {
-        ++failures;
+        WriteGraphicsLog("GPU Visibility validation: %s %s\n", success ? "PASS" : "FAIL", description);
+        if (!success)
+        {
+            ++failures;
+        }
     }
-}
 
-void WriteGrid(const string& path, uint32_t subdivisions, uint32_t sections = 1)
-{
-    ofstream file(path);
-    if (sections > 1)
+    void WriteGrid(const string& path, uint32_t subdivisions, uint32_t sections = 1)
     {
-        const auto materialPath = filesystem::path(path).replace_extension(".mtl");
-        ofstream materials(materialPath);
-        file << "mtllib " << materialPath.filename().string() << '\n';
+        ofstream file(path);
+        if (sections > 1)
+        {
+            const auto materialPath = filesystem::path(path).replace_extension(".mtl");
+            ofstream materials(materialPath);
+            file << "mtllib " << materialPath.filename().string() << '\n';
+            for (uint32_t section = 0; section < sections; ++section)
+            {
+                materials << "newmtl section" << section << "\nKd " << (0.2f + 0.05f * section) << " 1 1\n";
+            }
+        }
+        const uint32_t side = subdivisions + 1;
+        file << "vn 0 0 -1\n";
+        for (uint32_t y = 0; y < side; ++y)
+        {
+            for (uint32_t x = 0; x < side; ++x)
+            {
+                const float fx = float(x) / float(subdivisions) * 2 - 1, fy = float(y) / float(subdivisions) * 2 - 1;
+                file << "v " << fx << ' ' << fy << ' ' << 0.05f * sinf(fx * 3.14159265f) * sinf(fy * 3.14159265f)
+                     << '\n';
+            }
+        }
         for (uint32_t section = 0; section < sections; ++section)
         {
-            materials << "newmtl section" << section << "\nKd " << (0.2f + 0.05f * section) << " 1 1\n";
-        }
-    }
-    const uint32_t side = subdivisions + 1;
-    file << "vn 0 0 -1\n";
-    for (uint32_t y = 0; y < side; ++y)
-    {
-        for (uint32_t x = 0; x < side; ++x)
-        {
-            const float fx = float(x) / float(subdivisions) * 2 - 1, fy = float(y) / float(subdivisions) * 2 - 1;
-            file << "v " << fx << ' ' << fy << ' ' << 0.05f * sinf(fx * 3.14159265f) * sinf(fy * 3.14159265f) << '\n';
-        }
-    }
-    for (uint32_t section = 0; section < sections; ++section)
-    {
-        file << "g section" << section << "\nusemtl section" << section << '\n';
-        for (uint32_t y = 0; y < subdivisions; ++y)
-        {
-            for (uint32_t x = 0; x < subdivisions; ++x)
+            file << "g section" << section << "\nusemtl section" << section << '\n';
+            for (uint32_t y = 0; y < subdivisions; ++y)
             {
-                const uint32_t a = y * side + x + 1, b = a + side;
-                file << "f " << a << "//1 " << b << "//1 " << b + 1 << "//1\n";
-                file << "f " << a << "//1 " << b + 1 << "//1 " << a + 1 << "//1\n";
-            }
-        }
-    }
-}
-
-EntityID Create(uint32_t index, bool isWall = false)
-{
-    Entity entity = World::CreateEntity();
-    if (!entity.IsValid())
-    {
-        Check(false, "fixture entity capacity");
-        return UINT32_MAX;
-    }
-    entity.Add<TransformComponent>().Add<StaticModelComponent>().Add<MaterialComponent>().Add<LODComponent>();
-    entity.Get<StaticModelComponent>().ModelId = isWall ? wallMeshID : meshID;
-    auto& transform = entity.Get<TransformComponent>();
-    transform.Position =
-        isWall ? XMFLOAT3(0, 0, 0)
-               : XMFLOAT3(float(index % 100) * 0.08f - 3.96f, float((index / 100) % 100) * 0.08f - 3.96f, 5);
-    transform.Scale = isWall ? XMFLOAT3(20, 20, 1) : XMFLOAT3(0.035f, 0.035f, 0.035f);
-    auto& material = entity.Get<MaterialComponent>();
-    material.ShaderClassMode = MaterialMode::Manual;
-    material.ShaderClass = ShaderClass::PBR;
-    material.UseTexture = false;
-    material.IsTransparent = false;
-    material.Alpha = 1;
-    auto& lod = entity.Get<LODComponent>();
-    lod.UseLOD = !isWall;
-    lod.UseAssetSettings = false;
-    lod.ScreenLOD.MeshPaths = meshPaths;
-    return entity.GetID();
-}
-
-void Grow(uint32_t count)
-{
-    while (fixtures.size() < count)
-    {
-        fixtures.push_back(Create(static_cast<uint32_t>(fixtures.size())));
-    }
-}
-
-void Clear()
-{
-    for (auto entity : fixtures)
-    {
-        if (Registry::IsAlive(entity))
-        {
-            World::DestroyEntity(Entity(entity));
-        }
-    }
-    fixtures.clear();
-    for (auto entity : buildings)
-    {
-        if (Registry::IsAlive(entity))
-        {
-            World::DestroyEntity(Entity(entity));
-        }
-    }
-    buildings.clear();
-    if (Registry::IsAlive(wall))
-    {
-        World::DestroyEntity(Entity(wall));
-    }
-    wall = UINT32_MAX;
-}
-
-void Capture(bool compare)
-{
-    vector<RenderCapture::TextureData> image(2);
-    bool read = RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::BASE_COLOR), image[0]);
-    read &= RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::DEPTH), image[1]);
-    Check(read, "capture opaque color/depth");
-    if (!read)
-    {
-        return;
-    }
-    if (!compare)
-    {
-        reference = move(image);
-        return;
-    }
-    uint64_t differences = 0, covered = 0;
-    bool dimensions = reference.size() == image.size();
-    for (size_t i = 0; dimensions && i < image.size(); ++i)
-    {
-        const auto& a = reference[i];
-        const auto& b = image[i];
-        dimensions &= a.Width == b.Width && a.Height == b.Height && a.Format == b.Format;
-        if (!dimensions)
-        {
-            break;
-        }
-        for (uint32_t y = 0; y < a.Height; ++y)
-        {
-            for (uint32_t x = 0; x < a.Width; ++x)
-            {
-                const auto* first = a.Bytes.data() + y * a.RowPitch + x * 4;
-                const auto* second = b.Bytes.data() + y * b.RowPitch + x * 4;
-                if (i == 1)
+                for (uint32_t x = 0; x < subdivisions; ++x)
                 {
-                    float da, db;
-                    memcpy(&da, first, 4);
-                    memcpy(&db, second, 4);
-                    differences += abs(da - db) > 0.00001f;
-                    covered += da > 0 && da < 0.999f;
-                }
-                else
-                {
-                    differences += memcmp(first, second, 4) != 0;
+                    const uint32_t a = y * side + x + 1, b = a + side;
+                    file << "f " << a << "//1 " << b << "//1 " << b + 1 << "//1\n";
+                    file << "f " << a << "//1 " << b + 1 << "//1 " << a + 1 << "//1\n";
                 }
             }
         }
     }
-    WriteGraphicsLog("GPU Visibility image comparison: differences=%llu covered=%llu\n", differences, covered);
-    Check(dimensions && differences == 0 && covered > 0, "occlusion OFF/ON image equivalence");
-}
 
-Visibility::Statistics ReadStats()
-{
-    vector<uint8_t> bytes;
-    Visibility::Statistics stats;
-    const bool read = RenderCapture::ReadBuffer(GPUVisibility::StatisticsBuffer(),
-                                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, sizeof(stats), bytes);
-    Check(read, "read validation-only visibility counters");
-    if (read)
+    EntityID Create(uint32_t index, bool isWall = false)
     {
-        memcpy(&stats, bytes.data(), sizeof(stats));
-    }
-    Check(stats.FinalVisible + stats.Occluded == stats.FrustumVisible &&
-              stats.FrustumVisible + stats.FrustumCulled == stats.Total,
-          "visibility counter conservation");
-    return stats;
-}
-
-void ValidateSelectedCommands(uint32_t expectedLOD)
-{
-    vector<uint8_t> counter, visible, commands, geometry;
-    bool valid =
-        RenderCapture::ReadBuffer(GPUDrivenRenderer::CountBuffer(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, 4, counter);
-    uint32_t count = 0;
-    if (valid)
-    {
-        memcpy(&count, counter.data(), 4);
-    }
-    valid &= count > 0 && count <= GPUDrivenRenderer::CommandCapacity();
-    if (valid)
-    {
-        valid &=
-            RenderCapture::ReadBuffer(GPUDrivenRenderer::VisibleBuffer(),
-                                      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, uint64_t(count) * 16, visible);
-        valid &= RenderCapture::ReadBuffer(GPUDrivenRenderer::CommandBuffer(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
-                                           uint64_t(count) * sizeof(GPUIndirectDrawCommand), commands);
-        valid &= RenderCapture::ReadBuffer(
-            GPUDrivenRenderer::GeometryBuffer(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-            uint64_t(GpuScene::Statistics().Meshes) * sizeof(GPUDrivenGeometryData), geometry);
-    }
-    for (uint32_t i = 0; valid && i < count; ++i)
-    {
-        Visibility::VisibleInstanceData record{};
-        GPUIndirectDrawCommand command{};
-        GPUDrivenGeometryData mesh{};
-        memcpy(&record, visible.data() + size_t(i) * 16, 16);
-        memcpy(&command, commands.data() + size_t(i) * sizeof(command), sizeof(command));
-        if (record.SelectedMeshID >= GpuScene::Statistics().Meshes || record.SelectedLOD != expectedLOD)
+        Entity entity = World::CreateEntity();
+        if (!entity.IsValid())
         {
-            valid = false;
-            break;
+            Check(false, "fixture entity capacity");
+            return UINT32_MAX;
         }
-        memcpy(&mesh, geometry.data() + size_t(record.SelectedMeshID) * sizeof(mesh), sizeof(mesh));
-        valid &= mesh.Ready != 0 && command.InstanceID == record.InstanceID &&
-                 command.Draw.IndexCountPerInstance == mesh.IndexCount &&
-                 command.Draw.StartIndexLocation == mesh.StartIndex &&
-                 command.Draw.BaseVertexLocation == mesh.BaseVertex && command.Draw.InstanceCount == 1 &&
-                 command.Draw.StartInstanceLocation == 0;
+        entity.Add<TransformComponent>().Add<StaticModelComponent>().Add<MaterialComponent>().Add<LODComponent>();
+        entity.Get<StaticModelComponent>().ModelId = isWall ? wallMeshID : meshID;
+        auto& transform = entity.Get<TransformComponent>();
+        transform.Position =
+            isWall ? XMFLOAT3(0, 0, 0)
+                   : XMFLOAT3(float(index % 100) * 0.08f - 3.96f, float((index / 100) % 100) * 0.08f - 3.96f, 5);
+        transform.Scale = isWall ? XMFLOAT3(20, 20, 1) : XMFLOAT3(0.035f, 0.035f, 0.035f);
+        auto& material = entity.Get<MaterialComponent>();
+        material.ShaderClassMode = MaterialMode::Manual;
+        material.ShaderClass = ShaderClass::PBR;
+        material.UseTexture = false;
+        material.IsTransparent = false;
+        material.Alpha = 1;
+        auto& lod = entity.Get<LODComponent>();
+        lod.UseLOD = !isWall;
+        lod.UseAssetSettings = false;
+        lod.ScreenLOD.MeshPaths = meshPaths;
+        return entity.GetID();
     }
-    Check(valid, "Indirect commands use exact selected LOD mesh geometry");
-}
 
-void SetHysteresisCamera(float screenSize)
-{
-    const auto* mesh = ModelManager::GetStaticModel(meshID);
-    const auto extents = mesh->GetAabbExtents();
-    const float radius = sqrtf(extents.x * extents.x + extents.y * extents.y + extents.z * extents.z);
-    const auto camera = Camera::GetCameraEntity();
-    auto& data = ComponentManager::GetComponentUnchecked<CameraComponent>(camera);
-    auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(camera);
-    const float focal = data.ProjectionMatrix._22;
-    transform.Position = {0, 0, -(radius + radius * focal / screenSize)};
-    transform.IsDirty = true;
-    data.Target = {0, 0, 0};
-}
-} // namespace
+    void Grow(uint32_t count)
+    {
+        while (fixtures.size() < count)
+        {
+            fixtures.push_back(Create(static_cast<uint32_t>(fixtures.size())));
+        }
+    }
+
+    void Clear()
+    {
+        for (auto entity : fixtures)
+        {
+            if (Registry::IsAlive(entity))
+            {
+                World::DestroyEntity(Entity(entity));
+            }
+        }
+        fixtures.clear();
+        for (auto entity : buildings)
+        {
+            if (Registry::IsAlive(entity))
+            {
+                World::DestroyEntity(Entity(entity));
+            }
+        }
+        buildings.clear();
+        if (Registry::IsAlive(wall))
+        {
+            World::DestroyEntity(Entity(wall));
+        }
+        wall = UINT32_MAX;
+    }
+
+    void Capture(bool compare)
+    {
+        vector<RenderCapture::TextureData> image(2);
+        bool read = RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::BASE_COLOR), image[0]);
+        read &= RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::DEPTH), image[1]);
+        Check(read, "capture opaque color/depth");
+        if (!read)
+        {
+            return;
+        }
+        if (!compare)
+        {
+            reference = move(image);
+            return;
+        }
+        uint64_t differences = 0, covered = 0;
+        bool dimensions = reference.size() == image.size();
+        for (size_t i = 0; dimensions && i < image.size(); ++i)
+        {
+            const auto& a = reference[i];
+            const auto& b = image[i];
+            dimensions &= a.Width == b.Width && a.Height == b.Height && a.Format == b.Format;
+            if (!dimensions)
+            {
+                break;
+            }
+            for (uint32_t y = 0; y < a.Height; ++y)
+            {
+                for (uint32_t x = 0; x < a.Width; ++x)
+                {
+                    const auto* first = a.Bytes.data() + y * a.RowPitch + x * 4;
+                    const auto* second = b.Bytes.data() + y * b.RowPitch + x * 4;
+                    if (i == 1)
+                    {
+                        float da, db;
+                        memcpy(&da, first, 4);
+                        memcpy(&db, second, 4);
+                        differences += abs(da - db) > 0.00001f;
+                        covered += da > 0 && da < 0.999f;
+                    }
+                    else
+                    {
+                        differences += memcmp(first, second, 4) != 0;
+                    }
+                }
+            }
+        }
+        WriteGraphicsLog("GPU Visibility image comparison: differences=%llu covered=%llu\n", differences, covered);
+        Check(dimensions && differences == 0 && covered > 0, "occlusion OFF/ON image equivalence");
+    }
+
+    Visibility::Statistics ReadStats()
+    {
+        vector<uint8_t> bytes;
+        Visibility::Statistics stats;
+        const bool read = RenderCapture::ReadBuffer(
+            GPUVisibility::StatisticsBuffer(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, sizeof(stats), bytes);
+        Check(read, "read validation-only visibility counters");
+        if (read)
+        {
+            memcpy(&stats, bytes.data(), sizeof(stats));
+        }
+        Check(stats.FinalVisible + stats.Occluded == stats.FrustumVisible &&
+                  stats.FrustumVisible + stats.FrustumCulled == stats.Total,
+              "visibility counter conservation");
+        return stats;
+    }
+
+    void ValidateSelectedCommands(uint32_t expectedLOD)
+    {
+        vector<uint8_t> counter, visible, commands, geometry;
+        bool valid = RenderCapture::ReadBuffer(GPUDrivenRenderer::CountBuffer(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
+                                               4, counter);
+        uint32_t count = 0;
+        if (valid)
+        {
+            memcpy(&count, counter.data(), 4);
+        }
+        valid &= count > 0 && count <= GPUDrivenRenderer::CommandCapacity();
+        if (valid)
+        {
+            valid &= RenderCapture::ReadBuffer(GPUDrivenRenderer::VisibleBuffer(),
+                                               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, uint64_t(count) * 16,
+                                               visible);
+            valid &=
+                RenderCapture::ReadBuffer(GPUDrivenRenderer::CommandBuffer(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
+                                          uint64_t(count) * sizeof(GPUIndirectDrawCommand), commands);
+            valid &= RenderCapture::ReadBuffer(
+                GPUDrivenRenderer::GeometryBuffer(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                uint64_t(GpuScene::Statistics().Meshes) * sizeof(GPUDrivenGeometryData), geometry);
+        }
+        for (uint32_t i = 0; valid && i < count; ++i)
+        {
+            Visibility::VisibleInstanceData record{};
+            GPUIndirectDrawCommand command{};
+            GPUDrivenGeometryData mesh{};
+            memcpy(&record, visible.data() + size_t(i) * 16, 16);
+            memcpy(&command, commands.data() + size_t(i) * sizeof(command), sizeof(command));
+            if (record.SelectedMeshID >= GpuScene::Statistics().Meshes || record.SelectedLOD != expectedLOD)
+            {
+                valid = false;
+                break;
+            }
+            memcpy(&mesh, geometry.data() + size_t(record.SelectedMeshID) * sizeof(mesh), sizeof(mesh));
+            valid &= mesh.Ready != 0 && command.InstanceID == record.InstanceID &&
+                     command.Draw.IndexCountPerInstance == mesh.IndexCount &&
+                     command.Draw.StartIndexLocation == mesh.StartIndex &&
+                     command.Draw.BaseVertexLocation == mesh.BaseVertex && command.Draw.InstanceCount == 1 &&
+                     command.Draw.StartInstanceLocation == 0;
+        }
+        Check(valid, "Indirect commands use exact selected LOD mesh geometry");
+    }
+
+    void SetHysteresisCamera(float screenSize)
+    {
+        const auto* mesh = ModelManager::GetStaticModel(meshID);
+        const auto extents = mesh->GetAabbExtents();
+        const float radius = sqrtf(extents.x * extents.x + extents.y * extents.y + extents.z * extents.z);
+        const auto camera = Camera::GetCameraEntity();
+        auto& data = ComponentManager::GetComponentUnchecked<CameraComponent>(camera);
+        auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(camera);
+        const float focal = data.ProjectionMatrix._22;
+        transform.Position = {0, 0, -(radius + radius * focal / screenSize)};
+        transform.IsDirty = true;
+        data.Target = {0, 0, 0};
+    }
+} // 名前空間
 
 bool GPUVisibilityValidation::Enabled()
 {
@@ -277,8 +279,8 @@ bool GPUVisibilityValidation::Enabled()
 
 void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
 {
-    // This suite exercises mesh-wide discrete LOD. Native continuous hierarchy
-    // selection is validated separately and deliberately bypasses this policy.
+    // このテスト群はメッシュ全体の離散 LOD を検証する。ネイティブの連続階層選択は
+    // 別途検証し、意図的にこの規則を迂回する。
     VirtualGeometryTraversal::GetSettings().Enabled = false;
     frameCount = frame + 1;
     if (!frame)
@@ -383,7 +385,19 @@ void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
         {
             settings.ForceLOD = 0;
         }
-        const float size = frame < 87 ? 0.28f : frame < 91 ? 0.26f : frame < 95 ? 0.32f : 0.34f;
+        float size = 0.34f;
+        if (frame < 87)
+        {
+            size = 0.28f;
+        }
+        else if (frame < 91)
+        {
+            size = 0.26f;
+        }
+        else if (frame < 95)
+        {
+            size = 0.32f;
+        }
         SetHysteresisCamera(size);
     }
     if (frame == 76)
@@ -393,7 +407,7 @@ void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
     }
     if (frame >= 76 && frame < 80)
     {
-        settings.ForceLOD = 7; // LOD5..7 are missing; use LOD4.
+        settings.ForceLOD = 7; // LOD5～7 がないため、LOD4 を使う。
     }
     if (frame == 100 || frame == 125)
     {
@@ -406,7 +420,7 @@ void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
         Check(city && city->LoadAssimpModel(path.c_str(), GraphicsDevice::GetDevice(), false) &&
                   city->GetMeshCount() == sections,
               "import independent city mesh sections");
-        // Multi-section fixtures respect the existing 16384-entity ECS limit.
+        // 複数区画のフィクスチャでも、既存 ECS の16384エンティティ制限を守る。
         meshPaths.fill("");
         Grow(10000);
         for (uint32_t building = 0; building < 12; ++building)
@@ -532,7 +546,15 @@ void GPUVisibilityValidation::AfterFrame(uint64_t frame)
                 hiz += pass.GpuMs;
             }
         }
-        const char* mode = frame == 106 ? "Frustum" : frame == 114 ? "Frustum+Occlusion" : "Frustum+Occlusion+LOD";
+        const char* mode = "Frustum+Occlusion+LOD";
+        if (frame == 106)
+        {
+            mode = "Frustum";
+        }
+        else if (frame == 114)
+        {
+            mode = "Frustum+Occlusion";
+        }
         measurements << frame << ',' << mode << ',' << stats.Total << ',' << stats.FrustumVisible << ','
                      << stats.Occluded << ',' << stats.FinalVisible << ',' << stats.Triangles << ','
                      << stats.IndexVertices << ',' << profiler.GpuRenderMs << ',' << profiler.Pipeline.VSInvocations

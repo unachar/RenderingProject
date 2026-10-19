@@ -10,20 +10,20 @@ float ApplyEase(float value, TimelineInterpolation interpolation)
     value = clamp(value, 0.0f, 1.0f);
     switch (interpolation)
     {
-    case TimelineInterpolation::Step:
-        return 0.0f;
-    case TimelineInterpolation::EaseIn:
-        return value * value;
-    case TimelineInterpolation::EaseOut:
-        return 1.0f - (1.0f - value) * (1.0f - value);
-    case TimelineInterpolation::EaseInOut:
-        if (value < 0.5f)
-        {
-            return 2.0f * value * value;
-        }
-        return 1.0f - powf(-2.0f * value + 2.0f, 2.0f) * 0.5f;
-    default:
-        return value;
+        case TimelineInterpolation::Step:
+            return 0.0f;
+        case TimelineInterpolation::EaseIn:
+            return value * value;
+        case TimelineInterpolation::EaseOut:
+            return 1.0f - (1.0f - value) * (1.0f - value);
+        case TimelineInterpolation::EaseInOut:
+            if (value < 0.5f)
+            {
+                return 2.0f * value * value;
+            }
+            return 1.0f - powf(-2.0f * value + 2.0f, 2.0f) * 0.5f;
+        default:
+            return value;
     }
 }
 
@@ -91,23 +91,23 @@ void ApplyProperty(EntityID target, TimelineProperty property, const XMFLOAT4& v
         auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(target);
         switch (property)
         {
-        case TimelineProperty::CameraTarget:
-            camera.Target = {value.x, value.y, value.z};
-            break;
-        case TimelineProperty::CameraFov:
-            camera.Fov = clamp(value.x, XMConvertToRadians(1.0f), XMConvertToRadians(179.0f));
-            break;
-        case TimelineProperty::CameraNearClip:
-            camera.NearClip = max(0.001f, value.x);
-            break;
-        case TimelineProperty::CameraFarClip:
-            camera.FarClip = max(camera.NearClip + 0.001f, value.x);
-            break;
-        case TimelineProperty::CameraLockOnOffset:
-            camera.LockOnOffset = {value.x, value.y, value.z};
-            break;
-        default:
-            break;
+            case TimelineProperty::CameraTarget:
+                camera.Target = {value.x, value.y, value.z};
+                break;
+            case TimelineProperty::CameraFov:
+                camera.Fov = clamp(value.x, XMConvertToRadians(1.0f), XMConvertToRadians(179.0f));
+                break;
+            case TimelineProperty::CameraNearClip:
+                camera.NearClip = max(0.001f, value.x);
+                break;
+            case TimelineProperty::CameraFarClip:
+                camera.FarClip = max(camera.NearClip + 0.001f, value.x);
+                break;
+            case TimelineProperty::CameraLockOnOffset:
+                camera.LockOnOffset = {value.x, value.y, value.z};
+                break;
+            default:
+                break;
         }
         return;
     }
@@ -220,18 +220,18 @@ XMFLOAT4 TimeLineSystem::ReadProperty(EntityID target, TimelineProperty property
         }
         switch (property)
         {
-        case TimelineProperty::CameraTarget:
-            return {camera.Target.x, camera.Target.y, camera.Target.z, 0};
-        case TimelineProperty::CameraFov:
-            return {camera.Fov, 0, 0, 0};
-        case TimelineProperty::CameraNearClip:
-            return {camera.NearClip, 0, 0, 0};
-        case TimelineProperty::CameraFarClip:
-            return {camera.FarClip, 0, 0, 0};
-        case TimelineProperty::CameraLockOnOffset:
-            return {camera.LockOnOffset.x, camera.LockOnOffset.y, camera.LockOnOffset.z, 0};
-        default:
-            break;
+            case TimelineProperty::CameraTarget:
+                return {camera.Target.x, camera.Target.y, camera.Target.z, 0};
+            case TimelineProperty::CameraFov:
+                return {camera.Fov, 0, 0, 0};
+            case TimelineProperty::CameraNearClip:
+                return {camera.NearClip, 0, 0, 0};
+            case TimelineProperty::CameraFarClip:
+                return {camera.FarClip, 0, 0, 0};
+            case TimelineProperty::CameraLockOnOffset:
+                return {camera.LockOnOffset.x, camera.LockOnOffset.y, camera.LockOnOffset.z, 0};
+            default:
+                break;
         }
     }
     if (property == TimelineProperty::PostProcessIntensity &&

@@ -26,7 +26,7 @@ static void CheckCoverage(const std::vector<ShadowPages::Tile>& tiles)
                 assert(tile != tiles.end());
                 assert(tile->LogicalX == region.First.LogicalX + int(x));
                 assert(tile->LogicalY == region.First.LogicalY + int(y));
-                // Enlarging the projection and viewport must leave atlas texels unchanged.
+                // 投影範囲とビューポートを広げても、アトラス上のテクセル位置は変わらない。
                 for (double clip : {-1.0, -0.6, 0.0, 0.7, 1.0})
                 {
                     const double mergedX = (clip + 2 * x - (region.Width - 1)) / region.Width;
@@ -37,16 +37,16 @@ static void CheckCoverage(const std::vector<ShadowPages::Tile>& tiles)
             }
         }
     }
-    assert(actual == expected); // Never clear a clean page or draw one twice.
+    assert(actual == expected); // 更新不要なページをクリアせず、同じページを二重に描画しない。
 }
 
 int main()
 {
     using namespace ShadowPages;
-    assert(!NeedsStaticRefresh(true, true, true)); // Moving actors must reuse stationary depth.
-    assert(NeedsStaticRefresh(true, false, true)); // Ring reuse / camera changes.
-    assert(NeedsStaticRefresh(true, true, false)); // Static geometry or material edits.
-    assert(NeedsStaticRefresh(false, true, true)); // Explicit cache bypass.
+    assert(!NeedsStaticRefresh(true, true, true)); // 動くアクターの描画では、静止物体の深度を再利用する。
+    assert(NeedsStaticRefresh(true, false, true)); // リングの再利用、またはカメラの変更。
+    assert(NeedsStaticRefresh(true, true, false)); // 静的ジオメトリ、またはマテリアルの編集。
+    assert(NeedsStaticRefresh(false, true, true)); // 明示的にキャッシュを使わない場合。
     for (uint64_t frame = 0; frame < 64; ++frame)
     {
         unsigned farLevelsDue = 0;
@@ -54,7 +54,7 @@ int main()
         {
             farLevelsDue += UpdateDue(frame, level);
         }
-        assert(farLevelsDue <= 1); // Do not concentrate all far clipmaps in one frame.
+        assert(farLevelsDue <= 1); // 遠方のクリップマップの更新を1フレームに集中させない。
         assert(UpdateDue(frame, 0));
     }
     for (unsigned level = 0; level < 4; ++level)
@@ -64,7 +64,7 @@ int main()
         {
             updates += UpdateDue(frame, level);
         }
-        assert(updates == 64 / (1u << level)); // Keep the existing refresh frequency.
+        assert(updates == 64 / (1u << level)); // 既存の更新頻度を維持する。
     }
     assert(Merge({}).empty());
     std::vector<Tile> block;
@@ -80,12 +80,12 @@ int main()
     CheckCoverage(block);
     block.erase(block.begin() + 5);
     CheckCoverage(block);
-    // Adjacent atlas coordinates must not merge across the logical ring seam.
+    // アトラス上で隣接していても、論理リングの継ぎ目をまたぐ座標は結合しない。
     std::vector<Tile> seam{{0, 0, 7, 0, 0}, {1, 0, 0, 0, 1}};
     assert(Merge(seam).size() == 2);
     CheckCoverage(seam);
     CheckCoverage({{7, 0, 7, 0, 0}, {0, 0, 8, 0, 1}, {1, 0, 9, 0, 2}});
-    // Exercise every dirty-page mask of a 4x4 resident area.
+    // 4×4の常駐領域について、更新が必要なページの全マスクを検証する。
     for (unsigned mask = 0; mask < 65536; ++mask)
     {
         std::vector<Tile> tiles;

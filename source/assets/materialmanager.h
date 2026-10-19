@@ -17,7 +17,7 @@ struct MaterialRuntime
     bool Dirty = false;
     bool Missing = false;
     string Error;
-    // Kept alive until shutdown after the graphics fences have completed.
+    // グラフィックスのフェンス完了後、終了処理まで生存させる。
     ComPtr<ID3D12Resource> Constants;
     uint8_t* MappedConstants = nullptr;
     array<uint64_t, 3> UploadedRevision{};

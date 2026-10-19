@@ -8,30 +8,30 @@
 
 namespace
 {
-constexpr UINT kFrames = RendererState::g_kFRAME_COUNT;
-constexpr UINT kDescriptors = 7;
-ComPtr<ID3D12Device> g_Device;
-ComPtr<ID3D12RootSignature> g_Root;
-ComPtr<ID3D12PipelineState> g_Pack, g_Unpack;
-UINT g_Increment = 0;
-bool g_RuntimeFailed = false;
+    constexpr UINT kFrames = RendererState::g_kFRAME_COUNT;
+    constexpr UINT kDescriptors = 7;
+    ComPtr<ID3D12Device> g_Device;
+    ComPtr<ID3D12RootSignature> g_Root;
+    ComPtr<ID3D12PipelineState> g_Pack, g_Unpack;
+    UINT g_Increment = 0;
+    bool g_RuntimeFailed = false;
 
-struct Constants
-{
-    XMFLOAT4X4 WorldToView{};
-    XMUINT4 ExtentFlags{};
-    XMFLOAT4 Parameters{};
-};
+    struct Constants
+    {
+        XMFLOAT4X4 WorldToView{};
+        XMUINT4 ExtentFlags{};
+        XMFLOAT4 Parameters{};
+    };
 
-static_assert(sizeof(Constants) <= 256);
+    static_assert(sizeof(Constants) <= 256);
 
-void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
-                D3D12_RESOURCE_STATES after)
-{
-    const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, before, after);
-    commands->ResourceBarrier(1, &barrier);
-}
-} // namespace
+    void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
+                    D3D12_RESOURCE_STATES after)
+    {
+        const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, before, after);
+        commands->ResourceBarrier(1, &barrier);
+    }
+} // 名前空間
 
 struct OptixDenoiser::Impl
 {
@@ -226,8 +226,8 @@ bool OptixDenoiser::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource*
     commands->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
     Transition(commands, shared, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
     packProfile.Finish();
-    // The timestamp spans the ordered direct-queue wait for CUDA. It measures
-    // frame latency including interop, rather than CUDA kernel execution alone.
+    // タイムスタンプはダイレクトキューによる CUDA 待ちも含む。
+    // CUDA カーネル単体の実行時間ではなく、相互運用を含めたフレーム遅延を測る。
     RenderProfiler::ScopedEvent denoiseProfile(
         preserveHitDistance ? "DXR Reflections Denoise (OptiX wait)" : "Realtime GI Denoise (OptiX wait)", commands);
     GraphicsDevice::SubmitForExternalCompute();

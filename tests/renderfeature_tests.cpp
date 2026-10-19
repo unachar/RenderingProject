@@ -28,10 +28,12 @@ int main()
         Check(Evaluate(true, caps, requirements, budget, {0, 0, 2.1}) == Status::BudgetExceeded, "time budget");
         Check(Evaluate(true, caps, requirements, {}, usage) == Status::Ready, "zero limits are unlimited");
         Check(Evaluate(true, caps, requirements, budget, {0, 0, -1}) == Status::InvalidMeasurement, "negative timing");
-        Check(Evaluate(true, caps, requirements, budget,
-                       {0, 0, std::numeric_limits<double>::quiet_NaN()}) == Status::InvalidMeasurement, "NaN timing");
-        Check(Evaluate(true, caps, requirements, budget,
-                       {0, 0, std::numeric_limits<double>::infinity()}) == Status::InvalidMeasurement, "infinite timing");
+        Check(Evaluate(true, caps, requirements, budget, {0, 0, std::numeric_limits<double>::quiet_NaN()}) ==
+                  Status::InvalidMeasurement,
+              "NaN timing");
+        Check(Evaluate(true, caps, requirements, budget, {0, 0, std::numeric_limits<double>::infinity()}) ==
+                  Status::InvalidMeasurement,
+              "infinite timing");
         Check(Evaluate(true, {}, {}, {}, {}) == Status::Ready, "CPU features need no GPU capabilities");
         Check(Evaluate(true, {false, true, true, true}, requirements, {}, {}) == Status::UnsupportedHardware,
               "mesh capability is independently required");

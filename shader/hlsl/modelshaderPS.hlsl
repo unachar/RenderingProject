@@ -18,9 +18,7 @@ float3 SampleEnvironmentLatLong(float3 dir, float roughness)
 {
     const float PI = 3.14159265358979323846f;
     dir = SafeNormalizeCommon(dir, float3(0.0f, 1.0f, 0.0f));
-    float2 uv = float2(
-        frac(atan2(dir.z, dir.x) / (2.0f * PI) + 0.5f),
-        acos(clamp(dir.y, -1.0f, 1.0f)) / PI);
+    float2 uv = float2(frac(atan2(dir.z, dir.x) / (2.0f * PI) + 0.5f), acos(clamp(dir.y, -1.0f, 1.0f)) / PI);
     return EnvironmentTexture.SampleLevel(g_SamplerState, uv, roughness * 8.0f).rgb;
 }
 
@@ -41,7 +39,8 @@ SamplerState LightingSampler : register(s4);
 #define ShadowMapTexture g_ShadowMap
 #define ShadowSampler g_ShadowSampler
 #define TextureSampler LightingSampler
-// MegaLights M7：Forward / 半透明もクラスターライトグリッドで評価（ルート引数 34：t44〜t46 + b10、35：ライトのテクスチャ）
+// MegaLights M7：Forward / 半透明もクラスターライトグリッドで評価（ルート引数 34：t44〜t46 +
+// b10、35：ライトのテクスチャ）
 #define MEGALIGHTS_GRID 1
 #define MEGALIGHTS_FORWARD 1
 #define MEGALIGHTS_LIGHT_TEXTURES 1
@@ -64,89 +63,110 @@ float SampleForwardDeferredShadowMap(float3 worldPos, float3 normal, float3 ligh
     float rangeBlend;
     float visibility;
     g_MLCellIndex = MLCellIndexFromWorld(worldPos);
-    ResolveSurfaceLightAggregateShadowed(worldPos, ddx(worldPos), ddy(worldPos), normal,
-        WorldToScreenUV(worldPos).xy * ViewportSize, clamp((int)round(VirtualShadowGlobal.z), 0, 3),
-        false, normal, 0.0f, 0.0f, 0.0f, directLight, aggregateDirection, aggregateColor,
-        attenuation, volume, rangeBlend, visibility);
+    ResolveSurfaceLightAggregateShadowed(
+        worldPos, ddx(worldPos), ddy(worldPos), normal, WorldToScreenUV(worldPos).xy * ViewportSize,
+        clamp((int)round(VirtualShadowGlobal.z), 0, 3), false, normal, 0.0f, 0.0f, 0.0f, directLight,
+        aggregateDirection, aggregateColor, attenuation, volume, rangeBlend, visibility);
     return visibility;
 }
 
 // ---------------------------------------------------------------------------------------------
-// Refraction (RenderQuality: RaytracedRefraction). The refracted ray is traced against the scene
-// TLAS (inline RayQuery) to find the surface behind the transparent object; its colour is taken
-// from the opaque scene copy (t3) at the projected hit position. Without DXR the hit distance is
-// estimated from the opaque depth buffer.
+// 屈折（RenderQuality: RaytracedRefraction）。屈折レイをシーンの
+// TLAS に対して追跡し（インライン RayQuery）、透明物体の奥の面を求める。その色は、
+// 投影したヒット位置の不透明シーンのコピー（t3）から取得する。DXR がない場合、ヒット距離を
+// 不透明深度バッファーから推定する。
 // ---------------------------------------------------------------------------------------------
 float3 ReconstructForwardWorld(float2 uv, float depth)
 {
     float4 world = mul(float4(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f, depth, 1.0f), PPInvViewProjection);
-    float safeW=abs(world.w)>1e-6f ? world.w : (world.w<0 ? -1e-6f : 1e-6f);
-    return world.xyz/safeW;
-}
-
-// A depth-validated screen-space fallback. The opaque copy cannot represent
-// hidden/off-screen surfaces or additional transparent layers.
-float3 SampleGlassBackground(float2 uv, float roughness)
-{
-    uint sceneWidth,sceneHeight;
-    SceneColorTexture.GetDimensions(sceneWidth,sceneHeight);
-    float2 texel=1.0f/float2(max(sceneWidth,1u),max(sceneHeight,1u));
-    float2 radius = texel * (saturate(roughness) * saturate(roughness) * 24.0f);
-    float2 lo = texel * 0.5f, hi = 1.0f - lo;
-    float3 c = SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv, lo, hi), 0).rgb * 0.5f;
-    c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv+float2(radius.x,0),lo,hi),0).rgb * 0.125f;
-    c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv-float2(radius.x,0),lo,hi),0).rgb * 0.125f;
-    c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv+float2(0,radius.y),lo,hi),0).rgb * 0.125f;
-    c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv-float2(0,radius.y),lo,hi),0).rgb * 0.125f;
-    return c;
-}
-// A visible sky/background already rendered into the scene is not an IBL
-// lighting term. Reuse it only when this ray projects onto background depth.
-// Off-screen misses stay black; never substitute an environment map.
-float3 SampleGlassVisibleBackground(float3 origin,float3 direction,float roughness)
-{
-    float2 uv;
-    if (!ProjectWorldToScreenCommon(origin+direction*2000.0f,uv) || any(uv<=0) || any(uv>=1)) return 0.0f;
-    uint width,height,depthWidth,depthHeight;
-    SceneColorTexture.GetDimensions(width,height);
-    DepthTexture.GetDimensions(depthWidth,depthHeight);
-    float2 extent=float2(max(width,1u),max(height,1u));
-    float2 pixel=uv*extent-0.5f;
-    int2 base=(int2)floor(pixel);
-    float2 fraction=frac(pixel);
-    float3 sum=0; float weightSum=0;
-    [unroll] for(uint y=0;y<2;++y)
-    [unroll] for(uint x=0;x<2;++x)
+    float safeW = world.w;
+    if (!(abs(world.w) > 1e-6f))
     {
-        int2 p=clamp(base+int2(x,y),int2(0,0),int2(width,height)-1);
-        float2 tapUv=(float2(p)+0.5f)/extent;
-        int2 dp=clamp((int2)(tapUv*float2(depthWidth,depthHeight)),int2(0,0),int2(depthWidth,depthHeight)-1);
-        float depth=DepthTexture.Load(int3(dp,0));
-        float weight=(x==0 ? 1-fraction.x : fraction.x)*(y==0 ? 1-fraction.y : fraction.y);
-        if (depth>=0.9999f)
+        safeW = 1e-6f;
+        if (world.w < 0)
         {
-            sum+=SceneColorTexture.Load(int3(p,0)).rgb*weight;
-            weightSum+=weight;
+            safeW = -1e-6f;
         }
     }
-    return weightSum>1e-5f ? sum/weightSum : 0.0f;
+    return world.xyz / safeW;
+}
+
+// 深度で検証する画面空間のフォールバック。不透明シーンのコピーは、
+// 隠れた面、画面外の面、追加の透明レイヤーを表現できない。
+float3 SampleGlassBackground(float2 uv, float roughness)
+{
+    uint sceneWidth, sceneHeight;
+    SceneColorTexture.GetDimensions(sceneWidth, sceneHeight);
+    float2 texel = 1.0f / float2(max(sceneWidth, 1u), max(sceneHeight, 1u));
+    float2 radius = texel * (saturate(roughness) * saturate(roughness) * 24.0f);
+    float2 lo = texel * 0.5f;
+    float2 hi = 1.0f - lo;
+    float3 c = SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv, lo, hi), 0).rgb * 0.5f;
+    c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv + float2(radius.x, 0), lo, hi), 0).rgb * 0.125f;
+    c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv - float2(radius.x, 0), lo, hi), 0).rgb * 0.125f;
+    c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv + float2(0, radius.y), lo, hi), 0).rgb * 0.125f;
+    c += SceneColorTexture.SampleLevel(g_SamplerState, clamp(uv - float2(0, radius.y), lo, hi), 0).rgb * 0.125f;
+    return c;
+}
+
+// シーンに描画済みの可視の空や背景は、IBL の照明項ではない。
+// このレイが背景深度へ投影される場合だけ再利用する。
+// 画面外でヒットしなかった場合は黒を保ち、環境マップで代用しない。
+float3 SampleGlassVisibleBackground(float3 origin, float3 direction, float roughness)
+{
+    float2 uv;
+    if (!ProjectWorldToScreenCommon(origin + direction * 2000.0f, uv) || any(uv <= 0) || any(uv >= 1))
+    {
+        return 0.0f;
+    }
+    uint width, height, depthWidth, depthHeight;
+    SceneColorTexture.GetDimensions(width, height);
+    DepthTexture.GetDimensions(depthWidth, depthHeight);
+    float2 extent = float2(max(width, 1u), max(height, 1u));
+    float2 pixel = uv * extent - 0.5f;
+    int2 base = (int2)floor(pixel);
+    float2 fraction = frac(pixel);
+    float3 sum = 0;
+    float weightSum = 0;
+    [unroll] for (uint y = 0; y < 2; ++y)
+    {
+        [unroll] for (uint x = 0; x < 2; ++x)
+        {
+            int2 p = clamp(base + int2(x, y), int2(0, 0), int2(width, height) - 1);
+            float2 tapUv = (float2(p) + 0.5f) / extent;
+            int2 dp =
+                clamp((int2)(tapUv * float2(depthWidth, depthHeight)), int2(0, 0), int2(depthWidth, depthHeight) - 1);
+            float depth = DepthTexture.Load(int3(dp, 0));
+            float weight = (x == 0 ? 1 - fraction.x : fraction.x) * (y == 0 ? 1 - fraction.y : fraction.y);
+            if (depth >= 0.9999f)
+            {
+                sum += SceneColorTexture.Load(int3(p, 0)).rgb * weight;
+                weightSum += weight;
+            }
+        }
+    }
+    return weightSum > 1e-5f ? sum / weightSum : 0.0f;
 }
 
 float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, float3 viewDir, float2 screenUv,
-    out float pathLength)
+                         out float pathLength)
 {
     float3 N = dot(normal, viewDir) >= 0.0f ? normal : -normal;
     float eta = 1.0f / max(surface.IOR, 1.0f);
     float3 incident = -viewDir;
     float3 entering = refract(incident, N, eta);
-    if (dot(entering,entering) < 1e-8f) { pathLength=0; return 0.0f; }
+    if (dot(entering, entering) < 1e-8f)
+    {
+        pathLength = 0;
+        return 0.0f;
+    }
     entering = normalize(entering);
     float thickness = max(surface.Thickness, 0.0f);
-    pathLength = thickness / max(abs(dot(entering,N)), 1e-4f);
-    // The second interface is parallel to the first. Refraction at both
-    // interfaces restores the incident direction, with a lateral displacement.
+    pathLength = thickness / max(abs(dot(entering, N)), 1e-4f);
+    // 2 番目の界面は最初の界面と平行。両方の界面で屈折すると、
+    // 横方向の変位を残して入射方向へ戻る。
     float3 exitPosition = position + entering * pathLength;
-    float3 exitDirection = refract(entering, N, max(surface.IOR,1.0f));
+    float3 exitDirection = refract(entering, N, max(surface.IOR, 1.0f));
     exitDirection = SafeNormalizeCommon(exitDirection, incident);
     float roughness = saturate(Transparent0.z);
 #ifdef SHADER_RAYTRACING
@@ -154,65 +174,87 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
     {
         RayDesc ray;
         ray.Origin = exitPosition + exitDirection * 0.001f;
-        ray.Direction = exitDirection; ray.TMin = 0.001f; ray.TMax = 200.0f;
+        ray.Direction = exitDirection;
+        ray.TMin = 0.001f;
+        ray.TMax = 200.0f;
         RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
         query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0x03, ray);
-        while (query.Proceed()) { }
+        while (query.Proceed())
+        {
+        }
         if (query.CommittedStatus() != COMMITTED_NOTHING)
         {
             float3 hit = ray.Origin + exitDirection * query.CommittedRayT();
             float2 uv;
-            if (ProjectWorldToScreenCommon(hit,uv) && all(uv>0) && all(uv<1))
+            if (ProjectWorldToScreenCommon(hit, uv) && all(uv > 0) && all(uv < 1))
             {
-                float d = DepthTexture.SampleLevel(g_SamplerState,uv,0);
-                float3 visible = ReconstructForwardWorld(uv,d);
-                if (d < 0.9999f && length(visible-hit) < max(0.05f,length(hit-CameraPos)*0.01f))
-                    return SampleGlassBackground(uv,roughness);
+                float d = DepthTexture.SampleLevel(g_SamplerState, uv, 0);
+                float3 visible = ReconstructForwardWorld(uv, d);
+                if (d < 0.9999f && length(visible - hit) < max(0.05f, length(hit - CameraPos) * 0.01f))
+                {
+                    return SampleGlassBackground(uv, roughness);
+                }
             }
         }
     }
 #endif
     float previous = 0.0f;
-    [loop] for (uint step=0; step<32; ++step)
+    [loop] for (uint step = 0; step < 32; ++step)
     {
-        float distance = 0.025f * (exp2((step+1)*0.40f)-1.0f);
-        float3 p = exitPosition + exitDirection*distance;
+        float distance = 0.025f * (exp2((step + 1) * 0.40f) - 1.0f);
+        float3 p = exitPosition + exitDirection * distance;
         float2 uv;
-        if (!ProjectWorldToScreenCommon(p,uv) || any(uv<=0) || any(uv>=1)) break;
-        float depth = DepthTexture.SampleLevel(g_SamplerState,uv,0);
+        if (!ProjectWorldToScreenCommon(p, uv) || any(uv <= 0) || any(uv >= 1))
+        {
+            break;
+        }
+        float depth = DepthTexture.SampleLevel(g_SamplerState, uv, 0);
         if (depth < 0.9999f)
         {
-            float3 opaque = ReconstructForwardWorld(uv,depth);
-            float delta = length(p-CameraPos)-length(opaque-CameraPos);
+            float3 opaque = ReconstructForwardWorld(uv, depth);
+            float delta = length(p - CameraPos) - length(opaque - CameraPos);
             if (delta >= 0.0f)
             {
-                float low=previous, high=distance;
-                [unroll] for (uint j=0;j<5;++j)
+                float low = previous;
+                float high = distance;
+                [unroll] for (uint j = 0; j < 5; ++j)
                 {
-                    float mid=(low+high)*0.5f;
-                    float3 q=exitPosition+exitDirection*mid;
+                    float mid = (low + high) * 0.5f;
+                    float3 q = exitPosition + exitDirection * mid;
                     float2 quv;
-                    if (!ProjectWorldToScreenCommon(q,quv) || any(quv<=0) || any(quv>=1)) { high=mid; continue; }
-                    float qd=DepthTexture.SampleLevel(g_SamplerState,quv,0);
-                    float3 qw=ReconstructForwardWorld(quv,qd);
-                    if (qd<0.9999f && length(q-CameraPos)>=length(qw-CameraPos)) high=mid;
-                    else low=mid;
+                    if (!ProjectWorldToScreenCommon(q, quv) || any(quv <= 0) || any(quv >= 1))
+                    {
+                        high = mid;
+                        continue;
+                    }
+                    float qd = DepthTexture.SampleLevel(g_SamplerState, quv, 0);
+                    float3 qw = ReconstructForwardWorld(quv, qd);
+                    if (qd < 0.9999f && length(q - CameraPos) >= length(qw - CameraPos))
+                    {
+                        high = mid;
+                    }
+                    else
+                    {
+                        low = mid;
+                    }
                 }
-                float3 hit=exitPosition+exitDirection*high;
+                float3 hit = exitPosition + exitDirection * high;
                 float2 huv;
-                if (ProjectWorldToScreenCommon(hit,huv) && all(huv>0) && all(huv<1))
+                if (ProjectWorldToScreenCommon(hit, huv) && all(huv > 0) && all(huv < 1))
                 {
-                    float hd=DepthTexture.SampleLevel(g_SamplerState,huv,0);
-                    float3 hw=ReconstructForwardWorld(huv,hd);
-                    if (hd<0.9999f && length(hw-hit)<max(0.1f,length(hit-CameraPos)*0.02f))
-                        return SampleGlassBackground(huv,roughness);
+                    float hd = DepthTexture.SampleLevel(g_SamplerState, huv, 0);
+                    float3 hw = ReconstructForwardWorld(huv, hd);
+                    if (hd < 0.9999f && length(hw - hit) < max(0.1f, length(hit - CameraPos) * 0.02f))
+                    {
+                        return SampleGlassBackground(huv, roughness);
+                    }
                 }
                 break;
             }
         }
-        previous=distance;
+        previous = distance;
     }
-    return SampleGlassVisibleBackground(exitPosition,exitDirection,roughness);
+    return SampleGlassVisibleBackground(exitPosition, exitDirection, roughness);
 }
 
 #include "GeometryGlass.hlsli"
@@ -220,14 +262,14 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
 
 float4 ShadeForward(in PSInput3D In)
 {
-    float3 glassIncident=SafeNormalizeCommon(In.WorldPos-CameraPos,float3(0,0,1));
-    float3 glassRayDx=ddx(glassIncident);
-    float3 glassRayDy=ddy(glassIncident);
+    float3 glassIncident = SafeNormalizeCommon(In.WorldPos - CameraPos, float3(0, 0, 1));
+    float3 glassRayDx = ddx(glassIncident);
+    float3 glassRayDy = ddy(glassIncident);
     const float PI = 3.14159265358979323846f;
 
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
-    // Model color alpha can store a material class even after switching to manual mode.
+    // 手動モードへ切り替えた後も、モデル色の alpha にマテリアルの分類が残る場合がある。
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)
     {
@@ -240,29 +282,27 @@ float4 ShadeForward(in PSInput3D In)
     float assetMetallic = mMetallic;
     float assetRoughness = mRoughness;
     float4 assetEmissionAO;
-    ApplyAssetMaterial(assetMaterial, In.TexCoord, g_SamplerState, baseColor, assetMetallic, assetRoughness, assetEmissionAO);
+    ApplyAssetMaterial(assetMaterial, In.TexCoord, g_SamplerState, baseColor, assetMetallic, assetRoughness,
+                       assetEmissionAO);
     baseColor.a = saturate(baseColor.a * MaterialAlpha);
     clip(baseColor.a - (1.0f / 255.0f));
-
 
     float3 surfaceNormal = In.Normal * ((FlipNormal != 0) ? -1.0f : 1.0f);
     if (UseNormalMap != 0)
     {
         float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
-        surfaceNormal = ApplyNormalMapCommon(surfaceNormal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
+        surfaceNormal = ApplyNormalMapCommon(surfaceNormal, In.WorldPos, In.TexCoord,
+                                             ScaleAssetNormal(tangentNormal, assetMaterial));
     }
     surfaceNormal = SafeNormalizeCommon(surfaceNormal, float3(0.0f, 1.0f, 0.0f));
 
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
     bool usePartParams = MaterialMode != 1;
-    float4 material = float4(
-        usePartParams ? partParams.Basic.x : assetMetallic,
-        usePartParams ? partParams.Basic.y : assetRoughness,
-        usePartParams ? partParams.Basic.z : mFresnel,
-        materialPartId);
-    float4 shadowParams = usePartParams
-        ? float4(partParams.Shadow0.x, partParams.Shadow0.y, partParams.Shadow0.z, 0.0f)
-        : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
+    float4 material =
+        float4(usePartParams ? partParams.Basic.x : assetMetallic, usePartParams ? partParams.Basic.y : assetRoughness,
+               usePartParams ? partParams.Basic.z : mFresnel, materialPartId);
+    float4 shadowParams = usePartParams ? float4(partParams.Shadow0.x, partParams.Shadow0.y, partParams.Shadow0.z, 0.0f)
+                                        : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
 
     float shaderClass = material.a;
     bool transparent = IsMaterialClassForward(shaderClass, 0.0f) || MaterialIsTransparent != 0;
@@ -282,7 +322,8 @@ float4 ShadeForward(in PSInput3D In)
     float lightAttenuation;
     float volumeScatter;
     float rangeBlend;
-    ResolveLightAggregate(In.WorldPos, In.Position.xy, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend);
+    ResolveLightAggregate(In.WorldPos, In.Position.xy, lightDir, lightColor, lightAttenuation, volumeScatter,
+                          rangeBlend);
     float lightIntensity = LightColor.a;
 
     float metallicParam = material.r;
@@ -291,7 +332,9 @@ float4 ShadeForward(in PSInput3D In)
     float3 NdotL = saturate(dot(surfaceNormal, lightDir));
     float3 environmentColor = 0.0f;
     if (Transparent0.y <= 0.0f)
+    {
         environmentColor = EnvironmentTexture.SampleLevel(g_SamplerState, In.TexCoord, roughnessParam * 10.0f).rgb;
+    }
     NdotL += lightIntensity;
 
     float3 diffuse = 0.0f;
@@ -301,11 +344,13 @@ float4 ShadeForward(in PSInput3D In)
         iblTexcoord.x = -atan2(surfaceNormal.x, surfaceNormal.z) / (PI * 2);
         iblTexcoord.y = asin(surfaceNormal.y) / PI;
         if (Transparent0.y <= 0.0f)
+        {
             light += EnvironmentTexture.SampleLevel(g_SamplerState, iblTexcoord, roughnessParam * 10.0f).rgb * 6;
+        }
         diffuse = light * baseColor.rgb / PI;
     }
 
-    // Share the legacy visibility query instead of inlining the full light loop per class.
+    // 分類ごとにライトループ全体をインライン展開せず、従来の可視性クエリーを共有する。
     float legacyShadowVisibility = 1.0f;
     bool useLegacyBrdf = brdf && !(pbr || transparent || btdf || bsdf);
     if (shadow || lit || useLegacyBrdf)
@@ -334,8 +379,10 @@ float4 ShadeForward(in PSInput3D In)
         float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
         float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
         float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
-        float selfShadowMask = smoothstep(shadowThreshold - shadowSoftness, shadowThreshold + shadowSoftness, castShadow);
-        shadowDensity = saturate(max(shadowDensity, selfShadowMask * shadowStrength * lerp(0.20f, 0.85f, lightShadowPower)));
+        float selfShadowMask =
+            smoothstep(shadowThreshold - shadowSoftness, shadowThreshold + shadowSoftness, castShadow);
+        shadowDensity =
+            saturate(max(shadowDensity, selfShadowMask * shadowStrength * lerp(0.20f, 0.85f, lightShadowPower)));
         float3 lightTint = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
         float3 shadowTint = saturate(float3(0.018f, 0.016f, 0.020f) + environmentColor + lightTint * 0.025f);
         float3 litColor = baseColor.rgb * (lightColor.rgb * 0.72f + NdotL);
@@ -358,70 +405,76 @@ float4 ShadeForward(in PSInput3D In)
         float3 viewDir = SafeNormalizeCommon(CameraPos - In.WorldPos, surfaceNormal);
         if (SceneRayParameters.w > 0.5f && (surface.Transmission > 0.0f || g_ShadingModel.Model == 0u))
         {
-            float3 previewColor = EvaluateMaterialOpticsPreview(surface,In.WorldPos,viewDir);
-            return float4(previewColor*surface.Opacity,surface.Opacity);
+            float3 previewColor = EvaluateMaterialOpticsPreview(surface, In.WorldPos, viewDir);
+            return float4(previewColor * surface.Opacity, surface.Opacity);
         }
         float3 directLight;
         float visibility;
-        int filterRadius = clamp((int)round(lerp(max(VirtualShadowGlobal.z, 1.0f),
-            3.0f, saturate(shadowSoftness * 2.0f))), 1, 3);
+        int filterRadius =
+            clamp((int)round(lerp(max(VirtualShadowGlobal.z, 1.0f), 3.0f, saturate(shadowSoftness * 2.0f))), 1, 3);
         g_MLCellIndex = MLCellIndexFromWorld(In.WorldPos);
-        ResolveSurfaceLightAggregateShadowed(In.WorldPos, ddx(In.WorldPos), ddy(In.WorldPos),
-            surfaceNormal, In.Position.xy, filterRadius, true, viewDir, surface.BaseColor,
-            material.rgb, shadowSoftness, directLight, lightDir, lightColor,
-            lightAttenuation, volumeScatter, rangeBlend, visibility);
+        ResolveSurfaceLightAggregateShadowed(In.WorldPos, ddx(In.WorldPos), ddy(In.WorldPos), surfaceNormal,
+                                             In.Position.xy, filterRadius, true, viewDir, surface.BaseColor,
+                                             material.rgb, shadowSoftness, directLight, lightDir, lightColor,
+                                             lightAttenuation, volumeScatter, rangeBlend, visibility);
         uint width;
         uint height;
         SceneColorTexture.GetDimensions(width, height);
         float2 screenUv = In.Position.xy / float2(max(width, 1u), max(height, 1u));
-        // Glass receives direct light only. Do not run environment lighting,
-        // screen-space GI or reflection-probe contributions on its base lobe.
+        // ガラスは直接光だけを受ける。基本ローブに環境照明、
+        // 画面空間 GI、反射プローブの寄与を加えない。
         const bool glassMaterial = surface.Transmission > 0.0f;
         float3 color;
         if (glassMaterial)
+        {
             color = directLight + surface.Emissive;
+        }
         else
         {
-            color = EvaluateSurfaceEnvironment(surface, viewDir, In.WorldPos,
-                screenUv, shadowSoftness, directLight);
-            color = ApplySurfaceScreenEffects(color - surface.Emissive, surface.Emissive,
-                screenUv, surface.BaseColor * (1 - surface.Metallic));
+            color = EvaluateSurfaceEnvironment(surface, viewDir, In.WorldPos, screenUv, shadowSoftness, directLight);
+            color = ApplySurfaceScreenEffects(color - surface.Emissive, surface.Emissive, screenUv,
+                                              surface.BaseColor * (1 - surface.Metallic));
         }
         float3 premultiplied = color * surface.Opacity;
         float coverage = surface.Opacity;
-        // Transmission is a BSDF lobe weight, not (1-alpha). Alpha is
-        // geometric coverage, so a fully covered glass surface may use alpha=1.
-        float glassWeight = surface.Transmission * (1.0f-saturate(surface.Metallic));
+        // 透過率は BSDF ローブの重みであり、(1-alpha) ではない。alpha は
+        // 幾何的な被覆率なので、全面を覆うガラスでも alpha=1 を使える。
+        float glassWeight = surface.Transmission * (1.0f - saturate(surface.Metallic));
         if (glassWeight > 0.001f)
         {
 #ifdef SHADER_RAYTRACING
-            float3 geometryRadiance; bool ownsPixel;
-            if (TraceGeometryGlass(In.WorldPos,viewDir,glassRayDx,glassRayDy,geometryRadiance,ownsPixel))
+            float3 geometryRadiance;
+            bool ownsPixel;
+            if (TraceGeometryGlass(In.WorldPos, viewDir, glassRayDx, glassRayDy, geometryRadiance, ownsPixel))
             {
-                // Only the nearest raster layer owns the complete traced path.
-                if (!ownsPixel) clip(-1.0f);
-                return float4(geometryRadiance*surface.Opacity,surface.Opacity);
+                // 最も手前のラスターレイヤーだけが、追跡した経路全体を担当する。
+                if (!ownsPixel)
+                {
+                    clip(-1.0f);
+                }
+                return float4(geometryRadiance * surface.Opacity, surface.Opacity);
             }
 #endif
-            float3 N = dot(surfaceNormal,viewDir)>=0 ? surfaceNormal : -surfaceNormal;
+            float3 N = dot(surfaceNormal, viewDir) >= 0 ? surfaceNormal : -surfaceNormal;
             float pathLength;
-            float3 background = ComputeRefraction(surface,In.WorldPos,N,viewDir,screenUv,pathLength);
-            float F = GlassFresnel(dot(N,viewDir),1.0f,surface.IOR);
-            float3 beer = GlassBeer(surface.BaseColor,surface.AbsorptionColor,surface.Thickness,pathLength);
-            float3 R,T; GlassSlabWeights(F,beer,R,T);
-            // Fresnel still removes reflected energy from transmission;
-            // environment reflection is intentionally disabled for glass.
-            // Evaluate the existing clustered/direct-light specular path with
-            // zero diffuse albedo and the dielectric F0 derived from IOR.
-            float f0 = pow((surface.IOR-1.0f)/(surface.IOR+1.0f),2.0f);
+            float3 background = ComputeRefraction(surface, In.WorldPos, N, viewDir, screenUv, pathLength);
+            float F = GlassFresnel(dot(N, viewDir), 1.0f, surface.IOR);
+            float3 beer = GlassBeer(surface.BaseColor, surface.AbsorptionColor, surface.Thickness, pathLength);
+            float3 R, T;
+            GlassSlabWeights(F, beer, R, T);
+            // フレネル項によって、透過光から反射分のエネルギーを引き続き除く。
+            // ガラスの環境反射は意図的に無効にしている。
+            // 既存のクラスター化された直接光の鏡面反射経路を、
+            // 拡散アルベド 0 と IOR から導く誘電体の F0 で評価する。
+            float f0 = pow((surface.IOR - 1.0f) / (surface.IOR + 1.0f), 2.0f);
             float3 specularDirect, glassLightDir, glassLightColor;
             float glassAttenuation, glassVolume, glassRange, glassVisibility;
-            ResolveSurfaceLightAggregateShadowed(In.WorldPos,ddx(In.WorldPos),ddy(In.WorldPos),
-                N,In.Position.xy,filterRadius,true,viewDir,0.0f,
-                float3(0.0f,surface.Roughness,f0),shadowSoftness,specularDirect,glassLightDir,
-                glassLightColor,glassAttenuation,glassVolume,glassRange,glassVisibility);
-            float3 glassColor = specularDirect + T*background + surface.Emissive;
-            premultiplied = lerp(color,glassColor,glassWeight) * surface.Opacity;
+            ResolveSurfaceLightAggregateShadowed(In.WorldPos, ddx(In.WorldPos), ddy(In.WorldPos), N, In.Position.xy,
+                                                 filterRadius, true, viewDir, 0.0f, float3(0.0f, surface.Roughness, f0),
+                                                 shadowSoftness, specularDirect, glassLightDir, glassLightColor,
+                                                 glassAttenuation, glassVolume, glassRange, glassVisibility);
+            float3 glassColor = specularDirect + T * background + surface.Emissive;
+            premultiplied = lerp(color, glassColor, glassWeight) * surface.Opacity;
         }
         return float4(premultiplied, saturate(coverage));
     }
@@ -454,7 +507,8 @@ float4 ShadeForward(in PSInput3D In)
         float3 specularBRDF = (D * G * F) / max(4.0f * NdotLScalar * NdotV, 0.00001f);
         float3 diffuseBRDF = (1.0f - F) * (1.0f - metallic) * albedo / PI;
         float shadowVisibility = legacyShadowVisibility;
-        float3 directReflection = (diffuseBRDF + specularBRDF) * lightColor.rgb * lightIntensity * NdotLScalar * shadowVisibility;
+        float3 directReflection =
+            (diffuseBRDF + specularBRDF) * lightColor.rgb * lightIntensity * NdotLScalar * shadowVisibility;
         float3 envReflection = SampleEnvironmentLatLong(normalize(reflect(-V, N)), roughness) * F;
         baseColor.rgb = directReflection + envReflection;
     }
@@ -465,10 +519,10 @@ float4 ShadeForward(in PSInput3D In)
 }
 
 // ---------------------------------------------------------------------------------------------
-// Output: SV_Target0 premultiplied colour (all ordinary passes).
-// During the OIT transparent pass the PSO masks target 0 and blends SV_Target1/2 into the
-// weighted blended OIT accumulation / revealage targets (McGuire & Bavoil 2013).
-// Passes with a single render target ignore SV_Target1/2.
+// 出力：SV_Target0 は乗算済みの色（通常の全パス）。
+// OIT の透明パスでは、PSO がターゲット 0 をマスクし、SV_Target1/2 を
+// 重み付きブレンド OIT の蓄積先と透過残量のターゲットへ合成する（McGuire & Bavoil 2013）。
+// レンダーターゲットが 1 つのパスでは SV_Target1/2 を無視する。
 // ---------------------------------------------------------------------------------------------
 struct ForwardOutput
 {
@@ -484,7 +538,7 @@ ForwardOutput main(in PSInput3D In)
     output.Color = premultiplied;
     float alpha = saturate(premultiplied.a);
     float viewDistance = length(In.WorldPos - CameraPos);
-    // Eq. (7): distance based weight, robust for 0.1 .. 500 m.
+    // 式 (7)：距離に基づく重み。0.1 .. 500 m で安定する。
     float weight = alpha * clamp(0.03f / (0.00001f + pow(viewDistance / 200.0f, 4.0f)), 0.01f, 3000.0f);
     output.Accumulation = float4(premultiplied.rgb, alpha) * weight;
     output.Revealage = alpha.xxxx;

@@ -23,9 +23,10 @@ cbuffer RaytracingConstants : register(b0)
     float4 Distances;
     uint4 Features;
     float4x4 WorldToView;
-    float4 Jitter; // current and previous sample jitter, in pixels
+    float4 Jitter; // 現在と前のサンプルのジッター（ピクセル単位）
     float4 Stability;
 };
+
 #include "../../source/rendering/stablesampling.h"
 
 float Random(uint value)
@@ -45,8 +46,9 @@ float3 Tangent(float3 normal)
 }
 
 #include "RayTelemetry.hlsli"
+
 float TraceHitDistance(float3 origin, float3 direction, float distance, bool closest = false,
-    uint visibilityMask = 0x01, uint telemetryChannel = RAY_TELEMETRY_SHADOW)
+                       uint visibilityMask = 0x01, uint telemetryChannel = RAY_TELEMETRY_SHADOW)
 {
     RayDesc ray;
     ray.Origin = origin;
@@ -56,14 +58,14 @@ float TraceHitDistance(float3 origin, float3 direction, float distance, bool clo
     RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
     CountTelemetryRay(telemetryChannel);
     query.TraceRayInline(Scene, closest ? RAY_FLAG_NONE : RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-        visibilityMask & 0x03u, ray);
-    while (query.Proceed()) { }
+                         visibilityMask & 0x03u, ray);
+    while (query.Proceed())
+    {
+    }
     return query.CommittedStatus() == COMMITTED_NOTHING ? 65504.0f : query.CommittedRayT();
 }
 
-[numthreads(8, 8, 1)]
-void main(uint3 dispatchId : SV_DispatchThreadID)
-{
+[numthreads(8, 8, 1)] void main(uint3 dispatchId : SV_DispatchThreadID) {
     uint2 pixel = dispatchId.xy;
     if (any(pixel >= ExtentSamples.xy))
     {
@@ -93,7 +95,7 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
     float ambient = 0;
     float penumbra = 0;
     float ambientDistance = Distances.y;
-    // Only the denoiser consumes hit distances; binary visibility can stop at any hit.
+    // ヒット距離を使うのはデノイザーだけ。二値の可視性なら、任意のヒットで停止できる。
     bool needsHitDistance = false;
 #if USE_NRD
     needsHitDistance = Features.z != 0;
@@ -111,20 +113,22 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
             float2 shadowDisk = disk;
             if (Stability.x > .5)
             {
-                // SIGMA benefits from a short, repeatable temporal pattern. The
-                // first ray's phase is independent of the fallback sample count.
+                // SIGMA には短く反復可能な時間パターンが有効。
+                // 最初のレイの位相は、フォールバックのサンプル数から独立させる。
                 SamplePair sequenceSample = SampleSequence(pixel.x, pixel.y, (ExtentSamples.w & 7u) + sample * 8u, 3u);
                 float shadowAngle = sequenceSample.y * 6.28318530718f;
                 shadowDisk = float2(cos(shadowAngle), sin(shadowAngle)) * sqrt(sequenceSample.x);
             }
-            float3 direction = normalize(SunDirection.xyz +
-                (sunTangent * shadowDisk.x + sunBitangent * shadowDisk.y) * Distances.w);
+            float3 direction =
+                normalize(SunDirection.xyz + (sunTangent * shadowDisk.x + sunBitangent * shadowDisk.y) * Distances.w);
             float hitDistance = TraceHitDistance(origin, direction, Distances.x, needsHitDistance && sample == 0);
             shadow += hitDistance >= 65504.0f ? 1.0f : 0.0f;
 #if USE_NRD
-            // SIGMA takes the penumbra of one stochastic ray, never averaged binary visibility.
-            if (sample == 0) penumbra = dot(normal, direction) > 0 ?
-                SIGMA_FrontEnd_PackPenumbra(hitDistance, tan(Distances.w)) : 0;
+            // SIGMA は単一の確率的レイの半影を入力し、平均した二値の可視性は使わない。
+            if (sample == 0)
+            {
+                penumbra = dot(normal, direction) > 0 ? SIGMA_FrontEnd_PackPenumbra(hitDistance, tan(Distances.w)) : 0;
+            }
 #endif
         }
         else
@@ -143,10 +147,15 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
                 ambientRadius = sqrt(sequenceSample.x);
                 ambientDisk = float2(cos(ambientAngle), sin(ambientAngle)) * ambientRadius;
             }
-            float3 direction = tangent * ambientDisk.x + bitangent * ambientDisk.y + normal * sqrt(1.0f - ambientRadius * ambientRadius);
-            float hitDistance = TraceHitDistance(origin, direction, Distances.y, needsHitDistance && sample == 0, 0x02, RAY_TELEMETRY_AO);
+            float3 direction = tangent * ambientDisk.x + bitangent * ambientDisk.y +
+                               normal * sqrt(1.0f - ambientRadius * ambientRadius);
+            float hitDistance = TraceHitDistance(origin, direction, Distances.y, needsHitDistance && sample == 0, 0x02,
+                                                 RAY_TELEMETRY_AO);
             ambient += hitDistance >= 65504.0f ? 1.0f : 0.0f;
-            if (sample == 0) ambientDistance = min(hitDistance, Distances.y);
+            if (sample == 0)
+            {
+                ambientDistance = min(hitDistance, Distances.y);
+            }
         }
         else
         {
@@ -156,41 +165,57 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
     Visibility[pixel] = float2(shadow, ambient) / ExtentSamples.z;
 #if USE_NRD
     NrdMotion[pixel] = -Velocity.Load(int3(pixel, 0)).zw + (Jitter.zw - Jitter.xy) / ExtentSamples.xy;
-    NrdNormalRoughness[pixel] = NRD_FrontEnd_PackNormalAndRoughness(normal, saturate(Material.Load(int3(pixel, 0)).y), 0);
+    NrdNormalRoughness[pixel] =
+        NRD_FrontEnd_PackNormalAndRoughness(normal, saturate(Material.Load(int3(pixel, 0)).y), 0);
     NrdViewZ[pixel] = abs(mul(float4(position, 1), WorldToView).z);
     NrdPenumbra[pixel] = penumbra;
-    NrdAmbient[pixel] = REBLUR_FrontEnd_GetNormHitDist(ambientDistance, NrdViewZ[pixel], float3(Distances.y, 0.000001f, 1), 1);
+    NrdAmbient[pixel] =
+        REBLUR_FrontEnd_GetNormHitDist(ambientDistance, NrdViewZ[pixel], float3(Distances.y, 0.000001f, 1), 1);
 #endif
 }
 
 #if USE_NRD
-[numthreads(8, 8, 1)]
-void ComposeAmbient(uint3 dispatchId : SV_DispatchThreadID)
+    [numthreads(8, 8, 1)] void ComposeAmbient(uint3 dispatchId : SV_DispatchThreadID)
 {
     uint2 pixel = dispatchId.xy;
-    if (any(pixel >= ExtentSamples.xy)) return;
+    if (any(pixel >= ExtentSamples.xy))
+    {
+        return;
+    }
     float depth = Depth.Load(int3(pixel, 0));
     float2 uv = (pixel + 0.5f) / ExtentSamples.xy;
     float4 world = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, depth, 1), InvViewProjection);
     float viewZ = abs(mul(float4(world.xyz / world.w, 1), WorldToView).z);
     float2 visibility = Visibility[pixel];
-    if (depth >= 0.99999f) visibility.y = 1;
-    else if (viewZ < asfloat(Features.w)) visibility.y = saturate(DenoisedAmbient.Load(int3(pixel, 0)));
+    if (depth >= 0.99999f)
+    {
+        visibility.y = 1;
+    }
+    else if (viewZ < asfloat(Features.w))
+    {
+        visibility.y = saturate(DenoisedAmbient.Load(int3(pixel, 0)));
+    }
     Visibility[pixel] = visibility;
 }
-[numthreads(8, 8, 1)]
-void ComposeShadow(uint3 dispatchId : SV_DispatchThreadID)
-{
+[numthreads(8, 8, 1)] void ComposeShadow(uint3 dispatchId : SV_DispatchThreadID) {
     uint2 pixel = dispatchId.xy;
-    if (any(pixel >= ExtentSamples.xy)) return;
+    if (any(pixel >= ExtentSamples.xy))
+    {
+        return;
+    }
     float2 visibility = Visibility[pixel];
     float depth = Depth.Load(int3(pixel, 0));
     float2 uv = (pixel + 0.5f) / ExtentSamples.xy;
     float4 world = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, depth, 1), InvViewProjection);
     float viewZ = abs(mul(float4(world.xyz / world.w, 1), WorldToView).z);
-    if (depth >= 0.99999f) visibility.x = 1.0f;
+    if (depth >= 0.99999f)
+    {
+        visibility.x = 1.0f;
+    }
     else if (viewZ < asfloat(Features.w))
+    {
         visibility.x = SIGMA_BackEnd_UnpackShadow(DenoisedShadow.Load(int3(pixel, 0)));
+    }
     Visibility[pixel] = visibility;
 }
 #endif

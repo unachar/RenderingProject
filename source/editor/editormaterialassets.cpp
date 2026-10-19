@@ -13,107 +13,107 @@
 
 namespace
 {
-struct MaterialEdit
-{
-    AssetHandle Handle = 0;
-    MaterialAssetData Before;
-};
+    struct MaterialEdit
+    {
+        AssetHandle Handle = 0;
+        MaterialAssetData Before;
+    };
 
-AssetHandle openMaterial = 0;
-AssetHandle requestedMaterial = 0;
-bool closeRequested = false;
-bool promptRequested = false;
-bool editorFocused = false;
-bool focusEditorRequested = false;
-bool pendingEdit = false;
-MaterialEdit editStart;
-unordered_map<AssetHandle, vector<MaterialAssetData>> materialUndo;
-unordered_map<AssetHandle, vector<MaterialAssetData>> materialRedo;
-EntityID dropEntity = g_kINVALID_ENTITY;
-AssetHandle dropMaterial = 0;
+    AssetHandle openMaterial = 0;
+    AssetHandle requestedMaterial = 0;
+    bool closeRequested = false;
+    bool promptRequested = false;
+    bool editorFocused = false;
+    bool focusEditorRequested = false;
+    bool pendingEdit = false;
+    MaterialEdit editStart;
+    unordered_map<AssetHandle, vector<MaterialAssetData>> materialUndo;
+    unordered_map<AssetHandle, vector<MaterialAssetData>> materialRedo;
+    EntityID dropEntity = g_kINVALID_ENTITY;
+    AssetHandle dropMaterial = 0;
 
-const AssetDragPayload* ReadPayload(const ImGuiPayload* payload, AssetType expected)
-{
-    if (!payload || payload->DataSize != sizeof(AssetDragPayload))
+    const AssetDragPayload* ReadPayload(const ImGuiPayload* payload, AssetType expected)
     {
-        return nullptr;
-    }
-    const auto* asset = static_cast<const AssetDragPayload*>(payload->Data);
-    if (asset->Type != expected || MaterialManager::Registry().TypeOf(asset->Handle) != expected)
-    {
-        return nullptr;
-    }
-    return asset;
-}
-
-string AssetName(AssetHandle handle, const char* empty)
-{
-    if (handle == 0)
-    {
-        return empty;
-    }
-    const auto path = MaterialManager::Registry().Resolve(handle);
-    if (path.empty())
-    {
-        return "Missing: " + FormatAssetHandle(handle);
-    }
-    return path.filename().generic_string();
-}
-
-bool DrawTextureSlot(const char* label, AssetHandle& handle)
-{
-    ImGui::PushID(label);
-    const auto name = AssetName(handle, "未設定");
-    ImGui::Button(name.c_str(), ImVec2(-40, 0));
-    const auto textureMinimum = ImGui::GetItemRectMin();
-    const auto textureMaximum = ImGui::GetItemRectMax();
-    MaterialValidation::CaptureDropTarget(label, textureMinimum.x, textureMinimum.y, textureMaximum.x,
-                                          textureMaximum.y);
-    if (MaterialValidation::Enabled() && strcmp(label, "Normal") == 0 && ImGui::GetDragDropPayload())
-    {
-        WriteGraphicsLog("Material UI trace: Normal rect=%.1f,%.1f..%.1f,%.1f hovered=%d mouse=%.1f,%.1f\n",
-                         textureMinimum.x, textureMinimum.y, textureMaximum.x, textureMaximum.y,
-                         ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem),
-                         ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y);
-    }
-    bool changed = false;
-    if (ImGui::BeginDragDropTarget())
-    {
-        const auto* asset = ReadPayload(ImGui::AcceptDragDropPayload(AssetPayloadType), AssetType::Texture);
-        if (MaterialValidation::Enabled())
+        if (!payload || payload->DataSize != sizeof(AssetDragPayload))
         {
-            WriteGraphicsLog("Material UI trace: Texture target accepted=%d\n", asset != nullptr);
+            return nullptr;
         }
-        if (asset)
+        const auto* asset = static_cast<const AssetDragPayload*>(payload->Data);
+        if (asset->Type != expected || MaterialManager::Registry().TypeOf(asset->Handle) != expected)
         {
-            handle = asset->Handle;
+            return nullptr;
+        }
+        return asset;
+    }
+
+    string AssetName(AssetHandle handle, const char* empty)
+    {
+        if (handle == 0)
+        {
+            return empty;
+        }
+        const auto path = MaterialManager::Registry().Resolve(handle);
+        if (path.empty())
+        {
+            return "Missing: " + FormatAssetHandle(handle);
+        }
+        return path.filename().generic_string();
+    }
+
+    bool DrawTextureSlot(const char* label, AssetHandle& handle)
+    {
+        ImGui::PushID(label);
+        const auto name = AssetName(handle, "未設定");
+        ImGui::Button(name.c_str(), ImVec2(-40, 0));
+        const auto textureMinimum = ImGui::GetItemRectMin();
+        const auto textureMaximum = ImGui::GetItemRectMax();
+        MaterialValidation::CaptureDropTarget(label, textureMinimum.x, textureMinimum.y, textureMaximum.x,
+                                              textureMaximum.y);
+        if (MaterialValidation::Enabled() && strcmp(label, "Normal") == 0 && ImGui::GetDragDropPayload())
+        {
+            WriteGraphicsLog("Material UI trace: Normal rect=%.1f,%.1f..%.1f,%.1f hovered=%d mouse=%.1f,%.1f\n",
+                             textureMinimum.x, textureMinimum.y, textureMaximum.x, textureMaximum.y,
+                             ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem),
+                             ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y);
+        }
+        bool changed = false;
+        if (ImGui::BeginDragDropTarget())
+        {
+            const auto* asset = ReadPayload(ImGui::AcceptDragDropPayload(AssetPayloadType), AssetType::Texture);
+            if (MaterialValidation::Enabled())
+            {
+                WriteGraphicsLog("Material UI trace: Texture target accepted=%d\n", asset != nullptr);
+            }
+            if (asset)
+            {
+                handle = asset->Handle;
+                changed = true;
+            }
+            ImGui::EndDragDropTarget();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X"))
+        {
+            handle = 0;
             changed = true;
         }
-        ImGui::EndDragDropTarget();
+        ImGui::PopID();
+        return changed;
     }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("X"))
-    {
-        handle = 0;
-        changed = true;
-    }
-    ImGui::PopID();
-    return changed;
-}
 
-void FinishMaterialEdit()
-{
-    if (pendingEdit)
+    void FinishMaterialEdit()
     {
-        if (MaterialManager::GetRuntime(editStart.Handle).Editing != editStart.Before)
+        if (pendingEdit)
         {
-            materialUndo[editStart.Handle].push_back(editStart.Before);
-            materialRedo[editStart.Handle].clear();
+            if (MaterialManager::GetRuntime(editStart.Handle).Editing != editStart.Before)
+            {
+                materialUndo[editStart.Handle].push_back(editStart.Before);
+                materialRedo[editStart.Handle].clear();
+            }
+            pendingEdit = false;
         }
-        pendingEdit = false;
     }
 }
-} // namespace
 
 void ImGuiManager::OpenMaterialAsset(AssetHandle handle)
 {
@@ -340,7 +340,7 @@ void ImGuiManager::DrawMaterialEditorWindow()
     changed |= opticsChanged;
     if (editing.Transmission > 0.0f)
     {
-        // Render-state routing only. Never replace authored color/roughness/IOR.
+        // 描画経路だけを変更し、設定済みの色・粗さ・IOR は上書きしない。
         if (editing.Surface != MaterialSurface::Transparent || editing.DepthWrite)
         {
             editing.Surface = MaterialSurface::Transparent;
@@ -544,7 +544,7 @@ void ImGuiManager::DrawMaterialDropTarget()
             if (MaterialManager::IsRenderable(target))
             {
                 ImGui::SetTooltip("%s: Materialを適用", GetEntityDisplayName(target));
-                // Project the actual target bounds so the highlight follows the hovered entity.
+                // 対象の実際の境界を投影し、ホバー中のエンティティにハイライトを追従させる。
                 XMFLOAT3 center;
                 XMFLOAT3 extents;
                 if (EditorWidgets::GetLocalAabb(target, center, extents))

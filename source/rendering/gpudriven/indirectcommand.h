@@ -14,7 +14,7 @@ static_assert(sizeof(GPUIndirectDrawCommand) == 24);
 static_assert(offsetof(GPUIndirectDrawCommand, Draw) == 4);
 static_assert(offsetof(GPUIndirectDrawCommand, Draw.BaseVertexLocation) == 16);
 
-// Separate from the Phase 2 mesh record: existing geometry addresses remain valid.
+// フェーズ2のメッシュレコードとは分け、既存のジオメトリアドレスを有効に保つ。
 struct GPUDrivenGeometryData
 {
     uint32_t StartIndex = 0;
@@ -42,7 +42,7 @@ inline uint32_t GpuDrivenCapacity(uint32_t current, uint32_t required)
 inline GPUDrivenGeometryData ReserveGpuDrivenGeometry(uint64_t vertices, uint64_t indices, uint32_t vertexCount,
                                                       uint32_t indexCount)
 {
-    // IA view byte sizes are UINT; vertex format is the existing 48-byte StaticModelVertex.
+    // IA ビューのバイト数は UINT。頂点形式は既存の48バイトの StaticModelVertex。
     if ((vertices + vertexCount) * 48 > UINT32_MAX || (indices + indexCount) * 4 > UINT32_MAX ||
         vertices + vertexCount > INT32_MAX || indices + indexCount > UINT32_MAX)
     {

@@ -32,14 +32,13 @@ struct GPUInstanceData
     DirectX::XMFLOAT4X4 PreviousWorld{};
     uint32_t MeshIndex = 0;
     uint32_t MaterialIndex = 0;
-    uint32_t Flags =
-        0; // bit 0: active; bit 1: frustum; bit 2: GPU opaque; bit 3: moving; bit 4: native hierarchy eligible.
+    uint32_t Flags = 0; // ビット0は有効、1は視錐台、2は GPU 不透明描画、3は移動中、4はネイティブ階層の対象。
     uint32_t Entity = UINT32_MAX;
-    DirectX::XMFLOAT4 BoundsCenter{}; // World-space AABB.
+    DirectX::XMFLOAT4 BoundsCenter{}; // ワールド空間の AABB。
     DirectX::XMFLOAT4 BoundsExtents{};
     DirectX::XMFLOAT4 LocalCenter{};
     DirectX::XMFLOAT4 LocalExtents{};
-    DirectX::XMFLOAT4 LodDistances{}; // Preserve existing component metadata; no new LOD selection.
+    DirectX::XMFLOAT4 LodDistances{}; // 既存コンポーネントの情報を維持し、新たな LOD 選択は行わない。
     uint32_t LODGroupIndex = UINT32_MAX;
     uint32_t VirtualGeometryAssetIndex = UINT32_MAX;
     uint32_t VisibilityPadding[2]{};

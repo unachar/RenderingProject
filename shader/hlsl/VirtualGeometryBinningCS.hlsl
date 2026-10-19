@@ -2,10 +2,11 @@
 
 StructuredBuffer<VisibleVirtualCluster> InputClusters : register(t0);
 ByteAddressBuffer InputCounters : register(t1);
-RWStructuredBuffer<uint4> Bins : register(u0); // offset, count, scatter cursor, material
+RWStructuredBuffer<uint4> Bins : register(u0); // オフセット、個数、散布カーソル、マテリアル
 RWStructuredBuffer<VisibleVirtualCluster> SortedClusters : register(u1);
 RWByteAddressBuffer Commands : register(u2);
 RWByteAddressBuffer Counters : register(u3);
+
 cbuffer BinningParameters : register(b0)
 {
     uint Capacity, ExactMaterialBins, MaterialCount, Padding;
@@ -13,39 +14,52 @@ cbuffer BinningParameters : register(b0)
 
 uint InputCount()
 {
-    return min(InputCounters.Load(4),Capacity);
+    return min(InputCounters.Load(4), Capacity);
 }
+
 uint MaterialBin(uint material)
 {
     return material < ExactMaterialBins ? material : ExactMaterialBins;
 }
 
-[numthreads(64,1,1)]
-void Reset(uint3 id : SV_DispatchThreadID)
-{
-    if (id.x <= ExactMaterialBins) Bins[id.x] = 0;
-    if (id.x < 8) Counters.Store(id.x*4,0);
+[numthreads(64, 1, 1)] void Reset(uint3 id : SV_DispatchThreadID) {
+    if (id.x <= ExactMaterialBins)
+    {
+        Bins[id.x] = 0;
+    }
+    if (id.x < 8)
+    {
+        Counters.Store(id.x * 4, 0);
+    }
 }
 
-[numthreads(64,1,1)]
-void Count(uint3 id : SV_DispatchThreadID)
+    [numthreads(64, 1, 1)] void Count(uint3 id : SV_DispatchThreadID)
 {
     if (id.x == 0 && InputCounters.Load(4) > Capacity)
     {
         uint unused;
-        Counters.InterlockedAdd(16,InputCounters.Load(4)-Capacity,unused);
+        Counters.InterlockedAdd(16, InputCounters.Load(4) - Capacity, unused);
     }
-    if (id.x >= InputCount()) return;
+    if (id.x >= InputCount())
+    {
+        return;
+    }
     uint material = InputClusters[id.x].MaterialIndex;
     uint bin = MaterialBin(material);
     uint unused;
-    InterlockedAdd(Bins[bin].y,1,unused);
-    if (bin == ExactMaterialBins) Counters.InterlockedAdd(8,1,unused);
-    if (material >= MaterialCount) Counters.InterlockedAdd(12,1,unused);
+    InterlockedAdd(Bins[bin].y, 1, unused);
+    if (bin == ExactMaterialBins)
+    {
+        Counters.InterlockedAdd(8, 1, unused);
+    }
+    if (material >= MaterialCount)
+    {
+        Counters.InterlockedAdd(12, 1, unused);
+    }
 }
 
-// At most 4096 exact bins by default. One ordered scan creates compact commands
-// without CPU readback or an entry for every empty material in the scene.
+// 既定では最大 4096 個の正確なビン。順序付き走査 1 回でコンパクトなコマンドを作り、
+// CPU への読み戻しや、シーンの空のマテリアルごとのエントリーを不要にする。
 // 負荷削減：以前は 1 スレッドで全ビン（約 4097）を順番に処理しており GPU 1.8ms かかっていた。
 // 1 グループ 1024 スレッドの並列スキャン（オフセットとアクティブ数の 2 回）に変更。結果（順序・値）は同じ。
 //   クランプ：「クランプ済みの累積」= min(生の累積, Capacity) なので、生の累積から直接求められる
@@ -56,29 +70,33 @@ uint ExclusiveScan(uint value, uint thread)
 {
     gs_Scan[thread] = value;
     GroupMemoryBarrierWithGroupSync();
-    // Brent-Kung inclusive scan: disjoint readers/writers within each stage.
-    // 2036 shared additions instead of 10240, with no wave-size assumptions.
+    // Brent-Kung の包含スキャン：各段階の読み取りと書き込みは重複しない。
+    // 共有加算を 10240 回から 2036 回に減らし、ウェーブサイズを仮定しない。
     [unroll] for (uint stride = 1; stride < PREFIX_THREADS; stride <<= 1)
     {
         uint index = (thread + 1) * (stride << 1) - 1;
-        if (index < PREFIX_THREADS) gs_Scan[index] += gs_Scan[index - stride];
+        if (index < PREFIX_THREADS)
+        {
+            gs_Scan[index] += gs_Scan[index - stride];
+        }
         GroupMemoryBarrierWithGroupSync();
     }
     [unroll] for (uint stride = PREFIX_THREADS >> 2; stride > 0; stride >>= 1)
     {
         uint index = (thread + 1) * (stride << 1) - 1;
-        if (index + stride < PREFIX_THREADS) gs_Scan[index + stride] += gs_Scan[index];
+        if (index + stride < PREFIX_THREADS)
+        {
+            gs_Scan[index + stride] += gs_Scan[index];
+        }
         GroupMemoryBarrierWithGroupSync();
     }
     uint inclusive = gs_Scan[thread];
-    // Every lane must finish reading before the next scan reuses this array.
+    // 次のスキャンが配列を再利用する前に、全レーンが読み取りを終える必要がある。
     GroupMemoryBarrierWithGroupSync();
     return inclusive - value;
 }
 
-[numthreads(PREFIX_THREADS,1,1)]
-void Prefix(uint thread : SV_GroupIndex)
-{
+[numthreads(PREFIX_THREADS, 1, 1)] void Prefix(uint thread : SV_GroupIndex) {
     const uint binCount = ExactMaterialBins + 1;
     const uint perThread = (binCount + PREFIX_THREADS - 1) / PREFIX_THREADS;
     const uint first = min(thread * perThread, binCount);
@@ -86,7 +104,10 @@ void Prefix(uint thread : SV_GroupIndex)
 
     // 1) 生の個数の累積
     uint rawSum = 0;
-    for (uint bin = first; bin < last; ++bin) rawSum += Bins[bin].y;
+    for (uint bin = first; bin < last; ++bin)
+    {
+        rawSum += Bins[bin].y;
+    }
     uint rawOffset = ExclusiveScan(rawSum, thread);
 
     // 2) クランプ済みの個数と、このスレッドのアクティブ（個数 > 0）なビン数
@@ -127,23 +148,22 @@ void Prefix(uint thread : SV_GroupIndex)
     }
 }
 
-[numthreads(64,1,1)]
-void Scatter(uint3 id : SV_DispatchThreadID)
+    [numthreads(64, 1, 1)] void Scatter(uint3 id : SV_DispatchThreadID)
 {
-    if (id.x >= InputCount()) return;
+    if (id.x >= InputCount())
+    {
+        return;
+    }
     VisibleVirtualCluster record = InputClusters[id.x];
     uint bin = MaterialBin(record.MaterialIndex);
     uint cursor;
-    InterlockedAdd(Bins[bin].z,1,cursor);
-    uint destination = Bins[bin].x+cursor;
-    if (cursor >= Bins[bin].y || Bins[bin].x >= Capacity || cursor >= Capacity-Bins[bin].x)
+    InterlockedAdd(Bins[bin].z, 1, cursor);
+    uint destination = Bins[bin].x + cursor;
+    if (cursor >= Bins[bin].y || Bins[bin].x >= Capacity || cursor >= Capacity - Bins[bin].x)
     {
         uint unused;
-        Counters.InterlockedAdd(24,1,unused);
+        Counters.InterlockedAdd(24, 1, unused);
         return;
     }
     SortedClusters[destination] = record;
 }
-
-
-

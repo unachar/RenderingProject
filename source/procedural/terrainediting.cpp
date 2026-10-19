@@ -2,46 +2,46 @@
 
 namespace Procedural
 {
-bool TerrainEditState::SynchronizeSelection(uint32_t target, const TerrainSettings* appliedSettings)
-{
-    const bool selectionChanged = target != m_Target;
-    const bool settingsChangedExternally =
-        appliedSettings && !TerrainSettingsEqual(*appliedSettings, m_AppliedSettings);
-    if (!selectionChanged && !settingsChangedExternally)
+    bool TerrainEditState::SynchronizeSelection(uint32_t target, const TerrainSettings* appliedSettings)
     {
-        return false;
+        const bool selectionChanged = target != m_Target;
+        const bool settingsChangedExternally =
+            appliedSettings && !TerrainSettingsEqual(*appliedSettings, m_AppliedSettings);
+        if (!selectionChanged && !settingsChangedExternally)
+        {
+            return false;
+        }
+        m_Target = target;
+        m_PendingChanges = false;
+        m_NextApplyTime = 0.0;
+        if (appliedSettings)
+        {
+            m_Settings = *appliedSettings;
+            m_AppliedSettings = *appliedSettings;
+        }
+        return true;
     }
-    m_Target = target;
-    m_PendingChanges = false;
-    m_NextApplyTime = 0.0;
-    if (appliedSettings)
+
+    void TerrainEditState::SetSettings(const TerrainSettings& settings)
     {
-        m_Settings = *appliedSettings;
-        m_AppliedSettings = *appliedSettings;
+        m_Settings = settings;
+        m_PendingChanges = m_Target != InvalidTarget && !TerrainSettingsEqual(m_Settings, m_AppliedSettings);
     }
-    return true;
-}
 
-void TerrainEditState::SetSettings(const TerrainSettings& settings)
-{
-    m_Settings = settings;
-    m_PendingChanges = m_Target != InvalidTarget && !TerrainSettingsEqual(m_Settings, m_AppliedSettings);
-}
-
-bool TerrainEditState::ShouldApply(double now, bool editingControl) const
-{
-    return m_PendingChanges && (!editingControl || now >= m_NextApplyTime);
-}
-
-void TerrainEditState::MarkApplied(double now)
-{
-    m_AppliedSettings = m_Settings;
-    m_PendingChanges = false;
-    double interval = 0.1;
-    if (m_Settings.Resolution > 128)
+    bool TerrainEditState::ShouldApply(double now, bool editingControl) const
     {
-        interval = 0.25;
+        return m_PendingChanges && (!editingControl || now >= m_NextApplyTime);
     }
-    m_NextApplyTime = now + interval;
-}
-} // namespace Procedural
+
+    void TerrainEditState::MarkApplied(double now)
+    {
+        m_AppliedSettings = m_Settings;
+        m_PendingChanges = false;
+        double interval = 0.1;
+        if (m_Settings.Resolution > 128)
+        {
+            interval = 0.25;
+        }
+        m_NextApplyTime = now + interval;
+    }
+} // 名前空間 Procedural の終わり。

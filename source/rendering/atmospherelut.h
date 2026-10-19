@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================================
-// AtmosphereLut
+// 大気の参照テーブル（AtmosphereLut）
 //   物理スカイの LUT 化（Hillaire 2020 方式）。
 //   ・Transmittance LUT（光学的厚さ, 256x64）: 惑星形状のみに依存するため初回のみ生成
 //   ・MultiScattering LUT（32x32）           : 大気係数が変わった時だけ再生成（多重散乱）
@@ -62,8 +62,8 @@ class AtmosphereLut final
         s_Device = device;
         s_EngineHeap = engineHeap;
         s_Increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        // The null pair is written first: the deferred lighting pass always binds this table,
-        // so it must be valid even if the LUT cannot be created.
+        // 遅延ライティングは常にこのテーブルをバインドするため、最初に null のペアを書き込む。
+        // LUT を作成できない場合も、テーブルは有効でなければならない。
         WriteSrv(nullptr, EngineCpu(kFrames * 2));
         WriteSrv(nullptr, EngineCpu(kFrames * 2 + 1));
 
@@ -148,7 +148,7 @@ class AtmosphereLut final
             return Fail("constants");
         }
 
-        // Region 0: transmittance build, region 1: multi scattering build, region 2+slot: sky view.
+        // 領域0は透過率生成、領域1は多重散乱生成、領域2+slot はスカイビュー。
         WriteRegion(0, nullptr, nullptr, nullptr, nullptr, s_TransmittanceLut.Get());
         WriteRegion(1, s_TransmittanceLut.Get(), nullptr, s_MultiScatterLut.Get(), nullptr, nullptr);
         for (UINT slot = 0; slot < kFrames; ++slot)
@@ -157,9 +157,9 @@ class AtmosphereLut final
                         s_SkyTransmission[slot].Get(), nullptr);
         }
 
-        // Engine heap: (scatter, transmission) per slot, plus a null pair for "disabled".
-        // Freshly created committed textures are zero (alpha 0) -> consumers fall back to the
-        // analytic sky until the slot has been built once.
+        // エンジンヒープ：スロットごとに（散乱、透過率）を配置し、無効時用の null ペアを追加する。
+        // 作成直後のコミット済みテクスチャはゼロ（アルファ0）なので、初回の構築が終わるまで
+        // 利用側は解析的な空の計算へフォールバックする。
         for (UINT slot = 0; slot < kFrames; ++slot)
         {
             WriteSrv(s_SkyScatter[slot].Get(), EngineCpu(slot * 2));
@@ -206,8 +206,8 @@ class AtmosphereLut final
         s_Constants.Reset();
     }
 
-    // Called once per frame at the start of recording (RenderFrame::BeginDraw).
-    // graphicsList is the fallback when no async compute queue is active.
+    // フレームの記録開始時（RenderFrame::BeginDraw）に1回呼ぶ。
+    // 非同期コンピュートキューが使えない場合は graphicsList に記録する。
     static void Update(ID3D12GraphicsCommandList* graphicsList, ID3D12CommandQueue* graphicsQueue, UINT frameSlot)
     {
         s_Valid = false;
@@ -242,7 +242,7 @@ class AtmosphereLut final
         memcpy(static_cast<BYTE*>(mapped) + slot * 256, &constants, sizeof(constants));
         s_Constants->Unmap(0, nullptr);
 
-        // Multiple scattering depends on the coefficients and the ground albedo only.
+        // 多重散乱は大気係数と地表アルベドだけに依存する。
         uint64_t signature = 1469598103934665603ull;
         const float keys[] = {constants.Coefficients.x, constants.Coefficients.y, constants.Coefficients.z,
                               constants.Parameters.z};
@@ -261,8 +261,8 @@ class AtmosphereLut final
             list->SetComputeRootSignature(s_Root.Get());
             list->SetComputeRootConstantBufferView(0, s_Constants->GetGPUVirtualAddress() + slot * 256);
             constexpr auto kRead = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-            // All LUTs are SIMULTANEOUS_ACCESS: at the start of every ExecuteCommandLists they are
-            // in COMMON (decayed), so explicit transitions start from COMMON.
+            // すべての LUT は SIMULTANEOUS_ACCESS。ExecuteCommandLists の開始時は減衰後の
+            // COMMON 状態なので、明示的な状態遷移も COMMON から開始する。
             if (buildTransmittance)
             {
                 Barrier(list, s_TransmittanceLut.Get(), D3D12_RESOURCE_STATE_COMMON,
@@ -290,9 +290,9 @@ class AtmosphereLut final
             BindRegion(list, 2 + slot);
             list->SetPipelineState(s_SkyView.Get());
             list->Dispatch((192 + 7) / 8, (108 + 7) / 8, 1);
-            // Graphics queue (fallback): make the LUT readable by pixel and compute shaders now.
-            // Compute queue: leave it in UAV; it decays to COMMON when the list completes and the
-            // graphics queue promotes it implicitly on first read.
+            // グラフィックスキューへのフォールバックでは、ここでピクセル・コンピュートシェーダーの読み取りを許可する。
+            // コンピュートキューでは UAV のままにする。リスト完了時に COMMON へ減衰し、
+            // グラフィックスキューでの最初の読み取り時に暗黙に昇格する。
             if (!async)
             {
                 constexpr auto kShaderRead =
@@ -359,7 +359,7 @@ class AtmosphereLut final
         }
         else
         {
-            // Restore the engine heap for the rest of the graphics frame.
+            // この後のグラフィックス処理に向けてエンジンヒープを戻す。
             ID3D12DescriptorHeap* engine[] = {s_EngineHeap.Get()};
             graphicsList->SetDescriptorHeaps(1, engine);
         }
@@ -370,7 +370,7 @@ class AtmosphereLut final
         s_LastAsync = async;
     }
 
-    // Descriptor table (t40/t41) for the post process root signature.
+    // 後処理のルートシグネチャ用の記述子テーブル（t40/t41）。
     static D3D12_GPU_DESCRIPTOR_HANDLE GetGraphicsSrv()
     {
         if (!s_EngineHeap)
@@ -380,7 +380,7 @@ class AtmosphereLut final
         return EngineGpu(s_Valid ? s_Slot * 2 : kFrames * 2);
     }
 
-    // Writes the current sky view LUT (or null descriptors) into another shader-visible heap.
+    // 現在のスカイビュー LUT（または null 記述子）を別のシェーダー可視ヒープへ書き込む。
     static void WriteSrvs(ID3D12Device* device, D3D12_CPU_DESCRIPTOR_HANDLE scatter,
                           D3D12_CPU_DESCRIPTOR_HANDLE transmission)
     {
@@ -389,8 +389,8 @@ class AtmosphereLut final
         WriteSrv(valid ? s_SkyTransmission[s_Slot].Get() : nullptr, transmission, device);
     }
 
-    // Same selection as LightingResources (SkySunDirection): the first SunComponent's physical
-    // directional light, otherwise the day/night cycle direction.
+    // LightingResources（SkySunDirection）と同じ選択規則。最初の SunComponent の物理的な
+    // 平行光を使い、なければ昼夜サイクルの方向を使う。
     static XMFLOAT3 ResolveSkySunDirection()
     {
         const XMFLOAT4 cycle = DayNightCycle::GetSunDirection();
@@ -416,7 +416,7 @@ class AtmosphereLut final
   private:
     static inline std::unique_ptr<RenderGraphQueueExecutor> s_GraphExecutor;
     static constexpr UINT kFrames = RendererState::g_kFRAME_COUNT;
-    static constexpr UINT kRegionSize = 5; // t0, t1, u0, u1, u2
+    static constexpr UINT kRegionSize = 5; // 読み取り元：t0、t1、書き込み先：u0、u1、u2
     static constexpr UINT kRegionCount = 2 + kFrames;
 
     static inline Settings s_Settings{};
@@ -433,7 +433,7 @@ class AtmosphereLut final
     static bool Fail(const char* what)
     {
         WriteGraphicsLog("AtmosphereLut: %s failed, using the analytic sky\n", what);
-        ReleaseResources(); // keeps the engine heap so the null descriptors stay bindable
+        ReleaseResources(); // null 記述子を引き続きバインドできるよう、エンジンヒープは保持する
         return false;
     }
 
@@ -444,7 +444,7 @@ class AtmosphereLut final
         {
             return ComponentManager::GetComponentUnchecked<TransformComponent>(camera).Position.y;
         }
-        return 0.0f; // LightingResources falls back to (0, 0, -5)
+        return 0.0f; // LightingResources は（0, 0, -5）へフォールバックする
     }
 
     static bool CreateLut(ComPtr<ID3D12Resource>& texture, UINT width, UINT height, DXGI_FORMAT format,

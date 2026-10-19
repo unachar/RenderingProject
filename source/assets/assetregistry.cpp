@@ -158,8 +158,8 @@ bool AssetRegistry::Refresh(std::string& error)
         {
             continue;
         }
-        // Texture IDs are assigned when used or dragged. Scanning the project should
-        // not create metadata for every imported texture that no material references.
+        // テクスチャ ID は使用時やドラッグ時に割り当てる。プロジェクト走査では、
+        // どのマテリアルも参照しないインポート済みテクスチャのメタデータを作らない。
         if ((type == AssetType::Texture || type == AssetType::Mesh) &&
             !std::filesystem::exists(iterator->path().wstring() + L".meta", filesystemError))
         {

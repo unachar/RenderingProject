@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================================
-// RenderQuality
+// 描画品質設定（RenderQuality）
 //   画質向上機能の設定をまとめたヘッダー（ヘッダーのみ。.vcxproj への追加不要）。
 //   ・IBL DFG LUT / 多重散乱 GGX エネルギー補償
 //   ・エリアライト（LTC）
@@ -26,7 +26,7 @@ enum class ToneMapper : int
 
 struct RenderQualitySettings
 {
-    // --- PBR ---
+    // --- 物理ベース描画（PBR） ---
     bool EnergyCompensation = true; // 多重散乱 GGX のエネルギー補償（DFG LUT）
     bool AreaLights = true;         // 矩形ライト（LTC）
     // --- トーンマップ / グレーディング ---
@@ -66,7 +66,7 @@ struct RenderQualitySettings
     // --- 半透明 ---
     bool OrderIndependentTransparency = true;
     bool RaytracedRefraction = true;
-    // --- ReSTIR GI ---
+    // --- ReSTIRによる大域照明（ReSTIR GI） ---
     bool ReSTIRGI = true;
     int ReSTIRTemporalMaxM = 20; // 時間方向の履歴上限
     int ReSTIRSpatialSamples = 4;
@@ -84,7 +84,7 @@ class RenderQuality final
         return s_Settings;
     }
 
-    // Packs the settings into the extended PostProcessParams block (11 x float4).
+    // 設定を拡張 PostProcessParams ブロック（11 x float4）に詰める。
     static void Pack(DirectX::XMFLOAT4* out, float time, unsigned frame, bool oitActive, bool refractionActive)
     {
         Settings& s = s_Settings;
@@ -120,7 +120,7 @@ class RenderQuality final
         return s_EffectivePuddles;
     }
 
-    // Rain gradually soaks surfaces and forms puddles; they dry slowly when it stops.
+    // 雨で徐々に表面が濡れて水たまりができ、止んだ後はゆっくり乾く。
     static void Tick(float deltaTime)
     {
         Settings& s = s_Settings;

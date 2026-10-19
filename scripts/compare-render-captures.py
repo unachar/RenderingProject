@@ -1,4 +1,4 @@
-"""Compare captured output pixels; this does not assess temporal artifacts or HDR."""
+"""キャプチャ画像の画素を比較する。時間方向の乱れやHDR画質は評価しない。"""
 
 import argparse
 import json
@@ -9,7 +9,7 @@ from PIL import Image
 
 
 def rgb_metrics(first: np.ndarray, second: np.ndarray) -> dict:
-    """Encoded 8-bit RGB metrics; these are not linear HDR quality metrics."""
+    """符号化済みの8ビットRGBを評価する。線形HDRの画質指標ではない。"""
     first = np.asarray(first, dtype=np.float64)
     second = np.asarray(second, dtype=np.float64)
     if (first.shape != second.shape or first.ndim != 3 or first.shape[2] != 3
@@ -19,7 +19,7 @@ def rgb_metrics(first: np.ndarray, second: np.ndarray) -> dict:
         if not np.isfinite(pixels).all() or np.any(pixels < 0) or np.any(pixels > 255):
             raise ValueError("RGB capture values must be finite and between 0 and 255")
 
-    # Summed areas avoid materializing an HxWx11x11x3 array for local SSIM.
+    # 積分画像を使い、局所SSIM計算用の高さ×幅×11×11×3の配列を生成せずに済ませる。
     size = min(11, *first.shape[:2])
 
     def local_mean(pixels: np.ndarray) -> np.ndarray:

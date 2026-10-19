@@ -25,7 +25,7 @@ VirtualGeometryBuildResult VirtualGeometryBuilder::Build(std::span<const Virtual
         auto clean = VirtualGeometryInternal::CleanSource(vertices, indices, asset.Stats);
         auto leaves = VirtualGeometryInternal::AppendClusters(asset, vertices, clean, 0, 0);
         asset.Stats.LeafClusters = VirtualGeometryInternal::CheckedIndex(leaves.size());
-        // Release source-sized temporary indices before hierarchy group temporaries.
+        // 階層グループの一時データより先に、ソース全体分の一時インデックスを解放する。
         std::vector<uint32_t>().swap(clean);
         VirtualGeometryInternal::BuildHierarchy(asset, std::move(leaves));
         VirtualGeometryInternal::UpdateStatistics(asset);

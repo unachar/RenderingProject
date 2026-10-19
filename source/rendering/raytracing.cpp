@@ -22,711 +22,731 @@
 
 namespace
 {
-constexpr UINT kFrameCount = RendererState::g_kFRAME_COUNT;
-constexpr UINT kSrvStart = RendererState::g_kHIZ_MIP_SRV_START_INDEX + 2 * RendererState::g_kHIZ_MAX_MIPS;
-constexpr UINT kUavStart = kSrvStart + kFrameCount;
-constexpr UINT kFallbackSrv = kUavStart + kFrameCount;
-constexpr UINT kGuideUavStart = kSrvStart + 16; // after the existing DXR and DLSS descriptor ranges
-constexpr UINT kNrdShadowSrvStart = kGuideUavStart + 5 * kFrameCount;
-constexpr UINT kNrdAmbientSrvStart = kNrdShadowSrvStart + kFrameCount;
-static_assert(kNrdAmbientSrvStart + kFrameCount <= RendererState::g_kENGINE_DESCRIPTOR_END);
-static_assert(kFallbackSrv < RendererState::g_kENGINE_DESCRIPTOR_END, "DXR descriptor range exceeds engine heap");
-constexpr UINT kConstantStride = 256;
-constexpr UINT kMaximumInstances = RendererState::g_kGLASS_MAX_MESHES;
+    constexpr UINT kFrameCount = RendererState::g_kFRAME_COUNT;
+    constexpr UINT kSrvStart = RendererState::g_kHIZ_MIP_SRV_START_INDEX + 2 * RendererState::g_kHIZ_MAX_MIPS;
+    constexpr UINT kUavStart = kSrvStart + kFrameCount;
+    constexpr UINT kFallbackSrv = kUavStart + kFrameCount;
+    constexpr UINT kGuideUavStart = kSrvStart + 16; // 既存の DXR と DLSS の記述子領域の後に配置する
+    constexpr UINT kNrdShadowSrvStart = kGuideUavStart + 5 * kFrameCount;
+    constexpr UINT kNrdAmbientSrvStart = kNrdShadowSrvStart + kFrameCount;
+    static_assert(kNrdAmbientSrvStart + kFrameCount <= RendererState::g_kENGINE_DESCRIPTOR_END);
+    static_assert(kFallbackSrv < RendererState::g_kENGINE_DESCRIPTOR_END, "DXR descriptor range exceeds engine heap");
+    constexpr UINT kConstantStride = 256;
+    constexpr UINT kMaximumInstances = RendererState::g_kGLASS_MAX_MESHES;
 
-using GeometryKey = tuple<UINT64, UINT64, UINT, UINT, UINT, UINT>;
+    using GeometryKey = tuple<UINT64, UINT64, UINT, UINT, UINT, UINT>;
 
-struct BottomLevel
-{
-    ComPtr<ID3D12Resource> Result;
-    ComPtr<ID3D12Resource> Scratch;
-    ComPtr<ID3D12Resource> Vertices;
-    ComPtr<ID3D12Resource> Indices;
-    UINT64 LastSeen = 0;
-    UINT64 LastBuilt = 0;
-};
-
-struct GlassMesh
-{
-    XMFLOAT4X4 World{}, NormalToWorld{};
-    XMUINT4 Layout{};
-    XMFLOAT4 BaseColor{}, Emission{}, Optical{}, Absorption{}, OpticalExtra{};
-    XMUINT4 Flags{}; // medium id, texture present, triangle count, reserved
-};
-
-static_assert(sizeof(GlassMesh) == 240);
-
-struct GlassDescriptorRecord
-{
-    ComPtr<ID3D12Resource> Vertices, Indices, Texture;
-    UINT ResidentMip = UINT_MAX;
-    bool Valid = false;
-};
-
-struct FrameResources
-{
-    array<ComPtr<ID3D12Resource>, 4> Guides;
-    ComPtr<ID3D12Resource> AmbientGuide;
-    map<GeometryKey, BottomLevel> Geometry;
-    ComPtr<ID3D12Resource> TopLevel;
-    ComPtr<ID3D12Resource> Scratch;
-    ComPtr<ID3D12Resource> Instances;
-    ComPtr<ID3D12Resource> Result;
-    UINT Width = 0;
-    vector<RaytracingGeometry> SceneGeometry;
-    ComPtr<ID3D12Resource> GlassMetadata;
-    vector<GlassDescriptorRecord> GlassDescriptors;
-    bool GlassReady = false;
-    bool GlassReading = false;
-    vector<D3D12_RESOURCE_BARRIER> GlassRestore;
-    unordered_set<ID3D12Resource*> GlassSkinnedVertices;
-    // A scene SRV can already reference the previous TLAS earlier in this same
-    // command list. Keep replaced resources until this frame's fence is reused.
-    vector<ComPtr<ID3D12Resource>> Retired;
-    UINT Height = 0;
-};
-
-struct Constants
-{
-    XMFLOAT4X4 InvViewProjection;
-    XMFLOAT4 SunDirection;
-    XMUINT4 ExtentSamples;
-    XMFLOAT4 Distances;
-    XMUINT4 Features;
-    XMFLOAT4X4 WorldToView;
-    XMFLOAT4 Jitter;
-    XMFLOAT4 Stability;
-};
-
-struct LightingConstants
-{
-    XMFLOAT4 Flags{};
-    XMFLOAT4 Parameters{};
-    array<XMUINT4, 160> Lights{};
-};
-
-constexpr UINT kLightingStride = (sizeof(LightingConstants) + 255u) & ~255u;
-array<XMUINT4, 160> g_LightShadowFlags{};
-ComPtr<ID3D12Resource> g_LightingConstants;
-static_assert(sizeof(Constants) <= kConstantStride);
-
-ComPtr<ID3D12Device5> g_Device;
-ComPtr<ID3D12DescriptorHeap> g_Heap;
-ComPtr<ID3D12RootSignature> g_RootSignature;
-ComPtr<ID3D12PipelineState> g_Pipeline;
-ComPtr<ID3D12PipelineState> g_TelemetryPipeline;
-bool g_TelemetryPipelineTried = false;
-ComPtr<ID3D12PipelineState> g_ComposeShadow;
-ComPtr<ID3D12PipelineState> g_ComposeAmbient;
-unique_ptr<NrdDenoiser> g_NrdSun;
-unique_ptr<NrdDenoiser> g_NrdAmbient;
-UINT g_NrdWidth = 0, g_NrdHeight = 0, g_NrdDispatchCount = 0;
-UINT g_AmbientDispatchCount = 0;
-NrdFrame g_PreviousNrdFrame;
-TemporalHistory::State g_PreviousTemporalState;
-uint64_t g_GuideSerial = 0;
-bool g_NrdHistoryValid = false;
-bool g_ShadowHistoryValid = false;
-bool g_AmbientHistoryValid = false;
-EntityID g_NrdCamera = g_kINVALID_ENTITY;
-ComPtr<ID3D12Resource> g_Constants;
-array<FrameResources, kFrameCount> g_Frames;
-Raytracing::Settings g_Settings;
-UINT g_Increment = 0;
-UINT g_FrameIndex = 0;
-UINT g_InstanceCount = 0;
-UINT64 g_Serial = 0;
-bool g_Active = false;
-bool g_ReflectionsActive = false;
-bool g_GiActive = false;
-XMFLOAT4 g_SunDirection{};
-const char* g_Status = "未初期化";
-
-D3D12_CPU_DESCRIPTOR_HANDLE Cpu(UINT index)
-{
-    return CD3DX12_CPU_DESCRIPTOR_HANDLE(g_Heap->GetCPUDescriptorHandleForHeapStart(), index, g_Increment);
-}
-
-D3D12_GPU_DESCRIPTOR_HANDLE Gpu(UINT index)
-{
-    return CD3DX12_GPU_DESCRIPTOR_HANDLE(g_Heap->GetGPUDescriptorHandleForHeapStart(), index, g_Increment);
-}
-
-bool EnsureBuffer(ComPtr<ID3D12Resource>& resource, UINT64 bytes, D3D12_HEAP_TYPE heapType, D3D12_RESOURCE_STATES state,
-                  const wchar_t* name)
-{
-    bytes = (bytes + 255ull) & ~255ull;
-    if (resource && resource->GetDesc().Width >= bytes)
+    struct BottomLevel
     {
+        ComPtr<ID3D12Resource> Result;
+        ComPtr<ID3D12Resource> Scratch;
+        ComPtr<ID3D12Resource> Vertices;
+        ComPtr<ID3D12Resource> Indices;
+        UINT64 LastSeen = 0;
+        UINT64 LastBuilt = 0;
+    };
+
+    struct GlassMesh
+    {
+        XMFLOAT4X4 World{}, NormalToWorld{};
+        XMUINT4 Layout{};
+        XMFLOAT4 BaseColor{}, Emission{}, Optical{}, Absorption{}, OpticalExtra{};
+        XMUINT4 Flags{}; // 媒質 ID、テクスチャ有無、三角形数、予約領域
+    };
+
+    static_assert(sizeof(GlassMesh) == 240);
+
+    struct GlassDescriptorRecord
+    {
+        ComPtr<ID3D12Resource> Vertices, Indices, Texture;
+        UINT ResidentMip = UINT_MAX;
+        bool Valid = false;
+    };
+
+    struct FrameResources
+    {
+        array<ComPtr<ID3D12Resource>, 4> Guides;
+        ComPtr<ID3D12Resource> AmbientGuide;
+        map<GeometryKey, BottomLevel> Geometry;
+        ComPtr<ID3D12Resource> TopLevel;
+        ComPtr<ID3D12Resource> Scratch;
+        ComPtr<ID3D12Resource> Instances;
+        ComPtr<ID3D12Resource> Result;
+        UINT Width = 0;
+        vector<RaytracingGeometry> SceneGeometry;
+        ComPtr<ID3D12Resource> GlassMetadata;
+        vector<GlassDescriptorRecord> GlassDescriptors;
+        bool GlassReady = false;
+        bool GlassReading = false;
+        vector<D3D12_RESOURCE_BARRIER> GlassRestore;
+        unordered_set<ID3D12Resource*> GlassSkinnedVertices;
+        // 同じコマンドリスト内ですでにシーン SRV が以前の TLAS を参照している可能性がある。
+        // 置き換えたリソースは、このフレームのフェンスが再利用されるまで保持する。
+        vector<ComPtr<ID3D12Resource>> Retired;
+        UINT Height = 0;
+    };
+
+    struct Constants
+    {
+        XMFLOAT4X4 InvViewProjection;
+        XMFLOAT4 SunDirection;
+        XMUINT4 ExtentSamples;
+        XMFLOAT4 Distances;
+        XMUINT4 Features;
+        XMFLOAT4X4 WorldToView;
+        XMFLOAT4 Jitter;
+        XMFLOAT4 Stability;
+    };
+
+    struct LightingConstants
+    {
+        XMFLOAT4 Flags{};
+        XMFLOAT4 Parameters{};
+        array<XMUINT4, 160> Lights{};
+    };
+
+    constexpr UINT kLightingStride = (sizeof(LightingConstants) + 255u) & ~255u;
+    array<XMUINT4, 160> g_LightShadowFlags{};
+    ComPtr<ID3D12Resource> g_LightingConstants;
+    static_assert(sizeof(Constants) <= kConstantStride);
+
+    ComPtr<ID3D12Device5> g_Device;
+    ComPtr<ID3D12DescriptorHeap> g_Heap;
+    ComPtr<ID3D12RootSignature> g_RootSignature;
+    ComPtr<ID3D12PipelineState> g_Pipeline;
+    ComPtr<ID3D12PipelineState> g_TelemetryPipeline;
+    bool g_TelemetryPipelineTried = false;
+    ComPtr<ID3D12PipelineState> g_ComposeShadow;
+    ComPtr<ID3D12PipelineState> g_ComposeAmbient;
+    unique_ptr<NrdDenoiser> g_NrdSun;
+    unique_ptr<NrdDenoiser> g_NrdAmbient;
+    UINT g_NrdWidth = 0, g_NrdHeight = 0, g_NrdDispatchCount = 0;
+    UINT g_AmbientDispatchCount = 0;
+    NrdFrame g_PreviousNrdFrame;
+    TemporalHistory::State g_PreviousTemporalState;
+    uint64_t g_GuideSerial = 0;
+    bool g_NrdHistoryValid = false;
+    bool g_ShadowHistoryValid = false;
+    bool g_AmbientHistoryValid = false;
+    EntityID g_NrdCamera = g_kINVALID_ENTITY;
+    ComPtr<ID3D12Resource> g_Constants;
+    array<FrameResources, kFrameCount> g_Frames;
+    Raytracing::Settings g_Settings;
+    UINT g_Increment = 0;
+    UINT g_FrameIndex = 0;
+    UINT g_InstanceCount = 0;
+    UINT64 g_Serial = 0;
+    bool g_Active = false;
+    bool g_ReflectionsActive = false;
+    bool g_GiActive = false;
+    XMFLOAT4 g_SunDirection{};
+    const char* g_Status = "未初期化";
+
+    D3D12_CPU_DESCRIPTOR_HANDLE Cpu(UINT index)
+    {
+        return CD3DX12_CPU_DESCRIPTOR_HANDLE(g_Heap->GetCPUDescriptorHandleForHeapStart(), index, g_Increment);
+    }
+
+    D3D12_GPU_DESCRIPTOR_HANDLE Gpu(UINT index)
+    {
+        return CD3DX12_GPU_DESCRIPTOR_HANDLE(g_Heap->GetGPUDescriptorHandleForHeapStart(), index, g_Increment);
+    }
+
+    bool EnsureBuffer(ComPtr<ID3D12Resource>& resource, UINT64 bytes, D3D12_HEAP_TYPE heapType,
+                      D3D12_RESOURCE_STATES state, const wchar_t* name)
+    {
+        bytes = (bytes + 255ull) & ~255ull;
+        if (resource && resource->GetDesc().Width >= bytes)
+        {
+            return true;
+        }
+        const auto heap = CD3DX12_HEAP_PROPERTIES(heapType);
+        D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE;
+        if (heapType == D3D12_HEAP_TYPE_DEFAULT)
+        {
+            flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        }
+        const auto description = CD3DX12_RESOURCE_DESC::Buffer(bytes, flags);
+        ComPtr<ID3D12Resource> created;
+        const HRESULT result = g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, state,
+                                                                 nullptr, IID_PPV_ARGS(&created));
+        if (FAILED(result))
+        {
+            Debug::Log("DXR: buffer allocation failed (0x%08X)\n", static_cast<unsigned int>(result));
+            return false;
+        }
+        created->SetName(name);
+        if (resource)
+        {
+            g_Frames[g_FrameIndex].Retired.push_back(resource);
+        }
+        resource = move(created);
         return true;
     }
-    const auto heap = CD3DX12_HEAP_PROPERTIES(heapType);
-    D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE;
-    if (heapType == D3D12_HEAP_TYPE_DEFAULT)
-    {
-        flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-    }
-    const auto description = CD3DX12_RESOURCE_DESC::Buffer(bytes, flags);
-    ComPtr<ID3D12Resource> created;
-    const HRESULT result = g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, state, nullptr,
-                                                             IID_PPV_ARGS(&created));
-    if (FAILED(result))
-    {
-        Debug::Log("DXR: buffer allocation failed (0x%08X)\n", static_cast<unsigned int>(result));
-        return false;
-    }
-    created->SetName(name);
-    if (resource)
-    {
-        g_Frames[g_FrameIndex].Retired.push_back(resource);
-    }
-    resource = move(created);
-    return true;
-}
 
-void Transition(ID3D12GraphicsCommandList* commandList, ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
-                D3D12_RESOURCE_STATES after)
-{
-    if (resource && before != after && before != D3D12_RESOURCE_STATE_GENERIC_READ &&
-        after != D3D12_RESOURCE_STATE_GENERIC_READ)
+    void Transition(ID3D12GraphicsCommandList* commandList, ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
+                    D3D12_RESOURCE_STATES after)
     {
-        const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, before, after);
-        commandList->ResourceBarrier(1, &barrier);
+        if (resource && before != after && before != D3D12_RESOURCE_STATE_GENERIC_READ &&
+            after != D3D12_RESOURCE_STATE_GENERIC_READ)
+        {
+            const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, before, after);
+            commandList->ResourceBarrier(1, &barrier);
+        }
     }
-}
 
-bool EnsureOutput(FrameResources& frame, UINT width, UINT height)
-{
-    if (frame.Result && frame.Width == width && frame.Height == height)
+    bool EnsureOutput(FrameResources& frame, UINT width, UINT height)
     {
-        return true;
-    }
-    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    const auto description = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16_FLOAT, width, height, 1, 1, 1, 0,
-                                                          D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    ComPtr<ID3D12Resource> created;
-    if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
-                                                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
-                                                 IID_PPV_ARGS(&created))))
-    {
-        return false;
-    }
-    created->SetName(L"Raytraced Sun Shadow and AO");
-    frame.Result = move(created);
-    frame.Width = width;
-    frame.Height = height;
-    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-    srv.Format = description.Format;
-    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srv.Texture2D.MipLevels = 1;
-    g_Device->CreateShaderResourceView(frame.Result.Get(), &srv, Cpu(kSrvStart + g_FrameIndex));
-    D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
-    uav.Format = description.Format;
-    uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-    g_Device->CreateUnorderedAccessView(frame.Result.Get(), nullptr, &uav, Cpu(kUavStart + g_FrameIndex));
-    return true;
-}
-
-// NRD guides are written and consumed inside one command list, and NRD keeps its own copy of
-// the previous normal/viewZ. One shared set therefore replaces the former per-frame-slot copies
-// (5 full-resolution textures x 3 slots -> x 1). Each slot keeps a reference to the set it
-// recorded with, so a resize never releases textures that an in-flight frame still uses.
-array<ComPtr<ID3D12Resource>, 5> g_SharedGuides;
-
-bool EnsureSharedGuide(UINT index, DXGI_FORMAT format, UINT width, UINT height)
-{
-    auto& guide = g_SharedGuides[index];
-    if (guide && guide->GetDesc().Width == width && guide->GetDesc().Height == height)
-    {
-        return true;
-    }
-    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    const auto description =
-        CD3DX12_RESOURCE_DESC::Tex2D(format, width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    ComPtr<ID3D12Resource> created;
-    if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
-                                                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
-                                                 IID_PPV_ARGS(&created))))
-    {
-        return false;
-    }
-    created->SetName(index < 4 ? L"NRD Primary Surface Guide (shared)" : L"NRD Ambient Guide (shared)");
-    guide = move(created);
-    return true;
-}
-
-bool EnsureDenoiser(FrameResources& frame)
-{
-    if (!NrdDenoiser::IsCompiled() || !g_ComposeShadow)
-    {
-        return false;
-    }
-    constexpr DXGI_FORMAT formats[] = {DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R32_FLOAT,
-                                       DXGI_FORMAT_R16_FLOAT, DXGI_FORMAT_R16_FLOAT};
-    for (UINT index = 0; index < 5; ++index)
-    {
-        if (!EnsureSharedGuide(index, formats[index], frame.Width, frame.Height))
+        if (frame.Result && frame.Width == width && frame.Height == height)
+        {
+            return true;
+        }
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        const auto description = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16_FLOAT, width, height, 1, 1, 1, 0,
+                                                              D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        ComPtr<ID3D12Resource> created;
+        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+                                                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+                                                     IID_PPV_ARGS(&created))))
         {
             return false;
         }
-        auto& slotGuide = index < 4 ? frame.Guides[index] : frame.AmbientGuide;
-        if (slotGuide == g_SharedGuides[index])
-        {
-            continue;
-        }
-        slotGuide = g_SharedGuides[index];
+        created->SetName(L"Raytraced Sun Shadow and AO");
+        frame.Result = move(created);
+        frame.Width = width;
+        frame.Height = height;
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+        srv.Format = description.Format;
+        srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srv.Texture2D.MipLevels = 1;
+        g_Device->CreateShaderResourceView(frame.Result.Get(), &srv, Cpu(kSrvStart + g_FrameIndex));
         D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
-        uav.Format = formats[index];
+        uav.Format = description.Format;
         uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-        g_Device->CreateUnorderedAccessView(slotGuide.Get(), nullptr, &uav,
-                                            Cpu(kGuideUavStart + g_FrameIndex * 5 + index));
-    }
-    if (!g_NrdSun || g_NrdWidth != frame.Width || g_NrdHeight != frame.Height)
-    {
-        // Histories are shared across queued frames; retire them only after the queue has completed.
-        if (!GraphicsDevice::WaitForGpuIdle())
-        {
-            return false;
-        }
-        auto created = make_unique<NrdDenoiser>();
-        if (!created->Initialize(g_Device.Get(), NrdSignal::Shadow, frame.Width, frame.Height))
-        {
-            return false;
-        }
-        auto ambient = make_unique<NrdDenoiser>();
-        if (!ambient->Initialize(g_Device.Get(), NrdSignal::AmbientOcclusion, frame.Width, frame.Height))
-        {
-            return false;
-        }
-        g_NrdSun = move(created);
-        g_NrdAmbient = move(ambient);
-        g_NrdWidth = frame.Width;
-        g_NrdHeight = frame.Height;
-        g_NrdHistoryValid = false;
-    }
-    return true;
-}
-
-// Each BLAS owns its scratch allocation, so independent builds can overlap.
-// Restore geometry states even if allocation of a later BLAS fails.
-class GeometryReadBatch
-{
-  public:
-    explicit GeometryReadBatch(ID3D12GraphicsCommandList* commandList) : m_CommandList(commandList) {}
-
-    void Add(ID3D12Resource* resource, D3D12_RESOURCE_STATES state)
-    {
-        if (!resource || state == D3D12_RESOURCE_STATE_GENERIC_READ ||
-            state == D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE || !m_Resources.emplace(resource, state).second)
-        {
-            return;
-        }
-        m_ReadBarriers.push_back(
-            CD3DX12_RESOURCE_BARRIER::Transition(resource, state, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
-        m_FinishBarriers.push_back(
-            CD3DX12_RESOURCE_BARRIER::Transition(resource, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, state));
-    }
-
-    void Begin()
-    {
-        if (!m_ReadBarriers.empty())
-        {
-            m_CommandList->ResourceBarrier(static_cast<UINT>(m_ReadBarriers.size()), m_ReadBarriers.data());
-        }
-    }
-
-    void PrepareUpdate(ID3D12Resource* result)
-    {
-        // Raster lighting may query this frame slot's previous TLAS before
-        // Execute updates its BLASes. Finish those reads before refitting.
-        if (result)
-        {
-            m_ReadBarriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(result));
-        }
-    }
-
-    void CompleteBuild(ID3D12Resource* result)
-    {
-        m_FinishBarriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(result));
-    }
-
-    void Finish()
-    {
-        if (!m_FinishBarriers.empty())
-        {
-            m_CommandList->ResourceBarrier(static_cast<UINT>(m_FinishBarriers.size()), m_FinishBarriers.data());
-            m_FinishBarriers.clear();
-        }
-    }
-
-    ~GeometryReadBatch()
-    {
-        Finish();
-    }
-
-  private:
-    ID3D12GraphicsCommandList* m_CommandList;
-    map<ID3D12Resource*, D3D12_RESOURCE_STATES> m_Resources;
-    vector<D3D12_RESOURCE_BARRIER> m_ReadBarriers;
-    vector<D3D12_RESOURCE_BARRIER> m_FinishBarriers;
-};
-
-bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingGeometry& geometry, BottomLevel& level,
-                      GeometryReadBatch& geometryReads)
-{
-    level.LastSeen = g_Serial;
-    if (level.Result && (!geometry.Deforming || level.LastBuilt == g_Serial))
-    {
+        g_Device->CreateUnorderedAccessView(frame.Result.Get(), nullptr, &uav, Cpu(kUavStart + g_FrameIndex));
         return true;
     }
-    D3D12_RAYTRACING_GEOMETRY_DESC description{};
-    description.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-    description.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
-    description.Triangles.VertexBuffer.StartAddress = geometry.VertexView.BufferLocation;
-    description.Triangles.VertexBuffer.StrideInBytes = geometry.VertexView.StrideInBytes;
-    description.Triangles.VertexCount = geometry.VertexView.SizeInBytes / geometry.VertexView.StrideInBytes;
-    description.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
-    description.Triangles.IndexBuffer = geometry.IndexView.BufferLocation;
-    description.Triangles.IndexCount = geometry.IndexCount;
-    description.Triangles.IndexFormat = geometry.IndexView.Format;
-    if (!geometry.Indices)
-    {
-        description.Triangles.IndexFormat = DXGI_FORMAT_UNKNOWN;
-    }
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
-    inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
-    inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
-    inputs.NumDescs = 1;
-    inputs.pGeometryDescs = &description;
-    inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
-    if (geometry.Deforming)
-    {
-        inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE |
-                       D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
-    }
-    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes{};
-    g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &sizes);
-    const bool update = geometry.Deforming && level.Result;
-    if (sizes.ResultDataMaxSizeInBytes == 0 ||
-        !EnsureBuffer(level.Result, sizes.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
-                      D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene BLAS") ||
-        !EnsureBuffer(level.Scratch, (max)(sizes.ScratchDataSizeInBytes, sizes.UpdateScratchDataSizeInBytes),
-                      D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"BLAS Scratch"))
-    {
-        return false;
-    }
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
-    build.Inputs = inputs;
-    build.DestAccelerationStructureData = level.Result->GetGPUVirtualAddress();
-    build.ScratchAccelerationStructureData = level.Scratch->GetGPUVirtualAddress();
-    if (update)
-    {
-        build.Inputs.Flags |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE;
-        build.SourceAccelerationStructureData = build.DestAccelerationStructureData;
-    }
-    // Upload heaps remain GENERIC_READ: it already includes NON_PIXEL_SHADER_RESOURCE.
-    commandList->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
-    geometryReads.CompleteBuild(level.Result.Get());
-    level.Vertices = geometry.Vertices;
-    level.Indices = geometry.Indices;
-    level.LastBuilt = g_Serial;
-    return true;
-}
 
-bool EnsureTelemetryPipeline()
-{
-    if (!g_TelemetryPipelineTried)
-    {
-        g_TelemetryPipelineTried = true;
-        const D3D_SHADER_MACRO defines[] = {
-            {"USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0"}, {"ENABLE_RAY_TELEMETRY", "1"}, {}};
-        ComPtr<ID3DBlob> shader, errors;
-        const HRESULT result =
-            D3DCompileFromFile(L"shader/hlsl/RaytracingCS.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, "main",
-                               "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &shader, &errors);
-        if (SUCCEEDED(result))
-        {
-            D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
-            desc.pRootSignature = g_RootSignature.Get();
-            desc.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
-            g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&g_TelemetryPipeline));
-        }
-        if (!g_TelemetryPipeline)
-        {
-            WriteGraphicsLog("Ray telemetry: shadow/AO counter variant unavailable: %s\n",
-                             errors ? static_cast<const char*>(errors->GetBufferPointer())
-                                    : "pipeline creation failed");
-        }
-    }
-    return g_TelemetryPipeline != nullptr;
-}
+    // NRD ガイドは同じコマンドリスト内で生成・利用し、以前の法線と viewZ は NRD が保持する。
+    // そのため、従来のフレームスロット別の複製を共有の1組へ置き換える。
+    // 全解像度テクスチャ5枚を3スロット分から1組へ削減し、各スロットは記録時の組を参照する。
+    // これによりリサイズ時も、実行中のフレームが使うテクスチャを解放しない。
+    array<ComPtr<ID3D12Resource>, 5> g_SharedGuides;
 
-UINT GlassTableIndex(UINT slot)
-{
-    return RendererState::g_kGLASS_DESCRIPTOR_START + slot * RendererState::g_kGLASS_FRAME_DESCRIPTORS;
-}
-
-bool BuildGlassMetadata(FrameResources& frame)
-{
-    frame.GlassReady = false;
-    const UINT count = static_cast<UINT>(frame.SceneGeometry.size());
-    if (!count || !EnsureBuffer(frame.GlassMetadata, count * sizeof(GlassMesh), D3D12_HEAP_TYPE_UPLOAD,
-                                D3D12_RESOURCE_STATE_GENERIC_READ, L"Glass mesh metadata"))
+    bool EnsureSharedGuide(UINT index, DXGI_FORMAT format, UINT width, UINT height)
     {
-        return false;
-    }
-    const UINT start = GlassTableIndex(g_FrameIndex);
-    void* data = nullptr;
-    D3D12_RANGE noRead{0, 0};
-    if (FAILED(frame.GlassMetadata->Map(0, &noRead, &data)))
-    {
-        return false;
-    }
-    auto* meshes = static_cast<GlassMesh*>(data);
-    frame.GlassDescriptors.resize(count);
-    for (UINT i = 0; i < count; ++i)
-    {
-        const auto& g = frame.SceneGeometry[i];
-        GlassMesh m{};
-        XMMATRIX world = XMLoadFloat4x4(&g.World);
-        XMStoreFloat4x4(&m.World, XMMatrixTranspose(world));
-        XMStoreFloat4x4(&m.NormalToWorld, XMMatrixInverse(nullptr, world));
-        m.Layout = {g.VertexView.StrideInBytes,
-                    g.Indices ? (g.IndexView.Format == DXGI_FORMAT_R16_UINT ? 16u : 32u) : 0u,
-                    static_cast<UINT>(g.VertexView.BufferLocation - g.Vertices->GetGPUVirtualAddress()),
-                    g.Indices ? static_cast<UINT>(g.IndexView.BufferLocation - g.Indices->GetGPUVirtualAddress()) : 0u};
-        m.BaseColor = g.BaseColor;
-        m.Emission = g.Emission;
-        m.Optical = {g.IOR, g.Transmission, g.Roughness, g.Metallic};
-        m.Absorption = {g.Absorption.x, g.Absorption.y, g.Absorption.z, g.Thickness};
-        m.OpticalExtra = {g.TransmissionRoughness, g.Fresnel, 0, 0};
-        m.Flags = {g.MediumID, static_cast<UINT>(g.Texture != nullptr),
-                   g.Indices ? g.IndexCount / 3 : g.VertexView.SizeInBytes / g.VertexView.StrideInBytes / 3,
-                   static_cast<UINT>(g.UsesAssetMaterial)};
-        meshes[i] = m;
-        D3D12_SHADER_RESOURCE_VIEW_DESC raw{};
-        raw.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-        raw.Format = DXGI_FORMAT_R32_TYPELESS;
-        raw.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        raw.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
-        raw.Buffer.NumElements = static_cast<UINT>(g.Vertices->GetDesc().Width / 4);
-        auto& cached = frame.GlassDescriptors[i];
-        if (!cached.Valid || cached.Vertices.Get() != g.Vertices.Get())
+        auto& guide = g_SharedGuides[index];
+        if (guide && guide->GetDesc().Width == width && guide->GetDesc().Height == height)
         {
-            g_Device->CreateShaderResourceView(g.Vertices.Get(), &raw, Cpu(start + 1 + i));
+            return true;
         }
-        raw.Buffer.NumElements = g.Indices ? static_cast<UINT>(g.Indices->GetDesc().Width / 4) : 1;
-        if (!cached.Valid || cached.Indices.Get() != g.Indices.Get())
-        {
-            g_Device->CreateShaderResourceView(g.Indices.Get(), &raw, Cpu(start + 1 + kMaximumInstances + i));
-        }
-        D3D12_SHADER_RESOURCE_VIEW_DESC tex{};
-        tex.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-        tex.Format = g.Texture ? g.Texture->GetDesc().Format : DXGI_FORMAT_R8G8B8A8_UNORM;
-        tex.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        switch (tex.Format)
-        {
-        case DXGI_FORMAT_R32_TYPELESS:
-            tex.Format = DXGI_FORMAT_R32_FLOAT;
-            break;
-        case DXGI_FORMAT_R8G8B8A8_TYPELESS:
-            tex.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-            break;
-        case DXGI_FORMAT_B8G8R8A8_TYPELESS:
-            tex.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-            break;
-        case DXGI_FORMAT_BC1_TYPELESS:
-            tex.Format = DXGI_FORMAT_BC1_UNORM;
-            break;
-        case DXGI_FORMAT_BC2_TYPELESS:
-            tex.Format = DXGI_FORMAT_BC2_UNORM;
-            break;
-        case DXGI_FORMAT_BC3_TYPELESS:
-            tex.Format = DXGI_FORMAT_BC3_UNORM;
-            break;
-        case DXGI_FORMAT_BC7_TYPELESS:
-            tex.Format = DXGI_FORMAT_BC7_UNORM;
-            break;
-        default:
-            break;
-        }
-        tex.Texture2D.MipLevels = g.Texture ? g.Texture->GetDesc().MipLevels : 1;
-        tex.Texture2D.ResourceMinLODClamp = static_cast<float>(g.TextureResidentMip);
-        if (!cached.Valid || cached.Texture.Get() != g.Texture.Get() || cached.ResidentMip != g.TextureResidentMip)
-        {
-            g_Device->CreateShaderResourceView(g.Texture.Get(), &tex, Cpu(start + 1 + 2 * kMaximumInstances + i));
-        }
-        cached.Vertices = g.Vertices;
-        cached.Indices = g.Indices;
-        cached.Texture = g.Texture;
-        cached.ResidentMip = g.TextureResidentMip;
-        cached.Valid = true;
-    }
-    frame.GlassMetadata->Unmap(0, nullptr);
-    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-    srv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-    srv.Format = DXGI_FORMAT_UNKNOWN;
-    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srv.Buffer.NumElements = count;
-    srv.Buffer.StructureByteStride = sizeof(GlassMesh);
-    g_Device->CreateShaderResourceView(frame.GlassMetadata.Get(), &srv, Cpu(start));
-    frame.GlassReady = true;
-    return true;
-}
-
-bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
-{
-    RenderProfiler::ScopedEvent profile("DXR Acceleration Structures", commandList);
-    const auto geometry = GatherRaytracingGeometry();
-    frame.GlassReady = false;
-    frame.SceneGeometry.clear();
-    vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
-    instances.reserve((min)(geometry.size(), static_cast<size_t>(kMaximumInstances)));
-    GeometryReadBatch geometryReads(commandList);
-    // Match the instance limit and validity checks below. Cached static BLASes
-    // need no input transitions; shared vertex/index resources transition once.
-    size_t accepted = 0;
-    for (const auto& entry : geometry)
-    {
-        if (accepted >= kMaximumInstances || entry.VertexView.StrideInBytes < sizeof(XMFLOAT3))
-        {
-            continue;
-        }
-        ++accepted;
-        const GeometryKey key(entry.VertexView.BufferLocation, entry.IndexView.BufferLocation,
-                              entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,
-                              static_cast<UINT>(entry.IndexView.Format));
-        const auto bottom = frame.Geometry.find(key);
-        if (bottom == frame.Geometry.end() || !bottom->second.Result || entry.Deforming)
-        {
-            geometryReads.Add(entry.Vertices.Get(), entry.VertexState);
-            geometryReads.Add(entry.Indices.Get(), entry.IndexState);
-            if (bottom != frame.Geometry.end())
-            {
-                geometryReads.PrepareUpdate(bottom->second.Result.Get());
-            }
-        }
-    }
-    geometryReads.Begin();
-    for (const auto& entry : geometry)
-    {
-        if (instances.size() >= kMaximumInstances || entry.VertexView.StrideInBytes < sizeof(XMFLOAT3))
-        {
-            continue;
-        }
-        const GeometryKey key(entry.VertexView.BufferLocation, entry.IndexView.BufferLocation,
-                              entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,
-                              static_cast<UINT>(entry.IndexView.Format));
-        BottomLevel& bottom = frame.Geometry[key];
-        if (!BuildBottomLevel(commandList, entry, bottom, geometryReads))
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        const auto description =
+            CD3DX12_RESOURCE_DESC::Tex2D(format, width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        ComPtr<ID3D12Resource> created;
+        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+                                                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+                                                     IID_PPV_ARGS(&created))))
         {
             return false;
         }
-        D3D12_RAYTRACING_INSTANCE_DESC instance{};
-        XMFLOAT4X4 transform;
-        XMStoreFloat4x4(&transform, XMMatrixTranspose(XMLoadFloat4x4(&entry.World)));
-        memcpy(instance.Transform, &transform, sizeof(instance.Transform));
-        instance.InstanceID = static_cast<UINT>(instances.size());
-        // Bit zero is shadow visibility; bit one remains available to AO and reflections.
-        // Glass has its own visibility bit. Existing AO/GI queries retain opaque semantics.
-        instance.InstanceMask = entry.Transmission > 0.001f ? 4 : (entry.CastShadow ? 3 : 2);
-        instance.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
-        instance.AccelerationStructure = bottom.Result->GetGPUVirtualAddress();
-        instances.push_back(instance);
-        frame.SceneGeometry.push_back(entry);
+        created->SetName(index < 4 ? L"NRD Primary Surface Guide (shared)" : L"NRD Ambient Guide (shared)");
+        guide = move(created);
+        return true;
     }
-    BuildGlassMetadata(frame);
-    // All BLAS writes must be visible before TLAS construction and ray queries.
-    geometryReads.Finish();
-    for (auto iterator = frame.Geometry.begin(); iterator != frame.Geometry.end();)
-    {
-        if (iterator->second.LastSeen != g_Serial)
-        {
-            const auto& bottom = iterator->second;
-            if (bottom.Result)
-            {
-                frame.Retired.push_back(bottom.Result);
-            }
-            if (bottom.Scratch)
-            {
-                frame.Retired.push_back(bottom.Scratch);
-            }
-            if (bottom.Vertices)
-            {
-                frame.Retired.push_back(bottom.Vertices);
-            }
-            if (bottom.Indices)
-            {
-                frame.Retired.push_back(bottom.Indices);
-            }
-            iterator = frame.Geometry.erase(iterator);
-        }
-        else
-        {
-            ++iterator;
-        }
-    }
-    g_InstanceCount = static_cast<UINT>(instances.size());
-    if (instances.empty())
-    {
-        return false;
-    }
-    if (!EnsureBuffer(frame.Instances, instances.size() * sizeof(instances.front()), D3D12_HEAP_TYPE_UPLOAD,
-                      D3D12_RESOURCE_STATE_GENERIC_READ, L"TLAS Instance Descriptions"))
-    {
-        return false;
-    }
-    void* mapped = nullptr;
-    const CD3DX12_RANGE noRead(0, 0);
-    if (FAILED(frame.Instances->Map(0, &noRead, &mapped)))
-    {
-        return false;
-    }
-    memcpy(mapped, instances.data(), instances.size() * sizeof(instances.front()));
-    frame.Instances->Unmap(0, nullptr);
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
-    inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
-    inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
-    inputs.NumDescs = g_InstanceCount;
-    inputs.InstanceDescs = frame.Instances->GetGPUVirtualAddress();
-    inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
-    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes{};
-    g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &sizes);
-    if (!EnsureBuffer(frame.TopLevel, sizes.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
-                      D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene TLAS") ||
-        !EnsureBuffer(frame.Scratch, sizes.ScratchDataSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
-                      D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"TLAS Scratch"))
-    {
-        return false;
-    }
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
-    build.Inputs = inputs;
-    build.DestAccelerationStructureData = frame.TopLevel->GetGPUVirtualAddress();
-    build.ScratchAccelerationStructureData = frame.Scratch->GetGPUVirtualAddress();
-    commandList->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
-    const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(frame.TopLevel.Get());
-    commandList->ResourceBarrier(1, &barrier);
-    return true;
-}
 
-void FindSunDirection()
-{
-    g_SunDirection = {};
-    for (EntityID entity : World::GetView<SunComponent, LightComponent>())
+    bool EnsureDenoiser(FrameResources& frame)
     {
-        const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-        if (light.Type == LightType::Directional && light.RenderMode == LightRenderMode::Physical && light.IsActive &&
-            light.CastShadow && light.AffectsOpaque && light.Intensity > 0.0f)
+        if (!NrdDenoiser::IsCompiled() || !g_ComposeShadow)
         {
-            XMFLOAT3 direction;
-            XMStoreFloat3(&direction, XMVector3Normalize(XMLoadFloat3(&light.Direction)));
-            g_SunDirection = {direction.x, direction.y, direction.z, 1.0f};
-            return;
+            return false;
+        }
+        constexpr DXGI_FORMAT formats[] = {DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_R10G10B10A2_UNORM,
+                                           DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R16_FLOAT, DXGI_FORMAT_R16_FLOAT};
+        for (UINT index = 0; index < 5; ++index)
+        {
+            if (!EnsureSharedGuide(index, formats[index], frame.Width, frame.Height))
+            {
+                return false;
+            }
+            auto& slotGuide = index < 4 ? frame.Guides[index] : frame.AmbientGuide;
+            if (slotGuide == g_SharedGuides[index])
+            {
+                continue;
+            }
+            slotGuide = g_SharedGuides[index];
+            D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+            uav.Format = formats[index];
+            uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+            g_Device->CreateUnorderedAccessView(slotGuide.Get(), nullptr, &uav,
+                                                Cpu(kGuideUavStart + g_FrameIndex * 5 + index));
+        }
+        if (!g_NrdSun || g_NrdWidth != frame.Width || g_NrdHeight != frame.Height)
+        {
+            // 履歴は待機中のフレーム間で共有するため、キューの完了後だけ破棄する。
+            if (!GraphicsDevice::WaitForGpuIdle())
+            {
+                return false;
+            }
+            auto created = make_unique<NrdDenoiser>();
+            if (!created->Initialize(g_Device.Get(), NrdSignal::Shadow, frame.Width, frame.Height))
+            {
+                return false;
+            }
+            auto ambient = make_unique<NrdDenoiser>();
+            if (!ambient->Initialize(g_Device.Get(), NrdSignal::AmbientOcclusion, frame.Width, frame.Height))
+            {
+                return false;
+            }
+            g_NrdSun = move(created);
+            g_NrdAmbient = move(ambient);
+            g_NrdWidth = frame.Width;
+            g_NrdHeight = frame.Height;
+            g_NrdHistoryValid = false;
+        }
+        return true;
+    }
+
+    // 各 BLAS がスクラッチ領域を所有し、独立した構築処理を重ねられるようにする。
+    // 後続 BLAS の確保に失敗した場合も、ジオメトリの状態を復元する。
+    class GeometryReadBatch
+    {
+      public:
+        explicit GeometryReadBatch(ID3D12GraphicsCommandList* commandList) : m_CommandList(commandList) {}
+
+        void Add(ID3D12Resource* resource, D3D12_RESOURCE_STATES state)
+        {
+            if (!resource || state == D3D12_RESOURCE_STATE_GENERIC_READ ||
+                state == D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE || !m_Resources.emplace(resource, state).second)
+            {
+                return;
+            }
+            m_ReadBarriers.push_back(
+                CD3DX12_RESOURCE_BARRIER::Transition(resource, state, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
+            m_FinishBarriers.push_back(
+                CD3DX12_RESOURCE_BARRIER::Transition(resource, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, state));
+        }
+
+        void Begin()
+        {
+            if (!m_ReadBarriers.empty())
+            {
+                m_CommandList->ResourceBarrier(static_cast<UINT>(m_ReadBarriers.size()), m_ReadBarriers.data());
+            }
+        }
+
+        void PrepareUpdate(ID3D12Resource* result)
+        {
+            // ラスタライティングが Execute による BLAS 更新前に、このスロットの前の TLAS を読む場合がある。
+            // 再フィットの前にその読み取りを完了させる。
+            if (result)
+            {
+                m_ReadBarriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(result));
+            }
+        }
+
+        void CompleteBuild(ID3D12Resource* result)
+        {
+            m_FinishBarriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(result));
+        }
+
+        void Finish()
+        {
+            if (!m_FinishBarriers.empty())
+            {
+                m_CommandList->ResourceBarrier(static_cast<UINT>(m_FinishBarriers.size()), m_FinishBarriers.data());
+                m_FinishBarriers.clear();
+            }
+        }
+
+        ~GeometryReadBatch()
+        {
+            Finish();
+        }
+
+      private:
+        ID3D12GraphicsCommandList* m_CommandList;
+        map<ID3D12Resource*, D3D12_RESOURCE_STATES> m_Resources;
+        vector<D3D12_RESOURCE_BARRIER> m_ReadBarriers;
+        vector<D3D12_RESOURCE_BARRIER> m_FinishBarriers;
+    };
+
+    bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingGeometry& geometry,
+                          BottomLevel& level, GeometryReadBatch& geometryReads)
+    {
+        level.LastSeen = g_Serial;
+        if (level.Result && (!geometry.Deforming || level.LastBuilt == g_Serial))
+        {
+            return true;
+        }
+        D3D12_RAYTRACING_GEOMETRY_DESC description{};
+        description.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+        description.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+        description.Triangles.VertexBuffer.StartAddress = geometry.VertexView.BufferLocation;
+        description.Triangles.VertexBuffer.StrideInBytes = geometry.VertexView.StrideInBytes;
+        description.Triangles.VertexCount = geometry.VertexView.SizeInBytes / geometry.VertexView.StrideInBytes;
+        description.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+        description.Triangles.IndexBuffer = geometry.IndexView.BufferLocation;
+        description.Triangles.IndexCount = geometry.IndexCount;
+        description.Triangles.IndexFormat = geometry.IndexView.Format;
+        if (!geometry.Indices)
+        {
+            description.Triangles.IndexFormat = DXGI_FORMAT_UNKNOWN;
+        }
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
+        inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+        inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+        inputs.NumDescs = 1;
+        inputs.pGeometryDescs = &description;
+        inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+        if (geometry.Deforming)
+        {
+            inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE |
+                           D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
+        }
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes{};
+        g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &sizes);
+        const bool update = geometry.Deforming && level.Result;
+        if (sizes.ResultDataMaxSizeInBytes == 0 ||
+            !EnsureBuffer(level.Result, sizes.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
+                          D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene BLAS") ||
+            !EnsureBuffer(level.Scratch, (max)(sizes.ScratchDataSizeInBytes, sizes.UpdateScratchDataSizeInBytes),
+                          D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"BLAS Scratch"))
+        {
+            return false;
+        }
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
+        build.Inputs = inputs;
+        build.DestAccelerationStructureData = level.Result->GetGPUVirtualAddress();
+        build.ScratchAccelerationStructureData = level.Scratch->GetGPUVirtualAddress();
+        if (update)
+        {
+            build.Inputs.Flags |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE;
+            build.SourceAccelerationStructureData = build.DestAccelerationStructureData;
+        }
+        // アップロードヒープは GENERIC_READ のままにする。NON_PIXEL_SHADER_RESOURCE も含まれている。
+        commandList->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
+        geometryReads.CompleteBuild(level.Result.Get());
+        level.Vertices = geometry.Vertices;
+        level.Indices = geometry.Indices;
+        level.LastBuilt = g_Serial;
+        return true;
+    }
+
+    bool EnsureTelemetryPipeline()
+    {
+        if (!g_TelemetryPipelineTried)
+        {
+            g_TelemetryPipelineTried = true;
+            const D3D_SHADER_MACRO defines[] = {
+                {"USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0"}, {"ENABLE_RAY_TELEMETRY", "1"}, {}};
+            ComPtr<ID3DBlob> shader, errors;
+            const HRESULT result =
+                D3DCompileFromFile(L"shader/hlsl/RaytracingCS.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, "main",
+                                   "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &shader, &errors);
+            if (SUCCEEDED(result))
+            {
+                D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
+                desc.pRootSignature = g_RootSignature.Get();
+                desc.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
+                g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&g_TelemetryPipeline));
+            }
+            if (!g_TelemetryPipeline)
+            {
+                WriteGraphicsLog("Ray telemetry: shadow/AO counter variant unavailable: %s\n",
+                                 errors ? static_cast<const char*>(errors->GetBufferPointer())
+                                        : "pipeline creation failed");
+            }
+        }
+        return g_TelemetryPipeline != nullptr;
+    }
+
+    UINT GlassTableIndex(UINT slot)
+    {
+        return RendererState::g_kGLASS_DESCRIPTOR_START + slot * RendererState::g_kGLASS_FRAME_DESCRIPTORS;
+    }
+
+    bool BuildGlassMetadata(FrameResources& frame)
+    {
+        frame.GlassReady = false;
+        const UINT count = static_cast<UINT>(frame.SceneGeometry.size());
+        if (!count || !EnsureBuffer(frame.GlassMetadata, count * sizeof(GlassMesh), D3D12_HEAP_TYPE_UPLOAD,
+                                    D3D12_RESOURCE_STATE_GENERIC_READ, L"Glass mesh metadata"))
+        {
+            return false;
+        }
+        const UINT start = GlassTableIndex(g_FrameIndex);
+        void* data = nullptr;
+        D3D12_RANGE noRead{0, 0};
+        if (FAILED(frame.GlassMetadata->Map(0, &noRead, &data)))
+        {
+            return false;
+        }
+        auto* meshes = static_cast<GlassMesh*>(data);
+        frame.GlassDescriptors.resize(count);
+        for (UINT i = 0; i < count; ++i)
+        {
+            const auto& g = frame.SceneGeometry[i];
+            GlassMesh m{};
+            XMMATRIX world = XMLoadFloat4x4(&g.World);
+            XMStoreFloat4x4(&m.World, XMMatrixTranspose(world));
+            XMStoreFloat4x4(&m.NormalToWorld, XMMatrixInverse(nullptr, world));
+            UINT indexBitWidth = 0;
+            if (g.Indices)
+            {
+                indexBitWidth = 32;
+                if (g.IndexView.Format == DXGI_FORMAT_R16_UINT)
+                {
+                    indexBitWidth = 16;
+                }
+            }
+            m.Layout = {g.VertexView.StrideInBytes, indexBitWidth,
+                        static_cast<UINT>(g.VertexView.BufferLocation - g.Vertices->GetGPUVirtualAddress()),
+                        g.Indices ? static_cast<UINT>(g.IndexView.BufferLocation - g.Indices->GetGPUVirtualAddress())
+                                  : 0u};
+            m.BaseColor = g.BaseColor;
+            m.Emission = g.Emission;
+            m.Optical = {g.IOR, g.Transmission, g.Roughness, g.Metallic};
+            m.Absorption = {g.Absorption.x, g.Absorption.y, g.Absorption.z, g.Thickness};
+            m.OpticalExtra = {g.TransmissionRoughness, g.Fresnel, 0, 0};
+            m.Flags = {g.MediumID, static_cast<UINT>(g.Texture != nullptr),
+                       g.Indices ? g.IndexCount / 3 : g.VertexView.SizeInBytes / g.VertexView.StrideInBytes / 3,
+                       static_cast<UINT>(g.UsesAssetMaterial)};
+            meshes[i] = m;
+            D3D12_SHADER_RESOURCE_VIEW_DESC raw{};
+            raw.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+            raw.Format = DXGI_FORMAT_R32_TYPELESS;
+            raw.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            raw.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
+            raw.Buffer.NumElements = static_cast<UINT>(g.Vertices->GetDesc().Width / 4);
+            auto& cached = frame.GlassDescriptors[i];
+            if (!cached.Valid || cached.Vertices.Get() != g.Vertices.Get())
+            {
+                g_Device->CreateShaderResourceView(g.Vertices.Get(), &raw, Cpu(start + 1 + i));
+            }
+            raw.Buffer.NumElements = g.Indices ? static_cast<UINT>(g.Indices->GetDesc().Width / 4) : 1;
+            if (!cached.Valid || cached.Indices.Get() != g.Indices.Get())
+            {
+                g_Device->CreateShaderResourceView(g.Indices.Get(), &raw, Cpu(start + 1 + kMaximumInstances + i));
+            }
+            D3D12_SHADER_RESOURCE_VIEW_DESC tex{};
+            tex.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            tex.Format = g.Texture ? g.Texture->GetDesc().Format : DXGI_FORMAT_R8G8B8A8_UNORM;
+            tex.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            switch (tex.Format)
+            {
+                case DXGI_FORMAT_R32_TYPELESS:
+                    tex.Format = DXGI_FORMAT_R32_FLOAT;
+                    break;
+                case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+                    tex.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                    break;
+                case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+                    tex.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+                    break;
+                case DXGI_FORMAT_BC1_TYPELESS:
+                    tex.Format = DXGI_FORMAT_BC1_UNORM;
+                    break;
+                case DXGI_FORMAT_BC2_TYPELESS:
+                    tex.Format = DXGI_FORMAT_BC2_UNORM;
+                    break;
+                case DXGI_FORMAT_BC3_TYPELESS:
+                    tex.Format = DXGI_FORMAT_BC3_UNORM;
+                    break;
+                case DXGI_FORMAT_BC7_TYPELESS:
+                    tex.Format = DXGI_FORMAT_BC7_UNORM;
+                    break;
+                default:
+                    break;
+            }
+            tex.Texture2D.MipLevels = g.Texture ? g.Texture->GetDesc().MipLevels : 1;
+            tex.Texture2D.ResourceMinLODClamp = static_cast<float>(g.TextureResidentMip);
+            if (!cached.Valid || cached.Texture.Get() != g.Texture.Get() || cached.ResidentMip != g.TextureResidentMip)
+            {
+                g_Device->CreateShaderResourceView(g.Texture.Get(), &tex, Cpu(start + 1 + 2 * kMaximumInstances + i));
+            }
+            cached.Vertices = g.Vertices;
+            cached.Indices = g.Indices;
+            cached.Texture = g.Texture;
+            cached.ResidentMip = g.TextureResidentMip;
+            cached.Valid = true;
+        }
+        frame.GlassMetadata->Unmap(0, nullptr);
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+        srv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        srv.Format = DXGI_FORMAT_UNKNOWN;
+        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srv.Buffer.NumElements = count;
+        srv.Buffer.StructureByteStride = sizeof(GlassMesh);
+        g_Device->CreateShaderResourceView(frame.GlassMetadata.Get(), &srv, Cpu(start));
+        frame.GlassReady = true;
+        return true;
+    }
+
+    bool BuildScene(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
+    {
+        RenderProfiler::ScopedEvent profile("DXR Acceleration Structures", commandList);
+        const auto geometry = GatherRaytracingGeometry();
+        frame.GlassReady = false;
+        frame.SceneGeometry.clear();
+        vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
+        instances.reserve((min)(geometry.size(), static_cast<size_t>(kMaximumInstances)));
+        GeometryReadBatch geometryReads(commandList);
+        // 下記のインスタンス上限と有効性検証に合わせる。キャッシュ済みの静的 BLAS は入力遷移不要。
+        // 共有する頂点・インデックスリソースは1回だけ状態遷移する。
+        size_t accepted = 0;
+        for (const auto& entry : geometry)
+        {
+            if (accepted >= kMaximumInstances || entry.VertexView.StrideInBytes < sizeof(XMFLOAT3))
+            {
+                continue;
+            }
+            ++accepted;
+            const GeometryKey key(entry.VertexView.BufferLocation, entry.IndexView.BufferLocation,
+                                  entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,
+                                  static_cast<UINT>(entry.IndexView.Format));
+            const auto bottom = frame.Geometry.find(key);
+            if (bottom == frame.Geometry.end() || !bottom->second.Result || entry.Deforming)
+            {
+                geometryReads.Add(entry.Vertices.Get(), entry.VertexState);
+                geometryReads.Add(entry.Indices.Get(), entry.IndexState);
+                if (bottom != frame.Geometry.end())
+                {
+                    geometryReads.PrepareUpdate(bottom->second.Result.Get());
+                }
+            }
+        }
+        geometryReads.Begin();
+        for (const auto& entry : geometry)
+        {
+            if (instances.size() >= kMaximumInstances || entry.VertexView.StrideInBytes < sizeof(XMFLOAT3))
+            {
+                continue;
+            }
+            const GeometryKey key(entry.VertexView.BufferLocation, entry.IndexView.BufferLocation,
+                                  entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,
+                                  static_cast<UINT>(entry.IndexView.Format));
+            BottomLevel& bottom = frame.Geometry[key];
+            if (!BuildBottomLevel(commandList, entry, bottom, geometryReads))
+            {
+                return false;
+            }
+            D3D12_RAYTRACING_INSTANCE_DESC instance{};
+            XMFLOAT4X4 transform;
+            XMStoreFloat4x4(&transform, XMMatrixTranspose(XMLoadFloat4x4(&entry.World)));
+            memcpy(instance.Transform, &transform, sizeof(instance.Transform));
+            instance.InstanceID = static_cast<UINT>(instances.size());
+            // ビット0は影の可視性。ビット1は AO と反射用に残す。
+            // ガラスは専用の可視性ビットを使い、既存の AO/GI 判定は不透明物体としての意味を維持する。
+            if (entry.Transmission > 0.001f)
+            {
+                instance.InstanceMask = 4;
+            }
+            else if (entry.CastShadow)
+            {
+                instance.InstanceMask = 3;
+            }
+            else
+            {
+                instance.InstanceMask = 2;
+            }
+            instance.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
+            instance.AccelerationStructure = bottom.Result->GetGPUVirtualAddress();
+            instances.push_back(instance);
+            frame.SceneGeometry.push_back(entry);
+        }
+        BuildGlassMetadata(frame);
+        // TLAS 構築とレイ判定の前に、すべての BLAS 書き込みを可視化する。
+        geometryReads.Finish();
+        for (auto iterator = frame.Geometry.begin(); iterator != frame.Geometry.end();)
+        {
+            if (iterator->second.LastSeen != g_Serial)
+            {
+                const auto& bottom = iterator->second;
+                if (bottom.Result)
+                {
+                    frame.Retired.push_back(bottom.Result);
+                }
+                if (bottom.Scratch)
+                {
+                    frame.Retired.push_back(bottom.Scratch);
+                }
+                if (bottom.Vertices)
+                {
+                    frame.Retired.push_back(bottom.Vertices);
+                }
+                if (bottom.Indices)
+                {
+                    frame.Retired.push_back(bottom.Indices);
+                }
+                iterator = frame.Geometry.erase(iterator);
+            }
+            else
+            {
+                ++iterator;
+            }
+        }
+        g_InstanceCount = static_cast<UINT>(instances.size());
+        if (instances.empty())
+        {
+            return false;
+        }
+        if (!EnsureBuffer(frame.Instances, instances.size() * sizeof(instances.front()), D3D12_HEAP_TYPE_UPLOAD,
+                          D3D12_RESOURCE_STATE_GENERIC_READ, L"TLAS Instance Descriptions"))
+        {
+            return false;
+        }
+        void* mapped = nullptr;
+        const CD3DX12_RANGE noRead(0, 0);
+        if (FAILED(frame.Instances->Map(0, &noRead, &mapped)))
+        {
+            return false;
+        }
+        memcpy(mapped, instances.data(), instances.size() * sizeof(instances.front()));
+        frame.Instances->Unmap(0, nullptr);
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
+        inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+        inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+        inputs.NumDescs = g_InstanceCount;
+        inputs.InstanceDescs = frame.Instances->GetGPUVirtualAddress();
+        inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes{};
+        g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &sizes);
+        if (!EnsureBuffer(frame.TopLevel, sizes.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
+                          D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene TLAS") ||
+            !EnsureBuffer(frame.Scratch, sizes.ScratchDataSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
+                          D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"TLAS Scratch"))
+        {
+            return false;
+        }
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
+        build.Inputs = inputs;
+        build.DestAccelerationStructureData = frame.TopLevel->GetGPUVirtualAddress();
+        build.ScratchAccelerationStructureData = frame.Scratch->GetGPUVirtualAddress();
+        commandList->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
+        const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(frame.TopLevel.Get());
+        commandList->ResourceBarrier(1, &barrier);
+        return true;
+    }
+
+    void FindSunDirection()
+    {
+        g_SunDirection = {};
+        for (EntityID entity : World::GetView<SunComponent, LightComponent>())
+        {
+            const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
+            if (light.Type == LightType::Directional && light.RenderMode == LightRenderMode::Physical &&
+                light.IsActive && light.CastShadow && light.AffectsOpaque && light.Intensity > 0.0f)
+            {
+                XMFLOAT3 direction;
+                XMStoreFloat3(&direction, XMVector3Normalize(XMLoadFloat3(&light.Direction)));
+                g_SunDirection = {direction.x, direction.y, direction.z, 1.0f};
+                return;
+            }
         }
     }
-}
-} // namespace
+} // 名前空間
 
 bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UINT increment)
 {
@@ -750,8 +770,8 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
     {
         return false;
     }
-    // The material pixel shader also reads the preview discriminator in b5
-    // on raster-only devices. Supply a valid zero-filled CB before DXR probing.
+    // マテリアルのピクセルシェーダーはラスタ専用デバイスでも b5 のプレビュー識別値を読む。
+    // DXR 機能の検査前に、有効なゼロ埋めの定数バッファを用意する。
     const auto lightingHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
     const auto lightingDescription = CD3DX12_RESOURCE_DESC::Buffer(kLightingStride * kFrameCount);
     if (FAILED(device->CreateCommittedResource(&lightingHeap, D3D12_HEAP_FLAG_NONE, &lightingDescription,
@@ -982,7 +1002,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         g_NrdHistoryValid = false;
     }
     g_NrdCamera = cameraEntity;
-    // The NRD-enabled trace shader always produces its four guides, even when denoising is switched off.
+    // NRD 対応の追跡シェーダーは、デノイズ無効時も4つのガイドを出力する。
     const bool guidesReady = !NrdDenoiser::IsCompiled() || EnsureDenoiser(frame);
     if (!guidesReady)
     {
@@ -1002,10 +1022,10 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
                            clamp(g_Settings.SunAngularRadius, 0.0f, 0.05f)};
     constants.Features = {static_cast<UINT>(UsesRaytracedShadows()), static_cast<UINT>(UsesRaytracedAmbientOcclusion()),
                           static_cast<UINT>(NrdDenoiser::IsCompiled() && g_Settings.Denoise), 0};
-    // With NRD active, SIGMA consumes only the first stochastic sun ray and REBLUR only the first
-    // AO hit distance; ComposeShadow / ComposeAmbient then overwrite the averaged visibility.
-    // Extra samples are wasted rays, so trace one while both histories are known to be valid
-    // (the averaged multi-sample result is still used during the first frame / any fallback).
+    // NRD 有効時は SIGMA が最初の確率的な太陽レイだけを、REBLUR が最初の AO ヒット距離だけを使う。
+    // その後 ComposeShadow / ComposeAmbient が平均可視性を上書きする。
+    // 追加サンプルは無駄になるため、両履歴が有効な場合は1本だけ追跡する。
+    // 初回フレームやフォールバックでは、引き続き複数サンプルの平均を使う。
     const bool shadowDenoised = !UsesRaytracedShadows() || g_SunDirection.w <= 0.5f || shadowHistoryValid;
     const bool ambientDenoised = !UsesRaytracedAmbientOcclusion() || ambientHistoryValid;
     if (constants.Features.z != 0 && shadowDenoised && ambientDenoised)
@@ -1014,7 +1034,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     }
     if (constants.Features.x == 0 && constants.Features.y == 0)
     {
-        // Reflections still need the guides, but repeated unoccluded samples add no information.
+        // 反射にはガイドが必要だが、遮蔽されないサンプルを繰り返しても情報は増えない。
         constants.ExtentSamples.z = 1;
     }
     XMStoreFloat4x4(&constants.WorldToView, XMMatrixTranspose(view));
@@ -1232,7 +1252,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     {
         g_NrdDispatchCount += RayReflections::GetDenoiserDispatchCount();
     }
-    // Camera and motion history belongs to the scene, independently of enabled denoiser signals.
+    // カメラと動きの履歴はシーンに属し、有効なデノイズ信号の種類には依存しない。
     g_PreviousNrdFrame = nrdFrame;
     g_PreviousTemporalState = temporalState;
     g_NrdHistoryValid = true;
@@ -1269,8 +1289,8 @@ bool Raytracing::UsesRaytracedShadows()
     cachedFence = fence;
     cachedMaterialCount = materialCount;
     cachedResult = true;
-    // The current inline ray query forces opaque geometry. Cutout shadows use
-    // the material-aware raster pass until the ray path can evaluate texture alpha.
+    // 現在のインラインレイ判定はジオメトリを不透明として扱う。レイ経路でテクスチャのアルファを
+    // 評価できるまでは、切り抜きの影にマテリアル対応のラスタパスを使う。
     for (EntityID entity : World::GetView<MaterialComponent>())
     {
         const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
@@ -1430,8 +1450,8 @@ void Raytracing::BeginGlassRead(ID3D12GraphicsCommandList* commands)
         auto readState = static_cast<D3D12_RESOURCE_STATES>(originalState | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         if (originalState == D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
         {
-            // UAV writes cannot be combined with shader reads. Keep skinned vertices
-            // readable by both rasterization and glass until this pass finishes.
+            // UAV 書き込みとシェーダー読み取りは同時にできない。このパスが終わるまで、スキニング済み頂点を
+            // ラスタライズとガラスの両方から読み取れる状態に保つ。
             readState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
             frame.GlassSkinnedVertices.insert(resource);
         }

@@ -1,20 +1,20 @@
 // =============================================================================================
-// AtmosphereLutCS.hlsl  -  physical sky LUTs (runs on the async compute queue when available)
-//   TransmittanceLut : optical depth (Rayleigh, Mie) from (r, mu) to the top of the atmosphere.
-//                      Depends only on the planet geometry -> built once.
-//   MultiScatterLut  : Hillaire 2020 isotropic multiple scattering transfer Psi_ms(h, mu_s).
-//                      Rebuilt when the atmosphere coefficients change.
-//   SkyViewLut       : in-scattered radiance (rgb) and view transmittance (rgb) for the camera
-//                      altitude and sun direction of this frame. Built every frame.
-//   Density model and coefficients are identical to EvaluatePhysicalSky (SkyAtmosphere.hlsli).
+// AtmosphereLutCS.hlsl - 物理的な空の LUT（利用可能なら非同期コンピュートキューで実行）
+// TransmittanceLut：(r, mu) から大気上端までの光学的厚さ（レイリー、ミー）。
+// 惑星の形状だけに依存するため、一度だけ構築する。
+// MultiScatterLut：Hillaire 2020 の等方的な多重散乱伝達 Psi_ms(h, mu_s)。
+// 大気の係数が変化したときに再構築する。
+// SkyViewLut：このフレームのカメラ高度と太陽方向に対する入射散乱の放射輝度（rgb）と
+// 視線方向の透過率（rgb）。毎フレーム構築する。
+// 密度モデルと係数は EvaluatePhysicalSky（SkyAtmosphere.hlsli）と同一。
 // =============================================================================================
 #include "AtmosphereLutCommon.hlsli"
 
 cbuffer AtmosphereLutConstants : register(b0)
 {
-    float4 SunDirection;      // xyz normalised
-    float4 Coefficients;      // x rayleigh strength, y mie strength, z density, w mie g
-    float4 Parameters;        // x camera altitude (m), y multiple scattering strength, z ground albedo
+    float4 SunDirection; // xyz = 正規化済み
+    float4 Coefficients; // x = レイリー散乱の強度、y = ミー散乱の強度、z = 密度、w = ミー散乱の g
+    float4 Parameters;   // x = カメラ高度（m）、y = 多重散乱の強度、z = 地表のアルベド
 };
 
 Texture2D<float2> TransmittanceLut : register(t0);
@@ -28,7 +28,10 @@ float2 RaySphere(float3 origin, float3 direction, float radius)
 {
     float projected = dot(origin, direction);
     float discriminant = projected * projected - dot(origin, origin) + radius * radius;
-    if (discriminant < 0.0f) return float2(-1, -1);
+    if (discriminant < 0.0f)
+    {
+        return float2(-1, -1);
+    }
     float root = sqrt(discriminant);
     return float2(-projected - root, -projected + root);
 }
@@ -54,10 +57,11 @@ float2 SunOpticalDepth(float3 position, float3 sun)
 }
 
 // ---------------------------------------------------------------------------------------------
-[numthreads(8, 8, 1)]
-void BuildTransmittance(uint3 id : SV_DispatchThreadID)
-{
-    if (any(id.xy >= kTransmittanceLutSize)) return;
+[numthreads(8, 8, 1)] void BuildTransmittance(uint3 id : SV_DispatchThreadID) {
+    if (any(id.xy >= kTransmittanceLutSize))
+    {
+        return;
+    }
     float radius, mu;
     TransmittanceLutParameters((id.xy + 0.5f) / float2(kTransmittanceLutSize), radius, mu);
     float3 origin = float3(0, radius, 0);
@@ -73,11 +77,13 @@ void BuildTransmittance(uint3 id : SV_DispatchThreadID)
     OutputDepth[id.xy] = depth;
 }
 
-// ---------------------------------------------------------------------------------------------
-[numthreads(8, 8, 1)]
-void BuildMultiScatter(uint3 id : SV_DispatchThreadID)
+    // ---------------------------------------------------------------------------------------------
+    [numthreads(8, 8, 1)] void BuildMultiScatter(uint3 id : SV_DispatchThreadID)
 {
-    if (any(id.xy >= kMultiScatterLutSize)) return;
+    if (any(id.xy >= kMultiScatterLutSize))
+    {
+        return;
+    }
     float2 uv = id.xy / (float2(kMultiScatterLutSize) - 1.0f);
     float sunCos = uv.x * 2 - 1;
     float radius = kLutGroundRadius + max(uv.y * (kLutAtmosphereRadius - kLutGroundRadius), 10.0f);
@@ -92,7 +98,7 @@ void BuildMultiScatter(uint3 id : SV_DispatchThreadID)
     float3 transfer = 0;
     [loop] for (uint sample = 0; sample < directionsPerAxis * directionsPerAxis; ++sample)
     {
-        // Stratified uniform sphere directions.
+        // 球面方向を一様に層別サンプリングする。
         float2 cell = (float2(sample % directionsPerAxis, sample / directionsPerAxis) + 0.5f) / directionsPerAxis;
         float cosTheta = 1 - 2 * cell.y;
         float sinTheta = sqrt(saturate(1 - cosTheta * cosTheta));
@@ -143,24 +149,30 @@ void BuildMultiScatter(uint3 id : SV_DispatchThreadID)
 }
 
 // ---------------------------------------------------------------------------------------------
-[numthreads(8, 8, 1)]
-void BuildSkyView(uint3 id : SV_DispatchThreadID)
-{
-    if (any(id.xy >= kSkyViewLutSize)) return;
+[numthreads(8, 8, 1)] void BuildSkyView(uint3 id : SV_DispatchThreadID) {
+    if (any(id.xy >= kSkyViewLutSize))
+    {
+        return;
+    }
     float altitude = max(Parameters.x, 2.0f);
     float3 origin = float3(0, kLutGroundRadius + altitude, 0);
     float3 sun = normalize(SunDirection.xyz);
     float3 direction = SkyViewLutDirection(float2(id.xy), sun, origin.y);
     float endDistance = max(RaySphere(origin, direction, kLutAtmosphereRadius).y, 0.0f);
     float groundDistance = RaySphere(origin, direction, kLutGroundRadius).x;
-    if (groundDistance > 0) endDistance = min(endDistance, groundDistance);
+    if (groundDistance > 0)
+    {
+        endDistance = min(endDistance, groundDistance);
+    }
     float3 betaRayleigh, betaMie;
     Betas(betaRayleigh, betaMie);
 
     const int steps = 32;
     float stepDistance = endDistance / steps;
     float2 viewDepth = 0;
-    float3 rayleigh = 0, mie = 0, multiple = 0;
+    float3 rayleigh = 0;
+    float3 mie = 0;
+    float3 multiple = 0;
     [loop] for (int index = 0; index < steps; ++index)
     {
         float3 position = origin + direction * ((index + 0.5f) * stepDistance);
@@ -176,9 +188,9 @@ void BuildSkyView(uint3 id : SV_DispatchThreadID)
             rayleigh += localDepth.x * transmission;
             mie += localDepth.y * transmission;
         }
-        // Multiple scattering is not shadowed by the planet (it arrives from all directions).
-        float3 psi = MultiScatterLut.SampleLevel(LinearClamp,
-            MultiScatterLutUv(radius, dot(position / radius, sun)), 0).rgb;
+        // 多重散乱は全方向から到来するため、惑星による影を適用しない。
+        float3 psi =
+            MultiScatterLut.SampleLevel(LinearClamp, MultiScatterLutUv(radius, dot(position / radius, sun)), 0).rgb;
         multiple += (betaRayleigh * localDepth.x + betaMie * localDepth.y) * psi * viewTransmission;
         viewDepth += localDepth * 0.5f;
     }
@@ -188,8 +200,8 @@ void BuildSkyView(uint3 id : SV_DispatchThreadID)
     float g2 = g * g;
     float denominator = max(1.0f + g2 - 2.0f * g * cosine, 0.0001f);
     float miePhase = (1.0f - g2) / (4.0f * kLutPi * denominator * sqrt(denominator));
-    float3 scatter = rayleigh * betaRayleigh * rayleighPhase + mie * betaMie * miePhase +
-        multiple * max(Parameters.y, 0.0f);
+    float3 scatter =
+        rayleigh * betaRayleigh * rayleighPhase + mie * betaMie * miePhase + multiple * max(Parameters.y, 0.0f);
     Output0[id.xy] = float4(scatter, 1);
     Output1[id.xy] = float4(exp(-betaRayleigh * viewDepth.x - betaMie * viewDepth.y), 1);
 }

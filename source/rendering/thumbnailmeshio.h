@@ -9,7 +9,7 @@
 #include <vector>
 #include <string>
 
-// Only C data crosses the DLL boundary; Debug and Release STL layouts differ.
+// Debug と Release では STL の配置が異なるため、DLL 境界は C のデータだけで渡す。
 class ThumbnailMeshIO
 {
   public:
@@ -83,7 +83,15 @@ class ThumbnailMeshIO
             {
                 return aiReturn_FAILURE;
             }
-            const int anchor = origin == aiOrigin_SET ? SEEK_SET : origin == aiOrigin_CUR ? SEEK_CUR : SEEK_END;
+            int anchor = SEEK_END;
+            if (origin == aiOrigin_SET)
+            {
+                anchor = SEEK_SET;
+            }
+            else if (origin == aiOrigin_CUR)
+            {
+                anchor = SEEK_CUR;
+            }
             const auto displacement =
                 origin == aiOrigin_END ? -static_cast<int64_t>(offset) : static_cast<int64_t>(offset);
             return _fseeki64(reinterpret_cast<FILE*>(file->UserData), displacement, anchor) == 0 ? aiReturn_SUCCESS

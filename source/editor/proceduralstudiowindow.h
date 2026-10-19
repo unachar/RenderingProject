@@ -1,11 +1,11 @@
 #pragma once
 
-// Procedural Studio window: fractal / procedural textures, solid textures, procedural models and
-// fractal water / clouds with a live software-rendered model preview and file export.
+// Procedural Studio ウィンドウ。フラクタル・プロシージャル・立体テクスチャ、モデル、
+// フラクタルの水や雲を作成し、ソフトウェア描画のライブプレビューとファイル書き出しを行う。
 class ProceduralStudioWindow
 {
   public:
     static void Draw(bool* open);
-    // Releases the preview texture and descriptor; call before EditorDescriptors::Shutdown.
+    // プレビューテクスチャとディスクリプターを解放する。EditorDescriptors::Shutdown より前に呼ぶ。
     static void Shutdown();
 };

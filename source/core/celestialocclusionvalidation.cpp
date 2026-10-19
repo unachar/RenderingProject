@@ -23,66 +23,66 @@
 
 namespace
 {
-constexpr UINT FramesPerCase = 24, Cases = 12;
-UINT failures = 0;
-uint64_t lastFrame = 0;
-EntityID roof = g_kINVALID_ENTITY, sun = g_kINVALID_ENTITY;
-array<double, Cases> brightness{};
-array<UINT, Cases> samples{};
-array<double, Cases> reflectionBrightness{}, giBrightness{};
+    constexpr UINT FramesPerCase = 24, Cases = 12;
+    UINT failures = 0;
+    uint64_t lastFrame = 0;
+    EntityID roof = g_kINVALID_ENTITY, sun = g_kINVALID_ENTITY;
+    array<double, Cases> brightness{};
+    array<UINT, Cases> samples{};
+    array<double, Cases> reflectionBrightness{}, giBrightness{};
 
-void Check(bool valid, const char* message)
-{
-    if (!valid)
+    void Check(bool valid, const char* message)
     {
-        ++failures;
+        if (!valid)
+        {
+            ++failures;
+        }
+        WriteGraphicsLog("Celestial occlusion: %s %s\n", valid ? "PASS" : "FAIL", message);
     }
-    WriteGraphicsLog("Celestial occlusion: %s %s\n", valid ? "PASS" : "FAIL", message);
-}
 
-EntityID Cube(XMFLOAT3 position, XMFLOAT3 scale)
-{
-    auto entity = World::CreateEntity()
-                      .Add<TransformComponent>()
-                      .Add<MeshComponent>()
-                      .Add<MaterialComponent>()
-                      .Add<NameComponent>();
-    entity.SetName("Closed PBR room fixture");
-    auto& transform = entity.Get<TransformComponent>();
-    transform.Position = position;
-    transform.Scale = scale;
-    transform.IsDirty = true;
-    auto& material = entity.Get<MaterialComponent>();
-    material.UseTexture = false;
-    material.Roughness = .65f;
-    material.ShaderClassMode = MaterialMode::Manual;
-    material.ShaderClass = ShaderClass::PBR;
-    VertexResource geometry{};
-    geometry.entityid = entity.GetID();
-    geometry.objectType = ObjectType::CUBE;
-    geometry.color = Color::WHITE;
-    PrimitiveGeometry::CreateObjectVertex(geometry);
-    return entity.GetID();
-}
+    EntityID Cube(XMFLOAT3 position, XMFLOAT3 scale)
+    {
+        auto entity = World::CreateEntity()
+                          .Add<TransformComponent>()
+                          .Add<MeshComponent>()
+                          .Add<MaterialComponent>()
+                          .Add<NameComponent>();
+        entity.SetName("Closed PBR room fixture");
+        auto& transform = entity.Get<TransformComponent>();
+        transform.Position = position;
+        transform.Scale = scale;
+        transform.IsDirty = true;
+        auto& material = entity.Get<MaterialComponent>();
+        material.UseTexture = false;
+        material.Roughness = .65f;
+        material.ShaderClassMode = MaterialMode::Manual;
+        material.ShaderClass = ShaderClass::PBR;
+        VertexResource geometry{};
+        geometry.entityid = entity.GetID();
+        geometry.objectType = ObjectType::CUBE;
+        geometry.color = Color::WHITE;
+        PrimitiveGeometry::CreateObjectVertex(geometry);
+        return entity.GetID();
+    }
 
-float Luminance(const RenderCapture::TextureData& image, UINT x, UINT y)
-{
-    const auto* row = image.Bytes.data() + y * image.RowPitch;
-    if (image.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+    float Luminance(const RenderCapture::TextureData& image, UINT x, UINT y)
     {
-        const auto* pixel = reinterpret_cast<const uint16_t*>(row) + 4 * x;
-        return .2126f * RenderCapture::HalfToFloat(pixel[0]) + .7152f * RenderCapture::HalfToFloat(pixel[1]) +
-               .0722f * RenderCapture::HalfToFloat(pixel[2]);
+        const auto* row = image.Bytes.data() + y * image.RowPitch;
+        if (image.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+        {
+            const auto* pixel = reinterpret_cast<const uint16_t*>(row) + 4 * x;
+            return .2126f * RenderCapture::HalfToFloat(pixel[0]) + .7152f * RenderCapture::HalfToFloat(pixel[1]) +
+                   .0722f * RenderCapture::HalfToFloat(pixel[2]);
+        }
+        if (image.Format == DXGI_FORMAT_R8G8B8A8_UNORM)
+        {
+            const auto* pixel = row + 4 * x;
+            return (.2126f * pixel[0] + .7152f * pixel[1] + .0722f * pixel[2]) / 255;
+        }
+        Check(false, "supported HDR scene format");
+        return 0;
     }
-    if (image.Format == DXGI_FORMAT_R8G8B8A8_UNORM)
-    {
-        const auto* pixel = row + 4 * x;
-        return (.2126f * pixel[0] + .7152f * pixel[1] + .0722f * pixel[2]) / 255;
-    }
-    Check(false, "supported HDR scene format");
-    return 0;
 }
-} // namespace
 
 bool CelestialOcclusionValidation::Enabled()
 {
@@ -153,7 +153,7 @@ void CelestialOcclusionValidation::BeforeFrame(uint64_t frame)
     const UINT phase = UINT(frame / FramesPerCase);
     if (phase >= 6)
     {
-        // Exercise the actual secondary lighting paths, with the authored Sun disabled.
+        // 配置済みの Sun を無効にし、実際の二次照明経路を検証する。
         rays.Reflections = true;
         Atmosphere::GetMutableParameters().Enabled = true;
         Atmosphere::GetMutableParameters().PhysicalSky = true;

@@ -164,7 +164,7 @@ void World::WaitForFrameLimit()
         }
     }
 
-    const long long spinTicks = m_Frequency * 6 / 10000; // 0.6ms
+    const long long spinTicks = m_Frequency * 6 / 10000; // 処理時間の基準値：0.6ミリ秒
     for (;;)
     {
         QueryPerformanceCounter(&now);

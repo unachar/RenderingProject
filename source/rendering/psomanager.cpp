@@ -127,48 +127,48 @@ bool PsoManager::CreateComputePipelineState(const D3D12_COMPUTE_PIPELINE_STATE_D
 
 namespace
 {
-// 負荷削減：描画ごとの PSO 検索で毎回文字列キーを組み立てないための前段キャッシュ
-// （入力と、結果を左右する状態だけからハッシュを作る。m_PsoCache が空になったら捨てる）
-struct FastPsoKey
-{
-    uint64_t Vs = 0, Ps = 0;
-    uint32_t Flags = 0, Format = 0;
-
-    bool operator==(const FastPsoKey& other) const
+    // 負荷削減：描画ごとの PSO 検索で毎回文字列キーを組み立てないための前段キャッシュ
+    // （入力と、結果を左右する状態だけからハッシュを作る。m_PsoCache が空になったら捨てる）
+    struct FastPsoKey
     {
-        return Vs == other.Vs && Ps == other.Ps && Flags == other.Flags && Format == other.Format;
-    }
-};
+        uint64_t Vs = 0, Ps = 0;
+        uint32_t Flags = 0, Format = 0;
 
-struct FastPsoKeyHash
-{
-    size_t operator()(const FastPsoKey& key) const noexcept
-    {
-        return static_cast<size_t>(key.Vs * 0x9e3779b97f4a7c15ull ^ (key.Ps + 0x632be59bd9b4e019ull) ^
-                                   (static_cast<uint64_t>(key.Flags) << 32) ^ key.Format);
-    }
-};
-
-uint64_t HashPath(const char* path)
-{
-    uint64_t hash = 1469598103934665603ull;
-    if (path)
-    {
-        for (const char* c = path; *c; ++c)
+        bool operator==(const FastPsoKey& other) const
         {
-            hash ^= static_cast<unsigned char>(*c);
-            hash *= 1099511628211ull;
+            return Vs == other.Vs && Ps == other.Ps && Flags == other.Flags && Format == other.Format;
         }
-    }
-    return hash;
-}
+    };
 
-unordered_map<FastPsoKey, ID3D12PipelineState*, FastPsoKeyHash>& FastPsoCache()
-{
-    static unordered_map<FastPsoKey, ID3D12PipelineState*, FastPsoKeyHash> cache;
-    return cache;
-}
-} // namespace
+    struct FastPsoKeyHash
+    {
+        size_t operator()(const FastPsoKey& key) const noexcept
+        {
+            return static_cast<size_t>(key.Vs * 0x9e3779b97f4a7c15ull ^ (key.Ps + 0x632be59bd9b4e019ull) ^
+                                       (static_cast<uint64_t>(key.Flags) << 32) ^ key.Format);
+        }
+    };
+
+    uint64_t HashPath(const char* path)
+    {
+        uint64_t hash = 1469598103934665603ull;
+        if (path)
+        {
+            for (const char* c = path; *c; ++c)
+            {
+                hash ^= static_cast<unsigned char>(*c);
+                hash *= 1099511628211ull;
+            }
+        }
+        return hash;
+    }
+
+    unordered_map<FastPsoKey, ID3D12PipelineState*, FastPsoKeyHash>& FastPsoCache()
+    {
+        static unordered_map<FastPsoKey, ID3D12PipelineState*, FastPsoKeyHash> cache;
+        return cache;
+    }
+} // 名前空間
 
 ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPso(const ShaderDescription& resource)
 {
@@ -287,7 +287,7 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPsoSlow(const ShaderDescript
     string key = resource.vsPath + resolvedPsPath + "|" + (geometryKind) + "|" + (passKind) + "|" +
                  to_string(forwardRtvFormatVal) + "|" + (windingKind) + "|" + (blendKind) + "|" +
                  to_string(resource.cullMode) + "|" + to_string(resource.depthWrite);
-    // Weighted blended OIT: the transparent pass binds (accumulation, revealage) instead of the scene.
+    // 重み付きブレンド OIT：半透明パスはシーンの代わりに蓄積値と透過残率をバインドする。
     const bool oitPass = TransparencyEffects::IsOitPassActive() && !useDeferredMrt && !visibilityPass;
     if (oitPass)
     {
@@ -440,9 +440,9 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPsoSlow(const ShaderDescript
     }
     if (oitPass)
     {
-        // The transparent pass binds (scene, OIT accumulation, OIT revealage).
-        // modelshaderPS writes the weighted blended OIT outputs (SV_Target1/2) and leaves the
-        // scene untouched; every other shader keeps blending into the scene as before.
+        // 半透明パスはシーン、OIT 蓄積値、OIT 透過残率をバインドする。
+        // modelshaderPS は重み付き OIT 出力（SV_Target1/2）へ書き、シーンは変更しない。
+        // それ以外のシェーダーは従来どおりシーンへブレンドする。
         const bool oitShader = resolvedPsPath.find("modelshaderPS.cso") != string::npos;
         psoDesc.NumRenderTargets = 3;
         psoDesc.RTVFormats[0] = GetForwardRtvFormat();
@@ -456,12 +456,12 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPsoSlow(const ShaderDescript
         if (oitShader)
         {
             psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = 0;
-            // sum(premultiplied colour * w, alpha * w)
+            // 加算：sum(premultiplied colour * w, alpha * w)
             accum.BlendEnable = TRUE;
             accum.SrcBlend = accum.DestBlend = D3D12_BLEND_ONE;
             accum.SrcBlendAlpha = accum.DestBlendAlpha = D3D12_BLEND_ONE;
             accum.BlendOp = accum.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-            // prod(1 - alpha)
+            // 積算：prod(1 - alpha)
             reveal.BlendEnable = TRUE;
             reveal.SrcBlend = D3D12_BLEND_ZERO;
             reveal.DestBlend = D3D12_BLEND_INV_SRC_COLOR;
@@ -633,7 +633,7 @@ ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso(bool enableAlphaBlend
     psoDesc.SampleDesc.Count = 1;
     if (outlineOit)
     {
-        // Outlines keep blending into the scene target; the OIT targets are not written.
+        // 輪郭線は引き続きシーンへブレンドし、OIT ターゲットには書かない。
         psoDesc.NumRenderTargets = 3;
         psoDesc.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
         psoDesc.RTVFormats[2] = TransparencyEffects::GetRevealFormat();

@@ -14,22 +14,22 @@ using Microsoft::WRL::ComPtr;
 
 namespace
 {
-void Check(HRESULT result, const char* message)
-{
-    if (FAILED(result))
+    void Check(HRESULT result, const char* message)
     {
-        throw std::runtime_error(message);
+        if (FAILED(result))
+        {
+            throw std::runtime_error(message);
+        }
     }
-}
 
-void Require(bool condition, const char* message)
-{
-    if (!condition)
+    void Require(bool condition, const char* message)
     {
-        throw std::runtime_error(message);
+        if (!condition)
+        {
+            throw std::runtime_error(message);
+        }
     }
-}
-} // namespace
+} // 無名名前空間
 
 int main(int argc, char** argv)
 {

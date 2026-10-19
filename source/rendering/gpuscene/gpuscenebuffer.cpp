@@ -5,25 +5,25 @@ static_assert(GpuSceneBuffer::FrameCount == RendererState::g_kFRAME_COUNT);
 
 namespace
 {
-void ThrowIfFailed(HRESULT result)
-{
-    if (FAILED(result))
+    void ThrowIfFailed(HRESULT result)
     {
-        throw runtime_error("GPU scene buffer allocation/map failed");
+        if (FAILED(result))
+        {
+            throw runtime_error("GPU scene buffer allocation/map failed");
+        }
     }
-}
 
-ComPtr<ID3D12Resource> CreateBuffer(ID3D12Device* device, uint64_t bytes, D3D12_HEAP_TYPE heapType,
-                                    D3D12_RESOURCE_STATES state, D3D12_RESOURCE_FLAGS flags)
-{
-    ComPtr<ID3D12Resource> resource;
-    const auto heap = CD3DX12_HEAP_PROPERTIES(heapType);
-    const auto description = CD3DX12_RESOURCE_DESC::Buffer(bytes, flags);
-    ThrowIfFailed(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, state, nullptr,
-                                                  IID_PPV_ARGS(&resource)));
-    return resource;
-}
-} // namespace
+    ComPtr<ID3D12Resource> CreateBuffer(ID3D12Device* device, uint64_t bytes, D3D12_HEAP_TYPE heapType,
+                                        D3D12_RESOURCE_STATES state, D3D12_RESOURCE_FLAGS flags)
+    {
+        ComPtr<ID3D12Resource> resource;
+        const auto heap = CD3DX12_HEAP_PROPERTIES(heapType);
+        const auto description = CD3DX12_RESOURCE_DESC::Buffer(bytes, flags);
+        ThrowIfFailed(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, state, nullptr,
+                                                      IID_PPV_ARGS(&resource)));
+        return resource;
+    }
+} // 名前空間
 
 void GpuSceneBuffer::BeginFrame(uint32_t frame)
 {

@@ -17,7 +17,10 @@ float4 EncodeVelocity(float2 velocity)
 float4 main(VelocityInput input, bool frontFace : SV_IsFrontFace) : SV_Target
 {
 #ifdef MESHLET_VELOCITY
-    if ((input.MaterialFlags & 4u) == 0 && !frontFace) discard;
+    if ((input.MaterialFlags & 4u) == 0 && !frontFace)
+    {
+        discard;
+    }
 #endif
     if (input.CurrentClip.w <= 0.00001f || input.PreviousClip.w <= 0.00001f)
     {
@@ -29,4 +32,3 @@ float4 main(VelocityInput input, bool frontFace : SV_IsFrontFace) : SV_Target
     float2 previousUv = previousNdc * float2(0.5f, -0.5f) + 0.5f;
     return EncodeVelocity(currentUv - previousUv);
 }
-

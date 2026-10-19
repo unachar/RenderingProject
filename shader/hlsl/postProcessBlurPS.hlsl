@@ -4,7 +4,6 @@
 Texture2D<float4> SceneTexture : register(t0);
 SamplerState TextureSampler : register(s0);
 
-
 float4 main(PSInputPostProcess input) : SV_TARGET
 {
     float4 originalColor = SceneTexture.Sample(TextureSampler, input.TexCoord);
@@ -21,11 +20,9 @@ float4 main(PSInputPostProcess input) : SV_TARGET
 
     float4 blurColor = 0;
 
-    [unroll]
-    for (int y = -1; y <= 1; y++)
+    [unroll] for (int y = -1; y <= 1; y++)
     {
-        [unroll]
-        for (int x = -1; x <= 1; x++)
+        [unroll] for (int x = -1; x <= 1; x++)
         {
             float2 offset = float2(x, y) * texelSize;
             blurColor += SceneTexture.Sample(TextureSampler, input.TexCoord + offset);
@@ -38,4 +35,3 @@ float4 main(PSInputPostProcess input) : SV_TARGET
     result.a = 1.0f;
     return result;
 }
-

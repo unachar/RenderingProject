@@ -8,25 +8,25 @@
 
 namespace
 {
-int g_Checks = 0;
+    int g_Checks = 0;
 
-void Check(bool passed, const char* message)
-{
-    ++g_Checks;
-    if (!passed)
+    void Check(bool passed, const char* message)
     {
-        std::fprintf(stderr, "FAIL: %s\n", message);
-        std::exit(1);
+        ++g_Checks;
+        if (!passed)
+        {
+            std::fprintf(stderr, "FAIL: %s\n", message);
+            std::exit(1);
+        }
     }
-}
-} // namespace
+} // 無名名前空間
 
 int main()
 {
     using namespace Procedural;
     NoiseSettings composite;
     composite.Method = NoiseMethod::Composite;
-    // The new method must produce a usable signal before testing its controls.
+    // 調整項目を検証する前に、新しい手法が使用可能な信号を生成することを確認する。
     bool compositeHasSignal = false;
     for (int sample = 1; sample < 20; ++sample)
     {

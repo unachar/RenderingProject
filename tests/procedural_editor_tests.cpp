@@ -6,24 +6,24 @@
 
 namespace
 {
-int g_Checks = 0;
-int g_Failures = 0;
+    int g_Checks = 0;
+    int g_Failures = 0;
 
-void Check(bool condition, const char* description)
-{
-    ++g_Checks;
-    if (!condition)
+    void Check(bool condition, const char* description)
     {
-        ++g_Failures;
-        std::cerr << "FAIL: " << description << '\n';
+        ++g_Checks;
+        if (!condition)
+        {
+            ++g_Failures;
+            std::cerr << "FAIL: " << description << '\n';
+        }
     }
-}
 
-bool Near(float first, float second)
-{
-    return std::abs(first - second) < 1e-4f;
-}
-} // namespace
+    bool Near(float first, float second)
+    {
+        return std::abs(first - second) < 1e-4f;
+    }
+} // 無名名前空間
 
 int main()
 {

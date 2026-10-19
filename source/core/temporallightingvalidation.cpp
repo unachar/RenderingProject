@@ -27,226 +27,233 @@
 
 namespace
 {
-constexpr UINT Grid = 17, CaseCount = 4;
-UINT FramesPerCase = 128, Warmup = 96;
-constexpr float ReceiverHeight = -.95f;
-UINT failures = 0;
-uint64_t lastFrame = 0;
-filesystem::path directory, materials;
-ofstream hashes;
+    constexpr UINT Grid = 17, CaseCount = 4;
+    UINT FramesPerCase = 128, Warmup = 96;
+    constexpr float ReceiverHeight = -.95f;
+    UINT failures = 0;
+    uint64_t lastFrame = 0;
+    filesystem::path directory, materials;
+    ofstream hashes;
 
-struct Moments
-{
-    double Sum = 0, Square = 0;
-    UINT Count = 0;
-
-    void Add(double value)
+    struct Moments
     {
-        Sum += value;
-        Square += value * value;
-        ++Count;
-    }
-};
+        double Sum = 0;
+        double Square = 0;
+        UINT Count = 0;
 
-struct Measurement
-{
-    array<Moments, Grid * Grid> Gi, Shadow, Output, RawGi;
-    Moments RawMean;
-    UINT Frames = 0, InputWidth = 0, InputHeight = 0;
-    double GpuMs = 0, CpuMs = 0;
-    UINT TimingFrames = 0;
-};
-
-array<Measurement, CaseCount> measurements;
-array<UINT, 448 * CaseCount + 16> serialToFrame{};
-uint64_t firstSerial = 0, lastTimingSerial = 0;
-
-void Check(bool valid, const char* message)
-{
-    if (!valid)
-    {
-        ++failures;
-    }
-    WriteGraphicsLog("Temporal lighting: %s %s\n", valid ? "PASS" : "FAIL", message);
-}
-
-bool Flag(const char* name)
-{
-    char value[16]{};
-    return GetEnvironmentVariableA(name, value, sizeof(value)) && atoi(value) != 0;
-}
-
-AssetHandle Material(const char* name, XMFLOAT4 base, XMFLOAT3 emission)
-{
-    MaterialAssetData data;
-    data.BaseColor = {base.x, base.y, base.z, base.w};
-    data.Roughness = 1;
-    data.EmissiveColor = {emission.x, emission.y, emission.z};
-    data.EmissiveIntensity = 6;
-    string error;
-    const auto path = materials / name;
-    Check(MaterialSerializer::Save(path, data, error), "create fixture material");
-    return MaterialManager::Registry().Register(path, AssetType::Material, error);
-}
-
-void Cube(XMFLOAT3 position, XMFLOAT3 scale, AssetHandle material)
-{
-    auto entity = World::CreateEntity()
-                      .Add<TransformComponent>()
-                      .Add<MeshComponent>()
-                      .Add<MaterialComponent>()
-                      .Add<NameComponent>();
-    entity.SetName("Temporal lighting fixture");
-    auto& transform = entity.Get<TransformComponent>();
-    transform.Position = position;
-    transform.Scale = scale;
-    transform.IsDirty = true;
-    VertexResource mesh;
-    mesh.entityid = entity.GetID();
-    mesh.objectType = ObjectType::CUBE;
-    mesh.color = Color::WHITE;
-    PrimitiveGeometry::CreateObjectVertex(mesh);
-    Check(MaterialManager::Assign(entity.GetID(), 0, material), "assign fixture material");
-}
-
-void Initialize()
-{
-    char run[96]{};
-    GetEnvironmentVariableA("DX12_TEMPORAL_RUN", run, sizeof(run));
-    directory = filesystem::path("build/temporal-lighting") / (run[0] ? run : "manual");
-    filesystem::create_directories(directory);
-    materials = filesystem::path("asset") / ("__temporal_lighting_" + to_string(GetCurrentProcessId()));
-    filesystem::create_directories(materials);
-    hashes.open(directory / "hashes.csv");
-    hashes << "case,frame,gi,shadow,output,raw_gi\n";
-    vector<EntityID> entities;
-    for (EntityID entity : World::GetView<TransformComponent>())
-    {
-        if (!ComponentManager::HasComponent<CameraComponent>(entity))
+        void Add(double value)
         {
-            entities.push_back(entity);
+            Sum += value;
+            Square += value * value;
+            ++Count;
         }
-    }
-    for (auto entity : entities)
-    {
-        World::DestroyEntity(Entity(entity));
-    }
-    const auto white = Material("White.material", {.7f, .7f, .7f, 1}, {});
-    const bool flow = Flag("DX12_TEMPORAL_FLOW");
-    if (flow)
-    {
-        FramesPerCase = 448;
-        Warmup = 384;
-    }
-    const auto red = Material("Red.material", {.6f, .1f, .1f, 1}, flow ? XMFLOAT3{} : XMFLOAT3{1, 0, 0});
-    const auto green = Material("Green.material", {.1f, .6f, .1f, 1}, flow ? XMFLOAT3{} : XMFLOAT3{0, 1, 0});
-    Cube({0, -1, 0}, {4, .1f, 4}, white);
-    Cube({-.4f, -.1f, .3f}, {.15f, .8f, .15f}, white);
-    Cube({.8f, -.35f, 1.1f}, {.12f, .55f, .12f}, white);
-    Cube({flow ? -2.1f : -2.5f, .8f, flow ? 0.f : .8f}, {flow ? .2f : .05f, flow ? 3.6f : 1.6f, flow ? 4.4f : 2.f},
-         red);
-    Cube({flow ? 2.1f : 2.5f, .8f, flow ? 0.f : .8f}, {flow ? .2f : .05f, flow ? 3.6f : 1.6f, flow ? 4.4f : 2.f},
-         green);
-    const auto sun = Sun::CreateDefault();
-    if (flow)
-    {
-        ComponentManager::GetComponentUnchecked<LightComponent>(sun).IsActive = false;
-        // Analytic light on colored surfaces: GI must sample reflected radiance,
-        // rather than the separately sampled emissive-light shortcut.
-        auto lamp = World::CreateEntity().Add<TransformComponent>().Add<LightComponent>();
-        lamp.Get<TransformComponent>().Position = {0, 1.2f, .8f};
-        auto& light = lamp.Get<LightComponent>();
-        light.Type = LightType::Point;
-        light.Position = {0, 1.2f, .8f};
-        light.Intensity = .5f;
-        light.Range = 12;
-        light.CastShadow = true;
-        Cube({0, 2.5f, 0}, {6, .1f, 6}, white);
-        Cube({0, .8f, -2.1f}, {4.4f, 3.6f, .2f}, white);
-        Cube({0, .8f, 2.1f}, {4.4f, 3.6f, .2f}, white);
-    }
-    RenderConfiguration::Resize(1280, 720);
-}
+    };
 
-float Channel(const RenderCapture::TextureData& image, int x, int y, bool redOnly)
-{
-    const auto* row = image.Bytes.data() + UINT(y) * image.RowPitch;
-    if (image.Format == DXGI_FORMAT_R16G16_FLOAT)
+    struct Measurement
     {
-        return RenderCapture::HalfToFloat(reinterpret_cast<const uint16_t*>(row)[UINT(x) * 2]);
-    }
-    if (image.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
-    {
-        const auto* pixel = reinterpret_cast<const uint16_t*>(row) + UINT(x) * 4;
-        const float r = RenderCapture::HalfToFloat(pixel[0]);
-        if (redOnly)
-        {
-            return r;
-        }
-        return .2126f * r + .7152f * RenderCapture::HalfToFloat(pixel[1]) +
-               .0722f * RenderCapture::HalfToFloat(pixel[2]);
-    }
-    if (image.Format == DXGI_FORMAT_R8G8B8A8_UNORM || image.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
-    {
-        const auto* pixel = row + UINT(x) * 4;
-        return (.2126f * pixel[0] + .7152f * pixel[1] + .0722f * pixel[2]) / 255;
-    }
-    Check(false, "supported readback format");
-    return 0;
-}
+        array<Moments, Grid * Grid> Gi, Shadow, Output, RawGi;
+        Moments RawMean;
+        UINT Frames = 0, InputWidth = 0, InputHeight = 0;
+        double GpuMs = 0;
+        double CpuMs = 0;
+        UINT TimingFrames = 0;
+    };
 
-float Sample(const RenderCapture::TextureData& image, float u, float v, bool redOnly = false)
-{
-    const float px = u * image.Width - .5f, py = v * image.Height - .5f;
-    const int x = int(floor(px)), y = int(floor(py));
-    const float fx = px - x, fy = py - y;
-    float sum = 0;
-    for (int dy = 0; dy < 2; ++dy)
-    {
-        for (int dx = 0; dx < 2; ++dx)
-        {
-            sum += Channel(image, clamp(x + dx, 0, int(image.Width) - 1), clamp(y + dy, 0, int(image.Height) - 1),
-                           redOnly) *
-                   (dx ? fx : 1 - fx) * (dy ? fy : 1 - fy);
-        }
-    }
-    return sum;
-}
+    array<Measurement, CaseCount> measurements;
+    array<UINT, 448 * CaseCount + 16> serialToFrame{};
+    uint64_t firstSerial = 0;
+    uint64_t lastTimingSerial = 0;
 
-uint64_t Hash(const RenderCapture::TextureData& image, UINT validWidth = 0)
-{
-    uint64_t hash = 14695981039346656037ull;
-    const UINT bytesPerPixel = image.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ? 8 : 4;
-    for (UINT y = 0; y < image.Height; ++y)
+    void Check(bool valid, const char* message)
     {
-        for (UINT x = 0; x < (validWidth ? validWidth : image.Width) * bytesPerPixel; ++x)
+        if (!valid)
         {
-            hash ^= image.Bytes[y * image.RowPitch + x];
-            hash *= 1099511628211ull;
+            ++failures;
         }
+        WriteGraphicsLog("Temporal lighting: %s %s\n", valid ? "PASS" : "FAIL", message);
     }
-    return hash;
-}
 
-pair<double, double> Noise(const array<Moments, Grid * Grid>& values)
-{
-    double variance = 0, mean = 0;
-    UINT pixels = 0;
-    for (const auto& value : values)
+    bool Flag(const char* name)
     {
-        if (value.Count < 24)
-        {
-            continue;
-        }
-        const double average = value.Sum / value.Count;
-        variance += (std::max)(0., value.Square / value.Count - average * average);
-        mean += average;
-        ++pixels;
+        char value[16]{};
+        return GetEnvironmentVariableA(name, value, sizeof(value)) && atoi(value) != 0;
     }
-    Check(pixels >= 100, "sufficient stable receiver samples");
-    return {mean / (std::max)(pixels, 1u), sqrt(variance / (std::max)(pixels, 1u))};
+
+    AssetHandle Material(const char* name, XMFLOAT4 base, XMFLOAT3 emission)
+    {
+        MaterialAssetData data;
+        data.BaseColor = {base.x, base.y, base.z, base.w};
+        data.Roughness = 1;
+        data.EmissiveColor = {emission.x, emission.y, emission.z};
+        data.EmissiveIntensity = 6;
+        string error;
+        const auto path = materials / name;
+        Check(MaterialSerializer::Save(path, data, error), "create fixture material");
+        return MaterialManager::Registry().Register(path, AssetType::Material, error);
+    }
+
+    void Cube(XMFLOAT3 position, XMFLOAT3 scale, AssetHandle material)
+    {
+        auto entity = World::CreateEntity()
+                          .Add<TransformComponent>()
+                          .Add<MeshComponent>()
+                          .Add<MaterialComponent>()
+                          .Add<NameComponent>();
+        entity.SetName("Temporal lighting fixture");
+        auto& transform = entity.Get<TransformComponent>();
+        transform.Position = position;
+        transform.Scale = scale;
+        transform.IsDirty = true;
+        VertexResource mesh;
+        mesh.entityid = entity.GetID();
+        mesh.objectType = ObjectType::CUBE;
+        mesh.color = Color::WHITE;
+        PrimitiveGeometry::CreateObjectVertex(mesh);
+        Check(MaterialManager::Assign(entity.GetID(), 0, material), "assign fixture material");
+    }
+
+    void Initialize()
+    {
+        char run[96]{};
+        GetEnvironmentVariableA("DX12_TEMPORAL_RUN", run, sizeof(run));
+        directory = filesystem::path("build/temporal-lighting") / (run[0] ? run : "manual");
+        filesystem::create_directories(directory);
+        materials = filesystem::path("asset") / ("__temporal_lighting_" + to_string(GetCurrentProcessId()));
+        filesystem::create_directories(materials);
+        hashes.open(directory / "hashes.csv");
+        hashes << "case,frame,gi,shadow,output,raw_gi\n";
+        vector<EntityID> entities;
+        for (EntityID entity : World::GetView<TransformComponent>())
+        {
+            if (!ComponentManager::HasComponent<CameraComponent>(entity))
+            {
+                entities.push_back(entity);
+            }
+        }
+        for (auto entity : entities)
+        {
+            World::DestroyEntity(Entity(entity));
+        }
+        const auto white = Material("White.material", {.7f, .7f, .7f, 1}, {});
+        const bool flow = Flag("DX12_TEMPORAL_FLOW");
+        if (flow)
+        {
+            FramesPerCase = 448;
+            Warmup = 384;
+        }
+        const auto red = Material("Red.material", {.6f, .1f, .1f, 1}, flow ? XMFLOAT3{} : XMFLOAT3{1, 0, 0});
+        const auto green = Material("Green.material", {.1f, .6f, .1f, 1}, flow ? XMFLOAT3{} : XMFLOAT3{0, 1, 0});
+        Cube({0, -1, 0}, {4, .1f, 4}, white);
+        Cube({-.4f, -.1f, .3f}, {.15f, .8f, .15f}, white);
+        Cube({.8f, -.35f, 1.1f}, {.12f, .55f, .12f}, white);
+        Cube({flow ? -2.1f : -2.5f, .8f, flow ? 0.f : .8f}, {flow ? .2f : .05f, flow ? 3.6f : 1.6f, flow ? 4.4f : 2.f},
+             red);
+        Cube({flow ? 2.1f : 2.5f, .8f, flow ? 0.f : .8f}, {flow ? .2f : .05f, flow ? 3.6f : 1.6f, flow ? 4.4f : 2.f},
+             green);
+        const auto sun = Sun::CreateDefault();
+        if (flow)
+        {
+            ComponentManager::GetComponentUnchecked<LightComponent>(sun).IsActive = false;
+            // 色付き面への解析的ライトでは、GI は反射輝度をサンプリングする必要がある。
+            // 別途サンプリングした発光ライトの簡易経路で代替しない。
+            auto lamp = World::CreateEntity().Add<TransformComponent>().Add<LightComponent>();
+            lamp.Get<TransformComponent>().Position = {0, 1.2f, .8f};
+            auto& light = lamp.Get<LightComponent>();
+            light.Type = LightType::Point;
+            light.Position = {0, 1.2f, .8f};
+            light.Intensity = .5f;
+            light.Range = 12;
+            light.CastShadow = true;
+            Cube({0, 2.5f, 0}, {6, .1f, 6}, white);
+            Cube({0, .8f, -2.1f}, {4.4f, 3.6f, .2f}, white);
+            Cube({0, .8f, 2.1f}, {4.4f, 3.6f, .2f}, white);
+        }
+        RenderConfiguration::Resize(1280, 720);
+    }
+
+    float Channel(const RenderCapture::TextureData& image, int x, int y, bool redOnly)
+    {
+        const auto* row = image.Bytes.data() + UINT(y) * image.RowPitch;
+        if (image.Format == DXGI_FORMAT_R16G16_FLOAT)
+        {
+            return RenderCapture::HalfToFloat(reinterpret_cast<const uint16_t*>(row)[UINT(x) * 2]);
+        }
+        if (image.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+        {
+            const auto* pixel = reinterpret_cast<const uint16_t*>(row) + UINT(x) * 4;
+            const float r = RenderCapture::HalfToFloat(pixel[0]);
+            if (redOnly)
+            {
+                return r;
+            }
+            return .2126f * r + .7152f * RenderCapture::HalfToFloat(pixel[1]) +
+                   .0722f * RenderCapture::HalfToFloat(pixel[2]);
+        }
+        if (image.Format == DXGI_FORMAT_R8G8B8A8_UNORM || image.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
+        {
+            const auto* pixel = row + UINT(x) * 4;
+            return (.2126f * pixel[0] + .7152f * pixel[1] + .0722f * pixel[2]) / 255;
+        }
+        Check(false, "supported readback format");
+        return 0;
+    }
+
+    float Sample(const RenderCapture::TextureData& image, float u, float v, bool redOnly = false)
+    {
+        const float px = u * image.Width - .5f;
+        const float py = v * image.Height - .5f;
+        const int x = int(floor(px));
+        const int y = int(floor(py));
+        const float fx = px - x;
+        const float fy = py - y;
+        float sum = 0;
+        for (int dy = 0; dy < 2; ++dy)
+        {
+            for (int dx = 0; dx < 2; ++dx)
+            {
+                sum += Channel(image, clamp(x + dx, 0, int(image.Width) - 1), clamp(y + dy, 0, int(image.Height) - 1),
+                               redOnly) *
+                       (dx ? fx : 1 - fx) * (dy ? fy : 1 - fy);
+            }
+        }
+        return sum;
+    }
+
+    uint64_t Hash(const RenderCapture::TextureData& image, UINT validWidth = 0)
+    {
+        uint64_t hash = 14695981039346656037ull;
+        const UINT bytesPerPixel = image.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ? 8 : 4;
+        for (UINT y = 0; y < image.Height; ++y)
+        {
+            for (UINT x = 0; x < (validWidth ? validWidth : image.Width) * bytesPerPixel; ++x)
+            {
+                hash ^= image.Bytes[y * image.RowPitch + x];
+                hash *= 1099511628211ull;
+            }
+        }
+        return hash;
+    }
+
+    pair<double, double> Noise(const array<Moments, Grid * Grid>& values)
+    {
+        double variance = 0;
+        double mean = 0;
+        UINT pixels = 0;
+        for (const auto& value : values)
+        {
+            if (value.Count < 24)
+            {
+                continue;
+            }
+            const double average = value.Sum / value.Count;
+            variance += (std::max)(0., value.Square / value.Count - average * average);
+            mean += average;
+            ++pixels;
+        }
+        Check(pixels >= 100, "sufficient stable receiver samples");
+        return {mean / (std::max)(pixels, 1u), sqrt(variance / (std::max)(pixels, 1u))};
+    }
 }
-} // namespace
 
 bool TemporalLightingValidation::Enabled()
 {
@@ -374,7 +381,8 @@ void TemporalLightingValidation::AfterFrame(uint64_t frame)
     Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
     XMFLOAT4X4 jitteredProjection;
     XMStoreFloat4x4(&jitteredProjection, projection);
-    const float jitterU = jitteredProjection._31 * .5f, jitterV = -jitteredProjection._32 * .5f;
+    const float jitterU = jitteredProjection._31 * .5f;
+    const float jitterV = -jitteredProjection._32 * .5f;
     double rawMean = 0;
     UINT rawCount = 0;
     for (UINT z = 0; z < Grid; ++z)
@@ -385,15 +393,16 @@ void TemporalLightingValidation::AfterFrame(uint64_t frame)
             XMFLOAT3 pixel;
             XMStoreFloat3(&pixel, XMVector3Project(world, 0, 0, float(gi.Width), float(gi.Height), 0, 1, projection,
                                                    view, XMMatrixIdentity()));
-            const float u = pixel.x / gi.Width, v = pixel.y / gi.Height;
+            const float u = pixel.x / gi.Width;
+            const float v = pixel.y / gi.Height;
             if (u < .01f || u > .99f || v < .01f || v > .99f)
             {
                 continue;
             }
             const UINT px = UINT(pixel.x), py = UINT(pixel.y);
             const float actualDepth = reinterpret_cast<const float*>(depth.Bytes.data() + py * depth.RowPitch)[px];
-            // Validate the receiver in world space: a grazing plane has a large depth
-            // gradient within one input pixel, so projected point depth is unsuitable.
+            // 受光面をワールド空間で検証する。浅い角度の平面では入力 1 ピクセル内の
+            // 深度勾配が大きくなるため、投影した点の深度は適さない。
             const auto surface =
                 XMVector3Unproject(XMVectorSet(float(px) + .5f, float(py) + .5f, actualDepth, 1), 0, 0, float(gi.Width),
                                    float(gi.Height), 0, 1, projection, view, XMMatrixIdentity());
@@ -403,7 +412,7 @@ void TemporalLightingValidation::AfterFrame(uint64_t frame)
             }
             const UINT index = z * Grid + x;
             measured.Gi[index].Add(Sample(gi, u, v, true));
-            // REBLUR stores YCoCg: red = Y + Co - Cg. Without NRD SDK the signal is RGB.
+            // REBLUR は YCoCg を保存する。赤 = Y + Co - Cg。NRD SDK がない場合は RGB 信号。
             const UINT rawX = checkerboard ? px >> 1 : px;
             const auto* rawPixel =
                 reinterpret_cast<const uint16_t*>(rawGi.Bytes.data() + py * rawGi.RowPitch) + rawX * 4;

@@ -10,5 +10,3 @@ float4 main(PSInputPostProcess input) : SV_TARGET
     color.rgb = ApplyLensOutput(ApplyHdrOutput(color.rgb), input.TexCoord, input.Position.xy);
     return color;
 }
-
-

@@ -1,7 +1,7 @@
 #pragma once
 #include "rendererstate.h"
 
-// Depth-peeled thin dielectric sheets, stored separately from opaque occluders.
+// 深度ピーリングによる薄い誘電体の層。不透明な遮蔽物とは別に保存する。
 class TransmittanceShadows : protected RendererState
 {
   public:

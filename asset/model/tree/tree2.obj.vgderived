@@ -1,0 +1,22 @@
+{
+	"builder" : 4,
+	"compression" : 1,
+	"convert" : false,
+	"dependencies" : 
+	[
+		"12671476878119877170",
+		"16806932418980317936"
+	],
+	"meshes" : 
+	[
+		{
+			"material" : "",
+			"name" : "OBJ Mesh",
+			"part" : 10.0,
+			"path" : "asset/virtualgeometry-cache/49f5b29c60446060.vgmesh.12450969403434189254.encoded.vgmesh",
+			"texture" : "c:\\users\\songt\\desktop\\render\\asset\\model\\tree\\tree2_albedo.png"
+		}
+	],
+	"settings" : "16721141559523799466",
+	"sourceImporter" : 2
+}

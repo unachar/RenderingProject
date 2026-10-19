@@ -29,7 +29,7 @@ enum class CloudDebug
     DetailNoise
 };
 
-// The inherited first layer preserves the existing settings and validation API.
+// 継承した第1層により、既存の設定と検証 API を維持する。
 struct CloudLayerSettings
 {
     bool LayerEnabled = true;
@@ -121,8 +121,21 @@ struct CloudSettings : CloudLayerSettings
 
     void ApplyQuality(CloudQuality quality)
     {
-        ViewSteps = quality == CloudQuality::Low ? 40 : quality == CloudQuality::Medium ? 64 : 96;
-        LightSteps = quality == CloudQuality::Low ? 4 : quality == CloudQuality::Medium ? 6 : 8;
+        switch (quality)
+        {
+            case CloudQuality::Low:
+                ViewSteps = 40;
+                LightSteps = 4;
+                break;
+            case CloudQuality::Medium:
+                ViewSteps = 64;
+                LightSteps = 6;
+                break;
+            default:
+                ViewSteps = 96;
+                LightSteps = 8;
+                break;
+        }
         ResolutionScale = 0.5f;
     }
 

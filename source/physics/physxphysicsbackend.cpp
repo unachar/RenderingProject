@@ -199,19 +199,20 @@ class PhysXPhysicsBackend final : public IPhysicsBackend
         PxShape* shape = nullptr;
         switch (desc.Shape)
         {
-        case PhysicsShape::Sphere:
-            shape = m_Physics->createShape(PxSphereGeometry(max(desc.Radius, 0.001f)), *material, true);
-            break;
-        case PhysicsShape::Capsule:
-            shape = m_Physics->createShape(PxCapsuleGeometry(max(desc.Radius, 0.001f), max(desc.Height * 0.5f, 0.001f)),
-                                           *material, true);
-            break;
-        case PhysicsShape::Box:
-        default:
-            shape = m_Physics->createShape(PxBoxGeometry(max(desc.HalfExtent.x, 0.001f), max(desc.HalfExtent.y, 0.001f),
+            case PhysicsShape::Sphere:
+                shape = m_Physics->createShape(PxSphereGeometry(max(desc.Radius, 0.001f)), *material, true);
+                break;
+            case PhysicsShape::Capsule:
+                shape = m_Physics->createShape(
+                    PxCapsuleGeometry(max(desc.Radius, 0.001f), max(desc.Height * 0.5f, 0.001f)), *material, true);
+                break;
+            case PhysicsShape::Box:
+            default:
+                shape =
+                    m_Physics->createShape(PxBoxGeometry(max(desc.HalfExtent.x, 0.001f), max(desc.HalfExtent.y, 0.001f),
                                                          max(desc.HalfExtent.z, 0.001f)),
                                            *material, true);
-            break;
+                break;
         }
         if (!shape)
         {

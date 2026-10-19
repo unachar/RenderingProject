@@ -19,11 +19,10 @@ ShadowVertexOutput main(VSInput3D input)
     output.Opacity = input.Diffuse.a;
     output.WorldPosition = worldPos.xyz;
     float3x3 linearWorld = (float3x3)World;
-    float3x3 normalMatrix = float3x3(cross(linearWorld[1], linearWorld[2]),
-        cross(linearWorld[2], linearWorld[0]), cross(linearWorld[0], linearWorld[1]));
+    float3x3 normalMatrix = float3x3(cross(linearWorld[1], linearWorld[2]), cross(linearWorld[2], linearWorld[0]),
+                                     cross(linearWorld[0], linearWorld[1]));
     float determinant = dot(linearWorld[0], normalMatrix[0]);
-    output.NormalWS = abs(determinant) > 0.000001f ?
-        normalize(mul(input.Normal, normalMatrix) / determinant) : normalize(input.Normal);
+    output.NormalWS = abs(determinant) > 0.000001f ? normalize(mul(input.Normal, normalMatrix) / determinant)
+                                                   : normalize(input.Normal);
     return output;
 }
-

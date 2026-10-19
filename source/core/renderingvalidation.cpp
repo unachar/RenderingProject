@@ -44,721 +44,734 @@
 
 namespace
 {
-EntityID g_Terrain = g_kINVALID_ENTITY;
-EntityID g_Mover = g_kINVALID_ENTITY;
-UINT g_Failures = 0;
-float g_NoonSkyLuminance = 0.0f;
-uint64_t g_FrameCount = 0;
-bool g_GpuDrivenBeforeMeshFixture = true;
-UINT g_TsrJitterBeforeDraw = 0;
-double g_PausedTime = 0;
-uint64_t g_OriginalTerrainHash = 0;
-double g_PreviousVertexTime = 0;
-array<RenderCapture::TextureData, 4> g_PlayShadowReference;
-bool g_PlayCacheEnabled = true;
+    EntityID g_Terrain = g_kINVALID_ENTITY;
+    EntityID g_Mover = g_kINVALID_ENTITY;
+    UINT g_Failures = 0;
+    float g_NoonSkyLuminance = 0.0f;
+    uint64_t g_FrameCount = 0;
+    bool g_GpuDrivenBeforeMeshFixture = true;
+    UINT g_TsrJitterBeforeDraw = 0;
+    double g_PausedTime = 0;
+    uint64_t g_OriginalTerrainHash = 0;
+    double g_PreviousVertexTime = 0;
+    array<RenderCapture::TextureData, 4> g_PlayShadowReference;
+    bool g_PlayCacheEnabled = true;
 
-struct ShadowBenchmarkSample
-{
-    uint64_t Count = 0, Vertices = 0, Draws = 0, MaxVertices = 0;
-    double Gpu = 0, Cpu = 0, ShadowGpu = 0, FrameMs = 0;
-    vector<RenderProfiler::PassTiming> PassTotals;
-    uint64_t GpuSamples = 0;
-};
-
-array<ShadowBenchmarkSample, 3> g_ShadowBenchmark{};
-uint64_t g_ShadowBenchmarkSerial = 0;
-uint32_t g_ProfilerFaultMask = 0;
-uint64_t g_ProfilerFaultSerial = 0;
-
-bool PlayRenderTestEnabled()
-{
-    char value[8]{};
-    GetEnvironmentVariableA("DX12_PLAY_RENDER_TEST", value, sizeof(value));
-    return atoi(value) != 0;
-}
-
-bool ShadowBenchmarkEnabled()
-{
-    char value[8]{};
-    GetEnvironmentVariableA("DX12_PLAY_RENDER_BENCH", value, sizeof(value));
-    return atoi(value) != 0;
-}
-
-void RecordShadowBenchmark()
-{
-    const auto& snapshot = RenderProfiler::GetLatest();
-    if (!snapshot.PipelineStatisticsValid || snapshot.Serial == g_ShadowBenchmarkSerial)
+    struct ShadowBenchmarkSample
     {
-        return;
+        uint64_t Count = 0;
+        uint64_t Vertices = 0;
+        uint64_t Draws = 0;
+        uint64_t MaxVertices = 0;
+        double Gpu = 0;
+        double Cpu = 0;
+        double ShadowGpu = 0;
+        double FrameMs = 0;
+        vector<RenderProfiler::PassTiming> PassTotals;
+        uint64_t GpuSamples = 0;
+    };
+
+    array<ShadowBenchmarkSample, 3> g_ShadowBenchmark{};
+    uint64_t g_ShadowBenchmarkSerial = 0;
+    uint32_t g_ProfilerFaultMask = 0;
+    uint64_t g_ProfilerFaultSerial = 0;
+
+    bool PlayRenderTestEnabled()
+    {
+        char value[8]{};
+        GetEnvironmentVariableA("DX12_PLAY_RENDER_TEST", value, sizeof(value));
+        return atoi(value) != 0;
     }
-    g_ShadowBenchmarkSerial = snapshot.Serial;
-    const uint64_t serial = snapshot.Serial;
-    const int phase = serial >= 27 && serial <= 75
-                          ? 1
-                          : (serial >= 107 && serial <= 155 ? 2 : (serial >= 8 && serial <= 18 ? 0 : -1));
-    if (phase < 0)
+
+    bool ShadowBenchmarkEnabled()
     {
-        return;
+        char value[8]{};
+        GetEnvironmentVariableA("DX12_PLAY_RENDER_BENCH", value, sizeof(value));
+        return atoi(value) != 0;
     }
-    auto& sample = g_ShadowBenchmark[phase];
-    ++sample.Count;
-    sample.Vertices += snapshot.Pipeline.IAVertices;
-    sample.MaxVertices = max(sample.MaxVertices, snapshot.Pipeline.IAVertices);
-    sample.Draws += snapshot.Calls.DrawCalls;
-    sample.Gpu += snapshot.GpuRenderMs;
-    sample.Cpu += snapshot.CpuRenderMs;
-    sample.FrameMs += World::GetFrameTimeMs();
-    if (snapshot.GpuTimingValid)
+
+    void RecordShadowBenchmark()
     {
-        ++sample.GpuSamples;
-        for (const auto& pass : snapshot.Passes)
+        const auto& snapshot = RenderProfiler::GetLatest();
+        if (!snapshot.PipelineStatisticsValid || snapshot.Serial == g_ShadowBenchmarkSerial)
         {
-            if (pass.Name == "Shadow")
+            return;
+        }
+        g_ShadowBenchmarkSerial = snapshot.Serial;
+        const uint64_t serial = snapshot.Serial;
+        const int phase = serial >= 27 && serial <= 75
+                              ? 1
+                              : (serial >= 107 && serial <= 155 ? 2 : (serial >= 8 && serial <= 18 ? 0 : -1));
+        if (phase < 0)
+        {
+            return;
+        }
+        auto& sample = g_ShadowBenchmark[phase];
+        ++sample.Count;
+        sample.Vertices += snapshot.Pipeline.IAVertices;
+        sample.MaxVertices = max(sample.MaxVertices, snapshot.Pipeline.IAVertices);
+        sample.Draws += snapshot.Calls.DrawCalls;
+        sample.Gpu += snapshot.GpuRenderMs;
+        sample.Cpu += snapshot.CpuRenderMs;
+        sample.FrameMs += World::GetFrameTimeMs();
+        if (snapshot.GpuTimingValid)
+        {
+            ++sample.GpuSamples;
+            for (const auto& pass : snapshot.Passes)
             {
-                sample.ShadowGpu += pass.GpuMs;
+                if (pass.Name == "Shadow")
+                {
+                    sample.ShadowGpu += pass.GpuMs;
+                }
+                auto total = find_if(sample.PassTotals.begin(), sample.PassTotals.end(), [&](const auto& entry) {
+                    return entry.Name == pass.Name;
+                });
+                if (total == sample.PassTotals.end())
+                {
+                    sample.PassTotals.push_back({pass.Name});
+                    total = prev(sample.PassTotals.end());
+                }
+                total->CpuMs += pass.CpuMs;
+                total->GpuMs += pass.GpuMs;
+                total->DrawCalls += pass.DrawCalls;
             }
-            auto total = find_if(sample.PassTotals.begin(), sample.PassTotals.end(), [&](const auto& entry) {
-                return entry.Name == pass.Name;
+        }
+    }
+
+    void Check(bool passed, const char* name);
+
+    bool SunLightingTestEnabled()
+    {
+        char value[8]{};
+        return GetEnvironmentVariableA("DX12_SUN_LIGHTING_TEST", value, sizeof(value)) && atoi(value) != 0;
+    }
+
+    EntityID g_TestSun = g_kINVALID_ENTITY;
+    array<double, 5> g_SunRadiance{};
+    array<array<double, 3>, 5> g_SunColors{};
+
+    void BeforeSunLightingFrame(uint64_t frame)
+    {
+        g_FrameCount = frame + 1;
+        const uint64_t phase = frame <= 10 ? frame : (frame <= 20 ? frame - 10 : 10);
+        if (frame == 11)
+        {
+            auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(g_TestSun);
+            transform.Position = {0, 1.568f, -10}; // 報告された朝の状態に合わせ、太陽高度を 8.9 度にする。
+            transform.IsDirty = true;
+            ComponentManager::GetComponentUnchecked<LightComponent>(g_TestSun).Color = {1, 0.35f, 0.08f, 1};
+        }
+        if (frame == 0)
+        {
+            vector<EntityID> removed;
+            for (EntityID id : World::GetView<TransformComponent>())
+            {
+                if (ComponentManager::HasComponent<MeshComponent>(id) &&
+                    ComponentManager::GetComponentUnchecked<MeshComponent>(id).IsEnvironment)
+                {
+                    Entity(id).SetName("Renamed Environment Regression Sky");
+                    continue; // 環境の識別は編集可能な名前に依存させない。
+                }
+                if (!ComponentManager::HasComponent<CameraComponent>(id))
+                {
+                    removed.push_back(id);
+                }
+            }
+            for (auto id : removed)
+            {
+                World::DestroyEntity(Entity(id));
+            }
+            Entity environment = World::CreateEntity()
+                                     .Add<NameComponent>()
+                                     .Add<MeshComponent>()
+                                     .Add<StaticModelComponent>()
+                                     .Add<TransformComponent>()
+                                     .Add<MaterialComponent>();
+            environment.SetName("Renamed Environment Regression Sky");
+            environment.Get<MeshComponent>().IsEnvironment = true;
+            environment.Get<TransformComponent>().Scale = {50, 50, 50};
+            environment.Get<TransformComponent>().IsDirty = true;
+            environment.Get<StaticModelComponent>().ModelId = ModelManager::LoadStaticModel("asset/model/sky/sky.obj");
+            environment.Get<MaterialComponent>().ShaderClassMode = MaterialMode::Manual;
+            environment.Get<MaterialComponent>().ShaderClass = ShaderClass::Unlit;
+            g_TestSun = Sun::Create({0, 8, -8}, {0, 0, 0});
+            Entity cube = World::CreateEntity()
+                              .Add<NameComponent>()
+                              .Add<MeshComponent>()
+                              .Add<TransformComponent>()
+                              .Add<MaterialComponent>();
+            cube.SetName("Sun Lighting Regression Cube");
+            auto& material = cube.Get<MaterialComponent>();
+            material.ShaderClassMode = MaterialMode::Manual;
+            material.ShaderClass = ShaderClass::PBR;
+            material.Metallic = 0;
+            material.Roughness = 0.8f;
+            VertexResource resource;
+            resource.entityid = cube.GetID();
+            resource.objectType = ObjectType::CUBE;
+            resource.color = Color::WHITE;
+            PrimitiveGeometry::CreateObjectVertex(resource);
+            auto id = Camera::GetCameraEntity();
+            auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(id);
+            transform.Position = {0, 3, -8};
+            transform.IsDirty = true;
+            auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(id);
+            camera.Target = {0, 0, 0};
+            camera.AllowUserControl = false;
+            camera.LockOnTarget = g_kINVALID_ENTITY;
+        }
+        RenderConfiguration::SetHdr(true);
+        RenderConfiguration::SetResolutionScale(1.0f);
+        DayNightCycle::GetSettings().Running = false;
+        DayNightCycle::GetSettings().TimeDriven = false;
+        DayNightCycle::GetSettings().AutomaticLighting = false;
+        RenderConfiguration::SetRenderMode(RenderMode::DEFERRED);
+        RendererSettings::SetMeshShadersEnabled(false);
+        RendererSettings::SetComputeGBufferEnabled(false);
+        RendererSettings::SetSsaoEnabled(false);
+        RendererSettings::SetSsgiEnabled(false);
+        RendererSettings::SetUpscaleMode(UpscaleMode::Bilateral);
+        auto& rays = Raytracing::GetSettings();
+        rays.Enabled = true;
+        rays.Reflections = true;
+        rays.Denoise = false;
+        rays.Shadows = true;
+        rays.RenderMode = phase >= 7 && phase <= 8 ? Raytracing::Mode::Full : Raytracing::Mode::ReflectionsOnly;
+        RendererSettings::SetShadowMapMethod(phase >= 5 && phase <= 6 ? ShadowMapMethod::VirtualShadowMap
+                                                                      : ShadowMapMethod::ShadowMap);
+        auto& sun = ComponentManager::GetComponentUnchecked<LightComponent>(g_TestSun);
+        sun.IsActive = phase < 9;
+        sun.CastShadow = phase >= 3;
+        sun.AffectsVolumetrics = false;
+    }
+
+    void AfterSunLightingFrame(uint64_t frame)
+    {
+        if (frame < 2 || frame > 20 || frame % 2)
+        {
+            return;
+        }
+        const uint64_t phase = frame <= 10 ? frame : frame - 10;
+        Check(phase == 8 ? Raytracing::UsesRaytracedShadows() : !Raytracing::UsesRaytracedShadows(),
+              "sun regression uses the requested raster or raytraced shadow path");
+        if (phase == 4 || phase == 6)
+        {
+            for (EntityID id : World::GetView<MeshComponent>())
+            {
+                if (ComponentManager::GetComponentUnchecked<MeshComponent>(id).IsEnvironment)
+                {
+                    Check(!LightingResources::ShouldDrawEntityInCurrentShadowPass(id),
+                          "environment mesh is excluded from shadow culling and bounds");
+                }
+            }
+        }
+        RenderCapture::TextureData image, materials;
+        bool read = RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), image) &&
+                    RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::MATERIAL), materials);
+        const bool compatible = read && image.Format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
+                                materials.Format == DXGI_FORMAT_R16G16B16A16_FLOAT && image.Width == materials.Width &&
+                                image.Height == materials.Height;
+        Check(compatible, "read sun regression HDR and PBR mask");
+        if (!compatible)
+        {
+            return;
+        }
+        double sum = 0;
+        array<double, 3> channels{};
+        uint32_t pixels = 0;
+        for (uint32_t y = 0; y < image.Height; ++y)
+        {
+            auto* color = reinterpret_cast<const uint16_t*>(image.Bytes.data() + y * image.RowPitch);
+            auto* mask = reinterpret_cast<const uint16_t*>(materials.Bytes.data() + y * materials.RowPitch);
+            for (uint32_t x = 0; x < image.Width; ++x)
+            {
+                if (abs(RenderCapture::HalfToFloat(mask[x * 4 + 3]) - 11.f) < 0.1f)
+                {
+                    sum += 0.2126 * RenderCapture::HalfToFloat(color[x * 4]) +
+                           0.7152 * RenderCapture::HalfToFloat(color[x * 4 + 1]) +
+                           0.0722 * RenderCapture::HalfToFloat(color[x * 4 + 2]);
+                    for (uint32_t c = 0; c < 3; ++c)
+                    {
+                        channels[c] += RenderCapture::HalfToFloat(color[x * 4 + c]);
+                    }
+                    ++pixels;
+                }
+            }
+        }
+        Check(pixels > 100, "sun regression includes visible PBR pixels");
+        g_SunRadiance[phase / 2 - 1] = pixels ? sum / pixels : 0;
+        WriteGraphicsLog("Sun lighting regression frame=%llu radiance=%.6f pixels=%u\n", frame,
+                         g_SunRadiance[phase / 2 - 1], pixels);
+        for (uint32_t c = 0; c < 3; ++c)
+        {
+            g_SunColors[phase / 2 - 1][c] = pixels ? channels[c] / pixels : 0;
+        }
+        if (phase == 10)
+        {
+            double direct = g_SunRadiance[0] - g_SunRadiance[4];
+            Check(direct > 0.05, "virtual sun lights unshadowed PBR surface");
+            Check(g_SunRadiance[1] - g_SunRadiance[4] > direct * 0.5,
+                  "reflection-only ShadowMap preserves sun on unoccluded PBR surface");
+            Check(g_SunRadiance[2] - g_SunRadiance[4] > direct * 0.5,
+                  "reflection-only Virtual ShadowMap preserves sun on unoccluded PBR surface");
+            Check(g_SunRadiance[3] - g_SunRadiance[4] > direct * 0.5,
+                  "full raytracing preserves sun on unoccluded PBR surface");
+            if (frame == 20)
+            {
+                for (uint32_t path = 1; path <= 3; ++path)
+                {
+                    double red = g_SunColors[path][0] - g_SunColors[4][0];
+                    double green = g_SunColors[path][1] - g_SunColors[4][1];
+                    double blue = g_SunColors[path][2] - g_SunColors[4][2];
+                    WriteGraphicsLog("Sun morning direct path=%u RGB=%.6f,%.6f,%.6f\n", path, red, green, blue);
+                    Check(red > green * 1.4 && green > blue * 1.3,
+                          "morning sun color reaches PBR in raster and raytraced shadow paths");
+                }
+            }
+        }
+    }
+
+    void ValidateReflectionDenoising(const RenderCapture::TextureData& filtered)
+    {
+        if (!NrdDenoiser::IsCompiled())
+        {
+            return;
+        }
+        RenderCapture::TextureData noisy;
+        const bool read = RenderCapture::ReadTexture(RayReflections::GetNoisyResource(), noisy);
+        Check(read && noisy.Width == filtered.Width && noisy.Height == filtered.Height,
+              "read matching raw NRD reflection input");
+        if (!read || noisy.Width != filtered.Width || noisy.Height != filtered.Height)
+        {
+            return;
+        }
+
+        // NRD 入力の Y チャンネルは 0.25 R + 0.5 G + 0.25 B。同じ輝度を
+        // 合成後の RGB 出力でも比較する。隣接差分で高周波の変化を測る。
+        // 背景とヒット境界を除外し、輪郭が測定結果を支配しないようにする。
+        // パック入力は両軸の追跡済み近傍を比較する。チェッカーボードの間隔は 2 ピクセル。
+        double rawVariation = 0;
+        double filteredVariation = 0;
+        UINT pairs = 0;
+        const auto layout = RayReflections::GetReflectionSamplingLayout();
+        const UINT storageWidth = RenderMeasurement::TraceStorageWidth(filtered.Width, layout.Checkerboard);
+        const UINT pixelStep = layout.Checkerboard ? 2u : 1u;
+        for (UINT y = 0; y < filtered.Height; ++y)
+        {
+            const auto* raw = reinterpret_cast<const uint16_t*>(noisy.Bytes.data() + y * noisy.RowPitch);
+            const auto* output = reinterpret_cast<const uint16_t*>(filtered.Bytes.data() + y * filtered.RowPitch);
+            for (UINT storageX = 0; storageX < storageWidth; ++storageX)
+            {
+                const UINT x = RenderMeasurement::TracePixelX(storageX, y, layout.Sequence, layout.Checkerboard);
+                if (x >= filtered.Width)
+                {
+                    continue;
+                }
+                const UINT current = x * 4;
+                const UINT rawCurrent = storageX * 4;
+                const auto accumulatePair = [&](const uint16_t* otherRaw, const uint16_t* otherOutput,
+                                                UINT otherRawIndex, UINT otherOutputIndex) {
+                    const float distance = RenderCapture::HalfToFloat(output[current + 3]);
+                    const float otherDistance = RenderCapture::HalfToFloat(otherOutput[otherOutputIndex + 3]);
+                    if (abs(distance) < 0.01f || abs(otherDistance) < 0.01f)
+                    {
+                        return;
+                    }
+                    const auto luminance = [](const uint16_t* color) {
+                        return 0.25f * RenderCapture::HalfToFloat(color[0]) +
+                               0.5f * RenderCapture::HalfToFloat(color[1]) +
+                               0.25f * RenderCapture::HalfToFloat(color[2]);
+                    };
+                    rawVariation += abs(RenderCapture::HalfToFloat(raw[rawCurrent]) -
+                                        RenderCapture::HalfToFloat(otherRaw[otherRawIndex]));
+                    filteredVariation += abs(luminance(output + current) - luminance(otherOutput + otherOutputIndex));
+                    ++pairs;
+                };
+                if (storageX > 0)
+                {
+                    accumulatePair(raw, output, rawCurrent - 4, (x - pixelStep) * 4);
+                }
+                if (y >= pixelStep)
+                {
+                    const auto* previousRaw =
+                        reinterpret_cast<const uint16_t*>(noisy.Bytes.data() + (y - pixelStep) * noisy.RowPitch);
+                    const auto* previousOutput =
+                        reinterpret_cast<const uint16_t*>(filtered.Bytes.data() + (y - pixelStep) * filtered.RowPitch);
+                    accumulatePair(previousRaw, previousOutput, rawCurrent, current);
+                }
+            }
+        }
+        WriteGraphicsLog("Validation NRD reflection: neighbor pairs=%u rawVariation=%.6f filteredVariation=%.6f\n",
+                         pairs, rawVariation / max(pairs, 1u), filteredVariation / max(pairs, 1u));
+        Check(pairs > 100 && rawVariation > 0 && filteredVariation < rawVariation,
+              "NRD reduces reflection high-frequency variation in the test scene");
+    }
+
+    void ValidateProfilerIntervals()
+    {
+        const auto& snapshot = RenderProfiler::GetLatest();
+        Check(snapshot.GpuTimingValid && !snapshot.GpuEvents.empty(), "profiler resolves GPU frame intervals");
+        bool hierarchyValid = snapshot.DroppedGpuEvents == 0;
+        bool selfTimeValid = true;
+        for (const auto& event : snapshot.GpuEvents)
+        {
+            if (event.Interval.ParentId != RenderMeasurement::NoParent)
+            {
+                const auto parent =
+                    find_if(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(), [&](const auto& candidate) {
+                        return candidate.Interval.Id == event.Interval.ParentId;
+                    });
+                hierarchyValid &= parent != snapshot.GpuEvents.end() && parent->Depth + 1 == event.Depth;
+            }
+            selfTimeValid &= event.InclusiveMs.has_value() && event.ExclusiveMs.has_value();
+            if (event.InclusiveMs && event.ExclusiveMs)
+            {
+                selfTimeValid &= *event.ExclusiveMs >= 0 && *event.ExclusiveMs <= *event.InclusiveMs + 1e-6;
+            }
+        }
+        Check(hierarchyValid, "profiler records valid parent IDs without dropped GPU events");
+        Check(selfTimeValid, "profiler self times exclude children without exceeding inclusive time");
+    }
+
+    void ValidateProfilerFaults()
+    {
+        const auto& snapshot = RenderProfiler::GetLatest();
+        if (snapshot.InjectedFault == RenderProfiler::ValidationFault::None || snapshot.Serial == g_ProfilerFaultSerial)
+        {
+            return;
+        }
+        g_ProfilerFaultSerial = snapshot.Serial;
+        g_ProfilerFaultMask |= 1u << (static_cast<uint32_t>(snapshot.InjectedFault) - 1u);
+        Check(snapshot.GpuTimingValid, "profiler fault preserves independent Frame GPU timing");
+        if (snapshot.InjectedFault == RenderProfiler::ValidationFault::ExhaustQueries)
+        {
+            Check(snapshot.DroppedGpuEvents > 0, "profiler reports timestamp exhaustion");
+            const bool noInventedSelf =
+                all_of(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(), [](const auto& event) {
+                    return !event.ExclusiveMs;
+                });
+            Check(noInventedSelf, "timestamp exhaustion makes exclusive measurements unavailable");
+        }
+        else
+        {
+            const auto invalid = count_if(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(), [](const auto& event) {
+                return !event.Interval.Valid;
             });
-            if (total == sample.PassTotals.end())
-            {
-                sample.PassTotals.push_back({pass.Name});
-                total = prev(sample.PassTotals.end());
-            }
-            total->CpuMs += pass.CpuMs;
-            total->GpuMs += pass.GpuMs;
-            total->DrawCalls += pass.DrawCalls;
+            Check(invalid >= 1, "profiler marks leaked or out-of-order scopes invalid");
+            const auto frame = find_if(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(), [](const auto& event) {
+                return event.Name == "Frame";
+            });
+            Check(frame != snapshot.GpuEvents.end() && !frame->ExclusiveMs,
+                  "invalid direct child prevents an invented Frame self time");
         }
     }
-}
 
-void Check(bool passed, const char* name);
-
-bool SunLightingTestEnabled()
-{
-    char value[8]{};
-    return GetEnvironmentVariableA("DX12_SUN_LIGHTING_TEST", value, sizeof(value)) && atoi(value) != 0;
-}
-
-EntityID g_TestSun = g_kINVALID_ENTITY;
-array<double, 5> g_SunRadiance{};
-array<array<double, 3>, 5> g_SunColors{};
-
-void BeforeSunLightingFrame(uint64_t frame)
-{
-    g_FrameCount = frame + 1;
-    const uint64_t phase = frame <= 10 ? frame : (frame <= 20 ? frame - 10 : 10);
-    if (frame == 11)
+    void ValidateRayTelemetry(bool expectReflectionRays)
     {
-        auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(g_TestSun);
-        transform.Position = {0, 1.568f, -10}; // 8.9 degree sun elevation, matching the reported morning.
-        transform.IsDirty = true;
-        ComponentManager::GetComponentUnchecked<LightComponent>(g_TestSun).Color = {1, 0.35f, 0.08f, 1};
+        if (!RayTelemetry::Requested())
+        {
+            return;
+        }
+        const bool idle = GraphicsDevice::WaitForGpuIdle();
+        Check(idle, "ray telemetry readback fence completes");
+        if (!idle)
+        {
+            return;
+        }
+        const auto counts = RayTelemetry::Data().ConsumeCurrent(RenderProfiler::GetFrameSerial());
+        Check(counts.Valid, "ray telemetry readback has the current frame serial");
+        Check(counts.ProviderKnown(RayTelemetry::Radiance) && counts.ProviderKnown(RayTelemetry::ShadowAo),
+              "active radiance and shadow/AO shaders provide measured counters");
+        if (expectReflectionRays && Raytracing::AreReflectionsActive())
+        {
+            Check(counts.Rays[RAY_TELEMETRY_REFLECTION] > 0, "reflection primary rays are counted at TraceRayInline");
+        }
+        if (Raytracing::UsesRaytracedAmbientOcclusion())
+        {
+            Check(counts.Rays[RAY_TELEMETRY_AO] > 0, "AO rays are counted by the actual ray-tracing shader");
+        }
+        if (!Raytracing::UsesRaytracedShadows() && !Raytracing::UsesRaytracedAmbientOcclusion())
+        {
+            Check(counts.Rays[RAY_TELEMETRY_SHADOW] == 0 && counts.Rays[RAY_TELEMETRY_AO] == 0,
+                  "guides-only dispatch counts zero shadow/AO rays");
+        }
+        if (!Raytracing::IsAvailable())
+        {
+            Check(counts.Rays[RAY_TELEMETRY_REFLECTION] == 0 && counts.Rays[RAY_TELEMETRY_GI] == 0,
+                  "DXR-disabled fallback measures zero primary radiance rays");
+        }
+        Check(!counts.AllSourcesCovered, "partial DXR telemetry does not claim a total");
+        WriteGraphicsLog(
+            "Ray telemetry serial=%llu reflection=%llu gi=%llu visibility=%llu restir=%llu shadow=%llu ao=%llu active=%u measured=%u\n",
+            counts.Serial, counts.Rays[0], counts.Rays[1], counts.Rays[2], counts.Rays[3], counts.Rays[4],
+            counts.Rays[5], counts.ActiveProviders, counts.MeasuredProviders);
     }
-    if (frame == 0)
+
+    void ValidateVertexDeformation()
     {
-        vector<EntityID> removed;
-        for (EntityID id : World::GetView<TransformComponent>())
+        VertexDeformationView view;
+        const bool resolved = VertexDeformation::TryResolveMesh(g_Mover, view);
+        Check(resolved && VertexDeformation::GetDispatchCount() > 0, "GPU procedural vertex dispatch");
+        if (!resolved)
         {
-            if (ComponentManager::HasComponent<MeshComponent>(id) &&
-                ComponentManager::GetComponentUnchecked<MeshComponent>(id).IsEnvironment)
-            {
-                Entity(id).SetName("Renamed Environment Regression Sky");
-                continue; // Environment identity must not depend on its editable name.
-            }
-            if (!ComponentManager::HasComponent<CameraComponent>(id))
-            {
-                removed.push_back(id);
-            }
+            return;
         }
-        for (auto id : removed)
+        const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(g_Mover);
+        const auto& motion = ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(g_Mover);
+        vector<uint8_t> current, previous;
+        const bool read =
+            RenderCapture::ReadBuffer(view.CurrentResource, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
+                                      view.CurrentView.SizeInBytes, current) &&
+            RenderCapture::ReadBuffer(view.PreviousResource, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
+                                      view.PreviousView.SizeInBytes, previous);
+        Check(read, "read current and previous GPU vertices");
+        if (!read)
         {
-            World::DestroyEntity(Entity(id));
+            return;
         }
-        Entity environment = World::CreateEntity()
-                                 .Add<NameComponent>()
-                                 .Add<MeshComponent>()
-                                 .Add<StaticModelComponent>()
-                                 .Add<TransformComponent>()
-                                 .Add<MaterialComponent>();
-        environment.SetName("Renamed Environment Regression Sky");
-        environment.Get<MeshComponent>().IsEnvironment = true;
-        environment.Get<TransformComponent>().Scale = {50, 50, 50};
-        environment.Get<TransformComponent>().IsDirty = true;
-        environment.Get<StaticModelComponent>().ModelId = ModelManager::LoadStaticModel("asset/model/sky/sky.obj");
-        environment.Get<MaterialComponent>().ShaderClassMode = MaterialMode::Manual;
-        environment.Get<MaterialComponent>().ShaderClass = ShaderClass::Unlit;
-        g_TestSun = Sun::Create({0, 8, -8}, {0, 0, 0});
-        Entity cube = World::CreateEntity()
-                          .Add<NameComponent>()
-                          .Add<MeshComponent>()
-                          .Add<TransformComponent>()
-                          .Add<MaterialComponent>();
-        cube.SetName("Sun Lighting Regression Cube");
-        auto& material = cube.Get<MaterialComponent>();
-        material.ShaderClassMode = MaterialMode::Manual;
-        material.ShaderClass = ShaderClass::PBR;
-        material.Metallic = 0;
-        material.Roughness = 0.8f;
+        void* mapped = nullptr;
+        const CD3DX12_RANGE noRead(0, 0);
+        if (FAILED(mesh.VertexBuffer->Map(0, &noRead, &mapped)))
+        {
+            Check(false, "map immutable procedural base vertices");
+            return;
+        }
+        Procedural::VertexMotionSettings settings;
+        settings.Method = motion.Method;
+        settings.Amplitude = {motion.Amplitude.x, motion.Amplitude.y, motion.Amplitude.z};
+        settings.Speed = motion.Speed;
+        settings.SpatialFrequency = motion.SpatialFrequency;
+        settings.Seed = motion.Seed;
+        bool positions = true, normals = true, attributes = true, moved = false;
+        const auto close = [](float a, float b, float tolerance) {
+            return isfinite(a) && abs(a - b) < tolerance;
+        };
+        for (UINT index = 0; index < mesh.VertexCount; ++index)
+        {
+            const auto& base = static_cast<const Vertex*>(mapped)[index];
+            const auto& now = reinterpret_cast<const Vertex*>(current.data())[index];
+            const auto& old = reinterpret_cast<const Vertex*>(previous.data())[index];
+            const Procedural::Vector3 basePosition{base.Pos.x, base.Pos.y, base.Pos.z};
+            const auto expected = Procedural::DeformPosition(basePosition, settings, motion.Time);
+            const auto expectedPrevious = Procedural::DeformPosition(basePosition, settings, g_PreviousVertexTime);
+            const auto normal = Procedural::DeformNormal(basePosition, {base.Normal.x, base.Normal.y, base.Normal.z},
+                                                         settings, motion.Time);
+            positions &= close(now.Pos.x, expected.X, 0.002f) && close(now.Pos.y, expected.Y, 0.002f) &&
+                         close(now.Pos.z, expected.Z, 0.002f) && close(old.Pos.x, expectedPrevious.X, 0.002f) &&
+                         close(old.Pos.y, expectedPrevious.Y, 0.002f) && close(old.Pos.z, expectedPrevious.Z, 0.002f);
+            normals &= close(now.Normal.x, normal.X, 0.02f) && close(now.Normal.y, normal.Y, 0.02f) &&
+                       close(now.Normal.z, normal.Z, 0.02f);
+            attributes &= memcmp(&now.Tex, &base.Tex, sizeof(base.Tex)) == 0 &&
+                          memcmp(&now.Color, &base.Color, sizeof(base.Color)) == 0;
+            moved |= abs(now.Pos.y - base.Pos.y) > 0.001f;
+        }
+        const CD3DX12_RANGE noWrite(0, 0);
+        mesh.VertexBuffer->Unmap(0, &noWrite);
+        Check(positions && moved, "GPU positions and motion history agree with CPU reference");
+        Check(normals && attributes, "GPU deformed normals and unchanged UV/color");
+    }
+
+    void Check(bool passed, const char* name)
+    {
+        if (!passed)
+        {
+            ++g_Failures;
+        }
+        const char* result = "FAIL";
+        if (passed)
+        {
+            result = "PASS";
+        }
+        WriteGraphicsLog("Validation: %s %s\n", result, name);
+    }
+
+    void CreateTestScene()
+    {
+        // 別の .cpp ファイルからの登録も含め、実際の起動シーンを検証する。
+        const char* startupNames[] = {"Cube", "polygon3d", "XBot",           "field",
+                                      "Moca", "Karen",     "Kacchatta_Hone", "Alicia"};
+        for (const char* name : startupNames)
+        {
+            unsigned int count = 0;
+            for (EntityID id : World::GetView<NameComponent>())
+            {
+                if (ComponentManager::GetComponent<NameComponent>(id).Name == name)
+                {
+                    ++count;
+                }
+            }
+            const string checkName = string("auto-registered startup entity created once: ") + name;
+            Check(count == 1, checkName.c_str());
+        }
+
+        bool startupSky = false;
+        for (EntityID id : World::GetView<MeshComponent>())
+        {
+            startupSky |= ComponentManager::GetComponentUnchecked<MeshComponent>(id).IsEnvironment;
+        }
+        Check(!startupSky, "physical atmosphere startup does not create a legacy Sky object");
+
+        RendererSettings::SetMeshShadersEnabled(true);
+        D3D12_FEATURE_DATA_D3D12_OPTIONS7 meshOptions{};
+        if (SUCCEEDED(GraphicsDevice::GetDevice()->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &meshOptions,
+                                                                       sizeof(meshOptions))) &&
+            meshOptions.MeshShaderTier != D3D12_MESH_SHADER_TIER_NOT_SUPPORTED)
+        {
+            Check(MeshShaderPipeline::IsAvailable(), "mesh shader pipelines initialize on supported hardware");
+        }
+        const auto suns = World::GetView<SunComponent>();
+        if (suns.begin() == suns.end())
+        {
+            Check(Sun::CreateDefault() != g_kINVALID_ENTITY, "create simulation Sun");
+        }
+        for (EntityID sun : World::GetView<SunComponent>())
+        {
+            Check(!ComponentManager::HasComponent<MeshComponent>(sun) &&
+                      !ComponentManager::HasComponent<MaterialComponent>(sun),
+                  "virtual Sun has no rendered mesh or material");
+        }
+        Procedural::TerrainSettings terrain;
+        terrain.Resolution = 24;
+        g_Terrain = ProceduralScene::GenerateTerrain(terrain);
+        Check(g_Terrain != g_kINVALID_ENTITY, "generate terrain");
+        Entity mover = World::CreateEntity()
+                           .Add<NameComponent>()
+                           .Add<MeshComponent>()
+                           .Add<TransformComponent>()
+                           .Add<MaterialComponent>()
+                           .Add<ProceduralMotionComponent>();
+        mover.SetName("Procedural Validation Cube");
+        g_Mover = mover.GetID();
+        auto& transform = mover.Get<TransformComponent>();
+        transform.Position = {0.0f, 4.0f, 0.0f};
+        mover.Get<MaterialComponent>().ShaderClassMode = MaterialMode::Manual;
+        mover.Get<MaterialComponent>().ShaderClass = ShaderClass::PBR;
+        mover.Get<ProceduralMotionComponent>().Origin = transform.Position;
+        mover.Get<ProceduralMotionComponent>().Amplitude = {1.0f, 0.75f, 1.0f};
         VertexResource resource;
-        resource.entityid = cube.GetID();
+        resource.entityid = mover.GetID();
         resource.objectType = ObjectType::CUBE;
         resource.color = Color::WHITE;
         PrimitiveGeometry::CreateObjectVertex(resource);
-        auto id = Camera::GetCameraEntity();
-        auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(id);
-        transform.Position = {0, 3, -8};
-        transform.IsDirty = true;
-        auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(id);
-        camera.Target = {0, 0, 0};
-        camera.AllowUserControl = false;
-        camera.LockOnTarget = g_kINVALID_ENTITY;
-    }
-    RenderConfiguration::SetHdr(true);
-    RenderConfiguration::SetResolutionScale(1.0f);
-    DayNightCycle::GetSettings().Running = false;
-    DayNightCycle::GetSettings().TimeDriven = false;
-    DayNightCycle::GetSettings().AutomaticLighting = false;
-    RenderConfiguration::SetRenderMode(RenderMode::DEFERRED);
-    RendererSettings::SetMeshShadersEnabled(false);
-    RendererSettings::SetComputeGBufferEnabled(false);
-    RendererSettings::SetSsaoEnabled(false);
-    RendererSettings::SetSsgiEnabled(false);
-    RendererSettings::SetUpscaleMode(UpscaleMode::Bilateral);
-    auto& rays = Raytracing::GetSettings();
-    rays.Enabled = true;
-    rays.Reflections = true;
-    rays.Denoise = false;
-    rays.Shadows = true;
-    rays.RenderMode = phase >= 7 && phase <= 8 ? Raytracing::Mode::Full : Raytracing::Mode::ReflectionsOnly;
-    RendererSettings::SetShadowMapMethod(phase >= 5 && phase <= 6 ? ShadowMapMethod::VirtualShadowMap
-                                                                  : ShadowMapMethod::ShadowMap);
-    auto& sun = ComponentManager::GetComponentUnchecked<LightComponent>(g_TestSun);
-    sun.IsActive = phase < 9;
-    sun.CastShadow = phase >= 3;
-    sun.AffectsVolumetrics = false;
-}
-
-void AfterSunLightingFrame(uint64_t frame)
-{
-    if (frame < 2 || frame > 20 || frame % 2)
-    {
-        return;
-    }
-    const uint64_t phase = frame <= 10 ? frame : frame - 10;
-    Check(phase == 8 ? Raytracing::UsesRaytracedShadows() : !Raytracing::UsesRaytracedShadows(),
-          "sun regression uses the requested raster or raytraced shadow path");
-    if (phase == 4 || phase == 6)
-    {
-        for (EntityID id : World::GetView<MeshComponent>())
-        {
-            if (ComponentManager::GetComponentUnchecked<MeshComponent>(id).IsEnvironment)
-            {
-                Check(!LightingResources::ShouldDrawEntityInCurrentShadowPass(id),
-                      "environment mesh is excluded from shadow culling and bounds");
-            }
-        }
-    }
-    RenderCapture::TextureData image, materials;
-    bool read = RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), image) &&
-                RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::MATERIAL), materials);
-    const bool compatible = read && image.Format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
-                            materials.Format == DXGI_FORMAT_R16G16B16A16_FLOAT && image.Width == materials.Width &&
-                            image.Height == materials.Height;
-    Check(compatible, "read sun regression HDR and PBR mask");
-    if (!compatible)
-    {
-        return;
-    }
-    double sum = 0;
-    array<double, 3> channels{};
-    uint32_t pixels = 0;
-    for (uint32_t y = 0; y < image.Height; ++y)
-    {
-        auto* color = reinterpret_cast<const uint16_t*>(image.Bytes.data() + y * image.RowPitch);
-        auto* mask = reinterpret_cast<const uint16_t*>(materials.Bytes.data() + y * materials.RowPitch);
-        for (uint32_t x = 0; x < image.Width; ++x)
-        {
-            if (abs(RenderCapture::HalfToFloat(mask[x * 4 + 3]) - 11.f) < 0.1f)
-            {
-                sum += 0.2126 * RenderCapture::HalfToFloat(color[x * 4]) +
-                       0.7152 * RenderCapture::HalfToFloat(color[x * 4 + 1]) +
-                       0.0722 * RenderCapture::HalfToFloat(color[x * 4 + 2]);
-                for (uint32_t c = 0; c < 3; ++c)
-                {
-                    channels[c] += RenderCapture::HalfToFloat(color[x * 4 + c]);
-                }
-                ++pixels;
-            }
-        }
-    }
-    Check(pixels > 100, "sun regression includes visible PBR pixels");
-    g_SunRadiance[phase / 2 - 1] = pixels ? sum / pixels : 0;
-    WriteGraphicsLog("Sun lighting regression frame=%llu radiance=%.6f pixels=%u\n", frame,
-                     g_SunRadiance[phase / 2 - 1], pixels);
-    for (uint32_t c = 0; c < 3; ++c)
-    {
-        g_SunColors[phase / 2 - 1][c] = pixels ? channels[c] / pixels : 0;
-    }
-    if (phase == 10)
-    {
-        double direct = g_SunRadiance[0] - g_SunRadiance[4];
-        Check(direct > 0.05, "virtual sun lights unshadowed PBR surface");
-        Check(g_SunRadiance[1] - g_SunRadiance[4] > direct * 0.5,
-              "reflection-only ShadowMap preserves sun on unoccluded PBR surface");
-        Check(g_SunRadiance[2] - g_SunRadiance[4] > direct * 0.5,
-              "reflection-only Virtual ShadowMap preserves sun on unoccluded PBR surface");
-        Check(g_SunRadiance[3] - g_SunRadiance[4] > direct * 0.5,
-              "full raytracing preserves sun on unoccluded PBR surface");
-        if (frame == 20)
-        {
-            for (uint32_t path = 1; path <= 3; ++path)
-            {
-                double red = g_SunColors[path][0] - g_SunColors[4][0];
-                double green = g_SunColors[path][1] - g_SunColors[4][1];
-                double blue = g_SunColors[path][2] - g_SunColors[4][2];
-                WriteGraphicsLog("Sun morning direct path=%u RGB=%.6f,%.6f,%.6f\n", path, red, green, blue);
-                Check(red > green * 1.4 && green > blue * 1.3,
-                      "morning sun color reaches PBR in raster and raytraced shadow paths");
-            }
-        }
-    }
-}
-
-void ValidateReflectionDenoising(const RenderCapture::TextureData& filtered)
-{
-    if (!NrdDenoiser::IsCompiled())
-    {
-        return;
-    }
-    RenderCapture::TextureData noisy;
-    const bool read = RenderCapture::ReadTexture(RayReflections::GetNoisyResource(), noisy);
-    Check(read && noisy.Width == filtered.Width && noisy.Height == filtered.Height,
-          "read matching raw NRD reflection input");
-    if (!read || noisy.Width != filtered.Width || noisy.Height != filtered.Height)
-    {
-        return;
-    }
-
-    // NRD's input Y channel is 0.25 R + 0.5 G + 0.25 B. Compare the same luminance
-    // in the composed RGB output. Neighbor differences measure high-frequency variation;
-    // skip background and hit/miss boundaries so silhouettes do not dominate this fixture.
-    // Packed inputs compare traced neighbors in both axes; checkerboard spacing is two pixels.
-    double rawVariation = 0, filteredVariation = 0;
-    UINT pairs = 0;
-    const auto layout = RayReflections::GetReflectionSamplingLayout();
-    const UINT storageWidth = RenderMeasurement::TraceStorageWidth(filtered.Width, layout.Checkerboard);
-    const UINT pixelStep = layout.Checkerboard ? 2u : 1u;
-    for (UINT y = 0; y < filtered.Height; ++y)
-    {
-        const auto* raw = reinterpret_cast<const uint16_t*>(noisy.Bytes.data() + y * noisy.RowPitch);
-        const auto* output = reinterpret_cast<const uint16_t*>(filtered.Bytes.data() + y * filtered.RowPitch);
-        for (UINT storageX = 0; storageX < storageWidth; ++storageX)
-        {
-            const UINT x = RenderMeasurement::TracePixelX(storageX, y, layout.Sequence, layout.Checkerboard);
-            if (x >= filtered.Width)
-            {
-                continue;
-            }
-            const UINT current = x * 4;
-            const UINT rawCurrent = storageX * 4;
-            const auto accumulatePair = [&](const uint16_t* otherRaw, const uint16_t* otherOutput, UINT otherRawIndex,
-                                            UINT otherOutputIndex) {
-                const float distance = RenderCapture::HalfToFloat(output[current + 3]);
-                const float otherDistance = RenderCapture::HalfToFloat(otherOutput[otherOutputIndex + 3]);
-                if (abs(distance) < 0.01f || abs(otherDistance) < 0.01f)
-                {
-                    return;
-                }
-                const auto luminance = [](const uint16_t* color) {
-                    return 0.25f * RenderCapture::HalfToFloat(color[0]) + 0.5f * RenderCapture::HalfToFloat(color[1]) +
-                           0.25f * RenderCapture::HalfToFloat(color[2]);
-                };
-                rawVariation += abs(RenderCapture::HalfToFloat(raw[rawCurrent]) -
-                                    RenderCapture::HalfToFloat(otherRaw[otherRawIndex]));
-                filteredVariation += abs(luminance(output + current) - luminance(otherOutput + otherOutputIndex));
-                ++pairs;
-            };
-            if (storageX > 0)
-            {
-                accumulatePair(raw, output, rawCurrent - 4, (x - pixelStep) * 4);
-            }
-            if (y >= pixelStep)
-            {
-                const auto* previousRaw =
-                    reinterpret_cast<const uint16_t*>(noisy.Bytes.data() + (y - pixelStep) * noisy.RowPitch);
-                const auto* previousOutput =
-                    reinterpret_cast<const uint16_t*>(filtered.Bytes.data() + (y - pixelStep) * filtered.RowPitch);
-                accumulatePair(previousRaw, previousOutput, rawCurrent, current);
-            }
-        }
-    }
-    WriteGraphicsLog("Validation NRD reflection: neighbor pairs=%u rawVariation=%.6f filteredVariation=%.6f\n", pairs,
-                     rawVariation / max(pairs, 1u), filteredVariation / max(pairs, 1u));
-    Check(pairs > 100 && rawVariation > 0 && filteredVariation < rawVariation,
-          "NRD reduces reflection high-frequency variation in the test scene");
-}
-
-void ValidateProfilerIntervals()
-{
-    const auto& snapshot = RenderProfiler::GetLatest();
-    Check(snapshot.GpuTimingValid && !snapshot.GpuEvents.empty(), "profiler resolves GPU frame intervals");
-    bool hierarchyValid = snapshot.DroppedGpuEvents == 0;
-    bool selfTimeValid = true;
-    for (const auto& event : snapshot.GpuEvents)
-    {
-        if (event.Interval.ParentId != RenderMeasurement::NoParent)
-        {
-            const auto parent =
-                find_if(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(), [&](const auto& candidate) {
-                    return candidate.Interval.Id == event.Interval.ParentId;
-                });
-            hierarchyValid &= parent != snapshot.GpuEvents.end() && parent->Depth + 1 == event.Depth;
-        }
-        selfTimeValid &= event.InclusiveMs.has_value() && event.ExclusiveMs.has_value();
-        if (event.InclusiveMs && event.ExclusiveMs)
-        {
-            selfTimeValid &= *event.ExclusiveMs >= 0 && *event.ExclusiveMs <= *event.InclusiveMs + 1e-6;
-        }
-    }
-    Check(hierarchyValid, "profiler records valid parent IDs without dropped GPU events");
-    Check(selfTimeValid, "profiler self times exclude children without exceeding inclusive time");
-}
-
-void ValidateProfilerFaults()
-{
-    const auto& snapshot = RenderProfiler::GetLatest();
-    if (snapshot.InjectedFault == RenderProfiler::ValidationFault::None || snapshot.Serial == g_ProfilerFaultSerial)
-    {
-        return;
-    }
-    g_ProfilerFaultSerial = snapshot.Serial;
-    g_ProfilerFaultMask |= 1u << (static_cast<uint32_t>(snapshot.InjectedFault) - 1u);
-    Check(snapshot.GpuTimingValid, "profiler fault preserves independent Frame GPU timing");
-    if (snapshot.InjectedFault == RenderProfiler::ValidationFault::ExhaustQueries)
-    {
-        Check(snapshot.DroppedGpuEvents > 0, "profiler reports timestamp exhaustion");
-        const bool noInventedSelf = all_of(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(), [](const auto& event) {
-            return !event.ExclusiveMs;
-        });
-        Check(noInventedSelf, "timestamp exhaustion makes exclusive measurements unavailable");
-    }
-    else
-    {
-        const auto invalid = count_if(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(), [](const auto& event) {
-            return !event.Interval.Valid;
-        });
-        Check(invalid >= 1, "profiler marks leaked or out-of-order scopes invalid");
-        const auto frame = find_if(snapshot.GpuEvents.begin(), snapshot.GpuEvents.end(), [](const auto& event) {
-            return event.Name == "Frame";
-        });
-        Check(frame != snapshot.GpuEvents.end() && !frame->ExclusiveMs,
-              "invalid direct child prevents an invented Frame self time");
-    }
-}
-
-void ValidateRayTelemetry(bool expectReflectionRays)
-{
-    if (!RayTelemetry::Requested())
-    {
-        return;
-    }
-    const bool idle = GraphicsDevice::WaitForGpuIdle();
-    Check(idle, "ray telemetry readback fence completes");
-    if (!idle)
-    {
-        return;
-    }
-    const auto counts = RayTelemetry::Data().ConsumeCurrent(RenderProfiler::GetFrameSerial());
-    Check(counts.Valid, "ray telemetry readback has the current frame serial");
-    Check(counts.ProviderKnown(RayTelemetry::Radiance) && counts.ProviderKnown(RayTelemetry::ShadowAo),
-          "active radiance and shadow/AO shaders provide measured counters");
-    if (expectReflectionRays && Raytracing::AreReflectionsActive())
-    {
-        Check(counts.Rays[RAY_TELEMETRY_REFLECTION] > 0, "reflection primary rays are counted at TraceRayInline");
-    }
-    if (Raytracing::UsesRaytracedAmbientOcclusion())
-    {
-        Check(counts.Rays[RAY_TELEMETRY_AO] > 0, "AO rays are counted by the actual ray-tracing shader");
-    }
-    if (!Raytracing::UsesRaytracedShadows() && !Raytracing::UsesRaytracedAmbientOcclusion())
-    {
-        Check(counts.Rays[RAY_TELEMETRY_SHADOW] == 0 && counts.Rays[RAY_TELEMETRY_AO] == 0,
-              "guides-only dispatch counts zero shadow/AO rays");
-    }
-    if (!Raytracing::IsAvailable())
-    {
-        Check(counts.Rays[RAY_TELEMETRY_REFLECTION] == 0 && counts.Rays[RAY_TELEMETRY_GI] == 0,
-              "DXR-disabled fallback measures zero primary radiance rays");
-    }
-    Check(!counts.AllSourcesCovered, "partial DXR telemetry does not claim a total");
-    WriteGraphicsLog(
-        "Ray telemetry serial=%llu reflection=%llu gi=%llu visibility=%llu restir=%llu shadow=%llu ao=%llu active=%u measured=%u\n",
-        counts.Serial, counts.Rays[0], counts.Rays[1], counts.Rays[2], counts.Rays[3], counts.Rays[4], counts.Rays[5],
-        counts.ActiveProviders, counts.MeasuredProviders);
-}
-
-void ValidateVertexDeformation()
-{
-    VertexDeformationView view;
-    const bool resolved = VertexDeformation::TryResolveMesh(g_Mover, view);
-    Check(resolved && VertexDeformation::GetDispatchCount() > 0, "GPU procedural vertex dispatch");
-    if (!resolved)
-    {
-        return;
-    }
-    const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(g_Mover);
-    const auto& motion = ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(g_Mover);
-    vector<uint8_t> current, previous;
-    const bool read = RenderCapture::ReadBuffer(view.CurrentResource, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
-                                                view.CurrentView.SizeInBytes, current) &&
-                      RenderCapture::ReadBuffer(view.PreviousResource, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
-                                                view.PreviousView.SizeInBytes, previous);
-    Check(read, "read current and previous GPU vertices");
-    if (!read)
-    {
-        return;
-    }
-    void* mapped = nullptr;
-    const CD3DX12_RANGE noRead(0, 0);
-    if (FAILED(mesh.VertexBuffer->Map(0, &noRead, &mapped)))
-    {
-        Check(false, "map immutable procedural base vertices");
-        return;
-    }
-    Procedural::VertexMotionSettings settings;
-    settings.Method = motion.Method;
-    settings.Amplitude = {motion.Amplitude.x, motion.Amplitude.y, motion.Amplitude.z};
-    settings.Speed = motion.Speed;
-    settings.SpatialFrequency = motion.SpatialFrequency;
-    settings.Seed = motion.Seed;
-    bool positions = true, normals = true, attributes = true, moved = false;
-    const auto close = [](float a, float b, float tolerance) {
-        return isfinite(a) && abs(a - b) < tolerance;
-    };
-    for (UINT index = 0; index < mesh.VertexCount; ++index)
-    {
-        const auto& base = static_cast<const Vertex*>(mapped)[index];
-        const auto& now = reinterpret_cast<const Vertex*>(current.data())[index];
-        const auto& old = reinterpret_cast<const Vertex*>(previous.data())[index];
-        const Procedural::Vector3 basePosition{base.Pos.x, base.Pos.y, base.Pos.z};
-        const auto expected = Procedural::DeformPosition(basePosition, settings, motion.Time);
-        const auto expectedPrevious = Procedural::DeformPosition(basePosition, settings, g_PreviousVertexTime);
-        const auto normal = Procedural::DeformNormal(basePosition, {base.Normal.x, base.Normal.y, base.Normal.z},
-                                                     settings, motion.Time);
-        positions &= close(now.Pos.x, expected.X, 0.002f) && close(now.Pos.y, expected.Y, 0.002f) &&
-                     close(now.Pos.z, expected.Z, 0.002f) && close(old.Pos.x, expectedPrevious.X, 0.002f) &&
-                     close(old.Pos.y, expectedPrevious.Y, 0.002f) && close(old.Pos.z, expectedPrevious.Z, 0.002f);
-        normals &= close(now.Normal.x, normal.X, 0.02f) && close(now.Normal.y, normal.Y, 0.02f) &&
-                   close(now.Normal.z, normal.Z, 0.02f);
-        attributes &= memcmp(&now.Tex, &base.Tex, sizeof(base.Tex)) == 0 &&
-                      memcmp(&now.Color, &base.Color, sizeof(base.Color)) == 0;
-        moved |= abs(now.Pos.y - base.Pos.y) > 0.001f;
-    }
-    const CD3DX12_RANGE noWrite(0, 0);
-    mesh.VertexBuffer->Unmap(0, &noWrite);
-    Check(positions && moved, "GPU positions and motion history agree with CPU reference");
-    Check(normals && attributes, "GPU deformed normals and unchanged UV/color");
-}
-
-void Check(bool passed, const char* name)
-{
-    if (!passed)
-    {
-        ++g_Failures;
-    }
-    const char* result = "FAIL";
-    if (passed)
-    {
-        result = "PASS";
-    }
-    WriteGraphicsLog("Validation: %s %s\n", result, name);
-}
-
-void CreateTestScene()
-{
-    // Check the real startup scene, including registration from separate .cpp files.
-    const char* startupNames[] = {"Cube", "polygon3d", "XBot", "field", "Moca", "Karen", "Kacchatta_Hone", "Alicia"};
-    for (const char* name : startupNames)
-    {
-        unsigned int count = 0;
-        for (EntityID id : World::GetView<NameComponent>())
-        {
-            if (ComponentManager::GetComponent<NameComponent>(id).Name == name)
-            {
-                ++count;
-            }
-        }
-        const string checkName = string("auto-registered startup entity created once: ") + name;
-        Check(count == 1, checkName.c_str());
-    }
-
-    bool startupSky = false;
-    for (EntityID id : World::GetView<MeshComponent>())
-    {
-        startupSky |= ComponentManager::GetComponentUnchecked<MeshComponent>(id).IsEnvironment;
-    }
-    Check(!startupSky, "physical atmosphere startup does not create a legacy Sky object");
-
-    RendererSettings::SetMeshShadersEnabled(true);
-    D3D12_FEATURE_DATA_D3D12_OPTIONS7 meshOptions{};
-    if (SUCCEEDED(GraphicsDevice::GetDevice()->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &meshOptions,
-                                                                   sizeof(meshOptions))) &&
-        meshOptions.MeshShaderTier != D3D12_MESH_SHADER_TIER_NOT_SUPPORTED)
-    {
-        Check(MeshShaderPipeline::IsAvailable(), "mesh shader pipelines initialize on supported hardware");
-    }
-    const auto suns = World::GetView<SunComponent>();
-    if (suns.begin() == suns.end())
-    {
-        Check(Sun::CreateDefault() != g_kINVALID_ENTITY, "create simulation Sun");
-    }
-    for (EntityID sun : World::GetView<SunComponent>())
-    {
-        Check(!ComponentManager::HasComponent<MeshComponent>(sun) &&
-                  !ComponentManager::HasComponent<MaterialComponent>(sun),
-              "virtual Sun has no rendered mesh or material");
-    }
-    Procedural::TerrainSettings terrain;
-    terrain.Resolution = 24;
-    g_Terrain = ProceduralScene::GenerateTerrain(terrain);
-    Check(g_Terrain != g_kINVALID_ENTITY, "generate terrain");
-    Entity mover = World::CreateEntity()
-                       .Add<NameComponent>()
-                       .Add<MeshComponent>()
-                       .Add<TransformComponent>()
-                       .Add<MaterialComponent>()
-                       .Add<ProceduralMotionComponent>();
-    mover.SetName("Procedural Validation Cube");
-    g_Mover = mover.GetID();
-    auto& transform = mover.Get<TransformComponent>();
-    transform.Position = {0.0f, 4.0f, 0.0f};
-    mover.Get<MaterialComponent>().ShaderClassMode = MaterialMode::Manual;
-    mover.Get<MaterialComponent>().ShaderClass = ShaderClass::PBR;
-    mover.Get<ProceduralMotionComponent>().Origin = transform.Position;
-    mover.Get<ProceduralMotionComponent>().Amplitude = {1.0f, 0.75f, 1.0f};
-    VertexResource resource;
-    resource.entityid = mover.GetID();
-    resource.objectType = ObjectType::CUBE;
-    resource.color = Color::WHITE;
-    PrimitiveGeometry::CreateObjectVertex(resource);
-    Check(ProceduralScene::SavePreset("bin/validation/terrain.proc", terrain), "save terrain preset");
-    Procedural::TerrainSettings restored;
-    Check(ProceduralScene::LoadPreset("bin/validation/terrain.proc", restored) &&
-              Procedural::BuildHeightMap(restored) == Procedural::BuildHeightMap(terrain),
-          "load reproducible terrain preset");
-    const auto before = restored;
-    ofstream invalid("bin/validation/invalid.proc");
-    invalid << "PROCEDURAL_TERRAIN 1\n99 0 nan 100 0 0 0\n-1 0 0 0\n";
-    invalid.close();
-    Check(!ProceduralScene::LoadPreset("bin/validation/invalid.proc", restored) &&
-              restored.Noise.Seed == before.Noise.Seed,
-          "reject invalid preset without mutation");
-    ostringstream configuration;
-    SimulationConfiguration::Save(configuration);
-    istringstream records(configuration.str());
-    string line;
-    while (getline(records, line))
-    {
-        const size_t delimiter = line.find('=');
-        Check(SimulationConfiguration::TryLoad(line.substr(0, delimiter), line.substr(delimiter + 1)),
-              "simulation configuration roundtrip");
-    }
-    for (auto mode : {Raytracing::Mode::ReflectionsOnly, Raytracing::Mode::Full})
-    {
-        Raytracing::GetSettings().RenderMode = mode;
-        ostringstream saved;
-        SimulationConfiguration::Save(saved);
-        Raytracing::GetSettings().RenderMode =
-            mode == Raytracing::Mode::Full ? Raytracing::Mode::ReflectionsOnly : Raytracing::Mode::Full;
-        istringstream reload(saved.str());
-        while (getline(reload, line))
+        Check(ProceduralScene::SavePreset("bin/validation/terrain.proc", terrain), "save terrain preset");
+        Procedural::TerrainSettings restored;
+        Check(ProceduralScene::LoadPreset("bin/validation/terrain.proc", restored) &&
+                  Procedural::BuildHeightMap(restored) == Procedural::BuildHeightMap(terrain),
+              "load reproducible terrain preset");
+        const auto before = restored;
+        ofstream invalid("bin/validation/invalid.proc");
+        invalid << "PROCEDURAL_TERRAIN 1\n99 0 nan 100 0 0 0\n-1 0 0 0\n";
+        invalid.close();
+        Check(!ProceduralScene::LoadPreset("bin/validation/invalid.proc", restored) &&
+                  restored.Noise.Seed == before.Noise.Seed,
+              "reject invalid preset without mutation");
+        ostringstream configuration;
+        SimulationConfiguration::Save(configuration);
+        istringstream records(configuration.str());
+        string line;
+        while (getline(records, line))
         {
             const size_t delimiter = line.find('=');
-            SimulationConfiguration::TryLoad(line.substr(0, delimiter), line.substr(delimiter + 1));
+            Check(SimulationConfiguration::TryLoad(line.substr(0, delimiter), line.substr(delimiter + 1)),
+                  "simulation configuration roundtrip");
         }
-        Check(Raytracing::GetSettings().RenderMode == mode, "raytracing mode survives save/load");
-    }
-}
-
-void ValidateRayTexture()
-{
-    RenderCapture::TextureData data;
-    if (!Raytracing::IsActive())
-    {
-        return;
-    }
-    Check(RenderCapture::ReadTexture(Raytracing::GetResultResource(), data), "read raytracing texture");
-    UINT shadowed = 0;
-    UINT occluded = 0;
-    bool finite = true;
-    for (UINT row = 0; row < data.Height; ++row)
-    {
-        const auto* values =
-            reinterpret_cast<const uint16_t*>(data.Bytes.data() + static_cast<size_t>(row) * data.RowPitch);
-        for (UINT column = 0; column < data.Width; ++column)
+        for (auto mode : {Raytracing::Mode::ReflectionsOnly, Raytracing::Mode::Full})
         {
-            const float shadow = RenderCapture::HalfToFloat(values[column * 2]);
-            const float ambient = RenderCapture::HalfToFloat(values[column * 2 + 1]);
-            finite &= isfinite(shadow) && isfinite(ambient) && shadow >= 0.0f && shadow <= 1.0f && ambient >= 0.0f &&
-                      ambient <= 1.0f;
-            shadowed += shadow < 0.99f;
-            occluded += ambient < 0.99f;
+            Raytracing::GetSettings().RenderMode = mode;
+            ostringstream saved;
+            SimulationConfiguration::Save(saved);
+            Raytracing::GetSettings().RenderMode =
+                mode == Raytracing::Mode::Full ? Raytracing::Mode::ReflectionsOnly : Raytracing::Mode::Full;
+            istringstream reload(saved.str());
+            while (getline(reload, line))
+            {
+                const size_t delimiter = line.find('=');
+                SimulationConfiguration::TryLoad(line.substr(0, delimiter), line.substr(delimiter + 1));
+            }
+            Check(Raytracing::GetSettings().RenderMode == mode, "raytracing mode survives save/load");
         }
     }
-    Check(finite, "finite bounded ray visibility");
-    Check(shadowed > 0 && occluded > 0, "rays intersect scene geometry");
-    WriteGraphicsLog("Validation: ray hits shadow=%u ao=%u instances=%u\n", shadowed, occluded,
-                     Raytracing::GetInstanceCount());
-}
 
-void ValidateSkyBrightness(bool night)
-{
-    RenderCapture::TextureData texture;
-    if (!RenderCapture::ReadTexture(RenderTargets::GetEditorSceneResource(), texture))
+    void ValidateRayTexture()
     {
-        Check(false, "read atmospheric sky");
-        return;
-    }
-    double total = 0;
-    UINT samples = 0;
-    for (UINT row = texture.Height / 32; row < texture.Height / 6; row += 4)
-    {
-        for (UINT column = 0; column < texture.Width; column += 4)
+        RenderCapture::TextureData data;
+        if (!Raytracing::IsActive())
         {
-            const BYTE* pixel = texture.Bytes.data() + static_cast<size_t>(row) * texture.RowPitch;
-            float red, green, blue;
-            if (texture.Format == DXGI_FORMAT_R8G8B8A8_UNORM)
-            {
-                pixel += column * 4;
-                red = pixel[0] / 255.0f;
-                green = pixel[1] / 255.0f;
-                blue = pixel[2] / 255.0f;
-            }
-            else
-            {
-                const auto* color = reinterpret_cast<const uint16_t*>(pixel) + column * 4;
-                red = RenderCapture::HalfToFloat(color[0]);
-                green = RenderCapture::HalfToFloat(color[1]);
-                blue = RenderCapture::HalfToFloat(color[2]);
-            }
-            total += red * 0.2126f + green * 0.7152f + blue * 0.0722f;
-            ++samples;
+            return;
         }
+        Check(RenderCapture::ReadTexture(Raytracing::GetResultResource(), data), "read raytracing texture");
+        UINT shadowed = 0;
+        UINT occluded = 0;
+        bool finite = true;
+        for (UINT row = 0; row < data.Height; ++row)
+        {
+            const auto* values =
+                reinterpret_cast<const uint16_t*>(data.Bytes.data() + static_cast<size_t>(row) * data.RowPitch);
+            for (UINT column = 0; column < data.Width; ++column)
+            {
+                const float shadow = RenderCapture::HalfToFloat(values[column * 2]);
+                const float ambient = RenderCapture::HalfToFloat(values[column * 2 + 1]);
+                finite &= isfinite(shadow) && isfinite(ambient) && shadow >= 0.0f && shadow <= 1.0f &&
+                          ambient >= 0.0f && ambient <= 1.0f;
+                shadowed += shadow < 0.99f;
+                occluded += ambient < 0.99f;
+            }
+        }
+        Check(finite, "finite bounded ray visibility");
+        Check(shadowed > 0 && occluded > 0, "rays intersect scene geometry");
+        WriteGraphicsLog("Validation: ray hits shadow=%u ao=%u instances=%u\n", shadowed, occluded,
+                         Raytracing::GetInstanceCount());
     }
-    const float luminance = samples ? static_cast<float>(total / samples) : 0.0f;
-    Check(isfinite(luminance) && luminance > 0, "finite visible atmospheric sky");
-    if (night)
+
+    void ValidateSkyBrightness(bool night)
     {
-        Check(g_NoonSkyLuminance > luminance * 1.5f, "night sky is darker than noon");
+        RenderCapture::TextureData texture;
+        if (!RenderCapture::ReadTexture(RenderTargets::GetEditorSceneResource(), texture))
+        {
+            Check(false, "read atmospheric sky");
+            return;
+        }
+        double total = 0;
+        UINT samples = 0;
+        for (UINT row = texture.Height / 32; row < texture.Height / 6; row += 4)
+        {
+            for (UINT column = 0; column < texture.Width; column += 4)
+            {
+                const BYTE* pixel = texture.Bytes.data() + static_cast<size_t>(row) * texture.RowPitch;
+                float red;
+                float green;
+                float blue;
+                if (texture.Format == DXGI_FORMAT_R8G8B8A8_UNORM)
+                {
+                    pixel += column * 4;
+                    red = pixel[0] / 255.0f;
+                    green = pixel[1] / 255.0f;
+                    blue = pixel[2] / 255.0f;
+                }
+                else
+                {
+                    const auto* color = reinterpret_cast<const uint16_t*>(pixel) + column * 4;
+                    red = RenderCapture::HalfToFloat(color[0]);
+                    green = RenderCapture::HalfToFloat(color[1]);
+                    blue = RenderCapture::HalfToFloat(color[2]);
+                }
+                total += red * 0.2126f + green * 0.7152f + blue * 0.0722f;
+                ++samples;
+            }
+        }
+        const float luminance = samples ? static_cast<float>(total / samples) : 0.0f;
+        Check(isfinite(luminance) && luminance > 0, "finite visible atmospheric sky");
+        if (night)
+        {
+            Check(g_NoonSkyLuminance > luminance * 1.5f, "night sky is darker than noon");
+        }
+        else
+        {
+            g_NoonSkyLuminance = luminance;
+        }
+        WriteGraphicsLog("Validation: %s sky luminance %.4f\n", night ? "night" : "noon", luminance);
     }
-    else
-    {
-        g_NoonSkyLuminance = luminance;
-    }
-    WriteGraphicsLog("Validation: %s sky luminance %.4f\n", night ? "night" : "noon", luminance);
 }
-} // namespace
 
 bool RenderingValidation::IsEnabled()
 {
@@ -826,8 +839,8 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
         }
         if (frame >= 52 && frame <= 60)
         {
-            // Dirty moving-caster keys without changing the paused pose. This
-            // exercises stationary-depth reuse against the same reference image.
+            // 一時停止中の姿勢を変えず、移動する影の投影元のキーだけを更新する。
+            // 同じ参照画像を使って静止深度の再利用を検証する。
             for (auto entity : World::GetView<AnimationModelComponent>())
             {
                 ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).CurrentTime += 0.0001f;
@@ -1012,8 +1025,8 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
     }
     if (frame == 30)
     {
-        // This fixture specifically verifies mesh-shader page offsets. The GPU
-        // Driven indexed route can otherwise consume the terrain before it runs.
+        // このテストでは Mesh Shader のページオフセットを検証する。
+        // GPU Driven のインデックス描画経路が先に地形を処理しないようにする。
         g_GpuDrivenBeforeMeshFixture = GPUDrivenRenderer::IsEnabled();
         GPUDrivenRenderer::SetEnabled(false);
         auto terrain = ComponentManager::GetComponentUnchecked<ProceduralTerrainComponent>(g_Terrain).Settings;
@@ -1171,7 +1184,8 @@ void RenderingValidation::AfterFrame(uint64_t frame)
                 Check(RenderCapture::ReadTextureSlice(LightingResources::GetShadowMapResource(), optimized, layer),
                       "capture optimized shadow layer");
                 const auto& reference = g_PlayShadowReference[layer];
-                uint64_t changed = 0, populated = 0;
+                uint64_t changed = 0;
+                uint64_t populated = 0;
                 float maximumError = 0;
                 if (reference.Bytes.size() != optimized.Bytes.size() || reference.Bytes.empty())
                 {
@@ -1182,7 +1196,8 @@ void RenderingValidation::AfterFrame(uint64_t frame)
                 {
                     for (UINT x = 0; x < reference.Width; ++x)
                     {
-                        float a, b;
+                        float a;
+                        float b;
                         memcpy(&a, reference.Bytes.data() + y * reference.RowPitch + x * sizeof(float), sizeof(float));
                         memcpy(&b, optimized.Bytes.data() + y * optimized.RowPitch + x * sizeof(float), sizeof(float));
                         populated += a < 1.0f;
@@ -1454,7 +1469,7 @@ void RenderingValidation::AfterFrame(uint64_t frame)
             const bool forcedDisabled =
                 GetEnvironmentVariableA("DX12_DISABLE_DLSS", disabled, sizeof(disabled)) > 0 && atoi(disabled) != 0;
             Check(!DlssUpscaler::IsActive(), "unsupported DLSS uses raster upscale fallback");
-            // A capability-positive device must not silently lose DLSS during evaluation.
+            // 対応デバイスでは、評価中に DLSS が理由なく無効になってはならない。
             Check(forcedDisabled || string(DlssUpscaler::GetStatus()).find("failed") == string::npos,
                   "DLSS availability does not hide evaluation failure");
         }

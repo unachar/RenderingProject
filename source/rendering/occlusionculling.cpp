@@ -246,7 +246,7 @@ void OcclusionCulling::BuildCurrent(ID3D12GraphicsCommandList* commands, ID3D12R
     {
         return;
     }
-    // Legacy caller places depth in COPY_SOURCE. The graph restores that state.
+    // 従来の呼び出し側は深度を COPY_SOURCE にする。グラフはその状態に戻す。
     const auto desc = depth->GetDesc();
     const auto srv = Gpu(desc.Width == GraphicsDevice::GetWidth() && desc.Height == GraphicsDevice::GetHeight()
                              ? RendererState::g_kDEPTH_SRV_INDEX

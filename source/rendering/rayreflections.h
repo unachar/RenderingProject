@@ -2,8 +2,8 @@
 #include "raytracingscene.h"
 #include "nrddenoiser.h"
 
-// Shared scene/material bindings for one-bounce reflections and diffuse GI.
-// Each in-flight frame owns its raw signals; NRD histories are separate per signal.
+// 1バウンス反射と拡散 GI で共有するシーン・マテリアルのバインド。
+// 実行中の各フレームは生の信号を所有し、NRD の履歴は信号ごとに分ける。
 class RayReflections
 {
   public:
@@ -32,7 +32,7 @@ class RayReflections
     static bool DidRestartHistory();
     static ID3D12Resource* GetResultResource();
     static ID3D12Resource* GetNoisyResource();
-    // Human readable state of the reflection / realtime GI pipeline (editor diagnostics).
+    // 反射とリアルタイム GI パイプラインの状態を、人が読める形で表す（エディター診断）。
     static const char* GetStatus();
     static const char* GetLastShaderError();
     static UINT GetLumenResidentMeshes();

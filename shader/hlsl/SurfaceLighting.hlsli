@@ -42,15 +42,10 @@ float ContactShadowPixelNoise(float2 pixelPosition)
     return frac(52.9829189f * frac(dot(pixelPosition, float2(0.06711056f, 0.00583715f))));
 }
 
-float2 DirectionalReceiverDepthGradient(
-    float3 receiverWorldDx,
-    float3 receiverWorldDy,
-    float4x4 lightViewProjection)
+float2 DirectionalReceiverDepthGradient(float3 receiverWorldDx, float3 receiverWorldDy, float4x4 lightViewProjection)
 {
-    float3 lightDx = mul(
-        float4(receiverWorldDx, 0.0f), lightViewProjection).xyz;
-    float3 lightDy = mul(
-        float4(receiverWorldDy, 0.0f), lightViewProjection).xyz;
+    float3 lightDx = mul(float4(receiverWorldDx, 0.0f), lightViewProjection).xyz;
+    float3 lightDy = mul(float4(receiverWorldDy, 0.0f), lightViewProjection).xyz;
     float2 uvDx = float2(lightDx.x * 0.5f, -lightDx.y * 0.5f);
     float2 uvDy = float2(lightDy.x * 0.5f, -lightDy.y * 0.5f);
     float determinant = uvDx.x * uvDy.y - uvDx.y * uvDy.x;
@@ -60,17 +55,15 @@ float2 DirectionalReceiverDepthGradient(
     }
 
     float inverseDeterminant = rcp(determinant);
-    float2 gradient = float2(
-        (lightDx.z * uvDy.y - lightDy.z * uvDx.y) * inverseDeterminant,
-        (uvDx.x * lightDy.z - uvDy.x * lightDx.z) * inverseDeterminant);
+    float2 gradient = float2((lightDx.z * uvDy.y - lightDy.z * uvDx.y) * inverseDeterminant,
+                             (uvDx.x * lightDy.z - uvDy.x * lightDx.z) * inverseDeterminant);
 
     return clamp(gradient, float2(-4.0f, -4.0f), float2(4.0f, 4.0f));
 }
 
 float DirectionalShadowComparisonBias(float4 shadowParams, float nDotL)
 {
-    return max(shadowParams.z, 0.0f) +
-        max(shadowParams.w, 0.0f) * (1.0f - saturate(nDotL));
+    return max(shadowParams.z, 0.0f) + max(shadowParams.w, 0.0f) * (1.0f - saturate(nDotL));
 }
 
 Texture2DArray<float4> ShadowTransmissionTexture : register(t35);
@@ -78,62 +71,58 @@ Texture2DArray<float> ShadowTransmissionDepth : register(t36);
 
 float3 SampleShadowTransmission(float2 uv, float lightLayer, float receiverDepth)
 {
-    if (ShadowFilterParams.y < 0.5f || any(uv < 0) || any(uv >= 1)) return 1.0f;
+    if (ShadowFilterParams.y < 0.5f || any(uv < 0) || any(uv >= 1))
+    {
+        return 1.0f;
+    }
     uint width, height, slices;
     ShadowTransmissionDepth.GetDimensions(width, height, slices);
     int2 pixel = int2(uv * float2(width, height));
     float3 transmission = 1.0f;
-    [loop]
-    for (int peel = 0; peel < 4; ++peel)
+    [loop] for (int peel = 0; peel < 4; ++peel)
     {
         int slice = (int)lightLayer * 4 + peel;
         float depth = ShadowTransmissionDepth.Load(int4(pixel, slice, 0));
         if (depth < receiverDepth)
+        {
             transmission *= ShadowTransmissionTexture.Load(int4(pixel, slice, 0)).rgb;
+        }
     }
     return transmission;
 }
 
-float3 SampleConventionalShadowPcf9(
-    float2 shadowUv,
-    float shadowLayer,
-    float texelSize,
-    float currentDepth,
-    float2 receiverDepthGradient,
-    int filterRadius)
+float3 SampleConventionalShadowPcf9(float2 shadowUv, float shadowLayer, float texelSize, float currentDepth,
+                                    float2 receiverDepthGradient, int filterRadius)
 {
-    const float2 kernel[9] =
-    {
-        float2(0.0f, 0.0f),
-        float2(1.0f, 0.0f), float2(-1.0f, 0.0f),
-        float2(0.0f, 1.0f), float2(0.0f, -1.0f),
-        float2(0.7071068f, 0.7071068f), float2(-0.7071068f, 0.7071068f),
-        float2(0.7071068f, -0.7071068f), float2(-0.7071068f, -0.7071068f)
-    };
+    const float2 kernel[9] = {float2(0.0f, 0.0f),
+                              float2(1.0f, 0.0f),
+                              float2(-1.0f, 0.0f),
+                              float2(0.0f, 1.0f),
+                              float2(0.0f, -1.0f),
+                              float2(0.7071068f, 0.7071068f),
+                              float2(-0.7071068f, 0.7071068f),
+                              float2(0.7071068f, -0.7071068f),
+                              float2(-0.7071068f, -0.7071068f)};
     filterRadius = clamp(filterRadius, 0, 3);
     int tapCount = filterRadius <= 0 ? 1 : 9;
     float3 visibility = 0.0f;
-    [loop]
-    for (int tap = 0; tap < 9; ++tap)
+    [loop] for (int tap = 0; tap < 9; ++tap)
     {
-        if (tap >= tapCount) break;
+        if (tap >= tapCount)
+        {
+            break;
+        }
         float2 offset = kernel[tap] * (float)max(filterRadius, 1) * texelSize;
-        visibility += ShadowMapTexture.SampleCmpLevelZero(
-            ShadowSampler,
-            float3(shadowUv + offset, shadowLayer),
-            currentDepth + dot(receiverDepthGradient, offset)) *
+        visibility +=
+            ShadowMapTexture.SampleCmpLevelZero(ShadowSampler, float3(shadowUv + offset, shadowLayer),
+                                                currentDepth + dot(receiverDepthGradient, offset)) *
             SampleShadowTransmission(shadowUv + offset, shadowLayer, currentDepth + dot(receiverDepthGradient, offset));
     }
     return visibility / (float)tapCount;
 }
 
-bool ProjectVirtualShadowLevel(
-    int level,
-    float3 worldPos,
-    out float3 lightNdc,
-    out float2 virtualUv,
-    out float2 physicalUv,
-    out float levelInterior)
+bool ProjectVirtualShadowLevel(int level, float3 worldPos, out float3 lightNdc, out float2 virtualUv,
+                               out float2 physicalUv, out float levelInterior)
 {
     float4 clip = mul(float4(worldPos, 1.0f), VirtualShadowViewProjections[level]);
     if (clip.w <= 0.000001f)
@@ -160,22 +149,13 @@ bool ProjectVirtualShadowLevel(
     return true;
 }
 
-bool SampleVirtualShadowLevel(
-    int level,
-    float3 worldPos,
-    float3 worldPosDx,
-    float3 worldPosDy,
-    float3 normal,
-    float3 lightDir,
-    int filterRadius,
-    out float3 visibility,
-    out float levelInterior)
+bool SampleVirtualShadowLevel(int level, float3 worldPos, float3 worldPosDx, float3 worldPosDy, float3 normal,
+                              float3 lightDir, int filterRadius, out float3 visibility, out float levelInterior)
 {
     float3 lightNdc;
     float2 virtualUv;
     float2 centerPhysicalUv;
-    if (!ProjectVirtualShadowLevel(
-            level, worldPos, lightNdc, virtualUv, centerPhysicalUv, levelInterior))
+    if (!ProjectVirtualShadowLevel(level, worldPos, lightNdc, virtualUv, centerPhysicalUv, levelInterior))
     {
         visibility = 1.0f;
         return false;
@@ -186,23 +166,12 @@ bool SampleVirtualShadowLevel(
     float nDotL = saturate(dot(normal, lightDir));
     float baseBias = DirectionalShadowComparisonBias(params, nDotL);
     float currentDepth = lightNdc.z - baseBias;
-    float2 receiverDepthGradient = DirectionalReceiverDepthGradient(
-        worldPosDx,
-        worldPosDy,
-        VirtualShadowViewProjections[level]);
+    float2 receiverDepthGradient =
+        DirectionalReceiverDepthGradient(worldPosDx, worldPosDy, VirtualShadowViewProjections[level]);
 
-    const float2 poisson[9] =
-    {
-        float2(0.0f, 0.0f),
-        float2(0.286f, 0.088f),
-        float2(-0.218f, 0.273f),
-        float2(-0.153f, -0.394f),
-        float2(0.424f, -0.309f),
-        float2(0.523f, 0.334f),
-        float2(-0.444f, 0.474f),
-        float2(-0.666f, -0.126f),
-        float2(0.137f, -0.712f)
-    };
+    const float2 poisson[9] = {float2(0.0f, 0.0f),       float2(0.286f, 0.088f),   float2(-0.218f, 0.273f),
+                               float2(-0.153f, -0.394f), float2(0.424f, -0.309f),  float2(0.523f, 0.334f),
+                               float2(-0.444f, 0.474f),  float2(-0.666f, -0.126f), float2(0.137f, -0.712f)};
 
     filterRadius = clamp(filterRadius, 0, 3);
     int tapCount = filterRadius <= 0 ? 1 : 9;
@@ -210,19 +179,19 @@ bool SampleVirtualShadowLevel(
     float pageGrid = max(VirtualShadowPageOrigins[level].z, 1.0f);
     float pageTexels = rcp(max(params.y * pageGrid, 0.000001f));
     float2 texelInPage = frac(virtualUv * pageGrid) * pageTexels;
-    float edgeTexels = min(
-        min(texelInPage.x, texelInPage.y),
-        min(pageTexels - texelInPage.x, pageTexels - texelInPage.y));
+    float edgeTexels =
+        min(min(texelInPage.x, texelInPage.y), min(pageTexels - texelInPage.x, pageTexels - texelInPage.y));
     bool kernelInOnePage = edgeTexels > (float)filterRadius + 1.0f;
 
     float3 visibilitySum = 0.0f;
     float sampleCount = 0.0f;
-    [loop]
-    for (int tap = 0; tap < 9; ++tap)
+    [loop] for (int tap = 0; tap < 9; ++tap)
     {
-        if (tap >= tapCount) break;
-        float2 offset = poisson[tap] * (float)max(filterRadius, 1) *
-            ShadowWorldFilterScaleCommon(level);
+        if (tap >= tapCount)
+        {
+            break;
+        }
+        float2 offset = poisson[tap] * (float)max(filterRadius, 1) * ShadowWorldFilterScaleCommon(level);
         float2 tapVirtualUv = virtualUv + offset * params.y;
         float2 physicalUv;
         if (kernelInOnePage)
@@ -233,21 +202,18 @@ bool SampleVirtualShadowLevel(
         {
             bool tapResident;
             int2 tapPage;
-            physicalUv = VirtualShadowMapUvCommon(
-                level,
-                tapVirtualUv,
-                tapResident,
-                tapPage);
-            if (!tapResident) continue;
+            physicalUv = VirtualShadowMapUvCommon(level, tapVirtualUv, tapResident, tapPage);
+            if (!tapResident)
+            {
+                continue;
+            }
         }
 
-        visibilitySum += ShadowMapTexture.SampleCmpLevelZero(
-            ShadowSampler,
-            float3(physicalUv, max(params.x, 0.0f)),
-            currentDepth + dot(
-                receiverDepthGradient,
-                tapVirtualUv - virtualUv)) * SampleShadowTransmission(physicalUv, max(params.x, 0.0f),
-                    currentDepth + dot(receiverDepthGradient, tapVirtualUv - virtualUv));
+        visibilitySum +=
+            ShadowMapTexture.SampleCmpLevelZero(ShadowSampler, float3(physicalUv, max(params.x, 0.0f)),
+                                                currentDepth + dot(receiverDepthGradient, tapVirtualUv - virtualUv)) *
+            SampleShadowTransmission(physicalUv, max(params.x, 0.0f),
+                                     currentDepth + dot(receiverDepthGradient, tapVirtualUv - virtualUv));
         sampleCount += 1.0f;
     }
 
@@ -260,30 +226,23 @@ bool SampleVirtualShadowLevel(
     return true;
 }
 
-float3 SampleSurfaceShadowMap(
-    int lightIndex,
-    float3 worldPos,
-    float3 worldPosDx,
-    float3 worldPosDy,
-    float3 normal,
-    float3 lightDir,
-    int filterRadius)
+float3 SampleSurfaceShadowMap(int lightIndex, float3 worldPos, float3 worldPosDx, float3 worldPosDy, float3 normal,
+                              float3 lightDir, int filterRadius)
 {
 #ifdef SHADER_RAYTRACING
     if (SceneRayFlags.x > 0.5f)
+    {
         return SceneShadowForLightCommon(lightIndex, worldPos, normal, lightDir);
+    }
 #endif
     float shadowLayer = LightShadowData[lightIndex].x;
-    [branch]
-    if (shadowLayer < -0.5f)
+    [branch] if (shadowLayer < -0.5f)
     {
         return 1.0f;
     }
 
     const bool directionalMultiLevel = LightShadowData[lightIndex].w < 0.0f;
-    const bool virtualShadow =
-        VirtualShadowGlobal.x > 0.5f && VirtualShadowGlobal.x < 1.5f &&
-        directionalMultiLevel;
+    const bool virtualShadow = VirtualShadowGlobal.x > 0.5f && VirtualShadowGlobal.x < 1.5f && directionalMultiLevel;
     if (virtualShadow)
     {
         int levelCount = clamp((int)round(VirtualShadowGlobal.y), 1, 4);
@@ -291,22 +250,16 @@ float3 SampleSurfaceShadowMap(
         float fineInterior = 1.0f;
         bool hasFine = false;
 
-        [loop]
-        for (int level = 0; level < 4; ++level)
+        [loop] for (int level = 0; level < 4; ++level)
         {
-            if (level >= levelCount) break;
+            if (level >= levelCount)
+            {
+                break;
+            }
             float3 levelVisibility;
             float levelInterior;
-            if (!SampleVirtualShadowLevel(
-                    level,
-                    worldPos,
-                    worldPosDx,
-                    worldPosDy,
-                    normal,
-                    lightDir,
-                    filterRadius,
-                    levelVisibility,
-                    levelInterior))
+            if (!SampleVirtualShadowLevel(level, worldPos, worldPosDx, worldPosDy, normal, lightDir, filterRadius,
+                                          levelVisibility, levelInterior))
             {
                 continue;
             }
@@ -335,38 +288,34 @@ float3 SampleSurfaceShadowMap(
         float fineInterior = 1.0f;
         bool hasFine = false;
 
-        [loop]
-        for (int level = 0; level < 4; ++level)
+        [loop] for (int level = 0; level < 4; ++level)
         {
-            if (level >= levelCount) break;
+            if (level >= levelCount)
+            {
+                break;
+            }
             float4 lightClip = mul(float4(worldPos, 1.0f), VirtualShadowViewProjections[level]);
-            if (lightClip.w <= 0.000001f) continue;
+            if (lightClip.w <= 0.000001f)
+            {
+                continue;
+            }
 
             float3 lightNdc = lightClip.xyz / lightClip.w;
             float2 shadowUv = float2(lightNdc.x * 0.5f + 0.5f, -lightNdc.y * 0.5f + 0.5f);
-            if (any(shadowUv < 0.0f) || any(shadowUv > 1.0f) ||
-                lightNdc.z < 0.0f || lightNdc.z > 1.0f)
+            if (any(shadowUv < 0.0f) || any(shadowUv > 1.0f) || lightNdc.z < 0.0f || lightNdc.z > 1.0f)
             {
                 continue;
             }
 
             float4 params = VirtualShadowParams[level];
-            float baseBias = DirectionalShadowComparisonBias(
-                params, dot(normal, lightDir));
+            float baseBias = DirectionalShadowComparisonBias(params, dot(normal, lightDir));
             float currentDepth = lightNdc.z - baseBias;
-            float2 receiverDepthGradient = DirectionalReceiverDepthGradient(
-                worldPosDx,
-                worldPosDy,
-                VirtualShadowViewProjections[level]);
-            float3 levelVisibility = SampleConventionalShadowPcf9(
-                shadowUv,
-                params.x,
-                params.y * ShadowWorldFilterScaleCommon(level),
-                currentDepth,
-                receiverDepthGradient,
-                filterRadius);
-            float levelInterior = CascadedShadowLevelInteriorCommon(
-                level, shadowUv, worldPos);
+            float2 receiverDepthGradient =
+                DirectionalReceiverDepthGradient(worldPosDx, worldPosDy, VirtualShadowViewProjections[level]);
+            float3 levelVisibility =
+                SampleConventionalShadowPcf9(shadowUv, params.x, params.y * ShadowWorldFilterScaleCommon(level),
+                                             currentDepth, receiverDepthGradient, filterRadius);
+            float levelInterior = CascadedShadowLevelInteriorCommon(level, shadowUv, worldPos);
 
             if (!hasFine)
             {
@@ -388,24 +337,18 @@ float3 SampleSurfaceShadowMap(
     float4 lightClip = mul(float4(worldPos, 1.0f), LightViewProjections[lightIndex]);
     float3 lightNdc = lightClip.xyz / max(lightClip.w, 0.000001f);
     float2 shadowUv = float2(lightNdc.x * 0.5f + 0.5f, -lightNdc.y * 0.5f + 0.5f);
-    bool inBounds =
-        lightClip.w > 0.0f &&
-        all(shadowUv >= 0.0f) && all(shadowUv <= 1.0f) &&
-        lightNdc.z >= 0.0f && lightNdc.z <= 1.0f;
-    if (!inBounds) return 1.0f;
+    bool inBounds = lightClip.w > 0.0f && all(shadowUv >= 0.0f) && all(shadowUv <= 1.0f) && lightNdc.z >= 0.0f &&
+                    lightNdc.z <= 1.0f;
+    if (!inBounds)
+    {
+        return 1.0f;
+    }
 
     float texelSize = LightShadowData[lightIndex].y;
-    float currentDepth = lightNdc.z -
-        max(LightShadowData[lightIndex].z, 0.0f) -
-        abs(LightShadowData[lightIndex].w) *
-            (1.0f - saturate(dot(normal, lightDir)));
-    return SampleConventionalShadowPcf9(
-        shadowUv,
-        shadowLayer,
-        texelSize,
-        currentDepth,
-        float2(0.0f, 0.0f),
-        filterRadius);
+    float currentDepth = lightNdc.z - max(LightShadowData[lightIndex].z, 0.0f) -
+                         abs(LightShadowData[lightIndex].w) * (1.0f - saturate(dot(normal, lightDir)));
+    return SampleConventionalShadowPcf9(shadowUv, shadowLayer, texelSize, currentDepth, float2(0.0f, 0.0f),
+                                        filterRadius);
 }
 
 float LoadContactDepth(float2 uv)
@@ -413,10 +356,7 @@ float LoadContactDepth(float2 uv)
     uint width;
     uint height;
     DepthTexture.GetDimensions(width, height);
-    int2 pixel = clamp(
-        int2(uv * float2(width, height)),
-        int2(0, 0),
-        int2((int)width - 1, (int)height - 1));
+    int2 pixel = clamp(int2(uv * float2(width, height)), int2(0, 0), int2((int)width - 1, (int)height - 1));
     return DepthTexture.Load(int3(pixel, 0));
 }
 
@@ -429,17 +369,20 @@ float3 ReconstructContactWorldPosition(float2 uv, float depth)
 
 float SampleContactShadow(float3 worldPos, float3 normal, float3 lightDir)
 {
-    if (ShadowRuntimeGlobal.x < 0.5f) return 1.0f;
+    if (ShadowRuntimeGlobal.x < 0.5f)
+    {
+        return 1.0f;
+    }
 
     float cameraDistance = length(worldPos - PPCameraPos.xyz);
-    if (cameraDistance >= 30.0f) return 1.0f;
+    if (cameraDistance >= 30.0f)
+    {
+        return 1.0f;
+    }
 
     const int configuredSteps = clamp((int)round(ShadowRuntimeGlobal.z), 4, 24);
     const float distanceQuality = 1.0f - smoothstep(8.0f, 24.0f, cameraDistance);
-    const int stepCount = clamp(
-        (int)round(lerp(4.0f, (float)configuredSteps, distanceQuality)),
-        4,
-        configuredSteps);
+    const int stepCount = clamp((int)round(lerp(4.0f, (float)configuredSteps, distanceQuality)), 4, configuredSteps);
     const float rayLength = max(ShadowRuntimeGlobal.y, 0.02f);
     const float stepLength = rayLength / (float)stepCount;
     const float3 origin = worldPos + normal * max(0.018f, stepLength * 0.55f);
@@ -448,27 +391,27 @@ float SampleContactShadow(float3 worldPos, float3 normal, float3 lightDir)
     uint depthHeight;
     DepthTexture.GetDimensions(depthWidth, depthHeight);
     float3 receiverProjection = WorldToScreenUV(worldPos);
-    float2 receiverPixel = floor(saturate(receiverProjection.xy) *
-        float2((float)depthWidth, (float)depthHeight));
+    float2 receiverPixel = floor(saturate(receiverProjection.xy) * float2((float)depthWidth, (float)depthHeight));
     const float jitter = ContactShadowPixelNoise(receiverPixel);
 
     float occlusion = 0.0f;
-    [loop]
-    for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
+    [loop] for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
     {
 
         float t = ((float)stepIndex + 0.15f + jitter * 0.70f) / (float)stepCount;
         float3 rayPosition = origin + lightDir * rayLength * t;
         float3 projected = WorldToScreenUV(rayPosition);
-        if (projected.x <= 0.001f || projected.x >= 0.999f ||
-            projected.y <= 0.001f || projected.y >= 0.999f ||
+        if (projected.x <= 0.001f || projected.x >= 0.999f || projected.y <= 0.001f || projected.y >= 0.999f ||
             projected.z <= 0.0f || projected.z >= 1.0f)
         {
             break;
         }
 
         float sceneDepth = LoadContactDepth(projected.xy);
-        if (sceneDepth >= 0.9999f) continue;
+        if (sceneDepth >= 0.9999f)
+        {
+            continue;
+        }
         float3 sceneWorld = ReconstructContactWorldPosition(projected.xy, sceneDepth);
         float3 cameraToRay = rayPosition - PPCameraPos.xyz;
         float rayDistance = length(cameraToRay);
@@ -476,9 +419,8 @@ float SampleContactShadow(float3 worldPos, float3 normal, float3 lightDir)
         float sceneDistance = dot(sceneWorld - PPCameraPos.xyz, viewDirection);
         float depthDelta = rayDistance - sceneDistance;
         float thickness = 0.012f + stepLength * 0.75f + rayDistance * 0.0015f;
-        float hit =
-            smoothstep(0.0015f, thickness * 0.30f, depthDelta) *
-            (1.0f - smoothstep(thickness * 0.76f, thickness, depthDelta));
+        float hit = smoothstep(0.0015f, thickness * 0.30f, depthDelta) *
+                    (1.0f - smoothstep(thickness * 0.76f, thickness, depthDelta));
         float weightedHit = hit * (1.0f - t * 0.65f);
 
         occlusion = 1.0f - (1.0f - occlusion) * (1.0f - weightedHit);
@@ -497,18 +439,19 @@ float DistanceToBoxSdf(float3 samplePoint, float3 center, float3 extents)
 float SampleDistanceFieldShadow(float3 worldPos, float3 normal, float3 lightDir)
 {
     const int objectCount = min((int)round(DistanceFieldGlobal.x), 16);
-    if (objectCount <= 0) return 1.0f;
+    if (objectCount <= 0)
+    {
+        return 1.0f;
+    }
     const int stepCount = clamp((int)round(DistanceFieldGlobal.z), 4, 24);
     const float maxDistance = max(DistanceFieldGlobal.y, 0.1f);
     float travel = 0.12f;
     const float3 origin = worldPos + normal * 0.04f;
-    [loop]
-    for (int stepIndex = 0; stepIndex < stepCount && travel < maxDistance; ++stepIndex)
+    [loop] for (int stepIndex = 0; stepIndex < stepCount && travel < maxDistance; ++stepIndex)
     {
         const float3 samplePosition = origin + lightDir * travel;
         float closestDistance = maxDistance;
-        [loop]
-        for (int objectIndex = 0; objectIndex < objectCount; ++objectIndex)
+        [loop] for (int objectIndex = 0; objectIndex < objectCount; ++objectIndex)
         {
             const float3 center = DistanceFieldData0[objectIndex].xyz;
             const float3 extents = DistanceFieldData1[objectIndex].xyz;
@@ -518,24 +461,27 @@ float SampleDistanceFieldShadow(float3 worldPos, float3 normal, float3 lightDir)
                 closestDistance = min(closestDistance, DistanceToBoxSdf(samplePosition, center, extents));
             }
         }
-        if (closestDistance < 0.025f) return 0.45f;
+        if (closestDistance < 0.025f)
+        {
+            return 0.45f;
+        }
         travel += max(closestDistance, 0.05f);
     }
     return 1.0f;
 }
 
-// Radiance already includes this light's intensity, attenuation and visibility.
+// 放射輝度には、このライトの強度、減衰、可視性がすでに含まれる。
 // =============================================================================================
-// Render quality extensions
-//   ・DFG LUT / multiple scattering GGX energy compensation (Fdez-Aguera 2019, Kulla-Conty)
-//   ・Extended material models: clear coat, sheen (cloth), skin, hair, anisotropic GGX
-//   ・Rect area lights with LTC (Heitz et al. 2016)
+// 描画品質の拡張
+//   ・DFG参照テーブルとGGXの多重散乱によるエネルギー補償（Fdez-Aguera 2019、Kulla-Conty）
+//   ・拡張マテリアルモデル：クリアコート、布の光沢、肌、髪、異方性GGX
+//   ・LTCによる長方形の面光源（Heitzほか、2016）
 // =============================================================================================
 #ifdef SURFACE_PBR_LUTS
 Texture2D<float4> LtcMatrixLut : register(t42);
 Texture2D<float2> LtcAmplitudeLut : register(t43);
 #ifdef SKY_LUT
-#define PbrLutSampler SkyLutSampler // same clamp sampler (s4)
+#define PbrLutSampler SkyLutSampler // 同じクランプサンプラー（s4）
 #else
 SamplerState PbrLutSampler : register(s4);
 #endif
@@ -553,8 +499,9 @@ struct ShadingModelData
     uint Model;
     float Strength;
 };
-// Set by the deferred lighting pass per pixel (decoded from the shadow GBuffer alpha).
-static ShadingModelData g_ShadingModel = { 0u, 0.0f };
+
+// ディファードライティングパスがピクセルごとに設定する（影の GBuffer の alpha から復号）。
+static ShadingModelData g_ShadingModel = {0u, 0.0f};
 
 ShadingModelData DecodeShadingModel(float encoded)
 {
@@ -575,14 +522,14 @@ float2 PbrLutUv(float NdotV, float roughness)
     return (float2(sqrt(saturate(1.0f - NdotV)), saturate(roughness)) * 63.0f + 0.5f) / 64.0f;
 }
 
-// Split sum DFG: returns (A, B) with  Fss*Ess = F0 * A + B  and  Ess = A + B.
+// 分割和 DFG：(A, B) を返し、Fss*Ess = F0 * A + B、Ess = A + B を満たす。
 float2 SampleDfg(float NdotV, float roughness)
 {
 #ifdef SURFACE_PBR_LUTS
     float2 amplitude = LtcAmplitudeLut.SampleLevel(PbrLutSampler, PbrLutUv(NdotV, roughness), 0);
     return float2(amplitude.x - amplitude.y, amplitude.y);
 #else
-    // Karis 2014 analytic fit (forward / no LUT).
+    // Karis 2014 の解析的な近似（フォワード描画または LUT なしの場合）。
     const float4 c0 = float4(-1.0f, -0.0275f, -0.572f, 0.022f);
     const float4 c1 = float4(1.0f, 0.0425f, 1.04f, -0.04f);
     float4 r = roughness * c0 + c1;
@@ -591,10 +538,13 @@ float2 SampleDfg(float NdotV, float roughness)
 #endif
 }
 
-// Multiplier restoring the energy lost by single scattering microfacet models.
+// 単一散乱のマイクロファセットモデルで失われるエネルギーを回復する倍率。
 float3 SpecularEnergyCompensation(float3 F0, float NdotV, float roughness)
 {
-    if (!QualityEnergyCompensation()) return 1.0f;
+    if (!QualityEnergyCompensation())
+    {
+        return 1.0f;
+    }
     float2 dfg = SampleDfg(NdotV, roughness);
     float Ess = max(dfg.x + dfg.y, 0.05f);
     return 1.0f + F0 * (1.0f / Ess - 1.0f);
@@ -602,7 +552,7 @@ float3 SpecularEnergyCompensation(float3 F0, float NdotV, float roughness)
 
 float3 SurfaceTangent(float3 N)
 {
-    // Strands / brushed direction follow the world up axis projected on the surface.
+    // 毛束やブラシの方向は、ワールドの上軸を面へ投影した方向に沿う。
     float3 up = abs(N.y) < 0.99f ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
     return SafeNormalizeCommon(up - N * dot(N, up), float3(1.0f, 0.0f, 0.0f));
 }
@@ -622,9 +572,8 @@ float KajiyaKaySpecular(float3 T, float3 H, float exponent)
     return smoothstep(-1.0f, 0.0f, TdotH) * pow(sinTH, exponent);
 }
 
-float3 EvaluatePbrDirectLight(
-    float3 N, float3 V, float3 L, float3 radiance,
-    float3 albedo, float3 materialData, float shadowSoftness)
+float3 EvaluatePbrDirectLight(float3 N, float3 V, float3 L, float3 radiance, float3 albedo, float3 materialData,
+                              float shadowSoftness)
 {
     const float PI = 3.14159265359f;
     float3 H = SafeNormalizeCommon(L + V, N);
@@ -664,7 +613,7 @@ float3 EvaluatePbrDirectLight(
     const float strength = g_ShadingModel.Strength;
     if (model == kShadingAnisotropic && strength > 0.0f)
     {
-        // Anisotropic GGX (Burley 2012) along the surface tangent.
+        // 面の接線方向の異方性 GGX（Burley 2012）。
         float3 T = SurfaceTangent(N);
         float3 B = cross(N, T);
         float aspect = sqrt(1.0f - 0.9f * strength);
@@ -677,10 +626,11 @@ float3 EvaluatePbrDirectLight(
     }
     if (model == kShadingSkin && strength > 0.0f)
     {
-        // Two lobe skin specular (Jimenez / d'Eon): sharp oil layer + broad epidermis.
+        // 2 ローブの皮膚の鏡面反射（Jimenez / d'Eon）：鋭い油膜層と広い表皮。
         float roughA = max(roughness * 0.75f, 0.04f);
         float roughB = min(roughness * 1.35f, 1.0f);
-        float aA = roughA * roughA, aB = roughB * roughB;
+        float aA = roughA * roughA;
+        float aB = roughB * roughB;
         float dA = NdotH * NdotH * (aA * aA - 1.0f) + 1.0f;
         float dB = NdotH * NdotH * (aB * aB - 1.0f) + 1.0f;
         float twoLobe = 0.85f * aA * aA / max(PI * dA * dA, 0.00001f) + 0.15f * aB * aB / max(PI * dB * dB, 0.00001f);
@@ -697,12 +647,8 @@ float3 EvaluatePbrDirectLight(
 
     float3 diffuseBRDF = kD * albedo / PI;
 
-    float terminatorWidth = lerp(
-        0.08f,
-        0.45f,
-        saturate(shadowSoftness * 2.0f));
-    float wrappedNdotL = saturate(
-        (rawNdotL + terminatorWidth) / (1.0f + terminatorWidth));
+    float terminatorWidth = lerp(0.08f, 0.45f, saturate(shadowSoftness * 2.0f));
+    float wrappedNdotL = saturate((rawNdotL + terminatorWidth) / (1.0f + terminatorWidth));
 
     wrappedNdotL = wrappedNdotL * wrappedNdotL * (3.0f - 2.0f * wrappedNdotL);
 
@@ -712,31 +658,31 @@ float3 EvaluatePbrDirectLight(
 
     if (model == kShadingSkin && strength > 0.0f)
     {
-        // Pre-integrated style scattering: per channel wrap (red scatters farthest) keeps the
-        // terminator soft and reddish; normalised so total energy is preserved.
+        // 事前積分形式の散乱：チャンネル別のラップ（赤が最も遠くまで散乱）で
+        // 明暗境界を柔らかい赤みへ変え、正規化して総エネルギーを保つ。
         float3 wrap = float3(0.55f, 0.22f, 0.16f) * strength;
         float3 scattered = saturate((rawNdotL + wrap) / (1.0f + wrap)) / (1.0f + wrap);
         diffuseTerm = diffuseBRDF * lerp(wrappedNdotL.xxx, scattered, strength);
-        // Thin regions (ears, fingers): light transmitted from behind.
+        // 耳や指などの薄い部分：裏から透過する光。
         float3 transmitDirection = SafeNormalizeCommon(L + N * 0.35f, L);
         float transmission = pow(saturate(dot(V, -transmitDirection)), 4.0f) * saturate(-rawNdotL + 0.3f);
         extra += albedo * float3(1.0f, 0.35f, 0.22f) * transmission * strength * 0.35f;
     }
     else if (model == kShadingHair && strength > 0.0f)
     {
-        // Kajiya-Kay with two shifted lobes (Scheuermann 2004): white primary, tinted secondary.
+        // ずらした 2 ローブの Kajiya-Kay（Scheuermann 2004）：白い一次成分と色付きの二次成分。
         float3 T = SurfaceTangent(N);
         float exponent = clamp(2.0f / max(a * a, 0.0004f), 4.0f, 512.0f);
         float primary = KajiyaKaySpecular(SafeNormalizeCommon(T + N * -0.08f, T), H, exponent);
         float secondary = KajiyaKaySpecular(SafeNormalizeCommon(T + N * 0.12f, T), H, exponent * 0.25f);
         float3 hairSpecular = (F * primary + albedo * secondary * 0.6f) * NdotLScalar * 0.25f;
         specularTerm = lerp(specularTerm, hairSpecular, strength);
-        // Strands scatter light around the terminator.
+        // 毛束は明暗境界の周囲へ光を散乱する。
         diffuseTerm = lerp(diffuseTerm, albedo / PI * saturate(rawNdotL * 0.75f + 0.25f) * (1.0f - metallic), strength);
     }
     else if (model == kShadingSheen && strength > 0.0f)
     {
-        // Cloth sheen: Charlie distribution with the Neubelt visibility term.
+        // 布のシーン反射：Charlie 分布と Neubelt の可視性項。
         float sheenVisibility = 1.0f / max(4.0f * (NdotLScalar + NdotV - NdotLScalar * NdotV), 0.00001f);
         float3 sheenColor = lerp(float3(1.0f, 1.0f, 1.0f), albedo, 0.5f) * strength;
         extra += sheenColor * DistributionCharlie(NdotH, roughness) * sheenVisibility * NdotLScalar;
@@ -744,7 +690,7 @@ float3 EvaluatePbrDirectLight(
     }
     else if (model == kShadingClearCoat && strength > 0.0f)
     {
-        // Clear coat: polyurethane layer, IOR 1.5, fixed low roughness, Kelemen visibility.
+        // クリアコート：ポリウレタン層、IOR 1.5、固定の低い粗さ、Kelemen の可視性。
         const float coatAlpha = 0.06f * 0.06f;
         float dc = NdotH * NdotH * (coatAlpha * coatAlpha - 1.0f) + 1.0f;
         float coatD = coatAlpha * coatAlpha / max(PI * dc * dc, 0.00001f);
@@ -759,7 +705,7 @@ float3 EvaluatePbrDirectLight(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Rect area light, LTC (Heitz 2016). Horizon clipping + Hill's edge integral.
+// 矩形面光源の LTC（Heitz 2016）。地平線クリッピングと Hill の辺積分。
 // ---------------------------------------------------------------------------------------------
 void RectLightBasis(float3 emitNormal, out float3 right, out float3 up)
 {
@@ -782,29 +728,114 @@ float3 LtcIntegrateEdgeVector(float3 v1, float3 v2)
 void LtcClipQuadToHorizon(inout float3 L[5], out int n)
 {
     int config = 0;
-    if (L[0].z > 0.0f) config += 1;
-    if (L[1].z > 0.0f) config += 2;
-    if (L[2].z > 0.0f) config += 4;
-    if (L[3].z > 0.0f) config += 8;
+    if (L[0].z > 0.0f)
+    {
+        config += 1;
+    }
+    if (L[1].z > 0.0f)
+    {
+        config += 2;
+    }
+    if (L[2].z > 0.0f)
+    {
+        config += 4;
+    }
+    if (L[3].z > 0.0f)
+    {
+        config += 8;
+    }
     n = 0;
-    if (config == 1) { n = 3; L[1] = -L[1].z * L[0] + L[0].z * L[1]; L[2] = -L[3].z * L[0] + L[0].z * L[3]; }
-    else if (config == 2) { n = 3; L[0] = -L[0].z * L[1] + L[1].z * L[0]; L[2] = -L[2].z * L[1] + L[1].z * L[2]; }
-    else if (config == 3) { n = 4; L[2] = -L[2].z * L[1] + L[1].z * L[2]; L[3] = -L[3].z * L[0] + L[0].z * L[3]; }
-    else if (config == 4) { n = 3; L[0] = -L[3].z * L[2] + L[2].z * L[3]; L[1] = -L[1].z * L[2] + L[2].z * L[1]; }
-    else if (config == 6) { n = 4; L[0] = -L[0].z * L[1] + L[1].z * L[0]; L[3] = -L[3].z * L[2] + L[2].z * L[3]; }
-    else if (config == 7) { n = 5; L[4] = -L[3].z * L[0] + L[0].z * L[3]; L[3] = -L[3].z * L[2] + L[2].z * L[3]; }
-    else if (config == 8) { n = 3; L[0] = -L[0].z * L[3] + L[3].z * L[0]; L[1] = -L[2].z * L[3] + L[3].z * L[2]; L[2] = L[3]; }
-    else if (config == 9) { n = 4; L[1] = -L[1].z * L[0] + L[0].z * L[1]; L[2] = -L[2].z * L[3] + L[3].z * L[2]; }
-    else if (config == 11) { n = 5; L[4] = L[3]; L[3] = -L[2].z * L[3] + L[3].z * L[2]; L[2] = -L[2].z * L[1] + L[1].z * L[2]; }
-    else if (config == 12) { n = 4; L[1] = -L[1].z * L[2] + L[2].z * L[1]; L[0] = -L[0].z * L[3] + L[3].z * L[0]; }
-    else if (config == 13) { n = 5; L[4] = L[3]; L[3] = L[2]; L[2] = -L[1].z * L[2] + L[2].z * L[1]; L[1] = -L[1].z * L[0] + L[0].z * L[1]; }
-    else if (config == 14) { n = 5; L[4] = -L[0].z * L[3] + L[3].z * L[0]; L[0] = -L[0].z * L[1] + L[1].z * L[0]; }
-    else if (config == 15) { n = 4; }
-    if (n == 3) L[3] = L[0];
-    if (n == 4) L[4] = L[0];
+    if (config == 1)
+    {
+        n = 3;
+        L[1] = -L[1].z * L[0] + L[0].z * L[1];
+        L[2] = -L[3].z * L[0] + L[0].z * L[3];
+    }
+    else if (config == 2)
+    {
+        n = 3;
+        L[0] = -L[0].z * L[1] + L[1].z * L[0];
+        L[2] = -L[2].z * L[1] + L[1].z * L[2];
+    }
+    else if (config == 3)
+    {
+        n = 4;
+        L[2] = -L[2].z * L[1] + L[1].z * L[2];
+        L[3] = -L[3].z * L[0] + L[0].z * L[3];
+    }
+    else if (config == 4)
+    {
+        n = 3;
+        L[0] = -L[3].z * L[2] + L[2].z * L[3];
+        L[1] = -L[1].z * L[2] + L[2].z * L[1];
+    }
+    else if (config == 6)
+    {
+        n = 4;
+        L[0] = -L[0].z * L[1] + L[1].z * L[0];
+        L[3] = -L[3].z * L[2] + L[2].z * L[3];
+    }
+    else if (config == 7)
+    {
+        n = 5;
+        L[4] = -L[3].z * L[0] + L[0].z * L[3];
+        L[3] = -L[3].z * L[2] + L[2].z * L[3];
+    }
+    else if (config == 8)
+    {
+        n = 3;
+        L[0] = -L[0].z * L[3] + L[3].z * L[0];
+        L[1] = -L[2].z * L[3] + L[3].z * L[2];
+        L[2] = L[3];
+    }
+    else if (config == 9)
+    {
+        n = 4;
+        L[1] = -L[1].z * L[0] + L[0].z * L[1];
+        L[2] = -L[2].z * L[3] + L[3].z * L[2];
+    }
+    else if (config == 11)
+    {
+        n = 5;
+        L[4] = L[3];
+        L[3] = -L[2].z * L[3] + L[3].z * L[2];
+        L[2] = -L[2].z * L[1] + L[1].z * L[2];
+    }
+    else if (config == 12)
+    {
+        n = 4;
+        L[1] = -L[1].z * L[2] + L[2].z * L[1];
+        L[0] = -L[0].z * L[3] + L[3].z * L[0];
+    }
+    else if (config == 13)
+    {
+        n = 5;
+        L[4] = L[3];
+        L[3] = L[2];
+        L[2] = -L[1].z * L[2] + L[2].z * L[1];
+        L[1] = -L[1].z * L[0] + L[0].z * L[1];
+    }
+    else if (config == 14)
+    {
+        n = 5;
+        L[4] = -L[0].z * L[3] + L[3].z * L[0];
+        L[0] = -L[0].z * L[1] + L[1].z * L[0];
+    }
+    else if (config == 15)
+    {
+        n = 4;
+    }
+    if (n == 3)
+    {
+        L[3] = L[0];
+    }
+    if (n == 4)
+    {
+        L[4] = L[0];
+    }
 }
 
-// Cosine weighted integral (form factor) of the quad transformed by minv.
+// minv で変換した四角形のコサイン重み付き積分（形態係数）。
 float LtcEvaluateQuad(float3 N, float3 V, float3 P, float3x3 minv, float3 corners[4])
 {
     float3 T1 = SafeNormalizeCommon(V - N * dot(V, N), SurfaceTangent(N));
@@ -818,29 +849,42 @@ float LtcEvaluateQuad(float3 N, float3 V, float3 P, float3x3 minv, float3 corner
     L[4] = L[3];
     int n;
     LtcClipQuadToHorizon(L, n);
-    if (n == 0) return 0.0f;
+    if (n == 0)
+    {
+        return 0.0f;
+    }
     L[0] = normalize(L[0]);
     L[1] = normalize(L[1]);
     L[2] = normalize(L[2]);
     L[3] = normalize(L[3]);
     L[4] = normalize(L[4]);
     float sum = LtcIntegrateEdgeVector(L[0], L[1]).z + LtcIntegrateEdgeVector(L[1], L[2]).z +
-        LtcIntegrateEdgeVector(L[2], L[3]).z;
-    if (n >= 4) sum += LtcIntegrateEdgeVector(L[3], L[4]).z;
-    if (n == 5) sum += LtcIntegrateEdgeVector(L[4], L[0]).z;
+                LtcIntegrateEdgeVector(L[2], L[3]).z;
+    if (n >= 4)
+    {
+        sum += LtcIntegrateEdgeVector(L[3], L[4]).z;
+    }
+    if (n == 5)
+    {
+        sum += LtcIntegrateEdgeVector(L[4], L[0]).z;
+    }
     return abs(sum) / (2.0f * 3.14159265f);
 }
 
-// Returns outgoing radiance for emitter radiance 1 (diffuse + specular, standard GGX).
-float3 EvaluateRectLightLtcTinted(float3 N, float3 V, float3 P, float3 center, float3 emitNormal,
-    float width, float height, float3 albedo, float3 materialData, float3 diffuseTint, float3 specularTint)
+// 発光体の放射輝度 1 に対する出射放射輝度を返す（拡散と鏡面反射、標準 GGX）。
+float3 EvaluateRectLightLtcTinted(float3 N, float3 V, float3 P, float3 center, float3 emitNormal, float width,
+                                  float height, float3 albedo, float3 materialData, float3 diffuseTint,
+                                  float3 specularTint)
 {
-    if (dot(P - center, emitNormal) <= 0.0f) return 0.0f; // one sided emitter
+    if (dot(P - center, emitNormal) <= 0.0f)
+    {
+        return 0.0f; // 片面の発光体
+    }
     float3 right, up;
     RectLightBasis(emitNormal, right, up);
     right *= width * 0.5f;
     up *= height * 0.5f;
-    float3 corners[4] = { center + right + up, center + right - up, center - right - up, center - right + up };
+    float3 corners[4] = {center + right + up, center + right - up, center - right - up, center - right + up};
     float metallic = saturate(materialData.r);
     float roughness = clamp(materialData.g, 0.04f, 1.0f);
     float specularF0 = saturate(materialData.b);
@@ -860,12 +904,11 @@ float3 EvaluateRectLightLtcTinted(float3 N, float3 V, float3 P, float3 center, f
     return albedo * kD * diffuse * diffuseTint + specular * specularTint;
 }
 
-float3 EvaluateRectLightLtc(float3 N, float3 V, float3 P, float3 center, float3 emitNormal,
-    float width, float height, float3 albedo, float3 materialData)
+float3 EvaluateRectLightLtc(float3 N, float3 V, float3 P, float3 center, float3 emitNormal, float width, float height,
+                            float3 albedo, float3 materialData)
 {
     return EvaluateRectLightLtcTinted(N, V, P, center, emitNormal, width, height, albedo, materialData, 1.0f, 1.0f);
 }
-
 
 // ---------------------------------------------------------------------------------------------
 // MegaLights M7：テクスチャ付き矩形ライト
@@ -877,15 +920,19 @@ float3 EvaluateRectLightLtc(float3 N, float3 V, float3 P, float3 center, float3 
 Texture2D<float4> MegaLightTextures[512] : register(t0, space5);
 
 float3 MLSampleRectTexture(uint textureIndex, float3 center, float3 emitNormal, float width, float height,
-    float3 origin, float3 direction, float footprint)
+                           float3 origin, float3 direction, float footprint)
 {
     float3 right, up;
     RectLightBasis(emitNormal, right, up);
     // 発光面との交点（交わらないときは面への最近点）
     const float denominator = dot(direction, -emitNormal);
     float3 hit = origin + direction * max(dot(origin - center, emitNormal) / max(denominator, 1.0e-4f), 0.0f);
-    if (denominator <= 1.0e-4f) hit = origin - emitNormal * dot(origin - center, emitNormal);
-    const float2 uv = saturate(float2(dot(hit - center, right) / max(width, 1.0e-3f), -dot(hit - center, up) / max(height, 1.0e-3f)) + 0.5f);
+    if (denominator <= 1.0e-4f)
+    {
+        hit = origin - emitNormal * dot(origin - center, emitNormal);
+    }
+    const float2 uv = saturate(
+        float2(dot(hit - center, right) / max(width, 1.0e-3f), -dot(hit - center, up) / max(height, 1.0e-3f)) + 0.5f);
     uint textureWidth, textureHeight, mipCount;
     MegaLightTextures[NonUniformResourceIndex(textureIndex)].GetDimensions(0, textureWidth, textureHeight, mipCount);
     const float texels = footprint / max(max(width, height), 1.0e-3f) * (float)max(textureWidth, textureHeight);
@@ -897,7 +944,9 @@ float3 MLRectTextureMean(uint textureIndex)
 {
     uint textureWidth, textureHeight, mipCount;
     MegaLightTextures[NonUniformResourceIndex(textureIndex)].GetDimensions(0, textureWidth, textureHeight, mipCount);
-    return MegaLightTextures[NonUniformResourceIndex(textureIndex)].SampleLevel(TextureSampler, float2(0.5f, 0.5f), (float)max(mipCount, 1u) - 1.0f).rgb;
+    return MegaLightTextures[NonUniformResourceIndex(textureIndex)]
+        .SampleLevel(TextureSampler, float2(0.5f, 0.5f), (float)max(mipCount, 1u) - 1.0f)
+        .rgb;
 }
 #endif
 // ---------------------------------------------------------------------------------------------
@@ -919,254 +968,252 @@ struct SurfaceLightAccumulator
     float ShadowSum;
 };
 
-void AccumulateSurfaceLight(
-    int cbIndex,
-    float4 lightDirection,
-    float4 lightPositionType,
-    float4 lightExtra,
-    float4 lightColorData,
-    bool decalLight,
-    bool gridCastShadow,
-    float sampleWeight,
-    float visibilityOverride,
-    float3 worldPos,
-    float3 worldPosDx,
-    float3 worldPosDy,
-    float3 normal,
-    float2 pixelPosition,
-    int shadowFilterRadius,
-    bool evaluatePbr,
-    float3 viewDir,
-    float3 albedo,
-    float3 materialData,
-    float shadowSoftness,
-    float3 monitorColor,
-    inout SurfaceLightAccumulator acc)
+void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPositionType, float4 lightExtra,
+                            float4 lightColorData, bool decalLight, bool gridCastShadow, float sampleWeight,
+                            float visibilityOverride, float3 worldPos, float3 worldPosDx, float3 worldPosDy,
+                            float3 normal, float2 pixelPosition, int shadowFilterRadius, bool evaluatePbr,
+                            float3 viewDir, float3 albedo, float3 materialData, float shadowSoftness,
+                            float3 monitorColor, inout SurfaceLightAccumulator acc)
 {
-        float3 singleDir;
-        float singleAttenuation;
-        float singleVolume;
-        ResolveSingleLightCommon(worldPos, lightDirection, lightPositionType, lightExtra, singleDir, singleAttenuation, singleVolume);
+    float3 singleDir;
+    float singleAttenuation;
+    float singleVolume;
+    ResolveSingleLightCommon(worldPos, lightDirection, lightPositionType, lightExtra, singleDir, singleAttenuation,
+                             singleVolume);
 
-		float lightIntensityValue = max(lightColorData.a, 0.0f);
-		[branch]
-		if (singleAttenuation <= 0.000001f || lightIntensityValue <= 0.000001f)
-		{
-			return;
-		}
+    float lightIntensityValue = max(lightColorData.a, 0.0f);
+    [branch] if (singleAttenuation <= 0.000001f || lightIntensityValue <= 0.000001f)
+    {
+        return;
+    }
 
-        float3 shadowVisibility = 1.0f;
-        [branch]
-        if (visibilityOverride >= 0.0f)
-        {
-            // MegaLights M2 / リファレンス：影レイの結果（可視率）が与えられている
-            shadowVisibility = visibilityOverride;
-        }
-        else if (cbIndex >= 0)
-        {
-            const int i = cbIndex;
-            const bool directionalShadow =
-                LightPositionTypes[i].w < 0.5f && SceneLightCastsShadowCommon(i, LightShadowData[i].x >= -0.5f);
-            const bool useRayShadow = !decalLight && directionalShadow &&
-                RaytracingFlags.x > 0.5f && RaytracingFlags.z > 0.5f &&
-                RaytracingSunDirection.w > 0.5f && dot(singleDir, RaytracingSunDirection.xyz) > 0.999f;
-            // The primary sun already has a denoised visibility texture. Do not
-            // issue an inline ray whose result would immediately be overwritten.
-            shadowVisibility = decalLight || useRayShadow
-    			? 1.0f
-    			: SampleSurfaceShadowMap(
-                    i,
-                    worldPos,
-                    worldPosDx,
-                    worldPosDy,
-                    normal,
-                    singleDir,
-                    shadowFilterRadius);
+    float3 shadowVisibility = 1.0f;
+    [branch] if (visibilityOverride >= 0.0f)
+    {
+        // MegaLights M2 / リファレンス：影レイの結果（可視率）が与えられている
+        shadowVisibility = visibilityOverride;
+    }
+    else if (cbIndex >= 0)
+    {
+        const int i = cbIndex;
+        const bool directionalShadow =
+            LightPositionTypes[i].w < 0.5f && SceneLightCastsShadowCommon(i, LightShadowData[i].x >= -0.5f);
+        const bool useRayShadow = !decalLight && directionalShadow && RaytracingFlags.x > 0.5f &&
+                                  RaytracingFlags.z > 0.5f && RaytracingSunDirection.w > 0.5f &&
+                                  dot(singleDir, RaytracingSunDirection.xyz) > 0.999f;
+        // 主太陽光にはデノイズ済みの可視性テクスチャがある。
+        // 直後に結果を上書きするインラインレイは発行しない。
+        shadowVisibility = decalLight || useRayShadow ? 1.0f
+                                                      : SampleSurfaceShadowMap(i, worldPos, worldPosDx, worldPosDy,
+                                                                               normal, singleDir, shadowFilterRadius);
 
-            float contactVisibility = !decalLight && directionalShadow
-                ? SampleContactShadow(worldPos, normal, singleDir)
-                : 1.0f;
+        float contactVisibility =
+            !decalLight && directionalShadow ? SampleContactShadow(worldPos, normal, singleDir) : 1.0f;
 #ifdef SHADER_RAYTRACING
-            if (SceneRayFlags.x > 0.5f) contactVisibility = 1.0f;
-#endif
-            shadowVisibility *= lerp(1.0f, contactVisibility, 0.45f);
-    		if (useRayShadow)
-    		{
-    			uint rayWidth;
-    			uint rayHeight;
-    			RaytracedVisibility.GetDimensions(rayWidth, rayHeight);
-    			shadowVisibility = RaytracedVisibility.SampleLevel(TextureSampler, pixelPosition / float2(rayWidth, rayHeight), 0).r;
-    		}
-    		bool useLegacyDistanceShadow = !useRayShadow && !decalLight && directionalShadow;
-#ifdef SHADER_RAYTRACING
-            useLegacyDistanceShadow = useLegacyDistanceShadow && SceneRayFlags.x < 0.5f;
-#endif
-    		if (useLegacyDistanceShadow)
-    		{
-    			shadowVisibility *= SampleDistanceFieldShadow(worldPos, normal, singleDir);
-    		}
-            // Apply after raster/DXR visibility so neither path can overwrite cloud extinction.
-            if (!decalLight && i == CloudSunIndex())
-                shadowVisibility *= CloudSunVisibility(worldPos);
-        }
-#ifdef SHADER_RAYTRACING
-        else if (gridCastShadow && SceneRayFlags.x > 0.5f && SceneRayFlags.z > 0.5f)
+        if (SceneRayFlags.x > 0.5f)
         {
-            // MegaLights M1 グリッドのライト：DXR 影モードならライト中心へ影のレイを 1 本
-            const float maximumDistance = min(length(lightPositionType.xyz - worldPos), SceneRayParameters.x);
-            shadowVisibility = TraceSceneShadow(worldPos, normal, singleDir, maximumDistance);
+            contactVisibility = 1.0f;
         }
 #endif
-        float3 authoredLightColor = max(lightColorData.rgb, float3(0.0f, 0.0f, 0.0f));
+        shadowVisibility *= lerp(1.0f, contactVisibility, 0.45f);
+        if (useRayShadow)
+        {
+            uint rayWidth;
+            uint rayHeight;
+            RaytracedVisibility.GetDimensions(rayWidth, rayHeight);
+            shadowVisibility =
+                RaytracedVisibility.SampleLevel(TextureSampler, pixelPosition / float2(rayWidth, rayHeight), 0).r;
+        }
+        bool useLegacyDistanceShadow = !useRayShadow && !decalLight && directionalShadow;
+#ifdef SHADER_RAYTRACING
+        useLegacyDistanceShadow = useLegacyDistanceShadow && SceneRayFlags.x < 0.5f;
+#endif
+        if (useLegacyDistanceShadow)
+        {
+            shadowVisibility *= SampleDistanceFieldShadow(worldPos, normal, singleDir);
+        }
+        // ラスターと DXR の可視性の後に適用し、どちらの経路も雲の消散を上書きしないようにする。
+        if (!decalLight && i == CloudSunIndex())
+        {
+            shadowVisibility *= CloudSunVisibility(worldPos);
+        }
+    }
+#ifdef SHADER_RAYTRACING
+    else if (gridCastShadow && SceneRayFlags.x > 0.5f && SceneRayFlags.z > 0.5f)
+    {
+        // MegaLights M1 グリッドのライト：DXR 影モードならライト中心へ影のレイを 1 本
+        const float maximumDistance = min(length(lightPositionType.xyz - worldPos), SceneRayParameters.x);
+        shadowVisibility = TraceSceneShadow(worldPos, normal, singleDir, maximumDistance);
+    }
+#endif
+    float3 authoredLightColor = max(lightColorData.rgb, float3(0.0f, 0.0f, 0.0f));
 #ifdef MEGALIGHTS_LIGHT_TEXTURES
-        // M7：テクスチャ付き矩形ライト。非 PBR の陰影・平均ライトにはテクスチャの平均色を使う
-        const uint lightTexture = (cbIndex < 0 && lightPositionType.w > 3.5f) ? (uint)round(lightExtra.w) : 0u;
-        float3 textureMean = 1.0f;
-        if (lightTexture != 0u)
-        {
-            textureMean = max(MLRectTextureMean(lightTexture - 1u), 1.0e-4f);
-            authoredLightColor *= textureMean;
-        }
+    // M7：テクスチャ付き矩形ライト。非 PBR の陰影・平均ライトにはテクスチャの平均色を使う
+    const uint lightTexture = (cbIndex < 0 && lightPositionType.w > 3.5f) ? (uint)round(lightExtra.w) : 0u;
+    float3 textureMean = 1.0f;
+    if (lightTexture != 0u)
+    {
+        textureMean = max(MLRectTextureMean(lightTexture - 1u), 1.0e-4f);
+        authoredLightColor *= textureMean;
+    }
 #endif
-		if (decalLight)
-		{
+    if (decalLight)
+    {
 
-			authoredLightColor *= monitorColor;
-		}
-        float3 singleColor = authoredLightColor * lightIntensityValue * singleAttenuation * shadowVisibility;
-        if (!decalLight)
-		{
-			singleColor = ApplyAtmosphereToLightCommon(worldPos, singleDir, singleColor, singleVolume);
-		}
+        authoredLightColor *= monitorColor;
+    }
+    float3 singleColor = authoredLightColor * lightIntensityValue * singleAttenuation * shadowVisibility;
+    if (!decalLight)
+    {
+        singleColor = ApplyAtmosphereToLightCommon(worldPos, singleDir, singleColor, singleVolume);
+    }
 
-        if (evaluatePbr)
-        {
+    if (evaluatePbr)
+    {
 #ifdef SURFACE_PBR_LUTS
-            const bool rectLight = !decalLight && lightPositionType.w > 3.5f && QualityFlags.y > 0.5f;
+        const bool rectLight = !decalLight && lightPositionType.w > 3.5f && QualityFlags.y > 0.5f;
 #else
-            const bool rectLight = false;
+        const bool rectLight = false;
 #endif
-            [branch]
-            if (rectLight)
-            {
-                float3 toCenter = lightPositionType.xyz - worldPos;
-                float rangeFade = saturate(1.0f - length(toCenter) / max(lightDirection.w, 0.01f));
-                float3 emitterRadiance = authoredLightColor * lightIntensityValue * shadowVisibility * rangeFade * rangeFade;
-                const float3 emitNormal = SafeNormalizeCommon(lightDirection.xyz, float3(0.0f, -1.0f, 0.0f));
-                float3 diffuseTint = 1.0f;
-                float3 specularTint = 1.0f;
+        [branch] if (rectLight)
+        {
+            float3 toCenter = lightPositionType.xyz - worldPos;
+            float rangeFade = saturate(1.0f - length(toCenter) / max(lightDirection.w, 0.01f));
+            float3 emitterRadiance =
+                authoredLightColor * lightIntensityValue * shadowVisibility * rangeFade * rangeFade;
+            const float3 emitNormal = SafeNormalizeCommon(lightDirection.xyz, float3(0.0f, -1.0f, 0.0f));
+            float3 diffuseTint = 1.0f;
+            float3 specularTint = 1.0f;
 #ifdef MEGALIGHTS_LIGHT_TEXTURES
-                if (lightTexture != 0u)
-                {
-                    // 平均色は emitterRadiance に入っているので、ここでは平均との比を掛ける
-                    const float distance = length(toCenter);
-                    const float roughness = clamp(materialData.g, 0.04f, 1.0f);
-                    diffuseTint = MLSampleRectTexture(lightTexture - 1u, lightPositionType.xyz, emitNormal, lightExtra.x, lightExtra.y,
-                        worldPos, normal, distance * 2.0f) / textureMean;
-                    specularTint = MLSampleRectTexture(lightTexture - 1u, lightPositionType.xyz, emitNormal, lightExtra.x, lightExtra.y,
-                        worldPos, reflect(-viewDir, normal), distance * roughness * roughness * 2.0f) / textureMean;
-                }
-#endif
-                acc.PbrDirect += sampleWeight * EvaluateRectLightLtcTinted(normal, viewDir, worldPos, lightPositionType.xyz,
-                    emitNormal, lightExtra.x, lightExtra.y, albedo, materialData, diffuseTint, specularTint) * emitterRadiance;
-            }
-            else
+            if (lightTexture != 0u)
             {
-                acc.PbrDirect += sampleWeight * EvaluatePbrDirectLight(
-                    normal, viewDir, singleDir, singleColor, albedo, materialData, shadowSoftness);
+                // 平均色は emitterRadiance に入っているので、ここでは平均との比を掛ける
+                const float distance = length(toCenter);
+                const float roughness = clamp(materialData.g, 0.04f, 1.0f);
+                diffuseTint = MLSampleRectTexture(lightTexture - 1u, lightPositionType.xyz, emitNormal, lightExtra.x,
+                                                  lightExtra.y, worldPos, normal, distance * 2.0f) /
+                              textureMean;
+                specularTint = MLSampleRectTexture(lightTexture - 1u, lightPositionType.xyz, emitNormal, lightExtra.x,
+                                                   lightExtra.y, worldPos, reflect(-viewDir, normal),
+                                                   distance * roughness * roughness * 2.0f) /
+                               textureMean;
             }
+#endif
+            acc.PbrDirect +=
+                sampleWeight *
+                EvaluateRectLightLtcTinted(normal, viewDir, worldPos, lightPositionType.xyz, emitNormal, lightExtra.x,
+                                           lightExtra.y, albedo, materialData, diffuseTint, specularTint) *
+                emitterRadiance;
         }
+        else
+        {
+            acc.PbrDirect += sampleWeight * EvaluatePbrDirectLight(normal, viewDir, singleDir, singleColor, albedo,
+                                                                   materialData, shadowSoftness);
+        }
+    }
 
-        float weight = max(dot(authoredLightColor * lightIntensityValue, float3(0.299f, 0.587f, 0.114f)), 0.0001f) * singleAttenuation * sampleWeight;
-        acc.DirSum += singleDir * weight;
-        acc.ColorSum += singleColor * sampleWeight;
-        acc.WeightSum += weight;
-        acc.MaxAttenuation = max(acc.MaxAttenuation, singleAttenuation);
-        float visibilityLuminance = dot(shadowVisibility, float3(0.2126f, 0.7152f, 0.0722f));
-        acc.VolumeSum += singleVolume * lightIntensityValue * visibilityLuminance;
-        acc.RangeSum += saturate((max(lightDirection.w, 1.0f) - 1.0f) / 7.0f) * weight;
-        acc.ShadowSum += visibilityLuminance * weight;
+    float weight = max(dot(authoredLightColor * lightIntensityValue, float3(0.299f, 0.587f, 0.114f)), 0.0001f) *
+                   singleAttenuation * sampleWeight;
+    acc.DirSum += singleDir * weight;
+    acc.ColorSum += singleColor * sampleWeight;
+    acc.WeightSum += weight;
+    acc.MaxAttenuation = max(acc.MaxAttenuation, singleAttenuation);
+    float visibilityLuminance = dot(shadowVisibility, float3(0.2126f, 0.7152f, 0.0722f));
+    acc.VolumeSum += singleVolume * lightIntensityValue * visibilityLuminance;
+    acc.RangeSum += saturate((max(lightDirection.w, 1.0f) - 1.0f) / 7.0f) * weight;
+    acc.ShadowSum += visibilityLuminance * weight;
 }
 
 #if defined(MEGALIGHTS_GRID) && !defined(MEGALIGHTS_FORWARD)
 // ---------------------------------------------------------------------------------------------
 // MegaLights M2 / M3（ディファードのみ）
 // ---------------------------------------------------------------------------------------------
-void MLAccumulateSampleSet(uint2 samplePixel, float weight,
-    float3 worldPos, float3 worldPosDx, float3 worldPosDy, float3 normal, float2 pixelPosition, int shadowFilterRadius,
-    float3 viewDir, float3 albedo, float3 materialData, float shadowSoftness, float3 monitorColor,
-    inout SurfaceLightAccumulator acc)
+void MLAccumulateSampleSet(uint2 samplePixel, float weight, float3 worldPos, float3 worldPosDx, float3 worldPosDy,
+                           float3 normal, float2 pixelPosition, int shadowFilterRadius, float3 viewDir, float3 albedo,
+                           float3 materialData, float shadowSoftness, float3 monitorColor,
+                           inout SurfaceLightAccumulator acc)
 {
     const uint sampleCount = MLStochastic.y;
     const uint sampleBase = MLSampleBase(samplePixel);
     const float scale = weight / (float)max(sampleCount, 1u);
-    [loop]
-    for (uint sampleIndex = 0u; sampleIndex < sampleCount; ++sampleIndex)
+    [loop] for (uint sampleIndex = 0u; sampleIndex < sampleCount; ++sampleIndex)
     {
         const uint4 lightSample = MegaLightSamples[sampleBase + sampleIndex];
-        if ((lightSample.x & ML_SAMPLE_VALID) == 0u) continue;
+        if ((lightSample.x & ML_SAMPLE_VALID) == 0u)
+        {
+            continue;
+        }
         const MegaLightData sampledLight = MegaLightBuffer[lightSample.x & ML_SAMPLE_INDEX];
         const float visibility = (lightSample.x & ML_SAMPLE_VISIBLE) != 0u ? 1.0f : 0.0f;
         AccumulateSurfaceLight(-1, sampledLight.DirectionRange, sampledLight.PositionType, sampledLight.Extra,
-            sampledLight.Color, false, false, asfloat(lightSample.y) * scale, visibility,
-            worldPos, worldPosDx, worldPosDy, normal, pixelPosition, shadowFilterRadius, true,
-            viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
+                               sampledLight.Color, false, false, asfloat(lightSample.y) * scale, visibility, worldPos,
+                               worldPosDx, worldPosDy, normal, pixelPosition, shadowFilterRadius, true, viewDir, albedo,
+                               materialData, shadowSoftness, monitorColor, acc);
     }
 }
 
 // N 個のサンプルを 1/(N·p) の重みと影レイの可視率で評価（ML6）
 //   半解像度：このピクセルを囲む 2x2 のサンプル空間のピクセルを、深度・法線が近いものだけ重み付きで使う。
 //   各サンプルはこのピクセルの位置・法線・材質で評価し直す（選択確率と可視率は代表ピクセルのもの = 近似）
-void MLAccumulateStochasticSamples(
-    float3 worldPos, float3 worldPosDx, float3 worldPosDy, float3 normal, float2 pixelPosition, int shadowFilterRadius,
-    float3 viewDir, float3 albedo, float3 materialData, float shadowSoftness, float3 monitorColor,
-    inout SurfaceLightAccumulator acc)
+void MLAccumulateStochasticSamples(float3 worldPos, float3 worldPosDx, float3 worldPosDy, float3 normal,
+                                   float2 pixelPosition, int shadowFilterRadius, float3 viewDir, float3 albedo,
+                                   float3 materialData, float shadowSoftness, float3 monitorColor,
+                                   inout SurfaceLightAccumulator acc)
 {
     const uint2 pixel = uint2(pixelPosition);
     if (MLSampleScale() == 1u)
     {
         MLAccumulateSampleSet(pixel, 1.0f, worldPos, worldPosDx, worldPosDy, normal, pixelPosition, shadowFilterRadius,
-            viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
+                              viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
         return;
     }
     const float viewZ = mul(float4(worldPos, 1.0f), MLWorldToView).z;
     // サンプルの代表ピクセルを基準にした双線形の位置
-    const uint2 offsets[4] = { uint2(0u, 0u), uint2(1u, 1u), uint2(1u, 0u), uint2(0u, 1u) };
+    const uint2 offsets[4] = {uint2(0u, 0u), uint2(1u, 1u), uint2(1u, 0u), uint2(0u, 1u)};
     const float2 position = (float2(pixel) - float2(offsets[MLSampleGrid.w & 3u])) * 0.5f;
     const int2 base = int2(floor(position));
     const float2 f = position - float2(base);
     float weights[4];
     uint2 candidates[4];
     float weightSum = 0.0f;
-    [unroll]
-    for (uint index = 0u; index < 4u; ++index)
+    [unroll] for (uint index = 0u; index < 4u; ++index)
     {
         const int2 c = base + int2(index & 1u, index >> 1u);
         weights[index] = 0.0f;
         candidates[index] = uint2(clamp(c, int2(0, 0), int2(MLSampleGrid.xy) - 1));
-        if (any(c < 0) || any(c >= int2(MLSampleGrid.xy))) continue;
+        if (any(c < 0) || any(c >= int2(MLSampleGrid.xy)))
+        {
+            continue;
+        }
         const uint2 q = MLSampleToScreen(candidates[index]);
         const float qDepth = DepthTexture.Load(int3(q, 0));
-        if (!MLIsGeometryDepth(qDepth)) continue;
+        if (!MLIsGeometryDepth(qDepth))
+        {
+            continue;
+        }
         const float relative = abs(MLViewZFromDepth(qDepth) - viewZ) / max(viewZ, 1.0e-3f);
         const float3 qNormal = DecodeGBufferNormal(NormalTexture.Load(int3(q, 0)).xyz);
         const float bilinear = ((index & 1u) ? f.x : 1.0f - f.x) * ((index >> 1u) ? f.y : 1.0f - f.y);
-        weights[index] = (bilinear + 1.0e-3f) * saturate(1.0f - relative / 0.05f) * pow(saturate(dot(qNormal, normal)), 16.0f);
+        weights[index] =
+            (bilinear + 1.0e-3f) * saturate(1.0f - relative / 0.05f) * pow(saturate(dot(qNormal, normal)), 16.0f);
         weightSum += weights[index];
     }
     if (weightSum <= 1.0e-5f)
     {
         // 近いサンプルが無い（細い物体・境界）：このピクセルを含むサンプルだけを使う
         MLAccumulateSampleSet(MLScreenToSample(pixel), 1.0f, worldPos, worldPosDx, worldPosDy, normal, pixelPosition,
-            shadowFilterRadius, viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
+                              shadowFilterRadius, viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
         return;
     }
-    [loop]
-    for (uint candidate = 0u; candidate < 4u; ++candidate)
+    [loop] for (uint candidate = 0u; candidate < 4u; ++candidate)
     {
-        if (weights[candidate] <= 0.0f) continue;
-        MLAccumulateSampleSet(candidates[candidate], weights[candidate] / weightSum, worldPos, worldPosDx, worldPosDy, normal,
-            pixelPosition, shadowFilterRadius, viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
+        if (weights[candidate] <= 0.0f)
+        {
+            continue;
+        }
+        MLAccumulateSampleSet(candidates[candidate], weights[candidate] / weightSum, worldPos, worldPosDx, worldPosDy,
+                              normal, pixelPosition, shadowFilterRadius, viewDir, albedo, materialData, shadowSoftness,
+                              monitorColor, acc);
     }
 }
 
@@ -1183,25 +1230,12 @@ float3 MLRemodulation(float3 N, float3 V, float3 albedo, float3 materialData)
 }
 #endif // MEGALIGHTS_GRID && !MEGALIGHTS_FORWARD
 
-void ResolveSurfaceLightAggregateShadowed(
-    float3 worldPos,
-    float3 worldPosDx,
-    float3 worldPosDy,
-    float3 normal,
-    float2 pixelPosition,
-    int shadowFilterRadius,
-    bool evaluatePbr,
-    float3 viewDir,
-    float3 albedo,
-    float3 materialData,
-    float shadowSoftness,
-    out float3 pbrDirectLight,
-    out float3 lightDir,
-    out float3 lightColor,
-    out float attenuation,
-    out float volumeScatter,
-    out float rangeBlend,
-    out float aggregateShadowVisibility)
+void ResolveSurfaceLightAggregateShadowed(float3 worldPos, float3 worldPosDx, float3 worldPosDy, float3 normal,
+                                          float2 pixelPosition, int shadowFilterRadius, bool evaluatePbr,
+                                          float3 viewDir, float3 albedo, float3 materialData, float shadowSoftness,
+                                          out float3 pbrDirectLight, out float3 lightDir, out float3 lightColor,
+                                          out float attenuation, out float volumeScatter, out float rangeBlend,
+                                          out float aggregateShadowVisibility)
 {
     pbrDirectLight = 0.0f;
     lightDir = SafeNormalizeCommon(LightDirection.xyz, float3(0.0f, 1.0f, 0.0f));
@@ -1224,27 +1258,21 @@ void ResolveSurfaceLightAggregateShadowed(
 
     bool useLightGrid = HasLightTileGridCommon();
     uint tileBase = useLightGrid ? LightTileBaseCommon(pixelPosition) : 0u;
-    int iterationCount = useLightGrid
-        ? min(MAX_LIGHTS_PER_TILE, max((int)round(LightCount.w), 1))
-        : count;
+    int iterationCount = useLightGrid ? min(MAX_LIGHTS_PER_TILE, max((int)round(LightCount.w), 1)) : count;
     uint lightingWidth;
     uint lightingHeight;
     BaseColorTexture.GetDimensions(lightingWidth, lightingHeight);
-    const float2 monitorUv = pixelPosition /
-        float2(max(lightingWidth, 1u), max(lightingHeight, 1u));
+    const float2 monitorUv = pixelPosition / float2(max(lightingWidth, 1u), max(lightingHeight, 1u));
     const float3 monitorColor = MonitorTexture.SampleLevel(TextureSampler, monitorUv, 0).rgb;
-    [loop]
-    for (int iteration = 0; iteration < MAX_SHADER_LIGHTS; ++iteration)
+    [loop] for (int iteration = 0; iteration < MAX_SHADER_LIGHTS; ++iteration)
     {
         if (iteration >= iterationCount)
         {
             break;
         }
-        uint lightIndex = useLightGrid
-            ? LightTileIndices[tileBase + (uint)iteration]
-            : (uint)iteration;
-        if (lightIndex == 0xffffffffu || lightIndex >= (uint)count ||
-            LightFlags[lightIndex].x < 0.5f || LightFlags[lightIndex].w >= 1.5f)
+        uint lightIndex = useLightGrid ? LightTileIndices[tileBase + (uint)iteration] : (uint)iteration;
+        if (lightIndex == 0xffffffffu || lightIndex >= (uint)count || LightFlags[lightIndex].x < 0.5f ||
+            LightFlags[lightIndex].w >= 1.5f)
         {
             continue;
         }
@@ -1257,21 +1285,20 @@ void ResolveSurfaceLightAggregateShadowed(
 #endif
 
         AccumulateSurfaceLight((int)lightIndex, LightDirections[lightIndex], LightPositionTypes[lightIndex],
-            LightExtras[lightIndex], LightColors[lightIndex], LightFlags[lightIndex].w >= 0.5f, false, 1.0f, -1.0f,
-            worldPos, worldPosDx, worldPosDy, normal, pixelPosition, shadowFilterRadius, evaluatePbr,
-            viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
+                               LightExtras[lightIndex], LightColors[lightIndex], LightFlags[lightIndex].w >= 0.5f,
+                               false, 1.0f, -1.0f, worldPos, worldPosDx, worldPosDy, normal, pixelPosition,
+                               shadowFilterRadius, evaluatePbr, viewDir, albedo, materialData, shadowSoftness,
+                               monitorColor, acc);
     }
 
     uint gridLightCount = 0u;
 #ifdef MEGALIGHTS_GRID
-    [branch]
-    if (gridActive)
+    [branch] if (gridActive)
     {
         const uint2 cell = MegaLightCells[g_MLCellIndex];
         gridLightCount = cell.y;
 #ifndef MEGALIGHTS_FORWARD
-        [branch]
-        if (evaluatePbr && MLDenoisedActive())
+        [branch] if (evaluatePbr && MLDenoisedActive())
         {
             // MegaLights M3：ML6 の結果（デモジュレート済み）をデノイズしたものに、材質の反射率を掛け戻す
             const uint2 denoisePixel = min(uint2(pixelPosition), MLScreen.xy - 1u);
@@ -1282,34 +1309,36 @@ void ResolveSurfaceLightAggregateShadowed(
         {
             // MegaLights M2（ML6）：ML3 で選んだ N 個のサンプルだけを 1/(N·p) の重みで評価する（不偏推定）
             MLAccumulateStochasticSamples(worldPos, worldPosDx, worldPosDy, normal, pixelPosition, shadowFilterRadius,
-                viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
+                                          viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
         }
         else
 #endif
         {
             // MegaLights M1：このピクセルのセル（16px タイル × 奥行きスライス）に入っているローカルライトを全評価
-            //（M7 の Forward / 半透明もここ。Forward に影響しないライトは飛ばす）
+            // （M7 の Forward / 半透明もここ。Forward に影響しないライトは飛ばす）
 #ifdef MEGALIGHTS_FORWARD
             const bool reference = false;
 #else
             const bool reference = evaluatePbr && MLReferenceActive();
 #endif
-            [loop]
-            for (uint gridIteration = 0u; gridIteration < cell.y; ++gridIteration)
+            [loop] for (uint gridIteration = 0u; gridIteration < cell.y; ++gridIteration)
             {
                 const MegaLightData gridLight = MegaLightBuffer[MegaLightIndices[cell.x + gridIteration]];
 #ifdef MEGALIGHTS_FORWARD
-                if (!MLLightAffectsForward(gridLight)) continue;
+                if (!MLLightAffectsForward(gridLight))
+                {
+                    continue;
+                }
                 const float visibility = -1.0f;
 #else
-                const float visibility = reference
-                    ? MLReferenceVisibility(gridLight, worldPos, normal, uint2(pixelPosition), gridIteration)
-                    : -1.0f;
+                const float visibility =
+                    reference ? MLReferenceVisibility(gridLight, worldPos, normal, uint2(pixelPosition), gridIteration)
+                              : -1.0f;
 #endif
-                AccumulateSurfaceLight(-1, gridLight.DirectionRange, gridLight.PositionType, gridLight.Extra, gridLight.Color,
-                    false, MLLightCastsShadow(gridLight), 1.0f, visibility,
-                    worldPos, worldPosDx, worldPosDy, normal, pixelPosition, shadowFilterRadius, evaluatePbr,
-                    viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
+                AccumulateSurfaceLight(-1, gridLight.DirectionRange, gridLight.PositionType, gridLight.Extra,
+                                       gridLight.Color, false, MLLightCastsShadow(gridLight), 1.0f, visibility,
+                                       worldPos, worldPosDx, worldPosDy, normal, pixelPosition, shadowFilterRadius,
+                                       evaluatePbr, viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
             }
         }
     }
@@ -1331,8 +1360,8 @@ void ResolveSurfaceLightAggregateShadowed(
         lightColor = ApplyAtmosphereToLightCommon(worldPos, lightDir, lightColor, legacyVolume);
         if (evaluatePbr)
         {
-            pbrDirectLight = EvaluatePbrDirectLight(
-                normal, viewDir, lightDir, lightColor, albedo, materialData, shadowSoftness);
+            pbrDirectLight =
+                EvaluatePbrDirectLight(normal, viewDir, lightDir, lightColor, albedo, materialData, shadowSoftness);
         }
         volumeScatter = legacyVolume * max(LightColor.a, 0.0f);
         rangeBlend = saturate((max(LightDirection.w, 1.0f) - 1.0f) / 7.0f);
@@ -1361,15 +1390,17 @@ float VirtualMoonSurfaceVisibility(float3 worldPosition, float3 normal, float3 d
 {
 #ifdef SHADER_RAYTRACING
     if (SceneRayFlags.y > .5f && SceneRayFlags.z > .5f)
+    {
         return TraceSceneShadow(worldPosition, normal, direction, SceneRayParameters.x);
+    }
 #endif
-    // No authored shadow map belongs to the virtual moon. Without a valid
-    // visibility provider it remains a sky disc, not an unoccluded surface light.
+    // 仮想の月には設定済みのシャドウマップがない。有効な可視性の提供元が
+    // なければ、遮蔽のない面光源としては扱わず、空の円盤のままにする。
     return 0;
 }
 
-float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 worldPosition,
-    float2 screenUv, float shadowSoftness, float3 pbrDirectLight)
+float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 worldPosition, float2 screenUv,
+                                  float shadowSoftness, float3 pbrDirectLight)
 {
     const float PI = 3.14159265359f;
     float3 N = surface.NormalWS;
@@ -1394,30 +1425,29 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
 
     float maxMip = 8.0f;
 
-    float3 envSpecular = EnvironmentTexture.SampleLevel(
-        TextureSampler, reflectionUV, roughness * maxMip).rgb;
+    float3 envSpecular = EnvironmentTexture.SampleLevel(TextureSampler, reflectionUV, roughness * maxMip).rgb;
 #ifdef SHADER_RAYTRACING
     if (SceneRayFlags.x > 0.5f || RaytracingFlags.w > 0.5f)
+    {
         envSpecular = RaytracingFlags.w > 0.5f ? RaytracedReflections.SampleLevel(TextureSampler, screenUv, 0).rgb : 0;
+    }
 #endif
 
-    float3 irradiance = EnvironmentTexture.SampleLevel(TextureSampler,normalUV,maxMip).rgb;
+    float3 irradiance = EnvironmentTexture.SampleLevel(TextureSampler, normalUV, maxMip).rgb;
 
     float oneMinusNdotV = 1.0f - NdotV;
     float oneMinusNdotV2 = oneMinusNdotV * oneMinusNdotV;
     float oneMinusNdotV5 = oneMinusNdotV2 * oneMinusNdotV2 * oneMinusNdotV;
 
-    float3 roughnessF0Max = max(
-    float3(1.0f - roughness, 1.0f - roughness, 1.0f - roughness),F0
-    );
+    float3 roughnessF0Max = max(float3(1.0f - roughness, 1.0f - roughness, 1.0f - roughness), F0);
 
     float3 F_IBL = F0 + (roughnessF0Max - F0) * oneMinusNdotV5;
     float3 specularWeight = F_IBL;
     float3 ambientKD = 1.0f - F_IBL;
     if (QualityEnergyCompensation())
     {
-        // Split sum DFG + multiple scattering (Fdez-Aguera 2019): rough surfaces no longer lose
-        // the energy of multiply scattered light, diffuse gets exactly the remaining energy.
+        // 分割和 DFG と多重散乱（Fdez-Aguera 2019）：粗い面で多重散乱光の
+        // エネルギーを失わず、拡散光には残りのエネルギーを正確に割り当てる。
         float2 dfg = SampleDfg(NdotV, roughness);
         float3 FssEss = F0 * dfg.x + dfg.y;
         float Ess = dfg.x + dfg.y;
@@ -1429,17 +1459,17 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
     }
     ambientKD *= 1.0f - metallic;
 
-    float3 ambientDiffuse = ambientKD * albedo * irradiance / ( 0.5f * PI);
+    float3 ambientDiffuse = ambientKD * albedo * irradiance / (0.5f * PI);
     if (HdrFlags.w > 1.5f && Flags.w > 0)
     {
         ambientDiffuse = 0;
     }
-    // Specular occlusion (Lagarde & de Rousiers 2014): derives the occlusion of the reflection
-    // lobe from the material AO, roughness and view angle instead of applying AO uniformly.
-    // Rough surfaces converge to AO, smooth surfaces at grazing angles keep their reflection.
+    // 鏡面反射のオクルージョン（Lagarde & de Rousiers 2014）：AO を一様に適用せず、
+    // マテリアルの AO、粗さ、視線角から反射ローブの遮蔽を求める。
+    // 粗い面では AO に収束し、滑らかな面の浅い視線角では反射を保つ。
     float materialAo = saturate(surface.AO);
-    float specularOcclusion = saturate(pow(max(NdotV + materialAo, 0.0f),
-        exp2(-16.0f * roughness - 1.0f)) - 1.0f + materialAo);
+    float specularOcclusion =
+        saturate(pow(max(NdotV + materialAo, 0.0f), exp2(-16.0f * roughness - 1.0f)) - 1.0f + materialAo);
     float3 ambientSpecular = envSpecular * specularWeight;
     const uint model = g_ShadingModel.Model;
     const float modelStrength = g_ShadingModel.Strength;
@@ -1448,14 +1478,17 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
         float coatF = (0.04f + 0.96f * oneMinusNdotV5) * modelStrength;
         float3 coatEnvironment = EnvironmentTexture.SampleLevel(TextureSampler, reflectionUV, 0.06f * maxMip).rgb;
 #ifdef SHADER_RAYTRACING
-        if (RaytracingFlags.w > 0.5f) coatEnvironment = envSpecular;
+        if (RaytracingFlags.w > 0.5f)
+        {
+            coatEnvironment = envSpecular;
+        }
 #endif
         ambientDiffuse *= 1.0f - coatF;
         ambientSpecular = ambientSpecular * (1.0f - coatF) + coatEnvironment * coatF;
     }
     else if (model == kShadingSheen && modelStrength > 0.0f)
     {
-        // Approximate directional albedo of the Charlie sheen lobe.
+        // Charlie のシーン反射ローブの方向アルベドを近似する。
         float sheenAlbedo = lerp(0.12f, 0.35f, roughness) * (1.0f - NdotV * 0.5f);
         ambientSpecular += irradiance * lerp(1.0f, albedo, 0.5f) * sheenAlbedo * modelStrength;
     }
@@ -1467,49 +1500,50 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
         ambient *= lerp(0.025f, 1.0f, SkyParameters.y);
     }
     float3 moonDirection = VirtualMoonDirection();
-    float moonVisibility = CloudTrace.z > 0.5 && CloudTrace.w > 0.5 ?
-        CloudSolarTransmittance(worldPosition, moonDirection) : 1;
-    float3 moonRadiance = VirtualMoonIrradiance() * moonVisibility *
-        CelestialAtmosphereTransmission(worldPosition.y, moonDirection);
-    [branch]
-    if (any(moonRadiance > 1e-6))
+    float moonVisibility =
+        CloudTrace.z > 0.5 && CloudTrace.w > 0.5 ? CloudSolarTransmittance(worldPosition, moonDirection) : 1;
+    float3 moonRadiance =
+        VirtualMoonIrradiance() * moonVisibility * CelestialAtmosphereTransmission(worldPosition.y, moonDirection);
+    [branch] if (any(moonRadiance > 1e-6))
     {
         moonRadiance *= VirtualMoonSurfaceVisibility(worldPosition, N, moonDirection);
-        pbrDirectLight += EvaluatePbrDirectLight(N, V, moonDirection, moonRadiance,
-            albedo, float3(surface.Metallic, surface.Roughness, surface.F0), shadowSoftness);
+        pbrDirectLight +=
+            EvaluatePbrDirectLight(N, V, moonDirection, moonRadiance, albedo,
+                                   float3(surface.Metallic, surface.Roughness, surface.F0), shadowSoftness);
     }
     return pbrDirectLight + ambient + surface.Emissive;
 }
+
 float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv, float3 diffuseReflectance)
 {
-    // Isolated previews and forward-only scenes have no screen-space lighting history.
+    // 独立したプレビューやフォワード専用のシーンには、画面空間の照明履歴がない。
     if (Flags.w <= 0.0f)
     {
         return color + emissive;
     }
-	float ambientVisibility = 1.0f;
+    float ambientVisibility = 1.0f;
     if (HdrFlags.z > 0.5f)
     {
-        ambientVisibility = VisibilityBitmaskAO.SampleLevel(TextureSampler,screenUv,0);
+        ambientVisibility = VisibilityBitmaskAO.SampleLevel(TextureSampler, screenUv, 0);
     }
 
     float3 screenIndirect = 0.0f;
     if (HdrFlags.w > 0.5f)
     {
-        screenIndirect = DeinterleavedSSGI.SampleLevel(TextureSampler,screenUv,0).rgb;
+        screenIndirect = DeinterleavedSSGI.SampleLevel(TextureSampler, screenUv, 0).rgb;
     }
-	color *= lerp(0.38f, 1.0f, ambientVisibility);
+    color *= lerp(0.38f, 1.0f, ambientVisibility);
     float rayAmbientFactor = 1.0f;
-	if (RaytracingFlags.x > 0.5f && RaytracingFlags.y > 0.5f)
-	{
-		float rayAmbient = RaytracedVisibility.SampleLevel(TextureSampler, screenUv, 0).g;
-		rayAmbientFactor = lerp(0.45f, 1.0f, rayAmbient);
-	}
+    if (RaytracingFlags.x > 0.5f && RaytracingFlags.y > 0.5f)
+    {
+        float rayAmbient = RaytracedVisibility.SampleLevel(TextureSampler, screenUv, 0).g;
+        rayAmbientFactor = lerp(0.45f, 1.0f, rayAmbient);
+    }
     if (HdrFlags.w > 1.5f)
     {
-        // Ray traced GI already contains its own visibility (every bounce ray is occluded by
-        // the scene). Applying the AO term on top darkened exactly the regions that should
-        // receive bounce light, e.g. the underside of an object resting above a lit floor.
+        // レイトレーシング GI は、各反射レイがシーンで遮蔽されるため、独自の可視性を持つ。
+        // さらに AO を適用すると、反射光を受けるはずの場所が暗くなっていた。
+        // 例えば、照らされた床の上に置かれた物体の下面が該当する。
         color *= rayAmbientFactor;
         color += screenIndirect * max(diffuseReflectance, 0) / 3.14159265f;
     }

@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================================
-// AdvancedEffects
+// 高度な画面効果（AdvancedEffects）
 //   ・フロクセル（3Dグリッド）方式のボリュームフォグ（大気 + 局所フォグ + ライトシャフト）
 //   ・ヒストグラム方式の自動露出（Eye Adaptation）
 //   ・モーションブラー
@@ -44,7 +44,7 @@ class AdvancedEffects final
         float FogAmbient = 1.0f;       // 多重散乱近似（空の環境光）
         // 自動露出
         bool AutoExposure = false;
-        float ExposureCompensation = 0.0f; // EV
+        float ExposureCompensation = 0.0f; // 露出値（EV）
         float ExposureMinEv = -6.0f;
         float ExposureMaxEv = 8.0f;
         float ExposureSpeed = 2.5f;
@@ -73,13 +73,13 @@ class AdvancedEffects final
         return s_Available;
     }
 
-    // The dual filter bloom replaces the legacy Bloom post process while it is enabled.
+    // 有効な間は、デュアルフィルターのブルームが従来のブルーム後処理を置き換える。
     static bool IsDualBloomActive()
     {
         return s_Available && s_BloomAvailable && RenderQuality::Get().DualBloom;
     }
 
-    // Bloom follows the camera post process selection (PostProcessType::BLOOM), like the legacy pass.
+    // 従来のパスと同様、カメラの後処理選択（PostProcessType::BLOOM）に従う。
     static void SetBloomRequested(bool requested)
     {
         s_BloomRequested = requested;
@@ -251,8 +251,8 @@ class AdvancedEffects final
         s_ExposureReset = true;
     }
 
-    // Scene: linear HDR, PIXEL_SHADER_RESOURCE on entry and exit.
-    // Depth / velocity: GBuffer targets in PIXEL_SHADER_RESOURCE on entry and exit.
+    // シーンは線形 HDR。開始時と終了時の状態は PIXEL_SHADER_RESOURCE。
+    // 深度と速度は GBuffer のターゲット。開始時と終了時は PIXEL_SHADER_RESOURCE。
     static void Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource* scene, ID3D12Resource* depth,
                         ID3D12Resource* velocity, UINT frameIndex)
     {
@@ -305,7 +305,7 @@ class AdvancedEffects final
         commands->SetComputeRootDescriptorTable(2, Gpu(slot * kDescriptorsPerFrame + kSrvCount));
         const D3D12_GPU_VIRTUAL_ADDRESS lights = s_Lights->GetGPUVirtualAddress() + slot * kLightStride;
         const D3D12_GPU_VIRTUAL_ADDRESS tlas = Raytracing::GetSceneAddress();
-        // The TLAS slot is only read when FogMieColor.w (shadows available) is set.
+        // FogMieColor.w（影を利用可能）が立っている場合だけ TLAS スロットを読む。
         commands->SetComputeRootShaderResourceView(3, tlas ? tlas : lights);
         commands->SetComputeRootShaderResourceView(4, lights);
         MegaLights::BindFogCompute(commands, 5, 6, 7, 8, s_Constants->GetGPUVirtualAddress() + slot * kConstantStride,
@@ -409,7 +409,7 @@ class AdvancedEffects final
             result = ExecuteBloom(commands, slot, result, depth, dualBloom);
         }
 
-        // The scene target has no UAV flag; copy the result back.
+        // シーンターゲットには UAV フラグがないため、結果をコピーして戻す。
         vector<D3D12_RESOURCE_BARRIER> copy = {
             CD3DX12_RESOURCE_BARRIER::Transition(result, kRead, D3D12_RESOURCE_STATE_COPY_SOURCE),
             CD3DX12_RESOURCE_BARRIER::Transition(scene, kRead, D3D12_RESOURCE_STATE_COPY_DEST)};
@@ -435,8 +435,8 @@ class AdvancedEffects final
 
   private:
     static constexpr UINT kFrames = RendererState::g_kFRAME_COUNT;
-    static constexpr UINT kSrvCount = 10; // t0..t9 (t8, t9 reserved)
-    static constexpr UINT kUavCount = 6;  // u0..u5
+    static constexpr UINT kSrvCount = 10; // t0..t9（t8、t9 は予約済み）
+    static constexpr UINT kUavCount = 6;  // 書き込み先レジスター：u0～u5
     static constexpr UINT kHalfSrvOffset = kSrvCount + kUavCount, kHalfUavOffset = kHalfSrvOffset + 2;
     static constexpr UINT kDescriptorsPerFrame = kHalfUavOffset + 2;
     static constexpr UINT kMaxLights = 32;
@@ -479,10 +479,10 @@ class AdvancedEffects final
     static inline XMFLOAT4X4 s_PrevViewProjection{};
     static inline XMFLOAT3 s_PrevCamera{};
     static inline float s_LastExposureShown = 1.0f;
-    // --- Dual filter bloom / lens flare / weather overlay ---
+    // --- デュアルフィルターのブルーム / レンズフレア / 天候の重ね合わせ ---
     static constexpr UINT kMaxBloomLevels = 8;
     static constexpr UINT kBloomTablesPerFrame = kMaxBloomLevels * 2 + 1;
-    static constexpr UINT kBloomTableSize = 5; // t0..t3, u0
+    static constexpr UINT kBloomTableSize = 5; // 読み取り元レジスター：t0～t3、書き込み先レジスター：u0
     static inline bool s_BloomAvailable = false;
     static inline bool s_BloomRequested = false;
     static inline ComPtr<ID3D12RootSignature> s_BloomRoot;
@@ -598,7 +598,7 @@ class AdvancedEffects final
         return CD3DX12_GPU_DESCRIPTOR_HANDLE(s_BloomHeap->GetGPUDescriptorHandleForHeapStart(), index, s_Increment);
     }
 
-    // srvs: up to 4 (resource, mip; nullptr = null descriptor). Returns the GPU table handle.
+    // srvs は最大4個（リソース、ミップ。nullptr は null 記述子）。GPU テーブルのハンドルを返す。
     static D3D12_GPU_DESCRIPTOR_HANDLE WriteBloomTable(UINT table,
                                                        std::initializer_list<std::pair<ID3D12Resource*, UINT>> srvs,
                                                        ID3D12Resource* uav, UINT uavMip)
@@ -637,8 +637,8 @@ class AdvancedEffects final
         return BloomGpu(base);
     }
 
-    // Mip chain bloom, lens flare and rain / snow overlay. Returns the texture holding the result
-    // (the Post texture that was not the input). All textures are left in shader read state.
+    // ミップチェーンのブルーム、レンズフレア、雨雪を合成し、結果のテクスチャを返す。
+    // 結果は入力に使わなかった Post テクスチャに置き、全テクスチャをシェーダー読み取り状態にする。
     static ID3D12Resource* ExecuteBloom(ID3D12GraphicsCommandList* commands, UINT slot, ID3D12Resource* input,
                                         ID3D12Resource* depth, bool dualBloom)
     {
@@ -656,12 +656,12 @@ class AdvancedEffects final
         const auto mipSize = [](UINT size, UINT mip) {
             return (std::max)(1u, size >> mip);
         };
-        // Downsample chain.
+        // 縮小ミップチェーン。
         commands->SetPipelineState(s_BloomDownPso.Get());
         Barrier(commands, s_BloomDown.Get(), kRead, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         for (UINT level = 0; level < s_BloomLevels; ++level)
         {
-            // Each mip transitions independently: source mip -> read, destination mip stays UAV.
+            // ミップごとに遷移する。入力ミップは読み取り状態、出力ミップは UAV のままにする。
             const bool first = level == 0;
             if (!first)
             {
@@ -683,7 +683,7 @@ class AdvancedEffects final
         const auto lastToRead = CD3DX12_RESOURCE_BARRIER::Transition(
             s_BloomDown.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kRead, s_BloomLevels - 1);
         commands->ResourceBarrier(1, &lastToRead);
-        // Upsample chain: up[i] = down[i] + tent(up[i + 1]) * radius (coarsest uses down).
+        // 拡大ミップチェーン：up[i] = down[i] + tent(up[i + 1]) * radius（最粗ミップは down を使用）。
         commands->SetPipelineState(s_BloomUpPso.Get());
         Barrier(commands, s_BloomUp.Get(), kRead, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         float normalization = 1.0f, weight = 1.0f;
@@ -710,19 +710,19 @@ class AdvancedEffects final
             weight *= constants.Radius;
             normalization += weight;
         }
-        // Every up mip except the last coarsest one (never written) is now read; make the whole
-        // resource uniformly readable again.
+        // 未書き込みの最粗ミップ以外は読み取り状態になっているため、
+        // リソース全体を再び読み取り可能な状態にそろえる。
         for (UINT level = 0; level < s_BloomLevels; ++level)
         {
             if (level == 0 || level == s_BloomLevels - 1)
             {
-                // mip 0 still UAV; the coarsest up mip was never written but is in UAV state.
+                // ミップ0はまだ UAV。最粗ミップは未書き込みだが UAV 状態にある。
                 const auto toRead = CD3DX12_RESOURCE_BARRIER::Transition(
                     s_BloomUp.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kRead, level);
                 commands->ResourceBarrier(1, &toRead);
             }
         }
-        // Combine.
+        // 合成。
         const bool weather = quality.WeatherEnabled;
         constants.DestinationWidth = s_Width;
         constants.DestinationHeight = s_Height;
@@ -885,7 +885,7 @@ class AdvancedEffects final
         {
             return true;
         }
-        // Earlier frames may still reference the old textures.
+        // 先行フレームが古いテクスチャを参照している可能性がある。
         if (!GraphicsDevice::WaitForGpuIdle())
         {
             return false;
@@ -1037,8 +1037,8 @@ class AdvancedEffects final
         srv3D(s_Integrated.Get(), 5);
         srv2D(s_PostA.Get(), 6);
         srv2D(s_PostB.Get(), 7);
-        srv2D(s_PostA.Get(), 8); // reserved
-        srv2D(s_PostB.Get(), 9); // reserved
+        srv2D(s_PostA.Get(), 8); // 予約済み
+        srv2D(s_PostB.Get(), 9); // 予約済み
         uavTexture(s_Froxels[current].Get(), 0, true);
         uavTexture(s_Integrated.Get(), 1, true);
         uavTexture(s_PostA.Get(), 2, false);
@@ -1154,11 +1154,19 @@ class AdvancedEffects final
             static_cast<float>(std::clamp(settings.MotionBlurSamples, 2, 32)), motionBlur ? 1.0f : 0.0f};
         constants.DofParams = {(std::max)(0.05f, settings.FocusDistance), (std::max)(0.0f, settings.FocusRange),
                                std::clamp(settings.MaxBlurPixels, 1.0f, 48.0f), dof ? 1.0f : 0.0f};
-        // Bit 1: the physical sky already integrates its own atmosphere; like the former
-        // atmosphere pass, the background then receives no additional fog.
-        const UINT fogFlags = fog ? (1u | (air.Enabled && air.PhysicalSky ? 2u : 0u)) : 0u;
+        // ビット1：物理スカイは自身の大気をすでに積分しているため、従来の大気パスと同様に、
+        // 背景には追加のフォグを適用しない。
+        UINT fogFlags = 0;
+        if (fog)
+        {
+            fogFlags |= 1u;
+            if (air.Enabled && air.PhysicalSky)
+            {
+                fogFlags |= 2u;
+            }
+        }
         constants.Features = {fogFlags, exposure ? 1u : 0u, motionBlur ? 1u : 0u, dof ? 1u : 0u};
-        // w = 1: ExposureAdapt ignores the stored state (uninitialised buffer, re-enable).
+        // w = 1 の場合、ExposureAdapt は保存状態を無視する（未初期化バッファ、再有効化）。
         constants.FogAmbientColor.w = exposure && s_ExposureReset ? 1.0f : 0.0f;
         void* mapped = nullptr;
         const D3D12_RANGE noRead{0, 0};

@@ -11,10 +11,10 @@
 
 namespace
 {
-unordered_map<AssetHandle, unique_ptr<MaterialRuntime>> runtimes;
-AssetRegistry registry;
-bool sceneHasAssets = false;
-} // namespace
+    unordered_map<AssetHandle, unique_ptr<MaterialRuntime>> runtimes;
+    AssetRegistry registry;
+    bool sceneHasAssets = false;
+}
 
 bool SceneHasMaterialAssets()
 {
@@ -61,7 +61,7 @@ void MaterialManager::Refresh()
                 Revert(handle);
             }
         }
-        // Texture deletion/move changes the binding without changing authored GUIDs.
+        // テクスチャの削除や移動では、保存済み GUID を変更せずにバインドを更新する。
         if (!missing)
         {
             UpdateBinding(*runtime, runtime->Editing);
@@ -114,8 +114,8 @@ MaterialComponent MaterialManager::BuildPreviewBinding(const MaterialAssetData& 
     binding.AOStrength = material.AOStrength;
     binding.EmissiveColor = XMFLOAT3(material.EmissiveColor.data());
     binding.EmissiveIntensity = material.EmissiveIntensity;
-    // Optical transmission selects the transparent render path even when an
-    // older asset still stores Opaque. Alpha remains independent coverage.
+    // 旧アセットが Opaque を保存していても、光学的な透過があれば透明描画経路を選ぶ。
+    // アルファ値は独立した被覆率として扱う。
     const bool opticalTransmission = material.Transmission > 0.0f;
     binding.AssetSurface = opticalTransmission ? MaterialSurface::Transparent : material.Surface;
     binding.IsTransparent = binding.AssetSurface == MaterialSurface::Transparent;
@@ -178,7 +178,7 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
     }
     auto binding = BuildPreviewBinding(material, descriptors);
     binding.RuntimeHandle = runtime.Handle;
-    // Revision changes invalidate only a shared material record and its frame constant buffers.
+    // リビジョン変更時は、共有マテリアルレコードとそのフレーム定数バッファだけを無効化する。
     if (runtime.Revision == 0 || runtime.Binding.BaseColor.x != binding.BaseColor.x || runtime.BoundData != material ||
         runtime.TextureDescriptors != descriptors)
     {

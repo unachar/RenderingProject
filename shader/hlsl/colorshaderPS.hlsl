@@ -19,14 +19,14 @@ float4 main(PSInput2D input) : SV_Target
         float3 tangentNormal = NormalTexture.Sample(InputSampler, input.TexCoord).xyz * 2.0f - 1.0f;
         float3 tangent = float3(1.0f, 0.0f, 0.0f);
         float3 bitangent = float3(0.0f, -1.0f, 0.0f);
-        normal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal, normal);
+        normal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal,
+                                     normal);
     }
 
     float3 lightDir = normalize(float3(-0.35f, 0.45f, -1.0f));
     float lighting = saturate(dot(normalize(normal), lightDir));
     color.rgb *= lerp(0.35f, 1.0f, lighting);
-  
+
     color.rgb *= color.a;
     return color;
 }
-

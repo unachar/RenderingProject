@@ -10,120 +10,120 @@
 
 namespace
 {
-Json::Value WriteVector(const XMFLOAT3& vector)
-{
-    Json::Value result(Json::arrayValue);
-    result.append(vector.x);
-    result.append(vector.y);
-    result.append(vector.z);
-    return result;
-}
-
-bool IsFiniteArray(const Json::Value& array, Json::ArrayIndex length)
-{
-    if (!array.isArray() || array.size() != length)
+    Json::Value WriteVector(const XMFLOAT3& vector)
     {
-        return false;
+        Json::Value result(Json::arrayValue);
+        result.append(vector.x);
+        result.append(vector.y);
+        result.append(vector.z);
+        return result;
     }
-    for (const auto& value : array)
+
+    bool IsFiniteArray(const Json::Value& array, Json::ArrayIndex length)
     {
-        if (!value.isNumeric() || !isfinite(value.asFloat()))
+        if (!array.isArray() || array.size() != length)
         {
             return false;
         }
-    }
-    return true;
-}
-
-XMFLOAT3 ReadVector(const Json::Value& vector)
-{
-    return {vector[0].asFloat(), vector[1].asFloat(), vector[2].asFloat()};
-}
-
-bool ValidHandle(const Json::Value& reference)
-{
-    return reference.isString() &&
-           (ParseAssetHandle(reference.asString()) != 0 || reference.asString() == FormatAssetHandle(0));
-}
-
-bool ValidateRecord(const Json::Value& record)
-{
-    if (!record.isObject() || !record["entity"].isUInt() || !record["materialSlots"].isArray() ||
-        record["materialSlots"].size() > 4096 || (record.isMember("name") && !record["name"].isString()))
-    {
-        return false;
-    }
-    for (const auto& reference : record["materialSlots"])
-    {
-        if (!ValidHandle(reference))
+        for (const auto& value : array)
         {
-            return false;
-        }
-    }
-    if (record.isMember("identity") && !ValidHandle(record["identity"]))
-    {
-        return false;
-    }
-    if (record.isMember("transform"))
-    {
-        for (const char* property : {"position", "rotation", "scale"})
-        {
-            if (!IsFiniteArray(record["transform"][property], 3))
+            if (!value.isNumeric() || !isfinite(value.asFloat()))
             {
                 return false;
             }
         }
+        return true;
     }
-    if (record.isMember("modelPath") &&
-        (!record["modelPath"].isString() || !record["animated"].isBool() || !record["convert"].isBool()))
+
+    XMFLOAT3 ReadVector(const Json::Value& vector)
     {
-        return false;
+        return {vector[0].asFloat(), vector[1].asFloat(), vector[2].asFloat()};
     }
-    if (record.isMember("vertices"))
+
+    bool ValidHandle(const Json::Value& reference)
     {
-        if (!record["vertices"].isArray() || record["vertices"].size() > 1000000)
+        return reference.isString() &&
+               (ParseAssetHandle(reference.asString()) != 0 || reference.asString() == FormatAssetHandle(0));
+    }
+
+    bool ValidateRecord(const Json::Value& record)
+    {
+        if (!record.isObject() || !record["entity"].isUInt() || !record["materialSlots"].isArray() ||
+            record["materialSlots"].size() > 4096 || (record.isMember("name") && !record["name"].isString()))
         {
             return false;
         }
-        for (const auto& vertex : record["vertices"])
+        for (const auto& reference : record["materialSlots"])
         {
-            if (!IsFiniteArray(vertex, 12))
+            if (!ValidHandle(reference))
             {
                 return false;
             }
         }
-    }
-    return true;
-}
-
-bool MatchesSavedSource(const Json::Value& record, EntityID entity)
-{
-    if (!MaterialManager::IsRenderable(entity) || !record["name"].isString() ||
-        !ComponentManager::HasComponent<NameComponent>(entity) ||
-        ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name != record["name"].asString())
-    {
-        return false;
-    }
-    if (record["modelPath"].isString())
-    {
-        if (record["animated"].asBool())
+        if (record.isMember("identity") && !ValidHandle(record["identity"]))
         {
-            return ComponentManager::HasComponent<AnimationModelComponent>(entity) &&
-                   ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelPath ==
+            return false;
+        }
+        if (record.isMember("transform"))
+        {
+            for (const char* property : {"position", "rotation", "scale"})
+            {
+                if (!IsFiniteArray(record["transform"][property], 3))
+                {
+                    return false;
+                }
+            }
+        }
+        if (record.isMember("modelPath") &&
+            (!record["modelPath"].isString() || !record["animated"].isBool() || !record["convert"].isBool()))
+        {
+            return false;
+        }
+        if (record.isMember("vertices"))
+        {
+            if (!record["vertices"].isArray() || record["vertices"].size() > 1000000)
+            {
+                return false;
+            }
+            for (const auto& vertex : record["vertices"])
+            {
+                if (!IsFiniteArray(vertex, 12))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    bool MatchesSavedSource(const Json::Value& record, EntityID entity)
+    {
+        if (!MaterialManager::IsRenderable(entity) || !record["name"].isString() ||
+            !ComponentManager::HasComponent<NameComponent>(entity) ||
+            ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name != record["name"].asString())
+        {
+            return false;
+        }
+        if (record["modelPath"].isString())
+        {
+            if (record["animated"].asBool())
+            {
+                return ComponentManager::HasComponent<AnimationModelComponent>(entity) &&
+                       ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelPath ==
+                           record["modelPath"].asString();
+            }
+            return ComponentManager::HasComponent<StaticModelComponent>(entity) &&
+                   ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelPath ==
                        record["modelPath"].asString();
         }
-        return ComponentManager::HasComponent<StaticModelComponent>(entity) &&
-               ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelPath ==
-                   record["modelPath"].asString();
+        if (!record["meshSignature"].isString() || !ComponentManager::HasComponent<MeshComponent>(entity))
+        {
+            return false;
+        }
+        return FormatAssetHandle(ComponentManager::GetComponentUnchecked<MeshComponent>(entity).GeometryHash) ==
+               record["meshSignature"].asString();
     }
-    if (!record["meshSignature"].isString() || !ComponentManager::HasComponent<MeshComponent>(entity))
-    {
-        return false;
-    }
-    return FormatAssetHandle(ComponentManager::GetComponentUnchecked<MeshComponent>(entity).GeometryHash) ==
-           record["meshSignature"].asString();
 }
-} // namespace
 
 bool MaterialManager::SaveSceneReferences(const filesystem::path& path, string& error)
 {
@@ -217,7 +217,7 @@ bool MaterialManager::LoadSceneReferences(const filesystem::path& path, string& 
         error = "Invalid scene material reference file: " + error;
         return false;
     }
-    // Validate the complete document before changing any entity.
+    // エンティティを変更する前にドキュメント全体を検証する。
     for (const auto& record : root["entities"])
     {
         if (!ValidateRecord(record))

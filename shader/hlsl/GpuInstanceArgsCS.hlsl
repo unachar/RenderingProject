@@ -9,12 +9,9 @@ cbuffer ArgumentConstants : register(b0)
     uint IndexedDraw;
 };
 
-[numthreads(1, 1, 1)]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID)
-{
-    uint drawCounts[3] = { DrawCount0, DrawCount1, DrawCount2 };
-    [unroll]
-    for (uint lod = 0; lod < 3; ++lod)
+[numthreads(1, 1, 1)] void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
+    uint drawCounts[3] = {DrawCount0, DrawCount1, DrawCount2};
+    [unroll] for (uint lod = 0; lod < 3; ++lod)
     {
         uint baseOffset = lod * 20;
         uint instanceCount = LodCounts.Load(lod * 4);
@@ -25,4 +22,3 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         IndirectArguments.Store(baseOffset + 16, 0);
     }
 }
-

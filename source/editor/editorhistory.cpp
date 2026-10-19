@@ -18,30 +18,30 @@ using namespace EditorWidgets;
 
 namespace
 {
-void PublishHistoryChange(bool lightChanged, bool lodChanged)
-{
-    TemporalHistory::Context::NotifySceneChanged();
-    if (lightChanged)
+    void PublishHistoryChange(bool lightChanged, bool lodChanged)
     {
-        TemporalHistory::Context::NotifyLightingChanged();
+        TemporalHistory::Context::NotifySceneChanged();
+        if (lightChanged)
+        {
+            TemporalHistory::Context::NotifyLightingChanged();
+        }
+        if (lodChanged)
+        {
+            TemporalHistory::Context::NotifyLodChanged();
+        }
     }
-    if (lodChanged)
-    {
-        TemporalHistory::Context::NotifyLodChanged();
-    }
-}
 
-template <typename T> void RestoreSnapshotComponent(EntityID entity, const T& component)
-{
-    if (!ComponentManager::HasComponent<T>(entity))
+    template <typename T> void RestoreSnapshotComponent(EntityID entity, const T& component)
     {
-        ComponentManager::AddComponent(entity, ComponentTypeTraits<T>::value());
+        if (!ComponentManager::HasComponent<T>(entity))
+        {
+            ComponentManager::AddComponent(entity, ComponentTypeTraits<T>::value());
+        }
+        ComponentManager::GetComponentUnchecked<T>(entity) = component;
+        GpuSceneChanges::Notify(entity);
     }
-    ComponentManager::GetComponentUnchecked<T>(entity) = component;
-    GpuSceneChanges::Notify(entity);
-}
 
-} // namespace
+}
 
 ImGuiManager::EntitySnapshot ImGuiManager::CaptureEntity(EntityID entity)
 {
@@ -315,8 +315,8 @@ void ImGuiManager::BeginUndoCapture(EntityID entity, const EntitySnapshot& befor
     {
         return;
     }
-    // Explicit authoring edits invalidate history; simulation movement never
-    // enters this transaction path and continues through normal reprojection.
+    // 明示的な編集操作では履歴を無効化する。シミュレーションによる移動は
+    // このトランザクション経路を通らず、通常の再投影を継続する。
     PublishHistoryChange(before.HasLight, before.HasLod);
     GpuSceneChanges::Notify(entity);
     ++m_EditRevision;

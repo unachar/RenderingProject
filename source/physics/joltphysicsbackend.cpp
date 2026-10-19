@@ -315,39 +315,39 @@ class JoltPhysicsBackend final : public IPhysicsBackend
         ShapeRefC shape;
         switch (desc.Shape)
         {
-        case PhysicsShape::Mesh:
-            if (desc.MeshVertices.size() >= 4)
-            {
-                Array<Vec3> points;
-                points.reserve(desc.MeshVertices.size());
-                for (const XMFLOAT3& vertex : desc.MeshVertices)
+            case PhysicsShape::Mesh:
+                if (desc.MeshVertices.size() >= 4)
                 {
-                    points.push_back(ToJoltVector(vertex));
+                    Array<Vec3> points;
+                    points.reserve(desc.MeshVertices.size());
+                    for (const XMFLOAT3& vertex : desc.MeshVertices)
+                    {
+                        points.push_back(ToJoltVector(vertex));
+                    }
+                    ConvexHullShapeSettings hullSettings(points);
+                    ShapeSettings::ShapeResult hullResult = hullSettings.Create();
+                    if (!hullResult.HasError())
+                    {
+                        shape = hullResult.Get();
+                    }
                 }
-                ConvexHullShapeSettings hullSettings(points);
-                ShapeSettings::ShapeResult hullResult = hullSettings.Create();
-                if (!hullResult.HasError())
+                if (shape == nullptr)
                 {
-                    shape = hullResult.Get();
+                    shape = new BoxShape(Vec3(max(desc.HalfExtent.x, 0.001f), max(desc.HalfExtent.y, 0.001f),
+                                              max(desc.HalfExtent.z, 0.001f)));
                 }
-            }
-            if (shape == nullptr)
-            {
+                break;
+            case PhysicsShape::Sphere:
+                shape = new SphereShape(max(desc.Radius, 0.001f));
+                break;
+            case PhysicsShape::Capsule:
+                shape = new CapsuleShape(max(desc.Height * 0.5f, 0.001f), max(desc.Radius, 0.001f));
+                break;
+            case PhysicsShape::Box:
+            default:
                 shape = new BoxShape(Vec3(max(desc.HalfExtent.x, 0.001f), max(desc.HalfExtent.y, 0.001f),
                                           max(desc.HalfExtent.z, 0.001f)));
-            }
-            break;
-        case PhysicsShape::Sphere:
-            shape = new SphereShape(max(desc.Radius, 0.001f));
-            break;
-        case PhysicsShape::Capsule:
-            shape = new CapsuleShape(max(desc.Height * 0.5f, 0.001f), max(desc.Radius, 0.001f));
-            break;
-        case PhysicsShape::Box:
-        default:
-            shape = new BoxShape(
-                Vec3(max(desc.HalfExtent.x, 0.001f), max(desc.HalfExtent.y, 0.001f), max(desc.HalfExtent.z, 0.001f)));
-            break;
+                break;
         }
 
         EMotionType motionType = EMotionType::Dynamic;

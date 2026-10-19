@@ -236,12 +236,12 @@ bool SpatialUpscaler::IsAvailable(UpscaleMode mode)
 {
     switch (mode)
     {
-    case UpscaleMode::Fsr1:
-        return g_FsrEasuPso && g_FsrRcasPso && g_FsrScratch;
-    case UpscaleMode::Nis:
-        return g_NisPso && g_NisScaleCoefficients && g_NisUsmCoefficients;
-    default:
-        return true;
+        case UpscaleMode::Fsr1:
+            return g_FsrEasuPso && g_FsrRcasPso && g_FsrScratch;
+        case UpscaleMode::Nis:
+            return g_NisPso && g_NisScaleCoefficients && g_NisUsmCoefficients;
+        default:
+            return true;
     }
 }
 

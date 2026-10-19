@@ -102,42 +102,42 @@ static const char* GetAssimpTextureTypeName(aiTextureType type)
 {
     switch (type)
     {
-    case aiTextureType_DIFFUSE:
-        return "DIFFUSE";
-    case aiTextureType_SPECULAR:
-        return "SPECULAR";
-    case aiTextureType_AMBIENT:
-        return "AMBIENT";
-    case aiTextureType_EMISSIVE:
-        return "EMISSIVE";
-    case aiTextureType_HEIGHT:
-        return "HEIGHT";
-    case aiTextureType_NORMALS:
-        return "NORMALS";
-    case aiTextureType_SHININESS:
-        return "SHININESS";
-    case aiTextureType_OPACITY:
-        return "OPACITY";
-    case aiTextureType_DISPLACEMENT:
-        return "DISPLACEMENT";
-    case aiTextureType_LIGHTMAP:
-        return "LIGHTMAP";
-    case aiTextureType_REFLECTION:
-        return "REFLECTION";
-    case aiTextureType_BASE_COLOR:
-        return "BASE_COLOR";
-    case aiTextureType_NORMAL_CAMERA:
-        return "NORMAL_CAMERA";
-    case aiTextureType_EMISSION_COLOR:
-        return "EMISSION_COLOR";
-    case aiTextureType_METALNESS:
-        return "METALNESS";
-    case aiTextureType_DIFFUSE_ROUGHNESS:
-        return "DIFFUSE_ROUGHNESS";
-    case aiTextureType_AMBIENT_OCCLUSION:
-        return "AMBIENT_OCCLUSION";
-    default:
-        return "UNKNOWN";
+        case aiTextureType_DIFFUSE:
+            return "DIFFUSE";
+        case aiTextureType_SPECULAR:
+            return "SPECULAR";
+        case aiTextureType_AMBIENT:
+            return "AMBIENT";
+        case aiTextureType_EMISSIVE:
+            return "EMISSIVE";
+        case aiTextureType_HEIGHT:
+            return "HEIGHT";
+        case aiTextureType_NORMALS:
+            return "NORMALS";
+        case aiTextureType_SHININESS:
+            return "SHININESS";
+        case aiTextureType_OPACITY:
+            return "OPACITY";
+        case aiTextureType_DISPLACEMENT:
+            return "DISPLACEMENT";
+        case aiTextureType_LIGHTMAP:
+            return "LIGHTMAP";
+        case aiTextureType_REFLECTION:
+            return "REFLECTION";
+        case aiTextureType_BASE_COLOR:
+            return "BASE_COLOR";
+        case aiTextureType_NORMAL_CAMERA:
+            return "NORMAL_CAMERA";
+        case aiTextureType_EMISSION_COLOR:
+            return "EMISSION_COLOR";
+        case aiTextureType_METALNESS:
+            return "METALNESS";
+        case aiTextureType_DIFFUSE_ROUGHNESS:
+            return "DIFFUSE_ROUGHNESS";
+        case aiTextureType_AMBIENT_OCCLUSION:
+            return "AMBIENT_OCCLUSION";
+        default:
+            return "UNKNOWN";
     }
 }
 

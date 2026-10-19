@@ -76,7 +76,7 @@ struct MaterialAssetData
     float TransmissionRoughness = 0.02f;
     float Thickness = 0.1f;
     std::array<float, 3> AbsorptionCoefficient{0, 0, 0};
-    // Extended shading model: 0 Standard, 1 ClearCoat, 2 Sheen (cloth), 3 Skin, 4 Hair, 5 Anisotropic.
+    // 拡張シェーディングモデル: 0 標準、1 クリアコート、2 布の光沢、3 肌、4 髪、5 異方性。
     uint32_t ShadingModel = 0;
     float ShadingStrength = 1.0f;
     bool operator==(const MaterialAssetData&) const = default;
@@ -90,5 +90,5 @@ class MaterialSerializer
     static bool Save(const std::filesystem::path& path, const MaterialAssetData& material, std::string& error);
 };
 
-// Atomically replaces a file in the same directory; an unsuccessful write leaves its destination intact.
+// 同じディレクトリ内でファイルをアトミックに置換する。書き込み失敗時は置換先を保持する。
 bool WriteAssetFile(const std::filesystem::path& path, const std::string& contents, std::string& error);

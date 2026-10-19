@@ -30,15 +30,15 @@ float3 SampleBlurredBloom(float2 uv)
     const float2 texel = radius / float2(width, height);
     float3 bloom = 0.0f;
 
-    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler,uv).rgb) * 0.20f;
-    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler,uv + float2(texel.x, 0.0f)).rgb) * 0.12f;
-    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler,uv - float2(texel.x, 0.0f)).rgb) * 0.12f;
-    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler,uv + float2(0.0f, texel.y)).rgb) * 0.12f;
-    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler,uv - float2(0.0f, texel.y)).rgb) * 0.12f;
-    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler,uv + texel).rgb) * 0.08f;
-    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler,uv + float2(texel.x, -texel.y)).rgb ) * 0.08f;
-    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler,uv + float2(-texel.x, texel.y)).rgb) * 0.08f;
-    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler,uv - texel).rgb) * 0.08f;
+    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler, uv).rgb) * 0.20f;
+    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler, uv + float2(texel.x, 0.0f)).rgb) * 0.12f;
+    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler, uv - float2(texel.x, 0.0f)).rgb) * 0.12f;
+    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler, uv + float2(0.0f, texel.y)).rgb) * 0.12f;
+    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler, uv - float2(0.0f, texel.y)).rgb) * 0.12f;
+    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler, uv + texel).rgb) * 0.08f;
+    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler, uv + float2(texel.x, -texel.y)).rgb) * 0.08f;
+    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler, uv + float2(-texel.x, texel.y)).rgb) * 0.08f;
+    bloom += ExtractBloom(SceneTexture.Sample(TextureSampler, uv - texel).rgb) * 0.08f;
 
     return bloom;
 }
@@ -50,10 +50,8 @@ float4 main(PSInputPostProcess input) : SV_TARGET
     const float3 bloom = SampleBlurredBloom(input.TexCoord);
 
     const float intensity = max(Flags.y, 0.0f);
-    
+
     const float3 result = scene + bloom * intensity;
 
     return float4(ApplyLensOutput(ApplyHdrOutput(result), input.TexCoord, input.Position.xy), 1.0f);
 }
-
-

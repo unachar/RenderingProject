@@ -9,7 +9,7 @@ class Camera
     inline static EntityID m_GameCameraEntity = g_kINVALID_ENTITY;
 
   public:
-    // Call after a same-camera teleport/cut; ordinary movement is reprojected.
+    // 同じカメラのテレポートやカット後に呼ぶ。通常の移動では再投影する。
     static void NotifyCut();
     static void Create(XMFLOAT3 target = {0.0f, 3.f, 0.0f}, float fov = XM_PIDIV4);
     static EntityID CreateGameCamera(const string& name = "GameCamera", XMFLOAT3 position = {5.0f, 4.0f, -10.0f},

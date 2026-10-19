@@ -27,12 +27,12 @@ cbuffer CullLodConstants : register(b0)
     uint Padding0;
 };
 
-[numthreads(64, 1, 1)]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID)
-{
+[numthreads(64, 1, 1)] void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     const uint index = dispatchThreadId.x;
     if (index >= CandidateCount)
+    {
         return;
+    }
 
     InstanceInput instance = CandidateInstances[index];
     if (EnableFrustumCulling != 0 && instance.LodDistances.z >= 0.5f)
@@ -42,12 +42,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         float scaleY = length(instance.World[1].xyz);
         float scaleZ = length(instance.World[2].xyz);
         float worldRadius = length(instance.LocalExtents.xyz) * max(scaleX, max(scaleY, scaleZ));
-        [unroll]
-        for (uint planeIndex = 0; planeIndex < 6; ++planeIndex)
+        [unroll] for (uint planeIndex = 0; planeIndex < 6; ++planeIndex)
         {
             float signedDistance = dot(float4(worldCenter, 1.0f), FrustumPlanes[planeIndex]);
             if (signedDistance < -worldRadius)
+            {
                 return;
+            }
         }
     }
 
@@ -55,19 +56,28 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float distanceToCamera = length(worldPosition - CameraPosition.xyz);
     uint lod = 0;
     if (AvailableLodCount > 2 && distanceToCamera >= instance.LodDistances.y)
+    {
         lod = 2;
+    }
     else if (AvailableLodCount > 1 && distanceToCamera >= instance.LodDistances.x)
+    {
         lod = 1;
+    }
 
     uint destination = 0;
     LodCounts.InterlockedAdd(lod * 4, 1, destination);
     InstanceTransform output;
     output.World = instance.World;
     if (lod == 0)
+    {
         Lod0Instances[destination] = output;
+    }
     else if (lod == 1)
+    {
         Lod1Instances[destination] = output;
+    }
     else
+    {
         Lod2Instances[destination] = output;
+    }
 }
-

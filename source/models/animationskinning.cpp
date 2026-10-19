@@ -251,8 +251,8 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
     {
         return;
     }
-    // A material can enable outlines on a later frame without changing the pose.
-    // Upload the cached pose to this frame slot before generating only outlines.
+    // 姿勢が変わらなくても、後続フレームでマテリアルの輪郭線が有効になる場合がある。
+    // 輪郭線だけを生成する前に、キャッシュした姿勢を現在のフレームスロットへアップロードする。
     const UINT boneFrame = GraphicsDevice::GetFrameIndex() % RendererState::g_kFRAME_COUNT;
     if (!work.Base && work.Outlines && m_pBoneBufferMapped[boneFrame] && !m_BoneMatricesScratch.empty())
     {

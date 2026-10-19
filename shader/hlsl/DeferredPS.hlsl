@@ -19,7 +19,10 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     uint4 metadata = gSceneMaterials.Load4(address + 32u);
     uint normalTextureIndex = metadata.y;
 #ifndef SHADER_VISIBILITY_RESOLVE
-    if ((metadata.z & 4u) == 0 && !frontFace) discard;
+    if ((metadata.z & 4u) == 0 && !frontFace)
+    {
+        discard;
+    }
 #endif
     int UseTexture = (metadata.z & 1u) != 0;
     int FlipNormal = 0;
@@ -48,9 +51,11 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     {
 #ifdef SHADER_GPU_DRIVEN
 #ifdef SHADER_VISIBILITY_RESOLVE
-        baseColor *= gSceneTextures[NonUniformResourceIndex(SceneTextureIndex(metadata.x))].SampleGrad(g_SamplerState,In.TexCoord,VisibilityUvDx,VisibilityUvDy);
+        baseColor *= gSceneTextures[NonUniformResourceIndex(SceneTextureIndex(metadata.x))].SampleGrad(
+            g_SamplerState, In.TexCoord, VisibilityUvDx, VisibilityUvDy);
 #else
-        baseColor *= gSceneTextures[NonUniformResourceIndex(SceneTextureIndex(metadata.x))].Sample(g_SamplerState, In.TexCoord);
+        baseColor *=
+            gSceneTextures[NonUniformResourceIndex(SceneTextureIndex(metadata.x))].Sample(g_SamplerState, In.TexCoord);
 #endif
 #else
         baseColor *= g_Texture.Sample(g_SamplerState, In.TexCoord);
@@ -60,7 +65,8 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     float assetMetallic = mMetallic;
     float assetRoughness = mRoughness;
     float4 assetEmissionAO;
-    ApplyAssetMaterial(assetMaterial, In.TexCoord, g_SamplerState, baseColor, assetMetallic, assetRoughness, assetEmissionAO);
+    ApplyAssetMaterial(assetMaterial, In.TexCoord, g_SamplerState, baseColor, assetMetallic, assetRoughness,
+                       assetEmissionAO);
 #ifndef SHADER_VISIBILITY_RESOLVE
     clip(baseColor.a - 0.01f);
 #endif
@@ -68,20 +74,22 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     float3 normal = In.Normal.xyz * ((FlipNormal != 0) ? -1.0f : 1.0f);
 
 #ifdef SHADER_GPU_DRIVEN
-    bool hasNormalMap = normalTextureIndex != 0xffffffffu &&
-        normalTextureIndex >= TextureBase &&
-        normalTextureIndex - TextureBase < 512u;
+    bool hasNormalMap = normalTextureIndex != 0xffffffffu && normalTextureIndex >= TextureBase &&
+                        normalTextureIndex - TextureBase < 512u;
 
-    // The default scene texture is not a flat normal map; never sample it as one.
-    [branch]
-    if (hasNormalMap)
+    // シーン既定のテクスチャは平坦な法線マップではないため、法線としてサンプリングしない。
+    [branch] if (hasNormalMap)
     {
         uint textureIndex = SceneTextureIndex(normalTextureIndex);
 #ifdef SHADER_VISIBILITY_RESOLVE
-        float3 tangentNormal=gSceneTextures[NonUniformResourceIndex(textureIndex)].SampleGrad(g_SamplerState,In.TexCoord,VisibilityUvDx,VisibilityUvDy).xyz*2-1;
-#else
         float3 tangentNormal = gSceneTextures[NonUniformResourceIndex(textureIndex)]
-            .Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
+                                       .SampleGrad(g_SamplerState, In.TexCoord, VisibilityUvDx, VisibilityUvDy)
+                                       .xyz *
+                                   2 -
+                               1;
+#else
+        float3 tangentNormal =
+            gSceneTextures[NonUniformResourceIndex(textureIndex)].Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
 #endif
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }
@@ -99,8 +107,6 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     output.EmissionAO = assetEmissionAO;
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
-
-
 
     output.Depth = saturate(In.Position.z);
 
@@ -123,13 +129,11 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     if (VisibilityDebugMode != 0)
     {
         uint4 visibility = gVisibilityDebug[In.InstanceID];
-        const float3 palette[8] = {float3(0.1, 1, 0.2), float3(0.1, 0.5, 1), float3(1, 0.8, 0.1), float3(1, 0.3, 0.1),
-            float3(0.7, 0.2, 1), float3(0.2, 1, 1), float3(1, 0.2, 0.7), float3(0.8, 0.8, 0.8)};
+        const float3 palette[8] = {float3(0.1, 1, 0.2), float3(0.1, 0.5, 1),  float3(1, 0.8, 0.1),
+                                   float3(1, 0.3, 0.1), float3(0.7, 0.2, 1),  float3(0.2, 1, 1),
+                                   float3(1, 0.2, 0.7), float3(0.8, 0.8, 0.8)};
         output.Color.rgb = VisibilityDebugMode == 2 ? palette[min(visibility.z, 7u)] : float3(0.1, 1, 0.2);
     }
 #endif
     return output;
 }
-
-
-

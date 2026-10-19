@@ -18,11 +18,13 @@ $environmentBackup = @{}
 foreach ($name in $names) {
     $environmentBackup[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
-# Normal startup restores the user's scene; preserve settings written on shutdown.
+# 通常起動ではユーザーのシーンを復元するため、終了時に書き込まれる設定を退避する。
 $settingsBackup = @{}
 foreach ($name in @('project_environment.cfg', 'editor_layout.cfg', 'scene_materials.json')) {
     $path = Join-Path $workspace "Save/$name"
-    if (Test-Path $path) { $settingsBackup[$path] = [IO.File]::ReadAllBytes($path) }
+    if (Test-Path $path) {
+        $settingsBackup[$path] = [IO.File]::ReadAllBytes($path)
+    }
 }
 try {
     $env:DX12_STARTUP_TIMING = '1'
@@ -45,7 +47,9 @@ try {
     for ($run = 1; $run -le $Runs; ++$run) {
         $logPath = Join-Path $workspace 'init_log.txt'
         $offset = 0
-        if (Test-Path $logPath) { $offset = (Get-Item $logPath).Length }
+        if (Test-Path $logPath) {
+            $offset = (Get-Item $logPath).Length
+        }
         $deviceLogPath = Join-Path $workspace 'device_removed.log'
         $deviceLogLength = 0
         if (Test-Path -LiteralPath $deviceLogPath) {
@@ -56,7 +60,9 @@ try {
         try {
             $timeout = [Diagnostics.Stopwatch]::StartNew()
             while (-not $process.WaitForExit(1000)) {
-                if ($timeout.Elapsed.TotalSeconds -gt 180) { throw 'Startup smoke exceeded 180 seconds.' }
+                if ($timeout.Elapsed.TotalSeconds -gt 180) {
+                    throw 'Startup smoke exceeded 180 seconds.'
+                }
             }
             $process.Refresh()
             $stream = [IO.File]::OpenRead($logPath)
@@ -66,7 +72,9 @@ try {
                 $runLog = $reader.ReadToEnd()
                 $reader.Dispose()
             }
-            finally { $stream.Dispose() }
+            finally {
+                $stream.Dispose()
+            }
             $destination = Join-Path $outputDirectory "$Label-$Configuration-$run.log"
             Set-Content -LiteralPath $destination -Value $runLog -Encoding utf8
             if ($process.ExitCode -ne 0 -or $runLog -notmatch 'startup smoke test complete; shutdown complete') {
@@ -78,7 +86,9 @@ try {
             }
             $shown = [regex]::Match($runLog, '\[startup ([\d.]+) ms\] Step: window shown')
             $ready = [regex]::Match($runLog, '\[startup ([\d.]+) ms\] Step: first frame complete')
-            if (-not $shown.Success -or -not $ready.Success) { throw "Missing startup timings: $destination" }
+            if (-not $shown.Success -or -not $ready.Success) {
+                throw "Missing startup timings: $destination"
+            }
             $culture = [Globalization.CultureInfo]::InvariantCulture
             $duration = [double]::Parse($ready.Groups[1].Value, $culture) -
                 [double]::Parse($shown.Groups[1].Value, $culture)
@@ -91,14 +101,17 @@ try {
             }
         }
         finally {
-            if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit() }
+            if (-not $process.HasExited) {
+                $process.Kill()
+                $process.WaitForExit()
+            }
             $process.Dispose()
         }
     }
 }
 finally {
     foreach ($path in $settingsBackup.Keys) {
-        # The editor or an IDE may still map the original file after the process exits.
+        # プロセス終了後も、エディターやIDEが元のファイルをメモリへマップしている場合がある。
         $restorePath = "$path.startup-restore"
         [IO.File]::WriteAllBytes($restorePath, $settingsBackup[$path])
         Move-Item -LiteralPath $restorePath -Destination $path -Force

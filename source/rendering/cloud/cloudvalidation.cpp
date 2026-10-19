@@ -19,208 +19,211 @@
 
 namespace
 {
-UINT g_Failures = 0;
-UINT g_LastFrame = 0;
-uint64_t g_NoiseHash = 0;
-double g_InitialOpacity = 0;
-double g_InitialRadiance = 0;
-double g_LowerLayerOpacity = 0;
-double g_UpperLayerOpacity = 0;
-double g_TwoLayerOpacity = 0;
-double g_ShadowedReceiverRadiance = 0;
-double g_ShadowedCloudOpacity = 0;
-double g_ConnectedSunRadiance = 0;
-RenderCapture::TextureData g_ConnectedSunCloud;
-EntityID g_UnrelatedDirectional = g_kINVALID_ENTITY;
-bool g_SawGpuTiming = false;
-UINT g_RecordedFrameIndex = 0;
-RenderCapture::TextureData g_CloudHdr;
-vector<uint8_t> g_ForegroundMask;
+    UINT g_Failures = 0;
+    UINT g_LastFrame = 0;
+    uint64_t g_NoiseHash = 0;
+    double g_InitialOpacity = 0;
+    double g_InitialRadiance = 0;
+    double g_LowerLayerOpacity = 0;
+    double g_UpperLayerOpacity = 0;
+    double g_TwoLayerOpacity = 0;
+    double g_ShadowedReceiverRadiance = 0;
+    double g_ShadowedCloudOpacity = 0;
+    double g_ConnectedSunRadiance = 0;
+    RenderCapture::TextureData g_ConnectedSunCloud;
+    EntityID g_UnrelatedDirectional = g_kINVALID_ENTITY;
+    bool g_SawGpuTiming = false;
+    UINT g_RecordedFrameIndex = 0;
+    RenderCapture::TextureData g_CloudHdr;
+    vector<uint8_t> g_ForegroundMask;
 
-struct TimingConfiguration
-{
-    UINT Width;
-    UINT Height;
-    int ViewSteps;
-    int LightSteps;
-};
-
-vector<TimingConfiguration> g_Configurations;
-array<vector<double>, 3> g_BenchmarkMs;
-uint64_t g_LastTimingSerial = 0;
-
-void Check(bool condition, const char* message)
-{
-    WriteGraphicsLog("Cloud validation: %s %s\n", condition ? "PASS" : "FAIL", message);
-    if (!condition)
+    struct TimingConfiguration
     {
-        ++g_Failures;
-    }
-}
+        UINT Width;
+        UINT Height;
+        int ViewSteps;
+        int LightSteps;
+    };
 
-uint64_t NoiseHash()
-{
-    RenderCapture::TextureData noise;
-    if (!RenderCapture::ReadTexture(CloudRenderer::GetBaseNoiseResource(), noise))
+    vector<TimingConfiguration> g_Configurations;
+    array<vector<double>, 3> g_BenchmarkMs;
+    uint64_t g_LastTimingSerial = 0;
+
+    void Check(bool condition, const char* message)
     {
-        return 0;
-    }
-    uint64_t hash = 1469598103934665603ull;
-    const UINT depth = CloudRenderer::GetBaseNoiseResource()->GetDesc().DepthOrArraySize;
-    const UINT bytesPerVoxel = noise.Format == DXGI_FORMAT_R8_UNORM ? 1 : 2;
-    for (UINT z = 0; z < depth; ++z)
-    {
-        for (UINT y = 0; y < noise.Height; ++y)
+        WriteGraphicsLog("Cloud validation: %s %s\n", condition ? "PASS" : "FAIL", message);
+        if (!condition)
         {
-            for (UINT x = 0; x < noise.Width * bytesPerVoxel; ++x)
-            {
-                hash ^= noise.Bytes[(z * noise.Height + y) * noise.RowPitch + x];
-                hash *= 1099511628211ull;
-            }
+            ++g_Failures;
         }
     }
-    return hash;
-}
 
-void ValidateSceneOcclusion(const RenderCapture::TextureData& cloud)
-{
-    RenderCapture::TextureData depth, material;
-    const bool read = RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::DEPTH), depth) &&
-                      RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::MATERIAL), material);
-    Check(read && depth.Format == DXGI_FORMAT_R32_FLOAT, "read scene depth for occlusion oracle");
-    if (!read)
+    uint64_t NoiseHash()
     {
-        return;
-    }
-    XMMATRIX view, projection;
-    const auto camera = Camera::GetCameraEntity();
-    Camera::GetCameraMatrices(camera, view, projection);
-    const XMMATRIX inverse = XMMatrixInverse(nullptr, view * projection);
-    const auto position = ComponentManager::GetComponentUnchecked<TransformComponent>(camera).Position;
-    const auto& settings = CloudRenderer::GetSettings();
-    UINT tested = 0;
-    bool occluded = true;
-    for (UINT y = 0; y < cloud.Height; ++y)
-    {
-        const UINT fullY = min(depth.Height - 1, static_cast<UINT>((y + 0.5f) / cloud.Height * depth.Height));
-        const auto* depthRow = reinterpret_cast<const float*>(depth.Bytes.data() + fullY * depth.RowPitch);
-        const auto* materialRow = reinterpret_cast<const uint16_t*>(material.Bytes.data() + fullY * material.RowPitch);
-        const auto* cloudRow = reinterpret_cast<const uint16_t*>(cloud.Bytes.data() + y * cloud.RowPitch);
-        for (UINT x = 0; x < cloud.Width; ++x)
+        RenderCapture::TextureData noise;
+        if (!RenderCapture::ReadTexture(CloudRenderer::GetBaseNoiseResource(), noise))
         {
-            const UINT fullX = min(depth.Width - 1, static_cast<UINT>((x + 0.5f) / cloud.Width * depth.Width));
-            if (RenderCapture::HalfToFloat(materialRow[fullX * 4 + 3]) < -0.5f || depthRow[fullX] >= 0.999999f)
+            return 0;
+        }
+        uint64_t hash = 1469598103934665603ull;
+        const UINT depth = CloudRenderer::GetBaseNoiseResource()->GetDesc().DepthOrArraySize;
+        const UINT bytesPerVoxel = noise.Format == DXGI_FORMAT_R8_UNORM ? 1 : 2;
+        for (UINT z = 0; z < depth; ++z)
+        {
+            for (UINT y = 0; y < noise.Height; ++y)
             {
-                continue;
-            }
-            const float uvX = (x + 0.5f) / cloud.Width;
-            const float uvY = (y + 0.5f) / cloud.Height;
-            XMFLOAT3 world;
-            XMStoreFloat3(&world,
-                          XMVector3TransformCoord(XMVectorSet(uvX * 2 - 1, 1 - uvY * 2, depthRow[fullX], 1), inverse));
-            // The camera is below the cloud slab: geometry below its bottom cannot contain cloud.
-            if (position.y < settings.BottomHeight && world.y < settings.BottomHeight - 0.01f)
-            {
-                // Raster interpolation and CPU UV division can choose adjacent full-res
-                // texels at exact integer boundaries. Test interior footprints here;
-                // the final HDR comparison below includes every silhouette pixel.
-                bool interior = fullX > 0 && fullY > 0 && fullX + 1 < depth.Width && fullY + 1 < depth.Height;
-                for (int row = -1; row <= 1 && interior; ++row)
+                for (UINT x = 0; x < noise.Width * bytesPerVoxel; ++x)
                 {
-                    for (int column = -1; column <= 1 && interior; ++column)
-                    {
-                        const UINT nearX = fullX + column;
-                        const UINT nearY = fullY + row;
-                        const auto* nearDepth =
-                            reinterpret_cast<const float*>(depth.Bytes.data() + nearY * depth.RowPitch);
-                        const auto* nearMaterial =
-                            reinterpret_cast<const uint16_t*>(material.Bytes.data() + nearY * material.RowPitch);
-                        const float ndcX = (nearX + 0.5f) / depth.Width * 2 - 1;
-                        const float ndcY = 1 - (nearY + 0.5f) / depth.Height * 2;
-                        const float nearWorldY = XMVectorGetY(
-                            XMVector3TransformCoord(XMVectorSet(ndcX, ndcY, nearDepth[nearX], 1), inverse));
-                        interior &= RenderCapture::HalfToFloat(nearMaterial[nearX * 4 + 3]) >= -0.5f &&
-                                    nearWorldY < settings.BottomHeight - 0.1f;
-                    }
+                    hash ^= noise.Bytes[(z * noise.Height + y) * noise.RowPitch + x];
+                    hash *= 1099511628211ull;
                 }
-                if (!interior)
+            }
+        }
+        return hash;
+    }
+
+    void ValidateSceneOcclusion(const RenderCapture::TextureData& cloud)
+    {
+        RenderCapture::TextureData depth, material;
+        const bool read =
+            RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::DEPTH), depth) &&
+            RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::MATERIAL), material);
+        Check(read && depth.Format == DXGI_FORMAT_R32_FLOAT, "read scene depth for occlusion oracle");
+        if (!read)
+        {
+            return;
+        }
+        XMMATRIX view, projection;
+        const auto camera = Camera::GetCameraEntity();
+        Camera::GetCameraMatrices(camera, view, projection);
+        const XMMATRIX inverse = XMMatrixInverse(nullptr, view * projection);
+        const auto position = ComponentManager::GetComponentUnchecked<TransformComponent>(camera).Position;
+        const auto& settings = CloudRenderer::GetSettings();
+        UINT tested = 0;
+        bool occluded = true;
+        for (UINT y = 0; y < cloud.Height; ++y)
+        {
+            const UINT fullY = min(depth.Height - 1, static_cast<UINT>((y + 0.5f) / cloud.Height * depth.Height));
+            const auto* depthRow = reinterpret_cast<const float*>(depth.Bytes.data() + fullY * depth.RowPitch);
+            const auto* materialRow =
+                reinterpret_cast<const uint16_t*>(material.Bytes.data() + fullY * material.RowPitch);
+            const auto* cloudRow = reinterpret_cast<const uint16_t*>(cloud.Bytes.data() + y * cloud.RowPitch);
+            for (UINT x = 0; x < cloud.Width; ++x)
+            {
+                const UINT fullX = min(depth.Width - 1, static_cast<UINT>((x + 0.5f) / cloud.Width * depth.Width));
+                if (RenderCapture::HalfToFloat(materialRow[fullX * 4 + 3]) < -0.5f || depthRow[fullX] >= 0.999999f)
                 {
                     continue;
                 }
-                ++tested;
-                occluded &= RenderCapture::HalfToFloat(cloudRow[x * 4 + 3]) == 1;
-                for (UINT channel = 0; channel < 3; ++channel)
+                const float uvX = (x + 0.5f) / cloud.Width;
+                const float uvY = (y + 0.5f) / cloud.Height;
+                XMFLOAT3 world;
+                XMStoreFloat3(&world, XMVector3TransformCoord(XMVectorSet(uvX * 2 - 1, 1 - uvY * 2, depthRow[fullX], 1),
+                                                              inverse));
+                // カメラが雲の層より下にあるため、層の底より低いジオメトリには雲が含まれない。
+                if (position.y < settings.BottomHeight && world.y < settings.BottomHeight - 0.01f)
                 {
-                    occluded &= RenderCapture::HalfToFloat(cloudRow[x * 4 + channel]) == 0;
-                }
-            }
-        }
-    }
-    WriteGraphicsLog("Cloud occlusion: checked foreground pixels=%u\n", tested);
-    Check(tested > 100 && occluded, "foreground geometry clips cloud ray before layer entry");
-    Check(RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), g_CloudHdr), "read final HDR composite");
-    g_ForegroundMask.assign(static_cast<size_t>(depth.Width) * depth.Height, 0);
-    for (UINT y = 0; y < depth.Height; ++y)
-    {
-        const auto* depths = reinterpret_cast<const float*>(depth.Bytes.data() + y * depth.RowPitch);
-        const auto* materials = reinterpret_cast<const uint16_t*>(material.Bytes.data() + y * material.RowPitch);
-        for (UINT x = 0; x < depth.Width; ++x)
-        {
-            if (RenderCapture::HalfToFloat(materials[x * 4 + 3]) < -0.5f || depths[x] >= 0.999999f)
-            {
-                continue;
-            }
-            const float uvX = (x + 0.5f) / depth.Width;
-            const float uvY = (y + 0.5f) / depth.Height;
-            const float worldY =
-                XMVectorGetY(XMVector3TransformCoord(XMVectorSet(uvX * 2 - 1, 1 - uvY * 2, depths[x], 1), inverse));
-            g_ForegroundMask[y * depth.Width + x] = worldY < settings.BottomHeight - 0.01f;
-        }
-    }
-}
-
-void ValidateCompositeForeground()
-{
-    RenderCapture::TextureData clearHdr;
-    const bool read = RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), clearHdr);
-    const bool compatible = read && clearHdr.Width == g_CloudHdr.Width && clearHdr.Height == g_CloudHdr.Height &&
-                            clearHdr.Format == DXGI_FORMAT_R16G16B16A16_FLOAT && g_CloudHdr.Format == clearHdr.Format &&
-                            g_ForegroundMask.size() == static_cast<size_t>(clearHdr.Width) * clearHdr.Height &&
-                            !clearHdr.Bytes.empty() && !g_CloudHdr.Bytes.empty();
-    Check(compatible, "read HDR reference without cloud shadows");
-    if (!compatible)
-    {
-        return;
-    }
-    UINT tested = 0;
-    bool attenuated = true;
-    UINT shadowed = 0;
-    for (UINT y = 0; y < clearHdr.Height; ++y)
-    {
-        const auto* actual = reinterpret_cast<const uint16_t*>(g_CloudHdr.Bytes.data() + y * g_CloudHdr.RowPitch);
-        const auto* reference = reinterpret_cast<const uint16_t*>(clearHdr.Bytes.data() + y * clearHdr.RowPitch);
-        for (UINT x = 0; x < clearHdr.Width; ++x)
-        {
-            if (g_ForegroundMask[y * clearHdr.Width + x])
-            {
-                ++tested;
-                for (UINT channel = 0; channel < 3; ++channel)
-                {
-                    const float lit = RenderCapture::HalfToFloat(reference[x * 4 + channel]);
-                    const float shaded = RenderCapture::HalfToFloat(actual[x * 4 + channel]);
-                    attenuated &= shaded <= lit + 0.002f;
-                    if (lit - shaded > 0.005f)
+                    // 整数境界では、ラスタ補間と CPU の UV 除算が隣接する全解像度テクセルを選ぶことがある。
+                    // ここでは内側のサンプル範囲を検証する。
+                    // 下記の最終 HDR 比較では、シルエットの全ピクセルを含める。
+                    bool interior = fullX > 0 && fullY > 0 && fullX + 1 < depth.Width && fullY + 1 < depth.Height;
+                    for (int row = -1; row <= 1 && interior; ++row)
                     {
-                        ++shadowed;
+                        for (int column = -1; column <= 1 && interior; ++column)
+                        {
+                            const UINT nearX = fullX + column;
+                            const UINT nearY = fullY + row;
+                            const auto* nearDepth =
+                                reinterpret_cast<const float*>(depth.Bytes.data() + nearY * depth.RowPitch);
+                            const auto* nearMaterial =
+                                reinterpret_cast<const uint16_t*>(material.Bytes.data() + nearY * material.RowPitch);
+                            const float ndcX = (nearX + 0.5f) / depth.Width * 2 - 1;
+                            const float ndcY = 1 - (nearY + 0.5f) / depth.Height * 2;
+                            const float nearWorldY = XMVectorGetY(
+                                XMVector3TransformCoord(XMVectorSet(ndcX, ndcY, nearDepth[nearX], 1), inverse));
+                            interior &= RenderCapture::HalfToFloat(nearMaterial[nearX * 4 + 3]) >= -0.5f &&
+                                        nearWorldY < settings.BottomHeight - 0.1f;
+                        }
+                    }
+                    if (!interior)
+                    {
+                        continue;
+                    }
+                    ++tested;
+                    occluded &= RenderCapture::HalfToFloat(cloudRow[x * 4 + 3]) == 1;
+                    for (UINT channel = 0; channel < 3; ++channel)
+                    {
+                        occluded &= RenderCapture::HalfToFloat(cloudRow[x * 4 + channel]) == 0;
                     }
                 }
             }
         }
+        WriteGraphicsLog("Cloud occlusion: checked foreground pixels=%u\n", tested);
+        Check(tested > 100 && occluded, "foreground geometry clips cloud ray before layer entry");
+        Check(RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), g_CloudHdr), "read final HDR composite");
+        g_ForegroundMask.assign(static_cast<size_t>(depth.Width) * depth.Height, 0);
+        for (UINT y = 0; y < depth.Height; ++y)
+        {
+            const auto* depths = reinterpret_cast<const float*>(depth.Bytes.data() + y * depth.RowPitch);
+            const auto* materials = reinterpret_cast<const uint16_t*>(material.Bytes.data() + y * material.RowPitch);
+            for (UINT x = 0; x < depth.Width; ++x)
+            {
+                if (RenderCapture::HalfToFloat(materials[x * 4 + 3]) < -0.5f || depths[x] >= 0.999999f)
+                {
+                    continue;
+                }
+                const float uvX = (x + 0.5f) / depth.Width;
+                const float uvY = (y + 0.5f) / depth.Height;
+                const float worldY =
+                    XMVectorGetY(XMVector3TransformCoord(XMVectorSet(uvX * 2 - 1, 1 - uvY * 2, depths[x], 1), inverse));
+                g_ForegroundMask[y * depth.Width + x] = worldY < settings.BottomHeight - 0.01f;
+            }
+        }
     }
-    Check(tested > 100 && attenuated, "cloud shadow only attenuates foreground illumination");
-    Check(shadowed > 100, "clouds cast measurable shadows on foreground receivers");
-}
-} // namespace
+
+    void ValidateCompositeForeground()
+    {
+        RenderCapture::TextureData clearHdr;
+        const bool read = RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), clearHdr);
+        const bool compatible = read && clearHdr.Width == g_CloudHdr.Width && clearHdr.Height == g_CloudHdr.Height &&
+                                clearHdr.Format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
+                                g_CloudHdr.Format == clearHdr.Format &&
+                                g_ForegroundMask.size() == static_cast<size_t>(clearHdr.Width) * clearHdr.Height &&
+                                !clearHdr.Bytes.empty() && !g_CloudHdr.Bytes.empty();
+        Check(compatible, "read HDR reference without cloud shadows");
+        if (!compatible)
+        {
+            return;
+        }
+        UINT tested = 0;
+        bool attenuated = true;
+        UINT shadowed = 0;
+        for (UINT y = 0; y < clearHdr.Height; ++y)
+        {
+            const auto* actual = reinterpret_cast<const uint16_t*>(g_CloudHdr.Bytes.data() + y * g_CloudHdr.RowPitch);
+            const auto* reference = reinterpret_cast<const uint16_t*>(clearHdr.Bytes.data() + y * clearHdr.RowPitch);
+            for (UINT x = 0; x < clearHdr.Width; ++x)
+            {
+                if (g_ForegroundMask[y * clearHdr.Width + x])
+                {
+                    ++tested;
+                    for (UINT channel = 0; channel < 3; ++channel)
+                    {
+                        const float lit = RenderCapture::HalfToFloat(reference[x * 4 + channel]);
+                        const float shaded = RenderCapture::HalfToFloat(actual[x * 4 + channel]);
+                        attenuated &= shaded <= lit + 0.002f;
+                        if (lit - shaded > 0.005f)
+                        {
+                            ++shadowed;
+                        }
+                    }
+                }
+            }
+        }
+        Check(tested > 100 && attenuated, "cloud shadow only attenuates foreground illumination");
+        Check(shadowed > 100, "clouds cast measurable shadows on foreground receivers");
+    }
+} // 名前空間
 
 bool CloudValidation::Enabled()
 {
@@ -244,7 +247,7 @@ void CloudValidation::BeforeFrame(uint64_t frame)
     {
         RenderConfiguration::Resize(1920, 1080);
     }
-    // Resize may select a new swap-chain index.
+    // リサイズでスワップチェーンのインデックスが変わる可能性がある。
     g_RecordedFrameIndex = GraphicsDevice::GetFrameIndex();
     RenderConfiguration::SetHdr(true);
     RenderConfiguration::SetRenderMode(RenderMode::DEFERRED);
@@ -277,12 +280,20 @@ void CloudValidation::BeforeFrame(uint64_t frame)
     view.Target = {0, 12, 40};
     view.AllowUserControl = false;
     transform.IsDirty = true;
-    // The selected solar light drives daylight; a shared virtual moon lights night.
+    // 選択した太陽光が昼を照らし、共通の仮想的な月が夜を照らす。
     for (auto id : World::GetView<LightComponent>())
     {
         auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(id);
         light.IsActive = true;
-        light.Intensity = frame >= 44 && frame < 48 ? 0.0f : frame >= 48 && frame < 52 ? 100.0f : 3.0f;
+        light.Intensity = 3.0f;
+        if (frame >= 44 && frame < 48)
+        {
+            light.Intensity = 0.0f;
+        }
+        else if (frame >= 48 && frame < 52)
+        {
+            light.Intensity = 100.0f;
+        }
         light.Color = {1, 0.9f, 0.75f, 1};
         auto& sun = ComponentManager::GetComponentUnchecked<TransformComponent>(id);
         sun.Position = frame >= 48 && frame < 52 ? XMFLOAT3{0, 1, -8} : XMFLOAT3{0, 8, -8};
@@ -291,61 +302,61 @@ void CloudValidation::BeforeFrame(uint64_t frame)
     const UINT scenario = static_cast<UINT>(frame / 4);
     switch (scenario)
     {
-    case 1:
-        settings.Coverage = 0;
-        break;
-    case 2:
-        settings.Density = 0;
-        break;
-    case 3:
-        transform.Position.y = 30;
-        view.Target.y = 31;
-        break;
-    case 4:
-        transform.Position.y = 60;
-        view.Target.y = 0;
-        break;
-    case 5:
-        view.Target.y = transform.Position.y;
-        break;
-    case 6:
-        transform.Position.y = 30;
-        view.Target.y = 30;
-        break;
-    case 7:
-        view.Target = {0.001f, 50, -8};
-        break;
-    case 8:
-        view.Target = {0.001f, -50, -8};
-        break;
-    case 9:
-        settings.TopHeight = settings.BottomHeight + 0.01f;
-        break;
-    case 10:
-        settings.TopHeight = 400;
-        settings.Density = 10;
-        settings.Coverage = 1;
-        break;
-    case 13:
-        settings.ApplyQuality(CloudQuality::Low);
-        break;
-    case 14:
-        settings.ApplyQuality(CloudQuality::Medium);
-        break;
-    case 15:
-        settings.ApplyQuality(CloudQuality::High);
-        break;
-    case 16:
-        settings.ResolutionScale = 1;
-        break;
-    case 17:
-        settings.Seed = 1338;
-        break;
-    case 20:
-        settings.WindSpeed = 1000;
-        break;
-    default:
-        break;
+        case 1:
+            settings.Coverage = 0;
+            break;
+        case 2:
+            settings.Density = 0;
+            break;
+        case 3:
+            transform.Position.y = 30;
+            view.Target.y = 31;
+            break;
+        case 4:
+            transform.Position.y = 60;
+            view.Target.y = 0;
+            break;
+        case 5:
+            view.Target.y = transform.Position.y;
+            break;
+        case 6:
+            transform.Position.y = 30;
+            view.Target.y = 30;
+            break;
+        case 7:
+            view.Target = {0.001f, 50, -8};
+            break;
+        case 8:
+            view.Target = {0.001f, -50, -8};
+            break;
+        case 9:
+            settings.TopHeight = settings.BottomHeight + 0.01f;
+            break;
+        case 10:
+            settings.TopHeight = 400;
+            settings.Density = 10;
+            settings.Coverage = 1;
+            break;
+        case 13:
+            settings.ApplyQuality(CloudQuality::Low);
+            break;
+        case 14:
+            settings.ApplyQuality(CloudQuality::Medium);
+            break;
+        case 15:
+            settings.ApplyQuality(CloudQuality::High);
+            break;
+        case 16:
+            settings.ResolutionScale = 1;
+            break;
+        case 17:
+            settings.Seed = 1338;
+            break;
+        case 20:
+            settings.WindSpeed = 1000;
+            break;
+        default:
+            break;
     }
     if (frame == 72)
     {
@@ -393,7 +404,7 @@ void CloudValidation::BeforeFrame(uint64_t frame)
     }
     if (frame >= 316)
     {
-        // Keep these views deterministic and independent of the celestial-lighting cases.
+        // これらのビューは決定的に保ち、天体照明の検証ケースから独立させる。
         DayNightCycle::GetSettings().AutomaticLighting = false;
         DayNightCycle::GetSettings().TimeDriven = false;
         for (auto id : World::GetView<SunComponent, LightComponent>())
@@ -441,7 +452,7 @@ void CloudValidation::BeforeFrame(uint64_t frame)
         {
             transform.Position.y = 60;
             view.Target = {0.001f, 0, -8};
-            // Reverse height order to exercise sorting for downward rays.
+            // 高さの順を逆にし、下向きレイでの並べ替えを検証する。
             std::swap(settings.Layer(0), settings.Layer(1));
         }
         else if (layerScenario == 6)
@@ -821,16 +832,16 @@ bool CloudValidation::Finish()
             if (SUCCEEDED(info->GetMessage(index, message, &bytes)) &&
                 message->Severity == D3D12_MESSAGE_SEVERITY_WARNING)
             {
-                // Reproduced with clouds disabled in the existing Sun Lighting test.
-                // Report separately: existing indirect VB/IB/root updates limit GBV.
+                // 既存の太陽照明テストで、雲を無効にしても再現する。
+                // 既存の間接 VB/IB/ルート更新が GBV を制限するため、別に報告する。
                 if (message->ID == D3D12_MESSAGE_ID_GPU_BASED_VALIDATION_RESOURCE_STATE_IMPRECISE)
                 {
                     ++trackingLimitations;
                     continue;
                 }
-                // Existing readback helpers use COPY_DEST on readback buffers, and
-                // legacy scene passes clear with values different from optimized clears.
-                // Cloud passes neither create those buffers nor issue clears.
+                // 既存の読み戻しヘルパーは読み戻しバッファに COPY_DEST を使い、
+                // 従来のシーンパスは最適化クリア値と異なる値でクリアする。
+                // 雲のパスはそれらのバッファを作成せず、クリアも発行しない。
                 if (message->ID == D3D12_MESSAGE_ID_CREATERESOURCE_STATE_IGNORED ||
                     message->ID == D3D12_MESSAGE_ID_CLEARRENDERTARGETVIEW_MISMATCHINGCLEARVALUE)
                 {

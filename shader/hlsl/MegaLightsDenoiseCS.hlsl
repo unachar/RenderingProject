@@ -15,31 +15,31 @@
 
 cbuffer DenoiseConstants : register(b1)
 {
-    float4 PrevViewZRow;   // 前フレームのビュー Z = dot(float4(world, 1), PrevViewZRow)
-    uint   HistoryValid;   // 0: 前フレームの履歴を使わない
-    uint   MaxHistory;     // 履歴の長さの上限（このフレームの値。アンチラグ時は短い）
-    uint   StepSize;       // À-Trous の間隔（ピクセル）
-    uint   DenoiseFlags;   // bit0: ファイアフライ抑制, bit1: 1 回目の結果を履歴へ書き戻す
-    float  AlphaMin;       // 色の最小ブレンド率
-    float  MomentsAlphaMin;
-    float  DepthTolerance; // 履歴の深度の許容差（相対）
-    float  NormalThreshold;// 履歴の法線の許容（cos）
-    float  PhiNormal;      // À-Trous の法線の鋭さ
-    float  PhiLuminance;   // À-Trous の輝度の許容（σ の倍数）
-    float  PhiPlane;       // À-Trous の平面距離の許容（ピクセルの大きさの倍数）
-    float  Padding;
+    float4 PrevViewZRow; // 前フレームのビュー Z = dot(float4(world, 1), PrevViewZRow)
+    uint HistoryValid;   // 0: 前フレームの履歴を使わない
+    uint MaxHistory;     // 履歴の長さの上限（このフレームの値。アンチラグ時は短い）
+    uint StepSize;       // À-Trous の間隔（ピクセル）
+    uint DenoiseFlags;   // bit0: ファイアフライ抑制, bit1: 1 回目の結果を履歴へ書き戻す
+    float AlphaMin;      // 色の最小ブレンド率
+    float MomentsAlphaMin;
+    float DepthTolerance;  // 履歴の深度の許容差（相対）
+    float NormalThreshold; // 履歴の法線の許容（cos）
+    float PhiNormal;       // À-Trous の法線の鋭さ
+    float PhiLuminance;    // À-Trous の輝度の許容（σ の倍数）
+    float PhiPlane;        // À-Trous の平面距離の許容（ピクセルの大きさの倍数）
+    float Padding;
 };
 
-Texture2D<float4> GBufferNormal   : register(t9);
-Texture2D<float>  GBufferDepth    : register(t10);
+Texture2D<float4> GBufferNormal : register(t9);
+Texture2D<float> GBufferDepth : register(t10);
 Texture2D<float4> GBufferVelocity : register(t15);
 
-StructuredBuffer<float4>   InputColor    : register(t0); // Temporal: Raw / ATrous: 前段の結果
-StructuredBuffer<float4>   PrevColor     : register(t1); // rgb: 照明, a: 履歴の長さ
-StructuredBuffer<uint4>    PrevMoments   : register(t2); // x: m1, y: m2, z: ビュー Z, w: 法線（oct, unorm16x2）
-RWStructuredBuffer<float4> OutputColor   : register(u0); // Temporal / ATrous の出力（rgb, a: 分散。対象外は -1）
-RWStructuredBuffer<float4> HistoryColor  : register(u1); // このフレームの履歴（色）
-RWStructuredBuffer<uint4>  HistoryMoments: register(u2); // このフレームの履歴（モーメント）
+StructuredBuffer<float4> InputColor : register(t0);      // Temporal: Raw / ATrous: 前段の結果
+StructuredBuffer<float4> PrevColor : register(t1);       // rgb: 照明, a: 履歴の長さ
+StructuredBuffer<uint4> PrevMoments : register(t2);      // x: m1, y: m2, z: ビュー Z, w: 法線（oct, unorm16x2）
+RWStructuredBuffer<float4> OutputColor : register(u0);   // Temporal / ATrous の出力（rgb, a: 分散。対象外は -1）
+RWStructuredBuffer<float4> HistoryColor : register(u1);  // このフレームの履歴（色）
+RWStructuredBuffer<uint4> HistoryMoments : register(u2); // このフレームの履歴（モーメント）
 
 #define ML_DENOISE_FIREFLY 1u
 #define ML_DENOISE_FEEDBACK 2u
@@ -76,7 +76,10 @@ float3 UnpackNormal(uint packed)
 {
     float2 e = float2(packed & 0xffffu, packed >> 16u) / 65535.0f * 2.0f - 1.0f;
     float3 n = float3(e, 1.0f - abs(e.x) - abs(e.y));
-    if (n.z < 0.0f) n.xy = OctWrap(n.xy);
+    if (n.z < 0.0f)
+    {
+        n.xy = OctWrap(n.xy);
+    }
     return normalize(n);
 }
 
@@ -88,11 +91,12 @@ float3 LoadNormal(uint2 pixel)
 // --------------------------------------------------------------------------------------------
 // 時間方向
 // --------------------------------------------------------------------------------------------
-[numthreads(8, 8, 1)]
-void Temporal(uint3 dispatch : SV_DispatchThreadID)
-{
+[numthreads(8, 8, 1)] void Temporal(uint3 dispatch : SV_DispatchThreadID) {
     const uint2 pixel = dispatch.xy;
-    if (any(pixel >= MLScreen.xy)) return;
+    if (any(pixel >= MLScreen.xy))
+    {
+        return;
+    }
     const uint index = PixelIndex(pixel);
     const float4 raw = InputColor[index];
     const float depth = GBufferDepth.Load(int3(pixel, 0));
@@ -111,22 +115,31 @@ void Temporal(uint3 dispatch : SV_DispatchThreadID)
     // ---- 近傍（3x3）の統計：ファイアフライ抑制と、履歴が短い間の分散
     float3 color = max(raw.rgb, 0.0f);
     float neighborMax = 0.0f;
-    float sum1 = 0.0f, sum2 = 0.0f, count = 0.0f;
-    [unroll]
-    for (int y = -1; y <= 1; ++y)
+    float sum1 = 0.0f;
+    float sum2 = 0.0f;
+    float count = 0.0f;
+    [unroll] for (int y = -1; y <= 1; ++y)
     {
-        [unroll]
-        for (int x = -1; x <= 1; ++x)
+        [unroll] for (int x = -1; x <= 1; ++x)
         {
             const int2 q = int2(pixel) + int2(x, y);
-            if (!InScreen(q)) continue;
+            if (!InScreen(q))
+            {
+                continue;
+            }
             const float4 neighbor = InputColor[PixelIndex(uint2(q))];
-            if (neighbor.a < 0.5f) continue;
+            if (neighbor.a < 0.5f)
+            {
+                continue;
+            }
             const float l = Luminance(max(neighbor.rgb, 0.0f));
             sum1 += l;
             sum2 += l * l;
             count += 1.0f;
-            if (x != 0 || y != 0) neighborMax = max(neighborMax, l);
+            if (x != 0 || y != 0)
+            {
+                neighborMax = max(neighborMax, l);
+            }
         }
     }
     float luminance = Luminance(color);
@@ -149,19 +162,30 @@ void Temporal(uint3 dispatch : SV_DispatchThreadID)
     {
         const int2 base = int2(floor(previousPixel));
         const float2 f = previousPixel - float2(base);
-        const float bilinear[4] = { (1.0f - f.x) * (1.0f - f.y), f.x * (1.0f - f.y), (1.0f - f.x) * f.y, f.x * f.y };
-        const int2 offsets[4] = { int2(0, 0), int2(1, 0), int2(0, 1), int2(1, 1) };
-        [unroll]
-        for (uint tap = 0u; tap < 4u; ++tap)
+        const float bilinear[4] = {(1.0f - f.x) * (1.0f - f.y), f.x * (1.0f - f.y), (1.0f - f.x) * f.y, f.x * f.y};
+        const int2 offsets[4] = {int2(0, 0), int2(1, 0), int2(0, 1), int2(1, 1)};
+        [unroll] for (uint tap = 0u; tap < 4u; ++tap)
         {
             const int2 q = base + offsets[tap];
-            if (!InScreen(q) || bilinear[tap] <= 0.0f) continue;
+            if (!InScreen(q) || bilinear[tap] <= 0.0f)
+            {
+                continue;
+            }
             const uint qIndex = PixelIndex(uint2(q));
             const uint4 moments = PrevMoments[qIndex];
             const float previousZ = asfloat(moments.z);
-            if (previousZ <= 0.0f) continue;
-            if (abs(previousZ - expectedPreviousZ) > DepthTolerance * max(expectedPreviousZ, 1.0e-3f)) continue;
-            if (dot(UnpackNormal(moments.w), normal) < NormalThreshold) continue;
+            if (previousZ <= 0.0f)
+            {
+                continue;
+            }
+            if (abs(previousZ - expectedPreviousZ) > DepthTolerance * max(expectedPreviousZ, 1.0e-3f))
+            {
+                continue;
+            }
+            if (dot(UnpackNormal(moments.w), normal) < NormalThreshold)
+            {
+                continue;
+            }
             const float4 previous = PrevColor[qIndex];
             historyColor += previous.rgb * bilinear[tap];
             historyLength += previous.a * bilinear[tap];
@@ -201,14 +225,16 @@ void Temporal(uint3 dispatch : SV_DispatchThreadID)
     HistoryMoments[index] = uint4(asuint(moments.x), asuint(moments.y), asuint(viewZ), PackNormal(normal));
 }
 
-// --------------------------------------------------------------------------------------------
-// À-Trous（分散で輝度の許容を決める）
-// --------------------------------------------------------------------------------------------
-[numthreads(8, 8, 1)]
-void ATrous(uint3 dispatch : SV_DispatchThreadID)
+    // --------------------------------------------------------------------------------------------
+    // À-Trous（分散で輝度の許容を決める）
+    // --------------------------------------------------------------------------------------------
+    [numthreads(8, 8, 1)] void ATrous(uint3 dispatch : SV_DispatchThreadID)
 {
     const uint2 pixel = dispatch.xy;
-    if (any(pixel >= MLScreen.xy)) return;
+    if (any(pixel >= MLScreen.xy))
+    {
+        return;
+    }
     const uint index = PixelIndex(pixel);
     const float4 center = InputColor[index];
     if (center.a < 0.0f)
@@ -224,17 +250,22 @@ void ATrous(uint3 dispatch : SV_DispatchThreadID)
     const float pixelFootprint = 2.0f * viewZ / (MLProjection.y * (float)MLScreen.y);
 
     // 中心の分散を 3x3 ガウスで平滑化（輝度の許容に使う）
-    float filteredVariance = 0.0f, varianceWeight = 0.0f;
-    [unroll]
-    for (int vy = -1; vy <= 1; ++vy)
+    float filteredVariance = 0.0f;
+    float varianceWeight = 0.0f;
+    [unroll] for (int vy = -1; vy <= 1; ++vy)
     {
-        [unroll]
-        for (int vx = -1; vx <= 1; ++vx)
+        [unroll] for (int vx = -1; vx <= 1; ++vx)
         {
             const int2 q = int2(pixel) + int2(vx, vy);
-            if (!InScreen(q)) continue;
+            if (!InScreen(q))
+            {
+                continue;
+            }
             const float v = InputColor[PixelIndex(uint2(q))].a;
-            if (v < 0.0f) continue;
+            if (v < 0.0f)
+            {
+                continue;
+            }
             const float w = (vx == 0 ? 0.5f : 0.25f) * (vy == 0 ? 0.5f : 0.25f);
             filteredVariance += v * w;
             varianceWeight += w;
@@ -245,22 +276,29 @@ void ATrous(uint3 dispatch : SV_DispatchThreadID)
     const float luminanceScale = 1.0f / (PhiLuminance * sqrt(max(filteredVariance, 0.0f)) + 1.0e-4f);
     const float planeScale = 1.0f / (PhiPlane * pixelFootprint * (float)StepSize + 1.0e-4f);
 
-    const float kernel[3] = { 3.0f / 8.0f, 1.0f / 4.0f, 1.0f / 16.0f };
+    const float kernel[3] = {3.0f / 8.0f, 1.0f / 4.0f, 1.0f / 16.0f};
     const float centerWeight = kernel[0] * kernel[0];
     float3 colorSum = center.rgb * centerWeight;
     float varianceSum = center.a * centerWeight * centerWeight;
     float weightSum = centerWeight;
-    [unroll]
-    for (int y = -2; y <= 2; ++y)
+    [unroll] for (int y = -2; y <= 2; ++y)
     {
-        [unroll]
-        for (int x = -2; x <= 2; ++x)
+        [unroll] for (int x = -2; x <= 2; ++x)
         {
-            if (x == 0 && y == 0) continue;
+            if (x == 0 && y == 0)
+            {
+                continue;
+            }
             const int2 q = int2(pixel) + int2(x, y) * (int)StepSize;
-            if (!InScreen(q)) continue;
+            if (!InScreen(q))
+            {
+                continue;
+            }
             const float4 tapColor = InputColor[PixelIndex(uint2(q))];
-            if (tapColor.a < 0.0f) continue;
+            if (tapColor.a < 0.0f)
+            {
+                continue;
+            }
             const float qDepth = GBufferDepth.Load(int3(q, 0));
             const float3 qWorld = MLWorldPositionFromDepth(uint2(q), qDepth);
             const float3 qNormal = LoadNormal(uint2(q));

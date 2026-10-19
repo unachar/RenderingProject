@@ -15,11 +15,13 @@ GBufferOutput main(in PSInput3D In)
     if (UseNormalMap != 0)
     {
         float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
-        float3 tangent = SafeNormalizeCommon(mul(float3(1.0f, 0.0f, 0.0f), (float3x3) World), float3(1.0f, 0.0f, 0.0f));
-        float3 bitangent = SafeNormalizeCommon(mul(float3(0.0f, -1.0f, 0.0f), (float3x3) World), float3(0.0f, 0.0f, 1.0f));
-        normal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal, normal);
+        float3 tangent = SafeNormalizeCommon(mul(float3(1.0f, 0.0f, 0.0f), (float3x3)World), float3(1.0f, 0.0f, 0.0f));
+        float3 bitangent =
+            SafeNormalizeCommon(mul(float3(0.0f, -1.0f, 0.0f), (float3x3)World), float3(0.0f, 0.0f, 1.0f));
+        normal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal,
+                                     normal);
     }
-    
+
     if (UseTexture)
     {
         baseColor *= g_Texture.Sample(g_SamplerState, In.TexCoord);
@@ -38,10 +40,8 @@ GBufferOutput main(in PSInput3D In)
     output.Material.g = usePartParams ? partParams.Basic.y : mRoughness;
     output.Material.b = usePartParams ? partParams.Basic.z : mFresnel;
     output.Material.a = materialPartId;
-    output.Shadow = usePartParams
-        ? float4(partParams.Shadow0.x, partParams.Shadow0.y, partParams.Shadow0.z, 0.0f)
-        : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
+    output.Shadow = usePartParams ? float4(partParams.Shadow0.x, partParams.Shadow0.y, partParams.Shadow0.z, 0.0f)
+                                  : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
 
     return output;
 }
-

@@ -1,8 +1,8 @@
 #ifndef ATMOSPHERE_LUT_COMMON_HLSLI
 #define ATMOSPHERE_LUT_COMMON_HLSLI
-// Shared parameterisation of the atmosphere LUTs (Hillaire 2020, "A Scalable and Production
-// Ready Sky and Atmosphere Rendering Technique"). Used by AtmosphereLutCS.hlsl (builder) and
-// SkyAtmosphere.hlsli (consumers). Must stay identical on both sides.
+// 大気 LUT の共通パラメーター化（Hillaire 2020、論文「A Scalable and Production
+// Ready Sky and Atmosphere Rendering Technique」）。構築側の AtmosphereLutCS.hlsl と
+// 参照側の SkyAtmosphere.hlsli が使うため、両者で同一に保つ。
 
 static const float kLutGroundRadius = 6360000.0f;
 static const float kLutAtmosphereRadius = 6460000.0f;
@@ -11,7 +11,7 @@ static const uint2 kTransmittanceLutSize = uint2(256, 64);
 static const uint2 kMultiScatterLutSize = uint2(32, 32);
 static const uint2 kSkyViewLutSize = uint2(192, 108);
 
-// --- Transmittance (optical depth) LUT: Bruneton's (r, mu) mapping --------------------------
+// --- 透過率（光学的厚さ）LUT：Bruneton の (r, mu) マッピング ---
 float2 TransmittanceLutUv(float radius, float mu)
 {
     float H = sqrt(kLutAtmosphereRadius * kLutAtmosphereRadius - kLutGroundRadius * kLutGroundRadius);
@@ -37,7 +37,7 @@ void TransmittanceLutParameters(float2 uv, out float radius, out float mu)
     mu = clamp(mu, -1.0f, 1.0f);
 }
 
-// --- Sky view LUT: (sqrt relative sun azimuth, non-linear zenith around the horizon) ----------
+// --- 空の表示 LUT：（太陽の相対方位角の平方根、地平線付近の非線形な天頂角）---
 void SkyViewHorizon(float viewHeight, out float beta, out float zenithHorizonAngle)
 {
     float vHorizon = sqrt(max(viewHeight * viewHeight - kLutGroundRadius * kLutGroundRadius, 0.0f));
@@ -64,10 +64,10 @@ float2 SkyViewLutUv(float3 direction, float3 sun, float viewHeight)
     float2 light = sun.xz;
     float viewLength = length(view);
     float lightLength = length(light);
-    float cosAzimuth = viewLength > 0.00001f && lightLength > 0.00001f ?
-        dot(view / viewLength, light / lightLength) : 1.0f;
+    float cosAzimuth =
+        viewLength > 0.00001f && lightLength > 0.00001f ? dot(view / viewLength, light / lightLength) : 1.0f;
     float u = sqrt(acos(clamp(cosAzimuth, -1.0f, 1.0f)) / kLutPi);
-    // Texel centre remap so that [0,1] covers first..last texel centre.
+    // [0,1] が最初から最後のテクセル中心を覆うように再マッピングする。
     float2 size = float2(kSkyViewLutSize);
     return (float2(u, v) * (size - 1.0f) + 0.5f) / size;
 }
@@ -75,7 +75,7 @@ float2 SkyViewLutUv(float3 direction, float3 sun, float viewHeight)
 float3 SkyViewLutDirection(float2 texel, float3 sun, float viewHeight)
 {
     float2 size = float2(kSkyViewLutSize);
-    float2 uv = texel / (size - 1.0f); // texel index -> [0,1] at texel centres
+    float2 uv = texel / (size - 1.0f); // テクセル番号 → テクセル中心における [0,1]
     float beta, zenithHorizonAngle;
     SkyViewHorizon(viewHeight, beta, zenithHorizonAngle);
     float viewZenith;
@@ -96,11 +96,11 @@ float3 SkyViewLutDirection(float2 texel, float3 sun, float viewHeight)
     return float3(sinZenith * cos(azimuth), cos(viewZenith), sinZenith * sin(azimuth));
 }
 
-// --- Multiple scattering LUT: (sun cos zenith, altitude) --------------------------------------
+// --- 多重散乱 LUT：（太陽天頂角の cos、高度）---
 float2 MultiScatterLutUv(float radius, float sunCosZenith)
 {
     float2 uv = float2(sunCosZenith * 0.5f + 0.5f,
-        saturate((radius - kLutGroundRadius) / (kLutAtmosphereRadius - kLutGroundRadius)));
+                       saturate((radius - kLutGroundRadius) / (kLutAtmosphereRadius - kLutGroundRadius)));
     float2 size = float2(kMultiScatterLutSize);
     return (uv * (size - 1.0f) + 0.5f) / size;
 }

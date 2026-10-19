@@ -16,13 +16,13 @@ cbuffer CullConstants : register(b0)
     uint CommandStrideBytes;
     uint CandidateCount;
     uint EnableFrustumCulling;
-	uint Phase;
-	uint EnableOcclusion;
-	uint HiZWidth;
-	uint HiZHeight;
-	uint HiZMipCount;
-	uint PreviousHiZValid;
-	uint CurrentHiZValid;
+    uint Phase;
+    uint EnableOcclusion;
+    uint HiZWidth;
+    uint HiZHeight;
+    uint HiZMipCount;
+    uint PreviousHiZValid;
+    uint CurrentHiZValid;
     uint SceneInstanceId;
 };
 
@@ -51,7 +51,10 @@ uint IsObjectVisible()
     if (SceneInstanceId != 0xffffffffu)
     {
         GPUInstanceData instance = SceneInstances[SceneInstanceId];
-        if (!(instance.Flags & 1u)) return 0;
+        if (!(instance.Flags & 1u))
+        {
+            return 0;
+        }
         objectWorld = instance.World;
         objectCenter = instance.LocalCenter.xyz;
         objectExtents = instance.LocalExtents.xyz;
@@ -63,24 +66,18 @@ uint IsObjectVisible()
     float nearestDepth = 1.0f;
     uint crossesNearPlane = 0u;
 
-    [unroll]
-    for (uint cornerIndex = 0; cornerIndex < 8; ++cornerIndex)
+    [unroll] for (uint cornerIndex = 0; cornerIndex < 8; ++cornerIndex)
     {
-        float3 signValue = float3(
-            (cornerIndex & 1) ? 1.0f : -1.0f,
-            (cornerIndex & 2) ? 1.0f : -1.0f,
-            (cornerIndex & 4) ? 1.0f : -1.0f);
+        float3 signValue = float3((cornerIndex & 1) ? 1.0f : -1.0f, (cornerIndex & 2) ? 1.0f : -1.0f,
+                                  (cornerIndex & 4) ? 1.0f : -1.0f);
         float3 localPosition = objectCenter + objectExtents * signValue;
         float4 worldPosition = mul(float4(localPosition, 1.0f), objectWorld);
         float4 clipPosition = mul(worldPosition, ViewProjection);
 
         uint cornerMask =
-            (clipPosition.x < -clipPosition.w ? 0x01u : 0u) |
-            (clipPosition.x > clipPosition.w ? 0x02u : 0u) |
-            (clipPosition.y < -clipPosition.w ? 0x04u : 0u) |
-            (clipPosition.y > clipPosition.w ? 0x08u : 0u) |
-            (clipPosition.z < 0.0f ? 0x10u : 0u) |
-            (clipPosition.z > clipPosition.w ? 0x20u : 0u);
+            (clipPosition.x < -clipPosition.w ? 0x01u : 0u) | (clipPosition.x > clipPosition.w ? 0x02u : 0u) |
+            (clipPosition.y < -clipPosition.w ? 0x04u : 0u) | (clipPosition.y > clipPosition.w ? 0x08u : 0u) |
+            (clipPosition.z < 0.0f ? 0x10u : 0u) | (clipPosition.z > clipPosition.w ? 0x20u : 0u);
         outsideMask &= cornerMask;
         crossesNearPlane |= (clipPosition.w <= 0.0f || clipPosition.z <= 0.0f) ? 1u : 0u;
         float inverseW = rcp(max(abs(clipPosition.w), 1.0e-5f));
@@ -92,7 +89,9 @@ uint IsObjectVisible()
     }
 
     if (EnableFrustumCulling != 0u && outsideMask != 0u)
+    {
         result = 0u;
+    }
 
     if (result != 0u && EnableOcclusion != 0u && Phase != 0u && crossesNearPlane == 0u)
     {
@@ -102,15 +101,18 @@ uint IsObjectVisible()
         if (Phase == 1u)
         {
             if (PreviousHiZValid != 0u && IsOccluded(PreviousHiZ, uvMinimum, uvMaximum, nearestDepth))
+            {
                 result = 0u;
+            }
         }
         else if (Phase == 2u)
         {
 
-            if (PreviousHiZValid == 0u ||
-                !IsOccluded(PreviousHiZ, uvMinimum, uvMaximum, nearestDepth) ||
+            if (PreviousHiZValid == 0u || !IsOccluded(PreviousHiZ, uvMinimum, uvMaximum, nearestDepth) ||
                 (CurrentHiZValid != 0u && IsOccluded(CurrentHiZ, uvMinimum, uvMaximum, nearestDepth)))
+            {
                 result = 0u;
+            }
         }
     }
     return result;
@@ -121,35 +123,27 @@ void CopyCommand(uint sourceBase, uint destinationBase)
     uint byteOffset = 0;
     for (; byteOffset + 16 <= CommandStrideBytes; byteOffset += 16)
     {
-        VisibleCommands.Store4(destinationBase + byteOffset,
-            CandidateCommands.Load4(sourceBase + byteOffset));
+        VisibleCommands.Store4(destinationBase + byteOffset, CandidateCommands.Load4(sourceBase + byteOffset));
     }
     for (; byteOffset < CommandStrideBytes; byteOffset += 4)
     {
-        VisibleCommands.Store(destinationBase + byteOffset,
-            CandidateCommands.Load(sourceBase + byteOffset));
+        VisibleCommands.Store(destinationBase + byteOffset, CandidateCommands.Load(sourceBase + byteOffset));
     }
 }
 
-[numthreads(64, 1, 1)]
-void main(uint3 groupId : SV_GroupID,
-          uint groupThreadIndex : SV_GroupIndex,
-          uint3 dispatchThreadId : SV_DispatchThreadID)
-{
+[numthreads(64, 1, 1)] void main(uint3 groupId : SV_GroupID, uint groupThreadIndex : SV_GroupIndex,
+                                 uint3 dispatchThreadId : SV_DispatchThreadID) {
     const uint groupBegin = groupId.x * 64;
 
     if (groupThreadIndex == 0)
     {
         GroupVisible = IsObjectVisible();
         GroupDestinationBase = 0;
-        GroupCommandCount = groupBegin < CandidateCount
-            ? min(64u, CandidateCount - groupBegin)
-            : 0u;
+        GroupCommandCount = groupBegin < CandidateCount ? min(64u, CandidateCount - groupBegin) : 0u;
 
         if (GroupVisible != 0 && GroupCommandCount != 0)
         {
-            VisibleCommandCount.InterlockedAdd(
-                0, GroupCommandCount, GroupDestinationBase);
+            VisibleCommandCount.InterlockedAdd(0, GroupCommandCount, GroupDestinationBase);
         }
     }
 
@@ -157,10 +151,10 @@ void main(uint3 groupId : SV_GroupID,
 
     const uint commandIndex = dispatchThreadId.x;
     if (GroupVisible == 0 || commandIndex >= CandidateCount)
+    {
         return;
+    }
 
     const uint visibleIndex = GroupDestinationBase + groupThreadIndex;
-    CopyCommand(commandIndex * CommandStrideBytes,
-                visibleIndex * CommandStrideBytes);
+    CopyCommand(commandIndex * CommandStrideBytes, visibleIndex * CommandStrideBytes);
 }
-

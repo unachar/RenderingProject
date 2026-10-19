@@ -17,7 +17,7 @@ struct ID3D12DescriptorHeap;
 
 namespace Json
 {
-class Value;
+    class Value;
 }
 
 class ImGuiManager
@@ -217,7 +217,7 @@ class ImGuiManager
     inline static vector<filesystem::path> m_SelectedAssetPaths;
     inline static unordered_set<wstring> m_SelectedAssetKeys;
     inline static filesystem::path m_AssetSelectionAnchor;   // Shift 範囲選択の起点
-    inline static vector<filesystem::path> m_AssetClipboard; // Ctrl+C / Ctrl+X
+    inline static vector<filesystem::path> m_AssetClipboard; // コピー／切り取り（Ctrl+C / Ctrl+X）
     inline static bool m_AssetClipboardCut = false;
     inline static vector<filesystem::path> m_DraggedAssetPaths; // 複数ドラッグ中の項目
     inline static filesystem::path m_LastRelocatedAssetPath;    // 直近の移動 / リネーム先
@@ -378,4 +378,3 @@ class ImGuiManager
         return m_Exposure;
     }
 };
-

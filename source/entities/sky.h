@@ -2,7 +2,7 @@
 #include "entitybase.h"
 #include "game.h"
 
-// The physical atmosphere supplies the startup sky. Legacy environment meshes may still be loaded explicitly.
+// 起動時の空は物理ベースの大気が描画する。旧環境メッシュも明示的には読み込める。
 class Sky : public EntityBase
 {
   public:

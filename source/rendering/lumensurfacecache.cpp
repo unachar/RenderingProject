@@ -6,43 +6,47 @@
 
 namespace
 {
-bool CreateBuffer(ID3D12Device* device, ComPtr<ID3D12Resource>& resource, UINT64 bytes, bool upload)
-{
-    const auto heap = CD3DX12_HEAP_PROPERTIES(upload ? D3D12_HEAP_TYPE_UPLOAD : D3D12_HEAP_TYPE_DEFAULT);
-    const auto desc = CD3DX12_RESOURCE_DESC::Buffer((std::max)(bytes, 256ull), upload ? D3D12_RESOURCE_FLAG_NONE
-                                                               : D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    return SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                      upload ? D3D12_RESOURCE_STATE_GENERIC_READ : D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                      nullptr, IID_PPV_ARGS(resource.ReleaseAndGetAddressOf())));
-}
-bool Upload(ID3D12Resource* buffer, const void* source, size_t bytes)
-{
-    void* mapped = nullptr;
-    D3D12_RANGE noRead{};
-    if (FAILED(buffer->Map(0, &noRead, &mapped)))
+    bool CreateBuffer(ID3D12Device* device, ComPtr<ID3D12Resource>& resource, UINT64 bytes, bool upload)
     {
-        return false;
+        const auto heap = CD3DX12_HEAP_PROPERTIES(upload ? D3D12_HEAP_TYPE_UPLOAD : D3D12_HEAP_TYPE_DEFAULT);
+        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(
+            (std::max)(bytes, 256ull), upload ? D3D12_RESOURCE_FLAG_NONE : D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        return SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                         upload ? D3D12_RESOURCE_STATE_GENERIC_READ
+                                                                : D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                         nullptr, IID_PPV_ARGS(resource.ReleaseAndGetAddressOf())));
     }
-    if (bytes != 0)
+
+    bool Upload(ID3D12Resource* buffer, const void* source, size_t bytes)
     {
-        memcpy(mapped, source, bytes);
+        void* mapped = nullptr;
+        D3D12_RANGE noRead{};
+        if (FAILED(buffer->Map(0, &noRead, &mapped)))
+        {
+            return false;
+        }
+        if (bytes != 0)
+        {
+            memcpy(mapped, source, bytes);
+        }
+        buffer->Unmap(0, nullptr);
+        return true;
     }
-    buffer->Unmap(0, nullptr);
-    return true;
-}
-void Hash(uint64_t& hash, const void* data, size_t size)
-{
-    const auto* bytes = static_cast<const unsigned char*>(data);
-    for (size_t i = 0; i < size; ++i)
+
+    void Hash(uint64_t& hash, const void* data, size_t size)
     {
-        hash = (hash ^ bytes[i]) * 1099511628211ull;
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (size_t i = 0; i < size; ++i)
+        {
+            hash = (hash ^ bytes[i]) * 1099511628211ull;
+        }
     }
-}
 }
 
 bool LumenSurfaceCache::Prepare(ID3D12Device* device, UINT frame, const vector<RaytracingGeometry>& geometry,
-                               const XMFLOAT3& camera, UINT width, UINT height, UINT spacing, UINT captureBudget,
-                               UINT lightingBudget, UINT debugView, bool resetLighting, UINT sequence, bool changingScene)
+                                const XMFLOAT3& camera, UINT width, UINT height, UINT spacing, UINT captureBudget,
+                                UINT lightingBudget, UINT debugView, bool resetLighting, UINT sequence,
+                                bool changingScene)
 {
     if (!m_Atlases[0])
     {
@@ -50,10 +54,11 @@ bool LumenSurfaceCache::Prepare(ID3D12Device* device, UINT frame, const vector<R
         for (UINT i = 0; i < m_Atlases.size(); ++i)
         {
             const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(
-                i == 0 ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R16G16B16A16_FLOAT,
-                AtlasWidth, AtlasHeight, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+                i == 0 ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R16G16B16A16_FLOAT, AtlasWidth, AtlasHeight, 1, 1,
+                1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
             if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&m_Atlases[i]))))
+                                                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                       IID_PPV_ARGS(&m_Atlases[i]))))
             {
                 Reset();
                 return false;
@@ -75,7 +80,7 @@ bool LumenSurfaceCache::Prepare(ID3D12Device* device, UINT frame, const vector<R
         {
             return false;
         }
-        // Two frames of 4 x float4 records and guides (current + reprojection history).
+        // 4 x float4 のレコードとガイドを2フレーム分保持する（現在と再投影履歴）。
         if (!CreateBuffer(device, m_Probes, UINT64(count) * 2 * 4 * 16, false) ||
             !CreateBuffer(device, m_ProbeGuides, UINT64(count) * 2 * 32, false))
         {
@@ -107,7 +112,7 @@ bool LumenSurfaceCache::Prepare(ID3D12Device* device, UINT frame, const vector<R
         const float distance = offset.x * offset.x + offset.y * offset.y + offset.z * offset.z;
         inputs.push_back({!mesh.Deforming && mesh.Transmission <= 0.001f ? mesh.SurfaceOwner : 0, revision, distance});
     }
-    // Publish ownership only after uploads succeed; a failed frame must recapture on retry.
+    // アップロード成功後だけ所有関係を公開し、失敗したフレームは再試行時に再取得する。
     auto scheduler = m_Scheduler;
     m_Schedule = scheduler.Prepare(inputs, captureBudget, lightingBudget);
     vector<UINT> lookupSlots = m_Schedule.Slots;
@@ -156,10 +161,10 @@ bool LumenSurfaceCache::Prepare(ID3D12Device* device, UINT frame, const vector<R
     const bool probeHistory = m_ProbeHistory && gridStable && !resetLighting;
     const UINT parity = m_ProbeParity ^ 1u;
     m_Constants.Counts = {1, static_cast<UINT>(m_Schedule.Captures.size()),
-                            static_cast<UINT>(m_Schedule.Updates.size()), parity | (probeHistory ? 2u : 0u)};
+                          static_cast<UINT>(m_Schedule.Updates.size()), parity | (probeHistory ? 2u : 0u)};
     m_Constants.Grid = {columns, rows, spacing, Capacity};
     static const bool singleBounce = ReadEnvironmentFlagOnce("DX12_LUMEN_SINGLE_BOUNCE");
-    // Default: depth-buffer reconnection test. DX12_LUMEN_RAY_VISIBILITY restores the TLAS ray.
+    // 既定は深度バッファによる再接続判定。DX12_LUMEN_RAY_VISIBILITY で TLAS のレイ判定に戻す。
     static const bool rayVisibility = ReadEnvironmentFlagOnce("DX12_LUMEN_RAY_VISIBILITY");
     m_Constants.Settings = {changingScene ? 2.f : 16.f, static_cast<float>(debugView), rayVisibility ? 1.f : 0.f,
                             singleBounce ? 0.f : 1.f};
@@ -179,9 +184,11 @@ bool LumenSurfaceCache::Prepare(ID3D12Device* device, UINT frame, const vector<R
 }
 
 void LumenSurfaceCache::WriteDescriptors(ID3D12Device* device, UINT frame, D3D12_CPU_DESCRIPTOR_HANDLE start,
-                                       UINT increment)
+                                         UINT increment)
 {
-    auto target = [&](UINT index) { return CD3DX12_CPU_DESCRIPTOR_HANDLE(start, index, increment); };
+    auto target = [&](UINT index) {
+        return CD3DX12_CPU_DESCRIPTOR_HANDLE(start, index, increment);
+    };
     for (UINT i = 0; i < 3; ++i)
     {
         D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
@@ -189,7 +196,8 @@ void LumenSurfaceCache::WriteDescriptors(ID3D12Device* device, UINT frame, D3D12
         desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         desc.Buffer.StructureByteStride = i == 0 ? 4 : 16;
         auto* resource = i == 0 ? m_Frames[frame].Map.Get() : m_Frames[frame].Work.Get();
-        desc.Buffer.NumElements = resource ? static_cast<UINT>(resource->GetDesc().Width / desc.Buffer.StructureByteStride) : 1;
+        desc.Buffer.NumElements =
+            resource ? static_cast<UINT>(resource->GetDesc().Width / desc.Buffer.StructureByteStride) : 1;
         device->CreateShaderResourceView(resource, &desc, target(i));
     }
     for (UINT i = 0; i < 11; ++i)
@@ -198,40 +206,63 @@ void LumenSurfaceCache::WriteDescriptors(ID3D12Device* device, UINT frame, D3D12
         ID3D12Resource* resource = nullptr;
         if (i < 8)
         {
-            const UINT atlas = i < 4 ? i : i < 6 ? 4 + (m_Read ^ (i - 4)) : 6 + (m_Read ^ (i - 6));
+            UINT atlas = i;
+            if (i >= 4 && i < 6)
+            {
+                atlas = 4 + (m_Read ^ (i - 4));
+            }
+            else if (i >= 6)
+            {
+                atlas = 6 + (m_Read ^ (i - 6));
+            }
             resource = m_Atlases[atlas].Get();
             desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
             desc.Format = i == 0 ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R16G16B16A16_FLOAT;
         }
         else
         {
-            resource = i == 8 ? m_Bounds.Get() : i == 9 ? m_Probes.Get() : m_ProbeGuides.Get();
+            switch (i)
+            {
+                case 8:
+                    resource = m_Bounds.Get();
+                    break;
+                case 9:
+                    resource = m_Probes.Get();
+                    break;
+                default:
+                    resource = m_ProbeGuides.Get();
+                    break;
+            }
             desc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
             desc.Buffer.StructureByteStride = i == 9 ? 16 : 32;
-            desc.Buffer.NumElements = resource ? static_cast<UINT>(resource->GetDesc().Width / desc.Buffer.StructureByteStride) : 1;
+            desc.Buffer.NumElements =
+                resource ? static_cast<UINT>(resource->GetDesc().Width / desc.Buffer.StructureByteStride) : 1;
         }
         device->CreateUnorderedAccessView(resource, nullptr, &desc, target(3 + i));
     }
 }
+
 D3D12_GPU_VIRTUAL_ADDRESS LumenSurfaceCache::ConstantsAddress(UINT frame) const
 {
     return m_Frames[frame].Parameters->GetGPUVirtualAddress();
 }
+
 void LumenSurfaceCache::Barrier(ID3D12GraphicsCommandList* commands) const
 {
-    // All cache stages use UAVs on the graphics queue. Order captures, lighting and consumers.
+    // 全キャッシュ段階はグラフィックスキューの UAV を使う。取得、照明、利用側の順序を保証する。
     const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
     commands->ResourceBarrier(1, &barrier);
 }
+
 void LumenSurfaceCache::BeginLighting(ID3D12GraphicsCommandList* commands)
 {
-    // Nothing is written this frame: keep the current read atlas, no copy and no swap.
+    // このフレームに書き込みがなければ、現在の読み取りアトラスを保持し、コピーも交換もしない。
     if (m_Constants.Counts.z == 0)
     {
         return;
     }
-    // Clear/capture write both atlases, so after the swap the write atlas only lacks the slots
-    // updated by the previous lighting pass. Copy those rows instead of 2 x 3 MiB every frame.
+    // クリアと取得は両方のアトラスに書くため、交換後の書き込みアトラスで不足するのは
+    // 前回の照明パスで更新したスロットだけ。毎フレームの 2 x 3 MiB コピーを避け、その行だけコピーする。
     if (m_Clear)
     {
         m_FullCopy = false;
@@ -276,6 +307,7 @@ void LumenSurfaceCache::BeginLighting(ID3D12GraphicsCommandList* commands)
     commands->ResourceBarrier(static_cast<UINT>(after.size()), after.data());
     m_FullCopy = false;
 }
+
 void LumenSurfaceCache::EndLighting(ID3D12GraphicsCommandList* commands)
 {
     Barrier(commands);
@@ -284,7 +316,7 @@ void LumenSurfaceCache::EndLighting(ID3D12GraphicsCommandList* commands)
     {
         return;
     }
-    // The current frame reads the previous atlas; next frame sees the completed update.
+    // 現在のフレームは前のアトラスを読み、次のフレームで更新済みの内容を使う。
     m_Read ^= 1u;
     m_DirtySlots.clear();
     for (const auto work : m_Schedule.Updates)
@@ -292,17 +324,22 @@ void LumenSurfaceCache::EndLighting(ID3D12GraphicsCommandList* commands)
         m_DirtySlots.push_back(work.Slot);
     }
 }
+
 UINT LumenSurfaceCache::ResidentMeshes() const
 {
-    return static_cast<UINT>(std::count_if(m_Schedule.Slots.begin(), m_Schedule.Slots.end(),
-                                         [](UINT slot) { return slot != Lumen::InvalidSlot; }));
+    return static_cast<UINT>(std::count_if(m_Schedule.Slots.begin(), m_Schedule.Slots.end(), [](UINT slot) {
+        return slot != Lumen::InvalidSlot;
+    }));
 }
+
 UINT64 LumenSurfaceCache::MemoryBytes() const
 {
-    return m_Atlases[0] ? UINT64(AtlasWidth) * AtlasHeight * (16 + 7 * 8) + Capacity * 32ull + UINT64(m_ProbeCount) * 2 * (64 + 32) : 0;
+    return m_Atlases[0] ? UINT64(AtlasWidth) * AtlasHeight * (16 + 7 * 8) + Capacity * 32ull +
+                              UINT64(m_ProbeCount) * 2 * (64 + 32)
+                        : 0;
 }
+
 void LumenSurfaceCache::Reset()
 {
     *this = LumenSurfaceCache{};
 }
-

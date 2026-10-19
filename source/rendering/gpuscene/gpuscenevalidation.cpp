@@ -20,144 +20,144 @@
 
 namespace
 {
-uint32_t failures = 0;
-vector<EntityID> entities;
-MeshComponent sharedMesh;
-GPUInstanceID removed = InvalidGPUInstanceID;
-uint32_t sharedMaterial = UINT32_MAX;
-uint32_t previousMesh = UINT32_MAX;
-bool legacyCulling = false;
-uint64_t currentFrame = 0;
-uint32_t residentDrawCulls = 0, legacyDrawCulls = 0;
-XMFLOAT4X4 comparisonProjection{};
-vector<RenderCapture::TextureData> referenceGBuffer;
+    uint32_t failures = 0;
+    vector<EntityID> entities;
+    MeshComponent sharedMesh;
+    GPUInstanceID removed = InvalidGPUInstanceID;
+    uint32_t sharedMaterial = UINT32_MAX;
+    uint32_t previousMesh = UINT32_MAX;
+    bool legacyCulling = false;
+    uint64_t currentFrame = 0;
+    uint32_t residentDrawCulls = 0, legacyDrawCulls = 0;
+    XMFLOAT4X4 comparisonProjection{};
+    vector<RenderCapture::TextureData> referenceGBuffer;
 
-bool Enabled()
-{
-    char value[8]{};
-    return GetEnvironmentVariableA("DX12_GPU_SCENE_STRESS_TEST", value, sizeof(value)) && atoi(value) != 0;
-}
+    bool Enabled()
+    {
+        char value[8]{};
+        return GetEnvironmentVariableA("DX12_GPU_SCENE_STRESS_TEST", value, sizeof(value)) && atoi(value) != 0;
+    }
 
-void Check(bool passed, const char* name)
-{
-    WriteGraphicsLog("GPU Scene validation: %s %s\n", passed ? "PASS" : "FAIL", name);
-    if (!passed)
+    void Check(bool passed, const char* name)
     {
-        ++failures;
-    }
-}
-
-EntityID CreateFixture(bool skipCulling = false)
-{
-    Entity entity = World::CreateEntity();
-    entity.Add<TransformComponent>().Add<MeshComponent>().Add<MaterialComponent>();
-    auto& transform = entity.Get<TransformComponent>();
-    transform.Position = XMFLOAT3(100000, 0, 0);
-    entity.Get<MeshComponent>() = sharedMesh;
-    if (skipCulling)
-    {
-        entity.Add<InstancingComponent>();
-        entity.Get<InstancingComponent>().EnableFrustumCulling = false;
-    }
-    // Reuse the renderer's default primitive shader and the shared geometry.
-    // Opaque drawing remains on the existing CPU path during this phase.
-    return entity.GetID();
-}
-
-bool CpuVisible(const GPUInstanceData& instance, const XMMATRIX& viewProjection)
-{
-    if (!(instance.Flags & 1u))
-    {
-        return false;
-    }
-    if (!(instance.Flags & 2u))
-    {
-        return true;
-    }
-    uint32_t outside = 63;
-    for (uint32_t corner = 0; corner < 8; ++corner)
-    {
-        XMFLOAT4 position;
-        const auto& c = instance.BoundsCenter;
-        const auto& e = instance.BoundsExtents;
-        XMStoreFloat4(&position, XMVector4Transform(XMVectorSet(c.x + ((corner & 1) ? e.x : -e.x),
-                                                                c.y + ((corner & 2) ? e.y : -e.y),
-                                                                c.z + ((corner & 4) ? e.z : -e.z), 1),
-                                                    viewProjection));
-        const uint32_t mask = (position.x < -position.w ? 1u : 0u) | (position.x > position.w ? 2u : 0u) |
-                              (position.y < -position.w ? 4u : 0u) | (position.y > position.w ? 8u : 0u) |
-                              (position.z < 0 ? 16u : 0u) | (position.z > position.w ? 32u : 0u);
-        outside &= mask;
-    }
-    return !outside;
-}
-
-void Readback()
-{
-    vector<uint8_t> instanceBytes, visibilityBytes, meshBytes, materialBytes;
-    const auto& stats = GpuScene::Statistics();
-    const auto state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-    const bool read =
-        RenderCapture::ReadBuffer(GpuScene::InstanceBuffer(), state,
-                                  uint64_t(stats.InstanceSlots) * sizeof(GPUInstanceData), instanceBytes) &&
-        RenderCapture::ReadBuffer(GpuScene::VisibilityBuffer(), state, uint64_t(stats.InstanceSlots) * 4,
-                                  visibilityBytes) &&
-        RenderCapture::ReadBuffer(GpuScene::MeshBuffer(), state, uint64_t(stats.Meshes) * sizeof(GPUMeshData),
-                                  meshBytes) &&
-        RenderCapture::ReadBuffer(GpuScene::MaterialBuffer(), state,
-                                  uint64_t(stats.Materials) * sizeof(GPUMaterialData), materialBytes);
-    Check(read, "GPU buffer readback");
-    if (!read)
-    {
-        return;
-    }
-    XMMATRIX view, projection;
-    Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
-    bool matching = true, visibilityMatching = true, shared = true, meshReference = true;
-    uint32_t visible = 0;
-    uint32_t mesh = UINT32_MAX, material = UINT32_MAX;
-    for (EntityID entity : entities)
-    {
-        const auto id = Entity(entity).GetGPUInstanceID();
-        const auto* cached = GpuScene::GetInstance(id);
-        if (!cached || id >= stats.InstanceSlots)
+        WriteGraphicsLog("GPU Scene validation: %s %s\n", passed ? "PASS" : "FAIL", name);
+        if (!passed)
         {
-            matching = false;
-            continue;
+            ++failures;
         }
-        const auto* gpu = reinterpret_cast<const GPUInstanceData*>(instanceBytes.data()) + id;
-        matching &= memcmp(cached, gpu, sizeof(*gpu)) == 0;
-        const uint32_t result = reinterpret_cast<const uint32_t*>(visibilityBytes.data())[id];
-        visibilityMatching &= result == (CpuVisible(*cached, view * projection) ? 1u : 0u);
-        visible += result;
-        if (mesh == UINT32_MAX)
-        {
-            mesh = cached->MeshIndex;
-            material = cached->MaterialIndex;
-        }
-        // Later material edits intentionally diverge one instance's shared reference.
-        const auto& sourceMesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
-        if (sourceMesh.VertexBuffer == sharedMesh.VertexBuffer)
-        {
-            shared &= cached->MeshIndex == mesh;
-        }
-        const auto* meshData = reinterpret_cast<const GPUMeshData*>(meshBytes.data()) + cached->MeshIndex;
-        const uint64_t vertexAddress =
-            uint64_t(meshData->VertexAddressLow) | (uint64_t(meshData->VertexAddressHigh) << 32);
-        meshReference &= vertexAddress == sourceMesh.VertexBuffer->GetGPUVirtualAddress();
-        const auto* gpuMaterial =
-            reinterpret_cast<const GPUMaterialData*>(materialBytes.data()) + cached->MaterialIndex;
-        matching &= gpuMaterial->ParameterVectorCount > 0 &&
-                    gpuMaterial->ParameterVectorCount <= GpuSceneMaterialParameterVectors;
-        const auto expectedMaterial =
-            MaterialBindings::BuildGpuSceneMaterial(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity));
-        matching &= memcmp(gpuMaterial, &expectedMaterial, sizeof(expectedMaterial)) == 0;
     }
-    Check(matching, "CPU/HLSL layout and resident instance/material bytes");
-    Check(visibilityMatching && visible == 1, "10000 resident GPU frustum results match CPU reference");
-    Check(shared && meshReference, "10000 instances share existing vertex buffer reference");
-}
-} // namespace
+
+    EntityID CreateFixture(bool skipCulling = false)
+    {
+        Entity entity = World::CreateEntity();
+        entity.Add<TransformComponent>().Add<MeshComponent>().Add<MaterialComponent>();
+        auto& transform = entity.Get<TransformComponent>();
+        transform.Position = XMFLOAT3(100000, 0, 0);
+        entity.Get<MeshComponent>() = sharedMesh;
+        if (skipCulling)
+        {
+            entity.Add<InstancingComponent>();
+            entity.Get<InstancingComponent>().EnableFrustumCulling = false;
+        }
+        // 描画側の既定プリミティブシェーダーと共有ジオメトリを再利用する。
+        // この段階では、不透明描画は既存の CPU 経路を維持する。
+        return entity.GetID();
+    }
+
+    bool CpuVisible(const GPUInstanceData& instance, const XMMATRIX& viewProjection)
+    {
+        if (!(instance.Flags & 1u))
+        {
+            return false;
+        }
+        if (!(instance.Flags & 2u))
+        {
+            return true;
+        }
+        uint32_t outside = 63;
+        for (uint32_t corner = 0; corner < 8; ++corner)
+        {
+            XMFLOAT4 position;
+            const auto& c = instance.BoundsCenter;
+            const auto& e = instance.BoundsExtents;
+            XMStoreFloat4(&position, XMVector4Transform(XMVectorSet(c.x + ((corner & 1) ? e.x : -e.x),
+                                                                    c.y + ((corner & 2) ? e.y : -e.y),
+                                                                    c.z + ((corner & 4) ? e.z : -e.z), 1),
+                                                        viewProjection));
+            const uint32_t mask = (position.x < -position.w ? 1u : 0u) | (position.x > position.w ? 2u : 0u) |
+                                  (position.y < -position.w ? 4u : 0u) | (position.y > position.w ? 8u : 0u) |
+                                  (position.z < 0 ? 16u : 0u) | (position.z > position.w ? 32u : 0u);
+            outside &= mask;
+        }
+        return !outside;
+    }
+
+    void Readback()
+    {
+        vector<uint8_t> instanceBytes, visibilityBytes, meshBytes, materialBytes;
+        const auto& stats = GpuScene::Statistics();
+        const auto state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        const bool read =
+            RenderCapture::ReadBuffer(GpuScene::InstanceBuffer(), state,
+                                      uint64_t(stats.InstanceSlots) * sizeof(GPUInstanceData), instanceBytes) &&
+            RenderCapture::ReadBuffer(GpuScene::VisibilityBuffer(), state, uint64_t(stats.InstanceSlots) * 4,
+                                      visibilityBytes) &&
+            RenderCapture::ReadBuffer(GpuScene::MeshBuffer(), state, uint64_t(stats.Meshes) * sizeof(GPUMeshData),
+                                      meshBytes) &&
+            RenderCapture::ReadBuffer(GpuScene::MaterialBuffer(), state,
+                                      uint64_t(stats.Materials) * sizeof(GPUMaterialData), materialBytes);
+        Check(read, "GPU buffer readback");
+        if (!read)
+        {
+            return;
+        }
+        XMMATRIX view, projection;
+        Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
+        bool matching = true, visibilityMatching = true, shared = true, meshReference = true;
+        uint32_t visible = 0;
+        uint32_t mesh = UINT32_MAX, material = UINT32_MAX;
+        for (EntityID entity : entities)
+        {
+            const auto id = Entity(entity).GetGPUInstanceID();
+            const auto* cached = GpuScene::GetInstance(id);
+            if (!cached || id >= stats.InstanceSlots)
+            {
+                matching = false;
+                continue;
+            }
+            const auto* gpu = reinterpret_cast<const GPUInstanceData*>(instanceBytes.data()) + id;
+            matching &= memcmp(cached, gpu, sizeof(*gpu)) == 0;
+            const uint32_t result = reinterpret_cast<const uint32_t*>(visibilityBytes.data())[id];
+            visibilityMatching &= result == (CpuVisible(*cached, view * projection) ? 1u : 0u);
+            visible += result;
+            if (mesh == UINT32_MAX)
+            {
+                mesh = cached->MeshIndex;
+                material = cached->MaterialIndex;
+            }
+            // 後続のマテリアル編集で、1つのインスタンスの共有参照を意図的に分岐させる。
+            const auto& sourceMesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+            if (sourceMesh.VertexBuffer == sharedMesh.VertexBuffer)
+            {
+                shared &= cached->MeshIndex == mesh;
+            }
+            const auto* meshData = reinterpret_cast<const GPUMeshData*>(meshBytes.data()) + cached->MeshIndex;
+            const uint64_t vertexAddress =
+                uint64_t(meshData->VertexAddressLow) | (uint64_t(meshData->VertexAddressHigh) << 32);
+            meshReference &= vertexAddress == sourceMesh.VertexBuffer->GetGPUVirtualAddress();
+            const auto* gpuMaterial =
+                reinterpret_cast<const GPUMaterialData*>(materialBytes.data()) + cached->MaterialIndex;
+            matching &= gpuMaterial->ParameterVectorCount > 0 &&
+                        gpuMaterial->ParameterVectorCount <= GpuSceneMaterialParameterVectors;
+            const auto expectedMaterial = MaterialBindings::BuildGpuSceneMaterial(
+                ComponentManager::GetComponentUnchecked<MaterialComponent>(entity));
+            matching &= memcmp(gpuMaterial, &expectedMaterial, sizeof(expectedMaterial)) == 0;
+        }
+        Check(matching, "CPU/HLSL layout and resident instance/material bytes");
+        Check(visibilityMatching && visible == 1, "10000 resident GPU frustum results match CPU reference");
+        Check(shared && meshReference, "10000 instances share existing vertex buffer reference");
+    }
+} // 名前空間
 
 void GpuSceneValidation::BeforeFrame(uint64_t frame)
 {
@@ -170,7 +170,7 @@ void GpuSceneValidation::BeforeFrame(uint64_t frame)
     if (GetEnvironmentVariableA("DX12_GPU_SCENE_CPU_GEOMETRY", cpuGeometry, sizeof(cpuGeometry)) &&
         atoi(cpuGeometry) != 0)
     {
-        // Isolate scene bookkeeping from both GPU geometry drawing paths.
+        // シーンの管理処理を、2つの GPU ジオメトリ描画経路から切り離す。
         GPUDrivenRenderer::SetEnabled(false);
         MeshShaderRenderer::GetSettings().Enabled = false;
     }
@@ -409,8 +409,8 @@ void GpuSceneValidation::AfterFrame(uint64_t frame)
     {
         Check(frame == 80 ? residentDrawCulls > 0 : legacyDrawCulls > 0,
               "indexed model rendering executes resident/legacy GPU culling path");
-        // Compare the opaque render targets before temporal DLSS/NRD can change
-        // their histories. The camera projection is identical for these frames.
+        // 時間履歴を使う DLSS/NRD が履歴を変える前に、不透明描画のターゲットを比較する。
+        // これらのフレームのカメラ投影は同一。
         bool matching = true;
         const GBufferType targets[] = {GBufferType::BASE_COLOR, GBufferType::NORMAL, GBufferType::MATERIAL};
         for (size_t i = 0; i < size(targets); ++i)

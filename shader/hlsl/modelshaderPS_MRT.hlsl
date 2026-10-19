@@ -28,7 +28,8 @@ GBufferOutput main(in PSInput3D In)
     float assetMetallic = mMetallic;
     float assetRoughness = mRoughness;
     float4 assetEmissionAO;
-    ApplyAssetMaterial(assetMaterial, In.TexCoord, g_SamplerState, baseColor, assetMetallic, assetRoughness, assetEmissionAO);
+    ApplyAssetMaterial(assetMaterial, In.TexCoord, g_SamplerState, baseColor, assetMetallic, assetRoughness,
+                       assetEmissionAO);
     clip(baseColor.a - 0.01f);
 
     float3 normal = In.Normal;
@@ -50,11 +51,8 @@ GBufferOutput main(in PSInput3D In)
     output.Material.g = usePartParams ? partParams.Basic.y : assetRoughness;
     output.Material.b = usePartParams ? partParams.Basic.z : mFresnel;
     output.Material.a = materialPartId;
-    output.Shadow = usePartParams
-        ? float4(partParams.Shadow0.x, partParams.Shadow0.y, partParams.Shadow0.z, 0.0f)
-        : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
+    output.Shadow = usePartParams ? float4(partParams.Shadow0.x, partParams.Shadow0.y, partParams.Shadow0.z, 0.0f)
+                                  : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
     output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
     return output;
 }
-
-

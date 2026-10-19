@@ -2,16 +2,16 @@
 #include "cloudsettings.h"
 #include "pch.h"
 
-// Uses the renderer's camera/light buffers and descriptor heaps; owns no scene state.
+// 描画側のカメラ・ライトバッファと記述子ヒープを使い、シーン状態は所有しない。
 class CloudRenderer
 {
   public:
     static constexpr UINT kRtvCount = 2 * 3;
     static bool Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engineHeap, UINT increment);
     static void Shutdown();
-    // Called after the renderer has waited for all in-flight frames during resize.
+    // リサイズ時に、描画側が実行中の全フレームを待ち終わってから呼ぶ。
     static void Resize(D3D12_CPU_DESCRIPTOR_HANDLE rtvStart, UINT rtvIncrement);
-    // Prepare once per frame before deferred lighting; Render reuses the same density/wind state.
+    // 遅延ライティングの前に毎フレーム1回準備し、Render は同じ密度・風の状態を再利用する。
     static void PrepareLighting(ID3D12GraphicsCommandList* commands, UINT frameIndex, UINT width, UINT height,
                                 float deltaTime);
     static void BindLighting(ID3D12GraphicsCommandList* commands, UINT frameIndex);
@@ -22,8 +22,8 @@ class CloudRenderer
                        D3D12_CPU_DESCRIPTOR_HANDLE sceneRtv, DXGI_FORMAT sceneFormat);
     static CloudSettings& GetSettings();
     static void GenerateNoise(uint32_t seed);
-    // Replace the generated base (shape) noise with a user volume (resampled to the base extent, wrapped).
-    // Stays active across seed changes until ClearCustomBaseNoise.
+    // 生成したベース形状ノイズをユーザーボリュームに置き換える（基準サイズへ再サンプリングし、端は反復）。
+    // シードが変わっても ClearCustomBaseNoise まで有効なままにする。
     static void SetCustomBaseNoise(const std::vector<float>& density, int extent, const std::string& label);
     static void ClearCustomBaseNoise();
     static bool HasCustomBaseNoise();
@@ -33,4 +33,3 @@ class CloudRenderer
     static ID3D12Resource* GetBaseNoiseResource();
     static UINT GetNoiseGenerationCount();
 };
-

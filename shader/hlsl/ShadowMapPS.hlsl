@@ -26,4 +26,3 @@ void main(float4 position : SV_POSITION, float2 uv : TEXCOORD, float vertexOpaci
         clip(opacity - max(PBRPadding.z, 1.0f / 255.0f));
     }
 }
-

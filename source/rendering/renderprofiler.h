@@ -316,7 +316,7 @@ class RenderProfiler final
                     RenderMeasurement::EventInterval interval;
                     interval.Id = index;
                     interval.ParentId = event.ParentId;
-                    // This profiler currently timestamps the ordered direct queue only.
+                    // このプロファイラーは現在、順序付けられたダイレクトキューだけを計測する。
                     interval.QueueId = 0;
                     if (event.Ended && event.ScopeCompleted && event.BeginLocalQuery < slot.TimestampQueryCount &&
                         event.EndLocalQuery < slot.TimestampQueryCount)
@@ -490,7 +490,7 @@ class RenderProfiler final
         }
     }
 
-    // Caller must first wait for all direct-queue submissions to finish.
+    // 呼び出し側は先にダイレクトキューの全送信処理の完了を待つ必要がある。
     static void DrainCompletedFrames(const std::function<void(const FrameSnapshot&)>& visitor)
     {
         if (IsFrameActive())
@@ -508,8 +508,8 @@ class RenderProfiler final
         }
     }
 
-    // Used only by the GPU validation fixture, before BeginFrame. Physical query
-    // heap capacity is unchanged; the fault is part of the resolved frame record.
+    // GPU 検証用フィクスチャだけが BeginFrame の前に使う。実際のクエリヒープ容量は変更せず、
+    // 障害情報を解決済みのフレーム記録に含める。
     static void SetValidationFault(ValidationFault fault)
     {
         if (!IsFrameActive())
@@ -607,8 +607,8 @@ class RenderProfiler final
         {
             commandList->EndQuery(s_PipelineStatisticsHeap.Get(), D3D12_QUERY_TYPE_PIPELINE_STATISTICS,
                                   s_ActiveFrameIndex);
-            // Pipeline statistics cannot span command-list resets. Timestamp pairs
-            // remain valid across the GPU-ordered D3D12/CUDA submissions.
+            // パイプライン統計はコマンドリストのリセットをまたげない。タイムスタンプのペアは
+            // GPU 順序が保証された D3D12/CUDA の送信をまたいでも有効。
             s_ActiveSlot->PipelineQueryClosed = true;
         }
     }
@@ -683,8 +683,8 @@ class RenderProfiler final
         }
         RayTelemetry::Data().EndFrame(commandList);
 
-        // ResolveQueryData must never include an unwritten end query. Close leaked
-        // scopes for query safety, but keep their measurements explicitly invalid.
+        // ResolveQueryData に未書き込みの終了クエリを含めてはならない。閉じ忘れたスコープを終了して
+        // クエリの安全性を保ちつつ、その測定値は明示的に無効として扱う。
         while (!s_OpenGpuEvents.empty() && s_OpenGpuEvents.back() != s_FrameGpuToken)
         {
             const UINT token = s_OpenGpuEvents.back();

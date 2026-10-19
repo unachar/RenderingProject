@@ -61,8 +61,8 @@ void FramePipeline::Execute()
                 },
                 [](ID3D12GraphicsCommandList* passCommandList) {
                     RenderProfiler::ScopedEvent profile("Shadow", passCommandList);
-                    // Phase 3 GBV exercises the production GPU Scene/opaque passes.
-                    // Full-frame CPU fallback and auxiliary passes are tested separately.
+                    // フェーズ3の GBV は本番の GPU Scene と不透明描画パスを検証する。
+                    // フルフレームの CPU フォールバックと補助パスは別途検証する。
                     if (GPUDrivenValidation::IsGpuValidationRun())
                     {
                         return;

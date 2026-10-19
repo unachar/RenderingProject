@@ -11,227 +11,230 @@
 
 namespace
 {
-uint64_t HashGeometry(const void* data, size_t size)
-{
-    uint64_t hash = 1469598103934665603ull;
-    const auto* bytes = static_cast<const uint8_t*>(data);
-    for (size_t i = 0; i < size; ++i)
+    uint64_t HashGeometry(const void* data, size_t size)
     {
-        hash ^= bytes[i];
-        hash *= 1099511628211ull;
-    }
-    return hash;
-}
-
-struct MaterialPartShaderConstants
-{
-    XMFLOAT4 Basic{};
-    XMFLOAT4 Base{};
-    XMFLOAT4 Shadow0{};
-    XMFLOAT4 Shadow1{};
-    XMFLOAT4 Highlight{};
-    XMFLOAT4 RimStyle{};
-    XMFLOAT4 RimLight{};
-    XMFLOAT4 Skin0{};
-    XMFLOAT4 Skin1{};
-};
-
-struct PBRConstants
-{
-    float Metallic = 0.0f;
-    float Roughness = 0.5f;
-    float Fresnel = 0.04f;
-    float NormalBlend = 0.0f;
-    float NormalBias = 0.0f;
-    float BaseSaturation = 1.2f;
-    float BaseBrightness = 1.0f;
-    float ShadowThreshold = 0.44f;
-    float ShadowSoftness = 0.045f;
-    float ShadowStrength = 1.0f;
-    float MidStrength = 1.0f;
-    float LitStrength = 1.0f;
-    float RimStrength = 0.45f;
-    float RimThreshold = 0.70f;
-    float RimSoftness = 0.055f;
-    float RimPower = 1.0f;
-    XMFLOAT3 RimColor = {0.38f, 0.48f, 0.80f};
-    float RimAlbedoBlend = 0.20f;
-    float RimLightBlend = 0.35f;
-    float SpecularStrength = 0.35f;
-    float SpecularThreshold = 0.35f;
-    float KawaiiBlend = 1.0f;
-    float SkinScatterStrength = 1.0f;
-    float SkinScatterWrap = 0.42f;
-    float SkinBacklightStrength = 1.0f;
-    float SkinRimScatterStrength = 1.0f;
-    float SkinOilSpecularStrength = 1.0f;
-    float SkinShadowScatter = 0.54f;
-    float CastShadowThreshold = 0.28f;
-    float CastShadowSoftness = 0.10f;
-    // HLSL starts the next float4 at a 16-byte boundary after float3 PBRPadding.
-    float Padding[4]{};
-    XMFLOAT4 Transparent0 = {1.50f, 0.98f, 0.02f, 0.035f};
-    XMFLOAT4 Transparent1 = {0.10f, 0.02f, 0.01f, 0.005f};
-    MaterialPartShaderConstants PartParams[kMaterialPartParamCount]{};
-    XMFLOAT4 AssetBaseColor{1, 1, 1, 1};
-    XMFLOAT4 AssetSurface{1, 1, 0, 0.5f}; // Normal scale, AO strength, enabled, alpha cutoff.
-    XMFLOAT4 AssetEmission{};
-    XMUINT4 AssetTextures{UINT32_MAX, UINT32_MAX, UINT32_MAX, 0}; // MR, AO, emissive, surface/cull flags.
-};
-
-void WriteMaterialPartConstants(PBRConstants& constants, int index, const MaterialPartParams& params)
-{
-    if (index < 0 || index >= kMaterialPartParamCount)
-    {
-        return;
-    }
-
-    constants.PartParams[index].Basic = XMFLOAT4(params.Metallic, params.Roughness, params.Fresnel, params.NormalBlend);
-    constants.PartParams[index].Base =
-        XMFLOAT4(params.NormalBias, params.BaseSaturation, params.BaseBrightness, params.KawaiiBlend);
-    constants.PartParams[index].Shadow0 =
-        XMFLOAT4(params.ShadowThreshold, params.ShadowSoftness, params.ShadowStrength, params.MidStrength);
-    constants.PartParams[index].Shadow1 =
-        XMFLOAT4(params.LitStrength, params.CastShadowThreshold, params.CastShadowSoftness, 0.0f);
-    constants.PartParams[index].Highlight =
-        XMFLOAT4(params.RimStrength, params.RimThreshold, params.SpecularStrength, params.SpecularThreshold);
-    constants.PartParams[index].RimStyle =
-        XMFLOAT4(params.RimSoftness, params.RimPower, params.RimAlbedoBlend, params.RimLightBlend);
-    constants.PartParams[index].RimLight = XMFLOAT4(params.RimColor.x, params.RimColor.y, params.RimColor.z, 1.0f);
-    constants.PartParams[index].Skin0 = XMFLOAT4(params.SkinScatterStrength, params.SkinScatterWrap,
-                                                 params.SkinBacklightStrength, params.SkinRimScatterStrength);
-    constants.PartParams[index].Skin1 = XMFLOAT4(params.SkinOilSpecularStrength, params.SkinShadowScatter, 0.0f, 0.0f);
-}
-
-PBRConstants BuildPBRConstantsFromMaterial(const MaterialComponent& material)
-{
-    PBRConstants constants{};
-    constants.Metallic = material.Metallic;
-    constants.Roughness = material.Roughness;
-    constants.Fresnel = material.Fresnel;
-    constants.NormalBlend = material.NormalBlend;
-    constants.NormalBias = material.NormalBias;
-    constants.BaseSaturation = material.BaseSaturation;
-    constants.BaseBrightness = material.BaseBrightness;
-    constants.ShadowThreshold = material.ShadowThreshold;
-    constants.ShadowSoftness = material.ShadowSoftness;
-    constants.ShadowStrength = material.ShadowStrength;
-    constants.MidStrength = material.MidStrength;
-    constants.LitStrength = material.LitStrength;
-    constants.RimStrength = material.RimStrength;
-    constants.RimThreshold = material.RimThreshold;
-    constants.RimSoftness = material.RimSoftness;
-    constants.RimPower = material.RimPower;
-    constants.RimColor = material.RimColor;
-    constants.RimAlbedoBlend = material.RimAlbedoBlend;
-    constants.RimLightBlend = material.RimLightBlend;
-    constants.SpecularStrength = material.SpecularStrength;
-    constants.SpecularThreshold = material.SpecularThreshold;
-    constants.KawaiiBlend = material.KawaiiBlend;
-    constants.SkinScatterStrength = material.SkinScatterStrength;
-    constants.SkinScatterWrap = material.SkinScatterWrap;
-    constants.SkinBacklightStrength = material.SkinBacklightStrength;
-    constants.SkinRimScatterStrength = material.SkinRimScatterStrength;
-    constants.SkinOilSpecularStrength = material.SkinOilSpecularStrength;
-    constants.SkinShadowScatter = material.SkinShadowScatter;
-    constants.CastShadowThreshold = material.CastShadowThreshold;
-    constants.CastShadowSoftness = material.CastShadowSoftness;
-    constants.Padding[1] = static_cast<float>(MaterialSystem::ResolveShadowMode(material));
-    constants.Padding[2] = material.ShadowCutoff;
-    constants.Transparent0 =
-        XMFLOAT4(max(material.IOR, 1.0f), clamp(material.Transmission, 0.0f, 1.0f),
-                 clamp(material.TransmissionRoughness, 0.0f, 1.0f), max(material.RefractionStrength, 0.0f));
-    constants.Transparent1 =
-        XMFLOAT4(max(material.Thickness, 0.0f), max(material.AbsorptionCoefficient.x, 0.0f),
-                 max(material.AbsorptionCoefficient.y, 0.0f), max(material.AbsorptionCoefficient.z, 0.0f));
-    for (int i = 0; i < kMaterialPartParamCount; ++i)
-    {
-        WriteMaterialPartConstants(constants, i, material.PartParams[i]);
-    }
-    constants.AssetBaseColor = material.BaseColor;
-    constants.AssetSurface = {material.NormalScale, material.AOStrength, 0, material.AlphaCutoff};
-    if (material.RuntimeHandle != 0)
-    {
-        constants.AssetSurface.z = 1.0f;
-    }
-    constants.AssetEmission = {material.EmissiveColor.x, material.EmissiveColor.y, material.EmissiveColor.z,
-                               material.EmissiveIntensity};
-    auto textureOffset = [](int descriptor) {
-        if (descriptor < static_cast<int>(FrameConstants::g_kTEXTURE_SRV_START_INDEX))
+        uint64_t hash = 1469598103934665603ull;
+        const auto* bytes = static_cast<const uint8_t*>(data);
+        for (size_t i = 0; i < size; ++i)
         {
-            return UINT32_MAX;
+            hash ^= bytes[i];
+            hash *= 1099511628211ull;
         }
-        return static_cast<uint32_t>(descriptor) - FrameConstants::g_kTEXTURE_SRV_START_INDEX;
+        return hash;
+    }
+
+    struct MaterialPartShaderConstants
+    {
+        XMFLOAT4 Basic{};
+        XMFLOAT4 Base{};
+        XMFLOAT4 Shadow0{};
+        XMFLOAT4 Shadow1{};
+        XMFLOAT4 Highlight{};
+        XMFLOAT4 RimStyle{};
+        XMFLOAT4 RimLight{};
+        XMFLOAT4 Skin0{};
+        XMFLOAT4 Skin1{};
     };
-    constants.AssetTextures = {
-        textureOffset(material.MetallicRoughnessID), textureOffset(material.AOTextureID),
-        textureOffset(material.EmissiveTextureID),
-        static_cast<uint32_t>(material.AssetSurface) |
-            (static_cast<uint32_t>(material.DoubleSided ? MaterialCull::None : material.AssetCull) << 2) |
-            // Extended shading model (MaterialSurface.hlsli: EncodeShadingModel): bits 4-6 model, 8-15 strength.
-            ((min(material.ShadingModel, 7u) & 7u) << 4) |
-            (static_cast<uint32_t>(clamp(material.ShadingStrength, 0.0f, 1.0f) * 255.0f + 0.5f) << 8)};
-    return constants;
-}
 
-const MaterialComponent& GetDeferredLightingMaterial()
-{
-    static MaterialComponent defaultMaterial{};
-    EntityID fallbackEntity = g_kINVALID_ENTITY;
-    EntityID litEntity = g_kINVALID_ENTITY;
-    EntityID selfShadowEntity = g_kINVALID_ENTITY;
-    EntityID toonEntity = g_kINVALID_ENTITY;
-
-    for (EntityID entity : World::GetView<MaterialComponent>())
+    struct PBRConstants
     {
-        const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
-        if (material.ShaderClassMode != MaterialMode::Manual)
+        float Metallic = 0.0f;
+        float Roughness = 0.5f;
+        float Fresnel = 0.04f;
+        float NormalBlend = 0.0f;
+        float NormalBias = 0.0f;
+        float BaseSaturation = 1.2f;
+        float BaseBrightness = 1.0f;
+        float ShadowThreshold = 0.44f;
+        float ShadowSoftness = 0.045f;
+        float ShadowStrength = 1.0f;
+        float MidStrength = 1.0f;
+        float LitStrength = 1.0f;
+        float RimStrength = 0.45f;
+        float RimThreshold = 0.70f;
+        float RimSoftness = 0.055f;
+        float RimPower = 1.0f;
+        XMFLOAT3 RimColor = {0.38f, 0.48f, 0.80f};
+        float RimAlbedoBlend = 0.20f;
+        float RimLightBlend = 0.35f;
+        float SpecularStrength = 0.35f;
+        float SpecularThreshold = 0.35f;
+        float KawaiiBlend = 1.0f;
+        float SkinScatterStrength = 1.0f;
+        float SkinScatterWrap = 0.42f;
+        float SkinBacklightStrength = 1.0f;
+        float SkinRimScatterStrength = 1.0f;
+        float SkinOilSpecularStrength = 1.0f;
+        float SkinShadowScatter = 0.54f;
+        float CastShadowThreshold = 0.28f;
+        float CastShadowSoftness = 0.10f;
+        // HLSL では float3 PBRPadding の次の float4 が16バイト境界から始まる。
+        float Padding[4]{};
+        XMFLOAT4 Transparent0 = {1.50f, 0.98f, 0.02f, 0.035f};
+        XMFLOAT4 Transparent1 = {0.10f, 0.02f, 0.01f, 0.005f};
+        MaterialPartShaderConstants PartParams[kMaterialPartParamCount]{};
+        XMFLOAT4 AssetBaseColor{1, 1, 1, 1};
+        XMFLOAT4 AssetSurface{1, 1, 0, 0.5f}; // 法線スケール、AO 強度、有効フラグ、アルファ閾値。
+        XMFLOAT4 AssetEmission{};
+        XMUINT4 AssetTextures{UINT32_MAX, UINT32_MAX, UINT32_MAX, 0}; // MR、AO、発光、サーフェスとカリングのフラグ。
+    };
+
+    void WriteMaterialPartConstants(PBRConstants& constants, int index, const MaterialPartParams& params)
+    {
+        if (index < 0 || index >= kMaterialPartParamCount)
         {
-            continue;
+            return;
         }
 
-        if (fallbackEntity == g_kINVALID_ENTITY)
-        {
-            fallbackEntity = entity;
-        }
-        if (material.ShaderClass == ShaderClass::Lit && litEntity == g_kINVALID_ENTITY)
-        {
-            litEntity = entity;
-        }
-        if (material.ShaderClass == ShaderClass::SelfShadow && selfShadowEntity == g_kINVALID_ENTITY)
-        {
-            selfShadowEntity = entity;
-        }
-        if (material.ShaderClass == ShaderClass::Toon && toonEntity == g_kINVALID_ENTITY)
-        {
-            toonEntity = entity;
-        }
+        constants.PartParams[index].Basic =
+            XMFLOAT4(params.Metallic, params.Roughness, params.Fresnel, params.NormalBlend);
+        constants.PartParams[index].Base =
+            XMFLOAT4(params.NormalBias, params.BaseSaturation, params.BaseBrightness, params.KawaiiBlend);
+        constants.PartParams[index].Shadow0 =
+            XMFLOAT4(params.ShadowThreshold, params.ShadowSoftness, params.ShadowStrength, params.MidStrength);
+        constants.PartParams[index].Shadow1 =
+            XMFLOAT4(params.LitStrength, params.CastShadowThreshold, params.CastShadowSoftness, 0.0f);
+        constants.PartParams[index].Highlight =
+            XMFLOAT4(params.RimStrength, params.RimThreshold, params.SpecularStrength, params.SpecularThreshold);
+        constants.PartParams[index].RimStyle =
+            XMFLOAT4(params.RimSoftness, params.RimPower, params.RimAlbedoBlend, params.RimLightBlend);
+        constants.PartParams[index].RimLight = XMFLOAT4(params.RimColor.x, params.RimColor.y, params.RimColor.z, 1.0f);
+        constants.PartParams[index].Skin0 = XMFLOAT4(params.SkinScatterStrength, params.SkinScatterWrap,
+                                                     params.SkinBacklightStrength, params.SkinRimScatterStrength);
+        constants.PartParams[index].Skin1 =
+            XMFLOAT4(params.SkinOilSpecularStrength, params.SkinShadowScatter, 0.0f, 0.0f);
     }
 
-    if (litEntity != g_kINVALID_ENTITY)
+    PBRConstants BuildPBRConstantsFromMaterial(const MaterialComponent& material)
     {
-        return ComponentManager::GetComponentUnchecked<MaterialComponent>(litEntity);
+        PBRConstants constants{};
+        constants.Metallic = material.Metallic;
+        constants.Roughness = material.Roughness;
+        constants.Fresnel = material.Fresnel;
+        constants.NormalBlend = material.NormalBlend;
+        constants.NormalBias = material.NormalBias;
+        constants.BaseSaturation = material.BaseSaturation;
+        constants.BaseBrightness = material.BaseBrightness;
+        constants.ShadowThreshold = material.ShadowThreshold;
+        constants.ShadowSoftness = material.ShadowSoftness;
+        constants.ShadowStrength = material.ShadowStrength;
+        constants.MidStrength = material.MidStrength;
+        constants.LitStrength = material.LitStrength;
+        constants.RimStrength = material.RimStrength;
+        constants.RimThreshold = material.RimThreshold;
+        constants.RimSoftness = material.RimSoftness;
+        constants.RimPower = material.RimPower;
+        constants.RimColor = material.RimColor;
+        constants.RimAlbedoBlend = material.RimAlbedoBlend;
+        constants.RimLightBlend = material.RimLightBlend;
+        constants.SpecularStrength = material.SpecularStrength;
+        constants.SpecularThreshold = material.SpecularThreshold;
+        constants.KawaiiBlend = material.KawaiiBlend;
+        constants.SkinScatterStrength = material.SkinScatterStrength;
+        constants.SkinScatterWrap = material.SkinScatterWrap;
+        constants.SkinBacklightStrength = material.SkinBacklightStrength;
+        constants.SkinRimScatterStrength = material.SkinRimScatterStrength;
+        constants.SkinOilSpecularStrength = material.SkinOilSpecularStrength;
+        constants.SkinShadowScatter = material.SkinShadowScatter;
+        constants.CastShadowThreshold = material.CastShadowThreshold;
+        constants.CastShadowSoftness = material.CastShadowSoftness;
+        constants.Padding[1] = static_cast<float>(MaterialSystem::ResolveShadowMode(material));
+        constants.Padding[2] = material.ShadowCutoff;
+        constants.Transparent0 =
+            XMFLOAT4(max(material.IOR, 1.0f), clamp(material.Transmission, 0.0f, 1.0f),
+                     clamp(material.TransmissionRoughness, 0.0f, 1.0f), max(material.RefractionStrength, 0.0f));
+        constants.Transparent1 =
+            XMFLOAT4(max(material.Thickness, 0.0f), max(material.AbsorptionCoefficient.x, 0.0f),
+                     max(material.AbsorptionCoefficient.y, 0.0f), max(material.AbsorptionCoefficient.z, 0.0f));
+        for (int i = 0; i < kMaterialPartParamCount; ++i)
+        {
+            WriteMaterialPartConstants(constants, i, material.PartParams[i]);
+        }
+        constants.AssetBaseColor = material.BaseColor;
+        constants.AssetSurface = {material.NormalScale, material.AOStrength, 0, material.AlphaCutoff};
+        if (material.RuntimeHandle != 0)
+        {
+            constants.AssetSurface.z = 1.0f;
+        }
+        constants.AssetEmission = {material.EmissiveColor.x, material.EmissiveColor.y, material.EmissiveColor.z,
+                                   material.EmissiveIntensity};
+        auto textureOffset = [](int descriptor) {
+            if (descriptor < static_cast<int>(FrameConstants::g_kTEXTURE_SRV_START_INDEX))
+            {
+                return UINT32_MAX;
+            }
+            return static_cast<uint32_t>(descriptor) - FrameConstants::g_kTEXTURE_SRV_START_INDEX;
+        };
+        constants.AssetTextures = {
+            textureOffset(material.MetallicRoughnessID), textureOffset(material.AOTextureID),
+            textureOffset(material.EmissiveTextureID),
+            static_cast<uint32_t>(material.AssetSurface) |
+                (static_cast<uint32_t>(material.DoubleSided ? MaterialCull::None : material.AssetCull) << 2) |
+                // 拡張シェーディングモデル（MaterialSurface.hlsli:
+                // EncodeShadingModel）：ビット4～6がモデル、8～15が強度。
+                ((min(material.ShadingModel, 7u) & 7u) << 4) |
+                (static_cast<uint32_t>(clamp(material.ShadingStrength, 0.0f, 1.0f) * 255.0f + 0.5f) << 8)};
+        return constants;
     }
 
-    if (selfShadowEntity != g_kINVALID_ENTITY)
+    const MaterialComponent& GetDeferredLightingMaterial()
     {
-        return ComponentManager::GetComponentUnchecked<MaterialComponent>(selfShadowEntity);
+        static MaterialComponent defaultMaterial{};
+        EntityID fallbackEntity = g_kINVALID_ENTITY;
+        EntityID litEntity = g_kINVALID_ENTITY;
+        EntityID selfShadowEntity = g_kINVALID_ENTITY;
+        EntityID toonEntity = g_kINVALID_ENTITY;
+
+        for (EntityID entity : World::GetView<MaterialComponent>())
+        {
+            const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+            if (material.ShaderClassMode != MaterialMode::Manual)
+            {
+                continue;
+            }
+
+            if (fallbackEntity == g_kINVALID_ENTITY)
+            {
+                fallbackEntity = entity;
+            }
+            if (material.ShaderClass == ShaderClass::Lit && litEntity == g_kINVALID_ENTITY)
+            {
+                litEntity = entity;
+            }
+            if (material.ShaderClass == ShaderClass::SelfShadow && selfShadowEntity == g_kINVALID_ENTITY)
+            {
+                selfShadowEntity = entity;
+            }
+            if (material.ShaderClass == ShaderClass::Toon && toonEntity == g_kINVALID_ENTITY)
+            {
+                toonEntity = entity;
+            }
+        }
+
+        if (litEntity != g_kINVALID_ENTITY)
+        {
+            return ComponentManager::GetComponentUnchecked<MaterialComponent>(litEntity);
+        }
+
+        if (selfShadowEntity != g_kINVALID_ENTITY)
+        {
+            return ComponentManager::GetComponentUnchecked<MaterialComponent>(selfShadowEntity);
+        }
+
+        if (toonEntity != g_kINVALID_ENTITY)
+        {
+            return ComponentManager::GetComponentUnchecked<MaterialComponent>(toonEntity);
+        }
+
+        if (fallbackEntity != g_kINVALID_ENTITY)
+        {
+            return ComponentManager::GetComponentUnchecked<MaterialComponent>(fallbackEntity);
+        }
+
+        return defaultMaterial;
     }
 
-    if (toonEntity != g_kINVALID_ENTITY)
-    {
-        return ComponentManager::GetComponentUnchecked<MaterialComponent>(toonEntity);
-    }
-
-    if (fallbackEntity != g_kINVALID_ENTITY)
-    {
-        return ComponentManager::GetComponentUnchecked<MaterialComponent>(fallbackEntity);
-    }
-
-    return defaultMaterial;
-}
-
-} // namespace
+} // 名前空間
 
 GPUMaterialData MaterialBindings::BuildGpuSceneMaterial(const MaterialComponent& material)
 {

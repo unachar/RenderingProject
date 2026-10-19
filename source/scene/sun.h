@@ -7,7 +7,7 @@ class Sun
   public:
     static EntityID CreateDefault();
     static EntityID Create(const XMFLOAT3& position, const XMFLOAT3& target);
-    // Call before recording a frame, never from an Inspector or a draw callback.
+    // フレームの記録前に呼ぶ。Inspector や描画コールバックからは呼ばない。
     static bool MigrateLegacyGeometryBeforeFrame();
     static void Sync(EntityID entity);
 };

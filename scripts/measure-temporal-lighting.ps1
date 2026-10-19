@@ -18,16 +18,24 @@ function Restore-Settings {
             $restorePath = "$path.temporal-restore"
             [IO.File]::WriteAllBytes($restorePath, $savedFiles[$path])
             Move-Item -LiteralPath $restorePath -Destination $path -Force
-        } elseif (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path }
+        } elseif (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path
+        }
     }
 }
 Push-Location -LiteralPath $workspace
 try {
     New-Item -ItemType Directory -Force build/temporal-lighting | Out-Null
-    foreach ($name in $names) { $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+    foreach ($name in $names) {
+        $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
     foreach ($relative in @('Save/project_environment.cfg','Save/editor_layout.cfg','imgui.ini')) {
         $path = Join-Path $workspace $relative
-        $savedFiles[$path] = if (Test-Path -LiteralPath $path) { ,([IO.File]::ReadAllBytes($path)) } else { $null }
+        $savedFiles[$path] = if (Test-Path -LiteralPath $path) {
+            ,([IO.File]::ReadAllBytes($path))
+        } else {
+            $null
+        }
     }
     if (-not $SkipBuild) {
         $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -36,12 +44,20 @@ try {
         $env:_CL_ = '/Z7'
         $command = '"{0}" -no_logo -arch=amd64 -host_arch=amd64 && MSBuild.exe DirectX12.vcxproj /t:Build /p:Configuration={1} /p:Platform=x64 /m:2 /v:quiet /nologo' -f $developerCommand,$Configuration
         & $env:ComSpec /d /c $command *> build/temporal-lighting/build.log
-        if ($LASTEXITCODE -ne 0) { throw 'Build failed; see build/temporal-lighting/build.log.' }
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Build failed; see build/temporal-lighting/build.log.'
+        }
     }
     $runs = @{}
-    $profiles = if ($Flow) { @('raw','cache','restir','both','stable','replay') } else { @('legacy','fixed','sampled','stable','replay') }
+    $profiles = if ($Flow) {
+        @('raw','cache','restir','both','stable','replay')
+    } else {
+        @('legacy','fixed','sampled','stable','replay')
+    }
     if ($Focused) {
-        if (-not $Flow) { throw '-Focused requires -Flow.' }
+        if (-not $Flow) {
+            throw '-Focused requires -Flow.'
+        }
         $profiles = @('both','stable','replay')
     }
     foreach ($profile in $profiles) {
@@ -49,7 +65,11 @@ try {
         $run = "$stamp-$profile"
         $env:DX12_GI_TEST = '4'
         $env:DX12_VALIDATION_MODE = '1'
-        $env:DX12_STARTUP_SMOKE_FRAMES = if ($Flow) { '1792' } else { '512' }
+        $env:DX12_STARTUP_SMOKE_FRAMES = if ($Flow) {
+            '1792'
+        } else {
+            '512'
+        }
         $env:DX12_FEATURE_SMOKE_TEST = '0'
         $env:DX12_TEMPORAL_RUN = $run
         $env:DX12_TEMPORAL_STABLE_NRD = [string][int]($profile -ne 'legacy')
@@ -61,25 +81,38 @@ try {
         $env:DX12_TEMPORAL_NO_NRD = [string][int]($Flow -and $profile -notin @('stable','replay'))
         $initial = (Get-Item init_log.txt).Length
         $process = Start-Process -FilePath "bin/x64/$Configuration/DirectX12.exe" -WorkingDirectory $workspace -WindowStyle Hidden -PassThru
-        if (-not $process.WaitForExit(240000)) { $process.Kill(); throw "$profile exceeded 240 seconds." }
+        if (-not $process.WaitForExit(240000)) {
+            $process.Kill()
+            throw "$profile exceeded 240 seconds."
+        }
         $stream = [IO.File]::OpenRead((Join-Path $workspace 'init_log.txt'))
         try {
             $null = $stream.Seek($initial, [IO.SeekOrigin]::Begin)
             $reader = [IO.StreamReader]::new($stream)
             $log = $reader.ReadToEnd()
             $reader.Dispose()
-        } finally { $stream.Dispose() }
+        } finally {
+            $stream.Dispose()
+        }
         $directory = Join-Path $workspace "build/temporal-lighting/$run"
         [IO.File]::WriteAllText((Join-Path $directory 'init_log.txt'),$log)
-        if ($process.ExitCode -ne 0 -or $log -notmatch 'GI validation failures = 0') { throw "$profile failed; see $directory." }
+        if ($process.ExitCode -ne 0 -or $log -notmatch 'GI validation failures = 0') {
+            throw "$profile failed; see $directory."
+        }
         $runs[$profile] = $directory
         Write-Output "$profile`: PASS; $directory"
     }
     $report = @()
     foreach ($profile in $profiles) {
         foreach ($row in (Import-Csv (Join-Path $runs[$profile] 'summary.csv'))) {
-            $expectedFrames = if ($Flow) { 64 } else { 32 }
-            if ([int]$row.frames -ne $expectedFrames) { throw 'Missing temporal sample window.' }
+            $expectedFrames = if ($Flow) {
+                64
+            } else {
+                32
+            }
+            if ([int]$row.frames -ne $expectedFrames) {
+                throw 'Missing temporal sample window.'
+            }
             $row | Add-Member -NotePropertyName profile -NotePropertyValue $profile
             $report += $row
         }
@@ -90,9 +123,13 @@ try {
     $result = @{ Runs = $runs; Measurements = $report; ExactStableReplay = ($stableHashes -ceq $replayHashes); AdoptionProven = $false }
     $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $comparison -Encoding utf8
     Write-Output "Report: $comparison; exact replay=$($result.ExactStableReplay)"
-    if (-not $result.ExactStableReplay) { throw 'Stable replay differs. Report retained; do not claim whole-frame determinism.' }
+    if (-not $result.ExactStableReplay) {
+        throw 'Stable replay differs. Report retained; do not claim whole-frame determinism.'
+    }
 } finally {
     Restore-Settings
-    foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name,$savedEnvironment[$name],'Process') }
+    foreach ($name in $names) {
+        [Environment]::SetEnvironmentVariable($name,$savedEnvironment[$name],'Process')
+    }
     Pop-Location
 }

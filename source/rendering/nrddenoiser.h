@@ -35,17 +35,17 @@ struct NrdFrame
     XMFLOAT2 Jitter{};
     XMFLOAT2 PreviousJitter{};
     XMFLOAT3 LightDirection{};
-    UINT FrameIndex = 0; // safe engine frame slot
-    UINT Sequence = 0;   // consecutive temporal frame number
+    UINT FrameIndex = 0; // 安全に再利用できるエンジンのフレームスロット
+    UINT Sequence = 0;   // 時間方向に連続するフレーム番号
     float Range = 2000.0f;
     float AmbientRadius = 1.5f;
-    bool StableProfile = false; // Opt-in per owner: fixed 60 Hz denoiser reference, independent of wall-clock timing.
+    bool StableProfile = false; // 所有者ごとに明示的に選択する。実時間時計に依存しない固定60 Hz のデノイズ基準。
     bool ResetHistory = false;
-    uint32_t HistoryResetReasons = 0; // TemporalHistory::Reason bit mask from the shared contract.
+    uint32_t HistoryResetReasons = 0; // 共通契約で定義された TemporalHistory::Reason のビットマスク。
 };
 
-// Native D3D12 integration of NVIDIA NRD. Each signal/light owns its temporal history.
-// Execute restores input states; the result is returned in PIXEL_SHADER_RESOURCE state.
+// NVIDIA NRD のネイティブ D3D12 統合。信号とライトごとに時間履歴を所有する。
+// Execute は入力状態を復元し、結果を PIXEL_SHADER_RESOURCE 状態で返す。
 class NrdDenoiser
 {
   public:

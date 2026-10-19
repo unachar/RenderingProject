@@ -21,7 +21,8 @@ GBufferOutput main(PSInput2D input)
         float3 tangentNormal = NormalTexture.Sample(InputSampler, input.TexCoord).xyz * 2.0f - 1.0f;
         float3 tangent = float3(1.0f, 0.0f, 0.0f);
         float3 bitangent = float3(0.0f, -1.0f, 0.0f);
-        normal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal, normal);
+        normal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal,
+                                     normal);
     }
 
     GBufferOutput output;
@@ -34,4 +35,3 @@ GBufferOutput main(PSInput2D input)
     output.Shadow = 0.0f;
     return output;
 }
-

@@ -2,6 +2,7 @@
 #define SHADER_GPU_DRIVEN
 #include "common.hlsl"
 #include "GPUDrivenOpaque.hlsli"
+
 PSInput3D main(VSInput3D input)
 {
     GPUInstanceData instance = gSceneInstances[GPUInstanceID];
@@ -18,4 +19,3 @@ PSInput3D main(VSInput3D input)
     output.InstanceID = GPUInstanceID;
     return output;
 }
-

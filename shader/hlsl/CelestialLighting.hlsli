@@ -1,29 +1,35 @@
 #ifndef CELESTIAL_LIGHTING
 #define CELESTIAL_LIGHTING
-// A virtual full moon follows the opposite solar orbit. All passes share it.
+
+// 仮想の満月は太陽と逆の軌道をたどる。全パスで共有する。
 float3 VirtualMoonDirection()
 {
     const float lengthSquared = dot(SkySunDirection.xyz, SkySunDirection.xyz);
     if (lengthSquared < 0.00000001f)
     {
-        // Isolated material previews have no celestial light direction.
+        // 独立したマテリアルプレビューには天体の光源方向がない。
         return float3(0.0f, -1.0f, 0.0f);
     }
     return -SkySunDirection.xyz * rsqrt(lengthSquared);
 }
+
 float3 VirtualMoonIrradiance()
 {
     float visibility = smoothstep(0.0, 0.08, VirtualMoonDirection().y);
     return float3(0.55, 0.65, 0.80) * visibility * SkyParameters.x;
 }
-// Spherical atmosphere, with dense samples near the receiver for grazing rays.
+
+// 球状の大気。浅い角度のレイでは受光点付近を密にサンプリングする。
 float3 CelestialAtmosphereTransmission(float altitude, float3 direction)
 {
     const float radius = 6360000.0;
     float3 origin = float3(0, radius + max(altitude, 2.0), 0);
     float projection = dot(origin, direction);
     float groundDiscriminant = projection * projection - dot(origin, origin) + radius * radius;
-    if (groundDiscriminant >= 0 && -projection - sqrt(groundDiscriminant) > 0) return 0;
+    if (groundDiscriminant >= 0 && -projection - sqrt(groundDiscriminant) > 0)
+    {
+        return 0;
+    }
     float distance = -projection + sqrt(max(projection * projection - dot(origin, origin) + 6460000.0 * 6460000.0, 0));
     float2 depth = 0;
     [unroll] for (uint i = 0; i < 8; ++i)
@@ -39,4 +45,3 @@ float3 CelestialAtmosphereTransmission(float altitude, float3 direction)
     return exp(-rayleigh * depth.x - mie * depth.y);
 }
 #endif
-

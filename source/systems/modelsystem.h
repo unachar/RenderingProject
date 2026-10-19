@@ -449,16 +449,16 @@ class ModelSystem final : public SystemBase
         m_Backend.SetIndirectDrawCache(&m_IndirectDraws);
         switch (renderPass)
         {
-        case RenderPass::TransmittanceShadow:
-        case RenderPass::ShadowMap:
-            m_Backend.Draw(renderPass, receivingPostProcessOnly);
-            break;
-        case RenderPass::Velocity:
-            DrawVelocity();
-            break;
-        default:
-            m_Backend.Draw(renderPass, receivingPostProcessOnly);
-            break;
+            case RenderPass::TransmittanceShadow:
+            case RenderPass::ShadowMap:
+                m_Backend.Draw(renderPass, receivingPostProcessOnly);
+                break;
+            case RenderPass::Velocity:
+                DrawVelocity();
+                break;
+            default:
+                m_Backend.Draw(renderPass, receivingPostProcessOnly);
+                break;
         }
     }
 };

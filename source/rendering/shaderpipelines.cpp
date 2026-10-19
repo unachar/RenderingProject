@@ -185,8 +185,8 @@ bool ShaderPipelines::CreatePostProcessPipeline()
     ranges[14].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 33);
     ranges[15].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 35);
     ranges[16].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 36);
-    ranges[17].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 40); // atmosphere sky view LUT (scatter, transmission)
-    ranges[18].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 42); // LTC matrix, LTC amplitude / DFG
+    ranges[17].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 40); // 大気のスカイビュー LUT（散乱、透過率）
+    ranges[18].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 42); // LTC 行列、LTC 振幅 / DFG
     // 38：MegaLights M7 のライトのテクスチャ（エンジンのテクスチャ SRV 512 個、t0 space5）
     CD3DX12_DESCRIPTOR_RANGE megaLightTextures;
     megaLightTextures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 512, 0, 5);
@@ -220,7 +220,7 @@ bool ShaderPipelines::CreatePostProcessPipeline()
     params[25].InitAsDescriptorTable(1, &ranges[16], D3D12_SHADER_VISIBILITY_PIXEL);
     params[26].InitAsDescriptorTable(1, &ranges[17], D3D12_SHADER_VISIBILITY_PIXEL);
     params[27].InitAsDescriptorTable(1, &ranges[18], D3D12_SHADER_VISIBILITY_PIXEL);
-    // MegaLights（DeferredLightingPS）
+    // 多数のライトの遅延描画（MegaLights、DeferredLightingPS）
     //   M1: ライトバッファ / セル / セル内ライト / グリッド定数
     params[28].InitAsShaderResourceView(44, 0, D3D12_SHADER_VISIBILITY_PIXEL);
     params[29].InitAsShaderResourceView(45, 0, D3D12_SHADER_VISIBILITY_PIXEL);

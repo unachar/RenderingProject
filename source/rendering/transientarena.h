@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <vector>
 
-// The owner must keep this arena alive until its submitted GPU work completes.
-// Build/Reset are allowed only after the owner's frame fence has completed.
+// 所有者は、送信した GPU 処理が終わるまでこのアリーナを保持する必要がある。
+// Build/Reset は所有者のフレームフェンスが完了した後だけ呼び出せる。
 class TransientArena final
 {
   public:

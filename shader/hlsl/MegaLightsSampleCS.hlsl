@@ -5,13 +5,14 @@
 //   TraceShadows  (ML5) : 選んだサンプルのうち CastShadow のライトへ影レイ（RayQuery）
 //   ErrorReduce         : 検証用。累積平均とリファレンスの二乗誤差をグループごとに合計
 //   M5：タイル分類 + コンパクション + スクリーントレース
-//   ClearTraceCounters  : カウンタを 0 に（0: タイル数, 4: トレース要求数, 8: ワールドトレース数, 12: スクリーンで遮蔽が見つかった数）
-//   ClassifyTiles (ML2) : 8x8 タイルごとに「PBR 面でセルにライトがある」ピクセルがあるか → タイルリスト。空のタイルはサンプルを 0 に
-//   ArgsTiles/Trace/World : カウンタ → 間接ディスパッチの引数
-//   SampleLights  (ML3) : タイルリストで間接ディスパッチ。影レイが必要なサンプルをトレースリストへ
-//   ScreenTrace   (ML4) : 深度バッファを短くマーチ。遮蔽が見つかれば確定、見つからなければワールドトレースリストへ
-//   WorldTrace    (ML5) : ワールドトレースリストだけを RayQuery（ウェーブの全スレッドがレイを飛ばす）
-//   BuildHash     (ML7) : M4。影レイが通ったライトを 8x8 タイルの 128bit ブルームフィルタへ。
+//   ClearTraceCounters  : カウンタを 0 に（0: タイル数, 4: トレース要求数, 8: ワールドトレース数, 12:
+//   スクリーンで遮蔽が見つかった数） ClassifyTiles (ML2) : 8x8 タイルごとに「PBR
+//   面でセルにライトがある」ピクセルがあるか → タイルリスト。空のタイルはサンプルを 0 に ArgsTiles/Trace/World :
+//   カウンタ → 間接ディスパッチの引数 SampleLights  (ML3) :
+//   タイルリストで間接ディスパッチ。影レイが必要なサンプルをトレースリストへ ScreenTrace   (ML4) :
+//   深度バッファを短くマーチ。遮蔽が見つかれば確定、見つからなければワールドトレースリストへ WorldTrace    (ML5) :
+//   ワールドトレースリストだけを RayQuery（ウェーブの全スレッドがレイを飛ばす） BuildHash     (ML7) :
+//   M4。影レイが通ったライトを 8x8 タイルの 128bit ブルームフィルタへ。
 //                         前フレームの分（リプロジェクトしたタイル）は確率的に減衰させて引き継ぐ
 //   ガイド（M4）        : w_i ← w_i × g_i（g = 1：前フレームのハッシュに載っている, g = g_min：載っていない）
 //                         g は選択確率 p に入るので推定量は不偏のまま。g_min > 0 なので遮られがちなライトも時々調べる
@@ -23,55 +24,73 @@
 
 #define ML_MAX_SPP 4u
 
-StructuredBuffer<MegaLightData> Lights      : register(t1);
-StructuredBuffer<uint2>         Cells       : register(t3);
-StructuredBuffer<uint>          CellIndices : register(t4);
-RaytracingAccelerationStructure Scene       : register(t5);
-StructuredBuffer<float4>        Reference   : register(t7);
+StructuredBuffer<MegaLightData> Lights : register(t1);
+StructuredBuffer<uint2> Cells : register(t3);
+StructuredBuffer<uint> CellIndices : register(t4);
+RaytracingAccelerationStructure Scene : register(t5);
+StructuredBuffer<float4> Reference : register(t7);
 
 // GBuffer（ポストプロセスと同じ並び。ディスクリプタテーブル 1 つ）
 Texture2D<float4> GBufferBaseColor : register(t8);
-Texture2D<float4> GBufferNormal    : register(t9);
-Texture2D<float>  GBufferDepth     : register(t10);
-Texture2D<float4> GBufferMaterial  : register(t11);
-Texture2D<float4> GBufferVelocity  : register(t15); // zw = 現在の UV - 前フレームの UV
+Texture2D<float4> GBufferNormal : register(t9);
+Texture2D<float> GBufferDepth : register(t10);
+Texture2D<float4> GBufferMaterial : register(t11);
+Texture2D<float4> GBufferVelocity : register(t15); // zw = 現在の UV - 前フレームの UV
 StructuredBuffer<uint4> PreviousHash : register(t6);
 
-RWStructuredBuffer<uint4>  Samples      : register(u0);
+RWStructuredBuffer<uint4> Samples : register(u0);
 RWStructuredBuffer<float4> Accumulation : register(u1);
-RWStructuredBuffer<float2> Partials     : register(u2);
-RWStructuredBuffer<uint4>  CurrentHash  : register(u3);
-// ---- M5
-RWStructuredBuffer<uint>   TileList     : register(u4);
-RWStructuredBuffer<uint>   TraceList    : register(u5);
-RWStructuredBuffer<uint>   WorldList    : register(u6);
-RWByteAddressBuffer        TraceCounters: register(u7);
-RWByteAddressBuffer        DispatchArgs : register(u8);
+RWStructuredBuffer<float2> Partials : register(u2);
+RWStructuredBuffer<uint4> CurrentHash : register(u3);
+// ---- M5 段階
+RWStructuredBuffer<uint> TileList : register(u4);
+RWStructuredBuffer<uint> TraceList : register(u5);
+RWStructuredBuffer<uint> WorldList : register(u6);
+RWByteAddressBuffer TraceCounters : register(u7);
+RWByteAddressBuffer DispatchArgs : register(u8);
 
-#define ML_COUNTER_TILES  0u
-#define ML_COUNTER_TRACE  4u
-#define ML_COUNTER_WORLD  8u
+#define ML_COUNTER_TILES 0u
+#define ML_COUNTER_TRACE 4u
+#define ML_COUNTER_WORLD 8u
 #define ML_COUNTER_SCREEN 12u
 
 // ウェーブでまとめてリストへ追加（アトミックはウェーブに 1 回）
 void MLAppendTrace(bool want, uint value)
 {
     const uint count = WaveActiveCountBits(want);
-    if (count == 0u) return;
+    if (count == 0u)
+    {
+        return;
+    }
     uint base = 0u;
-    if (WaveIsFirstLane()) TraceCounters.InterlockedAdd(ML_COUNTER_TRACE, count, base);
+    if (WaveIsFirstLane())
+    {
+        TraceCounters.InterlockedAdd(ML_COUNTER_TRACE, count, base);
+    }
     base = WaveReadLaneFirst(base);
-    if (want) TraceList[base + WavePrefixCountBits(want)] = value;
+    if (want)
+    {
+        TraceList[base + WavePrefixCountBits(want)] = value;
+    }
 }
 
 void MLAppendWorld(bool want, uint value)
 {
     const uint count = WaveActiveCountBits(want);
-    if (count == 0u) return;
+    if (count == 0u)
+    {
+        return;
+    }
     uint base = 0u;
-    if (WaveIsFirstLane()) TraceCounters.InterlockedAdd(ML_COUNTER_WORLD, count, base);
+    if (WaveIsFirstLane())
+    {
+        TraceCounters.InterlockedAdd(ML_COUNTER_WORLD, count, base);
+    }
     base = WaveReadLaneFirst(base);
-    if (want) WorldList[base + WavePrefixCountBits(want)] = value;
+    if (want)
+    {
+        WorldList[base + WavePrefixCountBits(want)] = value;
+    }
 }
 
 bool MLGuideActive()
@@ -83,10 +102,16 @@ bool MLGuideActive()
 bool MLLoadPreviousHash(uint2 pixel, out uint4 hash)
 {
     hash = uint4(0u, 0u, 0u, 0u);
-    if (!MLGuideActive()) return false;
+    if (!MLGuideActive())
+    {
+        return false;
+    }
     const float2 size = float2(MLScreen.xy);
     const float2 previousUv = (float2(pixel) + 0.5f) / size - GBufferVelocity.Load(int3(pixel, 0)).zw;
-    if (any(previousUv < 0.0f) || any(previousUv >= 1.0f)) return false;
+    if (any(previousUv < 0.0f) || any(previousUv >= 1.0f))
+    {
+        return false;
+    }
     hash = PreviousHash[MLHashTileIndex(uint2(previousUv * size))];
     return true;
 }
@@ -107,7 +132,10 @@ bool MLIsPbrSurface(float shaderClass)
 //   ・Rect は「エリアライト（LTC）」設定がオフだと別の式で評価されるため、ここでは除外しない
 bool MLLightIsZero(MegaLightData light, float3 worldPos)
 {
-    if (light.Color.a <= 0.000001f) return true;
+    if (light.Color.a <= 0.000001f)
+    {
+        return true;
+    }
     const int type = (int)round(light.PositionType.w);
     if (type == 1 || type == 2)
     {
@@ -146,23 +174,28 @@ float MLTargetWeight(MegaLightData light, float3 worldPos, float3 N, float3 V, f
     const float3 H = normalize(L + V);
     const float alpha = roughness * roughness;
     const float shininess = min(2.0f / max(alpha * alpha, 1.0e-4f) - 2.0f, 2048.0f);
-    const float specular = min(MLLuminance(F0) * (shininess + 2.0f) / (2.0f * ML_PI) * pow(saturate(dot(N, H)), shininess), 64.0f);
+    const float specular =
+        min(MLLuminance(F0) * (shininess + 2.0f) / (2.0f * ML_PI) * pow(saturate(dot(N, H)), shininess), 64.0f);
     return MLLuminance(max(light.Color.rgb, 0.0f)) * max(light.Color.a, 0.0f) * geometry * NdotL * (diffuse + specular);
 }
 
 // --------------------------------------------------------------------------------------------
 // ML3：ライトの選択
 // --------------------------------------------------------------------------------------------
-[numthreads(8, 8, 1)]
-void SampleLights(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID)
-{
+[numthreads(8, 8, 1)] void SampleLights(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID) {
     // M5：対象のタイルだけを間接ディスパッチ
     const uint tileIndex = MLLinearGroup(groupId);
-    if (tileIndex >= TraceCounters.Load(ML_COUNTER_TILES)) return;
+    if (tileIndex >= TraceCounters.Load(ML_COUNTER_TILES))
+    {
+        return;
+    }
     const uint packedTile = TileList[tileIndex];
     // タイルはサンプル空間（半解像度なら画面の 1/2）。GBuffer は代表ピクセルで読む
     const uint2 samplePixel = uint2(packedTile & 0xffffu, packedTile >> 16u) * ML_HASH_TILE + groupThreadId.xy;
-    if (any(samplePixel >= MLSampleGrid.xy)) return;
+    if (any(samplePixel >= MLSampleGrid.xy))
+    {
+        return;
+    }
     const uint2 pixel = MLSampleToScreen(samplePixel);
     const uint sampleCount = min(MLStochastic.y, ML_MAX_SPP);
     const uint base = MLSampleBase(samplePixel);
@@ -171,10 +204,16 @@ void SampleLights(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThre
     const uint cellIndex = MLCellIndexFromDepth(pixel, depth);
     const float4 material = GBufferMaterial.Load(int3(pixel, 0));
     uint2 cell = uint2(0u, 0u);
-    if (cellIndex != ML_INVALID_CELL && MLIsPbrSurface(material.a)) cell = Cells[cellIndex];
+    if (cellIndex != ML_INVALID_CELL && MLIsPbrSurface(material.a))
+    {
+        cell = Cells[cellIndex];
+    }
     if (cell.y == 0u)
     {
-        for (uint clearIndex = 0u; clearIndex < sampleCount; ++clearIndex) Samples[base + clearIndex] = uint4(0u, 0u, 0u, 0u);
+        for (uint clearIndex = 0u; clearIndex < sampleCount; ++clearIndex)
+        {
+            Samples[base + clearIndex] = uint4(0u, 0u, 0u, 0u);
+        }
         return;
     }
 
@@ -194,8 +233,7 @@ void SampleLights(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThre
     float weightedValue[ML_MAX_SPP];
     uint uniformPick[ML_MAX_SPP];
     float uniformValue[ML_MAX_SPP];
-    [unroll]
-    for (uint init = 0u; init < ML_MAX_SPP; ++init)
+    [unroll] for (uint init = 0u; init < ML_MAX_SPP; ++init)
     {
         weightedPick[init] = 0xffffffffu;
         weightedValue[init] = 0.0f;
@@ -204,20 +242,27 @@ void SampleLights(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThre
     }
 
     // 1 回の走査で、重み比例のリザーバーと一様のリザーバーを N 個ずつ更新する
-    [loop]
-    for (uint i = 0u; i < cell.y; ++i)
+    [loop] for (uint i = 0u; i < cell.y; ++i)
     {
         const uint lightIndex = CellIndices[cell.x + i];
         const MegaLightData light = Lights[lightIndex];
-        if (MLLightIsZero(light, worldPos)) continue;
+        if (MLLightIsZero(light, worldPos))
+        {
+            continue;
+        }
         float w = max(MLTargetWeight(light, worldPos, N, V, albedo, material.rgb), 0.0f);
-        if (guided && !MLHashContains(previousHash, MLHashBits(light))) w *= guideMin;
+        if (guided && !MLHashContains(previousHash, MLHashBits(light)))
+        {
+            w *= guideMin;
+        }
         candidates += 1u;
         weightSum += w;
-        [unroll]
-        for (uint k = 0u; k < ML_MAX_SPP; ++k)
+        [unroll] for (uint k = 0u; k < ML_MAX_SPP; ++k)
         {
-            if (k >= sampleCount) break;
+            if (k >= sampleCount)
+            {
+                break;
+            }
             const uint stream = seed + (k * 0x9e3779b9u) + i * 0x85ebca6bu;
             if (w > 0.0f && MLRandom(stream) * weightSum < w)
             {
@@ -235,7 +280,10 @@ void SampleLights(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThre
     const float alpha = (weightSum > 0.0f) ? saturate(MLStochasticParams.x) : 1.0f;
     for (uint k = 0u; k < ML_MAX_SPP; ++k)
     {
-        if (k >= sampleCount) break;
+        if (k >= sampleCount)
+        {
+            break;
+        }
         uint4 result = uint4(0u, 0u, 0u, 0u);
         if (candidates > 0u)
         {
@@ -249,7 +297,8 @@ void SampleLights(uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThre
                 const MegaLightData light = Lights[lightIndex];
                 const bool castShadow = MLLightCastsShadow(light);
                 const float2 uv = float2(MLRandom(stream ^ 0x165667b1u), MLRandom(stream ^ 0xd3a2646cu));
-                result.x = (lightIndex & ML_SAMPLE_INDEX) | ML_SAMPLE_VALID | (castShadow ? ML_SAMPLE_TRACE : ML_SAMPLE_VISIBLE);
+                result.x = (lightIndex & ML_SAMPLE_INDEX) | ML_SAMPLE_VALID |
+                           (castShadow ? ML_SAMPLE_TRACE : ML_SAMPLE_VISIBLE);
                 result.y = asuint(1.0f / pdf);
                 result.z = MLPackUv(uv);
                 result.w = 0u;
@@ -271,7 +320,10 @@ bool MLTraceSegment(float3 position, float3 normal, float3 target, out float hit
     const float3 segment = target - origin;
     const float distance = length(segment);
     hitDistance = distance;
-    if (distance <= bias * 2.0f) return true;
+    if (distance <= bias * 2.0f)
+    {
+        return true;
+    }
     RayDesc ray;
     ray.Origin = origin;
     ray.Direction = segment / distance;
@@ -279,8 +331,13 @@ bool MLTraceSegment(float3 position, float3 normal, float3 target, out float hit
     ray.TMax = max(distance - bias, ray.TMin + 0.001f);
     RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_FORCE_OPAQUE> query;
     query.TraceRayInline(Scene, RAY_FLAG_NONE, 0x01, ray);
-    while (query.Proceed()) { }
-    if (query.CommittedStatus() == COMMITTED_NOTHING) return true;
+    while (query.Proceed())
+    {
+    }
+    if (query.CommittedStatus() == COMMITTED_NOTHING)
+    {
+        return true;
+    }
     hitDistance = query.CommittedRayT();
     return false;
 }
@@ -298,7 +355,10 @@ bool MLScreenTraceOccluded(uint2 pixel, float3 worldPos, float3 normal, float3 t
     const float3 startView = mul(float4(origin, 1.0f), MLWorldToView).xyz;
     float3 endView = mul(float4(target, 1.0f), MLWorldToView).xyz;
     const float nearZ = MLDepth.z;
-    if (startView.z <= nearZ) return false;
+    if (startView.z <= nearZ)
+    {
+        return false;
+    }
     // 終点がカメラの後ろなら手前で切る
     float segmentScale = 1.0f;
     if (endView.z < nearZ)
@@ -321,10 +381,19 @@ bool MLScreenTraceOccluded(uint2 pixel, float3 worldPos, float3 normal, float3 t
         const float t = tEnd * ((float)step + jitter) / (float)steps;
         const float3 pointView = lerp(startView, endView, t);
         const float2 samplePixel = MLViewToPixel(pointView);
-        if (any(samplePixel < 0.0f) || any(samplePixel >= float2(MLScreen.xy))) return false; // 画面外
-        if (length(samplePixel - startPixel) < selfPixels) continue; // 自分のピクセル付近は自己遮蔽になりやすい
+        if (any(samplePixel < 0.0f) || any(samplePixel >= float2(MLScreen.xy)))
+        {
+            return false; // 画面外
+        }
+        if (length(samplePixel - startPixel) < selfPixels)
+        {
+            continue; // 自分のピクセル付近は自己遮蔽になりやすい
+        }
         const float sceneDepth = GBufferDepth.Load(int3(uint2(samplePixel), 0));
-        if (!MLIsGeometryDepth(sceneDepth)) continue;
+        if (!MLIsGeometryDepth(sceneDepth))
+        {
+            continue;
+        }
         const float sceneZ = MLViewZFromDepth(sceneDepth);
         const float bias = 0.005f * pointView.z;
         if (sceneZ < pointView.z - bias && pointView.z - sceneZ < thickness)
@@ -336,11 +405,12 @@ bool MLScreenTraceOccluded(uint2 pixel, float3 worldPos, float3 normal, float3 t
     return false;
 }
 
-[numthreads(64, 1, 1)]
-void ScreenTrace(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
-{
+[numthreads(64, 1, 1)] void ScreenTrace(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex) {
     const uint index = MLLinearGroup(groupId) * 64u + groupIndex;
-    if (index >= TraceCounters.Load(ML_COUNTER_TRACE)) return;
+    if (index >= TraceCounters.Load(ML_COUNTER_TRACE))
+    {
+        return;
+    }
     const uint entry = TraceList[index];
     uint2 samplePixel;
     uint k;
@@ -374,11 +444,13 @@ void ScreenTrace(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
     MLAppendWorld(!resolved, entry);
 }
 
-[numthreads(64, 1, 1)]
-void WorldTrace(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
+    [numthreads(64, 1, 1)] void WorldTrace(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
 {
     const uint index = MLLinearGroup(groupId) * 64u + groupIndex;
-    if (index >= TraceCounters.Load(ML_COUNTER_WORLD)) return;
+    if (index >= TraceCounters.Load(ML_COUNTER_WORLD))
+    {
+        return;
+    }
     uint2 samplePixel;
     uint k;
     MLUnpackTraceEntry(WorldList[index], samplePixel, k);
@@ -391,7 +463,10 @@ void WorldTrace(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
     const MegaLightData light = Lights[lightSample.x & ML_SAMPLE_INDEX];
     const float3 target = MLLightSamplePoint(light, worldPos, MLUnpackUv(lightSample.z));
     float hitDistance;
-    if (MLTraceSegment(worldPos, N, target, hitDistance)) lightSample.x |= ML_SAMPLE_VISIBLE;
+    if (MLTraceSegment(worldPos, N, target, hitDistance))
+    {
+        lightSample.x |= ML_SAMPLE_VISIBLE;
+    }
     lightSample.w = asuint(hitDistance);
     Samples[sampleAddress] = lightSample;
 }
@@ -399,18 +474,18 @@ void WorldTrace(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
 // --------------------------------------------------------------------------------------------
 // M5：タイル分類 / カウンタ / 間接ディスパッチの引数
 // --------------------------------------------------------------------------------------------
-[numthreads(1, 1, 1)]
-void ClearTraceCounters()
-{
+[numthreads(1, 1, 1)] void ClearTraceCounters() {
     TraceCounters.Store4(0, uint4(0u, 0u, 0u, 0u));
 }
 
 groupshared uint gs_TileActive;
 
-[numthreads(8, 8, 1)]
-void ClassifyTiles(uint3 groupId : SV_GroupID, uint3 dispatch : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
-{
-    if (groupIndex == 0u) gs_TileActive = 0u;
+[numthreads(8, 8, 1)] void ClassifyTiles(uint3 groupId : SV_GroupID, uint3 dispatch : SV_DispatchThreadID,
+                                         uint groupIndex : SV_GroupIndex) {
+    if (groupIndex == 0u)
+    {
+        gs_TileActive = 0u;
+    }
     GroupMemoryBarrierWithGroupSync();
     // サンプル空間の 8x8 タイル
     const uint2 samplePixel = dispatch.xy;
@@ -420,7 +495,8 @@ void ClassifyTiles(uint3 groupId : SV_GroupID, uint3 dispatch : SV_DispatchThrea
     {
         const float depth = GBufferDepth.Load(int3(pixel, 0));
         const uint cellIndex = MLCellIndexFromDepth(pixel, depth);
-        if (cellIndex != ML_INVALID_CELL && MLIsPbrSurface(GBufferMaterial.Load(int3(pixel, 0)).a) && Cells[cellIndex].y > 0u)
+        if (cellIndex != ML_INVALID_CELL && MLIsPbrSurface(GBufferMaterial.Load(int3(pixel, 0)).a) &&
+            Cells[cellIndex].y > 0u)
         {
             InterlockedOr(gs_TileActive, 1u);
         }
@@ -433,7 +509,10 @@ void ClassifyTiles(uint3 groupId : SV_GroupID, uint3 dispatch : SV_DispatchThrea
         {
             const uint base = MLSampleBase(samplePixel);
             const uint sampleCount = min(MLStochastic.y, ML_MAX_SPP);
-            for (uint k = 0u; k < sampleCount; ++k) Samples[base + k] = uint4(0u, 0u, 0u, 0u);
+            for (uint k = 0u; k < sampleCount; ++k)
+            {
+                Samples[base + k] = uint4(0u, 0u, 0u, 0u);
+            }
         }
         return;
     }
@@ -452,21 +531,16 @@ void MLWriteDispatchArgs(uint offset, uint groups)
     DispatchArgs.Store3(offset, uint3(x, y, 1u));
 }
 
-[numthreads(1, 1, 1)]
-void ArgsTiles()
-{
+[numthreads(1, 1, 1)] void ArgsTiles() {
     MLWriteDispatchArgs(0u, TraceCounters.Load(ML_COUNTER_TILES));
 }
 
-[numthreads(1, 1, 1)]
-void ArgsTrace()
+    [numthreads(1, 1, 1)] void ArgsTrace()
 {
     MLWriteDispatchArgs(12u, (TraceCounters.Load(ML_COUNTER_TRACE) + 63u) / 64u);
 }
 
-[numthreads(1, 1, 1)]
-void ArgsWorld()
-{
+[numthreads(1, 1, 1)] void ArgsWorld() {
     MLWriteDispatchArgs(24u, (TraceCounters.Load(ML_COUNTER_WORLD) + 63u) / 64u);
 }
 
@@ -475,9 +549,8 @@ void ArgsWorld()
 // --------------------------------------------------------------------------------------------
 groupshared float2 gs_Error[256];
 
-[numthreads(256, 1, 1)]
-void ErrorReduce(uint3 groupId : SV_GroupID, uint3 dispatch : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
-{
+[numthreads(256, 1, 1)] void ErrorReduce(uint3 groupId : SV_GroupID, uint3 dispatch : SV_DispatchThreadID,
+                                         uint groupIndex : SV_GroupIndex) {
     const uint pixelCount = MLScreen.x * MLScreen.y;
     float2 value = 0.0f;
     if (dispatch.x < pixelCount)
@@ -496,13 +569,18 @@ void ErrorReduce(uint3 groupId : SV_GroupID, uint3 dispatch : SV_DispatchThreadI
     }
     gs_Error[groupIndex] = value;
     GroupMemoryBarrierWithGroupSync();
-    [unroll]
-    for (uint stride = 128u; stride > 0u; stride >>= 1u)
+    [unroll] for (uint stride = 128u; stride > 0u; stride >>= 1u)
     {
-        if (groupIndex < stride) gs_Error[groupIndex] += gs_Error[groupIndex + stride];
+        if (groupIndex < stride)
+        {
+            gs_Error[groupIndex] += gs_Error[groupIndex + stride];
+        }
         GroupMemoryBarrierWithGroupSync();
     }
-    if (groupIndex == 0u) Partials[groupId.x] = gs_Error[0];
+    if (groupIndex == 0u)
+    {
+        Partials[groupId.x] = gs_Error[0];
+    }
 }
 
 // --------------------------------------------------------------------------------------------
@@ -513,10 +591,12 @@ void ErrorReduce(uint3 groupId : SV_GroupID, uint3 dispatch : SV_DispatchThreadI
 // --------------------------------------------------------------------------------------------
 groupshared uint gs_Hash[4];
 
-[numthreads(8, 8, 1)]
-void BuildHash(uint3 groupId : SV_GroupID, uint3 dispatch : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
-{
-    if (groupIndex < 4u) gs_Hash[groupIndex] = 0u;
+[numthreads(8, 8, 1)] void BuildHash(uint3 groupId : SV_GroupID, uint3 dispatch : SV_DispatchThreadID,
+                                     uint groupIndex : SV_GroupIndex) {
+    if (groupIndex < 4u)
+    {
+        gs_Hash[groupIndex] = 0u;
+    }
     GroupMemoryBarrierWithGroupSync();
 
     const uint2 pixel = dispatch.xy;
@@ -528,7 +608,10 @@ void BuildHash(uint3 groupId : SV_GroupID, uint3 dispatch : SV_DispatchThreadID,
         for (uint k = 0u; k < sampleCount; ++k)
         {
             const uint4 lightSample = Samples[base + k];
-            if ((lightSample.x & ML_SAMPLE_VALID) == 0u || (lightSample.x & ML_SAMPLE_VISIBLE) == 0u) continue;
+            if ((lightSample.x & ML_SAMPLE_VALID) == 0u || (lightSample.x & ML_SAMPLE_VISIBLE) == 0u)
+            {
+                continue;
+            }
             bits |= MLHashBits(Lights[lightSample.x & ML_SAMPLE_INDEX]);
         }
         if (any(bits != 0u))
@@ -552,8 +635,7 @@ void BuildHash(uint3 groupId : SV_GroupID, uint3 dispatch : SV_DispatchThreadID,
             const float keep = (float)((MLGrid.w >> 8u) & 255u) / 255.0f;
             const uint seed = MLSeed(groupId.xy, MLStochastic.z, 0x48415348u);
             uint4 keepMask = uint4(0u, 0u, 0u, 0u);
-            [unroll]
-            for (uint word = 0u; word < 4u; ++word)
+            [unroll] for (uint word = 0u; word < 4u; ++word)
             {
                 uint mask = 0u;
                 uint remaining = previous[word];
@@ -561,7 +643,10 @@ void BuildHash(uint3 groupId : SV_GroupID, uint3 dispatch : SV_DispatchThreadID,
                 {
                     const uint bit = firstbitlow(remaining);
                     remaining &= remaining - 1u;
-                    if (MLRandom(seed + word * 131u + bit * 7919u) < keep) mask |= 1u << bit;
+                    if (MLRandom(seed + word * 131u + bit * 7919u) < keep)
+                    {
+                        mask |= 1u << bit;
+                    }
                 }
                 keepMask[word] = mask;
             }

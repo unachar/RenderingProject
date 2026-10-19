@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(VirtualGeometryPhase1Tests LANGUAGES CXX)
+
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
 enable_testing()
 set(ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 set(VG "${ROOT}/source/virtualgeometry")
@@ -42,15 +46,15 @@ add_executable(virtualgeometry_tests
 target_include_directories(virtualgeometry_tests PRIVATE "${ROOT}/source")
 target_compile_features(virtualgeometry_tests PRIVATE cxx_std_20)
 if(MSVC)
-    target_compile_options(virtualgeometry_tests PRIVATE /W4 /permissive- /utf-8)
+    target_compile_options(virtualgeometry_tests PRIVATE /W4 /permissive-)
 else()
     target_compile_options(virtualgeometry_tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 add_test(NAME virtualgeometry_phase1 COMMAND virtualgeometry_tests)
 add_test(NAME virtualgeometry_million COMMAND virtualgeometry_tests --million)
 set_tests_properties(virtualgeometry_million PROPERTIES LABELS stress)
-# Keep filesystem fixtures in the writable build tree. Windows sandbox temp
-# directories can reject the atomic file publication used by the cache tests.
+# ファイルを使うテストのデータは、書き込み可能なビルド領域に置く。Windowsのサンドボックスの
+# 一時領域では、キャッシュテストで使うアトミックなファイルの公開が拒否される場合がある。
 foreach(test_name virtualgeometry_phase1 virtualgeometry_million)
     set(test_temp "${CMAKE_CURRENT_BINARY_DIR}/test-temp/${test_name}")
     file(MAKE_DIRECTORY "${test_temp}")
@@ -71,7 +75,7 @@ target_include_directories(renderfeature_tests PRIVATE "${ROOT}/source")
 target_compile_features(renderfeature_tests PRIVATE cxx_std_17)
 add_test(NAME renderfeature_policy COMMAND renderfeature_tests)
 
-# Explicit opt-in target: the normal CPU test build does not compile or run D3D12 parity.
+# 明示的に指定した場合だけ使うターゲット。通常のCPUテストのビルドでは、D3D12の一致検証をコンパイル・実行しない。
 if(WIN32)
     add_executable(virtualgeometry_decoder_parity_tests EXCLUDE_FROM_ALL
         "${ROOT}/tests/virtualgeometry_decoder_parity_tests.cpp"

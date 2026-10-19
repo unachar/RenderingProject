@@ -15,12 +15,13 @@ cbuffer ScreenSpaceConstants : register(b0)
     uint4 FeatureFlags;
 };
 
-[numthreads(8, 8, 1)]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID)
-{
+[numthreads(8, 8, 1)] void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     uint2 deinterleavedPixel = dispatchThreadId.xy;
     uint slice = dispatchThreadId.z;
-    if (any(deinterleavedPixel >= DeinterleavedExtent) || slice >= 16u) return;
+    if (any(deinterleavedPixel >= DeinterleavedExtent) || slice >= 16u)
+    {
+        return;
+    }
 
     uint2 offset = uint2(slice & 3u, slice >> 2u);
     uint2 pixel = deinterleavedPixel * 4u + offset;
@@ -37,4 +38,3 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     OutLighting[uint3(deinterleavedPixel, slice)] =
         EffectParams.w > 0.5f ? PreviousLighting.Load(int3(pixel, 0)) : 0.0f;
 }
-

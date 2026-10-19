@@ -2,8 +2,12 @@ BasedOnStyle: Microsoft
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never
+NamespaceIndentation: All
+IndentExternBlock: Indent
+IndentCaseLabels: true
 ColumnLimit: 120
 SortIncludes: Never
+FixNamespaceComments: false
 BreakStringLiterals: false
 InsertBraces: true
 AllowShortBlocksOnASingleLine: Never

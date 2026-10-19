@@ -56,7 +56,7 @@ class Raytracing
     static D3D12_GPU_DESCRIPTOR_HANDLE GetGiSrv();
     static D3D12_GPU_DESCRIPTOR_HANDLE GetReflectionSrv();
     static D3D12_GPU_VIRTUAL_ADDRESS GetLightingConstantsAddress(UINT frameIndex);
-    // TLAS built by Execute() this frame (0 when ray tracing did not run).
+    // このフレームの Execute() が構築した TLAS（レイトレーシング未実行時は0）。
     static D3D12_GPU_VIRTUAL_ADDRESS GetSceneAddress();
     // NRD の共有ガイド（Motion / NormalRoughness / ViewZ。PIXEL_SHADER_RESOURCE）とカメラ情報。
     // serial は最後にガイドを書いた Execute の番号（同じフレームのものかを呼び出し側で判定する）

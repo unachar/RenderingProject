@@ -23,4 +23,3 @@ PSInput3D main(VSInput3D input, uint instanceId : SV_InstanceID)
     output.CameraPos = CameraPos;
     return output;
 }
-

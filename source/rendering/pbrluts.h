@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================================
-// PbrLuts
+// 物理ベース描画の参照テーブル（PbrLuts）
 //   LTC 行列（RGBA32F 64x64）と LTC 振幅 / DFG（RG32F 64x64）を GPU に転送する。
 //   DFG はスプリットサム IBL とマルチスキャッタリングのエネルギー補償、LTC は矩形エリアライトに使う。
 //   テーブルは ltctables.h（オフラインでフィットした値）。初期化時に 1 回だけ転送する。
@@ -30,7 +30,7 @@ class PbrLuts final
             return Fail();
         }
 
-        // Staging buffer for both textures (row pitch aligned to 256 bytes).
+        // 両テクスチャのステージングバッファ（行ピッチは256バイトに整列）。
         const UINT matrixPitch = Align(size * 16u, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
         const UINT amplitudePitch = Align(size * 8u, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
         const UINT amplitudeOffset = Align(matrixPitch * size, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
@@ -122,14 +122,14 @@ class PbrLuts final
         return s_Available;
     }
 
-    // Root parameter 27 of the post process root signature (t42, t43).
+    // 後処理のルートシグネチャのルートパラメーター27（t42、t43）。
     static D3D12_GPU_DESCRIPTOR_HANDLE GetSrv()
     {
         return CD3DX12_GPU_DESCRIPTOR_HANDLE(s_EngineHeap->GetGPUDescriptorHandleForHeapStart(),
                                              RendererState::g_kQUALITY_DESCRIPTOR_START, s_Increment);
     }
 
-    // Writes null descriptors so the table is always valid even if initialisation failed.
+    // 初期化失敗時もテーブルを有効に保つため、null 記述子を書き込む。
     static void WriteNullDescriptors(ID3D12Device* device, ID3D12DescriptorHeap* engineHeap)
     {
         s_EngineHeap = engineHeap;

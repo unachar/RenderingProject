@@ -121,34 +121,35 @@ class BulletPhysicsBackend final : public IPhysicsBackend
         BodyRecord record{};
         switch (desc.Shape)
         {
-        case PhysicsShape::Mesh:
-            if (!desc.MeshVertices.empty())
-            {
-                auto hull = make_unique<btConvexHullShape>();
-                for (const XMFLOAT3& vertex : desc.MeshVertices)
+            case PhysicsShape::Mesh:
+                if (!desc.MeshVertices.empty())
                 {
-                    hull->addPoint(ToBt(vertex), false);
+                    auto hull = make_unique<btConvexHullShape>();
+                    for (const XMFLOAT3& vertex : desc.MeshVertices)
+                    {
+                        hull->addPoint(ToBt(vertex), false);
+                    }
+                    hull->recalcLocalAabb();
+                    record.Shape = move(hull);
                 }
-                hull->recalcLocalAabb();
-                record.Shape = move(hull);
-            }
-            else
-            {
+                else
+                {
+                    record.Shape = make_unique<btBoxShape>(btVector3(max(desc.HalfExtent.x, 0.001f),
+                                                                     max(desc.HalfExtent.y, 0.001f),
+                                                                     max(desc.HalfExtent.z, 0.001f)));
+                }
+                break;
+            case PhysicsShape::Sphere:
+                record.Shape = make_unique<btSphereShape>(max(desc.Radius, 0.001f));
+                break;
+            case PhysicsShape::Capsule:
+                record.Shape = make_unique<btCapsuleShape>(max(desc.Radius, 0.001f), max(desc.Height, 0.001f));
+                break;
+            case PhysicsShape::Box:
+            default:
                 record.Shape = make_unique<btBoxShape>(btVector3(
                     max(desc.HalfExtent.x, 0.001f), max(desc.HalfExtent.y, 0.001f), max(desc.HalfExtent.z, 0.001f)));
-            }
-            break;
-        case PhysicsShape::Sphere:
-            record.Shape = make_unique<btSphereShape>(max(desc.Radius, 0.001f));
-            break;
-        case PhysicsShape::Capsule:
-            record.Shape = make_unique<btCapsuleShape>(max(desc.Radius, 0.001f), max(desc.Height, 0.001f));
-            break;
-        case PhysicsShape::Box:
-        default:
-            record.Shape = make_unique<btBoxShape>(btVector3(
-                max(desc.HalfExtent.x, 0.001f), max(desc.HalfExtent.y, 0.001f), max(desc.HalfExtent.z, 0.001f)));
-            break;
+                break;
         }
 
         const bool dynamic = desc.BodyType == PhysicsBodyType::Dynamic;

@@ -46,7 +46,7 @@ struct ThumbnailDimensions
 ThumbnailDimensions FitThumbnail(uint32_t width, uint32_t height, float size);
 std::string ThumbnailCacheFileName(AssetHandle handle);
 
-// GPU-independent state machine. Generation tickets reject obsolete and deleted results.
+// GPU に依存しない状態機械。生成チケットで古い結果や削除済みの結果を拒否する。
 class ThumbnailCache
 {
   public:

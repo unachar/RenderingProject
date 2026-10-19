@@ -334,52 +334,53 @@ bool LoadPmxModel(const char* fileName, PmxModel& outModel)
 
         switch (vertex.DeformType)
         {
-        case 0:
-            if (!reader.ReadIndex(reader.BoneIndexSize, vertex.BoneIndices[0]))
-            {
-                return false;
-            }
-            vertex.BoneWeights[0] = 1.0f;
-            break;
-        case 1:
-            if (!reader.ReadIndex(reader.BoneIndexSize, vertex.BoneIndices[0]) ||
-                !reader.ReadIndex(reader.BoneIndexSize, vertex.BoneIndices[1]) || !reader.Read(vertex.BoneWeights[0]))
-            {
-                return false;
-            }
-            vertex.BoneWeights[1] = 1.0f - vertex.BoneWeights[0];
-            break;
-        case 2:
-        case 4:
-            for (int n = 0; n < 4; ++n)
-            {
-                if (!reader.ReadIndex(reader.BoneIndexSize, vertex.BoneIndices[n]))
+            case 0:
+                if (!reader.ReadIndex(reader.BoneIndexSize, vertex.BoneIndices[0]))
                 {
                     return false;
                 }
-            }
-            for (int n = 0; n < 4; ++n)
-            {
-                if (!reader.Read(vertex.BoneWeights[n]))
+                vertex.BoneWeights[0] = 1.0f;
+                break;
+            case 1:
+                if (!reader.ReadIndex(reader.BoneIndexSize, vertex.BoneIndices[0]) ||
+                    !reader.ReadIndex(reader.BoneIndexSize, vertex.BoneIndices[1]) ||
+                    !reader.Read(vertex.BoneWeights[0]))
                 {
                     return false;
                 }
-            }
-            break;
-        case 3:
-            if (!reader.ReadIndex(reader.BoneIndexSize, vertex.BoneIndices[0]) ||
-                !reader.ReadIndex(reader.BoneIndexSize, vertex.BoneIndices[1]) || !reader.Read(vertex.BoneWeights[0]) ||
-                !ReadFloat3(reader, vertex.SdefC) || !ReadFloat3(reader, vertex.SdefR0) ||
-                !ReadFloat3(reader, vertex.SdefR1))
-            {
+                vertex.BoneWeights[1] = 1.0f - vertex.BoneWeights[0];
+                break;
+            case 2:
+            case 4:
+                for (int n = 0; n < 4; ++n)
+                {
+                    if (!reader.ReadIndex(reader.BoneIndexSize, vertex.BoneIndices[n]))
+                    {
+                        return false;
+                    }
+                }
+                for (int n = 0; n < 4; ++n)
+                {
+                    if (!reader.Read(vertex.BoneWeights[n]))
+                    {
+                        return false;
+                    }
+                }
+                break;
+            case 3:
+                if (!reader.ReadIndex(reader.BoneIndexSize, vertex.BoneIndices[0]) ||
+                    !reader.ReadIndex(reader.BoneIndexSize, vertex.BoneIndices[1]) ||
+                    !reader.Read(vertex.BoneWeights[0]) || !ReadFloat3(reader, vertex.SdefC) ||
+                    !ReadFloat3(reader, vertex.SdefR0) || !ReadFloat3(reader, vertex.SdefR1))
+                {
+                    return false;
+                }
+                vertex.BoneWeights[1] = 1.0f - vertex.BoneWeights[0];
+                ++sdefVertexCount;
+                break;
+            default:
+                Debug::Log("ERROR: PMX vertex deform type is unsupported: %u (%s)\n", vertex.DeformType, fileName);
                 return false;
-            }
-            vertex.BoneWeights[1] = 1.0f - vertex.BoneWeights[0];
-            ++sdefVertexCount;
-            break;
-        default:
-            Debug::Log("ERROR: PMX vertex deform type is unsupported: %u (%s)\n", vertex.DeformType, fileName);
-            return false;
         }
 
         if (!reader.Read(vertex.EdgeScale))
@@ -571,100 +572,100 @@ bool LoadPmxModel(const char* fileName, PmxModel& outModel)
         {
             switch (morph.Type)
             {
-            case 0: {
-                int32_t morphIndex = -1;
-                float weight = 0.0f;
-                if (!reader.ReadIndex(reader.MorphIndexSize, morphIndex) || !reader.Read(weight))
-                {
+                case 0: {
+                    int32_t morphIndex = -1;
+                    float weight = 0.0f;
+                    if (!reader.ReadIndex(reader.MorphIndexSize, morphIndex) || !reader.Read(weight))
+                    {
+                        return false;
+                    }
+                    if (morphIndex >= 0)
+                    {
+                        morph.GroupOffsets.push_back({static_cast<uint32_t>(morphIndex), weight});
+                    }
+                    break;
+                }
+                case 1: {
+                    uint32_t vertexIndex = 0;
+                    aiVector3D position{};
+                    if (!reader.ReadUnsignedIndex(reader.VertexIndexSize, vertexIndex) || !ReadFloat3(reader, position))
+                    {
+                        return false;
+                    }
+                    morph.PositionOffsets.push_back({vertexIndex, ConvertPosition(position)});
+                    break;
+                }
+                case 2: {
+                    int32_t boneIndex = -1;
+                    aiVector3D position{};
+                    float qx = 0.0f;
+                    float qy = 0.0f;
+                    float qz = 0.0f;
+                    float qw = 1.0f;
+                    if (!reader.ReadIndex(reader.BoneIndexSize, boneIndex) || !ReadFloat3(reader, position) ||
+                        !reader.Read(qx) || !reader.Read(qy) || !reader.Read(qz) || !reader.Read(qw))
+                    {
+                        return false;
+                    }
+                    if (boneIndex >= 0 && boneIndex < static_cast<int32_t>(outModel.Bones.size()))
+                    {
+                        PmxBoneMorphOffset boneOffset{};
+                        boneOffset.BoneName = outModel.Bones[static_cast<size_t>(boneIndex)].Name;
+                        boneOffset.Position = ConvertPosition(position);
+                        boneOffset.Rotation = ConvertRotation(aiQuaternion(qw, qx, qy, qz));
+                        morph.BoneOffsets.push_back(boneOffset);
+                    }
+                    break;
+                }
+                case 3: {
+                    uint32_t vertexIndex = 0;
+                    XMFLOAT4 uv{};
+                    if (!reader.ReadUnsignedIndex(reader.VertexIndexSize, vertexIndex) || !ReadFloat4(reader, uv))
+                    {
+                        return false;
+                    }
+                    morph.UvOffsets.push_back({vertexIndex, uv});
+                    break;
+                }
+                case 4:
+                case 5:
+                case 6:
+                case 7:
+                    if (!reader.SkipIndex(reader.VertexIndexSize) || !reader.Skip(16))
+                    {
+                        return false;
+                    }
+                    break;
+                case 8: {
+                    PmxMaterialMorphOffset materialOffset{};
+                    XMFLOAT4 ignored{};
+                    float ignoredFloat = 0.0f;
+                    if (!reader.ReadIndex(reader.MaterialIndexSize, materialOffset.MaterialIndex) ||
+                        !reader.Read(materialOffset.Operation) || !ReadFloat4(reader, materialOffset.Diffuse) ||
+                        !reader.Skip(12) || !reader.Read(ignoredFloat) || !reader.Skip(12) ||
+                        !ReadFloat4(reader, ignored) || !reader.Read(ignoredFloat) || !ReadFloat4(reader, ignored) ||
+                        !ReadFloat4(reader, ignored) || !ReadFloat4(reader, ignored))
+                    {
+                        return false;
+                    }
+                    morph.MaterialOffsets.push_back(materialOffset);
+                    break;
+                }
+                case 9:
+                    if (!reader.SkipIndex(reader.MorphIndexSize) || !reader.Skip(4))
+                    {
+                        return false;
+                    }
+                    break;
+                case 10:
+                    if (!reader.SkipIndex(reader.RigidBodyIndexSize) || !reader.Skip(25))
+                    {
+                        return false;
+                    }
+                    break;
+                default:
+                    Debug::Log("ERROR: PMX morph type is unsupported: %u (%s)\n", morph.Type, fileName);
                     return false;
-                }
-                if (morphIndex >= 0)
-                {
-                    morph.GroupOffsets.push_back({static_cast<uint32_t>(morphIndex), weight});
-                }
-                break;
-            }
-            case 1: {
-                uint32_t vertexIndex = 0;
-                aiVector3D position{};
-                if (!reader.ReadUnsignedIndex(reader.VertexIndexSize, vertexIndex) || !ReadFloat3(reader, position))
-                {
-                    return false;
-                }
-                morph.PositionOffsets.push_back({vertexIndex, ConvertPosition(position)});
-                break;
-            }
-            case 2: {
-                int32_t boneIndex = -1;
-                aiVector3D position{};
-                float qx = 0.0f;
-                float qy = 0.0f;
-                float qz = 0.0f;
-                float qw = 1.0f;
-                if (!reader.ReadIndex(reader.BoneIndexSize, boneIndex) || !ReadFloat3(reader, position) ||
-                    !reader.Read(qx) || !reader.Read(qy) || !reader.Read(qz) || !reader.Read(qw))
-                {
-                    return false;
-                }
-                if (boneIndex >= 0 && boneIndex < static_cast<int32_t>(outModel.Bones.size()))
-                {
-                    PmxBoneMorphOffset boneOffset{};
-                    boneOffset.BoneName = outModel.Bones[static_cast<size_t>(boneIndex)].Name;
-                    boneOffset.Position = ConvertPosition(position);
-                    boneOffset.Rotation = ConvertRotation(aiQuaternion(qw, qx, qy, qz));
-                    morph.BoneOffsets.push_back(boneOffset);
-                }
-                break;
-            }
-            case 3: {
-                uint32_t vertexIndex = 0;
-                XMFLOAT4 uv{};
-                if (!reader.ReadUnsignedIndex(reader.VertexIndexSize, vertexIndex) || !ReadFloat4(reader, uv))
-                {
-                    return false;
-                }
-                morph.UvOffsets.push_back({vertexIndex, uv});
-                break;
-            }
-            case 4:
-            case 5:
-            case 6:
-            case 7:
-                if (!reader.SkipIndex(reader.VertexIndexSize) || !reader.Skip(16))
-                {
-                    return false;
-                }
-                break;
-            case 8: {
-                PmxMaterialMorphOffset materialOffset{};
-                XMFLOAT4 ignored{};
-                float ignoredFloat = 0.0f;
-                if (!reader.ReadIndex(reader.MaterialIndexSize, materialOffset.MaterialIndex) ||
-                    !reader.Read(materialOffset.Operation) || !ReadFloat4(reader, materialOffset.Diffuse) ||
-                    !reader.Skip(12) || !reader.Read(ignoredFloat) || !reader.Skip(12) ||
-                    !ReadFloat4(reader, ignored) || !reader.Read(ignoredFloat) || !ReadFloat4(reader, ignored) ||
-                    !ReadFloat4(reader, ignored) || !ReadFloat4(reader, ignored))
-                {
-                    return false;
-                }
-                morph.MaterialOffsets.push_back(materialOffset);
-                break;
-            }
-            case 9:
-                if (!reader.SkipIndex(reader.MorphIndexSize) || !reader.Skip(4))
-                {
-                    return false;
-                }
-                break;
-            case 10:
-                if (!reader.SkipIndex(reader.RigidBodyIndexSize) || !reader.Skip(25))
-                {
-                    return false;
-                }
-                break;
-            default:
-                Debug::Log("ERROR: PMX morph type is unsupported: %u (%s)\n", morph.Type, fileName);
-                return false;
             }
         }
     }

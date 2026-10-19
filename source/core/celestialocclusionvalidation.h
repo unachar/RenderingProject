@@ -3,8 +3,8 @@
 
 namespace CelestialOcclusionValidation
 {
-bool Enabled();
-void BeforeFrame(uint64_t frame);
-void AfterFrame(uint64_t frame);
-bool Finish();
-} // namespace CelestialOcclusionValidation
+    bool Enabled();
+    void BeforeFrame(uint64_t frame);
+    void AfterFrame(uint64_t frame);
+    bool Finish();
+} // 名前空間 CelestialOcclusionValidation の終わり。

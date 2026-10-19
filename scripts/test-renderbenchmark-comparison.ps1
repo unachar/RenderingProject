@@ -4,7 +4,9 @@ $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $fixtureRoot = Join-Path $workspace ('bin/validation/benchmark-comparison-tests/' + [Guid]::NewGuid().ToString('N'))
 
 function Check([bool]$Condition, [string]$Message) {
-    if (-not $Condition) { throw $Message }
+    if (-not $Condition) {
+        throw $Message
+    }
 }
 function Write-Fixture([string]$Path) {
     New-Item -ItemType Directory -Path $Path -Force | Out-Null
@@ -23,7 +25,9 @@ function Write-Fixture([string]$Path) {
 }
 function Expect-Failure([scriptblock]$Action, [string]$Pattern) {
     $failed = $false
-    try { $null = & $Action }
+    try {
+        $null = & $Action
+    }
     catch {
         $failed = $true
         Check ($_.Exception.Message -match $Pattern) "Unexpected rejection: $($_.Exception.Message)"

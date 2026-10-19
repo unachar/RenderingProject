@@ -179,7 +179,7 @@ bool GraphicsDevice::Init(HWND hwnd)
     D3D12_FEATURE_DATA_D3D12_OPTIONS options{};
     if (SUCCEEDED(m_Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options, sizeof(options))))
     {
-        // Tier 2 is required for selectively mapped 2D texture mip tiles.
+        // 2D テクスチャのミップタイルを選択的にマップするには Tier 2 が必要。
         g_FeatureCapabilities.ReservedResources = options.TiledResourcesTier >= D3D12_TILED_RESOURCES_TIER_2;
     }
     D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5{};
@@ -536,8 +536,8 @@ bool GraphicsDevice::Init(HWND hwnd)
     CloudRenderer::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
     WriteGraphicsLog("Step: Raytracing::Initialize\n");
     Raytracing::Initialize(m_Device.Get(), m_CbvHeap.Get(), m_CbvIncrementSize);
-    // ShaderPipelines selects SM6 / inline visibility from Raytracing availability.
-    // Build deferred lighting only after that capability is known, before any frame.
+    // ShaderPipelines は Raytracing の可否から SM6 とインライン可視性判定を選ぶ。
+    // その機能判定の後、最初のフレームより前に遅延ライティングを構築する。
     WriteGraphicsLog("Step: CreateDeferredLightingPipeline\n");
     if (!PsoManager::CreateDeferredLightingPipeline())
     {
@@ -611,7 +611,7 @@ void GraphicsDevice::Uninit()
     RayTelemetry::Data().Shutdown();
     ScenePasses::ReleaseStaticShadowCache();
 
-    ProceduralStudioWindow::Shutdown(); // before the editor descriptor pool goes away
+    ProceduralStudioWindow::Shutdown(); // エディターの記述子プールを破棄する前に終了する
     AssetThumbnailManager::Shutdown();
     ImGuiManager::Uninit();
 
@@ -958,13 +958,13 @@ bool GraphicsDevice::WaitForGpuIdle()
 
 void GraphicsDevice::SubmitForExternalCompute()
 {
-    // Submit the pack dispatch so the external CUDA stream can wait on it.
-    // Do not reset the allocator: its earlier commands may still be executing.
+    // 外部 CUDA ストリームが待てるように、パック処理のディスパッチを送信する。
+    // 前のコマンドが実行中の可能性があるため、アロケーターはリセットしない。
     RenderProfiler::PrepareCommandListSplit(m_CommandList.Get());
     if (!CheckDeviceHealth(m_CommandList->Close(), "OptiX command list close"))
     {
-        // Submission failure is fatal: callers cannot safely resume recording or
-        // reconstruct resource states from an unsubmitted, invalid command list.
+        // 送信失敗は致命的なエラー。未送信の無効なコマンドリストからは、安全な記録の再開も
+        // リソース状態の復元もできない。
         WriteGraphicsLog("Fatal OptiX command-list close failure.\n");
         std::abort();
     }
@@ -976,11 +976,10 @@ void GraphicsDevice::SubmitForExternalCompute()
         WriteGraphicsLog("Fatal OptiX command-list reset failure.\n");
         std::abort();
     }
-    // Reset invalidates graphics state. Restore the common scene raster state;
-    // downstream passes bind their own root signatures, PSOs, targets and tables.
+    // リセットでグラフィックス状態が失われるため、シーン共通のラスタライズ状態を戻す。
+    // 後続パスは自身のルートシグネチャ、PSO、ターゲット、テーブルをバインドする。
     m_CommandList->RSSetViewports(1, &m_Viewport);
     m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
     ID3D12DescriptorHeap* heaps[] = {m_CbvHeap.Get()};
     m_CommandList->SetDescriptorHeaps(1, heaps);
 }
-

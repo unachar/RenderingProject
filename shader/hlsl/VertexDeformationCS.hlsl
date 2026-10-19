@@ -7,6 +7,7 @@ struct MotionData
     float4 AmplitudeAndPhase;
     float4 Parameters;
 };
+
 cbuffer DeformationConstants : register(b0)
 {
     MotionData Current;
@@ -28,14 +29,22 @@ float Gradient(int2 cell, float2 delta, uint seed)
 {
     switch (NoiseHash(cell, seed) & 7u)
     {
-    case 0: return delta.x;
-    case 1: return -delta.x;
-    case 2: return delta.y;
-    case 3: return -delta.y;
-    case 4: return (delta.x + delta.y) * 0.70710678118f;
-    case 5: return (delta.x - delta.y) * 0.70710678118f;
-    case 6: return (-delta.x + delta.y) * 0.70710678118f;
-    default: return (-delta.x - delta.y) * 0.70710678118f;
+        case 0:
+            return delta.x;
+        case 1:
+            return -delta.x;
+        case 2:
+            return delta.y;
+        case 3:
+            return -delta.y;
+        case 4:
+            return (delta.x + delta.y) * 0.70710678118f;
+        case 5:
+            return (delta.x - delta.y) * 0.70710678118f;
+        case 6:
+            return (-delta.x + delta.y) * 0.70710678118f;
+        default:
+            return (-delta.x - delta.y) * 0.70710678118f;
     }
 }
 
@@ -47,7 +56,7 @@ float Perlin(float2 position, float frequency, uint seed)
     float2 weight = local * local * local * (local * (local * 6.0f - 15.0f) + 10.0f);
     float low = lerp(Gradient(cell, local, seed), Gradient(cell + int2(1, 0), local - float2(1, 0), seed), weight.x);
     float high = lerp(Gradient(cell + int2(0, 1), local - float2(0, 1), seed),
-        Gradient(cell + int2(1, 1), local - 1.0f, seed), weight.x);
+                      Gradient(cell + int2(1, 1), local - 1.0f, seed), weight.x);
     return clamp(lerp(low, high, weight.y) * 1.41421356237f, -1.0f, 1.0f);
 }
 
@@ -55,21 +64,29 @@ float3 SpatialOffset(float3 position, MotionData motion, bool rest)
 {
     float phase = rest ? 0 : motion.AmplitudeAndPhase.w;
     float frequency = motion.Parameters.x;
-    float3 phases = float3(position.y * 0.73f + position.z, position.x + position.z * 0.61f,
-        position.x * 0.83f + position.y) * frequency;
+    float3 phases =
+        float3(position.y * 0.73f + position.z, position.x + position.z * 0.61f, position.x * 0.83f + position.y) *
+        frequency;
     int method = int(motion.Parameters.z);
-    if (method == 0) return sin(phases + phase);
-    if (method == 1) return float3(cos(phases.y + phase), sin(phases.x + phase), sin(phases.z + phase));
+    if (method == 0)
+    {
+        return sin(phases + phase);
+    }
+    if (method == 1)
+    {
+        return float3(cos(phases.y + phase), sin(phases.x + phase), sin(phases.z + phase));
+    }
     float time = rest ? 0 : motion.Parameters.y;
     uint seed = asuint(motion.Parameters.w);
     return float3(Perlin(float2(position.y + time, position.z + 11.2f), frequency, seed),
-        Perlin(float2(position.x + time, position.z + 37.9f), frequency, seed),
-        Perlin(float2(position.x + 93.1f, position.y + time), frequency, seed));
+                  Perlin(float2(position.x + time, position.z + 37.9f), frequency, seed),
+                  Perlin(float2(position.x + 93.1f, position.y + time), frequency, seed));
 }
 
 float3 DeformPosition(float3 position, MotionData motion)
 {
-    return position + motion.AmplitudeAndPhase.xyz * (SpatialOffset(position, motion, false) - SpatialOffset(position, motion, true));
+    return position + motion.AmplitudeAndPhase.xyz *
+                          (SpatialOffset(position, motion, false) - SpatialOffset(position, motion, true));
 }
 
 float3 DeformNormal(float3 position, float3 normal, MotionData motion)
@@ -79,17 +96,20 @@ float3 DeformNormal(float3 position, float3 normal, MotionData motion)
     float3 tangent = normalize(cross(axis, normal));
     float3 bitangent = cross(normal, tangent);
     float stepSize = 0.001f / max(1.0f, motion.Parameters.x);
-    float3 deltaT = DeformPosition(position + tangent * stepSize, motion) - DeformPosition(position - tangent * stepSize, motion);
-    float3 deltaB = DeformPosition(position + bitangent * stepSize, motion) - DeformPosition(position - bitangent * stepSize, motion);
+    float3 deltaT =
+        DeformPosition(position + tangent * stepSize, motion) - DeformPosition(position - tangent * stepSize, motion);
+    float3 deltaB = DeformPosition(position + bitangent * stepSize, motion) -
+                    DeformPosition(position - bitangent * stepSize, motion);
     float3 transformed = cross(deltaT, deltaB);
     return dot(transformed, transformed) > 1e-16f ? normalize(transformed) : normal;
 }
 
-[numthreads(64, 1, 1)]
-void main(uint3 group : SV_GroupID, uint thread : SV_GroupIndex)
-{
+[numthreads(64, 1, 1)] void main(uint3 group : SV_GroupID, uint thread : SV_GroupIndex) {
     uint vertex = (group.x + group.y * 65535u) * 64u + thread;
-    if (vertex >= Geometry.x) return;
+    if (vertex >= Geometry.x)
+    {
+        return;
+    }
     uint address = vertex * Geometry.y;
     float3 position = asfloat(BaseVertices.Load3(address));
     float3 normal = asfloat(BaseVertices.Load3(address + 12));
@@ -104,4 +124,3 @@ void main(uint3 group : SV_GroupID, uint thread : SV_GroupIndex)
     CurrentVertices.Store4(address + 32, color);
     PreviousVertices.Store4(address + 32, color);
 }
-

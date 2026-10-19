@@ -79,8 +79,8 @@ class RendererSettings
         SetValue(s_NisSharpness, clamp(value, 0.0f, 1.0f));
     }
 
-    // The packed visibility payload has no emission/AO channels. Use production raster
-    // GBuffer generation when the scene contains material assets; keep the user's option.
+    // 詰め込んだ可視性データには発光と AO のチャンネルがない。マテリアルアセットがあるシーンは
+    // 本番のラスタ GBuffer 生成を使い、ユーザーの設定自体は保持する。
     static bool GetComputeGBufferEnabled()
     {
         return s_ComputeGBufferEnabled && !SceneHasMaterialAssets();
@@ -216,8 +216,8 @@ class RendererSettings
         SetValue(s_SsgiIntensity, clamp(value, 0.0f, 3.0f));
     }
 
-    // Ray traced GI is a physically based irradiance estimate; it uses its own scale (1 = energy
-    // conserving) instead of the screen-space GI strength, which was tuned for SSGI.
+    // レイトレース GI は物理ベースの放射照度推定なので、SSGI 向けに調整された画面空間 GI 強度ではなく、
+    // 独自のスケールを使う（1でエネルギー保存）。
     static float GetRealtimeGiIntensity()
     {
         return s_RealtimeGiIntensity;
@@ -228,7 +228,7 @@ class RendererSettings
         SetValue(s_RealtimeGiIntensity, clamp(value, 0.0f, 3.0f));
     }
 
-    // World-space irradiance cache for multi-bounce realtime GI.
+    // 複数バウンスのリアルタイム GI 用の、ワールド空間放射照度キャッシュ。
     static bool GetGiRadianceCacheEnabled()
     {
         return s_GiRadianceCacheEnabled;
@@ -313,16 +313,16 @@ class RendererSettings
     {
         switch (quality)
         {
-        case UpscaleQuality::UltraQuality:
-            return 1.0f / 1.3f;
-        case UpscaleQuality::Quality:
-            return 1.0f / 1.5f;
-        case UpscaleQuality::Balanced:
-            return 1.0f / 1.7f;
-        case UpscaleQuality::Performance:
-            return 1.0f / 2.0f;
-        default:
-            return 1.0f;
+            case UpscaleQuality::UltraQuality:
+                return 1.0f / 1.3f;
+            case UpscaleQuality::Quality:
+                return 1.0f / 1.5f;
+            case UpscaleQuality::Balanced:
+                return 1.0f / 1.7f;
+            case UpscaleQuality::Performance:
+                return 1.0f / 2.0f;
+            default:
+                return 1.0f;
         }
     }
 

@@ -26,4 +26,3 @@ VelocityOutput main(VelocityInput input)
     output.PreviousClip = mul(previousWorld, PreviousViewProjection);
     return output;
 }
-

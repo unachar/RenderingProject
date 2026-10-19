@@ -7,7 +7,7 @@
 
 namespace
 {
-DayNightCycle::Settings g_Settings;
+    DayNightCycle::Settings g_Settings;
 }
 
 DayNightCycle::Settings& DayNightCycle::GetSettings()

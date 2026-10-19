@@ -163,7 +163,8 @@ float4 main(in PSInput3D In) : SV_Target
     float lightAttenuation;
     float volumeScatter;
     float rangeBlend;
-    ResolveLightAggregate(In.WorldPos, In.Position.xy, lightDir, lightColor, lightAttenuation, volumeScatter, rangeBlend);
+    ResolveLightAggregate(In.WorldPos, In.Position.xy, lightDir, lightColor, lightAttenuation, volumeScatter,
+                          rangeBlend);
     float3 halfDir = SafeNormalize(lightDir + viewDir, normal);
 
     float lightIntensity = 1.0f;
@@ -207,4 +208,3 @@ float4 main(in PSInput3D In) : SV_Target
     color = lerp(color, sqrt(saturate(color)), 0.12f);
     return float4(saturate(color) * baseColor.a, baseColor.a);
 }
-

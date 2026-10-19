@@ -15,8 +15,10 @@ uint4 main(PSInput3D input) : SV_Target0
     {
         float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, input.TexCoord).xyz * 2.0f - 1.0f;
         float3 tangent = SafeNormalizeCommon(mul(float3(1.0f, 0.0f, 0.0f), (float3x3)World), float3(1.0f, 0.0f, 0.0f));
-        float3 bitangent = SafeNormalizeCommon(mul(float3(0.0f, -1.0f, 0.0f), (float3x3)World), float3(0.0f, 0.0f, 1.0f));
-        normal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal, normal);
+        float3 bitangent =
+            SafeNormalizeCommon(mul(float3(0.0f, -1.0f, 0.0f), (float3x3)World), float3(0.0f, 0.0f, 1.0f));
+        normal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal,
+                                     normal);
     }
     if (UseTexture != 0)
     {
@@ -26,16 +28,8 @@ uint4 main(PSInput3D input) : SV_Target0
 
     MaterialPartShaderParams part = ResolveMaterialPartParams(materialPartId);
     bool usePart = MaterialMode != 1;
-    return PackVisibilityPayload(
-        baseColor.rgb,
-        normal,
-        saturate(input.Position.z),
-        usePart ? part.Basic.x : mMetallic,
-        usePart ? part.Basic.y : mRoughness,
-        usePart ? part.Basic.z : mFresnel,
-        materialPartId,
-        usePart ? part.Shadow0.x : ShadowThreshold,
-        usePart ? part.Shadow0.y : ShadowSoftness,
-        usePart ? part.Shadow0.z : ShadowStrength);
+    return PackVisibilityPayload(baseColor.rgb, normal, saturate(input.Position.z), usePart ? part.Basic.x : mMetallic,
+                                 usePart ? part.Basic.y : mRoughness, usePart ? part.Basic.z : mFresnel, materialPartId,
+                                 usePart ? part.Shadow0.x : ShadowThreshold, usePart ? part.Shadow0.y : ShadowSoftness,
+                                 usePart ? part.Shadow0.z : ShadowStrength);
 }
-

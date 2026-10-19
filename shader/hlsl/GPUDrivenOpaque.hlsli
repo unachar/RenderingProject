@@ -1,15 +1,29 @@
 #include "GpuSceneCommon.hlsli"
 StructuredBuffer<GPUInstanceData> gSceneInstances : register(t30);
 ByteAddressBuffer gSceneMaterials : register(t31);
-cbuffer IndirectInstance : register(b4) { uint GPUInstanceID; }
+
+cbuffer IndirectInstance : register(b4)
+{
+    uint GPUInstanceID;
+}
+
 Texture2D gSceneTextures[512] : register(t0, space1);
-cbuffer TextureLimits : register(b5) { uint TextureBase; uint DefaultTexture; uint VisibilityDebugMode; uint MaterialRate; }
+
+cbuffer TextureLimits : register(b5)
+{
+    uint TextureBase;
+    uint DefaultTexture;
+    uint VisibilityDebugMode;
+    uint MaterialRate;
+}
+
 StructuredBuffer<uint4> gVisibilityDebug : register(t32);
 
 uint SceneTextureIndex(uint heapIndex)
 {
     return heapIndex >= TextureBase && heapIndex - TextureBase < 512u ? heapIndex - TextureBase : DefaultTexture;
 }
+
 MaterialPartShaderParams LoadGpuDrivenPart(uint material, float partID)
 {
     uint first = 11u + (uint)clamp((int)round(partID), 0, 14) * 9u;
@@ -25,5 +39,3 @@ MaterialPartShaderParams LoadGpuDrivenPart(uint material, float partID)
     part.Skin1 = LoadSceneMaterialVector(gSceneMaterials, material, first + 8);
     return part;
 }
-
-

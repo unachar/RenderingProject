@@ -1,7 +1,7 @@
-"""Execute the production HLSL scan with a cooperative C++ barrier scheduler.
+"""協調動作するC++のバリアスケジューラーで、本番のHLSLスキャン処理を実行する。
 
-Requires Python 3 and a C++20 compiler (CXX, default g++). This verifies integer
-results, arbitrary lane arrival order and the shared-add work bound, not GPU time.
+Python 3とC++20コンパイラーが必要（CXXで指定、既定値はg++）。整数の計算結果、
+任意のレーン到達順、共有メモリ上の加算回数の上限を検証する。GPU時間は計測しない。
 """
 import os
 from pathlib import Path
@@ -60,7 +60,7 @@ int main() {
         for (uint i = 0; i < PREFIX_THREADS; ++i) {
             input[i] = test == 0 ? 0 : test == 1 ? 1 : test == 2 ? (i == 511 ? 17 : 0) : random();
             expected[i] = total;
-            total += input[i]; // Also exercise uint wraparound, as HLSL does.
+            total += input[i]; // HLSLと同じuintのオーバーフローも検証する。
         }
         additions = 0;
         std::vector<Task> tasks;

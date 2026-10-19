@@ -6,28 +6,28 @@
 
 namespace
 {
-bool IsWriteAccess(RenderGraph::Access access)
-{
-    return access == RenderGraph::Access::Write || access == RenderGraph::Access::ReadWrite;
-}
-
-RenderGraph::Access MergeAccess(RenderGraph::Access left, RenderGraph::Access right)
-{
-    if (left == right)
+    bool IsWriteAccess(RenderGraph::Access access)
     {
-        return left;
+        return access == RenderGraph::Access::Write || access == RenderGraph::Access::ReadWrite;
     }
-    return RenderGraph::Access::ReadWrite;
-}
 
-void AddUniqueDependency(vector<uint32_t>& dependencies, uint32_t dependency)
-{
-    if (find(dependencies.begin(), dependencies.end(), dependency) == dependencies.end())
+    RenderGraph::Access MergeAccess(RenderGraph::Access left, RenderGraph::Access right)
     {
-        dependencies.push_back(dependency);
+        if (left == right)
+        {
+            return left;
+        }
+        return RenderGraph::Access::ReadWrite;
     }
-}
-} // namespace
+
+    void AddUniqueDependency(vector<uint32_t>& dependencies, uint32_t dependency)
+    {
+        if (find(dependencies.begin(), dependencies.end(), dependency) == dependencies.end())
+        {
+            dependencies.push_back(dependency);
+        }
+    }
+} // 名前空間
 
 RenderGraph::PassBuilder& RenderGraph::PassBuilder::Read(ResourceHandle resource, D3D12_RESOURCE_STATES state)
 {

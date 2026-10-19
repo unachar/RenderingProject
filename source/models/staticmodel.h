@@ -64,7 +64,7 @@ struct StaticMeshData
     array<shared_future<shared_ptr<const VirtualGeometryRuntime::RuntimeAsset>>, LodCount> VirtualGeometryBuilds{};
     string VirtualGeometryBuildError;
     bool VirtualGeometryRootFallback = false;
-    vector<uint32_t> CpuIndices{}; // Exact optimized LOD0 upload data; never reconstructed by GPU readback.
+    vector<uint32_t> CpuIndices{}; // 最適化済み LOD0 の正確なアップロードデータ。GPU の読み戻しからは再構築しない。
     array<vector<uint32_t>, LodCount - 1> CpuLodIndices{};
     array<vector<StaticModelVertex>, kToonOutlineModeCount> CpuTeoVerticesByMode{};
 

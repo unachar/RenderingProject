@@ -9,7 +9,6 @@ float4 main(PSInputPostProcess input) : SV_TARGET
 {
     float4 color = SceneTexture.Sample(TextureSampler, input.TexCoord);
 
-
     float gray = dot(color.rgb, float3(0.299, 0.587, 0.114));
 
     float4 result = lerp(color, float4(gray, gray, gray, color.a), Flags.y);
@@ -17,4 +16,3 @@ float4 main(PSInputPostProcess input) : SV_TARGET
     result.a = 1.0f;
     return result;
 }
-

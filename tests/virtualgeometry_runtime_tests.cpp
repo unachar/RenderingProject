@@ -18,7 +18,7 @@ void TestVirtualGeometryRuntime()
     vertices[1].Position[0] = 1;
     vertices[2].Position[1] = 1;
     vertices[3] = vertices[0];
-    vertices[3].TexCoord[0] = 0.75f; // Same position, distinct UV seam.
+    vertices[3].TexCoord[0] = 0.75f; // 座標は同じでも、UVの継ぎ目が異なる頂点。
     for (auto& v : vertices)
     {
         v.Normal[2] = 1;
@@ -44,7 +44,7 @@ void TestVirtualGeometryRuntime()
             {
                 tri[j] = first->Meshlets.Vertices.at(meshlet.VertexOffset + ((packed >> (8 * j)) & 255));
             }
-            // Canonical cyclic rotation preserves winding.
+            // 標準形にそろえる巡回置換では、頂点の回り順を維持する。
             while (tri[0] > tri[1] || tri[0] > tri[2])
             {
                 tri = {tri[1], tri[2], tri[0]};
@@ -65,7 +65,8 @@ void TestVirtualGeometryRuntime()
     std::string cacheError;
     if (!VirtualGeometrySerializer::Load(cache, cached, cacheError))
     {
-        throw std::runtime_error("Runtime cache could not be reopened at " + cache.generic_string() + ": " + cacheError);
+        throw std::runtime_error("Runtime cache could not be reopened at " + cache.generic_string() + ": " +
+                                 cacheError);
     }
     check(cached.Config.MaxClusterVertices == first->Hierarchy.Config.MaxClusterVertices &&
               cached.Config.MaxClusterTriangles == first->Hierarchy.Config.MaxClusterTriangles &&

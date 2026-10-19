@@ -2,14 +2,14 @@ Texture2D<float4> MaterialEmissionAO : register(t33);
 #define SHADER_POSTPROCESS
 #define SHADER_3D
 #include "common.hlsl"
-// Physical sky from the atmosphere LUT (bound at root parameter 26, t40/t41, clamp sampler s4).
+// 大気 LUT の物理的な空（ルート引数 26、t40/t41、クランプサンプラー s4 にバインド）。
 #define SKY_LUT 1
 #define SKY_LUT_SCATTER_REGISTER t40
 #define SKY_LUT_TRANSMISSION_REGISTER t41
 #define SKY_LUT_SAMPLER_REGISTER s4
 #include "SkyAtmosphere.hlsli"
 #include "CloudMedium.hlsli"
-#pragma warning(disable: 4000)
+#pragma warning(disable : 4000)
 
 Texture2D<float4> BaseColorTexture : register(t0);
 Texture2D<float4> NormalTexture : register(t1);
@@ -51,7 +51,10 @@ static uint g_MLCellIndex = ML_INVALID_CELL;
 // リファレンス：ライト全体の平均可視率を、面上の層別点への影レイで求める（毎フレーム回転 → 累積で収束）
 float MLReferenceVisibility(MegaLightData light, float3 worldPos, float3 normal, uint2 pixel, uint lightOrdinal)
 {
-    if (!MLLightCastsShadow(light)) return 1.0f;
+    if (!MLLightCastsShadow(light))
+    {
+        return 1.0f;
+    }
 #ifdef SHADER_RAYTRACING
     const bool area = (int)round(light.PositionType.w) == 4 || light.Flags.y > 1.0e-4f;
     const uint requested = area ? clamp((uint)MLStochasticParams.w, 1u, 64u) : 1u;
@@ -59,8 +62,7 @@ float MLReferenceVisibility(MegaLightData light, float3 worldPos, float3 normal,
     const uint seed = MLSeed(pixel, MLStochastic.z, 0x5245u + lightOrdinal * 7919u);
     const float2 jitter = float2(MLRandom(seed), MLRandom(seed ^ 0x9e3779b9u));
     float visible = 0.0f;
-    [loop]
-    for (uint index = 0u; index < side * side; ++index)
+    [loop] for (uint index = 0u; index < side * side; ++index)
     {
         const float2 uv = (float2(index % side, index / side) + jitter) / (float)side;
         visible += TraceSceneSegment(worldPos, normal, MLLightSamplePoint(light, worldPos, uv));
@@ -74,7 +76,7 @@ float MLReferenceVisibility(MegaLightData light, float3 worldPos, float3 normal,
 // M7：テクスチャ付き矩形ライト（ルート引数 38：エンジンのテクスチャ SRV 512 個, t0 space5）
 #define MEGALIGHTS_LIGHT_TEXTURES 1
 
-// DFG / LTC tables (root parameter 27: t42, t43).
+// DFG / LTC テーブル（ルート引数 27：t42、t43）。
 #define SURFACE_PBR_LUTS 1
 #include "SurfaceLighting.hlsli"
 #include "WeatherSurface.hlsli"
@@ -83,65 +85,58 @@ float4 ShadeDeferred(PSInputPostProcess input)
 {
 
     const float PI = 3.14159265358979323846f;
-    // Lighting runs at GBuffer resolution. Integer fetches preserve material
-    // classes and avoid filtering work for these per-pixel attributes.
+    // ライティングは GBuffer の解像度で行う。整数座標の読み取りでマテリアルの
+    // 分類を保ち、ピクセルごとの属性のフィルタリングを省く。
     const int3 gbufferPixel = int3(int2(input.Position.xy), 0);
     float4 material = MaterialTexture.Load(gbufferPixel);
     float shaderClass = material.a;
     bool background = shaderClass < -0.5f;
     bool transparent = IsMaterialClass(shaderClass, 0.0f);
-	float4 baseColor = BaseColorTexture.Load(gbufferPixel);
+    float4 baseColor = BaseColorTexture.Load(gbufferPixel);
     float3 giReflectance = baseColor.rgb * (1 - saturate(material.x));
 
-	if (transparent)
-	{
-		return baseColor;
-	}
+    if (transparent)
+    {
+        return baseColor;
+    }
 
-	float4 atmosphereMedia = AtmosphereTexture.SampleLevel(
-		TextureSampler, input.TexCoord, 0);
-	float fogTransmittance = saturate(atmosphereMedia.a);
-	if (background)
-	{
-		if (SkyParameters.x > 0.5f)
-		{
-			// The sky integral already includes atmospheric extinction and scattering.
-			return float4(EvaluateSkyAtmosphere(ReconstructPostProcessViewRayCommon(input.TexCoord)), 1.0f);
-		}
-		baseColor.rgb =
-			(baseColor.rgb + AtmosphereBackgroundCommon(input.TexCoord)) *
-			fogTransmittance + atmosphereMedia.rgb;
-		return baseColor;
-	}
+    float4 atmosphereMedia = AtmosphereTexture.SampleLevel(TextureSampler, input.TexCoord, 0);
+    float fogTransmittance = saturate(atmosphereMedia.a);
+    if (background)
+    {
+        if (SkyParameters.x > 0.5f)
+        {
+            // 空の積分値には大気の消散と散乱がすでに含まれる。
+            return float4(EvaluateSkyAtmosphere(ReconstructPostProcessViewRayCommon(input.TexCoord)), 1.0f);
+        }
+        baseColor.rgb =
+            (baseColor.rgb + AtmosphereBackgroundCommon(input.TexCoord)) * fogTransmittance + atmosphereMedia.rgb;
+        return baseColor;
+    }
 
-	bool toon = IsMaterialClass(shaderClass, 4.0f);
-	bool shadow = IsMaterialClass(shaderClass, 5.0f);
-	bool lit = IsMaterialClass(shaderClass, 8.0f);
-	bool pbr = IsMaterialClass(shaderClass, 11.0f);
-	const int shadowDebugMode = (int)round(ShadowDebugGlobal.x);
-	const bool needsDeferredLighting =
-		toon || shadow || lit || pbr || shadowDebugMode > 0;
-	[branch]
-	if (!needsDeferredLighting)
-	{
-		baseColor.rgb = baseColor.rgb * fogTransmittance + atmosphereMedia.rgb;
-		baseColor.a = 1.0f;
-		return baseColor;
-	}
+    bool toon = IsMaterialClass(shaderClass, 4.0f);
+    bool shadow = IsMaterialClass(shaderClass, 5.0f);
+    bool lit = IsMaterialClass(shaderClass, 8.0f);
+    bool pbr = IsMaterialClass(shaderClass, 11.0f);
+    const int shadowDebugMode = (int)round(ShadowDebugGlobal.x);
+    const bool needsDeferredLighting = toon || shadow || lit || pbr || shadowDebugMode > 0;
+    [branch] if (!needsDeferredLighting)
+    {
+        baseColor.rgb = baseColor.rgb * fogTransmittance + atmosphereMedia.rgb;
+        baseColor.a = 1.0f;
+        return baseColor;
+    }
 
-	float4 normal = NormalTexture.Load(gbufferPixel);
-	float depth = DepthTexture.Load(gbufferPixel);
-	float3 position = ReconstructPostProcessWorldPositionCommon(input.TexCoord, depth);
+    float4 normal = NormalTexture.Load(gbufferPixel);
+    float depth = DepthTexture.Load(gbufferPixel);
+    float3 position = ReconstructPostProcessWorldPositionCommon(input.TexCoord, depth);
     float3 positionDx = ddx(position);
     float3 positionDy = ddy(position);
-	float4 shadowParams = ShadowGBufferTexture.Load(gbufferPixel);
-
+    float4 shadowParams = ShadowGBufferTexture.Load(gbufferPixel);
 
     float shadowThreshold = shadowParams.r;
     float shadowSoftness = max(shadowParams.g, 0.0001f);
     float shadowStrength = saturate(shadowParams.b);
-
-
 
     float3 lightDir;
     float3 lightColor;
@@ -152,57 +147,35 @@ float4 ShadeDeferred(PSInputPostProcess input)
     float3 surfaceNormal = DecodeGBufferNormal(normal.xyz);
     if (pbr)
     {
-        // Extended material model (shadow GBuffer alpha) and weather on PBR surfaces.
+        // 拡張マテリアルモデル（影の GBuffer の alpha）と、PBR の面に適用する天候。
         g_ShadingModel = DecodeShadingModel(shadowParams.a);
         ApplyWeatherToSurface(position, surfaceNormal, baseColor.rgb, material.rgb);
     }
     float3 viewDir = SafeNormalizeCommon(PPCameraPos.xyz - position, surfaceNormal);
     float3 pbrDirectLight;
     int materialShadowFilterRadius =
-        pbr
-            ? clamp(
-                (int)round(lerp(
-                    max(VirtualShadowGlobal.z, 1.0f),
-                    3.0f,
-                    saturate(shadowSoftness * 2.0f))),
-                1,
-                3)
+        pbr ? clamp((int)round(lerp(max(VirtualShadowGlobal.z, 1.0f), 3.0f, saturate(shadowSoftness * 2.0f))), 1, 3)
             : clamp((int)round(VirtualShadowGlobal.z), 0, 3);
-    ResolveSurfaceLightAggregateShadowed(
-        position,
-        positionDx,
-        positionDy,
-        surfaceNormal,
-        input.Position.xy,
-        materialShadowFilterRadius,
-        pbr,
-        viewDir,
-        baseColor.rgb,
-        material.rgb,
-        shadowSoftness,
-        pbrDirectLight,
-        lightDir,
-        lightColor,
-        lightAttenuation,
-        volumeScatter,
-        rangeBlend,
-        aggregateShadowVisibility);
+    ResolveSurfaceLightAggregateShadowed(position, positionDx, positionDy, surfaceNormal, input.Position.xy,
+                                         materialShadowFilterRadius, pbr, viewDir, baseColor.rgb, material.rgb,
+                                         shadowSoftness, pbrDirectLight, lightDir, lightColor, lightAttenuation,
+                                         volumeScatter, rangeBlend, aggregateShadowVisibility);
 
     if (shadowDebugMode == 1 && VirtualShadowGlobal.x > 0.5f)
     {
 
-
         return float4(aggregateShadowVisibility.xxx, 1.0f);
     }
-    if (shadowDebugMode > 1 &&
-        VirtualShadowGlobal.x > 0.5f && VirtualShadowGlobal.x < 1.5f)
+    if (shadowDebugMode > 1 && VirtualShadowGlobal.x > 0.5f && VirtualShadowGlobal.x < 1.5f)
     {
         int selectedLevel = max((int)round(VirtualShadowGlobal.y) - 1, 0);
         float2 selectedUv = float2(0.5f, 0.5f);
-        [unroll]
-        for (int level = 0; level < 4; ++level)
+        [unroll] for (int level = 0; level < 4; ++level)
         {
-            if (level >= (int)round(VirtualShadowGlobal.y)) break;
+            if (level >= (int)round(VirtualShadowGlobal.y))
+            {
+                break;
+            }
             float4 clip = mul(float4(position.xyz, 1.0f), VirtualShadowViewProjections[level]);
             float3 ndc = clip.xyz / max(clip.w, 0.000001f);
             float2 uv = float2(ndc.x * 0.5f + 0.5f, -ndc.y * 0.5f + 0.5f);
@@ -211,8 +184,7 @@ float4 ShadeDeferred(PSInputPostProcess input)
             float residentGrid = max(ShadowDebugGlobal.z, 1.0f);
             float firstResident = (pageGrid - residentGrid) * 0.5f;
             float2 pageCoord = floor(saturate(uv) * pageGrid);
-            if (all(uv >= 0.0f) && all(uv < 1.0f) &&
-                all(pageCoord >= firstResident) &&
+            if (all(uv >= 0.0f) && all(uv < 1.0f) && all(pageCoord >= firstResident) &&
                 all(pageCoord < firstResident + residentGrid))
             {
                 selectedLevel = level;
@@ -221,9 +193,8 @@ float4 ShadeDeferred(PSInputPostProcess input)
         }
         if (shadowDebugMode == 2)
         {
-            const float3 levelColors[4] = {
-                float3(0.10f, 0.85f, 0.30f), float3(0.15f, 0.45f, 1.00f),
-                float3(1.00f, 0.70f, 0.10f), float3(0.95f, 0.18f, 0.25f) };
+            const float3 levelColors[4] = {float3(0.10f, 0.85f, 0.30f), float3(0.15f, 0.45f, 1.00f),
+                                           float3(1.00f, 0.70f, 0.10f), float3(0.95f, 0.18f, 0.25f)};
             return float4(levelColors[selectedLevel], 1.0f);
         }
         float2 page = floor(saturate(selectedUv) * max(ShadowDebugGlobal.w, 1.0f));
@@ -231,18 +202,15 @@ float4 ShadeDeferred(PSInputPostProcess input)
         float3 pageColor = frac(pageHash + float3(0.0f, 0.333f, 0.667f));
         return float4(pageColor, 1.0f);
     }
-    [branch]
-    if (shadow || toon || lit)
+    [branch] if (shadow || toon || lit)
     {
         float lightIntensity = LightColor.a;
-
 
         float Roughness = material.g;
 
         float3 NdotL = saturate(dot(surfaceNormal, lightDir));
         float3 environmentColor = EnvironmentTexture.SampleLevel(TextureSampler, input.TexCoord, Roughness * 10.0f).rgb;
         NdotL += lightIntensity;
-
 
         float3 diffuse = 0.0f;
         {
@@ -251,62 +219,65 @@ float4 ShadeDeferred(PSInputPostProcess input)
             float2 iblTexcoord;
             iblTexcoord.x = -atan2(surfaceNormal.x, surfaceNormal.z) / (PI * 2);
             iblTexcoord.y = asin(surfaceNormal.y) / PI;
-            light += EnvironmentTexture.SampleLevel(TextureSampler, iblTexcoord, Roughness  * 10.0f).rgb * 6;
+            light += EnvironmentTexture.SampleLevel(TextureSampler, iblTexcoord, Roughness * 10.0f).rgb * 6;
             diffuse = light * baseColor.rgb / PI;
         }
 
-        if(shadow)
+        if (shadow)
         {
             float castShadow = saturate(1.0f - aggregateShadowVisibility);
             float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
             float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
             float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
             float3 lightTint = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
-            float3 shadowTint = saturate(float3(0.015f, 0.014f, 0.017f) + environmentColor * 0.16f + lightTint * 0.025f);
+            float3 shadowTint =
+                saturate(float3(0.015f, 0.014f, 0.017f) + environmentColor * 0.16f + lightTint * 0.025f);
             float3 litColor = baseColor.rgb * (0.12f + NdotL * (0.22f + lightColor.rgb * 0.72f));
             baseColor.rgb = lerp(litColor, baseColor.rgb * shadowTint - 0.08f, shadowDensity);
         }
 
-        if(toon)
+        if (toon)
         {
             float castShadow = saturate(1.0f - aggregateShadowVisibility);
             float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
             float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
             float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
-            float selfShadowMask = smoothstep(shadowThreshold - shadowSoftness, shadowThreshold + shadowSoftness, castShadow);
-            shadowDensity = saturate(max(shadowDensity, selfShadowMask * shadowStrength * lerp(0.20f, 0.85f, lightShadowPower)));
+            float selfShadowMask =
+                smoothstep(shadowThreshold - shadowSoftness, shadowThreshold + shadowSoftness, castShadow);
+            shadowDensity =
+                saturate(max(shadowDensity, selfShadowMask * shadowStrength * lerp(0.20f, 0.85f, lightShadowPower)));
             float3 lightTint = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
             float3 shadowTint = saturate(float3(0.018f, 0.016f, 0.020f) + environmentColor + lightTint * 0.025f);
             float3 litColor = baseColor.rgb * (lightColor.rgb * 0.72f + NdotL);
             baseColor.rgb = diffuse * lerp(litColor, litColor * shadowTint, shadowDensity);
         }
 
-        if(lit)
+        if (lit)
         {
             float castShadow = saturate(1.0f - aggregateShadowVisibility);
             float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
             float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
             float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
-            float selfShadowMask = smoothstep(shadowThreshold - shadowSoftness, shadowThreshold + shadowSoftness, castShadow);
-            shadowDensity = saturate(max(shadowDensity, selfShadowMask * shadowStrength * lerp(0.20f, 0.85f, lightShadowPower)));
+            float selfShadowMask =
+                smoothstep(shadowThreshold - shadowSoftness, shadowThreshold + shadowSoftness, castShadow);
+            shadowDensity =
+                saturate(max(shadowDensity, selfShadowMask * shadowStrength * lerp(0.20f, 0.85f, lightShadowPower)));
             float3 lightTint = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
             float3 shadowTint = saturate(float3(0.018f, 0.016f, 0.020f) + environmentColor + lightTint * 0.025f);
             float3 litColor = baseColor.rgb * (lightColor.rgb * 0.72f + NdotL);
             baseColor.rgb = diffuse * lerp(litColor, litColor * shadowTint, shadowDensity);
         }
-
     }
 
     float4 authoredEmissionAO = MaterialEmissionAO.Load(gbufferPixel);
     if (pbr)
     {
         SurfaceData surface = BuildLightingSurface(baseColor, surfaceNormal, material.rgb, authoredEmissionAO);
-        // Emission is applied after the screen-space effects below.
+        // 発光は、この後の画面空間エフェクトを適用した後で加える。
         surface.Emissive = 0.0f;
-        baseColor.rgb = EvaluateSurfaceEnvironment(surface, viewDir, position,
-            input.TexCoord, shadowSoftness, pbrDirectLight);
+        baseColor.rgb =
+            EvaluateSurfaceEnvironment(surface, viewDir, position, input.TexCoord, shadowSoftness, pbrDirectLight);
     }
-
 
     baseColor.rgb = ApplySurfaceScreenEffects(baseColor.rgb, authoredEmissionAO.rgb, input.TexCoord, giReflectance);
     baseColor.a = 1.0f;
@@ -327,8 +298,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     // グリッド構築（MegaLightsGridCS）・M2 のサンプリングと同じ深度・同じ式でセルを決める
     g_MLCellIndex = MLCellIndexFromDepth(pixel, DepthTexture.Load(int3(pixel, 0)));
     float4 color = ShadeDeferred(input);
-    [branch]
-    if (!MLGridActive() || any(pixel >= MLScreen.xy))
+    [branch] if (!MLGridActive() || any(pixel >= MLScreen.xy))
     {
         return color;
     }
@@ -336,8 +306,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     // 検証：静止時の累積平均（前フレームまでの平均 + このフレーム）
     const uint linearIndex = pixel.y * MLScreen.x + pixel.x;
     float4 mean = color;
-    [branch]
-    if ((MLStochastic.x & ML_FLAG_ACCUMULATE) != 0u)
+    [branch] if ((MLStochastic.x & ML_FLAG_ACCUMULATE) != 0u)
     {
         const float frames = (float)MLStochastic.w;
         const float4 previous = MegaLightAccumulation[linearIndex];
@@ -346,8 +315,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     }
 
     const uint debugView = MLCounts.y;
-    [branch]
-    if (debugView == 0u)
+    [branch] if (debugView == 0u)
     {
         return color;
     }
@@ -355,11 +323,15 @@ float4 main(PSInputPostProcess input) : SV_Target
     bool overlay = true;
     if (debugView == 1u || debugView == 2u)
     {
-        if (g_MLCellIndex == ML_INVALID_CELL) return color;
+        if (g_MLCellIndex == ML_INVALID_CELL)
+        {
+            return color;
+        }
         if (debugView == 1u)
         {
             const uint cellLights = MegaLightCells[g_MLCellIndex].y;
-            debugColor = cellLights == 0u ? float3(0.02f, 0.02f, 0.04f) : MLHeatmap((float)cellLights / max(MLDepth2.z, 1.0f));
+            debugColor =
+                cellLights == 0u ? float3(0.02f, 0.02f, 0.04f) : MLHeatmap((float)cellLights / max(MLDepth2.z, 1.0f));
         }
         else
         {
@@ -373,16 +345,28 @@ float4 main(PSInputPostProcess input) : SV_Target
     if (debugView >= 3u && debugView <= 5u)
     {
         // M2 のサンプル：3 = 選ばれたライト, 4 = 可視率, 5 = 1/p
-        if (!MLStochasticActive()) return color;
+        if (!MLStochasticActive())
+        {
+            return color;
+        }
         const uint sampleBase = MLSampleBase(MLScreenToSample(pixel));
-        uint valid = 0u, traced = 0u, visible = 0u, firstLight = 0xffffffffu;
+        uint valid = 0u;
+        uint traced = 0u;
+        uint visible = 0u;
+        uint firstLight = 0xffffffffu;
         float maxInvPdf = 0.0f;
         for (uint k = 0u; k < MLStochastic.y; ++k)
         {
             const uint4 lightSample = MegaLightSamples[sampleBase + k];
-            if ((lightSample.x & ML_SAMPLE_VALID) == 0u) continue;
+            if ((lightSample.x & ML_SAMPLE_VALID) == 0u)
+            {
+                continue;
+            }
             ++valid;
-            if (firstLight == 0xffffffffu) firstLight = lightSample.x & ML_SAMPLE_INDEX;
+            if (firstLight == 0xffffffffu)
+            {
+                firstLight = lightSample.x & ML_SAMPLE_INDEX;
+            }
             if ((lightSample.x & ML_SAMPLE_TRACE) != 0u)
             {
                 ++traced;
@@ -390,10 +374,14 @@ float4 main(PSInputPostProcess input) : SV_Target
             }
             maxInvPdf = max(maxInvPdf, asfloat(lightSample.y));
         }
-        if (valid == 0u) return color;
+        if (valid == 0u)
+        {
+            return color;
+        }
         if (debugView == 3u)
         {
-            debugColor = frac((float)MLHash(firstLight) * (1.0f / 4294967296.0f) * float3(1.0f, 7.0f, 31.0f) + float3(0.1f, 0.35f, 0.6f));
+            debugColor = frac((float)MLHash(firstLight) * (1.0f / 4294967296.0f) * float3(1.0f, 7.0f, 31.0f) +
+                              float3(0.1f, 0.35f, 0.6f));
         }
         else if (debugView == 4u)
         {
@@ -407,41 +395,71 @@ float4 main(PSInputPostProcess input) : SV_Target
     else if (debugView == 9u)
     {
         // M5：影レイの処理の内訳（緑 = スクリーントレースで遮蔽を確定, 橙 = ワールドトレース, 青 = 影レイ不要）
-        if (!MLStochasticActive()) return color;
+        if (!MLStochasticActive())
+        {
+            return color;
+        }
         const uint sampleBase = MLSampleBase(MLScreenToSample(pixel));
         float3 mix = 0.0f;
         uint valid = 0u;
         for (uint k = 0u; k < MLStochastic.y; ++k)
         {
             const uint flags = MegaLightSamples[sampleBase + k].x;
-            if ((flags & ML_SAMPLE_VALID) == 0u) continue;
+            if ((flags & ML_SAMPLE_VALID) == 0u)
+            {
+                continue;
+            }
             ++valid;
-            if ((flags & ML_SAMPLE_SCREEN) != 0u) mix += float3(0.15f, 0.95f, 0.3f);
-            else if ((flags & ML_SAMPLE_TRACE) != 0u) mix += float3(1.0f, 0.55f, 0.1f);
-            else mix += float3(0.2f, 0.4f, 1.0f);
+            if ((flags & ML_SAMPLE_SCREEN) != 0u)
+            {
+                mix += float3(0.15f, 0.95f, 0.3f);
+            }
+            else if ((flags & ML_SAMPLE_TRACE) != 0u)
+            {
+                mix += float3(1.0f, 0.55f, 0.1f);
+            }
+            else
+            {
+                mix += float3(0.2f, 0.4f, 1.0f);
+            }
         }
-        if (valid == 0u) return color;
+        if (valid == 0u)
+        {
+            return color;
+        }
         debugColor = mix / (float)valid;
     }
     else if (debugView == 8u)
     {
         // M4：可視ライトハッシュの埋まり具合（128bit 中の立っているビット数。8x8 タイル）
-        if (!MLStochasticActive()) return color;
+        if (!MLStochasticActive())
+        {
+            return color;
+        }
         const uint occupancy = MLHashOccupancy(MegaLightHash[MLHashTileIndex(pixel)]);
         debugColor = occupancy == 0u ? float3(0.02f, 0.02f, 0.04f) : MLHeatmap((float)occupancy / 64.0f);
         const uint2 tilePixel = pixel % ML_HASH_TILE;
-        if (tilePixel.x == 0u || tilePixel.y == 0u) debugColor *= 0.6f;
+        if (tilePixel.x == 0u || tilePixel.y == 0u)
+        {
+            debugColor *= 0.6f;
+        }
     }
     else if (debugView == 6u)
     {
         // 累積平均そのもの
-        if ((MLStochastic.x & ML_FLAG_ACCUMULATE) == 0u) return color;
+        if ((MLStochastic.x & ML_FLAG_ACCUMULATE) == 0u)
+        {
+            return color;
+        }
         return float4(mean.rgb, color.a);
     }
     else if (debugView == 7u)
     {
         // リファレンスとの差（輝度の相対誤差 × 10 をヒートマップ）
-        if ((MLStochastic.x & ML_FLAG_HAS_REF) == 0u) return color;
+        if ((MLStochastic.x & ML_FLAG_HAS_REF) == 0u)
+        {
+            return color;
+        }
         const float reference = MLDebugLuminance(MegaLightReference[linearIndex].rgb);
         const float difference = abs(MLDebugLuminance(mean.rgb) - reference);
         debugColor = MLHeatmap(10.0f * difference / max(reference, 0.05f));
@@ -463,15 +481,17 @@ float4 main(PSInputPostProcess input) : SV_Target
 float4 MegaLightsShadePS(PSInputPostProcess input) : SV_Target
 {
     const uint2 pixel = uint2(input.Position.xy);
-    if (!MLStochasticActive() || any(pixel >= MLScreen.xy)) return 0.0f;
+    if (!MLStochasticActive() || any(pixel >= MLScreen.xy))
+    {
+        return 0.0f;
+    }
     const uint linearIndex = pixel.y * MLScreen.x + pixel.x;
     const int3 gbufferPixel = int3(pixel, 0);
     float4 material = MaterialTexture.Load(gbufferPixel);
     const float depth = DepthTexture.Load(gbufferPixel);
     g_MLCellIndex = MLCellIndexFromDepth(pixel, depth);
     float4 result = 0.0f;
-    [branch]
-    if (g_MLCellIndex != ML_INVALID_CELL && IsMaterialClass(material.a, 11.0f))
+    [branch] if (g_MLCellIndex != ML_INVALID_CELL && IsMaterialClass(material.a, 11.0f))
     {
         float4 baseColor = BaseColorTexture.Load(gbufferPixel);
         const float3 position = ReconstructPostProcessWorldPositionCommon(input.TexCoord, depth);
@@ -481,8 +501,8 @@ float4 MegaLightsShadePS(PSInputPostProcess input) : SV_Target
         ApplyWeatherToSurface(position, surfaceNormal, baseColor.rgb, material.rgb);
         const float3 viewDir = SafeNormalizeCommon(PPCameraPos.xyz - position, surfaceNormal);
         SurfaceLightAccumulator acc = (SurfaceLightAccumulator)0;
-        MLAccumulateStochasticSamples(position, 0.0f, 0.0f, surfaceNormal, input.Position.xy, 1, viewDir,
-            baseColor.rgb, material.rgb, max(shadowParams.g, 0.0001f), float3(1.0f, 1.0f, 1.0f), acc);
+        MLAccumulateStochasticSamples(position, 0.0f, 0.0f, surfaceNormal, input.Position.xy, 1, viewDir, baseColor.rgb,
+                                      material.rgb, max(shadowParams.g, 0.0001f), float3(1.0f, 1.0f, 1.0f), acc);
         const float3 lighting = acc.PbrDirect / MLRemodulation(surfaceNormal, viewDir, baseColor.rgb, material.rgb);
         // a = 1 + ヒット距離（最も近いサンプルのライトまで）。M3 は a >= 0.5 を対象の印に、M6 の NRD は距離に使う
         float hitDistance = 1.0e4f;
@@ -490,8 +510,12 @@ float4 MegaLightsShadePS(PSInputPostProcess input) : SV_Target
         for (uint k = 0u; k < MLStochastic.y; ++k)
         {
             const uint4 lightSample = MegaLightSamples[sampleBase + k];
-            if ((lightSample.x & ML_SAMPLE_VALID) == 0u) continue;
-            hitDistance = min(hitDistance, length(MegaLightBuffer[lightSample.x & ML_SAMPLE_INDEX].PositionType.xyz - position));
+            if ((lightSample.x & ML_SAMPLE_VALID) == 0u)
+            {
+                continue;
+            }
+            hitDistance =
+                min(hitDistance, length(MegaLightBuffer[lightSample.x & ML_SAMPLE_INDEX].PositionType.xyz - position));
         }
         result = float4(all(isfinite(lighting)) ? lighting : 0.0f, 1.0f + hitDistance);
     }

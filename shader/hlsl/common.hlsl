@@ -1,8 +1,8 @@
 #ifdef SHADER_VISIBILITY_RESOLVE
-static float2 VisibilityUvDx,VisibilityUvDy;
-static float3 VisibilityWorldDx,VisibilityWorldDy;
+static float2 VisibilityUvDx, VisibilityUvDy;
+static float3 VisibilityWorldDx, VisibilityWorldDy;
 #endif
-#pragma warning(disable: 4000)
+#pragma warning(disable : 4000)
 #include "SceneRayShadow.hlsli"
 
 struct GBufferOutput
@@ -30,8 +30,6 @@ struct PS_OUTPUT
     float4 Color : SV_Target;
 };
 
-
-
 float4 MakeGBufferNormal(float3 normal)
 {
     return float4(normalize(normal) * 0.5f + 0.5f, 1.0f);
@@ -43,10 +41,6 @@ float3 DecodeGBufferNormal(float3 normal)
 }
 
 #ifdef SHADER_3D
-
-
-
-
 
 #ifndef SHADER_POSTPROCESS
 cbuffer ConstantBuffer3D : register(b0)
@@ -78,19 +72,19 @@ cbuffer ConstantBuffer3D : register(b0)
 struct VSInput3D
 {
     float3 Position : POSITION;
-    float3 Normal   : NORMAL;
+    float3 Normal : NORMAL;
     float2 TexCoord : TEXCOORD;
-    float4 Diffuse  : COLOR;
+    float4 Diffuse : COLOR;
 };
 
 struct PSInput3D
 {
     float4 Position : SV_POSITION;
-    float3 Normal   : NORMAL;
+    float3 Normal : NORMAL;
     float2 TexCoord : TEXCOORD;
-    float4 Diffuse  : COLOR;
+    float4 Diffuse : COLOR;
     float3 WorldPos : TEXCOORD1;
-    float3 ViewPos  : TEXCOORD2;
+    float3 ViewPos : TEXCOORD2;
     float3 CameraPos : TEXCOORD3;
 #ifdef SHADER_GPU_DRIVEN
     nointerpolation uint InstanceID : TEXCOORD4;
@@ -114,25 +108,26 @@ cbuffer ShadowParams : register(b3)
 #ifndef SHADER_POSTPROCESS
 float SampleShadowMapPcf9(float2 shadowUv, float shadowLayer, float texelSize, float currentDepth, int filterRadius)
 {
-    const float2 kernel[9] =
-    {
-        float2(0.0f, 0.0f),
-        float2(1.0f, 0.0f), float2(-1.0f, 0.0f),
-        float2(0.0f, 1.0f), float2(0.0f, -1.0f),
-        float2(0.7071068f, 0.7071068f), float2(-0.7071068f, 0.7071068f),
-        float2(0.7071068f, -0.7071068f), float2(-0.7071068f, -0.7071068f)
-    };
+    const float2 kernel[9] = {float2(0.0f, 0.0f),
+                              float2(1.0f, 0.0f),
+                              float2(-1.0f, 0.0f),
+                              float2(0.0f, 1.0f),
+                              float2(0.0f, -1.0f),
+                              float2(0.7071068f, 0.7071068f),
+                              float2(-0.7071068f, 0.7071068f),
+                              float2(0.7071068f, -0.7071068f),
+                              float2(-0.7071068f, -0.7071068f)};
     int tapCount = filterRadius <= 0 ? 1 : 9;
     float visibility = 0.0f;
-    [unroll]
-    for (int tap = 0; tap < 9; ++tap)
+    [unroll] for (int tap = 0; tap < 9; ++tap)
     {
-        if (tap >= tapCount) break;
+        if (tap >= tapCount)
+        {
+            break;
+        }
         float2 offset = kernel[tap] * (float)max(filterRadius, 1) * texelSize;
-        visibility += g_ShadowMap.SampleCmpLevelZero(
-            g_ShadowSampler,
-            float3(shadowUv + offset, shadowLayer),
-            currentDepth);
+        visibility +=
+            g_ShadowMap.SampleCmpLevelZero(g_ShadowSampler, float3(shadowUv + offset, shadowLayer), currentDepth);
     }
     return visibility / (float)tapCount;
 }
@@ -140,8 +135,11 @@ float SampleShadowMapPcf9(float2 shadowUv, float shadowLayer, float texelSize, f
 float SampleShadowMap(float3 worldPos, float3 normal, float3 lightDir)
 {
 #ifdef SHADER_RAYTRACING
-    // Forward lighting applies scene visibility separately to every contributing light.
-    if (SceneRayFlags.x > 0.5f) return 1.0f;
+    // フォワードライティングでは、寄与するライトごとにシーンの可視性を適用する。
+    if (SceneRayFlags.x > 0.5f)
+    {
+        return 1.0f;
+    }
 #endif
     float normalLenSq = dot(normal, normal);
     float lightLenSq = dot(lightDir, lightDir);
@@ -153,11 +151,10 @@ float SampleShadowMap(float3 worldPos, float3 normal, float3 lightDir)
     float3 lightNdc = lightClip.xyz / safeW;
     float2 shadowUv = float2(lightNdc.x * 0.5f + 0.5f, -lightNdc.y * 0.5f + 0.5f);
 
-    float inBounds =
-        (lightClip.w > 0.0f &&
-         shadowUv.x >= 0.0f && shadowUv.x <= 1.0f &&
-         shadowUv.y >= 0.0f && shadowUv.y <= 1.0f &&
-         lightNdc.z >= 0.0f && lightNdc.z <= 1.0f) ? 1.0f : 0.0f;
+    float inBounds = (lightClip.w > 0.0f && shadowUv.x >= 0.0f && shadowUv.x <= 1.0f && shadowUv.y >= 0.0f &&
+                      shadowUv.y <= 1.0f && lightNdc.z >= 0.0f && lightNdc.z <= 1.0f)
+                         ? 1.0f
+                         : 0.0f;
 
     float texelSize = ShadowMapParams.x;
     float nDotL = saturate(dot(n, l));
@@ -165,8 +162,7 @@ float SampleShadowMap(float3 worldPos, float3 normal, float3 lightDir)
     float currentDepth = lightNdc.z - bias;
 
     int filterRadius = clamp((int)round(ShadowFilterParams.x), 0, 3);
-    float visibility = SampleShadowMapPcf9(
-        shadowUv, 0.0f, texelSize, currentDepth, filterRadius);
+    float visibility = SampleShadowMapPcf9(shadowUv, 0.0f, texelSize, currentDepth, filterRadius);
     float shadowStrength = saturate(abs(ShadowMapParams.w));
     float outOfBoundsVisibility = 1.0f;
     return lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
@@ -226,9 +222,6 @@ cbuffer LightParams : register(b1)
     float4 SkyParameters;
 };
 
-
-
-
 StructuredBuffer<uint> LightTileIndices : register(t11);
 StructuredBuffer<uint> VolumetricLightIndices : register(t24);
 
@@ -236,7 +229,9 @@ bool SceneLightCastsShadowCommon(uint index, bool legacyHasShadow)
 {
 #ifdef SHADER_RAYTRACING
     if (SceneRayFlags.x > 0.5f)
+    {
         return index < MAX_SHADER_LIGHTS && SceneShadowLights[index].x != 0;
+    }
 #endif
     return legacyHasShadow;
 }
@@ -246,9 +241,13 @@ float SceneShadowForLightCommon(uint index, float3 worldPos, float3 normal, floa
 #ifdef SHADER_RAYTRACING
     if (SceneRayFlags.x > 0.5f)
     {
-        if (index >= 160u || SceneShadowLights[index].x == 0u) return 1.0f;
-        float maximumDistance = LightPositionTypes[index].w < 0.5f ? SceneRayParameters.x :
-            min(length(LightPositionTypes[index].xyz - worldPos), SceneRayParameters.x);
+        if (index >= 160u || SceneShadowLights[index].x == 0u)
+        {
+            return 1.0f;
+        }
+        float maximumDistance = LightPositionTypes[index].w < 0.5f
+                                    ? SceneRayParameters.x
+                                    : min(length(LightPositionTypes[index].xyz - worldPos), SceneRayParameters.x);
         return TraceSceneShadow(worldPos, normal, lightDir, maximumDistance);
     }
 #endif
@@ -264,9 +263,8 @@ uint LightTileBaseCommon(float2 pixelPosition)
 {
     uint tileCountX = max((uint)round(LightCount.y), 1u);
     uint tileCountY = max((uint)round(LightCount.z), 1u);
-    uint2 tile = min(
-        (uint2)max(pixelPosition, float2(0.0f, 0.0f)) / LIGHT_TILE_SIZE,
-        uint2(tileCountX - 1u, tileCountY - 1u));
+    uint2 tile =
+        min((uint2)max(pixelPosition, float2(0.0f, 0.0f)) / LIGHT_TILE_SIZE, uint2(tileCountX - 1u, tileCountY - 1u));
     return (tile.y * tileCountX + tile.x) * MAX_LIGHTS_PER_TILE;
 }
 
@@ -279,9 +277,8 @@ uint VirtualShadowResidencyRowCommon(int level, int row)
 bool VirtualShadowPageResidentCommon(int level, int2 localPage)
 {
     int pageGrid = max((int)round(VirtualShadowPageOrigins[level].z), 1);
-    if (level < 0 || level >= 4 ||
-        localPage.x < 0 || localPage.x >= pageGrid ||
-        localPage.y < 0 || localPage.y >= pageGrid)
+    if (level < 0 || level >= 4 || localPage.x < 0 || localPage.x >= pageGrid || localPage.y < 0 ||
+        localPage.y >= pageGrid)
     {
         return false;
     }
@@ -292,38 +289,27 @@ bool VirtualShadowPageResidentCommon(int level, int2 localPage)
 int VirtualShadowPositiveModuloCommon(int value, int modulus)
 {
 
-
-
-	return value & (modulus - 1);
+    return value & (modulus - 1);
 }
 
-float2 VirtualShadowMapUvCommon(
-    int level,
-    float2 virtualUv,
-    out bool resident,
-    out int2 localPage)
+float2 VirtualShadowMapUvCommon(int level, float2 virtualUv, out bool resident, out int2 localPage)
 {
     int pageGrid = max((int)round(VirtualShadowPageOrigins[level].z), 1);
     float2 pagePosition = virtualUv * (float)pageGrid;
     localPage = (int2)floor(pagePosition);
-    resident =
-        all(virtualUv >= 0.0f) && all(virtualUv < 1.0f) &&
-        VirtualShadowPageResidentCommon(level, localPage);
+    resident = all(virtualUv >= 0.0f) && all(virtualUv < 1.0f) && VirtualShadowPageResidentCommon(level, localPage);
     if (!resident)
     {
         return float2(0.0f, 0.0f);
     }
 
     int2 globalPage = (int2)round(VirtualShadowPageOrigins[level].xy) + localPage;
-    int2 physicalPage = int2(
-        VirtualShadowPositiveModuloCommon(globalPage.x, pageGrid),
-        VirtualShadowPositiveModuloCommon(globalPage.y, pageGrid));
+    int2 physicalPage = int2(VirtualShadowPositiveModuloCommon(globalPage.x, pageGrid),
+                             VirtualShadowPositiveModuloCommon(globalPage.y, pageGrid));
     float2 inPageUv = frac(pagePosition);
     float halfLocalTexel = VirtualShadowParams[level].y * (float)pageGrid * 0.5f;
-    inPageUv = clamp(
-        inPageUv,
-        float2(halfLocalTexel, halfLocalTexel),
-        float2(1.0f - halfLocalTexel, 1.0f - halfLocalTexel));
+    inPageUv =
+        clamp(inPageUv, float2(halfLocalTexel, halfLocalTexel), float2(1.0f - halfLocalTexel, 1.0f - halfLocalTexel));
     return ((float2)physicalPage + inPageUv) / (float)pageGrid;
 }
 
@@ -333,30 +319,16 @@ float VirtualShadowLevelInteriorCommon(int level, float2 virtualUv, float3 world
     float residentGrid = max(ShadowDebugGlobal.z, 1.0f);
     float firstResident = (pageGrid - residentGrid) * 0.5f;
     float2 pagePosition = virtualUv * pageGrid;
-    float2 edgeDistance = min(
-        pagePosition - firstResident,
-        firstResident + residentGrid - pagePosition);
+    float2 edgeDistance = min(pagePosition - firstResident, firstResident + residentGrid - pagePosition);
 
-
-
-
-
-
-    float overlapPages =
-        max(residentGrid * 0.5f * clamp(VirtualShadowGlobal.w, 0.05f, 0.40f),
-            0.25f);
-    return smoothstep(
-        0.0f,
-        overlapPages,
-        min(edgeDistance.x, edgeDistance.y));
+    float overlapPages = max(residentGrid * 0.5f * clamp(VirtualShadowGlobal.w, 0.05f, 0.40f), 0.25f);
+    return smoothstep(0.0f, overlapPages, min(edgeDistance.x, edgeDistance.y));
 }
 
 float CascadedShadowLevelInteriorCommon(int level, float2 shadowUv, float3 worldPos)
 {
     float2 edgeDistance = min(shadowUv, 1.0f - shadowUv);
-    float overlapUv =
-        max(0.5f * clamp(VirtualShadowGlobal.w, 0.05f, 0.40f),
-            2.0f / 2048.0f);
+    float overlapUv = max(0.5f * clamp(VirtualShadowGlobal.w, 0.05f, 0.40f), 2.0f / 2048.0f);
     return smoothstep(0.0f, overlapUv, min(edgeDistance.x, edgeDistance.y));
 }
 
@@ -377,8 +349,10 @@ float3 ApplyNormalMapCommon(float3 meshNormal, float3 worldPos, float2 texCoord,
 {
     float3 n = SafeNormalizeCommon(meshNormal, float3(0.0f, 1.0f, 0.0f));
 #ifdef SHADER_VISIBILITY_RESOLVE
-    float3 dp1=VisibilityWorldDx,dp2=VisibilityWorldDy;
-    float2 duv1=VisibilityUvDx,duv2=VisibilityUvDy;
+    float3 dp1 = VisibilityWorldDx;
+    float3 dp2 = VisibilityWorldDy;
+    float2 duv1 = VisibilityUvDx;
+    float2 duv2 = VisibilityUvDy;
 #else
     float3 dp1 = ddx(worldPos);
     float3 dp2 = ddy(worldPos);
@@ -393,12 +367,13 @@ float3 ApplyNormalMapCommon(float3 meshNormal, float3 worldPos, float2 texCoord,
     tangent = SafeNormalizeCommon(tangent - n * dot(n, tangent), float3(1.0f, 0.0f, 0.0f));
     float3 uvBitangent = (dp2 * duv1.x - dp1 * duv2.x) * invDet;
     float3 bitangent = SafeNormalizeCommon(cross(n, tangent), float3(0.0f, 0.0f, 1.0f));
-    // Preserve tangent-space handedness for mirrored UVs and reflected transforms.
+    // 反転 UV や反射変換でも接空間の左右の向きを保つ。
     if (dot(bitangent, uvBitangent) < 0.0f)
     {
         bitangent = -bitangent;
     }
-    float3 mappedNormal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * n, n);
+    float3 mappedNormal =
+        SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * n, n);
     return SafeNormalizeCommon(lerp(n, mappedNormal, useTbn), n);
 }
 
@@ -456,14 +431,9 @@ float AtmosphereDensityCommon(float3 worldPos)
     return density * heightDensity;
 }
 
-float3 ApplyAtmosphereToLightCommon(
-    float3 worldPos,
-    float3 lightDir,
-    float3 lightColor,
-    inout float volumeScatter)
+float3 ApplyAtmosphereToLightCommon(float3 worldPos, float3 lightDir, float3 lightColor, inout float volumeScatter)
 {
-    [branch]
-    if (AtmosphereParams0.x < 0.5f)
+    [branch] if (AtmosphereParams0.x < 0.5f)
     {
         return lightColor;
     }
@@ -474,8 +444,8 @@ float3 ApplyAtmosphereToLightCommon(
     float3 toLight = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
     float cosTheta = clamp(dot(toLight, viewToCamera), -1.0f, 1.0f);
 
-    float opticalDepth = AtmosphereDensityCommon(worldPos) *
-        (1.0f - exp(-viewDistance * max(AtmosphereParams1.w, 0.0001f)));
+    float opticalDepth =
+        AtmosphereDensityCommon(worldPos) * (1.0f - exp(-viewDistance * max(AtmosphereParams1.w, 0.0001f)));
     float transmittance = exp(-max(AtmosphereParams1.y, 0.0f) * opticalDepth);
 
     float rayleighPhase = RayleighPhaseCommon(cosTheta);
@@ -497,16 +467,12 @@ float3 AtmosphereAmbientCommon(float3 worldPos, float3 lightDir)
     return AtmosphereColor0.rgb * AtmosphereColor1.a * density * lerp(0.35f, 1.0f, upScatter) * atmosphereEnabled;
 }
 
-void ResolveSingleLightCommon(
-    float3 worldPos,
-    float4 lightDirectionData,
-    float4 lightPositionTypeData,
-    float4 lightExtraData,
-    out float3 lightDir,
-    out float attenuation,
-    out float volumeScatter);
+void ResolveSingleLightCommon(float3 worldPos, float4 lightDirectionData, float4 lightPositionTypeData,
+                              float4 lightExtraData, out float3 lightDir, out float attenuation,
+                              out float volumeScatter);
 
-float3 AtmosphereSingleScatterFromDensityCommon(float sampleDensity, float3 viewToCamera, float3 lightDir, float3 lightColor)
+float3 AtmosphereSingleScatterFromDensityCommon(float sampleDensity, float3 viewToCamera, float3 lightDir,
+                                                float3 lightColor)
 {
     float3 toLight = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
     float cosTheta = clamp(dot(toLight, viewToCamera), -1.0f, 1.0f);
@@ -519,20 +485,19 @@ float3 AtmosphereSingleScatterFromDensityCommon(float sampleDensity, float3 view
 
 float3 AtmosphereSingleScatterCommon(float3 samplePos, float3 viewToCamera, float3 lightDir, float3 lightColor)
 {
-    return AtmosphereSingleScatterFromDensityCommon(AtmosphereDensityCommon(samplePos), viewToCamera, lightDir, lightColor);
+    return AtmosphereSingleScatterFromDensityCommon(AtmosphereDensityCommon(samplePos), viewToCamera, lightDir,
+                                                    lightColor);
 }
 
-float SampleAtmosphereShadowMap(
-    float3 worldPos,
-    float3 lightDir,
-    Texture2DArray<float> shadowMap,
-    SamplerComparisonState shadowSampler,
-    float4x4 lightViewProjection,
-    float4 shadowMapParams,
-    float shadowLayer)
+float SampleAtmosphereShadowMap(float3 worldPos, float3 lightDir, Texture2DArray<float> shadowMap,
+                                SamplerComparisonState shadowSampler, float4x4 lightViewProjection,
+                                float4 shadowMapParams, float shadowLayer)
 {
 #ifdef SHADER_RAYTRACING
-    if (SceneRayFlags.x > 0.5f) return 1.0f;
+    if (SceneRayFlags.x > 0.5f)
+    {
+        return 1.0f;
+    }
 #endif
     float3 l = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
 
@@ -541,11 +506,10 @@ float SampleAtmosphereShadowMap(
     float3 lightNdc = lightClip.xyz / safeW;
     float2 shadowUv = float2(lightNdc.x * 0.5f + 0.5f, -lightNdc.y * 0.5f + 0.5f);
 
-    float inBounds =
-        (lightClip.w > 0.0f &&
-         shadowUv.x >= 0.0f && shadowUv.x <= 1.0f &&
-         shadowUv.y >= 0.0f && shadowUv.y <= 1.0f &&
-         lightNdc.z >= 0.0f && lightNdc.z <= 1.0f) ? 1.0f : 0.0f;
+    float inBounds = (lightClip.w > 0.0f && shadowUv.x >= 0.0f && shadowUv.x <= 1.0f && shadowUv.y >= 0.0f &&
+                      shadowUv.y <= 1.0f && lightNdc.z >= 0.0f && lightNdc.z <= 1.0f)
+                         ? 1.0f
+                         : 0.0f;
 
     float blur = saturate(AtmosphereCamera.w);
     float texelSize = shadowMapParams.x * (1.0f + blur * 4.0f);
@@ -553,17 +517,13 @@ float SampleAtmosphereShadowMap(
     float currentDepth = lightNdc.z - bias;
 
     float visibility = 0.0f;
-    [unroll]
-    for (int y = -2; y <= 2; ++y)
+    [unroll] for (int y = -2; y <= 2; ++y)
     {
-        [unroll]
-        for (int x = -2; x <= 2; ++x)
+        [unroll] for (int x = -2; x <= 2; ++x)
         {
             float2 offset = float2((float)x, (float)y) * texelSize;
-            visibility += shadowMap.SampleCmpLevelZero(
-                shadowSampler,
-                float3(shadowUv + offset, shadowLayer),
-                currentDepth);
+            visibility +=
+                shadowMap.SampleCmpLevelZero(shadowSampler, float3(shadowUv + offset, shadowLayer), currentDepth);
         }
     }
 
@@ -573,36 +533,42 @@ float SampleAtmosphereShadowMap(
     return lerp(1.0f, lerp(outOfBoundsVisibility, visibility, inBounds), shadowStrength);
 }
 
-
-float SampleVirtualAtmosphereShadowMapCommon(
-    float3 worldPos,
-    Texture2DArray<float> shadowMap,
-    SamplerComparisonState shadowSampler)
+float SampleVirtualAtmosphereShadowMapCommon(float3 worldPos, Texture2DArray<float> shadowMap,
+                                             SamplerComparisonState shadowSampler)
 {
     int levelCount = clamp((int)round(VirtualShadowGlobal.y), 1, 4);
     float fineVisibility = 1.0f;
     float fineInterior = 1.0f;
     bool hasFine = false;
-    [unroll]
-    for (int level = 0; level < 4; ++level)
+    [unroll] for (int level = 0; level < 4; ++level)
     {
-        if (level >= levelCount) break;
+        if (level >= levelCount)
+        {
+            break;
+        }
         float4 clip = mul(float4(worldPos, 1.0f), VirtualShadowViewProjections[level]);
-        if (clip.w <= 0.000001f) continue;
+        if (clip.w <= 0.000001f)
+        {
+            continue;
+        }
         float3 ndc = clip.xyz / clip.w;
-        if (ndc.z < 0.0f || ndc.z > 1.0f) continue;
+        if (ndc.z < 0.0f || ndc.z > 1.0f)
+        {
+            continue;
+        }
         float2 virtualUv = float2(ndc.x * 0.5f + 0.5f, -ndc.y * 0.5f + 0.5f);
         bool resident;
         int2 localPage;
         float2 physicalUv = VirtualShadowMapUvCommon(level, virtualUv, resident, localPage);
-        if (!resident) continue;
+        if (!resident)
+        {
+            continue;
+        }
 
         float4 params = VirtualShadowParams[level];
         float currentDepth = ndc.z - max(params.z, params.w) * (1.0f + level * 0.45f);
-        float levelVisibility = shadowMap.SampleCmpLevelZero(
-            shadowSampler,
-            float3(physicalUv, max(params.x, 0.0f)),
-            currentDepth);
+        float levelVisibility =
+            shadowMap.SampleCmpLevelZero(shadowSampler, float3(physicalUv, max(params.x, 0.0f)), currentDepth);
         float levelInterior = VirtualShadowLevelInteriorCommon(level, virtualUv, worldPos);
         if (!hasFine)
         {
@@ -620,34 +586,35 @@ float SampleVirtualAtmosphereShadowMapCommon(
     return hasFine ? fineVisibility : 1.0f;
 }
 
-float SampleCascadedAtmosphereShadowMapCommon(
-    float3 worldPos,
-    Texture2DArray<float> shadowMap,
-    SamplerComparisonState shadowSampler)
+float SampleCascadedAtmosphereShadowMapCommon(float3 worldPos, Texture2DArray<float> shadowMap,
+                                              SamplerComparisonState shadowSampler)
 {
     int levelCount = clamp((int)round(VirtualShadowGlobal.y), 1, 4);
     float fineVisibility = 1.0f;
     float fineInterior = 1.0f;
     bool hasFine = false;
-    [unroll]
-    for (int level = 0; level < 4; ++level)
+    [unroll] for (int level = 0; level < 4; ++level)
     {
-        if (level >= levelCount) break;
+        if (level >= levelCount)
+        {
+            break;
+        }
         float4 clip = mul(float4(worldPos, 1.0f), VirtualShadowViewProjections[level]);
-        if (clip.w <= 0.000001f) continue;
+        if (clip.w <= 0.000001f)
+        {
+            continue;
+        }
         float3 ndc = clip.xyz / clip.w;
         float2 uv = float2(ndc.x * 0.5f + 0.5f, -ndc.y * 0.5f + 0.5f);
-        if (any(uv < 0.0f) || any(uv > 1.0f) || ndc.z < 0.0f || ndc.z > 1.0f) continue;
+        if (any(uv < 0.0f) || any(uv > 1.0f) || ndc.z < 0.0f || ndc.z > 1.0f)
+        {
+            continue;
+        }
 
         float4 params = VirtualShadowParams[level];
         float levelVisibility = SampleAtmosphereShadowMap(
-            worldPos,
-            float3(0.0f, 1.0f, 0.0f),
-            shadowMap,
-            shadowSampler,
-            VirtualShadowViewProjections[level],
-            float4(params.y * ShadowWorldFilterScaleCommon(level), params.z, params.w, 1.0f),
-            params.x);
+            worldPos, float3(0.0f, 1.0f, 0.0f), shadowMap, shadowSampler, VirtualShadowViewProjections[level],
+            float4(params.y * ShadowWorldFilterScaleCommon(level), params.z, params.w, 1.0f), params.x);
         float levelInterior = CascadedShadowLevelInteriorCommon(level, uv, worldPos);
         if (!hasFine)
         {
@@ -665,33 +632,23 @@ float SampleCascadedAtmosphereShadowMapCommon(
     return hasFine ? fineVisibility : 1.0f;
 }
 
-
 float3 WorldToScreenUV(float3 worldPos);
 float3 ReconstructPostProcessViewRayCommon(float2 uv);
 float3 ReconstructPostProcessWorldPositionCommon(float2 uv, float depth);
 bool ProjectWorldToScreenCommon(float3 worldPos, out float2 screenUv);
-void ResolveSingleLightCommon(
-    float3 worldPos,
-    float4 lightDirectionData,
-    float4 lightPositionTypeData,
-    float4 lightExtraData,
-    out float3 lightDir,
-    out float attenuation,
-    out float volumeScatter);
+void ResolveSingleLightCommon(float3 worldPos, float4 lightDirectionData, float4 lightPositionTypeData,
+                              float4 lightExtraData, out float3 lightDir, out float attenuation,
+                              out float volumeScatter);
 
-float ScreenSpaceShaftVisibilityCommon(
-    float2 screenUv,
-    float2 lightUv,
-    Texture2D<float> depthTexture,
-    SamplerState depthSampler)
+float ScreenSpaceShaftVisibilityCommon(float2 screenUv, float2 lightUv, Texture2D<float> depthTexture,
+                                       SamplerState depthSampler)
 {
     const int stepCount = 8;
     float occlusion = 0.0f;
     float weightSum = 0.0f;
     float blurScale = lerp(0.70f, 1.35f, saturate(AtmosphereCamera.w));
     float2 rayToLight = lightUv - screenUv;
-    [unroll]
-    for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
+    [unroll] for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
     {
         float t = ((float)stepIndex + 1.0f) / ((float)stepCount + 1.0f);
         float sampleT = saturate(t * blurScale);
@@ -705,17 +662,12 @@ float ScreenSpaceShaftVisibilityCommon(
     return lerp(0.35f, 1.0f, occlusion / max(weightSum, 0.0001f));
 }
 
-float3 RayMarchAtmosphereViewCommon(
-    float3 worldPos,
-    Texture2DArray<float> shadowMap,
-    SamplerComparisonState shadowSampler,
-    float4x4 lightViewProjection,
-    float4 shadowMapParams)
+float3 RayMarchAtmosphereViewCommon(float3 worldPos, Texture2DArray<float> shadowMap,
+                                    SamplerComparisonState shadowSampler, float4x4 lightViewProjection,
+                                    float4 shadowMapParams)
 {
     float atmosphereActive =
-        step(0.5f, AtmosphereParams0.x) *
-        step(0.0001f, AtmosphereColor0.a) *
-        step(0.0001f, AtmosphereParams0.w);
+        step(0.5f, AtmosphereParams0.x) * step(0.0001f, AtmosphereColor0.a) * step(0.0001f, AtmosphereParams0.w);
     float3 cameraPos = AtmosphereCamera.xyz;
     float3 viewDelta = worldPos - cameraPos;
     float rawViewDistance = length(viewDelta);
@@ -731,55 +683,53 @@ float3 RayMarchAtmosphereViewCommon(
     float3 result = float3(0.0f, 0.0f, 0.0f);
     int count = min((int)round(LightCount.x), 5);
 
-    [loop]
-    for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
+    [loop] for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
     {
         float t = ((float)stepIndex + 0.5f) / (float)stepCount;
         float3 samplePos = cameraPos + viewDir * viewDistance * t;
         float3 stepScatter = float3(0.0f, 0.0f, 0.0f);
         float sampleDensity = AtmosphereDensityCommon(samplePos);
 
-        [loop]
-        for (int lightIndex = 0; lightIndex < count; ++lightIndex)
+        [loop] for (int lightIndex = 0; lightIndex < count; ++lightIndex)
         {
             float3 singleDir;
             float singleAttenuation;
             float singleVolume;
-            ResolveSingleLightCommon(samplePos, LightDirections[lightIndex], LightPositionTypes[lightIndex], LightExtras[lightIndex], singleDir, singleAttenuation, singleVolume);
-            float3 rawSingleColor = max(LightColors[lightIndex].rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColors[lightIndex].a, 0.0f);
+            ResolveSingleLightCommon(samplePos, LightDirections[lightIndex], LightPositionTypes[lightIndex],
+                                     LightExtras[lightIndex], singleDir, singleAttenuation, singleVolume);
+            float3 rawSingleColor =
+                max(LightColors[lightIndex].rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColors[lightIndex].a, 0.0f);
             float3 singleColor = rawSingleColor * singleAttenuation;
             float shadowVisibility = 1.0f;
             if (LightShadowData[lightIndex].x >= -0.5f)
             {
-                float4 perLightShadowParams = float4(
-                    LightShadowData[lightIndex].y,
-                    LightShadowData[lightIndex].z,
-                    LightShadowData[lightIndex].w,
-                    1.0f);
-                shadowVisibility = SampleAtmosphereShadowMap(
-                    samplePos,
-                    singleDir,
-                    shadowMap,
-                    shadowSampler,
-                    LightViewProjections[lightIndex],
-                    perLightShadowParams,
-                    LightShadowData[lightIndex].x);
+                float4 perLightShadowParams = float4(LightShadowData[lightIndex].y, LightShadowData[lightIndex].z,
+                                                     LightShadowData[lightIndex].w, 1.0f);
+                shadowVisibility = SampleAtmosphereShadowMap(samplePos, singleDir, shadowMap, shadowSampler,
+                                                             LightViewProjections[lightIndex], perLightShadowParams,
+                                                             LightShadowData[lightIndex].x);
             }
 #ifdef SHADER_RAYTRACING
             if (SceneRayFlags.x > 0.5f)
+            {
                 shadowVisibility = SceneShadowForLightCommon(lightIndex, samplePos, singleDir, singleDir);
+            }
 #endif
             float3 shadowedColor = singleColor * shadowVisibility;
             float localLight = step(0.5f, LightPositionTypes[lightIndex].w);
             float volumeVisibility = lerp(shadowVisibility, max(shadowVisibility, 0.45f), localLight);
             float3 volumeColor = rawSingleColor * sqrt(saturate(singleAttenuation)) * volumeVisibility;
-            float volumeLight = step(2.5f, LightPositionTypes[lightIndex].w) * step(LightPositionTypes[lightIndex].w, 3.5f);
+            float volumeLight =
+                step(2.5f, LightPositionTypes[lightIndex].w) * step(LightPositionTypes[lightIndex].w, 3.5f);
             float localVolumeStepBoost = lerp(1.0f, 0.35f / max(AtmosphereParams1.w, 0.0001f), localLight);
-            float phase = saturate(HenyeyGreensteinCommon(clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
+            float phase = saturate(
+                HenyeyGreensteinCommon(clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
             float shaftBoost = lerp(0.55f, 1.75f, phase) * lerp(1.0f, 2.35f, volumeLight);
-            float3 singleAtmosphere = AtmosphereSingleScatterFromDensityCommon(sampleDensity, viewToCamera, singleDir, shadowedColor);
+            float3 singleAtmosphere =
+                AtmosphereSingleScatterFromDensityCommon(sampleDensity, viewToCamera, singleDir, shadowedColor);
             stepScatter += singleAtmosphere * lerp(1.0f, 0.45f, volumeLight);
-            stepScatter += volumeColor * singleVolume * sampleDensity * shaftBoost * localVolumeStepBoost * lerp(0.22f, lerp(0.82f, 1.05f, volumeLight), localLight);
+            stepScatter += volumeColor * singleVolume * sampleDensity * shaftBoost * localVolumeStepBoost *
+                           lerp(0.22f, lerp(0.82f, 1.05f, volumeLight), localLight);
         }
 
         if (count <= 0)
@@ -787,21 +737,26 @@ float3 RayMarchAtmosphereViewCommon(
             float3 singleDir;
             float singleAttenuation;
             float singleVolume;
-            ResolveSingleLightCommon(samplePos, LightDirection, LightPositionType, LightExtra, singleDir, singleAttenuation, singleVolume);
+            ResolveSingleLightCommon(samplePos, LightDirection, LightPositionType, LightExtra, singleDir,
+                                     singleAttenuation, singleVolume);
             float3 rawSingleColor = max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColor.a, 0.0f);
             float3 singleColor = rawSingleColor * singleAttenuation;
-            float shadowVisibility = SampleAtmosphereShadowMap(samplePos, singleDir, shadowMap, shadowSampler, lightViewProjection, shadowMapParams, 0.0f);
+            float shadowVisibility = SampleAtmosphereShadowMap(samplePos, singleDir, shadowMap, shadowSampler,
+                                                               lightViewProjection, shadowMapParams, 0.0f);
             float3 shadowedColor = singleColor * shadowVisibility;
             float localLight = step(0.5f, LightPositionType.w);
             float volumeVisibility = lerp(shadowVisibility, max(shadowVisibility, 0.45f), localLight);
             float3 volumeColor = rawSingleColor * sqrt(saturate(singleAttenuation)) * volumeVisibility;
             float volumeLight = step(2.5f, LightPositionType.w) * step(LightPositionType.w, 3.5f);
             float localVolumeStepBoost = lerp(1.0f, 0.35f / max(AtmosphereParams1.w, 0.0001f), localLight);
-            float phase = saturate(HenyeyGreensteinCommon(clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
+            float phase = saturate(
+                HenyeyGreensteinCommon(clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
             float shaftBoost = lerp(0.55f, 1.75f, phase) * lerp(1.0f, 2.35f, volumeLight);
-            float3 singleAtmosphere = AtmosphereSingleScatterFromDensityCommon(sampleDensity, viewToCamera, singleDir, shadowedColor);
+            float3 singleAtmosphere =
+                AtmosphereSingleScatterFromDensityCommon(sampleDensity, viewToCamera, singleDir, shadowedColor);
             stepScatter += singleAtmosphere * lerp(1.0f, 0.45f, volumeLight);
-            stepScatter += volumeColor * singleVolume * sampleDensity * shaftBoost * localVolumeStepBoost * lerp(0.22f, lerp(0.82f, 1.05f, volumeLight), localLight);
+            stepScatter += volumeColor * singleVolume * sampleDensity * shaftBoost * localVolumeStepBoost *
+                           lerp(0.22f, lerp(0.82f, 1.05f, volumeLight), localLight);
         }
 
         result += stepScatter * transmittance * scaledStep;
@@ -818,7 +773,8 @@ float3 RayMarchAtmosphereViewCommon(
 float3 AtmosphereBackgroundCommon(float2 uv)
 {
     float atmosphereEnabled = step(0.5f, AtmosphereParams0.x);
-    float3 viewDir = SafeNormalizeCommon(float3((uv.x - 0.5f) * 1.45f, (0.5f - uv.y) * 0.9f + 0.25f, 1.0f), float3(0.0f, 0.2f, 1.0f));
+    float3 viewDir = SafeNormalizeCommon(float3((uv.x - 0.5f) * 1.45f, (0.5f - uv.y) * 0.9f + 0.25f, 1.0f),
+                                         float3(0.0f, 0.2f, 1.0f));
     float3 lightDir = SafeNormalizeCommon(LightDirection.xyz, float3(0.0f, 1.0f, 0.0f));
     float3 lightColor = max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColor.a, 0.0f);
 
@@ -839,14 +795,9 @@ float3 AtmosphereBackgroundCommon(float2 uv)
     return (rayleigh + mie) * lightColor * skyDensity * max(AtmosphereColor0.a, 0.0f) * atmosphereEnabled;
 }
 
-void ResolveSingleLightCommon(
-    float3 worldPos,
-    float4 lightDirectionData,
-    float4 lightPositionTypeData,
-    float4 lightExtraData,
-    out float3 lightDir,
-    out float attenuation,
-    out float volumeScatter)
+void ResolveSingleLightCommon(float3 worldPos, float4 lightDirectionData, float4 lightPositionTypeData,
+                              float4 lightExtraData, out float3 lightDir, out float attenuation,
+                              out float volumeScatter)
 {
     int lightType = (int)round(lightPositionTypeData.w);
     float lightRange = max(lightDirectionData.w, 0.01f);
@@ -893,10 +844,8 @@ void ResolveSingleLightCommon(
 
             float coneRadialAlpha = saturate(radialDistance / coneRadius);
             float axialAlpha = saturate(axialDistance / lightRange);
-            float coneBodyMask = exp(-coneRadialAlpha * coneRadialAlpha * 2.0f)
-                               * exp(-axialAlpha * 2.5f)
-                               * spotMask
-                               * step(0.0f, axialDistance);
+            float coneBodyMask = exp(-coneRadialAlpha * coneRadialAlpha * 2.0f) * exp(-axialAlpha * 2.5f) * spotMask *
+                                 step(0.0f, axialDistance);
 
             if (lightType == 2)
             {
@@ -915,61 +864,34 @@ void ResolveSingleLightCommon(
             float outerTan = outerSin / outerCos;
             float coneEndRadius = max(lightRange * outerTan, 0.001f);
             float coneRootRadius = max(coneEndRadius * 0.04f, 0.05f);
-            float coneRadiusSlope =
-                max(coneEndRadius - coneRootRadius, 0.0f) /
-                lightRange;
-            float coneRadius = max(
-                coneRootRadius + axialDistance * coneRadiusSlope,
-                coneRootRadius);
+            float coneRadiusSlope = max(coneEndRadius - coneRootRadius, 0.0f) / lightRange;
+            float coneRadius = max(coneRootRadius + axialDistance * coneRadiusSlope, coneRootRadius);
             float cylinderRadius = max(coneEndRadius * 0.45f, 0.001f);
 
-
-
-
-
-
-            float insideAxial =
-                step(0.0f, axialDistance) *
-                step(axialDistance, lightRange);
+            float insideAxial = step(0.0f, axialDistance) * step(axialDistance, lightRange);
             float axialAlpha = saturate(axialDistance / lightRange);
             float coneRadialAlpha = radialDistance / coneRadius;
             float cylinderRadialAlpha = radialDistance / cylinderRadius;
 
-            float coneEdge =
-                1.0f - smoothstep(0.78f, 1.0f, coneRadialAlpha);
-            float cylinderEdge =
-                1.0f - smoothstep(0.78f, 1.0f, cylinderRadialAlpha);
-            float endFade =
-                1.0f - smoothstep(0.72f, 1.0f, axialAlpha);
+            float coneEdge = 1.0f - smoothstep(0.78f, 1.0f, coneRadialAlpha);
+            float cylinderEdge = 1.0f - smoothstep(0.78f, 1.0f, cylinderRadialAlpha);
+            float endFade = 1.0f - smoothstep(0.72f, 1.0f, axialAlpha);
 
-            float coneMask =
-                exp(-coneRadialAlpha * coneRadialAlpha * 1.35f) *
-                coneEdge *
-                endFade *
-                insideAxial;
+            float coneMask = exp(-coneRadialAlpha * coneRadialAlpha * 1.35f) * coneEdge * endFade * insideAxial;
             float cylinderMask =
-                exp(-cylinderRadialAlpha * cylinderRadialAlpha * 1.7f) *
-                cylinderEdge *
-                endFade *
-                insideAxial;
+                exp(-cylinderRadialAlpha * cylinderRadialAlpha * 1.7f) * cylinderEdge * endFade * insideAxial;
 
             float shapeMask = lerp(coneMask, cylinderMask, volumeShape);
 
-
-
-
-            attenuation =
-                rangeFade *
-                rangeFade *
-                shapeMask;
+            attenuation = rangeFade * rangeFade * shapeMask;
             volumeScatter = shapeMask * density * 0.55f;
         }
     }
 
     if (lightType == 4)
     {
-        // Rect area light: centre-point approximation for non-PBR paths, shadows, GI and fog.
-        // PBR surfaces evaluate the full rectangle with LTC (SurfaceLighting.hlsli).
+        // 矩形面光源：非 PBR パス、影、GI、フォグでは中心点で近似する。
+        // PBR の面では LTC で矩形全体を評価する（SurfaceLighting.hlsli）。
         float3 toLight = lightPositionTypeData.xyz - worldPos;
         float distanceToLight = length(toLight);
         lightDir = SafeNormalizeCommon(toLight, lightDir);
@@ -977,7 +899,7 @@ void ResolveSingleLightCommon(
         float3 emitNormal = SafeNormalizeCommon(lightDirectionData.xyz, float3(0.0f, -1.0f, 0.0f));
         float emitterCosine = saturate(dot(-lightDir, emitNormal));
         float area = max(lightExtraData.x, 0.01f) * max(lightExtraData.y, 0.01f);
-        // Small sources behave like a point light of the same total power.
+        // 小さな光源は、総出力が同じ点光源として振る舞う。
         attenuation = rangeFade * rangeFade * emitterCosine * saturate(area);
         volumeScatter = 0.0f;
     }
@@ -985,17 +907,12 @@ void ResolveSingleLightCommon(
 
 void ResolveLightCommon(float3 worldPos, out float3 lightDir, out float attenuation, out float volumeScatter)
 {
-    ResolveSingleLightCommon(worldPos, LightDirection, LightPositionType, LightExtra, lightDir, attenuation, volumeScatter);
+    ResolveSingleLightCommon(worldPos, LightDirection, LightPositionType, LightExtra, lightDir, attenuation,
+                             volumeScatter);
 }
 
-void ResolveLightAggregate(
-    float3 worldPos,
-    float2 pixelPosition,
-    out float3 lightDir,
-    out float3 lightColor,
-    out float attenuation,
-    out float volumeScatter,
-    out float rangeBlend)
+void ResolveLightAggregate(float3 worldPos, float2 pixelPosition, out float3 lightDir, out float3 lightColor,
+                           out float attenuation, out float volumeScatter, out float rangeBlend)
 {
     lightDir = SafeNormalizeCommon(LightDirection.xyz, float3(0.0f, 1.0f, 0.0f));
     lightColor = max(LightColor.rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColor.a, 0.0f);
@@ -1013,22 +930,17 @@ void ResolveLightAggregate(
 
     bool useLightGrid = HasLightTileGridCommon();
     uint tileBase = useLightGrid ? LightTileBaseCommon(pixelPosition) : 0u;
-    int iterationCount = useLightGrid
-        ? min(MAX_LIGHTS_PER_TILE, max((int)round(LightCount.w), 1))
-        : count;
-    [loop]
-    for (int iteration = 0; iteration < MAX_SHADER_LIGHTS; ++iteration)
+    int iterationCount = useLightGrid ? min(MAX_LIGHTS_PER_TILE, max((int)round(LightCount.w), 1)) : count;
+    [loop] for (int iteration = 0; iteration < MAX_SHADER_LIGHTS; ++iteration)
     {
         if (iteration >= iterationCount)
         {
             break;
         }
 
-        uint lightIndex = useLightGrid
-            ? LightTileIndices[tileBase + (uint)iteration]
-            : (uint)iteration;
-        if (lightIndex == 0xffffffffu || lightIndex >= (uint)count ||
-            LightFlags[lightIndex].y < 0.5f || LightFlags[lightIndex].w >= 0.5f)
+        uint lightIndex = useLightGrid ? LightTileIndices[tileBase + (uint)iteration] : (uint)iteration;
+        if (lightIndex == 0xffffffffu || lightIndex >= (uint)count || LightFlags[lightIndex].y < 0.5f ||
+            LightFlags[lightIndex].w >= 0.5f)
         {
             continue;
         }
@@ -1038,9 +950,11 @@ void ResolveLightAggregate(
         float3 singleDir;
         float singleAttenuation;
         float singleVolume;
-        ResolveSingleLightCommon(worldPos, LightDirections[i], LightPositionTypes[i], LightExtras[i], singleDir, singleAttenuation, singleVolume);
+        ResolveSingleLightCommon(worldPos, LightDirections[i], LightPositionTypes[i], LightExtras[i], singleDir,
+                                 singleAttenuation, singleVolume);
 
-        float3 singleColor = max(LightColors[i].rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColors[i].a, 0.0f) * singleAttenuation;
+        float3 singleColor =
+            max(LightColors[i].rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColors[i].a, 0.0f) * singleAttenuation;
         singleColor *= SceneShadowForLightCommon(lightIndex, worldPos, float3(0.0f, 0.0f, 0.0f), singleDir);
         singleColor = ApplyAtmosphereToLightCommon(worldPos, singleDir, singleColor, singleVolume);
         float weight = max(dot(singleColor, float3(0.299f, 0.587f, 0.114f)), 0.0001f) * singleAttenuation;
@@ -1142,12 +1056,7 @@ MaterialPartShaderParams ResolveMaterialPartParams(float materialPartId)
 
 #endif
 
-
 #ifdef SHADER_2D
-
-
-
-
 
 float3 SafeNormalizeCommon(float3 value, float3 fallback)
 {
@@ -1159,8 +1068,10 @@ float3 ApplyNormalMapCommon(float3 meshNormal, float3 worldPos, float2 texCoord,
 {
     float3 n = SafeNormalizeCommon(meshNormal, float3(0.0f, 0.0f, -1.0f));
 #ifdef SHADER_VISIBILITY_RESOLVE
-    float3 dp1=VisibilityWorldDx,dp2=VisibilityWorldDy;
-    float2 duv1=VisibilityUvDx,duv2=VisibilityUvDy;
+    float3 dp1 = VisibilityWorldDx;
+    float3 dp2 = VisibilityWorldDy;
+    float2 duv1 = VisibilityUvDx;
+    float2 duv2 = VisibilityUvDy;
 #else
     float3 dp1 = ddx(worldPos);
     float3 dp2 = ddy(worldPos);
@@ -1174,7 +1085,8 @@ float3 ApplyNormalMapCommon(float3 meshNormal, float3 worldPos, float2 texCoord,
     float3 tangent = (dp1 * duv2.y - dp2 * duv1.y) * invDet;
     tangent = SafeNormalizeCommon(tangent - n * dot(n, tangent), float3(1.0f, 0.0f, 0.0f));
     float3 bitangent = SafeNormalizeCommon(cross(n, tangent), float3(0.0f, 1.0f, 0.0f));
-    float3 mappedNormal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * n, n);
+    float3 mappedNormal =
+        SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * n, n);
     return SafeNormalizeCommon(lerp(n, mappedNormal, useTbn), n);
 }
 
@@ -1191,30 +1103,24 @@ cbuffer ConstantBuffer2D : register(b0)
     float2 Padding2D;
 };
 
-
 struct VSInput2D
 {
     float3 Position : POSITION;
-    float4 Color    : COLOR;
+    float4 Color : COLOR;
 };
 
 struct PSInput2D
 {
     float4 Position : SV_POSITION;
-    float3 Normal   : NORMAL;
-    float4 Color    : COLOR;
+    float3 Normal : NORMAL;
+    float4 Color : COLOR;
     float2 TexCoord : TEXCOORD;
     float3 WorldPos : TEXCOORD1;
 };
 
 #endif
 
-
 #ifdef SHADER_DEBUG_LINE
-
-
-
-
 
 cbuffer cbModelDebugLine : register(b0)
 {
@@ -1227,26 +1133,21 @@ cbuffer cbModelDebugLine : register(b0)
 struct VSInputDebugLine
 {
     float3 Position : POSITION;
-    float3 Normal   : NORMAL;
+    float3 Normal : NORMAL;
     float2 TexCoord : TEXCOORD;
-    float4 Color    : COLOR;
+    float4 Color : COLOR;
 };
 
 struct PSInputDebugLine
 {
     float4 Position : SV_POSITION;
-    float4 Color    : COLOR;
+    float4 Color : COLOR;
     float3 WorldPos : TEXCOORD0;
 };
 
 #endif
 
-
 #if defined(SHADER_POSTPROCESS) || defined(SHADER_FORWARD_LIGHTING)
-
-
-
-
 
 float3 ACESToneMap(float3 color)
 {
@@ -1273,17 +1174,17 @@ cbuffer PostProcessParams : register(b0)
     float4x4 PPViewProjection;
     float4 RaytracingFlags;
     float4 RaytracingSunDirection;
-    // RenderQuality (renderquality.h)
-    float4 GradeParams0;   // tonemapper, contrast, saturation, vibrance
-    float4 GradeParams1;   // temperature, tint, AgX punchy, -
+    // 描画品質の設定（renderquality.h）
+    float4 GradeParams0; // トーンマッパー、コントラスト、彩度、自然な彩度
+    float4 GradeParams1; // 色温度、色かぶり、AgX のパンチ、未使用
     float4 GradeLift;
     float4 GradeGamma;
     float4 GradeGain;
-    float4 LensParams0;    // vignette, vignette smoothness, chromatic aberration px, film grain
-    float4 LensParams1;    // time, frame, -, -
-    float4 WeatherParams0; // wetness, puddles, snow, rain
-    float4 WeatherParams1; // snowfall, wind x, wind z, -
-    float4 QualityFlags;   // energy compensation, area lights, OIT active, RT refraction
+    float4 LensParams0;    // ビネット、ビネットの滑らかさ、色収差（px）、フィルムグレイン
+    float4 LensParams1;    // 時刻、フレーム、未使用、未使用
+    float4 WeatherParams0; // 濡れ、水たまり、雪、雨
+    float4 WeatherParams1; // 降雪、風の x、風の z、未使用
+    float4 QualityFlags;   // エネルギー補償、面光源、OIT の有効フラグ、RT 屈折
     float4 QualityReserved;
 };
 
@@ -1297,8 +1198,8 @@ float3 ReconstructPostProcessViewRayCommon(float2 uv)
 
 #include "ToneMapping.hlsli"
 
-// Exposure -> scene-referred grading -> tone mapper -> display-referred grading.
-// The output stays linear (the swap chain / sRGB conversion is unchanged).
+// 露出 → シーン基準の色調整 → トーンマッパー → ディスプレイ基準の色調整。
+// 出力は線形のまま（スワップチェーンと sRGB 変換は変更しない）。
 float3 ApplyHdrOutput(float3 color)
 {
     float exposure = Flags.x;
@@ -1344,9 +1245,6 @@ bool ProjectWorldToScreenCommon(float3 worldPos, out float2 screenUv)
     return ndc.z >= 0.0f && ndc.z <= 1.0f;
 }
 
-
-
-
 float3 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> depthTex, SamplerState depthSampler)
 {
     const float maxDist = 15.0f;
@@ -1358,26 +1256,28 @@ float3 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> dep
     float previousDepthDiff = -1.0f;
     bool hasFrontSample = false;
 
-    [loop]
-    for (int i = 1; i <= maxSteps; ++i)
+    [loop] for (int i = 1; i <= maxSteps; ++i)
     {
         float currentT = stepSize * (float)i;
         float3 rayPos = origin + direction * currentT;
         float4 clipPos = mul(float4(rayPos, 1.0f), PPViewProjection);
         if (clipPos.w <= 0.000001f)
+        {
             break;
+        }
 
         float3 rayNdc = clipPos.xyz / clipPos.w;
-        float3 rayUVZ = float3(
-            rayNdc.x * 0.5f + 0.5f,
-            -rayNdc.y * 0.5f + 0.5f,
-            rayNdc.z);
+        float3 rayUVZ = float3(rayNdc.x * 0.5f + 0.5f, -rayNdc.y * 0.5f + 0.5f, rayNdc.z);
 
         if (rayUVZ.x < 0.0f || rayUVZ.x > 1.0f || rayUVZ.y < 0.0f || rayUVZ.y > 1.0f)
+        {
             break;
+        }
 
         if (rayUVZ.z < 0.0f || rayUVZ.z > 1.0f)
+        {
             break;
+        }
 
         float sceneDepth = depthTex.SampleLevel(depthSampler, rayUVZ.xy, 0).r;
         if (sceneDepth >= 1.0f - 0.001f)
@@ -1395,15 +1295,12 @@ float3 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> dep
             continue;
         }
 
-
-
         if (hasFrontSample && previousDepthDiff <= 0.0f)
         {
             float lowT = previousT;
             float highT = currentT;
 
-            [unroll]
-            for (int refine = 0; refine < refineSteps; ++refine)
+            [unroll] for (int refine = 0; refine < refineSteps; ++refine)
             {
                 float midT = (lowT + highT) * 0.5f;
                 float3 midPos = origin + direction * midT;
@@ -1413,9 +1310,13 @@ float3 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> dep
                 float midSceneDepth = depthTex.SampleLevel(depthSampler, midUv, 0).r;
 
                 if (midNdc.z > midSceneDepth)
+                {
                     highT = midT;
+                }
                 else
+                {
                     lowT = midT;
+                }
             }
 
             float hitT = (lowT + highT) * 0.5f;
@@ -1441,6 +1342,3 @@ float3 ReconstructPostProcessWorldPositionCommon(float2 uv, float depth)
 }
 
 #endif
-
-
-

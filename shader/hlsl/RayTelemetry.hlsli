@@ -6,6 +6,7 @@
 #endif
 #if ENABLE_RAY_TELEMETRY
 RWByteAddressBuffer RayTelemetryCounters : register(u0, space9);
+
 void CountTelemetryRay(uint channel)
 {
     uint original;
@@ -17,6 +18,6 @@ void CountTelemetryRay(uint channel)
     }
 }
 #else
-void CountTelemetryRay(uint channel) { }
+void CountTelemetryRay(uint channel) {}
 #endif
 #endif

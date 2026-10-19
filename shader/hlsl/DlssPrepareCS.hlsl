@@ -4,9 +4,7 @@ Texture2D<float4> InputColor : register(t1);
 RWTexture2D<float2> Motion : register(u0);
 RWTexture2D<float4> Color : register(u1);
 
-[numthreads(8, 8, 1)]
-void Prepare(uint3 pixel : SV_DispatchThreadID)
-{
+[numthreads(8, 8, 1)] void Prepare(uint3 pixel : SV_DispatchThreadID) {
     uint width;
     uint height;
     Input.GetDimensions(width, height);
@@ -14,7 +12,7 @@ void Prepare(uint3 pixel : SV_DispatchThreadID)
     {
         return;
     }
-    // The engine stores current-minus-previous UV in ZW; NGX expects the reverse.
+    // エンジンは現在 UV - 前 UV を ZW に格納するが、NGX は逆方向を要求する。
     float2 motion = -Input[pixel.xy].zw;
     Motion[pixel.xy] = all(isfinite(motion)) ? motion : float2(0, 0);
     Color[pixel.xy] = InputColor[pixel.xy];
@@ -23,9 +21,7 @@ void Prepare(uint3 pixel : SV_DispatchThreadID)
 #else
 RWTexture2D<float4> DisplayOutput : register(u0);
 
-[numthreads(8, 8, 1)]
-void Copy(uint3 pixel : SV_DispatchThreadID)
-{
+[numthreads(8, 8, 1)] void Copy(uint3 pixel : SV_DispatchThreadID) {
     uint width;
     uint height;
     Input.GetDimensions(width, height);
@@ -35,4 +31,3 @@ void Copy(uint3 pixel : SV_DispatchThreadID)
     }
 }
 #endif
-

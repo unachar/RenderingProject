@@ -4,6 +4,6 @@
 class VirtualGeometryValidator
 {
   public:
-    // Explicit error in Debug AND Release. Never logs-and-continues on invalid data.
+    // Debug と Release の両方で明示的なエラーにする。不正データをログ出力だけで続行しない。
     static bool Validate(const VirtualGeometryAsset& asset, std::string& error);
 };

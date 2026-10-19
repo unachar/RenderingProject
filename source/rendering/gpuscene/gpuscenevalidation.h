@@ -3,10 +3,10 @@
 
 namespace GpuSceneValidation
 {
-void BeforeFrame(uint64_t frame);
-void AfterFrame(uint64_t frame);
-void BeforeScene();
-bool UseLegacyCulling();
-void RecordModelCull(bool resident);
-uint32_t Failures();
-} // namespace GpuSceneValidation
+    void BeforeFrame(uint64_t frame);
+    void AfterFrame(uint64_t frame);
+    void BeforeScene();
+    bool UseLegacyCulling();
+    void RecordModelCull(bool resident);
+    uint32_t Failures();
+} // 名前空間 GpuSceneValidation

@@ -9,326 +9,327 @@
 
 namespace
 {
-struct Entry
-{
-    std::shared_ptr<ThumbnailGpuImage> Image;
-    std::filesystem::path Path;
-    std::array<AssetHandle, 5> Dependencies{};
-    std::array<uint64_t, 5> DependencyRevisions{};
-    uint64_t SourceRevision = 0;
-    uint64_t RuntimeRevision = 0;
-    uint64_t ShaderRevision = 0;
-    uint64_t LastUsedFrame = 0;
-    uint64_t NextCheckFrame = 0;
-    bool ChangedSource = false;
-    uint64_t CacheKey = 0;
-    bool CacheNeeded = false;
-    bool ForceRegenerate = false;
-    std::vector<std::pair<std::filesystem::path, uint64_t>> SourceDependencies;
-};
-
-struct RetiredImage
-{
-    uint64_t Fence;
-    std::shared_ptr<ThumbnailGpuImage> Image;
-};
-
-struct CacheWrite
-{
-    ThumbnailPrepared Metadata;
-    std::shared_ptr<ThumbnailGpuImage> Image;
-    std::future<void> Future;
-};
-
-ThumbnailCache cache;
-ThumbnailSettings settings;
-std::unordered_map<AssetHandle, Entry> entries;
-std::vector<RetiredImage> retired;
-std::vector<CacheWrite> writes;
-std::future<ThumbnailPrepared> preparation;
-std::optional<ThumbnailTicket> active;
-std::optional<ThumbnailPrepared> prepared;
-uint64_t frame = 0;
-UINT previousSize = 128;
-uint64_t cacheHits = 0;
-
-uint64_t SourceVersion(const std::filesystem::path& path)
-{
-    return ThumbnailRenderer::SourceRevision(path) ^ ThumbnailRenderer::SourceRevision(path.wstring() + L".meta");
-}
-
-uint64_t ShaderVersion()
-{
-    return ThumbnailRenderer::SourceRevision("shader/hlsl/build/modelshaderVS.cso") ^
-           ThumbnailRenderer::SourceRevision("shader/hlsl/build/modelshaderPS.cso");
-}
-
-void Retire(std::shared_ptr<ThumbnailGpuImage>& image)
-{
-    if (image)
+    struct Entry
     {
-        retired.push_back({GraphicsDevice::GetPendingSubmissionFence(), std::move(image)});
+        std::shared_ptr<ThumbnailGpuImage> Image;
+        std::filesystem::path Path;
+        std::array<AssetHandle, 5> Dependencies{};
+        std::array<uint64_t, 5> DependencyRevisions{};
+        uint64_t SourceRevision = 0;
+        uint64_t RuntimeRevision = 0;
+        uint64_t ShaderRevision = 0;
+        uint64_t LastUsedFrame = 0;
+        uint64_t NextCheckFrame = 0;
+        bool ChangedSource = false;
+        uint64_t CacheKey = 0;
+        bool CacheNeeded = false;
+        bool ForceRegenerate = false;
+        std::vector<std::pair<std::filesystem::path, uint64_t>> SourceDependencies;
+    };
+
+    struct RetiredImage
+    {
+        uint64_t Fence;
+        std::shared_ptr<ThumbnailGpuImage> Image;
+    };
+
+    struct CacheWrite
+    {
+        ThumbnailPrepared Metadata;
+        std::shared_ptr<ThumbnailGpuImage> Image;
+        std::future<void> Future;
+    };
+
+    ThumbnailCache cache;
+    ThumbnailSettings settings;
+    std::unordered_map<AssetHandle, Entry> entries;
+    std::vector<RetiredImage> retired;
+    std::vector<CacheWrite> writes;
+    std::future<ThumbnailPrepared> preparation;
+    std::optional<ThumbnailTicket> active;
+    std::optional<ThumbnailPrepared> prepared;
+    uint64_t frame = 0;
+    UINT previousSize = 128;
+    uint64_t cacheHits = 0;
+
+    uint64_t SourceVersion(const std::filesystem::path& path)
+    {
+        return ThumbnailRenderer::SourceRevision(path) ^ ThumbnailRenderer::SourceRevision(path.wstring() + L".meta");
     }
-}
 
-bool EvictOldest()
-{
-    auto oldest = entries.end();
-    for (auto current = entries.begin(); current != entries.end(); ++current)
+    uint64_t ShaderVersion()
     {
-        if (!current->second.Image || current->second.LastUsedFrame + 1 >= frame)
+        return ThumbnailRenderer::SourceRevision("shader/hlsl/build/modelshaderVS.cso") ^
+               ThumbnailRenderer::SourceRevision("shader/hlsl/build/modelshaderPS.cso");
+    }
+
+    void Retire(std::shared_ptr<ThumbnailGpuImage>& image)
+    {
+        if (image)
         {
-            continue;
-        }
-        if (oldest == entries.end() || current->second.LastUsedFrame < oldest->second.LastUsedFrame)
-        {
-            oldest = current;
+            retired.push_back({GraphicsDevice::GetPendingSubmissionFence(), std::move(image)});
         }
     }
-    if (oldest == entries.end())
-    {
-        return false;
-    }
-    Retire(oldest->second.Image);
-    cache.Remove(oldest->first);
-    entries.erase(oldest);
-    return true;
-}
 
-UINT RequiredDescriptors(const ThumbnailPrepared& input)
-{
-    UINT count = input.Type == AssetType::Texture && input.Textures[0].Borrowed && !input.Cached ? 0 : 1;
-    if (input.Cached || input.Type == AssetType::Texture)
+    bool EvictOldest()
     {
-        return count;
-    }
-    std::unordered_set<std::string> counted;
-    const auto countTextures = [&counted](const auto& textures) {
-        UINT total = 0;
-        for (const auto& source : textures)
+        auto oldest = entries.end();
+        for (auto current = entries.begin(); current != entries.end(); ++current)
         {
-            if (source.Path.empty() && !source.Decoded && source.Encoded.empty())
+            if (!current->second.Image || current->second.LastUsedFrame + 1 >= frame)
             {
                 continue;
             }
-            const auto key = source.IdentityKey();
-            if (key.empty() || counted.insert(key).second)
+            if (oldest == entries.end() || current->second.LastUsedFrame < oldest->second.LastUsedFrame)
             {
-                ++total;
+                oldest = current;
             }
         }
-        return total;
-    };
-    if (input.Type == AssetType::Material)
-    {
-        count += countTextures(input.Textures);
-    }
-    for (const auto& part : input.MeshParts)
-    {
-        count += countTextures(part.Textures);
-    }
-    return count;
-}
-
-uint64_t ReleaseUploads(const std::shared_ptr<ThumbnailGpuImage>& image, uint64_t completed)
-{
-    if (!image)
-    {
-        return 0;
-    }
-    uint64_t released = 0;
-    for (const auto& dependency : image->Dependencies)
-    {
-        released += ReleaseUploads(dependency, completed);
-    }
-    if (image->Upload && image->SubmissionFence <= completed)
-    {
-        const auto description = image->Upload->GetDesc();
-        released += GraphicsDevice::GetDevice()->GetResourceAllocationInfo(0, 1, &description).SizeInBytes;
-        image->Upload.Reset();
-    }
-    image->Bytes -= std::min(image->Bytes, released);
-    return released;
-}
-
-uint64_t RequiredMemory(const ThumbnailPrepared& input)
-{
-    std::unordered_set<std::string> counted;
-    const auto imageBytes = [&counted](const ThumbnailSourceImage& source) {
-        if (source.Borrowed || !source.Decoded)
+        if (oldest == entries.end())
         {
-            return uint64_t{0};
+            return false;
         }
-        const auto key = source.IdentityKey();
-        if (!key.empty() && !counted.insert(key).second)
+        Retire(oldest->second.Image);
+        cache.Remove(oldest->first);
+        entries.erase(oldest);
+        return true;
+    }
+
+    UINT RequiredDescriptors(const ThumbnailPrepared& input)
+    {
+        UINT count = input.Type == AssetType::Texture && input.Textures[0].Borrowed && !input.Cached ? 0 : 1;
+        if (input.Cached || input.Type == AssetType::Texture)
         {
-            return uint64_t{0};
+            return count;
         }
-        const auto* pixels = source.Decoded->GetImage(0, 0, 0);
-        const uint64_t rowBytes = (pixels->rowPitch + 255) & ~uint64_t{255};
-        const uint64_t uploadBytes = (rowBytes * pixels->height + 65535) & ~uint64_t{65535};
-        // A 64 KiB alignment covers these small, single-mip ordinary 2D allocations.
-        return 2 * uploadBytes;
-    };
-    if (input.Type == AssetType::Texture || input.Cached)
-    {
-        return imageBytes(input.Textures[0]);
+        std::unordered_set<std::string> counted;
+        const auto countTextures = [&counted](const auto& textures) {
+            UINT total = 0;
+            for (const auto& source : textures)
+            {
+                if (source.Path.empty() && !source.Decoded && source.Encoded.empty())
+                {
+                    continue;
+                }
+                const auto key = source.IdentityKey();
+                if (key.empty() || counted.insert(key).second)
+                {
+                    ++total;
+                }
+            }
+            return total;
+        };
+        if (input.Type == AssetType::Material)
+        {
+            count += countTextures(input.Textures);
+        }
+        for (const auto& part : input.MeshParts)
+        {
+            count += countTextures(part.Textures);
+        }
+        return count;
     }
-    const auto allocationBytes = [](const D3D12_RESOURCE_DESC& description) {
-        return GraphicsDevice::GetDevice()->GetResourceAllocationInfo(0, 1, &description).SizeInBytes;
-    };
-    const auto target = CD3DX12_RESOURCE_DESC::Tex2D(RendererState::GetSceneColorFormat(), input.Size, input.Size, 1, 1,
-                                                     1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
-    const auto depth = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_D32_FLOAT, input.Size, input.Size, 1, 1, 1, 0,
-                                                    D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
-    uint64_t bytes = allocationBytes(target) + allocationBytes(depth);
-    bytes += allocationBytes(CD3DX12_RESOURCE_DESC::Buffer(32768ull * RendererState::g_kFRAME_COUNT));
-    const auto parts = std::max<size_t>(1, input.MeshParts.size());
-    bytes += allocationBytes(
-        CD3DX12_RESOURCE_DESC::Buffer(parts * RendererState::g_kPBR_CB_ALIGNED_SIZE * RendererState::g_kFRAME_COUNT));
-    // The context initially creates a sphere; mesh upload replaces it before drawing.
-    const auto sphereBytes = 16ull * 32 * 6 * sizeof(StaticModelVertex);
-    bytes += allocationBytes(CD3DX12_RESOURCE_DESC::Buffer(
-        std::max<uint64_t>(sphereBytes, input.Geometry.size() * sizeof(StaticModelVertex))));
-    for (const auto& source : input.Textures)
+
+    uint64_t ReleaseUploads(const std::shared_ptr<ThumbnailGpuImage>& image, uint64_t completed)
     {
-        bytes += imageBytes(source);
+        if (!image)
+        {
+            return 0;
+        }
+        uint64_t released = 0;
+        for (const auto& dependency : image->Dependencies)
+        {
+            released += ReleaseUploads(dependency, completed);
+        }
+        if (image->Upload && image->SubmissionFence <= completed)
+        {
+            const auto description = image->Upload->GetDesc();
+            released += GraphicsDevice::GetDevice()->GetResourceAllocationInfo(0, 1, &description).SizeInBytes;
+            image->Upload.Reset();
+        }
+        image->Bytes -= std::min(image->Bytes, released);
+        return released;
     }
-    for (const auto& part : input.MeshParts)
+
+    uint64_t RequiredMemory(const ThumbnailPrepared& input)
     {
-        for (const auto& source : part.Textures)
+        std::unordered_set<std::string> counted;
+        const auto imageBytes = [&counted](const ThumbnailSourceImage& source) {
+            if (source.Borrowed || !source.Decoded)
+            {
+                return uint64_t{0};
+            }
+            const auto key = source.IdentityKey();
+            if (!key.empty() && !counted.insert(key).second)
+            {
+                return uint64_t{0};
+            }
+            const auto* pixels = source.Decoded->GetImage(0, 0, 0);
+            const uint64_t rowBytes = (pixels->rowPitch + 255) & ~uint64_t{255};
+            const uint64_t uploadBytes = (rowBytes * pixels->height + 65535) & ~uint64_t{65535};
+            // この小さな通常の 2D リソースは単一 mip なので、64 KiB のアラインメントで足りる。
+            return 2 * uploadBytes;
+        };
+        if (input.Type == AssetType::Texture || input.Cached)
+        {
+            return imageBytes(input.Textures[0]);
+        }
+        const auto allocationBytes = [](const D3D12_RESOURCE_DESC& description) {
+            return GraphicsDevice::GetDevice()->GetResourceAllocationInfo(0, 1, &description).SizeInBytes;
+        };
+        const auto target = CD3DX12_RESOURCE_DESC::Tex2D(RendererState::GetSceneColorFormat(), input.Size, input.Size,
+                                                         1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+        const auto depth = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_D32_FLOAT, input.Size, input.Size, 1, 1, 1, 0,
+                                                        D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
+        uint64_t bytes = allocationBytes(target) + allocationBytes(depth);
+        bytes += allocationBytes(CD3DX12_RESOURCE_DESC::Buffer(32768ull * RendererState::g_kFRAME_COUNT));
+        const auto parts = std::max<size_t>(1, input.MeshParts.size());
+        bytes += allocationBytes(CD3DX12_RESOURCE_DESC::Buffer(parts * RendererState::g_kPBR_CB_ALIGNED_SIZE *
+                                                               RendererState::g_kFRAME_COUNT));
+        // コンテキストは最初に球を作り、描画前にメッシュのアップロードで置き換える。
+        const auto sphereBytes = 16ull * 32 * 6 * sizeof(StaticModelVertex);
+        bytes += allocationBytes(CD3DX12_RESOURCE_DESC::Buffer(
+            std::max<uint64_t>(sphereBytes, input.Geometry.size() * sizeof(StaticModelVertex))));
+        for (const auto& source : input.Textures)
         {
             bytes += imageBytes(source);
         }
+        for (const auto& part : input.MeshParts)
+        {
+            for (const auto& source : part.Textures)
+            {
+                bytes += imageBytes(source);
+            }
+        }
+        return bytes;
     }
-    return bytes;
-}
 
-ThumbnailPrepared MakeInput(AssetHandle handle)
-{
-    auto& registry = MaterialManager::Registry();
-    auto& entry = entries[handle];
-    ThumbnailPrepared input;
-    input.Handle = handle;
-    input.Type = registry.TypeOf(handle);
-    input.Size = settings.Size;
-    input.SourcePath = registry.Resolve(handle);
-    input.AllowBorrow = !entry.ChangedSource;
-    input.UseDiskCache = settings.DiskCache;
-    input.BypassDiskCache = entry.ForceRegenerate;
-    if (input.SourcePath.empty())
+    ThumbnailPrepared MakeInput(AssetHandle handle)
     {
-        input.Error = "Missing asset";
-        return input;
-    }
-    entry.Path = input.SourcePath;
-    const auto sourceRevision = SourceVersion(entry.Path);
-    entry.SourceRevision = sourceRevision;
-    entry.ShaderRevision = ShaderVersion();
-    input.Key = input.Type == AssetType::Texture ? entry.SourceRevision : entry.SourceRevision ^ entry.ShaderRevision;
-    if (input.Type == AssetType::Material)
-    {
-        const auto* runtime = MaterialManager::FindRuntime(handle);
-        if (runtime)
+        auto& registry = MaterialManager::Registry();
+        auto& entry = entries[handle];
+        ThumbnailPrepared input;
+        input.Handle = handle;
+        input.Type = registry.TypeOf(handle);
+        input.Size = settings.Size;
+        input.SourcePath = registry.Resolve(handle);
+        input.AllowBorrow = !entry.ChangedSource;
+        input.UseDiskCache = settings.DiskCache;
+        input.BypassDiskCache = entry.ForceRegenerate;
+        if (input.SourcePath.empty())
         {
-            entry.RuntimeRevision = runtime->Revision;
-        }
-        if (runtime && runtime->Dirty)
-        {
-            input.Material = runtime->Editing;
-            input.UseDiskCache = input.UseDiskCache && !runtime->Dirty;
-        }
-        else if (!MaterialSerializer::Load(entry.Path, input.Material, input.Error))
-        {
+            input.Error = "Missing asset";
             return input;
         }
-        entry.Dependencies = input.Material.Textures;
-        for (size_t slot = 0; slot < input.Textures.size(); ++slot)
+        entry.Path = input.SourcePath;
+        const auto sourceRevision = SourceVersion(entry.Path);
+        entry.SourceRevision = sourceRevision;
+        entry.ShaderRevision = ShaderVersion();
+        input.Key =
+            input.Type == AssetType::Texture ? entry.SourceRevision : entry.SourceRevision ^ entry.ShaderRevision;
+        if (input.Type == AssetType::Material)
         {
-            auto& source = input.Textures[slot];
-            source.Path = registry.Resolve(input.Material.Textures[slot]);
-            if (input.Material.Textures[slot] && source.Path.empty())
+            const auto* runtime = MaterialManager::FindRuntime(handle);
+            if (runtime)
             {
-                input.Error = "Missing material texture";
+                entry.RuntimeRevision = runtime->Revision;
             }
-            entry.DependencyRevisions[slot] = SourceVersion(source.Path);
-            const auto sourceEntry = entries.find(input.Material.Textures[slot]);
-            const bool changedTexture = sourceEntry != entries.end() && sourceEntry->second.ChangedSource;
-            if (!changedTexture && !source.Path.empty())
+            if (runtime && runtime->Dirty)
             {
-                source.BorrowedDescriptor = TextureManager::FindLoadedTexture(source.Path);
+                input.Material = runtime->Editing;
+                input.UseDiskCache = input.UseDiskCache && !runtime->Dirty;
             }
-            if (source.BorrowedDescriptor >= 0)
+            else if (!MaterialSerializer::Load(entry.Path, input.Material, input.Error))
             {
-                source.Borrowed = TextureManager::GetTextureResource(source.BorrowedDescriptor);
+                return input;
+            }
+            entry.Dependencies = input.Material.Textures;
+            for (size_t slot = 0; slot < input.Textures.size(); ++slot)
+            {
+                auto& source = input.Textures[slot];
+                source.Path = registry.Resolve(input.Material.Textures[slot]);
+                if (input.Material.Textures[slot] && source.Path.empty())
+                {
+                    input.Error = "Missing material texture";
+                }
+                entry.DependencyRevisions[slot] = SourceVersion(source.Path);
+                const auto sourceEntry = entries.find(input.Material.Textures[slot]);
+                const bool changedTexture = sourceEntry != entries.end() && sourceEntry->second.ChangedSource;
+                if (!changedTexture && !source.Path.empty())
+                {
+                    source.BorrowedDescriptor = TextureManager::FindLoadedTexture(source.Path);
+                }
+                if (source.BorrowedDescriptor >= 0)
+                {
+                    source.Borrowed = TextureManager::GetTextureResource(source.BorrowedDescriptor);
+                }
             }
         }
+        else if (input.Type == AssetType::Texture)
+        {
+            input.Textures[0].Path = entry.Path;
+            if (input.AllowBorrow)
+            {
+                input.Textures[0].BorrowedDescriptor = TextureManager::FindLoadedTexture(entry.Path);
+            }
+            if (input.Textures[0].BorrowedDescriptor >= 0)
+            {
+                input.Textures[0].Borrowed = TextureManager::GetTextureResource(input.Textures[0].BorrowedDescriptor);
+            }
+        }
+        return input;
     }
-    else if (input.Type == AssetType::Texture)
-    {
-        input.Textures[0].Path = entry.Path;
-        if (input.AllowBorrow)
-        {
-            input.Textures[0].BorrowedDescriptor = TextureManager::FindLoadedTexture(entry.Path);
-        }
-        if (input.Textures[0].BorrowedDescriptor >= 0)
-        {
-            input.Textures[0].Borrowed = TextureManager::GetTextureResource(input.Textures[0].BorrowedDescriptor);
-        }
-    }
-    return input;
-}
 
-void CheckEntry(AssetHandle handle, Entry& entry)
-{
-    if (entry.NextCheckFrame > frame || entry.Path.empty())
+    void CheckEntry(AssetHandle handle, Entry& entry)
     {
-        return;
-    }
-    entry.NextCheckFrame = frame + 30;
-    const auto path = MaterialManager::Registry().Resolve(handle);
-    const auto source = SourceVersion(path);
-    bool changed = source != entry.SourceRevision;
-    if (source == 0)
-    {
-        AssetThumbnailManager::Remove(handle);
-        return;
-    }
-    const auto type = MaterialManager::Registry().TypeOf(handle);
-    if (type == AssetType::Mesh && path.parent_path() != entry.Path.parent_path())
-    {
-        changed = true;
-    }
-    entry.Path = path;
-    const auto* runtime = MaterialManager::FindRuntime(handle);
-    changed = changed || (runtime && runtime->Revision != entry.RuntimeRevision);
-    changed = changed || (type != AssetType::Texture && ShaderVersion() != entry.ShaderRevision);
-    for (size_t slot = 0; slot < entry.Dependencies.size(); ++slot)
-    {
-        if (!entry.Dependencies[slot])
+        if (entry.NextCheckFrame > frame || entry.Path.empty())
         {
-            continue;
+            return;
         }
-        const auto version = SourceVersion(MaterialManager::Registry().Resolve(entry.Dependencies[slot]));
-        if (version != entry.DependencyRevisions[slot])
+        entry.NextCheckFrame = frame + 30;
+        const auto path = MaterialManager::Registry().Resolve(handle);
+        const auto source = SourceVersion(path);
+        bool changed = source != entry.SourceRevision;
+        if (source == 0)
+        {
+            AssetThumbnailManager::Remove(handle);
+            return;
+        }
+        const auto type = MaterialManager::Registry().TypeOf(handle);
+        if (type == AssetType::Mesh && path.parent_path() != entry.Path.parent_path())
         {
             changed = true;
         }
-    }
-    for (const auto& dependency : entry.SourceDependencies)
-    {
-        if (SourceVersion(dependency.first) != dependency.second)
+        entry.Path = path;
+        const auto* runtime = MaterialManager::FindRuntime(handle);
+        changed = changed || (runtime && runtime->Revision != entry.RuntimeRevision);
+        changed = changed || (type != AssetType::Texture && ShaderVersion() != entry.ShaderRevision);
+        for (size_t slot = 0; slot < entry.Dependencies.size(); ++slot)
         {
-            changed = true;
+            if (!entry.Dependencies[slot])
+            {
+                continue;
+            }
+            const auto version = SourceVersion(MaterialManager::Registry().Resolve(entry.Dependencies[slot]));
+            if (version != entry.DependencyRevisions[slot])
+            {
+                changed = true;
+            }
         }
-    }
-    if (changed)
-    {
-        entry.ChangedSource = true;
-        AssetThumbnailManager::MarkDirty(handle);
+        for (const auto& dependency : entry.SourceDependencies)
+        {
+            if (SourceVersion(dependency.first) != dependency.second)
+            {
+                changed = true;
+            }
+        }
+        if (changed)
+        {
+            entry.ChangedSource = true;
+            AssetThumbnailManager::MarkDirty(handle);
+        }
     }
 }
-} // namespace
 
 ThumbnailSettings& AssetThumbnailManager::Settings()
 {
@@ -388,7 +389,7 @@ void AssetThumbnailManager::MarkDirty(AssetHandle guid)
             found->second.ChangedSource = true;
         }
     }
-    // Reverse dependencies are limited to requested materials, never all project assets.
+    // 逆依存関係は要求されたマテリアルだけを対象とし、プロジェクト全体は走査しない。
     for (auto& [handle, entry] : entries)
     {
         if (std::find(entry.Dependencies.begin(), entry.Dependencies.end(), guid) == entry.Dependencies.end())
@@ -524,7 +525,7 @@ void AssetThumbnailManager::BeginFrame(uint64_t frameIndex)
         Refresh();
         previousSize = settings.Size;
     }
-    // LRU excludes entries referenced in the preceding frame, including clipped UI draws.
+    // 前フレームで参照された項目は、クリップされた UI 描画も含めて LRU から除外する。
     while (MemoryBytes() > settings.MemoryBudget)
     {
         if (!EvictOldest())
@@ -540,7 +541,7 @@ void AssetThumbnailManager::ProcessGenerationBudget()
     {
         return;
     }
-    // Check only recently requested entries, and at most eight filesystem records per frame.
+    // 最近要求された項目だけを確認し、ファイルシステムの確認は 1 フレーム最大 8 件に制限する。
     std::vector<AssetHandle> checks;
     for (const auto& [handle, entry] : entries)
     {

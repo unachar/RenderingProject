@@ -1,8 +1,9 @@
 #ifndef WEATHER_SURFACE_HLSLI
 #define WEATHER_SURFACE_HLSLI
-// Weather on opaque PBR surfaces (RenderQuality): wetness (Lagarde 2013 "Water drop" series),
-// puddles with animated rain ripples, and snow cover on upward facing surfaces.
-// Uses WeatherParams0/1 and LensParams1.x (time) from PostProcessParams.
+
+// 不透明 PBR 面の天候（RenderQuality）：濡れ（Lagarde 2013 の「Water drop」シリーズ）、
+// 動く雨の波紋を伴う水たまり、上向きの面の積雪。
+// PostProcessParams の WeatherParams0/1 と LensParams1.x（時刻）を使う。
 
 float WeatherHash(float2 p)
 {
@@ -17,15 +18,16 @@ float WeatherValueNoise(float2 p)
     float2 f = frac(p);
     float2 u = f * f * (3.0f - 2.0f * f);
     return lerp(lerp(WeatherHash(i), WeatherHash(i + float2(1, 0)), u.x),
-        lerp(WeatherHash(i + float2(0, 1)), WeatherHash(i + float2(1, 1)), u.x), u.y);
+                lerp(WeatherHash(i + float2(0, 1)), WeatherHash(i + float2(1, 1)), u.x), u.y);
 }
 
 float WeatherFbm(float2 p)
 {
-    return WeatherValueNoise(p) * 0.55f + WeatherValueNoise(p * 2.03f + 7.1f) * 0.3f + WeatherValueNoise(p * 4.11f + 3.7f) * 0.15f;
+    return WeatherValueNoise(p) * 0.55f + WeatherValueNoise(p * 2.03f + 7.1f) * 0.3f +
+           WeatherValueNoise(p * 4.11f + 3.7f) * 0.15f;
 }
 
-// Expanding ring ripples from rain drops on a grid of cells (normal perturbation in xz).
+// セルのグリッド上の雨粒から広がる環状の波紋（xz の法線摂動）。
 float2 RainRipples(float2 position, float time, float intensity)
 {
     float2 result = 0.0f;
@@ -46,26 +48,30 @@ float2 RainRipples(float2 position, float time, float intensity)
     return result * 0.35f;
 }
 
-// materialData: (metallic, roughness, F0)
+// materialData：（金属度、粗さ、F0）
 void ApplyWeatherToSurface(float3 worldPos, inout float3 normal, inout float3 albedo, inout float3 materialData)
 {
     float wetness = WeatherParams0.x;
     float puddleAmount = WeatherParams0.y;
     float snowAmount = WeatherParams0.z;
     float rain = WeatherParams0.w;
-    if (wetness <= 0.001f && puddleAmount <= 0.001f && snowAmount <= 0.001f) return;
+    if (wetness <= 0.001f && puddleAmount <= 0.001f && snowAmount <= 0.001f)
+    {
+        return;
+    }
     float upFacing = saturate(normal.y);
     float noise = WeatherFbm(worldPos.xz * 0.35f);
     float metallic = saturate(materialData.r);
 
-    // Wet surfaces: porous dielectrics darken (light is trapped in the water film), roughness drops.
+    // 濡れた面：多孔質の誘電体は水膜に光が閉じ込められて暗くなり、粗さが下がる。
     float porosity = (1.0f - metallic) * saturate(materialData.g * 1.5f);
     float wet = saturate(wetness * lerp(0.6f, 1.0f, upFacing));
     albedo = lerp(albedo, albedo * albedo, wet * porosity * 0.85f);
     materialData.g = lerp(materialData.g, min(materialData.g, 0.12f), wet);
 
-    // Puddles: accumulate on flat upward faces, mirror like water with rain ripples.
-    float puddle = smoothstep(1.0f - puddleAmount, 1.0f - puddleAmount + 0.12f, noise) * smoothstep(0.85f, 0.97f, normal.y);
+    // 水たまり：平らな上向き面にたまり、鏡のような水面に雨の波紋が立つ。
+    float puddle =
+        smoothstep(1.0f - puddleAmount, 1.0f - puddleAmount + 0.12f, noise) * smoothstep(0.85f, 0.97f, normal.y);
     puddle *= saturate(puddleAmount * 4.0f);
     if (puddle > 0.001f)
     {
@@ -82,7 +88,7 @@ void ApplyWeatherToSurface(float3 worldPos, inout float3 normal, inout float3 al
         materialData.b = lerp(materialData.b, 0.02f, puddle);
     }
 
-    // Snow on upward facing surfaces; the noise breaks up the edge.
+    // 上向きの面の雪。ノイズで縁を不規則にする。
     if (snowAmount > 0.001f)
     {
         float coverage = upFacing + (noise - 0.5f) * 0.35f;

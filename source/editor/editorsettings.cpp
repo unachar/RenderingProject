@@ -1295,7 +1295,7 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("culling.ReflectionRoughnessCutoff", culling.ReflectionRoughnessCutoff, 0.0, 1.0);
     field("culling.RayHitLights", culling.RayHitLights, 1, 160);
     field("culling.ReflectionCheckerboard", culling.ReflectionCheckerboard, 0, 1);
-    // MegaLights（megalights.h）
+    // MegaLights の設定（megalights.h）。
     auto& megaLights = MegaLights::GetSettings();
     field("megalights.Enabled", megaLights.Enabled, 0, 1);
     field("megalights.DebugView", megaLights.DebugView, 0, 9);
@@ -2024,4 +2024,3 @@ void ImGuiManager::LoadProjectSettings()
         m_StartupScenePath.clear();
     }
 }
-

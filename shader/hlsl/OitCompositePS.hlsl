@@ -1,4 +1,4 @@
-// Weighted blended OIT resolve (McGuire & Bavoil 2013). Compiled at runtime by transparencyeffects.h.
+// 重み付きブレンド OIT の解決（McGuire & Bavoil 2013）。transparencyeffects.h が実行時にコンパイルする。
 Texture2D<float4> OitAccumulation : register(t0);
 Texture2D<float> OitRevealage : register(t1);
 
@@ -15,16 +15,22 @@ FullscreenOutput FullscreenVS(uint vertexId : SV_VertexID)
     return output;
 }
 
-// Output: rgb = average transparent colour, a = total coverage (1 - revealage).
-// Blend: src * a + dst * (1 - a).
+// 出力：rgb = 透明色の平均、a = 総被覆率（1 - 透過残量）。
+// 合成式：src * a + dst * (1 - a)。
 float4 CompositePS(FullscreenOutput input) : SV_Target
 {
     int2 pixel = int2(input.Position.xy);
     float revealage = OitRevealage.Load(int3(pixel, 0));
-    if (revealage >= 0.9999f) discard;
+    if (revealage >= 0.9999f)
+    {
+        discard;
+    }
     float4 accumulation = OitAccumulation.Load(int3(pixel, 0));
-    // Suppress overflow of the fp16 accumulation.
-    if (any(isinf(accumulation.rgb))) accumulation.rgb = accumulation.aaa;
+    // fp16 の蓄積値のオーバーフローを抑える。
+    if (any(isinf(accumulation.rgb)))
+    {
+        accumulation.rgb = accumulation.aaa;
+    }
     float3 average = accumulation.rgb / max(accumulation.a, 0.00001f);
     return float4(average, 1.0f - revealage);
 }

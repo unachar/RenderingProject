@@ -11,21 +11,21 @@
 
 namespace
 {
-ComPtr<ID3D12Resource> g_Color, g_Depth, g_Constants;
-ComPtr<ID3D12DescriptorHeap> g_Rtv, g_Dsv;
-ComPtr<ID3D12PipelineState> g_Pso;
-UINT8* g_Mapped = nullptr;
-bool g_HasCasters = false, g_Active = false;
-UINT g_Slice = 0, g_PreviousDescriptor = 0, g_ConstantOffset = 0;
+    ComPtr<ID3D12Resource> g_Color, g_Depth, g_Constants;
+    ComPtr<ID3D12DescriptorHeap> g_Rtv, g_Dsv;
+    ComPtr<ID3D12PipelineState> g_Pso;
+    UINT8* g_Mapped = nullptr;
+    bool g_HasCasters = false, g_Active = false;
+    UINT g_Slice = 0, g_PreviousDescriptor = 0, g_ConstantOffset = 0;
 
-struct ShadowTransmissionConstants
-{
-    XMMATRIX ViewProjection;
-    XMFLOAT4 MapParams, FilterParams, PeelParams, LightPositionType, LightDirection;
-};
+    struct ShadowTransmissionConstants
+    {
+        XMMATRIX ViewProjection;
+        XMFLOAT4 MapParams, FilterParams, PeelParams, LightPositionType, LightDirection;
+    };
 
-static_assert(sizeof(ShadowTransmissionConstants) <= 256);
-} // namespace
+    static_assert(sizeof(ShadowTransmissionConstants) <= 256);
+} // 名前空間
 
 void TransmittanceShadows::PrepareFrame()
 {

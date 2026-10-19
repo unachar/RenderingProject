@@ -5,9 +5,9 @@ class RenderProfiler;
 
 namespace RenderBenchmark
 {
-bool IsEnabled();
-void BeforeFrame(uint64_t frame);
-void AfterFrame();
-bool ShouldStop(uint64_t completedFrames);
-bool Finish();
-} // namespace RenderBenchmark
+    bool IsEnabled();
+    void BeforeFrame(uint64_t frame);
+    void AfterFrame();
+    bool ShouldStop(uint64_t completedFrames);
+    bool Finish();
+} // 名前空間 RenderBenchmark の終わり。

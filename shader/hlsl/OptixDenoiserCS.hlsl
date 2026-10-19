@@ -8,13 +8,11 @@ RWTexture2D<float4> Result : register(u1);
 cbuffer OptixConstants : register(b0)
 {
     float4x4 WorldToView;
-    uint4 ExtentFlags; // width, height, NRD YCoCg input, preserve reflection hit distance
-    float4 Parameters; // output intensity, reserved
+    uint4 ExtentFlags; // 幅、高さ、NRD の YCoCg 入力、反射ヒット距離の保持
+    float4 Parameters; // 出力強度、予約領域
 };
 
-[numthreads(8, 8, 1)]
-void Pack(uint3 id : SV_DispatchThreadID)
-{
+[numthreads(8, 8, 1)] void Pack(uint3 id : SV_DispatchThreadID) {
     if (any(id.xy >= ExtentFlags.xy))
     {
         return;
@@ -40,17 +38,16 @@ void Pack(uint3 id : SV_DispatchThreadID)
         normal = float3(0, 0, -1);
     }
     normal = mul(float4(normalize(normal), 0), WorldToView).xyz;
-    normal.z = -normal.z; // D3D left-handed view to the OptiX camera-space guide.
+    normal.z = -normal.z; // D3D の左手系ビューから、OptiX のカメラ空間ガイドへ変換する。
     SharedOutput[index] = float4(max(radiance, 0), 1);
     SharedOutput[plane + index] = float4(normal, 0);
-    // These signals are incident radiance/irradiance, before receiver material
-    // modulation. A neutral albedo avoids imprinting receiver textures into GI.
+    // これらの信号は、受光側マテリアルの変調前の入射放射輝度と放射照度。
+    // 中立なアルベドで、受光側のテクスチャが GI に焼き付くのを避ける。
     float albedo = surface ? 1.0f : 0.0f;
     SharedOutput[2 * plane + index] = float4(albedo, albedo, albedo, 1);
 }
 
-[numthreads(8, 8, 1)]
-void Unpack(uint3 id : SV_DispatchThreadID)
+    [numthreads(8, 8, 1)] void Unpack(uint3 id : SV_DispatchThreadID)
 {
     if (any(id.xy >= ExtentFlags.xy))
     {
@@ -70,4 +67,3 @@ void Unpack(uint3 id : SV_DispatchThreadID)
     }
     Result[id.xy] = float4(min(max(radiance * Parameters.x, 0), 65504), alpha);
 }
-

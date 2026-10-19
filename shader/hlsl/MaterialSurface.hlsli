@@ -1,6 +1,6 @@
 #ifndef MATERIAL_SURFACE_INCLUDED
 #define MATERIAL_SURFACE_INCLUDED
-// Both raster and GPU driven shaders sample the same texture heap and parameter layout.
+// ラスターシェーダーと GPU 駆動シェーダーで同じテクスチャヒープとパラメーターレイアウトを使う。
 #ifndef SHADER_GPU_DRIVEN
 Texture2D AssetTextureHeap[512] : register(t0, space1);
 #define ASSET_TEXTURE_HEAP AssetTextureHeap
@@ -39,14 +39,15 @@ float4 SampleAssetTexture(uint index, float2 uv, SamplerState materialSampler, f
         return fallback;
     }
 #ifdef SHADER_VISIBILITY_RESOLVE
-    return ASSET_TEXTURE_HEAP[NonUniformResourceIndex(index)].SampleGrad(materialSampler,uv,VisibilityUvDx,VisibilityUvDy);
+    return ASSET_TEXTURE_HEAP[NonUniformResourceIndex(index)].SampleGrad(materialSampler, uv, VisibilityUvDx,
+                                                                         VisibilityUvDy);
 #else
     return ASSET_TEXTURE_HEAP[NonUniformResourceIndex(index)].Sample(materialSampler, uv);
 #endif
 }
 
-void ApplyAssetMaterial(AssetMaterialParameters material, float2 uv, SamplerState materialSampler,
-    inout float4 color, inout float metallic, inout float roughness, out float4 emissionAO)
+void ApplyAssetMaterial(AssetMaterialParameters material, float2 uv, SamplerState materialSampler, inout float4 color,
+                        inout float metallic, inout float roughness, out float4 emissionAO)
 {
     emissionAO = float4(0, 0, 0, 1);
     if (material.Surface.z < 0.5f)
@@ -60,7 +61,7 @@ void ApplyAssetMaterial(AssetMaterialParameters material, float2 uv, SamplerStat
     float occlusion = SampleAssetTexture(material.Textures.y, uv, materialSampler, 1).r;
     emissionAO.a = lerp(1.0f, occlusion, material.Surface.y);
     emissionAO.rgb = material.Emission.rgb * material.Emission.a *
-        SampleAssetTexture(material.Textures.z, uv, materialSampler, 1).rgb;
+                     SampleAssetTexture(material.Textures.z, uv, materialSampler, 1).rgb;
     const uint surface = material.Textures.w & 3u;
     if (surface == 1u)
     {
@@ -75,11 +76,14 @@ void ApplyAssetMaterial(AssetMaterialParameters material, float2 uv, SamplerStat
     }
 }
 
-// Extended shading model for the deferred pass, stored in the shadow GBuffer alpha (8 bit):
-// bits 5-7 model, bits 0-4 strength. Packed on the CPU in Textures.w bits 4-6 / 8-15.
+// ディファードパスの拡張シェーディングモデルを、影の GBuffer の alpha（8 ビット）に格納する。
+// bit 5-7 = モデル、bit 0-4 = 強度。CPU 側では Textures.w の bit 4-6 / 8-15 に詰める。
 float EncodeShadingModel(AssetMaterialParameters material, float fallback)
 {
-    if (material.Surface.z < 0.5f) return fallback;
+    if (material.Surface.z < 0.5f)
+    {
+        return fallback;
+    }
     uint model = (material.Textures.w >> 4u) & 7u;
     uint strength = (material.Textures.w >> 8u) & 255u;
     uint packed = (model << 5u) | ((strength * 31u + 127u) / 255u);
@@ -95,6 +99,3 @@ float3 ScaleAssetNormal(float3 tangentNormal, AssetMaterialParameters material)
     return normalize(tangentNormal);
 }
 #endif
-
-
-

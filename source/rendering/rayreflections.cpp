@@ -21,468 +21,473 @@
 
 namespace
 {
-constexpr UINT kFrames = RendererState::g_kFRAME_COUNT;
-constexpr UINT kMaximumMeshes = 16384;
-// 0-3 GBuffer/filtered, 4-7 signal UAVs, 8-11 GI inputs, 12-13 sky view LUT, 16-19 radiance cache.
-constexpr UINT kSkyLutDescriptors = 12;
-constexpr UINT kCacheDescriptors = 16;
-// 20-21 ReSTIR reservoirs (current, history) UAV, 22 velocity SRV.
-constexpr UINT kReSTIRDescriptors = 20;
-constexpr UINT kLumenDescriptors = 24;
-constexpr UINT kVertexDescriptors = 40;
-// World-space irradiance cache (hash grid). 2^18 cells: keys 1 MiB, accumulation 4 MiB,
-// resolved 4 MiB, ages 1 MiB.
-constexpr UINT kCacheCapacity = 1u << 18;
-constexpr UINT kIndexDescriptors = kVertexDescriptors + kMaximumMeshes;
-constexpr UINT kTextureDescriptors = kIndexDescriptors + kMaximumMeshes;
-constexpr UINT kEmissionDescriptors = kTextureDescriptors + kMaximumMeshes;
-constexpr UINT kGiSrv = RendererState::g_kHIZ_MIP_SRV_START_INDEX + 2 * RendererState::g_kHIZ_MAX_MIPS + 44;
-static_assert(kGiSrv + kFrames <= RendererState::g_kCLOUD_DESCRIPTOR_START);
-constexpr UINT kResultSrv = RendererState::g_kHIZ_MIP_SRV_START_INDEX + 2 * RendererState::g_kHIZ_MAX_MIPS + 40;
-static_assert(kResultSrv + kFrames <= RendererState::g_kENGINE_DESCRIPTOR_END);
+    constexpr UINT kFrames = RendererState::g_kFRAME_COUNT;
+    constexpr UINT kMaximumMeshes = 16384;
+    // 0～3は GBuffer とフィルター済み入力、4～7は信号 UAV、8～11は GI 入力、12～13は空
+    // LUT、16～19は放射輝度キャッシュ。
+    constexpr UINT kSkyLutDescriptors = 12;
+    constexpr UINT kCacheDescriptors = 16;
+    // 20～21は ReSTIR リザーバー（現在、履歴）の UAV、22は速度 SRV。
+    constexpr UINT kReSTIRDescriptors = 20;
+    constexpr UINT kLumenDescriptors = 24;
+    constexpr UINT kVertexDescriptors = 40;
+    // ワールド空間の放射照度キャッシュ（ハッシュグリッド）。2^18 セルで、キーは1 MiB、蓄積値は4 MiB、
+    // 解決済み値は4 MiB、経過フレーム数は1 MiB。
+    constexpr UINT kCacheCapacity = 1u << 18;
+    constexpr UINT kIndexDescriptors = kVertexDescriptors + kMaximumMeshes;
+    constexpr UINT kTextureDescriptors = kIndexDescriptors + kMaximumMeshes;
+    constexpr UINT kEmissionDescriptors = kTextureDescriptors + kMaximumMeshes;
+    constexpr UINT kGiSrv = RendererState::g_kHIZ_MIP_SRV_START_INDEX + 2 * RendererState::g_kHIZ_MAX_MIPS + 44;
+    static_assert(kGiSrv + kFrames <= RendererState::g_kCLOUD_DESCRIPTOR_START);
+    constexpr UINT kResultSrv = RendererState::g_kHIZ_MIP_SRV_START_INDEX + 2 * RendererState::g_kHIZ_MAX_MIPS + 40;
+    static_assert(kResultSrv + kFrames <= RendererState::g_kENGINE_DESCRIPTOR_END);
 
-struct MeshConstants
-{
-    XMFLOAT4X4 World{};
-    XMFLOAT4X4 NormalToWorld{};
-    XMUINT4 Layout{};
-    XMFLOAT4 Material{};
-    XMFLOAT4 BaseColor{};
-    XMFLOAT4 Emission{};
-    XMUINT4 Surface{};
-};
-
-struct FrameConstants
-{
-    XMFLOAT4X4 InvViewProjection{};
-    XMFLOAT4X4 View{};
-    XMFLOAT4X4 ViewProjection{};
-    XMFLOAT4 Camera{};
-    XMUINT4 Extent{};
-    XMFLOAT4 GiParameters{};
-    XMFLOAT4 CacheParameters{};  // enabled, base cell size, capacity, max history frames
-    XMFLOAT4 ReSTIRParameters{}; // enabled, max temporal M, spatial samples, spatial radius
-    XMFLOAT4X4 AdaptivePreviousViewProjection{};
-    XMFLOAT4 AdaptiveSampling{};
-    XMUINT4 ReSTIRState{}; // history valid, reservoir width, spatial visibility, -
-    XMFLOAT4 Stability{};
-};
-
-struct ReflectionLight
-{
-    XMFLOAT4 Direction{}, Color{}, PositionType{}, Extras{};
-    XMUINT4 Flags{};
-};
-
-static_assert(sizeof(ReflectionLight) == 80);
-static_assert(sizeof(MeshConstants) == 208 && sizeof(FrameConstants) <= 512);
-ComPtr<ID3D12Resource> g_AdaptiveRadiance, g_AdaptiveGuide;
-ComPtr<ID3D12PipelineState> g_AdaptiveCapture;
-bool g_AdaptiveValid = false, g_BudgetValid = false;
-uint64_t g_AdaptiveSignature = 0, g_BudgetSignature = 0;
-UINT g_AdaptiveSequence = 0, g_BudgetSequence = 0;
-
-struct RadianceCache
-{
-    ComPtr<ID3D12Resource> Keys, Accumulation, Resolved, Ages;
-    bool NeedsClear = true;
-};
-
-struct FrameResources
-{
-    ComPtr<ID3D12Resource> DisabledLumen;
-    ComPtr<ID3D12DescriptorHeap> Heap;
-    ComPtr<ID3D12Resource> Meshes, Lights, Emitters, Constants, Noisy, Result, GiNoisy, GiResult;
-    // Keep sampled resources alive until this frame slot's fence completes.
-    vector<RaytracingGeometry> Geometry;
-
-    // 負荷削減：メッシュごとの SRV（頂点 / インデックス / テクスチャ / 発光）が前回と同じなら作り直さない
-    // （参照を保持するので、解放されたアドレスに別のリソースが入って同じポインタになることはない）
-    struct DescriptorRecord
+    struct MeshConstants
     {
-        ComPtr<ID3D12Resource> Vertices, Indices, Texture, Emission;
-        UINT TextureMip = 0;
-        UINT EmissionMip = 0;
-        bool Valid = false;
+        XMFLOAT4X4 World{};
+        XMFLOAT4X4 NormalToWorld{};
+        XMUINT4 Layout{};
+        XMFLOAT4 Material{};
+        XMFLOAT4 BaseColor{};
+        XMFLOAT4 Emission{};
+        XMUINT4 Surface{};
     };
 
-    vector<DescriptorRecord> Descriptors;
-    UINT Width = 0, Height = 0;
-};
-
-ComPtr<ID3D12Device> g_Device;
-
-bool EnsureAdaptiveHistory(UINT width, UINT height)
-{
-    if (g_AdaptiveRadiance && g_AdaptiveRadiance->GetDesc().Width == width &&
-        g_AdaptiveRadiance->GetDesc().Height == height)
+    struct FrameConstants
     {
-        return true;
-    }
-    if (!GraphicsDevice::WaitForGpuIdle())
+        XMFLOAT4X4 InvViewProjection{};
+        XMFLOAT4X4 View{};
+        XMFLOAT4X4 ViewProjection{};
+        XMFLOAT4 Camera{};
+        XMUINT4 Extent{};
+        XMFLOAT4 GiParameters{};
+        XMFLOAT4 CacheParameters{};  // 有効、基準セルサイズ、容量、最大履歴フレーム数
+        XMFLOAT4 ReSTIRParameters{}; // 有効、時間方向の最大 M、空間サンプル数、空間半径
+        XMFLOAT4X4 AdaptivePreviousViewProjection{};
+        XMFLOAT4 AdaptiveSampling{};
+        XMUINT4 ReSTIRState{}; // 履歴有効、リザーバー幅、空間可視性、未使用
+        XMFLOAT4 Stability{};
+    };
+
+    struct ReflectionLight
     {
-        return false;
-    }
-    g_AdaptiveValid = false;
-    ComPtr<ID3D12Resource> a, b;
-    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    const auto radiance = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT, width, height, 1, 1);
-    const auto guide = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT, width, height, 1, 1, 1, 0,
-                                                    D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &radiance,
-                                                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
-                                                 IID_PPV_ARGS(&a))) ||
-        FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &guide,
-                                                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
-                                                 IID_PPV_ARGS(&b))))
+        XMFLOAT4 Direction{}, Color{}, PositionType{}, Extras{};
+        XMUINT4 Flags{};
+    };
+
+    static_assert(sizeof(ReflectionLight) == 80);
+    static_assert(sizeof(MeshConstants) == 208 && sizeof(FrameConstants) <= 512);
+    ComPtr<ID3D12Resource> g_AdaptiveRadiance, g_AdaptiveGuide;
+    ComPtr<ID3D12PipelineState> g_AdaptiveCapture;
+    bool g_AdaptiveValid = false, g_BudgetValid = false;
+    uint64_t g_AdaptiveSignature = 0, g_BudgetSignature = 0;
+    UINT g_AdaptiveSequence = 0, g_BudgetSequence = 0;
+
+    struct RadianceCache
     {
-        return false;
-    }
-    g_AdaptiveRadiance = a;
-    g_AdaptiveGuide = b;
-    return true;
-}
+        ComPtr<ID3D12Resource> Keys, Accumulation, Resolved, Ages;
+        bool NeedsClear = true;
+    };
 
-ComPtr<ID3D12DescriptorHeap> g_EngineHeap;
-ComPtr<ID3D12RootSignature> g_Root;
-ComPtr<ID3D12PipelineState> g_Trace, g_Compose, g_GiTrace, g_GiCompose, g_GiFilter, g_CacheResolve, g_CacheClear;
-ComPtr<ID3D12PipelineState> g_ReSTIRTemporal, g_ReSTIRSpatial;
-ComPtr<ID3D12PipelineState> g_TraceTelemetry, g_GiTraceTelemetry, g_ReSTIRSpatialTelemetry;
-bool g_TelemetryPipelinesTried = false;
-// ReSTIR GI reservoirs (32 bytes per traced pixel), ping-pong between current and history.
-ComPtr<ID3D12Resource> g_Reservoirs[2];
-UINT g_ReservoirWidth = 0, g_ReservoirHeight = 0, g_ReservoirCurrent = 0;
-bool g_ReSTIRHistoryValid = false;
-RadianceCache g_Cache;
-LumenSurfaceCache g_Lumen;
-ComPtr<ID3D12PipelineState> g_LumenBounds, g_LumenCapture, g_LumenClear, g_LumenLighting, g_LumenGather;
-ComPtr<ID3D12PipelineState> g_LumenCaptureTelemetry, g_LumenLightingTelemetry, g_LumenGatherTelemetry;
-uint64_t g_LumenSignature = 0;
-UINT g_LumenSequence = 0;
-UINT g_LumenQuietFrames = 8;
-bool g_LumenWasEnabled = false;
-bool g_CacheWasEnabled = false;
-// Diagnostics: why reflections / realtime GI are not running.
-const char* g_Status = "未初期化";
-string g_LastShaderError;
-array<FrameResources, kFrames> g_Frames;
-unique_ptr<NrdDenoiser> g_Denoiser, g_GiDenoiser;
-unique_ptr<OptixDenoiser> g_OptixGi, g_OptixReflections;
-bool g_OptixGiActive = false, g_OptixReflectionActive = false;
-UINT g_GiWidth = 0, g_GiHeight = 0;
-bool g_GiActive = false, g_GiHistoryValid = false;
-uint64_t g_GiEmissionSignature = 0;
-// Frames the emissive signature has stayed unchanged; restart only after a quiet period.
-constexpr UINT kGiEmissionRestartQuietFrames = 8;
-UINT g_GiEmissionStableFrames = kGiEmissionRestartQuietFrames;
-UINT g_Increment = 0, g_Width = 0, g_Height = 0, g_Dispatches = 0;
-bool g_ReflectionCheckerboard = false; // このフレームの反射を半分のピクセルでトレースした
-bool g_DenoiserCheckerboard = false;   // 作成済みの反射デノイザーのモード
-UINT g_LastFrame = 0;
-bool g_HistoryValid = false;
-RayReflections::SamplingLayout g_ReflectionSampling;
-
-D3D12_CPU_DESCRIPTOR_HANDLE Cpu(ID3D12DescriptorHeap* heap, UINT index)
-{
-    return CD3DX12_CPU_DESCRIPTOR_HANDLE(heap->GetCPUDescriptorHandleForHeapStart(), index, g_Increment);
-}
-
-D3D12_GPU_DESCRIPTOR_HANDLE Gpu(ID3D12DescriptorHeap* heap, UINT index)
-{
-    return CD3DX12_GPU_DESCRIPTOR_HANDLE(heap->GetGPUDescriptorHandleForHeapStart(), index, g_Increment);
-}
-
-bool EnsureUpload(ComPtr<ID3D12Resource>& resource, UINT64 bytes)
-{
-    if (resource && resource->GetDesc().Width >= bytes)
+    struct FrameResources
     {
-        return true;
-    }
-    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-    const auto desc = CD3DX12_RESOURCE_DESC::Buffer(bytes);
-    return SUCCEEDED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                       D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                                       IID_PPV_ARGS(resource.ReleaseAndGetAddressOf())));
-}
+        ComPtr<ID3D12Resource> DisabledLumen;
+        ComPtr<ID3D12DescriptorHeap> Heap;
+        ComPtr<ID3D12Resource> Meshes, Lights, Emitters, Constants, Noisy, Result, GiNoisy, GiResult;
+        // このフレームスロットのフェンスが完了するまで、参照するリソースを保持する。
+        vector<RaytracingGeometry> Geometry;
 
-bool Upload(ID3D12Resource* resource, const void* data, size_t bytes)
-{
-    void* mapped = nullptr;
-    D3D12_RANGE noRead{0, 0};
-    if (FAILED(resource->Map(0, &noRead, &mapped)))
-    {
-        return false;
-    }
-    memcpy(mapped, data, bytes);
-    resource->Unmap(0, nullptr);
-    return true;
-}
-
-void HashEmission(uint64_t& signature, const void* data, size_t bytes)
-{
-    const auto* values = static_cast<const uint8_t*>(data);
-    for (size_t index = 0; index < bytes; ++index)
-    {
-        signature ^= values[index];
-        signature *= 1099511628211ull;
-    }
-}
-
-void TextureSrv(ID3D12Resource* resource, D3D12_CPU_DESCRIPTOR_HANDLE handle, UINT minimumResidentMip = 0)
-{
-    D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
-    desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-    desc.Format = resource ? resource->GetDesc().Format : DXGI_FORMAT_R8G8B8A8_UNORM;
-    if (desc.Format == DXGI_FORMAT_R32_TYPELESS)
-    {
-        desc.Format = DXGI_FORMAT_R32_FLOAT;
-    }
-    desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    desc.Texture2D.MipLevels = resource ? resource->GetDesc().MipLevels : 1;
-    desc.Texture2D.ResourceMinLODClamp = static_cast<float>(minimumResidentMip);
-    g_Device->CreateShaderResourceView(resource, &desc, handle);
-}
-
-void BufferSrv(ID3D12Resource* resource, D3D12_CPU_DESCRIPTOR_HANDLE handle)
-{
-    D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
-    desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-    desc.Format = DXGI_FORMAT_R32_TYPELESS;
-    desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    desc.Buffer.NumElements = resource ? static_cast<UINT>(resource->GetDesc().Width / 4) : 1;
-    desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
-    g_Device->CreateShaderResourceView(resource, &desc, handle);
-}
-
-// Radiance signals are produced and consumed inside one command list on the direct queue
-// (the same rule the GBuffer already relies on), so a single set replaces the former
-// per-frame-slot copies: 4 x RGBA16F full-resolution textures x 3 slots -> x 1.
-// Each slot keeps references to the set it last recorded with, so resizing never frees a
-// texture that an in-flight frame still samples.
-struct SharedSignals
-{
-    ComPtr<ID3D12Resource> Noisy, Result, GiNoisy, GiResult;
-    UINT Width = 0, Height = 0;
-};
-
-SharedSignals g_Shared;
-
-bool EnsureFrame(FrameResources& frame, UINT slot, UINT width, UINT height)
-{
-    if (!frame.Heap)
-    {
-        D3D12_DESCRIPTOR_HEAP_DESC desc{};
-        desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-        desc.NumDescriptors = kEmissionDescriptors + kMaximumMeshes;
-        if (FAILED(g_Device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&frame.Heap))))
+        // 負荷削減：メッシュごとの SRV（頂点 / インデックス / テクスチャ / 発光）が前回と同じなら作り直さない
+        // （参照を保持するので、解放されたアドレスに別のリソースが入って同じポインタになることはない）
+        struct DescriptorRecord
         {
-            return false;
-        }
-        frame.Descriptors.clear(); // 新しいヒープは中身が空
-    }
-    if (!EnsureUpload(frame.Constants, 512))
+            ComPtr<ID3D12Resource> Vertices, Indices, Texture, Emission;
+            UINT TextureMip = 0;
+            UINT EmissionMip = 0;
+            bool Valid = false;
+        };
+
+        vector<DescriptorRecord> Descriptors;
+        UINT Width = 0, Height = 0;
+    };
+
+    ComPtr<ID3D12Device> g_Device;
+
+    bool EnsureAdaptiveHistory(UINT width, UINT height)
     {
-        return false;
-    }
-    if (g_Shared.Width != width || g_Shared.Height != height)
-    {
-        // Drop only the shared references; slots still holding the old textures keep them alive.
-        g_Shared = {};
-        g_Shared.Width = width;
-        g_Shared.Height = height;
-        g_GiHistoryValid = false;
-    }
-    frame.Width = width;
-    frame.Height = height;
-    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT, width, height, 1, 1, 1, 0,
-                                                   D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    const auto ensureSignal = [&](ComPtr<ID3D12Resource>& sharedNoisy, ComPtr<ID3D12Resource>& sharedResult,
-                                  ComPtr<ID3D12Resource>& noisy, ComPtr<ID3D12Resource>& result, UINT firstUav,
-                                  UINT resultSrv, const wchar_t* name) {
-        for (auto* resource : {addressof(sharedNoisy), addressof(sharedResult)})
-        {
-            if (*resource)
-            {
-                continue;
-            }
-            if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
-                                                         IID_PPV_ARGS(resource->ReleaseAndGetAddressOf()))))
-            {
-                return false;
-            }
-            (*resource)->SetName(name);
-        }
-        if (noisy == sharedNoisy && result == sharedResult)
+        if (g_AdaptiveRadiance && g_AdaptiveRadiance->GetDesc().Width == width &&
+            g_AdaptiveRadiance->GetDesc().Height == height)
         {
             return true;
         }
-        noisy = sharedNoisy;
-        result = sharedResult;
-        TextureSrv(result.Get(), Cpu(g_EngineHeap.Get(), resultSrv + slot));
-        D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
-        uav.Format = desc.Format;
-        uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-        g_Device->CreateUnorderedAccessView(noisy.Get(), nullptr, &uav, Cpu(frame.Heap.Get(), firstUav));
-        g_Device->CreateUnorderedAccessView(result.Get(), nullptr, &uav, Cpu(frame.Heap.Get(), firstUav + 1));
-        return true;
-    };
-    if (Raytracing::GetSettings().Reflections && !ensureSignal(g_Shared.Noisy, g_Shared.Result, frame.Noisy,
-                                                               frame.Result, 4, kResultSrv, L"Ray Reflection Radiance"))
-    {
-        return false;
-    }
-    if (RendererSettings::GetRealtimeGiEnabled() && !ensureSignal(g_Shared.GiNoisy, g_Shared.GiResult, frame.GiNoisy,
-                                                                  frame.GiResult, 6, kGiSrv, L"Realtime GI Irradiance"))
-    {
-        return false;
-    }
-    return true;
-}
-
-bool EnsureReservoirs(UINT width, UINT height)
-{
-    if (g_Reservoirs[0] && g_ReservoirWidth == width && g_ReservoirHeight == height)
-    {
-        return true;
-    }
-    // Older frames may still read the previous reservoirs.
-    if (g_Reservoirs[0] && !GraphicsDevice::WaitForGpuIdle())
-    {
-        return false;
-    }
-    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    const auto desc =
-        CD3DX12_RESOURCE_DESC::Buffer(UINT64(width) * height * 32ull, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    for (auto& buffer : g_Reservoirs)
-    {
-        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-                                                     IID_PPV_ARGS(buffer.ReleaseAndGetAddressOf()))))
-        {
-            g_Reservoirs[0].Reset();
-            g_Reservoirs[1].Reset();
-            g_ReservoirWidth = g_ReservoirHeight = 0;
-            return false;
-        }
-        buffer->SetName(L"ReSTIR GI Reservoirs");
-    }
-    g_ReservoirWidth = width;
-    g_ReservoirHeight = height;
-    g_ReservoirCurrent = 0;
-    g_ReSTIRHistoryValid = false;
-    return true;
-}
-
-bool CreateRadianceCache()
-{
-    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    const auto create = [&](ComPtr<ID3D12Resource>& buffer, UINT64 bytes, const wchar_t* name) {
-        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(bytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-                                                     IID_PPV_ARGS(buffer.ReleaseAndGetAddressOf()))))
+        if (!GraphicsDevice::WaitForGpuIdle())
         {
             return false;
         }
-        buffer->SetName(name);
+        g_AdaptiveValid = false;
+        ComPtr<ID3D12Resource> a, b;
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        const auto radiance = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT, width, height, 1, 1);
+        const auto guide = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT, width, height, 1, 1, 1, 0,
+                                                        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &radiance,
+                                                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+                                                     IID_PPV_ARGS(&a))) ||
+            FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &guide,
+                                                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+                                                     IID_PPV_ARGS(&b))))
+        {
+            return false;
+        }
+        g_AdaptiveRadiance = a;
+        g_AdaptiveGuide = b;
         return true;
-    };
-    g_Cache.NeedsClear = true;
-    return create(g_Cache.Keys, kCacheCapacity * 4ull, L"GI Radiance Cache Keys") &&
-           create(g_Cache.Accumulation, kCacheCapacity * 32ull, L"GI Radiance Cache Accumulation") &&
-           create(g_Cache.Resolved, kCacheCapacity * 32ull, L"GI Radiance Cache Resolved") &&
-           create(g_Cache.Ages, kCacheCapacity * 4ull, L"GI Radiance Cache Ages");
-}
+    }
 
-void WriteCacheDescriptors(ID3D12DescriptorHeap* heap)
-{
-    const auto raw = [&](ID3D12Resource* buffer, UINT index) {
-        D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};
+    ComPtr<ID3D12DescriptorHeap> g_EngineHeap;
+    ComPtr<ID3D12RootSignature> g_Root;
+    ComPtr<ID3D12PipelineState> g_Trace, g_Compose, g_GiTrace, g_GiCompose, g_GiFilter, g_CacheResolve, g_CacheClear;
+    ComPtr<ID3D12PipelineState> g_ReSTIRTemporal, g_ReSTIRSpatial;
+    ComPtr<ID3D12PipelineState> g_TraceTelemetry, g_GiTraceTelemetry, g_ReSTIRSpatialTelemetry;
+    bool g_TelemetryPipelinesTried = false;
+    // ReSTIR GI リザーバー（追跡ピクセルごとに32バイト）。現在と履歴を交互に使う。
+    ComPtr<ID3D12Resource> g_Reservoirs[2];
+    UINT g_ReservoirWidth = 0, g_ReservoirHeight = 0, g_ReservoirCurrent = 0;
+    bool g_ReSTIRHistoryValid = false;
+    RadianceCache g_Cache;
+    LumenSurfaceCache g_Lumen;
+    ComPtr<ID3D12PipelineState> g_LumenBounds, g_LumenCapture, g_LumenClear, g_LumenLighting, g_LumenGather;
+    ComPtr<ID3D12PipelineState> g_LumenCaptureTelemetry, g_LumenLightingTelemetry, g_LumenGatherTelemetry;
+    uint64_t g_LumenSignature = 0;
+    UINT g_LumenSequence = 0;
+    UINT g_LumenQuietFrames = 8;
+    bool g_LumenWasEnabled = false;
+    bool g_CacheWasEnabled = false;
+    // 反射とリアルタイム GI が動作しない理由を示す診断情報。
+    const char* g_Status = "未初期化";
+    string g_LastShaderError;
+    array<FrameResources, kFrames> g_Frames;
+    unique_ptr<NrdDenoiser> g_Denoiser, g_GiDenoiser;
+    unique_ptr<OptixDenoiser> g_OptixGi, g_OptixReflections;
+    bool g_OptixGiActive = false, g_OptixReflectionActive = false;
+    UINT g_GiWidth = 0, g_GiHeight = 0;
+    bool g_GiActive = false, g_GiHistoryValid = false;
+    uint64_t g_GiEmissionSignature = 0;
+    // 発光のシグネチャが変化しなかったフレーム数。変化が止まった後だけ再開する。
+    constexpr UINT kGiEmissionRestartQuietFrames = 8;
+    UINT g_GiEmissionStableFrames = kGiEmissionRestartQuietFrames;
+    UINT g_Increment = 0, g_Width = 0, g_Height = 0, g_Dispatches = 0;
+    bool g_ReflectionCheckerboard = false; // このフレームの反射を半分のピクセルでトレースした
+    bool g_DenoiserCheckerboard = false;   // 作成済みの反射デノイザーのモード
+    UINT g_LastFrame = 0;
+    bool g_HistoryValid = false;
+    RayReflections::SamplingLayout g_ReflectionSampling;
+
+    D3D12_CPU_DESCRIPTOR_HANDLE Cpu(ID3D12DescriptorHeap* heap, UINT index)
+    {
+        return CD3DX12_CPU_DESCRIPTOR_HANDLE(heap->GetCPUDescriptorHandleForHeapStart(), index, g_Increment);
+    }
+
+    D3D12_GPU_DESCRIPTOR_HANDLE Gpu(ID3D12DescriptorHeap* heap, UINT index)
+    {
+        return CD3DX12_GPU_DESCRIPTOR_HANDLE(heap->GetGPUDescriptorHandleForHeapStart(), index, g_Increment);
+    }
+
+    bool EnsureUpload(ComPtr<ID3D12Resource>& resource, UINT64 bytes)
+    {
+        if (resource && resource->GetDesc().Width >= bytes)
+        {
+            return true;
+        }
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(bytes);
+        return SUCCEEDED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                           D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                           IID_PPV_ARGS(resource.ReleaseAndGetAddressOf())));
+    }
+
+    bool Upload(ID3D12Resource* resource, const void* data, size_t bytes)
+    {
+        void* mapped = nullptr;
+        D3D12_RANGE noRead{0, 0};
+        if (FAILED(resource->Map(0, &noRead, &mapped)))
+        {
+            return false;
+        }
+        memcpy(mapped, data, bytes);
+        resource->Unmap(0, nullptr);
+        return true;
+    }
+
+    void HashEmission(uint64_t& signature, const void* data, size_t bytes)
+    {
+        const auto* values = static_cast<const uint8_t*>(data);
+        for (size_t index = 0; index < bytes; ++index)
+        {
+            signature ^= values[index];
+            signature *= 1099511628211ull;
+        }
+    }
+
+    void TextureSrv(ID3D12Resource* resource, D3D12_CPU_DESCRIPTOR_HANDLE handle, UINT minimumResidentMip = 0)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
+        desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        desc.Format = resource ? resource->GetDesc().Format : DXGI_FORMAT_R8G8B8A8_UNORM;
+        if (desc.Format == DXGI_FORMAT_R32_TYPELESS)
+        {
+            desc.Format = DXGI_FORMAT_R32_FLOAT;
+        }
+        desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        desc.Texture2D.MipLevels = resource ? resource->GetDesc().MipLevels : 1;
+        desc.Texture2D.ResourceMinLODClamp = static_cast<float>(minimumResidentMip);
+        g_Device->CreateShaderResourceView(resource, &desc, handle);
+    }
+
+    void BufferSrv(ID3D12Resource* resource, D3D12_CPU_DESCRIPTOR_HANDLE handle)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
+        desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
         desc.Format = DXGI_FORMAT_R32_TYPELESS;
-        desc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-        desc.Buffer.NumElements = buffer ? static_cast<UINT>(buffer->GetDesc().Width / 4) : 1;
-        desc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
-        g_Device->CreateUnorderedAccessView(buffer, nullptr, &desc, Cpu(heap, kCacheDescriptors + index));
-    };
-    raw(g_Cache.Keys.Get(), 0);
-    raw(g_Cache.Accumulation.Get(), 1);
-    D3D12_UNORDERED_ACCESS_VIEW_DESC structured{};
-    structured.Format = DXGI_FORMAT_UNKNOWN;
-    structured.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-    structured.Buffer.NumElements = kCacheCapacity;
-    structured.Buffer.StructureByteStride = 32;
-    g_Device->CreateUnorderedAccessView(g_Cache.Resolved.Get(), nullptr, &structured, Cpu(heap, kCacheDescriptors + 2));
-    raw(g_Cache.Ages.Get(), 3);
-}
-
-void CacheBarrier(ID3D12GraphicsCommandList* commands)
-{
-    const D3D12_RESOURCE_BARRIER barriers[] = {
-        CD3DX12_RESOURCE_BARRIER::UAV(g_Cache.Keys.Get()), CD3DX12_RESOURCE_BARRIER::UAV(g_Cache.Accumulation.Get()),
-        CD3DX12_RESOURCE_BARRIER::UAV(g_Cache.Resolved.Get()), CD3DX12_RESOURCE_BARRIER::UAV(g_Cache.Ages.Get())};
-    commands->ResourceBarrier(4, barriers);
-}
-
-bool CompileRadiancePipeline(const char* entry, ComPtr<ID3D12PipelineState>& pipeline, bool telemetry = false)
-{
-    const D3D_SHADER_MACRO defines[] = {
-        {"USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0"}, {"ENABLE_RAY_TELEMETRY", telemetry ? "1" : "0"}, {}};
-    ComPtr<ID3DBlob> blob, errors;
-    if (FAILED(D3DCompileFromFile(L"shader/hlsl/RayReflectionsCS.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-                                  entry, "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors)))
-    {
-        g_LastShaderError =
-            string(entry) + ": " + (errors ? static_cast<const char*>(errors->GetBufferPointer()) : "compile failed");
-        WriteGraphicsLog("DXR reflection shader failed (telemetry=%u): %s\n", static_cast<UINT>(telemetry),
-                         g_LastShaderError.c_str());
-        return false;
+        desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        desc.Buffer.NumElements = resource ? static_cast<UINT>(resource->GetDesc().Width / 4) : 1;
+        desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
+        g_Device->CreateShaderResourceView(resource, &desc, handle);
     }
-    D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
-    desc.pRootSignature = g_Root.Get();
-    desc.CS = CD3DX12_SHADER_BYTECODE(blob.Get());
-    if (SUCCEEDED(g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(pipeline.ReleaseAndGetAddressOf()))))
+
+    // 放射輝度信号はダイレクトキューの1つのコマンドリスト内で生成して利用する。
+    // GBuffer と同じ前提により、従来のフレームスロットごとの複製を1組にまとめる。
+    // 全解像度 RGBA16F テクスチャ4枚を、3スロット分から1組へ削減する。
+    // 各スロットは記録時に使った組への参照を保持し、実行中のフレームが読むテクスチャを
+    // リサイズで解放しないようにする。
+    struct SharedSignals
     {
+        ComPtr<ID3D12Resource> Noisy, Result, GiNoisy, GiResult;
+        UINT Width = 0, Height = 0;
+    };
+
+    SharedSignals g_Shared;
+
+    bool EnsureFrame(FrameResources& frame, UINT slot, UINT width, UINT height)
+    {
+        if (!frame.Heap)
+        {
+            D3D12_DESCRIPTOR_HEAP_DESC desc{};
+            desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+            desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+            desc.NumDescriptors = kEmissionDescriptors + kMaximumMeshes;
+            if (FAILED(g_Device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&frame.Heap))))
+            {
+                return false;
+            }
+            frame.Descriptors.clear(); // 新しいヒープは中身が空
+        }
+        if (!EnsureUpload(frame.Constants, 512))
+        {
+            return false;
+        }
+        if (g_Shared.Width != width || g_Shared.Height != height)
+        {
+            // 共有参照だけを外す。古いテクスチャを保持するスロットがある間は解放されない。
+            g_Shared = {};
+            g_Shared.Width = width;
+            g_Shared.Height = height;
+            g_GiHistoryValid = false;
+        }
+        frame.Width = width;
+        frame.Height = height;
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT, width, height, 1, 1, 1, 0,
+                                                       D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        const auto ensureSignal = [&](ComPtr<ID3D12Resource>& sharedNoisy, ComPtr<ID3D12Resource>& sharedResult,
+                                      ComPtr<ID3D12Resource>& noisy, ComPtr<ID3D12Resource>& result, UINT firstUav,
+                                      UINT resultSrv, const wchar_t* name) {
+            for (auto* resource : {addressof(sharedNoisy), addressof(sharedResult)})
+            {
+                if (*resource)
+                {
+                    continue;
+                }
+                if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+                                                             IID_PPV_ARGS(resource->ReleaseAndGetAddressOf()))))
+                {
+                    return false;
+                }
+                (*resource)->SetName(name);
+            }
+            if (noisy == sharedNoisy && result == sharedResult)
+            {
+                return true;
+            }
+            noisy = sharedNoisy;
+            result = sharedResult;
+            TextureSrv(result.Get(), Cpu(g_EngineHeap.Get(), resultSrv + slot));
+            D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+            uav.Format = desc.Format;
+            uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+            g_Device->CreateUnorderedAccessView(noisy.Get(), nullptr, &uav, Cpu(frame.Heap.Get(), firstUav));
+            g_Device->CreateUnorderedAccessView(result.Get(), nullptr, &uav, Cpu(frame.Heap.Get(), firstUav + 1));
+            return true;
+        };
+        if (Raytracing::GetSettings().Reflections &&
+            !ensureSignal(g_Shared.Noisy, g_Shared.Result, frame.Noisy, frame.Result, 4, kResultSrv,
+                          L"Ray Reflection Radiance"))
+        {
+            return false;
+        }
+        if (RendererSettings::GetRealtimeGiEnabled() &&
+            !ensureSignal(g_Shared.GiNoisy, g_Shared.GiResult, frame.GiNoisy, frame.GiResult, 6, kGiSrv,
+                          L"Realtime GI Irradiance"))
+        {
+            return false;
+        }
         return true;
     }
-    g_LastShaderError = string(entry) + ": CreateComputePipelineState failed";
-    return false;
-}
 
-bool EnsureTelemetryPipelines()
-{
-    if (!g_TelemetryPipelinesTried)
+    bool EnsureReservoirs(UINT width, UINT height)
     {
-        g_TelemetryPipelinesTried = true;
-        if (!CompileRadiancePipeline("main", g_TraceTelemetry, true) ||
-            !CompileRadiancePipeline("TraceDiffuse", g_GiTraceTelemetry, true) ||
-            (g_ReSTIRSpatial && !CompileRadiancePipeline("ReSTIRSpatial", g_ReSTIRSpatialTelemetry, true)) ||
-            (g_LumenBounds && (!CompileRadiancePipeline("LumenCapture", g_LumenCaptureTelemetry, true) ||
-                              !CompileRadiancePipeline("LumenUpdateLighting", g_LumenLightingTelemetry, true) ||
-                              !CompileRadiancePipeline("LumenTraceProbes", g_LumenGatherTelemetry, true))))
+        if (g_Reservoirs[0] && g_ReservoirWidth == width && g_ReservoirHeight == height)
         {
-            g_TraceTelemetry.Reset();
-            g_GiTraceTelemetry.Reset();
-            g_ReSTIRSpatialTelemetry.Reset();
-            WriteGraphicsLog("Ray telemetry: radiance counter variant unavailable; keeping normal shaders\n");
+            return true;
         }
+        // 先行フレームが前のリザーバーを読んでいる可能性がある。
+        if (g_Reservoirs[0] && !GraphicsDevice::WaitForGpuIdle())
+        {
+            return false;
+        }
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        const auto desc =
+            CD3DX12_RESOURCE_DESC::Buffer(UINT64(width) * height * 32ull, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        for (auto& buffer : g_Reservoirs)
+        {
+            if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                         IID_PPV_ARGS(buffer.ReleaseAndGetAddressOf()))))
+            {
+                g_Reservoirs[0].Reset();
+                g_Reservoirs[1].Reset();
+                g_ReservoirWidth = g_ReservoirHeight = 0;
+                return false;
+            }
+            buffer->SetName(L"ReSTIR GI Reservoirs");
+        }
+        g_ReservoirWidth = width;
+        g_ReservoirHeight = height;
+        g_ReservoirCurrent = 0;
+        g_ReSTIRHistoryValid = false;
+        return true;
     }
-    return g_TraceTelemetry && g_GiTraceTelemetry;
-}
 
-void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
-                D3D12_RESOURCE_STATES after)
-{
-    if (!resource || before == after)
+    bool CreateRadianceCache()
     {
-        return;
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        const auto create = [&](ComPtr<ID3D12Resource>& buffer, UINT64 bytes, const wchar_t* name) {
+            const auto desc = CD3DX12_RESOURCE_DESC::Buffer(bytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                         IID_PPV_ARGS(buffer.ReleaseAndGetAddressOf()))))
+            {
+                return false;
+            }
+            buffer->SetName(name);
+            return true;
+        };
+        g_Cache.NeedsClear = true;
+        return create(g_Cache.Keys, kCacheCapacity * 4ull, L"GI Radiance Cache Keys") &&
+               create(g_Cache.Accumulation, kCacheCapacity * 32ull, L"GI Radiance Cache Accumulation") &&
+               create(g_Cache.Resolved, kCacheCapacity * 32ull, L"GI Radiance Cache Resolved") &&
+               create(g_Cache.Ages, kCacheCapacity * 4ull, L"GI Radiance Cache Ages");
     }
-    const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, before, after);
-    commands->ResourceBarrier(1, &barrier);
-}
-} // namespace
+
+    void WriteCacheDescriptors(ID3D12DescriptorHeap* heap)
+    {
+        const auto raw = [&](ID3D12Resource* buffer, UINT index) {
+            D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};
+            desc.Format = DXGI_FORMAT_R32_TYPELESS;
+            desc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+            desc.Buffer.NumElements = buffer ? static_cast<UINT>(buffer->GetDesc().Width / 4) : 1;
+            desc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+            g_Device->CreateUnorderedAccessView(buffer, nullptr, &desc, Cpu(heap, kCacheDescriptors + index));
+        };
+        raw(g_Cache.Keys.Get(), 0);
+        raw(g_Cache.Accumulation.Get(), 1);
+        D3D12_UNORDERED_ACCESS_VIEW_DESC structured{};
+        structured.Format = DXGI_FORMAT_UNKNOWN;
+        structured.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        structured.Buffer.NumElements = kCacheCapacity;
+        structured.Buffer.StructureByteStride = 32;
+        g_Device->CreateUnorderedAccessView(g_Cache.Resolved.Get(), nullptr, &structured,
+                                            Cpu(heap, kCacheDescriptors + 2));
+        raw(g_Cache.Ages.Get(), 3);
+    }
+
+    void CacheBarrier(ID3D12GraphicsCommandList* commands)
+    {
+        const D3D12_RESOURCE_BARRIER barriers[] = {CD3DX12_RESOURCE_BARRIER::UAV(g_Cache.Keys.Get()),
+                                                   CD3DX12_RESOURCE_BARRIER::UAV(g_Cache.Accumulation.Get()),
+                                                   CD3DX12_RESOURCE_BARRIER::UAV(g_Cache.Resolved.Get()),
+                                                   CD3DX12_RESOURCE_BARRIER::UAV(g_Cache.Ages.Get())};
+        commands->ResourceBarrier(4, barriers);
+    }
+
+    bool CompileRadiancePipeline(const char* entry, ComPtr<ID3D12PipelineState>& pipeline, bool telemetry = false)
+    {
+        const D3D_SHADER_MACRO defines[] = {
+            {"USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0"}, {"ENABLE_RAY_TELEMETRY", telemetry ? "1" : "0"}, {}};
+        ComPtr<ID3DBlob> blob, errors;
+        if (FAILED(D3DCompileFromFile(L"shader/hlsl/RayReflectionsCS.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                                      entry, "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors)))
+        {
+            g_LastShaderError = string(entry) + ": " +
+                                (errors ? static_cast<const char*>(errors->GetBufferPointer()) : "compile failed");
+            WriteGraphicsLog("DXR reflection shader failed (telemetry=%u): %s\n", static_cast<UINT>(telemetry),
+                             g_LastShaderError.c_str());
+            return false;
+        }
+        D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
+        desc.pRootSignature = g_Root.Get();
+        desc.CS = CD3DX12_SHADER_BYTECODE(blob.Get());
+        if (SUCCEEDED(g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(pipeline.ReleaseAndGetAddressOf()))))
+        {
+            return true;
+        }
+        g_LastShaderError = string(entry) + ": CreateComputePipelineState failed";
+        return false;
+    }
+
+    bool EnsureTelemetryPipelines()
+    {
+        if (!g_TelemetryPipelinesTried)
+        {
+            g_TelemetryPipelinesTried = true;
+            if (!CompileRadiancePipeline("main", g_TraceTelemetry, true) ||
+                !CompileRadiancePipeline("TraceDiffuse", g_GiTraceTelemetry, true) ||
+                (g_ReSTIRSpatial && !CompileRadiancePipeline("ReSTIRSpatial", g_ReSTIRSpatialTelemetry, true)) ||
+                (g_LumenBounds && (!CompileRadiancePipeline("LumenCapture", g_LumenCaptureTelemetry, true) ||
+                                   !CompileRadiancePipeline("LumenUpdateLighting", g_LumenLightingTelemetry, true) ||
+                                   !CompileRadiancePipeline("LumenTraceProbes", g_LumenGatherTelemetry, true))))
+            {
+                g_TraceTelemetry.Reset();
+                g_GiTraceTelemetry.Reset();
+                g_ReSTIRSpatialTelemetry.Reset();
+                WriteGraphicsLog("Ray telemetry: radiance counter variant unavailable; keeping normal shaders\n");
+            }
+        }
+        return g_TraceTelemetry && g_GiTraceTelemetry;
+    }
+
+    void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
+                    D3D12_RESOURCE_STATES after)
+    {
+        if (!resource || before == after)
+        {
+            return;
+        }
+        const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, before, after);
+        commands->ResourceBarrier(1, &barrier);
+    }
+} // 名前空間
 
 bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engineHeap, UINT increment)
 {
@@ -496,10 +501,10 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     {
         ranges[i].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kMaximumMeshes, 0, i - 1);
     }
-    ranges[6].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 6);    // sky view LUT
-    ranges[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 4, 0, 7);    // radiance cache
-    ranges[8].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0, 8, 0); // ReSTIR reservoirs
-    ranges[9].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 8, 2); // velocity
+    ranges[6].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 6);    // スカイビュー LUT
+    ranges[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 4, 0, 7);    // 放射輝度キャッシュ
+    ranges[8].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0, 8, 0); // ReSTIR リザーバー
+    ranges[9].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 8, 2); // 速度
     ranges[10].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 10);
     ranges[11].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 10);
     ranges[12].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 11, 0);
@@ -546,9 +551,9 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     auto compile = [&](const char* entry, ComPtr<ID3D12PipelineState>& pipeline) {
         return CompileRadiancePipeline(entry, pipeline);
     };
-    // Required pipelines first. The optional ones (radiance cache, ReSTIR) only disable their own
-    // feature on failure; previously a failure there also skipped Compose / ComposeDiffuse, which
-    // left a null pipeline bound in the NRD path while TraceDiffuse kept running.
+    // 必須パイプラインを先に解決する。任意の放射輝度キャッシュと ReSTIR は失敗時に自身だけを無効化する。
+    // 以前はその失敗で Compose / ComposeDiffuse も省略され、TraceDiffuse が動いているのに
+    // NRD 経路に null パイプラインがバインドされたままになっていた。
     compile("CaptureAdaptiveGuide", g_AdaptiveCapture);
     const bool required =
         compile("main", g_Trace) && compile("TraceDiffuse", g_GiTrace) && compile("FilterDiffuse", g_GiFilter) &&
@@ -735,9 +740,17 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         const XMMATRIX world = XMLoadFloat4x4(&geometry.World);
         XMStoreFloat4x4(&mesh.World, XMMatrixTranspose(world));
         XMStoreFloat4x4(&mesh.NormalToWorld, XMMatrixInverse(nullptr, world));
+        UINT indexBitWidth = 0;
+        if (geometry.Indices)
+        {
+            indexBitWidth = 32;
+            if (geometry.IndexView.Format == DXGI_FORMAT_R16_UINT)
+            {
+                indexBitWidth = 16;
+            }
+        }
         mesh.Layout = {
-            geometry.VertexView.StrideInBytes,
-            geometry.Indices ? (geometry.IndexView.Format == DXGI_FORMAT_R16_UINT ? 16u : 32u) : 0u,
+            geometry.VertexView.StrideInBytes, indexBitWidth,
             static_cast<UINT>(geometry.VertexView.BufferLocation - geometry.Vertices->GetGPUVirtualAddress()),
             geometry.Indices
                 ? static_cast<UINT>(geometry.IndexView.BufferLocation - geometry.Indices->GetGPUVirtualAddress())
@@ -877,7 +890,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     }
     const XMMATRIX view = XMLoadFloat4x4(&nrdFrame.View);
     XMMATRIX projection = XMLoadFloat4x4(&nrdFrame.Projection);
-    // Restore the jitter used by this frame's GBuffer.
+    // このフレームの GBuffer が使ったジッターを復元する。
     XMFLOAT4X4 jittered;
     XMStoreFloat4x4(&jittered, projection);
     jittered._31 = -nrdFrame.Jitter.x * 2 / frame.Width;
@@ -890,8 +903,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     constants.Camera.w = nrdFrame.Range;
     constants.Extent = {frame.Width, frame.Height, nrdFrame.Sequence, static_cast<UINT>(lights.size())};
     constants.Stability = {Raytracing::GetSettings().StableSampling ? 1.f : 0.f, 0, 0, 0};
-    // Motion guides cannot detect a change in emitted radiance on a stationary mesh.
-    // Restart only this signal when the emissive material or emitter transform changes.
+    // 動きのガイドでは、静止メッシュの発光輝度の変化を検出できない。
+    // 発光マテリアルや発光体の変換が変わったら、この信号だけを再開する。
     uint64_t emissionSignature = 14695981039346656037ull;
     for (UINT emitter : emitters)
     {
@@ -906,9 +919,9 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     HashEmission(emissionSignature, &giDistance, sizeof(giDistance));
     if (emissionSignature != g_GiEmissionSignature)
     {
-        // A discrete change (toggle, new material, teleport) restarts the history once.
-        // Continuous animation changes the signature every frame; restarting each time would
-        // leave REBLUR permanently at 0.5 rpp and flicker, so it is left to NRD anti-lag.
+        // 切り替え、新規マテリアル、瞬間移動など離散的な変更では履歴を1回リセットする。
+        // 連続アニメーションでは毎フレームシグネチャが変わる。毎回リセットすると REBLUR が常に
+        // 0.5 rpp のままでちらつくため、その場合は NRD のアンチラグに任せる。
         if (g_GiEmissionStableFrames >= kGiEmissionRestartQuietFrames)
         {
             g_GiHistoryValid = false;
@@ -926,7 +939,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     constants.GiParameters = {RendererSettings::GetGiDistance(), RendererSettings::GetRealtimeGiIntensity(),
                               static_cast<float>(useGiDenoiser), static_cast<float>(emitters.size())};
     const bool lumenRequested = RendererSettings::GetLumenEnabled();
-    // Lumen always uses the hash grid as its world-space radiance cache (salted key namespace).
+    // Lumen のワールド空間放射輝度キャッシュは常にハッシュグリッドを使う（キー空間をソルトで分離）。
     const bool cacheEnabled = RendererSettings::GetRealtimeGiEnabled() &&
                               (lumenRequested || RendererSettings::GetGiRadianceCacheEnabled()) && g_Cache.Keys &&
                               g_CacheResolve && g_CacheClear;
@@ -937,8 +950,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     g_CacheWasEnabled = cacheEnabled;
     const auto& quality = RenderQuality::Get();
     const UINT reservoirWidth = useGiDenoiser ? (frame.Width + 1) / 2 : frame.Width;
-    const bool restir = RendererSettings::GetRealtimeGiEnabled() && !lumenRequested && quality.ReSTIRGI && velocity && g_ReSTIRTemporal &&
-                        g_ReSTIRSpatial && EnsureReservoirs(reservoirWidth, frame.Height);
+    const bool restir = RendererSettings::GetRealtimeGiEnabled() && !lumenRequested && quality.ReSTIRGI && velocity &&
+                        g_ReSTIRTemporal && g_ReSTIRSpatial && EnsureReservoirs(reservoirWidth, frame.Height);
     if (!restir || nrdFrame.ResetHistory)
     {
         g_ReSTIRHistoryValid = restir && g_ReSTIRHistoryValid && !nrdFrame.ResetHistory;
@@ -962,8 +975,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
                                  static_cast<float>(RendererSettings::GetGiRadianceCacheHistory())};
     static const bool adaptiveRequested = ReadEnvironmentFlagOnce("DX12_ADAPTIVE_REFLECTIONS");
     static const bool budgetRequested = ReadEnvironmentFlagOnce("DX12_GI_UPDATE_BUDGET");
-    const bool adaptive = adaptiveRequested && !lumenRequested && velocity && g_AdaptiveCapture && Raytracing::GetSettings().Reflections &&
-                          EnsureAdaptiveHistory(frame.Width, frame.Height);
+    const bool adaptive = adaptiveRequested && !lumenRequested && velocity && g_AdaptiveCapture &&
+                          Raytracing::GetSettings().Reflections && EnsureAdaptiveHistory(frame.Width, frame.Height);
     uint64_t signature = 1469598103934665603ull;
     for (const auto& entry : geometry)
     {
@@ -1008,7 +1021,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     {
         g_Lumen.NotifySceneChanged(nrdFrame.Sequence);
     }
-    const bool lumen = lumenRequested && g_LumenBounds &&
+    const bool lumen =
+        lumenRequested && g_LumenBounds &&
         g_Lumen.Prepare(g_Device.Get(), slot, frame.Geometry, lumenCamera, frame.Width, frame.Height,
                         RendererSettings::GetLumenProbeSpacing(), RendererSettings::GetLumenCaptureBudget(),
                         RendererSettings::GetLumenLightingBudget(), RendererSettings::GetLumenDebugView(), lumenReset,
@@ -1019,14 +1033,14 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     }
     if (g_LumenWasEnabled != lumen || (lumen && lumenReset))
     {
-        // Cached hit radiance belongs to the old lighting / mode.
+        // キャッシュ済みのヒット放射輝度は、以前の照明とモードに対応する。
         g_Cache.NeedsClear = true;
         g_GiHistoryValid = false;
         g_HistoryValid = false;
     }
     if (lumen)
     {
-        // World radiance cache: short history while objects/lights move, longer when static.
+        // ワールド放射輝度キャッシュ：物体やライトが動く間は短い履歴、静止時は長い履歴を使う。
         const float limit = g_LumenQuietFrames < 8 ? 4.0f : 16.0f;
         constants.CacheParameters.w = (std::min)(constants.CacheParameters.w, limit);
     }
@@ -1080,7 +1094,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     }
     for (UINT i = 0; i < 3; ++i)
     {
-        const auto type = i == 0 ? GBufferType::DEPTH : i == 1 ? GBufferType::NORMAL : GBufferType::MATERIAL;
+        constexpr GBufferType guideTypes[] = {GBufferType::DEPTH, GBufferType::NORMAL, GBufferType::MATERIAL};
+        const auto type = guideTypes[i];
         TextureSrv(RenderTargets::GetGBufferResource(type), Cpu(frame.Heap.Get(), i));
         TextureSrv(RenderTargets::GetGBufferResource(type), Cpu(frame.Heap.Get(), 8 + i));
     }
@@ -1104,7 +1119,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     }
     else
     {
-        // Valid null descriptors: the table is part of every bind.
+        // 毎回バインドするテーブルなので、有効な null 記述子を用意する。
         for (UINT index = 0; index < 2; ++index)
         {
             D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};
@@ -1150,7 +1165,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         commands->SetComputeRootDescriptorTable(18, Gpu(frame.Heap.Get(), 23));
         commands->SetComputeRootDescriptorTable(19, Gpu(frame.Heap.Get(), kLumenDescriptors));
         commands->SetComputeRootConstantBufferView(20, lumen ? g_Lumen.ConstantsAddress(slot)
-                                                           : frame.DisabledLumen->GetGPUVirtualAddress());
+                                                             : frame.DisabledLumen->GetGPUVirtualAddress());
         if (instrumented)
         {
             commands->SetComputeRootUnorderedAccessView(16, RayTelemetry::Data().Address());
@@ -1162,7 +1177,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         RenderProfiler::ScopedEvent surfaceProfile("Lumen Surface Cache", commands);
         if (cacheEnabled && g_Cache.NeedsClear)
         {
-            // Clear before the surface cache / probe rays write into the world radiance cache.
+            // サーフェスキャッシュやプローブレイがワールド放射輝度キャッシュへ書く前にクリアする。
             bind(g_CacheClear.Get());
             commands->Dispatch(kCacheCapacity / 64, 1, 1);
             CacheBarrier(commands);
@@ -1196,7 +1211,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         surfaceProfile.Finish();
         RenderProfiler::ScopedEvent probeProfile("Lumen Screen Probes", commands);
         bind(instrumented ? g_LumenGatherTelemetry.Get() : g_LumenGather.Get());
-        // 8 probes per 64-lane group (see LumenTraceProbes).
+        // 64レーンのグループごとに8プローブ（LumenTraceProbes を参照）。
         commands->Dispatch((parameters.Grid.x * parameters.Grid.y + 7) / 8, 1, 1);
         g_Lumen.Barrier(commands);
     }
@@ -1216,7 +1231,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         Transition(commands, frame.Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         traceProfile.Finish();
-        // NRD owns a separate heap and restores these four input states.
+        // NRD は独自ヒープを所有し、これら4入力の状態を復元する。
         if (useOptix)
         {
             if (!g_OptixReflections)
@@ -1311,7 +1326,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         commands->Dispatch((traceWidth + 7) / 8, (frame.Height + 7) / 8, 1);
         if (restir)
         {
-            // Temporal then spatial resampling of the bounce samples (ReSTIR GI).
+            // バウンスのサンプルを時間方向、次に空間方向へ再サンプリングする（ReSTIR GI）。
             const D3D12_RESOURCE_BARRIER uav[] = {CD3DX12_RESOURCE_BARRIER::UAV(g_Reservoirs[g_ReservoirCurrent].Get()),
                                                   CD3DX12_RESOURCE_BARRIER::UAV(frame.GiNoisy.Get())};
             commands->ResourceBarrier(2, uav);
@@ -1321,13 +1336,13 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
             commands->SetPipelineState(instrumented ? g_ReSTIRSpatialTelemetry.Get() : g_ReSTIRSpatial.Get());
             commands->Dispatch((reservoirWidth + 7) / 8, (frame.Height + 7) / 8, 1);
             commands->ResourceBarrier(2, uav);
-            // This frame's temporal reservoirs become next frame's history.
+            // このフレームの時間リザーバーを次のフレームの履歴にする。
             g_ReservoirCurrent ^= 1u;
             g_ReSTIRHistoryValid = true;
         }
         if (cacheEnabled)
         {
-            // Average this frame's samples into the cells and age out unused cells.
+            // このフレームのサンプルをセルへ平均化し、長く未使用のセルを失効させる。
             CacheBarrier(commands);
             commands->SetPipelineState(g_CacheResolve.Get());
             commands->Dispatch(kCacheCapacity / 64, 1, 1);
@@ -1355,7 +1370,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         {
             if (!g_GiDenoiser || g_GiWidth != frame.Width || g_GiHeight != frame.Height)
             {
-                // Resize destroys resources referenced by earlier frames only after their fences complete.
+                // 先行フレームが参照するリソースは、そのフェンス完了後だけリサイズで破棄する。
                 if (!GraphicsDevice::WaitForGpuIdle())
                 {
                     return false;
@@ -1401,7 +1416,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         }
         if (!filtered)
         {
-            // The spatial fallback combines filtering and composition in one dispatch.
+            // 空間フォールバックはフィルターと合成を1回のディスパッチで行う。
             RenderProfiler::ScopedEvent spatialProfile("Realtime GI Spatial Denoise / Compose", commands);
             TextureSrv(frame.GiNoisy.Get(), Cpu(frame.Heap.Get(), 11));
             Transition(commands, frame.GiNoisy.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
@@ -1419,9 +1434,10 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         }
         g_GiHistoryValid = temporalFiltered;
         g_GiActive = true;
-        g_Status = lumen ? "Lumen GI 動作中（Surface Cache / Screen Probes）" :
-                   lumenRequested ? "Lumen 初期化失敗。既存 DXR GI を使用中" :
-                   restir ? "Realtime GI 動作中（ReSTIR）" : "Realtime GI 動作中";
+        g_Status = lumen            ? "Lumen GI 動作中（Surface Cache / Screen Probes）"
+                   : lumenRequested ? "Lumen 初期化失敗。既存 DXR GI を使用中"
+                   : restir         ? "Realtime GI 動作中（ReSTIR）"
+                                    : "Realtime GI 動作中";
     }
     else
     {
@@ -1523,4 +1539,3 @@ ID3D12Resource* RayReflections::GetGiNoisyResource()
 {
     return g_Frames[g_LastFrame].GiNoisy.Get();
 }
-

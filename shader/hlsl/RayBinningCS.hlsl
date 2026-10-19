@@ -36,13 +36,14 @@ float2 OctEncode(float3 n)
 {
     n /= max(abs(n.x) + abs(n.y) + abs(n.z), 1.0e-5f);
     float2 oct = n.xy;
-    if (n.z < 0.0f) oct = (1.0f - abs(oct.yx)) * (oct >= 0.0f ? 1.0f : -1.0f);
+    if (n.z < 0.0f)
+    {
+        oct = (1.0f - abs(oct.yx)) * (oct >= 0.0f ? 1.0f : -1.0f);
+    }
     return oct * 0.5f + 0.5f;
 }
 
-[numthreads(64, 1, 1)]
-void main(uint3 groupId : SV_GroupID, uint lane : SV_GroupIndex)
-{
+[numthreads(64, 1, 1)] void main(uint3 groupId : SV_GroupID, uint lane : SV_GroupIndex) {
     uint tilesX = (FullExtent.x + 7u) / 8u;
     uint tileIndex = groupId.x;
     uint2 tile = uint2(tileIndex % tilesX, tileIndex / tilesX);
@@ -51,9 +52,7 @@ void main(uint3 groupId : SV_GroupID, uint lane : SV_GroupIndex)
 
     if (FeatureFlags.x == 0u)
     {
-        RayOrder[tileIndex * 64u + lane] = all(pixel < FullExtent)
-            ? (pixel.y * FullExtent.x + pixel.x)
-            : 0xffffffffu;
+        RayOrder[tileIndex * 64u + lane] = all(pixel < FullExtent) ? (pixel.y * FullExtent.x + pixel.x) : 0xffffffffu;
         return;
     }
 
@@ -80,7 +79,8 @@ void main(uint3 groupId : SV_GroupID, uint lane : SV_GroupIndex)
         float depth = DeinterleavedDepth.Load(int4(dePixel, slice, 0));
         float hash = frac(dot(float2(pixel), float2(0.06711056f, 0.00583715f)) + depth * 7.13f);
         float angle = hash * 6.28318530718f;
-        float3 tangent = normalize(abs(normal.y) < 0.98f ? cross(float3(0.0f, 1.0f, 0.0f), normal) : cross(float3(1.0f, 0.0f, 0.0f), normal));
+        float3 tangent = normalize(abs(normal.y) < 0.98f ? cross(float3(0.0f, 1.0f, 0.0f), normal)
+                                                         : cross(float3(1.0f, 0.0f, 0.0f), normal));
         float3 bitangent = cross(normal, tangent);
         float3 ray = normalize(normal * 0.55f + tangent * cos(angle) + bitangent * sin(angle));
         uint2 oct = min((uint2)(saturate(OctEncode(ray)) * 15.0f), 15u);
@@ -93,18 +93,22 @@ void main(uint3 groupId : SV_GroupID, uint lane : SV_GroupIndex)
     if (lane < 16u)
     {
         uint prefix = 0u;
-        [unroll]
-        for (uint i = 0u; i < 16u; ++i)
+        [unroll] for (uint i = 0u; i < 16u; ++i)
         {
-            if (i < lane) prefix += BinCounts[i];
+            if (i < lane)
+            {
+                prefix += BinCounts[i];
+            }
         }
         BinOffsets[lane] = prefix;
     }
     if (lane == 0u)
     {
         uint total = 0u;
-        [unroll]
-        for (uint i = 0u; i < 16u; ++i) total += BinCounts[i];
+        [unroll] for (uint i = 0u; i < 16u; ++i)
+        {
+            total += BinCounts[i];
+        }
         ValidCount = total;
     }
     GroupMemoryBarrierWithGroupSync();
@@ -124,4 +128,3 @@ void main(uint3 groupId : SV_GroupID, uint lane : SV_GroupIndex)
     }
     RayOrder[tileIndex * 64u + destination] = valid ? (pixel.y * FullExtent.x + pixel.x) : 0xffffffffu;
 }
-

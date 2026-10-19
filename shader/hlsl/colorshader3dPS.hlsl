@@ -12,26 +12,29 @@ void main(in PSInput3D In, out float4 outDiffuse : SV_Target)
     if (UseNormalMap != 0)
     {
         float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
-        float3 tangent = SafeNormalizeCommon(mul(float3(1.0f, 0.0f, 0.0f), (float3x3) World), float3(1.0f, 0.0f, 0.0f));
-        float3 bitangent = SafeNormalizeCommon(mul(float3(0.0f, -1.0f, 0.0f), (float3x3) World), float3(0.0f, 0.0f, 1.0f));
-        normal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal, normal);
+        float3 tangent = SafeNormalizeCommon(mul(float3(1.0f, 0.0f, 0.0f), (float3x3)World), float3(1.0f, 0.0f, 0.0f));
+        float3 bitangent =
+            SafeNormalizeCommon(mul(float3(0.0f, -1.0f, 0.0f), (float3x3)World), float3(0.0f, 0.0f, 1.0f));
+        normal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal,
+                                     normal);
     }
-    
+
     float3 lightDirection;
     float3 lightColor;
     float lightAttenuation;
     float volumeScatter;
     float rangeBlend;
-    ResolveLightAggregate(In.WorldPos, In.Position.xy, lightDirection, lightColor, lightAttenuation, volumeScatter, rangeBlend);
+    ResolveLightAggregate(In.WorldPos, In.Position.xy, lightDirection, lightColor, lightAttenuation, volumeScatter,
+                          rangeBlend);
     float lightIntensity = 1.0f;
-    
+
     if (UseTexture)
     {
         baseColor *= g_Texture.Sample(g_SamplerState, In.TexCoord);
     }
     baseColor.a *= saturate(MaterialAlpha);
     clip(baseColor.a - (1.0f / 255.0f));
-    
+
     float lighting = saturate(dot(normal, lightDirection));
     float shadowVisibility = SampleShadowMap(In.WorldPos, normal, lightDirection);
     float castShadow = saturate(1.0f - shadowVisibility);
@@ -42,4 +45,3 @@ void main(in PSInput3D In, out float4 outDiffuse : SV_Target)
     lit += lightColor * volumeScatter;
     outDiffuse = float4(lit * baseColor.a, baseColor.a);
 }
-

@@ -14,113 +14,113 @@
 
 namespace
 {
-std::filesystem::path root;
-std::vector<std::filesystem::path> files;
-std::vector<AssetHandle> handles;
-MaterialAssetData material;
-AssetHandle surface = 0, texture = 0, mesh = 0, broken = 0;
-uint64_t materialRevision = 0;
-uint64_t colorHash = 0;
-uint64_t cacheHits = 0;
-unsigned int stage = 0, failures = 0;
-bool complete = false;
-size_t entityCount = 0;
-UINT renderedBuffer = 0;
-XMFLOAT2 surfaceCell{};
-bool surfaceSelected = false;
-UINT inputStep = 0, visibleCells = 0, maximumVisibleCells = 0;
-ComPtr<ID3D12Resource> existingTexture;
+    std::filesystem::path root;
+    std::vector<std::filesystem::path> files;
+    std::vector<AssetHandle> handles;
+    MaterialAssetData material;
+    AssetHandle surface = 0, texture = 0, mesh = 0, broken = 0;
+    uint64_t materialRevision = 0;
+    uint64_t colorHash = 0;
+    uint64_t cacheHits = 0;
+    unsigned int stage = 0, failures = 0;
+    bool complete = false;
+    size_t entityCount = 0;
+    UINT renderedBuffer = 0;
+    XMFLOAT2 surfaceCell{};
+    bool surfaceSelected = false;
+    UINT inputStep = 0, visibleCells = 0, maximumVisibleCells = 0;
+    ComPtr<ID3D12Resource> existingTexture;
 
-void Check(bool condition, const char* name)
-{
-    WriteGraphicsLog("Thumbnail validation: %s %s\n", condition ? "PASS" : "FAIL", name);
-    if (!condition)
+    void Check(bool condition, const char* name)
     {
-        ++failures;
-    }
-}
-
-bool MakeImage(const std::filesystem::path& path, UINT width, UINT height, uint32_t color)
-{
-    DirectX::ScratchImage image;
-    if (FAILED(image.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, width, height, 1, 1)))
-    {
-        return false;
-    }
-    const auto* pixels = image.GetImage(0, 0, 0);
-    for (UINT row = 0; row < height; ++row)
-    {
-        auto* line = reinterpret_cast<uint32_t*>(pixels->pixels + row * pixels->rowPitch);
-        for (UINT column = 0; column < width; ++column)
+        WriteGraphicsLog("Thumbnail validation: %s %s\n", condition ? "PASS" : "FAIL", name);
+        if (!condition)
         {
-            line[column] = color;
+            ++failures;
         }
     }
-    if (path.extension() == ".dds")
-    {
-        return SUCCEEDED(DirectX::SaveToDDSFile(*pixels, DirectX::DDS_FLAGS_NONE, path.c_str()));
-    }
-    if (path.extension() == ".tga")
-    {
-        return SUCCEEDED(DirectX::SaveToTGAFile(*pixels, path.c_str()));
-    }
-    return SUCCEEDED(DirectX::SaveToWICFile(
-        *pixels, DirectX::WIC_FLAGS_NONE,
-        DirectX::GetWICCodec(path.extension() == ".jpg" ? DirectX::WIC_CODEC_JPEG : DirectX::WIC_CODEC_PNG),
-        path.c_str()));
-}
 
-AssetHandle Register(const std::filesystem::path& path)
-{
-    std::string error;
-    const auto handle = MaterialManager::Registry().Register(path, AssetRegistry::Classify(path), error);
-    Check(handle != 0, "fixture GUID registration");
-    handles.push_back(handle);
-    files.push_back(path);
-    files.emplace_back(path.wstring() + L".meta");
-    return handle;
-}
+    bool MakeImage(const std::filesystem::path& path, UINT width, UINT height, uint32_t color)
+    {
+        DirectX::ScratchImage image;
+        if (FAILED(image.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, width, height, 1, 1)))
+        {
+            return false;
+        }
+        const auto* pixels = image.GetImage(0, 0, 0);
+        for (UINT row = 0; row < height; ++row)
+        {
+            auto* line = reinterpret_cast<uint32_t*>(pixels->pixels + row * pixels->rowPitch);
+            for (UINT column = 0; column < width; ++column)
+            {
+                line[column] = color;
+            }
+        }
+        if (path.extension() == ".dds")
+        {
+            return SUCCEEDED(DirectX::SaveToDDSFile(*pixels, DirectX::DDS_FLAGS_NONE, path.c_str()));
+        }
+        if (path.extension() == ".tga")
+        {
+            return SUCCEEDED(DirectX::SaveToTGAFile(*pixels, path.c_str()));
+        }
+        return SUCCEEDED(DirectX::SaveToWICFile(
+            *pixels, DirectX::WIC_FLAGS_NONE,
+            DirectX::GetWICCodec(path.extension() == ".jpg" ? DirectX::WIC_CODEC_JPEG : DirectX::WIC_CODEC_PNG),
+            path.c_str()));
+    }
 
-uint64_t HashImage(const ThumbnailHandle& thumbnail)
-{
-    RenderCapture::TextureData pixels;
-    if (!thumbnail.Image || !RenderCapture::ReadTexture(thumbnail.Image->Resource.Get(), pixels))
+    AssetHandle Register(const std::filesystem::path& path)
     {
-        return 0;
+        std::string error;
+        const auto handle = MaterialManager::Registry().Register(path, AssetRegistry::Classify(path), error);
+        Check(handle != 0, "fixture GUID registration");
+        handles.push_back(handle);
+        files.push_back(path);
+        files.emplace_back(path.wstring() + L".meta");
+        return handle;
     }
-    uint64_t hash = 1469598103934665603ull;
-    for (auto byte : pixels.Bytes)
-    {
-        hash = (hash ^ byte) * 1099511628211ull;
-    }
-    return hash;
-}
 
-void CaptureBrowser()
-{
-    RenderCapture::TextureData pixels;
-    auto* resource = GraphicsDevice::GetBackBuffer(renderedBuffer);
-    if (!resource || !RenderCapture::ReadTextureMip(resource, pixels, 0, D3D12_RESOURCE_STATE_PRESENT))
+    uint64_t HashImage(const ThumbnailHandle& thumbnail)
     {
-        return;
+        RenderCapture::TextureData pixels;
+        if (!thumbnail.Image || !RenderCapture::ReadTexture(thumbnail.Image->Resource.Get(), pixels))
+        {
+            return 0;
+        }
+        uint64_t hash = 1469598103934665603ull;
+        for (auto byte : pixels.Bytes)
+        {
+            hash = (hash ^ byte) * 1099511628211ull;
+        }
+        return hash;
     }
-    DirectX::ScratchImage image;
-    if (FAILED(image.Initialize2D(pixels.Format, pixels.Width, pixels.Height, 1, 1)))
+
+    void CaptureBrowser()
     {
-        return;
+        RenderCapture::TextureData pixels;
+        auto* resource = GraphicsDevice::GetBackBuffer(renderedBuffer);
+        if (!resource || !RenderCapture::ReadTextureMip(resource, pixels, 0, D3D12_RESOURCE_STATE_PRESENT))
+        {
+            return;
+        }
+        DirectX::ScratchImage image;
+        if (FAILED(image.Initialize2D(pixels.Format, pixels.Width, pixels.Height, 1, 1)))
+        {
+            return;
+        }
+        const auto* destination = image.GetImage(0, 0, 0);
+        for (UINT row = 0; row < pixels.Height; ++row)
+        {
+            memcpy(destination->pixels + row * destination->rowPitch, pixels.Bytes.data() + row * pixels.RowPitch,
+                   destination->rowPitch);
+        }
+        Check(SUCCEEDED(DirectX::SaveToWICFile(*destination, DirectX::WIC_FLAGS_NONE,
+                                               DirectX::GetWICCodec(DirectX::WIC_CODEC_PNG),
+                                               L"build/thumbnail-tests/browser.png")),
+              "capture browser grid");
     }
-    const auto* destination = image.GetImage(0, 0, 0);
-    for (UINT row = 0; row < pixels.Height; ++row)
-    {
-        memcpy(destination->pixels + row * destination->rowPitch, pixels.Bytes.data() + row * pixels.RowPitch,
-               destination->rowPitch);
-    }
-    Check(SUCCEEDED(DirectX::SaveToWICFile(*destination, DirectX::WIC_FLAGS_NONE,
-                                           DirectX::GetWICCodec(DirectX::WIC_CODEC_PNG),
-                                           L"build/thumbnail-tests/browser.png")),
-          "capture browser grid");
 }
-} // namespace
 
 bool ThumbnailValidation::Enabled()
 {
@@ -155,7 +155,7 @@ void ThumbnailValidation::BeforeFrame(uint64_t frame)
         }
     }
     material.Textures[0] = texture;
-    // Fixture setup may synchronously preload; thumbnail Request/Generate must reuse this resource.
+    // 準備中に同期プリロードされる場合があるため、サムネイルの Request/Generate はそのリソースを再利用する。
     existingTexture = TextureManager::GetTextureResource(TextureManager::LoadTexture(root / "Wide.png"));
     material.Roughness = 0.25f;
     material.Metallic = 0.5f;
@@ -173,7 +173,7 @@ void ThumbnailValidation::BeforeFrame(uint64_t frame)
     broken = Register(root / "Broken.png");
     RenderProfiler::SetWindowVisible(false);
     ImGuiManager::SetAssetBrowserDirectory(root, true);
-    // The fixture also exercises row clipping and large-directory enumeration.
+    // 行のクリッピングと大きなディレクトリの列挙も検証する。
     for (UINT index = 0; index < 1000; ++index)
     {
         const auto path = root / ("Unused_" + std::to_string(index) + ".txt");

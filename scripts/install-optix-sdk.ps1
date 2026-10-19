@@ -23,7 +23,7 @@ function Install-Headers($Name, $Url, $Hash, $ArchiveRoot, $Destination) {
     Write-Output "Installed $Name headers: $target"
 }
 
-# Project-local headers only; CUDA is loaded from the NVIDIA display driver.
+# ヘッダーだけをプロジェクト内へ配置する。CUDAはNVIDIAのディスプレイドライバーから読み込む。
 Install-Headers 'optix' 'https://codeload.github.com/NVIDIA/optix-dev/zip/refs/tags/v9.0.0' `
     '461664FDA99A901D364996BF048A3DAE399CE1162C725E5C1855C336C6C9D0A8' `
     'optix-dev-9.0.0' 'External/OptiX/sdk'

@@ -11,16 +11,16 @@ struct CloudLayerParameters
     float4 Wind;
 };
 
-// Explicit float4/uint4 groups match CloudRenderer::Constants and 16-byte packing.
+// 明示的な float4/uint4 の組で CloudRenderer::Constants と 16 バイトのパッキングに合わせる。
 cbuffer CloudParameters : register(b9)
 {
-    float4 CloudLayer;       // bottom, top, coverage, density multiplier
-    float4 CloudShape;       // base scale, detail scale, erosion, extinction
-    float4 CloudLighting;    // phase g, ambient strength, powder, jitter
-    float4 CloudWind;        // wrapped base UV offset (xy), detail UV offset (zw)
-    uint4 CloudQuality;     // view steps, light steps, debug mode, layer count
-    float4 CloudExtent;      // full width/height, cloud width/height
-    float4 CloudTrace;       // max distance, noise slice, enabled, shadows enabled
+    float4 CloudLayer;    // 下端、上端、被覆率、密度の倍率
+    float4 CloudShape;    // 基本スケール、詳細スケール、浸食、消散
+    float4 CloudLighting; // 位相関数の g、環境光の強度、パウダー効果、ジッター
+    float4 CloudWind;     // ラップ済みの基本 UV オフセット（xy）、詳細 UV オフセット（zw）
+    uint4 CloudQuality;   // 視線のステップ数、光のステップ数、デバッグモード、レイヤー数
+    float4 CloudExtent;   // 全体の幅と高さ、雲の幅と高さ
+    float4 CloudTrace;    // 最大距離、ノイズスライス、有効フラグ、影の有効フラグ
     CloudLayerParameters CloudAdditionalLayers[3];
 };
 
@@ -69,13 +69,13 @@ void SortCloudIntervalPair(inout float2 nearInterval, inout float2 farInterval)
     }
 }
 
-// Sorted, merged occupied intervals: skip clear gaps and integrate overlaps only once.
+// 占有区間をソートして結合し、空の隙間を飛ばして重複部分は一度だけ積分する。
 uint CloudIntervals(float3 origin, float3 direction, float limit, out float2 intervals[4])
 {
     uint count = 0;
     [unroll] for (uint clearIndex = 0; clearIndex < 4; ++clearIndex)
     {
-        // Empty intervals sort after every occupied interval (whose start is < limit).
+        // 空の区間は、開始位置が limit より小さい全占有区間の後に並べる。
         intervals[clearIndex] = float2(limit, limit);
     }
     [loop] for (uint index = 0; index < CloudQuality.w; ++index)
@@ -110,7 +110,7 @@ uint CloudIntervals(float3 origin, float3 direction, float limit, out float2 int
     {
         return count;
     }
-    // A fixed four-input sorting network avoids dynamically indexed insertion loops in FXC.
+    // 固定の 4 入力ソートネットワークで、FXC の動的インデックス付き挿入ループを避ける。
     SortCloudIntervalPair(intervals[0], intervals[1]);
     SortCloudIntervalPair(intervals[2], intervals[3]);
     SortCloudIntervalPair(intervals[0], intervals[2]);
@@ -146,7 +146,7 @@ float CloudLayerDensity(float3 worldPosition, CloudLayerParameters layer, uint i
         return 0;
     }
     float gradient = smoothstep(0, 0.15, height) * (1 - smoothstep(0.7, 1, height));
-    // Fixed per-slot offsets decorrelate layers without generating more noise volumes.
+    // スロットごとの固定オフセットで、ノイズボリュームを増やさずレイヤー間の相関を除く。
     float3 noiseOffset = float3(0.173, 0.367, 0.619) * index;
     float3 baseUv = worldPosition * layer.Shape.x + noiseOffset;
     baseUv.xz -= layer.Wind.xy;
@@ -176,11 +176,13 @@ float CloudDensity(float3 worldPosition)
     }
     return density;
 }
+
 float CloudHG(float cosine)
 {
     float g = CloudLighting.x;
     return (1 - g * g) / (12.566370614 * pow(max(1 + g * g - 2 * g * cosine, 0.001), 1.5));
 }
+
 float CloudLightTransmittance(float3 position, float3 towardSun)
 {
     float2 intervals[4];
@@ -202,8 +204,8 @@ float CloudLightTransmittance(float3 position, float3 towardSun)
     return exp(-opticalDepth * CloudShape.w);
 }
 
-// Average four equal-area samples on the solar disc (angular radius ~0.266 degrees).
-// The same incident-light model is used inside clouds and at surface receivers.
+// 太陽円盤の等面積サンプル 4 個を平均する（角半径は約 0.266 度）。
+// 雲の内部と受光面で同じ入射光モデルを使う。
 float CloudSolarTransmittance(float3 position, float3 towardSun)
 {
     float3 tangent = normalize(cross(abs(towardSun.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0), towardSun));
@@ -214,24 +216,33 @@ float CloudSolarTransmittance(float3 position, float3 towardSun)
     {
         float2 offset = float2((sample & 1) ? 1 : -1, (sample & 2) ? 1 : -1) * discOffset;
         float3 direction = normalize(towardSun + tangent * offset.x + bitangent * offset.y);
-        if (direction.y > 0) transmission += CloudLightTransmittance(position, direction);
+        if (direction.y > 0)
+        {
+            transmission += CloudLightTransmittance(position, direction);
+        }
     }
     return transmission * 0.25;
 }
 
-// Index+1 is written by the CPU for the same Sun entity used by the sky.
+// 空と同じ Sun エンティティについて、CPU が Index+1 を書き込む。
 int CloudSunIndex()
 {
     int index = (int)round(SkySunDirection.w) - 1;
     return index >= 0 && index < min((int)LightCount.x, 160) ? index : -1;
 }
+
 float CloudSunVisibility(float3 position)
 {
-    if (CloudTrace.z < 0.5 || CloudTrace.w < 0.5 || CloudSunIndex() < 0) return 1;
+    if (CloudTrace.z < 0.5 || CloudTrace.w < 0.5 || CloudSunIndex() < 0)
+    {
+        return 1;
+    }
     float3 towardSun = SafeNormalizeCommon(SkySunDirection.xyz, float3(0, 1, 0));
-    if (towardSun.y <= 0) return 0; // Opaque planet blocks solar rays below the horizon.
+    if (towardSun.y <= 0)
+    {
+        return 0; // 不透明な惑星が地平線より下からの太陽光を遮る。
+    }
     return CloudSolarTransmittance(position, towardSun);
 }
 
 #endif
-

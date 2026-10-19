@@ -6,7 +6,7 @@
 
 namespace
 {
-EditorDescriptorPool pool(RendererState::g_kTHUMBNAIL_DESCRIPTOR_COUNT);
+    EditorDescriptorPool pool(RendererState::g_kTHUMBNAIL_DESCRIPTOR_COUNT);
 }
 
 EditorDescriptorLease::~EditorDescriptorLease()

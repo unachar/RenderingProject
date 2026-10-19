@@ -5,7 +5,7 @@
 #include <mutex>
 #include <sstream>
 
-// CachedPSO is a driver-validated hint. Cache rejection retries without a blob.
+// CachedPSO はドライバーが検証するヒント。拒否されたらバイナリなしで再試行する。
 class PersistentPsoCache final
 {
     struct Key

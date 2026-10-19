@@ -9,7 +9,6 @@ float4 main(PSInputPostProcess input) : SV_TARGET
 {
     float4 color = SceneTexture.Sample(TextureSampler, input.TexCoord);
 
-
     float3 sepiaColor;
     sepiaColor.r = dot(color.rgb, float3(0.393, 0.769, 0.189));
     sepiaColor.g = dot(color.rgb, float3(0.349, 0.686, 0.168));
@@ -20,4 +19,3 @@ float4 main(PSInputPostProcess input) : SV_TARGET
     result.a = 1.0f;
     return result;
 }
-

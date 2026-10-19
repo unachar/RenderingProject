@@ -31,15 +31,15 @@ inline ToonOutlineOptions GetToonOutlinePreset(ToonOutlineMeshMode mode)
 {
     switch (mode)
     {
-    case ToonOutlineMeshMode::Boundary:
-        return {true, false, 180.0f, 0.0010f, 0.0020f};
-    case ToonOutlineMeshMode::HardEdge:
-        return {false, true, 50.0f, 0.0010f, 0.0010f};
-    case ToonOutlineMeshMode::Clean:
-        return {true, true, 70.0f, 0.0030f, 0.0100f};
-    case ToonOutlineMeshMode::Balanced:
-    default:
-        return {true, true, 55.0f, 0.0010f, 0.0020f};
+        case ToonOutlineMeshMode::Boundary:
+            return {true, false, 180.0f, 0.0010f, 0.0020f};
+        case ToonOutlineMeshMode::HardEdge:
+            return {false, true, 50.0f, 0.0010f, 0.0010f};
+        case ToonOutlineMeshMode::Clean:
+            return {true, true, 70.0f, 0.0030f, 0.0100f};
+        case ToonOutlineMeshMode::Balanced:
+        default:
+            return {true, true, 55.0f, 0.0010f, 0.0020f};
     }
 }
 

@@ -114,17 +114,17 @@ const char* Light::GetTypeName(LightType type)
 {
     switch (type)
     {
-    case LightType::Directional:
-        return "Directional";
-    case LightType::Point:
-        return "Point";
-    case LightType::Spot:
-        return "Spot";
-    case LightType::Volume:
-        return "Volume";
-    case LightType::Rect:
-        return "Rect";
-    default:
-        return "Light";
+        case LightType::Directional:
+            return "Directional";
+        case LightType::Point:
+            return "Point";
+        case LightType::Spot:
+            return "Spot";
+        case LightType::Volume:
+            return "Volume";
+        case LightType::Rect:
+            return "Rect";
+        default:
+            return "Light";
     }
 }

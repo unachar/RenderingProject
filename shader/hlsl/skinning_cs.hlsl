@@ -1,9 +1,5 @@
 
 
-
-
-
-
 struct GpuSkinVertex
 {
     float3 Position;
@@ -110,15 +106,11 @@ float3x3 MatrixFromQuaternion(float4 q)
     const float wy = q.w * y2;
     const float wz = q.w * z2;
 
-    return float3x3(
-        1.0f - yy - zz, xy + wz, xz - wy,
-        xy - wz, 1.0f - xx - zz, yz + wx,
-        xz + wy, yz - wx, 1.0f - xx - yy);
+    return float3x3(1.0f - yy - zz, xy + wz, xz - wy, xy - wz, 1.0f - xx - zz, yz + wx, xz + wy, yz - wx,
+                    1.0f - xx - yy);
 }
 
-[numthreads(128, 1, 1)]
-void main(uint3 dispatchId : SV_DispatchThreadID)
-{
+[numthreads(128, 1, 1)] void main(uint3 dispatchId : SV_DispatchThreadID) {
     const uint vertexIndex = dispatchId.x;
 
     uint vertexCount;
@@ -135,22 +127,15 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
 
     GpuSkinVertex input = g_InputVertices[vertexIndex];
 
+    bool validX = input.BoneWeights.x > 0.0f && input.BoneIndices.x >= 0 && (uint)input.BoneIndices.x < boneCount;
+    bool validY = input.BoneWeights.y > 0.0f && input.BoneIndices.y >= 0 && (uint)input.BoneIndices.y < boneCount;
+    bool validZ = input.BoneWeights.z > 0.0f && input.BoneIndices.z >= 0 && (uint)input.BoneIndices.z < boneCount;
+    bool validW = input.BoneWeights.w > 0.0f && input.BoneIndices.w >= 0 && (uint)input.BoneIndices.w < boneCount;
 
-
-    bool validX = input.BoneWeights.x > 0.0f && input.BoneIndices.x >= 0 && (uint) input.BoneIndices.x < boneCount;
-    bool validY = input.BoneWeights.y > 0.0f && input.BoneIndices.y >= 0 && (uint) input.BoneIndices.y < boneCount;
-    bool validZ = input.BoneWeights.z > 0.0f && input.BoneIndices.z >= 0 && (uint) input.BoneIndices.z < boneCount;
-    bool validW = input.BoneWeights.w > 0.0f && input.BoneIndices.w >= 0 && (uint) input.BoneIndices.w < boneCount;
-
-    float4 weights = float4(
-        validX ? input.BoneWeights.x : 0.0f,
-        validY ? input.BoneWeights.y : 0.0f,
-        validZ ? input.BoneWeights.z : 0.0f,
-        validW ? input.BoneWeights.w : 0.0f);
+    float4 weights = float4(validX ? input.BoneWeights.x : 0.0f, validY ? input.BoneWeights.y : 0.0f,
+                            validZ ? input.BoneWeights.z : 0.0f, validW ? input.BoneWeights.w : 0.0f);
 
     const float totalWeight = weights.x + weights.y + weights.z + weights.w;
-
-
 
     if (totalWeight <= 0.0001f)
     {
@@ -180,16 +165,14 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
         const float3 cr0 = (sdefC + r0) * 0.5f;
         const float3 cr1 = (sdefC + r1) * 0.5f;
 
-        const float4x4 m0 = g_BoneMatrices[(uint) input.BoneIndices.x];
-        const float4x4 m1 = g_BoneMatrices[(uint) input.BoneIndices.y];
-        const float4 q0 = QuaternionFromMatrix((float3x3) m0);
-        const float4 q1 = QuaternionFromMatrix((float3x3) m1);
+        const float4x4 m0 = g_BoneMatrices[(uint)input.BoneIndices.x];
+        const float4x4 m1 = g_BoneMatrices[(uint)input.BoneIndices.y];
+        const float4 q0 = QuaternionFromMatrix((float3x3)m0);
+        const float4 q1 = QuaternionFromMatrix((float3x3)m1);
         const float3x3 rotation = MatrixFromQuaternion(QuaternionSlerp(q0, q1, w1));
 
-        const float3 sdefPos =
-            mul(input.Position - sdefC, rotation) +
-            mul(float4(cr0, 1.0f), m0).xyz * w0 +
-            mul(float4(cr1, 1.0f), m1).xyz * w1;
+        const float3 sdefPos = mul(input.Position - sdefC, rotation) + mul(float4(cr0, 1.0f), m0).xyz * w0 +
+                               mul(float4(cr1, 1.0f), m1).xyz * w1;
         const float3 sdefNor = mul(input.Normal, rotation);
 
         const bool invalidSdefPosition = any(sdefPos != sdefPos);
@@ -211,33 +194,31 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
 
     if (validX)
     {
-        const float4x4 m = g_BoneMatrices[(uint) input.BoneIndices.x];
+        const float4x4 m = g_BoneMatrices[(uint)input.BoneIndices.x];
         skinnedPos += weights.x * mul(pos, m);
         skinnedNor += weights.x * mul(nor, m);
     }
     if (validY)
     {
-        const float4x4 m = g_BoneMatrices[(uint) input.BoneIndices.y];
+        const float4x4 m = g_BoneMatrices[(uint)input.BoneIndices.y];
         skinnedPos += weights.y * mul(pos, m);
         skinnedNor += weights.y * mul(nor, m);
     }
     if (validZ)
     {
-        const float4x4 m = g_BoneMatrices[(uint) input.BoneIndices.z];
+        const float4x4 m = g_BoneMatrices[(uint)input.BoneIndices.z];
         skinnedPos += weights.z * mul(pos, m);
         skinnedNor += weights.z * mul(nor, m);
     }
     if (validW)
     {
-        const float4x4 m = g_BoneMatrices[(uint) input.BoneIndices.w];
+        const float4x4 m = g_BoneMatrices[(uint)input.BoneIndices.w];
         skinnedPos += weights.w * mul(pos, m);
         skinnedNor += weights.w * mul(nor, m);
     }
 
     const bool invalidSkinnedPosition =
-        (skinnedPos.w != skinnedPos.w) ||
-        any(skinnedPos.xyz != skinnedPos.xyz) ||
-        abs(skinnedPos.w) <= 0.0001f;
+        (skinnedPos.w != skinnedPos.w) || any(skinnedPos.xyz != skinnedPos.xyz) || abs(skinnedPos.w) <= 0.0001f;
     if (invalidSkinnedPosition)
     {
         SkinnedVertex output;
@@ -260,4 +241,3 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
     output.Diffuse = input.Diffuse;
     g_OutputVertices[vertexIndex] = output;
 }
-

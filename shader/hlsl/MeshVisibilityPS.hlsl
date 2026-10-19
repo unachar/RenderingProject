@@ -18,18 +18,15 @@ uint4 PSMain(PSInput3D input) : SV_Target0
         float3 bitangent = normalize(mul(float3(0.0f, -1.0f, 0.0f), (float3x3)World));
         normal = normalize(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal);
     }
-    if (UseTexture != 0) baseColor *= g_Texture.Sample(g_SamplerState, input.TexCoord);
+    if (UseTexture != 0)
+    {
+        baseColor *= g_Texture.Sample(g_SamplerState, input.TexCoord);
+    }
     clip(baseColor.a - 0.01f);
     MaterialPartShaderParams part = ResolveMaterialPartParams(materialPartId);
     bool usePart = MaterialMode != 1;
-    return PackVisibilityPayload(
-        baseColor.rgb, normal, saturate(input.Position.z),
-        usePart ? part.Basic.x : mMetallic,
-        usePart ? part.Basic.y : mRoughness,
-        usePart ? part.Basic.z : mFresnel,
-        materialPartId,
-        usePart ? part.Shadow0.x : ShadowThreshold,
-        usePart ? part.Shadow0.y : ShadowSoftness,
-        usePart ? part.Shadow0.z : ShadowStrength);
+    return PackVisibilityPayload(baseColor.rgb, normal, saturate(input.Position.z), usePart ? part.Basic.x : mMetallic,
+                                 usePart ? part.Basic.y : mRoughness, usePart ? part.Basic.z : mFresnel, materialPartId,
+                                 usePart ? part.Shadow0.x : ShadowThreshold, usePart ? part.Shadow0.y : ShadowSoftness,
+                                 usePart ? part.Shadow0.z : ShadowStrength);
 }
-

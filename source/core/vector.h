@@ -4,7 +4,9 @@
 class Vector3
 {
   public:
-    float x, y, z;
+    float x;
+    float y;
+    float z;
 
     Vector3() = default;
     Vector3(const Vector3& a) : x(a.x), y(a.y), z(a.z) {};

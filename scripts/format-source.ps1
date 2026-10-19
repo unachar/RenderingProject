@@ -13,10 +13,16 @@ if (-not (Test-Path -LiteralPath $formatterPath)) {
     throw 'clang-format is required. Install the Visual Studio C++ Clang tools or add clang-format to PATH.'
 }
 
-# Keep the bundled DirectX helper and generated LTC lookup tables unchanged.
+# 同梱のDirectXヘルパーと自動生成されたLTC参照テーブルは変更しない。
 $excludedFiles = @('d3dx12.h', 'ltctables.h')
-$sourceFiles = Get-ChildItem (Join-Path $workspace 'source'), (Join-Path $workspace 'tests') `
-    -Recurse -File -Include *.cpp, *.h | Where-Object { $_.Name -notin $excludedFiles }
+$sourceDirectories = @(
+    (Join-Path $workspace 'source'),
+    (Join-Path $workspace 'shader'),
+    (Join-Path $workspace 'tests')
+)
+$sourceFiles = Get-ChildItem $sourceDirectories `
+    -Recurse -File -Include *.cpp, *.h, *.hpp, *.hxx, *.inl, *.hlsl, *.hlsli |
+    Where-Object { $_.Name -notin $excludedFiles }
 $arguments = @('-i')
 if ($Check) {
     $arguments = @('--dry-run', '--Werror')
@@ -27,4 +33,4 @@ foreach ($sourceFile in $sourceFiles) {
         throw "Formatting failed: $($sourceFile.FullName)"
     }
 }
-Write-Output "C++ formatting: $($sourceFiles.Count) files checked."
+Write-Output "C++/HLSL formatting: $($sourceFiles.Count) files checked."

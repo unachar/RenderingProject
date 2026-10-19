@@ -597,12 +597,12 @@ void AnimationModelResource::ApplyPmxOrderedTransforms(const VmdAnimation* anima
     auto axisVectorFromIndex = [](int axisIndex) {
         switch (axisIndex)
         {
-        case 1:
-            return XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-        case 2:
-            return XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
-        default:
-            return XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f);
+            case 1:
+                return XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+            case 2:
+                return XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
+            default:
+                return XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f);
         }
     };
 

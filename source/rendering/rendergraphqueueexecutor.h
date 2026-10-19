@@ -2,9 +2,9 @@
 #include "pch.h"
 #include "rendergraph.h"
 
-// Conservative mixed-queue executor. Passes follow the graph's topological
-// order, with COMMON ownership transfers and GPU fence waits. It intentionally
-// serializes dependent and independent passes; it does not claim GPU overlap.
+// 保守的な複数キュー実行器。グラフのトポロジカル順にパスを実行し、COMMON 状態で所有権を
+// 渡して GPU フェンスで待つ。依存の有無にかかわらずパスは意図的に直列化しており、
+// GPU 処理の並列実行を保証するものではない。
 class RenderGraphQueueExecutor final
 {
     struct Batch
@@ -116,7 +116,7 @@ class RenderGraphQueueExecutor final
                 list->ResourceBarrier(1, &b);
             }
         };
-        // Preflight restrictions before recording or submitting any batch.
+        // バッチの記録・送信前に制約を検査する。
         for (const auto& resource : graph.m_Resources)
         {
             if (resource.Resource && resource.AutomaticBarriers && resource.HasFinalState &&
@@ -187,8 +187,8 @@ class RenderGraphQueueExecutor final
         {
             return false;
         }
-        // Record everything before submission. After the first ExecuteCommandLists,
-        // failures are fatal to this frame and must never trigger duplicate work.
+        // すべて記録してから送信する。最初の ExecuteCommandLists 後の失敗はフレームにとって致命的であり、
+        // 同じ処理を二重に実行してはならない。
         for (auto& batch : frame.Batches)
         {
             auto* queue = batch.Compute ? m_Compute.Get() : m_Graphics.Get();

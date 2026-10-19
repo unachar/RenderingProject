@@ -36,46 +36,46 @@
 
 namespace
 {
-TemporalHistory::State g_PreviousTaaState;
-TemporalHistory::State g_CurrentTaaState;
-bool g_TaaHistoryValid = false;
-bool g_CanReuseTaaHistory = false;
+    TemporalHistory::State g_PreviousTaaState;
+    TemporalHistory::State g_CurrentTaaState;
+    bool g_TaaHistoryValid = false;
+    bool g_CanReuseTaaHistory = false;
 
-struct PostProcessConstants
-{
-    XMFLOAT4 Flags{};
-    XMFLOAT4 PPCameraPos{};
-    XMFLOAT4 HdrFlags{};
-    XMFLOAT4 BloomParams{};
-    XMFLOAT4X4 PPInvViewProjection{};
-    XMFLOAT4X4 PPViewProjection{};
-    XMFLOAT4 RaytracingFlags{};
-    XMFLOAT4 RaytracingSunDirection{};
-    XMFLOAT4 Quality[11]{}; // RenderQuality::Pack
-};
-
-static_assert(sizeof(PostProcessConstants) <= RendererState::g_kPP_CB_ALIGNED_SIZE);
-
-UpscaleMode ResolveUpscaleMode(UINT inputWidth, UINT inputHeight, UINT outputWidth, UINT outputHeight)
-{
-    UpscaleMode mode = RendererSettings::GetUpscaleMode();
-    if (mode == UpscaleMode::Tsr)
+    struct PostProcessConstants
     {
+        XMFLOAT4 Flags{};
+        XMFLOAT4 PPCameraPos{};
+        XMFLOAT4 HdrFlags{};
+        XMFLOAT4 BloomParams{};
+        XMFLOAT4X4 PPInvViewProjection{};
+        XMFLOAT4X4 PPViewProjection{};
+        XMFLOAT4 RaytracingFlags{};
+        XMFLOAT4 RaytracingSunDirection{};
+        XMFLOAT4 Quality[11]{}; // 描画品質設定のビット詰め（RenderQuality::Pack）
+    };
+
+    static_assert(sizeof(PostProcessConstants) <= RendererState::g_kPP_CB_ALIGNED_SIZE);
+
+    UpscaleMode ResolveUpscaleMode(UINT inputWidth, UINT inputHeight, UINT outputWidth, UINT outputHeight)
+    {
+        UpscaleMode mode = RendererSettings::GetUpscaleMode();
+        if (mode == UpscaleMode::Tsr)
+        {
+            return mode;
+        }
+        if (mode == UpscaleMode::Dlss)
+        {
+            return DlssUpscaler::IsRequested() ? UpscaleMode::Dlss : UpscaleMode::Bilateral;
+        }
+        if (!SpatialUpscaler::IsAvailable(mode) ||
+            !SpatialUpscaler::IsScaleSupported(mode, inputWidth, inputHeight, outputWidth, outputHeight))
+        {
+            return UpscaleMode::Bilateral;
+        }
         return mode;
     }
-    if (mode == UpscaleMode::Dlss)
-    {
-        return DlssUpscaler::IsRequested() ? UpscaleMode::Dlss : UpscaleMode::Bilateral;
-    }
-    if (!SpatialUpscaler::IsAvailable(mode) ||
-        !SpatialUpscaler::IsScaleSupported(mode, inputWidth, inputHeight, outputWidth, outputHeight))
-    {
-        return UpscaleMode::Bilateral;
-    }
-    return mode;
-}
 
-} // namespace
+} // 名前空間
 
 void PostProcessPass::UpdateCameraConstants()
 {
@@ -96,8 +96,8 @@ void PostProcessPass::UpdateCameraConstants()
     constants.PPCameraPos = {position.x, position.y, position.z, 1.0f};
     XMStoreFloat4x4(&constants.PPInvViewProjection, XMMatrixTranspose(XMMatrixInverse(nullptr, view * projection)));
     XMStoreFloat4x4(&constants.PPViewProjection, XMMatrixTranspose(view * projection));
-    // Quality / grading / weather block: copied into every fullscreen pass slot and read by
-    // forward shading through the same slot-0 binding (b6).
+    // 品質、カラー調整、天候のブロックを全画面パスの各スロットへコピーする。
+    // フォワードシェーディングも同じスロット0のバインド（b6）を通して読む。
     static float s_QualityTime = 0.0f;
     static unsigned s_QualityFrame = 0;
     const float deltaTime = World::GetRawDeltaTime();
@@ -107,7 +107,7 @@ void PostProcessPass::UpdateCameraConstants()
                         TransparencyEffects::IsRefractionActive());
     if (!PbrLuts::IsAvailable())
     {
-        // Energy compensation and LTC specular need the tables.
+        // エネルギー補償と LTC 鏡面反射にはテーブルが必要。
         constants.Quality[9].x = 0.0f;
         constants.Quality[9].y = 0.0f;
     }
@@ -122,11 +122,11 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
         (uint64_t(TemporalUpscaler::IsInputTaaEnabled()) << 16);
     g_CurrentTaaState = TemporalHistory::Context::Capture(Camera::GetCameraEntity(), m_SceneWidth, m_SceneHeight,
                                                           historyConfiguration, ImGuiManager::GetExposure());
-    // The camera has already used this frame's jitter. History validity must not
-    // rewind that sequence, especially when TSR owns its own color history.
+    // カメラはすでにこのフレームのジッターを使っている。履歴の有効性判定で系列を巻き戻さない。
+    // 特に TSR が独自の色履歴を持つ場合は、この順序を維持する。
     g_CanReuseTaaHistory = TemporalHistory::Evaluate(g_PreviousTaaState, g_CurrentTaaState, g_TaaHistoryValid).CanReuse;
     UpdateCameraConstants();
-    UINT nextConstantSlot = 1; // Slot zero holds the frame camera data used by velocity and AA.
+    UINT nextConstantSlot = 1; // スロット0は速度と AA が使うフレームのカメラデータを保持する。
     auto DrawFullscreenPass = [&](ID3D12PipelineState* pso, D3D12_CPU_DESCRIPTOR_HANDLE targetRtv,
                                   D3D12_GPU_DESCRIPTOR_HANDLE sourceHandle, float intensity, float renderModeFlag,
                                   float deferredLightStrength,
@@ -274,7 +274,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
         return;
     }
 
-    // The dual filter bloom (AdvancedEffects) already added bloom in HDR; avoid doubling it.
+    // AdvancedEffects のデュアルフィルターブルームが HDR に加算済みなので、二重適用を避ける。
     const bool dualBloomReplacesLegacy = config.Type == PostProcessType::BLOOM && AdvancedEffects::IsDualBloomActive();
     ID3D12PipelineState* postProcessPso =
         PsoManager::GetPostProcessPso(dualBloomReplacesLegacy ? PostProcessType::NONE : config.Type);
@@ -309,8 +309,8 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
                                              static_cast<LONG>(atmosphereDesc.Height));
         m_CommandList->RSSetViewports(1, &atmosphereViewport);
         m_CommandList->RSSetScissorRects(1, &atmosphereScissor);
-        // The froxel volume replaces the per-pixel atmosphere ray march (the cleared target
-        // means: no in-scattering, transmittance 1). It is applied after lighting instead.
+        // フロクセルボリュームはピクセル単位の大気レイマーチを置き換える。クリア済みターゲットは
+        // 入射散乱なし、透過率1を表す。実際の適用はライティング後に行う。
         if (!AdvancedEffects::IsFroxelFogActive())
         {
             RenderProfiler::ScopedEvent profile("Atmosphere", m_CommandList.Get());
@@ -404,8 +404,8 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         m_CommandList->ResourceBarrier(1, &toSceneSrv);
         ScreenSpaceEffects::CaptureHistory(m_CommandList.Get(), GetRenderTarget(RenderTargetType::Scene).Get());
-        // Froxel fog, auto exposure, motion blur, DOF, dual filter bloom, lens flare and
-        // rain / snow on the linear HDR scene (before tone mapping).
+        // 線形 HDR シーンにフロクセルフォグ、自動露出、モーションブラー、DOF、ブルーム、
+        // レンズフレア、雨雪をトーンマッピング前に適用する。
         AdvancedEffects::SetBloomRequested(config.Type == PostProcessType::BLOOM);
         AdvancedEffects::Execute(m_CommandList.Get(), GetRenderTarget(RenderTargetType::Scene).Get(),
                                  m_GBufferTargets[static_cast<UINT>(GBufferType::DEPTH)].Get(),
@@ -608,7 +608,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
                                                          D3D12_RESOURCE_STATE_COPY_DEST,
                                                          D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
                 m_CommandList->ResourceBarrier(_countof(toShaderRead), toShaderRead);
-                // TSR advances the shared camera jitter once after reconstruction.
+                // TSR は再構成後に共通カメラのジッターを1回進める。
                 if (!tsrInputTaa)
                 {
                     ++m_TaaFrameIndex;
@@ -679,7 +679,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
 
     if (dlssRendered || tsrRendered)
     {
-        // DLSS has already produced the display-resolution image and antialiasing.
+        // DLSS は表示解像度の画像生成とアンチエイリアスを完了している。
     }
     else if (!needsUpscale)
     {

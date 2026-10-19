@@ -71,8 +71,8 @@ int main()
     assert(Load(path, loaded, key, positions));
     assert(loaded.Primitives == asset.Primitives && loaded.Vertices == asset.Vertices);
     assert(!Load(path, loaded, key + 1, positions));
-    // A different in-range, coplanar triangle still passes structural validation.
-    // The persisted payload must reject this same-length corruption.
+    // 範囲内にある別の同一平面上の三角形でも、構造の検証は通過する。
+    // 保存済みデータの検証では、長さが変わらないこの破損も検出しなければならない。
     auto planar = Build(positions, indices);
     assert(Save(path, planar, key));
     const auto payloadBytes = planar.Meshlets.size() * sizeof(Meshlet) +

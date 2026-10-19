@@ -4,7 +4,7 @@
 #include <cstring>
 #include <stdexcept>
 
-// CPU cache bookkeeping is independently testable; no draw calls or GPU synchronization here.
+// CPU キャッシュの管理は独立してテストできる。ここでは描画や GPU 同期を行わない。
 class GpuSceneSlots
 {
     vector<GPUInstanceData> m_Data;
@@ -90,7 +90,7 @@ class GpuSceneSlots
 
     void SettlePreviousTransforms()
     {
-        // One follow-up update clears velocity on the first stationary frame after a move.
+        // 移動後に初めて静止したフレームで、追従更新を1回行って速度をクリアする。
         for (GPUInstanceID id : m_Moving)
         {
             if (IsActive(id) && memcmp(&m_Data[id].PreviousWorld, &m_Data[id].World, sizeof(m_Data[id].World)) != 0)

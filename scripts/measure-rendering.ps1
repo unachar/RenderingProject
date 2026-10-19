@@ -18,13 +18,15 @@ $savedEnvironment = @{}
 $savedFiles = @{}
 try {
     $savedEnvironment['_CL_'] = [Environment]::GetEnvironmentVariable('_CL_', 'Process')
-    # Match the established validation scripts: embedded debug information avoids
-    # the installed compiler/PDB-manager mismatch without a machine-wide change.
+    # 既存の検証スクリプトに合わせ、デバッグ情報をオブジェクトへ埋め込むことで、
+    # システム全体の設定を変えずに、コンパイラーとPDB管理DLLの不整合を回避する。
     $env:_CL_ = ($savedEnvironment['_CL_'] + ' /Z7').Trim()
     if (-not $SkipBuild) {
         $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
         $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-        if (-not $installation) { throw 'Visual Studio C++ tools are required.' }
+        if (-not $installation) {
+            throw 'Visual Studio C++ tools are required.'
+        }
         $developerCommand = Join-Path $installation 'Common7/Tools/VsDevCmd.bat'
         $command = '"{0}" -no_logo -arch=amd64 -host_arch=amd64 && MSBuild.exe DirectX12.vcxproj /t:Build /p:Configuration={1} /p:Platform=x64 /m:2 /v:quiet /nologo' -f $developerCommand, $Configuration
         & $env:ComSpec /d /c $command *> build/render-benchmark-build.log
@@ -34,8 +36,12 @@ try {
         }
     }
     $defaultExecutable = Join-Path $workspace "bin/x64/$Configuration/DirectX12.exe"
-    if (-not $BaselineExecutable) { $BaselineExecutable = $defaultExecutable }
-    if (-not $CandidateExecutable) { $CandidateExecutable = $defaultExecutable }
+    if (-not $BaselineExecutable) {
+        $BaselineExecutable = $defaultExecutable
+    }
+    if (-not $CandidateExecutable) {
+        $CandidateExecutable = $defaultExecutable
+    }
     $executables = @{
         baseline = (Resolve-Path -LiteralPath $BaselineExecutable).Path
         candidate = (Resolve-Path -LiteralPath $CandidateExecutable).Path
@@ -52,7 +58,11 @@ try {
         if (-not $path.StartsWith($workspace + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
             throw 'Settings backup path is outside the workspace.'
         }
-        $savedFiles[$path] = if (Test-Path -LiteralPath $path) { ,([IO.File]::ReadAllBytes($path)) } else { $null }
+        $savedFiles[$path] = if (Test-Path -LiteralPath $path) {
+            ,([IO.File]::ReadAllBytes($path))
+        } else {
+            $null
+        }
     }
     $env:DX12_VALIDATION_MODE = '1'
     $env:DX12_STARTUP_SMOKE_FRAMES = '0'
@@ -64,46 +74,73 @@ try {
     $driverData = $null
     try {
         $driverData = @(Get-CimInstance Win32_VideoController | Sort-Object PNPDeviceID | Select-Object PNPDeviceID, DriverVersion, Name) | ConvertTo-Json -Compress
-    } catch { $driverData = 'unavailable' }
+    } catch {
+        $driverData = 'unavailable'
+    }
     $session = [Guid]::NewGuid().ToString('N').Substring(0,12)
     $comparisons = @()
     for ($pair = 0; $pair -lt $Pairs; ++$pair) {
-        $order = if ($pair % 2 -eq 0) { @('baseline','candidate') } else { @('candidate','baseline') }
+        $order = if ($pair % 2 -eq 0) {
+            @('baseline','candidate')
+        } else {
+            @('candidate','baseline')
+        }
         $runs = @{}
         foreach ($role in $order) {
-            # Restore the same saved UI/configuration inputs before each process.
+            # 各プロセスの起動前に、保存済みのUIと設定を同じ状態へ戻す。
             foreach ($path in $savedFiles.Keys) {
-                if ($null -ne $savedFiles[$path]) { [IO.File]::WriteAllBytes($path, $savedFiles[$path]) }
-                elseif (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path }
+                if ($null -ne $savedFiles[$path]) {
+                    [IO.File]::WriteAllBytes($path, $savedFiles[$path])
+                }
+                elseif (Test-Path -LiteralPath $path) {
+                    Remove-Item -LiteralPath $path
+                }
             }
             $env:DX12_RENDER_BENCHMARK_RUN = "$session-$pair-$role"
             $run = Join-Path $results $env:DX12_RENDER_BENCHMARK_RUN
             $log = Join-Path $workspace 'init_log.txt'
-            $offset = if (Test-Path -LiteralPath $log) { (Get-Item -LiteralPath $log).Length } else { 0 }
+            $offset = if (Test-Path -LiteralPath $log) {
+                (Get-Item -LiteralPath $log).Length
+            } else {
+                0
+            }
             $process = Start-Process -FilePath $executables[$role] -WorkingDirectory $workspace -WindowStyle Hidden -PassThru
             $deadline = [DateTime]::UtcNow.AddMinutes(20)
             while (-not $process.WaitForExit(1000)) {
-                if ([DateTime]::UtcNow -ge $deadline) { $process.Kill(); throw 'Rendering benchmark exceeded 20 minutes.' }
+                if ([DateTime]::UtcNow -ge $deadline) {
+                    $process.Kill()
+                    throw 'Rendering benchmark exceeded 20 minutes.'
+                }
             }
             $process.Refresh()
             if (Test-Path -LiteralPath $run) {
                 $stream = [IO.File]::OpenRead($log)
                 try {
-                    if ($offset -le $stream.Length) { $null = $stream.Seek($offset, 'Begin') }
+                    if ($offset -le $stream.Length) {
+                        $null = $stream.Seek($offset, 'Begin')
+                    }
                     $reader = [IO.StreamReader]::new($stream)
                     $runLog = $reader.ReadToEnd()
                     $reader.Dispose()
                     [IO.File]::WriteAllText((Join-Path $run 'init_log.txt'), $runLog)
-                } finally { $stream.Dispose() }
+                } finally {
+                    $stream.Dispose()
+                }
             }
-            if ($process.ExitCode -ne 0) { throw "Rendering benchmark failed: $run (exit $($process.ExitCode))" }
+            if ($process.ExitCode -ne 0) {
+                throw "Rendering benchmark failed: $run (exit $($process.ExitCode))"
+            }
             $frames = @(Import-Csv -LiteralPath (Join-Path $run 'frames.csv'))
             $conditions = [ordered]@{}
             foreach ($line in (Get-Content -LiteralPath (Join-Path $run 'metadata.txt'))) {
                 $parts = $line.Split('=',2)
-                if ($parts.Count -eq 2) { $conditions[$parts[0]] = $parts[1] }
+                if ($parts.Count -eq 2) {
+                    $conditions[$parts[0]] = $parts[1]
+                }
             }
-            foreach ($field in @('InputWidth','InputHeight','OutputWidth','OutputHeight')) { $conditions[$field] = $frames[0].$field }
+            foreach ($field in @('InputWidth','InputHeight','OutputWidth','OutputHeight')) {
+                $conditions[$field] = $frames[0].$field
+            }
             $conditions.settings_sha256 = (Get-FileHash -LiteralPath (Join-Path $run 'settings.cfg') -Algorithm SHA256).Hash
             $conditions.os = [Environment]::OSVersion.VersionString
             $conditions.driver = $driverData
@@ -125,9 +162,15 @@ try {
     $comparisons | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $results "$session-comparisons.json") -Encoding UTF8
 } finally {
     foreach ($path in $savedFiles.Keys) {
-        if ($null -ne $savedFiles[$path]) { [IO.File]::WriteAllBytes($path, $savedFiles[$path]) }
-        elseif (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path }
+        if ($null -ne $savedFiles[$path]) {
+            [IO.File]::WriteAllBytes($path, $savedFiles[$path])
+        }
+        elseif (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path
+        }
     }
-    foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
+    foreach ($name in $savedEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process')
+    }
     Pop-Location
 }

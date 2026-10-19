@@ -153,7 +153,7 @@ class RendererState
     static constexpr DXGI_FORMAT m_kDeferredRtvFormats[g_kGBUFFER_COUNT] = {
         DXGI_FORMAT_R8G8B8A8_UNORM,     DXGI_FORMAT_R10G10B10A2_UNORM,  DXGI_FORMAT_R32_FLOAT,
         DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM,
-        DXGI_FORMAT_R16G16B16A16_FLOAT, // Emission RGB and material AO.
+        DXGI_FORMAT_R16G16B16A16_FLOAT, // 発光 RGB とマテリアル AO。
         DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R32G32B32A32_UINT,
         DXGI_FORMAT_R16G16B16A16_FLOAT};
 
@@ -165,7 +165,7 @@ class RendererState
     static constexpr float g_kDEFAULT_RESOLUTION_SCALE = 0.5f;
 
     static constexpr UINT g_kCB_ALIGNED_SIZE = (sizeof(ConstantBuffer3D) + 255) & ~255;
-    // 56 floats of camera/HDR data + 11 float4 of quality settings (renderquality.h).
+    // カメラと HDR の56個の float、および品質設定の11個の float4（renderquality.h）。
     static constexpr UINT g_kPP_CB_ALIGNED_SIZE = (sizeof(float) * (56 + 44) + 255) & ~255;
     static constexpr UINT g_kPP_CB_SLOTS_PER_FRAME = 32;
 
@@ -180,7 +180,7 @@ class RendererState
                                                      16 + 3 + g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS * 2 + 1 +
                                                      g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES * 3 + 1 + 2;
     static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;
-    // The current material includes 15 part overrides (over 2048 bytes).
+    // 現在のマテリアルは15個のパーツ上書きを含み、2048バイトを超える。
     static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 640 + 255) & ~255;
     static constexpr UINT g_kPBR_CB_SLOT_COUNT = g_kMAX_ENTITIES + 1;
     static constexpr UINT g_kPBR_CB_TOTAL_SLOT_COUNT = g_kPBR_CB_SLOT_COUNT * g_kFRAME_COUNT;
@@ -193,8 +193,8 @@ class RendererState
     static constexpr UINT g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION = g_kSHADOW_MAP_SIZE / g_kVIRTUAL_SHADOW_PAGE_SIZE;
     static_assert((g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION & (g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION - 1)) == 0,
                   "VSM ring addressing requires a power-of-two physical page grid");
-    // Velocity and outline passes can each need a distinct copy per entity;
-    // the main-pass upload must not be overwritten after its draw is recorded.
+    // 速度パスと輪郭線パスは、各エンティティに個別のコピーを必要とする場合がある。
+    // メインパスのアップロードは、描画を記録した後に上書きしてはならない。
     static constexpr UINT g_kTRANSIENT_CB_SLOT_COUNT = g_kMAX_ENTITIES * 2 + 2048;
     static constexpr UINT g_kTRANSIENT_CB_START_INDEX = g_kMAX_ENTITIES;
     static constexpr UINT g_kCBV_PER_FRAME_COUNT = g_kMAX_ENTITIES + g_kTRANSIENT_CB_SLOT_COUNT;
@@ -248,24 +248,24 @@ class RendererState
     static constexpr UINT g_kTRANSMITTANCE_SHADOW_LAYERS = 4;
     static constexpr UINT g_kTRANSMITTANCE_SHADOW_SIZE = 512;
     static constexpr UINT g_kTRANSMITTANCE_SHADOW_SRV_START = g_kMATERIAL_PREVIEW_SRV_INDEX + 2;
-    // Per-frame glass tables: mesh metadata, raw vertices, raw indices, base textures.
+    // フレームごとのガラステーブル：メッシュ情報、生の頂点、生のインデックス、ベーステクスチャ。
     static constexpr UINT g_kGLASS_MAX_MESHES = 16384;
     static constexpr UINT g_kGLASS_FRAME_DESCRIPTORS = 1 + 3 * g_kGLASS_MAX_MESHES;
     static constexpr UINT g_kGLASS_DESCRIPTOR_START =
         g_kTRANSMITTANCE_SHADOW_SRV_START + 3 + g_kTRANSMITTANCE_SHADOW_LAYERS * g_kMAX_SHADOW_LIGHTS;
     static constexpr UINT g_kENGINE_DESCRIPTOR_END =
         g_kGLASS_DESCRIPTOR_START + g_kFRAME_COUNT * g_kGLASS_FRAME_DESCRIPTORS - 1;
-    // Reserved after DXR/NRD/reflection bindings in the existing engine heap.
+    // 既存エンジンヒープの DXR/NRD/反射バインドの後に予約する。
     static constexpr UINT g_kCLOUD_DESCRIPTOR_START = g_kHIZ_MIP_SRV_START_INDEX + 2 * g_kHIZ_MAX_MIPS + 48;
     static_assert(g_kCLOUD_DESCRIPTOR_START + 4 + 2 * g_kFRAME_COUNT <= g_kENGINE_DESCRIPTOR_END);
-    // Atmosphere LUT: (sky scattering, sky transmission) per frame slot + one null pair.
+    // 大気 LUT：フレームスロットごとの（空の散乱、透過率）と1組の null ペア。
     static constexpr UINT g_kATMOSPHERE_LUT_DESCRIPTOR_START = g_kCLOUD_DESCRIPTOR_START + 16;
     static constexpr UINT g_kATMOSPHERE_LUT_DESCRIPTOR_COUNT = 2 * g_kFRAME_COUNT + 2;
     static_assert(g_kCLOUD_DESCRIPTOR_START + 4 + 2 * g_kFRAME_COUNT <= g_kATMOSPHERE_LUT_DESCRIPTOR_START);
     static_assert(g_kATMOSPHERE_LUT_DESCRIPTOR_START + g_kATMOSPHERE_LUT_DESCRIPTOR_COUNT <=
                       g_kMATERIAL_PREVIEW_SRV_INDEX,
                   "Atmosphere LUT descriptors overlap the material preview range");
-    // Render quality resources: DFG LUT, LTC tables, OIT accumulation / revealage, bloom.
+    // 描画品質のリソース：DFG LUT、LTC テーブル、OIT 蓄積値・透過残率、ブルーム。
     static constexpr UINT g_kQUALITY_DESCRIPTOR_START =
         g_kATMOSPHERE_LUT_DESCRIPTOR_START + g_kATMOSPHERE_LUT_DESCRIPTOR_COUNT + 8;
     static constexpr UINT g_kQUALITY_DESCRIPTOR_COUNT = 16;

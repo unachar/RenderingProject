@@ -1288,8 +1288,8 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\rendering\thumbnailpreviewcontext.h" />
     <ClInclude Include="source\rendering\thumbnailmeshio.h" />
   </ItemGroup>
-  <!-- MSVC 14.51.36231 emits LNK1103 with optimized /GL + /Z7 records.
-       Keep /O2, and avoid only whole-program optimization on this affected toolset. -->
+  <!-- MSVC 14.51.36231では、最適化した/GLと/Z7の情報を併用するとLNK1103が発生する。
+       /O2は維持し、この問題があるツールセットでのみプログラム全体の最適化を無効にする。 -->
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64' and '$(VCToolsVersion)'=='14.51.36231'">
     <WholeProgramOptimization>false</WholeProgramOptimization>
   </PropertyGroup>

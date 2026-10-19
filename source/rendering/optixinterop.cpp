@@ -13,127 +13,127 @@
 
 namespace
 {
-struct CudaDriver
-{
-    HMODULE module = nullptr;
+    struct CudaDriver
+    {
+        HMODULE module = nullptr;
 #define CUDA_ENTRY(name) decltype(&name) name = nullptr;
-    CUDA_ENTRY(cuInit)
-    CUDA_ENTRY(cuDeviceGetCount)
-    CUDA_ENTRY(cuDeviceGet)
-    CUDA_ENTRY(cuDeviceGetLuid)
-    CUDA_ENTRY(cuDevicePrimaryCtxRetain)
-    CUDA_ENTRY(cuDevicePrimaryCtxRelease)
-    CUDA_ENTRY(cuCtxPushCurrent)
-    CUDA_ENTRY(cuCtxPopCurrent)
-    CUDA_ENTRY(cuStreamCreate)
-    CUDA_ENTRY(cuStreamDestroy)
-    CUDA_ENTRY(cuStreamSynchronize)
-    CUDA_ENTRY(cuMemAlloc)
-    CUDA_ENTRY(cuMemFree)
-    CUDA_ENTRY(cuImportExternalMemory)
-    CUDA_ENTRY(cuExternalMemoryGetMappedBuffer)
-    CUDA_ENTRY(cuDestroyExternalMemory)
-    CUDA_ENTRY(cuImportExternalSemaphore)
-    CUDA_ENTRY(cuDestroyExternalSemaphore)
-    CUDA_ENTRY(cuWaitExternalSemaphoresAsync)
-    CUDA_ENTRY(cuSignalExternalSemaphoresAsync)
+        CUDA_ENTRY(cuInit)
+        CUDA_ENTRY(cuDeviceGetCount)
+        CUDA_ENTRY(cuDeviceGet)
+        CUDA_ENTRY(cuDeviceGetLuid)
+        CUDA_ENTRY(cuDevicePrimaryCtxRetain)
+        CUDA_ENTRY(cuDevicePrimaryCtxRelease)
+        CUDA_ENTRY(cuCtxPushCurrent)
+        CUDA_ENTRY(cuCtxPopCurrent)
+        CUDA_ENTRY(cuStreamCreate)
+        CUDA_ENTRY(cuStreamDestroy)
+        CUDA_ENTRY(cuStreamSynchronize)
+        CUDA_ENTRY(cuMemAlloc)
+        CUDA_ENTRY(cuMemFree)
+        CUDA_ENTRY(cuImportExternalMemory)
+        CUDA_ENTRY(cuExternalMemoryGetMappedBuffer)
+        CUDA_ENTRY(cuDestroyExternalMemory)
+        CUDA_ENTRY(cuImportExternalSemaphore)
+        CUDA_ENTRY(cuDestroyExternalSemaphore)
+        CUDA_ENTRY(cuWaitExternalSemaphoresAsync)
+        CUDA_ENTRY(cuSignalExternalSemaphoresAsync)
 #undef CUDA_ENTRY
 
-    bool Load()
-    {
-        module = LoadLibraryExW(L"nvcuda.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-        if (!module)
+        bool Load()
         {
-            return false;
-        }
+            module = LoadLibraryExW(L"nvcuda.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+            if (!module)
+            {
+                return false;
+            }
 #define CUDA_LOAD(name, symbol)                                                                                        \
     name = reinterpret_cast<decltype(name)>(GetProcAddress(module, symbol));                                           \
     if (!name)                                                                                                         \
     {                                                                                                                  \
         return false;                                                                                                  \
     }
-        CUDA_LOAD(cuInit, "cuInit")
-        CUDA_LOAD(cuDeviceGetCount, "cuDeviceGetCount")
-        CUDA_LOAD(cuDeviceGet, "cuDeviceGet")
-        CUDA_LOAD(cuDeviceGetLuid, "cuDeviceGetLuid")
-        CUDA_LOAD(cuDevicePrimaryCtxRetain, "cuDevicePrimaryCtxRetain")
-        CUDA_LOAD(cuDevicePrimaryCtxRelease, "cuDevicePrimaryCtxRelease_v2")
-        CUDA_LOAD(cuCtxPushCurrent, "cuCtxPushCurrent_v2")
-        CUDA_LOAD(cuCtxPopCurrent, "cuCtxPopCurrent_v2")
-        CUDA_LOAD(cuStreamCreate, "cuStreamCreate")
-        CUDA_LOAD(cuStreamDestroy, "cuStreamDestroy_v2")
-        CUDA_LOAD(cuStreamSynchronize, "cuStreamSynchronize")
-        CUDA_LOAD(cuMemAlloc, "cuMemAlloc_v2")
-        CUDA_LOAD(cuMemFree, "cuMemFree_v2")
-        CUDA_LOAD(cuImportExternalMemory, "cuImportExternalMemory")
-        CUDA_LOAD(cuExternalMemoryGetMappedBuffer, "cuExternalMemoryGetMappedBuffer")
-        CUDA_LOAD(cuDestroyExternalMemory, "cuDestroyExternalMemory")
-        CUDA_LOAD(cuImportExternalSemaphore, "cuImportExternalSemaphore")
-        CUDA_LOAD(cuDestroyExternalSemaphore, "cuDestroyExternalSemaphore")
-        CUDA_LOAD(cuWaitExternalSemaphoresAsync, "cuWaitExternalSemaphoresAsync")
-        CUDA_LOAD(cuSignalExternalSemaphoresAsync, "cuSignalExternalSemaphoresAsync")
+            CUDA_LOAD(cuInit, "cuInit")
+            CUDA_LOAD(cuDeviceGetCount, "cuDeviceGetCount")
+            CUDA_LOAD(cuDeviceGet, "cuDeviceGet")
+            CUDA_LOAD(cuDeviceGetLuid, "cuDeviceGetLuid")
+            CUDA_LOAD(cuDevicePrimaryCtxRetain, "cuDevicePrimaryCtxRetain")
+            CUDA_LOAD(cuDevicePrimaryCtxRelease, "cuDevicePrimaryCtxRelease_v2")
+            CUDA_LOAD(cuCtxPushCurrent, "cuCtxPushCurrent_v2")
+            CUDA_LOAD(cuCtxPopCurrent, "cuCtxPopCurrent_v2")
+            CUDA_LOAD(cuStreamCreate, "cuStreamCreate")
+            CUDA_LOAD(cuStreamDestroy, "cuStreamDestroy_v2")
+            CUDA_LOAD(cuStreamSynchronize, "cuStreamSynchronize")
+            CUDA_LOAD(cuMemAlloc, "cuMemAlloc_v2")
+            CUDA_LOAD(cuMemFree, "cuMemFree_v2")
+            CUDA_LOAD(cuImportExternalMemory, "cuImportExternalMemory")
+            CUDA_LOAD(cuExternalMemoryGetMappedBuffer, "cuExternalMemoryGetMappedBuffer")
+            CUDA_LOAD(cuDestroyExternalMemory, "cuDestroyExternalMemory")
+            CUDA_LOAD(cuImportExternalSemaphore, "cuImportExternalSemaphore")
+            CUDA_LOAD(cuDestroyExternalSemaphore, "cuDestroyExternalSemaphore")
+            CUDA_LOAD(cuWaitExternalSemaphoresAsync, "cuWaitExternalSemaphoresAsync")
+            CUDA_LOAD(cuSignalExternalSemaphoresAsync, "cuSignalExternalSemaphoresAsync")
 #undef CUDA_LOAD
+            return true;
+        }
+    };
+
+    CudaDriver driver;
+    ComPtr<ID3D12Device> device;
+    CUdevice cudaDevice = 0;
+    CUcontext context = nullptr;
+    CUstream stream = nullptr;
+    OptixDeviceContext optixContext = nullptr;
+    void* optixLibrary = nullptr;
+    bool available = false;
+    std::string status = "OptiX has not been initialized";
+
+    bool Fail(const char* operation, int code)
+    {
+        status = std::string(operation) + " failed (" + std::to_string(code) + ")";
+        WriteGraphicsLog("OptiX: %s\n", status.c_str());
+        return false;
+    }
+
+    struct ContextScope
+    {
+        bool active = false;
+
+        ContextScope()
+        {
+            if (context)
+            {
+                active = driver.cuCtxPushCurrent(context) == CUDA_SUCCESS;
+            }
+        }
+
+        ~ContextScope()
+        {
+            if (active)
+            {
+                CUcontext previous = nullptr;
+                driver.cuCtxPopCurrent(&previous);
+            }
+        }
+    };
+
+    bool Cuda(CUresult result, const char* operation)
+    {
+        if (result != CUDA_SUCCESS)
+        {
+            return Fail(operation, static_cast<int>(result));
+        }
         return true;
     }
-};
 
-CudaDriver driver;
-ComPtr<ID3D12Device> device;
-CUdevice cudaDevice = 0;
-CUcontext context = nullptr;
-CUstream stream = nullptr;
-OptixDeviceContext optixContext = nullptr;
-void* optixLibrary = nullptr;
-bool available = false;
-std::string status = "OptiX has not been initialized";
-
-bool Fail(const char* operation, int code)
-{
-    status = std::string(operation) + " failed (" + std::to_string(code) + ")";
-    WriteGraphicsLog("OptiX: %s\n", status.c_str());
-    return false;
-}
-
-struct ContextScope
-{
-    bool active = false;
-
-    ContextScope()
+    bool Optix(OptixResult result, const char* operation)
     {
-        if (context)
+        if (result != OPTIX_SUCCESS)
         {
-            active = driver.cuCtxPushCurrent(context) == CUDA_SUCCESS;
+            return Fail(operation, static_cast<int>(result));
         }
+        return true;
     }
-
-    ~ContextScope()
-    {
-        if (active)
-        {
-            CUcontext previous = nullptr;
-            driver.cuCtxPopCurrent(&previous);
-        }
-    }
-};
-
-bool Cuda(CUresult result, const char* operation)
-{
-    if (result != CUDA_SUCCESS)
-    {
-        return Fail(operation, static_cast<int>(result));
-    }
-    return true;
-}
-
-bool Optix(OptixResult result, const char* operation)
-{
-    if (result != OPTIX_SUCCESS)
-    {
-        return Fail(operation, static_cast<int>(result));
-    }
-    return true;
-}
-} // namespace
+} // 名前空間
 
 struct OptixInterop::Impl
 {
@@ -176,7 +176,7 @@ struct OptixInterop::Impl
         {
             return;
         }
-        // Resize/destruction is rare; keep both APIs idle before unmapping shared storage.
+        // リサイズと破棄はまれなので、共有ストレージのマップ解除前に両方の API の処理完了を待つ。
         GraphicsDevice::WaitForGpuIdle();
         ContextScope scope;
         if (!scope.active)
@@ -570,8 +570,8 @@ bool OptixInterop::Enqueue(ID3D12CommandQueue* queue, UINT frameIndex)
     signal.params.fence.value = finishedValue;
     if (!Cuda(driver.cuSignalExternalSemaphoresAsync(&impl->semaphore, &signal, 1, stream), "signal CUDA completion"))
     {
-        // Never enqueue a graphics wait unless CUDA has accepted its matching signal.
-        // Drain exceptional partial work before the caller reuses these resources.
+        // 対応するシグナルを CUDA が受理するまで、グラフィックス側の待機を投入しない。
+        // 例外時に一部だけ投入された処理は、呼び出し側がリソースを再利用する前に完了させる。
         driver.cuStreamSynchronize(stream);
         available = false;
         return false;

@@ -15,7 +15,7 @@ class VertexDeformation
 {
   public:
     static bool IsRequested(EntityID entity);
-    // Call once after the safe frame allocator has been reset, before any geometry passes.
+    // 安全なフレームアロケーターのリセット後、ジオメトリの各パスより前に一度だけ呼ぶ。
     static void PrepareFrame(ID3D12GraphicsCommandList* commandList, UINT frameIndex);
     static bool TryResolveMesh(EntityID entity, VertexDeformationView& output);
     static bool TryResolveStaticMesh(EntityID entity, UINT meshIndex, VertexDeformationView& output,

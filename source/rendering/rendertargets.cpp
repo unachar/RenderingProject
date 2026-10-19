@@ -260,8 +260,8 @@ bool RenderTargets::CreateSceneRenderTarget()
         GetRenderTarget(type)->SetName(kRenderTargetNames[i]);
     }
 
-    // Same extent as the scene target: it receives a CopyResource of the opaque scene
-    // before the transparent pass (refraction source).
+    // シーンターゲットと同じ大きさにし、半透明パスの前に不透明シーンを CopyResource で受け取る。
+    // 半透明描画の屈折元として使う。
     auto transparentCopyDesc = CD3DX12_RESOURCE_DESC::Tex2D(m_SceneColorFormat, m_SceneWidth, m_SceneHeight, 1, 1, 1, 0,
                                                             D3D12_RESOURCE_FLAG_NONE);
     HRESULT hr = m_Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &transparentCopyDesc,

@@ -6,8 +6,8 @@
 #include <cstdint>
 #include <span>
 
-// Retirement follows GraphicsDevice's existing frame fences. BeginFrame is called
-// only after the allocator for that swap-chain frame has become safe to reuse.
+// 破棄時期は GraphicsDevice の既存フレームフェンスに従う。BeginFrame は、そのスワップチェーン
+// フレームのアロケーターを安全に再利用できる状態になってから呼ぶ。
 class GpuSceneBuffer
 {
   public:

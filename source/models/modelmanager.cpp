@@ -19,34 +19,34 @@
 
 namespace
 {
-struct SourceWatch
-{
-    std::filesystem::file_time_type Source{}, Settings{}, Lod{};
-    bool Convert = true;
-};
+    struct SourceWatch
+    {
+        std::filesystem::file_time_type Source{}, Settings{}, Lod{};
+        bool Convert = true;
+    };
 
-std::unordered_map<int, SourceWatch> sourceWatches;
+    std::unordered_map<int, SourceWatch> sourceWatches;
 
-struct RetiredModel
-{
-    uint64_t Fence = 0;
-    std::unique_ptr<StaticModelResource> Model;
-};
+    struct RetiredModel
+    {
+        uint64_t Fence = 0;
+        std::unique_ptr<StaticModelResource> Model;
+    };
 
-std::vector<RetiredModel> retiredModels;
+    std::vector<RetiredModel> retiredModels;
 
-std::filesystem::file_time_type Stamp(const std::filesystem::path& path)
-{
-    std::error_code ec;
-    return std::filesystem::last_write_time(path, ec);
+    std::filesystem::file_time_type Stamp(const std::filesystem::path& path)
+    {
+        std::error_code ec;
+        return std::filesystem::last_write_time(path, ec);
+    }
+
+    SourceWatch Watch(const std::string& path, bool convert)
+    {
+        return {Stamp(std::filesystem::u8path(path)), Stamp(std::filesystem::u8path(path + ".vgsettings")),
+                Stamp(std::filesystem::u8path(path + ".lod")), convert};
+    }
 }
-
-SourceWatch Watch(const std::string& path, bool convert)
-{
-    return {Stamp(std::filesystem::u8path(path)), Stamp(std::filesystem::u8path(path + ".vgsettings")),
-            Stamp(std::filesystem::u8path(path + ".lod")), convert};
-}
-} // namespace
 
 vector<unique_ptr<AnimationModelResource>> ModelManager::m_AnimModels;
 vector<unique_ptr<StaticModelResource>> ModelManager::m_StaticModels;
@@ -340,7 +340,7 @@ void ModelManager::UpdateVirtualGeometry()
             }
             else
             {
-                // A compatibility fallback must bypass the derived-cache fast import.
+                // 互換用のフォールバックでは、派生キャッシュによる高速インポートを迂回する。
                 const auto previousMode = GetGeometryRenderingMode();
 
                 struct RestoreMode
@@ -358,7 +358,7 @@ void ModelManager::UpdateVirtualGeometry()
                 GetGeometryRenderingMode() = previousMode;
                 if (!replacement.Succeeded)
                 {
-                    continue; // A partially written source must not replace the last complete mesh.
+                    continue; // 書き込み途中のソースで、最後の完全なメッシュを置き換えない。
                 }
                 retiredModels.push_back({GraphicsDevice::GetPendingSubmissionFence(), std::move(m_StaticModels[id])});
                 m_StaticModels[id] = std::move(m_StaticModels.back());

@@ -8,140 +8,140 @@
 
 namespace
 {
-constexpr UINT kFrames = 3;
-constexpr UINT kMaxDispatches = 128;
-constexpr nrd::Identifier kIdentifier = 0;
+    constexpr UINT kFrames = 3;
+    constexpr UINT kMaxDispatches = 128;
+    constexpr nrd::Identifier kIdentifier = 0;
 
-DXGI_FORMAT ToDxgi(nrd::Format format)
-{
-    constexpr DXGI_FORMAT formats[] = {DXGI_FORMAT_R8_UNORM,
-                                       DXGI_FORMAT_R8_SNORM,
-                                       DXGI_FORMAT_R8_UINT,
-                                       DXGI_FORMAT_R8_SINT,
-                                       DXGI_FORMAT_R8G8_UNORM,
-                                       DXGI_FORMAT_R8G8_SNORM,
-                                       DXGI_FORMAT_R8G8_UINT,
-                                       DXGI_FORMAT_R8G8_SINT,
-                                       DXGI_FORMAT_R8G8B8A8_UNORM,
-                                       DXGI_FORMAT_R8G8B8A8_SNORM,
-                                       DXGI_FORMAT_R8G8B8A8_UINT,
-                                       DXGI_FORMAT_R8G8B8A8_SINT,
-                                       DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
-                                       DXGI_FORMAT_R16_UNORM,
-                                       DXGI_FORMAT_R16_SNORM,
-                                       DXGI_FORMAT_R16_UINT,
-                                       DXGI_FORMAT_R16_SINT,
-                                       DXGI_FORMAT_R16_FLOAT,
-                                       DXGI_FORMAT_R16G16_UNORM,
-                                       DXGI_FORMAT_R16G16_SNORM,
-                                       DXGI_FORMAT_R16G16_UINT,
-                                       DXGI_FORMAT_R16G16_SINT,
-                                       DXGI_FORMAT_R16G16_FLOAT,
-                                       DXGI_FORMAT_R16G16B16A16_UNORM,
-                                       DXGI_FORMAT_R16G16B16A16_SNORM,
-                                       DXGI_FORMAT_R16G16B16A16_UINT,
-                                       DXGI_FORMAT_R16G16B16A16_SINT,
-                                       DXGI_FORMAT_R16G16B16A16_FLOAT,
-                                       DXGI_FORMAT_R32_UINT,
-                                       DXGI_FORMAT_R32_SINT,
-                                       DXGI_FORMAT_R32_FLOAT,
-                                       DXGI_FORMAT_R32G32_UINT,
-                                       DXGI_FORMAT_R32G32_SINT,
-                                       DXGI_FORMAT_R32G32_FLOAT,
-                                       DXGI_FORMAT_R32G32B32_UINT,
-                                       DXGI_FORMAT_R32G32B32_SINT,
-                                       DXGI_FORMAT_R32G32B32_FLOAT,
-                                       DXGI_FORMAT_R32G32B32A32_UINT,
-                                       DXGI_FORMAT_R32G32B32A32_SINT,
-                                       DXGI_FORMAT_R32G32B32A32_FLOAT,
-                                       DXGI_FORMAT_R10G10B10A2_UNORM,
-                                       DXGI_FORMAT_R10G10B10A2_UINT,
-                                       DXGI_FORMAT_R11G11B10_FLOAT,
-                                       DXGI_FORMAT_R9G9B9E5_SHAREDEXP};
-    static_assert(size(formats) == static_cast<size_t>(nrd::Format::MAX_NUM));
-    const auto index = static_cast<size_t>(format);
-    return index < size(formats) ? formats[index] : DXGI_FORMAT_UNKNOWN;
-}
-
-struct Texture
-{
-    ComPtr<ID3D12Resource> Resource;
-    D3D12_RESOURCE_STATES State = D3D12_RESOURCE_STATE_COMMON;
-};
-
-// ---------------------------------------------------------------------------------------------
-// REBLUR tuning. Optional members are assigned only when the linked NRD headers declare them,
-// so the same source builds against neighbouring 4.x SDK revisions without silent misuse.
-// ---------------------------------------------------------------------------------------------
-// Hit distance normalisation shared with RayReflectionsCS.hlsl (REBLUR_FrontEnd_GetNormHitDist).
-constexpr float kHitDistanceA = 3.0f;
-constexpr float kHitDistanceB = 0.1f;
-constexpr float kHitDistanceC = 20.0f;
-
-// Realtime GI: one checkerboard ray per two pixels (0.5 rpp). Stability is obtained from a long,
-// clamped history instead of a wide spatial blur, so geometry edges are not smeared.
-constexpr uint32_t kGiMaxAccumulatedFrames = 40;    // ~0.33 s at 120 fps, anti-lag shortens it on change
-constexpr uint32_t kGiMaxFastAccumulatedFrames = 8; // fast history used for clamping / anti-lag
-constexpr uint32_t kGiMaxStabilizedFrames = 63;     // REBLUR_MAX_HISTORY_FRAME_NUM
-constexpr float kGiMinBlurRadius = 2.0f;            // post-convergence footprint (pixels)
-constexpr float kGiMaxBlurRadius = 32.0f;           // footprint while history is short (pixels)
-constexpr float kGiPrepassBlurRadius = 40.0f;       // pre-pass also resolves the checkerboard holes
-constexpr float kGiFireflyRelativeScale = 1.5f;
-
-template <class Settings> void ApplyHitDistance(Settings& settings, float a, float b, float c)
-{
-    settings.hitDistanceParameters.A = a;
-    settings.hitDistanceParameters.B = b;
-    settings.hitDistanceParameters.C = c;
-}
-
-template <class Settings> void EnableAntiFirefly(Settings& settings)
-{
-    if constexpr (requires(Settings& value) { value.enableAntiFirefly = true; })
+    DXGI_FORMAT ToDxgi(nrd::Format format)
     {
-        settings.enableAntiFirefly = true;
+        constexpr DXGI_FORMAT formats[] = {DXGI_FORMAT_R8_UNORM,
+                                           DXGI_FORMAT_R8_SNORM,
+                                           DXGI_FORMAT_R8_UINT,
+                                           DXGI_FORMAT_R8_SINT,
+                                           DXGI_FORMAT_R8G8_UNORM,
+                                           DXGI_FORMAT_R8G8_SNORM,
+                                           DXGI_FORMAT_R8G8_UINT,
+                                           DXGI_FORMAT_R8G8_SINT,
+                                           DXGI_FORMAT_R8G8B8A8_UNORM,
+                                           DXGI_FORMAT_R8G8B8A8_SNORM,
+                                           DXGI_FORMAT_R8G8B8A8_UINT,
+                                           DXGI_FORMAT_R8G8B8A8_SINT,
+                                           DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+                                           DXGI_FORMAT_R16_UNORM,
+                                           DXGI_FORMAT_R16_SNORM,
+                                           DXGI_FORMAT_R16_UINT,
+                                           DXGI_FORMAT_R16_SINT,
+                                           DXGI_FORMAT_R16_FLOAT,
+                                           DXGI_FORMAT_R16G16_UNORM,
+                                           DXGI_FORMAT_R16G16_SNORM,
+                                           DXGI_FORMAT_R16G16_UINT,
+                                           DXGI_FORMAT_R16G16_SINT,
+                                           DXGI_FORMAT_R16G16_FLOAT,
+                                           DXGI_FORMAT_R16G16B16A16_UNORM,
+                                           DXGI_FORMAT_R16G16B16A16_SNORM,
+                                           DXGI_FORMAT_R16G16B16A16_UINT,
+                                           DXGI_FORMAT_R16G16B16A16_SINT,
+                                           DXGI_FORMAT_R16G16B16A16_FLOAT,
+                                           DXGI_FORMAT_R32_UINT,
+                                           DXGI_FORMAT_R32_SINT,
+                                           DXGI_FORMAT_R32_FLOAT,
+                                           DXGI_FORMAT_R32G32_UINT,
+                                           DXGI_FORMAT_R32G32_SINT,
+                                           DXGI_FORMAT_R32G32_FLOAT,
+                                           DXGI_FORMAT_R32G32B32_UINT,
+                                           DXGI_FORMAT_R32G32B32_SINT,
+                                           DXGI_FORMAT_R32G32B32_FLOAT,
+                                           DXGI_FORMAT_R32G32B32A32_UINT,
+                                           DXGI_FORMAT_R32G32B32A32_SINT,
+                                           DXGI_FORMAT_R32G32B32A32_FLOAT,
+                                           DXGI_FORMAT_R10G10B10A2_UNORM,
+                                           DXGI_FORMAT_R10G10B10A2_UINT,
+                                           DXGI_FORMAT_R11G11B10_FLOAT,
+                                           DXGI_FORMAT_R9G9B9E5_SHAREDEXP};
+        static_assert(size(formats) == static_cast<size_t>(nrd::Format::MAX_NUM));
+        const auto index = static_cast<size_t>(format);
+        return index < size(formats) ? formats[index] : DXGI_FORMAT_UNKNOWN;
     }
-}
 
-template <class Settings> void ConfigureStableDiffuse(Settings& settings)
-{
-    // TraceDiffuse writes the traced half of each row PACKED into [0, width/2) and alternates the
-    // populated parity with CommonSettings::frameIndex. NRD expects exactly this layout:
-    // "has data" pixels are read from (x >> 1, y), the others are reconstructed in the pre-pass.
-    settings.checkerboardMode = nrd::CheckerboardMode::BLACK;
-    ApplyHitDistance(settings, kHitDistanceA, kHitDistanceB, kHitDistanceC);
-    settings.maxAccumulatedFrameNum = kGiMaxAccumulatedFrames;
-    settings.maxFastAccumulatedFrameNum = kGiMaxFastAccumulatedFrames;
-    settings.minBlurRadius = kGiMinBlurRadius;
-    settings.maxBlurRadius = kGiMaxBlurRadius;
-    settings.fireflySuppressorMinRelativeScale = kGiFireflyRelativeScale;
-    if constexpr (requires(Settings& value) { value.maxStabilizedFrameNum = 1u; })
+    struct Texture
     {
-        settings.maxStabilizedFrameNum = kGiMaxStabilizedFrames;
-    }
-    if constexpr (requires(Settings& value) { value.diffusePrepassBlurRadius = 1.0f; })
-    {
-        settings.diffusePrepassBlurRadius = kGiPrepassBlurRadius;
-    }
-    EnableAntiFirefly(settings);
-}
+        ComPtr<ID3D12Resource> Resource;
+        D3D12_RESOURCE_STATES State = D3D12_RESOURCE_STATE_COMMON;
+    };
 
-void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, D3D12_RESOURCE_STATES& state,
-                D3D12_RESOURCE_STATES target)
-{
-    if (state != target)
+    // ---------------------------------------------------------------------------------------------
+    // REBLUR の調整。任意メンバーは、リンク対象の NRD ヘッダーに宣言がある場合だけ設定し、
+    // 近接する 4.x SDK の版でも、誤った設定を黙って使わずに同じソースをビルドできるようにする。
+    // ---------------------------------------------------------------------------------------------
+    // ヒット距離の正規化は RayReflectionsCS.hlsl（REBLUR_FrontEnd_GetNormHitDist）と共有する。
+    constexpr float kHitDistanceA = 3.0f;
+    constexpr float kHitDistanceB = 0.1f;
+    constexpr float kHitDistanceC = 20.0f;
+
+    // リアルタイム GI は2ピクセルにつき1本のチェッカーボードレイ（0.5 rpp）を使う。
+    // 広い空間ぼかしの代わりに、制限した長い履歴で安定させ、形状の輪郭を保つ。
+    constexpr uint32_t kGiMaxAccumulatedFrames = 40;    // 120 fps で約0.33秒。変化時はアンチラグで短縮する
+    constexpr uint32_t kGiMaxFastAccumulatedFrames = 8; // 制限とアンチラグに使う短期履歴
+    constexpr uint32_t kGiMaxStabilizedFrames = 63;     // 履歴フレーム数の上限（REBLUR_MAX_HISTORY_FRAME_NUM）
+    constexpr float kGiMinBlurRadius = 2.0f;            // 収束後のフィルター範囲（ピクセル）
+    constexpr float kGiMaxBlurRadius = 32.0f;           // 履歴が短い間のフィルター範囲（ピクセル）
+    constexpr float kGiPrepassBlurRadius = 40.0f;       // 前処理でチェッカーボードの欠損も補う
+    constexpr float kGiFireflyRelativeScale = 1.5f;
+
+    template <class Settings> void ApplyHitDistance(Settings& settings, float a, float b, float c)
     {
-        const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, state, target);
-        commands->ResourceBarrier(1, &barrier);
-        state = target;
+        settings.hitDistanceParameters.A = a;
+        settings.hitDistanceParameters.B = b;
+        settings.hitDistanceParameters.C = c;
     }
-    else if (target == D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+
+    template <class Settings> void EnableAntiFirefly(Settings& settings)
     {
-        const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(resource);
-        commands->ResourceBarrier(1, &barrier);
+        if constexpr (requires(Settings& value) { value.enableAntiFirefly = true; })
+        {
+            settings.enableAntiFirefly = true;
+        }
     }
-}
-} // namespace
+
+    template <class Settings> void ConfigureStableDiffuse(Settings& settings)
+    {
+        // TraceDiffuse は各行の追跡済み半分を [0, width/2) に詰めて書き、書き込む側の偶奇を
+        // CommonSettings::frameIndex で交互に変える。NRD が要求する配置は次のとおり。
+        // データのあるピクセルは（x >> 1, y）から読み、残りは前処理で復元する。
+        settings.checkerboardMode = nrd::CheckerboardMode::BLACK;
+        ApplyHitDistance(settings, kHitDistanceA, kHitDistanceB, kHitDistanceC);
+        settings.maxAccumulatedFrameNum = kGiMaxAccumulatedFrames;
+        settings.maxFastAccumulatedFrameNum = kGiMaxFastAccumulatedFrames;
+        settings.minBlurRadius = kGiMinBlurRadius;
+        settings.maxBlurRadius = kGiMaxBlurRadius;
+        settings.fireflySuppressorMinRelativeScale = kGiFireflyRelativeScale;
+        if constexpr (requires(Settings& value) { value.maxStabilizedFrameNum = 1u; })
+        {
+            settings.maxStabilizedFrameNum = kGiMaxStabilizedFrames;
+        }
+        if constexpr (requires(Settings& value) { value.diffusePrepassBlurRadius = 1.0f; })
+        {
+            settings.diffusePrepassBlurRadius = kGiPrepassBlurRadius;
+        }
+        EnableAntiFirefly(settings);
+    }
+
+    void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, D3D12_RESOURCE_STATES& state,
+                    D3D12_RESOURCE_STATES target)
+    {
+        if (state != target)
+        {
+            const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, state, target);
+            commands->ResourceBarrier(1, &barrier);
+            state = target;
+        }
+        else if (target == D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+        {
+            const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(resource);
+            commands->ResourceBarrier(1, &barrier);
+        }
+    }
+} // 名前空間
 
 struct NrdDenoiser::Impl
 {
@@ -346,8 +346,8 @@ struct NrdDenoiser::Impl
         common.cameraJitterPrev[0] = frame.PreviousJitter.x;
         common.cameraJitterPrev[1] = frame.PreviousJitter.y;
         common.frameIndex = frame.Sequence;
-        // NRD otherwise uses its private wall clock, changing checkerboard resolve
-        // and anti-lag weights even for an identical recorded input sequence.
+        // この設定がないと NRD は内部の実時間時計を使うため、同じ記録済み入力でも
+        // チェッカーボードの復元やアンチラグの重みが変わってしまう。
         common.timeDeltaBetweenFrames = frame.StableProfile ? 1000.f / 60.f : 0.f;
         common.motionVectorScale[0] = common.motionVectorScale[1] = 1.f;
         common.motionVectorScale[2] = 0.f;
@@ -388,9 +388,9 @@ struct NrdDenoiser::Impl
         }
         if (Signal == NrdSignal::Diffuse)
         {
-            // The parity must stay FIXED. NRD already alternates it internally with frameIndex
-            // (= frame.Sequence, the same value TraceDiffuse uses), flipping BLACK/WHITE per frame
-            // would make NRD read the empty half of the checkerboard.
+            // 偶奇設定は固定する。NRD 内部ですでに frameIndex による交互切り替えを行う。
+            // frameIndex は TraceDiffuse と同じ frame.Sequence であり、毎フレーム BLACK/WHITE を反転すると
+            // NRD がチェッカーボードの空の半分を読んでしまう。
             nrd::ReblurSettings settings;
             ConfigureStableDiffuse(settings);
             if (frame.StableProfile)
@@ -430,8 +430,8 @@ struct NrdDenoiser::Impl
         }
         if (Signal == NrdSignal::Specular)
         {
-            // Defaults are kept (full-resolution input, no checkerboard). Only isolated
-            // outliers are suppressed so that reflections do not sparkle frame to frame.
+            // 全解像度入力、チェッカーボードなしの既定設定を保つ。
+            // フレーム間で反射がちらつかないよう、孤立した外れ値だけを抑える。
             nrd::ReblurSettings settings;
             ApplyHitDistance(settings, kHitDistanceA, kHitDistanceB, kHitDistanceC);
             EnableAntiFirefly(settings);
@@ -459,7 +459,7 @@ struct NrdDenoiser::Impl
             return false;
         }
 
-        // Validate the entire dispatch sequence before recording commands or changing states.
+        // コマンド記録や状態変更の前に、ディスパッチ列全体を検証する。
         map<ID3D12Resource*, D3D12_RESOURCE_STATES> externalStates;
         for (const auto& texture : {inputs.Motion, inputs.NormalRoughness, inputs.ViewZ, inputs.NoisySignal})
         {
@@ -468,30 +468,30 @@ struct NrdDenoiser::Impl
         const auto resolve = [&](const nrd::ResourceDesc& resource) -> ID3D12Resource* {
             switch (resource.type)
             {
-            case nrd::ResourceType::PERMANENT_POOL:
-                return resource.indexInPool < Permanent.size() ? Permanent[resource.indexInPool].Resource.Get()
-                                                               : nullptr;
-            case nrd::ResourceType::TRANSIENT_POOL:
-                return resource.indexInPool < Transient.size() ? Transient[resource.indexInPool].Resource.Get()
-                                                               : nullptr;
-            case nrd::ResourceType::IN_MV:
-                return inputs.Motion.Resource;
-            case nrd::ResourceType::IN_NORMAL_ROUGHNESS:
-                return inputs.NormalRoughness.Resource;
-            case nrd::ResourceType::IN_VIEWZ:
-                return inputs.ViewZ.Resource;
-            case nrd::ResourceType::IN_PENUMBRA:
-            case nrd::ResourceType::IN_DIFF_HITDIST:
-            case nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST:
-            case nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST:
-                return inputs.NoisySignal.Resource;
-            case nrd::ResourceType::OUT_SHADOW_TRANSLUCENCY:
-            case nrd::ResourceType::OUT_DIFF_HITDIST:
-            case nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST:
-            case nrd::ResourceType::OUT_SPEC_RADIANCE_HITDIST:
-                return Output.Resource.Get();
-            default:
-                return nullptr;
+                case nrd::ResourceType::PERMANENT_POOL:
+                    return resource.indexInPool < Permanent.size() ? Permanent[resource.indexInPool].Resource.Get()
+                                                                   : nullptr;
+                case nrd::ResourceType::TRANSIENT_POOL:
+                    return resource.indexInPool < Transient.size() ? Transient[resource.indexInPool].Resource.Get()
+                                                                   : nullptr;
+                case nrd::ResourceType::IN_MV:
+                    return inputs.Motion.Resource;
+                case nrd::ResourceType::IN_NORMAL_ROUGHNESS:
+                    return inputs.NormalRoughness.Resource;
+                case nrd::ResourceType::IN_VIEWZ:
+                    return inputs.ViewZ.Resource;
+                case nrd::ResourceType::IN_PENUMBRA:
+                case nrd::ResourceType::IN_DIFF_HITDIST:
+                case nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST:
+                case nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST:
+                    return inputs.NoisySignal.Resource;
+                case nrd::ResourceType::OUT_SHADOW_TRANSLUCENCY:
+                case nrd::ResourceType::OUT_DIFF_HITDIST:
+                case nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST:
+                case nrd::ResourceType::OUT_SPEC_RADIANCE_HITDIST:
+                    return Output.Resource.Get();
+                default:
+                    return nullptr;
             }
         };
         for (UINT dispatch = 0; dispatch < count; ++dispatch)

@@ -22,105 +22,105 @@
 
 namespace
 {
-UINT failures = 0;
-AssetHandle emitterMaterial = 0;
-AssetHandle blueTexture = 0;
-EntityID emitter = g_kINVALID_ENTITY;
-EntityID blocker = g_kINVALID_ENTITY;
-filesystem::path fixtureRoot;
-XMFLOAT3 redSignal{}, greenSignal{};
-XMFLOAT3 blueSignal{};
-uint64_t lastFrame = 0;
-bool optixValidation = false;
-bool lumenValidation = false;
-array<double, 81> noiseSum{}, noiseSquareSum{};
-UINT noiseFrames = 0;
+    UINT failures = 0;
+    AssetHandle emitterMaterial = 0;
+    AssetHandle blueTexture = 0;
+    EntityID emitter = g_kINVALID_ENTITY;
+    EntityID blocker = g_kINVALID_ENTITY;
+    filesystem::path fixtureRoot;
+    XMFLOAT3 redSignal{}, greenSignal{};
+    XMFLOAT3 blueSignal{};
+    uint64_t lastFrame = 0;
+    bool optixValidation = false;
+    bool lumenValidation = false;
+    array<double, 81> noiseSum{}, noiseSquareSum{};
+    UINT noiseFrames = 0;
 
-void Check(bool passed, const char* message)
-{
-    if (!passed)
+    void Check(bool passed, const char* message)
     {
-        ++failures;
-    }
-    WriteGraphicsLog("GI validation: %s %s\n", passed ? "PASS" : "FAIL", message);
-}
-
-EntityID Cube(XMFLOAT3 position, XMFLOAT3 scale, AssetHandle material)
-{
-    auto entity = World::CreateEntity()
-                      .Add<TransformComponent>()
-                      .Add<MeshComponent>()
-                      .Add<MaterialComponent>()
-                      .Add<NameComponent>();
-    entity.SetName("GI validation fixture");
-    entity.Get<TransformComponent>().Position = position;
-    entity.Get<TransformComponent>().Scale = scale;
-    entity.Get<TransformComponent>().IsDirty = true;
-    VertexResource mesh;
-    mesh.entityid = entity.GetID();
-    mesh.objectType = ObjectType::CUBE;
-    mesh.color = Color::WHITE;
-    PrimitiveGeometry::CreateObjectVertex(mesh);
-    Check(MaterialManager::Assign(entity.GetID(), 0, material), "assign fixture material");
-    return entity.GetID();
-}
-
-AssetHandle Material(const char* name, MaterialAssetData data)
-{
-    string error;
-    const auto path = fixtureRoot / name;
-    Check(MaterialSerializer::Save(path, data, error), "save fixture material");
-    return MaterialManager::Registry().Register(path, AssetType::Material, error);
-}
-
-XMFLOAT3 SampleReceiver(bool measureNoise = false)
-{
-    RenderCapture::TextureData image;
-    if (!RenderCapture::ReadTexture(RayReflections::GetGiResource(), image))
-    {
-        Check(false, "read GI irradiance");
-        return {};
-    }
-    XMMATRIX view, projection;
-    Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
-    const XMFLOAT3 receiver{0, -0.89f, 0};
-    XMFLOAT3 pixel;
-    XMStoreFloat3(&pixel,
-                  XMVector3Project(XMLoadFloat3(&receiver), 0, 0, static_cast<float>(image.Width),
-                                   static_cast<float>(image.Height), 0, 1, projection, view, XMMatrixIdentity()));
-    XMFLOAT3 sum{};
-    UINT samples = 0;
-    for (int y = -4; y <= 4; ++y)
-    {
-        for (int x = -4; x <= 4; ++x)
+        if (!passed)
         {
-            const int px = static_cast<int>(pixel.x) + x;
-            const int py = static_cast<int>(pixel.y) + y;
-            if (px < 0 || py < 0 || px >= static_cast<int>(image.Width) || py >= static_cast<int>(image.Height))
-            {
-                continue;
-            }
-            const auto* rgb = reinterpret_cast<const uint16_t*>(image.Bytes.data() + py * image.RowPitch + px * 8);
-            sum.x += RenderCapture::HalfToFloat(rgb[0]);
-            sum.y += RenderCapture::HalfToFloat(rgb[1]);
-            sum.z += RenderCapture::HalfToFloat(rgb[2]);
-            if (measureNoise)
-            {
-                const double red = RenderCapture::HalfToFloat(rgb[0]);
-                noiseSum[samples] += red;
-                noiseSquareSum[samples] += red * red;
-            }
-            ++samples;
+            ++failures;
         }
+        WriteGraphicsLog("GI validation: %s %s\n", passed ? "PASS" : "FAIL", message);
     }
-    const float divisor = static_cast<float>(max(samples, 1u));
-    if (measureNoise)
+
+    EntityID Cube(XMFLOAT3 position, XMFLOAT3 scale, AssetHandle material)
     {
-        ++noiseFrames;
+        auto entity = World::CreateEntity()
+                          .Add<TransformComponent>()
+                          .Add<MeshComponent>()
+                          .Add<MaterialComponent>()
+                          .Add<NameComponent>();
+        entity.SetName("GI validation fixture");
+        entity.Get<TransformComponent>().Position = position;
+        entity.Get<TransformComponent>().Scale = scale;
+        entity.Get<TransformComponent>().IsDirty = true;
+        VertexResource mesh;
+        mesh.entityid = entity.GetID();
+        mesh.objectType = ObjectType::CUBE;
+        mesh.color = Color::WHITE;
+        PrimitiveGeometry::CreateObjectVertex(mesh);
+        Check(MaterialManager::Assign(entity.GetID(), 0, material), "assign fixture material");
+        return entity.GetID();
     }
-    return {sum.x / divisor, sum.y / divisor, sum.z / divisor};
+
+    AssetHandle Material(const char* name, MaterialAssetData data)
+    {
+        string error;
+        const auto path = fixtureRoot / name;
+        Check(MaterialSerializer::Save(path, data, error), "save fixture material");
+        return MaterialManager::Registry().Register(path, AssetType::Material, error);
+    }
+
+    XMFLOAT3 SampleReceiver(bool measureNoise = false)
+    {
+        RenderCapture::TextureData image;
+        if (!RenderCapture::ReadTexture(RayReflections::GetGiResource(), image))
+        {
+            Check(false, "read GI irradiance");
+            return {};
+        }
+        XMMATRIX view, projection;
+        Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
+        const XMFLOAT3 receiver{0, -0.89f, 0};
+        XMFLOAT3 pixel;
+        XMStoreFloat3(&pixel,
+                      XMVector3Project(XMLoadFloat3(&receiver), 0, 0, static_cast<float>(image.Width),
+                                       static_cast<float>(image.Height), 0, 1, projection, view, XMMatrixIdentity()));
+        XMFLOAT3 sum{};
+        UINT samples = 0;
+        for (int y = -4; y <= 4; ++y)
+        {
+            for (int x = -4; x <= 4; ++x)
+            {
+                const int px = static_cast<int>(pixel.x) + x;
+                const int py = static_cast<int>(pixel.y) + y;
+                if (px < 0 || py < 0 || px >= static_cast<int>(image.Width) || py >= static_cast<int>(image.Height))
+                {
+                    continue;
+                }
+                const auto* rgb = reinterpret_cast<const uint16_t*>(image.Bytes.data() + py * image.RowPitch + px * 8);
+                sum.x += RenderCapture::HalfToFloat(rgb[0]);
+                sum.y += RenderCapture::HalfToFloat(rgb[1]);
+                sum.z += RenderCapture::HalfToFloat(rgb[2]);
+                if (measureNoise)
+                {
+                    const double red = RenderCapture::HalfToFloat(rgb[0]);
+                    noiseSum[samples] += red;
+                    noiseSquareSum[samples] += red * red;
+                }
+                ++samples;
+            }
+        }
+        const float divisor = static_cast<float>(max(samples, 1u));
+        if (measureNoise)
+        {
+            ++noiseFrames;
+        }
+        return {sum.x / divisor, sum.y / divisor, sum.z / divisor};
+    }
 }
-} // namespace
 
 bool GiValidation::Enabled()
 {
@@ -182,7 +182,7 @@ void GiValidation::BeforeFrame(uint64_t frame)
         blueTexture = MaterialManager::Registry().Register(texturePath, AssetType::Texture, textureError);
         Check(blueTexture != 0, "register emission texture");
         Cube({0, -1, 0}, {8, 0.1f, 8}, receiverMaterial);
-        // Above and outside the camera frustum, but still visible to the floor.
+        // カメラの視錐台の上方外側だが、床からは見える位置。
         emitter = Cube({0, 4, 0}, {1.5f, 0.1f, 1.5f}, emitterMaterial);
         blocker = Cube({0, 20, 0}, {4, 0.1f, 4}, receiverMaterial);
         auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(Camera::GetCameraEntity());
@@ -198,9 +198,13 @@ void GiValidation::BeforeFrame(uint64_t frame)
         {
             char setting[16]{};
             if (GetEnvironmentVariableA("DX12_LUMEN_PROBE_SPACING", setting, sizeof(setting)))
+            {
                 RendererSettings::SetLumenProbeSpacing(atoi(setting));
+            }
             if (GetEnvironmentVariableA("DX12_LUMEN_LIGHTING_BUDGET", setting, sizeof(setting)))
+            {
                 RendererSettings::SetLumenLightingBudget(atoi(setting));
+            }
         }
         RendererSettings::SetSsgiIntensity(1);
         RendererSettings::SetRealtimeGiIntensity(1);
@@ -329,8 +333,8 @@ void GiValidation::AfterFrame(uint64_t frame)
                 {
                     for (UINT x = 0; x < atlas.Width; ++x)
                     {
-                        const auto* value = reinterpret_cast<const uint16_t*>(
-                            atlas.Bytes.data() + y * atlas.RowPitch + x * 8);
+                        const auto* value =
+                            reinterpret_cast<const uint16_t*>(atlas.Bytes.data() + y * atlas.RowPitch + x * 8);
                         const float r = RenderCapture::HalfToFloat(value[0]);
                         const float g = RenderCapture::HalfToFloat(value[1]);
                         const float b = RenderCapture::HalfToFloat(value[2]);
@@ -466,13 +470,14 @@ void GiValidation::AfterFrame(uint64_t frame)
         RenderCapture::TextureData atlas;
         bool accumulated = false;
         if (RenderCapture::ReadTextureMip(RayReflections::GetLumenLightingResource(), atlas, 0,
-                                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+                                          D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
         {
             for (UINT y = 0; y < 3 * 16 && !accumulated; ++y)
             {
                 for (UINT x = 0; x < atlas.Width; ++x)
                 {
-                    const auto* value = reinterpret_cast<const uint16_t*>(atlas.Bytes.data() + y * atlas.RowPitch + x * 8);
+                    const auto* value =
+                        reinterpret_cast<const uint16_t*>(atlas.Bytes.data() + y * atlas.RowPitch + x * 8);
                     accumulated = accumulated || RenderCapture::HalfToFloat(value[3]) >= 2;
                 }
             }
@@ -498,7 +503,7 @@ bool GiValidation::Finish()
     }
     Check(lastFrame >= 215, "complete dynamic GI sequence");
     failures += RenderCapture::ReportGraphicsErrors();
-    // Only files created by this fixture are removed; preserve unexpected contents.
+    // このテストが作成したファイルだけを削除し、想定外の内容は保持する。
     for (const char* name : {"Receiver.material", "Receiver.material.meta", "Emitter.material", "Emitter.material.meta",
                              "Blue.tga", "Blue.tga.meta"})
     {

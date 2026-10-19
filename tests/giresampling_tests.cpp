@@ -22,11 +22,11 @@ int main()
               "overrepresented radiance guides need BRDF probability correction");
         Check(GiResampling::GiGuideAcceptance(.5f, 100) == 1 && GiResampling::GiGuideAcceptance(.5f, 0) == 0,
               "guide acceptance must remain a bounded probability");
-        // A mapping that doubles solid angle doubles its integration weight.
+        // 立体角が2倍になる写像では、積分の重みも2倍になる。
         const auto expanded = GiResampling::GiSpatialReuseWeights(3, 2, 4, 2);
         Check(expanded.Selection == 48, "solid-angle expansion must multiply the sample weight");
         Check(expanded.Target == 3, "normalization must use the receiver target without the Jacobian");
-        // A nearly tangent reconnection must lose weight, not become a firefly.
+        // ほぼ接線方向の再接続では、異常な輝点を発生させず、重みを小さくする。
         const auto grazing = GiResampling::GiSpatialReuseWeights(3, 2, 4, .001f);
         Check(std::abs(grazing.Selection - .024f) < 1e-6f, "grazing reconnection must approach zero weight");
         Check(grazing.Target == expanded.Target, "Jacobian must not change selected target");

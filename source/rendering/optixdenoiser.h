@@ -1,7 +1,7 @@
 #pragma once
 #include "nrddenoiser.h"
 
-// D3D12 packing/dispatch integration. OptixInterop owns CUDA/OptiX resources.
+// D3D12 のパック処理とディスパッチを統合する。CUDA/OptiX リソースは OptixInterop が所有する。
 class OptixDenoiser
 {
   public:

@@ -107,48 +107,48 @@ bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string
 
 namespace
 {
-constexpr const char* textureNames[] = {"baseColor", "normal", "metallicRoughness", "ao", "emissive"};
+    constexpr const char* textureNames[] = {"baseColor", "normal", "metallicRoughness", "ao", "emissive"};
 
-bool ReadFloat(const Json::Value& object, const char* name, float& value, std::string& error)
-{
-    if (!object.isMember(name))
+    bool ReadFloat(const Json::Value& object, const char* name, float& value, std::string& error)
     {
-        return true;
-    }
-    if (!object[name].isNumeric())
-    {
-        error = std::string("Invalid ") + name + " property";
-        return false;
-    }
-    value = object[name].asFloat();
-    return true;
-}
-
-template <size_t Count>
-bool ReadColor(const Json::Value& object, const char* name, std::array<float, Count>& color, std::string& error)
-{
-    if (!object.isMember(name))
-    {
-        return true;
-    }
-    const auto& array = object[name];
-    if (!array.isArray() || array.size() != Count)
-    {
-        error = std::string("Invalid ") + name + " array";
-        return false;
-    }
-    for (Json::ArrayIndex i = 0; i < Count; ++i)
-    {
-        if (!array[i].isNumeric())
+        if (!object.isMember(name))
         {
-            error = std::string("Invalid ") + name + " channel";
+            return true;
+        }
+        if (!object[name].isNumeric())
+        {
+            error = std::string("Invalid ") + name + " property";
             return false;
         }
-        color[i] = array[i].asFloat();
+        value = object[name].asFloat();
+        return true;
     }
-    return true;
+
+    template <size_t Count>
+    bool ReadColor(const Json::Value& object, const char* name, std::array<float, Count>& color, std::string& error)
+    {
+        if (!object.isMember(name))
+        {
+            return true;
+        }
+        const auto& array = object[name];
+        if (!array.isArray() || array.size() != Count)
+        {
+            error = std::string("Invalid ") + name + " array";
+            return false;
+        }
+        for (Json::ArrayIndex i = 0; i < Count; ++i)
+        {
+            if (!array[i].isNumeric())
+            {
+                error = std::string("Invalid ") + name + " channel";
+                return false;
+            }
+            color[i] = array[i].asFloat();
+        }
+        return true;
+    }
 }
-} // namespace
 
 bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetData& material, std::string& error)
 {

@@ -45,7 +45,7 @@ static bool IsSkyEntity(EntityID entity)
 
 static bool ShouldCastShadow(EntityID entity, bool transmission = false)
 {
-    // Environment meshes supply background radiance and must not occlude the sun.
+    // 環境メッシュは背景放射輝度を供給するため、太陽を遮蔽させない。
     if (ComponentManager::HasComponent<MeshComponent>(entity) &&
         ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
     {
@@ -546,15 +546,18 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
             struct CbData
             {
-                float x, y;
+                float x;
+                float y;
                 int UseTexture;
                 float AspectRatio;
-                float ScaleX, ScaleY;
+                float ScaleX;
+                float ScaleY;
                 int UseNormalMap;
                 int MaterialMode;
                 int ShaderClass;
                 float MaterialAlpha;
-                float Pad0, Pad1;
+                float Pad0;
+                float Pad1;
             } cbData = {0, 0, 0, 1.0f, 1.0f, 1.0f, 0, 0, 10, 1.0f, 0, 0};
 
             if (Registry::HasComponent(i, ComponentType::TRANSFORM))

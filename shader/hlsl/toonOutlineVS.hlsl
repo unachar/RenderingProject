@@ -6,7 +6,8 @@ PSInput3D main(VSInput3D input)
     PSInput3D output;
     float normalLenSq = dot(input.Normal, input.Normal);
     float3 safeNormal = (normalLenSq > 0.000001f) ? input.Normal : float3(0.0f, 0.0f, 0.0f);
-    float3 worldNormal = (normalLenSq > 0.000001f) ? normalize(mul(safeNormal, (float3x3)World)) : float3(0.0f, 1.0f, 0.0f);
+    float3 worldNormal =
+        (normalLenSq > 0.000001f) ? normalize(mul(safeNormal, (float3x3)World)) : float3(0.0f, 1.0f, 0.0f);
     float outlineWidth = max(ToonOutlineWidth, 0.0f);
     float useScreenSpace = ToonOutlineUseScreenSpace != 0 ? 1.0f : 0.0f;
     float3 worldModePosition = input.Position + safeNormal * outlineWidth;
@@ -36,11 +37,9 @@ PSInput3D main(VSInput3D input)
     output.Normal = worldNormal;
     output.TexCoord = input.TexCoord;
 
-
     output.Diffuse = float4(0.0f, 0.0f, 0.0f, saturate(MaterialAlpha));
     output.WorldPos = worldPos.xyz;
     output.ViewPos = viewPos.xyz;
     output.CameraPos = CameraPos;
     return output;
 }
-

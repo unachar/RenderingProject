@@ -3,7 +3,7 @@
 #include <optional>
 #include <vector>
 
-// Slots are reusable only after the submission that last referenced them completes.
+// スロットを最後に参照した送信処理が完了した後だけ再利用できる。
 class EditorDescriptorPool
 {
   public:

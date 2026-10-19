@@ -42,7 +42,10 @@ groupshared uint MeshletVisible;
 
 uint LoadMeshIndex(uint index)
 {
-    if (MeshIndexIs16Bit == 2u) return index; // non-indexed procedural geometry
+    if (MeshIndexIs16Bit == 2u)
+    {
+        return index; // インデックスなしの手続き的な形状
+    }
     if (MeshIndexIs16Bit != 0u)
     {
         uint packed = MeshIndices.Load((index >> 1u) * 4u);
@@ -76,13 +79,10 @@ bool MeshBoundsVisible(float3 center, float3 extents)
     float2 uvMinimum = 1.0f;
     float2 uvMaximum = 0.0f;
     float nearestDepth = 1.0f;
-    [unroll]
-    for (uint corner = 0u; corner < 8u; ++corner)
+    [unroll] for (uint corner = 0u; corner < 8u; ++corner)
     {
-        float3 signValue = float3(
-            (corner & 1u) ? 1.0f : -1.0f,
-            (corner & 2u) ? 1.0f : -1.0f,
-            (corner & 4u) ? 1.0f : -1.0f);
+        float3 signValue =
+            float3((corner & 1u) ? 1.0f : -1.0f, (corner & 2u) ? 1.0f : -1.0f, (corner & 4u) ? 1.0f : -1.0f);
         float3 localPosition = center + extents * signValue;
         float4 worldPosition = mul(float4(localPosition, 1.0f), World);
         float4 viewPosition = mul(worldPosition, View);
@@ -100,8 +100,14 @@ bool MeshBoundsVisible(float3 center, float3 extents)
         uvMaximum = max(uvMaximum, uv);
         nearestDepth = min(nearestDepth, ndc.z);
     }
-    if (outsideLeft || outsideRight || outsideBottom || outsideTop || outsideNear || outsideFar) return false;
-    if (OcclusionPhase == 0u || crossesNearPlane) return true;
+    if (outsideLeft || outsideRight || outsideBottom || outsideTop || outsideNear || outsideFar)
+    {
+        return false;
+    }
+    if (OcclusionPhase == 0u || crossesNearPlane)
+    {
+        return true;
+    }
     uvMinimum = saturate(uvMinimum);
     uvMaximum = saturate(uvMaximum);
     nearestDepth = saturate(nearestDepth);
@@ -109,14 +115,18 @@ bool MeshBoundsVisible(float3 center, float3 extents)
     {
         return PreviousHiZValid == 0u || !MeshObjectOccluded(PreviousHiZ, uvMinimum, uvMaximum, nearestDepth);
     }
-    if (PreviousHiZValid == 0u) return false;
-    if (!MeshObjectOccluded(PreviousHiZ, uvMinimum, uvMaximum, nearestDepth)) return false;
+    if (PreviousHiZValid == 0u)
+    {
+        return false;
+    }
+    if (!MeshObjectOccluded(PreviousHiZ, uvMinimum, uvMaximum, nearestDepth))
+    {
+        return false;
+    }
     return CurrentHiZValid == 0u || !MeshObjectOccluded(CurrentHiZ, uvMinimum, uvMaximum, nearestDepth);
 }
 
-[numthreads(64, 1, 1)]
-void ASMain(uint3 groupId : SV_GroupID, uint threadIndex : SV_GroupIndex)
-{
+[numthreads(64, 1, 1)] void ASMain(uint3 groupId : SV_GroupID, uint threadIndex : SV_GroupIndex) {
     uint meshlet = MeshletBase + groupId.x;
     uint firstIndex = meshlet * 192u + threadIndex * 3u;
     float3 low = 3.402823e+38f;
@@ -169,23 +179,21 @@ PSInput3D BuildMeshVertex(uint index)
     return output;
 }
 
-[outputtopology("triangle")]
-[numthreads(64, 1, 1)]
-void MSMain(
-    in payload MeshPayload payload,
-    uint threadIndex : SV_GroupIndex,
-    out vertices PSInput3D outputVertices[192],
-    out indices uint3 outputTriangles[64])
-{
+[outputtopology("triangle")][numthreads(64, 1, 1)] void MSMain(in payload MeshPayload payload,
+                                                               uint threadIndex : SV_GroupIndex,
+                                                               out vertices PSInput3D outputVertices[192],
+                                                               out indices uint3 outputTriangles[64]) {
     const uint firstIndex = payload.MeshletIndex * 192u;
     const uint remainingIndices = firstIndex < MeshIndexCount ? MeshIndexCount - firstIndex : 0u;
     const uint primitiveCount = min(remainingIndices / 3u, 64u);
     SetMeshOutputCounts(primitiveCount * 3u, primitiveCount);
-    if (threadIndex >= primitiveCount) return;
+    if (threadIndex >= primitiveCount)
+    {
+        return;
+    }
     const uint outputBase = threadIndex * 3u;
     outputVertices[outputBase + 0u] = BuildMeshVertex(LoadMeshIndex(firstIndex + outputBase + 0u));
     outputVertices[outputBase + 1u] = BuildMeshVertex(LoadMeshIndex(firstIndex + outputBase + 1u));
     outputVertices[outputBase + 2u] = BuildMeshVertex(LoadMeshIndex(firstIndex + outputBase + 2u));
     outputTriangles[threadIndex] = uint3(outputBase, outputBase + 1u, outputBase + 2u);
 }
-

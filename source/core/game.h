@@ -18,7 +18,7 @@ class Game
     static void Update();
     static void Draw();
     static void Run();
-    // Register a Game-owned instance after its Create has completed.
+    // Create 完了後に Game 所有のインスタンスを登録する。
     static bool RegisterEntity(EntityBase* entity);
 
     template <typename T> static void AddEntity()
@@ -27,7 +27,7 @@ class Game
     }
 };
 
-// An inline static member declares automatic creation once per entity class.
+// インライン静的メンバーにより、エンティティクラスごとに一度だけ自動生成を宣言する。
 template <typename T> class EntityRegistration
 {
   public:

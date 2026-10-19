@@ -42,18 +42,18 @@ using namespace EditorWidgets;
 
 namespace
 {
-struct PrimitiveCreationState
-{
-    EntityID Entity = g_kINVALID_ENTITY;
-    ObjectType Type = ObjectType::NONE;
-    PrimitiveSettings Settings;
-    bool Open = false;
-    bool FocusRequested = false;
-    bool PendingUpdate = false;
-};
+    struct PrimitiveCreationState
+    {
+        EntityID Entity = g_kINVALID_ENTITY;
+        ObjectType Type = ObjectType::NONE;
+        PrimitiveSettings Settings;
+        bool Open = false;
+        bool FocusRequested = false;
+        bool PendingUpdate = false;
+    };
 
-PrimitiveCreationState primitiveCreation;
-} // namespace
+    PrimitiveCreationState primitiveCreation;
+}
 
 void ImGuiManager::DrawSceneViewWindow()
 {
@@ -173,7 +173,7 @@ void ImGuiManager::DrawSceneViewWindow()
                 ImVec2 sceneMouse = ImGui::GetIO().MousePos;
                 sceneMouse.x -= m_SceneViewPos.x;
                 sceneMouse.y -= m_SceneViewPos.y;
-                PlaceAssetInScene(filesystem::u8path(path), sceneMouse); // payload is UTF-8
+                PlaceAssetInScene(filesystem::u8path(path), sceneMouse); // ペイロードは UTF-8。
             }
         }
         ImGui::EndDragDropTarget();
@@ -976,16 +976,16 @@ const char* ImGuiManager::GetLightTypeName(LightType type)
 {
     switch (type)
     {
-    case LightType::Directional:
-        return "Directional";
-    case LightType::Point:
-        return "Point";
-    case LightType::Spot:
-        return "Spot";
-    case LightType::Volume:
-        return "Volume";
-    default:
-        return "Unknown";
+        case LightType::Directional:
+            return "Directional";
+        case LightType::Point:
+            return "Point";
+        case LightType::Spot:
+            return "Spot";
+        case LightType::Volume:
+            return "Volume";
+        default:
+            return "Unknown";
     }
 }
 
@@ -1019,127 +1019,127 @@ const char* ImGuiManager::GetEntityDisplayName(EntityID entity)
 // ============================================================================
 namespace
 {
-template <typename T> void VisitLiveComponent(SceneFile::Archive& archive, const char* key, EntityID entity)
-{
-    bool present = ComponentManager::HasComponent<T>(entity);
-    if (!present)
+    template <typename T> void VisitLiveComponent(SceneFile::Archive& archive, const char* key, EntityID entity)
     {
-        if (archive.Hashing())
-        {
-            const uint8_t none = 0;
-            archive.HashBytes(&none, 1);
-        }
-        return;
-    }
-    SceneFile::Component(archive, key, present, ComponentManager::GetComponentUnchecked<T>(entity));
-}
-
-// 書き込み / ハッシュ共通：1エンティティ分のコンポーネントを列挙する
-void VisitLiveEntity(SceneFile::Archive& archive, EntityID entity)
-{
-    // 昼夜サイクルが動かしている太陽の位置・光は、変更検知の対象から外す（保存はする）
-    bool drivenSun = false;
-    if (archive.Hashing() && ComponentManager::HasComponent<SunComponent>(entity))
-    {
-        const auto& cycle = DayNightCycle::GetSettings();
-        drivenSun = cycle.TimeDriven || cycle.AutomaticLighting;
-    }
-    VisitLiveComponent<NameComponent>(archive, "name", entity);
-    if (!drivenSun)
-    {
-        VisitLiveComponent<TransformComponent>(archive, "transform", entity);
-    }
-    VisitLiveComponent<ShaderComponent>(archive, "shader", entity);
-    VisitLiveComponent<StaticModelComponent>(archive, "staticModel", entity);
-    VisitLiveComponent<AnimationModelComponent>(archive, "animationModel", entity);
-    if (!drivenSun)
-    {
-        VisitLiveComponent<LightComponent>(archive, "light", entity);
-    }
-    VisitLiveComponent<SunComponent>(archive, "sun", entity);
-    VisitLiveComponent<ProceduralTerrainComponent>(archive, "terrain", entity);
-    VisitLiveComponent<ProceduralMotionComponent>(archive, "motion", entity);
-    VisitLiveComponent<MaterialComponent>(archive, "material", entity);
-    VisitLiveComponent<AABBComponent>(archive, "aabb", entity);
-    VisitLiveComponent<SpriteComponent>(archive, "sprite", entity);
-    VisitLiveComponent<MeshComponent>(archive, "mesh", entity);
-    VisitLiveComponent<CameraComponent>(archive, "camera", entity);
-    VisitLiveComponent<PostProcessComponent>(archive, "postProcess", entity);
-    VisitLiveComponent<InputComponent>(archive, "input", entity);
-    VisitLiveComponent<MoveComponent>(archive, "move", entity);
-    VisitLiveComponent<PhysicsComponent>(archive, "physics", entity);
-    VisitLiveComponent<TimelineComponent>(archive, "timeline", entity);
-    VisitLiveComponent<OBBComponent>(archive, "obb", entity);
-    VisitLiveComponent<LODComponent>(archive, "lod", entity);
-    VisitLiveComponent<InstancingComponent>(archive, "instancing", entity);
-
-    // プリミティブ・地形以外のメッシュは頂点そのものが形状。ハッシュでは頂点の代わりにジオメトリハッシュを使う
-    if (ComponentManager::HasComponent<MeshComponent>(entity) &&
-        !ComponentManager::HasComponent<ProceduralTerrainComponent>(entity))
-    {
-        auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
-        if (mesh.PrimitiveType == 0)
+        bool present = ComponentManager::HasComponent<T>(entity);
+        if (!present)
         {
             if (archive.Hashing())
             {
-                archive.HashBytes(&mesh.GeometryHash, sizeof(mesh.GeometryHash));
+                const uint8_t none = 0;
+                archive.HashBytes(&none, 1);
             }
-            else if (archive.Writing() && mesh.NaniteMesh && !mesh.NaniteMesh->CpuVertices.empty())
+            return;
+        }
+        SceneFile::Component(archive, key, present, ComponentManager::GetComponentUnchecked<T>(entity));
+    }
+
+    // 書き込み / ハッシュ共通：1エンティティ分のコンポーネントを列挙する
+    void VisitLiveEntity(SceneFile::Archive& archive, EntityID entity)
+    {
+        // 昼夜サイクルが動かしている太陽の位置・光は、変更検知の対象から外す（保存はする）
+        bool drivenSun = false;
+        if (archive.Hashing() && ComponentManager::HasComponent<SunComponent>(entity))
+        {
+            const auto& cycle = DayNightCycle::GetSettings();
+            drivenSun = cycle.TimeDriven || cycle.AutomaticLighting;
+        }
+        VisitLiveComponent<NameComponent>(archive, "name", entity);
+        if (!drivenSun)
+        {
+            VisitLiveComponent<TransformComponent>(archive, "transform", entity);
+        }
+        VisitLiveComponent<ShaderComponent>(archive, "shader", entity);
+        VisitLiveComponent<StaticModelComponent>(archive, "staticModel", entity);
+        VisitLiveComponent<AnimationModelComponent>(archive, "animationModel", entity);
+        if (!drivenSun)
+        {
+            VisitLiveComponent<LightComponent>(archive, "light", entity);
+        }
+        VisitLiveComponent<SunComponent>(archive, "sun", entity);
+        VisitLiveComponent<ProceduralTerrainComponent>(archive, "terrain", entity);
+        VisitLiveComponent<ProceduralMotionComponent>(archive, "motion", entity);
+        VisitLiveComponent<MaterialComponent>(archive, "material", entity);
+        VisitLiveComponent<AABBComponent>(archive, "aabb", entity);
+        VisitLiveComponent<SpriteComponent>(archive, "sprite", entity);
+        VisitLiveComponent<MeshComponent>(archive, "mesh", entity);
+        VisitLiveComponent<CameraComponent>(archive, "camera", entity);
+        VisitLiveComponent<PostProcessComponent>(archive, "postProcess", entity);
+        VisitLiveComponent<InputComponent>(archive, "input", entity);
+        VisitLiveComponent<MoveComponent>(archive, "move", entity);
+        VisitLiveComponent<PhysicsComponent>(archive, "physics", entity);
+        VisitLiveComponent<TimelineComponent>(archive, "timeline", entity);
+        VisitLiveComponent<OBBComponent>(archive, "obb", entity);
+        VisitLiveComponent<LODComponent>(archive, "lod", entity);
+        VisitLiveComponent<InstancingComponent>(archive, "instancing", entity);
+
+        // プリミティブ・地形以外のメッシュは頂点そのものが形状。ハッシュでは頂点の代わりにジオメトリハッシュを使う
+        if (ComponentManager::HasComponent<MeshComponent>(entity) &&
+            !ComponentManager::HasComponent<ProceduralTerrainComponent>(entity))
+        {
+            auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(entity);
+            if (mesh.PrimitiveType == 0)
             {
-                vector<float> packed;
-                packed.reserve(mesh.NaniteMesh->CpuVertices.size() * 12);
-                for (const auto& vertex : mesh.NaniteMesh->CpuVertices)
+                if (archive.Hashing())
                 {
-                    for (float value : {vertex.Position.x, vertex.Position.y, vertex.Position.z, vertex.Normal.x,
-                                        vertex.Normal.y, vertex.Normal.z, vertex.TexCoord.x, vertex.TexCoord.y,
-                                        vertex.Diffuse.x, vertex.Diffuse.y, vertex.Diffuse.z, vertex.Diffuse.w})
-                    {
-                        packed.push_back(value);
-                    }
+                    archive.HashBytes(&mesh.GeometryHash, sizeof(mesh.GeometryHash));
                 }
-                string encoded = SceneFile::EncodeBase64(packed.data(), packed.size() * sizeof(float));
-                archive.Object("meshVertices", [&](SceneFile::Archive& v) {
-                    int floatsPerVertex = 12;
-                    v("floatsPerVertex", floatsPerVertex);
-                    v("data", encoded);
-                });
+                else if (archive.Writing() && mesh.NaniteMesh && !mesh.NaniteMesh->CpuVertices.empty())
+                {
+                    vector<float> packed;
+                    packed.reserve(mesh.NaniteMesh->CpuVertices.size() * 12);
+                    for (const auto& vertex : mesh.NaniteMesh->CpuVertices)
+                    {
+                        for (float value : {vertex.Position.x, vertex.Position.y, vertex.Position.z, vertex.Normal.x,
+                                            vertex.Normal.y, vertex.Normal.z, vertex.TexCoord.x, vertex.TexCoord.y,
+                                            vertex.Diffuse.x, vertex.Diffuse.y, vertex.Diffuse.z, vertex.Diffuse.w})
+                        {
+                            packed.push_back(value);
+                        }
+                    }
+                    string encoded = SceneFile::EncodeBase64(packed.data(), packed.size() * sizeof(float));
+                    archive.Object("meshVertices", [&](SceneFile::Archive& v) {
+                        int floatsPerVertex = 12;
+                        v("floatsPerVertex", floatsPerVertex);
+                        v("data", encoded);
+                    });
+                }
             }
         }
     }
-}
 
-string ToUtf8(const filesystem::path& path)
-{
-    const auto text = path.generic_u8string();
-    return string(text.begin(), text.end());
-}
-
-wstring Utf8ToWide(const string& text)
-{
-    if (text.empty())
+    string ToUtf8(const filesystem::path& path)
     {
-        return {};
+        const auto text = path.generic_u8string();
+        return string(text.begin(), text.end());
     }
-    const int length = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0);
-    wstring result(static_cast<size_t>(max(length, 0)), L'\0');
-    if (length > 0)
+
+    wstring Utf8ToWide(const string& text)
     {
-        MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), result.data(), length);
+        if (text.empty())
+        {
+            return {};
+        }
+        const int length = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0);
+        wstring result(static_cast<size_t>(max(length, 0)), L'\0');
+        if (length > 0)
+        {
+            MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), result.data(), length);
+        }
+        return result;
     }
-    return result;
-}
 
-// 作業フォルダからの相対パス（日本語を含むパスも壊さないよう path のまま扱う）
-filesystem::path RelativeToWorkingDirectory(const filesystem::path& path)
-{
-    error_code error;
-    const filesystem::path relative = filesystem::relative(path, filesystem::current_path(error), error);
-    return error || relative.empty() ? path.lexically_normal() : relative;
-}
+    // 作業フォルダからの相対パス（日本語を含むパスも壊さないよう path のまま扱う）
+    filesystem::path RelativeToWorkingDirectory(const filesystem::path& path)
+    {
+        error_code error;
+        const filesystem::path relative = filesystem::relative(path, filesystem::current_path(error), error);
+        return error || relative.empty() ? path.lexically_normal() : relative;
+    }
 
-const char* kSaveChangesPopup = "シーンの変更を保存##SceneSaveChanges";
-const char* kSaveAsPopup = "名前を付けて保存##SceneSaveAs";
-} // namespace
+    const char* kSaveChangesPopup = "シーンの変更を保存##SceneSaveChanges";
+    const char* kSaveAsPopup = "名前を付けて保存##SceneSaveAs";
+}
 
 bool ImGuiManager::SceneTrackingAllowed()
 {
@@ -1204,242 +1204,244 @@ uint64_t ImGuiManager::ComputeSceneHash()
 
 namespace
 {
-// 高速保存：Json::Value の木を作らず、文字列へ直接書き出す（Archive の Stream モード）
-string StreamSceneJson(const vector<EntityID>& entities, const unordered_map<EntityID, EntityID>& fileIds,
-                       void (*visit)(SceneFile::Archive&, EntityID))
-{
-    string out;
-    out.reserve(entities.size() * 640 + 256);
-    out.append("{\"format\":\"DX12Scene\",\"version\":");
-    out.append(to_string(SceneFile::kVersion));
-    out.append(",\"entities\":[");
-    for (size_t index = 0; index < entities.size(); ++index)
+    // 高速保存：Json::Value の木を作らず、文字列へ直接書き出す（Archive の Stream モード）
+    string StreamSceneJson(const vector<EntityID>& entities, const unordered_map<EntityID, EntityID>& fileIds,
+                           void (*visit)(SceneFile::Archive&, EntityID))
     {
-        if (index)
+        string out;
+        out.reserve(entities.size() * 640 + 256);
+        out.append("{\"format\":\"DX12Scene\",\"version\":");
+        out.append(to_string(SceneFile::kVersion));
+        out.append(",\"entities\":[");
+        for (size_t index = 0; index < entities.size(); ++index)
         {
-            out.push_back(',');
-        }
-        out.append("{\"id\":");
-        out.append(to_string(fileIds.at(entities[index])));
-        string body;
-        SceneFile::Archive archive(body);
-        archive.EntityMap = &fileIds;
-        visit(archive, entities[index]);
-        if (!body.empty())
-        {
-            out.push_back(',');
-            out.append(body);
-        }
-        out.push_back('}');
-        out.push_back('\n'); // 1 エンティティ 1 行（差分ツールで見やすく）
-    }
-    out.append("]}\n");
-    return out;
-}
-
-// ---- 決定論的な差分保存
-//   出力は「シーンの状態」だけで決まる（同じ状態なら毎回バイト単位で同じファイル。キャッシュの有無・スレッド数に依存しない）
-//   ・エンティティは EntityID 昇順、ファイル内 ID は 0 からの連番、キーは Visit の順、数値は最短往復表現
-//   ・エンティティごとの書き出し結果を、内容のハッシュ（参照先のファイル内 ID も含む）をキーに再利用する
-//   ・並列に作ってもエンティティの順に連結するので、出力は 1 スレッドと同じ
-//   ・昼夜サイクルが動かす太陽はハッシュが位置を見ないので、毎回書き出す
-struct EntityRecordCache
-{
-    uint64_t Hash = 0;
-    EntityID FileId = 0;
-    bool Valid = false;
-    string Body; // {"id":N, の後ろから } の手前まで（コンポーネント部分）
-};
-
-vector<EntityRecordCache> g_RecordCache;
-constexpr uint64_t kRecordFormat = 1; // 書き出し形式を変えたら上げる（古いキャッシュを使わない）
-
-bool IsDrivenSun(EntityID entity)
-{
-    if (!ComponentManager::HasComponent<SunComponent>(entity))
-    {
-        return false;
-    }
-    const auto& cycle = DayNightCycle::GetSettings();
-    return cycle.TimeDriven || cycle.AutomaticLighting;
-}
-
-uint64_t HashEntityRecord(EntityID entity, EntityID fileId, const unordered_map<EntityID, EntityID>& fileIds)
-{
-    uint64_t hash = 1469598103934665603ull ^ (kRecordFormat * 0x9e3779b97f4a7c15ull);
-    SceneFile::Archive archive(hash);
-    archive.EntityMap = &fileIds;
-    archive.HashBytes(&fileId, sizeof(fileId));
-    VisitLiveEntity(archive, entity);
-    return hash;
-}
-
-void StreamEntityBody(EntityID entity, const unordered_map<EntityID, EntityID>& fileIds, string& out)
-{
-    out.clear();
-    SceneFile::Archive archive(out);
-    archive.EntityMap = &fileIds;
-    VisitLiveEntity(archive, entity);
-}
-
-struct DeterministicSaveStats
-{
-    size_t Reused = 0, Written = 0;
-};
-
-string StreamSceneDeterministic(const vector<EntityID>& entities, const unordered_map<EntityID, EntityID>& fileIds,
-                                DeterministicSaveStats& stats)
-{
-    // キャッシュは EntityID で引く（並列に書くので先に大きさを確保する）
-    EntityID maxEntity = 0;
-    for (EntityID entity : entities)
-    {
-        maxEntity = (std::max)(maxEntity, entity);
-    }
-    if (g_RecordCache.size() <= maxEntity)
-    {
-        g_RecordCache.resize(static_cast<size_t>(maxEntity) + 1);
-    }
-
-    // エンティティを塊に分けて並列に処理（各塊は自分の担当エンティティのキャッシュだけを読み書きする）
-    const size_t count = entities.size();
-    const size_t workers =
-        (std::max)(size_t(1), (std::min)(size_t(std::thread::hardware_concurrency()), count / 256 + 1));
-    vector<size_t> reused(workers, 0);
-    auto work = [&](size_t worker) {
-        const size_t first = count * worker / workers, last = count * (worker + 1) / workers;
-        for (size_t index = first; index < last; ++index)
-        {
-            const EntityID entity = entities[index];
-            const EntityID fileId = static_cast<EntityID>(index);
-            auto& cache = g_RecordCache[entity];
-            if (IsDrivenSun(entity))
+            if (index)
             {
-                StreamEntityBody(entity, fileIds, cache.Body);
-                cache.Valid = false;
-                continue;
+                out.push_back(',');
             }
-            const uint64_t hash = HashEntityRecord(entity, fileId, fileIds);
-            if (cache.Valid && cache.Hash == hash && cache.FileId == fileId)
+            out.append("{\"id\":");
+            out.append(to_string(fileIds.at(entities[index])));
+            string body;
+            SceneFile::Archive archive(body);
+            archive.EntityMap = &fileIds;
+            visit(archive, entities[index]);
+            if (!body.empty())
             {
-                ++reused[worker];
-                continue;
+                out.push_back(',');
+                out.append(body);
             }
-            StreamEntityBody(entity, fileIds, cache.Body);
-            cache.Hash = hash;
-            cache.FileId = fileId;
-            cache.Valid = true;
+            out.push_back('}');
+            out.push_back('\n'); // 1 エンティティ 1 行（差分ツールで見やすく）
         }
+        out.append("]}\n");
+        return out;
+    }
+
+    // ---- 決定論的な差分保存
+    //   出力は「シーンの状態」だけで決まる（同じ状態なら毎回バイト単位で同じファイル。キャッシュの有無・スレッド数に依存しない）
+    //   ・エンティティは EntityID 昇順、ファイル内 ID は 0 からの連番、キーは Visit の順、数値は最短往復表現
+    //   ・エンティティごとの書き出し結果を、内容のハッシュ（参照先のファイル内 ID も含む）をキーに再利用する
+    //   ・並列に作ってもエンティティの順に連結するので、出力は 1 スレッドと同じ
+    //   ・昼夜サイクルが動かす太陽はハッシュが位置を見ないので、毎回書き出す
+    struct EntityRecordCache
+    {
+        uint64_t Hash = 0;
+        EntityID FileId = 0;
+        bool Valid = false;
+        string Body; // {"id":N, の後ろから } の手前まで（コンポーネント部分）
     };
-    vector<std::future<void>> tasks;
-    for (size_t worker = 1; worker < workers; ++worker)
-    {
-        tasks.push_back(std::async(std::launch::async, work, worker));
-    }
-    work(0);
-    for (auto& task : tasks)
-    {
-        task.get();
-    }
-    for (size_t value : reused)
-    {
-        stats.Reused += value;
-    }
-    stats.Written = count - stats.Reused;
 
-    // エンティティの順に連結（ここが出力の順序を決める唯一の場所）
-    size_t total = 64;
-    for (EntityID entity : entities)
+    vector<EntityRecordCache> g_RecordCache;
+    constexpr uint64_t kRecordFormat = 1; // 書き出し形式を変えたら上げる（古いキャッシュを使わない）
+
+    bool IsDrivenSun(EntityID entity)
     {
-        total += g_RecordCache[entity].Body.size() + 24;
-    }
-    string out;
-    out.reserve(total);
-    out.append("{\"format\":\"DX12Scene\",\"version\":");
-    out.append(to_string(SceneFile::kVersion));
-    out.append(",\"entities\":[");
-    for (size_t index = 0; index < count; ++index)
-    {
-        if (index)
+        if (!ComponentManager::HasComponent<SunComponent>(entity))
         {
-            out.push_back(',');
+            return false;
         }
-        out.append("{\"id\":");
-        out.append(to_string(index));
-        const string& body = g_RecordCache[entities[index]].Body;
-        if (!body.empty())
-        {
-            out.push_back(',');
-            out.append(body);
-        }
-        out.push_back('}');
-        out.push_back('\n');
+        const auto& cycle = DayNightCycle::GetSettings();
+        return cycle.TimeDriven || cycle.AutomaticLighting;
     }
-    out.append("]}\n");
-    return out;
-}
 
-// ---- 非同期保存（文字列化 + 一時ファイル + 置き換え）
-struct SaveResult
-{
-    bool Success = false;
-    string Path;
-    double Milliseconds = 0.0;
-};
-
-std::future<SaveResult> g_PendingSave;
-std::mutex g_SaveFileMutex; // 同じファイルへの書き込みを直列化
-
-// 変更判定のハッシュを複数フレームに分けて計算する（以前は 0.25 秒ごとに全エンティティを 1 フレームで処理し、
-// 数千オブジェクトのシーンで定期的にフレームが引っかかっていた）
-struct IncrementalSceneHash
-{
-    vector<EntityID> Entities;
-    unordered_map<EntityID, EntityID> FileIds;
-    uint64_t Hash = 0;
-    size_t Next = 0;
-    bool Active = false;
-};
-
-IncrementalSceneHash g_TrackingHash;
-bool g_SavedHashPending = false;
-uint64_t g_SavedHashRevision = 0;
-constexpr size_t kHashEntitiesPerFrame = 768;
-
-SaveResult WriteSceneFile(string contents, filesystem::path path, string displayPath)
-{
-    const auto begin = std::chrono::steady_clock::now();
-    SaveResult result;
-    result.Path = std::move(displayPath);
-    std::lock_guard<std::mutex> lock(g_SaveFileMutex);
-    error_code error;
-    filesystem::path temporary = path;
-    temporary += L".tmp";
+    uint64_t HashEntityRecord(EntityID entity, EntityID fileId, const unordered_map<EntityID, EntityID>& fileIds)
     {
-        ofstream file(temporary, ios::binary | ios::trunc);
-        file.write(contents.data(), static_cast<streamsize>(contents.size()));
-        if (!file)
+        uint64_t hash = 1469598103934665603ull ^ (kRecordFormat * 0x9e3779b97f4a7c15ull);
+        SceneFile::Archive archive(hash);
+        archive.EntityMap = &fileIds;
+        archive.HashBytes(&fileId, sizeof(fileId));
+        VisitLiveEntity(archive, entity);
+        return hash;
+    }
+
+    void StreamEntityBody(EntityID entity, const unordered_map<EntityID, EntityID>& fileIds, string& out)
+    {
+        out.clear();
+        SceneFile::Archive archive(out);
+        archive.EntityMap = &fileIds;
+        VisitLiveEntity(archive, entity);
+    }
+
+    struct DeterministicSaveStats
+    {
+        size_t Reused = 0;
+        size_t Written = 0;
+    };
+
+    string StreamSceneDeterministic(const vector<EntityID>& entities, const unordered_map<EntityID, EntityID>& fileIds,
+                                    DeterministicSaveStats& stats)
+    {
+        // キャッシュは EntityID で引く（並列に書くので先に大きさを確保する）
+        EntityID maxEntity = 0;
+        for (EntityID entity : entities)
         {
+            maxEntity = (std::max)(maxEntity, entity);
+        }
+        if (g_RecordCache.size() <= maxEntity)
+        {
+            g_RecordCache.resize(static_cast<size_t>(maxEntity) + 1);
+        }
+
+        // エンティティを塊に分けて並列に処理（各塊は自分の担当エンティティのキャッシュだけを読み書きする）
+        const size_t count = entities.size();
+        const size_t workers =
+            (std::max)(size_t(1), (std::min)(size_t(std::thread::hardware_concurrency()), count / 256 + 1));
+        vector<size_t> reused(workers, 0);
+        auto work = [&](size_t worker) {
+            const size_t first = count * worker / workers;
+            const size_t last = count * (worker + 1) / workers;
+            for (size_t index = first; index < last; ++index)
+            {
+                const EntityID entity = entities[index];
+                const EntityID fileId = static_cast<EntityID>(index);
+                auto& cache = g_RecordCache[entity];
+                if (IsDrivenSun(entity))
+                {
+                    StreamEntityBody(entity, fileIds, cache.Body);
+                    cache.Valid = false;
+                    continue;
+                }
+                const uint64_t hash = HashEntityRecord(entity, fileId, fileIds);
+                if (cache.Valid && cache.Hash == hash && cache.FileId == fileId)
+                {
+                    ++reused[worker];
+                    continue;
+                }
+                StreamEntityBody(entity, fileIds, cache.Body);
+                cache.Hash = hash;
+                cache.FileId = fileId;
+                cache.Valid = true;
+            }
+        };
+        vector<std::future<void>> tasks;
+        for (size_t worker = 1; worker < workers; ++worker)
+        {
+            tasks.push_back(std::async(std::launch::async, work, worker));
+        }
+        work(0);
+        for (auto& task : tasks)
+        {
+            task.get();
+        }
+        for (size_t value : reused)
+        {
+            stats.Reused += value;
+        }
+        stats.Written = count - stats.Reused;
+
+        // エンティティの順に連結（ここが出力の順序を決める唯一の場所）
+        size_t total = 64;
+        for (EntityID entity : entities)
+        {
+            total += g_RecordCache[entity].Body.size() + 24;
+        }
+        string out;
+        out.reserve(total);
+        out.append("{\"format\":\"DX12Scene\",\"version\":");
+        out.append(to_string(SceneFile::kVersion));
+        out.append(",\"entities\":[");
+        for (size_t index = 0; index < count; ++index)
+        {
+            if (index)
+            {
+                out.push_back(',');
+            }
+            out.append("{\"id\":");
+            out.append(to_string(index));
+            const string& body = g_RecordCache[entities[index]].Body;
+            if (!body.empty())
+            {
+                out.push_back(',');
+                out.append(body);
+            }
+            out.push_back('}');
+            out.push_back('\n');
+        }
+        out.append("]}\n");
+        return out;
+    }
+
+    // ---- 非同期保存（文字列化 + 一時ファイル + 置き換え）
+    struct SaveResult
+    {
+        bool Success = false;
+        string Path;
+        double Milliseconds = 0.0;
+    };
+
+    std::future<SaveResult> g_PendingSave;
+    std::mutex g_SaveFileMutex; // 同じファイルへの書き込みを直列化
+
+    // 変更判定のハッシュを複数フレームに分けて計算する（以前は 0.25 秒ごとに全エンティティを 1 フレームで処理し、
+    // 数千オブジェクトのシーンで定期的にフレームが引っかかっていた）
+    struct IncrementalSceneHash
+    {
+        vector<EntityID> Entities;
+        unordered_map<EntityID, EntityID> FileIds;
+        uint64_t Hash = 0;
+        size_t Next = 0;
+        bool Active = false;
+    };
+
+    IncrementalSceneHash g_TrackingHash;
+    bool g_SavedHashPending = false;
+    uint64_t g_SavedHashRevision = 0;
+    constexpr size_t kHashEntitiesPerFrame = 768;
+
+    SaveResult WriteSceneFile(string contents, filesystem::path path, string displayPath)
+    {
+        const auto begin = std::chrono::steady_clock::now();
+        SaveResult result;
+        result.Path = std::move(displayPath);
+        std::lock_guard<std::mutex> lock(g_SaveFileMutex);
+        error_code error;
+        filesystem::path temporary = path;
+        temporary += L".tmp";
+        {
+            ofstream file(temporary, ios::binary | ios::trunc);
+            file.write(contents.data(), static_cast<streamsize>(contents.size()));
+            if (!file)
+            {
+                return result;
+            }
+        }
+        // 置き換えは原子的（途中で落ちても古いファイルか新しいファイルのどちらかが残る）。
+        // WRITE_THROUGH（ディスクへの物理書き出し待ち）は数百 ms〜秒かかるので使わない
+        if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
+        {
+            filesystem::remove(temporary, error);
             return result;
         }
-    }
-    // 置き換えは原子的（途中で落ちても古いファイルか新しいファイルのどちらかが残る）。
-    // WRITE_THROUGH（ディスクへの物理書き出し待ち）は数百 ms〜秒かかるので使わない
-    if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
-    {
-        filesystem::remove(temporary, error);
+        result.Success = true;
+        result.Milliseconds = std::chrono::duration<double, milli>(std::chrono::steady_clock::now() - begin).count();
         return result;
     }
-    result.Success = true;
-    result.Milliseconds = std::chrono::duration<double, milli>(std::chrono::steady_clock::now() - begin).count();
-    return result;
-}
 
-void VisitLiveEntityThunk(SceneFile::Archive& archive, EntityID entity)
-{
-    VisitLiveEntity(archive, entity);
+    void VisitLiveEntityThunk(SceneFile::Archive& archive, EntityID entity)
+    {
+        VisitLiveEntity(archive, entity);
+    }
 }
-} // namespace
 
 string ImGuiManager::SerializeScene()
 {
@@ -1785,9 +1787,9 @@ bool ImGuiManager::LoadScene(const filesystem::path& path)
         return false;
     }
 
-    // Validate the complete entity table before destroying the current scene.  A duplicate
-    // or malformed file id makes reference remapping ambiguous and used to leave ModelTest
-    // with partially rebuilt runtime resources.
+    // 現在のシーンを破棄する前にエンティティ表全体を検証する。ファイル ID が重複していたり
+    // 不正だったりすると参照の再割り当てが曖昧になり、従来は ModelTest の
+    // 実行時リソースが一部だけ再構築された状態で残ることがあった。
     unordered_set<EntityID> fileIds;
     fileIds.reserve(records.size());
     for (Json::ArrayIndex i = 0; i < records.size(); ++i)
@@ -2036,18 +2038,18 @@ void ImGuiManager::ProcessSceneAction()
     m_PendingScenePath.clear();
     switch (action)
     {
-    case SceneAction::Open:
-        LoadScene(path);
-        break;
-    case SceneAction::New:
-        CreateNewScene();
-        break;
-    case SceneAction::Quit:
-        m_SceneTracking = false;
-        PostQuitMessage(0);
-        break;
-    default:
-        break;
+        case SceneAction::Open:
+            LoadScene(path);
+            break;
+        case SceneAction::New:
+            CreateNewScene();
+            break;
+        case SceneAction::Quit:
+            m_SceneTracking = false;
+            PostQuitMessage(0);
+            break;
+        default:
+            break;
     }
 }
 
@@ -2235,4 +2237,3 @@ void ImGuiManager::DrawScenePopups()
         ImGui::EndPopup();
     }
 }
-

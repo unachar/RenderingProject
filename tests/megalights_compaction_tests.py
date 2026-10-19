@@ -1,7 +1,7 @@
-"""Run the production coarse-light compaction loop under shuffled lane arrivals.
+"""レーンの到達順を並べ替え、本番の粗いライト候補の圧縮ループを実行する。
 
-Intersection outcomes are fixture inputs; real HLSL ranking, shared writes and
-barriers run as C++20 coroutines. This does not compile the complete GPU shader.
+交差判定の結果はテストデータから与え、実際のHLSLの順位計算、共有メモリへの書き込み、
+バリアをC++20のコルーチンで実行する。GPUシェーダー全体のコンパイルは行わない。
 """
 import os
 from pathlib import Path
@@ -13,7 +13,7 @@ shader = (root / 'shader/hlsl/MegaLightsGridCS.hlsl').read_text(encoding='utf-8'
 begin = shader.index('    for (uint base = 0u; base < lightCount; base += 64u)')
 end = shader.index('\n    if (groupIndex == 0u)', begin + 1)
 loop = shader[begin:end]
-# Keep the production compaction intact, inject only intersection outcomes.
+# 本番の圧縮処理を維持し、交差判定の結果だけを差し替える。
 loop = loop.replace('MLSphereIntersectsAabb(MLLightViewSphere(Lights[lightIndex]), boundsMin, boundsMax)',
                     'hits[lightIndex]')
 local = 'uint listCount = 0u;' if 'uint listCount = 0u;' in shader[:begin] else ''

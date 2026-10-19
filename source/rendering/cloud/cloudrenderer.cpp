@@ -11,308 +11,310 @@
 
 namespace
 {
-constexpr UINT kFrames = RendererState::g_kFRAME_COUNT;
-static_assert(kFrames * 2 == CloudRenderer::kRtvCount);
-constexpr UINT kDescriptorStart = RendererState::g_kCLOUD_DESCRIPTOR_START;
-constexpr UINT kBaseSrv = kDescriptorStart;
-constexpr UINT kBaseUav = kDescriptorStart + 1;
-constexpr UINT kDetailSrv = kDescriptorStart + 2;
-constexpr UINT kDetailUav = kDescriptorStart + 3;
-constexpr UINT kFrameSrv = kDescriptorStart + 4;
-constexpr D3D12_RESOURCE_STATES kRead = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    constexpr UINT kFrames = RendererState::g_kFRAME_COUNT;
+    static_assert(kFrames * 2 == CloudRenderer::kRtvCount);
+    constexpr UINT kDescriptorStart = RendererState::g_kCLOUD_DESCRIPTOR_START;
+    constexpr UINT kBaseSrv = kDescriptorStart;
+    constexpr UINT kBaseUav = kDescriptorStart + 1;
+    constexpr UINT kDetailSrv = kDescriptorStart + 2;
+    constexpr UINT kDetailUav = kDescriptorStart + 3;
+    constexpr UINT kFrameSrv = kDescriptorStart + 4;
+    constexpr D3D12_RESOURCE_STATES kRead = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 
-struct LayerConstants
-{
-    XMFLOAT4 Layer;
-    XMFLOAT4 Shape;
-    XMFLOAT4 Wind;
-};
-
-static_assert(sizeof(LayerConstants) == 48);
-
-struct alignas(16) Constants
-{
-    XMFLOAT4 Layer;
-    XMFLOAT4 Shape;
-    XMFLOAT4 Lighting;
-    XMFLOAT4 Wind;
-    XMUINT4 Quality;
-    XMFLOAT4 Extent;
-    XMFLOAT4 Trace;
-    LayerConstants AdditionalLayers[CloudSettings::MaxLayers - 1];
-};
-
-static_assert(sizeof(Constants) == 256 && offsetof(Constants, Quality) == 64 && offsetof(Constants, Trace) == 96);
-static_assert(offsetof(Constants, AdditionalLayers) == 112);
-constexpr UINT kConstantStride = (sizeof(Constants) + 255) & ~255u;
-
-struct FrameResources
-{
-    ComPtr<ID3D12Resource> Color;
-    ComPtr<ID3D12Resource> Depth;
-    UINT Width = 0;
-    UINT Height = 0;
-};
-
-CloudSettings g_Settings;
-ComPtr<ID3D12Device> g_Device;
-ComPtr<ID3D12DescriptorHeap> g_Heap;
-ComPtr<ID3D12RootSignature> g_DrawRoot;
-ComPtr<ID3D12RootSignature> g_NoiseRoot;
-ComPtr<ID3D12PipelineState> g_RaymarchPso;
-ComPtr<ID3D12PipelineState> g_CompositeHdrPso;
-ComPtr<ID3D12PipelineState> g_CompositeLdrPso;
-ComPtr<ID3D12PipelineState> g_BasePso;
-ComPtr<ID3D12PipelineState> g_DetailPso;
-ComPtr<ID3D12Resource> g_BaseNoise;
-ComPtr<ID3D12Resource> g_DetailNoise;
-ComPtr<ID3D12Resource> g_Constants;
-array<FrameResources, kFrames> g_Frames;
-UINT8* g_Mapped = nullptr;
-UINT g_Increment = 0;
-UINT g_RtvIncrement = 0;
-D3D12_CPU_DESCRIPTOR_HANDLE g_RtvStart{};
-bool g_NoiseDirty = true;
-bool g_Available = false;
-uint32_t g_GeneratedSeed = 0;
-UINT g_GenerationCount = 0;
-// Double precision offset avoids loss of frame-sized increments during long sessions.
-double g_WindX = 0;
-double g_WindZ = 0;
-constexpr UINT kBaseExtent = 128;
-// User base noise (Procedural Studio / texture driven). Kept on the CPU so builtin regeneration
-// (device reset, enabling clouds) can be followed by a re-upload.
-vector<float> g_CustomNoise;
-string g_CustomLabel;
-bool g_CustomActive = false;
-bool g_CustomPending = false;
-array<ComPtr<ID3D12Resource>, kFrames> g_CustomUploads;
-
-D3D12_CPU_DESCRIPTOR_HANDLE Cpu(UINT index)
-{
-    return CD3DX12_CPU_DESCRIPTOR_HANDLE(g_Heap->GetCPUDescriptorHandleForHeapStart(), index, g_Increment);
-}
-
-D3D12_GPU_DESCRIPTOR_HANDLE Gpu(UINT index)
-{
-    return CD3DX12_GPU_DESCRIPTOR_HANDLE(g_Heap->GetGPUDescriptorHandleForHeapStart(), index, g_Increment);
-}
-
-D3D12_CPU_DESCRIPTOR_HANDLE Rtv(UINT frame, UINT target)
-{
-    return CD3DX12_CPU_DESCRIPTOR_HANDLE(g_RtvStart, frame * 2 + target, g_RtvIncrement);
-}
-
-void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
-                D3D12_RESOURCE_STATES after)
-{
-    const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, before, after);
-    commands->ResourceBarrier(1, &barrier);
-}
-
-bool CreateRoot(const CD3DX12_ROOT_SIGNATURE_DESC& desc, ComPtr<ID3D12RootSignature>& root)
-{
-    ComPtr<ID3DBlob> blob, errors;
-    if (FAILED(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)))
+    struct LayerConstants
     {
-        if (errors)
+        XMFLOAT4 Layer;
+        XMFLOAT4 Shape;
+        XMFLOAT4 Wind;
+    };
+
+    static_assert(sizeof(LayerConstants) == 48);
+
+    struct alignas(16) Constants
+    {
+        XMFLOAT4 Layer;
+        XMFLOAT4 Shape;
+        XMFLOAT4 Lighting;
+        XMFLOAT4 Wind;
+        XMUINT4 Quality;
+        XMFLOAT4 Extent;
+        XMFLOAT4 Trace;
+        LayerConstants AdditionalLayers[CloudSettings::MaxLayers - 1];
+    };
+
+    static_assert(sizeof(Constants) == 256 && offsetof(Constants, Quality) == 64 && offsetof(Constants, Trace) == 96);
+    static_assert(offsetof(Constants, AdditionalLayers) == 112);
+    constexpr UINT kConstantStride = (sizeof(Constants) + 255) & ~255u;
+
+    struct FrameResources
+    {
+        ComPtr<ID3D12Resource> Color;
+        ComPtr<ID3D12Resource> Depth;
+        UINT Width = 0;
+        UINT Height = 0;
+    };
+
+    CloudSettings g_Settings;
+    ComPtr<ID3D12Device> g_Device;
+    ComPtr<ID3D12DescriptorHeap> g_Heap;
+    ComPtr<ID3D12RootSignature> g_DrawRoot;
+    ComPtr<ID3D12RootSignature> g_NoiseRoot;
+    ComPtr<ID3D12PipelineState> g_RaymarchPso;
+    ComPtr<ID3D12PipelineState> g_CompositeHdrPso;
+    ComPtr<ID3D12PipelineState> g_CompositeLdrPso;
+    ComPtr<ID3D12PipelineState> g_BasePso;
+    ComPtr<ID3D12PipelineState> g_DetailPso;
+    ComPtr<ID3D12Resource> g_BaseNoise;
+    ComPtr<ID3D12Resource> g_DetailNoise;
+    ComPtr<ID3D12Resource> g_Constants;
+    array<FrameResources, kFrames> g_Frames;
+    UINT8* g_Mapped = nullptr;
+    UINT g_Increment = 0;
+    UINT g_RtvIncrement = 0;
+    D3D12_CPU_DESCRIPTOR_HANDLE g_RtvStart{};
+    bool g_NoiseDirty = true;
+    bool g_Available = false;
+    uint32_t g_GeneratedSeed = 0;
+    UINT g_GenerationCount = 0;
+    // 長時間動作してもフレーム単位の増分が失われないよう、オフセットを倍精度で保持する。
+    double g_WindX = 0;
+    double g_WindZ = 0;
+    constexpr UINT kBaseExtent = 128;
+    // ユーザー指定のベースノイズ（Procedural Studio / テクスチャ駆動）。CPU 側に保持し、
+    // デバイスリセットや雲の有効化による組み込みノイズ再生成の後に、再アップロードできるようにする。
+    vector<float> g_CustomNoise;
+    string g_CustomLabel;
+    bool g_CustomActive = false;
+    bool g_CustomPending = false;
+    array<ComPtr<ID3D12Resource>, kFrames> g_CustomUploads;
+
+    D3D12_CPU_DESCRIPTOR_HANDLE Cpu(UINT index)
+    {
+        return CD3DX12_CPU_DESCRIPTOR_HANDLE(g_Heap->GetCPUDescriptorHandleForHeapStart(), index, g_Increment);
+    }
+
+    D3D12_GPU_DESCRIPTOR_HANDLE Gpu(UINT index)
+    {
+        return CD3DX12_GPU_DESCRIPTOR_HANDLE(g_Heap->GetGPUDescriptorHandleForHeapStart(), index, g_Increment);
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE Rtv(UINT frame, UINT target)
+    {
+        return CD3DX12_CPU_DESCRIPTOR_HANDLE(g_RtvStart, frame * 2 + target, g_RtvIncrement);
+    }
+
+    void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
+                    D3D12_RESOURCE_STATES after)
+    {
+        const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, before, after);
+        commands->ResourceBarrier(1, &barrier);
+    }
+
+    bool CreateRoot(const CD3DX12_ROOT_SIGNATURE_DESC& desc, ComPtr<ID3D12RootSignature>& root)
+    {
+        ComPtr<ID3DBlob> blob, errors;
+        if (FAILED(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)))
         {
-            WriteGraphicsLog("Cloud root signature: %s\n", static_cast<const char*>(errors->GetBufferPointer()));
+            if (errors)
+            {
+                WriteGraphicsLog("Cloud root signature: %s\n", static_cast<const char*>(errors->GetBufferPointer()));
+            }
+            return false;
         }
-        return false;
+        return SUCCEEDED(
+            g_Device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&root)));
     }
-    return SUCCEEDED(
-        g_Device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&root)));
-}
 
-bool LoadCompute(const wchar_t* path, ComPtr<ID3D12PipelineState>& pso)
-{
-    ComPtr<ID3DBlob> shader;
-    if (FAILED(D3DReadFileToBlob(path, &shader)))
+    bool LoadCompute(const wchar_t* path, ComPtr<ID3D12PipelineState>& pso)
     {
-        return false;
-    }
-    D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
-    desc.pRootSignature = g_NoiseRoot.Get();
-    desc.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
-    return SUCCEEDED(g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&pso)));
-}
-
-bool LoadGraphics(const wchar_t* path, DXGI_FORMAT format, bool composite, ComPtr<ID3D12PipelineState>& pso)
-{
-    ComPtr<ID3DBlob> vertex, pixel;
-    if (FAILED(D3DReadFileToBlob(L"shader/hlsl/build/postProcessVS.cso", &vertex)) ||
-        FAILED(D3DReadFileToBlob(path, &pixel)))
-    {
-        return false;
-    }
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
-    desc.pRootSignature = g_DrawRoot.Get();
-    desc.VS = CD3DX12_SHADER_BYTECODE(vertex.Get());
-    desc.PS = CD3DX12_SHADER_BYTECODE(pixel.Get());
-    desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-    desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-    desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
-    desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-    desc.DepthStencilState.DepthEnable = FALSE;
-    desc.DepthStencilState.StencilEnable = FALSE;
-    desc.SampleMask = UINT_MAX;
-    desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    desc.NumRenderTargets = composite ? 1 : 2;
-    desc.RTVFormats[0] = format;
-    if (!composite)
-    {
-        desc.RTVFormats[1] = DXGI_FORMAT_R32G32_FLOAT;
-    }
-    desc.SampleDesc.Count = 1;
-    if (composite)
-    {
-        auto& blend = desc.BlendState.RenderTarget[0];
-        blend.BlendEnable = TRUE;
-        blend.SrcBlend = D3D12_BLEND_ONE;
-        blend.DestBlend = D3D12_BLEND_SRC_ALPHA;
-        blend.SrcBlendAlpha = D3D12_BLEND_ZERO;
-        blend.DestBlendAlpha = D3D12_BLEND_ONE;
-    }
-    return SUCCEEDED(g_Device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso)));
-}
-
-bool CreateNoise(UINT extent, UINT srvIndex, UINT uavIndex, ComPtr<ID3D12Resource>& resource)
-{
-    // Prefer the compact noise format; fall back when typed R8 UAV stores are unavailable.
-    DXGI_FORMAT format = DXGI_FORMAT_R16_FLOAT;
-    D3D12_FEATURE_DATA_FORMAT_SUPPORT support{DXGI_FORMAT_R8_UNORM};
-    if (SUCCEEDED(g_Device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support))) &&
-        (support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE) &&
-        (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE))
-    {
-        format = DXGI_FORMAT_R8_UNORM;
-    }
-    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    const auto desc = CD3DX12_RESOURCE_DESC::Tex3D(format, extent, extent, static_cast<UINT16>(extent), 1,
-                                                   D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, kRead, nullptr,
-                                                 IID_PPV_ARGS(&resource))))
-    {
-        return false;
-    }
-    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-    srv.Format = desc.Format;
-    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
-    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srv.Texture3D.MipLevels = 1;
-    g_Device->CreateShaderResourceView(resource.Get(), &srv, Cpu(srvIndex));
-    D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
-    uav.Format = desc.Format;
-    uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
-    uav.Texture3D.WSize = extent;
-    g_Device->CreateUnorderedAccessView(resource.Get(), nullptr, &uav, Cpu(uavIndex));
-    WriteGraphicsLog("Cloud noise: %ux%ux%u format=%s\n", extent, extent, extent,
-                     format == DXGI_FORMAT_R8_UNORM ? "R8_UNORM" : "R16_FLOAT");
-    return true;
-}
-
-bool CreateTarget(UINT width, UINT height, DXGI_FORMAT format, UINT srvIndex, D3D12_CPU_DESCRIPTOR_HANDLE rtv,
-                  ComPtr<ID3D12Resource>& resource)
-{
-    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    const auto desc =
-        CD3DX12_RESOURCE_DESC::Tex2D(format, width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
-    if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, kRead, nullptr,
-                                                 IID_PPV_ARGS(&resource))))
-    {
-        return false;
-    }
-    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-    srv.Format = format;
-    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srv.Texture2D.MipLevels = 1;
-    g_Device->CreateShaderResourceView(resource.Get(), &srv, Cpu(srvIndex));
-    g_Device->CreateRenderTargetView(resource.Get(), nullptr, rtv);
-    return true;
-}
-
-bool EnsureFrame(UINT index, UINT width, UINT height)
-{
-    auto& frame = g_Frames[index];
-    if (frame.Color && frame.Depth && frame.Width == width && frame.Height == height)
-    {
-        return true;
-    }
-    // The renderer waited for this frame's fence before recording its command list.
-    frame = {};
-    if (!CreateTarget(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, kFrameSrv + index * 2, Rtv(index, 0),
-                      frame.Color) ||
-        !CreateTarget(width, height, DXGI_FORMAT_R32G32_FLOAT, kFrameSrv + index * 2 + 1, Rtv(index, 1), frame.Depth))
-    {
-        return false;
-    }
-    frame.Width = width;
-    frame.Height = height;
-    frame.Color->SetName(L"Cloud Scattering / Transmittance");
-    frame.Depth->SetName(L"Cloud Scene / Weighted Depth");
-    return true;
-}
-
-void DispatchNoise(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, ID3D12PipelineState* pso,
-                   UINT uavIndex, UINT extent)
-{
-    Transition(commands, resource, kRead, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    commands->SetPipelineState(pso);
-    commands->SetComputeRootSignature(g_NoiseRoot.Get());
-    commands->SetComputeRootDescriptorTable(0, Gpu(uavIndex));
-    const UINT constants[] = {g_Settings.Seed, extent};
-    commands->SetComputeRoot32BitConstants(1, 2, constants, 0);
-    commands->Dispatch((extent + 3) / 4, (extent + 3) / 4, (extent + 3) / 4);
-    Transition(commands, resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kRead);
-}
-bool UploadCustomNoise(ID3D12GraphicsCommandList* commands, UINT frame)
-{
-    if (!g_BaseNoise || g_CustomNoise.size() != size_t(kBaseExtent) * kBaseExtent * kBaseExtent)
-    {
-        return false;
-    }
-    const DXGI_FORMAT format = g_BaseNoise->GetDesc().Format;
-    const UINT bytesPerTexel = format == DXGI_FORMAT_R8_UNORM ? 1u : 2u;
-    vector<uint8_t> texels(g_CustomNoise.size() * bytesPerTexel);
-    for (size_t i = 0; i < g_CustomNoise.size(); ++i)
-    {
-        const float value = clamp(g_CustomNoise[i], 0.0f, 1.0f);
-        if (bytesPerTexel == 1)
-        {
-            texels[i] = static_cast<uint8_t>(value * 255.0f + 0.5f);
-        }
-        else
-        {
-            const auto half = PackedVector::XMConvertFloatToHalf(value);
-            memcpy(&texels[i * 2], &half, 2);
-        }
-    }
-    auto& upload = g_CustomUploads[frame % kFrames];
-    const UINT64 bytes = GetRequiredIntermediateSize(g_BaseNoise.Get(), 0, 1);
-    if (!upload || upload->GetDesc().Width < bytes)
-    {
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(bytes);
-        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                     D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                                     IID_PPV_ARGS(upload.ReleaseAndGetAddressOf()))))
+        ComPtr<ID3DBlob> shader;
+        if (FAILED(D3DReadFileToBlob(path, &shader)))
         {
             return false;
         }
-        upload->SetName(L"Cloud Custom Noise Upload");
+        D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
+        desc.pRootSignature = g_NoiseRoot.Get();
+        desc.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
+        return SUCCEEDED(g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&pso)));
     }
-    D3D12_SUBRESOURCE_DATA data{};
-    data.pData = texels.data();
-    data.RowPitch = LONG_PTR(kBaseExtent) * bytesPerTexel;
-    data.SlicePitch = data.RowPitch * kBaseExtent;
-    Transition(commands, g_BaseNoise.Get(), kRead, D3D12_RESOURCE_STATE_COPY_DEST);
-    const bool copied = UpdateSubresources(commands, g_BaseNoise.Get(), upload.Get(), 0, 0, 1, &data) != 0;
-    Transition(commands, g_BaseNoise.Get(), D3D12_RESOURCE_STATE_COPY_DEST, kRead);
-    return copied;
-}
-} // namespace
+
+    bool LoadGraphics(const wchar_t* path, DXGI_FORMAT format, bool composite, ComPtr<ID3D12PipelineState>& pso)
+    {
+        ComPtr<ID3DBlob> vertex, pixel;
+        if (FAILED(D3DReadFileToBlob(L"shader/hlsl/build/postProcessVS.cso", &vertex)) ||
+            FAILED(D3DReadFileToBlob(path, &pixel)))
+        {
+            return false;
+        }
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
+        desc.pRootSignature = g_DrawRoot.Get();
+        desc.VS = CD3DX12_SHADER_BYTECODE(vertex.Get());
+        desc.PS = CD3DX12_SHADER_BYTECODE(pixel.Get());
+        desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+        desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+        desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+        desc.DepthStencilState.DepthEnable = FALSE;
+        desc.DepthStencilState.StencilEnable = FALSE;
+        desc.SampleMask = UINT_MAX;
+        desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        desc.NumRenderTargets = composite ? 1 : 2;
+        desc.RTVFormats[0] = format;
+        if (!composite)
+        {
+            desc.RTVFormats[1] = DXGI_FORMAT_R32G32_FLOAT;
+        }
+        desc.SampleDesc.Count = 1;
+        if (composite)
+        {
+            auto& blend = desc.BlendState.RenderTarget[0];
+            blend.BlendEnable = TRUE;
+            blend.SrcBlend = D3D12_BLEND_ONE;
+            blend.DestBlend = D3D12_BLEND_SRC_ALPHA;
+            blend.SrcBlendAlpha = D3D12_BLEND_ZERO;
+            blend.DestBlendAlpha = D3D12_BLEND_ONE;
+        }
+        return SUCCEEDED(g_Device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso)));
+    }
+
+    bool CreateNoise(UINT extent, UINT srvIndex, UINT uavIndex, ComPtr<ID3D12Resource>& resource)
+    {
+        // 小さいノイズ形式を優先し、型付き R8 UAV 書き込み非対応時はフォールバックする。
+        DXGI_FORMAT format = DXGI_FORMAT_R16_FLOAT;
+        D3D12_FEATURE_DATA_FORMAT_SUPPORT support{DXGI_FORMAT_R8_UNORM};
+        if (SUCCEEDED(g_Device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support))) &&
+            (support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE) &&
+            (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE))
+        {
+            format = DXGI_FORMAT_R8_UNORM;
+        }
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        const auto desc = CD3DX12_RESOURCE_DESC::Tex3D(format, extent, extent, static_cast<UINT16>(extent), 1,
+                                                       D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, kRead, nullptr,
+                                                     IID_PPV_ARGS(&resource))))
+        {
+            return false;
+        }
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+        srv.Format = desc.Format;
+        srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srv.Texture3D.MipLevels = 1;
+        g_Device->CreateShaderResourceView(resource.Get(), &srv, Cpu(srvIndex));
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+        uav.Format = desc.Format;
+        uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
+        uav.Texture3D.WSize = extent;
+        g_Device->CreateUnorderedAccessView(resource.Get(), nullptr, &uav, Cpu(uavIndex));
+        WriteGraphicsLog("Cloud noise: %ux%ux%u format=%s\n", extent, extent, extent,
+                         format == DXGI_FORMAT_R8_UNORM ? "R8_UNORM" : "R16_FLOAT");
+        return true;
+    }
+
+    bool CreateTarget(UINT width, UINT height, DXGI_FORMAT format, UINT srvIndex, D3D12_CPU_DESCRIPTOR_HANDLE rtv,
+                      ComPtr<ID3D12Resource>& resource)
+    {
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        const auto desc =
+            CD3DX12_RESOURCE_DESC::Tex2D(format, width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, kRead, nullptr,
+                                                     IID_PPV_ARGS(&resource))))
+        {
+            return false;
+        }
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+        srv.Format = format;
+        srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srv.Texture2D.MipLevels = 1;
+        g_Device->CreateShaderResourceView(resource.Get(), &srv, Cpu(srvIndex));
+        g_Device->CreateRenderTargetView(resource.Get(), nullptr, rtv);
+        return true;
+    }
+
+    bool EnsureFrame(UINT index, UINT width, UINT height)
+    {
+        auto& frame = g_Frames[index];
+        if (frame.Color && frame.Depth && frame.Width == width && frame.Height == height)
+        {
+            return true;
+        }
+        // 描画側はコマンドリストの記録前に、このフレームのフェンス完了を待っている。
+        frame = {};
+        if (!CreateTarget(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, kFrameSrv + index * 2, Rtv(index, 0),
+                          frame.Color) ||
+            !CreateTarget(width, height, DXGI_FORMAT_R32G32_FLOAT, kFrameSrv + index * 2 + 1, Rtv(index, 1),
+                          frame.Depth))
+        {
+            return false;
+        }
+        frame.Width = width;
+        frame.Height = height;
+        frame.Color->SetName(L"Cloud Scattering / Transmittance");
+        frame.Depth->SetName(L"Cloud Scene / Weighted Depth");
+        return true;
+    }
+
+    void DispatchNoise(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, ID3D12PipelineState* pso,
+                       UINT uavIndex, UINT extent)
+    {
+        Transition(commands, resource, kRead, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commands->SetPipelineState(pso);
+        commands->SetComputeRootSignature(g_NoiseRoot.Get());
+        commands->SetComputeRootDescriptorTable(0, Gpu(uavIndex));
+        const UINT constants[] = {g_Settings.Seed, extent};
+        commands->SetComputeRoot32BitConstants(1, 2, constants, 0);
+        commands->Dispatch((extent + 3) / 4, (extent + 3) / 4, (extent + 3) / 4);
+        Transition(commands, resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kRead);
+    }
+
+    bool UploadCustomNoise(ID3D12GraphicsCommandList* commands, UINT frame)
+    {
+        if (!g_BaseNoise || g_CustomNoise.size() != size_t(kBaseExtent) * kBaseExtent * kBaseExtent)
+        {
+            return false;
+        }
+        const DXGI_FORMAT format = g_BaseNoise->GetDesc().Format;
+        const UINT bytesPerTexel = format == DXGI_FORMAT_R8_UNORM ? 1u : 2u;
+        vector<uint8_t> texels(g_CustomNoise.size() * bytesPerTexel);
+        for (size_t i = 0; i < g_CustomNoise.size(); ++i)
+        {
+            const float value = clamp(g_CustomNoise[i], 0.0f, 1.0f);
+            if (bytesPerTexel == 1)
+            {
+                texels[i] = static_cast<uint8_t>(value * 255.0f + 0.5f);
+            }
+            else
+            {
+                const auto half = PackedVector::XMConvertFloatToHalf(value);
+                memcpy(&texels[i * 2], &half, 2);
+            }
+        }
+        auto& upload = g_CustomUploads[frame % kFrames];
+        const UINT64 bytes = GetRequiredIntermediateSize(g_BaseNoise.Get(), 0, 1);
+        if (!upload || upload->GetDesc().Width < bytes)
+        {
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+            const auto desc = CD3DX12_RESOURCE_DESC::Buffer(bytes);
+            if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                         IID_PPV_ARGS(upload.ReleaseAndGetAddressOf()))))
+            {
+                return false;
+            }
+            upload->SetName(L"Cloud Custom Noise Upload");
+        }
+        D3D12_SUBRESOURCE_DATA data{};
+        data.pData = texels.data();
+        data.RowPitch = LONG_PTR(kBaseExtent) * bytesPerTexel;
+        data.SlicePitch = data.RowPitch * kBaseExtent;
+        Transition(commands, g_BaseNoise.Get(), kRead, D3D12_RESOURCE_STATE_COPY_DEST);
+        const bool copied = UpdateSubresources(commands, g_BaseNoise.Get(), upload.Get(), 0, 0, 1, &data) != 0;
+        Transition(commands, g_BaseNoise.Get(), D3D12_RESOURCE_STATE_COPY_DEST, kRead);
+        return copied;
+    }
+} // 名前空間
 
 void CloudRenderer::SetCustomBaseNoise(const vector<float>& density, int extent, const string& label)
 {
@@ -335,7 +337,7 @@ void CloudRenderer::ClearCustomBaseNoise()
     g_CustomLabel.clear();
     g_CustomActive = false;
     g_CustomPending = false;
-    g_NoiseDirty = true; // restore the builtin shape noise
+    g_NoiseDirty = true; // 組み込みの形状ノイズへ戻す
 }
 
 bool CloudRenderer::HasCustomBaseNoise()
@@ -353,7 +355,7 @@ bool CloudRenderer::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap,
     g_Device = device;
     g_Heap = heap;
     g_Increment = increment;
-    // Valid null volumes keep the deferred pipeline usable if cloud initialization fails.
+    // 雲の初期化に失敗しても、有効な null ボリュームにより遅延描画パイプラインを利用可能に保つ。
     D3D12_SHADER_RESOURCE_VIEW_DESC nullVolume{};
     nullVolume.Format = DXGI_FORMAT_R8_UNORM;
     nullVolume.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
@@ -362,7 +364,7 @@ bool CloudRenderer::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap,
     device->CreateShaderResourceView(nullptr, &nullVolume, Cpu(kBaseSrv));
     device->CreateShaderResourceView(nullptr, &nullVolume, Cpu(kDetailSrv));
 
-    // A zeroed CBV remains valid when a later cloud pipeline or noise allocation fails.
+    // 後続の雲パイプラインやノイズ確保に失敗しても、ゼロ埋めの CBV は有効なままにする。
     const auto upload = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
     const auto buffer = CD3DX12_RESOURCE_DESC::Buffer(kConstantStride * kFrames);
     if (FAILED(device->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buffer,
@@ -432,7 +434,7 @@ void CloudRenderer::Shutdown()
     g_Mapped = nullptr;
     g_Frames = {};
     g_CustomUploads = {};
-    g_CustomPending = g_CustomActive; // re-upload after re-initialization
+    g_CustomPending = g_CustomActive; // 再初期化後に再アップロードする
     g_Constants.Reset();
     g_BaseNoise.Reset();
     g_DetailNoise.Reset();
@@ -510,7 +512,7 @@ void CloudRenderer::PrepareLighting(ID3D12GraphicsCommandList* commands, UINT fr
         g_GeneratedSeed = g_Settings.Seed;
         g_NoiseDirty = false;
         ++g_GenerationCount;
-        g_CustomPending = g_CustomActive; // builtin dispatch overwrote the custom volume
+        g_CustomPending = g_CustomActive; // 組み込みディスパッチが独自ボリュームを上書きした
     }
     if (g_CustomActive && g_CustomPending)
     {
@@ -656,146 +658,152 @@ void CloudRenderer::Render(ID3D12GraphicsCommandList* commands, UINT frameIndex,
 
 namespace
 {
-// Texture / fractal driven base-noise generation for the cloud window. Generation runs on worker
-// threads; the result is uploaded by PrepareLighting.
-struct CustomNoiseJob
-{
-    future<ProcStudio::Volume> Result;
-    string Label;
-    bool Running = false;
-};
-CustomNoiseJob g_NoiseJob;
-string g_NoiseStatus;
+    // 雲ウィンドウ用のテクスチャ・フラクタル駆動ベースノイズ生成。
+    // 生成はワーカースレッドで行い、結果は PrepareLighting でアップロードする。
+    struct CustomNoiseJob
+    {
+        future<ProcStudio::Volume> Result;
+        string Label;
+        bool Running = false;
+    };
 
-void StartNoiseJob(function<ProcStudio::Volume()> work, string label)
-{
-    g_NoiseJob.Result = async(launch::async, std::move(work));
-    g_NoiseJob.Label = std::move(label);
-    g_NoiseJob.Running = true;
-    g_NoiseStatus = "生成中: " + g_NoiseJob.Label;
-}
+    CustomNoiseJob g_NoiseJob;
+    string g_NoiseStatus;
 
-void DrawCustomNoiseUI()
-{
-    static filesystem::path source;
-    static int octaves = 3;
-    static float variation = 1.0f;
-    static int extent = 1; // 0 = 64, 1 = 128
-    static ProcStudio::TextureParams fractal = [] {
-        ProcStudio::TextureParams params;
-        params.Kind = ProcStudio::TextureKind::FractalCloud;
-        params.Noise.Frequency = 4;
-        params.Coverage = 0.55f;
-        params.Softness = 0.6f;
-        return params;
-    }();
-    if (g_NoiseJob.Running && g_NoiseJob.Result.wait_for(chrono::seconds(0)) == future_status::ready)
+    void StartNoiseJob(function<ProcStudio::Volume()> work, string label)
     {
-        g_NoiseJob.Running = false;
-        const auto volume = g_NoiseJob.Result.get();
-        if (volume.Extent > 0)
-        {
-            CloudRenderer::SetCustomBaseNoise(volume.Density, volume.Extent, g_NoiseJob.Label);
-            g_NoiseStatus = "適用済み: " + g_NoiseJob.Label;
-        }
-        else
-        {
-            g_NoiseStatus = "生成に失敗しました: " + g_NoiseJob.Label;
-        }
+        g_NoiseJob.Result = async(launch::async, std::move(work));
+        g_NoiseJob.Label = std::move(label);
+        g_NoiseJob.Running = true;
+        g_NoiseStatus = "生成中: " + g_NoiseJob.Label;
     }
-    ImGui::TextWrapped("現在: %s", g_CustomActive ? g_CustomLabel.c_str() : "組み込みノイズ (Perlin-Worley)");
-    if (!g_NoiseStatus.empty())
+
+    void DrawCustomNoiseUI()
     {
-        ImGui::TextDisabled("%s", g_NoiseStatus.c_str());
-    }
-    ImGui::Combo("生成解像度", &extent, "64^3 (高速)\000128^3\0");
-    const int size = extent == 0 ? 64 : 128;
-    ImGui::BeginDisabled(g_NoiseJob.Running);
-    ImGui::SeparatorText("テクスチャから生成");
-    ImGui::TextWrapped("2D 画像はオクターブ重ねで 3D の周期ノイズに変換します。3D DDS はそのまま使用します。");
-    ImGui::SliderInt("オクターブ", &octaves, 1, 6);
-    ImGui::SliderFloat("高さ方向の変化", &variation, 0, 4);
-    if (ImGui::Button("テクスチャを指定して生成..."))
-    {
-        filesystem::path path;
-        if (ProceduralIO::OpenFileDialog(L"画像 / ボリューム (*.png;*.jpg;*.dds;*.tga;*.bmp;*.hdr;*.tif)\0*.png;*.jpg;*.jpeg;*.dds;*.tga;*.bmp;*.hdr;*.tif;*.tiff\0すべてのファイル\0*.*\0",
-                                         path))
+        static filesystem::path source;
+        static int octaves = 3;
+        static float variation = 1.0f;
+        static int extent = 1; // 0 = 64, 1 = 128
+        static ProcStudio::TextureParams fractal = [] {
+            ProcStudio::TextureParams params;
+            params.Kind = ProcStudio::TextureKind::FractalCloud;
+            params.Noise.Frequency = 4;
+            params.Coverage = 0.55f;
+            params.Softness = 0.6f;
+            return params;
+        }();
+        if (g_NoiseJob.Running && g_NoiseJob.Result.wait_for(chrono::seconds(0)) == future_status::ready)
         {
-            source = path;
-            const int o = octaves;
-            const float v = variation;
-            const uint32_t seed = g_Settings.Seed;
+            g_NoiseJob.Running = false;
+            const auto volume = g_NoiseJob.Result.get();
+            if (volume.Extent > 0)
+            {
+                CloudRenderer::SetCustomBaseNoise(volume.Density, volume.Extent, g_NoiseJob.Label);
+                g_NoiseStatus = "適用済み: " + g_NoiseJob.Label;
+            }
+            else
+            {
+                g_NoiseStatus = "生成に失敗しました: " + g_NoiseJob.Label;
+            }
+        }
+        ImGui::TextWrapped("現在: %s", g_CustomActive ? g_CustomLabel.c_str() : "組み込みノイズ (Perlin-Worley)");
+        if (!g_NoiseStatus.empty())
+        {
+            ImGui::TextDisabled("%s", g_NoiseStatus.c_str());
+        }
+        ImGui::Combo("生成解像度", &extent, "64^3 (高速)\000128^3\0");
+        const int size = extent == 0 ? 64 : 128;
+        ImGui::BeginDisabled(g_NoiseJob.Running);
+        ImGui::SeparatorText("テクスチャから生成");
+        ImGui::TextWrapped("2D 画像はオクターブ重ねで 3D の周期ノイズに変換します。3D DDS はそのまま使用します。");
+        ImGui::SliderInt("オクターブ", &octaves, 1, 6);
+        ImGui::SliderFloat("高さ方向の変化", &variation, 0, 4);
+        if (ImGui::Button("テクスチャを指定して生成..."))
+        {
+            filesystem::path path;
+            if (ProceduralIO::OpenFileDialog(
+                    L"画像 / ボリューム (*.png;*.jpg;*.dds;*.tga;*.bmp;*.hdr;*.tif)\0*.png;*.jpg;*.jpeg;*.dds;*.tga;*.bmp;*.hdr;*.tif;*.tiff\0すべてのファイル\0*.*\0",
+                    path))
+            {
+                source = path;
+                const int o = octaves;
+                const float v = variation;
+                const uint32_t seed = g_Settings.Seed;
+                StartNoiseJob(
+                    [path, o, v, size, seed] {
+                        string error;
+                        ProcStudio::Volume volume;
+                        if (ProceduralIO::LoadVolume(path, volume, error))
+                        {
+                            return volume;
+                        }
+                        ProcStudio::Image image;
+                        if (!ProceduralIO::LoadImageFile(path, image, error))
+                        {
+                            return ProcStudio::Volume{};
+                        }
+                        return ProcStudio::VolumeFromImage(image, size, o, v, seed);
+                    },
+                    ProceduralIO::ToUtf8(path.filename()));
+            }
+        }
+        if (!source.empty())
+        {
+            ImGui::SameLine();
+            if (ImGui::Button("同じテクスチャで再生成"))
+            {
+                const auto path = source;
+                const int o = octaves;
+                const float v = variation;
+                const uint32_t seed = g_Settings.Seed;
+                StartNoiseJob(
+                    [path, o, v, size, seed] {
+                        string error;
+                        ProcStudio::Volume volume;
+                        if (ProceduralIO::LoadVolume(path, volume, error))
+                        {
+                            return volume;
+                        }
+                        ProcStudio::Image image;
+                        return ProceduralIO::LoadImageFile(path, image, error)
+                                   ? ProcStudio::VolumeFromImage(image, size, o, v, seed)
+                                   : ProcStudio::Volume{};
+                    },
+                    ProceduralIO::ToUtf8(path.filename()));
+            }
+        }
+        ImGui::SeparatorText("フラクタルノイズから生成");
+        int basis = static_cast<int>(fractal.Noise.BasisType);
+        if (ImGui::Combo("基底", &basis, "Perlin\0Value\0Worley\0Cell Edge\0"))
+        {
+            fractal.Noise.BasisType = static_cast<ProcStudio::Basis>(basis);
+        }
+        ImGui::InputScalar("Seed##fractal", ImGuiDataType_U32, &fractal.Noise.Seed);
+        ImGui::SliderFloat("周波数", &fractal.Noise.Frequency, 1, 16, "%.0f");
+        ImGui::SliderInt("オクターブ##fractal", &fractal.Noise.Octaves, 1, 8);
+        ImGui::SliderFloat("Gain", &fractal.Noise.Gain, 0.2f, 0.8f);
+        ImGui::SliderFloat("被覆率", &fractal.Coverage, 0, 1);
+        ImGui::SliderFloat("柔らかさ", &fractal.Softness, 0.05f, 1);
+        if (ImGui::Button("フラクタル雲ノイズを生成して適用"))
+        {
+            const auto params = fractal;
             StartNoiseJob(
-                [path, o, v, size, seed] {
-                    string error;
-                    ProcStudio::Volume volume;
-                    if (ProceduralIO::LoadVolume(path, volume, error))
-                    {
-                        return volume;
-                    }
-                    ProcStudio::Image image;
-                    if (!ProceduralIO::LoadImageFile(path, image, error))
-                    {
-                        return ProcStudio::Volume{};
-                    }
-                    return ProcStudio::VolumeFromImage(image, size, o, v, seed);
+                [params, size] {
+                    return ProcStudio::GenerateVolume(params, size);
                 },
-                ProceduralIO::ToUtf8(path.filename()));
+                "フラクタル雲ノイズ");
         }
-    }
-    if (!source.empty())
-    {
-        ImGui::SameLine();
-        if (ImGui::Button("同じテクスチャで再生成"))
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(!g_CustomActive);
+        if (ImGui::Button("組み込みノイズに戻す"))
         {
-            const auto path = source;
-            const int o = octaves;
-            const float v = variation;
-            const uint32_t seed = g_Settings.Seed;
-            StartNoiseJob(
-                [path, o, v, size, seed] {
-                    string error;
-                    ProcStudio::Volume volume;
-                    if (ProceduralIO::LoadVolume(path, volume, error))
-                    {
-                        return volume;
-                    }
-                    ProcStudio::Image image;
-                    return ProceduralIO::LoadImageFile(path, image, error)
-                               ? ProcStudio::VolumeFromImage(image, size, o, v, seed)
-                               : ProcStudio::Volume{};
-                },
-                ProceduralIO::ToUtf8(path.filename()));
+            CloudRenderer::ClearCustomBaseNoise();
+            g_NoiseStatus.clear();
         }
+        ImGui::EndDisabled();
+        ImGui::TextDisabled("プロシージャルスタジオの「フラクタル雲」からも適用できます。");
     }
-    ImGui::SeparatorText("フラクタルノイズから生成");
-    int basis = static_cast<int>(fractal.Noise.BasisType);
-    if (ImGui::Combo("基底", &basis, "Perlin\0Value\0Worley\0Cell Edge\0"))
-    {
-        fractal.Noise.BasisType = static_cast<ProcStudio::Basis>(basis);
-    }
-    ImGui::InputScalar("Seed##fractal", ImGuiDataType_U32, &fractal.Noise.Seed);
-    ImGui::SliderFloat("周波数", &fractal.Noise.Frequency, 1, 16, "%.0f");
-    ImGui::SliderInt("オクターブ##fractal", &fractal.Noise.Octaves, 1, 8);
-    ImGui::SliderFloat("Gain", &fractal.Noise.Gain, 0.2f, 0.8f);
-    ImGui::SliderFloat("被覆率", &fractal.Coverage, 0, 1);
-    ImGui::SliderFloat("柔らかさ", &fractal.Softness, 0.05f, 1);
-    if (ImGui::Button("フラクタル雲ノイズを生成して適用"))
-    {
-        const auto params = fractal;
-        StartNoiseJob([params, size] { return ProcStudio::GenerateVolume(params, size); }, "フラクタル雲ノイズ");
-    }
-    ImGui::EndDisabled();
-    ImGui::BeginDisabled(!g_CustomActive);
-    if (ImGui::Button("組み込みノイズに戻す"))
-    {
-        CloudRenderer::ClearCustomBaseNoise();
-        g_NoiseStatus.clear();
-    }
-    ImGui::EndDisabled();
-    ImGui::TextDisabled("プロシージャルスタジオの「フラクタル雲」からも適用できます。");
-}
-} // namespace
+} // 名前空間
 
 void CloudRenderer::DrawDebugUI()
 {
@@ -928,4 +936,3 @@ void CloudRenderer::DrawDebugUI()
     }
     g_Settings.Validate();
 }
-

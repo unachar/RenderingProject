@@ -19,17 +19,9 @@ float2 EncodeVisibilityOctahedron(float3 normal)
     return encoded * 0.5f + 0.5f;
 }
 
-uint4 PackVisibilityPayload(
-    float3 baseColor,
-    float3 normal,
-    float depth,
-    float metallic,
-    float roughness,
-    float fresnel,
-    float materialPartId,
-    float shadowThreshold,
-    float shadowSoftness,
-    float shadowStrength)
+uint4 PackVisibilityPayload(float3 baseColor, float3 normal, float depth, float metallic, float roughness,
+                            float fresnel, float materialPartId, float shadowThreshold, float shadowSoftness,
+                            float shadowStrength)
 {
     float2 octahedron = EncodeVisibilityOctahedron(normalize(normal));
     uint2 packedNormal = (uint2)round(saturate(octahedron) * 65535.0f);
@@ -41,13 +33,10 @@ uint4 PackVisibilityPayload(
     uint packedThreshold = (uint)round(saturate(shadowThreshold) * 255.0f);
     uint packedSoftness = (uint)round(saturate(shadowSoftness) * 127.0f);
 
-    return uint4(
-        PackVisibilityUnorm4(float4(baseColor, saturate(shadowStrength))),
-        packedNormal.x | (packedNormal.y << 16u),
-        packedDepth | (packedMetallic << 16u) | (packedRoughness << 24u),
-        packedFresnel | (packedPart << 8u) | (packedThreshold << 16u) |
-            (packedSoftness << 24u) | 0x80000000u);
+    return uint4(PackVisibilityUnorm4(float4(baseColor, saturate(shadowStrength))),
+                 packedNormal.x | (packedNormal.y << 16u),
+                 packedDepth | (packedMetallic << 16u) | (packedRoughness << 24u),
+                 packedFresnel | (packedPart << 8u) | (packedThreshold << 16u) | (packedSoftness << 24u) | 0x80000000u);
 }
 
 #endif
-

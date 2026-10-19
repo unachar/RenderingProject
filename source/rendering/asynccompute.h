@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================================
-// AsyncCompute
+// 非同期コンピュート処理（AsyncCompute）
 //   専用の COMPUTE コマンドキューで、グラフィックスと並行して実行できる処理を流す仕組み。
 //   ・フレームスロットごとのアロケーター（スロット再利用時は前回の GPU 処理が完了済み）
 //   ・Submit() で compute キューに投入して Signal し、グラフィックスキューに GPU 側の Wait を挿入
@@ -77,7 +77,7 @@ class AsyncCompute final
         }
     }
 
-    // Usable this frame (queue exists and the user has not disabled it).
+    // このフレームで利用可能か（キューが存在し、ユーザーが無効化していない）。
     static bool IsActive()
     {
         return s_Available && s_Enabled;
@@ -98,8 +98,8 @@ class AsyncCompute final
         return s_FenceValue;
     }
 
-    // The slot's allocator is reused only after RenderFrame waited for that slot's graphics
-    // fence, and that graphics frame waited for its compute work: the allocator is idle.
+    // RenderFrame がスロットのグラフィックスフェンスを待ち、そのフレームがコンピュート処理を
+    // 待った後だけアロケーターを再利用するため、この時点でアロケーターは使用されていない。
     static ID3D12GraphicsCommandList* Begin(UINT frameSlot)
     {
         if (!IsActive() || s_Recording)
@@ -115,8 +115,8 @@ class AsyncCompute final
         return s_List.Get();
     }
 
-    // Executes the recorded work on the compute queue and makes the graphics queue wait for it
-    // on the GPU timeline. Returns false if nothing was submitted.
+    // 記録済み処理をコンピュートキューで実行し、グラフィックスキューに GPU 上で完了を待たせる。
+    // 処理を送信しなかった場合は false を返す。
     static bool Submit(ID3D12CommandQueue* graphicsQueue)
     {
         if (!s_Recording)

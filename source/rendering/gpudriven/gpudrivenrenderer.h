@@ -9,7 +9,7 @@ class RenderGraph;
 
 namespace Meshlets
 {
-struct Asset;
+    struct Asset;
 }
 
 class GPUDrivenRenderer
@@ -49,7 +49,7 @@ class GPUDrivenRenderer
     static bool IsActive();
     static void SetEnabled(bool enabled);
     static void DrawDebug();
-    static void EndFrame(); // Optional debug readback, after submission and before frame-index rotation.
+    static void EndFrame(); // 任意のデバッグ読み戻し。送信後、フレームインデックスの切り替え前に行う。
     static void Shutdown();
     static ID3D12Resource* CommandBuffer();
     static ID3D12Resource* CountBuffer();

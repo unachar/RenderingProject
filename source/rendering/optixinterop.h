@@ -2,7 +2,7 @@
 #include <d3d12.h>
 #include <memory>
 
-// Each instance owns one signal's shared images and denoiser workspace.
+// 各インスタンスは1つの信号の共有画像とデノイザーの作業領域を所有する。
 class OptixInterop
 {
   public:

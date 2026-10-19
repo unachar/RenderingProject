@@ -6,12 +6,9 @@ PSInput2D main(float3 position : POSITION, float4 color : COLOR, float2 texCoord
     PSInput2D result;
     result.Position = float4(position, 1.0f);
 
-
     result.Position.xy *= Scale;
 
-
     result.Position.x *= (1.0f / AspectRatio);
-
 
     result.Position.xy += Offset;
 
@@ -22,4 +19,3 @@ PSInput2D main(float3 position : POSITION, float4 color : COLOR, float2 texCoord
 
     return result;
 }
-

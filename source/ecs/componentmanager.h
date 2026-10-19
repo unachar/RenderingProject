@@ -44,8 +44,8 @@ struct MeshComponent
     bool IsEnvironment = false;
     shared_ptr<StaticMeshData> NaniteMesh;
     // シーン保存用：プリミティブから作られたメッシュの再生成情報（0 = プリミティブ以外）
-    int PrimitiveType = 0;  // ObjectType
-    int PrimitiveColor = 0; // Color
+    int PrimitiveType = 0;  // オブジェクト種別（ObjectType）
+    int PrimitiveColor = 0; // 色（Color）
     float PrimitiveRadius = 0.5f;
     float PrimitiveHeight = 1.0f;
     float PrimitiveWidth = 1.0f;
@@ -266,7 +266,7 @@ struct MaterialComponent
     int AOTextureID = -1;
     int EmissiveTextureID = -1;
     MaterialSurface AssetSurface = MaterialSurface::Opaque;
-    uint32_t ShadingModel = 0; // see MaterialAssetData::ShadingModel
+    uint32_t ShadingModel = 0; // MaterialAssetData::ShadingModel を参照。
     float ShadingStrength = 1.0f;
     MaterialCull AssetCull = MaterialCull::Back;
     bool AssetDepthWrite = true;
@@ -328,7 +328,7 @@ struct MaterialComponent
     float Thickness = 0.10f;
     XMFLOAT3 AbsorptionCoefficient = {0.02f, 0.01f, 0.005f};
     bool IsTransparent = false;
-    bool DoubleSided = false; // Static opaque Mesh Shader rasterization and cone policy.
+    bool DoubleSided = false; // 静的不透明 Mesh Shader のラスタライズとコーン判定の方針。
     bool ReceivingPostProcess = true;
     bool UseTexture = false;
 };
@@ -372,9 +372,9 @@ struct SpriteComponent
     bool HasLocalBounds = false;
     bool UsePostProcess = false;
     // シーン保存用：スプライト形状の再生成情報（0 = 不明）
-    int SourceShape = 0; // ShapeType
+    int SourceShape = 0; // 形状種別（ShapeType）
     float SourceRadius = 0.5f;
-    int SourceColor = 0; // Color
+    int SourceColor = 0; // 色（Color）
 };
 
 struct InstancingComponent
@@ -405,7 +405,7 @@ struct LightComponent
     float InnerAngle = 0.0f;
     float VolumeDensity = 0.0f;
     int VolumeShape = 0;
-    float AreaWidth = 1.0f; // Rect light extent (metres)
+    float AreaWidth = 1.0f; // 矩形ライトの寸法（メートル）。
     float AreaHeight = 1.0f;
     bool IsActive = true;
     bool DrawDebug = false;

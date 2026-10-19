@@ -10,55 +10,56 @@
 
 namespace
 {
-bool g_LiveUpdate = true;
+    bool g_LiveUpdate = true;
 
-vector<Vertex> BuildTerrainVertices(const Procedural::TerrainSettings& settings)
-{
-    const int resolution = clamp(settings.Resolution, 4, 256);
-    const int side = resolution + 1;
-    const float size = clamp(settings.Size, 1.0f, 500.0f);
-    const float spacing = size / resolution;
-    const auto heights = Procedural::BuildHeightMap(settings);
-    vector<Vertex> lattice(heights.size());
-    for (int row = 0; row < side; ++row)
+    vector<Vertex> BuildTerrainVertices(const Procedural::TerrainSettings& settings)
     {
-        for (int column = 0; column < side; ++column)
+        const int resolution = clamp(settings.Resolution, 4, 256);
+        const int side = resolution + 1;
+        const float size = clamp(settings.Size, 1.0f, 500.0f);
+        const float spacing = size / resolution;
+        const auto heights = Procedural::BuildHeightMap(settings);
+        vector<Vertex> lattice(heights.size());
+        for (int row = 0; row < side; ++row)
         {
-            const int left = (max)(column - 1, 0);
-            const int right = (min)(column + 1, resolution);
-            const int lower = (max)(row - 1, 0);
-            const int upper = (min)(row + 1, resolution);
-            const float slopeX =
-                (heights[row * side + right] - heights[row * side + left]) / ((right - left) * spacing);
-            const float slopeZ =
-                (heights[upper * side + column] - heights[lower * side + column]) / ((upper - lower) * spacing);
-            Vertex& vertex = lattice[row * side + column];
-            vertex.Pos = {column * spacing - size * 0.5f, heights[row * side + column], row * spacing - size * 0.5f};
-            XMStoreFloat3(&vertex.Normal, XMVector3Normalize(XMVectorSet(-slopeX, 1.0f, -slopeZ, 0.0f)));
-            vertex.Tex = {static_cast<float>(column) / resolution, static_cast<float>(row) / resolution};
-            const float rock = clamp((1.0f - vertex.Normal.y) * 3.0f, 0.0f, 1.0f);
-            vertex.Color = {0.16f + rock * 0.32f, 0.36f + rock * 0.10f, 0.11f + rock * 0.31f, 1.0f};
+            for (int column = 0; column < side; ++column)
+            {
+                const int left = (max)(column - 1, 0);
+                const int right = (min)(column + 1, resolution);
+                const int lower = (max)(row - 1, 0);
+                const int upper = (min)(row + 1, resolution);
+                const float slopeX =
+                    (heights[row * side + right] - heights[row * side + left]) / ((right - left) * spacing);
+                const float slopeZ =
+                    (heights[upper * side + column] - heights[lower * side + column]) / ((upper - lower) * spacing);
+                Vertex& vertex = lattice[row * side + column];
+                vertex.Pos = {column * spacing - size * 0.5f, heights[row * side + column],
+                              row * spacing - size * 0.5f};
+                XMStoreFloat3(&vertex.Normal, XMVector3Normalize(XMVectorSet(-slopeX, 1.0f, -slopeZ, 0.0f)));
+                vertex.Tex = {static_cast<float>(column) / resolution, static_cast<float>(row) / resolution};
+                const float rock = clamp((1.0f - vertex.Normal.y) * 3.0f, 0.0f, 1.0f);
+                vertex.Color = {0.16f + rock * 0.32f, 0.36f + rock * 0.10f, 0.11f + rock * 0.31f, 1.0f};
+            }
         }
-    }
-    vector<Vertex> vertices;
-    vertices.reserve(static_cast<size_t>(resolution) * resolution * 6);
-    for (int row = 0; row < resolution; ++row)
-    {
-        for (int column = 0; column < resolution; ++column)
+        vector<Vertex> vertices;
+        vertices.reserve(static_cast<size_t>(resolution) * resolution * 6);
+        for (int row = 0; row < resolution; ++row)
         {
-            const int first = row * side + column;
-            // Clockwise in the renderer's left-handed coordinate system.
-            vertices.push_back(lattice[first]);
-            vertices.push_back(lattice[first + side]);
-            vertices.push_back(lattice[first + 1]);
-            vertices.push_back(lattice[first + 1]);
-            vertices.push_back(lattice[first + side]);
-            vertices.push_back(lattice[first + side + 1]);
+            for (int column = 0; column < resolution; ++column)
+            {
+                const int first = row * side + column;
+                // レンダラーの左手座標系では時計回り。
+                vertices.push_back(lattice[first]);
+                vertices.push_back(lattice[first + side]);
+                vertices.push_back(lattice[first + 1]);
+                vertices.push_back(lattice[first + 1]);
+                vertices.push_back(lattice[first + side]);
+                vertices.push_back(lattice[first + side + 1]);
+            }
         }
+        return vertices;
     }
-    return vertices;
 }
-} // namespace
 
 bool ProceduralScene::GetLiveUpdate()
 {

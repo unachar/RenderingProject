@@ -4,8 +4,9 @@
 // =============================================================================================
 // TAA（ちらつき対策版）
 //   ・動きベクトルは 3x3 で最も手前の深度のピクセルのものを使う（細い物・輪郭の取りこぼしによる履歴の引きずり防止）
-//   ・履歴は Catmull-Rom（5 タップ）で読む（双線形で読むたびに履歴がぼけ、ぼけを補うシャープ処理でちらつく、の悪循環を断つ）
-//   ・近傍は YCoCg の平均 ± γσ（分散クリップ）。min/max の箱でクランプすると、遠くの 1px 未満の物が
+//   ・履歴は Catmull-Rom（5
+//   タップ）で読む（双線形で読むたびに履歴がぼけ、ぼけを補うシャープ処理でちらつく、の悪循環を断つ） ・近傍は YCoCg
+//   の平均 ± γσ（分散クリップ）。min/max の箱でクランプすると、遠くの 1px 未満の物が
 //     ジッターのたびに箱の外へ出て履歴が捨てられ、点滅する。分散クリップは平均へ向けて線分で切るので安定
 //   ・静止していて履歴とよく合うピクセルほど γ を広げ、履歴を長く使う（遠景のちらつき対策の本体）
 //   ・輝度による重み付け（Karis）：明るい 1px が履歴を支配して明滅するのを抑える
@@ -27,7 +28,8 @@ cbuffer AaConstants : register(b4)
 
 float3 RgbToYCoCg(float3 c)
 {
-    return float3(0.25f * c.r + 0.5f * c.g + 0.25f * c.b, 0.5f * c.r - 0.5f * c.b, -0.25f * c.r + 0.5f * c.g - 0.25f * c.b);
+    return float3(0.25f * c.r + 0.5f * c.g + 0.25f * c.b, 0.5f * c.r - 0.5f * c.b,
+                  -0.25f * c.r + 0.5f * c.g - 0.25f * c.b);
 }
 
 float3 YCoCgToRgb(float3 c)
@@ -61,11 +63,21 @@ float3 SampleHistoryCatmullRom(float2 uv, float2 textureSize)
     float3 result = 0.0f;
     float weight = 0.0f;
     float w;
-    w = w12.x * w0.y;  result += HistoryColor.SampleLevel(LinearSampler, float2(uv12.x, uv0.y), 0).rgb * w;  weight += w;
-    w = w0.x * w12.y;  result += HistoryColor.SampleLevel(LinearSampler, float2(uv0.x, uv12.y), 0).rgb * w;  weight += w;
-    w = w12.x * w12.y; result += HistoryColor.SampleLevel(LinearSampler, float2(uv12.x, uv12.y), 0).rgb * w; weight += w;
-    w = w3.x * w12.y;  result += HistoryColor.SampleLevel(LinearSampler, float2(uv3.x, uv12.y), 0).rgb * w;  weight += w;
-    w = w12.x * w3.y;  result += HistoryColor.SampleLevel(LinearSampler, float2(uv12.x, uv3.y), 0).rgb * w;  weight += w;
+    w = w12.x * w0.y;
+    result += HistoryColor.SampleLevel(LinearSampler, float2(uv12.x, uv0.y), 0).rgb * w;
+    weight += w;
+    w = w0.x * w12.y;
+    result += HistoryColor.SampleLevel(LinearSampler, float2(uv0.x, uv12.y), 0).rgb * w;
+    weight += w;
+    w = w12.x * w12.y;
+    result += HistoryColor.SampleLevel(LinearSampler, float2(uv12.x, uv12.y), 0).rgb * w;
+    weight += w;
+    w = w3.x * w12.y;
+    result += HistoryColor.SampleLevel(LinearSampler, float2(uv3.x, uv12.y), 0).rgb * w;
+    weight += w;
+    w = w12.x * w3.y;
+    result += HistoryColor.SampleLevel(LinearSampler, float2(uv12.x, uv3.y), 0).rgb * w;
+    weight += w;
     return max(result / max(weight, 1.0e-4f), 0.0f);
 }
 
@@ -88,14 +100,13 @@ float4 main(PSInputPostProcess input) : SV_TARGET
     // ---- 近傍の統計（YCoCg・輝度重み付き）と、最も手前のピクセル
     const float3 currentRgb = CurrentColor.Load(int3(pixel, 0)).rgb;
     const float3 current = RgbToYCoCg(currentRgb);
-    float3 moment1 = 0.0f, moment2 = 0.0f;
+    float3 moment1 = 0.0f;
+    float3 moment2 = 0.0f;
     float closestDepth = 2.0f;
     int2 closestPixel = pixel;
-    [unroll]
-    for (int y = -1; y <= 1; ++y)
+    [unroll] for (int y = -1; y <= 1; ++y)
     {
-        [unroll]
-        for (int x = -1; x <= 1; ++x)
+        [unroll] for (int x = -1; x <= 1; ++x)
         {
             const int2 neighbor = clamp(pixel + int2(x, y), int2(0, 0), maxPixel);
             const float3 sampleColor = RgbToYCoCg(CurrentColor.Load(int3(neighbor, 0)).rgb);
@@ -137,7 +148,8 @@ float4 main(PSInputPostProcess input) : SV_TARGET
     // 輝度重み付きで混ぜる（明るい点の明滅を抑える）
     const float currentWeight = (1.0f - historyWeight) * LumaWeight(current);
     const float historyWeightL = historyWeight * LumaWeight(history);
-    const float3 resolved = (current * currentWeight + history * historyWeightL) / max(currentWeight + historyWeightL, 1.0e-5f);
+    const float3 resolved =
+        (current * currentWeight + history * historyWeightL) / max(currentWeight + historyWeightL, 1.0e-5f);
 
     float3 rgb = YCoCgToRgb(resolved);
     rgb = all(isfinite(rgb)) ? max(rgb, 0.0f) : currentRgb;

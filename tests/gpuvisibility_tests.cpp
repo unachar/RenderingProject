@@ -9,7 +9,7 @@ int main()
     static_assert(sizeof(VisibleInstanceData) == 16);
     static_assert(sizeof(GPULODLevel) == 16);
     static_assert(sizeof(GPULODGroup) == 16);
-    // The last destination texel must retain the odd source edge.
+    // 出力先の最後のテクセルには、奇数サイズの入力の端を必ず含める。
     assert(ReductionRange(0, 5, 2).first == 0);
     assert(ReductionRange(1, 5, 2).second == 5);
     assert(ReductionRange(0, 3, 1).second == 3);
@@ -38,7 +38,7 @@ int main()
     assert(SelectLOD(0.26f, metadata, 0) == 1);
     assert(SelectLOD(0.32f, metadata, 1) == 1);
     assert(SelectLOD(0.34f, metadata, 1) == 0);
-    assert(SelectLOD(0.31f, metadata, 2) == 1); // A large step still crosses the intermediate boundary.
+    assert(SelectLOD(0.31f, metadata, 2) == 1); // 大きな変化でも、途中の境界を越えたことを正しく反映する。
     metadata.MeshPaths[2] = "asset/Tree LOD2.obj";
     std::array<uint32_t, 8> meshes{4, 5, InvalidID, InvalidID, InvalidID, InvalidID, InvalidID, InvalidID};
     assert(FallbackLOD(4, meshes) == 1);
@@ -53,6 +53,6 @@ int main()
     assert(loaded.MeshPaths == metadata.MeshPaths);
     std::stringstream invalid("LOD 1 9 0.1");
     assert(!LoadLOD(invalid, loaded));
-    assert(loaded.Count == 5); // Failed loads are transactional.
+    assert(loaded.Count == 5); // 読み込みが失敗した場合は、それまでの状態を変更しない。
     std::puts("GPU visibility footprint/LOD/metadata tests: PASS");
 }

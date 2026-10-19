@@ -55,7 +55,7 @@ static bool IsSkyEntity(EntityID entity)
 
 static bool ShouldCastShadow(EntityID entity, bool transmission = false)
 {
-    // Environment meshes supply background radiance and must not occlude the sun.
+    // 環境メッシュは背景放射輝度を供給するため、太陽を遮蔽させない。
     if (ComponentManager::HasComponent<MeshComponent>(entity) &&
         ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
     {
@@ -132,12 +132,12 @@ bool ShouldDrawMeshToonOutline(const MaterialComponent& material, UINT meshIndex
     {
         switch (material.ToonMeshOutlineOverrides[meshIndex])
         {
-        case MeshOutlineOverride::ForceOn:
-            return true;
-        case MeshOutlineOverride::ForceOff:
-            return false;
-        default:
-            break;
+            case MeshOutlineOverride::ForceOn:
+                return true;
+            case MeshOutlineOverride::ForceOff:
+                return false;
+            default:
+                break;
         }
     }
     return meshData.DefaultToonOutlineEnabled;

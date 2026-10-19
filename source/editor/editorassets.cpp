@@ -27,195 +27,196 @@ using namespace EditorWidgets;
 
 namespace
 {
-// アセットブラウザ内でフォルダをドラッグするときのペイロード（wchar_t のパス、終端込み）
-constexpr const char* kAssetDirectoryPayload = "ASSET_DIR";
-// 複数選択をまとめてドラッグするときのペイロード（中身は件数。パスは m_DraggedAssetPaths）
-constexpr const char* kAssetMultiPayload = "ASSET_MULTI";
+    // アセットブラウザ内でフォルダをドラッグするときのペイロード（wchar_t のパス、終端込み）
+    constexpr const char* kAssetDirectoryPayload = "ASSET_DIR";
+    // 複数選択をまとめてドラッグするときのペイロード（中身は件数。パスは m_DraggedAssetPaths）
+    constexpr const char* kAssetMultiPayload = "ASSET_MULTI";
 
-// ImGui の入力（UTF-8）→ path。u8path は C++20 で非推奨のため自前で変換
-filesystem::path Utf8ToPath(const char* text)
-{
-    if (!text || text[0] == '\0')
+    // ImGui の入力（UTF-8）→ path。u8path は C++20 で非推奨のため自前で変換
+    filesystem::path Utf8ToPath(const char* text)
     {
-        return {};
-    }
-    const int length = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
-    if (length <= 1)
-    {
-        return {};
-    }
-    wstring wide(static_cast<size_t>(length - 1), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text, -1, wide.data(), length);
-    return filesystem::path(wide);
-}
-
-// ---- サムネイルの無いアセットのアイコン（cellSize 四方。サムネイル画像と同じ大きさ・同じ背景）
-void DrawAssetIcon(ImDrawList* drawList, const ImVec2& origin, float size, const filesystem::path& path,
-                   bool isDirectory)
-{
-    const ImVec2 maxCorner(origin.x + size, origin.y + size);
-    const float rounding = (std::max)(2.0f, size * 0.04f);
-    // サムネイルの背景色に合わせたタイル
-    drawList->AddRectFilled(origin, maxCorner, IM_COL32(30, 33, 42, 255), rounding);
-
-    const float unit = size / 16.0f; // 16 分割のグリッドで形を決めて、サイズに比例させる
-    auto at = [&](float x, float y) {
-        return ImVec2(origin.x + x * unit, origin.y + y * unit);
-    };
-
-    string extension = path.extension().generic_string();
-    transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
-        return static_cast<char>(tolower(c));
-    });
-
-    if (isDirectory)
-    {
-        const ImU32 back = IM_COL32(214, 160, 40, 255);
-        const ImU32 front = IM_COL32(255, 205, 70, 255);
-        // タブ + 奥の板 + 手前の板
-        drawList->AddRectFilled(at(2.0f, 3.5f), at(7.0f, 5.5f), back, unit * 0.8f, ImDrawFlags_RoundCornersTop);
-        drawList->AddRectFilled(at(2.0f, 4.5f), at(14.0f, 13.0f), back, unit * 0.8f);
-        drawList->AddRectFilled(at(2.0f, 6.0f), at(14.0f, 13.0f), front, unit * 0.8f);
-        drawList->AddLine(at(2.6f, 6.6f), at(13.4f, 6.6f), IM_COL32(255, 235, 160, 160),
-                          (std::max)(1.0f, unit * 0.35f));
-        return;
+        if (!text || text[0] == '\0')
+        {
+            return {};
+        }
+        const int length = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
+        if (length <= 1)
+        {
+            return {};
+        }
+        wstring wide(static_cast<size_t>(length - 1), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, text, -1, wide.data(), length);
+        return filesystem::path(wide);
     }
 
-    if (extension == ".material")
+    // ---- サムネイルの無いアセットのアイコン（cellSize 四方。サムネイル画像と同じ大きさ・同じ背景）
+    void DrawAssetIcon(ImDrawList* drawList, const ImVec2& origin, float size, const filesystem::path& path,
+                       bool isDirectory)
     {
-        // 球（マテリアルのプレビューと同じ見た目の簡易版）
-        const ImVec2 center = at(8.0f, 8.0f);
-        const float radius = unit * 5.6f;
-        drawList->AddCircleFilled(center, radius, IM_COL32(40, 170, 210, 255), 48);
-        drawList->AddCircleFilled(ImVec2(center.x + radius * 0.12f, center.y + radius * 0.12f), radius * 0.82f,
-                                  IM_COL32(60, 200, 240, 255), 48);
-        drawList->AddCircleFilled(ImVec2(center.x - radius * 0.38f, center.y - radius * 0.38f), radius * 0.22f,
-                                  IM_COL32(225, 248, 255, 230), 24);
-        return;
+        const ImVec2 maxCorner(origin.x + size, origin.y + size);
+        const float rounding = (std::max)(2.0f, size * 0.04f);
+        // サムネイルの背景色に合わせたタイル
+        drawList->AddRectFilled(origin, maxCorner, IM_COL32(30, 33, 42, 255), rounding);
+
+        const float unit = size / 16.0f; // 16 分割のグリッドで形を決めて、サイズに比例させる
+        auto at = [&](float x, float y) {
+            return ImVec2(origin.x + x * unit, origin.y + y * unit);
+        };
+
+        string extension = path.extension().generic_string();
+        transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
+            return static_cast<char>(tolower(c));
+        });
+
+        if (isDirectory)
+        {
+            const ImU32 back = IM_COL32(214, 160, 40, 255);
+            const ImU32 front = IM_COL32(255, 205, 70, 255);
+            // タブ + 奥の板 + 手前の板
+            drawList->AddRectFilled(at(2.0f, 3.5f), at(7.0f, 5.5f), back, unit * 0.8f, ImDrawFlags_RoundCornersTop);
+            drawList->AddRectFilled(at(2.0f, 4.5f), at(14.0f, 13.0f), back, unit * 0.8f);
+            drawList->AddRectFilled(at(2.0f, 6.0f), at(14.0f, 13.0f), front, unit * 0.8f);
+            drawList->AddLine(at(2.6f, 6.6f), at(13.4f, 6.6f), IM_COL32(255, 235, 160, 160),
+                              (std::max)(1.0f, unit * 0.35f));
+            return;
+        }
+
+        if (extension == ".material")
+        {
+            // 球（マテリアルのプレビューと同じ見た目の簡易版）
+            const ImVec2 center = at(8.0f, 8.0f);
+            const float radius = unit * 5.6f;
+            drawList->AddCircleFilled(center, radius, IM_COL32(40, 170, 210, 255), 48);
+            drawList->AddCircleFilled(ImVec2(center.x + radius * 0.12f, center.y + radius * 0.12f), radius * 0.82f,
+                                      IM_COL32(60, 200, 240, 255), 48);
+            drawList->AddCircleFilled(ImVec2(center.x - radius * 0.38f, center.y - radius * 0.38f), radius * 0.22f,
+                                      IM_COL32(225, 248, 255, 230), 24);
+            return;
+        }
+
+        // ファイル：右上を折った紙 + 種類ごとの色帯 + 拡張子
+        ImU32 accent = IM_COL32(120, 170, 230, 255);
+        if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".bmp" ||
+            extension == ".tga" || extension == ".dds" || extension == ".hdr")
+        {
+            accent = IM_COL32(90, 200, 110, 255);
+        }
+        else if (extension == ".fbx" || extension == ".obj" || extension == ".gltf" || extension == ".glb" ||
+                 extension == ".vrm" || extension == ".pmx" || extension == ".vgmesh")
+        {
+            accent = IM_COL32(245, 150, 70, 255);
+        }
+        else if (extension == ".scene")
+        {
+            accent = IM_COL32(110, 140, 255, 255);
+        }
+        else if (extension == ".hlsl" || extension == ".hlsli" || extension == ".slang")
+        {
+            accent = IM_COL32(190, 110, 245, 255);
+        }
+        else if (extension == ".wav" || extension == ".ogg" || extension == ".mp3")
+        {
+            accent = IM_COL32(240, 200, 80, 255);
+        }
+
+        const ImU32 paper = IM_COL32(222, 226, 234, 255);
+        const float fold = 3.2f;
+        // 本体（折り返し部分を除いた多角形）
+        const ImVec2 points[5] = {at(3.5f, 1.5f), at(12.5f - fold, 1.5f), at(12.5f, 1.5f + fold), at(12.5f, 14.5f),
+                                  at(3.5f, 14.5f)};
+        drawList->AddConvexPolyFilled(points, 5, paper);
+        // 折り返し
+        drawList->AddTriangleFilled(at(12.5f - fold, 1.5f), at(12.5f - fold, 1.5f + fold), at(12.5f, 1.5f + fold),
+                                    IM_COL32(160, 166, 178, 255));
+        // 色帯
+        drawList->AddRectFilled(at(3.5f, 9.0f), at(12.5f, 12.6f), accent);
+        // 本文の線
+        const float lineWidth = (std::max)(1.0f, unit * 0.45f);
+        drawList->AddLine(at(5.0f, 5.0f), at(9.0f, 5.0f), IM_COL32(150, 156, 168, 255), lineWidth);
+        drawList->AddLine(at(5.0f, 7.0f), at(11.0f, 7.0f), IM_COL32(150, 156, 168, 255), lineWidth);
+
+        // 拡張子（帯に収まるときだけ）
+        string label = extension.size() > 1 ? extension.substr(1) : string("FILE");
+        transform(label.begin(), label.end(), label.begin(), [](unsigned char c) {
+            return static_cast<char>(toupper(c));
+        });
+        if (label.size() > 5)
+        {
+            label.resize(5);
+        }
+        const float bandWidth = unit * 9.0f;
+        const float bandHeight = unit * 3.6f;
+        const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
+        if (textSize.y <= bandHeight + 2.0f && textSize.x <= bandWidth - 2.0f)
+        {
+            const ImVec2 bandMin = at(3.5f, 9.0f);
+            drawList->AddText(
+                ImVec2(bandMin.x + (bandWidth - textSize.x) * 0.5f, bandMin.y + (bandHeight - textSize.y) * 0.5f),
+                IM_COL32(255, 255, 255, 255), label.c_str());
+        }
     }
 
-    // ファイル：右上を折った紙 + 種類ごとの色帯 + 拡張子
-    ImU32 accent = IM_COL32(120, 170, 230, 255);
-    if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".bmp" ||
-        extension == ".tga" || extension == ".dds" || extension == ".hdr")
+    string PathToUtf8(const filesystem::path& path)
     {
-        accent = IM_COL32(90, 200, 110, 255);
-    }
-    else if (extension == ".fbx" || extension == ".obj" || extension == ".gltf" || extension == ".glb" ||
-             extension == ".vrm" || extension == ".pmx" || extension == ".vgmesh")
-    {
-        accent = IM_COL32(245, 150, 70, 255);
-    }
-    else if (extension == ".scene")
-    {
-        accent = IM_COL32(110, 140, 255, 255);
-    }
-    else if (extension == ".hlsl" || extension == ".hlsli" || extension == ".slang")
-    {
-        accent = IM_COL32(190, 110, 245, 255);
-    }
-    else if (extension == ".wav" || extension == ".ogg" || extension == ".mp3")
-    {
-        accent = IM_COL32(240, 200, 80, 255);
+        const auto text = path.generic_u8string();
+        return string(text.begin(), text.end());
     }
 
-    const ImU32 paper = IM_COL32(222, 226, 234, 255);
-    const float fold = 3.2f;
-    // 本体（折り返し部分を除いた多角形）
-    const ImVec2 points[5] = {at(3.5f, 1.5f), at(12.5f - fold, 1.5f), at(12.5f, 1.5f + fold), at(12.5f, 14.5f),
-                              at(3.5f, 14.5f)};
-    drawList->AddConvexPolyFilled(points, 5, paper);
-    // 折り返し
-    drawList->AddTriangleFilled(at(12.5f - fold, 1.5f), at(12.5f - fold, 1.5f + fold), at(12.5f, 1.5f + fold),
-                                IM_COL32(160, 166, 178, 255));
-    // 色帯
-    drawList->AddRectFilled(at(3.5f, 9.0f), at(12.5f, 12.6f), accent);
-    // 本文の線
-    const float lineWidth = (std::max)(1.0f, unit * 0.45f);
-    drawList->AddLine(at(5.0f, 5.0f), at(9.0f, 5.0f), IM_COL32(150, 156, 168, 255), lineWidth);
-    drawList->AddLine(at(5.0f, 7.0f), at(11.0f, 7.0f), IM_COL32(150, 156, 168, 255), lineWidth);
-
-    // 拡張子（帯に収まるときだけ）
-    string label = extension.size() > 1 ? extension.substr(1) : string("FILE");
-    transform(label.begin(), label.end(), label.begin(), [](unsigned char c) {
-        return static_cast<char>(toupper(c));
-    });
-    if (label.size() > 5)
+    filesystem::path CanonicalOf(const filesystem::path& path)
     {
-        label.resize(5);
+        error_code ec;
+        const filesystem::path absolute = filesystem::absolute(path, ec);
+        if (ec)
+        {
+            return path.lexically_normal();
+        }
+        filesystem::path canonical = filesystem::weakly_canonical(absolute, ec);
+        return ec ? absolute.lexically_normal() : canonical;
     }
-    const float bandWidth = unit * 9.0f, bandHeight = unit * 3.6f;
-    const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
-    if (textSize.y <= bandHeight + 2.0f && textSize.x <= bandWidth - 2.0f)
+
+    // child が parent と同じ、または parent の中にあるか（字句比較。両方 CanonicalOf 済みを想定）
+    bool IsSameOrInside(const filesystem::path& child, const filesystem::path& parent)
     {
-        const ImVec2 bandMin = at(3.5f, 9.0f);
-        drawList->AddText(
-            ImVec2(bandMin.x + (bandWidth - textSize.x) * 0.5f, bandMin.y + (bandHeight - textSize.y) * 0.5f),
-            IM_COL32(255, 255, 255, 255), label.c_str());
+        const filesystem::path relative = child.lexically_relative(parent);
+        if (relative.empty())
+        {
+            return false;
+        }
+        const auto first = *relative.begin();
+        return first != "..";
     }
-}
 
-string PathToUtf8(const filesystem::path& path)
-{
-    const auto text = path.generic_u8string();
-    return string(text.begin(), text.end());
-}
-
-filesystem::path CanonicalOf(const filesystem::path& path)
-{
-    error_code ec;
-    const filesystem::path absolute = filesystem::absolute(path, ec);
-    if (ec)
+    // 作業フォルダからの相対パス（ブラウザが扱う "asset/..." 形式に揃える）
+    filesystem::path ToWorkingRelative(const filesystem::path& path)
     {
-        return path.lexically_normal();
+        error_code ec;
+        const filesystem::path relative = filesystem::relative(path, filesystem::current_path(ec), ec);
+        return ec || relative.empty() ? path.lexically_normal() : relative;
     }
-    filesystem::path canonical = filesystem::weakly_canonical(absolute, ec);
-    return ec ? absolute.lexically_normal() : canonical;
-}
 
-// child が parent と同じ、または parent の中にあるか（字句比較。両方 CanonicalOf 済みを想定）
-bool IsSameOrInside(const filesystem::path& child, const filesystem::path& parent)
-{
-    const filesystem::path relative = child.lexically_relative(parent);
-    if (relative.empty())
+    // oldPrefix 自身、または oldPrefix/ 以下を指す文字列パスを newPrefix に付け替える
+    bool RemapPathString(string& value, const string& oldPrefix, const string& newPrefix)
     {
+        if (value.empty() || oldPrefix.empty())
+        {
+            return false;
+        }
+        string normalized = value;
+        std::replace(normalized.begin(), normalized.end(), '\\', '/');
+        if (normalized == oldPrefix)
+        {
+            value = newPrefix;
+            return true;
+        }
+        if (normalized.size() > oldPrefix.size() && normalized.compare(0, oldPrefix.size(), oldPrefix) == 0 &&
+            normalized[oldPrefix.size()] == '/')
+        {
+            value = newPrefix + normalized.substr(oldPrefix.size());
+            return true;
+        }
         return false;
     }
-    const auto first = *relative.begin();
-    return first != "..";
 }
-
-// 作業フォルダからの相対パス（ブラウザが扱う "asset/..." 形式に揃える）
-filesystem::path ToWorkingRelative(const filesystem::path& path)
-{
-    error_code ec;
-    const filesystem::path relative = filesystem::relative(path, filesystem::current_path(ec), ec);
-    return ec || relative.empty() ? path.lexically_normal() : relative;
-}
-
-// oldPrefix 自身、または oldPrefix/ 以下を指す文字列パスを newPrefix に付け替える
-bool RemapPathString(string& value, const string& oldPrefix, const string& newPrefix)
-{
-    if (value.empty() || oldPrefix.empty())
-    {
-        return false;
-    }
-    string normalized = value;
-    std::replace(normalized.begin(), normalized.end(), '\\', '/');
-    if (normalized == oldPrefix)
-    {
-        value = newPrefix;
-        return true;
-    }
-    if (normalized.size() > oldPrefix.size() && normalized.compare(0, oldPrefix.size(), oldPrefix) == 0 &&
-        normalized[oldPrefix.size()] == '/')
-    {
-        value = newPrefix + normalized.substr(oldPrefix.size());
-        return true;
-    }
-    return false;
-}
-} // namespace
 
 void ImGuiManager::DrawAssetBrowserWindow()
 {
@@ -489,7 +490,8 @@ void ImGuiManager::DrawAssetBrowserWindow()
         {
             anchorIndex = targetIndex;
         }
-        const int first = (min)(anchorIndex, targetIndex), last = (max)(anchorIndex, targetIndex);
+        const int first = (min)(anchorIndex, targetIndex);
+        const int last = (max)(anchorIndex, targetIndex);
         for (int index = first; index <= last; ++index)
         {
             AddAssetToSelection(entries[index].path());
@@ -737,7 +739,7 @@ void ImGuiManager::DrawAssetBrowserWindow()
                         const auto size = FitThumbnail(thumbnail.Image->Width, thumbnail.Image->Height, cellSize);
                         const ImVec2 top(cellPosition.x + (cellSize - size.Width) * 0.5f,
                                          cellPosition.y + (cellSize - size.Height) * 0.5f);
-                        // Draw on the cell without replacing the Selectable's interaction item.
+                        // Selectable の操作対象を置き換えず、セル上に描画する。
                         ImGui::GetWindowDrawList()->AddImage(
                             static_cast<ImTextureID>(thumbnail.GetImGuiTextureID().ptr), top,
                             ImVec2(top.x + size.Width, top.y + size.Height));
@@ -1327,19 +1329,20 @@ void ImGuiManager::PlaceAssetInScene(const filesystem::path& path, const ImVec2&
                       .Add<StaticModelComponent>();
 
     {
-        const auto stem = path.stem().u8string(); // ImGui / scene files are UTF-8
+        const auto stem = path.stem().u8string(); // ImGui とシーンファイルは UTF-8。
         entity.SetName(string(stem.begin(), stem.end()));
     }
-    // Procedural Studio OBJs are authored Y-up in metres: the name based heuristics (centimetre FBX
-    // scale 0.03 and the +90 degree X "convert" rotation) laid them on their side at 3 % size.
+    // Procedural Studio の OBJ は Y-up、メートル単位で作る。名前による推測で FBX 用の
+    // 0.03 倍と X 軸 +90 度回転を適用すると、横倒しで 3 % の大きさになってしまう。
     const bool procedural = ProcStudio::IsProceduralObj(path);
-    // relative is UTF-8; convert explicitly (implicit string -> path uses the ANSI code page).
+    // relative は UTF-8。暗黙の string → path 変換は ANSI を使うため、明示的に変換する。
     const filesystem::path relativePath = filesystem::u8path(relative);
     const bool isConvert = procedural ? false : ShouldConvertModelByPath(relativePath);
     auto& transform = entity.Get<TransformComponent>();
     transform.Position = pos;
     transform.Scale = procedural ? XMFLOAT3{1.0f, 1.0f, 1.0f} : XMFLOAT3{0.03f, 0.03f, 0.03f};
-    transform.Rotation = procedural ? XMFLOAT3{0.0f, 0.0f, 0.0f} : GetDefaultModelRotationByPath(relativePath, isConvert);
+    transform.Rotation =
+        procedural ? XMFLOAT3{0.0f, 0.0f, 0.0f} : GetDefaultModelRotationByPath(relativePath, isConvert);
     transform.IsDirty = true;
 
     entity.Get<StaticModelComponent>().IsConvert = isConvert;
@@ -1393,8 +1396,8 @@ bool ImGuiManager::IsModelFile(const filesystem::path& path)
 
 string ImGuiManager::MakeRelativeAssetPath(const filesystem::path& path)
 {
-    // UTF-8: model / texture loaders decode with u8path. generic_string() produced ANSI (CP932) bytes,
-    // so files with Japanese names failed to load after drag & drop.
+    // モデルとテクスチャは u8path で UTF-8 を復号する。generic_string() は ANSI（CP932）を返し、
+    // 日本語名のファイルがドラッグ＆ドロップ後に読み込めなくなっていた。
     const auto utf8 = [](const filesystem::path& value) {
         const auto text = value.generic_u8string();
         return string(text.begin(), text.end());
@@ -1611,7 +1614,7 @@ void ImGuiManager::AcceptAssetMoveDrop(const filesystem::path& destinationDirect
         const char* text = static_cast<const char*>(pathPayload->Data);
         if (text && text[0] != '\0')
         {
-            source = filesystem::u8path(text); // payload is UTF-8
+            source = filesystem::u8path(text); // ペイロードは UTF-8。
         }
     }
     else if (const ImGuiPayload* directoryPayload = ImGui::AcceptDragDropPayload(kAssetDirectoryPayload))
@@ -2240,4 +2243,3 @@ void ImGuiManager::DuplicateSelectedAssets()
         AddLog("複製: %d 個", static_cast<int>(created.size()));
     }
 }
-

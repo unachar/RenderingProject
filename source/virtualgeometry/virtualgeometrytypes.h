@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <type_traits>
 
-// Portable CPU layout mirrors StaticModelVertex; no D3D resource ownership.
+// 移植可能な CPU レイアウトは StaticModelVertex に対応し、D3D リソースは所有しない。
 struct VirtualGeometryVertex
 {
     float Position[3]{};
@@ -40,12 +40,12 @@ struct VirtualGeometryCluster
 {
     uint32_t VertexOffset = 0;
     uint32_t VertexCount = 0;
-    uint32_t TriangleOffset = 0; // Byte offset: three uint8_t indices per triangle.
+    uint32_t TriangleOffset = 0; // バイトオフセット。三角形ごとに uint8_t のインデックスを 3 個格納する。
     uint32_t TriangleCount = 0;
     uint32_t Level = 0;
-    uint32_t GroupIndex = VirtualGeometryConfig::InvalidIndex; // Consuming group; invalid for roots.
+    uint32_t GroupIndex = VirtualGeometryConfig::InvalidIndex; // 利用側のグループ。ルートでは無効。
     uint32_t GeneratingGroupIndex = VirtualGeometryConfig::InvalidIndex;
-    uint32_t MaterialId = 0; // Stable source section ID, distinct from shader MaterialPartId.
+    uint32_t MaterialId = 0; // 元セクションの安定した ID。シェーダーの MaterialPartId とは異なる。
     VirtualGeometrySphere Bounds;
     VirtualGeometryAabb Aabb;
     VirtualGeometryNormalCone Cone;
@@ -54,12 +54,12 @@ struct VirtualGeometryCluster
 
 struct VirtualGeometryClusterGroup
 {
-    uint32_t Level = 0; // Child level.
+    uint32_t Level = 0; // 子の階層レベル。
     uint32_t FirstChild = 0;
     uint32_t ChildCount = 0;
     uint32_t FirstParent = 0;
     uint32_t ParentCount = 0;
-    VirtualGeometrySphere Bounds; // Covers descendant geometry, not just simplified parents.
+    VirtualGeometrySphere Bounds; // 簡略化した親だけでなく、子孫のジオメトリ全体を覆う。
     float MinError = 0;
     float MaxError = 0;
 };
@@ -88,5 +88,5 @@ struct VirtualGeometryBuildStats
     double AverageVerticesPerCluster = 0;
     uint64_t SourceMemoryBytes = 0;
     uint64_t RawMemoryBytes = 0;
-    double BuildMilliseconds = 0; // Telemetry; excluded from deterministic serialization/hash.
+    double BuildMilliseconds = 0; // 計測情報。決定的なシリアライズとハッシュからは除外する。
 };

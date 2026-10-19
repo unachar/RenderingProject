@@ -128,7 +128,7 @@ static const MaterialComponent& DefaultMaterial()
 
 static bool ShouldCastShadow(EntityID entity)
 {
-    // Environment meshes supply background radiance and must not occlude the sun.
+    // 環境メッシュは背景放射輝度を供給するため、太陽を遮蔽させない。
     if (ComponentManager::HasComponent<MeshComponent>(entity) &&
         ComponentManager::GetComponentUnchecked<MeshComponent>(entity).IsEnvironment)
     {
@@ -339,7 +339,7 @@ bool InstancingSystem::CanInstance(EntityID entity)
     {
         const auto& material =
             MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity));
-        // Material-aware shadow pixels use the ordinary draw path.
+        // マテリアルを考慮する影のピクセルは、通常の描画経路を使う。
         if (MaterialSystem::IsTransparentMaterial(material) ||
             MaterialSystem::ResolveShadowMode(material) != MaterialShadowMode::Opaque ||
             material.AssetSurface == MaterialSurface::Masked || material.RuntimeHandle != 0)
@@ -352,7 +352,7 @@ bool InstancingSystem::CanInstance(EntityID entity)
     {
         return false;
     }
-    // Different per-entity vertex fields cannot share the same instanced draw geometry.
+    // エンティティごとの頂点場が異なる場合、同じインスタンス描画用ジオメトリは共有できない。
     if (VertexDeformation::IsRequested(entity))
     {
         return false;
@@ -644,7 +644,7 @@ void InstancingSystem::Uninit()
     m_DrawSignature.Reset();
 }
 
-// --- Private helper methods ---
+// 内部補助メソッド。
 
 struct DrawContext
 {
@@ -757,7 +757,7 @@ void InstancingSystem::BuildShadowBatches(DrawContext& ctx, BatchBuilder& builde
         return;
     }
 
-    // Animated models
+    // アニメーションモデル。
     for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
     {
         if (!CanInstance(entity) || !ShouldCastShadow(entity) ||
@@ -796,7 +796,7 @@ void InstancingSystem::BuildShadowBatches(DrawContext& ctx, BatchBuilder& builde
         }
     }
 
-    // Static models
+    // 静的モデル。
     for (EntityID entity : World::GetView<StaticModelComponent, TransformComponent>())
     {
         if (!CanInstance(entity) || !ShouldCastShadow(entity) ||
@@ -835,7 +835,7 @@ void InstancingSystem::BuildShadowBatches(DrawContext& ctx, BatchBuilder& builde
         }
     }
 
-    // Non-indexed (sprites/meshes)
+    // インデックスを使わない描画（スプライト・メッシュ）。
     for (EntityID entity : World::GetView<SpriteComponent, TransformComponent>())
     {
         const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(entity);
@@ -1028,7 +1028,7 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
         builder.Add(entity, prototype, key);
     };
 
-    // Sprites
+    // スプライト。
     for (EntityID entity : World::GetView<SpriteComponent, TransformComponent>())
     {
         if (!CanInstance(entity))
@@ -1107,7 +1107,7 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
         addEntity(entity, batch, key);
     }
 
-    // Meshes
+    // メッシュ。
     for (EntityID entity : World::GetView<MeshComponent, TransformComponent>())
     {
         if (!ctx.transparentPass && GPUDrivenRenderer::HandlesEntity(entity))
@@ -1191,7 +1191,7 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
         addEntity(entity, batch, key);
     }
 
-    // Animated models
+    // アニメーションモデル。
     for (EntityID entity : World::GetView<AnimationModelComponent, TransformComponent>())
     {
         if (!CanInstance(entity))
@@ -1307,7 +1307,7 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
         }
     }
 
-    // GPU-target instances are absent from this incremental CPU fallback list.
+    // GPU 側の対象インスタンスは、この差分更新用 CPU フォールバック一覧には含まれない。
     const auto staticEntities = !ctx.transparentPass && GPUDrivenRenderer::IsActive()
                                     ? EntityView(&GpuScene::CpuOpaqueStaticEntities())
                                     : World::GetView<StaticModelComponent, TransformComponent>();
@@ -1505,7 +1505,9 @@ void InstancingSystem::ExecuteGpuCullLod(InstanceBatch& batch, const function<vo
         destination->LocalCenter = {center.x, center.y, center.z, 1.0f};
         destination->LocalExtents = {extents.x, extents.y, extents.z, 0.0f};
 
-        float lod1 = 12.0f, lod2 = 28.0f, enableCull = 1.0f;
+        float lod1 = 12.0f;
+        float lod2 = 28.0f;
+        float enableCull = 1.0f;
         if (ComponentManager::HasComponent<InstancingComponent>(entity))
         {
             enableCull = static_cast<float>(
@@ -1528,8 +1530,8 @@ void InstancingSystem::ExecuteGpuCullLod(InstanceBatch& batch, const function<vo
     }
     m_FrameCursor += static_cast<UINT>(batch.Entities.size());
 
-    // ... (GPU culling implementation - same as before, using ctx.commandList)
-    // Omitted for brevity - delegates to existing GPU culling logic
+    // GPU カリングは ctx.commandList を使う既存の実装に従う。
+    // 既存の GPU カリング処理へ委譲する。
 }
 
 bool InstancingSystem::ExecuteCpuCulledDraw(InstanceBatch& batch, UINT minimumLod, const function<void()>& bindGraphics,
@@ -1552,7 +1554,8 @@ bool InstancingSystem::ExecuteCpuCulledDraw(InstanceBatch& batch, UINT minimumLo
     for (EntityID entity : batch.Entities)
     {
         const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-        float lod1 = FLT_MAX, lod2 = FLT_MAX;
+        float lod1 = FLT_MAX;
+        float lod2 = FLT_MAX;
         if (ComponentManager::HasComponent<LODComponent>(entity))
         {
             const auto& lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);

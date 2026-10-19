@@ -10,29 +10,29 @@
 
 namespace
 {
-float ReadFloat(istream& stream, float minimum, float maximum)
-{
-    float value = 0.0f;
-    if (!(stream >> value) || !isfinite(value))
+    float ReadFloat(istream& stream, float minimum, float maximum)
     {
-        throw invalid_argument("Invalid simulation setting");
+        float value = 0.0f;
+        if (!(stream >> value) || !isfinite(value))
+        {
+            throw invalid_argument("Invalid simulation setting");
+        }
+        return clamp(value, minimum, maximum);
     }
-    return clamp(value, minimum, maximum);
-}
 
-void RequireValidRecord(istream& stream)
-{
-    if (stream.fail())
+    void RequireValidRecord(istream& stream)
     {
-        throw invalid_argument("Incomplete simulation setting");
-    }
-    string extra;
-    if (stream >> extra)
-    {
-        throw invalid_argument("Unexpected simulation setting field");
+        if (stream.fail())
+        {
+            throw invalid_argument("Incomplete simulation setting");
+        }
+        string extra;
+        if (stream >> extra)
+        {
+            throw invalid_argument("Unexpected simulation setting field");
+        }
     }
 }
-} // namespace
 
 void SimulationConfiguration::Save(ostream& stream)
 {
@@ -93,7 +93,7 @@ bool SimulationConfiguration::TryLoad(const string& key, const string& value)
     if (key == "raytracing")
     {
         auto rays = Raytracing::GetSettings();
-        // Settings saved before the mode selector used the full RT pipeline.
+        // モード選択が導入される前に保存した設定は、完全な RT パイプラインを使っていた。
         rays.RenderMode = Raytracing::Mode::Full;
         record >> rays.Enabled >> rays.Shadows >> rays.AmbientOcclusion >> rays.Samples;
         rays.Samples = clamp(rays.Samples, 1, 8);

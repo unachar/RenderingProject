@@ -1,6 +1,6 @@
 #pragma once
 // ============================================================================
-// PerformanceGovernor
+// 実行負荷に応じた描画品質調整（PerformanceGovernor）
 //  目標フレームレート（既定120fps）を一定に保つため、GPU時間を毎フレーム監視して
 //  描画品質を段階（Tier）で自動調整する。
 //
@@ -367,8 +367,18 @@ class PerformanceGovernor final
         }
         else if (s_Base.GiMode == GlobalIlluminationMode::Realtime || s_Base.GiMode == GlobalIlluminationMode::Lumen)
         {
-            v.GiMode = t <= 1 ? s_Base.GiMode
-                              : (t <= 4 ? GlobalIlluminationMode::ScreenSpace : GlobalIlluminationMode::Off);
+            if (t <= 1)
+            {
+                v.GiMode = s_Base.GiMode;
+            }
+            else if (t <= 4)
+            {
+                v.GiMode = GlobalIlluminationMode::ScreenSpace;
+            }
+            else
+            {
+                v.GiMode = GlobalIlluminationMode::Off;
+            }
         }
         else if (s_Base.GiMode == GlobalIlluminationMode::ScreenSpace)
         {

@@ -13,48 +13,48 @@ using namespace std;
 
 namespace
 {
-void Check(bool condition, const char* message)
-{
-    if (!condition)
+    void Check(bool condition, const char* message)
     {
-        throw runtime_error(message);
-    }
-}
-
-void Write(const filesystem::path& path, const char* text)
-{
-    ofstream(path) << text;
-}
-
-size_t CacheEntries()
-{
-    size_t count = 0;
-    error_code error;
-    for (const auto& entry : filesystem::directory_iterator("EditorCache/Shaders", error))
-    {
-        if (entry.path().extension() == ".bin")
+        if (!condition)
         {
-            ++count;
+            throw runtime_error(message);
         }
     }
-    return count;
-}
 
-ComPtr<ID3DBlob> Compile(const char* entry = "main", const D3D_SHADER_MACRO* defines = nullptr,
-                         UINT flags = D3DCOMPILE_OPTIMIZATION_LEVEL3)
-{
-    ComPtr<ID3DBlob> code;
-    ComPtr<ID3DBlob> errors;
-    const HRESULT result = DxcCompileFromFileCompat(L"test.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry,
-                                                    "cs_6_0", flags, 0, &code, &errors);
-    if (FAILED(result) && errors)
+    void Write(const filesystem::path& path, const char* text)
     {
-        cerr << static_cast<const char*>(errors->GetBufferPointer());
+        ofstream(path) << text;
     }
-    Check(SUCCEEDED(result) && code, "shader compilation failed");
-    return code;
-}
-} // namespace
+
+    size_t CacheEntries()
+    {
+        size_t count = 0;
+        error_code error;
+        for (const auto& entry : filesystem::directory_iterator("EditorCache/Shaders", error))
+        {
+            if (entry.path().extension() == ".bin")
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    ComPtr<ID3DBlob> Compile(const char* entry = "main", const D3D_SHADER_MACRO* defines = nullptr,
+                             UINT flags = D3DCOMPILE_OPTIMIZATION_LEVEL3)
+    {
+        ComPtr<ID3DBlob> code;
+        ComPtr<ID3DBlob> errors;
+        const HRESULT result = DxcCompileFromFileCompat(L"test.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry,
+                                                        "cs_6_0", flags, 0, &code, &errors);
+        if (FAILED(result) && errors)
+        {
+            cerr << static_cast<const char*>(errors->GetBufferPointer());
+        }
+        Check(SUCCEEDED(result) && code, "shader compilation failed");
+        return code;
+    }
+} // 無名名前空間
 
 int main(int argc, char** argv)
 {
@@ -125,7 +125,7 @@ int main(int argc, char** argv)
         Compile();
         Check(CacheEntries() == 5, "corrupt cache must be replaced through normal compilation");
 
-        // An unwritable cache is optional: successful rendering still needs DXIL.
+        // キャッシュへの書き込みは必須ではないが、描画を成功させるにはDXILが必要になる。
         filesystem::create_directory("cache-unavailable");
         filesystem::copy_file("test.hlsl", "cache-unavailable/test.hlsl");
         filesystem::copy_file("nested.hlsli", "cache-unavailable/nested.hlsli");

@@ -123,8 +123,8 @@ void RenderConfiguration::Resize(UINT width, UINT height)
                                       m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV)));
     m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 
-    // Resize replaces the depth resource; its shader view must follow it too.
-    // Hi-Z reads this descriptor during the native geometry second pass.
+    // リサイズで深度リソースが置き換わるため、シェーダービューも更新する。
+    // ネイティブジオメトリの第2パスで、Hi-Z がこの記述子を読む。
     D3D12_SHADER_RESOURCE_VIEW_DESC depthSrvDesc{};
     depthSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     depthSrvDesc.Format = DXGI_FORMAT_R32_FLOAT;

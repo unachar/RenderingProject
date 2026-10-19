@@ -973,24 +973,24 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity, bool embeddedInInsp
         const int part = static_cast<int>(materialPartId + 0.5f);
         switch (part)
         {
-        case static_cast<int>(ShaderClass::Hair):
-            return "髪";
-        case static_cast<int>(ShaderClass::Cloth):
-            return "服";
-        case static_cast<int>(ShaderClass::Skin):
-            return "肌";
-        case static_cast<int>(ShaderClass::Toon):
-            return "トゥーン";
-        case static_cast<int>(ShaderClass::PBR):
-            return "PBR";
-        case static_cast<int>(ShaderClass::BRDF):
-            return "BRDF";
-        case static_cast<int>(ShaderClass::BTDF):
-            return "BTDF";
-        case static_cast<int>(ShaderClass::BSDF):
-            return "BSDF";
-        default:
-            return "自動";
+            case static_cast<int>(ShaderClass::Hair):
+                return "髪";
+            case static_cast<int>(ShaderClass::Cloth):
+                return "服";
+            case static_cast<int>(ShaderClass::Skin):
+                return "肌";
+            case static_cast<int>(ShaderClass::Toon):
+                return "トゥーン";
+            case static_cast<int>(ShaderClass::PBR):
+                return "PBR";
+            case static_cast<int>(ShaderClass::BRDF):
+                return "BRDF";
+            case static_cast<int>(ShaderClass::BTDF):
+                return "BTDF";
+            case static_cast<int>(ShaderClass::BSDF):
+                return "BSDF";
+            default:
+                return "自動";
         }
     };
 

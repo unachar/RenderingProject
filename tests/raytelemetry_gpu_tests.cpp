@@ -10,23 +10,23 @@ using Microsoft::WRL::ComPtr;
 
 namespace
 {
-void Check(bool value, const char* message)
-{
-    if (!value)
+    void Check(bool value, const char* message)
     {
-        throw std::runtime_error(message);
+        if (!value)
+        {
+            throw std::runtime_error(message);
+        }
     }
-}
 
-void Hr(HRESULT result, const char* message)
-{
-    if (FAILED(result))
+    void Hr(HRESULT result, const char* message)
     {
-        std::cerr << "HRESULT 0x" << std::hex << static_cast<unsigned long>(result) << std::dec << '\n';
-        throw std::runtime_error(message);
+        if (FAILED(result))
+        {
+            std::cerr << "HRESULT 0x" << std::hex << static_cast<unsigned long>(result) << std::dec << '\n';
+            throw std::runtime_error(message);
+        }
     }
-}
-} // namespace
+} // 無名名前空間
 
 int main()
 {

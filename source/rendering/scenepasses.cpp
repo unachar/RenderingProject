@@ -21,12 +21,12 @@
 
 namespace
 {
-bool g_VelocityDepthReadActive = false;
-ComPtr<ID3D12Resource> g_StationaryShadowDepth, g_StationaryShadowOwner;
-ComPtr<ID3D12DescriptorHeap> g_StationaryShadowDsv, g_StationaryShadowSrv;
-ComPtr<ID3D12RootSignature> g_ShadowCopyRoot;
-ComPtr<ID3D12PipelineState> g_ShadowCopyPso;
-} // namespace
+    bool g_VelocityDepthReadActive = false;
+    ComPtr<ID3D12Resource> g_StationaryShadowDepth, g_StationaryShadowOwner;
+    ComPtr<ID3D12DescriptorHeap> g_StationaryShadowDsv, g_StationaryShadowSrv;
+    ComPtr<ID3D12RootSignature> g_ShadowCopyRoot;
+    ComPtr<ID3D12PipelineState> g_ShadowCopyPso;
+} // 名前空間
 
 void ScenePasses::ReleaseStaticShadowCache()
 {
@@ -418,8 +418,8 @@ void ScenePasses::BeginHdrTransparentPass()
                                       m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV));
     m_IsDeferredGeometryPass = false;
     m_IsSceneColorForwardPass = true;
-    // OIT binds its accumulation / revealage targets instead of the scene; it also copies the
-    // opaque scene for ray traced refraction.
+    // OIT はシーンの代わりに蓄積値と透過残率のターゲットをバインドし、
+    // レイトレース屈折用に不透明シーンもコピーする。
     if (!TransparencyEffects::BeginTransparentPass(m_CommandList.Get(), GetRenderTarget(RenderTargetType::Scene).Get(),
                                                    GetRenderTargetRtvHandle(RenderTargetType::Scene),
                                                    m_TransparentSceneCopy.Get(), dsv))

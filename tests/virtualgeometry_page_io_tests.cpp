@@ -12,7 +12,7 @@ void TestVirtualGeometryPageIo()
     std::vector<uint8_t> expected(65536, 42);
     manifest->FileBytes = 65536;
     manifest->Pages.push_back({0, 65536, VirtualGeometrySerializer::Hash(expected)});
-    manifest->PageClusters.resize(1); // This raw test page contains no encoded clusters.
+    manifest->PageClusters.resize(1); // この未加工のテスト用ページには、符号化済みのクラスターは含まれない。
     {
         std::ofstream file(manifest->Path, std::ios::binary);
         file.write(reinterpret_cast<const char*>(expected.data()), expected.size());
@@ -33,8 +33,7 @@ void TestVirtualGeometryPageIo()
     {
         throw std::runtime_error("SSD Page read failed: " + results[0].Error);
     }
-    if (results.size() != 1 || results[0].Payload != expected ||
-        results[0].ReadBytes != 65536)
+    if (results.size() != 1 || results[0].Payload != expected || results[0].ReadBytes != 65536)
     {
         throw std::runtime_error("SSD Page bytes/read count mismatch");
     }

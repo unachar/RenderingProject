@@ -12,16 +12,17 @@
 // RayReflectionsCS / nrddenoiser.cpp の kHitDistance* と同じ
 static const float3 kHitDistanceParameters = float3(3.0f, 0.1f, 20.0f);
 
-StructuredBuffer<float4>   Raw        : register(t0);
-Texture2D<float>           GuideViewZ : register(t1);
-Texture2D<float4>          NrdOutput  : register(t2);
-RWTexture2D<float4>        NoisyOut   : register(u0);
-RWStructuredBuffer<float4> Denoised   : register(u1);
+StructuredBuffer<float4> Raw : register(t0);
+Texture2D<float> GuideViewZ : register(t1);
+Texture2D<float4> NrdOutput : register(t2);
+RWTexture2D<float4> NoisyOut : register(u0);
+RWStructuredBuffer<float4> Denoised : register(u1);
 
-[numthreads(8, 8, 1)]
-void NrdPack(uint3 id : SV_DispatchThreadID)
-{
-    if (any(id.xy >= MLScreen.xy)) return;
+[numthreads(8, 8, 1)] void NrdPack(uint3 id : SV_DispatchThreadID) {
+    if (any(id.xy >= MLScreen.xy))
+    {
+        return;
+    }
     const float4 raw = Raw[id.y * MLScreen.x + id.x];
     if (raw.a < 0.5f)
     {
@@ -35,10 +36,12 @@ void NrdPack(uint3 id : SV_DispatchThreadID)
     NoisyOut[id.xy] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(max(raw.rgb, 0.0f), normalized, true);
 }
 
-[numthreads(8, 8, 1)]
-void NrdUnpack(uint3 id : SV_DispatchThreadID)
+    [numthreads(8, 8, 1)] void NrdUnpack(uint3 id : SV_DispatchThreadID)
 {
-    if (any(id.xy >= MLScreen.xy)) return;
+    if (any(id.xy >= MLScreen.xy))
+    {
+        return;
+    }
     const float3 radiance = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(NrdOutput.Load(int3(id.xy, 0))).rgb;
     Denoised[id.y * MLScreen.x + id.x] = float4(all(isfinite(radiance)) ? max(radiance, 0.0f) : 0.0f, 0.0f);
 }

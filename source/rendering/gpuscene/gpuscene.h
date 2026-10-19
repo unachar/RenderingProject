@@ -7,7 +7,7 @@ class GpuScene
 {
   public:
     static void Execute(ID3D12GraphicsCommandList* commands);
-    static void Shutdown(); // Caller has already waited for GraphicsDevice's fences.
+    static void Shutdown(); // 呼び出し側は GraphicsDevice のフェンス完了を待ち終わっている。
     static GPUInstanceID GetEntityInstance(uint32_t entity);
     static const vector<GPUInstanceID>& GetEntityInstances(uint32_t entity);
     static const vector<uint32_t>& CpuOpaqueStaticEntities();

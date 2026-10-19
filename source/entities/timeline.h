@@ -67,21 +67,21 @@ inline float TimeLineApplyEase(float t, TimeLineEase ease)
     t = TimeLineClamp01(t);
     switch (ease)
     {
-    case TimeLineEase::Step:
-        return 0.0f;
-    case TimeLineEase::EaseIn:
-        return t * t;
-    case TimeLineEase::EaseOut:
-        return 1.0f - (1.0f - t) * (1.0f - t);
-    case TimeLineEase::EaseInOut:
-        if (t < 0.5f)
-        {
-            return 2.0f * t * t;
-        }
-        return 1.0f - powf(-2.0f * t + 2.0f, 2.0f) * 0.5f;
-    case TimeLineEase::Linear:
-    default:
-        return t;
+        case TimeLineEase::Step:
+            return 0.0f;
+        case TimeLineEase::EaseIn:
+            return t * t;
+        case TimeLineEase::EaseOut:
+            return 1.0f - (1.0f - t) * (1.0f - t);
+        case TimeLineEase::EaseInOut:
+            if (t < 0.5f)
+            {
+                return 2.0f * t * t;
+            }
+            return 1.0f - powf(-2.0f * t + 2.0f, 2.0f) * 0.5f;
+        case TimeLineEase::Linear:
+        default:
+            return t;
     }
 }
 

@@ -6,11 +6,17 @@ $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudi
 $developerCommand = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
 New-Item -ItemType Directory -Force -Path (Join-Path $workspace 'build/thumbnail-tests') | Out-Null
 $flags = '/Od /RTC1'
-if ($Configuration -eq 'Release') { $flags = '/O2' }
+if ($Configuration -eq 'Release') {
+    $flags = '/O2'
+}
 $command = '"{0}" -no_logo -arch=amd64 -host_arch=amd64 && cl /nologo /std:c++20 /EHsc /W4 /utf-8 {1} /I source tests\thumbnail_cache_tests.cpp source\assets\thumbnailcache.cpp /Fe:build\thumbnail-tests\cache-{2}.exe /Fo:build\thumbnail-tests\ && build\thumbnail-tests\cache-{2}.exe' -f $developerCommand, $flags, $Configuration
 Push-Location -LiteralPath $workspace
 try {
     & $env:ComSpec /d /c $command
-    if ($LASTEXITCODE) { throw 'Thumbnail tests failed.' }
+    if ($LASTEXITCODE) {
+        throw 'Thumbnail tests failed.'
+    }
 }
-finally { Pop-Location }
+finally {
+    Pop-Location
+}
