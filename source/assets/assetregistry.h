@@ -22,6 +22,10 @@ class AssetRegistry
     static AssetType Classify(const std::filesystem::path& path);
     // ルート（asset フォルダ）の絶対パス。作業フォルダが変わったら取り直す。
     const std::filesystem::path& Root() const;
+    // 検証（--validate 系）の一時フィクスチャ置き場（<作業フォルダ>/Data/Cache/Validation）。
+    // asset 以下に作らないことで、アセットブラウザや保存ダイアログに現れないようにする。
+    // レジストリはこの下のファイルもアセットとして登録できる。
+    static std::filesystem::path ValidationCacheRoot();
 
   private:
     // グローバル変数として WinMain より前に構築されるため、構築時点の作業フォルダで
@@ -34,3 +38,4 @@ class AssetRegistry
     std::unordered_set<AssetHandle> m_Collisions;
     bool Contains(const std::filesystem::path& path) const;
 };
+

@@ -20,6 +20,10 @@ int main()
         const auto root = std::filesystem::path("build/material-tests/assets-" + std::to_string(GetCurrentProcessId()));
         std::filesystem::create_directories(root);
         MaterialAssetData authored;
+        Check(authored.ParallaxDepth == 0.0f && authored.ParallaxSteps == 32.0f, "POM disabled by default");
+        authored.ParallaxDepth = 0.06f;
+        authored.ParallaxSteps = 48.0f;
+        authored.Textures[static_cast<size_t>(MaterialTextureSlot::Height)] = 0x123456789abcdef0ull;
         Check(authored.Roughness == 0.5f && authored.NormalScale == 1.0f, "PBR defaults");
         authored.BaseColor = {0.2f, 0.3f, 0.4f, 0.35f};
         authored.Textures[1] = 0xfedcba9876543210ull;
@@ -61,6 +65,12 @@ int main()
         Check(!MaterialSerializer::Validate(invalidShadow, error), "reject invalid shadow cutoff");
         Check(ParseAssetHandle(FormatAssetHandle(authored.Textures[1])) == authored.Textures[1], "handle precision");
         auto invalid = authored;
+        invalid.ParallaxDepth = -0.1f;
+        Check(!MaterialSerializer::Validate(invalid, error), "reject negative POM depth");
+        invalid = authored;
+        invalid.ParallaxSteps = 129.0f;
+        Check(!MaterialSerializer::Validate(invalid, error), "reject unbounded POM iterations");
+        invalid = authored;
         invalid.Roughness = -1.0f;
         Check(!MaterialSerializer::Save(path, invalid, error), "reject invalid authored values");
         Check(MaterialSerializer::Load(path, loaded, error) && loaded == authored, "failed save preserves file");
@@ -68,6 +78,11 @@ int main()
         std::ofstream(malformed) << "{\"version\":1,\"parameters\":{\"roughness\":\"bad\"}}";
         Check(!MaterialSerializer::Load(malformed, loaded, error), "reject wrong field type");
         Check(loaded == authored, "failed load preserves caller data");
+        std::ofstream(malformed) << "{\"version\":1,\"parameters\":{},\"renderState\":{},\"textures\":{}}";
+        MaterialAssetData legacy;
+        Check(MaterialSerializer::Load(malformed, legacy, error) && legacy.ParallaxDepth == 0 &&
+                  legacy.Textures[static_cast<size_t>(MaterialTextureSlot::Height)] == 0,
+              "legacy materials load with POM disabled");
         std::ofstream(malformed) << "{\"version\":999}";
         Check(!MaterialSerializer::Load(malformed, loaded, error), "reject future schema");
         AssetRegistry registry(root);

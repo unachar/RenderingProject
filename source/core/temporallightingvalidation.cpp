@@ -118,7 +118,7 @@ namespace
         GetEnvironmentVariableA("DX12_TEMPORAL_RUN", run, sizeof(run));
         directory = filesystem::path("build/temporal-lighting") / (run[0] ? run : "manual");
         filesystem::create_directories(directory);
-        materials = filesystem::path("asset") / ("__temporal_lighting_" + to_string(GetCurrentProcessId()));
+        materials = AssetRegistry::ValidationCacheRoot() / ("__temporal_lighting_" + to_string(GetCurrentProcessId()));
         filesystem::create_directories(materials);
         hashes.open(directory / "hashes.csv");
         hashes << "case,frame,gi,shadow,output,raw_gi\n";
@@ -474,7 +474,11 @@ bool TemporalLightingValidation::Finish()
         filesystem::remove(materials / (string(name) + ".meta"), error);
     }
     error_code error;
-    filesystem::remove(materials, error);
+    if (!materials.empty())
+    {
+        filesystem::remove_all(materials, error);
+    }
     WriteGraphicsLog("GI validation failures = %u\n", failures);
     return failures == 0;
 }
+

@@ -25,6 +25,8 @@
 #include "componentmanager.h"
 #include "light.h"
 #include "megalights.h"
+#include "lightingresources.h"
+#include "texturemanager.h"
 #include <algorithm>
 #include <cmath>
 
@@ -110,14 +112,19 @@ class AdvancedEffects final
         s_Device = device;
         s_EngineHeap = engineHeap;
         s_Increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        for (auto& revision : s_IesDescriptorRevisions)
+        {
+            revision = 0;
+        }
 
-        CD3DX12_DESCRIPTOR_RANGE ranges[4];
+        CD3DX12_DESCRIPTOR_RANGE ranges[5];
         ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kSrvCount, 0);
         ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, kUavCount, 0);
         // 5〜8：MegaLights（M6）のグリッド定数 / ライト / セル / セル内ライト（フロクセルのローカルライト）
         ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 11);
         ranges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0, 11);
-        CD3DX12_ROOT_PARAMETER parameters[12];
+        ranges[4].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, RendererState::g_kMAX_SRVS, 0, 5);
+        CD3DX12_ROOT_PARAMETER parameters[13];
         parameters[0].InitAsConstantBufferView(0);
         parameters[1].InitAsDescriptorTable(1, &ranges[0]);
         parameters[2].InitAsDescriptorTable(1, &ranges[1]);
@@ -130,6 +137,7 @@ class AdvancedEffects final
         parameters[9].InitAsDescriptorTable(1, &ranges[2]);
         parameters[10].InitAsDescriptorTable(1, &ranges[3]);
         parameters[11].InitAsConstants(4, 2);
+        parameters[12].InitAsDescriptorTable(1, &ranges[4]);
         CD3DX12_STATIC_SAMPLER_DESC samplers[2] = {
             CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
                                         D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP),
@@ -303,6 +311,9 @@ class AdvancedEffects final
         commands->SetComputeRootConstantBufferView(0, s_Constants->GetGPUVirtualAddress() + slot * kConstantStride);
         commands->SetComputeRootDescriptorTable(1, Gpu(slot * kDescriptorsPerFrame));
         commands->SetComputeRootDescriptorTable(2, Gpu(slot * kDescriptorsPerFrame + kSrvCount));
+        s_IesDescriptorRevisions[slot] = TextureManager::WriteIesProfileViews(
+            Cpu(slot * kDescriptorsPerFrame + kIesOffset), s_IesDescriptorRevisions[slot]);
+        commands->SetComputeRootDescriptorTable(12, Gpu(slot * kDescriptorsPerFrame + kIesOffset));
         const D3D12_GPU_VIRTUAL_ADDRESS lights = s_Lights->GetGPUVirtualAddress() + slot * kLightStride;
         const D3D12_GPU_VIRTUAL_ADDRESS tlas = Raytracing::GetSceneAddress();
         // FogMieColor.w（影を利用可能）が立っている場合だけ TLAS スロットを読む。
@@ -438,13 +449,15 @@ class AdvancedEffects final
     static constexpr UINT kSrvCount = 10; // t0..t9（t8、t9 は予約済み）
     static constexpr UINT kUavCount = 6;  // 書き込み先レジスター：u0～u5
     static constexpr UINT kHalfSrvOffset = kSrvCount + kUavCount, kHalfUavOffset = kHalfSrvOffset + 2;
-    static constexpr UINT kDescriptorsPerFrame = kHalfUavOffset + 2;
+    static constexpr UINT kIesOffset = kHalfUavOffset + 2;
+    inline static uint64_t s_IesDescriptorRevisions[kFrames]{};
+    static constexpr UINT kDescriptorsPerFrame = kIesOffset + RendererState::g_kMAX_SRVS;
     static constexpr UINT kMaxLights = 32;
     static constexpr UINT kMaxLocalFog = 16;
 
     struct alignas(16) FogLight
     {
-        XMFLOAT4 PositionType, DirectionRange, Color, Extras;
+        XMFLOAT4 PositionType, DirectionRange, Color, Extras, IesProfile;
     };
 
     struct alignas(16) Constants
@@ -1077,6 +1090,7 @@ class AdvancedEffects final
                            light.Color.z * light.Intensity, (std::max)(light.VolumeDensity, 0.0f)};
             entry.Extras = {cosf(XMConvertToRadians(light.InnerAngle)), cosf(XMConvertToRadians(light.OuterAngle)),
                             static_cast<float>(light.CastShadow), 0.0f};
+            entry.IesProfile = LightingResources::GetIesProfileParameters(light);
         }
         void* mapped = nullptr;
         const D3D12_RANGE noRead{0, 0};

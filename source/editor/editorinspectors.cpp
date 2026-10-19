@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "materialmanager.h"
 #include "materialopticsui.h"
+#include "proceduralio.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
 #include "camera.h"
@@ -1163,6 +1164,37 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
                     "MegaLights（M2 / リファレンス）の影レイで、発光球の大きさに応じたソフトシャドウになります。");
             }
         }
+    }
+    if (light.Type == LightType::Point || light.Type == LightType::Spot || light.Type == LightType::Rect)
+    {
+        char iesPath[1024]{};
+        strncpy_s(iesPath, light.IesProfilePath.c_str(), _TRUNCATE);
+        if (ImGui::InputText("IESプロファイル", iesPath, sizeof(iesPath), ImGuiInputTextFlags_EnterReturnsTrue))
+        {
+            light.IesProfilePath = iesPath;
+            changed = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("参照##IES"))
+        {
+            filesystem::path path;
+            if (ProceduralIO::OpenFileDialog(L"IESプロファイル (*.ies)\0*.ies\0", path))
+            {
+                light.IesProfilePath = MakeRelativeAssetPath(path);
+                changed = true;
+            }
+        }
+        if (!light.IesProfilePath.empty())
+        {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("解除##IES"))
+            {
+                light.IesProfilePath.clear();
+                changed = true;
+            }
+            changed |= ImGui::SliderFloat("IES回転", &light.IesRotationDegrees, -180.0f, 180.0f, "%.1f deg");
+        }
+        ImGui::TextDisabled("Type C / TILT=NONE。ライト方向を配光の正面として使用。");
     }
     changed |= ImGui::ColorEdit3("色", &light.Color.x);
     changed |= ImGui::DragFloat("ライト強度", &light.Intensity, 0.01f, 0.0f, 20.0f);

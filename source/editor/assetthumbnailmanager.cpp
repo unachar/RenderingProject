@@ -13,8 +13,8 @@ namespace
     {
         std::shared_ptr<ThumbnailGpuImage> Image;
         std::filesystem::path Path;
-        std::array<AssetHandle, 5> Dependencies{};
-        std::array<uint64_t, 5> DependencyRevisions{};
+        std::array<AssetHandle, static_cast<size_t>(MaterialTextureSlot::Count)> Dependencies{};
+        std::array<uint64_t, static_cast<size_t>(MaterialTextureSlot::Count)> DependencyRevisions{};
         uint64_t SourceRevision = 0;
         uint64_t RuntimeRevision = 0;
         uint64_t ShaderRevision = 0;

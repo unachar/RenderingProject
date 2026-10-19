@@ -32,6 +32,27 @@ namespace
     // 複数選択をまとめてドラッグするときのペイロード（中身は件数。パスは m_DraggedAssetPaths）
     constexpr const char* kAssetMultiPayload = "ASSET_MULTI";
 
+    // 検証（--validate 系）が asset 直下に作る一時フィクスチャフォルダ。ユーザーのアセットではないので
+    // アセットブラウザには出さない（例: __material_validation_21024）。
+    bool IsInternalAssetDirectory(const filesystem::directory_entry& entry)
+    {
+        error_code error;
+        if (!entry.is_directory(error))
+        {
+            return false;
+        }
+        const wstring name = entry.path().filename().wstring();
+        for (const wchar_t* prefix :
+             {L"__material_validation_", L"__temporal_lighting_", L"__gi_validation_", L"__thumbnail_validation_"})
+        {
+            if (name.rfind(prefix, 0) == 0)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // ImGui の入力（UTF-8）→ path。u8path は C++20 で非推奨のため自前で変換
     filesystem::path Utf8ToPath(const char* text)
     {
@@ -419,6 +440,7 @@ void ImGuiManager::DrawAssetBrowserWindow()
         for (const auto& entry : filesystem::directory_iterator(m_CurrentAssetDirectory, ec))
         {
             if (entry.path().extension() != ".meta" && entry.path().extension() != ".tmp" &&
+                !IsInternalAssetDirectory(entry) &&
                 assetFilter.PassFilter(entry.path().filename().generic_string().c_str()))
             {
                 entries.push_back(entry);
@@ -2243,3 +2265,4 @@ void ImGuiManager::DuplicateSelectedAssets()
         AddLog("複製: %d 個", static_cast<int>(created.size()));
     }
 }
+

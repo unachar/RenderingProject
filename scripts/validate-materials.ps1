@@ -1,4 +1,4 @@
-param([ValidateSet('Debug','Release')][string]$Configuration = 'Debug', [switch]$SkipBuild, [switch]$Rebuild, [switch]$Transparency)
+param([ValidateSet('Debug','Release')][string]$Configuration = 'Debug', [switch]$SkipBuild, [switch]$Rebuild, [switch]$Transparency, [switch]$Parallax)
 $ErrorActionPreference = 'Stop'
 if ($SkipBuild -and $Rebuild) {
     throw '-SkipBuild and -Rebuild cannot be combined.'
@@ -7,7 +7,7 @@ $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 $developerCommand = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
-$environmentNames = @('_CL_', 'DX12_FEATURE_SMOKE_TEST', 'DX12_VALIDATION_MODE', 'DX12_STARTUP_SMOKE_FRAMES', 'DX12_MATERIAL_ASSET_TEST')
+$environmentNames = @('_CL_', 'DX12_FEATURE_SMOKE_TEST', 'DX12_VALIDATION_MODE', 'DX12_STARTUP_SMOKE_FRAMES', 'DX12_MATERIAL_ASSET_TEST', 'DX12_POM_TEST')
 $previousEnvironment = @{}
 $savedSettings = @{}
 foreach ($name in $environmentNames) {
@@ -44,7 +44,13 @@ try {
     $env:DX12_VALIDATION_MODE = '1'
     $env:DX12_STARTUP_SMOKE_FRAMES = '33'
     if ($Transparency) {
-        $env:DX12_STARTUP_SMOKE_FRAMES = '79'
+        $env:DX12_STARTUP_SMOKE_FRAMES = '107'
+    }
+    if ($Parallax) {
+        $env:DX12_POM_TEST = '1'
+        $env:DX12_STARTUP_SMOKE_FRAMES = '12'
+    } else {
+        Remove-Item Env:DX12_POM_TEST -ErrorAction SilentlyContinue
     }
     $env:DX12_MATERIAL_ASSET_TEST = '1'
     $logPath = Join-Path $workspace 'init_log.txt'

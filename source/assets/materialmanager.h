@@ -9,8 +9,8 @@ struct MaterialRuntime
     MaterialAssetData Saved;
     MaterialAssetData Editing;
     MaterialAssetData BoundData;
-    array<filesystem::path, 5> TexturePaths;
-    array<int, 5> TextureDescriptors{-1, -1, -1, -1, -1};
+    array<filesystem::path, static_cast<size_t>(MaterialTextureSlot::Count)> TexturePaths;
+    array<int, static_cast<size_t>(MaterialTextureSlot::Count)> TextureDescriptors{-1, -1, -1, -1, -1, -1};
     MaterialComponent Binding;
     uint64_t Revision = 0;
     uint64_t PipelineRevision = 0;
@@ -32,7 +32,9 @@ class MaterialManager
     static void Refresh();
     static MaterialRuntime& GetRuntime(AssetHandle handle);
     static const MaterialRuntime* FindRuntime(AssetHandle handle);
-    static MaterialComponent BuildPreviewBinding(const MaterialAssetData& material, const array<int, 5>& descriptors);
+    static MaterialComponent BuildPreviewBinding(
+        const MaterialAssetData& material,
+        const array<int, static_cast<size_t>(MaterialTextureSlot::Count)>& descriptors);
     static const MaterialComponent& Resolve(const MaterialComponent& legacy, size_t slot = 0);
     static AssetHandle SlotHandle(const MaterialComponent& material, size_t slot);
     static bool SetEditing(AssetHandle handle, const MaterialAssetData& editing);

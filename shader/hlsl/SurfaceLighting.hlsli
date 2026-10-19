@@ -83,10 +83,12 @@ float3 SampleShadowTransmission(float2 uv, float lightLayer, float receiverDepth
     {
         int slice = (int)lightLayer * 4 + peel;
         float depth = ShadowTransmissionDepth.Load(int4(pixel, slice, 0));
-        if (depth < receiverDepth)
+        // ピーリング深度は手前から奥へ並ぶ。受け手以降の層はすべて無関係。
+        if (depth >= receiverDepth)
         {
-            transmission *= ShadowTransmissionTexture.Load(int4(pixel, slice, 0)).rgb;
+            break;
         }
+        transmission *= ShadowTransmissionTexture.Load(int4(pixel, slice, 0)).rgb;
     }
     return transmission;
 }
@@ -113,10 +115,13 @@ float3 SampleConventionalShadowPcf9(float2 shadowUv, float shadowLayer, float te
             break;
         }
         float2 offset = kernel[tap] * (float)max(filterRadius, 1) * texelSize;
-        visibility +=
-            ShadowMapTexture.SampleCmpLevelZero(ShadowSampler, float3(shadowUv + offset, shadowLayer),
-                                                currentDepth + dot(receiverDepthGradient, offset)) *
-            SampleShadowTransmission(shadowUv + offset, shadowLayer, currentDepth + dot(receiverDepthGradient, offset));
+        float tapDepth = currentDepth + dot(receiverDepthGradient, offset);
+        float opaqueVisibility =
+            ShadowMapTexture.SampleCmpLevelZero(ShadowSampler, float3(shadowUv + offset, shadowLayer), tapDepth);
+        [branch] if (opaqueVisibility > 0.0f)
+        {
+            visibility += opaqueVisibility * SampleShadowTransmission(shadowUv + offset, shadowLayer, tapDepth);
+        }
     }
     return visibility / (float)tapCount;
 }
@@ -182,6 +187,8 @@ bool SampleVirtualShadowLevel(int level, float3 worldPos, float3 worldPosDx, flo
     float edgeTexels =
         min(min(texelInPage.x, texelInPage.y), min(pageTexels - texelInPage.x, pageTexels - texelInPage.y));
     bool kernelInOnePage = edgeTexels > (float)filterRadius + 1.0f;
+    float filterScale = (float)max(filterRadius, 1) * ShadowWorldFilterScaleCommon(level);
+    float shadowLayer = max(params.x, 0.0f);
 
     float3 visibilitySum = 0.0f;
     float sampleCount = 0.0f;
@@ -191,7 +198,7 @@ bool SampleVirtualShadowLevel(int level, float3 worldPos, float3 worldPosDx, flo
         {
             break;
         }
-        float2 offset = poisson[tap] * (float)max(filterRadius, 1) * ShadowWorldFilterScaleCommon(level);
+        float2 offset = poisson[tap] * filterScale;
         float2 tapVirtualUv = virtualUv + offset * params.y;
         float2 physicalUv;
         if (kernelInOnePage)
@@ -209,11 +216,13 @@ bool SampleVirtualShadowLevel(int level, float3 worldPos, float3 worldPosDx, flo
             }
         }
 
-        visibilitySum +=
-            ShadowMapTexture.SampleCmpLevelZero(ShadowSampler, float3(physicalUv, max(params.x, 0.0f)),
-                                                currentDepth + dot(receiverDepthGradient, tapVirtualUv - virtualUv)) *
-            SampleShadowTransmission(physicalUv, max(params.x, 0.0f),
-                                     currentDepth + dot(receiverDepthGradient, tapVirtualUv - virtualUv));
+        float tapDepth = currentDepth + dot(receiverDepthGradient, tapVirtualUv - virtualUv);
+        float opaqueVisibility =
+            ShadowMapTexture.SampleCmpLevelZero(ShadowSampler, float3(physicalUv, shadowLayer), tapDepth);
+        [branch] if (opaqueVisibility > 0.0f)
+        {
+            visibilitySum += opaqueVisibility * SampleShadowTransmission(physicalUv, shadowLayer, tapDepth);
+        }
         sampleCount += 1.0f;
     }
 
@@ -918,6 +927,8 @@ float3 EvaluateRectLightLtc(float3 N, float3 V, float3 P, float3 center, float3 
 // ---------------------------------------------------------------------------------------------
 #ifdef MEGALIGHTS_LIGHT_TEXTURES
 Texture2D<float4> MegaLightTextures[512] : register(t0, space5);
+#define IES_TEXTURE_HEAP MegaLightTextures
+#include "IesProfileSampling.hlsli"
 
 float3 MLSampleRectTexture(uint textureIndex, float3 center, float3 emitNormal, float width, float height,
                            float3 origin, float3 direction, float footprint)
@@ -973,7 +984,7 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
                             float visibilityOverride, float3 worldPos, float3 worldPosDx, float3 worldPosDy,
                             float3 normal, float2 pixelPosition, int shadowFilterRadius, bool evaluatePbr,
                             float3 viewDir, float3 albedo, float3 materialData, float shadowSoftness,
-                            float3 monitorColor, inout SurfaceLightAccumulator acc)
+                            float3 monitorColor, float4 iesProfile, inout SurfaceLightAccumulator acc)
 {
     float3 singleDir;
     float singleAttenuation;
@@ -1048,6 +1059,10 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
 #endif
     float3 authoredLightColor = max(lightColorData.rgb, float3(0.0f, 0.0f, 0.0f));
 #ifdef MEGALIGHTS_LIGHT_TEXTURES
+    if (!decalLight && lightPositionType.w > 0.5f)
+    {
+        authoredLightColor *= SampleIesProfile(iesProfile, lightDirection.xyz, worldPos - lightPositionType.xyz);
+    }
     // M7：テクスチャ付き矩形ライト。非 PBR の陰影・平均ライトにはテクスチャの平均色を使う
     const uint lightTexture = (cbIndex < 0 && lightPositionType.w > 3.5f) ? (uint)round(lightExtra.w) : 0u;
     float3 textureMean = 1.0f;
@@ -1148,7 +1163,7 @@ void MLAccumulateSampleSet(uint2 samplePixel, float weight, float3 worldPos, flo
         AccumulateSurfaceLight(-1, sampledLight.DirectionRange, sampledLight.PositionType, sampledLight.Extra,
                                sampledLight.Color, false, false, asfloat(lightSample.y) * scale, visibility, worldPos,
                                worldPosDx, worldPosDy, normal, pixelPosition, shadowFilterRadius, true, viewDir, albedo,
-                               materialData, shadowSoftness, monitorColor, acc);
+                               materialData, shadowSoftness, monitorColor, sampledLight.IesProfile, acc);
     }
 }
 
@@ -1288,7 +1303,7 @@ void ResolveSurfaceLightAggregateShadowed(float3 worldPos, float3 worldPosDx, fl
                                LightExtras[lightIndex], LightColors[lightIndex], LightFlags[lightIndex].w >= 0.5f,
                                false, 1.0f, -1.0f, worldPos, worldPosDx, worldPosDy, normal, pixelPosition,
                                shadowFilterRadius, evaluatePbr, viewDir, albedo, materialData, shadowSoftness,
-                               monitorColor, acc);
+                               monitorColor, LightIesProfiles[lightIndex], acc);
     }
 
     uint gridLightCount = 0u;
@@ -1338,7 +1353,8 @@ void ResolveSurfaceLightAggregateShadowed(float3 worldPos, float3 worldPosDx, fl
                 AccumulateSurfaceLight(-1, gridLight.DirectionRange, gridLight.PositionType, gridLight.Extra,
                                        gridLight.Color, false, MLLightCastsShadow(gridLight), 1.0f, visibility,
                                        worldPos, worldPosDx, worldPosDy, normal, pixelPosition, shadowFilterRadius,
-                                       evaluatePbr, viewDir, albedo, materialData, shadowSoftness, monitorColor, acc);
+                                       evaluatePbr, viewDir, albedo, materialData, shadowSoftness, monitorColor,
+                                       gridLight.IesProfile, acc);
             }
         }
     }

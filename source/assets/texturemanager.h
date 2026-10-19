@@ -44,6 +44,9 @@ class TextureManager
     static int LoadTexture(const char* fileName);
     static int LoadTexture(const filesystem::path& fileName);
     static int LoadNormalTexture(const char* fileName);
+    // 線形の角度別配光テクスチャ。読込失敗時は -1 を返す。
+    static int LoadIesProfile(const filesystem::path& fileName);
+    static uint64_t WriteIesProfileViews(D3D12_CPU_DESCRIPTOR_HANDLE destination, uint64_t previousRevision);
     static int LoadTextureFromMemory(const char* name, const uint8_t* pData, size_t dataSize);
     static int GetDefaultTextureIndex();
     static ComPtr<ID3D12Resource> GetTextureResource(int srvIndex);

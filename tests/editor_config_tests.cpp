@@ -1,5 +1,10 @@
 #include "../source/editor/configvalue.h"
 #include <iostream>
+#include <algorithm>
+
+using std::clamp;
+using std::max;
+#include "../source/rendering/renderersettings.h"
 
 enum class View
 {
@@ -44,5 +49,35 @@ int main()
     check(EditorConfig::Value(nullptr, "view", "1", "view", view, 0, 1) && view == View::Second);
     float bias = 0;
     check(EditorConfig::Value(nullptr, "bias", "0.015", "bias", bias, 0, 1) && std::abs(bias - 0.015f) < 1e-6f);
+
+    check(RendererSettings::GetIesProfilesEnabled());
+    const uint64_t initialRevision = RendererSettings::GetRevision();
+    RendererSettings::SetIesProfilesEnabled(false);
+    check(!RendererSettings::GetIesProfilesEnabled());
+    check(RendererSettings::GetRevision() == initialRevision + 1);
+    RendererSettings::SetIesProfilesEnabled(false);
+    check(RendererSettings::GetRevision() == initialRevision + 1);
+
+    bool iesEnabled = RendererSettings::GetIesProfilesEnabled();
+    std::ostringstream savedIes;
+    EditorConfig::Value(&savedIes, {}, {}, "ies_profiles_enabled", iesEnabled);
+    check(savedIes.str() == "ies_profiles_enabled=0\n");
+    RendererSettings::SetIesProfilesEnabled(true);
+    check(RendererSettings::GetRevision() == initialRevision + 2);
+    check(EditorConfig::Value(nullptr, "ies_profiles_enabled", "0", "ies_profiles_enabled", iesEnabled));
+    RendererSettings::SetIesProfilesEnabled(iesEnabled);
+    check(!RendererSettings::GetIesProfilesEnabled());
+    check(RendererSettings::GetRevision() == initialRevision + 3);
+    bool invalidIesRejected = false;
+    try
+    {
+        EditorConfig::Value(nullptr, "ies_profiles_enabled", "2", "ies_profiles_enabled", iesEnabled);
+    }
+    catch (const std::invalid_argument&)
+    {
+        invalidIesRejected = true;
+    }
+    check(invalidIesRejected && !iesEnabled);
+    RendererSettings::SetIesProfilesEnabled(true);
     std::cout << "Editor configuration PASS: " << checks << " checks\n";
 }

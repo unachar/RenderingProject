@@ -3,14 +3,14 @@
   {
     "absorptionCoefficient" : 
     [
-      0.0,
+      -0.0,
       0.0,
       0.0
     ],
     "aoStrength" : 1.0,
     "baseColor" : 
     [
-      1.0,
+      0.0,
       1.0,
       1.0,
       1.0
@@ -22,13 +22,13 @@
       0.0
     ],
     "emissiveIntensity" : 0.0,
-    "ior" : 1.125,
+    "ior" : 1.1200000047683716,
     "metallic" : 0.0,
     "normalScale" : 1.0,
     "roughness" : 0.0,
     "shadingModel" : 0,
     "shadingStrength" : 1.0,
-    "thickness" : 0.26899999380111694,
+    "thickness" : 0.0,
     "transmission" : 1.0,
     "transmissionRoughness" : 0.0
   },

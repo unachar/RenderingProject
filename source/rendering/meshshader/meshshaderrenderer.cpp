@@ -739,6 +739,12 @@ namespace MeshShaderRenderer
                 Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
                 constants.View = XMMatrixTranspose(view);
                 constants.Projection = XMMatrixTranspose(projection);
+                const auto cameraEntity = Camera::GetCameraEntity();
+                if (ComponentManager::HasComponent<TransformComponent>(cameraEntity))
+                {
+                    constants.CameraPos =
+                        ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
+                }
                 constants.PreviousViewProjection =
                     XMMatrixTranspose(XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix()) *
                                       XMLoadFloat4x4(&GraphicsDevice::GetPreviousProjectionMatrix()));

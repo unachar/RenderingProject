@@ -986,6 +986,12 @@ void GPUDrivenRenderer::Draw(ID3D12GraphicsCommandList* commands)
             Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
             constants.View = XMMatrixTranspose(view);
             constants.Projection = XMMatrixTranspose(projection);
+            const auto cameraEntity = Camera::GetCameraEntity();
+            if (ComponentManager::HasComponent<TransformComponent>(cameraEntity))
+            {
+                constants.CameraPos =
+                    ComponentManager::GetComponentUnchecked<TransformComponent>(cameraEntity).Position;
+            }
             list->SetGraphicsRootDescriptorTable(1, FrameConstants::AllocateTransientConstantBuffer(constants));
             list->SetGraphicsRootShaderResourceView(2, GpuScene::InstanceBuffer()->GetGPUVirtualAddress());
             list->SetGraphicsRootShaderResourceView(3, GpuScene::MaterialBuffer()->GetGPUVirtualAddress());

@@ -36,7 +36,12 @@ struct FogLight
     float4 DirectionRange; // xyz = 方向（平行光源は光源方向、スポットは前方）、w = 範囲
     float4 Color;          // rgb * 強度、w = ボリューム密度
     float4 Extras;         // 内側の cos、外側の cos、影の有効フラグ、予約領域
+    float4 IesProfile;
 };
+
+Texture2D<float4> IesProfileTextures[512] : register(t0, space5);
+#define IES_TEXTURE_HEAP IesProfileTextures
+#include "IesProfileSampling.hlsli"
 
 Texture2D<float4> SceneColor : register(t0);
 Texture2D<float> SceneDepth : register(t1);
@@ -185,7 +190,8 @@ float3 MegaLightFogContribution(MegaLightData light, float3 position, float3 vie
         scatterAlbedo * (0.0596831f * (1 + cosine * cosine)) + mieAlbedo * HenyeyGreenstein(cosine, FogMedium1.z);
     // FogInject の従来ライトと同じ式（大気の媒質 + ライト自身のボリューム密度）
     float3 response = phase * globalDensity * FogMedium0.w + 0.16f * max(light.Extra.z, 0.0f) * 0.0795775f;
-    return response * max(light.Color.rgb, 0.0f) * max(light.Flags.w, 0.0f) * attenuation;
+    float ies = SampleIesProfile(light.IesProfile, light.DirectionRange.xyz, position - light.PositionType.xyz);
+    return response * max(light.Color.rgb, 0.0f) * max(light.Flags.w, 0.0f) * attenuation * ies;
 }
 
 float3 MegaLightsFogScattering(uint3 id, float3 position, float3 viewToCamera, float globalDensity,
@@ -326,7 +332,8 @@ float3 MegaLightsFogScattering(uint3 id, float3 position, float3 viewToCamera, f
         // 大気媒質にライト固有の設定済みボリューム密度を加える（光芒）。
         float3 response =
             phase * globalDensity * FogMedium0.w + (type == 0 ? 0.025f : 0.16f) * light.Color.w * 0.0795775f;
-        float3 incident = light.Color.rgb * attenuation;
+        float3 incident = light.Color.rgb * attenuation *
+            SampleIesProfile(light.IesProfile, light.DirectionRange.xyz, position - light.PositionType.xyz);
         if (all(response * incident < 0.0000001f))
         {
             continue;

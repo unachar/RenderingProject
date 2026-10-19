@@ -140,6 +140,7 @@ namespace
         XMFLOAT4 AtmosphereCamera = {0.0f, 0.0f, 0.0f, 0.0f};
         XMFLOAT4 SkySunDirection{};
         XMFLOAT4 SkyParameters{};
+        XMFLOAT4 LightIesProfiles[RendererState::g_kMAX_SHADER_LIGHTS]{};
     };
 
     static_assert(sizeof(LightConstants) <= RendererState::g_kLIGHT_CB_ALIGNED_SIZE,
@@ -1245,6 +1246,28 @@ UINT LightingResources::GetShadowLightCount()
     return g_ShadowRenderPassCount;
 }
 
+XMFLOAT4 LightingResources::GetIesProfileParameters(const LightComponent& light)
+{
+    if (!RendererSettings::GetIesProfilesEnabled() || light.IesProfilePath.empty() ||
+        light.RenderMode != LightRenderMode::Physical ||
+        !(light.Type == LightType::Point || light.Type == LightType::Spot || light.Type == LightType::Rect))
+    {
+        return {};
+    }
+    const int descriptor = TextureManager::LoadIesProfile(filesystem::u8path(light.IesProfilePath));
+    const int relative = descriptor - static_cast<int>(FrameConstants::g_kTEXTURE_SRV_START_INDEX);
+    if (relative < 0 || relative >= static_cast<int>(FrameConstants::g_kMAX_SRVS))
+    {
+        return {};
+    }
+    float rotation = 0.0f;
+    if (std::isfinite(light.IesRotationDegrees))
+    {
+        rotation = light.IesRotationDegrees / 360.0f;
+    }
+    return {static_cast<float>(relative + 1), rotation, 0, 0};
+}
+
 void LightingResources::SetCurrentShadowPassIndex(UINT index)
 {
     if ((g_ShadowRenderPassCount > 0))
@@ -1683,6 +1706,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
                 // x：bit0 影を落とす / bit1 Forward（半透明）に影響（M7）
                 const float lightBits = (light.CastShadow ? 1.0f : 0.0f) + (light.AffectsForward ? 2.0f : 0.0f);
                 gpuLight.Flags = XMFLOAT4(lightBits, sourceRadius, 0.0f, 0.0f);
+                gpuLight.IesProfile = GetIesProfileParameters(light);
                 // M7：Rect のテクスチャ（Extra.w = テクスチャ番号 + 1。番号はエンジンのテクスチャ SRV の先頭から）
                 if (light.Type == LightType::Rect && !light.AreaTexturePath.empty())
                 {
@@ -1790,6 +1814,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 
         constants.LightPositionTypes[lightIndex] =
             XMFLOAT4(candidate.Position.x, candidate.Position.y, candidate.Position.z, static_cast<float>(light.Type));
+        constants.LightIesProfiles[lightIndex] = GetIesProfileParameters(light);
         constants.LightExtras[lightIndex] =
             light.Type == LightType::Rect
                 ? XMFLOAT4(max(light.AreaWidth, 0.01f), max(light.AreaHeight, 0.01f), light.VolumeDensity, 0.0f)

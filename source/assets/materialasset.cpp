@@ -80,7 +80,9 @@ bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string
         }
     }
     if (!range(material.Metallic, 0, 1, "metallic") || !range(material.Roughness, 0, 1, "roughness") ||
-        !range(material.NormalScale, 0, 8, "normalScale") || !range(material.AOStrength, 0, 1, "aoStrength") ||
+        !range(material.ParallaxDepth, 0, 0.2f, "parallaxDepth") ||
+        !range(material.ParallaxSteps, 8, 128, "parallaxSteps") || !range(material.NormalScale, 0, 8, "normalScale") ||
+        !range(material.AOStrength, 0, 1, "aoStrength") ||
         !range(material.EmissiveIntensity, 0, 65504, "emissiveIntensity") ||
         !range(material.AlphaCutoff, 0, 1, "alphaCutoff") || !range(material.ShadowCutoff, 0, 1, "shadowCutoff") ||
         !range(material.IOR, 1, 10, "ior") || !range(material.Transmission, 0, 1, "transmission") ||
@@ -107,7 +109,7 @@ bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string
 
 namespace
 {
-    constexpr const char* textureNames[] = {"baseColor", "normal", "metallicRoughness", "ao", "emissive"};
+    constexpr const char* textureNames[] = {"baseColor", "normal", "metallicRoughness", "ao", "emissive", "height"};
 
     bool ReadFloat(const Json::Value& object, const char* name, float& value, std::string& error)
     {
@@ -193,6 +195,8 @@ bool MaterialSerializer::Load(const std::filesystem::path& path, MaterialAssetDa
         !ReadColor(parameters, "emissiveColor", result.EmissiveColor, error) ||
         !ReadFloat(parameters, "metallic", result.Metallic, error) ||
         !ReadFloat(parameters, "roughness", result.Roughness, error) ||
+        !ReadFloat(parameters, "parallaxDepth", result.ParallaxDepth, error) ||
+        !ReadFloat(parameters, "parallaxSteps", result.ParallaxSteps, error) ||
         !ReadFloat(parameters, "normalScale", result.NormalScale, error) ||
         !ReadFloat(parameters, "aoStrength", result.AOStrength, error) ||
         !ReadFloat(parameters, "emissiveIntensity", result.EmissiveIntensity, error) ||
@@ -364,6 +368,8 @@ bool MaterialSerializer::Save(const std::filesystem::path& path, const MaterialA
         parameters["absorptionCoefficient"].append(value);
     }
     parameters["roughness"] = material.Roughness;
+    parameters["parallaxDepth"] = material.ParallaxDepth;
+    parameters["parallaxSteps"] = material.ParallaxSteps;
     parameters["normalScale"] = material.NormalScale;
     parameters["aoStrength"] = material.AOStrength;
     parameters["emissiveIntensity"] = material.EmissiveIntensity;

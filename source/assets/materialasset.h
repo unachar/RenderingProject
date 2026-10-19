@@ -52,6 +52,7 @@ enum class MaterialTextureSlot : uint32_t
     MetallicRoughness,
     AO,
     Emissive,
+    Height,
     Count
 };
 
@@ -64,7 +65,9 @@ struct MaterialAssetData
     float AOStrength = 1.0f;
     std::array<float, 3> EmissiveColor{0, 0, 0};
     float EmissiveIntensity = 0.0f;
-    std::array<AssetHandle, 5> Textures{};
+    float ParallaxDepth = 0.0f; // UV units; zero disables POM.
+    float ParallaxSteps = 32.0f;
+    std::array<AssetHandle, static_cast<size_t>(MaterialTextureSlot::Count)> Textures{};
     MaterialSurface Surface = MaterialSurface::Opaque;
     MaterialCull Cull = MaterialCull::Back;
     bool DepthWrite = true;

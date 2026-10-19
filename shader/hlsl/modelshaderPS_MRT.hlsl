@@ -14,6 +14,8 @@ GBufferOutput main(in PSInput3D In)
 #else
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
 #endif
+    float2 materialUv = ApplyAssetParallax(assetMaterial, In.TexCoord, In.WorldPos,
+                                         In.Normal, In.CameraPos, g_SamplerState);
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)
@@ -22,21 +24,26 @@ GBufferOutput main(in PSInput3D In)
     }
     if (UseTexture)
     {
-        baseColor *= g_Texture.Sample(g_SamplerState, In.TexCoord);
+        baseColor *= g_Texture.Sample(g_SamplerState, materialUv);
     }
 
     float assetMetallic = mMetallic;
     float assetRoughness = mRoughness;
     float4 assetEmissionAO;
-    ApplyAssetMaterial(assetMaterial, In.TexCoord, g_SamplerState, baseColor, assetMetallic, assetRoughness,
+    ApplyAssetMaterial(assetMaterial, materialUv, g_SamplerState, baseColor, assetMetallic, assetRoughness,
                        assetEmissionAO);
     clip(baseColor.a - 0.01f);
 
     float3 normal = In.Normal;
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, materialUv).xyz * 2.0f - 1.0f;
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
+    }
+    else
+    {
+        // 法線マップが無いときは POM の高さマップから法線を作る。
+        normal = ApplyAssetHeightNormal(assetMaterial, normal, In.WorldPos, In.TexCoord, materialUv, g_SamplerState);
     }
 
     GBufferOutput output;
@@ -56,3 +63,4 @@ GBufferOutput main(in PSInput3D In)
     output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
     return output;
 }
+

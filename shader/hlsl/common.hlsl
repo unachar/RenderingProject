@@ -220,6 +220,7 @@ cbuffer LightParams : register(b1)
     float4 AtmosphereCamera;
     float4 SkySunDirection;
     float4 SkyParameters;
+    float4 LightIesProfiles[MAX_SHADER_LIGHTS]; // x: 配光テクスチャ番号+1、y: 軸回りの回転（周）
 };
 
 StructuredBuffer<uint> LightTileIndices : register(t11);
@@ -1046,6 +1047,7 @@ cbuffer PBRParams : register(b2)
     float4 AssetSurface;
     float4 AssetEmission;
     uint4 AssetTextures;
+    float4 AssetParallax;
 };
 
 MaterialPartShaderParams ResolveMaterialPartParams(float materialPartId)

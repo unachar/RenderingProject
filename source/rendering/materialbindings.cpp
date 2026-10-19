@@ -77,7 +77,12 @@ namespace
         XMFLOAT4 AssetSurface{1, 1, 0, 0.5f}; // 法線スケール、AO 強度、有効フラグ、アルファ閾値。
         XMFLOAT4 AssetEmission{};
         XMUINT4 AssetTextures{UINT32_MAX, UINT32_MAX, UINT32_MAX, 0}; // MR、AO、発光、サーフェスとカリングのフラグ。
+        XMFLOAT4 AssetParallax{0, 32, -1, 0};
     };
+
+    static_assert(offsetof(PBRConstants, AssetTextures) == 149 * sizeof(XMFLOAT4));
+    static_assert(offsetof(PBRConstants, AssetParallax) == 150 * sizeof(XMFLOAT4));
+    static_assert(sizeof(PBRConstants) <= RendererState::g_kPBR_CB_ALIGNED_SIZE);
 
     void WriteMaterialPartConstants(PBRConstants& constants, int index, const MaterialPartParams& params)
     {
@@ -165,6 +170,9 @@ namespace
             }
             return static_cast<uint32_t>(descriptor) - FrameConstants::g_kTEXTURE_SRV_START_INDEX;
         };
+        const uint32_t heightIndex = textureOffset(material.HeightTextureID);
+        constants.AssetParallax = {material.ParallaxDepth, material.ParallaxSteps,
+                                   heightIndex < 512u ? static_cast<float>(heightIndex) : -1.0f, 0};
         constants.AssetTextures = {
             textureOffset(material.MetallicRoughnessID), textureOffset(material.AOTextureID),
             textureOffset(material.EmissiveTextureID),
@@ -352,6 +360,8 @@ bool MaterialBindings::SetPreviewMaterial(const MaterialComponent& material, ID3
     constants.AssetTextures.x = offset(material.MetallicRoughnessID);
     constants.AssetTextures.y = offset(material.AOTextureID);
     constants.AssetTextures.z = offset(material.EmissiveTextureID);
+    const uint32_t heightIndex = offset(material.HeightTextureID);
+    constants.AssetParallax.z = heightIndex < 512u ? static_cast<float>(heightIndex) : -1.0f;
     uint8_t* mapped = nullptr;
     if (FAILED(buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))))
     {
@@ -453,7 +463,7 @@ void MaterialBindings::BindAssetSlot(EntityID entity, const MaterialComponent& m
     m_CommandList->SetGraphicsRootDescriptorTable(
         6, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap, normal, FrameConstants::GetCbvIncrementSize()));
     for (int descriptor :
-         {base, normal, material.MetallicRoughnessID, material.AOTextureID, material.EmissiveTextureID})
+         {base, normal, material.MetallicRoughnessID, material.AOTextureID, material.EmissiveTextureID, material.HeightTextureID})
     {
         if (descriptor >= 0)
         {

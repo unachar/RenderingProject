@@ -26,13 +26,13 @@ struct ThumbnailPrepared
     AssetHandle Handle = 0;
     AssetType Type = AssetType::Unknown;
     MaterialAssetData Material;
-    std::array<ThumbnailSourceImage, 5> Textures;
+    std::array<ThumbnailSourceImage, static_cast<size_t>(MaterialTextureSlot::Count)> Textures;
     std::vector<StaticModelVertex> Geometry;
 
     struct MeshPart
     {
         MaterialAssetData Material;
-        std::array<ThumbnailSourceImage, 5> Textures;
+        std::array<ThumbnailSourceImage, static_cast<size_t>(MaterialTextureSlot::Count)> Textures;
         UINT FirstVertex = 0;
         UINT VertexCount = 0;
     };

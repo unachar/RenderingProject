@@ -178,7 +178,7 @@ class RendererState
     static constexpr UINT g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS = 16;
     static constexpr UINT g_kLIGHT_CB_FLOAT4_COUNT = 10 + g_kMAX_SHADER_LIGHTS * 10 + g_kMAX_VIRTUAL_SHADOW_LEVELS * 6 +
                                                      16 + 3 + g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS * 2 + 1 +
-                                                     g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES * 3 + 1 + 2;
+                                                     g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES * 3 + 1 + 2 + g_kMAX_SHADER_LIGHTS;
     static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;
     // 現在のマテリアルは15個のパーツ上書きを含み、2048バイトを超える。
     static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 640 + 255) & ~255;

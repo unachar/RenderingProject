@@ -1,0 +1,15 @@
+IESNA:LM-63-2002
+[TEST] Render self-authored synthetic asymmetric beam, not a measured luminaire
+[MANUFAC] Render project
+[LUMCAT] Asymmetric
+[LUMINAIRE] Full azimuth asymmetric wall wash
+TILT=NONE
+1 -1 1 7 5 1 2 0 0 0
+1 1 10
+0 15 30 50 70 90 180
+0 90 180 270 360
+100 400 1000 800 200 0 0
+100 250 400 200 50 0 0
+100 80 40 10 0 0 0
+100 150 200 100 20 0 0
+100 400 1000 800 200 0 0

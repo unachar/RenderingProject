@@ -1,5 +1,6 @@
 #pragma once
 #include "rendererstate.h"
+struct LightComponent;
 
 class LightingResources : protected RendererState
 {
@@ -33,6 +34,7 @@ class LightingResources : protected RendererState
     };
 
     static void UpdateLightConstantBuffer(float deferredLightStrength);
+    static XMFLOAT4 GetIesProfileParameters(const LightComponent& light);
     static void UpdateShadowConstantBuffer();
     static UINT GetShadowLightCount();
     static bool ShouldRenderShadowPass(UINT shadowIndex);

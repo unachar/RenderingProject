@@ -41,6 +41,8 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
 #else
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
 #endif
+    float2 materialUv = ApplyAssetParallax(assetMaterial, In.TexCoord, In.WorldPos,
+                                         In.Normal, In.CameraPos, g_SamplerState);
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)
@@ -52,20 +54,20 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
 #ifdef SHADER_GPU_DRIVEN
 #ifdef SHADER_VISIBILITY_RESOLVE
         baseColor *= gSceneTextures[NonUniformResourceIndex(SceneTextureIndex(metadata.x))].SampleGrad(
-            g_SamplerState, In.TexCoord, VisibilityUvDx, VisibilityUvDy);
+            g_SamplerState, materialUv, VisibilityUvDx, VisibilityUvDy);
 #else
         baseColor *=
-            gSceneTextures[NonUniformResourceIndex(SceneTextureIndex(metadata.x))].Sample(g_SamplerState, In.TexCoord);
+            gSceneTextures[NonUniformResourceIndex(SceneTextureIndex(metadata.x))].Sample(g_SamplerState, materialUv);
 #endif
 #else
-        baseColor *= g_Texture.Sample(g_SamplerState, In.TexCoord);
+        baseColor *= g_Texture.Sample(g_SamplerState, materialUv);
 #endif
     }
 
     float assetMetallic = mMetallic;
     float assetRoughness = mRoughness;
     float4 assetEmissionAO;
-    ApplyAssetMaterial(assetMaterial, In.TexCoord, g_SamplerState, baseColor, assetMetallic, assetRoughness,
+    ApplyAssetMaterial(assetMaterial, materialUv, g_SamplerState, baseColor, assetMetallic, assetRoughness,
                        assetEmissionAO);
 #ifndef SHADER_VISIBILITY_RESOLVE
     clip(baseColor.a - 0.01f);
@@ -83,13 +85,13 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
         uint textureIndex = SceneTextureIndex(normalTextureIndex);
 #ifdef SHADER_VISIBILITY_RESOLVE
         float3 tangentNormal = gSceneTextures[NonUniformResourceIndex(textureIndex)]
-                                       .SampleGrad(g_SamplerState, In.TexCoord, VisibilityUvDx, VisibilityUvDy)
+                                       .SampleGrad(g_SamplerState, materialUv, VisibilityUvDx, VisibilityUvDy)
                                        .xyz *
                                    2 -
                                1;
 #else
         float3 tangentNormal =
-            gSceneTextures[NonUniformResourceIndex(textureIndex)].Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
+            gSceneTextures[NonUniformResourceIndex(textureIndex)].Sample(g_SamplerState, materialUv).xyz * 2.0f - 1.0f;
 #endif
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }
@@ -97,10 +99,19 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
 #else
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, materialUv).xyz * 2.0f - 1.0f;
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }
 #endif
+    // 法線マップが無いときは POM の高さマップから法線を作る（UV シフトだけでは見た目が変わらないため）。
+#ifdef SHADER_GPU_DRIVEN
+    if (!hasNormalMap)
+#else
+    if (UseNormalMap == 0)
+#endif
+    {
+        normal = ApplyAssetHeightNormal(assetMaterial, normal, In.WorldPos, In.TexCoord, materialUv, g_SamplerState);
+    }
     normal = SafeNormalizeCommon(normal, float3(0.0f, 1.0f, 0.0f));
 
     GBufferOutput output;
@@ -137,3 +148,4 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
 #endif
     return output;
 }
+

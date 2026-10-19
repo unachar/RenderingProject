@@ -39,6 +39,16 @@ enum class GlobalIlluminationMode : int
 class RendererSettings
 {
   public:
+    static bool GetIesProfilesEnabled()
+    {
+        return s_IesProfilesEnabled;
+    }
+
+    static void SetIesProfilesEnabled(bool enabled)
+    {
+        SetValue(s_IesProfilesEnabled, enabled);
+    }
+
     static UpscaleMode GetUpscaleMode()
     {
         return s_UpscaleMode;
@@ -663,6 +673,7 @@ class RendererSettings
     }
 
   private:
+    inline static bool s_IesProfilesEnabled = true;
     template <typename T> static void SetValue(T& destination, const T& value)
     {
         if (destination != value)

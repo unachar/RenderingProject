@@ -37,7 +37,7 @@
 
 #define ML_PI 3.14159265359f
 
-// 80 byte。xyzw の意味は LightParams の配列（LightPositionTypes など）と同じ。
+// 96 byte。xyzw の意味は LightParams の配列（LightPositionTypes など）と同じ。
 struct MegaLightData
 {
     float4 PositionType;   // xyz: 位置, w: LightType（1 Point / 2 Spot / 4 Rect）
@@ -46,6 +46,7 @@ struct MegaLightData
     float4 Extra;          // Spot: cos(内角), cos(外角), 密度, 形状 / Rect: 幅, 高さ, 密度, 0
     float4 Flags; // x: bit0 影を落とす / bit1 Forward に影響（M7）, y: ソース半径, z: Entity ID（asuint。M4）, w:
                   // 強度（M6 フォグ）
+    float4 IesProfile; // x: 配光テクスチャ番号+1、y: 軸回りの回転（周）
     // Rect の Extra.w：テクスチャ番号 + 1（0 = なし。M7）
 };
 

@@ -971,6 +971,17 @@ void ImGuiManager::DrawProjectSettingsWindow()
             "ライトは GPU 上でタイル別 instance list と volumetric shaft list に圧縮され、ピクセル当たりの評価数はタイル重複予算を超えません。");
     }
 
+    if (ImGui::CollapsingHeader("IES配光", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        bool iesEnabled = RendererSettings::GetIesProfilesEnabled();
+        if (ImGui::Checkbox("IESプロファイルを有効化", &iesEnabled))
+        {
+            RendererSettings::SetIesProfilesEnabled(iesEnabled);
+        }
+        ImGui::TextWrapped("Point / Spot / Rect ライトに指定した IES ファイルの配光を適用します。"
+                          "明るさはライト強度で調整できます。");
+    }
+
     if (ImGui::CollapsingHeader("シャドウ", ImGuiTreeNodeFlags_DefaultOpen))
     {
         const bool raytracedShadowsSupported = Raytracing::UsesRaytracedShadows();
@@ -1227,6 +1238,12 @@ void ImGuiManager::DrawProjectSettingsWindow()
 
 bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const string& value)
 {
+    bool iesEnabled = RendererSettings::GetIesProfilesEnabled();
+    if (EditorConfig::Value(output, key, value, "ies_profiles_enabled", iesEnabled))
+    {
+        RendererSettings::SetIesProfilesEnabled(iesEnabled);
+        return true;
+    }
     bool matched = false;
     auto& temporalRays = Raytracing::GetSettings();
     matched |= EditorConfig::Value(output, key, value, "ray.StableNrdProfile", temporalRays.StableNrdProfile, 0, 1);

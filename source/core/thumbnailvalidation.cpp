@@ -135,7 +135,7 @@ void ThumbnailValidation::BeforeFrame(uint64_t frame)
     {
         return;
     }
-    root = std::filesystem::path("asset") / ("__thumbnail_validation_" + std::to_string(GetCurrentProcessId()));
+    root = AssetRegistry::ValidationCacheRoot() / ("__thumbnail_validation_" + std::to_string(GetCurrentProcessId()));
     std::filesystem::create_directories(root);
     std::filesystem::create_directories("build/thumbnail-tests");
     entityCount = Registry::GetEntities().size();
@@ -372,8 +372,9 @@ bool ThumbnailValidation::Finish()
     }
     if (!root.empty())
     {
-        std::filesystem::remove(root, error);
+        std::filesystem::remove_all(root, error);
     }
     MaterialManager::Refresh();
     return complete && failures == 0;
 }
+

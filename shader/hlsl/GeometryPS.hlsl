@@ -16,6 +16,8 @@ PS_OUTPUT_GEOMETRY main(PSInput3D input)
 #else
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
 #endif
+    float2 materialUv = ApplyAssetParallax(assetMaterial, input.TexCoord, input.WorldPos,
+                                         input.Normal, input.CameraPos, Sampler);
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(input.Diffuse.a, 0.0f);
     float4 baseColor = float4(input.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)
@@ -25,22 +27,27 @@ PS_OUTPUT_GEOMETRY main(PSInput3D input)
     float3 normal = input.Normal;
     if (UseTexture)
     {
-        baseColor *= TextureBaseColor.Sample(Sampler, input.TexCoord);
+        baseColor *= TextureBaseColor.Sample(Sampler, materialUv);
     }
 
     float assetMetallic = mMetallic;
     float assetRoughness = mRoughness;
     float4 assetEmissionAO;
-    ApplyAssetMaterial(assetMaterial, input.TexCoord, Sampler, baseColor, assetMetallic, assetRoughness,
+    ApplyAssetMaterial(assetMaterial, materialUv, Sampler, baseColor, assetMetallic, assetRoughness,
                        assetEmissionAO);
     output.EmissionAO = assetEmissionAO;
     clip(baseColor.a - 0.01f);
 
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = TextureNormal.Sample(Sampler, input.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = TextureNormal.Sample(Sampler, materialUv).xyz * 2.0f - 1.0f;
         normal = ApplyNormalMapCommon(normal, input.WorldPos, input.TexCoord,
                                       ScaleAssetNormal(tangentNormal, assetMaterial));
+    }
+    else
+    {
+        // 法線マップが無いときは POM の高さマップから法線を作る。
+        normal = ApplyAssetHeightNormal(assetMaterial, normal, input.WorldPos, input.TexCoord, materialUv, Sampler);
     }
 
     output.Color = baseColor;
@@ -59,3 +66,4 @@ PS_OUTPUT_GEOMETRY main(PSInput3D input)
 
     return output;
 }
+

@@ -40,7 +40,11 @@ float4 main(float4 position : SV_POSITION, float2 uv : TEXCOORD, float vertexOpa
     float fresnel = GlassFresnel(cosIncident, 1.0f, eta);
     float thickness = max(Transparent1.x, 0.0f);
     float pathLength = thickness / max(cosTransmitted, 0.0001f);
-    float3 beer = GlassBeer(color.rgb, Transparent1.yzw, thickness, pathLength);
+    // ベースカラーは板を垂直に通る光の透過色。厚み0の薄板でも色を保ち、
+    // 吸収係数による減衰だけを実際の光路長に比例させる。
+    float3 tintDepth = -log(clamp(color.rgb, 1e-4f, 1.0f)) / max(cosTransmitted, 0.0001f);
+    float3 absorptionDepth = max(Transparent1.yzw, 0.0f) * pathLength;
+    float3 beer = exp(-min(tintDepth + absorptionDepth, 80.0f));
     float3 reflected, slab;
     GlassSlabWeights(fresnel, beer, reflected, slab);
     float3 transmission = saturate(Transparent0.y) * (1.0f - saturate(metallic)) * slab;

@@ -155,7 +155,7 @@ void GiValidation::BeforeFrame(uint64_t frame)
         {
             World::DestroyEntity(Entity(entity));
         }
-        fixtureRoot = filesystem::path("asset") / ("__gi_validation_" + to_string(GetCurrentProcessId()));
+        fixtureRoot = AssetRegistry::ValidationCacheRoot() / ("__gi_validation_" + to_string(GetCurrentProcessId()));
         filesystem::create_directories(fixtureRoot);
         filesystem::create_directories("build/gi-tests");
         MaterialAssetData white;
@@ -511,7 +511,11 @@ bool GiValidation::Finish()
         filesystem::remove(fixtureRoot / name, error);
     }
     error_code error;
-    filesystem::remove(fixtureRoot, error);
+    if (!fixtureRoot.empty())
+    {
+        filesystem::remove_all(fixtureRoot, error);
+    }
     WriteGraphicsLog("GI validation failures = %u\n", failures);
     return failures == 0;
 }
+

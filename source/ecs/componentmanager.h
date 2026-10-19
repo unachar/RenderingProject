@@ -265,6 +265,9 @@ struct MaterialComponent
     int MetallicRoughnessID = -1;
     int AOTextureID = -1;
     int EmissiveTextureID = -1;
+    int HeightTextureID = -1;
+    float ParallaxDepth = 0.0f;
+    float ParallaxSteps = 32.0f;
     MaterialSurface AssetSurface = MaterialSurface::Opaque;
     uint32_t ShadingModel = 0; // MaterialAssetData::ShadingModel を参照。
     float ShadingStrength = 1.0f;
@@ -416,6 +419,8 @@ struct LightComponent
     bool AllowMegaLights = true; // ディファード時、MegaLights のクラスターグリッドで評価してよい（Point / Spot / Rect）
     float SourceRadius = 0.0f;   // Point / Spot の発光球の半径（m）。MegaLights の影レイでソフトシャドウになる
     string AreaTexturePath;      // Rect の発光面のテクスチャ（MegaLights M7。空 = 単色）
+    string IesProfilePath;       // IES 配光。空の場合は従来の配光を使う。
+    float IesRotationDegrees = 0.0f;
     float Priority = 0.0f;
     LightRenderMode RenderMode = LightRenderMode::Physical;
 

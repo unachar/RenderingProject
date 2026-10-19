@@ -135,7 +135,7 @@ class MegaLights final
         UINT SampleWidth = 0, SampleHeight = 0, SampleScale = 1;
     };
 
-    // HLSL の MegaLightData と同じ並び（80 byte）
+    // HLSL の MegaLightData と同じ並び（96 byte）
     struct GpuLight
     {
         XMFLOAT4 PositionType;
@@ -143,9 +143,10 @@ class MegaLights final
         XMFLOAT4 Color;
         XMFLOAT4 Extra;
         XMFLOAT4 Flags; // x: 影を落とす, y: ソース半径, z: Entity ID（uint のビット。可視ライトハッシュのキー）
+        XMFLOAT4 IesProfile;
     };
 
-    static_assert(sizeof(GpuLight) == 80, "MegaLightData layout mismatch");
+    static_assert(sizeof(GpuLight) == 96, "MegaLightData layout mismatch");
 
     static constexpr UINT kMaxLights = 4096;
     static constexpr UINT kTileSize = 16;

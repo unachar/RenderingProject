@@ -27,6 +27,9 @@
 #include "atmosphere.h"
 #include "cloud/cloudrenderer.h"
 #include "lightingresources.h"
+#include "megalights.h"
+#include "advancedeffects.h"
+#include "scenefile.h"
 #include <imgui_internal.h>
 #include <fstream>
 
@@ -65,7 +68,10 @@ namespace
     EntityID secondTransmissionCaster = g_kINVALID_ENTITY;
     EntityID transmissionReceiver = g_kINVALID_ENTITY;
     XMFLOAT3 receiverBeforeCaster{}, receiverBehindCaster{};
+    EntityID iesFixtureLight = g_kINVALID_ENTITY;
+    XMFLOAT3 iesDisabledLight{}, iesNarrowLight{}, iesRotatedLight{};
     void Check(bool passed, const char* message);
+    bool EqualPixels(const RenderCapture::TextureData& left, const RenderCapture::TextureData& right, UINT pixelBytes);
 
     float PreviewBrightness()
     {
@@ -173,6 +179,109 @@ namespace
     }
 
     AssetDragPayload uiPayload;
+
+    bool ParallaxValidationEnabled()
+    {
+        return GetEnvironmentVariableW(L"DX12_POM_TEST", nullptr, 0) != 0;
+    }
+
+    RenderCapture::TextureData parallaxDisabled;
+    RenderCapture::TextureData parallaxEnabled;
+
+    void PrepareParallaxFrame(uint64_t frame)
+    {
+        if (frame == 1)
+        {
+            auto editing = MaterialManager::GetRuntime(copyHandle).Editing;
+            editing.Surface = MaterialSurface::Opaque;
+            editing.Transmission = 0;
+            editing.BaseColor = {1, 1, 1, 1};
+            editing.Textures[0] = normalTextureHandle;
+            editing.Textures[5] = normalTextureHandle;
+            editing.ParallaxDepth = 0;
+            MaterialManager::SetEditing(copyHandle, editing);
+            for (EntityID entity : World::GetView<MaterialComponent>())
+            {
+                if (MaterialManager::SlotCount(entity) > 0)
+                {
+                    MaterialManager::Assign(entity, 0, copyHandle);
+                }
+            }
+            auto& cameraTransform =
+                ComponentManager::GetComponentUnchecked<TransformComponent>(Camera::GetCameraEntity());
+            cameraTransform.Position = {3, 2, -7};
+            cameraTransform.IsDirty = true;
+        }
+        if (frame == 3 || frame == 7 || frame == 9)
+        {
+            auto editing = MaterialManager::GetRuntime(copyHandle).Editing;
+            editing.ParallaxDepth = frame == 9 ? 0.0f : 0.12f;
+            editing.Textures[5] = frame == 7 ? 0 : normalTextureHandle;
+            MaterialManager::SetEditing(copyHandle, editing);
+        }
+        if (frame == 5)
+        {
+            GPUDrivenRenderer::SetEnabled(true);
+            GPUVisibility::GetSettings().LOD = true;
+            GPUVisibility::GetSettings().ForceLOD = 0;
+        }
+        if (frame == 7)
+        {
+            GPUDrivenRenderer::SetEnabled(false);
+        }
+    }
+
+    void CheckParallaxFrame(uint64_t frame)
+    {
+        if (frame != 2 && frame != 4 && frame != 6 && frame != 8 && frame != 10)
+        {
+            return;
+        }
+        RenderCapture::TextureData color;
+        Check(RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::BASE_COLOR), color),
+              "capture POM production GBuffer");
+        if (frame == 2)
+        {
+            parallaxDisabled = color;
+            RenderCapture::SaveScenePng(L"build/material-tests/pom-disabled.png");
+        }
+        else if (frame == 4)
+        {
+            parallaxEnabled = color;
+            Check(!EqualPixels(parallaxDisabled, color, 4), "POM changes texture coordinates at oblique view");
+            RenderCapture::SaveScenePng(L"build/material-tests/pom-enabled.png");
+            RenderCapture::SaveTexturePng(RenderTargets::GetGBufferResource(GBufferType::BASE_COLOR),
+                                          L"build/material-tests/pom-cpu-gbuffer.png");
+        }
+        else if (frame == 6)
+        {
+            Check(GPUDrivenRenderer::HandlesEntity(first), "POM fixture uses GPU-driven rendering");
+            UINT maxDifference = 0;
+            UINT differentChannels = 0;
+            Check(color.Format == DXGI_FORMAT_R8G8B8A8_UNORM && color.Width == parallaxEnabled.Width &&
+                      color.Height == parallaxEnabled.Height,
+                  "POM parity capture format and size");
+            for (UINT y = 0; y < color.Height; ++y)
+            {
+                for (UINT channel = 0; channel < color.Width * 4; ++channel)
+                {
+                    const int difference = abs(int(color.Bytes[y * color.RowPitch + channel]) -
+                                               int(parallaxEnabled.Bytes[y * parallaxEnabled.RowPitch + channel]));
+                    maxDifference = max(maxDifference, static_cast<UINT>(difference));
+                    differentChannels += difference != 0;
+                }
+            }
+            WriteGraphicsLog("POM parity: max channel difference = %u / 255, differing channels = %u\n", maxDifference,
+                             differentChannels);
+            RenderCapture::SaveTexturePng(RenderTargets::GetGBufferResource(GBufferType::BASE_COLOR),
+                                          L"build/material-tests/pom-gpu-gbuffer.png");
+            Check(EqualPixels(parallaxEnabled, color, 4), "POM CPU/GPU-driven GBuffer parity");
+        }
+        else
+        {
+            Check(EqualPixels(parallaxDisabled, color, 4), "POM missing height or zero depth preserves original UVs");
+        }
+    }
 
     void Check(bool passed, const char* message)
     {
@@ -467,7 +576,125 @@ namespace
         {
             editing.AbsorptionCoefficient = {0, 0, 0};
         }
+        if (frame == 70 || frame == 72)
+        {
+            editing.Thickness = 0;
+            editing.BaseColor = {0.05f, 1, 1, 1};
+            if (frame == 72)
+            {
+                editing.BaseColor = {1, 0.05f, 1, 1};
+            }
+        }
+        if (frame == 74)
+        {
+            RendererSettings::SetShadowMapMethod(ShadowMapMethod::ShadowMap);
+        }
         MaterialManager::SetEditing(copyHandle, editing);
+    }
+
+    void PrepareIesFrame(uint64_t frame)
+    {
+        if (frame < 76 || (frame & 1) != 0)
+        {
+            return;
+        }
+        if (frame == 76)
+        {
+            MegaLights::GetSettings().Enabled = false;
+            for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
+            {
+                auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
+                light.IsActive = iesFixtureLight == g_kINVALID_ENTITY;
+                if (!light.IsActive)
+                {
+                    continue;
+                }
+                iesFixtureLight = entity;
+                light.Type = LightType::Point;
+                light.Intensity = 8;
+                light.Range = 12;
+                light.Color = {1, 1, 1, 1};
+                light.CastShadow = false;
+                light.Direction = {0, -1, 0};
+                light.IesProfilePath = "asset/Lighting/IES/NarrowBeam.ies";
+                auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+                transform.Position = {3, 4, 0};
+                transform.IsDirty = true;
+            }
+            RendererSettings::SetIesProfilesEnabled(false);
+        }
+        if (iesFixtureLight == g_kINVALID_ENTITY)
+        {
+            Check(false, "IES fixture has a local light");
+            return;
+        }
+        auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(iesFixtureLight);
+        if (frame == 76)
+        {
+            Json::Value node;
+            auto original = light;
+            original.IesRotationDegrees = 37;
+            SceneFile::Archive write(SceneFile::Mode::Write, node);
+            SceneFile::Visit(write, original);
+            LightComponent restored;
+            SceneFile::Archive read(SceneFile::Mode::Read, node);
+            SceneFile::Visit(read, restored);
+            Check(restored.IesProfilePath == original.IesProfilePath && restored.IesRotationDegrees == 37,
+                  "scene serialization preserves IES path and rotation");
+            Json::Value legacy(Json::objectValue);
+            LightComponent defaults;
+            SceneFile::Archive legacyRead(SceneFile::Mode::Read, legacy);
+            SceneFile::Visit(legacyRead, defaults);
+            Check(defaults.IesProfilePath.empty() && defaults.IesRotationDegrees == 0,
+                  "legacy scenes without IES fields retain conventional lighting");
+        }
+        if (frame == 78 || frame == 82)
+        {
+            RendererSettings::SetIesProfilesEnabled(true);
+        }
+        if (frame == 80)
+        {
+            RendererSettings::SetIesProfilesEnabled(false);
+        }
+        if (frame == 82)
+        {
+            light.IesProfilePath = "asset/Lighting/IES/__missing_validation.ies";
+        }
+        if (frame == 84)
+        {
+            light.IesProfilePath.clear();
+        }
+        if (frame == 86)
+        {
+            light.IesProfilePath = "asset/Lighting/IES/Asymmetric.ies";
+            light.IesRotationDegrees = 0;
+        }
+        if (frame == 88)
+        {
+            light.IesRotationDegrees = 180;
+        }
+        if (frame == 90)
+        {
+            light.AllowMegaLights = true;
+            MegaLights::GetSettings().Enabled = true;
+            MegaLights::GetSettings().EvaluationMode = static_cast<int>(MegaLights::Mode::Deterministic);
+            MegaLights::GetSettings().Denoise = false;
+        }
+        if (frame == 92)
+        {
+            AdvancedEffects::GetSettings().FroxelFog = true;
+            light.AffectsVolumetrics = true;
+            light.VolumeDensity = 0.2f;
+        }
+        if (frame == 94)
+        {
+            MegaLights::GetSettings().Enabled = false;
+        }
+        if (frame == 96)
+        {
+            AdvancedEffects::GetSettings().FroxelFog = false;
+            RenderConfiguration::SetRenderMode(RenderMode::FORWARD);
+        }
     }
 
     XMFLOAT3 ReadReceiverLight()
@@ -642,6 +869,71 @@ namespace
         {
             Check(MinimumTransmission(0).x > 0.9f, "optical parameter edits invalidate virtual shadow pages");
         }
+        if (frame == 71)
+        {
+            const auto t = MinimumTransmission(0);
+            Check(t.x < 0.1f && t.y > 0.9f && t.z > 0.9f,
+                  "zero thickness cyan glass tints virtual shadow transmission");
+            Check(RenderCapture::SaveScenePng(L"build/material-tests/transmission-cyan.png"),
+                  "capture zero thickness cyan glass shadow");
+        }
+        if (frame == 73 || frame == 75)
+        {
+            const auto t = MinimumTransmission(0);
+            Check(t.x > 0.9f && t.y < 0.1f && t.z > 0.9f,
+                  "base color edits tint zero thickness glass shadows in VSM and conventional maps");
+        }
+        if (frame == 77)
+        {
+            iesDisabledLight = ReadReceiverLight();
+            Check(iesDisabledLight.x > 0.01f, "IES fixture receiver is illuminated");
+            Check(RenderCapture::SaveScenePng(L"build/material-tests/ies-disabled.png"), "capture conventional lighting");
+        }
+        if (frame == 79)
+        {
+            iesNarrowLight = ReadReceiverLight();
+            Check(iesNarrowLight.x + 0.01f < iesDisabledLight.x,
+                  "IES narrow beam changes receiver radiance outside its beam");
+            Check(RenderCapture::SaveScenePng(L"build/material-tests/ies-enabled.png"), "capture IES lighting");
+        }
+        if (frame == 81 || frame == 83 || frame == 85)
+        {
+            const auto radiance = ReadReceiverLight();
+            Check(fabs(radiance.x - iesDisabledLight.x) < max(0.003f, iesDisabledLight.x * 0.03f),
+                  "IES disabled, missing and empty profiles preserve conventional lighting");
+        }
+        if (frame == 87)
+        {
+            iesNarrowLight = ReadReceiverLight();
+        }
+        if (frame == 89)
+        {
+            iesRotatedLight = ReadReceiverLight();
+            Check(iesRotatedLight.x > iesNarrowLight.x + 0.01f,
+                  "rotating an asymmetric IES profile rotates the illuminated direction");
+        }
+        if (frame == 91)
+        {
+            const auto radiance = ReadReceiverLight();
+            Check(MegaLights::GetStats().SubmittedLights > 0, "IES fixture uses the MegaLights grid");
+            Check(fabs(radiance.x - iesRotatedLight.x) < max(0.005f, iesRotatedLight.x * 0.1f),
+                  "MegaLights and conventional lighting agree on IES orientation and radiance");
+        }
+        if (frame == 93 || frame == 95)
+        {
+            Check(AdvancedEffects::IsFroxelFogActive(), "IES profiles are exercised by froxel fog compute shaders");
+            for (const auto& texture : TextureManager::GetLoadedTextureInfos())
+            {
+                Check(texture.Path.rfind("IES:", 0) != 0,
+                      "generated IES data is separate from image-file texture listings");
+            }
+        }
+        if (frame == 97)
+        {
+            const auto radiance = ReadReceiverLight();
+            Check(fabs(radiance.x - iesRotatedLight.x) < max(0.005f, iesRotatedLight.x * 0.1f),
+                  "Forward and Deferred lighting agree on IES orientation and radiance");
+        }
     }
 }
 
@@ -665,11 +957,29 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         return;
     }
     frames = frame + 1;
+    if (ParallaxValidationEnabled() && frame > 0)
+    {
+        ImGuiManager::m_ShowMaterialEditorWindow = false;
+        PrepareParallaxFrame(frame);
+        return;
+    }
     // 透明描画のテストがシーンとマテリアルを置き換える前に、エディター入力テストを終える。
     if (frame >= 33)
     {
         PrepareTransparencyFrame(frame - 9);
         PrepareTransmissionFrame(frame - 9);
+        PrepareIesFrame(frame - 9);
+        if (frame == 85)
+        {
+            std::ostringstream settings;
+            ImGuiManager::PersistentSettings(&settings);
+            Check(settings.str().find("ies_profiles_enabled=0\n") != string::npos,
+                  "environment settings persist the IES switch");
+            ImGuiManager::PersistentSettings(nullptr, "ies_profiles_enabled", "1");
+            Check(RendererSettings::GetIesProfilesEnabled(), "environment settings restore IES enabled");
+            ImGuiManager::PersistentSettings(nullptr, "ies_profiles_enabled", "0");
+            Check(!RendererSettings::GetIesProfilesEnabled(), "environment settings restore IES disabled");
+        }
     }
     if (frame == 0)
     {
@@ -688,7 +998,7 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
         {
             World::DestroyEntity(Entity(entity));
         }
-        fixtureRoot = filesystem::path("asset") / ("__material_validation_" + to_string(GetCurrentProcessId()));
+        fixtureRoot = AssetRegistry::ValidationCacheRoot() / ("__material_validation_" + to_string(GetCurrentProcessId()));
         filesystem::create_directories(fixtureRoot);
         filesystem::create_directories("build/material-tests");
         const auto normal = fixtureRoot / "Normal.tga";
@@ -953,6 +1263,11 @@ void MaterialValidation::BeforeFrame(uint64_t frame)
 
 void MaterialValidation::AfterFrame(uint64_t frame)
 {
+    if (ParallaxValidationEnabled())
+    {
+        CheckParallaxFrame(frame);
+        return;
+    }
     if (GiValidation::Enabled())
     {
         GiValidation::AfterFrame(frame);
@@ -1178,6 +1493,10 @@ void MaterialValidation::CaptureDropTarget(const char* name, float left, float t
 
 void MaterialValidation::BeforeEditorFrame()
 {
+    if (ParallaxValidationEnabled())
+    {
+        return;
+    }
     if (GiValidation::Enabled())
     {
         return;
@@ -1282,7 +1601,7 @@ bool MaterialValidation::Finish()
         return GiValidation::Finish();
     }
     GraphicsDevice::WaitForGpuIdle();
-    Check(frames >= 33, "complete material validation sequence");
+    Check(frames >= (ParallaxValidationEnabled() ? 11u : 33u), "complete material validation sequence");
     failures += RenderCapture::ReportGraphicsErrors();
     for (const auto& path : ownedFiles)
     {
@@ -1290,7 +1609,11 @@ bool MaterialValidation::Finish()
         filesystem::remove(path, ignored);
     }
     error_code ignored;
-    filesystem::remove(fixtureRoot, ignored);
+    if (!fixtureRoot.empty())
+    {
+        filesystem::remove_all(fixtureRoot, ignored); // .meta など個別管理外のファイルも残さない
+    }
     WriteGraphicsLog("Material validation failures = %u\n", failures);
     return failures == 0;
 }
+

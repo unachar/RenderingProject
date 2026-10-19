@@ -268,6 +268,8 @@ float4 ShadeForward(in PSInput3D In)
     const float PI = 3.14159265358979323846f;
 
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
+    float2 materialUv = ApplyAssetParallax(assetMaterial, In.TexCoord, In.WorldPos,
+                                         In.Normal, In.CameraPos, g_SamplerState);
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
     // 手動モードへ切り替えた後も、モデル色の alpha にマテリアルの分類が残る場合がある。
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
@@ -277,12 +279,12 @@ float4 ShadeForward(in PSInput3D In)
     }
     if (UseTexture != 0)
     {
-        baseColor *= g_Texture.Sample(g_SamplerState, In.TexCoord);
+        baseColor *= g_Texture.Sample(g_SamplerState, materialUv);
     }
     float assetMetallic = mMetallic;
     float assetRoughness = mRoughness;
     float4 assetEmissionAO;
-    ApplyAssetMaterial(assetMaterial, In.TexCoord, g_SamplerState, baseColor, assetMetallic, assetRoughness,
+    ApplyAssetMaterial(assetMaterial, materialUv, g_SamplerState, baseColor, assetMetallic, assetRoughness,
                        assetEmissionAO);
     baseColor.a = saturate(baseColor.a * MaterialAlpha);
     clip(baseColor.a - (1.0f / 255.0f));
@@ -290,9 +292,15 @@ float4 ShadeForward(in PSInput3D In)
     float3 surfaceNormal = In.Normal * ((FlipNormal != 0) ? -1.0f : 1.0f);
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, materialUv).xyz * 2.0f - 1.0f;
         surfaceNormal = ApplyNormalMapCommon(surfaceNormal, In.WorldPos, In.TexCoord,
                                              ScaleAssetNormal(tangentNormal, assetMaterial));
+    }
+    else
+    {
+        // 法線マップが無いときは POM の高さマップから法線を作る。
+        surfaceNormal = ApplyAssetHeightNormal(assetMaterial, surfaceNormal, In.WorldPos, In.TexCoord, materialUv,
+                                               g_SamplerState);
     }
     surfaceNormal = SafeNormalizeCommon(surfaceNormal, float3(0.0f, 1.0f, 0.0f));
 
@@ -333,7 +341,7 @@ float4 ShadeForward(in PSInput3D In)
     float3 environmentColor = 0.0f;
     if (Transparent0.y <= 0.0f)
     {
-        environmentColor = EnvironmentTexture.SampleLevel(g_SamplerState, In.TexCoord, roughnessParam * 10.0f).rgb;
+        environmentColor = EnvironmentTexture.SampleLevel(g_SamplerState, materialUv, roughnessParam * 10.0f).rgb;
     }
     NdotL += lightIntensity;
 
@@ -544,3 +552,4 @@ ForwardOutput main(in PSInput3D In)
     output.Revealage = alpha.xxxx;
     return output;
 }
+

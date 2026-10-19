@@ -2,6 +2,7 @@
 #include "graphicsdevice.h"
 #include "DirectXTex.h"
 #include "texturemanager.h"
+#include "iesprofile.h"
 #include "componentmanager.h"
 #include "renderersettings.h"
 #include <thread>
@@ -13,6 +14,7 @@
 
 unordered_map<string, TextureManager::TextureData> TextureManager::m_Textures;
 int TextureManager::m_NextSrvIndex = 0;
+static uint64_t g_IesProfileRevision = 1;
 ComPtr<ID3D12Resource> TextureManager::m_DefaultTexture;
 ComPtr<ID3D12Resource> TextureManager::m_ErrorTexture;
 
@@ -377,7 +379,8 @@ ComPtr<ID3D12Resource> LoadReservedTextureToDevice(ID3D12Device* device, const T
     return texture;
 }
 
-ComPtr<ID3D12Resource> LoadTextureToDevice(ID3D12Device* device, const TexMetadata& metadata, const ScratchImage& image)
+ComPtr<ID3D12Resource> LoadTextureToDevice(ID3D12Device* device, const TexMetadata& metadata, const ScratchImage& image,
+    D3D12_RESOURCE_STATES readState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
 {
     ComPtr<ID3D12Resource> texture;
 
@@ -461,8 +464,7 @@ ComPtr<ID3D12Resource> LoadTextureToDevice(ID3D12Device* device, const TexMetada
     UpdateSubresources(cmdList.Get(), texture.Get(), uploadBuffer.Get(), 0, 0, static_cast<UINT>(numSubresources),
                        subresources.data());
 
-    auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
-                                                        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST, readState);
     cmdList->ResourceBarrier(1, &barrier);
 
     if (batchMode)
@@ -930,6 +932,7 @@ void TextureManager::Init()
 
 void TextureManager::Uninit()
 {
+    ++g_IesProfileRevision;
     m_Textures.clear();
     m_DefaultTexture.Reset();
     m_ErrorTexture.Reset();
@@ -1115,6 +1118,96 @@ int TextureManager::LoadNormalTexture(const char* fileName)
     return LoadTexture(fileName);
 }
 
+int TextureManager::LoadIesProfile(const filesystem::path& fileName)
+{
+    const string key = "IES:" + MakeTextureCacheKey(fileName);
+    {
+        lock_guard<mutex> lock(g_TextureMutex);
+        const auto found = m_Textures.find(key);
+        if (found != m_Textures.end())
+        {
+            return found->second.SrvIndex;
+        }
+    }
+
+    IesProfiles::Profile profile;
+    string error;
+    TextureData data;
+    if (!IesProfiles::Load(fileName, profile, error))
+    {
+        Debug::Log("IES profile unavailable: %s (%s)\n", PathToUtf8(fileName).c_str(), error.c_str());
+    }
+    else
+    {
+        constexpr UINT width = 256, height = 128;
+        const auto pixels = IesProfiles::Bake(profile, width, height);
+        ScratchImage image;
+        if (SUCCEEDED(image.Initialize2D(DXGI_FORMAT_R32_FLOAT, width, height, 1, 1)))
+        {
+            const Image* target = image.GetImage(0, 0, 0);
+            for (UINT row = 0; row < height; ++row)
+            {
+                memcpy(target->pixels + row * target->rowPitch, pixels.data() + row * width, width * sizeof(float));
+            }
+            data.Resource = LoadTextureToDevice(GraphicsDevice::GetDevice(), image.GetMetadata(), image,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            if (data.Resource)
+            {
+                lock_guard<mutex> lock(g_TextureMutex);
+                const int end = FrameConstants::g_kTEXTURE_SRV_START_INDEX + FrameConstants::g_kMAX_SRVS;
+                if (m_NextSrvIndex < end)
+                {
+                    data.SrvIndex = m_NextSrvIndex++;
+                    CreateShaderResourceView(data.Resource.Get(), data.Resource->GetDesc(), data.SrvIndex);
+                }
+            }
+        }
+    }
+    const int result = data.SrvIndex;
+    {
+        lock_guard<mutex> lock(g_TextureMutex);
+        m_Textures.emplace(key, std::move(data));
+        if (result >= 0)
+        {
+            ++g_IesProfileRevision;
+        }
+    }
+    return result;
+}
+
+uint64_t TextureManager::WriteIesProfileViews(D3D12_CPU_DESCRIPTOR_HANDLE destination, uint64_t previousRevision)
+{
+    lock_guard<mutex> lock(g_TextureMutex);
+    if (previousRevision == g_IesProfileRevision)
+    {
+        return previousRevision;
+    }
+    auto* device = GraphicsDevice::GetDevice();
+    const UINT increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    D3D12_SHADER_RESOURCE_VIEW_DESC view{};
+    view.Format = DXGI_FORMAT_R32_FLOAT;
+    view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    view.Texture2D.MipLevels = 1;
+    // シェーダー可視ヒープはコピー元にできないため、呼び出し元のヒープに直接 SRV を作る。
+    for (UINT index = 0; index < FrameConstants::g_kMAX_SRVS; ++index)
+    {
+        device->CreateShaderResourceView(nullptr, &view, CD3DX12_CPU_DESCRIPTOR_HANDLE(destination, index, increment));
+    }
+    for (const auto& entry : m_Textures)
+    {
+        const auto& texture = entry.second;
+        const int index = texture.SrvIndex - static_cast<int>(FrameConstants::g_kTEXTURE_SRV_START_INDEX);
+        if (entry.first.rfind("IES:", 0) == 0 && texture.Resource && index >= 0 &&
+            index < static_cast<int>(FrameConstants::g_kMAX_SRVS))
+        {
+            device->CreateShaderResourceView(texture.Resource.Get(), &view,
+                CD3DX12_CPU_DESCRIPTOR_HANDLE(destination, index, increment));
+        }
+    }
+    return g_IesProfileRevision;
+}
+
 int TextureManager::LoadTextureFromMemory(const char* name, const uint8_t* pData, size_t dataSize)
 {
     string key = name;
@@ -1248,6 +1341,12 @@ vector<TextureManager::TextureInfo> TextureManager::GetLoadedTextureInfos()
     infos.reserve(m_Textures.size());
     for (const auto& pair : m_Textures)
     {
+        // IES は画像ファイルではなく、ライトの指定から再生成する実行時データ。
+        // 画像一覧・画像パスの保存対象へ混ぜない。
+        if (pair.first.rfind("IES:", 0) == 0)
+        {
+            continue;
+        }
         TextureInfo info;
         info.Path = pair.first;
         info.SrvIndex = pair.second.SrvIndex;

@@ -101,8 +101,8 @@ const MaterialRuntime* MaterialManager::FindRuntime(AssetHandle handle)
     return found == runtimes.end() ? nullptr : found->second.get();
 }
 
-MaterialComponent MaterialManager::BuildPreviewBinding(const MaterialAssetData& material,
-                                                       const array<int, 5>& descriptors)
+MaterialComponent MaterialManager::BuildPreviewBinding(
+    const MaterialAssetData& material, const array<int, static_cast<size_t>(MaterialTextureSlot::Count)>& descriptors)
 {
     MaterialComponent binding;
     binding.ShaderClassMode = MaterialMode::Manual;
@@ -110,6 +110,8 @@ MaterialComponent MaterialManager::BuildPreviewBinding(const MaterialAssetData& 
     binding.BaseColor = XMFLOAT4(material.BaseColor.data());
     binding.Metallic = material.Metallic;
     binding.Roughness = material.Roughness;
+    binding.ParallaxDepth = material.ParallaxDepth;
+    binding.ParallaxSteps = material.ParallaxSteps;
     binding.NormalScale = material.NormalScale;
     binding.AOStrength = material.AOStrength;
     binding.EmissiveColor = XMFLOAT3(material.EmissiveColor.data());
@@ -142,12 +144,13 @@ MaterialComponent MaterialManager::BuildPreviewBinding(const MaterialAssetData& 
     binding.MetallicRoughnessID = descriptors[2];
     binding.AOTextureID = descriptors[3];
     binding.EmissiveTextureID = descriptors[4];
+    binding.HeightTextureID = descriptors[5];
     return binding;
 }
 
 void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAssetData& material)
 {
-    array<int, 5> descriptors;
+    array<int, static_cast<size_t>(MaterialTextureSlot::Count)> descriptors;
     descriptors.fill(-1);
     for (size_t slot = 0; slot < descriptors.size(); ++slot)
     {

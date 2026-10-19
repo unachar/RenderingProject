@@ -982,6 +982,8 @@ namespace SceneFile
         a("allowMegaLights", c.AllowMegaLights);
         a("sourceRadius", c.SourceRadius);
         a("areaTexture", c.AreaTexturePath);
+        a("iesProfile", c.IesProfilePath);
+        a("iesRotation", c.IesRotationDegrees);
         a("priority", c.Priority);
     }
 

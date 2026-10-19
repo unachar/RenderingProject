@@ -35,6 +35,13 @@ const std::filesystem::path& AssetRegistry::Root() const
     return m_Root;
 }
 
+std::filesystem::path AssetRegistry::ValidationCacheRoot()
+{
+    std::error_code error;
+    const auto base = std::filesystem::current_path(error);
+    return (base / "Data" / "Cache" / "Validation").lexically_normal();
+}
+
 bool AssetRegistry::Contains(const std::filesystem::path& path) const
 {
     std::error_code error;
@@ -43,8 +50,17 @@ bool AssetRegistry::Contains(const std::filesystem::path& path) const
     {
         return false;
     }
-    const auto relative = canonical.lexically_relative(Root());
-    return !relative.empty() && *relative.begin() != ".." && *relative.begin() != ".";
+    auto inside = [&canonical](const std::filesystem::path& root) {
+        const auto relative = canonical.lexically_relative(root);
+        return !relative.empty() && *relative.begin() != ".." && *relative.begin() != ".";
+    };
+    if (inside(Root()))
+    {
+        return true;
+    }
+    std::error_code cacheError;
+    const auto cache = std::filesystem::weakly_canonical(ValidationCacheRoot(), cacheError);
+    return !cacheError && inside(cache);
 }
 
 AssetType AssetRegistry::Classify(const std::filesystem::path& path)
@@ -149,27 +165,37 @@ bool AssetRegistry::Refresh(std::string& error)
     m_Collisions.clear();
     error.clear();
     std::error_code filesystemError;
-    std::filesystem::recursive_directory_iterator iterator(Root(), filesystemError);
-    for (const auto end = std::filesystem::recursive_directory_iterator(); iterator != end && !filesystemError;
-         iterator.increment(filesystemError))
+    auto scan = [&](const std::filesystem::path& root) {
+        std::filesystem::recursive_directory_iterator iterator(root, filesystemError);
+        for (const auto end = std::filesystem::recursive_directory_iterator(); iterator != end && !filesystemError;
+             iterator.increment(filesystemError))
+        {
+            const auto type = Classify(iterator->path());
+            if (type == AssetType::Unknown || !iterator->is_regular_file(filesystemError))
+            {
+                continue;
+            }
+            // テクスチャ ID は使用時やドラッグ時に割り当てる。プロジェクト走査では、
+            // どのマテリアルも参照しないインポート済みテクスチャのメタデータを作らない。
+            if ((type == AssetType::Texture || type == AssetType::Mesh) &&
+                !std::filesystem::exists(iterator->path().wstring() + L".meta", filesystemError))
+            {
+                continue;
+            }
+            std::string assetError;
+            if (!Register(iterator->path(), type, assetError))
+            {
+                error += assetError + "\n";
+            }
+        }
+    };
+    scan(Root());
+    // 検証フィクスチャ（Data/Cache/Validation）は存在する場合のみ走査する。
+    std::error_code cacheError;
+    const auto cache = ValidationCacheRoot();
+    if (!filesystemError && std::filesystem::is_directory(cache, cacheError))
     {
-        const auto type = Classify(iterator->path());
-        if (type == AssetType::Unknown || !iterator->is_regular_file(filesystemError))
-        {
-            continue;
-        }
-        // テクスチャ ID は使用時やドラッグ時に割り当てる。プロジェクト走査では、
-        // どのマテリアルも参照しないインポート済みテクスチャのメタデータを作らない。
-        if ((type == AssetType::Texture || type == AssetType::Mesh) &&
-            !std::filesystem::exists(iterator->path().wstring() + L".meta", filesystemError))
-        {
-            continue;
-        }
-        std::string assetError;
-        if (!Register(iterator->path(), type, assetError))
-        {
-            error += assetError + "\n";
-        }
+        scan(cache);
     }
     if (filesystemError)
     {
@@ -238,3 +264,4 @@ AssetHandle AssetRegistry::Duplicate(AssetHandle handle, const std::filesystem::
     }
     return copy;
 }
+

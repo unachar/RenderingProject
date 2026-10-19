@@ -12,7 +12,7 @@ $previousOptions = $env:_CL_
 try {
     New-Item -ItemType Directory -Force build/editor-config | Out-Null
     $env:_CL_ = '/Z7 /MP1'
-    $command = '"{0}" -no_logo -arch=amd64 -host_arch=amd64 && cl /nologo /utf-8 /std:c++20 /EHsc tests\editor_config_tests.cpp /Fe:build\editor-config\tests.exe /Fo:build\editor-config\ && build\editor-config\tests.exe' -f $developerCommand
+    $command = '"{0}" -no_logo -arch=amd64 -host_arch=amd64 && cl /nologo /utf-8 /std:c++20 /EHsc /I source\assets tests\editor_config_tests.cpp /Fe:build\editor-config\tests.exe /Fo:build\editor-config\ && build\editor-config\tests.exe' -f $developerCommand
     & $env:ComSpec /d /c $command
     if ($LASTEXITCODE) {
         throw 'Editor configuration tests failed.'

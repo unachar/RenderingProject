@@ -285,6 +285,29 @@ void ImGuiManager::DrawMaterialEditorWindow()
         changed |= DrawTextureSlot("Normal", editing.Textures[1]);
         changed |= ImGui::SliderFloat("Strength", &editing.NormalScale, 0, 8);
     }
+    if (ImGui::CollapsingHeader("Parallax Occlusion Mapping"))
+    {
+        changed |= DrawTextureSlot("Height (POM)", editing.Textures[5]);
+        changed |= ImGui::SliderFloat("Parallax Depth", &editing.ParallaxDepth, 0, 0.2f, "%.3f");
+        changed |= ImGui::SliderFloat("Parallax Steps", &editing.ParallaxSteps, 8, 128, "%.0f");
+        ImGui::TextDisabled("Height: white = top, black = recessed. Depth 0 disables POM.");
+        ImGui::TextDisabled("Supported on opaque PBR materials.");
+        if (editing.Textures[5] != 0)
+        {
+            if (editing.Surface != MaterialSurface::Opaque || editing.Transmission > 0.0f)
+            {
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Surface が Opaque 以外のため POM は無効です。");
+            }
+            else if (editing.ParallaxDepth <= 0.0f)
+            {
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Parallax Depth が 0 のため POM は無効です。");
+            }
+            else if (editing.Textures[1] == 0)
+            {
+                ImGui::TextDisabled("Normal 未設定: 高さマップから法線を自動生成します。");
+            }
+        }
+    }
     if (ImGui::CollapsingHeader("Ambient Occlusion"))
     {
         changed |= DrawTextureSlot("AO", editing.Textures[3]);
@@ -609,3 +632,4 @@ void ImGuiManager::DrawMaterialDropTarget()
         ImGui::EndPopup();
     }
 }
+

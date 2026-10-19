@@ -517,7 +517,7 @@ std::shared_ptr<ThumbnailGpuImage> ThumbnailRenderer::Generate(ThumbnailPrepared
     const auto initialPreviewBytes = result->Preview->MemoryBytes();
     result->Bytes = initialPreviewBytes;
     Retain(result);
-    std::array<int, 5> descriptors{-1, -1, -1, -1, -1};
+    std::array<int, static_cast<size_t>(MaterialTextureSlot::Count)> descriptors{-1, -1, -1, -1, -1, -1};
     std::unordered_map<std::string, std::shared_ptr<ThumbnailGpuImage>> textureImages;
     const auto uploadDependency = [&](ThumbnailSourceImage& source) {
         const auto key = source.IdentityKey();
@@ -557,7 +557,7 @@ std::shared_ptr<ThumbnailGpuImage> ThumbnailRenderer::Generate(ThumbnailPrepared
     std::vector<ThumbnailPreviewPart> parts;
     for (auto& part : input.MeshParts)
     {
-        std::array<int, 5> textureDescriptors{-1, -1, -1, -1, -1};
+        std::array<int, static_cast<size_t>(MaterialTextureSlot::Count)> textureDescriptors{-1, -1, -1, -1, -1, -1};
         for (size_t slot = 0; slot < part.Textures.size(); ++slot)
         {
             auto& source = part.Textures[slot];
