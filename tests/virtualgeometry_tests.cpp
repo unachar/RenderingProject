@@ -286,7 +286,7 @@ int main(int argc, char** argv)
             std::string error;
             Check(VirtualGeometrySerializer::SaveEncoded(argv[2], built.Asset, error), error);
             VirtualGeometryPageCache::PageManifest manifest;
-            Check(VirtualGeometrySerializer::LoadEncoded(argv[2], manifest, error), error);
+            Check(VirtualGeometryPageCache::Open(argv[2], manifest, error), error);
             std::vector<uint8_t> payload(VirtualGeometryPages::PageBytes);
             for (uint32_t page = 0; page < manifest.Pages.size(); ++page)
             {

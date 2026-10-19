@@ -39,6 +39,12 @@
 
 static bool g_DeviceRemovalLogged = false;
 static bool g_GpuBasedValidationEnabled = false;
+static RenderFeature::Capabilities g_FeatureCapabilities;
+
+const RenderFeature::Capabilities& GraphicsDevice::GetFeatureCapabilities()
+{
+    return g_FeatureCapabilities;
+}
 
 bool GraphicsDevice::GpuBasedValidationEnabled()
 {
@@ -48,6 +54,7 @@ bool GraphicsDevice::GpuBasedValidationEnabled()
 bool GraphicsDevice::Init(HWND hwnd)
 {
     g_DeviceRemovalLogged = false;
+    g_FeatureCapabilities = {};
     g_GpuBasedValidationEnabled = false;
     m_FrameIndex = 0;
     m_FenceEvent = nullptr;
@@ -167,6 +174,30 @@ bool GraphicsDevice::Init(HWND hwnd)
         WriteGraphicsLog("ERROR: D3D12CreateDevice failed\n");
         return false;
     }
+
+    D3D12_FEATURE_DATA_D3D12_OPTIONS options{};
+    if (SUCCEEDED(m_Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options, sizeof(options))))
+    {
+        // Tier 2 is required for selectively mapped 2D texture mip tiles.
+        g_FeatureCapabilities.ReservedResources = options.TiledResourcesTier >= D3D12_TILED_RESOURCES_TIER_2;
+    }
+    D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5{};
+    if (SUCCEEDED(m_Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options5, sizeof(options5))))
+    {
+        g_FeatureCapabilities.Raytracing = options5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_1;
+    }
+    D3D12_FEATURE_DATA_D3D12_OPTIONS7 options7{};
+    if (SUCCEEDED(m_Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &options7, sizeof(options7))))
+    {
+        g_FeatureCapabilities.MeshShader = options7.MeshShaderTier != D3D12_MESH_SHADER_TIER_NOT_SUPPORTED;
+        g_FeatureCapabilities.SamplerFeedback =
+            options7.SamplerFeedbackTier != D3D12_SAMPLER_FEEDBACK_TIER_NOT_SUPPORTED;
+    }
+    WriteGraphicsLog("Feature capabilities: mesh=%u dxr11=%u sampler_feedback=%u reserved_textures=%u\n",
+                     static_cast<unsigned>(g_FeatureCapabilities.MeshShader),
+                     static_cast<unsigned>(g_FeatureCapabilities.Raytracing),
+                     static_cast<unsigned>(g_FeatureCapabilities.SamplerFeedback),
+                     static_cast<unsigned>(g_FeatureCapabilities.ReservedResources));
 
     D3D12_COMMAND_QUEUE_DESC queueDesc{};
     queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -666,6 +697,7 @@ void GraphicsDevice::Uninit()
     m_CommandQueue.Reset();
     m_Factory.Reset();
     m_Device.Reset();
+    g_FeatureCapabilities = {};
 
     if (m_FenceEvent)
     {

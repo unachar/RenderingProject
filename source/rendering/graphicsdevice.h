@@ -1,5 +1,6 @@
 #pragma once
 #include "rendererstate.h"
+#include "renderfeature.h"
 
 class GraphicsDevice : protected RendererState
 {
@@ -66,6 +67,7 @@ class GraphicsDevice : protected RendererState
     static bool WaitForGpuIdle();
     static void SubmitForExternalCompute();
     static bool GpuBasedValidationEnabled();
+    static const RenderFeature::Capabilities& GetFeatureCapabilities();
 
     static ID3D12CommandQueue* GetCommandQueue()
     {

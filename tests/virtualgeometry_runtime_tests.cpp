@@ -1,4 +1,5 @@
 #include "virtualgeometry/virtualgeometryruntime.h"
+#include "virtualgeometry/virtualgeometryserializer.h"
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -60,6 +61,18 @@ void TestVirtualGeometryRuntime()
     auto material = VirtualGeometryRuntime::Acquire(vertices, indices, 2, 8, directory);
     check(material->Key != originalKey, "Material cache invalidation");
     const auto cache = first->CachePath;
+    VirtualGeometryAsset cached;
+    std::string cacheError;
+    if (!VirtualGeometrySerializer::Load(cache, cached, cacheError))
+    {
+        throw std::runtime_error("Runtime cache could not be reopened at " + cache.generic_string() + ": " + cacheError);
+    }
+    check(cached.Config.MaxClusterVertices == first->Hierarchy.Config.MaxClusterVertices &&
+              cached.Config.MaxClusterTriangles == first->Hierarchy.Config.MaxClusterTriangles &&
+              cached.DebugName == first->Hierarchy.DebugName && cached.SourceMaterialId == 2 &&
+              cached.SourceMaterialPartId == 7 && cached.Stats.SourceVertices == vertices.size() &&
+              cached.Stats.SourceTriangles == indices.size() / 3,
+          "Runtime cache metadata roundtrip");
     first.reset();
     shared.reset();
     auto loaded = VirtualGeometryRuntime::Acquire(vertices, indices, 2, 7, directory);

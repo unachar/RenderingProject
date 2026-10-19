@@ -54,10 +54,11 @@ struct Constants
     uint32_t PageCount = 0, PageRequestCapacity = 65536, StreamingPadding[2]{};
     uint32_t HistorySlots = 0, HistoryCapacity = 0, ResetHistory = 0, TwoPass = 0;
     float HysteresisFraction = 0;
-    uint32_t HysteresisEnabled = 0, TemporalPhase = 0, TemporalPadding = 0;
+    uint32_t HysteresisEnabled = 0, TemporalPhase = 0, Orthographic = 0;
 };
 
 static_assert(sizeof(Constants) == 256);
+static_assert(offsetof(Constants, Orthographic) == 252);
 
 template <D3D12_PIPELINE_STATE_SUBOBJECT_TYPE Type, class T> struct alignas(void*) Subobject
 {
@@ -384,6 +385,7 @@ class Harness
         VirtualGeometrySelection::View view;
         view.Camera = {constants.Camera.x, constants.Camera.y, constants.Camera.z};
         view.ProjectionScalePixels = constants.ProjectionPixels;
+        view.Orthographic = constants.Orthographic != 0;
         VirtualGeometrySelection::Settings settings;
         settings.TargetErrorPixels = constants.TargetPixels;
         settings.ForceHierarchyLevel = constants.ForceLevel;
@@ -801,6 +803,17 @@ int main(int argc, char** argv)
             constants.ProjectionPixels = scale;
             gpu.Run(graph, constants);
         }
+        constants.Orthographic = 1;
+        for (float scale : {0.1f, 0.3f, 1.0f})
+        {
+            constants.ProjectionPixels = scale;
+            constants.Camera.z = 0;
+            gpu.Run(graph, constants);
+            constants.Camera.z = 10000;
+            gpu.Run(graph, constants);
+        }
+        constants.Camera.z = 0;
+        constants.Orthographic = 0;
         for (int level : {0, 1, 2, 31})
         {
             constants.ForceLevel = level;

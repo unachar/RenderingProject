@@ -101,4 +101,5 @@ imgui.ini
 /External/CUDA/sdk/
 *.meshlets
 *.vgmesh
+/asset/virtualgeometry-cache/*.vgmesh.meta
 /EditorCache/

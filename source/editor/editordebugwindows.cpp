@@ -101,6 +101,13 @@ void ImGuiManager::DrawRenderDebuggerWindow()
     }
     ImGui::Text("描画モード: %s", statusText);
     ImGui::Text("画面: %u x %u", GraphicsDevice::GetSceneWidth(), GraphicsDevice::GetSceneHeight());
+    const auto& caps = GraphicsDevice::GetFeatureCapabilities();
+    ImGui::Separator();
+    ImGui::TextUnformatted("Hardware capabilities (runtime readiness is feature specific)");
+    ImGui::Text("Mesh shaders: %s", caps.MeshShader ? "supported" : "unavailable");
+    ImGui::Text("DXR 1.1: %s", caps.Raytracing ? "supported" : "unavailable");
+    ImGui::Text("Sampler feedback: %s", caps.SamplerFeedback ? "supported" : "unavailable");
+    ImGui::Text("Reserved texture tiles: %s", caps.ReservedResources ? "supported" : "unavailable");
     ImGui::End();
 }
 

@@ -725,6 +725,9 @@
     <ClInclude Include="source\rendering\rendermeasurement.h">
       <Filter>rendering</Filter>
     </ClInclude>
+    <ClInclude Include="source\rendering\renderfeature.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
     <ClInclude Include="source\rendering\temporalhistory.h">
       <Filter>rendering</Filter>
     </ClInclude>

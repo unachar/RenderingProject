@@ -32,7 +32,7 @@ inline uint32_t GpuDrivenCapacity(uint32_t current, uint32_t required)
     {
         if (capacity > UINT32_MAX / 2)
         {
-            throw overflow_error("GPU driven capacity overflow");
+            throw std::overflow_error("GPU driven capacity overflow");
         }
         capacity *= 2;
     }
@@ -46,7 +46,7 @@ inline GPUDrivenGeometryData ReserveGpuDrivenGeometry(uint64_t vertices, uint64_
     if ((vertices + vertexCount) * 48 > UINT32_MAX || (indices + indexCount) * 4 > UINT32_MAX ||
         vertices + vertexCount > INT32_MAX || indices + indexCount > UINT32_MAX)
     {
-        throw overflow_error("GPU driven geometry arena exceeds IA limits");
+        throw std::overflow_error("GPU driven geometry arena exceeds IA limits");
     }
     return {static_cast<uint32_t>(indices), indexCount, static_cast<int32_t>(vertices), 1};
 }

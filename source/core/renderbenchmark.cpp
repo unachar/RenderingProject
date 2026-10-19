@@ -155,6 +155,11 @@ void Initialize()
     metadata << "ray_telemetry_requested=" << RayTelemetry::Requested()
              << "\nray_telemetry_scope=radiance-and-shadow-ao\n";
     metadata << "final_capture=png\n";
+    const auto& capabilities = GraphicsDevice::GetFeatureCapabilities();
+    metadata << "hardware_mesh_shaders=" << capabilities.MeshShader
+             << "\nhardware_dxr11=" << capabilities.Raytracing
+             << "\nhardware_sampler_feedback=" << capabilities.SamplerFeedback
+             << "\nhardware_reserved_texture_tiles=" << capabilities.ReservedResources << '\n';
 #ifdef _DEBUG
     metadata << "configuration=Debug\n";
 #else

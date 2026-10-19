@@ -923,6 +923,7 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\rendering\renderframe.h" />
     <ClInclude Include="source\rendering\renderprofiler.h" />
     <ClInclude Include="source\rendering\rendermeasurement.h" />
+    <ClInclude Include="source\rendering\renderfeature.h" />
     <ClInclude Include="source\rendering\temporalhistory.h" />
     <ClInclude Include="source\rendering\temporalhistorycontext.h" />
     <ClCompile Include="source\rendering\rendertargets.cpp" />

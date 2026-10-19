@@ -10,6 +10,12 @@ if (@($shadowCache.Exec).Count -ne 2 -or @($shadowCache.Outputs.Split(';')).Coun
 if ($shaderTargets.Count -ne 31) { throw 'Expected 31 individually tracked DXC shader outputs.' }
 if (@($targets | Group-Object Name | Where-Object Count -gt 1).Count) { throw 'Duplicate target names.' }
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')) + '\'
+$namespaces = [System.Xml.XmlNamespaceManager]::new($document.NameTable)
+$namespaces.AddNamespace('build', $document.DocumentElement.NamespaceURI)
+$rayTelemetryInputs = $document.SelectSingleNode('/build:Project/build:PropertyGroup/build:RayTelemetryShaderInputs', $namespaces)
+if (-not $rayTelemetryInputs -or [string]::IsNullOrWhiteSpace($rayTelemetryInputs.InnerText)) {
+    throw 'Ray telemetry shader dependencies must be defined.'
+}
 foreach ($target in $shaderTargets) {
     if (@($target.Exec).Count -ne 1 -or $target.Outputs.Contains(';')) {
         throw "Shader compilation is not independently tracked: $($target.Name)"
@@ -18,7 +24,8 @@ foreach ($target in $shaderTargets) {
         throw "Build settings are missing from dependencies: $($target.Name)"
     }
     if ($target.Exec.Command -notmatch ' -O3 ') { throw 'Release shader optimization must be preserved.' }
-    foreach ($input in $target.Inputs.Split(';')) {
+    $expandedInputs = $target.Inputs.Replace('$(RayTelemetryShaderInputs)', $rayTelemetryInputs.InnerText)
+    foreach ($input in $expandedInputs.Split(';')) {
         $path = $input.Replace('$(MSBuildThisFileDirectory)', $root).Replace('$(MSBuildThisFileFullPath)', [IO.Path]::GetFullPath($TargetsPath))
         if (-not (Test-Path -LiteralPath $path)) {
             if ($path.Contains('External\NRD\sdk\') -and $target.Condition.Contains('$(EnableNrd)')) { continue }

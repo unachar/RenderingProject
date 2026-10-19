@@ -49,6 +49,27 @@ endif()
 add_test(NAME virtualgeometry_phase1 COMMAND virtualgeometry_tests)
 add_test(NAME virtualgeometry_million COMMAND virtualgeometry_tests --million)
 set_tests_properties(virtualgeometry_million PROPERTIES LABELS stress)
+# Keep filesystem fixtures in the writable build tree. Windows sandbox temp
+# directories can reject the atomic file publication used by the cache tests.
+foreach(test_name virtualgeometry_phase1 virtualgeometry_million)
+    set(test_temp "${CMAKE_CURRENT_BINARY_DIR}/test-temp/${test_name}")
+    file(MAKE_DIRECTORY "${test_temp}")
+    set_tests_properties(${test_name} PROPERTIES
+        ENVIRONMENT "TEMP=${test_temp};TMP=${test_temp};TMPDIR=${test_temp}")
+endforeach()
+
+add_executable(virtualgeometry_shadow_selection_tests
+    "${ROOT}/tests/virtualgeometry_shadow_selection_tests.cpp"
+    "${ROOT}/tests/virtualgeometry_selection_tests.cpp"
+    "${VG}/virtualgeometryselection.cpp")
+target_include_directories(virtualgeometry_shadow_selection_tests PRIVATE "${ROOT}/source")
+target_compile_features(virtualgeometry_shadow_selection_tests PRIVATE cxx_std_20)
+add_test(NAME virtualgeometry_shadow_selection COMMAND virtualgeometry_shadow_selection_tests)
+
+add_executable(renderfeature_tests "${ROOT}/tests/renderfeature_tests.cpp")
+target_include_directories(renderfeature_tests PRIVATE "${ROOT}/source")
+target_compile_features(renderfeature_tests PRIVATE cxx_std_17)
+add_test(NAME renderfeature_policy COMMAND renderfeature_tests)
 
 # Explicit opt-in target: the normal CPU test build does not compile or run D3D12 parity.
 if(WIN32)

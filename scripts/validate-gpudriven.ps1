@@ -16,7 +16,7 @@ $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer
 $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (-not $installation) { throw 'Visual Studio C++ tools are required.' }
 $developerCommand = Join-Path $installation 'Common7/Tools/VsDevCmd.bat'
-$names = @('_CL_', 'DX12_GPU_DRIVEN_STRESS_TEST', 'DX12_GPU_BASED_VALIDATION', 'DX12_STARTUP_SMOKE_FRAMES', 'DX12_VALIDATION_MODE', 'DX12_FEATURE_SMOKE_TEST', 'DX12_DISABLE_DXR', 'DX12_DISABLE_DLSS')
+$names = @('_CL_', 'DX12_GPU_DRIVEN_STRESS_TEST', 'DX12_GPU_BASED_VALIDATION', 'DX12_STARTUP_SMOKE_FRAMES', 'DX12_VALIDATION_MODE', 'DX12_FEATURE_SMOKE_TEST', 'DX12_DISABLE_DXR', 'DX12_DISABLE_DLSS', 'DX12_PHASE5_MESH_SHADER')
 $previous = @{}
 foreach ($name in $names) { $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 Push-Location -LiteralPath $workspace
@@ -38,6 +38,9 @@ try {
     $env:DX12_FEATURE_SMOKE_TEST = '1'
     $env:DX12_DISABLE_DXR = '1'
     $env:DX12_DISABLE_DLSS = '1'
+    # This suite checks the indexed-indirect route, including its single opaque
+    # ExecuteIndirect call. Native mesh traversal has separate parity tests.
+    $env:DX12_PHASE5_MESH_SHADER = '0'
     $log = Join-Path $workspace 'init_log.txt'
     $offset = if (Test-Path -LiteralPath $log) { (Get-Item -LiteralPath $log).Length } else { 0 }
     $executable = Join-Path $workspace "bin/x64/$Configuration/DirectX12.exe"

@@ -44,7 +44,7 @@ cbuffer Parameters : register(b0)
     uint2 StreamingPadding;
     uint HistorySlots, HistoryCapacity, ResetHistory, TwoPass;
     float HysteresisFraction;
-    uint HysteresisEnabled, TemporalPhase, TemporalPadding;
+    uint HysteresisEnabled, TemporalPhase, OrthographicProjection;
 };
 groupshared uint StateBase, QueueBase, QueueCount, QueueCursor, OutputBase, OutputCount, Accepted;
 groupshared uint CurrentClusters[64];
@@ -353,7 +353,8 @@ void Traverse(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
         VirtualGeometryGPUGroup node = Groups[asset.GroupOffset+index];
         float4 sphere = WorldSphere(node.Bounds,instance);
         float distance = max(length(sphere.xyz-Camera.xyz)-sphere.w,1e-6);
-        float errorPixels = node.MaxError*MaximumScale(instance)*ProjectionPixels/distance;
+        float projectedError = node.MaxError*MaximumScale(instance)*ProjectionPixels;
+        float errorPixels = OrthographicProjection != 0 ? projectedError : projectedError/distance;
         float threshold = TargetPixels;
         uint historyBase = 0, epoch = 0, previous = 0;
         bool hasHistory = false;
@@ -373,7 +374,7 @@ void Traverse(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
             }
         }
         bool refine = ForceLevel >= 0 ? node.Level >= (uint)ForceLevel : errorPixels > threshold;
-        if (StreamingPadding.y != 0 && !refine && (asset.Flags&2u) != 0)
+        if (OrthographicProjection == 0 && StreamingPadding.y != 0 && !refine && (asset.Flags&2u) != 0)
         {
             uint packed = StreamingPadding.x;
             float3 direction = normalize(float3(packed&1023u,(packed>>10)&1023u,(packed>>20)&1023u)/1023.0*2-1);

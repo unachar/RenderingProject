@@ -34,10 +34,11 @@ struct Constants
     uint32_t PageCount = 0, RequestCapacity = 0, StreamingPadding[2]{};
     uint32_t HistorySlots = 0, HistoryCapacity = 0, ResetHistory = 0, TwoPass = 0;
     float HysteresisFraction = 0.1f;
-    uint32_t HysteresisEnabled = 0, TemporalPhase = 0, TemporalPadding = 0;
+    uint32_t HysteresisEnabled = 0, TemporalPhase = 0, OrthographicProjection = 0;
 };
 
 static_assert(sizeof(Constants) == 256);
+static_assert(offsetof(Constants, OrthographicProjection) == 252);
 
 struct HistoryHeader
 {
@@ -518,6 +519,7 @@ void Prepare(RenderGraph& graph, const FrameInputs& inputs)
     XMFLOAT4X4 projectionValues;
     XMStoreFloat4x4(&projectionValues, projection);
     p.ProjectionPixels = 0.5f * float(GraphicsDevice::GetSceneHeight()) * std::abs(projectionValues._22);
+    p.OrthographicProjection = 0;
     p.TargetPixels = std::max(0.01f, state.Options.TargetErrorPixels);
     p.ForceLevel = std::clamp(state.Options.ForceHierarchyLevel, -1, 31);
     p.Capacity = selectedCapacity;

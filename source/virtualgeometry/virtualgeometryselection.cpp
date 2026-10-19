@@ -145,16 +145,20 @@ static TemporalResult SelectInternal(const VirtualGeometryAsset& asset, const Vi
     for (uint32_t index : order)
     {
         const auto& group = asset.Groups[index];
-        double distanceSquared = 0;
-        for (size_t axis = 0; axis < 3; ++axis)
+        double errorPixels = double(group.MaxError) * view.WorldScale * view.ProjectionScalePixels;
+        if (!view.Orthographic)
         {
-            double difference = double(view.Camera[axis]) - group.Bounds.Center[axis];
-            distanceSquared += difference * difference;
+            double distanceSquared = 0;
+            for (size_t axis = 0; axis < 3; ++axis)
+            {
+                double difference = double(view.Camera[axis]) - group.Bounds.Center[axis];
+                distanceSquared += difference * difference;
+            }
+            // Minimum scale keeps distance conservative; maximum scale bounds error.
+            const double distance =
+                std::max((std::sqrt(distanceSquared) - group.Bounds.Radius) * view.MinimumWorldScale, 1e-6);
+            errorPixels /= distance;
         }
-        // The smallest singular-value bound keeps distance conservative even
-        // when scale is below one. Maximum scale bounds geometric error.
-        double distance = std::max((std::sqrt(distanceSquared) - group.Bounds.Radius) * view.MinimumWorldScale, 1e-6);
-        double errorPixels = double(group.MaxError) * view.WorldScale * view.ProjectionScalePixels / distance;
         bool requested =
             settings.ForceHierarchyLevel >= 0
                 ? group.Level >= uint32_t(settings.ForceHierarchyLevel)
