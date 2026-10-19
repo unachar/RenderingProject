@@ -3,6 +3,7 @@
 #include "assetthumbnailmanager.h"
 #include "thumbnailvalidation.h"
 #include "imguimanager.h"
+#include "proceduralstudio.h"
 #include "editorwidgets.h"
 #include "materialsystem.h"
 #include "modelmanager.h"
@@ -1325,12 +1326,20 @@ void ImGuiManager::PlaceAssetInScene(const filesystem::path& path, const ImVec2&
                       .Add<MaterialComponent>()
                       .Add<StaticModelComponent>();
 
-    entity.SetName(path.stem().generic_string());
-    const bool isConvert = ShouldConvertModelByPath(relative);
+    {
+        const auto stem = path.stem().u8string(); // ImGui / scene files are UTF-8
+        entity.SetName(string(stem.begin(), stem.end()));
+    }
+    // Procedural Studio OBJs are authored Y-up in metres: the name based heuristics (centimetre FBX
+    // scale 0.03 and the +90 degree X "convert" rotation) laid them on their side at 3 % size.
+    const bool procedural = ProcStudio::IsProceduralObj(path);
+    // relative is UTF-8; convert explicitly (implicit string -> path uses the ANSI code page).
+    const filesystem::path relativePath = filesystem::u8path(relative);
+    const bool isConvert = procedural ? false : ShouldConvertModelByPath(relativePath);
     auto& transform = entity.Get<TransformComponent>();
     transform.Position = pos;
-    transform.Scale = {0.03f, 0.03f, 0.03f};
-    transform.Rotation = GetDefaultModelRotationByPath(relative, isConvert);
+    transform.Scale = procedural ? XMFLOAT3{1.0f, 1.0f, 1.0f} : XMFLOAT3{0.03f, 0.03f, 0.03f};
+    transform.Rotation = procedural ? XMFLOAT3{0.0f, 0.0f, 0.0f} : GetDefaultModelRotationByPath(relativePath, isConvert);
     transform.IsDirty = true;
 
     entity.Get<StaticModelComponent>().IsConvert = isConvert;
@@ -1384,9 +1393,15 @@ bool ImGuiManager::IsModelFile(const filesystem::path& path)
 
 string ImGuiManager::MakeRelativeAssetPath(const filesystem::path& path)
 {
+    // UTF-8: model / texture loaders decode with u8path. generic_string() produced ANSI (CP932) bytes,
+    // so files with Japanese names failed to load after drag & drop.
+    const auto utf8 = [](const filesystem::path& value) {
+        const auto text = value.generic_u8string();
+        return string(text.begin(), text.end());
+    };
     if (path.is_relative())
     {
-        return path.generic_string();
+        return utf8(path);
     }
 
     error_code ec;
@@ -1395,7 +1410,7 @@ string ImGuiManager::MakeRelativeAssetPath(const filesystem::path& path)
     {
         relative = path;
     }
-    return relative.generic_string();
+    return utf8(relative);
 }
 
 // ============================================================================
@@ -1596,7 +1611,7 @@ void ImGuiManager::AcceptAssetMoveDrop(const filesystem::path& destinationDirect
         const char* text = static_cast<const char*>(pathPayload->Data);
         if (text && text[0] != '\0')
         {
-            source = filesystem::path(text);
+            source = filesystem::u8path(text); // payload is UTF-8
         }
     }
     else if (const ImGuiPayload* directoryPayload = ImGui::AcceptDragDropPayload(kAssetDirectoryPayload))
@@ -2225,3 +2240,4 @@ void ImGuiManager::DuplicateSelectedAssets()
         AddLog("複製: %d 個", static_cast<int>(created.size()));
     }
 }
+

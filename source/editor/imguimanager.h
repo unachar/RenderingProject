@@ -59,6 +59,7 @@ class ImGuiManager
     inline static bool m_ShowMeshShadingWindow = false;
     inline static bool m_ShowAtmosphereWindow = false;
     inline static bool m_ShowProceduralWindow = false;
+    inline static bool m_ShowProceduralStudioWindow = false;
     inline static bool m_ShowRaytracingWindow = false;
     inline static bool m_ShowProjectSettingsWindow = false;
     inline static bool m_ShowPhysicsSettingsWindow = false;
@@ -377,3 +378,4 @@ class ImGuiManager
         return m_Exposure;
     }
 };
+

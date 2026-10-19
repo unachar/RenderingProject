@@ -357,7 +357,7 @@ void ImGuiManager::DrawProjectSettingsWindow()
             {
                 RendererSettings::SetLumenDebugView(debug);
             }
-            ImGui::Text("Surface cache: %u / 128 meshes, %.1f MiB", RayReflections::GetLumenResidentMeshes(),
+            ImGui::Text("Surface cache: %u / 256 meshes, %.1f MiB", RayReflections::GetLumenResidentMeshes(),
                         RayReflections::GetLumenMemoryBytes() / (1024.0 * 1024.0));
             ImGui::TextWrapped("DXR hardware required. Uncached surfaces use hit lighting.");
         }
@@ -1255,6 +1255,7 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("editor.ShowMeshShadingWindow", m_ShowMeshShadingWindow, 0, 1);
     field("editor.ShowAtmosphereWindow", m_ShowAtmosphereWindow, 0, 1);
     field("editor.ShowProceduralWindow", m_ShowProceduralWindow, 0, 1);
+    field("editor.ShowProceduralStudioWindow", m_ShowProceduralStudioWindow, 0, 1);
     field("editor.ShowRaytracingWindow", m_ShowRaytracingWindow, 0, 1);
     field("editor.ShowProjectSettingsWindow", m_ShowProjectSettingsWindow, 0, 1);
     field("editor.ShowPhysicsSettingsWindow", m_ShowPhysicsSettingsWindow, 0, 1);
@@ -2023,3 +2024,4 @@ void ImGuiManager::LoadProjectSettings()
         m_StartupScenePath.clear();
     }
 }
+

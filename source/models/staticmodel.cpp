@@ -173,10 +173,20 @@ static void LogAssimpModelInfo(const aiScene* scene, const char* fileName, const
     Debug::Log("==== end %s model import info ====\n", modelKind);
 }
 
+// OBJ / MTL statement argument: the rest of the line, trimmed. File names may contain spaces.
+static string ObjStatementArgument(const string& line, size_t keywordLength)
+{
+    string value = line.size() > keywordLength ? line.substr(keywordLength) : string();
+    const auto first = value.find_first_not_of(" \t");
+    const auto last = value.find_last_not_of(" \t\r\n");
+    return first == string::npos ? string() : value.substr(first, last - first + 1);
+}
+
 static unordered_map<string, MtlData> ParseMtl(const string& mtlFilePath)
 {
     unordered_map<string, MtlData> materials;
-    ifstream ifs(mtlFilePath);
+    // UTF-8 path (Japanese folder / file names).
+    ifstream ifs(ModelPathFromUtf8(mtlFilePath.c_str()));
     if (!ifs)
     {
         return materials;
@@ -189,9 +199,7 @@ static unordered_map<string, MtlData> ParseMtl(const string& mtlFilePath)
     {
         if (line.rfind("newmtl ", 0) == 0)
         {
-            istringstream iss(line.substr(7));
-            string name;
-            iss >> name;
+            const string name = ObjStatementArgument(line, 7);
             if (!name.empty())
             {
                 currentMtl = name;
@@ -210,9 +218,9 @@ static unordered_map<string, MtlData> ParseMtl(const string& mtlFilePath)
         }
         else if (!currentMtl.empty() && line.rfind("map_Kd ", 0) == 0)
         {
-            istringstream iss(line.substr(7));
-            string path;
-            if (iss >> path)
+            // Options such as "-bm 1" are not supported; take the trailing file name.
+            const string path = ObjStatementArgument(line, 7);
+            if (!path.empty())
             {
                 materials[currentMtl].MapKd = path;
             }
@@ -604,14 +612,15 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
     LoadLODMetadata(fileName);
     // The legacy OBJ importer combines every face into one section. Preserve its
     // single-material behavior, but retain authored material sections via Assimp.
-    ifstream source(fileName);
+    const filesystem::path objPath = ModelPathFromUtf8(fileName);
+    ifstream source(objPath);
     unordered_set<string> sectionMaterials;
     string sourceLine;
     while (getline(source, sourceLine))
     {
         if (sourceLine.rfind("usemtl ", 0) == 0)
         {
-            sectionMaterials.insert(sourceLine.substr(7));
+            sectionMaterials.insert(ObjStatementArgument(sourceLine, 7));
         }
     }
     if (sectionMaterials.size() > 1)
@@ -620,7 +629,7 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
     }
     m_MaterialPath.clear();
 
-    ifstream ifs(fileName);
+    ifstream ifs(objPath);
     if (!ifs)
     {
         char buf[512];
@@ -633,6 +642,10 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
 
     unordered_map<string, MtlData> materialMap;
     XMFLOAT4 currentKd = {1.0f, 1.0f, 1.0f, 1.0f};
+    // Optional per-vertex colour extension "v x y z r g b" (Blender, MeshLab, Procedural Studio).
+    // Indexed like positions; multiplied with the material Kd.
+    vector<XMFLOAT3> vertexColors;
+    bool hasVertexColors = false;
 
     string line;
     vector<string> tokens;
@@ -641,45 +654,27 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
     {
         if (line.rfind("mtllib ", 0) == 0)
         {
-            istringstream iss(line.substr(7));
-            string mtlName;
-            iss >> mtlName;
+            const string mtlName = ObjStatementArgument(line, 7);
+            const auto dir = objPath.parent_path();
+            const filesystem::path mtlPath = dir.empty() ? ModelPathFromUtf8(mtlName.c_str())
+                                                         : dir / ModelPathFromUtf8(mtlName.c_str());
 
-            filesystem::path objPath(fileName);
-            auto dir = objPath.parent_path();
-            string mtlPath;
-            if (dir.empty())
-            {
-                mtlPath = mtlName;
-            }
-            else
-            {
-                mtlPath = (dir / mtlName).string();
-            }
-
-            materialMap = ParseMtl(mtlPath);
+            materialMap = ParseMtl(ModelPathToUtf8(mtlPath));
 
             for (auto const& pair : materialMap)
             {
                 const MtlData& data = pair.second;
                 if (!data.MapKd.empty() && m_MaterialPath.empty())
                 {
-                    if (dir.empty())
-                    {
-                        m_MaterialPath = data.MapKd;
-                    }
-                    else
-                    {
-                        m_MaterialPath = (dir / data.MapKd).string();
-                    }
+                    const auto texture = ModelPathFromUtf8(data.MapKd.c_str());
+                    m_MaterialPath = ModelPathToUtf8(dir.empty() || texture.is_absolute() ? texture : dir / texture);
                 }
             }
         }
         else if (line.rfind("usemtl ", 0) == 0)
         {
-            istringstream iss(line.substr(7));
-            string mtlName;
-            if (iss >> mtlName)
+            const string mtlName = ObjStatementArgument(line, 7);
+            if (!mtlName.empty())
             {
                 auto it = materialMap.find(mtlName);
                 if (it != materialMap.end())
@@ -691,9 +686,19 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
         else if (line.rfind("v ", 0) == 0)
         {
             XMFLOAT3 pos{};
+            XMFLOAT3 color{1.0f, 1.0f, 1.0f};
             istringstream iss(line.substr(2));
             iss >> pos.x >> pos.y >> pos.z;
+            if (iss >> color.x >> color.y >> color.z)
+            {
+                hasVertexColors = true;
+            }
+            else
+            {
+                color = {1.0f, 1.0f, 1.0f};
+            }
             m_Positions.push_back(pos);
+            vertexColors.push_back(color);
         }
         else if (line.rfind("vt ", 0) == 0)
         {
@@ -715,28 +720,44 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
             istringstream iss(line.substr(2));
             string tok;
             tokens.clear();
-            while (iss >> tok && tokens.size() < 4)
+            while (iss >> tok)
             {
                 tokens.push_back(tok);
             }
 
-            unsigned int vi[4] = {}, ti[4] = {}, ni[4]{};
+            // Polygons of any size (fan triangulated). Negative indices are relative to the current end.
+            thread_local vector<unsigned int> vi, ti, ni;
+            vi.assign(tokens.size(), 0);
+            ti.assign(tokens.size(), 0);
+            ni.assign(tokens.size(), 0);
+            const auto resolve = [](int value, size_t size) -> unsigned int {
+                if (value < 0)
+                {
+                    const long long index = static_cast<long long>(size) + value + 1;
+                    return index > 0 ? static_cast<unsigned int>(index) : 0u;
+                }
+                return static_cast<unsigned int>(value);
+            };
             int count = 0;
             for (auto& t : tokens)
             {
-                if (sscanf_s(t.c_str(), "%u/%u/%u", &vi[count], &ti[count], &ni[count]) == 3)
+                int v = 0, tc = 0, n = 0;
+                if (sscanf_s(t.c_str(), "%d/%d/%d", &v, &tc, &n) == 3)
                 {
                 }
-                else if (sscanf_s(t.c_str(), "%u//%u", &vi[count], &ni[count]) == 2)
+                else if (sscanf_s(t.c_str(), "%d//%d", &v, &n) == 2)
                 {
-                    ti[count] = 0;
+                    tc = 0;
                 }
-                else if (sscanf_s(t.c_str(), "%u/%u", &vi[count], &ti[count]) == 2)
-                {
-                }
-                else if (sscanf_s(t.c_str(), "%u", &vi[count]) == 1)
+                else if (sscanf_s(t.c_str(), "%d/%d", &v, &tc) == 2)
                 {
                 }
+                else if (sscanf_s(t.c_str(), "%d", &v) == 1)
+                {
+                }
+                vi[count] = resolve(v, m_Positions.size());
+                ti[count] = resolve(tc, m_TexCoords.size());
+                ni[count] = resolve(n, m_Normals.size());
                 count++;
             }
 
@@ -762,6 +783,13 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
                     }
 
                     vertex.Diffuse = currentKd;
+                    if (hasVertexColors && vi[idx] > 0 && vi[idx] <= (unsigned int)vertexColors.size())
+                    {
+                        const XMFLOAT3& color = vertexColors[vi[idx] - 1];
+                        vertex.Diffuse.x *= color.x;
+                        vertex.Diffuse.y *= color.y;
+                        vertex.Diffuse.z *= color.z;
+                    }
                     m_Indices.push_back((unsigned int)m_Vertices.size());
                     m_Vertices.push_back(vertex);
                 }
@@ -1178,13 +1206,18 @@ std::vector<std::filesystem::path> GeometryDependencies(const std::filesystem::p
         {
             if (line.rfind("mtllib ", 0) == 0)
             {
-                paths.push_back(source.parent_path() / line.substr(7));
+                // Trimmed (CRLF files) UTF-8 name; a stale '\r' made the dependency hash fail every load.
+                paths.push_back(source.parent_path() / ModelPathFromUtf8(ObjStatementArgument(line, 7).c_str()));
             }
         }
     }
     return paths;
 }
 } // namespace
+
+// Bump when the source importers change what they put into vertices (2: OBJ / Assimp vertex colours).
+// Derived virtual geometry caches written by older importers are rebuilt from the source.
+constexpr unsigned kSourceImporterRevision = 2;
 
 bool StaticModelResource::LoadDerivedVirtualGeometry(const char* fileName, ID3D12Device* device, bool convert)
 {
@@ -1210,7 +1243,8 @@ bool StaticModelResource::LoadDerivedVirtualGeometry(const char* fileName, ID3D1
             index["builder"].asUInt() != VirtualGeometryConfig::BuilderVersion ||
             index["compression"].asUInt() != VirtualGeometryCompression::CompressionVersion ||
             index["convert"].asBool() != convert ||
-            index["settings"].asString() != std::to_string(VirtualGeometryImport::SettingsKey(m_VGSettings)))
+            index["settings"].asString() != std::to_string(VirtualGeometryImport::SettingsKey(m_VGSettings)) ||
+            index["sourceImporter"].asUInt() != kSourceImporterRevision)
         {
             return false;
         }
@@ -1320,6 +1354,7 @@ void StaticModelResource::PublishDerivedVirtualGeometry(bool convert)
         index["compression"] = VirtualGeometryCompression::CompressionVersion;
         index["convert"] = convert;
         index["settings"] = std::to_string(VirtualGeometryImport::SettingsKey(m_VGSettings));
+        index["sourceImporter"] = kSourceImporterRevision;
         const auto dependencies = GeometryDependencies(ModelPathFromUtf8(m_SourcePath.c_str()));
         if (dependencies.empty())
         {
@@ -1502,6 +1537,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
     size_t totalVertices = 0;
     size_t totalIndices = 0;
 
+    const bool objVertexColors = ModelPathLowerExtension(modelPath) == ".obj";
     for (unsigned int m = 0; m < scene->mNumMeshes; ++m)
     {
         aiMesh* mesh = scene->mMeshes[m];
@@ -1547,6 +1583,15 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
                 vertex.TexCoord = XMFLOAT2(0.0f, 0.0f);
             }
             vertex.Diffuse = meshDiffuse;
+            if (objVertexColors && mesh->HasVertexColors(0))
+            {
+                // OBJ "v x y z r g b" (multi-material OBJs come through Assimp). Limited to OBJ: FBX / VRM
+                // files often carry unused (black) colour sets that would darken existing assets.
+                const aiColor4D& color = mesh->mColors[0][v];
+                vertex.Diffuse.x *= color.r;
+                vertex.Diffuse.y *= color.g;
+                vertex.Diffuse.z *= color.b;
+            }
 
             const XMFLOAT3& pos = vertex.Position;
             if (pos.x < minPos.x)
@@ -1843,3 +1888,4 @@ void StaticModelResource::RebuildVirtualGeometry(const VGImportSettings& setting
         GPUDrivenRenderer::UpdateGeometry(mesh);
     }
 }
+

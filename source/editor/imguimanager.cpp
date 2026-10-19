@@ -7,6 +7,7 @@
 #include "cloud/cloudrenderer.h"
 #include "renderingvalidation.h"
 #include "imguimanager.h"
+#include "proceduralstudiowindow.h"
 #include "modelmanager.h"
 #include "world.h"
 #include "camera.h"
@@ -380,6 +381,10 @@ void ImGuiManager::Update()
     {
         DrawProceduralWindow();
     }
+    if (m_ShowProceduralStudioWindow)
+    {
+        ProceduralStudioWindow::Draw(&m_ShowProceduralStudioWindow);
+    }
     if (m_ShowRaytracingWindow)
     {
         DrawRaytracingWindow();
@@ -651,6 +656,7 @@ void ImGuiManager::DrawEditorMainMenu()
         ImGui::MenuItem("リム設定", nullptr, &m_ShowRimSettingsWindow);
         ImGui::MenuItem("大気シミュレーション", nullptr, &m_ShowAtmosphereWindow);
         ImGui::MenuItem("プロシージャルエディター", nullptr, &m_ShowProceduralWindow);
+        ImGui::MenuItem("プロシージャルスタジオ (テクスチャ / モデル / フラクタル)", nullptr, &m_ShowProceduralStudioWindow);
         ImGui::MenuItem("レイトレーシング", nullptr, &m_ShowRaytracingWindow);
         ImGui::Separator();
         ImGui::MenuItem("メッシュ単位のアウトライン", nullptr, &m_ShowMeshOutlineWindow);
@@ -952,3 +958,4 @@ void ImGuiManager::StyleModernSlim()
         style.FrameBorderSize = 0.0f;
     }
 }
+

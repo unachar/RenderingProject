@@ -75,12 +75,14 @@ bool LumenSurfaceCache::Prepare(ID3D12Device* device, UINT frame, const vector<R
         {
             return false;
         }
-        if (!CreateBuffer(device, m_Probes, UINT64(count) * 9 * 16, false) ||
-            !CreateBuffer(device, m_ProbeGuides, UINT64(count) * 32, false))
+        // Two frames of 4 x float4 records and guides (current + reprojection history).
+        if (!CreateBuffer(device, m_Probes, UINT64(count) * 2 * 4 * 16, false) ||
+            !CreateBuffer(device, m_ProbeGuides, UINT64(count) * 2 * 32, false))
         {
             return false;
         }
         m_ProbeCount = count;
+        m_ProbeHistory = false;
         m_Probes->SetName(L"Lumen Screen Probe Radiance");
         m_ProbeGuides->SetName(L"Lumen Screen Probe Guides");
     }
@@ -150,11 +152,17 @@ bool LumenSurfaceCache::Prepare(ID3D12Device* device, UINT frame, const vector<R
     append(m_Schedule.Captures);
     append(m_Schedule.Updates);
     m_Clear = m_Clear || resetLighting;
+    const bool gridStable = columns == m_ProbeColumns && rows == m_ProbeRows && spacing == m_ProbeSpacing;
+    const bool probeHistory = m_ProbeHistory && gridStable && !resetLighting;
+    const UINT parity = m_ProbeParity ^ 1u;
     m_Constants.Counts = {1, static_cast<UINT>(m_Schedule.Captures.size()),
-                            static_cast<UINT>(m_Schedule.Updates.size()), 0};
+                            static_cast<UINT>(m_Schedule.Updates.size()), parity | (probeHistory ? 2u : 0u)};
     m_Constants.Grid = {columns, rows, spacing, Capacity};
     static const bool singleBounce = ReadEnvironmentFlagOnce("DX12_LUMEN_SINGLE_BOUNCE");
-    m_Constants.Settings = {changingScene ? 2.f : 16.f, static_cast<float>(debugView), 0, singleBounce ? 0.f : 1.f};
+    // Default: depth-buffer reconnection test. DX12_LUMEN_RAY_VISIBILITY restores the TLAS ray.
+    static const bool rayVisibility = ReadEnvironmentFlagOnce("DX12_LUMEN_RAY_VISIBILITY");
+    m_Constants.Settings = {changingScene ? 2.f : 16.f, static_cast<float>(debugView), rayVisibility ? 1.f : 0.f,
+                            singleBounce ? 0.f : 1.f};
     if (!Upload(uploads.Map.Get(), lookupSlots.data(), lookupSlots.size() * 4) ||
         !Upload(uploads.Work.Get(), work.data(), work.size() * sizeof(XMUINT4)) ||
         !Upload(uploads.Parameters.Get(), &m_Constants, sizeof(m_Constants)))
@@ -162,6 +170,11 @@ bool LumenSurfaceCache::Prepare(ID3D12Device* device, UINT frame, const vector<R
         return false;
     }
     m_Scheduler = std::move(scheduler);
+    m_ProbeParity = parity;
+    m_ProbeColumns = columns;
+    m_ProbeRows = rows;
+    m_ProbeSpacing = spacing;
+    m_ProbeHistory = true;
     return true;
 }
 
@@ -212,27 +225,72 @@ void LumenSurfaceCache::Barrier(ID3D12GraphicsCommandList* commands) const
 }
 void LumenSurfaceCache::BeginLighting(ID3D12GraphicsCommandList* commands)
 {
+    // Nothing is written this frame: keep the current read atlas, no copy and no swap.
+    if (m_Constants.Counts.z == 0)
+    {
+        return;
+    }
+    // Clear/capture write both atlases, so after the swap the write atlas only lacks the slots
+    // updated by the previous lighting pass. Copy those rows instead of 2 x 3 MiB every frame.
+    if (m_Clear)
+    {
+        m_FullCopy = false;
+        m_DirtySlots.clear();
+    }
+    const bool full = m_FullCopy;
+    if (!full && m_DirtySlots.empty())
+    {
+        return;
+    }
+    vector<D3D12_RESOURCE_BARRIER> before, after;
     for (UINT base : {4u, 6u})
     {
         auto* source = m_Atlases[base + m_Read].Get();
         auto* destination = m_Atlases[base + (m_Read ^ 1u)].Get();
-        const D3D12_RESOURCE_BARRIER before[] = {
-            CD3DX12_RESOURCE_BARRIER::Transition(source, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE),
-            CD3DX12_RESOURCE_BARRIER::Transition(destination, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST)};
-        commands->ResourceBarrier(2, before);
-        commands->CopyResource(destination, source);
-        const D3D12_RESOURCE_BARRIER after[] = {
-            CD3DX12_RESOURCE_BARRIER::Transition(source, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-            CD3DX12_RESOURCE_BARRIER::Transition(destination, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)};
-        commands->ResourceBarrier(2, after);
+        before.push_back(CD3DX12_RESOURCE_BARRIER::Transition(source, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                              D3D12_RESOURCE_STATE_COPY_SOURCE));
+        before.push_back(CD3DX12_RESOURCE_BARRIER::Transition(destination, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                              D3D12_RESOURCE_STATE_COPY_DEST));
+        after.push_back(CD3DX12_RESOURCE_BARRIER::Transition(source, D3D12_RESOURCE_STATE_COPY_SOURCE,
+                                                             D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+        after.push_back(CD3DX12_RESOURCE_BARRIER::Transition(destination, D3D12_RESOURCE_STATE_COPY_DEST,
+                                                             D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
     }
+    commands->ResourceBarrier(static_cast<UINT>(before.size()), before.data());
+    for (UINT base : {4u, 6u})
+    {
+        auto* source = m_Atlases[base + m_Read].Get();
+        auto* destination = m_Atlases[base + (m_Read ^ 1u)].Get();
+        if (full)
+        {
+            commands->CopyResource(destination, source);
+            continue;
+        }
+        const CD3DX12_TEXTURE_COPY_LOCATION dst(destination, 0), src(source, 0);
+        for (UINT slot : m_DirtySlots)
+        {
+            const D3D12_BOX box{0, slot * CardSize, 0, AtlasWidth, (slot + 1) * CardSize, 1};
+            commands->CopyTextureRegion(&dst, 0, slot * CardSize, 0, &src, &box);
+        }
+    }
+    commands->ResourceBarrier(static_cast<UINT>(after.size()), after.data());
+    m_FullCopy = false;
 }
 void LumenSurfaceCache::EndLighting(ID3D12GraphicsCommandList* commands)
 {
     Barrier(commands);
     m_Clear = false;
+    if (m_Constants.Counts.z == 0)
+    {
+        return;
+    }
     // The current frame reads the previous atlas; next frame sees the completed update.
     m_Read ^= 1u;
+    m_DirtySlots.clear();
+    for (const auto work : m_Schedule.Updates)
+    {
+        m_DirtySlots.push_back(work.Slot);
+    }
 }
 UINT LumenSurfaceCache::ResidentMeshes() const
 {
@@ -241,9 +299,10 @@ UINT LumenSurfaceCache::ResidentMeshes() const
 }
 UINT64 LumenSurfaceCache::MemoryBytes() const
 {
-    return m_Atlases[0] ? UINT64(AtlasWidth) * AtlasHeight * (16 + 7 * 8) + Capacity * 32ull + UINT64(m_ProbeCount) * 176 : 0;
+    return m_Atlases[0] ? UINT64(AtlasWidth) * AtlasHeight * (16 + 7 * 8) + Capacity * 32ull + UINT64(m_ProbeCount) * 2 * (64 + 32) : 0;
 }
 void LumenSurfaceCache::Reset()
 {
     *this = LumenSurfaceCache{};
 }
+

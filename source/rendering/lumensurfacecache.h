@@ -7,14 +7,14 @@
 class LumenSurfaceCache
 {
   public:
-    static constexpr UINT Capacity = 128, CardSize = 16, AtlasWidth = CardSize * 6;
+    static constexpr UINT Capacity = 256, CardSize = 16, AtlasWidth = CardSize * 6;
     static constexpr UINT AtlasHeight = CardSize * Capacity;
     static constexpr UINT DescriptorCount = 14;
     struct Constants
     {
         XMUINT4 Counts{}; // enabled, captures, lighting updates, reserved
         XMUINT4 Grid{};   // probe columns, rows, spacing, capacity
-        XMFLOAT4 Settings{}; // history limit, debug view, reserved
+        XMFLOAT4 Settings{}; // history limit, debug view, ray visibility, multi-bounce
     };
     bool Prepare(ID3D12Device* device, UINT frame, const vector<RaytracingGeometry>& geometry,
                  const XMFLOAT3& camera, UINT width, UINT height, UINT spacing, UINT captureBudget,
@@ -60,4 +60,11 @@ class LumenSurfaceCache
     array<UINT, Capacity> m_LastUpdate{};
     UINT m_LastSceneChange = 0;
     bool m_Clear = true;
+    // Slots written to the write atlas last frame; only those rows differ after the ping-pong swap.
+    vector<UINT> m_DirtySlots;
+    // Screen probe history: double-buffered records, invalidated on grid change or lighting reset.
+    UINT m_ProbeParity = 0, m_ProbeColumns = 0, m_ProbeRows = 0, m_ProbeSpacing = 0;
+    bool m_ProbeHistory = false;
+    bool m_FullCopy = true;
 };
+

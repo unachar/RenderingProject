@@ -926,9 +926,10 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     constants.GiParameters = {RendererSettings::GetGiDistance(), RendererSettings::GetRealtimeGiIntensity(),
                               static_cast<float>(useGiDenoiser), static_cast<float>(emitters.size())};
     const bool lumenRequested = RendererSettings::GetLumenEnabled();
-    const bool cacheEnabled = RendererSettings::GetRealtimeGiEnabled() && !lumenRequested &&
-                              RendererSettings::GetGiRadianceCacheEnabled() && g_Cache.Keys && g_CacheResolve &&
-                              g_CacheClear;
+    // Lumen always uses the hash grid as its world-space radiance cache (salted key namespace).
+    const bool cacheEnabled = RendererSettings::GetRealtimeGiEnabled() &&
+                              (lumenRequested || RendererSettings::GetGiRadianceCacheEnabled()) && g_Cache.Keys &&
+                              g_CacheResolve && g_CacheClear;
     if (cacheEnabled && !g_CacheWasEnabled)
     {
         g_Cache.NeedsClear = true;
@@ -1018,8 +1019,16 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     }
     if (g_LumenWasEnabled != lumen || (lumen && lumenReset))
     {
+        // Cached hit radiance belongs to the old lighting / mode.
+        g_Cache.NeedsClear = true;
         g_GiHistoryValid = false;
         g_HistoryValid = false;
+    }
+    if (lumen)
+    {
+        // World radiance cache: short history while objects/lights move, longer when static.
+        const float limit = g_LumenQuietFrames < 8 ? 4.0f : 16.0f;
+        constants.CacheParameters.w = (std::min)(constants.CacheParameters.w, limit);
     }
     g_LumenWasEnabled = lumen;
     g_LumenSignature = signature;
@@ -1151,6 +1160,14 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     if (lumen)
     {
         RenderProfiler::ScopedEvent surfaceProfile("Lumen Surface Cache", commands);
+        if (cacheEnabled && g_Cache.NeedsClear)
+        {
+            // Clear before the surface cache / probe rays write into the world radiance cache.
+            bind(g_CacheClear.Get());
+            commands->Dispatch(kCacheCapacity / 64, 1, 1);
+            CacheBarrier(commands);
+            g_Cache.NeedsClear = false;
+        }
         if (g_Lumen.NeedsLightingClear())
         {
             bind(g_LumenClear.Get());
@@ -1179,7 +1196,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         surfaceProfile.Finish();
         RenderProfiler::ScopedEvent probeProfile("Lumen Screen Probes", commands);
         bind(instrumented ? g_LumenGatherTelemetry.Get() : g_LumenGather.Get());
-        commands->Dispatch(parameters.Grid.x, parameters.Grid.y, 1);
+        // 8 probes per 64-lane group (see LumenTraceProbes).
+        commands->Dispatch((parameters.Grid.x * parameters.Grid.y + 7) / 8, 1, 1);
         g_Lumen.Barrier(commands);
     }
     if (Raytracing::GetSettings().Reflections)
@@ -1505,3 +1523,4 @@ ID3D12Resource* RayReflections::GetGiNoisyResource()
 {
     return g_Frames[g_LastFrame].GiNoisy.Get();
 }
+

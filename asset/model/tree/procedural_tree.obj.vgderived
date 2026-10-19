@@ -1,0 +1,20 @@
+{
+	"builder" : 4,
+	"compression" : 1,
+	"convert" : false,
+	"dependencies" : 
+	[
+		"1463676272495791680",
+		"9517360065637999147"
+	],
+	"meshes" : 
+	[
+		{
+			"material" : "",
+			"name" : "OBJ Mesh",
+			"part" : 10.0,
+			"path" : "asset/virtualgeometry-cache/64e12d65f6940880.vgmesh.3471995774496576771.encoded.vgmesh"
+		}
+	],
+	"settings" : "16721141559523799466"
+}

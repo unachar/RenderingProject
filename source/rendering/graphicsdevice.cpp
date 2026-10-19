@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "proceduralstudiowindow.h"
 #include "temporalupscaler.h"
 #include "advancedeffects.h"
 #include "asynccompute.h"
@@ -610,6 +611,7 @@ void GraphicsDevice::Uninit()
     RayTelemetry::Data().Shutdown();
     ScenePasses::ReleaseStaticShadowCache();
 
+    ProceduralStudioWindow::Shutdown(); // before the editor descriptor pool goes away
     AssetThumbnailManager::Shutdown();
     ImGuiManager::Uninit();
 
@@ -981,3 +983,4 @@ void GraphicsDevice::SubmitForExternalCompute()
     ID3D12DescriptorHeap* heaps[] = {m_CbvHeap.Get()};
     m_CommandList->SetDescriptorHeaps(1, heaps);
 }
+

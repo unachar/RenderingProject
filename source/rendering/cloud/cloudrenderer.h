@@ -22,9 +22,15 @@ class CloudRenderer
                        D3D12_CPU_DESCRIPTOR_HANDLE sceneRtv, DXGI_FORMAT sceneFormat);
     static CloudSettings& GetSettings();
     static void GenerateNoise(uint32_t seed);
+    // Replace the generated base (shape) noise with a user volume (resampled to the base extent, wrapped).
+    // Stays active across seed changes until ClearCustomBaseNoise.
+    static void SetCustomBaseNoise(const std::vector<float>& density, int extent, const std::string& label);
+    static void ClearCustomBaseNoise();
+    static bool HasCustomBaseNoise();
     static void DrawDebugUI();
     static bool IsAvailable();
     static ID3D12Resource* GetCloudResource(UINT frameIndex);
     static ID3D12Resource* GetBaseNoiseResource();
     static UINT GetNoiseGenerationCount();
 };
+

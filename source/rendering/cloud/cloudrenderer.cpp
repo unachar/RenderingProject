@@ -3,6 +3,10 @@
 #include "rendererstate.h"
 #include "renderprofiler.h"
 #include "graphicslog.h"
+#include "proceduralio.h"
+#include "proceduralstudio.h"
+#include <future>
+#include <DirectXPackedVector.h>
 #include <cstddef>
 
 namespace
@@ -75,6 +79,14 @@ UINT g_GenerationCount = 0;
 // Double precision offset avoids loss of frame-sized increments during long sessions.
 double g_WindX = 0;
 double g_WindZ = 0;
+constexpr UINT kBaseExtent = 128;
+// User base noise (Procedural Studio / texture driven). Kept on the CPU so builtin regeneration
+// (device reset, enabling clouds) can be followed by a re-upload.
+vector<float> g_CustomNoise;
+string g_CustomLabel;
+bool g_CustomActive = false;
+bool g_CustomPending = false;
+array<ComPtr<ID3D12Resource>, kFrames> g_CustomUploads;
 
 D3D12_CPU_DESCRIPTOR_HANDLE Cpu(UINT index)
 {
@@ -255,7 +267,81 @@ void DispatchNoise(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource
     commands->Dispatch((extent + 3) / 4, (extent + 3) / 4, (extent + 3) / 4);
     Transition(commands, resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kRead);
 }
+bool UploadCustomNoise(ID3D12GraphicsCommandList* commands, UINT frame)
+{
+    if (!g_BaseNoise || g_CustomNoise.size() != size_t(kBaseExtent) * kBaseExtent * kBaseExtent)
+    {
+        return false;
+    }
+    const DXGI_FORMAT format = g_BaseNoise->GetDesc().Format;
+    const UINT bytesPerTexel = format == DXGI_FORMAT_R8_UNORM ? 1u : 2u;
+    vector<uint8_t> texels(g_CustomNoise.size() * bytesPerTexel);
+    for (size_t i = 0; i < g_CustomNoise.size(); ++i)
+    {
+        const float value = clamp(g_CustomNoise[i], 0.0f, 1.0f);
+        if (bytesPerTexel == 1)
+        {
+            texels[i] = static_cast<uint8_t>(value * 255.0f + 0.5f);
+        }
+        else
+        {
+            const auto half = PackedVector::XMConvertFloatToHalf(value);
+            memcpy(&texels[i * 2], &half, 2);
+        }
+    }
+    auto& upload = g_CustomUploads[frame % kFrames];
+    const UINT64 bytes = GetRequiredIntermediateSize(g_BaseNoise.Get(), 0, 1);
+    if (!upload || upload->GetDesc().Width < bytes)
+    {
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(bytes);
+        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                     D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                     IID_PPV_ARGS(upload.ReleaseAndGetAddressOf()))))
+        {
+            return false;
+        }
+        upload->SetName(L"Cloud Custom Noise Upload");
+    }
+    D3D12_SUBRESOURCE_DATA data{};
+    data.pData = texels.data();
+    data.RowPitch = LONG_PTR(kBaseExtent) * bytesPerTexel;
+    data.SlicePitch = data.RowPitch * kBaseExtent;
+    Transition(commands, g_BaseNoise.Get(), kRead, D3D12_RESOURCE_STATE_COPY_DEST);
+    const bool copied = UpdateSubresources(commands, g_BaseNoise.Get(), upload.Get(), 0, 0, 1, &data) != 0;
+    Transition(commands, g_BaseNoise.Get(), D3D12_RESOURCE_STATE_COPY_DEST, kRead);
+    return copied;
+}
 } // namespace
+
+void CloudRenderer::SetCustomBaseNoise(const vector<float>& density, int extent, const string& label)
+{
+    if (extent <= 0 || density.size() != size_t(extent) * extent * extent)
+    {
+        return;
+    }
+    ProcStudio::Volume volume;
+    volume.Extent = extent;
+    volume.Density = density;
+    g_CustomNoise = ProceduralIO::Resample(volume, kBaseExtent).Density;
+    g_CustomLabel = label;
+    g_CustomActive = true;
+    g_CustomPending = true;
+}
+
+void CloudRenderer::ClearCustomBaseNoise()
+{
+    g_CustomNoise.clear();
+    g_CustomLabel.clear();
+    g_CustomActive = false;
+    g_CustomPending = false;
+    g_NoiseDirty = true; // restore the builtin shape noise
+}
+
+bool CloudRenderer::HasCustomBaseNoise()
+{
+    return g_CustomActive;
+}
 
 bool CloudRenderer::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UINT increment)
 {
@@ -345,6 +431,8 @@ void CloudRenderer::Shutdown()
     }
     g_Mapped = nullptr;
     g_Frames = {};
+    g_CustomUploads = {};
+    g_CustomPending = g_CustomActive; // re-upload after re-initialization
     g_Constants.Reset();
     g_BaseNoise.Reset();
     g_DetailNoise.Reset();
@@ -422,6 +510,15 @@ void CloudRenderer::PrepareLighting(ID3D12GraphicsCommandList* commands, UINT fr
         g_GeneratedSeed = g_Settings.Seed;
         g_NoiseDirty = false;
         ++g_GenerationCount;
+        g_CustomPending = g_CustomActive; // builtin dispatch overwrote the custom volume
+    }
+    if (g_CustomActive && g_CustomPending)
+    {
+        RenderProfiler::ScopedEvent profile("Cloud Custom Noise Upload", commands);
+        if (UploadCustomNoise(commands, index))
+        {
+            g_CustomPending = false;
+        }
     }
     const double length = sqrt(static_cast<double>(g_Settings.WindX) * g_Settings.WindX +
                                static_cast<double>(g_Settings.WindZ) * g_Settings.WindZ);
@@ -557,6 +654,149 @@ void CloudRenderer::Render(ID3D12GraphicsCommandList* commands, UINT frameIndex,
     }
 }
 
+namespace
+{
+// Texture / fractal driven base-noise generation for the cloud window. Generation runs on worker
+// threads; the result is uploaded by PrepareLighting.
+struct CustomNoiseJob
+{
+    future<ProcStudio::Volume> Result;
+    string Label;
+    bool Running = false;
+};
+CustomNoiseJob g_NoiseJob;
+string g_NoiseStatus;
+
+void StartNoiseJob(function<ProcStudio::Volume()> work, string label)
+{
+    g_NoiseJob.Result = async(launch::async, std::move(work));
+    g_NoiseJob.Label = std::move(label);
+    g_NoiseJob.Running = true;
+    g_NoiseStatus = "生成中: " + g_NoiseJob.Label;
+}
+
+void DrawCustomNoiseUI()
+{
+    static filesystem::path source;
+    static int octaves = 3;
+    static float variation = 1.0f;
+    static int extent = 1; // 0 = 64, 1 = 128
+    static ProcStudio::TextureParams fractal = [] {
+        ProcStudio::TextureParams params;
+        params.Kind = ProcStudio::TextureKind::FractalCloud;
+        params.Noise.Frequency = 4;
+        params.Coverage = 0.55f;
+        params.Softness = 0.6f;
+        return params;
+    }();
+    if (g_NoiseJob.Running && g_NoiseJob.Result.wait_for(chrono::seconds(0)) == future_status::ready)
+    {
+        g_NoiseJob.Running = false;
+        const auto volume = g_NoiseJob.Result.get();
+        if (volume.Extent > 0)
+        {
+            CloudRenderer::SetCustomBaseNoise(volume.Density, volume.Extent, g_NoiseJob.Label);
+            g_NoiseStatus = "適用済み: " + g_NoiseJob.Label;
+        }
+        else
+        {
+            g_NoiseStatus = "生成に失敗しました: " + g_NoiseJob.Label;
+        }
+    }
+    ImGui::TextWrapped("現在: %s", g_CustomActive ? g_CustomLabel.c_str() : "組み込みノイズ (Perlin-Worley)");
+    if (!g_NoiseStatus.empty())
+    {
+        ImGui::TextDisabled("%s", g_NoiseStatus.c_str());
+    }
+    ImGui::Combo("生成解像度", &extent, "64^3 (高速)\000128^3\0");
+    const int size = extent == 0 ? 64 : 128;
+    ImGui::BeginDisabled(g_NoiseJob.Running);
+    ImGui::SeparatorText("テクスチャから生成");
+    ImGui::TextWrapped("2D 画像はオクターブ重ねで 3D の周期ノイズに変換します。3D DDS はそのまま使用します。");
+    ImGui::SliderInt("オクターブ", &octaves, 1, 6);
+    ImGui::SliderFloat("高さ方向の変化", &variation, 0, 4);
+    if (ImGui::Button("テクスチャを指定して生成..."))
+    {
+        filesystem::path path;
+        if (ProceduralIO::OpenFileDialog(L"画像 / ボリューム (*.png;*.jpg;*.dds;*.tga;*.bmp;*.hdr;*.tif)\0*.png;*.jpg;*.jpeg;*.dds;*.tga;*.bmp;*.hdr;*.tif;*.tiff\0すべてのファイル\0*.*\0",
+                                         path))
+        {
+            source = path;
+            const int o = octaves;
+            const float v = variation;
+            const uint32_t seed = g_Settings.Seed;
+            StartNoiseJob(
+                [path, o, v, size, seed] {
+                    string error;
+                    ProcStudio::Volume volume;
+                    if (ProceduralIO::LoadVolume(path, volume, error))
+                    {
+                        return volume;
+                    }
+                    ProcStudio::Image image;
+                    if (!ProceduralIO::LoadImageFile(path, image, error))
+                    {
+                        return ProcStudio::Volume{};
+                    }
+                    return ProcStudio::VolumeFromImage(image, size, o, v, seed);
+                },
+                ProceduralIO::ToUtf8(path.filename()));
+        }
+    }
+    if (!source.empty())
+    {
+        ImGui::SameLine();
+        if (ImGui::Button("同じテクスチャで再生成"))
+        {
+            const auto path = source;
+            const int o = octaves;
+            const float v = variation;
+            const uint32_t seed = g_Settings.Seed;
+            StartNoiseJob(
+                [path, o, v, size, seed] {
+                    string error;
+                    ProcStudio::Volume volume;
+                    if (ProceduralIO::LoadVolume(path, volume, error))
+                    {
+                        return volume;
+                    }
+                    ProcStudio::Image image;
+                    return ProceduralIO::LoadImageFile(path, image, error)
+                               ? ProcStudio::VolumeFromImage(image, size, o, v, seed)
+                               : ProcStudio::Volume{};
+                },
+                ProceduralIO::ToUtf8(path.filename()));
+        }
+    }
+    ImGui::SeparatorText("フラクタルノイズから生成");
+    int basis = static_cast<int>(fractal.Noise.BasisType);
+    if (ImGui::Combo("基底", &basis, "Perlin\0Value\0Worley\0Cell Edge\0"))
+    {
+        fractal.Noise.BasisType = static_cast<ProcStudio::Basis>(basis);
+    }
+    ImGui::InputScalar("Seed##fractal", ImGuiDataType_U32, &fractal.Noise.Seed);
+    ImGui::SliderFloat("周波数", &fractal.Noise.Frequency, 1, 16, "%.0f");
+    ImGui::SliderInt("オクターブ##fractal", &fractal.Noise.Octaves, 1, 8);
+    ImGui::SliderFloat("Gain", &fractal.Noise.Gain, 0.2f, 0.8f);
+    ImGui::SliderFloat("被覆率", &fractal.Coverage, 0, 1);
+    ImGui::SliderFloat("柔らかさ", &fractal.Softness, 0.05f, 1);
+    if (ImGui::Button("フラクタル雲ノイズを生成して適用"))
+    {
+        const auto params = fractal;
+        StartNoiseJob([params, size] { return ProcStudio::GenerateVolume(params, size); }, "フラクタル雲ノイズ");
+    }
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!g_CustomActive);
+    if (ImGui::Button("組み込みノイズに戻す"))
+    {
+        CloudRenderer::ClearCustomBaseNoise();
+        g_NoiseStatus.clear();
+    }
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("プロシージャルスタジオの「フラクタル雲」からも適用できます。");
+}
+} // namespace
+
 void CloudRenderer::DrawDebugUI()
 {
     ImGui::Checkbox("Enable clouds", &g_Settings.Enabled);
@@ -654,6 +894,11 @@ void CloudRenderer::DrawDebugUI()
         ImGui::Text("Generations: %u", g_GenerationCount);
         ImGui::TreePop();
     }
+    if (ImGui::TreeNodeEx("ノイズテクスチャ (形状ノイズの差し替え)", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        DrawCustomNoiseUI();
+        ImGui::TreePop();
+    }
     int debug = static_cast<int>(g_Settings.Debug);
     if (ImGui::Combo(
             "Debug View", &debug,
@@ -683,3 +928,4 @@ void CloudRenderer::DrawDebugUI()
     }
     g_Settings.Validate();
 }
+

@@ -173,7 +173,7 @@ void ImGuiManager::DrawSceneViewWindow()
                 ImVec2 sceneMouse = ImGui::GetIO().MousePos;
                 sceneMouse.x -= m_SceneViewPos.x;
                 sceneMouse.y -= m_SceneViewPos.y;
-                PlaceAssetInScene(path, sceneMouse);
+                PlaceAssetInScene(filesystem::u8path(path), sceneMouse); // payload is UTF-8
             }
         }
         ImGui::EndDragDropTarget();
@@ -2235,3 +2235,4 @@ void ImGuiManager::DrawScenePopups()
         ImGui::EndPopup();
     }
 }
+

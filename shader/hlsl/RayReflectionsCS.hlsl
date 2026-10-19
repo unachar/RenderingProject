@@ -445,9 +445,20 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
         float3 selectedRadiance = 0;
         float selectedRange = 0;
         bool selectedShadow = false;
-        [loop] for (int i = 0; i < count; ++i)
+        // Lumen mode: bounded light subset (inclusion probability M/N, rescaled by N/M) so cache
+        // misses and probe hits do not pay O(light count). Existing DXR GI keeps the full loop.
+        uint candidates = (uint)count, stride = 1, start = 0;
+        float subsetScale = 1;
+        if (LumenCounts.x != 0 && count > 32)
         {
-            ReflectionLight light = ReflectionLights[i];
+            candidates = 32;
+            stride = (uint)count / 32;
+            start = ReflectionHash(randomSeed * 747796405u + 2891336453u) % (uint)count;
+            subsetScale = count / 32.0f;
+        }
+        [loop] for (uint k = 0; k < candidates; ++k)
+        {
+            ReflectionLight light = ReflectionLights[(start + k * stride) % (uint)count];
             float3 direction;
             float attenuation, volume;
             ResolveSingleLightCommon(position, light.Direction, light.PositionType, light.Extras, direction, attenuation, volume);
@@ -475,7 +486,7 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
         {
             float shadow = selectedShadow ?
                 TraceBounceVisibility(position, normal, selectedDirection, selectedRange) : 1;
-            radiance += diffuse * selectedRadiance * (shadow * totalWeight / selectedWeight);
+            radiance += diffuse * selectedRadiance * (shadow * totalWeight / selectedWeight * subsetScale);
         }
         return radiance;
     }
@@ -1225,3 +1236,4 @@ void ReSTIRSpatial(uint3 id : SV_DispatchThreadID)
 }
 
 #include "LumenPasses.hlsli"
+
