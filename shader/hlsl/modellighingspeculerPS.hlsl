@@ -1,5 +1,6 @@
 #define SHADER_3D
 #include "common.hlsl"
+#include "NormalMapDecode.hlsli"
 
 Texture2D g_Texture : register(t0);
 Texture2D g_NormalTexture : register(t2);
@@ -152,7 +153,7 @@ float4 main(in PSInput3D In) : SV_Target
     float3 meshNormal = SafeNormalize(In.Normal * ((FlipNormal != 0) ? -1.0f : 1.0f), float3(0.0f, 1.0f, 0.0f));
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, In.TexCoord));
         meshNormal = ApplyNormalMapCommon(meshNormal, In.WorldPos, In.TexCoord, tangentNormal);
     }
     float3 roundedNormal = SafeNormalize(meshNormal + viewDir, meshNormal);

@@ -7,9 +7,9 @@ cbuffer NativeVisualization : register(b6)
     uint NativeLevelColors;
 }
 
-GBufferOutput main(PSInput3D input, bool frontFace : SV_IsFrontFace)
+GBufferDepthOutput main(PSInput3D input, bool frontFace : SV_IsFrontFace)
 {
-    GBufferOutput output = VirtualGeometryMaterialMain(input, frontFace);
+    GBufferDepthOutput output = VirtualGeometryMaterialMain(input, frontFace);
     if (NativeLevelColors != 0)
     {
         // テクスチャやライティングと独立して、選択レベルの色を直接出力する。

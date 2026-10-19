@@ -512,6 +512,11 @@ struct ShadingModelData
 // ディファードライティングパスがピクセルごとに設定する（影の GBuffer の alpha から復号）。
 static ShadingModelData g_ShadingModel = {0u, 0.0f};
 
+// POM セルフシャドウ：GBuffer（フォワードではその場）で主光源に対して求めた可視率と、その光源の方向。
+// AccumulateSurfaceLight で同じ方向のライトの影に掛ける。既定値 1 で無効。
+static float g_PomSelfShadow = 1.0f;
+static float3 g_PomSelfShadowLight = float3(0.0f, 0.0f, 0.0f);
+
 ShadingModelData DecodeShadingModel(float encoded)
 {
     uint value = (uint)round(saturate(encoded) * 255.0f);
@@ -1048,6 +1053,11 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
         {
             shadowVisibility *= CloudSunVisibility(worldPos);
         }
+        // POM の凹凸が自分に落とす影（ラスター／DXR どちらの可視性にも掛ける）。
+        if (!decalLight && g_PomSelfShadow < 1.0f && dot(singleDir, g_PomSelfShadowLight) > 0.995f)
+        {
+            shadowVisibility *= g_PomSelfShadow;
+        }
     }
 #ifdef SHADER_RAYTRACING
     else if (gridCastShadow && SceneRayFlags.x > 0.5f && SceneRayFlags.z > 0.5f)
@@ -1575,3 +1585,4 @@ float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv,
     return color;
 }
 #endif
+

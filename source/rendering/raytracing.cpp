@@ -44,7 +44,31 @@ namespace
         ComPtr<ID3D12Resource> Indices;
         UINT64 LastSeen = 0;
         UINT64 LastBuilt = 0;
+        // コンパクション前の結果サイズ（統計用）。
+        UINT64 UncompactedBytes = 0;
+        // 最後のフルビルドからのリフィット回数（変形 BLAS の定期再構築判定）。
+        UINT UpdatesSinceBuild = 0;
+        // CompactionSizes 内の照会スロット。UINT_MAX は照会なし。
+        UINT CompactionQuery = UINT_MAX;
+        bool AllowsCompaction = false;
+        bool Compacted = false;
+        // R16G16B16A16_SNORM + Transform3x4 で構築したか。リフィットは同じ形式でのみ可能。
+        bool Quantized = false;
     };
+
+    // 量子化頂点は頂点ソース単位で共有する（PMX の材質別サブメッシュが同じ頂点バッファを参照するため）。
+    using VertexSourceKey = tuple<UINT64, UINT, UINT>;
+
+    struct PackedVertices
+    {
+        ComPtr<ID3D12Resource> Buffer;
+        D3D12_RESOURCE_STATES State = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        UINT64 LastUsed = 0;
+        UINT64 LastWritten = 0;
+    };
+
+    constexpr UINT64 kPackedPositionOffset = 64;
+    constexpr UINT kPackedStride = 8;
 
     struct GlassMesh
     {
@@ -68,6 +92,12 @@ namespace
         array<ComPtr<ID3D12Resource>, 4> Guides;
         ComPtr<ID3D12Resource> AmbientGuide;
         map<GeometryKey, BottomLevel> Geometry;
+        map<VertexSourceKey, PackedVertices> PackedSources;
+        // BLAS コンパクションのサイズ照会（GPU 書き込み先とリードバック）。
+        ComPtr<ID3D12Resource> CompactionSizes;
+        ComPtr<ID3D12Resource> CompactionReadback;
+        vector<GeometryKey> CompactionPending;
+        bool CompactionReadbackValid = false;
         ComPtr<ID3D12Resource> TopLevel;
         ComPtr<ID3D12Resource> Scratch;
         ComPtr<ID3D12Resource> Instances;
@@ -139,6 +169,11 @@ namespace
     bool g_Active = false;
     bool g_ReflectionsActive = false;
     bool g_GiActive = false;
+    ComPtr<ID3D12RootSignature> g_QuantizeRoot;
+    ComPtr<ID3D12PipelineState> g_QuantizePipeline;
+    bool g_QuantizeTried = false;
+    UINT g_RebuildStagger = 0;
+    Raytracing::BlasStatistics g_BlasStats;
     XMFLOAT4 g_SunDirection{};
     const char* g_Status = "未初期化";
 
@@ -372,21 +407,300 @@ namespace
         vector<D3D12_RESOURCE_BARRIER> m_FinishBarriers;
     };
 
+    bool EnsureQuantizePipeline()
+    {
+        if (g_QuantizeTried)
+        {
+            return g_QuantizePipeline != nullptr;
+        }
+        g_QuantizeTried = true;
+        CD3DX12_ROOT_PARAMETER parameters[3];
+        parameters[0].InitAsConstants(4, 0);
+        parameters[1].InitAsShaderResourceView(0);
+        parameters[2].InitAsUnorderedAccessView(0);
+        CD3DX12_ROOT_SIGNATURE_DESC rootDescription(3, parameters, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE);
+        ComPtr<ID3DBlob> serialized, errors;
+        if (FAILED(D3D12SerializeRootSignature(&rootDescription, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors)) ||
+            FAILED(g_Device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
+                                                 IID_PPV_ARGS(&g_QuantizeRoot))))
+        {
+            WriteGraphicsLog("DXR: BLAS quantize root signature failed; 32bit BLAS vertices are used\n");
+            return false;
+        }
+        ComPtr<ID3DBlob> shader;
+        errors.Reset();
+        if (FAILED(D3DCompileFromFile(L"shader/hlsl/BlasQuantizeCS.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                                      "main", "cs_6_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &shader, &errors)))
+        {
+            WriteGraphicsLog("DXR: BlasQuantizeCS compile failed: %s\n",
+                             errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
+            g_QuantizeRoot.Reset();
+            return false;
+        }
+        D3D12_COMPUTE_PIPELINE_STATE_DESC description{};
+        description.pRootSignature = g_QuantizeRoot.Get();
+        description.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
+        if (FAILED(g_Device->CreateComputePipelineState(&description, IID_PPV_ARGS(&g_QuantizePipeline))))
+        {
+            WriteGraphicsLog("DXR: BlasQuantizeCS pipeline creation failed\n");
+            g_QuantizeRoot.Reset();
+            return false;
+        }
+        g_QuantizePipeline->SetName(L"BLAS Vertex Quantize");
+        return true;
+    }
+
+    VertexSourceKey MakeVertexSourceKey(const RaytracingGeometry& geometry)
+    {
+        return VertexSourceKey(geometry.VertexView.BufferLocation, geometry.VertexView.SizeInBytes,
+                               geometry.VertexView.StrideInBytes);
+    }
+
+    // 16bit SNORM の量子化誤差（AABB 半幅 / 32767 の半分）がワールド空間の許容値以内なら量子化する。
+    bool WantsQuantizedVertices(const RaytracingGeometry& geometry)
+    {
+        const UINT stride = geometry.VertexView.StrideInBytes;
+        if (!g_Settings.QuantizeBlasVertices || stride < sizeof(XMFLOAT3) || (stride & 3u) != 0 ||
+            (geometry.VertexView.BufferLocation & 3ull) != 0 || geometry.VertexView.SizeInBytes < stride * 3)
+        {
+            return false;
+        }
+        if (geometry.Skinned)
+        {
+            return EnsureQuantizePipeline();
+        }
+        if (!(geometry.ObjectRadius > 0.0f))
+        {
+            return false;
+        }
+        const XMMATRIX world = XMLoadFloat4x4(&geometry.World);
+        const float scale = (std::max)({XMVectorGetX(XMVector3Length(world.r[0])),
+                                        XMVectorGetX(XMVector3Length(world.r[1])),
+                                        XMVectorGetX(XMVector3Length(world.r[2]))});
+        const float worldError = geometry.ObjectRadius * scale / 32767.0f * 0.5f;
+        return worldError <= (std::max)(g_Settings.BlasQuantizationMaxError, 0.0f) && EnsureQuantizePipeline();
+    }
+
+    bool EnsureCompactionBuffers(FrameResources& frame)
+    {
+        const UINT64 bytes = static_cast<UINT64>(kMaximumInstances) * sizeof(UINT64);
+        if (!frame.CompactionSizes)
+        {
+            if (!EnsureBuffer(frame.CompactionSizes, bytes, D3D12_HEAP_TYPE_DEFAULT,
+                              D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"BLAS Compaction Sizes"))
+            {
+                return false;
+            }
+        }
+        if (!frame.CompactionReadback)
+        {
+            if (!EnsureBuffer(frame.CompactionReadback, bytes, D3D12_HEAP_TYPE_READBACK,
+                              D3D12_RESOURCE_STATE_COPY_DEST, L"BLAS Compaction Readback"))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // 同じフレームスロットの前回コマンドは完了済み（Retired と同じ前提）なので、前回照会したサイズを読める。
+    void ApplyPendingCompaction(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
+    {
+        if (frame.CompactionPending.empty())
+        {
+            frame.CompactionReadbackValid = false;
+            return;
+        }
+        const UINT count = static_cast<UINT>(frame.CompactionPending.size());
+        const UINT64* sizes = nullptr;
+        void* mapped = nullptr;
+        const D3D12_RANGE readRange{0, static_cast<SIZE_T>(count) * sizeof(UINT64)};
+        if (frame.CompactionReadbackValid && frame.CompactionReadback &&
+            SUCCEEDED(frame.CompactionReadback->Map(0, &readRange, &mapped)))
+        {
+            sizes = static_cast<const UINT64*>(mapped);
+        }
+        vector<D3D12_RESOURCE_BARRIER> barriers;
+        for (UINT index = 0; index < count; ++index)
+        {
+            const auto found = frame.Geometry.find(frame.CompactionPending[index]);
+            if (found == frame.Geometry.end() || found->second.CompactionQuery != index)
+            {
+                continue;
+            }
+            BottomLevel& level = found->second;
+            level.CompactionQuery = UINT_MAX;
+            if (!sizes || level.Compacted || !level.Result || !g_Settings.CompactStaticBlas)
+            {
+                continue;
+            }
+            const UINT64 current = level.Result->GetDesc().Width;
+            const UINT64 compactedSize = sizes[index];
+            // 圧縮の効果がない（または無効値）なら再照会しない。
+            if (compactedSize == 0 || compactedSize > current || current - compactedSize < 4096)
+            {
+                level.Compacted = true;
+                continue;
+            }
+            ComPtr<ID3D12Resource> compacted;
+            if (!EnsureBuffer(compacted, compactedSize, D3D12_HEAP_TYPE_DEFAULT,
+                              D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene BLAS (compacted)"))
+            {
+                continue;
+            }
+            commandList->CopyRaytracingAccelerationStructure(
+                compacted->GetGPUVirtualAddress(), level.Result->GetGPUVirtualAddress(),
+                D3D12_RAYTRACING_ACCELERATION_STRUCTURE_COPY_MODE_COMPACT);
+            // 旧 BLAS は、このコマンドリストの前段（前回 TLAS を読むラスタライティング）から参照され得る。
+            // スロットのフェンス完了まで保持する。
+            frame.Retired.push_back(level.Result);
+            if (level.Scratch)
+            {
+                frame.Retired.push_back(level.Scratch);
+                level.Scratch.Reset();
+            }
+            level.UncompactedBytes = current;
+            level.Result = move(compacted);
+            level.Compacted = true;
+            barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(level.Result.Get()));
+        }
+        if (mapped)
+        {
+            const D3D12_RANGE noWrite{0, 0};
+            frame.CompactionReadback->Unmap(0, &noWrite);
+        }
+        frame.CompactionPending.clear();
+        frame.CompactionReadbackValid = false;
+        if (!barriers.empty())
+        {
+            // TLAS 構築とレイ判定の前にコピー結果を可視化する。
+            commandList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+        }
+    }
+
+    // ビルド済み静的 BLAS のコンパクションサイズを照会する（ビルドと同時に照会できなかったもの）。
+    void QueryCompaction(ID3D12GraphicsCommandList4* commandList, FrameResources& frame, const GeometryKey& key,
+                         BottomLevel& level)
+    {
+        if (!g_Settings.CompactStaticBlas || !level.AllowsCompaction || level.Compacted ||
+            level.CompactionQuery != UINT_MAX || !level.Result || level.LastBuilt == g_Serial ||
+            frame.CompactionPending.size() >= kMaximumInstances || !EnsureCompactionBuffers(frame))
+        {
+            return;
+        }
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC query{};
+        query.InfoType = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_COMPACTED_SIZE;
+        query.DestBuffer = frame.CompactionSizes->GetGPUVirtualAddress() +
+                           static_cast<UINT64>(frame.CompactionPending.size()) * sizeof(UINT64);
+        const D3D12_GPU_VIRTUAL_ADDRESS source = level.Result->GetGPUVirtualAddress();
+        commandList->EmitRaytracingAccelerationStructurePostbuildInfo(&query, 1, &source);
+        level.CompactionQuery = static_cast<UINT>(frame.CompactionPending.size());
+        frame.CompactionPending.push_back(key);
+    }
+
+    // 量子化が必要な頂点ソースを 1 ソース 1 グループでまとめてディスパッチする。
+    // 戻り値: 頂点ソース → BLAS 入力に使える量子化バッファ（NON_PIXEL_SHADER_RESOURCE 状態）。
+    map<VertexSourceKey, ID3D12Resource*> QuantizeVertexSources(ID3D12GraphicsCommandList4* commandList,
+                                                                FrameResources& frame,
+                                                                const map<VertexSourceKey, const RaytracingGeometry*>& sources)
+    {
+        map<VertexSourceKey, ID3D12Resource*> ready;
+        if (sources.empty() || !g_QuantizePipeline)
+        {
+            return ready;
+        }
+        vector<pair<PackedVertices*, const RaytracingGeometry*>> dispatches;
+        vector<D3D12_RESOURCE_BARRIER> toWrite;
+        for (const auto& [key, geometry] : sources)
+        {
+            PackedVertices& packed = frame.PackedSources[key];
+            packed.LastUsed = g_Serial;
+            if (packed.LastWritten == g_Serial && packed.Buffer)
+            {
+                ready[key] = packed.Buffer.Get();
+                continue;
+            }
+            const UINT vertexCount = geometry->VertexView.SizeInBytes / geometry->VertexView.StrideInBytes;
+            const UINT64 bytes = kPackedPositionOffset + static_cast<UINT64>(vertexCount) * kPackedStride;
+            ID3D12Resource* previous = packed.Buffer.Get();
+            if (!EnsureBuffer(packed.Buffer, bytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                              L"BLAS Quantized Vertices"))
+            {
+                frame.PackedSources.erase(key);
+                continue;
+            }
+            if (packed.Buffer.Get() != previous)
+            {
+                packed.State = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+            }
+            if (packed.State != D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+            {
+                toWrite.push_back(CD3DX12_RESOURCE_BARRIER::Transition(packed.Buffer.Get(), packed.State,
+                                                                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+                packed.State = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+            }
+            dispatches.emplace_back(&packed, geometry);
+            ready[key] = packed.Buffer.Get();
+        }
+        if (!toWrite.empty())
+        {
+            commandList->ResourceBarrier(static_cast<UINT>(toWrite.size()), toWrite.data());
+        }
+        if (dispatches.empty())
+        {
+            return ready;
+        }
+        RenderProfiler::ScopedEvent profile("BLAS Vertex Quantize", commandList);
+        commandList->SetComputeRootSignature(g_QuantizeRoot.Get());
+        commandList->SetPipelineState(g_QuantizePipeline.Get());
+        vector<D3D12_RESOURCE_BARRIER> toRead;
+        toRead.reserve(dispatches.size());
+        for (auto& [packed, geometry] : dispatches)
+        {
+            const UINT constants[4] = {geometry->VertexView.SizeInBytes / geometry->VertexView.StrideInBytes,
+                                       geometry->VertexView.StrideInBytes, 0u, 0u};
+            commandList->SetComputeRoot32BitConstants(0, 4, constants, 0);
+            commandList->SetComputeRootShaderResourceView(1, geometry->VertexView.BufferLocation);
+            commandList->SetComputeRootUnorderedAccessView(2, packed->Buffer->GetGPUVirtualAddress());
+            commandList->Dispatch(1, 1, 1);
+            packed->LastWritten = g_Serial;
+            packed->State = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            toRead.push_back(CD3DX12_RESOURCE_BARRIER::Transition(packed->Buffer.Get(),
+                                                                  D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                                  D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
+        }
+        // 量子化結果（頂点と Transform3x4）を BLAS 構築入力として読める状態にする。
+        commandList->ResourceBarrier(static_cast<UINT>(toRead.size()), toRead.data());
+        return ready;
+    }
+
     bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingGeometry& geometry,
-                          BottomLevel& level, GeometryReadBatch& geometryReads)
+                          BottomLevel& level, GeometryReadBatch& geometryReads, FrameResources& frame,
+                          const GeometryKey& key, ID3D12Resource* packed, UINT& rebuildBudget)
     {
         level.LastSeen = g_Serial;
         if (level.Result && (!geometry.Deforming || level.LastBuilt == g_Serial))
         {
             return true;
         }
+        const bool firstBuild = !level.Result;
+        const bool quantized = packed != nullptr;
+        const UINT vertexCount = geometry.VertexView.SizeInBytes / geometry.VertexView.StrideInBytes;
         D3D12_RAYTRACING_GEOMETRY_DESC description{};
         description.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
         description.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
         description.Triangles.VertexBuffer.StartAddress = geometry.VertexView.BufferLocation;
         description.Triangles.VertexBuffer.StrideInBytes = geometry.VertexView.StrideInBytes;
-        description.Triangles.VertexCount = geometry.VertexView.SizeInBytes / geometry.VertexView.StrideInBytes;
+        description.Triangles.VertexCount = vertexCount;
         description.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+        if (quantized)
+        {
+            // 16bit SNORM 頂点 + 復元行列。BLAS 空間は元のオブジェクト空間のまま。
+            description.Triangles.Transform3x4 = packed->GetGPUVirtualAddress();
+            description.Triangles.VertexBuffer.StartAddress = packed->GetGPUVirtualAddress() + kPackedPositionOffset;
+            description.Triangles.VertexBuffer.StrideInBytes = kPackedStride;
+            description.Triangles.VertexFormat = DXGI_FORMAT_R16G16B16A16_SNORM;
+        }
         description.Triangles.IndexBuffer = geometry.IndexView.BufferLocation;
         description.Triangles.IndexCount = geometry.IndexCount;
         description.Triangles.IndexFormat = geometry.IndexView.Format;
@@ -394,12 +708,18 @@ namespace
         {
             description.Triangles.IndexFormat = DXGI_FORMAT_UNKNOWN;
         }
+        const bool compact = !geometry.Deforming && g_Settings.CompactStaticBlas && EnsureCompactionBuffers(frame) &&
+                             frame.CompactionPending.size() < kMaximumInstances;
         D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
         inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
         inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
         inputs.NumDescs = 1;
         inputs.pGeometryDescs = &description;
         inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+        if (compact)
+        {
+            inputs.Flags |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_COMPACTION;
+        }
         if (geometry.Deforming)
         {
             inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE |
@@ -407,7 +727,15 @@ namespace
         }
         D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes{};
         g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &sizes);
-        const bool update = geometry.Deforming && level.Result;
+        // リフィットは同じ頂点形式でのみ可能。リフィットを重ねると BVH が劣化するため、
+        // 一定回数ごとにフルビルドへ切り替える（1 フレームの再構築数は予算で分散）。
+        bool update = geometry.Deforming && level.Result && level.Quantized == quantized;
+        const UINT interval = static_cast<UINT>((std::max)(g_Settings.DeformingBlasRebuildInterval, 0));
+        if (update && interval > 0 && level.UpdatesSinceBuild >= interval && rebuildBudget > 0)
+        {
+            update = false;
+            --rebuildBudget;
+        }
         if (sizes.ResultDataMaxSizeInBytes == 0 ||
             !EnsureBuffer(level.Result, sizes.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
                           D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene BLAS") ||
@@ -425,12 +753,42 @@ namespace
             build.Inputs.Flags |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE;
             build.SourceAccelerationStructureData = build.DestAccelerationStructureData;
         }
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC query{};
+        UINT queryCount = 0;
+        if (compact)
+        {
+            query.InfoType = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_COMPACTED_SIZE;
+            query.DestBuffer = frame.CompactionSizes->GetGPUVirtualAddress() +
+                               static_cast<UINT64>(frame.CompactionPending.size()) * sizeof(UINT64);
+            queryCount = 1;
+            level.CompactionQuery = static_cast<UINT>(frame.CompactionPending.size());
+            frame.CompactionPending.push_back(key);
+        }
         // アップロードヒープは GENERIC_READ のままにする。NON_PIXEL_SHADER_RESOURCE も含まれている。
-        commandList->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
+        commandList->BuildRaytracingAccelerationStructure(&build, queryCount, queryCount ? &query : nullptr);
         geometryReads.CompleteBuild(level.Result.Get());
         level.Vertices = geometry.Vertices;
         level.Indices = geometry.Indices;
         level.LastBuilt = g_Serial;
+        level.Quantized = quantized;
+        level.AllowsCompaction = compact;
+        level.Compacted = false;
+        level.UncompactedBytes = level.Result->GetDesc().Width;
+        if (update)
+        {
+            ++level.UpdatesSinceBuild;
+            ++g_BlasStats.RefitsThisFrame;
+        }
+        else
+        {
+            // 初回ビルドは開始位置をずらし、多数のキャラクターの再構築が同じフレームに集中しないようにする。
+            level.UpdatesSinceBuild = 0;
+            if (geometry.Deforming && firstBuild && interval > 0)
+            {
+                level.UpdatesSinceBuild = (g_RebuildStagger++) % interval;
+            }
+            ++g_BlasStats.RebuildsThisFrame;
+        }
         return true;
     }
 
@@ -592,12 +950,18 @@ namespace
         frame.SceneGeometry.clear();
         vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
         instances.reserve((min)(geometry.size(), static_cast<size_t>(kMaximumInstances)));
+        g_BlasStats = {};
+        // 前回このスロットで照会したコンパクションサイズを反映する（BLAS のアドレスが変わるので TLAS 構築前）。
+        ApplyPendingCompaction(commandList, frame);
         GeometryReadBatch geometryReads(commandList);
         // 下記のインスタンス上限と有効性検証に合わせる。キャッシュ済みの静的 BLAS は入力遷移不要。
         // 共有する頂点・インデックスリソースは1回だけ状態遷移する。
         size_t accepted = 0;
-        for (const auto& entry : geometry)
+        vector<char> wantsQuantized(geometry.size(), 0);
+        map<VertexSourceKey, const RaytracingGeometry*> quantizeSources;
+        for (size_t index = 0; index < geometry.size(); ++index)
         {
+            const auto& entry = geometry[index];
             if (accepted >= kMaximumInstances || entry.VertexView.StrideInBytes < sizeof(XMFLOAT3))
             {
                 continue;
@@ -615,11 +979,20 @@ namespace
                 {
                     geometryReads.PrepareUpdate(bottom->second.Result.Get());
                 }
+                if (WantsQuantizedVertices(entry))
+                {
+                    wantsQuantized[index] = 1;
+                    quantizeSources.emplace(MakeVertexSourceKey(entry), &entry);
+                }
             }
         }
         geometryReads.Begin();
-        for (const auto& entry : geometry)
+        // 頂点ソースの読み取り遷移後に 16bit 量子化をまとめて実行する。
+        const auto quantizedSources = QuantizeVertexSources(commandList, frame, quantizeSources);
+        UINT rebuildBudget = static_cast<UINT>((std::max)(g_Settings.DeformingBlasRebuildsPerFrame, 0));
+        for (size_t index = 0; index < geometry.size(); ++index)
         {
+            const auto& entry = geometry[index];
             if (instances.size() >= kMaximumInstances || entry.VertexView.StrideInBytes < sizeof(XMFLOAT3))
             {
                 continue;
@@ -628,9 +1001,29 @@ namespace
                                   entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,
                                   static_cast<UINT>(entry.IndexView.Format));
             BottomLevel& bottom = frame.Geometry[key];
-            if (!BuildBottomLevel(commandList, entry, bottom, geometryReads))
+            ID3D12Resource* packed = nullptr;
+            if (wantsQuantized[index])
+            {
+                const auto found = quantizedSources.find(MakeVertexSourceKey(entry));
+                if (found != quantizedSources.end())
+                {
+                    packed = found->second;
+                }
+            }
+            if (!BuildBottomLevel(commandList, entry, bottom, geometryReads, frame, key, packed, rebuildBudget))
             {
                 return false;
+            }
+            if (!entry.Deforming && bottom.LastBuilt != g_Serial)
+            {
+                // 過去フレームでビルド済みの静的 BLAS: スクラッチは再利用しないので解放し、
+                // 未照会ならコンパクションサイズを照会する。
+                if (bottom.Scratch)
+                {
+                    frame.Retired.push_back(bottom.Scratch);
+                    bottom.Scratch.Reset();
+                }
+                QueryCompaction(commandList, frame, key, bottom);
             }
             D3D12_RAYTRACING_INSTANCE_DESC instance{};
             XMFLOAT4X4 transform;
@@ -659,6 +1052,35 @@ namespace
         BuildGlassMetadata(frame);
         // TLAS 構築とレイ判定の前に、すべての BLAS 書き込みを可視化する。
         geometryReads.Finish();
+        if (!frame.CompactionPending.empty() && frame.CompactionSizes && frame.CompactionReadback)
+        {
+            // ビルド時に書かれたコンパクションサイズをリードバックへ写す。次にこのスロットを使うときに読む。
+            const auto toCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+                frame.CompactionSizes.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            commandList->ResourceBarrier(1, &toCopy);
+            commandList->CopyBufferRegion(frame.CompactionReadback.Get(), 0, frame.CompactionSizes.Get(), 0,
+                                          static_cast<UINT64>(frame.CompactionPending.size()) * sizeof(UINT64));
+            const auto toWrite = CD3DX12_RESOURCE_BARRIER::Transition(
+                frame.CompactionSizes.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commandList->ResourceBarrier(1, &toWrite);
+            frame.CompactionReadbackValid = true;
+        }
+        // 今フレームで使わなかった量子化頂点（ビルド済みの静的メッシュ分など）は解放する。
+        for (auto iterator = frame.PackedSources.begin(); iterator != frame.PackedSources.end();)
+        {
+            if (iterator->second.LastUsed != g_Serial)
+            {
+                if (iterator->second.Buffer)
+                {
+                    frame.Retired.push_back(iterator->second.Buffer);
+                }
+                iterator = frame.PackedSources.erase(iterator);
+            }
+            else
+            {
+                ++iterator;
+            }
+        }
         for (auto iterator = frame.Geometry.begin(); iterator != frame.Geometry.end();)
         {
             if (iterator->second.LastSeen != g_Serial)
@@ -685,6 +1107,26 @@ namespace
             else
             {
                 ++iterator;
+            }
+        }
+        g_BlasStats.BottomLevels = static_cast<UINT>(frame.Geometry.size());
+        g_BlasStats.ResultBytes = 0;
+        for (const auto& [unused, bottom] : frame.Geometry)
+        {
+            if (!bottom.Result)
+            {
+                continue;
+            }
+            const UINT64 bytes = bottom.Result->GetDesc().Width;
+            g_BlasStats.ResultBytes += bytes;
+            if (bottom.Quantized)
+            {
+                ++g_BlasStats.Quantized;
+            }
+            if (bottom.Compacted && bottom.UncompactedBytes > bytes)
+            {
+                ++g_BlasStats.Compacted;
+                g_BlasStats.CompactionSavedBytes += bottom.UncompactedBytes - bytes;
             }
         }
         g_InstanceCount = static_cast<UINT>(instances.size());
@@ -937,6 +1379,11 @@ void Raytracing::Shutdown()
     g_AmbientHistoryValid = false;
     g_InstanceCount = 0;
     g_Serial = 0;
+    g_QuantizePipeline.Reset();
+    g_QuantizeRoot.Reset();
+    g_QuantizeTried = false;
+    g_RebuildStagger = 0;
+    g_BlasStats = {};
 }
 
 void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource* depth, ID3D12Resource* normal,
@@ -1338,6 +1785,11 @@ D3D12_GPU_DESCRIPTOR_HANDLE Raytracing::GetResultSrv()
 XMFLOAT4 Raytracing::GetSunDirection()
 {
     return g_SunDirection;
+}
+
+Raytracing::BlasStatistics Raytracing::GetBlasStatistics()
+{
+    return g_BlasStats;
 }
 
 UINT Raytracing::GetInstanceCount()

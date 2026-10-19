@@ -33,6 +33,27 @@ class Raytracing
         float AmbientRadius = 1.5f;
         float NormalBias = 0.015f;
         float SunAngularRadius = 0.00465f;
+        // BLAS: 静的 BLAS をビルド後に圧縮（コンパクション）し、VRAM を削減する。
+        bool CompactStaticBlas = true;
+        // BLAS: 変形 BLAS は通常リフィット（更新）し、この回数ごとにフルビルドで BVH 品質を回復する。0 で無効。
+        int DeformingBlasRebuildInterval = 32;
+        // 1 フレームあたりの変形 BLAS フルビルド数の上限（スパイク分散）。
+        int DeformingBlasRebuildsPerFrame = 2;
+        // BLAS 入力頂点を R16G16B16A16_SNORM へ量子化する（バウンディングボックス正規化 + Transform3x4 で復元）。
+        bool QuantizeBlasVertices = true;
+        // 量子化誤差（ワールド空間）の許容上限。これを超えるメッシュは 32bit 頂点のまま構築する。
+        float BlasQuantizationMaxError = 0.0005f;
+    };
+
+    struct BlasStatistics
+    {
+        UINT BottomLevels = 0;
+        UINT Compacted = 0;
+        UINT Quantized = 0;
+        UINT RefitsThisFrame = 0;
+        UINT RebuildsThisFrame = 0;
+        UINT64 ResultBytes = 0;
+        UINT64 CompactionSavedBytes = 0;
     };
 
     static bool Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UINT increment);
@@ -49,6 +70,7 @@ class Raytracing
     static ID3D12Resource* GetResultResource();
     static XMFLOAT4 GetSunDirection();
     static UINT GetInstanceCount();
+    static BlasStatistics GetBlasStatistics();
     static UINT GetDenoiserDispatchCount();
     static UINT GetAmbientDenoiserDispatchCount();
     static bool AreReflectionsActive();

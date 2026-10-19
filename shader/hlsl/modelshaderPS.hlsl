@@ -1,6 +1,7 @@
 #define SHADER_3D
 #define SHADER_FORWARD_LIGHTING
 #define SHADER_MATERIAL_OPTICS_PREVIEW
+#define POM_PIXEL_DEPTH_OUTPUT
 #include "common.hlsl"
 
 Texture2D g_Texture : register(t0);
@@ -259,6 +260,9 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
 
 #include "GeometryGlass.hlsli"
 #include "MaterialOpticsPreview.hlsli"
+#include "NormalMapDecode.hlsli"
+
+static float g_PomForwardDepth = 0.0f;
 
 float4 ShadeForward(in PSInput3D In)
 {
@@ -268,8 +272,18 @@ float4 ShadeForward(in PSInput3D In)
     const float PI = 3.14159265358979323846f;
 
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
-    float2 materialUv = ApplyAssetParallax(assetMaterial, In.TexCoord, In.WorldPos,
-                                         In.Normal, In.CameraPos, g_SamplerState);
+    AssetParallaxResult pom =
+        ApplyAssetParallaxEx(assetMaterial, In.TexCoord, In.WorldPos, In.Normal, In.CameraPos, g_SamplerState);
+    float2 materialUv = pom.Uv;
+    // ピクセル深度オフセットと POM セルフシャドウ（主光源）。
+    g_PomForwardDepth = AssetParallaxPixelDepth(pom, In.WorldPos, In.CameraPos, saturate(In.Position.z));
+#ifdef POM_HAS_MAIN_LIGHT
+    if (pom.Active)
+    {
+        g_PomSelfShadowLight = PomMainLightDirection(In.WorldPos);
+        g_PomSelfShadow = AssetParallaxSelfShadow(pom, g_PomSelfShadowLight, g_SamplerState);
+    }
+#endif
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
     // 手動モードへ切り替えた後も、モデル色の alpha にマテリアルの分類が残る場合がある。
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
@@ -292,7 +306,7 @@ float4 ShadeForward(in PSInput3D In)
     float3 surfaceNormal = In.Normal * ((FlipNormal != 0) ? -1.0f : 1.0f);
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, materialUv).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, materialUv));
         surfaceNormal = ApplyNormalMapCommon(surfaceNormal, In.WorldPos, In.TexCoord,
                                              ScaleAssetNormal(tangentNormal, assetMaterial));
     }
@@ -537,6 +551,7 @@ struct ForwardOutput
     float4 Color : SV_Target0;
     float4 Accumulation : SV_Target1;
     float4 Revealage : SV_Target2;
+    float HardwareDepth : SV_DepthGreaterEqual; // POM のピクセル深度オフセット（常に補間深度以上）
 };
 
 ForwardOutput main(in PSInput3D In)
@@ -550,6 +565,6 @@ ForwardOutput main(in PSInput3D In)
     float weight = alpha * clamp(0.03f / (0.00001f + pow(viewDistance / 200.0f, 4.0f)), 0.01f, 3000.0f);
     output.Accumulation = float4(premultiplied.rgb, alpha) * weight;
     output.Revealage = alpha.xxxx;
+    output.HardwareDepth = max(g_PomForwardDepth, In.Position.z);
     return output;
 }
-

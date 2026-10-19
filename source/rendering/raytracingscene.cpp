@@ -33,6 +33,18 @@ namespace
                     TextureManager::TouchTexture(material.EmissiveTextureID);
                     geometry.EmissionResidentMip = TextureManager::GetTextureResidentMip(material.EmissiveTextureID);
                 }
+                // ラスターの POM と同じ条件（不透明・深さ > 0・高さマップあり）。
+                if (material.ParallaxDepth > 0.0f && material.HeightTextureID >= 0 &&
+                    material.AssetSurface == MaterialSurface::Opaque && !MaterialSystem::IsTransparentMaterial(material))
+                {
+                    geometry.HeightTexture = TextureManager::GetTextureResource(material.HeightTextureID);
+                    if (geometry.HeightTexture)
+                    {
+                        TextureManager::TouchTexture(material.HeightTextureID);
+                        geometry.HeightResidentMip = TextureManager::GetTextureResidentMip(material.HeightTextureID);
+                        geometry.ParallaxDepth = (std::min)(material.ParallaxDepth, 0.2f);
+                    }
+                }
             }
             geometry.IOR = material.IOR;
             geometry.Transmission = MaterialSystem::IsTransparentMaterial(material) ? material.Transmission : 0.0f;
@@ -142,6 +154,15 @@ namespace
             entry.IndexView = mesh.IndexBufferView;
             entry.IndexCount = mesh.IndexCount;
             entry.Deforming = deforming;
+            entry.Skinned = deforming;
+            if constexpr (std::is_same_v<std::decay_t<decltype(mesh)>, StaticMeshData>)
+            {
+                if (mesh.RayRadius > 0.0f)
+                {
+                    // AABB 中心から最遠頂点までの距離 <= RayRadius なので、量子化範囲の上限として使える。
+                    entry.ObjectRadius = mesh.RayRadius;
+                }
+            }
             entry.VertexState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
             if (deforming)
             {

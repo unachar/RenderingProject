@@ -13,6 +13,8 @@ namespace RenderFeature
         bool Raytracing = false;
         bool SamplerFeedback = false;
         bool ReservedResources = false;
+        // SM6.2 のネイティブ 16bit 演算（-enable-16bit-types）。Requirements には含めない（各シェーダーが自動で退避）。
+        bool Native16BitShaderOps = false;
     };
 
     struct Requirements

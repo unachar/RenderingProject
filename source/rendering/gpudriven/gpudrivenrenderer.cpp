@@ -29,6 +29,7 @@
 #include "virtualgeometry/virtualgeometrydebug.h"
 #include "virtualgeometry/virtualgeometrytraversal.h"
 #include "occlusionculling.h"
+#include "lightingresources.h"
 #include <unordered_set>
 #include <unordered_map>
 
@@ -168,7 +169,7 @@ namespace
         CD3DX12_DESCRIPTOR_RANGE constants, textures;
         constants.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
         textures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, FrameConstants::g_kMAX_SRVS, 0, 1);
-        CD3DX12_ROOT_PARAMETER opaque[12];
+        CD3DX12_ROOT_PARAMETER opaque[13];
         opaque[0].InitAsConstants(1, 4); // このインデックスはコマンドシグネチャの契約の一部。
         opaque[1].InitAsDescriptorTable(1, &constants);
         opaque[2].InitAsShaderResourceView(30);
@@ -184,6 +185,8 @@ namespace
         gbufferOutput.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, RendererState::g_kGEOMETRY_GBUFFER_COUNT, 0);
         opaque[10].InitAsDescriptorTable(1, &visibilityInput);
         opaque[11].InitAsDescriptorTable(1, &gbufferOutput);
+        // ライト定数（b1）：POM セルフシャドウの主光源（GPUDrivenOpaquePS / VisibilityResolveCS）。
+        opaque[12].InitAsConstantBufferView(1);
         CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_ANISOTROPIC);
         sampler.MaxAnisotropy = 16;
         CD3DX12_ROOT_SIGNATURE_DESC opaqueDescription(_countof(opaque), opaque, 1, &sampler,
@@ -1005,6 +1008,7 @@ void GPUDrivenRenderer::Draw(ID3D12GraphicsCommandList* commands)
                                                   FrameConstants::g_kTEXTURE_SRV_START_INDEX,
                                               static_cast<uint32_t>(GPUVisibility::GetSettings().DebugMode)};
             list->SetGraphicsRoot32BitConstants(5, 3, textureLimits, 0);
+            list->SetGraphicsRootConstantBufferView(12, LightingResources::GetCurrentLightConstantBufferAddress());
             const D3D12_VERTEX_BUFFER_VIEW vb{data.Vertices.Resource()->GetGPUVirtualAddress(),
                                               static_cast<UINT>(data.CpuVertices.size() * sizeof(StaticModelVertex)),
                                               sizeof(StaticModelVertex)};
@@ -1405,6 +1409,7 @@ bool GPUDrivenRenderer::ResolveVisibility(ID3D12GraphicsCommandList* commands, D
                                FrameConstants::g_kTEXTURE_SRV_START_INDEX,
                            static_cast<UINT>(GPUVisibility::GetSettings().DebugMode), rate ? 1u : 0u};
     commands->SetComputeRoot32BitConstants(5, 4, limits, 0);
+    commands->SetComputeRootConstantBufferView(12, LightingResources::GetCurrentLightConstantBufferAddress());
     commands->SetComputeRootDescriptorTable(10, visibility);
     commands->SetComputeRootDescriptorTable(11,
                                             CD3DX12_GPU_DESCRIPTOR_HANDLE(heap->GetGPUDescriptorHandleForHeapStart(),
@@ -1415,3 +1420,4 @@ bool GPUDrivenRenderer::ResolveVisibility(ID3D12GraphicsCommandList* commands, D
     transition(data.Indices, is);
     return true;
 }
+

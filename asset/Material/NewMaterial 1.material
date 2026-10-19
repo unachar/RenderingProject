@@ -25,7 +25,7 @@
     "ior" : 1.5,
     "metallic" : 0.0,
     "normalScale" : 0.0,
-    "parallaxDepth" : 0.029999999329447746,
+    "parallaxDepth" : 0.020999999716877937,
     "parallaxSteps" : 32.0,
     "roughness" : 1.0,
     "shadingModel" : 0,

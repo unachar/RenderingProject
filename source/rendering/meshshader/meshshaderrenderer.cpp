@@ -15,6 +15,7 @@
 #include "virtualgeometry/virtualgeometrytraversal.h"
 #include "virtualgeometry/virtualgeometrystreaming.h"
 #include "virtualgeometry/virtualgeometrybinning.h"
+#include "lightingresources.h"
 #include <unordered_set>
 
 namespace MeshShaderRenderer
@@ -159,7 +160,7 @@ namespace MeshShaderRenderer
             cs("shader/hlsl/build/BuildMeshDispatchCS.cso", state.DispatchPSO);
             CD3DX12_DESCRIPTOR_RANGE textures;
             textures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, FrameConstants::g_kMAX_SRVS, 0, 1);
-            CD3DX12_ROOT_PARAMETER opaque[17];
+            CD3DX12_ROOT_PARAMETER opaque[18];
             opaque[0].InitAsConstants(1, 4);
             opaque[1].InitAsDescriptorTable(1, &cbv);
             opaque[2].InitAsShaderResourceView(30);
@@ -177,9 +178,11 @@ namespace MeshShaderRenderer
             opaque[14].InitAsShaderResourceView(39);
             opaque[15].InitAsDescriptorTable(1, &pages);
             opaque[16].InitAsConstants(2, 7);
+            // ライト定数（b1）。GPU 駆動の不透明 PS（POM セルフシャドウ）と同じ契約にしておく。
+            opaque[17].InitAsConstantBufferView(1);
             CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_ANISOTROPIC);
             sampler.MaxAnisotropy = 16;
-            CD3DX12_ROOT_SIGNATURE_DESC opaqueDesc(17, opaque, 1, &sampler,
+            CD3DX12_ROOT_SIGNATURE_DESC opaqueDesc(_countof(opaque), opaque, 1, &sampler,
                                                    D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
             Root(opaqueDesc, state.OpaqueRoot);
             auto ms = Shader("shader/hlsl/build/MeshletMS.cso"), ps = Shader("shader/hlsl/build/MeshletOpaquePS.cso");
@@ -772,6 +775,8 @@ namespace MeshShaderRenderer
                     commands->SetGraphicsRootShaderResourceView(7 + i, resources[i]->GetGPUVirtualAddress());
                 }
                 commands->SetGraphicsRoot32BitConstant(13, data.Options.Colors, 0);
+                commands->SetGraphicsRootConstantBufferView(17,
+                                                            LightingResources::GetCurrentLightConstantBufferAddress());
                 if (phase != VirtualGeometryTraversal::RasterPhase::Second)
                 {
                     commands->SetPipelineState(velocity ? data.VelocityFallbackPSO.Get() : data.FallbackPSO.Get());
@@ -1184,3 +1189,4 @@ namespace MeshShaderRenderer
         Data() = {};
     }
 } // 名前空間 MeshShaderRenderer
+

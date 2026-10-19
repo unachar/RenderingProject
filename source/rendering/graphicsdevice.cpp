@@ -194,6 +194,16 @@ bool GraphicsDevice::Init(HWND hwnd)
         g_FeatureCapabilities.SamplerFeedback =
             options7.SamplerFeedbackTier != D3D12_SAMPLER_FEEDBACK_TIER_NOT_SUPPORTED;
     }
+    D3D12_FEATURE_DATA_D3D12_OPTIONS4 options4{};
+    D3D12_FEATURE_DATA_SHADER_MODEL shaderModel{D3D_SHADER_MODEL_6_2};
+    if (SUCCEEDED(m_Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &options4, sizeof(options4))) &&
+        SUCCEEDED(m_Device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &shaderModel, sizeof(shaderModel))))
+    {
+        g_FeatureCapabilities.Native16BitShaderOps =
+            options4.Native16BitShaderOpsSupported && shaderModel.HighestShaderModel >= D3D_SHADER_MODEL_6_2;
+    }
+    WriteGraphicsLog("Feature capabilities: native16bit=%u\n",
+                     static_cast<unsigned>(g_FeatureCapabilities.Native16BitShaderOps));
     WriteGraphicsLog("Feature capabilities: mesh=%u dxr11=%u sampler_feedback=%u reserved_textures=%u\n",
                      static_cast<unsigned>(g_FeatureCapabilities.MeshShader),
                      static_cast<unsigned>(g_FeatureCapabilities.Raytracing),

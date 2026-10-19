@@ -42,8 +42,26 @@ float SampleParallaxDepth(uint index, float2 uv, float2 uvDx, float2 uvDy, Sampl
                               .SampleGrad(materialSampler, uv, uvDx, uvDy).r);
 }
 
-float2 ApplyAssetParallax(AssetMaterialParameters material, float2 uv, float3 worldPos, float3 meshNormal,
-                         float3 cameraPos, SamplerState materialSampler)
+// POM の結果。UV だけでなく、ピクセル深度オフセットとセルフシャドウに必要な接空間とヒット深度を返す。
+struct AssetParallaxResult
+{
+    float2 Uv;          // ずらした UV
+    float HitDepth;     // ヒット位置の深さ（0 = 元の面、1 = 最深部）
+    float DepthScale;   // UV 単位の深さ（地平線フェード込み）
+    float Facing;       // dot(N, V)
+    float WorldPerUv;   // UV 1 単位あたりのワールド長
+    float3 Tangent;
+    float3 Bitangent;
+    float3 Normal;
+    float2 UvDx;
+    float2 UvDy;
+    uint HeightIndex;
+    uint MaxSteps;
+    bool Active;
+};
+
+AssetParallaxResult ApplyAssetParallaxEx(AssetMaterialParameters material, float2 uv, float3 worldPos,
+                                         float3 meshNormal, float3 cameraPos, SamplerState materialSampler)
 {
 #ifdef SHADER_VISIBILITY_RESOLVE
     float2 uvDx = VisibilityUvDx;
@@ -56,16 +74,21 @@ float2 ApplyAssetParallax(AssetMaterialParameters material, float2 uv, float3 wo
     float3 worldDx = ddx(worldPos);
     float3 worldDy = ddy(worldPos);
 #endif
+    AssetParallaxResult result = (AssetParallaxResult)0;
+    result.Uv = uv;
+    result.UvDx = uvDx;
+    result.UvDy = uvDy;
+    result.Active = false;
     // Mask coverage and shadow passes use the original UVs; keep those materials aligned.
     if (material.Surface.z < 0.5f || (material.Textures.w & 3u) != 0u ||
         material.Parallax.x <= 0.0f || material.Parallax.z < 0.0f || material.Parallax.z >= 512.0f)
     {
-        return uv;
+        return result;
     }
     float determinant = uvDx.x * uvDy.y - uvDx.y * uvDy.x;
     if (abs(determinant) < 1e-18f)
     {
-        return uv;
+        return result;
     }
     float3 normal = SafeNormalizeCommon(meshNormal, float3(0, 1, 0));
     float3 tangent = (worldDx * uvDy.y - worldDy * uvDx.y) / determinant;
@@ -73,8 +96,10 @@ float2 ApplyAssetParallax(AssetMaterialParameters material, float2 uv, float3 wo
     float3 uvBitangent = (worldDy * uvDx.x - worldDx * uvDy.x) / determinant;
     if (dot(tangent, tangent) < 1e-12f || dot(uvBitangent, uvBitangent) < 1e-12f)
     {
-        return uv;
+        return result;
     }
+    // dP/du・dP/dv の長さ（UV → ワールドの縮尺）。深度オフセットをワールド長に直すのに使う。
+    float worldPerUv = sqrt(length(tangent) * length(uvBitangent));
     tangent = normalize(tangent);
     float3 bitangent = normalize(cross(normal, tangent));
     if (dot(bitangent, uvBitangent) < 0.0f)
@@ -85,13 +110,13 @@ float2 ApplyAssetParallax(AssetMaterialParameters material, float2 uv, float3 wo
     float facing = dot(normal, viewDirection);
     if (facing <= 0.0f)
     {
-        return uv;
+        return result;
     }
     // Fade before the horizon to prevent an unbounded offset and unstable texture traversal.
     float depthScale = clamp(material.Parallax.x, 0.0f, 0.2f) * smoothstep(0.02f, 0.15f, facing);
     if (depthScale <= 0.0f)
     {
-        return uv;
+        return result;
     }
     float2 offset = float2(dot(viewDirection, tangent), dot(viewDirection, bitangent)) *
                     (depthScale / max(facing, 0.1f));
@@ -114,7 +139,107 @@ float2 ApplyAssetParallax(AssetMaterialParameters material, float2 uv, float3 wo
     float difference = sampledDepth - layerDepth;
     float interval = previousDifference - difference;
     float previousWeight = interval > 1e-6f ? saturate(-difference / interval) : 0.0f;
-    return currentUv + uvStep * previousWeight;
+    result.Uv = currentUv + uvStep * previousWeight;
+    result.HitDepth = saturate(layerDepth - layerStep * previousWeight);
+    result.DepthScale = depthScale;
+    result.Facing = facing;
+    result.WorldPerUv = worldPerUv;
+    result.Tangent = tangent;
+    result.Bitangent = bitangent;
+    result.Normal = normal;
+    result.HeightIndex = heightIndex;
+    result.MaxSteps = maxSteps;
+    result.Active = true;
+    return result;
+}
+
+float2 ApplyAssetParallax(AssetMaterialParameters material, float2 uv, float3 worldPos, float3 meshNormal,
+                         float3 cameraPos, SamplerState materialSampler)
+{
+    return ApplyAssetParallaxEx(material, uv, worldPos, meshNormal, cameraPos, materialSampler).Uv;
+}
+
+// ピクセル深度オフセット：POM のヒット点（面の奥）をワールドへ戻し、その深度を返す。
+// 結果は常に fallbackDepth 以上（標準 Z・LESS 比較で SV_DepthGreaterEqual の条件を満たす）。
+// 接地部分の影・SSAO・ライティングの位置復元・反射レイの始点が凹凸に一致する。
+float AssetParallaxPixelDepth(AssetParallaxResult pom, float3 worldPos, float3 cameraPos, float fallbackDepth)
+{
+    if (!pom.Active || pom.HitDepth <= 0.0f)
+    {
+        return fallbackDepth;
+    }
+    float3 viewDirection = SafeNormalizeCommon(cameraPos - worldPos, pom.Normal);
+    // POM の UV ずれ（HitDepth * DepthScale / facing）と同じ距離だけ視線方向へ潜る。
+    float distance = pom.HitDepth * pom.DepthScale / max(pom.Facing, 0.1f) * pom.WorldPerUv;
+    float3 displaced = worldPos - viewDirection * distance;
+    float4 clip = mul(mul(float4(displaced, 1.0f), View), Projection);
+    if (clip.w <= 1e-6f)
+    {
+        return fallbackDepth;
+    }
+    return max(saturate(clip.z / clip.w), fallbackDepth);
+}
+
+// POM セルフシャドウ：ヒット点からライト方向へ高さマップをたどり、手前の凸部による遮蔽を求める。
+// 返り値は可視率（1 = 遮蔽なし）。距離に応じて柔らかくする（Tatarchuk 2006 の soft shadow）。
+float AssetParallaxSelfShadow(AssetParallaxResult pom, float3 lightDirection, SamplerState materialSampler)
+{
+    if (!pom.Active || pom.HitDepth <= 1e-3f)
+    {
+        return 1.0f;
+    }
+    float3 lightTS = float3(dot(lightDirection, pom.Tangent), dot(lightDirection, pom.Bitangent),
+                            dot(lightDirection, pom.Normal));
+    if (lightTS.z <= 0.0f)
+    {
+        return 1.0f; // 裏側からの光は N·L が 0 にするので、ここでは扱わない
+    }
+    // 深さ 1 上るごとの UV 移動量。寝た光で発散しないよう z を下限で抑える。
+    float2 uvPerDepth = lightTS.xy / max(lightTS.z, 0.05f) * pom.DepthScale;
+    uint steps = (uint)clamp(round(pom.MaxSteps * 0.5f), 6.0f, 32.0f);
+    float shadow = 0.0f;
+    [loop] for (uint i = 1u; i <= steps; ++i)
+    {
+        float fraction = (float)i / (float)steps;
+        float rayDepth = pom.HitDepth * (1.0f - fraction);
+        float2 sampleUv = pom.Uv + uvPerDepth * (pom.HitDepth - rayDepth);
+        float surfaceDepth = SampleParallaxDepth(pom.HeightIndex, sampleUv, pom.UvDx, pom.UvDy, materialSampler);
+        // 面が光線より上（深さが浅い）なら遮蔽。ヒット点に近い遮蔽ほど影を濃くする。
+        shadow = max(shadow, (rayDepth - surfaceDepth) * (1.0f - fraction));
+        if (rayDepth <= 0.0f)
+        {
+            break;
+        }
+    }
+    return 1.0f - saturate(shadow * 8.0f);
+}
+
+// セルフシャドウを計算する主光源（LightParams b1 の先頭ライト）の方向。
+// GPU 駆動のルートシグネチャは POM_LIGHT_CBV を定義したシェーダーだけ b1 を持つ。
+#if !defined(SHADER_GPU_DRIVEN) || defined(POM_LIGHT_CBV)
+#define POM_HAS_MAIN_LIGHT 1
+float3 PomMainLightDirection(float3 worldPos)
+{
+    if (LightPositionType.w < 0.5f)
+    {
+        return SafeNormalizeCommon(LightDirection.xyz, float3(0.0f, 1.0f, 0.0f));
+    }
+    return SafeNormalizeCommon(LightPositionType.xyz - worldPos, float3(0.0f, 1.0f, 0.0f));
+}
+#endif
+
+// 影の GBuffer（PBR 画素では r / b を使わない）にセルフシャドウを詰める。
+// r = 1 を印、b = 可視率。DeferredLightingPS 側で PBR 画素かつ r = 1 のときだけ読む。
+void WriteAssetParallaxSelfShadow(AssetParallaxResult pom, float3 worldPos, SamplerState materialSampler,
+                                  inout float4 shadowGBuffer)
+{
+#ifdef POM_HAS_MAIN_LIGHT
+    if (pom.Active)
+    {
+        shadowGBuffer.r = 1.0f;
+        shadowGBuffer.b = AssetParallaxSelfShadow(pom, PomMainLightDirection(worldPos), materialSampler);
+    }
+#endif
 }
 
 bool AssetParallaxEnabled(AssetMaterialParameters material)
@@ -225,4 +350,5 @@ float3 ScaleAssetNormal(float3 tangentNormal, AssetMaterialParameters material)
     return normalize(tangentNormal);
 }
 #endif
+
 

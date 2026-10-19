@@ -1,21 +1,23 @@
 #define SHADER_3D
+#define POM_PIXEL_DEPTH_OUTPUT
 #include "common.hlsl"
-
 Texture2D g_Texture : register(t0);
 Texture2D g_NormalTexture : register(t2);
 SamplerState g_SamplerState : register(s0);
 
 #include "MaterialSurface.hlsli"
+#include "NormalMapDecode.hlsli"
 
-GBufferOutput main(in PSInput3D In)
+GBufferDepthOutput main(in PSInput3D In)
 {
 #ifdef SHADER_GPU_DRIVEN
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(materialID);
 #else
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
 #endif
-    float2 materialUv = ApplyAssetParallax(assetMaterial, In.TexCoord, In.WorldPos,
-                                         In.Normal, In.CameraPos, g_SamplerState);
+    AssetParallaxResult pom =
+        ApplyAssetParallaxEx(assetMaterial, In.TexCoord, In.WorldPos, In.Normal, In.CameraPos, g_SamplerState);
+    float2 materialUv = pom.Uv;
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)
@@ -37,7 +39,7 @@ GBufferOutput main(in PSInput3D In)
     float3 normal = In.Normal;
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, materialUv).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, materialUv));
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }
     else
@@ -46,12 +48,13 @@ GBufferOutput main(in PSInput3D In)
         normal = ApplyAssetHeightNormal(assetMaterial, normal, In.WorldPos, In.TexCoord, materialUv, g_SamplerState);
     }
 
-    GBufferOutput output;
+    GBufferDepthOutput output;
     output.EmissionAO = assetEmissionAO;
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
 
-    output.Depth = saturate(In.Position.z);
+    output.Depth = AssetParallaxPixelDepth(pom, In.WorldPos, In.CameraPos, saturate(In.Position.z));
+    output.HardwareDepth = max(output.Depth.x, In.Position.z);
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
     bool usePartParams = MaterialMode != 1;
     output.Material.r = usePartParams ? partParams.Basic.x : assetMetallic;
@@ -61,6 +64,6 @@ GBufferOutput main(in PSInput3D In)
     output.Shadow = usePartParams ? float4(partParams.Shadow0.x, partParams.Shadow0.y, partParams.Shadow0.z, 0.0f)
                                   : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
     output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
+    WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow);
     return output;
 }
-

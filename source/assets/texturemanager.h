@@ -6,6 +6,7 @@
 #include <mutex>
 #include <future>
 #include <filesystem>
+#include "texturecompression.h"
 
 struct SpriteComponent;
 struct TextureStreamingState;
@@ -43,6 +44,8 @@ class TextureManager
 
     static int LoadTexture(const char* fileName);
     static int LoadTexture(const filesystem::path& fileName);
+    // 用途別に BC 圧縮（Color=BC7 / Normal=BC5 / TwoChannel=BC5 / SingleChannel=BC4）して読み込む。
+    static int LoadTexture(const filesystem::path& fileName, TextureUsage usage);
     static int LoadNormalTexture(const char* fileName);
     // 線形の角度別配光テクスチャ。読込失敗時は -1 を返す。
     static int LoadIesProfile(const filesystem::path& fileName);

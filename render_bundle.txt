@@ -49515,6 +49515,7 @@ namespace GiResampling
 #include "virtualgeometry/virtualgeometrydebug.h"
 #include "virtualgeometry/virtualgeometrytraversal.h"
 #include "occlusionculling.h"
+#include "lightingresources.h"
 #include <unordered_set>
 #include <unordered_map>
 
@@ -49654,7 +49655,7 @@ namespace
         CD3DX12_DESCRIPTOR_RANGE constants, textures;
         constants.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
         textures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, FrameConstants::g_kMAX_SRVS, 0, 1);
-        CD3DX12_ROOT_PARAMETER opaque[12];
+        CD3DX12_ROOT_PARAMETER opaque[13];
         opaque[0].InitAsConstants(1, 4); // このインデックスはコマンドシグネチャの契約の一部。
         opaque[1].InitAsDescriptorTable(1, &constants);
         opaque[2].InitAsShaderResourceView(30);
@@ -49670,6 +49671,8 @@ namespace
         gbufferOutput.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, RendererState::g_kGEOMETRY_GBUFFER_COUNT, 0);
         opaque[10].InitAsDescriptorTable(1, &visibilityInput);
         opaque[11].InitAsDescriptorTable(1, &gbufferOutput);
+        // ライト定数（b1）：POM セルフシャドウの主光源（GPUDrivenOpaquePS / VisibilityResolveCS）。
+        opaque[12].InitAsConstantBufferView(1);
         CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_ANISOTROPIC);
         sampler.MaxAnisotropy = 16;
         CD3DX12_ROOT_SIGNATURE_DESC opaqueDescription(_countof(opaque), opaque, 1, &sampler,
@@ -50491,6 +50494,7 @@ void GPUDrivenRenderer::Draw(ID3D12GraphicsCommandList* commands)
                                                   FrameConstants::g_kTEXTURE_SRV_START_INDEX,
                                               static_cast<uint32_t>(GPUVisibility::GetSettings().DebugMode)};
             list->SetGraphicsRoot32BitConstants(5, 3, textureLimits, 0);
+            list->SetGraphicsRootConstantBufferView(12, LightingResources::GetCurrentLightConstantBufferAddress());
             const D3D12_VERTEX_BUFFER_VIEW vb{data.Vertices.Resource()->GetGPUVirtualAddress(),
                                               static_cast<UINT>(data.CpuVertices.size() * sizeof(StaticModelVertex)),
                                               sizeof(StaticModelVertex)};
@@ -50891,6 +50895,7 @@ bool GPUDrivenRenderer::ResolveVisibility(ID3D12GraphicsCommandList* commands, D
                                FrameConstants::g_kTEXTURE_SRV_START_INDEX,
                            static_cast<UINT>(GPUVisibility::GetSettings().DebugMode), rate ? 1u : 0u};
     commands->SetComputeRoot32BitConstants(5, 4, limits, 0);
+    commands->SetComputeRootConstantBufferView(12, LightingResources::GetCurrentLightConstantBufferAddress());
     commands->SetComputeRootDescriptorTable(10, visibility);
     commands->SetComputeRootDescriptorTable(11,
                                             CD3DX12_GPU_DESCRIPTOR_HANDLE(heap->GetGPUDescriptorHandleForHeapStart(),
@@ -50901,6 +50906,7 @@ bool GPUDrivenRenderer::ResolveVisibility(ID3D12GraphicsCommandList* commands, D
     transition(data.Indices, is);
     return true;
 }
+
 
 ===== FILE: source\rendering\gpudriven\gpudrivenrenderer.h =====
 #pragma once
@@ -67557,6 +67563,7 @@ namespace MeshletValidation
 #include "virtualgeometry/virtualgeometrytraversal.h"
 #include "virtualgeometry/virtualgeometrystreaming.h"
 #include "virtualgeometry/virtualgeometrybinning.h"
+#include "lightingresources.h"
 #include <unordered_set>
 
 namespace MeshShaderRenderer
@@ -67701,7 +67708,7 @@ namespace MeshShaderRenderer
             cs("shader/hlsl/build/BuildMeshDispatchCS.cso", state.DispatchPSO);
             CD3DX12_DESCRIPTOR_RANGE textures;
             textures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, FrameConstants::g_kMAX_SRVS, 0, 1);
-            CD3DX12_ROOT_PARAMETER opaque[17];
+            CD3DX12_ROOT_PARAMETER opaque[18];
             opaque[0].InitAsConstants(1, 4);
             opaque[1].InitAsDescriptorTable(1, &cbv);
             opaque[2].InitAsShaderResourceView(30);
@@ -67719,9 +67726,11 @@ namespace MeshShaderRenderer
             opaque[14].InitAsShaderResourceView(39);
             opaque[15].InitAsDescriptorTable(1, &pages);
             opaque[16].InitAsConstants(2, 7);
+            // ライト定数（b1）。GPU 駆動の不透明 PS（POM セルフシャドウ）と同じ契約にしておく。
+            opaque[17].InitAsConstantBufferView(1);
             CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_ANISOTROPIC);
             sampler.MaxAnisotropy = 16;
-            CD3DX12_ROOT_SIGNATURE_DESC opaqueDesc(17, opaque, 1, &sampler,
+            CD3DX12_ROOT_SIGNATURE_DESC opaqueDesc(_countof(opaque), opaque, 1, &sampler,
                                                    D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
             Root(opaqueDesc, state.OpaqueRoot);
             auto ms = Shader("shader/hlsl/build/MeshletMS.cso"), ps = Shader("shader/hlsl/build/MeshletOpaquePS.cso");
@@ -68314,6 +68323,8 @@ namespace MeshShaderRenderer
                     commands->SetGraphicsRootShaderResourceView(7 + i, resources[i]->GetGPUVirtualAddress());
                 }
                 commands->SetGraphicsRoot32BitConstant(13, data.Options.Colors, 0);
+                commands->SetGraphicsRootConstantBufferView(17,
+                                                            LightingResources::GetCurrentLightConstantBufferAddress());
                 if (phase != VirtualGeometryTraversal::RasterPhase::Second)
                 {
                     commands->SetPipelineState(velocity ? data.VelocityFallbackPSO.Get() : data.FallbackPSO.Get());
@@ -68726,6 +68737,7 @@ namespace MeshShaderRenderer
         Data() = {};
     }
 } // 名前空間 MeshShaderRenderer
+
 
 ===== FILE: source\rendering\meshshader\meshshaderrenderer.h =====
 #pragma once
@@ -75177,6 +75189,8 @@ namespace
     constexpr UINT kIndexDescriptors = kVertexDescriptors + kMaximumMeshes;
     constexpr UINT kTextureDescriptors = kIndexDescriptors + kMaximumMeshes;
     constexpr UINT kEmissionDescriptors = kTextureDescriptors + kMaximumMeshes;
+    // POM の高さマップ（メッシュごと、t0 space12）。
+    constexpr UINT kHeightDescriptors = kEmissionDescriptors + kMaximumMeshes;
     constexpr UINT kGiSrv = RendererState::g_kHIZ_MIP_SRV_START_INDEX + 2 * RendererState::g_kHIZ_MAX_MIPS + 44;
     static_assert(kGiSrv + kFrames <= RendererState::g_kCLOUD_DESCRIPTOR_START);
     constexpr UINT kResultSrv = RendererState::g_kHIZ_MIP_SRV_START_INDEX + 2 * RendererState::g_kHIZ_MAX_MIPS + 40;
@@ -75241,9 +75255,10 @@ namespace
         // （参照を保持するので、解放されたアドレスに別のリソースが入って同じポインタになることはない）
         struct DescriptorRecord
         {
-            ComPtr<ID3D12Resource> Vertices, Indices, Texture, Emission;
+            ComPtr<ID3D12Resource> Vertices, Indices, Texture, Emission, Height;
             UINT TextureMip = 0;
             UINT EmissionMip = 0;
+            UINT HeightMip = 0;
             bool Valid = false;
         };
 
@@ -75415,7 +75430,7 @@ namespace
             D3D12_DESCRIPTOR_HEAP_DESC desc{};
             desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
             desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-            desc.NumDescriptors = kEmissionDescriptors + kMaximumMeshes;
+            desc.NumDescriptors = kHeightDescriptors + kMaximumMeshes;
             if (FAILED(g_Device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&frame.Heap))))
             {
                 return false;
@@ -75634,7 +75649,7 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     g_Device = device;
     g_EngineHeap = engineHeap;
     g_Increment = increment;
-    CD3DX12_DESCRIPTOR_RANGE ranges[14];
+    CD3DX12_DESCRIPTOR_RANGE ranges[15];
     ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 1);
     ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0);
     for (UINT i = 2; i < 6; ++i)
@@ -75649,7 +75664,8 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     ranges[11].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 10);
     ranges[12].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 11, 0);
     ranges[13].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 11, 0, 11, 3);
-    CD3DX12_ROOT_PARAMETER parameters[21];
+    ranges[14].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kMaximumMeshes, 0, 12); // POM の高さマップ
+    CD3DX12_ROOT_PARAMETER parameters[22];
     parameters[0].InitAsShaderResourceView(25);
     parameters[1].InitAsShaderResourceView(0);
     parameters[2].InitAsConstantBufferView(6);
@@ -75670,12 +75686,13 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     parameters[18].InitAsDescriptorTable(1, &ranges[11]);
     parameters[19].InitAsDescriptorTable(2, &ranges[12]);
     parameters[20].InitAsConstantBufferView(7);
+    parameters[21].InitAsDescriptorTable(1, &ranges[14]);
     const CD3DX12_STATIC_SAMPLER_DESC samplers[2] = {
         CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_WRAP,
                                     D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP),
         CD3DX12_STATIC_SAMPLER_DESC(1, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
                                     D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP)};
-    const CD3DX12_ROOT_SIGNATURE_DESC root(21, parameters, 2, samplers);
+    const CD3DX12_ROOT_SIGNATURE_DESC root(_countof(parameters), parameters, 2, samplers);
     ComPtr<ID3DBlob> blob, errors;
     if (FAILED(D3D12SerializeRootSignature(&root, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)) ||
         FAILED(device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&g_Root))))
@@ -75895,7 +75912,9 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
             geometry.Indices
                 ? static_cast<UINT>(geometry.IndexView.BufferLocation - geometry.Indices->GetGPUVirtualAddress())
                 : 0u};
-        mesh.Material = {geometry.Roughness, geometry.Metallic, static_cast<float>(geometry.Texture != nullptr), 0};
+        // w = POM の深さ（UV 単位、0 で無効）。
+        mesh.Material = {geometry.Roughness, geometry.Metallic, static_cast<float>(geometry.Texture != nullptr),
+                         geometry.HeightTexture ? geometry.ParallaxDepth : 0.0f};
         mesh.BaseColor = geometry.BaseColor;
         mesh.Emission = geometry.Emission;
         UINT triangleCount = geometry.IndexCount / 3;
@@ -75903,7 +75922,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         {
             triangleCount = geometry.VertexView.SizeInBytes / geometry.VertexView.StrideInBytes / 3;
         }
-        mesh.Surface = {triangleCount, static_cast<UINT>(geometry.EmissionTexture != nullptr), 0,
+        mesh.Surface = {triangleCount, static_cast<UINT>(geometry.EmissionTexture != nullptr),
+                        static_cast<UINT>(geometry.HeightTexture != nullptr),
                         static_cast<UINT>(geometry.UsesAssetMaterial)};
         if (geometry.Emission.w > 0 && (geometry.Emission.x > 0 || geometry.Emission.y > 0 || geometry.Emission.z > 0))
         {
@@ -75921,6 +75941,16 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         if (geometry.EmissionTexture)
         {
             sampledResources.emplace(geometry.EmissionTexture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        }
+        const UINT heightMip = static_cast<UINT>(geometry.HeightResidentMip);
+        if (!record.Valid || record.Height.Get() != geometry.HeightTexture.Get() || record.HeightMip != heightMip)
+        {
+            TextureSrv(geometry.HeightTexture.Get(), Cpu(frame.Heap.Get(), kHeightDescriptors + i),
+                       geometry.HeightResidentMip);
+        }
+        if (geometry.HeightTexture)
+        {
+            sampledResources.emplace(geometry.HeightTexture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         }
         if (!record.Valid || record.Vertices.Get() != geometry.Vertices.Get())
         {
@@ -75950,6 +75980,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         record.Indices = geometry.Indices;
         record.Texture = geometry.Texture;
         record.Emission = geometry.EmissionTexture;
+        record.Height = geometry.HeightTexture;
+        record.HeightMip = heightMip;
         record.TextureMip = textureMip;
         record.EmissionMip = emissionMip;
         record.Valid = true;
@@ -76132,6 +76164,9 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         HashEmission(signature, &texture, sizeof(texture));
         HashEmission(signature, &emission, sizeof(emission));
         HashEmission(signature, &entry.TextureResidentMip, sizeof(entry.TextureResidentMip));
+        const auto height = entry.HeightTexture.Get();
+        HashEmission(signature, &height, sizeof(height));
+        HashEmission(signature, &entry.ParallaxDepth, sizeof(entry.ParallaxDepth));
         if (entry.Deforming)
         {
             HashEmission(signature, &nrdFrame.Sequence, sizeof(nrdFrame.Sequence));
@@ -76297,6 +76332,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         commands->SetComputeRootDescriptorTable(9, Gpu(frame.Heap.Get(), kTextureDescriptors));
         commands->SetComputeRootShaderResourceView(10, frame.Lights->GetGPUVirtualAddress());
         commands->SetComputeRootDescriptorTable(11, Gpu(frame.Heap.Get(), kEmissionDescriptors));
+        commands->SetComputeRootDescriptorTable(21, Gpu(frame.Heap.Get(), kHeightDescriptors));
         commands->SetComputeRootShaderResourceView(12, frame.Emitters->GetGPUVirtualAddress());
         commands->SetComputeRootDescriptorTable(13, Gpu(frame.Heap.Get(), kSkyLutDescriptors));
         commands->SetComputeRootDescriptorTable(14, Gpu(frame.Heap.Get(), kCacheDescriptors));
@@ -76679,6 +76715,7 @@ ID3D12Resource* RayReflections::GetGiNoisyResource()
 {
     return g_Frames[g_LastFrame].GiNoisy.Get();
 }
+
 
 ===== FILE: source\rendering\rayreflections.h =====
 #pragma once
@@ -78643,6 +78680,18 @@ namespace
                     TextureManager::TouchTexture(material.EmissiveTextureID);
                     geometry.EmissionResidentMip = TextureManager::GetTextureResidentMip(material.EmissiveTextureID);
                 }
+                // ラスターの POM と同じ条件（不透明・深さ > 0・高さマップあり）。
+                if (material.ParallaxDepth > 0.0f && material.HeightTextureID >= 0 &&
+                    material.AssetSurface == MaterialSurface::Opaque && !MaterialSystem::IsTransparentMaterial(material))
+                {
+                    geometry.HeightTexture = TextureManager::GetTextureResource(material.HeightTextureID);
+                    if (geometry.HeightTexture)
+                    {
+                        TextureManager::TouchTexture(material.HeightTextureID);
+                        geometry.HeightResidentMip = TextureManager::GetTextureResidentMip(material.HeightTextureID);
+                        geometry.ParallaxDepth = (std::min)(material.ParallaxDepth, 0.2f);
+                    }
+                }
             }
             geometry.IOR = material.IOR;
             geometry.Transmission = MaterialSystem::IsTransparentMaterial(material) ? material.Transmission : 0.0f;
@@ -78916,6 +78965,7 @@ vector<RaytracingGeometry> GatherRaytracingGeometry()
     return geometry;
 }
 
+
 ===== FILE: source\rendering\raytracingscene.h =====
 #pragma once
 
@@ -78942,6 +78992,10 @@ struct RaytracingGeometry
     XMFLOAT4 Emission{};
     ComPtr<ID3D12Resource> EmissionTexture;
     UINT EmissionResidentMip = 0;
+    // POM の高さマップ（反射の二次ヒットで UV のずれと凹凸法線に使う）。不透明マテリアルアセットのみ。
+    ComPtr<ID3D12Resource> HeightTexture;
+    UINT HeightResidentMip = 0;
+    float ParallaxDepth = 0.0f;
     float Roughness = 0.5f;
     float Metallic = 0.0f;
     UINT MediumID = 0;
@@ -78955,6 +79009,7 @@ struct RaytracingGeometry
 };
 
 vector<RaytracingGeometry> GatherRaytracingGeometry();
+
 
 ===== FILE: source\rendering\rendercapture.cpp =====
 #include "pch.h"
@@ -115411,6 +115466,30 @@ struct GBufferOutput
     float4 EmissionAO : SV_Target5;
 };
 
+// POM のピクセル深度オフセット付き GBuffer 出力。深度は常に補間深度以上（奥）にしか動かさないので、
+// SV_DepthGreaterEqual（保守的深度）で LESS 比較の Early-Z を維持する。
+struct GBufferDepthOutput
+{
+    float4 Color : SV_Target0;
+    float4 Normal : SV_Target1;
+    float4 Depth : SV_Target2;
+    float4 Material : SV_Target3;
+    float4 Shadow : SV_Target4;
+    float4 EmissionAO : SV_Target5;
+    float HardwareDepth : SV_DepthGreaterEqual;
+};
+
+struct PS_OUTPUT_GEOMETRY_DEPTH
+{
+    float4 Color : SV_Target0;
+    float4 Normal : SV_Target1;
+    float4 Depth : SV_Target2;
+    float4 Material : SV_Target3;
+    float4 Shadow : SV_Target4;
+    float4 EmissionAO : SV_Target5;
+    float HardwareDepth : SV_DepthGreaterEqual;
+};
+
 struct PS_OUTPUT_GEOMETRY
 {
     float4 Color : SV_Target0;
@@ -115475,7 +115554,11 @@ struct VSInput3D
 
 struct PSInput3D
 {
+#ifdef POM_PIXEL_DEPTH_OUTPUT
+    noperspective centroid float4 Position : SV_POSITION;
+#else
     float4 Position : SV_POSITION;
+#endif
     float3 Normal : NORMAL;
     float2 TexCoord : TEXCOORD;
     float4 Diffuse : COLOR;
@@ -116741,6 +116824,7 @@ float3 ReconstructPostProcessWorldPositionCommon(float2 uv, float depth)
 
 #endif
 
+
 ===== FILE: shader\hlsl\debugLinePS.hlsl =====
 #define SHADER_DEBUG_LINE
 #include "common.hlsl"
@@ -116935,6 +117019,14 @@ float4 ShadeDeferred(PSInputPostProcess input)
     {
         // 拡張マテリアルモデル（影の GBuffer の alpha）と、PBR の面に適用する天候。
         g_ShadingModel = DecodeShadingModel(shadowParams.a);
+        // POM セルフシャドウ（MaterialSurface.hlsli: WriteAssetParallaxSelfShadow）。r = 1 が印、b = 可視率。
+        if (shadowParams.r > 0.999f)
+        {
+            g_PomSelfShadow = saturate(shadowParams.b);
+            g_PomSelfShadowLight = LightPositionType.w < 0.5f
+                                       ? SafeNormalizeCommon(LightDirection.xyz, float3(0.0f, 1.0f, 0.0f))
+                                       : SafeNormalizeCommon(LightPositionType.xyz - position, float3(0.0f, 1.0f, 0.0f));
+        }
         ApplyWeatherToSurface(position, surfaceNormal, baseColor.rgb, material.rgb);
     }
     float3 viewDir = SafeNormalizeCommon(PPCameraPos.xyz - position, surfaceNormal);
@@ -117309,8 +117401,12 @@ float4 MegaLightsShadePS(PSInputPostProcess input) : SV_Target
     return 0.0f;
 }
 
+
 ===== FILE: shader\hlsl\DeferredPS.hlsl =====
 #define SHADER_3D
+#ifndef SHADER_VISIBILITY_RESOLVE
+#define POM_PIXEL_DEPTH_OUTPUT
+#endif
 #include "common.hlsl"
 
 #ifdef SHADER_GPU_DRIVEN
@@ -117323,7 +117419,7 @@ SamplerState g_SamplerState : register(s0);
 
 #include "MaterialSurface.hlsli"
 
-GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
+GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
 {
 #ifdef SHADER_GPU_DRIVEN
     uint materialID = gSceneInstances[In.InstanceID].MaterialIndex;
@@ -117353,8 +117449,9 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
 #else
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
 #endif
-    float2 materialUv = ApplyAssetParallax(assetMaterial, In.TexCoord, In.WorldPos,
-                                         In.Normal, In.CameraPos, g_SamplerState);
+    AssetParallaxResult pom =
+        ApplyAssetParallaxEx(assetMaterial, In.TexCoord, In.WorldPos, In.Normal, In.CameraPos, g_SamplerState);
+    float2 materialUv = pom.Uv;
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)
@@ -117431,7 +117528,8 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
 
-    output.Depth = saturate(In.Position.z);
+    // ピクセル深度オフセット：GBuffer 深度（ライティング・影・SSAO・反射レイの始点）を凹凸の奥へ。
+    output.Depth = AssetParallaxPixelDepth(pom, In.WorldPos, In.CameraPos, saturate(In.Position.z));
 
 #ifdef SHADER_GPU_DRIVEN
     MaterialPartShaderParams partParams = LoadGpuDrivenPart(materialID, materialPartId);
@@ -117447,6 +117545,8 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     output.Shadow.g = usePartParams ? partParams.Shadow0.y : ShadowSoftness;
     output.Shadow.b = usePartParams ? partParams.Shadow0.z : ShadowStrength;
     output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
+    // POM セルフシャドウ（主光源）。
+    WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow);
     output.Color.a = 1.0f;
 #ifdef SHADER_GPU_DRIVEN
     if (VisibilityDebugMode != 0)
@@ -117461,6 +117561,26 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     return output;
 }
 
+#ifdef SHADER_VISIBILITY_RESOLVE
+GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
+{
+    return ShadeGBuffer(In, frontFace);
+}
+#else
+GBufferDepthOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
+{
+    GBufferOutput shaded = ShadeGBuffer(In, frontFace);
+    GBufferDepthOutput output;
+    output.Color = shaded.Color;
+    output.Normal = shaded.Normal;
+    output.Depth = shaded.Depth;
+    output.Material = shaded.Material;
+    output.Shadow = shaded.Shadow;
+    output.EmissionAO = shaded.EmissionAO;
+    output.HardwareDepth = max(shaded.Depth.x, In.Position.z);
+    return output;
+}
+#endif
 
 ===== FILE: shader\hlsl\DlssPrepareCS.hlsl =====
 Texture2D<float4> Input : register(t0);
@@ -118150,6 +118270,7 @@ bool TraceGeometryGlass(float3 rasterPosition, float3 viewDir, float3 rayDx, flo
 
 ===== FILE: shader\hlsl\GeometryPS.hlsl =====
 #define SHADER_3D
+#define POM_PIXEL_DEPTH_OUTPUT
 #include "common.hlsl"
 
 Texture2D TextureBaseColor : register(t0);
@@ -118158,17 +118279,18 @@ SamplerState Sampler : register(s0);
 
 #include "MaterialSurface.hlsli"
 
-PS_OUTPUT_GEOMETRY main(PSInput3D input)
+PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
 {
-    PS_OUTPUT_GEOMETRY output;
+    PS_OUTPUT_GEOMETRY_DEPTH output;
 
 #ifdef SHADER_GPU_DRIVEN
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(materialID);
 #else
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
 #endif
-    float2 materialUv = ApplyAssetParallax(assetMaterial, input.TexCoord, input.WorldPos,
-                                         input.Normal, input.CameraPos, Sampler);
+    AssetParallaxResult pom =
+        ApplyAssetParallaxEx(assetMaterial, input.TexCoord, input.WorldPos, input.Normal, input.CameraPos, Sampler);
+    float2 materialUv = pom.Uv;
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(input.Diffuse.a, 0.0f);
     float4 baseColor = float4(input.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)
@@ -118204,7 +118326,8 @@ PS_OUTPUT_GEOMETRY main(PSInput3D input)
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
 
-    output.Depth = saturate(input.Position.z);
+    output.Depth = AssetParallaxPixelDepth(pom, input.WorldPos, input.CameraPos, saturate(input.Position.z));
+    output.HardwareDepth = max(output.Depth.x, input.Position.z);
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
     bool usePartParams = MaterialMode != 1;
     output.Material.r = usePartParams ? partParams.Basic.x : assetMetallic;
@@ -118214,9 +118337,11 @@ PS_OUTPUT_GEOMETRY main(PSInput3D input)
     output.Shadow = usePartParams ? float4(partParams.Shadow0.x, partParams.Shadow0.y, partParams.Shadow0.z, 0.0f)
                                   : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
     output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
+    WriteAssetParallaxSelfShadow(pom, input.WorldPos, Sampler, output.Shadow);
 
     return output;
 }
+
 
 
 ===== FILE: shader\hlsl\GlassHitLighting.hlsli =====
@@ -118612,7 +118737,10 @@ MaterialPartShaderParams LoadGpuDrivenPart(uint material, float partID)
 
 ===== FILE: shader\hlsl\GPUDrivenOpaquePS.hlsl =====
 #define SHADER_GPU_DRIVEN
+// GPU 駆動のルートシグネチャはライト定数（b1）を持つ。POM セルフシャドウの主光源に使う。
+#define POM_LIGHT_CBV
 #include "DeferredPS.hlsl"
+
 
 ===== FILE: shader\hlsl\GPUDrivenOpaqueVS.hlsl =====
 #define SHADER_3D
@@ -118708,6 +118836,7 @@ uint4 main(PSInput3D input, uint primitive : SV_PrimitiveID, bool front : SV_IsF
 ===== FILE: shader\hlsl\GPUDrivenVisibilityResolveCS.hlsl =====
 #define SHADER_GPU_DRIVEN
 #define SHADER_VISIBILITY_RESOLVE
+#define POM_LIGHT_CBV
 #define main EvaluateMaterial
 #include "DeferredPS.hlsl"
 #undef main
@@ -118911,8 +119040,10 @@ void ResolvePacked(uint2 pixel)
         uint material = gSceneInstances[ids[0].x].MaterialIndex;
         uint4 metadata = gSceneMaterials.Load4(material * GPU_SCENE_MATERIAL_STRIDE + 32u);
         AssetMaterialParameters asset = LoadAssetMaterial(material);
+        // POM はピクセルごとに UV・深度・影が変わるので、2x2 共有シェーディングから外す。
         share = (metadata.z & 1u) == 0 && metadata.y == 0xffffffffu &&
-                (asset.Surface.z < .5 || all(asset.Textures.xyz >= 512u));
+                (asset.Surface.z < .5 || (all(asset.Textures.xyz >= 512u) &&
+                                          (asset.Parallax.x <= 0.0f || asset.Parallax.z < 0.0f)));
         GPUInstanceData instance = gSceneInstances[ids[0].x];
         [unroll] for (uint row = 0; row < 4; ++row)
         {
@@ -118942,7 +119073,8 @@ void ResolvePacked(uint2 pixel)
             {
                 value = Shade(inputs[i], ids[i], extent);
             }
-            Store(p, value, inputs[i].Position.z);
+            // 非共有時は POM のピクセル深度オフセット込みの深度を書く。
+            Store(p, value, share ? inputs[i].Position.z : value.Depth.x);
         }
         else
         {
@@ -118950,6 +119082,7 @@ void ResolvePacked(uint2 pixel)
         }
     }
 }
+
 
 ===== FILE: shader\hlsl\GpuInstanceArgsCS.hlsl =====
 ByteAddressBuffer LodCounts : register(t0);
@@ -120782,8 +120915,26 @@ float SampleParallaxDepth(uint index, float2 uv, float2 uvDx, float2 uvDy, Sampl
                               .SampleGrad(materialSampler, uv, uvDx, uvDy).r);
 }
 
-float2 ApplyAssetParallax(AssetMaterialParameters material, float2 uv, float3 worldPos, float3 meshNormal,
-                         float3 cameraPos, SamplerState materialSampler)
+// POM の結果。UV だけでなく、ピクセル深度オフセットとセルフシャドウに必要な接空間とヒット深度を返す。
+struct AssetParallaxResult
+{
+    float2 Uv;          // ずらした UV
+    float HitDepth;     // ヒット位置の深さ（0 = 元の面、1 = 最深部）
+    float DepthScale;   // UV 単位の深さ（地平線フェード込み）
+    float Facing;       // dot(N, V)
+    float WorldPerUv;   // UV 1 単位あたりのワールド長
+    float3 Tangent;
+    float3 Bitangent;
+    float3 Normal;
+    float2 UvDx;
+    float2 UvDy;
+    uint HeightIndex;
+    uint MaxSteps;
+    bool Active;
+};
+
+AssetParallaxResult ApplyAssetParallaxEx(AssetMaterialParameters material, float2 uv, float3 worldPos,
+                                         float3 meshNormal, float3 cameraPos, SamplerState materialSampler)
 {
 #ifdef SHADER_VISIBILITY_RESOLVE
     float2 uvDx = VisibilityUvDx;
@@ -120796,16 +120947,21 @@ float2 ApplyAssetParallax(AssetMaterialParameters material, float2 uv, float3 wo
     float3 worldDx = ddx(worldPos);
     float3 worldDy = ddy(worldPos);
 #endif
+    AssetParallaxResult result = (AssetParallaxResult)0;
+    result.Uv = uv;
+    result.UvDx = uvDx;
+    result.UvDy = uvDy;
+    result.Active = false;
     // Mask coverage and shadow passes use the original UVs; keep those materials aligned.
     if (material.Surface.z < 0.5f || (material.Textures.w & 3u) != 0u ||
         material.Parallax.x <= 0.0f || material.Parallax.z < 0.0f || material.Parallax.z >= 512.0f)
     {
-        return uv;
+        return result;
     }
     float determinant = uvDx.x * uvDy.y - uvDx.y * uvDy.x;
     if (abs(determinant) < 1e-18f)
     {
-        return uv;
+        return result;
     }
     float3 normal = SafeNormalizeCommon(meshNormal, float3(0, 1, 0));
     float3 tangent = (worldDx * uvDy.y - worldDy * uvDx.y) / determinant;
@@ -120813,8 +120969,10 @@ float2 ApplyAssetParallax(AssetMaterialParameters material, float2 uv, float3 wo
     float3 uvBitangent = (worldDy * uvDx.x - worldDx * uvDy.x) / determinant;
     if (dot(tangent, tangent) < 1e-12f || dot(uvBitangent, uvBitangent) < 1e-12f)
     {
-        return uv;
+        return result;
     }
+    // dP/du・dP/dv の長さ（UV → ワールドの縮尺）。深度オフセットをワールド長に直すのに使う。
+    float worldPerUv = sqrt(length(tangent) * length(uvBitangent));
     tangent = normalize(tangent);
     float3 bitangent = normalize(cross(normal, tangent));
     if (dot(bitangent, uvBitangent) < 0.0f)
@@ -120825,13 +120983,13 @@ float2 ApplyAssetParallax(AssetMaterialParameters material, float2 uv, float3 wo
     float facing = dot(normal, viewDirection);
     if (facing <= 0.0f)
     {
-        return uv;
+        return result;
     }
     // Fade before the horizon to prevent an unbounded offset and unstable texture traversal.
     float depthScale = clamp(material.Parallax.x, 0.0f, 0.2f) * smoothstep(0.02f, 0.15f, facing);
     if (depthScale <= 0.0f)
     {
-        return uv;
+        return result;
     }
     float2 offset = float2(dot(viewDirection, tangent), dot(viewDirection, bitangent)) *
                     (depthScale / max(facing, 0.1f));
@@ -120854,7 +121012,107 @@ float2 ApplyAssetParallax(AssetMaterialParameters material, float2 uv, float3 wo
     float difference = sampledDepth - layerDepth;
     float interval = previousDifference - difference;
     float previousWeight = interval > 1e-6f ? saturate(-difference / interval) : 0.0f;
-    return currentUv + uvStep * previousWeight;
+    result.Uv = currentUv + uvStep * previousWeight;
+    result.HitDepth = saturate(layerDepth - layerStep * previousWeight);
+    result.DepthScale = depthScale;
+    result.Facing = facing;
+    result.WorldPerUv = worldPerUv;
+    result.Tangent = tangent;
+    result.Bitangent = bitangent;
+    result.Normal = normal;
+    result.HeightIndex = heightIndex;
+    result.MaxSteps = maxSteps;
+    result.Active = true;
+    return result;
+}
+
+float2 ApplyAssetParallax(AssetMaterialParameters material, float2 uv, float3 worldPos, float3 meshNormal,
+                         float3 cameraPos, SamplerState materialSampler)
+{
+    return ApplyAssetParallaxEx(material, uv, worldPos, meshNormal, cameraPos, materialSampler).Uv;
+}
+
+// ピクセル深度オフセット：POM のヒット点（面の奥）をワールドへ戻し、その深度を返す。
+// 結果は常に fallbackDepth 以上（標準 Z・LESS 比較で SV_DepthGreaterEqual の条件を満たす）。
+// 接地部分の影・SSAO・ライティングの位置復元・反射レイの始点が凹凸に一致する。
+float AssetParallaxPixelDepth(AssetParallaxResult pom, float3 worldPos, float3 cameraPos, float fallbackDepth)
+{
+    if (!pom.Active || pom.HitDepth <= 0.0f)
+    {
+        return fallbackDepth;
+    }
+    float3 viewDirection = SafeNormalizeCommon(cameraPos - worldPos, pom.Normal);
+    // POM の UV ずれ（HitDepth * DepthScale / facing）と同じ距離だけ視線方向へ潜る。
+    float distance = pom.HitDepth * pom.DepthScale / max(pom.Facing, 0.1f) * pom.WorldPerUv;
+    float3 displaced = worldPos - viewDirection * distance;
+    float4 clip = mul(mul(float4(displaced, 1.0f), View), Projection);
+    if (clip.w <= 1e-6f)
+    {
+        return fallbackDepth;
+    }
+    return max(saturate(clip.z / clip.w), fallbackDepth);
+}
+
+// POM セルフシャドウ：ヒット点からライト方向へ高さマップをたどり、手前の凸部による遮蔽を求める。
+// 返り値は可視率（1 = 遮蔽なし）。距離に応じて柔らかくする（Tatarchuk 2006 の soft shadow）。
+float AssetParallaxSelfShadow(AssetParallaxResult pom, float3 lightDirection, SamplerState materialSampler)
+{
+    if (!pom.Active || pom.HitDepth <= 1e-3f)
+    {
+        return 1.0f;
+    }
+    float3 lightTS = float3(dot(lightDirection, pom.Tangent), dot(lightDirection, pom.Bitangent),
+                            dot(lightDirection, pom.Normal));
+    if (lightTS.z <= 0.0f)
+    {
+        return 1.0f; // 裏側からの光は N·L が 0 にするので、ここでは扱わない
+    }
+    // 深さ 1 上るごとの UV 移動量。寝た光で発散しないよう z を下限で抑える。
+    float2 uvPerDepth = lightTS.xy / max(lightTS.z, 0.05f) * pom.DepthScale;
+    uint steps = (uint)clamp(round(pom.MaxSteps * 0.5f), 6.0f, 32.0f);
+    float shadow = 0.0f;
+    [loop] for (uint i = 1u; i <= steps; ++i)
+    {
+        float fraction = (float)i / (float)steps;
+        float rayDepth = pom.HitDepth * (1.0f - fraction);
+        float2 sampleUv = pom.Uv + uvPerDepth * (pom.HitDepth - rayDepth);
+        float surfaceDepth = SampleParallaxDepth(pom.HeightIndex, sampleUv, pom.UvDx, pom.UvDy, materialSampler);
+        // 面が光線より上（深さが浅い）なら遮蔽。ヒット点に近い遮蔽ほど影を濃くする。
+        shadow = max(shadow, (rayDepth - surfaceDepth) * (1.0f - fraction));
+        if (rayDepth <= 0.0f)
+        {
+            break;
+        }
+    }
+    return 1.0f - saturate(shadow * 8.0f);
+}
+
+// セルフシャドウを計算する主光源（LightParams b1 の先頭ライト）の方向。
+// GPU 駆動のルートシグネチャは POM_LIGHT_CBV を定義したシェーダーだけ b1 を持つ。
+#if !defined(SHADER_GPU_DRIVEN) || defined(POM_LIGHT_CBV)
+#define POM_HAS_MAIN_LIGHT 1
+float3 PomMainLightDirection(float3 worldPos)
+{
+    if (LightPositionType.w < 0.5f)
+    {
+        return SafeNormalizeCommon(LightDirection.xyz, float3(0.0f, 1.0f, 0.0f));
+    }
+    return SafeNormalizeCommon(LightPositionType.xyz - worldPos, float3(0.0f, 1.0f, 0.0f));
+}
+#endif
+
+// 影の GBuffer（PBR 画素では r / b を使わない）にセルフシャドウを詰める。
+// r = 1 を印、b = 可視率。DeferredLightingPS 側で PBR 画素かつ r = 1 のときだけ読む。
+void WriteAssetParallaxSelfShadow(AssetParallaxResult pom, float3 worldPos, SamplerState materialSampler,
+                                  inout float4 shadowGBuffer)
+{
+#ifdef POM_HAS_MAIN_LIGHT
+    if (pom.Active)
+    {
+        shadowGBuffer.r = 1.0f;
+        shadowGBuffer.b = AssetParallaxSelfShadow(pom, PomMainLightDirection(worldPos), materialSampler);
+    }
+#endif
 }
 
 bool AssetParallaxEnabled(AssetMaterialParameters material)
@@ -120965,6 +121223,7 @@ float3 ScaleAssetNormal(float3 tangentNormal, AssetMaterialParameters material)
     return normalize(tangentNormal);
 }
 #endif
+
 
 
 ===== FILE: shader\hlsl\MegaLightsCommon.hlsli =====
@@ -123612,6 +123871,7 @@ PSInput3D main(VSInput3D input, uint instanceId : SV_InstanceID)
 #define SHADER_3D
 #define SHADER_FORWARD_LIGHTING
 #define SHADER_MATERIAL_OPTICS_PREVIEW
+#define POM_PIXEL_DEPTH_OUTPUT
 #include "common.hlsl"
 
 Texture2D g_Texture : register(t0);
@@ -123871,6 +124131,8 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
 #include "GeometryGlass.hlsli"
 #include "MaterialOpticsPreview.hlsli"
 
+static float g_PomForwardDepth = 0.0f;
+
 float4 ShadeForward(in PSInput3D In)
 {
     float3 glassIncident = SafeNormalizeCommon(In.WorldPos - CameraPos, float3(0, 0, 1));
@@ -123879,8 +124141,18 @@ float4 ShadeForward(in PSInput3D In)
     const float PI = 3.14159265358979323846f;
 
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
-    float2 materialUv = ApplyAssetParallax(assetMaterial, In.TexCoord, In.WorldPos,
-                                         In.Normal, In.CameraPos, g_SamplerState);
+    AssetParallaxResult pom =
+        ApplyAssetParallaxEx(assetMaterial, In.TexCoord, In.WorldPos, In.Normal, In.CameraPos, g_SamplerState);
+    float2 materialUv = pom.Uv;
+    // ピクセル深度オフセットと POM セルフシャドウ（主光源）。
+    g_PomForwardDepth = AssetParallaxPixelDepth(pom, In.WorldPos, In.CameraPos, saturate(In.Position.z));
+#ifdef POM_HAS_MAIN_LIGHT
+    if (pom.Active)
+    {
+        g_PomSelfShadowLight = PomMainLightDirection(In.WorldPos);
+        g_PomSelfShadow = AssetParallaxSelfShadow(pom, g_PomSelfShadowLight, g_SamplerState);
+    }
+#endif
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
     // 手動モードへ切り替えた後も、モデル色の alpha にマテリアルの分類が残る場合がある。
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
@@ -124148,6 +124420,7 @@ struct ForwardOutput
     float4 Color : SV_Target0;
     float4 Accumulation : SV_Target1;
     float4 Revealage : SV_Target2;
+    float HardwareDepth : SV_DepthGreaterEqual; // POM のピクセル深度オフセット（常に補間深度以上）
 };
 
 ForwardOutput main(in PSInput3D In)
@@ -124161,29 +124434,32 @@ ForwardOutput main(in PSInput3D In)
     float weight = alpha * clamp(0.03f / (0.00001f + pow(viewDistance / 200.0f, 4.0f)), 0.01f, 3000.0f);
     output.Accumulation = float4(premultiplied.rgb, alpha) * weight;
     output.Revealage = alpha.xxxx;
+    output.HardwareDepth = max(g_PomForwardDepth, In.Position.z);
     return output;
 }
 
 
+
 ===== FILE: shader\hlsl\modelshaderPS_MRT.hlsl =====
 #define SHADER_3D
+#define POM_PIXEL_DEPTH_OUTPUT
 #include "common.hlsl"
-
 Texture2D g_Texture : register(t0);
 Texture2D g_NormalTexture : register(t2);
 SamplerState g_SamplerState : register(s0);
 
 #include "MaterialSurface.hlsli"
 
-GBufferOutput main(in PSInput3D In)
+GBufferDepthOutput main(in PSInput3D In)
 {
 #ifdef SHADER_GPU_DRIVEN
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(materialID);
 #else
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
 #endif
-    float2 materialUv = ApplyAssetParallax(assetMaterial, In.TexCoord, In.WorldPos,
-                                         In.Normal, In.CameraPos, g_SamplerState);
+    AssetParallaxResult pom =
+        ApplyAssetParallaxEx(assetMaterial, In.TexCoord, In.WorldPos, In.Normal, In.CameraPos, g_SamplerState);
+    float2 materialUv = pom.Uv;
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)
@@ -124214,12 +124490,13 @@ GBufferOutput main(in PSInput3D In)
         normal = ApplyAssetHeightNormal(assetMaterial, normal, In.WorldPos, In.TexCoord, materialUv, g_SamplerState);
     }
 
-    GBufferOutput output;
+    GBufferDepthOutput output;
     output.EmissionAO = assetEmissionAO;
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
 
-    output.Depth = saturate(In.Position.z);
+    output.Depth = AssetParallaxPixelDepth(pom, In.WorldPos, In.CameraPos, saturate(In.Position.z));
+    output.HardwareDepth = max(output.Depth.x, In.Position.z);
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
     bool usePartParams = MaterialMode != 1;
     output.Material.r = usePartParams ? partParams.Basic.x : assetMetallic;
@@ -124229,8 +124506,10 @@ GBufferOutput main(in PSInput3D In)
     output.Shadow = usePartParams ? float4(partParams.Shadow0.x, partParams.Shadow0.y, partParams.Shadow0.z, 0.0f)
                                   : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
     output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
+    WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow);
     return output;
 }
+
 
 
 ===== FILE: shader\hlsl\modelshaderVS.hlsl =====
@@ -124744,6 +125023,7 @@ ByteAddressBuffer SceneVertices[] : register(t0, space1);
 ByteAddressBuffer SceneIndices[] : register(t0, space2);
 Texture2D<float4> SceneTextures[] : register(t0, space3);
 Texture2D<float4> EmissionTextures[] : register(t0, space4);
+Texture2D<float4> HeightTextures[] : register(t0, space12); // POM の高さマップ（Surface.z != 0 のメッシュのみ）
 StructuredBuffer<uint> EmissiveMeshes : register(t6);
 SamplerState MaterialSampler : register(s0);
 RWTexture2D<float4> NoisyRadiance : register(u0);
@@ -124754,10 +125034,10 @@ struct ReflectionGeometry
     float4x4 World;
     float4x4 NormalToWorld;
     uint4 Layout;    // 頂点ストライド、インデックス形式（0/16/32）、頂点オフセット、インデックスオフセット
-    float4 Material; // 粗さ、金属度、テクスチャの有効フラグ、予約領域
+    float4 Material; // 粗さ、金属度、テクスチャの有効フラグ、POM の深さ（UV 単位）
     float4 BaseColor;
     float4 Emission;
-    uint4 Surface; // 三角形数、発光テクスチャの有無、予約領域
+    uint4 Surface; // 三角形数、発光テクスチャの有無、高さマップの有無、マテリアルアセット
 };
 
 StructuredBuffer<ReflectionGeometry> ReflectionMeshes : register(t0);
@@ -125184,6 +125464,68 @@ float3 SampleVisibleReflectionSky(float3 position, float3 normal, float3 directi
     return EvaluatePhysicalSkyFast(direction, angularFootprint, includeDiscs);
 }
 
+// 反射の二次ヒットでの POM。レイ上では画素微分が無いので、1 回の視差オフセット（Offset Limiting）と
+// 高さマップの中心差分による法線に絞る。ラスター側と同じく白 = 上面、黒 = 最深部。
+float ReflectionHeight(uint instance, float2 uv, float lod)
+{
+    return saturate(HeightTextures[NonUniformResourceIndex(instance)].SampleLevel(MaterialSampler, uv, lod).r);
+}
+
+void ApplyReflectionParallax(uint instance, ReflectionGeometry mesh, float3 p0, float3 p1, float3 p2, float2 t0,
+                             float2 t1, float2 t2, float3 incoming, float hitDistance, inout float2 uv,
+                             inout float3 normal)
+{
+    float depthScale = clamp(mesh.Material.w, 0.0f, 0.2f);
+    if (mesh.Surface.z == 0u || depthScale <= 0.0f)
+    {
+        return;
+    }
+    float3 e1 = p1 - p0, e2 = p2 - p0;
+    float2 d1 = t1 - t0, d2 = t2 - t0;
+    float determinant = d1.x * d2.y - d1.y * d2.x;
+    if (abs(determinant) < 1e-12f)
+    {
+        return;
+    }
+    float3 tangent = (e1 * d2.y - e2 * d1.y) / determinant;
+    float3 uvBitangent = (e2 * d1.x - e1 * d2.x) / determinant;
+    tangent -= normal * dot(normal, tangent);
+    if (dot(tangent, tangent) < 1e-12f || dot(uvBitangent, uvBitangent) < 1e-12f)
+    {
+        return;
+    }
+    float worldPerUv = sqrt(length(tangent) * length(uvBitangent));
+    tangent = normalize(tangent);
+    float3 bitangent = normalize(cross(normal, tangent));
+    if (dot(bitangent, uvBitangent) < 0.0f)
+    {
+        bitangent = -bitangent;
+    }
+    uint width, height, levels;
+    HeightTextures[NonUniformResourceIndex(instance)].GetDimensions(0u, width, height, levels);
+    // レイの到達距離から UV のフットプリントを見積もり、ミップを選ぶ（遠い反射ほど粗く・安定に）。
+    float uvFootprint = max(hitDistance, 0.01f) * 0.002f / max(worldPerUv, 1e-4f);
+    float lod = clamp(log2(max(uvFootprint * max(width, height), 1.0f)), 0.0f, (float)max(levels, 1u) - 1.0f);
+    float3 view = -incoming;
+    float facing = dot(normal, view);
+    if (facing > 0.05f)
+    {
+        float3 viewTS = float3(dot(view, tangent), dot(view, bitangent), facing);
+        float depth = 1.0f - ReflectionHeight(instance, uv, lod);
+        // Offset Limiting：facing で割らず、寝た角度でも破綻しない。
+        uv -= viewTS.xy * depth * depthScale * smoothstep(0.05f, 0.2f, facing);
+    }
+    float2 e = max(1.0f / float2(max(width, 1u), max(height, 1u)) * exp2(lod), 1e-5f);
+    float left = ReflectionHeight(instance, uv - float2(e.x, 0), lod);
+    float right = ReflectionHeight(instance, uv + float2(e.x, 0), lod);
+    float down = ReflectionHeight(instance, uv - float2(0, e.y), lod);
+    float up = ReflectionHeight(instance, uv + float2(0, e.y), lod);
+    float2 slope = float2(right - left, up - down) / (2.0f * e) * depthScale;
+    float3 tangentNormal = normalize(float3(-slope, 1.0f));
+    float3 mapped = tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal;
+    normal = dot(mapped, mapped) > 1e-8f ? normalize(mapped) : normal;
+}
+
 float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, float3 position, float3 incoming,
                           bool diffuseOnly, uint randomSeed, out float3 surfaceDiffuse, out float3 surfaceNormal)
 {
@@ -125204,6 +125546,22 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
     if (dot(normal, incoming) > 0)
     {
         normal = -normal;
+    }
+    [branch] if (mesh.Surface.z != 0u)
+    {
+        float3 corners[3];
+        float2 cornerUv[3];
+        [unroll] for (uint c = 0; c < 3; ++c)
+        {
+            uint vertex = LoadReflectionIndex(instance, primitive * 3 + c, mesh);
+            uint offset = mesh.Layout.z + vertex * mesh.Layout.x;
+            corners[c] =
+                mul(float4(asfloat(SceneVertices[NonUniformResourceIndex(instance)].Load3(offset)), 1), mesh.World).xyz;
+            cornerUv[c] = asfloat(SceneVertices[NonUniformResourceIndex(instance)].Load2(offset + 24));
+        }
+        float hitDistance = length(position - ReflectionCamera.xyz);
+        ApplyReflectionParallax(instance, mesh, corners[0], corners[1], corners[2], cornerUv[0], cornerUv[1],
+                                cornerUv[2], incoming, hitDistance, uv, normal);
     }
     float3 lumenTotal, lumenIndirect, lumenAlbedo, lumenEmission;
     bool lumenCached =
@@ -126207,6 +126565,7 @@ float ReSTIRJacobian(GiReservoir sample, float3 neighbourPosition, float3 positi
 }
 
 #include "LumenPasses.hlsli"
+
 
 ===== FILE: shader\hlsl\RayTelemetry.hlsli =====
 #ifndef RAY_TELEMETRY_INCLUDED
@@ -127870,6 +128229,11 @@ struct ShadingModelData
 // ディファードライティングパスがピクセルごとに設定する（影の GBuffer の alpha から復号）。
 static ShadingModelData g_ShadingModel = {0u, 0.0f};
 
+// POM セルフシャドウ：GBuffer（フォワードではその場）で主光源に対して求めた可視率と、その光源の方向。
+// AccumulateSurfaceLight で同じ方向のライトの影に掛ける。既定値 1 で無効。
+static float g_PomSelfShadow = 1.0f;
+static float3 g_PomSelfShadowLight = float3(0.0f, 0.0f, 0.0f);
+
 ShadingModelData DecodeShadingModel(float encoded)
 {
     uint value = (uint)round(saturate(encoded) * 255.0f);
@@ -128406,6 +128770,11 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
         {
             shadowVisibility *= CloudSunVisibility(worldPos);
         }
+        // POM の凹凸が自分に落とす影（ラスター／DXR どちらの可視性にも掛ける）。
+        if (!decalLight && g_PomSelfShadow < 1.0f && dot(singleDir, g_PomSelfShadowLight) > 0.995f)
+        {
+            shadowVisibility *= g_PomSelfShadow;
+        }
     }
 #ifdef SHADER_RAYTRACING
     else if (gridCastShadow && SceneRayFlags.x > 0.5f && SceneRayFlags.z > 0.5f)
@@ -128933,6 +129302,7 @@ float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv,
     return color;
 }
 #endif
+
 
 ===== FILE: shader\hlsl\TAA_BlendPS.hlsl =====
 #define SHADER_POSTPROCESS
@@ -130769,9 +131139,9 @@ cbuffer NativeVisualization : register(b6)
     uint NativeLevelColors;
 }
 
-GBufferOutput main(PSInput3D input, bool frontFace : SV_IsFrontFace)
+GBufferDepthOutput main(PSInput3D input, bool frontFace : SV_IsFrontFace)
 {
-    GBufferOutput output = VirtualGeometryMaterialMain(input, frontFace);
+    GBufferDepthOutput output = VirtualGeometryMaterialMain(input, frontFace);
     if (NativeLevelColors != 0)
     {
         // テクスチャやライティングと独立して、選択レベルの色を直接出力する。

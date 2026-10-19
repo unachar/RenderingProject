@@ -1,5 +1,6 @@
 #define SHADER_3D
 #include "common.hlsl"
+#include "NormalMapDecode.hlsli"
 
 Texture2D g_Texture : register(t0);
 Texture2D g_NormalTexture : register(t2);
@@ -14,7 +15,7 @@ GBufferOutput main(in PSInput3D In)
     float3 position = In.Position.xyz / In.Position.w;
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, In.TexCoord));
         float3 tangent = SafeNormalizeCommon(mul(float3(1.0f, 0.0f, 0.0f), (float3x3)World), float3(1.0f, 0.0f, 0.0f));
         float3 bitangent =
             SafeNormalizeCommon(mul(float3(0.0f, -1.0f, 0.0f), (float3x3)World), float3(0.0f, 0.0f, 1.0f));

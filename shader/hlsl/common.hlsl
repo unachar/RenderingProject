@@ -15,6 +15,30 @@ struct GBufferOutput
     float4 EmissionAO : SV_Target5;
 };
 
+// POM のピクセル深度オフセット付き GBuffer 出力。深度は常に補間深度以上（奥）にしか動かさないので、
+// SV_DepthGreaterEqual（保守的深度）で LESS 比較の Early-Z を維持する。
+struct GBufferDepthOutput
+{
+    float4 Color : SV_Target0;
+    float4 Normal : SV_Target1;
+    float4 Depth : SV_Target2;
+    float4 Material : SV_Target3;
+    float4 Shadow : SV_Target4;
+    float4 EmissionAO : SV_Target5;
+    float HardwareDepth : SV_DepthGreaterEqual;
+};
+
+struct PS_OUTPUT_GEOMETRY_DEPTH
+{
+    float4 Color : SV_Target0;
+    float4 Normal : SV_Target1;
+    float4 Depth : SV_Target2;
+    float4 Material : SV_Target3;
+    float4 Shadow : SV_Target4;
+    float4 EmissionAO : SV_Target5;
+    float HardwareDepth : SV_DepthGreaterEqual;
+};
+
 struct PS_OUTPUT_GEOMETRY
 {
     float4 Color : SV_Target0;
@@ -79,7 +103,11 @@ struct VSInput3D
 
 struct PSInput3D
 {
+#ifdef POM_PIXEL_DEPTH_OUTPUT
+    noperspective centroid float4 Position : SV_POSITION;
+#else
     float4 Position : SV_POSITION;
+#endif
     float3 Normal : NORMAL;
     float2 TexCoord : TEXCOORD;
     float4 Diffuse : COLOR;
@@ -1344,3 +1372,4 @@ float3 ReconstructPostProcessWorldPositionCommon(float2 uv, float depth)
 }
 
 #endif
+

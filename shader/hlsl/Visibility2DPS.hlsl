@@ -1,6 +1,7 @@
 #define SHADER_2D
 #include "common.hlsl"
 #include "VisibilityCommon.hlsl"
+#include "NormalMapDecode.hlsli"
 
 Texture2D InputTexture : register(t0);
 Texture2D NormalTexture : register(t2);
@@ -17,7 +18,7 @@ uint4 main(PSInput2D input) : SV_Target0
     float3 normal = input.Normal;
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = NormalTexture.Sample(InputSampler, input.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(NormalTexture.Sample(InputSampler, input.TexCoord));
         normal = SafeNormalizeCommon(tangentNormal.x * float3(1.0f, 0.0f, 0.0f) +
                                          tangentNormal.y * float3(0.0f, -1.0f, 0.0f) + tangentNormal.z * normal,
                                      normal);

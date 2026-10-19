@@ -14,6 +14,7 @@
 #include "rendererstate.h"
 #include "renderprofiler.h"
 #include "raytracing.h"
+#include "shader16bit.h"
 #include "camera.h"
 #include "world.h"
 #include "atmosphere.h"
@@ -546,13 +547,16 @@ class AdvancedEffects final
         {
             blob.Reset();
             errors.Reset();
-            if (FAILED(D3DCompileFromFile(L"shader/hlsl/BloomCS.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-                                          entry.Entry, "cs_6_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors)))
+            // 対応 GPU ではダウン/アップサンプルのフィルター演算をネイティブ 16bit で行う（非対応時は従来どおり）。
+            bool native16 = false;
+            if (FAILED(Shader16Bit::CompileFromFile(L"shader/hlsl/BloomCS.hlsl", nullptr, entry.Entry, "cs_6_0",
+                                                    D3DCOMPILE_OPTIMIZATION_LEVEL3, &blob, &errors, &native16)))
             {
                 WriteGraphicsLog("Bloom: %s compile failed: %s\n", entry.Entry,
                                  errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
                 return false;
             }
+            WriteGraphicsLog("Bloom: %s compiled (%s)\n", entry.Entry, native16 ? "native 16bit" : "32bit");
             D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
             desc.pRootSignature = s_BloomRoot.Get();
             desc.CS = CD3DX12_SHADER_BYTECODE(blob.Get());

@@ -1,4 +1,5 @@
 #define SHADER_3D
+#define POM_PIXEL_DEPTH_OUTPUT
 #include "common.hlsl"
 
 Texture2D TextureBaseColor : register(t0);
@@ -6,18 +7,20 @@ Texture2D TextureNormal : register(t2);
 SamplerState Sampler : register(s0);
 
 #include "MaterialSurface.hlsli"
+#include "NormalMapDecode.hlsli"
 
-PS_OUTPUT_GEOMETRY main(PSInput3D input)
+PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
 {
-    PS_OUTPUT_GEOMETRY output;
+    PS_OUTPUT_GEOMETRY_DEPTH output;
 
 #ifdef SHADER_GPU_DRIVEN
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(materialID);
 #else
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
 #endif
-    float2 materialUv = ApplyAssetParallax(assetMaterial, input.TexCoord, input.WorldPos,
-                                         input.Normal, input.CameraPos, Sampler);
+    AssetParallaxResult pom =
+        ApplyAssetParallaxEx(assetMaterial, input.TexCoord, input.WorldPos, input.Normal, input.CameraPos, Sampler);
+    float2 materialUv = pom.Uv;
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(input.Diffuse.a, 0.0f);
     float4 baseColor = float4(input.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)
@@ -40,7 +43,7 @@ PS_OUTPUT_GEOMETRY main(PSInput3D input)
 
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = TextureNormal.Sample(Sampler, materialUv).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(TextureNormal.Sample(Sampler, materialUv));
         normal = ApplyNormalMapCommon(normal, input.WorldPos, input.TexCoord,
                                       ScaleAssetNormal(tangentNormal, assetMaterial));
     }
@@ -53,7 +56,8 @@ PS_OUTPUT_GEOMETRY main(PSInput3D input)
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
 
-    output.Depth = saturate(input.Position.z);
+    output.Depth = AssetParallaxPixelDepth(pom, input.WorldPos, input.CameraPos, saturate(input.Position.z));
+    output.HardwareDepth = max(output.Depth.x, input.Position.z);
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
     bool usePartParams = MaterialMode != 1;
     output.Material.r = usePartParams ? partParams.Basic.x : assetMetallic;
@@ -63,7 +67,7 @@ PS_OUTPUT_GEOMETRY main(PSInput3D input)
     output.Shadow = usePartParams ? float4(partParams.Shadow0.x, partParams.Shadow0.y, partParams.Shadow0.z, 0.0f)
                                   : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
     output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
+    WriteAssetParallaxSelfShadow(pom, input.WorldPos, Sampler, output.Shadow);
 
     return output;
 }
-

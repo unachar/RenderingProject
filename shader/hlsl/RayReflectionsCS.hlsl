@@ -22,6 +22,7 @@ ByteAddressBuffer SceneVertices[] : register(t0, space1);
 ByteAddressBuffer SceneIndices[] : register(t0, space2);
 Texture2D<float4> SceneTextures[] : register(t0, space3);
 Texture2D<float4> EmissionTextures[] : register(t0, space4);
+Texture2D<float4> HeightTextures[] : register(t0, space12); // POM の高さマップ（Surface.z != 0 のメッシュのみ）
 StructuredBuffer<uint> EmissiveMeshes : register(t6);
 SamplerState MaterialSampler : register(s0);
 RWTexture2D<float4> NoisyRadiance : register(u0);
@@ -32,10 +33,10 @@ struct ReflectionGeometry
     float4x4 World;
     float4x4 NormalToWorld;
     uint4 Layout;    // 頂点ストライド、インデックス形式（0/16/32）、頂点オフセット、インデックスオフセット
-    float4 Material; // 粗さ、金属度、テクスチャの有効フラグ、予約領域
+    float4 Material; // 粗さ、金属度、テクスチャの有効フラグ、POM の深さ（UV 単位）
     float4 BaseColor;
     float4 Emission;
-    uint4 Surface; // 三角形数、発光テクスチャの有無、予約領域
+    uint4 Surface; // 三角形数、発光テクスチャの有無、高さマップの有無、マテリアルアセット
 };
 
 StructuredBuffer<ReflectionGeometry> ReflectionMeshes : register(t0);
@@ -462,6 +463,68 @@ float3 SampleVisibleReflectionSky(float3 position, float3 normal, float3 directi
     return EvaluatePhysicalSkyFast(direction, angularFootprint, includeDiscs);
 }
 
+// 反射の二次ヒットでの POM。レイ上では画素微分が無いので、1 回の視差オフセット（Offset Limiting）と
+// 高さマップの中心差分による法線に絞る。ラスター側と同じく白 = 上面、黒 = 最深部。
+float ReflectionHeight(uint instance, float2 uv, float lod)
+{
+    return saturate(HeightTextures[NonUniformResourceIndex(instance)].SampleLevel(MaterialSampler, uv, lod).r);
+}
+
+void ApplyReflectionParallax(uint instance, ReflectionGeometry mesh, float3 p0, float3 p1, float3 p2, float2 t0,
+                             float2 t1, float2 t2, float3 incoming, float hitDistance, inout float2 uv,
+                             inout float3 normal)
+{
+    float depthScale = clamp(mesh.Material.w, 0.0f, 0.2f);
+    if (mesh.Surface.z == 0u || depthScale <= 0.0f)
+    {
+        return;
+    }
+    float3 e1 = p1 - p0, e2 = p2 - p0;
+    float2 d1 = t1 - t0, d2 = t2 - t0;
+    float determinant = d1.x * d2.y - d1.y * d2.x;
+    if (abs(determinant) < 1e-12f)
+    {
+        return;
+    }
+    float3 tangent = (e1 * d2.y - e2 * d1.y) / determinant;
+    float3 uvBitangent = (e2 * d1.x - e1 * d2.x) / determinant;
+    tangent -= normal * dot(normal, tangent);
+    if (dot(tangent, tangent) < 1e-12f || dot(uvBitangent, uvBitangent) < 1e-12f)
+    {
+        return;
+    }
+    float worldPerUv = sqrt(length(tangent) * length(uvBitangent));
+    tangent = normalize(tangent);
+    float3 bitangent = normalize(cross(normal, tangent));
+    if (dot(bitangent, uvBitangent) < 0.0f)
+    {
+        bitangent = -bitangent;
+    }
+    uint width, height, levels;
+    HeightTextures[NonUniformResourceIndex(instance)].GetDimensions(0u, width, height, levels);
+    // レイの到達距離から UV のフットプリントを見積もり、ミップを選ぶ（遠い反射ほど粗く・安定に）。
+    float uvFootprint = max(hitDistance, 0.01f) * 0.002f / max(worldPerUv, 1e-4f);
+    float lod = clamp(log2(max(uvFootprint * max(width, height), 1.0f)), 0.0f, (float)max(levels, 1u) - 1.0f);
+    float3 view = -incoming;
+    float facing = dot(normal, view);
+    if (facing > 0.05f)
+    {
+        float3 viewTS = float3(dot(view, tangent), dot(view, bitangent), facing);
+        float depth = 1.0f - ReflectionHeight(instance, uv, lod);
+        // Offset Limiting：facing で割らず、寝た角度でも破綻しない。
+        uv -= viewTS.xy * depth * depthScale * smoothstep(0.05f, 0.2f, facing);
+    }
+    float2 e = max(1.0f / float2(max(width, 1u), max(height, 1u)) * exp2(lod), 1e-5f);
+    float left = ReflectionHeight(instance, uv - float2(e.x, 0), lod);
+    float right = ReflectionHeight(instance, uv + float2(e.x, 0), lod);
+    float down = ReflectionHeight(instance, uv - float2(0, e.y), lod);
+    float up = ReflectionHeight(instance, uv + float2(0, e.y), lod);
+    float2 slope = float2(right - left, up - down) / (2.0f * e) * depthScale;
+    float3 tangentNormal = normalize(float3(-slope, 1.0f));
+    float3 mapped = tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal;
+    normal = dot(mapped, mapped) > 1e-8f ? normalize(mapped) : normal;
+}
+
 float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, float3 position, float3 incoming,
                           bool diffuseOnly, uint randomSeed, out float3 surfaceDiffuse, out float3 surfaceNormal)
 {
@@ -482,6 +545,22 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
     if (dot(normal, incoming) > 0)
     {
         normal = -normal;
+    }
+    [branch] if (mesh.Surface.z != 0u)
+    {
+        float3 corners[3];
+        float2 cornerUv[3];
+        [unroll] for (uint c = 0; c < 3; ++c)
+        {
+            uint vertex = LoadReflectionIndex(instance, primitive * 3 + c, mesh);
+            uint offset = mesh.Layout.z + vertex * mesh.Layout.x;
+            corners[c] =
+                mul(float4(asfloat(SceneVertices[NonUniformResourceIndex(instance)].Load3(offset)), 1), mesh.World).xyz;
+            cornerUv[c] = asfloat(SceneVertices[NonUniformResourceIndex(instance)].Load2(offset + 24));
+        }
+        float hitDistance = length(position - ReflectionCamera.xyz);
+        ApplyReflectionParallax(instance, mesh, corners[0], corners[1], corners[2], cornerUv[0], cornerUv[1],
+                                cornerUv[2], incoming, hitDistance, uv, normal);
     }
     float3 lumenTotal, lumenIndirect, lumenAlbedo, lumenEmission;
     bool lumenCached =
@@ -1485,3 +1564,4 @@ float ReSTIRJacobian(GiReservoir sample, float3 neighbourPosition, float3 positi
 }
 
 #include "LumenPasses.hlsli"
+

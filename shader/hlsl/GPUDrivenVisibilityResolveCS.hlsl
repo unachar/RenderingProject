@@ -1,5 +1,6 @@
 #define SHADER_GPU_DRIVEN
 #define SHADER_VISIBILITY_RESOLVE
+#define POM_LIGHT_CBV
 #define main EvaluateMaterial
 #include "DeferredPS.hlsl"
 #undef main
@@ -203,8 +204,10 @@ void ResolvePacked(uint2 pixel)
         uint material = gSceneInstances[ids[0].x].MaterialIndex;
         uint4 metadata = gSceneMaterials.Load4(material * GPU_SCENE_MATERIAL_STRIDE + 32u);
         AssetMaterialParameters asset = LoadAssetMaterial(material);
+        // POM はピクセルごとに UV・深度・影が変わるので、2x2 共有シェーディングから外す。
         share = (metadata.z & 1u) == 0 && metadata.y == 0xffffffffu &&
-                (asset.Surface.z < .5 || all(asset.Textures.xyz >= 512u));
+                (asset.Surface.z < .5 || (all(asset.Textures.xyz >= 512u) &&
+                                          (asset.Parallax.x <= 0.0f || asset.Parallax.z < 0.0f)));
         GPUInstanceData instance = gSceneInstances[ids[0].x];
         [unroll] for (uint row = 0; row < 4; ++row)
         {
@@ -234,7 +237,8 @@ void ResolvePacked(uint2 pixel)
             {
                 value = Shade(inputs[i], ids[i], extent);
             }
-            Store(p, value, inputs[i].Position.z);
+            // 非共有時は POM のピクセル深度オフセット込みの深度を書く。
+            Store(p, value, share ? inputs[i].Position.z : value.Depth.x);
         }
         else
         {
@@ -242,3 +246,4 @@ void ResolvePacked(uint2 pixel)
         }
     }
 }
+

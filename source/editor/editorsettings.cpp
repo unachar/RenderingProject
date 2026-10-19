@@ -186,6 +186,28 @@ void ImGuiManager::DrawProjectSettingsWindow()
         ImGui::Checkbox("ノイズ除去を使用", &rays.Denoise);
         ImGui::Checkbox("NRDの時間・安定化設定を固定", &rays.StableNrdProfile);
         ImGui::Checkbox("GI・影の低偏差サンプリング", &rays.StableSampling);
+        if (ImGui::TreeNode("加速構造 (BLAS)"))
+        {
+            ImGui::Checkbox("静的 BLAS をコンパクション", &rays.CompactStaticBlas);
+            ImGui::SliderInt("変形 BLAS の再構築間隔 (リフィット回数)", &rays.DeformingBlasRebuildInterval, 0, 240);
+            ImGui::SliderInt("1 フレームの再構築上限", &rays.DeformingBlasRebuildsPerFrame, 1, 16);
+            ImGui::Checkbox("BLAS 頂点を 16bit 化 (R16G16B16A16_SNORM)", &rays.QuantizeBlasVertices);
+            ImGui::BeginDisabled(!rays.QuantizeBlasVertices);
+            float errorMillimeters = rays.BlasQuantizationMaxError * 1000.0f;
+            if (ImGui::SliderFloat("量子化誤差の上限", &errorMillimeters, 0.05f, 5.0f, "%.2f mm"))
+            {
+                rays.BlasQuantizationMaxError = errorMillimeters / 1000.0f;
+            }
+            ImGui::EndDisabled();
+            const auto blas = Raytracing::GetBlasStatistics();
+            ImGui::Text("BLAS: %u / 16bit: %u / コンパクション済み: %u", blas.BottomLevels, blas.Quantized,
+                        blas.Compacted);
+            ImGui::Text("BLAS メモリ: %.1f MB (削減 %.1f MB)", static_cast<double>(blas.ResultBytes) / (1024.0 * 1024.0),
+                        static_cast<double>(blas.CompactionSavedBytes) / (1024.0 * 1024.0));
+            ImGui::Text("このフレーム: リフィット %u / フルビルド %u", blas.RefitsThisFrame, blas.RebuildsThisFrame);
+            ImGui::TextWrapped("統計は直近にレイトレーシングを実行したフレームスロットの値です。");
+            ImGui::TreePop();
+        }
         ImGui::BeginDisabled(!rays.Denoise);
         int denoiser = static_cast<int>(rays.RadianceDenoiser);
         const char* denoisers[] = {"NVIDIA NRD", "NVIDIA OptiX AI (HDR)"};
@@ -306,6 +328,22 @@ void ImGuiManager::DrawProjectSettingsWindow()
         if (ImGui::Checkbox("Reserved Resource (64 KiB tiles)", &reservedResources))
         {
             RendererSettings::SetReservedResourcesEnabled(reservedResources);
+        }
+        auto& compression = TextureCompression::GetSettings();
+        ImGui::Checkbox("取り込み時に BC7/BC5/BC4 へ圧縮 (キャッシュ)", &compression.Enabled);
+        ImGui::BeginDisabled(!compression.Enabled);
+        ImGui::Checkbox("未キャッシュ時はバックグラウンドで圧縮", &compression.BackgroundForSynchronousLoads);
+        ImGui::EndDisabled();
+        {
+            const auto stats = TextureCompression::GetStatistics();
+            ImGui::TextDisabled("キャッシュ使用 %u / 新規圧縮 %u / 対象外 %u / 待機中 %u", stats.CacheHits,
+                                stats.Compressed, stats.Skipped, stats.BackgroundPending);
+            if (stats.SourceBytes > 0)
+            {
+                ImGui::TextDisabled("新規圧縮分: %.1f MB → %.1f MB", static_cast<double>(stats.SourceBytes) / 1048576.0,
+                                    static_cast<double>(stats.CompressedBytes) / 1048576.0);
+            }
+            ImGui::TextDisabled("保存先: Data/Cache/Textures（読み込み済みテクスチャには次回読み込みから反映）");
         }
 
         ImGui::SeparatorText("Screen Space");
@@ -1248,6 +1286,18 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     auto& temporalRays = Raytracing::GetSettings();
     matched |= EditorConfig::Value(output, key, value, "ray.StableNrdProfile", temporalRays.StableNrdProfile, 0, 1);
     matched |= EditorConfig::Value(output, key, value, "ray.StableSampling", temporalRays.StableSampling, 0, 1);
+    auto& textureCompression = TextureCompression::GetSettings();
+    matched |= EditorConfig::Value(output, key, value, "texture.CompressOnImport", textureCompression.Enabled, 0, 1);
+    matched |= EditorConfig::Value(output, key, value, "texture.BackgroundCompression",
+                                   textureCompression.BackgroundForSynchronousLoads, 0, 1);
+    matched |= EditorConfig::Value(output, key, value, "ray.CompactStaticBlas", temporalRays.CompactStaticBlas, 0, 1);
+    matched |= EditorConfig::Value(output, key, value, "ray.DeformingBlasRebuildInterval",
+                                   temporalRays.DeformingBlasRebuildInterval, 0, 240);
+    matched |= EditorConfig::Value(output, key, value, "ray.DeformingBlasRebuildsPerFrame",
+                                   temporalRays.DeformingBlasRebuildsPerFrame, 1, 16);
+    matched |= EditorConfig::Value(output, key, value, "ray.QuantizeBlasVertices", temporalRays.QuantizeBlasVertices, 0, 1);
+    matched |= EditorConfig::Value(output, key, value, "ray.BlasQuantizationMaxError",
+                                   temporalRays.BlasQuantizationMaxError, 0.00001, 0.01);
     const auto field = [&](const char* name, auto& setting, long double low, long double high) {
         matched |= EditorConfig::Value(output, key, value, name, setting, low, high);
     };

@@ -1,4 +1,7 @@
 #define SHADER_3D
+#ifndef SHADER_VISIBILITY_RESOLVE
+#define POM_PIXEL_DEPTH_OUTPUT
+#endif
 #include "common.hlsl"
 
 #ifdef SHADER_GPU_DRIVEN
@@ -10,8 +13,9 @@ Texture2D g_NormalTexture : register(t2);
 SamplerState g_SamplerState : register(s0);
 
 #include "MaterialSurface.hlsli"
+#include "NormalMapDecode.hlsli"
 
-GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
+GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
 {
 #ifdef SHADER_GPU_DRIVEN
     uint materialID = gSceneInstances[In.InstanceID].MaterialIndex;
@@ -41,8 +45,9 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
 #else
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
 #endif
-    float2 materialUv = ApplyAssetParallax(assetMaterial, In.TexCoord, In.WorldPos,
-                                         In.Normal, In.CameraPos, g_SamplerState);
+    AssetParallaxResult pom =
+        ApplyAssetParallaxEx(assetMaterial, In.TexCoord, In.WorldPos, In.Normal, In.CameraPos, g_SamplerState);
+    float2 materialUv = pom.Uv;
     float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : max(In.Diffuse.a, 0.0f);
     float4 baseColor = float4(In.Diffuse.rgb, 1.0f);
     if (assetMaterial.Surface.z > 0.5f)
@@ -84,14 +89,12 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     {
         uint textureIndex = SceneTextureIndex(normalTextureIndex);
 #ifdef SHADER_VISIBILITY_RESOLVE
-        float3 tangentNormal = gSceneTextures[NonUniformResourceIndex(textureIndex)]
-                                       .SampleGrad(g_SamplerState, materialUv, VisibilityUvDx, VisibilityUvDy)
-                                       .xyz *
-                                   2 -
-                               1;
+        float3 tangentNormal = DecodeTangentNormalSample(
+            gSceneTextures[NonUniformResourceIndex(textureIndex)].SampleGrad(g_SamplerState, materialUv,
+                                                                              VisibilityUvDx, VisibilityUvDy));
 #else
         float3 tangentNormal =
-            gSceneTextures[NonUniformResourceIndex(textureIndex)].Sample(g_SamplerState, materialUv).xyz * 2.0f - 1.0f;
+            DecodeTangentNormalSample(gSceneTextures[NonUniformResourceIndex(textureIndex)].Sample(g_SamplerState, materialUv));
 #endif
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }
@@ -99,7 +102,7 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
 #else
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, materialUv).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, materialUv));
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }
 #endif
@@ -119,7 +122,8 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
 
-    output.Depth = saturate(In.Position.z);
+    // ピクセル深度オフセット：GBuffer 深度（ライティング・影・SSAO・反射レイの始点）を凹凸の奥へ。
+    output.Depth = AssetParallaxPixelDepth(pom, In.WorldPos, In.CameraPos, saturate(In.Position.z));
 
 #ifdef SHADER_GPU_DRIVEN
     MaterialPartShaderParams partParams = LoadGpuDrivenPart(materialID, materialPartId);
@@ -135,6 +139,8 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     output.Shadow.g = usePartParams ? partParams.Shadow0.y : ShadowSoftness;
     output.Shadow.b = usePartParams ? partParams.Shadow0.z : ShadowStrength;
     output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
+    // POM セルフシャドウ（主光源）。
+    WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow);
     output.Color.a = 1.0f;
 #ifdef SHADER_GPU_DRIVEN
     if (VisibilityDebugMode != 0)
@@ -149,3 +155,23 @@ GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     return output;
 }
 
+#ifdef SHADER_VISIBILITY_RESOLVE
+GBufferOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
+{
+    return ShadeGBuffer(In, frontFace);
+}
+#else
+GBufferDepthOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
+{
+    GBufferOutput shaded = ShadeGBuffer(In, frontFace);
+    GBufferDepthOutput output;
+    output.Color = shaded.Color;
+    output.Normal = shaded.Normal;
+    output.Depth = shaded.Depth;
+    output.Material = shaded.Material;
+    output.Shadow = shaded.Shadow;
+    output.EmissionAO = shaded.EmissionAO;
+    output.HardwareDepth = max(shaded.Depth.x, In.Position.z);
+    return output;
+}
+#endif

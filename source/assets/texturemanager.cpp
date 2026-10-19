@@ -2,6 +2,7 @@
 #include "graphicsdevice.h"
 #include "DirectXTex.h"
 #include "texturemanager.h"
+#include "texturecompression.h"
 #include "iesprofile.h"
 #include "componentmanager.h"
 #include "renderersettings.h"
@@ -75,6 +76,7 @@ static constexpr bool g_ReservedResourceStreamingSafe = true;
 struct DecodedEntry
 {
     string Key{};
+    filesystem::path SourcePath{};
     int SrvIndex = -1;
     TexMetadata Metadata{};
     unique_ptr<ScratchImage> Image = nullptr;
@@ -760,7 +762,7 @@ void TextureManager::EndTextureLoading()
         td.Resource = resource;
         td.Streaming = move(streaming);
         error_code timestampError;
-        const auto timestamp = filesystem::last_write_time(filesystem::u8path(d.Key), timestampError);
+        const auto timestamp = filesystem::last_write_time(d.SourcePath, timestampError);
         if (!timestampError)
         {
             td.SourceTime = timestamp.time_since_epoch().count();
@@ -1006,13 +1008,48 @@ int TextureManager::FindLoadedTexture(const filesystem::path& path)
 
 int TextureManager::LoadTexture(const filesystem::path& fileName)
 {
+    return LoadTexture(fileName, TextureUsage::Color);
+}
+
+// ソース画像を読み込み、BC 圧縮キャッシュがあればそれを使う。inlineCompress が偽なら、未キャッシュ時は
+// 非圧縮のまま返し、圧縮はバックグラウンドで行う（次回読み込みから BC）。
+static HRESULT LoadCompressedOrSource(const filesystem::path& path, TextureUsage usage, bool inlineCompress,
+                                      TexMetadata& metadata, ScratchImage& image)
+{
+    const uint64_t cacheKey = TextureCompression::FileCacheKey(path, usage);
+    if (TextureCompression::TryLoadCached(cacheKey, metadata, image))
+    {
+        return S_OK;
+    }
+    HRESULT hr = LoadImageFromFile(path.c_str(), metadata, image);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    EnsureMipChain(metadata, image);
+    if (TextureCompression::GetSettings().Enabled && TextureCompression::IsCompressible(metadata))
+    {
+        if (inlineCompress)
+        {
+            TextureCompression::CompressAndCache(cacheKey, usage, metadata, image);
+        }
+        else
+        {
+            TextureCompression::CompressFileInBackground(cacheKey, usage, path);
+        }
+    }
+    return S_OK;
+}
+
+int TextureManager::LoadTexture(const filesystem::path& fileName, TextureUsage usage)
+{
     if (fileName.empty())
     {
         Debug::Log("ERROR: Texture path is empty.\n");
         return GetErrorTextureIndex();
     }
 
-    const string key = MakeTextureCacheKey(fileName);
+    const string key = MakeTextureCacheKey(fileName) + TextureCompression::KeySuffix(usage);
     const string displayPath = PathToUtf8(fileName);
     {
         lock_guard<mutex> lock(g_TextureMutex);
@@ -1039,14 +1076,17 @@ int TextureManager::LoadTexture(const filesystem::path& fileName)
     {
         auto entry = make_shared<DecodedEntry>();
         entry->Key = key;
+        entry->SourcePath = fileName;
         entry->SrvIndex = srvIndex;
         entry->Future = entry->Promise.get_future();
 
-        wstring pathString = fileName.wstring();
-        thread([entry, pathString]() mutable {
+        filesystem::path sourcePath = fileName;
+        const bool inlineCompress = !TextureCompression::GetSettings().BackgroundForSynchronousLoads;
+        thread([entry, sourcePath, usage, inlineCompress]() mutable {
             TexMetadata metadata;
             auto image = make_unique<ScratchImage>();
-            HRESULT hr = LoadImageFromFile(pathString.c_str(), metadata, *image);
+            // 未キャッシュ時の圧縮は設定に従う（既定はバックグラウンド。シーン読み込みを初回でも遅くしない）。
+            HRESULT hr = LoadCompressedOrSource(sourcePath, usage, inlineCompress, metadata, *image);
             if (SUCCEEDED(hr))
             {
                 entry->Metadata = metadata;
@@ -1073,7 +1113,10 @@ int TextureManager::LoadTexture(const filesystem::path& fileName)
     TexMetadata metadata;
     ScratchImage image;
 
-    HRESULT hr = LoadImageFromFile(fileName.c_str(), metadata, image);
+    // メインスレッドを止めないよう、未キャッシュ時の圧縮は既定でバックグラウンドへ回す（設定で変更可）。
+    HRESULT hr = LoadCompressedOrSource(fileName, usage,
+                                        !TextureCompression::GetSettings().BackgroundForSynchronousLoads, metadata,
+                                        image);
     if (FAILED(hr))
     {
         Debug::Log("ERROR: Failed to load texture: %s (HRESULT: 0x%08X)\n", displayPath.c_str(), hr);
@@ -1115,7 +1158,13 @@ int TextureManager::LoadTexture(const filesystem::path& fileName)
 
 int TextureManager::LoadNormalTexture(const char* fileName)
 {
-    return LoadTexture(fileName);
+    if (!fileName || fileName[0] == '\0')
+    {
+        Debug::Log("ERROR: Texture path is empty.\n");
+        return GetErrorTextureIndex();
+    }
+    // BC5（RG）。Z は NormalMapDecode.hlsli で再構成する。
+    return LoadTexture(filesystem::u8path(fileName), TextureUsage::Normal);
 }
 
 int TextureManager::LoadIesProfile(const filesystem::path& fileName)
@@ -1234,13 +1283,29 @@ int TextureManager::LoadTextureFromMemory(const char* name, const uint8_t* pData
 
     TexMetadata metadata;
     ScratchImage image;
-    HRESULT hr = LoadImageFromMemory(pData, dataSize, metadata, image);
-    if (FAILED(hr))
+    // モデル埋め込みテクスチャはベースカラー扱い（BC7）。内容ハッシュでキャッシュする。
+    const uint64_t cacheKey = TextureCompression::MemoryCacheKey(pData, dataSize, TextureUsage::Color);
+    if (!TextureCompression::TryLoadCached(cacheKey, metadata, image))
     {
-        Debug::Log("ERROR: Failed to load texture from memory: %s (HRESULT: 0x%08X)\n", name, hr);
-        return GetErrorTextureIndex();
+        HRESULT hr = LoadImageFromMemory(pData, dataSize, metadata, image);
+        if (FAILED(hr))
+        {
+            Debug::Log("ERROR: Failed to load texture from memory: %s (HRESULT: 0x%08X)\n", name, hr);
+            return GetErrorTextureIndex();
+        }
+        EnsureMipChain(metadata, image);
+        if (TextureCompression::GetSettings().Enabled && TextureCompression::IsCompressible(metadata))
+        {
+            if (TextureCompression::GetSettings().BackgroundForSynchronousLoads)
+            {
+                TextureCompression::CompressMemoryInBackground(cacheKey, TextureUsage::Color, pData, dataSize);
+            }
+            else
+            {
+                TextureCompression::CompressAndCache(cacheKey, TextureUsage::Color, metadata, image);
+            }
+        }
     }
-    EnsureMipChain(metadata, image);
 
     ID3D12Device* device = GraphicsDevice::GetDevice();
     shared_ptr<TextureStreamingState> streaming;
@@ -1348,7 +1413,7 @@ vector<TextureManager::TextureInfo> TextureManager::GetLoadedTextureInfos()
             continue;
         }
         TextureInfo info;
-        info.Path = pair.first;
+        info.Path = TextureCompression::StripKeySuffix(pair.first);
         info.SrvIndex = pair.second.SrvIndex;
         if (pair.second.Resource)
         {
@@ -1476,3 +1541,5 @@ bool TextureManager::IsReservedResourceStreamingAvailable()
 {
     return g_ReservedResourcesSupported && g_ReservedResourceStreamingSafe;
 }
+
+#include "texturecompression.inl"

@@ -149,6 +149,14 @@ float4 ShadeDeferred(PSInputPostProcess input)
     {
         // 拡張マテリアルモデル（影の GBuffer の alpha）と、PBR の面に適用する天候。
         g_ShadingModel = DecodeShadingModel(shadowParams.a);
+        // POM セルフシャドウ（MaterialSurface.hlsli: WriteAssetParallaxSelfShadow）。r = 1 が印、b = 可視率。
+        if (shadowParams.r > 0.999f)
+        {
+            g_PomSelfShadow = saturate(shadowParams.b);
+            g_PomSelfShadowLight = LightPositionType.w < 0.5f
+                                       ? SafeNormalizeCommon(LightDirection.xyz, float3(0.0f, 1.0f, 0.0f))
+                                       : SafeNormalizeCommon(LightPositionType.xyz - position, float3(0.0f, 1.0f, 0.0f));
+        }
         ApplyWeatherToSurface(position, surfaceNormal, baseColor.rgb, material.rgb);
     }
     float3 viewDir = SafeNormalizeCommon(PPCameraPos.xyz - position, surfaceNormal);
@@ -522,3 +530,4 @@ float4 MegaLightsShadePS(PSInputPostProcess input) : SV_Target
     MegaLightRaw[linearIndex] = result;
     return 0.0f;
 }
+

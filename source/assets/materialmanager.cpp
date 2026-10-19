@@ -170,7 +170,19 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
             }
             else
             {
-                descriptors[slot] = TextureManager::LoadTexture(path);
+                // シェーダーが参照するチャンネルに合わせて BC 形式を選ぶ。
+                // MetallicRoughness は .rg（BC5）、AO と高さは .r（BC4）、ベースカラーとエミッシブは BC7。
+                TextureUsage usage = TextureUsage::Color;
+                if (slot == static_cast<size_t>(MaterialTextureSlot::MetallicRoughness))
+                {
+                    usage = TextureUsage::TwoChannel;
+                }
+                else if (slot == static_cast<size_t>(MaterialTextureSlot::AO) ||
+                         slot == static_cast<size_t>(MaterialTextureSlot::Height))
+                {
+                    usage = TextureUsage::SingleChannel;
+                }
+                descriptors[slot] = TextureManager::LoadTexture(path, usage);
             }
             runtime.TexturePaths[slot] = path;
         }

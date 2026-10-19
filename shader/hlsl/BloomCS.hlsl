@@ -31,25 +31,48 @@ Texture2D<float> SceneDepth : register(t3);
 RWTexture2D<float4> Destination : register(u0);
 SamplerState LinearClamp : register(s0);
 
+#include "Half16.hlsli"
+
 static const float3 kLuma = float3(0.2126f, 0.7152f, 0.0722f);
 
-float KarisWeight(float3 color)
+// ダウン/アップサンプルのフィルター演算は 16bit（対応 GPU）で行う。加算は重み付きで逐次行い、
+// 中間値が入力の最大値を超えないようにして FP16 のオーバーフローを避ける。
+// 明るい画素の重みは FP16 の非正規化数域（< 6.1e-5）に入るため、重みと正規化は float で行う。
+float KarisWeight(hfloat3 color)
 {
-    return 1.0f / (1.0f + dot(color, kLuma));
+    return 1.0f / (1.0f + dot((float3)color, kLuma));
 }
 
-float3 SoftThreshold(float3 color)
+hfloat3 SoftThreshold(hfloat3 color)
 {
     if (Threshold <= 0.0f)
     {
         return color;
     }
+    // しきい値の計算はスカラー 1 回なので float で行い、係数だけ 16bit に戻す。
     float brightness = max(color.r, max(color.g, color.b));
     float knee = Threshold * 0.5f;
     float soft = clamp(brightness - Threshold + knee, 0.0f, 2.0f * knee);
     soft = soft * soft / (4.0f * knee + 0.00001f);
     float contribution = max(soft, brightness - Threshold) / max(brightness, 0.00001f);
-    return color * contribution;
+    return color * (hfloat)contribution;
+}
+
+hfloat3 SampleSource0(float2 uv)
+{
+    return ToHalf3(Source0.SampleLevel(LinearClamp, uv, 0).rgb);
+}
+
+hfloat3 SampleSource1(float2 uv)
+{
+    return ToHalf3(Source1.SampleLevel(LinearClamp, uv, 0).rgb);
+}
+
+// 4 値の平均（逐次加算でオーバーフローしない）
+hfloat3 Average4(hfloat3 a, hfloat3 b, hfloat3 c, hfloat3 d)
+{
+    const hfloat quarter = (hfloat)0.25f;
+    return a * quarter + b * quarter + c * quarter + d * quarter;
 }
 
 [numthreads(8, 8, 1)] void BloomDownsample(uint3 id : SV_DispatchThreadID) {
@@ -59,41 +82,47 @@ float3 SoftThreshold(float3 color)
     }
     float2 uv = (id.xy + 0.5f) / DestinationSize;
     float2 t = 1.0f / SourceSize;
-    float3 a = Source0.SampleLevel(LinearClamp, uv + t * float2(-2, -2), 0).rgb;
-    float3 b = Source0.SampleLevel(LinearClamp, uv + t * float2(0, -2), 0).rgb;
-    float3 c = Source0.SampleLevel(LinearClamp, uv + t * float2(2, -2), 0).rgb;
-    float3 d = Source0.SampleLevel(LinearClamp, uv + t * float2(-2, 0), 0).rgb;
-    float3 e = Source0.SampleLevel(LinearClamp, uv, 0).rgb;
-    float3 f = Source0.SampleLevel(LinearClamp, uv + t * float2(2, 0), 0).rgb;
-    float3 g = Source0.SampleLevel(LinearClamp, uv + t * float2(-2, 2), 0).rgb;
-    float3 h = Source0.SampleLevel(LinearClamp, uv + t * float2(0, 2), 0).rgb;
-    float3 i = Source0.SampleLevel(LinearClamp, uv + t * float2(2, 2), 0).rgb;
-    float3 j = Source0.SampleLevel(LinearClamp, uv + t * float2(-1, -1), 0).rgb;
-    float3 k = Source0.SampleLevel(LinearClamp, uv + t * float2(1, -1), 0).rgb;
-    float3 l = Source0.SampleLevel(LinearClamp, uv + t * float2(-1, 1), 0).rgb;
-    float3 m = Source0.SampleLevel(LinearClamp, uv + t * float2(1, 1), 0).rgb;
-    float3 result;
+    hfloat3 a = SampleSource0(uv + t * float2(-2, -2));
+    hfloat3 b = SampleSource0(uv + t * float2(0, -2));
+    hfloat3 c = SampleSource0(uv + t * float2(2, -2));
+    hfloat3 d = SampleSource0(uv + t * float2(-2, 0));
+    hfloat3 e = SampleSource0(uv);
+    hfloat3 f = SampleSource0(uv + t * float2(2, 0));
+    hfloat3 g = SampleSource0(uv + t * float2(-2, 2));
+    hfloat3 h = SampleSource0(uv + t * float2(0, 2));
+    hfloat3 i = SampleSource0(uv + t * float2(2, 2));
+    hfloat3 j = SampleSource0(uv + t * float2(-1, -1));
+    hfloat3 k = SampleSource0(uv + t * float2(1, -1));
+    hfloat3 l = SampleSource0(uv + t * float2(-1, 1));
+    hfloat3 m = SampleSource0(uv + t * float2(1, 1));
+    hfloat3 result;
     if (FirstLevel != 0)
     {
         // 2x2 グループごとの Karis 平均で、チェーン全体から単独ピクセルの輝点ノイズを除く。
-        float3 g0 = (j + k + l + m) * 0.25f;
-        float3 g1 = (a + b + d + e) * 0.25f;
-        float3 g2 = (b + c + e + f) * 0.25f;
-        float3 g3 = (d + e + g + h) * 0.25f;
-        float3 g4 = (e + f + h + i) * 0.25f;
+        hfloat3 g0 = Average4(j, k, l, m);
+        hfloat3 g1 = Average4(a, b, d, e);
+        hfloat3 g2 = Average4(b, c, e, f);
+        hfloat3 g3 = Average4(d, e, g, h);
+        hfloat3 g4 = Average4(e, f, h, i);
         float w0 = KarisWeight(g0) * 0.5f;
         float w1 = KarisWeight(g1) * 0.125f;
         float w2 = KarisWeight(g2) * 0.125f;
         float w3 = KarisWeight(g3) * 0.125f;
         float w4 = KarisWeight(g4) * 0.125f;
-        result = (g0 * w0 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4) / max(w0 + w1 + w2 + w3 + w4, 0.0001f);
+        float3 weighted = (float3)g0 * w0 + (float3)g1 * w1 + (float3)g2 * w2 + (float3)g3 * w3 + (float3)g4 * w4;
+        result = ToHalf3(weighted / max(w0 + w1 + w2 + w3 + w4, 0.0001f));
         result = SoftThreshold(result);
     }
     else
     {
-        result = e * 0.125f + (a + c + g + i) * 0.03125f + (b + d + f + h) * 0.0625f + (j + k + l + m) * 0.125f;
+        // 重みの総和は 1。逐次加算で中間値が最大値を超えない。
+        const hfloat corner = (hfloat)0.03125f, edge = (hfloat)0.0625f, inner = (hfloat)0.125f;
+        result = e * inner;
+        result += a * corner + c * corner + g * corner + i * corner;
+        result += b * edge + d * edge + f * edge + h * edge;
+        result += j * inner + k * inner + l * inner + m * inner;
     }
-    Destination[id.xy] = float4(max(result, 0.0f), 1.0f);
+    Destination[id.xy] = float4(max((float3)result, 0.0f), 1.0f);
 }
 
     [numthreads(8, 8, 1)] void BloomUpsample(uint3 id : SV_DispatchThreadID)
@@ -104,19 +133,17 @@ float3 SoftThreshold(float3 color)
     }
     float2 uv = (id.xy + 0.5f) / DestinationSize;
     float2 t = 1.0f / SourceSize; // 下位の粗いレベルのサイズ
-    float3 tent = Source1.SampleLevel(LinearClamp, uv, 0).rgb * 4.0f;
-    tent += (Source1.SampleLevel(LinearClamp, uv + t * float2(-1, 0), 0).rgb +
-             Source1.SampleLevel(LinearClamp, uv + t * float2(1, 0), 0).rgb +
-             Source1.SampleLevel(LinearClamp, uv + t * float2(0, -1), 0).rgb +
-             Source1.SampleLevel(LinearClamp, uv + t * float2(0, 1), 0).rgb) *
-            2.0f;
-    tent += Source1.SampleLevel(LinearClamp, uv + t * float2(-1, -1), 0).rgb +
-            Source1.SampleLevel(LinearClamp, uv + t * float2(1, -1), 0).rgb +
-            Source1.SampleLevel(LinearClamp, uv + t * float2(-1, 1), 0).rgb +
-            Source1.SampleLevel(LinearClamp, uv + t * float2(1, 1), 0).rgb;
-    tent /= 16.0f;
+    // 3x3 テント（重み 4/16, 2/16, 1/16）。重みを先に掛けて加算する。
+    const hfloat centerWeight = (hfloat)0.25f, edgeWeight = (hfloat)0.125f, cornerWeight = (hfloat)0.0625f;
+    hfloat3 tent = SampleSource1(uv) * centerWeight;
+    tent += SampleSource1(uv + t * float2(-1, 0)) * edgeWeight + SampleSource1(uv + t * float2(1, 0)) * edgeWeight +
+            SampleSource1(uv + t * float2(0, -1)) * edgeWeight + SampleSource1(uv + t * float2(0, 1)) * edgeWeight;
+    tent += SampleSource1(uv + t * float2(-1, -1)) * cornerWeight +
+            SampleSource1(uv + t * float2(1, -1)) * cornerWeight +
+            SampleSource1(uv + t * float2(-1, 1)) * cornerWeight + SampleSource1(uv + t * float2(1, 1)) * cornerWeight;
+    // 最後の合成は float（current + tent * Radius は FP16 の範囲を超え得る）。
     float3 current = Source0.SampleLevel(LinearClamp, uv, 0).rgb;
-    Destination[id.xy] = float4(current + tent * Radius, 1.0f);
+    Destination[id.xy] = float4(current + (float3)tent * Radius, 1.0f);
 }
 
 float Hash21(float2 p)

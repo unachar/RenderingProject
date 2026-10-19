@@ -12,6 +12,10 @@ struct RaytracingGeometry
     D3D12_INDEX_BUFFER_VIEW IndexView{};
     UINT IndexCount = 0;
     bool Deforming = false;
+    // スキニング出力（キャラクター等）。BLAS 頂点の 16bit 量子化をサイズ不明でも許可する。
+    bool Skinned = false;
+    // オブジェクト空間のバウンディング球半径。負値は不明（16bit 量子化の誤差判定ができないため 32bit のまま）。
+    float ObjectRadius = -1.0f;
     bool CastShadow = true;
     D3D12_RESOURCE_STATES VertexState = D3D12_RESOURCE_STATE_GENERIC_READ;
     D3D12_RESOURCE_STATES IndexState = D3D12_RESOURCE_STATE_GENERIC_READ;
@@ -23,6 +27,10 @@ struct RaytracingGeometry
     XMFLOAT4 Emission{};
     ComPtr<ID3D12Resource> EmissionTexture;
     UINT EmissionResidentMip = 0;
+    // POM の高さマップ（反射の二次ヒットで UV のずれと凹凸法線に使う）。不透明マテリアルアセットのみ。
+    ComPtr<ID3D12Resource> HeightTexture;
+    UINT HeightResidentMip = 0;
+    float ParallaxDepth = 0.0f;
     float Roughness = 0.5f;
     float Metallic = 0.0f;
     UINT MediumID = 0;

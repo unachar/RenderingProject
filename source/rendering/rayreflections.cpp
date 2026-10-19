@@ -37,6 +37,8 @@ namespace
     constexpr UINT kIndexDescriptors = kVertexDescriptors + kMaximumMeshes;
     constexpr UINT kTextureDescriptors = kIndexDescriptors + kMaximumMeshes;
     constexpr UINT kEmissionDescriptors = kTextureDescriptors + kMaximumMeshes;
+    // POM の高さマップ（メッシュごと、t0 space12）。
+    constexpr UINT kHeightDescriptors = kEmissionDescriptors + kMaximumMeshes;
     constexpr UINT kGiSrv = RendererState::g_kHIZ_MIP_SRV_START_INDEX + 2 * RendererState::g_kHIZ_MAX_MIPS + 44;
     static_assert(kGiSrv + kFrames <= RendererState::g_kCLOUD_DESCRIPTOR_START);
     constexpr UINT kResultSrv = RendererState::g_kHIZ_MIP_SRV_START_INDEX + 2 * RendererState::g_kHIZ_MAX_MIPS + 40;
@@ -101,9 +103,10 @@ namespace
         // （参照を保持するので、解放されたアドレスに別のリソースが入って同じポインタになることはない）
         struct DescriptorRecord
         {
-            ComPtr<ID3D12Resource> Vertices, Indices, Texture, Emission;
+            ComPtr<ID3D12Resource> Vertices, Indices, Texture, Emission, Height;
             UINT TextureMip = 0;
             UINT EmissionMip = 0;
+            UINT HeightMip = 0;
             bool Valid = false;
         };
 
@@ -275,7 +278,7 @@ namespace
             D3D12_DESCRIPTOR_HEAP_DESC desc{};
             desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
             desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-            desc.NumDescriptors = kEmissionDescriptors + kMaximumMeshes;
+            desc.NumDescriptors = kHeightDescriptors + kMaximumMeshes;
             if (FAILED(g_Device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&frame.Heap))))
             {
                 return false;
@@ -494,7 +497,7 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     g_Device = device;
     g_EngineHeap = engineHeap;
     g_Increment = increment;
-    CD3DX12_DESCRIPTOR_RANGE ranges[14];
+    CD3DX12_DESCRIPTOR_RANGE ranges[15];
     ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 1);
     ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0);
     for (UINT i = 2; i < 6; ++i)
@@ -509,7 +512,8 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     ranges[11].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 10);
     ranges[12].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 11, 0);
     ranges[13].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 11, 0, 11, 3);
-    CD3DX12_ROOT_PARAMETER parameters[21];
+    ranges[14].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kMaximumMeshes, 0, 12); // POM の高さマップ
+    CD3DX12_ROOT_PARAMETER parameters[22];
     parameters[0].InitAsShaderResourceView(25);
     parameters[1].InitAsShaderResourceView(0);
     parameters[2].InitAsConstantBufferView(6);
@@ -530,12 +534,13 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     parameters[18].InitAsDescriptorTable(1, &ranges[11]);
     parameters[19].InitAsDescriptorTable(2, &ranges[12]);
     parameters[20].InitAsConstantBufferView(7);
+    parameters[21].InitAsDescriptorTable(1, &ranges[14]);
     const CD3DX12_STATIC_SAMPLER_DESC samplers[2] = {
         CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_WRAP,
                                     D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP),
         CD3DX12_STATIC_SAMPLER_DESC(1, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
                                     D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP)};
-    const CD3DX12_ROOT_SIGNATURE_DESC root(21, parameters, 2, samplers);
+    const CD3DX12_ROOT_SIGNATURE_DESC root(_countof(parameters), parameters, 2, samplers);
     ComPtr<ID3DBlob> blob, errors;
     if (FAILED(D3D12SerializeRootSignature(&root, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)) ||
         FAILED(device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&g_Root))))
@@ -755,7 +760,9 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
             geometry.Indices
                 ? static_cast<UINT>(geometry.IndexView.BufferLocation - geometry.Indices->GetGPUVirtualAddress())
                 : 0u};
-        mesh.Material = {geometry.Roughness, geometry.Metallic, static_cast<float>(geometry.Texture != nullptr), 0};
+        // w = POM の深さ（UV 単位、0 で無効）。
+        mesh.Material = {geometry.Roughness, geometry.Metallic, static_cast<float>(geometry.Texture != nullptr),
+                         geometry.HeightTexture ? geometry.ParallaxDepth : 0.0f};
         mesh.BaseColor = geometry.BaseColor;
         mesh.Emission = geometry.Emission;
         UINT triangleCount = geometry.IndexCount / 3;
@@ -763,7 +770,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         {
             triangleCount = geometry.VertexView.SizeInBytes / geometry.VertexView.StrideInBytes / 3;
         }
-        mesh.Surface = {triangleCount, static_cast<UINT>(geometry.EmissionTexture != nullptr), 0,
+        mesh.Surface = {triangleCount, static_cast<UINT>(geometry.EmissionTexture != nullptr),
+                        static_cast<UINT>(geometry.HeightTexture != nullptr),
                         static_cast<UINT>(geometry.UsesAssetMaterial)};
         if (geometry.Emission.w > 0 && (geometry.Emission.x > 0 || geometry.Emission.y > 0 || geometry.Emission.z > 0))
         {
@@ -781,6 +789,16 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         if (geometry.EmissionTexture)
         {
             sampledResources.emplace(geometry.EmissionTexture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        }
+        const UINT heightMip = static_cast<UINT>(geometry.HeightResidentMip);
+        if (!record.Valid || record.Height.Get() != geometry.HeightTexture.Get() || record.HeightMip != heightMip)
+        {
+            TextureSrv(geometry.HeightTexture.Get(), Cpu(frame.Heap.Get(), kHeightDescriptors + i),
+                       geometry.HeightResidentMip);
+        }
+        if (geometry.HeightTexture)
+        {
+            sampledResources.emplace(geometry.HeightTexture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         }
         if (!record.Valid || record.Vertices.Get() != geometry.Vertices.Get())
         {
@@ -810,6 +828,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         record.Indices = geometry.Indices;
         record.Texture = geometry.Texture;
         record.Emission = geometry.EmissionTexture;
+        record.Height = geometry.HeightTexture;
+        record.HeightMip = heightMip;
         record.TextureMip = textureMip;
         record.EmissionMip = emissionMip;
         record.Valid = true;
@@ -992,6 +1012,9 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         HashEmission(signature, &texture, sizeof(texture));
         HashEmission(signature, &emission, sizeof(emission));
         HashEmission(signature, &entry.TextureResidentMip, sizeof(entry.TextureResidentMip));
+        const auto height = entry.HeightTexture.Get();
+        HashEmission(signature, &height, sizeof(height));
+        HashEmission(signature, &entry.ParallaxDepth, sizeof(entry.ParallaxDepth));
         if (entry.Deforming)
         {
             HashEmission(signature, &nrdFrame.Sequence, sizeof(nrdFrame.Sequence));
@@ -1157,6 +1180,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         commands->SetComputeRootDescriptorTable(9, Gpu(frame.Heap.Get(), kTextureDescriptors));
         commands->SetComputeRootShaderResourceView(10, frame.Lights->GetGPUVirtualAddress());
         commands->SetComputeRootDescriptorTable(11, Gpu(frame.Heap.Get(), kEmissionDescriptors));
+        commands->SetComputeRootDescriptorTable(21, Gpu(frame.Heap.Get(), kHeightDescriptors));
         commands->SetComputeRootShaderResourceView(12, frame.Emitters->GetGPUVirtualAddress());
         commands->SetComputeRootDescriptorTable(13, Gpu(frame.Heap.Get(), kSkyLutDescriptors));
         commands->SetComputeRootDescriptorTable(14, Gpu(frame.Heap.Get(), kCacheDescriptors));
@@ -1539,3 +1563,4 @@ ID3D12Resource* RayReflections::GetGiNoisyResource()
 {
     return g_Frames[g_LastFrame].GiNoisy.Get();
 }
+

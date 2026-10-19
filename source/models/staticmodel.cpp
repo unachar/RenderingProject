@@ -536,6 +536,24 @@ bool StaticModelResource::BuildLodIndexBuffers(ID3D12Device* device, const vecto
         meshData.CpuLodIndices[lod].assign(lodIndices.begin(), lodIndices.end());
     }
 
+    // BLAS 頂点の 16bit 量子化判定にも使うため、DXR LOD/プロキシの有無に関係なく境界を求める。
+    if (!vertices.empty())
+    {
+        XMFLOAT3 boundsLow = vertices.front().Position, boundsHigh = boundsLow;
+        for (const auto& v : vertices)
+        {
+            boundsLow.x = (std::min)(boundsLow.x, v.Position.x);
+            boundsLow.y = (std::min)(boundsLow.y, v.Position.y);
+            boundsLow.z = (std::min)(boundsLow.z, v.Position.z);
+            boundsHigh.x = (std::max)(boundsHigh.x, v.Position.x);
+            boundsHigh.y = (std::max)(boundsHigh.y, v.Position.y);
+            boundsHigh.z = (std::max)(boundsHigh.z, v.Position.z);
+        }
+        const float dx = boundsHigh.x - boundsLow.x, dy = boundsHigh.y - boundsLow.y, dz = boundsHigh.z - boundsLow.z;
+        meshData.RayCenter = {(boundsLow.x + boundsHigh.x) * .5f, (boundsLow.y + boundsHigh.y) * .5f,
+                              (boundsLow.z + boundsHigh.z) * .5f};
+        meshData.RayRadius = .5f * sqrtf(dx * dx + dy * dy + dz * dz);
+    }
     static const bool rayLod = ReadEnvironmentFlagOnce("DX12_DXR_LOD"),
                       rayProxy = ReadEnvironmentFlagOnce("DX12_DXR_PROXY");
     if (rayLod || rayProxy)
