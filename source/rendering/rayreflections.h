@@ -35,4 +35,7 @@ class RayReflections
     // Human readable state of the reflection / realtime GI pipeline (editor diagnostics).
     static const char* GetStatus();
     static const char* GetLastShaderError();
+    static UINT GetLumenResidentMeshes();
+    static UINT64 GetLumenMemoryBytes();
+    static ID3D12Resource* GetLumenLightingResource();
 };

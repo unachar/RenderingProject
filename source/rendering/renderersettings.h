@@ -32,7 +32,8 @@ enum class GlobalIlluminationMode : int
 {
     Off,
     ScreenSpace,
-    Realtime
+    Realtime,
+    Lumen
 };
 
 class RendererSettings
@@ -142,7 +143,52 @@ class RendererSettings
 
     static bool GetRealtimeGiEnabled()
     {
-        return s_GiMode == GlobalIlluminationMode::Realtime;
+        return s_GiMode == GlobalIlluminationMode::Realtime || s_GiMode == GlobalIlluminationMode::Lumen;
+    }
+
+    static bool GetLumenEnabled()
+    {
+        return s_GiMode == GlobalIlluminationMode::Lumen;
+    }
+
+    static int GetLumenCaptureBudget()
+    {
+        return s_LumenCaptureBudget;
+    }
+
+    static int GetLumenLightingBudget()
+    {
+        return s_LumenLightingBudget;
+    }
+
+    static int GetLumenProbeSpacing()
+    {
+        return s_LumenProbeSpacing;
+    }
+
+    static int GetLumenDebugView()
+    {
+        return s_LumenDebugView;
+    }
+
+    static void SetLumenCaptureBudget(int value)
+    {
+        SetValue(s_LumenCaptureBudget, clamp(value, 1, 16));
+    }
+
+    static void SetLumenLightingBudget(int value)
+    {
+        SetValue(s_LumenLightingBudget, clamp(value, 1, 32));
+    }
+
+    static void SetLumenProbeSpacing(int value)
+    {
+        SetValue(s_LumenProbeSpacing, clamp(value, 4, 16));
+    }
+
+    static void SetLumenDebugView(int value)
+    {
+        SetValue(s_LumenDebugView, clamp(value, 0, 2));
     }
 
     static float GetGiDistance()
@@ -638,6 +684,8 @@ class RendererSettings
     inline static float s_GiDistance = 40.0f;
     inline static float s_SsgiIntensity = 0.45f;
     inline static float s_RealtimeGiIntensity = 1.0f;
+    inline static int s_LumenCaptureBudget = 4, s_LumenLightingBudget = 4, s_LumenProbeSpacing = 8;
+    inline static int s_LumenDebugView = 0;
     inline static bool s_GiRadianceCacheEnabled = true;
     inline static float s_GiRadianceCacheCellSize = 0.25f;
     inline static int s_GiRadianceCacheHistory = 32;

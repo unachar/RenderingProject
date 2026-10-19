@@ -4,6 +4,8 @@
 
 struct RaytracingGeometry
 {
+    // Entity and submesh identity, independent of the current TLAS instance order.
+    uint64_t SurfaceOwner = 0;
     ComPtr<ID3D12Resource> Vertices;
     ComPtr<ID3D12Resource> Indices;
     D3D12_VERTEX_BUFFER_VIEW VertexView{};

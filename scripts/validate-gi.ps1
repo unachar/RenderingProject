@@ -5,12 +5,17 @@ param(
     [switch]$Spatial,
     [switch]$Optix,
     [switch]$NoNrdSdk,
-    [switch]$Celestial
+    [switch]$Celestial,
+    [switch]$Lumen,
+    [ValidateRange(4,16)][int]$LumenProbeSpacing = 8,
+    [ValidateRange(1,32)][int]$LumenLightingBudget = 4,
+    [switch]$LumenSingleBounce
 )
 $ErrorActionPreference = 'Stop'
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$environmentNames = @('_CL_', 'DX12_GI_TEST', 'DX12_VALIDATION_MODE', 'DX12_STARTUP_SMOKE_FRAMES', 'DX12_FEATURE_SMOKE_TEST', 'DX12_MATERIAL_ASSET_TEST', 'DX12_RAY_TELEMETRY')
+$environmentNames = @('_CL_', 'DX12_GI_TEST', 'DX12_LUMEN_GI_TEST', 'DX12_VALIDATION_MODE', 'DX12_STARTUP_SMOKE_FRAMES', 'DX12_FEATURE_SMOKE_TEST', 'DX12_MATERIAL_ASSET_TEST', 'DX12_RAY_TELEMETRY')
 $previousEnvironment = @{}
+$environmentNames += @('DX12_LUMEN_PROBE_SPACING', 'DX12_LUMEN_LIGHTING_BUDGET', 'DX12_LUMEN_SINGLE_BOUNCE')
 $savedFiles = @{}
 foreach ($name in $environmentNames) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 Push-Location -LiteralPath $workspace
@@ -23,9 +28,11 @@ try {
         $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
         $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
         $developerCommand = Join-Path $installation 'Common7/Tools/VsDevCmd.bat'
-        $env:_CL_ = '/Z7'
+        $env:_CL_ = '/Z7 /MP4'
         $sdkOption = ''
         if ($NoNrdSdk) { $sdkOption = '/p:EnableNrd=false' }
+        # Keep /Z7 validation artifacts separate from the interactive editor's /Zi PCH.
+        if ($Lumen) { $sdkOption += " /p:IntDir=build\lumen-tests\obj-$Configuration\" }
         $buildCommand = '"{0}" -no_logo -arch=amd64 -host_arch=amd64 && MSBuild.exe DirectX12.vcxproj /t:Build /p:Configuration={1} /p:Platform=x64 {2} /m:2 /v:quiet /nologo' -f $developerCommand, $Configuration, $sdkOption
         & $env:ComSpec /d /c $buildCommand *> build/gi-tests/build.log
         if ($LASTEXITCODE) {
@@ -35,6 +42,10 @@ try {
     }
     $env:DX12_GI_TEST = if ($Celestial) { '5' } elseif ($Optix) { '3' } elseif ($Spatial) { '2' } else { '1' }
     $env:DX12_VALIDATION_MODE = '1'
+    $env:DX12_LUMEN_GI_TEST = [string][int]$Lumen.IsPresent
+    $env:DX12_LUMEN_PROBE_SPACING = [string]$LumenProbeSpacing
+    $env:DX12_LUMEN_LIGHTING_BUDGET = [string]$LumenLightingBudget
+    $env:DX12_LUMEN_SINGLE_BOUNCE = [string][int]$LumenSingleBounce.IsPresent
     $env:DX12_RAY_TELEMETRY = [string][int]$RayTelemetry.IsPresent
     $env:DX12_STARTUP_SMOKE_FRAMES = if ($Celestial) { '288' } else { '218' }
     $env:DX12_FEATURE_SMOKE_TEST = '0'
@@ -58,6 +69,10 @@ try {
     }
     finally { $stream.Dispose() }
     $suffix = if ($Celestial) { 'celestial' } elseif ($Optix) { 'optix' } elseif ($NoNrdSdk) { 'fallback' } elseif ($Spatial) { 'spatial' } else { 'nrd' }
+    if ($Lumen) { $suffix = "lumen-$suffix" }
+    if ($LumenSingleBounce) { $suffix += '-single' }
+    if ($Lumen -and $LumenProbeSpacing -ne 8) { $suffix += "-spacing$LumenProbeSpacing" }
+    if ($Lumen -and $LumenLightingBudget -ne 4) { $suffix += "-budget$LumenLightingBudget" }
     Set-Content -LiteralPath "build/gi-tests/validation-$Configuration-$suffix.log" -Value $runLog -Encoding utf8
     $captureDirectory = "build/gi-tests/$suffix-captures"
     New-Item -ItemType Directory -Force $captureDirectory | Out-Null

@@ -960,6 +960,10 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\rendering\optixinterop.h" />
     <ClInclude Include="source\rendering\optixdenoiser.h" />
     <ClCompile Include="source\rendering\rayreflections.cpp" />
+    <ClCompile Include="source\rendering\lumensurfacecache.cpp" />
+    <ClInclude Include="source\rendering\lumensurfacecache.h" />
+    <ClInclude Include="source\rendering\lumenscheduler.h" />
+    <ClInclude Include="source\rendering\lumencachemath.h" />
     <ClInclude Include="source\rendering\rayreflections.h" />
     <ClInclude Include="source\rendering\raytracing.h" />
     <ClInclude Include="source\rendering\nrddenoiser.h" />

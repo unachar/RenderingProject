@@ -134,6 +134,7 @@ void AppendModel(vector<RaytracingGeometry>& geometry, EntityID entity, Model* m
             continue;
         }
         RaytracingGeometry entry;
+        entry.SurfaceOwner = (static_cast<uint64_t>(entity) << 32) | (uint64_t(meshIndex) + 1);
         entry.Vertices = mesh.VertexBuffer;
         entry.Indices = mesh.IndexBuffer;
         entry.VertexView = mesh.VertexBufferView;
@@ -261,6 +262,7 @@ vector<RaytracingGeometry> GatherRaytracingGeometry()
             continue;
         }
         RaytracingGeometry entry;
+        entry.SurfaceOwner = (static_cast<uint64_t>(entity) << 32) | 0x80000000ull;
         entry.Vertices = mesh.VertexBuffer;
         entry.VertexView = mesh.VertexBufferView;
         entry.World = ComponentManager::GetComponentUnchecked<TransformComponent>(entity).WorldMatrix;

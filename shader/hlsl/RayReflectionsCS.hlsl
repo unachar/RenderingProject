@@ -61,6 +61,7 @@ cbuffer ReflectionConstants : register(b6)
 };
 #include "../../source/rendering/stablesampling.h"
 #include "../../source/rendering/giresampling.h"
+#include "LumenSurfaceCache.hlsli"
 
 Texture2D<float4> AdaptiveRadiance:register(t0,space10);
 Texture2D<float4> AdaptiveGuide:register(t1,space10);
@@ -391,11 +392,21 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
     }
     normal = normalize(mul(float4(normal, 0), mesh.NormalToWorld).xyz);
     if (dot(normal, incoming) > 0) normal = -normal;
+    float3 lumenTotal, lumenIndirect, lumenAlbedo, lumenEmission;
+    bool lumenCached = LumenLookupMaterial(instance, position, normal, lumenTotal, lumenIndirect,
+                                           lumenAlbedo, lumenEmission);
     // Match modelshaderPS: shared material assets ignore vertex RGB.
-    if ((mesh.Surface.w & 1u) != 0u) albedo = 1.0f;
-    if (mesh.Material.z > 0.5f)
-        albedo *= SceneTextures[NonUniformResourceIndex(instance)].SampleLevel(MaterialSampler, uv, 0).rgb;
-    albedo *= mesh.BaseColor.rgb;
+    if (lumenCached)
+    {
+        albedo = lumenAlbedo;
+    }
+    else
+    {
+        if ((mesh.Surface.w & 1u) != 0u) albedo = 1.0f;
+        if (mesh.Material.z > 0.5f)
+            albedo *= SceneTextures[NonUniformResourceIndex(instance)].SampleLevel(MaterialSampler, uv, 0).rgb;
+        albedo *= mesh.BaseColor.rgb;
+    }
     float metallic = saturate(mesh.Material.y);
     float roughness = clamp(mesh.Material.x, 0.02f, 1);
     float3 f0 = lerp(0.04f, max(albedo, 0), metallic);
@@ -405,15 +416,20 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
     float3 diffuse = max(albedo, 0) * (1 - metallic) / 3.14159265f;
     surfaceDiffuse = diffuse;
     surfaceNormal = normal;
+    if (diffuseOnly && lumenCached)
+    {
+        return diffuse * lumenTotal;
+    }
     float3 radiance = 0;
     if (!diffuseOnly)
     {
         // Retain the cheap secondary environment approximation only where sky is visible.
         // Solar/lunar discs belong to direct light, not the diffuse ambient approximation.
-        radiance = diffuse * SampleVisibleReflectionSky(position, normal, normal, 0.01f, false) * 0.12f +
+        radiance = (lumenCached ? diffuse * lumenIndirect :
+            diffuse * SampleVisibleReflectionSky(position, normal, normal, 0.01f, false) * 0.12f) +
             skyFresnel * SampleVisibleReflectionSky(position, normal, reflect(incoming, normal),
                 max(0.001f, roughness * 0.02f), true) +
-            SampleEmission(instance, uv);
+            (lumenCached ? lumenEmission : SampleEmission(instance, uv));
     }
     int count = (int)ReflectionExtent.w;
     [branch] if (diffuseOnly)
@@ -806,6 +822,19 @@ void TraceDiffuse(uint3 id : SV_DispatchThreadID)
     float4 world = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, depth, 1), ReflectionInvViewProjection);
     float3 position = world.xyz / world.w;
     float3 normal = normalize(ReflectionNormal.Load(int3(pixel, 0)).xyz * 2 - 1);
+    float3 lumenIrradiance;
+    float lumenDistance;
+    if (LumenGatherIrradiance(position, normal, pixel, lumenIrradiance, lumenDistance))
+    {
+#if USE_NRD
+        float viewZ = abs(mul(float4(position, 1), ReflectionView).z);
+        float normalized = REBLUR_FrontEnd_GetNormHitDist(lumenDistance, viewZ, float3(3, 0.1f, 20), 1);
+        NoisyRadiance[storage] = REBLUR_FrontEnd_PackRadianceAndNormHitDist(lumenIrradiance, normalized, true);
+#else
+        NoisyRadiance[storage] = float4(lumenIrradiance, lumenDistance);
+#endif
+        return;
+    }
     uint period=max(1u,(uint)AdaptiveSampling.w);
     if(period>1 && ((ReflectionHash(pixel.x+pixel.y*ReflectionExtent.x)+ReflectionExtent.z)%period)!=0)
     {
@@ -1194,3 +1223,5 @@ void ReSTIRSpatial(uint3 id : SV_DispatchThreadID)
     NoisyRadiance[storage] = float4(irradiance, hitDistance);
 #endif
 }
+
+#include "LumenPasses.hlsli"

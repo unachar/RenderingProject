@@ -14,6 +14,8 @@
 #include "atmospherelut.h"
 #include "renderquality.h"
 #include "raytelemetry.h"
+#include "lumensurfacecache.h"
+#include "temporalhistory.h"
 #include <map>
 #include <algorithm>
 
@@ -26,7 +28,8 @@ constexpr UINT kSkyLutDescriptors = 12;
 constexpr UINT kCacheDescriptors = 16;
 // 20-21 ReSTIR reservoirs (current, history) UAV, 22 velocity SRV.
 constexpr UINT kReSTIRDescriptors = 20;
-constexpr UINT kVertexDescriptors = 24;
+constexpr UINT kLumenDescriptors = 24;
+constexpr UINT kVertexDescriptors = 40;
 // World-space irradiance cache (hash grid). 2^18 cells: keys 1 MiB, accumulation 4 MiB,
 // resolved 4 MiB, ages 1 MiB.
 constexpr UINT kCacheCapacity = 1u << 18;
@@ -87,6 +90,7 @@ struct RadianceCache
 
 struct FrameResources
 {
+    ComPtr<ID3D12Resource> DisabledLumen;
     ComPtr<ID3D12DescriptorHeap> Heap;
     ComPtr<ID3D12Resource> Meshes, Lights, Emitters, Constants, Noisy, Result, GiNoisy, GiResult;
     // Keep sampled resources alive until this frame slot's fence completes.
@@ -150,6 +154,13 @@ ComPtr<ID3D12Resource> g_Reservoirs[2];
 UINT g_ReservoirWidth = 0, g_ReservoirHeight = 0, g_ReservoirCurrent = 0;
 bool g_ReSTIRHistoryValid = false;
 RadianceCache g_Cache;
+LumenSurfaceCache g_Lumen;
+ComPtr<ID3D12PipelineState> g_LumenBounds, g_LumenCapture, g_LumenClear, g_LumenLighting, g_LumenGather;
+ComPtr<ID3D12PipelineState> g_LumenCaptureTelemetry, g_LumenLightingTelemetry, g_LumenGatherTelemetry;
+uint64_t g_LumenSignature = 0;
+UINT g_LumenSequence = 0;
+UINT g_LumenQuietFrames = 8;
+bool g_LumenWasEnabled = false;
 bool g_CacheWasEnabled = false;
 // Diagnostics: why reflections / realtime GI are not running.
 const char* g_Status = "未初期化";
@@ -447,7 +458,10 @@ bool EnsureTelemetryPipelines()
         g_TelemetryPipelinesTried = true;
         if (!CompileRadiancePipeline("main", g_TraceTelemetry, true) ||
             !CompileRadiancePipeline("TraceDiffuse", g_GiTraceTelemetry, true) ||
-            (g_ReSTIRSpatial && !CompileRadiancePipeline("ReSTIRSpatial", g_ReSTIRSpatialTelemetry, true)))
+            (g_ReSTIRSpatial && !CompileRadiancePipeline("ReSTIRSpatial", g_ReSTIRSpatialTelemetry, true)) ||
+            (g_LumenBounds && (!CompileRadiancePipeline("LumenCapture", g_LumenCaptureTelemetry, true) ||
+                              !CompileRadiancePipeline("LumenUpdateLighting", g_LumenLightingTelemetry, true) ||
+                              !CompileRadiancePipeline("LumenTraceProbes", g_LumenGatherTelemetry, true))))
         {
             g_TraceTelemetry.Reset();
             g_GiTraceTelemetry.Reset();
@@ -475,7 +489,7 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     g_Device = device;
     g_EngineHeap = engineHeap;
     g_Increment = increment;
-    CD3DX12_DESCRIPTOR_RANGE ranges[12];
+    CD3DX12_DESCRIPTOR_RANGE ranges[14];
     ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 1);
     ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0);
     for (UINT i = 2; i < 6; ++i)
@@ -488,7 +502,9 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     ranges[9].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 8, 2); // velocity
     ranges[10].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 10);
     ranges[11].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 10);
-    CD3DX12_ROOT_PARAMETER parameters[19];
+    ranges[12].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 11, 0);
+    ranges[13].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 11, 0, 11, 3);
+    CD3DX12_ROOT_PARAMETER parameters[21];
     parameters[0].InitAsShaderResourceView(25);
     parameters[1].InitAsShaderResourceView(0);
     parameters[2].InitAsConstantBufferView(6);
@@ -507,12 +523,14 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     parameters[16].InitAsUnorderedAccessView(0, 9);
     parameters[17].InitAsDescriptorTable(1, &ranges[10]);
     parameters[18].InitAsDescriptorTable(1, &ranges[11]);
+    parameters[19].InitAsDescriptorTable(2, &ranges[12]);
+    parameters[20].InitAsConstantBufferView(7);
     const CD3DX12_STATIC_SAMPLER_DESC samplers[2] = {
         CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_WRAP,
                                     D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP),
         CD3DX12_STATIC_SAMPLER_DESC(1, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
                                     D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP)};
-    const CD3DX12_ROOT_SIGNATURE_DESC root(19, parameters, 2, samplers);
+    const CD3DX12_ROOT_SIGNATURE_DESC root(21, parameters, 2, samplers);
     ComPtr<ID3DBlob> blob, errors;
     if (FAILED(D3D12SerializeRootSignature(&root, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)) ||
         FAILED(device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&g_Root))))
@@ -559,6 +577,13 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
         g_ReSTIRSpatial.Reset();
         WriteGraphicsLog("ReSTIR GI unavailable; continuing without it\n");
     }
+    if (!compile("LumenBuildBounds", g_LumenBounds) || !compile("LumenCapture", g_LumenCapture) ||
+        !compile("LumenClear", g_LumenClear) || !compile("LumenUpdateLighting", g_LumenLighting) ||
+        !compile("LumenTraceProbes", g_LumenGather))
+    {
+        g_LumenBounds.Reset();
+        WriteGraphicsLog("Lumen GI unavailable: %s\n", g_LastShaderError.c_str());
+    }
     g_Status = "準備完了";
     return true;
 }
@@ -573,8 +598,33 @@ const char* RayReflections::GetLastShaderError()
     return g_LastShaderError.c_str();
 }
 
+UINT RayReflections::GetLumenResidentMeshes()
+{
+    return g_Lumen.ResidentMeshes();
+}
+
+UINT64 RayReflections::GetLumenMemoryBytes()
+{
+    return g_Lumen.MemoryBytes();
+}
+
+ID3D12Resource* RayReflections::GetLumenLightingResource()
+{
+    return g_Lumen.LightingResource();
+}
+
 void RayReflections::Shutdown()
 {
+    g_Lumen.Reset();
+    g_LumenBounds.Reset();
+    g_LumenCapture.Reset();
+    g_LumenClear.Reset();
+    g_LumenLighting.Reset();
+    g_LumenGather.Reset();
+    g_LumenCaptureTelemetry.Reset();
+    g_LumenLightingTelemetry.Reset();
+    g_LumenGatherTelemetry.Reset();
+    g_LumenWasEnabled = false;
     g_AdaptiveRadiance.Reset();
     g_AdaptiveGuide.Reset();
     g_AdaptiveCapture.Reset();
@@ -875,7 +925,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     const bool useGiDenoiser = denoise && !useOptix && NrdDenoiser::IsCompiled() && guides[0] && guides[1] && guides[2];
     constants.GiParameters = {RendererSettings::GetGiDistance(), RendererSettings::GetRealtimeGiIntensity(),
                               static_cast<float>(useGiDenoiser), static_cast<float>(emitters.size())};
-    const bool cacheEnabled = RendererSettings::GetRealtimeGiEnabled() &&
+    const bool lumenRequested = RendererSettings::GetLumenEnabled();
+    const bool cacheEnabled = RendererSettings::GetRealtimeGiEnabled() && !lumenRequested &&
                               RendererSettings::GetGiRadianceCacheEnabled() && g_Cache.Keys && g_CacheResolve &&
                               g_CacheClear;
     if (cacheEnabled && !g_CacheWasEnabled)
@@ -885,7 +936,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     g_CacheWasEnabled = cacheEnabled;
     const auto& quality = RenderQuality::Get();
     const UINT reservoirWidth = useGiDenoiser ? (frame.Width + 1) / 2 : frame.Width;
-    const bool restir = RendererSettings::GetRealtimeGiEnabled() && quality.ReSTIRGI && velocity && g_ReSTIRTemporal &&
+    const bool restir = RendererSettings::GetRealtimeGiEnabled() && !lumenRequested && quality.ReSTIRGI && velocity && g_ReSTIRTemporal &&
                         g_ReSTIRSpatial && EnsureReservoirs(reservoirWidth, frame.Height);
     if (!restir || nrdFrame.ResetHistory)
     {
@@ -910,7 +961,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
                                  static_cast<float>(RendererSettings::GetGiRadianceCacheHistory())};
     static const bool adaptiveRequested = ReadEnvironmentFlagOnce("DX12_ADAPTIVE_REFLECTIONS");
     static const bool budgetRequested = ReadEnvironmentFlagOnce("DX12_GI_UPDATE_BUDGET");
-    const bool adaptive = adaptiveRequested && velocity && g_AdaptiveCapture && Raytracing::GetSettings().Reflections &&
+    const bool adaptive = adaptiveRequested && !lumenRequested && velocity && g_AdaptiveCapture && Raytracing::GetSettings().Reflections &&
                           EnsureAdaptiveHistory(frame.Width, frame.Height);
     uint64_t signature = 1469598103934665603ull;
     for (const auto& entry : geometry)
@@ -937,6 +988,51 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         HashEmission(signature, lights.data(), lights.size() * sizeof(ReflectionLight));
     }
     HashEmission(signature, &nrdFrame.LightDirection, sizeof(nrdFrame.LightDirection));
+    HashEmission(signature, &giDistance, sizeof(giDistance));
+    const auto& atmosphere = Atmosphere::GetParameters();
+    HashEmission(signature, &atmosphere, sizeof(atmosphere));
+    const auto& skySettings = AtmosphereLut::GetSettings();
+    HashEmission(signature, &skySettings, sizeof(skySettings));
+    const bool lumenChanged = signature != g_LumenSignature;
+    const bool lumenDiscreteChange = Lumen::LightingChangeRequiresReset(lumenChanged, g_LumenQuietFrames);
+    g_LumenQuietFrames = lumenChanged ? 0 : (std::min)(g_LumenQuietFrames + 1, 8u);
+    const UINT hardResetReasons = TemporalHistory::FirstFrame | TemporalHistory::FrameGap |
+                                  TemporalHistory::CameraChanged | TemporalHistory::ResolutionChanged |
+                                  TemporalHistory::ConfigurationChanged;
+    const bool lumenReset = !g_LumenWasEnabled || lumenDiscreteChange ||
+                            (nrdFrame.HistoryResetReasons & hardResetReasons) != 0 ||
+                            nrdFrame.Sequence != g_LumenSequence + 1;
+    const XMFLOAT3 lumenCamera{constants.Camera.x, constants.Camera.y, constants.Camera.z};
+    if (lumenRequested && (lumenChanged || !g_LumenWasEnabled))
+    {
+        g_Lumen.NotifySceneChanged(nrdFrame.Sequence);
+    }
+    const bool lumen = lumenRequested && g_LumenBounds &&
+        g_Lumen.Prepare(g_Device.Get(), slot, frame.Geometry, lumenCamera, frame.Width, frame.Height,
+                        RendererSettings::GetLumenProbeSpacing(), RendererSettings::GetLumenCaptureBudget(),
+                        RendererSettings::GetLumenLightingBudget(), RendererSettings::GetLumenDebugView(), lumenReset,
+                        nrdFrame.Sequence, g_LumenQuietFrames < 8);
+    if (lumenRequested && !lumen)
+    {
+        g_Status = "Lumen GI の初期化失敗。既存 DXR GI を使用中";
+    }
+    if (g_LumenWasEnabled != lumen || (lumen && lumenReset))
+    {
+        g_GiHistoryValid = false;
+        g_HistoryValid = false;
+    }
+    g_LumenWasEnabled = lumen;
+    g_LumenSignature = signature;
+    g_LumenSequence = nrdFrame.Sequence;
+    if (!frame.DisabledLumen)
+    {
+        const LumenSurfaceCache::Constants disabled{};
+        if (!EnsureUpload(frame.DisabledLumen, 256) || !Upload(frame.DisabledLumen.Get(), &disabled, sizeof(disabled)))
+        {
+            return false;
+        }
+    }
+    g_Lumen.WriteDescriptors(g_Device.Get(), slot, Cpu(frame.Heap.Get(), kLumenDescriptors), g_Increment);
     const bool reuse = adaptive && g_AdaptiveValid && !nrdFrame.ResetHistory && g_AdaptiveSignature == signature &&
                        nrdFrame.Sequence == g_AdaptiveSequence + 1u;
     const bool budget = budgetRequested && cacheEnabled && !restir && velocity && g_BudgetValid &&
@@ -1043,12 +1139,49 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         commands->SetComputeRootDescriptorTable(15, Gpu(frame.Heap.Get(), kReSTIRDescriptors));
         commands->SetComputeRootDescriptorTable(17, Gpu(frame.Heap.Get(), 14));
         commands->SetComputeRootDescriptorTable(18, Gpu(frame.Heap.Get(), 23));
+        commands->SetComputeRootDescriptorTable(19, Gpu(frame.Heap.Get(), kLumenDescriptors));
+        commands->SetComputeRootConstantBufferView(20, lumen ? g_Lumen.ConstantsAddress(slot)
+                                                           : frame.DisabledLumen->GetGPUVirtualAddress());
         if (instrumented)
         {
             commands->SetComputeRootUnorderedAccessView(16, RayTelemetry::Data().Address());
         }
     };
     preparationProfile.Finish();
+    if (lumen)
+    {
+        RenderProfiler::ScopedEvent surfaceProfile("Lumen Surface Cache", commands);
+        if (g_Lumen.NeedsLightingClear())
+        {
+            bind(g_LumenClear.Get());
+            commands->Dispatch(LumenSurfaceCache::AtlasWidth / 8, LumenSurfaceCache::AtlasHeight / 8, 1);
+            g_Lumen.Barrier(commands);
+        }
+        const auto& parameters = g_Lumen.GetConstants();
+        if (parameters.Counts.y != 0)
+        {
+            RenderProfiler::ScopedEvent captureProfile("Lumen Material Capture", commands);
+            bind(g_LumenBounds.Get());
+            commands->Dispatch(parameters.Counts.y, 1, 1);
+            g_Lumen.Barrier(commands);
+            bind(instrumented ? g_LumenCaptureTelemetry.Get() : g_LumenCapture.Get());
+            commands->Dispatch(2, 2, parameters.Counts.y * 6);
+            g_Lumen.Barrier(commands);
+        }
+        g_Lumen.BeginLighting(commands);
+        if (parameters.Counts.z != 0)
+        {
+            RenderProfiler::ScopedEvent lightingProfile("Lumen Lighting Update", commands);
+            bind(instrumented ? g_LumenLightingTelemetry.Get() : g_LumenLighting.Get());
+            commands->Dispatch(2, 2, parameters.Counts.z * 6);
+        }
+        g_Lumen.EndLighting(commands);
+        surfaceProfile.Finish();
+        RenderProfiler::ScopedEvent probeProfile("Lumen Screen Probes", commands);
+        bind(instrumented ? g_LumenGatherTelemetry.Get() : g_LumenGather.Get());
+        commands->Dispatch(parameters.Grid.x, parameters.Grid.y, 1);
+        g_Lumen.Barrier(commands);
+    }
     if (Raytracing::GetSettings().Reflections)
     {
         RenderProfiler::ScopedEvent reflectionProfile("DXR Reflections", commands);
@@ -1268,7 +1401,9 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         }
         g_GiHistoryValid = temporalFiltered;
         g_GiActive = true;
-        g_Status = restir ? "Realtime GI 動作中（ReSTIR）" : "Realtime GI 動作中";
+        g_Status = lumen ? "Lumen GI 動作中（Surface Cache / Screen Probes）" :
+                   lumenRequested ? "Lumen 初期化失敗。既存 DXR GI を使用中" :
+                   restir ? "Realtime GI 動作中（ReSTIR）" : "Realtime GI 動作中";
     }
     else
     {

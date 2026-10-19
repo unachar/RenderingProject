@@ -328,12 +328,39 @@ void ImGuiManager::DrawProjectSettingsWindow()
         ImGui::EndDisabled();
 
         int giMode = static_cast<int>(RendererSettings::GetGiMode());
-        const char* giModes[] = {"Off", "SSGI", "Realtime GI (DXR)"};
-        if (ImGui::Combo("Global Illumination", &giMode, giModes, 3))
+        const char* giModes[] = {"Off", "SSGI", "Realtime GI (DXR)", "Lumen-style GI (DXR)"};
+        if (ImGui::Combo("Global Illumination", &giMode, giModes, 4))
         {
             RendererSettings::SetGiMode(static_cast<GlobalIlluminationMode>(giMode));
         }
         ImGui::BeginDisabled(giMode == 0);
+        if (RendererSettings::GetLumenEnabled())
+        {
+            int captures = RendererSettings::GetLumenCaptureBudget();
+            int lighting = RendererSettings::GetLumenLightingBudget();
+            int spacing = RendererSettings::GetLumenProbeSpacing();
+            if (ImGui::SliderInt("材質キャプチャ数 / frame", &captures, 1, 16))
+            {
+                RendererSettings::SetLumenCaptureBudget(captures);
+            }
+            if (ImGui::SliderInt("照明更新メッシュ数 / frame", &lighting, 1, 32))
+            {
+                RendererSettings::SetLumenLightingBudget(lighting);
+            }
+            if (ImGui::SliderInt("プローブ間隔 (px)", &spacing, 4, 16))
+            {
+                RendererSettings::SetLumenProbeSpacing(spacing);
+            }
+            int debug = RendererSettings::GetLumenDebugView();
+            const char* views[] = {"Lighting", "Probe coverage", "Surface cache coverage"};
+            if (ImGui::Combo("Lumen view", &debug, views, 3))
+            {
+                RendererSettings::SetLumenDebugView(debug);
+            }
+            ImGui::Text("Surface cache: %u / 128 meshes, %.1f MiB", RayReflections::GetLumenResidentMeshes(),
+                        RayReflections::GetLumenMemoryBytes() / (1024.0 * 1024.0));
+            ImGui::TextWrapped("DXR hardware required. Uncached surfaces use hit lighting.");
+        }
         if (RendererSettings::GetRealtimeGiEnabled())
         {
             // 物理ベースの放射照度なので 1.0 がエネルギー保存（SSGI の強度とは別管理）
@@ -1580,6 +1607,9 @@ string ImGuiManager::SerializeProjectSettings()
     stream << "ssao_power=" << RendererSettings::GetSsaoPower() << '\n';
     stream << "ssgi=" << (static_cast<int>(RendererSettings::GetSsgiEnabled())) << '\n';
     stream << "gi_mode=" << static_cast<int>(RendererSettings::GetGiMode()) << '\n';
+    stream << "lumen_capture_budget=" << RendererSettings::GetLumenCaptureBudget() << '\n';
+    stream << "lumen_lighting_budget=" << RendererSettings::GetLumenLightingBudget() << '\n';
+    stream << "lumen_probe_spacing=" << RendererSettings::GetLumenProbeSpacing() << '\n';
     stream << "gi_distance=" << RendererSettings::GetGiDistance() << '\n';
     stream << "ssgi_intensity=" << RendererSettings::GetSsgiIntensity() << '\n';
     stream << "realtime_gi_intensity=" << RendererSettings::GetRealtimeGiIntensity() << '\n';
@@ -1769,7 +1799,19 @@ void ImGuiManager::LoadProjectSettings()
             }
             else if (key == "gi_mode")
             {
-                RendererSettings::SetGiMode(static_cast<GlobalIlluminationMode>(clamp(stoi(value), 0, 2)));
+                RendererSettings::SetGiMode(static_cast<GlobalIlluminationMode>(clamp(stoi(value), 0, 3)));
+            }
+            else if (key == "lumen_capture_budget")
+            {
+                RendererSettings::SetLumenCaptureBudget(stoi(value));
+            }
+            else if (key == "lumen_lighting_budget")
+            {
+                RendererSettings::SetLumenLightingBudget(stoi(value));
+            }
+            else if (key == "lumen_probe_spacing")
+            {
+                RendererSettings::SetLumenProbeSpacing(stoi(value));
             }
             else if (key == "gi_distance")
             {
