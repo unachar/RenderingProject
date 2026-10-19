@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <cstdint>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -84,6 +85,127 @@ struct Constants
         }
     }
 };
+
+void VerifyCacheParity(ID3D11Device* device, ID3D11DeviceContext* context)
+{
+    std::array<ComPtr<ID3D11ComputeShader>, 2> shaders;
+    for (UINT variant = 0; variant < 2; ++variant)
+    {
+        const D3D_SHADER_MACRO defines[] = {{"TSR_USE_SHARED_TILE", variant == 0 ? "0" : "1"}, {nullptr, nullptr}};
+        ComPtr<ID3DBlob> code, errors;
+        const auto compiled = D3DCompileFromFile(L"shader/hlsl/TemporalUpscaleCS.hlsl", defines,
+            D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
+        if (FAILED(compiled) && errors) std::cerr << static_cast<const char*>(errors->GetBufferPointer());
+        Check(compiled, "compile cache parity variant");
+        Check(device->CreateComputeShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, &shaders[variant]),
+              "create cache parity shader");
+    }
+    D3D11_BUFFER_DESC bufferDesc{};
+    bufferDesc.ByteWidth = sizeof(Constants);
+    bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    ComPtr<ID3D11Buffer> buffer;
+    Check(device->CreateBuffer(&bufferDesc, nullptr, &buffer), "create cache parity constants");
+    context->CSSetConstantBuffers(0, 1, buffer.GetAddressOf());
+    D3D11_SAMPLER_DESC samplerDesc{};
+    samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+    ComPtr<ID3D11SamplerState> sampler;
+    Check(device->CreateSamplerState(&samplerDesc, &sampler), "create cache parity sampler");
+    context->CSSetSamplers(0, 1, sampler.GetAddressOf());
+    // Include partial groups, 1px inputs, native, anisotropic and downscale fallbacks.
+    const UINT sizes[][4] = {{1, 1, 1, 1}, {1, 3, 17, 19}, {32, 24, 159, 119},
+        {97, 71, 97, 71}, {33, 17, 71, 65}, {32, 24, 17, 13}, {32, 12, 17, 25}};
+    UINT comparisons = 0;
+    for (const auto& size : sizes)
+    {
+        auto color = MakeTexture(device, size[0], size[1], false, false);
+        auto depth = MakeTexture(device, size[0], size[1], true, false);
+        auto velocity = MakeTexture(device, size[0], size[1], false, false);
+        auto reveal = MakeTexture(device, size[0], size[1], true, false);
+        auto history = MakeTexture(device, size[2], size[3], false, false);
+        auto historyDepth = MakeTexture(device, size[2], size[3], true, false);
+        auto detail = MakeTexture(device, size[2], size[3], false, false, true);
+        std::array<std::array<Texture, 3>, 2> output;
+        std::array<std::array<ComPtr<ID3D11Texture2D>, 3>, 2> readback;
+        for (UINT variant = 0; variant < 2; ++variant)
+        {
+            output[variant][0] = MakeTexture(device, size[2], size[3], false, true);
+            output[variant][1] = MakeTexture(device, size[2], size[3], true, true);
+            output[variant][2] = MakeTexture(device, size[2], size[3], false, true, true);
+            for (UINT channel = 0; channel < 3; ++channel)
+            {
+                D3D11_TEXTURE2D_DESC desc{};
+                output[variant][channel].Resource->GetDesc(&desc);
+                desc.BindFlags = 0;
+                desc.Usage = D3D11_USAGE_STAGING;
+                desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+                Check(device->CreateTexture2D(&desc, nullptr, &readback[variant][channel]), "create parity readback");
+            }
+        }
+        const UINT inputPixels = size[0] * size[1], outputPixels = size[2] * size[3];
+        std::vector<float> colors(inputPixels * 4), depths(inputPixels, .5f), velocities(inputPixels * 4, 0);
+        std::vector<float> revealage(inputPixels, 1), oldColors(outputPixels * 4, .25f), oldDepths(outputPixels, .5f);
+        std::vector<uint32_t> oldDetail(outputPixels, 0); // R16G16_FLOAT zero.
+        for (UINT i = 0; i < inputPixels; ++i)
+        {
+            colors[i * 4] = float((i * 13) % 257) / 32;
+            colors[i * 4 + 1] = float((i * 29) % 251) / 64;
+            colors[i * 4 + 2] = float((i * 47) % 241) / 128;
+            colors[i * 4 + 3] = 1;
+        }
+        context->UpdateSubresource(color.Resource.Get(), 0, nullptr, colors.data(), size[0] * 16, 0);
+        context->UpdateSubresource(depth.Resource.Get(), 0, nullptr, depths.data(), size[0] * 4, 0);
+        context->UpdateSubresource(velocity.Resource.Get(), 0, nullptr, velocities.data(), size[0] * 16, 0);
+        context->UpdateSubresource(reveal.Resource.Get(), 0, nullptr, revealage.data(), size[0] * 4, 0);
+        context->UpdateSubresource(history.Resource.Get(), 0, nullptr, oldColors.data(), size[2] * 16, 0);
+        context->UpdateSubresource(historyDepth.Resource.Get(), 0, nullptr, oldDepths.data(), size[2] * 4, 0);
+        context->UpdateSubresource(detail.Resource.Get(), 0, nullptr, oldDetail.data(), size[2] * 4, 0);
+        for (UINT frame = 0; frame < 16; ++frame)
+        {
+            Constants constants;
+            for (UINT i = 0; i < 4; ++i) constants.Extent[i] = static_cast<float>(size[i]);
+            constants.Jitter[0] = Halton(frame + 1, 2) / static_cast<float>(size[0]);
+            constants.Jitter[1] = Halton(frame + 1, 3) / static_cast<float>(size[1]);
+            constants.Parameters[0] = frame == 0 ? 0.f : 1.f;
+            constants.Parameters[2] = constants.Parameters[3] = 1;
+            constants.Reconstruction[0] = constants.Reconstruction[1] = 1;
+            context->UpdateSubresource(buffer.Get(), 0, nullptr, &constants, 0, 0);
+            ID3D11ShaderResourceView* srvs[] = {color.Srv.Get(), depth.Srv.Get(), velocity.Srv.Get(), history.Srv.Get(),
+                historyDepth.Srv.Get(), reveal.Srv.Get(), detail.Srv.Get()};
+            for (UINT variant = 0; variant < 2; ++variant)
+            {
+                context->CSSetShader(shaders[variant].Get(), nullptr, 0);
+                context->CSSetShaderResources(0, 7, srvs);
+                ID3D11UnorderedAccessView* uavs[] = {output[variant][0].Uav.Get(), output[variant][1].Uav.Get(), output[variant][2].Uav.Get()};
+                context->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);
+                context->Dispatch((size[2] + 7) / 8, (size[3] + 7) / 8, 1);
+                ID3D11ShaderResourceView* noSrvs[7]{};
+                ID3D11UnorderedAccessView* noUavs[3]{};
+                context->CSSetShaderResources(0, 7, noSrvs);
+                context->CSSetUnorderedAccessViews(0, 3, noUavs, nullptr);
+                for (UINT channel = 0; channel < 3; ++channel)
+                    context->CopyResource(readback[variant][channel].Get(), output[variant][channel].Resource.Get());
+            }
+            for (UINT channel = 0; channel < 3; ++channel)
+            {
+                D3D11_MAPPED_SUBRESOURCE a{}, b{};
+                Check(context->Map(readback[0][channel].Get(), 0, D3D11_MAP_READ, 0, &a), "map direct TSR output");
+                Check(context->Map(readback[1][channel].Get(), 0, D3D11_MAP_READ, 0, &b), "map tiled TSR output");
+                bool equal = true;
+                const size_t rowBytes = size_t(size[2]) * (channel == 0 ? 16u : 4u);
+                for (UINT y = 0; y < size[3]; ++y)
+                    equal = equal && std::memcmp(static_cast<const char*>(a.pData) + size_t(y) * a.RowPitch,
+                        static_cast<const char*>(b.pData) + size_t(y) * b.RowPitch, rowBytes) == 0;
+                context->Unmap(readback[0][channel].Get(), 0);
+                context->Unmap(readback[1][channel].Get(), 0);
+                Require(equal, "tiled TSR differs bitwise from direct loads (color/depth/detail)");
+                ++comparisons;
+            }
+        }
+    }
+    std::cout << "TSR direct/tiled GPU parity: " << comparisons << " channel comparisons passed\n";
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -109,6 +231,11 @@ int main(int argc, char** argv)
         Check(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &device,
                                 nullptr, &context),
               "create fixture device");
+        if (argc > 1 && std::string(argv[1]) == "--cache-parity")
+        {
+            VerifyCacheParity(device.Get(), context.Get());
+            return 0;
+        }
         ComPtr<ID3DBlob> bytecode, errors;
         const auto compiled =
             D3DCompileFromFile(L"shader/hlsl/TemporalUpscaleCS.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
@@ -482,3 +609,4 @@ int main(int argc, char** argv)
         return 1;
     }
 }
+

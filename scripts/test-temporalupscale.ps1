@@ -12,6 +12,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Temporal upscale fixture compilation failed.' }
     & ./packages/Microsoft.Direct3D.DXC.1.9.2602.24/build/native/bin/x64/dxc.exe -T cs_6_5 -E main -O3 -Fo bin/validation/temporalupscale_test.cso shader/hlsl/TemporalUpscaleCS.hlsl
     if ($LASTEXITCODE -ne 0) { throw 'Production DX12 TSR shader compilation failed.' }
+    & ./bin/validation/temporalupscale_gpu_tests.exe --cache-parity
+    if ($LASTEXITCODE -ne 0) { throw 'Direct/tiled TSR GPU parity failed.' }
     & ./bin/validation/temporalupscale_gpu_tests.exe --legacy
     if ($LASTEXITCODE -ne 0) { throw 'Legacy TSR reproduction failed.' }
     & ./bin/validation/temporalupscale_gpu_tests.exe
@@ -42,3 +44,4 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Thin geometry fixture failed: $case" }
     }
 } finally { Pop-Location }
+

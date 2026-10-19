@@ -120,6 +120,9 @@ void CoarseCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
     float3 boundsMin, boundsMax;
     MLCellBounds(tileMin, tileMax, sliceMin, sliceMax, boundsMin, boundsMax);
 
+    // The count is identical in every lane. Keeping it local removes the
+    // lane-0 shared update and its extra barrier on each 64-light chunk.
+    uint listCount = 0u;
     const uint lightCount = min(MLCounts.x, ML_MAX_LIGHTS);
     for (uint base = 0u; base < lightCount; base += 64u)
     {
@@ -141,16 +144,15 @@ void CoarseCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
             const uint rank = groupIndex < 32u
                 ? countbits(low & ((1u << groupIndex) - 1u))
                 : countbits(low) + countbits(high & ((1u << (groupIndex - 32u)) - 1u));
-            gs_List[gs_ListCount + rank] = lightIndex;
+            gs_List[listCount + rank] = lightIndex;
         }
         GroupMemoryBarrierWithGroupSync();
-        if (groupIndex == 0u) gs_ListCount += countbits(low) + countbits(high);
-        GroupMemoryBarrierWithGroupSync();
+        listCount += countbits(low) + countbits(high);
     }
 
     if (groupIndex == 0u)
     {
-        const uint count = gs_ListCount;
+        const uint count = listCount;
         uint offset = 0u;
         uint stored = 0u;
         if (count > 0u)
@@ -273,4 +275,5 @@ void FineCull(uint3 coarse : SV_GroupID, uint groupIndex : SV_GroupIndex)
         if (bits != 0u) LightVisibleBits.InterlockedOr(word * 4u, bits);
     }
 }
+
 
