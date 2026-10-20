@@ -32,7 +32,10 @@ struct GPUInstanceData
     DirectX::XMFLOAT4X4 PreviousWorld{};
     uint32_t MeshIndex = 0;
     uint32_t MaterialIndex = 0;
-    uint32_t Flags = 0; // ビット0は有効、1は視錐台、2は GPU 不透明描画、3は移動中、4はネイティブ階層の対象。
+    uint32_t Flags = 0; // ビット0は有効、1は視錐台、2は GPU 不透明描画、3は移動中、4はネイティブ階層の対象、
+                        // 5はインポスターのアトラス準備済み（置き換えの距離判定は GPUOcclusionCS）。
+                        // ビット5のとき LodDistances.w = 切替距離、BoundsExtents.w / LocalExtents.w /
+                        // VisibilityPadding[0] = モデルのローカル中心。
     uint32_t Entity = UINT32_MAX;
     DirectX::XMFLOAT4 BoundsCenter{}; // ワールド空間の AABB。
     DirectX::XMFLOAT4 BoundsExtents{};
@@ -97,3 +100,4 @@ struct GpuSceneStatistics
     uint64_t BufferMemoryBytes = 0;
     double UpdateCpuMilliseconds = 0;
 };
+

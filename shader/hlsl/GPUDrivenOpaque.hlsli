@@ -7,7 +7,7 @@ cbuffer IndirectInstance : register(b4)
     uint GPUInstanceID;
 }
 
-Texture2D gSceneTextures[512] : register(t0, space1);
+#include "MaterialTextureHeap.hlsli"
 
 cbuffer TextureLimits : register(b5)
 {

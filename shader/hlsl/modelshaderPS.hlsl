@@ -277,6 +277,9 @@ float4 ShadeForward(in PSInput3D In)
     float2 materialUv = pom.Uv;
     // ピクセル深度オフセットと POM セルフシャドウ（主光源）。
     g_PomForwardDepth = AssetParallaxPixelDepth(pom, In.WorldPos, In.CameraPos, saturate(In.Position.z));
+#ifdef IMPOSTOR_FORWARD
+    g_PomForwardDepth = g_ImpostorDepth; // インポスター：アトラスから復元した表面の深度
+#endif
 #ifdef POM_HAS_MAIN_LIGHT
     if (pom.Active)
     {
@@ -300,6 +303,9 @@ float4 ShadeForward(in PSInput3D In)
     float4 assetEmissionAO;
     ApplyAssetMaterial(assetMaterial, materialUv, g_SamplerState, baseColor, assetMetallic, assetRoughness,
                        assetEmissionAO);
+#ifdef IMPOSTOR_FORWARD
+    baseColor = float4(g_ImpostorAlbedo, 1.0f); // インポスター：被覆率は呼び出し側で切り抜き済み
+#endif
     baseColor.a = saturate(baseColor.a * MaterialAlpha);
     clip(baseColor.a - (1.0f / 255.0f));
 
@@ -317,6 +323,9 @@ float4 ShadeForward(in PSInput3D In)
                                                g_SamplerState);
     }
     surfaceNormal = SafeNormalizeCommon(surfaceNormal, float3(0.0f, 1.0f, 0.0f));
+#ifdef IMPOSTOR_FORWARD
+    surfaceNormal = g_ImpostorNormal;
+#endif
 
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
     bool usePartParams = MaterialMode != 1;
@@ -554,6 +563,7 @@ struct ForwardOutput
     float HardwareDepth : SV_DepthGreaterEqual; // POM のピクセル深度オフセット（常に補間深度以上）
 };
 
+#ifndef IMPOSTOR_FORWARD
 ForwardOutput main(in PSInput3D In)
 {
     float4 premultiplied = ShadeForward(In);
@@ -568,3 +578,4 @@ ForwardOutput main(in PSInput3D In)
     output.HardwareDepth = max(g_PomForwardDepth, In.Position.z);
     return output;
 }
+#endif

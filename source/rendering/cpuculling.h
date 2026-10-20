@@ -1,6 +1,8 @@
 #pragma once
 // =============================================================================================
-// RenderCulling : CPU 側のカリングと負荷削減の設定（ヘッダーのみ。.vcxproj への追加不要）
+// RenderCulling : カリングと負荷削減の設定（ヘッダーのみ。.vcxproj への追加不要）
+//   ※ オブジェクトの可視判定は GPU（GpuObjectCulling / GpuInstanceCullLodCS / GPU Driven）へ移した。
+//     ここの IsEntityVisible は描画経路からは使わない。設定値（視錐台・画面サイズ・描画距離）は GPU 側が参照する。
 //   ・オブジェクト：視錐台カリング（ワールド AABB × 6 平面）、画面サイズカリング（投影半径が小さいもの）、
 //     描画距離カリング。結果はフレームごとにエンティティ単位でキャッシュ（同じフレームの複数パスで再計算しない）
 //   ・ライト：視錐台カリング（球 × 6 平面）、距離・画面サイズによるライトの LOD（境界でフェードして飛ばない）
@@ -182,6 +184,12 @@ class RenderCulling final
         return surface <= fadeStart ? 1.0f : 1.0f - (surface - fadeStart) / (maxDistance - fadeStart);
     }
 
+    // LightingResources::BeginFrame ごとに増える。GpuObjectCulling のフレーム判定に使う。
+    static uint64_t FrameSerial()
+    {
+        return s_FrameSerial;
+    }
+
     static const XMFLOAT3& CameraPosition()
     {
         return s_CameraPosition;
@@ -265,3 +273,4 @@ class RenderCulling final
     static inline std::vector<uint32_t> s_ObjectStamp;
     static inline std::vector<uint8_t> s_ObjectVisible;
 };
+

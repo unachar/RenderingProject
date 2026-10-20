@@ -15,6 +15,7 @@
 #include "gpuscene/gpuscene.h"
 #include "gpudriven/gpudrivenrenderer.h"
 #include "gpudriven/gpudrivenvalidation.h"
+#include "impostorrenderer.h"
 
 void FramePipeline::Execute()
 {
@@ -162,6 +163,12 @@ void FramePipeline::Execute()
                 [](ID3D12GraphicsCommandList* passCommandList) {
                     RenderProfiler::ScopedEvent profile("GBuffer / Opaque", passCommandList);
                     const auto submissionStart = chrono::steady_clock::now();
+                    if (!GPUDrivenValidation::IsGpuValidationRun())
+                    {
+                        // 保留中のインポスターを1件ベイク（レンダーターゲット設定前に行う）。
+                        RenderProfiler::ScopedEvent p("GBuffer: Impostor Bake", passCommandList);
+                        ImpostorRenderer::ProcessPendingBakes(passCommandList);
+                    }
                     // 内訳を計測（GBuffer の CPU 時間がどこで使われているかを特定するため）
                     {
                         RenderProfiler::ScopedEvent p("GBuffer: Begin", passCommandList);

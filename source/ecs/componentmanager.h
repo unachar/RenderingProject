@@ -395,6 +395,12 @@ struct LODComponent
     float Lod2Distance = 28.0f;
     Visibility::LODMetadata ScreenLOD{};
     bool UseAssetSettings = true;
+    // インポスター（静的モデルのみ）。切替距離より遠いとき、オクタヘドラル・インポスター1枚で描く。
+    bool UseImpostor = false;
+    float ImpostorDistance = 80.0f;
+    uint32_t ImpostorFrames = 8;        // 1辺の視点数（4 / 8 / 16）
+    uint32_t ImpostorResolution = 1024; // アトラス解像度（512 / 1024 / 2048）
+    bool ImpostorHemisphere = false;    // 上半球のみ（地面に立つ物）
 };
 
 struct LightComponent

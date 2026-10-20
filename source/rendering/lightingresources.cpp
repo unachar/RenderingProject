@@ -2009,6 +2009,45 @@ bool LightingResources::ShouldDrawEntityInCurrentShadowPass(EntityID entity)
     return IsShadowCasterVisible(entity, pass.ViewProjection);
 }
 
+bool LightingResources::ShouldDrawEntityInCurrentShadowSubset(EntityID entity)
+{
+    if (!g_LightCacheValid)
+    {
+        RebuildLightCache();
+    }
+    return g_ShadowCasterSubset == ShadowCasterSubset::All ||
+           IsMovingShadowCaster(entity) == (g_ShadowCasterSubset == ShadowCasterSubset::Moving);
+}
+
+bool LightingResources::GetCurrentShadowCullMatrix(XMMATRIX& transposedViewProjection)
+{
+    if (!g_LightCacheValid)
+    {
+        RebuildLightCache();
+    }
+    if (g_CurrentShadowPassIndex >= g_ShadowRenderPassCount)
+    {
+        return false;
+    }
+    transposedViewProjection = g_ShadowRenderPasses[g_CurrentShadowPassIndex].ViewProjection;
+    return true;
+}
+
+bool LightingResources::GetShadowCasterSphere(EntityID entity, XMFLOAT4& sphere)
+{
+    if (!ComponentManager::HasComponent<TransformComponent>(entity))
+    {
+        return false;
+    }
+    const ShadowBoundsCache& bounds = GetShadowBounds(entity);
+    if (!bounds.Caster)
+    {
+        return false;
+    }
+    sphere = {bounds.Center.x, bounds.Center.y, bounds.Center.z, bounds.Radius};
+    return true;
+}
+
 void LightingResources::SetShadowCasterSubset(ShadowCasterSubset subset)
 {
     g_ShadowCasterSubset = subset;
@@ -2096,3 +2135,4 @@ bool LightingResources::GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_V
     clearLayer = pass.ClearLayer;
     return true;
 }
+

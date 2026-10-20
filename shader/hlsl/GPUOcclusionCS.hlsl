@@ -99,6 +99,15 @@ bool Occluded(float2 minimum, float2 maximum, float nearest)
         result.w = 2;
         gStatistics.InterlockedAdd(4, 1, unused);
     }
+    else if ((instance.Flags & GPU_INSTANCE_IMPOSTOR_READY) != 0u && instance.LodDistances.w > 0.0f &&
+             dot(mul(float4(GpuInstanceImpostorCenter(instance), 1.0f), View).xyz,
+                 mul(float4(GpuInstanceImpostorCenter(instance), 1.0f), View).xyz) >=
+                 instance.LodDistances.w * instance.LodDistances.w)
+    {
+        // w = 4：視錐台内で、切替距離より遠い → メッシュは描かずインポスターで描く。
+        // 判定はここ1か所だけ。ImpostorCullCS はこの結果を読んでインポスターを追加する。
+        result.w = 4;
+    }
     else
     {
         result.w = 1;
@@ -126,3 +135,4 @@ bool Occluded(float2 minimum, float2 maximum, float nearest)
     }
     gResult[slot] = result;
 }
+

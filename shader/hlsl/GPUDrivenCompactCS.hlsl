@@ -47,3 +47,4 @@ cbuffer Limits : register(b0)
     }
     gVisible[target] = visible;
 }
+

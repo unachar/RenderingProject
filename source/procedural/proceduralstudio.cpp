@@ -1,43 +1,15 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "proceduralstudio.h"
+#include "proceduralworkgraph.h"
 #include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <functional>
-#include <thread>
 
 namespace ProcStudio
 {
     namespace
     {
-        // [0, count)をCPUスレッドへ分割する。生成処理は座標ごとに独立して実行する。
-        void ParallelFor(int count, const std::function<void(int)>& body)
-        {
-            const int workerCount = std::clamp(static_cast<int>(std::thread::hardware_concurrency()), 1, 32);
-            if (count < 8 || workerCount == 1)
-            {
-                for (int itemIndex = 0; itemIndex < count; ++itemIndex)
-                {
-                    body(itemIndex);
-                }
-                return;
-            }
-            std::vector<std::thread> workerThreads;
-            for (int workerIndex = 0; workerIndex < workerCount; ++workerIndex)
-            {
-                workerThreads.emplace_back([&, workerIndex] {
-                    for (int itemIndex = workerIndex; itemIndex < count; itemIndex += workerCount)
-                    {
-                        body(itemIndex);
-                    }
-                });
-            }
-            for (auto& thread : workerThreads)
-            {
-                thread.join();
-            }
-        }
-
         constexpr float kPi = 3.14159265358979323846f;
 
         uint32_t Hash(uint32_t value)
@@ -554,142 +526,22 @@ namespace ProcStudio
 
     Image GenerateTexture(const TextureParams& p, int width, int height)
     {
-        Image image;
-        image.Width = (std::max)(width, 1);
-        image.Height = (std::max)(height, 1);
-        image.Pixels.resize(static_cast<size_t>(image.Width) * image.Height);
-        std::vector<float> heights;
-        if (p.Output == TextureOutput::Normal)
-        {
-            heights.resize(image.Pixels.size());
-        }
-        ParallelFor(image.Height, [&](int y) {
-            for (int x = 0; x < image.Width; ++x)
-            {
-                const float u = (x + 0.5f) / image.Width;
-                const float v = (y + 0.5f) / image.Height;
-                auto& out = image.Pixels[static_cast<size_t>(y) * image.Width + x];
-                if (p.Output == TextureOutput::Color)
-                {
-                    const Float3 c = TextureColor(p, u, v, 0, false);
-                    out = {c.X, c.Y, c.Z, 1};
-                }
-                else
-                {
-                    const float h = TextureScalar(p, u, v, 0, false);
-                    out = {h, h, h, 1};
-                    if (!heights.empty())
-                    {
-                        heights[static_cast<size_t>(y) * image.Width + x] = h;
-                    }
-                }
-            }
-        });
-        if (!heights.empty())
-        {
-            // 折り返し付き中央差分から接空間法線マップを生成する（OpenGL の +Y 規約）。
-            for (int y = 0; y < image.Height; ++y)
-            {
-                for (int x = 0; x < image.Width; ++x)
-                {
-                    auto h = [&](int px, int py) {
-                        return heights[Wrap(py, image.Height) * image.Width + Wrap(px, image.Width)];
-                    };
-                    const float dx = (h(x + 1, y) - h(x - 1, y)) * p.NormalStrength;
-                    const float dy = (h(x, y + 1) - h(x, y - 1)) * p.NormalStrength;
-                    const Float3 n = Normalize({-dx, dy, 1});
-                    image.Pixels[static_cast<size_t>(y) * image.Width + x] = {n.X * 0.5f + 0.5f, n.Y * 0.5f + 0.5f,
-                                                                              n.Z * 0.5f + 0.5f, 1};
-                }
-            }
-        }
-        return image;
+        return ProceduralWorkGraph::GenerateTexture(p, width, height);
     }
 
     Volume GenerateVolume(const TextureParams& p, int extent)
     {
-        Volume volume;
-        volume.Extent = std::clamp(extent, 8, 256);
-        const size_t n = static_cast<size_t>(volume.Extent);
-        volume.Density.resize(n * n * n);
-        TextureParams params = p;
-        params.Tileable = true;
-        ParallelFor(static_cast<int>(n), [&](int zi) {
-            const size_t z = static_cast<size_t>(zi);
-            for (size_t y = 0; y < n; ++y)
-            {
-                for (size_t x = 0; x < n; ++x)
-                {
-                    const float fx = (x + 0.5f) / n;
-                    const float fy = (y + 0.5f) / n;
-                    const float fz = (z + 0.5f) / n;
-                    // 第 3 座標を格子軸として 2D スカラーを評価し、3 軸すべてでタイル化可能にする。
-                    volume.Density[(z * n + y) * n + x] = TextureScalar(params, fx, fy, fz, false);
-                }
-            }
-        });
-        return volume;
+        return ProceduralWorkGraph::GenerateVolume(p, extent);
     }
 
     Volume VolumeFromImage(const Image& image, int extent, int octaves, float verticalVariation, uint32_t seed)
     {
-        Volume volume;
-        volume.Extent = std::clamp(extent, 8, 256);
-        const size_t n = static_cast<size_t>(volume.Extent);
-        volume.Density.resize(n * n * n);
-        octaves = std::clamp(octaves, 1, 6);
-        ParallelFor(static_cast<int>(n), [&](int zi) {
-            const size_t z = static_cast<size_t>(zi);
-            for (size_t y = 0; y < n; ++y)
-            {
-                for (size_t x = 0; x < n; ++x)
-                {
-                    const float fx = (x + 0.5f) / n;
-                    const float fy = (y + 0.5f) / n;
-                    const float fz = (z + 0.5f) / n;
-                    float sum = 0;
-                    float norm = 0;
-                    float amplitude = 1;
-                    for (int o = 0; o < octaves; ++o)
-                    {
-                        const float scale = static_cast<float>(1 << o);
-                        // 高さに応じて水平方向の参照位置をずらす。整数オフセットでボリュームの周期性を保つ。
-                        const uint32_t h = Hash(seed + static_cast<uint32_t>(o) * 977u);
-                        const float angle = fy * 2 * kPi;
-                        const float ox = std::round(verticalVariation * 2) * std::cos(angle) * 0.5f / scale + Unit(h);
-                        const float oz =
-                            std::round(verticalVariation * 2) * std::sin(angle) * 0.5f / scale + Unit(Hash(h));
-                        const Float4 a = image.Sample(fx * scale + ox, fz * scale + oz);
-                        const Float4 b = image.Sample(fz * scale - oz + 0.37f, fy * scale + ox);
-                        const float value = (a.X + a.Y + a.Z) / 3 * 0.7f + (b.X + b.Y + b.Z) / 3 * 0.3f;
-                        sum += value * amplitude;
-                        norm += amplitude;
-                        amplitude *= 0.5f;
-                    }
-                    volume.Density[(z * n + y) * n + x] = Saturate(sum / norm);
-                }
-            }
-        });
-        return volume;
+        return ProceduralWorkGraph::VolumeFromImage(image, extent, octaves, verticalVariation, seed);
     }
 
     std::vector<Float4> GenerateSolidVolume(const TextureParams& p, int extent)
     {
-        const size_t volumeExtent = static_cast<size_t>(std::clamp(extent, 8, 256));
-        std::vector<Float4> voxels(volumeExtent * volumeExtent * volumeExtent);
-        ParallelFor(static_cast<int>(volumeExtent), [&](int sliceIndex) {
-            const size_t z = static_cast<size_t>(sliceIndex);
-            for (size_t y = 0; y < volumeExtent; ++y)
-            {
-                for (size_t x = 0; x < volumeExtent; ++x)
-                {
-                    const Float3 color = TextureColor(p, (x + 0.5f) / volumeExtent, (y + 0.5f) / volumeExtent,
-                                                      (z + 0.5f) / volumeExtent, true);
-                    voxels[(z * volumeExtent + y) * volumeExtent + x] = {color.X, color.Y, color.Z, 1};
-                }
-            }
-        });
-        return voxels;
+        return ProceduralWorkGraph::GenerateSolidVolume(p, extent);
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -1314,45 +1166,18 @@ namespace ProcStudio
         Mesh mesh;
         switch (p.Kind)
         {
+            case ModelKind::Rock:
             case ModelKind::Sphere:
-                BuildSphere(mesh, 1.0f, 64, 32);
-                mesh.ComputeNormals();
-                break;
             case ModelKind::Cube:
-                AddBox(mesh, {0, 0, 0}, 0.8f, kWhite, true);
-                mesh.ComputeNormals();
+            case ModelKind::MengerSponge:
+            case ModelKind::SierpinskiPyramid:
+                mesh = ProceduralWorkGraph::GenerateAnalyticModel(p);
                 break;
             case ModelKind::Plane:
-                BuildGrid(
-                    mesh, 1, 2.5f,
-                    [](float, float) {
-                        return 0.0f;
-                    },
-                    [](float, float, float) {
-                        return kWhite;
-                    });
+            case ModelKind::Terrain:
+            case ModelKind::WaterSurface:
+                mesh = ProceduralWorkGraph::GenerateGridModel(p);
                 break;
-            case ModelKind::Terrain: {
-                NoiseParams n = p.Noise;
-                n.Seed ^= p.Seed;
-                BuildGrid(
-                    mesh, p.Resolution, p.Size,
-                    [&](float u, float v) {
-                        return FractalNoise(n, u, v, 0.37f, false) * p.Height;
-                    },
-                    [&](float, float, float h) {
-                        return p.TerrainColors ? TerrainColor(h / (std::max)(p.Height, 1e-3f), 0) : kWhite;
-                    });
-                if (p.TerrainColors)
-                {
-                    for (size_t i = 0; i < mesh.Positions.size(); ++i)
-                    {
-                        const float slope = 1 - std::fabs(mesh.Normals[i].Y);
-                        mesh.Colors[i] = TerrainColor(mesh.Positions[i].Y / (std::max)(p.Height, 1e-3f), slope * 2.5f);
-                    }
-                }
-                break;
-            }
             case ModelKind::FractalTree: {
                 Random random{Hash(p.Seed)};
                 std::vector<LeafPlacement> leaves;
@@ -1401,59 +1226,8 @@ namespace ProcStudio
                     }
                 }
                 break;
-            case ModelKind::Rock: {
-                Icosphere(mesh, p.Subdivisions);
-                NoiseParams n = p.Noise;
-                n.Seed ^= p.Seed;
-                for (auto& position : mesh.Positions)
-                {
-                    const float d =
-                        FractalNoise(n, position.X * 0.5f + 7, position.Y * 0.5f + 3, position.Z * 0.5f + 5, false);
-                    position = Mul(position, 1 + (d - 0.5f) * 2 * p.Displacement);
-                }
-                mesh.ComputeNormals();
-                for (size_t i = 0; i < mesh.Positions.size(); ++i)
-                {
-                    const float g = 0.18f + 0.22f * FractalNoise(n, mesh.Positions[i].X * 2, mesh.Positions[i].Y * 2,
-                                                                 mesh.Positions[i].Z * 2, false);
-                    mesh.Colors[i] = {g * 1.05f, g, g * 0.92f};
-                }
-                break;
-            }
-            case ModelKind::WaterSurface: {
-                TextureParams water;
-                water.Kind = TextureKind::FractalWater;
-                water.Noise = p.Noise;
-                water.Noise.Seed ^= p.Seed;
-                water.Time = p.Time;
-                water.Tileable = false;
-                BuildGrid(
-                    mesh, p.Resolution, p.Size,
-                    [&](float u, float v) {
-                        return (TextureScalar(water, u, v, 0, false) - 0.5f) * 2 * p.WaveAmplitude;
-                    },
-                    [&](float, float, float h) {
-                        const float t = Saturate(h / (std::max)(p.WaveAmplitude, 1e-3f) * 0.5f + 0.5f);
-                        return Mix3(Float3{0.02f, 0.12f, 0.2f}, Float3{0.1f, 0.4f, 0.5f}, t);
-                    });
-                break;
-            }
-            case ModelKind::MengerSponge:
-                Menger(mesh, {0, 0, 0}, 1.0f, std::clamp(p.Level, 0, 3), {0.8f, 0.78f, 0.72f});
-                break;
-            case ModelKind::SierpinskiPyramid: {
-                const float s = 1.2f;
-                Sierpinski(mesh, {-s, -s * 0.7f, -s * 0.58f}, {s, -s * 0.7f, -s * 0.58f}, {0, -s * 0.7f, s * 1.15f},
-                           {0, s * 1.0f, 0}, std::clamp(p.Level, 0, 7), {0.85f, 0.65f, 0.3f});
-                mesh.ComputeNormals();
-                break;
-            }
             default:
                 break;
-        }
-        if (p.Kind == ModelKind::MengerSponge)
-        {
-            mesh.ComputeNormals();
         }
         return mesh;
     }

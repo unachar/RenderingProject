@@ -172,7 +172,8 @@ namespace
         };
         const uint32_t heightIndex = textureOffset(material.HeightTextureID);
         constants.AssetParallax = {material.ParallaxDepth, material.ParallaxSteps,
-                                   heightIndex < 512u ? static_cast<float>(heightIndex) : -1.0f, 0};
+                                   heightIndex < 512u ? static_cast<float>(heightIndex) : -1.0f,
+                                   static_cast<float>(FrameConstants::g_kTEXTURE_SRV_START_INDEX)};
         constants.AssetTextures = {
             textureOffset(material.MetallicRoughnessID), textureOffset(material.AOTextureID),
             textureOffset(material.EmissiveTextureID),
@@ -362,6 +363,7 @@ bool MaterialBindings::SetPreviewMaterial(const MaterialComponent& material, ID3
     constants.AssetTextures.z = offset(material.EmissiveTextureID);
     const uint32_t heightIndex = offset(material.HeightTextureID);
     constants.AssetParallax.z = heightIndex < 512u ? static_cast<float>(heightIndex) : -1.0f;
+    constants.AssetParallax.w = static_cast<float>(textureBase);
     uint8_t* mapped = nullptr;
     if (FAILED(buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))))
     {
@@ -462,8 +464,8 @@ void MaterialBindings::BindAssetSlot(EntityID entity, const MaterialComponent& m
         1, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap, base, FrameConstants::GetCbvIncrementSize()));
     m_CommandList->SetGraphicsRootDescriptorTable(
         6, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap, normal, FrameConstants::GetCbvIncrementSize()));
-    for (int descriptor :
-         {base, normal, material.MetallicRoughnessID, material.AOTextureID, material.EmissiveTextureID, material.HeightTextureID})
+    for (int descriptor : {base, normal, material.MetallicRoughnessID, material.AOTextureID, material.EmissiveTextureID,
+                           material.HeightTextureID})
     {
         if (descriptor >= 0)
         {

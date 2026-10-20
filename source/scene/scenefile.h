@@ -1310,6 +1310,11 @@ namespace SceneFile
         a("thresholds", c.ScreenLOD.Thresholds);
         a("hysteresis", c.ScreenLOD.Hysteresis);
         a("meshPaths", c.ScreenLOD.MeshPaths);
+        a("impostor", c.UseImpostor);
+        a("impostorDistance", c.ImpostorDistance);
+        a("impostorFrames", c.ImpostorFrames);
+        a("impostorResolution", c.ImpostorResolution);
+        a("impostorHemisphere", c.ImpostorHemisphere);
     }
 
     inline void Visit(Archive& a, InstancingComponent& c)

@@ -26,6 +26,7 @@
 #include "gpudriven/gpudrivenrenderer.h"
 #include "meshshader/meshshaderrenderer.h"
 #include "cpuculling.h"
+#include "gpuobjectculling.h"
 #include "renderprofiler.h"
 #include <optional>
 #include <chrono>
@@ -190,6 +191,8 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
             return;
         }
 
+        // 影パスの可視判定は GPU（GpuObjectCullCS）。PSO を設定する前に取得する。
+        const int cullView = GpuObjectCulling::ShadowView(pCommandList);
         pCommandList->SetPipelineState(shadowPso);
         auto writeShadowCb = [&](EntityID entity) {
             XMMATRIX world =
@@ -211,14 +214,16 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
             const auto& sprite = ComponentManager::GetComponentUnchecked<SpriteComponent>(i);
             if (!sprite.Is3D || sprite.VertexBufferView.BufferLocation == 0 ||
                 !Registry::HasComponent(i, ComponentType::TRANSFORM) || !ShouldCastShadow(i, transmission) ||
-                !LightingResources::ShouldDrawEntityInCurrentShadowPass(i) || InstancingSystem::CanInstance(i))
+                !LightingResources::ShouldDrawEntityInCurrentShadowSubset(i) || InstancingSystem::CanInstance(i))
             {
                 continue;
             }
 
             writeShadowCb(i);
             pCommandList->IASetVertexBuffers(0, 1, &sprite.VertexBufferView);
+            GpuObjectCulling::Begin(pCommandList, cullView, i);
             pCommandList->DrawInstanced(sprite.VertexCount, 1, 0, 0);
+            GpuObjectCulling::End(pCommandList);
         }
 
         for (EntityID i : World::GetView<MeshComponent>())
@@ -231,7 +236,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
 
             const auto& mesh = ComponentManager::GetComponentUnchecked<MeshComponent>(i);
             if (mesh.VertexBufferView.BufferLocation == 0 || !Registry::HasComponent(i, ComponentType::TRANSFORM) ||
-                !ShouldCastShadow(i, transmission) || !LightingResources::ShouldDrawEntityInCurrentShadowPass(i) ||
+                !ShouldCastShadow(i, transmission) || !LightingResources::ShouldDrawEntityInCurrentShadowSubset(i) ||
                 InstancingSystem::CanInstance(i))
             {
                 continue;
@@ -242,7 +247,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
             const auto vertexView =
                 VertexDeformation::TryResolveMesh(i, deformation) ? deformation.CurrentView : mesh.VertexBufferView;
             pCommandList->IASetVertexBuffers(0, 1, &vertexView);
+            GpuObjectCulling::Begin(pCommandList, cullView, i);
             pCommandList->DrawInstanced(mesh.VertexCount, 1, 0, 0);
+            GpuObjectCulling::End(pCommandList);
         }
         return;
     }
@@ -264,6 +271,8 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
         XMMATRIX previousViewProjection = XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix()) *
                                           XMLoadFloat4x4(&GraphicsDevice::GetPreviousProjectionMatrix());
         commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
+        // 可視判定は GPU（GpuObjectCullCS）。PSO を設定する前に取得する。
+        const int cullView = GpuObjectCulling::CameraView(commandList);
         commandList->SetPipelineState(pso);
         commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -282,15 +291,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
                 ++RenderCulling::MutableStats().VelocitySkipped;
                 return;
             }
-            if (!RenderCulling::IsEntityVisible(entity))
-            {
-                return;
-            }
             if (MaterialSystem::IsTransparent(entity))
-            {
-                return;
-            }
-            if (InstancingSystem::CanInstance(entity) && !InstancingSystem::IsEntityVisible(entity))
             {
                 return;
             }
@@ -310,7 +311,9 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
             }
             commandList->IASetVertexBuffers(0, 2, views);
             commandList->IASetIndexBuffer(nullptr);
+            GpuObjectCulling::Begin(commandList, cullView, entity);
             commandList->DrawInstanced(vertexCount, 1, 0, 0);
+            GpuObjectCulling::End(commandList);
         };
 
         for (EntityID entity : World::GetView<SpriteComponent>())
@@ -430,11 +433,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
                 {
                     continue;
                 }
-                // 負荷削減：視錐台・画面サイズのカリング（ルートの再設定は描画の直前に 1 回だけ）
-                if (!RenderCulling::IsEntityVisible(i))
-                {
-                    continue;
-                }
+                // 視錐台・画面サイズの判定は GPU（描画時に SetPredication で破棄）。
 
                 ShaderDescription psoResource{};
                 psoResource.vsPath = GetSpriteVsPath(i, true);
@@ -640,11 +639,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
         {
             continue;
         }
-        // 負荷削減：視錐台・画面サイズのカリング
-        if (!RenderCulling::IsEntityVisible(i))
-        {
-            continue;
-        }
+        // 視錐台・画面サイズの判定は GPU（描画時に SetPredication で破棄）。
 
         bool isReceiving = MaterialSystem::IsReceivingPostProcess(i);
         const MaterialComponent* material;
@@ -781,6 +776,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
         drawDeferredOpaque ? "RenderSystem: Submit (opaque)" : "RenderSystem: Submit", pCommandList);
 
     auto heapStart = pCbvHeap->GetGPUDescriptorHandleForHeapStart();
+    // 可視判定は GPU（GpuObjectCullCS）。PSO を設定する前に取得する。
+    const int cullView = (m_SpriteDrawCalls.empty() && m_ModelDrawCalls.empty())
+                             ? GpuObjectCulling::kNoView
+                             : GpuObjectCulling::CameraView(pCommandList);
 
     auto submitDrawCalls = [&](const vector<DrawCall>& drawCalls) {
         ID3D12PipelineState* lastPso = nullptr;
@@ -834,6 +833,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
             }
 
             pCommandList->IASetVertexBuffers(0, 1, &dc.vbv);
+            if (dc.is3D)
+            {
+                GpuObjectCulling::Begin(pCommandList, cullView, dc.EntityID);
+            }
             bool meshShaderDrawn = false;
             if (material.RuntimeHandle == 0 && drawDeferredOpaque && dc.is3D &&
                 ComponentManager::HasComponent<MeshComponent>(dc.EntityID))
@@ -868,6 +871,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
                 pCommandList->DrawInstanced(dc.vertexCount, 1, 0, 0);
                 lastPso = outlinePso;
             }
+            GpuObjectCulling::End(pCommandList);
         }
     };
 
@@ -893,3 +897,4 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
     }
     s_MeshShaderDraws = 0;
 }
+

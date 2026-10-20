@@ -16,6 +16,7 @@
 #include "texturemanager.h"
 #include "timelinesystem.h"
 #include "gpuscene/gpuscenechanges.h"
+#include "impostorrenderer.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -2002,6 +2003,78 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
         changed |= ImGui::DragFloat("LOD2距離", &lod.Lod2Distance, 0.25f, 0.0f, 100000.0f, "%.2f");
         lod.Lod1Distance = max(0.0f, lod.Lod1Distance);
         lod.Lod2Distance = max(lod.Lod1Distance, lod.Lod2Distance);
+        if (ComponentManager::HasComponent<StaticModelComponent>(entity))
+        {
+            ImGui::SeparatorText("インポスター");
+            changed |= ImGui::Checkbox("インポスターを使用", &lod.UseImpostor);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("切替距離より遠いとき、多視点で焼いた板1枚で描きます。\n"
+                                  "影・レイトレーシングは実メッシュのままです。\n"
+                                  "有効にすると GPU Driven ではなく CPU インスタンス描画経路になります。");
+            }
+            ImGui::BeginDisabled(!lod.UseImpostor);
+            changed |= ImGui::DragFloat("切替距離", &lod.ImpostorDistance, 0.5f, 0.0f, 100000.0f, "%.1f m");
+            lod.ImpostorDistance = max(0.0f, lod.ImpostorDistance);
+            int framesIndex = lod.ImpostorFrames <= 4 ? 0 : (lod.ImpostorFrames <= 8 ? 1 : 2);
+            if (ImGui::Combo("視点数", &framesIndex, "4 x 4 (軽量)\0" "8 x 8 (標準)\0" "16 x 16 (高品質)\0"))
+            {
+                lod.ImpostorFrames = framesIndex == 0 ? 4u : (framesIndex == 1 ? 8u : 16u);
+                changed = true;
+            }
+            int resolutionIndex = lod.ImpostorResolution <= 512 ? 0 : (lod.ImpostorResolution <= 1024 ? 1 : 2);
+            if (ImGui::Combo("アトラス解像度", &resolutionIndex, "512 (約 2.7 MB)\0" "1024 (約 11 MB)\0" "2048 (約 43 MB)\0"))
+            {
+                lod.ImpostorResolution = resolutionIndex == 0 ? 512u : (resolutionIndex == 1 ? 1024u : 2048u);
+                changed = true;
+            }
+            changed |= ImGui::Checkbox("上半球のみ (地面に立つ物)", &lod.ImpostorHemisphere);
+            const char* stateText = "未生成（切替距離を超えると生成）";
+            switch (ImpostorRenderer::QueryState(entity))
+            {
+            case ImpostorRenderer::AtlasState::Pending:
+                stateText = "生成待ち";
+                break;
+            case ImpostorRenderer::AtlasState::Ready:
+                stateText = "生成済み";
+                break;
+            case ImpostorRenderer::AtlasState::Failed:
+                stateText = "生成失敗（メッシュで描画）";
+                break;
+            default:
+                break;
+            }
+            ImGui::Text("状態: %s", stateText);
+            if (ImGui::Button("再ベイク"))
+            {
+                if (StaticModelResource* impostorModel = ModelManager::GetStaticModel(
+                        ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId))
+                {
+                    ImpostorRenderer::InvalidateModel(impostorModel);
+                }
+            }
+            ImGui::EndDisabled();
+
+            auto& impostorSettings = ImpostorRenderer::GetSettings();
+            if (ImGui::TreeNode("インポスター全体設定"))
+            {
+                ImGui::Checkbox("インポスター描画を有効化", &impostorSettings.Enabled);
+                ImGui::SliderFloat("被覆率しきい値", &impostorSettings.AlphaCutoff, 0.05f, 0.95f, "%.2f");
+                ImGui::SliderFloat("Mip バイアス", &impostorSettings.MipBias, -1.0f, 2.0f, "%.2f");
+                const auto stats = ImpostorRenderer::GetStatistics();
+                ImGui::Text("アトラス: %u 生成済み / %u 待ち / %u 失敗", stats.ReadyAtlases, stats.PendingAtlases,
+                            stats.FailedAtlases);
+                ImGui::Text("VRAM: %.1f MB", static_cast<double>(stats.AtlasBytes) / (1024.0 * 1024.0));
+                ImGui::Text("描画: %u インスタンス / %u ドローコール", stats.DrawnInstances, stats.DrawCalls);
+                if (ImGui::Button("全アトラスを再生成"))
+                {
+                    ImpostorRenderer::InvalidateAll();
+                }
+                ImGui::TreePop();
+            }
+        }
         changed |= ImGui::Checkbox("Use asset LOD metadata", &lod.UseAssetSettings);
         StaticModelResource* lodModel =
             ComponentManager::HasComponent<StaticModelComponent>(entity)

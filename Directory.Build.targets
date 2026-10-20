@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <RayTelemetryShaderInputs>$(MSBuildThisFileDirectory)shader\hlsl\RayTelemetry.hlsli;$(MSBuildThisFileDirectory)source\rendering\raytelemetrylayout.h;$(MSBuildThisFileDirectory)source\rendering\stablesampling.h</RayTelemetryShaderInputs>
@@ -131,7 +131,7 @@
     <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T cs_6_0 -E Reset -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\MeshletResetCS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\BuildMeshDispatchCS.hlsl&quot;" />
   </Target>
   <Target Name="CompilePhase5ShadersMeshletOpaquePS"
-          Inputs="$(MSBuildThisFileDirectory)shader\hlsl\common.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\DeferredPS.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\GPUDrivenOpaque.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\GPUDrivenOpaquePS.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\GpuSceneCommon.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\MaterialSurface.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\SceneRayShadow.hlsli;$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props"
+          Inputs="$(MSBuildThisFileDirectory)shader\hlsl\common.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\DeferredPS.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\GPUDrivenOpaque.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\GPUDrivenOpaquePS.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\GpuSceneCommon.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\MaterialTextureHeap.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\MaterialSurface.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\SceneRayShadow.hlsli;$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props"
           Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\MeshletOpaquePS.cso"
           Condition="'$(Platform)' == 'x64'">
     <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
@@ -186,7 +186,7 @@
     <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
     <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T ms_6_5 -E main -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\VirtualGeometryVelocityMS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\VirtualGeometryVelocityMS.hlsl&quot;" />
   </Target>
-  <Target Name="CompileVirtualGeometryShadersVirtualGeometryOpaquePS" Inputs="$(MSBuildThisFileDirectory)shader\hlsl\VirtualGeometryOpaquePS.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\VirtualGeometryCommon.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\GpuSceneCommon.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\GPUDrivenOpaquePS.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\GPUDrivenOpaque.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\DeferredPS.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\MaterialSurface.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\common.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\SceneRayShadow.hlsli;$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props" Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\VirtualGeometryOpaquePS.cso" Condition="'$(Platform)' == 'x64'">
+  <Target Name="CompileVirtualGeometryShadersVirtualGeometryOpaquePS" Inputs="$(MSBuildThisFileDirectory)shader\hlsl\VirtualGeometryOpaquePS.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\VirtualGeometryCommon.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\GpuSceneCommon.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\GPUDrivenOpaquePS.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\GPUDrivenOpaque.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\DeferredPS.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\MaterialTextureHeap.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\MaterialSurface.hlsli;$(MSBuildThisFileDirectory)shader\hlsl\common.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\SceneRayShadow.hlsli;$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props" Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\VirtualGeometryOpaquePS.cso" Condition="'$(Platform)' == 'x64'">
     <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
     <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T ps_6_0 -E main -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\VirtualGeometryOpaquePS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\VirtualGeometryOpaquePS.hlsl&quot;" />
   </Target>
@@ -234,4 +234,9 @@
     <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
     <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\native\bin\x64\dxc.exe&quot; -T ms_6_5 -E main -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\VirtualGeometryBinnedVelocityMS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\VirtualGeometryBinnedVelocityMS.hlsl&quot;" />
   </Target>
-</Project>
+  <Target Name="CopyMeshNodesPreviewCompiler" AfterTargets="Build" Condition="'$(Platform)' == 'x64'">
+    <ItemGroup>
+      <MeshNodesCompilerFiles Include="$(MeshNodesPreviewCompilerRoot)bin\x64\dxcompiler.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(MeshNodesCompilerFiles)" DestinationFolder="$(OutDir)MeshNodesDXC" SkipUnchangedFiles="true" />
+  </Target></Project>

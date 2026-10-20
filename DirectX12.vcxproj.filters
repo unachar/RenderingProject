@@ -1553,4 +1553,10 @@
       <Filter>assets</Filter>
     </ClCompile>
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\rendering\workgraphruntime.cpp" />
+    <ClInclude Include="source\rendering\workgraphruntime.h" />
+    <ClCompile Include="source\procedural\proceduralworkgraph.cpp" />
+    <ClInclude Include="source\procedural\proceduralworkgraph.h" />
+  </ItemGroup>
 </Project>

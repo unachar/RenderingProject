@@ -30,6 +30,7 @@
 #include "materialbindings.h"
 #include "frameconstants.h"
 #include "lightingresources.h"
+#include "gpuobjectculling.h"
 #include "renderconfiguration.h"
 
 static const MaterialComponent& DefaultMaterial()
@@ -214,6 +215,8 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
             return;
         }
 
+        // 影パスの可視判定は GPU（GpuObjectCullCS）。PSO を設定する前に取得する。
+        const int cullView = GpuObjectCulling::ShadowView(pCommandList);
         pCommandList->SetPipelineState(shadowPso);
         auto writeShadowCb = [&](EntityID entity) {
             XMMATRIX world =
@@ -234,7 +237,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         {
             auto& animComp = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(i);
             if (animComp.ModelId < 0 || !ShouldCastShadow(i, transmission) ||
-                !LightingResources::ShouldDrawEntityInCurrentShadowPass(i) || InstancingSystem::CanInstance(i))
+                !LightingResources::ShouldDrawEntityInCurrentShadowSubset(i) || InstancingSystem::CanInstance(i))
             {
                 continue;
             }
@@ -266,6 +269,8 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
             }
             TransmittanceShadows::BindCurrentPass(pCommandList);
             pCommandList->SetPipelineState(shadowPso);
+            // 以降の描画・間接描画は GPU の判定で破棄される（スキニングは他のパスと共有のため対象外）。
+            GpuObjectCulling::Begin(pCommandList, cullView, i);
             writeShadowCb(i);
             const auto& shadowMaterial = MaterialManager::Resolve(LegacyMaterialForEntity(i));
             const bool indirectShadow =
@@ -302,13 +307,14 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
                 pCommandList->ResourceBarrier(1, &backBarrier);
             }
+            GpuObjectCulling::End(pCommandList);
         }
 
         for (EntityID i : World::GetView<StaticModelComponent>())
         {
             auto& staticComp = ComponentManager::GetComponentUnchecked<StaticModelComponent>(i);
             if (staticComp.ModelId < 0 || !ShouldCastShadow(i, transmission) ||
-                !LightingResources::ShouldDrawEntityInCurrentShadowPass(i) || InstancingSystem::CanInstance(i))
+                !LightingResources::ShouldDrawEntityInCurrentShadowSubset(i) || InstancingSystem::CanInstance(i))
             {
                 continue;
             }
@@ -319,6 +325,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                 continue;
             }
 
+            GpuObjectCulling::Begin(pCommandList, cullView, i);
             writeShadowCb(i);
             const auto& shadowMaterial = MaterialManager::Resolve(LegacyMaterialForEntity(i));
             const bool indirectShadow =
@@ -350,6 +357,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                     pCommandList->DrawIndexedInstanced(meshData.IndexCount, 1, 0, 0, 0);
                 }
             }
+            GpuObjectCulling::End(pCommandList);
         }
         return;
     }
@@ -1169,3 +1177,4 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         }
     }
 }
+

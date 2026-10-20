@@ -1277,7 +1277,19 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
             }
             else
             {
-                descriptors[slot] = TextureManager::LoadTexture(path);
+                // シェーダーが参照するチャンネルに合わせて BC 形式を選ぶ。
+                // MetallicRoughness は .rg（BC5）、AO と高さは .r（BC4）、ベースカラーとエミッシブは BC7。
+                TextureUsage usage = TextureUsage::Color;
+                if (slot == static_cast<size_t>(MaterialTextureSlot::MetallicRoughness))
+                {
+                    usage = TextureUsage::TwoChannel;
+                }
+                else if (slot == static_cast<size_t>(MaterialTextureSlot::AO) ||
+                         slot == static_cast<size_t>(MaterialTextureSlot::Height))
+                {
+                    usage = TextureUsage::SingleChannel;
+                }
+                descriptors[slot] = TextureManager::LoadTexture(path, usage);
             }
             runtime.TexturePaths[slot] = path;
         }
@@ -1881,11 +1893,529 @@ bool MaterialManager::LoadSceneReferences(const filesystem::path& path, string& 
     return true;
 }
 
+===== FILE: source\assets\texturecompression.h =====
+#pragma once
+
+// テクスチャ取り込み時の BC 圧縮とディスクキャッシュ。
+//   Color       : BC7（sRGB 入力は BC7_UNORM_SRGB）   ベースカラー / エミッシブ / モデル埋め込み
+//   Normal      : BC5（RG のみ保持。Z はシェーダーで再構成: NormalMapDecode.hlsli）
+//   TwoChannel  : BC5（R=Metallic, G=Roughness。シェーダーは .rg のみ参照）
+//   SingleChannel: BC4（AO / 高さ。シェーダーは .r のみ参照）
+// 圧縮結果は <作業ディレクトリ>/Data/Cache/Textures/<hash>.dds に保存し、ソースのパス・サイズ・更新時刻・
+// 用途・エンコーダー版が一致すれば再利用する。
+
+#include <cstdint>
+#include <filesystem>
+#include <string>
+
+namespace DirectX
+{
+    struct TexMetadata;
+    class ScratchImage;
+} // namespace DirectX
+
+enum class TextureUsage : uint32_t
+{
+    Color = 0,
+    Normal = 1,
+    TwoChannel = 2,
+    SingleChannel = 3,
+};
+
+namespace TextureCompression
+{
+    struct Settings
+    {
+        bool Enabled = true;
+        // 未キャッシュのテクスチャはその場では圧縮せず非圧縮で使い、バックグラウンドでキャッシュを作る
+        // （次回読み込みから BC）。偽にすると読み込み時に圧縮する（初回の読み込みが遅くなる）。
+        bool BackgroundForSynchronousLoads = true;
+    };
+
+    struct Statistics
+    {
+        uint32_t CacheHits = 0;
+        uint32_t Compressed = 0;
+        uint32_t Skipped = 0;
+        uint32_t BackgroundPending = 0;
+        uint64_t SourceBytes = 0;
+        uint64_t CompressedBytes = 0;
+    };
+
+    Settings& GetSettings();
+    Statistics GetStatistics();
+
+    const char* UsageName(TextureUsage usage);
+    // m_Textures のキーへ付ける接尾辞（Color は空 = 従来キーのまま）。
+    std::string KeySuffix(TextureUsage usage);
+    // キーから接尾辞を取り除いたパス部分。
+    std::string StripKeySuffix(const std::string& key);
+
+    std::filesystem::path CacheDirectory();
+    // ソースファイル用キャッシュキー（パス・サイズ・更新時刻・用途・エンコーダー版）。0 は失敗。
+    uint64_t FileCacheKey(const std::filesystem::path& source, TextureUsage usage);
+    // メモリ上の画像（モデル埋め込み）用キャッシュキー（内容・用途・エンコーダー版）。
+    uint64_t MemoryCacheKey(const void* data, size_t size, TextureUsage usage);
+
+    // キャッシュ済み BC テクスチャを読み込む。
+    bool TryLoadCached(uint64_t cacheKey, DirectX::TexMetadata& metadata, DirectX::ScratchImage& image);
+    // BC 圧縮の対象になる画像か（4 の倍数サイズの 2D・非 HDR・未圧縮）。
+    bool IsCompressible(const DirectX::TexMetadata& metadata);
+    // ミップ生成済みの画像をその場で BC 圧縮し、キャッシュへ保存する。圧縮対象外なら false（画像は不変）。
+    bool CompressAndCache(uint64_t cacheKey, TextureUsage usage, DirectX::TexMetadata& metadata,
+                          DirectX::ScratchImage& image);
+    // バックグラウンドでソースファイルを読み込み・ミップ生成・圧縮・キャッシュ保存する。
+    void CompressFileInBackground(uint64_t cacheKey, TextureUsage usage, const std::filesystem::path& source);
+    void CompressMemoryInBackground(uint64_t cacheKey, TextureUsage usage, const void* data, size_t size);
+} // namespace TextureCompression
+
+===== FILE: source\assets\texturecompression.inl =====
+// texturemanager.cpp の末尾から取り込まれる実装（プロジェクトへのファイル追加を不要にするため .inl）。
+#include "DirectXTex.h"
+#include "texturecompression.h"
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <unordered_set>
+#include <cwctype>
+
+// texturemanager.cpp の LoadImageFromFile / LoadImageFromMemory / EnsureMipChain をそのまま使い、
+// 通常読み込みと同じ画像からキャッシュを作る。
+
+namespace TextureCompressionDetail
+{
+    // エンコーダーや判定規則を変えたら上げる（古いキャッシュを自動的に無効化）。
+    constexpr uint64_t kEncoderVersion = 1;
+
+    TextureCompression::Settings g_Settings;
+
+    struct Counters
+    {
+        std::atomic<uint32_t> CacheHits{0};
+        std::atomic<uint32_t> Compressed{0};
+        std::atomic<uint32_t> Skipped{0};
+        std::atomic<uint32_t> BackgroundPending{0};
+        std::atomic<uint64_t> SourceBytes{0};
+        std::atomic<uint64_t> CompressedBytes{0};
+    };
+
+    Counters& GetCounters()
+    {
+        static Counters* counters = new Counters();
+        return *counters;
+    }
+
+    // BC 圧縮は内部で並列化されるため、同時に 1 枚だけ圧縮して CPU の過剰な取り合いを避ける。
+    std::mutex& CompressionGate()
+    {
+        static std::mutex* gate = new std::mutex();
+        return *gate;
+    }
+
+    uint64_t Fnv(const void* data, size_t size, uint64_t hash = 14695981039346656037ull)
+    {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (size_t index = 0; index < size; ++index)
+        {
+            hash ^= bytes[index];
+            hash *= 1099511628211ull;
+        }
+        return hash;
+    }
+
+    bool IsFloatFormat(DXGI_FORMAT format)
+    {
+        switch (format)
+        {
+            case DXGI_FORMAT_R32G32B32A32_FLOAT:
+            case DXGI_FORMAT_R32G32B32_FLOAT:
+            case DXGI_FORMAT_R16G16B16A16_FLOAT:
+            case DXGI_FORMAT_R32G32_FLOAT:
+            case DXGI_FORMAT_R11G11B10_FLOAT:
+            case DXGI_FORMAT_R16G16_FLOAT:
+            case DXGI_FORMAT_R32_FLOAT:
+            case DXGI_FORMAT_R16_FLOAT:
+            case DXGI_FORMAT_R9G9B9E5_SHAREDEXP:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    DXGI_FORMAT TargetFormat(TextureUsage usage, DXGI_FORMAT source)
+    {
+        switch (usage)
+        {
+            case TextureUsage::Normal:
+            case TextureUsage::TwoChannel:
+                return DXGI_FORMAT_BC5_UNORM;
+            case TextureUsage::SingleChannel:
+                return DXGI_FORMAT_BC4_UNORM;
+            case TextureUsage::Color:
+            default:
+                return IsSRGB(source) ? DXGI_FORMAT_BC7_UNORM_SRGB : DXGI_FORMAT_BC7_UNORM;
+        }
+    }
+
+    std::filesystem::path CacheFile(uint64_t cacheKey)
+    {
+        char name[32]{};
+        sprintf_s(name, "%016llx.dds", static_cast<unsigned long long>(cacheKey));
+        return TextureCompression::CacheDirectory() / name;
+    }
+
+    void SaveCache(uint64_t cacheKey, const ScratchImage& image)
+    {
+        if (cacheKey == 0)
+        {
+            return;
+        }
+        std::error_code error;
+        const auto directory = TextureCompression::CacheDirectory();
+        std::filesystem::create_directories(directory, error);
+        if (error)
+        {
+            return;
+        }
+        const auto target = CacheFile(cacheKey);
+        const auto temporary = target.wstring() + L"." + std::to_wstring(GetCurrentProcessId()) + L"." +
+                               std::to_wstring(GetCurrentThreadId()) + L".tmp";
+        if (FAILED(SaveToDDSFile(image.GetImages(), image.GetImageCount(), image.GetMetadata(), DDS_FLAGS_NONE,
+                                 temporary.c_str())))
+        {
+            std::filesystem::remove(temporary, error);
+            return;
+        }
+        // 読み手には完成したファイルかキャッシュミスのどちらかだけが見える。
+        if (!MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING))
+        {
+            std::filesystem::remove(temporary, error);
+        }
+    }
+
+    // バックグラウンド圧縮用の単一ワーカー。終了時に破棄しないようにヒープへ置き、スレッドは切り離す。
+    struct BackgroundQueue
+    {
+        std::mutex Mutex;
+        std::condition_variable Ready;
+        std::deque<std::function<void()>> Jobs;
+        std::unordered_set<uint64_t> Queued;
+        bool Started = false;
+    };
+
+    BackgroundQueue& GetQueue()
+    {
+        static BackgroundQueue* queue = new BackgroundQueue();
+        return *queue;
+    }
+
+    void Enqueue(uint64_t cacheKey, std::function<void()> job)
+    {
+        auto& queue = GetQueue();
+        {
+            std::lock_guard<std::mutex> lock(queue.Mutex);
+            if (cacheKey == 0 || !queue.Queued.insert(cacheKey).second)
+            {
+                return;
+            }
+            ++GetCounters().BackgroundPending;
+            queue.Jobs.push_back([cacheKey, job = std::move(job)]() {
+                job();
+                auto& owner = GetQueue();
+                std::lock_guard<std::mutex> done(owner.Mutex);
+                owner.Queued.erase(cacheKey);
+                --GetCounters().BackgroundPending;
+            });
+            if (!queue.Started)
+            {
+                queue.Started = true;
+                std::thread([] {
+                    auto& owner = GetQueue();
+                    for (;;)
+                    {
+                        std::function<void()> next;
+                        {
+                            std::unique_lock<std::mutex> lock(owner.Mutex);
+                            owner.Ready.wait(lock, [&owner] {
+                                return !owner.Jobs.empty();
+                            });
+                            next = std::move(owner.Jobs.front());
+                            owner.Jobs.pop_front();
+                        }
+                        // ワーカーは描画より優先度を下げる。
+                        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+                        next();
+                    }
+                }).detach();
+            }
+        }
+        queue.Ready.notify_one();
+    }
+} // namespace TextureCompressionDetail
+
+namespace TextureCompression
+{
+    using namespace TextureCompressionDetail;
+
+    Settings& GetSettings()
+    {
+        return g_Settings;
+    }
+
+    Statistics GetStatistics()
+    {
+        const auto& counters = GetCounters();
+        Statistics statistics;
+        statistics.CacheHits = counters.CacheHits.load();
+        statistics.Compressed = counters.Compressed.load();
+        statistics.Skipped = counters.Skipped.load();
+        statistics.BackgroundPending = counters.BackgroundPending.load();
+        statistics.SourceBytes = counters.SourceBytes.load();
+        statistics.CompressedBytes = counters.CompressedBytes.load();
+        return statistics;
+    }
+
+    const char* UsageName(TextureUsage usage)
+    {
+        switch (usage)
+        {
+            case TextureUsage::Normal:
+                return "BC5 (法線)";
+            case TextureUsage::TwoChannel:
+                return "BC5 (2ch)";
+            case TextureUsage::SingleChannel:
+                return "BC4 (1ch)";
+            case TextureUsage::Color:
+            default:
+                return "BC7 (カラー)";
+        }
+    }
+
+    std::string KeySuffix(TextureUsage usage)
+    {
+        switch (usage)
+        {
+            case TextureUsage::Normal:
+                return "#tc:normal";
+            case TextureUsage::TwoChannel:
+                return "#tc:rg";
+            case TextureUsage::SingleChannel:
+                return "#tc:r";
+            case TextureUsage::Color:
+            default:
+                return {};
+        }
+    }
+
+    std::string StripKeySuffix(const std::string& key)
+    {
+        const auto position = key.rfind("#tc:");
+        return position == std::string::npos ? key : key.substr(0, position);
+    }
+
+    std::filesystem::path CacheDirectory()
+    {
+        std::error_code error;
+        const auto directory = (std::filesystem::current_path(error) / "Data" / "Cache" / "Textures").lexically_normal();
+        static std::once_flag cleaned;
+        std::call_once(cleaned, [&directory] {
+            // 前回の異常終了で残った書きかけファイルを掃除する。
+            std::error_code iterateError;
+            for (std::filesystem::directory_iterator it(directory, iterateError), end; !iterateError && it != end;
+                 it.increment(iterateError))
+            {
+                if (it->path().extension() == ".tmp")
+                {
+                    std::error_code removeError;
+                    std::filesystem::remove(it->path(), removeError);
+                }
+            }
+        });
+        return directory;
+    }
+
+    uint64_t FileCacheKey(const std::filesystem::path& source, TextureUsage usage)
+    {
+        std::error_code error;
+        auto absolute = std::filesystem::absolute(source, error);
+        if (error)
+        {
+            absolute = source;
+        }
+        std::wstring path = absolute.lexically_normal().wstring();
+        for (auto& letter : path)
+        {
+            letter = static_cast<wchar_t>(towlower(letter));
+        }
+        const auto size = std::filesystem::file_size(source, error);
+        if (error)
+        {
+            return 0;
+        }
+        const auto modified = std::filesystem::last_write_time(source, error);
+        if (error)
+        {
+            return 0;
+        }
+        const int64_t time = modified.time_since_epoch().count();
+        const uint32_t usageValue = static_cast<uint32_t>(usage);
+        uint64_t hash = Fnv(&kEncoderVersion, sizeof(kEncoderVersion));
+        hash = Fnv(path.data(), path.size() * sizeof(wchar_t), hash);
+        hash = Fnv(&size, sizeof(size), hash);
+        hash = Fnv(&time, sizeof(time), hash);
+        hash = Fnv(&usageValue, sizeof(usageValue), hash);
+        return hash ? hash : 1;
+    }
+
+    uint64_t MemoryCacheKey(const void* data, size_t size, TextureUsage usage)
+    {
+        if (!data || size == 0)
+        {
+            return 0;
+        }
+        const uint32_t usageValue = static_cast<uint32_t>(usage);
+        const uint64_t marker = 0x4d454d5458ull; // "MEMTX"
+        uint64_t hash = Fnv(&kEncoderVersion, sizeof(kEncoderVersion));
+        hash = Fnv(&marker, sizeof(marker), hash);
+        hash = Fnv(data, size, hash);
+        hash = Fnv(&size, sizeof(size), hash);
+        hash = Fnv(&usageValue, sizeof(usageValue), hash);
+        return hash ? hash : 1;
+    }
+
+    bool TryLoadCached(uint64_t cacheKey, TexMetadata& metadata, ScratchImage& image)
+    {
+        if (!g_Settings.Enabled || cacheKey == 0)
+        {
+            return false;
+        }
+        const auto file = CacheFile(cacheKey);
+        std::error_code error;
+        if (!std::filesystem::exists(file, error))
+        {
+            return false;
+        }
+        ScratchImage cached;
+        TexMetadata cachedMetadata{};
+        if (FAILED(LoadFromDDSFile(file.c_str(), DDS_FLAGS_NONE, &cachedMetadata, cached)) ||
+            !IsCompressed(cachedMetadata.format))
+        {
+            // 壊れたキャッシュは削除して作り直す。
+            std::filesystem::remove(file, error);
+            return false;
+        }
+        metadata = cachedMetadata;
+        image = std::move(cached);
+        ++GetCounters().CacheHits;
+        return true;
+    }
+
+    bool IsCompressible(const TexMetadata& metadata)
+    {
+        // BC は 4x4 ブロック単位。最上位ミップが 4 の倍数でないものと、HDR（BC6H 対象外）・配列・3D は対象外。
+        return !IsCompressed(metadata.format) && !IsFloatFormat(metadata.format) && !IsPlanar(metadata.format) &&
+               !IsPalettized(metadata.format) && !IsVideo(metadata.format) &&
+               metadata.dimension == TEX_DIMENSION_TEXTURE2D && metadata.arraySize == 1 && metadata.depth == 1 &&
+               !metadata.IsCubemap() && (metadata.width % 4) == 0 && (metadata.height % 4) == 0 &&
+               metadata.width >= 4 && metadata.height >= 4;
+    }
+
+    bool CompressAndCache(uint64_t cacheKey, TextureUsage usage, TexMetadata& metadata, ScratchImage& image)
+    {
+        if (!g_Settings.Enabled)
+        {
+            return false;
+        }
+        if (!IsCompressible(metadata))
+        {
+            ++GetCounters().Skipped;
+            return false;
+        }
+        const DXGI_FORMAT target = TargetFormat(usage, metadata.format);
+        // DirectXTex の版によってはフラグ型に |= が無いため、整数で組み立てる。
+        unsigned long flagBits = TEX_COMPRESS_PARALLEL;
+        if (target == DXGI_FORMAT_BC7_UNORM || target == DXGI_FORMAT_BC7_UNORM_SRGB)
+        {
+            // モード 6 中心の高速エンコード（初回のみのコスト。結果はキャッシュされる）。
+            flagBits |= TEX_COMPRESS_BC7_QUICK;
+        }
+        else if (IsSRGB(metadata.format))
+        {
+            // sRGB ソースを非 sRGB の BC4/BC5 にする場合、従来ハードウェアが行っていた sRGB→線形変換を
+            // 事前に適用し、サンプリング結果を一致させる。
+            flagBits |= TEX_COMPRESS_SRGB_IN;
+        }
+        const auto flags = static_cast<TEX_COMPRESS_FLAGS>(flagBits);
+        ScratchImage compressed;
+        HRESULT result = E_FAIL;
+        {
+            std::lock_guard<std::mutex> lock(CompressionGate());
+            result = Compress(image.GetImages(), image.GetImageCount(), image.GetMetadata(), target, flags,
+                              TEX_THRESHOLD_DEFAULT, compressed);
+        }
+        if (FAILED(result))
+        {
+            Debug::Log("TextureCompression: Compress to %s failed (0x%08X)\n", UsageName(usage),
+                       static_cast<unsigned>(result));
+            ++GetCounters().Skipped;
+            return false;
+        }
+        GetCounters().SourceBytes += image.GetPixelsSize();
+        GetCounters().CompressedBytes += compressed.GetPixelsSize();
+        ++GetCounters().Compressed;
+        SaveCache(cacheKey, compressed);
+        metadata = compressed.GetMetadata();
+        image = std::move(compressed);
+        return true;
+    }
+
+    void CompressFileInBackground(uint64_t cacheKey, TextureUsage usage, const std::filesystem::path& source)
+    {
+        if (!g_Settings.Enabled || cacheKey == 0)
+        {
+            return;
+        }
+        Enqueue(cacheKey, [cacheKey, usage, source]() {
+            TexMetadata metadata{};
+            ScratchImage image;
+            if (FAILED(LoadImageFromFile(source.c_str(), metadata, image)))
+            {
+                return;
+            }
+            EnsureMipChain(metadata, image);
+            CompressAndCache(cacheKey, usage, metadata, image);
+        });
+    }
+
+    void CompressMemoryInBackground(uint64_t cacheKey, TextureUsage usage, const void* data, size_t size)
+    {
+        if (!g_Settings.Enabled || cacheKey == 0 || !data || size == 0)
+        {
+            return;
+        }
+        auto copy = std::make_shared<std::vector<uint8_t>>(static_cast<const uint8_t*>(data),
+                                                           static_cast<const uint8_t*>(data) + size);
+        Enqueue(cacheKey, [cacheKey, usage, copy]() {
+            TexMetadata metadata{};
+            ScratchImage image;
+            if (FAILED(LoadImageFromMemory(copy->data(), copy->size(), metadata, image)))
+            {
+                return;
+            }
+            EnsureMipChain(metadata, image);
+            CompressAndCache(cacheKey, usage, metadata, image);
+        });
+    }
+} // namespace TextureCompression
+
 ===== FILE: source\assets\texturemanager.cpp =====
 #include "pch.h"
 #include "graphicsdevice.h"
 #include "DirectXTex.h"
 #include "texturemanager.h"
+#include "texturecompression.h"
 #include "iesprofile.h"
 #include "componentmanager.h"
 #include "renderersettings.h"
@@ -1959,6 +2489,7 @@ static constexpr bool g_ReservedResourceStreamingSafe = true;
 struct DecodedEntry
 {
     string Key{};
+    filesystem::path SourcePath{};
     int SrvIndex = -1;
     TexMetadata Metadata{};
     unique_ptr<ScratchImage> Image = nullptr;
@@ -2644,7 +3175,7 @@ void TextureManager::EndTextureLoading()
         td.Resource = resource;
         td.Streaming = move(streaming);
         error_code timestampError;
-        const auto timestamp = filesystem::last_write_time(filesystem::u8path(d.Key), timestampError);
+        const auto timestamp = filesystem::last_write_time(d.SourcePath, timestampError);
         if (!timestampError)
         {
             td.SourceTime = timestamp.time_since_epoch().count();
@@ -2890,13 +3421,48 @@ int TextureManager::FindLoadedTexture(const filesystem::path& path)
 
 int TextureManager::LoadTexture(const filesystem::path& fileName)
 {
+    return LoadTexture(fileName, TextureUsage::Color);
+}
+
+// ソース画像を読み込み、BC 圧縮キャッシュがあればそれを使う。inlineCompress が偽なら、未キャッシュ時は
+// 非圧縮のまま返し、圧縮はバックグラウンドで行う（次回読み込みから BC）。
+static HRESULT LoadCompressedOrSource(const filesystem::path& path, TextureUsage usage, bool inlineCompress,
+                                      TexMetadata& metadata, ScratchImage& image)
+{
+    const uint64_t cacheKey = TextureCompression::FileCacheKey(path, usage);
+    if (TextureCompression::TryLoadCached(cacheKey, metadata, image))
+    {
+        return S_OK;
+    }
+    HRESULT hr = LoadImageFromFile(path.c_str(), metadata, image);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    EnsureMipChain(metadata, image);
+    if (TextureCompression::GetSettings().Enabled && TextureCompression::IsCompressible(metadata))
+    {
+        if (inlineCompress)
+        {
+            TextureCompression::CompressAndCache(cacheKey, usage, metadata, image);
+        }
+        else
+        {
+            TextureCompression::CompressFileInBackground(cacheKey, usage, path);
+        }
+    }
+    return S_OK;
+}
+
+int TextureManager::LoadTexture(const filesystem::path& fileName, TextureUsage usage)
+{
     if (fileName.empty())
     {
         Debug::Log("ERROR: Texture path is empty.\n");
         return GetErrorTextureIndex();
     }
 
-    const string key = MakeTextureCacheKey(fileName);
+    const string key = MakeTextureCacheKey(fileName) + TextureCompression::KeySuffix(usage);
     const string displayPath = PathToUtf8(fileName);
     {
         lock_guard<mutex> lock(g_TextureMutex);
@@ -2923,14 +3489,17 @@ int TextureManager::LoadTexture(const filesystem::path& fileName)
     {
         auto entry = make_shared<DecodedEntry>();
         entry->Key = key;
+        entry->SourcePath = fileName;
         entry->SrvIndex = srvIndex;
         entry->Future = entry->Promise.get_future();
 
-        wstring pathString = fileName.wstring();
-        thread([entry, pathString]() mutable {
+        filesystem::path sourcePath = fileName;
+        const bool inlineCompress = !TextureCompression::GetSettings().BackgroundForSynchronousLoads;
+        thread([entry, sourcePath, usage, inlineCompress]() mutable {
             TexMetadata metadata;
             auto image = make_unique<ScratchImage>();
-            HRESULT hr = LoadImageFromFile(pathString.c_str(), metadata, *image);
+            // 未キャッシュ時の圧縮は設定に従う（既定はバックグラウンド。シーン読み込みを初回でも遅くしない）。
+            HRESULT hr = LoadCompressedOrSource(sourcePath, usage, inlineCompress, metadata, *image);
             if (SUCCEEDED(hr))
             {
                 entry->Metadata = metadata;
@@ -2957,7 +3526,10 @@ int TextureManager::LoadTexture(const filesystem::path& fileName)
     TexMetadata metadata;
     ScratchImage image;
 
-    HRESULT hr = LoadImageFromFile(fileName.c_str(), metadata, image);
+    // メインスレッドを止めないよう、未キャッシュ時の圧縮は既定でバックグラウンドへ回す（設定で変更可）。
+    HRESULT hr = LoadCompressedOrSource(fileName, usage,
+                                        !TextureCompression::GetSettings().BackgroundForSynchronousLoads, metadata,
+                                        image);
     if (FAILED(hr))
     {
         Debug::Log("ERROR: Failed to load texture: %s (HRESULT: 0x%08X)\n", displayPath.c_str(), hr);
@@ -2999,7 +3571,13 @@ int TextureManager::LoadTexture(const filesystem::path& fileName)
 
 int TextureManager::LoadNormalTexture(const char* fileName)
 {
-    return LoadTexture(fileName);
+    if (!fileName || fileName[0] == '\0')
+    {
+        Debug::Log("ERROR: Texture path is empty.\n");
+        return GetErrorTextureIndex();
+    }
+    // BC5（RG）。Z は NormalMapDecode.hlsli で再構成する。
+    return LoadTexture(filesystem::u8path(fileName), TextureUsage::Normal);
 }
 
 int TextureManager::LoadIesProfile(const filesystem::path& fileName)
@@ -3118,13 +3696,29 @@ int TextureManager::LoadTextureFromMemory(const char* name, const uint8_t* pData
 
     TexMetadata metadata;
     ScratchImage image;
-    HRESULT hr = LoadImageFromMemory(pData, dataSize, metadata, image);
-    if (FAILED(hr))
+    // モデル埋め込みテクスチャはベースカラー扱い（BC7）。内容ハッシュでキャッシュする。
+    const uint64_t cacheKey = TextureCompression::MemoryCacheKey(pData, dataSize, TextureUsage::Color);
+    if (!TextureCompression::TryLoadCached(cacheKey, metadata, image))
     {
-        Debug::Log("ERROR: Failed to load texture from memory: %s (HRESULT: 0x%08X)\n", name, hr);
-        return GetErrorTextureIndex();
+        HRESULT hr = LoadImageFromMemory(pData, dataSize, metadata, image);
+        if (FAILED(hr))
+        {
+            Debug::Log("ERROR: Failed to load texture from memory: %s (HRESULT: 0x%08X)\n", name, hr);
+            return GetErrorTextureIndex();
+        }
+        EnsureMipChain(metadata, image);
+        if (TextureCompression::GetSettings().Enabled && TextureCompression::IsCompressible(metadata))
+        {
+            if (TextureCompression::GetSettings().BackgroundForSynchronousLoads)
+            {
+                TextureCompression::CompressMemoryInBackground(cacheKey, TextureUsage::Color, pData, dataSize);
+            }
+            else
+            {
+                TextureCompression::CompressAndCache(cacheKey, TextureUsage::Color, metadata, image);
+            }
+        }
     }
-    EnsureMipChain(metadata, image);
 
     ID3D12Device* device = GraphicsDevice::GetDevice();
     shared_ptr<TextureStreamingState> streaming;
@@ -3232,7 +3826,7 @@ vector<TextureManager::TextureInfo> TextureManager::GetLoadedTextureInfos()
             continue;
         }
         TextureInfo info;
-        info.Path = pair.first;
+        info.Path = TextureCompression::StripKeySuffix(pair.first);
         info.SrvIndex = pair.second.SrvIndex;
         if (pair.second.Resource)
         {
@@ -3361,6 +3955,8 @@ bool TextureManager::IsReservedResourceStreamingAvailable()
     return g_ReservedResourcesSupported && g_ReservedResourceStreamingSafe;
 }
 
+#include "texturecompression.inl"
+
 ===== FILE: source\assets\texturemanager.h =====
 #pragma once
 #include "main.h"
@@ -3370,6 +3966,7 @@ bool TextureManager::IsReservedResourceStreamingAvailable()
 #include <mutex>
 #include <future>
 #include <filesystem>
+#include "texturecompression.h"
 
 struct SpriteComponent;
 struct TextureStreamingState;
@@ -3407,6 +4004,8 @@ class TextureManager
 
     static int LoadTexture(const char* fileName);
     static int LoadTexture(const filesystem::path& fileName);
+    // 用途別に BC 圧縮（Color=BC7 / Normal=BC5 / TwoChannel=BC5 / SingleChannel=BC4）して読み込む。
+    static int LoadTexture(const filesystem::path& fileName, TextureUsage usage);
     static int LoadNormalTexture(const char* fileName);
     // 線形の角度別配光テクスチャ。読込失敗時は -1 を返す。
     static int LoadIesProfile(const filesystem::path& fileName);
@@ -10600,6 +11199,12 @@ struct LODComponent
     float Lod2Distance = 28.0f;
     Visibility::LODMetadata ScreenLOD{};
     bool UseAssetSettings = true;
+    // インポスター（静的モデルのみ）。切替距離より遠いとき、オクタヘドラル・インポスター1枚で描く。
+    bool UseImpostor = false;
+    float ImpostorDistance = 80.0f;
+    uint32_t ImpostorFrames = 8;        // 1辺の視点数（4 / 8 / 16）
+    uint32_t ImpostorResolution = 1024; // アトラス解像度（512 / 1024 / 2048）
+    bool ImpostorHemisphere = false;    // 上半球のみ（地面に立つ物）
 };
 
 struct LightComponent
@@ -15407,6 +16012,7 @@ void ImGuiManager::Redo()
 #include "texturemanager.h"
 #include "timelinesystem.h"
 #include "gpuscene/gpuscenechanges.h"
+#include "impostorrenderer.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -17393,6 +17999,78 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
         changed |= ImGui::DragFloat("LOD2距離", &lod.Lod2Distance, 0.25f, 0.0f, 100000.0f, "%.2f");
         lod.Lod1Distance = max(0.0f, lod.Lod1Distance);
         lod.Lod2Distance = max(lod.Lod1Distance, lod.Lod2Distance);
+        if (ComponentManager::HasComponent<StaticModelComponent>(entity))
+        {
+            ImGui::SeparatorText("インポスター");
+            changed |= ImGui::Checkbox("インポスターを使用", &lod.UseImpostor);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("切替距離より遠いとき、多視点で焼いた板1枚で描きます。\n"
+                                  "影・レイトレーシングは実メッシュのままです。\n"
+                                  "有効にすると GPU Driven ではなく CPU インスタンス描画経路になります。");
+            }
+            ImGui::BeginDisabled(!lod.UseImpostor);
+            changed |= ImGui::DragFloat("切替距離", &lod.ImpostorDistance, 0.5f, 0.0f, 100000.0f, "%.1f m");
+            lod.ImpostorDistance = max(0.0f, lod.ImpostorDistance);
+            int framesIndex = lod.ImpostorFrames <= 4 ? 0 : (lod.ImpostorFrames <= 8 ? 1 : 2);
+            if (ImGui::Combo("視点数", &framesIndex, "4 x 4 (軽量)\0" "8 x 8 (標準)\0" "16 x 16 (高品質)\0"))
+            {
+                lod.ImpostorFrames = framesIndex == 0 ? 4u : (framesIndex == 1 ? 8u : 16u);
+                changed = true;
+            }
+            int resolutionIndex = lod.ImpostorResolution <= 512 ? 0 : (lod.ImpostorResolution <= 1024 ? 1 : 2);
+            if (ImGui::Combo("アトラス解像度", &resolutionIndex, "512 (約 2.7 MB)\0" "1024 (約 11 MB)\0" "2048 (約 43 MB)\0"))
+            {
+                lod.ImpostorResolution = resolutionIndex == 0 ? 512u : (resolutionIndex == 1 ? 1024u : 2048u);
+                changed = true;
+            }
+            changed |= ImGui::Checkbox("上半球のみ (地面に立つ物)", &lod.ImpostorHemisphere);
+            const char* stateText = "未生成（切替距離を超えると生成）";
+            switch (ImpostorRenderer::QueryState(entity))
+            {
+            case ImpostorRenderer::AtlasState::Pending:
+                stateText = "生成待ち";
+                break;
+            case ImpostorRenderer::AtlasState::Ready:
+                stateText = "生成済み";
+                break;
+            case ImpostorRenderer::AtlasState::Failed:
+                stateText = "生成失敗（メッシュで描画）";
+                break;
+            default:
+                break;
+            }
+            ImGui::Text("状態: %s", stateText);
+            if (ImGui::Button("再ベイク"))
+            {
+                if (StaticModelResource* impostorModel = ModelManager::GetStaticModel(
+                        ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId))
+                {
+                    ImpostorRenderer::InvalidateModel(impostorModel);
+                }
+            }
+            ImGui::EndDisabled();
+
+            auto& impostorSettings = ImpostorRenderer::GetSettings();
+            if (ImGui::TreeNode("インポスター全体設定"))
+            {
+                ImGui::Checkbox("インポスター描画を有効化", &impostorSettings.Enabled);
+                ImGui::SliderFloat("被覆率しきい値", &impostorSettings.AlphaCutoff, 0.05f, 0.95f, "%.2f");
+                ImGui::SliderFloat("Mip バイアス", &impostorSettings.MipBias, -1.0f, 2.0f, "%.2f");
+                const auto stats = ImpostorRenderer::GetStatistics();
+                ImGui::Text("アトラス: %u 生成済み / %u 待ち / %u 失敗", stats.ReadyAtlases, stats.PendingAtlases,
+                            stats.FailedAtlases);
+                ImGui::Text("VRAM: %.1f MB", static_cast<double>(stats.AtlasBytes) / (1024.0 * 1024.0));
+                ImGui::Text("描画: %u インスタンス / %u ドローコール", stats.DrawnInstances, stats.DrawCalls);
+                if (ImGui::Button("全アトラスを再生成"))
+                {
+                    ImpostorRenderer::InvalidateAll();
+                }
+                ImGui::TreePop();
+            }
+        }
         changed |= ImGui::Checkbox("Use asset LOD metadata", &lod.UseAssetSettings);
         StaticModelResource* lodModel =
             ComponentManager::HasComponent<StaticModelComponent>(entity)
@@ -21167,6 +21845,28 @@ void ImGuiManager::DrawProjectSettingsWindow()
         ImGui::Checkbox("ノイズ除去を使用", &rays.Denoise);
         ImGui::Checkbox("NRDの時間・安定化設定を固定", &rays.StableNrdProfile);
         ImGui::Checkbox("GI・影の低偏差サンプリング", &rays.StableSampling);
+        if (ImGui::TreeNode("加速構造 (BLAS)"))
+        {
+            ImGui::Checkbox("静的 BLAS をコンパクション", &rays.CompactStaticBlas);
+            ImGui::SliderInt("変形 BLAS の再構築間隔 (リフィット回数)", &rays.DeformingBlasRebuildInterval, 0, 240);
+            ImGui::SliderInt("1 フレームの再構築上限", &rays.DeformingBlasRebuildsPerFrame, 1, 16);
+            ImGui::Checkbox("BLAS 頂点を 16bit 化 (R16G16B16A16_SNORM)", &rays.QuantizeBlasVertices);
+            ImGui::BeginDisabled(!rays.QuantizeBlasVertices);
+            float errorMillimeters = rays.BlasQuantizationMaxError * 1000.0f;
+            if (ImGui::SliderFloat("量子化誤差の上限", &errorMillimeters, 0.05f, 5.0f, "%.2f mm"))
+            {
+                rays.BlasQuantizationMaxError = errorMillimeters / 1000.0f;
+            }
+            ImGui::EndDisabled();
+            const auto blas = Raytracing::GetBlasStatistics();
+            ImGui::Text("BLAS: %u / 16bit: %u / コンパクション済み: %u", blas.BottomLevels, blas.Quantized,
+                        blas.Compacted);
+            ImGui::Text("BLAS メモリ: %.1f MB (削減 %.1f MB)", static_cast<double>(blas.ResultBytes) / (1024.0 * 1024.0),
+                        static_cast<double>(blas.CompactionSavedBytes) / (1024.0 * 1024.0));
+            ImGui::Text("このフレーム: リフィット %u / フルビルド %u", blas.RefitsThisFrame, blas.RebuildsThisFrame);
+            ImGui::TextWrapped("統計は直近にレイトレーシングを実行したフレームスロットの値です。");
+            ImGui::TreePop();
+        }
         ImGui::BeginDisabled(!rays.Denoise);
         int denoiser = static_cast<int>(rays.RadianceDenoiser);
         const char* denoisers[] = {"NVIDIA NRD", "NVIDIA OptiX AI (HDR)"};
@@ -21287,6 +21987,22 @@ void ImGuiManager::DrawProjectSettingsWindow()
         if (ImGui::Checkbox("Reserved Resource (64 KiB tiles)", &reservedResources))
         {
             RendererSettings::SetReservedResourcesEnabled(reservedResources);
+        }
+        auto& compression = TextureCompression::GetSettings();
+        ImGui::Checkbox("取り込み時に BC7/BC5/BC4 へ圧縮 (キャッシュ)", &compression.Enabled);
+        ImGui::BeginDisabled(!compression.Enabled);
+        ImGui::Checkbox("未キャッシュ時はバックグラウンドで圧縮", &compression.BackgroundForSynchronousLoads);
+        ImGui::EndDisabled();
+        {
+            const auto stats = TextureCompression::GetStatistics();
+            ImGui::TextDisabled("キャッシュ使用 %u / 新規圧縮 %u / 対象外 %u / 待機中 %u", stats.CacheHits,
+                                stats.Compressed, stats.Skipped, stats.BackgroundPending);
+            if (stats.SourceBytes > 0)
+            {
+                ImGui::TextDisabled("新規圧縮分: %.1f MB → %.1f MB", static_cast<double>(stats.SourceBytes) / 1048576.0,
+                                    static_cast<double>(stats.CompressedBytes) / 1048576.0);
+            }
+            ImGui::TextDisabled("保存先: Data/Cache/Textures（読み込み済みテクスチャには次回読み込みから反映）");
         }
 
         ImGui::SeparatorText("Screen Space");
@@ -22229,6 +22945,18 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     auto& temporalRays = Raytracing::GetSettings();
     matched |= EditorConfig::Value(output, key, value, "ray.StableNrdProfile", temporalRays.StableNrdProfile, 0, 1);
     matched |= EditorConfig::Value(output, key, value, "ray.StableSampling", temporalRays.StableSampling, 0, 1);
+    auto& textureCompression = TextureCompression::GetSettings();
+    matched |= EditorConfig::Value(output, key, value, "texture.CompressOnImport", textureCompression.Enabled, 0, 1);
+    matched |= EditorConfig::Value(output, key, value, "texture.BackgroundCompression",
+                                   textureCompression.BackgroundForSynchronousLoads, 0, 1);
+    matched |= EditorConfig::Value(output, key, value, "ray.CompactStaticBlas", temporalRays.CompactStaticBlas, 0, 1);
+    matched |= EditorConfig::Value(output, key, value, "ray.DeformingBlasRebuildInterval",
+                                   temporalRays.DeformingBlasRebuildInterval, 0, 240);
+    matched |= EditorConfig::Value(output, key, value, "ray.DeformingBlasRebuildsPerFrame",
+                                   temporalRays.DeformingBlasRebuildsPerFrame, 1, 16);
+    matched |= EditorConfig::Value(output, key, value, "ray.QuantizeBlasVertices", temporalRays.QuantizeBlasVertices, 0, 1);
+    matched |= EditorConfig::Value(output, key, value, "ray.BlasQuantizationMaxError",
+                                   temporalRays.BlasQuantizationMaxError, 0.00001, 0.01);
     const auto field = [&](const char* name, auto& setting, long double low, long double high) {
         matched |= EditorConfig::Value(output, key, value, name, setting, low, high);
     };
@@ -36891,6 +37619,24 @@ bool StaticModelResource::BuildLodIndexBuffers(ID3D12Device* device, const vecto
         meshData.CpuLodIndices[lod].assign(lodIndices.begin(), lodIndices.end());
     }
 
+    // BLAS 頂点の 16bit 量子化判定にも使うため、DXR LOD/プロキシの有無に関係なく境界を求める。
+    if (!vertices.empty())
+    {
+        XMFLOAT3 boundsLow = vertices.front().Position, boundsHigh = boundsLow;
+        for (const auto& v : vertices)
+        {
+            boundsLow.x = (std::min)(boundsLow.x, v.Position.x);
+            boundsLow.y = (std::min)(boundsLow.y, v.Position.y);
+            boundsLow.z = (std::min)(boundsLow.z, v.Position.z);
+            boundsHigh.x = (std::max)(boundsHigh.x, v.Position.x);
+            boundsHigh.y = (std::max)(boundsHigh.y, v.Position.y);
+            boundsHigh.z = (std::max)(boundsHigh.z, v.Position.z);
+        }
+        const float dx = boundsHigh.x - boundsLow.x, dy = boundsHigh.y - boundsLow.y, dz = boundsHigh.z - boundsLow.z;
+        meshData.RayCenter = {(boundsLow.x + boundsHigh.x) * .5f, (boundsLow.y + boundsHigh.y) * .5f,
+                              (boundsLow.z + boundsHigh.z) * .5f};
+        meshData.RayRadius = .5f * sqrtf(dx * dx + dy * dy + dz * dz);
+    }
     static const bool rayLod = ReadEnvironmentFlagOnce("DX12_DXR_LOD"),
                       rayProxy = ReadEnvironmentFlagOnce("DX12_DXR_PROXY");
     if (rayLod || rayProxy)
@@ -44204,6 +44950,7 @@ namespace Procedural
 #include "rendererstate.h"
 #include "renderprofiler.h"
 #include "raytracing.h"
+#include "shader16bit.h"
 #include "camera.h"
 #include "world.h"
 #include "atmosphere.h"
@@ -44736,13 +45483,16 @@ class AdvancedEffects final
         {
             blob.Reset();
             errors.Reset();
-            if (FAILED(D3DCompileFromFile(L"shader/hlsl/BloomCS.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-                                          entry.Entry, "cs_6_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors)))
+            // 対応 GPU ではダウン/アップサンプルのフィルター演算をネイティブ 16bit で行う（非対応時は従来どおり）。
+            bool native16 = false;
+            if (FAILED(Shader16Bit::CompileFromFile(L"shader/hlsl/BloomCS.hlsl", nullptr, entry.Entry, "cs_6_0",
+                                                    D3DCOMPILE_OPTIMIZATION_LEVEL3, &blob, &errors, &native16)))
             {
                 WriteGraphicsLog("Bloom: %s compile failed: %s\n", entry.Entry,
                                  errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
                 return false;
             }
+            WriteGraphicsLog("Bloom: %s compiled (%s)\n", entry.Entry, native16 ? "native 16bit" : "32bit");
             D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
             desc.pRootSignature = s_BloomRoot.Get();
             desc.CS = CD3DX12_SHADER_BYTECODE(blob.Get());
@@ -49157,6 +49907,7 @@ class FrameConstants : protected RendererState
 #include "gpuscene/gpuscene.h"
 #include "gpudriven/gpudrivenrenderer.h"
 #include "gpudriven/gpudrivenvalidation.h"
+#include "impostorrenderer.h"
 
 void FramePipeline::Execute()
 {
@@ -49304,6 +50055,12 @@ void FramePipeline::Execute()
                 [](ID3D12GraphicsCommandList* passCommandList) {
                     RenderProfiler::ScopedEvent profile("GBuffer / Opaque", passCommandList);
                     const auto submissionStart = chrono::steady_clock::now();
+                    if (!GPUDrivenValidation::IsGpuValidationRun())
+                    {
+                        // 保留中のインポスターを1件ベイク（レンダーターゲット設定前に行う）。
+                        RenderProfiler::ScopedEvent p("GBuffer: Impostor Bake", passCommandList);
+                        ImpostorRenderer::ProcessPendingBakes(passCommandList);
+                    }
                     // 内訳を計測（GBuffer の CPU 時間がどこで使われているかを特定するため）
                     {
                         RenderProfiler::ScopedEvent p("GBuffer: Begin", passCommandList);
@@ -50083,6 +50840,12 @@ bool GPUDrivenRenderer::SupportsEntity(uint32_t entity)
     }
     if (ComponentManager::HasComponent<NameComponent>(entity) &&
         ComponentManager::GetComponentUnchecked<NameComponent>(entity).Name == "Sky")
+    {
+        return false;
+    }
+    // インポスターを使う静的モデルは、遠距離の置き換えを行う CPU インスタンス描画経路で描く。
+    if (staticModel && ComponentManager::HasComponent<LODComponent>(entity) &&
+        ComponentManager::GetComponentUnchecked<LODComponent>(entity).UseImpostor)
     {
         return false;
     }
@@ -50906,7 +51669,6 @@ bool GPUDrivenRenderer::ResolveVisibility(ID3D12GraphicsCommandList* commands, D
     transition(data.Indices, is);
     return true;
 }
-
 
 ===== FILE: source\rendering\gpudriven\gpudrivenrenderer.h =====
 #pragma once
@@ -54608,6 +55370,16 @@ bool GraphicsDevice::Init(HWND hwnd)
         g_FeatureCapabilities.SamplerFeedback =
             options7.SamplerFeedbackTier != D3D12_SAMPLER_FEEDBACK_TIER_NOT_SUPPORTED;
     }
+    D3D12_FEATURE_DATA_D3D12_OPTIONS4 options4{};
+    D3D12_FEATURE_DATA_SHADER_MODEL shaderModel{D3D_SHADER_MODEL_6_2};
+    if (SUCCEEDED(m_Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &options4, sizeof(options4))) &&
+        SUCCEEDED(m_Device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &shaderModel, sizeof(shaderModel))))
+    {
+        g_FeatureCapabilities.Native16BitShaderOps =
+            options4.Native16BitShaderOpsSupported && shaderModel.HighestShaderModel >= D3D_SHADER_MODEL_6_2;
+    }
+    WriteGraphicsLog("Feature capabilities: native16bit=%u\n",
+                     static_cast<unsigned>(g_FeatureCapabilities.Native16BitShaderOps));
     WriteGraphicsLog("Feature capabilities: mesh=%u dxr11=%u sampler_feedback=%u reserved_textures=%u\n",
                      static_cast<unsigned>(g_FeatureCapabilities.MeshShader),
                      static_cast<unsigned>(g_FeatureCapabilities.Raytracing),
@@ -54856,7 +55628,8 @@ bool GraphicsDevice::Init(HWND hwnd)
     D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc{};
     // 末尾に MegaLights（M7：Forward 用のグリッドのディスクリプタ）の領域を追加
     cbvHeapDesc.NumDescriptors = g_kENGINE_DESCRIPTOR_END + 1 + g_kTHUMBNAIL_DESCRIPTOR_COUNT +
-                                 ImGuiManager::kSrvDescriptorCount + 16384 + MegaLights::kEngineHeapDescriptors;
+                                 ImGuiManager::kSrvDescriptorCount + 16384 + MegaLights::kEngineHeapDescriptors +
+                                 g_kIMPOSTOR_DESCRIPTOR_COUNT; // インポスター（VirtualGeometry ページの直前）
     cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     WriteGraphicsLog("Step: CreateDescriptorHeap(CBV)\n");
@@ -55527,6 +56300,1248 @@ void WriteGraphicsLog(const char* format, ...)
 #pragma once
 
 void WriteGraphicsLog(const char* format, ...);
+
+===== FILE: source\rendering\impostorrenderer.h =====
+#pragma once
+// オクタヘドラル・インポスター（ヘッダーのみ。vcxproj への追加不要）。
+//
+// ・LODComponent::UseImpostor が有効な静的モデルを、切替距離より遠いときにカメラ正対の四角形1枚で描く。
+// ・アトラスは (モデル, 代替テクスチャ, 分割数, 解像度, 半球) ごとに1つ。初回要求の次フレームで GPU ベイクする
+//   （1フレーム1件まで。ベイク完了まではメッシュのまま描画）。
+// ・ピクセルシェーダーは3フレームをブレンドし、焼き込んだ深度で視差補正し、実際の表面深度を
+//   SV_DepthGreaterEqual で出力する。GBuffer / Visibility Buffer / フォワードの3経路に対応し、
+//   ディファードのライト・影・GI・SSAO はメッシュと同じ扱いになる。
+// ・シャドウマップ・レイトレーシング（BLAS）は従来どおり実メッシュを使う（影の形が崩れない）。
+#include "rendererstate.h"
+#include "componentmanager.h"
+#include "staticmodel.h"
+#include "modelmanager.h"
+#include "camera.h"
+#include "graphicsdevice.h"
+#include "shaderpipelines.h"
+#include "psomanager.h"
+#include "frameconstants.h"
+#include "materialbindings.h"
+#include "texturemanager.h"
+#include "shaderdescription.h"
+#include "renderersettings.h"
+#include "visibilitybuffer.h"
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstring>
+#include <unordered_map>
+#include <vector>
+
+class ImpostorRenderer : protected RendererState
+{
+  public:
+    // 実行時の全体設定（エディターの LOD 欄から変更）。
+    struct Settings
+    {
+        bool Enabled = true;        // false でインポスター置き換えを全停止（A/B 比較用）
+        float AlphaCutoff = 0.5f;   // 3フレームブレンド後の被覆率しきい値
+        float MipBias = 0.0f;       // 正で遠景のちらつきを抑える（ぼける）
+        uint32_t EvictFrames = 900; // この間使われなかったアトラスを解放
+    };
+
+    struct Statistics
+    {
+        uint32_t ReadyAtlases = 0;
+        uint32_t PendingAtlases = 0;
+        uint32_t FailedAtlases = 0;
+        uint64_t AtlasBytes = 0;
+        uint32_t DrawnInstances = 0; // 直近フレーム
+        uint32_t DrawCalls = 0;      // 直近フレーム
+    };
+
+    enum class AtlasState : uint8_t
+    {
+        None,
+        Pending,
+        Ready,
+        Failed
+    };
+
+    static constexpr uint32_t kDescriptorCount = RendererState::g_kIMPOSTOR_DESCRIPTOR_COUNT;
+    static constexpr uint32_t kScratchDescriptorsPerFrame = 32;
+    static constexpr uint32_t kMaxInstancesPerFrame = 32768;
+    static constexpr uint32_t kDilateRadius = 6;
+
+    static Settings& GetSettings()
+    {
+        return S().Config;
+    }
+
+    static Statistics GetStatistics()
+    {
+        auto& s = S();
+        Statistics stats{};
+        for (const auto& [key, atlas] : s.Atlases)
+        {
+            (void)key;
+            if (atlas.State == AtlasState::Ready)
+            {
+                ++stats.ReadyAtlases;
+                stats.AtlasBytes += AtlasBytes(atlas.Resolution, atlas.MipLevels);
+            }
+            else if (atlas.State == AtlasState::Pending)
+            {
+                ++stats.PendingAtlases;
+            }
+            else if (atlas.State == AtlasState::Failed)
+            {
+                ++stats.FailedAtlases;
+            }
+        }
+        stats.DrawnInstances = s.LastFrameInstances;
+        stats.DrawCalls = s.LastFrameDrawCalls;
+        return stats;
+    }
+
+    static bool WantsImpostor(EntityID entity)
+    {
+        if (!ComponentManager::HasComponent<LODComponent>(entity) ||
+            !ComponentManager::HasComponent<StaticModelComponent>(entity))
+        {
+            return false;
+        }
+        return ComponentManager::GetComponentUnchecked<LODComponent>(entity).UseImpostor;
+    }
+
+    // インスタンス描画と同じ規則で、エンティティのテクスチャ（メッシュにテクスチャが無いときの代替）を求める。
+    static int ResolveEntityTexture(EntityID entity)
+    {
+        if (ComponentManager::HasComponent<MaterialComponent>(entity))
+        {
+            const auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+            if (material.UseTexture && material.TextureID >= 0)
+            {
+                return material.TextureID;
+            }
+        }
+        return TextureManager::GetDefaultTextureIndex();
+    }
+
+    // エディター表示用。
+    static AtlasState QueryState(EntityID entity)
+    {
+        if (!WantsImpostor(entity))
+        {
+            return AtlasState::None;
+        }
+        StaticModelResource* model = ModelManager::GetStaticModel(
+            ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId);
+        if (!model)
+        {
+            return AtlasState::None;
+        }
+        const auto key = MakeKey(model, ComponentManager::GetComponentUnchecked<LODComponent>(entity),
+                                 ResolveEntityTexture(entity));
+        const auto found = S().Atlases.find(key);
+        return found == S().Atlases.end() ? AtlasState::None : found->second.State;
+    }
+
+    // モデル（全エンティティ共通）のアトラスを破棄し、次の要求で再ベイクさせる。
+    static void InvalidateModel(const StaticModelResource* model)
+    {
+        auto& s = S();
+        for (auto it = s.Atlases.begin(); it != s.Atlases.end();)
+        {
+            if (it->first.Model == model)
+            {
+                RetireAtlas(it->second);
+                it = s.Atlases.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+    }
+
+    static void InvalidateAll()
+    {
+        auto& s = S();
+        for (auto& [key, atlas] : s.Atlases)
+        {
+            (void)key;
+            RetireAtlas(atlas);
+        }
+        s.Atlases.clear();
+        if (s.BakeFailed && !s.BakeReady)
+        {
+            s.BakeResourcesTried = false; // シェーダー修正後の再試行
+        }
+        s.BakeFailed = false;
+        s.PassFailures = 0;
+    }
+
+    // InstancingSystem::Draw（不透明・メイン）の先頭で呼ぶ。現在のパス用の PSO を解決してキューを空にする。
+    static void BeginPass()
+    {
+        auto& s = S();
+        s.Queue.clear();
+        s.PassPso = nullptr;
+        const UINT frameIndex = GraphicsDevice::GetFrameIndex() % g_kFRAME_COUNT;
+        if (s.InstanceFrame != frameIndex)
+        {
+            s.InstanceFrame = frameIndex;
+            s.InstanceCursor = 0;
+        }
+        if (!s.Config.Enabled || s.BakeFailed)
+        {
+            return;
+        }
+        const uint32_t passBit = CurrentPassBit();
+        if (s.PassFailures & passBit)
+        {
+            return;
+        }
+        ShaderDescription resource{};
+        resource.vsPath = "shader/hlsl/build/ImpostorVS.cso";
+        resource.psPath = "shader/hlsl/build/ImpostorPS.cso";
+        resource.isModel = true;
+        resource.cullMode = D3D12_CULL_MODE_NONE;
+        s.PassPso = PsoManager::GetOrCreateGraphicsPso(resource);
+        if (!s.PassPso)
+        {
+            // 毎フレーム再コンパイルしないよう、この経路では以後メッシュ描画に戻す。
+            s.PassFailures |= passBit;
+            Debug::Log("Impostor: pipeline creation failed (pass bit %u). Falling back to meshes.\n", passBit);
+        }
+    }
+
+    // 切替距離より遠く、アトラスが準備済みなら描画キューに積んで true（呼び出し側はメッシュ描画を省く）。
+    // アトラスが無ければベイクを要求して false。
+    static bool TryQueue(EntityID entity, StaticModelResource* model, const MaterialComponent* material,
+                         int entityTexture, const XMFLOAT3& cameraPosition)
+    {
+        auto& s = S();
+        if (!s.PassPso || !model || !WantsImpostor(entity))
+        {
+            return false;
+        }
+        if (s.InstanceCursor + s.Queue.size() >= kMaxInstancesPerFrame)
+        {
+            return false; // このフレームのインスタンス領域が尽きたらメッシュで描く
+        }
+        if (ComponentManager::HasComponent<ShaderComponent>(entity) &&
+            !ComponentManager::GetComponentUnchecked<ShaderComponent>(entity).PsPath.empty())
+        {
+            return false; // 独自シェーダーは再現できない
+        }
+        const auto& lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
+        const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+
+        // 近距離でもアトラスを要求・保持しておく（切替距離を越えた瞬間にベイク待ちにならないように）。
+        const AtlasKey key = MakeKey(model, lod, entityTexture);
+        auto found = s.Atlases.find(key);
+        if (found == s.Atlases.end())
+        {
+            Atlas atlas{};
+            atlas.Key = key;
+            atlas.Resolution = key.Resolution;
+            atlas.Frames = key.Frames;
+            atlas.Hemisphere = key.Hemisphere != 0;
+            atlas.EntityTexture = entityTexture;
+            atlas.ModelId = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId;
+            atlas.State = AtlasState::Pending;
+            atlas.RequestedFrame = s.FrameCounter;
+            found = s.Atlases.emplace(key, std::move(atlas)).first;
+        }
+        Atlas& atlas = found->second;
+        atlas.LastUsedFrame = s.FrameCounter;
+        if (atlas.State != AtlasState::Ready)
+        {
+            return false;
+        }
+
+        const XMMATRIX world = XMLoadFloat4x4(&transform.WorldMatrix);
+        const XMFLOAT3 localCenter = model->GetAabbCenter();
+        XMFLOAT3 worldCenter{};
+        XMStoreFloat3(&worldCenter,
+                      XMVector3TransformCoord(XMVectorSet(localCenter.x, localCenter.y, localCenter.z, 1.0f), world));
+        const float dx = worldCenter.x - cameraPosition.x;
+        const float dy = worldCenter.y - cameraPosition.y;
+        const float dz = worldCenter.z - cameraPosition.z;
+        const float distance = max(lod.ImpostorDistance, 0.0f);
+        if (dx * dx + dy * dy + dz * dz < distance * distance)
+        {
+            return false;
+        }
+
+        QueuedInstance queued{};
+        queued.AtlasPtr = &atlas;
+        queued.Entity = entity;
+        queued.Material = material;
+        queued.MaterialHash = material ? MaterialBindings::GetMaterialBatchHash(*material) : 0;
+        queued.World = transform.WorldMatrix;
+        s.Queue.push_back(queued);
+        return true;
+    }
+
+    // キューを描画する。モデル用ルートシグネチャと現在のパスのレンダーターゲットが設定済みであること。
+    static void Flush(ID3D12GraphicsCommandList* commandList, UINT frameIndex)
+    {
+        auto& s = S();
+        if (s.Queue.empty() || !s.PassPso || !commandList || !EnsureRuntimeResources())
+        {
+            s.Queue.clear();
+            return;
+        }
+        (void)frameIndex;
+        std::sort(s.Queue.begin(), s.Queue.end(), [](const QueuedInstance& a, const QueuedInstance& b) {
+            if (a.AtlasPtr != b.AtlasPtr)
+            {
+                return a.AtlasPtr < b.AtlasPtr;
+            }
+            if (a.MaterialHash != b.MaterialHash)
+            {
+                return a.MaterialHash < b.MaterialHash;
+            }
+            return a.Entity < b.Entity;
+        });
+
+        XMMATRIX view = XMMatrixIdentity();
+        XMMATRIX projection = XMMatrixIdentity();
+        Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
+        XMVECTOR determinant{};
+        const XMMATRIX inverseView = XMMatrixInverse(&determinant, view);
+        XMFLOAT3 cameraPosition{};
+        XMStoreFloat3(&cameraPosition, inverseView.r[3]);
+        const XMMATRIX previousViewProjection = XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix()) *
+                                                XMLoadFloat4x4(&GraphicsDevice::GetPreviousProjectionMatrix());
+
+        ID3D12DescriptorHeap* heap = FrameConstants::GetCbvHeap();
+        const UINT increment = FrameConstants::GetCbvIncrementSize();
+        const UINT64 frameBase = static_cast<UINT64>(s.InstanceFrame % g_kFRAME_COUNT) * kMaxInstancesPerFrame;
+
+        commandList->SetPipelineState(s.PassPso);
+        commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        commandList->IASetVertexBuffers(0, 1, &s.QuadView);
+
+        size_t begin = 0;
+        while (begin < s.Queue.size())
+        {
+            size_t end = begin + 1;
+            while (end < s.Queue.size() && s.Queue[end].AtlasPtr == s.Queue[begin].AtlasPtr &&
+                   s.Queue[end].MaterialHash == s.Queue[begin].MaterialHash)
+            {
+                ++end;
+            }
+            const QueuedInstance& first = s.Queue[begin];
+            const Atlas& atlas = *first.AtlasPtr;
+            UINT count = static_cast<UINT>(end - begin);
+            if (s.InstanceCursor + count > kMaxInstancesPerFrame)
+            {
+                count = kMaxInstancesPerFrame - s.InstanceCursor;
+            }
+            if (count == 0 || atlas.State != AtlasState::Ready)
+            {
+                begin = end;
+                continue;
+            }
+            XMFLOAT4X4* destination = s.MappedInstances + frameBase + s.InstanceCursor;
+            for (UINT index = 0; index < count; ++index)
+            {
+                destination[index] = s.Queue[begin + index].World;
+            }
+
+            // b0：エンティティの定数をもとに、カメラとマテリアルの値を確定させる（BindAssetSlot と同じ方式）。
+            ConstantBuffer3D constants{};
+            if (const UINT8* entityConstants = FrameConstants::GetConstantBufferPtr();
+                entityConstants && first.Entity < g_kMAX_ENTITIES)
+            {
+                memcpy(&constants, entityConstants + static_cast<size_t>(first.Entity) * FrameConstants::g_kCB_ALIGNED_SIZE,
+                       sizeof(constants));
+            }
+            constants.World = XMMatrixIdentity();
+            constants.PreviousWorld = XMMatrixIdentity();
+            constants.View = XMMatrixTranspose(view);
+            constants.Projection = XMMatrixTranspose(projection);
+            constants.PreviousViewProjection = XMMatrixTranspose(previousViewProjection);
+            constants.CameraPos = cameraPosition;
+            constants.UseTexture = 1;
+            constants.FlipNormal = 0;
+            constants.UseNormalMap = 0;
+            constants.MaterialAlpha = 1.0f;
+            constants.MaterialIsTransparent = 0;
+            if (first.Material)
+            {
+                constants.MaterialMode = static_cast<int>(first.Material->ShaderClassMode);
+                constants.ShaderClass = static_cast<int>(first.Material->ShaderClass);
+                constants.MaterialMetallic = first.Material->Metallic;
+                constants.MaterialRoughness = first.Material->Roughness;
+                constants.MaterialFresnel = first.Material->Fresnel;
+            }
+            commandList->SetGraphicsRootDescriptorTable(0, FrameConstants::AllocateTransientConstantBuffer(constants));
+            if (first.Material)
+            {
+                MaterialBindings::SetMaterial(first.Entity, *first.Material);
+            }
+            commandList->SetGraphicsRootDescriptorTable(
+                1, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap->GetGPUDescriptorHandleForHeapStart(), atlas.SrvIndex, increment));
+            commandList->SetGraphicsRootDescriptorTable(
+                6, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap->GetGPUDescriptorHandleForHeapStart(), atlas.SrvIndex + 1,
+                                                 increment));
+            const float rootConstants[16] = {atlas.Center.x,
+                                             atlas.Center.y,
+                                             atlas.Center.z,
+                                             atlas.Radius,
+                                             static_cast<float>(atlas.Frames),
+                                             atlas.Hemisphere ? 1.0f : 0.0f,
+                                             static_cast<float>(atlas.Resolution),
+                                             static_cast<float>(atlas.MipLevels - 1),
+                                             s.Config.AlphaCutoff,
+                                             s.Config.MipBias,
+                                             0.0f,
+                                             0.0f,
+                                             0.0f,
+                                             0.0f,
+                                             0.0f,
+                                             0.0f};
+            commandList->SetGraphicsRoot32BitConstants(13, 16, rootConstants, 0);
+            commandList->SetGraphicsRootShaderResourceView(
+                9, s.InstanceUpload->GetGPUVirtualAddress() + (frameBase + s.InstanceCursor) * sizeof(XMFLOAT4X4));
+            commandList->DrawInstanced(6, count, 0, 0);
+            s.InstanceCursor += count;
+            s.FrameInstances += count;
+            ++s.FrameDrawCalls;
+            begin = end;
+        }
+        // 後続のアセットマテリアル描画のため、アセットテクスチャ表を既定に戻す。
+        commandList->SetGraphicsRootDescriptorTable(
+            18, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap->GetGPUDescriptorHandleForHeapStart(),
+                                              FrameConstants::g_kTEXTURE_SRV_START_INDEX, increment));
+        s.Queue.clear();
+    }
+
+    // フレームの GBuffer パス開始前（レンダーターゲット設定前）に呼ぶ。保留中のアトラスを1件ベイクし、
+    // 使われなくなったアトラスを解放する。
+    static void ProcessPendingBakes(ID3D12GraphicsCommandList* commandList)
+    {
+        auto& s = S();
+        ++s.FrameCounter;
+        s.LastFrameInstances = s.FrameInstances;
+        s.LastFrameDrawCalls = s.FrameDrawCalls;
+        s.FrameInstances = 0;
+        s.FrameDrawCalls = 0;
+        CollectRetired();
+
+        for (auto it = s.Atlases.begin(); it != s.Atlases.end();)
+        {
+            Atlas& atlas = it->second;
+            if (s.FrameCounter > atlas.LastUsedFrame + s.Config.EvictFrames)
+            {
+                RetireAtlas(atlas);
+                it = s.Atlases.erase(it);
+                continue;
+            }
+            ++it;
+        }
+
+        if (!commandList || !s.Config.Enabled || s.BakeFailed)
+        {
+            return;
+        }
+        Atlas* candidate = nullptr;
+        for (auto& [key, atlas] : s.Atlases)
+        {
+            (void)key;
+            if (atlas.State != AtlasState::Pending)
+            {
+                continue;
+            }
+            if (!ModelAlive(atlas))
+            {
+                atlas.State = AtlasState::Failed;
+                continue;
+            }
+            if (!TexturesReady(atlas))
+            {
+                continue;
+            }
+            if (!candidate || atlas.RequestedFrame < candidate->RequestedFrame)
+            {
+                candidate = &atlas;
+            }
+        }
+        if (!candidate)
+        {
+            return;
+        }
+        if (!EnsureBakeResources() || !EnsureRuntimeResources())
+        {
+            s.BakeFailed = true;
+            Debug::Log("Impostor: bake pipeline unavailable. Impostors disabled.\n");
+            return;
+        }
+        if (!Bake(commandList, *candidate))
+        {
+            candidate->State = AtlasState::Failed;
+            ReleaseAtlasResources(*candidate);
+        }
+        // ベイクで変更した状態を、後続の GBuffer パスが期待する状態へ戻す。
+        commandList->RSSetViewports(1, &m_Viewport);
+        commandList->RSSetScissorRects(1, &m_ScissorRect);
+        if (ID3D12RootSignature* modelRoot = ShaderPipelines::GetModelRootSignature())
+        {
+            commandList->SetGraphicsRootSignature(modelRoot);
+        }
+    }
+
+    static void Shutdown()
+    {
+        auto& s = S();
+        s.Atlases.clear();
+        s.Retired.clear();
+        s.RetiredSlots.clear();
+        s.FreeSlots.clear();
+        s.NextSlot = 0;
+        s.Queue.clear();
+        if (s.InstanceUpload && s.MappedInstances)
+        {
+            s.InstanceUpload->Unmap(0, nullptr);
+        }
+        s.MappedInstances = nullptr;
+        s.InstanceUpload.Reset();
+        s.QuadBuffer.Reset();
+        s.BakeRoot.Reset();
+        s.BakePso.Reset();
+        s.BuildRoot.Reset();
+        s.DilatePso.Reset();
+        s.DownsamplePso.Reset();
+        s.RtvHeap.Reset();
+        s.DsvHeap.Reset();
+        s.BakeResourcesTried = false;
+        s.RuntimeResourcesTried = false;
+        s.BakeReady = false;
+        s.RuntimeReady = false;
+        s.BakeFailed = false;
+        s.PassFailures = 0;
+        s.PassPso = nullptr;
+        s.InstanceFrame = UINT_MAX;
+        s.InstanceCursor = 0;
+    }
+
+  private:
+    struct AtlasKey
+    {
+        const StaticModelResource* Model = nullptr;
+        D3D12_GPU_VIRTUAL_ADDRESS GeometryAddress = 0; // モデル再読込の検出
+        int EntityTexture = -1;
+        uint32_t Frames = 8;
+        uint32_t Resolution = 1024;
+        uint32_t Hemisphere = 0;
+
+        bool operator==(const AtlasKey& other) const
+        {
+            return Model == other.Model && GeometryAddress == other.GeometryAddress &&
+                   EntityTexture == other.EntityTexture && Frames == other.Frames &&
+                   Resolution == other.Resolution && Hemisphere == other.Hemisphere;
+        }
+    };
+
+    struct AtlasKeyHash
+    {
+        size_t operator()(const AtlasKey& key) const noexcept
+        {
+            size_t h = std::hash<const void*>{}(key.Model);
+            auto combine = [&h](size_t value) { h ^= value + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
+            combine(std::hash<uint64_t>{}(key.GeometryAddress));
+            combine(std::hash<int>{}(key.EntityTexture));
+            combine(key.Frames | (key.Resolution << 8) | (key.Hemisphere << 31));
+            return h;
+        }
+    };
+
+    struct Atlas
+    {
+        AtlasKey Key{};
+        AtlasState State = AtlasState::None;
+        uint32_t Resolution = 1024;
+        uint32_t Frames = 8;
+        uint32_t MipLevels = 1;
+        bool Hemisphere = false;
+        int EntityTexture = -1;
+        int ModelId = -1;
+        XMFLOAT3 Center{};
+        float Radius = 1.0f;
+        ComPtr<ID3D12Resource> Albedo;
+        ComPtr<ID3D12Resource> NormalDepth;
+        UINT SrvIndex = 0; // ヒープの絶対位置（アルベド、法線の順）
+        uint32_t Slot = UINT32_MAX;
+        uint64_t RequestedFrame = 0;
+        uint64_t LastUsedFrame = 0;
+    };
+
+    struct QueuedInstance
+    {
+        Atlas* AtlasPtr = nullptr;
+        EntityID Entity = 0;
+        const MaterialComponent* Material = nullptr;
+        uint64_t MaterialHash = 0;
+        XMFLOAT4X4 World{};
+    };
+
+    struct RetiredResource
+    {
+        UINT64 Fence = 0;
+        ComPtr<ID3D12Resource> Resource;
+    };
+
+    struct RetiredSlot
+    {
+        UINT64 Fence = 0;
+        uint32_t Slot = 0;
+    };
+
+    struct State
+    {
+        Settings Config{};
+        std::unordered_map<AtlasKey, Atlas, AtlasKeyHash> Atlases;
+        std::vector<QueuedInstance> Queue;
+        std::vector<RetiredResource> Retired;
+        std::vector<RetiredSlot> RetiredSlots;
+        std::vector<uint32_t> FreeSlots;
+        uint32_t NextSlot = 0;
+        uint64_t FrameCounter = 1;
+        uint32_t FrameInstances = 0;
+        uint32_t FrameDrawCalls = 0;
+        uint32_t LastFrameInstances = 0;
+        uint32_t LastFrameDrawCalls = 0;
+        ID3D12PipelineState* PassPso = nullptr;
+        uint32_t PassFailures = 0;
+        bool BakeFailed = false;
+        bool BakeResourcesTried = false;
+        bool RuntimeResourcesTried = false;
+        bool RuntimeReady = false;
+        bool BakeReady = false;
+        // 実行時
+        ComPtr<ID3D12Resource> InstanceUpload;
+        XMFLOAT4X4* MappedInstances = nullptr;
+        UINT InstanceFrame = UINT_MAX;
+        UINT InstanceCursor = 0;
+        ComPtr<ID3D12Resource> QuadBuffer;
+        D3D12_VERTEX_BUFFER_VIEW QuadView{};
+        // ベイク
+        ComPtr<ID3D12RootSignature> BakeRoot;
+        ComPtr<ID3D12PipelineState> BakePso;
+        ComPtr<ID3D12RootSignature> BuildRoot;
+        ComPtr<ID3D12PipelineState> DilatePso;
+        ComPtr<ID3D12PipelineState> DownsamplePso;
+        ComPtr<ID3D12DescriptorHeap> RtvHeap;
+        ComPtr<ID3D12DescriptorHeap> DsvHeap;
+    };
+
+    static State& S()
+    {
+        static State state;
+        return state;
+    }
+
+    static uint32_t CurrentPassBit()
+    {
+        const bool deferred = m_RenderMode == RenderMode::DEFERRED && m_IsDeferredGeometryPass;
+        const bool visibility = deferred && RendererSettings::GetComputeGBufferEnabled() && VisibilityBuffer::IsAvailable();
+        return visibility ? 4u : (deferred ? 2u : 1u);
+    }
+
+    static uint32_t SanitizeFrames(uint32_t frames)
+    {
+        return frames <= 4 ? 4u : (frames <= 8 ? 8u : 16u);
+    }
+
+    static uint32_t SanitizeResolution(uint32_t resolution)
+    {
+        return resolution <= 512 ? 512u : (resolution <= 1024 ? 1024u : 2048u);
+    }
+
+    static AtlasKey MakeKey(const StaticModelResource* model, const LODComponent& lod, int entityTexture)
+    {
+        AtlasKey key{};
+        key.Model = model;
+        key.GeometryAddress = model && model->GetMeshCount() > 0
+                                  ? model->GetMeshData(0).VertexBufferView.BufferLocation
+                                  : 0;
+        key.EntityTexture = entityTexture;
+        key.Frames = SanitizeFrames(lod.ImpostorFrames);
+        key.Resolution = SanitizeResolution(lod.ImpostorResolution);
+        key.Hemisphere = lod.ImpostorHemisphere ? 1u : 0u;
+        return key;
+    }
+
+    static uint32_t MipCountFor(uint32_t resolution, uint32_t frames)
+    {
+        // 1フレームが 8 texel になるまで（フレーム境界をまたいだ平均を作らない）。
+        uint32_t frameSize = resolution / frames;
+        uint32_t levels = 1;
+        while (frameSize > 8 && levels < 8)
+        {
+            frameSize >>= 1;
+            ++levels;
+        }
+        return levels;
+    }
+
+    static uint64_t AtlasBytes(uint32_t resolution, uint32_t mipLevels)
+    {
+        uint64_t bytes = 0;
+        for (uint32_t level = 0; level < mipLevels; ++level)
+        {
+            const uint64_t size = max(resolution >> level, 1u);
+            bytes += size * size * 8ull; // RGBA8 × 2
+        }
+        return bytes;
+    }
+
+    static UINT DescriptorBase()
+    {
+        // ヒープ末尾 16384 個（VirtualGeometry ページ）の直前に予約した領域。
+        ID3D12DescriptorHeap* heap = FrameConstants::GetCbvHeap();
+        return heap ? heap->GetDesc().NumDescriptors - 16384u - kDescriptorCount : 0u;
+    }
+
+    static D3D12_CPU_DESCRIPTOR_HANDLE CpuDescriptor(UINT index)
+    {
+        return CD3DX12_CPU_DESCRIPTOR_HANDLE(FrameConstants::GetCbvHeap()->GetCPUDescriptorHandleForHeapStart(), index,
+                                             FrameConstants::GetCbvIncrementSize());
+    }
+
+    static D3D12_GPU_DESCRIPTOR_HANDLE GpuDescriptor(UINT index)
+    {
+        return CD3DX12_GPU_DESCRIPTOR_HANDLE(FrameConstants::GetCbvHeap()->GetGPUDescriptorHandleForHeapStart(), index,
+                                             FrameConstants::GetCbvIncrementSize());
+    }
+
+    static bool AllocateSlot(uint32_t& slot)
+    {
+        auto& s = S();
+        constexpr uint32_t slotCount = (kDescriptorCount - kScratchDescriptorsPerFrame * g_kFRAME_COUNT) / 2;
+        if (!s.FreeSlots.empty())
+        {
+            slot = s.FreeSlots.back();
+            s.FreeSlots.pop_back();
+            return true;
+        }
+        if (s.NextSlot < slotCount)
+        {
+            slot = s.NextSlot++;
+            return true;
+        }
+        return false;
+    }
+
+    static UINT SlotDescriptor(uint32_t slot)
+    {
+        return DescriptorBase() + kScratchDescriptorsPerFrame * g_kFRAME_COUNT + slot * 2;
+    }
+
+    static void RetireResource(ComPtr<ID3D12Resource>& resource)
+    {
+        if (resource)
+        {
+            S().Retired.push_back({GraphicsDevice::GetPendingSubmissionFence(), resource});
+            resource.Reset();
+        }
+    }
+
+    static void ReleaseAtlasResources(Atlas& atlas)
+    {
+        RetireResource(atlas.Albedo);
+        RetireResource(atlas.NormalDepth);
+        if (atlas.Slot != UINT32_MAX)
+        {
+            S().RetiredSlots.push_back({GraphicsDevice::GetPendingSubmissionFence(), atlas.Slot});
+            atlas.Slot = UINT32_MAX;
+        }
+    }
+
+    static void RetireAtlas(Atlas& atlas)
+    {
+        ReleaseAtlasResources(atlas);
+        atlas.State = AtlasState::None;
+    }
+
+    static void CollectRetired()
+    {
+        auto& s = S();
+        const UINT64 completed = GraphicsDevice::GetCompletedFence();
+        s.Retired.erase(std::remove_if(s.Retired.begin(), s.Retired.end(),
+                                       [completed](const RetiredResource& r) { return r.Fence <= completed; }),
+                        s.Retired.end());
+        for (auto it = s.RetiredSlots.begin(); it != s.RetiredSlots.end();)
+        {
+            if (it->Fence <= completed)
+            {
+                s.FreeSlots.push_back(it->Slot);
+                it = s.RetiredSlots.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+    }
+
+    // モデルが解放・再読込されていないか（アトラスのキーは生ポインタなので、使う前に必ず確認する）。
+    static bool ModelAlive(const Atlas& atlas)
+    {
+        const StaticModelResource* current = ModelManager::GetStaticModel(atlas.ModelId);
+        return current && current == atlas.Key.Model && current->GetMeshCount() > 0 &&
+               current->GetMeshData(0).VertexBufferView.BufferLocation == atlas.Key.GeometryAddress;
+    }
+
+    static bool TexturesReady(Atlas& atlas)
+    {
+        // ストリーミング中の低解像度 mip を焼き込まないよう、最詳細 mip が揃うまで待つ（最大 4 秒程度）。
+        const auto* model = atlas.Key.Model;
+        if (!model)
+        {
+            return false;
+        }
+        bool ready = true;
+        auto check = [&ready](int index) {
+            if (index < 0)
+            {
+                return;
+            }
+            TextureManager::TouchTexture(index);
+            if (TextureManager::GetTextureResidentMip(index) > 0)
+            {
+                ready = false;
+            }
+        };
+        for (UINT mesh = 0; mesh < model->GetMeshCount(); ++mesh)
+        {
+            check(model->GetMeshData(mesh).TextureIndex);
+        }
+        check(atlas.EntityTexture);
+        return ready || S().FrameCounter > atlas.RequestedFrame + 240;
+    }
+
+    static ComPtr<ID3DBlob> CompileShader(const wchar_t* file, const char* entry, const char* target)
+    {
+        ComPtr<ID3DBlob> blob;
+        ComPtr<ID3DBlob> errors;
+        const HRESULT hr = D3DCompileFromFile(file, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry, target,
+                                              D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors);
+        if (FAILED(hr))
+        {
+            Debug::Log("Impostor: shader compile failed (%s): %s\n", entry,
+                       errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
+            return nullptr;
+        }
+        return blob;
+    }
+
+    static bool CreateRootSignature(ID3D12Device* device, const CD3DX12_ROOT_SIGNATURE_DESC& description,
+                                    ComPtr<ID3D12RootSignature>& rootSignature)
+    {
+        ComPtr<ID3DBlob> serialized;
+        ComPtr<ID3DBlob> errors;
+        if (FAILED(D3D12SerializeRootSignature(&description, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors)))
+        {
+            Debug::Log("Impostor: root signature error: %s\n",
+                       errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
+            return false;
+        }
+        return SUCCEEDED(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
+                                                     IID_PPV_ARGS(&rootSignature)));
+    }
+
+    static bool EnsureRuntimeResources()
+    {
+        auto& s = S();
+        if (s.RuntimeResourcesTried)
+        {
+            return s.RuntimeReady;
+        }
+        s.RuntimeResourcesTried = true;
+        ID3D12Device* device = GraphicsDevice::GetDevice();
+        if (!device || !FrameConstants::GetCbvHeap())
+        {
+            return false;
+        }
+        const auto uploadHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+        const auto instanceDescription = CD3DX12_RESOURCE_DESC::Buffer(static_cast<UINT64>(g_kFRAME_COUNT) *
+                                                                       kMaxInstancesPerFrame * sizeof(XMFLOAT4X4));
+        if (FAILED(device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &instanceDescription,
+                                                   D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                   IID_PPV_ARGS(&s.InstanceUpload))))
+        {
+            return false;
+        }
+        const D3D12_RANGE noRead{0, 0};
+        if (FAILED(s.InstanceUpload->Map(0, &noRead, reinterpret_cast<void**>(&s.MappedInstances))))
+        {
+            s.InstanceUpload.Reset();
+            return false;
+        }
+
+        // 6頂点の四角形（Position.xy = 角の符号）。レイアウトは StaticModelVertex と同じ。
+        StaticModelVertex quad[6]{};
+        const float corners[6][2] = {{-1, -1}, {-1, 1}, {1, 1}, {-1, -1}, {1, 1}, {1, -1}};
+        for (int i = 0; i < 6; ++i)
+        {
+            quad[i].Position = {corners[i][0], corners[i][1], 0.0f};
+            quad[i].Normal = {0.0f, 0.0f, 1.0f};
+            quad[i].TexCoord = {corners[i][0] * 0.5f + 0.5f, 0.5f - corners[i][1] * 0.5f};
+            quad[i].Diffuse = {1.0f, 1.0f, 1.0f, 10.0f};
+        }
+        const auto quadDescription = CD3DX12_RESOURCE_DESC::Buffer(sizeof(quad));
+        if (FAILED(device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &quadDescription,
+                                                   D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                   IID_PPV_ARGS(&s.QuadBuffer))))
+        {
+            return false;
+        }
+        void* mapped = nullptr;
+        if (FAILED(s.QuadBuffer->Map(0, &noRead, &mapped)))
+        {
+            return false;
+        }
+        memcpy(mapped, quad, sizeof(quad));
+        s.QuadBuffer->Unmap(0, nullptr);
+        s.QuadView.BufferLocation = s.QuadBuffer->GetGPUVirtualAddress();
+        s.QuadView.SizeInBytes = sizeof(quad);
+        s.QuadView.StrideInBytes = sizeof(StaticModelVertex);
+        s.RuntimeReady = true;
+        return true;
+    }
+
+    static bool EnsureBakeResources()
+    {
+        auto& s = S();
+        if (s.BakeResourcesTried)
+        {
+            return s.BakeReady;
+        }
+        s.BakeResourcesTried = true;
+        ID3D12Device* device = GraphicsDevice::GetDevice();
+        if (!device)
+        {
+            return false;
+        }
+
+        // ベイク用：b0 定数 12 個 + t0（メッシュのテクスチャ）
+        {
+            CD3DX12_DESCRIPTOR_RANGE textureRange;
+            textureRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+            CD3DX12_ROOT_PARAMETER parameters[2];
+            parameters[0].InitAsConstants(12, 0, 0, D3D12_SHADER_VISIBILITY_ALL);
+            parameters[1].InitAsDescriptorTable(1, &textureRange, D3D12_SHADER_VISIBILITY_PIXEL);
+            CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_ANISOTROPIC);
+            sampler.MaxAnisotropy = 8;
+            CD3DX12_ROOT_SIGNATURE_DESC description;
+            description.Init(_countof(parameters), parameters, 1, &sampler,
+                             D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+            if (!CreateRootSignature(device, description, s.BakeRoot))
+            {
+                return false;
+            }
+        }
+        // 後処理用：b0 定数 4 個 + t0..t1 + u0..u1
+        {
+            CD3DX12_DESCRIPTOR_RANGE srvRange;
+            srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);
+            CD3DX12_DESCRIPTOR_RANGE uavRange;
+            uavRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0);
+            CD3DX12_ROOT_PARAMETER parameters[3];
+            parameters[0].InitAsConstants(4, 0);
+            parameters[1].InitAsDescriptorTable(1, &srvRange);
+            parameters[2].InitAsDescriptorTable(1, &uavRange);
+            CD3DX12_ROOT_SIGNATURE_DESC description;
+            description.Init(_countof(parameters), parameters, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE);
+            if (!CreateRootSignature(device, description, s.BuildRoot))
+            {
+                return false;
+            }
+        }
+
+        const auto bakeVs = CompileShader(L"shader/hlsl/ImpostorBake.hlsl", "BakeVS", "vs_6_5");
+        const auto bakePs = CompileShader(L"shader/hlsl/ImpostorBake.hlsl", "BakePS", "ps_6_5");
+        const auto dilate = CompileShader(L"shader/hlsl/ImpostorBuildCS.hlsl", "DilateCS", "cs_6_5");
+        const auto downsample = CompileShader(L"shader/hlsl/ImpostorBuildCS.hlsl", "DownsampleCS", "cs_6_5");
+        if (!bakeVs || !bakePs || !dilate || !downsample)
+        {
+            return false;
+        }
+
+        static const D3D12_INPUT_ELEMENT_DESC layout[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}};
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC graphics{};
+        graphics.pRootSignature = s.BakeRoot.Get();
+        graphics.VS = CD3DX12_SHADER_BYTECODE(bakeVs.Get());
+        graphics.PS = CD3DX12_SHADER_BYTECODE(bakePs.Get());
+        graphics.InputLayout = {layout, _countof(layout)};
+        graphics.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+        graphics.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; // 葉などの片面ポリゴンも両方向から写す
+        graphics.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+        graphics.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+        graphics.SampleMask = UINT_MAX;
+        graphics.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        graphics.NumRenderTargets = 2;
+        graphics.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+        graphics.RTVFormats[1] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        graphics.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+        graphics.SampleDesc.Count = 1;
+        if (!PsoManager::CreateGraphicsPipelineState(graphics, "Impostor Bake", s.BakePso))
+        {
+            return false;
+        }
+        D3D12_COMPUTE_PIPELINE_STATE_DESC compute{};
+        compute.pRootSignature = s.BuildRoot.Get();
+        compute.CS = CD3DX12_SHADER_BYTECODE(dilate.Get());
+        if (!PsoManager::CreateComputePipelineState(compute, "Impostor Dilate", s.DilatePso))
+        {
+            return false;
+        }
+        compute.CS = CD3DX12_SHADER_BYTECODE(downsample.Get());
+        if (!PsoManager::CreateComputePipelineState(compute, "Impostor Downsample", s.DownsamplePso))
+        {
+            return false;
+        }
+
+        D3D12_DESCRIPTOR_HEAP_DESC rtv{};
+        rtv.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        rtv.NumDescriptors = 2;
+        D3D12_DESCRIPTOR_HEAP_DESC dsv{};
+        dsv.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+        dsv.NumDescriptors = 1;
+        if (FAILED(device->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&s.RtvHeap))) ||
+            FAILED(device->CreateDescriptorHeap(&dsv, IID_PPV_ARGS(&s.DsvHeap))))
+        {
+            return false;
+        }
+        s.BakeReady = true;
+        return true;
+    }
+
+    static bool CreateTexture(ID3D12Device* device, UINT size, UINT16 mips, DXGI_FORMAT format,
+                              D3D12_RESOURCE_FLAGS flags, D3D12_RESOURCE_STATES state, const D3D12_CLEAR_VALUE* clear,
+                              ComPtr<ID3D12Resource>& resource)
+    {
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        const auto description = CD3DX12_RESOURCE_DESC::Tex2D(format, size, size, 1, mips, 1, 0, flags);
+        return SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, state, clear,
+                                                         IID_PPV_ARGS(&resource)));
+    }
+
+    static void WriteSrv(ID3D12Resource* resource, DXGI_FORMAT format, UINT mostDetailedMip, UINT mipLevels,
+                         UINT index)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC view{};
+        view.Format = format;
+        view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        view.Texture2D.MostDetailedMip = mostDetailedMip;
+        view.Texture2D.MipLevels = mipLevels;
+        GraphicsDevice::GetDevice()->CreateShaderResourceView(resource, &view, CpuDescriptor(index));
+    }
+
+    static void WriteUav(ID3D12Resource* resource, DXGI_FORMAT format, UINT mip, UINT index)
+    {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC view{};
+        view.Format = format;
+        view.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+        view.Texture2D.MipSlice = mip;
+        GraphicsDevice::GetDevice()->CreateUnorderedAccessView(resource, nullptr, &view, CpuDescriptor(index));
+    }
+
+    static bool Bake(ID3D12GraphicsCommandList* commandList, Atlas& atlas)
+    {
+        auto& s = S();
+        ID3D12Device* device = GraphicsDevice::GetDevice();
+        const StaticModelResource* model = atlas.Key.Model;
+        if (!device || !model || !FrameConstants::GetCbvHeap())
+        {
+            return false;
+        }
+        bool hasGeometry = false;
+        for (UINT mesh = 0; mesh < model->GetMeshCount(); ++mesh)
+        {
+            const auto& data = model->GetMeshData(mesh);
+            hasGeometry |= data.VertexBuffer && data.IndexBuffer && data.IndexCount > 0;
+        }
+        if (!hasGeometry || !AllocateSlot(atlas.Slot))
+        {
+            return false;
+        }
+
+        const UINT resolution = atlas.Resolution;
+        const UINT frames = atlas.Frames;
+        const UINT frameSize = resolution / frames;
+        atlas.MipLevels = MipCountFor(resolution, frames);
+        const XMFLOAT3 extents = model->GetAabbExtents();
+        atlas.Center = model->GetAabbCenter();
+        atlas.Radius = max(sqrtf(extents.x * extents.x + extents.y * extents.y + extents.z * extents.z), 1e-3f);
+
+        ComPtr<ID3D12Resource> bakeAlbedo;
+        ComPtr<ID3D12Resource> bakeNormal;
+        ComPtr<ID3D12Resource> bakeDepth;
+        D3D12_CLEAR_VALUE albedoClear{DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, {0.0f, 0.0f, 0.0f, 0.0f}};
+        D3D12_CLEAR_VALUE normalClear{DXGI_FORMAT_R8G8B8A8_UNORM, {0.5f, 0.5f, 1.0f, 0.0f}};
+        D3D12_CLEAR_VALUE depthClear{};
+        depthClear.Format = DXGI_FORMAT_D32_FLOAT;
+        depthClear.DepthStencil.Depth = 1.0f;
+        if (!CreateTexture(device, resolution, 1, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+                           D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET, &albedoClear,
+                           bakeAlbedo) ||
+            !CreateTexture(device, resolution, 1, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,
+                           D3D12_RESOURCE_STATE_RENDER_TARGET, &normalClear, bakeNormal) ||
+            !CreateTexture(device, resolution, 1, DXGI_FORMAT_D32_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL,
+                           D3D12_RESOURCE_STATE_DEPTH_WRITE, &depthClear, bakeDepth) ||
+            !CreateTexture(device, resolution, static_cast<UINT16>(atlas.MipLevels), DXGI_FORMAT_R8G8B8A8_TYPELESS,
+                           D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                           atlas.Albedo) ||
+            !CreateTexture(device, resolution, static_cast<UINT16>(atlas.MipLevels), DXGI_FORMAT_R8G8B8A8_UNORM,
+                           D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                           atlas.NormalDepth))
+        {
+            RetireResource(bakeAlbedo);
+            RetireResource(bakeNormal);
+            RetireResource(bakeDepth);
+            return false;
+        }
+        atlas.Albedo->SetName(L"Impostor Albedo Atlas");
+        atlas.NormalDepth->SetName(L"Impostor NormalDepth Atlas");
+
+        const UINT rtvIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+        const CD3DX12_CPU_DESCRIPTOR_HANDLE rtv0(s.RtvHeap->GetCPUDescriptorHandleForHeapStart(), 0, rtvIncrement);
+        const CD3DX12_CPU_DESCRIPTOR_HANDLE rtv1(s.RtvHeap->GetCPUDescriptorHandleForHeapStart(), 1, rtvIncrement);
+        const D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = s.DsvHeap->GetCPUDescriptorHandleForHeapStart();
+        device->CreateRenderTargetView(bakeAlbedo.Get(), nullptr, rtv0);
+        device->CreateRenderTargetView(bakeNormal.Get(), nullptr, rtv1);
+        device->CreateDepthStencilView(bakeDepth.Get(), nullptr, dsvHandle);
+
+        // 1. 各視点を正射影でタイルへ描く。
+        const D3D12_CPU_DESCRIPTOR_HANDLE targets[2] = {rtv0, rtv1};
+        commandList->ClearRenderTargetView(rtv0, albedoClear.Color, 0, nullptr);
+        commandList->ClearRenderTargetView(rtv1, normalClear.Color, 0, nullptr);
+        commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        commandList->OMSetRenderTargets(2, targets, FALSE, &dsvHandle);
+        commandList->SetGraphicsRootSignature(s.BakeRoot.Get());
+        commandList->SetPipelineState(s.BakePso.Get());
+        commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        const float bounds[4] = {atlas.Center.x, atlas.Center.y, atlas.Center.z, atlas.Radius};
+        commandList->SetGraphicsRoot32BitConstants(0, 4, bounds, 0);
+        const int defaultTexture = TextureManager::GetDefaultTextureIndex();
+        for (UINT y = 0; y < frames; ++y)
+        {
+            for (UINT x = 0; x < frames; ++x)
+            {
+                const D3D12_VIEWPORT viewport{static_cast<float>(x * frameSize), static_cast<float>(y * frameSize),
+                                              static_cast<float>(frameSize), static_cast<float>(frameSize), 0.0f,
+                                              1.0f};
+                const D3D12_RECT scissor{static_cast<LONG>(x * frameSize), static_cast<LONG>(y * frameSize),
+                                         static_cast<LONG>((x + 1) * frameSize), static_cast<LONG>((y + 1) * frameSize)};
+                commandList->RSSetViewports(1, &viewport);
+                commandList->RSSetScissorRects(1, &scissor);
+                const float frame[4] = {static_cast<float>(x), static_cast<float>(y), static_cast<float>(frames),
+                                        atlas.Hemisphere ? 1.0f : 0.0f};
+                commandList->SetGraphicsRoot32BitConstants(0, 4, frame, 4);
+                for (UINT mesh = 0; mesh < model->GetMeshCount(); ++mesh)
+                {
+                    const auto& data = model->GetMeshData(mesh);
+                    if (!data.VertexBuffer || !data.IndexBuffer || data.IndexCount == 0)
+                    {
+                        continue;
+                    }
+                    int texture = data.TextureIndex >= 0 ? data.TextureIndex : atlas.EntityTexture;
+                    const bool useTexture = texture >= 0 && texture != defaultTexture;
+                    if (texture < 0)
+                    {
+                        texture = defaultTexture;
+                    }
+                    const float flags[4] = {useTexture ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+                    commandList->SetGraphicsRoot32BitConstants(0, 4, flags, 8);
+                    commandList->SetGraphicsRootDescriptorTable(1, GpuDescriptor(static_cast<UINT>(texture)));
+                    commandList->IASetVertexBuffers(0, 1, &data.VertexBufferView);
+                    commandList->IASetIndexBuffer(&data.IndexBufferView);
+                    commandList->DrawIndexedInstanced(data.IndexCount, 1, 0, 0, 0);
+                }
+            }
+        }
+
+        // 2. 膨張（ベイク結果 -> アトラス mip0）
+        D3D12_RESOURCE_BARRIER toRead[2] = {
+            CD3DX12_RESOURCE_BARRIER::Transition(bakeAlbedo.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET,
+                                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
+            CD3DX12_RESOURCE_BARRIER::Transition(bakeNormal.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET,
+                                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)};
+        commandList->ResourceBarrier(2, toRead);
+
+        const UINT scratch = DescriptorBase() + (GraphicsDevice::GetFrameIndex() % g_kFRAME_COUNT) * kScratchDescriptorsPerFrame;
+        WriteSrv(bakeAlbedo.Get(), DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, 0, 1, scratch + 0);
+        WriteSrv(bakeNormal.Get(), DXGI_FORMAT_R8G8B8A8_UNORM, 0, 1, scratch + 1);
+        WriteUav(atlas.Albedo.Get(), DXGI_FORMAT_R8G8B8A8_UNORM, 0, scratch + 2);
+        WriteUav(atlas.NormalDepth.Get(), DXGI_FORMAT_R8G8B8A8_UNORM, 0, scratch + 3);
+
+        commandList->SetComputeRootSignature(s.BuildRoot.Get());
+        commandList->SetPipelineState(s.DilatePso.Get());
+        const UINT dilateConstants[4] = {resolution, frameSize, kDilateRadius, 0};
+        commandList->SetComputeRoot32BitConstants(0, 4, dilateConstants, 0);
+        commandList->SetComputeRootDescriptorTable(1, GpuDescriptor(scratch + 0));
+        commandList->SetComputeRootDescriptorTable(2, GpuDescriptor(scratch + 2));
+        commandList->Dispatch((resolution + 7) / 8, (resolution + 7) / 8, 1);
+
+        // 3. mip 生成（フレーム境界は 2 のべき乗で揃っているので、2x2 平均はフレームをまたがない）
+        commandList->SetPipelineState(s.DownsamplePso.Get());
+        for (UINT level = 1; level < atlas.MipLevels; ++level)
+        {
+            D3D12_RESOURCE_BARRIER previous[2] = {
+                CD3DX12_RESOURCE_BARRIER::Transition(atlas.Albedo.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, level - 1),
+                CD3DX12_RESOURCE_BARRIER::Transition(atlas.NormalDepth.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, level - 1)};
+            commandList->ResourceBarrier(2, previous);
+            const UINT base = scratch + level * 4;
+            WriteSrv(atlas.Albedo.Get(), DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, level - 1, 1, base + 0);
+            WriteSrv(atlas.NormalDepth.Get(), DXGI_FORMAT_R8G8B8A8_UNORM, level - 1, 1, base + 1);
+            WriteUav(atlas.Albedo.Get(), DXGI_FORMAT_R8G8B8A8_UNORM, level, base + 2);
+            WriteUav(atlas.NormalDepth.Get(), DXGI_FORMAT_R8G8B8A8_UNORM, level, base + 3);
+            const UINT size = max(resolution >> level, 1u);
+            const UINT levelConstants[4] = {size, max(frameSize >> level, 1u), 0, 0};
+            commandList->SetComputeRoot32BitConstants(0, 4, levelConstants, 0);
+            commandList->SetComputeRootDescriptorTable(1, GpuDescriptor(base + 0));
+            commandList->SetComputeRootDescriptorTable(2, GpuDescriptor(base + 2));
+            commandList->Dispatch((size + 7) / 8, (size + 7) / 8, 1);
+        }
+        const UINT last = atlas.MipLevels - 1;
+        D3D12_RESOURCE_BARRIER lastLevel[2] = {
+            CD3DX12_RESOURCE_BARRIER::Transition(atlas.Albedo.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, last),
+            CD3DX12_RESOURCE_BARRIER::Transition(atlas.NormalDepth.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, last)};
+        commandList->ResourceBarrier(2, lastLevel);
+        constexpr auto allShader =
+            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        D3D12_RESOURCE_BARRIER finalBarriers[2] = {
+            CD3DX12_RESOURCE_BARRIER::Transition(atlas.Albedo.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                                                 allShader),
+            CD3DX12_RESOURCE_BARRIER::Transition(atlas.NormalDepth.Get(),
+                                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, allShader)};
+        commandList->ResourceBarrier(2, finalBarriers);
+
+        // 4. 描画用 SRV（アルベド sRGB、法線・深度）。
+        atlas.SrvIndex = SlotDescriptor(atlas.Slot);
+        WriteSrv(atlas.Albedo.Get(), DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, 0, atlas.MipLevels, atlas.SrvIndex);
+        WriteSrv(atlas.NormalDepth.Get(), DXGI_FORMAT_R8G8B8A8_UNORM, 0, atlas.MipLevels, atlas.SrvIndex + 1);
+
+        RetireResource(bakeAlbedo);
+        RetireResource(bakeNormal);
+        RetireResource(bakeDepth);
+        atlas.State = AtlasState::Ready;
+        Debug::Log("Impostor: baked %ux%u frames, %u px, %u mips (radius %.2f)\n", frames, frames, resolution,
+                   atlas.MipLevels, atlas.Radius);
+        return true;
+    }
+};
 
 ===== FILE: source\rendering\lightingresources.cpp =====
 #include "pch.h"
@@ -74105,7 +76120,12 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPsoSlow(const ShaderDescript
     if (visibilityPass)
     {
         const char* modelKind;
-        if (resource.isModel)
+        if (resource.isModel && resource.psPath && RendererPathEndsWith(resource.psPath, "ImpostorPS.cso"))
+        {
+            // インポスターは表面をアトラスから復元するため、専用の Visibility ペイロード出力を使う。
+            modelKind = "shader/hlsl/build/ImpostorVisibilityPS.cso";
+        }
+        else if (resource.isModel)
         {
             modelKind = "shader/hlsl/build/VisibilityPS.cso";
         }
@@ -77096,7 +79116,31 @@ namespace
         ComPtr<ID3D12Resource> Indices;
         UINT64 LastSeen = 0;
         UINT64 LastBuilt = 0;
+        // コンパクション前の結果サイズ（統計用）。
+        UINT64 UncompactedBytes = 0;
+        // 最後のフルビルドからのリフィット回数（変形 BLAS の定期再構築判定）。
+        UINT UpdatesSinceBuild = 0;
+        // CompactionSizes 内の照会スロット。UINT_MAX は照会なし。
+        UINT CompactionQuery = UINT_MAX;
+        bool AllowsCompaction = false;
+        bool Compacted = false;
+        // R16G16B16A16_SNORM + Transform3x4 で構築したか。リフィットは同じ形式でのみ可能。
+        bool Quantized = false;
     };
+
+    // 量子化頂点は頂点ソース単位で共有する（PMX の材質別サブメッシュが同じ頂点バッファを参照するため）。
+    using VertexSourceKey = tuple<UINT64, UINT, UINT>;
+
+    struct PackedVertices
+    {
+        ComPtr<ID3D12Resource> Buffer;
+        D3D12_RESOURCE_STATES State = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        UINT64 LastUsed = 0;
+        UINT64 LastWritten = 0;
+    };
+
+    constexpr UINT64 kPackedPositionOffset = 64;
+    constexpr UINT kPackedStride = 8;
 
     struct GlassMesh
     {
@@ -77120,6 +79164,12 @@ namespace
         array<ComPtr<ID3D12Resource>, 4> Guides;
         ComPtr<ID3D12Resource> AmbientGuide;
         map<GeometryKey, BottomLevel> Geometry;
+        map<VertexSourceKey, PackedVertices> PackedSources;
+        // BLAS コンパクションのサイズ照会（GPU 書き込み先とリードバック）。
+        ComPtr<ID3D12Resource> CompactionSizes;
+        ComPtr<ID3D12Resource> CompactionReadback;
+        vector<GeometryKey> CompactionPending;
+        bool CompactionReadbackValid = false;
         ComPtr<ID3D12Resource> TopLevel;
         ComPtr<ID3D12Resource> Scratch;
         ComPtr<ID3D12Resource> Instances;
@@ -77191,6 +79241,11 @@ namespace
     bool g_Active = false;
     bool g_ReflectionsActive = false;
     bool g_GiActive = false;
+    ComPtr<ID3D12RootSignature> g_QuantizeRoot;
+    ComPtr<ID3D12PipelineState> g_QuantizePipeline;
+    bool g_QuantizeTried = false;
+    UINT g_RebuildStagger = 0;
+    Raytracing::BlasStatistics g_BlasStats;
     XMFLOAT4 g_SunDirection{};
     const char* g_Status = "未初期化";
 
@@ -77424,21 +79479,300 @@ namespace
         vector<D3D12_RESOURCE_BARRIER> m_FinishBarriers;
     };
 
+    bool EnsureQuantizePipeline()
+    {
+        if (g_QuantizeTried)
+        {
+            return g_QuantizePipeline != nullptr;
+        }
+        g_QuantizeTried = true;
+        CD3DX12_ROOT_PARAMETER parameters[3];
+        parameters[0].InitAsConstants(4, 0);
+        parameters[1].InitAsShaderResourceView(0);
+        parameters[2].InitAsUnorderedAccessView(0);
+        CD3DX12_ROOT_SIGNATURE_DESC rootDescription(3, parameters, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE);
+        ComPtr<ID3DBlob> serialized, errors;
+        if (FAILED(D3D12SerializeRootSignature(&rootDescription, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors)) ||
+            FAILED(g_Device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
+                                                 IID_PPV_ARGS(&g_QuantizeRoot))))
+        {
+            WriteGraphicsLog("DXR: BLAS quantize root signature failed; 32bit BLAS vertices are used\n");
+            return false;
+        }
+        ComPtr<ID3DBlob> shader;
+        errors.Reset();
+        if (FAILED(D3DCompileFromFile(L"shader/hlsl/BlasQuantizeCS.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                                      "main", "cs_6_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &shader, &errors)))
+        {
+            WriteGraphicsLog("DXR: BlasQuantizeCS compile failed: %s\n",
+                             errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
+            g_QuantizeRoot.Reset();
+            return false;
+        }
+        D3D12_COMPUTE_PIPELINE_STATE_DESC description{};
+        description.pRootSignature = g_QuantizeRoot.Get();
+        description.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
+        if (FAILED(g_Device->CreateComputePipelineState(&description, IID_PPV_ARGS(&g_QuantizePipeline))))
+        {
+            WriteGraphicsLog("DXR: BlasQuantizeCS pipeline creation failed\n");
+            g_QuantizeRoot.Reset();
+            return false;
+        }
+        g_QuantizePipeline->SetName(L"BLAS Vertex Quantize");
+        return true;
+    }
+
+    VertexSourceKey MakeVertexSourceKey(const RaytracingGeometry& geometry)
+    {
+        return VertexSourceKey(geometry.VertexView.BufferLocation, geometry.VertexView.SizeInBytes,
+                               geometry.VertexView.StrideInBytes);
+    }
+
+    // 16bit SNORM の量子化誤差（AABB 半幅 / 32767 の半分）がワールド空間の許容値以内なら量子化する。
+    bool WantsQuantizedVertices(const RaytracingGeometry& geometry)
+    {
+        const UINT stride = geometry.VertexView.StrideInBytes;
+        if (!g_Settings.QuantizeBlasVertices || stride < sizeof(XMFLOAT3) || (stride & 3u) != 0 ||
+            (geometry.VertexView.BufferLocation & 3ull) != 0 || geometry.VertexView.SizeInBytes < stride * 3)
+        {
+            return false;
+        }
+        if (geometry.Skinned)
+        {
+            return EnsureQuantizePipeline();
+        }
+        if (!(geometry.ObjectRadius > 0.0f))
+        {
+            return false;
+        }
+        const XMMATRIX world = XMLoadFloat4x4(&geometry.World);
+        const float scale = (std::max)({XMVectorGetX(XMVector3Length(world.r[0])),
+                                        XMVectorGetX(XMVector3Length(world.r[1])),
+                                        XMVectorGetX(XMVector3Length(world.r[2]))});
+        const float worldError = geometry.ObjectRadius * scale / 32767.0f * 0.5f;
+        return worldError <= (std::max)(g_Settings.BlasQuantizationMaxError, 0.0f) && EnsureQuantizePipeline();
+    }
+
+    bool EnsureCompactionBuffers(FrameResources& frame)
+    {
+        const UINT64 bytes = static_cast<UINT64>(kMaximumInstances) * sizeof(UINT64);
+        if (!frame.CompactionSizes)
+        {
+            if (!EnsureBuffer(frame.CompactionSizes, bytes, D3D12_HEAP_TYPE_DEFAULT,
+                              D3D12_RESOURCE_STATE_UNORDERED_ACCESS, L"BLAS Compaction Sizes"))
+            {
+                return false;
+            }
+        }
+        if (!frame.CompactionReadback)
+        {
+            if (!EnsureBuffer(frame.CompactionReadback, bytes, D3D12_HEAP_TYPE_READBACK,
+                              D3D12_RESOURCE_STATE_COPY_DEST, L"BLAS Compaction Readback"))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // 同じフレームスロットの前回コマンドは完了済み（Retired と同じ前提）なので、前回照会したサイズを読める。
+    void ApplyPendingCompaction(ID3D12GraphicsCommandList4* commandList, FrameResources& frame)
+    {
+        if (frame.CompactionPending.empty())
+        {
+            frame.CompactionReadbackValid = false;
+            return;
+        }
+        const UINT count = static_cast<UINT>(frame.CompactionPending.size());
+        const UINT64* sizes = nullptr;
+        void* mapped = nullptr;
+        const D3D12_RANGE readRange{0, static_cast<SIZE_T>(count) * sizeof(UINT64)};
+        if (frame.CompactionReadbackValid && frame.CompactionReadback &&
+            SUCCEEDED(frame.CompactionReadback->Map(0, &readRange, &mapped)))
+        {
+            sizes = static_cast<const UINT64*>(mapped);
+        }
+        vector<D3D12_RESOURCE_BARRIER> barriers;
+        for (UINT index = 0; index < count; ++index)
+        {
+            const auto found = frame.Geometry.find(frame.CompactionPending[index]);
+            if (found == frame.Geometry.end() || found->second.CompactionQuery != index)
+            {
+                continue;
+            }
+            BottomLevel& level = found->second;
+            level.CompactionQuery = UINT_MAX;
+            if (!sizes || level.Compacted || !level.Result || !g_Settings.CompactStaticBlas)
+            {
+                continue;
+            }
+            const UINT64 current = level.Result->GetDesc().Width;
+            const UINT64 compactedSize = sizes[index];
+            // 圧縮の効果がない（または無効値）なら再照会しない。
+            if (compactedSize == 0 || compactedSize > current || current - compactedSize < 4096)
+            {
+                level.Compacted = true;
+                continue;
+            }
+            ComPtr<ID3D12Resource> compacted;
+            if (!EnsureBuffer(compacted, compactedSize, D3D12_HEAP_TYPE_DEFAULT,
+                              D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene BLAS (compacted)"))
+            {
+                continue;
+            }
+            commandList->CopyRaytracingAccelerationStructure(
+                compacted->GetGPUVirtualAddress(), level.Result->GetGPUVirtualAddress(),
+                D3D12_RAYTRACING_ACCELERATION_STRUCTURE_COPY_MODE_COMPACT);
+            // 旧 BLAS は、このコマンドリストの前段（前回 TLAS を読むラスタライティング）から参照され得る。
+            // スロットのフェンス完了まで保持する。
+            frame.Retired.push_back(level.Result);
+            if (level.Scratch)
+            {
+                frame.Retired.push_back(level.Scratch);
+                level.Scratch.Reset();
+            }
+            level.UncompactedBytes = current;
+            level.Result = move(compacted);
+            level.Compacted = true;
+            barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(level.Result.Get()));
+        }
+        if (mapped)
+        {
+            const D3D12_RANGE noWrite{0, 0};
+            frame.CompactionReadback->Unmap(0, &noWrite);
+        }
+        frame.CompactionPending.clear();
+        frame.CompactionReadbackValid = false;
+        if (!barriers.empty())
+        {
+            // TLAS 構築とレイ判定の前にコピー結果を可視化する。
+            commandList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+        }
+    }
+
+    // ビルド済み静的 BLAS のコンパクションサイズを照会する（ビルドと同時に照会できなかったもの）。
+    void QueryCompaction(ID3D12GraphicsCommandList4* commandList, FrameResources& frame, const GeometryKey& key,
+                         BottomLevel& level)
+    {
+        if (!g_Settings.CompactStaticBlas || !level.AllowsCompaction || level.Compacted ||
+            level.CompactionQuery != UINT_MAX || !level.Result || level.LastBuilt == g_Serial ||
+            frame.CompactionPending.size() >= kMaximumInstances || !EnsureCompactionBuffers(frame))
+        {
+            return;
+        }
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC query{};
+        query.InfoType = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_COMPACTED_SIZE;
+        query.DestBuffer = frame.CompactionSizes->GetGPUVirtualAddress() +
+                           static_cast<UINT64>(frame.CompactionPending.size()) * sizeof(UINT64);
+        const D3D12_GPU_VIRTUAL_ADDRESS source = level.Result->GetGPUVirtualAddress();
+        commandList->EmitRaytracingAccelerationStructurePostbuildInfo(&query, 1, &source);
+        level.CompactionQuery = static_cast<UINT>(frame.CompactionPending.size());
+        frame.CompactionPending.push_back(key);
+    }
+
+    // 量子化が必要な頂点ソースを 1 ソース 1 グループでまとめてディスパッチする。
+    // 戻り値: 頂点ソース → BLAS 入力に使える量子化バッファ（NON_PIXEL_SHADER_RESOURCE 状態）。
+    map<VertexSourceKey, ID3D12Resource*> QuantizeVertexSources(ID3D12GraphicsCommandList4* commandList,
+                                                                FrameResources& frame,
+                                                                const map<VertexSourceKey, const RaytracingGeometry*>& sources)
+    {
+        map<VertexSourceKey, ID3D12Resource*> ready;
+        if (sources.empty() || !g_QuantizePipeline)
+        {
+            return ready;
+        }
+        vector<pair<PackedVertices*, const RaytracingGeometry*>> dispatches;
+        vector<D3D12_RESOURCE_BARRIER> toWrite;
+        for (const auto& [key, geometry] : sources)
+        {
+            PackedVertices& packed = frame.PackedSources[key];
+            packed.LastUsed = g_Serial;
+            if (packed.LastWritten == g_Serial && packed.Buffer)
+            {
+                ready[key] = packed.Buffer.Get();
+                continue;
+            }
+            const UINT vertexCount = geometry->VertexView.SizeInBytes / geometry->VertexView.StrideInBytes;
+            const UINT64 bytes = kPackedPositionOffset + static_cast<UINT64>(vertexCount) * kPackedStride;
+            ID3D12Resource* previous = packed.Buffer.Get();
+            if (!EnsureBuffer(packed.Buffer, bytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                              L"BLAS Quantized Vertices"))
+            {
+                frame.PackedSources.erase(key);
+                continue;
+            }
+            if (packed.Buffer.Get() != previous)
+            {
+                packed.State = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+            }
+            if (packed.State != D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+            {
+                toWrite.push_back(CD3DX12_RESOURCE_BARRIER::Transition(packed.Buffer.Get(), packed.State,
+                                                                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+                packed.State = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+            }
+            dispatches.emplace_back(&packed, geometry);
+            ready[key] = packed.Buffer.Get();
+        }
+        if (!toWrite.empty())
+        {
+            commandList->ResourceBarrier(static_cast<UINT>(toWrite.size()), toWrite.data());
+        }
+        if (dispatches.empty())
+        {
+            return ready;
+        }
+        RenderProfiler::ScopedEvent profile("BLAS Vertex Quantize", commandList);
+        commandList->SetComputeRootSignature(g_QuantizeRoot.Get());
+        commandList->SetPipelineState(g_QuantizePipeline.Get());
+        vector<D3D12_RESOURCE_BARRIER> toRead;
+        toRead.reserve(dispatches.size());
+        for (auto& [packed, geometry] : dispatches)
+        {
+            const UINT constants[4] = {geometry->VertexView.SizeInBytes / geometry->VertexView.StrideInBytes,
+                                       geometry->VertexView.StrideInBytes, 0u, 0u};
+            commandList->SetComputeRoot32BitConstants(0, 4, constants, 0);
+            commandList->SetComputeRootShaderResourceView(1, geometry->VertexView.BufferLocation);
+            commandList->SetComputeRootUnorderedAccessView(2, packed->Buffer->GetGPUVirtualAddress());
+            commandList->Dispatch(1, 1, 1);
+            packed->LastWritten = g_Serial;
+            packed->State = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            toRead.push_back(CD3DX12_RESOURCE_BARRIER::Transition(packed->Buffer.Get(),
+                                                                  D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                                  D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
+        }
+        // 量子化結果（頂点と Transform3x4）を BLAS 構築入力として読める状態にする。
+        commandList->ResourceBarrier(static_cast<UINT>(toRead.size()), toRead.data());
+        return ready;
+    }
+
     bool BuildBottomLevel(ID3D12GraphicsCommandList4* commandList, const RaytracingGeometry& geometry,
-                          BottomLevel& level, GeometryReadBatch& geometryReads)
+                          BottomLevel& level, GeometryReadBatch& geometryReads, FrameResources& frame,
+                          const GeometryKey& key, ID3D12Resource* packed, UINT& rebuildBudget)
     {
         level.LastSeen = g_Serial;
         if (level.Result && (!geometry.Deforming || level.LastBuilt == g_Serial))
         {
             return true;
         }
+        const bool firstBuild = !level.Result;
+        const bool quantized = packed != nullptr;
+        const UINT vertexCount = geometry.VertexView.SizeInBytes / geometry.VertexView.StrideInBytes;
         D3D12_RAYTRACING_GEOMETRY_DESC description{};
         description.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
         description.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
         description.Triangles.VertexBuffer.StartAddress = geometry.VertexView.BufferLocation;
         description.Triangles.VertexBuffer.StrideInBytes = geometry.VertexView.StrideInBytes;
-        description.Triangles.VertexCount = geometry.VertexView.SizeInBytes / geometry.VertexView.StrideInBytes;
+        description.Triangles.VertexCount = vertexCount;
         description.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+        if (quantized)
+        {
+            // 16bit SNORM 頂点 + 復元行列。BLAS 空間は元のオブジェクト空間のまま。
+            description.Triangles.Transform3x4 = packed->GetGPUVirtualAddress();
+            description.Triangles.VertexBuffer.StartAddress = packed->GetGPUVirtualAddress() + kPackedPositionOffset;
+            description.Triangles.VertexBuffer.StrideInBytes = kPackedStride;
+            description.Triangles.VertexFormat = DXGI_FORMAT_R16G16B16A16_SNORM;
+        }
         description.Triangles.IndexBuffer = geometry.IndexView.BufferLocation;
         description.Triangles.IndexCount = geometry.IndexCount;
         description.Triangles.IndexFormat = geometry.IndexView.Format;
@@ -77446,12 +79780,18 @@ namespace
         {
             description.Triangles.IndexFormat = DXGI_FORMAT_UNKNOWN;
         }
+        const bool compact = !geometry.Deforming && g_Settings.CompactStaticBlas && EnsureCompactionBuffers(frame) &&
+                             frame.CompactionPending.size() < kMaximumInstances;
         D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
         inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
         inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
         inputs.NumDescs = 1;
         inputs.pGeometryDescs = &description;
         inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+        if (compact)
+        {
+            inputs.Flags |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_COMPACTION;
+        }
         if (geometry.Deforming)
         {
             inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE |
@@ -77459,7 +79799,15 @@ namespace
         }
         D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes{};
         g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &sizes);
-        const bool update = geometry.Deforming && level.Result;
+        // リフィットは同じ頂点形式でのみ可能。リフィットを重ねると BVH が劣化するため、
+        // 一定回数ごとにフルビルドへ切り替える（1 フレームの再構築数は予算で分散）。
+        bool update = geometry.Deforming && level.Result && level.Quantized == quantized;
+        const UINT interval = static_cast<UINT>((std::max)(g_Settings.DeformingBlasRebuildInterval, 0));
+        if (update && interval > 0 && level.UpdatesSinceBuild >= interval && rebuildBudget > 0)
+        {
+            update = false;
+            --rebuildBudget;
+        }
         if (sizes.ResultDataMaxSizeInBytes == 0 ||
             !EnsureBuffer(level.Result, sizes.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
                           D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene BLAS") ||
@@ -77477,12 +79825,42 @@ namespace
             build.Inputs.Flags |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE;
             build.SourceAccelerationStructureData = build.DestAccelerationStructureData;
         }
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC query{};
+        UINT queryCount = 0;
+        if (compact)
+        {
+            query.InfoType = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_COMPACTED_SIZE;
+            query.DestBuffer = frame.CompactionSizes->GetGPUVirtualAddress() +
+                               static_cast<UINT64>(frame.CompactionPending.size()) * sizeof(UINT64);
+            queryCount = 1;
+            level.CompactionQuery = static_cast<UINT>(frame.CompactionPending.size());
+            frame.CompactionPending.push_back(key);
+        }
         // アップロードヒープは GENERIC_READ のままにする。NON_PIXEL_SHADER_RESOURCE も含まれている。
-        commandList->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
+        commandList->BuildRaytracingAccelerationStructure(&build, queryCount, queryCount ? &query : nullptr);
         geometryReads.CompleteBuild(level.Result.Get());
         level.Vertices = geometry.Vertices;
         level.Indices = geometry.Indices;
         level.LastBuilt = g_Serial;
+        level.Quantized = quantized;
+        level.AllowsCompaction = compact;
+        level.Compacted = false;
+        level.UncompactedBytes = level.Result->GetDesc().Width;
+        if (update)
+        {
+            ++level.UpdatesSinceBuild;
+            ++g_BlasStats.RefitsThisFrame;
+        }
+        else
+        {
+            // 初回ビルドは開始位置をずらし、多数のキャラクターの再構築が同じフレームに集中しないようにする。
+            level.UpdatesSinceBuild = 0;
+            if (geometry.Deforming && firstBuild && interval > 0)
+            {
+                level.UpdatesSinceBuild = (g_RebuildStagger++) % interval;
+            }
+            ++g_BlasStats.RebuildsThisFrame;
+        }
         return true;
     }
 
@@ -77644,12 +80022,18 @@ namespace
         frame.SceneGeometry.clear();
         vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
         instances.reserve((min)(geometry.size(), static_cast<size_t>(kMaximumInstances)));
+        g_BlasStats = {};
+        // 前回このスロットで照会したコンパクションサイズを反映する（BLAS のアドレスが変わるので TLAS 構築前）。
+        ApplyPendingCompaction(commandList, frame);
         GeometryReadBatch geometryReads(commandList);
         // 下記のインスタンス上限と有効性検証に合わせる。キャッシュ済みの静的 BLAS は入力遷移不要。
         // 共有する頂点・インデックスリソースは1回だけ状態遷移する。
         size_t accepted = 0;
-        for (const auto& entry : geometry)
+        vector<char> wantsQuantized(geometry.size(), 0);
+        map<VertexSourceKey, const RaytracingGeometry*> quantizeSources;
+        for (size_t index = 0; index < geometry.size(); ++index)
         {
+            const auto& entry = geometry[index];
             if (accepted >= kMaximumInstances || entry.VertexView.StrideInBytes < sizeof(XMFLOAT3))
             {
                 continue;
@@ -77667,11 +80051,20 @@ namespace
                 {
                     geometryReads.PrepareUpdate(bottom->second.Result.Get());
                 }
+                if (WantsQuantizedVertices(entry))
+                {
+                    wantsQuantized[index] = 1;
+                    quantizeSources.emplace(MakeVertexSourceKey(entry), &entry);
+                }
             }
         }
         geometryReads.Begin();
-        for (const auto& entry : geometry)
+        // 頂点ソースの読み取り遷移後に 16bit 量子化をまとめて実行する。
+        const auto quantizedSources = QuantizeVertexSources(commandList, frame, quantizeSources);
+        UINT rebuildBudget = static_cast<UINT>((std::max)(g_Settings.DeformingBlasRebuildsPerFrame, 0));
+        for (size_t index = 0; index < geometry.size(); ++index)
         {
+            const auto& entry = geometry[index];
             if (instances.size() >= kMaximumInstances || entry.VertexView.StrideInBytes < sizeof(XMFLOAT3))
             {
                 continue;
@@ -77680,9 +80073,29 @@ namespace
                                   entry.VertexView.SizeInBytes, entry.IndexCount, entry.VertexView.StrideInBytes,
                                   static_cast<UINT>(entry.IndexView.Format));
             BottomLevel& bottom = frame.Geometry[key];
-            if (!BuildBottomLevel(commandList, entry, bottom, geometryReads))
+            ID3D12Resource* packed = nullptr;
+            if (wantsQuantized[index])
+            {
+                const auto found = quantizedSources.find(MakeVertexSourceKey(entry));
+                if (found != quantizedSources.end())
+                {
+                    packed = found->second;
+                }
+            }
+            if (!BuildBottomLevel(commandList, entry, bottom, geometryReads, frame, key, packed, rebuildBudget))
             {
                 return false;
+            }
+            if (!entry.Deforming && bottom.LastBuilt != g_Serial)
+            {
+                // 過去フレームでビルド済みの静的 BLAS: スクラッチは再利用しないので解放し、
+                // 未照会ならコンパクションサイズを照会する。
+                if (bottom.Scratch)
+                {
+                    frame.Retired.push_back(bottom.Scratch);
+                    bottom.Scratch.Reset();
+                }
+                QueryCompaction(commandList, frame, key, bottom);
             }
             D3D12_RAYTRACING_INSTANCE_DESC instance{};
             XMFLOAT4X4 transform;
@@ -77711,6 +80124,35 @@ namespace
         BuildGlassMetadata(frame);
         // TLAS 構築とレイ判定の前に、すべての BLAS 書き込みを可視化する。
         geometryReads.Finish();
+        if (!frame.CompactionPending.empty() && frame.CompactionSizes && frame.CompactionReadback)
+        {
+            // ビルド時に書かれたコンパクションサイズをリードバックへ写す。次にこのスロットを使うときに読む。
+            const auto toCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+                frame.CompactionSizes.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            commandList->ResourceBarrier(1, &toCopy);
+            commandList->CopyBufferRegion(frame.CompactionReadback.Get(), 0, frame.CompactionSizes.Get(), 0,
+                                          static_cast<UINT64>(frame.CompactionPending.size()) * sizeof(UINT64));
+            const auto toWrite = CD3DX12_RESOURCE_BARRIER::Transition(
+                frame.CompactionSizes.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commandList->ResourceBarrier(1, &toWrite);
+            frame.CompactionReadbackValid = true;
+        }
+        // 今フレームで使わなかった量子化頂点（ビルド済みの静的メッシュ分など）は解放する。
+        for (auto iterator = frame.PackedSources.begin(); iterator != frame.PackedSources.end();)
+        {
+            if (iterator->second.LastUsed != g_Serial)
+            {
+                if (iterator->second.Buffer)
+                {
+                    frame.Retired.push_back(iterator->second.Buffer);
+                }
+                iterator = frame.PackedSources.erase(iterator);
+            }
+            else
+            {
+                ++iterator;
+            }
+        }
         for (auto iterator = frame.Geometry.begin(); iterator != frame.Geometry.end();)
         {
             if (iterator->second.LastSeen != g_Serial)
@@ -77737,6 +80179,26 @@ namespace
             else
             {
                 ++iterator;
+            }
+        }
+        g_BlasStats.BottomLevels = static_cast<UINT>(frame.Geometry.size());
+        g_BlasStats.ResultBytes = 0;
+        for (const auto& [unused, bottom] : frame.Geometry)
+        {
+            if (!bottom.Result)
+            {
+                continue;
+            }
+            const UINT64 bytes = bottom.Result->GetDesc().Width;
+            g_BlasStats.ResultBytes += bytes;
+            if (bottom.Quantized)
+            {
+                ++g_BlasStats.Quantized;
+            }
+            if (bottom.Compacted && bottom.UncompactedBytes > bytes)
+            {
+                ++g_BlasStats.Compacted;
+                g_BlasStats.CompactionSavedBytes += bottom.UncompactedBytes - bytes;
             }
         }
         g_InstanceCount = static_cast<UINT>(instances.size());
@@ -77989,6 +80451,11 @@ void Raytracing::Shutdown()
     g_AmbientHistoryValid = false;
     g_InstanceCount = 0;
     g_Serial = 0;
+    g_QuantizePipeline.Reset();
+    g_QuantizeRoot.Reset();
+    g_QuantizeTried = false;
+    g_RebuildStagger = 0;
+    g_BlasStats = {};
 }
 
 void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource* depth, ID3D12Resource* normal,
@@ -78392,6 +80859,11 @@ XMFLOAT4 Raytracing::GetSunDirection()
     return g_SunDirection;
 }
 
+Raytracing::BlasStatistics Raytracing::GetBlasStatistics()
+{
+    return g_BlasStats;
+}
+
 UINT Raytracing::GetInstanceCount()
 {
     return g_InstanceCount;
@@ -78607,6 +81079,27 @@ class Raytracing
         float AmbientRadius = 1.5f;
         float NormalBias = 0.015f;
         float SunAngularRadius = 0.00465f;
+        // BLAS: 静的 BLAS をビルド後に圧縮（コンパクション）し、VRAM を削減する。
+        bool CompactStaticBlas = true;
+        // BLAS: 変形 BLAS は通常リフィット（更新）し、この回数ごとにフルビルドで BVH 品質を回復する。0 で無効。
+        int DeformingBlasRebuildInterval = 32;
+        // 1 フレームあたりの変形 BLAS フルビルド数の上限（スパイク分散）。
+        int DeformingBlasRebuildsPerFrame = 2;
+        // BLAS 入力頂点を R16G16B16A16_SNORM へ量子化する（バウンディングボックス正規化 + Transform3x4 で復元）。
+        bool QuantizeBlasVertices = true;
+        // 量子化誤差（ワールド空間）の許容上限。これを超えるメッシュは 32bit 頂点のまま構築する。
+        float BlasQuantizationMaxError = 0.0005f;
+    };
+
+    struct BlasStatistics
+    {
+        UINT BottomLevels = 0;
+        UINT Compacted = 0;
+        UINT Quantized = 0;
+        UINT RefitsThisFrame = 0;
+        UINT RebuildsThisFrame = 0;
+        UINT64 ResultBytes = 0;
+        UINT64 CompactionSavedBytes = 0;
     };
 
     static bool Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UINT increment);
@@ -78623,6 +81116,7 @@ class Raytracing
     static ID3D12Resource* GetResultResource();
     static XMFLOAT4 GetSunDirection();
     static UINT GetInstanceCount();
+    static BlasStatistics GetBlasStatistics();
     static UINT GetDenoiserDispatchCount();
     static UINT GetAmbientDenoiserDispatchCount();
     static bool AreReflectionsActive();
@@ -78801,6 +81295,15 @@ namespace
             entry.IndexView = mesh.IndexBufferView;
             entry.IndexCount = mesh.IndexCount;
             entry.Deforming = deforming;
+            entry.Skinned = deforming;
+            if constexpr (std::is_same_v<std::decay_t<decltype(mesh)>, StaticMeshData>)
+            {
+                if (mesh.RayRadius > 0.0f)
+                {
+                    // AABB 中心から最遠頂点までの距離 <= RayRadius なので、量子化範囲の上限として使える。
+                    entry.ObjectRadius = mesh.RayRadius;
+                }
+            }
             entry.VertexState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
             if (deforming)
             {
@@ -78965,7 +81468,6 @@ vector<RaytracingGeometry> GatherRaytracingGeometry()
     return geometry;
 }
 
-
 ===== FILE: source\rendering\raytracingscene.h =====
 #pragma once
 
@@ -78981,6 +81483,10 @@ struct RaytracingGeometry
     D3D12_INDEX_BUFFER_VIEW IndexView{};
     UINT IndexCount = 0;
     bool Deforming = false;
+    // スキニング出力（キャラクター等）。BLAS 頂点の 16bit 量子化をサイズ不明でも許可する。
+    bool Skinned = false;
+    // オブジェクト空間のバウンディング球半径。負値は不明（16bit 量子化の誤差判定ができないため 32bit のまま）。
+    float ObjectRadius = -1.0f;
     bool CastShadow = true;
     D3D12_RESOURCE_STATES VertexState = D3D12_RESOURCE_STATE_GENERIC_READ;
     D3D12_RESOURCE_STATES IndexState = D3D12_RESOURCE_STATE_GENERIC_READ;
@@ -79009,7 +81515,6 @@ struct RaytracingGeometry
 };
 
 vector<RaytracingGeometry> GatherRaytracingGeometry();
-
 
 ===== FILE: source\rendering\rendercapture.cpp =====
 #include "pch.h"
@@ -80847,6 +83352,8 @@ class RendererState
     static constexpr UINT g_kMAX_DYNAMIC_VERTICES = 65536;
     static constexpr UINT g_kTHUMBNAIL_DESCRIPTOR_START = g_kENGINE_DESCRIPTOR_END + 1;
     static constexpr UINT g_kTHUMBNAIL_DESCRIPTOR_COUNT = 512;
+    // インポスターのアトラス SRV とベイク用の一時ディスクリプタ。ヒープ末尾の VirtualGeometry ページ（16384）の直前に置く。
+    static constexpr UINT g_kIMPOSTOR_DESCRIPTOR_COUNT = 1024;
 
     static DXGI_FORMAT GetSceneColorFormat()
     {
@@ -80901,6 +83408,8 @@ namespace RenderFeature
         bool Raytracing = false;
         bool SamplerFeedback = false;
         bool ReservedResources = false;
+        // SM6.2 のネイティブ 16bit 演算（-enable-16bit-types）。Requirements には含めない（各シェーダーが自動で退避）。
+        bool Native16BitShaderOps = false;
     };
 
     struct Requirements
@@ -85527,6 +88036,266 @@ class ScreenSpaceEffects
     static D3D12_GPU_DESCRIPTOR_HANDLE GetFallbackSrv();
 };
 
+===== FILE: source\rendering\shader16bit.h =====
+#pragma once
+
+// ネイティブ 16bit シェーダー演算（DXC -enable-16bit-types / SM6.2+）でのコンパイル。
+// - GPU が Native16BitShaderOps に対応し、DXC が利用できる場合だけ 16bit 型を有効にする。
+// - それ以外は従来の D3DCompileFromFile（DXC 互換ラッパー）で RP_NATIVE_16BIT=0 としてコンパイルし、
+//   Half16.hlsli の hfloat 系の型は float に戻る（結果は従来と同じ）。
+// - 環境変数 DX12_DISABLE_16BIT_SHADERS=1 で強制的に無効化できる。
+// RTX 30 系（GA10x）の FP16 スループットは FP32 と同等のため、主な効果はレジスタ使用量の削減による
+// 占有率の向上と、中間値の帯域削減。
+
+#include "pch.h"
+#include <dxcapi.h>
+#include "dxcshadercache.h"
+#include "graphicsdevice.h"
+#include "graphicslog.h"
+#include <filesystem>
+#include <string>
+#include <vector>
+
+namespace Shader16Bit
+{
+    inline bool DisabledByEnvironment()
+    {
+        static const bool disabled = [] {
+            char value[8]{};
+            return GetEnvironmentVariableA("DX12_DISABLE_16BIT_SHADERS", value, sizeof(value)) > 0 && atoi(value) != 0;
+        }();
+        return disabled;
+    }
+
+    inline bool IsAvailable()
+    {
+        return !DisabledByEnvironment() && GraphicsDevice::GetFeatureCapabilities().Native16BitShaderOps;
+    }
+
+    inline std::wstring Widen(const char* text)
+    {
+        if (!text || !*text)
+        {
+            return {};
+        }
+        const int length = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
+        std::wstring result(static_cast<size_t>((std::max)(length, 1)), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, text, -1, result.data(), length);
+        result.resize(wcslen(result.c_str()));
+        return result;
+    }
+
+    inline HRESULT CreateBlob(const void* data, size_t size, ID3DBlob** blob)
+    {
+        if (!blob)
+        {
+            return E_POINTER;
+        }
+        *blob = nullptr;
+        ComPtr<ID3DBlob> created;
+        const HRESULT result = D3DCreateBlob(size, &created);
+        if (FAILED(result))
+        {
+            return result;
+        }
+        if (size)
+        {
+            memcpy(created->GetBufferPointer(), data, size);
+        }
+        *blob = created.Detach();
+        return S_OK;
+    }
+
+    using DxcCreateInstanceFunction = HRESULT(WINAPI*)(REFCLSID, REFIID, LPVOID*);
+
+    inline DxcCreateInstanceFunction DxcFactory()
+    {
+        static const DxcCreateInstanceFunction factory = []() -> DxcCreateInstanceFunction {
+            HMODULE module = GetModuleHandleW(L"dxcompiler.dll");
+            if (!module)
+            {
+                module = LoadLibraryW(L"dxcompiler.dll");
+            }
+            return module ? reinterpret_cast<DxcCreateInstanceFunction>(GetProcAddress(module, "DxcCreateInstance"))
+                          : nullptr;
+        }();
+        return factory;
+    }
+
+    // ターゲットのシェーダーモデルを 6.2 以上へ引き上げる（"cs_6_0" → "cs_6_2"）。
+    inline std::string PromoteTarget(const char* target)
+    {
+        std::string promoted = target ? target : "";
+        if (promoted.size() >= 6 && promoted[promoted.size() - 3] == '6' && promoted[promoted.size() - 2] == '_' &&
+            promoted.back() >= '0' && promoted.back() < '2')
+        {
+            promoted.back() = '2';
+        }
+        return promoted;
+    }
+
+    inline HRESULT CompileNative(const wchar_t* path, const D3D_SHADER_MACRO* defines, const char* entry,
+                                 const char* target, UINT flags, ID3DBlob** code, ID3DBlob** errors)
+    {
+        const auto factory = DxcFactory();
+        if (!factory)
+        {
+            return E_NOINTERFACE;
+        }
+        ComPtr<IDxcUtils> utils;
+        ComPtr<IDxcCompiler3> compiler;
+        ComPtr<IDxcIncludeHandler> includes;
+        if (FAILED(factory(CLSID_DxcUtils, IID_PPV_ARGS(&utils))) ||
+            FAILED(factory(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler))) ||
+            FAILED(utils->CreateDefaultIncludeHandler(&includes)))
+        {
+            return E_NOINTERFACE;
+        }
+        ComPtr<IDxcBlobEncoding> source;
+        HRESULT result = utils->LoadFile(path, nullptr, &source);
+        if (FAILED(result))
+        {
+            return result;
+        }
+        const DxcBuffer buffer{source->GetBufferPointer(), source->GetBufferSize(), DXC_CP_ACP};
+
+        const std::wstring entryName = Widen(entry);
+        const std::wstring targetName = Widen(PromoteTarget(target).c_str());
+        const std::wstring includeDirectory =
+            std::filesystem::path(path).parent_path().lexically_normal().wstring();
+        std::vector<std::wstring> storage;
+        storage.reserve(16);
+        storage.push_back(L"RP_NATIVE_16BIT=1");
+        for (const D3D_SHADER_MACRO* macro = defines; macro && macro->Name; ++macro)
+        {
+            storage.push_back(Widen(macro->Name) + L"=" + (macro->Definition ? Widen(macro->Definition) : L"1"));
+        }
+        std::vector<LPCWSTR> arguments = {path, L"-E", entryName.c_str(), L"-T", targetName.c_str(),
+                                          L"-enable-16bit-types"};
+        if (!includeDirectory.empty())
+        {
+            arguments.push_back(L"-I");
+            arguments.push_back(includeDirectory.c_str());
+        }
+        if (flags & D3DCOMPILE_SKIP_OPTIMIZATION)
+        {
+            arguments.push_back(L"-Od");
+        }
+        else
+        {
+            arguments.push_back(L"-O3");
+        }
+        if (flags & D3DCOMPILE_DEBUG)
+        {
+            arguments.push_back(L"-Zi");
+            arguments.push_back(L"-Qembed_debug");
+        }
+        for (const auto& define : storage)
+        {
+            arguments.push_back(L"-D");
+            arguments.push_back(define.c_str());
+        }
+
+        const auto cachePath = DxcShaderCache::CachePath(compiler.Get(), includes.Get(), buffer, arguments);
+        std::vector<char> cachedObject;
+        std::string cachedDiagnostics;
+        if (DxcShaderCache::Load(cachePath, cachedObject, cachedDiagnostics))
+        {
+            if (errors && !cachedDiagnostics.empty())
+            {
+                CreateBlob(cachedDiagnostics.c_str(), cachedDiagnostics.size() + 1, errors);
+            }
+            return CreateBlob(cachedObject.data(), cachedObject.size(), code);
+        }
+
+        ComPtr<IDxcResult> compiled;
+        result = compiler->Compile(&buffer, arguments.data(), static_cast<UINT32>(arguments.size()), includes.Get(),
+                                   IID_PPV_ARGS(&compiled));
+        if (FAILED(result) || !compiled)
+        {
+            return FAILED(result) ? result : E_FAIL;
+        }
+        std::string diagnostics;
+        ComPtr<IDxcBlobUtf8> diagnosticBlob;
+        if (SUCCEEDED(compiled->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&diagnosticBlob), nullptr)) && diagnosticBlob &&
+            diagnosticBlob->GetStringLength() > 0)
+        {
+            diagnostics.assign(diagnosticBlob->GetStringPointer(), diagnosticBlob->GetStringLength());
+            if (errors)
+            {
+                CreateBlob(diagnostics.c_str(), diagnostics.size() + 1, errors);
+            }
+        }
+        HRESULT status = E_FAIL;
+        if (FAILED(compiled->GetStatus(&status)) || FAILED(status))
+        {
+            return FAILED(status) ? status : E_FAIL;
+        }
+        ComPtr<IDxcBlob> object;
+        if (FAILED(compiled->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&object), nullptr)) || !object ||
+            object->GetBufferSize() == 0)
+        {
+            return E_FAIL;
+        }
+        DxcShaderCache::Store(cachePath, object->GetBufferPointer(), object->GetBufferSize(), diagnostics);
+        return CreateBlob(object->GetBufferPointer(), object->GetBufferSize(), code);
+    }
+
+    // 16bit 対応ならネイティブ 16bit でコンパイルし、失敗・非対応時は従来経路へ退避する。
+    // usedNative には実際に 16bit 型が有効になったかを返す。
+    inline HRESULT CompileFromFile(const wchar_t* path, const D3D_SHADER_MACRO* defines, const char* entry,
+                                   const char* target, UINT flags, ID3DBlob** code, ID3DBlob** errors,
+                                   bool* usedNative = nullptr)
+    {
+        if (usedNative)
+        {
+            *usedNative = false;
+        }
+        if (code)
+        {
+            *code = nullptr;
+        }
+        if (errors)
+        {
+            *errors = nullptr;
+        }
+        if (IsAvailable())
+        {
+            ComPtr<ID3DBlob> nativeErrors;
+            const HRESULT native = CompileNative(path, defines, entry, target, flags, code, &nativeErrors);
+            if (SUCCEEDED(native) && code && *code)
+            {
+                if (usedNative)
+                {
+                    *usedNative = true;
+                }
+                if (errors)
+                {
+                    *errors = nativeErrors.Detach();
+                }
+                return native;
+            }
+            WriteGraphicsLog("16bit shader: native compile failed (%ls:%s), using 32bit path: %s\n", path,
+                             entry ? entry : "",
+                             nativeErrors ? static_cast<const char*>(nativeErrors->GetBufferPointer()) : "");
+            if (code && *code)
+            {
+                (*code)->Release();
+                *code = nullptr;
+            }
+        }
+        std::vector<D3D_SHADER_MACRO> fallback;
+        for (const D3D_SHADER_MACRO* macro = defines; macro && macro->Name; ++macro)
+        {
+            fallback.push_back(*macro);
+        }
+        fallback.push_back({"RP_NATIVE_16BIT", "0"});
+        fallback.push_back({nullptr, nullptr});
+        return D3DCompileFromFile(path, fallback.data(), D3D_COMPILE_STANDARD_FILE_INCLUDE, entry, target, flags, 0,
+                                  code, errors);
+    }
+} // 名前空間 Shader16Bit の終わり。
+
 ===== FILE: source\rendering\shaderdescription.h =====
 #pragma once
 #include "rendererstate.h"
@@ -85580,6 +88349,10 @@ string ResolvePixelShaderPathForRenderMode(const string& psPath, RenderMode rend
     if (RendererPathEndsWith(psPath, "colorshader3dPS.cso"))
     {
         return "shader/hlsl/build/colorshader3dPS_MRT.cso";
+    }
+    if (RendererPathEndsWith(psPath, "ImpostorPS.cso"))
+    {
+        return "shader/hlsl/build/ImpostorPS_MRT.cso";
     }
     if (RendererPathEndsWith(psPath, "modelshaderPS.cso") || RendererPathEndsWith(psPath, "modellightingPS.cso") ||
         RendererPathEndsWith(psPath, "modellighingspeculerPS.cso"))
@@ -85726,6 +88499,44 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource)
     if (FAILED(hr))
     {
         hr = D3DReadFileToBlob(wPath.c_str(), ppBlob);
+    }
+    if (FAILED(hr))
+    {
+        // .cso が無い（vcxproj に未登録の新規シェーダーなど）場合は、同名の .hlsl を実行時にコンパイルする。
+        string source = key;
+        const auto buildFolder = source.find("/build/");
+        if (buildFolder != string::npos)
+        {
+            source.erase(buildFolder, 6);
+        }
+        source = filesystem::path(source).replace_extension(".hlsl").string();
+        const size_t psAt = leaf.rfind("PS");
+        const size_t vsAt = leaf.rfind("VS");
+        const size_t csAt = leaf.rfind("CS");
+        const char* target = nullptr;
+        size_t best = 0;
+        auto consider = [&](size_t at, const char* stage) {
+            if (at != string::npos && (!target || at > best))
+            {
+                best = at;
+                target = stage;
+            }
+        };
+        consider(psAt, "ps_6_5");
+        consider(vsAt, "vs_6_5");
+        consider(csAt, "cs_6_5");
+        if (target && filesystem::exists(source))
+        {
+            ComPtr<ID3DBlob> errors;
+            hr = D3DCompileFromFile(filesystem::path(source).wstring().c_str(), nullptr,
+                                    D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", target,
+                                    D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, ppBlob, &errors);
+            if (FAILED(hr))
+            {
+                WriteGraphicsLog("Runtime shader compile failed: %s %s\n", source.c_str(),
+                                 errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
+            }
+        }
     }
     if (FAILED(hr))
     {
@@ -92841,6 +95652,11 @@ namespace SceneFile
         a("thresholds", c.ScreenLOD.Thresholds);
         a("hysteresis", c.ScreenLOD.Hysteresis);
         a("meshPaths", c.ScreenLOD.MeshPaths);
+        a("impostor", c.UseImpostor);
+        a("impostorDistance", c.ImpostorDistance);
+        a("impostorFrames", c.ImpostorFrames);
+        a("impostorResolution", c.ImpostorResolution);
+        a("impostorHemisphere", c.ImpostorHemisphere);
     }
 
     inline void Visit(Archive& a, InstancingComponent& c)
@@ -94655,6 +97471,7 @@ class InputSystem : public SystemBase
 #include "frameconstants.h"
 #include "lightingresources.h"
 #include "renderconfiguration.h"
+#include "impostorrenderer.h"
 
 enum class InstanceKind : UINT8
 {
@@ -95005,7 +97822,9 @@ bool InstancingSystem::CanInstance(EntityID entity)
                                ComponentManager::GetComponentUnchecked<InstancingComponent>(entity).UseInstancing;
     const bool useLod = ComponentManager::HasComponent<LODComponent>(entity) &&
                         ComponentManager::GetComponentUnchecked<LODComponent>(entity).UseLOD;
-    if (!useInstancing && !useLod)
+    // インポスターの置き換えはこの経路で行う。
+    const bool useImpostor = ImpostorRenderer::WantsImpostor(entity);
+    if (!useInstancing && !useLod && !useImpostor)
     {
         return false;
     }
@@ -95249,6 +98068,7 @@ void InstancingSystem::Init()
 
 void InstancingSystem::Uninit()
 {
+    ImpostorRenderer::Shutdown();
     s_Available = false;
     m_GpuCullingInitialized = false;
     if (m_InstanceUpload && m_MappedInstances)
@@ -95538,7 +98358,7 @@ InstanceBatch InstancingSystem::CreateStaticShadowBatch(const StaticMeshData& me
     batch.IndexCount = mesh.IndexCount;
     batch.LodIndexBuffers[0] = mesh.IndexBufferView;
     batch.LodDrawCounts[0] = mesh.IndexCount;
-    for (UINT lod = 1; lod < StaticMeshData::LodCount; ++lod)
+    for (UINT lod = 1; lod < min(StaticMeshData::LodCount, static_cast<UINT>(batch.LodIndexBuffers.size())); ++lod)
     {
         batch.LodIndexBuffers[lod] = mesh.GetLodIndexBufferView(lod);
         batch.LodDrawCounts[lod] = mesh.GetLodIndexCount(lod);
@@ -95999,6 +98819,13 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
             normal = ctx.defaultTexture;
         }
 
+        // 切替距離より遠く、アトラスが準備済みならインポスター1枚に置き換える（全メッシュ分をまとめて省く）。
+        if (!ctx.transparentPass &&
+            ImpostorRenderer::TryQueue(entity, model, material, entityTexture, ctx.cameraPosition))
+        {
+            continue;
+        }
+
         for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
         {
             const StaticMeshData& mesh = model->GetMeshData(meshIndex);
@@ -96037,7 +98864,8 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
             batch.IndexCount = mesh.IndexCount;
             batch.LodIndexBuffers[0] = mesh.IndexBufferView;
             batch.LodDrawCounts[0] = mesh.IndexCount;
-            for (UINT lod = 1; lod < StaticMeshData::LodCount; ++lod)
+            for (UINT lod = 1; lod < min(StaticMeshData::LodCount, static_cast<UINT>(batch.LodIndexBuffers.size()));
+                 ++lod)
             {
                 batch.LodIndexBuffers[lod] = mesh.GetLodIndexBufferView(lod);
                 batch.LodDrawCounts[lod] = mesh.GetLodIndexCount(lod);
@@ -96177,6 +99005,8 @@ bool InstancingSystem::ExecuteCpuCulledDraw(InstanceBatch& batch, UINT minimumLo
         return false;
     }
 
+    const UINT lodCount = min(max(batch.AvailableLodCount, 1u), static_cast<UINT>(m_DirectLodScratch.size()));
+
     for (auto& transforms : m_DirectLodScratch)
     {
         transforms.clear();
@@ -96204,20 +99034,20 @@ bool InstancingSystem::ExecuteCpuCulledDraw(InstanceBatch& batch, UINT minimumLo
         const float dz = transform.Position.z - ctx.cameraPosition.z;
         const float dist = sqrtf(dx * dx + dy * dy + dz * dz);
         UINT lodIndex = 0;
-        if (batch.AvailableLodCount > 2 && dist >= lod2)
+        if (lodCount > 2 && dist >= lod2)
         {
             lodIndex = 2;
         }
-        else if (batch.AvailableLodCount > 1 && dist >= lod1)
+        else if (lodCount > 1 && dist >= lod1)
         {
             lodIndex = 1;
         }
-        lodIndex = min(max(lodIndex, minimumLod), max(batch.AvailableLodCount, 1u) - 1u);
+        lodIndex = min(max(lodIndex, minimumLod), lodCount - 1u);
         m_DirectLodScratch[lodIndex].push_back(transform.WorldMatrix);
     }
 
     const UINT64 frameBase = static_cast<UINT64>(ctx.frameIndex) * kMaxInstancesPerFrame;
-    for (UINT lod = 0; lod < batch.AvailableLodCount; ++lod)
+    for (UINT lod = 0; lod < lodCount; ++lod)
     {
         const auto& transforms = m_DirectLodScratch[lod];
         if (transforms.empty())
@@ -96266,9 +99096,18 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         return;
     }
 
+    const bool impostorPass = renderPass == RenderPass::PrimaryScene && !ctx.transparentPass;
+    if (impostorPass)
+    {
+        ImpostorRenderer::BeginPass();
+    }
     BatchBuilder builder;
     BuildMainBatches(ctx, builder);
     ExecuteMainBatches(ctx, builder.batches);
+    if (impostorPass)
+    {
+        ImpostorRenderer::Flush(ctx.commandList, ctx.frameIndex);
+    }
 }
 
 ===== FILE: source\systems\instancingsystem.h =====
@@ -114305,6 +117144,100 @@ float2 SunOpticalDepth(float3 position, float3 sun)
     Output1[id.xy] = float4(exp(-betaRayleigh * viewDepth.x - betaMie * viewDepth.y), 1);
 }
 
+===== FILE: shader\hlsl\BlasQuantizeCS.hlsl =====
+// =============================================================================================
+// BlasQuantizeCS.hlsl - DXR BLAS 入力頂点を R16G16B16A16_SNORM へ量子化する。
+// 1 グループ（256 スレッド）が 1 頂点ソースを担当し、
+//   1) 位置の AABB をグループ共有メモリでリダクション
+//   2) AABB 中心・半径で正規化して 16bit SNORM に書き出し
+//   3) 復元用の 3x4 行列（行優先）を先頭 48 バイトに書き出す
+// BLAS 構築時は Triangles.Transform3x4 にこの行列を指定するため、BLAS 空間は元のオブジェクト空間の
+// まま（TLAS のインスタンス行列・ヒット位置・法線計算は変更不要）。
+// 出力レイアウト: [0..47] float3x4 / [48..63] float4(最小値, 最大値の x) 予約 / [64..] 頂点 8 バイト
+// =============================================================================================
+cbuffer QuantizeConstants : register(b0)
+{
+    uint VertexCount;
+    uint Stride;
+    uint Reserved0;
+    uint Reserved1;
+};
+
+ByteAddressBuffer SourceVertices : register(t0);
+RWByteAddressBuffer PackedVertices : register(u0);
+
+static const uint kThreads = 256;
+static const uint kPositionOffset = 64;
+
+groupshared float3 s_Min[kThreads];
+groupshared float3 s_Max[kThreads];
+
+bool IsFinitePosition(float3 p)
+{
+    return all(abs(p) < 3.0e38f); // NaN は比較が偽になるため除外される
+}
+
+int Snorm16(float value)
+{
+    return (int)round(clamp(value, -1.0f, 1.0f) * 32767.0f);
+}
+
+[numthreads(kThreads, 1, 1)] void main(uint groupIndex : SV_GroupIndex)
+{
+    float3 lo = 3.0e38f;
+    float3 hi = -3.0e38f;
+    for (uint v = groupIndex; v < VertexCount; v += kThreads)
+    {
+        float3 p = asfloat(SourceVertices.Load3(v * Stride));
+        if (IsFinitePosition(p))
+        {
+            lo = min(lo, p);
+            hi = max(hi, p);
+        }
+    }
+    s_Min[groupIndex] = lo;
+    s_Max[groupIndex] = hi;
+    GroupMemoryBarrierWithGroupSync();
+    [unroll] for (uint step = kThreads / 2; step > 0; step >>= 1)
+    {
+        if (groupIndex < step)
+        {
+            s_Min[groupIndex] = min(s_Min[groupIndex], s_Min[groupIndex + step]);
+            s_Max[groupIndex] = max(s_Max[groupIndex], s_Max[groupIndex + step]);
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    lo = s_Min[0];
+    hi = s_Max[0];
+    if (any(lo > hi))
+    {
+        lo = 0.0f;
+        hi = 0.0f;
+    }
+    const float3 center = (lo + hi) * 0.5f;
+    // ゼロ幅の軸でも 0 除算しない。
+    const float3 halfExtent = max((hi - lo) * 0.5f, 1.0e-6f);
+    const float3 inverse = 1.0f / halfExtent;
+    if (groupIndex == 0)
+    {
+        // 行優先 3x4: x' = halfExtent.x * q.x + center.x（DXR の Transform3x4 と同じ並び）
+        PackedVertices.Store4(0, asuint(float4(halfExtent.x, 0.0f, 0.0f, center.x)));
+        PackedVertices.Store4(16, asuint(float4(0.0f, halfExtent.y, 0.0f, center.y)));
+        PackedVertices.Store4(32, asuint(float4(0.0f, 0.0f, halfExtent.z, center.z)));
+        PackedVertices.Store4(48, asuint(float4(lo.x, lo.y, lo.z, hi.x)));
+    }
+    for (uint v = groupIndex; v < VertexCount; v += kThreads)
+    {
+        float3 p = asfloat(SourceVertices.Load3(v * Stride));
+        // 非有限値は中心へ寄せる（元の BLAS では非アクティブ三角形になる頂点）。
+        p = IsFinitePosition(p) ? p : center;
+        const int3 q = int3(Snorm16((p.x - center.x) * inverse.x), Snorm16((p.y - center.y) * inverse.y),
+                            Snorm16((p.z - center.z) * inverse.z));
+        PackedVertices.Store2(kPositionOffset + v * 8,
+                              uint2((uint(q.x) & 0xffffu) | (uint(q.y) << 16), uint(q.z) & 0xffffu));
+    }
+}
+
 ===== FILE: shader\hlsl\BloomCS.hlsl =====
 // =============================================================================================
 // BloomCS.hlsl - 物理ベースのブルーム（二重フィルターのミップチェーン）、レンズフレア、画面空間の
@@ -114339,25 +117272,48 @@ Texture2D<float> SceneDepth : register(t3);
 RWTexture2D<float4> Destination : register(u0);
 SamplerState LinearClamp : register(s0);
 
+#include "Half16.hlsli"
+
 static const float3 kLuma = float3(0.2126f, 0.7152f, 0.0722f);
 
-float KarisWeight(float3 color)
+// ダウン/アップサンプルのフィルター演算は 16bit（対応 GPU）で行う。加算は重み付きで逐次行い、
+// 中間値が入力の最大値を超えないようにして FP16 のオーバーフローを避ける。
+// 明るい画素の重みは FP16 の非正規化数域（< 6.1e-5）に入るため、重みと正規化は float で行う。
+float KarisWeight(hfloat3 color)
 {
-    return 1.0f / (1.0f + dot(color, kLuma));
+    return 1.0f / (1.0f + dot((float3)color, kLuma));
 }
 
-float3 SoftThreshold(float3 color)
+hfloat3 SoftThreshold(hfloat3 color)
 {
     if (Threshold <= 0.0f)
     {
         return color;
     }
+    // しきい値の計算はスカラー 1 回なので float で行い、係数だけ 16bit に戻す。
     float brightness = max(color.r, max(color.g, color.b));
     float knee = Threshold * 0.5f;
     float soft = clamp(brightness - Threshold + knee, 0.0f, 2.0f * knee);
     soft = soft * soft / (4.0f * knee + 0.00001f);
     float contribution = max(soft, brightness - Threshold) / max(brightness, 0.00001f);
-    return color * contribution;
+    return color * (hfloat)contribution;
+}
+
+hfloat3 SampleSource0(float2 uv)
+{
+    return ToHalf3(Source0.SampleLevel(LinearClamp, uv, 0).rgb);
+}
+
+hfloat3 SampleSource1(float2 uv)
+{
+    return ToHalf3(Source1.SampleLevel(LinearClamp, uv, 0).rgb);
+}
+
+// 4 値の平均（逐次加算でオーバーフローしない）
+hfloat3 Average4(hfloat3 a, hfloat3 b, hfloat3 c, hfloat3 d)
+{
+    const hfloat quarter = (hfloat)0.25f;
+    return a * quarter + b * quarter + c * quarter + d * quarter;
 }
 
 [numthreads(8, 8, 1)] void BloomDownsample(uint3 id : SV_DispatchThreadID) {
@@ -114367,41 +117323,47 @@ float3 SoftThreshold(float3 color)
     }
     float2 uv = (id.xy + 0.5f) / DestinationSize;
     float2 t = 1.0f / SourceSize;
-    float3 a = Source0.SampleLevel(LinearClamp, uv + t * float2(-2, -2), 0).rgb;
-    float3 b = Source0.SampleLevel(LinearClamp, uv + t * float2(0, -2), 0).rgb;
-    float3 c = Source0.SampleLevel(LinearClamp, uv + t * float2(2, -2), 0).rgb;
-    float3 d = Source0.SampleLevel(LinearClamp, uv + t * float2(-2, 0), 0).rgb;
-    float3 e = Source0.SampleLevel(LinearClamp, uv, 0).rgb;
-    float3 f = Source0.SampleLevel(LinearClamp, uv + t * float2(2, 0), 0).rgb;
-    float3 g = Source0.SampleLevel(LinearClamp, uv + t * float2(-2, 2), 0).rgb;
-    float3 h = Source0.SampleLevel(LinearClamp, uv + t * float2(0, 2), 0).rgb;
-    float3 i = Source0.SampleLevel(LinearClamp, uv + t * float2(2, 2), 0).rgb;
-    float3 j = Source0.SampleLevel(LinearClamp, uv + t * float2(-1, -1), 0).rgb;
-    float3 k = Source0.SampleLevel(LinearClamp, uv + t * float2(1, -1), 0).rgb;
-    float3 l = Source0.SampleLevel(LinearClamp, uv + t * float2(-1, 1), 0).rgb;
-    float3 m = Source0.SampleLevel(LinearClamp, uv + t * float2(1, 1), 0).rgb;
-    float3 result;
+    hfloat3 a = SampleSource0(uv + t * float2(-2, -2));
+    hfloat3 b = SampleSource0(uv + t * float2(0, -2));
+    hfloat3 c = SampleSource0(uv + t * float2(2, -2));
+    hfloat3 d = SampleSource0(uv + t * float2(-2, 0));
+    hfloat3 e = SampleSource0(uv);
+    hfloat3 f = SampleSource0(uv + t * float2(2, 0));
+    hfloat3 g = SampleSource0(uv + t * float2(-2, 2));
+    hfloat3 h = SampleSource0(uv + t * float2(0, 2));
+    hfloat3 i = SampleSource0(uv + t * float2(2, 2));
+    hfloat3 j = SampleSource0(uv + t * float2(-1, -1));
+    hfloat3 k = SampleSource0(uv + t * float2(1, -1));
+    hfloat3 l = SampleSource0(uv + t * float2(-1, 1));
+    hfloat3 m = SampleSource0(uv + t * float2(1, 1));
+    hfloat3 result;
     if (FirstLevel != 0)
     {
         // 2x2 グループごとの Karis 平均で、チェーン全体から単独ピクセルの輝点ノイズを除く。
-        float3 g0 = (j + k + l + m) * 0.25f;
-        float3 g1 = (a + b + d + e) * 0.25f;
-        float3 g2 = (b + c + e + f) * 0.25f;
-        float3 g3 = (d + e + g + h) * 0.25f;
-        float3 g4 = (e + f + h + i) * 0.25f;
+        hfloat3 g0 = Average4(j, k, l, m);
+        hfloat3 g1 = Average4(a, b, d, e);
+        hfloat3 g2 = Average4(b, c, e, f);
+        hfloat3 g3 = Average4(d, e, g, h);
+        hfloat3 g4 = Average4(e, f, h, i);
         float w0 = KarisWeight(g0) * 0.5f;
         float w1 = KarisWeight(g1) * 0.125f;
         float w2 = KarisWeight(g2) * 0.125f;
         float w3 = KarisWeight(g3) * 0.125f;
         float w4 = KarisWeight(g4) * 0.125f;
-        result = (g0 * w0 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4) / max(w0 + w1 + w2 + w3 + w4, 0.0001f);
+        float3 weighted = (float3)g0 * w0 + (float3)g1 * w1 + (float3)g2 * w2 + (float3)g3 * w3 + (float3)g4 * w4;
+        result = ToHalf3(weighted / max(w0 + w1 + w2 + w3 + w4, 0.0001f));
         result = SoftThreshold(result);
     }
     else
     {
-        result = e * 0.125f + (a + c + g + i) * 0.03125f + (b + d + f + h) * 0.0625f + (j + k + l + m) * 0.125f;
+        // 重みの総和は 1。逐次加算で中間値が最大値を超えない。
+        const hfloat corner = (hfloat)0.03125f, edge = (hfloat)0.0625f, inner = (hfloat)0.125f;
+        result = e * inner;
+        result += a * corner + c * corner + g * corner + i * corner;
+        result += b * edge + d * edge + f * edge + h * edge;
+        result += j * inner + k * inner + l * inner + m * inner;
     }
-    Destination[id.xy] = float4(max(result, 0.0f), 1.0f);
+    Destination[id.xy] = float4(max((float3)result, 0.0f), 1.0f);
 }
 
     [numthreads(8, 8, 1)] void BloomUpsample(uint3 id : SV_DispatchThreadID)
@@ -114412,19 +117374,17 @@ float3 SoftThreshold(float3 color)
     }
     float2 uv = (id.xy + 0.5f) / DestinationSize;
     float2 t = 1.0f / SourceSize; // 下位の粗いレベルのサイズ
-    float3 tent = Source1.SampleLevel(LinearClamp, uv, 0).rgb * 4.0f;
-    tent += (Source1.SampleLevel(LinearClamp, uv + t * float2(-1, 0), 0).rgb +
-             Source1.SampleLevel(LinearClamp, uv + t * float2(1, 0), 0).rgb +
-             Source1.SampleLevel(LinearClamp, uv + t * float2(0, -1), 0).rgb +
-             Source1.SampleLevel(LinearClamp, uv + t * float2(0, 1), 0).rgb) *
-            2.0f;
-    tent += Source1.SampleLevel(LinearClamp, uv + t * float2(-1, -1), 0).rgb +
-            Source1.SampleLevel(LinearClamp, uv + t * float2(1, -1), 0).rgb +
-            Source1.SampleLevel(LinearClamp, uv + t * float2(-1, 1), 0).rgb +
-            Source1.SampleLevel(LinearClamp, uv + t * float2(1, 1), 0).rgb;
-    tent /= 16.0f;
+    // 3x3 テント（重み 4/16, 2/16, 1/16）。重みを先に掛けて加算する。
+    const hfloat centerWeight = (hfloat)0.25f, edgeWeight = (hfloat)0.125f, cornerWeight = (hfloat)0.0625f;
+    hfloat3 tent = SampleSource1(uv) * centerWeight;
+    tent += SampleSource1(uv + t * float2(-1, 0)) * edgeWeight + SampleSource1(uv + t * float2(1, 0)) * edgeWeight +
+            SampleSource1(uv + t * float2(0, -1)) * edgeWeight + SampleSource1(uv + t * float2(0, 1)) * edgeWeight;
+    tent += SampleSource1(uv + t * float2(-1, -1)) * cornerWeight +
+            SampleSource1(uv + t * float2(1, -1)) * cornerWeight +
+            SampleSource1(uv + t * float2(-1, 1)) * cornerWeight + SampleSource1(uv + t * float2(1, 1)) * cornerWeight;
+    // 最後の合成は float（current + tent * Radius は FP16 の範囲を超え得る）。
     float3 current = Source0.SampleLevel(LinearClamp, uv, 0).rgb;
-    Destination[id.xy] = float4(current + tent * Radius, 1.0f);
+    Destination[id.xy] = float4(current + (float3)tent * Radius, 1.0f);
 }
 
 float Hash21(float2 p)
@@ -115238,6 +118198,7 @@ PSInput3D main(VSInput3D input, uint instanceId : SV_InstanceID)
 ===== FILE: shader\hlsl\colorshader3dPS.hlsl =====
 #define SHADER_3D
 #include "common.hlsl"
+#include "NormalMapDecode.hlsli"
 
 Texture2D g_Texture : register(t0);
 Texture2D g_NormalTexture : register(t2);
@@ -115249,7 +118210,7 @@ void main(in PSInput3D In, out float4 outDiffuse : SV_Target)
     float3 normal = normalize(In.Normal.xyz);
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, In.TexCoord));
         float3 tangent = SafeNormalizeCommon(mul(float3(1.0f, 0.0f, 0.0f), (float3x3)World), float3(1.0f, 0.0f, 0.0f));
         float3 bitangent =
             SafeNormalizeCommon(mul(float3(0.0f, -1.0f, 0.0f), (float3x3)World), float3(0.0f, 0.0f, 1.0f));
@@ -115287,6 +118248,7 @@ void main(in PSInput3D In, out float4 outDiffuse : SV_Target)
 ===== FILE: shader\hlsl\colorshader3dPS_MRT.hlsl =====
 #define SHADER_3D
 #include "common.hlsl"
+#include "NormalMapDecode.hlsli"
 
 Texture2D g_Texture : register(t0);
 Texture2D g_NormalTexture : register(t2);
@@ -115301,7 +118263,7 @@ GBufferOutput main(in PSInput3D In)
     float3 position = In.Position.xyz / In.Position.w;
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, In.TexCoord));
         float3 tangent = SafeNormalizeCommon(mul(float3(1.0f, 0.0f, 0.0f), (float3x3)World), float3(1.0f, 0.0f, 0.0f));
         float3 bitangent =
             SafeNormalizeCommon(mul(float3(0.0f, -1.0f, 0.0f), (float3x3)World), float3(0.0f, 0.0f, 1.0f));
@@ -115355,6 +118317,7 @@ PSInput3D main(VSInput3D input)
 ===== FILE: shader\hlsl\colorshaderPS.hlsl =====
 #define SHADER_2D
 #include "common.hlsl"
+#include "NormalMapDecode.hlsli"
 Texture2D InputTexture : register(t0);
 Texture2D NormalTexture : register(t2);
 SamplerState InputSampler : register(s0);
@@ -115371,7 +118334,7 @@ float4 main(PSInput2D input) : SV_Target
     float3 normal = input.Normal;
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = NormalTexture.Sample(InputSampler, input.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(NormalTexture.Sample(InputSampler, input.TexCoord));
         float3 tangent = float3(1.0f, 0.0f, 0.0f);
         float3 bitangent = float3(0.0f, -1.0f, 0.0f);
         normal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal,
@@ -115389,6 +118352,7 @@ float4 main(PSInput2D input) : SV_Target
 ===== FILE: shader\hlsl\colorshaderPS_MRT.hlsl =====
 #define SHADER_2D
 #include "common.hlsl"
+#include "NormalMapDecode.hlsli"
 
 Texture2D InputTexture : register(t0);
 Texture2D NormalTexture : register(t2);
@@ -115407,7 +118371,7 @@ GBufferOutput main(PSInput2D input)
     float3 normal = input.Normal;
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = NormalTexture.Sample(InputSampler, input.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(NormalTexture.Sample(InputSampler, input.TexCoord));
         float3 tangent = float3(1.0f, 0.0f, 0.0f);
         float3 bitangent = float3(0.0f, -1.0f, 0.0f);
         normal = SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal,
@@ -117418,6 +120382,7 @@ Texture2D g_NormalTexture : register(t2);
 SamplerState g_SamplerState : register(s0);
 
 #include "MaterialSurface.hlsli"
+#include "NormalMapDecode.hlsli"
 
 GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
 {
@@ -117493,14 +120458,12 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
     {
         uint textureIndex = SceneTextureIndex(normalTextureIndex);
 #ifdef SHADER_VISIBILITY_RESOLVE
-        float3 tangentNormal = gSceneTextures[NonUniformResourceIndex(textureIndex)]
-                                       .SampleGrad(g_SamplerState, materialUv, VisibilityUvDx, VisibilityUvDy)
-                                       .xyz *
-                                   2 -
-                               1;
+        float3 tangentNormal = DecodeTangentNormalSample(
+            gSceneTextures[NonUniformResourceIndex(textureIndex)].SampleGrad(g_SamplerState, materialUv,
+                                                                              VisibilityUvDx, VisibilityUvDy));
 #else
         float3 tangentNormal =
-            gSceneTextures[NonUniformResourceIndex(textureIndex)].Sample(g_SamplerState, materialUv).xyz * 2.0f - 1.0f;
+            DecodeTangentNormalSample(gSceneTextures[NonUniformResourceIndex(textureIndex)].Sample(g_SamplerState, materialUv));
 #endif
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }
@@ -117508,7 +120471,7 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
 #else
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, materialUv).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, materialUv));
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }
 #endif
@@ -118278,6 +121241,7 @@ Texture2D TextureNormal : register(t2);
 SamplerState Sampler : register(s0);
 
 #include "MaterialSurface.hlsli"
+#include "NormalMapDecode.hlsli"
 
 PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
 {
@@ -118313,7 +121277,7 @@ PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
 
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = TextureNormal.Sample(Sampler, materialUv).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(TextureNormal.Sample(Sampler, materialUv));
         normal = ApplyNormalMapCommon(normal, input.WorldPos, input.TexCoord,
                                       ScaleAssetNormal(tangentNormal, assetMaterial));
     }
@@ -118341,8 +121305,6 @@ PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
 
     return output;
 }
-
-
 
 ===== FILE: shader\hlsl\GlassHitLighting.hlsli =====
 #ifndef GLASS_HIT_LIGHTING_INCLUDED
@@ -119648,6 +122610,45 @@ cbuffer VisibilityConstants : register(b0)
     }
 }
 
+===== FILE: shader\hlsl\Half16.hlsli =====
+// =============================================================================================
+// Half16.hlsli - ネイティブ 16bit 演算（DXC -enable-16bit-types）用の型エイリアス。
+// Shader16Bit::CompileFromFile が対応 GPU で RP_NATIVE_16BIT=1 と -enable-16bit-types を付けてコンパイルする。
+// 非対応時（または FXC / 16bit 無効時）は float に戻るため、同じソースで従来と同じ結果になる。
+// =============================================================================================
+#ifndef HALF16_HLSLI
+#define HALF16_HLSLI
+
+#if defined(RP_NATIVE_16BIT) && RP_NATIVE_16BIT && defined(__HLSL_ENABLE_16_BIT)
+#define RP_HALF_ENABLED 1
+typedef float16_t hfloat;
+typedef float16_t2 hfloat2;
+typedef float16_t3 hfloat3;
+typedef float16_t4 hfloat4;
+// FP16 の最大有限値。HDR 値の加算前にこの値で飽和させ、INF を防ぐ。
+static const float kHalfMax = 65504.0f;
+#else
+#define RP_HALF_ENABLED 0
+typedef float hfloat;
+typedef float2 hfloat2;
+typedef float3 hfloat3;
+typedef float4 hfloat4;
+static const float kHalfMax = 3.0e38f;
+#endif
+
+// float → hfloat 変換（飽和付き）。16bit 時は FP16 の範囲へ収める。
+hfloat3 ToHalf3(float3 value)
+{
+    return (hfloat3)min(value, kHalfMax);
+}
+
+hfloat ToHalf(float value)
+{
+    return (hfloat)min(value, kHalfMax);
+}
+
+#endif // HALF16_HLSLI
+
 ===== FILE: shader\hlsl\HiZCopyCS.hlsl =====
 Texture2D<float> SourceDepth : register(t0);
 RWTexture2D<float> Destination : register(u0);
@@ -119778,6 +122779,643 @@ float SampleIesProfile(float4 profile, float3 emitterDirection, float3 fromLight
     return saturate(lerp(lerp(a, b, weight.x), lerp(c, d, weight.x), weight.y));
 }
 #endif
+
+===== FILE: shader\hlsl\ImpostorBake.hlsl =====
+// インポスターのベイク（エントリ：BakeVS / BakePS）。ImpostorRenderer が実行時にコンパイルする。
+// 1フレーム = 正射影で境界球を撮影したタイル。出力：
+//   SV_Target0 (R8G8B8A8_UNORM_SRGB) : アルベド RGB + 被覆率
+//   SV_Target1 (R8G8B8A8_UNORM)      : ローカル法線（オクタヘドラル RG）+ 深度（B）+ マテリアルパーツ ID / 15（A）
+#include "ImpostorMath.hlsli"
+
+cbuffer ImpostorBakeConstants : register(b0)
+{
+    float4 BakeBounds; // xyz: ローカル中心, w: 半径
+    float4 BakeFrame;  // xy: フレームセル, z: 1辺のフレーム数, w: 上半球のみ
+    float4 BakeFlags;  // x: テクスチャを使う
+};
+
+Texture2D BakeTexture : register(t0);
+SamplerState BakeSampler : register(s0);
+
+struct BakeVSInput
+{
+    float3 Position : POSITION;
+    float3 Normal : NORMAL;
+    float2 TexCoord : TEXCOORD;
+    float4 Diffuse : COLOR;
+};
+
+struct BakePSInput
+{
+    float4 Position : SV_POSITION;
+    float3 Normal : NORMAL;
+    float2 TexCoord : TEXCOORD;
+    float4 Diffuse : COLOR;
+};
+
+BakePSInput BakeVS(BakeVSInput input)
+{
+    float3 direction = ImpostorFrameDirection(BakeFrame.xy, BakeFrame.z, BakeFrame.w > 0.5f);
+    float3 right;
+    float3 up;
+    ImpostorFrameBasis(direction, right, up);
+    float radius = max(BakeBounds.w, 1e-4f);
+    float3 p = input.Position - BakeBounds.xyz;
+
+    BakePSInput output;
+    // 深度 0 = カメラ側の境界球の接平面、1 = 奥側。
+    output.Position = float4(dot(p, right) / radius, dot(p, up) / radius,
+                             saturate((radius - dot(p, direction)) / (2.0f * radius)), 1.0f);
+    output.Normal = input.Normal;
+    output.TexCoord = input.TexCoord;
+    output.Diffuse = input.Diffuse;
+    return output;
+}
+
+struct BakeOutput
+{
+    float4 Albedo : SV_Target0;
+    float4 NormalDepth : SV_Target1;
+};
+
+BakeOutput BakePS(BakePSInput input)
+{
+    // 通常の不透明パス（modelshaderPS_MRT / VisibilityPS）と同じ規則：頂点色 RGB × テクスチャ、alpha 0.01 で切り抜き。
+    float4 color = float4(input.Diffuse.rgb, 1.0f);
+    if (BakeFlags.x > 0.5f)
+    {
+        color *= BakeTexture.Sample(BakeSampler, input.TexCoord);
+    }
+    clip(color.a - 0.01f);
+
+    float lengthSq = dot(input.Normal, input.Normal);
+    float3 normal = lengthSq > 1e-12f ? input.Normal * rsqrt(lengthSq) : float3(0.0f, 1.0f, 0.0f);
+    float part = clamp(round(max(input.Diffuse.a, 0.0f)), 0.0f, 15.0f);
+
+    BakeOutput output;
+    output.Albedo = float4(color.rgb, 1.0f);
+    output.NormalDepth = float4(ImpostorOctEncode(normal) * 0.5f + 0.5f, input.Position.z, part / 15.0f);
+    return output;
+}
+
+===== FILE: shader\hlsl\ImpostorBuildCS.hlsl =====
+// インポスターアトラスの後処理（エントリ：DilateCS / DownsampleCS）。ImpostorRenderer が実行時にコンパイルする。
+// DilateCS     : ベイク結果 -> アトラス mip0。空き texel をフレーム内の最も近い被覆 texel で埋める（alpha は 0 のまま）。
+//                バイリニア / mip で背景の黒や不定の深度が滲み込むのを防ぐ。
+// DownsampleCS : mip k -> mip k+1。被覆率で重み付けした平均（色は線形空間で平均し sRGB で格納）。
+#include "ImpostorMath.hlsli"
+
+cbuffer ImpostorBuildConstants : register(b0)
+{
+    uint DestinationSize; // 出力 mip の1辺の texel 数
+    uint FrameSize;       // 出力 mip での1フレームの texel 数
+    uint DilateRadius;
+    uint BuildPadding;
+};
+
+Texture2D<float4> SourceAlbedo : register(t0); // sRGB ビュー（読み出し値は線形）
+Texture2D<float4> SourceNormal : register(t1);
+RWTexture2D<unorm float4> DestinationAlbedo : register(u0); // UNORM ビュー（sRGB 符号化して書く）
+RWTexture2D<unorm float4> DestinationNormal : register(u1);
+
+[numthreads(8, 8, 1)] void DilateCS(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= DestinationSize || id.y >= DestinationSize)
+    {
+        return;
+    }
+    float4 albedo = SourceAlbedo.Load(int3(id.xy, 0));
+    float4 normal = SourceNormal.Load(int3(id.xy, 0));
+    if (albedo.a <= 0.0f)
+    {
+        const int2 frameOrigin = int2((id.xy / FrameSize) * FrameSize);
+        const int2 frameEnd = frameOrigin + int2(FrameSize, FrameSize);
+        const int radius = int(DilateRadius);
+        float bestDistance = 1e30f;
+        float3 bestColor = albedo.rgb;
+        float4 bestNormal = normal;
+        for (int y = -radius; y <= radius; ++y)
+        {
+            for (int x = -radius; x <= radius; ++x)
+            {
+                int2 p = int2(id.xy) + int2(x, y);
+                if (any(p < frameOrigin) || any(p >= frameEnd))
+                {
+                    continue;
+                }
+                float4 candidate = SourceAlbedo.Load(int3(p, 0));
+                float distanceSq = float(x * x + y * y);
+                if (candidate.a > 0.0f && distanceSq < bestDistance)
+                {
+                    bestDistance = distanceSq;
+                    bestColor = candidate.rgb;
+                    bestNormal = SourceNormal.Load(int3(p, 0));
+                }
+            }
+        }
+        albedo.rgb = bestColor;
+        normal = bestNormal;
+        albedo.a = 0.0f;
+    }
+    DestinationAlbedo[id.xy] = float4(ImpostorLinearToSrgb(albedo.rgb), albedo.a);
+    DestinationNormal[id.xy] = normal;
+}
+
+[numthreads(8, 8, 1)] void DownsampleCS(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= DestinationSize || id.y >= DestinationSize)
+    {
+        return;
+    }
+    const int2 source = int2(id.xy) * 2;
+    float4 albedo[4];
+    float4 normalDepth[4];
+    [unroll] for (int i = 0; i < 4; ++i)
+    {
+        int2 p = source + int2(i & 1, i >> 1);
+        albedo[i] = SourceAlbedo.Load(int3(p, 0));
+        normalDepth[i] = SourceNormal.Load(int3(p, 0));
+    }
+
+    float coverageSum = albedo[0].a + albedo[1].a + albedo[2].a + albedo[3].a;
+    float3 colorSum = 0.0f;
+    float3 normalSum = 0.0f;
+    float depthSum = 0.0f;
+    float weightSum = 0.0f;
+    float bestWeight = -1.0f;
+    float part = normalDepth[0].a;
+    [unroll] for (int j = 0; j < 4; ++j)
+    {
+        // 被覆 texel があればそれだけで平均、全て空なら（膨張済みの値を）単純平均する。
+        float weight = coverageSum > 1e-4f ? albedo[j].a : 1.0f;
+        colorSum += albedo[j].rgb * weight;
+        normalSum += ImpostorOctDecode(normalDepth[j].rg * 2.0f - 1.0f) * weight;
+        depthSum += normalDepth[j].b * weight;
+        weightSum += weight;
+        if (albedo[j].a > bestWeight)
+        {
+            bestWeight = albedo[j].a;
+            part = normalDepth[j].a;
+        }
+    }
+    float inverseWeight = 1.0f / max(weightSum, 1e-6f);
+    float normalLengthSq = dot(normalSum, normalSum);
+    float3 normal = normalLengthSq > 1e-10f ? normalSum * rsqrt(normalLengthSq) : float3(0.0f, 1.0f, 0.0f);
+
+    DestinationAlbedo[id.xy] = float4(ImpostorLinearToSrgb(colorSum * inverseWeight), coverageSum * 0.25f);
+    DestinationNormal[id.xy] = float4(ImpostorOctEncode(normal) * 0.5f + 0.5f, depthSum * inverseWeight, part);
+}
+
+===== FILE: shader\hlsl\ImpostorCommon.hlsli =====
+#ifndef IMPOSTOR_COMMON_HLSLI
+#define IMPOSTOR_COMMON_HLSLI
+
+// 実行時のインポスター（オクタヘドラル、3フレームブレンド + 深度による視差補正 + ピクセル深度出力）。
+// 取り込み側で common.hlsl（SHADER_3D）と g_Texture(t0) / g_NormalTexture(t2) / g_SamplerState(s0) を宣言しておくこと。
+#include "ImpostorMath.hlsli"
+
+cbuffer ImpostorConstants : register(b4)
+{
+    float4 ImpostorBounds;   // xyz: ローカル中心, w: 半径
+    float4 ImpostorGrid;     // x: 1辺のフレーム数, y: 上半球のみ, z: アトラス解像度, w: 最大 mip
+    float4 ImpostorParams;   // x: 被覆率のしきい値, y: mip バイアス
+    float4 ImpostorReserved;
+};
+
+struct ImpostorPSInput
+{
+#ifdef IMPOSTOR_VERTEX_SHADER
+    float4 Position : SV_POSITION;
+#else
+    // SV_DepthGreaterEqual を出すため、位置は noperspective centroid（POM と同じ制約）。
+    noperspective centroid float4 Position : SV_POSITION;
+#endif
+    float3 WorldPos : TEXCOORD1;
+    float3 LocalPos : TEXCOORD2;
+    nointerpolation float3 LocalCamera : TEXCOORD3;
+    nointerpolation float4 FrameCells01 : TEXCOORD4;
+    nointerpolation float4 FrameCell2Weights : TEXCOORD5; // xy: セル2, z: 重み0, w: 重み1
+    nointerpolation float4 WorldRow0 : TEXCOORD6;         // xyz: ワールド行列の行, w: 平行移動
+    nointerpolation float4 WorldRow1 : TEXCOORD7;
+    nointerpolation float4 WorldRow2 : TEXCOORD8;
+};
+
+#ifndef IMPOSTOR_VERTEX_SHADER
+struct ImpostorSurface
+{
+    float3 Albedo;
+    float3 WorldNormal;
+    float3 WorldPos;
+    float Depth;
+    float PartId;
+    float Coverage;
+};
+
+float2 ImpostorAtlasUv(float2 cell, float2 frameUv, float framesPerAxis, float halfTexel)
+{
+    return (cell + clamp(frameUv, halfTexel, 1.0f - halfTexel)) / framesPerAxis;
+}
+
+ImpostorSurface ResolveImpostorSurface(ImpostorPSInput input)
+{
+    const float framesPerAxis = max(ImpostorGrid.x, 2.0f);
+    const bool hemisphere = ImpostorGrid.y > 0.5f;
+    const float atlasResolution = max(ImpostorGrid.z, 1.0f);
+    const float maxMip = ImpostorGrid.w;
+    const float3 center = ImpostorBounds.xyz;
+    const float radius = max(ImpostorBounds.w, 1e-4f);
+    const float frameTexels = atlasResolution / framesPerAxis;
+    const float halfTexel = 0.5f / frameTexels;
+
+    const float3 origin = input.LocalCamera;
+    const float3 rayDirection = normalize(input.LocalPos - origin);
+
+    float2 cells[3] = {input.FrameCells01.xy, input.FrameCells01.zw, input.FrameCell2Weights.xy};
+    float weights[3] = {input.FrameCell2Weights.z, input.FrameCell2Weights.w,
+                        saturate(1.0f - input.FrameCell2Weights.z - input.FrameCell2Weights.w)};
+
+    float3 directions[3];
+    float3 rights[3];
+    float3 ups[3];
+    float denominators[3];
+    float2 planeUv[3];
+    [unroll] for (int k = 0; k < 3; ++k)
+    {
+        directions[k] = ImpostorFrameDirection(cells[k], framesPerAxis, hemisphere);
+        ImpostorFrameBasis(directions[k], rights[k], ups[k]);
+        float denominator = dot(rayDirection, directions[k]);
+        denominators[k] = abs(denominator) < 1e-4f ? -1e-4f : denominator;
+        // 視線とフレーム平面（中心を通り撮影方向に垂直）の交点。
+        float t = dot(center - origin, directions[k]) / denominators[k];
+        planeUv[k] = ImpostorProject(origin + rayDirection * t, center, radius, rights[k], ups[k]);
+    }
+
+    // mip は平面 UV の画面微分から決める（discard より前に計算する）。
+    float2 dx = ddx(planeUv[0]) * frameTexels;
+    float2 dy = ddy(planeUv[0]) * frameTexels;
+    float lod = clamp(0.5f * log2(max(max(dot(dx, dx), dot(dy, dy)), 1e-8f)) + ImpostorParams.y, 0.0f, maxMip);
+
+    // パス1：各フレームの深度から、視線上の表面点を推定する（視差補正）。
+    float3 rayPoints[3];
+    [unroll] for (int p = 0; p < 3; ++p)
+    {
+        float4 normalDepth = g_NormalTexture.SampleLevel(
+            g_SamplerState, ImpostorAtlasUv(cells[p], planeUv[p], framesPerAxis, halfTexel), lod);
+        float t = (radius - 2.0f * radius * normalDepth.b - dot(origin - center, directions[p])) / denominators[p];
+        rayPoints[p] = origin + rayDirection * t;
+    }
+
+    // パス2：補正した位置で再サンプルしてブレンドする。
+    float coverage = 0.0f;
+    float weightSum = 0.0f;
+    float3 colorSum = 0.0f;
+    float3 normalSum = 0.0f;
+    float3 positionSum = 0.0f;
+    float bestWeight = -1.0f;
+    float partEncoded = 0.0f;
+    [unroll] for (int s = 0; s < 3; ++s)
+    {
+        float2 frameUv = ImpostorProject(rayPoints[s], center, radius, rights[s], ups[s]);
+        float inside = (all(frameUv >= 0.0f) && all(frameUv <= 1.0f)) ? 1.0f : 0.0f;
+        float2 atlasUv = ImpostorAtlasUv(cells[s], frameUv, framesPerAxis, halfTexel);
+        float4 albedo = g_Texture.SampleLevel(g_SamplerState, atlasUv, lod);
+        float4 normalDepth = g_NormalTexture.SampleLevel(g_SamplerState, atlasUv, lod);
+        float frameCoverage = albedo.a * inside;
+        float weight = weights[s] * frameCoverage;
+        coverage += weight;
+        weightSum += weight;
+        colorSum += albedo.rgb * weight;
+        normalSum += ImpostorOctDecode(normalDepth.rg * 2.0f - 1.0f) * weight;
+        float t = (radius - 2.0f * radius * normalDepth.b - dot(origin - center, directions[s])) / denominators[s];
+        positionSum += (origin + rayDirection * t) * weight;
+        if (weight > bestWeight)
+        {
+            bestWeight = weight;
+            partEncoded = normalDepth.a;
+        }
+    }
+
+    clip(coverage - ImpostorParams.x);
+
+    const float inverseWeight = 1.0f / max(weightSum, 1e-5f);
+    const float3 localPosition = positionSum * inverseWeight;
+    const float normalLengthSq = dot(normalSum, normalSum);
+    const float3 localNormal = normalLengthSq > 1e-10f ? normalSum * rsqrt(normalLengthSq) : -rayDirection;
+
+    const float3x3 world3x3 = float3x3(input.WorldRow0.xyz, input.WorldRow1.xyz, input.WorldRow2.xyz);
+    const float3 translation = float3(input.WorldRow0.w, input.WorldRow1.w, input.WorldRow2.w);
+
+    ImpostorSurface surface;
+    surface.Albedo = colorSum * inverseWeight;
+    surface.WorldPos = mul(localPosition, world3x3) + translation;
+    // 通常のインスタンス描画（modelshaderInstancedVS）と同じ法線変換。
+    surface.WorldNormal = normalize(mul(localNormal, world3x3));
+    float4 clipPosition = mul(mul(float4(surface.WorldPos, 1.0f), View), Projection);
+    surface.Depth = clipPosition.w > 1e-6f ? saturate(clipPosition.z / clipPosition.w) : saturate(input.Position.z);
+    surface.PartId = round(saturate(partEncoded) * 15.0f);
+    surface.Coverage = coverage;
+    return surface;
+}
+#endif // !IMPOSTOR_VERTEX_SHADER
+
+#endif
+
+===== FILE: shader\hlsl\ImpostorMath.hlsli =====
+#ifndef IMPOSTOR_MATH_HLSLI
+#define IMPOSTOR_MATH_HLSLI
+
+// オクタヘドラル・インポスターの共通数学（ベイクと実行時で同じ関数を使い、フレームの向きを完全に一致させる）。
+// 座標はすべてモデルのローカル空間。Y を上とする。
+
+float ImpostorSignNotZero(float value)
+{
+    return value >= 0.0f ? 1.0f : -1.0f;
+}
+
+// 全球オクタヘドラル：[-1,1]^2 -> 単位ベクトル
+float3 ImpostorOctDecode(float2 f)
+{
+    float3 n = float3(f.x, 1.0f - abs(f.x) - abs(f.y), f.y);
+    float t = saturate(-n.y);
+    n.x += (n.x >= 0.0f) ? -t : t;
+    n.z += (n.z >= 0.0f) ? -t : t;
+    return normalize(n);
+}
+
+float2 ImpostorOctEncode(float3 n)
+{
+    n /= max(abs(n.x) + abs(n.y) + abs(n.z), 1e-6f);
+    float2 p = n.xz;
+    if (n.y < 0.0f)
+    {
+        p = (1.0f - abs(p.yx)) * float2(ImpostorSignNotZero(p.x), ImpostorSignNotZero(p.y));
+    }
+    return p;
+}
+
+// 上半球オクタヘドラル（地面に立つ物用。真下からの視点を持たない分、同じ枚数で解像度が上がる）
+float3 ImpostorHemiOctDecode(float2 f)
+{
+    float x = (f.x + f.y) * 0.5f;
+    float z = (f.x - f.y) * 0.5f;
+    return normalize(float3(x, max(1.0f - abs(x) - abs(z), 0.0f), z));
+}
+
+float2 ImpostorHemiOctEncode(float3 n)
+{
+    n.y = max(n.y, 0.0f);
+    n /= max(abs(n.x) + abs(n.y) + abs(n.z), 1e-6f);
+    return float2(n.x + n.z, n.x - n.z);
+}
+
+// フレーム (i, j) の撮影方向（中心 -> カメラ）。グリッドの端点にもフレームを置く（N-1 分割）。
+float3 ImpostorFrameDirection(float2 cell, float framesPerAxis, bool hemisphere)
+{
+    float2 f = cell / max(framesPerAxis - 1.0f, 1.0f) * 2.0f - 1.0f;
+    return hemisphere ? ImpostorHemiOctDecode(f) : ImpostorOctDecode(f);
+}
+
+void ImpostorFrameBasis(float3 direction, out float3 right, out float3 up)
+{
+    float3 upHint = abs(direction.y) > 0.999f ? float3(0.0f, 0.0f, 1.0f) : float3(0.0f, 1.0f, 0.0f);
+    right = normalize(cross(upHint, direction));
+    up = cross(direction, right);
+}
+
+// ローカル点 -> フレーム内 UV（[0,1]、v は下向き）
+float2 ImpostorProject(float3 p, float3 center, float radius, float3 right, float3 up)
+{
+    float3 q = p - center;
+    return float2(dot(q, right), -dot(q, up)) / radius * 0.5f + 0.5f;
+}
+
+// 視線方向（ローカル、中心 -> カメラ）から、ブレンドする3フレームと重みを選ぶ。
+void ImpostorSelectFrames(float3 viewDirection, float framesPerAxis, bool hemisphere, out float2 cell0,
+                          out float2 cell1, out float2 cell2, out float3 weights)
+{
+    float3 v = viewDirection;
+    if (hemisphere)
+    {
+        v.y = max(v.y, 0.0f);
+    }
+    float lengthSq = dot(v, v);
+    v = lengthSq > 1e-10f ? v * rsqrt(lengthSq) : float3(0.0f, 1.0f, 0.0f);
+    float2 encoded = hemisphere ? ImpostorHemiOctEncode(v) : ImpostorOctEncode(v);
+    float maxCell = max(framesPerAxis - 1.0f, 1.0f);
+    float2 grid = saturate(encoded * 0.5f + 0.5f) * maxCell;
+    float2 baseCell = clamp(floor(grid), 0.0f, max(framesPerAxis - 2.0f, 0.0f));
+    float2 f = saturate(grid - baseCell);
+    if (f.x + f.y <= 1.0f)
+    {
+        cell0 = baseCell;
+        cell1 = baseCell + float2(1.0f, 0.0f);
+        cell2 = baseCell + float2(0.0f, 1.0f);
+        weights = float3(1.0f - f.x - f.y, f.x, f.y);
+    }
+    else
+    {
+        cell0 = baseCell + float2(1.0f, 1.0f);
+        cell1 = baseCell + float2(0.0f, 1.0f);
+        cell2 = baseCell + float2(1.0f, 0.0f);
+        weights = float3(f.x + f.y - 1.0f, 1.0f - f.x, 1.0f - f.y);
+    }
+}
+
+float3 ImpostorLinearToSrgb(float3 c)
+{
+    c = saturate(c);
+    float3 low = c * 12.92f;
+    float3 high = 1.055f * pow(c, 1.0f / 2.4f) - 0.055f;
+    return float3(c.r <= 0.0031308f ? low.r : high.r, c.g <= 0.0031308f ? low.g : high.g,
+                  c.b <= 0.0031308f ? low.b : high.b);
+}
+
+#endif
+
+===== FILE: shader\hlsl\ImpostorPS.hlsl =====
+// フォワード経路のインポスター。modelshaderPS の ShadeForward（ライト・影・GI・環境光）をそのまま使い、
+// 表面（アルベド・法線・位置・深度）だけをアトラスから復元した値に差し替える。
+#define IMPOSTOR_FORWARD
+static float3 g_ImpostorAlbedo = float3(1.0f, 1.0f, 1.0f);
+static float3 g_ImpostorNormal = float3(0.0f, 1.0f, 0.0f);
+static float g_ImpostorDepth = 0.0f;
+
+#include "modelshaderPS.hlsl"
+#include "ImpostorCommon.hlsli"
+
+ForwardOutput main(ImpostorPSInput input)
+{
+    ImpostorSurface surface = ResolveImpostorSurface(input);
+    g_ImpostorAlbedo = surface.Albedo;
+    g_ImpostorNormal = surface.WorldNormal;
+    g_ImpostorDepth = surface.Depth;
+
+    PSInput3D shading;
+    shading.Position = input.Position;
+    shading.Normal = surface.WorldNormal;
+    shading.TexCoord = float2(0.0f, 0.0f);
+    shading.Diffuse = float4(surface.Albedo, surface.PartId);
+    shading.WorldPos = surface.WorldPos;
+    shading.ViewPos = mul(float4(surface.WorldPos, 1.0f), View).xyz;
+    shading.CameraPos = CameraPos;
+
+    float4 premultiplied = ShadeForward(shading);
+    ForwardOutput output;
+    output.Color = premultiplied;
+    output.Accumulation = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    output.Revealage = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    output.HardwareDepth = max(surface.Depth, input.Position.z);
+    return output;
+}
+
+===== FILE: shader\hlsl\ImpostorPS_MRT.hlsl =====
+#define SHADER_3D
+#define POM_PIXEL_DEPTH_OUTPUT
+#include "common.hlsl"
+Texture2D g_Texture : register(t0);       // インポスターのアルベドアトラス（sRGB）
+Texture2D g_NormalTexture : register(t2); // 法線・深度・パーツ ID アトラス
+SamplerState g_SamplerState : register(s0);
+
+#include "ImpostorCommon.hlsli"
+
+// ディファード（GBuffer MRT）。modelshaderPS_MRT と同じ GBuffer 規則で書き、深度は実際の表面位置を出す。
+GBufferDepthOutput main(ImpostorPSInput input)
+{
+    ImpostorSurface surface = ResolveImpostorSurface(input);
+    float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : surface.PartId;
+    MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
+    bool usePartParams = MaterialMode != 1;
+
+    GBufferDepthOutput output;
+    output.Color = float4(surface.Albedo, 1.0f);
+    output.Normal = MakeGBufferNormal(surface.WorldNormal);
+    output.Depth = surface.Depth.xxxx;
+    output.HardwareDepth = max(surface.Depth, input.Position.z);
+    output.Material.r = usePartParams ? partParams.Basic.x : mMetallic;
+    output.Material.g = usePartParams ? partParams.Basic.y : mRoughness;
+    output.Material.b = usePartParams ? partParams.Basic.z : mFresnel;
+    output.Material.a = materialPartId;
+    output.Shadow = usePartParams ? float4(partParams.Shadow0.x, partParams.Shadow0.y, partParams.Shadow0.z, 0.0f)
+                                  : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
+    output.EmissionAO = float4(0.0f, 0.0f, 0.0f, 1.0f);
+    return output;
+}
+
+===== FILE: shader\hlsl\ImpostorVisibilityPS.hlsl =====
+#define SHADER_3D
+#include "common.hlsl"
+#include "VisibilityCommon.hlsl"
+Texture2D g_Texture : register(t0);
+Texture2D g_NormalTexture : register(t2);
+SamplerState g_SamplerState : register(s0);
+
+#include "ImpostorCommon.hlsli"
+
+// Compute GBuffer（Visibility Buffer）経路。VisibilityPS と同じペイロードを書く。
+struct ImpostorVisibilityOutput
+{
+    uint4 Payload : SV_Target0;
+    float HardwareDepth : SV_DepthGreaterEqual;
+};
+
+ImpostorVisibilityOutput main(ImpostorPSInput input)
+{
+    ImpostorSurface surface = ResolveImpostorSurface(input);
+    float materialPartId = (MaterialMode == 1) ? (float)ShaderClass : surface.PartId;
+    MaterialPartShaderParams part = ResolveMaterialPartParams(materialPartId);
+    bool usePart = MaterialMode != 1;
+
+    ImpostorVisibilityOutput output;
+    output.HardwareDepth = max(surface.Depth, input.Position.z);
+    output.Payload = PackVisibilityPayload(
+        surface.Albedo, surface.WorldNormal, output.HardwareDepth, usePart ? part.Basic.x : mMetallic,
+        usePart ? part.Basic.y : mRoughness, usePart ? part.Basic.z : mFresnel, materialPartId,
+        usePart ? part.Shadow0.x : ShadowThreshold, usePart ? part.Shadow0.y : ShadowSoftness,
+        usePart ? part.Shadow0.z : ShadowStrength);
+    return output;
+}
+
+===== FILE: shader\hlsl\ImpostorVS.hlsl =====
+#define SHADER_3D
+#define IMPOSTOR_VERTEX_SHADER
+#include "common.hlsl"
+#include "ImpostorCommon.hlsli"
+
+// 1インスタンス = カメラに正対する四角形1枚（6頂点、Position.xy = 角の符号）。
+struct ImpostorInstance
+{
+    row_major float4x4 World;
+};
+
+StructuredBuffer<ImpostorInstance> ImpostorInstances : register(t0, space2);
+
+float3x3 ImpostorInverse3x3(float3x3 m)
+{
+    float3 r0 = cross(m[1], m[2]);
+    float3 r1 = cross(m[2], m[0]);
+    float3 r2 = cross(m[0], m[1]);
+    float determinant = dot(m[0], r0);
+    determinant = abs(determinant) > 1e-12f ? determinant : 1e-12f;
+    return transpose(float3x3(r0, r1, r2)) / determinant;
+}
+
+ImpostorPSInput main(VSInput3D input, uint instanceId : SV_InstanceID)
+{
+    row_major float4x4 world = ImpostorInstances[instanceId].World;
+    const float3x3 world3x3 = (float3x3)world;
+    const float3 translation = world[3].xyz;
+    const float3 localCenter = ImpostorBounds.xyz;
+    const float localRadius = max(ImpostorBounds.w, 1e-4f);
+
+    const float3 worldCenter = mul(localCenter, world3x3) + translation;
+    const float maxScale = max(length(world[0].xyz), max(length(world[1].xyz), length(world[2].xyz)));
+    const float worldRadius = localRadius * maxScale;
+
+    float3 toCamera = CameraPos - worldCenter;
+    const float distanceToCamera = max(length(toCamera), 1e-4f);
+    toCamera /= distanceToCamera;
+
+    // 境界球のカメラ側の接平面に置く。表面は必ずこの平面より奥にあるので、
+    // ピクセル深度は補間深度以上（SV_DepthGreaterEqual）になり Early-Z が効く。
+    const float offset = min(worldRadius, distanceToCamera * 0.5f);
+    const float planeDistance = distanceToCamera - offset;
+    float halfSize = worldRadius;
+    if (distanceToCamera > worldRadius * 1.001f)
+    {
+        // 平面上での境界球のシルエット半径（透視投影で必要な最小サイズ）。
+        halfSize = planeDistance * worldRadius /
+                   sqrt(max(distanceToCamera * distanceToCamera - worldRadius * worldRadius, 1e-8f));
+    }
+    halfSize = min(halfSize * 1.02f, worldRadius * 4.0f);
+
+    const float3 upHint = abs(toCamera.y) > 0.999f ? float3(0.0f, 0.0f, 1.0f) : float3(0.0f, 1.0f, 0.0f);
+    const float3 right = normalize(cross(upHint, toCamera));
+    const float3 up = cross(toCamera, right);
+    const float3 worldPos =
+        worldCenter + toCamera * offset + (right * input.Position.x + up * input.Position.y) * halfSize;
+
+    const float3x3 inverseWorld = ImpostorInverse3x3(world3x3);
+    const float3 localCamera = mul(CameraPos - translation, inverseWorld);
+
+    float2 cell0;
+    float2 cell1;
+    float2 cell2;
+    float3 weights;
+    ImpostorSelectFrames(localCamera - localCenter, ImpostorGrid.x, ImpostorGrid.y > 0.5f, cell0, cell1, cell2,
+                         weights);
+
+    ImpostorPSInput output;
+    output.Position = mul(mul(float4(worldPos, 1.0f), View), Projection);
+    output.WorldPos = worldPos;
+    output.LocalPos = mul(worldPos - translation, inverseWorld);
+    output.LocalCamera = localCamera;
+    output.FrameCells01 = float4(cell0, cell1);
+    output.FrameCell2Weights = float4(cell2, weights.x, weights.y);
+    output.WorldRow0 = float4(world[0].xyz, translation.x);
+    output.WorldRow1 = float4(world[1].xyz, translation.y);
+    output.WorldRow2 = float4(world[2].xyz, translation.z);
+    return output;
+}
 
 ===== FILE: shader\hlsl\LightInstanceBuilderCS.hlsl =====
 struct LightInstanceInput
@@ -123557,6 +127195,7 @@ PSInput3D BuildMeshVertex(uint index)
 #define SHADER_3D
 #include "common.hlsl"
 #include "VisibilityCommon.hlsl"
+#include "NormalMapDecode.hlsli"
 
 Texture2D g_Texture : register(t0);
 Texture2D g_NormalTexture : register(t2);
@@ -123569,7 +127208,7 @@ uint4 PSMain(PSInput3D input) : SV_Target0
     float3 normal = input.Normal * (FlipNormal != 0 ? -1.0f : 1.0f);
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, input.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, input.TexCoord));
         float3 tangent = normalize(mul(float3(1.0f, 0.0f, 0.0f), (float3x3)World));
         float3 bitangent = normalize(mul(float3(0.0f, -1.0f, 0.0f), (float3x3)World));
         normal = normalize(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal);
@@ -123590,6 +127229,7 @@ uint4 PSMain(PSInput3D input) : SV_Target0
 ===== FILE: shader\hlsl\modellighingspeculerPS.hlsl =====
 #define SHADER_3D
 #include "common.hlsl"
+#include "NormalMapDecode.hlsli"
 
 Texture2D g_Texture : register(t0);
 Texture2D g_NormalTexture : register(t2);
@@ -123742,7 +127382,7 @@ float4 main(in PSInput3D In) : SV_Target
     float3 meshNormal = SafeNormalize(In.Normal * ((FlipNormal != 0) ? -1.0f : 1.0f), float3(0.0f, 1.0f, 0.0f));
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, In.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, In.TexCoord));
         meshNormal = ApplyNormalMapCommon(meshNormal, In.WorldPos, In.TexCoord, tangentNormal);
     }
     float3 roundedNormal = SafeNormalize(meshNormal + viewDir, meshNormal);
@@ -124130,6 +127770,7 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
 
 #include "GeometryGlass.hlsli"
 #include "MaterialOpticsPreview.hlsli"
+#include "NormalMapDecode.hlsli"
 
 static float g_PomForwardDepth = 0.0f;
 
@@ -124146,6 +127787,9 @@ float4 ShadeForward(in PSInput3D In)
     float2 materialUv = pom.Uv;
     // ピクセル深度オフセットと POM セルフシャドウ（主光源）。
     g_PomForwardDepth = AssetParallaxPixelDepth(pom, In.WorldPos, In.CameraPos, saturate(In.Position.z));
+#ifdef IMPOSTOR_FORWARD
+    g_PomForwardDepth = g_ImpostorDepth; // インポスター：アトラスから復元した表面の深度
+#endif
 #ifdef POM_HAS_MAIN_LIGHT
     if (pom.Active)
     {
@@ -124169,13 +127813,16 @@ float4 ShadeForward(in PSInput3D In)
     float4 assetEmissionAO;
     ApplyAssetMaterial(assetMaterial, materialUv, g_SamplerState, baseColor, assetMetallic, assetRoughness,
                        assetEmissionAO);
+#ifdef IMPOSTOR_FORWARD
+    baseColor = float4(g_ImpostorAlbedo, 1.0f); // インポスター：被覆率は呼び出し側で切り抜き済み
+#endif
     baseColor.a = saturate(baseColor.a * MaterialAlpha);
     clip(baseColor.a - (1.0f / 255.0f));
 
     float3 surfaceNormal = In.Normal * ((FlipNormal != 0) ? -1.0f : 1.0f);
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, materialUv).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, materialUv));
         surfaceNormal = ApplyNormalMapCommon(surfaceNormal, In.WorldPos, In.TexCoord,
                                              ScaleAssetNormal(tangentNormal, assetMaterial));
     }
@@ -124186,6 +127833,9 @@ float4 ShadeForward(in PSInput3D In)
                                                g_SamplerState);
     }
     surfaceNormal = SafeNormalizeCommon(surfaceNormal, float3(0.0f, 1.0f, 0.0f));
+#ifdef IMPOSTOR_FORWARD
+    surfaceNormal = g_ImpostorNormal;
+#endif
 
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
     bool usePartParams = MaterialMode != 1;
@@ -124423,6 +128073,7 @@ struct ForwardOutput
     float HardwareDepth : SV_DepthGreaterEqual; // POM のピクセル深度オフセット（常に補間深度以上）
 };
 
+#ifndef IMPOSTOR_FORWARD
 ForwardOutput main(in PSInput3D In)
 {
     float4 premultiplied = ShadeForward(In);
@@ -124437,8 +128088,7 @@ ForwardOutput main(in PSInput3D In)
     output.HardwareDepth = max(g_PomForwardDepth, In.Position.z);
     return output;
 }
-
-
+#endif
 
 ===== FILE: shader\hlsl\modelshaderPS_MRT.hlsl =====
 #define SHADER_3D
@@ -124449,6 +128099,7 @@ Texture2D g_NormalTexture : register(t2);
 SamplerState g_SamplerState : register(s0);
 
 #include "MaterialSurface.hlsli"
+#include "NormalMapDecode.hlsli"
 
 GBufferDepthOutput main(in PSInput3D In)
 {
@@ -124481,7 +128132,7 @@ GBufferDepthOutput main(in PSInput3D In)
     float3 normal = In.Normal;
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, materialUv).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, materialUv));
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }
     else
@@ -124510,8 +128161,6 @@ GBufferDepthOutput main(in PSInput3D In)
     return output;
 }
 
-
-
 ===== FILE: shader\hlsl\modelshaderVS.hlsl =====
 #define SHADER_3D
 #include "common.hlsl"
@@ -124530,6 +128179,28 @@ PSInput3D main(VSInput3D input)
     output.CameraPos = CameraPos;
     return output;
 }
+
+===== FILE: shader\hlsl\NormalMapDecode.hlsli =====
+// =============================================================================================
+// NormalMapDecode.hlsli - タンジェント空間法線マップのデコード。
+// 法線マップは取り込み時に BC5（RG の 2ch）へ圧縮される。BC5 のサンプル結果は B=0 になるため、
+// その場合は Z を sqrt(1 - x^2 - y^2) で再構成する。非圧縮・BC7 の RGB 法線マップ（B は通常 0.5 以上）は
+// 従来どおり xyz * 2 - 1 で復元するので、既存アセットの見た目は変わらない。
+// =============================================================================================
+#ifndef NORMAL_MAP_DECODE_HLSLI
+#define NORMAL_MAP_DECODE_HLSLI
+
+float3 DecodeTangentNormalSample(float4 encoded)
+{
+    float3 normal = encoded.xyz * 2.0f - 1.0f;
+    [flatten] if (encoded.z <= 0.0f)
+    {
+        normal.z = sqrt(saturate(1.0f - dot(normal.xy, normal.xy)));
+    }
+    return normal;
+}
+
+#endif // NORMAL_MAP_DECODE_HLSLI
 
 ===== FILE: shader\hlsl\OitCompositePS.hlsl =====
 // 重み付きブレンド OIT の解決（McGuire & Bavoil 2013）。transparencyeffects.h が実行時にコンパイルする。
@@ -131907,6 +135578,7 @@ void ResidentCut(VirtualGeometryGPUAsset asset, GPUInstanceData instance, uint4 
 #define SHADER_2D
 #include "common.hlsl"
 #include "VisibilityCommon.hlsl"
+#include "NormalMapDecode.hlsli"
 
 Texture2D InputTexture : register(t0);
 Texture2D NormalTexture : register(t2);
@@ -131923,7 +135595,7 @@ uint4 main(PSInput2D input) : SV_Target0
     float3 normal = input.Normal;
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = NormalTexture.Sample(InputSampler, input.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(NormalTexture.Sample(InputSampler, input.TexCoord));
         normal = SafeNormalizeCommon(tangentNormal.x * float3(1.0f, 0.0f, 0.0f) +
                                          tangentNormal.y * float3(0.0f, -1.0f, 0.0f) + tangentNormal.z * normal,
                                      normal);
@@ -131991,6 +135663,7 @@ uint4 main(PSInput3D input) : SV_Target0
 #define SHADER_3D
 #include "common.hlsl"
 #include "VisibilityCommon.hlsl"
+#include "NormalMapDecode.hlsli"
 
 Texture2D g_Texture : register(t0);
 Texture2D g_NormalTexture : register(t2);
@@ -132003,7 +135676,7 @@ uint4 main(PSInput3D input) : SV_Target0
     float3 normal = input.Normal.xyz * ((FlipNormal != 0) ? -1.0f : 1.0f);
     if (UseNormalMap != 0)
     {
-        float3 tangentNormal = g_NormalTexture.Sample(g_SamplerState, input.TexCoord).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = DecodeTangentNormalSample(g_NormalTexture.Sample(g_SamplerState, input.TexCoord));
         float3 tangent = SafeNormalizeCommon(mul(float3(1.0f, 0.0f, 0.0f), (float3x3)World), float3(1.0f, 0.0f, 0.0f));
         float3 bitangent =
             SafeNormalizeCommon(mul(float3(0.0f, -1.0f, 0.0f), (float3x3)World), float3(0.0f, 0.0f, 1.0f));

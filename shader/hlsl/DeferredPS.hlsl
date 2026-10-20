@@ -58,11 +58,10 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
     {
 #ifdef SHADER_GPU_DRIVEN
 #ifdef SHADER_VISIBILITY_RESOLVE
-        baseColor *= gSceneTextures[NonUniformResourceIndex(SceneTextureIndex(metadata.x))].SampleGrad(
+        baseColor *= LoadMaterialTexture(SceneTextureIndex(metadata.x)).SampleGrad(
             g_SamplerState, materialUv, VisibilityUvDx, VisibilityUvDy);
 #else
-        baseColor *=
-            gSceneTextures[NonUniformResourceIndex(SceneTextureIndex(metadata.x))].Sample(g_SamplerState, materialUv);
+        baseColor *= LoadMaterialTexture(SceneTextureIndex(metadata.x)).Sample(g_SamplerState, materialUv);
 #endif
 #else
         baseColor *= g_Texture.Sample(g_SamplerState, materialUv);
@@ -90,11 +89,10 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
         uint textureIndex = SceneTextureIndex(normalTextureIndex);
 #ifdef SHADER_VISIBILITY_RESOLVE
         float3 tangentNormal = DecodeTangentNormalSample(
-            gSceneTextures[NonUniformResourceIndex(textureIndex)].SampleGrad(g_SamplerState, materialUv,
-                                                                              VisibilityUvDx, VisibilityUvDy));
+            LoadMaterialTexture(textureIndex).SampleGrad(g_SamplerState, materialUv, VisibilityUvDx, VisibilityUvDy));
 #else
-        float3 tangentNormal =
-            DecodeTangentNormalSample(gSceneTextures[NonUniformResourceIndex(textureIndex)].Sample(g_SamplerState, materialUv));
+        float3 tangentNormal = DecodeTangentNormalSample(
+            LoadMaterialTexture(textureIndex).Sample(g_SamplerState, materialUv));
 #endif
         normal = ApplyNormalMapCommon(normal, In.WorldPos, In.TexCoord, ScaleAssetNormal(tangentNormal, assetMaterial));
     }

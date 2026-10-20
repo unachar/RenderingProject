@@ -17,8 +17,7 @@ uint4 main(PSInput3D input, uint primitive : SV_PrimitiveID, bool front : SV_IsF
     float4 color = asset.Surface.z > .5 ? float4(1, 1, 1, 1) : float4(input.Diffuse.rgb, 1);
     if ((metadata.z & 1u) != 0)
     {
-        color *= gSceneTextures[NonUniformResourceIndex(SceneTextureIndex(metadata.x))].Sample(g_SamplerState,
-                                                                                               input.TexCoord);
+        color *= LoadMaterialTexture(SceneTextureIndex(metadata.x)).Sample(g_SamplerState, input.TexCoord);
     }
     if (asset.Surface.z > .5)
     {

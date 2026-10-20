@@ -8,9 +8,10 @@
 
 void GpuSceneCulling::Prepare(ID3D12Device* device, uint32_t slots, uint32_t frame)
 {
+    m_FrameIndex = frame;
     Visibility.BeginFrame(frame);
     Visibility.Ensure(device, slots, sizeof(uint32_t), frame, L"GPU Scene Visibility", true);
-    if (m_Pipeline)
+    if (m_Graph.IsInitialized())
     {
         return;
     }
@@ -32,20 +33,9 @@ void GpuSceneCulling::Prepare(ID3D12Device* device, uint32_t slots, uint32_t fra
     {
         throw runtime_error("GPU scene culling root creation failed");
     }
-    ComPtr<ID3DBlob> shader;
-    ShaderDescription shaderDescription{};
-    shaderDescription.csoPath = "shader/hlsl/build/GpuSceneCullCS.cso";
-    shaderDescription.ppBlob = shader.GetAddressOf();
-    if (!ShaderPipelines::LoadShaderBlob(shaderDescription))
+    if (!m_Graph.Initialize(device, m_Root.Get(), L"shader/hlsl/GpuSceneCullWorkGraph.hlsl", L"CullScene"))
     {
-        throw runtime_error("GPU scene culling shader is missing");
-    }
-    D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline{};
-    pipeline.pRootSignature = m_Root.Get();
-    pipeline.CS = {shader->GetBufferPointer(), shader->GetBufferSize()};
-    if (FAILED(device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&m_Pipeline))))
-    {
-        throw runtime_error("GPU scene culling pipeline failed");
+        throw runtime_error("GPU scene culling Work Graph initialization failed");
     }
 }
 
@@ -83,11 +73,14 @@ void GpuSceneCulling::ExecuteCulling(ID3D12GraphicsCommandList* commands, ID3D12
     constants.Materials = materialCount;
     RenderProfiler::ScopedEvent profile("GPU Scene Culling", commands);
     commands->SetComputeRootSignature(m_Root.Get());
-    commands->SetPipelineState(m_Pipeline.Get());
     commands->SetComputeRootShaderResourceView(0, instances->GetGPUVirtualAddress());
     commands->SetComputeRootShaderResourceView(1, meshes->GetGPUVirtualAddress());
     commands->SetComputeRootShaderResourceView(2, materials->GetGPUVirtualAddress());
     commands->SetComputeRootUnorderedAccessView(3, Visibility.Resource()->GetGPUVirtualAddress());
     commands->SetComputeRoot32BitConstants(4, 20, &constants, 0);
-    commands->Dispatch((slots + 63) / 64, 1, 1);
+    const uint32_t dispatchGrid[3]{(slots + 63) / 64, 1, 1};
+    if (!m_Graph.DispatchCpu(commands, m_FrameIndex, dispatchGrid, sizeof(dispatchGrid)))
+    {
+        throw runtime_error("GPU scene culling Work Graph dispatch failed");
+    }
 }

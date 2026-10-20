@@ -29,6 +29,7 @@
 #include "renderprofiler.h"
 #include "raytracing.h"
 #include "nrddenoiser.h"
+#include "postprocesspass.h"
 #include <memory>
 #include "camera.h"
 #include <cmath>
@@ -887,6 +888,13 @@ class MegaLights final
         {
             WriteGraphicsLog("MegaLights: MegaLightsShadePS pipeline failed\n");
             s_ShadeFailed = true;
+            return nullptr;
+        }
+        if (!PostProcessPass::RegisterFullscreenPipeline(s_Device.Get(), s_ShadePso.Get(), desc, L"MegaLightsShadePS"))
+        {
+            s_ShadePso.Reset();
+            s_ShadeFailed = true;
+            WriteGraphicsLog("MegaLights: shade Mesh Node initialization failed\n");
             return nullptr;
         }
         s_ShadeFormat = sceneFormat;

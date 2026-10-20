@@ -39,6 +39,12 @@ class LightingResources : protected RendererState
     static UINT GetShadowLightCount();
     static bool ShouldRenderShadowPass(UINT shadowIndex);
     static bool ShouldDrawEntityInCurrentShadowPass(EntityID entity);
+    // 静的 / 動的キャスターの分割だけを判定する（視錐台の判定は GPU：GpuObjectCulling / GpuInstanceCullLodCS）。
+    static bool ShouldDrawEntityInCurrentShadowSubset(EntityID entity);
+    // 現在のシャドウパスのカリング用行列（転置済み）。パス外なら false（カリングしない）。
+    static bool GetCurrentShadowCullMatrix(XMMATRIX& transposedViewProjection);
+    // 影を落とす物ならワールド空間の境界球（xyz 中心, w 半径）を返す。GPU へ渡すためのデータ準備。
+    static bool GetShadowCasterSphere(EntityID entity, XMFLOAT4& sphere);
     static bool IsCurrentShadowPassVirtualPage();
     static UINT GetCurrentShadowLodBias();
     static bool IsVirtualShadowCacheHit();
@@ -70,3 +76,4 @@ class LightingResources : protected RendererState
         return m_ShadowDepthBuffer.Get();
     }
 };
+

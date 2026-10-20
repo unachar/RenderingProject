@@ -20,4 +20,10 @@ class GpuScene
     static uint64_t InstanceHistoryGeneration(GPUInstanceID id);
     static uint32_t ResolveEntity(GPUInstanceID id, uint64_t generation);
     static void DrawDebug();
+    // エンティティの全インスタンスが GPU 不透明描画（ビット2）の対象か。
+    static bool EntityUsesGpuOpaque(uint32_t entity);
+    // インポスター置き換えの準備状態を全インスタンスへ書く（ビット5・切替距離・モデル中心）。
+    // 距離の判定は GPU（GPUOcclusionCS）が行う。値が変わった場合のみ転送対象になる。
+    static void SetEntityImpostor(uint32_t entity, bool ready, const DirectX::XMFLOAT3& localCenter, float distance);
 };
+

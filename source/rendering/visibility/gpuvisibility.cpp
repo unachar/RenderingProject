@@ -12,6 +12,7 @@
 #include "shaderpipelines.h"
 #include "meshshader/meshshaderrenderer.h"
 #include "virtualgeometry/virtualgeometrytraversal.h"
+#include "workgraphruntime.h"
 
 namespace GPUVisibility
 {
@@ -47,6 +48,7 @@ namespace GPUVisibility
             array<FrameData, GpuSceneBuffer::FrameCount> Frames;
             ComPtr<ID3D12RootSignature> Root;
             ComPtr<ID3D12PipelineState> ResetPSO, OcclusionPSO, LODPSO;
+            WorkGraph::ComputeGraph ResetGraph, OcclusionGraph, LodGraph;
             XMFLOAT4X4 PreviousVP{}, PreviousView{}, PreviousProjection{};
             uint32_t PreviousCamera = UINT32_MAX, FrameIndex = 0;
             bool HaveCamera = false, Cut = true, Reset = true, UsableHistory = false;
@@ -131,6 +133,12 @@ namespace GPUVisibility
             pipeline("shader/hlsl/build/GPUVisibilityResetCS.cso", state.ResetPSO);
             pipeline("shader/hlsl/build/GPUOcclusionCS.cso", state.OcclusionPSO);
             pipeline("shader/hlsl/build/GPULODSelectionCS.cso", state.LODPSO);
+            if (!state.ResetGraph.Initialize(device, state.Root.Get(), L"shader/hlsl/GPUVisibilityResetWorkGraph.hlsl", L"ResetCounters") ||
+                !state.OcclusionGraph.Initialize(device, state.Root.Get(), L"shader/hlsl/GPUOcclusionWorkGraph.hlsl", L"CullOcclusion") ||
+                !state.LodGraph.Initialize(device, state.Root.Get(), L"shader/hlsl/GPULODSelectionWorkGraph.hlsl", L"SelectLod"))
+            {
+                throw runtime_error("GPU visibility Work Graph initialization failed");
+            }
         }
 
         void AllocateReadback(ComPtr<ID3D12Resource>& resource, uint64_t bytes)
@@ -421,7 +429,11 @@ namespace GPUVisibility
                 list->SetComputeRootSignature(Data().Root.Get());
                 list->SetPipelineState(Data().ResetPSO.Get());
                 list->SetComputeRootUnorderedAccessView(8, Frame().Counters.Resource()->GetGPUVirtualAddress());
-                list->Dispatch(1, 1, 1);
+                const uint32_t record[] = {1, 1, 1};
+                if (!Data().ResetGraph.DispatchCpu(list, Data().FrameIndex, record, sizeof(record)))
+                {
+                    throw runtime_error("Visibility counter Work Graph dispatch failed");
+                }
             });
         RenderGraph::ResourceHandle hierarchy;
         if (state.Parameters.Occlusion)
@@ -453,7 +465,11 @@ namespace GPUVisibility
                 list->SetPipelineState(Data().OcclusionPSO.Get());
                 if (Data().Parameters.Slots)
                 {
-                    list->Dispatch((Data().Parameters.Slots + 63) / 64, 1, 1);
+                    const uint32_t record[] = {(Data().Parameters.Slots + 63) / 64, 1, 1};
+                    if (!Data().OcclusionGraph.DispatchCpu(list, Data().FrameIndex, record, sizeof(record)))
+                    {
+                        throw runtime_error("Occlusion Work Graph dispatch failed");
+                    }
                 }
             });
         graph.AddPass(
@@ -473,7 +489,11 @@ namespace GPUVisibility
                 list->SetPipelineState(Data().LODPSO.Get());
                 if (Data().Parameters.Slots)
                 {
-                    list->Dispatch((Data().Parameters.Slots + 63) / 64, 1, 1);
+                    const uint32_t record[] = {(Data().Parameters.Slots + 63) / 64, 1, 1};
+                    if (!Data().LodGraph.DispatchCpu(list, Data().FrameIndex, record, sizeof(record)))
+                    {
+                        throw runtime_error("LOD Work Graph dispatch failed");
+                    }
                 }
             });
         if (state.Options.DebugReadback || state.Options.Bounds || state.Options.ScreenRectangles)

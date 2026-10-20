@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
+    <MeshNodesPreviewCompilerRoot>$(MSBuildThisFileDirectory)packages\MeshNodesPreview\DXC\</MeshNodesPreviewCompilerRoot>
     <DirectXShaderCompilerPackageVersion>1.9.2602.24</DirectXShaderCompilerPackageVersion>
     <DirectXShaderCompilerPackageRoot>$(MSBuildThisFileDirectory)packages\Microsoft.Direct3D.DXC.$(DirectXShaderCompilerPackageVersion)\</DirectXShaderCompilerPackageRoot>
     <DlssSdkRoot>$(MSBuildThisFileDirectory)External\DLSS\sdk\</DlssSdkRoot>

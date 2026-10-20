@@ -76,11 +76,13 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource)
     string key = csoPath;
     replace(key.begin(), key.end(), '\\', '/');
     const string leaf = filesystem::path(key).filename().string();
-    const bool scenePixelShader = leaf.find("PS") != string::npos && Raytracing::IsAvailable();
-    const bool sceneVertexShader = leaf.find("VS") != string::npos && Raytracing::IsAvailable();
-    const bool sceneGeometryShader = leaf.find("GS") != string::npos && Raytracing::IsAvailable();
+    const bool modernShaders = Raytracing::IsAvailable() || g_BindlessShaderSettings.Enabled;
+    const bool scenePixelShader = leaf.find("PS") != string::npos && modernShaders;
+    const bool sceneVertexShader = leaf.find("VS") != string::npos && modernShaders;
+    const bool sceneGeometryShader = leaf.find("GS") != string::npos && modernShaders;
     const bool compileModern = scenePixelShader || sceneVertexShader || sceneGeometryShader;
-    const string cacheKey = key + (compileModern ? ":DXR" : "");
+    const string cacheKey = key + (compileModern ? ":DXIL" : "") + (Raytracing::IsAvailable() ? ":DXR" : "") +
+                            (g_BindlessShaderSettings.Enabled ? ":Bindless" : "");
 
     auto cached = g_ShaderBlobCache.find(cacheKey);
     if (cached != g_ShaderBlobCache.end())
@@ -104,19 +106,25 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource)
             source.erase(buildFolder, 6);
         }
         source = filesystem::path(source).replace_extension(".hlsl").string();
+        // MeshletOpaquePS is built from the shared GPU-driven material shader.
+        if (leaf == "MeshletOpaquePS.cso")
+        {
+            source = "shader/hlsl/GPUDrivenOpaquePS.hlsl";
+        }
         if (filesystem::exists(source))
         {
             const auto sourcePath = filesystem::path(source).wstring();
             const D3D_SHADER_MACRO defines[] = {{"SHADER_RAYTRACING", "1"}, {}};
             ComPtr<ID3DBlob> errors;
-            hr = D3DCompileFromFile(sourcePath.c_str(), defines, D3D_COMPILE_STANDARD_FILE_INCLUDE, "main",
+            hr = D3DCompileFromFile(sourcePath.c_str(), Raytracing::IsAvailable() ? defines : nullptr,
+                                    D3D_COMPILE_STANDARD_FILE_INCLUDE, "main",
                                     scenePixelShader    ? "ps_6_5"
                                     : sceneVertexShader ? "vs_6_5"
                                                         : "gs_6_5",
                                     D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, ppBlob, &errors);
             if (FAILED(hr))
             {
-                WriteGraphicsLog("DXR pixel shader failed: %s %s\n", source.c_str(),
+                WriteGraphicsLog("Scene shader compile failed: %s %s\n", source.c_str(),
                                  errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
                 return false;
             }
@@ -125,6 +133,44 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource)
     if (FAILED(hr))
     {
         hr = D3DReadFileToBlob(wPath.c_str(), ppBlob);
+    }
+    if (FAILED(hr))
+    {
+        // .cso が無い（vcxproj に未登録の新規シェーダーなど）場合は、同名の .hlsl を実行時にコンパイルする。
+        string source = key;
+        const auto buildFolder = source.find("/build/");
+        if (buildFolder != string::npos)
+        {
+            source.erase(buildFolder, 6);
+        }
+        source = filesystem::path(source).replace_extension(".hlsl").string();
+        const size_t psAt = leaf.rfind("PS");
+        const size_t vsAt = leaf.rfind("VS");
+        const size_t csAt = leaf.rfind("CS");
+        const char* target = nullptr;
+        size_t best = 0;
+        auto consider = [&](size_t at, const char* stage) {
+            if (at != string::npos && (!target || at > best))
+            {
+                best = at;
+                target = stage;
+            }
+        };
+        consider(psAt, "ps_6_5");
+        consider(vsAt, "vs_6_5");
+        consider(csAt, "cs_6_5");
+        if (target && filesystem::exists(source))
+        {
+            ComPtr<ID3DBlob> errors;
+            hr = D3DCompileFromFile(filesystem::path(source).wstring().c_str(), nullptr,
+                                    D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", target, D3DCOMPILE_OPTIMIZATION_LEVEL3,
+                                    0, ppBlob, &errors);
+            if (FAILED(hr))
+            {
+                WriteGraphicsLog("Runtime shader compile failed: %s %s\n", source.c_str(),
+                                 errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
+            }
+        }
     }
     if (FAILED(hr))
     {

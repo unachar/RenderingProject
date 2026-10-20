@@ -22,6 +22,10 @@ string ResolvePixelShaderPathForRenderMode(const string& psPath, RenderMode rend
     {
         return "shader/hlsl/build/colorshader3dPS_MRT.cso";
     }
+    if (RendererPathEndsWith(psPath, "ImpostorPS.cso"))
+    {
+        return "shader/hlsl/build/ImpostorPS_MRT.cso";
+    }
     if (RendererPathEndsWith(psPath, "modelshaderPS.cso") || RendererPathEndsWith(psPath, "modellightingPS.cso") ||
         RendererPathEndsWith(psPath, "modellighingspeculerPS.cso"))
     {

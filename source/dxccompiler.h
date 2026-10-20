@@ -15,6 +15,16 @@
 
 using Microsoft::WRL::ComPtr;
 
+// デバイス作成後、シェーダーをコンパイルする前に設定する。
+// 引数にも含めることで、従来経路と Bindless のキャッシュを分離する。
+struct BindlessShaderSettings
+{
+    bool Enabled = false;
+    UINT TextureHeapBase = 0;
+};
+
+inline BindlessShaderSettings g_BindlessShaderSettings;
+
 struct CompilerState
 {
     ComPtr<IDxcUtils> Utils;
@@ -195,7 +205,11 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(LPCWSTR fileName, const D3D_SHADE
     }
 
     const wstring wideEntryPoint = ToWide(entryPoint);
-    const wstring wideTarget = PromoteLegacyProfile(target);
+    wstring wideTarget = PromoteLegacyProfile(target);
+    if (g_BindlessShaderSettings.Enabled)
+    {
+        wideTarget = wideTarget.substr(0, wideTarget.find(L'_')) + L"_6_6";
+    }
 
     vector<wstring> argumentStorage;
     argumentStorage.reserve(32);
@@ -206,6 +220,14 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(LPCWSTR fileName, const D3D_SHADE
     AddArgument(argumentStorage, wideTarget);
     AddArgument(argumentStorage, L"-HV");
     AddArgument(argumentStorage, L"2021");
+    if (g_BindlessShaderSettings.Enabled)
+    {
+        AddArgument(argumentStorage, L"-D");
+        AddArgument(argumentStorage, L"RP_BINDLESS=1");
+        AddArgument(argumentStorage, L"-D");
+        AddArgument(argumentStorage,
+                    L"RP_TEXTURE_HEAP_BASE=" + std::to_wstring(g_BindlessShaderSettings.TextureHeapBase));
+    }
 
     const filesystem::path sourcePath(fileName);
     if (!sourcePath.parent_path().empty())

@@ -53,8 +53,20 @@ struct GPUMaterialData
 // 15 個のパーツ上書きがあり、2624 バイトのキャッシュを生の SRV アクセスで扱う。
 #define GPU_SCENE_MATERIAL_STRIDE 2624u
 
+// インポスター置き換え（Flags ビット5 = アトラス準備済み。CPU は距離判定を行わない）。
+//   LodDistances.w      : 切替距離
+//   BoundsExtents.w / LocalExtents.w / asfloat(VisibilityPadding.x) : モデルのローカル AABB 中心
+// 全セクションが同じ中心・距離を持つので、エンティティ内で判定が揃う。
+#define GPU_INSTANCE_IMPOSTOR_READY 32u
+float3 GpuInstanceImpostorCenter(GPUInstanceData instance)
+{
+    float3 local = float3(instance.BoundsExtents.w, instance.LocalExtents.w, asfloat(instance.VisibilityPadding.x));
+    return mul(float4(local, 1.0f), instance.World).xyz;
+}
+
 float4 LoadSceneMaterialVector(ByteAddressBuffer materials, uint materialId, uint vectorIndex)
 {
     return asfloat(materials.Load4(materialId * GPU_SCENE_MATERIAL_STRIDE + 64u + vectorIndex * 16u));
 }
 #endif
+

@@ -9,6 +9,8 @@
 #include "renderersettings.h"
 #include "visibilitybuffer.h"
 #include "shaderdescription.h"
+#include "postprocesspass.h"
+#include "instancingsystem.h"
 
 bool PsoManager::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc, const char* debugName,
                                              ComPtr<ID3D12PipelineState>& outPso)
@@ -83,6 +85,15 @@ bool PsoManager::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE
             fclose(log);
         }
 
+        return false;
+    }
+    const bool fullscreenPipeline = desc.pRootSignature &&
+        (desc.pRootSignature == m_PostProcessRootSignature.Get() ||
+         desc.pRootSignature == m_UpscaleRootSignature.Get() ||
+         desc.pRootSignature == m_AaRootSignature.Get());
+    if (fullscreenPipeline && !PostProcessPass::RegisterFullscreenPipeline(m_Device.Get(), outPso.Get(), desc))
+    {
+        outPso.Reset();
         return false;
     }
     ++s_GraphicsPipelineCreations;
@@ -208,7 +219,12 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPsoSlow(const ShaderDescript
     if (visibilityPass)
     {
         const char* modelKind;
-        if (resource.isModel)
+        if (resource.isModel && resource.psPath && RendererPathEndsWith(resource.psPath, "ImpostorPS.cso"))
+        {
+            // インポスターは表面をアトラスから復元するため、専用の Visibility ペイロード出力を使う。
+            modelKind = "shader/hlsl/build/ImpostorVisibilityPS.cso";
+        }
+        else if (resource.isModel)
         {
             modelKind = "shader/hlsl/build/VisibilityPS.cso";
         }
@@ -479,6 +495,12 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPsoSlow(const ShaderDescript
 
     ComPtr<ID3D12PipelineState> newPso{};
     if (!CreateGraphicsPipelineState(psoDesc, "renderer", newPso))
+    {
+        return nullptr;
+    }
+
+    if (RendererPathEndsWith(resource.vsPath, "InstancedVS.cso") &&
+        !InstancingSystem::RegisterMeshPipeline(m_Device.Get(), newPso.Get(), psoDesc, false))
     {
         return nullptr;
     }
@@ -761,6 +783,10 @@ ID3D12PipelineState* PsoManager::GetOrCreateShadowMapInstancedPso()
 
     ComPtr<ID3D12PipelineState> pso;
     if (!CreateGraphicsPipelineState(psoDesc, key, pso))
+    {
+        return nullptr;
+    }
+    if (!InstancingSystem::RegisterMeshPipeline(m_Device.Get(), pso.Get(), psoDesc, true))
     {
         return nullptr;
     }

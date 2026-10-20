@@ -23,7 +23,7 @@
     ],
     "emissiveIntensity" : 0.0,
     "ior" : 1.5,
-    "metallic" : 0.0,
+    "metallic" : 0.28600001335144043,
     "normalScale" : 0.0,
     "parallaxDepth" : 0.020999999716877937,
     "parallaxSteps" : 32.0,

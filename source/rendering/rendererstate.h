@@ -276,6 +276,8 @@ class RendererState
     static constexpr UINT g_kMAX_DYNAMIC_VERTICES = 65536;
     static constexpr UINT g_kTHUMBNAIL_DESCRIPTOR_START = g_kENGINE_DESCRIPTOR_END + 1;
     static constexpr UINT g_kTHUMBNAIL_DESCRIPTOR_COUNT = 512;
+    // インポスターのアトラス SRV とベイク用の一時ディスクリプタ。ヒープ末尾の VirtualGeometry ページ（16384）の直前に置く。
+    static constexpr UINT g_kIMPOSTOR_DESCRIPTOR_COUNT = 1024;
 
     static DXGI_FORMAT GetSceneColorFormat()
     {

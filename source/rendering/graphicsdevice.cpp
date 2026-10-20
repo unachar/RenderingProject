@@ -37,6 +37,7 @@
 #include "raytracing.h"
 #include "vertexdeformation.h"
 #include "dlssupscaler.h"
+#include "workgraphruntime.h"
 
 static bool g_DeviceRemovalLogged = false;
 static bool g_GpuBasedValidationEnabled = false;
@@ -56,6 +57,7 @@ bool GraphicsDevice::Init(HWND hwnd)
 {
     g_DeviceRemovalLogged = false;
     g_FeatureCapabilities = {};
+    g_BindlessShaderSettings = {};
     g_GpuBasedValidationEnabled = false;
     m_FrameIndex = 0;
     m_FenceEvent = nullptr;
@@ -95,25 +97,35 @@ bool GraphicsDevice::Init(HWND hwnd)
         dredSettings1->SetBreadcrumbContextEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
     }
 
+    char gpuValidation[8]{};
+    const bool requestGpuValidation =
+        GetEnvironmentVariableA("DX12_GPU_BASED_VALIDATION", gpuValidation, sizeof(gpuValidation)) &&
+        atoi(gpuValidation) != 0;
 #ifdef _DEBUG
-    ComPtr<ID3D12Debug> debugController;
-    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
+    constexpr bool defaultDebugLayer = true;
+#else
+    constexpr bool defaultDebugLayer = false;
+#endif
+    if (defaultDebugLayer || requestGpuValidation)
     {
-        debugController->EnableDebugLayer();
-        char gpuValidation[8]{};
-        if (GetEnvironmentVariableA("DX12_GPU_BASED_VALIDATION", gpuValidation, sizeof(gpuValidation)) &&
-            atoi(gpuValidation))
+        ComPtr<ID3D12Debug> debugController;
+        if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
         {
-            ComPtr<ID3D12Debug1> validation;
-            if (SUCCEEDED(debugController.As(&validation)))
+            debugController->EnableDebugLayer();
+            if (requestGpuValidation)
             {
-                validation->SetEnableGPUBasedValidation(TRUE);
-                g_GpuBasedValidationEnabled = true;
-                WriteGraphicsLog("GPU Based Validation enabled\n");
+                ComPtr<ID3D12Debug1> validation;
+                if (SUCCEEDED(debugController.As(&validation)))
+                {
+                    validation->SetEnableGPUBasedValidation(TRUE);
+                    g_GpuBasedValidationEnabled = true;
+                    WriteGraphicsLog("GPU Based Validation enabled\n");
+                }
             }
         }
     }
-#endif
+
+    WorkGraph::EnablePreviewFeatures();
 
     WriteGraphicsLog("Step: CreateDXGIFactory2\n");
     HRESULT hr = CreateDXGIFactory2(0, IID_PPV_ARGS(&m_Factory));
@@ -182,6 +194,20 @@ bool GraphicsDevice::Init(HWND hwnd)
         // 2D テクスチャのミップタイルを選択的にマップするには Tier 2 が必要。
         g_FeatureCapabilities.ReservedResources = options.TiledResourcesTier >= D3D12_TILED_RESOURCES_TIER_2;
     }
+    D3D12_FEATURE_DATA_SHADER_MODEL bindlessShaderModel{D3D_SHADER_MODEL_6_6};
+    g_FeatureCapabilities.BindlessResources =
+        SUCCEEDED(m_Device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &bindlessShaderModel,
+                                                sizeof(bindlessShaderModel))) &&
+        bindlessShaderModel.HighestShaderModel >= D3D_SHADER_MODEL_6_6 &&
+        options.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_3;
+    char disableBindless[8]{};
+    GetEnvironmentVariableA("DX12_DISABLE_BINDLESS", disableBindless, sizeof(disableBindless));
+    g_BindlessShaderSettings = {g_FeatureCapabilities.BindlessResources && disableBindless[0] != '1',
+                                g_kTEXTURE_SRV_START_INDEX};
+    WriteGraphicsLog("Bindless: supported=%u enabled=%u shader_model=0x%x binding_tier=%u texture_heap_base=%u\n",
+                     static_cast<unsigned>(g_FeatureCapabilities.BindlessResources),
+                     static_cast<unsigned>(g_BindlessShaderSettings.Enabled), bindlessShaderModel.HighestShaderModel,
+                     static_cast<unsigned>(options.ResourceBindingTier), g_kTEXTURE_SRV_START_INDEX);
     D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5{};
     if (SUCCEEDED(m_Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options5, sizeof(options5))))
     {
@@ -355,7 +381,7 @@ bool GraphicsDevice::Init(HWND hwnd)
     rootParametersAll[6].InitAsDescriptorTable(1, &rangesNormalTex[0], D3D12_SHADER_VISIBILITY_PIXEL);
     rootParametersAll[7].InitAsDescriptorTable(1, &rangesEnvironmentTex[0], D3D12_SHADER_VISIBILITY_PIXEL);
     rootParametersAll[8].InitAsDescriptorTable(1, &rangesSceneColorTex[0], D3D12_SHADER_VISIBILITY_PIXEL);
-    rootParametersAll[9].InitAsShaderResourceView(0, 2, D3D12_SHADER_VISIBILITY_VERTEX);
+    rootParametersAll[9].InitAsShaderResourceView(0, 2, D3D12_SHADER_VISIBILITY_ALL);
     rootParametersAll[10].InitAsShaderResourceView(11, 0, D3D12_SHADER_VISIBILITY_PIXEL);
     rootParametersAll[11].InitAsShaderResourceView(20, 0, D3D12_SHADER_VISIBILITY_ALL);
     rootParametersAll[12].InitAsShaderResourceView(21, 0, D3D12_SHADER_VISIBILITY_ALL);
@@ -420,6 +446,10 @@ bool GraphicsDevice::Init(HWND hwnd)
     CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
     rootSignatureDesc.Init(_countof(rootParametersAll), rootParametersAll, _countof(staticSamplers), staticSamplers,
                            D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+    if (g_BindlessShaderSettings.Enabled)
+    {
+        rootSignatureDesc.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
+    }
     ComPtr<ID3DBlob> signature;
     ComPtr<ID3DBlob> error;
     WriteGraphicsLog("Step: D3D12SerializeRootSignature\n");
@@ -452,7 +482,8 @@ bool GraphicsDevice::Init(HWND hwnd)
     D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc{};
     // 末尾に MegaLights（M7：Forward 用のグリッドのディスクリプタ）の領域を追加
     cbvHeapDesc.NumDescriptors = g_kENGINE_DESCRIPTOR_END + 1 + g_kTHUMBNAIL_DESCRIPTOR_COUNT +
-                                 ImGuiManager::kSrvDescriptorCount + 16384 + MegaLights::kEngineHeapDescriptors;
+                                 ImGuiManager::kSrvDescriptorCount + 16384 + MegaLights::kEngineHeapDescriptors +
+                                 g_kIMPOSTOR_DESCRIPTOR_COUNT; // インポスター（VirtualGeometry ページの直前）
     cbvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     cbvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     WriteGraphicsLog("Step: CreateDescriptorHeap(CBV)\n");
@@ -710,6 +741,7 @@ void GraphicsDevice::Uninit()
     m_Factory.Reset();
     m_Device.Reset();
     g_FeatureCapabilities = {};
+    g_BindlessShaderSettings = {};
 
     if (m_FenceEvent)
     {

@@ -1,6 +1,6 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props" Condition="Exists('packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props')" />
+  <Import Project="packages\MeshNodesPreview\Agility\build\native\Microsoft.Direct3D.D3D12.props" Condition="Exists('packages\MeshNodesPreview\Agility\build\native\Microsoft.Direct3D.D3D12.props')" />
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
       <Configuration>Debug</Configuration>
@@ -1000,15 +1000,14 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
-    <Import Project="packages\Microsoft.Direct3D.D3D12.1.618.5\build\native\Microsoft.Direct3D.D3D12.targets" Condition="Exists('packages\Microsoft.Direct3D.D3D12.1.618.5\build\native\Microsoft.Direct3D.D3D12.targets')" />
-    <Import Project="packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.targets" Condition="Exists('packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.targets')" />
+    <Import Project="packages\MeshNodesPreview\Agility\build\native\Microsoft.Direct3D.D3D12.targets" Condition="Exists('packages\MeshNodesPreview\Agility\build\native\Microsoft.Direct3D.D3D12.targets')" />
   </ImportGroup>
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
       <ErrorText>This project references NuGet packages that are missing on this computer. Use NuGet Package Restore to download them. Missing file: {0}.</ErrorText>
     </PropertyGroup>
-    <Error Condition="!Exists('packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props')" Text="$([System.String]::Format('$(ErrorText)', 'packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props'))" />
-    <Error Condition="!Exists('packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.targets'))" />
+    <Error Condition="!Exists('packages\MeshNodesPreview\Agility\build\native\Microsoft.Direct3D.D3D12.props')" Text="$([System.String]::Format('$(ErrorText)', 'packages\MeshNodesPreview\Agility\build\native\Microsoft.Direct3D.D3D12.props'))" />
+    <Error Condition="!Exists('packages\MeshNodesPreview\Agility\build\native\Microsoft.Direct3D.D3D12.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\MeshNodesPreview\Agility\build\native\Microsoft.Direct3D.D3D12.targets'))" />
   </Target>
   <ItemGroup>
     <ClCompile Include="source\rendering\dlssupscaler.cpp" />
@@ -1339,5 +1338,14 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\virtualgeometry\virtualgeometrystreamingvalidation.cpp">
     </ClCompile>
     <ClInclude Include="source\virtualgeometry\virtualgeometrystreamingvalidation.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\rendering\workgraphruntime.cpp" />
+    <ClInclude Include="source\rendering\workgraphruntime.h" />
+    <ClCompile Include="source\procedural\proceduralworkgraph.cpp" />
+    <ClInclude Include="source\procedural\proceduralworkgraph.h" />
+    <None Include="shader\hlsl\GpuSceneCullWorkGraph.hlsl" />
+    <None Include="shader\hlsl\GpuObjectCullWorkGraph.hlsl" />
+    <None Include="shader\hlsl\FullscreenWorkGraph.hlsl" />
   </ItemGroup>
 </Project>

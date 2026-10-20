@@ -30,6 +30,7 @@
 #include "virtualgeometry/virtualgeometrytraversal.h"
 #include "occlusionculling.h"
 #include "lightingresources.h"
+#include "workgraphruntime.h"
 #include <unordered_set>
 #include <unordered_map>
 
@@ -72,6 +73,8 @@ namespace
         ComPtr<ID3D12PipelineState> ResetPSO, CompactPSO, GeneratePSO, OpaquePSO, OccluderPSO;
         ComPtr<ID3D12CommandSignature> Signature;
         ComPtr<ID3D12PipelineState> VisibilityPSO, VisibilityResolvePSO, IndexedVelocityPSO;
+        array<WorkGraph::MeshGraph, 4> RasterGraphs;
+        bool WorkGraphActive = false;
         uint32_t Slots = 0, Meshes = 0, Calls = 0, FrameIndex = 0;
         double SubmissionMs = 0;
         double CpuOpaqueMs = 0, GpuOpaqueMs = 0;
@@ -191,6 +194,10 @@ namespace
         sampler.MaxAnisotropy = 16;
         CD3DX12_ROOT_SIGNATURE_DESC opaqueDescription(_countof(opaque), opaque, 1, &sampler,
                                                       D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+        if (g_BindlessShaderSettings.Enabled)
+        {
+            opaqueDescription.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
+        }
         Root(device, opaqueDescription, state.OpaqueRoot);
         auto vs = Shader("shader/hlsl/build/GPUDrivenOpaqueVS.cso");
         auto ps = Shader("shader/hlsl/build/GPUDrivenOpaquePS.cso");
@@ -306,6 +313,166 @@ namespace
         description.FinalState = finalState;
         buffer.State = finalState;
         return graph.ImportResource(description);
+    }
+
+    bool UseWorkGraphs()
+    {
+        static const bool disabled = ReadEnvironmentFlagOnce("DX12_DISABLE_WORK_GRAPHS");
+        return !disabled && WorkGraph::IsSupported(GraphicsDevice::GetDevice(), true);
+    }
+
+    enum class GraphRasterPass : uint32_t
+    {
+        Opaque,
+        Visibility,
+        Velocity,
+        Occluder
+    };
+
+    WorkGraph::MeshGraph& RasterGraph(GraphRasterPass pass)
+    {
+        auto& state = Data();
+        auto& graph = state.RasterGraphs.at(static_cast<uint32_t>(pass));
+        if (graph.IsInitialized())
+        {
+            return graph;
+        }
+        const bool velocity = pass == GraphRasterPass::Velocity;
+        const bool visibility = pass == GraphRasterPass::Visibility;
+        const bool occluder = pass == GraphRasterPass::Occluder;
+        const wchar_t* pixelFile = L"shader/hlsl/GPUDrivenOpaquePS.hlsl";
+        if (velocity)
+        {
+            pixelFile = L"shader/hlsl/VelocityGeometryPS.hlsl";
+        }
+        else if (visibility)
+        {
+            pixelFile = L"shader/hlsl/GPUDrivenVisibilityPS.hlsl";
+        }
+        else if (occluder)
+        {
+            pixelFile = L"shader/hlsl/GPUOccluderPS.hlsl";
+        }
+        ComPtr<ID3DBlob> library, pixel;
+        const wchar_t* libraryFile = L"shader/hlsl/GPUDrivenWorkGraph.hlsl";
+        if (velocity)
+        {
+            libraryFile = L"shader/hlsl/GPUDrivenVelocityWorkGraph.hlsl";
+        }
+        Check(WorkGraph::CompileFile(libraryFile, nullptr, L"lib_6_9", library));
+        Check(WorkGraph::CompileFile(pixelFile, L"main", L"ps_6_6", pixel));
+        WorkGraph::MeshGraphDescription description;
+        description.RootSignature = state.OpaqueRoot.Get();
+        description.Library = {library->GetBufferPointer(), library->GetBufferSize()};
+        description.PixelShader = {pixel->GetBufferPointer(), pixel->GetBufferSize()};
+        description.PixelShaderEntry = L"main";
+        description.ProgramName = L"SceneRasterGraph";
+        description.EntryNode = L"SelectInstances";
+        description.MeshNode = L"Raster";
+        description.MeshShader = L"Raster";
+        description.Blend = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+        description.Rasterizer = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+        description.Rasterizer.CullMode = D3D12_CULL_MODE_NONE;
+        description.DepthStencil = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+        description.DepthFormat = DXGI_FORMAT_D32_FLOAT;
+        description.RenderTargets.NumRenderTargets = RendererState::g_kGEOMETRY_GBUFFER_COUNT;
+        for (uint32_t target = 0; target < RendererState::g_kGEOMETRY_GBUFFER_COUNT; ++target)
+        {
+            description.RenderTargets.RTFormats[target] = RendererState::GetGBufferFormat(static_cast<GBufferType>(target));
+        }
+        if (velocity || visibility || occluder)
+        {
+            description.RenderTargets = {};
+            if (!occluder)
+            {
+                description.RenderTargets.NumRenderTargets = 1;
+                description.RenderTargets.RTFormats[0] = RendererState::GetGBufferFormat(
+                    velocity ? GBufferType::VELOCITY : GBufferType::VISIBILITY);
+            }
+        }
+        if (velocity)
+        {
+            description.DepthStencil.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+            description.DepthStencil.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        }
+        if (!graph.Initialize(GraphicsDevice::GetDevice(), description))
+        {
+            throw runtime_error("Scene raster Work Graph initialization failed");
+        }
+        WriteGraphicsLog("Scene raster Work Graph ready: pass=%u backing=%llu bytes\n",
+                         static_cast<uint32_t>(pass), graph.BackingMemoryBytes());
+        return graph;
+    }
+
+    void DrawWorkGraph(ID3D12GraphicsCommandList* commands, GraphRasterPass pass)
+    {
+        auto& state = Data();
+        auto& raster = RasterGraph(pass);
+        RenderGraph graph;
+        const auto shaderRead = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        auto import = [&](const char* name, ID3D12Resource* resource) {
+            RenderGraph::ImportedResource description{};
+            description.Name = name;
+            description.Resource = resource;
+            description.InitialState = description.FinalState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            description.HasFinalState = true;
+            return graph.ImportResource(description);
+        };
+        const auto instances = import("Graph scene instances", GpuScene::InstanceBuffer());
+        const auto materials = import("Graph scene materials", GpuScene::MaterialBuffer());
+        const auto selected = import("Graph visible instances", GPUVisibility::ResultBuffer());
+        const auto geometry = Import(graph, "Graph geometry", state.Geometry, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        const auto vertices = Import(graph, "Graph vertices", state.Vertices,
+                                     D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        const auto indices = Import(graph, "Graph indices", state.Indices,
+                                    D3D12_RESOURCE_STATE_INDEX_BUFFER | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        graph.AddPass("Work Graph Scene Raster", [=](RenderGraph::PassBuilder& builder) {
+            builder.Read(instances, shaderRead).Read(materials, shaderRead).Read(selected, shaderRead)
+                .Read(geometry, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+                .Read(vertices, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER)
+                .Read(indices, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_INDEX_BUFFER);
+        }, [&](ID3D12GraphicsCommandList* list) {
+            RenderProfiler::ScopedEvent profile("Work Graph Scene Raster", list);
+            ID3D12DescriptorHeap* heap = FrameConstants::GetCbvHeap();
+            list->SetDescriptorHeaps(1, &heap);
+            list->SetGraphicsRootSignature(state.OpaqueRoot.Get());
+            ConstantBuffer3D constants{};
+            XMMATRIX view, projection;
+            Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
+            constants.View = XMMatrixTranspose(view);
+            constants.Projection = XMMatrixTranspose(projection);
+            constants.PreviousViewProjection = XMMatrixTranspose(
+                XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix()) * XMLoadFloat4x4(&GraphicsDevice::GetPreviousProjectionMatrix()));
+            const auto camera = Camera::GetCameraEntity();
+            if (ComponentManager::HasComponent<TransformComponent>(camera))
+            {
+                constants.CameraPos = ComponentManager::GetComponentUnchecked<TransformComponent>(camera).Position;
+            }
+            list->SetGraphicsRootDescriptorTable(1, FrameConstants::AllocateTransientConstantBuffer(constants));
+            list->SetGraphicsRootShaderResourceView(2, GpuScene::InstanceBuffer()->GetGPUVirtualAddress());
+            list->SetGraphicsRootShaderResourceView(3, GpuScene::MaterialBuffer()->GetGPUVirtualAddress());
+            list->SetGraphicsRootShaderResourceView(6, GPUVisibility::ResultBuffer()->GetGPUVirtualAddress());
+            list->SetGraphicsRootShaderResourceView(7, state.Geometry.Resource()->GetGPUVirtualAddress());
+            list->SetGraphicsRootShaderResourceView(8, state.Vertices.Resource()->GetGPUVirtualAddress());
+            list->SetGraphicsRootShaderResourceView(9, state.Indices.Resource()->GetGPUVirtualAddress());
+            CD3DX12_GPU_DESCRIPTOR_HANDLE textures(heap->GetGPUDescriptorHandleForHeapStart(),
+                FrameConstants::g_kTEXTURE_SRV_START_INDEX, FrameConstants::GetCbvIncrementSize());
+            list->SetGraphicsRootDescriptorTable(4, textures);
+            const uint32_t limits[] = {FrameConstants::g_kTEXTURE_SRV_START_INDEX,
+                static_cast<uint32_t>(TextureManager::GetDefaultTextureIndex()) - FrameConstants::g_kTEXTURE_SRV_START_INDEX,
+                static_cast<uint32_t>(GPUVisibility::GetSettings().DebugMode), 1};
+            list->SetGraphicsRoot32BitConstants(5, 4, limits, 0);
+            list->SetGraphicsRootConstantBufferView(12, LightingResources::GetCurrentLightConstantBufferAddress());
+            const uint32_t record[] = {(state.Slots + 63u) / 64u, 1, 1, state.Slots, state.Meshes};
+            if (state.Slots && !raster.DispatchCpu(list, state.FrameIndex, record, sizeof(record)))
+            {
+                throw runtime_error("Scene raster Work Graph dispatch failed");
+            }
+        });
+        if (!graph.Compile() || !graph.Execute(commands))
+        {
+            throw runtime_error(graph.GetLastError());
+        }
     }
 
     bool CompatibleMode()
@@ -600,6 +767,8 @@ bool GPUDrivenRenderer::SupportsEntity(uint32_t entity)
     {
         return false;
     }
+    // インポスターを使う静的モデルも GPU Driven のまま描く。遠距離で置き換える間だけ、
+    // ImpostorRenderer が GPU シーンのインスタンスにビット5を立ててメッシュ描画を省く。
     const auto& component = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
     const auto& material = MaterialManager::Resolve(component);
     for (size_t slot = 0; slot < MaterialManager::SlotCount(entity); ++slot)
@@ -714,6 +883,7 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
         pending.FeedbackFence = 0;
     }
     state.Active = false;
+    state.WorkGraphActive = false;
     state.Calls = 0;
     state.SubmissionMs = 0;
     const bool compatible = GetGeometryRenderingMode() != GeometryRenderingMode::Legacy && state.Enabled &&
@@ -819,6 +989,8 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
                 data.Geometry.Copy(list, frameIndex);
             });
     }
+    if (!UseWorkGraphs())
+    {
     graph.AddPass(
         "GPU Driven Counter Reset",
         [=](RenderGraph::PassBuilder& builder) {
@@ -831,6 +1003,7 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
             list->SetComputeRootUnorderedAccessView(0, Frame().Count.Resource()->GetGPUVirtualAddress());
             list->Dispatch(1, 1, 1);
         });
+    }
     RenderGraph::ResourceHandle selected;
     try
     {
@@ -842,6 +1015,19 @@ void GPUDrivenRenderer::Prepare(RenderGraph& graph, RenderGraph::ResourceHandle 
         state.Failed = true;
         GPUVisibility::Invalidate("Visibility initialization failed");
         WriteGraphicsLog("GPU Visibility CPU fallback: %s\n", error.what());
+        return;
+    }
+    if (UseWorkGraphs())
+    {
+        state.WorkGraphActive = true;
+        state.Active = true;
+        for (const auto& [texture, users] : state.TextureUsers)
+        {
+            if (users)
+            {
+                TextureManager::TouchTexture(static_cast<int>(texture));
+            }
+        }
         return;
     }
     auto bindCompute = [](ID3D12GraphicsCommandList* list, bool generate) {
@@ -929,6 +1115,13 @@ void GPUDrivenRenderer::Draw(ID3D12GraphicsCommandList* commands)
         return;
     }
     const auto start = chrono::steady_clock::now();
+    if (state.WorkGraphActive)
+    {
+        DrawWorkGraph(commands, RendererSettings::GetComputeGBufferEnabled() ? GraphRasterPass::Visibility
+                                                                            : GraphRasterPass::Opaque);
+        state.SubmissionMs = chrono::duration<double, milli>(chrono::steady_clock::now() - start).count();
+        return;
+    }
     if (MeshShaderRenderer::IsActive() && !RendererSettings::GetComputeGBufferEnabled())
     {
         const D3D12_VERTEX_BUFFER_VIEW vb{state.Vertices.Resource()->GetGPUVirtualAddress(),
@@ -1077,6 +1270,12 @@ void GPUDrivenRenderer::BuildHiZ(ID3D12GraphicsCommandList* commands)
             const D3D12_RECT scissor{0, 0, LONG(OcclusionCulling::GetWidth()), LONG(OcclusionCulling::GetHeight())};
             list->RSSetViewports(1, &viewport);
             list->RSSetScissorRects(1, &scissor);
+            if (data.WorkGraphActive)
+            {
+                DrawWorkGraph(list, GraphRasterPass::Occluder);
+                list->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+                return;
+            }
             ID3D12DescriptorHeap* heap = FrameConstants::GetCbvHeap();
             list->SetDescriptorHeaps(1, &heap);
             list->SetGraphicsRootSignature(data.OpaqueRoot.Get());
@@ -1121,6 +1320,11 @@ void GPUDrivenRenderer::DrawVelocity(ID3D12GraphicsCommandList* commands)
     auto& state = Data();
     if (!state.Active || !commands)
     {
+        return;
+    }
+    if (state.WorkGraphActive)
+    {
+        DrawWorkGraph(commands, GraphRasterPass::Velocity);
         return;
     }
     const D3D12_VERTEX_BUFFER_VIEW vb{state.Vertices.Resource()->GetGPUVirtualAddress(),
@@ -1420,4 +1624,3 @@ bool GPUDrivenRenderer::ResolveVisibility(ID3D12GraphicsCommandList* commands, D
     transition(data.Indices, is);
     return true;
 }
-

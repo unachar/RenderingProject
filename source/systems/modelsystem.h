@@ -18,6 +18,7 @@
 #include <vector>
 #include "frameconstants.h"
 #include "lightingresources.h"
+#include "gpuobjectculling.h"
 
 struct MaterialComponent;
 
@@ -151,6 +152,8 @@ class ModelSystem final : public SystemBase
             return;
         }
 
+        // 影パスの可視判定は GPU（GpuObjectCullCS）。PSO を設定する前に取得する。
+        const int cullView = ctx.shadowPass ? GpuObjectCulling::ShadowView(ctx.commandList) : GpuObjectCulling::kNoView;
         callbacks.restoreGraphicsState(ctx.commandList, ctx.pso);
 
         vector<D3D12_RESOURCE_BARRIER> barriers;
@@ -166,12 +169,11 @@ class ModelSystem final : public SystemBase
 
             constexpr bool isAnimated = is_same_v<ModelComponent, AnimationModelComponent>;
             if (ctx.shadowPass &&
-                (!ShouldCastShadow(entity) || !LightingResources::ShouldDrawEntityInCurrentShadowPass(entity)))
+                (!ShouldCastShadow(entity) || !LightingResources::ShouldDrawEntityInCurrentShadowSubset(entity)))
             {
                 continue;
             }
-            if (InstancingSystem::CanInstance(entity) ||
-                (InstancingSystem::CanInstance(entity) && !InstancingSystem::IsEntityVisible(entity)))
+            if (InstancingSystem::CanInstance(entity))
             {
                 continue;
             }
@@ -215,6 +217,7 @@ class ModelSystem final : public SystemBase
 
             const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
             const XMMATRIX world = XMLoadFloat4x4(&transform.WorldMatrix);
+            GpuObjectCulling::Begin(ctx.commandList, cullView, entity);
             callbacks.writeConstants(entity, ctx.commandList);
             if (!callbacks.executeIndirect(ctx.commandList, model, entity, world, ctx.viewProjection, ctx.pso,
                                            ctx.cpuCulledVirtualPage))
@@ -222,6 +225,7 @@ class ModelSystem final : public SystemBase
                 callbacks.restoreGraphicsState(ctx.commandList, ctx.pso);
                 callbacks.fallbackDraw(ctx.commandList, model, entity, world, ctx.pso);
             }
+            GpuObjectCulling::End(ctx.commandList);
 
             barriers.clear();
             for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
@@ -462,3 +466,4 @@ class ModelSystem final : public SystemBase
         }
     }
 };
+

@@ -184,6 +184,10 @@ namespace MeshShaderRenderer
             sampler.MaxAnisotropy = 16;
             CD3DX12_ROOT_SIGNATURE_DESC opaqueDesc(_countof(opaque), opaque, 1, &sampler,
                                                    D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+            if (g_BindlessShaderSettings.Enabled)
+            {
+                opaqueDesc.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
+            }
             Root(opaqueDesc, state.OpaqueRoot);
             auto ms = Shader("shader/hlsl/build/MeshletMS.cso"), ps = Shader("shader/hlsl/build/MeshletOpaquePS.cso");
             MeshStream stream{};
@@ -1189,4 +1193,3 @@ namespace MeshShaderRenderer
         Data() = {};
     }
 } // 名前空間 MeshShaderRenderer
-

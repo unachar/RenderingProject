@@ -1,19 +1,14 @@
 #ifndef MATERIAL_SURFACE_INCLUDED
 #define MATERIAL_SURFACE_INCLUDED
 // ラスターシェーダーと GPU 駆動シェーダーで同じテクスチャヒープとパラメーターレイアウトを使う。
-#ifndef SHADER_GPU_DRIVEN
-Texture2D AssetTextureHeap[512] : register(t0, space1);
-#define ASSET_TEXTURE_HEAP AssetTextureHeap
-#else
-#define ASSET_TEXTURE_HEAP gSceneTextures
-#endif
+#include "MaterialTextureHeap.hlsli"
 struct AssetMaterialParameters
 {
     float4 BaseColor;
     float4 Surface;
     float4 Emission;
     uint4 Textures;
-    float4 Parallax; // UV depth, maximum steps, heap-relative height texture index, reserved.
+    float4 Parallax; // UV depth, maximum steps, heap-relative height texture index, heap base.
 };
 
 AssetMaterialParameters LoadAssetMaterial(uint materialID)
@@ -38,8 +33,7 @@ AssetMaterialParameters LoadAssetMaterial(uint materialID)
 float SampleParallaxDepth(uint index, float2 uv, float2 uvDx, float2 uvDy, SamplerState materialSampler)
 {
     // Height maps use white for the original surface and black for the deepest recess.
-    return 1.0f - saturate(ASSET_TEXTURE_HEAP[NonUniformResourceIndex(index)]
-                              .SampleGrad(materialSampler, uv, uvDx, uvDy).r);
+    return 1.0f - saturate(LoadMaterialTexture(index).SampleGrad(materialSampler, uv, uvDx, uvDy).r);
 }
 
 // POM の結果。UV だけでなく、ピクセル深度オフセットとセルフシャドウに必要な接空間とヒット深度を返す。
@@ -268,7 +262,7 @@ float3 ApplyAssetHeightNormal(AssetMaterialParameters material, float3 normal, f
     }
     uint heightIndex = (uint)material.Parallax.z;
     uint width, height, levels;
-    ASSET_TEXTURE_HEAP[NonUniformResourceIndex(heightIndex)].GetDimensions(0u, width, height, levels);
+    LoadMaterialTexture(heightIndex).GetDimensions(0u, width, height, levels);
     float2 texel = 1.0f / float2(max(width, 1u), max(height, 1u));
     // 差分幅は 1 テクセルと画素フットプリントの大きい方。遠景での法線エイリアス（ちらつき）を抑える。
     float2 footprint = float2(max(abs(uvDx.x), abs(uvDy.x)), max(abs(uvDx.y), abs(uvDy.y)));
@@ -290,10 +284,9 @@ float4 SampleAssetTexture(uint index, float2 uv, SamplerState materialSampler, f
         return fallback;
     }
 #ifdef SHADER_VISIBILITY_RESOLVE
-    return ASSET_TEXTURE_HEAP[NonUniformResourceIndex(index)].SampleGrad(materialSampler, uv, VisibilityUvDx,
-                                                                         VisibilityUvDy);
+    return LoadMaterialTexture(index).SampleGrad(materialSampler, uv, VisibilityUvDx, VisibilityUvDy);
 #else
-    return ASSET_TEXTURE_HEAP[NonUniformResourceIndex(index)].Sample(materialSampler, uv);
+    return LoadMaterialTexture(index).Sample(materialSampler, uv);
 #endif
 }
 

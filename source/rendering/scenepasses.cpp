@@ -191,6 +191,9 @@ void ScenePasses::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_TO
         RenderProfiler::ScopedEvent profile("BeginPass: Shadow Constants", m_CommandList.Get());
         LightingResources::UpdateShadowConstantBuffer();
     }
+    // Directly indexed root signatures require the resource heap to be set first.
+    ID3D12DescriptorHeap* resourceHeap = m_CbvHeap.Get();
+    m_CommandList->SetDescriptorHeaps(1, &resourceHeap);
     m_CommandList->SetGraphicsRootSignature(rootSignature);
     Raytracing::BindLighting(m_CommandList.Get(), 16, 17);
     Raytracing::BindGlass(m_CommandList.Get());
@@ -320,6 +323,8 @@ bool ScenePasses::BeginShadowPass(UINT shadowIndex, bool preserveDepth, bool sta
         m_CommandList->ClearDepthStencilView(shadowDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &shadowScissor);
     }
     m_CommandList->OMSetRenderTargets(0, nullptr, FALSE, &shadowDsvHandle);
+    ID3D12DescriptorHeap* resourceHeap = m_CbvHeap.Get();
+    m_CommandList->SetDescriptorHeaps(1, &resourceHeap);
     m_CommandList->SetGraphicsRootSignature(m_ModelRootSignature.Get());
     if (m_ShadowConstantBuffer)
     {

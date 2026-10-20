@@ -33,9 +33,15 @@
 #include "pbrluts.h"
 #include "transparencyeffects.h"
 #include "temporalhistorycontext.h"
+#include "workgraphruntime.h"
+#include "graphicslog.h"
+#include <memory>
+#include <unordered_map>
 
 namespace
 {
+    std::unordered_map<ID3D12PipelineState*, std::unique_ptr<WorkGraph::MeshGraph>> g_FullscreenGraphs;
+    ComPtr<ID3DBlob> g_FullscreenGraphLibrary;
     TemporalHistory::State g_PreviousTaaState;
     TemporalHistory::State g_CurrentTaaState;
     bool g_TaaHistoryValid = false;
@@ -76,6 +82,67 @@ namespace
     }
 
 } // 名前空間
+
+bool PostProcessPass::RegisterFullscreenPipeline(ID3D12Device* device, ID3D12PipelineState* pipeline,
+                                                 const D3D12_GRAPHICS_PIPELINE_STATE_DESC& description,
+                                                 const wchar_t* pixelEntry)
+{
+    if (!device || !pipeline || !WorkGraph::IsSupported(device, true))
+    {
+        WriteGraphicsLog("Fullscreen Work Graph: Mesh Nodes tier 1.1 is required.\n");
+        return false;
+    }
+    if (!g_FullscreenGraphLibrary)
+    {
+        const HRESULT result = WorkGraph::CompileFile(L"shader/hlsl/FullscreenWorkGraph.hlsl", nullptr,
+                                                      L"lib_6_9", g_FullscreenGraphLibrary);
+        if (FAILED(result))
+        {
+            WriteGraphicsLog("Fullscreen Work Graph: graph shader compilation failed (0x%08X).\n", result);
+            return false;
+        }
+    }
+
+    WorkGraph::MeshGraphDescription graphDescription{};
+    graphDescription.RootSignature = description.pRootSignature;
+    graphDescription.Library = CD3DX12_SHADER_BYTECODE(g_FullscreenGraphLibrary.Get());
+    graphDescription.PixelShader = description.PS;
+    graphDescription.PixelShaderEntry = pixelEntry;
+    graphDescription.ProgramName = L"FullscreenGraph";
+    graphDescription.EntryNode = L"FullscreenEntry";
+    graphDescription.MeshNode = L"FullscreenMesh";
+    graphDescription.MeshShader = L"FullscreenMeshMain";
+    graphDescription.Blend = description.BlendState;
+    graphDescription.Rasterizer = description.RasterizerState;
+    graphDescription.DepthStencil = description.DepthStencilState;
+    graphDescription.RenderTargets.NumRenderTargets = description.NumRenderTargets;
+    for (UINT index = 0; index < description.NumRenderTargets; ++index)
+    {
+        graphDescription.RenderTargets.RTFormats[index] = description.RTVFormats[index];
+    }
+    graphDescription.DepthFormat = description.DSVFormat;
+    auto graph = std::make_unique<WorkGraph::MeshGraph>();
+    if (!graph->Initialize(device, graphDescription))
+    {
+        WriteGraphicsLog("Fullscreen Work Graph: graphics node creation failed; the pass cannot render.\n");
+        return false;
+    }
+    g_FullscreenGraphs[pipeline] = std::move(graph);
+    return true;
+}
+
+bool PostProcessPass::DispatchFullscreenPipeline(ID3D12PipelineState* pipeline,
+                                                 ID3D12GraphicsCommandList* commands, UINT frameIndex)
+{
+    const auto graph = g_FullscreenGraphs.find(pipeline);
+    if (graph == g_FullscreenGraphs.end())
+    {
+        WriteGraphicsLog("Fullscreen Work Graph: requested pipeline has no registered graphics node.\n");
+        return false;
+    }
+    const UINT entryRecord = 0;
+    return graph->second->DispatchCpu(commands, frameIndex, &entryRecord, sizeof(entryRecord));
+}
 
 void PostProcessPass::UpdateCameraConstants()
 {
@@ -265,8 +332,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
             bloomSourceHandle = sourceHandle;
         }
         m_CommandList->SetGraphicsRootDescriptorTable(15, bloomSourceHandle);
-        m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        m_CommandList->DrawInstanced(3, 1, 0, 0);
+        DispatchFullscreenPipeline(pso, m_CommandList.Get(), m_FrameIndex);
     };
 
     if (!GetRenderTarget(RenderTargetType::EditorScene))
@@ -585,8 +651,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
             }
             m_CommandList->RSSetViewports(1, &m_Viewport);
             m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
-            m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            m_CommandList->DrawInstanced(3, 1, 0, 0);
+            DispatchFullscreenPipeline(aaPso, m_CommandList.Get(), m_FrameIndex);
 
             if (useTaa)
             {
@@ -724,8 +789,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
                                                           m_GBufferSrvHandles[static_cast<UINT>(GBufferType::DEPTH)]);
             m_CommandList->SetGraphicsRootConstantBufferView(2, m_PostProcessConstantBuffer->GetGPUVirtualAddress() +
                                                                     GetPostProcessFrameOffset());
-            m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            m_CommandList->DrawInstanced(3, 1, 0, 0);
+            DispatchFullscreenPipeline(upscalePso, m_CommandList.Get(), m_FrameIndex);
         }
         D3D12_RESOURCE_BARRIER editorToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
             GetRenderTarget(RenderTargetType::EditorScene).Get(), D3D12_RESOURCE_STATE_RENDER_TARGET,
@@ -877,8 +941,7 @@ void PostProcessPass::ApplyAntiAliasing()
         m_CommandList->SetGraphicsRoot32BitConstants(4, 20, cbData, 0);
     }
 
-    m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    m_CommandList->DrawInstanced(3, 1, 0, 0);
+    DispatchFullscreenPipeline(pso, m_CommandList.Get(), m_FrameIndex);
 
     D3D12_RESOURCE_BARRIER toAaSrv = CD3DX12_RESOURCE_BARRIER::Transition(
         m_AaRenderTarget.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);

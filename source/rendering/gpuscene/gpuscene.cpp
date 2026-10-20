@@ -19,6 +19,7 @@
 #include "renderprofiler.h"
 #include "visibility/gpuvisibility.h"
 #include "virtualgeometry/virtualgeometryresources.h"
+#include "impostorrenderer.h"
 #include <unordered_set>
 
 namespace
@@ -773,6 +774,8 @@ void GpuScene::Execute(ID3D12GraphicsCommandList* commands)
     {
         RetireUnusedPrimitiveMeshes();
     }
+    // UpdateEntity は Flags を作り直すため、その後でインポスター置き換えのビットを反映する。
+    ImpostorRenderer::UpdateGpuInstances();
     scene.Stats.EntitiesProcessed = static_cast<uint32_t>(changed.size());
     scene.Stats.DirtyInstances = static_cast<uint32_t>(scene.Instances.Updates().size());
     scene.Stats.InstanceSlots = static_cast<uint32_t>(scene.Instances.Data().size());
@@ -902,6 +905,60 @@ const vector<GPUInstanceID>& GpuScene::GetEntityInstances(uint32_t entity)
     return found == Scene().Entities.end() ? empty : found->second;
 }
 
+bool GpuScene::EntityUsesGpuOpaque(uint32_t entity)
+{
+    const auto& ids = GetEntityInstances(entity);
+    if (ids.empty())
+    {
+        return false;
+    }
+    const auto& data = Scene().Instances.Data();
+    for (const auto id : ids)
+    {
+        if (id >= data.size() || (data[id].Flags & 5u) != 5u)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+void GpuScene::SetEntityImpostor(uint32_t entity, bool ready, const XMFLOAT3& localCenter, float distance)
+{
+    constexpr uint32_t kImpostorReady = 32u; // GpuSceneCommon.hlsli の GPU_INSTANCE_IMPOSTOR_READY
+    auto& scene = Scene();
+    const auto found = scene.Entities.find(entity);
+    if (found == scene.Entities.end())
+    {
+        return;
+    }
+    for (const auto id : found->second)
+    {
+        if (!scene.Instances.IsActive(id))
+        {
+            continue;
+        }
+        GPUInstanceData instance = scene.Instances.Data()[id];
+        if (ready)
+        {
+            instance.Flags |= kImpostorReady;
+            instance.LodDistances.w = max(distance, 0.0f);
+            instance.BoundsExtents.w = localCenter.x;
+            instance.LocalExtents.w = localCenter.y;
+            memcpy(&instance.VisibilityPadding[0], &localCenter.z, sizeof(float));
+        }
+        else
+        {
+            instance.Flags &= ~kImpostorReady;
+            instance.LodDistances.w = 0.0f;
+            instance.BoundsExtents.w = 0.0f;
+            instance.LocalExtents.w = 0.0f;
+            instance.VisibilityPadding[0] = 0;
+        }
+        scene.Instances.Update(id, instance);
+    }
+}
+
 const vector<uint32_t>& GpuScene::CpuOpaqueStaticEntities()
 {
     return Scene().CpuOpaqueStatic;
@@ -997,3 +1054,4 @@ void GpuScene::DrawDebug()
         ImGui::TreePop();
     }
 }
+
