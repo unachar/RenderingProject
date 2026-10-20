@@ -239,4 +239,12 @@
       <MeshNodesCompilerFiles Include="$(MeshNodesPreviewCompilerRoot)bin\x64\dxcompiler.dll" />
     </ItemGroup>
     <Copy SourceFiles="@(MeshNodesCompilerFiles)" DestinationFolder="$(OutDir)MeshNodesDXC" SkipUnchangedFiles="true" />
-  </Target></Project>
+    <ItemGroup>
+      <MeshNodesRuntimeFiles Include="$(MSBuildThisFileDirectory)packages\MeshNodesPreview\Agility\build\native\bin\x64\D3D12Core.dll" />
+      <MeshNodesRuntimeFiles Include="$(MSBuildThisFileDirectory)packages\MeshNodesPreview\Agility\build\native\bin\x64\d3d12SDKLayers.dll" />
+      <MeshNodesRuntimeFiles Include="$(MSBuildThisFileDirectory)packages\MeshNodesPreview\Agility\build\native\bin\x64\DirectSR.dll" />
+    </ItemGroup>
+    <!-- The preview runtime predates retail DLLs; PreserveNewest alone keeps the wrong SDK. -->
+    <Copy SourceFiles="@(MeshNodesRuntimeFiles)" DestinationFolder="$(OutDir)D3D12" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

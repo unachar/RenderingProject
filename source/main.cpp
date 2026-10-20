@@ -11,6 +11,8 @@
 #include "renderingvalidation.h"
 #include "performancegovernor.h"
 #include "renderbenchmark.h"
+#include "proceduralworkgraph.h"
+#include "rendercapture.h"
 
 extern "C"
 {
@@ -139,6 +141,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     }
     const bool automatedRun =
         automatedBenchmark || renderingBenchmark || IsPhysicsSmokeTest() || startupSmokeFrames > 0;
+    if (automatedRun)
+    {
+        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    }
     char exePath[MAX_PATH]{};
     GetModuleFileNameA(nullptr, exePath, MAX_PATH);
 
@@ -191,8 +197,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 
     if (!GraphicsDevice::Init(hwnd))
     {
-        MessageBoxA(hwnd, "Failed to initialize renderer.", "Error", MB_OK | MB_ICONERROR);
+        if (!automatedRun)
+        {
+            MessageBoxA(hwnd, "Failed to initialize renderer.", "Error", MB_OK | MB_ICONERROR);
+        }
         return 1;
+    }
+
+    char proceduralValidation[8]{};
+    if (GetEnvironmentVariableA("DX12_WORK_GRAPH_VALIDATE_PROCEDURAL", proceduralValidation, sizeof(proceduralValidation)) &&
+        atoi(proceduralValidation) != 0)
+    {
+        const bool valid = ProceduralWorkGraph::ValidateAuthoringOutputs();
+        GraphicsDevice::Uninit();
+        return valid ? 0 : 2;
     }
 
     RenderProfiler::SetPipelineStatisticsForced(automatedRun);
@@ -283,7 +301,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
             PostQuitMessage(0);
         }
     }
-    const bool featuresPassed = renderingBenchmark ? RenderBenchmark::Finish() : RenderingValidation::Finish();
+    bool featuresPassed = renderingBenchmark ? RenderBenchmark::Finish() : RenderingValidation::Finish();
+    if (startupSmokeFrames > 0 && completedFrames > 0)
+    {
+        GraphicsDevice::WaitForGpuIdle();
+        RenderProfiler::DrainCompletedFrames([](const RenderProfiler::FrameSnapshot&) {});
+        const auto& snapshot = RenderProfiler::GetLatest();
+        WriteGraphicsLog("WorkGraph frame sample: frame=%llu graphs=%llu draws=%llu indirect=%llu CPU=%.3f GPU=%.3f ms\n",
+                         snapshot.Serial, snapshot.Calls.WorkGraphDispatchCalls, snapshot.Calls.DrawCalls,
+                         snapshot.Calls.ExecuteIndirectCalls, snapshot.CpuRenderMs, snapshot.GpuRenderMs);
+        char capture[8]{};
+        if (GetEnvironmentVariableA("DX12_WORK_GRAPH_CAPTURE", capture, sizeof(capture)) && atoi(capture) != 0)
+        {
+            featuresPassed &= RenderCapture::SaveScenePng(L"cache/workgraphs-scene.png");
+        }
+        featuresPassed &= RenderCapture::ReportGraphicsErrors() == 0;
+    }
     Game::Uninit();
     if (!featuresPassed)
     {

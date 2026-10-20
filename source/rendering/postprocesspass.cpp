@@ -115,6 +115,20 @@ bool PostProcessPass::RegisterFullscreenPipeline(ID3D12Device* device, ID3D12Pip
     graphDescription.Blend = description.BlendState;
     graphDescription.Rasterizer = description.RasterizerState;
     graphDescription.DepthStencil = description.DepthStencilState;
+    // Generic-program validation also examines fields ignored by disabled legacy PSO stages.
+    if (!graphDescription.DepthStencil.DepthEnable)
+    {
+        graphDescription.DepthStencil.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+        graphDescription.DepthStencil.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    }
+    if (!graphDescription.DepthStencil.StencilEnable)
+    {
+        const auto defaults = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+        graphDescription.DepthStencil.StencilReadMask = defaults.StencilReadMask;
+        graphDescription.DepthStencil.StencilWriteMask = defaults.StencilWriteMask;
+        graphDescription.DepthStencil.FrontFace = defaults.FrontFace;
+        graphDescription.DepthStencil.BackFace = defaults.BackFace;
+    }
     graphDescription.RenderTargets.NumRenderTargets = description.NumRenderTargets;
     for (UINT index = 0; index < description.NumRenderTargets; ++index)
     {

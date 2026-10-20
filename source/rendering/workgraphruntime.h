@@ -76,6 +76,7 @@ namespace WorkGraph
         bool Bind(ID3D12GraphicsCommandList* commands, UINT frameIndex,
                   Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList10>& graphCommands);
         Microsoft::WRL::ComPtr<ID3D12StateObject> m_StateObject;
+        Microsoft::WRL::ComPtr<ID3D12Device> m_Device;
         std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, FrameSlots> m_BackingMemory;
         D3D12_PROGRAM_IDENTIFIER m_ProgramIdentifier{};
         UINT m_EntrypointIndex = 0;
@@ -89,6 +90,8 @@ namespace WorkGraph
       public:
         bool Initialize(ID3D12Device* device, ID3D12RootSignature* rootSignature, const wchar_t* file,
                         const wchar_t* entryNode);
+        bool InitializeLibrary(ID3D12Device* device, ID3D12RootSignature* rootSignature, ID3DBlob* library,
+                               const wchar_t* entryNode);
     };
 
     class MeshGraph : public Graph

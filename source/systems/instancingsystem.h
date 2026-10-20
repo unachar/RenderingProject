@@ -112,8 +112,6 @@ class InstancingSystem final : public SystemBase
     Microsoft::WRL::ComPtr<ID3D12Resource> m_IndirectArguments;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_ZeroCountsUpload;
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_CullLodRootSignature;
-    Microsoft::WRL::ComPtr<ID3D12CommandSignature> m_DrawIndexedSignature;
-    ComPtr<ID3D12CommandSignature> m_DrawSignature;
     WorkGraph::ComputeGraph m_CullLodGraph;
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_ArgsRootSignature;
     WorkGraph::ComputeGraph m_ArgsGraph;
@@ -128,4 +126,3 @@ class InstancingSystem final : public SystemBase
 
     bool CreateGpuCullingResources(ID3D12Device* device);
 };
-

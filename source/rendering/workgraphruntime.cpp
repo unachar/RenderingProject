@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "workgraphruntime.h"
 #include "graphicslog.h"
+#include <d3d12sdklayers.h>
 #include <dxcapi.h>
 #include <filesystem>
 
@@ -55,8 +56,8 @@ namespace WorkGraph
             return E_INVALIDARG;
         }
         // Mesh Nodes DXIL belongs to the preview runtime. The retail validator loaded by the
-        // application cannot validate this experimental dialect; retain DXC front-end checks.
-        std::vector<LPCWSTR> arguments{sourceName, L"-T", profile, L"-HV", L"2021", L"-O3", L"-Vd"};
+        // application cannot validate this experimental dialect; use the preview internal validator.
+        std::vector<LPCWSTR> arguments{sourceName, L"-T", profile, L"-HV", L"2021", L"-O3", L"-select-validator", L"internal"};
         if (entry && entry[0])
         {
             arguments.push_back(L"-E");
@@ -84,6 +85,8 @@ namespace WorkGraph
             return result;
         }
         Microsoft::WRL::ComPtr<IDxcResult> compilation;
+        const auto compileBegin = std::chrono::steady_clock::now();
+        WriteGraphicsLog("WorkGraph compile begin: %ls (%ls)\n", sourceName, profile);
         result = compiler.Compiler->Compile(&buffer, arguments.data(), static_cast<UINT>(arguments.size()),
                                             includes.Get(), IID_PPV_ARGS(&compilation));
         if (FAILED(result))
@@ -111,6 +114,10 @@ namespace WorkGraph
         if (SUCCEEDED(result))
         {
             memcpy(bytecode->GetBufferPointer(), object->GetBufferPointer(), object->GetBufferSize());
+            const double milliseconds = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - compileBegin).count();
+            WriteGraphicsLog("WorkGraph compile complete: %ls %.3f ms %zu bytes\n", sourceName,
+                             milliseconds, object->GetBufferSize());
         }
         return result;
     }
@@ -171,6 +178,7 @@ namespace WorkGraph
     void Graph::Reset()
     {
         m_StateObject.Reset();
+        m_Device.Reset();
         for (auto& backing : m_BackingMemory)
         {
             backing.Reset();
@@ -189,10 +197,28 @@ namespace WorkGraph
         {
             return false;
         }
+        WriteGraphicsLog("WorkGraph state creation begin: %ls\n", programName);
         HRESULT result = stateDevice->CreateStateObject(&description, IID_PPV_ARGS(&m_StateObject));
         if (FAILED(result))
         {
             WriteGraphicsLog("WorkGraph %ls CreateStateObject failed: 0x%08lx\n", programName, result);
+            Microsoft::WRL::ComPtr<ID3D12InfoQueue> messages;
+            if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&messages))))
+            {
+                const UINT64 count = messages->GetNumStoredMessagesAllowedByRetrievalFilter();
+                const UINT64 first = count > 12 ? count - 12 : 0;
+                for (UINT64 index = first; index < count; ++index)
+                {
+                    SIZE_T size = 0;
+                    messages->GetMessage(index, nullptr, &size);
+                    std::vector<unsigned char> storage(size);
+                    auto* message = reinterpret_cast<D3D12_MESSAGE*>(storage.data());
+                    if (SUCCEEDED(messages->GetMessage(index, message, &size)))
+                    {
+                        WriteGraphicsLog("WorkGraph D3D12: %s\n", message->pDescription);
+                    }
+                }
+            }
             return false;
         }
         Microsoft::WRL::ComPtr<ID3D12StateObjectProperties1> stateProperties;
@@ -217,32 +243,7 @@ namespace WorkGraph
         D3D12_WORK_GRAPH_MEMORY_REQUIREMENTS requirements{};
         graphProperties->GetWorkGraphMemoryRequirements(graphIndex, &requirements);
         m_BackingMemoryBytes = requirements.MaxSizeInBytes;
-        if (m_BackingMemoryBytes)
-        {
-            D3D12_HEAP_PROPERTIES heap{};
-            heap.Type = D3D12_HEAP_TYPE_DEFAULT;
-            D3D12_RESOURCE_DESC buffer{};
-            buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-            buffer.Width = m_BackingMemoryBytes;
-            buffer.Height = 1;
-            buffer.DepthOrArraySize = 1;
-            buffer.MipLevels = 1;
-            buffer.SampleDesc.Count = 1;
-            buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-            buffer.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-            for (auto& backing : m_BackingMemory)
-            {
-                result = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer,
-                                                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-                                                         IID_PPV_ARGS(&backing));
-                if (FAILED(result))
-                {
-                    Reset();
-                    return false;
-                }
-                backing->SetName(programName);
-            }
-        }
+        m_Device = device;
         WriteGraphicsLog("WorkGraph %ls ready: entry=%u backing=%llu bytes/slot slots=%u\n", programName,
                          m_EntrypointIndex, m_BackingMemoryBytes, FrameSlots);
         return true;
@@ -262,6 +263,20 @@ namespace WorkGraph
         // Reinitialize for each invocation; a frame can dispatch this graph more than once.
         program.WorkGraph.Flags = D3D12_SET_WORK_GRAPH_FLAG_INITIALIZE;
         auto& backing = m_BackingMemory[frameIndex];
+        if (m_BackingMemoryBytes && !backing)
+        {
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            const auto buffer = CD3DX12_RESOURCE_DESC::Buffer(m_BackingMemoryBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            const HRESULT result = m_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer,
+                D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&backing));
+            if (FAILED(result))
+            {
+                WriteGraphicsLog("WorkGraph backing allocation failed: %llu bytes, HRESULT=0x%08lx\n",
+                                 m_BackingMemoryBytes, result);
+                return false;
+            }
+            backing->SetName(L"Work Graph Frame Backing Memory");
+        }
         if (backing)
         {
             D3D12_RESOURCE_BARRIER barrier{};
@@ -290,6 +305,7 @@ namespace WorkGraph
         dispatch.Mode = D3D12_DISPATCH_MODE_NODE_CPU_INPUT;
         dispatch.NodeCPUInput = {m_EntrypointIndex, numRecords, records, recordStride};
         graphCommands->DispatchGraph(&dispatch);
+        RenderProfiler::RecordWorkGraphDispatch();
         ++m_DispatchCount;
         return true;
     }
@@ -306,6 +322,7 @@ namespace WorkGraph
         dispatch.Mode = D3D12_DISPATCH_MODE_NODE_GPU_INPUT;
         dispatch.NodeGPUInput = inputAddress;
         graphCommands->DispatchGraph(&dispatch);
+        RenderProfiler::RecordWorkGraphDispatch();
         ++m_DispatchCount;
         return true;
     }
@@ -319,6 +336,16 @@ namespace WorkGraph
         }
         Microsoft::WRL::ComPtr<ID3DBlob> library;
         if (FAILED(CompileFile(file, nullptr, L"lib_6_9", library)))
+        {
+            return false;
+        }
+        return InitializeLibrary(device, rootSignature, library.Get(), entryNode);
+    }
+
+    bool ComputeGraph::InitializeLibrary(ID3D12Device* device, ID3D12RootSignature* rootSignature,
+                                         ID3DBlob* library, const wchar_t* entryNode)
+    {
+        if (!IsSupported(device) || !rootSignature || !library)
         {
             return false;
         }
@@ -362,7 +389,10 @@ namespace WorkGraph
         subobjects.push_back({D3D12_STATE_SUBOBJECT_TYPE_RASTERIZER, &description.Rasterizer});
         subobjects.push_back({D3D12_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL, &description.DepthStencil});
         subobjects.push_back({D3D12_STATE_SUBOBJECT_TYPE_RENDER_TARGET_FORMATS, &description.RenderTargets});
-        subobjects.push_back({D3D12_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL_FORMAT, &depthFormat});
+        if (description.DepthFormat != DXGI_FORMAT_UNKNOWN)
+        {
+            subobjects.push_back({D3D12_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL_FORMAT, &depthFormat});
+        }
         subobjects.push_back({D3D12_STATE_SUBOBJECT_TYPE_SAMPLE_MASK, &sampleMask});
         subobjects.push_back({D3D12_STATE_SUBOBJECT_TYPE_SAMPLE_DESC, &samples});
         subobjects.push_back({D3D12_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY, &topology});

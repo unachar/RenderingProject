@@ -1,6 +1,7 @@
 #pragma once
 // Procedural Studio: フラクタル・プロシージャルテクスチャ、立体テクスチャ、ボリューム、
-// モデルの CPU 生成処理。D3D に依存しない C++ とし、単体テストやエディター・クラウドレンダラーで共有する。
+// モデルの生成 API。生成は D3D12 Work Graph が担当し、エディターと書き出しには結果を読み戻す。
+// スカラー評価は設定のプレビュー計算と明示的な GPU 出力診断にも使う。
 #include <array>
 #include <cstdint>
 #include <filesystem>

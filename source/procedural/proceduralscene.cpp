@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "proceduralscene.h"
+#include "proceduralworkgraph.h"
 #include "primitivegeometry.h"
 #include "graphicsdevice.h"
 #include "projectmanager.h"
@@ -12,53 +13,6 @@ namespace
 {
     bool g_LiveUpdate = true;
 
-    vector<Vertex> BuildTerrainVertices(const Procedural::TerrainSettings& settings)
-    {
-        const int resolution = clamp(settings.Resolution, 4, 256);
-        const int side = resolution + 1;
-        const float size = clamp(settings.Size, 1.0f, 500.0f);
-        const float spacing = size / resolution;
-        const auto heights = Procedural::BuildHeightMap(settings);
-        vector<Vertex> lattice(heights.size());
-        for (int row = 0; row < side; ++row)
-        {
-            for (int column = 0; column < side; ++column)
-            {
-                const int left = (max)(column - 1, 0);
-                const int right = (min)(column + 1, resolution);
-                const int lower = (max)(row - 1, 0);
-                const int upper = (min)(row + 1, resolution);
-                const float slopeX =
-                    (heights[row * side + right] - heights[row * side + left]) / ((right - left) * spacing);
-                const float slopeZ =
-                    (heights[upper * side + column] - heights[lower * side + column]) / ((upper - lower) * spacing);
-                Vertex& vertex = lattice[row * side + column];
-                vertex.Pos = {column * spacing - size * 0.5f, heights[row * side + column],
-                              row * spacing - size * 0.5f};
-                XMStoreFloat3(&vertex.Normal, XMVector3Normalize(XMVectorSet(-slopeX, 1.0f, -slopeZ, 0.0f)));
-                vertex.Tex = {static_cast<float>(column) / resolution, static_cast<float>(row) / resolution};
-                const float rock = clamp((1.0f - vertex.Normal.y) * 3.0f, 0.0f, 1.0f);
-                vertex.Color = {0.16f + rock * 0.32f, 0.36f + rock * 0.10f, 0.11f + rock * 0.31f, 1.0f};
-            }
-        }
-        vector<Vertex> vertices;
-        vertices.reserve(static_cast<size_t>(resolution) * resolution * 6);
-        for (int row = 0; row < resolution; ++row)
-        {
-            for (int column = 0; column < resolution; ++column)
-            {
-                const int first = row * side + column;
-                // レンダラーの左手座標系では時計回り。
-                vertices.push_back(lattice[first]);
-                vertices.push_back(lattice[first + side]);
-                vertices.push_back(lattice[first + 1]);
-                vertices.push_back(lattice[first + 1]);
-                vertices.push_back(lattice[first + side]);
-                vertices.push_back(lattice[first + side + 1]);
-            }
-        }
-        return vertices;
-    }
 }
 
 bool ProceduralScene::GetLiveUpdate()
@@ -77,6 +31,16 @@ EntityID ProceduralScene::GenerateTerrain(const Procedural::TerrainSettings& set
         Registry::IsAlive(target) && ComponentManager::HasComponent<ProceduralTerrainComponent>(target);
     if (replace && !GraphicsDevice::WaitForGpuIdle())
     {
+        return g_kINVALID_ENTITY;
+    }
+    vector<Vertex> vertices;
+    try
+    {
+        vertices = ProceduralWorkGraph::BuildTerrainVertices(settings);
+    }
+    catch (const std::exception& error)
+    {
+        Debug::Log("Procedural terrain generation failed: %s\n", error.what());
         return g_kINVALID_ENTITY;
     }
     Entity entity(target);
@@ -99,7 +63,6 @@ EntityID ProceduralScene::GenerateTerrain(const Procedural::TerrainSettings& set
         material.ShaderClass = ShaderClass::PBR;
         material.UseTexture = false;
     }
-    const auto vertices = BuildTerrainVertices(settings);
     if (!PrimitiveGeometry::UploadVertices(entity.GetID(), vertices))
     {
         if (!replace)
@@ -119,6 +82,8 @@ void ProceduralScene::UpdateMotion(float deltaTime)
     {
         return;
     }
+    std::vector<EntityID> entities;
+    std::vector<ProceduralWorkGraph::MotionInput> samples;
     for (EntityID entity : World::GetView<ProceduralMotionComponent, TransformComponent>())
     {
         auto& motion = ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(entity);
@@ -139,9 +104,18 @@ void ProceduralScene::UpdateMotion(float deltaTime)
         {
             continue;
         }
-        const auto offset =
-            Procedural::SampleMotion(motion.Method, motion.Time, motion.Speed,
-                                     {motion.Amplitude.x, motion.Amplitude.y, motion.Amplitude.z}, motion.Seed);
+        entities.push_back(entity);
+        samples.push_back({motion.Time, motion.Speed, static_cast<uint32_t>(motion.Method),
+                           {motion.Amplitude.x, motion.Amplitude.y, motion.Amplitude.z}, motion.Seed});
+    }
+    // Physics and editor consumers require this frame's authoritative positions.
+    // Evaluate the entire batch on the GPU, then retire one fence before applying it.
+    const auto offsets = ProceduralWorkGraph::SampleMotionBatch(samples);
+    for (size_t index = 0; index < entities.size(); ++index)
+    {
+        const EntityID entity = entities[index];
+        const auto& motion = ComponentManager::GetComponentUnchecked<ProceduralMotionComponent>(entity);
+        const auto& offset = offsets[index];
         auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
         transform.Position = {motion.Origin.x + offset.X, motion.Origin.y + offset.Y, motion.Origin.z + offset.Z};
         transform.IsDirty = true;

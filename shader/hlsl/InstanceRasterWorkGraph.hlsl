@@ -39,6 +39,11 @@ struct InstanceMeshRecord
     uint TotalGroups;
 };
 
+struct InstancePrimitive
+{
+    uint PrimitiveID : SV_PrimitiveID;
+};
+
 [Shader("node")]
 [NodeLaunch("broadcasting")]
 [NodeIsProgramEntry]
@@ -94,7 +99,8 @@ void InstanceMeshMain(
     uint3 groupId : SV_GroupID,
     DispatchNodeInputRecord<InstanceMeshRecord> input,
     out vertices InstanceMeshVertex vertices[63],
-    out indices uint3 triangles[21])
+    out indices uint3 triangles[21],
+    out primitives InstancePrimitive primitiveData[21])
 {
     InstanceMeshRecord record = input.Get();
     uint groupIndex = record.FirstGroup + groupId.y * record.DispatchGrid.x + groupId.x;
@@ -126,5 +132,6 @@ void InstanceMeshMain(
     if (threadIndex < triangleCount)
     {
         triangles[threadIndex] = uint3(threadIndex * 3, threadIndex * 3 + 1, threadIndex * 3 + 2);
+        primitiveData[threadIndex].PrimitiveID = firstTriangle + threadIndex;
     }
 }

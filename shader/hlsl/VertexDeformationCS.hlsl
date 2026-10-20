@@ -104,7 +104,8 @@ float3 DeformNormal(float3 position, float3 normal, MotionData motion)
     return dot(transformed, transformed) > 1e-16f ? normalize(transformed) : normal;
 }
 
-[numthreads(64, 1, 1)] void main(uint3 group : SV_GroupID, uint thread : SV_GroupIndex) {
+void DeformVertex(uint3 group, uint thread)
+{
     uint vertex = (group.x + group.y * 65535u) * 64u + thread;
     if (vertex >= Geometry.x)
     {
@@ -124,3 +125,11 @@ float3 DeformNormal(float3 position, float3 normal, MotionData motion)
     CurrentVertices.Store4(address + 32, color);
     PreviousVertices.Store4(address + 32, color);
 }
+
+#ifndef VERTEX_DEFORMATION_WORK_GRAPH
+[numthreads(64, 1, 1)]
+void main(uint3 group : SV_GroupID, uint thread : SV_GroupIndex)
+{
+    DeformVertex(group, thread);
+}
+#endif

@@ -431,7 +431,9 @@ bool InstancingSystem::CanInstance(EntityID entity)
                         ComponentManager::GetComponentUnchecked<LODComponent>(entity).UseLOD;
     // インポスターの置き換えはこの経路で行う。
     const bool useImpostor = ImpostorRenderer::WantsImpostor(entity);
-    if (!useInstancing && !useLod && !useImpostor)
+    // Compatible opaque objects use Mesh Nodes even without an explicit instancing component.
+    const bool useMeshNodes = WorkGraph::IsSupported(GraphicsDevice::GetDevice(), true);
+    if (!useInstancing && !useLod && !useImpostor && !useMeshNodes)
     {
         return false;
     }
@@ -1174,7 +1176,7 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
         batch.Kind = InstanceKind::Sprite3D;
         batch.Pso = pso;
         batch.VertexBuffer = sprite.VertexBufferView;
-    batch.VertexResource = sprite.VertexBuffer.Get();
+        batch.VertexResource = sprite.VertexBuffer.Get();
         batch.VertexCount = sprite.VertexCount;
         batch.LodDrawCounts = {sprite.VertexCount, sprite.VertexCount, sprite.VertexCount};
         batch.TextureIndex = texture;
@@ -1259,7 +1261,7 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
         batch.Kind = InstanceKind::Mesh;
         batch.Pso = pso;
         batch.VertexBuffer = mesh.VertexBufferView;
-    batch.VertexResource = mesh.VertexBuffer.Get();
+        batch.VertexResource = mesh.VertexBuffer.Get();
         batch.VertexCount = mesh.VertexCount;
         batch.LodDrawCounts = {mesh.VertexCount, mesh.VertexCount, mesh.VertexCount};
         batch.TextureIndex = texture;
@@ -1359,22 +1361,22 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
             batch.Kind = InstanceKind::AnimatedMesh;
             batch.Pso = pso;
             batch.VertexBuffer = mesh.VertexBufferView;
-    batch.VertexResource = mesh.VertexBuffer.Get();
+            batch.VertexResource = mesh.VertexBuffer.Get();
             batch.VertexCount = mesh.VertexCount;
             batch.IndexBuffer = mesh.IndexBufferView;
             batch.IndexCount = mesh.IndexCount;
             batch.LodIndexBuffers[0] = mesh.IndexBufferView;
-    batch.LodIndexResources[0] = mesh.IndexBuffer.Get();
+            batch.LodIndexResources[0] = mesh.IndexBuffer.Get();
             batch.LodDrawCounts[0] = mesh.IndexCount;
             batch.AvailableLodCount = 1;
             for (UINT lod = 1; lod < MeshData::LodCount; ++lod)
             {
                 batch.LodIndexBuffers[lod] = mesh.GetLodIndexBufferView(lod);
-        batch.LodIndexResources[lod] = mesh.IndexBuffer.Get();
-        if (mesh.LodIndexCounts[lod - 1] != 0)
-        {
-            batch.LodIndexResources[lod] = mesh.LodIndexBuffers[lod - 1].Get();
-        }
+                batch.LodIndexResources[lod] = mesh.IndexBuffer.Get();
+                if (mesh.LodIndexCounts[lod - 1] != 0)
+                {
+                    batch.LodIndexResources[lod] = mesh.LodIndexBuffers[lod - 1].Get();
+                }
                 batch.LodDrawCounts[lod] = mesh.GetLodIndexCount(lod);
                 if (mesh.LodIndexCounts[lod - 1] != 0)
                 {
@@ -1495,22 +1497,22 @@ void InstancingSystem::BuildMainBatches(DrawContext& ctx, BatchBuilder& builder)
             batch.Kind = InstanceKind::StaticMesh;
             batch.Pso = pso;
             batch.VertexBuffer = mesh.VertexBufferView;
-    batch.VertexResource = mesh.VertexBuffer.Get();
+            batch.VertexResource = mesh.VertexBuffer.Get();
             batch.VertexCount = mesh.VertexCount;
             batch.IndexBuffer = mesh.IndexBufferView;
             batch.IndexCount = mesh.IndexCount;
             batch.LodIndexBuffers[0] = mesh.IndexBufferView;
-    batch.LodIndexResources[0] = mesh.IndexBuffer.Get();
+            batch.LodIndexResources[0] = mesh.IndexBuffer.Get();
             batch.LodDrawCounts[0] = mesh.IndexCount;
             for (UINT lod = 1; lod < min(StaticMeshData::LodCount, static_cast<UINT>(batch.LodIndexBuffers.size()));
                  ++lod)
             {
                 batch.LodIndexBuffers[lod] = mesh.GetLodIndexBufferView(lod);
-        batch.LodIndexResources[lod] = mesh.IndexBuffer.Get();
-        if (mesh.LodIndexCounts[lod - 1] != 0)
-        {
-            batch.LodIndexResources[lod] = mesh.LodIndexBuffers[lod - 1].Get();
-        }
+                batch.LodIndexResources[lod] = mesh.IndexBuffer.Get();
+                if (mesh.LodIndexCounts[lod - 1] != 0)
+                {
+                    batch.LodIndexResources[lod] = mesh.LodIndexBuffers[lod - 1].Get();
+                }
                 batch.LodDrawCounts[lod] = mesh.GetLodIndexCount(lod);
                 if (mesh.LodIndexCounts[lod - 1] != 0)
                 {
@@ -1843,7 +1845,7 @@ bool InstancingSystem::CullBatchesOnGpu(const DrawContext& ctx, vector<InstanceB
         m_CullLodGraph.DispatchCpu(list, ctx.frameIndex, dispatchGrid, sizeof(dispatchGrid));
     }
 
-    // 4. 件数 → ExecuteIndirect の引数（GPU）。
+    // 4. LOD ごとの描画数とインスタンス数を Mesh Graph の入力へ書く。
     {
         D3D12_RESOURCE_BARRIER barriers[2] = {
             CD3DX12_RESOURCE_BARRIER::Transition(m_LodCounts.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
@@ -1876,7 +1878,7 @@ bool InstancingSystem::CullBatchesOnGpu(const DrawContext& ctx, vector<InstanceB
     {
         D3D12_RESOURCE_BARRIER barriers[4] = {
             CD3DX12_RESOURCE_BARRIER::Transition(m_IndirectArguments.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                                                 D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT),
+                                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
             CD3DX12_RESOURCE_BARRIER::Transition(m_LodInstances[0].Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                                  D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
             CD3DX12_RESOURCE_BARRIER::Transition(m_LodInstances[1].Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
@@ -1891,50 +1893,102 @@ bool InstancingSystem::CullBatchesOnGpu(const DrawContext& ctx, vector<InstanceB
 void InstancingSystem::DrawCulledBatch(const DrawContext& ctx, const InstanceBatch& batch,
                                        const GpuBatchRecord& record, const function<void()>& bindGraphics)
 {
-    if (!record.Valid)
+    if (!record.Valid || !m_MappedRasterGraphInputs || !batch.VertexResource)
     {
         return;
     }
+    const auto graph = g_InstanceRasterGraphs.find(batch.Pso);
+    if (graph == g_InstanceRasterGraphs.end())
+    {
+        WriteGraphicsLog("Instancing Mesh Graph: requested batch pipeline is not registered.\n");
+        return;
+    }
+
+    auto transitionGeometry = [&](ID3D12Resource* resource, D3D12_RESOURCE_STATES originalState,
+                                    bool shaderRead) {
+        if (!resource)
+        {
+            return;
+        }
+        D3D12_HEAP_PROPERTIES heap{};
+        D3D12_HEAP_FLAGS heapFlags{};
+        if (SUCCEEDED(resource->GetHeapProperties(&heap, &heapFlags)) && heap.Type == D3D12_HEAP_TYPE_UPLOAD)
+        {
+            return;
+        }
+        D3D12_RESOURCE_STATES before = originalState;
+        D3D12_RESOURCE_STATES after = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        if (!shaderRead)
+        {
+            before = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            after = originalState;
+        }
+        const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, before, after);
+        ctx.commandList->ResourceBarrier(1, &barrier);
+    };
+
+    bindGraphics();
+    transitionGeometry(batch.VertexResource, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, true);
+    ctx.commandList->SetGraphicsRootShaderResourceView(11, batch.VertexBuffer.BufferLocation);
     const UINT lodCount = min(max(batch.AvailableLodCount, 1u), 3u);
-    bool bound = false;
     for (UINT lod = 0; lod < lodCount; ++lod)
     {
         if (batch.LodDrawCounts[lod] == 0)
         {
             continue;
         }
-        if (!bound)
+        const bool indexed = batch.IndexCount != 0;
+        ID3D12Resource* indexResource = batch.LodIndexResources[lod];
+        if (indexed && !indexResource)
         {
-            bindGraphics();
-            ctx.commandList->IASetVertexBuffers(0, 1, &batch.VertexBuffer);
-            ctx.commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            bound = true;
+            WriteGraphicsLog("Instancing Mesh Graph: indexed batch has no source resource.\n");
+            continue;
         }
-        ctx.commandList->SetGraphicsRootShaderResourceView(
-            9, m_LodInstances[lod]->GetGPUVirtualAddress() + static_cast<UINT64>(record.FirstInput) * sizeof(XMFLOAT4X4));
-        const UINT64 argumentOffset =
-            (static_cast<UINT64>(record.BatchIndex) * 3 + lod) * sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
-        // インスタンス数は GPU が書いた値（見えない LOD は 0 件で何も描かれない）。
-        if (batch.IndexCount != 0)
+        if (indexed)
         {
-            ctx.commandList->IASetIndexBuffer(&batch.LodIndexBuffers[lod]);
-            ctx.commandList->ExecuteIndirect(m_DrawIndexedSignature.Get(), 1, m_IndirectArguments.Get(),
-                                             argumentOffset, nullptr, 0);
+            transitionGeometry(indexResource, D3D12_RESOURCE_STATE_INDEX_BUFFER, true);
+            ctx.commandList->SetGraphicsRootShaderResourceView(12, batch.LodIndexBuffers[lod].BufferLocation);
         }
         else
         {
-            ctx.commandList->IASetIndexBuffer(nullptr);
-            ctx.commandList->ExecuteIndirect(m_DrawSignature.Get(), 1, m_IndirectArguments.Get(), argumentOffset,
-                                             nullptr, 0);
+            ctx.commandList->SetGraphicsRootShaderResourceView(12, batch.VertexBuffer.BufferLocation);
+        }
+        UINT indexStride = 4;
+        if (batch.LodIndexBuffers[lod].Format == DXGI_FORMAT_R16_UINT)
+        {
+            indexStride = 2;
+        }
+        const UINT geometry[4] = {batch.VertexBuffer.StrideInBytes, indexStride, static_cast<UINT>(indexed), 0};
+        ctx.commandList->SetGraphicsRoot32BitConstants(13, 4, geometry, 0);
+        ctx.commandList->SetGraphicsRootShaderResourceView(
+            9, m_LodInstances[lod]->GetGPUVirtualAddress() + static_cast<UINT64>(record.FirstInput) * sizeof(XMFLOAT4X4));
+
+        const UINT inputIndex = (ctx.frameIndex * kMaxBatchesPerFrame + record.BatchIndex) * 3 + lod;
+        D3D12_NODE_GPU_INPUT& graphInput = m_MappedRasterGraphInputs[inputIndex];
+        graphInput.EntrypointIndex = graph->second->EntrypointIndex();
+        graphInput.NumRecords = 1;
+        graphInput.Records.StartAddress = m_IndirectArguments->GetGPUVirtualAddress() +
+            (static_cast<UINT64>(record.BatchIndex) * 3 + lod) * sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
+        graphInput.Records.StrideInBytes = sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
+        const D3D12_GPU_VIRTUAL_ADDRESS inputAddress = m_RasterGraphInputs->GetGPUVirtualAddress() +
+            static_cast<UINT64>(inputIndex) * sizeof(D3D12_NODE_GPU_INPUT);
+        if (!graph->second->DispatchGpu(ctx.commandList, ctx.frameIndex, inputAddress))
+        {
+            WriteGraphicsLog("Instancing Mesh Graph: GPU record dispatch failed.\n");
+        }
+        if (indexed)
+        {
+            transitionGeometry(indexResource, D3D12_RESOURCE_STATE_INDEX_BUFFER, false);
         }
     }
+    transitionGeometry(batch.VertexResource, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, false);
 }
 
 void InstancingSystem::FinishGpuCulling(const DrawContext& ctx)
 {
     // 次の Draw 呼び出しが COMMON から始められるよう戻す。
     D3D12_RESOURCE_BARRIER barriers[5] = {
-        CD3DX12_RESOURCE_BARRIER::Transition(m_IndirectArguments.Get(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
+        CD3DX12_RESOURCE_BARRIER::Transition(m_IndirectArguments.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                                              D3D12_RESOURCE_STATE_COMMON),
         CD3DX12_RESOURCE_BARRIER::Transition(m_LodCounts.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                                              D3D12_RESOURCE_STATE_COMMON),
@@ -1990,4 +2044,3 @@ void InstancingSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         ImpostorRenderer::Flush(ctx.commandList, ctx.frameIndex);
     }
 }
-

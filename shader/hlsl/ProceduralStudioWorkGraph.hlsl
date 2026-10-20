@@ -1,3 +1,7 @@
+// Compile one authoring program at a time: unrelated kernels must not enter driver/GBV compilation.
+#ifndef PROCEDURAL_SPECIALIZED_MODE
+#define PROCEDURAL_SPECIALIZED_MODE -1
+#endif
 struct NoiseParams
 {
     uint BasisType;
@@ -43,13 +47,23 @@ struct TextureParams
 static const float kPi = 3.14159265358979323846f;
 ByteAddressBuffer Parameters : register(t0);
 ByteAddressBuffer SourcePixels : register(t1);
-RWByteAddressBuffer Output : register(u0);
+globallycoherent RWByteAddressBuffer Output : register(u0);
 
 TextureParams LoadParameters()
 {
     TextureParams p;
+#if PROCEDURAL_SPECIALIZED_MODE == 6
+    p.Kind = 7; // The water-surface model always uses FractalWater.
+#elif PROCEDURAL_SPECIALIZED_MODE == 0 && defined(PROCEDURAL_TEXTURE_KIND)
+    p.Kind = PROCEDURAL_TEXTURE_KIND;
+#else
     p.Kind = Parameters.Load(16);
+#endif
+#if PROCEDURAL_SPECIALIZED_MODE == 0 && defined(PROCEDURAL_TEXTURE_OUTPUT)
+    p.Output = PROCEDURAL_TEXTURE_OUTPUT;
+#else
     p.Output = Parameters.Load(20);
+#endif
     p.Noise.BasisType = Parameters.Load(24);
     p.Noise.Fractal = Parameters.Load(28);
     p.Noise.Seed = Parameters.Load(32);
@@ -62,7 +76,11 @@ TextureParams LoadParameters()
     p.ColorA = asfloat(Parameters.Load3(60));
     p.ColorB = asfloat(Parameters.Load3(72));
     p.ColorC = asfloat(Parameters.Load3(84));
+#if PROCEDURAL_SPECIALIZED_MODE == 6
+    p.Tileable = false;
+#else
     p.Tileable = Parameters.Load(96);
+#endif
     p.Contrast = asfloat(Parameters.Load(100));
     p.Bias = asfloat(Parameters.Load(104));
     p.Turbulence = asfloat(Parameters.Load(108));
@@ -134,6 +152,17 @@ int Wrap(int value, int period)
     return m < 0 ? m + period : m;
 }
 
+// std::round rounds ties away from zero; HLSL round uses ties to even.
+float RoundAway(float value)
+{
+    if(value<0)
+    {
+        return ceil(value-0.5);
+    }
+    return floor(value+0.5);
+}
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 0 || PROCEDURAL_SPECIALIZED_MODE == 1 || PROCEDURAL_SPECIALIZED_MODE == 2 || PROCEDURAL_SPECIALIZED_MODE == 5 || PROCEDURAL_SPECIALIZED_MODE == 6 || PROCEDURAL_SPECIALIZED_MODE == 7 || PROCEDURAL_SPECIALIZED_MODE == 12 || PROCEDURAL_SPECIALIZED_MODE == 17
 float GradientDot(uint h, float x, float y, float z)
 {
     // 立方体の辺方向に沿う 12 個の勾配
@@ -280,14 +309,14 @@ float FractalSum(NoiseParams params, float x, float y, float z, bool tileable)
 {
     const int octaves = clamp(params.Octaves, 1, 12);
     float frequency = max(params.Frequency, 0.001f);
-    const float lacunarity = tileable ? max(1.0f, round(params.Lacunarity)) : params.Lacunarity;
+    const float lacunarity = tileable ? max(1.0f, RoundAway(params.Lacunarity)) : params.Lacunarity;
     float amplitude = 1;
     float sum = 0;
     float norm = 0;
     float weight = 1;
     for (int o = 0; o < octaves; ++o)
     {
-        const int period = tileable ? max(1, int(round(frequency))) : 0;
+        const int period = tileable ? max(1, int(RoundAway(frequency))) : 0;
         const float f = tileable ? float(period) : frequency;
         const uint seed = Hash(params.Seed + uint(o) * 1013u);
         float n = BasisNoise(params.BasisType, x * f, y * f, z * f, seed, period);
@@ -354,20 +383,20 @@ float FractalNoise(NoiseParams params, float x, float y, float z, bool tileable)
 float Escape(TextureParams p, float u, float v, bool julia)
 {
     const float scale = 3.0f / max(p.Zoom, 1e-4f);
-    float zx = julia ? (u - 0.5) * scale : 0;
-    float zy = julia ? (v - 0.5) * scale : 0;
-    const float cx = julia ? p.JuliaX : p.CenterX + (u - 0.5) * scale;
-    const float cy = julia ? p.JuliaY : p.CenterY + (v - 0.5) * scale;
+    double zx = julia ? (double(u) - 0.5) * scale : 0;
+    double zy = julia ? (double(v) - 0.5) * scale : 0;
+    const double cx = julia ? double(p.JuliaX) : double(p.CenterX) + (double(u) - 0.5) * scale;
+    const double cy = julia ? double(p.JuliaY) : double(p.CenterY) + (double(v) - 0.5) * scale;
     if (julia)
     {
-        zx += p.CenterX + 0.5;
+        zx += double(p.CenterX) + 0.5;
         zy += p.CenterY;
     }
     const int limit = clamp(p.Iterations, 8, 4000);
     int i = 0;
     for (; i < limit && zx * zx + zy * zy < 256.0; ++i)
     {
-        const float t = zx * zx - zy * zy + cx;
+        const double t = zx * zx - zy * zy + cx;
         zy = 2 * zx * zy + cy;
         zx = t;
     }
@@ -376,7 +405,7 @@ float Escape(TextureParams p, float u, float v, bool julia)
         return 0;
     }
     // 滑らかな反復回数。
-    const float smoothing = log(log(sqrt(zx * zx + zy * zy)) / log(2.0)) / log(2.0);
+    const float smoothing = log(log(sqrt(float(zx * zx + zy * zy))) / log(2.0)) / log(2.0);
     return Saturate(float((i + 1 - smoothing) / limit) * 4.0f);
 }
 
@@ -403,7 +432,7 @@ float TextureScalar(TextureParams p, float x, float y, float z, bool solid)
         case 1: {
             const float n = FractalNoise(p.Noise, x, y, z, tile);
             // 縞の周波数を整数にし、タイル化したパターンの周期性を保つ。
-            value = 0.5f + 0.5f * sin((x * round(p.RingCount) + n * p.Turbulence) * 2 * kPi);
+            value = 0.5f + 0.5f * sin((x * RoundAway(p.RingCount) + n * p.Turbulence) * 2 * kPi);
             value = pow(value, 0.6f);
             break;
         }
@@ -429,7 +458,7 @@ float TextureScalar(TextureParams p, float x, float y, float z, bool solid)
         case 4: {
             float f1;
             float f2;
-            const int period = tile ? max(1, int(round(p.Noise.Frequency))) : 0;
+            const int period = tile ? max(1, int(RoundAway(p.Noise.Frequency))) : 0;
             const float f = tile ? float(period) : p.Noise.Frequency;
             Worley(x * f, y * f, z * f, p.Noise.Seed, period, f1, f2);
             value = Saturate((f2 - f1) * 3.0f);
@@ -523,6 +552,9 @@ float3 TextureColor(TextureParams p, float x, float y, float z, bool solid)
     }
 }
 
+
+#endif
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 3
 float4 SampleImage(float2 uv)
 {
     int width = Parameters.Load(172);
@@ -546,6 +578,9 @@ float4 SampleImage(float2 uv)
     return lerp(lerp(samples[0], samples[1], weight.x), lerp(samples[2], samples[3], weight.x), weight.y);
 }
 
+
+#endif
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 4 || PROCEDURAL_SPECIALIZED_MODE == 15 || PROCEDURAL_SPECIALIZED_MODE == 16
 struct BasicNoiseSettings
 {
     uint Method;
@@ -627,7 +662,7 @@ float LatticeNoise(float x, float y, uint seed, bool useGradient)
     const int cellY = int(floor(y));
     const float localX = x - cellX;
     const float localY = y - cellY;
-    float corners[4] = {0,0,0,0};
+    float corners[4] = {0, 0, 0, 0};
     for (int row = 0; row < 2; ++row)
     {
         for (int column = 0; column < 2; ++column)
@@ -769,101 +804,185 @@ float TerrainHeight(uint index, uint side)
 }
 
 
+#endif
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 5 || PROCEDURAL_SPECIALIZED_MODE == 6 || PROCEDURAL_SPECIALIZED_MODE == 7
 float3 GridPosition(uint vertex, uint resolution, uint mode, TextureParams p)
 {
-    float2 uv=float2(vertex%(resolution+1),vertex/(resolution+1))/resolution;
-    float height=0;
-    if(mode==5)
+    float2 uv = float2(vertex % (resolution + 1), vertex / (resolution + 1)) / resolution;
+    float height = 0;
+    if (mode == 5)
     {
-        height=FractalNoise(p.Noise,uv.x,uv.y,0.37,false)*p.Turbulence;
+        height = FractalNoise(p.Noise, uv.x, uv.y, 0.37, false) * p.Turbulence;
     }
-    else if(mode==6)
+    else if (mode == 6)
     {
-        height=(TextureScalar(p,uv.x,uv.y,0,false)-0.5)*2*p.Coverage;
+        height = (TextureScalar(p, uv.x, uv.y, 0, false) - 0.5) * 2 * p.Coverage;
     }
-    return float3((uv.x-0.5)*p.RingCount,height,(uv.y-0.5)*p.RingCount);
+    return float3((uv.x - 0.5) * p.RingCount, height, (uv.y - 0.5) * p.RingCount);
 }
-float3 GridTerrainColor(float height,float slope)
+
+float3 GridTerrainColor(float height, float slope)
 {
-    float3 rock=float3(0.42,0.38,0.34);
-    float3 color=lerp(float3(0.76,0.70,0.50),float3(0.22,0.45,0.16),Smooth(0.15,0.25,height));
-    color=lerp(color,rock,Smooth(0.55,0.7,height));
-    color=lerp(color,float3(0.95,0.96,0.98),Smooth(0.78,0.88,height));
-    return lerp(color,rock,Smooth(0.55,0.8,slope)*(1-Smooth(0.85,0.95,height)));
+    float3 rock = float3(0.42, 0.38, 0.34);
+    float3 color = lerp(float3(0.76, 0.70, 0.50), float3(0.22, 0.45, 0.16), Smooth(0.15, 0.25, height));
+    color = lerp(color, rock, Smooth(0.55, 0.7, height));
+    color = lerp(color, float3(0.95, 0.96, 0.98), Smooth(0.78, 0.88, height));
+    return lerp(color, rock, Smooth(0.55, 0.8, slope) * (1 - Smooth(0.85, 0.95, height)));
 }
-void GenerateGridVertex(uint index,uint mode,TextureParams p)
+
+void GenerateGridVertex(uint index, uint mode, TextureParams p)
 {
-    uint resolution=Parameters.Load(172);
-    uint side=resolution+1;
-    uint vertexCount=side*side;
-    uint indexCount=resolution*resolution*6;
-    if(index<indexCount)
+    uint resolution = Parameters.Load(172);
+    uint side = resolution + 1;
+    uint vertexCount = side * side;
+    uint indexCount = resolution * resolution * 6;
+    if (index < indexCount)
     {
-        uint cell=index/6;
-        uint a=(cell/resolution)*side+cell%resolution;
-        uint corners[6]={a,a+side,a+1,a+1,a+side,a+side+1};
-        Output.Store(vertexCount*44+index*4,corners[index%6]);
+        uint cell = index / 6;
+        uint a = (cell / resolution) * side + cell % resolution;
+        uint corners[6] = {a, a + side, a + 1, a + 1, a + side, a + side + 1};
+        Output.Store(vertexCount * 44 + index * 4, corners[index % 6]);
     }
-    if(index>=vertexCount)
+    if (index >= vertexCount)
     {
         return;
     }
-    float3 position=GridPosition(index,resolution,mode,p);
-    float3 normal=0;
-    int2 cell=int2(index%side,index/side);
-    for(int row=max(cell.y-1,0);row<=min(cell.y,int(resolution)-1);++row)
+    float3 position = GridPosition(index, resolution, mode, p);
+    float3 normal = 0;
+    int2 cell = int2(index % side, index / side);
+    for (int row = max(cell.y - 1, 0); row <= min(cell.y, int(resolution) - 1); ++row)
     {
-        for(int column=max(cell.x-1,0);column<=min(cell.x,int(resolution)-1);++column)
+        for (int column = max(cell.x - 1, 0); column <= min(cell.x, int(resolution) - 1); ++column)
         {
-            uint a=row*side+column;
-            uint triangles[6]={a,a+side,a+1,a+1,a+side,a+side+1};
-            for(uint faceIndex=0;faceIndex<2;++faceIndex)
+            uint a = row * side + column;
+            uint triangles[6] = {a, a + side, a + 1, a + 1, a + side, a + side + 1};
+            for (uint faceIndex = 0; faceIndex < 2; ++faceIndex)
             {
-                uint3 vertices=uint3(triangles[faceIndex*3],triangles[faceIndex*3+1],triangles[faceIndex*3+2]);
-                if(any(vertices==index))
+                uint3 vertices =
+                    uint3(triangles[faceIndex * 3], triangles[faceIndex * 3 + 1], triangles[faceIndex * 3 + 2]);
+                if (any(vertices == index))
                 {
-                    float3 first=GridPosition(vertices.x,resolution,mode,p);
-                    float3 second=GridPosition(vertices.y,resolution,mode,p);
-                    float3 third=GridPosition(vertices.z,resolution,mode,p);
-                    normal+=cross(second-first,third-first);
+                    float3 first = GridPosition(vertices.x, resolution, mode, p);
+                    float3 second = GridPosition(vertices.y, resolution, mode, p);
+                    float3 third = GridPosition(vertices.z, resolution, mode, p);
+                    normal += cross(second - first, third - first);
                 }
             }
         }
     }
-    if(length(normal)>1e-12)
+    if (length(normal) > 1e-12)
     {
-        normal=normalize(normal);
+        normal = normalize(normal);
     }
     else
     {
-        normal=float3(0,1,0);
+        normal = float3(0, 1, 0);
     }
-    float3 color=1;
-    if(mode==5 && p.Output!=0)
+    float3 color = 1;
+    if (mode == 5 && p.Output != 0)
     {
-        color=GridTerrainColor(position.y/max(p.Turbulence,1e-3),(1-abs(normal.y))*2.5);
+        color = GridTerrainColor(position.y / max(p.Turbulence, 1e-3), (1 - abs(normal.y)) * 2.5);
     }
-    else if(mode==6)
+    else if (mode == 6)
     {
-        float weight=saturate(position.y/max(p.Coverage,1e-3)*0.5+0.5);
-        color=lerp(float3(0.02,0.12,0.2),float3(0.1,0.4,0.5),weight);
+        float weight = saturate(position.y / max(p.Coverage, 1e-3) * 0.5 + 0.5);
+        color = lerp(float3(0.02, 0.12, 0.2), float3(0.1, 0.4, 0.5), weight);
     }
-    uint offset=index*44;
-    Output.Store3(offset,asuint(position));Output.Store3(offset+12,asuint(normal));
-    Output.Store3(offset+24,asuint(color));
-    Output.Store2(offset+36,asuint(float2(cell)/resolution));
+    uint offset = index * 44;
+    Output.Store3(offset, asuint(position));
+    Output.Store3(offset + 12, asuint(normal));
+    Output.Store3(offset + 24, asuint(color));
+    Output.Store2(offset + 36, asuint(float2(cell) / resolution));
 }
+
+
+#endif
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 8 || PROCEDURAL_SPECIALIZED_MODE == 9 || PROCEDURAL_SPECIALIZED_MODE == 10 || PROCEDURAL_SPECIALIZED_MODE == 11 || PROCEDURAL_SPECIALIZED_MODE == 12 || PROCEDURAL_SPECIALIZED_MODE == 13 || PROCEDURAL_SPECIALIZED_MODE == 14
 #include "ProceduralModelWorkGraph.hlsli"
+#endif
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 12
 #include "ProceduralRockWorkGraph.hlsli"
+#endif
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 13 || PROCEDURAL_SPECIALIZED_MODE == 14
+#include "ProceduralTreeWorkGraph.hlsli"
+#endif
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 16
+#include "ProceduralMotionWorkGraph.hlsli"
+#endif
+
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 15
+void GenerateSceneTerrainVertex(uint index)
+{
+    uint resolution=clamp(int(SourcePixels.Load(192)),4,256);
+    uint side=resolution+1;
+    uint cell=index/6;
+    uint first=(cell/resolution)*side+cell%resolution;
+    uint corners[6]={first,first+side,first+1,first+1,first+side,first+side+1};
+    uint vertex=corners[index%6];
+    uint column=vertex%side;
+    uint row=vertex/side;
+    uint left=max(int(column)-1,0);
+    uint right=min(column+1,resolution);
+    uint lower=max(int(row)-1,0);
+    uint upper=min(row+1,resolution);
+    float size=clamp(asfloat(SourcePixels.Load(196)),1.0,500.0);
+    float spacing=size/resolution;
+    float slopeX=(TerrainHeight(row*side+right,side)-TerrainHeight(row*side+left,side))/((right-left)*spacing);
+    float slopeZ=(TerrainHeight(upper*side+column,side)-TerrainHeight(lower*side+column,side))/((upper-lower)*spacing);
+    float3 position=float3(column*spacing-size*0.5,TerrainHeight(vertex,side),row*spacing-size*0.5);
+    float3 normal=normalize(float3(-slopeX,1,-slopeZ));
+    float rock=saturate((1-normal.y)*3);
+    uint offset=index*48;
+    Output.Store3(offset,asuint(position));
+    Output.Store3(offset+12,asuint(normal));
+    Output.Store2(offset+24,asuint(float2(column,row)/resolution));
+    Output.Store4(offset+32,asuint(float4(0.16+rock*0.32,0.36+rock*0.1,0.11+rock*0.31,1)));
+}
+
+#endif
 struct GenerationRecord
 {
     uint3 Grid : SV_DispatchGrid;
 };
-[Shader("node")][NodeLaunch("broadcasting")][NodeIsProgramEntry][NodeMaxDispatchGrid(4096, 4095, 1)][NumThreads(64, 1,
-                                                                                                                1)] void
-Generate(DispatchNodeInputRecord<GenerationRecord> record, uint3 group : SV_GroupID, uint thread : SV_GroupIndex) {
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 13 || PROCEDURAL_SPECIALIZED_MODE == 14
+struct TreeFinalizeInput
+{
+    uint3 Grid : SV_DispatchGrid;
+};
+[Shader("node")]
+[NodeLaunch("broadcasting")]
+[NodeMaxDispatchGrid(4096,4095,1)]
+[NumThreads(64,1,1)]
+void FinalizeTree(DispatchNodeInputRecord<TreeFinalizeInput> record, uint3 group : SV_GroupID,
+                  uint thread : SV_GroupIndex)
+{
+    uint index=(group.y*4096+group.x)*64+thread;
+    FinalizeProceduralTree(index);
+}
+
+#endif
+[Shader("node")]
+[NodeLaunch("broadcasting")]
+[NodeIsProgramEntry]
+[NodeMaxDispatchGrid(4096,4095,1)]
+[NumThreads(64,1,1)]
+void Generate(DispatchNodeInputRecord<GenerationRecord> record, uint3 group : SV_GroupID,
+              uint thread : SV_GroupIndex
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 13 || PROCEDURAL_SPECIALIZED_MODE == 14
+              , [MaxRecords(1)] [NodeID("FinalizeTree")] NodeOutput<TreeFinalizeInput> finalizeOutput
+#endif
+              )
+{
     uint index = (group.y * 4096 + group.x) * 64 + thread;
+#if PROCEDURAL_SPECIALIZED_MODE == -1
     uint mode = Parameters.Load(0);
+#else
+    const uint mode = PROCEDURAL_SPECIALIZED_MODE;
+#endif
     uint width = Parameters.Load(4);
     uint height = Parameters.Load(8);
     uint depth = Parameters.Load(12);
@@ -871,32 +990,94 @@ Generate(DispatchNodeInputRecord<GenerationRecord> record, uint3 group : SV_Grou
     {
         return;
     }
-    if(mode==12)
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 15
+    if(mode==15)
+    {
+        GenerateSceneTerrainVertex(index);
+        return;
+    }
+#endif
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 13 || PROCEDURAL_SPECIALIZED_MODE == 14
+    if(mode==13 || mode==14)
     {
         if(index==0)
+        {
+            uint jobCount=PrepareProceduralTree(mode);
+            ThreadNodeOutputRecords<TreeFinalizeInput> output=finalizeOutput.GetThreadNodeOutputRecords(jobCount>0?1:0);
+            if(jobCount>0)
+            {
+                uint groups=(jobCount+63)/64;
+                output.Get().Grid=uint3(min(groups,4096u),(groups+4095)/4096,1);
+            }
+            DeviceMemoryBarrier();
+            output.OutputComplete();
+        }
+        return;
+    }
+#endif
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 17
+    if(mode==17)
+    {
+        float3 position=asfloat(SourcePixels.Load3(index*12));
+        float3 minimum=asfloat(Parameters.Load3(192));
+        float scale=asfloat(Parameters.Load(204));
+        float3 coordinate=frac((position-minimum)*scale);
+        TextureParams parameters=LoadParameters();
+        Output.Store3(index*12,asuint(TextureColor(parameters,coordinate.x,coordinate.y,coordinate.z,true)));
+        return;
+    }
+#endif
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 16
+    if(mode==16)
+    {
+        GenerateObjectMotion(index);
+        return;
+    }
+#endif
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 12
+    if (mode == 12)
+    {
+        if (index == 0)
         {
             GenerateRock(LoadParameters());
         }
         return;
     }
-    if(mode>=8 && mode<=11)
+#endif
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 8 || PROCEDURAL_SPECIALIZED_MODE == 9 || PROCEDURAL_SPECIALIZED_MODE == 10 || PROCEDURAL_SPECIALIZED_MODE == 11
+    if (mode >= 8 && mode <= 11)
     {
-        GenerateAnalyticVertex(index,mode);
+        GenerateAnalyticVertex(index, mode);
         return;
     }
-    if(mode>=5 && mode<=7)
+#endif
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 5 || PROCEDURAL_SPECIALIZED_MODE == 6 || PROCEDURAL_SPECIALIZED_MODE == 7
+    if (mode >= 5 && mode <= 7)
     {
-        GenerateGridVertex(index,mode,LoadParameters());
+        GenerateGridVertex(index, mode, LoadParameters());
         return;
     }
+#endif
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 4
     if (mode == 4)
     {
         Output.Store(index * 4, asuint(TerrainHeight(index, width)));
         return;
     }
+#endif
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 0 || PROCEDURAL_SPECIALIZED_MODE == 1 || PROCEDURAL_SPECIALIZED_MODE == 2 || PROCEDURAL_SPECIALIZED_MODE == 3
     uint3 pixel = uint3(index % width, (index / width) % height, index / (width * height));
     float3 coordinate = (float3(pixel) + 0.5) / float3(width, height, depth);
     TextureParams p = LoadParameters();
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 3
     if (mode == 3)
     {
         float sum = 0;
@@ -910,8 +1091,8 @@ Generate(DispatchNodeInputRecord<GenerationRecord> record, uint3 group : SV_Grou
             float scale = float(1u << octave);
             uint h = Hash(seed + uint(octave) * 977u);
             float angle = coordinate.y * 2 * kPi;
-            float ox = round(variation * 2) * cos(angle) * 0.5 / scale + Unit(h);
-            float oz = round(variation * 2) * sin(angle) * 0.5 / scale + Unit(Hash(h));
+            float ox = RoundAway(variation * 2) * cos(angle) * 0.5 / scale + Unit(h);
+            float oz = RoundAway(variation * 2) * sin(angle) * 0.5 / scale + Unit(Hash(h));
             float3 a = SampleImage(float2(coordinate.x * scale + ox, coordinate.z * scale + oz)).rgb;
             float3 b = SampleImage(float2(coordinate.z * scale - oz + 0.37, coordinate.y * scale + ox)).rgb;
             sum += (dot(a, 1.0 / 3.0) * 0.7 + dot(b, 1.0 / 3.0) * 0.3) * amplitude;
@@ -921,12 +1102,18 @@ Generate(DispatchNodeInputRecord<GenerationRecord> record, uint3 group : SV_Grou
         Output.Store(index * 4, asuint(saturate(sum / norm)));
         return;
     }
+#endif
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE <= 2
     if (mode == 1)
     {
         p.Tileable = true;
         Output.Store(index * 4, asuint(TextureScalar(p, coordinate.x, coordinate.y, coordinate.z, false)));
         return;
     }
+#endif
+
+#if PROCEDURAL_SPECIALIZED_MODE == -1 || PROCEDURAL_SPECIALIZED_MODE == 0 || PROCEDURAL_SPECIALIZED_MODE == 1 || PROCEDURAL_SPECIALIZED_MODE == 2
     float4 color;
     if (mode == 2 || p.Output == 0)
     {
@@ -955,4 +1142,7 @@ Generate(DispatchNodeInputRecord<GenerationRecord> record, uint3 group : SV_Grou
         color = float4(normalize(float3(-dx, dy, 1)) * 0.5 + 0.5, 1);
     }
     Output.Store4(index * 16, asuint(color));
+
+#endif
+#endif
 }

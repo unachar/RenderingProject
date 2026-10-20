@@ -1,6 +1,7 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "proceduralstudiowindow.h"
 #include "proceduralstudio.h"
+#include "proceduralworkgraph.h"
 #include "proceduralio.h"
 #include "editordescriptors.h"
 #include "graphicsdevice.h"
@@ -31,7 +32,6 @@ namespace ProcStudioEditorDetail
     using ProcStudio::ModelKindName;
     using ProcStudio::ModelParams;
     using ProcStudio::NoiseParams;
-    using ProcStudio::TextureColor;
     using ProcStudio::TextureKind;
     using ProcStudio::TextureKindName;
     using ProcStudio::TextureOutput;
@@ -1153,18 +1153,8 @@ namespace ProcStudioEditorDetail
                 string error, textureName;
                 if (solidMode)
                 {
-                    // プレビューと同じオブジェクト空間の対応付けで、立体テクスチャを頂点色へ焼き込む。
-                    Float3 minimum;
-                    Float3 maximum;
-                    mesh.Bounds(minimum, maximum);
-                    const float extent =
-                        (std::max)({maximum.X - minimum.X, maximum.Y - minimum.Y, maximum.Z - minimum.Z, 1e-4f});
-                    for (size_t i = 0; i < mesh.Positions.size(); ++i)
-                    {
-                        const Float3 p = (mesh.Positions[i] - minimum) * (solidScale / extent);
-                        mesh.Colors[i] =
-                            TextureColor(solidParams, p.X - floorf(p.X), p.Y - floorf(p.Y), p.Z - floorf(p.Z), true);
-                    }
+                    // プレビューと同じオブジェクト空間の対応付けで GPU が頂点色を生成する。
+                    ProceduralWorkGraph::BakeSolidVertexColors(mesh, solidParams, solidScale);
                 }
                 if (textureMode)
                 {
@@ -1336,7 +1326,15 @@ namespace ProcStudioEditorDetail
         {
             InitializeDefaults(s);
         }
-        PollTasks(s);
+        try
+        {
+            PollTasks(s);
+        }
+        catch (const std::exception& error)
+        {
+            s.Status = "生成に失敗: " + string(error.what());
+            s.Animate = false;
+        }
         ImGui::SetNextWindowSize(ImVec2(1040, 680), ImGuiCond_FirstUseEver);
         if (!ImGui::Begin("プロシージャルスタジオ", open))
         {
@@ -1552,8 +1550,17 @@ namespace ProcStudioEditorDetail
                 s.MeshJob.Dirty = true;
             }
         }
-        PumpJobs(s);
-        RenderPreview(s);
+        try
+        {
+            PumpJobs(s);
+            RenderPreview(s);
+        }
+        catch (const std::exception& error)
+        {
+            s.Status = "生成に失敗: " + string(error.what());
+            s.PreviewDirty = false;
+            s.Animate = false;
+        }
         ImGui::End();
     }
 

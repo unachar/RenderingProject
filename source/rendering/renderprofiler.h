@@ -60,6 +60,7 @@ class RenderProfiler final
         uint64_t IndexedDrawCalls = 0;
         uint64_t DrawnInstances = 0;
         uint64_t DispatchCalls = 0;
+        uint64_t WorkGraphDispatchCalls = 0;
         uint64_t DispatchThreadGroups = 0;
         uint64_t ExecuteIndirectCalls = 0;
         uint64_t IndirectMaxCommands = 0;
@@ -753,6 +754,15 @@ class RenderProfiler final
         snapshot->Calls.DispatchThreadGroups += static_cast<uint64_t>(x) * y * z;
     }
 
+    static void RecordWorkGraphDispatch()
+    {
+        FrameSnapshot* snapshot = ActiveSnapshot();
+        if (snapshot)
+        {
+            ++snapshot->Calls.WorkGraphDispatchCalls;
+        }
+    }
+
     static void RecordExecuteIndirect(UINT maxCommandCount)
     {
         FrameSnapshot* snapshot = ActiveSnapshot();
@@ -948,6 +958,7 @@ class RenderProfiler final
             row("Indexed draw calls", calls.IndexedDrawCalls);
             row("Drawn instances", calls.DrawnInstances);
             row("Dispatch calls", calls.DispatchCalls);
+            row("Work Graph dispatches", calls.WorkGraphDispatchCalls);
             row("Dispatch thread groups", calls.DispatchThreadGroups);
             row("ExecuteIndirect calls", calls.ExecuteIndirectCalls);
             row("Indirect maximum commands", calls.IndirectMaxCommands);
