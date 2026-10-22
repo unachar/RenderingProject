@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "gpumemorybudget.h"
+#include "rendertargets.h"
 #include "envflags.h"
 #include "transmittanceshadows.h"
 #include "materialmanager.h"
@@ -50,8 +52,8 @@ namespace
         UINT Layer = 0;
         UINT X = 0;
         UINT Y = 0;
-        UINT Width = RendererState::g_kSHADOW_MAP_SIZE;
-        UINT Height = RendererState::g_kSHADOW_MAP_SIZE;
+        UINT Width = RendererState::GetShadowMapSize();
+        UINT Height = RendererState::GetShadowMapSize();
         int LogicalPageX = 0, LogicalPageY = 0;
         UINT VirtualLevel = 0;
         bool ClearLayer = true;
@@ -149,7 +151,7 @@ namespace
     struct ShadowConstants
     {
         XMMATRIX LightViewProjection{};
-        XMFLOAT4 ShadowMapParams = {1.0f / RendererState::g_kSHADOW_MAP_SIZE, 0.0015f, 0.0025f, 1.0f};
+        XMFLOAT4 ShadowMapParams = {1.0f / RendererState::GetShadowMapSize(), 0.0015f, 0.0025f, 1.0f};
         XMFLOAT4 ShadowFilterParams = {1.0f, 0.0f, 0.0f, 0.0f};
     };
 
@@ -242,12 +244,12 @@ namespace
             g_ShadowLightEntities[i] = g_kINVALID_ENTITY;
             g_ShadowLightViewProjections[i] = XMMatrixIdentity();
             g_ShadowMapParams[i] =
-                XMFLOAT4(1.0f / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE), 0.000008f, 0.00001f, 0.0f);
+                XMFLOAT4(1.0f / static_cast<float>(RendererState::GetShadowMapSize()), 0.000008f, 0.00001f, 0.0f);
         }
         for (UINT i = 0; i < RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS; ++i)
         {
             g_VirtualShadowViewProjections[i] = XMMatrixIdentity();
-            g_VirtualShadowParams[i] = XMFLOAT4(-1.0f, 1.0f / RendererState::g_kSHADOW_MAP_SIZE, 0.0f, 0.0f);
+            g_VirtualShadowParams[i] = XMFLOAT4(-1.0f, 1.0f / RendererState::GetShadowMapSize(), 0.0f, 0.0f);
             g_VirtualShadowPageOrigins[i] =
                 XMFLOAT4(0.0f, 0.0f, static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION), 0.0f);
         }
@@ -518,7 +520,7 @@ namespace
                 pass.Layer = layer;
                 pass.X = 0;
                 pass.Y = 0;
-                pass.Width = pass.Height = RendererState::g_kSHADOW_MAP_SIZE;
+                pass.Width = pass.Height = RendererState::GetShadowMapSize();
                 pass.VirtualLevel = 0;
                 pass.ClearLayer = true;
                 pass.VirtualPage = false;
@@ -1101,11 +1103,11 @@ namespace
         UINT shadowSize;
         if ((lightType == LightType::Directional))
         {
-            shadowSize = RendererState::g_kSHADOW_MAP_SIZE;
+            shadowSize = RendererState::GetShadowMapSize();
         }
         else
         {
-            shadowSize = RendererState::g_kSHADOW_MAP_SIZE_SMALL;
+            shadowSize = RendererState::GetShadowMapSize();
         }
         outLightViewProjection = XMMatrixTranspose(lightView * lightProjection);
         outShadowMapParams = XMFLOAT4(1.0f / static_cast<float>(shadowSize), RendererSettings::GetShadowDepthBias(),
@@ -1173,7 +1175,7 @@ namespace
             float snapSize;
             if (conventionalCascade)
             {
-                snapSize = (radius * 2.0f) / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE);
+                snapSize = (radius * 2.0f) / static_cast<float>(RendererState::GetShadowMapSize());
             }
             else
             {
@@ -1221,7 +1223,7 @@ namespace
             virtualLevelBiasScale = static_cast<float>(1u << actualLevel);
         }
         outShadowMapParams =
-            XMFLOAT4(1.0f / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE),
+            XMFLOAT4(1.0f / static_cast<float>(RendererState::GetShadowMapSize()),
                      RendererSettings::GetShadowDepthBias() * biasScale * virtualLevelBiasScale,
                      RendererSettings::GetShadowNormalBias() * biasScale * virtualLevelBiasScale, 1.0f);
     }
@@ -1235,6 +1237,42 @@ void LightingResources::BeginFrame()
     RenderCulling::BeginFrame(g_FrameSerial);
     g_LightCacheValid = false;
     m_TransientCbSlot = 0;
+    RebuildLightCache();
+    const auto& memory = GpuMemoryBudget::Options;
+    // VSM page addressing retains its logical 2048 grid. Conventional maps can use 1024.
+    const UINT resolution = memory.Enabled && RendererSettings::GetShadowMapMethod() == ShadowMapMethod::ShadowMap
+                                ? memory.ShadowResolution
+                                : RendererState::g_kSHADOW_MAP_SIZE;
+    UINT layers = memory.Enabled ? max(g_ShadowLightCount, 1u) : RendererState::g_kMAX_SHADOW_LIGHTS;
+    auto* shadow = RenderTargets::GetShadowDepthResource();
+    static UINT shrinkFrames = 0;
+    if (shadow && layers < shadow->GetDesc().DepthOrArraySize && !GpuMemoryBudget::UnderPressure())
+    {
+        // Light visibility can fluctuate near the frustum edge. Shrink only after sustained spare capacity.
+        if (++shrinkFrames < 240)
+        {
+            layers = shadow->GetDesc().DepthOrArraySize;
+        }
+    }
+    else
+    {
+        shrinkFrames = 0;
+    }
+    if (RenderTargets::ConfigureShadowDepthBuffer(layers, resolution))
+    {
+        for (auto& level : g_VirtualShadowPageCache)
+        {
+            for (auto& row : level)
+            {
+                for (auto& page : row)
+                {
+                    page.Valid = false;
+                    page.StaticValid = false;
+                }
+            }
+        }
+        RebuildLightCache();
+    }
 }
 
 UINT LightingResources::GetShadowLightCount()
@@ -1380,7 +1418,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
     {
         constants.LightViewProjections[i] = XMMatrixIdentity();
         constants.LightShadowData[i] =
-            XMFLOAT4(-1.0f, 1.0f / static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE), 0.000008f, 0.00001f);
+            XMFLOAT4(-1.0f, 1.0f / static_cast<float>(RendererState::GetShadowMapSize()), 0.000008f, 0.00001f);
     }
     for (UINT i = 0; i < RendererState::g_kMAX_VIRTUAL_SHADOW_LEVELS; ++i)
     {
@@ -2135,4 +2173,3 @@ bool LightingResources::GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_V
     clearLayer = pass.ClearLayer;
     return true;
 }
-

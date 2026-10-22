@@ -12,6 +12,10 @@
 #include "atmospherelut.h"
 #include "temporalhistorycontext.h"
 #include "renderprofiler.h"
+#include "gpumemorybudget.h"
+#include "advancedeffects.h"
+#include "rayreflections.h"
+#include "rendertargets.h"
 
 void RenderFrame::BeginDraw()
 {
@@ -20,6 +24,11 @@ void RenderFrame::BeginDraw()
     {
         WaitForSingleObjectEx(m_FrameLatencyWaitableObject, 1000, TRUE);
     }
+    GpuMemoryBudget::Update();
+    RenderTargets::UpdateMemoryPolicy();
+    Raytracing::ReleaseInactiveResources();
+    RayReflections::ReleaseInactiveResources();
+    AdvancedEffects::ReleaseInactiveResources();
     LightingResources::BeginFrame();
 
     m_CommandAllocator[m_FrameIndex]->Reset();
@@ -124,6 +133,7 @@ void RenderFrame::EndDraw()
         return;
     }
 
+    TextureManager::OnFrameSubmitted(m_CurrentFenceValue);
     GPUDrivenRenderer::EndFrame();
     m_FrameIndex = m_SwapChain->GetCurrentBackBufferIndex();
 

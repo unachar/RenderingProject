@@ -260,7 +260,7 @@ bool TransmittanceShadows::BeginPass(UINT shadowIndex, UINT peel)
                             static_cast<float>(lightLayer)};
     LightingResources::GetCurrentShadowLight(constants.LightPositionType, constants.LightDirection);
     memcpy(g_Mapped + g_ConstantOffset, &constants, sizeof(constants));
-    const float scale = static_cast<float>(g_kTRANSMITTANCE_SHADOW_SIZE) / g_kSHADOW_MAP_SIZE;
+    const float scale = static_cast<float>(g_kTRANSMITTANCE_SHADOW_SIZE) / GetShadowMapSize();
     viewport.TopLeftX *= scale;
     viewport.TopLeftY *= scale;
     viewport.Width *= scale;

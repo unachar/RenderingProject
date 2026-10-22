@@ -188,6 +188,13 @@ class RendererState
     static constexpr UINT g_kSHADOW_CB_SLOT_COUNT = g_kFRAME_COUNT * g_kMAX_SHADOW_PASSES;
 
     static constexpr UINT g_kSHADOW_MAP_SIZE = 2048;
+    inline static UINT m_ShadowMapSize = g_kSHADOW_MAP_SIZE;
+
+    static UINT GetShadowMapSize()
+    {
+        return m_ShadowMapSize;
+    }
+
     static constexpr UINT g_kSHADOW_MAP_SIZE_SMALL = 1024;
     static constexpr UINT g_kVIRTUAL_SHADOW_PAGE_SIZE = 128;
     static constexpr UINT g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION = g_kSHADOW_MAP_SIZE / g_kVIRTUAL_SHADOW_PAGE_SIZE;
@@ -276,7 +283,8 @@ class RendererState
     static constexpr UINT g_kMAX_DYNAMIC_VERTICES = 65536;
     static constexpr UINT g_kTHUMBNAIL_DESCRIPTOR_START = g_kENGINE_DESCRIPTOR_END + 1;
     static constexpr UINT g_kTHUMBNAIL_DESCRIPTOR_COUNT = 512;
-    // インポスターのアトラス SRV とベイク用の一時ディスクリプタ。ヒープ末尾の VirtualGeometry ページ（16384）の直前に置く。
+    // インポスターのアトラス SRV とベイク用の一時ディスクリプタ。ヒープ末尾の VirtualGeometry
+    // ページ（16384）の直前に置く。
     static constexpr UINT g_kIMPOSTOR_DESCRIPTOR_COUNT = 1024;
 
     static DXGI_FORMAT GetSceneColorFormat()

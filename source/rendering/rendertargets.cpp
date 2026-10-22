@@ -4,6 +4,9 @@
 #include "texturemanager.h"
 #include "spatialupscaler.h"
 #include "screenspaceeffects.h"
+#include "graphicsdevice.h"
+#include "gpumemorybudget.h"
+#include "graphicslog.h"
 
 void RenderTargets::GetGBufferClearColor(UINT index, float outColor[4])
 {
@@ -127,24 +130,27 @@ bool RenderTargets::CreateDepthBuffer()
     return true;
 }
 
-bool RenderTargets::CreateShadowDepthBuffer()
+bool RenderTargets::CreateShadowDepthBuffer(UINT layers, UINT resolution)
 {
     D3D12_CLEAR_VALUE clearValue{};
     clearValue.Format = DXGI_FORMAT_D32_FLOAT;
     clearValue.DepthStencil.Depth = 1.0f;
     clearValue.DepthStencil.Stencil = 0;
-    auto depthDesc = CD3DX12_RESOURCE_DESC::Tex2D(
-        DXGI_FORMAT_R32_TYPELESS, RendererState::g_kSHADOW_MAP_SIZE, RendererState::g_kSHADOW_MAP_SIZE,
-        RendererState::g_kMAX_SHADOW_LIGHTS, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
+    auto depthDesc =
+        CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32_TYPELESS, resolution, resolution, static_cast<UINT16>(layers), 1,
+                                     1, 0, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
     auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+    ComPtr<ID3D12Resource> replacement;
     HRESULT hr = m_Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &depthDesc,
                                                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue,
-                                                   IID_PPV_ARGS(&m_ShadowDepthBuffer));
+                                                   IID_PPV_ARGS(&replacement));
     if (FAILED(hr))
     {
         Debug::Log("ERROR: CreateCommittedResource(ShadowDepth) failed\n");
         return false;
     }
+    m_ShadowDepthBuffer = move(replacement);
+    m_ShadowMapSize = resolution;
     if (!m_DsvHeap)
     {
         D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc{};
@@ -158,7 +164,7 @@ bool RenderTargets::CreateShadowDepthBuffer()
         }
     }
     const UINT dsvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
-    for (UINT i = 0; i < RendererState::g_kMAX_SHADOW_LIGHTS; ++i)
+    for (UINT i = 0; i < layers; ++i)
     {
         D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
         dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
@@ -177,27 +183,54 @@ bool RenderTargets::CreateShadowDepthBuffer()
     srvDesc.Texture2DArray.MostDetailedMip = 0;
     srvDesc.Texture2DArray.MipLevels = 1;
     srvDesc.Texture2DArray.FirstArraySlice = 0;
-    srvDesc.Texture2DArray.ArraySize = RendererState::g_kMAX_SHADOW_LIGHTS;
+    srvDesc.Texture2DArray.ArraySize = layers;
     CD3DX12_CPU_DESCRIPTOR_HANDLE srvCpuHandle(m_CbvHeap->GetCPUDescriptorHandleForHeapStart(),
                                                RendererState::g_kSHADOW_SRV_INDEX, m_CbvIncrementSize);
     m_Device->CreateShaderResourceView(m_ShadowDepthBuffer.Get(), &srvDesc, srvCpuHandle);
-    auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(RendererState::g_kSHADOW_CB_ALIGNED_SIZE *
-                                                RendererState::g_kSHADOW_CB_SLOT_COUNT);
-    auto cbHeapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-    hr = m_Device->CreateCommittedResource(&cbHeapProps, D3D12_HEAP_FLAG_NONE, &cbDesc,
-                                           D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                           IID_PPV_ARGS(&m_ShadowConstantBuffer));
-    if (FAILED(hr))
+    if (!m_ShadowConstantBuffer)
     {
-        Debug::Log("ERROR: CreateCommittedResource(Shadow CB) failed\n");
-        return false;
+        auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(RendererState::g_kSHADOW_CB_ALIGNED_SIZE *
+                                                    RendererState::g_kSHADOW_CB_SLOT_COUNT);
+        auto cbHeapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+        hr = m_Device->CreateCommittedResource(&cbHeapProps, D3D12_HEAP_FLAG_NONE, &cbDesc,
+                                               D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                               IID_PPV_ARGS(&m_ShadowConstantBuffer));
+        if (FAILED(hr))
+        {
+            Debug::Log("ERROR: CreateCommittedResource(Shadow CB) failed\n");
+            return false;
+        }
+        CD3DX12_RANGE readRange(0, 0);
+        m_ShadowConstantBuffer->Map(0, &readRange, reinterpret_cast<void**>(&m_pShadowCbvDataBegin));
     }
-    CD3DX12_RANGE readRange(0, 0);
-    m_ShadowConstantBuffer->Map(0, &readRange, reinterpret_cast<void**>(&m_pShadowCbvDataBegin));
-    m_ShadowViewport = CD3DX12_VIEWPORT(0.0f, 0.0f, static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE),
-                                        static_cast<float>(RendererState::g_kSHADOW_MAP_SIZE));
-    m_ShadowScissorRect = CD3DX12_RECT(0, 0, RendererState::g_kSHADOW_MAP_SIZE, RendererState::g_kSHADOW_MAP_SIZE);
+    m_ShadowViewport = CD3DX12_VIEWPORT(0.0f, 0.0f, static_cast<float>(resolution), static_cast<float>(resolution));
+    m_ShadowScissorRect = CD3DX12_RECT(0, 0, resolution, resolution);
     return true;
+}
+
+bool RenderTargets::ConfigureShadowDepthBuffer(UINT layers, UINT resolution)
+{
+    layers = std::clamp(layers, 1u, g_kMAX_SHADOW_LIGHTS);
+    resolution = resolution <= 1024 ? 1024 : g_kSHADOW_MAP_SIZE;
+    if (m_ShadowDepthBuffer)
+    {
+        const auto desc = m_ShadowDepthBuffer->GetDesc();
+        if (desc.Width == resolution && desc.DepthOrArraySize == layers)
+        {
+            return false;
+        }
+        if (!GraphicsDevice::WaitForGpuIdle())
+        {
+            return false;
+        }
+    }
+    const bool created = CreateShadowDepthBuffer(layers, resolution);
+    if (created)
+    {
+        WriteGraphicsLog("VRAM: shadow allocation %u x %u x %u, %.2f MiB\n", resolution, resolution, layers,
+                         double(uint64_t(resolution) * resolution * layers * 4) / 1048576.0);
+    }
+    return created;
 }
 
 bool RenderTargets::CreateSceneRenderTarget()
@@ -215,6 +248,8 @@ bool RenderTargets::CreateSceneRenderTarget()
     m_RenderTargetRtvHandles = {};
     m_RenderTargetSrvHandles = {};
     m_TransparentSceneCopy.Reset();
+    m_TransparentAaArena.Reset();
+    m_TransparentAaAliased = false;
     m_SceneRtvHeap.Reset();
 
     auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
@@ -235,9 +270,30 @@ bool RenderTargets::CreateSceneRenderTarget()
         L"Scene Lighting (Internal Resolution)", L"Post Process (Internal Resolution)", L"Pre-Upscale Antialiasing",
         L"Pre-Upscale TAA History", L"Editor Scene (Display Resolution)"};
 
+    m_AliasRequested = GpuMemoryBudget::Options.Enabled && GpuMemoryBudget::Options.TransientAliasing;
+    if (m_AliasRequested)
+    {
+        auto copyDesc = resDesc;
+        copyDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+        const vector<TransientArena::Request> requests = {{copyDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, 0, 0},
+                                                          {resDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, 1, 1}};
+        if (m_TransparentAaArena.Build(m_Device.Get(), requests))
+        {
+            m_TransparentSceneCopy = m_TransparentAaArena.Get(0);
+            GetRenderTarget(RenderTargetType::PreUpscaleAa) = m_TransparentAaArena.Get(1);
+            m_TransparentAaAliased = true;
+            WriteGraphicsLog("VRAM: transparent/AA alias saved %.2f MiB\n",
+                             double(m_TransparentAaArena.SavedBytes()) / 1048576.0);
+        }
+    }
+
     for (size_t i = 0; i < kRenderTargetCount; ++i)
     {
         const auto type = static_cast<RenderTargetType>(i);
+        if (type == RenderTargetType::PreUpscaleAa && m_TransparentAaAliased)
+        {
+            continue;
+        }
         const D3D12_RESOURCE_DESC* desc;
         if (type == RenderTargetType::EditorScene)
         {
@@ -264,12 +320,16 @@ bool RenderTargets::CreateSceneRenderTarget()
     // 半透明描画の屈折元として使う。
     auto transparentCopyDesc = CD3DX12_RESOURCE_DESC::Tex2D(m_SceneColorFormat, m_SceneWidth, m_SceneHeight, 1, 1, 1, 0,
                                                             D3D12_RESOURCE_FLAG_NONE);
-    HRESULT hr = m_Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &transparentCopyDesc,
-                                                   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
-                                                   IID_PPV_ARGS(&m_TransparentSceneCopy));
-    if (FAILED(hr))
+    HRESULT hr = S_OK;
+    if (!m_TransparentAaAliased)
     {
-        return false;
+        hr = m_Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &transparentCopyDesc,
+                                               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+                                               IID_PPV_ARGS(&m_TransparentSceneCopy));
+        if (FAILED(hr))
+        {
+            return false;
+        }
     }
     m_TransparentSceneCopy->SetName(L"TransparentSceneCopy");
 
@@ -510,4 +570,13 @@ D3D12_GPU_DESCRIPTOR_HANDLE RenderTargets::GetImGuiGpuHandle()
     return CD3DX12_GPU_DESCRIPTOR_HANDLE(
         m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
         RendererState::g_kENGINE_DESCRIPTOR_END + 1 + RendererState::g_kTHUMBNAIL_DESCRIPTOR_COUNT, cbvIncrement);
+}
+
+void RenderTargets::UpdateMemoryPolicy()
+{
+    const bool alias = GpuMemoryBudget::Options.Enabled && GpuMemoryBudget::Options.TransientAliasing;
+    if (alias != m_AliasRequested && GraphicsDevice::WaitForGpuIdle())
+    {
+        CreateSceneRenderTarget();
+    }
 }

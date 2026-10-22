@@ -26,6 +26,13 @@ void FramePipeline::Execute()
     MeshShaderPipeline::BeginFrame();
     static RenderGraph graph;
     static bool graphReady = false;
+    static ComPtr<ID3D12Resource> importedShadow;
+    if (importedShadow.Get() != RenderTargets::GetShadowDepthResource())
+    {
+        graph.Reset();
+        graphReady = false;
+        importedShadow = RenderTargets::GetShadowDepthResource();
+    }
 
     if (!graphReady)
     {

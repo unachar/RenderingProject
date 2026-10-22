@@ -20,6 +20,7 @@ class TextureManager
         int SrvIndex = -1;
         shared_ptr<TextureStreamingState> Streaming{};
         int64_t SourceTime = 0;
+        uint64_t CompressionCacheKey = 0;
     };
 
     static unordered_map<string, TextureData> m_Textures;
@@ -27,7 +28,8 @@ class TextureManager
     static ComPtr<ID3D12Resource> m_DefaultTexture;
     static ComPtr<ID3D12Resource> m_ErrorTexture;
 
-    static bool CreateShaderResourceView(ID3D12Resource* pResource, const D3D12_RESOURCE_DESC& desc, int srvIndex);
+    static bool CreateShaderResourceView(ID3D12Resource* pResource, const D3D12_RESOURCE_DESC& desc, int srvIndex,
+                                         UINT minimumMip = 0);
     static ComPtr<ID3D12Resource> CreateSolidColorTexture(ID3D12Device* device, uint32_t color, int srvIndex);
 
   public:
@@ -60,6 +62,7 @@ class TextureManager
     static int FindLoadedTexture(const filesystem::path& path);
     static void TouchTexture(int srvIndex);
     static void UpdateStreaming(ID3D12GraphicsCommandList* commandList);
+    static void OnFrameSubmitted(uint64_t fence);
     static bool IsReservedResourceStreamingSupported();
     static bool IsReservedResourceStreamingAvailable();
 

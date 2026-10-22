@@ -11,6 +11,7 @@
 #include "pch.h"
 #include "rendergraph.h"
 #include "envflags.h"
+#include "gpumemorybudget.h"
 #include "rendererstate.h"
 #include "renderprofiler.h"
 #include "raytracing.h"
@@ -258,6 +259,61 @@ class AdvancedEffects final
         s_FroxelExtent = {};
         s_FogHistoryValid = false;
         s_ExposureReset = true;
+    }
+
+    static void ReleaseInactiveResources()
+    {
+        if (!GpuMemoryBudget::Options.Enabled || !GpuMemoryBudget::Options.ReleaseInactive)
+        {
+            return;
+        }
+        const auto& quality = RenderQuality::Get();
+        const bool weather = quality.WeatherEnabled && (quality.RainIntensity > 0.001f || quality.SnowFall > 0.001f);
+        const bool bloom = (quality.DualBloom && s_BloomRequested) || quality.LensFlare || weather;
+        const bool lens = s_Settings.HalfResolutionLens && (s_Settings.MotionBlur || s_Settings.DepthOfField);
+        const bool any = s_Settings.FroxelFog || s_Settings.AutoExposure || s_Settings.MotionBlur ||
+                         s_Settings.DepthOfField || bloom;
+        const bool releaseFog = !s_Settings.FroxelFog && s_Froxels[0];
+        const bool releaseBloom = !bloom && s_BloomDown;
+        const bool releaseLens = !lens && s_HalfLens[0];
+        const bool releasePost = !any && s_PostA;
+        if (!(releaseFog || releaseBloom || releaseLens || releasePost) || !GraphicsDevice::WaitForGpuIdle())
+        {
+            return;
+        }
+        if (releaseFog)
+        {
+            s_Froxels[0].Reset();
+            s_Froxels[1].Reset();
+            s_Integrated.Reset();
+            s_FroxelExtent = {};
+            s_FogHistoryValid = false;
+        }
+        if (releaseBloom)
+        {
+            s_BloomDown.Reset();
+            s_BloomUp.Reset();
+            s_BloomWidth = s_BloomHeight = s_BloomLevels = 0;
+        }
+        if (releaseLens)
+        {
+            s_HalfLens[0].Reset();
+            s_HalfLens[1].Reset();
+            s_HalfWidth = s_HalfHeight = 0;
+            s_HalfActive = false;
+        }
+        if (releasePost)
+        {
+            s_PostA.Reset();
+            s_PostB.Reset();
+            if (s_AliasActive)
+            {
+                s_Histogram.Reset();
+            }
+            s_Transient.Reset();
+            s_AliasActive = false;
+            s_Width = s_Height = 0;
+        }
     }
 
     // シーンは線形 HDR。開始時と終了時の状態は PIXEL_SHADER_RESOURCE。
@@ -828,6 +884,7 @@ class AdvancedEffects final
 
     static inline TransientArena s_Transient;
     static inline bool s_AliasActive = false;
+    static inline bool s_AliasRequested = false;
     static inline ComPtr<ID3D12Resource> s_HalfLens[2];
     static inline ComPtr<ID3D12PipelineState> s_ResolveHalf, s_DofHalf, s_UpsampleLens;
     static inline UINT s_HalfWidth = 0, s_HalfHeight = 0;
@@ -895,9 +952,13 @@ class AdvancedEffects final
         const UINT tile = static_cast<UINT>(std::clamp(s_Settings.FroxelTileSize, 4, 32));
         const XMUINT3 froxels = {(std::max)(1u, (width + tile - 1) / tile), (std::max)(1u, (height + tile - 1) / tile),
                                  static_cast<UINT>(std::clamp(s_Settings.FroxelSliceCount, 16, 128))};
-        const bool sceneChanged = width != s_Width || height != s_Height || format != s_Format;
+        const bool aliasRequested = (GpuMemoryBudget::Options.Enabled && GpuMemoryBudget::Options.TransientAliasing) ||
+                                    ReadEnvironmentFlagOnce("DX12_TRANSIENT_ALIAS");
+        const bool sceneChanged =
+            width != s_Width || height != s_Height || format != s_Format || aliasRequested != s_AliasRequested;
         const bool froxelChanged =
-            froxels.x != s_FroxelExtent.x || froxels.y != s_FroxelExtent.y || froxels.z != s_FroxelExtent.z;
+            s_Settings.FroxelFog &&
+            (froxels.x != s_FroxelExtent.x || froxels.y != s_FroxelExtent.y || froxels.z != s_FroxelExtent.z);
         if (!sceneChanged && !froxelChanged)
         {
             return true;
@@ -915,7 +976,12 @@ class AdvancedEffects final
             {
                 return false;
             }
-            static const bool alias = ReadEnvironmentFlagOnce("DX12_TRANSIENT_ALIAS");
+            const bool alias = (GpuMemoryBudget::Options.Enabled && GpuMemoryBudget::Options.TransientAliasing) ||
+                               ReadEnvironmentFlagOnce("DX12_TRANSIENT_ALIAS");
+            if (s_AliasActive)
+            {
+                s_Histogram.Reset();
+            }
             s_AliasActive = false;
             s_Transient.Reset();
             if (alias)
@@ -958,6 +1024,12 @@ class AdvancedEffects final
                     s_AliasActive = true;
                 }
             }
+            if (!s_Histogram &&
+                !CreateBuffer(s_Histogram, 64 * sizeof(UINT), D3D12_HEAP_TYPE_DEFAULT, L"AdvancedEffects Histogram"))
+            {
+                return false;
+            }
+            s_AliasRequested = aliasRequested;
             s_Width = width;
             s_Height = height;
             s_Format = format;
@@ -984,7 +1056,7 @@ class AdvancedEffects final
         const UINT base = slot * kDescriptorsPerFrame;
         const auto srv2D = [&](ID3D12Resource* resource, UINT index) {
             D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
-            desc.Format = resource->GetDesc().Format;
+            desc.Format = resource ? resource->GetDesc().Format : DXGI_FORMAT_R16G16B16A16_FLOAT;
             if (desc.Format == DXGI_FORMAT_R32_TYPELESS)
             {
                 desc.Format = DXGI_FORMAT_R32_FLOAT;
@@ -1026,11 +1098,11 @@ class AdvancedEffects final
         };
         const auto uavTexture = [&](ID3D12Resource* resource, UINT index, bool volume) {
             D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};
-            desc.Format = resource->GetDesc().Format;
+            desc.Format = resource ? resource->GetDesc().Format : DXGI_FORMAT_R16G16B16A16_FLOAT;
             if (volume)
             {
                 desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
-                desc.Texture3D.WSize = resource->GetDesc().DepthOrArraySize;
+                desc.Texture3D.WSize = resource ? resource->GetDesc().DepthOrArraySize : 1;
             }
             else
             {

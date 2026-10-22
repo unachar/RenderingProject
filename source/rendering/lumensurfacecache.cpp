@@ -74,7 +74,7 @@ bool LumenSurfaceCache::Prepare(ID3D12Device* device, UINT frame, const vector<R
     const UINT columns = (width + spacing - 1) / spacing;
     const UINT rows = (height + spacing - 1) / spacing;
     const UINT count = columns * rows;
-    if (count > m_ProbeCount)
+    if (count != m_ProbeCount)
     {
         if (m_Probes && !GraphicsDevice::WaitForGpuIdle())
         {

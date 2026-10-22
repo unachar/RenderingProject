@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "gpumemorybudget.h"
+#include "rendertargets.h"
 #include "performancegovernor.h"
 #include "advancedeffects.h"
 #include "atmospherelut.h"
@@ -202,7 +204,8 @@ void ImGuiManager::DrawProjectSettingsWindow()
             const auto blas = Raytracing::GetBlasStatistics();
             ImGui::Text("BLAS: %u / 16bit: %u / コンパクション済み: %u", blas.BottomLevels, blas.Quantized,
                         blas.Compacted);
-            ImGui::Text("BLAS メモリ: %.1f MB (削減 %.1f MB)", static_cast<double>(blas.ResultBytes) / (1024.0 * 1024.0),
+            ImGui::Text("BLAS メモリ: %.1f MB (削減 %.1f MB)",
+                        static_cast<double>(blas.ResultBytes) / (1024.0 * 1024.0),
                         static_cast<double>(blas.CompactionSavedBytes) / (1024.0 * 1024.0));
             ImGui::Text("このフレーム: リフィット %u / フルビルド %u", blas.RefitsThisFrame, blas.RebuildsThisFrame);
             ImGui::TextWrapped("統計は直近にレイトレーシングを実行したフレームスロットの値です。");
@@ -312,6 +315,40 @@ void ImGuiManager::DrawProjectSettingsWindow()
             RendererSettings::SetTwoPhaseOcclusionEnabled(twoPhase);
         }
 
+        ImGui::SeparatorText("GPU Memory");
+        auto& memory = GpuMemoryBudget::Options;
+        ImGui::Checkbox("VRAM 予算に合わせて常駐量を制限", &memory.Enabled);
+        ImGui::BeginDisabled(!memory.Enabled);
+        int textureMiB = static_cast<int>(memory.TextureMiB);
+        if (ImGui::SliderInt("テクスチャ予算 (MiB)", &textureMiB, 32, 2048))
+        {
+            memory.TextureMiB = static_cast<uint32_t>(textureMiB);
+        }
+        int targetPercent = static_cast<int>(memory.TargetPercent);
+        if (ImGui::SliderInt("OS 予算の使用上限 (%)", &targetPercent, 50, 95))
+        {
+            memory.TargetPercent = static_cast<uint32_t>(targetPercent);
+        }
+        int shadowResolution = memory.ShadowResolution <= 1024 ? 0 : 1;
+        if (ImGui::Combo("通常の影の解像度", &shadowResolution,
+                         "1024\0"
+                         "2048\0"))
+        {
+            memory.ShadowResolution = shadowResolution == 0 ? 1024 : 2048;
+        }
+        ImGui::Checkbox("無効な描画機能の GPU メモリを解放", &memory.ReleaseInactive);
+        ImGui::Checkbox("屈折コピーと AA の一時領域を共有", &memory.TransientAliasing);
+        ImGui::EndDisabled();
+        const auto& memoryStats = GpuMemoryBudget::Stats;
+        if (memoryStats.Valid)
+        {
+            ImGui::Text("このプロセス: %.1f / %.1f MiB (OS 予算)", memoryStats.Usage / 1048576.0,
+                        memoryStats.Budget / 1048576.0);
+        }
+        ImGui::Text("テクスチャ: %.1f / %.1f MiB、累積退避 %.1f MiB", memoryStats.TextureBytes / 1048576.0,
+                    memoryStats.TextureBudget / 1048576.0, memoryStats.EvictedBytes / 1048576.0);
+        ImGui::TextDisabled("BC 差し替え: %llu、VSM は 2048 のページ座標を維持", memoryStats.CompressedReplacements);
+
         bool textureStreaming = RendererSettings::GetTextureStreamingEnabled();
         if (ImGui::Checkbox("Texture Streaming", &textureStreaming))
         {
@@ -343,7 +380,7 @@ void ImGuiManager::DrawProjectSettingsWindow()
                 ImGui::TextDisabled("新規圧縮分: %.1f MB → %.1f MB", static_cast<double>(stats.SourceBytes) / 1048576.0,
                                     static_cast<double>(stats.CompressedBytes) / 1048576.0);
             }
-            ImGui::TextDisabled("保存先: Data/Cache/Textures（読み込み済みテクスチャには次回読み込みから反映）");
+            ImGui::TextDisabled("保存先: Data/Cache/Textures（VRAM 管理が有効なら実行中にも反映）");
         }
 
         ImGui::SeparatorText("Screen Space");
@@ -1017,7 +1054,7 @@ void ImGuiManager::DrawProjectSettingsWindow()
             RendererSettings::SetIesProfilesEnabled(iesEnabled);
         }
         ImGui::TextWrapped("Point / Spot / Rect ライトに指定した IES ファイルの配光を適用します。"
-                          "明るさはライト強度で調整できます。");
+                           "明るさはライト強度で調整できます。");
     }
 
     if (ImGui::CollapsingHeader("シャドウ", ImGuiTreeNodeFlags_DefaultOpen))
@@ -1192,13 +1229,14 @@ void ImGuiManager::DrawProjectSettingsWindow()
         {
             activeShadowLayers = RendererSettings::GetShadowCascadeCount();
         }
-        const float estimatedMemoryMb = static_cast<float>(activeShadowLayers * RendererState::g_kSHADOW_MAP_SIZE *
-                                                           RendererState::g_kSHADOW_MAP_SIZE * sizeof(float)) /
+        const float estimatedMemoryMb = static_cast<float>(activeShadowLayers * RendererState::GetShadowMapSize() *
+                                                           RendererState::GetShadowMapSize() * sizeof(float)) /
                                         (1024.0f * 1024.0f);
-        const float allocatedMemoryMb =
-            static_cast<float>(RendererState::g_kMAX_SHADOW_LIGHTS * RendererState::g_kSHADOW_MAP_SIZE *
-                               RendererState::g_kSHADOW_MAP_SIZE * sizeof(float)) /
-            (1024.0f * 1024.0f);
+        auto* shadowResource = RenderTargets::GetShadowDepthResource();
+        const auto shadowDesc = shadowResource ? shadowResource->GetDesc() : D3D12_RESOURCE_DESC{};
+        const float allocatedMemoryMb = static_cast<float>(uint64_t(shadowDesc.Width) * shadowDesc.Height *
+                                                           shadowDesc.DepthOrArraySize * sizeof(float)) /
+                                        1048576.0f;
         ImGui::Text("使用レイヤー: %d / 有効フットプリント: %.0f MB", activeShadowLayers, estimatedMemoryMb);
         ImGui::Text("確保済み深度プール: %.0f MB", allocatedMemoryMb);
         ImGui::TextWrapped(
@@ -1286,6 +1324,15 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     auto& temporalRays = Raytracing::GetSettings();
     matched |= EditorConfig::Value(output, key, value, "ray.StableNrdProfile", temporalRays.StableNrdProfile, 0, 1);
     matched |= EditorConfig::Value(output, key, value, "ray.StableSampling", temporalRays.StableSampling, 0, 1);
+    auto& memory = GpuMemoryBudget::Options;
+    matched |= EditorConfig::Value(output, key, value, "memory.Enabled", memory.Enabled, 0, 1);
+    matched |= EditorConfig::Value(output, key, value, "memory.TextureMiB", memory.TextureMiB, 32, 4096);
+    matched |= EditorConfig::Value(output, key, value, "memory.TargetPercent", memory.TargetPercent, 50, 95);
+    matched |= EditorConfig::Value(output, key, value, "memory.IdleTextureFrames", memory.IdleTextureFrames, 60, 3600);
+    matched |= EditorConfig::Value(output, key, value, "memory.UploadMiBPerFrame", memory.UploadMiBPerFrame, 1, 64);
+    matched |= EditorConfig::Value(output, key, value, "memory.ShadowResolution", memory.ShadowResolution, 1024, 2048);
+    matched |= EditorConfig::Value(output, key, value, "memory.ReleaseInactive", memory.ReleaseInactive, 0, 1);
+    matched |= EditorConfig::Value(output, key, value, "memory.TransientAliasing", memory.TransientAliasing, 0, 1);
     auto& textureCompression = TextureCompression::GetSettings();
     matched |= EditorConfig::Value(output, key, value, "texture.CompressOnImport", textureCompression.Enabled, 0, 1);
     matched |= EditorConfig::Value(output, key, value, "texture.BackgroundCompression",
@@ -1295,7 +1342,8 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
                                    temporalRays.DeformingBlasRebuildInterval, 0, 240);
     matched |= EditorConfig::Value(output, key, value, "ray.DeformingBlasRebuildsPerFrame",
                                    temporalRays.DeformingBlasRebuildsPerFrame, 1, 16);
-    matched |= EditorConfig::Value(output, key, value, "ray.QuantizeBlasVertices", temporalRays.QuantizeBlasVertices, 0, 1);
+    matched |=
+        EditorConfig::Value(output, key, value, "ray.QuantizeBlasVertices", temporalRays.QuantizeBlasVertices, 0, 1);
     matched |= EditorConfig::Value(output, key, value, "ray.BlasQuantizationMaxError",
                                    temporalRays.BlasQuantizationMaxError, 0.00001, 0.01);
     const auto field = [&](const char* name, auto& setting, long double low, long double high) {

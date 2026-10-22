@@ -16,6 +16,7 @@
 #include "raytelemetry.h"
 #include "lumensurfacecache.h"
 #include "temporalhistory.h"
+#include "gpumemorybudget.h"
 #include <map>
 #include <algorithm>
 
@@ -573,8 +574,7 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
         g_Status = "RayReflectionsCS のコンパイル失敗（反射 / Realtime GI 無効）。ログを確認してください";
         return false;
     }
-    if (!CreateRadianceCache() || !compile("ResolveRadianceCache", g_CacheResolve) ||
-        !compile("ClearRadianceCache", g_CacheClear))
+    if (!compile("ResolveRadianceCache", g_CacheResolve) || !compile("ClearRadianceCache", g_CacheClear))
     {
         g_CacheResolve.Reset();
         g_CacheClear.Reset();
@@ -676,6 +676,109 @@ void RayReflections::Shutdown()
     g_EngineHeap.Reset();
     g_Width = g_Height = g_Dispatches = 0;
     g_HistoryValid = false;
+}
+
+void RayReflections::ReleaseInactiveResources()
+{
+    if (!g_Device || !GpuMemoryBudget::Options.Enabled || !GpuMemoryBudget::Options.ReleaseInactive)
+    {
+        return;
+    }
+    const auto& settings = Raytracing::GetSettings();
+    const bool reflection = settings.Enabled && settings.Reflections;
+    const bool gi = settings.Enabled && RendererSettings::GetRealtimeGiEnabled();
+    const bool lumen = gi && RendererSettings::GetLumenEnabled();
+    const bool reservoir = gi && !lumen && RenderQuality::Get().ReSTIRGI;
+    const bool cache = gi && (lumen || RendererSettings::GetGiRadianceCacheEnabled());
+    const bool optix = settings.Denoise && settings.RadianceDenoiser == Raytracing::DenoiserType::Optix &&
+                       OptixDenoiser::IsAvailable();
+    const bool nrd = settings.Denoise && !optix;
+    const bool releaseReflection = !reflection && (g_Shared.Noisy || g_Shared.Result);
+    const bool releaseGi = !gi && (g_Shared.GiNoisy || g_Shared.GiResult);
+    const bool releaseReservoir = !reservoir && g_Reservoirs[0];
+    const bool releaseCache = !cache && g_Cache.Keys;
+    const bool releaseLumen = !lumen && g_Lumen.MemoryBytes() != 0;
+    const bool releaseDenoisers = ((!reflection || !nrd) && g_Denoiser) || ((!gi || !nrd) && g_GiDenoiser) ||
+                                  ((!reflection || !optix) && g_OptixReflections) || ((!gi || !optix) && g_OptixGi);
+    const bool releaseAdaptive = (!reflection || lumen) && g_AdaptiveRadiance;
+    if (!(releaseReflection || releaseGi || releaseReservoir || releaseCache || releaseLumen || releaseDenoisers ||
+          releaseAdaptive) ||
+        !GraphicsDevice::WaitForGpuIdle())
+    {
+        return;
+    }
+    if (releaseReflection)
+    {
+        g_Shared.Noisy.Reset();
+        g_Shared.Result.Reset();
+        g_HistoryValid = false;
+    }
+    if (releaseGi)
+    {
+        g_Shared.GiNoisy.Reset();
+        g_Shared.GiResult.Reset();
+        g_GiActive = g_GiHistoryValid = false;
+    }
+    for (auto& frame : g_Frames)
+    {
+        if (!reflection)
+        {
+            frame.Noisy.Reset();
+            frame.Result.Reset();
+        }
+        if (!gi)
+        {
+            frame.GiNoisy.Reset();
+            frame.GiResult.Reset();
+        }
+        if (!reflection && !gi)
+        {
+            frame = {};
+        }
+    }
+    if (releaseReservoir)
+    {
+        g_Reservoirs[0].Reset();
+        g_Reservoirs[1].Reset();
+        g_ReservoirWidth = g_ReservoirHeight = 0;
+        g_ReSTIRHistoryValid = false;
+    }
+    if (releaseCache)
+    {
+        g_Cache = {};
+        g_CacheWasEnabled = false;
+    }
+    if (releaseLumen)
+    {
+        g_Lumen.Reset();
+        g_LumenWasEnabled = false;
+    }
+    if (releaseAdaptive)
+    {
+        g_AdaptiveRadiance.Reset();
+        g_AdaptiveGuide.Reset();
+        g_AdaptiveValid = false;
+    }
+    if (!reflection || !nrd)
+    {
+        g_Denoiser.reset();
+        g_Width = g_Height = 0;
+        g_HistoryValid = false;
+    }
+    if (!gi || !nrd)
+    {
+        g_GiDenoiser.reset();
+        g_GiWidth = g_GiHeight = 0;
+        g_GiHistoryValid = false;
+    }
+    if (!reflection || !optix)
+    {
+        g_OptixReflections.reset();
+    }
+    if (!gi || !optix)
+    {
+        g_OptixGi.reset();
+    }
 }
 
 bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource* scene,
@@ -962,8 +1065,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     const bool lumenRequested = RendererSettings::GetLumenEnabled();
     // Lumen のワールド空間放射輝度キャッシュは常にハッシュグリッドを使う（キー空間をソルトで分離）。
     const bool cacheEnabled = RendererSettings::GetRealtimeGiEnabled() &&
-                              (lumenRequested || RendererSettings::GetGiRadianceCacheEnabled()) && g_Cache.Keys &&
-                              g_CacheResolve && g_CacheClear;
+                              (lumenRequested || RendererSettings::GetGiRadianceCacheEnabled()) &&
+                              (g_Cache.Keys || CreateRadianceCache()) && g_CacheResolve && g_CacheClear;
     if (cacheEnabled && !g_CacheWasEnabled)
     {
         g_Cache.NeedsClear = true;

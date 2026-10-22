@@ -31,6 +31,7 @@
 #include "lightinstancebuilder.h"
 #include "megalights.h"
 #include "graphicsdevice.h"
+#include "gpumemorybudget.h"
 #include "meshshader/meshshaderrenderer.h"
 #include "rendertargets.h"
 #include "scenepasses.h"
@@ -184,6 +185,8 @@ bool GraphicsDevice::Init(HWND hwnd)
         WriteGraphicsLog("ERROR: D3D12CreateDevice failed\n");
         return false;
     }
+
+    GpuMemoryBudget::Initialize(m_Device.Get());
 
     D3D12_FEATURE_DATA_D3D12_OPTIONS options{};
     if (SUCCEEDED(m_Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options, sizeof(options))))
@@ -714,6 +717,7 @@ void GraphicsDevice::Uninit()
     m_PreUpscaleAaHistory.Reset();
     m_EditorSceneRenderTarget.Reset();
     m_TransparentSceneCopy.Reset();
+    RenderTargets::ReleaseMemoryResources();
     m_SceneRtvHeap.Reset();
     m_CbvHeap.Reset();
     m_RootSignature.Reset();

@@ -18,6 +18,7 @@
 #include "cloud/cloudrenderer.h"
 #include "screenspaceeffects.h"
 #include "graphicslog.h"
+#include "gpumemorybudget.h"
 
 namespace
 {
@@ -45,6 +46,11 @@ bool ScenePasses::PrepareStaticShadowCache()
         RendererSettings::GetShadowMapMethod() != ShadowMapMethod::VirtualShadowMap ||
         Raytracing::UsesRaytracedShadows())
     {
+        if (g_StationaryShadowDepth && GpuMemoryBudget::Options.Enabled && GpuMemoryBudget::Options.ReleaseInactive &&
+            GraphicsDevice::WaitForGpuIdle())
+        {
+            ReleaseStaticShadowCache();
+        }
         LightingResources::SetStaticShadowCacheAvailable(false);
         return false;
     }
@@ -403,6 +409,7 @@ void ScenePasses::BeginEditorSceneOverlayPass()
 
 void ScenePasses::BeginHdrTransparentPass()
 {
+    RenderTargets::ActivateTransparentCopy(m_CommandList.Get());
     Raytracing::BeginGlassRead(m_CommandList.Get());
     m_UseLowResDepth = m_RenderMode == RenderMode::DEFERRED && m_LowResDepthBuffer != nullptr;
     auto* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
@@ -708,11 +715,11 @@ void ScenePasses::EndScenePass()
             {
                 RenderProfiler::ScopedEvent profile("Compute GBuffer", m_CommandList.Get());
                 const UINT depthIndex = m_UseLowResDepth ? g_kLOW_RES_DEPTH_SRV_INDEX : g_kDEPTH_SRV_INDEX;
-                const CD3DX12_GPU_DESCRIPTOR_HANDLE depthSrv(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
-                                                             depthIndex, m_Device->GetDescriptorHandleIncrementSize(
-                                                                             D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV));
-                VisibilityBuffer::GenerateGBuffer(m_CommandList.Get(), m_GBufferSrvHandles[visibilityIndex],
-                                                  depthSrv, m_SceneWidth, m_SceneHeight);
+                const CD3DX12_GPU_DESCRIPTOR_HANDLE depthSrv(
+                    m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), depthIndex,
+                    m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV));
+                VisibilityBuffer::GenerateGBuffer(m_CommandList.Get(), m_GBufferSrvHandles[visibilityIndex], depthSrv,
+                                                  m_SceneWidth, m_SceneHeight);
             }
             D3D12_RESOURCE_BARRIER afterCompute[g_kGEOMETRY_GBUFFER_COUNT + 2]{};
             afterCompute[0] = CD3DX12_RESOURCE_BARRIER::Transition(m_GBufferTargets[visibilityIndex].Get(),

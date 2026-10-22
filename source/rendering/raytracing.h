@@ -58,6 +58,7 @@ class Raytracing
 
     static bool Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UINT increment);
     static void Shutdown();
+    static void ReleaseInactiveResources();
     static void Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource* depth, ID3D12Resource* normal,
                         D3D12_GPU_DESCRIPTOR_HANDLE depthSrv, D3D12_GPU_DESCRIPTOR_HANDLE normalSrv, UINT frameIndex);
     static bool IsAvailable();

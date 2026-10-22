@@ -537,10 +537,13 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
                 antiAliasingLabel = "Pre-upscale FXAA";
             }
             RenderProfiler::ScopedEvent profile(antiAliasingLabel, m_CommandList.Get());
+            RenderTargets::ActivatePreUpscaleAa(m_CommandList.Get());
             D3D12_RESOURCE_BARRIER preAaToRt = CD3DX12_RESOURCE_BARRIER::Transition(
                 GetRenderTarget(RenderTargetType::PreUpscaleAa).Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
                 D3D12_RESOURCE_STATE_RENDER_TARGET);
             m_CommandList->ResourceBarrier(1, &preAaToRt);
+            m_CommandList->ClearRenderTargetView(GetRenderTargetRtvHandle(RenderTargetType::PreUpscaleAa),
+                                                 m_kSceneClearColor, 0, nullptr);
             m_CommandList->OMSetRenderTargets(1, &GetRenderTargetRtvHandle(RenderTargetType::PreUpscaleAa), FALSE,
                                               nullptr);
             m_CommandList->SetPipelineState(aaPso);

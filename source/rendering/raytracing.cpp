@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "gpumemorybudget.h"
 #include "raytracing.h"
 #include "raytracingscene.h"
 #include "rendererstate.h"
@@ -317,28 +318,40 @@ namespace
             g_Device->CreateUnorderedAccessView(slotGuide.Get(), nullptr, &uav,
                                                 Cpu(kGuideUavStart + g_FrameIndex * 5 + index));
         }
-        if (!g_NrdSun || g_NrdWidth != frame.Width || g_NrdHeight != frame.Height)
+        const bool resize = g_NrdWidth != frame.Width || g_NrdHeight != frame.Height;
+        const bool needSun = g_Settings.Denoise && Raytracing::UsesRaytracedShadows();
+        const bool needAmbient = g_Settings.Denoise && Raytracing::UsesRaytracedAmbientOcclusion();
+        if (resize)
         {
-            // 履歴は待機中のフレーム間で共有するため、キューの完了後だけ破棄する。
-            if (!GraphicsDevice::WaitForGpuIdle())
+            if ((g_NrdSun || g_NrdAmbient) && !GraphicsDevice::WaitForGpuIdle())
             {
                 return false;
             }
+            g_NrdSun.reset();
+            g_NrdAmbient.reset();
+            g_NrdWidth = frame.Width;
+            g_NrdHeight = frame.Height;
+            g_NrdHistoryValid = g_ShadowHistoryValid = g_AmbientHistoryValid = false;
+        }
+        if (needSun && !g_NrdSun)
+        {
             auto created = make_unique<NrdDenoiser>();
             if (!created->Initialize(g_Device.Get(), NrdSignal::Shadow, frame.Width, frame.Height))
             {
                 return false;
             }
-            auto ambient = make_unique<NrdDenoiser>();
-            if (!ambient->Initialize(g_Device.Get(), NrdSignal::AmbientOcclusion, frame.Width, frame.Height))
+            g_NrdSun = move(created);
+            g_ShadowHistoryValid = false;
+        }
+        if (needAmbient && !g_NrdAmbient)
+        {
+            auto created = make_unique<NrdDenoiser>();
+            if (!created->Initialize(g_Device.Get(), NrdSignal::AmbientOcclusion, frame.Width, frame.Height))
             {
                 return false;
             }
-            g_NrdSun = move(created);
-            g_NrdAmbient = move(ambient);
-            g_NrdWidth = frame.Width;
-            g_NrdHeight = frame.Height;
-            g_NrdHistoryValid = false;
+            g_NrdAmbient = move(created);
+            g_AmbientHistoryValid = false;
         }
         return true;
     }
@@ -474,9 +487,9 @@ namespace
             return false;
         }
         const XMMATRIX world = XMLoadFloat4x4(&geometry.World);
-        const float scale = (std::max)({XMVectorGetX(XMVector3Length(world.r[0])),
-                                        XMVectorGetX(XMVector3Length(world.r[1])),
-                                        XMVectorGetX(XMVector3Length(world.r[2]))});
+        const float scale =
+            (std::max)({XMVectorGetX(XMVector3Length(world.r[0])), XMVectorGetX(XMVector3Length(world.r[1])),
+                        XMVectorGetX(XMVector3Length(world.r[2]))});
         const float worldError = geometry.ObjectRadius * scale / 32767.0f * 0.5f;
         return worldError <= (std::max)(g_Settings.BlasQuantizationMaxError, 0.0f) && EnsureQuantizePipeline();
     }
@@ -494,8 +507,8 @@ namespace
         }
         if (!frame.CompactionReadback)
         {
-            if (!EnsureBuffer(frame.CompactionReadback, bytes, D3D12_HEAP_TYPE_READBACK,
-                              D3D12_RESOURCE_STATE_COPY_DEST, L"BLAS Compaction Readback"))
+            if (!EnsureBuffer(frame.CompactionReadback, bytes, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST,
+                              L"BLAS Compaction Readback"))
             {
                 return false;
             }
@@ -548,9 +561,9 @@ namespace
             {
                 continue;
             }
-            commandList->CopyRaytracingAccelerationStructure(
-                compacted->GetGPUVirtualAddress(), level.Result->GetGPUVirtualAddress(),
-                D3D12_RAYTRACING_ACCELERATION_STRUCTURE_COPY_MODE_COMPACT);
+            commandList->CopyRaytracingAccelerationStructure(compacted->GetGPUVirtualAddress(),
+                                                             level.Result->GetGPUVirtualAddress(),
+                                                             D3D12_RAYTRACING_ACCELERATION_STRUCTURE_COPY_MODE_COMPACT);
             // 旧 BLAS は、このコマンドリストの前段（前回 TLAS を読むラスタライティング）から参照され得る。
             // スロットのフェンス完了まで保持する。
             frame.Retired.push_back(level.Result);
@@ -600,9 +613,9 @@ namespace
 
     // 量子化が必要な頂点ソースを 1 ソース 1 グループでまとめてディスパッチする。
     // 戻り値: 頂点ソース → BLAS 入力に使える量子化バッファ（NON_PIXEL_SHADER_RESOURCE 状態）。
-    map<VertexSourceKey, ID3D12Resource*> QuantizeVertexSources(ID3D12GraphicsCommandList4* commandList,
-                                                                FrameResources& frame,
-                                                                const map<VertexSourceKey, const RaytracingGeometry*>& sources)
+    map<VertexSourceKey, ID3D12Resource*> QuantizeVertexSources(
+        ID3D12GraphicsCommandList4* commandList, FrameResources& frame,
+        const map<VertexSourceKey, const RaytracingGeometry*>& sources)
     {
         map<VertexSourceKey, ID3D12Resource*> ready;
         if (sources.empty() || !g_QuantizePipeline)
@@ -1384,6 +1397,48 @@ void Raytracing::Shutdown()
     g_QuantizeTried = false;
     g_RebuildStagger = 0;
     g_BlasStats = {};
+}
+
+void Raytracing::ReleaseInactiveResources()
+{
+    if (!g_Device || !GpuMemoryBudget::Options.Enabled || !GpuMemoryBudget::Options.ReleaseInactive)
+    {
+        return;
+    }
+    const bool needed =
+        g_Settings.Enabled && (UsesRaytracedShadows() || UsesRaytracedAmbientOcclusion() || g_Settings.Reflections ||
+                               RendererSettings::GetRealtimeGiEnabled() || RenderQuality::Get().RaytracedRefraction);
+    const bool releaseSun = g_NrdSun && (!needed || !g_Settings.Denoise || !UsesRaytracedShadows());
+    const bool releaseAmbient = g_NrdAmbient && (!needed || !g_Settings.Denoise || !UsesRaytracedAmbientOcclusion());
+    bool releaseScene = false;
+    for (const auto& frame : g_Frames)
+    {
+        releaseScene |= !needed && (frame.TopLevel || frame.Result || !frame.Geometry.empty());
+    }
+    if (!(releaseScene || releaseSun || releaseAmbient) || !GraphicsDevice::WaitForGpuIdle())
+    {
+        return;
+    }
+    if (releaseSun)
+    {
+        g_NrdSun.reset();
+        g_ShadowHistoryValid = false;
+    }
+    if (releaseAmbient)
+    {
+        g_NrdAmbient.reset();
+        g_AmbientHistoryValid = false;
+    }
+    if (releaseScene)
+    {
+        g_Frames = {};
+        g_SharedGuides = {};
+        g_InstanceCount = 0;
+        g_Active = g_ReflectionsActive = g_GiActive = false;
+        g_NrdHistoryValid = false;
+        g_GuideSerial = 0;
+        g_BlasStats = {};
+    }
 }
 
 void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource* depth, ID3D12Resource* normal,

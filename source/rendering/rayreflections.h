@@ -24,6 +24,8 @@ class RayReflections
     static ID3D12Resource* GetGiNoisyResource();
     static bool Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engineHeap, UINT increment);
     static void Shutdown();
+    // Called before recording a frame, including frames where DXR is disabled.
+    static void ReleaseInactiveResources();
     static bool Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource* scene,
                         const vector<RaytracingGeometry>& geometry, const NrdFrame& frame,
                         const array<ComPtr<ID3D12Resource>, 4>& guides, bool denoise);

@@ -29,6 +29,7 @@ class TransientArena final
             UINT64 Size, Alignment, Offset;
         };
 
+        UINT64 separateBytes = 0;
         std::vector<Slot> slots;
         std::vector<UINT> assignment(requests.size()), order(requests.size());
         for (UINT i = 0; i < order.size(); ++i)
@@ -50,6 +51,7 @@ class TransientArena final
             {
                 return false;
             }
+            separateBytes += info.SizeInBytes;
             UINT slot = UINT(slots.size());
             for (UINT j = 0; j < slots.size(); ++j)
             {
@@ -111,7 +113,19 @@ class TransientArena final
             }
         }
         m_Placed = placed;
+        m_AllocationBytes = placed ? bytes : separateBytes;
+        m_SavedBytes = placed && separateBytes > bytes ? separateBytes - bytes : 0;
         return true;
+    }
+
+    UINT64 AllocationBytes() const
+    {
+        return m_AllocationBytes;
+    }
+
+    UINT64 SavedBytes() const
+    {
+        return m_SavedBytes;
     }
 
     ID3D12Resource* Get(UINT index) const
@@ -142,6 +156,7 @@ class TransientArena final
         m_Slots.clear();
         m_Active.clear();
         m_Placed = false;
+        m_AllocationBytes = m_SavedBytes = 0;
     }
 
   private:
@@ -150,4 +165,5 @@ class TransientArena final
     std::vector<UINT> m_Slots;
     std::vector<ID3D12Resource*> m_Active;
     bool m_Placed = false;
+    UINT64 m_AllocationBytes = 0, m_SavedBytes = 0;
 };

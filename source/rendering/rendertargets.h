@@ -2,6 +2,7 @@
 #include "rendererstate.h"
 #include <array>
 #include <cstddef>
+#include "transientarena.h"
 
 enum class RenderTargetType
 {
@@ -23,6 +24,9 @@ class RenderTargets : protected RendererState
   protected:
     static void GetGBufferClearColor(UINT index, float outColor[4]);
 
+    inline static TransientArena m_TransparentAaArena;
+    inline static bool m_TransparentAaAliased = false;
+    inline static bool m_AliasRequested = false;
     inline static RenderTargetResourceArray m_RenderTargetResources{};
     inline static RenderTargetCpuHandleArray m_RenderTargetRtvHandles{};
     inline static RenderTargetGpuHandleArray m_RenderTargetSrvHandles{};
@@ -52,11 +56,35 @@ class RenderTargets : protected RendererState
     using RendererState::GetSceneColorFormat;
 
     static bool CreateDepthBuffer();
-    static bool CreateShadowDepthBuffer();
+    static bool CreateShadowDepthBuffer(UINT layers = g_kMAX_SHADOW_LIGHTS, UINT resolution = g_kSHADOW_MAP_SIZE);
+    static bool ConfigureShadowDepthBuffer(UINT layers, UINT resolution);
     static bool CreateSceneRenderTarget();
     static void ReleaseGBufferResources();
 
     static void ResizeScene(UINT width, UINT height);
+    static void UpdateMemoryPolicy();
+
+    static void ReleaseMemoryResources()
+    {
+        m_TransparentAaArena.Reset();
+        m_TransparentAaAliased = false;
+    }
+
+    static void ActivateTransparentCopy(ID3D12GraphicsCommandList* commands)
+    {
+        if (m_TransparentAaAliased)
+        {
+            m_TransparentAaArena.Activate(0, commands);
+        }
+    }
+
+    static void ActivatePreUpscaleAa(ID3D12GraphicsCommandList* commands)
+    {
+        if (m_TransparentAaAliased)
+        {
+            m_TransparentAaArena.Activate(1, commands);
+        }
+    }
 
     static D3D12_GPU_DESCRIPTOR_HANDLE GetSceneSrvHandle()
     {

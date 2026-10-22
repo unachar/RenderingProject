@@ -12,6 +12,10 @@
 #include <cctype>
 #include <filesystem>
 #include "frameconstants.h"
+#include "gpumemorybudget.h"
+#include "graphicslog.h"
+#include <atomic>
+#include <unordered_set>
 
 unordered_map<string, TextureManager::TextureData> TextureManager::m_Textures;
 int TextureManager::m_NextSrvIndex = 0;
@@ -31,11 +35,60 @@ struct TextureStreamingState
 {
     vector<TextureMipUploadData> Mips{};
     vector<ComPtr<ID3D12Heap>> TileHeaps{};
+    ComPtr<ID3D12Heap> TailHeap;
+    UINT TailFirstMip = 0;
+    uint64_t LastChangedFrame = 0;
     UINT MostDetailedResidentMip = 0;
     UINT StandardMipCount = 0;
     UINT TotalMipCount = 0;
     uint64_t LastTouchedFrame = 0;
 };
+
+// A borrowed reserved resource (thumbnails, ray descriptor caches) must keep its
+// backing heaps alive even after the texture manager publishes a BC replacement.
+class TextureHeapLifetime final : public IUnknown
+{
+  public:
+    explicit TextureHeapLifetime(shared_ptr<TextureStreamingState> state) : m_State(move(state)) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** output) override
+    {
+        if (!output)
+        {
+            return E_POINTER;
+        }
+        *output = nullptr;
+        if (iid != __uuidof(IUnknown))
+        {
+            return E_NOINTERFACE;
+        }
+        *output = static_cast<IUnknown*>(this);
+        AddRef();
+        return S_OK;
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef() override
+    {
+        return ++m_References;
+    }
+
+    ULONG STDMETHODCALLTYPE Release() override
+    {
+        const ULONG references = --m_References;
+        if (references == 0)
+        {
+            delete this;
+        }
+        return references;
+    }
+
+  private:
+    atomic<ULONG> m_References{1};
+    shared_ptr<TextureStreamingState> m_State;
+};
+
+static constexpr GUID g_TextureHeapLifetimeId = {
+    0x7be881b2, 0x677d, 0x4c7a, {0x8d, 0xaf, 0x99, 0x57, 0x2c, 0xba, 0x1e, 0x31}};
 
 static ComPtr<ID3D12CommandAllocator> g_BatchCmdAlloc;
 static ComPtr<ID3D12GraphicsCommandList> g_BatchCmdList;
@@ -62,10 +115,18 @@ struct StreamingUploadEntry
 {
     ComPtr<ID3D12Resource> Resource;
     UINT64 Size = 0;
-    uint64_t RetireFrame = 0;
+    uint64_t Fence = 0;
 };
 
 static vector<StreamingUploadEntry> g_StreamingUploads;
+
+struct RetiredTextureHeap
+{
+    ComPtr<ID3D12Heap> Heap;
+    uint64_t Fence = 0;
+};
+
+static vector<RetiredTextureHeap> g_RetiredTextureHeaps;
 static uint64_t g_StreamingFrame = 1;
 static bool g_ReservedResourcesSupported = false;
 
@@ -77,6 +138,7 @@ struct DecodedEntry
 {
     string Key{};
     filesystem::path SourcePath{};
+    TextureUsage Usage = TextureUsage::Color;
     int SrvIndex = -1;
     TexMetadata Metadata{};
     unique_ptr<ScratchImage> Image = nullptr;
@@ -359,7 +421,9 @@ ComPtr<ID3D12Resource> LoadReservedTextureToDevice(ID3D12Device* device, const T
     streaming->StandardMipCount = standardMipCount;
     streaming->TotalMipCount = static_cast<UINT>(metadata.mipLevels);
     streaming->LastTouchedFrame = g_StreamingFrame;
-    streaming->TileHeaps.push_back(residentHeap);
+    streaming->TailHeap = residentHeap;
+    streaming->TailFirstMip = firstResidentMip;
+    streaming->TileHeaps.resize(firstResidentMip);
     streaming->Mips.resize(metadata.mipLevels);
     for (UINT mip = 0; mip < metadata.mipLevels; ++mip)
     {
@@ -377,12 +441,19 @@ ComPtr<ID3D12Resource> LoadReservedTextureToDevice(ID3D12Device* device, const T
             destination.TileCount = tilings[mip].WidthInTiles * tilings[mip].HeightInTiles * tilings[mip].DepthInTiles;
         }
     }
+    auto* lifetime = new TextureHeapLifetime(streaming);
+    const HRESULT lifetimeResult = texture->SetPrivateDataInterface(g_TextureHeapLifetimeId, lifetime);
+    lifetime->Release();
+    if (FAILED(lifetimeResult))
+    {
+        return nullptr;
+    }
     outStreaming = move(streaming);
     return texture;
 }
 
 ComPtr<ID3D12Resource> LoadTextureToDevice(ID3D12Device* device, const TexMetadata& metadata, const ScratchImage& image,
-    D3D12_RESOURCE_STATES readState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+                                           D3D12_RESOURCE_STATES readState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
 {
     ComPtr<ID3D12Resource> texture;
 
@@ -537,7 +608,18 @@ void TextureManager::ReleaseUploadBuffer(ComPtr<ID3D12Resource> upload, UINT64 s
     }
     else
     {
-        g_UploadPool.push_back({upload, size});
+        // Upload heaps are system memory on discrete GPUs. Bound the cache as well,
+        // so a single large import does not remain allocated for the whole session.
+        constexpr uint64_t poolLimit = 32ull * 1024 * 1024;
+        uint64_t pooled = 0;
+        for (const auto& entry : g_UploadPool)
+        {
+            pooled += entry.Size;
+        }
+        if (size <= poolLimit && pooled + size <= poolLimit)
+        {
+            g_UploadPool.push_back({upload, size});
+        }
     }
 }
 
@@ -758,9 +840,14 @@ void TextureManager::EndTextureLoading()
             continue;
         }
 
-        TextureManager::CreateShaderResourceView(resource.Get(), resource->GetDesc(), d.SrvIndex);
+        TextureManager::CreateShaderResourceView(resource.Get(), resource->GetDesc(), d.SrvIndex,
+                                                 streaming ? streaming->MostDetailedResidentMip : 0);
         td.Resource = resource;
         td.Streaming = move(streaming);
+        if (!IsCompressed(d.Metadata.format))
+        {
+            td.CompressionCacheKey = TextureCompression::FileCacheKey(d.SourcePath, d.Usage);
+        }
         error_code timestampError;
         const auto timestamp = filesystem::last_write_time(d.SourcePath, timestampError);
         if (!timestampError)
@@ -781,13 +868,14 @@ void TextureManager::EndTextureLoading()
         Debug::Log("ERROR: Batch command list execution failed\n");
     }
 
+    vector<UploadPoolEntry> completedUploads;
     {
         lock_guard<mutex> lock(g_UploadMutex);
-        for (auto& e : g_DeferredUploadReturns)
-        {
-            g_UploadPool.push_back(e);
-        }
-        g_DeferredUploadReturns.clear();
+        completedUploads.swap(g_DeferredUploadReturns);
+    }
+    for (auto& entry : completedUploads)
+    {
+        ReleaseUploadBuffer(move(entry.Resource), entry.Size, false);
     }
 
     g_IsBatchLoading = false;
@@ -939,6 +1027,9 @@ void TextureManager::Uninit()
     m_DefaultTexture.Reset();
     m_ErrorTexture.Reset();
     g_StreamingUploads.clear();
+    g_RetiredTextureHeaps.clear();
+    g_UploadPool.clear();
+    g_DeferredUploadReturns.clear();
     g_ReservedResourcesSupported = false;
     g_StreamingFrame = 1;
     g_SingleFence.Reset();
@@ -955,10 +1046,12 @@ void TextureManager::Uninit()
     }
 }
 
-bool TextureManager::CreateShaderResourceView(ID3D12Resource* pResource, const D3D12_RESOURCE_DESC& desc, int srvIndex)
+bool TextureManager::CreateShaderResourceView(ID3D12Resource* pResource, const D3D12_RESOURCE_DESC& desc, int srvIndex,
+                                              UINT minimumMip)
 {
     ID3D12Device* device = GraphicsDevice::GetDevice();
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+    srvDesc.Texture2D.ResourceMinLODClamp = static_cast<float>(minimumMip);
     srvDesc.Format = desc.Format;
     srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -1077,6 +1170,7 @@ int TextureManager::LoadTexture(const filesystem::path& fileName, TextureUsage u
         auto entry = make_shared<DecodedEntry>();
         entry->Key = key;
         entry->SourcePath = fileName;
+        entry->Usage = usage;
         entry->SrvIndex = srvIndex;
         entry->Future = entry->Promise.get_future();
 
@@ -1114,9 +1208,8 @@ int TextureManager::LoadTexture(const filesystem::path& fileName, TextureUsage u
     ScratchImage image;
 
     // メインスレッドを止めないよう、未キャッシュ時の圧縮は既定でバックグラウンドへ回す（設定で変更可）。
-    HRESULT hr = LoadCompressedOrSource(fileName, usage,
-                                        !TextureCompression::GetSettings().BackgroundForSynchronousLoads, metadata,
-                                        image);
+    HRESULT hr = LoadCompressedOrSource(
+        fileName, usage, !TextureCompression::GetSettings().BackgroundForSynchronousLoads, metadata, image);
     if (FAILED(hr))
     {
         Debug::Log("ERROR: Failed to load texture: %s (HRESULT: 0x%08X)\n", displayPath.c_str(), hr);
@@ -1136,12 +1229,17 @@ int TextureManager::LoadTexture(const filesystem::path& fileName, TextureUsage u
         return GetErrorTextureIndex();
     }
 
-    TextureManager::CreateShaderResourceView(resource.Get(), resource->GetDesc(), srvIndex);
+    TextureManager::CreateShaderResourceView(resource.Get(), resource->GetDesc(), srvIndex,
+                                             streaming ? streaming->MostDetailedResidentMip : 0);
 
     TextureData tData;
     tData.Resource = resource;
     tData.SrvIndex = srvIndex;
     tData.Streaming = move(streaming);
+    if (!IsCompressed(metadata.format))
+    {
+        tData.CompressionCacheKey = TextureCompression::FileCacheKey(fileName, usage);
+    }
     error_code timestampError;
     const auto timestamp = filesystem::last_write_time(fileName, timestampError);
     if (!timestampError)
@@ -1199,7 +1297,8 @@ int TextureManager::LoadIesProfile(const filesystem::path& fileName)
                 memcpy(target->pixels + row * target->rowPitch, pixels.data() + row * width, width * sizeof(float));
             }
             data.Resource = LoadTextureToDevice(GraphicsDevice::GetDevice(), image.GetMetadata(), image,
-                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
+                                                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             if (data.Resource)
             {
                 lock_guard<mutex> lock(g_TextureMutex);
@@ -1251,7 +1350,7 @@ uint64_t TextureManager::WriteIesProfileViews(D3D12_CPU_DESCRIPTOR_HANDLE destin
             index < static_cast<int>(FrameConstants::g_kMAX_SRVS))
         {
             device->CreateShaderResourceView(texture.Resource.Get(), &view,
-                CD3DX12_CPU_DESCRIPTOR_HANDLE(destination, index, increment));
+                                             CD3DX12_CPU_DESCRIPTOR_HANDLE(destination, index, increment));
         }
     }
     return g_IesProfileRevision;
@@ -1319,12 +1418,17 @@ int TextureManager::LoadTextureFromMemory(const char* name, const uint8_t* pData
         return GetErrorTextureIndex();
     }
 
-    TextureManager::CreateShaderResourceView(resource.Get(), resource->GetDesc(), srvIndex);
+    TextureManager::CreateShaderResourceView(resource.Get(), resource->GetDesc(), srvIndex,
+                                             streaming ? streaming->MostDetailedResidentMip : 0);
 
     TextureData tData;
     tData.Resource = resource;
     tData.SrvIndex = srvIndex;
     tData.Streaming = move(streaming);
+    if (!IsCompressed(metadata.format))
+    {
+        tData.CompressionCacheKey = cacheKey;
+    }
     {
         lock_guard<mutex> lock(g_TextureMutex);
         m_Textures.emplace(key, tData);
@@ -1447,18 +1551,36 @@ void TextureManager::TouchTexture(int srvIndex)
     }
 }
 
+void TextureManager::OnFrameSubmitted(uint64_t fence)
+{
+    for (auto& retired : g_RetiredTextureHeaps)
+    {
+        if (retired.Fence == 0)
+        {
+            retired.Fence = fence;
+        }
+    }
+    for (auto& upload : g_StreamingUploads)
+    {
+        if (upload.Fence == 0)
+        {
+            upload.Fence = fence;
+        }
+    }
+}
+
 void TextureManager::UpdateStreaming(ID3D12GraphicsCommandList* commandList)
 {
-    if (!g_ReservedResourceStreamingSafe || !commandList || !g_ReservedResourcesSupported ||
-        !RendererSettings::GetTextureStreamingEnabled() || !RendererSettings::GetReservedResourcesEnabled())
-    {
-        return;
-    }
     ++g_StreamingFrame;
-
+    const uint64_t completed = GraphicsDevice::GetCompletedFence();
+    g_RetiredTextureHeaps.erase(remove_if(g_RetiredTextureHeaps.begin(), g_RetiredTextureHeaps.end(),
+                                          [completed](const auto& retired) {
+                                              return retired.Fence != 0 && retired.Fence <= completed;
+                                          }),
+                                g_RetiredTextureHeaps.end());
     for (auto it = g_StreamingUploads.begin(); it != g_StreamingUploads.end();)
     {
-        if (it->RetireFrame <= g_StreamingFrame)
+        if (it->Fence != 0 && it->Fence <= completed)
         {
             ReleaseUploadBuffer(it->Resource, it->Size, false);
             it = g_StreamingUploads.erase(it);
@@ -1468,31 +1590,181 @@ void TextureManager::UpdateStreaming(ID3D12GraphicsCommandList* commandList)
             ++it;
         }
     }
-
+    if (!commandList)
+    {
+        return;
+    }
     lock_guard<mutex> lock(g_TextureMutex);
+    auto* device = GraphicsDevice::GetDevice();
+    auto& stats = GpuMemoryBudget::Stats;
+    const auto& options = GpuMemoryBudget::Options;
+    const auto allocationBytes = [&](const TextureData& texture) -> uint64_t {
+        if (!texture.Resource)
+        {
+            return 0;
+        }
+        if (texture.Streaming)
+        {
+            uint64_t bytes = texture.Streaming->TailHeap->GetDesc().SizeInBytes;
+            for (const auto& heap : texture.Streaming->TileHeaps)
+            {
+                if (heap)
+                {
+                    bytes += heap->GetDesc().SizeInBytes;
+                }
+            }
+            return bytes;
+        }
+        const auto desc = texture.Resource->GetDesc();
+        const auto info = device->GetResourceAllocationInfo(0, 1, &desc);
+        return info.SizeInBytes == UINT64_MAX ? 0 : info.SizeInBytes;
+    };
+    stats.TextureBytes = 0;
+    unordered_set<ID3D12Resource*> counted;
+    for (const auto& pair : m_Textures)
+    {
+        if (counted.insert(pair.second.Resource.Get()).second)
+        {
+            stats.TextureBytes += allocationBytes(pair.second);
+        }
+    }
+    GpuMemoryBudget::Update();
+    if (g_StreamingFrame % 120 == 0)
+    {
+        WriteGraphicsLog(
+            "VRAM: policy=%u local=%.2f budget=%.2f textures=%.2f texture_budget=%.2f evicted=%.2f BC=%llu MiB\n",
+            unsigned(options.Enabled), stats.Usage / 1048576.0, stats.Budget / 1048576.0,
+            stats.TextureBytes / 1048576.0, stats.TextureBudget / 1048576.0, stats.EvictedBytes / 1048576.0,
+            stats.CompressedReplacements);
+    }
+    bool idle = false;
+    const auto ensureIdle = [&]() {
+        if (!idle)
+        {
+            idle = GraphicsDevice::WaitForGpuIdle();
+        }
+        return idle;
+    };
+    // Publish completed BC caches before recording draws. Descriptor indices stay stable.
+    if (options.Enabled && TextureCompression::GetSettings().Enabled && g_StreamingFrame % 60 == 0)
+    {
+        for (auto& pair : m_Textures)
+        {
+            auto& texture = pair.second;
+            if (texture.CompressionCacheKey == 0)
+            {
+                continue;
+            }
+            TexMetadata metadata{};
+            ScratchImage image;
+            if (!TextureCompression::TryLoadCached(texture.CompressionCacheKey, metadata, image))
+            {
+                continue;
+            }
+            if (!ensureIdle())
+            {
+                return;
+            }
+            shared_ptr<TextureStreamingState> streaming;
+            auto replacement = LoadReservedTextureToDevice(device, metadata, image, streaming);
+            if (!replacement)
+            {
+                replacement = LoadTextureToDevice(device, metadata, image);
+            }
+            if (!replacement)
+            {
+                break;
+            }
+            const uint64_t previous = allocationBytes(texture);
+            texture.Resource = move(replacement);
+            texture.Streaming = move(streaming);
+            texture.CompressionCacheKey = 0;
+            CreateShaderResourceView(texture.Resource.Get(), texture.Resource->GetDesc(), texture.SrvIndex,
+                                     texture.Streaming ? texture.Streaming->MostDetailedResidentMip : 0);
+            stats.TextureBytes = stats.TextureBytes - previous + allocationBytes(texture);
+            ++stats.CompressedReplacements;
+            break;
+        }
+    }
+    if (!g_ReservedResourcesSupported || !g_ReservedResourceStreamingSafe ||
+        !RendererSettings::GetReservedResourcesEnabled() || !RendererSettings::GetTextureStreamingEnabled())
+    {
+        return;
+    }
+    if (options.Enabled && g_StreamingFrame % 16 == 0)
+    {
+        vector<TextureData*> candidates;
+        for (auto& pair : m_Textures)
+        {
+            if (pair.second.Streaming)
+            {
+                candidates.push_back(&pair.second);
+            }
+        }
+        stable_sort(candidates.begin(), candidates.end(), [](const auto* a, const auto* b) {
+            return a->Streaming->LastTouchedFrame < b->Streaming->LastTouchedFrame;
+        });
+        for (auto* texture : candidates)
+        {
+            auto& state = *texture->Streaming;
+            const bool unused = g_StreamingFrame > state.LastTouchedFrame + options.IdleTextureFrames;
+            while (state.MostDetailedResidentMip < state.TailFirstMip &&
+                   (unused || stats.TextureBytes > stats.TextureBudget))
+            {
+                if (!ensureIdle())
+                {
+                    return;
+                }
+                const UINT mip = state.MostDetailedResidentMip;
+                D3D12_TILED_RESOURCE_COORDINATE coordinate{};
+                coordinate.Subresource = mip;
+                D3D12_TILE_REGION_SIZE region{};
+                region.NumTiles = state.Mips[mip].TileCount;
+                D3D12_TILE_RANGE_FLAGS flag = D3D12_TILE_RANGE_FLAG_NULL;
+                UINT offset = 0;
+                GraphicsDevice::GetCommandQueue()->UpdateTileMappings(texture->Resource.Get(), 1, &coordinate, &region,
+                                                                      nullptr, 1, &flag, &offset, &region.NumTiles,
+                                                                      D3D12_TILE_MAPPING_FLAG_NONE);
+                // Retain backing storage through the submission that contains the unmap.
+                const uint64_t bytes = state.TileHeaps[mip]->GetDesc().SizeInBytes;
+                g_RetiredTextureHeaps.push_back({move(state.TileHeaps[mip]), 0});
+                ++state.MostDetailedResidentMip;
+                state.LastChangedFrame = g_StreamingFrame;
+                stats.TextureBytes -= bytes;
+                stats.EvictedBytes += bytes;
+                CreateShaderResourceView(texture->Resource.Get(), texture->Resource->GetDesc(), texture->SrvIndex,
+                                         state.MostDetailedResidentMip);
+            }
+        }
+    }
+    const uint64_t uploadLimit = uint64_t(std::clamp(options.UploadMiBPerFrame, 1u, 64u)) * 1024 * 1024;
+    uint64_t uploadsInFlight = 0;
+    for (const auto& upload : g_StreamingUploads)
+    {
+        uploadsInFlight += upload.Size;
+    }
     for (auto& pair : m_Textures)
     {
         auto& texture = pair.second;
         auto state = texture.Streaming;
-        if (!state || !texture.Resource || state->MostDetailedResidentMip == 0 ||
-            g_StreamingFrame > state->LastTouchedFrame + 30)
+        if (!state || state->MostDetailedResidentMip == 0 || g_StreamingFrame > state->LastTouchedFrame + 30 ||
+            (state->LastChangedFrame != 0 && g_StreamingFrame < state->LastChangedFrame + 120))
         {
             continue;
         }
-
         const UINT mip = state->MostDetailedResidentMip - 1;
-        if (mip >= state->Mips.size())
+        const auto& mipData = state->Mips[mip];
+        const uint64_t bytes = uint64_t(mipData.TileCount) * D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+        const UINT64 uploadSize = GetRequiredIntermediateSize(texture.Resource.Get(), mip, 1);
+        if (mipData.Pixels.empty() || bytes == 0 ||
+            (uploadsInFlight != 0 && uploadsInFlight + uploadSize > uploadLimit) ||
+            (options.Enabled && (stats.TextureBytes + bytes > stats.TextureBudget || GpuMemoryBudget::UnderPressure())))
         {
             continue;
         }
-        auto& mipData = state->Mips[mip];
-        if (mipData.Pixels.empty() || mipData.TileCount == 0)
-        {
-            continue;
-        }
-
-        ComPtr<ID3D12Heap> mipHeap = CreateTextureTileHeap(GraphicsDevice::GetDevice(), mipData.TileCount);
-        if (!mipHeap)
+        auto upload = AcquireUploadBuffer(device, uploadSize);
+        auto mipHeap = CreateTextureTileHeap(device, mipData.TileCount);
+        if (!upload || !mipHeap || !ensureIdle())
         {
             continue;
         }
@@ -1500,22 +1772,12 @@ void TextureManager::UpdateStreaming(ID3D12GraphicsCommandList* commandList)
         coordinate.Subresource = mip;
         D3D12_TILE_REGION_SIZE region{};
         region.NumTiles = mipData.TileCount;
-        D3D12_TILE_RANGE_FLAGS rangeFlag = D3D12_TILE_RANGE_FLAG_NONE;
-        UINT heapOffset = 0;
+        D3D12_TILE_RANGE_FLAGS flag = D3D12_TILE_RANGE_FLAG_NONE;
+        UINT offset = 0;
         GraphicsDevice::GetCommandQueue()->UpdateTileMappings(texture.Resource.Get(), 1, &coordinate, &region,
-                                                              mipHeap.Get(), 1, &rangeFlag, &heapOffset,
-                                                              &mipData.TileCount, D3D12_TILE_MAPPING_FLAG_NONE);
-
-        const UINT64 uploadSize = GetRequiredIntermediateSize(texture.Resource.Get(), mip, 1);
-        ComPtr<ID3D12Resource> upload = AcquireUploadBuffer(GraphicsDevice::GetDevice(), uploadSize);
-        if (!upload)
-        {
-            continue;
-        }
-        D3D12_SUBRESOURCE_DATA subresource{};
-        subresource.pData = mipData.Pixels.data();
-        subresource.RowPitch = mipData.RowPitch;
-        subresource.SlicePitch = mipData.SlicePitch;
+                                                              mipHeap.Get(), 1, &flag, &offset, &mipData.TileCount,
+                                                              D3D12_TILE_MAPPING_FLAG_NONE);
+        D3D12_SUBRESOURCE_DATA subresource{mipData.Pixels.data(), mipData.RowPitch, mipData.SlicePitch};
         auto toCopy = CD3DX12_RESOURCE_BARRIER::Transition(
             texture.Resource.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
         commandList->ResourceBarrier(1, &toCopy);
@@ -1523,11 +1785,11 @@ void TextureManager::UpdateStreaming(ID3D12GraphicsCommandList* commandList)
         auto toShader = CD3DX12_RESOURCE_BARRIER::Transition(texture.Resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
                                                              D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         commandList->ResourceBarrier(1, &toShader);
-
-        state->TileHeaps.push_back(move(mipHeap));
+        state->TileHeaps[mip] = move(mipHeap);
         state->MostDetailedResidentMip = mip;
-        g_StreamingUploads.push_back({move(upload), uploadSize, g_StreamingFrame + 4});
-
+        stats.TextureBytes += bytes;
+        CreateShaderResourceView(texture.Resource.Get(), texture.Resource->GetDesc(), texture.SrvIndex, mip);
+        g_StreamingUploads.push_back({move(upload), uploadSize, 0});
         break;
     }
 }
