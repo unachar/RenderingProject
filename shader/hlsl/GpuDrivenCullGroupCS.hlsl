@@ -32,11 +32,11 @@ bool IsOccluded(Texture2D<float> hierarchy, float2 uvMinimum, float2 uvMaximum, 
     float mip = clamp(floor(log2(max(extentPixels.x, extentPixels.y))), 0.0f, (float)max(HiZMipCount, 1u) - 1.0f);
     float2 center = (uvMinimum + uvMaximum) * 0.5f;
     float maximumDepth = hierarchy.SampleLevel(HiZSampler, center, mip);
-    maximumDepth = max(maximumDepth, hierarchy.SampleLevel(HiZSampler, uvMinimum, mip));
-    maximumDepth = max(maximumDepth, hierarchy.SampleLevel(HiZSampler, float2(uvMaximum.x, uvMinimum.y), mip));
-    maximumDepth = max(maximumDepth, hierarchy.SampleLevel(HiZSampler, float2(uvMinimum.x, uvMaximum.y), mip));
-    maximumDepth = max(maximumDepth, hierarchy.SampleLevel(HiZSampler, uvMaximum, mip));
-    return maximumDepth < nearestDepth - 0.0015f;
+    maximumDepth = min(maximumDepth, hierarchy.SampleLevel(HiZSampler, uvMinimum, mip));
+    maximumDepth = min(maximumDepth, hierarchy.SampleLevel(HiZSampler, float2(uvMaximum.x, uvMinimum.y), mip));
+    maximumDepth = min(maximumDepth, hierarchy.SampleLevel(HiZSampler, float2(uvMinimum.x, uvMaximum.y), mip));
+    maximumDepth = min(maximumDepth, hierarchy.SampleLevel(HiZSampler, uvMaximum, mip));
+    return maximumDepth > nearestDepth + 0.0015f;
 }
 
 groupshared uint GroupVisible;
@@ -63,7 +63,7 @@ uint IsObjectVisible()
     uint outsideMask = 0x3fu;
     float2 uvMinimum = 1.0f;
     float2 uvMaximum = 0.0f;
-    float nearestDepth = 1.0f;
+    float nearestDepth = 0.0f;
     uint crossesNearPlane = 0u;
 
     [unroll] for (uint cornerIndex = 0; cornerIndex < 8; ++cornerIndex)
@@ -79,13 +79,13 @@ uint IsObjectVisible()
             (clipPosition.y < -clipPosition.w ? 0x04u : 0u) | (clipPosition.y > clipPosition.w ? 0x08u : 0u) |
             (clipPosition.z < 0.0f ? 0x10u : 0u) | (clipPosition.z > clipPosition.w ? 0x20u : 0u);
         outsideMask &= cornerMask;
-        crossesNearPlane |= (clipPosition.w <= 0.0f || clipPosition.z <= 0.0f) ? 1u : 0u;
+        crossesNearPlane |= (clipPosition.w <= 0.0f || clipPosition.z >= clipPosition.w) ? 1u : 0u;
         float inverseW = rcp(max(abs(clipPosition.w), 1.0e-5f));
         float3 ndc = clipPosition.xyz * inverseW;
         float2 uv = ndc.xy * float2(0.5f, -0.5f) + 0.5f;
         uvMinimum = min(uvMinimum, uv);
         uvMaximum = max(uvMaximum, uv);
-        nearestDepth = min(nearestDepth, ndc.z);
+        nearestDepth = max(nearestDepth, ndc.z);
     }
 
     if (EnableFrustumCulling != 0u && outsideMask != 0u)

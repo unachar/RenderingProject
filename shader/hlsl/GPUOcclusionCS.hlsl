@@ -5,7 +5,7 @@ bool ProjectBounds(GPUInstanceData instance, out float2 minimum, out float2 maxi
 {
     minimum = 1;
     maximum = 0;
-    nearest = 1;
+    nearest = 0;
     [unroll] for (uint corner = 0; corner < 8; ++corner)
     {
         float3 signs = float3((corner & 1) ? 1 : -1, (corner & 2) ? 1 : -1, (corner & 4) ? 1 : -1);
@@ -19,7 +19,7 @@ bool ProjectBounds(GPUInstanceData instance, out float2 minimum, out float2 maxi
         float2 uv = ndc.xy * float2(0.5f, -0.5f) + 0.5f;
         minimum = min(minimum, uv);
         maximum = max(maximum, uv);
-        nearest = min(nearest, ndc.z);
+        nearest = max(nearest, ndc.z);
     }
     minimum -= 1.0f / HiZSize;
     maximum += 1.0f / HiZSize;
@@ -46,7 +46,7 @@ bool Occluded(float2 minimum, float2 maximum, float nearest)
     {
         return false;
     }
-    float farthest = 0;
+    float farthest = 1;
     [loop] for (uint y = first.y; y <= last.y; ++y)
     {
         [loop] for (uint x = first.x; x <= last.x; ++x)
@@ -56,10 +56,10 @@ bool Occluded(float2 minimum, float2 maximum, float nearest)
             {
                 return false;
             }
-            farthest = max(farthest, depth);
+            farthest = min(farthest, depth);
         }
     }
-    return nearest > farthest + max(DepthBias, 0);
+    return nearest < farthest - max(DepthBias, 0);
 }
 
 [numthreads(64, 1, 1)] void Reset(uint3 id : SV_DispatchThreadID) {

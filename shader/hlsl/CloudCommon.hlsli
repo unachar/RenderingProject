@@ -19,7 +19,7 @@ float SceneRayDistance(float2 uv)
         return CloudTrace.x;
     }
     float depth = CloudSceneDepth.Load(int3(pixel, 0));
-    if (depth >= 0.999999)
+    if (depth <= 0.0f)
     {
         return CloudTrace.x;
     }

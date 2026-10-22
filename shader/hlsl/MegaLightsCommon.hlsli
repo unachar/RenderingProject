@@ -139,7 +139,7 @@ float MLViewZFromDepth(float depth)
 
 bool MLIsGeometryDepth(float depth)
 {
-    return abs(depth - MLDepth2.x) > 1.0e-7f;
+    return abs(depth - MLDepth2.x) > 0.0f;
 }
 
 uint MLSliceFromViewZ(float viewZ)

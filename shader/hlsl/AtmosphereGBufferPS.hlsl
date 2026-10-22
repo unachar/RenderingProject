@@ -601,7 +601,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     float depth = DepthTexture.SampleLevel(TextureSampler, input.TexCoord, 0);
     float4 material = MaterialTexture.SampleLevel(TextureSampler, input.TexCoord, 0);
 
-    bool background = material.a < -0.5f || depth >= 0.9999f;
+    bool background = material.a < -0.5f || depth <= 0.0f;
 
     float3 viewRay = ReconstructPostProcessViewRayCommon(input.TexCoord);
     float3 rayEnd = background ? PPCameraPos.xyz + viewRay * 100.0f

@@ -60,11 +60,11 @@ bool MeshObjectOccluded(Texture2D<float> hierarchy, float2 uvMinimum, float2 uvM
     float mip = clamp(floor(log2(max(extentPixels.x, extentPixels.y))), 0.0f, (float)max(HiZMipCount, 1u) - 1.0f);
     float2 center = (uvMinimum + uvMaximum) * 0.5f;
     float depth = hierarchy.SampleLevel(HiZSampler, center, mip);
-    depth = max(depth, hierarchy.SampleLevel(HiZSampler, uvMinimum, mip));
-    depth = max(depth, hierarchy.SampleLevel(HiZSampler, uvMaximum, mip));
-    depth = max(depth, hierarchy.SampleLevel(HiZSampler, float2(uvMinimum.x, uvMaximum.y), mip));
-    depth = max(depth, hierarchy.SampleLevel(HiZSampler, float2(uvMaximum.x, uvMinimum.y), mip));
-    return depth < nearestDepth - 0.0015f;
+    depth = min(depth, hierarchy.SampleLevel(HiZSampler, uvMinimum, mip));
+    depth = min(depth, hierarchy.SampleLevel(HiZSampler, uvMaximum, mip));
+    depth = min(depth, hierarchy.SampleLevel(HiZSampler, float2(uvMinimum.x, uvMaximum.y), mip));
+    depth = min(depth, hierarchy.SampleLevel(HiZSampler, float2(uvMaximum.x, uvMinimum.y), mip));
+    return depth > nearestDepth + 0.0015f;
 }
 
 bool MeshBoundsVisible(float3 center, float3 extents)
@@ -78,7 +78,7 @@ bool MeshBoundsVisible(float3 center, float3 extents)
     bool crossesNearPlane = false;
     float2 uvMinimum = 1.0f;
     float2 uvMaximum = 0.0f;
-    float nearestDepth = 1.0f;
+    float nearestDepth = 0.0f;
     [unroll] for (uint corner = 0u; corner < 8u; ++corner)
     {
         float3 signValue =
@@ -93,12 +93,12 @@ bool MeshBoundsVisible(float3 center, float3 extents)
         outsideTop = outsideTop && clipPosition.y > clipPosition.w;
         outsideNear = outsideNear && clipPosition.z < 0.0f;
         outsideFar = outsideFar && clipPosition.z > clipPosition.w;
-        crossesNearPlane = crossesNearPlane || clipPosition.w <= 0.0f || clipPosition.z <= 0.0f;
+        crossesNearPlane = crossesNearPlane || clipPosition.w <= 0.0f || clipPosition.z >= clipPosition.w;
         float3 ndc = clipPosition.xyz / max(abs(clipPosition.w), 1.0e-5f);
         float2 uv = ndc.xy * float2(0.5f, -0.5f) + 0.5f;
         uvMinimum = min(uvMinimum, uv);
         uvMaximum = max(uvMaximum, uv);
-        nearestDepth = min(nearestDepth, ndc.z);
+        nearestDepth = max(nearestDepth, ndc.z);
     }
     if (outsideLeft || outsideRight || outsideBottom || outsideTop || outsideNear || outsideFar)
     {

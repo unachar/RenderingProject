@@ -139,7 +139,7 @@ float3 SampleGlassVisibleBackground(float3 origin, float3 direction, float rough
                 clamp((int2)(tapUv * float2(depthWidth, depthHeight)), int2(0, 0), int2(depthWidth, depthHeight) - 1);
             float depth = DepthTexture.Load(int3(dp, 0));
             float weight = (x == 0 ? 1 - fraction.x : fraction.x) * (y == 0 ? 1 - fraction.y : fraction.y);
-            if (depth >= 0.9999f)
+            if (depth <= 0.0f)
             {
                 sum += SceneColorTexture.Load(int3(p, 0)).rgb * weight;
                 weightSum += weight;
@@ -191,7 +191,7 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
             {
                 float d = DepthTexture.SampleLevel(g_SamplerState, uv, 0);
                 float3 visible = ReconstructForwardWorld(uv, d);
-                if (d < 0.9999f && length(visible - hit) < max(0.05f, length(hit - CameraPos) * 0.01f))
+                if (d > 0.0f && length(visible - hit) < max(0.05f, length(hit - CameraPos) * 0.01f))
                 {
                     return SampleGlassBackground(uv, roughness);
                 }
@@ -210,7 +210,7 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
             break;
         }
         float depth = DepthTexture.SampleLevel(g_SamplerState, uv, 0);
-        if (depth < 0.9999f)
+        if (depth > 0.0f)
         {
             float3 opaque = ReconstructForwardWorld(uv, depth);
             float delta = length(p - CameraPos) - length(opaque - CameraPos);
@@ -230,7 +230,7 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
                     }
                     float qd = DepthTexture.SampleLevel(g_SamplerState, quv, 0);
                     float3 qw = ReconstructForwardWorld(quv, qd);
-                    if (qd < 0.9999f && length(q - CameraPos) >= length(qw - CameraPos))
+                    if (qd > 0.0f && length(q - CameraPos) >= length(qw - CameraPos))
                     {
                         high = mid;
                     }
@@ -245,7 +245,7 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
                 {
                     float hd = DepthTexture.SampleLevel(g_SamplerState, huv, 0);
                     float3 hw = ReconstructForwardWorld(huv, hd);
-                    if (hd < 0.9999f && length(hw - hit) < max(0.1f, length(hit - CameraPos) * 0.02f))
+                    if (hd > 0.0f && length(hw - hit) < max(0.1f, length(hit - CameraPos) * 0.02f))
                     {
                         return SampleGlassBackground(huv, roughness);
                     }
@@ -560,7 +560,7 @@ struct ForwardOutput
     float4 Color : SV_Target0;
     float4 Accumulation : SV_Target1;
     float4 Revealage : SV_Target2;
-    float HardwareDepth : SV_DepthGreaterEqual; // POM のピクセル深度オフセット（常に補間深度以上）
+    float HardwareDepth : SV_DepthLessEqual; // POM のピクセル深度オフセット（常に補間深度以下）
 };
 
 #ifndef IMPOSTOR_FORWARD
@@ -575,7 +575,7 @@ ForwardOutput main(in PSInput3D In)
     float weight = alpha * clamp(0.03f / (0.00001f + pow(viewDistance / 200.0f, 4.0f)), 0.01f, 3000.0f);
     output.Accumulation = float4(premultiplied.rgb, alpha) * weight;
     output.Revealage = alpha.xxxx;
-    output.HardwareDepth = max(g_PomForwardDepth, In.Position.z);
+    output.HardwareDepth = min(g_PomForwardDepth, In.Position.z);
     return output;
 }
 #endif

@@ -169,7 +169,7 @@ GBufferDepthOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     output.Material = shaded.Material;
     output.Shadow = shaded.Shadow;
     output.EmissionAO = shaded.EmissionAO;
-    output.HardwareDepth = max(shaded.Depth.x, In.Position.z);
+    output.HardwareDepth = min(shaded.Depth.x, In.Position.z);
     return output;
 }
 #endif

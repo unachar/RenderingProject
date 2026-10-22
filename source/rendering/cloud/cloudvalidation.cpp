@@ -111,7 +111,7 @@ namespace
             for (UINT x = 0; x < cloud.Width; ++x)
             {
                 const UINT fullX = min(depth.Width - 1, static_cast<UINT>((x + 0.5f) / cloud.Width * depth.Width));
-                if (RenderCapture::HalfToFloat(materialRow[fullX * 4 + 3]) < -0.5f || depthRow[fullX] >= 0.999999f)
+                if (RenderCapture::HalfToFloat(materialRow[fullX * 4 + 3]) < -0.5f || depthRow[fullX] <= 0.0f)
                 {
                     continue;
                 }
@@ -168,7 +168,7 @@ namespace
             const auto* materials = reinterpret_cast<const uint16_t*>(material.Bytes.data() + y * material.RowPitch);
             for (UINT x = 0; x < depth.Width; ++x)
             {
-                if (RenderCapture::HalfToFloat(materials[x * 4 + 3]) < -0.5f || depths[x] >= 0.999999f)
+                if (RenderCapture::HalfToFloat(materials[x * 4 + 3]) < -0.5f || depths[x] <= 0.0f)
                 {
                     continue;
                 }

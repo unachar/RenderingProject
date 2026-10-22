@@ -1,8 +1,8 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "proceduralstudiowindow.h"
 #include "proceduralstudio.h"
-#include "proceduralworkgraph.h"
 #include "proceduralio.h"
+#include "proceduralmodelexport.h"
 #include "editordescriptors.h"
 #include "graphicsdevice.h"
 #include "rendererstate.h"
@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <future>
+#include <memory>
 
 // 名前付き名前空間と using 宣言を使う。エンジンのプリコンパイル済みヘッダーは
 // DirectX:: と std:: をグローバルへ導入するため、Image / Mesh などの短い名前を漏らさない。
@@ -32,12 +33,12 @@ namespace ProcStudioEditorDetail
     using ProcStudio::ModelKindName;
     using ProcStudio::ModelParams;
     using ProcStudio::NoiseParams;
+    using ProcStudio::TextureColor;
     using ProcStudio::TextureKind;
     using ProcStudio::TextureKindName;
     using ProcStudio::TextureOutput;
     using ProcStudio::TextureParams;
     using ProcStudio::Volume;
-    using ProcStudio::WriteObj;
 
     constexpr int kPreviewSize = 512;
     constexpr int kTexturePreview = 256;
@@ -167,7 +168,7 @@ namespace ProcStudioEditorDetail
     {
         float Yaw = 0.7f;
         float Pitch = 0.35f;
-        float Distance = 2.6f;
+        float Distance = 3.2f;
     };
 
     struct RenderInput
@@ -179,6 +180,7 @@ namespace ProcStudioEditorDetail
         const vector<Float4>* Solid = nullptr;
         int SolidExtent = 0;
         float SolidScale = 1.0f;
+        float TerrainGridSize = 0.0f;
         OrbitCamera View;
     };
 
@@ -448,7 +450,18 @@ namespace ProcStudioEditorDetail
                                           Float3{0.55f, 0.65f, 0.8f} * (fill * 0.35f)) +
                                 Float3{1, 1, 1} * (powf(nDotH, 48) * 0.12f * key);
                     }
-                    out[pixel] = Pack(Tonemap(color * 0.95f), true);
+                    Float3 displayColor = Tonemap(color * 0.95f);
+                    if (input.TerrainGridSize > 0)
+                    {
+                        const float gridX = (position.X - minimum.X) / input.TerrainGridSize;
+                        const float gridZ = (position.Z - minimum.Z) / input.TerrainGridSize;
+                        const float distance = (std::min)(fabsf(gridX - roundf(gridX)), fabsf(gridZ - roundf(gridZ))) *
+                                               input.TerrainGridSize;
+                        const float pixelWidth = 2.0f / (invZ * focal * size);
+                        const float coverage = Clamp01(1.0f - distance / pixelWidth);
+                        displayColor = Mix(displayColor, Float3{1.0f, 0.7f, 0.15f}, coverage * 0.85f);
+                    }
+                    out[pixel] = Pack(displayColor, true);
                 }
             }
         }
@@ -561,12 +574,16 @@ namespace ProcStudioEditorDetail
         float Slice = 0.5f;
         bool Animate = false;
         float AnimationSpeed = 1.0f;
-        int SaveResolution = 2; // 256, 512, 1024, 2048, 4096
-        int VolumeExtent = 1;   // 64, 128
+        int SaveResolution = 2;    // 256, 512, 1024, 2048, 4096
+        int ModelExportFormat = 0; // OBJ, FBX (ASCII)
+        int VolumeExtent = 1;      // 64, 128
         OrbitCamera Orbit;
 
         Image TextureImage;
-        Mesh ModelMesh;
+        shared_ptr<const Mesh> ModelMesh = make_shared<Mesh>();
+        ModelParams GeneratedModel;
+        ModelParams PendingModel;
+        bool ShowTerrainGrid = true;
         Mesh PrimitiveMesh;
         ModelKind PrimitiveKind = ModelKind::Count;
         vector<Float4> SolidVoxels;
@@ -575,6 +592,9 @@ namespace ProcStudioEditorDetail
 
         Job<Image> TextureJob;
         Job<Mesh> MeshJob;
+        Job<vector<uint32_t>> PreviewJob;
+        Category PreviewCategory = Category::Texture;
+        ViewMode PreviewView = ViewMode::Model3D;
         Job<vector<Float4>> SolidJob;
         Job<Volume> CloudSliceJob;
         future<string> SaveTask;
@@ -813,8 +833,23 @@ namespace ProcStudioEditorDetail
         {
             case ModelKind::Terrain:
                 changed |= ImGui::InputScalar("Seed##model", ImGuiDataType_U32, &m.Seed);
-                changed |= ImGui::SliderInt("解像度", &m.Resolution, 8, 256);
-                changed |= ImGui::SliderFloat("サイズ", &m.Size, 1.0f, 100.0f);
+                ImGui::SeparatorText("地形マップ");
+                changed |= ImGui::SliderInt("区画数 X", &m.TerrainMapsX, 1, ProcStudio::kMaxTerrainMaps, "%d",
+                                            ImGuiSliderFlags_AlwaysClamp);
+                changed |= ImGui::SliderInt("区画数 Z", &m.TerrainMapsZ, 1, ProcStudio::kMaxTerrainMaps, "%d",
+                                            ImGuiSliderFlags_AlwaysClamp);
+                changed |= ImGui::SliderInt("1区画の分割数", &m.Resolution, 8, 256, "%d", ImGuiSliderFlags_AlwaysClamp);
+                changed |=
+                    ImGui::SliderFloat("1区画のサイズ", &m.Size, 1.0f, 100.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+                {
+                    const size_t stepsX = static_cast<size_t>(m.Resolution) * m.TerrainMapsX;
+                    const size_t stepsZ = static_cast<size_t>(m.Resolution) * m.TerrainMapsZ;
+                    ImGui::Text("全体 %.1f × %.1f m / %d 区画", m.Size * m.TerrainMapsX, m.Size * m.TerrainMapsZ,
+                                m.TerrainMapsX * m.TerrainMapsZ);
+                    ImGui::TextDisabled("生成予定: 頂点 %zu / 三角形 %zu", (stepsX + 1) * (stepsZ + 1),
+                                        stepsX * stepsZ * 2);
+                    ImGui::TextWrapped("同じノイズの続きを生成し、全体を1つのメッシュとして保存します。");
+                }
                 changed |= ImGui::SliderFloat("高さ", &m.Height, 0.0f, 30.0f);
                 changed |= ImGui::Checkbox("高度・傾斜で色分け", &m.TerrainColors);
                 if (ImGui::TreeNodeEx("地形ノイズ", ImGuiTreeNodeFlags_DefaultOpen))
@@ -906,7 +941,7 @@ namespace ProcStudioEditorDetail
             }
             return s.PrimitiveMesh;
         }
-        return s.ModelMesh;
+        return *s.ModelMesh;
     }
 
     bool NeedsTexture(const State& s)
@@ -935,7 +970,8 @@ namespace ProcStudioEditorDetail
         Mesh mesh;
         if (s.MeshJob.Poll(mesh))
         {
-            s.ModelMesh = std::move(mesh);
+            s.ModelMesh = make_shared<Mesh>(std::move(mesh));
+            s.GeneratedModel = s.PendingModel;
             s.PreviewDirty = true;
         }
         vector<Float4> voxels;
@@ -962,6 +998,7 @@ namespace ProcStudioEditorDetail
         if (NeedsMesh(s) && s.MeshJob.Dirty && !s.MeshJob.Running)
         {
             const auto params = s.Model;
+            s.PendingModel = params;
             s.MeshJob.Start([params] {
                 return GenerateModel(params);
             });
@@ -986,11 +1023,18 @@ namespace ProcStudioEditorDetail
 
     void RenderPreview(State& s)
     {
-        if (s.PreviewDirty)
+        vector<uint32_t> pixels;
+        if (s.PreviewJob.Poll(pixels) && s.PreviewCategory == s.Mode && s.PreviewView == s.View)
+        {
+            s.Pixels = std::move(pixels);
+            s.UploadPending = true;
+        }
+        if (s.PreviewDirty && !s.PreviewJob.Running)
         {
             if (s.View == ViewMode::Flat2D && s.Mode == Category::Texture)
             {
                 BlitImage(s.TextureImage, s.Texture.Output == TextureOutput::Color, s.Tiles, s.Pixels);
+                s.UploadPending = true;
             }
             else if (s.View == ViewMode::VolumeSlice)
             {
@@ -1003,15 +1047,16 @@ namespace ProcStudioEditorDetail
                 {
                     BlitVolumeSlice(nullptr, &s.CloudPreview, s.CloudPreview.Extent, s.Slice, s.Pixels);
                 }
+                s.UploadPending = true;
             }
             else
             {
                 RenderInput input;
-                input.Geometry = &PreviewMesh(s);
+                // 不変の形状を保持し、描画中に次の生成結果へ切り替わっても参照を有効に保つ。
+                const auto geometry =
+                    s.Mode == Category::Texture ? make_shared<const Mesh>(PreviewMesh(s)) : s.ModelMesh;
                 input.View = s.Orbit;
                 input.UvScale = s.UvScale;
-                input.Texture = &s.TextureImage;
-                input.Solid = &s.SolidVoxels;
                 input.SolidExtent = s.SolidVoxels.empty() ? 0 : s.SolidExtent;
                 input.SolidScale = s.SolidScale;
                 if (s.Mode == Category::Texture)
@@ -1029,10 +1074,24 @@ namespace ProcStudioEditorDetail
                                  : s.Model.Kind == ModelKind::WaterSurface ? Shading::Water
                                                                            : Shading::VertexColor;
                 }
-                Rasterize(input, s.Pixels);
+                if (s.Mode != Category::Texture && s.GeneratedModel.Kind == ModelKind::Terrain && s.ShowTerrainGrid)
+                {
+                    input.TerrainGridSize = s.GeneratedModel.Size;
+                }
+                Image texture = input.Mode == Shading::Texture ? s.TextureImage : Image{};
+                vector<Float4> solid = input.Mode == Shading::Solid ? s.SolidVoxels : vector<Float4>{};
+                s.PreviewCategory = s.Mode;
+                s.PreviewView = s.View;
+                s.PreviewJob.Start([input, geometry, texture = std::move(texture), solid = std::move(solid)]() mutable {
+                    input.Geometry = geometry.get();
+                    input.Texture = &texture;
+                    input.Solid = &solid;
+                    vector<uint32_t> rendered;
+                    Rasterize(input, rendered);
+                    return rendered;
+                });
             }
             s.PreviewDirty = false;
-            s.UploadPending = true;
         }
         if (s.UploadPending && s.Pixels.size() == size_t(kPreviewSize) * kPreviewSize && s.Gpu.Upload(s.Pixels))
         {
@@ -1133,7 +1192,10 @@ namespace ProcStudioEditorDetail
     void SaveModel(State& s)
     {
         filesystem::path path;
-        if (!ProceduralIO::SaveFileDialog(L"Wavefront OBJ (*.obj)\0*.obj\0", L"obj", L"procedural_model.obj", path))
+        const bool fbx = s.ModelExportFormat == 1;
+        const wchar_t* filter = fbx ? L"Autodesk FBX (*.fbx)\0*.fbx\0" : L"Wavefront OBJ (*.obj)\0*.obj\0";
+        if (!ProceduralIO::SaveFileDialog(filter, fbx ? L"fbx" : L"obj",
+                                          fbx ? L"procedural_model.fbx" : L"procedural_model.obj", path))
         {
             return;
         }
@@ -1153,8 +1215,18 @@ namespace ProcStudioEditorDetail
                 string error, textureName;
                 if (solidMode)
                 {
-                    // プレビューと同じオブジェクト空間の対応付けで GPU が頂点色を生成する。
-                    ProceduralWorkGraph::BakeSolidVertexColors(mesh, solidParams, solidScale);
+                    // プレビューと同じオブジェクト空間の対応付けで、立体テクスチャを頂点色へ焼き込む。
+                    Float3 minimum;
+                    Float3 maximum;
+                    mesh.Bounds(minimum, maximum);
+                    const float extent =
+                        (std::max)({maximum.X - minimum.X, maximum.Y - minimum.Y, maximum.Z - minimum.Z, 1e-4f});
+                    for (size_t i = 0; i < mesh.Positions.size(); ++i)
+                    {
+                        const Float3 p = (mesh.Positions[i] - minimum) * (solidScale / extent);
+                        mesh.Colors[i] =
+                            TextureColor(solidParams, p.X - floorf(p.X), p.Y - floorf(p.Y), p.Z - floorf(p.Z), true);
+                    }
                 }
                 if (textureMode)
                 {
@@ -1173,7 +1245,7 @@ namespace ProcStudioEditorDetail
                     }
                     textureName = ProceduralIO::ToUtf8(texturePath.filename());
                 }
-                WriteObj(path, mesh, !textureMode, textureName, error);
+                ProceduralIO::SaveModelFile(path, mesh, !textureMode, textureName, error);
                 return error;
             },
             ProceduralIO::ToUtf8(path.filename()));
@@ -1239,6 +1311,14 @@ namespace ProcStudioEditorDetail
             ImGui::SameLine();
             ImGui::RadioButton("ボリューム断面", &view, static_cast<int>(ViewMode::VolumeSlice));
         }
+        if (s.Mode != Category::Texture && s.Model.Kind == ModelKind::Terrain)
+        {
+            ImGui::SameLine();
+            if (ImGui::Checkbox("区画線", &s.ShowTerrainGrid))
+            {
+                s.PreviewDirty = true;
+            }
+        }
         if (view != static_cast<int>(s.View))
         {
             s.View = static_cast<ViewMode>(view);
@@ -1302,7 +1382,8 @@ namespace ProcStudioEditorDetail
             ImGui::TextDisabled("ドラッグで回転 / ホイールでズーム   頂点 %zu  三角形 %zu", mesh.Positions.size(),
                                 mesh.Indices.size() / 3);
         }
-        const bool busy = s.TextureJob.Running || s.MeshJob.Running || s.SolidJob.Running || s.CloudSliceJob.Running;
+        const bool busy = s.TextureJob.Running || s.MeshJob.Running || s.SolidJob.Running || s.CloudSliceJob.Running ||
+                          s.PreviewJob.Running;
         if (busy)
         {
             ImGui::SameLine();
@@ -1459,7 +1540,9 @@ namespace ProcStudioEditorDetail
                     {
                         SaveSolidVolume(s);
                     }
-                    if (ImGui::Button("焼き込んだモデルを保存 (.obj)..."))
+                    ImGui::SetNextItemWidth(140);
+                    ImGui::Combo("モデル形式", &s.ModelExportFormat, "OBJ\0FBX (ASCII)\0");
+                    if (ImGui::Button("焼き込んだモデルを保存..."))
                     {
                         SaveModel(s);
                     }
@@ -1512,15 +1595,17 @@ namespace ProcStudioEditorDetail
                         DrawSaveRow(s, true);
                     }
                     ImGui::BeginDisabled(busySaving);
-                    if (ImGui::Button("モデルを保存 (.obj)..."))
+                    ImGui::SetNextItemWidth(140);
+                    ImGui::Combo("モデル形式", &s.ModelExportFormat, "OBJ\0FBX (ASCII)\0");
+                    if (ImGui::Button("モデルを保存..."))
                     {
                         SaveModel(s);
                     }
                     ImGui::EndDisabled();
                     ImGui::TextWrapped(
                         s.ModelSurface == Surface::Texture
-                            ? "OBJ / MTL と <名前>_albedo.png を同じフォルダに保存します。"
-                            : "OBJ / MTL を保存します。色は頂点カラー (v x y z r g b) として書き出します。");
+                            ? "モデルと <名前>_albedo.png を同じフォルダに保存します。OBJ には MTL も保存します。"
+                            : "頂点カラー付きのモデルを保存します。OBJ には MTL も保存します。");
                     break;
                 }
             }
@@ -1575,6 +1660,10 @@ namespace ProcStudioEditorDetail
         if (s.MeshJob.Running)
         {
             s.MeshJob.Result.wait();
+        }
+        if (s.PreviewJob.Running)
+        {
+            s.PreviewJob.Result.wait();
         }
         if (s.SolidJob.Running)
         {

@@ -10,6 +10,7 @@
 //     ここは GPU 駆動で扱えない物（半透明・Forward・スプライト・GPU 駆動オフ時）と Velocity・ライトが対象
 // =============================================================================================
 #include "pch.h"
+#include "rendering/scenedepth.h"
 #include "camera.h"
 #include "componentmanager.h"
 #include "graphicsdevice.h"
@@ -209,7 +210,7 @@ class RenderCulling final
                                     {m._14 - m._13, m._24 - m._23, m._34 - m._33, m._44 - m._43}};
         for (int index = 0; index < 6; ++index)
         {
-            XMStoreFloat4(&s_Planes[index], XMPlaneNormalize(XMLoadFloat4(&planes[index])));
+            XMStoreFloat4(&s_Planes[index], SceneDepth::NormalizeFrustumPlane(XMLoadFloat4(&planes[index])));
         }
     }
 

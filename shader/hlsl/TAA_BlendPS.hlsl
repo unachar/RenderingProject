@@ -102,7 +102,7 @@ float4 main(PSInputPostProcess input) : SV_TARGET
     const float3 current = RgbToYCoCg(currentRgb);
     float3 moment1 = 0.0f;
     float3 moment2 = 0.0f;
-    float closestDepth = 2.0f;
+    float closestDepth = -1.0f;
     int2 closestPixel = pixel;
     [unroll] for (int y = -1; y <= 1; ++y)
     {
@@ -113,7 +113,7 @@ float4 main(PSInputPostProcess input) : SV_TARGET
             moment1 += sampleColor;
             moment2 += sampleColor * sampleColor;
             const float depth = DepthBuffer.Load(int3(neighbor, 0));
-            if (depth < closestDepth)
+            if (depth > closestDepth)
             {
                 closestDepth = depth;
                 closestPixel = neighbor;

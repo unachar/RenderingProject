@@ -238,7 +238,7 @@ bool ReSTIRVisiblePoint(uint2 pixel, out float3 position, out float3 normal, out
         return false;
     }
     float depth = ReflectionDepth.Load(int3(pixel, 0));
-    if (depth >= 0.99999f)
+    if (depth <= 0.0f)
     {
         return false;
     }
@@ -770,7 +770,7 @@ bool AdaptiveReflection(uint2 pixel, float depth, float3 position, float3 normal
     {
         return false;
     }
-    float tolerance = max(2e-5, abs(1 - depth) * .005);
+    float tolerance = max(2e-5, abs(depth) * .005);
     [unroll] for (uint i = 0; i < 4; ++i)
     {
         int2 offset = int2(0, -1);
@@ -849,7 +849,7 @@ bool AdaptiveReflection(uint2 pixel, float depth, float3 position, float3 normal
         return;
     }
     float depth = ReflectionDepth.Load(int3(pixel, 0));
-    if (depth >= 0.99999f)
+    if (depth <= 0.0f)
     {
         NoisyRadiance[storage] = 0;
         ReflectionRadiance[pixel] = 0;
@@ -878,6 +878,14 @@ bool AdaptiveReflection(uint2 pixel, float depth, float3 position, float3 normal
 
     uint seed = ReflectionHash(pixel.x + pixel.y * ReflectionExtent.x + ReflectionExtent.z * 104729u);
     float2 random = float2((seed & 0xffff) + 0.5f, (seed >> 16) + 0.5f) / 65536;
+    if (ReflectionStability.x > .5)
+    {
+        // GI と異なる系列を使い、追跡したフレームごとに反射ローブを均等に覆う。
+        // チェッカーボードで飛ばしたフレームはサンプル番号に数えない。
+        SamplePair reflectionSample =
+            SampleSequence(pixel.x, pixel.y, PixelSampleIndex(ReflectionExtent.z, checkerboard), 3u);
+        random = float2(reflectionSample.x, reflectionSample.y);
+    }
     // 粗い面ではヒットのシェーディングを省くが、空を使う前の可視性レイは必要。
     const float roughnessCutoff = (ReSTIRState.w & 0xffffu) / 1000.0f;
     if (roughnessCutoff < 0.999f && roughness > roughnessCutoff)
@@ -895,42 +903,97 @@ bool AdaptiveReflection(uint2 pixel, float depth, float3 position, float3 normal
         return;
     }
     float alpha = roughness * roughness;
-    float3 halfVector = SampleVisibleGgx(view, normal, roughness, random);
-    float3 direction = reflect(-view, halfVector);
     RayDesc ray;
     ray.Origin = position + normal * SceneRayParameters.y;
-    ray.Direction = direction;
     ray.TMin = SceneRayParameters.y * 0.25f;
     ray.TMax = SceneRayParameters.x;
     bool hit = false;
     float hitDistance = 65504;
     float3 radiance = 0;
-    float nDotL = dot(normal, direction);
-    if (nDotL > 0)
+    float3 nearestHitPosition = position;
+    uint sampleCount = 1;
+    if (ReflectionStability.x > .5 && ReflectionStability.y > 0 && ReflectionStability.y <= .25 && roughness < .25)
     {
+        sampleCount = 4;
+    }
+    [loop] for (uint sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
+    {
+        float3 samplePosition = position;
+        float3 sampleView = view;
+        float2 sampleRandom = random;
+        if (sampleCount > 1)
+        {
+            uint sequence = PixelSampleIndex(ReflectionExtent.z, checkerboard) * sampleCount + sampleIndex;
+            // ローブと画素内位置は、相関した R2 ペアではなく 4 次元の系列で覆う。
+            // GI の系列とは画素のスクランブルを分離する。
+            uint reflectionPixel = pixel.x ^ 0x68bc21ebu;
+            SamplePair lobeSample = SampleSequence(reflectionPixel, pixel.y, sequence, 1u);
+            SamplePair footprintSample = SampleSequence(reflectionPixel, pixel.y, sequence, 2u);
+            sampleRandom = float2(lobeSample.x, lobeSample.y);
+            // 鏡の画素内でも位置を変え、反射像の輪郭を面積としてサンプリングする。
+            // 現在の接平面とカメラレイの交点なので、同じ深度を横へずらす誤差を避ける。
+            float2 sampleUv = uv + (float2(footprintSample.x, footprintSample.y) - .5) / ReflectionExtent.xy;
+            float4 sampleWorld =
+                mul(float4(sampleUv * float2(2, -2) + float2(-1, 1), depth, 1), ReflectionInvViewProjection);
+            float3 cameraDirection = normalize(sampleWorld.xyz / sampleWorld.w - ReflectionCamera.xyz);
+            float planeDenominator = dot(cameraDirection, normal);
+            if (abs(planeDenominator) > .001)
+            {
+                float planeDistance = dot(position - ReflectionCamera.xyz, normal) / planeDenominator;
+                if (planeDistance > 0)
+                {
+                    samplePosition = ReflectionCamera.xyz + cameraDirection * planeDistance;
+                    sampleView = -cameraDirection;
+                }
+            }
+        }
+        float3 halfVector = SampleVisibleGgx(sampleView, normal, roughness, sampleRandom);
+        float3 direction = reflect(-sampleView, halfVector);
+        ray.Origin = samplePosition + normal * SceneRayParameters.y;
+        ray.Direction = direction;
+        float nDotL = dot(normal, direction);
+        if (nDotL <= 0)
+        {
+            continue;
+        }
         RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
         CountTelemetryRay(RAY_TELEMETRY_REFLECTION);
         query.TraceRayInline(LightingScene, RAY_FLAG_NONE, 0x03, ray);
         while (query.Proceed())
         {
         }
-        hit = query.CommittedStatus() != COMMITTED_NOTHING;
-        hitDistance = hit ? query.CommittedRayT() : 65504;
-        radiance = hit ? ShadeReflectionHit(query.CommittedInstanceID(), query.CommittedPrimitiveIndex(),
-                                            query.CommittedTriangleBarycentrics(), ray.Origin + direction * hitDistance,
-                                            direction, false, seed * 7919u + 17u)
-                       : EvaluatePhysicalSky(direction, max(0.001f, roughness * 0.02f));
+        bool sampleHit = query.CommittedStatus() != COMMITTED_NOTHING;
+        float sampleDistance = sampleHit ? query.CommittedRayT() : 65504;
+        float3 sampleRadiance;
+        if (sampleHit)
+        {
+            sampleRadiance = ShadeReflectionHit(
+                query.CommittedInstanceID(), query.CommittedPrimitiveIndex(), query.CommittedTriangleBarycentrics(),
+                ray.Origin + direction * sampleDistance, direction, false, seed * 7919u + 17u + sampleIndex * 104729u);
+        }
+        else
+        {
+            sampleRadiance = EvaluatePhysicalSky(direction, max(0.001f, roughness * 0.02f));
+        }
+        // 最も近い実ヒットを履歴追跡に使い、空との距離平均で反射像を遠ざけない。
+        if (sampleHit && sampleDistance < hitDistance)
+        {
+            hit = true;
+            hitDistance = sampleDistance;
+            nearestHitPosition = ray.Origin + direction * sampleDistance;
+        }
         // サンプリング密度で除算した後の Smith のマスキングと有界ローブの確率。
         float masking = 2 * nDotL / (nDotL + sqrt(alpha * alpha + (1 - alpha * alpha) * nDotL * nDotL));
-        float nDotV = max(dot(normal, view), 0.0001f);
+        float nDotV = max(dot(normal, sampleView), 0.0001f);
         float projectedView = sqrt(max(1 - nDotV * nDotV, 0));
         float boundSquared = (1 + projectedView) * (1 + projectedView);
         float bound = (1 - alpha * alpha) * boundSquared / (boundSquared + alpha * alpha * nDotV * nDotV);
         float stretchedLength = sqrt(alpha * alpha * (1 - nDotV * nDotV) + nDotV * nDotV);
-        radiance *= masking * (bound * nDotV + stretchedLength) / (nDotV + stretchedLength);
+        sampleRadiance *= masking * (bound * nDotV + stretchedLength) / (nDotV + stretchedLength);
+        radiance += min(max(sampleRadiance, 0), 1000) / sampleCount;
     }
     radiance = min(max(radiance, 0), 1000);
-    float4 hitClip = mul(float4(ray.Origin + direction * min(hitDistance, ray.TMax), 1), ReflectionViewProjection);
+    float4 hitClip = mul(float4(nearestHitPosition, 1), ReflectionViewProjection);
     bool offscreen = hitClip.w <= 0 || any(abs(hitClip.xy) > hitClip.w) || hitClip.z < 0 || hitClip.z > hitClip.w;
     // 符号付き距離はキャプチャ検証に使い、RGB はシェーディング信号として扱う。
     float signedHitDistance = 0;
@@ -962,7 +1025,7 @@ bool AdaptiveReflection(uint2 pixel, float depth, float3 position, float3 normal
     float2 uv = (id.xy + 0.5f) / ReflectionExtent.xy;
     float4 world = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, depth, 1), ReflectionInvViewProjection);
     float viewZ = abs(mul(float4(world.xyz / world.w, 1), ReflectionView).z);
-    if (depth < 0.99999f && viewZ < ReflectionCamera.w)
+    if (depth > 0.0f && viewZ < ReflectionCamera.w)
     {
         ReflectionRadiance[id.xy] =
             float4(REBLUR_BackEnd_UnpackRadianceAndNormHitDist(FilteredRadiance.Load(int3(id.xy, 0))).rgb,
@@ -1088,7 +1151,7 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2
     }
     float depth = ReflectionDepth.Load(int3(pixel, 0));
     NoisyRadiance[storage] = 0;
-    if (depth >= 0.99999f)
+    if (depth <= 0.0f)
     {
         return;
     }
@@ -1132,7 +1195,7 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2
                 offset = int2(0, 1);
             }
             int2 p = clamp(int2(pixel) + offset, 0, int2(ReflectionExtent.xy) - 1);
-            stable = stable && abs(ReflectionDepth.Load(int3(p, 0)) - depth) < max(2e-5, abs(1 - depth) * .005) &&
+            stable = stable && abs(ReflectionDepth.Load(int3(p, 0)) - depth) < max(2e-5, abs(depth) * .005) &&
                      dot(normalize(ReflectionNormal.Load(int3(p, 0)).xyz * 2 - 1), normal) > .995;
         }
         if (stable && CacheLookupSignal(position, normal, cached, cachedDistance))
@@ -1235,7 +1298,7 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2
         return;
     }
     float centerDepth = ReflectionDepth.Load(int3(pixel, 0));
-    if (centerDepth >= 0.99999f)
+    if (centerDepth <= 0.0f)
     {
         ReflectionRadiance[pixel] = 0;
         return;
@@ -1282,10 +1345,10 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2
     }
     float depth = ReflectionDepth.Load(int3(id.xy, 0));
     float3 irradiance = 0;
-    if (depth < 0.99999f)
+    if (depth > 0.0f)
     {
         float3 normal = ReflectionNormal.Load(int3(id.xy, 0)).xyz * 2 - 1;
-        float depthTolerance = max(0.00002f, (1 - depth) * 0.02f);
+        float depthTolerance = max(0.00002f, depth * 0.02f);
         float weightSum = 0;
         // NRD に正しく詰めたチェッカーボードを渡すため、軽い 3x3 のエッジを考慮した
         // 平滑化だけを残す（以前は回避策で 5x5）。幾何形状の重みで隣接する壁と
@@ -1299,7 +1362,7 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2
             {
                 int2 pixel = clamp(int2(id.xy) + int2(x, y), 0, int2(ReflectionExtent.xy) - 1);
                 float sampleDepth = ReflectionDepth.Load(int3(pixel, 0));
-                if (sampleDepth >= 0.99999f)
+                if (sampleDepth <= 0.0f)
                 {
                     continue;
                 }
@@ -1564,4 +1627,3 @@ float ReSTIRJacobian(GiReservoir sample, float3 neighbourPosition, float3 positi
 }
 
 #include "LumenPasses.hlsli"
-

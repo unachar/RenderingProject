@@ -348,7 +348,7 @@ void DebugSystem::InitDebugLinePso()
     psoDesc.pRootSignature = ShaderPipelines::GetModelRootSignature();
     psoDesc.DepthStencilState.DepthEnable = TRUE;
     psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
-    psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+    psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER;
     psoDesc.DepthStencilState.StencilEnable = FALSE;
 
     if (!PsoManager::CreateGraphicsPipelineState(psoDesc, "AABB debug line", m_DebugLinePso))

@@ -19,7 +19,7 @@ GBufferDepthOutput main(ImpostorPSInput input)
     output.Color = float4(surface.Albedo, 1.0f);
     output.Normal = MakeGBufferNormal(surface.WorldNormal);
     output.Depth = surface.Depth.xxxx;
-    output.HardwareDepth = max(surface.Depth, input.Position.z);
+    output.HardwareDepth = min(surface.Depth, input.Position.z);
     output.Material.r = usePartParams ? partParams.Basic.x : mMetallic;
     output.Material.g = usePartParams ? partParams.Basic.y : mRoughness;
     output.Material.b = usePartParams ? partParams.Basic.z : mFresnel;

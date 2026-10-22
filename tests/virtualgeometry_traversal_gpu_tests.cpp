@@ -132,6 +132,7 @@ namespace
                                                     D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&m_HiZ)),
                   "Create test Hi-Z");
             std::array<float, 64> depths{};
+            depths.fill(1.0f); // Reverse-Z の手前の遮蔽物（背景のクリア値は 0）。
             auto upload = Upload(depths.data(), sizeof(depths));
             D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
             footprint.Footprint.Format = DXGI_FORMAT_R32_FLOAT;

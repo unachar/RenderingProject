@@ -133,12 +133,53 @@ float4 Reconstruct(float2 uv)
     return max(sum / max(weights, 1e-5), 0);
 }
 
+float4 ReconstructHistory(float2 uv)
+{
+    // 履歴を毎フレーム線形補間すると、移動中に再構築した細部が失われる。
+    // Catmull-Rom の中央 2 タップをまとめ、9 回の読み取りで補間する。
+    float2 position = uv * Extent.zw - .5;
+    float2 base = floor(position);
+    float2 fraction = position - base;
+    float2 weight0 = -.5 * fraction + fraction * fraction - .5 * fraction * fraction * fraction;
+    float2 weight1 = 1 - 2.5 * fraction * fraction + 1.5 * fraction * fraction * fraction;
+    float2 weight2 = .5 * fraction + 2 * fraction * fraction - 1.5 * fraction * fraction * fraction;
+    float2 weight3 = -.5 * fraction * fraction + .5 * fraction * fraction * fraction;
+    float2 middleWeight = weight1 + weight2;
+    float2 middlePosition = base + weight2 / middleWeight;
+    float2 coordinatesX = float2(base.x - 1, base.x + 2);
+    float2 coordinatesY = float2(base.y - 1, base.y + 2);
+    float4 reconstructed = 0;
+    [unroll] for (int y = 0; y < 3; ++y)
+    {
+        float sampleY = middlePosition.y;
+        float weightY = middleWeight.y;
+        if (y != 1)
+        {
+            sampleY = coordinatesY[y / 2];
+            weightY = y == 0 ? weight0.y : weight3.y;
+        }
+        [unroll] for (int x = 0; x < 3; ++x)
+        {
+            float sampleX = middlePosition.x;
+            float weightX = middleWeight.x;
+            if (x != 1)
+            {
+                sampleX = coordinatesX[x / 2];
+                weightX = x == 0 ? weight0.x : weight3.x;
+            }
+            float2 sampleUv = (float2(sampleX, sampleY) + .5) / Extent.zw;
+            reconstructed += History.SampleLevel(LinearClamp, sampleUv, 0) * weightX * weightY;
+        }
+    }
+    return max(reconstructed, 0);
+}
+
 bool HistoryDepthMatches(float2 uv, float expectedDepth, float footprintTolerance)
 {
     // 履歴深度はポイントサンプリングする。前景と空を補間すると架空の面が生まれ、
     // 輪郭の AA に必要なサブピクセルの被覆が除外されてしまう。
     // 被覆がジッターに伴って移動するため、入力サンプル 1 個分の投影範囲を覆う。
-    const float tolerance = max(max(.0002, abs(1 - expectedDepth) * .01), footprintTolerance);
+    const float tolerance = max(max(.0002, abs(expectedDepth) * .01), footprintTolerance);
     const int2 maximumPixel = int2(Extent.zw) - 1;
     const int2 center = clamp(int2(uv * Extent.zw), 0, maximumPixel);
     float difference = abs(HistoryDepth.Load(int3(center, 0)) - expectedDepth);
@@ -206,7 +247,7 @@ bool HistoryDepthMatches(float2 uv, float expectedDepth, float footprintToleranc
             {
                 cardinalDepth.w = neighborDepth;
             }
-            if (neighborDepth < nearest)
+            if (neighborDepth > nearest)
             {
                 nearest = neighborDepth;
                 velocityPixel = neighbor;
@@ -248,10 +289,10 @@ bool HistoryDepthMatches(float2 uv, float expectedDepth, float footprintToleranc
     }
     float reactive = Parameters.y > .5 ? 1 - saturate(Revealage.Load(int3(pixel, 0))) : 0;
     float motionPixels = length((motion - Jitter.xy + Jitter.zw) * Extent.zw);
-    float separation = max(1e-6, abs(1 - depth) * .02);
+    float separation = max(1e-6, abs(depth) * .02);
     bool thinDepthRidge =
-        depth < .99999 && ((cardinalDepth.x > depth + separation && cardinalDepth.y > depth + separation) ||
-                           (cardinalDepth.z > depth + separation && cardinalDepth.w > depth + separation));
+        depth > 0.0f && ((cardinalDepth.x < depth - separation && cardinalDepth.y < depth - separation) ||
+                         (cardinalDepth.z < depth - separation && cardinalDepth.w < depth - separation));
     bool observedThinGeometry =
         Reconstruction.y > .5 && Parameters.w > .5 && thinDepthRidge && motionPixels < .25 && reactive == 0;
     // 色の履歴を再利用できない、新しく現れたサンプルでも初期値を与える。
@@ -260,25 +301,29 @@ bool HistoryDepthMatches(float2 uv, float expectedDepth, float footprintToleranc
         OutputDetail[id.xy] = float2(currentLuma, 1.8);
     }
     float4 world = mul(float4(source * float2(2, -2) + float2(-1, 1), depth, 1), InvCurrent);
-    if (abs(world.w) < 1e-8)
+    if (depth > 0.0f)
     {
-        return;
+        if (world.w <= 0.0f)
+        {
+            return;
+        }
+        world /= world.w;
     }
-    world /= world.w;
+    // 背景は w = 0 の方向のまま再投影し、カメラ移動による視差を与えない。
     float4 previous = mul(world, Previous);
     float expected = previous.z / max(previous.w, 1e-8);
     bool subpixelAA = Parameters.z > .5;
     float footprintTolerance = 0;
-    if (Reconstruction.x > .5 && depth < .99999)
+    if (Reconstruction.x > .5 && depth > 0.0f)
     {
         // 透視投影の NDC 深度は平面上でアフィンとなる。対称で連続した
         // 深度勾配だけが入力サンプルの投影範囲を広げられる。
         // 輪郭や幅の狭い前景物体では、厳密な除外を保つ。
         float2 curvature = abs(cardinalDepth.xz + cardinalDepth.yw - 2 * depth);
         float2 slope = .5 * abs(cardinalDepth.yw - cardinalDepth.xz);
-        float planarityTolerance = max(2e-6, abs(1 - depth) * .0005);
-        bool planar = all(curvature < planarityTolerance) && all(cardinalDepth < .99999);
-        if (planar && all(slope < abs(1 - depth) * .1))
+        float planarityTolerance = max(2e-6, abs(depth) * .0005);
+        bool planar = all(curvature < planarityTolerance) && all(cardinalDepth > 0.0f);
+        if (planar && all(slope < abs(depth) * .1))
         {
             footprintTolerance = slope.x + slope.y + planarityTolerance;
         }
@@ -291,7 +336,7 @@ bool HistoryDepthMatches(float2 uv, float expectedDepth, float footprintToleranc
     else
     {
         float oldDepth = HistoryDepth.SampleLevel(LinearClamp, oldUv, 0);
-        depthMatches = abs(oldDepth - expected) <= max(.0002, abs(1 - expected) * .01);
+        depthMatches = abs(oldDepth - expected) <= max(.0002, abs(expected) * .01);
     }
     if (previous.w <= 0)
     {
@@ -306,7 +351,7 @@ bool HistoryDepthMatches(float2 uv, float expectedDepth, float footprintToleranc
         // 実際の細い物体が消えた場合に、保持期間を制限する。
         float confidence = max(abs(previousDetail.y) - 1, 0);
         float oldDepth = HistoryDepth.Load(int3(historyPixel, 0));
-        if (confidence > .1 && oldDepth < depth - separation && nearest >= oldDepth - separation)
+        if (confidence > .1 && oldDepth > depth + separation && nearest <= oldDepth + separation)
         {
             float4 retained = History.SampleLevel(LinearClamp, oldUv, 0);
             if (all(isfinite(retained)))
@@ -319,7 +364,7 @@ bool HistoryDepthMatches(float2 uv, float expectedDepth, float footprintToleranc
         }
         // 新しく観測したサブピクセルの稜線は、最大の明るさで再開せず、
         // 以前の背景の上へ被覆を蓄積する必要がある。
-        if (observedThinGeometry && oldDepth > depth + separation)
+        if (observedThinGeometry && oldDepth < depth - separation)
         {
             depthMatches = true;
         }
@@ -328,7 +373,7 @@ bool HistoryDepthMatches(float2 uv, float expectedDepth, float footprintToleranc
     {
         return;
     }
-    float4 history = History.SampleLevel(LinearClamp, oldUv, 0);
+    float4 history = ReconstructHistory(oldUv);
     if (!all(isfinite(history)))
     {
         return;
@@ -400,7 +445,9 @@ bool HistoryDepthMatches(float2 uv, float expectedDepth, float footprintToleranc
     // 移動したピクセルと除外したピクセルでは、空間再構築を維持する。
     float2 sampleDistance = ((float2(pixel) + .5) / Extent.xy - source) * Extent.zw;
     float sampleConfidence = exp2(-.5 * dot(sampleDistance, sampleDistance));
-    float currentWeight = lerp(.08, .002 + .1 * sampleConfidence, stillness);
+    // 5 倍拡大時、遠いサンプルにも固定の重みを与えると、輪郭に低解像度の
+    // 階段が混ざる。静止中は実際のサンプル位置の近くで主に被覆を更新する。
+    float currentWeight = lerp(.08, .0001 + .12 * sampleConfidence, stillness);
     if (stablePlane)
     {
         currentWeight *= .5;

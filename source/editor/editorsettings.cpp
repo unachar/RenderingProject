@@ -185,7 +185,7 @@ void ImGuiManager::DrawProjectSettingsWindow()
         ImGui::Checkbox("レイトレーシング反射", &rays.Reflections);
         ImGui::Checkbox("ノイズ除去を使用", &rays.Denoise);
         ImGui::Checkbox("NRDの時間・安定化設定を固定", &rays.StableNrdProfile);
-        ImGui::Checkbox("GI・影の低偏差サンプリング", &rays.StableSampling);
+        ImGui::Checkbox("GI・影・反射の低偏差サンプリング", &rays.StableSampling);
         if (ImGui::TreeNode("加速構造 (BLAS)"))
         {
             ImGui::Checkbox("静的 BLAS をコンパクション", &rays.CompactStaticBlas);

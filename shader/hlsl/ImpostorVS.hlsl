@@ -38,7 +38,7 @@ ImpostorPSInput main(VSInput3D input, uint instanceId : SV_InstanceID)
     toCamera /= distanceToCamera;
 
     // 境界球のカメラ側の接平面に置く。表面は必ずこの平面より奥にあるので、
-    // ピクセル深度は補間深度以上（SV_DepthGreaterEqual）になり Early-Z が効く。
+    // ピクセル深度は補間深度以下（SV_DepthLessEqual）になり Early-Z が効く。
     const float offset = min(worldRadius, distanceToCamera * 0.5f);
     const float planeDistance = distanceToCamera - offset;
     float halfSize = worldRadius;

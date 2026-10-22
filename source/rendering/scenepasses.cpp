@@ -374,7 +374,7 @@ void ScenePasses::BeginEditorSceneOverlayPass()
     CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
     if (m_UseLowResDepth)
     {
-        m_CommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        m_CommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
 
         ID3D12PipelineState* depthPso = PsoManager::GetUpscaleDepthPso();
         if (depthPso && m_UpscaleRootSignature)
@@ -530,7 +530,7 @@ void ScenePasses::BeginScenePass()
             {
                 dsvHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
             }
-            m_CommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+            m_CommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
             m_CommandList->OMSetRenderTargets(1, &m_GBufferRtvHandles[visibilityIndex], TRUE, &dsvHandle);
             return;
         }
@@ -577,7 +577,7 @@ void ScenePasses::BeginScenePass()
             GetGBufferClearColor(i, clearColor);
             m_CommandList->ClearRenderTargetView(m_GBufferRtvHandles[i], clearColor, 0, nullptr);
         }
-        m_CommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        m_CommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
 
         D3D12_CPU_DESCRIPTOR_HANDLE handles[g_kGEOMETRY_GBUFFER_COUNT]{};
         for (UINT i = 0; i < g_kGEOMETRY_GBUFFER_COUNT; ++i)
@@ -598,7 +598,7 @@ void ScenePasses::BeginScenePass()
     CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(m_DsvHeap->GetCPUDescriptorHandleForHeapStart());
     m_CommandList->ClearRenderTargetView(GetRenderTargetRtvHandle(RenderTargetType::Scene), m_kSceneClearColor, 0,
                                          nullptr);
-    m_CommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    m_CommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
     m_CommandList->OMSetRenderTargets(1, &GetRenderTargetRtvHandle(RenderTargetType::Scene), TRUE, &dsvHandle);
 }
 
@@ -696,21 +696,25 @@ void ScenePasses::EndScenePass()
             {
                 beforeCompute[beforeCount++] =
                     CD3DX12_RESOURCE_BARRIER::Transition(m_LowResDepthBuffer.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE,
-                                                         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                                                         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             }
             else
             {
                 beforeCompute[beforeCount++] = CD3DX12_RESOURCE_BARRIER::Transition(
-                    m_DepthStencilBuffer.Get(), m_DepthStencilState, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-                m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+                    m_DepthStencilBuffer.Get(), m_DepthStencilState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                m_DepthStencilState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
             }
             m_CommandList->ResourceBarrier(beforeCount, beforeCompute);
             {
                 RenderProfiler::ScopedEvent profile("Compute GBuffer", m_CommandList.Get());
+                const UINT depthIndex = m_UseLowResDepth ? g_kLOW_RES_DEPTH_SRV_INDEX : g_kDEPTH_SRV_INDEX;
+                const CD3DX12_GPU_DESCRIPTOR_HANDLE depthSrv(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
+                                                             depthIndex, m_Device->GetDescriptorHandleIncrementSize(
+                                                                             D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV));
                 VisibilityBuffer::GenerateGBuffer(m_CommandList.Get(), m_GBufferSrvHandles[visibilityIndex],
-                                                  m_SceneWidth, m_SceneHeight);
+                                                  depthSrv, m_SceneWidth, m_SceneHeight);
             }
-            D3D12_RESOURCE_BARRIER afterCompute[g_kGEOMETRY_GBUFFER_COUNT + 1]{};
+            D3D12_RESOURCE_BARRIER afterCompute[g_kGEOMETRY_GBUFFER_COUNT + 2]{};
             afterCompute[0] = CD3DX12_RESOURCE_BARRIER::Transition(m_GBufferTargets[visibilityIndex].Get(),
                                                                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                                                                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -720,7 +724,14 @@ void ScenePasses::EndScenePass()
                                                                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                                                            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
             }
+            auto* sceneDepth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
+            afterCompute[g_kGEOMETRY_GBUFFER_COUNT + 1] = CD3DX12_RESOURCE_BARRIER::Transition(
+                sceneDepth, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
             m_CommandList->ResourceBarrier(_countof(afterCompute), afterCompute);
+            if (!m_UseLowResDepth)
+            {
+                m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            }
             m_IsDeferredGeometryPass = false;
             m_IsSceneColorForwardPass = false;
             return;

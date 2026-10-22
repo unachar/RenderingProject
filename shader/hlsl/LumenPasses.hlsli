@@ -438,12 +438,16 @@ bool LumenFindHistory(float3 position, float3 normal, out uint previousIndex)
     bool valid = index < LumenProbeCount();
     uint2 probe = valid ? uint2(index % LumenGrid.x, index / LumenGrid.x) : 0;
     uint2 pixel = min(probe * LumenGrid.z + LumenGrid.z / 2, ReflectionExtent.xy - 1);
-    float depth = valid ? ReflectionDepth.Load(int3(pixel, 0)) : 1;
+    float depth = valid ? ReflectionDepth.Load(int3(pixel, 0)) : 0;
     float2 uv = (pixel + 0.5f) / ReflectionExtent.xy;
     float4 world = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, depth, 1), ReflectionInvViewProjection);
     float3 normal = normalize(ReflectionNormal.Load(int3(pixel, 0)).xyz * 2 - 1);
-    float3 position = world.xyz / world.w;
-    bool sky = depth >= 0.99999f;
+    bool sky = depth <= 0.0f;
+    float3 position = ReflectionCamera.xyz;
+    if (!sky)
+    {
+        position = world.xyz / world.w;
+    }
     uint current = LumenProbeBase(false);
     if (valid && lane == 0)
     {
@@ -553,7 +557,7 @@ bool LumenProbeVisibleScreen(float3 position, float3 normal, float3 probePositio
             return false;
         }
         float scene = ReflectionDepth.Load(int3(screen, 0));
-        if (scene < ndc.z - max(2e-5f, (1 - ndc.z) * 0.02f))
+        if (scene > ndc.z + max(2e-5f, ndc.z * 0.02f))
         {
             return false;
         }

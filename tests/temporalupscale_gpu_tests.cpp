@@ -10,6 +10,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include "rendering/scenedepth.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -79,10 +80,13 @@ namespace
 
         Constants()
         {
-            for (UINT i = 0; i < 4; ++i)
-            {
-                InvCurrent[i * 5] = Previous[i * 5] = 1;
-            }
+            const auto projection = SceneDepth::InfiniteReverseZPerspectiveLH(DirectX::XM_PIDIV2, 1.0f, 0.1f);
+            DirectX::XMFLOAT4X4 inverse;
+            DirectX::XMFLOAT4X4 previous;
+            DirectX::XMStoreFloat4x4(&inverse, DirectX::XMMatrixTranspose(DirectX::XMMatrixInverse(nullptr, projection)));
+            DirectX::XMStoreFloat4x4(&previous, DirectX::XMMatrixTranspose(projection));
+            std::memcpy(InvCurrent, &inverse, sizeof(inverse));
+            std::memcpy(Previous, &previous, sizeof(previous));
         }
     };
 
@@ -350,7 +354,7 @@ int main(int argc, char** argv)
                     const float objectOffset = frame >= 163 ? float(frame - 163) * 2 / OutputHeight : 0;
                     const bool foreground =
                         (frame < 160 || frame >= 163) && worldY > .3f * worldX + .31f + objectOffset;
-                    inputDepth[pixel] = foreground ? .5f : 1.f;
+                    inputDepth[pixel] = foreground ? .5f : 0.f;
                     float value = frame == 161 ? .7f : frame == 162 ? .4f : foreground ? 1.f : .02f;
                     if (fineDetail)
                     {
@@ -358,10 +362,10 @@ int main(int argc, char** argv)
                         value = frame < 160 && std::abs(worldX - (.27f * worldY + .37f)) < .5f / OutputWidth
                                     ? .02f + .98f * detailScale
                                     : .02f;
-                        inputDepth[pixel] = planarFixture ? .3f + .4f * worldY : .5f;
+                        inputDepth[pixel] = planarFixture ? .7f - .4f * worldY : .5f;
                         if (thinGeometry)
                         {
-                            inputDepth[pixel] = value > .02f ? .5f : 1.f;
+                            inputDepth[pixel] = value > .02f ? .5f : 0.f;
                         }
                     }
                     for (UINT channel = 0; channel < 3; ++channel)

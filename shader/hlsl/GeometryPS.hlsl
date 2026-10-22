@@ -57,7 +57,7 @@ PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
     output.Normal = MakeGBufferNormal(normal);
 
     output.Depth = AssetParallaxPixelDepth(pom, input.WorldPos, input.CameraPos, saturate(input.Position.z));
-    output.HardwareDepth = max(output.Depth.x, input.Position.z);
+    output.HardwareDepth = min(output.Depth.x, input.Position.z);
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
     bool usePartParams = MaterialMode != 1;
     output.Material.r = usePartParams ? partParams.Basic.x : assetMetallic;

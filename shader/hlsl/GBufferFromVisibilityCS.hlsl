@@ -1,4 +1,5 @@
 Texture2D<uint4> VisibilityBuffer : register(t0);
+Texture2D<float> HardwareDepth : register(t1);
 RWTexture2D<float4> OutBaseColor : register(u0);
 RWTexture2D<float4> OutNormal : register(u1);
 RWTexture2D<float> OutDepth : register(u2);
@@ -41,7 +42,7 @@ float3 DecodeOctahedron(float2 encoded)
     {
         OutBaseColor[pixel] = float4(0.1f, 0.2f, 0.4f, 1.0f);
         OutNormal[pixel] = float4(0.5f, 1.0f, 0.5f, 1.0f);
-        OutDepth[pixel] = 1.0f;
+        OutDepth[pixel] = 0.0f;
         OutMaterial[pixel] = float4(0.0f, 0.0f, 0.0f, -1.0f);
         OutShadow[pixel] = float4(0.0f, 0.0f, 0.0f, 1.0f);
         return;
@@ -51,7 +52,7 @@ float3 DecodeOctahedron(float2 encoded)
         float4(payload.x & 0xffu, (payload.x >> 8u) & 0xffu, (payload.x >> 16u) & 0xffu, (payload.x >> 24u) & 0xffu) /
         255.0f;
     float3 normal = DecodeOctahedron(UnpackUnorm16x2(payload.y));
-    float depth = (payload.z & 0xffffu) / 65535.0f;
+    float depth = HardwareDepth.Load(int3(pixel, 0));
     float metallic = ((payload.z >> 16u) & 0xffu) / 255.0f;
     float roughness = ((payload.z >> 24u) & 0xffu) / 255.0f;
     float fresnel = (payload.w & 0xffu) / 255.0f;

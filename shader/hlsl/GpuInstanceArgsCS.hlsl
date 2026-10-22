@@ -26,10 +26,6 @@ void BuildInstanceArguments()
         IndirectArguments.Store(baseOffset + 16, 0);
     }
 }
-#ifndef INSTANCE_ARGS_WORK_GRAPH
-[numthreads(1, 1, 1)]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID)
-{
+[numthreads(1, 1, 1)] void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     BuildInstanceArguments();
 }
-#endif

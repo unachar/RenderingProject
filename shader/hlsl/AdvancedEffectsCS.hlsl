@@ -89,8 +89,8 @@ float Hash(uint value)
 
 float3 ViewRay(float2 uv)
 {
-    float4 farPoint = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, 1, 1), InvViewProjection);
-    return normalize(farPoint.xyz / farPoint.w - CameraPosition.xyz);
+    float4 farPoint = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, 0, 1), InvViewProjection);
+    return normalize(farPoint.xyz);
 }
 
 float3 WorldFromDepth(float2 uv, float depth)
@@ -420,11 +420,11 @@ float4 SampleIntegratedFog(float2 uv, float dist)
     }
     float4 color = SceneColor[id.xy];
     float depth = SceneDepth[id.xy];
-    bool physicalSkyPixel = depth >= 0.9999f && (Features.x & 2u) != 0;
+    bool physicalSkyPixel = depth <= 0.0f && (Features.x & 2u) != 0;
     if ((Features.x & 1u) != 0 && !physicalSkyPixel)
     {
         float2 uv = (id.xy + 0.5f) / Extent.xy;
-        float dist = depth >= 0.9999f ? FogDepth.y : length(WorldFromDepth(uv, depth) - CameraPosition.xyz);
+        float dist = depth <= 0.0f ? FogDepth.y : length(WorldFromDepth(uv, depth) - CameraPosition.xyz);
         // 画面空間の小さなディザーで、フロクセルの三線形補間の形状を目立たなくする。
         float dither = (Hash(id.x + id.y * 4099u + Extent.z * 7919u) - 0.5f) / Extent.x;
         float4 fog = SampleIntegratedFog(uv + dither, dist);
@@ -551,7 +551,7 @@ float4 ResolvePixel(uint3 id)
                 float2 sampleVelocity = SceneVelocity[samplePixel].zw * Extent.xy * MotionBlurParams.x;
                 // 背景のサンプルは常に加算する。前景のサンプルはこのピクセルに届くほど
                 // 移動した場合だけ加算し、静止した前景が引き伸ばされるのを防ぐ。
-                bool behind = sampleDepth >= centerDepth - 0.00002f;
+                bool behind = sampleDepth <= centerDepth + 0.00002f;
                 float reach = sqrt(dot(sampleVelocity, sampleVelocity)) * 0.5f;
                 float dist = abs(t) * velocityLength;
                 float weight = behind ? 1 : saturate(reach - dist + 1);
@@ -569,7 +569,7 @@ float4 ResolvePixel(uint3 id)
 // ---------------------------------------------------------------------------------------------
 float CircleOfConfusion(float2 uv, float depth)
 {
-    float dist = depth >= 0.9999f ? 100000.0f : length(WorldFromDepth(uv, depth) - CameraPosition.xyz);
+    float dist = depth <= 0.0f ? 100000.0f : length(WorldFromDepth(uv, depth) - CameraPosition.xyz);
     float focus = max(DofParams.x, 0.05f);
     float blur = saturate((abs(dist - focus) - DofParams.y * 0.5f) / focus);
     return blur * DofParams.z; // ピクセル単位
@@ -622,7 +622,7 @@ float4 DepthOfFieldPixel(uint3 id)
         float sampleCoc = CircleOfConfusion((samplePixel + 0.5f) / Extent.xy, sampleDepth);
         // サンプル自身のぼけ円盤がこのピクセルを覆う場合に寄与する。中心より奥のサンプルは
         // 中心のぼけ量で制限し、合焦した前景の鮮明さを保つ。
-        float coverage = sampleDepth > centerDepth ? min(sampleCoc, centerCoc) : sampleCoc;
+        float coverage = sampleDepth < centerDepth ? min(sampleCoc, centerCoc) : sampleCoc;
         float weight = saturate(coverage - radius + 1) / max(coverage * coverage, 1);
         sum += DofSource(samplePixel).rgb * weight;
         weightSum += weight;
@@ -677,7 +677,7 @@ float4 DepthOfFieldPixel(uint3 id)
         {
             int2 low = clamp(base + int2(x, y), 0, int2(HalfWidth, HalfHeight) - 1);
             uint2 full = min(uint2(low) * 2 + 1, uint2(Extent.xy) - 1);
-            float geometry = exp2(-abs(SceneDepth[full] - depth) / max(2e-5, abs(1 - depth) * .02));
+            float geometry = exp2(-abs(SceneDepth[full] - depth) / max(2e-5, abs(depth) * .02));
             float2 spatial = lerp(1 - fraction, fraction, float2(x, y));
             float weight = spatial.x * spatial.y * geometry;
             float4 color = HalfHasDof != 0 ? HalfDofInput.Load(int3(low, 0)) : HalfResolveInput.Load(int3(low, 0));

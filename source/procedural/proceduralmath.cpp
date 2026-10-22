@@ -1,5 +1,4 @@
 #include "proceduralmath.h"
-#include "proceduralworkgraph.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -212,7 +211,21 @@ namespace Procedural
 
     std::vector<float> BuildHeightMap(const TerrainSettings& settings)
     {
-        return ProceduralWorkGraph::BuildHeightMap(settings);
+        const int resolution = std::clamp(settings.Resolution, 4, 256);
+        const int side = resolution + 1;
+        const float size = std::clamp(settings.Size, 1.0f, 500.0f);
+        const float height = std::clamp(settings.Height, 0.0f, 100.0f);
+        std::vector<float> heights(static_cast<size_t>(side) * side);
+        for (int row = 0; row < side; ++row)
+        {
+            for (int column = 0; column < side; ++column)
+            {
+                const float x = size * (static_cast<float>(column) / resolution - 0.5f);
+                const float z = size * (static_cast<float>(row) / resolution - 0.5f);
+                heights[row * side + column] = settings.BaseHeight + SampleNoise(x, z, settings.Noise) * height;
+            }
+        }
+        return heights;
     }
 
     Vector3 SampleMotion(MotionMethod method, double time, float speed, const Vector3& amplitude, uint32_t seed)

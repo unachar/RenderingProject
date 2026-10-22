@@ -154,7 +154,7 @@ float2 ApplyAssetParallax(AssetMaterialParameters material, float2 uv, float3 wo
 }
 
 // ピクセル深度オフセット：POM のヒット点（面の奥）をワールドへ戻し、その深度を返す。
-// 結果は常に fallbackDepth 以上（標準 Z・LESS 比較で SV_DepthGreaterEqual の条件を満たす）。
+// 結果は常に fallbackDepth 以下（Reverse-Z・GREATER 比較で SV_DepthLessEqual の条件を満たす）。
 // 接地部分の影・SSAO・ライティングの位置復元・反射レイの始点が凹凸に一致する。
 float AssetParallaxPixelDepth(AssetParallaxResult pom, float3 worldPos, float3 cameraPos, float fallbackDepth)
 {
@@ -171,7 +171,7 @@ float AssetParallaxPixelDepth(AssetParallaxResult pom, float3 worldPos, float3 c
     {
         return fallbackDepth;
     }
-    return max(saturate(clip.z / clip.w), fallbackDepth);
+    return min(saturate(clip.z / clip.w), fallbackDepth);
 }
 
 // POM セルフシャドウ：ヒット点からライト方向へ高さマップをたどり、手前の凸部による遮蔽を求める。

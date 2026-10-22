@@ -18,7 +18,7 @@ cbuffer ScreenSpaceConstants : register(b0)
         return;
     }
     float centerDepth = InputDepth.Load(int3(pixel, 0));
-    if (centerDepth >= 0.9999f)
+    if (centerDepth <= 0.0f)
     {
         OutOcclusion[pixel] = 1.0f;
         return;
@@ -41,7 +41,7 @@ cbuffer ScreenSpaceConstants : register(b0)
             int2 samplePixel = int2(pixel) + direction * (int)stepIndex * stepPixels;
             samplePixel = clamp(samplePixel, int2(0, 0), int2(FullExtent) - 1);
             float sampleDepth = InputDepth.Load(int3(samplePixel, 0));
-            float depthDelta = centerDepth - sampleDepth;
+            float depthDelta = sampleDepth - centerDepth;
             float rangeWeight = saturate(1.0f - abs(depthDelta) * 96.0f);
             float horizon = saturate((depthDelta - 0.00015f) * 640.0f) * rangeWeight;
             float normalWeight = 0.4f + 0.6f * saturate(1.0f - dot(normal.xy, directionNormal));

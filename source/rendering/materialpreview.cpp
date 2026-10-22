@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "rendering/scenedepth.h"
 #include "materialpreview.h"
 #include "thumbnailpreviewcontext.h"
 #include "assets/thumbnailgeometry.h"
@@ -184,7 +185,7 @@ namespace
         target.Format = DXGI_FORMAT_D32_FLOAT;
         target.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
         clear.Format = target.Format;
-        clear.DepthStencil.Depth = 1;
+        clear.DepthStencil.Depth = 0.0f;
         if (FAILED(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &target,
                                                    D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear, IID_PPV_ARGS(&Depth))))
         {
@@ -316,6 +317,7 @@ namespace
             description.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT;
         }
         description.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+        description.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER;
         if (!material.AssetDepthWrite || material.IsTransparent)
         {
             description.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
@@ -447,7 +449,7 @@ namespace
         if (partIndex == 0)
         {
             commands->ClearRenderTargetView(rtv, background, 0, nullptr);
-            commands->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1, 0, 0, nullptr);
+            commands->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
         }
         commands->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
         const D3D12_VIEWPORT viewport = {0, 0, static_cast<float>(preview.Size), static_cast<float>(preview.Size),
@@ -495,7 +497,7 @@ namespace
         constants.World = XMMatrixIdentity();
         constants.View = XMMatrixTranspose(
             XMMatrixLookAtLH(XMLoadFloat3(&eye), XMLoadFloat3(&preview.Center), XMVectorSet(0, 1, 0, 0)));
-        constants.Projection = XMMatrixTranspose(XMMatrixPerspectiveFovLH(XM_PIDIV4, 1, preview.Near, preview.Far));
+        constants.Projection = XMMatrixTranspose(SceneDepth::InfiniteReverseZPerspectiveLH(XM_PIDIV4, 1, preview.Near));
         constants.CameraPos = eye;
         constants.UseTexture = material.UseTexture;
         constants.UseNormalMap = material.NormalMapID >= 0;

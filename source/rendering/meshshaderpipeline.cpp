@@ -125,6 +125,7 @@ bool MeshShaderPipeline::Initialize(ID3D12Device* device, ID3D12RootSignature* r
     stream.SampleMask = UINT_MAX;
     stream.Rasterizer = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
     stream.DepthStencil = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+    stream.DepthStencil.Value.DepthFunc = D3D12_COMPARISON_FUNC_GREATER;
     stream.Topology = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     stream.RenderTargets = renderTargets;
     stream.DepthFormat = DXGI_FORMAT_D32_FLOAT;

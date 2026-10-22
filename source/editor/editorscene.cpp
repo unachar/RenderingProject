@@ -33,6 +33,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <unordered_set>
 #include <DirectXCollision.h>
 #include <ImGuizmo.h>
@@ -231,12 +232,32 @@ void ImGuiManager::DrawTransformGizmo()
         return;
     }
 
-    BeginUndoCapture(m_SelectedEntity, before);
+    // Reject an invalid gizmo result before it can corrupt the entity or its undo history.
+    for (int row = 0; row < 4; ++row)
+    {
+        for (int column = 0; column < 4; ++column)
+        {
+            if (!std::isfinite(modelMatrix.m[row][column]))
+            {
+                return;
+            }
+        }
+    }
 
     float translation[3]{};
     float rotationDeg[3]{};
     float scale[3]{};
     ImGuizmo::DecomposeMatrixToComponents(&modelMatrix._11, translation, rotationDeg, scale);
+
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (!std::isfinite(translation[axis]) || !std::isfinite(rotationDeg[axis]) || !std::isfinite(scale[axis]))
+        {
+            return;
+        }
+    }
+
+    BeginUndoCapture(m_SelectedEntity, before);
 
     transform.Position = {translation[0], translation[1], translation[2]};
     transform.Rotation = {rotationDeg[0] * kDegToRad, rotationDeg[1] * kDegToRad, rotationDeg[2] * kDegToRad};
@@ -739,10 +760,10 @@ bool ImGuiManager::GetSceneViewRay(const ImVec2& sceneMouse, XMVECTOR& outOrigin
     XMMATRIX view;
     XMMATRIX proj;
     Camera::GetCameraMatrices(cameraEntity, view, proj);
-    outOrigin = XMVector3Unproject(XMVectorSet(sceneMouse.x, sceneMouse.y, 0.0f, 1.0f), 0.0f, 0.0f, m_SceneViewSize.x,
+    outOrigin = XMVector3Unproject(XMVectorSet(sceneMouse.x, sceneMouse.y, 1.0f, 1.0f), 0.0f, 0.0f, m_SceneViewSize.x,
                                    m_SceneViewSize.y, 0.0f, 1.0f, proj, view, XMMatrixIdentity());
     XMVECTOR farPoint =
-        XMVector3Unproject(XMVectorSet(sceneMouse.x, sceneMouse.y, 1.0f, 1.0f), 0.0f, 0.0f, m_SceneViewSize.x,
+        XMVector3Unproject(XMVectorSet(sceneMouse.x, sceneMouse.y, 0.5f, 1.0f), 0.0f, 0.0f, m_SceneViewSize.x,
                            m_SceneViewSize.y, 0.0f, 1.0f, proj, view, XMMatrixIdentity());
     outDirection = XMVector3Normalize(XMVectorSubtract(farPoint, outOrigin));
     return true;
@@ -782,9 +803,9 @@ void ImGuiManager::PickEntityFromMouse()
     XMMATRIX proj;
     Camera::GetCameraMatrices(cameraEntity, view, proj);
 
-    XMVECTOR nearPoint = XMVector3Unproject(XMVectorSet(mouse.x, mouse.y, 0.0f, 1.0f), 0.0f, 0.0f, width, height, 0.0f,
+    XMVECTOR nearPoint = XMVector3Unproject(XMVectorSet(mouse.x, mouse.y, 1.0f, 1.0f), 0.0f, 0.0f, width, height, 0.0f,
                                             1.0f, proj, view, XMMatrixIdentity());
-    XMVECTOR farPoint = XMVector3Unproject(XMVectorSet(mouse.x, mouse.y, 1.0f, 1.0f), 0.0f, 0.0f, width, height, 0.0f,
+    XMVECTOR farPoint = XMVector3Unproject(XMVectorSet(mouse.x, mouse.y, 0.5f, 1.0f), 0.0f, 0.0f, width, height, 0.0f,
                                            1.0f, proj, view, XMMatrixIdentity());
     XMVECTOR rayDir = XMVector3Normalize(XMVectorSubtract(farPoint, nearPoint));
 

@@ -922,7 +922,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     XMStoreFloat4(&constants.Camera, XMMatrixInverse(nullptr, view).r[3]);
     constants.Camera.w = nrdFrame.Range;
     constants.Extent = {frame.Width, frame.Height, nrdFrame.Sequence, static_cast<UINT>(lights.size())};
-    constants.Stability = {Raytracing::GetSettings().StableSampling ? 1.f : 0.f, 0, 0, 0};
+    const float inputScale = float(frame.Width) / float((std::max)(1u, GraphicsDevice::GetWidth()));
+    constants.Stability = {Raytracing::GetSettings().StableSampling ? 1.f : 0.f, inputScale, 0, 0};
     // 動きのガイドでは、静止メッシュの発光輝度の変化を検出できない。
     // 発光マテリアルや発光体の変換が変わったら、この信号だけを再開する。
     uint64_t emissionSignature = 14695981039346656037ull;
@@ -1563,4 +1564,3 @@ ID3D12Resource* RayReflections::GetGiNoisyResource()
 {
     return g_Frames[g_LastFrame].GiNoisy.Get();
 }
-

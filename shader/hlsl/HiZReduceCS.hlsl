@@ -21,12 +21,12 @@ cbuffer HiZConstants : register(b0)
     uint2 sourceExtent = uint2(sourceWidth, sourceHeight);
     uint2 first = pixel * sourceExtent / DestinationExtent;
     uint2 end = min(((pixel + 1u) * sourceExtent + DestinationExtent - 1u) / DestinationExtent, sourceExtent);
-    float depth = 0;
+    float depth = 1;
     [loop] for (uint y = first.y; y < end.y; ++y)
     {
         [loop] for (uint x = first.x; x < end.x; ++x)
         {
-            depth = max(depth, SourceDepth.Load(int3(x, y, SourceMip)));
+            depth = min(depth, SourceDepth.Load(int3(x, y, SourceMip)));
         }
     }
     Destination[pixel] = depth;

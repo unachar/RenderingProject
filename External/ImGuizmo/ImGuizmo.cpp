@@ -831,7 +831,9 @@ namespace IMGUIZMO_NAMESPACE
       const float moy = (1.f - ((io.MousePos.y - position.y) / size.y)) * 2.f - 1.f;
 
       const float zNear = gContext.mReversed ? (1.f - FLT_EPSILON) : 0.f;
-      const float zFar = gContext.mReversed ? 0.f : (1.f - FLT_EPSILON);
+      // A second finite point defines the same ray. Depth 0 (reverse Z) or 1
+      // (forward Z) can be at infinity, making the perspective divide produce NaNs.
+      const float zFar = 0.5f;
 
       rayOrigin.Transform(makeVect(mox, moy, zNear, 1.f), mViewProjInverse);
       rayOrigin *= 1.f / rayOrigin.w;

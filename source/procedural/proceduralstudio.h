@@ -1,7 +1,6 @@
 #pragma once
 // Procedural Studio: フラクタル・プロシージャルテクスチャ、立体テクスチャ、ボリューム、
-// モデルの生成 API。生成は D3D12 Work Graph が担当し、エディターと書き出しには結果を読み戻す。
-// スカラー評価は設定のプレビュー計算と明示的な GPU 出力診断にも使う。
+// モデルの CPU 生成処理。D3D に依存しない C++ とし、単体テストやエディター・クラウドレンダラーで共有する。
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -210,6 +209,8 @@ namespace ProcStudio
     // 表面は +Z。表裏は別の頂点を持つ両面構造とし、法線を計算する。
     Mesh GenerateLeaf(const LeafParams& params, uint32_t seed);
 
+    inline constexpr int kMaxTerrainMaps = 4;
+
     struct ModelParams
     {
         ModelKind Kind = ModelKind::FractalTree;
@@ -220,6 +221,8 @@ namespace ProcStudio
         float Size = 10.0f;
         float Height = 2.5f;
         bool TerrainColors = true;
+        int TerrainMapsX = 1;
+        int TerrainMapsZ = 1;
         // 木。
         int Depth = 6;
         int Branches = 3;

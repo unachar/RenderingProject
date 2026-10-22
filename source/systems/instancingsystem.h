@@ -7,7 +7,6 @@
 #include <array>
 #include <vector>
 #include <functional>
-#include "workgraphruntime.h"
 
 enum class InstanceKind : UINT8;
 struct InstanceBatch;
@@ -28,8 +27,6 @@ class InstancingSystem final : public SystemBase
   public:
     static bool CanInstance(EntityID entity);
     static bool IsEntityVisible(EntityID entity);
-    static bool RegisterMeshPipeline(ID3D12Device* device, ID3D12PipelineState* pipeline,
-                                      const D3D12_GRAPHICS_PIPELINE_STATE_DESC& description, bool shadowPass);
 
     static bool IsAvailable()
     {
@@ -73,6 +70,7 @@ class InstancingSystem final : public SystemBase
         UINT BatchIndex = 0;
         bool Valid = false;
     };
+
     struct GpuCullView
     {
         XMFLOAT4 Planes[6]{};
@@ -80,12 +78,12 @@ class InstancingSystem final : public SystemBase
         UINT MinimumLod = 0;
         bool Impostor = false;
     };
+
     bool CullBatchesOnGpu(const DrawContext& ctx, vector<InstanceBatch>& batches, const GpuCullView& view,
                           vector<GpuBatchRecord>& records);
     void DrawCulledBatch(const DrawContext& ctx, const InstanceBatch& batch, const GpuBatchRecord& record,
                          const function<void()>& bindGraphics);
     void FinishGpuCulling(const DrawContext& ctx);
-
 
     static constexpr UINT kMaxInstancesPerFrame = 32768;
     static constexpr UINT kMaxBatchesPerFrame = 4096;
@@ -96,8 +94,8 @@ class InstancingSystem final : public SystemBase
         XMFLOAT4 LocalCenter{};
         XMFLOAT4 LocalExtents{};
         XMFLOAT4 LodDistances{};
-        XMFLOAT4 Impostor{};     // xyz: モデルのローカル中心, w: 切替距離（0 = なし）
-        XMUINT4 ImpostorInfo{};  // x: グループ, y: 出力先頭, z: 容量, w: 有効
+        XMFLOAT4 Impostor{};    // xyz: モデルのローカル中心, w: 切替距離（0 = なし）
+        XMUINT4 ImpostorInfo{}; // x: グループ, y: 出力先頭, z: 容量, w: 有効
     };
 
     static_assert(sizeof(GpuInstanceInput) == 144);
@@ -112,11 +110,11 @@ class InstancingSystem final : public SystemBase
     Microsoft::WRL::ComPtr<ID3D12Resource> m_IndirectArguments;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_ZeroCountsUpload;
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_CullLodRootSignature;
-    WorkGraph::ComputeGraph m_CullLodGraph;
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> m_CullLodPipeline;
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_ArgsRootSignature;
-    WorkGraph::ComputeGraph m_ArgsGraph;
-    Microsoft::WRL::ComPtr<ID3D12Resource> m_RasterGraphInputs;
-    D3D12_NODE_GPU_INPUT* m_MappedRasterGraphInputs = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> m_ArgsPipeline;
+    Microsoft::WRL::ComPtr<ID3D12CommandSignature> m_DrawSignature;
+    Microsoft::WRL::ComPtr<ID3D12CommandSignature> m_DrawIndexedSignature;
     UINT m_FrameIndex = UINT_MAX;
     UINT m_FrameCursor = 0;
     UINT m_DirectFrameCursor = 0;

@@ -39,7 +39,7 @@ class GPUDrivenRenderer
                         RenderGraph::ResourceHandle visibility, uint32_t slots, uint32_t capacity, uint32_t meshes);
     static void Draw(ID3D12GraphicsCommandList* commands);
     static bool ResolveVisibility(ID3D12GraphicsCommandList* commands, D3D12_GPU_DESCRIPTOR_HANDLE visibility,
-                                  UINT width, UINT height);
+                                  D3D12_GPU_DESCRIPTOR_HANDLE depthSrv, UINT width, UINT height);
     static void DrawSecondPass(ID3D12GraphicsCommandList* commands);
     static void DrawVelocity(ID3D12GraphicsCommandList* commands);
     static void BuildHiZ(ID3D12GraphicsCommandList* commands);

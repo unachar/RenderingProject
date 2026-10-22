@@ -439,8 +439,13 @@ void ImGuiManager::DrawAssetBrowserWindow()
         nextScan = ImGui::GetTime() + 0.5;
         for (const auto& entry : filesystem::directory_iterator(m_CurrentAssetDirectory, ec))
         {
-            if (entry.path().extension() != ".meta" && entry.path().extension() != ".tmp" &&
-                !IsInternalAssetDirectory(entry) &&
+            string extension = entry.path().extension().generic_string();
+            transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
+                return static_cast<char>(tolower(c));
+            });
+            const bool isAuxiliaryFile =
+                extension == ".meta" || extension == ".tmp" || extension == ".mtl" || extension == ".vgderived";
+            if (!isAuxiliaryFile && !IsInternalAssetDirectory(entry) &&
                 assetFilter.PassFilter(entry.path().filename().generic_string().c_str()))
             {
                 entries.push_back(entry);

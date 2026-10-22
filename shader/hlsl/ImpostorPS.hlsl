@@ -29,6 +29,6 @@ ForwardOutput main(ImpostorPSInput input)
     output.Color = premultiplied;
     output.Accumulation = float4(0.0f, 0.0f, 0.0f, 0.0f);
     output.Revealage = float4(0.0f, 0.0f, 0.0f, 0.0f);
-    output.HardwareDepth = max(surface.Depth, input.Position.z);
+    output.HardwareDepth = min(surface.Depth, input.Position.z);
     return output;
 }

@@ -25,10 +25,10 @@ void RenderTargets::GetGBufferClearColor(UINT index, float outColor[4])
     }
     else if (index == static_cast<UINT>(GBufferType::DEPTH))
     {
-        outColor[0] = 1.0f;
-        outColor[1] = 1.0f;
-        outColor[2] = 1.0f;
-        outColor[3] = 1.0f;
+        outColor[0] = 0.0f;
+        outColor[1] = 0.0f;
+        outColor[2] = 0.0f;
+        outColor[3] = 0.0f;
     }
     else if (index == static_cast<UINT>(GBufferType::MATERIAL))
     {
@@ -86,7 +86,7 @@ bool RenderTargets::CreateDepthBuffer()
 
     D3D12_CLEAR_VALUE clearValue{};
     clearValue.Format = DXGI_FORMAT_D32_FLOAT;
-    clearValue.DepthStencil.Depth = 1.0f;
+    clearValue.DepthStencil.Depth = 0.0f;
     clearValue.DepthStencil.Stencil = 0;
 
     hr = m_Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &depthDesc,

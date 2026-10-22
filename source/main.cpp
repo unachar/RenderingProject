@@ -11,12 +11,10 @@
 #include "renderingvalidation.h"
 #include "performancegovernor.h"
 #include "renderbenchmark.h"
-#include "proceduralworkgraph.h"
-#include "rendercapture.h"
 
 extern "C"
 {
-    __declspec(dllexport) extern const UINT D3D12SDKVersion = 715;
+    __declspec(dllexport) extern const UINT D3D12SDKVersion = 619;
     __declspec(dllexport) extern const char* D3D12SDKPath = ".\\D3D12\\";
 }
 
@@ -204,15 +202,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         return 1;
     }
 
-    char proceduralValidation[8]{};
-    if (GetEnvironmentVariableA("DX12_WORK_GRAPH_VALIDATE_PROCEDURAL", proceduralValidation, sizeof(proceduralValidation)) &&
-        atoi(proceduralValidation) != 0)
-    {
-        const bool valid = ProceduralWorkGraph::ValidateAuthoringOutputs();
-        GraphicsDevice::Uninit();
-        return valid ? 0 : 2;
-    }
-
     RenderProfiler::SetPipelineStatisticsForced(automatedRun);
     if (renderingBenchmark)
     {
@@ -301,22 +290,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
             PostQuitMessage(0);
         }
     }
-    bool featuresPassed = renderingBenchmark ? RenderBenchmark::Finish() : RenderingValidation::Finish();
-    if (startupSmokeFrames > 0 && completedFrames > 0)
-    {
-        GraphicsDevice::WaitForGpuIdle();
-        RenderProfiler::DrainCompletedFrames([](const RenderProfiler::FrameSnapshot&) {});
-        const auto& snapshot = RenderProfiler::GetLatest();
-        WriteGraphicsLog("WorkGraph frame sample: frame=%llu graphs=%llu draws=%llu indirect=%llu CPU=%.3f GPU=%.3f ms\n",
-                         snapshot.Serial, snapshot.Calls.WorkGraphDispatchCalls, snapshot.Calls.DrawCalls,
-                         snapshot.Calls.ExecuteIndirectCalls, snapshot.CpuRenderMs, snapshot.GpuRenderMs);
-        char capture[8]{};
-        if (GetEnvironmentVariableA("DX12_WORK_GRAPH_CAPTURE", capture, sizeof(capture)) && atoi(capture) != 0)
-        {
-            featuresPassed &= RenderCapture::SaveScenePng(L"cache/workgraphs-scene.png");
-        }
-        featuresPassed &= RenderCapture::ReportGraphicsErrors() == 0;
-    }
+    const bool featuresPassed = renderingBenchmark ? RenderBenchmark::Finish() : RenderingValidation::Finish();
     Game::Uninit();
     if (!featuresPassed)
     {

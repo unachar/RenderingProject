@@ -23,7 +23,7 @@
             float radius = length(instance.BoundsExtents.xyz);
             // 近クリップ面と交差する場合は、常に詳細な形状を維持する。
             float4 nearest = mul(float4(center.xy, center.z - radius, 1), Projection);
-            bool nearCamera = !all(isfinite(nearest)) || nearest.z <= 0 || nearest.w <= 0;
+            bool nearCamera = !all(isfinite(nearest)) || nearest.z >= nearest.w || nearest.w <= 0;
             float size = radius * abs(Projection[1][1]) / max(center.z - radius, 0.00001f);
             if (!isfinite(size))
             {

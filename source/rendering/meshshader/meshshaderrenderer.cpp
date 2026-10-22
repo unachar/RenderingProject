@@ -199,7 +199,7 @@ namespace MeshShaderRenderer
             stream.Raster.Value.CullMode =
                 D3D12_CULL_MODE_NONE; // メッシュ出力はプリミティブごとに片面・両面の規則を適用する。
             stream.Depth.Value = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-            stream.Depth.Value.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+            stream.Depth.Value.DepthFunc = D3D12_COMPARISON_FUNC_GREATER;
             stream.Targets.Value.NumRenderTargets = RendererState::g_kGEOMETRY_GBUFFER_COUNT;
             for (uint32_t i = 0; i < RendererState::g_kGEOMETRY_GBUFFER_COUNT; ++i)
             {
@@ -311,7 +311,7 @@ namespace MeshShaderRenderer
             stream.Targets.Value.NumRenderTargets = 1;
             stream.Targets.Value.RTFormats[0] = RendererState::GetGBufferFormat(GBufferType::VELOCITY);
             stream.Depth.Value.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-            stream.Depth.Value.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+            stream.Depth.Value.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
             Check(device2->CreatePipelineState(&meshDesc, IID_PPV_ARGS(&state.VelocityPSO)));
             auto nativeVelocity = Shader("shader/hlsl/build/VirtualGeometryVelocityMS.cso");
             stream.MS.Value = {nativeVelocity->GetBufferPointer(), nativeVelocity->GetBufferSize()};

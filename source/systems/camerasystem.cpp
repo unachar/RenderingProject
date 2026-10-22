@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "rendering/scenedepth.h"
 #include "temporalupscaler.h"
 #include "camerasystem.h"
 #include "componentmanager.h"
@@ -143,7 +144,7 @@ void CameraSystem::Update()
         XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
         XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
 
-        XMMATRIX proj = XMMatrixPerspectiveFovLH(cam.Fov, aspectRatio, cam.NearClip, cam.FarClip);
+        XMMATRIX proj = SceneDepth::InfiniteReverseZPerspectiveLH(cam.Fov, aspectRatio, cam.NearClip);
 
         if (isActive && TemporalUpscaler::IsRequested())
         {

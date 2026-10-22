@@ -20,7 +20,7 @@ float4 EncodeVelocity(float2 velocity)
 float4 main(PSInputPostProcess input) : SV_Target
 {
     float depth = DepthTexture.SampleLevel(PointSampler, input.TexCoord, 0);
-    if (depth >= 0.9999f)
+    if (depth <= 0.0f)
     {
         // 無限遠の空はカメラの回転と投影ジッターに応答し、平行移動には応答しない。
         float3 direction = ReconstructPostProcessViewRayCommon(input.TexCoord);

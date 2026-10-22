@@ -112,10 +112,6 @@ void CullInstance(uint3 dispatchThreadId)
     }
 }
 
-#ifndef INSTANCE_CULL_WORK_GRAPH
-[numthreads(64, 1, 1)]
-void main(uint3 dispatchThreadId : SV_DispatchThreadID)
-{
+[numthreads(64, 1, 1)] void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     CullInstance(dispatchThreadId);
 }
-#endif

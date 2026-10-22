@@ -373,7 +373,7 @@ float3 ReconstructContactWorldPosition(float2 uv, float depth)
 {
     float2 ndc = uv * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f);
     float4 world = mul(float4(ndc, depth, 1.0f), PPInvViewProjection);
-    return world.xyz / max(abs(world.w), 0.000001f);
+    return world.xyz / max(abs(world.w), 1.0e-20f);
 }
 
 float SampleContactShadow(float3 worldPos, float3 normal, float3 lightDir)
@@ -417,7 +417,7 @@ float SampleContactShadow(float3 worldPos, float3 normal, float3 lightDir)
         }
 
         float sceneDepth = LoadContactDepth(projected.xy);
-        if (sceneDepth >= 0.9999f)
+        if (sceneDepth <= 0.0f)
         {
             continue;
         }

@@ -126,7 +126,7 @@ namespace
                         memcpy(&da, pa, 4);
                         memcpy(&db, pb, 4);
                         different += abs(da - db) > 0.00001f;
-                        covered += da < 0.999f && da > 0.0f;
+                        covered += da <= 1.0f && da > 0.0f;
                     }
                     else
                     {

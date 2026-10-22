@@ -179,7 +179,7 @@ bool OcclusionCulling::Resize(UINT width, UINT height)
                                                   D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
     D3D12_CLEAR_VALUE clear{};
     clear.Format = DXGI_FORMAT_D32_FLOAT;
-    clear.DepthStencil.Depth = 1;
+    clear.DepthStencil.Depth = 0.0f;
     g_OccluderDepth.Reset();
     if (FAILED(g_Device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &depthDesc,
                                                  D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, &clear,

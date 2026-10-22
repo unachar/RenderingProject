@@ -19,7 +19,7 @@ cbuffer OptixConstants : register(b0)
     }
     uint index = id.x + id.y * ExtentFlags.x;
     uint plane = ExtentFlags.x * ExtentFlags.y;
-    bool surface = SceneDepth.Load(int3(id.xy, 0)) < 0.99999f;
+    bool surface = SceneDepth.Load(int3(id.xy, 0)) > 0.0f;
     float3 radiance = NoisyRadiance.Load(int3(id.xy, 0)).rgb;
     if (ExtentFlags.z != 0)
     {
@@ -56,7 +56,7 @@ cbuffer OptixConstants : register(b0)
     uint plane = ExtentFlags.x * ExtentFlags.y;
     uint index = id.x + id.y * ExtentFlags.x;
     float3 radiance = SharedInput[3 * plane + index].rgb;
-    if (SceneDepth.Load(int3(id.xy, 0)) >= 0.99999f || !all(isfinite(radiance)))
+    if (SceneDepth.Load(int3(id.xy, 0)) <= 0.0f || !all(isfinite(radiance)))
     {
         radiance = 0;
     }

@@ -16,7 +16,7 @@ struct GBufferOutput
 };
 
 // POM のピクセル深度オフセット付き GBuffer 出力。深度は常に補間深度以上（奥）にしか動かさないので、
-// SV_DepthGreaterEqual（保守的深度）で LESS 比較の Early-Z を維持する。
+// SV_DepthLessEqual（保守的深度）で GREATER 比較の Early-Z を維持する。
 struct GBufferDepthOutput
 {
     float4 Color : SV_Target0;
@@ -25,7 +25,7 @@ struct GBufferDepthOutput
     float4 Material : SV_Target3;
     float4 Shadow : SV_Target4;
     float4 EmissionAO : SV_Target5;
-    float HardwareDepth : SV_DepthGreaterEqual;
+    float HardwareDepth : SV_DepthLessEqual;
 };
 
 struct PS_OUTPUT_GEOMETRY_DEPTH
@@ -36,7 +36,7 @@ struct PS_OUTPUT_GEOMETRY_DEPTH
     float4 Material : SV_Target3;
     float4 Shadow : SV_Target4;
     float4 EmissionAO : SV_Target5;
-    float HardwareDepth : SV_DepthGreaterEqual;
+    float HardwareDepth : SV_DepthLessEqual;
 };
 
 struct PS_OUTPUT_GEOMETRY
@@ -682,7 +682,7 @@ float ScreenSpaceShaftVisibilityCommon(float2 screenUv, float2 lightUv, Texture2
         float t = ((float)stepIndex + 1.0f) / ((float)stepCount + 1.0f);
         float sampleT = saturate(t * blurScale);
         float sampleDepth = depthTexture.SampleLevel(depthSampler, screenUv + rayToLight * sampleT, 0);
-        float skyVisibility = smoothstep(0.96f, 0.999f, sampleDepth);
+        float skyVisibility = (sampleDepth <= 0.0f ? 1.0f : 0.0f);
         float weight = 1.0f - sampleT * 0.55f;
         occlusion += skyVisibility * weight;
         weightSum += weight;
@@ -1221,9 +1221,9 @@ cbuffer PostProcessParams : register(b0)
 float3 ReconstructPostProcessViewRayCommon(float2 uv)
 {
     float2 ndc = uv * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f);
-    float4 worldFar = mul(float4(ndc, 1.0f, 1.0f), PPInvViewProjection);
-    worldFar.xyz /= max(abs(worldFar.w), 0.000001f);
-    return SafeNormalizeCommon(worldFar.xyz - PPCameraPos.xyz, float3(0.0f, 0.0f, 1.0f));
+    // 無限遠は w = 0 の方向ベクトルとなるため、透視除算を行わない。
+    float4 worldFar = mul(float4(ndc, 0.0f, 1.0f), PPInvViewProjection);
+    return SafeNormalizeCommon(worldFar.xyz, float3(0.0f, 0.0f, 1.0f));
 }
 
 #include "ToneMapping.hlsli"
@@ -1310,13 +1310,13 @@ float3 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> dep
         }
 
         float sceneDepth = depthTex.SampleLevel(depthSampler, rayUVZ.xy, 0).r;
-        if (sceneDepth >= 1.0f - 0.001f)
+        if (sceneDepth <= 0.0f)
         {
             previousT = currentT;
             continue;
         }
 
-        float depthDiff = rayUVZ.z - sceneDepth;
+        float depthDiff = sceneDepth - rayUVZ.z;
         if (depthDiff <= 0.0f)
         {
             hasFrontSample = true;
@@ -1339,7 +1339,7 @@ float3 ScreenSpaceRayMarch(float3 origin, float3 direction, Texture2D<float> dep
                 float2 midUv = float2(midNdc.x * 0.5f + 0.5f, -midNdc.y * 0.5f + 0.5f);
                 float midSceneDepth = depthTex.SampleLevel(depthSampler, midUv, 0).r;
 
-                if (midNdc.z > midSceneDepth)
+                if (midNdc.z < midSceneDepth)
                 {
                     highT = midT;
                 }
@@ -1368,7 +1368,7 @@ float3 ReconstructPostProcessWorldPositionCommon(float2 uv, float depth)
 {
     float2 ndc = uv * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f);
     float4 world = mul(float4(ndc, depth, 1.0f), PPInvViewProjection);
-    return world.xyz / max(abs(world.w), 0.000001f);
+    return world.xyz / max(abs(world.w), 1.0e-20f);
 }
 
 #endif

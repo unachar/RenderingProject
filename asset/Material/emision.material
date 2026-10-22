@@ -11,25 +11,28 @@
     "baseColor" : 
     [
       1.0,
-      1.0,
+      0.0,
       1.0,
       1.0
     ],
     "emissiveColor" : 
     [
-      1.0,
-      1.0,
+      0.60465097427368164,
+      0.0,
       1.0
     ],
-    "emissiveIntensity" : 12.932999610900879,
+    "emissiveIntensity" : 6.4109997749328613,
     "ior" : 1.5,
     "metallic" : 0.0,
     "normalScale" : 1.0,
+    "parallaxDepth" : 0.0,
+    "parallaxSteps" : 32.0,
     "roughness" : 0.5,
     "shadingModel" : 0,
     "shadingStrength" : 1.0,
     "thickness" : 0.10000000149011612,
-    "transmission" : 0.0
+    "transmission" : 0.0,
+    "transmissionRoughness" : 0.019999999552965164
   },
   "renderState" : 
   {
@@ -46,6 +49,7 @@
     "ao" : "guid:0000000000000000",
     "baseColor" : "guid:0000000000000000",
     "emissive" : "guid:0000000000000000",
+    "height" : "guid:0000000000000000",
     "metallicRoughness" : "guid:0000000000000000",
     "normal" : "guid:0000000000000000"
   },

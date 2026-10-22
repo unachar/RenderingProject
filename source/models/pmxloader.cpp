@@ -315,7 +315,6 @@ bool LoadPmxModel(const char* fileName, PmxModel& outModel)
         return false;
     }
     outModel.Vertices.resize(static_cast<size_t>(vertexCount));
-    size_t sdefVertexCount = 0;
     for (int32_t i = 0; i < vertexCount; ++i)
     {
         PmxVertex& vertex = outModel.Vertices[static_cast<size_t>(i)];
@@ -376,7 +375,6 @@ bool LoadPmxModel(const char* fileName, PmxModel& outModel)
                     return false;
                 }
                 vertex.BoneWeights[1] = 1.0f - vertex.BoneWeights[0];
-                ++sdefVertexCount;
                 break;
             default:
                 Debug::Log("ERROR: PMX vertex deform type is unsupported: %u (%s)\n", vertex.DeformType, fileName);
@@ -760,11 +758,6 @@ bool LoadPmxModel(const char* fileName, PmxModel& outModel)
         }
     }
 
-    Debug::Log(
-        "PMX binary model loaded: %s (version=%.1f, vertices=%zu, indices=%zu, materials=%zu, textures=%zu, bones=%zu, morphs=%zu, rigidBodies=%zu, joints=%zu, sdefVertices=%zu)\n",
-        fileName, version, outModel.Vertices.size(), outModel.Indices.size(), outModel.Materials.size(),
-        outModel.Textures.size(), outModel.Bones.size(), outModel.Morphs.size(), outModel.RigidBodies.size(),
-        outModel.Joints.size(), sdefVertexCount);
     return true;
 }
 

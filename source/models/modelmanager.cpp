@@ -149,7 +149,6 @@ ModelManager::LoadModelResult ModelManager::LoadAnimModelDetailed(const char* fi
     auto end = chrono::high_resolution_clock::now();
     result.ElapsedMs = chrono::duration<double, milli>(end - start).count();
     result.Succeeded = true;
-    Debug::Log("Anim model loaded: %s (id=%d, %.2f ms)\n", fileName, result.ModelId, result.ElapsedMs);
     return result;
 }
 
@@ -175,25 +174,24 @@ ModelManager::LoadModelResult ModelManager::LoadStaticModelDetailed(const char* 
             model->CaptureSourceIdentity(std::filesystem::u8path(fileName));
         }
     }
-    if (loaded)
+    if (!loaded)
     {
-        Debug::Log("Static model uses encoded derived geometry: %s\n", fileName);
-    }
-    else if (ext == ".obj")
-    {
-        loaded = model->LoadObj(fileName, GraphicsDevice::GetDevice());
-    }
-    else if (ext == ".vgmesh" || ext == ".vgp2")
-    {
-        loaded = model->LoadVirtualGeometry(fileName, GraphicsDevice::GetDevice());
-    }
-    else if (ext == ".fbx" || ext == ".vrm" || ext == ".pmx" || ext == ".gltf" || ext == ".glb")
-    {
-        loaded = model->LoadAssimpModel(fileName, GraphicsDevice::GetDevice(), isConvert);
-    }
-    else
-    {
-        Debug::Log("ERROR: Unsupported static model extension: %s\n", fileName);
+        if (ext == ".obj")
+        {
+            loaded = model->LoadObj(fileName, GraphicsDevice::GetDevice());
+        }
+        else if (ext == ".vgmesh" || ext == ".vgp2")
+        {
+            loaded = model->LoadVirtualGeometry(fileName, GraphicsDevice::GetDevice());
+        }
+        else if (ext == ".fbx" || ext == ".vrm" || ext == ".pmx" || ext == ".gltf" || ext == ".glb")
+        {
+            loaded = model->LoadAssimpModel(fileName, GraphicsDevice::GetDevice(), isConvert);
+        }
+        else
+        {
+            Debug::Log("ERROR: Unsupported static model extension: %s\n", fileName);
+        }
     }
 
     if (!loaded)
@@ -217,7 +215,6 @@ ModelManager::LoadModelResult ModelManager::LoadStaticModelDetailed(const char* 
     auto end = chrono::high_resolution_clock::now();
     result.ElapsedMs = chrono::duration<double, milli>(end - start).count();
     result.Succeeded = true;
-    Debug::Log("Static model loaded: %s (id=%d, %.2f ms)\n", fileName, result.ModelId, result.ElapsedMs);
     return result;
 }
 

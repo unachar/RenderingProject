@@ -31,6 +31,7 @@ namespace
     uint64_t frameCount = 0;
     vector<RenderCapture::TextureData> reference;
     array<string, 8> meshPaths;
+    string fixtureDirectory;
     ofstream measurements;
     vector<EntityID> buildings;
 
@@ -181,7 +182,7 @@ namespace
                         memcpy(&da, first, 4);
                         memcpy(&db, second, 4);
                         differences += abs(da - db) > 0.00001f;
-                        covered += da > 0 && da < 0.999f;
+                        covered += da > 0 && da <= 1.0f;
                     }
                     else
                     {
@@ -243,6 +244,8 @@ namespace
             memcpy(&command, commands.data() + size_t(i) * sizeof(command), sizeof(command));
             if (record.SelectedMeshID >= GpuScene::Statistics().Meshes || record.SelectedLOD != expectedLOD)
             {
+                WriteGraphicsLog("GPU LOD mismatch: expected=%u selected=%u mesh=%u meshCount=%u\n", expectedLOD,
+                                 record.SelectedLOD, record.SelectedMeshID, GpuScene::Statistics().Meshes);
                 valid = false;
                 break;
             }
@@ -298,19 +301,36 @@ void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
             World::DestroyEntity(Entity(entity));
         }
         filesystem::create_directories("build/visibility");
+        // 実行ごとに新しい入力を用意し、過去の派生ジオメトリや通常シーンのキャッシュを混ぜない。
+        fixtureDirectory = "build/visibility/fixtures-" + to_string(GetCurrentProcessId()) + "-" +
+                           to_string(GetTickCount64());
+        filesystem::create_directories(fixtureDirectory);
         for (uint32_t level = 0; level < 5; ++level)
         {
-            const auto path = "build/visibility/grid-lod" + to_string(level) + ".obj";
+            const auto path = fixtureDirectory + "/grid-lod" + to_string(level) + ".obj";
             WriteGrid(path, 16u >> level);
             if (level)
             {
                 meshPaths[level] = path;
             }
         }
-        meshID = ModelManager::LoadStaticModel("build/visibility/grid-lod0.obj", false);
-        WriteGrid("build/visibility/wall.obj", 1);
-        wallMeshID = ModelManager::LoadStaticModel("build/visibility/wall.obj", false);
+        meshID = ModelManager::LoadStaticModel((fixtureDirectory + "/grid-lod0.obj").c_str(), false);
+        WriteGrid(fixtureDirectory + "/wall.obj", 1);
+        wallMeshID = ModelManager::LoadStaticModel((fixtureDirectory + "/wall.obj").c_str(), false);
         Check(meshID >= 0 && wallMeshID >= 0, "import five-level fixture and wall");
+        for (uint32_t level = 0; level < 5; ++level)
+        {
+            const string path = fixtureDirectory + "/grid-lod" + to_string(level) + ".obj";
+            const auto* fixture = ModelManager::GetStaticModel(ModelManager::LoadStaticModel(path.c_str(), false));
+            if (fixture)
+            {
+                const auto center = fixture->GetAabbCenter();
+                const auto extents = fixture->GetAabbExtents();
+                WriteGraphicsLog("GPU LOD fixture: level=%u meshes=%u center=(%g,%g,%g) extents=(%g,%g,%g)\n",
+                                 level, fixture->GetMeshCount(), center.x, center.y, center.z,
+                                 extents.x, extents.y, extents.z);
+            }
+        }
         Grow(1000);
         World::SetVSyncEnabled(false);
         measurements.open("build/visibility/comparison.csv");
@@ -413,7 +433,7 @@ void GPUVisibilityValidation::BeforeFrame(uint64_t frame)
     {
         Clear();
         const uint32_t sections = frame == 100 ? 5 : 10;
-        const auto path = "build/visibility/city-" + to_string(sections) + ".obj";
+        const auto path = fixtureDirectory + "/city-" + to_string(sections) + ".obj";
         WriteGrid(path, 2, sections);
         meshID = ModelManager::LoadStaticModel(path.c_str(), false);
         auto* city = ModelManager::GetStaticModel(meshID);
@@ -584,18 +604,19 @@ void GPUVisibilityValidation::AfterFrame(uint64_t frame)
                 {
                     const auto xr = Visibility::ReductionRange(x, source.Width, destination.Width);
                     const auto yr = Visibility::ReductionRange(y, source.Height, destination.Height);
-                    float maximum = 0, actual = 0;
+                    float minimum = 1;
+                    float actual = 0;
                     for (uint32_t sy = yr.first; sy < yr.second; ++sy)
                     {
                         for (uint32_t sx = xr.first; sx < xr.second; ++sx)
                         {
                             float depth;
                             memcpy(&depth, source.Bytes.data() + sy * source.RowPitch + sx * 4, 4);
-                            maximum = (max)(maximum, depth);
+                            minimum = (min)(minimum, depth);
                         }
                     }
                     memcpy(&actual, destination.Bytes.data() + y * destination.RowPitch + x * 4, 4);
-                    if (actual != maximum)
+                    if (actual != minimum)
                     {
                         valid = false;
                         break;
@@ -604,7 +625,7 @@ void GPUVisibilityValidation::AfterFrame(uint64_t frame)
             }
         }
         Check(valid && mips[0].Width == 801 && mips[0].Height == 451,
-              "GPU odd-resolution pyramid matches CPU max reduction at every mip");
+              "GPU odd-resolution pyramid matches CPU min reduction at every mip");
     }
 }
 

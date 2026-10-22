@@ -29,7 +29,6 @@
 #include "renderprofiler.h"
 #include "raytracing.h"
 #include "nrddenoiser.h"
-#include "postprocesspass.h"
 #include <memory>
 #include "camera.h"
 #include <cmath>
@@ -888,13 +887,6 @@ class MegaLights final
         {
             WriteGraphicsLog("MegaLights: MegaLightsShadePS pipeline failed\n");
             s_ShadeFailed = true;
-            return nullptr;
-        }
-        if (!PostProcessPass::RegisterFullscreenPipeline(s_Device.Get(), s_ShadePso.Get(), desc, L"MegaLightsShadePS"))
-        {
-            s_ShadePso.Reset();
-            s_ShadeFailed = true;
-            WriteGraphicsLog("MegaLights: shade Mesh Node initialization failed\n");
             return nullptr;
         }
         s_ShadeFormat = sceneFormat;
@@ -2143,7 +2135,7 @@ class MegaLights final
             XMStoreFloat4x4(&constants.ViewToWorld, XMMatrixTranspose(XMMatrixInverse(nullptr, view)));
             constants.Projection = {p._11, p._22, p._31, p._32};
             // z = _43 / (ndc - _33)。ndc = 0 と 1 の距離から手前 / 奥を求める（逆 Z でも成り立つ）
-            const float zAtZero = fabsf(p._33) > 1.0e-6f ? p._43 / (0.0f - p._33) : 0.1f;
+            const float zAtZero = fabsf(p._33) > 1.0e-6f ? p._43 / (0.0f - p._33) : 1.0e6f;
             const float zAtOne = fabsf(1.0f - p._33) > 1.0e-6f ? p._43 / (1.0f - p._33) : 1.0e6f;
             const bool reversed = zAtZero > zAtOne;
             const float nearZ = (std::max)(0.001f, reversed ? zAtOne : zAtZero);

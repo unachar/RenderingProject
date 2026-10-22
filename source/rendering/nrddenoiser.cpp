@@ -126,6 +126,20 @@ namespace
         EnableAntiFirefly(settings);
     }
 
+    void ConfigureStableSpecular(nrd::ReblurSettings& settings, bool stableProfile)
+    {
+        ApplyHitDistance(settings, kHitDistanceA, kHitDistanceB, kHitDistanceC);
+        EnableAntiFirefly(settings);
+        if (stableProfile)
+        {
+            // 低解像度の鏡面では短い履歴に粒状ノイズが残る。
+            // 空間ぼかしを広げず、変化への追従に使う短期履歴も維持する。
+            settings.maxAccumulatedFrameNum = 63;
+            settings.maxFastAccumulatedFrameNum = 8;
+            settings.maxStabilizedFrameNum = 63;
+        }
+    }
+
     void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, D3D12_RESOURCE_STATES& state,
                     D3D12_RESOURCE_STATES target)
     {
@@ -421,8 +435,7 @@ struct NrdDenoiser::Impl
             // パリティは frameIndex で NRD が交互に切り替えるので、モードは BLACK に固定する（GI と同じ）
             nrd::ReblurSettings settings;
             settings.checkerboardMode = nrd::CheckerboardMode::BLACK;
-            ApplyHitDistance(settings, kHitDistanceA, kHitDistanceB, kHitDistanceC);
-            EnableAntiFirefly(settings);
+            ConfigureStableSpecular(settings, frame.StableProfile);
             if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS)
             {
                 return false;
@@ -430,11 +443,9 @@ struct NrdDenoiser::Impl
         }
         if (Signal == NrdSignal::Specular)
         {
-            // 全解像度入力、チェッカーボードなしの既定設定を保つ。
-            // フレーム間で反射がちらつかないよう、孤立した外れ値だけを抑える。
+            // 全ピクセル追跡時も、半解像度と同じ反射の安定化設定を使う。
             nrd::ReblurSettings settings;
-            ApplyHitDistance(settings, kHitDistanceA, kHitDistanceB, kHitDistanceC);
-            EnableAntiFirefly(settings);
+            ConfigureStableSpecular(settings, frame.StableProfile);
             if (nrd::SetDenoiserSettings(*Instance, kIdentifier, &settings) != nrd::Result::SUCCESS)
             {
                 return false;

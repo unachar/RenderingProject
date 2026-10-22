@@ -72,7 +72,7 @@ float TraceHitDistance(float3 origin, float3 direction, float distance, bool clo
         return;
     }
     float depth = Depth.Load(int3(pixel, 0));
-    if (depth >= 0.99999f)
+    if (depth <= 0.0f)
     {
         Visibility[pixel] = float2(1, 1);
 #if USE_NRD
@@ -187,7 +187,7 @@ float TraceHitDistance(float3 origin, float3 direction, float distance, bool clo
     float4 world = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, depth, 1), InvViewProjection);
     float viewZ = abs(mul(float4(world.xyz / world.w, 1), WorldToView).z);
     float2 visibility = Visibility[pixel];
-    if (depth >= 0.99999f)
+    if (depth <= 0.0f)
     {
         visibility.y = 1;
     }
@@ -208,7 +208,7 @@ float TraceHitDistance(float3 origin, float3 direction, float distance, bool clo
     float2 uv = (pixel + 0.5f) / ExtentSamples.xy;
     float4 world = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, depth, 1), InvViewProjection);
     float viewZ = abs(mul(float4(world.xyz / world.w, 1), WorldToView).z);
-    if (depth >= 0.99999f)
+    if (depth <= 0.0f)
     {
         visibility.x = 1.0f;
     }

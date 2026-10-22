@@ -1,6 +1,5 @@
 #pragma once
 #include "gpuscenebuffer.h"
-#include "workgraphruntime.h"
 #include <DirectXMath.h>
 
 class GpuSceneCulling
@@ -13,6 +12,5 @@ class GpuSceneCulling
 
   private:
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_Root;
-    WorkGraph::ComputeGraph m_Graph;
-    uint32_t m_FrameIndex = 0;
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> m_Pipeline;
 };

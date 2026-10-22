@@ -6,7 +6,6 @@
 #include "modelmanager.h"
 #include "world.h"
 #include "renderprofiler.h"
-#include "workgraphruntime.h"
 #include <map>
 #include <set>
 #include <tuple>
@@ -55,14 +54,14 @@ namespace
     array<map<GeometryKey, FrameGeometry>, kFrameCount> g_Frames;
     map<GeometryKey, History> g_History;
     ComPtr<ID3D12RootSignature> g_Root;
-    WorkGraph::ComputeGraph g_Graph;
+    ComPtr<ID3D12PipelineState> g_Pipeline;
     UINT g_FrameIndex = 0;
     UINT g_Dispatches = 0;
     UINT64 g_Revision = 0;
 
     bool Initialize()
     {
-        if (g_Graph.IsInitialized())
+        if (g_Pipeline)
         {
             return true;
         }
@@ -84,8 +83,21 @@ namespace
         {
             return false;
         }
-        return g_Graph.Initialize(device, g_Root.Get(), L"shader/hlsl/VertexDeformationWorkGraph.hlsl",
-                                  L"VertexDeformationEntry");
+        ComPtr<ID3DBlob> shader;
+        if (FAILED(D3DCompileFromFile(L"shader/hlsl/VertexDeformationCS.hlsl", nullptr,
+                                      D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", "cs_6_0",
+                                      D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &shader, &errors)))
+        {
+            if (errors)
+            {
+                Debug::Log("Vertex deformation: %s\n", static_cast<const char*>(errors->GetBufferPointer()));
+            }
+            return false;
+        }
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline{};
+        pipeline.pRootSignature = g_Root.Get();
+        pipeline.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
+        return SUCCEEDED(device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&g_Pipeline)));
     }
 
     bool Allocate(FrameGeometry& geometry, ID3D12Resource* base, const D3D12_VERTEX_BUFFER_VIEW& view)
@@ -187,23 +199,18 @@ namespace
                                                                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
         commandList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
         commandList->SetComputeRootSignature(g_Root.Get());
+        commandList->SetPipelineState(g_Pipeline.Get());
         commandList->SetComputeRootShaderResourceView(0, view.BufferLocation);
         commandList->SetComputeRootUnorderedAccessView(1, geometry.Current->GetGPUVirtualAddress());
         commandList->SetComputeRootUnorderedAccessView(2, geometry.Previous->GetGPUVirtualAddress());
         commandList->SetComputeRootConstantBufferView(3, geometry.ConstantBuffer->GetGPUVirtualAddress());
         const UINT groups = (constants.Geometry.x + 63u) / 64u;
-        const UINT dispatchGrid[3] = {(min)(groups, 65535u), (groups + 65534u) / 65535u, 1};
-        const bool dispatched = g_Graph.DispatchCpu(commandList, g_FrameIndex, dispatchGrid, sizeof(dispatchGrid));
+        commandList->Dispatch((min)(groups, 65535u), (groups + 65534u) / 65535u, 1);
         for (auto& barrier : barriers)
         {
             swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
         }
         commandList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
-        if (!dispatched)
-        {
-            Debug::Log("Vertex deformation: Work Graph dispatch failed.\n");
-            return;
-        }
         history = {view.BufferLocation, constants.Current, motion.Time, true};
         geometry.Revision = g_Revision;
         ++g_Dispatches;
@@ -391,7 +398,7 @@ void VertexDeformation::Shutdown()
 {
     g_Frames = {};
     g_History.clear();
-    g_Graph.Reset();
+    g_Pipeline.Reset();
     g_Root.Reset();
     g_Dispatches = 0;
     g_Revision = 0;

@@ -100,7 +100,7 @@ struct CameraComponent
     XMFLOAT3 Target = {0.0f, 0.0f, 0.0f};
     float Fov = XM_PIDIV4;
     float NearClip = 0.1f;
-    float FarClip = 100.0f;
+    float FarClip = 100.0f; // エフェクトの距離設定。カメラの透視投影自体は無限遠。
     bool EnablePostProcess = false;
     bool IsGameCamera = false;
     bool IsMainGameCamera = false;

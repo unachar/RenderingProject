@@ -54,7 +54,7 @@ GBufferDepthOutput main(in PSInput3D In)
     output.Normal = MakeGBufferNormal(normal);
 
     output.Depth = AssetParallaxPixelDepth(pom, In.WorldPos, In.CameraPos, saturate(In.Position.z));
-    output.HardwareDepth = max(output.Depth.x, In.Position.z);
+    output.HardwareDepth = min(output.Depth.x, In.Position.z);
     MaterialPartShaderParams partParams = ResolveMaterialPartParams(materialPartId);
     bool usePartParams = MaterialMode != 1;
     output.Material.r = usePartParams ? partParams.Basic.x : assetMetallic;

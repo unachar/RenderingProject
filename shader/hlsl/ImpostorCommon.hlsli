@@ -18,7 +18,7 @@ struct ImpostorPSInput
 #ifdef IMPOSTOR_VERTEX_SHADER
     float4 Position : SV_POSITION;
 #else
-    // SV_DepthGreaterEqual を出すため、位置は noperspective centroid（POM と同じ制約）。
+    // SV_DepthLessEqual を出すため、位置は noperspective centroid（POM と同じ制約）。
     noperspective centroid float4 Position : SV_POSITION;
 #endif
     float3 WorldPos : TEXCOORD1;

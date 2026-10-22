@@ -36,7 +36,7 @@ float3 DecodeNormal(float3 value)
     uint2 dePixel = pixel >> 2u;
     float centerDepth = DeinterleavedDepth.Load(int4(dePixel, slice, 0));
     float3 normal = DecodeNormal(DeinterleavedNormal.Load(int4(dePixel, slice, 0)).xyz);
-    if (centerDepth >= 0.9999f)
+    if (centerDepth <= 0.0f)
     {
         OutIndirect[uint3(dePixel, slice)] = 0.0f;
         return;
@@ -55,7 +55,7 @@ float3 DecodeNormal(float3 value)
             samplePixel = clamp(samplePixel, int2(0, 0), int2(DeinterleavedExtent) - 1);
             float sampleDepth = DeinterleavedDepth.Load(int4(samplePixel, slice, 0));
             float3 sampleNormal = DecodeNormal(DeinterleavedNormal.Load(int4(samplePixel, slice, 0)).xyz);
-            float depthDelta = centerDepth - sampleDepth;
+            float depthDelta = sampleDepth - centerDepth;
             float facing = saturate(dot(normal, normalize(float3(direction, max(depthDelta * 180.0f, 0.05f))))) *
                            saturate(dot(sampleNormal, -normalize(float3(direction, min(depthDelta * 180.0f, -0.05f)))));
             float proximity = exp2(-abs(depthDelta) * 320.0f) / (1.0f + (float)stepIndex);

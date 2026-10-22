@@ -20,13 +20,15 @@ bool VisibilityBuffer::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* de
     g_VisibilityDescriptorHeap = descriptorHeap;
     g_VisibilityDescriptorIncrement = descriptorIncrement;
 
-    CD3DX12_DESCRIPTOR_RANGE ranges[2];
+    CD3DX12_DESCRIPTOR_RANGE ranges[3];
     ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
     ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, RendererState::g_kGEOMETRY_GBUFFER_COUNT, 0);
-    CD3DX12_ROOT_PARAMETER parameters[3];
+    ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
+    CD3DX12_ROOT_PARAMETER parameters[4];
     parameters[0].InitAsDescriptorTable(1, &ranges[0]);
     parameters[1].InitAsDescriptorTable(1, &ranges[1]);
     parameters[2].InitAsConstants(4, 0);
+    parameters[3].InitAsDescriptorTable(1, &ranges[2]);
     CD3DX12_ROOT_SIGNATURE_DESC rootDesc(_countof(parameters), parameters, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE);
     ComPtr<ID3DBlob> serialized;
     ComPtr<ID3DBlob> errors;
@@ -73,13 +75,14 @@ bool VisibilityBuffer::IsAvailable()
 }
 
 void VisibilityBuffer::GenerateGBuffer(ID3D12GraphicsCommandList* commandList,
-                                       D3D12_GPU_DESCRIPTOR_HANDLE visibilitySrv, UINT width, UINT height)
+                                       D3D12_GPU_DESCRIPTOR_HANDLE visibilitySrv,
+                                       D3D12_GPU_DESCRIPTOR_HANDLE depthSrv, UINT width, UINT height)
 {
     if (!commandList || !width || !height)
     {
         return;
     }
-    if (GPUDrivenRenderer::ResolveVisibility(commandList, visibilitySrv, width, height))
+    if (GPUDrivenRenderer::ResolveVisibility(commandList, visibilitySrv, depthSrv, width, height))
     {
         return;
     }
@@ -92,6 +95,7 @@ void VisibilityBuffer::GenerateGBuffer(ID3D12GraphicsCommandList* commandList,
     commandList->SetComputeRootSignature(g_VisibilityRootSignature.Get());
     commandList->SetPipelineState(g_VisibilityPso.Get());
     commandList->SetComputeRootDescriptorTable(0, visibilitySrv);
+    commandList->SetComputeRootDescriptorTable(3, depthSrv);
     commandList->SetComputeRootDescriptorTable(
         1, CD3DX12_GPU_DESCRIPTOR_HANDLE(g_VisibilityDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
                                          RendererState::g_kGBUFFER_UAV_START_INDEX, g_VisibilityDescriptorIncrement));

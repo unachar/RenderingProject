@@ -548,6 +548,9 @@
     <ClInclude Include="source\rendering\occlusionculling.h">
       <Filter>rendering</Filter>
     </ClInclude>
+    <ClInclude Include="source\rendering\scenedepth.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
     <ClInclude Include="source\rendering\meshshaderpipeline.h">
       <Filter>rendering</Filter>
     </ClInclude>
@@ -1554,9 +1557,11 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="source\rendering\workgraphruntime.cpp" />
-    <ClInclude Include="source\rendering\workgraphruntime.h" />
-    <ClCompile Include="source\procedural\proceduralworkgraph.cpp" />
-    <ClInclude Include="source\procedural\proceduralworkgraph.h" />
+    <ClCompile Include="source\editor\proceduralmodelexport.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClInclude Include="source\editor\proceduralmodelexport.h">
+      <Filter>editor</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

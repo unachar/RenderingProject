@@ -14,6 +14,7 @@
 //     （数フレーム遅れ。結果が無いときは可視扱い）。
 // =============================================================================================
 #include "pch.h"
+#include "rendering/scenedepth.h"
 #include "cpuculling.h"
 #include "camera.h"
 #include "componentmanager.h"
@@ -24,7 +25,8 @@
 #include "animationmodel.h"
 #include "vertexdeformation.h"
 #include "world.h"
-#include "workgraphruntime.h"
+#include "shaderpipelines.h"
+#include "shaderdescription.h"
 #include <cstring>
 #include <vector>
 
@@ -71,11 +73,12 @@ class GpuObjectCulling final
         const XMVECTOR c1 = transposedViewProjection.r[1];
         const XMVECTOR c2 = transposedViewProjection.r[2];
         const XMVECTOR c3 = transposedViewProjection.r[3];
-        const XMVECTOR planes[6] = {XMVectorAdd(c3, c0), XMVectorSubtract(c3, c0), XMVectorAdd(c3, c1),
-                                    XMVectorSubtract(c3, c1), c2, XMVectorSubtract(c3, c2)};
+        const XMVECTOR planes[6] = {
+            XMVectorAdd(c3, c0),     XMVectorSubtract(c3, c0), XMVectorAdd(c3, c1), XMVectorSubtract(c3, c1), c2,
+            XMVectorSubtract(c3, c2)};
         for (int i = 0; i < 6; ++i)
         {
-            XMStoreFloat4(&constants.Planes[i], XMPlaneNormalize(planes[i]));
+            XMStoreFloat4(&constants.Planes[i], SceneDepth::NormalizeFrustumPlane(planes[i]));
         }
         constants.Mode = 1;
         constants.Flags = 1;
@@ -136,7 +139,7 @@ class GpuObjectCulling final
         }
         s.Predicates.Reset();
         s.Root.Reset();
-        s.Graph.Reset();
+        s.Pipeline.Reset();
         s.Tried = false;
         s.Ready = false;
         s.Views.clear();
@@ -154,6 +157,7 @@ class GpuObjectCulling final
         XMFLOAT4 LocalExtents{};
         XMFLOAT4 ShadowSphere{};
     };
+
     static_assert(sizeof(ObjectRecord) == 112);
 
     struct ViewConstants
@@ -168,6 +172,7 @@ class GpuObjectCulling final
         float MaxDistance = 0.0f;
         float Padding[2]{};
     };
+
     static_assert(sizeof(ViewConstants) == 144);
 
     struct ViewEntry
@@ -190,7 +195,7 @@ class GpuObjectCulling final
         bool Tried = false;
         bool Ready = false;
         ComPtr<ID3D12RootSignature> Root;
-        WorkGraph::ComputeGraph Graph;
+        ComPtr<ID3D12PipelineState> Pipeline;
         ComPtr<ID3D12Resource> Predicates;
         D3D12_RESOURCE_STATES PredicateState = D3D12_RESOURCE_STATE_COMMON;
         UINT64 PredicateStateFence = 0; // この値の送信までは PredicateState が有効（送信後は COMMON に戻る）
@@ -228,7 +233,7 @@ class GpuObjectCulling final
                                     {m._14 - m._13, m._24 - m._23, m._34 - m._33, m._44 - m._43}};
         for (int index = 0; index < 6; ++index)
         {
-            XMStoreFloat4(&outPlanes[index], XMPlaneNormalize(XMLoadFloat4(&planes[index])));
+            XMStoreFloat4(&outPlanes[index], SceneDepth::NormalizeFrustumPlane(XMLoadFloat4(&planes[index])));
         }
     }
 
@@ -259,7 +264,18 @@ class GpuObjectCulling final
         {
             return false;
         }
-        if (!s.Graph.Initialize(device, s.Root.Get(), L"shader/hlsl/GpuObjectCullWorkGraph.hlsl", L"CullObjects"))
+        ComPtr<ID3DBlob> shader;
+        ShaderDescription shaderDescription{};
+        shaderDescription.csoPath = "shader/hlsl/build/GpuObjectCullCS.cso";
+        shaderDescription.ppBlob = shader.GetAddressOf();
+        if (!ShaderPipelines::LoadShaderBlob(shaderDescription))
+        {
+            return false;
+        }
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline{};
+        pipeline.pRootSignature = s.Root.Get();
+        pipeline.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
+        if (FAILED(device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&s.Pipeline))))
         {
             return false;
         }
@@ -267,8 +283,7 @@ class GpuObjectCulling final
         const auto predicateDescription =
             CD3DX12_RESOURCE_DESC::Buffer(kPredicateBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         if (FAILED(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &predicateDescription,
-                                                   D3D12_RESOURCE_STATE_COMMON, nullptr,
-                                                   IID_PPV_ARGS(&s.Predicates))))
+                                                   D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&s.Predicates))))
         {
             return false;
         }
@@ -491,14 +506,11 @@ class GpuObjectCulling final
         FrameResources& resources = s.Frames[GraphicsDevice::GetFrameIndex() % RendererState::g_kFRAME_COUNT];
         TransitionPredicates(commandList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         commandList->SetComputeRootSignature(s.Root.Get());
+        commandList->SetPipelineState(s.Pipeline.Get());
         commandList->SetComputeRootShaderResourceView(0, resources.Upload->GetGPUVirtualAddress());
         commandList->SetComputeRootUnorderedAccessView(1, s.Predicates->GetGPUVirtualAddress());
         commandList->SetComputeRoot32BitConstants(2, sizeof(ViewConstants) / 4, &constants, 0);
-        const uint32_t dispatchGrid[3]{(s.ObjectCount + 63) / 64, 1, 1};
-        if (!s.Graph.DispatchCpu(commandList, GraphicsDevice::GetFrameIndex(), dispatchGrid, sizeof(dispatchGrid)))
-        {
-            throw std::runtime_error("GPU object culling Work Graph dispatch failed");
-        }
+        commandList->Dispatch((s.ObjectCount + 63) / 64, 1, 1);
 
         // メイン カメラの結果を CPU 用に読み戻す（アニメーションの更新間引き用）。
         if (camera && !s.CameraReadbackQueued && resources.Readback)
@@ -557,4 +569,3 @@ class GpuObjectCulling final
         s.LatestReadbackFence = newest->ReadbackFence;
     }
 };
-

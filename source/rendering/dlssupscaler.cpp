@@ -178,7 +178,8 @@ namespace
             parameters.Feature.InPerfQualityValue = NVSDK_NGX_PerfQuality_Value_Balanced;
         }
         parameters.InFeatureCreateFlags =
-            NVSDK_NGX_DLSS_Feature_Flags_MVLowRes | NVSDK_NGX_DLSS_Feature_Flags_MVJittered;
+            NVSDK_NGX_DLSS_Feature_Flags_MVLowRes | NVSDK_NGX_DLSS_Feature_Flags_MVJittered |
+            NVSDK_NGX_DLSS_Feature_Flags_DepthInverted;
         if (hdrInput)
         {
             parameters.InFeatureCreateFlags |=

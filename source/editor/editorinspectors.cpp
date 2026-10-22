@@ -1453,7 +1453,11 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
             changed = true;
         }
         changed |= ImGui::DragFloat("Near Clip", &camera.NearClip, 0.01f, 0.001f, 1000.0f);
-        changed |= ImGui::DragFloat("Far Clip", &camera.FarClip, 1.0f, 0.01f, 1000000.0f);
+        changed |= ImGui::DragFloat("Effect Range", &camera.FarClip, 1.0f, 0.01f, 1000000.0f);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Perspective projection uses an infinite far plane (Reverse-Z).");
+        }
         camera.NearClip = max(0.001f, camera.NearClip);
         camera.FarClip = max(camera.NearClip + 0.001f, camera.FarClip);
 

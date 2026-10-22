@@ -16,6 +16,6 @@ cbuffer HiZConstants : register(b0)
     SourceDepth.GetDimensions(0, width, height, mips);
     uint2 pixel = min(id.xy * uint2(width, height) / DestinationExtent, uint2(width - 1, height - 1));
     float depth = SourceDepth.Load(int3(pixel, 0));
-    float shade = pow(saturate(1 - depth), 0.25f);
+    float shade = pow(saturate(depth), 0.25f);
     Destination[id.xy] = float4(shade.xxx, 1);
 }

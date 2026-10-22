@@ -41,138 +41,6 @@ struct MtlData
     string MapKd = "";
 };
 
-static const char* GetAssimpTextureTypeName(aiTextureType type)
-{
-    switch (type)
-    {
-        case aiTextureType_DIFFUSE:
-            return "DIFFUSE";
-        case aiTextureType_SPECULAR:
-            return "SPECULAR";
-        case aiTextureType_AMBIENT:
-            return "AMBIENT";
-        case aiTextureType_EMISSIVE:
-            return "EMISSIVE";
-        case aiTextureType_HEIGHT:
-            return "HEIGHT";
-        case aiTextureType_NORMALS:
-            return "NORMALS";
-        case aiTextureType_SHININESS:
-            return "SHININESS";
-        case aiTextureType_OPACITY:
-            return "OPACITY";
-        case aiTextureType_DISPLACEMENT:
-            return "DISPLACEMENT";
-        case aiTextureType_LIGHTMAP:
-            return "LIGHTMAP";
-        case aiTextureType_REFLECTION:
-            return "REFLECTION";
-        case aiTextureType_BASE_COLOR:
-            return "BASE_COLOR";
-        case aiTextureType_NORMAL_CAMERA:
-            return "NORMAL_CAMERA";
-        case aiTextureType_EMISSION_COLOR:
-            return "EMISSION_COLOR";
-        case aiTextureType_METALNESS:
-            return "METALNESS";
-        case aiTextureType_DIFFUSE_ROUGHNESS:
-            return "DIFFUSE_ROUGHNESS";
-        case aiTextureType_AMBIENT_OCCLUSION:
-            return "AMBIENT_OCCLUSION";
-        default:
-            return "UNKNOWN";
-    }
-}
-
-static void LogAssimpMaterialTexture(const aiMaterial* material, aiTextureType type)
-{
-    const unsigned int textureCount = material->GetTextureCount(type);
-    for (unsigned int i = 0; i < textureCount; ++i)
-    {
-        aiString path;
-        if (material->GetTexture(type, i, &path) == AI_SUCCESS)
-        {
-            Debug::Log("    Texture[%s][%u]: %s\n", GetAssimpTextureTypeName(type), i, path.C_Str());
-        }
-    }
-}
-
-static void LogAssimpModelInfo(const aiScene* scene, const char* fileName, const char* modelKind)
-{
-    if (!scene)
-    {
-        return;
-    }
-
-    Debug::Log("==== %s model import info: %s ====\n", modelKind, fileName);
-    Debug::Log("Scene: meshes=%u, materials=%u, textures=%u, animations=%u\n", scene->mNumMeshes, scene->mNumMaterials,
-               scene->mNumTextures, scene->mNumAnimations);
-
-    for (unsigned int i = 0; i < scene->mNumMaterials; ++i)
-    {
-        const aiMaterial* material = scene->mMaterials[i];
-        aiString name;
-        aiColor3D diffuse(1.0f, 1.0f, 1.0f);
-        aiColor3D specular(0.0f, 0.0f, 0.0f);
-        aiColor3D ambient(0.0f, 0.0f, 0.0f);
-        aiColor3D emissive(0.0f, 0.0f, 0.0f);
-        aiColor4D baseColor(1.0f, 1.0f, 1.0f, 1.0f);
-        float opacity = 1.0f;
-        float shininess = 0.0f;
-        float metallic = 0.0f;
-        float roughness = 0.0f;
-        int twoSided = 0;
-
-        material->Get(AI_MATKEY_NAME, name);
-        material->Get(AI_MATKEY_COLOR_DIFFUSE, diffuse);
-        material->Get(AI_MATKEY_COLOR_SPECULAR, specular);
-        material->Get(AI_MATKEY_COLOR_AMBIENT, ambient);
-        material->Get(AI_MATKEY_COLOR_EMISSIVE, emissive);
-        material->Get(AI_MATKEY_BASE_COLOR, baseColor);
-        material->Get(AI_MATKEY_OPACITY, opacity);
-        material->Get(AI_MATKEY_SHININESS, shininess);
-        material->Get(AI_MATKEY_METALLIC_FACTOR, metallic);
-        material->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness);
-        material->Get(AI_MATKEY_TWOSIDED, twoSided);
-
-        Debug::Log("  Material[%u]: name='%s', properties=%u\n", i, name.C_Str(), material->mNumProperties);
-        Debug::Log(
-            "    Diffuse=(%.3f, %.3f, %.3f), Specular=(%.3f, %.3f, %.3f), Ambient=(%.3f, %.3f, %.3f), Emissive=(%.3f, %.3f, %.3f)\n",
-            diffuse.r, diffuse.g, diffuse.b, specular.r, specular.g, specular.b, ambient.r, ambient.g, ambient.b,
-            emissive.r, emissive.g, emissive.b);
-        Debug::Log(
-            "    BaseColor=(%.3f, %.3f, %.3f, %.3f), Opacity=%.3f, Shininess=%.3f, Metallic=%.3f, Roughness=%.3f, TwoSided=%d\n",
-            baseColor.r, baseColor.g, baseColor.b, baseColor.a, opacity, shininess, metallic, roughness, twoSided);
-
-        const aiTextureType textureTypes[] = {
-            aiTextureType_DIFFUSE,           aiTextureType_BASE_COLOR,        aiTextureType_SPECULAR,
-            aiTextureType_NORMALS,           aiTextureType_NORMAL_CAMERA,     aiTextureType_METALNESS,
-            aiTextureType_DIFFUSE_ROUGHNESS, aiTextureType_AMBIENT_OCCLUSION, aiTextureType_EMISSIVE,
-            aiTextureType_OPACITY,
-        };
-        for (aiTextureType type : textureTypes)
-        {
-            LogAssimpMaterialTexture(material, type);
-        }
-    }
-
-    for (unsigned int i = 0; i < scene->mNumMeshes; ++i)
-    {
-        const aiMesh* mesh = scene->mMeshes[i];
-        if (!mesh)
-        {
-            Debug::Log("  Mesh[%u]: <null>\n", i);
-            continue;
-        }
-
-        Debug::Log("  Mesh[%u]: name='%s', material=%u, vertices=%u, faces=%u, bones=%u, normals=%d, texcoord0=%d\n", i,
-                   mesh->mName.C_Str(), mesh->mMaterialIndex, mesh->mNumVertices, mesh->mNumFaces, mesh->mNumBones,
-                   static_cast<int>(mesh->HasNormals()), static_cast<int>(mesh->HasTextureCoords(0)));
-        Debug::Log("    MaterialPartId=%.0f\n", ResolveMaterialPartId(scene, mesh));
-    }
-    Debug::Log("==== end %s model import info ====\n", modelKind);
-}
-
 // OBJ / MTL 文の引数は、行の残りを前後の空白を除いて取得する。ファイル名には空白を許す。
 static string ObjStatementArgument(const string& line, size_t keywordLength)
 {
@@ -996,11 +864,6 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
     MeshletManager::BuildImportedMesh(meshData);
     m_Meshes.push_back(move(meshData));
 
-    char buf[512];
-    sprintf_s(buf, "Static model loaded: %s (vertices=%zu, indices=%zu)\n", fileName, m_Vertices.size(),
-              m_Indices.size());
-    Debug::Log("%s", buf);
-
     return true;
 }
 
@@ -1549,16 +1412,10 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
         releaseScene();
         return false;
     }
-    if (!isPmxModel)
-    {
-        LogAssimpModelInfo(scene, fileName, "Static");
-    }
     const string dirPath = ModelPathToUtf8(modelPath.parent_path());
 
     XMFLOAT3 minPos = {FLT_MAX, FLT_MAX, FLT_MAX};
     XMFLOAT3 maxPos = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
-    size_t totalVertices = 0;
-    size_t totalIndices = 0;
 
     const bool objVertexColors = ModelPathLowerExtension(modelPath) == ".obj";
     for (unsigned int m = 0; m < scene->mNumMeshes; ++m)
@@ -1782,8 +1639,6 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
             }
         }
 
-        totalVertices += vertices.size();
-        totalIndices += indices.size();
         if (!BuildLodIndexBuffers(device, vertices, indices, meshData))
         {
             releaseScene();
@@ -1807,9 +1662,6 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
     m_AabbExtents.x = (maxPos.x - minPos.x) * 0.5f;
     m_AabbExtents.y = (maxPos.y - minPos.y) * 0.5f;
     m_AabbExtents.z = (maxPos.z - minPos.z) * 0.5f;
-
-    Debug::Log("Static model loaded: %s (meshes=%zu, vertices=%zu, indices=%zu)\n", fileName, m_Meshes.size(),
-               totalVertices, totalIndices);
 
     releaseScene();
     return true;

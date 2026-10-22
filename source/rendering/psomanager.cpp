@@ -9,8 +9,6 @@
 #include "renderersettings.h"
 #include "visibilitybuffer.h"
 #include "shaderdescription.h"
-#include "postprocesspass.h"
-#include "instancingsystem.h"
 
 bool PsoManager::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc, const char* debugName,
                                              ComPtr<ID3D12PipelineState>& outPso)
@@ -85,15 +83,6 @@ bool PsoManager::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE
             fclose(log);
         }
 
-        return false;
-    }
-    const bool fullscreenPipeline = desc.pRootSignature &&
-        (desc.pRootSignature == m_PostProcessRootSignature.Get() ||
-         desc.pRootSignature == m_UpscaleRootSignature.Get() ||
-         desc.pRootSignature == m_AaRootSignature.Get());
-    if (fullscreenPipeline && !PostProcessPass::RegisterFullscreenPipeline(m_Device.Get(), outPso.Get(), desc))
-    {
-        outPso.Reset();
         return false;
     }
     ++s_GraphicsPipelineCreations;
@@ -316,36 +305,6 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPsoSlow(const ShaderDescript
         return it->second.Get();
     }
 
-    const char* passKind3;
-    if (useDeferredMrt)
-    {
-        passKind3 = "DEFERRED";
-    }
-    else
-    {
-        passKind3 = "FORWARD";
-    }
-    UINT renderTargetCount;
-    if (visibilityPass)
-    {
-        renderTargetCount = 1;
-    }
-    else
-    {
-        UINT renderTargetCountValue;
-        if (useDeferredMrt)
-        {
-            renderTargetCountValue = g_kGEOMETRY_GBUFFER_COUNT;
-        }
-        else
-        {
-            renderTargetCountValue = 1;
-        }
-        renderTargetCount = (renderTargetCountValue);
-    }
-    Debug::Log("Creating PSO: VS=%s PS=%s Mode=%s RTV=%u\n", resource.vsPath, resolvedPsPath.c_str(), passKind3,
-               renderTargetCount);
-
     ComPtr<ID3DBlob> vsBlob;
     ComPtr<ID3DBlob> psBlob;
 
@@ -420,7 +379,7 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPsoSlow(const ShaderDescript
         psoDesc.pRootSignature = m_ModelRootSignature.Get();
         psoDesc.DepthStencilState.DepthEnable = TRUE;
         psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
-        psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+        psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER;
         psoDesc.DepthStencilState.StencilEnable = FALSE;
     }
     else
@@ -495,12 +454,6 @@ ID3D12PipelineState* PsoManager::GetOrCreateGraphicsPsoSlow(const ShaderDescript
 
     ComPtr<ID3D12PipelineState> newPso{};
     if (!CreateGraphicsPipelineState(psoDesc, "renderer", newPso))
-    {
-        return nullptr;
-    }
-
-    if (RendererPathEndsWith(resource.vsPath, "InstancedVS.cso") &&
-        !InstancingSystem::RegisterMeshPipeline(m_Device.Get(), newPso.Get(), psoDesc, false))
     {
         return nullptr;
     }
@@ -616,7 +569,7 @@ ID3D12PipelineState* PsoManager::GetOrCreateToonOutlinePso(bool enableAlphaBlend
     }
     psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
     psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-    psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
     psoDesc.SampleMask = UINT_MAX;
     psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     if (visibilityPass)
@@ -783,10 +736,6 @@ ID3D12PipelineState* PsoManager::GetOrCreateShadowMapInstancedPso()
 
     ComPtr<ID3D12PipelineState> pso;
     if (!CreateGraphicsPipelineState(psoDesc, key, pso))
-    {
-        return nullptr;
-    }
-    if (!InstancingSystem::RegisterMeshPipeline(m_Device.Get(), pso.Get(), psoDesc, true))
     {
         return nullptr;
     }
@@ -1122,7 +1071,7 @@ bool PsoManager::CreateVelocityGeometryPso()
     desc.RTVFormats[0] = GetGBufferFormat(GBufferType::VELOCITY);
     desc.DepthStencilState.DepthEnable = TRUE;
     desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-    desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
     desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     desc.SampleDesc.Count = 1;
     return CreateGraphicsPipelineState(desc, "VelocityGeometryPso", m_VelocityGeometryPso);

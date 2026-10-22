@@ -167,7 +167,7 @@ namespace
             auto* depth = reinterpret_cast<const float*>(shadow.Bytes.data() + row * shadow.RowPitch);
             for (UINT column = 0; column < shadow.Width; ++column)
             {
-                if (depth[column] < 0.9999f)
+                if (depth[column] > 0.0f)
                 {
                     occluded = true;
                     break;

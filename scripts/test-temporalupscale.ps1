@@ -9,7 +9,7 @@ $developerCommand = Join-Path $installation 'Common7/Tools/VsDevCmd.bat'
 Push-Location -LiteralPath $workspace
 try {
     New-Item -ItemType Directory -Force bin/validation | Out-Null
-    $command = 'cl.exe /nologo /utf-8 /EHsc /W4 /WX /std:c++17 /O2 tests\temporalupscale_gpu_tests.cpp /Fe:bin\validation\temporalupscale_gpu_tests.exe /Fo:bin\validation\temporalupscale_gpu_tests.obj /link d3d11.lib d3dcompiler.lib'
+    $command = 'cl.exe /nologo /utf-8 /EHsc /W4 /WX /std:c++17 /O2 /I source tests\temporalupscale_gpu_tests.cpp /Fe:bin\validation\temporalupscale_gpu_tests.exe /Fo:bin\validation\temporalupscale_gpu_tests.obj /link d3d11.lib d3dcompiler.lib'
     & $env:ComSpec /d /c ('"{0}" -no_logo -arch=amd64 -host_arch=amd64 && {1}' -f $developerCommand, $command)
     if ($LASTEXITCODE -ne 0) {
         throw 'Temporal upscale fixture compilation failed.'

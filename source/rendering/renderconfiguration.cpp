@@ -98,7 +98,7 @@ void RenderConfiguration::Resize(UINT width, UINT height)
 
     D3D12_CLEAR_VALUE clearValue{};
     clearValue.Format = DXGI_FORMAT_D32_FLOAT;
-    clearValue.DepthStencil.Depth = 1.0f;
+    clearValue.DepthStencil.Depth = 0.0f;
     clearValue.DepthStencil.Stencil = 0;
 
     auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);

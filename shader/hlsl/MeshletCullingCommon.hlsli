@@ -108,7 +108,7 @@ bool OcclusionCull(float4 sphere, GPUInstanceData instance)
     }
     float2 minimum = 1;
     float2 maximum = 0;
-    float nearest = 1;
+    float nearest = 0;
     [unroll] for (uint i = 0; i < 8; ++i)
     {
         float3 sign = float3((i & 1) ? 1 : -1, (i & 2) ? 1 : -1, (i & 4) ? 1 : -1);
@@ -121,7 +121,7 @@ bool OcclusionCull(float4 sphere, GPUInstanceData instance)
         float2 uv = ndc.xy * float2(0.5, -0.5) + 0.5;
         minimum = min(minimum, uv);
         maximum = max(maximum, uv);
-        nearest = min(nearest, ndc.z);
+        nearest = max(nearest, ndc.z);
     }
     minimum -= 1 / HiZSize;
     maximum += 1 / HiZSize;
@@ -146,7 +146,7 @@ bool OcclusionCull(float4 sphere, GPUInstanceData instance)
     {
         return false;
     }
-    float farthest = 0;
+    float farthest = 1;
     [loop] for (uint y = first.y; y <= last.y; ++y)
     {
         [loop] for (uint x = first.x; x <= last.x; ++x)
@@ -156,8 +156,8 @@ bool OcclusionCull(float4 sphere, GPUInstanceData instance)
             {
                 return false;
             }
-            farthest = max(farthest, depth);
+            farthest = min(farthest, depth);
         }
     }
-    return nearest > farthest + max(Bias, 0);
+    return nearest < farthest - max(Bias, 0);
 }

@@ -27,7 +27,7 @@ cbuffer ScreenSpaceConstants : register(b0)
     uint2 pixel = deinterleavedPixel * 4u + offset;
     if (any(pixel >= FullExtent))
     {
-        OutDepth[uint3(deinterleavedPixel, slice)] = 1.0f;
+        OutDepth[uint3(deinterleavedPixel, slice)] = 0.0f;
         OutNormal[uint3(deinterleavedPixel, slice)] = float4(0.5f, 1.0f, 0.5f, 0.0f);
         OutLighting[uint3(deinterleavedPixel, slice)] = 0.0f;
         return;

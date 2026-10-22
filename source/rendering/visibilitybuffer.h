@@ -9,5 +9,5 @@ class VisibilityBuffer
     static void Shutdown();
     static bool IsAvailable();
     static void GenerateGBuffer(ID3D12GraphicsCommandList* commandList, D3D12_GPU_DESCRIPTOR_HANDLE visibilitySrv,
-                                UINT width, UINT height);
+                                D3D12_GPU_DESCRIPTOR_HANDLE depthSrv, UINT width, UINT height);
 };

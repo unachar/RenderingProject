@@ -11,7 +11,7 @@ SamplerState g_SamplerState : register(s0);
 struct ImpostorVisibilityOutput
 {
     uint4 Payload : SV_Target0;
-    float HardwareDepth : SV_DepthGreaterEqual;
+    float HardwareDepth : SV_DepthLessEqual;
 };
 
 ImpostorVisibilityOutput main(ImpostorPSInput input)
@@ -22,7 +22,7 @@ ImpostorVisibilityOutput main(ImpostorPSInput input)
     bool usePart = MaterialMode != 1;
 
     ImpostorVisibilityOutput output;
-    output.HardwareDepth = max(surface.Depth, input.Position.z);
+    output.HardwareDepth = min(surface.Depth, input.Position.z);
     output.Payload = PackVisibilityPayload(
         surface.Albedo, surface.WorldNormal, output.HardwareDepth, usePart ? part.Basic.x : mMetallic,
         usePart ? part.Basic.y : mRoughness, usePart ? part.Basic.z : mFresnel, materialPartId,

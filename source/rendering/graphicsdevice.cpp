@@ -37,7 +37,6 @@
 #include "raytracing.h"
 #include "vertexdeformation.h"
 #include "dlssupscaler.h"
-#include "workgraphruntime.h"
 
 static bool g_DeviceRemovalLogged = false;
 static bool g_GpuBasedValidationEnabled = false;
@@ -124,8 +123,6 @@ bool GraphicsDevice::Init(HWND hwnd)
             }
         }
     }
-
-    WorkGraph::EnablePreviewFeatures();
 
     WriteGraphicsLog("Step: CreateDXGIFactory2\n");
     HRESULT hr = CreateDXGIFactory2(0, IID_PPV_ARGS(&m_Factory));
