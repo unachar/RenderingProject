@@ -1,9 +1,10 @@
-#pragma once
+﻿#pragma once
 #include "imguimanager.h"
 #include <ImGuizmo.h>
 
 namespace EditorWidgets
 {
+    inline const ImVec4 kPrefabColor{0.48f, 0.78f, 1.0f, 1.0f};
     inline constexpr float kRadToDeg = 180.0f / XM_PI;
     inline constexpr float kDegToRad = XM_PI / 180.0f;
     void DrawSearchField(const char* id, const char* hint, ImGuiTextFilter& filter);

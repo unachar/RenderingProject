@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "pch.h"
 #include "ecs.h"
 #include "materialasset.h"
@@ -134,10 +134,10 @@ class ImGuiManager
         LODComponent Lod{};
     };
 
-    inline static vector<EntitySnapshot> m_UndoStack;
-    inline static vector<EntitySnapshot> m_RedoStack;
+    inline static vector<vector<EntitySnapshot>> m_UndoStack;
+    inline static vector<vector<EntitySnapshot>> m_RedoStack;
     inline static bool m_HasPendingUndo = false;
-    inline static EntitySnapshot m_PendingUndo{};
+    inline static vector<EntitySnapshot> m_PendingUndo;
 
     static void StyleModernSlim();
     static void DrawDockSpace();
@@ -181,6 +181,26 @@ class ImGuiManager
     static void DrawMeshShadingInspector(EntityID entity, bool embeddedInInspector = true);
     static void DrawLightInspector(EntityID entity);
     static void DrawComponentInspector(EntityID entity);
+    inline static vector<EntityID> m_SelectedEntities;
+    inline static EntityID m_EntitySelectionAnchor = g_kINVALID_ENTITY;
+    static void SyncEntitySelection();
+    static void SelectEntity(EntityID entity, bool toggle = false);
+    static void SelectEntityRange(EntityID entity, const vector<EntityID>& visible);
+    static bool IsEntitySelected(EntityID entity);
+    static void ReparentSelection(EntityID parent);
+    static void DrawParentSelector();
+    static bool IsPrefabFile(const filesystem::path& path);
+    static EntityID GetPrefabRoot(EntityID entity);
+    static bool SavePrefabAsset(EntityID root, const filesystem::path& path);
+    static EntityID LoadPrefabInstance(const filesystem::path& path, EntityID existing = g_kINVALID_ENTITY,
+                                       const TransformComponent* placement = nullptr,
+                                       const XMFLOAT3* position = nullptr, vector<EntitySnapshot>* history = nullptr);
+    static bool DrawPrefabInspector();
+    static void ValidateEditorObjects();
+
+    static void ApplySelectionTransform(const TransformComponent& before, const TransformComponent& after);
+    static void PushUndoGroup(const vector<EntitySnapshot>& snapshots);
+    static void RestoreHistoryGroup(const vector<EntitySnapshot>& snapshots);
     static void DeleteSelectedEntity();
     static EntityID DuplicateSelectedEntity();
     static string MakeDuplicateName(const string& sourceName);
@@ -249,7 +269,7 @@ class ImGuiManager
     static EntitySnapshot CaptureEntity(EntityID entity);
     static void ApplySnapshot(const EntitySnapshot& snapshot);
     static void BeginUndoCapture(EntityID entity, const EntitySnapshot& before);
-    static void FinalizeUndoCaptureIfIdle();
+    static void FinalizeUndoCaptureIfIdle(bool force = false);
     static void PushUndoSnapshot(const EntitySnapshot& snapshot);
     static void Undo();
     static void Redo();

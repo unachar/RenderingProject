@@ -5,6 +5,9 @@
 // advancedeffects.h が実行時にコンパイルする（cs_6_5、DXC）。
 // =============================================================================================
 
+#define CLOUD_MEDIUM_NO_SCENE_LIGHTS
+#include "CloudMedium.hlsli"
+
 cbuffer AdvancedConstants : register(b0)
 {
     float4x4 InvViewProjection;  // 現在フレーム、ジッター適用済み（GBuffer と一致）
@@ -35,7 +38,7 @@ struct FogLight
     float4 PositionType;   // xyz = 位置、w = 種類（0 = 平行光源、1 = 点光源、2 = スポット、3 = ボリューム）
     float4 DirectionRange; // xyz = 方向（平行光源は光源方向、スポットは前方）、w = 範囲
     float4 Color;          // rgb * 強度、w = ボリューム密度
-    float4 Extras;         // 内側の cos、外側の cos、影の有効フラグ、予約領域
+    float4 Extras;         // 内側の cos、外側の cos、影の有効フラグ、選択された太陽
     float4 IesProfile;
 };
 
@@ -185,7 +188,7 @@ float3 MegaLightFogContribution(MegaLightData light, float3 position, float3 vie
     {
         return 0;
     }
-    float cosine = dot(toLight, viewToCamera);
+    float cosine = dot(-toLight, viewToCamera);
     float3 phase =
         scatterAlbedo * (0.0596831f * (1 + cosine * cosine)) + mieAlbedo * HenyeyGreenstein(cosine, FogMedium1.z);
     // FogInject の従来ライトと同じ式（大気の媒質 + ライト自身のボリューム密度）
@@ -282,7 +285,7 @@ float3 MegaLightsFogScattering(uint3 id, float3 position, float3 viewToCamera, f
     }
     uint frame = Extent.z;
     // セル内でフロクセルごとにジッターを加え（深度方向は R2 列）、履歴で解消する。
-    float jitter = frac(0.5f + frame * 0.618034f + Hash(id.x + id.y * 977u) * 0.25f);
+    float jitter = FogDepth.w > 0 ? frac(0.5f + frame * 0.618034f + Hash(id.x + id.y * 977u) * 0.25f) : 0.5f;
     float2 uv = (id.xy + 0.5f) / FroxelExtent.xy;
     float3 rayDirection = ViewRay(uv);
     float dist = SliceToDistance(id.z + jitter);
@@ -326,13 +329,15 @@ float3 MegaLightsFogScattering(uint3 id, float3 position, float3 viewToCamera, f
         {
             continue;
         }
-        float cosine = dot(toLight, viewToCamera);
+        // 入射光とカメラへ向かう散乱光が揃うとき、正の g が前方散乱を強める。
+        float cosine = dot(-toLight, viewToCamera);
         float3 phase =
             scatterAlbedo * (0.0596831f * (1 + cosine * cosine)) + mieAlbedo * HenyeyGreenstein(cosine, FogMedium1.z);
         // 大気媒質にライト固有の設定済みボリューム密度を加える（光芒）。
         float3 response =
             phase * globalDensity * FogMedium0.w + (type == 0 ? 0.025f : 0.16f) * light.Color.w * 0.0795775f;
-        float3 incident = light.Color.rgb * attenuation *
+        float3 incident =
+            light.Color.rgb * attenuation *
             SampleIesProfile(light.IesProfile, light.DirectionRange.xyz, position - light.PositionType.xyz);
         if (all(response * incident < 0.0000001f))
         {
@@ -344,6 +349,10 @@ float3 MegaLightsFogScattering(uint3 id, float3 position, float3 viewToCamera, f
         {
             visibility = TraceVisibility(position, toLight, type == 0 ? 200.0f : lightDistance - 0.05f);
             shadowedLocal += type == 0 ? 0 : 1;
+        }
+        if (light.Extras.w > 0.5f && CloudTrace.z > 0.5f && CloudTrace.w > 0.5f)
+        {
+            visibility *= toLight.y > 0 ? CloudLightTransmittance(position, toLight) : 0;
         }
         scattering += response * incident * visibility * FogMedium1.w;
     }
@@ -420,13 +429,14 @@ float4 SampleIntegratedFog(float2 uv, float dist)
     }
     float4 color = SceneColor[id.xy];
     float depth = SceneDepth[id.xy];
-    bool physicalSkyPixel = depth <= 0.0f && (Features.x & 2u) != 0;
+    bool physicalSkyPixel = depth <= 0.0f && (Features.x & 2u) != 0 && (Features.x & 4u) == 0;
     if ((Features.x & 1u) != 0 && !physicalSkyPixel)
     {
         float2 uv = (id.xy + 0.5f) / Extent.xy;
         float dist = depth <= 0.0f ? FogDepth.y : length(WorldFromDepth(uv, depth) - CameraPosition.xyz);
         // 画面空間の小さなディザーで、フロクセルの三線形補間の形状を目立たなくする。
-        float dither = (Hash(id.x + id.y * 4099u + Extent.z * 7919u) - 0.5f) / Extent.x;
+        uint sampleFrame = FogDepth.w > 0 ? Extent.z : 0;
+        float dither = (Hash(id.x + id.y * 4099u + sampleFrame * 7919u) - 0.5f) / Extent.x;
         float4 fog = SampleIntegratedFog(uv + dither, dist);
         color.rgb = color.rgb * fog.a + fog.rgb;
     }

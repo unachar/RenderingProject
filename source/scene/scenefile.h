@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // ============================================================================
 // SceneFile : .scene ファイル（JSON）の読み書きとシーンの変更検知用ハッシュ。ヘッダーのみ。
 //
@@ -8,6 +8,7 @@
 //  ・実行時にしか意味のない値（GPUバッファ、テクスチャID、行列、再生位置など）は保存しない
 // ============================================================================
 #include "componentmanager.h"
+#include "transformmath.h"
 #include "physicscomponent.h"
 #include "timelinecomponent.h"
 #include "proceduralcomponents.h"
@@ -921,6 +922,9 @@ namespace SceneFile
     inline void Visit(Archive& a, NameComponent& c)
     {
         a("name", c.Name);
+        a("prefabAsset", c.PrefabAssetPath);
+        a("prefabLocalId", c.PrefabLocalId);
+        a("prefabRoot", c.IsPrefabRoot);
     }
 
     inline void Visit(Archive& a, TransformComponent& c)
@@ -928,6 +932,31 @@ namespace SceneFile
         a("position", c.Position);
         a("rotation", c.Rotation);
         a("scale", c.Scale);
+        a.Entity("parent", c.Parent);
+        bool affine = c.HasAffineWorld && TransformMath::Same(c.Position, c.AffinePosition) &&
+                      TransformMath::Same(c.Rotation, c.AffineRotation) && TransformMath::Same(c.Scale, c.AffineScale);
+        a("hasAffineWorld", affine);
+        if (affine)
+        {
+            std::array<float, 16> matrix{};
+            if (!a.Reading())
+            {
+                std::memcpy(matrix.data(), &c.WorldMatrix, sizeof(c.WorldMatrix));
+            }
+            a("affineWorld", matrix);
+            if (a.Reading())
+            {
+                std::memcpy(&c.WorldMatrix, matrix.data(), sizeof(c.WorldMatrix));
+                c.HasAffineWorld = true;
+                c.AffinePosition = c.Position;
+                c.AffineRotation = c.Rotation;
+                c.AffineScale = c.Scale;
+            }
+        }
+        else if (a.Reading())
+        {
+            c.HasAffineWorld = false;
+        }
     }
 
     inline void Visit(Archive& a, ShaderComponent& c)

@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "envflags.h"
 #include "thumbnailvalidation.h"
 #include "materialmanager.h"
@@ -206,6 +206,7 @@ void ImGuiManager::Update()
     MaterialValidation::BeforeEditorFrame();
     ThumbnailValidation::BeforeEditorFrame();
     ImGui::NewFrame();
+    ValidateEditorObjects();
     MaterialValidation::InjectDragPayload();
     ImGuizmo::BeginFrame();
     DebugSystem::SetShowLightDebug(m_ShowLightDebug);

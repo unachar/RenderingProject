@@ -1,9 +1,10 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "materialmanager.h"
 #include "imguimanager.h"
 #include "editorwidgets.h"
 #include "sun.h"
 #include "world.h"
+#include "scenehierarchy.h"
 #include "graphicsdevice.h"
 #include "temporalhistorycontext.h"
 #include <fstream>
@@ -320,38 +321,186 @@ void ImGuiManager::BeginUndoCapture(EntityID entity, const EntitySnapshot& befor
     PublishHistoryChange(before.HasLight, before.HasLod);
     GpuSceneChanges::Notify(entity);
     ++m_EditRevision;
-    if (!m_HasPendingUndo)
+    auto append = [&](const EntitySnapshot& snapshot) {
+        for (const auto& existing : m_PendingUndo)
+        {
+            if (existing.Entity == snapshot.Entity)
+            {
+                return;
+            }
+        }
+        m_PendingUndo.push_back(snapshot);
+    };
+    append(before);
+    for (EntityID child :
+         EntityHierarchy::WithDescendants({entity}, SceneHierarchy::Entities(), SceneHierarchy::Parent))
     {
-        m_PendingUndo = before;
-        m_HasPendingUndo = true;
+        const bool alreadyCaptured =
+            any_of(m_PendingUndo.begin(), m_PendingUndo.end(), [&](const EntitySnapshot& snapshot) {
+                return snapshot.Entity == child;
+            });
+        if (!alreadyCaptured)
+        {
+            append(CaptureEntity(child));
+        }
     }
+    m_HasPendingUndo = true;
 }
 
-void ImGuiManager::FinalizeUndoCaptureIfIdle()
+void ImGuiManager::FinalizeUndoCaptureIfIdle(bool force)
 {
-    if (!m_HasPendingUndo || ImGui::IsAnyItemActive() || ImGuizmo::IsUsing())
+    if (!m_HasPendingUndo || (!force && (ImGui::IsAnyItemActive() || ImGuizmo::IsUsing())))
     {
         return;
     }
-    PushUndoSnapshot(m_PendingUndo);
+    PushUndoGroup(m_PendingUndo);
     m_HasPendingUndo = false;
     m_PendingUndo = {};
 }
 
 void ImGuiManager::PushUndoSnapshot(const EntitySnapshot& snapshot)
 {
-    if (snapshot.Entity == g_kINVALID_ENTITY)
+    PushUndoGroup({snapshot});
+}
+
+void ImGuiManager::PushUndoGroup(const vector<EntitySnapshot>& snapshots)
+{
+    if (snapshots.empty())
     {
         return;
     }
-    PublishHistoryChange(snapshot.HasLight, snapshot.HasLod);
+    for (const auto& snapshot : snapshots)
+    {
+        PublishHistoryChange(snapshot.HasLight, snapshot.HasLod);
+    }
     ++m_EditRevision;
-    m_UndoStack.push_back(snapshot);
+    m_UndoStack.push_back(snapshots);
     if (m_UndoStack.size() > 10)
     {
         m_UndoStack.erase(m_UndoStack.begin());
     }
     m_RedoStack.clear();
+}
+
+void ImGuiManager::RestoreHistoryGroup(const vector<EntitySnapshot>& snapshots)
+{
+    for (const auto& snapshot : snapshots)
+    {
+        if (snapshot.WasAlive && Registry::IsAlive(snapshot.Entity))
+        {
+            if (!snapshot.HasName && ComponentManager::HasComponent<NameComponent>(snapshot.Entity))
+            {
+                World::UnregisterName(snapshot.Entity);
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<NameComponent>::value());
+            }
+            if (!snapshot.HasTransform && ComponentManager::HasComponent<TransformComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<TransformComponent>::value());
+            }
+            if (!snapshot.HasShader && ComponentManager::HasComponent<ShaderComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<ShaderComponent>::value());
+            }
+            if (!snapshot.HasStaticModel && ComponentManager::HasComponent<StaticModelComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<StaticModelComponent>::value());
+            }
+            if (!snapshot.HasAnimationModel && ComponentManager::HasComponent<AnimationModelComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity,
+                                                  ComponentTypeTraits<AnimationModelComponent>::value());
+            }
+            if (!snapshot.HasLight && ComponentManager::HasComponent<LightComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<LightComponent>::value());
+            }
+            if (!snapshot.HasSun && ComponentManager::HasComponent<SunComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<SunComponent>::value());
+            }
+            if (!snapshot.HasProceduralTerrain &&
+                ComponentManager::HasComponent<ProceduralTerrainComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity,
+                                                  ComponentTypeTraits<ProceduralTerrainComponent>::value());
+            }
+            if (!snapshot.HasProceduralMotion &&
+                ComponentManager::HasComponent<ProceduralMotionComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity,
+                                                  ComponentTypeTraits<ProceduralMotionComponent>::value());
+            }
+            if (!snapshot.HasMaterial && ComponentManager::HasComponent<MaterialComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<MaterialComponent>::value());
+            }
+            if (!snapshot.HasAabb && ComponentManager::HasComponent<AABBComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<AABBComponent>::value());
+            }
+            if (!snapshot.HasSprite && ComponentManager::HasComponent<SpriteComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<SpriteComponent>::value());
+            }
+            if (!snapshot.HasMesh && ComponentManager::HasComponent<MeshComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<MeshComponent>::value());
+            }
+            if (!snapshot.HasCamera && ComponentManager::HasComponent<CameraComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<CameraComponent>::value());
+            }
+            if (!snapshot.HasPostProcess && ComponentManager::HasComponent<PostProcessComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<PostProcessComponent>::value());
+            }
+            if (!snapshot.HasInput && ComponentManager::HasComponent<InputComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<InputComponent>::value());
+            }
+            if (!snapshot.HasMove && ComponentManager::HasComponent<MoveComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<MoveComponent>::value());
+            }
+            if (!snapshot.HasPhysics && ComponentManager::HasComponent<PhysicsComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<PhysicsComponent>::value());
+            }
+            if (!snapshot.HasTimeline && ComponentManager::HasComponent<TimelineComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<TimelineComponent>::value());
+            }
+            if (!snapshot.HasObb && ComponentManager::HasComponent<OBBComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<OBBComponent>::value());
+            }
+            if (!snapshot.HasLod && ComponentManager::HasComponent<LODComponent>(snapshot.Entity))
+            {
+                ComponentManager::RemoveComponent(snapshot.Entity, ComponentTypeTraits<LODComponent>::value());
+            }
+        }
+        ApplySnapshot(snapshot);
+    }
+    // Restoring both parent and child must not apply the parent's delta a second time.
+    for (EntityID entity : SceneHierarchy::Entities())
+    {
+        SceneHierarchy::ResetParentFrame(entity);
+    }
+    SceneHierarchy::Update();
+    m_SelectedEntities.clear();
+    for (const auto& snapshot : snapshots)
+    {
+        if (snapshot.WasAlive && Registry::IsAlive(snapshot.Entity))
+        {
+            m_SelectedEntities.push_back(snapshot.Entity);
+        }
+    }
+    m_SelectedEntity = g_kINVALID_ENTITY;
+    if (!m_SelectedEntities.empty())
+    {
+        m_SelectedEntity = m_SelectedEntities.front();
+    }
+    MaterialManager::NotifyAssignmentsChanged();
 }
 
 void ImGuiManager::Undo()
@@ -361,48 +510,33 @@ void ImGuiManager::Undo()
     {
         return;
     }
-    EntitySnapshot snapshot = m_UndoStack.back();
+    const auto snapshots = m_UndoStack.back();
     m_UndoStack.pop_back();
+    vector<EntitySnapshot> inverse;
+    for (const auto& snapshot : snapshots)
+    {
+        inverse.push_back(CaptureEntity(snapshot.Entity));
+    }
+    m_RedoStack.push_back(move(inverse));
     ++m_EditRevision;
-    m_RedoStack.push_back(CaptureEntity(snapshot.Entity));
-    if (m_RedoStack.size() > 10)
-    {
-        m_RedoStack.erase(m_RedoStack.begin());
-    }
-    ApplySnapshot(snapshot);
-    MaterialManager::NotifyAssignmentsChanged();
-    if (snapshot.WasAlive)
-    {
-        m_SelectedEntity = snapshot.Entity;
-    }
-    else
-    {
-        m_SelectedEntity = g_kINVALID_ENTITY;
-    }
+    RestoreHistoryGroup(snapshots);
 }
 
 void ImGuiManager::Redo()
 {
+    FinalizeUndoCaptureIfIdle();
     if (m_RedoStack.empty())
     {
         return;
     }
-    EntitySnapshot snapshot = m_RedoStack.back();
+    const auto snapshots = m_RedoStack.back();
     m_RedoStack.pop_back();
+    vector<EntitySnapshot> inverse;
+    for (const auto& snapshot : snapshots)
+    {
+        inverse.push_back(CaptureEntity(snapshot.Entity));
+    }
+    m_UndoStack.push_back(move(inverse));
     ++m_EditRevision;
-    m_UndoStack.push_back(CaptureEntity(snapshot.Entity));
-    if (m_UndoStack.size() > 10)
-    {
-        m_UndoStack.erase(m_UndoStack.begin());
-    }
-    ApplySnapshot(snapshot);
-    MaterialManager::NotifyAssignmentsChanged();
-    if (snapshot.WasAlive)
-    {
-        m_SelectedEntity = snapshot.Entity;
-    }
-    else
-    {
-        m_SelectedEntity = g_kINVALID_ENTITY;
-    }
+    RestoreHistoryGroup(snapshots);
 }

@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "materialmanager.h"
 #include "assetthumbnailmanager.h"
 #include "thumbnailvalidation.h"
@@ -11,6 +11,7 @@
 #include "texturemanager.h"
 #include "world.h"
 #include "scenefile.h"
+#include "scenehierarchy.h"
 #include "assetregistry.h"
 #include <json/json.h>
 #include <fstream>
@@ -102,6 +103,14 @@ namespace
             return;
         }
 
+        if (extension == ".prefab")
+        {
+            // Unity-style blue cube for reusable prefab assets.
+            drawList->AddQuadFilled(at(8, 1.5f), at(14, 5), at(8, 8.5f), at(2, 5), IM_COL32(151, 218, 255, 255));
+            drawList->AddQuadFilled(at(2, 5), at(8, 8.5f), at(8, 15), at(2, 11.5f), IM_COL32(88, 176, 237, 255));
+            drawList->AddQuadFilled(at(8, 8.5f), at(14, 5), at(14, 11.5f), at(8, 15), IM_COL32(57, 137, 215, 255));
+            return;
+        }
         if (extension == ".material")
         {
             // 球（マテリアルのプレビューと同じ見た目の簡易版）
@@ -789,8 +798,12 @@ void ImGuiManager::DrawAssetBrowserWindow()
                     const bool renamingThis = !m_RenamingAssetPath.empty() && path == m_RenamingAssetPath;
                     if (!renamingThis)
                     {
-                        ImGui::GetWindowDrawList()->AddText(labelPosition, ImGui::GetColorU32(ImGuiCol_Text),
-                                                            displayName.c_str());
+                        ImU32 labelColor = ImGui::GetColorU32(ImGuiCol_Text);
+                        if (IsPrefabFile(path))
+                        {
+                            labelColor = ImGui::GetColorU32(kPrefabColor);
+                        }
+                        ImGui::GetWindowDrawList()->AddText(labelPosition, labelColor, displayName.c_str());
                     }
                     ImGui::GetWindowDrawList()->PopClipRect();
                     if (ImGui::IsItemHovered())
@@ -1314,7 +1327,8 @@ void ImGuiManager::PlaceAssetInScene(const filesystem::path& path, const ImVec2&
         return;
     }
 
-    if (!IsModelFile(path))
+    const bool prefab = IsPrefabFile(path);
+    if (!prefab && !IsModelFile(path))
     {
         AddLog("シーンD&D無視: %s", relative.c_str());
         return;
@@ -1347,6 +1361,11 @@ void ImGuiManager::PlaceAssetInScene(const filesystem::path& path, const ImVec2&
     XMFLOAT3 pos{};
     XMStoreFloat3(&pos, hit);
 
+    if (prefab)
+    {
+        LoadPrefabInstance(path, g_kINVALID_ENTITY, nullptr, &pos);
+        return;
+    }
     auto entity = World::CreateEntity()
                       .Add<NameComponent>()
                       .Add<TransformComponent>()
@@ -1598,6 +1617,29 @@ void ImGuiManager::BeginAssetDragSource(const filesystem::path& path, bool isDir
 
 void ImGuiManager::AcceptAssetMoveDrop(const filesystem::path& destinationDirectory)
 {
+    if (ImGui::AcceptDragDropPayload("SCENE_ENTITIES"))
+    {
+        const auto roots = EntityHierarchy::SelectionRoots(m_SelectedEntities, SceneHierarchy::Parent);
+        if (roots.size() == 1)
+        {
+            string name = GetEntityDisplayName(roots.front());
+            for (char& character : name)
+            {
+                if (static_cast<unsigned char>(character) < 32 || string("<>:\"/\\|?*").find(character) != string::npos)
+                {
+                    character = '_';
+                }
+            }
+            SavePrefabAsset(roots.front(),
+                            MakeUniqueAssetPath(destinationDirectory, filesystem::u8path(name), ".prefab"));
+        }
+        else
+        {
+            AddLog("プレハブ作成: 共通の親を選択してからドロップしてください");
+        }
+        return;
+    }
+
     if (ImGui::AcceptDragDropPayload(kAssetMultiPayload))
     {
         const vector<filesystem::path> sources = m_DraggedAssetPaths;
@@ -1785,6 +1827,11 @@ bool ImGuiManager::RelocateAssetPath(const filesystem::path& from, const filesys
     int remappedReferences = 0;
     for (EntityID entity : CollectSceneEntities())
     {
+        if (ComponentManager::HasComponent<NameComponent>(entity))
+        {
+            auto& name = ComponentManager::GetComponentUnchecked<NameComponent>(entity);
+            remappedReferences += RemapPathString(name.PrefabAssetPath, oldText, newText) ? 1 : 0;
+        }
         if (ComponentManager::HasComponent<StaticModelComponent>(entity))
         {
             auto& model = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
@@ -2081,6 +2128,11 @@ void ImGuiManager::OpenAssetItem(const filesystem::path& path)
         ClearAssetSelection();
         return;
     }
+    if (IsPrefabFile(path))
+    {
+        LoadPrefabInstance(path);
+        return;
+    }
     if (IsSceneFile(path))
     {
         RequestOpenScene(path); // 未保存なら確認ポップアップ
@@ -2270,4 +2322,3 @@ void ImGuiManager::DuplicateSelectedAssets()
         AddLog("複製: %d 個", static_cast<int>(created.size()));
     }
 }
-

@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "editorscenenavigation.h"
 #include "imguimanager.h"
 #include <unordered_map>
@@ -21,6 +21,9 @@
 #include "rendertargets.h"
 #include "sun.h"
 #include "world.h"
+#include "scenehierarchy.h"
+#include "prefabformat.h"
+#include "graphicslog.h"
 #include "primitivegeometry.h"
 #include "materialmanager.h"
 #include "gpuscene/gpuscenechanges.h"
@@ -35,6 +38,7 @@
 #include <cctype>
 #include <cmath>
 #include <unordered_set>
+#include <functional>
 #include <DirectXCollision.h>
 #include <ImGuizmo.h>
 #include "virtualgeometry/virtualgeometrydebug.h"
@@ -210,7 +214,7 @@ void ImGuiManager::DrawTransformGizmo()
     XMStoreFloat4x4(&projectionMatrix, proj);
 
     auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(m_SelectedEntity);
-    EntitySnapshot before = CaptureEntity(m_SelectedEntity);
+    const TransformComponent beforeTransform = transform;
 
     XMFLOAT4X4 modelMatrix{};
     XMStoreFloat4x4(&modelMatrix, BuildWorldMatrix(transform));
@@ -257,21 +261,11 @@ void ImGuiManager::DrawTransformGizmo()
         }
     }
 
-    BeginUndoCapture(m_SelectedEntity, before);
-
-    transform.Position = {translation[0], translation[1], translation[2]};
-    transform.Rotation = {rotationDeg[0] * kDegToRad, rotationDeg[1] * kDegToRad, rotationDeg[2] * kDegToRad};
-    transform.Scale = ClampScale(scale, false);
-    XMStoreFloat4x4(&transform.WorldMatrix, BuildWorldMatrix(transform));
-    transform.IsDirty = true;
-    if (ComponentManager::HasComponent<SunComponent>(m_SelectedEntity))
-    {
-        Sun::Sync(m_SelectedEntity);
-    }
-    else
-    {
-        ApplyLightEntityToRuntime(m_SelectedEntity);
-    }
+    TransformComponent after = beforeTransform;
+    after.Position = {translation[0], translation[1], translation[2]};
+    after.Rotation = {rotationDeg[0] * kDegToRad, rotationDeg[1] * kDegToRad, rotationDeg[2] * kDegToRad};
+    after.Scale = ClampScale(scale, false);
+    ApplySelectionTransform(beforeTransform, after);
 }
 
 void ImGuiManager::DrawPrimitiveCreationMenu()
@@ -437,6 +431,7 @@ void ImGuiManager::DrawPrimitiveSettingsWindow()
 
 void ImGuiManager::DrawHierarchyWindow()
 {
+    SyncEntitySelection();
     ImGui::SetNextWindowPos(ImVec2(8.0f, 32.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(260.0f, 420.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("ヒエラルキー", &m_ShowHierarchyWindow))
@@ -472,7 +467,7 @@ void ImGuiManager::DrawHierarchyWindow()
     ImGui::BeginDisabled(m_SelectedEntity == g_kINVALID_ENTITY);
     if (ImGui::Button("選択解除"))
     {
-        m_SelectedEntity = g_kINVALID_ENTITY;
+        SelectEntity(g_kINVALID_ENTITY);
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
@@ -482,6 +477,15 @@ void ImGuiManager::DrawHierarchyWindow()
     }
     if (ImGui::BeginPopup("HierarchyCreatePopup"))
     {
+        if (ImGui::MenuItem("空のオブジェクト"))
+        {
+            auto group = World::CreateEntity().Add<TransformComponent>().Add<NameComponent>();
+            group.SetName("GameObject");
+            SelectEntity(group.GetID());
+            EntitySnapshot missing{};
+            missing.Entity = group.GetID();
+            PushUndoSnapshot(missing);
+        }
         DrawPrimitiveCreationMenu();
         if (ImGui::MenuItem("GameCamera"))
         {
@@ -525,53 +529,188 @@ void ImGuiManager::DrawHierarchyWindow()
     bool deleteRequested = false;
     bool duplicateRequested = false;
     ImGui::BeginChild("EntityList", ImVec2(0.0f, -ImGui::GetTextLineHeightWithSpacing()));
-    for (EntityID entity : World::GetView<TransformComponent>())
+    vector<EntityID> visible;
+    vector<EntityID> all;
+    unordered_map<EntityID, vector<EntityID>> children;
+    for (EntityID entity : SceneHierarchy::Entities())
     {
-        if (!IsEditableEntity(entity))
+        if (IsEditableEntity(entity))
         {
-            continue;
+            all.push_back(entity);
         }
-
-        ++totalCount;
+    }
+    totalCount = static_cast<int>(all.size());
+    for (EntityID entity : all)
+    {
+        EntityID parent = SceneHierarchy::Parent(entity);
+        if (find(all.begin(), all.end(), parent) == all.end())
+        {
+            parent = g_kINVALID_ENTITY;
+        }
+        children[parent].push_back(entity);
+    }
+    EntityID clicked = g_kINVALID_ENTITY;
+    static EntityID pendingClick = g_kINVALID_ENTITY;
+    static bool selectionDragged = false;
+    EntityID dropParent = g_kINVALID_ENTITY;
+    bool reparentRequested = false;
+    unordered_set<EntityID> drawn;
+    std::function<void(EntityID)> drawEntity = [&](EntityID entity) {
+        if (!drawn.insert(entity).second)
+        {
+            return;
+        }
         const string displayName = GetEntityDisplayName(entity);
-        if (m_RenamingEntity != entity && !entityFilter.PassFilter(displayName.c_str()))
+        if (entityFilter.IsActive() && !entityFilter.PassFilter(displayName.c_str()) && m_RenamingEntity != entity)
         {
-            continue;
+            return;
         }
-        ++visibleCount;
+        visible.push_back(entity);
         ImGui::PushID(static_cast<int>(entity));
-        const bool selected = entity == m_SelectedEntity;
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (IsEntitySelected(entity))
+        {
+            flags |= ImGuiTreeNodeFlags_Selected;
+        }
+        if (children[entity].empty() || entityFilter.IsActive())
+        {
+            flags |= ImGuiTreeNodeFlags_Leaf;
+        }
+        const bool prefab = GetPrefabRoot(entity) != g_kINVALID_ENTITY;
+        if (prefab)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, kPrefabColor);
+        }
+        const bool open = ImGui::TreeNodeEx("Entity", flags, "%s", displayName.c_str());
+        if (prefab)
+        {
+            ImGui::PopStyleColor();
+        }
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+        {
+            clicked = entity;
+        }
+        if (ImGui::BeginDragDropSource())
+        {
+            selectionDragged = true;
+            if (!IsEntitySelected(entity))
+            {
+                SelectEntity(entity);
+            }
+            ImGui::SetDragDropPayload("SCENE_ENTITIES", &entity, sizeof(entity));
+            ImGui::Text("%zu 個のオブジェクト", m_SelectedEntities.size());
+            ImGui::EndDragDropSource();
+        }
+        if (ImGui::BeginDragDropTarget())
+        {
+            if (ImGui::AcceptDragDropPayload("SCENE_ENTITIES"))
+            {
+                dropParent = entity;
+                reparentRequested = true;
+            }
+            ImGui::EndDragDropTarget();
+        }
+        if (ImGui::BeginPopupContextItem("EntityActions"))
+        {
+            if (!IsEntitySelected(entity))
+            {
+                SelectEntity(entity);
+            }
+            if (ImGui::MenuItem("名前を変更", "F2", false, m_SelectedEntities.size() == 1))
+            {
+                BeginRename(entity);
+            }
+            if (ImGui::MenuItem("複製", "Ctrl+D", false, m_SelectedEntities.size() == 1))
+            {
+                duplicateRequested = true;
+            }
+            if (ImGui::MenuItem("親を解除"))
+            {
+                reparentRequested = true;
+            }
+            if (ImGui::MenuItem("削除（子も含む）", "Delete"))
+            {
+                deleteRequested = true;
+            }
+            ImGui::EndPopup();
+        }
         if (m_RenamingEntity == entity)
         {
             DrawRenameInput(entity);
         }
-        else if (ImGui::Selectable(displayName.c_str(), selected))
+        if (open)
         {
-            m_SelectedEntity = entity;
-        }
-        if (ImGui::BeginPopupContextItem("EntityActions"))
-        {
-            m_SelectedEntity = entity;
-            if (ImGui::MenuItem("名前を変更", "F2", false, ComponentManager::HasComponent<NameComponent>(entity)))
+            if (!entityFilter.IsActive())
             {
-                BeginRename(entity);
+                for (EntityID child : children[entity])
+                {
+                    drawEntity(child);
+                }
             }
-            if (ImGui::MenuItem("複製", "Ctrl+D"))
-            {
-                duplicateRequested = true;
-            }
-            if (ImGui::MenuItem("削除", "Delete"))
-            {
-                deleteRequested = true;
-            }
-            if (ImGui::BeginMenu("オブジェクトの作成"))
-            {
-                DrawPrimitiveCreationMenu();
-                ImGui::EndMenu();
-            }
-            ImGui::EndPopup();
+            ImGui::TreePop();
         }
         ImGui::PopID();
+    };
+    if (entityFilter.IsActive())
+    {
+        for (EntityID entity : all)
+        {
+            drawEntity(entity);
+        }
+    }
+    else
+    {
+        for (EntityID entity : children[g_kINVALID_ENTITY])
+        {
+            drawEntity(entity);
+        }
+    }
+    visibleCount = static_cast<int>(visible.size());
+    if (clicked != g_kINVALID_ENTITY)
+    {
+        if (!ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift && IsEntitySelected(clicked) &&
+            m_SelectedEntities.size() > 1)
+        {
+            // Keep a multi-selection intact while the user starts dragging one of its rows.
+            pendingClick = clicked;
+            selectionDragged = false;
+        }
+        else if (ImGui::GetIO().KeyShift)
+        {
+            SelectEntityRange(clicked, visible);
+        }
+        else
+        {
+            SelectEntity(clicked, ImGui::GetIO().KeyCtrl);
+        }
+    }
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+    {
+        if (pendingClick != g_kINVALID_ENTITY && !selectionDragged && Registry::IsAlive(pendingClick))
+        {
+            SelectEntity(pendingClick);
+        }
+        pendingClick = g_kINVALID_ENTITY;
+        selectionDragged = false;
+    }
+    if (hierarchyFocused && ImGui::GetIO().KeyCtrl && !ImGui::GetIO().WantTextInput &&
+        ImGui::IsKeyPressed(ImGuiKey_A, false) && !visible.empty())
+    {
+        m_SelectedEntities = visible;
+        m_SelectedEntity = visible.back();
+    }
+    ImGui::Selectable("ここにドロップして親を解除", false);
+    if (ImGui::BeginDragDropTarget())
+    {
+        if (ImGui::AcceptDragDropPayload("SCENE_ENTITIES"))
+        {
+            reparentRequested = true;
+        }
+        ImGui::EndDragDropTarget();
+    }
+    if (reparentRequested)
+    {
+        ReparentSelection(dropParent);
     }
     if (visibleCount == 0)
     {
@@ -596,26 +735,218 @@ void ImGuiManager::DrawHierarchyWindow()
     {
         DeleteSelectedEntity();
     }
-    ImGui::TextDisabled("%d / %d 件", visibleCount, totalCount);
+    ImGui::TextDisabled("%d / %d 件 | %zu 選択", visibleCount, totalCount, m_SelectedEntities.size());
     ImGui::End();
+}
+
+bool ImGuiManager::IsEntitySelected(EntityID entity)
+{
+    return find(m_SelectedEntities.begin(), m_SelectedEntities.end(), entity) != m_SelectedEntities.end();
+}
+
+void ImGuiManager::SyncEntitySelection()
+{
+    if (!Registry::IsAlive(m_SelectedEntity))
+    {
+        m_SelectedEntity = g_kINVALID_ENTITY;
+        m_SelectedEntities.clear();
+        return;
+    }
+    // Existing creation/import commands still assign the active entity directly.
+    if (!IsEntitySelected(m_SelectedEntity))
+    {
+        m_SelectedEntities = {m_SelectedEntity};
+        m_EntitySelectionAnchor = m_SelectedEntity;
+    }
+    erase_if(m_SelectedEntities, [](EntityID entity) {
+        return !Registry::IsAlive(entity);
+    });
+}
+
+void ImGuiManager::SelectEntity(EntityID entity, bool toggle)
+{
+    FinalizeUndoCaptureIfIdle(true);
+    SyncEntitySelection();
+    if (!toggle)
+    {
+        m_SelectedEntities.clear();
+    }
+    if (toggle && IsEntitySelected(entity))
+    {
+        erase(m_SelectedEntities, entity);
+        m_SelectedEntity = g_kINVALID_ENTITY;
+        if (!m_SelectedEntities.empty())
+        {
+            m_SelectedEntity = m_SelectedEntities.back();
+        }
+    }
+    else
+    {
+        if (Registry::IsAlive(entity))
+        {
+            m_SelectedEntities.push_back(entity);
+        }
+        m_SelectedEntity = entity;
+    }
+    m_EntitySelectionAnchor = entity;
+}
+
+void ImGuiManager::SelectEntityRange(EntityID entity, const vector<EntityID>& visible)
+{
+    const auto anchor = find(visible.begin(), visible.end(), m_EntitySelectionAnchor);
+    const auto target = find(visible.begin(), visible.end(), entity);
+    if (anchor == visible.end() || target == visible.end())
+    {
+        SelectEntity(entity, ImGui::GetIO().KeyCtrl);
+        return;
+    }
+    FinalizeUndoCaptureIfIdle(true);
+    if (!ImGui::GetIO().KeyCtrl)
+    {
+        m_SelectedEntities.clear();
+    }
+    const auto first = min(anchor, target);
+    const auto last = max(anchor, target);
+    for (auto it = first; it != last + 1; ++it)
+    {
+        if (!IsEntitySelected(*it))
+        {
+            m_SelectedEntities.push_back(*it);
+        }
+    }
+    m_SelectedEntity = entity;
+}
+
+void ImGuiManager::ReparentSelection(EntityID parent)
+{
+    SyncEntitySelection();
+    const auto roots = EntityHierarchy::SelectionRoots(m_SelectedEntities, SceneHierarchy::Parent);
+    for (EntityID entity : roots)
+    {
+        if (!EntityHierarchy::CanReparent(entity, parent, SceneHierarchy::Parent))
+        {
+            AddLog("親子関係は設定できません: 自分自身や子孫を親にはできません");
+            return;
+        }
+    }
+    FinalizeUndoCaptureIfIdle(true);
+    SceneHierarchy::Update();
+    vector<EntitySnapshot> before;
+    for (EntityID entity : roots)
+    {
+        if (SceneHierarchy::Parent(entity) != parent)
+        {
+            before.push_back(CaptureEntity(entity));
+            SceneHierarchy::SetParent(entity, parent);
+        }
+    }
+    PushUndoGroup(before);
+}
+
+void ImGuiManager::DrawParentSelector()
+{
+    const EntityID current = SceneHierarchy::Parent(m_SelectedEntity);
+    bool mixed = false;
+    for (EntityID entity : m_SelectedEntities)
+    {
+        mixed |= SceneHierarchy::Parent(entity) != current;
+    }
+    const char* label = "なし（ルート）";
+    if (mixed)
+    {
+        label = "複数の親";
+    }
+    else if (current != g_kINVALID_ENTITY)
+    {
+        label = GetEntityDisplayName(current);
+    }
+    if (ImGui::BeginCombo("親", label))
+    {
+        if (ImGui::Selectable("なし（ルート）", !mixed && current == g_kINVALID_ENTITY))
+        {
+            ReparentSelection(g_kINVALID_ENTITY);
+        }
+        const auto roots = EntityHierarchy::SelectionRoots(m_SelectedEntities, SceneHierarchy::Parent);
+        for (EntityID candidate : SceneHierarchy::Entities())
+        {
+            bool valid = IsEditableEntity(candidate);
+            for (EntityID entity : roots)
+            {
+                valid &= EntityHierarchy::CanReparent(entity, candidate, SceneHierarchy::Parent);
+            }
+            if (!valid)
+            {
+                continue;
+            }
+            ImGui::PushID(static_cast<int>(candidate));
+            if (ImGui::Selectable(GetEntityDisplayName(candidate), !mixed && candidate == current))
+            {
+                ReparentSelection(candidate);
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+}
+
+void ImGuiManager::ApplySelectionTransform(const TransformComponent& before, const TransformComponent& after)
+{
+    SyncEntitySelection();
+    // Property edits describe a delta in the displayed TRS frame. Apply that delta
+    // to the exact affine matrix so moving a sheared child preserves its shape.
+    const XMMATRIX original = TransformMath::World(before.Position, before.Rotation, before.Scale);
+    if (std::abs(XMVectorGetX(XMMatrixDeterminant(original))) < 0.0000001f)
+    {
+        return;
+    }
+    const XMMATRIX delta =
+        XMMatrixInverse(nullptr, original) * TransformMath::World(after.Position, after.Rotation, after.Scale);
+    const auto roots = EntityHierarchy::SelectionRoots(m_SelectedEntities, SceneHierarchy::Parent);
+    // Capture every root before changing any of them, including their descendants.
+    for (EntityID entity : roots)
+    {
+        BeginUndoCapture(entity, CaptureEntity(entity));
+    }
+    for (EntityID entity : roots)
+    {
+        auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+        TransformMath::SetWorld(transform, TransformMath::World(transform) * delta);
+    }
+    SceneHierarchy::Update();
+    for (EntityID entity : EntityHierarchy::WithDescendants(roots, SceneHierarchy::Entities(), SceneHierarchy::Parent))
+    {
+        if (ComponentManager::HasComponent<SunComponent>(entity))
+        {
+            Sun::Sync(entity);
+        }
+        else
+        {
+            ApplyLightEntityToRuntime(entity);
+        }
+    }
 }
 
 void ImGuiManager::DeleteSelectedEntity()
 {
-    if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
+    SyncEntitySelection();
+    FinalizeUndoCaptureIfIdle(true);
+    const auto entities =
+        EntityHierarchy::WithDescendants(m_SelectedEntities, SceneHierarchy::Entities(), SceneHierarchy::Parent);
+    vector<EntitySnapshot> before;
+    for (EntityID entity : entities)
     {
-        return;
+        before.push_back(CaptureEntity(entity));
     }
-
-    const EntityID entity = m_SelectedEntity;
-    PushUndoSnapshot(CaptureEntity(entity));
-    AddLog("エンティティ削除: %s", GetEntityDisplayName(entity));
-    if (m_RenamingEntity == entity)
+    PushUndoGroup(before);
+    for (EntityID entity : entities)
     {
-        CancelRename();
+        if (m_RenamingEntity == entity)
+        {
+            CancelRename();
+        }
+        World::DestroyEntity(Entity(entity));
     }
-    World::DestroyEntity(Entity(entity));
-    m_SelectedEntity = g_kINVALID_ENTITY;
+    SelectEntity(g_kINVALID_ENTITY);
 }
 
 // Unity の "Cube" → "Cube (1)" → "Cube (2)" と同じ規則で、重複しない名前を作る。
@@ -675,6 +1006,12 @@ EntityID ImGuiManager::DuplicateSelectedEntity()
         return g_kINVALID_ENTITY;
     }
 
+    if (GetPrefabRoot(source) == source)
+    {
+        const string asset = ComponentManager::GetComponentUnchecked<NameComponent>(source).PrefabAssetPath;
+        const auto placement = ComponentManager::GetComponentUnchecked<TransformComponent>(source);
+        return LoadPrefabInstance(filesystem::u8path(asset), g_kINVALID_ENTITY, &placement);
+    }
     EntitySnapshot copy = CaptureEntity(source);
     const EntityID duplicate = World::CreateEntity().GetID();
     if (duplicate == g_kINVALID_ENTITY || !Registry::IsAlive(duplicate))
@@ -688,6 +1025,9 @@ EntityID ImGuiManager::DuplicateSelectedEntity()
     if (copy.HasName)
     {
         copy.Name.Name = MakeDuplicateName(copy.Name.Name);
+        copy.Name.PrefabAssetPath.clear();
+        copy.Name.PrefabLocalId = g_kINVALID_ENTITY;
+        copy.Name.IsPrefabRoot = false;
     }
     if (copy.HasTransform)
     {
@@ -860,7 +1200,10 @@ void ImGuiManager::PickEntityFromMouse()
 
     if (hits.empty())
     {
-        m_SelectedEntity = g_kINVALID_ENTITY;
+        if (!ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift)
+        {
+            SelectEntity(g_kINVALID_ENTITY);
+        }
         m_LastPickCandidates.clear();
         m_LastPickMouse = mouse;
         return;
@@ -884,13 +1227,17 @@ void ImGuiManager::PickEntityFromMouse()
         }
     }
 
-    m_SelectedEntity = hits[pickIndex].Entity;
+    SelectEntity(hits[pickIndex].Entity, ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeyShift);
     m_LastPickCandidates = move(candidates);
     m_LastPickMouse = mouse;
 }
 
 bool ImGuiManager::IsEditableEntity(EntityID entity)
 {
+    if (entity == Camera::GetEditorCameraEntity())
+    {
+        return false;
+    }
     if (!Registry::IsAlive(entity) || !ComponentManager::HasComponent<TransformComponent>(entity))
     {
         return false;
@@ -919,7 +1266,7 @@ bool ImGuiManager::IsEditableEntity(EntityID entity)
         return true;
     }
 
-    return false;
+    return ComponentManager::HasComponent<NameComponent>(entity);
 }
 
 void ImGuiManager::BeginRename(EntityID entity)
@@ -1561,6 +1908,8 @@ void ImGuiManager::DestroySceneEntities()
     CancelRename();
     m_SelectedEntity = g_kINVALID_ENTITY;
     m_LastPickCandidates.clear();
+    m_SelectedEntities.clear();
+    m_EntitySelectionAnchor = g_kINVALID_ENTITY;
     m_UndoStack.clear();
     m_RedoStack.clear();
     m_HasPendingUndo = false;
@@ -2257,4 +2606,531 @@ void ImGuiManager::DrawScenePopups()
         }
         ImGui::EndPopup();
     }
+}
+
+bool ImGuiManager::IsPrefabFile(const filesystem::path& path)
+{
+    string extension = path.extension().generic_string();
+    transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character) {
+        return static_cast<char>(tolower(character));
+    });
+    return extension == ".prefab";
+}
+
+EntityID ImGuiManager::GetPrefabRoot(EntityID entity)
+{
+    unordered_set<EntityID> visited;
+    while (entity != g_kINVALID_ENTITY && visited.insert(entity).second)
+    {
+        if (ComponentManager::HasComponent<NameComponent>(entity))
+        {
+            const auto& name = ComponentManager::GetComponentUnchecked<NameComponent>(entity);
+            if (name.IsPrefabRoot && !name.PrefabAssetPath.empty())
+            {
+                return entity;
+            }
+        }
+        entity = SceneHierarchy::Parent(entity);
+    }
+    return g_kINVALID_ENTITY;
+}
+
+bool ImGuiManager::SavePrefabAsset(EntityID root, const filesystem::path& path)
+{
+    if (!SceneHierarchy::HasTransform(root) || !IsInsideAssetRoot(path))
+    {
+        return false;
+    }
+    FinalizeUndoCaptureIfIdle(true);
+    SceneHierarchy::Update();
+    const auto entities = EntityHierarchy::WithDescendants({root}, SceneHierarchy::Entities(), SceneHierarchy::Parent);
+    const string source = MakeRelativeAssetPath(path);
+    unordered_map<EntityID, EntityID> fileIds{{root, 0}};
+    unordered_set<EntityID> used{0};
+    for (EntityID entity : entities)
+    {
+        if (entity == root || !ComponentManager::HasComponent<NameComponent>(entity))
+        {
+            continue;
+        }
+        const auto& name = ComponentManager::GetComponentUnchecked<NameComponent>(entity);
+        if (name.PrefabAssetPath == source && name.PrefabLocalId != g_kINVALID_ENTITY &&
+            used.insert(name.PrefabLocalId).second)
+        {
+            fileIds[entity] = name.PrefabLocalId;
+        }
+    }
+    EntityID next = 1;
+    for (EntityID entity : entities)
+    {
+        if (!fileIds.count(entity))
+        {
+            while (used.count(next))
+            {
+                ++next;
+            }
+            fileIds[entity] = next;
+            used.insert(next++);
+        }
+    }
+    Json::Value prefab;
+    Json::CharReaderBuilder reader;
+    string error;
+    istringstream contents(StreamSceneJson(entities, fileIds, VisitLiveEntityThunk));
+    if (!Json::parseFromStream(reader, contents, &prefab, &error))
+    {
+        AddLog("プレハブ作成失敗: %s", error.c_str());
+        return false;
+    }
+    prefab["format"] = "DX12Prefab";
+    prefab["root"] = 0;
+    for (auto& record : prefab["entities"])
+    {
+        record["name"]["prefabAsset"] = "";
+        record["name"]["prefabLocalId"] = Json::UInt(g_kINVALID_ENTITY);
+        record["name"]["prefabRoot"] = false;
+    }
+    if (!PrefabFormat::Validate(prefab, error))
+    {
+        AddLog("プレハブ作成失敗: %s", error.c_str());
+        return false;
+    }
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "  ";
+    const auto result = WriteSceneFile(Json::writeString(writer, prefab), path, source);
+    if (!result.Success)
+    {
+        AddLog("プレハブを書き込めません: %s", source.c_str());
+        return false;
+    }
+    vector<EntitySnapshot> before;
+    for (EntityID entity : entities)
+    {
+        before.push_back(CaptureEntity(entity));
+        if (!ComponentManager::HasComponent<NameComponent>(entity))
+        {
+            ComponentManager::AddComponent(entity, ComponentType::NAME);
+        }
+        auto& name = ComponentManager::GetComponentUnchecked<NameComponent>(entity);
+        name.PrefabAssetPath = source;
+        name.PrefabLocalId = fileIds.at(entity);
+        name.IsPrefabRoot = entity == root;
+    }
+    // Apply to other linked instances while retaining their placement in the scene.
+    vector<EntityID> instances;
+    for (EntityID entity : SceneHierarchy::Entities())
+    {
+        if (entity != root && GetPrefabRoot(entity) == entity &&
+            ComponentManager::GetComponentUnchecked<NameComponent>(entity).PrefabAssetPath == source)
+        {
+            instances.push_back(entity);
+        }
+    }
+    for (EntityID instance : instances)
+    {
+        LoadPrefabInstance(path, instance, nullptr, nullptr, &before);
+    }
+    PushUndoGroup(before);
+    SelectEntity(root);
+    m_AssetBrowserRescan = true;
+    AddLog("プレハブ保存: %s", source.c_str());
+    return true;
+}
+
+EntityID ImGuiManager::LoadPrefabInstance(const filesystem::path& path, EntityID existing,
+                                          const TransformComponent* placement, const XMFLOAT3* position,
+                                          vector<EntitySnapshot>* history)
+{
+    Json::Value prefab;
+    Json::CharReaderBuilder reader;
+    string error;
+    ifstream stream(path, ios::binary);
+    if (!stream || !Json::parseFromStream(reader, stream, &prefab, &error) || !PrefabFormat::Validate(prefab, error))
+    {
+        AddLog("プレハブを読み込めません: %s %s", ToUtf8(path).c_str(), error.c_str());
+        return g_kINVALID_ENTITY;
+    }
+    const auto& records = prefab["entities"];
+    if (SceneHierarchy::Entities().size() + records.size() > g_kMAX_ENTITIES)
+    {
+        AddLog("プレハブ配置失敗: オブジェクト数が上限を超えます");
+        return g_kINVALID_ENTITY;
+    }
+    if (!GraphicsDevice::WaitForGpuIdle())
+    {
+        return g_kINVALID_ENTITY;
+    }
+    FinalizeUndoCaptureIfIdle(true);
+    SceneHierarchy::Update();
+    const string source = MakeRelativeAssetPath(path);
+    const EntityID rootFileId = prefab["root"].asUInt();
+    vector<EntityID> oldEntities;
+    vector<EntitySnapshot> before;
+    unordered_map<EntityID, EntityID> entityMap;
+    TransformComponent desired;
+    bool keepPlacement = placement != nullptr;
+    if (placement)
+    {
+        desired = *placement;
+    }
+    if (SceneHierarchy::HasTransform(existing))
+    {
+        desired = ComponentManager::GetComponentUnchecked<TransformComponent>(existing);
+        keepPlacement = true;
+        oldEntities = EntityHierarchy::WithDescendants({existing}, SceneHierarchy::Entities(), SceneHierarchy::Parent);
+        entityMap[rootFileId] = existing;
+        for (EntityID entity : oldEntities)
+        {
+            before.push_back(CaptureEntity(entity));
+            if (entity != existing && ComponentManager::HasComponent<NameComponent>(entity))
+            {
+                const auto& name = ComponentManager::GetComponentUnchecked<NameComponent>(entity);
+                if (name.PrefabAssetPath == source && name.PrefabLocalId != g_kINVALID_ENTITY)
+                {
+                    entityMap.emplace(name.PrefabLocalId, entity);
+                }
+            }
+        }
+    }
+    vector<EntityID> loaded;
+    for (const auto& record : records)
+    {
+        const EntityID fileId = record["id"].asUInt();
+        if (!entityMap.count(fileId))
+        {
+            const EntityID created = World::CreateEntity().GetID();
+            if (created == g_kINVALID_ENTITY)
+            {
+                for (const auto& snapshot : before)
+                {
+                    if (!snapshot.WasAlive)
+                    {
+                        World::DestroyEntity(Entity(snapshot.Entity));
+                    }
+                }
+                return g_kINVALID_ENTITY;
+            }
+            entityMap[fileId] = created;
+            EntitySnapshot missing{};
+            missing.Entity = created;
+            before.push_back(missing);
+        }
+        loaded.push_back(entityMap.at(fileId));
+    }
+    for (EntityID entity : oldEntities)
+    {
+        World::DestroyEntity(Entity(entity));
+    }
+    try
+    {
+        for (auto& record : prefab["entities"])
+        {
+            const EntityID fileId = record["id"].asUInt();
+            const EntityID entity = entityMap.at(fileId);
+            RestoreLoadedEntity(entity, record, entityMap);
+            if (!ComponentManager::HasComponent<NameComponent>(entity))
+            {
+                ComponentManager::AddComponent(entity, ComponentType::NAME);
+            }
+            auto& name = ComponentManager::GetComponentUnchecked<NameComponent>(entity);
+            name.PrefabAssetPath = source;
+            name.PrefabLocalId = fileId;
+            name.IsPrefabRoot = fileId == rootFileId;
+        }
+        const EntityID root = entityMap.at(rootFileId);
+        if (position)
+        {
+            desired = ComponentManager::GetComponentUnchecked<TransformComponent>(root);
+            desired.Position = *position;
+            keepPlacement = true;
+        }
+        if (keepPlacement)
+        {
+            const auto original = ComponentManager::GetComponentUnchecked<TransformComponent>(root);
+            const XMMATRIX originalWorld = TransformMath::World(original);
+            if (std::abs(XMVectorGetX(XMMatrixDeterminant(originalWorld))) < 0.0000001f)
+            {
+                throw std::runtime_error("プレハブのルートのスケールが 0 です");
+            }
+            const XMMATRIX delta = XMMatrixInverse(nullptr, originalWorld) * TransformMath::World(desired);
+            for (EntityID entity : loaded)
+            {
+                auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+                if (!TransformMath::SetWorld(transform, TransformMath::World(transform) * delta))
+                {
+                    throw std::runtime_error("プレハブの変形を復元できません");
+                }
+            }
+            SceneHierarchy::SetParent(root, desired.Parent);
+        }
+        for (EntityID entity : loaded)
+        {
+            SceneHierarchy::ResetParentFrame(entity);
+        }
+        SceneHierarchy::Update();
+        if (history)
+        {
+            history->insert(history->end(), before.begin(), before.end());
+        }
+        else
+        {
+            PushUndoGroup(before);
+        }
+        SelectEntity(root);
+        MaterialManager::NotifyAssignmentsChanged();
+        AddLog("プレハブ配置 / 更新: %s", source.c_str());
+        return root;
+    }
+    catch (const std::exception& exception)
+    {
+        for (EntityID entity : loaded)
+        {
+            World::DestroyEntity(Entity(entity));
+        }
+        RestoreHistoryGroup(before);
+        AddLog("プレハブ復元失敗: %s", exception.what());
+        return g_kINVALID_ENTITY;
+    }
+}
+
+bool ImGuiManager::DrawPrefabInspector()
+{
+    const EntityID root = GetPrefabRoot(m_SelectedEntity);
+    if (root != g_kINVALID_ENTITY)
+    {
+        const string source = ComponentManager::GetComponentUnchecked<NameComponent>(root).PrefabAssetPath;
+        ImGui::TextColored(kPrefabColor, "プレハブ: %s", source.c_str());
+        ImGui::TextWrapped("適用すると、同じプレハブの全インスタンスを更新します。各インスタンスの配置は保持します。");
+        if (ImGui::Button("プレハブに適用"))
+        {
+            SavePrefabAsset(root, filesystem::u8path(source));
+            return true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("元に戻す"))
+        {
+            LoadPrefabInstance(filesystem::u8path(source), root);
+            return true;
+        }
+        if (ImGui::Button("プレハブのリンクを解除"))
+        {
+            FinalizeUndoCaptureIfIdle(true);
+            vector<EntitySnapshot> before;
+            for (EntityID entity :
+                 EntityHierarchy::WithDescendants({root}, SceneHierarchy::Entities(), SceneHierarchy::Parent))
+            {
+                if (ComponentManager::HasComponent<NameComponent>(entity))
+                {
+                    before.push_back(CaptureEntity(entity));
+                    auto& name = ComponentManager::GetComponentUnchecked<NameComponent>(entity);
+                    name.PrefabAssetPath.clear();
+                    name.PrefabLocalId = g_kINVALID_ENTITY;
+                    name.IsPrefabRoot = false;
+                }
+            }
+            PushUndoGroup(before);
+        }
+    }
+    const auto roots = EntityHierarchy::SelectionRoots(m_SelectedEntities, SceneHierarchy::Parent);
+    ImGui::BeginDisabled(roots.size() != 1);
+    if (ImGui::Button("選択からプレハブを作成"))
+    {
+        string name = GetEntityDisplayName(roots.front());
+        for (char& character : name)
+        {
+            if (static_cast<unsigned char>(character) < 32 || string("<>:\"/\\|?*").find(character) != string::npos)
+            {
+                character = '_';
+            }
+        }
+        auto directory = m_CurrentAssetDirectory;
+        error_code error;
+        if (!filesystem::is_directory(directory, error) || !IsInsideAssetRoot(directory))
+        {
+            directory = m_AssetRoot;
+        }
+        const auto target = MakeUniqueAssetPath(directory, filesystem::u8path(name), ".prefab");
+        ImGui::EndDisabled();
+        SavePrefabAsset(roots.front(), target);
+        return true;
+    }
+    ImGui::EndDisabled();
+    return false;
+}
+
+void ImGuiManager::ValidateEditorObjects()
+{
+    static bool checked = false;
+    char enabled[8]{};
+    if (checked || !GetEnvironmentVariableA("DX12_EDITOR_OBJECT_TEST", enabled, sizeof(enabled)) || atoi(enabled) == 0)
+    {
+        return;
+    }
+    checked = true;
+    const auto previousSelection = m_SelectedEntities;
+    const auto previousActive = m_SelectedEntity;
+    const auto previousAnchor = m_EntitySelectionAnchor;
+    const auto previousUndo = m_UndoStack;
+    const auto previousRedo = m_RedoStack;
+    const auto previousPending = m_PendingUndo;
+    const bool hadPending = m_HasPendingUndo;
+    const auto revision = m_EditRevision;
+    const auto originalEntities = SceneHierarchy::Entities();
+    const unordered_set<EntityID> originalSet(originalEntities.begin(), originalEntities.end());
+    const auto path = MakeUniqueAssetPath(m_AssetRoot, "__editor_object_validation", ".prefab");
+    int failures = 0;
+    auto check = [&](bool condition, const char* description) {
+        WriteGraphicsLog("Editor object validation: %s %s\n", description, condition ? "PASS" : "FAIL");
+        if (!condition)
+        {
+            throw std::runtime_error(description);
+        }
+    };
+    auto position = [](EntityID entity) -> float {
+        return ComponentManager::GetComponentUnchecked<TransformComponent>(entity).Position.x;
+    };
+    try
+    {
+        check(!IsEditableEntity(Camera::GetEditorCameraEntity()), "editor camera excluded from batch selection");
+        TransformComponent affine;
+        affine.Rotation.z = 0.5f;
+        const XMMATRIX sheared = TransformMath::World(affine) * XMMatrixScaling(2, 1, 1);
+        check(TransformMath::SetWorld(affine, sheared), "affine hierarchy transform");
+        Json::Value serialized;
+        SceneFile::Archive write(SceneFile::Mode::Write, serialized);
+        SceneFile::Visit(write, affine);
+        TransformComponent restored;
+        SceneFile::Archive read(SceneFile::Mode::Read, serialized);
+        SceneFile::Visit(read, restored);
+        XMFLOAT4X4 restoredMatrix;
+        XMFLOAT4X4 expectedMatrix;
+        XMStoreFloat4x4(&restoredMatrix, TransformMath::World(restored));
+        XMStoreFloat4x4(&expectedMatrix, sheared);
+        check(std::memcmp(&restoredMatrix, &expectedMatrix, sizeof(expectedMatrix)) == 0, "affine scene serialization");
+        m_UndoStack.clear();
+        m_RedoStack.clear();
+        m_PendingUndo.clear();
+        m_HasPendingUndo = false;
+        auto affineEntity = World::CreateEntity().Add<TransformComponent>().Add<NameComponent>();
+        affineEntity.Get<TransformComponent>() = affine;
+        SelectEntity(affineEntity.GetID());
+        auto movedAffine = affine;
+        movedAffine.Position.x += 3;
+        ApplySelectionTransform(affine, movedAffine);
+        FinalizeUndoCaptureIfIdle(true);
+        const auto& movedMatrix = affineEntity.Get<TransformComponent>().WorldMatrix;
+        bool shapePreserved = true;
+        for (int row = 0; row < 3; ++row)
+        {
+            for (int column = 0; column < 3; ++column)
+            {
+                shapePreserved &= std::abs(movedMatrix.m[row][column] - expectedMatrix.m[row][column]) < 0.0001f;
+            }
+        }
+        check(shapePreserved && std::abs(movedMatrix._41 - 3) < 0.0001f, "affine property translation preserves shape");
+        auto parent = World::CreateEntity().Add<TransformComponent>().Add<NameComponent>();
+        auto child = World::CreateEntity().Add<TransformComponent>().Add<NameComponent>();
+        parent.SetName("Prefab validation root");
+        child.SetName("Prefab validation child");
+        parent.Get<TransformComponent>().Position.x = 1;
+        child.Get<TransformComponent>().Position.x = 3;
+        const EntityID root = parent.GetID();
+        const EntityID childId = child.GetID();
+        check(SceneHierarchy::SetParent(childId, root), "parent assignment");
+        check(!SceneHierarchy::SetParent(root, childId), "cycle rejection");
+        SelectEntity(root);
+        SelectEntity(childId, true);
+        const auto before = child.Get<TransformComponent>();
+        auto after = before;
+        after.Position.x += 5;
+        ApplySelectionTransform(before, after);
+        FinalizeUndoCaptureIfIdle(true);
+        check(std::abs(position(root) - 6) < 0.0001f && std::abs(position(childId) - 8) < 0.0001f,
+              "parent and child selection transforms once");
+        Undo();
+        check(std::abs(position(root) - 1) < 0.0001f && std::abs(position(childId) - 3) < 0.0001f, "group undo");
+        Redo();
+        check(std::abs(position(childId) - 8) < 0.0001f, "group redo");
+        DrawInspectorWindow();
+        DrawHierarchyWindow();
+        SelectEntity(root);
+        check(SavePrefabAsset(root, path), "prefab creation");
+        const XMFLOAT3 dropPosition{20, 0, 0};
+        const EntityID instance = LoadPrefabInstance(path, g_kINVALID_ENTITY, nullptr, &dropPosition);
+        check(instance != g_kINVALID_ENTITY, "prefab placement");
+        EntityID instanceChild = g_kINVALID_ENTITY;
+        for (EntityID entity : SceneHierarchy::Entities())
+        {
+            if (SceneHierarchy::Parent(entity) == instance)
+            {
+                instanceChild = entity;
+            }
+        }
+        check(instanceChild != g_kINVALID_ENTITY && std::abs(position(instanceChild) - 22) < 0.0001f,
+              "prefab hierarchy and placement restored");
+        const XMFLOAT3 secondPosition{30, 0, 0};
+        const EntityID secondInstance = LoadPrefabInstance(path, g_kINVALID_ENTITY, nullptr, &secondPosition);
+        EntityID secondChild = g_kINVALID_ENTITY;
+        for (EntityID entity : SceneHierarchy::Entities())
+        {
+            if (SceneHierarchy::Parent(entity) == secondInstance)
+            {
+                secondChild = entity;
+            }
+        }
+        check(secondChild != g_kINVALID_ENTITY, "second prefab instance");
+        child.Get<TransformComponent>().Position.x += 2;
+        child.Get<TransformComponent>().IsDirty = true;
+        check(SavePrefabAsset(root, path), "apply prefab");
+        check(Registry::IsAlive(instanceChild) && SceneHierarchy::Parent(instanceChild) == instance &&
+                  std::abs(position(instance) - 20) < 0.0001f && std::abs(position(instanceChild) - 24) < 0.0001f,
+              "apply keeps instance IDs and placement");
+        Undo();
+        check(std::abs(position(instanceChild) - 22) < 0.0001f && std::abs(position(secondChild) - 32) < 0.0001f,
+              "prefab apply undo groups all instances");
+        Redo();
+        check(std::abs(position(instanceChild) - 24) < 0.0001f && std::abs(position(secondChild) - 34) < 0.0001f,
+              "prefab apply redo groups all instances");
+        ComponentManager::GetComponentUnchecked<TransformComponent>(instanceChild).Position.x = 99;
+        ComponentManager::GetComponentUnchecked<TransformComponent>(instanceChild).IsDirty = true;
+        check(LoadPrefabInstance(path, instance) == instance && std::abs(position(instanceChild) - 24) < 0.0001f,
+              "revert prefab instance");
+        DrawInspectorWindow();
+        DrawHierarchyWindow();
+        SelectEntity(root);
+        SelectEntity(instance, true);
+        DeleteSelectedEntity();
+        check(!Registry::IsAlive(root) && !Registry::IsAlive(childId) && !Registry::IsAlive(instanceChild),
+              "batch deletion includes children");
+        Undo();
+        check(Registry::IsAlive(root) && Registry::IsAlive(childId) && Registry::IsAlive(instanceChild) &&
+                  SceneHierarchy::Parent(childId) == root && GetPrefabRoot(instanceChild) == instance,
+              "deletion undo restores hierarchy and prefab links");
+    }
+    catch (const std::exception& exception)
+    {
+        ++failures;
+        WriteGraphicsLog("Editor object validation exception: %s\n", exception.what());
+    }
+    for (EntityID entity : SceneHierarchy::Entities())
+    {
+        if (!originalSet.count(entity))
+        {
+            World::DestroyEntity(Entity(entity));
+        }
+    }
+    error_code error;
+    filesystem::remove(path, error);
+    auto temporary = path;
+    temporary += L".tmp";
+    filesystem::remove(temporary, error);
+    m_SelectedEntities = previousSelection;
+    m_SelectedEntity = previousActive;
+    m_EntitySelectionAnchor = previousAnchor;
+    m_UndoStack = previousUndo;
+    m_RedoStack = previousRedo;
+    m_PendingUndo = previousPending;
+    m_HasPendingUndo = hadPending;
+    m_EditRevision = revision;
+    WriteGraphicsLog("Editor object validation failures = %d\n", failures);
 }

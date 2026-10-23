@@ -1,6 +1,7 @@
 #define SHADER_POSTPROCESS
 #define SHADER_3D
 #include "common.hlsl"
+#include "CloudMedium.hlsli"
 
 Texture2D<float4> BaseColorTexture : register(t0);
 Texture2D<float4> NormalTexture : register(t1);
@@ -113,7 +114,7 @@ float3 EvaluateAtmosphereLight(float3 viewToCamera, float sampleDensity, float3 
 
     float localVolumeStepBoost = lerp(1.0f, 0.35f / max(AtmosphereParams1.w, 0.0001f), localLight);
 
-    float cosTheta = clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f);
+    float cosTheta = clamp(dot(-singleDir, viewToCamera), -1.0f, 1.0f);
     float rayleighPhase = RayleighPhaseCommon(cosTheta);
     float miePhase = HenyeyGreensteinCommon(cosTheta, AtmosphereParams1.z);
     float phase = saturate(miePhase * 6.0f);
@@ -405,6 +406,7 @@ float3 RayMarchAtmosphereViewFixed(float3 worldPos, Texture2DArray<float> shadow
     }
 
     float legacyShadowVisibility = 1.0f;
+    float cachedCloudVisibility = 1.0f;
 
     [loop] for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
     {
@@ -446,9 +448,18 @@ float3 RayMarchAtmosphereViewFixed(float3 worldPos, Texture2DArray<float> shadow
                     shadowSampler);
             }
 
-            stepScatter += EvaluateAtmosphereLight(viewToCamera, sampleDensity, singleDir, singleAttenuation,
-                                                   singleVolume, LightColors[lightIndex],
-                                                   LightPositionTypes[lightIndex], cachedShadowVisibility[lightIndex]);
+            float visibility = cachedShadowVisibility[lightIndex];
+            if (lightIndex == CloudSunIndex())
+            {
+                if (updateShadow)
+                {
+                    cachedCloudVisibility = CloudSunVisibility(samplePos);
+                }
+                visibility *= cachedCloudVisibility;
+            }
+            stepScatter +=
+                EvaluateAtmosphereLight(viewToCamera, sampleDensity, singleDir, singleAttenuation, singleVolume,
+                                        LightColors[lightIndex], LightPositionTypes[lightIndex], visibility);
         }
 
         if (count <= 0 && (int)round(LightPositionType.w) != 3)

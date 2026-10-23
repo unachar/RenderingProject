@@ -1,8 +1,9 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "materialmanager.h"
 #include "materialopticsui.h"
 #include "proceduralio.h"
 #include "imguimanager.h"
+#include "world.h"
 #include "editorwidgets.h"
 #include "camera.h"
 #include "frameconstants.h"
@@ -29,6 +30,7 @@ using namespace EditorWidgets;
 
 void ImGuiManager::DrawInspectorWindow()
 {
+    SyncEntitySelection();
     ImGui::SetNextWindowSize(ImVec2(312.0f, 520.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("インスペクター", &m_ShowInspectorWindow))
     {
@@ -36,6 +38,48 @@ void ImGuiManager::DrawInspectorWindow()
         return;
     }
 
+    if (ImGui::Button("選択対象を変更"))
+    {
+        ImGui::OpenPopup("InspectorSelection");
+    }
+    if (ImGui::BeginPopup("InspectorSelection"))
+    {
+        if (ImGui::Button("すべて選択"))
+        {
+            FinalizeUndoCaptureIfIdle(true);
+            m_SelectedEntities.clear();
+            for (EntityID entity : World::GetView<TransformComponent>())
+            {
+                if (IsEditableEntity(entity))
+                {
+                    m_SelectedEntities.push_back(entity);
+                    m_SelectedEntity = entity;
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("選択解除"))
+        {
+            SelectEntity(g_kINVALID_ENTITY);
+        }
+        ImGui::BeginChild("SelectionList", ImVec2(280.0f, 260.0f));
+        for (EntityID entity : World::GetView<TransformComponent>())
+        {
+            if (!IsEditableEntity(entity))
+            {
+                continue;
+            }
+            ImGui::PushID(static_cast<int>(entity));
+            bool selected = IsEntitySelected(entity);
+            if (ImGui::Checkbox(GetEntityDisplayName(entity), &selected))
+            {
+                SelectEntity(entity, true);
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+        ImGui::EndPopup();
+    }
     if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity))
     {
         ImGui::SeparatorText("オブジェクト未選択");
@@ -45,20 +89,43 @@ void ImGuiManager::DrawInspectorWindow()
         return;
     }
 
+    if (m_SelectedEntities.size() > 1)
+    {
+        ImGui::Text("%zu 個のオブジェクトを選択中", m_SelectedEntities.size());
+        ImGui::TextWrapped("位置・回転・スケールは、最後に選んだオブジェクトを基準にまとめて変更します。");
+        if (ImGui::TreeNode("選択オブジェクト"))
+        {
+            for (EntityID entity : m_SelectedEntities)
+            {
+                ImGui::BulletText("%s (#%u)", GetEntityDisplayName(entity), entity);
+            }
+            ImGui::TreePop();
+        }
+    }
     if (m_RenamingEntity == m_SelectedEntity)
     {
         DrawRenameInput(m_SelectedEntity);
     }
     else
     {
+        if (GetPrefabRoot(m_SelectedEntity) != g_kINVALID_ENTITY)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, kPrefabColor);
+        }
         ImGui::TextWrapped("%s", GetEntityDisplayName(m_SelectedEntity));
+        if (GetPrefabRoot(m_SelectedEntity) != g_kINVALID_ENTITY)
+        {
+            ImGui::PopStyleColor();
+        }
         ImGui::TextDisabled("Entity #%u", m_SelectedEntity);
     }
     ImGui::Separator();
 
     if (ImGui::BeginPopupContextWindow("InspectorEntityContext", ImGuiPopupFlags_MouseButtonRight))
     {
-        if (ImGui::MenuItem("名前を変更", "F2", false, ComponentManager::HasComponent<NameComponent>(m_SelectedEntity)))
+        if (ImGui::MenuItem("名前を変更", "F2", false,
+                            m_SelectedEntities.size() == 1 &&
+                                ComponentManager::HasComponent<NameComponent>(m_SelectedEntity)))
         {
             BeginRename(m_SelectedEntity);
         }
@@ -72,29 +139,49 @@ void ImGuiManager::DrawInspectorWindow()
         ImGui::EndPopup();
     }
 
+    if (m_SelectedEntities.size() == 1 && DrawPrefabInspector())
+    {
+        ImGui::End();
+        return;
+    }
+    DrawParentSelector();
+    if (ImGui::Button("選択を削除（子も含む）"))
+    {
+        DeleteSelectedEntity();
+        ImGui::End();
+        return;
+    }
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput &&
+        !ImGui::IsAnyItemActive() && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+    {
+        DeleteSelectedEntity();
+        ImGui::End();
+        return;
+    }
     if (ComponentManager::HasComponent<TransformComponent>(m_SelectedEntity) &&
         ImGui::CollapsingHeader("トランスフォーム", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(m_SelectedEntity);
-        EntitySnapshot before = CaptureEntity(m_SelectedEntity);
+        const auto before = ComponentManager::GetComponentUnchecked<TransformComponent>(m_SelectedEntity);
+        auto transform = before;
+        ImGui::TextDisabled("ワールド座標 / 最後に選択したオブジェクトが基準");
         float rotationDeg[3] = {transform.Rotation.x * kRadToDeg, transform.Rotation.y * kRadToDeg,
                                 transform.Rotation.z * kRadToDeg};
-
-        bool changed = false;
-        changed |= DrawAxisFloat3("位置", transform.Position, 0.01f);
+        bool changed = DrawAxisFloat3("位置", transform.Position, 0.01f);
         if (DrawAxisFloat3("回転", rotationDeg, 0.1f))
         {
             transform.Rotation = {rotationDeg[0] * kDegToRad, rotationDeg[1] * kDegToRad, rotationDeg[2] * kDegToRad};
             changed = true;
         }
         changed |= DrawScaleAxisFloat3("スケール", transform.Scale, 0.01f, 0.001f, 100.0f);
-
         if (changed)
         {
-            BeginUndoCapture(m_SelectedEntity, before);
-            XMStoreFloat4x4(&transform.WorldMatrix, BuildWorldMatrix(transform));
-            transform.IsDirty = true;
+            ApplySelectionTransform(before, transform);
         }
+    }
+    if (m_SelectedEntities.size() > 1)
+    {
+        ImGui::End();
+        return;
     }
 
     if (ComponentManager::HasComponent<AABBComponent>(m_SelectedEntity) &&
@@ -2023,13 +2110,19 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
             changed |= ImGui::DragFloat("切替距離", &lod.ImpostorDistance, 0.5f, 0.0f, 100000.0f, "%.1f m");
             lod.ImpostorDistance = max(0.0f, lod.ImpostorDistance);
             int framesIndex = lod.ImpostorFrames <= 4 ? 0 : (lod.ImpostorFrames <= 8 ? 1 : 2);
-            if (ImGui::Combo("視点数", &framesIndex, "4 x 4 (軽量)\0" "8 x 8 (標準)\0" "16 x 16 (高品質)\0"))
+            if (ImGui::Combo("視点数", &framesIndex,
+                             "4 x 4 (軽量)\0"
+                             "8 x 8 (標準)\0"
+                             "16 x 16 (高品質)\0"))
             {
                 lod.ImpostorFrames = framesIndex == 0 ? 4u : (framesIndex == 1 ? 8u : 16u);
                 changed = true;
             }
             int resolutionIndex = lod.ImpostorResolution <= 512 ? 0 : (lod.ImpostorResolution <= 1024 ? 1 : 2);
-            if (ImGui::Combo("アトラス解像度", &resolutionIndex, "512 (約 2.7 MB)\0" "1024 (約 11 MB)\0" "2048 (約 43 MB)\0"))
+            if (ImGui::Combo("アトラス解像度", &resolutionIndex,
+                             "512 (約 2.7 MB)\0"
+                             "1024 (約 11 MB)\0"
+                             "2048 (約 43 MB)\0"))
             {
                 lod.ImpostorResolution = resolutionIndex == 0 ? 512u : (resolutionIndex == 1 ? 1024u : 2048u);
                 changed = true;
@@ -2038,17 +2131,17 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
             const char* stateText = "未生成（切替距離を超えると生成）";
             switch (ImpostorRenderer::QueryState(entity))
             {
-            case ImpostorRenderer::AtlasState::Pending:
-                stateText = "生成待ち";
-                break;
-            case ImpostorRenderer::AtlasState::Ready:
-                stateText = "生成済み";
-                break;
-            case ImpostorRenderer::AtlasState::Failed:
-                stateText = "生成失敗（メッシュで描画）";
-                break;
-            default:
-                break;
+                case ImpostorRenderer::AtlasState::Pending:
+                    stateText = "生成待ち";
+                    break;
+                case ImpostorRenderer::AtlasState::Ready:
+                    stateText = "生成済み";
+                    break;
+                case ImpostorRenderer::AtlasState::Failed:
+                    stateText = "生成失敗（メッシュで描画）";
+                    break;
+                default:
+                    break;
             }
             ImGui::Text("状態: %s", stateText);
             if (ImGui::Button("再ベイク"))

@@ -58,7 +58,7 @@ try {
     $env:DX12_GPU_BASED_VALIDATION = [int]$GpuValidation.IsPresent
     $env:DX12_FEATURE_SMOKE_TEST = '1'
     $env:DX12_VALIDATION_MODE = '1'
-    $env:DX12_STARTUP_SMOKE_FRAMES = '356'
+    $env:DX12_STARTUP_SMOKE_FRAMES = '364'
     $env:DX12_SUN_LIGHTING_TEST = '0'
     $env:DX12_MESHLET_STRESS_TEST = '0'
     $env:DX12_GPU_DRIVEN_STRESS_TEST = '0'

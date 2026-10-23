@@ -15,6 +15,7 @@
 #include "sun.h"
 #include "light.h"
 #include "daynightcycle.h"
+#include "advancedeffects.h"
 #include <cmath>
 
 namespace
@@ -35,6 +36,7 @@ namespace
     bool g_SawGpuTiming = false;
     UINT g_RecordedFrameIndex = 0;
     RenderCapture::TextureData g_CloudHdr;
+    RenderCapture::TextureData g_ShaftReference;
     vector<uint8_t> g_ForegroundMask;
 
     struct TimingConfiguration
@@ -61,7 +63,9 @@ namespace
     uint64_t NoiseHash()
     {
         RenderCapture::TextureData noise;
-        if (!RenderCapture::ReadTexture(CloudRenderer::GetBaseNoiseResource(), noise))
+        if (!RenderCapture::ReadTextureMip(CloudRenderer::GetBaseNoiseResource(), noise, 0,
+                                           D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
+                                               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE))
         {
             return 0;
         }
@@ -504,6 +508,34 @@ void CloudValidation::BeforeFrame(uint64_t frame)
                        transform.Position.y + (max)(direction.y * sign, 0.15f) * 100,
                        transform.Position.z + direction.z * sign * 100};
     }
+    if (frame >= 356)
+    {
+        settings = CloudSettings{};
+        settings.Enabled = true;
+        settings.WindSpeed = 0;
+        settings.CastShadows = frame < 360;
+        settings.BottomHeight = 30;
+        settings.TopHeight = 42;
+        settings.BaseScale = 0.035f;
+        settings.Coverage = 0.65f;
+        settings.Extinction = 0.45f;
+        Atmosphere::Reset();
+        auto& air = Atmosphere::GetMutableParameters();
+        air.HeightFalloff = 0.025f;
+        air.LightShaftStrength = 2.0f;
+        air.MieG = 0.65f;
+        auto& effects = AdvancedEffects::GetSettings();
+        effects.FroxelFog = true;
+        effects.FogHistoryWeight = 0;
+        effects.AutoExposure = false;
+        effects.FogScattering = 1;
+        transform.Position = {0, 3, -8};
+        DayNightCycle::GetSettings().AutomaticLighting = true;
+        DayNightCycle::SetTime(16.0f);
+        const auto direction = DayNightCycle::GetSunDirection();
+        view.Target = {transform.Position.x + direction.x * 100, transform.Position.y + 20,
+                       transform.Position.z + direction.z * 100};
+    }
     g_Configurations.push_back({static_cast<UINT>(ceilf(GraphicsDevice::GetWidth() * settings.ResolutionScale)),
                                 static_cast<UINT>(ceilf(GraphicsDevice::GetHeight() * settings.ResolutionScale)),
                                 settings.ViewSteps, settings.LightSteps});
@@ -549,6 +581,58 @@ void CloudValidation::AfterFrame(uint64_t frame)
     }
     if (frame % 4 != 3)
     {
+        return;
+    }
+    if (frame >= 356)
+    {
+        RenderCapture::TextureData scene;
+        RenderCapture::TextureData depth;
+        const bool read = RenderCapture::ReadTexture(RenderTargets::GetSceneResource(), scene) &&
+                          RenderCapture::ReadTexture(RenderTargets::GetGBufferResource(GBufferType::DEPTH), depth);
+        const bool compatible = read && scene.Format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
+                                depth.Format == DXGI_FORMAT_R32_FLOAT && scene.Width == depth.Width &&
+                                scene.Height == depth.Height;
+        Check(compatible, "read HDR sky for cloud shaft comparison");
+        if (!compatible)
+        {
+            return;
+        }
+        if (frame == 359)
+        {
+            g_ShaftReference = scene;
+        }
+        else if (g_ShaftReference.Width == scene.Width && g_ShaftReference.Height == scene.Height)
+        {
+            double skyDifference = 0;
+            UINT skyPixels = 0;
+            bool finite = true;
+            for (UINT y = 0; y < scene.Height; ++y)
+            {
+                const auto* pixels = reinterpret_cast<const uint16_t*>(scene.Bytes.data() + y * scene.RowPitch);
+                const auto* reference =
+                    reinterpret_cast<const uint16_t*>(g_ShaftReference.Bytes.data() + y * g_ShaftReference.RowPitch);
+                const auto* depths = reinterpret_cast<const float*>(depth.Bytes.data() + y * depth.RowPitch);
+                for (UINT x = 0; x < scene.Width; ++x)
+                {
+                    if (depths[x] > 0)
+                    {
+                        continue;
+                    }
+                    ++skyPixels;
+                    for (UINT channel = 0; channel < 3; ++channel)
+                    {
+                        const float actual = RenderCapture::HalfToFloat(pixels[x * 4 + channel]);
+                        finite &= std::isfinite(actual) && actual >= 0;
+                        skyDifference += fabs(actual - RenderCapture::HalfToFloat(reference[x * 4 + channel]));
+                    }
+                }
+            }
+            Check(finite && skyPixels > 0 && skyDifference / (std::max)(skyPixels, 1u) > 0.00001,
+                  "cloud shadows modulate visible shafts against the physical sky");
+        }
+        Check(RenderCapture::SaveScenePng(frame == 359 ? L"bin/validation/cloud-shafts-shadowed.png"
+                                                       : L"bin/validation/cloud-shafts-unshadowed.png"),
+              "capture cloud shaft comparison");
         return;
     }
     RenderCapture::TextureData cloud;
@@ -797,7 +881,7 @@ void CloudValidation::AfterFrame(uint64_t frame)
 
 bool CloudValidation::Finish()
 {
-    Check(g_LastFrame >= 355, "complete cloud validation including four-layer clouds");
+    Check(g_LastFrame >= 363, "complete cloud validation including cloud shafts");
     Check(g_SawGpuTiming, "cloud GPU timestamps available");
     const char* qualityNames[] = {"Low", "Medium", "High"};
     array<double, 3> medians{};

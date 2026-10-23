@@ -16,6 +16,9 @@ class CloudRenderer
                                 float deltaTime);
     static void BindLighting(ID3D12GraphicsCommandList* commands, UINT frameIndex);
     static void BindForwardLighting(ID3D12GraphicsCommandList* commands, UINT frameIndex);
+    // フォグ固有のヒープへノイズ SRV をコピーし、同じフレームの雲定数を返す。
+    static D3D12_GPU_VIRTUAL_ADDRESS CopyFogResources(ID3D12Device* device, D3D12_CPU_DESCRIPTOR_HANDLE destination,
+                                                      UINT frameIndex);
     static void Render(ID3D12GraphicsCommandList* commands, UINT frameIndex, UINT width, UINT height,
                        D3D12_GPU_DESCRIPTOR_HANDLE depth, D3D12_GPU_DESCRIPTOR_HANDLE material,
                        D3D12_GPU_VIRTUAL_ADDRESS cameraConstants, D3D12_GPU_VIRTUAL_ADDRESS lightConstants,

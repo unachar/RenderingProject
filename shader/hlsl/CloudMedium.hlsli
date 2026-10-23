@@ -224,6 +224,7 @@ float CloudSolarTransmittance(float3 position, float3 towardSun)
     return transmission * 0.25;
 }
 
+#ifndef CLOUD_MEDIUM_NO_SCENE_LIGHTS
 // 空と同じ Sun エンティティについて、CPU が Index+1 を書き込む。
 int CloudSunIndex()
 {
@@ -244,5 +245,6 @@ float CloudSunVisibility(float3 position)
     }
     return CloudSolarTransmittance(position, towardSun);
 }
+#endif
 
 #endif

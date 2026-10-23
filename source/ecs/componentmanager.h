@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "ecs.h"
 #include "materialasset.h"
 #include "rendertypes.h"
@@ -25,6 +25,15 @@ struct TransformComponent
     XMFLOAT3 Rotation = {0.0f, 0.0f, 0.0f};
     XMFLOAT4X4 WorldMatrix{};
     XMFLOAT4X4 PreviousWorldMatrix{};
+    // Position/Rotation/Scale remain world-space for rendering, physics and existing tools.
+    EntityID Parent = g_kINVALID_ENTITY;
+    XMFLOAT4X4 ParentWorldMatrix{};
+    bool HasParentWorld = false;
+    // Preserve affine child matrices when a rotated hierarchy has non-uniform scale.
+    bool HasAffineWorld = false;
+    XMFLOAT3 AffinePosition{};
+    XMFLOAT3 AffineRotation{};
+    XMFLOAT3 AffineScale{};
     bool HasPreviousWorld = false;
     bool IsDirty = true;
 };
@@ -348,6 +357,9 @@ struct PostProcessComponent
 struct NameComponent
 {
     string Name = "EntityName";
+    string PrefabAssetPath;
+    uint32_t PrefabLocalId = g_kINVALID_ENTITY;
+    bool IsPrefabRoot = false;
 };
 
 struct MoveComponent

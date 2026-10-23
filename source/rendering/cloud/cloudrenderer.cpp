@@ -20,6 +20,8 @@ namespace
     constexpr UINT kDetailUav = kDescriptorStart + 3;
     constexpr UINT kFrameSrv = kDescriptorStart + 4;
     constexpr D3D12_RESOURCE_STATES kRead = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    constexpr D3D12_RESOURCE_STATES kNoiseRead =
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 
     struct LayerConstants
     {
@@ -191,7 +193,7 @@ namespace
         const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         const auto desc = CD3DX12_RESOURCE_DESC::Tex3D(format, extent, extent, static_cast<UINT16>(extent), 1,
                                                        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, kRead, nullptr,
+        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, kNoiseRead, nullptr,
                                                      IID_PPV_ARGS(&resource))))
         {
             return false;
@@ -259,14 +261,14 @@ namespace
     void DispatchNoise(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, ID3D12PipelineState* pso,
                        UINT uavIndex, UINT extent)
     {
-        Transition(commands, resource, kRead, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        Transition(commands, resource, kNoiseRead, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         commands->SetPipelineState(pso);
         commands->SetComputeRootSignature(g_NoiseRoot.Get());
         commands->SetComputeRootDescriptorTable(0, Gpu(uavIndex));
         const UINT constants[] = {g_Settings.Seed, extent};
         commands->SetComputeRoot32BitConstants(1, 2, constants, 0);
         commands->Dispatch((extent + 3) / 4, (extent + 3) / 4, (extent + 3) / 4);
-        Transition(commands, resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kRead);
+        Transition(commands, resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kNoiseRead);
     }
 
     bool UploadCustomNoise(ID3D12GraphicsCommandList* commands, UINT frame)
@@ -309,9 +311,9 @@ namespace
         data.pData = texels.data();
         data.RowPitch = LONG_PTR(kBaseExtent) * bytesPerTexel;
         data.SlicePitch = data.RowPitch * kBaseExtent;
-        Transition(commands, g_BaseNoise.Get(), kRead, D3D12_RESOURCE_STATE_COPY_DEST);
+        Transition(commands, g_BaseNoise.Get(), kNoiseRead, D3D12_RESOURCE_STATE_COPY_DEST);
         const bool copied = UpdateSubresources(commands, g_BaseNoise.Get(), upload.Get(), 0, 0, 1, &data) != 0;
-        Transition(commands, g_BaseNoise.Get(), D3D12_RESOURCE_STATE_COPY_DEST, kRead);
+        Transition(commands, g_BaseNoise.Get(), D3D12_RESOURCE_STATE_COPY_DEST, kNoiseRead);
         return copied;
     }
 } // 名前空間
@@ -566,6 +568,25 @@ void CloudRenderer::PrepareLighting(ID3D12GraphicsCommandList* commands, UINT fr
     constants.Trace = {g_Settings.MaxTraceDistance, g_Settings.NoiseSlice, static_cast<float>(g_Settings.Enabled),
                        static_cast<float>(g_Settings.CastShadows)};
     memcpy(g_Mapped + index * kConstantStride, &constants, sizeof(constants));
+}
+
+D3D12_GPU_VIRTUAL_ADDRESS CloudRenderer::CopyFogResources(ID3D12Device* device, D3D12_CPU_DESCRIPTOR_HANDLE destination,
+                                                          UINT frameIndex)
+{
+    const UINT increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    for (UINT index = 0; index < 2; ++index)
+    {
+        ID3D12Resource* noise = index == 0 ? g_BaseNoise.Get() : g_DetailNoise.Get();
+        D3D12_SHADER_RESOURCE_VIEW_DESC view{};
+        view.Format = noise ? noise->GetDesc().Format : DXGI_FORMAT_R16_FLOAT;
+        view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+        view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        view.Texture3D.MipLevels = 1;
+        // シェーダー可視ヒープは記述子コピーのコピー元にできないため、SRV を直接作る。
+        device->CreateShaderResourceView(noise, &view, destination);
+        destination.ptr += increment;
+    }
+    return g_Constants ? g_Constants->GetGPUVirtualAddress() + (frameIndex % kFrames) * kConstantStride : 0;
 }
 
 void CloudRenderer::BindLighting(ID3D12GraphicsCommandList* commands, UINT frameIndex)

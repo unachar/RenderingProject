@@ -26,6 +26,8 @@
 #include "renderquality.h"
 #include "componentmanager.h"
 #include "light.h"
+#include "sun.h"
+#include "cloud/cloudrenderer.h"
 #include "megalights.h"
 #include "lightingresources.h"
 #include "texturemanager.h"
@@ -119,14 +121,15 @@ class AdvancedEffects final
             revision = 0;
         }
 
-        CD3DX12_DESCRIPTOR_RANGE ranges[5];
+        CD3DX12_DESCRIPTOR_RANGE ranges[6];
         ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kSrvCount, 0);
         ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, kUavCount, 0);
         // 5〜8：MegaLights（M6）のグリッド定数 / ライト / セル / セル内ライト（フロクセルのローカルライト）
         ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 11);
         ranges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0, 11);
         ranges[4].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, RendererState::g_kMAX_SRVS, 0, 5);
-        CD3DX12_ROOT_PARAMETER parameters[13];
+        ranges[5].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 31);
+        CD3DX12_ROOT_PARAMETER parameters[15];
         parameters[0].InitAsConstantBufferView(0);
         parameters[1].InitAsDescriptorTable(1, &ranges[0]);
         parameters[2].InitAsDescriptorTable(1, &ranges[1]);
@@ -140,12 +143,16 @@ class AdvancedEffects final
         parameters[10].InitAsDescriptorTable(1, &ranges[3]);
         parameters[11].InitAsConstants(4, 2);
         parameters[12].InitAsDescriptorTable(1, &ranges[4]);
-        CD3DX12_STATIC_SAMPLER_DESC samplers[2] = {
+        parameters[13].InitAsDescriptorTable(1, &ranges[5]);
+        parameters[14].InitAsConstantBufferView(9);
+        CD3DX12_STATIC_SAMPLER_DESC samplers[3] = {
             CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
                                         D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP),
             CD3DX12_STATIC_SAMPLER_DESC(1, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
-                                        D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP)};
-        const CD3DX12_ROOT_SIGNATURE_DESC root(_countof(parameters), parameters, 2, samplers);
+                                        D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP),
+            CD3DX12_STATIC_SAMPLER_DESC(3, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_WRAP,
+                                        D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP)};
+        const CD3DX12_ROOT_SIGNATURE_DESC root(_countof(parameters), parameters, _countof(samplers), samplers);
         ComPtr<ID3DBlob> blob, errors;
         if (FAILED(D3D12SerializeRootSignature(&root, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)) ||
             FAILED(
@@ -371,6 +378,12 @@ class AdvancedEffects final
         s_IesDescriptorRevisions[slot] = TextureManager::WriteIesProfileViews(
             Cpu(slot * kDescriptorsPerFrame + kIesOffset), s_IesDescriptorRevisions[slot]);
         commands->SetComputeRootDescriptorTable(12, Gpu(slot * kDescriptorsPerFrame + kIesOffset));
+        const auto cloudConstants = CloudRenderer::CopyFogResources(
+            s_Device.Get(), Cpu(slot * kDescriptorsPerFrame + kCloudOffset), frameIndex);
+        commands->SetComputeRootDescriptorTable(13, Gpu(slot * kDescriptorsPerFrame + kCloudOffset));
+        commands->SetComputeRootConstantBufferView(
+            14, cloudConstants ? cloudConstants
+                               : s_Constants->GetGPUVirtualAddress() + slot * kConstantStride + kDisabledCloudOffset);
         const D3D12_GPU_VIRTUAL_ADDRESS lights = s_Lights->GetGPUVirtualAddress() + slot * kLightStride;
         const D3D12_GPU_VIRTUAL_ADDRESS tlas = Raytracing::GetSceneAddress();
         // FogMieColor.w（影を利用可能）が立っている場合だけ TLAS スロットを読む。
@@ -508,7 +521,8 @@ class AdvancedEffects final
     static constexpr UINT kHalfSrvOffset = kSrvCount + kUavCount, kHalfUavOffset = kHalfSrvOffset + 2;
     static constexpr UINT kIesOffset = kHalfUavOffset + 2;
     inline static uint64_t s_IesDescriptorRevisions[kFrames]{};
-    static constexpr UINT kDescriptorsPerFrame = kIesOffset + RendererState::g_kMAX_SRVS;
+    static constexpr UINT kCloudOffset = kIesOffset + RendererState::g_kMAX_SRVS;
+    static constexpr UINT kDescriptorsPerFrame = kCloudOffset + 2;
     static constexpr UINT kMaxLights = 32;
     static constexpr UINT kMaxLocalFog = 16;
 
@@ -529,7 +543,8 @@ class AdvancedEffects final
         XMUINT4 MegaLightsFog; // x: MegaLights のグリッドを使う, y: フロクセルあたりのサンプル数
     };
 
-    static constexpr UINT kConstantStride = (sizeof(Constants) + 255u) & ~255u;
+    static constexpr UINT kDisabledCloudOffset = (sizeof(Constants) + 255u) & ~255u;
+    static constexpr UINT kConstantStride = kDisabledCloudOffset + 256;
     static constexpr UINT kLightStride = (sizeof(FogLight) * kMaxLights + 255u) & ~255u;
 
     static inline Settings s_Settings{};
@@ -1139,6 +1154,7 @@ class AdvancedEffects final
     static UINT UploadLights(UINT slot)
     {
         FogLight lights[kMaxLights]{};
+        const auto suns = World::GetView<SunComponent, LightComponent>();
         UINT count = 0;
         for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
         {
@@ -1165,7 +1181,9 @@ class AdvancedEffects final
             entry.Color = {light.Color.x * light.Intensity, light.Color.y * light.Intensity,
                            light.Color.z * light.Intensity, (std::max)(light.VolumeDensity, 0.0f)};
             entry.Extras = {cosf(XMConvertToRadians(light.InnerAngle)), cosf(XMConvertToRadians(light.OuterAngle)),
-                            static_cast<float>(light.CastShadow), 0.0f};
+                            static_cast<float>(light.CastShadow),
+                            !suns.empty() && entity == *suns.begin() && light.Type == LightType::Directional ? 1.0f
+                                                                                                             : 0.0f};
             entry.IesProfile = LightingResources::GetIesProfileParameters(light);
         }
         void* mapped = nullptr;
@@ -1254,6 +1272,10 @@ class AdvancedEffects final
             {
                 fogFlags |= 2u;
             }
+            if (CloudRenderer::IsAvailable() && CloudRenderer::GetSettings().Enabled)
+            {
+                fogFlags |= 4u;
+            }
         }
         constants.Features = {fogFlags, exposure ? 1u : 0u, motionBlur ? 1u : 0u, dof ? 1u : 0u};
         // w = 1 の場合、ExposureAdapt は保存状態を無視する（未初期化バッファ、再有効化）。
@@ -1263,6 +1285,7 @@ class AdvancedEffects final
         if (SUCCEEDED(s_Constants->Map(0, &noRead, &mapped)))
         {
             memcpy(static_cast<BYTE*>(mapped) + slot * kConstantStride, &constants, sizeof(constants));
+            memset(static_cast<BYTE*>(mapped) + slot * kConstantStride + kDisabledCloudOffset, 0, 256);
             s_Constants->Unmap(0, nullptr);
         }
     }
