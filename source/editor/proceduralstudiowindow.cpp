@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "proceduralstudiowindow.h"
 #include "proceduralstudio.h"
+#include "proceduraltexturegpu.h"
 #include "proceduralio.h"
 #include "proceduralmodelexport.h"
 #include "editordescriptors.h"
@@ -134,6 +135,29 @@ namespace ProcStudioEditorDetail
             commands->ResourceBarrier(1, &after);
             Fences[slot] = GraphicsDevice::GetPendingSubmissionFence();
             ++Next;
+            return true;
+        }
+
+        bool CopyGpuPixels(ID3D12Resource* packed)
+        {
+            if (!packed || !Ensure())
+            {
+                return false;
+            }
+            auto* commands = GraphicsDevice::GetCommandList();
+            const auto before = CD3DX12_RESOURCE_BARRIER::Transition(
+                Texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+            commands->ResourceBarrier(1, &before);
+            D3D12_TEXTURE_COPY_LOCATION source{};
+            source.pResource = packed;
+            source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            source.PlacedFootprint.Footprint = {DXGI_FORMAT_R8G8B8A8_UNORM, kPreviewSize, kPreviewSize, 1,
+                                                kPreviewSize * 4};
+            const CD3DX12_TEXTURE_COPY_LOCATION target(Texture.Get(), 0);
+            commands->CopyTextureRegion(&target, 0, 0, 0, &source, nullptr);
+            const auto after = CD3DX12_RESOURCE_BARRIER::Transition(Texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+                                                                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            commands->ResourceBarrier(1, &after);
             return true;
         }
 
@@ -607,6 +631,15 @@ namespace ProcStudioEditorDetail
         bool PreviewDirty = true;
         bool UploadPending = false;
         GpuPreview Gpu;
+        ProcStudio::TextureGpu TextureCompute;
+        bool GpuAttempted = false;
+        bool GpuAvailable = false;
+        bool GpuTextureValid = false;
+        bool CpuTextureValid = false;
+        bool CpuTextureCurrent = false;
+        bool ReadbackPending = false;
+        UINT64 ReadbackFence = 0;
+        string ComputeError;
         bool Initialized = false;
     };
 
@@ -991,10 +1024,30 @@ namespace ProcStudioEditorDetail
 
     void PumpJobs(State& s)
     {
+        if (!s.GpuAttempted && GraphicsDevice::GetDevice())
+        {
+            s.GpuAttempted = true;
+            s.GpuAvailable = s.TextureCompute.Initialize(GraphicsDevice::GetDevice(), s.ComputeError);
+        }
+        if (s.ReadbackPending && GraphicsDevice::GetCompletedFence() >= s.ReadbackFence)
+        {
+            s.ReadbackPending = false;
+            s.CpuTextureValid = s.TextureCompute.Readback(s.TextureImage, s.ComputeError);
+            s.CpuTextureCurrent = s.CpuTextureValid;
+            if (!s.CpuTextureValid)
+            {
+                s.GpuAvailable = false;
+                s.GpuTextureValid = false;
+                s.TextureJob.Dirty = true;
+            }
+            s.PreviewDirty = true;
+        }
         Image image;
         if (s.TextureJob.Poll(image))
         {
             s.TextureImage = std::move(image);
+            s.CpuTextureValid = true;
+            s.CpuTextureCurrent = true;
             s.PreviewDirty = true;
         }
         Mesh mesh;
@@ -1018,12 +1071,48 @@ namespace ProcStudioEditorDetail
             s.PreviewDirty = true;
         }
         // 種類ごとに実行中ジョブは最大 1 件。実行中の変更は、完了後に再実行して反映する。
-        if (NeedsTexture(s) && s.TextureJob.Dirty && !s.TextureJob.Running)
+        if (NeedsTexture(s) && s.TextureJob.Dirty && !s.TextureJob.Running && !s.ReadbackPending)
         {
             const auto params = s.Texture;
-            s.TextureJob.Start([params] {
-                return GenerateTexture(params, kTexturePreview, kTexturePreview);
-            });
+            s.GpuTextureValid = false;
+            if (s.GpuAvailable && ProcStudio::TextureGpu::Supports(params))
+            {
+                s.GpuTextureValid = s.TextureCompute.Generate(GraphicsDevice::GetCommandList(), params, kTexturePreview,
+                                                              kTexturePreview, s.ComputeError);
+                if (!s.GpuTextureValid)
+                {
+                    s.GpuAvailable = false;
+                }
+            }
+            // Keep the last completed snapshot visible while the next one is generated.
+            s.CpuTextureCurrent = false;
+            if (s.GpuTextureValid)
+            {
+                s.TextureJob.Dirty = false;
+                s.PreviewDirty = true;
+            }
+            else
+            {
+                s.TextureJob.Start([params] {
+                    return GenerateTexture(params, kTexturePreview, kTexturePreview);
+                });
+            }
+        }
+        // Software mesh previews need CPU pixels; flat previews stay on the GPU.
+        const bool cpuTextureNeeded = NeedsTexture(s) && s.View == ViewMode::Model3D;
+        if (s.GpuTextureValid && cpuTextureNeeded && !s.CpuTextureCurrent && !s.ReadbackPending)
+        {
+            if (s.TextureCompute.CopyToReadback(GraphicsDevice::GetCommandList(), s.ComputeError))
+            {
+                s.ReadbackPending = true;
+                s.ReadbackFence = GraphicsDevice::GetPendingSubmissionFence();
+            }
+            else
+            {
+                s.GpuAvailable = false;
+                s.GpuTextureValid = false;
+                s.TextureJob.Dirty = true;
+            }
         }
         if (NeedsMesh(s) && s.MeshJob.Dirty && !s.MeshJob.Running)
         {
@@ -1053,11 +1142,36 @@ namespace ProcStudioEditorDetail
 
     void RenderPreview(State& s)
     {
+        // Drain finished software jobs even while the GPU flat view is active.
         vector<uint32_t> pixels;
         if (s.PreviewJob.Poll(pixels) && s.PreviewCategory == s.Mode && s.PreviewView == s.View)
         {
             s.Pixels = std::move(pixels);
             s.UploadPending = true;
+        }
+        if (s.Mode == Category::Texture && s.View == ViewMode::Flat2D && s.GpuTextureValid)
+        {
+            if (s.PreviewDirty)
+            {
+                auto* packed =
+                    s.TextureCompute.Preview(GraphicsDevice::GetCommandList(), kPreviewSize, s.Tiles, s.ComputeError);
+                if (packed && s.Gpu.CopyGpuPixels(packed))
+                {
+                    s.PreviewDirty = false;
+                    s.UploadPending = false;
+                }
+                else
+                {
+                    s.GpuAvailable = false;
+                    s.GpuTextureValid = false;
+                    s.TextureJob.Dirty = true;
+                }
+            }
+            return;
+        }
+        if (NeedsTexture(s) && !s.CpuTextureValid && s.View != ViewMode::VolumeSlice)
+        {
+            return;
         }
         if (s.PreviewDirty && !s.PreviewJob.Running)
         {
@@ -1169,11 +1283,18 @@ namespace ProcStudioEditorDetail
         const auto encoding = params.Output == TextureOutput::Color    ? ProceduralIO::Encoding::Color
                               : params.Output == TextureOutput::Height ? ProceduralIO::Encoding::Height
                                                                        : ProceduralIO::Encoding::Linear;
+        const ComPtr<ID3D12Device> device = GraphicsDevice::GetDevice();
+        const bool useGpu = s.GpuAvailable && ProcStudio::TextureGpu::Supports(params);
         StartSave(
             s,
-            [params, size, encoding, path] {
+            [params, size, encoding, path, device, useGpu] {
                 string error;
-                const auto image = GenerateTexture(params, size, size);
+                Image image;
+                if (!useGpu || !ProcStudio::GenerateTextureGpu(device.Get(), params, size, size, image, error))
+                {
+                    image = GenerateTexture(params, size, size);
+                }
+                error.clear();
                 ProceduralIO::SaveImageFile(path, image, encoding, error);
                 return error;
             },
@@ -1412,8 +1533,16 @@ namespace ProcStudioEditorDetail
             ImGui::TextDisabled("ドラッグで回転 / ホイールでズーム   頂点 %zu  三角形 %zu", mesh.Positions.size(),
                                 mesh.Indices.size() / 3);
         }
-        const bool busy = s.TextureJob.Running || s.MeshJob.Running || s.SolidJob.Running || s.CloudSliceJob.Running ||
-                          s.PreviewJob.Running;
+        if (NeedsTexture(s))
+        {
+            ImGui::TextDisabled(s.GpuTextureValid ? "テクスチャ生成: GPU" : "テクスチャ生成: CPU");
+            if (!s.GpuAvailable && !s.ComputeError.empty() && ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("GPU を利用できないため CPU で生成します\n%s", s.ComputeError.c_str());
+            }
+        }
+        const bool busy = s.ReadbackPending || s.TextureJob.Running || s.MeshJob.Running || s.SolidJob.Running ||
+                          s.CloudSliceJob.Running || s.PreviewJob.Running;
         if (busy)
         {
             ImGui::SameLine();
@@ -1711,6 +1840,13 @@ namespace ProcStudioEditorDetail
         {
             s.CloudTask.wait();
         }
+        GraphicsDevice::WaitForGpuIdle();
+        s.TextureCompute.Release();
+        s.GpuAttempted = false;
+        s.GpuAvailable = false;
+        s.GpuTextureValid = false;
+        s.ReadbackPending = false;
+        s.TextureJob.Dirty = true;
         s.Gpu.Release();
     }
 } // 名前空間 ProcStudioEditorDetail の終わり。
