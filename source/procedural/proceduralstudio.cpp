@@ -362,9 +362,9 @@ namespace ProcStudio
 
     const char* TextureKindName(TextureKind kind)
     {
-        static const char* names[] = {"フラクタルノイズ", "大理石 (Marble)",  "木目 (Wood)", "御影石 (Granite)",
-                                      "ボロノイ",         "レンガ",           "チェッカー",  "フラクタル水面",
-                                      "フラクタル雲",     "マンデルブロ集合", "ジュリア集合"};
+        static const char* names[] = {"フラクタルノイズ", "大理石 (Marble)",  "木目 (Wood)",  "御影石 (Granite)",
+                                      "ボロノイ",         "レンガ",           "チェッカー",   "フラクタル水面",
+                                      "フラクタル雲",     "マンデルブロ集合", "ジュリア集合", "幾何学模様"};
         const int index = std::clamp(static_cast<int>(kind), 0, static_cast<int>(TextureKind::Count) - 1);
         return names[index];
     }
@@ -377,6 +377,55 @@ namespace ProcStudio
 
     namespace
     {
+        float GeometricMask(const TextureParams& params, float x, float y)
+        {
+            const float cellX = x * std::clamp(params.RepeatX, 1, 128);
+            const float cellY = y * std::clamp(params.RepeatY, 1, 128);
+            const float localX = cellX - std::floor(cellX) - 0.5f;
+            const float localY = cellY - std::floor(cellY) - 0.5f;
+            const float size = std::clamp(params.PatternSize, 0.05f, 0.95f);
+            const float softness = std::clamp(params.PatternSoftness, 0.001f, 0.15f);
+            float distance = 0;
+            switch (params.Pattern)
+            {
+                case GeometricPattern::Stripes:
+                    distance = std::abs(localX) - size * 0.5f;
+                    break;
+                case GeometricPattern::Grid:
+                    distance = (std::min)(0.5f - std::abs(localX), 0.5f - std::abs(localY)) - size * 0.5f;
+                    break;
+                case GeometricPattern::Dots:
+                    distance = std::sqrt(localX * localX + localY * localY) - size * 0.5f;
+                    break;
+                case GeometricPattern::Diamonds:
+                    distance = (std::abs(localX) + std::abs(localY) - size * 0.5f) / std::sqrt(2.0f);
+                    break;
+                case GeometricPattern::Hexagons:
+                    distance = (std::max)(std::abs(localX) * 0.8660254f + std::abs(localY) * 0.5f, std::abs(localY)) -
+                               size * 0.4330127f;
+                    break;
+                case GeometricPattern::Triangles:
+                    // 大きい三角形のぼかしはセルを越えるため、隣接セルも評価して継ぎ目をなくす。
+                    distance = 1;
+                    for (int offsetY = -1; offsetY <= 1; ++offsetY)
+                    {
+                        for (int offsetX = -1; offsetX <= 1; ++offsetX)
+                        {
+                            const float triangleX = localX + offsetX;
+                            const float triangleY = localY + offsetY;
+                            const float triangleDistance =
+                                (std::max)(std::abs(triangleX) * 0.8660254f + triangleY * 0.5f, -triangleY) -
+                                size * 0.25f;
+                            distance = (std::min)(distance, triangleDistance);
+                        }
+                    }
+                    break;
+                default:
+                    return 0;
+            }
+            return 1 - Smooth(-softness * 0.5f, softness * 0.5f, distance);
+        }
+
         float Escape(const TextureParams& p, float u, float v, bool julia)
         {
             const float scale = 3.0f / (std::max)(p.Zoom, 1e-4f);
@@ -427,6 +476,9 @@ namespace ProcStudio
         float value = 0;
         switch (p.Kind)
         {
+            case TextureKind::Geometric:
+                value = GeometricMask(p, x, y);
+                break;
             case TextureKind::Marble: {
                 const float n = FractalNoise(p.Noise, x, y, z, tile);
                 // 縞の周波数を整数にし、タイル化したパターンの周期性を保つ。
@@ -518,6 +570,8 @@ namespace ProcStudio
         const float v = TextureScalar(p, x, y, z, solid);
         switch (p.Kind)
         {
+            case TextureKind::Geometric:
+                return Mix(p.ColorA, p.ColorB, v);
             case TextureKind::Brick:
                 // 目地には ColorB、レンガには ColorC を使い、レンガごとに陰影を変える。
                 return Mix3(ToF3(p.ColorB), Mul(ToF3(p.ColorC), 0.6f + 0.6f * v), Saturate(v * 4));

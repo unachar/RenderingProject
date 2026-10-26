@@ -94,6 +94,7 @@ namespace ProcStudio
         FractalCloud,
         Mandelbrot,
         Julia,
+        Geometric,
         Count
     };
     enum class TextureOutput
@@ -101,6 +102,17 @@ namespace ProcStudio
         Color,
         Height,
         Normal,
+        Count
+    };
+
+    enum class GeometricPattern
+    {
+        Stripes,
+        Grid,
+        Dots,
+        Diamonds,
+        Hexagons,
+        Triangles,
         Count
     };
 
@@ -122,6 +134,12 @@ namespace ProcStudio
         int BricksX = 4;
         int BricksY = 8;
         float Mortar = 0.06f;
+        // 幾何学模様。サイズと境界の幅は、各セルに対する比率。
+        GeometricPattern Pattern = GeometricPattern::Stripes;
+        int RepeatX = 4;
+        int RepeatY = 4;
+        float PatternSize = 0.5f;
+        float PatternSoftness = 0.02f;
         // 水。
         float Time = 0.0f;
         float Choppiness = 0.6f;

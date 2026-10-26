@@ -700,13 +700,35 @@ namespace ProcStudioEditorDetail
             ImGui::EndDisabled();
         }
         const bool escape = t.Kind == TextureKind::Mandelbrot || t.Kind == TextureKind::Julia;
-        if (!escape && t.Kind != TextureKind::Checker && ImGui::TreeNodeEx("ノイズ", ImGuiTreeNodeFlags_DefaultOpen))
+        const bool geometric = t.Kind == TextureKind::Geometric;
+        if (!escape && !geometric && t.Kind != TextureKind::Checker &&
+            ImGui::TreeNodeEx("ノイズ", ImGuiTreeNodeFlags_DefaultOpen))
         {
             changed |= NoiseWidgets(t.Noise);
             ImGui::TreePop();
         }
         switch (t.Kind)
         {
+            case TextureKind::Geometric: {
+                int pattern = static_cast<int>(t.Pattern);
+                if (ImGui::Combo("模様", &pattern, "縞\0格子\0水玉\0ひし形\0六角形\0三角形\0"))
+                {
+                    t.Pattern = static_cast<ProcStudio::GeometricPattern>(pattern);
+                    changed = true;
+                }
+                changed |= ImGui::SliderInt("横の繰り返し数", &t.RepeatX, 1, 64, "%d", ImGuiSliderFlags_AlwaysClamp);
+                if (t.Pattern != ProcStudio::GeometricPattern::Stripes)
+                {
+                    changed |=
+                        ImGui::SliderInt("縦の繰り返し数", &t.RepeatY, 1, 64, "%d", ImGuiSliderFlags_AlwaysClamp);
+                }
+                changed |= ImGui::SliderFloat("太さ / 大きさ", &t.PatternSize, 0.05f, 0.95f, "%.2f",
+                                              ImGuiSliderFlags_AlwaysClamp);
+                changed |= ImGui::SliderFloat("境界の柔らかさ", &t.PatternSoftness, 0.001f, 0.15f, "%.3f",
+                                              ImGuiSliderFlags_AlwaysClamp);
+                ImGui::TextWrapped("縦横の繰り返し数を揃えると、正方形の画像では模様の縦横比が揃います。");
+                break;
+            }
             case TextureKind::Marble:
             case TextureKind::Wood:
                 changed |= ImGui::SliderFloat("乱流", &t.Turbulence, 0.0f, 12.0f);
@@ -752,12 +774,20 @@ namespace ProcStudioEditorDetail
             changed |= ImGui::SliderFloat("バイアス", &t.Bias, -0.5f, 0.5f);
             if (ImGui::TreeNode("カラー"))
             {
-                changed |= ImGui::ColorEdit3(t.Kind == TextureKind::Brick ? "未使用" : "カラー A (低)", t.ColorA.data(),
-                                             ImGuiColorEditFlags_Float);
-                changed |= ImGui::ColorEdit3(t.Kind == TextureKind::Brick ? "目地" : "カラー B (中)", t.ColorB.data(),
-                                             ImGuiColorEditFlags_Float);
-                changed |= ImGui::ColorEdit3(t.Kind == TextureKind::Brick ? "レンガ" : "カラー C (高)", t.ColorC.data(),
-                                             ImGuiColorEditFlags_Float);
+                const char* colorALabel = t.Kind == TextureKind::Brick ? "未使用" : "カラー A (低)";
+                const char* colorBLabel = t.Kind == TextureKind::Brick ? "目地" : "カラー B (中)";
+                if (geometric)
+                {
+                    colorALabel = "背景色";
+                    colorBLabel = "模様の色";
+                }
+                changed |= ImGui::ColorEdit3(colorALabel, t.ColorA.data(), ImGuiColorEditFlags_Float);
+                changed |= ImGui::ColorEdit3(colorBLabel, t.ColorB.data(), ImGuiColorEditFlags_Float);
+                if (!geometric)
+                {
+                    changed |= ImGui::ColorEdit3(t.Kind == TextureKind::Brick ? "レンガ" : "カラー C (高)",
+                                                 t.ColorC.data(), ImGuiColorEditFlags_Float);
+                }
                 ImGui::TreePop();
             }
         }
