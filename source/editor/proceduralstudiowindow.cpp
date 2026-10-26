@@ -668,13 +668,18 @@ namespace ProcStudioEditorDetail
     {
         bool changed = false;
         int basis = static_cast<int>(n.BasisType);
-        if (ImGui::Combo("基底ノイズ", &basis, "Perlin\0Value\0Worley (セル)\0Cell Edge (F2-F1)\0"))
+        if (ImGui::Combo("基底ノイズ", &basis, "Perlin\0Value\0Worley (F1)\0Cell Edge (F2-F1)\0"
+                         "White\0Simplex\0Voronoi (セル ID)\0Cell (格子 ID)\0Gabor\0"
+                         "Wavelet (Compact)\0Curl (Z 成分)\0Value-Gradient\0Sparse Convolution\0"
+                         "Spot\0Local Random Phase\0Chevron\0Lattice-Free\0Phasor\0"
+                         "Anisotropic Gabor\0Harmonic\0Flow\0Ridged (単一)\0"))
         {
             n.BasisType = static_cast<Basis>(basis);
             changed = true;
         }
         int fractal = static_cast<int>(n.Fractal);
-        if (ImGui::Combo("フラクタル", &fractal, "fBm\0Ridged\0Billow\0Turbulence\0Hybrid Multifractal\0Domain Warp\0なし\0"))
+        if (ImGui::Combo("フラクタル", &fractal, "fBm\0Ridged Multifractal\0Billow\0Turbulence\0Hybrid Multifractal\0Domain Warp\0なし\0"
+                         "Multifractal\0Heterogeneous Multifractal\0"))
         {
             n.Fractal = static_cast<FractalType>(fractal);
             changed = true;
@@ -690,9 +695,26 @@ namespace ProcStudioEditorDetail
         {
             changed |= ImGui::SliderFloat("Warp 強度", &n.WarpStrength, 0.0f, 4.0f);
         }
-        if (n.Fractal == FractalType::Ridged || n.Fractal == FractalType::HybridMultifractal)
+        if (n.Fractal == FractalType::Ridged || n.Fractal == FractalType::HybridMultifractal ||
+            n.Fractal == FractalType::HeterogeneousMultifractal)
         {
             changed |= ImGui::SliderFloat("Ridge オフセット", &n.RidgeOffset, 0.5f, 1.5f);
+        }
+        if (n.BasisType == Basis::Gabor || n.BasisType == Basis::AnisotropicGabor ||
+            n.BasisType == Basis::Phasor || n.BasisType == Basis::LocalRandom)
+        {
+            changed |= ImGui::SliderFloat("カーネル周波数", &n.KernelFrequency, 0.25f, 8.0f);
+        }
+        if (n.BasisType == Basis::AnisotropicGabor || n.BasisType == Basis::Phasor)
+        {
+            changed |= ImGui::SliderAngle("方向", &n.Direction);
+            changed |= ImGui::SliderFloat("異方性", &n.Anisotropy, 1.0f, 8.0f);
+        }
+        if (n.BasisType == Basis::Gabor || n.BasisType == Basis::AnisotropicGabor ||
+            n.BasisType == Basis::Phasor || n.BasisType == Basis::LocalRandom ||
+            n.BasisType == Basis::Flow || n.BasisType == Basis::Chevron)
+        {
+            changed |= ImGui::SliderAngle("位相", &n.Phase, -360.0f, 360.0f);
         }
         return changed;
     }

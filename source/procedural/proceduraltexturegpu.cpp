@@ -23,9 +23,11 @@ namespace ProcStudio
             float PatternSize, PatternSoftness, NormalStrength;
             float Choppiness, Coverage, CloudSoftness, Padding = 0;
             uint32_t PreviewSize = 0, Tiles = 1, Padding1 = 0, Padding2 = 0;
+            float Direction = 0, Anisotropy = 4, KernelFrequency = 2, Phase = 0;
         };
 
-        static_assert(sizeof(Constants) == 192);
+        static_assert(sizeof(Constants) == 208);
+        static_assert(sizeof(Constants) / 4 + 6 <= 64, "Root constants plus three root descriptors must fit");
 
         void Transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
                         D3D12_RESOURCE_STATES after)
@@ -205,6 +207,10 @@ namespace ProcStudio
                        params.Choppiness,
                        params.Coverage,
                        params.Softness};
+        impl.Params.Direction = n.Direction;
+        impl.Params.Anisotropy = n.Anisotropy;
+        impl.Params.KernelFrequency = n.KernelFrequency;
+        impl.Params.Phase = n.Phase;
         auto* generated = normalOutput ? impl.Heights.Get() : impl.Pixels.Get();
         Transition(commands, generated, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS);

@@ -16,6 +16,7 @@ cbuffer Parameters : register(b0)
     float PatternSize, PatternSoftness, NormalStrength;
     float Choppiness, Coverage, CloudSoftness, Padding;
     uint PreviewSize, Tiles, Padding1, Padding2;
+    float Direction, Anisotropy, KernelFrequency, Phase;
 };
 RWStructuredBuffer<float4> Generated : register(u0);
 StructuredBuffer<float4> ImagePixels : register(t0);
@@ -82,7 +83,8 @@ float Scalar(float2 uv)
         noiseCount = 2;
     }
     TextureNoise::NoiseSettings noiseSettings = {
-        Frequency, Octaves, Lacunarity, Gain, WarpStrength, RidgeOffset, Tileable
+        Frequency, Octaves, Lacunarity, Gain, WarpStrength, RidgeOffset, Tileable,
+        Direction, Anisotropy, KernelFrequency, Phase
     };
     // A shared call site keeps the GPU program small instead of inlining the full
     // fractal evaluator separately into every material branch.

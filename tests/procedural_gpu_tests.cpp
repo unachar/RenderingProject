@@ -338,7 +338,7 @@ int main(int argc, char** argv)
                 ++comparisons;
             }
         }
-        for (int basis = 0; basis < 4; ++basis)
+        for (int basis = 0; basis < static_cast<int>(Basis::Count); ++basis)
         {
             for (int fractal = 0; fractal < static_cast<int>(FractalType::Count); ++fractal)
             {
@@ -350,6 +350,10 @@ int main(int argc, char** argv)
                     params.Noise.Seed = 0xfedcba98;
                     params.Noise.Frequency = 3.5f;
                     params.Noise.Lacunarity = 1.7f;
+                    params.Noise.Direction = 0.73f;
+                    params.Noise.Anisotropy = 2.3f;
+                    params.Noise.KernelFrequency = 1.25f;
+                    params.Noise.Phase = 0.41f;
                     params.Tileable = tileable;
                     harness.Compare(params, "basis=" + std::to_string(basis) + " fractal=" + std::to_string(fractal));
                     ++comparisons;

@@ -37,9 +37,11 @@ void RunTests()
                 const float z = sample * 0.071f;
                 const int period = tileable ? 4 : 0;
                 const float frequency = tileable ? 4.0f : noise.Frequency;
-                const float expected = NoiseDetail::Saturate(
-                    BasisNoise(noise.BasisType, x * frequency, y * frequency, z * frequency,
-                               NoiseDetail::Hash(noise.Seed), period) * 0.5f + 0.5f);
+                const float expected =
+                    NoiseDetail::Saturate(BasisNoise(noise.BasisType, x * frequency, y * frequency, z * frequency,
+                                                     NoiseDetail::Hash(noise.Seed), period) *
+                                              0.5f +
+                                          0.5f);
                 Require(Near(FractalNoise(noise, x, y, z, tileable), expected),
                         "none must render the normalized base noise without octave synthesis");
                 NoiseParams changed = noise;
@@ -56,6 +58,42 @@ void RunTests()
                             "base noise must tile on all three axes");
                 }
             }
+        }
+    }
+    // Exercise the public Studio paths, not only the header evaluator.
+    for (int basis = 0; basis < static_cast<int>(Basis::Count); ++basis)
+    {
+        TextureParams texture;
+        texture.Noise.BasisType = static_cast<Basis>(basis);
+        texture.Noise.Fractal = FractalType::None;
+        texture.Noise.Frequency = 3.5f;
+        texture.Noise.Phase = 0.7f;
+        for (TextureOutput output : {TextureOutput::Color, TextureOutput::Height, TextureOutput::Normal})
+        {
+            texture.Output = output;
+            const auto image = GenerateTexture(texture, 8, 8);
+            Require(image.Pixels.size() == 64, "noise texture dimensions");
+            for (const auto& pixel : image.Pixels)
+            {
+                Require(std::isfinite(pixel.X) && std::isfinite(pixel.Y) && std::isfinite(pixel.Z),
+                        "noise texture outputs must be finite");
+            }
+        }
+        const auto volume = GenerateVolume(texture, 8);
+        Require(volume.Density.size() == 512, "noise volume dimensions");
+        for (float value : volume.Density)
+        {
+            Require(std::isfinite(value) && value >= 0 && value <= 1, "noise volume density range");
+        }
+        ModelParams terrain;
+        terrain.Kind = ModelKind::Terrain;
+        terrain.Noise = texture.Noise;
+        terrain.Resolution = 8;
+        const auto mesh = GenerateModel(terrain);
+        Require(!mesh.Positions.empty() && !mesh.Indices.empty(), "noise terrain must generate geometry");
+        for (const auto& position : mesh.Positions)
+        {
+            Require(std::isfinite(position.Y), "noise terrain heights must be finite");
         }
     }
     TextureParams params;
@@ -155,7 +193,7 @@ void RunTests()
     params.PatternSize = 0;
     params.PatternSoftness = 0;
     Require(std::isfinite(TextureScalar(params, -0.5f, -0.5f, 0, false)), "out-of-range settings must be clamped");
-    std::cout << "All six geometric patterns: geometry, tiling, sizing, colors and output modes passed\n";
+    std::cout << "22 noise bases: textures, volumes, terrain; six geometric patterns: all checks passed\n";
 }
 
 int main()

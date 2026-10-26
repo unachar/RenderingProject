@@ -242,6 +242,24 @@ namespace ProcStudio
         Value,
         Worley,
         CellEdge, // Worleyノイズの距離差（F2 - F1）
+        White,
+        Simplex,
+        Voronoi,
+        Cell,
+        Gabor,
+        Wavelet,
+        Curl,
+        ValueGradient,
+        SparseConvolution,
+        Spot,
+        LocalRandom,
+        Chevron,
+        LatticeFree,
+        Phasor,
+        AnisotropicGabor,
+        Harmonic,
+        Flow,
+        Ridged, // Single-octave ridge; FractalType::Ridged is the feedback multifractal.
         Count
     };
     enum class FractalType
@@ -253,6 +271,8 @@ namespace ProcStudio
         HybridMultifractal,
         DomainWarp,
         None,
+        Multifractal,
+        HeterogeneousMultifractal,
         Count
     };
 
@@ -267,6 +287,10 @@ namespace ProcStudio
         float Gain = 0.5f;
         float WarpStrength = 0.6f;
         float RidgeOffset = 1.0f;
+        float Direction = 0.0f;       // Radians in the XY plane for directional kernels.
+        float Anisotropy = 4.0f;      // Transverse kernel compression, [1, 8].
+        float KernelFrequency = 2.0f; // Oscillations per kernel radius.
+        float Phase = 0.0f;           // Radians; flow rotates lattice gradients continuously.
     };
 
     namespace NoiseDetail
@@ -428,9 +452,263 @@ namespace ProcStudio
             f1 = std::sqrt(f1);
             f2 = std::sqrt(f2);
         }
+
+        // Compact kernels share a bounded neighborhood and wrapped *hashes*, not wrapped
+        // offsets: this is essential to preserve both continuity and tileability.
+        inline float SimplexRaw(float x, float y, float z, uint32_t seed)
+        {
+            const float skew = (x + y + z) / 3.0f;
+            const int i = static_cast<int>(std::floor(x + skew));
+            const int j = static_cast<int>(std::floor(y + skew));
+            const int k = static_cast<int>(std::floor(z + skew));
+            const float unskew = (i + j + k) / 6.0f;
+            const float a = x - (i - unskew), b = y - (j - unskew), c = z - (k - unskew);
+            const int ix = a >= b && a >= c ? 1 : 0;
+            const int iy = b > a && b >= c ? 1 : 0;
+            const int iz = c > a && c > b ? 1 : 0;
+            const int jx = a >= b || a >= c ? 1 : 0;
+            const int jy = b > a || b >= c ? 1 : 0;
+            const int jz = c > a || c > b ? 1 : 0;
+            float sum = 0;
+            for (int corner = 0; corner < 4; ++corner)
+            {
+                const int dx = corner == 0 ? 0 : (corner == 1 ? ix : (corner == 2 ? jx : 1));
+                const int dy = corner == 0 ? 0 : (corner == 1 ? iy : (corner == 2 ? jy : 1));
+                const int dz = corner == 0 ? 0 : (corner == 1 ? iz : (corner == 2 ? jz : 1));
+                const float px = a - dx + corner / 6.0f;
+                const float py = b - dy + corner / 6.0f;
+                const float pz = c - dz + corner / 6.0f;
+                const float t = (std::max)(0.0f, 0.6f - px * px - py * py - pz * pz);
+                sum += t * t * t * t * GradientDot(Hash3(i + dx, j + dy, k + dz, seed), px, py, pz);
+            }
+            return std::clamp(32.0f * sum, -1.0f, 1.0f);
+        }
+
+        inline float Simplex(float x, float y, float z, uint32_t seed, int period)
+        {
+            if (period <= 0)
+            {
+                return SimplexRaw(x, y, z, seed);
+            }
+            // Blend translated simplex fields with quintic weights. Skewed simplex
+            // lattice coordinates cannot be wrapped as Cartesian lattice cells.
+            const float px = x - std::floor(x / period) * period;
+            const float py = y - std::floor(y / period) * period;
+            const float pz = z - std::floor(z / period) * period;
+            const float u = Fade(px / period), v = Fade(py / period), w = Fade(pz / period);
+            float sum = 0;
+            for (int dz = 0; dz < 2; ++dz)
+            {
+                for (int dy = 0; dy < 2; ++dy)
+                {
+                    for (int dx = 0; dx < 2; ++dx)
+                    {
+                        sum += SimplexRaw(px - dx * period, py - dy * period, pz - dz * period, seed) *
+                               (dx == 0 ? 1 - u : u) * (dy == 0 ? 1 - v : v) * (dz == 0 ? 1 - w : w);
+                    }
+                }
+            }
+            return sum;
+        }
+
+        inline float VoronoiCell(float x, float y, float z, uint32_t seed, int period)
+        {
+            const int ix = static_cast<int>(std::floor(x)), iy = static_cast<int>(std::floor(y));
+            const int iz = static_cast<int>(std::floor(z));
+            float nearest = 1e9f;
+            uint32_t nearestHash = 0;
+            // Radius two ensures the nearest feature is found even near cell corners.
+            for (int dz = -2; dz <= 2; ++dz)
+            {
+                for (int dy = -2; dy <= 2; ++dy)
+                {
+                    for (int dx = -2; dx <= 2; ++dx)
+                    {
+                        const uint32_t h =
+                            Hash3(Wrap(ix + dx, period), Wrap(iy + dy, period), Wrap(iz + dz, period), seed);
+                        const float a = ix + dx + Unit(h) - x;
+                        const float b = iy + dy + Unit(Hash(h ^ 0x68bc21ebu)) - y;
+                        const float c = iz + dz + Unit(Hash(h ^ 0x02e5be93u)) - z;
+                        const float d = a * a + b * b + c * c;
+                        if (d < nearest)
+                        {
+                            nearest = d;
+                            nearestHash = h;
+                        }
+                    }
+                }
+            }
+            return Unit(Hash(nearestHash ^ 0xb5297a4du)) * 2 - 1;
+        }
+
+        inline float Flow(float x, float y, float z, uint32_t seed, int period, float phase)
+        {
+            const int ix = static_cast<int>(std::floor(x)), iy = static_cast<int>(std::floor(y));
+            const int iz = static_cast<int>(std::floor(z));
+            const float a = x - ix, b = y - iy, c = z - iz;
+            const float u = Fade(a), v = Fade(b), w = Fade(c);
+            const float co = std::cos(phase), si = std::sin(phase);
+            float sum = 0;
+            for (int dz = 0; dz < 2; ++dz)
+            {
+                for (int dy = 0; dy < 2; ++dy)
+                {
+                    for (int dx = 0; dx < 2; ++dx)
+                    {
+                        const uint32_t h =
+                            Hash3(Wrap(ix + dx, period), Wrap(iy + dy, period), Wrap(iz + dz, period), seed);
+                        // Rotate each lattice gradient, rather than translating the field.
+                        const float px = a - dx, py = b - dy, pz = c - dz;
+                        const float g = GradientDot(h, co * px + si * py, -si * px + co * py, pz);
+                        sum += g * (dx == 0 ? 1 - u : u) * (dy == 0 ? 1 - v : v) * (dz == 0 ? 1 - w : w);
+                    }
+                }
+            }
+            return std::clamp(sum * 0.95f, -1.0f, 1.0f);
+        }
+
+        inline std::array<float, 3> CurlVector(float x, float y, float z, uint32_t seed, int period)
+        {
+            // Curl of three independent scalar potentials; do not normalize the
+            // vector, since doing so would destroy its divergence-free property.
+            const float e = 0.002f;
+            const uint32_t sy = seed ^ 0x68bc21ebu, sz = seed ^ 0x02e5be93u;
+            const float cx = (Perlin(x, y + e, z, sz, period) - Perlin(x, y - e, z, sz, period) -
+                              Perlin(x, y, z + e, sy, period) + Perlin(x, y, z - e, sy, period)) /
+                             (2 * e);
+            const float cy = (Perlin(x, y, z + e, seed, period) - Perlin(x, y, z - e, seed, period) -
+                              Perlin(x + e, y, z, sz, period) + Perlin(x - e, y, z, sz, period)) /
+                             (2 * e);
+            const float cz = (Perlin(x + e, y, z, sy, period) - Perlin(x - e, y, z, sy, period) -
+                              Perlin(x, y + e, z, seed, period) + Perlin(x, y - e, z, seed, period)) /
+                             (2 * e);
+            return {cx, cy, cz};
+        }
+
+        inline float Spectral(float x, float y, float z, uint32_t seed, int period, bool harmonic)
+        {
+            const float tau = 6.28318530718f;
+            float sum = 0, norm = 0;
+            // No spatial lattice. Integer wavevectors for periodic synthesis, random
+            // continuous wavevectors otherwise. Harmonic uses one fundamental + overtones.
+            const uint32_t fundamental = Hash(seed);
+            for (int wave = 0; wave < 16; ++wave)
+            {
+                const uint32_t h = harmonic ? fundamental : Hash(seed + static_cast<uint32_t>(wave) * 1013u);
+                float a = Unit(h) * 2 - 1;
+                float b = Unit(Hash(h ^ 0x68bc21ebu)) * 2 - 1;
+                float c = Unit(Hash(h ^ 0x02e5be93u)) * 2 - 1;
+                if (period > 0)
+                {
+                    a = std::floor(a * period + 0.5f) / period;
+                    b = std::floor(b * period + 0.5f) / period;
+                    c = std::floor(c * period + 0.5f) / period;
+                    if (a == 0 && b == 0 && c == 0)
+                    {
+                        a = 1.0f / period;
+                    }
+                }
+                const float multiple = harmonic ? static_cast<float>(wave + 1) : 1.0f;
+                const float amplitude = harmonic ? 1.0f / (multiple * multiple) : 1.0f;
+                const float phase = tau * Unit(Hash(seed + static_cast<uint32_t>(wave) * 7919u));
+                sum += std::sin(tau * multiple * (a * x + b * y + c * z) + phase) * amplitude;
+                norm += amplitude;
+            }
+            return sum / norm;
+        }
+
+        inline float CompactWavelet(float r2)
+        {
+            // Laplacian of the compact radial bump (1-r^2)^5 in 3D, rescaled.
+            // Its integral is zero; both value and slope vanish at the support boundary.
+            const float t = (std::max)(0.0f, 1.0f - r2);
+            return t * t * t * (1.0f - (11.0f / 3.0f) * r2);
+        }
+
+        inline float KernelNoise(Basis basis, float x, float y, float z, uint32_t seed, int period, float direction,
+                                 float anisotropy, float kernelFrequency, float phase)
+        {
+            const float tau = 6.28318530718f;
+            const int ix = static_cast<int>(std::floor(x)), iy = static_cast<int>(std::floor(y));
+            const int iz = static_cast<int>(std::floor(z));
+            float real = 0, imaginary = 0, spots = 0;
+            const float stretch = std::clamp(anisotropy, 1.0f, 8.0f);
+            const float frequency = std::clamp(kernelFrequency, 0.25f, 8.0f);
+            for (int dz = -1; dz <= 1; ++dz)
+            {
+                for (int dy = -1; dy <= 1; ++dy)
+                {
+                    for (int dx = -1; dx <= 1; ++dx)
+                    {
+                        const uint32_t cellHash =
+                            Hash3(Wrap(ix + dx, period), Wrap(iy + dy, period), Wrap(iz + dz, period), seed);
+                        // Two stratified random impulses per cell: bounded work and no empty support holes.
+                        for (int impulse = 0; impulse < 2; ++impulse)
+                        {
+                            const uint32_t h = Hash(cellHash + static_cast<uint32_t>(impulse) * 0x9e3779b9u);
+                            const float a = x - (ix + dx + Unit(h));
+                            const float b = y - (iy + dy + Unit(Hash(h ^ 0x68bc21ebu)));
+                            const float c = z - (iz + dz + Unit(Hash(h ^ 0x02e5be93u)));
+                            const float r2 = a * a + b * b + c * c;
+                            if (r2 >= 1.0f)
+                            {
+                                continue;
+                            }
+                            const float t = 1 - r2;
+                            const float weight = Unit(Hash(h ^ 0xb5297a4du)) * 2 - 1;
+                            if (basis == Basis::Wavelet)
+                            {
+                                real += weight * CompactWavelet(r2);
+                                continue;
+                            }
+                            if (basis == Basis::SparseConvolution)
+                            {
+                                real += weight * t * t * t;
+                                continue;
+                            }
+                            if (basis == Basis::Spot)
+                            {
+                                const float radius = 0.2f + 0.35f * Unit(Hash(h ^ 0x1b56c4e9u));
+                                spots = (std::max)(spots, 1.0f - Smooth(radius * 0.6f, radius, std::sqrt(r2)));
+                                continue;
+                            }
+                            const bool directed = basis == Basis::AnisotropicGabor || basis == Basis::Phasor;
+                            const float angle = directed ? direction : tau * Unit(Hash(h ^ 0x1b56c4e9u));
+                            const float along = a * std::cos(angle) + b * std::sin(angle);
+                            const float across = -a * std::sin(angle) + b * std::cos(angle);
+                            const float envelope =
+                                std::exp(-4.0f *
+                                         (along * along + across * across * (directed ? stretch : 1.0f) + c * c)) *
+                                t * t;
+                            const float theta = tau * frequency * along + phase + tau * Unit(Hash(h ^ 0x967a889bu));
+                            if (basis == Basis::LocalRandom)
+                            {
+                                // Local random-phase synthesis with multiple independent frequencies.
+                                real += envelope * (std::cos(theta) + 0.5f * std::cos(theta * 1.93f + h % 17u));
+                            }
+                            else
+                            {
+                                real += envelope * std::cos(theta);
+                                imaginary += envelope * std::sin(theta);
+                            }
+                        }
+                    }
+                }
+            }
+            if (basis == Basis::Spot)
+            {
+                return spots * 2 - 1;
+            }
+            if (basis == Basis::Phasor)
+            {
+                return real / std::sqrt((std::max)(real * real + imaginary * imaginary, 1e-12f));
+            }
+            return real / (1.0f + std::fabs(real));
+        }
     }
 
-    inline float BasisNoise(Basis basis, float x, float y, float z, uint32_t seed, int period)
+    inline float BasisNoiseConfigured(Basis basis, float x, float y, float z, uint32_t seed, int period,
+                                      float direction, float anisotropy, float kernelFrequency, float phase)
     {
         switch (basis)
         {
@@ -446,9 +724,66 @@ namespace ProcStudio
                     basis == Basis::Worley ? NoiseDetail::Saturate(f1 * 1.2f) : NoiseDetail::Saturate((f2 - f1) * 2.0f);
                 return value * 2 - 1;
             }
+            case Basis::White: {
+                const int ix = static_cast<int>(std::floor(x)), iy = static_cast<int>(std::floor(y));
+                const int iz = static_cast<int>(std::floor(z));
+                const uint32_t cell = NoiseDetail::Hash3(NoiseDetail::Wrap(ix, period), NoiseDetail::Wrap(iy, period),
+                                                         NoiseDetail::Wrap(iz, period), seed);
+                return NoiseDetail::Unit(NoiseDetail::Hash3(static_cast<int>((x - ix) * 256),
+                                                            static_cast<int>((y - iy) * 256),
+                                                            static_cast<int>((z - iz) * 256), cell)) *
+                           2 -
+                       1;
+            }
+            case Basis::Simplex:
+                return NoiseDetail::Simplex(x, y, z, seed, period);
+            case Basis::Voronoi:
+                return NoiseDetail::VoronoiCell(x, y, z, seed, period);
+            case Basis::Cell:
+                return NoiseDetail::Unit(NoiseDetail::Hash3(NoiseDetail::Wrap(static_cast<int>(std::floor(x)), period),
+                                                            NoiseDetail::Wrap(static_cast<int>(std::floor(y)), period),
+                                                            NoiseDetail::Wrap(static_cast<int>(std::floor(z)), period),
+                                                            seed)) *
+                           2 -
+                       1;
+            case Basis::Gabor:
+            case Basis::AnisotropicGabor:
+            case Basis::Wavelet:
+            case Basis::SparseConvolution:
+            case Basis::Spot:
+            case Basis::LocalRandom:
+            case Basis::Phasor:
+                return NoiseDetail::KernelNoise(basis, x, y, z, seed, period, direction, anisotropy, kernelFrequency,
+                                                phase);
+            case Basis::Curl: {
+                const auto curl = NoiseDetail::CurlVector(x, y, z, seed, period);
+                return curl[2] / (1.0f + std::fabs(curl[2]));
+            }
+            case Basis::ValueGradient:
+                return 0.5f *
+                       (NoiseDetail::ValueNoise(x, y, z, seed, period) + NoiseDetail::Perlin(x, y, z, seed, period));
+            case Basis::Chevron: {
+                const float tau = 6.28318530718f;
+                const float offset = NoiseDetail::Unit(NoiseDetail::Hash(seed));
+                const float v = y + offset;
+                const float triangle = std::fabs((v - std::floor(v)) * 2 - 1);
+                return std::sin(tau * (x + triangle + offset + phase / tau));
+            }
+            case Basis::LatticeFree:
+            case Basis::Harmonic:
+                return NoiseDetail::Spectral(x, y, z, seed, period, basis == Basis::Harmonic);
+            case Basis::Flow:
+                return NoiseDetail::Flow(x, y, z, seed, period, phase);
+            case Basis::Ridged:
+                return 1.0f - 2.0f * std::fabs(NoiseDetail::Perlin(x, y, z, seed, period));
             default:
                 return NoiseDetail::Perlin(x, y, z, seed, period);
         }
+    }
+
+    inline float BasisNoise(Basis basis, float x, float y, float z, uint32_t seed, int period)
+    {
+        return BasisNoiseConfigured(basis, x, y, z, seed, period, 0.0f, 4.0f, 2.0f, 0.0f);
     }
 
     inline float FractalNoise(const NoiseParams& params, float x, float y, float z, bool tileable)
@@ -459,8 +794,9 @@ namespace ProcStudio
         {
             const int period = tileable ? (std::max)(1, static_cast<int>(std::round(frequency))) : 0;
             const float scale = tileable ? static_cast<float>(period) : frequency;
-            const float value = BasisNoise(params.BasisType, x * scale, y * scale, z * scale,
-                                           NoiseDetail::Hash(params.Seed), period);
+            const float value =
+                BasisNoiseConfigured(params.BasisType, x * scale, y * scale, z * scale, NoiseDetail::Hash(params.Seed),
+                                     period, params.Direction, params.Anisotropy, params.KernelFrequency, params.Phase);
             return NoiseDetail::Saturate(value * 0.5f + 0.5f);
         }
         const float lacunarity = tileable ? (std::max)(1.0f, std::round(params.Lacunarity)) : params.Lacunarity;
@@ -485,7 +821,8 @@ namespace ProcStudio
             const int period = tileable ? (std::max)(1, static_cast<int>(std::round(frequency))) : 0;
             const float f = tileable ? static_cast<float>(period) : frequency;
             const uint32_t seed = NoiseDetail::Hash(params.Seed + static_cast<uint32_t>(o) * 1013u);
-            float n = BasisNoise(params.BasisType, x * f, y * f, z * f, seed, period);
+            float n = BasisNoiseConfigured(params.BasisType, x * f, y * f, z * f, seed, period, params.Direction,
+                                           params.Anisotropy, params.KernelFrequency, params.Phase);
             switch (params.Fractal)
             {
                 case FractalType::Ridged: {
@@ -493,6 +830,18 @@ namespace ProcStudio
                     n *= n * weight;
                     weight = NoiseDetail::Saturate(n * 2);
                     sum += n * amplitude;
+                    break;
+                }
+                case FractalType::Multifractal: {
+                    // Product of offset signals; subtract the unit DC term after normalization.
+                    weight *= 1.0f + n * amplitude;
+                    sum = weight - 1.0f;
+                    break;
+                }
+                case FractalType::HeterogeneousMultifractal: {
+                    // Higher elevations receive more detail; valleys remain smooth.
+                    const float signal = (n + params.RidgeOffset) * amplitude;
+                    sum += o == 0 ? signal : signal * sum;
                     break;
                 }
                 case FractalType::Billow:
@@ -524,6 +873,10 @@ namespace ProcStudio
                 return NoiseDetail::Saturate(value * 1.6f);
             case FractalType::HybridMultifractal:
                 return NoiseDetail::Saturate(value * 0.8f);
+            case FractalType::Multifractal:
+                return NoiseDetail::Saturate(0.5f + 0.5f * sum / (1.0f + std::fabs(sum)));
+            case FractalType::HeterogeneousMultifractal:
+                return NoiseDetail::Saturate(sum / (1.0f + std::fabs(sum)));
             default:
                 return NoiseDetail::Saturate(value * 0.8f + 0.5f);
         }
