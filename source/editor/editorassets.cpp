@@ -1594,7 +1594,7 @@ void ImGuiManager::BeginAssetDragSource(const filesystem::path& path, bool isDir
         const string relative = MakeRelativeAssetPath(path);
         const auto type = AssetRegistry::Classify(path);
         bool sent = false;
-        if (type == AssetType::Material || type == AssetType::Texture)
+        if (type == AssetType::Material || type == AssetType::Texture || type == AssetType::Noise)
         {
             string error;
             const AssetDragPayload payload{MaterialManager::Registry().Register(path, type, error), type};

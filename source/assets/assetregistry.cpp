@@ -69,6 +69,10 @@ AssetType AssetRegistry::Classify(const std::filesystem::path& path)
     std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char letter) {
         return static_cast<char>(std::tolower(letter));
     });
+    if (extension == ".noise")
+    {
+        return AssetType::Noise;
+    }
     if (extension == ".material")
     {
         return AssetType::Material;

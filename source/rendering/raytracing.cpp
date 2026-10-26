@@ -77,9 +77,10 @@ namespace
         XMUINT4 Layout{};
         XMFLOAT4 BaseColor{}, Emission{}, Optical{}, Absorption{}, OpticalExtra{};
         XMUINT4 Flags{}; // 媒質 ID、テクスチャ有無、三角形数、予約領域
+        ProcStudio::TextureGpuParams NoiseBase{};
     };
 
-    static_assert(sizeof(GlassMesh) == 240);
+    static_assert(sizeof(GlassMesh) == 448);
 
     struct GlassDescriptorRecord
     {
@@ -876,6 +877,7 @@ namespace
                         static_cast<UINT>(g.VertexView.BufferLocation - g.Vertices->GetGPUVirtualAddress()),
                         g.Indices ? static_cast<UINT>(g.IndexView.BufferLocation - g.Indices->GetGPUVirtualAddress())
                                   : 0u};
+            m.NoiseBase = g.Noise[0];
             m.BaseColor = g.BaseColor;
             m.Emission = g.Emission;
             m.Optical = {g.IOR, g.Transmission, g.Roughness, g.Metallic};

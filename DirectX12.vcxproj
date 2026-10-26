@@ -1239,6 +1239,12 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="source\assets\noiseasset.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <None Include="shader\hlsl\ProceduralTexture.hlsli" />
+    <ClInclude Include="source\assets\noiseasset.h" />
+    <ClInclude Include="source\procedural\proceduraltextureparams.h" />
     <ClCompile Include="source\assets\materialasset.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>

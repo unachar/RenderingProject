@@ -10,7 +10,8 @@ enum class AssetType : uint32_t
     Unknown,
     Material,
     Texture,
-    Mesh
+    Mesh,
+    Noise
 };
 
 struct AssetDragPayload

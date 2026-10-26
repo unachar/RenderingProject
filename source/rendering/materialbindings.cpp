@@ -78,8 +78,10 @@ namespace
         XMFLOAT4 AssetEmission{};
         XMUINT4 AssetTextures{UINT32_MAX, UINT32_MAX, UINT32_MAX, 0}; // MR、AO、発光、サーフェスとカリングのフラグ。
         XMFLOAT4 AssetParallax{0, 32, -1, 0};
+        std::array<ProcStudio::TextureGpuParams, 3> AssetNoise{};
     };
 
+    static_assert(offsetof(PBRConstants, AssetNoise) == 151 * sizeof(XMFLOAT4));
     static_assert(offsetof(PBRConstants, AssetTextures) == 149 * sizeof(XMFLOAT4));
     static_assert(offsetof(PBRConstants, AssetParallax) == 150 * sizeof(XMFLOAT4));
     static_assert(sizeof(PBRConstants) <= RendererState::g_kPBR_CB_ALIGNED_SIZE);
@@ -155,6 +157,7 @@ namespace
         {
             WriteMaterialPartConstants(constants, i, material.PartParams[i]);
         }
+        constants.AssetNoise = material.Noise;
         constants.AssetBaseColor = material.BaseColor;
         constants.AssetSurface = {material.NormalScale, material.AOStrength, 0, material.AlphaCutoff};
         if (material.RuntimeHandle != 0)

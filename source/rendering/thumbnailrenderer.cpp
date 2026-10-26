@@ -5,6 +5,7 @@
 #include "frameconstants.h"
 #include "texturemanager.h"
 #include "materialmanager.h"
+#include "assets/noiseasset.h"
 #include "assets/thumbnailcache.h"
 #include <cimport.h>
 #include <postprocess.h>
@@ -471,10 +472,36 @@ ThumbnailPrepared ThumbnailRenderer::Prepare(ThumbnailPrepared input)
             return input;
         }
     }
-    for (auto& texture : input.Textures)
+    if (input.Type == AssetType::Noise)
     {
-        if (input.Type != AssetType::Mesh &&
-            !Decode(texture, input.Type == AssetType::Texture ? input.Size : 256, input.Error))
+        ProcStudio::TextureParams definition;
+        if (!NoiseSerializer::Load(input.SourcePath, definition, input.Error))
+        {
+            return input;
+        }
+        input.Noise[0] = ProcStudio::MakeTextureGpuParams(definition);
+        input.Noise[0].Width = 1;
+    }
+    for (size_t slot = 0; slot < input.Textures.size(); ++slot)
+    {
+        auto& texture = input.Textures[slot];
+        if (AssetRegistry::Classify(texture.Path) == AssetType::Noise)
+        {
+            const int channel = slot == 0 ? 0 : slot == 1 ? 1 : slot == 5 ? 2 : -1;
+            ProcStudio::TextureParams definition;
+            if (channel < 0 || !NoiseSerializer::Load(texture.Path, definition, input.Error))
+            {
+                if (input.Error.empty())
+                {
+                    input.Error = "Unsupported .noise material slot";
+                }
+                return input;
+            }
+            input.Noise[channel] = ProcStudio::MakeTextureGpuParams(definition);
+            input.Noise[channel].Width = 1;
+        }
+        else if (input.Type != AssetType::Mesh &&
+                 !Decode(texture, input.Type == AssetType::Texture ? input.Size : 256, input.Error))
         {
             return input;
         }
@@ -542,7 +569,7 @@ std::shared_ptr<ThumbnailGpuImage> ThumbnailRenderer::Generate(ThumbnailPrepared
         for (size_t slot = 0; slot < input.Textures.size(); ++slot)
         {
             auto& source = input.Textures[slot];
-            if (source.Path.empty())
+            if (source.Path.empty() || AssetRegistry::Classify(source.Path) == AssetType::Noise)
             {
                 continue;
             }
@@ -576,6 +603,7 @@ std::shared_ptr<ThumbnailGpuImage> ThumbnailRenderer::Generate(ThumbnailPrepared
                          part.VertexCount});
     }
     auto material = MaterialManager::BuildPreviewBinding(input.Material, descriptors);
+    material.Noise = input.Noise;
     if (!result->Preview->Render(material, input.Geometry, parts))
     {
         return {};

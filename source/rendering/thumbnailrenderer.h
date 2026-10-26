@@ -1,5 +1,6 @@
 #pragma once
 #include "materialasset.h"
+#include "procedural/proceduraltextureparams.h"
 #include "staticmodel.h"
 #include "editordescriptors.h"
 #include "thumbnailpreviewcontext.h"
@@ -26,6 +27,7 @@ struct ThumbnailPrepared
     AssetHandle Handle = 0;
     AssetType Type = AssetType::Unknown;
     MaterialAssetData Material;
+    std::array<ProcStudio::TextureGpuParams, 3> Noise{};
     std::array<ThumbnailSourceImage, static_cast<size_t>(MaterialTextureSlot::Count)> Textures;
     std::vector<StaticModelVertex> Geometry;
 

@@ -54,6 +54,8 @@ namespace
         XMFLOAT4 BaseColor{};
         XMFLOAT4 Emission{};
         XMUINT4 Surface{};
+        std::array<ProcStudio::TextureGpuParams, 3> Noise{};
+        XMFLOAT4 NoiseSurface{};
     };
 
     struct FrameConstants
@@ -79,7 +81,7 @@ namespace
     };
 
     static_assert(sizeof(ReflectionLight) == 80);
-    static_assert(sizeof(MeshConstants) == 208 && sizeof(FrameConstants) <= 512);
+    static_assert(sizeof(MeshConstants) == 848 && sizeof(FrameConstants) <= 512);
     ComPtr<ID3D12Resource> g_AdaptiveRadiance, g_AdaptiveGuide;
     ComPtr<ID3D12PipelineState> g_AdaptiveCapture;
     bool g_AdaptiveValid = false, g_BudgetValid = false;
@@ -865,7 +867,9 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
                 : 0u};
         // w = POM の深さ（UV 単位、0 で無効）。
         mesh.Material = {geometry.Roughness, geometry.Metallic, static_cast<float>(geometry.Texture != nullptr),
-                         geometry.HeightTexture ? geometry.ParallaxDepth : 0.0f};
+                         geometry.ParallaxDepth};
+        mesh.Noise = geometry.Noise;
+        mesh.NoiseSurface.x = geometry.NoiseNormalScale;
         mesh.BaseColor = geometry.BaseColor;
         mesh.Emission = geometry.Emission;
         UINT triangleCount = geometry.IndexCount / 3;
@@ -874,7 +878,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
             triangleCount = geometry.VertexView.SizeInBytes / geometry.VertexView.StrideInBytes / 3;
         }
         mesh.Surface = {triangleCount, static_cast<UINT>(geometry.EmissionTexture != nullptr),
-                        static_cast<UINT>(geometry.HeightTexture != nullptr),
+                        static_cast<UINT>(geometry.HeightTexture != nullptr || geometry.Noise[2].Width != 0),
                         static_cast<UINT>(geometry.UsesAssetMaterial)};
         if (geometry.Emission.w > 0 && (geometry.Emission.x > 0 || geometry.Emission.y > 0 || geometry.Emission.z > 0))
         {
@@ -1119,6 +1123,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         const auto height = entry.HeightTexture.Get();
         HashEmission(signature, &height, sizeof(height));
         HashEmission(signature, &entry.ParallaxDepth, sizeof(entry.ParallaxDepth));
+        HashEmission(signature, entry.Noise.data(), sizeof(entry.Noise));
+        HashEmission(signature, &entry.NoiseNormalScale, sizeof(entry.NoiseNormalScale));
         if (entry.Deforming)
         {
             HashEmission(signature, &nrdFrame.Sequence, sizeof(nrdFrame.Sequence));

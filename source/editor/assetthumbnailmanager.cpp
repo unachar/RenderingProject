@@ -60,7 +60,8 @@ namespace
     uint64_t ShaderVersion()
     {
         return ThumbnailRenderer::SourceRevision("shader/hlsl/build/modelshaderVS.cso") ^
-               ThumbnailRenderer::SourceRevision("shader/hlsl/build/modelshaderPS.cso");
+               ThumbnailRenderer::SourceRevision("shader/hlsl/build/modelshaderPS.cso") ^
+               ThumbnailRenderer::SourceRevision("shader/hlsl/ProceduralTexture.hlsli");
     }
 
     void Retire(std::shared_ptr<ThumbnailGpuImage>& image)
@@ -107,7 +108,8 @@ namespace
             UINT total = 0;
             for (const auto& source : textures)
             {
-                if (source.Path.empty() && !source.Decoded && source.Encoded.empty())
+                if (AssetRegistry::Classify(source.Path) == AssetType::Noise ||
+                    (source.Path.empty() && !source.Decoded && source.Encoded.empty()))
                 {
                     continue;
                 }

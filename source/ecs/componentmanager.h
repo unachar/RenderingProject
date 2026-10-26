@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "ecs.h"
 #include "materialasset.h"
+#include "procedural/proceduraltextureparams.h"
 #include "rendertypes.h"
 #include "light.h"
 #include "animationplayback.h"
@@ -275,6 +276,7 @@ struct MaterialComponent
     int AOTextureID = -1;
     int EmissiveTextureID = -1;
     int HeightTextureID = -1;
+    std::array<ProcStudio::TextureGpuParams, 3> Noise{}; // Base Color, Normal, Height; Width=enabled.
     float ParallaxDepth = 0.0f;
     float ParallaxSteps = 32.0f;
     MaterialSurface AssetSurface = MaterialSurface::Opaque;

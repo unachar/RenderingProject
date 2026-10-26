@@ -8,12 +8,40 @@ struct AssetMaterialParameters
     float4 Surface;
     float4 Emission;
     uint4 Textures;
+    ProceduralTexture::Parameters Noise[3];
     float4 Parallax; // UV depth, maximum steps, heap-relative height texture index, heap base.
 };
+
+ProceduralTexture::Parameters LoadAssetNoise(uint materialID, uint channel)
+{
+#ifndef SHADER_GPU_DRIVEN
+    return AssetNoise[channel];
+#else
+    uint start = 151u + channel * 13u;
+    float4 v[13];
+    [unroll] for (uint i = 0; i < 13u; ++i)
+        v[i] = LoadSceneMaterialVector(gSceneMaterials, materialID, start + i);
+    ProceduralTexture::Parameters p;
+    p.Width = asuint(v[0].x); p.Height = asuint(v[0].y); p.Kind = asuint(v[0].z); p.Output = asuint(v[0].w);
+    p.BasisType = asuint(v[1].x); p.Fractal = asuint(v[1].y); p.Seed = asuint(v[1].z); p.Tileable = asuint(v[1].w);
+    p.Frequency = v[2].x; p.Octaves = asint(v[2].y); p.Lacunarity = v[2].z; p.Gain = v[2].w;
+    p.WarpStrength = v[3].x; p.RidgeOffset = v[3].y; p.Contrast = v[3].z; p.Bias = v[3].w;
+    p.ColorA = v[4]; p.ColorB = v[5]; p.ColorC = v[6];
+    p.Turbulence = v[7].x; p.RingCount = v[7].y; p.Mortar = v[7].z; p.Time = v[7].w;
+    p.BricksX = asint(v[8].x); p.BricksY = asint(v[8].y); p.Pattern = asint(v[8].z); p.RepeatX = asint(v[8].w);
+    p.RepeatY = asint(v[9].x); p.PatternSize = v[9].y; p.PatternSoftness = v[9].z; p.NormalStrength = v[9].w;
+    p.Choppiness = v[10].x; p.Coverage = v[10].y; p.CloudSoftness = v[10].z; p.Padding = v[10].w;
+    p.PreviewSize = asuint(v[11].x); p.Tiles = asuint(v[11].y); p.Padding1 = asuint(v[11].z); p.Padding2 = asuint(v[11].w);
+    p.Direction = v[12].x; p.Anisotropy = v[12].y; p.KernelFrequency = v[12].z; p.Phase = v[12].w;
+    return p;
+#endif
+}
 
 AssetMaterialParameters LoadAssetMaterial(uint materialID)
 {
     AssetMaterialParameters result;
+    [unroll] for (uint channel = 0; channel < 3; ++channel)
+        result.Noise[channel] = LoadAssetNoise(materialID, channel);
 #ifdef SHADER_GPU_DRIVEN
     result.BaseColor = LoadSceneMaterialVector(gSceneMaterials, materialID, 146u);
     result.Surface = LoadSceneMaterialVector(gSceneMaterials, materialID, 147u);
@@ -30,8 +58,10 @@ AssetMaterialParameters LoadAssetMaterial(uint materialID)
     return result;
 }
 
-float SampleParallaxDepth(uint index, float2 uv, float2 uvDx, float2 uvDy, SamplerState materialSampler)
+float SampleParallaxDepth(ProceduralTexture::Parameters noise, uint index, float2 uv, float2 uvDx, float2 uvDy, SamplerState materialSampler)
 {
+    if (noise.Width != 0)
+        return 1.0f - ProceduralTexture::Scalar(noise, uv);
     // Height maps use white for the original surface and black for the deepest recess.
     return 1.0f - saturate(LoadMaterialTexture(index).SampleGrad(materialSampler, uv, uvDx, uvDy).r);
 }
@@ -50,6 +80,7 @@ struct AssetParallaxResult
     float2 UvDx;
     float2 UvDy;
     uint HeightIndex;
+    ProceduralTexture::Parameters HeightNoise;
     uint MaxSteps;
     bool Active;
 };
@@ -75,7 +106,8 @@ AssetParallaxResult ApplyAssetParallaxEx(AssetMaterialParameters material, float
     result.Active = false;
     // Mask coverage and shadow passes use the original UVs; keep those materials aligned.
     if (material.Surface.z < 0.5f || (material.Textures.w & 3u) != 0u ||
-        material.Parallax.x <= 0.0f || material.Parallax.z < 0.0f || material.Parallax.z >= 512.0f)
+        material.Parallax.x <= 0.0f ||
+        (material.Noise[2].Width == 0 && (material.Parallax.z < 0.0f || material.Parallax.z >= 512.0f)))
     {
         return result;
     }
@@ -121,14 +153,15 @@ AssetParallaxResult ApplyAssetParallaxEx(AssetMaterialParameters material, float
     uint heightIndex = (uint)material.Parallax.z;
     float2 currentUv = uv;
     float layerDepth = 0.0f;
-    float sampledDepth = SampleParallaxDepth(heightIndex, currentUv, uvDx, uvDy, materialSampler);
-    float previousDifference = sampledDepth;
-    [loop] for (uint step = 0u; step < steps && layerDepth < sampledDepth; ++step)
+    float sampledDepth = 0;
+    float previousDifference = 0;
+    [loop] for (uint step = 0u; step <= steps; ++step)
     {
+        sampledDepth = SampleParallaxDepth(material.Noise[2], heightIndex, currentUv, uvDx, uvDy, materialSampler);
+        if (step == steps || layerDepth >= sampledDepth) break;
         previousDifference = sampledDepth - layerDepth;
         currentUv -= uvStep;
         layerDepth += layerStep;
-        sampledDepth = SampleParallaxDepth(heightIndex, currentUv, uvDx, uvDy, materialSampler);
     }
     float difference = sampledDepth - layerDepth;
     float interval = previousDifference - difference;
@@ -142,6 +175,7 @@ AssetParallaxResult ApplyAssetParallaxEx(AssetMaterialParameters material, float
     result.Bitangent = bitangent;
     result.Normal = normal;
     result.HeightIndex = heightIndex;
+    result.HeightNoise = material.Noise[2];
     result.MaxSteps = maxSteps;
     result.Active = true;
     return result;
@@ -197,7 +231,7 @@ float AssetParallaxSelfShadow(AssetParallaxResult pom, float3 lightDirection, Sa
         float fraction = (float)i / (float)steps;
         float rayDepth = pom.HitDepth * (1.0f - fraction);
         float2 sampleUv = pom.Uv + uvPerDepth * (pom.HitDepth - rayDepth);
-        float surfaceDepth = SampleParallaxDepth(pom.HeightIndex, sampleUv, pom.UvDx, pom.UvDy, materialSampler);
+        float surfaceDepth = SampleParallaxDepth(pom.HeightNoise, pom.HeightIndex, sampleUv, pom.UvDx, pom.UvDy, materialSampler);
         // 面が光線より上（深さが浅い）なら遮蔽。ヒット点に近い遮蔽ほど影を濃くする。
         shadow = max(shadow, (rayDepth - surfaceDepth) * (1.0f - fraction));
         if (rayDepth <= 0.0f)
@@ -239,7 +273,7 @@ void WriteAssetParallaxSelfShadow(AssetParallaxResult pom, float3 worldPos, Samp
 bool AssetParallaxEnabled(AssetMaterialParameters material)
 {
     return material.Surface.z > 0.5f && (material.Textures.w & 3u) == 0u && material.Parallax.x > 0.0f &&
-           material.Parallax.z >= 0.0f && material.Parallax.z < 512.0f;
+           (material.Noise[2].Width != 0 || (material.Parallax.z >= 0.0f && material.Parallax.z < 512.0f));
 }
 
 // POM は UV をずらすだけなので、ベースカラー／法線マップが無いと見た目が一切変わらない。
@@ -256,24 +290,30 @@ float3 ApplyAssetHeightNormal(AssetMaterialParameters material, float3 normal, f
     float2 uvDx = ddx(texCoord);
     float2 uvDy = ddy(texCoord);
 #endif
-    if (!AssetParallaxEnabled(material))
-    {
-        return normal;
-    }
+    bool normalNoise = material.Surface.z > 0.5f && material.Noise[1].Width != 0;
+    if (!normalNoise && !AssetParallaxEnabled(material)) return normal;
+    ProceduralTexture::Parameters noise = material.Noise[2];
+    if (normalNoise) noise = material.Noise[1];
     uint heightIndex = (uint)material.Parallax.z;
-    uint width, height, levels;
-    LoadMaterialTexture(heightIndex).GetDimensions(0u, width, height, levels);
-    float2 texel = 1.0f / float2(max(width, 1u), max(height, 1u));
-    // 差分幅は 1 テクセルと画素フットプリントの大きい方。遠景での法線エイリアス（ちらつき）を抑える。
+    float2 texel = 0.00001.xx;
+    if (noise.Width == 0)
+    {
+        uint width, height, levels;
+        LoadMaterialTexture(heightIndex).GetDimensions(0u, width, height, levels);
+        texel = 1.0f / float2(max(width, 1u), max(height, 1u));
+    }
     float2 footprint = float2(max(abs(uvDx.x), abs(uvDy.x)), max(abs(uvDx.y), abs(uvDy.y)));
     float2 e = max(texel, footprint);
-    float left = 1.0f - SampleParallaxDepth(heightIndex, materialUv - float2(e.x, 0), uvDx, uvDy, materialSampler);
-    float right = 1.0f - SampleParallaxDepth(heightIndex, materialUv + float2(e.x, 0), uvDx, uvDy, materialSampler);
-    float down = 1.0f - SampleParallaxDepth(heightIndex, materialUv - float2(0, e.y), uvDx, uvDy, materialSampler);
-    float up = 1.0f - SampleParallaxDepth(heightIndex, materialUv + float2(0, e.y), uvDx, uvDy, materialSampler);
-    float depthScale = clamp(material.Parallax.x, 0.0f, 0.2f);
-    float2 slope = float2(right - left, up - down) / (2.0f * e) * depthScale;
-    float3 tangentNormal = normalize(float3(-slope, 1.0f));
+    float4 samples = 0;
+    // A single call site avoids duplicating the entire noise evaluator four times in DXIL.
+    [loop] for (uint i = 0; i < 4; ++i)
+    {
+        float2 offset = i < 2 ? float2((i == 0 ? -1 : 1) * e.x, 0) : float2(0, (i == 2 ? -1 : 1) * e.y);
+        samples[i] = 1.0f - SampleParallaxDepth(noise, heightIndex, materialUv + offset, uvDx, uvDy, materialSampler);
+    }
+    float scale = normalNoise ? noise.NormalStrength * material.Surface.x / 256.0f : clamp(material.Parallax.x, 0.0f, 0.2f);
+    float2 slope = float2(samples.y - samples.x, samples.w - samples.z) / (2.0f * e) * scale;
+    float3 tangentNormal = normalize(float3(-slope.x, normalNoise ? slope.y : -slope.y, 1.0f));
     return ApplyNormalMapCommon(normal, worldPos, texCoord, tangentNormal);
 }
 
@@ -297,6 +337,11 @@ void ApplyAssetMaterial(AssetMaterialParameters material, float2 uv, SamplerStat
     if (material.Surface.z < 0.5f)
     {
         return;
+    }
+    if (material.Noise[0].Width != 0)
+    {
+        float value = ProceduralTexture::Scalar(material.Noise[0], uv);
+        color.rgb *= ProceduralTexture::Color(material.Noise[0], value);
     }
     color *= material.BaseColor;
     float2 metallicRoughness = SampleAssetTexture(material.Textures.x, uv, materialSampler, 1).rg;

@@ -24,6 +24,8 @@ namespace
                 MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(entity), slot);
             if (material.RuntimeHandle != 0)
             {
+                geometry.Noise = material.Noise;
+                geometry.NoiseNormalScale = material.NormalScale;
                 geometry.BaseColor = material.BaseColor;
                 geometry.Emission = {material.EmissiveColor.x, material.EmissiveColor.y, material.EmissiveColor.z,
                                      material.EmissiveIntensity};
@@ -34,11 +36,12 @@ namespace
                     geometry.EmissionResidentMip = TextureManager::GetTextureResidentMip(material.EmissiveTextureID);
                 }
                 // ラスターの POM と同じ条件（不透明・深さ > 0・高さマップあり）。
-                if (material.ParallaxDepth > 0.0f && material.HeightTextureID >= 0 &&
-                    material.AssetSurface == MaterialSurface::Opaque && !MaterialSystem::IsTransparentMaterial(material))
+                if (material.ParallaxDepth > 0.0f && (material.HeightTextureID >= 0 || material.Noise[2].Width != 0) &&
+                    material.AssetSurface == MaterialSurface::Opaque &&
+                    !MaterialSystem::IsTransparentMaterial(material))
                 {
                     geometry.HeightTexture = TextureManager::GetTextureResource(material.HeightTextureID);
-                    if (geometry.HeightTexture)
+                    if (geometry.HeightTexture || material.Noise[2].Width != 0)
                     {
                         TextureManager::TouchTexture(material.HeightTextureID);
                         geometry.HeightResidentMip = TextureManager::GetTextureResidentMip(material.HeightTextureID);

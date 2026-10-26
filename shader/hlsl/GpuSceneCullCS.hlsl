@@ -27,7 +27,7 @@ cbuffer SceneCullConstants : register(b0)
     // GPU 上でも共有参照とインスタンスのレイアウトを検証する。
     GPUMeshData mesh = Meshes[instance.MeshIndex];
     uint parameterCount = Materials.Load(instance.MaterialIndex * GPU_SCENE_MATERIAL_STRIDE + 48u);
-    if (!mesh.VertexCount || parameterCount > 160)
+    if (!mesh.VertexCount || parameterCount > GPU_SCENE_MATERIAL_PARAMETER_VECTORS)
     {
         Visibility[id] = 0;
         return;

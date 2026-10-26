@@ -7,6 +7,7 @@ struct GlassMeshData
     uint4 Layout;
     float4 BaseColor, Emission, Optical, Absorption, OpticalExtra;
     uint4 Flags;
+    ProceduralTexture::Parameters NoiseBase;
 };
 
 StructuredBuffer<GlassMeshData> GlassMeshes : register(t0, space12);
@@ -104,6 +105,8 @@ bool TraceGlassBoundary(float3 origin, float3 direction, float coneAngle, float 
     hit.Geometric = geometric;
     hit.UV = uv;
     hit.Color = max(mesh.BaseColor.rgb, 0.0f);
+    if (mesh.NoiseBase.Width != 0)
+        hit.Color *= ProceduralTexture::Color(mesh.NoiseBase, ProceduralTexture::Scalar(mesh.NoiseBase, uv));
     // ラスターパスではアセットのマテリアルは白から始める。設定されたプリミティブやモデルの
     // 頂点 RGB を使うのは従来のマテリアルだけ。
     if ((mesh.Flags.w & 1u) == 0u && mesh.Layout.x >= 44)

@@ -60,11 +60,15 @@ namespace
         return path.filename().generic_string();
     }
 
-    bool DrawTextureSlot(const char* label, AssetHandle& handle)
+    bool DrawTextureSlot(const char* label, AssetHandle& handle, bool allowNoise = false)
     {
         ImGui::PushID(label);
         const auto name = AssetName(handle, "未設定");
         ImGui::Button(name.c_str(), ImVec2(-40, 0));
+        if (allowNoise)
+        {
+            ImGui::SetItemTooltip("通常のテクスチャ、または .noise をドロップ。ノイズは描画時に計算します。");
+        }
         const auto textureMinimum = ImGui::GetItemRectMin();
         const auto textureMaximum = ImGui::GetItemRectMax();
         MaterialValidation::CaptureDropTarget(label, textureMinimum.x, textureMinimum.y, textureMaximum.x,
@@ -79,7 +83,12 @@ namespace
         bool changed = false;
         if (ImGui::BeginDragDropTarget())
         {
-            const auto* asset = ReadPayload(ImGui::AcceptDragDropPayload(AssetPayloadType), AssetType::Texture);
+            const auto* payload = ImGui::AcceptDragDropPayload(AssetPayloadType);
+            const auto* asset = ReadPayload(payload, AssetType::Texture);
+            if (!asset && allowNoise)
+            {
+                asset = ReadPayload(payload, AssetType::Noise);
+            }
             if (MaterialValidation::Enabled())
             {
                 WriteGraphicsLog("Material UI trace: Texture target accepted=%d\n", asset != nullptr);
@@ -117,7 +126,7 @@ namespace
 
 void ImGuiManager::OpenMaterialAsset(AssetHandle handle)
 {
-    if (handle == 0 || MaterialManager::Registry().TypeOf(handle) == AssetType::Texture)
+    if (handle == 0 || MaterialManager::Registry().TypeOf(handle) != AssetType::Material)
     {
         return;
     }
@@ -271,7 +280,7 @@ void ImGuiManager::DrawMaterialEditorWindow()
         const auto transparencyMaximum = ImGui::GetItemRectMax();
         MaterialValidation::CaptureDropTarget("Transparency", transparencyMinimum.x, transparencyMinimum.y,
                                               transparencyMaximum.x, transparencyMaximum.y);
-        changed |= DrawTextureSlot("Base Color", editing.Textures[0]);
+        changed |= DrawTextureSlot("Base Color", editing.Textures[0], true);
     }
     if (ImGui::CollapsingHeader("Metallic / Roughness", ImGuiTreeNodeFlags_DefaultOpen))
     {
@@ -282,12 +291,12 @@ void ImGuiManager::DrawMaterialEditorWindow()
     }
     if (ImGui::CollapsingHeader("Normal", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        changed |= DrawTextureSlot("Normal", editing.Textures[1]);
+        changed |= DrawTextureSlot("Normal", editing.Textures[1], true);
         changed |= ImGui::SliderFloat("Strength", &editing.NormalScale, 0, 8);
     }
     if (ImGui::CollapsingHeader("Parallax Occlusion Mapping"))
     {
-        changed |= DrawTextureSlot("Height (POM)", editing.Textures[5]);
+        changed |= DrawTextureSlot("Height (POM)", editing.Textures[5], true);
         changed |= ImGui::SliderFloat("Parallax Depth", &editing.ParallaxDepth, 0, 0.2f, "%.3f");
         changed |= ImGui::SliderFloat("Parallax Steps", &editing.ParallaxSteps, 8, 128, "%.0f");
         ImGui::TextDisabled("Height: white = top, black = recessed. Depth 0 disables POM.");
@@ -386,6 +395,10 @@ void ImGuiManager::DrawMaterialEditorWindow()
         FinishMaterialEdit();
     }
     ImGui::EndChild();
+    if (!runtime.SourceError.empty())
+    {
+        ImGui::TextColored(ImVec4(1, 0.35f, 0.25f, 1), "%s", runtime.SourceError.c_str());
+    }
     if (!runtime.Error.empty())
     {
         ImGui::TextColored(ImVec4(1, 0.35f, 0.25f, 1), "%s", runtime.Error.c_str());

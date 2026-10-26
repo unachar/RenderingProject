@@ -5,7 +5,9 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 std::string FormatAssetHandle(AssetHandle handle)
 {
@@ -44,6 +46,7 @@ bool WriteAssetFile(const std::filesystem::path& path, const std::string& conten
             return false;
         }
     }
+#ifdef _WIN32
     if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
     {
         error = "Failed to replace " + path.generic_string() + " (" + std::to_string(GetLastError()) + ")";
@@ -51,6 +54,17 @@ bool WriteAssetFile(const std::filesystem::path& path, const std::string& conten
         std::filesystem::remove(temporary, ignored);
         return false;
     }
+#else
+    std::error_code filesystemError;
+    std::filesystem::rename(temporary, path, filesystemError);
+    if (filesystemError)
+    {
+        error = "Failed to replace " + path.generic_string() + ": " + filesystemError.message();
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        return false;
+    }
+#endif
     return true;
 }
 

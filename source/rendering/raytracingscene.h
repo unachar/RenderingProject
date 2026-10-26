@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pch.h"
+#include "procedural/proceduraltextureparams.h"
 
 struct RaytracingGeometry
 {
@@ -31,6 +32,8 @@ struct RaytracingGeometry
     ComPtr<ID3D12Resource> HeightTexture;
     UINT HeightResidentMip = 0;
     float ParallaxDepth = 0.0f;
+    std::array<ProcStudio::TextureGpuParams, 3> Noise{};
+    float NoiseNormalScale = 1.0f;
     float Roughness = 0.5f;
     float Metallic = 0.0f;
     UINT MediumID = 0;

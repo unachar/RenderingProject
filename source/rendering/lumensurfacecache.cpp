@@ -100,6 +100,8 @@ bool LumenSurfaceCache::Prepare(ID3D12Device* device, UINT frame, const vector<R
         Hash(revision, &mesh.VertexView, sizeof(mesh.VertexView));
         Hash(revision, &mesh.IndexView, sizeof(mesh.IndexView));
         Hash(revision, &mesh.BaseColor, sizeof(mesh.BaseColor));
+        Hash(revision, mesh.Noise.data(), sizeof(mesh.Noise));
+        Hash(revision, &mesh.NoiseNormalScale, sizeof(mesh.NoiseNormalScale));
         Hash(revision, &mesh.Emission, sizeof(mesh.Emission));
         Hash(revision, &mesh.Metallic, sizeof(mesh.Metallic));
         Hash(revision, &mesh.UsesAssetMaterial, sizeof(mesh.UsesAssetMaterial));

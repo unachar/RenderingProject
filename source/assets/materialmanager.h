@@ -1,5 +1,6 @@
 #pragma once
 #include "assetregistry.h"
+#include "noiseasset.h"
 #include "componentmanager.h"
 #include <functional>
 
@@ -11,12 +12,14 @@ struct MaterialRuntime
     MaterialAssetData BoundData;
     array<filesystem::path, static_cast<size_t>(MaterialTextureSlot::Count)> TexturePaths;
     array<int, static_cast<size_t>(MaterialTextureSlot::Count)> TextureDescriptors{-1, -1, -1, -1, -1, -1};
+    MaterialNoiseSources NoiseSources;
     MaterialComponent Binding;
     uint64_t Revision = 0;
     uint64_t PipelineRevision = 0;
     bool Dirty = false;
     bool Missing = false;
     string Error;
+    string SourceError;
     // グラフィックスのフェンス完了後、終了処理まで生存させる。
     ComPtr<ID3D12Resource> Constants;
     uint8_t* MappedConstants = nullptr;

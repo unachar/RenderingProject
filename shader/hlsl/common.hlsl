@@ -1006,6 +1006,8 @@ struct MaterialPartShaderParams
     float4 Skin1;
 };
 
+#include "ProceduralTexture.hlsli"
+
 cbuffer PBRParams : register(b2)
 {
     float Metallic;
@@ -1047,6 +1049,7 @@ cbuffer PBRParams : register(b2)
     float4 AssetEmission;
     uint4 AssetTextures;
     float4 AssetParallax;
+    ProceduralTexture::Parameters AssetNoise[3]; // Base Color, Normal, Height. Width is enabled.
 };
 
 MaterialPartShaderParams ResolveMaterialPartParams(float materialPartId)

@@ -206,7 +206,8 @@ void ResolvePacked(uint2 pixel)
         uint4 metadata = gSceneMaterials.Load4(material * GPU_SCENE_MATERIAL_STRIDE + 32u);
         AssetMaterialParameters asset = LoadAssetMaterial(material);
         // POM はピクセルごとに UV・深度・影が変わるので、2x2 共有シェーディングから外す。
-        share = (metadata.z & 1u) == 0 && metadata.y == 0xffffffffu &&
+        share = asset.Noise[0].Width == 0u && asset.Noise[1].Width == 0u && asset.Noise[2].Width == 0u &&
+                (metadata.z & 1u) == 0 && metadata.y == 0xffffffffu &&
                 (asset.Surface.z < .5 || (all(asset.Textures.xyz >= 512u) &&
                                           (asset.Parallax.x <= 0.0f || asset.Parallax.z < 0.0f)));
         GPUInstanceData instance = gSceneInstances[ids[0].x];
@@ -216,11 +217,9 @@ void ResolvePacked(uint2 pixel)
         }
     }
     GBufferOutput sharedValue = (GBufferOutput)0;
-    if (share)
-    {
-        sharedValue = Shade(inputs[0], ids[0], extent);
-    }
-    [unroll] for (uint i = 0; i < 4; ++i)
+    // One shading call site prevents the full procedural evaluator being inlined five times.
+    // Shared quads evaluate their first pixel once; other quads evaluate every valid pixel.
+    [loop] for (uint i = 0; i < 4; ++i)
     {
         uint2 p = base + uint2(i & 1u, i >> 1u);
         if (any(p >= extent))
@@ -229,15 +228,11 @@ void ResolvePacked(uint2 pixel)
         }
         if (valid[i])
         {
-            GBufferOutput value;
-            if (share)
+            if (!share || i == 0u)
             {
-                value = sharedValue;
+                sharedValue = Shade(inputs[i], ids[i], extent);
             }
-            else
-            {
-                value = Shade(inputs[i], ids[i], extent);
-            }
+            GBufferOutput value = sharedValue;
             // 非共有時は POM のピクセル深度オフセット込みの深度を書く。
             Store(p, value, share ? inputs[i].Position.z : value.Depth.x);
         }

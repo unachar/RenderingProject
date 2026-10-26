@@ -244,6 +244,7 @@ namespace EditorDescriptors
 }
 
 #include "editor-compute-under-test.h"
+#include "noise_material_gpu_tests.h"
 
 void TestEditorTransitions(Harness& harness)
 {
@@ -384,6 +385,7 @@ int main(int argc, char** argv)
         Require(GenerateTextureGpu(harness.Device.Get(), params, 53, 41, exported, error), error);
         Require(exported.Width == 53 && exported.Height == 41, "export dimensions");
         TestEditorTransitions(harness);
+        TestNoiseMaterialEvaluation(harness);
         harness.CheckDiagnostics();
         std::cout << "GPU texture parity: PASS (" << comparisons
                   << " image cases, 6 previews, separate export queue)\n";

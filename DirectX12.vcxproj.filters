@@ -1513,6 +1513,9 @@
     <None Include="shader\hlsl\CloudMedium.hlsli">
       <Filter>shader\hlsl\clouds</Filter>
     </None>
+    <ClCompile Include="source\assets\noiseasset.cpp">
+      <Filter>assets</Filter>
+    </ClCompile>
     <ClCompile Include="source\assets\materialasset.cpp">
       <Filter>assets</Filter>
     </ClCompile>

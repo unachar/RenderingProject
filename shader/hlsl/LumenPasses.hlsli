@@ -122,6 +122,8 @@ groupshared float3 LumenMaximum[64];
     {
         albedo *= SceneTextures[NonUniformResourceIndex(work.x)].SampleLevel(MaterialSampler, materialUv, 0).rgb;
     }
+    if (mesh.Noise[0].Width != 0)
+        albedo *= ProceduralTexture::Color(mesh.Noise[0], ProceduralTexture::Scalar(mesh.Noise[0], materialUv));
     // 物理的な反射率の範囲外に設定された色について、フィードバックのエネルギーを制限する。
     float3 reflectance = saturate(albedo * mesh.BaseColor.rgb);
     LumenPosition[texel] = float4(origin + direction * query.CommittedRayT(), 1);

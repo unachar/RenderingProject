@@ -3,6 +3,8 @@
 #include "proceduralstudio.h"
 #include "proceduraltexturegpu.h"
 #include "proceduralio.h"
+#include "assets/noiseasset.h"
+#include "assets/materialmanager.h"
 #include "proceduralmodelexport.h"
 #include "editordescriptors.h"
 #include "graphicsdevice.h"
@@ -1295,6 +1297,53 @@ namespace ProcStudioEditorDetail
     constexpr const wchar_t* kImageFilter =
         L"PNG (*.png)\0*.png\0DDS (*.dds)\0*.dds\0TGA (*.tga)\0*.tga\0JPEG (*.jpg)\0*.jpg\0BMP (*.bmp)\0*.bmp\0";
 
+    void SaveNoise(State& s)
+    {
+        string error;
+        if (!NoiseSerializer::Validate(s.Texture, error))
+        {
+            s.Status = error;
+            return;
+        }
+        filesystem::path path;
+        const auto defaultPath = MaterialManager::Registry().Root() / "procedural.noise";
+        if (!ProceduralIO::SaveFileDialog(L"Noise definition (*.noise)\0*.noise\0", L"noise", defaultPath.wstring(),
+                                          path))
+        {
+            return;
+        }
+        if (NoiseSerializer::Save(path, s.Texture, error))
+        {
+            MaterialManager::Refresh();
+            s.Status = ".noise を保存しました。アセットから Base Color / Normal / Height (POM) にドロップできます。";
+        }
+        else
+        {
+            s.Status = "保存に失敗: " + error;
+        }
+    }
+
+    void LoadNoise(State& s)
+    {
+        filesystem::path path;
+        if (!ProceduralIO::OpenFileDialog(L"Noise definition (*.noise)\0*.noise\0", path))
+        {
+            return;
+        }
+        TextureParams params;
+        string error;
+        if (!NoiseSerializer::Load(path, params, error))
+        {
+            s.Status = "読み込みに失敗: " + error;
+            return;
+        }
+        s.Texture = params;
+        s.TextureJob.Dirty = true;
+        s.CloudSliceJob.Dirty = true;
+        s.PreviewDirty = true;
+        s.Status = ".noise の設定を読み込みました";
+    }
+
     void SaveTexture(State& s)
     {
         filesystem::path path;
@@ -1667,7 +1716,28 @@ namespace ProcStudioEditorDetail
                         s.View = ViewMode::Flat2D;
                         s.PreviewDirty = true;
                     }
-                    ImGui::SeparatorText("保存");
+                    ImGui::SeparatorText("ノイズ定義 (.noise)");
+                    const bool supportsNoise = ProcStudio::TextureGpu::Supports(s.Texture);
+                    ImGui::BeginDisabled(busySaving || !supportsNoise);
+                    if (ImGui::Button(".noise を保存..."))
+                    {
+                        SaveNoise(s);
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    ImGui::BeginDisabled(busySaving);
+                    if (ImGui::Button(".noise を読み込む..."))
+                    {
+                        LoadNoise(s);
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::TextWrapped(
+                        "asset フォルダに保存し、マテリアルへドロップ。画像解像度に依存せず描画時に計算します。");
+                    if (!supportsNoise)
+                    {
+                        ImGui::TextWrapped("Mandelbrot / Julia は CPU 計算のため、画像として保存してください。");
+                    }
+                    ImGui::SeparatorText("画像を保存");
                     DrawSaveRow(s, true);
                     ImGui::BeginDisabled(busySaving);
                     if (ImGui::Button("テクスチャを保存..."))

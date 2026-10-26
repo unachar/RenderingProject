@@ -2,6 +2,8 @@
 #include "materialmanager.h"
 #include "assetthumbnailmanager.h"
 #include "texturemanager.h"
+#include "noiseasset.h"
+#include <cstring>
 #include "modelmanager.h"
 #include "world.h"
 #include "materialsystem.h"
@@ -152,12 +154,14 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
 {
     array<int, static_cast<size_t>(MaterialTextureSlot::Count)> descriptors;
     descriptors.fill(-1);
+    string sourceError;
+    const auto noise = runtime.NoiseSources.Update(registry, material, sourceError);
     for (size_t slot = 0; slot < descriptors.size(); ++slot)
     {
         const auto path = registry.Resolve(material.Textures[slot]);
         if (!path.empty() && registry.TypeOf(material.Textures[slot]) == AssetType::Texture)
         {
-            const auto previousHandle = runtime.Editing.Textures[slot];
+            const auto previousHandle = runtime.BoundData.Textures[slot];
             const auto previousPath = runtime.TexturePaths[slot];
             if (previousHandle == material.Textures[slot] && previousPath == path &&
                 runtime.TextureDescriptors[slot] >= 0)
@@ -193,9 +197,12 @@ void MaterialManager::UpdateBinding(MaterialRuntime& runtime, const MaterialAsse
     }
     auto binding = BuildPreviewBinding(material, descriptors);
     binding.RuntimeHandle = runtime.Handle;
+    binding.Noise = noise;
+    runtime.SourceError = sourceError;
     // リビジョン変更時は、共有マテリアルレコードとそのフレーム定数バッファだけを無効化する。
     if (runtime.Revision == 0 || runtime.Binding.BaseColor.x != binding.BaseColor.x || runtime.BoundData != material ||
-        runtime.TextureDescriptors != descriptors)
+        runtime.TextureDescriptors != descriptors ||
+        std::memcmp(runtime.Binding.Noise.data(), noise.data(), sizeof(noise)) != 0)
     {
         if (runtime.Revision == 0 || runtime.BoundData.Cull != material.Cull ||
             runtime.BoundData.Surface != material.Surface || runtime.BoundData.DepthWrite != material.DepthWrite ||

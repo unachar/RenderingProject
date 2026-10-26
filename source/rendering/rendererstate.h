@@ -181,7 +181,7 @@ class RendererState
                                                      g_kMAX_LOCAL_HEIGHT_FOG_VOLUMES * 3 + 1 + 2 + g_kMAX_SHADER_LIGHTS;
     static constexpr UINT g_kLIGHT_CB_ALIGNED_SIZE = (sizeof(float) * 4 * g_kLIGHT_CB_FLOAT4_COUNT + 255) & ~255;
     // 現在のマテリアルは15個のパーツ上書きを含み、2048バイトを超える。
-    static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 640 + 255) & ~255;
+    static constexpr UINT g_kPBR_CB_ALIGNED_SIZE = (sizeof(float) * 768 + 255) & ~255;
     static constexpr UINT g_kPBR_CB_SLOT_COUNT = g_kMAX_ENTITIES + 1;
     static constexpr UINT g_kPBR_CB_TOTAL_SLOT_COUNT = g_kPBR_CB_SLOT_COUNT * g_kFRAME_COUNT;
     static constexpr UINT g_kSHADOW_CB_ALIGNED_SIZE = (sizeof(XMMATRIX) + sizeof(float) * 8 + 255) & ~255;

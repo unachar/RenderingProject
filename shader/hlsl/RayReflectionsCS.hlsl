@@ -14,6 +14,7 @@
 #endif
 
 #include "RayTelemetry.hlsli"
+#include "ProceduralTexture.hlsli"
 Texture2D<float> ReflectionDepth : register(t1);
 Texture2D<float4> ReflectionNormal : register(t2);
 Texture2D<float4> ReflectionMaterial : register(t3);
@@ -37,6 +38,8 @@ struct ReflectionGeometry
     float4 BaseColor;
     float4 Emission;
     uint4 Surface; // 三角形数、発光テクスチャの有無、高さマップの有無、マテリアルアセット
+    ProceduralTexture::Parameters Noise[3];
+    float4 NoiseSurface;
 };
 
 StructuredBuffer<ReflectionGeometry> ReflectionMeshes : register(t0);
@@ -467,6 +470,8 @@ float3 SampleVisibleReflectionSky(float3 position, float3 normal, float3 directi
 // 高さマップの中心差分による法線に絞る。ラスター側と同じく白 = 上面、黒 = 最深部。
 float ReflectionHeight(uint instance, float2 uv, float lod)
 {
+    ProceduralTexture::Parameters noise = ReflectionMeshes[instance].Noise[2];
+    if (noise.Width != 0) return ProceduralTexture::Scalar(noise, uv);
     return saturate(HeightTextures[NonUniformResourceIndex(instance)].SampleLevel(MaterialSampler, uv, lod).r);
 }
 
@@ -475,7 +480,8 @@ void ApplyReflectionParallax(uint instance, ReflectionGeometry mesh, float3 p0, 
                              inout float3 normal)
 {
     float depthScale = clamp(mesh.Material.w, 0.0f, 0.2f);
-    if (mesh.Surface.z == 0u || depthScale <= 0.0f)
+    bool heightActive = mesh.Surface.z != 0u && depthScale > 0.0f;
+    if (!heightActive && mesh.Noise[1].Width == 0)
     {
         return;
     }
@@ -500,21 +506,30 @@ void ApplyReflectionParallax(uint instance, ReflectionGeometry mesh, float3 p0, 
     {
         bitangent = -bitangent;
     }
-    uint width, height, levels;
-    HeightTextures[NonUniformResourceIndex(instance)].GetDimensions(0u, width, height, levels);
+    uint width = 1, height = 1, levels = 1;
+    if (heightActive && mesh.Noise[2].Width == 0)
+        HeightTextures[NonUniformResourceIndex(instance)].GetDimensions(0u, width, height, levels);
     // レイの到達距離から UV のフットプリントを見積もり、ミップを選ぶ（遠い反射ほど粗く・安定に）。
     float uvFootprint = max(hitDistance, 0.01f) * 0.002f / max(worldPerUv, 1e-4f);
     float lod = clamp(log2(max(uvFootprint * max(width, height), 1.0f)), 0.0f, (float)max(levels, 1u) - 1.0f);
     float3 view = -incoming;
     float facing = dot(normal, view);
-    if (facing > 0.05f)
+    if (heightActive && facing > 0.05f)
     {
         float3 viewTS = float3(dot(view, tangent), dot(view, bitangent), facing);
         float depth = 1.0f - ReflectionHeight(instance, uv, lod);
         // Offset Limiting：facing で割らず、寝た角度でも破綻しない。
         uv -= viewTS.xy * depth * depthScale * smoothstep(0.05f, 0.2f, facing);
     }
-    float2 e = max(1.0f / float2(max(width, 1u), max(height, 1u)) * exp2(lod), 1e-5f);
+    if (mesh.Noise[1].Width != 0)
+    {
+        float3 tangentNormal = ProceduralTexture::Normal(mesh.Noise[1], uv, uvFootprint.xx);
+        tangentNormal.xy *= mesh.NoiseSurface.x;
+        normal = normalize(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal);
+        return;
+    }
+    float2 e = mesh.Noise[2].Width != 0 ? max(uvFootprint, 1e-5f).xx :
+               max(1.0f / float2(max(width, 1u), max(height, 1u)) * exp2(lod), 1e-5f);
     float left = ReflectionHeight(instance, uv - float2(e.x, 0), lod);
     float right = ReflectionHeight(instance, uv + float2(e.x, 0), lod);
     float down = ReflectionHeight(instance, uv - float2(0, e.y), lod);
@@ -546,7 +561,7 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
     {
         normal = -normal;
     }
-    [branch] if (mesh.Surface.z != 0u)
+    [branch] if (mesh.Surface.z != 0u || mesh.Noise[1].Width != 0u)
     {
         float3 corners[3];
         float2 cornerUv[3];
@@ -580,6 +595,8 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
         {
             albedo *= SceneTextures[NonUniformResourceIndex(instance)].SampleLevel(MaterialSampler, uv, 0).rgb;
         }
+        if (mesh.Noise[0].Width != 0)
+            albedo *= ProceduralTexture::Color(mesh.Noise[0], ProceduralTexture::Scalar(mesh.Noise[0], uv));
         albedo *= mesh.BaseColor.rgb;
     }
     float metallic = saturate(mesh.Material.y);

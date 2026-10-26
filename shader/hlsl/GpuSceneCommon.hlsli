@@ -1,5 +1,6 @@
 #ifndef GPU_SCENE_COMMON_INCLUDED
 #define GPU_SCENE_COMMON_INCLUDED
+#define GPU_SCENE_MATERIAL_PARAMETER_VECTORS 192u
 
 // バイト単位のストライドとオフセットは gpuscenetypes.h で検証する。全行列は
 // StructuredBuffer のメンバーも含め、DirectXMath の行ベクトル規約を使う。
@@ -46,12 +47,12 @@ struct GPUMaterialData
     uint ParameterVectorCount;
     uint ShaderMode;
     uint2 Padding;
-    float4 ShadingParameters[160];
+    float4 ShadingParameters[GPU_SCENE_MATERIAL_PARAMETER_VECTORS];
 };
 
 // SM 5.1 の StructuredBuffer 要素は 2048 バイトまで。既存のマテリアルには
-// 15 個のパーツ上書きがあり、2624 バイトのキャッシュを生の SRV アクセスで扱う。
-#define GPU_SCENE_MATERIAL_STRIDE 2624u
+// 15 個のパーツ上書きがあり、3136 バイトのキャッシュを生の SRV アクセスで扱う。
+#define GPU_SCENE_MATERIAL_STRIDE 3136u
 
 // インポスター置き換え（Flags ビット5 = アトラス準備済み。CPU は距離判定を行わない）。
 //   LodDistances.w      : 切替距離
