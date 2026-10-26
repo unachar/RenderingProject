@@ -252,6 +252,7 @@ namespace ProcStudio
         Turbulence,
         HybridMultifractal,
         DomainWarp,
+        None,
         Count
     };
 
@@ -454,6 +455,14 @@ namespace ProcStudio
     {
         const int octaves = std::clamp(params.Octaves, 1, 12);
         float frequency = (std::max)(params.Frequency, 0.001f);
+        if (params.Fractal == FractalType::None)
+        {
+            const int period = tileable ? (std::max)(1, static_cast<int>(std::round(frequency))) : 0;
+            const float scale = tileable ? static_cast<float>(period) : frequency;
+            const float value = BasisNoise(params.BasisType, x * scale, y * scale, z * scale,
+                                           NoiseDetail::Hash(params.Seed), period);
+            return NoiseDetail::Saturate(value * 0.5f + 0.5f);
+        }
         const float lacunarity = tileable ? (std::max)(1.0f, std::round(params.Lacunarity)) : params.Lacunarity;
         if (params.Fractal == FractalType::DomainWarp)
         {

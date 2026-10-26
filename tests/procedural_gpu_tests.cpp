@@ -340,7 +340,7 @@ int main(int argc, char** argv)
         }
         for (int basis = 0; basis < 4; ++basis)
         {
-            for (int fractal = 0; fractal < 6; ++fractal)
+            for (int fractal = 0; fractal < static_cast<int>(FractalType::Count); ++fractal)
             {
                 for (bool tileable : {false, true})
                 {

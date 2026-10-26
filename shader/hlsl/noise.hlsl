@@ -7,6 +7,7 @@ namespace TextureNoise
     static const uint BasisPerlin = 0, BasisValue = 1, BasisWorley = 2;
     static const uint FractalFBm = 0, FractalRidged = 1, FractalBillow = 2;
     static const uint FractalTurbulence = 3, FractalHybrid = 4, FractalDomainWarp = 5;
+    static const uint FractalNone = 6;
 
     struct NoiseSettings
     {
@@ -149,6 +150,13 @@ namespace TextureNoise
     float FractalSum(float3 p, uint basis, uint fractal, uint seed, bool tileable, NoiseSettings settings)
     {
         float frequency = max(settings.Frequency, 0.001);
+        if (fractal == FractalNone)
+        {
+            int period = tileable ? max(1, (int)floor(frequency + 0.5)) : 0;
+            float scale = tileable ? (float)period : frequency;
+            float value = BasisNoise(basis, p * scale, Hash(seed), period);
+            return saturate(value * 0.5 + 0.5);
+        }
         // CPU round uses half-away-from-zero; tile frequencies are positive.
         float lacunarity = tileable ? max(1.0, floor(settings.Lacunarity + 0.5)) : settings.Lacunarity;
         float amplitude = 1;

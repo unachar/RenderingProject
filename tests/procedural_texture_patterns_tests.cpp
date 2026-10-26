@@ -22,6 +22,42 @@ namespace
 void RunTests()
 {
     using namespace ProcStudio;
+    for (int basis = 0; basis < static_cast<int>(Basis::Count); ++basis)
+    {
+        for (bool tileable : {false, true})
+        {
+            NoiseParams noise;
+            noise.BasisType = static_cast<Basis>(basis);
+            noise.Fractal = FractalType::None;
+            noise.Frequency = 3.5f;
+            for (int sample = -8; sample <= 8; ++sample)
+            {
+                const float x = sample * 0.137f;
+                const float y = sample * 0.219f;
+                const float z = sample * 0.071f;
+                const int period = tileable ? 4 : 0;
+                const float frequency = tileable ? 4.0f : noise.Frequency;
+                const float expected = NoiseDetail::Saturate(
+                    BasisNoise(noise.BasisType, x * frequency, y * frequency, z * frequency,
+                               NoiseDetail::Hash(noise.Seed), period) * 0.5f + 0.5f);
+                Require(Near(FractalNoise(noise, x, y, z, tileable), expected),
+                        "none must render the normalized base noise without octave synthesis");
+                NoiseParams changed = noise;
+                changed.Octaves = 10;
+                changed.Lacunarity = 3.7f;
+                changed.Gain = 0.9f;
+                Require(Near(FractalNoise(changed, x, y, z, tileable), expected),
+                        "none must ignore fractal synthesis settings");
+                if (tileable)
+                {
+                    Require(Near(FractalNoise(noise, x + 1, y, z, true), expected) &&
+                                Near(FractalNoise(noise, x, y + 1, z, true), expected) &&
+                                Near(FractalNoise(noise, x, y, z + 1, true), expected),
+                            "base noise must tile on all three axes");
+                }
+            }
+        }
+    }
     TextureParams params;
     params.Kind = TextureKind::Geometric;
     Require(TextureScalar(params, 0.125f, 0.0625f, 0, false) > 0.99f,

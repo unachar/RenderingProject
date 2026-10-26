@@ -674,16 +674,18 @@ namespace ProcStudioEditorDetail
             changed = true;
         }
         int fractal = static_cast<int>(n.Fractal);
-        if (ImGui::Combo("フラクタル", &fractal, "fBm\0Ridged\0Billow\0Turbulence\0Hybrid Multifractal\0Domain Warp\0"))
+        if (ImGui::Combo("フラクタル", &fractal, "fBm\0Ridged\0Billow\0Turbulence\0Hybrid Multifractal\0Domain Warp\0なし\0"))
         {
             n.Fractal = static_cast<FractalType>(fractal);
             changed = true;
         }
         changed |= ImGui::InputScalar("Seed", ImGuiDataType_U32, &n.Seed);
         changed |= ImGui::SliderFloat("周波数", &n.Frequency, 0.5f, 32.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+        ImGui::BeginDisabled(n.Fractal == FractalType::None);
         changed |= ImGui::SliderInt("オクターブ", &n.Octaves, 1, 10);
         changed |= ImGui::SliderFloat("Lacunarity", &n.Lacunarity, 1.0f, 4.0f);
         changed |= ImGui::SliderFloat("Gain", &n.Gain, 0.1f, 0.9f);
+        ImGui::EndDisabled();
         if (n.Fractal == FractalType::DomainWarp)
         {
             changed |= ImGui::SliderFloat("Warp 強度", &n.WarpStrength, 0.0f, 4.0f);
