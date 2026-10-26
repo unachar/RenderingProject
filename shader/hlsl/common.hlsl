@@ -1,3 +1,5 @@
+#include "noise.hlsl"
+
 #ifdef SHADER_VISIBILITY_RESOLVE
 static float2 VisibilityUvDx, VisibilityUvDy;
 static float3 VisibilityWorldDx, VisibilityWorldDy;
@@ -404,37 +406,6 @@ float3 ApplyNormalMapCommon(float3 meshNormal, float3 worldPos, float2 texCoord,
     float3 mappedNormal =
         SafeNormalizeCommon(tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * n, n);
     return SafeNormalizeCommon(lerp(n, mappedNormal, useTbn), n);
-}
-
-float Hash13Common(float3 p)
-{
-    p = frac(p * 0.1031f);
-    p += dot(p, p.yzx + 33.33f);
-    return frac((p.x + p.y) * p.z);
-}
-
-float ValueNoiseCommon(float3 p)
-{
-    float3 i = floor(p);
-    float3 f = frac(p);
-    f = f * f * (3.0f - 2.0f * f);
-
-    float n000 = Hash13Common(i + float3(0.0f, 0.0f, 0.0f));
-    float n100 = Hash13Common(i + float3(1.0f, 0.0f, 0.0f));
-    float n010 = Hash13Common(i + float3(0.0f, 1.0f, 0.0f));
-    float n110 = Hash13Common(i + float3(1.0f, 1.0f, 0.0f));
-    float n001 = Hash13Common(i + float3(0.0f, 0.0f, 1.0f));
-    float n101 = Hash13Common(i + float3(1.0f, 0.0f, 1.0f));
-    float n011 = Hash13Common(i + float3(0.0f, 1.0f, 1.0f));
-    float n111 = Hash13Common(i + float3(1.0f, 1.0f, 1.0f));
-
-    float nx00 = lerp(n000, n100, f.x);
-    float nx10 = lerp(n010, n110, f.x);
-    float nx01 = lerp(n001, n101, f.x);
-    float nx11 = lerp(n011, n111, f.x);
-    float nxy0 = lerp(nx00, nx10, f.y);
-    float nxy1 = lerp(nx01, nx11, f.y);
-    return lerp(nxy0, nxy1, f.z);
 }
 
 float RayleighPhaseCommon(float cosTheta)

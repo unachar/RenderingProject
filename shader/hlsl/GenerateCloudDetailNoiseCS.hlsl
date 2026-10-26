@@ -1,4 +1,4 @@
-#include "CloudNoise.hlsli"
+#include "noise.hlsl"
 
 cbuffer NoiseParameters : register(b0)
 {

@@ -1,3 +1,5 @@
+#include "noise.hlsl"
+
 #ifndef SURFACE_LIGHTING_INCLUDED
 #define SURFACE_LIGHTING_INCLUDED
 
@@ -37,10 +39,7 @@ float IsMaterialClass(float value, float target)
     return abs(value - target) < 0.5f;
 }
 
-float ContactShadowPixelNoise(float2 pixelPosition)
-{
-    return frac(52.9829189f * frac(dot(pixelPosition, float2(0.06711056f, 0.00583715f))));
-}
+
 
 float2 DirectionalReceiverDepthGradient(float3 receiverWorldDx, float3 receiverWorldDy, float4x4 lightViewProjection)
 {

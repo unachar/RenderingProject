@@ -1,4 +1,5 @@
 #pragma once
+#include "noise.h"
 // Procedural Studio: フラクタル・プロシージャルテクスチャ、立体テクスチャ、ボリューム、
 // モデルの CPU 生成処理。D3D に依存しない C++ とし、単体テストやエディター・クラウドレンダラーで共有する。
 #include <array>
@@ -29,43 +30,6 @@ namespace ProcStudio
         float Z = 0;
         float W = 1;
     };
-
-    enum class Basis
-    {
-        Perlin,
-        Value,
-        Worley,
-        CellEdge, // Worleyノイズの距離差（F2 - F1）
-        Count
-    };
-    enum class FractalType
-    {
-        FBm,
-        Ridged,
-        Billow,
-        Turbulence,
-        HybridMultifractal,
-        DomainWarp,
-        Count
-    };
-
-    struct NoiseParams
-    {
-        Basis BasisType = Basis::Perlin;
-        FractalType Fractal = FractalType::FBm;
-        uint32_t Seed = 1337;
-        float Frequency = 4.0f; // テクスチャ全体のセル数。立体テクスチャではワールド空間 1 単位あたりのセル数。
-        int Octaves = 5;
-        float Lacunarity = 2.0f;
-        float Gain = 0.5f;
-        float WarpStrength = 0.6f;
-        float RidgeOffset = 1.0f;
-    };
-
-    // 格子ノイズは [-1, 1]（Worley 系は [0, 1]）。period > 0 では格子を折り返してタイル化する。
-    float BasisNoise(Basis basis, float x, float y, float z, uint32_t seed, int period);
-    // およそ [0, 1] に正規化したフラクタル和。
-    float FractalNoise(const NoiseParams& params, float x, float y, float z, bool tileable);
 
     struct Image
     {

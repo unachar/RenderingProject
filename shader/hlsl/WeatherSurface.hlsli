@@ -1,31 +1,11 @@
+#include "noise.hlsl"
+
 #ifndef WEATHER_SURFACE_HLSLI
 #define WEATHER_SURFACE_HLSLI
 
 // 不透明 PBR 面の天候（RenderQuality）：濡れ（Lagarde 2013 の「Water drop」シリーズ）、
 // 動く雨の波紋を伴う水たまり、上向きの面の積雪。
 // PostProcessParams の WeatherParams0/1 と LensParams1.x（時刻）を使う。
-
-float WeatherHash(float2 p)
-{
-    float3 p3 = frac(float3(p.xyx) * 0.1031f);
-    p3 += dot(p3, p3.yzx + 33.33f);
-    return frac((p3.x + p3.y) * p3.z);
-}
-
-float WeatherValueNoise(float2 p)
-{
-    float2 i = floor(p);
-    float2 f = frac(p);
-    float2 u = f * f * (3.0f - 2.0f * f);
-    return lerp(lerp(WeatherHash(i), WeatherHash(i + float2(1, 0)), u.x),
-                lerp(WeatherHash(i + float2(0, 1)), WeatherHash(i + float2(1, 1)), u.x), u.y);
-}
-
-float WeatherFbm(float2 p)
-{
-    return WeatherValueNoise(p) * 0.55f + WeatherValueNoise(p * 2.03f + 7.1f) * 0.3f +
-           WeatherValueNoise(p * 4.11f + 3.7f) * 0.15f;
-}
 
 // セルのグリッド上の雨粒から広がる環状の波紋（xz の法線摂動）。
 float2 RainRipples(float2 position, float time, float intensity)
@@ -36,9 +16,9 @@ float2 RainRipples(float2 position, float time, float intensity)
         float2 p = position * (layer == 0 ? 2.3f : 3.7f) + layer * 17.0f;
         float2 cell = floor(p);
         float2 local = frac(p) - 0.5f;
-        float seed = WeatherHash(cell + layer * 31.0f);
+        float seed = Hash21(cell + layer * 31.0f);
         float phase = frac(time * (0.9f + seed * 0.6f) + seed);
-        float2 center = (float2(WeatherHash(cell + 3.1f), WeatherHash(cell + 5.7f)) - 0.5f) * 0.6f;
+        float2 center = (float2(Hash21(cell + 3.1f), Hash21(cell + 5.7f)) - 0.5f) * 0.6f;
         float2 offset = local - center;
         float distance = length(offset);
         float ring = sin((distance - phase * 0.45f) * 60.0f) * saturate(1.0f - abs(distance - phase * 0.45f) * 12.0f);

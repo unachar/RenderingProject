@@ -1,3 +1,5 @@
+#include "noise.hlsl"
+
 // =============================================================================================
 // BloomCS.hlsl - 物理ベースのブルーム（二重フィルターのミップチェーン）、レンズフレア、画面空間の
 // 雨と雪。AdvancedEffects 内でトーンマッピング前の線形 HDR シーンへ適用する。
@@ -146,12 +148,7 @@ hfloat3 Average4(hfloat3 a, hfloat3 b, hfloat3 c, hfloat3 d)
     Destination[id.xy] = float4(current + (float3)tent * Radius, 1.0f);
 }
 
-float Hash21(float2 p)
-{
-    float3 p3 = frac(float3(p.xyx) * 0.1031f);
-    p3 += dot(p3, p3.yzx + 33.33f);
-    return frac((p3.x + p3.y) * p3.z);
-}
+
 
 float3 LensFlare(float2 uv)
 {

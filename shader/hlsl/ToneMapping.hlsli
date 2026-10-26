@@ -1,3 +1,5 @@
+#include "noise.hlsl"
+
 #ifndef TONE_MAPPING_HLSLI
 #define TONE_MAPPING_HLSLI
 // common.hlsl の PostProcessParams（GradeParams0/1、GradeLift/Gamma/Gain）が必要。
@@ -131,12 +133,7 @@ float3 GradeDisplay(float3 color)
 }
 
 // --- レンズ効果 ---
-float LensHash(float2 p)
-{
-    float3 p3 = frac(float3(p.xyx) * 0.1031f);
-    p3 += dot(p3, p3.yzx + 33.33f);
-    return frac((p3.x + p3.y) * p3.z);
-}
+
 
 // 倍率色収差：赤と青を、放射状にスケールした位置でサンプリングする。
 float3 SampleWithChromaticAberration(Texture2D<float4> source, SamplerState linearSampler, float2 uv)
@@ -169,7 +166,7 @@ float3 ApplyLensOutput(float3 color, float2 uv, float2 pixel)
     float grain = LensParams0.w;
     if (grain > 0.001f)
     {
-        float noise = LensHash(pixel + frac(LensParams1.y * 0.6180339f) * 1024.0f) - 0.5f;
+        float noise = Hash21(pixel + frac(LensParams1.y * 0.6180339f) * 1024.0f) - 0.5f;
         float luma = dot(color, kLumaWeights);
         // フィルム同様、グレインは中間調で最も強くする。
         float response = 4.0f * luma * (1.0f - saturate(luma));

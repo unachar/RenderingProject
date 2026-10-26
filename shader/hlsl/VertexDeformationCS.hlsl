@@ -1,3 +1,5 @@
+#include "noise.hlsl"
+
 ByteAddressBuffer BaseVertices : register(t0);
 RWByteAddressBuffer CurrentVertices : register(u0);
 RWByteAddressBuffer PreviousVertices : register(u1);
@@ -14,51 +16,6 @@ cbuffer DeformationConstants : register(b0)
     MotionData Previous;
     uint4 Geometry;
 };
-
-uint NoiseHash(int2 cell, uint seed)
-{
-    uint value = uint(cell.x) * 0x9e3779b9u ^ uint(cell.y) * 0x85ebca6bu ^ seed;
-    value ^= value >> 16;
-    value *= 0x7feb352du;
-    value ^= value >> 15;
-    value *= 0x846ca68bu;
-    return value ^ (value >> 16);
-}
-
-float Gradient(int2 cell, float2 delta, uint seed)
-{
-    switch (NoiseHash(cell, seed) & 7u)
-    {
-        case 0:
-            return delta.x;
-        case 1:
-            return -delta.x;
-        case 2:
-            return delta.y;
-        case 3:
-            return -delta.y;
-        case 4:
-            return (delta.x + delta.y) * 0.70710678118f;
-        case 5:
-            return (delta.x - delta.y) * 0.70710678118f;
-        case 6:
-            return (-delta.x + delta.y) * 0.70710678118f;
-        default:
-            return (-delta.x - delta.y) * 0.70710678118f;
-    }
-}
-
-float Perlin(float2 position, float frequency, uint seed)
-{
-    position = clamp(position * clamp(frequency, 0.0001f, 2.0f), -10000.0f, 10000.0f);
-    int2 cell = int2(floor(position));
-    float2 local = position - cell;
-    float2 weight = local * local * local * (local * (local * 6.0f - 15.0f) + 10.0f);
-    float low = lerp(Gradient(cell, local, seed), Gradient(cell + int2(1, 0), local - float2(1, 0), seed), weight.x);
-    float high = lerp(Gradient(cell + int2(0, 1), local - float2(0, 1), seed),
-                      Gradient(cell + int2(1, 1), local - 1.0f, seed), weight.x);
-    return clamp(lerp(low, high, weight.y) * 1.41421356237f, -1.0f, 1.0f);
-}
 
 float3 SpatialOffset(float3 position, MotionData motion, bool rest)
 {
@@ -78,9 +35,9 @@ float3 SpatialOffset(float3 position, MotionData motion, bool rest)
     }
     float time = rest ? 0 : motion.Parameters.y;
     uint seed = asuint(motion.Parameters.w);
-    return float3(Perlin(float2(position.y + time, position.z + 11.2f), frequency, seed),
-                  Perlin(float2(position.x + time, position.z + 37.9f), frequency, seed),
-                  Perlin(float2(position.x + 93.1f, position.y + time), frequency, seed));
+    return float3(DeformationNoise::Perlin(float2(position.y + time, position.z + 11.2f), frequency, seed),
+                  DeformationNoise::Perlin(float2(position.x + time, position.z + 37.9f), frequency, seed),
+                  DeformationNoise::Perlin(float2(position.x + 93.1f, position.y + time), frequency, seed));
 }
 
 float3 DeformPosition(float3 position, MotionData motion)

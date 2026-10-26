@@ -964,6 +964,9 @@
     <ClCompile Include="source\procedural\proceduralmath.cpp">
       <Filter>procedural</Filter>
     </ClCompile>
+    <ClInclude Include="source\procedural\noise.h">
+      <Filter>source\procedural</Filter>
+    </ClInclude>
     <ClInclude Include="source\procedural\proceduralmath.h">
       <Filter>procedural</Filter>
     </ClInclude>
@@ -1319,8 +1322,8 @@
     <None Include="shader\hlsl\CloudCommon.hlsli">
       <Filter>shader\hlsl\clouds</Filter>
     </None>
-    <None Include="shader\hlsl\CloudNoise.hlsli">
-      <Filter>shader\hlsl\clouds</Filter>
+    <None Include="shader\hlsl\noise.hlsl">
+      <Filter>shader\hlsl</Filter>
     </None>
     <FxCompile Include="shader\hlsl\GenerateCloudBaseNoiseCS.hlsl">
       <Filter>shader\hlsl\clouds</Filter>
