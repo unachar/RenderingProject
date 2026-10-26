@@ -547,7 +547,7 @@ namespace VirtualGeometryTraversal
         XMFLOAT4X4 projectionValues;
         XMStoreFloat4x4(&projectionValues, projection);
         p.ProjectionPixels = 0.5f * float(GraphicsDevice::GetSceneHeight()) * std::abs(projectionValues._22);
-        p.OrthographicProjection = 0;
+        p.OrthographicProjection = fabsf(projectionValues._44) > 0.5f ? 1u : 0u;
         p.TargetPixels = std::max(0.01f, state.Options.TargetErrorPixels);
         p.ForceLevel = std::clamp(state.Options.ForceHierarchyLevel, -1, 31);
         p.Capacity = selectedCapacity;

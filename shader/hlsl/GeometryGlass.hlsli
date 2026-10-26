@@ -150,10 +150,9 @@ float GlassRayEpsilon(float3 p)
 
 // 外向きに閉じたメッシュが必要。透過経路は決定的に計算する。
 // 環境照明や反射へのフォールバックは使わず、全反射は実際の形状をたどる。
-bool IntegrateGeometryGlass(GlassHit hit, float3 direction, float coneAngle, out float3 radiance)
+bool IntegrateGeometryGlass(GlassHit hit, float3 origin, float3 direction, float coneAngle, out float3 radiance)
 {
     radiance = 0;
-    float3 origin = CameraPos;
     float traveled = 0;
     uint mediumID[8];
     float mediumIOR[8];
@@ -316,7 +315,8 @@ bool IntegrateGeometryGlass(GlassHit hit, float3 direction, float coneAngle, out
 
 // 固定のサブピクセルサンプルを使い、フレームごとのランダムなジッターや古い履歴は使わない。
 // 低い内部解像度では 4 経路、大きな描画先では 1 経路を維持する。
-bool TraceGeometryGlass(float3 rasterPosition, float3 viewDir, float3 rayDx, float3 rayDy, out float3 radiance,
+bool TraceGeometryGlass(float3 rasterPosition, float3 viewDir, float3 rayDx, float3 rayDy,
+                        float3 originDx, float3 originDy, out float3 radiance,
                         out bool ownsPixel)
 {
     radiance = 0;
@@ -326,9 +326,13 @@ bool TraceGeometryGlass(float3 rasterPosition, float3 viewDir, float3 rayDx, flo
         return false;
     }
     float3 direction = -viewDir;
-    float coneAngle = max(max(length(rayDx), length(rayDy)), 1e-6f);
+    float3 origin = SurfaceCameraOriginCommon(rasterPosition, CameraPos);
+    float rasterDistance = length(rasterPosition - origin);
+    float coneAngle = max(max(length(rayDx), length(rayDy)),
+                          max(length(originDx), length(originDy)) / max(rasterDistance, 0.001f));
+    coneAngle = max(coneAngle, 1e-6f);
     GlassHit center;
-    if (!TraceGlassBoundary(CameraPos, direction, coneAngle, 0.0f, center))
+    if (!TraceGlassBoundary(origin, direction, coneAngle, 0.0f, center))
     {
         return false;
     }
@@ -337,7 +341,6 @@ bool TraceGeometryGlass(float3 rasterPosition, float3 viewDir, float3 rayDx, flo
     {
         return false;
     }
-    float rasterDistance = length(rasterPosition - CameraPos);
     // 固定のワールド空間しきい値の代わりに、ピクセルの投影範囲の小さな割合を使い、
     // 曲面メッシュで RT とフォールバックの担当が交互に変わるのを防ぐ。
     float tolerance = max(0.0001f, rasterDistance * coneAngle * 0.05f);
@@ -351,7 +354,7 @@ bool TraceGeometryGlass(float3 rasterPosition, float3 viewDir, float3 rayDx, flo
         return false;
     }
     float3 centerRadiance;
-    IntegrateGeometryGlass(center, direction, coneAngle, centerRadiance);
+    IntegrateGeometryGlass(center, origin, direction, coneAngle, centerRadiance);
     radiance = centerRadiance;
     uint width, height;
     SceneColorTexture.GetDimensions(width, height);
@@ -361,15 +364,16 @@ bool TraceGeometryGlass(float3 rasterPosition, float3 viewDir, float3 rayDx, flo
     {
         float2 offset = offsets[sampleIndex - 1];
         float3 sampleDirection = SafeNormalizeCommon(direction + rayDx * offset.x + rayDy * offset.y, direction);
+        float3 sampleOrigin = origin + originDx * offset.x + originDy * offset.y;
         GlassHit sampleHit;
         float3 sampleRadiance = centerRadiance;
-        if (TraceGlassBoundary(CameraPos, sampleDirection, coneAngle, 0.0f, sampleHit))
+        if (TraceGlassBoundary(sampleOrigin, sampleDirection, coneAngle, 0.0f, sampleHit))
         {
             GlassMeshData sampleMesh = GlassMeshes[sampleHit.Instance];
             // 隣接する不透明な物体をガラスの輪郭へにじませない。
             if (sampleMesh.Optical.y > 0.001f && sampleMesh.Flags.x == first.Flags.x)
             {
-                IntegrateGeometryGlass(sampleHit, sampleDirection, coneAngle, sampleRadiance);
+                IntegrateGeometryGlass(sampleHit, sampleOrigin, sampleDirection, coneAngle, sampleRadiance);
             }
         }
         radiance += sampleRadiance;

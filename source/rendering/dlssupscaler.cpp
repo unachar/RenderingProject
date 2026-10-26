@@ -6,6 +6,7 @@
 #include "renderconfiguration.h"
 #include "renderersettings.h"
 #include "imguimanager.h"
+#include "temporalhistorycontext.h"
 #include <filesystem>
 
 #ifdef RENDERINGPROJECT_USE_DLSS
@@ -33,6 +34,7 @@ namespace
     UINT g_JitterFrame = 0;
     EntityID g_Camera = g_kINVALID_ENTITY;
     XMFLOAT2 g_Jitter{};
+    uint64_t g_CameraCutGeneration = 0;
     string g_Status = "NGX SDK is not installed";
 
 #ifdef RENDERINGPROJECT_USE_DLSS
@@ -348,7 +350,8 @@ void DlssUpscaler::PrepareFrame(EntityID camera)
 {
     g_Active = false;
     const bool requested = IsRequested();
-    if (!requested || !g_Prepared || camera != g_Camera)
+    const uint64_t cutGeneration = TemporalHistory::Context::Capture(camera, 0, 0, 0).CameraCutGeneration;
+    if (!requested || !g_Prepared || camera != g_Camera || cutGeneration != g_CameraCutGeneration)
     {
         g_ResetHistory = true;
         g_JitterFrame = 0;
@@ -364,6 +367,7 @@ void DlssUpscaler::PrepareFrame(EntityID camera)
     }
     g_Prepared = requested;
     g_Camera = camera;
+    g_CameraCutGeneration = cutGeneration;
 }
 
 bool DlssUpscaler::Execute(ID3D12GraphicsCommandList* commands, UINT frameIndex, ID3D12Resource* color,

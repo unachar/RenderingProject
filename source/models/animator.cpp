@@ -2,6 +2,148 @@
 #include "animator.h"
 #include "componentmanager.h"
 #include "animationplayback.h"
+#include "vmdanimationimpoter.h"
+#include <cmath>
+
+bool Animator::Play(CameraComponent& camera, bool restart)
+{
+    return Play(camera, camera.Animation.Path, restart);
+}
+
+bool Animator::Play(CameraComponent& camera, const char* vmdPath, bool restart)
+{
+    return Play(camera, string(vmdPath ? vmdPath : ""), restart);
+}
+
+bool Animator::Play(CameraComponent& camera, const string& vmdPath, bool restart)
+{
+    auto& animation = camera.Animation;
+    if (vmdPath.empty())
+    {
+        animation.Error = "カメラ用VMDを指定してください。";
+        return false;
+    }
+    const bool changed = animation.LoadedPath != vmdPath || !animation.Clip;
+    if (changed || restart)
+    {
+        auto clip = make_shared<VmdAnimation>();
+        if (!LoadVmdAnimationFile(vmdPath.c_str(), *clip))
+        {
+            animation.Error = "カメラ用VMDを読み込めません: " + vmdPath;
+            Debug::Log("%s\n", animation.Error.c_str());
+            return false;
+        }
+        if (clip->CameraTrack.empty())
+        {
+            animation.Error = "このVMDにはカメラのキーフレームがありません。";
+            Debug::Log("%s: %s\n", animation.Error.c_str(), vmdPath.c_str());
+            return false;
+        }
+        animation.Clip = move(clip);
+        animation.LoadedPath = vmdPath;
+    }
+    animation.Path = vmdPath;
+    if (changed || restart)
+    {
+        animation.CurrentTime = 0.0f;
+        animation.LastFrame = -1.0f;
+    }
+    animation.Error.clear();
+    animation.IsPlaying = true;
+    animation.IsActive = true;
+    return true;
+}
+
+void Animator::Stop(CameraComponent& camera)
+{
+    camera.Animation.IsPlaying = false;
+    camera.Animation.IsActive = false;
+    camera.Animation.CurrentTime = 0.0f;
+    camera.Animation.LastFrame = -1.0f;
+    camera.Animation.CutThisFrame = false;
+}
+
+void Animator::Pause(CameraComponent& camera)
+{
+    camera.Animation.IsPlaying = false;
+}
+
+void Animator::SetSpeed(CameraComponent& camera, float speed)
+{
+    camera.Animation.Speed = isfinite(speed) ? max(0.0f, speed) : 1.0f;
+}
+
+void Animator::Update(CameraComponent& camera, TransformComponent& transform, float deltaTime)
+{
+    auto& animation = camera.Animation;
+    if (!animation.IsActive || !animation.Clip || animation.Clip->CameraTrack.empty())
+    {
+        return;
+    }
+    const auto& keys = animation.Clip->CameraTrack;
+    float frameAdvance = 0.0f;
+    if (animation.IsPlaying && isfinite(deltaTime) && deltaTime > 0.0f)
+    {
+        const float elapsed = deltaTime * animation.Speed;
+        animation.CurrentTime += elapsed;
+        frameAdvance = elapsed * 30.0f;
+    }
+    float frame = max(0.0f, animation.CurrentTime) * 30.0f;
+    const float lastFrame = static_cast<float>(keys.back().Frame);
+    if (animation.Loop)
+    {
+        frame = fmod(frame, lastFrame + 1.0f);
+    }
+    else if (frame >= lastFrame)
+    {
+        frame = lastFrame;
+        animation.CurrentTime = lastFrame / 30.0f;
+        animation.IsPlaying = false;
+    }
+    // Keep cuts pending until CameraSystem consumes them, including the frame-zero
+    // pose applied by ProjectManager before the first simulation update.
+    animation.CutThisFrame |= animation.LastFrame < 0.0f || frame < animation.LastFrame ||
+                               (animation.Loop && frameAdvance >= lastFrame + 1.0f);
+    if (!animation.CutThisFrame)
+    {
+        auto next = upper_bound(keys.begin(), keys.end(), animation.LastFrame,
+                                [](float value, const VmdCameraKeyframe& key) {
+            return value < static_cast<float>(key.Frame);
+        });
+        for (; next != keys.end() && static_cast<float>(next->Frame) <= frame; ++next)
+        {
+            if (next != keys.begin() && next->Frame - (next - 1)->Frame == 1)
+            {
+                animation.CutThisFrame = true;
+                break;
+            }
+        }
+    }
+    animation.LastFrame = frame;
+    const VmdCameraSample sample = SampleVmdCameraTrack(keys, frame);
+    const bool orthographic = !sample.Perspective;
+    animation.CutThisFrame |= camera.IsOrthographic != orthographic;
+    camera.IsOrthographic = orthographic;
+    // MMD's orthographic zoom depends on distance, independently of the FOV.
+    // A distance of 45 MMD units spans 25 units vertically.
+    camera.OrthographicHeight = max(0.001f, fabsf(sample.Distance * animation.Scale) * (25.0f / 45.0f));
+    const XMMATRIX rotation = XMMatrixRotationRollPitchYaw(-sample.Rotation.x, -sample.Rotation.y,
+                                                          -sample.Rotation.z);
+    const XMVECTOR center = XMVectorAdd(XMVectorScale(XMLoadFloat3(&sample.Center), animation.Scale),
+                                        XMLoadFloat3(&animation.Offset));
+    const XMVECTOR eye = XMVectorAdd(center, XMVector3TransformNormal(
+        XMVectorSet(0, 0, sample.Distance * animation.Scale, 0), rotation));
+    const float forwardSign = orthographic && sample.Distance > 0.0f ? -1.0f : 1.0f;
+    const XMVECTOR forward = XMVector3TransformNormal(XMVectorSet(0, 0, forwardSign, 0), rotation);
+    XMStoreFloat3(&transform.Position, eye);
+    // A direction-based target also works for zero or positive VMD distances.
+    XMStoreFloat3(&camera.Target, XMVectorAdd(eye, forward));
+    XMStoreFloat3(&camera.Up, XMVector3TransformNormal(XMVectorSet(0, 1, 0, 0), rotation));
+    transform.Rotation = {-sample.Rotation.x, -sample.Rotation.y, -sample.Rotation.z};
+    transform.IsDirty = true;
+    camera.Position = transform.Position;
+    camera.Fov = sample.Fov;
+}
 
 void Animator::Play(AnimationModelComponent& animation, bool restart)
 {

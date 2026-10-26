@@ -132,7 +132,7 @@ AssetParallaxResult ApplyAssetParallaxEx(AssetMaterialParameters material, float
     {
         bitangent = -bitangent;
     }
-    float3 viewDirection = SafeNormalizeCommon(cameraPos - worldPos, normal);
+    float3 viewDirection = SurfaceViewDirectionCommon(worldPos, cameraPos);
     float facing = dot(normal, viewDirection);
     if (facing <= 0.0f)
     {
@@ -196,7 +196,7 @@ float AssetParallaxPixelDepth(AssetParallaxResult pom, float3 worldPos, float3 c
     {
         return fallbackDepth;
     }
-    float3 viewDirection = SafeNormalizeCommon(cameraPos - worldPos, pom.Normal);
+    float3 viewDirection = SurfaceViewDirectionCommon(worldPos, cameraPos);
     // POM の UV ずれ（HitDepth * DepthScale / facing）と同じ距離だけ視線方向へ潜る。
     float distance = pom.HitDepth * pom.DepthScale / max(pom.Facing, 0.1f) * pom.WorldPerUv;
     float3 displaced = worldPos - viewDirection * distance;

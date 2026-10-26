@@ -58,8 +58,13 @@ ImpostorSurface ResolveImpostorSurface(ImpostorPSInput input)
     const float frameTexels = atlasResolution / framesPerAxis;
     const float halfTexel = 0.5f / frameTexels;
 
-    const float3 origin = input.LocalCamera;
-    const float3 rayDirection = normalize(input.LocalPos - origin);
+    float3 origin = input.LocalCamera;
+    float3 rayDirection = normalize(input.LocalPos - origin);
+    if (abs(Projection[3][3]) > 0.5f)
+    {
+        rayDirection = normalize(center - origin);
+        origin = input.LocalPos - rayDirection * dot(input.LocalPos - origin, rayDirection);
+    }
 
     float2 cells[3] = {input.FrameCells01.xy, input.FrameCells01.zw, input.FrameCell2Weights.xy};
     float weights[3] = {input.FrameCell2Weights.z, input.FrameCell2Weights.w,

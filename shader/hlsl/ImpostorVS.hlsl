@@ -33,16 +33,15 @@ ImpostorPSInput main(VSInput3D input, uint instanceId : SV_InstanceID)
     const float maxScale = max(length(world[0].xyz), max(length(world[1].xyz), length(world[2].xyz)));
     const float worldRadius = localRadius * maxScale;
 
-    float3 toCamera = CameraPos - worldCenter;
-    const float distanceToCamera = max(length(toCamera), 1e-4f);
-    toCamera /= distanceToCamera;
+    float3 toCamera = SurfaceViewDirectionCommon(worldCenter, CameraPos);
+    const float distanceToCamera = max(length(worldCenter - SurfaceCameraOriginCommon(worldCenter, CameraPos)), 1e-4f);
 
     // 境界球のカメラ側の接平面に置く。表面は必ずこの平面より奥にあるので、
     // ピクセル深度は補間深度以下（SV_DepthLessEqual）になり Early-Z が効く。
     const float offset = min(worldRadius, distanceToCamera * 0.5f);
     const float planeDistance = distanceToCamera - offset;
     float halfSize = worldRadius;
-    if (distanceToCamera > worldRadius * 1.001f)
+    if (abs(Projection[3][3]) < 0.5f && distanceToCamera > worldRadius * 1.001f)
     {
         // 平面上での境界球のシルエット半径（透視投影で必要な最小サイズ）。
         halfSize = planeDistance * worldRadius /
@@ -57,7 +56,7 @@ ImpostorPSInput main(VSInput3D input, uint instanceId : SV_InstanceID)
         worldCenter + toCamera * offset + (right * input.Position.x + up * input.Position.y) * halfSize;
 
     const float3x3 inverseWorld = ImpostorInverse3x3(world3x3);
-    const float3 localCamera = mul(CameraPos - translation, inverseWorld);
+    const float3 localCamera = mul(SurfaceCameraOriginCommon(worldCenter, CameraPos) - translation, inverseWorld);
 
     float2 cell0;
     float2 cell1;

@@ -1243,6 +1243,15 @@ namespace SceneFile
         a("priority", c.Priority);
         a.Entity("lockOnTarget", c.LockOnTarget);
         a("lockOnOffset", c.LockOnOffset);
+        a("up", c.Up);
+        a("cameraVmd", c.Animation.Path);
+        a("cameraPlayOnStart", c.Animation.PlayOnStart);
+        a("cameraLoop", c.Animation.Loop);
+        a("cameraSpeed", c.Animation.Speed);
+        a("cameraScale", c.Animation.Scale);
+        a("cameraOffset", c.Animation.Offset);
+        a("orthographic", c.IsOrthographic);
+        a("orthographicHeight", c.OrthographicHeight);
     }
 
     inline void Visit(Archive& a, PostProcessComponent& c)

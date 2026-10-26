@@ -11,7 +11,7 @@ void CameraControlSystem::Update()
     ComponentManager::ForEach<CameraComponent, InputComponent, MoveComponent, TransformComponent>(
         [frameScale](EntityID, CameraComponent& camera, InputComponent& input, MoveComponent& move,
                      TransformComponent& transform) {
-            if (!input.IsActive)
+            if (!input.IsActive || camera.Animation.IsActive)
             {
                 return;
             }

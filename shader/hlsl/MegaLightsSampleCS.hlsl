@@ -219,7 +219,7 @@ float MLTargetWeight(MegaLightData light, float3 worldPos, float3 N, float3 V, f
 
     const float3 worldPos = MLWorldPositionFromDepth(pixel, depth);
     const float3 N = normalize(GBufferNormal.Load(int3(pixel, 0)).xyz * 2.0f - 1.0f);
-    const float3 V = normalize(MLCameraPosition() - worldPos);
+    const float3 V = MLViewDirection(worldPos);
     const float3 albedo = GBufferBaseColor.Load(int3(pixel, 0)).rgb;
     const uint seed = MLSeed(pixel, MLStochastic.z, 0x4d4cu);
     // M4：ガイド。前フレームのタイルのハッシュが空（何も見えていない / 初回）ならガイドしない

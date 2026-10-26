@@ -191,7 +191,7 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
             {
                 float d = DepthTexture.SampleLevel(g_SamplerState, uv, 0);
                 float3 visible = ReconstructForwardWorld(uv, d);
-                if (d > 0.0f && length(visible - hit) < max(0.05f, length(hit - CameraPos) * 0.01f))
+                if (d > 0.0f && length(visible - hit) < max(0.05f, length(hit - SurfaceCameraOriginCommon(hit, CameraPos)) * 0.01f))
                 {
                     return SampleGlassBackground(uv, roughness);
                 }
@@ -213,7 +213,7 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
         if (depth > 0.0f)
         {
             float3 opaque = ReconstructForwardWorld(uv, depth);
-            float delta = length(p - CameraPos) - length(opaque - CameraPos);
+            float delta = length(p - SurfaceCameraOriginCommon(p, CameraPos)) - length(opaque - SurfaceCameraOriginCommon(opaque, CameraPos));
             if (delta >= 0.0f)
             {
                 float low = previous;
@@ -230,7 +230,7 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
                     }
                     float qd = DepthTexture.SampleLevel(g_SamplerState, quv, 0);
                     float3 qw = ReconstructForwardWorld(quv, qd);
-                    if (qd > 0.0f && length(q - CameraPos) >= length(qw - CameraPos))
+                    if (qd > 0.0f && length(q - SurfaceCameraOriginCommon(q, CameraPos)) >= length(qw - SurfaceCameraOriginCommon(qw, CameraPos)))
                     {
                         high = mid;
                     }
@@ -245,7 +245,7 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
                 {
                     float hd = DepthTexture.SampleLevel(g_SamplerState, huv, 0);
                     float3 hw = ReconstructForwardWorld(huv, hd);
-                    if (hd > 0.0f && length(hw - hit) < max(0.1f, length(hit - CameraPos) * 0.02f))
+                    if (hd > 0.0f && length(hw - hit) < max(0.1f, length(hit - SurfaceCameraOriginCommon(hit, CameraPos)) * 0.02f))
                     {
                         return SampleGlassBackground(huv, roughness);
                     }
@@ -266,9 +266,12 @@ static float g_PomForwardDepth = 0.0f;
 
 float4 ShadeForward(in PSInput3D In)
 {
-    float3 glassIncident = SafeNormalizeCommon(In.WorldPos - CameraPos, float3(0, 0, 1));
+    float3 glassIncident = -SurfaceViewDirectionCommon(In.WorldPos, CameraPos);
     float3 glassRayDx = ddx(glassIncident);
     float3 glassRayDy = ddy(glassIncident);
+    float3 glassOrigin = SurfaceCameraOriginCommon(In.WorldPos, CameraPos);
+    float3 glassOriginDx = ddx(glassOrigin);
+    float3 glassOriginDy = ddy(glassOrigin);
     const float PI = 3.14159265358979323846f;
 
     AssetMaterialParameters assetMaterial = LoadAssetMaterial(0);
@@ -433,7 +436,7 @@ float4 ShadeForward(in PSInput3D In)
             surface.F0 = ratio * ratio;
             material.b = surface.F0;
         }
-        float3 viewDir = SafeNormalizeCommon(CameraPos - In.WorldPos, surfaceNormal);
+        float3 viewDir = SurfaceViewDirectionCommon(In.WorldPos, CameraPos);
         if (SceneRayParameters.w > 0.5f && (surface.Transmission > 0.0f || g_ShadingModel.Model == 0u))
         {
             float3 previewColor = EvaluateMaterialOpticsPreview(surface, In.WorldPos, viewDir);
@@ -476,7 +479,8 @@ float4 ShadeForward(in PSInput3D In)
 #ifdef SHADER_RAYTRACING
             float3 geometryRadiance;
             bool ownsPixel;
-            if (TraceGeometryGlass(In.WorldPos, viewDir, glassRayDx, glassRayDy, geometryRadiance, ownsPixel))
+            if (TraceGeometryGlass(In.WorldPos, viewDir, glassRayDx, glassRayDy, glassOriginDx, glassOriginDy,
+                                   geometryRadiance, ownsPixel))
             {
                 // 最も手前のラスターレイヤーだけが、追跡した経路全体を担当する。
                 if (!ownsPixel)
@@ -514,7 +518,7 @@ float4 ShadeForward(in PSInput3D In)
     {
         float3 N = normalize(surfaceNormal + 0.00001f);
         float3 L = normalize(lightDir + 0.00001f);
-        float3 V = normalize(CameraPos - In.WorldPos + 0.00001f);
+        float3 V = SurfaceViewDirectionCommon(In.WorldPos, CameraPos);
         float3 H = normalize(L + V + 0.00001f);
         float NdotLScalar = saturate(dot(N, L));
         float NdotV = saturate(dot(N, V));
@@ -570,7 +574,7 @@ ForwardOutput main(in PSInput3D In)
     ForwardOutput output;
     output.Color = premultiplied;
     float alpha = saturate(premultiplied.a);
-    float viewDistance = length(In.WorldPos - CameraPos);
+    float viewDistance = length(In.WorldPos - SurfaceCameraOriginCommon(In.WorldPos, CameraPos));
     // 式 (7)：距離に基づく重み。0.1 .. 500 m で安定する。
     float weight = alpha * clamp(0.03f / (0.00001f + pow(viewDistance / 200.0f, 4.0f)), 0.01f, 3000.0f);
     output.Accumulation = float4(premultiplied.rgb, alpha) * weight;

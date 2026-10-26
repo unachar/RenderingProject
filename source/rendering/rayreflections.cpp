@@ -3,6 +3,7 @@
 #include "cpuculling.h"
 #include "rayreflections.h"
 #include "raytracing.h"
+#include "scenedepth.h"
 #include "rendererstate.h"
 #include "rendertargets.h"
 #include "graphicsdevice.h"
@@ -1203,8 +1204,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     g_BudgetSequence = nrdFrame.Sequence;
     g_BudgetValid = budgetRequested && cacheEnabled && !restir;
     XMFLOAT4X4 previousProjection = nrdFrame.PreviousProjection;
-    previousProjection._31 = -nrdFrame.PreviousJitter.x * 2 / frame.Width;
-    previousProjection._32 = nrdFrame.PreviousJitter.y * 2 / frame.Height;
+    SceneDepth::SetProjectionJitter(previousProjection,
+        {-nrdFrame.PreviousJitter.x * 2 / frame.Width, nrdFrame.PreviousJitter.y * 2 / frame.Height});
     XMStoreFloat4x4(&constants.AdaptivePreviousViewProjection,
                     XMMatrixTranspose(XMLoadFloat4x4(&nrdFrame.PreviousView) * XMLoadFloat4x4(&previousProjection)));
     TextureSrv(adaptive ? g_AdaptiveRadiance.Get() : nullptr, Cpu(frame.Heap.Get(), 14));

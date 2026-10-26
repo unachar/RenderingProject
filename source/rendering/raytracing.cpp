@@ -7,6 +7,7 @@
 #include "camera.h"
 #include "world.h"
 #include "nrddenoiser.h"
+#include "scenedepth.h"
 #include "rayreflections.h"
 #include "optixdenoiser.h"
 #include "renderersettings.h"
@@ -1545,8 +1546,9 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     NrdFrame nrdFrame;
     XMStoreFloat4x4(&nrdFrame.View, view);
     XMStoreFloat4x4(&nrdFrame.Projection, projection);
-    nrdFrame.Jitter = {-nrdFrame.Projection._31 * frame.Width * 0.5f, nrdFrame.Projection._32 * frame.Height * 0.5f};
-    nrdFrame.Projection._31 = nrdFrame.Projection._32 = 0;
+    const auto projectionJitter = SceneDepth::ProjectionJitter(nrdFrame.Projection);
+    nrdFrame.Jitter = {-projectionJitter.x * frame.Width * 0.5f, projectionJitter.y * frame.Height * 0.5f};
+    SceneDepth::SetProjectionJitter(nrdFrame.Projection, {});
     nrdFrame.PreviousView = g_NrdHistoryValid ? g_PreviousNrdFrame.View : nrdFrame.View;
     nrdFrame.PreviousProjection = g_NrdHistoryValid ? g_PreviousNrdFrame.Projection : nrdFrame.Projection;
     nrdFrame.PreviousJitter = g_NrdHistoryValid ? g_PreviousNrdFrame.Jitter : nrdFrame.Jitter;

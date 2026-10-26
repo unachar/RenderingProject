@@ -159,7 +159,7 @@ float4 ShadeDeferred(PSInputPostProcess input)
         }
         ApplyWeatherToSurface(position, surfaceNormal, baseColor.rgb, material.rgb);
     }
-    float3 viewDir = SafeNormalizeCommon(PPCameraPos.xyz - position, surfaceNormal);
+    float3 viewDir = CameraViewDirection(position, PPCameraPos.xyz, PPInvViewProjection);
     float3 pbrDirectLight;
     int materialShadowFilterRadius =
         pbr ? clamp((int)round(lerp(max(VirtualShadowGlobal.z, 1.0f), 3.0f, saturate(shadowSoftness * 2.0f))), 1, 3)
@@ -507,7 +507,7 @@ float4 MegaLightsShadePS(PSInputPostProcess input) : SV_Target
         const float4 shadowParams = ShadowGBufferTexture.Load(gbufferPixel);
         g_ShadingModel = DecodeShadingModel(shadowParams.a);
         ApplyWeatherToSurface(position, surfaceNormal, baseColor.rgb, material.rgb);
-        const float3 viewDir = SafeNormalizeCommon(PPCameraPos.xyz - position, surfaceNormal);
+        const float3 viewDir = CameraViewDirection(position, PPCameraPos.xyz, PPInvViewProjection);
         SurfaceLightAccumulator acc = (SurfaceLightAccumulator)0;
         MLAccumulateStochasticSamples(position, 0.0f, 0.0f, surfaceNormal, input.Position.xy, 1, viewDir, baseColor.rgb,
                                       material.rgb, max(shadowParams.g, 0.0001f), float3(1.0f, 1.0f, 1.0f), acc);

@@ -25,6 +25,7 @@
 #define ML_FLAG_DENOISED 16u          // M3：ディファードは ML6 の代わりにデノイズ済みの結果を使う
 #define ML_FLAG_GUIDE 32u             // M4：前フレームの可視ライトハッシュでサンプリングを導く
 #define ML_GRID_FORWARD (1u << 17)    // MLGrid.w：Forward / 半透明もグリッドで評価する（M7）
+#define ML_GRID_ORTHOGRAPHIC (1u << 18)
 #define ML_GRID_VOLUMETRIC (1u << 16) // MLGrid.w：フォグ用に視錐台全体（ジオメトリの手前のスライスも）を構築
 #define ML_FLAG_SCREEN_TRACE 64u      // M5：ワールドトレースの前にスクリーントレース（深度バッファ）で遮蔽を探す
 
@@ -134,7 +135,8 @@ bool MLReferenceActive()
 // NDC 深度 → ビュー空間 Z（透視投影。逆 Z でも同じ式）
 float MLViewZFromDepth(float depth)
 {
-    return MLDepth.y / (depth - MLDepth.x);
+    return (MLGrid.w & ML_GRID_ORTHOGRAPHIC) != 0u ? (depth - MLDepth.y) / MLDepth.x
+                                                  : MLDepth.y / (depth - MLDepth.x);
 }
 
 bool MLIsGeometryDepth(float depth)
@@ -188,7 +190,7 @@ uint MLCellIndexFromWorld(float3 worldPos)
     {
         return ML_INVALID_CELL;
     }
-    const float invZ = 1.0f / view.z;
+    const float invZ = (MLGrid.w & ML_GRID_ORTHOGRAPHIC) != 0u ? 1.0f : 1.0f / view.z;
     const float2 ndc =
         float2(MLProjection.x * view.x * invZ + MLProjection.z, MLProjection.y * view.y * invZ + MLProjection.w);
     const float2 pixel = float2((ndc.x * 0.5f + 0.5f) * MLScreen.x, (0.5f - ndc.y * 0.5f) * MLScreen.y);
@@ -205,15 +207,16 @@ float3 MLWorldPositionFromDepth(uint2 pixel, float depth)
 {
     float viewZ = MLViewZFromDepth(depth);
     float2 ndc = float2((pixel.x + 0.5f) / MLScreen.x * 2.0f - 1.0f, 1.0f - (pixel.y + 0.5f) / MLScreen.y * 2.0f);
-    float3 view = float3((ndc.x - MLProjection.z) / MLProjection.x * viewZ,
-                         (ndc.y - MLProjection.w) / MLProjection.y * viewZ, viewZ);
+    float projectionW = (MLGrid.w & ML_GRID_ORTHOGRAPHIC) != 0u ? 1.0f : viewZ;
+    float3 view = float3((ndc.x - MLProjection.z) / MLProjection.x * projectionW,
+                         (ndc.y - MLProjection.w) / MLProjection.y * projectionW, viewZ);
     return mul(float4(view, 1.0f), MLViewToWorld).xyz;
 }
 
 // ビュー空間の点 → ピクセル座標（MLWorldPositionFromDepth の逆）
 float2 MLViewToPixel(float3 view)
 {
-    const float invZ = 1.0f / max(view.z, 1.0e-4f);
+    const float invZ = (MLGrid.w & ML_GRID_ORTHOGRAPHIC) != 0u ? 1.0f : 1.0f / max(view.z, 1.0e-4f);
     const float2 ndc =
         float2(MLProjection.x * view.x * invZ + MLProjection.z, MLProjection.y * view.y * invZ + MLProjection.w);
     return float2((ndc.x * 0.5f + 0.5f) * MLScreen.x, (0.5f - ndc.y * 0.5f) * MLScreen.y);
@@ -242,6 +245,13 @@ float3 MLCameraPosition()
     return mul(float4(0.0f, 0.0f, 0.0f, 1.0f), MLViewToWorld).xyz;
 }
 
+float3 MLViewDirection(float3 worldPosition)
+{
+    return (MLGrid.w & ML_GRID_ORTHOGRAPHIC) != 0u
+               ? normalize(mul(float4(0, 0, -1, 0), MLViewToWorld).xyz)
+               : normalize(MLCameraPosition() - worldPosition);
+}
+
 // サンプル空間のピクセルのサンプル先頭（N 個連続）
 uint MLSampleBase(uint2 samplePixel)
 {
@@ -261,10 +271,11 @@ void MLCellBounds(uint2 tileMin, uint2 tileMax, uint sliceMin, uint sliceMax, ou
     float ndcX1 = pixel1.x / screen.x * 2.0f - 1.0f;
     float ndcY0 = 1.0f - pixel1.y / screen.y * 2.0f;
     float ndcY1 = 1.0f - pixel0.y / screen.y * 2.0f;
-    float2 x0 = (ndcX0 - MLProjection.z) / MLProjection.x * float2(z0, z1);
-    float2 x1 = (ndcX1 - MLProjection.z) / MLProjection.x * float2(z0, z1);
-    float2 y0 = (ndcY0 - MLProjection.w) / MLProjection.y * float2(z0, z1);
-    float2 y1 = (ndcY1 - MLProjection.w) / MLProjection.y * float2(z0, z1);
+    float2 projectionW = (MLGrid.w & ML_GRID_ORTHOGRAPHIC) != 0u ? float2(1, 1) : float2(z0, z1);
+    float2 x0 = (ndcX0 - MLProjection.z) / MLProjection.x * projectionW;
+    float2 x1 = (ndcX1 - MLProjection.z) / MLProjection.x * projectionW;
+    float2 y0 = (ndcY0 - MLProjection.w) / MLProjection.y * projectionW;
+    float2 y1 = (ndcY1 - MLProjection.w) / MLProjection.y * projectionW;
     boundsMin = float3(min(min(x0.x, x0.y), min(x1.x, x1.y)), min(min(y0.x, y0.y), min(y1.x, y1.y)), z0);
     boundsMax = float3(max(max(x0.x, x0.y), max(x1.x, x1.y)), max(max(y0.x, y0.y), max(y1.x, y1.y)), z1);
 }

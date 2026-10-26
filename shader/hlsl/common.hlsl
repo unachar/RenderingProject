@@ -1,4 +1,7 @@
 #include "noise.hlsl"
+#include "CameraProjection.hlsli"
+
+float3 ReconstructPostProcessCameraOriginCommon(float3 worldPosition, float3 cameraPosition);
 
 #ifdef SHADER_VISIBILITY_RESOLVE
 static float2 VisibilityUvDx, VisibilityUvDy;
@@ -94,6 +97,23 @@ cbuffer ConstantBuffer3D : register(b0)
     float4x4 PreviousWorld;
     float4x4 PreviousViewProjection;
 };
+
+float3 SurfaceViewDirectionCommon(float3 worldPosition, float3 cameraPosition)
+{
+    return abs(Projection[3][3]) > 0.5f
+               ? -normalize(float3(View[0][2], View[1][2], View[2][2]))
+               : normalize(cameraPosition - worldPosition + 1e-20f);
+}
+
+float3 SurfaceCameraOriginCommon(float3 worldPosition, float3 cameraPosition)
+{
+    if (abs(Projection[3][3]) < 0.5f)
+    {
+        return cameraPosition;
+    }
+    float3 direction = -SurfaceViewDirectionCommon(worldPosition, cameraPosition);
+    return worldPosition - direction * dot(worldPosition - cameraPosition, direction);
+}
 
 struct VSInput3D
 {
@@ -438,7 +458,12 @@ float3 ApplyAtmosphereToLightCommon(float3 worldPos, float3 lightDir, float3 lig
         return lightColor;
     }
 
-    float3 toCamera = AtmosphereCamera.xyz - worldPos;
+#ifdef SHADER_POSTPROCESS
+    float3 origin = ReconstructPostProcessCameraOriginCommon(worldPos, AtmosphereCamera.xyz);
+#else
+    float3 origin = SurfaceCameraOriginCommon(worldPos, AtmosphereCamera.xyz);
+#endif
+    float3 toCamera = origin - worldPos;
     float viewDistance = length(toCamera);
     float3 viewToCamera = SafeNormalizeCommon(toCamera, -lightDir);
     float3 toLight = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
@@ -668,7 +693,11 @@ float3 RayMarchAtmosphereViewCommon(float3 worldPos, Texture2DArray<float> shado
 {
     float atmosphereActive =
         step(0.5f, AtmosphereParams0.x) * step(0.0001f, AtmosphereColor0.a) * step(0.0001f, AtmosphereParams0.w);
-    float3 cameraPos = AtmosphereCamera.xyz;
+#ifdef SHADER_POSTPROCESS
+    float3 cameraPos = ReconstructPostProcessCameraOriginCommon(worldPos, AtmosphereCamera.xyz);
+#else
+    float3 cameraPos = SurfaceCameraOriginCommon(worldPos, AtmosphereCamera.xyz);
+#endif
     float3 viewDelta = worldPos - cameraPos;
     float rawViewDistance = length(viewDelta);
     float validDistance = step(0.0001f, rawViewDistance);
@@ -1194,10 +1223,12 @@ cbuffer PostProcessParams : register(b0)
 
 float3 ReconstructPostProcessViewRayCommon(float2 uv)
 {
-    float2 ndc = uv * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f);
-    // 無限遠は w = 0 の方向ベクトルとなるため、透視除算を行わない。
-    float4 worldFar = mul(float4(ndc, 0.0f, 1.0f), PPInvViewProjection);
-    return SafeNormalizeCommon(worldFar.xyz, float3(0.0f, 0.0f, 1.0f));
+    return CameraRayDirection(uv, PPInvViewProjection);
+}
+
+float3 ReconstructPostProcessCameraOriginCommon(float3 worldPosition, float3 cameraPosition)
+{
+    return CameraRayOriginFromWorld(worldPosition, cameraPosition, PPInvViewProjection);
 }
 
 #include "ToneMapping.hlsli"

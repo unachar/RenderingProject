@@ -37,6 +37,7 @@
 #include "lightingresources.h"
 #include "camera.h"
 #include "modelmanager.h"
+#include "animator.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -139,6 +140,150 @@ namespace
     }
 
     void Check(bool passed, const char* name);
+
+    const string& VmdCameraTestPath()
+    {
+        static const string path = [] {
+            char value[2048]{};
+            GetEnvironmentVariableA("DX12_VMD_CAMERA_TEST", value, sizeof(value));
+            return string(value);
+        }();
+        return path;
+    }
+
+    struct VmdCameraTestState
+    {
+        EntityID Camera = g_kINVALID_ENTITY;
+        EntityID OtherCamera = g_kINVALID_ENTITY;
+        EntityID EditorCamera = g_kINVALID_ENTITY;
+        TransformComponent OriginalTransform{};
+        CameraComponent OriginalCamera{};
+        XMFLOAT3 EditorPosition{};
+        XMFLOAT3 PausedPosition{};
+        float PausedTime = 0.0f;
+        bool SawPerspective = false;
+        bool SawOrthographic = false;
+        bool Completed = false;
+    };
+
+    VmdCameraTestState g_VmdCameraTest;
+
+    bool NearCameraValue(float actual, float expected)
+    {
+        return fabsf(actual - expected) < 0.001f;
+    }
+
+    bool SameCameraPosition(const XMFLOAT3& a, const XMFLOAT3& b)
+    {
+        return NearCameraValue(a.x, b.x) && NearCameraValue(a.y, b.y) && NearCameraValue(a.z, b.z);
+    }
+
+    void BeforeVmdCameraTestFrame(uint64_t frame)
+    {
+        auto& test = g_VmdCameraTest;
+        if (frame == 1)
+        {
+            test.Camera = Camera::CreateGameCamera("VMD validation camera", {5, 4, -10}, {0, 3, 0}, XM_PIDIV4, true);
+            test.OtherCamera = Camera::CreateGameCamera("VMD validation secondary", {5, 4, -10}, {0, 3, 0}, XM_PIDIV4, false);
+            test.EditorCamera = Camera::GetEditorCameraEntity();
+            test.EditorPosition = ComponentManager::GetComponentUnchecked<TransformComponent>(test.EditorCamera).Position;
+            for (EntityID entity : {test.Camera, test.OtherCamera})
+            {
+                auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(entity);
+                camera.Animation.Path = VmdCameraTestPath();
+                camera.Animation.Scale = 0.15f;
+                camera.Animation.Offset = {1, 0, 0};
+            }
+            test.OriginalCamera = ComponentManager::GetComponentUnchecked<CameraComponent>(test.Camera);
+            test.OriginalTransform = ComponentManager::GetComponentUnchecked<TransformComponent>(test.Camera);
+            ProjectManager::Play();
+            const auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(test.Camera);
+            const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(test.Camera);
+            Check(Camera::GetCameraEntity() == test.Camera && camera.Animation.IsActive,
+                  "VMD Play starts the selected main GameCamera");
+            Check(!ComponentManager::GetComponentUnchecked<CameraComponent>(test.OtherCamera).Animation.IsActive,
+                  "VMD Play leaves the secondary GameCamera idle");
+            Check(SameCameraPosition(transform.Position, {1.0f, 0.3f, -1.05f}),
+                  "VMD initial camera pose applies scale and world offset");
+        }
+        if (frame == 12)
+        {
+            test.PausedTime = ComponentManager::GetComponentUnchecked<CameraComponent>(test.Camera).Animation.CurrentTime;
+            test.PausedPosition = ComponentManager::GetComponentUnchecked<TransformComponent>(test.Camera).Position;
+            Check(test.PausedTime > 0.0f, "VMD camera advances in AnimationSystem");
+            ProjectManager::TogglePause();
+        }
+        if (frame == 16)
+        {
+            ProjectManager::TogglePause();
+        }
+        if (frame == 20)
+        {
+            Check(ComponentManager::GetComponentUnchecked<CameraComponent>(test.Camera).Animation.CurrentTime > test.PausedTime,
+                  "VMD camera resumes after project pause");
+            ProjectManager::Stop();
+            const auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(test.Camera);
+            const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(test.Camera);
+            Check(!camera.Animation.IsActive && SameCameraPosition(transform.Position, test.OriginalTransform.Position) &&
+                      SameCameraPosition(camera.Target, test.OriginalCamera.Target) &&
+                      SameCameraPosition(camera.Up, test.OriginalCamera.Up) &&
+                      NearCameraValue(camera.Fov, test.OriginalCamera.Fov) &&
+                      camera.IsOrthographic == test.OriginalCamera.IsOrthographic &&
+                      NearCameraValue(camera.OrthographicHeight, test.OriginalCamera.OrthographicHeight),
+                  "VMD Stop restores the complete editor camera pose");
+            Check(SameCameraPosition(ComponentManager::GetComponentUnchecked<TransformComponent>(test.EditorCamera).Position,
+                                     test.EditorPosition), "VMD playback preserves EditorCamera");
+        }
+        if (frame == 22)
+        {
+            Camera::SetMainGameCamera(test.OtherCamera);
+            ProjectManager::Play();
+            Check(ComponentManager::GetComponentUnchecked<CameraComponent>(test.OtherCamera).Animation.IsActive &&
+                      !ComponentManager::GetComponentUnchecked<CameraComponent>(test.Camera).Animation.IsActive,
+                  "VMD replay targets the main GameCamera selected for that play session");
+        }
+        if (frame == 25)
+        {
+            ProjectManager::Stop();
+            test.Completed = true;
+        }
+    }
+
+    void AfterVmdCameraTestFrame(uint64_t frame)
+    {
+        auto& test = g_VmdCameraTest;
+        if (frame >= 1 && frame < 12)
+        {
+            const auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(test.Camera);
+            const auto projection = XMLoadFloat4x4(&camera.ProjectionMatrix);
+            const auto close = XMVector4Transform(XMVectorSet(0.25f, 0, 1, 1), projection);
+            const auto distant = XMVector4Transform(XMVectorSet(0.25f, 0, 20, 1), projection);
+            const float closeX = XMVectorGetX(close) / XMVectorGetW(close);
+            const float distantX = XMVectorGetX(distant) / XMVectorGetW(distant);
+            if (camera.IsOrthographic && !test.SawOrthographic)
+            {
+                Check(NearCameraValue(camera.ProjectionMatrix._44, 1.0f) && NearCameraValue(closeX, distantX),
+                      "VMD orthographic render preserves size across camera depth");
+                Check(RenderCapture::SaveScenePng(L"bin/validation/vmd-camera-orthographic.png"),
+                      "capture VMD orthographic camera output");
+                test.SawOrthographic = true;
+            }
+            if (!camera.IsOrthographic && !test.SawPerspective)
+            {
+                Check(NearCameraValue(camera.ProjectionMatrix._44, 0.0f) && fabsf(closeX - distantX) > 0.01f,
+                      "VMD perspective render retains perspective division");
+                test.SawPerspective = true;
+            }
+        }
+        if (frame == 15)
+        {
+            const auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(test.Camera);
+            const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(test.Camera);
+            Check(NearCameraValue(camera.Animation.CurrentTime, test.PausedTime) &&
+                      SameCameraPosition(transform.Position, test.PausedPosition),
+                  "VMD project pause holds camera time and pose");
+        }
+    }
 
     bool SunLightingTestEnabled()
     {
@@ -781,6 +926,11 @@ bool RenderingValidation::IsEnabled()
 
 void RenderingValidation::BeforeFrame(uint64_t frame)
 {
+    if (!VmdCameraTestPath().empty())
+    {
+        BeforeVmdCameraTestFrame(frame);
+        return;
+    }
     if (VirtualGeometryProduction::ValidationEnabled())
     {
         VirtualGeometryProduction::BeforeFrame(frame);
@@ -1124,6 +1274,11 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
 
 void RenderingValidation::AfterFrame(uint64_t frame)
 {
+    if (!VmdCameraTestPath().empty())
+    {
+        AfterVmdCameraTestFrame(frame);
+        return;
+    }
     VirtualGeometryProduction::RecordBenchmark();
     if (VirtualGeometryProduction::ValidationEnabled())
     {
@@ -1501,6 +1656,15 @@ void RenderingValidation::AfterFrame(uint64_t frame)
 
 bool RenderingValidation::Finish()
 {
+    if (!VmdCameraTestPath().empty())
+    {
+        Check(g_VmdCameraTest.Completed, "complete VMD GameCamera play/pause/stop sequence");
+        Check(g_VmdCameraTest.SawOrthographic && g_VmdCameraTest.SawPerspective,
+              "VMD runtime renders both projection modes in one clip");
+        g_Failures += RenderCapture::ReportGraphicsErrors();
+        WriteGraphicsLog("VMD camera failures = %u\n", g_Failures);
+        return g_Failures == 0;
+    }
     if (VirtualGeometryProduction::ValidationEnabled())
     {
         return VirtualGeometryProduction::Finish();

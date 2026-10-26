@@ -118,4 +118,10 @@ void AnimationSystem::Update()
         model->UpdateBoneMatrices(animationComponent.CurrentAnimation.c_str(), animationComponent.CurrentTime,
                                   nextAnimation.c_str(), nextTime, animationComponent.BlendRate);
     }
+
+    // Camera playback is independent of model visibility and animation LOD.
+    ComponentManager::ForEach<CameraComponent, TransformComponent>(
+        [](EntityID, CameraComponent& camera, TransformComponent& transform) {
+            Animator::Update(camera, transform, World::GetDeltaTime());
+        });
 }

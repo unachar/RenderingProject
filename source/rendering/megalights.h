@@ -2133,10 +2133,12 @@ class MegaLights final
             XMStoreFloat4x4(&p, projection);
             XMStoreFloat4x4(&constants.WorldToView, XMMatrixTranspose(view));
             XMStoreFloat4x4(&constants.ViewToWorld, XMMatrixTranspose(XMMatrixInverse(nullptr, view)));
-            constants.Projection = {p._11, p._22, p._31, p._32};
-            // z = _43 / (ndc - _33)。ndc = 0 と 1 の距離から手前 / 奥を求める（逆 Z でも成り立つ）
-            const float zAtZero = fabsf(p._33) > 1.0e-6f ? p._43 / (0.0f - p._33) : 1.0e6f;
-            const float zAtOne = fabsf(1.0f - p._33) > 1.0e-6f ? p._43 / (1.0f - p._33) : 1.0e6f;
+            const bool orthographic = fabsf(p._44) > 0.5f;
+            constants.Projection = {p._11, p._22, orthographic ? p._41 : p._31, orthographic ? p._42 : p._32};
+            const float zAtZero = orthographic ? -p._43 / p._33
+                                               : (fabsf(p._33) > 1.0e-6f ? -p._43 / p._33 : 1.0e6f);
+            const float zAtOne = orthographic ? (1.0f - p._43) / p._33
+                                              : (fabsf(1.0f - p._33) > 1.0e-6f ? p._43 / (1.0f - p._33) : 1.0e6f);
             const bool reversed = zAtZero > zAtOne;
             const float nearZ = (std::max)(0.001f, reversed ? zAtOne : zAtZero);
             float farPlaneDistance = reversed ? zAtZero : zAtOne;
@@ -2149,7 +2151,7 @@ class MegaLights final
             constants.Depth = {p._33, p._43, nearZ, static_cast<float>(kSlices) / logf(sliceFar / nearZ)};
             constants.Depth2 = {reversed ? 0.0f : 1.0f, farZ, static_cast<float>((std::max)(s_Settings.HeatmapMax, 1)),
                                 std::clamp(s_Settings.GuideMinWeight, 0.001f, 1.0f)};
-            constants.Grid = {tilesX, tilesY, kSlices, 1u};
+            constants.Grid = {tilesX, tilesY, kSlices, 1u | (orthographic ? (1u << 18) : 0u)};
             constants.Counts = {s_LightCount, static_cast<UINT>(std::clamp(s_Settings.DebugView, 0, 9)), kFineCapacity,
                                 kCoarseCapacity};
             constants.Screen = {static_cast<UINT>(depthDesc.Width), depthDesc.Height, coarseX, coarseY};

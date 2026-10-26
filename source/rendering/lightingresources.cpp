@@ -1561,6 +1561,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
     Camera::GetCameraMatrices(Camera::GetCameraEntity(), cameraView, cameraProjection);
     const float projectionX = fabsf(XMVectorGetX(cameraProjection.r[0]));
     const float projectionY = fabsf(XMVectorGetY(cameraProjection.r[1]));
+    const bool orthographic = fabsf(XMVectorGetW(cameraProjection.r[3])) > 0.5f;
 
     auto calculateTileBounds = [&](const LightComponent& light, const XMFLOAT3& position, UINT& minTileX,
                                    UINT& minTileY, UINT& maxTileX, UINT& maxTileY) -> bool {
@@ -1590,10 +1591,12 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
             return true;
         }
 
-        const float reciprocalDepth = 1.0f / max(viewPosition.z, 0.1f);
-        const float radiusDepth = 1.0f / max(viewPosition.z - radius, 0.1f);
-        const float centerNdcX = viewPosition.x * projectionX * reciprocalDepth;
-        const float centerNdcY = viewPosition.y * projectionY * reciprocalDepth;
+        const float reciprocalDepth = orthographic ? 1.0f : 1.0f / max(viewPosition.z, 0.1f);
+        const float radiusDepth = orthographic ? 1.0f : 1.0f / max(viewPosition.z - radius, 0.1f);
+        const float centerNdcX = viewPosition.x * projectionX * reciprocalDepth +
+                                 (orthographic ? XMVectorGetX(cameraProjection.r[3]) : 0.0f);
+        const float centerNdcY = viewPosition.y * projectionY * reciprocalDepth +
+                                 (orthographic ? XMVectorGetY(cameraProjection.r[3]) : 0.0f);
         const float radiusNdcX = radius * projectionX * radiusDepth;
         const float radiusNdcY = radius * projectionY * radiusDepth;
         const float centerPixelX = (centerNdcX * 0.5f + 0.5f) * sceneWidth;

@@ -23,7 +23,8 @@ float SceneRayDistance(float2 uv)
     {
         return CloudTrace.x;
     }
-    return min(length(ReconstructPostProcessWorldPositionCommon(uv, depth) - PPCameraPos.xyz), CloudTrace.x);
+    float3 origin = CameraRayOrigin(uv, PPCameraPos.xyz, PPInvViewProjection);
+    return min(length(ReconstructPostProcessWorldPositionCommon(uv, depth) - origin), CloudTrace.x);
 }
 
 struct CloudOutput
@@ -55,8 +56,9 @@ CloudOutput MarchCloud(float2 uv, float2 pixel)
         return output;
     }
     float3 ray = ReconstructPostProcessViewRayCommon(uv);
+    float3 origin = CameraRayOrigin(uv, PPCameraPos.xyz, PPInvViewProjection);
     float2 intervals[4];
-    uint intervalCount = CloudIntervals(PPCameraPos.xyz, ray, sceneDistance, intervals);
+    uint intervalCount = CloudIntervals(origin, ray, sceneDistance, intervals);
     if (intervalCount == 0)
     {
         return output;
@@ -100,7 +102,7 @@ CloudOutput MarchCloud(float2 uv, float2 pixel)
         {
             ++steps;
             float distance = intervals[interval].x + (i + offset) * stepLength;
-            float3 position = PPCameraPos.xyz + ray * distance;
+            float3 position = origin + ray * distance;
             float density = CloudDensity(position);
             if (density < 0.00001 && CloudQuality.z != 3)
             {

@@ -1529,10 +1529,61 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
                 ImGui::TextColored(ImVec4(0.25f, 0.9f, 0.4f, 1.0f), "Main GameCamera");
             }
             changed |= ImGui::InputInt("優先度", &camera.Priority);
+
+            ImGui::SeparatorText("VMDカメラアニメーション");
+            ImGui::BeginDisabled(ProjectManager::IsPlaying());
+            char vmdPath[1024]{};
+            strncpy_s(vmdPath, camera.Animation.Path.c_str(), _TRUNCATE);
+            if (ImGui::InputText("カメラVMD", vmdPath, sizeof(vmdPath), ImGuiInputTextFlags_EnterReturnsTrue))
+            {
+                camera.Animation.Path = vmdPath;
+                camera.Animation.Error.clear();
+                changed = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("参照##CameraVmd"))
+            {
+                filesystem::path path;
+                if (ProceduralIO::OpenFileDialog(L"カメラモーション (*.vmd)\0*.vmd\0", path))
+                {
+                    camera.Animation.Path = MakeRelativeAssetPath(path);
+                    camera.Animation.Error.clear();
+                    changed = true;
+                }
+            }
+            if (!camera.Animation.Path.empty())
+            {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("解除##CameraVmd"))
+                {
+                    camera.Animation.Path.clear();
+                    camera.Animation.Error.clear();
+                    changed = true;
+                }
+            }
+            changed |= ImGui::Checkbox("再生開始時にVMDを再生", &camera.Animation.PlayOnStart);
+            changed |= ImGui::Checkbox("カメラVMDをループ", &camera.Animation.Loop);
+            changed |= ImGui::DragFloat("カメラ再生速度", &camera.Animation.Speed, 0.01f, 0.0f, 10.0f);
+            changed |= ImGui::DragFloat("VMD座標の倍率", &camera.Animation.Scale, 0.01f, 0.001f, 1000.0f);
+            changed |= ImGui::DragFloat3("VMD位置補正", &camera.Animation.Offset.x, 0.01f);
+            camera.Animation.Speed = max(0.0f, camera.Animation.Speed);
+            camera.Animation.Scale = max(0.001f, camera.Animation.Scale);
+            ImGui::EndDisabled();
+            ImGui::TextDisabled("再生開始時のメインGameCameraに適用します。");
+            if (!camera.Animation.Error.empty())
+            {
+                ImGui::TextWrapped("%s", camera.Animation.Error.c_str());
+            }
         }
 
         changed |= ImGui::Checkbox("ユーザー操作を許可", &camera.AllowUserControl);
         changed |= ImGui::DragFloat3("注視点", &camera.Target.x, 0.01f);
+        changed |= ImGui::Checkbox("平行投影", &camera.IsOrthographic);
+        if (camera.IsOrthographic)
+        {
+            changed |= ImGui::DragFloat("表示範囲の高さ", &camera.OrthographicHeight, 0.01f, 0.001f, 100000.0f);
+            camera.OrthographicHeight = max(0.001f, camera.OrthographicHeight);
+        }
         float fovDegrees = XMConvertToDegrees(camera.Fov);
         if (ImGui::SliderFloat("視野角 (度)", &fovDegrees, 1.0f, 179.0f))
         {
@@ -1540,7 +1591,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
             changed = true;
         }
         changed |= ImGui::DragFloat("Near Clip", &camera.NearClip, 0.01f, 0.001f, 1000.0f);
-        changed |= ImGui::DragFloat("Effect Range", &camera.FarClip, 1.0f, 0.01f, 1000000.0f);
+        changed |= ImGui::DragFloat(camera.IsOrthographic ? "Far Clip" : "Effect Range", &camera.FarClip, 1.0f, 0.01f, 1000000.0f);
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip("Perspective projection uses an infinite far plane (Reverse-Z).");

@@ -30,6 +30,16 @@ void CameraSystem::Update()
     auto cameraEntities = World::GetView<CameraComponent, TransformComponent>();
     float aspectRatio = GraphicsDevice::GetSceneAspectRatio();
     const EntityID activeCamera = Camera::GetCameraEntity();
+    if (ComponentManager::HasComponent<CameraComponent>(activeCamera))
+    {
+        auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(activeCamera);
+        if (camera.Animation.CutThisFrame ||
+            camera.IsOrthographic != SceneDepth::IsOrthographic(camera.ProjectionMatrix))
+        {
+            Camera::NotifyCut();
+            camera.Animation.CutThisFrame = false;
+        }
+    }
     DlssUpscaler::PrepareFrame(activeCamera);
     static EntityID previousActiveCamera = g_kINVALID_ENTITY;
 
@@ -53,7 +63,7 @@ void CameraSystem::Update()
             }
         }
 
-        if (isActive && cam.AllowUserControl && Input::IsKeyHeld(VK_RBUTTON))
+        if (isActive && cam.AllowUserControl && !cam.Animation.IsActive && Input::IsKeyHeld(VK_RBUTTON))
         {
             const POINT mouseDelta = Input::GetMouseDelta();
             const float sensitivity = 0.004f;
@@ -127,7 +137,7 @@ void CameraSystem::Update()
             }
         }
 
-        if (cam.LockOnTarget != g_kINVALID_ENTITY && Registry::IsAlive(cam.LockOnTarget) &&
+        if (!cam.Animation.IsActive && cam.LockOnTarget != g_kINVALID_ENTITY && Registry::IsAlive(cam.LockOnTarget) &&
             Registry::HasComponent(cam.LockOnTarget, ComponentType::TRANSFORM))
         {
 
@@ -141,22 +151,25 @@ void CameraSystem::Update()
 
         XMVECTOR eye = XMLoadFloat3(&transform.Position);
         XMVECTOR at = XMLoadFloat3(&cam.Target);
-        XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+        XMVECTOR up = XMLoadFloat3(&cam.Up);
         XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
 
-        XMMATRIX proj = SceneDepth::InfiniteReverseZPerspectiveLH(cam.Fov, aspectRatio, cam.NearClip);
+        XMMATRIX proj = cam.IsOrthographic
+                            ? SceneDepth::ReverseZOrthographicLH(cam.OrthographicHeight, aspectRatio, cam.NearClip, cam.FarClip)
+                            : SceneDepth::InfiniteReverseZPerspectiveLH(cam.Fov, aspectRatio, cam.NearClip);
+        const size_t jitterRow = cam.IsOrthographic ? 3 : 2;
 
         if (isActive && TemporalUpscaler::IsRequested())
         {
             const auto jitter = TemporalUpscaler::Jitter();
-            proj.r[2].m128_f32[0] += jitter.x * 2.f / (std::max)(1u, GraphicsDevice::GetSceneWidth());
-            proj.r[2].m128_f32[1] -= jitter.y * 2.f / (std::max)(1u, GraphicsDevice::GetSceneHeight());
+            proj.r[jitterRow].m128_f32[0] += jitter.x * 2.f / (std::max)(1u, GraphicsDevice::GetSceneWidth());
+            proj.r[jitterRow].m128_f32[1] -= jitter.y * 2.f / (std::max)(1u, GraphicsDevice::GetSceneHeight());
         }
         else if (isActive && DlssUpscaler::IsRequested())
         {
             const XMFLOAT2 jitter = DlssUpscaler::GetJitter();
-            proj.r[2].m128_f32[0] -= jitter.x * 2.0f / GraphicsDevice::GetSceneWidth();
-            proj.r[2].m128_f32[1] += jitter.y * 2.0f / GraphicsDevice::GetSceneHeight();
+            proj.r[jitterRow].m128_f32[0] -= jitter.x * 2.0f / GraphicsDevice::GetSceneWidth();
+            proj.r[jitterRow].m128_f32[1] += jitter.y * 2.0f / GraphicsDevice::GetSceneHeight();
         }
         else if (RendererState::m_AntiAliasingMode == AntiAliasingMode::TAA)
         {
@@ -175,8 +188,8 @@ void CameraSystem::Update()
             float jitterX = (haltonX - 0.5f) * 2.0f / max((float)GraphicsDevice::GetSceneWidth(), 1.0f);
             float jitterY = (haltonY - 0.5f) * 2.0f / max((float)GraphicsDevice::GetSceneHeight(), 1.0f);
 
-            proj.r[2].m128_f32[0] += jitterX;
-            proj.r[2].m128_f32[1] += jitterY;
+            proj.r[jitterRow].m128_f32[0] += jitterX;
+            proj.r[jitterRow].m128_f32[1] += jitterY;
         }
 
         XMStoreFloat4x4(&cam.ViewMatrix, view);

@@ -2,6 +2,8 @@
 #include "projectmanager.h"
 #include "modelmanager.h"
 #include "world.h"
+#include "animator.h"
+#include "camera.h"
 
 void ProjectManager::Init()
 {
@@ -170,6 +172,17 @@ void ProjectManager::Play()
         s_PlaySession = 1;
     }
     s_State = ProjectPlayState::Playing;
+    const EntityID gameCamera = Camera::GetGameCameraEntity();
+    if (ComponentManager::HasComponent<CameraComponent>(gameCamera) &&
+        ComponentManager::HasComponent<TransformComponent>(gameCamera))
+    {
+        auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(gameCamera);
+        if (camera.Animation.PlayOnStart && !camera.Animation.Path.empty() && Animator::Play(camera))
+        {
+            auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(gameCamera);
+            Animator::Update(camera, transform, 0.0f);
+        }
+    }
 }
 
 void ProjectManager::Stop()

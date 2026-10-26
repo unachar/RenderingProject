@@ -876,7 +876,7 @@ bool AdaptiveReflection(uint2 pixel, float depth, float3 position, float3 normal
     float4 world = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, depth, 1), ReflectionInvViewProjection);
     float3 position = world.xyz / world.w;
     float3 normal = normalize(ReflectionNormal.Load(int3(pixel, 0)).xyz * 2 - 1);
-    float3 view = normalize(ReflectionCamera.xyz - position);
+    float3 view = CameraViewDirection(position, ReflectionCamera.xyz, ReflectionInvViewProjection);
     float roughness = clamp(ReflectionMaterial.Load(int3(pixel, 0)).y, 0.02f, 1);
     float4 adaptiveSignal;
     if (AdaptiveReflection(pixel, depth, position, normal, roughness, adaptiveSignal))
@@ -952,14 +952,15 @@ bool AdaptiveReflection(uint2 pixel, float depth, float3 position, float3 normal
             float2 sampleUv = uv + (float2(footprintSample.x, footprintSample.y) - .5) / ReflectionExtent.xy;
             float4 sampleWorld =
                 mul(float4(sampleUv * float2(2, -2) + float2(-1, 1), depth, 1), ReflectionInvViewProjection);
-            float3 cameraDirection = normalize(sampleWorld.xyz / sampleWorld.w - ReflectionCamera.xyz);
+            float3 sampleOrigin = CameraRayOrigin(sampleUv, ReflectionCamera.xyz, ReflectionInvViewProjection);
+            float3 cameraDirection = CameraRayDirection(sampleUv, ReflectionInvViewProjection);
             float planeDenominator = dot(cameraDirection, normal);
             if (abs(planeDenominator) > .001)
             {
-                float planeDistance = dot(position - ReflectionCamera.xyz, normal) / planeDenominator;
+                float planeDistance = dot(position - sampleOrigin, normal) / planeDenominator;
                 if (planeDistance > 0)
                 {
-                    samplePosition = ReflectionCamera.xyz + cameraDirection * planeDistance;
+                    samplePosition = sampleOrigin + cameraDirection * planeDistance;
                     sampleView = -cameraDirection;
                 }
             }

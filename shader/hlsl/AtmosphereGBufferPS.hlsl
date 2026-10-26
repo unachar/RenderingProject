@@ -377,7 +377,7 @@ float3 RayMarchAtmosphereViewFixed(float3 worldPos, Texture2DArray<float> shadow
         return float3(0.0f, 0.0f, 0.0f);
     }
 
-    float3 cameraPos = AtmosphereCamera.xyz;
+    float3 cameraPos = ReconstructPostProcessCameraOriginCommon(worldPos, AtmosphereCamera.xyz);
     float3 viewDelta = worldPos - cameraPos;
     float rawViewDistance = length(viewDelta);
 
@@ -534,7 +534,7 @@ LocalFogRayResult IntegrateLocalFogRay(float3 rayEnd)
         return result;
     }
 
-    float3 cameraPos = PPCameraPos.xyz;
+    float3 cameraPos = ReconstructPostProcessCameraOriginCommon(rayEnd, PPCameraPos.xyz);
     float3 viewDelta = rayEnd - cameraPos;
     float rawDistance = length(viewDelta);
 
@@ -615,7 +615,7 @@ float4 main(PSInputPostProcess input) : SV_Target
     bool background = material.a < -0.5f || depth <= 0.0f;
 
     float3 viewRay = ReconstructPostProcessViewRayCommon(input.TexCoord);
-    float3 rayEnd = background ? PPCameraPos.xyz + viewRay * 100.0f
+    float3 rayEnd = background ? CameraRayOrigin(input.TexCoord, PPCameraPos.xyz, PPInvViewProjection) + viewRay * 100.0f
                                : ReconstructPostProcessWorldPositionCommon(input.TexCoord, depth);
 
     float3 scatter =

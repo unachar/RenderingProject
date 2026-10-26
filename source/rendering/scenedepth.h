@@ -30,4 +30,38 @@ namespace SceneDepth
         }
         return DirectX::XMPlaneNormalize(plane);
     }
+
+    inline DirectX::XMMATRIX ReverseZOrthographicLH(float height, float aspect, float nearClip, float farClip)
+    {
+        assert(std::isfinite(height) && height > 0.0f);
+        assert(std::isfinite(aspect) && aspect > 0.0f);
+        assert(std::isfinite(nearClip) && nearClip > 0.0f);
+        assert(std::isfinite(farClip) && farClip > nearClip);
+        return DirectX::XMMatrixOrthographicLH(height * aspect, height, farClip, nearClip);
+    }
+
+    inline bool IsOrthographic(const DirectX::XMFLOAT4X4& projection)
+    {
+        return std::abs(projection._44) > 0.5f;
+    }
+
+    inline DirectX::XMFLOAT2 ProjectionJitter(const DirectX::XMFLOAT4X4& projection)
+    {
+        return IsOrthographic(projection) ? DirectX::XMFLOAT2{projection._41, projection._42}
+                                          : DirectX::XMFLOAT2{projection._31, projection._32};
+    }
+
+    inline void SetProjectionJitter(DirectX::XMFLOAT4X4& projection, DirectX::XMFLOAT2 jitter)
+    {
+        if (IsOrthographic(projection))
+        {
+            projection._41 = jitter.x;
+            projection._42 = jitter.y;
+        }
+        else
+        {
+            projection._31 = jitter.x;
+            projection._32 = jitter.y;
+        }
+    }
 }

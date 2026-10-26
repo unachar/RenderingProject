@@ -33,6 +33,23 @@ struct VmdIkKeyframe
     bool Enable = true;
 };
 
+struct VmdCameraSample
+{
+    XMFLOAT3 Center{};
+    XMFLOAT3 Rotation{};
+    float Distance = -45.0f;
+    float Fov = DirectX::XM_PI / 6.0f;
+    bool Perspective = true;
+};
+
+struct VmdCameraKeyframe : VmdCameraSample
+{
+    uint32_t Frame = 0;
+    // Position X/Y/Z, Euler rotation, distance, field of view.
+    array<XMFLOAT2, 6> P1{};
+    array<XMFLOAT2, 6> P2{{{1, 1}, {1, 1}, {1, 1}, {1, 1}, {1, 1}, {1, 1}}};
+};
+
 struct VmdAnimation
 {
     string ModelName{};
@@ -46,6 +63,7 @@ struct VmdAnimation
     unordered_map<string, vector<VmdKeyframe>> BoneTracks{};
     unordered_map<string, vector<VmdScalarKeyframe>> MorphTracks{};
     unordered_map<string, vector<VmdIkKeyframe>> IkTracks{};
+    vector<VmdCameraKeyframe> CameraTrack{};
 };
 
 struct VmdTrackSampleCursor
@@ -56,6 +74,7 @@ struct VmdTrackSampleCursor
 };
 
 bool LoadVmdAnimationFile(const char* fileName, VmdAnimation& outAnimation);
+VmdCameraSample SampleVmdCameraTrack(const vector<VmdCameraKeyframe>& keys, float currentFrame);
 float VmdToFrameTime(const VmdAnimation* animation, float timeSeconds);
 void ResetVmdSampleCursor(VmdTrackSampleCursor& cursor);
 void SampleVmdBoneTrack(const vector<VmdKeyframe>* keys, float currentFrame, aiQuaternion& outRotation,

@@ -342,11 +342,54 @@ bool LoadVmdAnimationFile(const char* fileName, VmdAnimation& outAnimation)
         }
     }
 
-    if (!ReadOptionalSectionCount(stream, animation.CameraCount, "camera", fileName) ||
-        !SkipBinaryBytes(stream, static_cast<uint64_t>(animation.CameraCount) * 61u, "camera", fileName))
+    if (!ReadOptionalSectionCount(stream, animation.CameraCount, "camera", fileName))
     {
         return false;
     }
+    if (GetRemainingBytes(stream) < static_cast<uint64_t>(animation.CameraCount) * 61u)
+    {
+        Debug::Log("ERROR: VMD camera data is truncated: %s\n", fileName);
+        return false;
+    }
+    animation.CameraTrack.reserve(animation.CameraCount);
+    for (uint32_t i = 0; i < animation.CameraCount; ++i)
+    {
+        VmdCameraKeyframe key;
+        array<char, 24> interpolation{};
+        uint32_t viewAngle = 30;
+        uint8_t orthographic = 0;
+        if (!ReadBinary(stream, key.Frame) || !ReadBinary(stream, key.Distance) ||
+            !ReadBinary(stream, key.Center.x) || !ReadBinary(stream, key.Center.y) ||
+            !ReadBinary(stream, key.Center.z) || !ReadBinary(stream, key.Rotation.x) ||
+            !ReadBinary(stream, key.Rotation.y) || !ReadBinary(stream, key.Rotation.z) ||
+            !ReadBinaryArray(stream, interpolation) || !ReadBinary(stream, viewAngle) ||
+            !ReadBinary(stream, orthographic))
+        {
+            return false;
+        }
+        if (!isfinite(key.Distance) || !isfinite(key.Center.x) || !isfinite(key.Center.y) ||
+            !isfinite(key.Center.z) || !isfinite(key.Rotation.x) || !isfinite(key.Rotation.y) ||
+            !isfinite(key.Rotation.z))
+        {
+            Debug::Log("ERROR: VMD camera contains non-finite values: %s\n", fileName);
+            return false;
+        }
+        for (size_t channel = 0; channel < key.P1.size(); ++channel)
+        {
+            const size_t offset = channel * 4;
+            key.P1[channel] = {NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[offset])),
+                               NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[offset + 2]))};
+            key.P2[channel] = {NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[offset + 1])),
+                               NormalizeVmdInterpolationByte(static_cast<unsigned char>(interpolation[offset + 3]))};
+        }
+        key.Fov = XMConvertToRadians(static_cast<float>(clamp(viewAngle, 1u, 179u)));
+        key.Perspective = orthographic == 0;
+        animation.CameraTrack.push_back(key);
+        animation.MaxFrame = max(animation.MaxFrame, key.Frame);
+    }
+    SortUniqueTrack(animation.CameraTrack, [](const VmdCameraKeyframe& a, const VmdCameraKeyframe& b) {
+        return a.Frame < b.Frame;
+    });
 
     if (!ReadOptionalSectionCount(stream, animation.LightCount, "light", fileName) ||
         !SkipBinaryBytes(stream, static_cast<uint64_t>(animation.LightCount) * 28u, "light", fileName))
@@ -418,6 +461,51 @@ bool LoadVmdAnimationFile(const char* fileName, VmdAnimation& outAnimation)
 
     outAnimation = move(animation);
     return true;
+}
+
+VmdCameraSample SampleVmdCameraTrack(const vector<VmdCameraKeyframe>& keys, float currentFrame)
+{
+    if (keys.empty())
+    {
+        return {};
+    }
+    const size_t nextIndex = FindUpperBoundIndex(keys, currentFrame, nullptr);
+    if (nextIndex == 0)
+    {
+        return keys.front();
+    }
+    if (nextIndex == keys.size())
+    {
+        return keys.back();
+    }
+    const auto& previous = keys[nextIndex - 1];
+    const auto& next = keys[nextIndex];
+    // Adjacent frames represent a camera cut, not a fast interpolated move.
+    if (next.Frame - previous.Frame == 1)
+    {
+        return previous;
+    }
+    const float fraction = clamp((currentFrame - static_cast<float>(previous.Frame)) /
+                                     static_cast<float>(next.Frame - previous.Frame), 0.0f, 1.0f);
+    array<float, 6> weights{};
+    for (size_t channel = 0; channel < weights.size(); ++channel)
+    {
+        weights[channel] = GetYFromXOnBezier(fraction, next.P1[channel], next.P2[channel], 8);
+    }
+    const auto interpolate = [](float a, float b, float weight) {
+        return a + (b - a) * weight;
+    };
+    VmdCameraSample sample;
+    sample.Center = {interpolate(previous.Center.x, next.Center.x, weights[0]),
+                     interpolate(previous.Center.y, next.Center.y, weights[1]),
+                     interpolate(previous.Center.z, next.Center.z, weights[2])};
+    sample.Rotation = {interpolate(previous.Rotation.x, next.Rotation.x, weights[3]),
+                       interpolate(previous.Rotation.y, next.Rotation.y, weights[3]),
+                       interpolate(previous.Rotation.z, next.Rotation.z, weights[3])};
+    sample.Distance = interpolate(previous.Distance, next.Distance, weights[4]);
+    sample.Fov = interpolate(previous.Fov, next.Fov, weights[5]);
+    sample.Perspective = previous.Perspective;
+    return sample;
 }
 
 float VmdToFrameTime(const VmdAnimation* animation, float timeSeconds)

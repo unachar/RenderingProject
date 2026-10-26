@@ -7,6 +7,7 @@
 
 #define CLOUD_MEDIUM_NO_SCENE_LIGHTS
 #include "CloudMedium.hlsli"
+#include "CameraProjection.hlsli"
 
 cbuffer AdvancedConstants : register(b0)
 {
@@ -92,8 +93,7 @@ float Hash(uint value)
 
 float3 ViewRay(float2 uv)
 {
-    float4 farPoint = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, 0, 1), InvViewProjection);
-    return normalize(farPoint.xyz);
+    return CameraRayDirection(uv, InvViewProjection);
 }
 
 float3 WorldFromDepth(float2 uv, float depth)
@@ -289,7 +289,7 @@ float3 MegaLightsFogScattering(uint3 id, float3 position, float3 viewToCamera, f
     float2 uv = (id.xy + 0.5f) / FroxelExtent.xy;
     float3 rayDirection = ViewRay(uv);
     float dist = SliceToDistance(id.z + jitter);
-    float3 position = CameraPosition.xyz + rayDirection * dist;
+    float3 position = CameraRayOrigin(uv, CameraPosition.xyz, InvViewProjection) + rayDirection * dist;
 
     float globalDensity;
     float3 localEmission;
@@ -369,6 +369,13 @@ float3 MegaLightsFogScattering(uint3 id, float3 position, float3 viewToCamera, f
         {
             float2 previousUv = float2(previousClip.x, -previousClip.y) / previousClip.w * 0.5f + 0.5f;
             float previousDistance = length(position - PrevCameraPosition.xyz);
+            float3 previousW = float3(PrevViewProjection[0][3], PrevViewProjection[1][3], PrevViewProjection[2][3]);
+            if (dot(previousW, previousW) < 1e-12f)
+            {
+                float3 previousZ = normalize(float3(PrevViewProjection[0][2], PrevViewProjection[1][2],
+                                                     PrevViewProjection[2][2]));
+                previousDistance = abs(dot(position - PrevCameraPosition.xyz, previousZ));
+            }
             float previousSlice = DistanceToSliceCoordinate(previousDistance);
             if (all(previousUv > 0) && all(previousUv < 1))
             {
@@ -433,7 +440,8 @@ float4 SampleIntegratedFog(float2 uv, float dist)
     if ((Features.x & 1u) != 0 && !physicalSkyPixel)
     {
         float2 uv = (id.xy + 0.5f) / Extent.xy;
-        float dist = depth <= 0.0f ? FogDepth.y : length(WorldFromDepth(uv, depth) - CameraPosition.xyz);
+        float dist = depth <= 0.0f ? FogDepth.y
+                                   : length(WorldFromDepth(uv, depth) - CameraRayOrigin(uv, CameraPosition.xyz, InvViewProjection));
         // 画面空間の小さなディザーで、フロクセルの三線形補間の形状を目立たなくする。
         uint sampleFrame = FogDepth.w > 0 ? Extent.z : 0;
         float dither = (Hash(id.x + id.y * 4099u + sampleFrame * 7919u) - 0.5f) / Extent.x;
@@ -579,7 +587,8 @@ float4 ResolvePixel(uint3 id)
 // ---------------------------------------------------------------------------------------------
 float CircleOfConfusion(float2 uv, float depth)
 {
-    float dist = depth <= 0.0f ? 100000.0f : length(WorldFromDepth(uv, depth) - CameraPosition.xyz);
+    float dist = depth <= 0.0f ? 100000.0f
+                               : length(WorldFromDepth(uv, depth) - CameraRayOrigin(uv, CameraPosition.xyz, InvViewProjection));
     float focus = max(DofParams.x, 0.05f);
     float blur = saturate((abs(dist - focus) - DofParams.y * 0.5f) / focus);
     return blur * DofParams.z; // ピクセル単位

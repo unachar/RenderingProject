@@ -5,10 +5,20 @@
 #include <vector>
 
 struct AnimationModelComponent;
+struct CameraComponent;
+struct TransformComponent;
 
 class Animator
 {
   public:
+    static bool Play(CameraComponent& camera, bool restart = true);
+    static bool Play(CameraComponent& camera, const string& vmdPath, bool restart = true);
+    static bool Play(CameraComponent& camera, const char* vmdPath, bool restart = true);
+    static void Stop(CameraComponent& camera);
+    static void Pause(CameraComponent& camera);
+    static void SetSpeed(CameraComponent& camera, float speed);
+    static void Update(CameraComponent& camera, TransformComponent& transform, float deltaTime);
+
     static void Play(AnimationModelComponent& animation, bool restart = true);
     static void Play(AnimationModelComponent& animation, const string& animationName, bool restart = true);
 

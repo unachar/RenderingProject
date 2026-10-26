@@ -108,6 +108,8 @@ struct CameraComponent
 {
     XMFLOAT3 Position = {0.0f, 0.0f, 0.0f};
     XMFLOAT3 Target = {0.0f, 0.0f, 0.0f};
+    XMFLOAT3 Up = {0.0f, 1.0f, 0.0f};
+    CameraAnimationPlayback Animation{};
     float Fov = XM_PIDIV4;
     float NearClip = 0.1f;
     float FarClip = 100.0f; // エフェクトの距離設定。カメラの透視投影自体は無限遠。
@@ -120,6 +122,8 @@ struct CameraComponent
     XMFLOAT3 LockOnOffset = {0.0f, 0.0f, 0.0f};
     XMFLOAT4X4 ViewMatrix{};
     XMFLOAT4X4 ProjectionMatrix{};
+    bool IsOrthographic = false;
+    float OrthographicHeight = 10.0f;
 };
 
 struct AnimationModelComponent
