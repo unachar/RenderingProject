@@ -89,7 +89,7 @@ float Scalar(Parameters params, float2 uv)
     };
     // A shared call site keeps the GPU program small instead of inlining the full
     // fractal evaluator separately into every material branch.
-    [loop]
+
     for (int sampleIndex = 0; sampleIndex < noiseCount; ++sampleIndex)
     {
         float3 position = p;

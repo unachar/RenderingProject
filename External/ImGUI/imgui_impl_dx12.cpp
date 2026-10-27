@@ -66,10 +66,7 @@
 // DirectX
 #include <d3d12.h>
 #include <dxgi1_5.h>
-#include <d3dcompiler.h>
-#ifdef _MSC_VER
-#pragma comment(lib, "d3dcompiler") // Automatically link with d3dcompiler.lib as we are using D3DCompile() below.
-#endif
+#include "imguishadercompiler.h"
 
 // Clang/GCC warnings with -Weverything
 #if defined(__clang__)
@@ -749,11 +746,7 @@ bool    ImGui_ImplDX12_CreateDeviceObjects()
         blob->Release();
     }
 
-    // By using D3DCompile() from <d3dcompiler.h> / d3dcompiler.lib, we introduce a dependency to a given version of d3dcompiler_XX.dll (see D3DCOMPILER_DLL_A)
-    // If you would like to use this DX12 sample code but remove this dependency you can:
-    //  1) compile once, save the compiled shader blobs into a file or source code and assign them to psoDesc.VS/PS [preferred solution]
-    //  2) use code to detect any version of the DLL and grab a pointer to D3DCompile from the DLL.
-    // See https://github.com/ocornut/imgui/pull/638 for sources and details.
+    // Project integration: embedded shaders use DXC and Shader Model 6 like the renderer.
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc {};
     psoDesc.NodeMask = 1;
@@ -799,8 +792,8 @@ bool    ImGui_ImplDX12_CreateDeviceObjects()
               return output;\
             }";
 
-        if (FAILED(D3DCompile(vertexShader, strlen(vertexShader), nullptr, nullptr, nullptr, "main", "vs_5_0", 0, 0, &vertexShaderBlob, nullptr)))
-            return false; // NB: Pass ID3DBlob* pErrorBlob to D3DCompile() to get error showing in (const char*)pErrorBlob->GetBufferPointer(). Make sure to Release() the blob!
+        if (FAILED(ImGuiShaderCompiler::Compile(vertexShader, L"vs_6_0", &vertexShaderBlob)))
+            return false;
         psoDesc.VS = { vertexShaderBlob->GetBufferPointer(), vertexShaderBlob->GetBufferSize() };
 
         // Create the input layout
@@ -831,10 +824,10 @@ bool    ImGui_ImplDX12_CreateDeviceObjects()
               return out_col; \
             }";
 
-        if (FAILED(D3DCompile(pixelShader, strlen(pixelShader), nullptr, nullptr, nullptr, "main", "ps_5_0", 0, 0, &pixelShaderBlob, nullptr)))
+        if (FAILED(ImGuiShaderCompiler::Compile(pixelShader, L"ps_6_0", &pixelShaderBlob)))
         {
             vertexShaderBlob->Release();
-            return false; // NB: Pass ID3DBlob* pErrorBlob to D3DCompile() to get error showing in (const char*)pErrorBlob->GetBufferPointer(). Make sure to Release() the blob!
+            return false;
         }
         psoDesc.PS = { pixelShaderBlob->GetBufferPointer(), pixelShaderBlob->GetBufferSize() };
     }

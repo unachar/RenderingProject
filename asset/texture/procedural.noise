@@ -1,0 +1,63 @@
+{
+  "bias" : 0.0299999993,
+  "bricksX" : 4,
+  "bricksY" : 8,
+  "centerX" : -0.5,
+  "centerY" : 0.0,
+  "choppiness" : 0.600000024,
+  "colorA" : 
+  [
+    0.0500000007,
+    0.0700000003,
+    0.119999997
+  ],
+  "colorB" : 
+  [
+    0.850000024,
+    0.819999993,
+    0.75999999
+  ],
+  "colorC" : 
+  [
+    0.449999988,
+    0.280000001,
+    0.119999997
+  ],
+  "contrast" : 1.27400005,
+  "coverage" : 0.5,
+  "iterations" : 200,
+  "juliaX" : -0.800000012,
+  "juliaY" : 0.156000003,
+  "kind" : 0,
+  "mortar" : 0.0599999987,
+  "noise" : 
+  {
+    "anisotropy" : 4.56099987,
+    "basis" : 6,
+    "direction" : 2.02458191,
+    "fractal" : 4,
+    "frequency" : 10.4300003,
+    "gain" : 0.603999972,
+    "kernelFrequency" : 2.91199994,
+    "lacunarity" : 2.00399995,
+    "octaves" : 4,
+    "phase" : 3.17649937,
+    "ridgeOffset" : 0.908999979,
+    "seed" : 1337,
+    "warpStrength" : 1.71300006
+  },
+  "normalStrength" : 4.0,
+  "output" : 1,
+  "pattern" : 0,
+  "patternSize" : 0.5,
+  "patternSoftness" : 0.0199999996,
+  "repeatX" : 4,
+  "repeatY" : 4,
+  "ringCount" : 8.0,
+  "softness" : 0.25,
+  "tileable" : true,
+  "time" : 0.0,
+  "turbulence" : 4.0,
+  "version" : 1,
+  "zoom" : 1.0
+}

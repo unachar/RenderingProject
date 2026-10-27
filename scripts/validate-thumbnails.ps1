@@ -1,4 +1,7 @@
-param([ValidateSet('Debug','Release')][string]$Configuration = 'Debug')
+param(
+    [ValidateSet('Debug','Release')][string]$Configuration = 'Debug',
+    [ValidateRange(30, 1800)][int]$TimeoutSeconds = 240
+)
 $ErrorActionPreference = 'Stop'
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $names = @('DX12_THUMBNAIL_TEST','DX12_MATERIAL_ASSET_TEST','DX12_FEATURE_SMOKE_TEST','DX12_VALIDATION_MODE','DX12_STARTUP_SMOKE_FRAMES')
@@ -21,7 +24,7 @@ try {
     }
     $process = Start-Process -FilePath (Join-Path $workspace "bin/x64/$Configuration/DirectX12.exe") -WorkingDirectory $workspace -WindowStyle Hidden -PassThru
     while (-not $process.WaitForExit(1000)) {
-        if ((Get-Date) - $process.StartTime -gt [TimeSpan]::FromMinutes(4)) {
+        if ((Get-Date) - $process.StartTime -gt [TimeSpan]::FromSeconds($TimeoutSeconds)) {
             $process.Kill()
             throw 'Thumbnail validation timed out.'
         }

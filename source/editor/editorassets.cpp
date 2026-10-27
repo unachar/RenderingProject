@@ -1,6 +1,7 @@
 ﻿#include "pch.h"
 #include "materialmanager.h"
 #include "assetthumbnailmanager.h"
+#include "assetbrowserlisting.h"
 #include "thumbnailvalidation.h"
 #include "imguimanager.h"
 #include "proceduralstudio.h"
@@ -32,27 +33,6 @@ namespace
     constexpr const char* kAssetDirectoryPayload = "ASSET_DIR";
     // 複数選択をまとめてドラッグするときのペイロード（中身は件数。パスは m_DraggedAssetPaths）
     constexpr const char* kAssetMultiPayload = "ASSET_MULTI";
-
-    // 検証（--validate 系）が asset 直下に作る一時フィクスチャフォルダ。ユーザーのアセットではないので
-    // アセットブラウザには出さない（例: __material_validation_21024）。
-    bool IsInternalAssetDirectory(const filesystem::directory_entry& entry)
-    {
-        error_code error;
-        if (!entry.is_directory(error))
-        {
-            return false;
-        }
-        const wstring name = entry.path().filename().wstring();
-        for (const wchar_t* prefix :
-             {L"__material_validation_", L"__temporal_lighting_", L"__gi_validation_", L"__thumbnail_validation_"})
-        {
-            if (name.rfind(prefix, 0) == 0)
-            {
-                return true;
-            }
-        }
-        return false;
-    }
 
     // ImGui の入力（UTF-8）→ path。u8path は C++20 で非推奨のため自前で変換
     filesystem::path Utf8ToPath(const char* text)
@@ -269,11 +249,13 @@ void ImGuiManager::DrawAssetBrowserWindow()
     m_AssetBrowserFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
     error_code ec;
-    if (!filesystem::exists(m_AssetRoot, ec))
+    static bool assetRootChecked = false;
+    if (!assetRootChecked)
     {
         filesystem::create_directories(m_AssetRoot, ec);
+        assetRootChecked = !ec;
     }
-    if (!filesystem::exists(m_CurrentAssetDirectory, ec) || !filesystem::is_directory(m_CurrentAssetDirectory, ec))
+    if (m_CurrentAssetDirectory.empty())
     {
         m_CurrentAssetDirectory = m_AssetRoot;
     }
@@ -294,6 +276,7 @@ void ImGuiManager::DrawAssetBrowserWindow()
     if (ImGui::Button("再スキャン"))
     {
         MaterialManager::Refresh();
+        m_AssetBrowserRescan = true;
     }
     ImGui::SameLine();
     if (ImGui::Button("ルート"))
@@ -431,54 +414,68 @@ void ImGuiManager::DrawAssetBrowserWindow()
     const bool listFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     SyncAssetSelection();
 
-    static vector<filesystem::directory_entry> entries;
+    static AssetBrowserListing listing;
+    static vector<AssetBrowserItem> entries;
     static unordered_map<string, AssetHandle> browserHandles;
     static filesystem::path listedDirectory;
     static string listedFilter;
-    static double nextScan = 0;
     const string currentFilter = assetFilter.InputBuf;
-    if (m_AssetBrowserRescan || listedDirectory != m_CurrentAssetDirectory || listedFilter != currentFilter ||
-        ImGui::GetTime() >= nextScan)
+    const bool directoryChanged = listedDirectory != m_CurrentAssetDirectory;
+    const bool forceScan = m_AssetBrowserRescan;
+    m_AssetBrowserRescan = false;
+    if (directoryChanged || forceScan)
     {
-        m_AssetBrowserRescan = false;
-        entries.clear();
         browserHandles.clear();
+    }
+    const bool listingChanged = listing.Update(m_CurrentAssetDirectory, forceScan, ImGui::GetTime());
+    if (listingChanged)
+    {
+        browserHandles.clear();
+    }
+    if (listingChanged || directoryChanged || listedFilter != currentFilter)
+    {
+        entries.clear();
         listedDirectory = m_CurrentAssetDirectory;
         listedFilter = currentFilter;
-        nextScan = ImGui::GetTime() + 0.5;
-        for (const auto& entry : filesystem::directory_iterator(m_CurrentAssetDirectory, ec))
+        for (const auto& entry : listing.Items())
         {
-            string extension = entry.path().extension().generic_string();
-            transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
-                return static_cast<char>(tolower(c));
-            });
-            const bool isAuxiliaryFile =
-                extension == ".meta" || extension == ".tmp" || extension == ".mtl" || extension == ".vgderived";
-            if (!isAuxiliaryFile && !IsInternalAssetDirectory(entry) &&
-                assetFilter.PassFilter(entry.path().filename().generic_string().c_str()))
+            if (assetFilter.PassFilter(entry.Name.c_str()))
             {
                 entries.push_back(entry);
             }
         }
-        sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
-            error_code firstError, secondError;
-            const bool firstDirectory = a.is_directory(firstError), secondDirectory = b.is_directory(secondError);
-            if (firstDirectory != secondDirectory)
-            {
-                return firstDirectory > secondDirectory;
-            }
-            return a.path().filename().generic_string() < b.path().filename().generic_string();
-        });
     }
-    if (ec)
+    if (listing.Error())
     {
-        ImGui::TextWrapped("フォルダを読み込めません: %s", ec.message().c_str());
+        ImGui::TextWrapped("フォルダを読み込めません: %s", listing.Error().message().c_str());
+        if (m_CurrentAssetDirectory != m_AssetRoot &&
+            (listing.Error() == errc::no_such_file_or_directory || listing.Error() == errc::not_a_directory))
+        {
+            m_CurrentAssetDirectory = m_AssetRoot;
+            ClearAssetSelection();
+        }
     }
     else if (entries.empty())
     {
-        ImGui::TextWrapped("表示するアセットがありません。");
+        if (listing.Loading())
+        {
+            ImGui::TextUnformatted("フォルダを読み込み中...");
+        }
+        else
+        {
+            ImGui::TextWrapped("表示するアセットがありません。");
+        }
     }
 
+    const auto browserHandle = [&](const filesystem::path& path, AssetType type) {
+        auto [found, inserted] = browserHandles.try_emplace(path.generic_string(), 0);
+        if (inserted)
+        {
+            string error;
+            found->second = MaterialManager::Registry().Register(path, type, error);
+        }
+        return found->second;
+    };
     if (!m_SelectedAssetPath.empty())
     {
         const auto selectedType = AssetRegistry::Classify(m_SelectedAssetPath);
@@ -488,12 +485,7 @@ void ImGuiManager::DrawAssetBrowserWindow()
         }
         if (selectedType != AssetType::Unknown)
         {
-            auto& handle = browserHandles[m_SelectedAssetPath.generic_string()];
-            if (!handle)
-            {
-                string error;
-                handle = MaterialManager::Registry().Register(m_SelectedAssetPath, selectedType, error);
-            }
+            const auto handle = browserHandle(m_SelectedAssetPath, selectedType);
             AssetThumbnailManager::Request(handle, ThumbnailPriority::Selected);
         }
     }
@@ -717,10 +709,9 @@ void ImGuiManager::DrawAssetBrowserWindow()
                         break;
                     }
                     ImGui::TableSetColumnIndex(column);
-                    const filesystem::path path = entries[i].path();
-                    const bool isDir = entries[i].is_directory(ec);
-                    ec.clear();
-                    const string fileName = path.filename().generic_string();
+                    const filesystem::path& path = entries[i].path();
+                    const bool isDir = entries[i].IsDirectory;
+                    const string& fileName = entries[i].Name;
                     string displayName;
                     if (fileName.empty())
                     {
@@ -730,7 +721,7 @@ void ImGuiManager::DrawAssetBrowserWindow()
                     {
                         displayName = fileName;
                     }
-                    const string itemId = path.generic_string();
+                    const string& itemId = entries[i].Key;
 
                     const bool selected = IsAssetSelected(path);
 
@@ -759,13 +750,7 @@ void ImGuiManager::DrawAssetBrowserWindow()
                         const auto type = AssetRegistry::Classify(path);
                         if (type != AssetType::Unknown)
                         {
-                            string error;
-                            const auto key = path.generic_string();
-                            auto& handle = browserHandles[key];
-                            if (!handle)
-                            {
-                                handle = MaterialManager::Registry().Register(path, type, error);
-                            }
+                            const auto handle = browserHandle(path, type);
                             thumbnail = AssetThumbnailManager::Request(handle, selected ? ThumbnailPriority::Selected
                                                                                         : ThumbnailPriority::Visible);
                         }

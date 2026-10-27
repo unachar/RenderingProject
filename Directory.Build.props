@@ -89,7 +89,7 @@
 
   <ItemDefinitionGroup Condition="'$(Platform)' == 'x64'">
     <ClCompile>
-      <PreprocessorDefinitions>RENDERINGPROJECT_USE_DXC=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>RENDERINGPROJECT_BUILD_SHARED_PCH=1;RENDERINGPROJECT_USE_DXC=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
 

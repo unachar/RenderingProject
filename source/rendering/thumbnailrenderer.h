@@ -42,6 +42,7 @@ struct ThumbnailPrepared
     std::vector<MeshPart> MeshParts;
     std::vector<std::pair<std::filesystem::path, uint64_t>> SourceDependencies;
     uint64_t Key = 0;
+    uint64_t BaseKey = 0;
     UINT Size = 128;
     std::filesystem::path SourcePath;
     bool UseDiskCache = true;

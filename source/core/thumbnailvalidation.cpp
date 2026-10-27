@@ -9,6 +9,7 @@
 #include "imguimanager.h"
 #include "renderprofiler.h"
 #include "texturemanager.h"
+#include "assets/thumbnailmanifest.h"
 #include <DirectXTex.h>
 #include <fstream>
 
@@ -30,6 +31,13 @@ namespace
     bool surfaceSelected = false;
     UINT inputStep = 0, visibleCells = 0, maximumVisibleCells = 0;
     ComPtr<ID3D12Resource> existingTexture;
+    std::future<ThumbnailPrepared> meshCacheCheck;
+    bool meshCacheChecked = false;
+    std::vector<AssetHandle> rootHandles;
+    unsigned int rootFrames = 0;
+    bool rootCellSeen = false;
+    double rootMaximumFrameMs = 0.0;
+    std::chrono::steady_clock::time_point frameStart;
 
     void Check(bool condition, const char* name)
     {
@@ -130,6 +138,7 @@ bool ThumbnailValidation::Enabled()
 
 void ThumbnailValidation::BeforeFrame(uint64_t frame)
 {
+    frameStart = std::chrono::steady_clock::now();
     renderedBuffer = GraphicsDevice::GetFrameIndex();
     if (frame != 0)
     {
@@ -262,6 +271,41 @@ void ThumbnailValidation::AfterFrame(uint64_t frame)
     }
     else if (stage == 4 && thumbnail.State == ThumbnailState::Ready)
     {
+        if (!meshCacheChecked)
+        {
+            if (!meshCacheCheck.valid())
+            {
+                std::ifstream stream(ThumbnailRenderer::CachePath(mesh).wstring() + L".key");
+                ThumbnailManifest manifest;
+                if (!manifest.Read(stream))
+                {
+                    return;
+                }
+                ThumbnailPrepared input;
+                input.Handle = mesh;
+                input.Type = AssetType::Mesh;
+                input.SourcePath = MaterialManager::Registry().Resolve(mesh);
+                input.Size = AssetThumbnailManager::Settings().Size;
+                input.Key = ThumbnailRenderer::SourceRevision(input.SourcePath) ^
+                            ThumbnailRenderer::SourceRevision(input.SourcePath.wstring() + L".meta") ^
+                            ThumbnailRenderer::SourceRevision("shader/hlsl/build/modelshaderVS.cso") ^
+                            ThumbnailRenderer::SourceRevision("shader/hlsl/build/modelshaderPS.cso") ^
+                            ThumbnailRenderer::SourceRevision("shader/hlsl/ProceduralTexture.hlsli");
+                meshCacheCheck = std::async(std::launch::async, [input = std::move(input)]() mutable {
+                    return ThumbnailRenderer::Prepare(std::move(input));
+                });
+                return;
+            }
+            if (meshCacheCheck.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            {
+                return;
+            }
+            const auto cached = meshCacheCheck.get();
+            Check(cached.Cached && cached.Geometry.empty() && cached.MeshParts.empty() &&
+                      !cached.SourceDependencies.empty(),
+                  "mesh disk cache bypasses model import and preserves dependencies");
+            meshCacheChecked = true;
+        }
         Check(AssetThumbnailManager::CacheHits() > cacheHits, "disk cache reused after eviction");
         Check(Registry::GetEntities().size() == entityCount, "preview adds no world entities");
         Check(AssetThumbnailManager::MemoryBytes() <= AssetThumbnailManager::Settings().MemoryBudget,
@@ -311,7 +355,44 @@ void ThumbnailValidation::AfterFrame(uint64_t frame)
 #else
         WriteGraphicsLog("Thumbnail validation: Release debug layer disabled; debug-layer checks run in Debug\n");
 #endif
-        complete = true;
+        const auto directory = MaterialManager::Registry().Root();
+        std::error_code error;
+        for (const auto& entry : std::filesystem::directory_iterator(directory, error))
+        {
+            const auto type = AssetRegistry::Classify(entry.path());
+            if (type != AssetType::Unknown && entry.is_regular_file(error))
+            {
+                std::string registrationError;
+                const auto handle = MaterialManager::Registry().Register(entry.path(), type, registrationError);
+                if (handle)
+                {
+                    rootHandles.push_back(handle);
+                }
+            }
+        }
+        ImGuiManager::SetAssetBrowserDirectory(directory, true);
+        ++stage;
+    }
+    else if (stage == 10)
+    {
+        rootMaximumFrameMs =
+            std::max(rootMaximumFrameMs,
+                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frameStart).count());
+        ++rootFrames;
+        bool ready = true;
+        for (const auto handle : rootHandles)
+        {
+            const auto item = AssetThumbnailManager::Request(handle);
+            ready = ready && (item.State == ThumbnailState::Ready || item.State == ThumbnailState::Failed);
+        }
+        if (rootFrames >= 60 && rootCellSeen && ready)
+        {
+            Check(true, "project root remains responsive while thumbnails finish");
+            WriteGraphicsLog("Thumbnail root frames=%u maximum CPU frame=%.3f ms assets=%zu\n", rootFrames,
+                             rootMaximumFrameMs, rootHandles.size());
+            CaptureBrowser();
+            complete = true;
+        }
     }
     if (frame == 299 && !complete)
     {
@@ -326,6 +407,11 @@ void ThumbnailValidation::BeforeEditorFrame()
         return;
     }
     visibleCells = 0;
+    // Saved editor settings can be restored after BeforeFrame initializes the fixture.
+    if (stage == 0)
+    {
+        ImGuiManager::SetAssetBrowserDirectory(root, true);
+    }
     if (stage == 6 && inputStep < 2)
     {
         auto& input = ImGui::GetIO();
@@ -349,6 +435,10 @@ void ThumbnailValidation::CaptureAssetCell(const char* fileName, float x, float 
         return;
     }
     maximumVisibleCells = std::max(maximumVisibleCells, ++visibleCells);
+    if (stage == 10)
+    {
+        rootCellSeen = true;
+    }
     if (std::string(fileName) == "Surface.material")
     {
         surfaceCell = {x + 48, y + 48};
@@ -358,6 +448,16 @@ void ThumbnailValidation::CaptureAssetCell(const char* fileName, float x, float 
 
 bool ThumbnailValidation::Finish()
 {
+    if (!complete)
+    {
+        WriteGraphicsLog("Thumbnail validation incomplete: stage=%u\n", stage);
+        for (const auto handle : handles)
+        {
+            const auto thumbnail = AssetThumbnailManager::Request(handle);
+            WriteGraphicsLog("Thumbnail validation pending: %s state=%u\n", FormatAssetHandle(handle).c_str(),
+                             static_cast<unsigned int>(thumbnail.State));
+        }
+    }
     Check(complete, "all thumbnail stages completed");
     WriteGraphicsLog("Thumbnail validation failures = %u\n", failures);
     for (auto handle : handles)

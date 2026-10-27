@@ -22,6 +22,7 @@ namespace
         uint64_t NextCheckFrame = 0;
         bool ChangedSource = false;
         uint64_t CacheKey = 0;
+        uint64_t CacheBaseKey = 0;
         bool CacheNeeded = false;
         bool ForceRegenerate = false;
         std::vector<std::pair<std::filesystem::path, uint64_t>> SourceDependencies;
@@ -518,6 +519,10 @@ void AssetThumbnailManager::BeginFrame(uint64_t frameIndex)
         ThumbnailPrepared metadata;
         metadata.Handle = handle;
         metadata.Key = entry.CacheKey;
+        metadata.BaseKey = entry.CacheBaseKey;
+        metadata.Type = MaterialManager::Registry().TypeOf(handle);
+        metadata.SourceDependencies = entry.SourceDependencies;
+        metadata.SourcePath = entry.Path;
         writes.push_back({std::move(metadata), entry.Image, {}});
         entry.CacheNeeded = false;
     }
@@ -652,6 +657,7 @@ void AssetThumbnailManager::ProcessGenerationBudget()
                 Retire(entry.Image);
                 entry.Image = image;
                 entry.CacheKey = input.Key;
+                entry.CacheBaseKey = input.BaseKey;
                 entry.ForceRegenerate = false;
                 entry.SourceDependencies = std::move(input.SourceDependencies);
                 entry.CacheNeeded =

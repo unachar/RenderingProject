@@ -206,7 +206,7 @@ namespace TextureNoise
         const int jy = b > a || b >= c ? 1 : 0;
         const int jz = c > a || c > b ? 1 : 0;
         float sum = 0;
-        for (int corner = 0; corner < 4; ++corner)
+        [loop] for (int corner = 0; corner < 4; ++corner)
         {
             const int dx = corner == 0 ? 0 : (corner == 1 ? ix : (corner == 2 ? jx : 1));
             const int dy = corner == 0 ? 0 : (corner == 1 ? iy : (corner == 2 ? jy : 1));
@@ -233,11 +233,11 @@ namespace TextureNoise
         const float pz = z - floor(z / period) * period;
         const float u = Fade(px / period), v = Fade(py / period), w = Fade(pz / period);
         float sum = 0;
-        for (int dz = 0; dz < 2; ++dz)
+        [loop] for (int dz = 0; dz < 2; ++dz)
         {
-            for (int dy = 0; dy < 2; ++dy)
+            [loop] for (int dy = 0; dy < 2; ++dy)
             {
-                for (int dx = 0; dx < 2; ++dx)
+                [loop] for (int dx = 0; dx < 2; ++dx)
                 {
                     sum += SimplexRaw(px - dx * period, py - dy * period, pz - dz * period, seed) *
                            (dx == 0 ? 1 - u : u) * (dy == 0 ? 1 - v : v) * (dz == 0 ? 1 - w : w);
@@ -254,11 +254,11 @@ namespace TextureNoise
         float nearest = 1e9f;
         uint nearestHash = 0;
         // Radius two ensures the nearest feature is found even near cell corners.
-        for (int dz = -2; dz <= 2; ++dz)
+        [loop] for (int dz = -2; dz <= 2; ++dz)
         {
-            for (int dy = -2; dy <= 2; ++dy)
+            [loop] for (int dy = -2; dy <= 2; ++dy)
             {
-                for (int dx = -2; dx <= 2; ++dx)
+                [loop] for (int dx = -2; dx <= 2; ++dx)
                 {
                     const uint h = HashXYZ(Wrap(ix + dx, period), Wrap(iy + dy, period), Wrap(iz + dz, period), seed);
                     const float a = ix + dx + Unit(h) - x;
@@ -284,11 +284,11 @@ namespace TextureNoise
         const float u = Fade(a), v = Fade(b), w = Fade(c);
         const float co = cos(phase), si = sin(phase);
         float sum = 0;
-        for (int dz = 0; dz < 2; ++dz)
+        [loop] for (int dz = 0; dz < 2; ++dz)
         {
-            for (int dy = 0; dy < 2; ++dy)
+            [loop] for (int dy = 0; dy < 2; ++dy)
             {
-                for (int dx = 0; dx < 2; ++dx)
+                [loop] for (int dx = 0; dx < 2; ++dx)
                 {
                     const uint h = HashXYZ(Wrap(ix + dx, period), Wrap(iy + dy, period), Wrap(iz + dz, period), seed);
                     // Rotate each lattice gradient, rather than translating the field.
@@ -326,7 +326,7 @@ namespace TextureNoise
         // No spatial lattice. Integer wavevectors for periodic synthesis, random
         // continuous wavevectors otherwise. Harmonic uses one fundamental + overtones.
         const uint fundamental = Hash(seed);
-        for (int wave = 0; wave < 16; ++wave)
+        [loop] for (int wave = 0; wave < 16; ++wave)
         {
             const uint h = harmonic ? fundamental : Hash(seed + uint(wave) * 1013u);
             float a = Unit(h) * 2 - 1;
@@ -368,16 +368,16 @@ namespace TextureNoise
         float real = 0, imaginary = 0, spots = 0;
         const float stretch = clamp(anisotropy, 1.0f, 8.0f);
         const float frequency = clamp(kernelFrequency, 0.25f, 8.0f);
-        for (int dz = -1; dz <= 1; ++dz)
+        [loop] for (int dz = -1; dz <= 1; ++dz)
         {
-            for (int dy = -1; dy <= 1; ++dy)
+            [loop] for (int dy = -1; dy <= 1; ++dy)
             {
-                for (int dx = -1; dx <= 1; ++dx)
+                [loop] for (int dx = -1; dx <= 1; ++dx)
                 {
                     const uint cellHash =
                         HashXYZ(Wrap(ix + dx, period), Wrap(iy + dy, period), Wrap(iz + dz, period), seed);
                     // Two stratified random impulses per cell: bounded work and no empty support holes.
-                    for (int impulse = 0; impulse < 2; ++impulse)
+                    [loop] for (int impulse = 0; impulse < 2; ++impulse)
                     {
                         const uint h = Hash(cellHash + uint(impulse) * 0x9e3779b9u);
                         const float a = x - (ix + dx + Unit(h));
@@ -505,22 +505,15 @@ namespace TextureNoise
     float FractalSum(float3 p, uint basis, uint fractal, uint seed, bool tileable, NoiseSettings settings)
     {
         float frequency = max(settings.Frequency, 0.001);
-        if (fractal == FractalNone)
-        {
-            int period = tileable ? max(1, (int)floor(frequency + 0.5)) : 0;
-            float scale = tileable ? (float)period : frequency;
-            float value =
-                BasisNoiseConfigured(basis, p.x * scale, p.y * scale, p.z * scale, Hash(seed), period,
-                                     settings.Direction, settings.Anisotropy, settings.KernelFrequency, settings.Phase);
-            return saturate(value * 0.5 + 0.5);
-        }
         // CPU round uses half-away-from-zero; tile frequencies are positive.
         float lacunarity = tileable ? max(1.0, floor(settings.Lacunarity + 0.5)) : settings.Lacunarity;
         float amplitude = 1;
         float sum = 0;
         float norm = 0;
         float weight = 1;
-        [loop] for (int octave = 0; octave < clamp(settings.Octaves, 1, 12); ++octave)
+        // Keep the full basis evaluator at one call site, including unfractalized noise.
+        int octaveCount = fractal == FractalNone ? 1 : clamp(settings.Octaves, 1, 12);
+        [loop] for (int octave = 0; octave < octaveCount; ++octave)
         {
             int period = tileable ? max(1, (int)floor(frequency + 0.5)) : 0;
             float scale = tileable ? (float)period : frequency;
@@ -564,6 +557,10 @@ namespace TextureNoise
             amplitude *= settings.Gain;
             frequency *= lacunarity;
         }
+        if (fractal == FractalNone)
+        {
+            return saturate(sum * 0.5 + 0.5);
+        }
         float value = sum / max(norm, 1e-5);
         switch (fractal)
         {
@@ -585,15 +582,45 @@ namespace TextureNoise
     float Noise(float3 p, uint basis, uint fractal, uint seed, NoiseSettings settings)
     {
         bool tileable = settings.Tileable != 0;
-        if (fractal != FractalDomainWarp)
+        bool domainWarp = fractal == FractalDomainWarp;
+        int sampleCount = domainWarp ? 3 : 1;
+        float2 warp = 0;
+        float result = 0;
+        // Share the basis evaluator across the two warp samples and the final sample.
+        [loop] for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
         {
-            return FractalSum(p, basis, fractal, seed, tileable, settings);
+            float3 position = p;
+            uint sampleSeed = seed;
+            uint sampleFractal = fractal;
+            if (domainWarp)
+            {
+                sampleFractal = FractalFBm;
+                if (sampleIndex == 0)
+                {
+                    position += float3(5.2, 1.3, 2.7);
+                }
+                else if (sampleIndex == 1)
+                {
+                    position += float3(1.7, 9.2, 4.1);
+                    sampleSeed ^= 0x9e3779b9;
+                }
+                else
+                {
+                    float scale = settings.WarpStrength / max(settings.Frequency, 0.001);
+                    position += float3(warp.x, warp.y, (warp.x - warp.y) * 0.5) * scale;
+                }
+            }
+            result = FractalSum(position, basis, sampleFractal, sampleSeed, tileable, settings);
+            if (sampleIndex == 0)
+            {
+                warp.x = result * 2 - 1;
+            }
+            if (sampleIndex == 1)
+            {
+                warp.y = result * 2 - 1;
+            }
         }
-        float wx = FractalSum(p + float3(5.2, 1.3, 2.7), basis, FractalFBm, seed, tileable, settings) * 2 - 1;
-        float wy =
-            FractalSum(p + float3(1.7, 9.2, 4.1), basis, FractalFBm, seed ^ 0x9e3779b9, tileable, settings) * 2 - 1;
-        float scale = settings.WarpStrength / max(settings.Frequency, 0.001);
-        return FractalSum(p + float3(wx, wy, (wx - wy) * 0.5) * scale, basis, FractalFBm, seed, tileable, settings);
+        return result;
     }
 
 }

@@ -55,6 +55,14 @@ class Debug
 #define D3DCompileFromFile DxcCompileFromFileCompat
 #endif
 
+// Parse the shared ECS and renderer declarations once for the project sources.
+// Individual source files keep their includes so their dependencies stay explicit.
+#if defined(RENDERINGPROJECT_BUILD_SHARED_PCH) && RENDERINGPROJECT_BUILD_SHARED_PCH
+#include "world.h"
+#include "graphicsdevice.h"
+#endif
+#include <fstream>
+
 #include "renderprofiler.h"
 
 #ifndef RENDERINGPROJECT_DISABLE_RENDER_CALL_INSTRUMENTATION

@@ -7,6 +7,7 @@
 #include "materialmanager.h"
 #include "assets/noiseasset.h"
 #include "assets/thumbnailcache.h"
+#include "assets/thumbnailmanifest.h"
 #include <cimport.h>
 #include <postprocess.h>
 #include <scene.h>
@@ -399,6 +400,39 @@ ThumbnailPrepared ThumbnailRenderer::Prepare(ThumbnailPrepared input)
         }
     } scope{SUCCEEDED(com)};
 
+    const auto cachePath = CachePath(input.Handle);
+    input.BaseKey = Combine(Combine(input.Key, ThumbnailGeneratorVersion), input.Size);
+    const auto loadCachedImage = [&]() {
+        auto cached = std::make_unique<DirectX::ScratchImage>();
+        DirectX::TexMetadata metadata;
+        if (SUCCEEDED(DirectX::LoadFromDDSFile(cachePath.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, *cached)) &&
+            metadata.dimension == DirectX::TEX_DIMENSION_TEXTURE2D && metadata.arraySize == 1 &&
+            !metadata.IsCubemap() && metadata.width <= input.Size && metadata.height <= input.Size)
+        {
+            input.Cached = true;
+            input.Textures[0].Borrowed.Reset();
+            input.Textures[0].Decoded = std::move(cached);
+            return true;
+        }
+        return false;
+    };
+    if (input.Type == AssetType::Mesh && input.UseDiskCache && !input.BypassDiskCache)
+    {
+        std::ifstream stream(cachePath.wstring() + L".key");
+        ThumbnailManifest manifest;
+        if (manifest.Read(stream) &&
+            manifest.Matches(input.BaseKey, input.SourcePath,
+                             [](const auto& path) {
+                                 return SourceRevision(path) ^ SourceRevision(path.wstring() + L".meta");
+                             }) &&
+            loadCachedImage())
+        {
+            input.Key = manifest.Key;
+            input.SourceDependencies = std::move(manifest.Dependencies);
+            return input;
+        }
+    }
+
     if (input.Type == AssetType::Mesh)
     {
         std::vector<std::filesystem::path> importedFiles;
@@ -442,8 +476,7 @@ ThumbnailPrepared ThumbnailRenderer::Prepare(ThumbnailPrepared input)
             }
         }
     }
-    auto key = Combine(input.Key, ThumbnailGeneratorVersion);
-    key = Combine(key, input.Size);
+    auto key = input.BaseKey;
     for (auto& texture : input.Textures)
     {
         key = Combine(key, SourceRevision(texture.Path));
@@ -454,21 +487,13 @@ ThumbnailPrepared ThumbnailRenderer::Prepare(ThumbnailPrepared input)
         key = Combine(key, dependency.second);
     }
     input.Key = key;
-    const auto cachePath = CachePath(input.Handle);
     uint64_t cachedKey = 0;
     std::ifstream manifest(cachePath.string() + ".key");
-    if (input.UseDiskCache && !input.BypassDiskCache &&
+    if (input.Type != AssetType::Mesh && input.UseDiskCache && !input.BypassDiskCache &&
         !(input.Type == AssetType::Texture && input.Textures[0].Borrowed) && manifest >> cachedKey && cachedKey == key)
     {
-        auto cached = std::make_unique<DirectX::ScratchImage>();
-        DirectX::TexMetadata metadata;
-        if (SUCCEEDED(DirectX::LoadFromDDSFile(cachePath.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, *cached)) &&
-            metadata.dimension == DirectX::TEX_DIMENSION_TEXTURE2D && metadata.arraySize == 1 &&
-            !metadata.IsCubemap() && metadata.width <= input.Size && metadata.height <= input.Size)
+        if (loadCachedImage())
         {
-            input.Cached = true;
-            input.Textures[0].Borrowed.Reset();
-            input.Textures[0].Decoded = std::move(cached);
             return input;
         }
     }
@@ -648,7 +673,9 @@ std::future<void> ThumbnailRenderer::SaveCache(const ThumbnailPrepared& input,
 {
     const auto path = CachePath(input.Handle);
     const auto key = input.Key;
-    return std::async(std::launch::async, [path, key, image] {
+    ThumbnailManifest manifest{input.BaseKey, input.Key, input.SourceDependencies, input.SourcePath};
+    return std::async(std::launch::async, [path, key, image, mesh = input.Type == AssetType::Mesh,
+                                           manifest = std::move(manifest)] {
         DirectX::ScratchImage pixels;
         if (FAILED(pixels.Initialize2D(image->Resource->GetDesc().Format, image->Width, image->Height, 1, 1)))
         {
@@ -685,7 +712,16 @@ std::future<void> ThumbnailRenderer::SaveCache(const ThumbnailPrepared& input,
             return;
         }
         std::string message;
-        WriteAssetFile(path.string() + ".key", std::to_string(key), message);
+        std::ostringstream metadata;
+        if (mesh)
+        {
+            manifest.Write(metadata);
+        }
+        else
+        {
+            metadata << key;
+        }
+        WriteAssetFile(path.string() + ".key", metadata.str(), message);
     });
 }
 

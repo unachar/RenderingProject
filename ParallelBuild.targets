@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Condition="'$(Platform)' == 'x64'">
+    <EnableParallelShaderBuild Condition="'$(EnableParallelShaderBuild)' == ''">true</EnableParallelShaderBuild>
+    <ParallelFxcJobs Condition="'$(ParallelFxcJobs)' == ''">4</ParallelFxcJobs>
+  </PropertyGroup>
+  <Target Name="ConfigureParallelFxc" BeforeTargets="FxCompile"
+          Condition="'$(Platform)' == 'x64' and '$(EnableParallelShaderBuild)' == 'true'">
+    <PropertyGroup>
+      <MultiProcFXC>true</MultiProcFXC>
+      <MultiProcMaxCount>$(ParallelFxcJobs)</MultiProcMaxCount>
+    </PropertyGroup>
+  </Target>
+  <!-- VC Clean filters out outputs outside IntDir/OutDir, including our shader directory. -->
+  <Target Name="CleanCustomShaderOutputs" BeforeTargets="CoreClean" Condition="'$(Platform)' == 'x64'">
+    <ItemGroup>
+      <_CustomShaderToClean Include="@(FileWrites)" Condition="'%(FileWrites.Extension)' == '.cso'" />
+    </ItemGroup>
+    <Delete Files="@(_CustomShaderToClean)" />
+  </Target>
+  <!-- A distinct global property gives each compiler job its own MSBuild project instance. -->
+  <ItemGroup Condition="'$(Platform)' == 'x64' and '$(_RequestedShaderTarget)' == ''">
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileDlssHelperShadersDlssPrepareCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileDlssHelperShadersDlssCopyCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileRaytracingShaderRaytracingCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileNrdRaytracingShadersRaytracingNrdCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileNrdRaytracingShadersNrdComposeShadowCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileNrdRaytracingShadersNrdComposeAmbientCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompilePhase5ShadersMeshletMS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompilePhase5ShadersClusterCullingCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompilePhase5ShadersMeshletCullingCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompilePhase5ShadersBuildMeshDispatchCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompilePhase5ShadersMeshletResetCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompilePhase5ShadersMeshletOpaquePS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompilePhase5ShadersMeshletFallbackVS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompilePhase5ShadersMeshletVelocityMS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompilePhase5ShadersMeshletVelocityPS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompilePhase5ShadersMeshletVelocityVS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryResetCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryTraversalCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryArgumentsCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryMS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryVelocityMS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryOpaquePS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileShadowCacheShaders</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryPartitionCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryRetestCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryTemporalArgumentsCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryBinsResetCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryBinsCountCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryBinsPrefixCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryBinsScatterCS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryBinnedMS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileVirtualGeometryShadersVirtualGeometryBinnedVelocityMS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileMaterialDeferredPS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileMaterialGeometryPS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileMaterialmodelshaderPS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileMaterialmodelshaderPS_MRT</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileMaterialGPUDrivenOpaquePS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileMaterialDeferredLightingPS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileMaterialmodellightingPS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileMaterialShadowTransmissionPS</AdditionalProperties>
+    </_ParallelShaderProject>
+    <_ParallelShaderProject Include="$(MSBuildProjectFullPath)">
+      <AdditionalProperties>_RequestedShaderTarget=CompileMaterialShadowMapPS</AdditionalProperties>
+    </_ParallelShaderProject>
+  </ItemGroup>
+  <Target Name="CompileProjectShadersInParallel"
+          BeforeTargets="CompileDlssHelperShadersDlssPrepareCS;CompileDlssHelperShadersDlssCopyCS;CompileRaytracingShaderRaytracingCS;CompileNrdRaytracingShadersRaytracingNrdCS;CompileNrdRaytracingShadersNrdComposeShadowCS;CompileNrdRaytracingShadersNrdComposeAmbientCS;CompilePhase5ShadersMeshletMS;CompilePhase5ShadersClusterCullingCS;CompilePhase5ShadersMeshletCullingCS;CompilePhase5ShadersBuildMeshDispatchCS;CompilePhase5ShadersMeshletResetCS;CompilePhase5ShadersMeshletOpaquePS;CompilePhase5ShadersMeshletFallbackVS;CompilePhase5ShadersMeshletVelocityMS;CompilePhase5ShadersMeshletVelocityPS;CompilePhase5ShadersMeshletVelocityVS;CompileVirtualGeometryShadersVirtualGeometryResetCS;CompileVirtualGeometryShadersVirtualGeometryTraversalCS;CompileVirtualGeometryShadersVirtualGeometryArgumentsCS;CompileVirtualGeometryShadersVirtualGeometryMS;CompileVirtualGeometryShadersVirtualGeometryVelocityMS;CompileVirtualGeometryShadersVirtualGeometryOpaquePS;CompileShadowCacheShaders;CompileVirtualGeometryShadersVirtualGeometryPartitionCS;CompileVirtualGeometryShadersVirtualGeometryRetestCS;CompileVirtualGeometryShadersVirtualGeometryTemporalArgumentsCS;CompileVirtualGeometryShadersVirtualGeometryBinsResetCS;CompileVirtualGeometryShadersVirtualGeometryBinsCountCS;CompileVirtualGeometryShadersVirtualGeometryBinsPrefixCS;CompileVirtualGeometryShadersVirtualGeometryBinsScatterCS;CompileVirtualGeometryShadersVirtualGeometryBinnedMS;CompileVirtualGeometryShadersVirtualGeometryBinnedVelocityMS;CompileMaterialDeferredPS;CompileMaterialGeometryPS;CompileMaterialmodelshaderPS;CompileMaterialmodelshaderPS_MRT;CompileMaterialGPUDrivenOpaquePS;CompileMaterialDeferredLightingPS;CompileMaterialmodellightingPS;CompileMaterialShadowTransmissionPS;CompileMaterialShadowMapPS"
+          Condition="'$(Platform)' == 'x64' and '$(EnableParallelShaderBuild)' == 'true' and '$(_RequestedShaderTarget)' == '' and $(MSBuildNodeCount) &gt; 1">
+    <MSBuild Projects="@(_ParallelShaderProject)" Targets="CompileRequestedProjectShader" BuildInParallel="true" />
+  </Target>
+  <Target Name="CompileRequestedProjectShader" DependsOnTargets="$(_RequestedShaderTarget)"
+          Condition="'$(_RequestedShaderTarget)' != ''" />
+</Project>
