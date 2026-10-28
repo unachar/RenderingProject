@@ -1,6 +1,9 @@
 #ifndef PROCEDURAL_TEXTURE_INCLUDED
 #define PROCEDURAL_TEXTURE_INCLUDED
 #include "noise.hlsl"
+#include "NoiseCacheLayout.hlsli"
+ByteAddressBuffer ProceduralNoiseSamples : register(t0, space15);
+RWByteAddressBuffer ProceduralNoiseRequests : register(u0, space15);
 
 namespace ProceduralTexture
 {
@@ -210,6 +213,158 @@ float3 Color(Parameters params, float value)
         default:
             return value < 0.5 ? lerp(params.ColorA.rgb, params.ColorB.rgb, value * 2) : lerp(params.ColorB.rgb, params.ColorC.rgb, (value - 0.5) * 2);
     }
+}
+
+// Rendering reads completed pages only. Each miss bucket has one request owner;
+// frame-end barriers make the entire definition available to the merge dispatch.
+bool CacheCoordinates(Parameters params, float2 uv, float2 footprint,
+                      out NoiseCacheKey key, out uint2 vertex, out float2 blend)
+{
+    key = (NoiseCacheKey)0;
+    vertex = 0;
+    blend = 0;
+    if (!any(uint2(params.Padding1, params.Padding2) != 0u) ||
+        !all(isfinite(uv)) || !all(isfinite(footprint)) || any(abs(footprint) == 0))
+    {
+        return false;
+    }
+    float2 levels = floor(log2(abs(footprint)));
+    if (any(levels < -120) || any(levels > 120))
+    {
+        return false;
+    }
+    float2 scaled = uv / exp2(levels);
+    // Keep integer lattice arithmetic exact and leave room for the border vertex.
+    // Beyond this range float UVs cannot describe every neighboring grid vertex.
+    if (!all(isfinite(scaled)) || any(abs(scaled) > 8388590.0))
+    {
+        return false;
+    }
+    float2 cell = floor(scaled);
+    int2 integerCell = int2(cell);
+    // Signed integer division truncates toward zero; compensate to floor negatives.
+    int2 negativeAdjustment = int2(integerCell.x < 0 ? 14 : 0, integerCell.y < 0 ? 14 : 0);
+    int2 tile = (integerCell - negativeAdjustment) / int(NoiseCacheCellsPerSide);
+    int2 localVertex = integerCell - tile * int(NoiseCacheCellsPerSide);
+    if (any(localVertex < 0) || any(localVertex >= int(NoiseCacheCellsPerSide)))
+    {
+        return false;
+    }
+    float2 firstVertex = float2(tile) * float(NoiseCacheCellsPerSide);
+    if (!all(isfinite(firstVertex * exp2(levels))) ||
+        !all(isfinite((firstVertex + float(NoiseCacheCellsPerSide)) * exp2(levels))))
+    {
+        return false;
+    }
+    vertex = uint2(localVertex);
+    blend = scaled - cell;
+    uint2 packedLevels = uint2(int2(levels) + 128);
+    key.Words = uint4(params.Padding1, params.Padding2,
+                      packedLevels.x | (packedLevels.y << 8u), asuint(tile.x));
+    key.TileY = asuint(tile.y);
+    return true;
+}
+
+bool FindCachePage(NoiseCacheKey key, uint2 vertex, float2 blend, out float3 color)
+{
+    color = 0;
+    if (ProceduralNoiseSamples.Load(0u) == 0u)
+    {
+        return false;
+    }
+    uint firstPage = NoiseCacheHash(key) * NoiseCacheWays;
+    [unroll] for (uint way = 0; way < NoiseCacheWays; ++way)
+    {
+        uint page = firstPage + way;
+        uint address = NoiseCacheHeaderBytes + page * NoiseCacheEntryBytes;
+        [branch] if (all(ProceduralNoiseSamples.Load4(address) == key.Words) &&
+                     ProceduralNoiseSamples.Load(address + 16u) == key.TileY)
+        {
+            float3 c00 = NoiseCacheUnpackColor(ProceduralNoiseSamples.Load2(NoiseCacheTexelAddress(page, vertex)));
+            float3 c10 = NoiseCacheUnpackColor(ProceduralNoiseSamples.Load2(NoiseCacheTexelAddress(page, vertex + uint2(1, 0))));
+            float3 c01 = NoiseCacheUnpackColor(ProceduralNoiseSamples.Load2(NoiseCacheTexelAddress(page, vertex + uint2(0, 1))));
+            float3 c11 = NoiseCacheUnpackColor(ProceduralNoiseSamples.Load2(NoiseCacheTexelAddress(page, vertex + uint2(1, 1))));
+            color = lerp(lerp(c00, c10, blend.x), lerp(c01, c11, blend.x), blend.y);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool FindCachedColor(Parameters params, float2 uv, float2 footprint, out float3 color)
+{
+    NoiseCacheKey key;
+    uint2 vertex;
+    float2 blend;
+    color = 0;
+    if (!CacheCoordinates(params, uv, footprint, key, vertex, blend))
+    {
+        return false;
+    }
+    return FindCachePage(key, vertex, blend, color);
+}
+
+float3 CachedColor(Parameters params, float2 uv, float2 footprint)
+{
+    NoiseCacheKey key;
+    uint2 vertex;
+    float2 blend;
+    bool cacheable = CacheCoordinates(params, uv, footprint, key, vertex, blend) &&
+                     ProceduralNoiseSamples.Load(0u) != 0u;
+    float3 color;
+    if (cacheable)
+    {
+        [branch] if (FindCachePage(key, vertex, blend, color))
+        {
+            return color;
+        }
+    }
+    color = Color(params, Scalar(params, uv));
+    if (cacheable)
+    {
+        uint address = NoiseCacheHash(key) * NoiseCacheRequestBytes;
+        uint previous;
+        ProceduralNoiseRequests.InterlockedCompareExchange(address + NoiseCacheRequestStateOffset, 0u, 1u, previous);
+        if (previous == 0u)
+        {
+            ProceduralNoiseRequests.Store4(address, key.Words);
+            ProceduralNoiseRequests.Store(address + 16u, key.TileY);
+            // Explicit vectors keep this shared include compatible with FXC SM5.
+            uint definitionAddress = address + 32u;
+            ProceduralNoiseRequests.Store4(definitionAddress, uint4(params.Width, params.Height, params.Kind, params.Output));
+            ProceduralNoiseRequests.Store4(definitionAddress + 16u, uint4(params.BasisType, params.Fractal, params.Seed, params.Tileable));
+            ProceduralNoiseRequests.Store4(definitionAddress + 32u, uint4(asuint(params.Frequency), asuint(params.Octaves), asuint(params.Lacunarity), asuint(params.Gain)));
+            ProceduralNoiseRequests.Store4(definitionAddress + 48u, asuint(float4(params.WarpStrength, params.RidgeOffset, params.Contrast, params.Bias)));
+            ProceduralNoiseRequests.Store4(definitionAddress + 64u, asuint(params.ColorA));
+            ProceduralNoiseRequests.Store4(definitionAddress + 80u, asuint(params.ColorB));
+            ProceduralNoiseRequests.Store4(definitionAddress + 96u, asuint(params.ColorC));
+            ProceduralNoiseRequests.Store4(definitionAddress + 112u, asuint(float4(params.Turbulence, params.RingCount, params.Mortar, params.Time)));
+            ProceduralNoiseRequests.Store4(definitionAddress + 128u, asuint(int4(params.BricksX, params.BricksY, params.Pattern, params.RepeatX)));
+            ProceduralNoiseRequests.Store4(definitionAddress + 144u, uint4(asuint(params.RepeatY), asuint(params.PatternSize), asuint(params.PatternSoftness), asuint(params.NormalStrength)));
+            ProceduralNoiseRequests.Store4(definitionAddress + 160u, asuint(float4(params.Choppiness, params.Coverage, params.CloudSoftness, params.Padding)));
+            ProceduralNoiseRequests.Store4(definitionAddress + 176u, uint4(params.PreviewSize, params.Tiles, params.Padding1, params.Padding2));
+            ProceduralNoiseRequests.Store4(definitionAddress + 192u, asuint(float4(params.Direction, params.Anisotropy, params.KernelFrequency, params.Phase)));
+        }
+    }
+    return color;
+}
+
+// Secondary rays may reuse visible tiles, but do not request entire new pages
+// for sparse random hits. Their misses remain analytical.
+float3 CachedColorReadOnly(Parameters params, float2 uv, float2 footprint)
+{
+    float3 color;
+    [branch] if (FindCachedColor(params, uv, footprint, color))
+    {
+        return color;
+    }
+    return Color(params, Scalar(params, uv));
+}
+
+// Callers without a reliable footprint retain the exact analytical result.
+float3 CachedColor(Parameters params, float2 uv)
+{
+    return Color(params, Scalar(params, uv));
 }
 
 // Return a tangent-space normal, with the same V-axis convention as studio image export.

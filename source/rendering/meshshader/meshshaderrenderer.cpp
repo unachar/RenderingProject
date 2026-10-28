@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "noisecachebindings.h"
 #include "meshshaderrenderer.h"
 #include "meshlets/meshletmanager.h"
 #include "graphicsdevice.h"
@@ -160,7 +161,7 @@ namespace MeshShaderRenderer
             cs("shader/hlsl/build/BuildMeshDispatchCS.cso", state.DispatchPSO);
             CD3DX12_DESCRIPTOR_RANGE textures;
             textures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, FrameConstants::g_kMAX_SRVS, 0, 1);
-            CD3DX12_ROOT_PARAMETER opaque[18];
+            CD3DX12_ROOT_PARAMETER opaque[20];
             opaque[0].InitAsConstants(1, 4);
             opaque[1].InitAsDescriptorTable(1, &cbv);
             opaque[2].InitAsShaderResourceView(30);
@@ -180,6 +181,8 @@ namespace MeshShaderRenderer
             opaque[16].InitAsConstants(2, 7);
             // ライト定数（b1）。GPU 駆動の不透明 PS（POM セルフシャドウ）と同じ契約にしておく。
             opaque[17].InitAsConstantBufferView(1);
+            opaque[18].InitAsShaderResourceView(0, 15, D3D12_SHADER_VISIBILITY_PIXEL);
+            opaque[19].InitAsUnorderedAccessView(0, 15, D3D12_SHADER_VISIBILITY_PIXEL);
             CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_ANISOTROPIC);
             sampler.MaxAnisotropy = 16;
             CD3DX12_ROOT_SIGNATURE_DESC opaqueDesc(_countof(opaque), opaque, 1, &sampler,
@@ -741,6 +744,7 @@ namespace MeshShaderRenderer
                 ID3D12DescriptorHeap* heap = FrameConstants::GetCbvHeap();
                 commands->SetDescriptorHeaps(1, &heap);
                 commands->SetGraphicsRootSignature(data.OpaqueRoot.Get());
+                NoiseCacheBindings::BindGraphics(commands, NoiseCacheBindings::MeshRoot);
                 ConstantBuffer3D constants{};
                 XMMATRIX view, projection;
                 Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);

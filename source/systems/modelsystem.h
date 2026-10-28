@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pch.h"
+#include "noisecachebindings.h"
 #include "systembase.h"
 #include "ecs.h"
 #include "componentmanager.h"
@@ -128,6 +129,7 @@ class ModelSystem final : public SystemBase
     static void RestoreShadowGraphicsState(ID3D12GraphicsCommandList* commandList, ID3D12PipelineState* shadowPso)
     {
         commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
+        NoiseCacheBindings::BindMain(commandList);
         if (LightingResources::GetShadowCB())
         {
             commandList->SetGraphicsRootConstantBufferView(5,
@@ -140,6 +142,7 @@ class ModelSystem final : public SystemBase
     static void RestoreVelocityGraphicsState(ID3D12GraphicsCommandList* commandList, ID3D12PipelineState* velocityPso)
     {
         commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
+        NoiseCacheBindings::BindMain(commandList);
         commandList->SetPipelineState(velocityPso);
         commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     }

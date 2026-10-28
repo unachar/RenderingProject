@@ -49,6 +49,8 @@ struct ThumbnailPrepared
     bool BypassDiskCache = false;
     bool Cached = false;
     bool AllowBorrow = true;
+    std::shared_ptr<EditorDescriptorLease> PreviewDescriptor;
+    std::shared_ptr<ThumbnailPreviewContext> Preview;
     std::string Error;
 };
 
@@ -77,6 +79,7 @@ class ThumbnailRenderer
 {
   public:
     static ThumbnailPrepared Prepare(ThumbnailPrepared input);
+    static ThumbnailPrepared PreparePreview(ThumbnailPrepared input);
     static std::shared_ptr<ThumbnailGpuImage> Generate(ThumbnailPrepared& input);
     static uint64_t SourceRevision(const std::filesystem::path& path);
     static std::filesystem::path CachePath(AssetHandle handle);

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "noisecachebindings.h"
 #include "proceduralstudiowindow.h"
 #include "temporalupscaler.h"
 #include "advancedeffects.h"
@@ -371,7 +372,7 @@ bool GraphicsDevice::Init(HWND hwnd)
     glassRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, g_kGLASS_MAX_MESHES, 1, 12);
     glassRanges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, g_kGLASS_MAX_MESHES, 0, 13);
     glassRanges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, g_kGLASS_MAX_MESHES, 0, 14);
-    CD3DX12_ROOT_PARAMETER rootParametersAll[37];
+    CD3DX12_ROOT_PARAMETER rootParametersAll[38];
     rootParametersAll[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_ALL);
     rootParametersAll[1].InitAsDescriptorTable(1, &rangesTex[0], D3D12_SHADER_VISIBILITY_ALL);
     rootParametersAll[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -404,6 +405,8 @@ bool GraphicsDevice::Init(HWND hwnd)
     rootParametersAll[34].InitAsDescriptorTable(2, megaLightRanges, D3D12_SHADER_VISIBILITY_PIXEL);
     rootParametersAll[35].InitAsDescriptorTable(1, &megaLightTextures, D3D12_SHADER_VISIBILITY_PIXEL);
     rootParametersAll[36].InitAsDescriptorTable(4, glassRanges, D3D12_SHADER_VISIBILITY_PIXEL);
+    CD3DX12_DESCRIPTOR_RANGE noiseCacheRanges[2];
+    NoiseCacheBindings::InitializeMainRoot(rootParametersAll[NoiseCacheBindings::MainRoot], noiseCacheRanges);
 
     CD3DX12_STATIC_SAMPLER_DESC sampler{};
 
@@ -491,6 +494,11 @@ bool GraphicsDevice::Init(HWND hwnd)
     if (FAILED(hr))
     {
         WriteGraphicsLog("ERROR: CreateDescriptorHeap(CBV) failed\n");
+        return false;
+    }
+
+    if (!NoiseCacheBindings::InitializeFallback())
+    {
         return false;
     }
 
@@ -649,6 +657,7 @@ bool GraphicsDevice::Init(HWND hwnd)
 void GraphicsDevice::Uninit()
 {
     WaitForGpuIdle();
+    NoiseCacheBindings::Shutdown();
     RayTelemetry::Data().Shutdown();
     ScenePasses::ReleaseStaticShadowCache();
 

@@ -2,7 +2,8 @@
 #include "procedural/proceduraltextureparams.h"
 
 // Runs the resource-free production material evaluator at sub-texel coordinates on a real D3D12 queue.
-void TestNoiseMaterialEvaluation(Harness& harness)
+void TestNoiseMaterialEvaluation(Harness& harness, int firstBasis = 0,
+                                 int endBasis = static_cast<int>(ProcStudio::Basis::Count))
 {
     using namespace ProcStudio;
     ComPtr<ID3D12RootSignature> root;
@@ -45,7 +46,7 @@ void TestNoiseMaterialEvaluation(Harness& harness)
     allocate(16 * sizeof(Float4), D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, output);
     allocate(16 * sizeof(Float4), D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, readback);
     constexpr float e = 1.0f / 2048;
-    for (int basis = 0; basis < static_cast<int>(Basis::Count); ++basis)
+    for (int basis = firstBasis; basis < endBasis; ++basis)
     {
         TextureParams params;
         params.Noise.BasisType = static_cast<Basis>(basis);
@@ -58,7 +59,7 @@ void TestNoiseMaterialEvaluation(Harness& harness)
         memcpy(data, &packed, sizeof(packed));
         definitions->Unmap(0, nullptr);
         harness.Begin();
-        if (basis != 0)
+        if (basis != firstBasis)
         {
             const auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(output.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE,
                                                                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -100,5 +101,6 @@ void TestNoiseMaterialEvaluation(Harness& harness)
         }
         readback->Unmap(0, nullptr);
     }
-    std::cout << "Noise material evaluation: 22 bases, sub-texel scalar/color/normal GPU parity PASS\n";
+    std::cout << "Noise material evaluation: " << endBasis - firstBasis
+              << " bases, sub-texel scalar/color/normal GPU parity PASS\n";
 }

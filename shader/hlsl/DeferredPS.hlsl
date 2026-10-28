@@ -119,6 +119,7 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
     output.EmissionAO = assetEmissionAO;
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
+    output.Normal.a = -AssetParallaxRayDistance(pom);
 
     // ピクセル深度オフセット：GBuffer 深度（ライティング・影・SSAO・反射レイの始点）を凹凸の奥へ。
     output.Depth = AssetParallaxPixelDepth(pom, In.WorldPos, In.CameraPos, saturate(In.Position.z));

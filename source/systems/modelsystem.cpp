@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "noisecachebindings.h"
 #include "envflags.h"
 #include "transmittanceshadows.h"
 #include "materialmanager.h"
@@ -262,6 +263,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
             }
 
             pCommandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
+            NoiseCacheBindings::BindMain(pCommandList);
             if (LightingResources::GetShadowCB())
             {
                 pCommandList->SetGraphicsRootConstantBufferView(
@@ -379,6 +381,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
         XMMATRIX previousViewProjection = XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix()) *
                                           XMLoadFloat4x4(&GraphicsDevice::GetPreviousProjectionMatrix());
         commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
+        NoiseCacheBindings::BindMain(commandList);
         commandList->SetPipelineState(pso);
         commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -408,6 +411,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
             model->DispatchGpuSkinning(commandList, false);
             commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
+            NoiseCacheBindings::BindMain(commandList);
             commandList->SetPipelineState(pso);
             commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             setConstants(entity);

@@ -427,7 +427,8 @@ bool MLScreenTraceOccluded(uint2 pixel, float3 worldPos, float3 normal, float3 t
         const MegaLightData light = Lights[lightSample.x & ML_SAMPLE_INDEX];
         const float3 target = MLLightSamplePoint(light, worldPos, MLUnpackUv(lightSample.z));
         float hitDistance;
-        if (MLScreenTraceOccluded(pixel, worldPos, N, target, MLSeed(pixel, MLStochastic.z, 0x5354u + k), hitDistance))
+        float3 shadowPosition = worldPos + MLViewDirection(worldPos) * max(-GBufferNormal.Load(int3(pixel, 0)).a, 0.0f);
+        if (MLScreenTraceOccluded(pixel, shadowPosition, N, target, MLSeed(pixel, MLStochastic.z, 0x5354u + k), hitDistance))
         {
             lightSample.x = (lightSample.x & ~ML_SAMPLE_VISIBLE) | ML_SAMPLE_SCREEN;
             lightSample.w = asuint(hitDistance);
@@ -463,7 +464,8 @@ bool MLScreenTraceOccluded(uint2 pixel, float3 worldPos, float3 normal, float3 t
     const MegaLightData light = Lights[lightSample.x & ML_SAMPLE_INDEX];
     const float3 target = MLLightSamplePoint(light, worldPos, MLUnpackUv(lightSample.z));
     float hitDistance;
-    if (MLTraceSegment(worldPos, N, target, hitDistance))
+    float3 shadowPosition = worldPos + MLViewDirection(worldPos) * max(-GBufferNormal.Load(int3(pixel, 0)).a, 0.0f);
+    if (MLTraceSegment(shadowPosition, N, target, hitDistance))
     {
         lightSample.x |= ML_SAMPLE_VISIBLE;
     }

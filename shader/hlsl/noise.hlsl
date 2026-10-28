@@ -251,24 +251,54 @@ namespace TextureNoise
     {
         const int ix = int(floor(x)), iy = int(floor(y));
         const int iz = int(floor(z));
-        float nearest = 1e9f;
-        uint nearestHash = 0;
-        // Radius two ensures the nearest feature is found even near cell corners.
+        uint nearestHash = HashXYZ(Wrap(ix, period), Wrap(iy, period), Wrap(iz, period), seed);
+        const float centerX = ix + Unit(nearestHash) - x;
+        const float centerY = iy + Unit(Hash(nearestHash ^ 0x68bc21ebu)) - y;
+        const float centerZ = iz + Unit(Hash(nearestHash ^ 0x02e5be93u)) - z;
+        float nearest = centerX * centerX + centerY * centerY + centerZ * centerZ;
+        int nearestOrder = 62; // Center of the original 5x5x5 traversal; preserve ties.
+        // Keep the radius-two search, but reject cells whose entire box is farther
+        // than an already known feature. No UV quantization or baked image is used.
         [loop] for (int dz = -2; dz <= 2; ++dz)
         {
+            const float lowerZ = max(0.0f, max(iz + dz - z, z - (iz + dz + 1)));
+            const float distanceZ = lowerZ * lowerZ;
+            // A small conservative margin keeps rounded distance bounds from rejecting ties.
+            [branch] if (distanceZ > nearest + 1e-6f)
+            {
+                continue;
+            }
+            const int wrappedZ = Wrap(iz + dz, period);
+            const uint zHash = Hash((uint)wrappedZ * 0xcb1ab31fu ^ seed);
             [loop] for (int dy = -2; dy <= 2; ++dy)
             {
+                const float lowerY = max(0.0f, max(iy + dy - y, y - (iy + dy + 1)));
+                const float distanceYZ = lowerY * lowerY + distanceZ;
+                [branch] if (distanceYZ > nearest + 1e-6f)
+                {
+                    continue;
+                }
+                const int wrappedY = Wrap(iy + dy, period);
+                const uint yzHash = Hash((uint)wrappedY * 0xd8163841u ^ zHash);
                 [loop] for (int dx = -2; dx <= 2; ++dx)
                 {
-                    const uint h = HashXYZ(Wrap(ix + dx, period), Wrap(iy + dy, period), Wrap(iz + dz, period), seed);
+                    const float lowerX = max(0.0f, max(ix + dx - x, x - (ix + dx + 1)));
+                    [branch] if (lowerX * lowerX + distanceYZ > nearest + 1e-6f)
+                    {
+                        continue;
+                    }
+                    // The Y/Z hash is fixed for this row; reuse it for every X cell.
+                    const uint h = Hash((uint)Wrap(ix + dx, period) * 0x8da6b343u ^ yzHash);
                     const float a = ix + dx + Unit(h) - x;
                     const float b = iy + dy + Unit(Hash(h ^ 0x68bc21ebu)) - y;
                     const float c = iz + dz + Unit(Hash(h ^ 0x02e5be93u)) - z;
                     const float d = a * a + b * b + c * c;
-                    if (d < nearest)
+                    const int order = (dz + 2) * 25 + (dy + 2) * 5 + dx + 2;
+                    if (d < nearest || (d == nearest && order < nearestOrder))
                     {
                         nearest = d;
                         nearestHash = h;
+                        nearestOrder = order;
                     }
                 }
             }

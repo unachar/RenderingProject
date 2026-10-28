@@ -515,6 +515,10 @@ static ShadingModelData g_ShadingModel = {0u, 0.0f};
 // AccumulateSurfaceLight で同じ方向のライトの影に掛ける。既定値 1 で無効。
 static float g_PomSelfShadow = 1.0f;
 static float3 g_PomSelfShadowLight = float3(0.0f, 0.0f, 0.0f);
+// POM の見た目の位置から、影を生成する元のメッシュまでの差分。
+static float3 g_PomShadowOffset = 0.0f;
+static float3 g_PomShadowOffsetDx = 0.0f;
+static float3 g_PomShadowOffsetDy = 0.0f;
 
 ShadingModelData DecodeShadingModel(float encoded)
 {
@@ -1019,11 +1023,13 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
         // 主太陽光にはデノイズ済みの可視性テクスチャがある。
         // 直後に結果を上書きするインラインレイは発行しない。
         shadowVisibility = decalLight || useRayShadow ? 1.0f
-                                                      : SampleSurfaceShadowMap(i, worldPos, worldPosDx, worldPosDy,
+                                                      : SampleSurfaceShadowMap(i, worldPos + g_PomShadowOffset,
+                                                                               worldPosDx + g_PomShadowOffsetDx,
+                                                                               worldPosDy + g_PomShadowOffsetDy,
                                                                                normal, singleDir, shadowFilterRadius);
 
         float contactVisibility =
-            !decalLight && directionalShadow ? SampleContactShadow(worldPos, normal, singleDir) : 1.0f;
+            !decalLight && directionalShadow ? SampleContactShadow(worldPos + g_PomShadowOffset, normal, singleDir) : 1.0f;
 #ifdef SHADER_RAYTRACING
         if (SceneRayFlags.x > 0.5f)
         {
@@ -1045,7 +1051,7 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
 #endif
         if (useLegacyDistanceShadow)
         {
-            shadowVisibility *= SampleDistanceFieldShadow(worldPos, normal, singleDir);
+            shadowVisibility *= SampleDistanceFieldShadow(worldPos + g_PomShadowOffset, normal, singleDir);
         }
         // ラスターと DXR の可視性の後に適用し、どちらの経路も雲の消散を上書きしないようにする。
         if (!decalLight && i == CloudSunIndex())
@@ -1063,7 +1069,7 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
     {
         // MegaLights M1 グリッドのライト：DXR 影モードならライト中心へ影のレイを 1 本
         const float maximumDistance = min(length(lightPositionType.xyz - worldPos), SceneRayParameters.x);
-        shadowVisibility = TraceSceneShadow(worldPos, normal, singleDir, maximumDistance);
+        shadowVisibility = TraceSceneShadow(worldPos + g_PomShadowOffset, normal, singleDir, maximumDistance);
     }
 #endif
     float3 authoredLightColor = max(lightColorData.rgb, float3(0.0f, 0.0f, 0.0f));
@@ -1416,7 +1422,7 @@ float VirtualMoonSurfaceVisibility(float3 worldPosition, float3 normal, float3 d
 #ifdef SHADER_RAYTRACING
     if (SceneRayFlags.y > .5f && SceneRayFlags.z > .5f)
     {
-        return TraceSceneShadow(worldPosition, normal, direction, SceneRayParameters.x);
+        return TraceSceneShadow(worldPosition + g_PomShadowOffset, normal, direction, SceneRayParameters.x);
     }
 #endif
     // 仮想の月には設定済みのシャドウマップがない。有効な可視性の提供元が

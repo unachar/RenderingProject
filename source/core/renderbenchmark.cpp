@@ -44,6 +44,21 @@ namespace
     XMFLOAT3 g_CameraOrigin{}, g_CameraTarget{};
     bool g_Failed = false;
     bool g_SettingsCaptured = false;
+    bool g_NativeResolution = false;
+    bool g_LowResolution250p = false;
+
+    float BenchmarkScale()
+    {
+        return g_LowResolution250p ? 0.35f : (g_NativeResolution ? 1.0f : 0.3f);
+    }
+    UINT BenchmarkWidth()
+    {
+        return g_LowResolution250p ? 448u : (g_NativeResolution ? 1280u : 384u);
+    }
+    UINT BenchmarkHeight()
+    {
+        return g_LowResolution250p ? 252u : (g_NativeResolution ? 720u : 216u);
+    }
 
     uint32_t ReadCount(const char* name, uint32_t fallback, uint32_t minimum)
     {
@@ -113,6 +128,12 @@ namespace
 
     void Initialize()
     {
+        char native[8]{};
+        g_NativeResolution = GetEnvironmentVariableA("DX12_RENDER_BENCHMARK_NATIVE", native, sizeof(native)) > 0 &&
+                             atoi(native) != 0;
+        char lowResolution[8]{};
+        g_LowResolution250p = GetEnvironmentVariableA("DX12_RENDER_BENCHMARK_250P", lowResolution,
+                                                     sizeof(lowResolution)) > 0 && atoi(lowResolution) != 0;
         g_Warmup = ReadCount("DX12_RENDER_BENCHMARK_WARMUP", 120, 2);
         g_Measured = ReadCount("DX12_RENDER_BENCHMARK_SAMPLES", 600, 2);
         char label[128]{};
@@ -151,7 +172,8 @@ namespace
                  << "\nsamples=" << g_Measured << "\ndxr=" << Raytracing::IsAvailable()
                  << "\nnrd=" << NrdDenoiser::IsCompiled() << '\n';
         metadata
-            << "requested_input_width=384\nrequested_input_height=216\nrequested_output_width=1280\nrequested_output_height=720\n";
+            << "requested_input_width=" << BenchmarkWidth() << "\nrequested_input_height=" << BenchmarkHeight()
+            << "\nrequested_output_width=1280\nrequested_output_height=720\n";
         metadata << "gpu_scope=direct-frame-commands\n";
         metadata << "ray_telemetry_requested=" << RayTelemetry::Requested()
                  << "\nray_telemetry_scope=radiance-and-shadow-ao\n";
@@ -188,7 +210,7 @@ namespace
         cycle.Running = false;
         cycle.PreviewInEditor = false;
         RenderConfiguration::Resize(1280, 720);
-        RenderConfiguration::SetResolutionScale(0.3f);
+        RenderConfiguration::SetResolutionScale(BenchmarkScale());
         const auto camera = Camera::GetCameraEntity();
         g_CameraOrigin = ComponentManager::GetComponentUnchecked<TransformComponent>(camera).Position;
         g_CameraTarget = ComponentManager::GetComponentUnchecked<CameraComponent>(camera).Target;
@@ -293,7 +315,7 @@ void RenderBenchmark::BeforeFrame(uint64_t frame)
         World::SetFixedFrameRateEnabled(false);
         PerformanceGovernor::GetOptions().Enabled = false;
         RenderProfiler::SetEnabled(true);
-        RenderConfiguration::SetResolutionScale(0.3f);
+        RenderConfiguration::SetResolutionScale(BenchmarkScale());
         auto& cycle = DayNightCycle::GetSettings();
         cycle.Running = false;
         cycle.PreviewInEditor = false;
@@ -343,7 +365,7 @@ void RenderBenchmark::AfterFrame()
     metadata.OutputWidth = GraphicsDevice::GetWidth();
     metadata.OutputHeight = GraphicsDevice::GetHeight();
     if (RenderProfiler::GetFrameSerial() >= g_FirstSerial + g_Warmup &&
-        (metadata.InputWidth != 384 || metadata.InputHeight != 216 || metadata.OutputWidth != 1280 ||
+        (metadata.InputWidth != BenchmarkWidth() || metadata.InputHeight != BenchmarkHeight() || metadata.OutputWidth != 1280 ||
          metadata.OutputHeight != 720))
     {
         g_Failed = true;

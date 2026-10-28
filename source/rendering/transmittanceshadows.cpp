@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "noisecachebindings.h"
 #include "transmittanceshadows.h"
 #include "graphicsdevice.h"
 #include "lightingresources.h"
@@ -289,6 +290,7 @@ bool TransmittanceShadows::BeginPass(UINT shadowIndex, UINT peel)
     m_CommandList->RSSetViewports(1, &viewport);
     m_CommandList->RSSetScissorRects(1, &scissor);
     m_CommandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
+    NoiseCacheBindings::BindMain(m_CommandList.Get());
     m_CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     g_Active = true;
     BindCurrentPass(m_CommandList.Get());

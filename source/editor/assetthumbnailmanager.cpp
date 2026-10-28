@@ -99,7 +99,8 @@ namespace
 
     UINT RequiredDescriptors(const ThumbnailPrepared& input)
     {
-        UINT count = input.Type == AssetType::Texture && input.Textures[0].Borrowed && !input.Cached ? 0 : 1;
+        const bool borrowedTexture = input.Type == AssetType::Texture && input.Textures[0].Borrowed && !input.Cached;
+        UINT count = borrowedTexture || input.PreviewDescriptor ? 0 : 1;
         if (input.Cached || input.Type == AssetType::Texture)
         {
             return count;
@@ -556,7 +557,8 @@ void AssetThumbnailManager::ProcessGenerationBudget()
         {
             break;
         }
-        if (entry.LastUsedFrame + 1 >= frame && entry.NextCheckFrame <= frame)
+        // Queued assets have no source baseline until MakeInput starts their first load.
+        if (!entry.Path.empty() && entry.LastUsedFrame + 1 >= frame && entry.NextCheckFrame <= frame)
         {
             checks.push_back(handle);
         }
@@ -627,6 +629,21 @@ void AssetThumbnailManager::ProcessGenerationBudget()
                 active.reset();
                 prepared.reset();
                 continue;
+            }
+            if (prepared->Error.empty() && !prepared->Cached && prepared->Type != AssetType::Texture &&
+                !prepared->Preview)
+            {
+                prepared->PreviewDescriptor = EditorDescriptors::Allocate();
+                if (!prepared->PreviewDescriptor)
+                {
+                    return;
+                }
+                // Descriptor allocation stays on the UI thread; driver preparation does not.
+                preparation = std::async(std::launch::async, [input = std::move(*prepared)]() mutable {
+                    return ThumbnailRenderer::PreparePreview(std::move(input));
+                });
+                prepared.reset();
+                return;
             }
             ThumbnailPrepared input = std::move(*prepared);
             active.reset();

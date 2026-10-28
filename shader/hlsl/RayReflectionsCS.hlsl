@@ -69,6 +69,13 @@ cbuffer ReflectionConstants : register(b6)
 };
 
 #include "../../source/rendering/stablesampling.h"
+// Screen depth includes POM, but world/TLAS geometry remains on the original mesh.
+float3 ReflectionMeshPosition(float3 position, uint2 pixel)
+{
+    float distance = max(-ReflectionNormal.Load(int3(pixel, 0)).a, 0.0f);
+    return position + CameraViewDirection(position, ReflectionCamera.xyz, ReflectionInvViewProjection) * distance;
+}
+
 #include "../../source/rendering/giresampling.h"
 #include "LumenSurfaceCache.hlsli"
 
@@ -477,11 +484,12 @@ float ReflectionHeight(uint instance, float2 uv, float lod)
 
 void ApplyReflectionParallax(uint instance, ReflectionGeometry mesh, float3 p0, float3 p1, float3 p2, float2 t0,
                              float2 t1, float2 t2, float3 incoming, float hitDistance, inout float2 uv,
-                             inout float3 normal)
+                             inout float3 normal, float3 hitPosition, out float2 colorFootprint)
 {
+    colorFootprint = 0;
     float depthScale = clamp(mesh.Material.w, 0.0f, 0.2f);
     bool heightActive = mesh.Surface.z != 0u && depthScale > 0.0f;
-    if (!heightActive && mesh.Noise[1].Width == 0)
+    if (!heightActive && mesh.Noise[1].Width == 0 && mesh.Noise[0].Width == 0)
     {
         return;
     }
@@ -494,12 +502,37 @@ void ApplyReflectionParallax(uint instance, ReflectionGeometry mesh, float3 p0, 
     }
     float3 tangent = (e1 * d2.y - e2 * d1.y) / determinant;
     float3 uvBitangent = (e2 * d1.x - e1 * d2.x) / determinant;
+    // Estimate UV derivatives from the actual trace resolution. Keep UV axes
+    // separate: a geometric mean would blur anisotropic texture mappings.
+    float4 clip = mul(float4(hitPosition, 1), ReflectionViewProjection);
+    float t2Length = dot(tangent, tangent), b2Length = dot(uvBitangent, uvBitangent);
+    float tangentDot = dot(tangent, uvBitangent);
+    float gramDeterminant = t2Length * b2Length - tangentDot * tangentDot;
+    if (abs(clip.w) > 1e-6f && gramDeterminant > 1e-20f && all(ReflectionExtent.xy > 0))
+    {
+        float3 projected = clip.xyz / clip.w;
+        float4 worldX = mul(float4(projected + float3(2.0f / ReflectionExtent.x, 0, 0), 1), ReflectionInvViewProjection);
+        float4 worldY = mul(float4(projected + float3(0, 2.0f / ReflectionExtent.y, 0), 1), ReflectionInvViewProjection);
+        if (abs(worldX.w) > 1e-6f && abs(worldY.w) > 1e-6f)
+        {
+            float3 gradientU = (b2Length * tangent - tangentDot * uvBitangent) / gramDeterminant;
+            float3 gradientV = (t2Length * uvBitangent - tangentDot * tangent) / gramDeterminant;
+            float3 dx = worldX.xyz / worldX.w - hitPosition;
+            float3 dy = worldY.xyz / worldY.w - hitPosition;
+            colorFootprint = max(abs(float2(dot(gradientU, dx), dot(gradientV, dx))),
+                                 abs(float2(dot(gradientU, dy), dot(gradientV, dy))));
+        }
+    }
     tangent -= normal * dot(normal, tangent);
     if (dot(tangent, tangent) < 1e-12f || dot(uvBitangent, uvBitangent) < 1e-12f)
     {
         return;
     }
     float worldPerUv = sqrt(length(tangent) * length(uvBitangent));
+    if (!heightActive && mesh.Noise[1].Width == 0)
+    {
+        return;
+    }
     tangent = normalize(tangent);
     float3 bitangent = normalize(cross(normal, tangent));
     if (dot(bitangent, uvBitangent) < 0.0f)
@@ -561,7 +594,8 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
     {
         normal = -normal;
     }
-    [branch] if (mesh.Surface.z != 0u || mesh.Noise[1].Width != 0u)
+    float2 colorFootprint = 0;
+    [branch] if (mesh.Surface.z != 0u || mesh.Noise[1].Width != 0u || mesh.Noise[0].Width != 0u)
     {
         float3 corners[3];
         float2 cornerUv[3];
@@ -575,7 +609,7 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
         }
         float hitDistance = length(position - ReflectionCamera.xyz);
         ApplyReflectionParallax(instance, mesh, corners[0], corners[1], corners[2], cornerUv[0], cornerUv[1],
-                                cornerUv[2], incoming, hitDistance, uv, normal);
+                                cornerUv[2], incoming, hitDistance, uv, normal, position, colorFootprint);
     }
     float3 lumenTotal, lumenIndirect, lumenAlbedo, lumenEmission;
     bool lumenCached =
@@ -596,7 +630,7 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
             albedo *= SceneTextures[NonUniformResourceIndex(instance)].SampleLevel(MaterialSampler, uv, 0).rgb;
         }
         if (mesh.Noise[0].Width != 0)
-            albedo *= ProceduralTexture::Color(mesh.Noise[0], ProceduralTexture::Scalar(mesh.Noise[0], uv));
+            albedo *= ProceduralTexture::CachedColorReadOnly(mesh.Noise[0], uv, colorFootprint);
         albedo *= mesh.BaseColor.rgb;
     }
     float metallic = saturate(mesh.Material.y);
@@ -967,7 +1001,8 @@ bool AdaptiveReflection(uint2 pixel, float depth, float3 position, float3 normal
         }
         float3 halfVector = SampleVisibleGgx(sampleView, normal, roughness, sampleRandom);
         float3 direction = reflect(-sampleView, halfVector);
-        ray.Origin = samplePosition + normal * SceneRayParameters.y;
+        ray.Origin = samplePosition + sampleView * max(-ReflectionNormal.Load(int3(pixel, 0)).a, 0.0f) +
+                     normal * SceneRayParameters.y;
         ray.Direction = direction;
         float nDotL = dot(normal, direction);
         if (nDotL <= 0)
@@ -1242,7 +1277,7 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2
     float3 direction =
         tangent * (radius * cos(angle)) + cross(normal, tangent) * (radius * sin(angle)) + normal * sqrt(1 - random.x);
     RayDesc ray;
-    ray.Origin = position + normal * SceneRayParameters.y;
+    ray.Origin = ReflectionMeshPosition(position, pixel) + normal * SceneRayParameters.y;
     ray.Direction = direction;
     ray.TMin = SceneRayParameters.y * 0.25f;
     ray.TMax = GiParameters.x;
@@ -1277,7 +1312,7 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2
         // 太陽と月の円盤は除く。直接光ですでに扱っている（SkyAtmosphere.hlsli を参照）。
         incoming = EvaluatePhysicalSkyFast(direction, 0.01f, false);
     }
-    float3 emissiveIrradiance = SampleEmissiveIrradiance(position, normal, seed + 17, pixel, checkerboard);
+    float3 emissiveIrradiance = SampleEmissiveIrradiance(ReflectionMeshPosition(position, pixel), normal, seed + 17, pixel, checkerboard);
     float3 irradiance = incoming * 3.14159265f + emissiveIrradiance;
     irradiance = min(max(irradiance, 0), 65504);
     CacheInsert(position, normal, irradiance, hitDistance);
@@ -1611,7 +1646,7 @@ float ReSTIRJacobian(GiReservoir sample, float3 neighbourPosition, float3 positi
     if (ReSTIRState.z != 0u && W > 0.0f && sampleDistance < 9000.0f)
     {
         RayDesc ray;
-        ray.Origin = position + normal * SceneRayParameters.y;
+        ray.Origin = ReflectionMeshPosition(position, pixel) + normal * SceneRayParameters.y;
         ray.Direction = direction;
         ray.TMin = SceneRayParameters.y * 0.25f;
         ray.TMax = max(sampleDistance - SceneRayParameters.y * 2.0f, ray.TMin + 0.001f);

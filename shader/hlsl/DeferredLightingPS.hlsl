@@ -65,7 +65,8 @@ float MLReferenceVisibility(MegaLightData light, float3 worldPos, float3 normal,
     [loop] for (uint index = 0u; index < side * side; ++index)
     {
         const float2 uv = (float2(index % side, index / side) + jitter) / (float)side;
-        visible += TraceSceneSegment(worldPos, normal, MLLightSamplePoint(light, worldPos, uv));
+        float3 shadowPosition = worldPos + MLViewDirection(worldPos) * max(-NormalTexture.Load(int3(pixel, 0)).a, 0.0f);
+        visible += TraceSceneSegment(shadowPosition, normal, MLLightSamplePoint(light, worldPos, uv));
     }
     return visible / (float)(side * side);
 #else
@@ -160,6 +161,9 @@ float4 ShadeDeferred(PSInputPostProcess input)
         ApplyWeatherToSurface(position, surfaceNormal, baseColor.rgb, material.rgb);
     }
     float3 viewDir = CameraViewDirection(position, PPCameraPos.xyz, PPInvViewProjection);
+    g_PomShadowOffset = viewDir * max(-normal.a, 0.0f);
+    g_PomShadowOffsetDx = ddx(g_PomShadowOffset);
+    g_PomShadowOffsetDy = ddy(g_PomShadowOffset);
     float3 pbrDirectLight;
     int materialShadowFilterRadius =
         pbr ? clamp((int)round(lerp(max(VirtualShadowGlobal.z, 1.0f), 3.0f, saturate(shadowSoftness * 2.0f))), 1, 3)

@@ -127,6 +127,7 @@ class AssetBrowserListing
                     extension == ".meta" || extension == ".tmp" || extension == ".mtl" || extension == ".vgderived";
                 if (isDirectory)
                 {
+                    hidden = hidden || name == "virtualgeometry-cache";
                     for (const char* prefix : {"__material_validation_", "__temporal_lighting_", "__gi_validation_",
                                                "__thumbnail_validation_"})
                     {

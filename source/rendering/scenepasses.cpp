@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "noisecachebindings.h"
 #include "renderprofiler.h"
 #include "megalights.h"
 #include "transparencyeffects.h"
@@ -201,6 +202,7 @@ void ScenePasses::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_TO
     ID3D12DescriptorHeap* resourceHeap = m_CbvHeap.Get();
     m_CommandList->SetDescriptorHeaps(1, &resourceHeap);
     m_CommandList->SetGraphicsRootSignature(rootSignature);
+    NoiseCacheBindings::BindMain(m_CommandList.Get());
     Raytracing::BindLighting(m_CommandList.Get(), 16, 17);
     Raytracing::BindGlass(m_CommandList.Get());
     if (m_LightConstantBuffer)
@@ -332,6 +334,7 @@ bool ScenePasses::BeginShadowPass(UINT shadowIndex, bool preserveDepth, bool sta
     ID3D12DescriptorHeap* resourceHeap = m_CbvHeap.Get();
     m_CommandList->SetDescriptorHeaps(1, &resourceHeap);
     m_CommandList->SetGraphicsRootSignature(m_ModelRootSignature.Get());
+    NoiseCacheBindings::BindMain(m_CommandList.Get());
     if (m_ShadowConstantBuffer)
     {
         m_CommandList->SetGraphicsRootConstantBufferView(

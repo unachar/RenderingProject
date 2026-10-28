@@ -190,6 +190,15 @@ float2 ApplyAssetParallax(AssetMaterialParameters material, float2 uv, float3 wo
 // ピクセル深度オフセット：POM のヒット点（面の奥）をワールドへ戻し、その深度を返す。
 // 結果は常に fallbackDepth 以下（Reverse-Z・GREATER 比較で SV_DepthLessEqual の条件を満たす）。
 // 接地部分の影・SSAO・ライティングの位置復元・反射レイの始点が凹凸に一致する。
+float AssetParallaxRayDistance(AssetParallaxResult pom)
+{
+    if (!pom.Active)
+    {
+        return 0.0f;
+    }
+    return pom.HitDepth * pom.DepthScale * pom.WorldPerUv / max(pom.Facing, 0.1f);
+}
+
 float AssetParallaxPixelDepth(AssetParallaxResult pom, float3 worldPos, float3 cameraPos, float fallbackDepth)
 {
     if (!pom.Active || pom.HitDepth <= 0.0f)
@@ -198,7 +207,7 @@ float AssetParallaxPixelDepth(AssetParallaxResult pom, float3 worldPos, float3 c
     }
     float3 viewDirection = SurfaceViewDirectionCommon(worldPos, cameraPos);
     // POM の UV ずれ（HitDepth * DepthScale / facing）と同じ距離だけ視線方向へ潜る。
-    float distance = pom.HitDepth * pom.DepthScale / max(pom.Facing, 0.1f) * pom.WorldPerUv;
+    float distance = AssetParallaxRayDistance(pom);
     float3 displaced = worldPos - viewDirection * distance;
     float4 clip = mul(mul(float4(displaced, 1.0f), View), Projection);
     if (clip.w <= 1e-6f)
@@ -225,15 +234,19 @@ float AssetParallaxSelfShadow(AssetParallaxResult pom, float3 lightDirection, Sa
     // 深さ 1 上るごとの UV 移動量。寝た光で発散しないよう z を下限で抑える。
     float2 uvPerDepth = lightTS.xy / max(lightTS.z, 0.05f) * pom.DepthScale;
     uint steps = (uint)clamp(round(pom.MaxSteps * 0.5f), 6.0f, 32.0f);
+    // 交差補間で求めた深さは実際の高さより奥に入ることがある。
+    // 同じ UV の高さへ戻してから光をたどり、自分自身を遮蔽物として数えない。
+    float startDepth = SampleParallaxDepth(pom.HeightNoise, pom.HeightIndex, pom.Uv, pom.UvDx, pom.UvDy, materialSampler);
+    const float depthBias = 0.002f;
     float shadow = 0.0f;
     [loop] for (uint i = 1u; i <= steps; ++i)
     {
         float fraction = (float)i / (float)steps;
-        float rayDepth = pom.HitDepth * (1.0f - fraction);
-        float2 sampleUv = pom.Uv + uvPerDepth * (pom.HitDepth - rayDepth);
+        float rayDepth = startDepth * (1.0f - fraction);
+        float2 sampleUv = pom.Uv + uvPerDepth * (startDepth - rayDepth);
         float surfaceDepth = SampleParallaxDepth(pom.HeightNoise, pom.HeightIndex, sampleUv, pom.UvDx, pom.UvDy, materialSampler);
         // 面が光線より上（深さが浅い）なら遮蔽。ヒット点に近い遮蔽ほど影を濃くする。
-        shadow = max(shadow, (rayDepth - surfaceDepth) * (1.0f - fraction));
+        shadow = max(shadow, (rayDepth - surfaceDepth - depthBias) * (1.0f - fraction));
         if (rayDepth <= 0.0f)
         {
             break;
@@ -340,8 +353,12 @@ void ApplyAssetMaterial(AssetMaterialParameters material, float2 uv, SamplerStat
     }
     if (material.Noise[0].Width != 0)
     {
-        float value = ProceduralTexture::Scalar(material.Noise[0], uv);
-        color.rgb *= ProceduralTexture::Color(material.Noise[0], value);
+#ifdef SHADER_VISIBILITY_RESOLVE
+        float2 footprint = max(abs(VisibilityUvDx), abs(VisibilityUvDy));
+#else
+        float2 footprint = max(abs(ddx(uv)), abs(ddy(uv)));
+#endif
+        color.rgb *= ProceduralTexture::CachedColor(material.Noise[0], uv, footprint);
     }
     color *= material.BaseColor;
     float2 metallicRoughness = SampleAssetTexture(material.Textures.x, uv, materialSampler, 1).rg;

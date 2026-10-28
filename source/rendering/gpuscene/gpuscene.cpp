@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "noisecachebindings.h"
 #include "cpuculling.h"
 #include "gpuscene.h"
 #include "gpuscenechanges.h"
@@ -716,6 +717,10 @@ void GpuScene::Execute(ID3D12GraphicsCommandList* commands)
     for (auto& [handle, record] : scene.AssetMaterials)
     {
         const auto& runtime = MaterialManager::GetRuntime(handle);
+        if (!record.Users.empty() && runtime.Binding.Noise[0].Width != 0)
+        {
+            NoiseCacheBindings::Request();
+        }
         if (record.PipelineRevision != runtime.PipelineRevision)
         {
             for (const auto entity : record.Users)

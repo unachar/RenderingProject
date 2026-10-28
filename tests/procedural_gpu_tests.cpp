@@ -7,6 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <chrono>
 using Microsoft::WRL::ComPtr;
 
 namespace
@@ -245,6 +246,7 @@ namespace EditorDescriptors
 
 #include "editor-compute-under-test.h"
 #include "noise_material_gpu_tests.h"
+#include "noise_cache_gpu_tests.h"
 
 void TestEditorTransitions(Harness& harness)
 {
@@ -315,8 +317,70 @@ int main(int argc, char** argv)
     try
     {
         using namespace ProcStudio;
-        Harness harness(argc > 1 && std::string(argv[1]) == "--warp");
+        bool warp = false;
+        for (int argument = 1; argument < argc; ++argument)
+        {
+            warp = warp || std::string(argv[argument]) == "--warp";
+        }
+        Harness harness(warp);
         TextureParams params;
+        if (argc > 1 && std::string(argv[1]) == "--noise-cache")
+        {
+            TestNoiseSampleCache(harness);
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "--voronoi-parity")
+        {
+            params.Noise.BasisType = Basis::Voronoi;
+            for (int fractal = 0; fractal < static_cast<int>(FractalType::Count); ++fractal)
+            {
+                params.Noise.Fractal = static_cast<FractalType>(fractal);
+                for (bool tileable : {false, true})
+                {
+                    params.Tileable = tileable;
+                    for (auto output : {TextureOutput::Color, TextureOutput::Height, TextureOutput::Normal})
+                    {
+                        params.Output = output;
+                        harness.Compare(params, "Voronoi fractal=" + std::to_string(fractal));
+                    }
+                }
+            }
+            TestNoiseMaterialEvaluation(harness, static_cast<int>(Basis::Voronoi),
+                                        static_cast<int>(Basis::Voronoi) + 1);
+            harness.CheckDiagnostics();
+            std::cout << "Voronoi GPU parity: PASS (54 image cases and sub-texel material evaluation)\n";
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "--noise-benchmark")
+        {
+            params.Noise.BasisType = Basis::Voronoi;
+            params.Noise.Fractal = FractalType::HybridMultifractal;
+            params.Noise.Octaves = 4;
+            params.Noise.Frequency = 10.43f;
+            params.Noise.Gain = 0.604f;
+            for (auto output : {TextureOutput::Height, TextureOutput::Normal})
+            {
+                params.Output = output;
+                double milliseconds = 0;
+                for (int iteration = 0; iteration < 9; ++iteration)
+                {
+                    const auto start = std::chrono::steady_clock::now();
+                    harness.Begin();
+                    Require(harness.Generator.Generate(harness.Commands.Get(), params, 1024, 1024, harness.Error),
+                            harness.Error);
+                    harness.Submit();
+                    if (iteration > 0)
+                    {
+                        milliseconds +=
+                            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+                    }
+                }
+                std::cout << "Voronoi 1024x1024 output=" << static_cast<int>(output)
+                          << " dispatch+fence ms=" << milliseconds / 8 << '\n';
+            }
+            harness.CheckDiagnostics();
+            return 0;
+        }
         for (auto kind : {TextureKind::Mandelbrot, TextureKind::Julia})
         {
             params.Kind = kind;

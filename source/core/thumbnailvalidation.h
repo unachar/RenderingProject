@@ -5,6 +5,7 @@ class ThumbnailValidation
 {
   public:
     static bool Enabled();
+    static bool IsComplete();
     static void BeforeFrame(uint64_t frame);
     static void AfterFrame(uint64_t frame);
     static bool Finish();

@@ -31,12 +31,15 @@ namespace
     bool surfaceSelected = false;
     UINT inputStep = 0, visibleCells = 0, maximumVisibleCells = 0;
     ComPtr<ID3D12Resource> existingTexture;
+    int existingTextureIndex = -1;
     std::future<ThumbnailPrepared> meshCacheCheck;
     bool meshCacheChecked = false;
     std::vector<AssetHandle> rootHandles;
     unsigned int rootFrames = 0;
     bool rootCellSeen = false;
     double rootMaximumFrameMs = 0.0;
+    double initialMaximumFrameMs = 0.0;
+    unsigned int initialFrames = 0;
     std::chrono::steady_clock::time_point frameStart;
 
     void Check(bool condition, const char* name)
@@ -136,12 +139,22 @@ bool ThumbnailValidation::Enabled()
     return GetEnvironmentVariableA("DX12_THUMBNAIL_TEST", value, sizeof(value)) > 0 && atoi(value) != 0;
 }
 
+bool ThumbnailValidation::IsComplete()
+{
+    return complete;
+}
+
 void ThumbnailValidation::BeforeFrame(uint64_t frame)
 {
     frameStart = std::chrono::steady_clock::now();
     renderedBuffer = GraphicsDevice::GetFrameIndex();
     if (frame != 0)
     {
+        if (stage == 0)
+        {
+            // Keep the reuse fixture resident while asynchronous driver work is pending.
+            TextureManager::TouchTexture(existingTextureIndex);
+        }
         return;
     }
     root = AssetRegistry::ValidationCacheRoot() / ("__thumbnail_validation_" + std::to_string(GetCurrentProcessId()));
@@ -165,7 +178,8 @@ void ThumbnailValidation::BeforeFrame(uint64_t frame)
     }
     material.Textures[0] = texture;
     // 準備中に同期プリロードされる場合があるため、サムネイルの Request/Generate はそのリソースを再利用する。
-    existingTexture = TextureManager::GetTextureResource(TextureManager::LoadTexture(root / "Wide.png"));
+    existingTextureIndex = TextureManager::LoadTexture(root / "Wide.png");
+    existingTexture = TextureManager::GetTextureResource(existingTextureIndex);
     material.Roughness = 0.25f;
     material.Metallic = 0.5f;
     std::string error;
@@ -200,6 +214,14 @@ void ThumbnailValidation::AfterFrame(uint64_t frame)
     const auto thumbnail = AssetThumbnailManager::Request(surface, ThumbnailPriority::Selected);
     if (stage == 0)
     {
+        // Exclude fixture setup, but include the first uncached thumbnail preparations.
+        if (frame > 0)
+        {
+            ++initialFrames;
+            initialMaximumFrameMs = std::max(
+                initialMaximumFrameMs,
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frameStart).count());
+        }
         bool ready = true;
         for (auto handle : handles)
         {
@@ -217,10 +239,16 @@ void ThumbnailValidation::AfterFrame(uint64_t frame)
         {
             return;
         }
+        WriteGraphicsLog("Thumbnail initial frames=%u maximum CPU frame=%.3f ms\n", initialFrames,
+                         initialMaximumFrameMs);
+        Check(initialFrames > 0 && initialMaximumFrameMs < 1000.0, "uncached thumbnails avoid second-long UI stalls");
         Check(HashImage(thumbnail) != 0, "material sphere renders");
         const auto wide = AssetThumbnailManager::Request(texture);
         Check(wide.Image->Width * 9 == wide.Image->Height * 16, "wide texture keeps aspect ratio");
-        Check(wide.Image->Resource == existingTexture && !wide.Image->Descriptor,
+        // Background BC compression may replace the resident resource while preparation runs.
+        const auto residentTexture = TextureManager::GetTextureResource(existingTextureIndex);
+        Check((wide.Image->Resource == existingTexture || wide.Image->Resource == residentTexture) &&
+                  !wide.Image->Descriptor,
               "loaded texture resource and SRV reused");
         const auto meshThumbnail = AssetThumbnailManager::Request(mesh);
         Check(HashImage(meshThumbnail) != 0, "offset mesh renders with camera fit");
@@ -394,10 +422,6 @@ void ThumbnailValidation::AfterFrame(uint64_t frame)
             complete = true;
         }
     }
-    if (frame == 299 && !complete)
-    {
-        Check(false, "thumbnail sequence completes");
-    }
 }
 
 void ThumbnailValidation::BeforeEditorFrame()
@@ -477,4 +501,3 @@ bool ThumbnailValidation::Finish()
     MaterialManager::Refresh();
     return complete && failures == 0;
 }
-

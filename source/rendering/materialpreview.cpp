@@ -16,11 +16,15 @@
 #include "materialvalidation.h"
 #include "rendererstate.h"
 #include <cmath>
+#include <mutex>
 
 namespace
 {
     constexpr UINT previewSize = 512;
     constexpr UINT constantBytes = 32768; // 本番のライトバッファの予約サイズに合わせる。
+    std::mutex thumbnailPipelineMutex;
+    std::array<ComPtr<ID3D12PipelineState>, 12> thumbnailPipelines;
+    DXGI_FORMAT thumbnailPipelineFormat = DXGI_FORMAT_UNKNOWN;
 
     struct PreviewState : RendererState
     {
@@ -286,6 +290,24 @@ namespace
         {
             return Pipelines[index].Get();
         }
+        // Thumbnail targets have independent constants, but share identical pipeline states.
+        const bool thumbnail = SrvIndex != g_kMATERIAL_PREVIEW_SRV_INDEX;
+        std::unique_lock cacheLock(thumbnailPipelineMutex, std::defer_lock);
+        if (thumbnail)
+        {
+            cacheLock.lock();
+            const auto format = Target->GetDesc().Format;
+            if (thumbnailPipelineFormat != format)
+            {
+                thumbnailPipelines = {};
+                thumbnailPipelineFormat = format;
+            }
+            if (thumbnailPipelines[index])
+            {
+                Pipelines[index] = thumbnailPipelines[index];
+                return Pipelines[index].Get();
+            }
+        }
         ComPtr<ID3DBlob> vertex;
         ComPtr<ID3DBlob> pixel;
         ShaderDescription shader;
@@ -354,6 +376,10 @@ namespace
         {
             Error = "Failed to create production preview PSO";
             return nullptr;
+        }
+        if (thumbnail)
+        {
+            thumbnailPipelines[index] = Pipelines[index];
         }
         return Pipelines[index].Get();
     }
@@ -585,6 +611,9 @@ void MaterialPreview::Render()
 void MaterialPreview::Shutdown()
 {
     preview = PreviewState{};
+    std::lock_guard lock(thumbnailPipelineMutex);
+    thumbnailPipelines = {};
+    thumbnailPipelineFormat = DXGI_FORMAT_UNKNOWN;
 }
 
 ID3D12Resource* MaterialPreview::GetTarget()
@@ -633,6 +662,24 @@ bool ThumbnailPreviewContext::Initialize(UINT size, UINT descriptorIndex)
     return SUCCEEDED(GraphicsDevice::GetDevice()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
                                                                           D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
                                                                           IID_PPV_ARGS(&state.PreviewConstants)));
+}
+
+bool ThumbnailPreviewContext::PreparePipelines(const MaterialComponent& material,
+                                               const std::vector<ThumbnailPreviewPart>& parts)
+{
+    auto& state = m_Impl->State;
+    if (parts.empty())
+    {
+        return state.Pipeline(material) != nullptr;
+    }
+    for (const auto& part : parts)
+    {
+        if (!state.Pipeline(part.Material))
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool ThumbnailPreviewContext::Render(const MaterialComponent& material, const std::vector<StaticModelVertex>& geometry,

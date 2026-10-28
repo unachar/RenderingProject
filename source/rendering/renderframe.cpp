@@ -16,6 +16,7 @@
 #include "advancedeffects.h"
 #include "rayreflections.h"
 #include "rendertargets.h"
+#include "noisecachebindings.h"
 
 void RenderFrame::BeginDraw()
 {
@@ -29,15 +30,12 @@ void RenderFrame::BeginDraw()
     Raytracing::ReleaseInactiveResources();
     RayReflections::ReleaseInactiveResources();
     AdvancedEffects::ReleaseInactiveResources();
-    LightingResources::BeginFrame();
 
     m_CommandAllocator[m_FrameIndex]->Reset();
     m_CommandList->Reset(m_CommandAllocator[m_FrameIndex].Get(), nullptr);
     RenderProfiler::BeginFrame(m_Device.Get(), m_CommandQueue.Get(), m_CommandList.Get(), m_FrameIndex);
     TextureManager::UpdateStreaming(m_CommandList.Get());
-    // このフレームの空 LUT は直ちに非同期コンピュートキューへ記録・送信し、前フレームの
-    // グラフィックス処理と重ねる。グラフィックスキューは GPU 上で完了を待つ。
-    AtmosphereLut::Update(m_CommandList.Get(), m_CommandQueue.Get(), m_FrameIndex);
+    NoiseCacheBindings::BeginFrame(m_CommandList.Get());
 
     m_CommandList->RSSetViewports(1, &m_Viewport);
     m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
@@ -62,12 +60,22 @@ void RenderFrame::BeginDraw()
     static uint64_t editorFrame = 0;
     AssetThumbnailManager::BeginFrame(++editorFrame);
     ImGuiManager::Update();
+
+    // UI でシーンを読み替えるとライトの EntityID も変わるため、更新後のシーンからキャッシュを作る。
+    LightingResources::BeginFrame();
+    // このフレームの空 LUT は直ちに非同期コンピュートキューへ記録・送信し、前フレームの
+    // グラフィックス処理と重ねる。グラフィックスキューは GPU 上で完了を待つ。
+    AtmosphereLut::Update(m_CommandList.Get(), m_CommandQueue.Get(), m_FrameIndex);
 }
 
 void RenderFrame::EndDraw()
 {
     MaterialPreview::Render();
     AssetThumbnailManager::ProcessGenerationBudget();
+    {
+        RenderProfiler::ScopedEvent profile("Procedural Color Tile Update", m_CommandList.Get());
+        NoiseCacheBindings::FinishFrame(m_CommandList.Get());
+    }
     m_CommandList->RSSetViewports(1, &m_Viewport);
     m_CommandList->RSSetScissorRects(1, &m_ScissorRect);
     if (m_CommandList)

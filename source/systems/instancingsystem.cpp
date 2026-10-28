@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "noisecachebindings.h"
 #include "rendering/scenedepth.h"
 #include "materialmanager.h"
 #include "vertexdeformation.h"
@@ -945,6 +946,7 @@ void InstancingSystem::ExecuteShadowBatches(const DrawContext& ctx, vector<Insta
     }
 
     ctx.commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
+    NoiseCacheBindings::BindMain(ctx.commandList);
     if (LightingResources::GetShadowCB())
     {
         ctx.commandList->SetGraphicsRootConstantBufferView(5,
@@ -983,6 +985,7 @@ void InstancingSystem::ExecuteShadowBatches(const DrawContext& ctx, vector<Insta
         return;
     }
     ctx.commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
+    NoiseCacheBindings::BindMain(ctx.commandList);
     if (LightingResources::GetShadowCB())
     {
         ctx.commandList->SetGraphicsRootConstantBufferView(5,
@@ -997,6 +1000,7 @@ void InstancingSystem::ExecuteShadowBatches(const DrawContext& ctx, vector<Insta
         {
             batch.AnimatedModel->DispatchGpuSkinning(ctx.commandList, false);
             ctx.commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
+            NoiseCacheBindings::BindMain(ctx.commandList);
             ctx.commandList->SetGraphicsRootConstantBufferView(
                 5, LightingResources::GetCurrentShadowConstantBufferAddress());
             ctx.commandList->SetPipelineState(shadowPso);
@@ -1021,6 +1025,7 @@ void InstancingSystem::ExecuteShadowBatches(const DrawContext& ctx, vector<Insta
 
         auto bindShadowGraphics = [&]() {
             ctx.commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
+            NoiseCacheBindings::BindMain(ctx.commandList);
             ctx.commandList->SetGraphicsRootConstantBufferView(
                 5, LightingResources::GetCurrentShadowConstantBufferAddress());
             ctx.commandList->SetPipelineState(shadowPso);

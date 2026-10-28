@@ -106,7 +106,20 @@ bool TraceGlassBoundary(float3 origin, float3 direction, float coneAngle, float 
     hit.UV = uv;
     hit.Color = max(mesh.BaseColor.rgb, 0.0f);
     if (mesh.NoiseBase.Width != 0)
-        hit.Color *= ProceduralTexture::Color(mesh.NoiseBase, ProceduralTexture::Scalar(mesh.NoiseBase, uv));
+    {
+        float2 footprint = 0;
+        float2 d1 = triangleUV[1] - triangleUV[0], d2 = triangleUV[2] - triangleUV[0];
+        float determinant = d1.x * d2.y - d1.y * d2.x;
+        if (abs(determinant) > 1e-12f && all(ViewportSize > 0))
+        {
+            float3 e1 = positions[1] - positions[0], e2 = positions[2] - positions[0];
+            float2 worldPerUv = float2(length((e1 * d2.y - e2 * d1.y) / determinant),
+                                      length((e2 * d1.x - e1 * d2.x) / determinant));
+            float rayWidth = max(hit.Distance, 0.01f) / min(ViewportSize.x, ViewportSize.y);
+            footprint = rayWidth / max(worldPerUv, 1e-4f.xx);
+        }
+        hit.Color *= ProceduralTexture::CachedColorReadOnly(mesh.NoiseBase, uv, footprint);
+    }
     // ラスターパスではアセットのマテリアルは白から始める。設定されたプリミティブやモデルの
     // 頂点 RGB を使うのは従来のマテリアルだけ。
     if ((mesh.Flags.w & 1u) == 0u && mesh.Layout.x >= 44)

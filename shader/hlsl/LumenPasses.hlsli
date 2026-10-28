@@ -101,10 +101,14 @@ groupshared float3 LumenMaximum[64];
     float3 normal = 0;
     float3 albedo = 0;
     float2 materialUv = 0;
+    float3 trianglePosition[3];
+    float2 triangleUv[3];
     for (uint corner = 0; corner < 3; ++corner)
     {
         uint vertex = LoadReflectionIndex(work.x, primitive * 3 + corner, mesh);
         uint offset = mesh.Layout.z + vertex * mesh.Layout.x;
+        trianglePosition[corner] = mul(float4(asfloat(SceneVertices[NonUniformResourceIndex(work.x)].Load3(offset)), 1), mesh.World).xyz;
+        triangleUv[corner] = asfloat(SceneVertices[NonUniformResourceIndex(work.x)].Load2(offset + 24));
         normal += asfloat(SceneVertices[NonUniformResourceIndex(work.x)].Load3(offset + 12)) * weights[corner];
         materialUv += asfloat(SceneVertices[NonUniformResourceIndex(work.x)].Load2(offset + 24)) * weights[corner];
         albedo += asfloat(SceneVertices[NonUniformResourceIndex(work.x)].Load3(offset + 32)) * weights[corner];
@@ -123,7 +127,34 @@ groupshared float3 LumenMaximum[64];
         albedo *= SceneTextures[NonUniformResourceIndex(work.x)].SampleLevel(MaterialSampler, materialUv, 0).rgb;
     }
     if (mesh.Noise[0].Width != 0)
-        albedo *= ProceduralTexture::Color(mesh.Noise[0], ProceduralTexture::Scalar(mesh.Noise[0], materialUv));
+    {
+        float2 footprint = 0;
+        float2 d1 = triangleUv[1] - triangleUv[0], d2 = triangleUv[2] - triangleUv[0];
+        float determinant = d1.x * d2.y - d1.y * d2.x;
+        if (abs(determinant) > 1e-12f)
+        {
+            float3 e1 = trianglePosition[1] - trianglePosition[0], e2 = trianglePosition[2] - trianglePosition[0];
+            float3 tangent = (e1 * d2.y - e2 * d1.y) / determinant;
+            float3 bitangent = (e2 * d1.x - e1 * d2.x) / determinant;
+            float uu = dot(tangent, tangent), vv = dot(bitangent, bitangent), uvDot = dot(tangent, bitangent);
+            float gramDeterminant = uu * vv - uvDot * uvDot;
+            float3 planeNormal = cross(e1, e2);
+            float facing = dot(planeNormal, direction);
+            if (gramDeterminant > 1e-20f && abs(facing) > 1e-12f)
+            {
+                float3 dx = 0, dy = 0;
+                dx[u] = extent[u] / 16.0f;
+                dy[v] = extent[v] / 16.0f;
+                dx -= direction * (dot(planeNormal, dx) / facing);
+                dy -= direction * (dot(planeNormal, dy) / facing);
+                float3 gradientU = (vv * tangent - uvDot * bitangent) / gramDeterminant;
+                float3 gradientV = (uu * bitangent - uvDot * tangent) / gramDeterminant;
+                footprint = max(abs(float2(dot(gradientU, dx), dot(gradientV, dx))),
+                                abs(float2(dot(gradientU, dy), dot(gradientV, dy))));
+            }
+        }
+        albedo *= ProceduralTexture::CachedColorReadOnly(mesh.Noise[0], materialUv, footprint);
+    }
     // 物理的な反射率の範囲外に設定された色について、フィードバックのエネルギーを制限する。
     float3 reflectance = saturate(albedo * mesh.BaseColor.rgb);
     LumenPosition[texel] = float4(origin + direction * query.CommittedRayT(), 1);
@@ -465,8 +496,9 @@ bool LumenFindHistory(float3 position, float3 normal, out uint previousIndex)
         uint seed = ReflectionHash(index * 8 + lane + ReflectionExtent.z * 104729u);
         float distance;
         direction = LumenCosineDirection(normal, seed);
-        float3 irradiance = LumenIncoming(position, normal, seed, distance) * 3.14159265f +
-                            SampleEmissiveIrradiance(position, normal, seed + 17, pixel + uint2(lane, 0), false);
+        float3 meshPosition = ReflectionMeshPosition(position, pixel);
+        float3 irradiance = LumenIncoming(meshPosition, normal, seed, distance) * 3.14159265f +
+                            SampleEmissiveIrradiance(meshPosition, normal, seed + 17, pixel + uint2(lane, 0), false);
         signal = float4(min(max(irradiance, 0), 65504), distance);
     }
     // バリアは一様な制御フローに置く（全 64 レーンが到達する）。

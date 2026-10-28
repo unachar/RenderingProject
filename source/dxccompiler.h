@@ -52,7 +52,7 @@ struct CompilerState
 
 inline CompilerState& GetCompilerState()
 {
-    static CompilerState state;
+    thread_local CompilerState state;
     return state;
 }
 

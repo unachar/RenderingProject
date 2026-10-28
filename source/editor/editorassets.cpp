@@ -232,6 +232,7 @@ void ImGuiManager::DrawAssetBrowserWindow()
 {
     if (m_AssetBrowserStandalone)
     {
+        ImGui::SetNextWindowFocus();
         ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
         ImGui::SetNextWindowPos(ImVec2(40, 60), ImGuiCond_Once);
         ImGui::SetNextWindowSize(ImVec2(1000, 480), ImGuiCond_Once);

@@ -12,8 +12,10 @@
 #include "raytracing.h"
 #include "graphicslog.h"
 #include <filesystem>
+#include <mutex>
 
 unordered_map<string, ComPtr<ID3DBlob>> g_ShaderBlobCache;
+std::mutex g_ShaderBlobCacheMutex;
 
 bool ShaderPipelines::CreateModelPipeline()
 {
@@ -84,12 +86,15 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource)
     const string cacheKey = key + (compileModern ? ":DXIL" : "") + (Raytracing::IsAvailable() ? ":DXR" : "") +
                             (g_BindlessShaderSettings.Enabled ? ":Bindless" : "");
 
-    auto cached = g_ShaderBlobCache.find(cacheKey);
-    if (cached != g_ShaderBlobCache.end())
     {
-        *ppBlob = cached->second.Get();
-        (*ppBlob)->AddRef();
-        return true;
+        std::lock_guard lock(g_ShaderBlobCacheMutex);
+        auto cached = g_ShaderBlobCache.find(cacheKey);
+        if (cached != g_ShaderBlobCache.end())
+        {
+            *ppBlob = cached->second.Get();
+            (*ppBlob)->AddRef();
+            return true;
+        }
     }
 
     int len = MultiByteToWideChar(CP_UTF8, 0, csoPath, -1, NULL, 0);
@@ -180,7 +185,10 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource)
         return false;
     }
 
-    g_ShaderBlobCache.emplace(cacheKey, *ppBlob);
+    {
+        std::lock_guard lock(g_ShaderBlobCacheMutex);
+        g_ShaderBlobCache.emplace(cacheKey, *ppBlob);
+    }
     return true;
 }
 

@@ -1,6 +1,7 @@
 param(
     [ValidateSet('Debug','Release')][string]$Configuration = 'Debug',
-    [ValidateRange(30, 1800)][int]$TimeoutSeconds = 240
+    [ValidateRange(30, 1800)][int]$TimeoutSeconds = 240,
+    [ValidateRange(600, 60000)][int]$FrameCount = 60000
 )
 $ErrorActionPreference = 'Stop'
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -15,7 +16,7 @@ try {
     $env:DX12_MATERIAL_ASSET_TEST = '0'
     $env:DX12_FEATURE_SMOKE_TEST = '0'
     $env:DX12_VALIDATION_MODE = '1'
-    $env:DX12_STARTUP_SMOKE_FRAMES = '600'
+    $env:DX12_STARTUP_SMOKE_FRAMES = [string]$FrameCount
     $logPath = Join-Path $workspace 'init_log.txt'
     $initialLength = if (Test-Path -LiteralPath $logPath) {
         (Get-Item -LiteralPath $logPath).Length

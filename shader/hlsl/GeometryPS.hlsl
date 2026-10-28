@@ -55,6 +55,7 @@ PS_OUTPUT_GEOMETRY_DEPTH main(PSInput3D input)
 
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
+    output.Normal.a = -AssetParallaxRayDistance(pom);
 
     output.Depth = AssetParallaxPixelDepth(pom, input.WorldPos, input.CameraPos, saturate(input.Position.z));
     output.HardwareDepth = min(output.Depth.x, input.Position.z);

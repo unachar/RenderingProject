@@ -87,8 +87,13 @@ float TraceHitDistance(float3 origin, float3 direction, float distance, bool clo
     float2 uv = (pixel + 0.5f) / ExtentSamples.xy;
     float4 world = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, depth, 1), InvViewProjection);
     float3 position = world.xyz / world.w;
-    float3 normal = normalize(Normal.Load(int3(pixel, 0)).xyz * 2.0f - 1.0f);
-    float3 origin = position + normal * Distances.z;
+    float4 normalSample = Normal.Load(int3(pixel, 0));
+    float3 normal = normalize(normalSample.xyz * 2.0f - 1.0f);
+    // Homogeneous subtraction gives the camera ray for perspective and orthographic views.
+    float4 nearPoint = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, 1, 1), InvViewProjection);
+    float4 farPoint = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, 0, 1), InvViewProjection);
+    float3 viewDirection = normalize(nearPoint.xyz * farPoint.w - farPoint.xyz * nearPoint.w);
+    float3 origin = position + viewDirection * max(-normalSample.a, 0.0f) + normal * Distances.z;
     float3 tangent = Tangent(normal);
     float3 bitangent = cross(normal, tangent);
     float shadow = 0;

@@ -1,4 +1,4 @@
-param([switch]$Warp)
+param([switch]$Warp, [switch]$NoiseBenchmark, [switch]$VoronoiParity, [switch]$NoiseCache)
 $ErrorActionPreference = 'Stop'
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -28,7 +28,19 @@ try {
     Copy-Item (Join-Path $dxcRoot 'bin/x64/dxcompiler.dll') build/procedural-gpu-tests/
     Copy-Item (Join-Path $dxcRoot 'bin/x64/dxil.dll') build/procedural-gpu-tests/
     $arguments = if ($Warp) { '--warp' } else { '' }
-    $command = '"{0}" -no_logo -arch=amd64 -host_arch=amd64 && cl /nologo /std:c++20 /EHsc /W4 /utf-8 /O2 /D NOMINMAX /D RENDERINGPROJECT_USE_DXC=1 /I packages/Microsoft.Direct3D.DXC.1.9.2602.24/build/native/include /D RENDERINGPROJECT_DISABLE_RENDER_CALL_INSTRUMENTATION /I source /I source/rendering /I source/procedural /I build/procedural-gpu-tests /I External/ImGUI tests\procedural_gpu_tests.cpp source\procedural\proceduraltexturegpu.cpp source\procedural\proceduralstudio.cpp /Fe:build\procedural-gpu-tests\tests.exe /Fo:build\procedural-gpu-tests\ /link /LIBPATH:packages/Microsoft.Direct3D.DXC.1.9.2602.24/build/native/lib/x64 dxcompiler.lib d3d12.lib dxgi.lib d3dcompiler.lib && build\procedural-gpu-tests\tests.exe {1}' -f $developerCommand, $arguments
+    if ($NoiseBenchmark) {
+        if ($Warp) { throw 'Run the noise benchmark on hardware without -Warp.' }
+        $arguments = '--noise-benchmark'
+    }
+    if ($VoronoiParity) {
+        if ($Warp -or $NoiseBenchmark) { throw 'Run -VoronoiParity separately on hardware.' }
+        $arguments = '--voronoi-parity'
+    }
+    if ($NoiseCache) {
+        if ($NoiseBenchmark -or $VoronoiParity) { throw 'Run -NoiseCache separately.' }
+        $arguments = if ($Warp) { '--noise-cache --warp' } else { '--noise-cache' }
+    }
+    $command = '"{0}" -no_logo -arch=amd64 -host_arch=amd64 && cl /nologo /std:c++20 /EHsc /W4 /utf-8 /O2 /D NOMINMAX /D RENDERINGPROJECT_USE_DXC=1 /I packages/Microsoft.Direct3D.DXC.1.9.2602.24/build/native/include /D RENDERINGPROJECT_DISABLE_RENDER_CALL_INSTRUMENTATION /I source /I source/rendering /I source/procedural /I build/procedural-gpu-tests /I External/ImGUI tests\procedural_gpu_tests.cpp source\procedural\proceduraltexturegpu.cpp source\procedural\proceduralnoisecache.cpp source\procedural\proceduralstudio.cpp /Fe:build\procedural-gpu-tests\tests.exe /Fo:build\procedural-gpu-tests\ /link /LIBPATH:packages/Microsoft.Direct3D.DXC.1.9.2602.24/build/native/lib/x64 dxcompiler.lib d3d12.lib dxgi.lib d3dcompiler.lib && build\procedural-gpu-tests\tests.exe {1}' -f $developerCommand, $arguments
     & $env:ComSpec /d /c $command
     if ($LASTEXITCODE) {
         throw 'Procedural GPU tests failed.'

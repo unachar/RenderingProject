@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "noisecachebindings.h"
 #include "transmittanceshadows.h"
 #include "materialmanager.h"
 #include "vertexdeformation.h"
@@ -271,6 +272,7 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
         XMMATRIX previousViewProjection = XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix()) *
                                           XMLoadFloat4x4(&GraphicsDevice::GetPreviousProjectionMatrix());
         commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
+        NoiseCacheBindings::BindMain(commandList);
         // 可視判定は GPU（GpuObjectCullCS）。PSO を設定する前に取得する。
         const int cullView = GpuObjectCulling::CameraView(commandList);
         commandList->SetPipelineState(pso);

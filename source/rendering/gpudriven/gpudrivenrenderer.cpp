@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "noisecachebindings.h"
 #include "materialmanager.h"
 #include "gpudrivenrenderer.h"
 #include "meshlets/meshletmanager.h"
@@ -169,7 +170,7 @@ namespace
         CD3DX12_DESCRIPTOR_RANGE constants, textures;
         constants.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
         textures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, FrameConstants::g_kMAX_SRVS, 0, 1);
-        CD3DX12_ROOT_PARAMETER opaque[14];
+        CD3DX12_ROOT_PARAMETER opaque[16];
         opaque[0].InitAsConstants(1, 4); // このインデックスはコマンドシグネチャの契約の一部。
         opaque[1].InitAsDescriptorTable(1, &constants);
         opaque[2].InitAsShaderResourceView(30);
@@ -190,6 +191,8 @@ namespace
         CD3DX12_DESCRIPTOR_RANGE sceneDepth;
         sceneDepth.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 45);
         opaque[13].InitAsDescriptorTable(1, &sceneDepth);
+        opaque[14].InitAsShaderResourceView(0, 15);
+        opaque[15].InitAsUnorderedAccessView(0, 15);
         CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_ANISOTROPIC);
         sampler.MaxAnisotropy = 16;
         CD3DX12_ROOT_SIGNATURE_DESC opaqueDescription(_countof(opaque), opaque, 1, &sampler,
@@ -991,6 +994,7 @@ void GPUDrivenRenderer::Draw(ID3D12GraphicsCommandList* commands)
             ID3D12DescriptorHeap* heap = FrameConstants::GetCbvHeap();
             list->SetDescriptorHeaps(1, &heap);
             list->SetGraphicsRootSignature(data.OpaqueRoot.Get());
+            NoiseCacheBindings::BindGraphics(list, NoiseCacheBindings::GpuDrivenRoot);
             list->SetPipelineState(RendererSettings::GetComputeGBufferEnabled() ? data.VisibilityPSO.Get()
                                                                                 : data.OpaquePSO.Get());
             ConstantBuffer3D constants{};
@@ -1089,6 +1093,7 @@ void GPUDrivenRenderer::BuildHiZ(ID3D12GraphicsCommandList* commands)
             ID3D12DescriptorHeap* heap = FrameConstants::GetCbvHeap();
             list->SetDescriptorHeaps(1, &heap);
             list->SetGraphicsRootSignature(data.OpaqueRoot.Get());
+            NoiseCacheBindings::BindGraphics(list, NoiseCacheBindings::GpuDrivenRoot);
             list->SetPipelineState(data.OccluderPSO.Get());
             XMMATRIX view, projection;
             Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
@@ -1152,6 +1157,7 @@ void GPUDrivenRenderer::DrawVelocity(ID3D12GraphicsCommandList* commands)
     ID3D12DescriptorHeap* heap = FrameConstants::GetCbvHeap();
     commands->SetDescriptorHeaps(1, &heap);
     commands->SetGraphicsRootSignature(state.OpaqueRoot.Get());
+    NoiseCacheBindings::BindGraphics(commands, NoiseCacheBindings::GpuDrivenRoot);
     commands->SetPipelineState(state.IndexedVelocityPSO.Get());
     ConstantBuffer3D constants{};
     XMMATRIX view, projection;
@@ -1391,6 +1397,7 @@ bool GPUDrivenRenderer::ResolveVisibility(ID3D12GraphicsCommandList* commands, D
     ID3D12DescriptorHeap* heap = FrameConstants::GetCbvHeap();
     commands->SetDescriptorHeaps(1, &heap);
     commands->SetComputeRootSignature(data.OpaqueRoot.Get());
+    NoiseCacheBindings::BindCompute(commands, NoiseCacheBindings::GpuDrivenRoot);
     commands->SetPipelineState(data.VisibilityResolvePSO.Get());
     ConstantBuffer3D constants{};
     XMMATRIX view, projection;

@@ -148,8 +148,8 @@ namespace
         {
             part.Material.Cull = MaterialCull::None;
         }
-        const aiTextureType types[] = {aiTextureType_BASE_COLOR, aiTextureType_NORMALS, aiTextureType_UNKNOWN,
-                                       aiTextureType_AMBIENT_OCCLUSION, aiTextureType_EMISSIVE};
+        const aiTextureType types[] = {aiTextureType_BASE_COLOR,        aiTextureType_NORMALS,  aiTextureType_UNKNOWN,
+                                       aiTextureType_AMBIENT_OCCLUSION, aiTextureType_EMISSIVE, aiTextureType_HEIGHT};
         for (size_t slot = 0; slot < part.Textures.size(); ++slot)
         {
             aiString reference;
@@ -544,6 +544,42 @@ ThumbnailPrepared ThumbnailRenderer::Prepare(ThumbnailPrepared input)
     return input;
 }
 
+ThumbnailPrepared ThumbnailRenderer::PreparePreview(ThumbnailPrepared input)
+{
+    try
+    {
+        input.Preview = std::make_shared<ThumbnailPreviewContext>();
+        if (!input.PreviewDescriptor || !input.Preview->Initialize(input.Size, input.PreviewDescriptor->Index))
+        {
+            input.Error = "Failed to initialize thumbnail preview";
+            return input;
+        }
+        std::array<int, static_cast<size_t>(MaterialTextureSlot::Count)> descriptors;
+        descriptors.fill(-1);
+        std::vector<ThumbnailPreviewPart> parts;
+        for (const auto& part : input.MeshParts)
+        {
+            parts.push_back(
+                {MaterialManager::BuildPreviewBinding(part.Material, descriptors), part.FirstVertex, part.VertexCount});
+        }
+        const auto material = MaterialManager::BuildPreviewBinding(input.Material, descriptors);
+        if (!input.Preview->PreparePipelines(material, parts))
+        {
+            input.Error = "Failed to prepare thumbnail pipelines";
+        }
+    }
+    catch (const std::exception& error)
+    {
+        // Return the lease even on failure so the UI thread retires its descriptor.
+        input.Error = error.what();
+    }
+    catch (...)
+    {
+        input.Error = "Unexpected thumbnail preparation failure";
+    }
+    return input;
+}
+
 std::shared_ptr<ThumbnailGpuImage> ThumbnailRenderer::Generate(ThumbnailPrepared& input)
 {
     if (!input.Error.empty())
@@ -555,13 +591,9 @@ std::shared_ptr<ThumbnailGpuImage> ThumbnailRenderer::Generate(ThumbnailPrepared
         return Upload(input.Textures[0], false);
     }
     auto result = std::make_shared<ThumbnailGpuImage>();
-    result->Descriptor = EditorDescriptors::Allocate();
-    if (!result->Descriptor)
-    {
-        return {};
-    }
-    result->Preview = std::make_shared<ThumbnailPreviewContext>();
-    if (!result->Preview->Initialize(input.Size, result->Descriptor->Index))
+    result->Descriptor = std::move(input.PreviewDescriptor);
+    result->Preview = std::move(input.Preview);
+    if (!result->Descriptor || !result->Preview)
     {
         return {};
     }
@@ -674,55 +706,55 @@ std::future<void> ThumbnailRenderer::SaveCache(const ThumbnailPrepared& input,
     const auto path = CachePath(input.Handle);
     const auto key = input.Key;
     ThumbnailManifest manifest{input.BaseKey, input.Key, input.SourceDependencies, input.SourcePath};
-    return std::async(std::launch::async, [path, key, image, mesh = input.Type == AssetType::Mesh,
-                                           manifest = std::move(manifest)] {
-        DirectX::ScratchImage pixels;
-        if (FAILED(pixels.Initialize2D(image->Resource->GetDesc().Format, image->Width, image->Height, 1, 1)))
-        {
-            return;
-        }
-        const auto* target = pixels.GetImage(0, 0, 0);
-        uint8_t* source = nullptr;
-        D3D12_RANGE read{0, static_cast<SIZE_T>(image->Readback->GetDesc().Width)};
-        if (FAILED(image->Readback->Map(0, &read, reinterpret_cast<void**>(&source))))
-        {
-            return;
-        }
-        for (UINT row = 0; row < image->Height; ++row)
-        {
-            memcpy(target->pixels + row * target->rowPitch,
-                   source + image->Footprint.Offset + row * image->Footprint.Footprint.RowPitch, target->rowPitch);
-        }
-        const D3D12_RANGE noWrite{0, 0};
-        image->Readback->Unmap(0, &noWrite);
-        std::error_code error;
-        std::filesystem::create_directories(path.parent_path(), error);
-        if (error)
-        {
-            return;
-        }
-        const std::filesystem::path temporary(path.wstring() + L".tmp");
-        if (FAILED(DirectX::SaveToDDSFile(pixels.GetImages(), pixels.GetImageCount(), pixels.GetMetadata(),
-                                          DirectX::DDS_FLAGS_NONE, temporary.c_str())))
-        {
-            return;
-        }
-        if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-        {
-            return;
-        }
-        std::string message;
-        std::ostringstream metadata;
-        if (mesh)
-        {
-            manifest.Write(metadata);
-        }
-        else
-        {
-            metadata << key;
-        }
-        WriteAssetFile(path.string() + ".key", metadata.str(), message);
-    });
+    return std::async(
+        std::launch::async, [path, key, image, mesh = input.Type == AssetType::Mesh, manifest = std::move(manifest)] {
+            DirectX::ScratchImage pixels;
+            if (FAILED(pixels.Initialize2D(image->Resource->GetDesc().Format, image->Width, image->Height, 1, 1)))
+            {
+                return;
+            }
+            const auto* target = pixels.GetImage(0, 0, 0);
+            uint8_t* source = nullptr;
+            D3D12_RANGE read{0, static_cast<SIZE_T>(image->Readback->GetDesc().Width)};
+            if (FAILED(image->Readback->Map(0, &read, reinterpret_cast<void**>(&source))))
+            {
+                return;
+            }
+            for (UINT row = 0; row < image->Height; ++row)
+            {
+                memcpy(target->pixels + row * target->rowPitch,
+                       source + image->Footprint.Offset + row * image->Footprint.Footprint.RowPitch, target->rowPitch);
+            }
+            const D3D12_RANGE noWrite{0, 0};
+            image->Readback->Unmap(0, &noWrite);
+            std::error_code error;
+            std::filesystem::create_directories(path.parent_path(), error);
+            if (error)
+            {
+                return;
+            }
+            const std::filesystem::path temporary(path.wstring() + L".tmp");
+            if (FAILED(DirectX::SaveToDDSFile(pixels.GetImages(), pixels.GetImageCount(), pixels.GetMetadata(),
+                                              DirectX::DDS_FLAGS_NONE, temporary.c_str())))
+            {
+                return;
+            }
+            if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+            {
+                return;
+            }
+            std::string message;
+            std::ostringstream metadata;
+            if (mesh)
+            {
+                manifest.Write(metadata);
+            }
+            else
+            {
+                metadata << key;
+            }
+            WriteAssetFile(path.string() + ".key", metadata.str(), message);
+        });
 }
 
 void ThumbnailRenderer::Collect()

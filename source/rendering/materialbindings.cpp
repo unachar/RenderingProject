@@ -8,6 +8,7 @@
 #include "materialmanager.h"
 #include "frameconstants.h"
 #include "texturemanager.h"
+#include "noisecachebindings.h"
 
 namespace
 {
@@ -114,6 +115,10 @@ namespace
 
     PBRConstants BuildPBRConstantsFromMaterial(const MaterialComponent& material)
     {
+        if (material.Noise[0].Width != 0)
+        {
+            NoiseCacheBindings::Request();
+        }
         PBRConstants constants{};
         constants.Metallic = material.Metallic;
         constants.Roughness = material.Roughness;

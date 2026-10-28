@@ -67,6 +67,17 @@ namespace ProcStudio
         result.Anisotropy = n.Anisotropy;
         result.KernelFrequency = n.KernelFrequency;
         result.Phase = n.Phase;
+        // The material-only cache identity includes every definition field. These
+        // spare words do not change the persisted asset or the shared GPU layout.
+        uint64_t identity = 14695981039346656037ull;
+        const auto* bytes = reinterpret_cast<const unsigned char*>(&result);
+        for (size_t index = 0; index < sizeof(result); ++index)
+        {
+            identity ^= bytes[index];
+            identity *= 1099511628211ull;
+        }
+        result.Padding1 = static_cast<uint32_t>(identity) | 1u;
+        result.Padding2 = static_cast<uint32_t>(identity >> 32);
         return result;
     }
 }

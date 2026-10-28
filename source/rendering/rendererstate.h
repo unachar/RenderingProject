@@ -151,7 +151,9 @@ class RendererState
 
     static constexpr float m_kSceneClearColor[4] = {0.1f, 0.2f, 0.4f, 1.0f};
     static constexpr DXGI_FORMAT m_kDeferredRtvFormats[g_kGBUFFER_COUNT] = {
-        DXGI_FORMAT_R8G8B8A8_UNORM,     DXGI_FORMAT_R10G10B10A2_UNORM,  DXGI_FORMAT_R32_FLOAT,
+        // Normal alpha stores the negative POM displacement along the camera ray.
+        // Signed floating point keeps the mesh shadow receiver independent of the displaced depth.
+        DXGI_FORMAT_R8G8B8A8_UNORM,     DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R32_FLOAT,
         DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM,
         DXGI_FORMAT_R16G16B16A16_FLOAT, // 発光 RGB とマテリアル AO。
         DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R32G32B32A32_UINT,
@@ -261,7 +263,8 @@ class RendererState
     static constexpr UINT g_kGLASS_DESCRIPTOR_START =
         g_kTRANSMITTANCE_SHADOW_SRV_START + 3 + g_kTRANSMITTANCE_SHADOW_LAYERS * g_kMAX_SHADOW_LIGHTS;
     static constexpr UINT g_kENGINE_DESCRIPTOR_END =
-        g_kGLASS_DESCRIPTOR_START + g_kFRAME_COUNT * g_kGLASS_FRAME_DESCRIPTORS - 1;
+        g_kGLASS_DESCRIPTOR_START + g_kFRAME_COUNT * g_kGLASS_FRAME_DESCRIPTORS - 1 + 4;
+    static constexpr UINT g_kNOISE_CACHE_DESCRIPTOR_START = g_kENGINE_DESCRIPTOR_END - 3;
     // 既存エンジンヒープの DXR/NRD/反射バインドの後に予約する。
     static constexpr UINT g_kCLOUD_DESCRIPTOR_START = g_kHIZ_MIP_SRV_START_INDEX + 2 * g_kHIZ_MAX_MIPS + 48;
     static_assert(g_kCLOUD_DESCRIPTOR_START + 4 + 2 * g_kFRAME_COUNT <= g_kENGINE_DESCRIPTOR_END);

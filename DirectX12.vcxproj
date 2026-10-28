@@ -740,6 +740,7 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\entities\kacchatta_hone.cpp" />
     <ClCompile Include="source\procedural\proceduralstudio.cpp" />
     <ClCompile Include="source\procedural\proceduraltexturegpu.cpp" />
+    <ClCompile Include="source\procedural\proceduralnoisecache.cpp" />
     <ClCompile Include="source\scene\atmosphere.cpp" />
     <ClCompile Include="source\models\animator.cpp" />
     <ClCompile Include="source\entities\cube.cpp" />

@@ -11,6 +11,7 @@
 #include "renderingvalidation.h"
 #include "performancegovernor.h"
 #include "renderbenchmark.h"
+#include "thumbnailvalidation.h"
 
 extern "C"
 {
@@ -129,6 +130,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     GetEnvironmentVariableA("DX12_STARTUP_SMOKE_FRAMES", startupSmokeValue,
                             static_cast<DWORD>(size(startupSmokeValue)));
     const int startupSmokeFrames = (max)(0, atoi(startupSmokeValue));
+    const bool thumbnailValidation = ThumbnailValidation::Enabled();
     char resizeSmokeValue[8]{};
     GetEnvironmentVariableA("DX12_RESIZE_SMOKE_TEST", resizeSmokeValue, static_cast<DWORD>(size(resizeSmokeValue)));
     const bool resizeSmoke = startupSmokeFrames > 0 && atoi(resizeSmokeValue) != 0;
@@ -289,6 +291,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         {
             PostQuitMessage(0);
         }
+        if (thumbnailValidation && ThumbnailValidation::IsComplete())
+        {
+            PostQuitMessage(0);
+        }
     }
     const bool featuresPassed = renderingBenchmark ? RenderBenchmark::Finish() : RenderingValidation::Finish();
     Game::Uninit();
@@ -298,7 +304,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     }
     if (startupSmokeFrames > 0)
     {
-        if (completedFrames < static_cast<UINT64>(startupSmokeFrames))
+        if (completedFrames < static_cast<UINT64>(startupSmokeFrames) &&
+            !(thumbnailValidation && ThumbnailValidation::IsComplete()))
         {
             WriteGraphicsLog("ERROR: startup smoke test interrupted before target frame count\n");
             return 1;

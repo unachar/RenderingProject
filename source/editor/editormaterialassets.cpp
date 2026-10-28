@@ -297,7 +297,7 @@ void ImGuiManager::DrawMaterialEditorWindow()
     if (ImGui::CollapsingHeader("Parallax Occlusion Mapping"))
     {
         changed |= DrawTextureSlot("Height (POM)", editing.Textures[5], true);
-        changed |= ImGui::SliderFloat("Parallax Depth", &editing.ParallaxDepth, 0, 0.2f, "%.3f");
+        changed |= ImGui::SliderFloat("Parallax Depth", &editing.ParallaxDepth, 0.0f, 0.2f, "%.3f");
         changed |= ImGui::SliderFloat("Parallax Steps", &editing.ParallaxSteps, 8, 128, "%.0f");
         ImGui::TextDisabled("Height: white = top, black = recessed. Depth 0 disables POM.");
         ImGui::TextDisabled("Supported on opaque PBR materials.");

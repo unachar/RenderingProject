@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "noisecachebindings.h"
 #include "envflags.h"
 #include "cpuculling.h"
 #include "rayreflections.h"
@@ -517,7 +518,7 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     ranges[12].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 11, 0);
     ranges[13].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 11, 0, 11, 3);
     ranges[14].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kMaximumMeshes, 0, 12); // POM の高さマップ
-    CD3DX12_ROOT_PARAMETER parameters[22];
+    CD3DX12_ROOT_PARAMETER parameters[24];
     parameters[0].InitAsShaderResourceView(25);
     parameters[1].InitAsShaderResourceView(0);
     parameters[2].InitAsConstantBufferView(6);
@@ -539,6 +540,8 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     parameters[19].InitAsDescriptorTable(2, &ranges[12]);
     parameters[20].InitAsConstantBufferView(7);
     parameters[21].InitAsDescriptorTable(1, &ranges[14]);
+    parameters[22].InitAsShaderResourceView(0, 15);
+    parameters[23].InitAsUnorderedAccessView(0, 15);
     const CD3DX12_STATIC_SAMPLER_DESC samplers[2] = {
         CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_WRAP,
                                     D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP),
@@ -1278,6 +1281,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         ID3D12DescriptorHeap* heaps[] = {frame.Heap.Get()};
         commands->SetDescriptorHeaps(1, heaps);
         commands->SetComputeRootSignature(g_Root.Get());
+        NoiseCacheBindings::BindCompute(commands, NoiseCacheBindings::ReflectionRoot);
         commands->SetPipelineState(pipeline);
         commands->SetComputeRootShaderResourceView(0, scene->GetGPUVirtualAddress());
         commands->SetComputeRootShaderResourceView(1, frame.Meshes->GetGPUVirtualAddress());
