@@ -25,9 +25,9 @@
     "ior" : 1.5,
     "metallic" : 0.0,
     "normalScale" : 0.0,
-    "parallaxDepth" : 0.016000000759959221,
-    "parallaxSteps" : 32.0,
-    "roughness" : 0.5,
+    "parallaxDepth" : 0.046000000089406967,
+    "parallaxSteps" : 46.0,
+    "roughness" : 1.0,
     "shadingModel" : 0,
     "shadingStrength" : 1.0,
     "thickness" : 0.10000000149011612,
@@ -47,7 +47,7 @@
   "textures" : 
   {
     "ao" : "guid:0000000000000000",
-    "baseColor" : "guid:68df35cbb72df187",
+    "baseColor" : "guid:710210e8ac921b30",
     "emissive" : "guid:0000000000000000",
     "height" : "guid:634821b8ff73b025",
     "metallicRoughness" : "guid:0000000000000000",

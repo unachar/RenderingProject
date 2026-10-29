@@ -95,7 +95,7 @@ bool MaterialSerializer::Validate(const MaterialAssetData& material, std::string
     }
     if (!range(material.Metallic, 0, 1, "metallic") || !range(material.Roughness, 0, 1, "roughness") ||
         !range(material.ParallaxDepth, 0, 0.2f, "parallaxDepth") ||
-        !range(material.ParallaxSteps, 8, 128, "parallaxSteps") || !range(material.NormalScale, 0, 8, "normalScale") ||
+        !range(material.ParallaxSteps, 8, 1024, "parallaxSteps") || !range(material.NormalScale, 0, 8, "normalScale") ||
         !range(material.AOStrength, 0, 1, "aoStrength") ||
         !range(material.EmissiveIntensity, 0, 65504, "emissiveIntensity") ||
         !range(material.AlphaCutoff, 0, 1, "alphaCutoff") || !range(material.ShadowCutoff, 0, 1, "shadowCutoff") ||

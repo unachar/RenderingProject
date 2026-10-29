@@ -3,6 +3,7 @@
 #include "proceduralstudio.h"
 #include "proceduraltexturegpu.h"
 #include "proceduralio.h"
+#include "imagemaps.h"
 #include "assets/noiseasset.h"
 #include "assets/materialmanager.h"
 #include "proceduralmodelexport.h"
@@ -11,7 +12,10 @@
 #include "rendererstate.h"
 #include "cloud/cloudrenderer.h"
 #include <imgui.h>
+#include <objbase.h>
 #include <chrono>
+#include <cstring>
+#include <filesystem>
 #include <cmath>
 #include <future>
 #include <memory>
@@ -202,6 +206,9 @@ namespace ProcStudioEditorDetail
         const Mesh* Geometry = nullptr;
         Shading Mode = Shading::VertexColor;
         const Image* Texture = nullptr;
+        // 接空間法線マップ（0〜1 エンコード）。UV から三角形ごとに接線を求めて適用する。
+        const Image* NormalMap = nullptr;
+        bool NormalFlipY = false; // true: DirectX 規約 (-Y)。
         float UvScale = 1.0f;
         const vector<Float4>* Solid = nullptr;
         int SolidExtent = 0;
@@ -406,6 +413,27 @@ namespace ProcStudioEditorDetail
                 continue;
             }
             const float inverseArea = 1 / area;
+            // 法線マップ用の接線・従接線（UV の +u / +v 方向）。三角形ごとに一定。
+            Float3 triangleTangent{};
+            Float3 triangleBitangent{};
+            bool hasTangent = false;
+            if (input.NormalMap && hasUv)
+            {
+                const Float3 e1 = mesh.Positions[i1] - mesh.Positions[i0];
+                const Float3 e2 = mesh.Positions[i2] - mesh.Positions[i0];
+                const float du1 = mesh.UVs[i1].X - mesh.UVs[i0].X;
+                const float dv1 = mesh.UVs[i1].Y - mesh.UVs[i0].Y;
+                const float du2 = mesh.UVs[i2].X - mesh.UVs[i0].X;
+                const float dv2 = mesh.UVs[i2].Y - mesh.UVs[i0].Y;
+                const float det = du1 * dv2 - du2 * dv1;
+                if (fabsf(det) > 1e-12f)
+                {
+                    const float r = 1 / det;
+                    triangleTangent = (e1 * dv2 - e2 * dv1) * r;
+                    triangleBitangent = (e2 * du1 - e1 * du2) * r;
+                    hasTangent = true;
+                }
+            }
             for (int y = minY; y <= maxY; ++y)
             {
                 const float py = y + 0.5f;
@@ -438,15 +466,28 @@ namespace ProcStudioEditorDetail
                                               : Normalize(Cross(mesh.Positions[i1] - mesh.Positions[i0],
                                                                 mesh.Positions[i2] - mesh.Positions[i0]));
                     const Float3 view = Normalize(eye - position);
-                    if (Dot(normal, view) < 0)
+                    const bool backFacing = Dot(normal, view) < 0;
+                    const float u = hasUv ? mesh.UVs[i0].X * p0 + mesh.UVs[i1].X * p1 + mesh.UVs[i2].X * p2 : 0.0f;
+                    const float v = hasUv ? mesh.UVs[i0].Y * p0 + mesh.UVs[i1].Y * p1 + mesh.UVs[i2].Y * p2 : 0.0f;
+                    if (hasTangent)
+                    {
+                        // 接空間法線は OpenGL 規約（+Y = 画像の上 = -v）。FlipY なら DirectX 規約から変換する。
+                        const Float4 encoded = input.NormalMap->Sample(u * input.UvScale, v * input.UvScale);
+                        const float tx = encoded.X * 2 - 1;
+                        const float ty = (encoded.Y * 2 - 1) * (input.NormalFlipY ? -1.0f : 1.0f);
+                        const float tz = encoded.Z * 2 - 1;
+                        const Float3 tangent = Normalize(triangleTangent - normal * Dot(normal, triangleTangent));
+                        Float3 bitangent = triangleBitangent - normal * Dot(normal, triangleBitangent);
+                        bitangent = Normalize(bitangent - tangent * Dot(tangent, bitangent));
+                        normal = Normalize(tangent * tx + bitangent * -ty + normal * tz);
+                    }
+                    if (backFacing)
                     {
                         normal = normal * -1.0f;
                     }
                     Float3 albedo = hasColor ? interpolate3(mesh.Colors) : Float3{0.8f, 0.8f, 0.8f};
                     if (input.Mode == Shading::Texture && input.Texture && hasUv)
                     {
-                        const float u = mesh.UVs[i0].X * p0 + mesh.UVs[i1].X * p1 + mesh.UVs[i2].X * p2;
-                        const float v = mesh.UVs[i0].Y * p0 + mesh.UVs[i1].Y * p1 + mesh.UVs[i2].Y * p2;
                         const Float4 texel = input.Texture->Sample(u * input.UvScale, v * input.UvScale);
                         albedo = albedo * Float3{texel.X, texel.Y, texel.Z};
                     }
@@ -540,6 +581,90 @@ namespace ProcStudioEditorDetail
     }
 
     // ------------------------------------------------------------------------------------------------
+    // 画像から生成する高さ・法線マップのプレビュー。
+    enum class ImageView
+    {
+        Source, // 元画像
+        Height,
+        Normal,
+        Lit // 法線マップで陰影を付けた平面
+    };
+
+    struct ImagePreviewInput
+    {
+        shared_ptr<const Image> Source;
+        shared_ptr<const ProcStudio::ImageMaps> Maps;
+        ImageView View = ImageView::Normal;
+        bool FlipY = false;
+        bool SourceColor = true; // 陰影表示で元画像の色を使う。false ならグレー。
+        float LightAzimuth = 0.785f;
+        float LightElevation = 0.6f;
+        int Tiles = 1;
+    };
+
+    // 縦横比を保って正方形のプレビューへ収める。余白は背景色。
+    void BlitImageMaps(const ImagePreviewInput& input, vector<uint32_t>& out)
+    {
+        out.assign(static_cast<size_t>(kPreviewSize) * kPreviewSize, Pack(Float3{0.08f, 0.08f, 0.09f}, false));
+        const Image* image = input.View == ImageView::Source   ? input.Source.get()
+                             : input.View == ImageView::Height ? (input.Maps ? &input.Maps->Height : nullptr)
+                                                               : (input.Maps ? &input.Maps->Normal : nullptr);
+        if (!image || image->Width <= 0 || image->Height <= 0)
+        {
+            return;
+        }
+        const float aspect = static_cast<float>(image->Width) / image->Height;
+        const float drawW = aspect >= 1 ? kPreviewSize : kPreviewSize * aspect;
+        const float drawH = aspect >= 1 ? kPreviewSize / aspect : kPreviewSize;
+        const float originX = (kPreviewSize - drawW) * 0.5f;
+        const float originY = (kPreviewSize - drawH) * 0.5f;
+        const float cosE = cosf(input.LightElevation);
+        // 接空間の光の向き（+X = 右、+Y = 画像の上、+Z = 手前）。
+        const Float3 light = Normalize({cosE * cosf(input.LightAzimuth), cosE * sinf(input.LightAzimuth),
+                                        sinf(input.LightElevation)});
+        for (int y = 0; y < kPreviewSize; ++y)
+        {
+            const float fy = (y + 0.5f - originY) / drawH;
+            if (fy < 0 || fy >= 1)
+            {
+                continue;
+            }
+            for (int x = 0; x < kPreviewSize; ++x)
+            {
+                const float fx = (x + 0.5f - originX) / drawW;
+                if (fx < 0 || fx >= 1)
+                {
+                    continue;
+                }
+                const float u = fx * input.Tiles;
+                const float v = fy * input.Tiles;
+                const Float4 c = image->Sample(u, v);
+                uint32_t& pixel = out[static_cast<size_t>(y) * kPreviewSize + x];
+                if (input.View == ImageView::Lit)
+                {
+                    const float ny = (c.Y * 2 - 1) * (input.FlipY ? -1.0f : 1.0f);
+                    const Float3 n = Normalize({c.X * 2 - 1, ny, c.Z * 2 - 1});
+                    Float3 albedo{0.72f, 0.72f, 0.72f};
+                    if (input.SourceColor && input.Source)
+                    {
+                        const Float4 a = input.Source->Sample(u, v);
+                        albedo = {a.X, a.Y, a.Z};
+                    }
+                    const float diffuse = (std::max)(Dot(n, light), 0.0f);
+                    const Float3 halfVector = Normalize(light + Float3{0, 0, 1});
+                    const float specular = powf((std::max)(n.Z > 0 ? Dot(n, halfVector) : 0.0f, 0.0f), 40) * 0.15f;
+                    pixel = Pack(albedo * (0.18f + diffuse * 1.0f) + Float3{1, 1, 1} * specular, true);
+                }
+                else
+                {
+                    // 高さ・法線は保存されるファイルと同じ値をそのまま表示する。
+                    pixel = Pack({c.X, c.Y, c.Z}, input.View == ImageView::Source);
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------------
     // ウィンドウの状態。
     enum class Category
     {
@@ -585,6 +710,42 @@ namespace ProcStudioEditorDetail
         }
     };
 
+    enum class TextureSource
+    {
+        Procedural,
+        Image
+    };
+
+    // 画像から生成する高さ・法線マップの元。プレビューは長辺 kImageProcessMax に縮小して処理し、
+    // 保存時は元ファイルを読み直して元の解像度で処理する（巨大画像を常駐させないため）。
+    constexpr int kImageProcessMax = 1024;
+
+    struct LoadedImage
+    {
+        filesystem::path Path;
+        shared_ptr<const Image> Preview;
+        int Width = 0;
+        int Height = 0;
+        bool Srgb = true;
+        string Error;
+    };
+
+    struct ImageSourceState
+    {
+        TextureSource Source = TextureSource::Procedural;
+        ProcStudio::ImageMapParams Params;
+        ImageView View = ImageView::Normal;
+        bool SourceColor = true;
+        float LightAzimuth = 0.785f;   // ラジアン
+        float LightElevation = 0.6f;   // ラジアン
+        LoadedImage Loaded;            // 現在の画像（Preview が null なら未読み込み）
+        filesystem::path PendingPath;  // 読み込み中に次のドロップがあった場合の予約
+        shared_ptr<const ProcStudio::ImageMaps> Maps;
+        // エクスプローラーからのドロップを受け付ける矩形（クライアント座標）と、記録したフレーム。
+        vector<ImVec4> DropRects;
+        int DropFrame = -100;
+    };
+
     struct State
     {
         Category Mode = Category::Texture;
@@ -617,6 +778,10 @@ namespace ProcStudioEditorDetail
         Volume CloudPreview;
 
         Job<Image> TextureJob;
+        ImageSourceState Img;
+        Job<LoadedImage> ImageLoadJob;
+        Job<ProcStudio::ImageMaps> ImageMapJob;
+        bool PreviewFromImage = false;
         Job<Mesh> MeshJob;
         Job<vector<uint32_t>> PreviewJob;
         Category PreviewCategory = Category::Texture;
@@ -1048,6 +1213,119 @@ namespace ProcStudioEditorDetail
         return s.Mode != Category::Texture;
     }
 
+    bool ImageActive(const State& s)
+    {
+        return s.Mode == Category::Texture && s.Img.Source == TextureSource::Image;
+    }
+
+    // std::async のワーカーで WIC を使うため、スレッドごとに COM を初期化する。
+    struct ComScope
+    {
+        HRESULT Result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        ~ComScope()
+        {
+            if (SUCCEEDED(Result))
+            {
+                CoUninitialize();
+            }
+        }
+    };
+
+    bool IsImagePath(const filesystem::path& path)
+    {
+        return AssetRegistry::Classify(path) == AssetType::Texture;
+    }
+
+    void StartImageLoad(State& s, const filesystem::path& path)
+    {
+        s.ImageLoadJob.Start([path] {
+            ComScope com;
+            LoadedImage result;
+            result.Path = path;
+            Image full;
+            bool srgb = true;
+            if (!ProceduralIO::LoadImageFile(path, full, result.Error, &srgb))
+            {
+                if (result.Error.empty())
+                {
+                    result.Error = "画像を読み込めません";
+                }
+                return result;
+            }
+            result.Width = full.Width;
+            result.Height = full.Height;
+            result.Srgb = srgb;
+            result.Preview = make_shared<const Image>(ProcStudio::DownsampleImage(full, kImageProcessMax));
+            return result;
+        });
+        s.Status = "画像を読み込み中: " + ProceduralIO::ToUtf8(path.filename());
+    }
+
+    // ドロップ・参照から呼ぶ。読み込み中なら完了後に最新の 1 件だけ読み込む。
+    void RequestImageLoad(State& s, const filesystem::path& path)
+    {
+        if (!IsImagePath(path))
+        {
+            s.Status = "画像ファイルではありません: " + ProceduralIO::ToUtf8(path.filename());
+            return;
+        }
+        s.Mode = Category::Texture;
+        s.Img.Source = TextureSource::Image;
+        if (s.View == ViewMode::VolumeSlice)
+        {
+            s.View = ViewMode::Flat2D;
+        }
+        s.PreviewDirty = true;
+        if (s.ImageLoadJob.Running)
+        {
+            s.Img.PendingPath = path;
+            return;
+        }
+        StartImageLoad(s, path);
+    }
+
+    void PumpImageJobs(State& s)
+    {
+        LoadedImage loaded;
+        if (s.ImageLoadJob.Poll(loaded))
+        {
+            if (loaded.Preview)
+            {
+                s.Status = "画像を読み込みました: " + ProceduralIO::ToUtf8(loaded.Path.filename()) + " (" +
+                           to_string(loaded.Width) + " x " + to_string(loaded.Height) + ")";
+                s.Img.Loaded = std::move(loaded);
+                s.ImageMapJob.Dirty = true;
+                s.PreviewDirty = true;
+            }
+            else
+            {
+                s.Status = "画像の読み込みに失敗: " + loaded.Error;
+            }
+            if (!s.Img.PendingPath.empty())
+            {
+                const auto next = s.Img.PendingPath;
+                s.Img.PendingPath.clear();
+                StartImageLoad(s, next);
+            }
+        }
+        ProcStudio::ImageMaps maps;
+        if (s.ImageMapJob.Poll(maps))
+        {
+            s.Img.Maps = make_shared<const ProcStudio::ImageMaps>(std::move(maps));
+            s.PreviewDirty = true;
+        }
+        if (s.Img.Loaded.Preview && s.ImageMapJob.Dirty && !s.ImageMapJob.Running)
+        {
+            const auto source = s.Img.Loaded.Preview;
+            const auto params = s.Img.Params;
+            const bool srgb = s.Img.Loaded.Srgb;
+            const float scale = static_cast<float>(source->Width) / (std::max)(s.Img.Loaded.Width, 1);
+            s.ImageMapJob.Start([source, params, srgb, scale] {
+                return ProcStudio::BuildImageMaps(*source, params, srgb, scale);
+            });
+        }
+    }
+
     void PumpJobs(State& s)
     {
         if (!s.GpuAttempted && GraphicsDevice::GetDevice())
@@ -1096,8 +1374,11 @@ namespace ProcStudioEditorDetail
             s.CloudPreview = std::move(cloud);
             s.PreviewDirty = true;
         }
+        PumpImageJobs(s);
         // 種類ごとに実行中ジョブは最大 1 件。実行中の変更は、完了後に再実行して反映する。
-        if (NeedsTexture(s) && s.TextureJob.Dirty && !s.TextureJob.Running && !s.ReadbackPending)
+        // 画像ソース中はプロシージャルの生成を止める（戻したときに Dirty なら再生成される）。
+        if (NeedsTexture(s) && !ImageActive(s) && s.TextureJob.Dirty && !s.TextureJob.Running &&
+            !s.ReadbackPending)
         {
             const auto params = s.Texture;
             s.GpuTextureValid = false;
@@ -1125,7 +1406,7 @@ namespace ProcStudioEditorDetail
             }
         }
         // Software mesh previews need CPU pixels; flat previews stay on the GPU.
-        const bool cpuTextureNeeded = NeedsTexture(s) && s.View == ViewMode::Model3D;
+        const bool cpuTextureNeeded = NeedsTexture(s) && !ImageActive(s) && s.View == ViewMode::Model3D;
         if (s.GpuTextureValid && cpuTextureNeeded && !s.CpuTextureCurrent && !s.ReadbackPending)
         {
             if (s.TextureCompute.CopyToReadback(GraphicsDevice::GetCommandList(), s.ComputeError))
@@ -1166,14 +1447,77 @@ namespace ProcStudioEditorDetail
         }
     }
 
+    void RenderImagePreview(State& s)
+    {
+        if (s.PreviewDirty && !s.PreviewJob.Running)
+        {
+            const auto& img = s.Img;
+            if (s.View == ViewMode::Model3D && img.Maps)
+            {
+                RenderInput input;
+                const auto geometry = make_shared<const Mesh>(PreviewMesh(s));
+                input.View = s.Orbit;
+                input.UvScale = s.UvScale;
+                input.Mode = Shading::Texture;
+                input.NormalFlipY = img.Params.FlipY;
+                shared_ptr<const Image> albedo = img.Loaded.Preview;
+                if (!img.SourceColor || !albedo)
+                {
+                    auto gray = make_shared<Image>();
+                    gray->Width = 1;
+                    gray->Height = 1;
+                    gray->Pixels = {Float4{0.6f, 0.6f, 0.6f, 1.0f}};
+                    albedo = gray;
+                }
+                const auto maps = img.Maps;
+                s.PreviewCategory = s.Mode;
+                s.PreviewView = s.View;
+                s.PreviewFromImage = true;
+                s.PreviewJob.Start([input, geometry, albedo, maps]() mutable {
+                    input.Geometry = geometry.get();
+                    input.Texture = albedo.get();
+                    input.NormalMap = &maps->Normal;
+                    vector<uint32_t> rendered;
+                    Rasterize(input, rendered);
+                    return rendered;
+                });
+            }
+            else
+            {
+                ImagePreviewInput input;
+                input.Source = img.Loaded.Preview;
+                input.Maps = img.Maps;
+                input.View = img.View;
+                input.FlipY = img.Params.FlipY;
+                input.SourceColor = img.SourceColor;
+                input.LightAzimuth = img.LightAzimuth;
+                input.LightElevation = img.LightElevation;
+                input.Tiles = s.Tiles;
+                BlitImageMaps(input, s.Pixels);
+                s.UploadPending = true;
+            }
+            s.PreviewDirty = false;
+        }
+        if (s.UploadPending && s.Pixels.size() == size_t(kPreviewSize) * kPreviewSize && s.Gpu.Upload(s.Pixels))
+        {
+            s.UploadPending = false;
+        }
+    }
+
     void RenderPreview(State& s)
     {
         // Drain finished software jobs even while the GPU flat view is active.
         vector<uint32_t> pixels;
-        if (s.PreviewJob.Poll(pixels) && s.PreviewCategory == s.Mode && s.PreviewView == s.View)
+        if (s.PreviewJob.Poll(pixels) && s.PreviewCategory == s.Mode && s.PreviewView == s.View &&
+            s.PreviewFromImage == ImageActive(s))
         {
             s.Pixels = std::move(pixels);
             s.UploadPending = true;
+        }
+        if (ImageActive(s))
+        {
+            RenderImagePreview(s);
+            return;
         }
         if (s.Mode == Category::Texture && s.View == ViewMode::Flat2D && s.GpuTextureValid)
         {
@@ -1252,6 +1596,7 @@ namespace ProcStudioEditorDetail
                 vector<Float4> solid = input.Mode == Shading::Solid ? s.SolidVoxels : vector<Float4>{};
                 s.PreviewCategory = s.Mode;
                 s.PreviewView = s.View;
+                s.PreviewFromImage = false;
                 s.PreviewJob.Start([input, geometry, texture = std::move(texture), solid = std::move(solid)]() mutable {
                     input.Geometry = geometry.get();
                     input.Texture = &texture;
@@ -1370,6 +1715,91 @@ namespace ProcStudioEditorDetail
                 error.clear();
                 ProceduralIO::SaveImageFile(path, image, encoding, error);
                 return error;
+            },
+            ProceduralIO::ToUtf8(path.filename()));
+    }
+
+    enum ImageSaveTarget
+    {
+        SaveHeightMap = 1,
+        SaveNormalMap = 2,
+        SaveBothMaps = 3
+    };
+
+    // 元ファイルを読み直し、元の解像度で高さ・法線を作って保存する。
+    // メモリのピークを抑えるため、高さを求めたら元画像を解放し、出力は 1 枚ずつ作る。
+    void SaveImageMaps(State& s, int targets)
+    {
+        if (!s.Img.Loaded.Preview)
+        {
+            s.Status = "先に画像を読み込んでください";
+            return;
+        }
+        const filesystem::path sourcePath = s.Img.Loaded.Path;
+        const wstring suffix = targets == SaveHeightMap ? L"_height" : targets == SaveNormalMap ? L"_normal" : L"";
+        const auto defaultPath = MaterialManager::Registry().Root() / (sourcePath.stem().wstring() + suffix + L".png");
+        filesystem::path path;
+        if (!ProceduralIO::SaveFileDialog(kImageFilter, L"png", defaultPath.wstring(), path))
+        {
+            return;
+        }
+        filesystem::path heightPath;
+        filesystem::path normalPath;
+        if (targets == SaveBothMaps)
+        {
+            heightPath = path;
+            heightPath.replace_filename(path.stem().wstring() + L"_height" + path.extension().wstring());
+            normalPath = path;
+            normalPath.replace_filename(path.stem().wstring() + L"_normal" + path.extension().wstring());
+        }
+        else if (targets == SaveHeightMap)
+        {
+            heightPath = path;
+        }
+        else
+        {
+            normalPath = path;
+        }
+        const auto params = s.Img.Params;
+        StartSave(
+            s,
+            [sourcePath, params, heightPath, normalPath]() -> string {
+                ComScope com;
+                string error;
+                Image full;
+                bool srgb = true;
+                if (!ProceduralIO::LoadImageFile(sourcePath, full, error, &srgb))
+                {
+                    return "元画像を読み込めません: " + error;
+                }
+                const int width = full.Width;
+                const int height = full.Height;
+                const auto heights = ProcStudio::ComputeHeight(full, params, srgb, 1.0f);
+                full = Image{};
+                if (!heightPath.empty())
+                {
+                    Image image;
+                    image.Width = width;
+                    image.Height = height;
+                    image.Pixels.resize(heights.size());
+                    for (size_t i = 0; i < heights.size(); ++i)
+                    {
+                        image.Pixels[i] = {heights[i], heights[i], heights[i], 1.0f};
+                    }
+                    if (!ProceduralIO::SaveImageFile(heightPath, image, ProceduralIO::Encoding::Height, error))
+                    {
+                        return error;
+                    }
+                }
+                if (!normalPath.empty())
+                {
+                    const Image normal = ProcStudio::HeightToNormal(heights, width, height, params, 1.0f);
+                    if (!ProceduralIO::SaveImageFile(normalPath, normal, ProceduralIO::Encoding::Linear, error))
+                    {
+                        return error;
+                    }
+                }
+                return {};
             },
             ProceduralIO::ToUtf8(path.filename()));
     }
@@ -1511,6 +1941,186 @@ namespace ProcStudioEditorDetail
     }
 
     // ------------------------------------------------------------------------------------------------
+    // 画像ドロップ。直前の項目をアセットブラウザからのドロップ先にし、エクスプローラーからの
+    // ドロップ（WM_DROPFILES）用に矩形を記録する。
+    void ImageDropTarget(State& s)
+    {
+        const ImVec2 offset = ImGui::GetMainViewport()->Pos;
+        const ImVec2 minimum = ImGui::GetItemRectMin();
+        const ImVec2 maximum = ImGui::GetItemRectMax();
+        s.Img.DropRects.push_back(
+            ImVec4(minimum.x - offset.x, minimum.y - offset.y, maximum.x - offset.x, maximum.y - offset.y));
+        s.Img.DropFrame = ImGui::GetFrameCount();
+        if (!ImGui::BeginDragDropTarget())
+        {
+            return;
+        }
+        filesystem::path path;
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetPayloadType))
+        {
+            if (payload->DataSize == sizeof(AssetDragPayload))
+            {
+                AssetDragPayload asset{};
+                memcpy(&asset, payload->Data, sizeof(asset));
+                if (asset.Type == AssetType::Texture)
+                {
+                    path = MaterialManager::Registry().Resolve(asset.Handle);
+                }
+                else
+                {
+                    s.Status = "テクスチャ画像をドロップしてください";
+                }
+            }
+        }
+        else if (const ImGuiPayload* pathPayload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+        {
+            const char* text = static_cast<const char*>(pathPayload->Data);
+            if (text && text[0] != '\0')
+            {
+                path = filesystem::u8path(text);
+            }
+        }
+        ImGui::EndDragDropTarget();
+        if (!path.empty())
+        {
+            RequestImageLoad(s, path);
+        }
+    }
+
+    constexpr const wchar_t* kImageOpenFilter =
+        L"画像 (*.png;*.jpg;*.dds;*.tga;*.bmp;*.tif;*.hdr)\0*.png;*.jpg;*.jpeg;*.dds;*.tga;*.bmp;*.tif;*.tiff;*.hdr\0"
+        L"すべてのファイル\0*.*\0";
+
+    void DrawImageSourcePanel(State& s, bool busySaving)
+    {
+        auto& img = s.Img;
+        bool changed = false;
+
+        ImGui::SeparatorText("元画像");
+        {
+            string label;
+            if (img.Loaded.Preview)
+            {
+                label = ProceduralIO::ToUtf8(img.Loaded.Path.filename()) + "\n" + to_string(img.Loaded.Width) +
+                        " x " + to_string(img.Loaded.Height) + "   (クリック / ドロップで差し替え)";
+            }
+            else
+            {
+                label = "ここに画像をドロップ\n(エクスプローラー / アセットブラウザ、クリックで参照)";
+            }
+            label += "###ImageDropZone";
+            if (ImGui::Button(label.c_str(), ImVec2(-FLT_MIN, 56)))
+            {
+                filesystem::path path;
+                if (ProceduralIO::OpenFileDialog(kImageOpenFilter, path))
+                {
+                    RequestImageLoad(s, path);
+                }
+            }
+            ImageDropTarget(s);
+        }
+        if (s.ImageLoadJob.Running)
+        {
+            ImGui::TextDisabled("読み込み中...");
+        }
+
+        ImGui::SeparatorText("高さマップ");
+        auto& p = img.Params;
+        if (ImGui::BeginCombo("高さの元", ProcStudio::HeightChannelName(p.Channel)))
+        {
+            for (int i = 0; i < static_cast<int>(ProcStudio::HeightChannel::Count); ++i)
+            {
+                const auto channel = static_cast<ProcStudio::HeightChannel>(i);
+                if (ImGui::Selectable(ProcStudio::HeightChannelName(channel), p.Channel == channel))
+                {
+                    p.Channel = channel;
+                    changed = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        changed |= ImGui::Checkbox("反転 (明るい所を低く)", &p.Invert);
+        changed |= ImGui::SliderFloat("ぼかし", &p.BlurRadius, 0.0f, 32.0f, "%.1f px", ImGuiSliderFlags_AlwaysClamp);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("細かいノイズを抑えます (元画像のピクセル単位)。");
+        }
+        changed |= ImGui::SliderFloat("大きな明暗の除去", &p.HighPassRadius, 0.0f, 512.0f, p.HighPassRadius > 0 ? "%.0f px" : "なし",
+                                      ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("写真の照明ムラなど、指定半径より大きな明暗を高さから取り除きます。0 で無効。");
+        }
+        changed |= ImGui::Checkbox("自動レベル補正 (0〜1 に正規化)", &p.AutoLevels);
+        changed |= ImGui::SliderFloat("コントラスト##image", &p.Contrast, 0.0f, 8.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        changed |= ImGui::SliderFloat("バイアス##image", &p.Bias, -1.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        changed |= ImGui::SliderFloat("ガンマ##image", &p.Gamma, 0.1f, 5.0f, "%.2f",
+                                      ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+
+        ImGui::SeparatorText("法線マップ");
+        changed |= ImGui::SliderFloat("法線強度##image", &p.NormalStrength, 0.1f, 128.0f, "%.2f",
+                                      ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+        int filter = static_cast<int>(p.Filter);
+        if (ImGui::Combo("フィルター", &filter, "中央差分 (鋭い)\0Sobel\0Scharr\0"))
+        {
+            p.Filter = static_cast<ProcStudio::NormalFilter>(filter);
+            changed = true;
+        }
+        int convention = p.FlipY ? 1 : 0;
+        if (ImGui::Combo("Y の向き", &convention, "OpenGL (+Y)\0DirectX (-Y)\0"))
+        {
+            p.FlipY = convention == 1;
+            changed = true;
+        }
+        changed |= ImGui::Checkbox("端を折り返す (タイリング)", &p.Tileable);
+        if (ImGui::Button("設定を初期値に戻す"))
+        {
+            p = ProcStudio::ImageMapParams{};
+            changed = true;
+        }
+        if (changed)
+        {
+            s.ImageMapJob.Dirty = true;
+        }
+
+        ImGui::SeparatorText("プレビュー");
+        bool previewChanged = false;
+        int view = static_cast<int>(img.View);
+        previewChanged |= ImGui::Combo("2D 表示", &view, "元画像\0高さ\0法線\0陰影 (ライティング)\0");
+        img.View = static_cast<ImageView>(view);
+        previewChanged |= ImGui::Checkbox("陰影・3D で元画像の色を使う", &img.SourceColor);
+        previewChanged |= ImGui::SliderAngle("光の方位", &img.LightAzimuth, -180.0f, 180.0f);
+        previewChanged |= ImGui::SliderAngle("光の高さ", &img.LightElevation, 5.0f, 90.0f);
+        if (previewChanged)
+        {
+            s.PreviewDirty = true;
+        }
+
+        ImGui::SeparatorText("保存");
+        ImGui::BeginDisabled(busySaving || !img.Loaded.Preview);
+        if (ImGui::Button("高さマップを保存..."))
+        {
+            SaveImageMaps(s, SaveHeightMap);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("法線マップを保存..."))
+        {
+            SaveImageMaps(s, SaveNormalMap);
+        }
+        if (ImGui::Button("両方を保存..."))
+        {
+            SaveImageMaps(s, SaveBothMaps);
+        }
+        ImGui::EndDisabled();
+        if (img.Loaded.Preview)
+        {
+            ImGui::TextWrapped("元の解像度 (%d x %d) で保存します。高さは PNG / DDS / TIF なら 16 bit。"
+                               "「両方を保存」は <名前>_height / <名前>_normal で保存します。",
+                               img.Loaded.Width, img.Loaded.Height);
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------------
     void DrawPreviewPanel(State& s)
     {
         if (!s.Gpu.Ensure())
@@ -1524,7 +2134,7 @@ namespace ProcStudioEditorDetail
         {
             ImGui::SameLine();
             ImGui::RadioButton("2D", &view, static_cast<int>(ViewMode::Flat2D));
-            if (s.Texture.Kind == TextureKind::FractalCloud)
+            if (s.Texture.Kind == TextureKind::FractalCloud && !ImageActive(s))
             {
                 ImGui::SameLine();
                 ImGui::RadioButton("3D ノイズ断面", &view, static_cast<int>(ViewMode::VolumeSlice));
@@ -1588,16 +2198,23 @@ namespace ProcStudioEditorDetail
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
         ImGui::ImageButton("##ProceduralPreview", (ImTextureID)s.Gpu.Lease->Gpu.ptr, ImVec2(side, side));
         ImGui::PopStyleVar();
+        const bool previewActive = ImGui::IsItemActive();
+        const bool previewHovered = ImGui::IsItemHovered();
+        if (s.Mode == Category::Texture)
+        {
+            // プレビューへ画像をドロップすると、画像から生成するモードへ切り替える。
+            ImageDropTarget(s);
+        }
         if (s.View == ViewMode::Model3D)
         {
-            if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+            if (previewActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
             {
                 const auto delta = ImGui::GetIO().MouseDelta;
                 s.Orbit.Yaw -= delta.x * 0.01f;
                 s.Orbit.Pitch = std::clamp(s.Orbit.Pitch + delta.y * 0.01f, -1.5f, 1.5f);
                 s.PreviewDirty = true;
             }
-            if (ImGui::IsItemHovered() && ImGui::GetIO().MouseWheel != 0)
+            if (previewHovered && ImGui::GetIO().MouseWheel != 0)
             {
                 s.Orbit.Distance = std::clamp(s.Orbit.Distance * powf(0.9f, ImGui::GetIO().MouseWheel), 1.05f, 10.0f);
                 s.PreviewDirty = true;
@@ -1606,7 +2223,20 @@ namespace ProcStudioEditorDetail
             ImGui::TextDisabled("ドラッグで回転 / ホイールでズーム   頂点 %zu  三角形 %zu", mesh.Positions.size(),
                                 mesh.Indices.size() / 3);
         }
-        if (NeedsTexture(s))
+        if (ImageActive(s))
+        {
+            if (s.Img.Loaded.Preview)
+            {
+                ImGui::TextDisabled("画像: %s (%d x %d) / プレビュー処理 %d x %d",
+                                    ProceduralIO::ToUtf8(s.Img.Loaded.Path.filename()).c_str(), s.Img.Loaded.Width,
+                                    s.Img.Loaded.Height, s.Img.Loaded.Preview->Width, s.Img.Loaded.Preview->Height);
+            }
+            else
+            {
+                ImGui::TextDisabled("画像をプレビューか左のドロップ領域へドロップしてください");
+            }
+        }
+        else if (NeedsTexture(s))
         {
             ImGui::TextDisabled(s.GpuTextureValid ? "テクスチャ生成: GPU" : "テクスチャ生成: CPU");
             if (!s.GpuAvailable && !s.ComputeError.empty() && ImGui::IsItemHovered())
@@ -1615,7 +2245,8 @@ namespace ProcStudioEditorDetail
             }
         }
         const bool busy = s.ReadbackPending || s.TextureJob.Running || s.MeshJob.Running || s.SolidJob.Running ||
-                          s.CloudSliceJob.Running || s.PreviewJob.Running;
+                          s.CloudSliceJob.Running || s.PreviewJob.Running || s.ImageLoadJob.Running ||
+                          s.ImageMapJob.Running;
         if (busy)
         {
             ImGui::SameLine();
@@ -1648,6 +2279,7 @@ namespace ProcStudioEditorDetail
             s.Status = "生成に失敗: " + string(error.what());
             s.Animate = false;
         }
+        s.Img.DropRects.clear();
         ImGui::SetNextWindowSize(ImVec2(1040, 680), ImGuiCond_FirstUseEver);
         if (!ImGui::Begin("プロシージャルスタジオ", open))
         {
@@ -1699,6 +2331,25 @@ namespace ProcStudioEditorDetail
             switch (s.Mode)
             {
                 case Category::Texture: {
+                    int source = static_cast<int>(s.Img.Source);
+                    ImGui::RadioButton("プロシージャル", &source, static_cast<int>(TextureSource::Procedural));
+                    ImGui::SameLine();
+                    ImGui::RadioButton("画像から生成 (高さ / 法線)", &source, static_cast<int>(TextureSource::Image));
+                    if (source != static_cast<int>(s.Img.Source))
+                    {
+                        s.Img.Source = static_cast<TextureSource>(source);
+                        if (s.View == ViewMode::VolumeSlice)
+                        {
+                            s.View = ViewMode::Flat2D;
+                        }
+                        s.PreviewDirty = true;
+                    }
+                    if (s.Img.Source == TextureSource::Image)
+                    {
+                        DrawImageSourcePanel(s, busySaving);
+                        break;
+                    }
+                    ImGui::Separator();
                     if (TextureWidgets(s.Texture, false))
                     {
                         s.TextureJob.Dirty = true;
@@ -1902,6 +2553,28 @@ namespace ProcStudioEditorDetail
         ImGui::End();
     }
 
+    bool AcceptDroppedFileImpl(const char* path, float x, float y)
+    {
+        State& s = S();
+        // 直前（またはその前）のフレームで描画したドロップ領域だけを有効にする。
+        if (!path || s.Img.DropRects.empty() || ImGui::GetFrameCount() - s.Img.DropFrame > 2)
+        {
+            return false;
+        }
+        bool inside = false;
+        for (const auto& rect : s.Img.DropRects)
+        {
+            inside |= x >= rect.x && y >= rect.y && x < rect.z && y < rect.w;
+        }
+        if (!inside)
+        {
+            return false;
+        }
+        // DragQueryFileA の文字列は ANSI コードページ。filesystem::path(string) も同じ変換を使う。
+        RequestImageLoad(s, filesystem::path(string(path)));
+        return true;
+    }
+
     void ShutdownWindow()
     {
         State& s = S();
@@ -1909,6 +2582,14 @@ namespace ProcStudioEditorDetail
         if (s.TextureJob.Running)
         {
             s.TextureJob.Result.wait();
+        }
+        if (s.ImageLoadJob.Running)
+        {
+            s.ImageLoadJob.Result.wait();
+        }
+        if (s.ImageMapJob.Running)
+        {
+            s.ImageMapJob.Result.wait();
         }
         if (s.MeshJob.Running)
         {
@@ -1950,7 +2631,13 @@ void ProceduralStudioWindow::Draw(bool* open)
     ProcStudioEditorDetail::DrawWindow(open);
 }
 
+bool ProceduralStudioWindow::AcceptDroppedFile(const char* path, float x, float y)
+{
+    return ProcStudioEditorDetail::AcceptDroppedFileImpl(path, x, y);
+}
+
 void ProceduralStudioWindow::Shutdown()
 {
     ProcStudioEditorDetail::ShutdownWindow();
 }
+

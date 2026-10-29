@@ -339,7 +339,8 @@ namespace
         vector<Vertex> vertices;
         const XMFLOAT4 vertexColor = GetVertexColor(color);
         const float h = 0.5f;
-        AddFace(vertices, vertexColor, {0.0f, 1.0f, 0.0f}, {-h, 0.0f, -h}, {h, 0.0f, -h}, {h, 0.0f, h}, {-h, 0.0f, h});
+        // From above on the +Z side, image right is -X and image top is -Z.
+        AddFace(vertices, vertexColor, {0.0f, 1.0f, 0.0f}, {h, 0.0f, -h}, {-h, 0.0f, -h}, {-h, 0.0f, h}, {h, 0.0f, h});
         return vertices;
     }
 

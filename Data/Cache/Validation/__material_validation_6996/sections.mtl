@@ -1,0 +1,4 @@
+newmtl One
+Kd 1 1 1
+newmtl Two
+Kd 0.5 1 1

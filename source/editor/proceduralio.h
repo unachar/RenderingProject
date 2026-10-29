@@ -20,7 +20,10 @@ namespace ProceduralIO
     bool SaveImageFile(const std::filesystem::path& path, const ProcStudio::Image& image, Encoding encoding,
                        std::string& error);
     // WIC / DDS / TGA / HDR 画像に対応。3D DDS は先頭スライスを返す（ボリュームには LoadVolume を使う）。
-    bool LoadImageFile(const std::filesystem::path& path, ProcStudio::Image& image, std::string& error);
+    // srgbEncoded: 非 null なら、ファイルの値を sRGB とみなして線形化したかを返す
+    // （8 ビット以下の非 HDR 画像は true）。格納値そのものが必要な処理（高さの抽出など）で使う。
+    bool LoadImageFile(const std::filesystem::path& path, ProcStudio::Image& image, std::string& error,
+                       bool* srgbEncoded = nullptr);
     bool SaveDensityVolume(const std::filesystem::path& path, const ProcStudio::Volume& volume, std::string& error);
     bool SaveColorVolume(const std::filesystem::path& path, const std::vector<ProcStudio::Float4>& voxels, int extent,
                          std::string& error);
@@ -30,3 +33,4 @@ namespace ProceduralIO
     ProcStudio::Volume Resample(const ProcStudio::Volume& volume, int extent);
     std::string ToUtf8(const std::filesystem::path& path);
 } // 名前空間 ProceduralIO の終わり。
+

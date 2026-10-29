@@ -149,8 +149,24 @@ namespace
                     {
                         position[axis] = 0;
                     }
+                    // Image UVs start at the top left when looking at the outside of a face.
+                    // Derive them from a face-local right/up frame, not the corner bit order.
+                    float horizontal;
+                    float vertical;
+                    if (axis == 1)
+                    {
+                        horizontal = position[0];
+                        vertical = direction * position[2];
+                    }
+                    else
+                    {
+                        horizontal = -normal[2] * position[0] + normal[0] * position[2];
+                        vertical = position[1];
+                    }
+                    const float u = (horizontal + 1.0f) * 0.5f;
+                    const float v = (1.0f - vertical) * 0.5f;
                     corners[corner] = Vertex(position[0], position[1], position[2], normal[0], normal[1], normal[2],
-                                             static_cast<float>(corner & 1), static_cast<float>((corner >> 1) & 1));
+                                             u, v);
                 }
                 Triangle(vertices, corners[0], corners[1], corners[2]);
                 Triangle(vertices, corners[1], corners[3], corners[2]);

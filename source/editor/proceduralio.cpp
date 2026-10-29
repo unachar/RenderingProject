@@ -310,7 +310,7 @@ namespace ProceduralIO
         }
     }
 
-    bool LoadImageFile(const filesystem::path& path, ProcStudio::Image& image, string& error)
+    bool LoadImageFile(const filesystem::path& path, ProcStudio::Image& image, string& error, bool* srgbEncoded)
     {
         ScratchImage converted;
         TexMetadata metadata{};
@@ -321,6 +321,10 @@ namespace ProceduralIO
         const bool srgb =
             IsSRGB(metadata.format) || (!IsCompressed(metadata.format) && BitsPerColor(metadata.format) <= 8 &&
                                         Lower(path.extension().wstring()) != L".hdr");
+        if (srgbEncoded)
+        {
+            *srgbEncoded = srgb;
+        }
         const auto* source = converted.GetImage(0, 0, 0);
         image.Width = static_cast<int>(source->width);
         image.Height = static_cast<int>(source->height);
@@ -501,3 +505,4 @@ namespace ProceduralIO
         return result;
     }
 } // 名前空間 ProceduralIO の終わり。
+

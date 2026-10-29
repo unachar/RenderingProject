@@ -33,13 +33,17 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     if (uMsg == WM_DROPFILES)
     {
         HDROP drop = reinterpret_cast<HDROP>(wParam);
+        // ドロップ位置（クライアント座標）。プロシージャルスタジオなど、位置で受け取り先を決めるウィンドウ用。
+        POINT point{};
+        const bool hasPoint = DragQueryPoint(drop, &point) != FALSE;
         const UINT count = DragQueryFileA(drop, 0xFFFFFFFF, nullptr, 0);
         for (UINT i = 0; i < count; ++i)
         {
             char path[MAX_PATH]{};
             if (DragQueryFileA(drop, i, path, MAX_PATH) > 0)
             {
-                ImGuiManager::HandleDroppedFile(path);
+                ImGuiManager::HandleDroppedFile(path, hasPoint, static_cast<float>(point.x),
+                                                static_cast<float>(point.y));
             }
         }
         DragFinish(drop);
@@ -314,3 +318,4 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     }
     return 0;
 }
+

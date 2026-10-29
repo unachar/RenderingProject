@@ -85,6 +85,11 @@ class AdvancedEffects final
         return s_Available && s_BloomAvailable && RenderQuality::Get().DualBloom;
     }
 
+    static ID3D12Resource* GetBloomPreviewResource()
+    {
+        return IsDualBloomActive() && s_BloomRequested ? s_BloomUp.Get() : nullptr;
+    }
+
     // 従来のパスと同様、カメラの後処理選択（PostProcessType::BLOOM）に従う。
     static void SetBloomRequested(bool requested)
     {

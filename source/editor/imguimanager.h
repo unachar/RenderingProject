@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "pch.h"
 #include "ecs.h"
 #include "materialasset.h"
@@ -81,7 +81,13 @@ class ImGuiManager
     inline static string m_NewFolderName = "NewFolder";
     inline static string m_NewFileName = "NewMaterial.txt";
     inline static string m_TexturePathInput;
-    inline static vector<string> m_DroppedFiles;
+    struct DroppedFile
+    {
+        string Path;
+        bool HasPoint = false;
+        ImVec2 Point{0.0f, 0.0f};
+    };
+    inline static vector<DroppedFile> m_DroppedFiles;
     inline static vector<string> m_Logs;
     inline static EntityID m_RenamingEntity = g_kINVALID_ENTITY;
     inline static string m_RenameBuffer;
@@ -370,7 +376,8 @@ class ImGuiManager
     static void Update();
     static void Draw(ID3D12GraphicsCommandList* commandList);
     static bool HandleWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-    static void HandleDroppedFile(const char* path);
+    // hasPoint/x/y: WM_DROPFILES のドロップ位置（クライアント座標）。
+    static void HandleDroppedFile(const char* path, bool hasPoint = false, float x = 0.0f, float y = 0.0f);
     static void AddLog(const char* fmt, ...);
 
     static EntityID GetSelectedEntity()
@@ -398,3 +405,4 @@ class ImGuiManager
         return m_Exposure;
     }
 };
+

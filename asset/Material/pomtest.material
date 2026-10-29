@@ -26,7 +26,7 @@
     "metallic" : 0.0,
     "normalScale" : 1.0,
     "parallaxDepth" : 0.056000001728534698,
-    "parallaxSteps" : 128.0,
+    "parallaxSteps" : 1024.0,
     "roughness" : 0.5,
     "shadingModel" : 0,
     "shadingStrength" : 1.0,
@@ -47,9 +47,9 @@
   "textures" : 
   {
     "ao" : "guid:0000000000000000",
-    "baseColor" : "guid:0000000000000000",
+    "baseColor" : "guid:c10f984bc75ee1f5",
     "emissive" : "guid:0000000000000000",
-    "height" : "guid:e6b338964ca8f03b",
+    "height" : "guid:8f66aede0ae00144",
     "metallicRoughness" : "guid:0000000000000000",
     "normal" : "guid:0000000000000000"
   },

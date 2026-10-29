@@ -52,6 +52,8 @@ GBufferDepthOutput main(in PSInput3D In)
     output.EmissionAO = assetEmissionAO;
     output.Color = baseColor;
     output.Normal = MakeGBufferNormal(normal);
+    // DeferredPS / GeometryPS と同じく、POM で潜った距離を法線の alpha に入れる（影の受け位置を元のメッシュへ戻す）。
+    output.Normal.a = -AssetParallaxRayDistance(pom);
 
     output.Depth = AssetParallaxPixelDepth(pom, In.WorldPos, In.CameraPos, saturate(In.Position.z));
     output.HardwareDepth = min(output.Depth.x, In.Position.z);
@@ -67,3 +69,4 @@ GBufferDepthOutput main(in PSInput3D In)
     WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow);
     return output;
 }
+

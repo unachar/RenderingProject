@@ -1,0 +1,57 @@
+{
+  "parameters" : 
+  {
+    "absorptionCoefficient" : 
+    [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "aoStrength" : 0.80000001192092896,
+    "baseColor" : 
+    [
+      0.69999998807907104,
+      0.25,
+      0.12999999523162842,
+      1.0
+    ],
+    "emissiveColor" : 
+    [
+      0.20000000298023224,
+      0.10000000149011612,
+      0.019999999552965164
+    ],
+    "emissiveIntensity" : 0.40000000596046448,
+    "ior" : 1.5,
+    "metallic" : 0.60000002384185791,
+    "normalScale" : 1.0,
+    "parallaxDepth" : 0.0,
+    "parallaxSteps" : 32.0,
+    "roughness" : 0.69999998807907104,
+    "shadingModel" : 0,
+    "shadingStrength" : 1.0,
+    "thickness" : 0.10000000149011612,
+    "transmission" : 0.0,
+    "transmissionRoughness" : 0.019999999552965164
+  },
+  "renderState" : 
+  {
+    "alphaCutoff" : 0.5,
+    "cullMode" : "Back",
+    "depthWrite" : true,
+    "shadowCutoff" : 0.5,
+    "shadowMode" : "Auto"
+  },
+  "shader" : "PBR",
+  "surfaceType" : "Opaque",
+  "textures" : 
+  {
+    "ao" : "guid:c3306f162c2b672e",
+    "baseColor" : "guid:c3306f162c2b672e",
+    "emissive" : "guid:c3306f162c2b672e",
+    "height" : "guid:0000000000000000",
+    "metallicRoughness" : "guid:c3306f162c2b672e",
+    "normal" : "guid:1fe79049c13a72ae"
+  },
+  "version" : 1
+}

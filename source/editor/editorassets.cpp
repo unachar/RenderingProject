@@ -1,9 +1,10 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "materialmanager.h"
 #include "assetthumbnailmanager.h"
 #include "assetbrowserlisting.h"
 #include "thumbnailvalidation.h"
 #include "imguimanager.h"
+#include "proceduralstudiowindow.h"
 #include "proceduralstudio.h"
 #include "editorwidgets.h"
 #include "materialsystem.h"
@@ -1180,11 +1181,17 @@ void ImGuiManager::ProcessDroppedFiles()
         return;
     }
 
-    vector<string> dropped;
+    vector<DroppedFile> dropped;
     dropped.swap(m_DroppedFiles);
-    for (const string& path : dropped)
+    for (const DroppedFile& file : dropped)
     {
-        ImportAssetFile(path);
+        // プロシージャルスタジオの画像ドロップ領域に落とされた画像は、アセットへ取り込まずにそちらで使う。
+        if (m_ShowProceduralStudioWindow && file.HasPoint &&
+            ProceduralStudioWindow::AcceptDroppedFile(file.Path.c_str(), file.Point.x, file.Point.y))
+        {
+            continue;
+        }
+        ImportAssetFile(file.Path);
     }
 }
 
@@ -2308,3 +2315,4 @@ void ImGuiManager::DuplicateSelectedAssets()
         AddLog("複製: %d 個", static_cast<int>(created.size()));
     }
 }
+

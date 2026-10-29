@@ -13,6 +13,14 @@ namespace ProceduralTexture { struct Parameters { uint Width; }; }
 SamplerState MaterialSampler : register(s0);
 RWTexture2D<float> Output : register(u0);
 static bool Blocker;
+// The shadow fixture supplies an analytic height field for both source paths.
+Texture2D HeightTexture : register(t0);
+Texture2D LoadMaterialTexture(uint index) { return HeightTexture; }
+float SampleParallaxDepthTexture(Texture2D heightTexture, float2 uv,
+                                float2 uvDx, float2 uvDy, SamplerState materialSampler)
+{
+    return Blocker && uv.x > 0.00001f ? 0.0f : 0.5f;
+}
 float SampleParallaxDepth(ProceduralTexture::Parameters noise, uint index, float2 uv,
                          float2 uvDx, float2 uvDy, SamplerState materialSampler)
 {

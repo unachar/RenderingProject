@@ -6,6 +6,8 @@
 #include "virtualgeometry/virtualgeometrydebug.h"
 #include "cloud/cloudrenderer.h"
 #include "imguimanager.h"
+#include "gbufferpreview.h"
+#include "advancedeffects.h"
 #include "editorwidgets.h"
 #include "atmosphere.h"
 #include "daynightcycle.h"
@@ -176,18 +178,30 @@ void ImGuiManager::DrawGBufferWindow()
 
     ImGui::BeginChild("GBufferPreview", ImVec2(0, 0), true);
 
-    const ImVec2 previewSize(320.0f, 180.0f);
     const float cellSpacing = 12.0f;
     const int columns = 2;
+    const float previewWidth = max(1.0f, (ImGui::GetContentRegionAvail().x - cellSpacing) / columns);
+    const float aspect =
+        float(max(1u, GraphicsDevice::GetSceneHeight())) / float(max(1u, GraphicsDevice::GetSceneWidth()));
+    const ImVec2 previewSize(previewWidth, previewWidth * aspect);
 
     const struct
     {
         const char* Label;
         GBufferType Type;
+        const char* Description;
+        bool Alpha = false;
     } cells[] = {
-        {"ベースカラー", GBufferType::BASE_COLOR}, {"法線", GBufferType::NORMAL},    {"深度", GBufferType::DEPTH},
-        {"マテリアル", GBufferType::MATERIAL},     {"影", GBufferType::SHADOW},      {"大気", GBufferType::ATMOSPHERE},
-        {"ベロシティ", GBufferType::VELOCITY},     {"ブルーム", GBufferType::BLOOM},
+        {"ベースカラー", GBufferType::BASE_COLOR, "RGB: ベースカラー"},
+        {"法線", GBufferType::NORMAL, "RGB: ワールド法線（0～1） / α: POM変位"},
+        {"深度", GBufferType::DEPTH, "逆Zを強調表示（明るいほど近い）"},
+        {"マテリアル", GBufferType::MATERIAL, "RGB: メタリック / ラフネス / フレネル"},
+        {"影パラメーター", GBufferType::SHADOW, "RGB: 影のしきい値 / 柔らかさ / 強さ"},
+        {"大気", GBufferType::ATMOSPHERE, "HDR圧縮表示。有効な散乱がない場合は黒です"},
+        {"ベロシティ", GBufferType::VELOCITY, "RG: 移動方向と大きさ（静止時は灰色）"},
+        {"ブルーム", GBufferType::BLOOM, "HDR圧縮表示。発光がない場合は黒です"},
+        {"発光", GBufferType::EMISSION_AO, "RGB: 発光をHDR圧縮表示"},
+        {"AO", GBufferType::EMISSION_AO, "α: マテリアルAO（白=遮蔽なし）", true},
     };
 
     const int cellCount = int(size(cells));
@@ -204,7 +218,18 @@ void ImGuiManager::DrawGBufferWindow()
 
             ImGui::BeginGroup();
             ImGui::TextUnformatted(cells[index].Label);
-            ImGui::Image(ImTextureID(RenderTargets::GetGBufferSrvHandle(cells[index].Type).ptr), previewSize);
+            const UINT previewType = cells[index].Alpha ? UINT(GBufferType::COUNT) : UINT(cells[index].Type);
+            auto texture = RenderTargets::GetGBufferSrvHandle(cells[index].Type);
+            if (cells[index].Type == GBufferType::BLOOM)
+            {
+                texture = GBufferPreview::BloomTexture(GraphicsDevice::GetDevice(),
+                                                       AdvancedEffects::GetBloomPreviewResource(), texture);
+            }
+            GBufferPreview::Image(texture, previewSize, previewType);
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("%s", cells[index].Description);
+            }
             ImGui::EndGroup();
 
             if (col < columns - 1 && index + 1 < cellCount)

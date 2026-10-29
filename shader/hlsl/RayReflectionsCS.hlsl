@@ -475,9 +475,9 @@ float3 SampleVisibleReflectionSky(float3 position, float3 normal, float3 directi
 
 // 反射の二次ヒットでの POM。レイ上では画素微分が無いので、1 回の視差オフセット（Offset Limiting）と
 // 高さマップの中心差分による法線に絞る。ラスター側と同じく白 = 上面、黒 = 最深部。
-float ReflectionHeight(uint instance, float2 uv, float lod)
+// noise は呼び出し側で読み込み済みのメッシュ情報から渡す（サンプルごとに構造化バッファを読み直さない）。
+float ReflectionHeight(uint instance, ProceduralTexture::Parameters noise, float2 uv, float lod)
 {
-    ProceduralTexture::Parameters noise = ReflectionMeshes[instance].Noise[2];
     if (noise.Width != 0) return ProceduralTexture::Scalar(noise, uv);
     return saturate(HeightTextures[NonUniformResourceIndex(instance)].SampleLevel(MaterialSampler, uv, lod).r);
 }
@@ -550,7 +550,7 @@ void ApplyReflectionParallax(uint instance, ReflectionGeometry mesh, float3 p0, 
     if (heightActive && facing > 0.05f)
     {
         float3 viewTS = float3(dot(view, tangent), dot(view, bitangent), facing);
-        float depth = 1.0f - ReflectionHeight(instance, uv, lod);
+        float depth = 1.0f - ReflectionHeight(instance, mesh.Noise[2], uv, lod);
         // Offset Limiting：facing で割らず、寝た角度でも破綻しない。
         uv -= viewTS.xy * depth * depthScale * smoothstep(0.05f, 0.2f, facing);
     }
@@ -563,10 +563,10 @@ void ApplyReflectionParallax(uint instance, ReflectionGeometry mesh, float3 p0, 
     }
     float2 e = mesh.Noise[2].Width != 0 ? max(uvFootprint, 1e-5f).xx :
                max(1.0f / float2(max(width, 1u), max(height, 1u)) * exp2(lod), 1e-5f);
-    float left = ReflectionHeight(instance, uv - float2(e.x, 0), lod);
-    float right = ReflectionHeight(instance, uv + float2(e.x, 0), lod);
-    float down = ReflectionHeight(instance, uv - float2(0, e.y), lod);
-    float up = ReflectionHeight(instance, uv + float2(0, e.y), lod);
+    float left = ReflectionHeight(instance, mesh.Noise[2], uv - float2(e.x, 0), lod);
+    float right = ReflectionHeight(instance, mesh.Noise[2], uv + float2(e.x, 0), lod);
+    float down = ReflectionHeight(instance, mesh.Noise[2], uv - float2(0, e.y), lod);
+    float up = ReflectionHeight(instance, mesh.Noise[2], uv + float2(0, e.y), lod);
     float2 slope = float2(right - left, up - down) / (2.0f * e) * depthScale;
     float3 tangentNormal = normalize(float3(-slope, 1.0f));
     float3 mapped = tangentNormal.x * tangent + tangentNormal.y * bitangent + tangentNormal.z * normal;
@@ -581,12 +581,17 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
     float3 normal = 0;
     float2 uv = 0;
     float3 albedo = 0;
+    // 頂点オフセットと UV は POM の接空間計算でも使うので、ここで読んだものを使い回す。
+    uint cornerOffset[3];
+    float2 cornerUv[3];
     [unroll] for (uint corner = 0; corner < 3; ++corner)
     {
         uint vertex = LoadReflectionIndex(instance, primitive * 3 + corner, mesh);
         uint offset = mesh.Layout.z + vertex * mesh.Layout.x;
+        cornerOffset[corner] = offset;
+        cornerUv[corner] = asfloat(SceneVertices[NonUniformResourceIndex(instance)].Load2(offset + 24));
         normal += asfloat(SceneVertices[NonUniformResourceIndex(instance)].Load3(offset + 12)) * weights[corner];
-        uv += asfloat(SceneVertices[NonUniformResourceIndex(instance)].Load2(offset + 24)) * weights[corner];
+        uv += cornerUv[corner] * weights[corner];
         albedo += asfloat(SceneVertices[NonUniformResourceIndex(instance)].Load3(offset + 32)) * weights[corner];
     }
     normal = normalize(mul(float4(normal, 0), mesh.NormalToWorld).xyz);
@@ -598,14 +603,10 @@ float3 ShadeReflectionHit(uint instance, uint primitive, float2 barycentrics, fl
     [branch] if (mesh.Surface.z != 0u || mesh.Noise[1].Width != 0u || mesh.Noise[0].Width != 0u)
     {
         float3 corners[3];
-        float2 cornerUv[3];
         [unroll] for (uint c = 0; c < 3; ++c)
         {
-            uint vertex = LoadReflectionIndex(instance, primitive * 3 + c, mesh);
-            uint offset = mesh.Layout.z + vertex * mesh.Layout.x;
-            corners[c] =
-                mul(float4(asfloat(SceneVertices[NonUniformResourceIndex(instance)].Load3(offset)), 1), mesh.World).xyz;
-            cornerUv[c] = asfloat(SceneVertices[NonUniformResourceIndex(instance)].Load2(offset + 24));
+            corners[c] = mul(float4(asfloat(SceneVertices[NonUniformResourceIndex(instance)].Load3(cornerOffset[c])), 1),
+                             mesh.World).xyz;
         }
         float hitDistance = length(position - ReflectionCamera.xyz);
         ApplyReflectionParallax(instance, mesh, corners[0], corners[1], corners[2], cornerUv[0], cornerUv[1],
@@ -1680,3 +1681,4 @@ float ReSTIRJacobian(GiReservoir sample, float3 neighbourPosition, float3 positi
 }
 
 #include "LumenPasses.hlsli"
+

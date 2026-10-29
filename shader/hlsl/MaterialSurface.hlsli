@@ -66,6 +66,13 @@ float SampleParallaxDepth(ProceduralTexture::Parameters noise, uint index, float
     return 1.0f - saturate(LoadMaterialTexture(index).SampleGrad(materialSampler, uv, uvDx, uvDy).r);
 }
 
+// 高さテクスチャだけを読む版。ノイズ評価器を含まないので、ループ内で複数回展開しても DXIL が膨らまない。
+float SampleParallaxDepthTexture(Texture2D heightTexture, float2 uv, float2 uvDx, float2 uvDy,
+                                 SamplerState materialSampler)
+{
+    return 1.0f - saturate(heightTexture.SampleGrad(materialSampler, uv, uvDx, uvDy).r);
+}
+
 // POM の結果。UV だけでなく、ピクセル深度オフセットとセルフシャドウに必要な接空間とヒット深度を返す。
 struct AssetParallaxResult
 {
@@ -82,6 +89,7 @@ struct AssetParallaxResult
     uint HeightIndex;
     ProceduralTexture::Parameters HeightNoise;
     uint MaxSteps;
+    float PixelsPerUv;  // UV 1 単位あたりの画素数（セルフシャドウのステップ数を画面上の長さで決める）
     bool Active;
 };
 
@@ -146,28 +154,105 @@ AssetParallaxResult ApplyAssetParallaxEx(AssetMaterialParameters material, float
     }
     float2 offset = float2(dot(viewDirection, tangent), dot(viewDirection, bitangent)) *
                     (depthScale / max(facing, 0.1f));
-    uint maxSteps = (uint)clamp(round(material.Parallax.y), 8.0f, 128.0f);
-    uint steps = (uint)ceil(lerp((float)maxSteps, 8.0f, saturate(facing)));
+    // 最深部での視差のずれを画素数に直す（|determinant| = 1 画素あたりの UV 面積）。
+    float pixelsPerUv = rsqrt(abs(determinant));
+    float shiftPixels = length(offset) * pixelsPerUv;
+    // ずれが 1 画素に満たない遠景では、POM を回しても見た目が変わらないので止める。
+    // 境界は深さごとフェードさせ、ON/OFF の切り替わりでポップしないようにする。
+    float pixelFade = smoothstep(0.25f, 1.0f, shiftPixels);
+    if (pixelFade <= 0.0f)
+    {
+        return result;
+    }
+    depthScale *= pixelFade;
+    offset *= pixelFade;
+    shiftPixels *= pixelFade;
+    uint maxSteps = (uint)clamp(round(material.Parallax.y), 8.0f, 1024.0f);
+    uint viewSteps = (uint)ceil(lerp((float)maxSteps, 8.0f, saturate(facing)));
+    // 高さはミップで画素幅にぼけているので、1 ステップ 1 画素より細かく刻んでも結果は変わらない。
+    // 近景（ずれが viewSteps 画素以上）は従来どおり viewSteps、遠方の斜め面だけステップを減らす。
+    uint steps = min(viewSteps, (uint)clamp(ceil(shiftPixels), 8.0f, 1024.0f));
     float layerStep = rcp((float)steps);
     float2 uvStep = offset * layerStep;
     uint heightIndex = (uint)material.Parallax.z;
-    float2 currentUv = uv;
-    float layerDepth = 0.0f;
-    float sampledDepth = 0;
-    float previousDifference = 0;
-    [loop] for (uint step = 0u; step <= steps; ++step)
+    // 層 i（深さ i / steps、UV = uv - uvStep * i）で「高さ - 層の深さ」が初めて 0 以下になる層を探す。
+    // 層 steps では深さ 1 になるので、必ずどこかで交差する。
+    uint hitIndex = steps;
+    float difference = 0.0f;          // 交差した層での差（<= 0）
+    float previousDifference = 0.0f;  // その 1 つ手前の層での差（> 0、層 0 で交差したときは 0）
+    [branch] if (material.Noise[2].Width == 0)
     {
-        sampledDepth = SampleParallaxDepth(material.Noise[2], heightIndex, currentUv, uvDx, uvDy, materialSampler);
-        if (step == steps || layerDepth >= sampledDepth) break;
-        previousDifference = sampledDepth - layerDepth;
-        currentUv -= uvStep;
-        layerDepth += layerStep;
+        // 高さテクスチャ：4 層ずつまとめてフェッチし、サンプルの待ち時間を重ねる。
+        // 範囲外のレーンは層 steps に丸める（必ず交差扱いになり、手前の交差が優先される）。
+        Texture2D heightTexture = LoadMaterialTexture(heightIndex);
+        [loop] for (uint first = 0u; first <= steps; first += 4u)
+        {
+            float4 layer = min(float4(first, first + 1u, first + 2u, first + 3u), (float)steps);
+            float4 laneDifference;
+            [unroll] for (uint lane = 0u; lane < 4u; ++lane)
+            {
+                laneDifference[lane] =
+                    SampleParallaxDepthTexture(heightTexture, uv - uvStep * layer[lane], uvDx, uvDy, materialSampler) -
+                    layer[lane] * layerStep;
+            }
+            bool4 crossed = laneDifference <= 0.0f;
+            if (any(crossed))
+            {
+                uint hitLane = crossed.x ? 0u : (crossed.y ? 1u : (crossed.z ? 2u : 3u));
+                hitIndex = first + hitLane;
+                difference = laneDifference[hitLane];
+                previousDifference = hitLane == 0u ? previousDifference : laneDifference[hitLane - 1u];
+                break;
+            }
+            previousDifference = laneDifference.w;
+        }
     }
-    float difference = sampledDepth - layerDepth;
-    float interval = previousDifference - difference;
-    float previousWeight = interval > 1e-6f ? saturate(-difference / interval) : 0.0f;
-    result.Uv = currentUv + uvStep * previousWeight;
-    result.HitDepth = saturate(layerDepth - layerStep * previousWeight);
+    else
+    {
+        // ノイズ：評価器が大きいので呼び出し箇所は 1 つに保つ。
+        [loop] for (uint layerIndex = 0u; layerIndex <= steps; ++layerIndex)
+        {
+            float layerDifference = SampleParallaxDepth(material.Noise[2], heightIndex, uv - uvStep * (float)layerIndex,
+                                                        uvDx, uvDy, materialSampler) -
+                                    (float)layerIndex * layerStep;
+            if (layerDifference <= 0.0f || layerIndex == steps)
+            {
+                hitIndex = layerIndex;
+                difference = layerDifference;
+                break;
+            }
+            previousDifference = layerDifference;
+        }
+    }
+    float hitLayer = (float)hitIndex;
+    if (hitIndex > 0u)
+    {
+        // 粗い探索で交差した区間だけを 8 分割して再探索する（Contact Refinement）。
+        // 急な高さ変化を粗い区間の両端だけで補間すると、低 Steps・深い凹凸で層が見える。
+        // 奥側の端点は既に読んであるので、追加サンプルは最大 7 回で済む。
+        const uint refinementSteps = 8u;
+        const float refinementStep = 1.0f / (float)refinementSteps;
+        float intervalStart = (float)(hitIndex - 1u);
+        [loop] for (uint refinement = 1u; refinement < refinementSteps; ++refinement)
+        {
+            float candidateLayer = intervalStart + (float)refinement * refinementStep;
+            float candidateDifference =
+                SampleParallaxDepth(material.Noise[2], heightIndex, uv - uvStep * candidateLayer,
+                                    uvDx, uvDy, materialSampler) - candidateLayer * layerStep;
+            if (candidateDifference <= 0.0f)
+            {
+                hitLayer = candidateLayer;
+                difference = candidateDifference;
+                break;
+            }
+            previousDifference = candidateDifference;
+        }
+        float interval = previousDifference - difference;
+        float previousWeight = interval > 1e-6f ? saturate(-difference / interval) : 0.0f;
+        hitLayer -= refinementStep * previousWeight;
+    }
+    result.Uv = uv - uvStep * hitLayer;
+    result.HitDepth = saturate(hitLayer * layerStep);
     result.DepthScale = depthScale;
     result.Facing = facing;
     result.WorldPerUv = worldPerUv;
@@ -177,6 +262,7 @@ AssetParallaxResult ApplyAssetParallaxEx(AssetMaterialParameters material, float
     result.HeightIndex = heightIndex;
     result.HeightNoise = material.Noise[2];
     result.MaxSteps = maxSteps;
+    result.PixelsPerUv = pixelsPerUv;
     result.Active = true;
     return result;
 }
@@ -233,23 +319,61 @@ float AssetParallaxSelfShadow(AssetParallaxResult pom, float3 lightDirection, Sa
     }
     // 深さ 1 上るごとの UV 移動量。寝た光で発散しないよう z を下限で抑える。
     float2 uvPerDepth = lightTS.xy / max(lightTS.z, 0.05f) * pom.DepthScale;
-    uint steps = (uint)clamp(round(pom.MaxSteps * 0.5f), 6.0f, 32.0f);
     // 交差補間で求めた深さは実際の高さより奥に入ることがある。
     // 同じ UV の高さへ戻してから光をたどり、自分自身を遮蔽物として数えない。
-    float startDepth = SampleParallaxDepth(pom.HeightNoise, pom.HeightIndex, pom.Uv, pom.UvDx, pom.UvDy, materialSampler);
     const float depthBias = 0.002f;
-    float shadow = 0.0f;
-    [loop] for (uint i = 1u; i <= steps; ++i)
+    bool heightTextureSource = pom.HeightNoise.Width == 0;
+    float startDepth = SampleParallaxDepth(pom.HeightNoise, pom.HeightIndex, pom.Uv, pom.UvDx, pom.UvDy, materialSampler);
+    // 遮蔽量は (光線の深さ - 面の深さ - バイアス) で、光線の深さは startDepth 以下。
+    // 上面付近では面の深さ >= 0 なので必ず 0 以下になり、遮蔽は起きない。
+    if (startDepth <= depthBias)
     {
-        float fraction = (float)i / (float)steps;
-        float rayDepth = startDepth * (1.0f - fraction);
-        float2 sampleUv = pom.Uv + uvPerDepth * (startDepth - rayDepth);
-        float surfaceDepth = SampleParallaxDepth(pom.HeightNoise, pom.HeightIndex, sampleUv, pom.UvDx, pom.UvDy, materialSampler);
-        // 面が光線より上（深さが浅い）なら遮蔽。ヒット点に近い遮蔽ほど影を濃くする。
-        shadow = max(shadow, (rayDepth - surfaceDepth - depthBias) * (1.0f - fraction));
-        if (rayDepth <= 0.0f)
+        return 1.0f;
+    }
+    // ステップ数：従来の上限（MaxSteps / 2、6〜32）を、光方向にたどる画面上の長さ（1 ステップ 1 画素）で抑える。
+    float maxShadowSteps = clamp(round(pom.MaxSteps * 0.5f), 6.0f, 32.0f);
+    float shadowShiftPixels = length(uvPerDepth) * startDepth * pom.PixelsPerUv;
+    uint steps = (uint)clamp(ceil(shadowShiftPixels), 6.0f, maxShadowSteps);
+    float stepRcp = rcp((float)steps);
+    // saturate(shadow * 8) が 1 になる値。これを超えたら以降のサンプルは結果を変えないので打ち切る。
+    const float fullShadow = 0.125f;
+    float shadow = 0.0f;
+    [branch] if (heightTextureSource)
+    {
+        // 高さテクスチャ：4 サンプルずつまとめてフェッチする。範囲外のレーンは fraction = 1（重み 0）に丸める。
+        Texture2D heightTexture = LoadMaterialTexture(pom.HeightIndex);
+        [loop] for (uint first = 1u; first <= steps; first += 4u)
         {
-            break;
+            [unroll] for (uint lane = 0u; lane < 4u; ++lane)
+            {
+                float fraction = min((float)(first + lane) * stepRcp, 1.0f);
+                float rayDepth = startDepth * (1.0f - fraction);
+                float2 sampleUv = pom.Uv + uvPerDepth * (startDepth - rayDepth);
+                float surfaceDepth =
+                    SampleParallaxDepthTexture(heightTexture, sampleUv, pom.UvDx, pom.UvDy, materialSampler);
+                // 面が光線より上（深さが浅い）なら遮蔽。ヒット点に近い遮蔽ほど影を濃くする。
+                shadow = max(shadow, (rayDepth - surfaceDepth - depthBias) * (1.0f - fraction));
+            }
+            if (shadow >= fullShadow)
+            {
+                break;
+            }
+        }
+    }
+    else
+    {
+        [loop] for (uint i = 1u; i <= steps; ++i)
+        {
+            float fraction = (float)i * stepRcp;
+            float rayDepth = startDepth * (1.0f - fraction);
+            float2 sampleUv = pom.Uv + uvPerDepth * (startDepth - rayDepth);
+            float surfaceDepth =
+                SampleParallaxDepth(pom.HeightNoise, pom.HeightIndex, sampleUv, pom.UvDx, pom.UvDy, materialSampler);
+            shadow = max(shadow, (rayDepth - surfaceDepth - depthBias) * (1.0f - fraction));
+            if (shadow >= fullShadow)
+            {
+                break;
+            }
         }
     }
     return 1.0f - saturate(shadow * 8.0f);
@@ -308,21 +432,30 @@ float3 ApplyAssetHeightNormal(AssetMaterialParameters material, float3 normal, f
     ProceduralTexture::Parameters noise = material.Noise[2];
     if (normalNoise) noise = material.Noise[1];
     uint heightIndex = (uint)material.Parallax.z;
-    float2 texel = 0.00001.xx;
-    if (noise.Width == 0)
-    {
-        uint width, height, levels;
-        LoadMaterialTexture(heightIndex).GetDimensions(0u, width, height, levels);
-        texel = 1.0f / float2(max(width, 1u), max(height, 1u));
-    }
     float2 footprint = float2(max(abs(uvDx.x), abs(uvDy.x)), max(abs(uvDx.y), abs(uvDy.y)));
-    float2 e = max(texel, footprint);
+    float2 e;
     float4 samples = 0;
-    // A single call site avoids duplicating the entire noise evaluator four times in DXIL.
-    [loop] for (uint i = 0; i < 4; ++i)
+    [branch] if (noise.Width == 0)
     {
-        float2 offset = i < 2 ? float2((i == 0 ? -1 : 1) * e.x, 0) : float2(0, (i == 2 ? -1 : 1) * e.y);
-        samples[i] = 1.0f - SampleParallaxDepth(noise, heightIndex, materialUv + offset, uvDx, uvDy, materialSampler);
+        // 高さテクスチャ：4 サンプルを展開して同時にフェッチする（テクスチャ読み取りだけなので DXIL は小さい）。
+        Texture2D heightTexture = LoadMaterialTexture(heightIndex);
+        uint width, height, levels;
+        heightTexture.GetDimensions(0u, width, height, levels);
+        e = max(1.0f / float2(max(width, 1u), max(height, 1u)), footprint);
+        samples.x = 1.0f - SampleParallaxDepthTexture(heightTexture, materialUv - float2(e.x, 0.0f), uvDx, uvDy, materialSampler);
+        samples.y = 1.0f - SampleParallaxDepthTexture(heightTexture, materialUv + float2(e.x, 0.0f), uvDx, uvDy, materialSampler);
+        samples.z = 1.0f - SampleParallaxDepthTexture(heightTexture, materialUv - float2(0.0f, e.y), uvDx, uvDy, materialSampler);
+        samples.w = 1.0f - SampleParallaxDepthTexture(heightTexture, materialUv + float2(0.0f, e.y), uvDx, uvDy, materialSampler);
+    }
+    else
+    {
+        e = max(0.00001.xx, footprint);
+        // A single call site avoids duplicating the entire noise evaluator four times in DXIL.
+        [loop] for (uint i = 0; i < 4; ++i)
+        {
+            float2 offset = i < 2 ? float2((i == 0 ? -1 : 1) * e.x, 0) : float2(0, (i == 2 ? -1 : 1) * e.y);
+            samples[i] = 1.0f - SampleParallaxDepth(noise, heightIndex, materialUv + offset, uvDx, uvDy, materialSampler);
+        }
     }
     float scale = normalNoise ? noise.NormalStrength * material.Surface.x / 256.0f : clamp(material.Parallax.x, 0.0f, 0.2f);
     float2 slope = float2(samples.y - samples.x, samples.w - samples.z) / (2.0f * e) * scale;
@@ -405,5 +538,3 @@ float3 ScaleAssetNormal(float3 tangentNormal, AssetMaterialParameters material)
     return normalize(tangentNormal);
 }
 #endif
-
-

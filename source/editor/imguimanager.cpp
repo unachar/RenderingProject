@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "envflags.h"
 #include "thumbnailvalidation.h"
 #include "materialmanager.h"
@@ -39,6 +39,7 @@
 #include "lightingresources.h"
 #include "renderconfiguration.h"
 #include "graphicslog.h"
+#include "gbufferpreview.h"
 
 #include "editorwidgets.h"
 #include <imgui_internal.h> // DockBuilder は同梱の docking ブランチで提供される。
@@ -157,6 +158,14 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
     {
         return false;
     }
+    if (!GBufferPreview::Initialize(device, rtvFormat, initInfo.DSVFormat))
+    {
+        WriteGraphicsLog("ERROR: GBuffer preview initialization failed\n");
+    }
+    else
+    {
+        initInfo.SrvDescriptorAllocFn(&initInfo, &GBufferPreview::BloomCpu, &GBufferPreview::BloomGpu);
+    }
     WriteGraphicsLog("ImGui: initialization complete\n");
 
     return true;
@@ -164,6 +173,7 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
 
 void ImGuiManager::Uninit()
 {
+    GBufferPreview::Shutdown();
     ImGui_ImplDX12_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
@@ -173,6 +183,7 @@ void ImGuiManager::Update()
 {
     if (IsFeatureSmokeTestEnabled())
     {
+        m_ShowGBufferWindow = true;
         m_ShowProceduralWindow = true;
         m_ShowRaytracingWindow = true;
         m_ShowAtmosphereWindow = true;
@@ -782,11 +793,11 @@ bool ImGuiManager::HandleWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
     return ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam) != 0;
 }
 
-void ImGuiManager::HandleDroppedFile(const char* path)
+void ImGuiManager::HandleDroppedFile(const char* path, bool hasPoint, float x, float y)
 {
     if (path && path[0] != '\0')
     {
-        m_DroppedFiles.push_back(path);
+        m_DroppedFiles.push_back({path, hasPoint, ImVec2(x, y)});
     }
 }
 
@@ -960,3 +971,4 @@ void ImGuiManager::StyleModernSlim()
         style.FrameBorderSize = 0.0f;
     }
 }
+

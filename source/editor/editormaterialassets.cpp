@@ -298,7 +298,8 @@ void ImGuiManager::DrawMaterialEditorWindow()
     {
         changed |= DrawTextureSlot("Height (POM)", editing.Textures[5], true);
         changed |= ImGui::SliderFloat("Parallax Depth", &editing.ParallaxDepth, 0.0f, 0.2f, "%.3f");
-        changed |= ImGui::SliderFloat("Parallax Steps", &editing.ParallaxSteps, 8, 128, "%.0f");
+        changed |= ImGui::SliderFloat("Parallax Steps", &editing.ParallaxSteps, 8, 1024, "%.0f",
+                                      ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
         ImGui::TextDisabled("Height: white = top, black = recessed. Depth 0 disables POM.");
         ImGui::TextDisabled("Supported on opaque PBR materials.");
         if (editing.Textures[5] != 0)
@@ -645,4 +646,3 @@ void ImGuiManager::DrawMaterialDropTarget()
         ImGui::EndPopup();
     }
 }
-
