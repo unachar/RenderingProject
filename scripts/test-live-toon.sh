@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 validation_dir="$(mktemp -d)"
 trap 'rm -rf "$validation_dir"' EXIT
-for test in toon_lighting toon_outline_projection skinning_work; do
+for test in stage_lighting toon_lighting toon_outline_projection skinning_work; do
     "${CXX:-g++}" -std=c++17 -Wall -Wextra -Werror -I source "tests/${test}_tests.cpp" -o "$validation_dir/$test"
     "$validation_dir/$test"
 done

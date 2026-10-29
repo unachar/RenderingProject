@@ -1084,7 +1084,7 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
         authoredLightColor *= SampleIesProfile(iesProfile, lightDirection.xyz, worldPos - lightPositionType.xyz);
     }
     // M7：テクスチャ付き矩形ライト。非 PBR の陰影・平均ライトにはテクスチャの平均色を使う
-    const uint lightTexture = (cbIndex < 0 && lightPositionType.w > 3.5f) ? (uint)round(lightExtra.w) : 0u;
+    const uint lightTexture = (cbIndex < 0 && abs(lightPositionType.w - 4.0f) < 0.5f) ? (uint)round(lightExtra.w) : 0u;
     float3 textureMean = 1.0f;
     if (lightTexture != 0u)
     {
@@ -1106,7 +1106,8 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
     if (evaluatePbr)
     {
 #ifdef SURFACE_PBR_LUTS
-        const bool rectLight = !decalLight && lightPositionType.w > 3.5f && QualityFlags.y > 0.5f;
+        const bool rectLight = lightExtra.z >= 0.0f && !decalLight &&
+                               abs(lightPositionType.w - 4.0f) < 0.5f && QualityFlags.y > 0.5f;
 #else
         const bool rectLight = false;
 #endif

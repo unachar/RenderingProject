@@ -38,7 +38,7 @@ float3 GlassEvaluateWorldLight(float3 P, float3 N, float3 V, float3 color, float
     float3 L;
     float attenuation, volume;
     ResolveSingleLightCommon(P, directionRange, positionType, extra, L, attenuation, volume);
-    const bool rectangle = positionType.w > 3.5f;
+    const bool rectangle = abs(positionType.w - 4.0f) < 0.5f && extra.z >= 0.0f;
     if (rectangle)
     {
         float3 toCenter = positionType.xyz - P;

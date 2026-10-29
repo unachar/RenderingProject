@@ -1,5 +1,6 @@
 #include "noise.hlsl"
 #include "CameraProjection.hlsli"
+#include "StageLighting.hlsli"
 
 float3 ReconstructPostProcessCameraOriginCommon(float3 worldPosition, float3 cameraPosition);
 
@@ -836,7 +837,7 @@ void ResolveSingleLightCommon(float3 worldPos, float4 lightDirectionData, float4
 
     if (lightType == 0)
     {
-        float density = max(lightExtraData.z, 0.0f);
+        float density = StageVolumeDensity(lightExtraData.z);
         volumeScatter = density * 0.025f;
     }
 
@@ -846,10 +847,10 @@ void ResolveSingleLightCommon(float3 worldPos, float4 lightDirectionData, float4
         float distanceToLight = length(toLight);
         lightDir = SafeNormalizeCommon(toLight, lightDir);
         float rangeFade = saturate(1.0f - distanceToLight / lightRange);
-        attenuation = rangeFade * rangeFade;
+        attenuation = StageRangeAttenuation(distanceToLight, lightRange, lightExtraData.z);
         float3 fromLight = SafeNormalizeCommon(worldPos - lightPositionTypeData.xyz, float3(0.0f, -1.0f, 0.0f));
         float3 spotForward = SafeNormalizeCommon(lightDirectionData.xyz, fromLight);
-        float density = max(lightExtraData.z, 0.0f);
+        float density = StageVolumeDensity(lightExtraData.z);
 
         if (lightType == 1)
         {
@@ -912,9 +913,19 @@ void ResolveSingleLightCommon(float3 worldPos, float4 lightDirectionData, float4
 
             float shapeMask = lerp(coneMask, cylinderMask, volumeShape);
 
-            attenuation = rangeFade * rangeFade * shapeMask;
+            attenuation = StageRangeAttenuation(distanceToLight, lightRange, lightExtraData.z) * shapeMask;
             volumeScatter = shapeMask * density * 0.55f;
         }
+    }
+
+    if (lightType == 5)
+    {
+        float3 offset = worldPos - lightPositionTypeData.xyz;
+        float axial = StageCapsuleAxial(dot(offset, lightDir), lightExtraData.x);
+        float3 toSource = lightDir * axial - offset;
+        float distanceToSource = max(length(toSource) - max(lightExtraData.y, 0.0f), 0.0f);
+        lightDir = SafeNormalizeCommon(toSource, lightDir);
+        attenuation = StageRangeAttenuation(distanceToSource, lightRange, lightExtraData.z);
     }
 
     if (lightType == 4)
@@ -924,12 +935,12 @@ void ResolveSingleLightCommon(float3 worldPos, float4 lightDirectionData, float4
         float3 toLight = lightPositionTypeData.xyz - worldPos;
         float distanceToLight = length(toLight);
         lightDir = SafeNormalizeCommon(toLight, lightDir);
-        float rangeFade = saturate(1.0f - distanceToLight / lightRange);
         float3 emitNormal = SafeNormalizeCommon(lightDirectionData.xyz, float3(0.0f, -1.0f, 0.0f));
         float emitterCosine = saturate(dot(-lightDir, emitNormal));
         float area = max(lightExtraData.x, 0.01f) * max(lightExtraData.y, 0.01f);
         // 小さな光源は、総出力が同じ点光源として振る舞う。
-        attenuation = rangeFade * rangeFade * emitterCosine * saturate(area);
+        attenuation = StageRangeAttenuation(distanceToLight, lightRange, lightExtraData.z) * emitterCosine *
+                      (lightExtraData.z < 0.0f ? 1.0f : saturate(area));
         volumeScatter = 0.0f;
     }
 }

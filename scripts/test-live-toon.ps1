@@ -8,7 +8,7 @@ try {
     $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
     if (-not $installation) { throw 'Visual Studio C++ tools are required.' }
     $developer = Join-Path $installation 'Common7/Tools/VsDevCmd.bat'
-    foreach ($test in @('toon_lighting', 'toon_outline_projection', 'skinning_work')) {
+    foreach ($test in @('stage_lighting', 'toon_lighting', 'toon_outline_projection', 'skinning_work')) {
         # Keep assertions active: these regression executables intentionally use assert.
         $command = 'cl.exe /nologo /utf-8 /EHsc /W4 /std:c++17 /O2 /I source tests/{0}_tests.cpp /Fe:bin/validation/live-toon/{0}.exe /Fo:bin/validation/live-toon/{0}.obj' -f $test
         & $env:ComSpec /d /c ('"{0}" -no_logo -arch=amd64 -host_arch=amd64 && {1}' -f $developer, $command)

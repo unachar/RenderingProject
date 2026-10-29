@@ -1168,7 +1168,8 @@ class AdvancedEffects final
                 break;
             }
             const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-            if (!light.IsActive || light.RenderMode != LightRenderMode::Physical || light.Intensity <= 0.0f)
+            if (!light.IsActive || light.Type == LightType::Capsule ||
+                light.RenderMode != LightRenderMode::Physical || light.Intensity <= 0.0f)
             {
                 continue;
             }
@@ -1184,7 +1185,7 @@ class AdvancedEffects final
                                   static_cast<float>(light.Type)};
             entry.DirectionRange = {direction.x, direction.y, direction.z, light.Range};
             entry.Color = {light.Color.x * light.Intensity, light.Color.y * light.Intensity,
-                           light.Color.z * light.Intensity, (std::max)(light.VolumeDensity, 0.0f)};
+                           light.Color.z * light.Intensity, PackLightExtra(light).z};
             entry.Extras = {cosf(XMConvertToRadians(light.InnerAngle)), cosf(XMConvertToRadians(light.OuterAngle)),
                             static_cast<float>(light.CastShadow),
                             !suns.empty() && entity == *suns.begin() && light.Type == LightType::Directional ? 1.0f

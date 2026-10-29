@@ -225,6 +225,19 @@ static void AppendLightLines(vector<DebugVertex>& vertices, const TransformCompo
     }
 
     const float range = max(light.Range, 0.1f);
+    if (light.Type == LightType::Capsule)
+    {
+        const XMFLOAT3 extent = Scale3(direction, max(light.CapsuleLength, 0.0f) * 0.5f);
+        const XMFLOAT3 a = Add3(position, extent);
+        const XMFLOAT3 b = Add3(position, Scale3(extent, -1.0f));
+        AppendLine(vertices, a, b, color);
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            AppendCircle(vertices, a, range + light.CapsuleRadius, axis, color);
+            AppendCircle(vertices, b, range + light.CapsuleRadius, axis, color);
+        }
+        return;
+    }
     if (light.Type == LightType::Rect)
     {
         // シェーダーと同じ基底（SurfaceLighting.hlsli の RectLightBasis）。

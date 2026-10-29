@@ -26,6 +26,7 @@ Light::CreateDesc Light::MakeDefaultDesc(LightType type)
 {
     CreateDesc desc{};
     desc.Type = type;
+    desc.PhysicallyBased = type != LightType::Capsule;
     desc.Name = string(GetTypeName(type)) + " Light";
     if ((type == LightType::Volume))
     {
@@ -88,6 +89,9 @@ EntityID Light::Create(const CreateDesc& desc)
     light.Direction = NormalizeDirection(desc.Direction);
     light.Color = desc.Color;
     light.Intensity = max(0.0f, desc.Intensity);
+    light.PhysicallyBased = desc.PhysicallyBased;
+    light.CapsuleLength = max(desc.CapsuleLength, 0.0f);
+    light.CapsuleRadius = max(desc.CapsuleRadius, 0.0f);
     light.Range = max(0.01f, desc.Range);
     light.InnerAngle = max(0.1f, min(89.0f, desc.InnerAngle));
     light.OuterAngle = max(light.InnerAngle + 0.1f, min(89.5f, desc.OuterAngle));
@@ -98,7 +102,7 @@ EntityID Light::Create(const CreateDesc& desc)
     light.AffectsOpaque = desc.AffectsOpaque;
     light.AffectsForward = desc.AffectsForward;
     light.AffectsVolumetrics = desc.AffectsVolumetrics;
-    light.CastShadow = desc.CastShadow;
+    light.CastShadow = desc.CastShadow && desc.Type != LightType::Capsule;
     light.Priority = desc.Priority;
     light.RenderMode = desc.RenderMode;
 
@@ -124,6 +128,8 @@ const char* Light::GetTypeName(LightType type)
             return "Volume";
         case LightType::Rect:
             return "Rect";
+        case LightType::Capsule:
+            return "Capsule";
         default:
             return "Light";
     }

@@ -428,6 +428,9 @@ struct LightComponent
     XMFLOAT3 Position = {0.0f, 0.0f, 0.0f};
     XMFLOAT4 Color = {1.0f, 1.0f, 1.0f, 1.0f};
     float Intensity = 1.0f;
+    bool PhysicallyBased = true;
+    float CapsuleLength = 2.0f;
+    float CapsuleRadius = 0.1f;
     float Range = 1.0f;
     XMFLOAT3 Direction = {0.0f, 1.0f, -1.0f};
     float OuterAngle = 0.0f;
@@ -452,6 +455,24 @@ struct LightComponent
 
     LightType Type = LightType::Directional;
 };
+
+// Preserve legacy buffer layouts: stage attenuation is encoded in the density sign.
+inline XMFLOAT4 PackLightExtra(const LightComponent& light)
+{
+    const float density = light.PhysicallyBased ? (std::max)(light.VolumeDensity, 0.0f)
+                                              : -1.0f - (std::max)(light.VolumeDensity, 0.0f);
+    if (light.Type == LightType::Capsule)
+        return {(std::max)(light.CapsuleLength, 0.0f), (std::max)(light.CapsuleRadius, 0.0f), density, 0.0f};
+    if (light.Type == LightType::Rect)
+        return {(std::max)(light.AreaWidth, 0.01f), (std::max)(light.AreaHeight, 0.01f), density, 0.0f};
+    return {cosf(light.InnerAngle * XM_PI / 180.0f), cosf(light.OuterAngle * XM_PI / 180.0f),
+            density, static_cast<float>(light.VolumeShape)};
+}
+inline float LightInfluenceRadius(const LightComponent& light)
+{
+    return (std::max)(light.Range, 0.01f) + (light.Type == LightType::Capsule
+        ? (std::max)(light.CapsuleLength, 0.0f) * 0.5f + (std::max)(light.CapsuleRadius, 0.0f) : 0.0f);
+}
 
 struct SunComponent
 {

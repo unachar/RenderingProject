@@ -264,7 +264,7 @@ namespace
             for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
             {
                 const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
-                if (!light.IsActive || light.RenderMode != LightRenderMode::Physical)
+                if (!light.IsActive || light.Type == LightType::Capsule || light.RenderMode != LightRenderMode::Physical)
                 {
                     continue;
                 }
@@ -314,7 +314,7 @@ namespace
             {
                 const auto& culling = RenderCulling::GetSettings();
                 skipShadowMap = (culling.SkipRayTracedShadowMaps && rayTracedShadows) ||
-                                RenderCulling::LightWeight(transform.Position, light.Range, false) <= 0.0f ||
+                                RenderCulling::LightWeight(transform.Position, LightInfluenceRadius(light), false) <= 0.0f ||
                                 (culling.LightOcclusionCulling && MegaLights::IsLightOccluded(entity));
                 if (skipShadowMap)
                 {
@@ -1520,10 +1520,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
         constants.LightColor = lightColor;
         constants.LightPositionType = XMFLOAT4(runtimeLight.Position.x, runtimeLight.Position.y,
                                                runtimeLight.Position.z, static_cast<float>(lightComponent.Type));
-        const float innerRad = lightComponent.InnerAngle * XM_PI / 180.0f;
-        const float outerRad = lightComponent.OuterAngle * XM_PI / 180.0f;
-        constants.LightExtra = XMFLOAT4(cosf(innerRad), cosf(outerRad), lightComponent.VolumeDensity,
-                                        static_cast<float>(lightComponent.VolumeShape));
+        constants.LightExtra = PackLightExtra(lightComponent);
     }
     else
     {
@@ -1576,7 +1573,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
 
         XMFLOAT3 viewPosition{};
         XMStoreFloat3(&viewPosition, XMVector3TransformCoord(XMLoadFloat3(&position), cameraView));
-        const float radius = max(light.Range, 0.01f);
+        const float radius = LightInfluenceRadius(light);
         if (viewPosition.z + radius <= 0.1f)
         {
             return false;
@@ -1647,7 +1644,8 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
         const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
         // 負荷削減：ライトの視錐台カリング（球 × 6 平面）と距離・画面サイズの LOD（境界でフェード）
         const float cullWeight =
-            RenderCulling::LightWeight(transform.Position, light.Range, light.Type == LightType::Directional);
+            RenderCulling::LightWeight(transform.Position, LightInfluenceRadius(light),
+                                      light.Type == LightType::Directional);
         if (cullWeight <= 0.0f)
         {
             continue;
@@ -1729,19 +1727,14 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
                     continue;
                 }
                 const XMFLOAT3 direction = NormalizeFloat3(light.Direction, {0.0f, 1.0f, -1.0f});
-                const float innerRad = light.InnerAngle * XM_PI / 180.0f;
-                const float outerRad = light.OuterAngle * XM_PI / 180.0f;
+
                 MegaLights::GpuLight gpuLight{};
                 gpuLight.PositionType = XMFLOAT4(candidate.Position.x, candidate.Position.y, candidate.Position.z,
                                                  static_cast<float>(light.Type));
                 gpuLight.DirectionRange = XMFLOAT4(direction.x, direction.y, direction.z, light.Range);
                 gpuLight.Color =
                     XMFLOAT4(light.Color.x, light.Color.y, light.Color.z, deferredLightStrength * light.Intensity);
-                gpuLight.Extra =
-                    light.Type == LightType::Rect
-                        ? XMFLOAT4(max(light.AreaWidth, 0.01f), max(light.AreaHeight, 0.01f), light.VolumeDensity, 0.0f)
-                        : XMFLOAT4(cosf(innerRad), cosf(outerRad), light.VolumeDensity,
-                                   static_cast<float>(light.VolumeShape));
+                gpuLight.Extra = PackLightExtra(light);
                 const float sourceRadius =
                     light.Type == LightType::Rect ? 0.0f : clamp(light.SourceRadius, 0.0f, max(light.Range, 0.0f));
                 // x：bit0 影を落とす / bit1 Forward（半透明）に影響（M7）
@@ -1842,8 +1835,6 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
         const XMFLOAT3 direction = NormalizeFloat3(light.Direction, {0.0f, 1.0f, -1.0f});
         XMFLOAT4 color = light.Color;
         color.w = deferredLightStrength * light.Intensity;
-        const float innerRad = light.InnerAngle * XM_PI / 180.0f;
-        const float outerRad = light.OuterAngle * XM_PI / 180.0f;
 
         constants.LightDirections[lightIndex] = XMFLOAT4(direction.x, direction.y, direction.z, light.Range);
         constants.LightColors[lightIndex] = color;
@@ -1856,11 +1847,9 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
         constants.LightPositionTypes[lightIndex] =
             XMFLOAT4(candidate.Position.x, candidate.Position.y, candidate.Position.z, static_cast<float>(light.Type));
         constants.LightIesProfiles[lightIndex] = GetIesProfileParameters(light);
-        constants.LightExtras[lightIndex] =
-            light.Type == LightType::Rect
-                ? XMFLOAT4(max(light.AreaWidth, 0.01f), max(light.AreaHeight, 0.01f), light.VolumeDensity, 0.0f)
-                : XMFLOAT4(cosf(innerRad), cosf(outerRad), light.VolumeDensity, static_cast<float>(light.VolumeShape));
-        const bool enableVolumetrics = light.RenderMode == LightRenderMode::Physical && light.AffectsVolumetrics &&
+        constants.LightExtras[lightIndex] = PackLightExtra(light);
+        const bool enableVolumetrics = light.Type != LightType::Capsule &&
+                                       light.RenderMode == LightRenderMode::Physical && light.AffectsVolumetrics &&
                                        light.VolumeDensity > 0.0001f && enabledVolumetricLights < volumetricLightBudget;
         if (enableVolumetrics)
         {
@@ -1915,7 +1904,8 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
                      static_cast<float>(light.RenderMode));
 
         constants.LightShadowData[lightIndex] = XMFLOAT4(-1.0f, 0.0f, 0.0f, 0.0f);
-        Raytracing::SetLightShadowFlag(lightIndex, light.CastShadow && light.RenderMode == LightRenderMode::Physical);
+        Raytracing::SetLightShadowFlag(lightIndex, light.CastShadow && light.Type != LightType::Capsule &&
+                                                     light.RenderMode == LightRenderMode::Physical);
         const int shadowIndex = FindShadowLightIndex(candidate.Entity);
         if (shadowIndex >= 0)
         {

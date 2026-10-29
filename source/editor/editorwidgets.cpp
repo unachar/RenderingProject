@@ -578,6 +578,9 @@ namespace EditorWidgets
             case LightType::Volume:
                 typeName = "Volume";
                 break;
+            case LightType::Capsule:
+                typeName = "Capsule";
+                break;
             case LightType::Rect:
                 typeName = "Rect Area";
                 break;

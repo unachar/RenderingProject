@@ -1,3 +1,4 @@
+#include "StageLighting.hlsli"
 // =============================================================================================
 // 高度な画面効果（AdvancedEffectsCS.hlsl）
 // フロクセルのボリュームフォグ（注入・積分・合成）、ヒストグラムによる自動露出、
@@ -177,8 +178,7 @@ float3 MegaLightFogContribution(MegaLightData light, float3 position, float3 vie
     float3 offset = light.PositionType.xyz - position;
     lightDistance = length(offset);
     toLight = offset / max(lightDistance, 0.0001f);
-    float fade = saturate(1 - lightDistance / max(light.DirectionRange.w, 0.01f));
-    float attenuation = fade * fade;
+    float attenuation = StageRangeAttenuation(lightDistance, light.DirectionRange.w, light.Extra.z);
     if ((int)round(light.PositionType.w) == 2)
     {
         float spotCosine = dot(-toLight, normalize(light.DirectionRange.xyz));
@@ -192,7 +192,7 @@ float3 MegaLightFogContribution(MegaLightData light, float3 position, float3 vie
     float3 phase =
         scatterAlbedo * (0.0596831f * (1 + cosine * cosine)) + mieAlbedo * HenyeyGreenstein(cosine, FogMedium1.z);
     // FogInject の従来ライトと同じ式（大気の媒質 + ライト自身のボリューム密度）
-    float3 response = phase * globalDensity * FogMedium0.w + 0.16f * max(light.Extra.z, 0.0f) * 0.0795775f;
+    float3 response = phase * globalDensity * FogMedium0.w + 0.16f * StageVolumeDensity(light.Extra.z) * 0.0795775f;
     float ies = SampleIesProfile(light.IesProfile, light.DirectionRange.xyz, position - light.PositionType.xyz);
     return response * max(light.Color.rgb, 0.0f) * max(light.Flags.w, 0.0f) * attenuation * ies;
 }
@@ -317,8 +317,7 @@ float3 MegaLightsFogScattering(uint3 id, float3 position, float3 viewToCamera, f
             float3 offset = light.PositionType.xyz - position;
             lightDistance = length(offset);
             toLight = offset / max(lightDistance, 0.0001f);
-            float fade = saturate(1 - lightDistance / max(light.DirectionRange.w, 0.01f));
-            attenuation = fade * fade;
+            attenuation = StageRangeAttenuation(lightDistance, light.DirectionRange.w, light.Color.w);
             if (type == 2 || type == 3)
             {
                 float spotCosine = dot(-toLight, normalize(light.DirectionRange.xyz));
@@ -335,7 +334,8 @@ float3 MegaLightsFogScattering(uint3 id, float3 position, float3 viewToCamera, f
             scatterAlbedo * (0.0596831f * (1 + cosine * cosine)) + mieAlbedo * HenyeyGreenstein(cosine, FogMedium1.z);
         // 大気媒質にライト固有の設定済みボリューム密度を加える（光芒）。
         float3 response =
-            phase * globalDensity * FogMedium0.w + (type == 0 ? 0.025f : 0.16f) * light.Color.w * 0.0795775f;
+            phase * globalDensity * FogMedium0.w + (type == 0 ? 0.025f : 0.16f) *
+                StageVolumeDensity(light.Color.w) * 0.0795775f;
         float3 incident =
             light.Color.rgb * attenuation *
             SampleIesProfile(light.IesProfile, light.DirectionRange.xyz, position - light.PositionType.xyz);

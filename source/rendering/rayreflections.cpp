@@ -983,7 +983,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
                 const auto& position = ComponentManager::GetComponentUnchecked<TransformComponent>(entity).Position;
                 key = (std::max)(XMVectorGetX(
                                      XMVector3Length(XMVectorSubtract(XMLoadFloat3(&position), cameraPosition))) -
-                                     light.Range,
+                                     LightInfluenceRadius(light),
                                  0.0f);
             }
             reflectionCandidates.emplace_back(key, entity);
@@ -1009,9 +1009,8 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         entry.Color = {light.Color.x, light.Color.y, light.Color.z, light.Intensity * 1.35f};
         entry.PositionType = {transform.Position.x, transform.Position.y, transform.Position.z,
                               static_cast<float>(light.Type)};
-        entry.Extras = {cosf(XMConvertToRadians(light.InnerAngle)), cosf(XMConvertToRadians(light.OuterAngle)),
-                        light.VolumeDensity, static_cast<float>(light.VolumeShape)};
-        entry.Flags.x = static_cast<UINT>(light.CastShadow);
+        entry.Extras = PackLightExtra(light);
+        entry.Flags.x = static_cast<UINT>(light.CastShadow && light.Type != LightType::Capsule);
         lights.push_back(entry);
     }
     if (!EnsureUpload(frame.Lights, (max)(sizeof(ReflectionLight), lights.size() * sizeof(ReflectionLight))) ||

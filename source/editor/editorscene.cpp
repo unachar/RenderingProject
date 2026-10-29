@@ -512,6 +512,14 @@ void ImGuiManager::DrawHierarchyWindow()
             {
                 m_SelectedEntity = CreateLightEntity(LightType::Point);
             }
+            if (ImGui::MenuItem("Rect Area"))
+            {
+                m_SelectedEntity = CreateLightEntity(LightType::Rect);
+            }
+            if (ImGui::MenuItem("Capsule"))
+            {
+                m_SelectedEntity = CreateLightEntity(LightType::Capsule);
+            }
             if (ImGui::MenuItem("Spot"))
             {
                 m_SelectedEntity = CreateLightEntity(LightType::Spot);
@@ -1352,6 +1360,10 @@ const char* ImGuiManager::GetLightTypeName(LightType type)
             return "Spot";
         case LightType::Volume:
             return "Volume";
+        case LightType::Rect:
+            return "Rect";
+        case LightType::Capsule:
+            return "Capsule";
         default:
             return "Unknown";
     }

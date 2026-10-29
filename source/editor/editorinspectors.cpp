@@ -1121,7 +1121,7 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
     auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
     EntitySnapshot before = CaptureEntity(entity);
     bool changed = false;
-    const char* lightTypes[] = {"Directional", "Point", "Spot", "Volume", "Rect (エリア)"};
+    const char* lightTypes[] = {"Directional", "Point", "Spot", "Volume", "Rect (エリア)", "Capsule"};
     int typeIndex = static_cast<int>(light.Type);
     if (ImGui::Combo("ライトタイプ", &typeIndex, lightTypes, IM_ARRAYSIZE(lightTypes)))
     {
@@ -1133,6 +1133,16 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
 
     changed |= ImGui::Checkbox("有効", &light.IsActive);
     changed |= ImGui::Checkbox("デバッグ描画", &light.DrawDebug);
+    changed |= ImGui::Checkbox("物理ベース", &light.PhysicallyBased);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("オン: 従来の減衰。オフ: 範囲内は一定の強度、末端1mのみ減衰。\n照明経路・影とは独立して切り替えます。");
+    if (light.Type == LightType::Capsule)
+    {
+        changed |= ImGui::DragFloat("カプセル長", &light.CapsuleLength, 0.05f, 0.0f, 100.0f);
+        changed |= ImGui::DragFloat("カプセル半径", &light.CapsuleRadius, 0.01f, 0.0f, 10.0f);
+        light.CastShadow = false;
+        ImGui::TextDisabled("方向を軸とする線光源。影・MegaLightsサンプリングは非対応。");
+    }
     const char* renderModes[] = {"Physical", "Decal (軽量)", "Emission Only"};
     int renderMode = static_cast<int>(light.RenderMode);
     if (ImGui::Combo("照明経路", &renderMode, renderModes, IM_ARRAYSIZE(renderModes)))
@@ -1153,9 +1163,11 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
     }
     changed |= ImGui::Checkbox("不透明に影響", &light.AffectsOpaque);
     changed |= ImGui::Checkbox("Forwardに影響", &light.AffectsForward);
+    ImGui::BeginDisabled(light.Type == LightType::Capsule);
     changed |= ImGui::Checkbox("大気・ボリュームに影響", &light.AffectsVolumetrics);
+    ImGui::EndDisabled();
     changed |= ImGui::DragFloat("ライト優先度", &light.Priority, 0.05f, -10.0f, 10.0f);
-    ImGui::BeginDisabled(light.RenderMode != LightRenderMode::Physical);
+    ImGui::BeginDisabled(light.RenderMode != LightRenderMode::Physical || light.Type == LightType::Capsule);
     changed |= ImGui::Checkbox("影を描画", &light.CastShadow);
     ImGui::EndDisabled();
     if (light.Type == LightType::Point || light.Type == LightType::Spot || light.Type == LightType::Rect)

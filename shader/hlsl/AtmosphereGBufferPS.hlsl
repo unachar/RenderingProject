@@ -303,7 +303,8 @@ float3 IntegrateVolumeLightRay(float3 rayOrigin, float3 rayDirection, float maxD
                                float4x4 lightViewProjection, float4 shadowParams, float shadowLayer, bool hasShadow,
                                Texture2DArray<float> shadowMap, SamplerComparisonState shadowSampler)
 {
-    if ((int)round(lightPositionTypeData.w) != 3 || lightExtraData.z <= 0.0001f || lightColorData.a <= 0.0001f)
+    if ((int)round(lightPositionTypeData.w) != 3 || StageVolumeDensity(lightExtraData.z) <= 0.0001f ||
+        lightColorData.a <= 0.0001f)
     {
         return float3(0.0f, 0.0f, 0.0f);
     }

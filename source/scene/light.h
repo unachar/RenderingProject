@@ -9,7 +9,8 @@ enum class LightType
     Point,
     Spot,
     Volume,
-    Rect // 矩形エリアライト（LTC）
+    Rect, // 矩形エリアライト（LTC）
+    Capsule = 5
 };
 
 enum class LightRenderMode
@@ -32,6 +33,9 @@ class Light
         XMFLOAT3 Direction = {0.0f, -0.75f, 0.65f};
         XMFLOAT4 Color = {1.0f, 0.96f, 0.88f, 1.0f};
         float Intensity = 1.0f;
+        bool PhysicallyBased = true;
+        float CapsuleLength = 2.0f;
+        float CapsuleRadius = 0.1f;
         float Range = 8.0f;
         float InnerAngle = 18.0f;
         float OuterAngle = 32.0f;

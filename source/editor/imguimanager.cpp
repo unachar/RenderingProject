@@ -694,6 +694,14 @@ void ImGuiManager::DrawEditorMainMenu()
         {
             m_SelectedEntity = CreateLightEntity(LightType::Point);
         }
+        if (ImGui::MenuItem("Rect Area"))
+        {
+            m_SelectedEntity = CreateLightEntity(LightType::Rect);
+        }
+        if (ImGui::MenuItem("Capsule"))
+        {
+            m_SelectedEntity = CreateLightEntity(LightType::Capsule);
+        }
         if (ImGui::MenuItem("Spot"))
         {
             m_SelectedEntity = CreateLightEntity(LightType::Spot);

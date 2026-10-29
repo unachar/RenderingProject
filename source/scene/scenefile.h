@@ -994,6 +994,9 @@ namespace SceneFile
         a("position", c.Position);
         a("color", c.Color);
         a("intensity", c.Intensity);
+        a("physicallyBased", c.PhysicallyBased);
+        a("capsuleLength", c.CapsuleLength);
+        a("capsuleRadius", c.CapsuleRadius);
         a("range", c.Range);
         a("direction", c.Direction);
         a("outerAngle", c.OuterAngle);
