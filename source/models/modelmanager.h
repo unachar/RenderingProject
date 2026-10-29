@@ -28,6 +28,8 @@ class ModelManager
 
   public:
     static int LoadAnimModel(const char* fileName, bool isConvert = true);
+    // Fresh mutable pose/GPU buffers; not inserted into the file cache.
+    static int CreateAnimModelInstance(int sourceId);
     static int LoadStaticModel(const char* fileName, bool isConvert = true);
 
     static bool LoadAnimation(int modelId, const char* fileName, const char* name);

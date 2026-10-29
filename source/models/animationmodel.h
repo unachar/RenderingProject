@@ -20,6 +20,7 @@
 #include "modelresourcemap.h"
 #include "vmdretarget.h"
 #include "humanoidik.h"
+#include "lookatsolver.h"
 #pragma comment(lib, "assimp-vc143-mt.lib")
 
 struct ModelVertex
@@ -303,6 +304,18 @@ class AnimationModelResource
     const aiScene* m_AiScene = nullptr;
     bool m_OwnsGeneratedAiScene = false;
 
+    string m_SourceModelPath;
+    bool m_SourceConvert = true;
+    unordered_map<string, string> m_AnimationSourcePaths;
+    HumanoidIk::Pose m_LookAtPose;
+    Gaze::Rig m_LookAtRig;
+    Gaze::SavedLocals m_LookAtSaved;
+    array<string,4> m_LookAtOverrideNames;
+    bool m_LookAtRigReady = false;
+    bool m_HasLookAtPose = false;
+    bool m_HasLookAtForward = false;
+    aiVector3D m_LookAtForward{0,0,1};
+    bool SetupLookAtRig(const LookAtSettings& settings);
     ModelResourceMap m_ResourceMap;
     bool m_IsPmxModel = false;
     float m_VmdTranslationScale = 1.0f;
@@ -432,6 +445,10 @@ class AnimationModelResource
 
     bool Load(const char* fileName, ID3D12Device* device, bool isConvert = true);
     bool LoadAnimation(const char* fileName, const char* name);
+    bool LoadPoseInstance(const AnimationModelResource& source, ID3D12Device* device);
+    bool HasLookAtBones(const LookAtSettings& settings) { return SetupLookAtRig(settings); }
+    void RestoreLookAtPose();
+    bool ApplyLookAtPose(LookAtRuntime& runtime, const aiVector3D& modelTarget, float deltaTime);
     // Explicit mappings for rigs not recognized by VRM metadata / common aliases.
     bool SetVmdBoneMapping(const string& sourceBoneName, const string& targetBoneName);
     bool SetVmdTranslationScale(float modelUnitsPerVmdUnit);

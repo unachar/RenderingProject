@@ -822,6 +822,9 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\procedural\proceduraltexturegpu.h" />
     <ClInclude Include="source\scene\atmosphere.h" />
     <ClInclude Include="source\models\animator.h" />
+    <ClInclude Include="source\models\lookatsettings.h" />
+    <ClInclude Include="source\models\lookatsolver.h" />
+    <ClInclude Include="source\systems\lookatsystem.h" />
     <ClInclude Include="source\models\animationmodel.h" />
     <ClInclude Include="source\models\pmxloader.h" />
     <ClInclude Include="source\models\vmdanimationimpoter.h" />
@@ -927,6 +930,9 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\models\animationhumanoidik.cpp" />
     <ClInclude Include="source\models\animationmath.h" />
     <ClCompile Include="source\models\animationmorph.cpp" />
+    <ClCompile Include="source\models\animationlookat.cpp" />
+    <ClCompile Include="source\models\animatorlookat.cpp" />
+    <ClCompile Include="source\systems\lookatsystem.cpp" />
     <ClCompile Include="source\models\animationpose.cpp" />
     <ClCompile Include="source\models\animationskinning.cpp" />
     <ClInclude Include="source\models\toonoutlinebuilder.h" />

@@ -369,6 +369,15 @@
     <ClCompile Include="source\models\animationmorph.cpp">
       <Filter>models</Filter>
     </ClCompile>
+    <ClCompile Include="source\models\animationlookat.cpp">
+      <Filter>models</Filter>
+    </ClCompile>
+    <ClCompile Include="source\models\animatorlookat.cpp">
+      <Filter>models</Filter>
+    </ClCompile>
+    <ClCompile Include="source\systems\lookatsystem.cpp">
+      <Filter>systems</Filter>
+    </ClCompile>
     <ClCompile Include="source\models\animationpose.cpp">
       <Filter>models</Filter>
     </ClCompile>
@@ -436,6 +445,15 @@
     </ClInclude>
     <ClInclude Include="source\models\animator.h">
       <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\lookatsettings.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\lookatsolver.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\systems\lookatsystem.h">
+      <Filter>systems</Filter>
     </ClInclude>
     <ClInclude Include="source\models\animationmodel.h">
       <Filter>models</Filter>

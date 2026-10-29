@@ -14,6 +14,7 @@
 #include "cameracontrolsystem.h"
 #include "postprocessinputsystem.h"
 #include "animationsystem.h"
+#include "lookatsystem.h"
 #include "physicssystem.h"
 #include "projectmanager.h"
 #include "materialsystem.h"
@@ -48,6 +49,7 @@ bool SystemManager::Init()
     addSystem(make_unique<LightSystem>());
     addSystem(make_unique<CameraSystem>());
     addSystem(make_unique<TransformSystem>());
+    addSystem(make_unique<LookAtSystem>());
 
     addSystem(make_unique<GridSystem>());
     addSystem(make_unique<RenderSystem>());

@@ -10,6 +10,22 @@
 
 void AnimationSystem::Update()
 {
+    // Remove last frame's procedural corrections before animation cache checks or physics.
+    // This also restores paused/no-clip and animation-LOD-skipped characters.
+    ComponentManager::ForEachComponent<AnimationModelComponent>([](EntityID entity, AnimationModelComponent& animation) {
+        auto& gaze = animation.LookAt;
+        // Isolate a copied component before either entity evaluates a shared pose or builds physics bodies.
+        if (gaze.Active && gaze.Tracking && (gaze.Owner != entity || gaze.PoseModelId != animation.ModelId))
+        {
+            if (!Animator::LookAt(entity, gaze.Target, gaze.Settings))
+            {
+                gaze.Active = gaze.Tracking = false;
+                gaze.State = {};
+            }
+        }
+        if (gaze.Owner != entity || gaze.PoseModelId != animation.ModelId) return;
+        if (auto* model = ModelManager::GetAnimModel(animation.ModelId)) model->RestoreLookAtPose();
+    });
     auto animEntities = World::GetView<AnimationModelComponent>();
     unordered_set<int> updatedInstancedModels;
 

@@ -337,6 +337,8 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 {
     Uninit();
     m_pDevice = device;
+    m_SourceModelPath = fileName;
+    m_SourceConvert = isConvert;
 
     const filesystem::path modelPath = ModelPathFromUtf8(fileName);
     const string extension = ModelPathLowerExtension(modelPath);
@@ -964,7 +966,9 @@ bool AnimationModelResource::LoadAnimation(const char* fileName, const char* nam
 
     if (ModelPathLowerExtension(animPath) == ".vmd")
     {
-        return LoadVmdAnimation(fileName, name);
+        if (!LoadVmdAnimation(fileName, name)) return false;
+        m_AnimationSourcePaths[name ? name : ""] = fileName;
+        return true;
     }
 
     const aiScene* anim = ImportModelScene(fileName, aiProcess_ConvertToLeftHanded);
@@ -992,6 +996,7 @@ bool AnimationModelResource::LoadAnimation(const char* fileName, const char* nam
         animationName = "";
     }
     m_Animation[animationName] = anim;
+    m_AnimationSourcePaths[animationName] = fileName;
     m_VmdAnimations.erase(animationName);
     InvalidateVmdRuntimeCache();
     return true;
@@ -1266,6 +1271,11 @@ void AnimationModelResource::Uninit()
         }
     }
 
+    m_SourceModelPath.clear();
+    m_AnimationSourcePaths.clear();
+    m_LookAtPose.Nodes.clear();
+    m_LookAtRig = {};
+    m_LookAtRigReady = m_HasLookAtPose = m_HasLookAtForward = false;
     m_ResourceMap.Clear();
     m_VmdRetargetTransforms.clear();
     m_IsPmxModel = false;

@@ -11,6 +11,7 @@ void AnimationModelResource::InvalidateVmdRuntimeCache()
     m_HumanoidIkSecondary = {};
     m_HumanoidIkLayered = {};
     m_HumanoidIkRigDirty = true;
+    m_LookAtRigReady = false;
     m_HasCachedPose = false;
     m_HasCachedLayeredPose = false;
     m_UseLayeredVmdIk = false;

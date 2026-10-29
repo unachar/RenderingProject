@@ -1,6 +1,7 @@
 #pragma once
 
 #include <initializer_list>
+#include "lookatsettings.h"
 #include <string>
 #include <vector>
 
@@ -11,6 +12,10 @@ struct TransformComponent;
 class Animator
 {
   public:
+    // Registers persistent tracking; returns false for invalid entities or an unsupported rig.
+    static bool LookAt(uint32_t character, uint32_t target, const LookAtSettings& settings = {});
+    static void ClearLookAt(uint32_t character);
+
     static bool Play(CameraComponent& camera, bool restart = true);
     static bool Play(CameraComponent& camera, const string& vmdPath, bool restart = true);
     static bool Play(CameraComponent& camera, const char* vmdPath, bool restart = true);

@@ -109,6 +109,20 @@ int ModelManager::LoadAnimModel(const char* fileName, bool isConvert)
     return id;
 }
 
+int ModelManager::CreateAnimModelInstance(int sourceId)
+{
+    const auto* source = GetAnimModel(sourceId);
+    if (!source) return -1;
+    TextureManager::BeginTextureLoading();
+    auto instance = make_unique<AnimationModelResource>();
+    const bool loaded = instance->LoadPoseInstance(*source, GraphicsDevice::GetDevice());
+    TextureManager::EndTextureLoading();
+    if (!loaded) return -1;
+    const int id = static_cast<int>(m_AnimModels.size());
+    m_AnimModels.push_back(move(instance));
+    return id;
+}
+
 int ModelManager::LoadStaticModel(const char* fileName, bool isConvert)
 {
     string key = MakeModelCacheKey(fileName, isConvert);

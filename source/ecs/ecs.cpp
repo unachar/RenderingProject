@@ -144,6 +144,11 @@ void Registry::DestroyEntity(EntityID entity)
         return;
     }
 
+    // Cancel gaze bindings before this ID can be reused; preserve their eased return state.
+    ComponentManager::ForEachComponent<AnimationModelComponent>([&](EntityID, AnimationModelComponent& animation) {
+        InvalidateLookAtTarget(animation.LookAt, entity);
+    });
+
     // 立っているビットだけを1回走査し、一覧からの除去とストレージの解放を同時に行う
     unsigned long bits = m_Entities[entity].Mask.to_ulong();
     while (bits != 0)

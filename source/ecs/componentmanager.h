@@ -5,6 +5,7 @@
 #include "rendertypes.h"
 #include "light.h"
 #include "animationplayback.h"
+#include "lookatsettings.h"
 #include "physicscomponent.h"
 #include "timelinecomponent.h"
 #include "proceduralcomponents.h"
@@ -128,6 +129,7 @@ struct CameraComponent
 
 struct AnimationModelComponent
 {
+    LookAtRuntime LookAt{};
     int ModelId = -1;
     string ModelPath;
     bool IsConvert = true;

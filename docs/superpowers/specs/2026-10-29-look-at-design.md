@@ -1,0 +1,9 @@
+# Entity LookAt with eyes, head and neck
+
+Provide Animator::LookAt(characterEntity, targetEntity, settings) and Animator::ClearLookAt(characterEntity). Registration follows the target every frame; callers do not need to repeat it. Store target, response state and separate joint limits/weights/speeds on the character component. Validate live targets and supported bones; missing individual bones are skipped. Expose model forward/up and explicit per-bone names for unrecognized rigs.
+
+Solve neck then head then independent eyes against the updated hierarchy, preserving animated translations/scales and roll. Use a comfortable eye-only angle before head/neck move; damp corrections using exponential delta-time response and max angular rates. Clamp yaw/pitch; fade influence for rear targets; keep close eye convergence bounded; ease back to animation on Clear or target deletion. Invalidate target bindings synchronously in Registry::DestroyEntity before entity ID reuse. Never accumulate corrections into the next animation frame. Restore captured local joint baselines before animation evaluation, then apply after physics and transforms, before rendering/skinning consumption.
+
+Model resources currently own mutable animation and GPU buffers and are cached by file. Create a separate resource once on first successful registration and retain it on clear, copying animation source bindings and explicit resource mappings. The extra import/GPU buffers are a cost of isolation; do not silently modify shared models or enable instancing on independently posed resources.
+
+Use portable Assimp-based pose math for real solver tests (front/side/behind/close targets, animated/rotated bind axes, hierarchy residual, limits, damping, clear, missing/invalid bones). Integrate model APIs and system scheduling with project source registration. Windows compilation and visual output are unavailable on this host and must be reported explicitly.
