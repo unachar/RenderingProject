@@ -3,6 +3,8 @@
 // PCM16 and IEEE 32-bit float WAV; no compressed codecs or streaming yet.
 #include <xaudio2.h>
 #include <algorithm>
+#include <cmath>
+#include <utility>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -104,7 +106,7 @@ class XAudioMusicPlayer
         if (!m_Voice) return false;
         XAUDIO2_VOICE_STATE state{};
         m_Voice->GetState(&state);
-        if (!state.BuffersQueued && !QueueFrom(m_OffsetFrames)) return false;
+        if (!state.BuffersQueued && (m_OffsetFrames >= m_TotalFrames || !QueueFrom(m_OffsetFrames))) return false;
         if (FAILED(m_Voice->Start())) return false;
         m_Playing = true;
         return true;
