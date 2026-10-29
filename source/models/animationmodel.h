@@ -19,6 +19,7 @@
 #include "pmxphysicsdata.h"
 #include "modelresourcemap.h"
 #include "vmdretarget.h"
+#include "humanoidik.h"
 #pragma comment(lib, "assimp-vc143-mt.lib")
 
 struct ModelVertex
@@ -268,6 +269,12 @@ class AnimationModelResource
         VmdTrackSampleCursor Cursor{};
     };
 
+    struct VmdHumanoidIkChannel
+    {
+        VmdRootMotionBinding Foot, Toe, Root, Parent;
+        VmdLayeredIkBinding FootSwitch, ToeSwitch;
+    };
+
     struct PmxRuntimeNode
     {
         aiNode* Node = nullptr;
@@ -298,6 +305,11 @@ class AnimationModelResource
 
     ModelResourceMap m_ResourceMap;
     bool m_IsPmxModel = false;
+    float m_VmdTranslationScale = 1.0f;
+    bool m_HumanoidIkRigDirty = true;
+    HumanoidIk::Pose m_HumanoidIkPose;
+    array<HumanoidIk::Leg, 2> m_HumanoidIkLegs{};
+    array<VmdHumanoidIkChannel, 2> m_HumanoidIkPrimary{}, m_HumanoidIkSecondary{}, m_HumanoidIkLayered{};
     unordered_map<string, VmdRetarget::Transform> m_VmdRetargetTransforms;
     vector<MeshData> m_Meshes{};
     vector<string> m_BoneNames{};
@@ -375,6 +387,12 @@ class AnimationModelResource
                                float frame2, float blendRate);
     void UpdateVmdBoneMatrices(const vector<AnimationPlaybackLayer>& animationLayers);
     void ConfigureVmdRetargeting(const char* fileName);
+    void BuildHumanoidIkChannel(const VmdAnimation* animation, size_t layerIndex, unsigned side,
+                                VmdHumanoidIkChannel& channel);
+    void SetupHumanoidIkRig();
+    HumanoidIk::Target SampleHumanoidIkTarget(VmdHumanoidIkChannel& channel, const HumanoidIk::Leg& leg,
+                                             float frame, const vector<float>* layerFrames);
+    void ApplyVmdHumanoidIk(float frame1, float frame2, float blendRate, bool layered);
     void BuildVmdRootMotionBindings(uint32_t boneIndex, const VmdAnimation* animation, size_t layerIndex,
                                     vector<VmdRootMotionBinding>& bindings);
     void BuildVmdTorsoCompensation(uint32_t boneIndex, const VmdAnimation* animation, size_t layerIndex,

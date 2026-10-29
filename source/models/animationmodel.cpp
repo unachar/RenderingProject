@@ -12,6 +12,7 @@ using namespace AnimationMath;
 #include "material.h"
 #include "modelimportutils.h"
 #include "modelmapimport.h"
+#include "vmdikbinding.h"
 #include "toonoutlinebuilder.h"
 #include "../../External/meshoptimizer/src/meshoptimizer.h"
 #include <cstdint>
@@ -1047,9 +1048,14 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
                matchedTrackCount, loaded.BoneTracks.size(), matchedMorphTrackCount, loaded.MorphTracks.size(), fileName);
     if (!m_IsPmxModel && (!loaded.IkTracks.empty() || !loaded.MorphTracks.empty()))
     {
-        Debug::Log("VMD humanoid playback uses FK bones; PMX IK and morph tracks require separate rig conversion.\n");
+        Debug::Log("VMD humanoid playback supports leg/toe IK; PMX-specific append constraints and morphs require separate conversion.\n");
     }
-    if (!loaded.BoneTracks.empty() && matchedTrackCount == 0)
+    bool hasHumanoidIkTargets = false;
+    if (!m_IsPmxModel)
+        for (unsigned side = 0; side < 2; ++side)
+            hasHumanoidIkTargets |= VmdIkBinding::Find(loaded.BoneTracks, VmdIkBinding::FootNames(side)) ||
+                                    VmdIkBinding::Find(loaded.BoneTracks, VmdIkBinding::ToeNames(side));
+    if (!loaded.BoneTracks.empty() && matchedTrackCount == 0 && !hasHumanoidIkTargets)
     {
         Debug::Log("WARNING: VMD loaded but no bone names matched this model: %s\n", fileName);
     }
@@ -1263,6 +1269,7 @@ void AnimationModelResource::Uninit()
     m_ResourceMap.Clear();
     m_VmdRetargetTransforms.clear();
     m_IsPmxModel = false;
+    m_VmdTranslationScale = 1.0f;
     m_Meshes.clear();
     m_DeformVertex.clear();
     m_GpuSkinVertices.clear();

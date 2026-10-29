@@ -360,6 +360,9 @@
     <ClCompile Include="source\editor\editorwidgets.cpp">
       <Filter>editor</Filter>
     </ClCompile>
+    <ClCompile Include="source\models\animationhumanoidik.cpp">
+      <Filter>models</Filter>
+    </ClCompile>
     <ClCompile Include="source\models\animationcache.cpp">
       <Filter>models</Filter>
     </ClCompile>
@@ -447,6 +450,12 @@
       <Filter>models</Filter>
     </ClInclude>
     <ClInclude Include="source\models\modelmapjson.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\humanoidik.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\vmdikbinding.h">
       <Filter>models</Filter>
     </ClInclude>
     <ClInclude Include="source\models\vmdretarget.h">

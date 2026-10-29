@@ -466,6 +466,7 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation
 
     ApplyVmdMorphs(primaryAnimation, currentFrame1);
     ApplyPmxOrderedTransforms(primaryAnimation, currentFrame1);
+    ApplyVmdHumanoidIk(currentFrame1, currentFrame2, safeBlendRate, false);
     UpdateBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
     WriteBoneMatricesToBuffer();
 }
@@ -539,6 +540,7 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const vector<AnimationPlaybac
 
     ApplyVmdMorphLayers();
     ApplyPmxOrderedTransforms(nullptr, 0.0f);
+    ApplyVmdHumanoidIk(0.0f, 0.0f, 0.0f, true);
     UpdateBoneMatrix(m_AiScene->mRootNode, MakeAiIdentityMatrix());
     WriteBoneMatricesToBuffer();
 

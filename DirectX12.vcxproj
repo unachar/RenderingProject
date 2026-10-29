@@ -201,6 +201,8 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\models\modelmapimport.h" />
     <ClInclude Include="source\models\modelmapjson.h" />
     <ClInclude Include="source\models\vmdretarget.h" />
+    <ClInclude Include="source\models\humanoidik.h" />
+    <ClInclude Include="source\models\vmdikbinding.h" />
     <FxCompile Include="shader\hlsl\colorshader3dPS.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>
@@ -922,6 +924,7 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\editor\editorwidgets.cpp" />
     <ClInclude Include="source\editor\editorwidgets.h" />
     <ClCompile Include="source\models\animationcache.cpp" />
+    <ClCompile Include="source\models\animationhumanoidik.cpp" />
     <ClInclude Include="source\models\animationmath.h" />
     <ClCompile Include="source\models\animationmorph.cpp" />
     <ClCompile Include="source\models\animationpose.cpp" />

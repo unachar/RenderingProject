@@ -7,6 +7,10 @@ using namespace AnimationMath;
 void AnimationModelResource::InvalidateVmdRuntimeCache()
 {
 
+    m_HumanoidIkPrimary = {};
+    m_HumanoidIkSecondary = {};
+    m_HumanoidIkLayered = {};
+    m_HumanoidIkRigDirty = true;
     m_HasCachedPose = false;
     m_HasCachedLayeredPose = false;
     m_UseLayeredVmdIk = false;
@@ -52,6 +56,13 @@ void AnimationModelResource::RebuildVmdRuntimeCache(const VmdAnimation* primaryA
     else
     {
         secondary = primaryAnimation;
+    }
+    m_HumanoidIkPrimary = {};
+    m_HumanoidIkSecondary = {};
+    for (unsigned side = 0; side < 2; ++side)
+    {
+        BuildHumanoidIkChannel(primaryAnimation, 0, side, m_HumanoidIkPrimary[side]);
+        BuildHumanoidIkChannel(secondary, 0, side, m_HumanoidIkSecondary[side]);
     }
     m_VmdBoneBindings.reserve(m_Bone.size());
     for (auto& pair : m_Bone)
@@ -147,6 +158,10 @@ void AnimationModelResource::RebuildVmdLayeredRuntimeCache(const vector<Animatio
         m_CachedVmdLayerAnimations.push_back(layerAnimation);
     }
 
+    m_HumanoidIkLayered = {};
+    for (size_t layer = 0; layer < m_CachedVmdLayerAnimations.size(); ++layer)
+        for (unsigned side = 0; side < 2; ++side)
+            BuildHumanoidIkChannel(m_CachedVmdLayerAnimations[layer], layer, side, m_HumanoidIkLayered[side]);
     m_VmdLayerFramesScratch.resize(animationLayers.size());
     m_LastLayerPoseTimes.resize(animationLayers.size());
     m_VmdLayeredBoneBindings.clear();
@@ -249,6 +264,9 @@ void AnimationModelResource::RebuildVmdLayeredRuntimeCache(const vector<Animatio
 
 void AnimationModelResource::InvalidatePmxRuntimeCache()
 {
+    m_HumanoidIkPose.Nodes.clear();
+    m_HumanoidIkLegs = {};
+    m_HumanoidIkRigDirty = true;
     m_PmxRuntimeNodes.clear();
     m_PmxRuntimeNodeIndexMap.clear();
     m_PmxGlobalMatricesScratch.clear();
@@ -392,6 +410,7 @@ bool AnimationModelResource::SetVmdBoneMapping(const string& sourceBoneName, con
 bool AnimationModelResource::SetVmdTranslationScale(float modelUnitsPerVmdUnit)
 {
     if (!std::isfinite(modelUnitsPerVmdUnit) || modelUnitsPerVmdUnit <= 0.0f || m_IsPmxModel) return false;
+    m_VmdTranslationScale = modelUnitsPerVmdUnit;
     for (auto& transform : m_VmdRetargetTransforms) transform.second.TranslationScale = modelUnitsPerVmdUnit;
     InvalidateVmdRuntimeCache();
     return true;

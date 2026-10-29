@@ -8,7 +8,7 @@ Push-Location -LiteralPath $workspace
 try {
     New-Item -ItemType Directory -Force build/model-map-tests | Out-Null
     $jsonRoot = 'External\RTXNS\external\donut\thirdparty\jsoncpp'
-    foreach ($test in @('model_resource_map', 'model_map_import', 'model_map_json', 'vmd_retarget')) {
+    foreach ($test in @('model_resource_map', 'model_map_import', 'model_map_json', 'vmd_retarget', 'vmd_ik', 'vmd_ik_fixture')) {
         $command = 'cl /nologo /std:c++20 /EHsc /utf-8 /DNOMINMAX /I source /I assimp /I {0}\include tests\{1}_tests.cpp {0}\src\lib_json\json_reader.cpp {0}\src\lib_json\json_value.cpp {0}\src\lib_json\json_writer.cpp /Fe:build\model-map-tests\{1}.exe /Fo:build\model-map-tests\' -f $jsonRoot, $test
         & $env:ComSpec /d /c ('"{0}" -no_logo -arch=amd64 -host_arch=amd64 && {1}' -f $developerCommand, $command)
         if ($LASTEXITCODE) { throw "$test compilation failed." }

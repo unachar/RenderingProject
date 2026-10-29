@@ -8,7 +8,7 @@ flags=(-std=c++20 -Wall -Wextra -Werror -I source -I assimp -I "$json_root/inclu
 for part in reader value writer; do
     g++ "${flags[@]}" -c "$json_root/src/lib_json/json_$part.cpp" -o "$validation_dir/json_$part.o"
 done
-for test in model_resource_map model_map_import model_map_json vmd_retarget; do
+for test in model_resource_map model_map_import model_map_json vmd_retarget vmd_ik vmd_ik_fixture; do
     g++ "${flags[@]}" "tests/${test}_tests.cpp" "$validation_dir"/json_*.o -o "$validation_dir/$test"
     "$validation_dir/$test"
 done
