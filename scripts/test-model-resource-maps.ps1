@@ -15,5 +15,11 @@ try {
         & "./build/model-map-tests/$test.exe"
         if ($LASTEXITCODE) { throw "$test failed." }
     }
+    $command = 'cl /nologo /std:c++20 /EHsc /utf-8 /DNOMINMAX /I source /I External/ImGUI tests/model_mesh_table_tests.cpp External/ImGUI/imgui.cpp External/ImGUI/imgui_draw.cpp External/ImGUI/imgui_tables.cpp External/ImGUI/imgui_widgets.cpp /Fe:build/model-map-tests/model_mesh_table.exe /Fo:build/model-map-tests/'
+    & $env:ComSpec /d /c ('"{0}" -no_logo -arch=amd64 -host_arch=amd64 && {1}' -f $developerCommand, $command)
+    if ($LASTEXITCODE) { throw 'Model mesh table compilation failed.' }
+    & ./build/model-map-tests/model_mesh_table.exe
+    if ($LASTEXITCODE) { throw 'Model mesh table tests failed.' }
+
 }
 finally { Pop-Location }

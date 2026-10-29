@@ -376,12 +376,12 @@ bool AnimationModelResource::SetVmdBoneMapping(const string& sourceBoneName, con
 {
     const auto* target = m_ResourceMap.Find(ModelResourceMap::Bones, targetBoneName);
     if (sourceBoneName.empty() || !target || target->size() != 1 || m_IsPmxModel) return false;
-    const auto category = m_ResourceMap.Categories().find(ModelResourceMap::Vmd);
-    if (category != m_ResourceMap.Categories().end())
+    if (const auto* names = m_ResourceMap.NamesForIndex(ModelResourceMap::Vmd, target->front()))
     {
-        for (const auto& mapping : category->second)
+        for (const auto* name : *names)
         {
-            if (mapping.first != sourceBoneName && mapping.second == *target) return false;
+            const auto* indices = m_ResourceMap.Find(ModelResourceMap::Vmd, *name);
+            if (*name != sourceBoneName && indices && indices->size() == 1) return false;
         }
     }
     m_ResourceMap.Set(ModelResourceMap::Vmd, sourceBoneName, target->front());

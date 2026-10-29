@@ -9,6 +9,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // CPU metadata only. Indices are owned by a model, and remain valid until reload.
@@ -19,6 +20,21 @@ class ModelResourceMap
     using Indices = std::vector<uint32_t>;
     using NameMap = std::unordered_map<std::string, Indices>;
     using CategoryMap = std::unordered_map<std::string, NameMap>;
+    using Names = std::vector<const std::string*>;
+
+    ModelResourceMap() = default;
+    ModelResourceMap(const ModelResourceMap& other) : m_Categories(other.m_Categories) { RebuildLookups(); }
+    ModelResourceMap& operator=(const ModelResourceMap& other)
+    {
+        if (this != &other)
+        {
+            ModelResourceMap copy(other);
+            *this = std::move(copy);
+        }
+        return *this;
+    }
+    ModelResourceMap(ModelResourceMap&&) noexcept = default;
+    ModelResourceMap& operator=(ModelResourceMap&&) noexcept = default;
     static constexpr const char* Bones = "bone";
     static constexpr const char* Meshes = "mesh";
     static constexpr const char* Materials = "material";
@@ -26,19 +42,36 @@ class ModelResourceMap
     static constexpr const char* Humanoid = "humanoid";
     static constexpr const char* Vmd = "vmd";
 
-    void Clear() { m_Categories.clear(); }
+    void Clear() { m_Categories.clear(); m_Reverse.clear(); m_MultilineCategories.clear(); }
     const CategoryMap& Categories() const { return m_Categories; }
     void Add(const std::string& category, const std::string& name, uint32_t index)
     {
-        auto& indices = m_Categories[category][name];
+        if (name.find_first_of("\r\n") != std::string::npos) m_MultilineCategories.insert(category);
+        auto& names = m_Categories[category];
+        auto [entry, inserted] = names.try_emplace(name);
+        auto& indices = entry->second;
         if (std::find(indices.begin(), indices.end(), index) == indices.end())
         {
             indices.push_back(index);
+            m_Reverse[category][index].push_back(&entry->first);
         }
     }
     void Set(const std::string& category, const std::string& name, uint32_t index)
     {
+        if (const auto* previous = Find(category, name))
+        {
+            for (uint32_t oldIndex : *previous)
+            {
+                auto& reverse = m_Reverse[category];
+                auto it = reverse.find(oldIndex);
+                if (it == reverse.end()) continue;
+                std::erase_if(it->second, [&](const std::string* value) { return *value == name; });
+                if (it->second.empty()) reverse.erase(it);
+            }
+        }
+        if (name.find_first_of("\r\n") != std::string::npos) m_MultilineCategories.insert(category);
         m_Categories[category][name] = {index};
+        m_Reverse[category][index].push_back(&m_Categories.at(category).find(name)->first);
     }
     const Indices* Find(const std::string& category, const std::string& name) const
     {
@@ -46,6 +79,36 @@ class ModelResourceMap
         if (c == m_Categories.end()) return nullptr;
         const auto n = c->second.find(name);
         return n == c->second.end() ? nullptr : &n->second;
+    }
+
+    bool HasMultilineNames(const std::string& category) const
+    {
+        return m_MultilineCategories.count(category) != 0;
+    }
+
+    // Built at import/deserialization time. Const reads never mutate shared metadata.
+    // Names borrow map-owned strings; acquire this view again after any mutation.
+    const Names* NamesForIndex(const std::string& category, uint32_t index) const
+    {
+        const auto c = m_Reverse.find(category);
+        if (c == m_Reverse.end()) return nullptr;
+        const auto names = c->second.find(index);
+        return names == c->second.end() ? nullptr : &names->second;
+    }
+
+    template<class Visitor> void ForEachMaterialMesh(int32_t materialIndex, size_t meshCount, Visitor&& visit) const
+    {
+        if (materialIndex < 0)
+        {
+            for (size_t i = 0; i < meshCount; ++i) visit(static_cast<uint32_t>(i));
+            return;
+        }
+        const auto* meshes = Find(MaterialMeshes, std::to_string(materialIndex));
+        if (!meshes) return;
+        for (uint32_t index : *meshes)
+        {
+            if (index < meshCount) visit(index);
+        }
     }
 
     uint64_t Fingerprint(const std::string& importIdentity) const
@@ -105,7 +168,10 @@ class ModelResourceMap
             if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) return false;
         }
         if (input.peek() != std::char_traits<char>::eof()) return false;
+        candidate.RebuildLookups();
         m_Categories = std::move(candidate.m_Categories);
+        m_Reverse = std::move(candidate.m_Reverse);
+        m_MultilineCategories = std::move(candidate.m_MultilineCategories);
         return true;
     }
 
@@ -154,6 +220,22 @@ class ModelResourceMap
     static constexpr uint64_t MaxEntries = 1024 * 1024;
     static constexpr uint64_t MaxString = 65536;
     CategoryMap m_Categories;
+    std::unordered_set<std::string> m_MultilineCategories;
+    std::unordered_map<std::string, std::unordered_map<uint32_t, Names>> m_Reverse;
+
+    void RebuildLookups()
+    {
+        m_Reverse.clear();
+        m_MultilineCategories.clear();
+        for (const auto& category : m_Categories)
+            for (const auto& name : category.second)
+            {
+                if (name.first.find_first_of("\r\n") != std::string::npos)
+                    m_MultilineCategories.insert(category.first);
+                for (uint32_t index : name.second)
+                    m_Reverse[category.first][index].push_back(&name.first);
+            }
+    }
 
     static uint64_t Hash(const std::string& bytes, uint64_t hash = 14695981039346656037ull)
     {

@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include "materialmanager.h"
+#include "modelmeshtable.h"
 #include "materialopticsui.h"
 #include "proceduralio.h"
 #include "imguimanager.h"
@@ -678,50 +679,22 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity, bool embeddedIn
 
     auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
 
-    UINT meshCount = 0;
+    // Resolve components/resources once for this draw, rather than once per table row.
+    const bool hasStaticModel = ComponentManager::HasComponent<StaticModelComponent>(entity);
+    const auto* staticModel = hasStaticModel ? ModelManager::GetStaticModel(
+        ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId) : nullptr;
+    const auto* animationModel = ComponentManager::HasComponent<AnimationModelComponent>(entity) ?
+        ModelManager::GetAnimModel(ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelId) : nullptr;
+    const UINT meshCount = hasStaticModel ? (staticModel ? staticModel->GetMeshCount() : 0) :
+                                           (animationModel ? animationModel->GetMeshCount() : 0);
+    const auto* resourceMap = staticModel ? &staticModel->GetResourceMap() :
+                              (animationModel ? &animationModel->GetResourceMap() : nullptr);
     auto getStaticMesh = [&](UINT index) -> const StaticMeshData* {
-        if (!ComponentManager::HasComponent<StaticModelComponent>(entity))
-        {
-            return nullptr;
-        }
-        const auto& comp = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
-        auto* model = ModelManager::GetStaticModel(comp.ModelId);
-        if (!model || index >= model->GetMeshCount())
-        {
-            return nullptr;
-        }
-        return &model->GetMeshData(index);
+        return staticModel && index < staticModel->GetMeshCount() ? &staticModel->GetMeshData(index) : nullptr;
     };
     auto getAnimMesh = [&](UINT index) -> const MeshData* {
-        if (!ComponentManager::HasComponent<AnimationModelComponent>(entity))
-        {
-            return nullptr;
-        }
-        const auto& comp = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
-        auto* model = ModelManager::GetAnimModel(comp.ModelId);
-        if (!model || index >= model->GetMeshCount())
-        {
-            return nullptr;
-        }
-        return &model->GetMeshData(index);
+        return animationModel && index < animationModel->GetMeshCount() ? &animationModel->GetMeshData(index) : nullptr;
     };
-
-    if (ComponentManager::HasComponent<StaticModelComponent>(entity))
-    {
-        const auto& comp = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
-        if (auto* model = ModelManager::GetStaticModel(comp.ModelId))
-        {
-            meshCount = model->GetMeshCount();
-        }
-    }
-    else if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
-    {
-        const auto& comp = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
-        if (auto* model = ModelManager::GetAnimModel(comp.ModelId))
-        {
-            meshCount = model->GetMeshCount();
-        }
-    }
 
     if (meshCount == 0)
     {
@@ -805,34 +778,24 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity, bool embeddedIn
         ImGui::TableSetupColumn("幅倍率", ImGuiTableColumnFlags_WidthFixed, 112.0f);
         ImGui::TableHeadersRow();
 
-        for (UINT i = 0; i < meshCount; ++i)
-        {
-            string meshName;
-            string materialName;
+        ForEachVisibleModelMesh(resourceMap, meshCount, [&](uint32_t i) {
+            const char* meshName = "(unnamed)";
+            const char* materialName = "(none)";
             float materialPartId = 10.0f;
             bool defaultOutline = true;
             if (const auto* mesh = getStaticMesh(i))
             {
-                meshName = mesh->MeshName;
-                materialName = mesh->MaterialName;
+                meshName = mesh->MeshName.empty() ? "(unnamed)" : mesh->MeshName.c_str();
+                materialName = mesh->MaterialName.empty() ? "(none)" : mesh->MaterialName.c_str();
                 materialPartId = mesh->MaterialPartId;
                 defaultOutline = mesh->DefaultToonOutlineEnabled;
             }
             else if (const auto* mesh = getAnimMesh(i))
             {
-                meshName = mesh->MeshName;
-                materialName = mesh->MaterialName;
+                meshName = mesh->MeshName.empty() ? "(unnamed)" : mesh->MeshName.c_str();
+                materialName = mesh->MaterialName.empty() ? "(none)" : mesh->MaterialName.c_str();
                 materialPartId = mesh->MaterialPartId;
                 defaultOutline = mesh->DefaultToonOutlineEnabled;
-            }
-
-            if (meshName.empty())
-            {
-                meshName = "(unnamed)";
-            }
-            if (materialName.empty())
-            {
-                materialName = "(none)";
             }
 
             ImGui::PushID(static_cast<int>(i));
@@ -840,9 +803,9 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity, bool embeddedIn
             ImGui::TableSetColumnIndex(0);
             ImGui::Text("%u", i);
             ImGui::TableSetColumnIndex(1);
-            ImGui::TextUnformatted(meshName.c_str());
+            ImGui::TextUnformatted(meshName);
             ImGui::TableSetColumnIndex(2);
-            ImGui::TextUnformatted(materialName.c_str());
+            ImGui::TextUnformatted(materialName);
             ImGui::TableSetColumnIndex(3);
             ImGui::Text("%.0f", materialPartId);
             ImGui::TableSetColumnIndex(4);
@@ -884,7 +847,7 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity, bool embeddedIn
                 changed = true;
             }
             ImGui::PopID();
-        }
+        });
         ImGui::EndTable();
     }
 
@@ -944,50 +907,22 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity, bool embeddedInInsp
 
     auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
 
-    UINT meshCount = 0;
+    // Resolve components/resources once for this draw, rather than once per table row.
+    const bool hasStaticModel = ComponentManager::HasComponent<StaticModelComponent>(entity);
+    const auto* staticModel = hasStaticModel ? ModelManager::GetStaticModel(
+        ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId) : nullptr;
+    const auto* animationModel = ComponentManager::HasComponent<AnimationModelComponent>(entity) ?
+        ModelManager::GetAnimModel(ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelId) : nullptr;
+    const UINT meshCount = hasStaticModel ? (staticModel ? staticModel->GetMeshCount() : 0) :
+                                           (animationModel ? animationModel->GetMeshCount() : 0);
+    const auto* resourceMap = staticModel ? &staticModel->GetResourceMap() :
+                              (animationModel ? &animationModel->GetResourceMap() : nullptr);
     auto getStaticMesh = [&](UINT index) -> const StaticMeshData* {
-        if (!ComponentManager::HasComponent<StaticModelComponent>(entity))
-        {
-            return nullptr;
-        }
-        const auto& comp = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
-        auto* model = ModelManager::GetStaticModel(comp.ModelId);
-        if (!model || index >= model->GetMeshCount())
-        {
-            return nullptr;
-        }
-        return &model->GetMeshData(index);
+        return staticModel && index < staticModel->GetMeshCount() ? &staticModel->GetMeshData(index) : nullptr;
     };
     auto getAnimMesh = [&](UINT index) -> const MeshData* {
-        if (!ComponentManager::HasComponent<AnimationModelComponent>(entity))
-        {
-            return nullptr;
-        }
-        const auto& comp = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
-        auto* model = ModelManager::GetAnimModel(comp.ModelId);
-        if (!model || index >= model->GetMeshCount())
-        {
-            return nullptr;
-        }
-        return &model->GetMeshData(index);
+        return animationModel && index < animationModel->GetMeshCount() ? &animationModel->GetMeshData(index) : nullptr;
     };
-
-    if (ComponentManager::HasComponent<StaticModelComponent>(entity))
-    {
-        const auto& comp = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
-        if (auto* model = ModelManager::GetStaticModel(comp.ModelId))
-        {
-            meshCount = model->GetMeshCount();
-        }
-    }
-    else if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
-    {
-        const auto& comp = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
-        if (auto* model = ModelManager::GetAnimModel(comp.ModelId))
-        {
-            meshCount = model->GetMeshCount();
-        }
-    }
 
     if (meshCount == 0)
     {
@@ -1104,31 +1039,21 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity, bool embeddedInInsp
         ImGui::TableSetupColumn("シェーディング", ImGuiTableColumnFlags_WidthFixed, 128.0f);
         ImGui::TableHeadersRow();
 
-        for (UINT i = 0; i < meshCount; ++i)
-        {
-            string meshName;
-            string materialName;
+        ForEachVisibleModelMesh(resourceMap, meshCount, [&](uint32_t i) {
+            const char* meshName = "(unnamed)";
+            const char* materialName = "(none)";
             float materialPartId = 10.0f;
             if (const auto* mesh = getStaticMesh(i))
             {
-                meshName = mesh->MeshName;
-                materialName = mesh->MaterialName;
+                meshName = mesh->MeshName.empty() ? "(unnamed)" : mesh->MeshName.c_str();
+                materialName = mesh->MaterialName.empty() ? "(none)" : mesh->MaterialName.c_str();
                 materialPartId = mesh->MaterialPartId;
             }
             else if (const auto* mesh = getAnimMesh(i))
             {
-                meshName = mesh->MeshName;
-                materialName = mesh->MaterialName;
+                meshName = mesh->MeshName.empty() ? "(unnamed)" : mesh->MeshName.c_str();
+                materialName = mesh->MaterialName.empty() ? "(none)" : mesh->MaterialName.c_str();
                 materialPartId = mesh->MaterialPartId;
-            }
-
-            if (meshName.empty())
-            {
-                meshName = "(unnamed)";
-            }
-            if (materialName.empty())
-            {
-                materialName = "(none)";
             }
 
             MeshShadingOverride overrideValue = MeshShadingOverride::Auto;
@@ -1151,9 +1076,9 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity, bool embeddedInInsp
             ImGui::TableSetColumnIndex(0);
             ImGui::Text("%u", i);
             ImGui::TableSetColumnIndex(1);
-            ImGui::TextUnformatted(meshName.c_str());
+            ImGui::TextUnformatted(meshName);
             ImGui::TableSetColumnIndex(2);
-            ImGui::TextUnformatted(materialName.c_str());
+            ImGui::TextUnformatted(materialName);
             ImGui::TableSetColumnIndex(3);
             ImGui::Text("%.0f", materialPartId);
             ImGui::TableSetColumnIndex(4);
@@ -1165,7 +1090,7 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity, bool embeddedInInsp
                 changed = true;
             }
             ImGui::PopID();
-        }
+        });
         ImGui::EndTable();
     }
 

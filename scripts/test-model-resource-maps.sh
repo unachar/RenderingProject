@@ -12,3 +12,8 @@ for test in model_resource_map model_map_import model_map_json vmd_retarget; do
     g++ "${flags[@]}" "tests/${test}_tests.cpp" "$validation_dir"/json_*.o -o "$validation_dir/$test"
     "$validation_dir/$test"
 done
+
+g++ "${flags[@]}" -I External/ImGUI tests/model_mesh_table_tests.cpp \
+    External/ImGUI/imgui.cpp External/ImGUI/imgui_draw.cpp \
+    External/ImGUI/imgui_tables.cpp External/ImGUI/imgui_widgets.cpp -o "$validation_dir/model_mesh_table"
+"$validation_dir/model_mesh_table"

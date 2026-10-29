@@ -437,6 +437,9 @@
     <ClInclude Include="source\models\animationmodel.h">
       <Filter>models</Filter>
     </ClInclude>
+    <ClInclude Include="source\editor\modelmeshtable.h">
+      <Filter>editor</Filter>
+    </ClInclude>
     <ClInclude Include="source\models\modelresourcemap.h">
       <Filter>models</Filter>
     </ClInclude>

@@ -153,18 +153,20 @@ template<class TrackMap> inline const typename TrackMap::mapped_type* FindTrack(
 {
     const auto exact = tracks.find(targetName);
     if (exact != tracks.end()) return &exact->second;
-    const auto category = map.Categories().find(ModelResourceMap::Vmd);
-    if (category == map.Categories().end()) return nullptr;
+    const auto* aliases = map.NamesForIndex(ModelResourceMap::Vmd, targetIndex);
+    if (!aliases) return nullptr;
     const typename TrackMap::mapped_type* found = nullptr;
-    for (const auto& alias : category->second)
+    for (const auto* aliasName : *aliases)
     {
-        if (alias.second.size() != 1 || alias.second.front() != targetIndex) continue;
-        auto it = tracks.find(alias.first);
-        if (it == tracks.end() && alias.first == "上半身2") it = tracks.find("上半身２");
-        if (it == tracks.end() && alias.first == "上半身3") it = tracks.find("上半身３");
+        const auto& alias = *aliasName;
+        const auto* targets = map.Find(ModelResourceMap::Vmd, alias);
+        if (!targets || targets->size() != 1) continue;
+        auto it = tracks.find(alias);
+        if (it == tracks.end() && alias == "上半身2") it = tracks.find("上半身２");
+        if (it == tracks.end() && alias == "上半身3") it = tracks.find("上半身３");
         if (it == tracks.end())
         {
-            std::string alternative = alias.first;
+            std::string alternative = alias;
             const char* wide[] = {"０", "１", "２", "３"};
             for (int digit = 0; digit < 4; ++digit)
             {

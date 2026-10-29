@@ -197,6 +197,7 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\entities\entitybase.h" />
     <ClInclude Include="source\models\modelimportutils.h" />
     <ClInclude Include="source\models\modelresourcemap.h" />
+    <ClInclude Include="source\editor\modelmeshtable.h" />
     <ClInclude Include="source\models\modelmapimport.h" />
     <ClInclude Include="source\models\modelmapjson.h" />
     <ClInclude Include="source\models\vmdretarget.h" />

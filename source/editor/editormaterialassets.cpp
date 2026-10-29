@@ -486,7 +486,8 @@ void ImGuiManager::DrawMaterialAssetSlots(EntityID entity)
         return;
     }
     const auto& component = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
-    for (size_t slot = 0; slot < MaterialManager::SlotCount(entity); ++slot)
+    const size_t slotCount = MaterialManager::SlotCount(entity);
+    for (size_t slot = 0; slot < slotCount; ++slot)
     {
         ImGui::PushID(static_cast<int>(slot));
         const auto handle = MaterialManager::SlotHandle(component, slot);
@@ -636,7 +637,8 @@ void ImGuiManager::DrawMaterialDropTarget()
     }
     if (ImGui::BeginPopup("Material Slotを選択"))
     {
-        for (size_t slot = 0; slot < MaterialManager::SlotCount(dropEntity); ++slot)
+        const size_t slotCount = MaterialManager::SlotCount(dropEntity);
+        for (size_t slot = 0; slot < slotCount; ++slot)
         {
             if (ImGui::Selectable(("Element " + to_string(slot)).c_str()))
             {

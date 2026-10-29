@@ -194,14 +194,7 @@ void AnimationModelResource::ApplyActiveVmdMorphs()
 
             for (const PmxMaterialMorphOffset& offset : morph.MaterialOffsets)
             {
-                for (size_t meshIndex = 0; meshIndex < m_Meshes.size(); ++meshIndex)
-                {
-                    const MeshData& meshData = m_Meshes[meshIndex];
-                    if (offset.MaterialIndex >= 0 && meshData.MaterialIndex != offset.MaterialIndex)
-                    {
-                        continue;
-                    }
-
+                m_ResourceMap.ForEachMaterialMesh(offset.MaterialIndex, m_Meshes.size(), [&](uint32_t meshIndex) {
                     for (GpuSkinVertex& vertex : m_GpuSkinVertices[meshIndex])
                     {
                         if (offset.Operation == 0)
@@ -218,7 +211,7 @@ void AnimationModelResource::ApplyActiveVmdMorphs()
                         }
                     }
                     vertexBufferChanged = true;
-                }
+                });
             }
         }
 
