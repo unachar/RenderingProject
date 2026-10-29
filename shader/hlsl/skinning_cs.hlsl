@@ -27,88 +27,7 @@ StructuredBuffer<GpuSkinVertex> g_InputVertices : register(t0);
 StructuredBuffer<float4x4> g_BoneMatrices : register(t1);
 RWStructuredBuffer<SkinnedVertex> g_OutputVertices : register(u0);
 
-float4 NormalizeQuaternion(float4 q)
-{
-    return q * rsqrt(max(dot(q, q), 0.00000001f));
-}
-
-float4 QuaternionFromMatrix(float3x3 m)
-{
-    float4 q;
-    const float trace = m[0][0] + m[1][1] + m[2][2];
-    if (trace > 0.0f)
-    {
-        const float s = sqrt(trace + 1.0f) * 2.0f;
-        q.w = 0.25f * s;
-        q.x = (m[1][2] - m[2][1]) / s;
-        q.y = (m[2][0] - m[0][2]) / s;
-        q.z = (m[0][1] - m[1][0]) / s;
-    }
-    else if (m[0][0] > m[1][1] && m[0][0] > m[2][2])
-    {
-        const float s = sqrt(1.0f + m[0][0] - m[1][1] - m[2][2]) * 2.0f;
-        q.w = (m[1][2] - m[2][1]) / s;
-        q.x = 0.25f * s;
-        q.y = (m[0][1] + m[1][0]) / s;
-        q.z = (m[2][0] + m[0][2]) / s;
-    }
-    else if (m[1][1] > m[2][2])
-    {
-        const float s = sqrt(1.0f + m[1][1] - m[0][0] - m[2][2]) * 2.0f;
-        q.w = (m[2][0] - m[0][2]) / s;
-        q.x = (m[0][1] + m[1][0]) / s;
-        q.y = 0.25f * s;
-        q.z = (m[1][2] + m[2][1]) / s;
-    }
-    else
-    {
-        const float s = sqrt(1.0f + m[2][2] - m[0][0] - m[1][1]) * 2.0f;
-        q.w = (m[0][1] - m[1][0]) / s;
-        q.x = (m[2][0] + m[0][2]) / s;
-        q.y = (m[1][2] + m[2][1]) / s;
-        q.z = 0.25f * s;
-    }
-    return NormalizeQuaternion(q);
-}
-
-float4 QuaternionSlerp(float4 a, float4 b, float t)
-{
-    float cosTheta = dot(a, b);
-    if (cosTheta < 0.0f)
-    {
-        b = -b;
-        cosTheta = -cosTheta;
-    }
-
-    float4 result = NormalizeQuaternion(lerp(a, b, t));
-    if (cosTheta <= 0.9995f)
-    {
-        const float theta = acos(clamp(cosTheta, -1.0f, 1.0f));
-        const float sinTheta = max(sin(theta), 0.00001f);
-        result = (sin((1.0f - t) * theta) * a + sin(t * theta) * b) / sinTheta;
-    }
-    return result;
-}
-
-float3x3 MatrixFromQuaternion(float4 q)
-{
-    q = NormalizeQuaternion(q);
-    const float x2 = q.x + q.x;
-    const float y2 = q.y + q.y;
-    const float z2 = q.z + q.z;
-    const float xx = q.x * x2;
-    const float yy = q.y * y2;
-    const float zz = q.z * z2;
-    const float xy = q.x * y2;
-    const float xz = q.x * z2;
-    const float yz = q.y * z2;
-    const float wx = q.w * x2;
-    const float wy = q.w * y2;
-    const float wz = q.w * z2;
-
-    return float3x3(1.0f - yy - zz, xy + wz, xz - wy, xy - wz, 1.0f - xx - zz, yz + wx, xz + wy, yz - wx,
-                    1.0f - xx - yy);
-}
+#include "DualQuaternionSkinning.hlsli"
 
 [numthreads(128, 1, 1)] void main(uint3 dispatchId : SV_DispatchThreadID) {
     const uint vertexIndex = dispatchId.x;
@@ -127,17 +46,21 @@ float3x3 MatrixFromQuaternion(float4 q)
 
     GpuSkinVertex input = g_InputVertices[vertexIndex];
 
-    bool validX = input.BoneWeights.x > 0.0f && input.BoneIndices.x >= 0 && (uint)input.BoneIndices.x < boneCount;
-    bool validY = input.BoneWeights.y > 0.0f && input.BoneIndices.y >= 0 && (uint)input.BoneIndices.y < boneCount;
-    bool validZ = input.BoneWeights.z > 0.0f && input.BoneIndices.z >= 0 && (uint)input.BoneIndices.z < boneCount;
-    bool validW = input.BoneWeights.w > 0.0f && input.BoneIndices.w >= 0 && (uint)input.BoneIndices.w < boneCount;
+    bool validX = isfinite(input.BoneWeights.x) && input.BoneWeights.x > 0.0f &&
+                  input.BoneIndices.x >= 0 && (uint)input.BoneIndices.x < boneCount;
+    bool validY = isfinite(input.BoneWeights.y) && input.BoneWeights.y > 0.0f &&
+                  input.BoneIndices.y >= 0 && (uint)input.BoneIndices.y < boneCount;
+    bool validZ = isfinite(input.BoneWeights.z) && input.BoneWeights.z > 0.0f &&
+                  input.BoneIndices.z >= 0 && (uint)input.BoneIndices.z < boneCount;
+    bool validW = isfinite(input.BoneWeights.w) && input.BoneWeights.w > 0.0f &&
+                  input.BoneIndices.w >= 0 && (uint)input.BoneIndices.w < boneCount;
 
     float4 weights = float4(validX ? input.BoneWeights.x : 0.0f, validY ? input.BoneWeights.y : 0.0f,
                             validZ ? input.BoneWeights.z : 0.0f, validW ? input.BoneWeights.w : 0.0f);
 
     const float totalWeight = weights.x + weights.y + weights.z + weights.w;
 
-    if (totalWeight <= 0.0001f)
+    if (!isfinite(totalWeight) || totalWeight <= 0.0001f)
     {
         SkinnedVertex output;
         output.Position = input.Position;
@@ -186,6 +109,50 @@ float3x3 MatrixFromQuaternion(float4 q)
         return;
     }
 
+    // All model importers share this path. Preserve authored SDEF above; use DQS
+    // for BDEF/QDEF and ordinary FBX/VRM vertices when every influence is rigid.
+    SkinningDualQuaternion blended = ZeroDualQuaternion();
+    float4 reference = float4(0.0f, 0.0f, 0.0f, 1.0f);
+    bool hasReference = false;
+    bool rigid = true;
+    [unroll]
+    for (int influence = 0; influence < 4; ++influence)
+    {
+        if (weights[influence] <= 0.0f) continue;
+        const float4x4 boneMatrix = g_BoneMatrices[(uint)input.BoneIndices[influence]];
+        if (!IsRigidSkinningMatrix(boneMatrix))
+        {
+            rigid = false;
+            break;
+        }
+        const SkinningDualQuaternion value = DualQuaternionFromMatrix(boneMatrix);
+        if (!hasReference)
+        {
+            reference = value.Real;
+            hasReference = true;
+        }
+        blended = AccumulateDualQuaternion(blended, value, weights[influence], reference);
+    }
+    if (rigid && hasReference && dot(blended.Real, blended.Real) > 0.00000001f)
+    {
+        blended = NormalizeDualQuaternion(blended);
+        const float3 position = TransformDualQuaternionPosition(blended, input.Position);
+        const float3 normal = RotateDualQuaternionVector(blended, input.Normal);
+        if (all(isfinite(position)) && all(isfinite(normal)))
+        {
+            SkinnedVertex output;
+            output.Position = position;
+            const float normalLenSq = dot(normal, normal);
+            output.Normal = normalLenSq > 0.000001f ? normalize(normal) : float3(0.0f, 1.0f, 0.0f);
+            output.TexCoord = input.TexCoord;
+            output.Diffuse = input.Diffuse;
+            g_OutputVertices[vertexIndex] = output;
+            return;
+        }
+    }
+
+    // DQS cannot encode scale, shear or reflection. Keep the complete LBS result
+    // for this vertex instead of mixing incompatible transformations.
     const float4 pos = float4(input.Position, 1.0f);
     const float4 nor = float4(input.Normal, 0.0f);
 

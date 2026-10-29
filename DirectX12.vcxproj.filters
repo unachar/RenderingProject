@@ -1343,6 +1343,9 @@
     <ClInclude Include="source\rendering\cloud\cloudvalidation.h">
       <Filter>rendering\cloud</Filter>
     </ClInclude>
+    <None Include="shader\hlsl\DualQuaternionSkinning.hlsli">
+      <Filter>shader\hlsl</Filter>
+    </None>
     <None Include="shader\hlsl\CloudCommon.hlsli">
       <Filter>shader\hlsl\clouds</Filter>
     </None>

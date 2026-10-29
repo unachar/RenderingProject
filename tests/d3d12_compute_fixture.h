@@ -246,6 +246,22 @@ namespace D3D12Test
 
         void Upload(Texture& texture, const void* data, UINT rowBytes)
         {
+            if (texture.Stride)
+            {
+                const UINT64 bytes = UINT64(texture.Width) * texture.Stride;
+                if (rowBytes != bytes) throw std::runtime_error("Structured upload size mismatch");
+                auto upload = Buffer(bytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+                void* mapped = nullptr;
+                D3D12_RANGE noRead{0, 0};
+                Check(upload->Map(0, &noRead, &mapped));
+                std::memcpy(mapped, data, static_cast<size_t>(bytes));
+                upload->Unmap(0, nullptr);
+                Begin();
+                Transition(texture, D3D12_RESOURCE_STATE_COPY_DEST);
+                commands->CopyBufferRegion(texture.Resource.Get(), 0, upload.Get(), 0, bytes);
+                Execute();
+                return;
+            }
             const auto desc = texture.Resource->GetDesc();
             D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
             UINT64 totalBytes = 0;
@@ -314,6 +330,13 @@ namespace D3D12Test
                 desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
                 desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
                 desc.Texture2D.MipLevels = 1;
+                if (texture.Stride)
+                {
+                    desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+                    desc.Buffer = {};
+                    desc.Buffer.NumElements = texture.Width;
+                    desc.Buffer.StructureByteStride = texture.Stride;
+                }
                 device->CreateShaderResourceView(texture.Resource.Get(), &desc, Cpu(index));
             }
             for (UINT index = 0; index < static_cast<UINT>(uavs.size()); ++index)
