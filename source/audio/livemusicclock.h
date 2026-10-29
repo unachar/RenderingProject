@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstddef>
+#include <utility>
 #include <stdexcept>
 #include <vector>
 
