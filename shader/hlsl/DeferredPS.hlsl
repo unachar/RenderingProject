@@ -139,7 +139,7 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
     output.Shadow.b = usePartParams ? partParams.Shadow0.z : ShadowStrength;
     output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
     // POM セルフシャドウ（主光源）。
-    WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow);
+    WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow, output.Material.a);
     output.Color.a = 1.0f;
 #ifdef SHADER_GPU_DRIVEN
     if (VisibilityDebugMode != 0)

@@ -1303,7 +1303,7 @@ void AnimationModelResource::Uninit()
     m_BoneMatricesScratch.clear();
     m_SkinningVersion = 0;
     m_DispatchedSkinningVersion = UINT64_MAX;
-    m_DispatchedOutlineSkinningVersion = UINT64_MAX;
+    m_DispatchedOutlineSkinningVersions.fill(UINT64_MAX);
     m_LastPoseAnimation1.clear();
     m_LastPoseAnimation2.clear();
     m_LastPoseFrame1 = 0.0f;

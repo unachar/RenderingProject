@@ -154,6 +154,14 @@ float GetMeshToonOutlineWidthScale(const MaterialComponent& material, UINT meshI
     return 1.0f;
 }
 
+bool HasVisibleToonOutlineWidth(const MaterialComponent& material, float scale = 1.0f)
+{
+    const float width = material.ToonOutlineWidthModeSetting == ToonOutlineWidthMode::ScreenPixels
+                            ? material.ToonOutlineScreenWidth
+                            : material.ToonOutlineWidth;
+    return width > 0.0f && scale > 0.0f;
+}
+
 static float GetCameraDepth(EntityID entity, const XMMATRIX& view)
 {
     if (!Registry::HasComponent(entity, ComponentType::TRANSFORM))
@@ -248,7 +256,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
             {
                 continue;
             }
-            model->DispatchGpuSkinning(pCommandList, referenceDraw);
+            model->DispatchGpuSkinning(pCommandList, 0); // Shadow draws never consume TEO vertices.
             for (UINT m = 0; m < model->GetMeshCount(); ++m)
             {
                 const MeshData& meshData = model->GetMeshData(m);
@@ -409,7 +417,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                 continue;
             }
 
-            model->DispatchGpuSkinning(commandList, false);
+            model->DispatchGpuSkinning(commandList, 0);
             commandList->SetGraphicsRootSignature(ShaderPipelines::GetModelRootSignature());
             NoiseCacheBindings::BindMain(commandList);
             commandList->SetPipelineState(pso);
@@ -642,8 +650,14 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
             {
                 continue;
             }
-            const bool useToonOutlines = ShouldDrawToonOutline(dc.EntityID);
-            dc.model->DispatchGpuSkinning(pCommandList, useToonOutlines);
+            const auto& outlineMaterial = dc.material ? *dc.material : DefaultMaterial();
+            const bool useToonOutlines = !occlusionPhaseTwo && ShouldDrawToonOutline(dc.EntityID) &&
+                                         HasVisibleToonOutlineWidth(outlineMaterial);
+            const int activeTeoMode = GetTeoModeIndex(outlineMaterial);
+            const bool useTeoOutlines = useToonOutlines &&
+                                        outlineMaterial.ToonOutlineRenderMode != ToonOutlineMode::Extrude &&
+                                        outlineMaterial.ToonOutlineTeoWidthScale > 0.0f;
+            dc.model->DispatchGpuSkinning(pCommandList, useTeoOutlines ? (1u << activeTeoMode) : 0u);
             lastPso = nullptr;
 
             barriers.clear();
@@ -665,7 +679,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
                 for (int teoMode = 0; useToonOutlines && teoMode < kToonOutlineModeCount; ++teoMode)
                 {
-                    if (!meshData.TeoVertexBuffers[teoMode])
+                    if (!useTeoOutlines || teoMode != activeTeoMode || !meshData.TeoVertexBuffers[teoMode])
                     {
                         continue;
                     }
@@ -773,7 +787,8 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                 }
 
                 if (!occlusionPhaseTwo && outlinePso && useToonOutlines &&
-                    ShouldDrawMeshToonOutline(material, m, meshData))
+                    ShouldDrawMeshToonOutline(material, m, meshData) &&
+                    HasVisibleToonOutlineWidth(material, GetMeshToonOutlineWidthScale(material, m)))
                 {
                     const float meshWidthScale = GetMeshToonOutlineWidthScale(material, m);
                     const int teoMode = GetTeoModeIndex(material);
@@ -782,8 +797,9 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                     const bool drawExtrude = material.ToonOutlineRenderMode == ToonOutlineMode::Extrude ||
                                              material.ToonOutlineRenderMode == ToonOutlineMode::Mix ||
                                              (material.ToonOutlineRenderMode == ToonOutlineMode::TEO && !hasTeoMesh);
-                    const bool drawTeo = hasTeoMesh && (material.ToonOutlineRenderMode == ToonOutlineMode::TEO ||
-                                                        material.ToonOutlineRenderMode == ToonOutlineMode::Mix);
+                    const bool drawTeo = hasTeoMesh && material.ToonOutlineTeoWidthScale > 0.0f &&
+                                         (material.ToonOutlineRenderMode == ToonOutlineMode::TEO ||
+                                          material.ToonOutlineRenderMode == ToonOutlineMode::Mix);
 
                     pCommandList->SetPipelineState(outlinePso);
                     if (drawExtrude)
@@ -819,8 +835,9 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                         pCommandList->DrawIndexedInstanced(meshData.TeoIndexCounts[teoMode], 1, 0, 0, 0);
                     }
                     pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
-                    pCommandList->SetPipelineState(dc.pso);
-                    lastPso = dc.pso;
+                    // The next base draw sets its section PSO explicitly. Avoid an
+                    // unused restore after every outline (especially the last mesh).
+                    lastPso = nullptr;
                 }
             }
 
@@ -843,7 +860,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
 
                 for (int teoMode = 0; useToonOutlines && teoMode < kToonOutlineModeCount; ++teoMode)
                 {
-                    if (!meshData.TeoVertexBuffers[teoMode])
+                    if (!useTeoOutlines || teoMode != activeTeoMode || !meshData.TeoVertexBuffers[teoMode])
                     {
                         continue;
                     }
@@ -1123,7 +1140,8 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                 }
 
                 if (!occlusionPhaseTwo && outlinePso && ShouldDrawToonOutline(dc.EntityID) &&
-                    ShouldDrawMeshToonOutline(material, m, meshData))
+                    ShouldDrawMeshToonOutline(material, m, meshData) &&
+                    HasVisibleToonOutlineWidth(material, GetMeshToonOutlineWidthScale(material, m)))
                 {
                     const float meshWidthScale = GetMeshToonOutlineWidthScale(material, m);
                     const int teoMode = GetTeoModeIndex(material);
@@ -1132,8 +1150,9 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                     const bool drawExtrude = material.ToonOutlineRenderMode == ToonOutlineMode::Extrude ||
                                              material.ToonOutlineRenderMode == ToonOutlineMode::Mix ||
                                              (material.ToonOutlineRenderMode == ToonOutlineMode::TEO && !hasTeoMesh);
-                    const bool drawTeo = hasTeoMesh && (material.ToonOutlineRenderMode == ToonOutlineMode::TEO ||
-                                                        material.ToonOutlineRenderMode == ToonOutlineMode::Mix);
+                    const bool drawTeo = hasTeoMesh && material.ToonOutlineTeoWidthScale > 0.0f &&
+                                         (material.ToonOutlineRenderMode == ToonOutlineMode::TEO ||
+                                          material.ToonOutlineRenderMode == ToonOutlineMode::Mix);
 
                     pCommandList->SetPipelineState(outlinePso);
                     if (drawExtrude)
@@ -1174,8 +1193,9 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                         pCommandList->DrawIndexedInstanced(meshData.TeoIndexCounts[teoMode], 1, 0, 0, 0);
                     }
                     pCommandList->SetGraphicsRootDescriptorTable(0, cbvHandle);
-                    pCommandList->SetPipelineState(dc.pso);
-                    lastPso = dc.pso;
+                    // The next base draw sets its section PSO explicitly. Avoid an
+                    // unused restore after every outline (especially the last mesh).
+                    lastPso = nullptr;
                 }
             }
         }

@@ -162,7 +162,9 @@ void ResolvePacked(uint2 pixel)
     OutNormal[pixel] = float4(normal * 0.5f + 0.5f, 1.0f);
     OutDepth[pixel] = depth;
     OutMaterial[pixel] = float4(metallic, roughness, fresnel, materialPart);
-    OutShadow[pixel] = float4(shadowThreshold, shadowSoftness, packedColor.a, 1.0f);
+    // Packed primitives have no POM; Toon alpha must encode zero occlusion.
+    float shadowAlpha = IsLiveToonClass(materialPart) ? 0.0f : 1.0f;
+    OutShadow[pixel] = float4(shadowThreshold, shadowSoftness, packedColor.a, shadowAlpha);
 }
 
 [numthreads(8, 8, 1)] void main(uint3 thread : SV_DispatchThreadID) {

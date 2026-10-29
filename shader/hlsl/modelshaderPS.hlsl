@@ -351,6 +351,29 @@ float4 ShadeForward(in PSInput3D In)
     float shadowSoftness = max(shadowParams.g, 0.0001f);
     float shadowStrength = saturate(shadowParams.b);
 
+    if (IsLiveToonClass(shaderClass) && !transparent)
+    {
+        float3 toonDirection, toonColor, directLight;
+        float attenuation, volume, range, visibility;
+        float3 toonView = SurfaceViewDirectionCommon(In.WorldPos, CameraPos);
+        g_MLCellIndex = MLCellIndexFromWorld(In.WorldPos);
+        g_LiveToonClass = shaderClass;
+        g_LiveToonShadow = float2(shadowThreshold, shadowStrength);
+        ResolveSurfaceLightAggregateShadowed(
+            In.WorldPos, ddx(In.WorldPos), ddy(In.WorldPos), surfaceNormal, In.Position.xy,
+            clamp((int)round(VirtualShadowGlobal.z), 0, 3), false, toonView, baseColor.rgb,
+            material.rgb, shadowSoftness, directLight, toonDirection, toonColor,
+            attenuation, volume, range, visibility);
+        float3 irradiance = SampleEnvironmentLatLong(surfaceNormal, 1.0f);
+        float3 color = directLight + EvaluateLiveToonAmbient(baseColor.rgb, irradiance, shaderClass);
+        color *= assetEmissionAO.a;
+        // Reuse the same GI/fog/emission composition as Deferred.
+        float2 screenUv = In.Position.xy / max(ViewportSize, float2(1.0f, 1.0f));
+        color = ApplySurfaceScreenEffects(color, assetEmissionAO.rgb, screenUv,
+                                           baseColor.rgb * (1.0f - saturate(material.r)));
+        return float4(color * baseColor.a, baseColor.a);
+    }
+
     float3 lightDir;
     float3 lightColor;
     float lightAttenuation;

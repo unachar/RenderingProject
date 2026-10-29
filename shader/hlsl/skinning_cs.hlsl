@@ -1,3 +1,4 @@
+#include "SkinningNormal.hlsli"
 
 
 struct GpuSkinVertex
@@ -64,8 +65,7 @@ RWStructuredBuffer<SkinnedVertex> g_OutputVertices : register(u0);
     {
         SkinnedVertex output;
         output.Position = input.Position;
-        const float normalLenSq = dot(input.Normal, input.Normal);
-        output.Normal = (normalLenSq > 0.000001f) ? normalize(input.Normal) : float3(0.0f, 1.0f, 0.0f);
+        output.Normal = NormalizeSkinnedNormal(input.Normal, input.Normal);
         output.TexCoord = input.TexCoord;
         output.Diffuse = input.Diffuse;
         g_OutputVertices[vertexIndex] = output;
@@ -101,8 +101,7 @@ RWStructuredBuffer<SkinnedVertex> g_OutputVertices : register(u0);
         const bool invalidSdefPosition = any(sdefPos != sdefPos);
         SkinnedVertex output;
         output.Position = invalidSdefPosition ? input.Position : sdefPos;
-        const float normalLenSq = dot(sdefNor, sdefNor);
-        output.Normal = (normalLenSq > 0.000001f) ? normalize(sdefNor) : float3(0.0f, 1.0f, 0.0f);
+        output.Normal = NormalizeSkinnedNormal(input.Normal, sdefNor);
         output.TexCoord = input.TexCoord;
         output.Diffuse = input.Diffuse;
         g_OutputVertices[vertexIndex] = output;
@@ -142,8 +141,7 @@ RWStructuredBuffer<SkinnedVertex> g_OutputVertices : register(u0);
         {
             SkinnedVertex output;
             output.Position = position;
-            const float normalLenSq = dot(normal, normal);
-            output.Normal = normalLenSq > 0.000001f ? normalize(normal) : float3(0.0f, 1.0f, 0.0f);
+            output.Normal = NormalizeSkinnedNormal(input.Normal, normal);
             output.TexCoord = input.TexCoord;
             output.Diffuse = input.Diffuse;
             g_OutputVertices[vertexIndex] = output;
@@ -190,8 +188,7 @@ RWStructuredBuffer<SkinnedVertex> g_OutputVertices : register(u0);
     {
         SkinnedVertex output;
         output.Position = input.Position;
-        const float normalLenSq = dot(input.Normal, input.Normal);
-        output.Normal = (normalLenSq > 0.000001f) ? normalize(input.Normal) : float3(0.0f, 1.0f, 0.0f);
+        output.Normal = NormalizeSkinnedNormal(input.Normal, input.Normal);
         output.TexCoord = input.TexCoord;
         output.Diffuse = input.Diffuse;
         g_OutputVertices[vertexIndex] = output;
@@ -202,8 +199,7 @@ RWStructuredBuffer<SkinnedVertex> g_OutputVertices : register(u0);
 
     SkinnedVertex output;
     output.Position = skinnedPos.xyz;
-    const float normalLenSq = dot(skinnedNor.xyz, skinnedNor.xyz);
-    output.Normal = (normalLenSq > 0.000001f) ? normalize(skinnedNor.xyz) : float3(0.0f, 1.0f, 0.0f);
+    output.Normal = NormalizeSkinnedNormal(input.Normal, skinnedNor.xyz);
     output.TexCoord = input.TexCoord;
     output.Diffuse = input.Diffuse;
     g_OutputVertices[vertexIndex] = output;

@@ -1,3 +1,4 @@
+#include "ToonLighting.hlsli"
 Texture2D<uint4> VisibilityBuffer : register(t0);
 Texture2D<float> HardwareDepth : register(t1);
 RWTexture2D<float4> OutBaseColor : register(u0);
@@ -24,7 +25,8 @@ float3 DecodeOctahedron(float2 encoded)
     float3 normal = float3(f, 1.0f - abs(f.x) - abs(f.y));
     if (normal.z < 0.0f)
     {
-        normal.xy = (1.0f - abs(normal.yx)) * (normal.xy >= 0.0f ? 1.0f : -1.0f);
+        float2 direction = float2(normal.x >= 0.0f ? 1.0f : -1.0f, normal.y >= 0.0f ? 1.0f : -1.0f);
+        normal.xy = (1.0f - abs(normal.yx)) * direction;
     }
     return normalize(normal);
 }
@@ -64,5 +66,7 @@ float3 DecodeOctahedron(float2 encoded)
     OutNormal[pixel] = float4(normal * 0.5f + 0.5f, 1.0f);
     OutDepth[pixel] = depth;
     OutMaterial[pixel] = float4(metallic, roughness, fresnel, materialPart);
-    OutShadow[pixel] = float4(shadowThreshold, shadowSoftness, packedColor.a, 1.0f);
+    // Toon alpha carries POM occlusion; this packed primitive path has no POM.
+    float shadowAlpha = IsLiveToonClass(materialPart) ? 0.0f : 1.0f;
+    OutShadow[pixel] = float4(shadowThreshold, shadowSoftness, packedColor.a, shadowAlpha);
 }

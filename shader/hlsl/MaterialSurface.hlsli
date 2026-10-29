@@ -1,5 +1,6 @@
 #ifndef MATERIAL_SURFACE_INCLUDED
 #define MATERIAL_SURFACE_INCLUDED
+#include "ToonLighting.hlsli"
 // ラスターシェーダーと GPU 駆動シェーダーで同じテクスチャヒープとパラメーターレイアウトを使う。
 #include "MaterialTextureHeap.hlsli"
 struct AssetMaterialParameters
@@ -393,13 +394,25 @@ float3 PomMainLightDirection(float3 worldPos)
 }
 #endif
 
-// 影の GBuffer（PBR 画素では r / b を使わない）にセルフシャドウを詰める。
-// r = 1 を印、b = 可視率。DeferredLightingPS 側で PBR 画素かつ r = 1 のときだけ読む。
+// PBR: r=1 marker / b=visibility. Toon: preserve authored RGB and store
+// occlusion in alpha (the PBR shading-model channel is unused for classes 1..4).
 void WriteAssetParallaxSelfShadow(AssetParallaxResult pom, float3 worldPos, SamplerState materialSampler,
-                                  inout float4 shadowGBuffer)
+                                  inout float4 shadowGBuffer, float materialClass = 11.0f)
 {
+    if (IsLiveToonClass(materialClass))
+    {
+        float visibility = 1.0f;
 #ifdef POM_HAS_MAIN_LIGHT
-    if (pom.Active)
+        if (pom.Active)
+        {
+            visibility = AssetParallaxSelfShadow(pom, PomMainLightDirection(worldPos), materialSampler);
+        }
+#endif
+        shadowGBuffer = PackLiveToonPomShadow(shadowGBuffer, visibility);
+        return;
+    }
+#ifdef POM_HAS_MAIN_LIGHT
+    if (pom.Active && abs(materialClass - 11.0f) < 0.5f)
     {
         shadowGBuffer.r = 1.0f;
         shadowGBuffer.b = AssetParallaxSelfShadow(pom, PomMainLightDirection(worldPos), materialSampler);

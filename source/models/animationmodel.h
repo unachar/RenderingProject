@@ -350,7 +350,8 @@ class AnimationModelResource
     vector<XMFLOAT4X4> m_BoneMatricesScratch{};
     uint64_t m_SkinningVersion = 0;
     uint64_t m_DispatchedSkinningVersion = UINT64_MAX;
-    uint64_t m_DispatchedOutlineSkinningVersion = UINT64_MAX;
+    array<uint64_t, kToonOutlineModeCount> m_DispatchedOutlineSkinningVersions = {
+        UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX};
     string m_LastPoseAnimation1{};
     string m_LastPoseAnimation2{};
     float m_LastPoseFrame1 = 0.0f;
@@ -463,7 +464,8 @@ class AnimationModelResource
     void CommitPhysicsPose();
 
     bool ApplyMeshShadingOverridePartIds(const vector<int>& overridePartIds);
-    void DispatchGpuSkinning(ID3D12GraphicsCommandList* pCommandList, bool wantsOutlines = true);
+    // outlineModes: bit mask of requested ToonOutlineMeshMode presets; zero skins only the base mesh.
+    void DispatchGpuSkinning(ID3D12GraphicsCommandList* pCommandList, uint32_t outlineModes = 0);
 
     void Uninit();
 

@@ -242,19 +242,20 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
     return true;
 }
 
-void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCommandList, bool wantsOutlines)
+void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCommandList, uint32_t outlineModes)
 {
-    const auto work = PlanSkinningWork(m_SkinningVersion, m_DispatchedSkinningVersion,
-                                       m_DispatchedOutlineSkinningVersion, wantsOutlines);
+    const bool skinBase = m_SkinningVersion != m_DispatchedSkinningVersion;
+    const uint32_t skinModes =
+        PlanOutlineSkinningModes(m_SkinningVersion, m_DispatchedOutlineSkinningVersions, outlineModes);
     if (!pCommandList || !m_SkinningDescHeap || !ShaderPipelines::GetSkinningRootSignature() ||
-        !PsoManager::GetSkinningPso() || (!work.Base && !work.Outlines))
+        !PsoManager::GetSkinningPso() || (!skinBase && skinModes == 0))
     {
         return;
     }
     // 姿勢が変わらなくても、後続フレームでマテリアルの輪郭線が有効になる場合がある。
     // 輪郭線だけを生成する前に、キャッシュした姿勢を現在のフレームスロットへアップロードする。
     const UINT boneFrame = GraphicsDevice::GetFrameIndex() % RendererState::g_kFRAME_COUNT;
-    if (!work.Base && work.Outlines && m_pBoneBufferMapped[boneFrame] && !m_BoneMatricesScratch.empty())
+    if (!skinBase && skinModes != 0 && m_pBoneBufferMapped[boneFrame] && !m_BoneMatricesScratch.empty())
     {
         memcpy(m_pBoneBufferMapped[boneFrame], m_BoneMatricesScratch.data(),
                m_BoneMatricesScratch.size() * sizeof(XMFLOAT4X4));
@@ -277,7 +278,7 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
             continue;
         }
 
-        if (work.Base && m_Meshes[m].PreviousVertexValid)
+        if (skinBase && m_Meshes[m].PreviousVertexValid)
         {
             D3D12_RESOURCE_BARRIER copyBarriers[2] = {
                 CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].VertexBuffer.Get(),
@@ -311,7 +312,7 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
                                                       m_Meshes[m].UavOutputVertexIndex, descSize);
         pCommandList->SetComputeRootDescriptorTable(2, uavOutputHandle);
 
-        if (work.Base)
+        if (skinBase)
         {
             UINT threadGroups = (m_Meshes[m].VertexCount + kSkinningThreadGroupSize - 1) / kSkinningThreadGroupSize;
             pCommandList->Dispatch(threadGroups, 1, 1);
@@ -341,10 +342,10 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
             }
         }
 
-        for (int mode = 0; work.Outlines && mode < kToonOutlineModeCount; ++mode)
+        for (int mode = 0; (skinModes != 0) && mode < kToonOutlineModeCount; ++mode)
         {
-            if (m_Meshes[m].TeoVertexCounts[mode] == 0 || !m_Meshes[m].TeoInputVertexBuffers[mode] ||
-                !m_Meshes[m].TeoVertexBuffers[mode])
+            if ((skinModes & (1u << mode)) == 0 || m_Meshes[m].TeoVertexCounts[mode] == 0 ||
+                !m_Meshes[m].TeoInputVertexBuffers[mode] || !m_Meshes[m].TeoVertexBuffers[mode])
             {
                 continue;
             }
@@ -372,12 +373,15 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
         pCommandList->SetDescriptorHeaps(_countof(rendererHeaps), rendererHeaps);
     }
 
-    if (work.Base)
+    if (skinBase)
     {
         m_DispatchedSkinningVersion = m_SkinningVersion;
     }
-    if (work.Outlines)
+    for (int mode = 0; mode < kToonOutlineModeCount; ++mode)
     {
-        m_DispatchedOutlineSkinningVersion = m_SkinningVersion;
+        if ((skinModes & (1u << mode)) != 0)
+        {
+            m_DispatchedOutlineSkinningVersions[mode] = m_SkinningVersion;
+        }
     }
 }

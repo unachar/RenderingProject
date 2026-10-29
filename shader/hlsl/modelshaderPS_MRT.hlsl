@@ -66,7 +66,7 @@ GBufferDepthOutput main(in PSInput3D In)
     output.Shadow = usePartParams ? float4(partParams.Shadow0.x, partParams.Shadow0.y, partParams.Shadow0.z, 0.0f)
                                   : float4(ShadowThreshold, ShadowSoftness, ShadowStrength, 0.0f);
     output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
-    WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow);
+    WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow, output.Material.a);
     return output;
 }
 

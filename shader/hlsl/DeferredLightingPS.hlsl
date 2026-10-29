@@ -115,7 +115,7 @@ float4 ShadeDeferred(PSInputPostProcess input)
         return baseColor;
     }
 
-    bool toon = IsMaterialClass(shaderClass, 4.0f);
+    bool toon = IsLiveToonClass(shaderClass);
     bool shadow = IsMaterialClass(shaderClass, 5.0f);
     bool lit = IsMaterialClass(shaderClass, 8.0f);
     bool pbr = IsMaterialClass(shaderClass, 11.0f);
@@ -146,6 +146,13 @@ float4 ShadeDeferred(PSInputPostProcess input)
     float rangeBlend;
     float aggregateShadowVisibility;
     float3 surfaceNormal = DecodeGBufferNormal(normal.xyz);
+    if (toon)
+    {
+        g_PomSelfShadow = LiveToonPomVisibility(shadowParams.a);
+        g_PomSelfShadowLight = LightPositionType.w < 0.5f
+                                  ? SafeNormalizeCommon(LightDirection.xyz, float3(0.0f, 1.0f, 0.0f))
+                                  : SafeNormalizeCommon(LightPositionType.xyz - position, float3(0.0f, 1.0f, 0.0f));
+    }
     if (pbr)
     {
         // 拡張マテリアルモデル（影の GBuffer の alpha）と、PBR の面に適用する天候。
@@ -168,6 +175,8 @@ float4 ShadeDeferred(PSInputPostProcess input)
     int materialShadowFilterRadius =
         pbr ? clamp((int)round(lerp(max(VirtualShadowGlobal.z, 1.0f), 3.0f, saturate(shadowSoftness * 2.0f))), 1, 3)
             : clamp((int)round(VirtualShadowGlobal.z), 0, 3);
+    g_LiveToonClass = toon ? shaderClass : 0.0f;
+    g_LiveToonShadow = float2(shadowThreshold, shadowStrength);
     ResolveSurfaceLightAggregateShadowed(position, positionDx, positionDy, surfaceNormal, input.Position.xy,
                                          materialShadowFilterRadius, pbr, viewDir, baseColor.rgb, material.rgb,
                                          shadowSoftness, pbrDirectLight, lightDir, lightColor, lightAttenuation,
@@ -214,7 +223,14 @@ float4 ShadeDeferred(PSInputPostProcess input)
         float3 pageColor = frac(pageHash + float3(0.0f, 0.333f, 0.667f));
         return float4(pageColor, 1.0f);
     }
-    [branch] if (shadow || toon || lit)
+    if (toon)
+    {
+        float2 environmentUv = float2(frac(atan2(surfaceNormal.z, surfaceNormal.x) / (2.0f * PI) + 0.5f),
+                                      acos(clamp(surfaceNormal.y, -1.0f, 1.0f)) / PI);
+        float3 irradiance = EnvironmentTexture.SampleLevel(TextureSampler, environmentUv, 8.0f).rgb;
+        baseColor.rgb = pbrDirectLight + EvaluateLiveToonAmbient(baseColor.rgb, irradiance, shaderClass);
+    }
+    [branch] if (shadow || lit)
     {
         float lightIntensity = LightColor.a;
 
@@ -248,22 +264,6 @@ float4 ShadeDeferred(PSInputPostProcess input)
             baseColor.rgb = lerp(litColor, baseColor.rgb * shadowTint - 0.08f, shadowDensity);
         }
 
-        if (toon)
-        {
-            float castShadow = saturate(1.0f - aggregateShadowVisibility);
-            float lightLuminance = dot(lightColor.rgb, float3(0.299f, 0.587f, 0.114f));
-            float lightShadowPower = saturate(lightLuminance / (lightLuminance + 1.0f));
-            float shadowDensity = castShadow * shadowStrength * lerp(0.25f, 1.0f, lightShadowPower);
-            float selfShadowMask =
-                smoothstep(shadowThreshold - shadowSoftness, shadowThreshold + shadowSoftness, castShadow);
-            shadowDensity =
-                saturate(max(shadowDensity, selfShadowMask * shadowStrength * lerp(0.20f, 0.85f, lightShadowPower)));
-            float3 lightTint = (lightLuminance > 0.0001f) ? lightColor.rgb / lightLuminance : float3(1.0f, 1.0f, 1.0f);
-            float3 shadowTint = saturate(float3(0.018f, 0.016f, 0.020f) + environmentColor + lightTint * 0.025f);
-            float3 litColor = baseColor.rgb * (lightColor.rgb * 0.72f + NdotL);
-            baseColor.rgb = diffuse * lerp(litColor, litColor * shadowTint, shadowDensity);
-        }
-
         if (lit)
         {
             float castShadow = saturate(1.0f - aggregateShadowVisibility);
@@ -282,6 +282,10 @@ float4 ShadeDeferred(PSInputPostProcess input)
     }
 
     float4 authoredEmissionAO = MaterialEmissionAO.Load(gbufferPixel);
+    if (toon)
+    {
+        baseColor.rgb *= authoredEmissionAO.a;
+    }
     if (pbr)
     {
         SurfaceData surface = BuildLightingSurface(baseColor, surfaceNormal, material.rgb, authoredEmissionAO);

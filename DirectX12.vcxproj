@@ -1238,6 +1238,9 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\rendering\cloud\cloudrenderer.h" />
     <ClInclude Include="source\rendering\cloud\cloudsettings.h" />
     <None Include="shader\hlsl\DualQuaternionSkinning.hlsli" />
+    <None Include="shader\hlsl\SkinningNormal.hlsli" />
+    <None Include="shader\hlsl\ToonLighting.hlsli" />
+    <None Include="shader\hlsl\ToonOutlineProjection.hlsli" />
     <None Include="shader\hlsl\CloudCommon.hlsli" />
     <None Include="shader\hlsl\CloudMedium.hlsli" />
     <None Include="shader\hlsl\noise.hlsl" />

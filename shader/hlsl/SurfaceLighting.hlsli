@@ -2,6 +2,11 @@
 
 #ifndef SURFACE_LIGHTING_INCLUDED
 #define SURFACE_LIGHTING_INCLUDED
+#include "ToonLighting.hlsli"
+
+// Set only by character lighting callers; other surface users remain unchanged.
+static float g_LiveToonClass = 0.0f;
+static float2 g_LiveToonShadow = float2(0.44f, 1.0f);
 
 struct SurfaceData
 {
@@ -1142,6 +1147,13 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
         }
     }
 
+    if (IsLiveToonClass(g_LiveToonClass))
+    {
+        acc.PbrDirect += sampleWeight * EvaluateLiveToonLight(
+            albedo, normal, viewDir, singleDir, singleColor, g_LiveToonClass, materialData.g,
+            g_LiveToonShadow.x, shadowSoftness, g_LiveToonShadow.y);
+    }
+
     float weight = max(dot(authoredLightColor * lightIntensityValue, float3(0.299f, 0.587f, 0.114f)), 0.0001f) *
                    singleAttenuation * sampleWeight;
     acc.DirSum += singleDir * weight;
@@ -1393,6 +1405,12 @@ void ResolveSurfaceLightAggregateShadowed(float3 worldPos, float3 worldPosDx, fl
         {
             pbrDirectLight =
                 EvaluatePbrDirectLight(normal, viewDir, lightDir, lightColor, albedo, materialData, shadowSoftness);
+        }
+        if (IsLiveToonClass(g_LiveToonClass))
+        {
+            pbrDirectLight = EvaluateLiveToonLight(
+                albedo, normal, viewDir, lightDir, lightColor, g_LiveToonClass, materialData.g,
+                g_LiveToonShadow.x, shadowSoftness, g_LiveToonShadow.y);
         }
         volumeScatter = legacyVolume * max(LightColor.a, 0.0f);
         rangeBlend = saturate((max(LightDirection.w, 1.0f) - 1.0f) / 7.0f);
