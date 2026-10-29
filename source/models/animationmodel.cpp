@@ -11,6 +11,7 @@ using namespace AnimationMath;
 #include "materialpartresolver.h"
 #include "material.h"
 #include "modelimportutils.h"
+#include "modelmapimport.h"
 #include "toonoutlinebuilder.h"
 #include "../../External/meshoptimizer/src/meshoptimizer.h"
 #include <cstdint>
@@ -333,11 +334,13 @@ void AnimationModelResource::CreateBone(aiNode* node)
 
 bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bool isConvert)
 {
+    Uninit();
     m_pDevice = device;
 
     const filesystem::path modelPath = ModelPathFromUtf8(fileName);
     const string extension = ModelPathLowerExtension(modelPath);
     const bool isPmxModel = extension == ".pmx";
+    m_IsPmxModel = isPmxModel;
     PmxModel pmxModel{};
     vector<vector<uint32_t>> pmxMeshVertexIndices{};
 
@@ -910,6 +913,19 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
         m_BaseGpuSkinVertices[m] = m_GpuSkinVertices[m];
     }
 
+    m_ResourceMap.Clear();
+    for (const auto& bone : m_BoneIndexMap)
+    {
+        m_ResourceMap.Add(ModelResourceMap::Bones, bone.first, bone.second);
+    }
+    ModelMapImport::AddMaterials(m_ResourceMap, m_AiScene);
+    ModelMapImport::AddMeshes(m_ResourceMap, m_Meshes);
+    ConfigureVmdRetargeting(fileName);
+    if (!m_ResourceMap.Persist(modelPath, isConvert ? "animated|left-handed|v1" : "animated|raw|v1"))
+    {
+        Debug::Log("WARNING: Model map cache could not be saved: %s\n", fileName);
+    }
+
     BuildPmxVertexMeshMap();
     InvalidateVmdRuntimeCache();
     InvalidatePmxRuntimeCache();
@@ -998,7 +1014,8 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
     size_t matchedTrackCount = 0;
     for (const auto& pair : animation.BoneTracks)
     {
-        if (m_Bone.find(pair.first) != m_Bone.end())
+        const auto* indices = m_ResourceMap.Find(ModelResourceMap::Vmd, pair.first);
+        if (m_Bone.find(pair.first) != m_Bone.end() || (indices && indices->size() == 1))
         {
             ++matchedTrackCount;
         }
@@ -1026,6 +1043,12 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
     InvalidateVmdRuntimeCache();
 
     const VmdAnimation& loaded = m_VmdAnimations[animationName];
+    Debug::Log("VMD bone-name bindings: %zu/%zu, morph bindings: %zu/%zu (%s)\n",
+               matchedTrackCount, loaded.BoneTracks.size(), matchedMorphTrackCount, loaded.MorphTracks.size(), fileName);
+    if (!m_IsPmxModel && (!loaded.IkTracks.empty() || !loaded.MorphTracks.empty()))
+    {
+        Debug::Log("VMD humanoid playback uses FK bones; PMX IK and morph tracks require separate rig conversion.\n");
+    }
     if (!loaded.BoneTracks.empty() && matchedTrackCount == 0)
     {
         Debug::Log("WARNING: VMD loaded but no bone names matched this model: %s\n", fileName);
@@ -1237,6 +1260,9 @@ void AnimationModelResource::Uninit()
         }
     }
 
+    m_ResourceMap.Clear();
+    m_VmdRetargetTransforms.clear();
+    m_IsPmxModel = false;
     m_Meshes.clear();
     m_DeformVertex.clear();
     m_GpuSkinVertices.clear();

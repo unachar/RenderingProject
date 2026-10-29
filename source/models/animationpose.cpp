@@ -439,6 +439,9 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation
         aiQuaternion rotation1(1.0f, 0.0f, 0.0f, 0.0f);
         aiVector3D pos1(0.0f, 0.0f, 0.0f);
         SampleVmdBoneTrackCached(binding.PrimaryTrack, currentFrame1, binding.PrimaryCursor, rotation1, pos1);
+        SampleVmdRootMotion(binding.PrimaryRootMotion, currentFrame1, nullptr, rotation1, pos1);
+        SampleVmdTorsoCompensation(binding.PrimaryTorsoCompensation, currentFrame1, nullptr,
+                                   binding.Retarget, binding.BasePosition, rotation1, pos1);
 
         aiQuaternion rotation = rotation1;
         aiVector3D pos = pos1;
@@ -447,11 +450,15 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation
             aiQuaternion rotation2(1.0f, 0.0f, 0.0f, 0.0f);
             aiVector3D pos2(0.0f, 0.0f, 0.0f);
             SampleVmdBoneTrackCached(binding.SecondaryTrack, currentFrame2, binding.SecondaryCursor, rotation2, pos2);
+            SampleVmdRootMotion(binding.SecondaryRootMotion, currentFrame2, nullptr, rotation2, pos2);
+            SampleVmdTorsoCompensation(binding.SecondaryTorsoCompensation, currentFrame2, nullptr,
+                                       binding.Retarget, binding.BasePosition, rotation2, pos2);
             pos = pos1 * (1.0f - safeBlendRate) + pos2 * safeBlendRate;
             aiQuaternion::Interpolate(rotation, rotation1, rotation2, safeBlendRate);
             rotation.Normalize();
         }
 
+        VmdRetarget::Apply(binding.Retarget, rotation, pos);
         aiQuaternion localRotation = binding.BaseRotation * rotation;
         localRotation.Normalize();
         bonePtr->AnimationMatrix = aiMatrix4x4(binding.BaseScale, localRotation, binding.BasePosition + pos);
@@ -520,6 +527,10 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const vector<AnimationPlaybac
                                      rotation, position);
         }
 
+        SampleVmdRootMotion(binding.RootMotion, 0.0f, &m_VmdLayerFramesScratch, rotation, position);
+        SampleVmdTorsoCompensation(binding.TorsoCompensation, 0.0f, &m_VmdLayerFramesScratch,
+                                   binding.Retarget, binding.BasePosition, rotation, position);
+        VmdRetarget::Apply(binding.Retarget, rotation, position);
         aiQuaternion localRotation = binding.BaseRotation * rotation;
         localRotation.Normalize();
         binding.BonePtr->AnimationMatrix =
@@ -825,4 +836,47 @@ void AnimationModelResource::UpdateBoneMatrices(const vector<AnimationPlaybackLa
     const AnimationPlaybackLayer& highestPriorityLayer = animationLayers.back();
     UpdateBoneMatrices(highestPriorityLayer.AnimationName.c_str(), highestPriorityLayer.CurrentTime,
                        highestPriorityLayer.AnimationName.c_str(), highestPriorityLayer.CurrentTime, 0.0f);
+}
+
+void AnimationModelResource::SampleVmdRootMotion(vector<VmdRootMotionBinding>& bindings, float frame,
+                                                 const vector<float>* layerFrames, aiQuaternion& rotation,
+                                                 aiVector3D& position)
+{
+    aiQuaternion rootRotation;
+    aiVector3D rootPosition;
+    for (auto& binding : bindings)
+    {
+        float sampleFrame = frame;
+        if (layerFrames)
+        {
+            if (binding.LayerIndex >= layerFrames->size()) continue;
+            sampleFrame = (*layerFrames)[binding.LayerIndex];
+        }
+        aiQuaternion delta;
+        aiVector3D translation;
+        SampleVmdBoneTrackCached(binding.Track, sampleFrame, binding.Cursor, delta, translation);
+        rootPosition += rootRotation.Rotate(translation);
+        rootRotation = rootRotation * delta;
+    }
+    position = rootPosition + rootRotation.Rotate(position);
+    rotation = rootRotation * rotation;
+    rotation.Normalize();
+}
+
+void AnimationModelResource::SampleVmdTorsoCompensation(VmdRootMotionBinding& binding, float frame,
+                                                        const vector<float>* layerFrames,
+                                                        const VmdRetarget::Transform& transform,
+                                                        const aiVector3D& bindPosition,
+                                                        aiQuaternion& rotation, aiVector3D& position)
+{
+    if (!binding.Track) return;
+    if (layerFrames)
+    {
+        if (binding.LayerIndex >= layerFrames->size()) return;
+        frame = (*layerFrames)[binding.LayerIndex];
+    }
+    aiQuaternion lowerRotation;
+    aiVector3D lowerPosition;
+    SampleVmdBoneTrackCached(binding.Track, frame, binding.Cursor, lowerRotation, lowerPosition);
+    VmdRetarget::CompensateTorso(transform, bindPosition, lowerRotation, lowerPosition, rotation, position);
 }

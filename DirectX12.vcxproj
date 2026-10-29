@@ -196,6 +196,10 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\models\animationplayback.h" />
     <ClInclude Include="source\entities\entitybase.h" />
     <ClInclude Include="source\models\modelimportutils.h" />
+    <ClInclude Include="source\models\modelresourcemap.h" />
+    <ClInclude Include="source\models\modelmapimport.h" />
+    <ClInclude Include="source\models\modelmapjson.h" />
+    <ClInclude Include="source\models\vmdretarget.h" />
     <FxCompile Include="shader\hlsl\colorshader3dPS.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shader\hlsl\build\%(Filename).cso</ObjectFileOutput>

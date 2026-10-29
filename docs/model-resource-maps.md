@@ -1,0 +1,109 @@
+# モデル共通マップと VMD 人型ボーン対応
+
+`dev_main` の PMX / FBX / VRM インポーターに、CPU 側から参照できる `ModelResourceMap` を追加した。
+
+## 名前検索
+
+```cpp
+const ModelResourceMap* map = ModelManager::GetResourceMap(modelId, true); // true: AnimationModel
+if (map)
+{
+    if (const auto* meshes = map->Find(ModelResourceMap::Meshes, "Body"))
+    {
+        for (uint32_t meshIndex : *meshes)
+        {
+            const auto& mesh = ModelManager::GetAnimModel(modelId)->GetMeshData(meshIndex);
+            // マテリアルエディターなどから参照する。
+        }
+    }
+}
+```
+
+静的モデルは第2引数を `false` にする。各リソースの `GetResourceMap()` でも取得できる。名前は UTF-8。未発見は `nullptr`、同名は複数のインデックスを返す。空の名前も検索できる。取得したポインター・インデックスは、そのモデルのアンロード／再読み込みまで有効。ホットリロード後は取り直す。
+
+| カテゴリ | キー | 値 |
+|---|---|---|
+| `bone` | 元のボーン／変換ノード名 | アニメーションモデルでは既存のスキニングパレット番号。静的モデルではインポートしたノードの深さ優先番号 |
+| `mesh` | 元のメッシュ名 | `GetMeshData()` の番号。空メッシュが除外されても描画用の番号と一致 |
+| `material` | 元のマテリアル名 | Assimp のマテリアル番号。未使用マテリアルも含む |
+| `mesh-material` | マテリアル番号の10進文字列 | そのマテリアルを使う描画メッシュ番号一覧 |
+| `humanoid` | VRM 標準の人型部位名 | 対応する `bone` の番号 |
+| `vmd` | VMD の日本語ボーン名 | 対応する `bone` の番号 |
+
+OBJ の旧単一メッシュ読み込みと単独 VG ファイルには、元の Assimp マテリアル番号がないため、モデル内の番号を割り当てる。アニメーションモデルの同名ボーンの制限は既存のパレット実装に従う。静的ノード番号をアニメーションパレット番号として流用しない。
+
+内部は `unordered_map<string, unordered_map<string, vector<uint32_t>>>`。検索は平均 O(1)、同名の全要素の列挙は要素数に比例する。新しい用途は `Add("socket", "RightHand", index)` のようにカテゴリを追加でき、バイナリ形式の変更は不要。
+
+## バイナリ保存
+
+`ModelManager` 経由のインポートで `Data/Cache/ModelMaps/<path-and-import-options-hash>.modelmap` に保存する。アニメーションモデルはリソースの `Load()` 自体でも保存する。パス、静的／アニメーション、座標変換モード別に保存先を分ける。
+
+- マジック、形式バージョン、インポートしたマップの指紋、サイズ、チェックサムを記録。
+- 名前・インデックスを整列した little-endian レコードとして保存。STL コンテナーのメモリや GPU／CPU ポインターは保存しない。
+- 読み込み時にサイズ上限、チェックサム、重複レコードを確認し、`unordered_map` を復元する。失敗時は既存のマップを変更しない。
+- 通常のモデル読み込みでは現在のインポート結果とキャッシュを照合。不一致・破損・旧形式なら再生成。保存失敗は警告だけでモデル読み込みを継続する。
+- VG 派生キャッシュにも同じスナップショットを保存し、キャッシュ経由でもボーン・未使用マテリアルの情報を保持する。旧 revision 2 は元モデルから再生成する。
+
+外部ツールはモデルを GPU に読み込まずに参照できる。
+
+```cpp
+ModelResourceMap map;
+std::ifstream input(cachePath, std::ios::binary);
+if (map.Read(input))
+{
+    const auto* bones = map.Find(ModelResourceMap::Bones, "hips");
+}
+```
+
+実モデルとの一致も確認する場合は `Read(input, expectedFingerprint)` を使う。ファイル読み込み・マップ構築は O(n)。復元後の名前検索が平均 O(1) になる仕組みで、モデル本体のインポートや GPU リソース構築を省略するものではない。
+
+## FBX / VRM の VMD 再生
+
+VMD 読み込み・再生の既存 API を使う。
+
+```cpp
+int id = ModelManager::LoadAnimModel("asset/model/moca.vrm");
+ModelManager::LoadAnimation(id, "asset/model/animation/kasou.vmd", "Dance");
+// AnimationModelComponent に id / AnimationPaths / Animations を設定し、Animator::Play(component, "Dance")。
+```
+
+VRM 0.x / 1.0 の humanoid メタデータを優先し、続いて Mixamo などの共通名を認識する。左右の腕・脚・肩・手足・指、胴体・首・頭・目を対応付ける。完全一致するトラック名がある場合はそれを優先。複数候補がある曖昧な共通名は自動決定しない。
+
+元の名前は変更せず、日本語 VMD 名とインポート後の番号を別カテゴリで保持する。対応先・トラックポインター・補間カーソルは再生キャッシュの作成時に解決するため、各フレームではモデル全体の名前検索を行わない。
+
+モデル独自の名前には明示指定できる。
+
+```cpp
+auto* model = ModelManager::GetAnimModel(id);
+bool mapped = model->SetVmdBoneMapping("左腕", "Rig_CustomUpperArm_L");
+bool scaled = model->SetVmdTranslationScale(0.1f); // MMD 1単位あたりのモデル単位
+```
+
+存在しない対象・空の元名・別の VMD 名と対応先が重複する指定は `false`。PMX の既存処理は変更しない。指定の変更は全 VMD 再生キャッシュを無効化する。明示指定は実行中のモデルに対するもので、再インポート後は呼び出し元が再適用する。
+
+非 PMX の再生では初期姿勢のグローバル回転を使ってボーン軸を変換し、移動を親の空間へ変換する。移動スケールは頭と腰の距離から推定し、必要なら上記 API で指定する。センター・グルーブなどは腰へ合成し、上半身／下半身の兄弟関係と人型の腰→背骨の違いは胴体境界で補正する。単独・ブレンド・複数レイヤーの VMD 経路に適用する。
+
+これは人型の FK ボーントラック再生。VMD だけには元モデルの完全なレスト姿勢・骨長・IK 設定がないため、モデル間で姿勢・接地が完全一致する保証はない。PMX の IK／付与ボーン／物理・表情モーフを FBX / VRM に自動生成する処理は含まない。足 IK 主体のモーションは足の動きが不足するため、FK 焼き込み済みモーションや別途 IK リターゲットが必要。
+
+## 動作確認
+
+CPU テスト:
+
+```powershell
+./scripts/test-model-resource-maps.ps1
+```
+
+Linux の場合は `./scripts/test-model-resource-maps.sh`。マップの保存・復元、破損／途中切れ／サイズ上限／変換モード別保存、メッシュ番号、派生キャッシュのスナップショット、名前対応、曖昧性、初期姿勢の軸変換、移動量、胴体階層補正、実際の Moca VRM1 メタデータを検証する。
+
+モデルテストシーンの通常表示を維持し、次の設定で XBot と Moca を VMD 再生に切り替えられる。
+
+```powershell
+$env:DX12_VMD_HUMANOID_TEST = "1"
+./bin/x64/Debug/DirectX12.exe
+# 確認後
+Remove-Item Env:DX12_VMD_HUMANOID_TEST
+```
+
+リポジトリをカレントディレクトリにして起動する。XBot は既存 FBX アニメーションも選べる。Moca はこの設定時だけ静的モデルからアニメーションモデルへ切り替える。Karen の再生は既存経路を維持する。
+
+検証環境は Linux のため、Visual Studio 本体のビルド、GPU スキニング結果、実画面での姿勢・足の接地は未確認。Windows では Debug/Release のビルド後、Karen / XBot / Moca の単独・レイヤー再生と通常 FBX アニメーションを確認すること。

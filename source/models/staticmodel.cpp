@@ -17,6 +17,8 @@
 
 #include "main.h"
 #include "staticmodel.h"
+#include "modelmapimport.h"
+#include "modelmapjson.h"
 #include "virtualgeometry/virtualgeometrypagecache.h"
 #include "virtualgeometry/virtualgeometryresources.h"
 #include "materialmanager.h"
@@ -733,6 +735,7 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
     m_AabbExtents.z = (maxPos.z - minPos.z) * 0.5f;
 
     StaticMeshData meshData{};
+    meshData.MaterialIndex = 0;
     meshData.MeshName = "OBJ Mesh";
     meshData.MaterialName = "";
     meshData.MaterialPartId = 10.0f;
@@ -863,6 +866,7 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
     meshData.VirtualGeometrySettings = m_VGSettings;
     MeshletManager::BuildImportedMesh(meshData);
     m_Meshes.push_back(move(meshData));
+    ModelMapImport::AddMeshes(m_ResourceMap, m_Meshes);
 
     return true;
 }
@@ -995,8 +999,11 @@ bool StaticModelResource::LoadVirtualGeometry(const char* fileName, ID3D12Device
         mesh.VirtualGeometryLODs[0] = std::move(runtime);
         m_AabbCenter = {(lower.x + upper.x) * 0.5f, (lower.y + upper.y) * 0.5f, (lower.z + upper.z) * 0.5f};
         m_AabbExtents = {(upper.x - lower.x) * 0.5f, (upper.y - lower.y) * 0.5f, (upper.z - lower.z) * 0.5f};
+        m_ResourceMap.Clear();
         m_Meshes.clear();
+        mesh.MaterialIndex = 0;
         m_Meshes.push_back(std::move(mesh));
+        ModelMapImport::AddMeshes(m_ResourceMap, m_Meshes);
         return true;
     }
     catch (const std::exception& error)
@@ -1101,9 +1108,9 @@ namespace
     }
 }
 
-// 元インポーターの頂点生成内容を変更したら更新する（2: OBJ / Assimp の頂点色）。
+// 元インポーターの生成内容を変更したら更新する（3: 共有マップ・元マテリアル番号の保存）。
 // 旧インポーターが作成した派生仮想ジオメトリキャッシュはソースから再構築する。
-constexpr unsigned kSourceImporterRevision = 2;
+constexpr unsigned kSourceImporterRevision = 3;
 
 bool StaticModelResource::LoadDerivedVirtualGeometry(const char* fileName, ID3D12Device* device, bool convert)
 {
@@ -1151,6 +1158,8 @@ bool StaticModelResource::LoadDerivedVirtualGeometry(const char* fileName, ID3D1
         {
             return false;
         }
+        ModelResourceMap sourceMap;
+        if (!ModelMapJson::Read(index["resourceMap"], sourceMap)) return false;
         const std::string originalSource = fileName;
         const auto settings = m_VGSettings;
         std::vector<StaticMeshData> meshes;
@@ -1171,6 +1180,11 @@ bool StaticModelResource::LoadDerivedVirtualGeometry(const char* fileName, ID3D1
             auto mesh = std::move(m_Meshes.front());
             mesh.MeshName = entry["name"].asString();
             mesh.MaterialName = entry["material"].asString();
+            if (!entry["materialIndex"].isInt() || entry["materialIndex"].asInt() < 0) return false;
+            mesh.MaterialIndex = entry["materialIndex"].asInt();
+            const auto* materialIds = sourceMap.Find(ModelResourceMap::Materials, mesh.MaterialName);
+            if (!materialIds || std::find(materialIds->begin(), materialIds->end(),
+                                          static_cast<uint32_t>(mesh.MaterialIndex)) == materialIds->end()) return false;
             mesh.MaterialPartId = entry["part"].asFloat();
             mesh.AppliedMaterialPartId = mesh.MaterialPartId;
             mesh.VirtualGeometrySettings = settings;
@@ -1199,6 +1213,7 @@ bool StaticModelResource::LoadDerivedVirtualGeometry(const char* fileName, ID3D1
             upper.z = std::max(upper.z, m_AabbCenter.z + m_AabbExtents.z);
         }
         m_Meshes = std::move(meshes);
+        m_ResourceMap = std::move(sourceMap);
         m_AabbCenter = {(lower.x + upper.x) * 0.5f, (lower.y + upper.y) * 0.5f, (lower.z + upper.z) * 0.5f};
         m_AabbExtents = {(upper.x - lower.x) * 0.5f, (upper.y - lower.y) * 0.5f, (upper.z - lower.z) * 0.5f};
         LoadLODMetadata(originalSource.c_str());
@@ -1241,6 +1256,8 @@ void StaticModelResource::PublishDerivedVirtualGeometry(bool convert)
         index["convert"] = convert;
         index["settings"] = std::to_string(VirtualGeometryImport::SettingsKey(m_VGSettings));
         index["sourceImporter"] = kSourceImporterRevision;
+        index["resourceMap"] = ModelMapJson::Write(m_ResourceMap);
+        if (index["resourceMap"].isNull()) return;
         const auto dependencies = GeometryDependencies(ModelPathFromUtf8(m_SourcePath.c_str()));
         if (dependencies.empty())
         {
@@ -1276,6 +1293,7 @@ void StaticModelResource::PublishDerivedVirtualGeometry(bool convert)
             entry["path"] = manifest->Path.generic_string();
             entry["name"] = mesh.MeshName;
             entry["material"] = mesh.MaterialName;
+            entry["materialIndex"] = mesh.MaterialIndex;
             entry["part"] = mesh.MaterialPartId;
             if (mesh.TextureIndex >= 0)
             {
@@ -1362,6 +1380,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
         return false;
     }
 
+    m_ResourceMap.Clear();
     m_Meshes.clear();
     m_MaterialPath.clear();
     Clear();
@@ -1412,6 +1431,9 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
         releaseScene();
         return false;
     }
+    uint32_t nextBone = 0;
+    ModelMapImport::AddNodes(m_ResourceMap, scene->mRootNode, nextBone);
+    ModelMapImport::AddMaterials(m_ResourceMap, scene);
     const string dirPath = ModelPathToUtf8(modelPath.parent_path());
 
     XMFLOAT3 minPos = {FLT_MAX, FLT_MAX, FLT_MAX};
@@ -1530,6 +1552,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
         }
 
         StaticMeshData meshData{};
+        meshData.MaterialIndex = static_cast<int>(mesh->mMaterialIndex);
         meshData.MeshName = mesh->mName.C_Str();
         meshData.MaterialName = materialName.C_Str();
         meshData.MaterialPartId = materialPartId;
@@ -1663,6 +1686,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
     m_AabbExtents.y = (maxPos.y - minPos.y) * 0.5f;
     m_AabbExtents.z = (maxPos.z - minPos.z) * 0.5f;
 
+    ModelMapImport::AddMeshes(m_ResourceMap, m_Meshes);
     releaseScene();
     return true;
 }
@@ -1731,6 +1755,7 @@ bool StaticModelResource::ApplyMeshShadingOverridePartIds(ID3D12Device* device, 
 
 void StaticModelResource::Uninit()
 {
+    m_ResourceMap.Clear();
     m_Meshes.clear();
     Clear();
 }
@@ -1761,5 +1786,32 @@ void StaticModelResource::RebuildVirtualGeometry(const VGImportSettings& setting
         }
         MeshletManager::BuildImportedMesh(mesh);
         GPUDrivenRenderer::UpdateGeometry(mesh);
+    }
+}
+
+void StaticModelResource::RefreshResourceMap(const char* fileName, bool isConvert)
+{
+    // Derived geometry has its own drawable order. Never reuse original mesh indices.
+    int nextMaterial = 0;
+    std::unordered_map<std::string, int> fallbackMaterials;
+    for (auto& mesh : m_Meshes)
+    {
+        if (mesh.MaterialIndex >= 0) nextMaterial = std::max(nextMaterial, mesh.MaterialIndex + 1);
+    }
+    for (auto& mesh : m_Meshes)
+    {
+        if (mesh.MaterialIndex < 0)
+        {
+            auto [it, inserted] = fallbackMaterials.emplace(mesh.MaterialName, nextMaterial);
+            if (inserted) ++nextMaterial;
+            mesh.MaterialIndex = it->second;
+        }
+    }
+    ModelMapImport::AddMeshes(m_ResourceMap, m_Meshes);
+    const std::string identity = std::string(m_UsesDerivedVG ? "derived-static|" : "static|") +
+                                 (isConvert ? "left-handed|v1" : "raw|v1");
+    if (!m_ResourceMap.Persist(ModelPathFromUtf8(fileName), identity))
+    {
+        Debug::Log("WARNING: Model map cache could not be saved: %s\n", fileName);
     }
 }

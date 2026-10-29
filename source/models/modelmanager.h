@@ -34,6 +34,8 @@ class ModelManager
 
     static AnimationModelResource* GetAnimModel(int modelId);
     static StaticModelResource* GetStaticModel(int modelId);
+    // Resource-local indices; pointer lifetime ends on unload or hot reload.
+    static const ModelResourceMap* GetResourceMap(int modelId, bool animated);
     static void UpdateVirtualGeometry();
     static StaticModelResource* FindLoadedStaticModel(const std::filesystem::path& path);
     static bool SaveVirtualGeometrySettings(const std::filesystem::path& path, const VGImportSettings& settings,

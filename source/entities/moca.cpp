@@ -3,6 +3,8 @@
 #include "game.h"
 #include "world.h"
 #include "modelmanager.h"
+#include "animator.h"
+#include "envflags.h"
 
 void Moca::Create()
 {
@@ -16,13 +18,36 @@ void Moca::Create()
                       .Add<NameComponent>()
                       .Add<TransformComponent>()
                       .Add<MeshComponent>()
-                      .Add<MaterialComponent>()
-                      .Add<StaticModelComponent>();
+                      .Add<MaterialComponent>();
 
     entity.SetName(modelName);
-    auto& staticModel = entity.Get<StaticModelComponent>();
-    staticModel.ModelPath = modelPath;
-    staticModel.ModelId = ModelManager::LoadStaticModel(modelPath);
+    if (ReadEnvironmentFlagOnce("DX12_VMD_HUMANOID_TEST"))
+    {
+        entity.Add<AnimationModelComponent>().Add<AABBComponent>();
+        auto& animation = entity.Get<AnimationModelComponent>();
+        animation.ModelPath = modelPath;
+        animation.ModelId = ModelManager::LoadAnimModel(modelPath);
+        const char* vmdPath = "asset\\model\\animation\\kasou.vmd";
+        if (ModelManager::LoadAnimation(animation.ModelId, vmdPath, "VMD"))
+        {
+            animation.AnimationPaths = {vmdPath};
+            animation.Animations = {"VMD"};
+            Animator::Play(animation, "VMD");
+        }
+        else animation.IsPlaying = false;
+        if (const auto* model = ModelManager::GetAnimModel(animation.ModelId))
+        {
+            entity.Get<AABBComponent>().Center = model->GetAabbCenter();
+            entity.Get<AABBComponent>().Extents = model->GetAabbExtents();
+        }
+    }
+    else
+    {
+        entity.Add<StaticModelComponent>();
+        auto& staticModel = entity.Get<StaticModelComponent>();
+        staticModel.ModelPath = modelPath;
+        staticModel.ModelId = ModelManager::LoadStaticModel(modelPath);
+    }
     entity.Get<TransformComponent>().Position = modelPosition;
     entity.Get<TransformComponent>().Scale = modelScale;
     entity.Get<TransformComponent>().Rotation = modelRotation;

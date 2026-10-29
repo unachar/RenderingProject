@@ -437,6 +437,18 @@
     <ClInclude Include="source\models\animationmodel.h">
       <Filter>models</Filter>
     </ClInclude>
+    <ClInclude Include="source\models\modelresourcemap.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\modelmapimport.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\modelmapjson.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="source\models\vmdretarget.h">
+      <Filter>models</Filter>
+    </ClInclude>
     <ClInclude Include="source\models\pmxloader.h">
       <Filter>models</Filter>
     </ClInclude>

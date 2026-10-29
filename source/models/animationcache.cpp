@@ -60,17 +60,15 @@ void AnimationModelResource::RebuildVmdRuntimeCache(const VmdAnimation* primaryA
         binding.BonePtr = &pair.second;
         binding.BonePtr->BindLocalMatrix.Decompose(binding.BaseScale, binding.BaseRotation, binding.BasePosition);
 
-        auto primaryTrackIt = primaryAnimation->BoneTracks.find(pair.first);
-        if (primaryTrackIt != primaryAnimation->BoneTracks.end())
-        {
-            binding.PrimaryTrack = &primaryTrackIt->second;
-        }
-
-        auto secondaryTrackIt = secondary->BoneTracks.find(pair.first);
-        if (secondaryTrackIt != secondary->BoneTracks.end())
-        {
-            binding.SecondaryTrack = &secondaryTrackIt->second;
-        }
+        const uint32_t boneIndex = m_BoneIndexMap.at(pair.first);
+        binding.PrimaryTrack = VmdRetarget::FindTrack(primaryAnimation->BoneTracks, pair.first, boneIndex, m_ResourceMap);
+        binding.SecondaryTrack = VmdRetarget::FindTrack(secondary->BoneTracks, pair.first, boneIndex, m_ResourceMap);
+        const auto transform = m_VmdRetargetTransforms.find(pair.first);
+        if (transform != m_VmdRetargetTransforms.end()) binding.Retarget = transform->second;
+        BuildVmdTorsoCompensation(boneIndex, primaryAnimation, 0, binding.PrimaryTorsoCompensation);
+        BuildVmdTorsoCompensation(boneIndex, secondary, 0, binding.SecondaryTorsoCompensation);
+        BuildVmdRootMotionBindings(boneIndex, primaryAnimation, 0, binding.PrimaryRootMotion);
+        BuildVmdRootMotionBindings(boneIndex, secondary, 0, binding.SecondaryRootMotion);
 
         m_VmdBoneBindings.push_back(binding);
     }
@@ -162,6 +160,9 @@ void AnimationModelResource::RebuildVmdLayeredRuntimeCache(const vector<Animatio
         VmdLayeredBoneBinding binding{};
         binding.BonePtr = &bonePair.second;
         binding.BonePtr->BindLocalMatrix.Decompose(binding.BaseScale, binding.BaseRotation, binding.BasePosition);
+        const uint32_t boneIndex = m_BoneIndexMap.at(bonePair.first);
+        const auto transform = m_VmdRetargetTransforms.find(bonePair.first);
+        if (transform != m_VmdRetargetTransforms.end()) binding.Retarget = transform->second;
 
         for (size_t layerIndex = 0; layerIndex < m_CachedVmdLayerAnimations.size(); ++layerIndex)
         {
@@ -170,10 +171,12 @@ void AnimationModelResource::RebuildVmdLayeredRuntimeCache(const vector<Animatio
             {
                 continue;
             }
-            const auto trackIt = animation->BoneTracks.find(bonePair.first);
-            if (trackIt != animation->BoneTracks.end())
+            BuildVmdTorsoCompensation(boneIndex, animation, layerIndex, binding.TorsoCompensation);
+            BuildVmdRootMotionBindings(boneIndex, animation, layerIndex, binding.RootMotion);
+            const auto* track = VmdRetarget::FindTrack(animation->BoneTracks, bonePair.first, boneIndex, m_ResourceMap);
+            if (track)
             {
-                binding.Track = &trackIt->second;
+                binding.Track = track;
                 binding.LayerIndex = layerIndex;
             }
         }
@@ -319,4 +322,108 @@ void AnimationModelResource::InvalidateAnimationPoseCache()
     m_HasCachedPose = false;
     m_HasCachedLayeredPose = false;
     m_UseLayeredVmdIk = false;
+}
+
+void AnimationModelResource::ConfigureVmdRetargeting(const char* fileName)
+{
+    m_VmdRetargetTransforms.clear();
+    if (m_IsPmxModel || !m_AiScene || !m_AiScene->mRootNode) return;
+    VmdRetarget::AddVrmHumanoidBones(std::filesystem::u8path(fileName), m_ResourceMap);
+    VmdRetarget::AddCommonHumanoidBones(m_ResourceMap);
+    VmdRetarget::AddVmdAliases(m_ResourceMap);
+
+    unordered_map<uint32_t, aiMatrix4x4> globals;
+    auto visit = [&](auto&& self, const aiNode* node, const aiMatrix4x4& parent) -> void {
+        const aiMatrix4x4 global = parent * node->mTransformation;
+        const string name = node->mName.C_Str();
+        const auto index = m_BoneIndexMap.find(name);
+        if (index != m_BoneIndexMap.end())
+        {
+            globals[index->second] = global;
+            VmdRetarget::Transform transform;
+            aiVector3D scale, position;
+            global.Decompose(scale, transform.GlobalBindRotation, position);
+            transform.GlobalBindRotation.Normalize();
+            transform.ParentBindLinear = aiMatrix3x3(parent);
+            transform.ParentInverse = transform.ParentBindLinear;
+            if (fabsf(transform.ParentInverse.Determinant()) > 0.00000001f)
+            {
+                transform.ParentInverse.Inverse();
+                transform.Enabled = true;
+            }
+            m_VmdRetargetTransforms.emplace(name, transform);
+        }
+        for (unsigned i = 0; i < node->mNumChildren; ++i) self(self, node->mChildren[i], global);
+    };
+    visit(visit, m_AiScene->mRootNode, aiMatrix4x4());
+    // Typical MMD head-to-hips distance is about 7.5 model units.
+    // An explicit scale is available for differently proportioned source motions.
+    float motionScale = 1.0f;
+    const auto* hips = m_ResourceMap.Find(ModelResourceMap::Humanoid, "hips");
+    const auto* head = m_ResourceMap.Find(ModelResourceMap::Humanoid, "head");
+    if (hips && head && hips->size() == 1 && head->size() == 1 &&
+        globals.count(hips->front()) && globals.count(head->front()))
+    {
+        const auto& h = globals.at(hips->front());
+        const auto& t = globals.at(head->front());
+        const float distance = aiVector3D(t.a4 - h.a4, t.b4 - h.b4, t.c4 - h.c4).Length();
+        if (std::isfinite(distance) && distance > 0.0001f) motionScale = distance / 7.5f;
+    }
+    SetVmdTranslationScale(motionScale);
+}
+
+bool AnimationModelResource::SetVmdBoneMapping(const string& sourceBoneName, const string& targetBoneName)
+{
+    const auto* target = m_ResourceMap.Find(ModelResourceMap::Bones, targetBoneName);
+    if (sourceBoneName.empty() || !target || target->size() != 1 || m_IsPmxModel) return false;
+    const auto category = m_ResourceMap.Categories().find(ModelResourceMap::Vmd);
+    if (category != m_ResourceMap.Categories().end())
+    {
+        for (const auto& mapping : category->second)
+        {
+            if (mapping.first != sourceBoneName && mapping.second == *target) return false;
+        }
+    }
+    m_ResourceMap.Set(ModelResourceMap::Vmd, sourceBoneName, target->front());
+    InvalidateVmdRuntimeCache();
+    return true;
+}
+
+bool AnimationModelResource::SetVmdTranslationScale(float modelUnitsPerVmdUnit)
+{
+    if (!std::isfinite(modelUnitsPerVmdUnit) || modelUnitsPerVmdUnit <= 0.0f || m_IsPmxModel) return false;
+    for (auto& transform : m_VmdRetargetTransforms) transform.second.TranslationScale = modelUnitsPerVmdUnit;
+    InvalidateVmdRuntimeCache();
+    return true;
+}
+
+void AnimationModelResource::BuildVmdRootMotionBindings(uint32_t boneIndex, const VmdAnimation* animation,
+                                                        size_t layerIndex, vector<VmdRootMotionBinding>& bindings)
+{
+    if (m_IsPmxModel || !animation) return;
+    const auto* hips = VmdRetarget::RootMotionTarget(m_ResourceMap);
+    if (!hips || hips->size() != 1 || hips->front() != boneIndex) return;
+    for (const char* name : {"全ての親", "センター", "グルーブ", "腰"})
+    {
+        // A native MMD hierarchy already propagates these ancestor tracks.
+        if (m_Bone.count(name) || m_ResourceMap.Find(ModelResourceMap::Vmd, name)) continue;
+        const auto track = animation->BoneTracks.find(name);
+        if (track == animation->BoneTracks.end()) continue;
+        const auto existing = std::find_if(bindings.begin(), bindings.end(), [&](const auto& binding) {
+            return binding.Name == name;
+        });
+        VmdRootMotionBinding binding{name, &track->second, layerIndex, {}};
+        if (existing == bindings.end()) bindings.push_back(binding);
+        else *existing = binding; // Last layer wins independently for each root-motion source.
+    }
+}
+
+void AnimationModelResource::BuildVmdTorsoCompensation(uint32_t boneIndex, const VmdAnimation* animation,
+                                                       size_t layerIndex, VmdRootMotionBinding& binding)
+{
+    if (m_IsPmxModel || !animation || m_Bone.count("上半身")) return;
+    const auto* torso = m_ResourceMap.Find(ModelResourceMap::Vmd, "上半身");
+    if (!torso || torso->size() != 1 || torso->front() != boneIndex) return;
+    const auto lower = animation->BoneTracks.find("下半身");
+    if (lower != animation->BoneTracks.end()) binding = {"下半身", &lower->second, layerIndex, {}};
 }

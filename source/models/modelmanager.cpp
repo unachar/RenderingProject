@@ -204,6 +204,7 @@ ModelManager::LoadModelResult ModelManager::LoadStaticModelDetailed(const char* 
         return result;
     }
 
+    model->RefreshResourceMap(fileName, isConvert);
     result.ModelId = (int)m_StaticModels.size();
     model->LoadLODMetadata(fileName);
     std::string registryError;
@@ -413,4 +414,15 @@ StaticModelResource* ModelManager::FindLoadedStaticModel(const std::filesystem::
         }
     }
     return nullptr;
+}
+
+const ModelResourceMap* ModelManager::GetResourceMap(int modelId, bool animated)
+{
+    if (animated)
+    {
+        const auto* model = GetAnimModel(modelId);
+        return model ? &model->GetResourceMap() : nullptr;
+    }
+    const auto* model = GetStaticModel(modelId);
+    return model ? &model->GetResourceMap() : nullptr;
 }

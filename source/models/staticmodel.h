@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <array>
 #include "toonoutlinebuilder.h"
+#include "modelresourcemap.h"
 #include "visibility/visibilitytypes.h"
 #include "meshlets/meshletbuilder.h"
 #include "virtualgeometry/virtualgeometryruntime.h"
@@ -52,6 +53,7 @@ struct StaticMeshData
     array<UINT, kToonOutlineModeCount> TeoIndexCounts{};
     array<UINT, kToonOutlineModeCount> TeoVertexCounts{};
     int TextureIndex = -1;
+    int MaterialIndex = -1;
     string MeshName{};
     string MaterialName{};
     float MaterialPartId = 10.0f;
@@ -90,6 +92,7 @@ struct StaticMeshData
 class StaticModelResource
 {
   private:
+    ModelResourceMap m_ResourceMap;
     vector<StaticMeshData> m_Meshes{};
     string m_MaterialPath{};
     string m_SourcePath{};
@@ -151,6 +154,9 @@ class StaticModelResource
     bool LoadAssimpModel(const char* fileName, ID3D12Device* device, bool isConvert = true);
     bool ApplyMeshShadingOverridePartIds(ID3D12Device* device, const vector<int>& overridePartIds);
     void Uninit();
+
+    const ModelResourceMap& GetResourceMap() const { return m_ResourceMap; }
+    void RefreshResourceMap(const char* fileName, bool isConvert);
 
     UINT GetMeshCount() const
     {

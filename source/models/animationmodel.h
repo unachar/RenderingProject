@@ -17,6 +17,8 @@
 #include "vmdanimationimpoter.h"
 #include "animationplayback.h"
 #include "pmxphysicsdata.h"
+#include "modelresourcemap.h"
+#include "vmdretarget.h"
 #pragma comment(lib, "assimp-vc143-mt.lib")
 
 struct ModelVertex
@@ -205,9 +207,22 @@ class AnimationModelResource
     static constexpr UINT m_kOUTPUT_VERTEX_UAV_OFFSET = 1 + RendererState::g_kFRAME_COUNT;
     static constexpr UINT m_kTEO_DESCRIPTOR_OFFSET = 2 + RendererState::g_kFRAME_COUNT;
 
+    struct VmdRootMotionBinding
+    {
+        string Name;
+        const vector<VmdKeyframe>* Track = nullptr;
+        size_t LayerIndex = 0;
+        VmdTrackSampleCursor Cursor{};
+    };
+
     struct VmdBoneBinding
     {
         Bone* BonePtr = nullptr;
+        VmdRetarget::Transform Retarget{};
+        VmdRootMotionBinding PrimaryTorsoCompensation;
+        VmdRootMotionBinding SecondaryTorsoCompensation;
+        vector<VmdRootMotionBinding> PrimaryRootMotion;
+        vector<VmdRootMotionBinding> SecondaryRootMotion;
         const vector<VmdKeyframe>* PrimaryTrack = nullptr;
         const vector<VmdKeyframe>* SecondaryTrack = nullptr;
         VmdTrackSampleCursor PrimaryCursor{};
@@ -227,6 +242,9 @@ class AnimationModelResource
     struct VmdLayeredBoneBinding
     {
         Bone* BonePtr = nullptr;
+        VmdRetarget::Transform Retarget{};
+        VmdRootMotionBinding TorsoCompensation;
+        vector<VmdRootMotionBinding> RootMotion;
         const vector<VmdKeyframe>* Track = nullptr;
         size_t LayerIndex = 0;
         VmdTrackSampleCursor Cursor{};
@@ -278,6 +296,9 @@ class AnimationModelResource
     const aiScene* m_AiScene = nullptr;
     bool m_OwnsGeneratedAiScene = false;
 
+    ModelResourceMap m_ResourceMap;
+    bool m_IsPmxModel = false;
+    unordered_map<string, VmdRetarget::Transform> m_VmdRetargetTransforms;
     vector<MeshData> m_Meshes{};
     vector<string> m_BoneNames{};
     vector<vector<DeformVertex>> m_DeformVertex{};
@@ -353,6 +374,16 @@ class AnimationModelResource
     void UpdateVmdBoneMatrices(const VmdAnimation* animation1, float frame1, const VmdAnimation* animation2,
                                float frame2, float blendRate);
     void UpdateVmdBoneMatrices(const vector<AnimationPlaybackLayer>& animationLayers);
+    void ConfigureVmdRetargeting(const char* fileName);
+    void BuildVmdRootMotionBindings(uint32_t boneIndex, const VmdAnimation* animation, size_t layerIndex,
+                                    vector<VmdRootMotionBinding>& bindings);
+    void BuildVmdTorsoCompensation(uint32_t boneIndex, const VmdAnimation* animation, size_t layerIndex,
+                                   VmdRootMotionBinding& binding);
+    void SampleVmdTorsoCompensation(VmdRootMotionBinding& binding, float frame, const vector<float>* layerFrames,
+                                    const VmdRetarget::Transform& transform, const aiVector3D& bindPosition,
+                                    aiQuaternion& rotation, aiVector3D& position);
+    void SampleVmdRootMotion(vector<VmdRootMotionBinding>& bindings, float frame,
+                             const vector<float>* layerFrames, aiQuaternion& rotation, aiVector3D& position);
     void InvalidateVmdRuntimeCache();
     void RebuildVmdRuntimeCache(const VmdAnimation* primaryAnimation, const VmdAnimation* secondaryAnimation);
     bool IsVmdLayeredRuntimeCacheValid(const vector<AnimationPlaybackLayer>& animationLayers) const;
@@ -383,6 +414,9 @@ class AnimationModelResource
 
     bool Load(const char* fileName, ID3D12Device* device, bool isConvert = true);
     bool LoadAnimation(const char* fileName, const char* name);
+    // Explicit mappings for rigs not recognized by VRM metadata / common aliases.
+    bool SetVmdBoneMapping(const string& sourceBoneName, const string& targetBoneName);
+    bool SetVmdTranslationScale(float modelUnitsPerVmdUnit);
 
     void UpdateBoneMatrices(const char* animName1, float frame1, const char* animName2, float frame2, float blendRate);
     void UpdateBoneMatrices(const vector<AnimationPlaybackLayer>& animationLayers);
@@ -397,6 +431,8 @@ class AnimationModelResource
     void DispatchGpuSkinning(ID3D12GraphicsCommandList* pCommandList, bool wantsOutlines = true);
 
     void Uninit();
+
+    const ModelResourceMap& GetResourceMap() const { return m_ResourceMap; }
 
     UINT GetMeshCount() const
     {

@@ -4,6 +4,7 @@
 #include "world.h"
 #include "animator.h"
 #include "modelmanager.h"
+#include "envflags.h"
 
 void XBot::Create()
 {
@@ -17,8 +18,9 @@ void XBot::Create()
     const auto animPath2 = "asset\\model\\idle.fbx";
     constexpr bool isConvert = true;
 
-    const auto animations = vector<string>{"Standup", "Idle"};
-    const auto currentAnimation = "Standup";
+    auto animations = vector<string>{"Standup", "Idle"};
+    string currentAnimation = "Standup";
+    vector<string> animationPaths{animPath1, animPath2};
     const int modelID = ModelManager::LoadAnimModel(modelPath, isConvert);
     if (modelID < 0)
     {
@@ -26,6 +28,14 @@ void XBot::Create()
     }
     ModelManager::LoadAnimation(modelID, animPath1, "Standup");
     ModelManager::LoadAnimation(modelID, animPath2, "Idle");
+    const char* vmdPath = "asset\\model\\animation\\kasou.vmd";
+    if (ReadEnvironmentFlagOnce("DX12_VMD_HUMANOID_TEST") &&
+        ModelManager::LoadAnimation(modelID, vmdPath, "VMD"))
+    {
+        animations.emplace_back("VMD");
+        animationPaths.emplace_back(vmdPath);
+        currentAnimation = "VMD";
+    }
 
     for (int i = 0; i < 1; ++i)
     {
@@ -49,7 +59,7 @@ void XBot::Create()
         auto& anim = entity.Get<AnimationModelComponent>();
         anim.ModelId = modelID;
         anim.ModelPath = modelPath;
-        anim.AnimationPaths = {animPath1, animPath2};
+        anim.AnimationPaths = animationPaths;
         anim.Animations = animations;
         anim.CurrentAnimation = currentAnimation;
 
