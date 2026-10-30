@@ -16,6 +16,17 @@ scene access: the same BLAS/TLAS, instance and material buffers the
 real-time DXR passes consume, so both sides render *the same scene
 data* by construction.
 
+## Staging note
+
+V1 (landed) renders fixture scenes the tool builds itself:
+`ReferencePathTraceCS` consumes one combined position/index
+buffer, per-instance transforms and per-instance analytic PBR
+materials, plus an analytic light list — enough for the
+Cornell/metal/glass/emissive fixtures. Evaluating the engine's
+packed scene materials for arbitrary game scenes is the follow-on
+step; the integrator, seeding and accumulation contracts stay the
+same.
+
 ## Design
 
 - **Integrator**: a standalone DXR compute/raytracing shader
