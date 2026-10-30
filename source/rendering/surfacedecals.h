@@ -20,8 +20,10 @@ namespace SurfaceDecals
 
     struct Decal
     {
-        // Row-major world -> decal-local matrix. Local space is the
-        // unit box: receivers with |local| > 1 on any axis are outside.
+        // World -> decal-local matrix, stored TRANSPOSED (the engine's
+        // HLSL convention: shaders compute mul(float4(p, 1), M)).
+        // Local space is the unit box: receivers with |local| > 1 on
+        // any axis are outside.
         float WorldToLocal[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         float Opacity = 1.0f;
         uint32_t AlbedoTexture = kNoTexture;
@@ -51,6 +53,9 @@ namespace SurfaceDecals
     static_assert(sizeof(GpuDecal) == 112, "GpuDecal layout must stay 112 bytes");
 
     void Clear();
+    // Rebuilds the registry from the scene's DecalComponents (called
+    // once per frame by the scene pass hook when the flag is on).
+    void SyncFromScene();
     // Returns the decal index, or kNoTexture when the registry is full.
     uint32_t Add(const Decal& decal);
     uint32_t Count();

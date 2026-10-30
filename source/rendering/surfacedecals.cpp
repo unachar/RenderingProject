@@ -1,6 +1,11 @@
 #include "pch.h"
 #include "surfacedecals.h"
 #include "memoryallocator.h"
+#include "componentmanager.h"
+#include "rendererstate.h"
+#include "texturemanager.h"
+
+#include <unordered_map>
 
 #include <algorithm>
 #include <cstring>
@@ -29,6 +34,58 @@ namespace SurfaceDecals
     void Clear()
     {
         g_Decals.clear();
+    }
+
+    void SyncFromScene()
+    {
+        Clear();
+        // Path -> bindless heap index (relative to the texture SRV
+        // region start), resolved once per path like the rect-light
+        // area textures in lightingresources.cpp.
+        static std::unordered_map<std::string, uint32_t> textureCache;
+        const auto resolveTexture = [](const std::string& path) -> uint32_t {
+            if (path.empty())
+            {
+                return kNoTexture;
+            }
+            auto found = textureCache.find(path);
+            if (found == textureCache.end())
+            {
+                const int absolute = TextureManager::LoadTexture(path.c_str());
+                const int relative = absolute - static_cast<int>(RendererState::g_kTEXTURE_SRV_START_INDEX);
+                const uint32_t index = (relative >= 0 && relative < static_cast<int>(RendererState::g_kMAX_SRVS))
+                                           ? static_cast<uint32_t>(relative)
+                                           : kNoTexture;
+                found = textureCache.emplace(path, index).first;
+            }
+            return found->second;
+        };
+        ComponentManager::ForEach<DecalComponent, TransformComponent>(
+            [&](EntityID entity, DecalComponent& decalComponent, TransformComponent& transform) {
+                (void)entity;
+                if (!decalComponent.IsActive)
+                {
+                    return;
+                }
+                const XMMATRIX world = XMLoadFloat4x4(&transform.WorldMatrix);
+                const XMMATRIX scale = XMMatrixScaling((std::max)(decalComponent.Size.x, 0.01f) * 0.5f,
+                                                       (std::max)(decalComponent.Size.y, 0.01f) * 0.5f,
+                                                       (std::max)(decalComponent.Size.z, 0.01f) * 0.5f);
+                XMFLOAT4X4 worldToLocal{};
+                XMStoreFloat4x4(&worldToLocal, XMMatrixTranspose(XMMatrixInverse(nullptr, world * scale)));
+                Decal decal{};
+                std::memcpy(decal.WorldToLocal, &worldToLocal, sizeof(decal.WorldToLocal));
+                decal.Opacity = decalComponent.Opacity;
+                decal.AlbedoTexture = resolveTexture(decalComponent.AlbedoTexturePath);
+                decal.NormalTexture = resolveTexture(decalComponent.NormalTexturePath);
+                decal.RoughnessTexture = resolveTexture(decalComponent.RoughnessTexturePath);
+                decal.LayerMask = decalComponent.LayerMask;
+                decal.AngleFadeStartCos = decalComponent.AngleFadeStartCos;
+                decal.AngleFadeEndCos = decalComponent.AngleFadeEndCos;
+                decal.Roughness = decalComponent.Roughness;
+                decal.Priority = decalComponent.Priority;
+                Add(decal);
+            });
     }
 
     uint32_t Add(const Decal& decal)

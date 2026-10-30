@@ -691,7 +691,12 @@ bool ScenePasses::BuildOcclusionHierarchyAndBeginPhaseTwo()
 
 void ScenePasses::ApplySurfaceDecals()
 {
-    if (!RendererSettings::GetUseDBufferDecals() || SurfaceDecals::Count() == 0)
+    if (!RendererSettings::GetUseDBufferDecals())
+    {
+        return;
+    }
+    SurfaceDecals::SyncFromScene();
+    if (SurfaceDecals::Count() == 0)
     {
         return;
     }

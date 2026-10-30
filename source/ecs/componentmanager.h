@@ -462,6 +462,24 @@ struct LightComponent
     LightType Type = LightType::Directional;
 };
 
+// Stage 1D: DBuffer surface decal projector (box). The entity transform
+// places/orients the box; Size is the full extent in meters. Texture
+// paths resolve through TextureManager like the rect-light area texture.
+struct DecalComponent
+{
+    XMFLOAT3 Size = {2.0f, 2.0f, 2.0f};
+    float Opacity = 1.0f;
+    string AlbedoTexturePath;
+    string NormalTexturePath;
+    string RoughnessTexturePath;
+    float AngleFadeStartCos = 0.5f;
+    float AngleFadeEndCos = 0.25f;
+    float Roughness = 0.85f;
+    int Priority = 0;
+    uint32_t LayerMask = 0xFFFFFFFFu;
+    bool IsActive = true;
+};
+
 // Preserve legacy buffer layouts: stage attenuation is encoded in the density sign.
 inline XMFLOAT4 PackLightExtra(const LightComponent& light)
 {
@@ -634,6 +652,7 @@ inline const ComponentType ComponentType::SUN = ComponentTypeRegistry::GetType<S
 inline const ComponentType ComponentType::INSTANCING = ComponentTypeRegistry::GetType<InstancingComponent>();
 inline const ComponentType ComponentType::LOD = ComponentTypeRegistry::GetType<LODComponent>();
 inline const ComponentType ComponentType::TIMELINE = ComponentTypeRegistry::GetType<TimelineComponent>();
+inline const ComponentType ComponentType::DECAL = ComponentTypeRegistry::GetType<DecalComponent>();
 inline const ComponentType ComponentType::PROCEDURAL_TERRAIN =
     ComponentTypeRegistry::GetType<ProceduralTerrainComponent>();
 inline const ComponentType ComponentType::PROCEDURAL_MOTION =
