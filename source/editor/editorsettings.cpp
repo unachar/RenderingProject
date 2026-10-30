@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "memoryallocator.h"
 #include "gpumemorybudget.h"
 #include "rendertargets.h"
 #include "performancegovernor.h"
@@ -320,6 +321,16 @@ void ImGuiManager::DrawProjectSettingsWindow()
         if (ImGui::Checkbox("D3D12 Memory Allocator", &useD3d12Ma))
         {
             RendererSettings::SetUseD3D12MemoryAllocator(useD3d12Ma);
+        }
+        {
+            const auto maStats = MemoryAllocator::GetStatistics();
+            if (maStats.HeapCount > 0)
+            {
+                ImGui::TextDisabled("D3D12MA: %.1f MB allocated / %.1f MB heaps (%u allocations, %u heaps)",
+                                    static_cast<double>(maStats.AllocatedBytes) / (1024.0 * 1024.0),
+                                    static_cast<double>(maStats.HeapBytes) / (1024.0 * 1024.0),
+                                    maStats.AllocationCount, maStats.HeapCount);
+            }
         }
         bool useSpdHiZ = RendererSettings::GetUseFidelityFxSpdHiZ();
         if (ImGui::Checkbox("FidelityFX SPD Hi-Z", &useSpdHiZ))

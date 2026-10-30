@@ -791,6 +791,19 @@ void ScenePasses::ExecuteScreenSpaceReflections()
         XMFLOAT4X4 previousTransposed{};
         XMStoreFloat4x4(&previousTransposed, XMMatrixTranspose(previousViewProjection));
         std::memcpy(inputs.PrevViewProjection, &previousTransposed, sizeof(inputs.PrevViewProjection));
+        // Camera-cut detection: a large one-frame forward swing or
+        // origin jump invalidates the SSR history (the hit-point
+        // reprojection handles smooth motion, not teleports).
+        const XMFLOAT4X4& previousView = GraphicsDevice::GetPreviousViewMatrix();
+        XMFLOAT4X4 currentViewStored{};
+        XMStoreFloat4x4(&currentViewStored, view);
+        const float forwardDot = previousView.m[2][0] * currentViewStored.m[2][0] +
+                                 previousView.m[2][1] * currentViewStored.m[2][1] +
+                                 previousView.m[2][2] * currentViewStored.m[2][2];
+        const XMVECTOR previousOrigin = XMMatrixInverse(nullptr, XMLoadFloat4x4(&previousView)).r[3];
+        const XMVECTOR currentOrigin = XMMatrixInverse(nullptr, view).r[3];
+        const float originJump = XMVectorGetX(XMVector3Length(XMVectorSubtract(currentOrigin, previousOrigin)));
+        inputs.ResetHistory = forwardDot < 0.9f || originJump > 10.0f;
     }
 
     ScreenSpaceReflections::TraceConstants& constants = inputs.Constants;
