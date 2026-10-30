@@ -60,7 +60,7 @@ namespace ScreenSpaceReflections
         float EdgeFade;
         float FallbackRoughness;
         float CameraPosition[3];
-        float Padding0;
+        float CheckerboardParity = -1.0f; // < 0: off; 0/1: traced pixel parity
         float CameraForward[3];
         uint32_t GBufferScale; // 1 = full-res trace, 2 = half-res trace (T1)
     };
@@ -79,6 +79,9 @@ namespace ScreenSpaceReflections
         // reprojection, plus a history reset request (camera cuts).
         float PrevViewProjection[16] = {};
         bool ResetHistory = false;
+        // Checkerboard trace mode: alternate pixel parity per frame,
+        // temporal history fills the gaps.
+        bool Checkerboard = false;
     };
 
     // (Re)creates the result target (RGBA16F, UAV+SRV) at the given

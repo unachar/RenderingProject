@@ -805,6 +805,7 @@ void ScenePasses::ExecuteScreenSpaceReflections()
         const float originJump = XMVectorGetX(XMVector3Length(XMVectorSubtract(currentOrigin, previousOrigin)));
         inputs.ResetHistory = forwardDot < 0.9f || originJump > 10.0f;
     }
+    inputs.Checkerboard = RendererSettings::GetUseSsrCheckerboard();
 
     ScreenSpaceReflections::TraceConstants& constants = inputs.Constants;
     XMFLOAT4X4 stored{};

@@ -334,6 +334,16 @@ class RendererSettings
         SetValue(s_UseScreenSpaceReflections, value);
     }
 
+    static bool GetUseSsrCheckerboard()
+    {
+        return s_UseSsrCheckerboard;
+    }
+
+    static void SetUseSsrCheckerboard(bool value)
+    {
+        SetValue(s_UseSsrCheckerboard, value);
+    }
+
     // Stage 2 J: local reflection probes override the global
     // environment texture while the camera is inside a probe volume.
     static bool GetUseLocalReflectionProbes()
@@ -750,6 +760,7 @@ class RendererSettings
     inline static bool s_UseDBufferDecals = false;
     inline static bool s_UseLocalReflectionProbes = false;
     inline static bool s_UseScreenSpaceReflections = false;
+    inline static bool s_UseSsrCheckerboard = false;
     inline static bool s_SsaoEnabled = true;
     inline static float s_SsaoRadius = 1.15f;
     inline static float s_SsaoPower = 1.35f;

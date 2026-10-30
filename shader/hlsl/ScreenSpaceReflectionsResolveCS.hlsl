@@ -27,7 +27,8 @@ cbuffer ResolveConstants : register(b0)
     float4x4 PrevViewProjection;
     float HistoryBlend;
     uint HistoryValid;
-    float2 ResolvePadding;
+    int CheckerboardParity; // < 0: off; otherwise untraced half-pixels are excluded
+    float ResolvePadding;
 };
 
 float ViewZFromStoredDepth(float storedDepth)
@@ -62,6 +63,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         for (int dx = -1; dx <= 1; ++dx)
         {
             const int2 halfPixel = clamp(halfBase + int2(dx, dy), int2(0, 0), int2(HalfResolution) - 1);
+            if (CheckerboardParity >= 0 &&
+                ((halfPixel.x + halfPixel.y) & 1) != CheckerboardParity)
+            {
+                continue; // untraced this frame; history covers it
+            }
             const int2 repPixel = min(halfPixel * 2, int2(FullResolution) - 1);
             const float tapDepth = SceneDepth.Load(int3(repPixel, 0));
             const float tapViewZ = ViewZFromStoredDepth(tapDepth);

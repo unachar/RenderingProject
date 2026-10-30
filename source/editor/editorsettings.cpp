@@ -352,6 +352,11 @@ void ImGuiManager::DrawProjectSettingsWindow()
         {
             RendererSettings::SetUseScreenSpaceReflections(useSsr);
         }
+        bool useCheckerboard = RendererSettings::GetUseSsrCheckerboard();
+        if (ImGui::Checkbox("SSR チェッカーボードトレース", &useCheckerboard))
+        {
+            RendererSettings::SetUseSsrCheckerboard(useCheckerboard);
+        }
 
         ImGui::SeparatorText("GPU Memory");
         auto& memory = GpuMemoryBudget::Options;

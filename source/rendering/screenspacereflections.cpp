@@ -24,6 +24,7 @@ namespace ScreenSpaceReflections
         ComPtr<ID3D12Resource> g_Accumulation[2]; // full-res temporal ping-pong (T2)
         int g_AccumulationCurrent = 0;
         bool g_HistoryValid = false;
+        uint32_t g_FrameCounter = 0;
         bool g_HitInSrvState = false;
         uint32_t g_TraceWidth = 0;
         uint32_t g_TraceHeight = 0;
@@ -377,6 +378,11 @@ namespace ScreenSpaceReflections
         traceConstants.InvResolution[0] = 1.0f / static_cast<float>(g_TraceWidth);
         traceConstants.InvResolution[1] = 1.0f / static_cast<float>(g_TraceHeight);
         traceConstants.GBufferScale = 2;
+        // Checkerboard parity alternates per executed frame; the
+        // same parity feeds the resolve's tap exclusion.
+        const int checkerboardParity = inputs.Checkerboard ? static_cast<int>(g_FrameCounter & 1u) : -1;
+        traceConstants.CheckerboardParity = static_cast<float>(checkerboardParity);
+        ++g_FrameCounter;
         commandList->SetComputeRootSignature(g_RootSignature.Get());
         commandList->SetPipelineState(g_Pso.Get());
         commandList->SetComputeRoot32BitConstants(0, 52, &traceConstants, 0);
@@ -421,7 +427,8 @@ namespace ScreenSpaceReflections
             float PrevViewProjection[16];
             float HistoryBlend;
             uint32_t HistoryValid;
-            float Padding[2];
+            int32_t CheckerboardParity;
+            float Padding;
         };
         const int accumulationPrevious = 1 - g_AccumulationCurrent;
         // Invariant: both accumulation buffers are in SRV state at
@@ -446,6 +453,7 @@ namespace ScreenSpaceReflections
         std::memcpy(resolve.PrevViewProjection, inputs.PrevViewProjection, sizeof(resolve.PrevViewProjection));
         resolve.HistoryBlend = 0.85f;
         resolve.HistoryValid = (g_HistoryValid && !inputs.ResetHistory) ? 1u : 0u;
+        resolve.CheckerboardParity = checkerboardParity;
         commandList->SetComputeRootSignature(g_ResolveRootSignature.Get());
         commandList->SetPipelineState(g_ResolvePso.Get());
         commandList->SetComputeRoot32BitConstants(0, 26, &resolve, 0);

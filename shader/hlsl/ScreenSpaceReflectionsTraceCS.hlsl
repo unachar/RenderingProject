@@ -39,7 +39,7 @@ cbuffer TraceConstants : register(b0)
     float EdgeFade;
     float FallbackRoughness;
     float3 CameraPosition;
-    float TracePadding0;
+    float CheckerboardParity; // < 0: off; 0/1: trace only pixels with (x+y)&1 == parity
     float3 CameraForward;
     uint GBufferScale; // full-res GBuffer texel = pixel * GBufferScale (1 full-res trace, 2 half-res)
 };
@@ -77,6 +77,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     const uint2 pixel = dispatchThreadId.xy;
     const float2 uv = (float2(pixel) + 0.5f) * InvResolution;
     ReflectionResult[pixel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    if (CheckerboardParity >= 0.0f && ((pixel.x + pixel.y) & 1u) != (uint)CheckerboardParity)
+    {
+        // Untraced checkerboard pixel: the resolve excludes it from
+        // the bilateral sum and the temporal history fills in. The
+        // hit anchor from two frames ago stays valid by design.
+        return;
+    }
     HitPoints[pixel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
 
     const int3 gbufferPixel = int3(pixel * max(GBufferScale, 1u), 0);
