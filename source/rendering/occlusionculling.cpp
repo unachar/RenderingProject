@@ -400,16 +400,19 @@ void OcclusionCulling::BuildPyramid(ID3D12GraphicsCommandList* commands, ID3D12R
         input.Subresource = mip;
         mips.push_back(graph.ImportResource(input));
     }
-    // FidelityFX SPD path: one dispatch builds the whole chain (SPD covers
-    // at most 12 levels). The legacy per-mip chain stays as the fallback.
-    const bool useSpd = RendererSettings::GetUseFidelityFxSpdHiZ() && g_SpdPso && g_SpdCounter && g_MipCount <= 12;
+    // FidelityFX SPD path: one dispatch builds up to 12 levels. Chains
+    // longer than that (8K-class framebuffers) finish the remaining mips
+    // with the legacy Reduce passes below; with SPD off the whole chain
+    // stays on the legacy Copy/Reduce path.
+    const bool useSpd = RendererSettings::GetUseFidelityFxSpdHiZ() && g_SpdPso && g_SpdCounter;
+    const UINT spdMips = min(g_MipCount, 12u);
     if (useSpd)
     {
         graph.AddPass(
             "Hi-Z SPD Generation",
             [=](RenderGraph::PassBuilder& builder) {
                 builder.Read(source, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-                for (UINT mip = 0; mip < g_MipCount; ++mip)
+                for (UINT mip = 0; mip < spdMips; ++mip)
                 {
                     builder.Write(mips[mip], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
                 }
@@ -422,13 +425,13 @@ void OcclusionCulling::BuildPyramid(ID3D12GraphicsCommandList* commands, ID3D12R
                 list->SetComputeRootDescriptorTable(0, srv);
                 list->SetComputeRootDescriptorTable(
                     1, Gpu(RendererState::g_kHIZ_MIP_SRV_START_INDEX +
-                           g_CurrentIndex * RendererState::g_kHIZ_MAX_MIPS + min(5u, g_MipCount - 1)));
+                           g_CurrentIndex * RendererState::g_kHIZ_MAX_MIPS + min(5u, spdMips - 1)));
                 list->SetComputeRootDescriptorTable(2, Gpu(RendererState::g_kHIZ_UAV_START_INDEX +
                                                            g_CurrentIndex * RendererState::g_kHIZ_MAX_MIPS));
                 list->SetComputeRootUnorderedAccessView(3, g_SpdCounter->GetGPUVirtualAddress());
                 const UINT groupsX = (g_Width + 63) / 64;
                 const UINT groupsY = (g_Height + 63) / 64;
-                const UINT constants[4] = {0, 0, groupsX * groupsY, g_MipCount};
+                const UINT constants[4] = {0, 0, groupsX * groupsY, spdMips};
                 list->SetComputeRoot32BitConstants(4, 4, constants, 0);
                 list->Dispatch(groupsX, groupsY, 1);
                 // A second SPD build in the same frame (current + temporal)
@@ -437,7 +440,7 @@ void OcclusionCulling::BuildPyramid(ID3D12GraphicsCommandList* commands, ID3D12R
                 list->ResourceBarrier(1, &counterBarrier);
             });
     }
-    for (UINT mip = 0; !useSpd && mip < g_MipCount; ++mip)
+    for (UINT mip = useSpd ? spdMips : 0; mip < g_MipCount; ++mip)
     {
         const auto read = mip == 0 ? source : mips[mip - 1];
         const auto write = mips[mip];
