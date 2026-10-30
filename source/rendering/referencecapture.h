@@ -1,6 +1,9 @@
 #pragma once
 #include <cstdint>
 
+struct ID3D12Device;
+struct ID3D12Resource;
+
 // Stage 2 H: bookkeeping for offline reference path-trace capture
 // jobs (see docs/rendering-technology-stage2h-design.md). This module
 // owns the job state machine, sample accounting and the deterministic

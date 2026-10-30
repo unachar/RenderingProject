@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "referencecapture.h"
+#include "memoryallocator.h"
 
 namespace ReferenceCapture
 {
@@ -8,6 +9,9 @@ namespace ReferenceCapture
         Settings g_Settings{};
         State g_State = State::Idle;
         uint32_t g_AccumulatedSamples = 0;
+        ComPtr<ID3D12Resource> g_Accumulation;
+        uint32_t g_TargetWidth = 0;
+        uint32_t g_TargetHeight = 0;
 
         // splitmix32 finalizer: strong avalanche for seed spreading.
         uint32_t Mix(uint32_t value)
