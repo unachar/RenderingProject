@@ -89,5 +89,11 @@ targets XML is well-formed with 34 tracked DXC outputs.
   Revisit if a shared sampling header is introduced.
 - FidelityFX CAS: not adopted; the engine already ships FSR RCAS,
   the same sharpening family.
+- FidelityFX SSSR: not vendored (evaluation:
+  rendering-technology-sssr-evaluation.md). SDK 2.x does not ship it
+  as shader sources and it drags in the FidelityFX Denoiser chain;
+  a native Hi-Z screen-space specular pass against the engine's own
+  Hi-Z/history is the preferred route if the fallback is needed
+  beyond probes + IBL.
 - Stage 1C remaining v1 limits: shadow pass 0 only (first directional
   view), no shadow material binning.
