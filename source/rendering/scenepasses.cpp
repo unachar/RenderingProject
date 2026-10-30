@@ -752,6 +752,80 @@ void ScenePasses::ApplySurfaceDecals()
     SurfaceDecals::Render(params);
 }
 
+void ScenePasses::ExecuteScreenSpaceReflections()
+{
+    if (!RendererSettings::GetUseScreenSpaceReflections() || Raytracing::AreReflectionsActive())
+    {
+        return;
+    }
+    if (!OcclusionCulling::HasCurrent())
+    {
+        return;
+    }
+    if (!ScreenSpaceReflections::EnsureResultTarget(m_Device.Get(), m_SceneWidth, m_SceneHeight))
+    {
+        return;
+    }
+    const EntityID camera = Camera::GetCameraEntity();
+    XMMATRIX view = XMMatrixIdentity();
+    XMMATRIX projection = XMMatrixIdentity();
+    Camera::GetCameraMatrices(camera, view, projection);
+    const XMMATRIX viewProjection = view * projection;
+
+    ScreenSpaceReflections::TraceInputs inputs{};
+    const UINT increment = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    const auto gpuHandle = [&](UINT index) {
+        return CD3DX12_GPU_DESCRIPTOR_HANDLE(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), index, increment);
+    };
+    inputs.DepthSrv = gpuHandle(m_UseLowResDepth ? g_kLOW_RES_DEPTH_SRV_INDEX : g_kDEPTH_SRV_INDEX);
+    inputs.HiZSrv = OcclusionCulling::GetCurrentSrv();
+    inputs.NormalSrv = m_GBufferSrvHandles[static_cast<UINT>(GBufferType::NORMAL)];
+    inputs.PreviousColorSrv = GetRenderTargetSrvHandle(RenderTargetType::PreUpscaleAaHistory);
+
+    ScreenSpaceReflections::TraceConstants& constants = inputs.Constants;
+    XMFLOAT4X4 stored{};
+    XMStoreFloat4x4(&stored, XMMatrixTranspose(XMMatrixInverse(nullptr, viewProjection)));
+    memcpy(constants.InvViewProjection, &stored, sizeof(stored));
+    XMStoreFloat4x4(&stored, XMMatrixTranspose(viewProjection));
+    memcpy(constants.ViewProjection, &stored, sizeof(stored));
+    constants.Resolution[0] = static_cast<float>(m_SceneWidth);
+    constants.Resolution[1] = static_cast<float>(m_SceneHeight);
+    constants.InvResolution[0] = 1.0f / static_cast<float>(m_SceneWidth);
+    constants.InvResolution[1] = 1.0f / static_cast<float>(m_SceneHeight);
+    XMFLOAT4X4 projectionStored{};
+    XMStoreFloat4x4(&projectionStored, projection);
+    constants.DepthNumerator = projectionStored.m[3][2];
+    constants.DepthDenominator = projectionStored.m[2][2];
+    constants.MaxDistance = 30.0f;
+    constants.Thickness = 0.35f;
+    constants.MaxSteps = 64;
+    constants.StridePixels = 8.0f;
+    constants.EdgeFade = 0.08f;
+    constants.Roughness = 0.5f;
+    XMFLOAT3 cameraPosition{0.0f, 0.0f, 5.0f};
+    if (camera != g_kINVALID_ENTITY && ComponentManager::HasComponent<TransformComponent>(camera))
+    {
+        cameraPosition = ComponentManager::GetComponentUnchecked<TransformComponent>(camera).Position;
+    }
+    constants.CameraPosition[0] = cameraPosition.x;
+    constants.CameraPosition[1] = cameraPosition.y;
+    constants.CameraPosition[2] = cameraPosition.z;
+    XMFLOAT4X4 inverseView{};
+    XMStoreFloat4x4(&inverseView, XMMatrixInverse(nullptr, view));
+    XMFLOAT3 forward = {inverseView.m[2][0], inverseView.m[2][1], inverseView.m[2][2]};
+    const float forwardLength = std::sqrt(forward.x * forward.x + forward.y * forward.y + forward.z * forward.z);
+    if (forwardLength > 1e-6f)
+    {
+        forward.x /= forwardLength;
+        forward.y /= forwardLength;
+        forward.z /= forwardLength;
+    }
+    constants.CameraForward[0] = forward.x;
+    constants.CameraForward[1] = forward.y;
+    constants.CameraForward[2] = forward.z;
+    ScreenSpaceReflections::Execute(m_CommandList.Get(), m_CbvHeap.Get(), inputs);
+}
+
 void ScenePasses::EndScenePass()
 {
     if (!GetRenderTarget(RenderTargetType::Scene))
@@ -819,6 +893,7 @@ void ScenePasses::EndScenePass()
                 m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
             }
             ApplySurfaceDecals();
+            ExecuteScreenSpaceReflections();
             m_IsDeferredGeometryPass = false;
             m_IsSceneColorForwardPass = false;
             return;
@@ -857,6 +932,7 @@ void ScenePasses::EndScenePass()
 
         m_CommandList->ResourceBarrier(barrierCount, barriers);
         ApplySurfaceDecals();
+        ExecuteScreenSpaceReflections();
         m_IsDeferredGeometryPass = false;
         m_IsSceneColorForwardPass = false;
         return;

@@ -24,6 +24,7 @@ class ScenePasses : protected RenderTargets
     // Stage 1D: DBuffer decals, applied at the end of the deferred
     // geometry pass (flag-gated, no-op without registered decals).
     static void ApplySurfaceDecals();
+    static void ExecuteScreenSpaceReflections();
     static bool BuildOcclusionHierarchyAndBeginPhaseTwo();
     static void RenderVelocityBuffer();
     static void EndVelocityBuffer();
