@@ -309,6 +309,18 @@ class RendererSettings
         SetValue(s_UseFidelityFxSpdHiZ, value);
     }
 
+    // Stage 1D: DBuffer surface decals (box projectors composited into
+    // the GBuffer before lighting). Distinct from LightRenderMode::Decal.
+    static bool GetUseDBufferDecals()
+    {
+        return s_UseDBufferDecals;
+    }
+
+    static void SetUseDBufferDecals(bool value)
+    {
+        SetValue(s_UseDBufferDecals, value);
+    }
+
     static bool GetReservedResourcesEnabled()
     {
         return s_ReservedResourcesEnabled;
@@ -710,6 +722,7 @@ class RendererSettings
     inline static bool s_ComputeGBufferEnabled = true;
     inline static bool s_UseD3D12MemoryAllocator = false;
     inline static bool s_UseFidelityFxSpdHiZ = false;
+    inline static bool s_UseDBufferDecals = false;
     inline static bool s_SsaoEnabled = true;
     inline static float s_SsaoRadius = 1.15f;
     inline static float s_SsaoPower = 1.35f;
