@@ -34,8 +34,30 @@
 #include "pmxloader.h"
 #include "postprocess.h"
 #include "toonoutlinebuilder.h"
+#include "memoryallocator.h"
 
 #pragma comment(lib, "assimp-vc143-mt.lib")
+
+namespace
+{
+    // Static geometry buffers are persistent DEFAULT-heap resources: route
+    // them through D3D12MA when enabled, committed otherwise.
+    bool CreateDefaultBuffer(ID3D12Device* device, const D3D12_RESOURCE_DESC& description,
+                             ComPtr<ID3D12Resource>& output)
+    {
+        output.Reset();
+        if (ID3D12Resource* allocated =
+                MemoryAllocator::CreateResourceAutoLifetime(description, D3D12_RESOURCE_STATE_COMMON, nullptr))
+        {
+            output.Attach(allocated);
+            return true;
+        }
+        CD3DX12_HEAP_PROPERTIES heapProps(D3D12_HEAP_TYPE_DEFAULT);
+        return SUCCEEDED(device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &description,
+                                                         D3D12_RESOURCE_STATE_COMMON, nullptr,
+                                                         IID_PPV_ARGS(&output)));
+    }
+} // namespace
 
 struct MtlData
 {
@@ -336,11 +358,9 @@ bool StaticModelResource::CreateDefaultBufferAndUpload(ID3D12Device* device, UIN
         return false;
     }
 
-    CD3DX12_HEAP_PROPERTIES heapProps(D3D12_HEAP_TYPE_DEFAULT);
     D3D12_RESOURCE_DESC desc = CD3DX12_RESOURCE_DESC::Buffer(sizeInBytes);
-    HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON,
-                                                 nullptr, IID_PPV_ARGS(&outResource));
-    if (FAILED(hr) || !outResource)
+    const bool created = CreateDefaultBuffer(device, desc, outResource);
+    if (!created || !outResource)
     {
         Debug::Log("%s", createErrorLog);
         return false;
@@ -746,11 +766,8 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
     const UINT vertexBufferSize = sizeof(StaticModelVertex) * (UINT)m_Vertices.size();
     {
         D3D12_RESOURCE_DESC vbDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
-        CD3DX12_HEAP_PROPERTIES heapProps(D3D12_HEAP_TYPE_DEFAULT);
-        HRESULT hr =
-            device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &vbDesc, D3D12_RESOURCE_STATE_COMMON,
-                                            nullptr, IID_PPV_ARGS(&meshData.VertexBuffer));
-        if (FAILED(hr) || !meshData.VertexBuffer)
+        const bool created = CreateDefaultBuffer(device, vbDesc, meshData.VertexBuffer);
+        if (!created || !meshData.VertexBuffer)
         {
             Debug::Log("ERROR: Failed to create DEFAULT vertex buffer for static model\n");
             return false;
@@ -780,11 +797,8 @@ bool StaticModelResource::LoadObj(const char* fileName, ID3D12Device* device)
     const UINT indexBufferSize = sizeof(unsigned int) * (UINT)m_Indices.size();
     {
         D3D12_RESOURCE_DESC ibDesc = CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize);
-        CD3DX12_HEAP_PROPERTIES heapProps(D3D12_HEAP_TYPE_DEFAULT);
-        HRESULT hr =
-            device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &ibDesc, D3D12_RESOURCE_STATE_COMMON,
-                                            nullptr, IID_PPV_ARGS(&meshData.IndexBuffer));
-        if (FAILED(hr) || !meshData.IndexBuffer)
+        const bool created = CreateDefaultBuffer(device, ibDesc, meshData.IndexBuffer);
+        if (!created || !meshData.IndexBuffer)
         {
             Debug::Log("ERROR: Failed to create DEFAULT index buffer for static model\n");
             return false;
@@ -1561,11 +1575,8 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
         meshData.CpuVertices = vertices;
         meshData.CpuIndices.assign(indices.begin(), indices.end());
         const UINT vertexBufferSize = sizeof(StaticModelVertex) * (UINT)vertices.size();
-        auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         auto vbDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
-        HRESULT hr =
-            device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &vbDesc, D3D12_RESOURCE_STATE_COMMON,
-                                            nullptr, IID_PPV_ARGS(&meshData.VertexBuffer));
+        HRESULT hr = CreateDefaultBuffer(device, vbDesc, meshData.VertexBuffer) ? S_OK : E_FAIL;
         if (FAILED(hr) || !meshData.VertexBuffer)
         {
             Debug::Log("ERROR: Failed to create DEFAULT vertex buffer for static model\n");
@@ -1586,8 +1597,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
 
         const UINT indexBufferSize = sizeof(unsigned int) * (UINT)indices.size();
         auto ibDesc = CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize);
-        hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &ibDesc, D3D12_RESOURCE_STATE_COMMON,
-                                             nullptr, IID_PPV_ARGS(&meshData.IndexBuffer));
+        hr = CreateDefaultBuffer(device, ibDesc, meshData.IndexBuffer) ? S_OK : E_FAIL;
         if (FAILED(hr) || !meshData.IndexBuffer)
         {
             Debug::Log("ERROR: Failed to create DEFAULT index buffer for static model\n");
