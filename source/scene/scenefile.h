@@ -1020,6 +1020,31 @@ namespace SceneFile
         a("priority", c.Priority);
     }
 
+    inline void Visit(Archive& a, DecalComponent& c)
+    {
+        a("size", c.Size);
+        a("opacity", c.Opacity);
+        a("albedoTexture", c.AlbedoTexturePath);
+        a("normalTexture", c.NormalTexturePath);
+        a("roughnessTexture", c.RoughnessTexturePath);
+        a("angleFadeStartCos", c.AngleFadeStartCos);
+        a("angleFadeEndCos", c.AngleFadeEndCos);
+        a("roughness", c.Roughness);
+        a("priority", c.Priority);
+        a("layerMask", c.LayerMask);
+        a("active", c.IsActive);
+    }
+
+    inline void Visit(Archive& a, ReflectionProbeComponent& c)
+    {
+        a("influenceSize", c.InfluenceSize);
+        a("environmentTexture", c.EnvironmentTexturePath);
+        a("priority", c.Priority);
+        a("intensity", c.Intensity);
+        a("generatePrefilter", c.GeneratePrefilter);
+        a("active", c.IsActive);
+    }
+
     inline void Visit(Archive& a, SunComponent& c)
     {
         a("target", c.Target);

@@ -176,6 +176,18 @@ ImGuiManager::EntitySnapshot ImGuiManager::CaptureEntity(EntityID entity)
         snapshot.Lod = ComponentManager::GetComponentUnchecked<LODComponent>(entity);
     }
 
+    if (ComponentManager::HasComponent<DecalComponent>(entity))
+    {
+        snapshot.HasDecal = true;
+        snapshot.Decal = ComponentManager::GetComponentUnchecked<DecalComponent>(entity);
+    }
+
+    if (ComponentManager::HasComponent<ReflectionProbeComponent>(entity))
+    {
+        snapshot.HasReflectionProbe = true;
+        snapshot.ReflectionProbe = ComponentManager::GetComponentUnchecked<ReflectionProbeComponent>(entity);
+    }
+
     return snapshot;
 }
 
@@ -307,6 +319,22 @@ void ImGuiManager::ApplySnapshot(const EntitySnapshot& snapshot)
     else if (ComponentManager::HasComponent<LODComponent>(snapshot.Entity))
     {
         ComponentManager::RemoveComponent(snapshot.Entity, ComponentType::LOD);
+    }
+    if (snapshot.HasDecal)
+    {
+        RestoreSnapshotComponent(snapshot.Entity, snapshot.Decal);
+    }
+    else if (ComponentManager::HasComponent<DecalComponent>(snapshot.Entity))
+    {
+        ComponentManager::RemoveComponent(snapshot.Entity, ComponentType::DECAL);
+    }
+    if (snapshot.HasReflectionProbe)
+    {
+        RestoreSnapshotComponent(snapshot.Entity, snapshot.ReflectionProbe);
+    }
+    else if (ComponentManager::HasComponent<ReflectionProbeComponent>(snapshot.Entity))
+    {
+        ComponentManager::RemoveComponent(snapshot.Entity, ComponentType::REFLECTION_PROBE);
     }
 }
 

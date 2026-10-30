@@ -156,6 +156,10 @@ class ImGuiManager
         OBBComponent Obb{};
         bool HasLod = false;
         LODComponent Lod{};
+        bool HasDecal = false;
+        DecalComponent Decal{};
+        bool HasReflectionProbe = false;
+        ReflectionProbeComponent ReflectionProbe{};
     };
 
     inline static vector<vector<EntitySnapshot>> m_UndoStack;

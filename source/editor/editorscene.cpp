@@ -1451,6 +1451,8 @@ namespace
         VisitLiveComponent<TimelineComponent>(archive, "timeline", entity);
         VisitLiveComponent<OBBComponent>(archive, "obb", entity);
         VisitLiveComponent<LODComponent>(archive, "lod", entity);
+        VisitLiveComponent<DecalComponent>(archive, "decal", entity);
+        VisitLiveComponent<ReflectionProbeComponent>(archive, "reflectionProbe", entity);
         VisitLiveComponent<InstancingComponent>(archive, "instancing", entity);
 
         // プリミティブ・地形以外のメッシュは頂点そのものが形状。ハッシュでは頂点の代わりにジオメトリハッシュを使う
@@ -1964,6 +1966,8 @@ void ImGuiManager::RestoreLoadedEntity(EntityID entity, Json::Value& record,
     SceneFile::Component(archive, "timeline", snapshot.HasTimeline, snapshot.Timeline);
     SceneFile::Component(archive, "obb", snapshot.HasObb, snapshot.Obb);
     SceneFile::Component(archive, "lod", snapshot.HasLod, snapshot.Lod);
+    SceneFile::Component(archive, "decal", snapshot.HasDecal, snapshot.Decal);
+    SceneFile::Component(archive, "reflectionProbe", snapshot.HasReflectionProbe, snapshot.ReflectionProbe);
     if (!snapshot.HasTransform)
     {
         snapshot.HasTransform = true; // シーンのエンティティは必ずTransformを持つ
