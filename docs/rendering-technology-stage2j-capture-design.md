@@ -42,6 +42,19 @@ it through the same SRV plumbing.
    registration; probes with CaptureLive sample the capture.
 3. Amortized refresh scheduling + editor recapture action.
 
+## Progress (500-push run)
+
+- Step 2's conversion is landed: EnvironmentCubeToEquirectCS +
+  ReflectionProbes::ConvertCubeToEquirect (registered equirect out).
+- Step 1's groundwork is landed: the shared capture scratch
+  (EnsureCaptureScratch, 6-slice RGBA16F RT target), the cube-face
+  view/projection helper (GetCaptureFaceMatrices), and the
+  CaptureLive flag on ReflectionProbeComponent.
+- Remaining: the 6-face scene capture pass itself (render the
+  opaque scene into the scratch from a probe position), wiring
+  CaptureLive probes through conversion + prefilter in
+  SyncFromScene, and the refresh scheduling of step 3.
+
 ## Acceptance
 
 - A probe in a test room reflects the room's colored walls (not

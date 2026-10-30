@@ -258,6 +258,64 @@ namespace ReflectionProbes
         return TextureManager::RegisterExternalTexture(registrationName, output);
     }
 
+    namespace
+    {
+        ComPtr<ID3D12Resource> g_CaptureScratch;
+        uint32_t g_CaptureScratchSize = 0;
+    }
+
+    ID3D12Resource* EnsureCaptureScratch(uint32_t faceSize)
+    {
+        if (g_CaptureScratch && g_CaptureScratchSize == faceSize)
+        {
+            return g_CaptureScratch.Get();
+        }
+        ID3D12Device* device = GraphicsDevice::GetDevice();
+        if (device == nullptr || faceSize == 0)
+        {
+            return nullptr;
+        }
+        const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT, faceSize, faceSize, 6, 1, 1, 0,
+                                                      D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+        ComPtr<ID3D12Resource> scratch;
+        if (ID3D12Resource* allocated =
+                MemoryAllocator::CreateResourceAutoLifetime(desc, D3D12_RESOURCE_STATE_COMMON, nullptr))
+        {
+            scratch.Attach(allocated);
+        }
+        else
+        {
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                       D3D12_RESOURCE_STATE_COMMON, nullptr,
+                                                       IID_PPV_ARGS(&scratch))))
+            {
+                return nullptr;
+            }
+        }
+        g_CaptureScratch = scratch;
+        g_CaptureScratchSize = faceSize;
+        return g_CaptureScratch.Get();
+    }
+
+    void GetCaptureFaceMatrices(uint32_t face, const float position[3], float viewOut[16], float projectionOut[16])
+    {
+        // Standard cube-face orientations (D3D): +X, -X, +Y, -Y, +Z, -Z.
+        static const float kForward[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+        static const float kUp[6][3] = {{0, 1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}, {0, 1, 0}, {0, 1, 0}};
+        const uint32_t f = face < 6 ? face : 0;
+        const XMVECTOR eye = XMVectorSet(position[0], position[1], position[2], 1.0f);
+        const XMVECTOR target = XMVectorAdd(eye, XMVectorSet(kForward[f][0], kForward[f][1], kForward[f][2], 0.0f));
+        const XMVECTOR up = XMVectorSet(kUp[f][0], kUp[f][1], kUp[f][2], 0.0f);
+        XMFLOAT4X4 view{};
+        XMFLOAT4X4 projection{};
+        XMStoreFloat4x4(&view, XMMatrixTranspose(XMMatrixLookAtLH(eye, target, up)));
+        XMStoreFloat4x4(&projection,
+                        XMMatrixTranspose(XMMatrixPerspectiveFovLH(XM_PIDIV2, 1.0f, 0.1f, 100.0f)));
+        std::memcpy(viewOut, &view, sizeof(view));
+        std::memcpy(projectionOut, &projection, sizeof(projection));
+    }
+
     int ConvertCubeToEquirect(ID3D12GraphicsCommandList* commandList, ID3D12Resource* cubeResource,
                               uint32_t width, uint32_t height, const char* registrationName)
     {

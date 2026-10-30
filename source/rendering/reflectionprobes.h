@@ -50,6 +50,15 @@ namespace ReflectionProbes
     int ConvertCubeToEquirect(ID3D12GraphicsCommandList* commandList, ID3D12Resource* cubeResource,
                               uint32_t width, uint32_t height, const char* registrationName);
 
+    // Live capture step 2: the shared cubemap scratch target all
+    // probe captures render into (6 slices, RGBA16F, RTV + SRV),
+    // recreated when the requested face size changes, plus the
+    // standard cube-face view/projection matrices (90-degree FOV)
+    // for a capture at a world position. The scene capture pass
+    // itself is the remaining step of the capture design.
+    ID3D12Resource* EnsureCaptureScratch(uint32_t faceSize);
+    void GetCaptureFaceMatrices(uint32_t face, const float position[3], float view[16], float projection[16]);
+
     // Returns the environment SRV index of the active probe for the
     // given camera position, or -1 when no probe contains it.
     // Selection: containing probes only; highest priority wins; ties
