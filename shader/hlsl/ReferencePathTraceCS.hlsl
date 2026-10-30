@@ -187,7 +187,48 @@ float GeometrySmith1(float NdotX, float roughness)
     return 2.0f * NdotX / (NdotX + sqrt(a * a + (1.0f - a * a) * NdotX * NdotX));
 }
 
-// Direct lighting from the analytic light list (NEE, no MIS in v1).
+// Mixture BSDF sampling PDF (GGX + cosine, selection-weighted) -
+// the density the path sampler produces for a direction; used by
+// the MIS weights on both the NEE and BSDF sides.
+float BsdfPdf(float3 normal, float3 V, float3 L, float roughness, float metallic)
+{
+    const float NdotL = dot(normal, L);
+    if (NdotL <= 0.0f)
+    {
+        return 0.0f;
+    }
+    const float3 H = normalize(L + V);
+    const float NdotH = max(dot(normal, H), 0.0f);
+    const float HdotV = max(dot(H, V), 0.0f);
+    const float pdfSpecular = DistributionGGX(NdotH, roughness) * NdotH / max(4.0f * HdotV, 1e-5f);
+    const float pdfDiffuse = NdotL / REF_PI;
+    const float specularWeight = lerp(0.04f, 1.0f, metallic);
+    return specularWeight * pdfSpecular + (1.0f - specularWeight) * pdfDiffuse;
+}
+
+// Solid-angle PDF of a quad light segment ending at hitPoint.
+float QuadLightPdf(uint pairIndex, float3 from, float3 hitPoint, float3 directionToHit)
+{
+    const float4 edgeUb = Lights[pairIndex * 2 + 1];
+    const float4 edgeVc = Lights[pairIndex * 2 + 2];
+    const float3 normalRaw = cross(edgeUb.xyz, edgeVc.xyz);
+    const float area = length(normalRaw);
+    if (area <= 1e-8f)
+    {
+        return 0.0f;
+    }
+    const float cosLight = dot(normalRaw / area, -directionToHit);
+    if (cosLight <= 0.0f)
+    {
+        return 0.0f;
+    }
+    const float3 d = hitPoint - from;
+    return dot(d, d) / (area * cosLight);
+}
+
+// Direct lighting from the analytic light list (NEE; quad lights
+// are MIS-weighted against the BSDF density, analytic delta
+// lights keep weight 1).
 float3 DirectLight(float3 position, float3 normal, float3 V, float3 albedo, float roughness, float metallic,
                    inout Rng rng)
 {
@@ -235,6 +276,8 @@ float3 DirectLight(float3 position, float3 normal, float3 V, float3 albedo, floa
                 continue;
             }
             const float pdf = distance2 / (area * cosLight);
+            const float bsdfPdf = BsdfPdf(normal, V, Lq, roughness, metallic);
+            const float misWeight = pdf / max(pdf + bsdfPdf, 1e-6f);
             const float3 Hq = normalize(Lq + V);
             const float NdotVq = max(dot(normal, V), 1e-4f);
             const float Dq = DistributionGGX(max(dot(normal, Hq), 0.0f), roughness);
@@ -242,7 +285,7 @@ float3 DirectLight(float3 position, float3 normal, float3 V, float3 albedo, floa
             const float Gq = GeometrySmith1(NdotVq, roughness) * GeometrySmith1(NdotLq, roughness);
             const float3 specularQ = Dq * Fq * Gq / max(4.0f * NdotVq * NdotLq, 1e-4f);
             const float3 diffuseQ = albedo * (1.0f - Fq) * (1.0f - metallic) / REF_PI;
-            result += (diffuseQ + specularQ) * (lightD.xyz * lightD.w) * (NdotLq / pdf);
+            result += (diffuseQ + specularQ) * (lightD.xyz * lightD.w) * (NdotLq / pdf) * misWeight;
             continue;
         }
         float3 L;
@@ -292,6 +335,7 @@ float3 TracePath(float3 origin, float3 direction, inout Rng rng)
     float3 throughput = float3(1.0f, 1.0f, 1.0f);
     float3 rayOrigin = origin;
     float3 rayDirection = direction;
+    float previousBsdfPdf = 0.0f; // sampling density of the arriving segment (MIS)
     for (uint depth = 0; depth < MaxDepth; ++depth)
     {
         const HitSurface surface = TraceScene(rayOrigin, rayDirection, 1e30f);
@@ -307,11 +351,17 @@ float3 TracePath(float3 origin, float3 direction, inout Rng rng)
         const float metallic = mat0.w;
         const float3 emission = mat1.rgb;
         const float roughness = clamp(mat1.w, 0.03f, 1.0f);
-        // NEE-registered light sources (mat2.x) contribute through
-        // DirectLight; counting their emission on BSDF hits too
-        // would double-count. Camera rays still see them. (MIS is
-        // the recorded follow-up.)
-        if (mat2.x < 0.5f || depth == 0u)
+        // Light-source materials (mat2.x, linked pair in mat2.y):
+        // BSDF-sampled emission, MIS-weighted against the light's
+        // own sampling density; camera rays take it whole.
+        if (mat2.x > 0.5f && mat2.y > 0.5f && depth > 0u)
+        {
+            const uint pairIndex = (uint)(mat2.y - 0.5f);
+            const float lightPdf = QuadLightPdf(pairIndex, rayOrigin, surface.Position, rayDirection);
+            const float misWeight = previousBsdfPdf / max(previousBsdfPdf + lightPdf, 1e-6f);
+            radiance += throughput * emission * misWeight;
+        }
+        else
         {
             radiance += throughput * emission;
         }
@@ -346,6 +396,7 @@ float3 TracePath(float3 origin, float3 direction, inout Rng rng)
             nextDirection = SampleCosineHemisphere(rng.Next2(), surface.Normal);
             throughput *= albedo * (1.0f - metallic) / max(1.0f - specularWeight, 1e-4f);
         }
+        previousBsdfPdf = BsdfPdf(surface.Normal, V, nextDirection, roughness, metallic);
         rayOrigin = surface.Position + surface.Normal * 1e-3f;
         rayDirection = nextDirection;
 

@@ -91,12 +91,21 @@ namespace ReferenceFixture
             }
             // Quad area light, two light slots (type 2 + continuation):
             // (corner, 2) (edgeU, 0) / (edgeV, 0) (emission, intensity).
-            void AddQuadLight(const float corner[3], const float edgeU[3], const float edgeV[3], float r, float g,
-                              float b, float intensity)
+            // Returns the light's pair index (for MIS material links).
+            uint32_t AddQuadLight(const float corner[3], const float edgeU[3], const float edgeV[3], float r, float g,
+                                  float b, float intensity)
             {
+                const uint32_t pairIndex = static_cast<uint32_t>(Data.Lights.size() / 8);
                 const float values[16] = {corner[0], corner[1], corner[2], 2.0f, edgeU[0], edgeU[1], edgeU[2], 0.0f,
                                           edgeV[0],  edgeV[1],  edgeV[2],  0.0f, r,       g,       b,       intensity};
                 Data.Lights.insert(Data.Lights.end(), values, values + 16);
+                return pairIndex;
+            }
+            // Links a light-source material to its light pair for MIS:
+            // material entry 3 .y = pair index + 1 (0 = unlinked).
+            void MarkMaterialLight(uint32_t material, uint32_t lightPairIndex)
+            {
+                Data.MaterialData[material * 12 + 9] = static_cast<float>(lightPairIndex + 1);
             }
         };
 
@@ -244,7 +253,8 @@ namespace ReferenceFixture
             const float corner[3] = {-0.7f, 0.99f, -0.7f};
             const float edgeU[3] = {1.4f, 0.0f, 0.0f};
             const float edgeV[3] = {0.0f, 0.0f, 1.4f};
-            builder.AddQuadLight(corner, edgeU, edgeV, 1.0f, 1.0f, 1.0f, 6.0f);
+            const uint32_t pair = builder.AddQuadLight(corner, edgeU, edgeV, 1.0f, 1.0f, 1.0f, 6.0f);
+            builder.MarkMaterialLight(panel, pair);
         }
 
         builder.Data.CameraPosition[0] = 0.0f;
