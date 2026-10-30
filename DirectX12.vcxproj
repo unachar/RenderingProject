@@ -1017,6 +1017,8 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\rendering\referencecapture.h" />
     <ClCompile Include="source\rendering\referencefixture.cpp" />
     <ClInclude Include="source\rendering\referencefixture.h" />
+    <ClCompile Include="source\rendering\referenceintegrator.cpp" />
+    <ClInclude Include="source\rendering\referenceintegrator.h" />
     <ClCompile Include="source\rendering\screenspacereflections.cpp" />
     <ClInclude Include="source\rendering\screenspacereflections.h" />
     <ClInclude Include="source\rendering\lumenscheduler.h" />
