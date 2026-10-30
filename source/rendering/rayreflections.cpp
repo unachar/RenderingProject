@@ -19,6 +19,7 @@
 #include "lumensurfacecache.h"
 #include "temporalhistory.h"
 #include "gpumemorybudget.h"
+#include "memoryallocator.h"
 #include <map>
 #include <algorithm>
 
@@ -121,6 +122,23 @@ namespace
 
     ComPtr<ID3D12Device> g_Device;
 
+    // Persistent DEFAULT-heap resources (reflection/GI signals, reservoirs,
+    // radiance cache) go through D3D12MA when its flag is on; any failure
+    // falls back to a committed resource. ComPtr ownership is unchanged.
+    bool CreateDefaultResource(const D3D12_RESOURCE_DESC& description, D3D12_RESOURCE_STATES initialState,
+                               ComPtr<ID3D12Resource>& output)
+    {
+        if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(description, initialState, nullptr))
+        {
+            output.Reset();
+            output.Attach(allocated);
+            return true;
+        }
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        return SUCCEEDED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, initialState,
+                                                           nullptr, IID_PPV_ARGS(output.ReleaseAndGetAddressOf())));
+    }
+
     bool EnsureAdaptiveHistory(UINT width, UINT height)
     {
         if (g_AdaptiveRadiance && g_AdaptiveRadiance->GetDesc().Width == width &&
@@ -134,16 +152,11 @@ namespace
         }
         g_AdaptiveValid = false;
         ComPtr<ID3D12Resource> a, b;
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         const auto radiance = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT, width, height, 1, 1);
         const auto guide = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT, width, height, 1, 1, 1, 0,
                                                         D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &radiance,
-                                                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
-                                                     IID_PPV_ARGS(&a))) ||
-            FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &guide,
-                                                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
-                                                     IID_PPV_ARGS(&b))))
+        if (!CreateDefaultResource(radiance, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, a) ||
+            !CreateDefaultResource(guide, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, b))
         {
             return false;
         }
@@ -304,7 +317,6 @@ namespace
         }
         frame.Width = width;
         frame.Height = height;
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT, width, height, 1, 1, 1, 0,
                                                        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         const auto ensureSignal = [&](ComPtr<ID3D12Resource>& sharedNoisy, ComPtr<ID3D12Resource>& sharedResult,
@@ -316,9 +328,7 @@ namespace
                 {
                     continue;
                 }
-                if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
-                                                             IID_PPV_ARGS(resource->ReleaseAndGetAddressOf()))))
+                if (!CreateDefaultResource(desc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, *resource))
                 {
                     return false;
                 }
@@ -364,14 +374,11 @@ namespace
         {
             return false;
         }
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         const auto desc =
             CD3DX12_RESOURCE_DESC::Buffer(UINT64(width) * height * 32ull, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         for (auto& buffer : g_Reservoirs)
         {
-            if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-                                                         IID_PPV_ARGS(buffer.ReleaseAndGetAddressOf()))))
+            if (!CreateDefaultResource(desc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, buffer))
             {
                 g_Reservoirs[0].Reset();
                 g_Reservoirs[1].Reset();
@@ -389,12 +396,9 @@ namespace
 
     bool CreateRadianceCache()
     {
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         const auto create = [&](ComPtr<ID3D12Resource>& buffer, UINT64 bytes, const wchar_t* name) {
             const auto desc = CD3DX12_RESOURCE_DESC::Buffer(bytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-            if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-                                                         IID_PPV_ARGS(buffer.ReleaseAndGetAddressOf()))))
+            if (!CreateDefaultResource(desc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, buffer))
             {
                 return false;
             }
