@@ -21,6 +21,8 @@
 #include "rendertargets.h"
 #include "noisecachebindings.h"
 #include "reflectionprobes.h"
+#include "raytracing.h"
+#include "screenspacereflections.h"
 
 void RenderFrame::BeginDraw()
 {
@@ -44,6 +46,7 @@ void RenderFrame::BeginDraw()
     // After the command list reset: probe sync may record prefilter
     // dispatches into it (they would be wiped by an earlier call).
     ReflectionProbes::UpdateActiveEnvironment(m_CommandList.Get());
+    ScreenSpaceReflections::UpdateFrameSelection(Raytracing::AreReflectionsActive());
     NoiseCacheBindings::BeginFrame(m_CommandList.Get());
 
     m_CommandList->RSSetViewports(1, &m_Viewport);

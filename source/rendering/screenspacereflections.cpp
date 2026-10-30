@@ -1,6 +1,10 @@
 #include "pch.h"
 #include "screenspacereflections.h"
 #include "memoryallocator.h"
+#include "renderersettings.h"
+#include "texturemanager.h"
+
+#include <string>
 
 namespace ScreenSpaceReflections
 {
@@ -13,6 +17,9 @@ namespace ScreenSpaceReflections
         uint32_t g_ResultWidth = 0;
         uint32_t g_ResultHeight = 0;
         UINT g_DescriptorIncrement = 0;
+        Source g_FrameSource = Source::Environment;
+        bool g_ResultProduced = false;
+        int g_ResultEngineSrvIndex = -1;
 
         bool EnsurePipeline(ID3D12Device* device)
         {
@@ -91,6 +98,27 @@ namespace ScreenSpaceReflections
         return Source::Environment;
     }
 
+    void UpdateFrameSelection(bool dxrReflectionActive)
+    {
+        g_FrameSource = SelectSource(dxrReflectionActive, RendererSettings::GetUseScreenSpaceReflections(),
+                                     g_ResultProduced && g_Result != nullptr);
+    }
+
+    Source GetFrameSource()
+    {
+        return g_FrameSource;
+    }
+
+    bool IsScreenSpaceSelected()
+    {
+        return g_FrameSource == Source::ScreenSpace;
+    }
+
+    int GetResultEngineSrvIndex()
+    {
+        return g_ResultEngineSrvIndex;
+    }
+
     bool EnsureResultTarget(ID3D12Device* device, uint32_t width, uint32_t height)
     {
         if (device == nullptr || width == 0 || height == 0)
@@ -139,6 +167,11 @@ namespace ScreenSpaceReflections
         g_Result = result;
         g_ResultWidth = width;
         g_ResultHeight = height;
+        g_ResultProduced = false;
+        // Register in the engine heap so the lighting pass can bind
+        // the result exactly like the raytraced reflection texture.
+        const std::string registration = "ssr://result/" + std::to_string(width) + "x" + std::to_string(height);
+        g_ResultEngineSrvIndex = TextureManager::RegisterExternalTexture(registration.c_str(), result);
         return true;
     }
 
@@ -147,6 +180,8 @@ namespace ScreenSpaceReflections
         g_Result.Reset();
         g_ResultWidth = 0;
         g_ResultHeight = 0;
+        g_ResultProduced = false;
+        g_ResultEngineSrvIndex = -1;
     }
 
     bool IsResultReady()
@@ -184,6 +219,7 @@ namespace ScreenSpaceReflections
         commandList->Dispatch((g_ResultWidth + 7) / 8, (g_ResultHeight + 7) / 8, 1);
         D3D12_RESOURCE_BARRIER uavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(g_Result.Get());
         commandList->ResourceBarrier(1, &uavBarrier);
+        g_ResultProduced = true;
         return true;
     }
 } // namespace ScreenSpaceReflections

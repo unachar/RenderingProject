@@ -30,6 +30,16 @@ namespace ScreenSpaceReflections
     // for this frame (false during warmup / when disabled by caps).
     Source SelectSource(bool dxrReflectionActive, bool ssrRequested, bool ssrResultReady);
 
+    // Per-frame decision, computed once in RenderFrame::BeginDraw and
+    // consumed by the lighting bindings (postprocess constants +
+    // scene pass tables) so every consumer agrees.
+    void UpdateFrameSelection(bool dxrReflectionActive);
+    Source GetFrameSource();
+    bool IsScreenSpaceSelected();
+    // Engine-heap SRV index of the result texture (registered with
+    // TextureManager when the target is created), or -1.
+    int GetResultEngineSrvIndex();
+
     // Trace constants, laid out to match ScreenSpaceReflectionsTraceCS
     // cbuffer exactly (44 DWORDs). Matrices are stored transposed
     // (engine HLSL convention).

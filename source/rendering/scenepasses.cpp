@@ -22,6 +22,7 @@
 #include "raytracing.h"
 #include "cloud/cloudrenderer.h"
 #include "screenspaceeffects.h"
+#include "screenspacereflections.h"
 #include "graphicslog.h"
 #include "gpumemorybudget.h"
 
@@ -254,7 +255,16 @@ void ScenePasses::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_TO
     m_CommandList->SetGraphicsRootDescriptorTable(
         21, CD3DX12_GPU_DESCRIPTOR_HANDLE(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), monitorIndex,
                                           m_CbvIncrementSize));
-    m_CommandList->SetGraphicsRootDescriptorTable(22, Raytracing::GetResultSrv());
+    if (ScreenSpaceReflections::IsScreenSpaceSelected() && ScreenSpaceReflections::GetResultEngineSrvIndex() >= 0)
+    {
+        CD3DX12_GPU_DESCRIPTOR_HANDLE ssrSrvHandle(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
+                                                   ScreenSpaceReflections::GetResultEngineSrvIndex(), m_CbvIncrementSize);
+        m_CommandList->SetGraphicsRootDescriptorTable(22, ssrSrvHandle);
+    }
+    else
+    {
+        m_CommandList->SetGraphicsRootDescriptorTable(22, Raytracing::GetResultSrv());
+    }
     m_CommandList->SetGraphicsRootDescriptorTable(23, Raytracing::GetReflectionSrv());
     if (m_PostProcessConstantBuffer)
     {
