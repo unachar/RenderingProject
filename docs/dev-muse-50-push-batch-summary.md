@@ -6,6 +6,9 @@ feature is flag-gated default OFF, with CPU tests or DXC compiles
 run on Linux where possible. Verification on the Windows/RTX
 machine is requested as one batch, like the previous two.
 
+Status: batch complete at 50 pushes (this commit is #50);
+verification pending.
+
 ## What landed
 
 1. **D3D12MA sweep completed** (14 pushes): every remaining
