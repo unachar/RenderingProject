@@ -250,7 +250,18 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
         m_CommandList->SetGraphicsRootDescriptorTable(12, ScreenSpaceEffects::GetAoSrv());
         m_CommandList->SetGraphicsRootDescriptorTable(
             13, (Raytracing::IsGiActive() ? Raytracing::GetGiSrv() : ScreenSpaceEffects::GetGiSrv()));
-        m_CommandList->SetGraphicsRootDescriptorTable(16, Raytracing::GetResultSrv());
+        if (ScreenSpaceReflections::IsScreenSpaceSelected() &&
+            ScreenSpaceReflections::GetResultEngineSrvIndex() >= 0)
+        {
+            CD3DX12_GPU_DESCRIPTOR_HANDLE ssrSrvHandle(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
+                                                       ScreenSpaceReflections::GetResultEngineSrvIndex(),
+                                                       m_CbvIncrementSize);
+            m_CommandList->SetGraphicsRootDescriptorTable(16, ssrSrvHandle);
+        }
+        else
+        {
+            m_CommandList->SetGraphicsRootDescriptorTable(16, Raytracing::GetResultSrv());
+        }
         const D3D12_GPU_VIRTUAL_ADDRESS volumetricLightAddress =
             LightingResources::GetCurrentVolumetricLightIndexBufferAddress();
         if (volumetricLightAddress != 0)
