@@ -7,8 +7,30 @@
 #include "frameconstants.h"
 #include "skinningwork.h"
 #include "temporalhistorycontext.h"
+#include "memoryallocator.h"
 
 using namespace AnimationMath;
+
+namespace
+{
+    // GPU skinning output buffers are persistent DEFAULT-heap resources:
+    // route them through D3D12MA when enabled, committed otherwise.
+    bool CreateSkinningBuffer(ID3D12Device* device, const D3D12_RESOURCE_DESC& description,
+                              ComPtr<ID3D12Resource>& output)
+    {
+        output.Reset();
+        if (ID3D12Resource* allocated =
+                MemoryAllocator::CreateResourceAutoLifetime(description, D3D12_RESOURCE_STATE_COMMON, nullptr))
+        {
+            output.Attach(allocated);
+            return true;
+        }
+        auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        return SUCCEEDED(device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &description,
+                                                         D3D12_RESOURCE_STATE_COMMON, nullptr,
+                                                         IID_PPV_ARGS(&output)));
+    }
+} // namespace
 
 bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 {
@@ -121,19 +143,12 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 
         {
             UINT bufSize = sizeof(ModelVertex) * vertexCount;
-            auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
             auto resDesc = CD3DX12_RESOURCE_DESC::Buffer(bufSize, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-            HRESULT hr =
-                device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_COMMON,
-                                                nullptr, IID_PPV_ARGS(&m_Meshes[m].VertexBuffer));
-            if (FAILED(hr))
+            if (!CreateSkinningBuffer(device, resDesc, m_Meshes[m].VertexBuffer))
             {
                 return false;
             }
-            hr =
-                device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_COMMON,
-                                                nullptr, IID_PPV_ARGS(&m_Meshes[m].PreviousVertexBuffer));
-            if (FAILED(hr))
+            if (!CreateSkinningBuffer(device, resDesc, m_Meshes[m].PreviousVertexBuffer))
             {
                 return false;
             }
@@ -202,12 +217,8 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 
             {
                 UINT bufSize = sizeof(ModelVertex) * teoVertexCount;
-                auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
                 auto resDesc = CD3DX12_RESOURCE_DESC::Buffer(bufSize, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-                HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &resDesc,
-                                                             D3D12_RESOURCE_STATE_COMMON, nullptr,
-                                                             IID_PPV_ARGS(&m_Meshes[m].TeoVertexBuffers[mode]));
-                if (FAILED(hr))
+                if (!CreateSkinningBuffer(device, resDesc, m_Meshes[m].TeoVertexBuffers[mode]))
                 {
                     return false;
                 }
