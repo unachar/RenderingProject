@@ -34,6 +34,7 @@
 #include "megalights.h"
 #include "graphicsdevice.h"
 #include "gpumemorybudget.h"
+#include "memoryallocator.h"
 #include "meshshader/meshshaderrenderer.h"
 #include "rendertargets.h"
 #include "scenepasses.h"
@@ -189,6 +190,7 @@ bool GraphicsDevice::Init(HWND hwnd)
     }
 
     GpuMemoryBudget::Initialize(m_Device.Get());
+    MemoryAllocator::Initialize(m_Device.Get(), selectedAdapter.Get());
 
     D3D12_FEATURE_DATA_D3D12_OPTIONS options{};
     if (SUCCEEDED(m_Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options, sizeof(options))))
@@ -671,6 +673,7 @@ void GraphicsDevice::Uninit()
     TransmittanceShadows::Shutdown();
     MaterialManager::Shutdown();
     TextureManager::Uninit();
+    MemoryAllocator::Shutdown();
 
     if (m_ConstantBuffer)
     {

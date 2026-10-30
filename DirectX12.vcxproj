@@ -947,6 +947,12 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\rendering\gpudrivenindirect.h" />
     <ClCompile Include="source\rendering\graphicslog.cpp" />
     <ClInclude Include="source\rendering\graphicslog.h" />
+    <ClCompile Include="External\D3D12MemoryAllocator\D3D12MemAlloc.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClInclude Include="External\D3D12MemoryAllocator\D3D12MemAlloc.h" />
+    <ClCompile Include="source\rendering\memoryallocator.cpp" />
+    <ClInclude Include="source\rendering\memoryallocator.h" />
     <ClCompile Include="source\rendering\lightingresources.cpp" />
     <ClCompile Include="source\rendering\transmittanceshadows.cpp" />
     <ClInclude Include="source\rendering\lightingresources.h" />
