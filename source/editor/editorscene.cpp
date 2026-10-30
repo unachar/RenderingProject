@@ -526,6 +526,25 @@ void ImGuiManager::DrawHierarchyWindow()
             }
             ImGui::EndMenu();
         }
+        if (ImGui::MenuItem("デカール (DBuffer)"))
+        {
+            auto entity = World::CreateEntity().Add<TransformComponent>().Add<NameComponent>().Add<DecalComponent>();
+            entity.SetName("Decal");
+            SelectEntity(entity.GetID());
+            EntitySnapshot missing{};
+            missing.Entity = entity.GetID();
+            PushUndoSnapshot(missing);
+        }
+        if (ImGui::MenuItem("反射プローブ"))
+        {
+            auto entity =
+                World::CreateEntity().Add<TransformComponent>().Add<NameComponent>().Add<ReflectionProbeComponent>();
+            entity.SetName("Reflection Probe");
+            SelectEntity(entity.GetID());
+            EntitySnapshot missing{};
+            missing.Entity = entity.GetID();
+            PushUndoSnapshot(missing);
+        }
         ImGui::EndPopup();
     }
 
