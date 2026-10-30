@@ -39,16 +39,23 @@ namespace ReferenceIntegrator
 
     using CaptureResult = ReferenceImage;
 
-    // Synchronous end-to-end capture of the Cornell fixture: builds
-    // the scene, runs a ReferenceCapture job to completion on the
-    // given queue (blocking the calling thread - this is an offline
-    // tool), and reads back the mean image. Returns false on any
-    // failure; the job is cancelled in that case.
+    // Synchronous end-to-end capture of a fixture scene: builds the
+    // scene, runs a ReferenceCapture job to completion on the given
+    // queue (blocking the calling thread - this is an offline tool),
+    // and reads back the mean image. Returns false on any failure;
+    // the job is cancelled in that case.
+    bool RunFixtureCapture(ID3D12Device* device, ID3D12CommandQueue* queue,
+                           const ReferenceCapture::Settings& settings,
+                           const ReferenceFixture::SceneData& scene, CaptureResult& result);
     bool RunCornellCapture(ID3D12Device* device, ID3D12CommandQueue* queue,
                            const ReferenceCapture::Settings& settings, CaptureResult& result);
 
     // Runs a capture and writes PFM + PPM preview files (writers in
     // ReferenceImageIO); returns false if any step fails.
+    bool RunFixtureCaptureToFiles(ID3D12Device* device, ID3D12CommandQueue* queue,
+                                  const ReferenceCapture::Settings& settings,
+                                  const ReferenceFixture::SceneData& scene, const char* pfmPath,
+                                  const char* ppmPath);
     bool RunCornellCaptureToFiles(ID3D12Device* device, ID3D12CommandQueue* queue,
                                   const ReferenceCapture::Settings& settings, const char* pfmPath,
                                   const char* ppmPath);

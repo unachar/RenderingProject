@@ -385,8 +385,9 @@ namespace ReferenceIntegrator
         }
     } // namespace
 
-    bool RunCornellCapture(ID3D12Device* device, ID3D12CommandQueue* queue,
-                           const ReferenceCapture::Settings& settings, CaptureResult& result)
+    bool RunFixtureCapture(ID3D12Device* device, ID3D12CommandQueue* queue,
+                           const ReferenceCapture::Settings& settings,
+                           const ReferenceFixture::SceneData& scene, CaptureResult& result)
     {
         result = {};
         if (device == nullptr || queue == nullptr || !EnsurePipeline(device))
@@ -429,7 +430,6 @@ namespace ReferenceIntegrator
         {
             return false;
         }
-        const ReferenceFixture::SceneData scene = ReferenceFixture::BuildCornellBox();
         if (!BuildFixtureScene(device, list.Get(), scene))
         {
             return false;
@@ -561,14 +561,27 @@ namespace ReferenceIntegrator
         return true;
     }
 
-    bool RunCornellCaptureToFiles(ID3D12Device* device, ID3D12CommandQueue* queue,
-                                  const ReferenceCapture::Settings& settings, const char* pfmPath, const char* ppmPath)
+    bool RunFixtureCaptureToFiles(ID3D12Device* device, ID3D12CommandQueue* queue,
+                                  const ReferenceCapture::Settings& settings,
+                                  const ReferenceFixture::SceneData& scene, const char* pfmPath, const char* ppmPath)
     {
         CaptureResult result;
-        if (!RunCornellCapture(device, queue, settings, result))
+        if (!RunFixtureCapture(device, queue, settings, scene, result))
         {
             return false;
         }
         return ReferenceImageIO::WritePfm(pfmPath, result) && ReferenceImageIO::WritePpmPreview(ppmPath, result);
+    }
+
+    bool RunCornellCapture(ID3D12Device* device, ID3D12CommandQueue* queue,
+                           const ReferenceCapture::Settings& settings, CaptureResult& result)
+    {
+        return RunFixtureCapture(device, queue, settings, ReferenceFixture::BuildCornellBox(), result);
+    }
+
+    bool RunCornellCaptureToFiles(ID3D12Device* device, ID3D12CommandQueue* queue,
+                                  const ReferenceCapture::Settings& settings, const char* pfmPath, const char* ppmPath)
+    {
+        return RunFixtureCaptureToFiles(device, queue, settings, ReferenceFixture::BuildCornellBox(), pfmPath, ppmPath);
     }
 } // namespace ReferenceIntegrator

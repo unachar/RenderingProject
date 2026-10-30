@@ -326,11 +326,17 @@ namespace
         {
             settings.SamplesPerPixel = static_cast<uint32_t>(atoi(value));
         }
-        const bool ok = ReferenceIntegrator::RunCornellCaptureToFiles(
-            GraphicsDevice::GetDevice(), GraphicsDevice::GetCommandQueue(), settings, "reference_cornell.pfm",
-            "reference_cornell.ppm");
-        WriteGraphicsLog("Reference capture (Stage 2H): %s (%ux%u, %u spp)\n", ok ? "PASS" : "FAIL", settings.Width,
-                         settings.Height, settings.SamplesPerPixel);
+        char fixture[32]{};
+        GetEnvironmentVariableA("DX12_REFERENCE_CAPTURE_FIXTURE", fixture, sizeof(fixture));
+        const bool materials = strcmp(fixture, "materials") == 0;
+        const ReferenceFixture::SceneData scene =
+            materials ? ReferenceFixture::BuildMaterialTest() : ReferenceFixture::BuildCornellBox();
+        const bool ok = ReferenceIntegrator::RunFixtureCaptureToFiles(
+            GraphicsDevice::GetDevice(), GraphicsDevice::GetCommandQueue(), settings, scene,
+            materials ? "reference_materials.pfm" : "reference_cornell.pfm",
+            materials ? "reference_materials.ppm" : "reference_cornell.ppm");
+        WriteGraphicsLog("Reference capture (Stage 2H, %s): %s (%ux%u, %u spp)\n", materials ? "materials" : "cornell",
+                         ok ? "PASS" : "FAIL", settings.Width, settings.Height, settings.SamplesPerPixel);
         Check(ok, "reference capture produced PFM and PPM outputs");
     }
 
