@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "reflectionprobes.h"
 #include "camera.h"
+#include "frameconstants.h"
 #include "componentmanager.h"
 #include "graphicsdevice.h"
 #include "memoryallocator.h"
@@ -333,5 +334,60 @@ namespace ReflectionProbes
         }
         intensity = g_ActiveProbe.Intensity;
         return true;
+    }
+
+    int SelectTopProbes(const float point[3], Probe out[2], int outBindlessIndices[2])
+    {
+        // Ranked top-2 (priority first, then distance to the probe
+        // center - the SelectProbe ordering), maintained by insertion.
+        float rankedDistanceSq[2] = {0.0f, 0.0f};
+        int count = 0;
+        auto outranks = [](const Probe& a, float aDistanceSq, const Probe& b, float bDistanceSq) {
+            return a.Priority > b.Priority || (a.Priority == b.Priority && aDistanceSq < bDistanceSq);
+        };
+        for (const Probe& probe : g_Probes)
+        {
+            if (probe.EnvironmentSrvIndex < 0)
+            {
+                continue;
+            }
+            float distanceSq = 0.0f;
+            bool inside = true;
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                const float delta = point[axis] - probe.Center[axis];
+                if (std::fabs(delta) > probe.HalfExtents[axis])
+                {
+                    inside = false;
+                    break;
+                }
+                distanceSq += delta * delta;
+            }
+            if (!inside)
+            {
+                continue;
+            }
+            const int bindless = probe.EnvironmentSrvIndex - FrameConstants::g_kTEXTURE_SRV_START_INDEX;
+            if (count < 2)
+            {
+                out[count] = probe;
+                outBindlessIndices[count] = bindless;
+                rankedDistanceSq[count] = distanceSq;
+                ++count;
+            }
+            else if (outranks(probe, distanceSq, out[1], rankedDistanceSq[1]))
+            {
+                out[1] = probe;
+                outBindlessIndices[1] = bindless;
+                rankedDistanceSq[1] = distanceSq;
+            }
+            if (count == 2 && outranks(out[1], rankedDistanceSq[1], out[0], rankedDistanceSq[0]))
+            {
+                std::swap(out[0], out[1]);
+                std::swap(outBindlessIndices[0], outBindlessIndices[1]);
+                std::swap(rankedDistanceSq[0], rankedDistanceSq[1]);
+            }
+        }
+        return count;
     }
 } // namespace ReflectionProbes

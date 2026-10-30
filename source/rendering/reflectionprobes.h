@@ -52,6 +52,12 @@ namespace ReflectionProbes
     // (box-projection data for the lighting shader). Returns false
     // when no probe is active this frame.
     bool GetActiveProbeBox(float center[3], float halfExtents[3], float& intensity);
+    // The two best probes containing the point (highest priority,
+    // then nearest center), for the per-pixel blending route in
+    // docs/rendering-technology-stage2j-blending-design.md. Writes
+    // up to two entries into `out` (each with its bindless-relative
+    // texture index in `outBindlessIndices`) and returns the count.
+    int SelectTopProbes(const float point[3], Probe out[2], int outBindlessIndices[2]);
 
     const std::vector<Probe>& All();
 } // namespace ReflectionProbes
