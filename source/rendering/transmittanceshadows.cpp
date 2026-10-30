@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "memoryallocator.h"
 #include "noisecachebindings.h"
 #include "transmittanceshadows.h"
 #include "graphicsdevice.h"
@@ -104,6 +105,23 @@ D3D12_GPU_VIRTUAL_ADDRESS TransmittanceShadows::GetCurrentConstantBufferAddress(
     return g_Constants ? g_Constants->GetGPUVirtualAddress() + g_ConstantOffset : 0;
 }
 
+// DEFAULT-heap creation for this file: through D3D12MA when the flag is
+// on (allocation lifetime bound to the resource), else committed.
+static bool CreateTransmittanceResource(ID3D12Device* device, const D3D12_RESOURCE_DESC& description,
+                                        const D3D12_CLEAR_VALUE* clearValue, ID3D12Resource** resource)
+{
+    if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(
+            description, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, clearValue))
+    {
+        *resource = allocated;
+        return true;
+    }
+    auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+    return SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+                                                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, clearValue,
+                                                     IID_PPV_ARGS(resource)));
+}
+
 bool TransmittanceShadows::CreateResources()
 {
     if (g_Pso)
@@ -117,9 +135,7 @@ bool TransmittanceShadows::CreateResources()
                                                   g_kTRANSMITTANCE_SHADOW_SIZE, slices, 1, 1, 0,
                                                   D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
     D3D12_CLEAR_VALUE colorClear{DXGI_FORMAT_R16G16B16A16_FLOAT, {1, 1, 1, 1}};
-    if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &colorDesc,
-                                               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &colorClear,
-                                               IID_PPV_ARGS(&g_Color))))
+    if (!CreateTransmittanceResource(device, colorDesc, &colorClear, g_Color.GetAddressOf()))
     {
         return false;
     }
@@ -129,9 +145,7 @@ bool TransmittanceShadows::CreateResources()
     D3D12_CLEAR_VALUE depthClear{};
     depthClear.Format = DXGI_FORMAT_D32_FLOAT;
     depthClear.DepthStencil.Depth = 1;
-    if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &depthDesc,
-                                               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &depthClear,
-                                               IID_PPV_ARGS(&g_Depth))))
+    if (!CreateTransmittanceResource(device, depthDesc, &depthClear, g_Depth.GetAddressOf()))
     {
         return false;
     }
