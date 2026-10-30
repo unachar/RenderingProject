@@ -13,6 +13,9 @@ static ComPtr<ID3D12DescriptorHeap> g_Heap;
 static UINT g_Increment = 0;
 static ComPtr<ID3D12RootSignature> g_RootSignature;
 static ComPtr<ID3D12PipelineState> g_ReducePso, g_CopyPso, g_DebugPso;
+static ComPtr<ID3D12RootSignature> g_SpdRootSignature;
+static ComPtr<ID3D12PipelineState> g_SpdPso;
+static ComPtr<ID3D12Resource> g_SpdCounter;
 static ComPtr<ID3D12Resource> g_DebugTexture;
 static UINT g_DebugMip = 0;
 static bool g_DebugEnabled = false, g_DebugReady = false;
@@ -38,7 +41,8 @@ static D3D12_GPU_DESCRIPTOR_HANDLE Gpu(UINT index)
     return CD3DX12_GPU_DESCRIPTOR_HANDLE(g_Heap->GetGPUDescriptorHandleForHeapStart(), index, g_Increment);
 }
 
-static bool LoadPipeline(const wchar_t* path, ComPtr<ID3D12PipelineState>& output)
+static bool LoadPipeline(const wchar_t* path, ID3D12RootSignature* rootSignature,
+                         ComPtr<ID3D12PipelineState>& output)
 {
     ComPtr<ID3DBlob> shader;
     if (FAILED(D3DReadFileToBlob(path, &shader)))
@@ -46,9 +50,112 @@ static bool LoadPipeline(const wchar_t* path, ComPtr<ID3D12PipelineState>& outpu
         return false;
     }
     D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
-    desc.pRootSignature = g_RootSignature.Get();
+    desc.pRootSignature = rootSignature;
     desc.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
     return SUCCEEDED(g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&output)));
+}
+
+static bool LoadPipeline(const wchar_t* path, ComPtr<ID3D12PipelineState>& output)
+{
+    return LoadPipeline(path, g_RootSignature.Get(), output);
+}
+
+// FidelityFX SPD's global atomic counter must start at zero (SPD resets it
+// to zero itself at the end of every completed dispatch). Created once and
+// zeroed with a one-shot upload copy; failure just disables the SPD path.
+static bool CreateSpdCounter(ID3D12Device* device)
+{
+    auto heapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+    auto bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(4, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    if (FAILED(device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &bufferDesc,
+                                               D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                               IID_PPV_ARGS(&g_SpdCounter))))
+    {
+        return false;
+    }
+    ComPtr<ID3D12Resource> upload;
+    auto uploadHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+    auto uploadDesc = CD3DX12_RESOURCE_DESC::Buffer(4);
+    if (FAILED(device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &uploadDesc,
+                                               D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload))))
+    {
+        g_SpdCounter.Reset();
+        return false;
+    }
+    void* data = nullptr;
+    if (FAILED(upload->Map(0, nullptr, &data)) || !data)
+    {
+        g_SpdCounter.Reset();
+        return false;
+    }
+    *static_cast<UINT*>(data) = 0;
+    upload->Unmap(0, nullptr);
+
+    ComPtr<ID3D12CommandAllocator> allocator;
+    ComPtr<ID3D12GraphicsCommandList> list;
+    ComPtr<ID3D12Fence> fence;
+    HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    bool ok = fenceEvent && SUCCEEDED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                                                     IID_PPV_ARGS(&allocator))) &&
+              SUCCEEDED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr,
+                                                  IID_PPV_ARGS(&list))) &&
+              SUCCEEDED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)));
+    if (ok)
+    {
+        list->CopyBufferRegion(g_SpdCounter.Get(), 0, upload.Get(), 0, 4);
+        auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(g_SpdCounter.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+                                                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        list->ResourceBarrier(1, &barrier);
+        ok = SUCCEEDED(list->Close());
+    }
+    if (ok)
+    {
+        ID3D12CommandList* lists[] = {list.Get()};
+        ID3D12CommandQueue* queue = GraphicsDevice::GetCommandQueue();
+        queue->ExecuteCommandLists(1, lists);
+        ok = SUCCEEDED(queue->Signal(fence.Get(), 1)) && SUCCEEDED(fence->SetEventOnCompletion(1, fenceEvent)) &&
+             WaitForSingleObject(fenceEvent, 5000) == WAIT_OBJECT_0;
+    }
+    if (fenceEvent)
+    {
+        CloseHandle(fenceEvent);
+    }
+    if (!ok)
+    {
+        g_SpdCounter.Reset();
+    }
+    return ok;
+}
+
+static bool InitializeSpd(ID3D12Device* device)
+{
+    CD3DX12_DESCRIPTOR_RANGE ranges[3];
+    ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);  // t0: source depth
+    ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);  // t1: destination mip 5 (SPD levels 6+)
+    ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 12, 0); // u0..u11: destination mips
+    CD3DX12_ROOT_PARAMETER parameters[5];
+    parameters[0].InitAsDescriptorTable(1, &ranges[0]);
+    parameters[1].InitAsDescriptorTable(1, &ranges[1]);
+    parameters[2].InitAsDescriptorTable(1, &ranges[2]);
+    parameters[3].InitAsUnorderedAccessView(12); // u12: SPD global atomic counter
+    parameters[4].InitAsConstants(4, 0);
+    CD3DX12_ROOT_SIGNATURE_DESC desc(_countof(parameters), parameters, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE);
+    ComPtr<ID3DBlob> serialized;
+    ComPtr<ID3DBlob> errors;
+    if (FAILED(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors)) ||
+        FAILED(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
+                                           IID_PPV_ARGS(&g_SpdRootSignature))))
+    {
+        g_SpdRootSignature.Reset();
+        return false;
+    }
+    if (!LoadPipeline(L"shader/hlsl/build/HiZSpdCS.cso", g_SpdRootSignature.Get(), g_SpdPso) || !CreateSpdCounter(device))
+    {
+        g_SpdRootSignature.Reset();
+        g_SpdPso.Reset();
+        return false;
+    }
+    return true;
 }
 
 bool OcclusionCulling::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UINT descriptorIncrement)
@@ -93,9 +200,15 @@ bool OcclusionCulling::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* he
     {
         device->CreateShaderResourceView(nullptr, &nullSrv, Cpu(RendererState::g_kHIZ_SRV_START_INDEX + i));
     }
-    return LoadPipeline(L"shader/hlsl/build/HiZReduceCS.cso", g_ReducePso) &&
-           LoadPipeline(L"shader/hlsl/build/HiZCopyCS.cso", g_CopyPso) &&
-           LoadPipeline(L"shader/hlsl/build/HiZDebugCS.cso", g_DebugPso);
+    const bool legacyReady = LoadPipeline(L"shader/hlsl/build/HiZReduceCS.cso", g_ReducePso) &&
+                             LoadPipeline(L"shader/hlsl/build/HiZCopyCS.cso", g_CopyPso) &&
+                             LoadPipeline(L"shader/hlsl/build/HiZDebugCS.cso", g_DebugPso);
+    if (legacyReady)
+    {
+        // Optional fast path; failure leaves the legacy chain in charge.
+        InitializeSpd(device);
+    }
+    return legacyReady;
 }
 
 void OcclusionCulling::Shutdown()
@@ -109,6 +222,9 @@ void OcclusionCulling::Shutdown()
     g_DebugPso.Reset();
     g_DebugTexture.Reset();
     g_DebugReady = g_DebugEnabled = false;
+    g_SpdPso.Reset();
+    g_SpdCounter.Reset();
+    g_SpdRootSignature.Reset();
     g_RootSignature.Reset();
     g_Heap.Reset();
     g_Device.Reset();
@@ -284,7 +400,44 @@ void OcclusionCulling::BuildPyramid(ID3D12GraphicsCommandList* commands, ID3D12R
         input.Subresource = mip;
         mips.push_back(graph.ImportResource(input));
     }
-    for (UINT mip = 0; mip < g_MipCount; ++mip)
+    // FidelityFX SPD path: one dispatch builds the whole chain (SPD covers
+    // at most 12 levels). The legacy per-mip chain stays as the fallback.
+    const bool useSpd = RendererSettings::GetUseFidelityFxSpdHiZ() && g_SpdPso && g_SpdCounter && g_MipCount <= 12;
+    if (useSpd)
+    {
+        graph.AddPass(
+            "Hi-Z SPD Generation",
+            [=](RenderGraph::PassBuilder& builder) {
+                builder.Read(source, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                for (UINT mip = 0; mip < g_MipCount; ++mip)
+                {
+                    builder.Write(mips[mip], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                }
+            },
+            [=](ID3D12GraphicsCommandList* list) {
+                ID3D12DescriptorHeap* heap = g_Heap.Get();
+                list->SetDescriptorHeaps(1, &heap);
+                list->SetComputeRootSignature(g_SpdRootSignature.Get());
+                list->SetPipelineState(g_SpdPso.Get());
+                list->SetComputeRootDescriptorTable(0, srv);
+                list->SetComputeRootDescriptorTable(
+                    1, Gpu(RendererState::g_kHIZ_MIP_SRV_START_INDEX +
+                           g_CurrentIndex * RendererState::g_kHIZ_MAX_MIPS + min(5u, g_MipCount - 1)));
+                list->SetComputeRootDescriptorTable(2, Gpu(RendererState::g_kHIZ_UAV_START_INDEX +
+                                                           g_CurrentIndex * RendererState::g_kHIZ_MAX_MIPS));
+                list->SetComputeRootUnorderedAccessView(3, g_SpdCounter->GetGPUVirtualAddress());
+                const UINT groupsX = (g_Width + 63) / 64;
+                const UINT groupsY = (g_Height + 63) / 64;
+                const UINT constants[4] = {0, 0, groupsX * groupsY, g_MipCount};
+                list->SetComputeRoot32BitConstants(4, 4, constants, 0);
+                list->Dispatch(groupsX, groupsY, 1);
+                // A second SPD build in the same frame (current + temporal)
+                // must not start before this dispatch's counter use drains.
+                auto counterBarrier = CD3DX12_RESOURCE_BARRIER::UAV(g_SpdCounter.Get());
+                list->ResourceBarrier(1, &counterBarrier);
+            });
+    }
+    for (UINT mip = 0; !useSpd && mip < g_MipCount; ++mip)
     {
         const auto read = mip == 0 ? source : mips[mip - 1];
         const auto write = mips[mip];

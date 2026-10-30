@@ -299,6 +299,16 @@ class RendererSettings
         SetValue(s_UseD3D12MemoryAllocator, value);
     }
 
+    static bool GetUseFidelityFxSpdHiZ()
+    {
+        return s_UseFidelityFxSpdHiZ;
+    }
+
+    static void SetUseFidelityFxSpdHiZ(bool value)
+    {
+        SetValue(s_UseFidelityFxSpdHiZ, value);
+    }
+
     static bool GetReservedResourcesEnabled()
     {
         return s_ReservedResourcesEnabled;
@@ -699,6 +709,7 @@ class RendererSettings
     inline static float s_NisSharpness = 0.5f;
     inline static bool s_ComputeGBufferEnabled = true;
     inline static bool s_UseD3D12MemoryAllocator = false;
+    inline static bool s_UseFidelityFxSpdHiZ = false;
     inline static bool s_SsaoEnabled = true;
     inline static float s_SsaoRadius = 1.15f;
     inline static float s_SsaoPower = 1.35f;
