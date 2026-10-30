@@ -15,6 +15,11 @@ namespace TemporalHistory
             s_Frame.OutputHeight = outputHeight;
         }
 
+        static uint64_t GetFrameSerial()
+        {
+            return s_Frame.Serial;
+        }
+
         static State Capture(uint64_t cameraId, uint32_t inputWidth, uint32_t inputHeight, uint64_t configurationKey,
                              double exposure = 1.0)
         {

@@ -6,6 +6,7 @@
 #include "psomanager.h"
 #include "frameconstants.h"
 #include "skinningwork.h"
+#include "temporalhistorycontext.h"
 
 using namespace AnimationMath;
 
@@ -245,10 +246,14 @@ bool AnimationModelResource::CreateGpuSkinningBuffers(ID3D12Device* device)
 void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCommandList, uint32_t outlineModes)
 {
     const bool skinBase = m_SkinningVersion != m_DispatchedSkinningVersion;
+    const uint64_t frame = TemporalHistory::Context::GetFrameSerial();
+    // Preserve motion across all passes in the update frame, then consume it on
+    // the first unchanged frame. A cached pose must not keep its last velocity.
+    const bool settleHistory = !skinBase && !m_SkinningHistorySettled && frame != m_LastBaseSkinningFrame;
     const uint32_t skinModes =
         PlanOutlineSkinningModes(m_SkinningVersion, m_DispatchedOutlineSkinningVersions, outlineModes);
     if (!pCommandList || !m_SkinningDescHeap || !ShaderPipelines::GetSkinningRootSignature() ||
-        !PsoManager::GetSkinningPso() || (!skinBase && skinModes == 0))
+        !PsoManager::GetSkinningPso() || (!skinBase && skinModes == 0 && !settleHistory))
     {
         return;
     }
@@ -278,7 +283,7 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
             continue;
         }
 
-        if (skinBase && m_Meshes[m].PreviousVertexValid)
+        if ((skinBase || settleHistory) && m_Meshes[m].PreviousVertexValid)
         {
             D3D12_RESOURCE_BARRIER copyBarriers[2] = {
                 CD3DX12_RESOURCE_BARRIER::Transition(m_Meshes[m].VertexBuffer.Get(),
@@ -376,6 +381,12 @@ void AnimationModelResource::DispatchGpuSkinning(ID3D12GraphicsCommandList* pCom
     if (skinBase)
     {
         m_DispatchedSkinningVersion = m_SkinningVersion;
+        m_LastBaseSkinningFrame = frame;
+        m_SkinningHistorySettled = false;
+    }
+    else if (settleHistory)
+    {
+        m_SkinningHistorySettled = true;
     }
     for (int mode = 0; mode < kToonOutlineModeCount; ++mode)
     {

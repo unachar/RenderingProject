@@ -966,7 +966,10 @@ bool AnimationModelResource::LoadAnimation(const char* fileName, const char* nam
 
     if (ModelPathLowerExtension(animPath) == ".vmd")
     {
-        if (!LoadVmdAnimation(fileName, name)) return false;
+        if (!LoadVmdAnimation(fileName, name))
+        {
+            return false;
+        }
         m_AnimationSourcePaths[name ? name : ""] = fileName;
         return true;
     }
@@ -1049,17 +1052,22 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
     InvalidateVmdRuntimeCache();
 
     const VmdAnimation& loaded = m_VmdAnimations[animationName];
-    Debug::Log("VMD bone-name bindings: %zu/%zu, morph bindings: %zu/%zu (%s)\n",
-               matchedTrackCount, loaded.BoneTracks.size(), matchedMorphTrackCount, loaded.MorphTracks.size(), fileName);
+    Debug::Log("VMD bone-name bindings: %zu/%zu, morph bindings: %zu/%zu (%s)\n", matchedTrackCount,
+               loaded.BoneTracks.size(), matchedMorphTrackCount, loaded.MorphTracks.size(), fileName);
     if (!m_IsPmxModel && (!loaded.IkTracks.empty() || !loaded.MorphTracks.empty()))
     {
-        Debug::Log("VMD humanoid playback supports leg/toe IK; PMX-specific append constraints and morphs require separate conversion.\n");
+        Debug::Log(
+            "VMD humanoid playback supports leg/toe IK; PMX-specific append constraints and morphs require separate conversion.\n");
     }
     bool hasHumanoidIkTargets = false;
     if (!m_IsPmxModel)
+    {
         for (unsigned side = 0; side < 2; ++side)
+        {
             hasHumanoidIkTargets |= VmdIkBinding::Find(loaded.BoneTracks, VmdIkBinding::FootNames(side)) ||
                                     VmdIkBinding::Find(loaded.BoneTracks, VmdIkBinding::ToeNames(side));
+        }
+    }
     if (!loaded.BoneTracks.empty() && matchedTrackCount == 0 && !hasHumanoidIkTargets)
     {
         Debug::Log("WARNING: VMD loaded but no bone names matched this model: %s\n", fileName);
@@ -1303,6 +1311,8 @@ void AnimationModelResource::Uninit()
     m_BoneMatricesScratch.clear();
     m_SkinningVersion = 0;
     m_DispatchedSkinningVersion = UINT64_MAX;
+    m_LastBaseSkinningFrame = UINT64_MAX;
+    m_SkinningHistorySettled = true;
     m_DispatchedOutlineSkinningVersions.fill(UINT64_MAX);
     m_LastPoseAnimation1.clear();
     m_LastPoseAnimation2.clear();

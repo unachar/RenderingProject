@@ -1,5 +1,6 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "materialmanager.h"
+#include "assetthumbnailmanager.h"
 #include "modelmeshtable.h"
 #include "materialopticsui.h"
 #include "proceduralio.h"
@@ -17,6 +18,8 @@
 #include "systemmanager.h"
 #include "texturemanager.h"
 #include "timelinesystem.h"
+#include "light.h"
+#include "scenehierarchy.h"
 #include "gpuscene/gpuscenechanges.h"
 #include "impostorrenderer.h"
 #include <fstream>
@@ -29,8 +32,256 @@
 
 using namespace EditorWidgets;
 
+bool ImGuiManager::AppendLiveMonitorImages(LiveMonitorBinding& monitor, const vector<filesystem::path>& sources)
+{
+    vector<filesystem::path> images;
+    for (const auto& source : sources)
+    {
+        error_code error;
+        if (filesystem::is_directory(source, error))
+        {
+            vector<filesystem::path> sequence;
+            for (filesystem::directory_iterator file(source, error), end; !error && file != end; file.increment(error))
+            {
+                if (IsTextureFile(file->path()) && file->is_regular_file(error))
+                {
+                    sequence.push_back(file->path());
+                }
+            }
+            if (!error)
+            {
+                sort(sequence.begin(), sequence.end());
+                images.insert(images.end(), sequence.begin(), sequence.end());
+            }
+        }
+        else if (!error && IsTextureFile(source) && filesystem::is_regular_file(source, error))
+        {
+            images.push_back(source);
+        }
+    }
+    for (const auto& image : images)
+    {
+        monitor.Frames.push_back(MakeRelativeAssetPath(image));
+    }
+    if (images.empty())
+    {
+        AddLog("LEDモニター: 読み込める画像がありません。PNG / JPG / JPEG / BMP / TGA / DDSを指定してください。");
+    }
+    return !images.empty();
+}
+
+bool ImGuiManager::AcceptLiveMonitorFileDrop(const DroppedFile& file)
+{
+    if (!m_ShowInspectorWindow || !file.HasPoint)
+    {
+        return false;
+    }
+    for (const auto& target : m_LiveMonitorDropTargets)
+    {
+        if (ImGui::GetFrameCount() - target.Frame > 2 || target.Entity != m_SelectedEntity ||
+            file.Point.x < target.Min.x || file.Point.x >= target.Max.x ||
+            file.Point.y < target.Min.y || file.Point.y >= target.Max.y ||
+            !ComponentManager::HasComponent<TimelineComponent>(target.Entity))
+        {
+            continue;
+        }
+        auto& timeline = ComponentManager::GetComponentUnchecked<TimelineComponent>(target.Entity);
+        if (target.MonitorIndex >= timeline.Monitors.size())
+        {
+            return true;
+        }
+        const auto before = CaptureEntity(target.Entity);
+        // OSドロップのパスはDragQueryFileA由来のため、Windowsのコードページで変換する。
+        if (AppendLiveMonitorImages(timeline.Monitors[target.MonitorIndex], {filesystem::path(file.Path)}))
+        {
+            BeginUndoCapture(target.Entity, before);
+            if (!ProjectManager::IsSimulationRunning())
+            {
+                TimeLineSystem::EvaluateComponent(timeline);
+            }
+            FinalizeUndoCaptureIfIdle(true);
+        }
+        return true;
+    }
+    return false;
+}
+
+bool ImGuiManager::DrawLiveMonitorFrames(EntityID entity, size_t monitorIndex, LiveMonitorBinding& monitor)
+{
+    struct FrameDrag
+    {
+        EntityID Entity;
+        size_t Monitor, Frame;
+    };
+    constexpr const char* framePayloadType = "LIVE_MONITOR_FRAME";
+    bool changed = false;
+    ImGui::TextWrapped("画像を追加すると末尾に並びます。サムネイルをドラッグして表示順を変更できます。");
+    if (ImGui::Button("画像をここにドロップ\nクリックして画像を選択", ImVec2(-1, 54)))
+    {
+        filesystem::path image;
+        if (ProceduralIO::OpenFileDialog(L"画像 (*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.dds)\0*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.dds\0", image))
+        {
+            changed |= AppendLiveMonitorImages(monitor, {image});
+        }
+    }
+    if (ImGui::IsItemVisible())
+    {
+        const auto window = ImGui::GetWindowPos();
+        const auto size = ImGui::GetWindowSize();
+        const auto min = ImGui::GetItemRectMin();
+        const auto max = ImGui::GetItemRectMax();
+        m_LiveMonitorDropTargets.push_back({entity, monitorIndex,
+            {std::max(min.x, window.x), std::max(min.y, window.y)},
+            {std::min(max.x, window.x + size.x), std::min(max.y, window.y + size.y)}, ImGui::GetFrameCount()});
+    }
+    if (ImGui::BeginDragDropTarget())
+    {
+        vector<filesystem::path> sources;
+        if (const auto* payload = ImGui::AcceptDragDropPayload(AssetPayloadType))
+        {
+            if (payload->DataSize == sizeof(AssetDragPayload))
+            {
+                const auto& asset = *static_cast<const AssetDragPayload*>(payload->Data);
+                if (asset.Type == AssetType::Texture)
+                {
+                    sources.push_back(MaterialManager::Registry().Resolve(asset.Handle));
+                }
+            }
+        }
+        else if (const auto* payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+        {
+            sources.push_back(filesystem::u8path(static_cast<const char*>(payload->Data)));
+        }
+        else if (const auto* payload = ImGui::AcceptDragDropPayload("ASSET_DIR"))
+        {
+            sources.push_back(filesystem::path(static_cast<const wchar_t*>(payload->Data)));
+        }
+        else if (ImGui::AcceptDragDropPayload("ASSET_MULTI"))
+        {
+            sources = m_DraggedAssetPaths;
+            sort(sources.begin(), sources.end());
+        }
+        if (!sources.empty())
+        {
+            changed |= AppendLiveMonitorImages(monitor, sources);
+        }
+        ImGui::EndDragDropTarget();
+    }
+    ImGui::Text("登録画像: %zu 枚", monitor.Frames.size());
+    int remove = -1, moveFrom = -1, moveTo = -1;
+    constexpr float cellWidth = 104.0f;
+    constexpr float imageSize = 88.0f;
+    const int columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / cellWidth));
+    const float height = std::min(290.0f, 154.0f * static_cast<float>((monitor.Frames.size() + columns - 1) / columns));
+    if (!monitor.Frames.empty() && ImGui::BeginChild("Frames", ImVec2(0, height), ImGuiChildFlags_Borders))
+    {
+        if (ImGui::BeginTable("FrameGrid", columns, ImGuiTableFlags_SizingFixedSame))
+        {
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>((monitor.Frames.size() + columns - 1) / columns), 150.0f);
+            while (clipper.Step())
+            {
+                for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
+                {
+                    ImGui::TableNextRow(0, 150.0f);
+                    for (int column = 0; column < columns; ++column)
+                    {
+                        const size_t index = static_cast<size_t>(row * columns + column);
+                        if (index >= monitor.Frames.size())
+                        {
+                            break;
+                        }
+                        ImGui::TableSetColumnIndex(column);
+                        ImGui::PushID(static_cast<int>(index));
+                        const auto path = filesystem::u8path(monitor.Frames[index]);
+                        const auto origin = ImGui::GetCursorScreenPos();
+                        ImGui::InvisibleButton("Image", ImVec2(imageSize, imageSize));
+                        static unordered_map<string, AssetHandle> handles;
+                        auto [cached, inserted] = handles.try_emplace(monitor.Frames[index], 0);
+                        if (inserted)
+                        {
+                            string error;
+                            cached->second = MaterialManager::Registry().Register(path, AssetType::Texture, error);
+                        }
+                        const auto thumbnail = AssetThumbnailManager::Request(cached->second);
+                        if (thumbnail.State == ThumbnailState::Ready && thumbnail.Image)
+                        {
+                            const float scale = imageSize / static_cast<float>(std::max(thumbnail.Image->Width, thumbnail.Image->Height));
+                            const ImVec2 size(thumbnail.Image->Width * scale, thumbnail.Image->Height * scale);
+                            const ImVec2 top(origin.x + (imageSize - size.x) * 0.5f, origin.y + (imageSize - size.y) * 0.5f);
+                            ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(thumbnail.GetImGuiTextureID().ptr),
+                                top, ImVec2(top.x + size.x, top.y + size.y));
+                        }
+                        else
+                        {
+                            ImGui::GetWindowDrawList()->AddRect(origin, ImVec2(origin.x + imageSize, origin.y + imageSize),
+                                ImGui::GetColorU32(ImGuiCol_Border));
+                            ImGui::GetWindowDrawList()->AddText(ImVec2(origin.x + 4, origin.y + 34),
+                                ImGui::GetColorU32(ImGuiCol_TextDisabled), thumbnail.State == ThumbnailState::Failed ? "読込失敗" : "準備中");
+                        }
+                        if (ImGui::IsItemHovered())
+                        {
+                            ImGui::SetTooltip("%s", monitor.Frames[index].c_str());
+                        }
+                        if (ImGui::BeginDragDropSource())
+                        {
+                            const FrameDrag drag{entity, monitorIndex, index};
+                            ImGui::SetDragDropPayload(framePayloadType, &drag, sizeof(drag));
+                            ImGui::Text("画像 %zu", index + 1);
+                            ImGui::EndDragDropSource();
+                        }
+                        if (ImGui::BeginDragDropTarget())
+                        {
+                            if (const auto* payload = ImGui::AcceptDragDropPayload(framePayloadType))
+                            {
+                                if (payload->DataSize == sizeof(FrameDrag))
+                                {
+                                    const auto& drag = *static_cast<const FrameDrag*>(payload->Data);
+                                    if (drag.Entity == entity && drag.Monitor == monitorIndex && drag.Frame < monitor.Frames.size())
+                                    {
+                                        moveFrom = static_cast<int>(drag.Frame);
+                                        moveTo = static_cast<int>(index);
+                                    }
+                                }
+                            }
+                            ImGui::EndDragDropTarget();
+                        }
+                        const auto name = path.filename().u8string();
+                        ImGui::Text("%zu", index + 1);
+                        ImGui::TextUnformatted(string(name.begin(), name.end()).c_str());
+                        if (ImGui::SmallButton("削除"))
+                        {
+                            remove = static_cast<int>(index);
+                        }
+                        ImGui::PopID();
+                    }
+                }
+            }
+            ImGui::EndTable();
+        }
+    }
+    if (!monitor.Frames.empty())
+    {
+        ImGui::EndChild();
+    }
+    if (remove >= 0)
+    {
+        monitor.Frames.erase(monitor.Frames.begin() + remove);
+        changed = true;
+    }
+    else if (moveFrom >= 0 && moveTo >= 0 && moveFrom != moveTo)
+    {
+        string frame = move(monitor.Frames[moveFrom]);
+        monitor.Frames.erase(monitor.Frames.begin() + moveFrom);
+        monitor.Frames.insert(monitor.Frames.begin() + moveTo, move(frame));
+        changed = true;
+    }
+    return changed;
+}
+
 void ImGuiManager::DrawInspectorWindow()
 {
+    m_LiveMonitorDropTargets.clear();
     SyncEntitySelection();
     ImGui::SetNextWindowSize(ImVec2(312.0f, 520.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("インスペクター", &m_ShowInspectorWindow))
@@ -681,14 +932,19 @@ void ImGuiManager::DrawToonMeshOutlineInspector(EntityID entity, bool embeddedIn
 
     // Resolve components/resources once for this draw, rather than once per table row.
     const bool hasStaticModel = ComponentManager::HasComponent<StaticModelComponent>(entity);
-    const auto* staticModel = hasStaticModel ? ModelManager::GetStaticModel(
-        ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId) : nullptr;
-    const auto* animationModel = ComponentManager::HasComponent<AnimationModelComponent>(entity) ?
-        ModelManager::GetAnimModel(ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelId) : nullptr;
-    const UINT meshCount = hasStaticModel ? (staticModel ? staticModel->GetMeshCount() : 0) :
-                                           (animationModel ? animationModel->GetMeshCount() : 0);
-    const auto* resourceMap = staticModel ? &staticModel->GetResourceMap() :
-                              (animationModel ? &animationModel->GetResourceMap() : nullptr);
+    const auto* staticModel = hasStaticModel
+                                  ? ModelManager::GetStaticModel(
+                                        ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId)
+                                  : nullptr;
+    const auto* animationModel =
+        ComponentManager::HasComponent<AnimationModelComponent>(entity)
+            ? ModelManager::GetAnimModel(
+                  ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelId)
+            : nullptr;
+    const UINT meshCount = hasStaticModel ? (staticModel ? staticModel->GetMeshCount() : 0)
+                                          : (animationModel ? animationModel->GetMeshCount() : 0);
+    const auto* resourceMap =
+        staticModel ? &staticModel->GetResourceMap() : (animationModel ? &animationModel->GetResourceMap() : nullptr);
     auto getStaticMesh = [&](UINT index) -> const StaticMeshData* {
         return staticModel && index < staticModel->GetMeshCount() ? &staticModel->GetMeshData(index) : nullptr;
     };
@@ -909,14 +1165,19 @@ void ImGuiManager::DrawMeshShadingInspector(EntityID entity, bool embeddedInInsp
 
     // Resolve components/resources once for this draw, rather than once per table row.
     const bool hasStaticModel = ComponentManager::HasComponent<StaticModelComponent>(entity);
-    const auto* staticModel = hasStaticModel ? ModelManager::GetStaticModel(
-        ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId) : nullptr;
-    const auto* animationModel = ComponentManager::HasComponent<AnimationModelComponent>(entity) ?
-        ModelManager::GetAnimModel(ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelId) : nullptr;
-    const UINT meshCount = hasStaticModel ? (staticModel ? staticModel->GetMeshCount() : 0) :
-                                           (animationModel ? animationModel->GetMeshCount() : 0);
-    const auto* resourceMap = staticModel ? &staticModel->GetResourceMap() :
-                              (animationModel ? &animationModel->GetResourceMap() : nullptr);
+    const auto* staticModel = hasStaticModel
+                                  ? ModelManager::GetStaticModel(
+                                        ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity).ModelId)
+                                  : nullptr;
+    const auto* animationModel =
+        ComponentManager::HasComponent<AnimationModelComponent>(entity)
+            ? ModelManager::GetAnimModel(
+                  ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity).ModelId)
+            : nullptr;
+    const UINT meshCount = hasStaticModel ? (staticModel ? staticModel->GetMeshCount() : 0)
+                                          : (animationModel ? animationModel->GetMeshCount() : 0);
+    const auto* resourceMap =
+        staticModel ? &staticModel->GetResourceMap() : (animationModel ? &animationModel->GetResourceMap() : nullptr);
     auto getStaticMesh = [&](UINT index) -> const StaticMeshData* {
         return staticModel && index < staticModel->GetMeshCount() ? &staticModel->GetMeshData(index) : nullptr;
     };
@@ -1135,7 +1396,10 @@ void ImGuiManager::DrawLightInspector(EntityID entity)
     changed |= ImGui::Checkbox("デバッグ描画", &light.DrawDebug);
     changed |= ImGui::Checkbox("物理ベース", &light.PhysicallyBased);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("オン: 従来の減衰。オフ: 範囲内は一定の強度、末端1mのみ減衰。\n照明経路・影とは独立して切り替えます。");
+    {
+        ImGui::SetTooltip(
+            "オン: 従来の減衰。オフ: 範囲内は一定の強度、末端1mのみ減衰。\n照明経路・影とは独立して切り替えます。");
+    }
     if (light.Type == LightType::Capsule)
     {
         changed |= ImGui::DragFloat("カプセル長", &light.CapsuleLength, 0.05f, 0.0f, 100.0f);
@@ -1528,7 +1792,8 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
             changed = true;
         }
         changed |= ImGui::DragFloat("Near Clip", &camera.NearClip, 0.01f, 0.001f, 1000.0f);
-        changed |= ImGui::DragFloat(camera.IsOrthographic ? "Far Clip" : "Effect Range", &camera.FarClip, 1.0f, 0.01f, 1000000.0f);
+        changed |= ImGui::DragFloat(camera.IsOrthographic ? "Far Clip" : "Effect Range", &camera.FarClip, 1.0f, 0.01f,
+                                    1000000.0f);
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip("Perspective projection uses an infinite far plane (Reverse-Z).");
@@ -1621,8 +1886,32 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
         bool changed = false;
         bool evaluate = false;
 
+        char musicPath[1024]{};
+        strncpy_s(musicPath, timeline.MusicPath.c_str(), _TRUNCATE);
+        if (ImGui::InputText("LiveDirector / 曲 (PCM16・float32 WAV)", musicPath, IM_ARRAYSIZE(musicPath)))
+        {
+            timeline.MusicPath = musicPath;
+            timeline.MusicDuration = 0.0f;
+            timeline.SeekRequested = true;
+            changed = true;
+        }
+        changed |= ImGui::DragFloat("曲の開始位置 (秒)", &timeline.MusicOffset, 0.01f, 0.0f, 36000.0f);
+        changed |= ImGui::DragFloat("BPM", &timeline.BeatsPerMinute, 0.1f, 1.0f, 1000.0f);
+        changed |= ImGui::DragFloat("先頭ビート (秒)", &timeline.BeatOffset, 0.01f);
+        ImGui::Text("Beat %.2f", (timeline.CurrentTime - timeline.BeatOffset) * timeline.BeatsPerMinute / 60.0f);
+        ImGui::Text("Time %.3f / %.3f s", timeline.CurrentTime, timeline.Duration);
+        if (!timeline.PlaybackError.empty())
+        {
+            ImGui::TextWrapped("%s", timeline.PlaybackError.c_str());
+        }
+        if (!timeline.MusicPath.empty())
+        {
+            ImGui::TextWrapped("曲の再生位置に同期します。エディターのPlayで開始してください。再生速度は1倍です。");
+        }
         changed |= ImGui::DragFloat("長さ (秒)", &timeline.Duration, 0.1f, 0.01f, 36000.0f);
+        ImGui::BeginDisabled(!timeline.MusicPath.empty());
         changed |= ImGui::DragFloat("再生速度", &timeline.Speed, 0.01f, -100.0f, 100.0f);
+        ImGui::EndDisabled();
         changed |= ImGui::Checkbox("Play On Awake", &timeline.PlayOnAwake);
         ImGui::SameLine();
         changed |= ImGui::Checkbox("Loop", &timeline.Loop);
@@ -1639,6 +1928,14 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
         }
         if (ImGui::Button(statusText8))
         {
+            const float end = timeline.MusicDuration > 0.0f
+                                  ? min(timeline.Duration, max(0.0f, timeline.MusicDuration - timeline.MusicOffset))
+                                  : timeline.Duration;
+            if (!timeline.IsPlaying && timeline.CurrentTime >= end)
+            {
+                timeline.CurrentTime = 0.0f;
+                timeline.SeekRequested = true;
+            }
             timeline.IsPlaying = !timeline.IsPlaying;
         }
         ImGui::SameLine();
@@ -1646,25 +1943,174 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
         {
             timeline.IsPlaying = false;
             timeline.CurrentTime = 0.0f;
+            timeline.SeekRequested = true;
             evaluate = true;
         }
         if (ImGui::SliderFloat("再生ヘッド", &timeline.CurrentTime, 0.0f, timeline.Duration, "%.3f 秒"))
         {
             timeline.IsPlaying = false;
+            timeline.SeekRequested = true;
             evaluate = true;
         }
 
-        const char* propertyNames[] = {
-            "Transform / Position",   "Transform / Rotation", "Transform / Scale", "Camera / Target",
-            "Camera / FOV",           "Camera / Near Clip",   "Camera / Far Clip", "Camera / Lock-on Offset",
-            "PostProcess / Intensity"};
+        auto editEntity = [](const char* label, EntityID& target) {
+            int id = target == g_kINVALID_ENTITY ? -1 : static_cast<int>(target);
+            if (!ImGui::InputInt(label, &id))
+            {
+                return false;
+            }
+            target = id < 0 ? g_kINVALID_ENTITY : static_cast<EntityID>(id);
+            return true;
+        };
+        if (ImGui::TreeNode("ステージライト"))
+        {
+            if (ImGui::Button("4灯ムービングライトを作成"))
+            {
+                vector<EntitySnapshot> undo{before};
+                StageLightGroup group;
+                const auto origin = ComponentManager::GetComponentUnchecked<TransformComponent>(entity).Position;
+                for (int index = 0; index < 4; ++index)
+                {
+                    auto desc = Light::MakeDefaultDesc(LightType::Spot);
+                    desc.Name = "Moving Spot " + to_string(index + 1);
+                    desc.Position = {origin.x + (index - 1.5f) * 2.0f, origin.y + 4.0f, origin.z};
+                    desc.Range = 20.0f;
+                    desc.InnerAngle = 8.0f;
+                    desc.OuterAngle = 14.0f;
+                    desc.AffectsVolumetrics = true;
+                    desc.VolumeDensity = group.BeamDensity;
+                    const EntityID spot = Light::Create(desc);
+                    SceneHierarchy::SetParent(spot, entity);
+                    group.Fixtures.push_back({spot, index * 0.25f});
+                    EntitySnapshot missing{};
+                    missing.Entity = spot;
+                    undo.push_back(missing);
+                }
+                timeline.LightGroups.push_back(move(group));
+                PushUndoGroup(undo);
+                evaluate = true;
+            }
+            ImGui::TextWrapped(
+                "ルートをPrefabとして保存すると、灯体の参照・ビート設定も保存されます。キーのLightトラックはグループ設定を上書きします。");
+            for (size_t index = 0; index < timeline.LightGroups.size();)
+            {
+                ImGui::PushID(static_cast<int>(index));
+                auto& group = timeline.LightGroups[index];
+                bool remove = false;
+                if (ImGui::TreeNode("LightGroup", "ライトグループ %zu", index + 1))
+                {
+                    changed |= ImGui::Checkbox("有効", &group.Enabled);
+                    changed |= ImGui::DragFloat("明るさ", &group.Intensity, 0.1f, 0.0f, 100000.0f);
+                    changed |= ImGui::ColorEdit3("色", &group.Color.x);
+                    changed |= ImGui::Checkbox("ビートごとに色切替", &group.AlternateOnBeat);
+                    changed |= ImGui::ColorEdit3("交互色", &group.AlternateColor.x);
+                    changed |= ImGui::SliderAngle("Pan", &group.Pan, -180, 180);
+                    changed |= ImGui::SliderAngle("Tilt", &group.Tilt, -90, 90);
+                    changed |= ImGui::SliderAngle("Pan振幅", &group.PanSweep, 0, 180);
+                    changed |= ImGui::SliderAngle("Tilt振幅", &group.TiltSweep, 0, 90);
+                    changed |= ImGui::DragFloat("首振り周期 (拍)", &group.SweepBeats, 0.1f, 0.01f, 128.0f);
+                    changed |= ImGui::DragFloat("ストロボ回数 / 拍 (0=無効)", &group.StrobesPerBeat, 0.1f, 0.0f, 32.0f);
+                    changed |= ImGui::SliderFloat("ストロボ点灯比率", &group.StrobeDuty, 0.0f, 1.0f);
+                    changed |= ImGui::DragFloat("ビーム密度", &group.BeamDensity, 0.01f, 0.0f, 3.0f);
+                    for (size_t lightIndex = 0; lightIndex < group.Fixtures.size(); ++lightIndex)
+                    {
+                        ImGui::PushID(static_cast<int>(lightIndex));
+                        changed |= editEntity("Spot Entity", group.Fixtures[lightIndex].Target);
+                        changed |= ImGui::DragFloat("位相 (周期)", &group.Fixtures[lightIndex].Phase, 0.01f);
+                        ImGui::PopID();
+                    }
+                    if (ImGui::Button("既存ライトを追加"))
+                    {
+                        group.Fixtures.push_back({});
+                        changed = true;
+                    }
+                    remove = ImGui::Button("グループ設定を削除");
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+                if (remove)
+                {
+                    timeline.LightGroups.erase(timeline.LightGroups.begin() + index);
+                    changed = true;
+                }
+                else
+                {
+                    ++index;
+                }
+            }
+            ImGui::TreePop();
+        }
+        if (ImGui::TreeNode("LEDモニター・発光床"))
+        {
+            ImGui::TextWrapped(
+                "画像連番を曲の時刻で再生します。同じ画像をRectライトの発光面に使い、周辺照明を連動します。連番名は0001.pngのように桁を揃えてください。");
+            if (ImGui::Button("モニター設定を追加"))
+            {
+                timeline.Monitors.push_back({});
+                changed = true;
+            }
+            for (size_t index = 0; index < timeline.Monitors.size();)
+            {
+                ImGui::PushID(static_cast<int>(index));
+                auto& monitor = timeline.Monitors[index];
+                bool remove = false;
+                if (ImGui::TreeNode("Monitor", "モニター %zu", index + 1))
+                {
+                    changed |= editEntity("発光メッシュ Entity", monitor.Target);
+                    changed |= editEntity("周辺照明 Rect Entity", monitor.SurroundLight);
+                    changed |= ImGui::DragFloat("FPS", &monitor.FramesPerSecond, 0.1f, 0.01f, 240.0f);
+                    changed |= ImGui::DragFloat("開始 (秒)", &monitor.StartTime, 0.01f, 0.0f, timeline.Duration);
+                    changed |= ImGui::DragFloat("発光強度", &monitor.EmissiveIntensity, 0.1f, 0.0f, 10000.0f);
+                    changed |= ImGui::DragFloat("周辺照明の強度", &monitor.LightIntensity, 0.1f, 0.0f, 100000.0f);
+                    changed |= ImGui::Checkbox("連番ループ", &monitor.Loop);
+                    changed |= DrawLiveMonitorFrames(entity, index, monitor);
+                    remove = ImGui::Button("モニター設定を削除");
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+                if (remove)
+                {
+                    timeline.Monitors.erase(timeline.Monitors.begin() + index);
+                    changed = true;
+                }
+                else
+                {
+                    ++index;
+                }
+            }
+            ImGui::TreePop();
+        }
+
+        const char* propertyNames[] = {"Transform / Position",
+                                       "Transform / Rotation",
+                                       "Transform / Scale",
+                                       "Camera / Target",
+                                       "Camera / FOV",
+                                       "Camera / Near Clip",
+                                       "Camera / Far Clip",
+                                       "Camera / Lock-on Offset",
+                                       "PostProcess / Intensity",
+                                       "Light / Intensity",
+                                       "Light / Color",
+                                       "Light / Direction",
+                                       "Light / Range",
+                                       "Light / Beam Density",
+                                       "Bloom / Threshold",
+                                       "Bloom / Soft Knee",
+                                       "Bloom / Radius",
+                                       "Fog / Density",
+                                       "Fog / Color",
+                                       "Animation / Time (seconds)",
+                                       "Material / Emissive Intensity",
+                                       "Material / Emissive Color"};
         if (ImGui::Button("+ Track"))
         {
             TimelineTrackData track{};
             track.Target = entity;
             track.Name = string("Track ") + to_string(timeline.Tracks.size() + 1);
             bool valid = false;
-            track.DefaultValue = TimeLineSystem::ReadProperty(track.Target, track.Property, &valid);
+            track.DefaultValue =
+                TimeLineSystem::ReadProperty(track.Target, track.Property, &valid, track.FogVolumeIndex);
             track.HasDefaultValue = valid;
             timeline.Tracks.push_back(move(track));
             changed = true;
@@ -1675,8 +2121,9 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
             auto& track = timeline.Tracks[trackIndex];
             ImGui::PushID(static_cast<int>(trackIndex));
             bool removeTrack = false;
-            if (ImGui::TreeNodeEx("TrackNode", ImGuiTreeNodeFlags_DefaultOpen, "%s  (%s)", track.Name.c_str(),
-                                  propertyNames[static_cast<int>(track.Property)]))
+            if (ImGui::TreeNodeEx(
+                    "TrackNode", ImGuiTreeNodeFlags_DefaultOpen, "%s  (%s)", track.Name.c_str(),
+                    propertyNames[clamp(static_cast<int>(track.Property), 0, IM_ARRAYSIZE(propertyNames) - 1)]))
             {
                 changed |= ImGui::Checkbox("有効##Track", &track.Enabled);
                 char trackName[128]{};
@@ -1705,14 +2152,29 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
                     {
                         track.Target = static_cast<EntityID>(targetId);
                     }
+                    bool valid = false;
+                    track.DefaultValue =
+                        TimeLineSystem::ReadProperty(track.Target, track.Property, &valid, track.FogVolumeIndex);
+                    track.HasDefaultValue = valid;
                     changed = true;
                 }
                 int property = static_cast<int>(track.Property);
+                if (track.Property == TimelineProperty::FogDensity || track.Property == TimelineProperty::FogColor)
+                {
+                    changed |= ImGui::InputInt("Fog Volume Index", &track.FogVolumeIndex);
+                }
+                bool targetValid = false;
+                TimeLineSystem::ReadProperty(track.Target, track.Property, &targetValid, track.FogVolumeIndex);
+                if (!targetValid)
+                {
+                    ImGui::TextWrapped("対象EntityのComponent、またはFog Volume Indexを確認してください。");
+                }
                 if (ImGui::Combo("パラメーター", &property, propertyNames, IM_ARRAYSIZE(propertyNames)))
                 {
                     track.Property = static_cast<TimelineProperty>(clamp(property, 0, IM_ARRAYSIZE(propertyNames) - 1));
                     bool valid = false;
-                    track.DefaultValue = TimeLineSystem::ReadProperty(track.Target, track.Property, &valid);
+                    track.DefaultValue =
+                        TimeLineSystem::ReadProperty(track.Target, track.Property, &valid, track.FogVolumeIndex);
                     track.HasDefaultValue = valid;
                     changed = true;
                 }
@@ -1723,7 +2185,8 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
                     clip.StartTime = timeline.CurrentTime;
                     clip.Duration = min(1.0f, max(0.01f, timeline.Duration - clip.StartTime));
                     bool valid = false;
-                    const XMFLOAT4 value = TimeLineSystem::ReadProperty(track.Target, track.Property, &valid);
+                    const XMFLOAT4 value =
+                        TimeLineSystem::ReadProperty(track.Target, track.Property, &valid, track.FogVolumeIndex);
                     if (valid)
                     {
                         clip.Keys.push_back({0.0f, value, TimelineInterpolation::Linear});
@@ -1771,7 +2234,8 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
                         if (ImGui::Button("+ Key (現在値)"))
                         {
                             bool valid = false;
-                            const XMFLOAT4 value = TimeLineSystem::ReadProperty(track.Target, track.Property, &valid);
+                            const XMFLOAT4 value = TimeLineSystem::ReadProperty(track.Target, track.Property, &valid,
+                                                                                track.FogVolumeIndex);
                             if (valid)
                             {
                                 clip.Keys.push_back({clamp(timeline.CurrentTime - clip.StartTime, 0.0f, clip.Duration),
@@ -1801,8 +2265,17 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
                                                             track.Property == TimelineProperty::TransformRotation ||
                                                             track.Property == TimelineProperty::TransformScale ||
                                                             track.Property == TimelineProperty::CameraTarget ||
-                                                            track.Property == TimelineProperty::CameraLockOnOffset;
-                                if (vectorProperty)
+                                                            track.Property == TimelineProperty::CameraLockOnOffset ||
+                                                            track.Property == TimelineProperty::LightDirection;
+                                const bool colorProperty = track.Property == TimelineProperty::LightColor ||
+                                                           track.Property == TimelineProperty::FogColor ||
+                                                           track.Property == TimelineProperty::EmissiveColor;
+                                if (colorProperty)
+                                {
+                                    changed |= ImGui::ColorEdit3("色", &key.Value.x,
+                                                                 ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
+                                }
+                                else if (vectorProperty)
                                 {
                                     changed |= ImGui::DragFloat3("値", &key.Value.x, 0.01f);
                                 }
@@ -1867,13 +2340,17 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
             }
         }
 
-        if (evaluate || (!ProjectManager::IsSimulationRunning() && changed))
-        {
-            TimeLineSystem::EvaluateComponent(timeline);
-        }
         if (changed)
         {
             BeginUndoCapture(entity, before);
+        }
+        if (evaluate || (!ProjectManager::IsSimulationRunning() && changed))
+        {
+            if (evaluate)
+            {
+                Camera::NotifyCut();
+            }
+            TimeLineSystem::EvaluateComponent(timeline);
         }
     }
 

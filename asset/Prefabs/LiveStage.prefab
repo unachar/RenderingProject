@@ -1,0 +1,745 @@
+{
+  "format": "DX12Prefab",
+  "version": 1,
+  "entities": [
+    {
+      "id": 0,
+      "name": {
+        "name": "LiveDirector"
+      },
+      "transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "parent": -1
+      },
+      "timeline": {
+        "duration": 16,
+        "loop": true,
+        "playOnAwake": true,
+        "bpm": 120,
+        "lightGroups": [
+          {
+            "intensity": 25,
+            "color": [
+              0.1,
+              0.4,
+              1,
+              1
+            ],
+            "alternateColor": [
+              1,
+              0.05,
+              0.3,
+              1
+            ],
+            "alternateOnBeat": true,
+            "pan": 0,
+            "tilt": 0.6,
+            "panSweep": 0.5,
+            "tiltSweep": 0.25,
+            "sweepBeats": 8,
+            "strobesPerBeat": 0,
+            "strobeDuty": 0.25,
+            "beamDensity": 0.2,
+            "fixtures": [
+              {
+                "target": 1,
+                "phase": 0
+              },
+              {
+                "target": 2,
+                "phase": 0.25
+              },
+              {
+                "target": 3,
+                "phase": 0.5
+              },
+              {
+                "target": 4,
+                "phase": 0.75
+              }
+            ]
+          }
+        ],
+        "monitors": [
+          {
+            "target": 5,
+            "surroundLight": 6,
+            "fps": 2,
+            "loop": true,
+            "emissiveIntensity": 3,
+            "lightIntensity": 10,
+            "frames": [
+              "asset/texture/block.png",
+              "asset/texture/field.png"
+            ]
+          }
+        ],
+        "tracks": [
+          {
+            "name": "Dance clock",
+            "target": 9,
+            "property": 19,
+            "clips": [
+              {
+                "duration": 16,
+                "keys": [
+                  {
+                    "time": 0,
+                    "value": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "time": 16,
+                    "value": [
+                      16,
+                      0,
+                      0,
+                      0
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "Camera movement",
+            "target": 8,
+            "property": 0,
+            "clips": [
+              {
+                "duration": 16,
+                "keys": [
+                  {
+                    "time": 0,
+                    "value": [
+                      0,
+                      4,
+                      -14,
+                      0
+                    ]
+                  },
+                  {
+                    "time": 8,
+                    "value": [
+                      3,
+                      3,
+                      -12,
+                      0
+                    ]
+                  },
+                  {
+                    "time": 16,
+                    "value": [
+                      0,
+                      4,
+                      -14,
+                      0
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "Bloom pulse",
+            "target": 8,
+            "property": 8,
+            "clips": [
+              {
+                "duration": 16,
+                "keys": [
+                  {
+                    "time": 0,
+                    "value": [
+                      0.15,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "time": 8,
+                    "value": [
+                      0.6,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "time": 16,
+                    "value": [
+                      0.15,
+                      0,
+                      0,
+                      0
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "Floor emission",
+            "target": 7,
+            "property": 20,
+            "clips": [
+              {
+                "duration": 16,
+                "keys": [
+                  {
+                    "time": 0,
+                    "value": [
+                      0.2,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "time": 8,
+                    "value": [
+                      1.5,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "time": 16,
+                    "value": [
+                      0.2,
+                      0,
+                      0,
+                      0
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "Optional fog density (create volume 0 first)",
+            "fogVolume": 0,
+            "enabled": false,
+            "target": 0,
+            "property": 17,
+            "clips": [
+              {
+                "keys": [
+                  {
+                    "time": 0,
+                    "value": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "time": 8,
+                    "value": [
+                      3,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "time": 16,
+                    "value": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  }
+                ],
+                "duration": 16
+              }
+            ]
+          },
+          {
+            "name": "Optional fog color",
+            "fogVolume": 0,
+            "enabled": false,
+            "target": 0,
+            "property": 18,
+            "clips": [
+              {
+                "keys": [
+                  {
+                    "time": 0,
+                    "value": [
+                      0.1,
+                      0.3,
+                      1,
+                      1
+                    ]
+                  },
+                  {
+                    "time": 8,
+                    "value": [
+                      1,
+                      0.1,
+                      0.3,
+                      1
+                    ]
+                  },
+                  {
+                    "time": 16,
+                    "value": [
+                      0.1,
+                      0.3,
+                      1,
+                      1
+                    ]
+                  }
+                ],
+                "duration": 16
+              }
+            ]
+          },
+          {
+            "property": 13,
+            "clips": [
+              {
+                "keys": [
+                  {
+                    "time": 0,
+                    "value": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "time": 8,
+                    "value": [
+                      3,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "time": 16,
+                    "value": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  }
+                ],
+                "duration": 16
+              }
+            ],
+            "enabled": false,
+            "name": "Optional keyed beam",
+            "target": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": 1,
+      "name": {
+        "name": "Moving Spot 1"
+      },
+      "transform": {
+        "position": [
+          -4,
+          5,
+          -1
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "parent": 0
+      },
+      "light": {
+        "type": 2,
+        "color": [
+          0.1,
+          0.4,
+          1,
+          1
+        ],
+        "intensity": 25,
+        "range": 20,
+        "direction": [
+          0,
+          -0.6,
+          0.8
+        ],
+        "innerAngle": 8,
+        "outerAngle": 14,
+        "volumeDensity": 0.2,
+        "affectsVolumetrics": true
+      }
+    },
+    {
+      "id": 2,
+      "name": {
+        "name": "Moving Spot 2"
+      },
+      "transform": {
+        "position": [
+          -1.3,
+          5,
+          -1
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "parent": 0
+      },
+      "light": {
+        "type": 2,
+        "color": [
+          1,
+          0.05,
+          0.3,
+          1
+        ],
+        "intensity": 25,
+        "range": 20,
+        "direction": [
+          0,
+          -0.6,
+          0.8
+        ],
+        "innerAngle": 8,
+        "outerAngle": 14,
+        "volumeDensity": 0.2,
+        "affectsVolumetrics": true
+      }
+    },
+    {
+      "id": 3,
+      "name": {
+        "name": "Moving Spot 3"
+      },
+      "transform": {
+        "position": [
+          1.3,
+          5,
+          -1
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "parent": 0
+      },
+      "light": {
+        "type": 2,
+        "color": [
+          0.1,
+          0.4,
+          1,
+          1
+        ],
+        "intensity": 25,
+        "range": 20,
+        "direction": [
+          0,
+          -0.6,
+          0.8
+        ],
+        "innerAngle": 8,
+        "outerAngle": 14,
+        "volumeDensity": 0.2,
+        "affectsVolumetrics": true
+      }
+    },
+    {
+      "id": 4,
+      "name": {
+        "name": "Moving Spot 4"
+      },
+      "transform": {
+        "position": [
+          4,
+          5,
+          -1
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "parent": 0
+      },
+      "light": {
+        "type": 2,
+        "color": [
+          1,
+          0.05,
+          0.3,
+          1
+        ],
+        "intensity": 25,
+        "range": 20,
+        "direction": [
+          0,
+          -0.6,
+          0.8
+        ],
+        "innerAngle": 8,
+        "outerAngle": 14,
+        "volumeDensity": 0.2,
+        "affectsVolumetrics": true
+      }
+    },
+    {
+      "id": 5,
+      "name": {
+        "name": "LED backdrop"
+      },
+      "transform": {
+        "position": [
+          0,
+          3,
+          4
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          10,
+          5,
+          0.15
+        ],
+        "parent": 0
+      },
+      "mesh": {
+        "primitive": 1,
+        "primitiveColor": 1
+      },
+      "material": {
+        "shaderClassMode": 1,
+        "shaderClass": 11,
+        "emissiveColor": [
+          1,
+          1,
+          1
+        ],
+        "emissiveIntensity": 3,
+        "roughness": 0.7
+      }
+    },
+    {
+      "id": 6,
+      "name": {
+        "name": "Monitor surround light"
+      },
+      "transform": {
+        "position": [
+          0,
+          3,
+          3.8
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "parent": 0
+      },
+      "light": {
+        "type": 4,
+        "color": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "intensity": 10,
+        "range": 15,
+        "direction": [
+          0,
+          0,
+          -1
+        ],
+        "areaWidth": 10,
+        "areaHeight": 5
+      }
+    },
+    {
+      "id": 7,
+      "name": {
+        "name": "Emissive floor"
+      },
+      "transform": {
+        "position": [
+          0,
+          -0.2,
+          1
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          12,
+          0.3,
+          10
+        ],
+        "parent": 0
+      },
+      "mesh": {
+        "primitive": 1,
+        "primitiveColor": 1
+      },
+      "material": {
+        "shaderClassMode": 1,
+        "shaderClass": 11,
+        "emissiveColor": [
+          0.05,
+          0.15,
+          0.5
+        ],
+        "emissiveIntensity": 0.2,
+        "roughness": 0.35
+      }
+    },
+    {
+      "id": 8,
+      "name": {
+        "name": "Live camera"
+      },
+      "transform": {
+        "position": [
+          0,
+          4,
+          -14
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "parent": 0
+      },
+      "camera": {
+        "target": [
+          0,
+          2,
+          1
+        ],
+        "gameCamera": true,
+        "mainGameCamera": true,
+        "postProcess": true,
+        "userControl": false,
+        "cameraPlayOnStart": false
+      },
+      "postProcess": {
+        "type": 5,
+        "intensity": 0.15,
+        "bloomThreshold": 1,
+        "bloomSoftKnee": 0.5,
+        "bloomRadius": 1
+      }
+    },
+    {
+      "id": 9,
+      "name": {
+        "name": "Stage dancer"
+      },
+      "transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.3,
+          0.3,
+          0.3
+        ],
+        "parent": 0
+      },
+      "animationModel": {
+        "path": "asset/model/karenv1.3/karem.pmx",
+        "convert": true,
+        "animationPaths": [
+          "asset/model/animation/kasou.vmd"
+        ],
+        "animations": [
+          "dance"
+        ],
+        "current": "dance"
+      },
+      "material": {
+        "shaderClassMode": 1,
+        "shaderClass": 4,
+        "useTexture": true
+      }
+    }
+  ],
+  "root": 0
+}

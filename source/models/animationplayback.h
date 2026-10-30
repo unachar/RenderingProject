@@ -24,6 +24,7 @@ struct CameraAnimationPlayback
     bool IsPlaying = false;
     bool IsActive = false;
     bool CutThisFrame = false;
+    bool TimelineDriven = false;
 };
 
 struct AnimationPlaybackLayer

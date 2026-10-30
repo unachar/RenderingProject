@@ -380,6 +380,13 @@ namespace
         AddFace(vertices, vertexColor, {0.0f, 1.0f, 0.0f}, {-h, h, -h}, {h, h, -h}, {h, h, h}, {-h, h, h});
         AddFace(vertices, vertexColor, {0.0f, -1.0f, 0.0f}, {-h, -h, h}, {h, -h, h}, {h, -h, -h}, {-h, -h, -h});
 
+        // Each cube face is listed right-to-left when viewed from outside.
+        // Keep images readable on outward-facing panels such as the LED backdrop.
+        for (auto& vertex : vertices)
+        {
+            vertex.Tex.x = 1.0f - vertex.Tex.x;
+        }
+
         return vertices;
     }
 

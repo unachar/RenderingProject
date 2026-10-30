@@ -1,13 +1,13 @@
-# Live music engine — XAudio2 foundation (phase 1)
+# Live music engine — XAudio2 foundation
 
-This is an **opt-in audio foundation**, not yet an integrated editor or complete concert playback system.
+The original phase-1 foundation is now connected to the editor Timeline. See [LiveDirector](live-director.md) for transport controls, scene/prefab persistence and stage synchronization. The following describes the underlying WAV player and tempo primitives.
 
 ## Added
 - `source/audio/xaudiomusicplayer.h`: RAII XAudio2 device/master/source voice, PCM16 / IEEE float32 RIFF WAV loading, playback, pause, stop, seek and sample-derived time.
 - `source/audio/livemusicclock.h`: frame-rate-independent tempo grid, tempo changes, seconds/beats conversion, bars and crossed-beat enumeration.
 - `tests/live_music_clock_tests.cpp`: portable tempo-clock assertions.
 
-Both components deliberately avoid touching the existing renderer and scene format, so existing scenes remain unchanged. XAudio2 audio functions are Windows-only. The clock module is portable C++17.
+The player and tempo primitives remain independent of the renderer. The Timeline integration adds optional scene/prefab fields while preserving existing property values and defaults. XAudio2 audio functions are Windows-only. The clock module is portable C++17.
 
 ## Minimal integration example (Windows)
 
@@ -32,11 +32,15 @@ For beat-triggered effects use `ForEachCrossedBeat(tempo, lastTime, nowTime, cal
 
 ## Known limitations / next phase
 
-1. WAV PCM16/float32 only; no MP3, extensible WAV, multi-buffer streaming, music loop, decoder or waveform cache yet. The WAV is fully held in RAM. XAudio2's buffer-size limit is checked.
+1. WAV PCM16/float32 only; no MP3, extensible WAV, multi-buffer streaming, decoder or waveform cache yet. The WAV is fully held in RAM. XAudio2's buffer-size limit is checked. LiveDirector implements Timeline/song-boundary looping.
 2. `SamplesPlayed` is a voice consumption clock, **not an exact audible speaker timestamp**. Seek, queueing and audio device latency require calibration for tight AV sync.
-3. Playback code is intentionally not wired into `SystemManager`, `TimelineComponent`, scene/prefab persistence or ImGui; phase 2 should add `AudioSourceComponent`, `MusicPlayerSystem`, `LiveDirector`, beat-grid UI, and audio-master transport controls.
+3. Playback is owned by each live Timeline and uses the sample clock as its master. Timeline contains the persisted WAV path, intro offset, BPM and beat offset. Standalone audio sources, multiple tempo-change editing and waveform UI remain outside this integration.
 4. XAudio2 source voice operations should be performed on the owning engine thread. Do not create/destroy voices from an XAudio2 callback. WAV parsing rejects unsupported or damaged files.
-5. No Windows build or audible-output validation was run in the authoring environment. It must be tested with a real audio device before production use.
+5. The integrated Windows Release application compiles and links successfully. Audible speaker output and device-specific latency require separate confirmation; cursor progress alone does not establish audible timing.
+
+Seeks now recreate the source voice on its owning thread to establish a new sample-zero origin. EOF is derived from the drained buffer queue because `XAUDIO2_END_OF_STREAM` resets `SamplesPlayed`; this avoids a backward clock jump at the end. The WAV path is opened as UTF-8 through `std::filesystem::u8path`.
+
+The clock handling follows Microsoft's [voice-state documentation](https://learn.microsoft.com/en-us/windows/win32/api/xaudio2/ns-xaudio2-xaudio2_voice_state) and [flush/reset contract](https://learn.microsoft.com/en-us/windows/win32/api/xaudio2/nf-xaudio2-ixaudio2sourcevoice-flushsourcebuffers).
 
 ### Suggested validation
 

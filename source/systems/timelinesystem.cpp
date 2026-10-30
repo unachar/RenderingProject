@@ -3,7 +3,111 @@
 #include "world.h"
 #include "componentmanager.h"
 #include "projectmanager.h"
+#include "animator.h"
+#include "camera.h"
+#include "materialmanager.h"
+#include "modelmanager.h"
+#include "texturemanager.h"
+#include "localheightfog.h"
+#include "gpuscene/gpuscenechanges.h"
+#include <filesystem>
+#include "../audio/xaudiomusicplayer.h"
+#include "../audio/livemusicclock.h"
 #include <algorithm>
+
+namespace
+{
+    struct MusicPlayback
+    {
+        LiveMusic::XAudioMusicPlayer Player;
+        string Path;
+        uint64_t Session = 0;
+        bool Playing = false;
+        float Offset = 0.0f;
+    };
+
+    unordered_map<EntityID, unique_ptr<MusicPlayback>> g_Music;
+
+    bool AudioError(TimelineComponent& timeline, const char* operation)
+    {
+        timeline.PlaybackError = string("XAudio2: ") + operation + ": " + timeline.MusicPath;
+        timeline.IsPlaying = false;
+        timeline.SeekRequested = false;
+        return false;
+    }
+
+    bool UpdateMusic(EntityID entity, TimelineComponent& timeline)
+    {
+        auto& entry = g_Music[entity];
+        const uint64_t session = ProjectManager::GetPlaySession();
+        if (entry && (entry->Path != timeline.MusicPath || entry->Session != session))
+        {
+            entry.reset();
+        }
+        if (!entry)
+        {
+            entry = make_unique<MusicPlayback>();
+            entry->Path = timeline.MusicPath;
+            entry->Session = session;
+            if (!entry->Player.OpenWav(timeline.MusicPath))
+            {
+                entry.reset();
+                return AudioError(timeline, "Cannot open PCM16 / float32 WAV or audio device");
+            }
+            timeline.SeekRequested = true;
+        }
+        auto& music = *entry;
+        timeline.MusicDuration = static_cast<float>(music.Player.DurationSeconds());
+        const float end = min(timeline.Duration, max(0.0f, timeline.MusicDuration - timeline.MusicOffset));
+        if (timeline.SeekRequested || music.Offset != timeline.MusicOffset)
+        {
+            music.Player.Pause();
+            music.Playing = false;
+            if (!music.Player.Seek(timeline.CurrentTime + timeline.MusicOffset))
+            {
+                return AudioError(timeline, "Seek failed");
+            }
+            timeline.SeekRequested = false;
+            music.Offset = timeline.MusicOffset;
+        }
+        timeline.CurrentTime = clamp(static_cast<float>(music.Player.TimeSeconds()) - timeline.MusicOffset, 0.0f, end);
+        if (timeline.IsPlaying && timeline.CurrentTime >= end)
+        {
+            music.Player.Pause();
+            music.Playing = false;
+            if (timeline.Loop && end > 0.0f)
+            {
+                Camera::NotifyCut();
+                if (!music.Player.Seek(timeline.MusicOffset))
+                {
+                    return AudioError(timeline, "Loop seek failed");
+                }
+                timeline.CurrentTime = 0.0f;
+            }
+            else
+            {
+                timeline.IsPlaying = false;
+            }
+        }
+        if (timeline.IsPlaying != music.Playing)
+        {
+            if (timeline.IsPlaying)
+            {
+                if (!music.Player.Play())
+                {
+                    return AudioError(timeline, "Playback failed");
+                }
+            }
+            else
+            {
+                music.Player.Pause();
+            }
+            music.Playing = timeline.IsPlaying;
+        }
+        timeline.PlaybackError.clear();
+        return true;
+    }
+}
 
 float ApplyEase(float value, TimelineInterpolation interpolation)
 {
@@ -45,7 +149,7 @@ XMFLOAT4 SampleClip(const TimelineClipData& clip, float localTime)
     for (size_t i = 1; i < clip.Keys.size(); ++i)
     {
         const auto& right = clip.Keys[i];
-        if (localTime <= right.Time)
+        if (localTime < right.Time)
         {
             const auto& left = clip.Keys[i - 1];
             const float span = max(0.00001f, right.Time - left.Time);
@@ -56,7 +160,7 @@ XMFLOAT4 SampleClip(const TimelineClipData& clip, float localTime)
     return clip.Keys.back().Value;
 }
 
-void ApplyProperty(EntityID target, TimelineProperty property, const XMFLOAT4& value)
+void ApplyProperty(EntityID target, TimelineProperty property, const XMFLOAT4& value, int fogVolume)
 {
     if (!Registry::IsAlive(target))
     {
@@ -116,12 +220,141 @@ void ApplyProperty(EntityID target, TimelineProperty property, const XMFLOAT4& v
     {
         ComponentManager::GetComponentUnchecked<PostProcessComponent>(target).Intensity = clamp(value.x, 0.0f, 1.0f);
     }
+    if (property >= TimelineProperty::LightIntensity && property <= TimelineProperty::LightBeamDensity &&
+        ComponentManager::HasComponent<LightComponent>(target))
+    {
+        auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(target);
+        switch (property)
+        {
+            case TimelineProperty::LightIntensity:
+                light.Intensity = max(0.0f, value.x);
+                break;
+            case TimelineProperty::LightColor:
+                light.Color = value;
+                break;
+            case TimelineProperty::LightDirection:
+                if (XMVectorGetX(XMVector3LengthSq(XMLoadFloat4(&value))) > 0.000001f)
+                {
+                    XMStoreFloat3(&light.Direction, XMVector3Normalize(XMLoadFloat4(&value)));
+                }
+                break;
+            case TimelineProperty::LightRange:
+                light.Range = max(0.001f, value.x);
+                break;
+            case TimelineProperty::LightBeamDensity:
+                light.VolumeDensity = max(0.0f, value.x);
+                light.AffectsVolumetrics = light.VolumeDensity > 0.0f;
+                break;
+        }
+    }
+    if (property >= TimelineProperty::BloomThreshold && property <= TimelineProperty::BloomRadius &&
+        ComponentManager::HasComponent<PostProcessComponent>(target))
+    {
+        auto& post = ComponentManager::GetComponentUnchecked<PostProcessComponent>(target);
+        if (property == TimelineProperty::BloomThreshold)
+        {
+            post.BloomThreshold = max(0.0f, value.x);
+        }
+        if (property == TimelineProperty::BloomSoftKnee)
+        {
+            post.BloomSoftKnee = clamp(value.x, 0.0f, 1.0f);
+        }
+        if (property == TimelineProperty::BloomRadius)
+        {
+            post.BloomRadius = max(0.0f, value.x);
+        }
+    }
+    auto& fog = LocalHeightFog::GetMutableVolumes();
+    if (fogVolume >= 0 && static_cast<size_t>(fogVolume) < fog.size())
+    {
+        if (property == TimelineProperty::FogDensity)
+        {
+            fog[fogVolume].Density = max(0.0f, value.x);
+        }
+        if (property == TimelineProperty::FogColor)
+        {
+            fog[fogVolume].Color = {value.x, value.y, value.z};
+        }
+    }
+    if (property == TimelineProperty::AnimationTime)
+    {
+        if (ComponentManager::HasComponent<AnimationModelComponent>(target))
+        {
+            auto& animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(target);
+            if (animation.CurrentAnimation.empty() && !animation.Animations.empty())
+            {
+                Animator::Play(animation, animation.Animations.front());
+            }
+            animation.TimelineDriven = true;
+            animation.CurrentTime = animation.NextTime = max(0.0f, value.x);
+            for (auto& layer : animation.ActiveAnimationLayers)
+            {
+                layer.CurrentTime = animation.CurrentTime;
+            }
+            if (!ProjectManager::IsSimulationRunning())
+            {
+                if (auto* model = ModelManager::GetAnimModel(animation.ModelId))
+                {
+                    if (animation.ActiveAnimationLayers.size() > 1)
+                    {
+                        model->UpdateBoneMatrices(animation.ActiveAnimationLayers);
+                    }
+                    else if (!animation.CurrentAnimation.empty())
+                    {
+                        model->UpdateBoneMatrices(animation.CurrentAnimation.c_str(), animation.CurrentTime,
+                                                  animation.CurrentAnimation.c_str(), animation.CurrentTime, 0.0f);
+                    }
+                }
+            }
+        }
+        if (ComponentManager::HasComponent<CameraComponent>(target) &&
+            ComponentManager::HasComponent<TransformComponent>(target))
+        {
+            auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(target);
+            if (!camera.Animation.Path.empty() &&
+                (!camera.Animation.Clip || camera.Animation.LoadedPath != camera.Animation.Path))
+            {
+                Animator::Play(camera, false);
+            }
+            camera.Animation.TimelineDriven = true;
+            camera.Animation.CurrentTime = max(0.0f, value.x);
+            Animator::Update(camera, ComponentManager::GetComponentUnchecked<TransformComponent>(target), 0.0f);
+        }
+    }
+    if ((property == TimelineProperty::EmissiveIntensity || property == TimelineProperty::EmissiveColor) &&
+        ComponentManager::HasComponent<MaterialComponent>(target))
+    {
+        auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(target);
+        if (!material.MaterialSlots.empty() || material.RuntimeHandle)
+        {
+            MaterialComponent binding = MaterialManager::Resolve(material);
+            binding.MaterialSlots.clear();
+            binding.RuntimeHandle = 0;
+            material = move(binding);
+        }
+        if (property == TimelineProperty::EmissiveIntensity)
+        {
+            material.EmissiveIntensity = max(0.0f, value.x);
+        }
+        else
+        {
+            material.EmissiveColor = {value.x, value.y, value.z};
+        }
+        material.LiveSurfaceOverride = true;
+        GpuSceneChanges::Notify(target, GpuSceneDirtyFlags::Material);
+    }
 }
 
 vector<unique_ptr<TimeLineDirector>> TimeLineSystem::m_Directors;
 
 void TimeLineSystem::Update()
 {
+    ComponentManager::ForEachComponent<AnimationModelComponent>([](EntityID, auto& animation) {
+        animation.TimelineDriven = false;
+    });
+    ComponentManager::ForEachComponent<CameraComponent>([](EntityID, auto& camera) {
+        camera.Animation.TimelineDriven = false;
+    });
     const float deltaTime = World::GetDeltaTime();
     for (auto& director : m_Directors)
     {
@@ -131,26 +364,48 @@ void TimeLineSystem::Update()
         }
     }
 
-    ComponentManager::ForEachComponent<TimelineComponent>([&](EntityID, TimelineComponent& timeline) {
+    for (auto it = g_Music.begin(); it != g_Music.end();)
+    {
+        if (!Registry::IsAlive(it->first) || !ComponentManager::HasComponent<TimelineComponent>(it->first) ||
+            ComponentManager::GetComponentUnchecked<TimelineComponent>(it->first).MusicPath.empty())
+        {
+            it = g_Music.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+    ComponentManager::ForEachComponent<TimelineComponent>([&](EntityID entity, TimelineComponent& timeline) {
         const uint64_t session = ProjectManager::GetPlaySession();
         if (timeline.LastPlaySession != session)
         {
             timeline.LastPlaySession = session;
             timeline.CurrentTime = 0.0f;
             timeline.IsPlaying = timeline.PlayOnAwake;
+            timeline.PlaybackError.clear();
         }
-        if (timeline.IsPlaying)
+        if (!timeline.MusicPath.empty())
+        {
+            if (timeline.PlaybackError.empty() || timeline.IsPlaying || timeline.SeekRequested)
+            {
+                UpdateMusic(entity, timeline);
+            }
+        }
+        else if (timeline.IsPlaying)
         {
             timeline.CurrentTime += deltaTime * timeline.Speed;
-            if (timeline.CurrentTime > timeline.Duration)
+            if (timeline.CurrentTime >= timeline.Duration || timeline.CurrentTime < 0.0f)
             {
                 if (timeline.Loop && timeline.Duration > 0.0f)
                 {
-                    timeline.CurrentTime = fmodf(timeline.CurrentTime, timeline.Duration);
+                    Camera::NotifyCut();
+                    timeline.CurrentTime =
+                        fmodf(fmodf(timeline.CurrentTime, timeline.Duration) + timeline.Duration, timeline.Duration);
                 }
                 else
                 {
-                    timeline.CurrentTime = timeline.Duration;
+                    timeline.CurrentTime = clamp(timeline.CurrentTime, 0.0f, timeline.Duration);
                     timeline.IsPlaying = false;
                 }
             }
@@ -174,10 +429,28 @@ TimeLineDirector& TimeLineSystem::CreateDirector()
 
 void TimeLineSystem::Clear()
 {
+    SuspendAudio(true);
     m_Directors.clear();
 }
 
-XMFLOAT4 TimeLineSystem::ReadProperty(EntityID target, TimelineProperty property, bool* valid)
+void TimeLineSystem::SuspendAudio(bool close)
+{
+    if (close)
+    {
+        g_Music.clear();
+        return;
+    }
+    for (auto& [entity, music] : g_Music)
+    {
+        if (music && music->Playing)
+        {
+            music->Player.Pause();
+            music->Playing = false;
+        }
+    }
+}
+
+XMFLOAT4 TimeLineSystem::ReadProperty(EntityID target, TimelineProperty property, bool* valid, int fogVolume)
 {
     if (valid)
     {
@@ -243,11 +516,170 @@ XMFLOAT4 TimeLineSystem::ReadProperty(EntityID target, TimelineProperty property
         }
         return {ComponentManager::GetComponentUnchecked<PostProcessComponent>(target).Intensity, 0, 0, 0};
     }
-    return {};
+    XMFLOAT4 result{};
+    bool found = false;
+    if (property >= TimelineProperty::LightIntensity && property <= TimelineProperty::LightBeamDensity &&
+        ComponentManager::HasComponent<LightComponent>(target))
+    {
+        const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(target);
+        found = true;
+        switch (property)
+        {
+            case TimelineProperty::LightIntensity:
+                result.x = light.Intensity;
+                break;
+            case TimelineProperty::LightColor:
+                result = light.Color;
+                break;
+            case TimelineProperty::LightDirection:
+                result = {light.Direction.x, light.Direction.y, light.Direction.z, 0};
+                break;
+            case TimelineProperty::LightRange:
+                result.x = light.Range;
+                break;
+            case TimelineProperty::LightBeamDensity:
+                result.x = light.VolumeDensity;
+                break;
+        }
+    }
+    if (property >= TimelineProperty::BloomThreshold && property <= TimelineProperty::BloomRadius &&
+        ComponentManager::HasComponent<PostProcessComponent>(target))
+    {
+        const auto& post = ComponentManager::GetComponentUnchecked<PostProcessComponent>(target);
+        found = true;
+        if (property == TimelineProperty::BloomThreshold)
+        {
+            result.x = post.BloomThreshold;
+        }
+        if (property == TimelineProperty::BloomSoftKnee)
+        {
+            result.x = post.BloomSoftKnee;
+        }
+        if (property == TimelineProperty::BloomRadius)
+        {
+            result.x = post.BloomRadius;
+        }
+    }
+    const auto& fog = LocalHeightFog::GetVolumes();
+    if ((property == TimelineProperty::FogDensity || property == TimelineProperty::FogColor) && fogVolume >= 0 &&
+        static_cast<size_t>(fogVolume) < fog.size())
+    {
+        found = true;
+        const auto& volume = fog[fogVolume];
+        result = property == TimelineProperty::FogDensity ? XMFLOAT4{volume.Density, 0, 0, 0}
+                                                          : XMFLOAT4{volume.Color.x, volume.Color.y, volume.Color.z, 1};
+    }
+    if (property == TimelineProperty::AnimationTime)
+    {
+        if (ComponentManager::HasComponent<AnimationModelComponent>(target))
+        {
+            found = true;
+            result.x = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(target).CurrentTime;
+        }
+        else if (ComponentManager::HasComponent<CameraComponent>(target))
+        {
+            found = true;
+            result.x = ComponentManager::GetComponentUnchecked<CameraComponent>(target).Animation.CurrentTime;
+        }
+    }
+    if ((property == TimelineProperty::EmissiveIntensity || property == TimelineProperty::EmissiveColor) &&
+        ComponentManager::HasComponent<MaterialComponent>(target))
+    {
+        const auto& material =
+            MaterialManager::Resolve(ComponentManager::GetComponentUnchecked<MaterialComponent>(target));
+        found = true;
+        result = property == TimelineProperty::EmissiveIntensity
+                     ? XMFLOAT4{material.EmissiveIntensity, 0, 0, 0}
+                     : XMFLOAT4{material.EmissiveColor.x, material.EmissiveColor.y, material.EmissiveColor.z, 1};
+    }
+    if (valid)
+    {
+        *valid = found;
+    }
+    return result;
 }
 
 void TimeLineSystem::EvaluateComponent(TimelineComponent& timeline)
 {
+    const LiveMusic::TempoMap tempo(max(1.0f, timeline.BeatsPerMinute));
+    const float beat = static_cast<float>(tempo.SecondsToBeats(timeline.CurrentTime - timeline.BeatOffset));
+    for (const auto& group : timeline.LightGroups)
+    {
+        if (!group.Enabled)
+        {
+            continue;
+        }
+        for (const auto& fixture : group.Fixtures)
+        {
+            if (!ComponentManager::HasComponent<LightComponent>(fixture.Target))
+            {
+                continue;
+            }
+            auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(fixture.Target);
+            const float phase = beat / max(0.001f, group.SweepBeats) + fixture.Phase;
+            const float pan = group.Pan + sinf(phase * XM_2PI) * group.PanSweep;
+            const float tilt = group.Tilt + cosf(phase * XM_2PI) * group.TiltSweep;
+            XMVECTOR direction = XMVectorSet(sinf(pan) * cosf(tilt), -sinf(tilt), cosf(pan) * cosf(tilt), 0);
+            if (ComponentManager::HasComponent<TransformComponent>(fixture.Target))
+            {
+                const auto& rotation =
+                    ComponentManager::GetComponentUnchecked<TransformComponent>(fixture.Target).Rotation;
+                direction = XMVector3TransformNormal(direction,
+                                                     XMMatrixRotationRollPitchYaw(rotation.x, rotation.y, rotation.z));
+            }
+            XMStoreFloat3(&light.Direction, XMVector3Normalize(direction));
+            const float flash = beat * max(0.0f, group.StrobesPerBeat) + fixture.Phase;
+            const bool illuminated =
+                group.StrobesPerBeat <= 0.0f || flash - floorf(flash) < clamp(group.StrobeDuty, 0.0f, 1.0f);
+            light.Intensity = illuminated ? max(0.0f, group.Intensity) : 0.0f;
+            const bool alternate = group.AlternateOnBeat && static_cast<int>(floorf(beat + fixture.Phase)) % 2 != 0;
+            light.Color = alternate ? group.AlternateColor : group.Color;
+            light.VolumeDensity = max(0.0f, group.BeamDensity);
+            light.AffectsVolumetrics = group.BeamDensity > 0.0f;
+        }
+    }
+    for (const auto& monitor : timeline.Monitors)
+    {
+        if (monitor.Frames.empty() || !ComponentManager::HasComponent<MaterialComponent>(monitor.Target))
+        {
+            continue;
+        }
+        const double frameTime = max(0.0, static_cast<double>(timeline.CurrentTime - monitor.StartTime)) *
+                                 max(0.001f, monitor.FramesPerSecond);
+        const size_t frame = monitor.Loop
+                                 ? static_cast<size_t>(fmod(frameTime, static_cast<double>(monitor.Frames.size())))
+                                 : static_cast<size_t>(min(frameTime, static_cast<double>(monitor.Frames.size() - 1)));
+        const string& path = monitor.Frames[frame];
+        const int texture = TextureManager::LoadTexture(filesystem::u8path(path));
+        if (texture < 0)
+        {
+            continue;
+        }
+        auto& material = ComponentManager::GetComponentUnchecked<MaterialComponent>(monitor.Target);
+        if (!material.MaterialSlots.empty() || material.RuntimeHandle)
+        {
+            MaterialComponent binding = MaterialManager::Resolve(material);
+            binding.MaterialSlots.clear();
+            binding.RuntimeHandle = 0;
+            material = move(binding);
+        }
+        material.TextureID = material.EmissiveTextureID = texture;
+        material.LiveSurfaceOverride = true;
+        material.UseTexture = true;
+        material.TexturePath = path;
+        material.EmissiveColor = {1, 1, 1};
+        material.EmissiveIntensity = max(0.0f, monitor.EmissiveIntensity);
+        GpuSceneChanges::Notify(monitor.Target, GpuSceneDirtyFlags::Material);
+        if (ComponentManager::HasComponent<LightComponent>(monitor.SurroundLight))
+        {
+            auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(monitor.SurroundLight);
+            if (light.Type == LightType::Rect)
+            {
+                light.AreaTexturePath = path;
+                light.Intensity = max(0.0f, monitor.LightIntensity);
+            }
+        }
+    }
     for (auto& track : timeline.Tracks)
     {
         if (!track.Enabled || !Registry::IsAlive(track.Target))
@@ -283,6 +715,10 @@ void TimeLineSystem::EvaluateComponent(TimelineComponent& timeline)
         }
         if (totalWeight <= 0.0f)
         {
+            if (track.HasDefaultValue)
+            {
+                ApplyProperty(track.Target, track.Property, track.DefaultValue, track.FogVolumeIndex);
+            }
             continue;
         }
         if (totalWeight < 1.0f && track.HasDefaultValue)
@@ -299,6 +735,6 @@ void TimeLineSystem::EvaluateComponent(TimelineComponent& timeline)
         accumulated.y *= invWeight;
         accumulated.z *= invWeight;
         accumulated.w *= invWeight;
-        ApplyProperty(track.Target, track.Property, accumulated);
+        ApplyProperty(track.Target, track.Property, accumulated, track.FogVolumeIndex);
     }
 }

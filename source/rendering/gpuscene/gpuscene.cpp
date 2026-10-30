@@ -396,7 +396,7 @@ namespace
             {
                 const auto& resolved = MaterialManager::Resolve(material, section);
                 auto gpuMaterial = MaterialBindings::BuildGpuSceneMaterial(resolved);
-                if (resolved.RuntimeHandle == 0 && material.UseTexture && texture >= 0)
+                if (resolved.RuntimeHandle == 0 && !resolved.LiveSurfaceOverride && material.UseTexture && texture >= 0)
                 {
                     gpuMaterial.AlbedoTextureIndex = static_cast<uint32_t>(texture);
                 }

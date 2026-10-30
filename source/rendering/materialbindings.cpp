@@ -165,7 +165,7 @@ namespace
         constants.AssetNoise = material.Noise;
         constants.AssetBaseColor = material.BaseColor;
         constants.AssetSurface = {material.NormalScale, material.AOStrength, 0, material.AlphaCutoff};
-        if (material.RuntimeHandle != 0)
+        if (material.RuntimeHandle != 0 || material.LiveSurfaceOverride)
         {
             constants.AssetSurface.z = 1.0f;
         }
@@ -420,7 +420,7 @@ void MaterialBindings::BindAssetSlot(EntityID entity, const MaterialComponent& m
     memcpy(&constants, FrameConstants::GetConstantBufferPtr() + entity * FrameConstants::g_kCB_ALIGNED_SIZE,
            sizeof(constants));
     constants.UseTexture = static_cast<int>(material.UseTexture);
-    const bool useModelTexture = material.RuntimeHandle == 0 && modelTexture >= 0;
+    const bool useModelTexture = material.RuntimeHandle == 0 && !material.LiveSurfaceOverride && modelTexture >= 0;
     if (useModelTexture)
     {
         constants.UseTexture = 1;

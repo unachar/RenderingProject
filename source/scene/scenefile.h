@@ -1314,15 +1314,49 @@ namespace SceneFile
 
     inline void Visit(Archive& a, TimelineComponent& c)
     {
+        a("music", c.MusicPath);
+        a("musicOffset", c.MusicOffset);
+        a("bpm", c.BeatsPerMinute);
+        a("beatOffset", c.BeatOffset);
         a("duration", c.Duration);
         a("speed", c.Speed);
         a("playOnAwake", c.PlayOnAwake);
         a("loop", c.Loop);
+        a.Array("lightGroups", c.LightGroups, [](Archive& g, StageLightGroup& group) {
+            g("enabled", group.Enabled);
+            g("intensity", group.Intensity);
+            g("color", group.Color);
+            g("alternateColor", group.AlternateColor);
+            g("alternateOnBeat", group.AlternateOnBeat);
+            g("pan", group.Pan);
+            g("tilt", group.Tilt);
+            g("panSweep", group.PanSweep);
+            g("tiltSweep", group.TiltSweep);
+            g("sweepBeats", group.SweepBeats);
+            g("strobesPerBeat", group.StrobesPerBeat);
+            g("strobeDuty", group.StrobeDuty);
+            g("beamDensity", group.BeamDensity);
+            g.Array("fixtures", group.Fixtures, [](Archive& f, StageLightFixture& fixture) {
+                f.Entity("target", fixture.Target);
+                f("phase", fixture.Phase);
+            });
+        });
+        a.Array("monitors", c.Monitors, [](Archive& m, LiveMonitorBinding& monitor) {
+            m.Entity("target", monitor.Target);
+            m.Entity("surroundLight", monitor.SurroundLight);
+            m("frames", monitor.Frames);
+            m("fps", monitor.FramesPerSecond);
+            m("start", monitor.StartTime);
+            m("emissiveIntensity", monitor.EmissiveIntensity);
+            m("lightIntensity", monitor.LightIntensity);
+            m("loop", monitor.Loop);
+        });
         a.Array("tracks", c.Tracks, [](Archive& t, TimelineTrackData& track) {
             t("name", track.Name);
             t.Entity("target", track.Target);
             t("property", track.Property);
             t("enabled", track.Enabled);
+            t("fogVolume", track.FogVolumeIndex);
             t("hasDefault", track.HasDefaultValue);
             t("default", track.DefaultValue);
             t.Array("clips", track.Clips, [](Archive& k, TimelineClipData& clip) {

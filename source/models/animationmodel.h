@@ -310,11 +310,11 @@ class AnimationModelResource
     HumanoidIk::Pose m_LookAtPose;
     Gaze::Rig m_LookAtRig;
     Gaze::SavedLocals m_LookAtSaved;
-    array<string,4> m_LookAtOverrideNames;
+    array<string, 4> m_LookAtOverrideNames;
     bool m_LookAtRigReady = false;
     bool m_HasLookAtPose = false;
     bool m_HasLookAtForward = false;
-    aiVector3D m_LookAtForward{0,0,1};
+    aiVector3D m_LookAtForward{0, 0, 1};
     bool SetupLookAtRig(const LookAtSettings& settings);
     ModelResourceMap m_ResourceMap;
     bool m_IsPmxModel = false;
@@ -350,8 +350,10 @@ class AnimationModelResource
     vector<XMFLOAT4X4> m_BoneMatricesScratch{};
     uint64_t m_SkinningVersion = 0;
     uint64_t m_DispatchedSkinningVersion = UINT64_MAX;
-    array<uint64_t, kToonOutlineModeCount> m_DispatchedOutlineSkinningVersions = {
-        UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX};
+    uint64_t m_LastBaseSkinningFrame = UINT64_MAX;
+    bool m_SkinningHistorySettled = true;
+    array<uint64_t, kToonOutlineModeCount> m_DispatchedOutlineSkinningVersions = {UINT64_MAX, UINT64_MAX, UINT64_MAX,
+                                                                                  UINT64_MAX};
     string m_LastPoseAnimation1{};
     string m_LastPoseAnimation2{};
     float m_LastPoseFrame1 = 0.0f;
@@ -404,8 +406,8 @@ class AnimationModelResource
     void BuildHumanoidIkChannel(const VmdAnimation* animation, size_t layerIndex, unsigned side,
                                 VmdHumanoidIkChannel& channel);
     void SetupHumanoidIkRig();
-    HumanoidIk::Target SampleHumanoidIkTarget(VmdHumanoidIkChannel& channel, const HumanoidIk::Leg& leg,
-                                             float frame, const vector<float>* layerFrames);
+    HumanoidIk::Target SampleHumanoidIkTarget(VmdHumanoidIkChannel& channel, const HumanoidIk::Leg& leg, float frame,
+                                              const vector<float>* layerFrames);
     void ApplyVmdHumanoidIk(float frame1, float frame2, float blendRate, bool layered);
     void BuildVmdRootMotionBindings(uint32_t boneIndex, const VmdAnimation* animation, size_t layerIndex,
                                     vector<VmdRootMotionBinding>& bindings);
@@ -414,8 +416,8 @@ class AnimationModelResource
     void SampleVmdTorsoCompensation(VmdRootMotionBinding& binding, float frame, const vector<float>* layerFrames,
                                     const VmdRetarget::Transform& transform, const aiVector3D& bindPosition,
                                     aiQuaternion& rotation, aiVector3D& position);
-    void SampleVmdRootMotion(vector<VmdRootMotionBinding>& bindings, float frame,
-                             const vector<float>* layerFrames, aiQuaternion& rotation, aiVector3D& position);
+    void SampleVmdRootMotion(vector<VmdRootMotionBinding>& bindings, float frame, const vector<float>* layerFrames,
+                             aiQuaternion& rotation, aiVector3D& position);
     void InvalidateVmdRuntimeCache();
     void RebuildVmdRuntimeCache(const VmdAnimation* primaryAnimation, const VmdAnimation* secondaryAnimation);
     bool IsVmdLayeredRuntimeCacheValid(const vector<AnimationPlaybackLayer>& animationLayers) const;
@@ -447,7 +449,12 @@ class AnimationModelResource
     bool Load(const char* fileName, ID3D12Device* device, bool isConvert = true);
     bool LoadAnimation(const char* fileName, const char* name);
     bool LoadPoseInstance(const AnimationModelResource& source, ID3D12Device* device);
-    bool HasLookAtBones(const LookAtSettings& settings) { return SetupLookAtRig(settings); }
+
+    bool HasLookAtBones(const LookAtSettings& settings)
+    {
+        return SetupLookAtRig(settings);
+    }
+
     void RestoreLookAtPose();
     bool ApplyLookAtPose(LookAtRuntime& runtime, const aiVector3D& modelTarget, float deltaTime);
     // Explicit mappings for rigs not recognized by VRM metadata / common aliases.
@@ -469,7 +476,10 @@ class AnimationModelResource
 
     void Uninit();
 
-    const ModelResourceMap& GetResourceMap() const { return m_ResourceMap; }
+    const ModelResourceMap& GetResourceMap() const
+    {
+        return m_ResourceMap;
+    }
 
     UINT GetMeshCount() const
     {

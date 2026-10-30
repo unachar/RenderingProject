@@ -3,6 +3,7 @@
 #include "ecs.h"
 #include "componentmanager.h"
 #include "daynightcycle.h"
+#include "localheightfog.h"
 #include <vector>
 
 enum class ProjectPlayState : int
@@ -31,12 +32,15 @@ class ProjectManager final
         ProceduralMotionComponent ProceduralMotion{};
         bool HasLight = false;
         LightComponent Light{};
+        bool HasMaterial = false;
+        MaterialComponent Material{};
     };
 
     inline static ProjectPlayState s_State = ProjectPlayState::Edit;
     inline static vector<RuntimeSnapshot> s_RuntimeSnapshots{};
     inline static uint64_t s_PlaySession = 0;
     inline static DayNightCycle::Settings s_EditorDayNight{};
+    inline static vector<LocalHeightFogVolume> s_EditorFog{};
 
     static void CaptureRuntimeState();
     static void RestoreRuntimeState();

@@ -1185,6 +1185,10 @@ void ImGuiManager::ProcessDroppedFiles()
     dropped.swap(m_DroppedFiles);
     for (const DroppedFile& file : dropped)
     {
+        if (AcceptLiveMonitorFileDrop(file))
+        {
+            continue;
+        }
         // プロシージャルスタジオの画像ドロップ領域に落とされた画像は、アセットへ取り込まずにそちらで使う。
         if (m_ShowProceduralStudioWindow && file.HasPoint &&
             ProceduralStudioWindow::AcceptDroppedFile(file.Path.c_str(), file.Point.x, file.Point.y))
@@ -1570,7 +1574,7 @@ void ImGuiManager::BeginAssetDragSource(const filesystem::path& path, bool isDir
     const string label = PathToUtf8(path.filename());
     if (m_SelectedAssetKeys.size() > 1 && IsAssetSelected(path))
     {
-        // 複数選択中の項目を掴んだ：選択全体をまとめて運ぶ（フォルダへの移動専用）
+        // 複数選択中の項目を掴んだ：選択全体をまとめて運ぶ。
         m_DraggedAssetPaths = GetSelectedAssetPaths();
         const int count = static_cast<int>(m_DraggedAssetPaths.size());
         ImGui::SetDragDropPayload(kAssetMultiPayload, &count, sizeof(count));

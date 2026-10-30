@@ -88,6 +88,14 @@ class ImGuiManager
         ImVec2 Point{0.0f, 0.0f};
     };
     inline static vector<DroppedFile> m_DroppedFiles;
+    struct LiveMonitorDropTarget
+    {
+        EntityID Entity = g_kINVALID_ENTITY;
+        size_t MonitorIndex = 0;
+        ImVec2 Min, Max;
+        int Frame = 0;
+    };
+    inline static vector<LiveMonitorDropTarget> m_LiveMonitorDropTargets;
     inline static vector<string> m_Logs;
     inline static EntityID m_RenamingEntity = g_kINVALID_ENTITY;
     inline static string m_RenameBuffer;
@@ -154,6 +162,9 @@ class ImGuiManager
     static void DrawPrimitiveCreationMenu();
     static void DrawPrimitiveSettingsWindow();
     static void DrawInspectorWindow();
+    static bool DrawLiveMonitorFrames(EntityID entity, size_t monitorIndex, LiveMonitorBinding& monitor);
+    static bool AppendLiveMonitorImages(LiveMonitorBinding& monitor, const vector<filesystem::path>& sources);
+    static bool AcceptLiveMonitorFileDrop(const DroppedFile& file);
     static void DrawAssetBrowserWindow();
     static void DrawRenderDebuggerWindow();
     static void DrawRenderFeatureWindows();

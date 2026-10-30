@@ -723,7 +723,8 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
             const XMMATRIX world =
                 XMLoadFloat4x4(&ComponentManager::GetComponentUnchecked<TransformComponent>(dc.EntityID).WorldMatrix);
             const bool indirectBaseDrawn =
-                LegacyMaterialForEntity(dc.EntityID).MaterialSlots.empty() && m_IndirectDraws &&
+                LegacyMaterialForEntity(dc.EntityID).MaterialSlots.empty() && !material.LiveSurfaceOverride &&
+                m_IndirectDraws &&
                 m_IndirectDraws->ExecutePrimary(pCommandList, dc.model, dc.EntityID, world, viewProjection, dc.srvIndex,
                                                 heapStart, cbvIncrement, dc.pso);
 
@@ -737,7 +738,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                     continue;
                 }
 
-                if (!LegacyMaterialForEntity(dc.EntityID).MaterialSlots.empty())
+                if (!LegacyMaterialForEntity(dc.EntityID).MaterialSlots.empty() || slotMaterial.LiveSurfaceOverride)
                 {
                     MaterialBindings::BindAssetSlot(dc.EntityID, slotMaterial);
                 }
@@ -767,7 +768,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                     lastPso = nullptr;
                 }
 
-                if (slotMaterial.RuntimeHandle == 0 && meshData.TextureIndex >= 0)
+                if (slotMaterial.RuntimeHandle == 0 && !slotMaterial.LiveSurfaceOverride && meshData.TextureIndex >= 0)
                 {
                     TextureManager::TouchTexture(meshData.TextureIndex);
                     CD3DX12_GPU_DESCRIPTOR_HANDLE meshSrvHandle(heapStart, meshData.TextureIndex, cbvIncrement);
@@ -1057,7 +1058,8 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
             const bool gpuBaseDrawn = !drawTransparent && GPUDrivenRenderer::HandlesEntity(dc.EntityID);
             const bool indirectBaseDrawn =
                 gpuBaseDrawn ||
-                (!deforming && LegacyMaterialForEntity(dc.EntityID).MaterialSlots.empty() && !useMeshShaders &&
+                (!deforming && LegacyMaterialForEntity(dc.EntityID).MaterialSlots.empty() &&
+                 !material.LiveSurfaceOverride && !useMeshShaders &&
                  m_IndirectDraws &&
                  m_IndirectDraws->ExecutePrimary(pCommandList, dc.model, dc.EntityID, world, viewProjection,
                                                  dc.srvIndex, heapStart, cbvIncrement, dc.pso));
@@ -1072,7 +1074,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                     continue;
                 }
 
-                if (!LegacyMaterialForEntity(dc.EntityID).MaterialSlots.empty())
+                if (!LegacyMaterialForEntity(dc.EntityID).MaterialSlots.empty() || slotMaterial.LiveSurfaceOverride)
                 {
                     MaterialBindings::BindAssetSlot(dc.EntityID, slotMaterial);
                 }
@@ -1107,7 +1109,7 @@ void ModelDrawBackend::Draw(RenderPass renderPass, bool receivingPostProcessOnly
                                             ? deformation.CurrentView
                                             : meshData.VertexBufferView;
 
-                if (slotMaterial.RuntimeHandle == 0 && meshData.TextureIndex >= 0)
+                if (slotMaterial.RuntimeHandle == 0 && !slotMaterial.LiveSurfaceOverride && meshData.TextureIndex >= 0)
                 {
                     TextureManager::TouchTexture(meshData.TextureIndex);
                     CD3DX12_GPU_DESCRIPTOR_HANDLE meshSrvHandle(heapStart, meshData.TextureIndex, cbvIncrement);

@@ -143,6 +143,7 @@ struct AnimationModelComponent
     float BlendRate = 0.0f;
     float Speed = 1.0f;
     bool IsPlaying = true;
+    bool TimelineDriven = false;
 };
 
 struct ShaderComponent
@@ -273,6 +274,7 @@ struct MaterialComponent
     vector<AssetHandle> MaterialSlots;
     AssetHandle MaterialSceneIdentity = 0;
     AssetHandle RuntimeHandle = 0;
+    bool LiveSurfaceOverride = false; // Per-entity live emission/monitor binding; not an asset mutation.
     XMFLOAT4 BaseColor{1, 1, 1, 1};
     float NormalScale = 1.0f;
     float AOStrength = 1.0f;
@@ -459,19 +461,26 @@ struct LightComponent
 // Preserve legacy buffer layouts: stage attenuation is encoded in the density sign.
 inline XMFLOAT4 PackLightExtra(const LightComponent& light)
 {
-    const float density = light.PhysicallyBased ? (std::max)(light.VolumeDensity, 0.0f)
-                                              : -1.0f - (std::max)(light.VolumeDensity, 0.0f);
+    const float density =
+        light.PhysicallyBased ? (std::max)(light.VolumeDensity, 0.0f) : -1.0f - (std::max)(light.VolumeDensity, 0.0f);
     if (light.Type == LightType::Capsule)
+    {
         return {(std::max)(light.CapsuleLength, 0.0f), (std::max)(light.CapsuleRadius, 0.0f), density, 0.0f};
+    }
     if (light.Type == LightType::Rect)
+    {
         return {(std::max)(light.AreaWidth, 0.01f), (std::max)(light.AreaHeight, 0.01f), density, 0.0f};
-    return {cosf(light.InnerAngle * XM_PI / 180.0f), cosf(light.OuterAngle * XM_PI / 180.0f),
-            density, static_cast<float>(light.VolumeShape)};
+    }
+    return {cosf(light.InnerAngle * XM_PI / 180.0f), cosf(light.OuterAngle * XM_PI / 180.0f), density,
+            static_cast<float>(light.VolumeShape)};
 }
+
 inline float LightInfluenceRadius(const LightComponent& light)
 {
-    return (std::max)(light.Range, 0.01f) + (light.Type == LightType::Capsule
-        ? (std::max)(light.CapsuleLength, 0.0f) * 0.5f + (std::max)(light.CapsuleRadius, 0.0f) : 0.0f);
+    return (std::max)(light.Range, 0.01f) +
+           (light.Type == LightType::Capsule
+                ? (std::max)(light.CapsuleLength, 0.0f) * 0.5f + (std::max)(light.CapsuleRadius, 0.0f)
+                : 0.0f);
 }
 
 struct SunComponent

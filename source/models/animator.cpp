@@ -82,7 +82,7 @@ void Animator::Update(CameraComponent& camera, TransformComponent& transform, fl
     }
     const auto& keys = animation.Clip->CameraTrack;
     float frameAdvance = 0.0f;
-    if (animation.IsPlaying && isfinite(deltaTime) && deltaTime > 0.0f)
+    if (!animation.TimelineDriven && animation.IsPlaying && isfinite(deltaTime) && deltaTime > 0.0f)
     {
         const float elapsed = deltaTime * animation.Speed;
         animation.CurrentTime += elapsed;
@@ -103,13 +103,13 @@ void Animator::Update(CameraComponent& camera, TransformComponent& transform, fl
     // Keep cuts pending until CameraSystem consumes them, including the frame-zero
     // pose applied by ProjectManager before the first simulation update.
     animation.CutThisFrame |= animation.LastFrame < 0.0f || frame < animation.LastFrame ||
-                               (animation.Loop && frameAdvance >= lastFrame + 1.0f);
+                              (animation.Loop && frameAdvance >= lastFrame + 1.0f);
     if (!animation.CutThisFrame)
     {
-        auto next = upper_bound(keys.begin(), keys.end(), animation.LastFrame,
-                                [](float value, const VmdCameraKeyframe& key) {
-            return value < static_cast<float>(key.Frame);
-        });
+        auto next =
+            upper_bound(keys.begin(), keys.end(), animation.LastFrame, [](float value, const VmdCameraKeyframe& key) {
+                return value < static_cast<float>(key.Frame);
+            });
         for (; next != keys.end() && static_cast<float>(next->Frame) <= frame; ++next)
         {
             if (next != keys.begin() && next->Frame - (next - 1)->Frame == 1)
@@ -127,12 +127,11 @@ void Animator::Update(CameraComponent& camera, TransformComponent& transform, fl
     // MMD's orthographic zoom depends on distance, independently of the FOV.
     // A distance of 45 MMD units spans 25 units vertically.
     camera.OrthographicHeight = max(0.001f, fabsf(sample.Distance * animation.Scale) * (25.0f / 45.0f));
-    const XMMATRIX rotation = XMMatrixRotationRollPitchYaw(-sample.Rotation.x, -sample.Rotation.y,
-                                                          -sample.Rotation.z);
-    const XMVECTOR center = XMVectorAdd(XMVectorScale(XMLoadFloat3(&sample.Center), animation.Scale),
-                                        XMLoadFloat3(&animation.Offset));
-    const XMVECTOR eye = XMVectorAdd(center, XMVector3TransformNormal(
-        XMVectorSet(0, 0, sample.Distance * animation.Scale, 0), rotation));
+    const XMMATRIX rotation = XMMatrixRotationRollPitchYaw(-sample.Rotation.x, -sample.Rotation.y, -sample.Rotation.z);
+    const XMVECTOR center =
+        XMVectorAdd(XMVectorScale(XMLoadFloat3(&sample.Center), animation.Scale), XMLoadFloat3(&animation.Offset));
+    const XMVECTOR eye = XMVectorAdd(
+        center, XMVector3TransformNormal(XMVectorSet(0, 0, sample.Distance * animation.Scale, 0), rotation));
     const float forwardSign = orthographic && sample.Distance > 0.0f ? -1.0f : 1.0f;
     const XMVECTOR forward = XMVector3TransformNormal(XMVectorSet(0, 0, forwardSign, 0), rotation);
     XMStoreFloat3(&transform.Position, eye);
@@ -307,7 +306,7 @@ void Animator::SetBlendRate(AnimationModelComponent& animation, float blendRate)
 
 void Animator::Update(AnimationModelComponent& animation, float deltaTime)
 {
-    if (!animation.IsPlaying)
+    if (!animation.IsPlaying || animation.TimelineDriven)
     {
         return;
     }

@@ -36,7 +36,7 @@ bool MaterialSystem::IsTransparent(EntityID entity)
 bool MaterialSystem::CastsShadow(const MaterialComponent& material)
 {
     float opacity = material.Alpha;
-    if (material.RuntimeHandle != 0)
+    if (material.RuntimeHandle != 0 || material.LiveSurfaceOverride)
     {
         opacity *= material.BaseColor.w;
     }

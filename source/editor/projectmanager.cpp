@@ -4,6 +4,8 @@
 #include "world.h"
 #include "animator.h"
 #include "camera.h"
+#include "timelinesystem.h"
+#include "gpuscene/gpuscenechanges.h"
 
 void ProjectManager::Init()
 {
@@ -21,6 +23,7 @@ void ProjectManager::Uninit()
 void ProjectManager::CaptureRuntimeState()
 {
     s_EditorDayNight = DayNightCycle::GetSettings();
+    s_EditorFog = LocalHeightFog::GetVolumes();
     s_RuntimeSnapshots.clear();
     const auto& entities = Registry::GetEntities();
     for (EntityID entity = 0; entity < static_cast<EntityID>(entities.size()); ++entity)
@@ -67,6 +70,11 @@ void ProjectManager::CaptureRuntimeState()
         {
             snapshot.Light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
         }
+        snapshot.HasMaterial = ComponentManager::HasComponent<MaterialComponent>(entity);
+        if (snapshot.HasMaterial)
+        {
+            snapshot.Material = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+        }
         s_RuntimeSnapshots.push_back(move(snapshot));
     }
 }
@@ -74,6 +82,7 @@ void ProjectManager::CaptureRuntimeState()
 void ProjectManager::RestoreRuntimeState()
 {
     DayNightCycle::GetSettings() = s_EditorDayNight;
+    LocalHeightFog::GetMutableVolumes() = s_EditorFog;
     for (const RuntimeSnapshot& snapshot : s_RuntimeSnapshots)
     {
         if (!Registry::IsAlive(snapshot.Entity))
@@ -99,6 +108,11 @@ void ProjectManager::RestoreRuntimeState()
         if (snapshot.HasLight && ComponentManager::HasComponent<LightComponent>(snapshot.Entity))
         {
             ComponentManager::GetComponentUnchecked<LightComponent>(snapshot.Entity) = snapshot.Light;
+        }
+        if (snapshot.HasMaterial && ComponentManager::HasComponent<MaterialComponent>(snapshot.Entity))
+        {
+            ComponentManager::GetComponentUnchecked<MaterialComponent>(snapshot.Entity) = snapshot.Material;
+            GpuSceneChanges::Notify(snapshot.Entity, GpuSceneDirtyFlags::Material);
         }
         if (snapshot.HasAnimation && ComponentManager::HasComponent<AnimationModelComponent>(snapshot.Entity))
         {
@@ -187,11 +201,13 @@ void ProjectManager::Play()
 
 void ProjectManager::Stop()
 {
+    TimeLineSystem::SuspendAudio(true);
     if (s_State == ProjectPlayState::Edit)
     {
         return;
     }
     RestoreRuntimeState();
+    Camera::NotifyCut();
     s_State = ProjectPlayState::Edit;
 }
 
@@ -211,6 +227,7 @@ void ProjectManager::TogglePause()
 {
     if (s_State == ProjectPlayState::Playing)
     {
+        TimeLineSystem::SuspendAudio();
         s_State = ProjectPlayState::Paused;
     }
     else if (s_State == ProjectPlayState::Paused)
