@@ -2,19 +2,77 @@
 #include "reflectionprobes.h"
 #include "camera.h"
 #include "componentmanager.h"
+#include "graphicsdevice.h"
+#include "memoryallocator.h"
 #include "renderersettings.h"
 #include "rendererstate.h"
 #include "texturemanager.h"
 
 #include <cmath>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace ReflectionProbes
 {
     namespace
     {
         std::vector<Probe> g_Probes;
-    }
+
+        // Prefilter pipeline (EnvironmentPrefilterCS): own root
+        // signature (b0 constants, t0 source table, u0 output table,
+        // static wrap-U sampler) and a small local descriptor heap
+        // (1 SRV + up to kPrefilterLevels UAVs).
+        constexpr uint32_t kPrefilterLevels = 9;
+        ComPtr<ID3D12RootSignature> g_PrefilterRootSignature;
+        ComPtr<ID3D12PipelineState> g_PrefilterPso;
+        ComPtr<ID3D12DescriptorHeap> g_PrefilterHeap;
+
+        bool EnsurePrefilterPipeline(ID3D12Device* device)
+        {
+            if (g_PrefilterPso)
+            {
+                return true;
+            }
+            CD3DX12_DESCRIPTOR_RANGE srvRange(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+            CD3DX12_DESCRIPTOR_RANGE uavRange(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
+            CD3DX12_ROOT_PARAMETER parameters[3];
+            parameters[0].InitAsConstants(8, 0);
+            parameters[1].InitAsDescriptorTable(1, &srvRange, D3D12_SHADER_VISIBILITY_ALL);
+            parameters[2].InitAsDescriptorTable(1, &uavRange, D3D12_SHADER_VISIBILITY_ALL);
+            CD3DX12_STATIC_SAMPLER_DESC sampler(0);
+            sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+            sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+            sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            CD3DX12_ROOT_SIGNATURE_DESC rootDesc(_countof(parameters), parameters, 1, &sampler,
+                                                 D3D12_ROOT_SIGNATURE_FLAG_NONE);
+            ComPtr<ID3DBlob> serialized;
+            ComPtr<ID3DBlob> errors;
+            if (FAILED(D3D12SerializeRootSignature(&rootDesc, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors)) ||
+                FAILED(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
+                                                   IID_PPV_ARGS(&g_PrefilterRootSignature))))
+            {
+                return false;
+            }
+            ComPtr<ID3DBlob> shader;
+            if (FAILED(D3DReadFileToBlob(L"shader/hlsl/build/EnvironmentPrefilterCS.cso", &shader)))
+            {
+                return false;
+            }
+            D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
+            pso.pRootSignature = g_PrefilterRootSignature.Get();
+            pso.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
+            if (FAILED(device->CreateComputePipelineState(&pso, IID_PPV_ARGS(&g_PrefilterPso))))
+            {
+                return false;
+            }
+            D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
+            heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+            heapDesc.NumDescriptors = 1 + kPrefilterLevels;
+            heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+            return SUCCEEDED(device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&g_PrefilterHeap)));
+        }
+    } // namespace
 
     void Clear()
     {
@@ -36,10 +94,121 @@ namespace ReflectionProbes
         return g_Probes;
     }
 
-    void SyncFromScene()
+    int GeneratePrefilteredEnvironment(ID3D12GraphicsCommandList* commandList, int sourceSrvIndex,
+                                       const char* registrationName)
+    {
+        ID3D12Device* device = GraphicsDevice::GetDevice();
+        ComPtr<ID3D12Resource> source = TextureManager::GetTextureResource(sourceSrvIndex);
+        if (commandList == nullptr || device == nullptr || !source || registrationName == nullptr)
+        {
+            return sourceSrvIndex;
+        }
+        const D3D12_RESOURCE_DESC sourceDesc = source->GetDesc();
+        if (sourceDesc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || sourceDesc.MipLevels >= kPrefilterLevels)
+        {
+            return sourceSrvIndex; // already prefiltered (or not a 2D source)
+        }
+        if (!EnsurePrefilterPipeline(device))
+        {
+            return sourceSrvIndex;
+        }
+        const UINT outputWidth = (std::min)(static_cast<UINT>(sourceDesc.Width), 1024u);
+        const UINT outputHeight =
+            (std::max)(1u, static_cast<UINT>(outputWidth * sourceDesc.Height / (std::max)(1u, static_cast<UINT>(sourceDesc.Width))));
+        uint32_t fullChain = 0;
+        for (UINT size = outputWidth; size > 0; size >>= 1)
+        {
+            ++fullChain;
+        }
+        const uint32_t levels = (std::min)(kPrefilterLevels, fullChain);
+
+        D3D12_RESOURCE_DESC outputDesc{};
+        outputDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        outputDesc.Width = outputWidth;
+        outputDesc.Height = outputHeight;
+        outputDesc.DepthOrArraySize = 1;
+        outputDesc.MipLevels = static_cast<UINT16>(levels);
+        outputDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        outputDesc.SampleDesc.Count = 1;
+        outputDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        ComPtr<ID3D12Resource> output;
+        if (ID3D12Resource* allocated =
+                MemoryAllocator::CreateResourceAutoLifetime(outputDesc, D3D12_RESOURCE_STATE_COMMON, nullptr))
+        {
+            output.Attach(allocated);
+        }
+        else
+        {
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &outputDesc,
+                                                       D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&output))))
+            {
+                return sourceSrvIndex;
+            }
+        }
+
+        const UINT increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        CD3DX12_CPU_DESCRIPTOR_HANDLE heapCpu(g_PrefilterHeap->GetCPUDescriptorHandleForHeapStart());
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = sourceDesc.Format;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Texture2D.MipLevels = sourceDesc.MipLevels;
+        device->CreateShaderResourceView(source.Get(), &srvDesc, heapCpu);
+        for (uint32_t level = 0; level < levels; ++level)
+        {
+            D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+            uavDesc.Format = outputDesc.Format;
+            uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+            uavDesc.Texture2D.MipSlice = level;
+            device->CreateUnorderedAccessView(output.Get(), nullptr, &uavDesc, CD3DX12_CPU_DESCRIPTOR_HANDLE(heapCpu, 1 + static_cast<int>(level), increment));
+        }
+
+        commandList->SetComputeRootSignature(g_PrefilterRootSignature.Get());
+        commandList->SetPipelineState(g_PrefilterPso.Get());
+        ID3D12DescriptorHeap* heaps[] = {g_PrefilterHeap.Get()};
+        commandList->SetDescriptorHeaps(1, heaps);
+        const CD3DX12_GPU_DESCRIPTOR_HANDLE heapGpu(g_PrefilterHeap->GetGPUDescriptorHandleForHeapStart());
+        commandList->SetComputeRootDescriptorTable(1, heapGpu);
+
+        D3D12_RESOURCE_BARRIER toUav = CD3DX12_RESOURCE_BARRIER::Transition(
+            output.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commandList->ResourceBarrier(1, &toUav);
+        struct Constants
+        {
+            uint32_t OutputSize[2];
+            uint32_t SourceSize[2];
+            float Roughness;
+            uint32_t SampleCount;
+            float Padding[2];
+        };
+        for (uint32_t level = 0; level < levels; ++level)
+        {
+            Constants constants{};
+            constants.OutputSize[0] = (std::max)(1u, outputWidth >> level);
+            constants.OutputSize[1] = (std::max)(1u, outputHeight >> level);
+            constants.SourceSize[0] = static_cast<uint32_t>(sourceDesc.Width);
+            constants.SourceSize[1] = sourceDesc.Height;
+            constants.Roughness = static_cast<float>(level) / static_cast<float>(kPrefilterLevels - 1);
+            constants.SampleCount = 512;
+            commandList->SetComputeRoot32BitConstants(0, 8, &constants, 0);
+            commandList->SetComputeRootDescriptorTable(
+                2, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapGpu, 1 + static_cast<int>(level), increment));
+            commandList->Dispatch((constants.OutputSize[0] + 7) / 8, (constants.OutputSize[1] + 7) / 8, 1);
+            D3D12_RESOURCE_BARRIER uavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(output.Get());
+            commandList->ResourceBarrier(1, &uavBarrier);
+        }
+        D3D12_RESOURCE_BARRIER toSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+            output.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        commandList->ResourceBarrier(1, &toSrv);
+        return TextureManager::RegisterExternalTexture(registrationName, output);
+    }
+
+    void SyncFromScene(ID3D12GraphicsCommandList* commandList)
     {
         Clear();
         static std::unordered_map<std::string, int> textureCache;
+        static std::unordered_set<std::string> prefilterAttempted;
         ComponentManager::ForEach<ReflectionProbeComponent, TransformComponent>(
             [&](EntityID entity, ReflectionProbeComponent& probeComponent, TransformComponent& transform) {
                 (void)entity;
@@ -50,10 +219,14 @@ namespace ReflectionProbes
                 auto found = textureCache.find(probeComponent.EnvironmentTexturePath);
                 if (found == textureCache.end())
                 {
-                    found = textureCache
-                                .emplace(probeComponent.EnvironmentTexturePath,
-                                         TextureManager::LoadTexture(probeComponent.EnvironmentTexturePath.c_str()))
-                                .first;
+                    int srvIndex = TextureManager::LoadTexture(probeComponent.EnvironmentTexturePath.c_str());
+                    if (probeComponent.GeneratePrefilter && commandList != nullptr &&
+                        prefilterAttempted.insert(probeComponent.EnvironmentTexturePath).second)
+                    {
+                        const std::string registration = probeComponent.EnvironmentTexturePath + "#prefiltered";
+                        srvIndex = GeneratePrefilteredEnvironment(commandList, srvIndex, registration.c_str());
+                    }
+                    found = textureCache.emplace(probeComponent.EnvironmentTexturePath, srvIndex).first;
                 }
                 Probe probe{};
                 probe.Center[0] = transform.Position.x;
@@ -68,14 +241,14 @@ namespace ReflectionProbes
             });
     }
 
-    void UpdateActiveEnvironment()
+    void UpdateActiveEnvironment(ID3D12GraphicsCommandList* commandList)
     {
         if (!RendererSettings::GetUseLocalReflectionProbes())
         {
             RendererState::m_EnvironmentTextureOverrideSrvIndex = -1;
             return;
         }
-        SyncFromScene();
+        SyncFromScene(commandList);
         const EntityID cameraEntity = Camera::GetCameraEntity();
         if (!ComponentManager::HasComponent<TransformComponent>(cameraEntity))
         {

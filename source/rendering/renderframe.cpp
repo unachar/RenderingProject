@@ -31,7 +31,7 @@ void RenderFrame::BeginDraw()
     }
     GpuMemoryBudget::Update();
     MemoryAllocator::LogStatisticsPeriodically();
-    ReflectionProbes::UpdateActiveEnvironment();
+    ReflectionProbes::UpdateActiveEnvironment(m_CommandList.Get());
     ModelManager::CollectRetiredAnimModels();
     RenderTargets::UpdateMemoryPolicy();
     Raytracing::ReleaseInactiveResources();

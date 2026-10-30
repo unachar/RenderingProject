@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <vector>
 
+struct ID3D12GraphicsCommandList;
+
 // Stage 2 J: local reflection probes (see
 // docs/rendering-technology-stage2j-design.md). The registry holds
 // the frame's probes with their resolved environment SRV indices;
@@ -24,13 +26,21 @@ namespace ReflectionProbes
     void Add(const Probe& probe);
     uint32_t Count();
     // Rebuilds the registry from the scene's ReflectionProbeComponents.
-    void SyncFromScene();
+    void SyncFromScene(ID3D12GraphicsCommandList* commandList);
 
     // Per-frame entry (RenderFrame::BeginDraw): syncs the registry,
     // selects the probe containing the camera and writes the result
     // to RendererState's environment override. Clears the override
     // whenever the feature flag is off.
-    void UpdateActiveEnvironment();
+    void UpdateActiveEnvironment(ID3D12GraphicsCommandList* commandList);
+
+    // Runs the GGX prefilter (EnvironmentPrefilterCS) over the source
+    // texture and registers the result with TextureManager under
+    // `registrationName`. Returns the prefiltered texture's SRV
+    // index, or the source index unchanged when the source already
+    // has a full mip chain or generation fails.
+    int GeneratePrefilteredEnvironment(ID3D12GraphicsCommandList* commandList, int sourceSrvIndex,
+                                       const char* registrationName);
 
     // Returns the environment SRV index of the active probe for the
     // given camera position, or -1 when no probe contains it.

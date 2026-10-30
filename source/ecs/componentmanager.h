@@ -490,6 +490,9 @@ struct ReflectionProbeComponent
     string EnvironmentTexturePath;
     int Priority = 0;
     float Intensity = 1.0f;
+    // When the source texture lacks a prefiltered mip chain, generate
+    // one at runtime with the GGX prefilter (Stage 2 J step 5).
+    bool GeneratePrefilter = false;
     bool IsActive = true;
 };
 
