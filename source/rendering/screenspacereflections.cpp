@@ -14,12 +14,36 @@ namespace ScreenSpaceReflections
         ComPtr<ID3D12PipelineState> g_Pso;
         ComPtr<ID3D12RootSignature> g_ResolveRootSignature;
         ComPtr<ID3D12PipelineState> g_ResolvePso;
-        ComPtr<ID3D12DescriptorHeap> g_Heap; // 0: result SRV, 1: result UAV, 2: trace SRV, 3: trace UAV
+        // Heap slots: 0 result SRV, 1 result UAV, 2 trace SRV,
+        // 3 trace UAV, 4 hit-points SRV, 5 hit-points UAV,
+        // 6/7 accumulation SRVs, 8/9 accumulation UAVs.
+        ComPtr<ID3D12DescriptorHeap> g_Heap;
         ComPtr<ID3D12Resource> g_Result;
         ComPtr<ID3D12Resource> g_TraceResult; // half-resolution trace target (T1)
+        ComPtr<ID3D12Resource> g_HitPoints;   // half-res hit anchors (T2)
+        ComPtr<ID3D12Resource> g_Accumulation[2]; // full-res temporal ping-pong (T2)
+        int g_AccumulationCurrent = 0;
+        bool g_HistoryValid = false;
+        bool g_HitInSrvState = false;
         uint32_t g_TraceWidth = 0;
         uint32_t g_TraceHeight = 0;
         bool g_TraceInSrvState = false;
+
+        ComPtr<ID3D12Resource> CreateTarget(ID3D12Device* device, const D3D12_RESOURCE_DESC& description,
+                                            D3D12_RESOURCE_STATES initialState)
+        {
+            ComPtr<ID3D12Resource> target;
+            if (ID3D12Resource* allocated =
+                    MemoryAllocator::CreateResourceAutoLifetime(description, initialState, nullptr))
+            {
+                target.Attach(allocated);
+                return target;
+            }
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, initialState, nullptr,
+                                            IID_PPV_ARGS(&target));
+            return target;
+        }
         uint32_t g_ResultWidth = 0;
         uint32_t g_ResultHeight = 0;
         UINT g_DescriptorIncrement = 0;
@@ -34,16 +58,17 @@ namespace ScreenSpaceReflections
             {
                 return true;
             }
-            CD3DX12_DESCRIPTOR_RANGE ranges[6];
+            CD3DX12_DESCRIPTOR_RANGE ranges[7];
             ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
             ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
             ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);
             ranges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3);
             ranges[4].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4);
             ranges[5].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
-            CD3DX12_ROOT_PARAMETER parameters[7];
+            ranges[6].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 1);
+            CD3DX12_ROOT_PARAMETER parameters[8];
             parameters[0].InitAsConstants(52, 0);
-            for (int i = 0; i < 6; ++i)
+            for (int i = 0; i < 7; ++i)
             {
                 parameters[1 + i].InitAsDescriptorTable(1, &ranges[i], D3D12_SHADER_VISIBILITY_ALL);
             }
@@ -82,27 +107,35 @@ namespace ScreenSpaceReflections
             }
             D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
             heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-            heapDesc.NumDescriptors = 4;
+            heapDesc.NumDescriptors = 10;
             heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
             if (FAILED(device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&g_Heap))))
             {
                 return false;
             }
             g_DescriptorIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-            // Resolve pipeline (bilateral upsample of the half-res trace).
-            CD3DX12_DESCRIPTOR_RANGE resolveRanges[4];
-            resolveRanges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
-            resolveRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
-            resolveRanges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);
-            resolveRanges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
-            CD3DX12_ROOT_PARAMETER resolveParameters[5];
-            resolveParameters[0].InitAsConstants(8, 0);
-            for (int i = 0; i < 4; ++i)
+            // Resolve pipeline (bilateral upsample + temporal blend).
+            CD3DX12_DESCRIPTOR_RANGE resolveRanges[8];
+            for (int i = 0; i < 6; ++i)
+            {
+                resolveRanges[i].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, i);
+            }
+            resolveRanges[6].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
+            resolveRanges[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 1);
+            CD3DX12_ROOT_PARAMETER resolveParameters[9];
+            resolveParameters[0].InitAsConstants(26, 0);
+            for (int i = 0; i < 8; ++i)
             {
                 resolveParameters[1 + i].InitAsDescriptorTable(1, &resolveRanges[i], D3D12_SHADER_VISIBILITY_ALL);
             }
-            CD3DX12_ROOT_SIGNATURE_DESC resolveRootDesc(_countof(resolveParameters), resolveParameters, 0, nullptr,
-                                                        D3D12_ROOT_SIGNATURE_FLAG_NONE);
+            CD3DX12_STATIC_SAMPLER_DESC resolveSampler{};
+            resolveSampler.Init(0);
+            resolveSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+            resolveSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            resolveSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            resolveSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            CD3DX12_ROOT_SIGNATURE_DESC resolveRootDesc(_countof(resolveParameters), resolveParameters, 1,
+                                                        &resolveSampler, D3D12_ROOT_SIGNATURE_FLAG_NONE);
             ComPtr<ID3DBlob> resolveSerialized;
             if (FAILED(D3D12SerializeRootSignature(&resolveRootDesc, D3D_ROOT_SIGNATURE_VERSION_1, &resolveSerialized,
                                                    &errors)) ||
@@ -233,6 +266,43 @@ namespace ScreenSpaceReflections
                                          CD3DX12_CPU_DESCRIPTOR_HANDLE(heapCpu, 2, increment));
         device->CreateUnorderedAccessView(traceResult.Get(), nullptr, &uavDesc,
                                           CD3DX12_CPU_DESCRIPTOR_HANDLE(heapCpu, 3, increment));
+        // Hit-point anchors (half res, world positions need float32).
+        const auto hitDescription = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT, traceWidth,
+                                                                 traceHeight, 1, 1, 1, 0,
+                                                                 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        g_HitPoints = CreateTarget(device, hitDescription, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        if (!g_HitPoints)
+        {
+            return false;
+        }
+        D3D12_SHADER_RESOURCE_VIEW_DESC hitSrvDesc{};
+        hitSrvDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+        hitSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        hitSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        hitSrvDesc.Texture2D.MipLevels = 1;
+        device->CreateShaderResourceView(g_HitPoints.Get(), &hitSrvDesc,
+                                         CD3DX12_CPU_DESCRIPTOR_HANDLE(heapCpu, 4, increment));
+        D3D12_UNORDERED_ACCESS_VIEW_DESC hitUavDesc{};
+        hitUavDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+        hitUavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+        device->CreateUnorderedAccessView(g_HitPoints.Get(), nullptr, &hitUavDesc,
+                                          CD3DX12_CPU_DESCRIPTOR_HANDLE(heapCpu, 5, increment));
+        g_HitInSrvState = false;
+        // Temporal accumulation ping-pong (full res).
+        for (int i = 0; i < 2; ++i)
+        {
+            g_Accumulation[i] = CreateTarget(device, description, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            if (!g_Accumulation[i])
+            {
+                return false;
+            }
+            device->CreateShaderResourceView(g_Accumulation[i].Get(), &srvDesc,
+                                             CD3DX12_CPU_DESCRIPTOR_HANDLE(heapCpu, 6 + i, increment));
+            device->CreateUnorderedAccessView(g_Accumulation[i].Get(), nullptr, &uavDesc,
+                                              CD3DX12_CPU_DESCRIPTOR_HANDLE(heapCpu, 8 + i, increment));
+        }
+        g_AccumulationCurrent = 0;
+        g_HistoryValid = false;
         g_TraceResult = traceResult;
         g_TraceWidth = traceWidth;
         g_TraceHeight = traceHeight;
@@ -253,6 +323,11 @@ namespace ScreenSpaceReflections
     {
         g_Result.Reset();
         g_TraceResult.Reset();
+        g_HitPoints.Reset();
+        g_Accumulation[0].Reset();
+        g_Accumulation[1].Reset();
+        g_HistoryValid = false;
+        g_HitInSrvState = false;
         g_TraceWidth = 0;
         g_TraceHeight = 0;
         g_TraceInSrvState = false;
@@ -280,7 +355,8 @@ namespace ScreenSpaceReflections
 
     bool Execute(ID3D12GraphicsCommandList* commandList, ID3D12DescriptorHeap* engineHeap, const TraceInputs& inputs)
     {
-        if (commandList == nullptr || engineHeap == nullptr || !g_Result || !g_TraceResult || !g_Pso || !g_ResolvePso)
+        if (commandList == nullptr || engineHeap == nullptr || !g_Result || !g_TraceResult || !g_HitPoints || !g_Pso ||
+            !g_ResolvePso)
         {
             return false;
         }
@@ -310,11 +386,23 @@ namespace ScreenSpaceReflections
         commandList->SetComputeRootDescriptorTable(4, inputs.PreviousColorSrv);
         commandList->SetComputeRootDescriptorTable(5, inputs.MaterialSrv);
         commandList->SetComputeRootDescriptorTable(6, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapGpu, 3, g_DescriptorIncrement));
+        if (g_HitInSrvState)
+        {
+            D3D12_RESOURCE_BARRIER hitToUav = CD3DX12_RESOURCE_BARRIER::Transition(
+                g_HitPoints.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commandList->ResourceBarrier(1, &hitToUav);
+            g_HitInSrvState = false;
+        }
+        commandList->SetComputeRootDescriptorTable(7, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapGpu, 5, g_DescriptorIncrement));
         commandList->Dispatch((g_TraceWidth + 7) / 8, (g_TraceHeight + 7) / 8, 1);
-        D3D12_RESOURCE_BARRIER traceToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
-            g_TraceResult.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        commandList->ResourceBarrier(1, &traceToSrv);
+        D3D12_RESOURCE_BARRIER traceToSrv[2] = {
+            CD3DX12_RESOURCE_BARRIER::Transition(g_TraceResult.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+            CD3DX12_RESOURCE_BARRIER::Transition(g_HitPoints.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
+        commandList->ResourceBarrier(2, traceToSrv);
         g_TraceInSrvState = true;
+        g_HitInSrvState = true;
         // Bilateral resolve into the full-resolution result.
         if (g_ResultInSrvState)
         {
@@ -330,7 +418,22 @@ namespace ScreenSpaceReflections
             float DepthNumerator;
             float DepthDenominator;
             uint32_t HalfResolution[2];
+            float PrevViewProjection[16];
+            float HistoryBlend;
+            uint32_t HistoryValid;
+            float Padding[2];
         };
+        const int accumulationPrevious = 1 - g_AccumulationCurrent;
+        // Invariant: both accumulation buffers are in SRV state at
+        // frame start (they are created that way and the write side
+        // transitions back below), so the current one can always be
+        // moved to UAV here.
+        {
+            D3D12_RESOURCE_BARRIER accumToUav = CD3DX12_RESOURCE_BARRIER::Transition(
+                g_Accumulation[g_AccumulationCurrent].Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commandList->ResourceBarrier(1, &accumToUav);
+        }
         ResolveConstants resolve{};
         resolve.FullResolution[0] = g_ResultWidth;
         resolve.FullResolution[1] = g_ResultHeight;
@@ -340,14 +443,31 @@ namespace ScreenSpaceReflections
         resolve.DepthDenominator = inputs.Constants.DepthDenominator;
         resolve.HalfResolution[0] = g_TraceWidth;
         resolve.HalfResolution[1] = g_TraceHeight;
+        std::memcpy(resolve.PrevViewProjection, inputs.PrevViewProjection, sizeof(resolve.PrevViewProjection));
+        resolve.HistoryBlend = 0.85f;
+        resolve.HistoryValid = (g_HistoryValid && !inputs.ResetHistory) ? 1u : 0u;
         commandList->SetComputeRootSignature(g_ResolveRootSignature.Get());
         commandList->SetPipelineState(g_ResolvePso.Get());
-        commandList->SetComputeRoot32BitConstants(0, 8, &resolve, 0);
+        commandList->SetComputeRoot32BitConstants(0, 26, &resolve, 0);
         commandList->SetComputeRootDescriptorTable(1, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapGpu, 2, g_DescriptorIncrement));
         commandList->SetComputeRootDescriptorTable(2, inputs.DepthSrv);
         commandList->SetComputeRootDescriptorTable(3, inputs.NormalSrv);
-        commandList->SetComputeRootDescriptorTable(4, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapGpu, 1, g_DescriptorIncrement));
+        commandList->SetComputeRootDescriptorTable(4, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapGpu, 4, g_DescriptorIncrement));
+        commandList->SetComputeRootDescriptorTable(
+            5, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapGpu, 6 + accumulationPrevious, g_DescriptorIncrement));
+        commandList->SetComputeRootDescriptorTable(6, inputs.MaterialSrv);
+        commandList->SetComputeRootDescriptorTable(7, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapGpu, 1, g_DescriptorIncrement));
+        commandList->SetComputeRootDescriptorTable(
+            8, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapGpu, 8 + g_AccumulationCurrent, g_DescriptorIncrement));
         commandList->Dispatch((g_ResultWidth + 7) / 8, (g_ResultHeight + 7) / 8, 1);
+        {
+            D3D12_RESOURCE_BARRIER accumToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+                g_Accumulation[g_AccumulationCurrent].Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            commandList->ResourceBarrier(1, &accumToSrv);
+        }
+        g_AccumulationCurrent = accumulationPrevious;
+        g_HistoryValid = true;
         D3D12_RESOURCE_BARRIER toSrv = CD3DX12_RESOURCE_BARRIER::Transition(
             g_Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         commandList->ResourceBarrier(1, &toSrv);

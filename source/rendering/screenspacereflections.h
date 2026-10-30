@@ -74,6 +74,11 @@ namespace ScreenSpaceReflections
         D3D12_GPU_DESCRIPTOR_HANDLE PreviousColorSrv;
         D3D12_GPU_DESCRIPTOR_HANDLE MaterialSrv;
         TraceConstants Constants;
+        // Previous frame's view-projection (transposed, engine
+        // convention) for the temporal resolve's hit-point
+        // reprojection, plus a history reset request (camera cuts).
+        float PrevViewProjection[16] = {};
+        bool ResetHistory = false;
     };
 
     // (Re)creates the result target (RGBA16F, UAV+SRV) at the given

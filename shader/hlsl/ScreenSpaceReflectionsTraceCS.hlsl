@@ -20,6 +20,7 @@ Texture2D<float4> GBufferNormal : register(t2);
 Texture2D<float4> PreviousSceneColor : register(t3);
 Texture2D<float4> GBufferMaterial : register(t4);
 RWTexture2D<float4> ReflectionResult : register(u0);
+RWTexture2D<float4> HitPoints : register(u1); // xyz: hit world position, w: hit distance (0 = no hit)
 SamplerState PointSampler : register(s0);
 SamplerState LinearSampler : register(s1);
 
@@ -76,6 +77,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     const uint2 pixel = dispatchThreadId.xy;
     const float2 uv = (float2(pixel) + 0.5f) * InvResolution;
     ReflectionResult[pixel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    HitPoints[pixel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
 
     const int3 gbufferPixel = int3(pixel * max(GBufferScale, 1u), 0);
     const float depth = SceneDepth.Load(gbufferPixel);
@@ -173,4 +175,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float effectiveRoughness = roughness > 0.001f ? roughness : FallbackRoughness;
     const float3 radiance = PreviousSceneColor.SampleLevel(LinearSampler, hitUv, effectiveRoughness * 4.0f).rgb;
     ReflectionResult[pixel] = float4(radiance, confidence);
+    // Anchor for the temporal resolve: the hit surface point lets
+    // the resolve reproject history through the surface instead of
+    // the reflecting pixel.
+    const float hitDepth = SceneDepth.SampleLevel(PointSampler, hitUv, 0.0f);
+    if (hitDepth > 1e-7f)
+    {
+        const float3 hitPosition = WorldPositionFromDepth(hitUv, hitDepth);
+        HitPoints[pixel] = float4(hitPosition, length(hitPosition - worldPosition));
+    }
 }

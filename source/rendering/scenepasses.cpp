@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "graphicsdevice.h"
 #include "memoryallocator.h"
 #include "surfacedecals.h"
 #include "camera.h"
@@ -782,6 +783,15 @@ void ScenePasses::ExecuteScreenSpaceReflections()
     inputs.NormalSrv = m_GBufferSrvHandles[static_cast<UINT>(GBufferType::NORMAL)];
     inputs.PreviousColorSrv = GetRenderTargetSrvHandle(RenderTargetType::PreUpscaleAaHistory);
     inputs.MaterialSrv = m_GBufferSrvHandles[static_cast<UINT>(GBufferType::MATERIAL)];
+    {
+        // Previous frame's view-projection for the temporal resolve.
+        const XMMATRIX previousViewProjection =
+            XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix()) *
+            XMLoadFloat4x4(&GraphicsDevice::GetPreviousProjectionMatrix());
+        XMFLOAT4X4 previousTransposed{};
+        XMStoreFloat4x4(&previousTransposed, XMMatrixTranspose(previousViewProjection));
+        std::memcpy(inputs.PrevViewProjection, &previousTransposed, sizeof(inputs.PrevViewProjection));
+    }
 
     ScreenSpaceReflections::TraceConstants& constants = inputs.Constants;
     XMFLOAT4X4 stored{};

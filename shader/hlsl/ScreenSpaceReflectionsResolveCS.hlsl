@@ -1,16 +1,21 @@
-// Native Hi-Z SSR, step T1 (see
+// Native Hi-Z SSR resolve (see
 // docs/rendering-technology-ssr-temporal-design.md): bilateral
-// upsample of the half-resolution trace result into the full
-// resolution result the lighting pass consumes. Each full-res
-// pixel blends the 2x2 half-res taps around it, weighted by depth
-// and normal similarity against the tap's representative full-res
-// pixel; rejected taps fall back to the nearest tap so the output
-// is always defined.
+// upsample of the half-resolution trace (T1) plus hit-point
+// reprojected temporal accumulation (T2). The temporal fetch
+// projects this frame's hit surface point through the PREVIOUS
+// frame's view-projection and samples the previous accumulation
+// there, so history follows the reflected surface rather than the
+// reflecting pixel; the blend factor grows with roughness.
 
 Texture2D<float4> HalfResult : register(t0);
 Texture2D<float> SceneDepth : register(t1);
 Texture2D<float4> GBufferNormal : register(t2);
+Texture2D<float4> HitPoints : register(t3);
+Texture2D<float4> PreviousAccumulation : register(t4);
+Texture2D<float4> GBufferMaterial : register(t5);
 RWTexture2D<float4> FullResult : register(u0);
+RWTexture2D<float4> AccumulationOut : register(u1);
+SamplerState LinearSampler : register(s0);
 
 cbuffer ResolveConstants : register(b0)
 {
@@ -19,6 +24,10 @@ cbuffer ResolveConstants : register(b0)
     float DepthNumerator;
     float DepthDenominator;
     uint2 HalfResolution;
+    float4x4 PrevViewProjection;
+    float HistoryBlend;
+    uint HistoryValid;
+    float2 ResolvePadding;
 };
 
 float ViewZFromStoredDepth(float storedDepth)
@@ -38,6 +47,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (centerDepth <= 1e-7f)
     {
         FullResult[pixel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        AccumulationOut[pixel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }
     const float centerViewZ = ViewZFromStoredDepth(centerDepth);
@@ -71,5 +81,33 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
             }
         }
     }
-    FullResult[pixel] = weightSum > 1e-4f ? accumulation / weightSum : nearestTap;
+    float4 current = weightSum > 1e-4f ? accumulation / weightSum : nearestTap;
+
+    // T2: hit-point reprojected history blend.
+    if (HistoryValid != 0u && current.a > 0.001f)
+    {
+        const int2 halfPixel = clamp(halfBase, int2(0, 0), int2(HalfResolution) - 1);
+        const float4 hitData = HitPoints.Load(int3(halfPixel, 0));
+        if (hitData.w > 0.0f)
+        {
+            const float4 prevClip = mul(float4(hitData.xyz, 1.0f), PrevViewProjection);
+            if (prevClip.w > 0.0f)
+            {
+                const float2 prevUv = (prevClip.xy / prevClip.w) * float2(0.5f, -0.5f) + 0.5f;
+                if (all(prevUv >= 0.0f) && all(prevUv <= 1.0f))
+                {
+                    const float4 history = PreviousAccumulation.SampleLevel(LinearSampler, prevUv, 0.0f);
+                    if (history.a > 0.05f)
+                    {
+                        const float roughness = GBufferMaterial.Load(int3(pixel, 0)).g;
+                        const float blend = clamp(HistoryBlend * (0.35f + 0.65f * roughness), 0.0f, 0.92f);
+                        current.rgb = lerp(current.rgb, history.rgb, blend);
+                        current.a = max(current.a, history.a);
+                    }
+                }
+            }
+        }
+    }
+    FullResult[pixel] = current;
+    AccumulationOut[pixel] = current;
 }
