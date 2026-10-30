@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "lightinstancebuilder.h"
+#include "memoryallocator.h"
 #include "rendererstate.h"
 #include "renderprofiler.h"
 
@@ -16,8 +17,18 @@ static bool g_OutputInShaderRead[RendererState::g_kFRAME_COUNT]{};
 bool CreateBuffer(UINT64 size, D3D12_HEAP_TYPE heapType, D3D12_RESOURCE_FLAGS flags, D3D12_RESOURCE_STATES state,
                   ComPtr<ID3D12Resource>& output)
 {
-    auto heap = CD3DX12_HEAP_PROPERTIES(heapType);
     auto desc = CD3DX12_RESOURCE_DESC::Buffer(size, flags);
+    // DEFAULT buffers go through D3D12MA when the flag is on.
+    if (heapType == D3D12_HEAP_TYPE_DEFAULT)
+    {
+        if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(desc, state, nullptr))
+        {
+            output.Reset();
+            output.Attach(allocated);
+            return true;
+        }
+    }
+    auto heap = CD3DX12_HEAP_PROPERTIES(heapType);
     return SUCCEEDED(
         g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, state, nullptr, IID_PPV_ARGS(&output)));
 }
