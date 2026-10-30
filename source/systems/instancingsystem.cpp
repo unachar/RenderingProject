@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "memoryallocator.h"
 #include "noisecachebindings.h"
 #include "rendering/scenedepth.h"
 #include "materialmanager.h"
@@ -417,8 +418,14 @@ bool InstancingSystem::CreateGpuCullingResources(ID3D12Device* device)
 
     auto createDefaultBuffer = [&](UINT64 size, D3D12_RESOURCE_FLAGS flags, D3D12_RESOURCE_STATES state,
                                    ComPtr<ID3D12Resource>& resource) {
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         const auto description = CD3DX12_RESOURCE_DESC::Buffer(size, flags);
+        // Through D3D12MA when the flag is on; committed fallback otherwise.
+        if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(description, state, nullptr))
+        {
+            resource.Attach(allocated);
+            return true;
+        }
+        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         return SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, state, nullptr,
                                                          IID_PPV_ARGS(&resource)));
     };
