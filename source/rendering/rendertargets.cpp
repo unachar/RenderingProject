@@ -7,6 +7,29 @@
 #include "graphicsdevice.h"
 #include "gpumemorybudget.h"
 #include "graphicslog.h"
+#include "memoryallocator.h"
+
+namespace
+{
+    // Persistent render targets go through D3D12MA when its flag is on (any
+    // failure falls back to a committed resource). AutoLifetime keeps the
+    // existing ComPtr ownership semantics across resize/recreate.
+    bool CreateTargetResource(ID3D12Device* device, const D3D12_RESOURCE_DESC& description,
+                              D3D12_RESOURCE_STATES initialState, const D3D12_CLEAR_VALUE* clearValue,
+                              ComPtr<ID3D12Resource>& output)
+    {
+        output.Reset();
+        if (ID3D12Resource* allocated =
+                MemoryAllocator::CreateResourceAutoLifetime(description, initialState, clearValue))
+        {
+            output.Attach(allocated);
+            return true;
+        }
+        auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        return SUCCEEDED(device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &description, initialState,
+                                                         clearValue, IID_PPV_ARGS(&output)));
+    }
+} // namespace
 
 void RenderTargets::GetGBufferClearColor(UINT index, float outColor[4])
 {
@@ -73,8 +96,6 @@ bool RenderTargets::CreateDepthBuffer()
         return false;
     }
 
-    auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-
     UINT dsvIncrement = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 
     D3D12_RESOURCE_DESC depthDesc{};
@@ -92,9 +113,10 @@ bool RenderTargets::CreateDepthBuffer()
     clearValue.DepthStencil.Depth = 0.0f;
     clearValue.DepthStencil.Stencil = 0;
 
-    hr = m_Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &depthDesc,
-                                           D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue,
-                                           IID_PPV_ARGS(&m_DepthStencilBuffer));
+    hr = CreateTargetResource(m_Device.Get(), depthDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue,
+                              m_DepthStencilBuffer)
+             ? S_OK
+             : E_FAIL;
     if (FAILED(hr))
     {
         Debug::Log("ERROR: CreateCommittedResource(Depth) failed\n");
@@ -139,11 +161,11 @@ bool RenderTargets::CreateShadowDepthBuffer(UINT layers, UINT resolution)
     auto depthDesc =
         CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32_TYPELESS, resolution, resolution, static_cast<UINT16>(layers), 1,
                                      1, 0, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
-    auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
     ComPtr<ID3D12Resource> replacement;
-    HRESULT hr = m_Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &depthDesc,
-                                                   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue,
-                                                   IID_PPV_ARGS(&replacement));
+    HRESULT hr = CreateTargetResource(m_Device.Get(), depthDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                                      &clearValue, replacement)
+                     ? S_OK
+                     : E_FAIL;
     if (FAILED(hr))
     {
         Debug::Log("ERROR: CreateCommittedResource(ShadowDepth) failed\n");
@@ -252,7 +274,6 @@ bool RenderTargets::CreateSceneRenderTarget()
     m_TransparentAaAliased = false;
     m_SceneRtvHeap.Reset();
 
-    auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
     auto resDesc = CD3DX12_RESOURCE_DESC::Tex2D(m_SceneColorFormat, m_SceneWidth, m_SceneHeight, 1, 1, 1, 0,
                                                 D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
     auto fullResDesc = CD3DX12_RESOURCE_DESC::Tex2D(m_SceneColorFormat, m_Width, m_Height, 1, 1, 1, 0,
@@ -304,9 +325,10 @@ bool RenderTargets::CreateSceneRenderTarget()
             desc = &resDesc;
         }
 
-        HRESULT hr = m_Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, desc,
-                                                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue,
-                                                       IID_PPV_ARGS(&GetRenderTarget(type)));
+        HRESULT hr = CreateTargetResource(m_Device.Get(), *desc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                                          &clearValue, GetRenderTarget(type))
+                         ? S_OK
+                         : E_FAIL;
 
         if (FAILED(hr))
         {
@@ -323,9 +345,10 @@ bool RenderTargets::CreateSceneRenderTarget()
     HRESULT hr = S_OK;
     if (!m_TransparentAaAliased)
     {
-        hr = m_Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &transparentCopyDesc,
-                                               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
-                                               IID_PPV_ARGS(&m_TransparentSceneCopy));
+        hr = CreateTargetResource(m_Device.Get(), transparentCopyDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                                  nullptr, m_TransparentSceneCopy)
+                 ? S_OK
+                 : E_FAIL;
         if (FAILED(hr))
         {
             return false;
@@ -419,9 +442,10 @@ bool RenderTargets::CreateSceneRenderTarget()
         aaClear.Color[2] = m_kSceneClearColor[2];
         aaClear.Color[3] = m_kSceneClearColor[3];
         m_AaRenderTarget.Reset();
-        hr = m_Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &aaDesc,
-                                               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &aaClear,
-                                               IID_PPV_ARGS(&m_AaRenderTarget));
+        hr = CreateTargetResource(m_Device.Get(), aaDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &aaClear,
+                                  m_AaRenderTarget)
+                 ? S_OK
+                 : E_FAIL;
         if (FAILED(hr))
         {
             return false;
@@ -495,9 +519,10 @@ bool RenderTargets::CreateSceneRenderTarget()
             gbufferClear.Format = m_kDeferredRtvFormats[i];
             GetGBufferClearColor(i, gbufferClear.Color);
 
-            hr = m_Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &gbufferDesc,
-                                                   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &gbufferClear,
-                                                   IID_PPV_ARGS(&m_GBufferTargets[i]));
+            hr = CreateTargetResource(m_Device.Get(), gbufferDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                                      &gbufferClear, m_GBufferTargets[i])
+                     ? S_OK
+                     : E_FAIL;
             if (FAILED(hr))
             {
                 return false;
