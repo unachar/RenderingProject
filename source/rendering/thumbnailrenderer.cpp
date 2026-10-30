@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "memoryallocator.h"
 #include "thumbnailrenderer.h"
 #include "thumbnailmeshio.h"
 #include "graphicsdevice.h"
@@ -304,14 +305,23 @@ namespace
             const auto* decoded = source.Decoded->GetImage(0, 0, 0);
             image->Width = static_cast<UINT>(decoded->width);
             image->Height = static_cast<UINT>(decoded->height);
-            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
             const auto description = CD3DX12_RESOURCE_DESC::Tex2D(decoded->format, image->Width, image->Height, 1, 1);
             auto* device = GraphicsDevice::GetDevice();
-            if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
-                                                       D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                       IID_PPV_ARGS(&image->Resource))))
+            // Through D3D12MA when the flag is on; committed fallback otherwise.
+            if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(
+                    description, D3D12_RESOURCE_STATE_COPY_DEST, nullptr))
             {
-                return {};
+                image->Resource.Attach(allocated);
+            }
+            else
+            {
+                const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+                if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+                                                           D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                           IID_PPV_ARGS(&image->Resource))))
+                {
+                    return {};
+                }
             }
             const auto uploadHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
             const auto uploadSize = GetRequiredIntermediateSize(image->Resource.Get(), 0, 1);
