@@ -56,6 +56,23 @@ targets XML is well-formed with 34 tracked DXC outputs.
   shadow path; the legacy path still draws every caster, so coverage
   differences show up as shadow detail, never as missing shadows.
 
+## Also landed in the 50-push batch (pending verification)
+
+- D3D12MA routing completed for the remaining persistent DEFAULT-heap
+  resources: instancing, screen-space effects, DXR buffers/guides,
+  clouds, transmittance shadows, thumbnails, occlusion culling
+  (batch 1), VG streaming pages, Lumen surface cache, procedural
+  texture/noise caches, light instance builder, animated model index
+  buffers, FSR scratch, stationary VSM depth cache, main depth.
+  Excluded by design: UPLOAD/READBACK heaps, the transient aliasing
+  arena, reserved/tiled streaming, and OptiX interop buffers
+  (shared-handle requirements).
+- Stage 1D DBuffer surface decals: design, flag, registry, DBuffer
+  targets, raster + composite shaders, frame wiring and a
+  DecalComponent with per-frame sync (docs:
+  rendering-technology-stage1d-design.md). Inspector/save support is
+  still outstanding.
+
 ## Deferred / deprioritized
 
 - CACAO A/B: deprioritized 2026-10-31. The FidelityFX SDK 2.x Kits
@@ -65,5 +82,12 @@ targets XML is well-formed with 34 tracked DXC outputs.
   implementation; revisit AO only with a fixed-scene comparison.
 - RTXDI: license review required before any adoption (comparison
   only); MegaLights already covers the many-lights use case.
+- STBN sampling: deferred 2026-10-31. The engine has no shared
+  R2/R4 sampling-sequence module or blue-noise asset for STBN to
+  replace (each stochastic subsystem hashes independently), and the
+  reference STBN data set's redistribution terms are unclear.
+  Revisit if a shared sampling header is introduced.
+- FidelityFX CAS: not adopted; the engine already ships FSR RCAS,
+  the same sharpening family.
 - Stage 1C remaining v1 limits: shadow pass 0 only (first directional
   view), no shadow material binning.
