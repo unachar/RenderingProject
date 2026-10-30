@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "memoryallocator.h"
 #include "spatialupscaler.h"
 #include "rendererstate.h"
 #include "renderprofiler.h"
@@ -188,12 +189,23 @@ bool SpatialUpscaler::Resize(UINT outputWidth, UINT outputHeight, DXGI_FORMAT fo
     g_OutputHeight = outputHeight;
     g_OutputFormat = format;
 
-    auto heapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
     auto desc = CD3DX12_RESOURCE_DESC::Tex2D(format, outputWidth, outputHeight, 1, 1, 1, 0,
                                              D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    HRESULT hr = g_Device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &desc,
-                                                   D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, nullptr,
-                                                   IID_PPV_ARGS(&g_FsrScratch));
+    // Through D3D12MA when the flag is on; committed fallback otherwise.
+    HRESULT hr = E_FAIL;
+    if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(
+            desc, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, nullptr))
+    {
+        g_FsrScratch.Attach(allocated);
+        hr = S_OK;
+    }
+    else
+    {
+        auto heapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        hr = g_Device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &desc,
+                                               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, nullptr,
+                                               IID_PPV_ARGS(&g_FsrScratch));
+    }
     if (FAILED(hr))
     {
         return false;
