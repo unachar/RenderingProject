@@ -202,4 +202,39 @@ namespace ReferenceFixture
         builder.Data.CameraFovYRadians = 0.9f;
         return builder.Data;
     }
+
+    SceneData BuildEmissivePanel()
+    {
+        Builder builder;
+        const float quadVerts[12] = {-0.5f, -0.5f, 0, 0.5f, -0.5f, 0, 0.5f, 0.5f, 0, -0.5f, 0.5f, 0};
+        const uint32_t quadIndices[6] = {0, 1, 2, 0, 2, 3};
+        const uint32_t quad = builder.AddGeometry(quadVerts, 4, quadIndices, 6);
+        const float cubeVerts[24] = {-0.5f, -0.5f, -0.5f, 0.5f, -0.5f, -0.5f, 0.5f, 0.5f, -0.5f, -0.5f, 0.5f, -0.5f,
+                                     -0.5f, -0.5f, 0.5f,  0.5f, -0.5f, 0.5f,  0.5f, 0.5f, 0.5f,  -0.5f, 0.5f, 0.5f};
+        const uint32_t cubeIndices[36] = {0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4,
+                                          3, 6, 2, 3, 7, 6, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5};
+        const uint32_t cube = builder.AddGeometry(cubeVerts, 8, cubeIndices, 36);
+
+        const uint32_t white = builder.AddMaterial(0.73f, 0.73f, 0.73f, 0.0f, 0, 0, 0, 0.9f);
+        const uint32_t panel = builder.AddMaterial(0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 6.0f, 6.0f, 1.0f);
+
+        builder.AddInstance(quad, white, Compose(2, 2, 1, -kHalfPi, 0, 0, -1, 0));
+        builder.AddInstance(quad, white, Compose(2, 2, 1, kHalfPi, 0, 0, 1, 0));
+        builder.AddInstance(quad, white, Compose(2, 2, 1, 0, kPi, 0, 0, 1));
+        builder.AddInstance(quad, white, Compose(2, 2, 1, 0, kHalfPi, -1, 0, 0));
+        builder.AddInstance(quad, white, Compose(2, 2, 1, 0, -kHalfPi, 1, 0, 0));
+        // The only light in the scene: a 1.4 x 1.4 emissive panel.
+        builder.AddInstance(quad, panel, Compose(1.4f, 1.4f, 1, kHalfPi, 0, 0, 0.99f, 0));
+        builder.AddInstance(cube, white, Compose(0.7f, 0.7f, 0.7f, 0, 0.4f, 0.0f, -0.65f, 0.1f));
+        // Deliberately no analytic lights: Lights stays empty.
+
+        builder.Data.CameraPosition[0] = 0.0f;
+        builder.Data.CameraPosition[1] = 0.0f;
+        builder.Data.CameraPosition[2] = -3.4f;
+        builder.Data.CameraTarget[0] = 0.0f;
+        builder.Data.CameraTarget[1] = 0.0f;
+        builder.Data.CameraTarget[2] = 0.0f;
+        builder.Data.CameraFovYRadians = 0.9f;
+        return builder.Data;
+    }
 } // namespace ReferenceFixture

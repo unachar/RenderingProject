@@ -330,13 +330,18 @@ namespace
         char fixture[32]{};
         GetEnvironmentVariableA("DX12_REFERENCE_CAPTURE_FIXTURE", fixture, sizeof(fixture));
         const bool materials = strcmp(fixture, "materials") == 0;
-        const ReferenceFixture::SceneData scene =
-            materials ? ReferenceFixture::BuildMaterialTest() : ReferenceFixture::BuildCornellBox();
+        const bool emissive = strcmp(fixture, "emissive") == 0;
+        const ReferenceFixture::SceneData scene = materials ? ReferenceFixture::BuildMaterialTest()
+                                                  : emissive ? ReferenceFixture::BuildEmissivePanel()
+                                                             : ReferenceFixture::BuildCornellBox();
+        const char* fixtureName = materials ? "materials" : emissive ? "emissive" : "cornell";
+        char pfmPath[64]{};
+        char ppmPath[64]{};
+        sprintf_s(pfmPath, "reference_%s.pfm", fixtureName);
+        sprintf_s(ppmPath, "reference_%s.ppm", fixtureName);
         const bool ok = ReferenceIntegrator::RunFixtureCaptureToFiles(
-            GraphicsDevice::GetDevice(), GraphicsDevice::GetCommandQueue(), settings, scene,
-            materials ? "reference_materials.pfm" : "reference_cornell.pfm",
-            materials ? "reference_materials.ppm" : "reference_cornell.ppm");
-        WriteGraphicsLog("Reference capture (Stage 2H, %s): %s (%ux%u, %u spp)\n", materials ? "materials" : "cornell",
+            GraphicsDevice::GetDevice(), GraphicsDevice::GetCommandQueue(), settings, scene, pfmPath, ppmPath);
+        WriteGraphicsLog("Reference capture (Stage 2H, %s): %s (%ux%u, %u spp)\n", fixtureName,
                          ok ? "PASS" : "FAIL", settings.Width, settings.Height, settings.SamplesPerPixel);
         Check(ok, "reference capture produced PFM and PPM outputs");
     }

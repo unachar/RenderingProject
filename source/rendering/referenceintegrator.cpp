@@ -135,6 +135,10 @@ namespace ReferenceIntegrator
             return false;
         }
         g_SceneBuffers.resize(kSceneBufferCount);
+        // A scene with no analytic lights still needs a bound buffer.
+        static const float kEmptyLights[8] = {};
+        const std::vector<float>& lightData = scene.Lights.empty() ? std::vector<float>(kEmptyLights, kEmptyLights + 8)
+                                                                   : scene.Lights;
         const struct
         {
             const void* Data;
@@ -148,7 +152,7 @@ namespace ReferenceIntegrator
             {scene.GeometryInfo.data(), scene.GeometryInfo.size() * sizeof(uint32_t), kGeometryInfo},
             {scene.Positions.data(), scene.Positions.size() * sizeof(float), kPositions},
             {scene.Indices.data(), scene.Indices.size() * sizeof(uint32_t), kIndices},
-            {scene.Lights.data(), scene.Lights.size() * sizeof(float), kLights},
+            {lightData.data(), lightData.size() * sizeof(float), kLights},
         };
         for (const auto& upload : uploads)
         {

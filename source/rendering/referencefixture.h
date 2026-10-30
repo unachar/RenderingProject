@@ -34,4 +34,10 @@ namespace ReferenceFixture
     // diffuse - under a ceiling light quad + point light. Exercises
     // the GGX lobe across roughness/metallic on curved geometry.
     SceneData BuildMaterialTest();
+
+    // Emissive-only scene: a white room lit solely by a large
+    // emissive ceiling panel (no analytic lights). The variance
+    // baseline for emissive sampling / MIS work: BSDF sampling must
+    // find the panel unaided.
+    SceneData BuildEmissivePanel();
 } // namespace ReferenceFixture
