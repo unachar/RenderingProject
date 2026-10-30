@@ -247,6 +247,9 @@ namespace ReflectionProbes
     {
         Probe g_ActiveProbe{};
         bool g_HasActiveProbe = false;
+        Probe g_FrameProbes[2]{};
+        int g_FrameBindless[2] = {-1, -1};
+        int g_FrameProbeCount = 0;
     } // namespace
 
     const Probe* SelectProbe(const float cameraPosition[3])
@@ -290,6 +293,7 @@ namespace ReflectionProbes
     void UpdateActiveEnvironment(ID3D12GraphicsCommandList* commandList)
     {
         g_HasActiveProbe = false;
+        g_FrameProbeCount = 0;
         if (!RendererSettings::GetUseLocalReflectionProbes())
         {
             RendererState::m_EnvironmentTextureOverrideSrvIndex = -1;
@@ -305,14 +309,28 @@ namespace ReflectionProbes
         TransformComponent& cameraTransform = ComponentManager::GetComponent<TransformComponent>(cameraEntity);
         const float cameraPosition[3] = {cameraTransform.Position.x, cameraTransform.Position.y,
                                          cameraTransform.Position.z};
-        const Probe* selected = SelectProbe(cameraPosition);
-        RendererState::m_EnvironmentTextureOverrideSrvIndex =
-            selected != nullptr ? selected->EnvironmentSrvIndex : -1;
-        if (selected != nullptr)
+        g_FrameProbeCount = SelectTopProbes(cameraPosition, g_FrameProbes, g_FrameBindless);
+        if (g_FrameProbeCount > 0)
         {
-            g_ActiveProbe = *selected;
+            g_ActiveProbe = g_FrameProbes[0];
             g_HasActiveProbe = true;
         }
+        // One probe: the frame-global SRV override (v1 route). Two
+        // probes: the per-pixel bindless blend consumes them, so the
+        // override stays off and every consumer keeps the global
+        // environment texture as the blend remainder.
+        RendererState::m_EnvironmentTextureOverrideSrvIndex =
+            g_FrameProbeCount == 1 ? g_FrameProbes[0].EnvironmentSrvIndex : -1;
+    }
+
+    int GetFrameProbes(Probe out[2], int outBindlessIndices[2])
+    {
+        for (int i = 0; i < g_FrameProbeCount; ++i)
+        {
+            out[i] = g_FrameProbes[i];
+            outBindlessIndices[i] = g_FrameBindless[i];
+        }
+        return g_FrameProbeCount;
     }
 
     int SelectEnvironmentSrvIndex(const float cameraPosition[3])

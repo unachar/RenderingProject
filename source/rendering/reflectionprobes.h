@@ -58,6 +58,10 @@ namespace ReflectionProbes
     // up to two entries into `out` (each with its bindless-relative
     // texture index in `outBindlessIndices`) and returns the count.
     int SelectTopProbes(const float point[3], Probe out[2], int outBindlessIndices[2]);
+    // The frame's probe set as chosen by the most recent
+    // UpdateActiveEnvironment (same data as SelectTopProbes at the
+    // camera position). Returns the count (0, 1 or 2).
+    int GetFrameProbes(Probe out[2], int outBindlessIndices[2]);
 
     const std::vector<Probe>& All();
 } // namespace ReflectionProbes

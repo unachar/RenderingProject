@@ -56,6 +56,9 @@ namespace
         XMFLOAT4 Quality[11]{}; // 描画品質設定のビット詰め（RenderQuality::Pack）
         XMFLOAT4 ProbeBoxCenter{};  // xyz: active probe center, w: 1 when a local probe is active
         XMFLOAT4 ProbeBoxExtents{}; // xyz: probe half extents, w: probe intensity
+        XMFLOAT4 Probe2BoxCenter{};
+        XMFLOAT4 Probe2BoxExtents{};
+        XMFLOAT4 ProbeTextureIndices{}; // x/y: probe bindless indices, z: global env bindless index
     };
 
     static_assert(sizeof(PostProcessConstants) <= RendererState::g_kPP_CB_ALIGNED_SIZE);
@@ -115,17 +118,27 @@ void PostProcessPass::UpdateCameraConstants()
         constants.Quality[9].x = 0.0f;
         constants.Quality[9].y = 0.0f;
     }
-    // Stage 2 J box projection: the active local probe's box, consumed
-    // by SurfaceLighting to parallax-correct the environment sample.
+    // Stage 2 J: the frame's probe boxes for box projection (slot 1)
+    // and the per-pixel two-probe blend (slot 2 + bindless indices).
     {
-        float center[3] = {};
-        float halfExtents[3] = {};
-        float intensity = 1.0f;
-        if (ReflectionProbes::GetActiveProbeBox(center, halfExtents, intensity))
+        ReflectionProbes::Probe probes[2]{};
+        int bindless[2] = {-1, -1};
+        const int probeCount = ReflectionProbes::GetFrameProbes(probes, bindless);
+        if (probeCount > 0)
         {
-            constants.ProbeBoxCenter = {center[0], center[1], center[2], 1.0f};
-            constants.ProbeBoxExtents = {halfExtents[0], halfExtents[1], halfExtents[2], intensity};
+            constants.ProbeBoxCenter = {probes[0].Center[0], probes[0].Center[1], probes[0].Center[2], 1.0f};
+            constants.ProbeBoxExtents = {probes[0].HalfExtents[0], probes[0].HalfExtents[1],
+                                         probes[0].HalfExtents[2], probes[0].Intensity};
         }
+        if (probeCount > 1)
+        {
+            constants.Probe2BoxCenter = {probes[1].Center[0], probes[1].Center[1], probes[1].Center[2], 1.0f};
+            constants.Probe2BoxExtents = {probes[1].HalfExtents[0], probes[1].HalfExtents[1],
+                                          probes[1].HalfExtents[2], probes[1].Intensity};
+        }
+        constants.ProbeTextureIndices = {
+            static_cast<float>(bindless[0]), static_cast<float>(bindless[1]),
+            static_cast<float>(m_EnvironmentTextureSrvIndex - FrameConstants::g_kTEXTURE_SRV_START_INDEX), 0.0f};
     }
     memcpy(m_pPostProcessCbvDataBegin + GetPostProcessFrameOffset(), &constants, sizeof(constants));
 }

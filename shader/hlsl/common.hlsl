@@ -1235,6 +1235,9 @@ cbuffer PostProcessParams : register(b0)
     float4 QualityReserved;
     float4 ProbeBoxCenter;  // Stage 2J: xyz = active local probe center, w = active flag
     float4 ProbeBoxExtents; // xyz = probe half extents, w = probe intensity
+    float4 Probe2BoxCenter;     // second probe (per-pixel blending), same layout
+    float4 Probe2BoxExtents;
+    float4 ProbeTextureIndices; // x/y = probe 1/2 bindless indices, z = global env bindless index
 };
 
 float3 ReconstructPostProcessViewRayCommon(float2 uv)

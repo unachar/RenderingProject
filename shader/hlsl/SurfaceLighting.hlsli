@@ -1449,6 +1449,40 @@ float VirtualMoonSurfaceVisibility(float3 worldPosition, float3 normal, float3 d
     return 0;
 }
 
+#if defined(SHADER_POSTPROCESS) || defined(SHADER_FORWARD_LIGHTING)
+// Stage 2J helpers: box projection of a sample direction onto a
+// probe's influence box, the box-distance blend weight, and the
+// equirect UV mapping shared by all environment taps.
+float3 ProbeBoxProject(float3 dir, float3 worldPosition, float3 center, float3 extents)
+{
+    const float3 probeLocal = worldPosition - center;
+    const float3 boxExtents = max(extents, float3(0.05f, 0.05f, 0.05f));
+    const float3 recip = rcp(dir); // inf components are fine: the t range checks reject NaN/inf results
+    const float3 tA = (boxExtents - probeLocal) * recip;
+    const float3 tB = (-boxExtents - probeLocal) * recip;
+    const float3 tMax = max(tA, tB);
+    const float t = min(tMax.x, min(tMax.y, tMax.z));
+    return (t > 0.0f && t < 1e30f) ? normalize(probeLocal + dir * t) : dir;
+}
+
+float ProbeBoxWeight(float3 worldPosition, float3 center, float3 extents, float intensity)
+{
+    const float3 q = saturate(1.0f - abs(worldPosition - center) / max(extents, float3(0.05f, 0.05f, 0.05f)));
+    const float d = min(q.x, min(q.y, q.z));
+    return d * d * intensity;
+}
+
+float2 ProbeEnvUV(float3 dir)
+{
+    const float probePi = 3.14159265359f;
+    return float2(frac(atan2(dir.z, dir.x) / (2.0f * probePi) + 0.5f), acos(clamp(dir.y, -1.0f, 1.0f)) / probePi);
+}
+#endif
+
+#ifdef PROBE_BLENDING_BINDLESS
+#include "MaterialTextureHeap.hlsli"
+#endif
+
 float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 worldPosition, float2 screenUv,
                                   float shadowSoftness, float3 pbrDirectLight)
 {
@@ -1464,6 +1498,7 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
 
     float3 R = reflect(-V, N);
     R = normalize(R);
+    const float3 reflectionDirRaw = R;
 
 #if defined(SHADER_POSTPROCESS) || defined(SHADER_FORWARD_LIGHTING)
     // Stage 2J box projection: when a local reflection probe is
@@ -1473,18 +1508,27 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
     // loses. No-op for the global environment (flag 0).
     if (ProbeBoxCenter.w > 0.5f)
     {
-        const float3 probeLocal = worldPosition - ProbeBoxCenter.xyz;
-        const float3 boxExtents = max(ProbeBoxExtents.xyz, float3(0.05f, 0.05f, 0.05f));
-        const float3 recip = rcp(R); // inf components are fine: the t range checks below reject NaN/inf results
-        const float3 tA = (boxExtents - probeLocal) * recip;
-        const float3 tB = (-boxExtents - probeLocal) * recip;
-        const float3 tMax = max(tA, tB);
-        const float t = min(tMax.x, min(tMax.y, tMax.z));
-        if (t > 0.0f && t < 1e30f)
-        {
-            R = normalize(probeLocal + R * t);
-        }
+        R = ProbeBoxProject(R, worldPosition, ProbeBoxCenter.xyz, ProbeBoxExtents.xyz);
     }
+    // Two-probe blending (Route A of the blending design): weights
+    // from the surface point's normalized distance to each box.
+    float probeWeight0 = 0.0f;
+    float probeWeight1 = 0.0f;
+    float probeWeightGlobal = 1.0f;
+    float probeWeightTotal = 1.0f;
+    float3 probeDir1 = R;
+    bool probeBlend = false;
+#ifdef PROBE_BLENDING_BINDLESS
+    if (Probe2BoxCenter.w > 0.5f)
+    {
+        probeBlend = true;
+        probeWeight0 = ProbeBoxWeight(worldPosition, ProbeBoxCenter.xyz, ProbeBoxExtents.xyz, ProbeBoxExtents.w);
+        probeWeight1 = ProbeBoxWeight(worldPosition, Probe2BoxCenter.xyz, Probe2BoxExtents.xyz, Probe2BoxExtents.w);
+        probeWeightGlobal = max(0.0f, 1.0f - (probeWeight0 + probeWeight1));
+        probeWeightTotal = max(probeWeight0 + probeWeight1 + probeWeightGlobal, 1e-4f);
+        probeDir1 = ProbeBoxProject(reflectionDirRaw, worldPosition, Probe2BoxCenter.xyz, Probe2BoxExtents.xyz);
+    }
+#endif
 #endif
 
     float2 reflectionUV;
@@ -1497,13 +1541,34 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
 
     float maxMip = 8.0f;
 
-    float3 envSpecular = EnvironmentTexture.SampleLevel(TextureSampler, reflectionUV, roughness * maxMip).rgb;
+    float3 envSpecular;
 #if defined(SHADER_POSTPROCESS) || defined(SHADER_FORWARD_LIGHTING)
-    if (ProbeBoxCenter.w > 0.5f)
+    if (probeBlend)
     {
-        envSpecular *= ProbeBoxExtents.w;
-    }
+#ifdef PROBE_BLENDING_BINDLESS
+        envSpecular = (probeWeight0 * LoadMaterialTexture((uint)ProbeTextureIndices.x)
+                                          .SampleLevel(TextureSampler, reflectionUV, roughness * maxMip)
+                                          .rgb +
+                       probeWeight1 * LoadMaterialTexture((uint)ProbeTextureIndices.y)
+                                          .SampleLevel(TextureSampler, ProbeEnvUV(probeDir1), roughness * maxMip)
+                                          .rgb +
+                       probeWeightGlobal * LoadMaterialTexture((uint)ProbeTextureIndices.z)
+                                               .SampleLevel(TextureSampler, ProbeEnvUV(reflectionDirRaw), roughness * maxMip)
+                                               .rgb) /
+                      probeWeightTotal;
 #endif
+    }
+    else
+#endif
+    {
+        envSpecular = EnvironmentTexture.SampleLevel(TextureSampler, reflectionUV, roughness * maxMip).rgb;
+#if defined(SHADER_POSTPROCESS) || defined(SHADER_FORWARD_LIGHTING)
+        if (ProbeBoxCenter.w > 0.5f)
+        {
+            envSpecular *= ProbeBoxExtents.w;
+        }
+#endif
+    }
 #ifdef SHADER_RAYTRACING
     if (SceneRayFlags.x > 0.5f || RaytracingFlags.w > 0.5f)
     {
@@ -1516,13 +1581,34 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
     }
 #endif
 
-    float3 irradiance = EnvironmentTexture.SampleLevel(TextureSampler, normalUV, maxMip).rgb;
+    float3 irradiance;
 #if defined(SHADER_POSTPROCESS) || defined(SHADER_FORWARD_LIGHTING)
-    if (ProbeBoxCenter.w > 0.5f)
+    if (probeBlend)
     {
-        irradiance *= ProbeBoxExtents.w;
-    }
+#ifdef PROBE_BLENDING_BINDLESS
+        irradiance = (probeWeight0 * LoadMaterialTexture((uint)ProbeTextureIndices.x)
+                                         .SampleLevel(TextureSampler, normalUV, maxMip)
+                                         .rgb +
+                      probeWeight1 * LoadMaterialTexture((uint)ProbeTextureIndices.y)
+                                         .SampleLevel(TextureSampler, normalUV, maxMip)
+                                         .rgb +
+                      probeWeightGlobal * LoadMaterialTexture((uint)ProbeTextureIndices.z)
+                                              .SampleLevel(TextureSampler, normalUV, maxMip)
+                                              .rgb) /
+                     probeWeightTotal;
 #endif
+    }
+    else
+#endif
+    {
+        irradiance = EnvironmentTexture.SampleLevel(TextureSampler, normalUV, maxMip).rgb;
+#if defined(SHADER_POSTPROCESS) || defined(SHADER_FORWARD_LIGHTING)
+        if (ProbeBoxCenter.w > 0.5f)
+        {
+            irradiance *= ProbeBoxExtents.w;
+        }
+#endif
+    }
 
     float oneMinusNdotV = 1.0f - NdotV;
     float oneMinusNdotV2 = oneMinusNdotV * oneMinusNdotV;
