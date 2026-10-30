@@ -2,6 +2,7 @@
 #include "referencefixture.h"
 
 #include <cmath>
+#include <vector>
 
 namespace ReferenceFixture
 {
@@ -128,6 +129,75 @@ namespace ReferenceFixture
         builder.Data.CameraPosition[2] = -3.4f;
         builder.Data.CameraTarget[0] = 0.0f;
         builder.Data.CameraTarget[1] = 0.0f;
+        builder.Data.CameraTarget[2] = 0.0f;
+        builder.Data.CameraFovYRadians = 0.9f;
+        return builder.Data;
+    }
+
+    SceneData BuildMaterialTest()
+    {
+        Builder builder;
+        const float quadVerts[12] = {-0.5f, -0.5f, 0, 0.5f, -0.5f, 0, 0.5f, 0.5f, 0, -0.5f, 0.5f, 0};
+        const uint32_t quadIndices[6] = {0, 1, 2, 0, 2, 3};
+        const uint32_t quad = builder.AddGeometry(quadVerts, 4, quadIndices, 6);
+
+        // Unit-diameter UV sphere (radius 0.5, centered at origin).
+        constexpr uint32_t kSphereWidth = 48;
+        constexpr uint32_t kSphereHeight = 32;
+        std::vector<float> sphereVerts;
+        std::vector<uint32_t> sphereIndices;
+        sphereVerts.reserve(static_cast<size_t>(kSphereWidth + 1) * (kSphereHeight + 1) * 3);
+        for (uint32_t y = 0; y <= kSphereHeight; ++y)
+        {
+            const float theta = kPi * static_cast<float>(y) / static_cast<float>(kSphereHeight);
+            for (uint32_t x = 0; x <= kSphereWidth; ++x)
+            {
+                const float phi = 2.0f * kPi * static_cast<float>(x) / static_cast<float>(kSphereWidth);
+                sphereVerts.push_back(0.5f * std::sin(theta) * std::cos(phi));
+                sphereVerts.push_back(0.5f * std::cos(theta));
+                sphereVerts.push_back(0.5f * std::sin(theta) * std::sin(phi));
+            }
+        }
+        for (uint32_t y = 0; y < kSphereHeight; ++y)
+        {
+            for (uint32_t x = 0; x < kSphereWidth; ++x)
+            {
+                const uint32_t a = y * (kSphereWidth + 1) + x;
+                const uint32_t b = a + 1;
+                const uint32_t c = a + kSphereWidth + 1;
+                const uint32_t d = c + 1;
+                sphereIndices.insert(sphereIndices.end(), {a, c, b, b, c, d});
+            }
+        }
+        const uint32_t sphere = builder.AddGeometry(sphereVerts.data(),
+                                                    static_cast<uint32_t>(sphereVerts.size() / 3),
+                                                    sphereIndices.data(),
+                                                    static_cast<uint32_t>(sphereIndices.size()));
+
+        const uint32_t white = builder.AddMaterial(0.73f, 0.73f, 0.73f, 0.0f, 0, 0, 0, 0.9f);
+        const uint32_t lightMat = builder.AddMaterial(0.0f, 0.0f, 0.0f, 0.0f, 18.0f, 18.0f, 18.0f, 1.0f);
+        const uint32_t gold = builder.AddMaterial(1.0f, 0.71f, 0.29f, 1.0f, 0, 0, 0, 0.15f);
+        const uint32_t redPlastic = builder.AddMaterial(0.65f, 0.05f, 0.05f, 0.0f, 0, 0, 0, 0.3f);
+        const uint32_t roughWhite = builder.AddMaterial(0.8f, 0.8f, 0.8f, 0.0f, 0, 0, 0, 0.95f);
+
+        builder.AddInstance(quad, white, Compose(2, 2, 1, -kHalfPi, 0, 0, -1, 0));
+        builder.AddInstance(quad, white, Compose(2, 2, 1, kHalfPi, 0, 0, 1, 0));
+        builder.AddInstance(quad, white, Compose(2, 2, 1, 0, kPi, 0, 0, 1));
+        builder.AddInstance(quad, white, Compose(2, 2, 1, 0, kHalfPi, -1, 0, 0));
+        builder.AddInstance(quad, white, Compose(2, 2, 1, 0, -kHalfPi, 1, 0, 0));
+        builder.AddInstance(quad, lightMat, Compose(0.6f, 0.6f, 1, kHalfPi, 0, 0, 0.99f, 0));
+        // Spheres resting on the floor (radius 0.35 after scale 0.7).
+        builder.AddInstance(sphere, gold, Compose(0.7f, 0.7f, 0.7f, 0, 0, -0.55f, -0.65f, 0.1f));
+        builder.AddInstance(sphere, redPlastic, Compose(0.7f, 0.7f, 0.7f, 0, 0, 0.05f, -0.65f, -0.25f));
+        builder.AddInstance(sphere, roughWhite, Compose(0.7f, 0.7f, 0.7f, 0, 0, 0.6f, -0.65f, 0.25f));
+
+        builder.AddPointLight(0.0f, 0.85f, 0.0f, 1.0f, 1.0f, 1.0f, 8.0f);
+
+        builder.Data.CameraPosition[0] = 0.0f;
+        builder.Data.CameraPosition[1] = -0.1f;
+        builder.Data.CameraPosition[2] = -3.2f;
+        builder.Data.CameraTarget[0] = 0.0f;
+        builder.Data.CameraTarget[1] = -0.2f;
         builder.Data.CameraTarget[2] = 0.0f;
         builder.Data.CameraFovYRadians = 0.9f;
         return builder.Data;

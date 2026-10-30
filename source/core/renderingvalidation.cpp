@@ -1317,6 +1317,10 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
 
 void RenderingValidation::AfterFrame(uint64_t frame)
 {
+    if (ReferenceCaptureTestEnabled() && frame >= 5)
+    {
+        RunReferenceCaptureOnce();
+    }
     if (!VmdCameraTestPath().empty())
     {
         AfterVmdCameraTestFrame(frame);

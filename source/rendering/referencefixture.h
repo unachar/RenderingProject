@@ -28,4 +28,10 @@ namespace ReferenceFixture
     // emissive ceiling quad + point light, one tall and one short
     // white box. Deterministic: identical bytes on every call.
     SceneData BuildCornellBox();
+
+    // Material test scene: a white room with three spheres on the
+    // floor - rough gold metal, glossy red dielectric, rough white
+    // diffuse - under a ceiling light quad + point light. Exercises
+    // the GGX lobe across roughness/metallic on curved geometry.
+    SceneData BuildMaterialTest();
 } // namespace ReferenceFixture
