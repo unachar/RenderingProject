@@ -2138,6 +2138,11 @@ void LightingResources::SetShadowCasterSubset(ShadowCasterSubset subset)
     g_ShadowCasterSubset = subset;
 }
 
+LightingResources::ShadowCasterSubset LightingResources::GetShadowCasterSubset()
+{
+    return g_ShadowCasterSubset;
+}
+
 void LightingResources::SetStaticShadowCacheAvailable(bool available)
 {
     if (g_StaticShadowCacheAvailable != available)

@@ -926,6 +926,13 @@ namespace MeshShaderRenderer
         {
             return false;
         }
+        // Never bake VG casters into the static shadow cache's stationary
+        // target, and never replay a selection whose light view has moved on.
+        if (LightingResources::GetShadowCasterSubset() == LightingResources::ShadowCasterSubset::Stationary ||
+            !VirtualGeometryTraversal::ShadowViewStillValid(lightView, lightProjection))
+        {
+            return false;
+        }
         RenderProfiler::ScopedEvent profile("Nanite Shadow Mesh Shader", commands);
         ID3D12DescriptorHeap* heap = FrameConstants::GetCbvHeap();
         commands->SetDescriptorHeaps(1, &heap);

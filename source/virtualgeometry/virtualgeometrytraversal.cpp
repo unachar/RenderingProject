@@ -89,6 +89,8 @@ namespace VirtualGeometryTraversal
             Constants Parameters;
             Constants ShadowParameters;
             bool ShadowViewActive = false;
+            XMFLOAT4X4 ShadowTraversedView{};
+            XMFLOAT4X4 ShadowTraversedProjection{};
             FrameInputs Inputs;
             std::array<Frame, GpuSceneBuffer::FrameCount> Frames;
             uint32_t FrameIndex = 0;
@@ -844,6 +846,8 @@ namespace VirtualGeometryTraversal
         auto& frame = Current();
         auto& shadow = state.ShadowParameters;
         shadow = state.Parameters;
+        state.ShadowTraversedView = view.View;
+        state.ShadowTraversedProjection = view.Projection;
         FillViewConstants(shadow, view);
         shadow.Enabled = 1;
         shadow.TwoPass = 0;
@@ -969,6 +973,36 @@ namespace VirtualGeometryTraversal
             });
         state.ShadowViewActive = true;
         return true;
+    }
+
+    bool ShadowViewStillValid(const XMFLOAT4X4& view, const XMFLOAT4X4& projection)
+    {
+        auto& state = Data();
+        if (!state.ShadowViewActive)
+        {
+            return false;
+        }
+        const auto traversedView = XMLoadFloat4x4(&state.ShadowTraversedView);
+        const auto currentView = XMLoadFloat4x4(&view);
+        // The third row of a view matrix is the view forward in world space;
+        // a direction change invalidates the cluster selection outright.
+        XMFLOAT3 traversedForward, currentForward;
+        XMStoreFloat3(&traversedForward, traversedView.r[2]);
+        XMStoreFloat3(&currentForward, currentView.r[2]);
+        const float directionDot = traversedForward.x * currentForward.x +
+                                   traversedForward.y * currentForward.y +
+                                   traversedForward.z * currentForward.z;
+        if (directionDot < 0.9999f)
+        {
+            return false;
+        }
+        // Small origin drift (clipmap texel snapping, slow light motion) is
+        // fine; a jump beyond a quarter of the view width is not.
+        const auto traversedOrigin = XMMatrixInverse(nullptr, traversedView).r[3];
+        const auto currentOrigin = XMMatrixInverse(nullptr, currentView).r[3];
+        const float drift = XMVectorGetX(XMVector3Length(XMVectorSubtract(currentOrigin, traversedOrigin)));
+        const float viewWidth = 2.0f / std::max(0.000001f, std::abs(projection._11));
+        return drift <= 0.25f * viewWidth;
     }
 
     void RecordFeedback(RenderGraph& graph)

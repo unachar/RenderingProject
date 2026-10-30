@@ -12,6 +12,7 @@ class LightingResources : protected RendererState
         Moving
     };
     static void SetShadowCasterSubset(ShadowCasterSubset subset);
+    static ShadowCasterSubset GetShadowCasterSubset();
     static void SetStaticShadowCacheAvailable(bool available);
     static bool UseStaticShadowCache(UINT shadowIndex);
     static bool ShouldRenderStaticShadowPass(UINT shadowIndex);

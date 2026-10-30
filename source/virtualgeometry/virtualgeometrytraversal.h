@@ -63,6 +63,7 @@ namespace VirtualGeometryTraversal
     void Prepare(RenderGraph& graph, const FrameInputs& inputs);
     bool PrepareShadowView(RenderGraph& graph, const FrameInputs& inputs, const ViewInput& view);
     bool ShadowViewActive();
+    bool ShadowViewStillValid(const XMFLOAT4X4& view, const XMFLOAT4X4& projection);
     bool Active();
     enum class RasterPhase
     {
