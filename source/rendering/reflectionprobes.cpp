@@ -77,14 +77,14 @@ namespace ReflectionProbes
         }
         SyncFromScene();
         const EntityID cameraEntity = Camera::GetCameraEntity();
-        TransformComponent* cameraTransform = ComponentManager::GetComponent<TransformComponent>(cameraEntity);
-        if (cameraTransform == nullptr)
+        if (!ComponentManager::HasComponent<TransformComponent>(cameraEntity))
         {
             RendererState::m_EnvironmentTextureOverrideSrvIndex = -1;
             return;
         }
-        const float cameraPosition[3] = {cameraTransform->Position.x, cameraTransform->Position.y,
-                                         cameraTransform->Position.z};
+        TransformComponent& cameraTransform = ComponentManager::GetComponent<TransformComponent>(cameraEntity);
+        const float cameraPosition[3] = {cameraTransform.Position.x, cameraTransform.Position.y,
+                                         cameraTransform.Position.z};
         RendererState::m_EnvironmentTextureOverrideSrvIndex = SelectEnvironmentSrvIndex(cameraPosition);
     }
 
