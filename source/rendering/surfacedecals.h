@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+#include <d3d12.h>
+#include <wrl/client.h>
 
 // Stage 1D: DBuffer surface decals (see
 // docs/rendering-technology-stage1d-design.md). A decal is an oriented
@@ -55,4 +57,24 @@ namespace SurfaceDecals
     // Fills `out` with the packed records in raster order (priority,
     // then submission order). Returns the record count.
     uint32_t PackAll(std::vector<GpuDecal>& out);
+
+    // ---- DBuffer targets -------------------------------------------------
+    // The DBuffer lives in this module with its own small descriptor
+    // heaps, so the engine-wide descriptor layout is untouched. Three
+    // targets at scene resolution: albedo (RGBA8, rgb = color,
+    // a = coverage), normal (RGBA16F, rgb = world normal), roughness/
+    // mask (RGBA8, r = roughness, a = composite mask). Cleared to zero;
+    // a zero mask means "no decal here".
+    inline constexpr uint32_t kDBufferCount = 3;
+
+    // Creates or recreates the targets when the size changed. Returns
+    // false on allocation failure (callers then skip the decal passes).
+    bool EnsureTargets(ID3D12Device* device, uint32_t width, uint32_t height);
+    void ReleaseTargets();
+    bool TargetsReady();
+    ID3D12Resource* TargetResource(uint32_t index);
+    D3D12_CPU_DESCRIPTOR_HANDLE TargetRtv(uint32_t index);
+    // Start of the shader-visible SRV heap holding the three targets.
+    ID3D12DescriptorHeap* TargetSrvHeap();
+    D3D12_GPU_DESCRIPTOR_HANDLE TargetSrvGpuStart();
 } // namespace SurfaceDecals
