@@ -261,11 +261,12 @@ namespace MeshShaderRenderer
             try
             {
                 auto shadowMS = Shader("shader/hlsl/build/VirtualGeometryShadowMS.cso");
+                auto shadowPS = Shader("shader/hlsl/build/VirtualGeometryShadowPS.cso");
                 const auto originalDepth = stream.Depth.Value;
                 const auto originalPS = stream.PS.Value;
                 const auto originalTargetCount = stream.Targets.Value.NumRenderTargets;
                 stream.MS.Value = {shadowMS->GetBufferPointer(), shadowMS->GetBufferSize()};
-                stream.PS.Value = {nullptr, 0};
+                stream.PS.Value = {shadowPS->GetBufferPointer(), shadowPS->GetBufferSize()};
                 stream.Depth.Value.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
                 stream.Targets.Value.NumRenderTargets = 0;
                 Check(device2->CreatePipelineState(&meshDesc, IID_PPV_ARGS(&state.NativeShadowPSO)));

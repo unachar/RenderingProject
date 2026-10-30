@@ -33,6 +33,9 @@ struct PrimitiveOutput
 struct MeshVertex
 {
     float4 Position : SV_POSITION;
+    float2 TexCoord : TEXCOORD0;
+    float Alpha : TEXCOORD1;
+    nointerpolation uint MaterialIndex : TEXCOORD2;
 };
 #elif defined(VIRTUAL_GEOMETRY_VELOCITY)
 struct MeshVertex
@@ -219,6 +222,30 @@ float3 NativeDebugColor(VirtualGeometryGPUAsset asset, VirtualGeometryGPUCluster
         vertex.CurrentClip = vertex.Position;
         vertex.PreviousClip = mul(mul(float4(position, 1), instance.PreviousWorld), PreviousViewProjection);
         vertex.MaterialFlags = Materials.Load(item.MaterialIndex * GPU_SCENE_MATERIAL_STRIDE + 40);
+#elif defined(VIRTUAL_GEOMETRY_SHADOW)
+        // Alpha-tested shadows need UVs, vertex alpha and the material id;
+        // everything else stays position-only.
+        if ((asset.Flags & 2u) != 0)
+        {
+            uint slot = Residency[asset.VertexOffset + cluster.PageIndex].x;
+            ByteAddressBuffer page = GeometryPages[NonUniformResourceIndex(slot)];
+            if ((cluster.Flags & 0x10000u) != 0)
+            {
+                vertex.TexCoord = VGDecodeTexcoord(page, cluster.VertexOffset, vertexIndex, 0);
+                vertex.Alpha = VGDecodeColor(page, cluster.VertexOffset, vertexIndex).a;
+            }
+            else
+            {
+                vertex.TexCoord = asfloat(page.Load2(address + 24));
+                vertex.Alpha = asfloat(page.Load4(address + 32)).a;
+            }
+        }
+        else
+        {
+            vertex.TexCoord = asfloat(Vertices.Load2(address + 24));
+            vertex.Alpha = asfloat(Vertices.Load4(address + 32)).a;
+        }
+        vertex.MaterialIndex = item.MaterialIndex;
 #elif !defined(VIRTUAL_GEOMETRY_SHADOW)
         if ((asset.Flags & 2u) != 0)
         {
