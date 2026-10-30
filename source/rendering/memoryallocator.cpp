@@ -249,4 +249,34 @@ namespace MemoryAllocator
         }
         return statistics;
     }
+
+    void LogStatistics()
+    {
+        const Statistics statistics = GetStatistics();
+        if (statistics.HeapCount == 0 && statistics.AllocationCount == 0)
+        {
+            return;
+        }
+        const double heapMiB = static_cast<double>(statistics.HeapBytes) / 1048576.0;
+        const double allocatedMiB = static_cast<double>(statistics.AllocatedBytes) / 1048576.0;
+        const double waste = statistics.HeapBytes > 0
+                                 ? 100.0 * (1.0 - static_cast<double>(statistics.AllocatedBytes) /
+                                                  static_cast<double>(statistics.HeapBytes))
+                                 : 0.0;
+        WriteGraphicsLog("VRAM: D3D12MA heaps %u, heap %.2f MiB, allocated %.2f MiB (waste %.1f%%), allocations %u\n",
+                         statistics.HeapCount, heapMiB, allocatedMiB, waste, statistics.AllocationCount);
+    }
+
+    void LogStatisticsPeriodically()
+    {
+        static uint64_t frame = 0;
+        if (!Enabled())
+        {
+            return;
+        }
+        if ((++frame % 900) == 0)
+        {
+            LogStatistics();
+        }
+    }
 } // namespace MemoryAllocator

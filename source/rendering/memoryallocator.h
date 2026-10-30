@@ -39,4 +39,12 @@ namespace MemoryAllocator
         uint32_t HeapCount = 0;
     };
     Statistics GetStatistics();
+
+    // Writes the current statistics to the graphics log (no-op when the
+    // allocator holds nothing). LogStatisticsPeriodically() throttles itself
+    // to roughly once per 900 frames for per-frame call sites; both exist so
+    // the D3D12MA A/B (heap count / heap bytes vs committed) can be read off
+    // the log without a debugger.
+    void LogStatistics();
+    void LogStatisticsPeriodically();
 } // namespace MemoryAllocator

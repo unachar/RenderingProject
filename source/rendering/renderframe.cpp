@@ -15,6 +15,7 @@
 #include "temporalhistorycontext.h"
 #include "renderprofiler.h"
 #include "gpumemorybudget.h"
+#include "memoryallocator.h"
 #include "advancedeffects.h"
 #include "rayreflections.h"
 #include "rendertargets.h"
@@ -28,6 +29,7 @@ void RenderFrame::BeginDraw()
         WaitForSingleObjectEx(m_FrameLatencyWaitableObject, 1000, TRUE);
     }
     GpuMemoryBudget::Update();
+    MemoryAllocator::LogStatisticsPeriodically();
     ModelManager::CollectRetiredAnimModels();
     RenderTargets::UpdateMemoryPolicy();
     Raytracing::ReleaseInactiveResources();

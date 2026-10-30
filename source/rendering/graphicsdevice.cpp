@@ -673,6 +673,7 @@ void GraphicsDevice::Uninit()
     TransmittanceShadows::Shutdown();
     MaterialManager::Shutdown();
     TextureManager::Uninit();
+    MemoryAllocator::LogStatistics();
     MemoryAllocator::Shutdown();
 
     if (m_ConstantBuffer)
