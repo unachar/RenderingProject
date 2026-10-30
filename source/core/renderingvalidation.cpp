@@ -12,6 +12,8 @@
 #include "gpuscene/gpuscenevalidation.h"
 #include "visibility/gpuvisibilityvalidation.h"
 #include "rendercapture.h"
+#include "referencecapture.h"
+#include "referenceintegrator.h"
 #include "rendertargets.h"
 #include "graphicsdevice.h"
 #include "graphicslog.h"
@@ -289,6 +291,47 @@ namespace
     {
         char value[8]{};
         return GetEnvironmentVariableA("DX12_SUN_LIGHTING_TEST", value, sizeof(value)) && atoi(value) != 0;
+    }
+
+    // Stage 2 H: one-shot reference path-tracer capture
+    // (DX12_REFERENCE_CAPTURE_TEST=1). Writes reference_cornell.pfm /
+    // .ppm next to the executable; size and spp can be overridden with
+    // DX12_REFERENCE_CAPTURE_SIZE / DX12_REFERENCE_CAPTURE_SPP.
+    bool ReferenceCaptureTestEnabled()
+    {
+        char value[8]{};
+        return GetEnvironmentVariableA("DX12_REFERENCE_CAPTURE_TEST", value, sizeof(value)) && atoi(value) != 0;
+    }
+
+    bool g_ReferenceCaptureDone = false;
+
+    void RunReferenceCaptureOnce()
+    {
+        if (g_ReferenceCaptureDone)
+        {
+            return;
+        }
+        g_ReferenceCaptureDone = true;
+        ReferenceCapture::Settings settings{};
+        settings.Width = 256;
+        settings.Height = 256;
+        settings.SamplesPerPixel = 256;
+        settings.SamplesPerDispatch = 16;
+        char value[16]{};
+        if (GetEnvironmentVariableA("DX12_REFERENCE_CAPTURE_SIZE", value, sizeof(value)) && atoi(value) > 0)
+        {
+            settings.Width = settings.Height = static_cast<uint32_t>(atoi(value));
+        }
+        if (GetEnvironmentVariableA("DX12_REFERENCE_CAPTURE_SPP", value, sizeof(value)) && atoi(value) > 0)
+        {
+            settings.SamplesPerPixel = static_cast<uint32_t>(atoi(value));
+        }
+        const bool ok = ReferenceIntegrator::RunCornellCaptureToFiles(
+            GraphicsDevice::GetDevice(), GraphicsDevice::GetCommandQueue(), settings, "reference_cornell.pfm",
+            "reference_cornell.ppm");
+        WriteGraphicsLog("Reference capture (Stage 2H): %s (%ux%u, %u spp)\n", ok ? "PASS" : "FAIL", settings.Width,
+                         settings.Height, settings.SamplesPerPixel);
+        Check(ok, "reference capture produced PFM and PPM outputs");
     }
 
     EntityID g_TestSun = g_kINVALID_ENTITY;
