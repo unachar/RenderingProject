@@ -7,8 +7,8 @@ $shadowCache = $targets | Where-Object Name -eq 'CompileShadowCacheShaders'
 if (@($shadowCache.Exec).Count -ne 2 -or @($shadowCache.Outputs.Split(';')).Count -ne 2) {
     throw 'Shadow cache must track both vertex and pixel shader outputs.'
 }
-if ($shaderTargets.Count -ne 34) {
-    throw 'Expected 34 individually tracked DXC shader outputs.'
+if ($shaderTargets.Count -ne 36) {
+    throw 'Expected 36 individually tracked DXC shader outputs.'
 }
 if (@($targets | Group-Object Name | Where-Object Count -gt 1).Count) {
     throw 'Duplicate target names.'

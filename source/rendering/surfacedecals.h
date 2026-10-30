@@ -34,6 +34,8 @@ namespace SurfaceDecals
         // strength at/above StartCos, fading to zero at EndCos.
         float AngleFadeStartCos = 0.5f;
         float AngleFadeEndCos = 0.25f;
+        // Roughness used when no roughness texture is bound.
+        float Roughness = 0.85f;
         // Draw order: lower priority rasterizes first.
         int32_t Priority = 0;
     };

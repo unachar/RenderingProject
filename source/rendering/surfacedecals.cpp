@@ -75,7 +75,7 @@ namespace SurfaceDecals
             packed.Textures[3] = decal.LayerMask;
             packed.Fade[0] = decal.AngleFadeStartCos;
             packed.Fade[1] = decal.AngleFadeEndCos;
-            packed.Fade[2] = 0.0f;
+            packed.Fade[2] = decal.Roughness;
             packed.Fade[3] = 0.0f;
             out.push_back(packed);
         }
