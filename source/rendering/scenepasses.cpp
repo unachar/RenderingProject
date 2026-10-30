@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "memoryallocator.h"
 #include "noisecachebindings.h"
 #include "renderprofiler.h"
 #include "megalights.h"
@@ -63,15 +64,24 @@ bool ScenePasses::PrepareStaticShadowCache()
     ReleaseStaticShadowCache();
     auto create = [&]() {
         const auto description = m_ShadowDepthBuffer->GetDesc();
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         D3D12_CLEAR_VALUE clear{};
         clear.Format = DXGI_FORMAT_D32_FLOAT;
         clear.DepthStencil.Depth = 1;
-        if (FAILED(m_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
-                                                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear,
-                                                     IID_PPV_ARGS(&g_StationaryShadowDepth))))
+        // Through D3D12MA when the flag is on; committed fallback otherwise.
+        if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(
+                description, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear))
         {
-            return false;
+            g_StationaryShadowDepth.Attach(allocated);
+        }
+        else
+        {
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            if (FAILED(m_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+                                                         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear,
+                                                         IID_PPV_ARGS(&g_StationaryShadowDepth))))
+            {
+                return false;
+            }
         }
         g_StationaryShadowDepth->SetName(L"Stationary VSM Depth Cache");
         D3D12_DESCRIPTOR_HEAP_DESC descriptors{};
