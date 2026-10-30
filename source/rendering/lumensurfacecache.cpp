@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "memoryallocator.h"
 #include "rendererstate.h"
 #include "lumensurfacecache.h"
 #include "graphicsdevice.h"
@@ -8,13 +9,22 @@ namespace
 {
     bool CreateBuffer(ID3D12Device* device, ComPtr<ID3D12Resource>& resource, UINT64 bytes, bool upload)
     {
-        const auto heap = CD3DX12_HEAP_PROPERTIES(upload ? D3D12_HEAP_TYPE_UPLOAD : D3D12_HEAP_TYPE_DEFAULT);
         const auto desc = CD3DX12_RESOURCE_DESC::Buffer(
             (std::max)(bytes, 256ull), upload ? D3D12_RESOURCE_FLAG_NONE : D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        return SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                         upload ? D3D12_RESOURCE_STATE_GENERIC_READ
-                                                                : D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                                                         nullptr, IID_PPV_ARGS(resource.ReleaseAndGetAddressOf())));
+        const auto state = upload ? D3D12_RESOURCE_STATE_GENERIC_READ : D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        // DEFAULT buffers go through D3D12MA when the flag is on.
+        if (!upload)
+        {
+            if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(desc, state, nullptr))
+            {
+                resource.Reset();
+                resource.Attach(allocated);
+                return true;
+            }
+        }
+        const auto heap = CD3DX12_HEAP_PROPERTIES(upload ? D3D12_HEAP_TYPE_UPLOAD : D3D12_HEAP_TYPE_DEFAULT);
+        return SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, state, nullptr,
+                                                         IID_PPV_ARGS(resource.ReleaseAndGetAddressOf())));
     }
 
     bool Upload(ID3D12Resource* buffer, const void* source, size_t bytes)
@@ -50,18 +60,26 @@ bool LumenSurfaceCache::Prepare(ID3D12Device* device, UINT frame, const vector<R
 {
     if (!m_Atlases[0])
     {
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         for (UINT i = 0; i < m_Atlases.size(); ++i)
         {
             const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(
                 i == 0 ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R16G16B16A16_FLOAT, AtlasWidth, AtlasHeight, 1, 1,
                 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-            if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-                                                       IID_PPV_ARGS(&m_Atlases[i]))))
+            if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(
+                    desc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr))
             {
-                Reset();
-                return false;
+                m_Atlases[i].Attach(allocated);
+            }
+            else
+            {
+                const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+                if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                           IID_PPV_ARGS(&m_Atlases[i]))))
+                {
+                    Reset();
+                    return false;
+                }
             }
             m_Atlases[i]->SetName(L"Lumen Surface Atlas");
         }
