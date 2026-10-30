@@ -1,5 +1,30 @@
 # Stage 2J follow-up — per-pixel two-probe blending: design
 
+## Root-signature audit (2026-10-31, resolves the Route A gate)
+
+Route A samples through `LoadMaterialTexture`
+(MaterialTextureHeap.hlsli), which has two modes:
+
+- **RP_BINDLESS=1** (runtime DXC path, `g_BindlessShaderSettings`
+  in dxccompiler.h): uses `ResourceDescriptorHeap` (SM 6.6) with
+  a heap-base constant — no root table required. Route A works
+  as-is in this mode, in both deferred and forward shaders.
+- **RP_BINDLESS=0** (precompiled CSOs, the default): declares
+  `AssetTextureHeap[512] : register(t0, space1)`, so the root
+  signature must bind a space-1 SRV table. The postprocess root
+  signature (shaderpipelines.cpp) binds its 512-texture table at
+  root 38 in **space 5**, not space 1 — so the deferred lighting
+  path would sample an unbound table. The forward / GPU-driven
+  opaque path already exercises the same include successfully.
+
+**Decision:** `PROBE_BLENDING_BINDLESS` may be enabled only when
+the engine's bindless shader mode is active. Enabling it for the
+default precompiled deferred path additionally requires adding a
+space-1 range to the postprocess root signature (and binding the
+engine texture heap to it in DrawFullscreenPass). The frame-global
+top-2 selection and remainder weighting stay live either way;
+only the per-pixel Route A fetch is gated.
+
 Status: DESIGN. Stage 2J v1 selects ONE probe per frame (the
 camera-containing, highest-priority one) and overrides the
 environment texture for the whole frame; box projection (landed in
