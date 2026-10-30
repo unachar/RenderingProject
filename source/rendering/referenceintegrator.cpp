@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "referenceintegrator.h"
+#include "referencecapture.h"
 #include "referencefixture.h"
 
 #include <vector>
@@ -102,6 +103,20 @@ namespace ReferenceIntegrator
     uint32_t LightCount()
     {
         return g_LightCount;
+    }
+
+    uint64_t GetTlasAddress()
+    {
+        return g_TlasResult ? g_TlasResult->GetGPUVirtualAddress() : 0;
+    }
+
+    uint64_t GetSceneBufferAddress(int index)
+    {
+        if (index < 0 || index >= static_cast<int>(g_SceneBuffers.size()) || !g_SceneBuffers[index])
+        {
+            return 0;
+        }
+        return g_SceneBuffers[index]->GetGPUVirtualAddress();
     }
 
     bool BuildFixtureScene(ID3D12Device* device, ID3D12GraphicsCommandList* commandList,
@@ -289,6 +304,260 @@ namespace ReferenceIntegrator
         tlasBuild.ScratchAccelerationStructureData = tlasScratch->GetGPUVirtualAddress();
         tlasBuild.DestAccelerationStructureData = g_TlasResult->GetGPUVirtualAddress();
         list4->BuildRaytracingAccelerationStructure(&tlasBuild, 0, nullptr);
+        return true;
+    }
+
+    namespace
+    {
+        ComPtr<ID3D12RootSignature> g_RootSignature;
+        ComPtr<ID3D12PipelineState> g_Pso;
+        ComPtr<ID3D12DescriptorHeap> g_UavHeap;      // shader-visible, slot 0 = accumulation UAV
+        ComPtr<ID3D12DescriptorHeap> g_UavHeapCpu;   // non-visible twin for ClearUnorderedAccessViewFloat
+
+        bool EnsurePipeline(ID3D12Device* device)
+        {
+            if (g_Pso)
+            {
+                return true;
+            }
+            CD3DX12_ROOT_PARAMETER parameters[11];
+            parameters[0].InitAsConstants(30, 0);
+            for (int i = 0; i < 9; ++i)
+            {
+                parameters[1 + i].InitAsShaderResourceView(i);
+            }
+            CD3DX12_DESCRIPTOR_RANGE uavRange(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
+            parameters[10].InitAsDescriptorTable(1, &uavRange, D3D12_SHADER_VISIBILITY_ALL);
+            CD3DX12_ROOT_SIGNATURE_DESC rootDesc(_countof(parameters), parameters, 0, nullptr,
+                                                 D3D12_ROOT_SIGNATURE_FLAG_NONE);
+            ComPtr<ID3DBlob> serialized;
+            ComPtr<ID3DBlob> errors;
+            if (FAILED(D3D12SerializeRootSignature(&rootDesc, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors)) ||
+                FAILED(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
+                                                   IID_PPV_ARGS(&g_RootSignature))))
+            {
+                return false;
+            }
+            ComPtr<ID3DBlob> shader;
+            if (FAILED(D3DReadFileToBlob(L"shader/hlsl/build/ReferencePathTraceCS.cso", &shader)))
+            {
+                return false;
+            }
+            D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
+            pso.pRootSignature = g_RootSignature.Get();
+            pso.CS = CD3DX12_SHADER_BYTECODE(shader.Get());
+            if (FAILED(device->CreateComputePipelineState(&pso, IID_PPV_ARGS(&g_Pso))))
+            {
+                return false;
+            }
+            D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
+            heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+            heapDesc.NumDescriptors = 1;
+            heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+            if (FAILED(device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&g_UavHeap))))
+            {
+                return false;
+            }
+            heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+            return SUCCEEDED(device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&g_UavHeapCpu)));
+        }
+
+        bool WaitForQueue(ID3D12Device* device, ID3D12CommandQueue* queue)
+        {
+            ComPtr<ID3D12Fence> fence;
+            if (FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence))))
+            {
+                return false;
+            }
+            HANDLE eventHandle = CreateEventEx(nullptr, nullptr, 0, EVENT_ALL_ACCESS);
+            if (eventHandle == nullptr)
+            {
+                return false;
+            }
+            bool ok = SUCCEEDED(queue->Signal(fence.Get(), 1)) &&
+                      SUCCEEDED(fence->SetEventOnCompletion(1, eventHandle));
+            if (ok)
+            {
+                WaitForSingleObject(eventHandle, INFINITE);
+            }
+            CloseHandle(eventHandle);
+            return ok;
+        }
+    } // namespace
+
+    bool RunCornellCapture(ID3D12Device* device, ID3D12CommandQueue* queue,
+                           const ReferenceCapture::Settings& settings, CaptureResult& result)
+    {
+        result = {};
+        if (device == nullptr || queue == nullptr || !EnsurePipeline(device))
+        {
+            return false;
+        }
+        if (!ReferenceCapture::Begin(settings))
+        {
+            return false;
+        }
+        struct JobGuard
+        {
+            bool Done = false;
+            ~JobGuard()
+            {
+                if (!Done)
+                {
+                    ReferenceCapture::Cancel();
+                }
+            }
+        } guard;
+        if (!ReferenceCapture::EnsureTargets(device))
+        {
+            return false;
+        }
+        ID3D12Resource* accumulation = ReferenceCapture::GetAccumulationResource();
+        {
+            D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+            uavDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+            uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+            device->CreateUnorderedAccessView(accumulation, nullptr, &uavDesc, g_UavHeap->GetCPUDescriptorHandleForHeapStart());
+            device->CreateUnorderedAccessView(accumulation, nullptr, &uavDesc, g_UavHeapCpu->GetCPUDescriptorHandleForHeapStart());
+        }
+
+        ComPtr<ID3D12CommandAllocator> allocator;
+        ComPtr<ID3D12GraphicsCommandList> list;
+        if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator))) ||
+            FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr,
+                                             IID_PPV_ARGS(&list))))
+        {
+            return false;
+        }
+        const ReferenceFixture::SceneData scene = ReferenceFixture::BuildCornellBox();
+        if (!BuildFixtureScene(device, list.Get(), scene))
+        {
+            return false;
+        }
+        const float clearValue[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        list->ClearUnorderedAccessViewFloat(g_UavHeap->GetGPUDescriptorHandleForHeapStart(),
+                                            g_UavHeapCpu->GetCPUDescriptorHandleForHeapStart(), accumulation,
+                                            clearValue, 0, nullptr);
+
+        // Camera matrices from the fixture suggestion.
+        const XMFLOAT3 cameraPosFloat(scene.CameraPosition[0], scene.CameraPosition[1], scene.CameraPosition[2]);
+        const XMFLOAT3 cameraTargetFloat(scene.CameraTarget[0], scene.CameraTarget[1], scene.CameraTarget[2]);
+        const XMVECTOR cameraPos = XMLoadFloat3(&cameraPosFloat);
+        const XMVECTOR cameraTarget = XMLoadFloat3(&cameraTargetFloat);
+        const XMMATRIX view = XMMatrixLookAtLH(cameraPos, cameraTarget, XMVectorSet(0, 1, 0, 0));
+        const float aspect = static_cast<float>(settings.Width) / static_cast<float>(settings.Height);
+        const XMMATRIX projection = XMMatrixPerspectiveFovLH(scene.CameraFovYRadians, aspect, 0.1f, 100.0f);
+        XMFLOAT4X4 invViewProjection{};
+        XMStoreFloat4x4(&invViewProjection, XMMatrixTranspose(XMMatrixInverse(nullptr, view * projection)));
+
+        struct Constants
+        {
+            float InvViewProjection[16];
+            float CameraPosition[3];
+            uint32_t SampleOffset;
+            uint32_t Resolution[2];
+            uint32_t SamplesInDispatch;
+            uint32_t MaxDepth;
+            uint32_t JobSeed;
+            uint32_t LightCount;
+            float SkyRadiance[3];
+            uint32_t Padding;
+        };
+        list->SetComputeRootSignature(g_RootSignature.Get());
+        list->SetPipelineState(g_Pso.Get());
+        ID3D12DescriptorHeap* heaps[] = {g_UavHeap.Get()};
+        list->SetDescriptorHeaps(1, heaps);
+        list->SetComputeRootShaderResourceView(1, GetTlasAddress());
+        for (int i = 0; i < 8; ++i)
+        {
+            list->SetComputeRootShaderResourceView(2 + i, GetSceneBufferAddress(i));
+        }
+        list->SetComputeRootDescriptorTable(10, g_UavHeap->GetGPUDescriptorHandleForHeapStart());
+        bool finished = false;
+        while (!finished)
+        {
+            Constants constants{};
+            std::memcpy(constants.InvViewProjection, &invViewProjection, sizeof(invViewProjection));
+            constants.CameraPosition[0] = scene.CameraPosition[0];
+            constants.CameraPosition[1] = scene.CameraPosition[1];
+            constants.CameraPosition[2] = scene.CameraPosition[2];
+            constants.SampleOffset = ReferenceCapture::GetAccumulatedSamples();
+            constants.Resolution[0] = settings.Width;
+            constants.Resolution[1] = settings.Height;
+            constants.SamplesInDispatch = settings.SamplesPerDispatch;
+            constants.MaxDepth = settings.MaxDepth;
+            constants.JobSeed = settings.Seed;
+            constants.LightCount = LightCount();
+            list->SetComputeRoot32BitConstants(0, 30, &constants, 0);
+            list->Dispatch((settings.Width + 7) / 8, (settings.Height + 7) / 8, 1);
+            D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::UAV(accumulation);
+            list->ResourceBarrier(1, &barrier);
+            finished = ReferenceCapture::RecordDispatchComplete();
+        }
+
+        // Readback: accumulation -> readback buffer.
+        const uint64_t rowPitch = (static_cast<uint64_t>(settings.Width) * 16 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) &
+                                  ~(static_cast<uint64_t>(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) - 1);
+        const uint64_t readbackSize = rowPitch * settings.Height;
+        ComPtr<ID3D12Resource> readback;
+        {
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
+            const auto desc = CD3DX12_RESOURCE_DESC::Buffer(readbackSize);
+            if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                       D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                       IID_PPV_ARGS(&readback))))
+            {
+                return false;
+            }
+        }
+        D3D12_RESOURCE_BARRIER toCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+            accumulation, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        list->ResourceBarrier(1, &toCopy);
+        D3D12_TEXTURE_COPY_LOCATION dest{};
+        dest.pResource = readback.Get();
+        dest.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        dest.PlacedFootprint.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+        dest.PlacedFootprint.Width = settings.Width;
+        dest.PlacedFootprint.Height = settings.Height;
+        dest.PlacedFootprint.Depth = 1;
+        dest.PlacedFootprint.RowPitch = static_cast<UINT>(rowPitch);
+        D3D12_TEXTURE_COPY_LOCATION src{};
+        src.pResource = accumulation;
+        src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        src.SubresourceIndex = 0;
+        list->CopyTextureRegion(&dest, 0, 0, 0, &src, nullptr);
+        if (FAILED(list->Close()))
+        {
+            return false;
+        }
+        ID3D12CommandList* lists[] = {list.Get()};
+        queue->ExecuteCommandLists(1, lists);
+        if (!WaitForQueue(device, queue))
+        {
+            return false;
+        }
+        void* mapped = nullptr;
+        const D3D12_RANGE readRange{0, static_cast<SIZE_T>(readbackSize)};
+        if (FAILED(readback->Map(0, &readRange, &mapped)))
+        {
+            return false;
+        }
+        result.Width = settings.Width;
+        result.Height = settings.Height;
+        result.Samples = ReferenceCapture::GetAccumulatedSamples();
+        result.Pixels.resize(static_cast<size_t>(settings.Width) * settings.Height * 4);
+        const float invSamples = 1.0f / static_cast<float>(result.Samples);
+        for (uint32_t y = 0; y < settings.Height; ++y)
+        {
+            const float* srcRow = reinterpret_cast<const float*>(static_cast<const uint8_t*>(mapped) + rowPitch * y);
+            float* dstRow = &result.Pixels[static_cast<size_t>(y) * settings.Width * 4];
+            for (size_t i = 0; i < static_cast<size_t>(settings.Width) * 4; ++i)
+            {
+                dstRow[i] = srcRow[i] * invSamples;
+            }
+        }
+        readback->Unmap(0, nullptr);
+        guard.Done = true;
         return true;
     }
 } // namespace ReferenceIntegrator
