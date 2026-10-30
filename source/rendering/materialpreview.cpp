@@ -17,6 +17,7 @@
 #include "imguimanager.h"
 #include "materialvalidation.h"
 #include "rendererstate.h"
+#include "memoryallocator.h"
 #include <cmath>
 #include <mutex>
 
@@ -198,9 +199,21 @@ namespace
         clear.Color[1] = 0.13f;
         clear.Color[2] = 0.16f;
         clear.Color[3] = 1;
-        if (FAILED(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &target,
-                                                   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear,
-                                                   IID_PPV_ARGS(&Target))))
+        // Preview target/depth are persistent DEFAULT-heap resources: route
+        // them through D3D12MA when enabled, committed resource otherwise.
+        const auto createPreviewResource = [&](const D3D12_RESOURCE_DESC& description,
+                                               D3D12_RESOURCE_STATES initialState, const D3D12_CLEAR_VALUE& clearValue,
+                                               ComPtr<ID3D12Resource>& output) {
+            if (ID3D12Resource* allocated =
+                    MemoryAllocator::CreateResourceAutoLifetime(description, initialState, &clearValue))
+            {
+                output.Attach(allocated);
+                return true;
+            }
+            return SUCCEEDED(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &description,
+                                                             initialState, &clearValue, IID_PPV_ARGS(&output)));
+        };
+        if (!createPreviewResource(target, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, clear, Target))
         {
             Error = "Failed to create material preview target";
             return false;
@@ -209,8 +222,7 @@ namespace
         target.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
         clear.Format = target.Format;
         clear.DepthStencil.Depth = 0.0f;
-        if (FAILED(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &target,
-                                                   D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear, IID_PPV_ARGS(&Depth))))
+        if (!createPreviewResource(target, D3D12_RESOURCE_STATE_DEPTH_WRITE, clear, Depth))
         {
             Error = "Failed to create preview depth";
             Target.Reset();
