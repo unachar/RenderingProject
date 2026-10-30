@@ -58,7 +58,7 @@ namespace ScreenSpaceReflections
         uint32_t MaxSteps;
         float StridePixels;
         float EdgeFade;
-        float Roughness;
+        float FallbackRoughness;
         float CameraPosition[3];
         float Padding0;
         float CameraForward[3];
@@ -72,6 +72,7 @@ namespace ScreenSpaceReflections
         D3D12_GPU_DESCRIPTOR_HANDLE HiZSrv;
         D3D12_GPU_DESCRIPTOR_HANDLE NormalSrv;
         D3D12_GPU_DESCRIPTOR_HANDLE PreviousColorSrv;
+        D3D12_GPU_DESCRIPTOR_HANDLE MaterialSrv;
         TraceConstants Constants;
     };
 

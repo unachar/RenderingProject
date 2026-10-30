@@ -781,6 +781,7 @@ void ScenePasses::ExecuteScreenSpaceReflections()
     inputs.HiZSrv = OcclusionCulling::GetCurrentSrv();
     inputs.NormalSrv = m_GBufferSrvHandles[static_cast<UINT>(GBufferType::NORMAL)];
     inputs.PreviousColorSrv = GetRenderTargetSrvHandle(RenderTargetType::PreUpscaleAaHistory);
+    inputs.MaterialSrv = m_GBufferSrvHandles[static_cast<UINT>(GBufferType::MATERIAL)];
 
     ScreenSpaceReflections::TraceConstants& constants = inputs.Constants;
     XMFLOAT4X4 stored{};
@@ -801,7 +802,7 @@ void ScenePasses::ExecuteScreenSpaceReflections()
     constants.MaxSteps = 64;
     constants.StridePixels = 8.0f;
     constants.EdgeFade = 0.08f;
-    constants.Roughness = 0.5f;
+    constants.FallbackRoughness = 0.5f;
     XMFLOAT3 cameraPosition{0.0f, 0.0f, 5.0f};
     if (camera != g_kINVALID_ENTITY && ComponentManager::HasComponent<TransformComponent>(camera))
     {

@@ -28,15 +28,16 @@ namespace ScreenSpaceReflections
             {
                 return true;
             }
-            CD3DX12_DESCRIPTOR_RANGE ranges[5];
+            CD3DX12_DESCRIPTOR_RANGE ranges[6];
             ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
             ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
             ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);
             ranges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3);
-            ranges[4].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
-            CD3DX12_ROOT_PARAMETER parameters[6];
+            ranges[4].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4);
+            ranges[5].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
+            CD3DX12_ROOT_PARAMETER parameters[7];
             parameters[0].InitAsConstants(52, 0);
-            for (int i = 0; i < 5; ++i)
+            for (int i = 0; i < 6; ++i)
             {
                 parameters[1 + i].InitAsDescriptorTable(1, &ranges[i], D3D12_SHADER_VISIBILITY_ALL);
             }
@@ -217,8 +218,9 @@ namespace ScreenSpaceReflections
         commandList->SetComputeRootDescriptorTable(2, inputs.HiZSrv);
         commandList->SetComputeRootDescriptorTable(3, inputs.NormalSrv);
         commandList->SetComputeRootDescriptorTable(4, inputs.PreviousColorSrv);
+        commandList->SetComputeRootDescriptorTable(5, inputs.MaterialSrv);
         commandList->SetComputeRootDescriptorTable(
-            5, CD3DX12_GPU_DESCRIPTOR_HANDLE(g_Heap->GetGPUDescriptorHandleForHeapStart(), 1, g_DescriptorIncrement));
+            6, CD3DX12_GPU_DESCRIPTOR_HANDLE(g_Heap->GetGPUDescriptorHandleForHeapStart(), 1, g_DescriptorIncrement));
         if (g_ResultInSrvState)
         {
             D3D12_RESOURCE_BARRIER toUav = CD3DX12_RESOURCE_BARRIER::Transition(

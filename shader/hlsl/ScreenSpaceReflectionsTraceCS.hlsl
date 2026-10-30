@@ -18,6 +18,7 @@ Texture2D<float> SceneDepth : register(t0);
 Texture2D<float> HiZTexture : register(t1);
 Texture2D<float4> GBufferNormal : register(t2);
 Texture2D<float4> PreviousSceneColor : register(t3);
+Texture2D<float4> GBufferMaterial : register(t4);
 RWTexture2D<float4> ReflectionResult : register(u0);
 SamplerState PointSampler : register(s0);
 SamplerState LinearSampler : register(s1);
@@ -35,7 +36,7 @@ cbuffer TraceConstants : register(b0)
     uint MaxSteps;
     float StridePixels;
     float EdgeFade;
-    float Roughness;
+    float FallbackRoughness;
     float3 CameraPosition;
     float TracePadding0;
     float3 CameraForward;
@@ -164,6 +165,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     {
         return;
     }
-    const float3 radiance = PreviousSceneColor.SampleLevel(LinearSampler, hitUv, Roughness * 4.0f).rgb;
+    // Per-pixel roughness of the reflecting surface (material
+    // GBuffer g channel) drives the prefilter mip; the constant is
+    // only a fallback for pixels without a material entry.
+    const float roughness = GBufferMaterial.Load(int3(pixel, 0)).g;
+    const float effectiveRoughness = roughness > 0.001f ? roughness : FallbackRoughness;
+    const float3 radiance = PreviousSceneColor.SampleLevel(LinearSampler, hitUv, effectiveRoughness * 4.0f).rgb;
     ReflectionResult[pixel] = float4(radiance, confidence);
 }
