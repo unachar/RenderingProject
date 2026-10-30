@@ -19,6 +19,7 @@ namespace ScreenSpaceReflections
         UINT g_DescriptorIncrement = 0;
         Source g_FrameSource = Source::Environment;
         bool g_ResultProduced = false;
+        bool g_ResultInSrvState = false;
         int g_ResultEngineSrvIndex = -1;
 
         bool EnsurePipeline(ID3D12Device* device)
@@ -34,7 +35,7 @@ namespace ScreenSpaceReflections
             ranges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3);
             ranges[4].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
             CD3DX12_ROOT_PARAMETER parameters[6];
-            parameters[0].InitAsConstants(44, 0);
+            parameters[0].InitAsConstants(52, 0);
             for (int i = 0; i < 5; ++i)
             {
                 parameters[1 + i].InitAsDescriptorTable(1, &ranges[i], D3D12_SHADER_VISIBILITY_ALL);
@@ -168,6 +169,7 @@ namespace ScreenSpaceReflections
         g_ResultWidth = width;
         g_ResultHeight = height;
         g_ResultProduced = false;
+        g_ResultInSrvState = false;
         // Register in the engine heap so the lighting pass can bind
         // the result exactly like the raytraced reflection texture.
         const std::string registration = "ssr://result/" + std::to_string(width) + "x" + std::to_string(height);
@@ -181,6 +183,7 @@ namespace ScreenSpaceReflections
         g_ResultWidth = 0;
         g_ResultHeight = 0;
         g_ResultProduced = false;
+        g_ResultInSrvState = false;
         g_ResultEngineSrvIndex = -1;
     }
 
@@ -209,16 +212,25 @@ namespace ScreenSpaceReflections
         commandList->SetPipelineState(g_Pso.Get());
         ID3D12DescriptorHeap* heaps[] = {engineHeap, g_Heap.Get()};
         commandList->SetDescriptorHeaps(2, heaps);
-        commandList->SetComputeRoot32BitConstants(0, 44, &inputs.Constants, 0);
+        commandList->SetComputeRoot32BitConstants(0, 52, &inputs.Constants, 0);
         commandList->SetComputeRootDescriptorTable(1, inputs.DepthSrv);
         commandList->SetComputeRootDescriptorTable(2, inputs.HiZSrv);
         commandList->SetComputeRootDescriptorTable(3, inputs.NormalSrv);
         commandList->SetComputeRootDescriptorTable(4, inputs.PreviousColorSrv);
         commandList->SetComputeRootDescriptorTable(
             5, CD3DX12_GPU_DESCRIPTOR_HANDLE(g_Heap->GetGPUDescriptorHandleForHeapStart(), 1, g_DescriptorIncrement));
+        if (g_ResultInSrvState)
+        {
+            D3D12_RESOURCE_BARRIER toUav = CD3DX12_RESOURCE_BARRIER::Transition(
+                g_Result.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commandList->ResourceBarrier(1, &toUav);
+            g_ResultInSrvState = false;
+        }
         commandList->Dispatch((g_ResultWidth + 7) / 8, (g_ResultHeight + 7) / 8, 1);
-        D3D12_RESOURCE_BARRIER uavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(g_Result.Get());
-        commandList->ResourceBarrier(1, &uavBarrier);
+        D3D12_RESOURCE_BARRIER toSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+            g_Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        commandList->ResourceBarrier(1, &toSrv);
+        g_ResultInSrvState = true;
         g_ResultProduced = true;
         return true;
     }

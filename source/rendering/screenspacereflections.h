@@ -41,12 +41,14 @@ namespace ScreenSpaceReflections
     int GetResultEngineSrvIndex();
 
     // Trace constants, laid out to match ScreenSpaceReflectionsTraceCS
-    // cbuffer exactly (44 DWORDs). Matrices are stored transposed
-    // (engine HLSL convention).
+    // cbuffer exactly (52 DWORDs). Matrices are stored transposed
+    // (engine HLSL convention). DepthNumerator/DepthDenominator come
+    // from the projection matrix: Numerator = P[3][2],
+    // Denominator = P[2][2] (row-major element indices).
     struct TraceConstants
     {
-        float InvProjection[16];
-        float Projection[16];
+        float InvViewProjection[16];
+        float ViewProjection[16];
         float Resolution[2];
         float InvResolution[2];
         float DepthNumerator;
@@ -57,6 +59,10 @@ namespace ScreenSpaceReflections
         float StridePixels;
         float EdgeFade;
         float Roughness;
+        float CameraPosition[3];
+        float Padding0;
+        float CameraForward[3];
+        float Padding1;
     };
 
     struct TraceInputs

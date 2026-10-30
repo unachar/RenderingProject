@@ -1,17 +1,18 @@
 // Native Hi-Z screen-space reflections: trace pass (see
 // docs/rendering-technology-ssr-design.md). One thread per output
-// pixel marches the reflected ray through the Hi-Z pyramid and
-// writes reflected radiance (rgb) + confidence (a) sampled from the
-// previous frame's lit scene color. Own root signature: b0
-// constants, t0 depth, t1 Hi-Z, t2 world normal (GBuffer encoding),
-// t3 previous scene color, u0 result, s0 linear clamp.
+// pixel marches the reflected ray (world space) through the Hi-Z
+// pyramid and writes reflected radiance (rgb) + confidence (a)
+// sampled from the previous frame's lit scene color. Own root
+// signature: b0 constants, t0 depth, t1 Hi-Z, t2 world normal
+// (GBuffer encoding), t3 previous scene color, u0 result, s0 point,
+// s1 linear.
 //
 // Depth convention: the engine uses reverse-Z. The Hi-Z pyramid
 // stores per-cell the FARTHEST surface depth (smallest stored
 // value). Stored depth d converts to positive view-space distance
 // as ViewZ = DepthNumerator / (d - DepthDenominator); the host
-// derives both constants from the projection matrix in use (third
-// row), validated in the integration step.
+// derives both from the projection matrix (for the row-vector
+// convention, Numerator = P[3][2], Denominator = P[2][2]).
 
 Texture2D<float> SceneDepth : register(t0);
 Texture2D<float> HiZTexture : register(t1);
@@ -23,8 +24,8 @@ SamplerState LinearSampler : register(s1);
 
 cbuffer TraceConstants : register(b0)
 {
-    float4x4 InvProjection;
-    float4x4 Projection;
+    float4x4 InvViewProjection;
+    float4x4 ViewProjection;
     float2 Resolution;
     float2 InvResolution;
     float DepthNumerator;
@@ -35,6 +36,10 @@ cbuffer TraceConstants : register(b0)
     float StridePixels;
     float EdgeFade;
     float Roughness;
+    float3 CameraPosition;
+    float TracePadding0;
+    float3 CameraForward;
+    float TracePadding1;
 };
 
 float ViewZFromStoredDepth(float storedDepth)
@@ -42,17 +47,22 @@ float ViewZFromStoredDepth(float storedDepth)
     return DepthNumerator / (storedDepth - DepthDenominator);
 }
 
-float3 ViewPositionFromDepth(float2 uv, float storedDepth)
+float3 WorldPositionFromDepth(float2 uv, float storedDepth)
 {
     const float4 clip = float4(uv * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f), storedDepth, 1.0f);
-    const float4 view = mul(clip, InvProjection);
-    return view.xyz / view.w;
+    const float4 world = mul(clip, InvViewProjection);
+    return world.xyz / world.w;
 }
 
-float2 ProjectToUv(float3 viewPosition)
+float2 ProjectToUv(float3 worldPosition)
 {
-    const float4 clip = mul(float4(viewPosition, 1.0f), Projection);
+    const float4 clip = mul(float4(worldPosition, 1.0f), ViewProjection);
     return (clip.xy / clip.w) * float2(0.5f, -0.5f) + 0.5f;
+}
+
+float ViewDistanceOf(float3 worldPosition)
+{
+    return dot(worldPosition - CameraPosition, CameraForward);
 }
 
 [numthreads(8, 8, 1)]
@@ -71,25 +81,20 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     {
         return; // sky (reverse-Z far)
     }
-    const float3 viewPosition = ViewPositionFromDepth(uv, depth);
+    const float3 worldPosition = WorldPositionFromDepth(uv, depth);
     const float3 worldNormal = normalize(GBufferNormal.Load(int3(pixel, 0)).rgb * 2.0f - 1.0f);
-    // The trace works in view space; the host passes normals already
-    // transformed by the normal matrix packed into InvProjection's
-    // frame setup step (integration step wires the view-space normal
-    // GBuffer view). Until then worldNormal is used as-is and the
-    // module stays disabled by default.
-    const float3 V = normalize(viewPosition);
-    const float3 R = reflect(V, normalize(worldNormal));
-    if (R.z >= 0.0f)
+    const float3 V = normalize(worldPosition - CameraPosition);
+    const float3 R = reflect(V, worldNormal);
+    if (dot(R, CameraForward) <= 0.001f)
     {
-        return; // reflected ray points away from the camera
+        return; // reflected ray does not advance into the frustum
     }
 
     // March along the ray (parameter t = distance from the shaded
     // point), sampling the Hi-Z pyramid at a mip derived from the
     // step footprint; refine hits with a short binary search
     // against mip 0 depth.
-    const float3 rayStart = viewPosition + R * (Thickness * 0.5f);
+    const float3 rayStart = worldPosition + R * (Thickness * 0.5f);
     const float stepLength = MaxDistance / float(MaxSteps);
     float previousT = 0.0f;
     bool hit = false;
@@ -98,7 +103,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     {
         const float t = stepLength * float(step);
         const float3 rayPosition = rayStart + R * t;
-        const float rayViewZ = -rayPosition.z;
+        const float rayViewZ = ViewDistanceOf(rayPosition);
         if (rayViewZ <= 0.0f)
         {
             break;
@@ -129,7 +134,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
                         lo = midT;
                         continue;
                     }
-                    if (-midPosition.z > ViewZFromStoredDepth(refinedDepth))
+                    if (ViewDistanceOf(midPosition) > ViewZFromStoredDepth(refinedDepth))
                     {
                         hi = midT;
                     }
