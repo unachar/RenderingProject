@@ -315,6 +315,7 @@ namespace ReferenceIntegrator
     {
         ComPtr<ID3D12RootSignature> g_RootSignature;
         ComPtr<ID3D12PipelineState> g_Pso;
+        ComPtr<ID3D12PipelineState> g_AovPso; // null when the AOV blob is unavailable
         ComPtr<ID3D12DescriptorHeap> g_UavHeap;      // shader-visible, slot 0 = accumulation UAV
         ComPtr<ID3D12DescriptorHeap> g_UavHeapCpu;   // non-visible twin for ClearUnorderedAccessViewFloat
 
@@ -330,7 +331,7 @@ namespace ReferenceIntegrator
             {
                 parameters[1 + i].InitAsShaderResourceView(i);
             }
-            CD3DX12_DESCRIPTOR_RANGE uavRange(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
+            CD3DX12_DESCRIPTOR_RANGE uavRange(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 0);
             parameters[10].InitAsDescriptorTable(1, &uavRange, D3D12_SHADER_VISIBILITY_ALL);
             CD3DX12_ROOT_SIGNATURE_DESC rootDesc(_countof(parameters), parameters, 0, nullptr,
                                                  D3D12_ROOT_SIGNATURE_FLAG_NONE);
@@ -354,9 +355,17 @@ namespace ReferenceIntegrator
             {
                 return false;
             }
+            ComPtr<ID3DBlob> aovShader;
+            if (SUCCEEDED(D3DReadFileToBlob(L"shader/hlsl/build/ReferencePathTraceAovCS.cso", &aovShader)))
+            {
+                D3D12_COMPUTE_PIPELINE_STATE_DESC aovPso{};
+                aovPso.pRootSignature = g_RootSignature.Get();
+                aovPso.CS = CD3DX12_SHADER_BYTECODE(aovShader.Get());
+                device->CreateComputePipelineState(&aovPso, IID_PPV_ARGS(&g_AovPso));
+            }
             D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
             heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-            heapDesc.NumDescriptors = 1;
+            heapDesc.NumDescriptors = 3;
             heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
             if (FAILED(device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&g_UavHeap))))
             {
@@ -391,8 +400,10 @@ namespace ReferenceIntegrator
 
     bool RunFixtureCapture(ID3D12Device* device, ID3D12CommandQueue* queue,
                            const ReferenceCapture::Settings& settings,
-                           const ReferenceFixture::SceneData& scene, CaptureResult& result)
+                           const ReferenceFixture::SceneData& scene, CaptureResult& result,
+                           CaptureResult* albedoOut = nullptr, CaptureResult* normalOut = nullptr)
     {
+        const bool wantAovs = albedoOut != nullptr && normalOut != nullptr && g_AovPso;
         result = {};
         if (device == nullptr || queue == nullptr || !EnsurePipeline(device))
         {
@@ -418,12 +429,37 @@ namespace ReferenceIntegrator
             return false;
         }
         ID3D12Resource* accumulation = ReferenceCapture::GetAccumulationResource();
+        ComPtr<ID3D12Resource> aovAlbedo;
+        ComPtr<ID3D12Resource> aovNormal;
         {
             D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
             uavDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
             uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
             device->CreateUnorderedAccessView(accumulation, nullptr, &uavDesc, g_UavHeap->GetCPUDescriptorHandleForHeapStart());
             device->CreateUnorderedAccessView(accumulation, nullptr, &uavDesc, g_UavHeapCpu->GetCPUDescriptorHandleForHeapStart());
+            if (wantAovs)
+            {
+                const auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+                const auto texDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT, settings.Width,
+                                                                  settings.Height, 1, 1, 1, 0,
+                                                                  D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+                if (FAILED(device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc,
+                                                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                           IID_PPV_ARGS(&aovAlbedo))) ||
+                    FAILED(device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc,
+                                                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                           IID_PPV_ARGS(&aovNormal))))
+                {
+                    return false;
+                }
+                const UINT increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                device->CreateUnorderedAccessView(aovAlbedo.Get(), nullptr, &uavDesc,
+                                                  CD3DX12_CPU_DESCRIPTOR_HANDLE(
+                                                      g_UavHeap->GetCPUDescriptorHandleForHeapStart(), 1, increment));
+                device->CreateUnorderedAccessView(aovNormal.Get(), nullptr, &uavDesc,
+                                                  CD3DX12_CPU_DESCRIPTOR_HANDLE(
+                                                      g_UavHeap->GetCPUDescriptorHandleForHeapStart(), 2, increment));
+            }
         }
 
         ComPtr<ID3D12CommandAllocator> allocator;
@@ -499,6 +535,60 @@ namespace ReferenceIntegrator
             finished = ReferenceCapture::RecordDispatchComplete();
         }
 
+        // AOV pass: one center ray per pixel, then stage readbacks
+        // alongside the beauty one.
+        ComPtr<ID3D12Resource> aovAlbedoReadback;
+        ComPtr<ID3D12Resource> aovNormalReadback;
+        const uint64_t aovRowPitch = (static_cast<uint64_t>(settings.Width) * 16 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) &
+                                     ~(static_cast<uint64_t>(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) - 1);
+        if (wantAovs)
+        {
+            Constants aovConstants{};
+            std::memcpy(aovConstants.InvViewProjection, &invViewProjection, sizeof(invViewProjection));
+            aovConstants.CameraPosition[0] = scene.CameraPosition[0];
+            aovConstants.CameraPosition[1] = scene.CameraPosition[1];
+            aovConstants.CameraPosition[2] = scene.CameraPosition[2];
+            aovConstants.Resolution[0] = settings.Width;
+            aovConstants.Resolution[1] = settings.Height;
+            aovConstants.MaxDepth = settings.MaxDepth;
+            aovConstants.LightCount = LightCount();
+            list->SetPipelineState(g_AovPso.Get());
+            list->SetComputeRoot32BitConstants(0, 30, &aovConstants, 0);
+            list->Dispatch((settings.Width + 7) / 8, (settings.Height + 7) / 8, 1);
+            list->SetPipelineState(g_Pso.Get());
+            auto makeReadback = [&](ID3D12Resource* source, ComPtr<ID3D12Resource>& out) {
+                const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
+                const auto desc = CD3DX12_RESOURCE_DESC::Buffer(aovRowPitch * settings.Height);
+                if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                           D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                           IID_PPV_ARGS(&out))))
+                {
+                    return false;
+                }
+                D3D12_RESOURCE_BARRIER toCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+                    source, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+                list->ResourceBarrier(1, &toCopy);
+                D3D12_TEXTURE_COPY_LOCATION dest{};
+                dest.pResource = out.Get();
+                dest.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+                dest.PlacedFootprint.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+                dest.PlacedFootprint.Width = settings.Width;
+                dest.PlacedFootprint.Height = settings.Height;
+                dest.PlacedFootprint.Depth = 1;
+                dest.PlacedFootprint.RowPitch = static_cast<UINT>(aovRowPitch);
+                D3D12_TEXTURE_COPY_LOCATION src{};
+                src.pResource = source;
+                src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                src.SubresourceIndex = 0;
+                list->CopyTextureRegion(&dest, 0, 0, 0, &src, nullptr);
+                return true;
+            };
+            if (!makeReadback(aovAlbedo.Get(), aovAlbedoReadback) || !makeReadback(aovNormal.Get(), aovNormalReadback))
+            {
+                return false;
+            }
+        }
+
         // Readback: accumulation -> readback buffer.
         const uint64_t rowPitch = (static_cast<uint64_t>(settings.Width) * 16 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) &
                                   ~(static_cast<uint64_t>(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) - 1);
@@ -561,6 +651,34 @@ namespace ReferenceIntegrator
             }
         }
         readback->Unmap(0, nullptr);
+        if (wantAovs)
+        {
+            auto fillAov = [&](ID3D12Resource* buffer, CaptureResult& out) {
+                void* aovMapped = nullptr;
+                const D3D12_RANGE range{0, static_cast<SIZE_T>(aovRowPitch * settings.Height)};
+                if (FAILED(buffer->Map(0, &range, &aovMapped)))
+                {
+                    return false;
+                }
+                out.Width = settings.Width;
+                out.Height = settings.Height;
+                out.Samples = 1;
+                out.Pixels.resize(static_cast<size_t>(settings.Width) * settings.Height * 4);
+                for (uint32_t y = 0; y < settings.Height; ++y)
+                {
+                    const float* srcRow =
+                        reinterpret_cast<const float*>(static_cast<const uint8_t*>(aovMapped) + aovRowPitch * y);
+                    float* dstRow = &out.Pixels[static_cast<size_t>(y) * settings.Width * 4];
+                    std::memcpy(dstRow, srcRow, static_cast<size_t>(settings.Width) * 16);
+                }
+                buffer->Unmap(0, nullptr);
+                return true;
+            };
+            if (!fillAov(aovAlbedoReadback.Get(), *albedoOut) || !fillAov(aovNormalReadback.Get(), *normalOut))
+            {
+                return false;
+            }
+        }
         guard.Done = true;
         return true;
     }
@@ -575,6 +693,22 @@ namespace ReferenceIntegrator
             return false;
         }
         return ReferenceImageIO::WritePfm(pfmPath, result) && ReferenceImageIO::WritePpmPreview(ppmPath, result);
+    }
+
+    bool RunFixtureCaptureWithAovsToFiles(ID3D12Device* device, ID3D12CommandQueue* queue,
+                                          const ReferenceCapture::Settings& settings,
+                                          const ReferenceFixture::SceneData& scene, const char* pfmPath,
+                                          const char* ppmPath, const char* albedoPfmPath, const char* normalPfmPath)
+    {
+        CaptureResult result;
+        CaptureResult albedo;
+        CaptureResult normal;
+        if (!RunFixtureCapture(device, queue, settings, scene, result, &albedo, &normal))
+        {
+            return false;
+        }
+        return ReferenceImageIO::WritePfm(pfmPath, result) && ReferenceImageIO::WritePpmPreview(ppmPath, result) &&
+               ReferenceImageIO::WritePfm(albedoPfmPath, albedo) && ReferenceImageIO::WritePfm(normalPfmPath, normal);
     }
 
     bool RunCornellCapture(ID3D12Device* device, ID3D12CommandQueue* queue,

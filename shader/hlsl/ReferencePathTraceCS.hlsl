@@ -22,6 +22,8 @@ StructuredBuffer<float3> Positions : register(t6);
 StructuredBuffer<uint> Indices : register(t7);
 StructuredBuffer<float4> Lights : register(t8); // 2 entries per light: (pos.xyz, type), (dirOrColor.xyz, intensity)
 RWTexture2D<float4> Accumulation : register(u0);
+RWTexture2D<float4> AovAlbedo : register(u1);  // rgb: albedo, a: hit distance (-1 = sky)
+RWTexture2D<float4> AovNormal : register(u2);  // rgb: normal * 0.5 + 0.5, a: metallic
 
 cbuffer ReferenceConstants : register(b0)
 {
@@ -414,6 +416,7 @@ float3 TracePath(float3 origin, float3 direction, inout Rng rng)
     return radiance;
 }
 
+#ifndef REFERENCE_AOV_ENTRY
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
@@ -438,3 +441,31 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float4 previous = Accumulation[pixel];
     Accumulation[pixel] = float4(previous.rgb + sum, previous.a);
 }
+
+#endif // REFERENCE_AOV_ENTRY
+
+#ifdef REFERENCE_AOV_ENTRY
+// First-hit AOVs: one deterministic center ray per pixel.
+[numthreads(8, 8, 1)]
+void AovMain(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    if (dispatchThreadId.x >= Resolution.x || dispatchThreadId.y >= Resolution.y)
+    {
+        return;
+    }
+    const uint2 pixel = dispatchThreadId.xy;
+    const float2 ndc = (float2(pixel) + 0.5f) / float2(Resolution) * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f);
+    const float4 farPoint = mul(float4(ndc, 0.0f, 1.0f), InvViewProjection);
+    const float3 direction = normalize(farPoint.xyz / farPoint.w - CameraPosition);
+    const HitSurface surface = TraceScene(CameraPosition, direction, 1e30f);
+    if (!surface.Hit)
+    {
+        AovAlbedo[pixel] = float4(SkyRadiance, -1.0f);
+        AovNormal[pixel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        return;
+    }
+    const float4 mat0 = MaterialData[surface.Material * 3 + 0];
+    AovAlbedo[pixel] = float4(mat0.rgb, length(surface.Position - CameraPosition));
+    AovNormal[pixel] = float4(surface.Normal * 0.5f + 0.5f, mat0.w);
+}
+#endif // REFERENCE_AOV_ENTRY

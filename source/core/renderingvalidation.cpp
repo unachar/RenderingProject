@@ -337,10 +337,15 @@ namespace
         const char* fixtureName = materials ? "materials" : emissive ? "emissive" : "cornell";
         char pfmPath[64]{};
         char ppmPath[64]{};
+        char albedoPath[64]{};
+        char normalPath[64]{};
         sprintf_s(pfmPath, "reference_%s.pfm", fixtureName);
         sprintf_s(ppmPath, "reference_%s.ppm", fixtureName);
-        const bool ok = ReferenceIntegrator::RunFixtureCaptureToFiles(
-            GraphicsDevice::GetDevice(), GraphicsDevice::GetCommandQueue(), settings, scene, pfmPath, ppmPath);
+        sprintf_s(albedoPath, "reference_%s_albedo.pfm", fixtureName);
+        sprintf_s(normalPath, "reference_%s_normal.pfm", fixtureName);
+        const bool ok = ReferenceIntegrator::RunFixtureCaptureWithAovsToFiles(
+            GraphicsDevice::GetDevice(), GraphicsDevice::GetCommandQueue(), settings, scene, pfmPath, ppmPath,
+            albedoPath, normalPath);
         WriteGraphicsLog("Reference capture (Stage 2H, %s): %s (%ux%u, %u spp)\n", fixtureName,
                          ok ? "PASS" : "FAIL", settings.Width, settings.Height, settings.SamplesPerPixel);
         Check(ok, "reference capture produced PFM and PPM outputs");

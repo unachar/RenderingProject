@@ -59,4 +59,12 @@ namespace ReferenceIntegrator
     bool RunCornellCaptureToFiles(ID3D12Device* device, ID3D12CommandQueue* queue,
                                   const ReferenceCapture::Settings& settings, const char* pfmPath,
                                   const char* ppmPath);
+
+    // Capture variant that also writes first-hit AOVs (albedo +
+    // distance, world normal + metallic) as PFMs.
+    bool RunFixtureCaptureWithAovsToFiles(ID3D12Device* device, ID3D12CommandQueue* queue,
+                                          const ReferenceCapture::Settings& settings,
+                                          const ReferenceFixture::SceneData& scene, const char* pfmPath,
+                                          const char* ppmPath, const char* albedoPfmPath,
+                                          const char* normalPfmPath);
 } // namespace ReferenceIntegrator
