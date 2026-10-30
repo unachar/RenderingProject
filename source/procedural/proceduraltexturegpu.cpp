@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "memoryallocator.h"
 #include "proceduraltexturegpu.h"
 #include "proceduraltextureparams.h"
 #include <cstring>
@@ -22,12 +23,20 @@ namespace ProcStudio
         bool CreateBuffer(ID3D12Device* device, UINT64 bytes, D3D12_HEAP_TYPE heapType, D3D12_RESOURCE_STATES state,
                           ComPtr<ID3D12Resource>& output, std::string& error)
         {
-            const auto heap = CD3DX12_HEAP_PROPERTIES(heapType);
             auto description = CD3DX12_RESOURCE_DESC::Buffer(bytes);
             if (heapType == D3D12_HEAP_TYPE_DEFAULT)
             {
                 description.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+                // Through D3D12MA when the flag is on; committed fallback.
+                if (ID3D12Resource* allocated =
+                        MemoryAllocator::CreateResourceAutoLifetime(description, state, nullptr))
+                {
+                    output.Reset();
+                    output.Attach(allocated);
+                    return true;
+                }
             }
+            const auto heap = CD3DX12_HEAP_PROPERTIES(heapType);
             if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, state, nullptr,
                                                        IID_PPV_ARGS(&output))))
             {
