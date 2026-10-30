@@ -18,7 +18,10 @@ reported no problems:
 - The pre-existing full-renderer smoke device hang (frame 35) did not
   surface as a problem in this verification run.
 
-## Landed after that verification (pending the next batch check)
+## Verified on the user's Windows machine (2026-10-31, second batch)
+
+The batch below was also built and run by the repo owner on
+2026-10-31 and reported problem-free.
 
 | Commit | Change |
 | --- | --- |
@@ -30,6 +33,8 @@ reported no problems:
 | f45ae02e | Stage 1C v2: alpha-tested VG shadows (shadow PS, UV/alpha decode in the shadow MS) |
 | 2b531b01 | D3D12MA: allocator statistics in the graphics log (periodic + at shutdown) |
 | af43ce93 | SPD Hi-Z: hybrid Reduce tail for mip chains longer than 12 |
+| d1eec2f9 | This status document (initial version) |
+| 8ead54ea | D3D12MA: occlusion culling resources (Hi-Z pyramids, occluder depth, debug texture, SPD counter) |
 
 VM-side checks for this batch: HiZSpdCS, VirtualGeometryShadowMS and
 VirtualGeometryShadowPS compile clean with Linux DXC v1.9.2609
