@@ -43,6 +43,13 @@ namespace ReflectionProbes
     int GeneratePrefilteredEnvironment(ID3D12GraphicsCommandList* commandList, int sourceSrvIndex,
                                        const char* registrationName);
 
+    // Live capture step 1: converts a captured cubemap (6+ slices)
+    // into an equirect texture registered under registrationName,
+    // ready to feed GeneratePrefilteredEnvironment. Returns the
+    // engine SRV index or -1 on failure.
+    int ConvertCubeToEquirect(ID3D12GraphicsCommandList* commandList, ID3D12Resource* cubeResource,
+                              uint32_t width, uint32_t height, const char* registrationName);
+
     // Returns the environment SRV index of the active probe for the
     // given camera position, or -1 when no probe contains it.
     // Selection: containing probes only; highest priority wins; ties
