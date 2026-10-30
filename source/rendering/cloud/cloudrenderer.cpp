@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "cloudrenderer.h"
+#include "memoryallocator.h"
 #include "rendererstate.h"
 #include "renderprofiler.h"
 #include "graphicslog.h"
@@ -190,13 +191,21 @@ namespace
         {
             format = DXGI_FORMAT_R8_UNORM;
         }
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         const auto desc = CD3DX12_RESOURCE_DESC::Tex3D(format, extent, extent, static_cast<UINT16>(extent), 1,
                                                        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, kNoiseRead, nullptr,
-                                                     IID_PPV_ARGS(&resource))))
+        // Through D3D12MA when the flag is on; committed fallback otherwise.
+        if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(desc, kNoiseRead, nullptr))
         {
-            return false;
+            resource.Attach(allocated);
+        }
+        else
+        {
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, kNoiseRead, nullptr,
+                                                         IID_PPV_ARGS(&resource))))
+            {
+                return false;
+            }
         }
         D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
         srv.Format = desc.Format;
@@ -217,13 +226,20 @@ namespace
     bool CreateTarget(UINT width, UINT height, DXGI_FORMAT format, UINT srvIndex, D3D12_CPU_DESCRIPTOR_HANDLE rtv,
                       ComPtr<ID3D12Resource>& resource)
     {
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         const auto desc =
             CD3DX12_RESOURCE_DESC::Tex2D(format, width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
-        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, kRead, nullptr,
-                                                     IID_PPV_ARGS(&resource))))
+        if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(desc, kRead, nullptr))
         {
-            return false;
+            resource.Attach(allocated);
+        }
+        else
+        {
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, kRead, nullptr,
+                                                         IID_PPV_ARGS(&resource))))
+            {
+                return false;
+            }
         }
         D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
         srv.Format = format;
