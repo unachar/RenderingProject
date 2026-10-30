@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "memoryallocator.h"
 #include "animationmath.h"
 
 using namespace AnimationMath;
@@ -23,6 +24,24 @@ using namespace AnimationMath;
 #include <limits>
 #include "frameconstants.h"
 
+// DEFAULT-heap index buffer creation: through D3D12MA when the flag is
+// on (allocation lifetime bound to the resource), else committed.
+static bool CreateDefaultIndexBuffer(ID3D12Device* device, const D3D12_RESOURCE_DESC& description,
+                                     ComPtr<ID3D12Resource>& resource)
+{
+    if (ID3D12Resource* allocated =
+            MemoryAllocator::CreateResourceAutoLifetime(description, D3D12_RESOURCE_STATE_COMMON, nullptr))
+    {
+        resource.Reset();
+        resource.Attach(allocated);
+        return true;
+    }
+    const CD3DX12_HEAP_PROPERTIES heap(D3D12_HEAP_TYPE_DEFAULT);
+    return SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+                                                     D3D12_RESOURCE_STATE_COMMON, nullptr,
+                                                     IID_PPV_ARGS(&resource)));
+}
+
 static bool CreateLodIndexBuffer(ID3D12Device* device, const vector<unsigned int>& indices,
                                  ComPtr<ID3D12Resource>& resource, D3D12_INDEX_BUFFER_VIEW& view)
 {
@@ -33,9 +52,7 @@ static bool CreateLodIndexBuffer(ID3D12Device* device, const vector<unsigned int
 
     const UINT byteSize = static_cast<UINT>(indices.size() * sizeof(unsigned int));
     const D3D12_RESOURCE_DESC description = CD3DX12_RESOURCE_DESC::Buffer(byteSize);
-    const CD3DX12_HEAP_PROPERTIES heap(D3D12_HEAP_TYPE_DEFAULT);
-    if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_COMMON,
-                                               nullptr, IID_PPV_ARGS(&resource))))
+    if (!CreateDefaultIndexBuffer(device, description, resource))
     {
         return false;
     }
@@ -694,11 +711,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
             const UINT indexBufferSize = sizeof(unsigned int) * (UINT)indices.size();
 
             D3D12_RESOURCE_DESC ibDesc = CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize);
-            CD3DX12_HEAP_PROPERTIES heapProps(D3D12_HEAP_TYPE_DEFAULT);
-            HRESULT hr = m_pDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &ibDesc,
-                                                            D3D12_RESOURCE_STATE_COMMON, nullptr,
-                                                            IID_PPV_ARGS(&m_Meshes[m].IndexBuffer));
-            if (FAILED(hr))
+            if (!CreateDefaultIndexBuffer(m_pDevice, ibDesc, m_Meshes[m].IndexBuffer))
             {
                 Debug::Log("ERROR: Failed to create DEFAULT index buffer for animated mesh\n");
                 return false;
@@ -814,10 +827,7 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
 
                 const UINT teoIndexBufferSize = sizeof(unsigned int) * (UINT)teoIndices.size();
                 D3D12_RESOURCE_DESC teoIbDesc = CD3DX12_RESOURCE_DESC::Buffer(teoIndexBufferSize);
-                HRESULT teoHr = m_pDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &teoIbDesc,
-                                                                   D3D12_RESOURCE_STATE_COMMON, nullptr,
-                                                                   IID_PPV_ARGS(&m_Meshes[m].TeoIndexBuffers[mode]));
-                if (FAILED(teoHr))
+                if (!CreateDefaultIndexBuffer(m_pDevice, teoIbDesc, m_Meshes[m].TeoIndexBuffers[mode]))
                 {
                     Debug::Log("ERROR: Failed to create DEFAULT TEO index buffer for animated mesh\n");
                     return false;
