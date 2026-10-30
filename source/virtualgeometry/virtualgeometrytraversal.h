@@ -61,9 +61,14 @@ namespace VirtualGeometryTraversal
 
     Settings& GetSettings();
     void Prepare(RenderGraph& graph, const FrameInputs& inputs);
-    bool PrepareShadowView(RenderGraph& graph, const FrameInputs& inputs, const ViewInput& view);
+    // viewId selects the per-view shadow state slot
+    // (viewId = lightIndex * 8 + faceOrCascade); ids beyond the pool
+    // return false so the caller falls back to the legacy submission
+    // for that view.
+    bool PrepareShadowView(RenderGraph& graph, const FrameInputs& inputs, const ViewInput& view, uint32_t viewId = 0);
     bool ShadowViewActive();
-    bool ShadowViewStillValid(const XMFLOAT4X4& view, const XMFLOAT4X4& projection);
+    bool ShadowViewActive(uint32_t viewId);
+    bool ShadowViewStillValid(const XMFLOAT4X4& view, const XMFLOAT4X4& projection, uint32_t viewId = 0);
     bool Active();
     enum class RasterPhase
     {
@@ -100,6 +105,7 @@ namespace VirtualGeometryTraversal
     GpuSceneBuffer& ArgumentBuffer();
     GpuSceneBuffer& SuccessBuffer();
     GpuSceneBuffer& ShadowVisibleBuffer();
+    GpuSceneBuffer& ShadowVisibleBuffer(uint32_t viewId);
     GpuSceneBuffer& ShadowCounterBuffer();
     GpuSceneBuffer& ShadowArgumentBuffer();
     const std::array<uint32_t, 64>& DebugCounters();
