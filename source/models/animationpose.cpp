@@ -33,6 +33,22 @@ aiNodeAnim* AnimationModelResource::FindNodeAnimChannelCached(aiAnimation* anima
     return found;
 }
 
+float AnimationModelResource::GetAnimationDuration(const string& name)
+{
+    const auto vmd = m_VmdAnimations.find(name);
+    if (vmd != m_VmdAnimations.end())
+    {
+        return (static_cast<float>(vmd->second.MaxFrame) + 1.0f) / 30.0f;
+    }
+    const auto* animation = GetAnimation(name);
+    if (!animation)
+    {
+        return 0.0f;
+    }
+    const double rate = animation->mTicksPerSecond > 0.0 ? animation->mTicksPerSecond : 25.0;
+    return static_cast<float>(animation->mDuration / rate);
+}
+
 aiAnimation* AnimationModelResource::GetAnimation(const string& name)
 {
     auto it = m_Animation.find(name);

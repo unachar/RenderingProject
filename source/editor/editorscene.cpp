@@ -2012,6 +2012,16 @@ void ImGuiManager::RebuildLoadedEntity(EntityID entity, const Json::Value& recor
         animation.ModelId = animation.ModelPath.empty()
                                 ? -1
                                 : ModelManager::LoadAnimModel(animation.ModelPath.c_str(), animation.IsConvert);
+        if (animation.ModelId >= 0 && animation.UseIndependentPose)
+        {
+            auto instance = make_unique<AnimationModelResource>();
+            TextureManager::BeginTextureLoading();
+            const bool loaded = instance->LoadPoseInstance(*ModelManager::GetAnimModel(animation.ModelId),
+                                                           GraphicsDevice::GetDevice(), false);
+            TextureManager::EndTextureLoading();
+            animation.ModelId =
+                loaded ? ModelManager::RegisterAnimModelInstance(move(instance), animation.PoseOwner) : -1;
+        }
         if (animation.ModelId < 0)
         {
             AddLog("シーン: アニメーションモデルを読み込めません: %s", animation.ModelPath.c_str());

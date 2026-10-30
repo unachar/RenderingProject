@@ -117,6 +117,10 @@
                   }
                 ]
               }
+            ],
+            "animationPaths": [
+              "asset/model/animation/kasou.vmd",
+              "asset/model/animation/kasou_kao.vmd"
             ]
           },
           {
@@ -727,12 +731,22 @@
         "path": "asset/model/karenv1.3/karem.pmx",
         "convert": true,
         "animationPaths": [
-          "asset/model/animation/kasou.vmd"
+          "asset/model/animation/kasou.vmd",
+          "asset/model/animation/kasou_kao.vmd"
         ],
         "animations": [
-          "dance"
+          "dance",
+          "kasou_kao"
         ],
-        "current": "dance"
+        "current": "dance",
+        "layers": [
+          {
+            "name": "dance"
+          },
+          {
+            "name": "kasou_kao"
+          }
+        ]
       },
       "material": {
         "shaderClassMode": 1,

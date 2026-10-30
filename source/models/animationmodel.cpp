@@ -998,7 +998,13 @@ bool AnimationModelResource::LoadAnimation(const char* fileName, const char* nam
     {
         animationName = "";
     }
+    const auto previous = m_Animation.find(animationName);
+    if (previous != m_Animation.end())
+    {
+        aiReleaseImport(previous->second);
+    }
     m_Animation[animationName] = anim;
+    m_NodeAnimChannelCache.clear();
     m_AnimationSourcePaths[animationName] = fileName;
     m_VmdAnimations.erase(animationName);
     InvalidateVmdRuntimeCache();
@@ -1048,7 +1054,13 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
         animationName = "";
     }
     m_VmdAnimations[animationName] = move(animation);
-    m_Animation.erase(animationName);
+    const auto previous = m_Animation.find(animationName);
+    if (previous != m_Animation.end())
+    {
+        aiReleaseImport(previous->second);
+        m_Animation.erase(previous);
+        m_NodeAnimChannelCache.clear();
+    }
     InvalidateVmdRuntimeCache();
 
     const VmdAnimation& loaded = m_VmdAnimations[animationName];

@@ -599,6 +599,93 @@ XMFLOAT4 TimeLineSystem::ReadProperty(EntityID target, TimelineProperty property
     return result;
 }
 
+bool TimeLineSystem::PrepareTrackAnimations(TimelineTrackData& track)
+{
+    if (track.AnimationPaths.empty())
+    {
+        if (ComponentManager::HasComponent<AnimationModelComponent>(track.Target))
+        {
+            auto& animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(track.Target);
+            if (!track.PreviousAnimationNames.empty())
+            {
+                Animator::Play(animation, track.PreviousAnimationNames, false);
+            }
+        }
+        track.PreviousAnimationNames.clear();
+        track.LoadedAnimationPaths.clear();
+        track.LoadedAnimationNames.clear();
+        track.LoadedAnimationModelId = -1;
+        track.AnimationError.clear();
+        return true;
+    }
+    if (!ComponentManager::HasComponent<AnimationModelComponent>(track.Target))
+    {
+        track.LoadedAnimationModelId = -1;
+        track.AnimationError = "アニメーションモデルを対象Entityに指定してください。";
+        return false;
+    }
+    auto& animation = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(track.Target);
+    if (animation.ModelId < 0)
+    {
+        track.LoadedAnimationModelId = -1;
+        track.AnimationError = "対象のモデルが読み込まれていません。";
+        return false;
+    }
+    if (track.PreviousAnimationNames.empty())
+    {
+        for (const auto& layer : animation.ActiveAnimationLayers)
+        {
+            track.PreviousAnimationNames.push_back(layer.AnimationName);
+        }
+        if (track.PreviousAnimationNames.empty() && !animation.CurrentAnimation.empty())
+        {
+            track.PreviousAnimationNames.push_back(animation.CurrentAnimation);
+        }
+    }
+    if (track.LoadedAnimationModelId != animation.ModelId || track.LoadedAnimationPaths != track.AnimationPaths)
+    {
+        track.LoadedAnimationModelId = animation.ModelId;
+        track.LoadedAnimationPaths = track.AnimationPaths;
+        track.LoadedAnimationNames.clear();
+        track.AnimationError.clear();
+        for (const auto& path : track.AnimationPaths)
+        {
+            // Reuse registered names so saving the selected animation remains reloadable.
+            // New files use the full path to avoid collisions between equal filenames.
+            string name = "timeline:" + path;
+            bool registered = false;
+            const size_t count = min(animation.AnimationPaths.size(), animation.Animations.size());
+            for (size_t index = 0; index < count; ++index)
+            {
+                if (filesystem::u8path(animation.AnimationPaths[index]).lexically_normal() ==
+                    filesystem::u8path(path).lexically_normal())
+                {
+                    name = animation.Animations[index];
+                    registered = true;
+                    break;
+                }
+            }
+            if (!ModelManager::LoadAnimation(animation.ModelId, path.c_str(), name.c_str()))
+            {
+                track.AnimationError = "アニメーションを読み込めません: " + path;
+                break;
+            }
+            if (!registered)
+            {
+                animation.AnimationPaths.push_back(path);
+                animation.Animations.push_back(name);
+            }
+            track.LoadedAnimationNames.push_back(name);
+        }
+    }
+    if (!track.AnimationError.empty())
+    {
+        return false;
+    }
+    Animator::Play(animation, track.LoadedAnimationNames, false);
+    return true;
+}
+
 void TimeLineSystem::EvaluateComponent(TimelineComponent& timeline)
 {
     const LiveMusic::TempoMap tempo(max(1.0f, timeline.BeatsPerMinute));
@@ -717,6 +804,10 @@ void TimeLineSystem::EvaluateComponent(TimelineComponent& timeline)
         {
             if (track.HasDefaultValue)
             {
+                if (track.Property == TimelineProperty::AnimationTime && !PrepareTrackAnimations(track))
+                {
+                    continue;
+                }
                 ApplyProperty(track.Target, track.Property, track.DefaultValue, track.FogVolumeIndex);
             }
             continue;
@@ -735,6 +826,10 @@ void TimeLineSystem::EvaluateComponent(TimelineComponent& timeline)
         accumulated.y *= invWeight;
         accumulated.z *= invWeight;
         accumulated.w *= invWeight;
+        if (track.Property == TimelineProperty::AnimationTime && !PrepareTrackAnimations(track))
+        {
+            continue;
+        }
         ApplyProperty(track.Target, track.Property, accumulated, track.FogVolumeIndex);
     }
 }

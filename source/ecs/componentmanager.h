@@ -19,6 +19,7 @@
 #include <memory>
 
 enum class PostProcessType;
+class AnimationModelResource;
 
 struct TransformComponent
 {
@@ -134,6 +135,9 @@ struct AnimationModelComponent
     string ModelPath;
     bool IsConvert = true;
     vector<string> AnimationPaths{};
+    bool UseIndependentPose = false;
+    // Runtime-only ownership; scene snapshots keep independently edited poses alive for Undo.
+    shared_ptr<AnimationModelResource> PoseOwner;
     vector<string> Animations{};
     vector<AnimationPlaybackLayer> ActiveAnimationLayers{};
     string CurrentAnimation{};

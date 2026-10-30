@@ -976,6 +976,7 @@ namespace SceneFile
         a("path", c.ModelPath);
         a("convert", c.IsConvert);
         a("animationPaths", c.AnimationPaths);
+        a("independentPose", c.UseIndependentPose);
         a("animations", c.Animations);
         a("current", c.CurrentAnimation);
         a("next", c.NextAnimation);
@@ -1359,6 +1360,7 @@ namespace SceneFile
             t("fogVolume", track.FogVolumeIndex);
             t("hasDefault", track.HasDefaultValue);
             t("default", track.DefaultValue);
+            t("animationPaths", track.AnimationPaths);
             t.Array("clips", track.Clips, [](Archive& k, TimelineClipData& clip) {
                 k("name", clip.Name);
                 k("start", clip.StartTime);

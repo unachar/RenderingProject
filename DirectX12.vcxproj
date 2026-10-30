@@ -193,6 +193,9 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\editor\proceduralio.h" />
     <ClInclude Include="source\editor\proceduralmodelexport.h" />
     <ClInclude Include="source\editor\proceduralstudiowindow.h" />
+    <ClInclude Include="source\editor\animationpreviewwindow.h" />
+    <ClInclude Include="source\editor\animationpreviewstate.h" />
+    <ClInclude Include="source\rendering\animationpreviewcontext.h" />
     <ClInclude Include="source\models\animationplayback.h" />
     <ClInclude Include="source\entities\entitybase.h" />
     <ClInclude Include="source\models\modelimportutils.h" />
@@ -744,6 +747,7 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\entities\alicia.cpp" />
     <ClCompile Include="source\entities\moca.cpp" />
     <ClCompile Include="source\entities\karen.cpp" />
+    <ClCompile Include="source\editor\animationpreviewwindow.cpp" />
     <ClCompile Include="source\entities\kacchatta_hone.cpp" />
     <ClCompile Include="source\procedural\proceduralstudio.cpp" />
     <ClCompile Include="source\procedural\proceduraltexturegpu.cpp" />

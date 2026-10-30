@@ -1185,7 +1185,7 @@ void ImGuiManager::ProcessDroppedFiles()
     dropped.swap(m_DroppedFiles);
     for (const DroppedFile& file : dropped)
     {
-        if (AcceptLiveMonitorFileDrop(file))
+        if (AcceptTimelineAnimationFileDrop(file) || AcceptLiveMonitorFileDrop(file))
         {
             continue;
         }

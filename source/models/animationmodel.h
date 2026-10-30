@@ -448,7 +448,7 @@ class AnimationModelResource
 
     bool Load(const char* fileName, ID3D12Device* device, bool isConvert = true);
     bool LoadAnimation(const char* fileName, const char* name);
-    bool LoadPoseInstance(const AnimationModelResource& source, ID3D12Device* device);
+    bool LoadPoseInstance(const AnimationModelResource& source, ID3D12Device* device, bool copyAnimations = true);
 
     bool HasLookAtBones(const LookAtSettings& settings)
     {
@@ -487,6 +487,7 @@ class AnimationModelResource
     }
 
     aiAnimation* GetAnimation(const string& name);
+    float GetAnimationDuration(const string& name);
 
     const MeshData& GetMeshData(UINT index) const
     {

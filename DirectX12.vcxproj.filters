@@ -1615,4 +1615,18 @@
       <Filter>editor</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="source\editor\animationpreviewwindow.cpp">
+      <Filter>editor</Filter>
+    </ClCompile>
+    <ClInclude Include="source\editor\animationpreviewwindow.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\editor\animationpreviewstate.h">
+      <Filter>editor</Filter>
+    </ClInclude>
+    <ClInclude Include="source\rendering\animationpreviewcontext.h">
+      <Filter>rendering</Filter>
+    </ClInclude>
+  </ItemGroup>
 </Project>

@@ -68,6 +68,14 @@ struct TimelineTrackData
     int FogVolumeIndex = 0;
     DirectX::XMFLOAT4 DefaultValue = {0, 0, 0, 0};
     vector<TimelineClipData> Clips{};
+    // VMD files are layered in this order and share the AnimationTime clock.
+    vector<string> AnimationPaths;
+    // Runtime loading and fallback state; only AnimationPaths is serialized.
+    int LoadedAnimationModelId = -1;
+    vector<string> LoadedAnimationPaths;
+    vector<string> LoadedAnimationNames;
+    vector<string> PreviousAnimationNames;
+    string AnimationError;
 };
 
 struct StageLightFixture

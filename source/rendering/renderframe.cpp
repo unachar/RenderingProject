@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "materialpreview.h"
+#include "animationpreviewwindow.h"
+#include "modelmanager.h"
 #include "assetthumbnailmanager.h"
 #include "renderframe.h"
 #include "gpudriven/gpudrivenrenderer.h"
@@ -26,6 +28,7 @@ void RenderFrame::BeginDraw()
         WaitForSingleObjectEx(m_FrameLatencyWaitableObject, 1000, TRUE);
     }
     GpuMemoryBudget::Update();
+    ModelManager::CollectRetiredAnimModels();
     RenderTargets::UpdateMemoryPolicy();
     Raytracing::ReleaseInactiveResources();
     RayReflections::ReleaseInactiveResources();
@@ -70,6 +73,7 @@ void RenderFrame::BeginDraw()
 
 void RenderFrame::EndDraw()
 {
+    AnimationPreviewWindow::Render();
     MaterialPreview::Render();
     AssetThumbnailManager::ProcessGenerationBudget();
     {

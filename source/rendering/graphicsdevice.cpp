@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "noisecachebindings.h"
 #include "proceduralstudiowindow.h"
+#include "animationpreviewwindow.h"
 #include "temporalupscaler.h"
 #include "advancedeffects.h"
 #include "asynccompute.h"
@@ -661,6 +662,7 @@ void GraphicsDevice::Uninit()
     RayTelemetry::Data().Shutdown();
     ScenePasses::ReleaseStaticShadowCache();
 
+    AnimationPreviewWindow::Shutdown();
     ProceduralStudioWindow::Shutdown(); // エディターの記述子プールを破棄する前に終了する
     AssetThumbnailManager::Shutdown();
     ImGuiManager::Uninit();

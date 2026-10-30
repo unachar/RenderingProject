@@ -24,6 +24,7 @@ class ImGuiManager
 {
     friend class RenderingValidation;
     friend class MaterialValidation;
+    friend class AnimationPreviewWindow;
 
   private:
     inline static bool m_IsClosing = false;
@@ -60,6 +61,7 @@ class ImGuiManager
     inline static bool m_ShowAtmosphereWindow = false;
     inline static bool m_ShowProceduralWindow = false;
     inline static bool m_ShowProceduralStudioWindow = false;
+    inline static bool m_ShowAnimationPreviewWindow = false;
     inline static bool m_ShowRaytracingWindow = false;
     inline static bool m_ShowProjectSettingsWindow = false;
     inline static bool m_ShowPhysicsSettingsWindow = false;
@@ -96,6 +98,14 @@ class ImGuiManager
         int Frame = 0;
     };
     inline static vector<LiveMonitorDropTarget> m_LiveMonitorDropTargets;
+    struct TimelineAnimationDropTarget
+    {
+        EntityID Entity = g_kINVALID_ENTITY;
+        size_t TrackIndex = 0;
+        ImVec2 Min, Max;
+        int Frame = 0;
+    };
+    inline static vector<TimelineAnimationDropTarget> m_TimelineAnimationDropTargets;
     inline static vector<string> m_Logs;
     inline static EntityID m_RenamingEntity = g_kINVALID_ENTITY;
     inline static string m_RenameBuffer;
@@ -165,6 +175,9 @@ class ImGuiManager
     static bool DrawLiveMonitorFrames(EntityID entity, size_t monitorIndex, LiveMonitorBinding& monitor);
     static bool AppendLiveMonitorImages(LiveMonitorBinding& monitor, const vector<filesystem::path>& sources);
     static bool AcceptLiveMonitorFileDrop(const DroppedFile& file);
+    static bool DrawTimelineAnimations(EntityID entity, size_t trackIndex, TimelineTrackData& track);
+    static bool AppendTimelineAnimations(TimelineTrackData& track, const vector<filesystem::path>& paths);
+    static bool AcceptTimelineAnimationFileDrop(const DroppedFile& file);
     static void DrawAssetBrowserWindow();
     static void DrawRenderDebuggerWindow();
     static void DrawRenderFeatureWindows();

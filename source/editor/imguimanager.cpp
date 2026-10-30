@@ -8,6 +8,7 @@
 #include "renderingvalidation.h"
 #include "imguimanager.h"
 #include "proceduralstudiowindow.h"
+#include "animationpreviewwindow.h"
 #include "modelmanager.h"
 #include "world.h"
 #include "camera.h"
@@ -397,6 +398,7 @@ void ImGuiManager::Update()
     {
         ProceduralStudioWindow::Draw(&m_ShowProceduralStudioWindow);
     }
+    AnimationPreviewWindow::Draw(&m_ShowAnimationPreviewWindow);
     if (m_ShowRaytracingWindow)
     {
         DrawRaytracingWindow();
@@ -670,6 +672,7 @@ void ImGuiManager::DrawEditorMainMenu()
         ImGui::MenuItem("プロシージャルエディター", nullptr, &m_ShowProceduralWindow);
         ImGui::MenuItem("プロシージャルスタジオ (テクスチャ / モデル / フラクタル)", nullptr,
                         &m_ShowProceduralStudioWindow);
+        ImGui::MenuItem("アニメーションプレビュー", nullptr, &m_ShowAnimationPreviewWindow);
         ImGui::MenuItem("レイトレーシング", nullptr, &m_ShowRaytracingWindow);
         ImGui::Separator();
         ImGui::MenuItem("メッシュ単位のアウトライン", nullptr, &m_ShowMeshOutlineWindow);

@@ -17,5 +17,6 @@ class TimeLineSystem : public SystemBase
     static void Clear();
     static void SuspendAudio(bool close = false);
     static void EvaluateComponent(TimelineComponent& timeline);
+    static bool PrepareTrackAnimations(TimelineTrackData& track);
     static XMFLOAT4 ReadProperty(EntityID target, TimelineProperty property, bool* valid = nullptr, int fogVolume = 0);
 };

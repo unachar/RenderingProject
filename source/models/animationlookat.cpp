@@ -1,33 +1,58 @@
 #include "pch.h"
 #include "animationmodel.h"
 
-bool AnimationModelResource::LoadPoseInstance(const AnimationModelResource& source, ID3D12Device* device)
+bool AnimationModelResource::LoadPoseInstance(const AnimationModelResource& source, ID3D12Device* device,
+                                              bool copyAnimations)
 {
-    if (&source == this || source.m_SourceModelPath.empty()) return false;
-    if (!Load(source.m_SourceModelPath.c_str(), device, source.m_SourceConvert)) return false;
+    if (&source == this || source.m_SourceModelPath.empty())
+    {
+        return false;
+    }
+    if (!Load(source.m_SourceModelPath.c_str(), device, source.m_SourceConvert))
+    {
+        return false;
+    }
     // Reject a source file edited since the original load instead of copying stale palette indices.
-    if (m_BoneNames != source.m_BoneNames || m_Meshes.size() != source.m_Meshes.size()) { Uninit(); return false; }
+    if (m_BoneNames != source.m_BoneNames || m_Meshes.size() != source.m_Meshes.size())
+    {
+        Uninit();
+        return false;
+    }
     // Importing the same source produces the same palette indices; copy explicit user mappings too.
     m_ResourceMap = source.m_ResourceMap;
     m_VmdTranslationScale = source.m_VmdTranslationScale;
     m_VmdRetargetTransforms = source.m_VmdRetargetTransforms;
-    for (const auto& [name,path] : source.m_AnimationSourcePaths)
+    for (const auto& [name, path] : source.m_AnimationSourcePaths)
     {
-        if (!LoadAnimation(path.c_str(), name.c_str())) { Uninit(); return false; }
+        if (copyAnimations && !LoadAnimation(path.c_str(), name.c_str()))
+        {
+            Uninit();
+            return false;
+        }
     }
     vector<int> partIds;
     for (const auto& vertices : source.m_BaseGpuSkinVertices)
+    {
         partIds.push_back(vertices.empty() ? -1 : static_cast<int>(vertices.front().Diffuse.w));
-    if (!ApplyMeshShadingOverridePartIds(partIds)) { Uninit(); return false; }
+    }
+    if (!ApplyMeshShadingOverridePartIds(partIds))
+    {
+        Uninit();
+        return false;
+    }
     return true;
 }
 
 bool AnimationModelResource::SetupLookAtRig(const LookAtSettings& settings)
 {
-    const array<string,4> overrides={settings.NeckBone,settings.HeadBone,settings.LeftEyeBone,settings.RightEyeBone};
+    const array<string, 4> overrides = {settings.NeckBone, settings.HeadBone, settings.LeftEyeBone,
+                                        settings.RightEyeBone};
     if (!m_LookAtRigReady || overrides != m_LookAtOverrideNames)
     {
-        if (m_PmxRuntimeNodes.empty()) RebuildPmxRuntimeCache();
+        if (m_PmxRuntimeNodes.empty())
+        {
+            RebuildPmxRuntimeCache();
+        }
         m_LookAtPose.Nodes.clear();
         for (const auto& node : m_PmxRuntimeNodes)
         {

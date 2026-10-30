@@ -1371,6 +1371,7 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("editor.ShowAtmosphereWindow", m_ShowAtmosphereWindow, 0, 1);
     field("editor.ShowProceduralWindow", m_ShowProceduralWindow, 0, 1);
     field("editor.ShowProceduralStudioWindow", m_ShowProceduralStudioWindow, 0, 1);
+    field("editor.ShowAnimationPreviewWindow", m_ShowAnimationPreviewWindow, 0, 1);
     field("editor.ShowRaytracingWindow", m_ShowRaytracingWindow, 0, 1);
     field("editor.ShowProjectSettingsWindow", m_ShowProjectSettingsWindow, 0, 1);
     field("editor.ShowPhysicsSettingsWindow", m_ShowPhysicsSettingsWindow, 0, 1);

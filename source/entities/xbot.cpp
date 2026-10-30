@@ -13,7 +13,7 @@ void XBot::Create()
     const auto modelPosition = XMFLOAT3(-5.0f, 10.0f, 10.0f);
     const auto modelScale = XMFLOAT3(0.01f, 0.01f, 0.01f);
 
-    const auto modelPath = "asset\\model\\XBot.fbx";
+    const auto modelPath = "asset\\model\\bal.fbx";
 
     const char* vmdPath = "asset\\model\\animation\\kasou.vmd";
     constexpr bool isConvert = true;

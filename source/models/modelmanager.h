@@ -14,6 +14,7 @@ class ModelManager
     static vector<unique_ptr<StaticModelResource>> m_StaticModels;
     static unordered_map<string, int> m_AnimModelCache;
     static unordered_map<string, int> m_StaticModelCache;
+    static unordered_map<int, weak_ptr<AnimationModelResource>> m_OwnedAnimModels;
 
     struct LoadModelResult
     {
@@ -30,6 +31,10 @@ class ModelManager
     static int LoadAnimModel(const char* fileName, bool isConvert = true);
     // Fresh mutable pose/GPU buffers; not inserted into the file cache.
     static int CreateAnimModelInstance(int sourceId);
+    // Transfers an independently loaded pose into scene ownership, without entering the file cache.
+    static int RegisterAnimModelInstance(unique_ptr<AnimationModelResource> model,
+                                         shared_ptr<AnimationModelResource>& owner);
+    static void CollectRetiredAnimModels();
     static int LoadStaticModel(const char* fileName, bool isConvert = true);
 
     static bool LoadAnimation(int modelId, const char* fileName, const char* name);

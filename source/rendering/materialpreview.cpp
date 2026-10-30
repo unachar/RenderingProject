@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "rendering/scenedepth.h"
 #include "materialpreview.h"
+#include "animationpreviewcontext.h"
+#include "animationmodel.h"
 #include "thumbnailpreviewcontext.h"
 #include "assets/thumbnailgeometry.h"
 #include "materialmanager.h"
@@ -30,6 +32,7 @@ namespace
     {
         UINT Size = previewSize;
         UINT SrvIndex = g_kMATERIAL_PREVIEW_SRV_INDEX;
+        UINT TextureBase = g_kTHUMBNAIL_DESCRIPTOR_START;
         ComPtr<ID3D12Resource> PreviewConstants;
         XMFLOAT3 Center{};
         float Near = 0.05f;
@@ -471,7 +474,7 @@ void MaterialPreview::DrawImage(AssetHandle material)
 namespace
 {
     bool RenderPreview(PreviewState& preview, const MaterialComponent& material, UINT firstVertex = 0,
-                       UINT vertexCount = 0, UINT partIndex = 0, UINT partCount = 1)
+                       UINT vertexCount = 0, UINT partIndex = 0, UINT partCount = 1, const MeshData* mesh = nullptr)
     {
         auto* pipeline = preview.Pipeline(material);
         if (!pipeline)
@@ -563,10 +566,13 @@ namespace
         commands->SetGraphicsRootDescriptorTable(0, drawConstants);
         if (preview.PreviewConstants)
         {
-            if (!MaterialBindings::SetPreviewMaterial(material, preview.PreviewConstants.Get(),
-                                                      RendererState::g_kTHUMBNAIL_DESCRIPTOR_START, partIndex,
-                                                      partCount))
+            if (!MaterialBindings::SetPreviewMaterial(material, preview.PreviewConstants.Get(), preview.TextureBase,
+                                                      partIndex, partCount))
             {
+                const auto restore =
+                    CD3DX12_RESOURCE_BARRIER::Transition(preview.Target.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET,
+                                                         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                commands->ResourceBarrier(1, &restore);
                 return false;
             }
         }
@@ -593,9 +599,18 @@ namespace
             commands->SetGraphicsRootDescriptorTable(
                 7, CD3DX12_GPU_DESCRIPTOR_HANDLE(heap, TextureManager::GetDefaultTextureIndex(), increment));
         }
-        commands->IASetVertexBuffers(0, 1, &preview.Views[preview.Shape]);
-        commands->IASetIndexBuffer(nullptr);
-        commands->DrawInstanced(vertexCount ? vertexCount : preview.Counts[preview.Shape], 1, firstVertex, 0);
+        if (mesh)
+        {
+            commands->IASetVertexBuffers(0, 1, &mesh->VertexBufferView);
+            commands->IASetIndexBuffer(&mesh->IndexBufferView);
+            commands->DrawIndexedInstanced(mesh->IndexCount, 1, 0, 0, 0);
+        }
+        else
+        {
+            commands->IASetVertexBuffers(0, 1, &preview.Views[preview.Shape]);
+            commands->IASetIndexBuffer(nullptr);
+            commands->DrawInstanced(vertexCount ? vertexCount : preview.Counts[preview.Shape], 1, firstVertex, 0);
+        }
         barrier = CD3DX12_RESOURCE_BARRIER::Transition(preview.Target.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET,
                                                        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         if (partIndex + 1 == partCount)
@@ -653,6 +668,126 @@ struct ThumbnailPreviewContext::Impl
     bool GeometryUploaded = false;
     UINT MaterialSlots = 1;
 };
+
+struct AnimationPreviewContext::Impl
+{
+    PreviewState State;
+    UINT MaterialCount = 1;
+    float Radius = 1.0f;
+};
+
+AnimationPreviewContext::AnimationPreviewContext() : m_Impl(make_unique<Impl>()) {}
+
+AnimationPreviewContext::~AnimationPreviewContext() = default;
+
+bool AnimationPreviewContext::Initialize(UINT size, UINT descriptorIndex, UINT materialCount)
+{
+    auto& state = m_Impl->State;
+    state.Size = size;
+    state.SrvIndex = descriptorIndex;
+    state.TextureBase = FrameConstants::g_kTEXTURE_SRV_START_INDEX;
+    if (!state.Initialize())
+    {
+        return false;
+    }
+    m_Impl->MaterialCount = max(1u, materialCount);
+    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+    const auto description =
+        CD3DX12_RESOURCE_DESC::Buffer(RendererState::g_kPBR_CB_ALIGNED_SIZE * RendererState::g_kFRAME_COUNT *
+                                      static_cast<UINT64>(m_Impl->MaterialCount));
+    if (FAILED(GraphicsDevice::GetDevice()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+                                                                    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                                    IID_PPV_ARGS(&state.PreviewConstants))))
+    {
+        state.Error = "アニメーションプレビューのマテリアルバッファを作成できません";
+        return false;
+    }
+    return true;
+}
+
+void AnimationPreviewContext::FrameModel(const XMFLOAT3& center, const XMFLOAT3& extents)
+{
+    auto& state = m_Impl->State;
+    state.Center = center;
+    m_Impl->Radius = max(0.01f, sqrtf(extents.x * extents.x + extents.y * extents.y + extents.z * extents.z));
+    const auto fit = FitThumbnailCamera(m_Impl->Radius);
+    state.Distance = fit.Distance;
+    state.Near = fit.Near;
+    state.Far = fit.Far;
+    state.Yaw = 0.0f;
+    state.Pitch = 0.12f;
+}
+
+void AnimationPreviewContext::Orbit(float yaw, float pitch, float zoom)
+{
+    auto& state = m_Impl->State;
+    state.Yaw += yaw;
+    state.Pitch = clamp(state.Pitch + pitch, -1.4f, 1.4f);
+    state.Distance = clamp(state.Distance * expf(-zoom * 0.15f), m_Impl->Radius * 0.25f, m_Impl->Radius * 30.0f);
+}
+
+const string& AnimationPreviewContext::Error() const
+{
+    return m_Impl->State.Error;
+}
+
+bool AnimationPreviewContext::Render(AnimationModelResource& model, const vector<MaterialComponent>& materials)
+{
+    auto& state = m_Impl->State;
+    if (!state.Target || materials.size() != model.GetMeshCount() || materials.size() > m_Impl->MaterialCount)
+    {
+        return false;
+    }
+    vector<UINT> meshes;
+    for (UINT index = 0; index < model.GetMeshCount(); ++index)
+    {
+        const auto& mesh = model.GetMeshData(index);
+        if (mesh.IndexCount == 0 || !mesh.VertexBuffer || !mesh.IndexBuffer)
+        {
+            continue;
+        }
+        if (!state.Pipeline(materials[index]))
+        {
+            return false;
+        }
+        meshes.push_back(index);
+    }
+    if (meshes.empty())
+    {
+        state.Error = "プレビューできるメッシュがありません";
+        return false;
+    }
+    auto* commands = GraphicsDevice::GetCommandList();
+    model.DispatchGpuSkinning(commands);
+    for (UINT part = 0; part < meshes.size(); ++part)
+    {
+        const UINT index = meshes[part];
+        const auto& mesh = model.GetMeshData(index);
+        const auto& material = materials[index];
+        for (int texture : {material.TextureID, material.NormalMapID, material.MetallicRoughnessID,
+                            material.AOTextureID, material.EmissiveTextureID, material.HeightTextureID})
+        {
+            if (texture >= 0)
+            {
+                TextureManager::TouchTexture(texture);
+            }
+        }
+        auto transition =
+            CD3DX12_RESOURCE_BARRIER::Transition(mesh.VertexBuffer.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                 D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+        commands->ResourceBarrier(1, &transition);
+        const bool rendered = RenderPreview(state, material, 0, 0, part, static_cast<UINT>(meshes.size()), &mesh);
+        transition = CD3DX12_RESOURCE_BARRIER::Transition(mesh.VertexBuffer.Get(),
+                                                          D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
+                                                          D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commands->ResourceBarrier(1, &transition);
+        if (!rendered)
+        {
+            return false;
+        }
+    }
+    return true;
+}
 
 ThumbnailPreviewContext::ThumbnailPreviewContext() : m_Impl(std::make_unique<Impl>()) {}
 

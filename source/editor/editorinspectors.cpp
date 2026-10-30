@@ -4,6 +4,7 @@
 #include "modelmeshtable.h"
 #include "materialopticsui.h"
 #include "proceduralio.h"
+#include "animationpreviewwindow.h"
 #include "imguimanager.h"
 #include "world.h"
 #include "editorwidgets.h"
@@ -31,6 +32,146 @@
 #include <ImGuizmo.h>
 
 using namespace EditorWidgets;
+
+bool ImGuiManager::AppendTimelineAnimations(TimelineTrackData& track, const vector<filesystem::path>& paths)
+{
+    bool changed = false;
+    for (const auto& path : paths)
+    {
+        string extension = path.extension().string();
+        transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char letter) {
+            return static_cast<char>(tolower(letter));
+        });
+        if (extension != ".vmd")
+        {
+            AddLog("Timeline: 身体・表情の同時再生にはVMDファイルを指定してください。");
+            continue;
+        }
+        const string relative = MakeRelativeAssetPath(path);
+        if (find(track.AnimationPaths.begin(), track.AnimationPaths.end(), relative) == track.AnimationPaths.end())
+        {
+            track.AnimationPaths.push_back(relative);
+            changed = true;
+        }
+    }
+    if (changed)
+    {
+        track.LoadedAnimationModelId = -1;
+        TimeLineSystem::PrepareTrackAnimations(track);
+    }
+    return changed;
+}
+
+bool ImGuiManager::AcceptTimelineAnimationFileDrop(const DroppedFile& file)
+{
+    if (!m_ShowInspectorWindow || !file.HasPoint)
+    {
+        return false;
+    }
+    for (const auto& target : m_TimelineAnimationDropTargets)
+    {
+        if (ImGui::GetFrameCount() - target.Frame > 2 || target.Entity != m_SelectedEntity ||
+            file.Point.x < target.Min.x || file.Point.x >= target.Max.x || file.Point.y < target.Min.y ||
+            file.Point.y >= target.Max.y || !ComponentManager::HasComponent<TimelineComponent>(target.Entity))
+        {
+            continue;
+        }
+        auto& timeline = ComponentManager::GetComponentUnchecked<TimelineComponent>(target.Entity);
+        if (target.TrackIndex >= timeline.Tracks.size())
+        {
+            return true;
+        }
+        const auto before = CaptureEntity(target.Entity);
+        if (AppendTimelineAnimations(timeline.Tracks[target.TrackIndex], {filesystem::path(file.Path)}))
+        {
+            BeginUndoCapture(target.Entity, before);
+            if (!ProjectManager::IsSimulationRunning())
+            {
+                TimeLineSystem::EvaluateComponent(timeline);
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+bool ImGuiManager::DrawTimelineAnimations(EntityID entity, size_t trackIndex, TimelineTrackData& track)
+{
+    bool changed = false;
+    ImGui::TextWrapped(
+        "VMDを追加すると同時再生します。身体 → 表情の順に登録してください。空欄では対象モデルの再生設定を使います。");
+    if (ImGui::Button("アニメーション (.vmd) をここにドロップ\nクリックしてファイルを選択", ImVec2(-1, 54)))
+    {
+        filesystem::path path;
+        if (ProceduralIO::OpenFileDialog(L"VMD (*.vmd)\0*.vmd\0", path))
+        {
+            changed |= AppendTimelineAnimations(track, {path});
+        }
+    }
+    if (ImGui::IsItemVisible())
+    {
+        const auto window = ImGui::GetWindowPos();
+        const auto size = ImGui::GetWindowSize();
+        const auto minimum = ImGui::GetItemRectMin();
+        const auto maximum = ImGui::GetItemRectMax();
+        m_TimelineAnimationDropTargets.push_back(
+            {entity,
+             trackIndex,
+             {max(minimum.x, window.x), max(minimum.y, window.y)},
+             {min(maximum.x, window.x + size.x), min(maximum.y, window.y + size.y)},
+             ImGui::GetFrameCount()});
+    }
+    if (ImGui::BeginDragDropTarget())
+    {
+        if (const auto* payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
+        {
+            if (payload->Data && payload->DataSize > 0)
+            {
+                const string path(static_cast<const char*>(payload->Data),
+                                  strnlen_s(static_cast<const char*>(payload->Data), payload->DataSize));
+                changed |= AppendTimelineAnimations(track, {filesystem::u8path(path)});
+            }
+        }
+        else if (ImGui::AcceptDragDropPayload("ASSET_MULTI"))
+        {
+            changed |= AppendTimelineAnimations(track, m_DraggedAssetPaths);
+        }
+        ImGui::EndDragDropTarget();
+    }
+    for (size_t index = 0; index < track.AnimationPaths.size();)
+    {
+        ImGui::PushID(static_cast<int>(index));
+        ImGui::TextWrapped("%zu: %s", index + 1, track.AnimationPaths[index].c_str());
+        const bool remove = ImGui::SmallButton("削除");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("上へ") && index > 0)
+        {
+            swap(track.AnimationPaths[index - 1], track.AnimationPaths[index]);
+            changed = true;
+        }
+        ImGui::PopID();
+        if (remove)
+        {
+            track.AnimationPaths.erase(track.AnimationPaths.begin() + index);
+            changed = true;
+        }
+        else
+        {
+            ++index;
+        }
+    }
+    if (!track.AnimationError.empty())
+    {
+        ImGui::TextWrapped("%s", track.AnimationError.c_str());
+        if (ImGui::SmallButton("読み込みを再試行"))
+        {
+            track.LoadedAnimationModelId = -1;
+            TimeLineSystem::PrepareTrackAnimations(track);
+            changed = true;
+        }
+    }
+    return changed;
+}
 
 bool ImGuiManager::AppendLiveMonitorImages(LiveMonitorBinding& monitor, const vector<filesystem::path>& sources)
 {
@@ -282,6 +423,7 @@ bool ImGuiManager::DrawLiveMonitorFrames(EntityID entity, size_t monitorIndex, L
 void ImGuiManager::DrawInspectorWindow()
 {
     m_LiveMonitorDropTargets.clear();
+    m_TimelineAnimationDropTargets.clear();
     SyncEntitySelection();
     ImGui::SetNextWindowSize(ImVec2(312.0f, 520.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("インスペクター", &m_ShowInspectorWindow))
@@ -1660,6 +1802,10 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
             auto& animModel = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
             ImGui::Text("アニメーションモデル: あり");
             ImGui::Checkbox("座標変換", &animModel.IsConvert);
+            if (ImGui::Button("アニメーションをプレビュー・設定"))
+            {
+                AnimationPreviewWindow::OpenForSelection();
+            }
         }
         else
         {
@@ -2177,6 +2323,11 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
                         TimeLineSystem::ReadProperty(track.Target, track.Property, &valid, track.FogVolumeIndex);
                     track.HasDefaultValue = valid;
                     changed = true;
+                }
+                if (track.Property == TimelineProperty::AnimationTime &&
+                    ComponentManager::HasComponent<AnimationModelComponent>(track.Target))
+                {
+                    changed |= DrawTimelineAnimations(entity, trackIndex, track);
                 }
                 if (ImGui::Button("+ Clip"))
                 {

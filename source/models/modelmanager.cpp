@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "modelmanager.h"
+#include "deferredresourcelifetime.h"
 #include "graphicsdevice.h"
 #include "texturemanager.h"
 #include "materialmanager.h"
@@ -34,6 +35,9 @@ namespace
     };
 
     std::vector<RetiredModel> retiredModels;
+    DeferredResourceLifetime<AnimationModelResource> animationLifetime([] {
+        return GraphicsDevice::GetPendingSubmissionFence();
+    });
 
     std::filesystem::file_time_type Stamp(const std::filesystem::path& path)
     {
@@ -52,6 +56,7 @@ vector<unique_ptr<AnimationModelResource>> ModelManager::m_AnimModels;
 vector<unique_ptr<StaticModelResource>> ModelManager::m_StaticModels;
 unordered_map<string, int> ModelManager::m_AnimModelCache;
 unordered_map<string, int> ModelManager::m_StaticModelCache;
+unordered_map<int, weak_ptr<AnimationModelResource>> ModelManager::m_OwnedAnimModels;
 
 string GetLowerExtension(const char* fileName)
 {
@@ -121,6 +126,28 @@ int ModelManager::CreateAnimModelInstance(int sourceId)
     const int id = static_cast<int>(m_AnimModels.size());
     m_AnimModels.push_back(move(instance));
     return id;
+}
+
+int ModelManager::RegisterAnimModelInstance(unique_ptr<AnimationModelResource> model,
+                                            shared_ptr<AnimationModelResource>& owner)
+{
+    if (!model)
+    {
+        return -1;
+    }
+    owner = animationLifetime.Own(move(model));
+    const int id = static_cast<int>(m_AnimModels.size());
+    m_AnimModels.push_back(nullptr);
+    m_OwnedAnimModels[id] = owner;
+    return id;
+}
+
+void ModelManager::CollectRetiredAnimModels()
+{
+    animationLifetime.Collect(GraphicsDevice::GetCompletedFence());
+    std::erase_if(m_OwnedAnimModels, [](const auto& item) {
+        return item.second.expired();
+    });
 }
 
 int ModelManager::LoadStaticModel(const char* fileName, bool isConvert)
@@ -235,15 +262,20 @@ ModelManager::LoadModelResult ModelManager::LoadStaticModelDetailed(const char* 
 
 bool ModelManager::LoadAnimation(int modelId, const char* fileName, const char* name)
 {
-    if (modelId >= 0 && modelId < (int)m_AnimModels.size())
+    if (auto* model = GetAnimModel(modelId))
     {
-        return m_AnimModels[modelId]->LoadAnimation(fileName, name);
+        return model->LoadAnimation(fileName, name);
     }
     return false;
 }
 
 AnimationModelResource* ModelManager::GetAnimModel(int modelId)
 {
+    const auto owned = m_OwnedAnimModels.find(modelId);
+    if (owned != m_OwnedAnimModels.end())
+    {
+        return owned->second.lock().get();
+    }
     if (modelId >= 0 && modelId < (int)m_AnimModels.size())
     {
         return m_AnimModels[modelId].get();
@@ -262,9 +294,14 @@ StaticModelResource* ModelManager::GetStaticModel(int modelId)
 
 void ModelManager::Uninit()
 {
+    animationLifetime.Shutdown();
+    m_OwnedAnimModels.clear();
     for (auto& model : m_AnimModels)
     {
-        model->Uninit();
+        if (model)
+        {
+            model->Uninit();
+        }
     }
     m_AnimModels.clear();
     m_AnimModelCache.clear();
