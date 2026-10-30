@@ -52,6 +52,8 @@ namespace MeshShaderRenderer
             ComPtr<ID3D12PipelineState> NativeOpaquePSO, NativeVelocityPSO;
             ComPtr<ID3D12PipelineState> NativeBinnedOpaquePSO, NativeBinnedVelocityPSO;
             ComPtr<ID3D12PipelineState> NativeShadowPSO;
+            ComPtr<ID3D12PipelineState> NativeShadowBinnedPSO;  // bin 1 (alpha-tested): binned MS + shadow PS
+            ComPtr<ID3D12PipelineState> NativeShadowDepthPSO;   // bin 0 (opaque): binned MS, no PS
             ComPtr<ID3D12PipelineState> NativeOverdrawPSO, NativeBinnedOverdrawPSO;
             ComPtr<ID3D12CommandSignature> MeshSignature, FallbackSignature;
             ComPtr<ID3D12CommandSignature> MaterialBinSignature;
@@ -270,6 +272,16 @@ namespace MeshShaderRenderer
                 stream.Depth.Value.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
                 stream.Targets.Value.NumRenderTargets = 0;
                 Check(device2->CreatePipelineState(&meshDesc, IID_PPV_ARGS(&state.NativeShadowPSO)));
+                // Stage 1C binning: the traversal now emits two
+                // IndirectCommands per shadow view, so the draw uses
+                // the binned MS variant - with the alpha PS for the
+                // alpha bin and depth-only for the opaque bin.
+                auto shadowBinnedMS = Shader("shader/hlsl/build/VirtualGeometryShadowBinnedMS.cso");
+                stream.MS.Value = {shadowBinnedMS->GetBufferPointer(), shadowBinnedMS->GetBufferSize()};
+                Check(device2->CreatePipelineState(&meshDesc, IID_PPV_ARGS(&state.NativeShadowBinnedPSO)));
+                stream.PS.Value = {};
+                Check(device2->CreatePipelineState(&meshDesc, IID_PPV_ARGS(&state.NativeShadowDepthPSO)));
+                stream.MS.Value = {shadowMS->GetBufferPointer(), shadowMS->GetBufferSize()};
                 stream.Depth.Value = originalDepth;
                 stream.PS.Value = originalPS;
                 stream.Targets.Value.NumRenderTargets = originalTargetCount;
@@ -929,8 +941,8 @@ namespace MeshShaderRenderer
     {
         auto& data = Data();
         const uint32_t viewId = LightingResources::GetCurrentShadowPassIndex();
-        if (!IsActive() || data.Failed || !data.NativeShadowPSO ||
-            !VirtualGeometryTraversal::ShadowViewActive(viewId))
+        if (!IsActive() || data.Failed || !data.NativeShadowBinnedPSO || !data.NativeShadowDepthPSO ||
+            !data.MaterialBinSignature || !VirtualGeometryTraversal::ShadowViewActive(viewId))
         {
             return false;
         }
@@ -988,9 +1000,16 @@ namespace MeshShaderRenderer
             14, VirtualGeometryStreaming::ResidencyBuffer().Resource()->GetGPUVirtualAddress());
         commands->SetGraphicsRootDescriptorTable(15, VirtualGeometryStreaming::PageDescriptors());
         commands->SetGraphicsRootConstantBufferView(17, LightingResources::GetCurrentLightConstantBufferAddress());
-        commands->SetPipelineState(data.NativeShadowPSO.Get());
-        commands->ExecuteIndirect(data.MeshSignature.Get(), 1,
+        // Two bins, two draws (see the binning design doc): the
+        // opaque bin runs depth-only, the alpha-tested bin runs the
+        // alpha PS; each command carries its bin offset/count as
+        // root constants via the shared material-bin signature.
+        commands->SetPipelineState(data.NativeShadowDepthPSO.Get());
+        commands->ExecuteIndirect(data.MaterialBinSignature.Get(), 1,
                                   VirtualGeometryTraversal::ShadowArgumentBuffer(viewId).Resource(), 0, nullptr, 0);
+        commands->SetPipelineState(data.NativeShadowBinnedPSO.Get());
+        commands->ExecuteIndirect(data.MaterialBinSignature.Get(), 1,
+                                  VirtualGeometryTraversal::ShadowArgumentBuffer(viewId).Resource(), 20, nullptr, 0);
         return true;
     }
 
