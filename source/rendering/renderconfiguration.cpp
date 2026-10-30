@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "memoryallocator.h"
 #include "renderconfiguration.h"
 #include "graphicslog.h"
 #include "graphicsdevice.h"
@@ -101,10 +102,21 @@ void RenderConfiguration::Resize(UINT width, UINT height)
     clearValue.DepthStencil.Depth = 0.0f;
     clearValue.DepthStencil.Stencil = 0;
 
-    auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    hr = m_Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &depthDesc,
-                                           D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue,
-                                           IID_PPV_ARGS(&m_DepthStencilBuffer));
+    // Through D3D12MA when the flag is on; committed fallback otherwise.
+    if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(
+            depthDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue))
+    {
+        m_DepthStencilBuffer.Reset();
+        m_DepthStencilBuffer.Attach(allocated);
+        hr = S_OK;
+    }
+    else
+    {
+        auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        hr = m_Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &depthDesc,
+                                               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue,
+                                               IID_PPV_ARGS(&m_DepthStencilBuffer));
+    }
     if (FAILED(hr))
     {
         WriteGraphicsLog("ERROR: Resize CreateCommittedResource(Depth) failed\n");
