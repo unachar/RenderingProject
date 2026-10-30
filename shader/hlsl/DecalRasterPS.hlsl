@@ -2,9 +2,10 @@
 // reconstruct the receiver's world position from the scene depth,
 // transform it into decal-local (unit box) space, clip outside the box,
 // sample the decal material and write albedo / world normal /
-// roughness+mask into the DBuffer. Blending (configured in the PSO)
-// accumulates decals in priority order; the composite pass merges the
-// DBuffer into the GBuffer before lighting.
+// roughness+mask into the DBuffer. The decal record arrives as root
+// constants (112 bytes = 28 DWORDs); blending (configured in the PSO)
+// accumulates decals in priority order, and the composite pass merges
+// the DBuffer into the GBuffer before lighting.
 //
 // Conventions (see docs/rendering-technology-stage1d-design.md):
 // - WorldToLocal is row-major; world positions transform with
@@ -20,29 +21,22 @@ cbuffer DecalFrame : register(b0)
     float4 CameraPosition;
 }
 
-cbuffer DecalConstants : register(b1)
+cbuffer DecalData : register(b1)
 {
-    uint DecalIndex;
+    float4x4 DecalWorldToLocal;
+    float4 DecalExtentsOpacity;
+    uint4 DecalTextures;
+    float4 DecalFade;
 }
-
-struct GpuDecal
-{
-    float4x4 WorldToLocal;
-    float4 ExtentsOpacity;
-    uint4 Textures;
-    float4 Fade;
-};
 
 Texture2D<float> SceneDepth : register(t0);
 Texture2D GBufferNormal : register(t1);
-StructuredBuffer<GpuDecal> Decals : register(t2);
 SamplerState LinearClamp : register(s0);
 
 struct DecalPSInput
 {
     float4 Position : SV_POSITION;
     float2 TexCoord : TEXCOORD0;
-    nointerpolation uint DecalIndex : TEXCOORD1;
 };
 
 struct DecalPSOutput
@@ -54,7 +48,6 @@ struct DecalPSOutput
 
 DecalPSOutput main(DecalPSInput input)
 {
-    GpuDecal decal = Decals[input.DecalIndex];
     int2 pixel = int2(input.Position.xy);
     float depth = SceneDepth.Load(int3(pixel, 0));
     clip(depth - 1e-7f);
@@ -63,7 +56,7 @@ DecalPSOutput main(DecalPSInput input)
     float4 world = mul(clipPosition, InvViewProjection);
     float3 worldPosition = world.xyz / world.w;
 
-    float3 local = mul(float4(worldPosition, 1.0f), decal.WorldToLocal).xyz;
+    float3 local = mul(float4(worldPosition, 1.0f), DecalWorldToLocal).xyz;
     clip(1.0f - abs(local.x));
     clip(1.0f - abs(local.y));
     clip(1.0f - abs(local.z));
@@ -71,10 +64,10 @@ DecalPSOutput main(DecalPSInput input)
 
     float3 receiverNormal = normalize(GBufferNormal.Load(int3(pixel, 0)).xyz * 2.0f - 1.0f);
     // Gradient of local z in world space is the third row of the 3x3.
-    float3 projectionAxis = normalize(float3(decal.WorldToLocal[2][0], decal.WorldToLocal[2][1],
-                                             decal.WorldToLocal[2][2]));
+    float3 projectionAxis = normalize(float3(DecalWorldToLocal[2][0], DecalWorldToLocal[2][1],
+                                             DecalWorldToLocal[2][2]));
     float facing = dot(receiverNormal, projectionAxis);
-    float angleFade = smoothstep(decal.Fade[1], decal.Fade[0], facing);
+    float angleFade = smoothstep(DecalFade[1], DecalFade[0], facing);
     clip(angleFade - 1.0f / 255.0f);
 
     float edgeFade = (1.0f - smoothstep(0.85f, 1.0f, abs(local.x))) *
@@ -82,28 +75,28 @@ DecalPSOutput main(DecalPSInput input)
                      (1.0f - smoothstep(0.85f, 1.0f, abs(local.z)));
 
     float4 albedo = float4(1.0f, 1.0f, 1.0f, 1.0f);
-    if (decal.Textures[0] != 0xFFFFFFFFu)
+    if (DecalTextures[0] != 0xFFFFFFFFu)
     {
-        albedo = LoadMaterialTexture(decal.Textures[0]).Sample(LinearClamp, uv);
+        albedo = LoadMaterialTexture(DecalTextures[0]).Sample(LinearClamp, uv);
     }
-    float strength = albedo.a * decal.ExtentsOpacity[3] * angleFade * edgeFade;
+    float strength = albedo.a * DecalExtentsOpacity[3] * angleFade * edgeFade;
     clip(strength - 1.0f / 255.0f);
 
     float3 decalNormal = receiverNormal;
-    if (decal.Textures[1] != 0xFFFFFFFFu)
+    if (DecalTextures[1] != 0xFFFFFFFFu)
     {
-        float3 tangentNormal = LoadMaterialTexture(decal.Textures[1]).Sample(LinearClamp, uv).xyz * 2.0f - 1.0f;
+        float3 tangentNormal = LoadMaterialTexture(DecalTextures[1]).Sample(LinearClamp, uv).xyz * 2.0f - 1.0f;
         // Approximate local->world with the transposed 3x3 (exact for
         // the rotation part of the projector transform).
-        float3x3 worldToLocal3 = float3x3(decal.WorldToLocal[0].xyz, decal.WorldToLocal[1].xyz,
-                                          decal.WorldToLocal[2].xyz);
+        float3x3 worldToLocal3 = float3x3(DecalWorldToLocal[0].xyz, DecalWorldToLocal[1].xyz,
+                                          DecalWorldToLocal[2].xyz);
         decalNormal = normalize(mul(tangentNormal, transpose(worldToLocal3)));
     }
 
-    float roughness = decal.Fade[2];
-    if (decal.Textures[2] != 0xFFFFFFFFu)
+    float roughness = DecalFade[2];
+    if (DecalTextures[2] != 0xFFFFFFFFu)
     {
-        roughness = LoadMaterialTexture(decal.Textures[2]).Sample(LinearClamp, uv).r;
+        roughness = LoadMaterialTexture(DecalTextures[2]).Sample(LinearClamp, uv).r;
     }
 
     DecalPSOutput output;
