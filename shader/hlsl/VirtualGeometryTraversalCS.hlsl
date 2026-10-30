@@ -53,6 +53,7 @@ cbuffer Parameters : register(b0)
 };
 
 groupshared uint StateBase, QueueBase, QueueCount, QueueCursor, OutputBase, OutputCount, Accepted;
+groupshared uint OutputBin;
 groupshared uint CurrentClusters[64];
 
 void Stat(uint offset, uint value = 1)
@@ -213,6 +214,88 @@ bool Reserve(uint counter, uint amount, uint limit, out uint base)
     }
 }
 
+// Stage 1C shadow material binning. Statistics layout additions:
+// byte 28 = alpha-bin cluster count, byte 96 = shadow total
+// reservation counter (the single serialization point that keeps
+// the two-sided allocation race-free).
+uint ShadowMaterialBin(GPUInstanceData instance)
+{
+    if (instance.MaterialIndex >= MaterialCount)
+    {
+        return 0;
+    }
+    // Packed vector 8 .y = ResolveShadowMode (None 0, Opaque 1,
+    // AlphaTest 2, Transmittance 3): mirrors VirtualGeometryShadowPS,
+    // which discards every pixel for modes other than 1 and 2.
+    float4 pbrPadding = LoadSceneMaterialVector(Materials, instance.MaterialIndex, 8u);
+    uint mode = (uint)(pbrPadding.y + 0.5f);
+    if (mode == 2u)
+    {
+        return 1;
+    }
+    return mode == 1u ? 0u : 2u;
+}
+
+bool ReserveShadowTotal(uint amount)
+{
+    uint first = Statistics.Load(96), observed;
+    [allow_uav_condition] while (true)
+    {
+        if (Statistics.Load(4) + Statistics.Load(28) + amount > Capacity)
+        {
+            return false;
+        }
+        Statistics.InterlockedCompareExchange(96, first, first + amount, observed);
+        if (first == observed)
+        {
+            return true;
+        }
+        first = observed;
+    }
+}
+
+bool ReserveShadowDown(uint amount, out uint base)
+{
+    uint first = Statistics.Load(28), observed;
+    [allow_uav_condition] while (true)
+    {
+        if (amount > Capacity || first > Capacity - amount)
+        {
+            base = 0;
+            return false;
+        }
+        Statistics.InterlockedCompareExchange(28, first, first + amount, observed);
+        if (first == observed)
+        {
+            base = Capacity - (first + amount);
+            return true;
+        }
+        first = observed;
+    }
+}
+
+// Reserves a whole per-instance output block into its material
+// bin (shadow views only). Bin 2 (skip) reports success with no
+// reservation: the writers check the bin and emit nothing.
+bool ReserveShadowBlock(GPUInstanceData instance, uint amount, out uint bin, out uint base)
+{
+    bin = ShadowMaterialBin(instance);
+    base = 0;
+    if (bin == 2u)
+    {
+        return true;
+    }
+    if (!ReserveShadowTotal(amount))
+    {
+        return false;
+    }
+    if (bin == 0u)
+    {
+        return Reserve(4, amount, Capacity, base);
+    }
+    return ReserveShadowDown(amount, base);
+}
+
 [numthreads(64, 1, 1)] void Reset(uint3 id : SV_DispatchThreadID) {
     if (id.x < 64)
     {
@@ -242,6 +325,22 @@ bool Reserve(uint counter, uint amount, uint limit, out uint base)
 }[numthreads(1, 1, 1)] void BuildArguments()
 {
     uint count = Statistics.Load(4);
+    if (ShadowBinning != 0)
+    {
+        // Two IndirectCommands (VirtualGeometryBinning layout:
+        // FirstCluster, ClusterCount, DispatchMesh args): bin 0
+        // grows up from 0, bin 1 sits at the tail.
+        uint alpha = Statistics.Load(28);
+        uint x0 = min(count, 65535u);
+        Arguments.Store(0, 0);
+        Arguments.Store(4, count);
+        Arguments.Store3(8, uint3(x0, count ? (count + x0 - 1) / x0 : 1, 1));
+        Arguments.Store(20, Capacity - alpha);
+        Arguments.Store(24, alpha);
+        uint x1 = min(alpha, 65535u);
+        Arguments.Store3(28, uint3(x1, alpha ? (alpha + x1 - 1) / x1 : 1, 1));
+        return;
+    }
     uint x = min(count, 65535u);
     Arguments.Store3(0, uint3(x, count ? (count + x - 1) / x : 1, 1));
 }
@@ -405,7 +504,15 @@ void ResidentCut(VirtualGeometryGPUAsset asset, GPUInstanceData instance, uint4 
     AllMemoryBarrierWithGroupSync();
     if (lane == 0)
     {
-        Accepted = Reserve(4, OutputCount, Capacity, OutputBase);
+        if (ShadowBinning != 0)
+        {
+            Accepted = ReserveShadowBlock(instance, OutputCount, OutputBin, OutputBase) ? 1 : 0;
+        }
+        else
+        {
+            OutputBin = 0;
+            Accepted = Reserve(4, OutputCount, Capacity, OutputBase);
+        }
         OutputCount = 0;
         Success[object] = Accepted;
         if (Accepted == 0)
@@ -418,7 +525,7 @@ void ResidentCut(VirtualGeometryGPUAsset asset, GPUInstanceData instance, uint4 
         }
     }
     GroupMemoryBarrierWithGroupSync();
-    if (Accepted == 0)
+    if (Accepted == 0 || OutputBin == 2)
     {
         return;
     }
@@ -663,7 +770,15 @@ void ResidentCut(VirtualGeometryGPUAsset asset, GPUInstanceData instance, uint4 
     }
     if (lane == 0)
     {
-        Accepted = Reserve(4, OutputCount, Capacity, OutputBase);
+        if (ShadowBinning != 0)
+        {
+            Accepted = ReserveShadowBlock(instance, OutputCount, OutputBin, OutputBase) ? 1 : 0;
+        }
+        else
+        {
+            OutputBin = 0;
+            Accepted = Reserve(4, OutputCount, Capacity, OutputBase);
+        }
         Success[object] = Accepted;
         if (Accepted == 0)
         {
@@ -675,7 +790,7 @@ void ResidentCut(VirtualGeometryGPUAsset asset, GPUInstanceData instance, uint4 
         }
     }
     GroupMemoryBarrierWithGroupSync();
-    if (Accepted == 0)
+    if (Accepted == 0 || OutputBin == 2)
     {
         return;
     }

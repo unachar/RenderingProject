@@ -659,7 +659,7 @@ namespace VirtualGeometryTraversal
         bool shadowTraversal = state.Options.Enabled && state.Options.ShadowTraversal;
         ensure(frame.ShadowBuffers().Success, inputs.ObjectCapacity, 4);
         ensure(frame.ShadowBuffers().Counters, 64, 4);
-        ensure(frame.ShadowBuffers().Arguments, 1, 12);
+        ensure(frame.ShadowBuffers().Arguments, 2, 20); // two IndirectCommands (material bins)
         ensure(frame.ShadowBuffers().States, shadowTraversal ? scratch : 1, 4);
         ensure(frame.ShadowBuffers().Queue, shadowTraversal ? scratch : 1, 4);
         ensure(frame.ShadowBuffers().Visible, shadowTraversal ? selectedCapacity : 1, 16);
@@ -943,7 +943,7 @@ namespace VirtualGeometryTraversal
             };
             ensureSlot(shadowBuffers.Success, inputs.ObjectCapacity, 4);
             ensureSlot(shadowBuffers.Counters, 64, 4);
-            ensureSlot(shadowBuffers.Arguments, 1, 12);
+            ensureSlot(shadowBuffers.Arguments, 2, 20); // two IndirectCommands (material bins)
             ensureSlot(shadowBuffers.States, scratch, 4);
             ensureSlot(shadowBuffers.Queue, scratch, 4);
             ensureSlot(shadowBuffers.Visible, selectedCapacity, 16);
