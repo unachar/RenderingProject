@@ -1,4 +1,5 @@
 #pragma once
+#include "referenceimage.h"
 #include <cstdint>
 #include <vector>
 
@@ -36,13 +37,7 @@ namespace ReferenceIntegrator
     uint64_t GetTlasAddress();
     uint64_t GetSceneBufferAddress(int index);
 
-    struct CaptureResult
-    {
-        std::vector<float> Pixels; // RGBA32F mean radiance, row-major
-        uint32_t Width = 0;
-        uint32_t Height = 0;
-        uint32_t Samples = 0;
-    };
+    using CaptureResult = ReferenceImage;
 
     // Synchronous end-to-end capture of the Cornell fixture: builds
     // the scene, runs a ReferenceCapture job to completion on the
@@ -51,4 +46,10 @@ namespace ReferenceIntegrator
     // failure; the job is cancelled in that case.
     bool RunCornellCapture(ID3D12Device* device, ID3D12CommandQueue* queue,
                            const ReferenceCapture::Settings& settings, CaptureResult& result);
+
+    // Runs a capture and writes PFM + PPM preview files (writers in
+    // ReferenceImageIO); returns false if any step fails.
+    bool RunCornellCaptureToFiles(ID3D12Device* device, ID3D12CommandQueue* queue,
+                                  const ReferenceCapture::Settings& settings, const char* pfmPath,
+                                  const char* ppmPath);
 } // namespace ReferenceIntegrator

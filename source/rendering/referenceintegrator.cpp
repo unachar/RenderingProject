@@ -560,4 +560,15 @@ namespace ReferenceIntegrator
         guard.Done = true;
         return true;
     }
+
+    bool RunCornellCaptureToFiles(ID3D12Device* device, ID3D12CommandQueue* queue,
+                                  const ReferenceCapture::Settings& settings, const char* pfmPath, const char* ppmPath)
+    {
+        CaptureResult result;
+        if (!RunCornellCapture(device, queue, settings, result))
+        {
+            return false;
+        }
+        return ReferenceImageIO::WritePfm(pfmPath, result) && ReferenceImageIO::WritePpmPreview(ppmPath, result);
+    }
 } // namespace ReferenceIntegrator
