@@ -20,6 +20,7 @@
 #include "rayreflections.h"
 #include "rendertargets.h"
 #include "noisecachebindings.h"
+#include "reflectionprobes.h"
 
 void RenderFrame::BeginDraw()
 {
@@ -30,6 +31,7 @@ void RenderFrame::BeginDraw()
     }
     GpuMemoryBudget::Update();
     MemoryAllocator::LogStatisticsPeriodically();
+    ReflectionProbes::UpdateActiveEnvironment();
     ModelManager::CollectRetiredAnimModels();
     RenderTargets::UpdateMemoryPolicy();
     Raytracing::ReleaseInactiveResources();

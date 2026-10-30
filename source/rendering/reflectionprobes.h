@@ -26,6 +26,12 @@ namespace ReflectionProbes
     // Rebuilds the registry from the scene's ReflectionProbeComponents.
     void SyncFromScene();
 
+    // Per-frame entry (RenderFrame::BeginDraw): syncs the registry,
+    // selects the probe containing the camera and writes the result
+    // to RendererState's environment override. Clears the override
+    // whenever the feature flag is off.
+    void UpdateActiveEnvironment();
+
     // Returns the environment SRV index of the active probe for the
     // given camera position, or -1 when no probe contains it.
     // Selection: containing probes only; highest priority wins; ties

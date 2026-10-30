@@ -1,6 +1,9 @@
 #include "pch.h"
 #include "reflectionprobes.h"
+#include "camera.h"
 #include "componentmanager.h"
+#include "renderersettings.h"
+#include "rendererstate.h"
 #include "texturemanager.h"
 
 #include <cmath>
@@ -63,6 +66,26 @@ namespace ReflectionProbes
                 probe.Priority = probeComponent.Priority;
                 Add(probe);
             });
+    }
+
+    void UpdateActiveEnvironment()
+    {
+        if (!RendererSettings::GetUseLocalReflectionProbes())
+        {
+            RendererState::m_EnvironmentTextureOverrideSrvIndex = -1;
+            return;
+        }
+        SyncFromScene();
+        const EntityID cameraEntity = Camera::GetCameraEntity();
+        TransformComponent* cameraTransform = ComponentManager::GetComponent<TransformComponent>(cameraEntity);
+        if (cameraTransform == nullptr)
+        {
+            RendererState::m_EnvironmentTextureOverrideSrvIndex = -1;
+            return;
+        }
+        const float cameraPosition[3] = {cameraTransform->Position.x, cameraTransform->Position.y,
+                                         cameraTransform->Position.z};
+        RendererState::m_EnvironmentTextureOverrideSrvIndex = SelectEnvironmentSrvIndex(cameraPosition);
     }
 
     int SelectEnvironmentSrvIndex(const float cameraPosition[3])

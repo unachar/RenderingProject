@@ -197,7 +197,7 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
             m_CommandList->SetGraphicsRootConstantBufferView(2,
                                                              LightingResources::GetCurrentLightConstantBufferAddress());
         }
-        int environmentSrvIndex = m_EnvironmentTextureSrvIndex;
+        int environmentSrvIndex = GetActiveEnvironmentTextureSrvIndex();
         if (environmentSrvIndex < 0)
         {
             environmentSrvIndex = TextureManager::GetDefaultTextureIndex();

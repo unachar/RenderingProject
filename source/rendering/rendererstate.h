@@ -104,6 +104,14 @@ class RendererState
     static CD3DX12_CPU_DESCRIPTOR_HANDLE m_GBufferRtvHandles[g_kGBUFFER_COUNT];
     static CD3DX12_GPU_DESCRIPTOR_HANDLE m_GBufferSrvHandles[g_kGBUFFER_COUNT];
     static int m_EnvironmentTextureSrvIndex;
+    // Stage 2 J: when >= 0, a local reflection probe overrides the
+    // global environment texture for the frame.
+    static int m_EnvironmentTextureOverrideSrvIndex;
+    static int GetActiveEnvironmentTextureSrvIndex()
+    {
+        return m_EnvironmentTextureOverrideSrvIndex >= 0 ? m_EnvironmentTextureOverrideSrvIndex
+                                                         : m_EnvironmentTextureSrvIndex;
+    }
     static int m_MonitorTextureSrvIndex;
     static ComPtr<ID3D12RootSignature> m_PostProcessRootSignature;
     static ComPtr<ID3D12RootSignature> m_UpscaleRootSignature;

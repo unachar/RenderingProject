@@ -236,7 +236,7 @@ void ScenePasses::BeginPass(ID3D12RootSignature* rootSignature, D3D_PRIMITIVE_TO
     {
         m_CommandList->SetGraphicsRootConstantBufferView(5, LightingResources::GetCurrentShadowConstantBufferAddress());
     }
-    int environmentSrvIndex = m_EnvironmentTextureSrvIndex;
+    int environmentSrvIndex = GetActiveEnvironmentTextureSrvIndex();
     if (environmentSrvIndex < 0)
     {
         environmentSrvIndex = TextureManager::GetDefaultTextureIndex();
