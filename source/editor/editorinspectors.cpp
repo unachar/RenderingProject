@@ -593,6 +593,59 @@ void ImGuiManager::DrawInspectorWindow()
         }
     }
 
+    if (ComponentManager::HasComponent<DecalComponent>(m_SelectedEntity) &&
+        ImGui::CollapsingHeader("デカール (DBuffer)", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        auto& decal = ComponentManager::GetComponentUnchecked<DecalComponent>(m_SelectedEntity);
+        EntitySnapshot before = CaptureEntity(m_SelectedEntity);
+        bool changed = false;
+        changed |= ImGui::Checkbox("有効", &decal.IsActive);
+        changed |= ImGui::DragFloat3("サイズ", &decal.Size.x, 0.01f, 0.02f, 100.0f);
+        changed |= ImGui::SliderFloat("不透明度", &decal.Opacity, 0.0f, 1.0f);
+        changed |= ImGui::DragFloat("粗さ", &decal.Roughness, 0.01f, 0.0f, 1.0f);
+        changed |= ImGui::DragInt("優先度", &decal.Priority, 1.0f);
+        const auto textureField = [&changed](const char* label, string& path) {
+            char buffer[512];
+            strncpy_s(buffer, path.c_str(), _TRUNCATE);
+            if (ImGui::InputText(label, buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue))
+            {
+                path = buffer;
+                changed = true;
+            }
+        };
+        textureField("アルベドテクスチャ", decal.AlbedoTexturePath);
+        textureField("法線テクスチャ", decal.NormalTexturePath);
+        textureField("粗さテクスチャ", decal.RoughnessTexturePath);
+        if (changed)
+        {
+            BeginUndoCapture(m_SelectedEntity, before);
+        }
+    }
+
+    if (ComponentManager::HasComponent<ReflectionProbeComponent>(m_SelectedEntity) &&
+        ImGui::CollapsingHeader("反射プローブ", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        auto& probe = ComponentManager::GetComponentUnchecked<ReflectionProbeComponent>(m_SelectedEntity);
+        EntitySnapshot before = CaptureEntity(m_SelectedEntity);
+        bool changed = false;
+        changed |= ImGui::Checkbox("有効", &probe.IsActive);
+        changed |= ImGui::DragFloat3("影響範囲", &probe.InfluenceSize.x, 0.05f, 0.2f, 1000.0f);
+        changed |= ImGui::DragInt("優先度", &probe.Priority, 1.0f);
+        changed |= ImGui::DragFloat("強度", &probe.Intensity, 0.01f, 0.0f, 10.0f);
+        changed |= ImGui::Checkbox("プリフィルタ生成", &probe.GeneratePrefilter);
+        char buffer[512];
+        strncpy_s(buffer, probe.EnvironmentTexturePath.c_str(), _TRUNCATE);
+        if (ImGui::InputText("環境テクスチャ", buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue))
+        {
+            probe.EnvironmentTexturePath = buffer;
+            changed = true;
+        }
+        if (changed)
+        {
+            BeginUndoCapture(m_SelectedEntity, before);
+        }
+    }
+
     if (ComponentManager::HasComponent<LightComponent>(m_SelectedEntity))
     {
         DrawLightInspector(m_SelectedEntity);
