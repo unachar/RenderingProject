@@ -321,6 +321,18 @@ class RendererSettings
         SetValue(s_UseDBufferDecals, value);
     }
 
+    // Stage 2 J: local reflection probes override the global
+    // environment texture while the camera is inside a probe volume.
+    static bool GetUseLocalReflectionProbes()
+    {
+        return s_UseLocalReflectionProbes;
+    }
+
+    static void SetUseLocalReflectionProbes(bool value)
+    {
+        SetValue(s_UseLocalReflectionProbes, value);
+    }
+
     static bool GetReservedResourcesEnabled()
     {
         return s_ReservedResourcesEnabled;
@@ -723,6 +735,7 @@ class RendererSettings
     inline static bool s_UseD3D12MemoryAllocator = false;
     inline static bool s_UseFidelityFxSpdHiZ = false;
     inline static bool s_UseDBufferDecals = false;
+    inline static bool s_UseLocalReflectionProbes = false;
     inline static bool s_SsaoEnabled = true;
     inline static float s_SsaoRadius = 1.15f;
     inline static float s_SsaoPower = 1.35f;
