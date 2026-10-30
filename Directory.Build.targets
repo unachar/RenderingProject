@@ -69,7 +69,7 @@
     <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
     <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\\native\\bin\\x64\\dxc.exe&quot; -T cs_6_5 -E AovMain -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\ReferencePathTraceAovCS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\ReferencePathTraceAovCS.hlsl&quot;" />
   </Target>
-  <Target Name="CompileReferencePathTraceAovShader" Inputs="$(MSBuildThisFileDirectory)shader\hlsl\EnvironmentCubeToEquirectCS.hlsl;$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props" Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\EnvironmentCubeToEquirectCS.cso" Condition="'$(Platform)' == 'x64'">
+  <Target Name="CompileEnvironmentCubeToEquirectShader" Inputs="$(MSBuildThisFileDirectory)shader\hlsl\EnvironmentCubeToEquirectCS.hlsl;$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props" Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\EnvironmentCubeToEquirectCS.cso" Condition="'$(Platform)' == 'x64'">
     <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
     <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\\native\\bin\\x64\\dxc.exe&quot; -T cs_6_0 -E main -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\EnvironmentCubeToEquirectCS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\EnvironmentCubeToEquirectCS.hlsl&quot;" />
   </Target>
