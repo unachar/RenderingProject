@@ -53,6 +53,11 @@ class TextureManager
     static int LoadIesProfile(const filesystem::path& fileName);
     static uint64_t WriteIesProfileViews(D3D12_CPU_DESCRIPTOR_HANDLE destination, uint64_t previousRevision);
     static int LoadTextureFromMemory(const char* name, const uint8_t* pData, size_t dataSize);
+    // Registers an externally created texture (e.g. a runtime-generated
+    // probe prefilter result) in the shared SRV heap under `name` and
+    // returns its SRV index, or the error texture index on failure.
+    // Re-registering the same name returns the existing index.
+    static int RegisterExternalTexture(const char* name, ComPtr<ID3D12Resource> resource);
     static int GetDefaultTextureIndex();
     static ComPtr<ID3D12Resource> GetTextureResource(int srvIndex);
     static UINT GetTextureResidentMip(int srvIndex);

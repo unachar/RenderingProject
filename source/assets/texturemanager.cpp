@@ -1456,6 +1456,43 @@ int TextureManager::LoadTextureFromMemory(const char* name, const uint8_t* pData
     return srvIndex;
 }
 
+int TextureManager::RegisterExternalTexture(const char* name, ComPtr<ID3D12Resource> resource)
+{
+    if (name == nullptr || !resource)
+    {
+        return GetErrorTextureIndex();
+    }
+    const string key = name;
+    {
+        lock_guard<mutex> lock(g_TextureMutex);
+        auto it = m_Textures.find(key);
+        if (it != m_Textures.end())
+        {
+            return it->second.SrvIndex;
+        }
+    }
+    const int maxSrvIndex = FrameConstants::g_kTEXTURE_SRV_START_INDEX + FrameConstants::g_kMAX_SRVS;
+    int srvIndex = -1;
+    {
+        lock_guard<mutex> lock(g_TextureMutex);
+        if (m_NextSrvIndex >= maxSrvIndex)
+        {
+            Debug::Log("ERROR: SRV heap is full. Cannot register external texture.\n");
+            return GetErrorTextureIndex();
+        }
+        srvIndex = m_NextSrvIndex++;
+    }
+    TextureManager::CreateShaderResourceView(resource.Get(), resource->GetDesc(), srvIndex, 0);
+    TextureData tData;
+    tData.Resource = resource;
+    tData.SrvIndex = srvIndex;
+    {
+        lock_guard<mutex> lock(g_TextureMutex);
+        m_Textures.emplace(key, tData);
+    }
+    return srvIndex;
+}
+
 int TextureManager::GetDefaultTextureIndex()
 {
     lock_guard<mutex> lock(g_TextureMutex);
