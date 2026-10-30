@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "gpumemorybudget.h"
+#include "memoryallocator.h"
 #include "raytracing.h"
 #include "raytracingscene.h"
 #include "rendererstate.h"
@@ -206,8 +207,21 @@ namespace
         }
         const auto description = CD3DX12_RESOURCE_DESC::Buffer(bytes, flags);
         ComPtr<ID3D12Resource> created;
-        const HRESULT result = g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, state,
-                                                                 nullptr, IID_PPV_ARGS(&created));
+        // DEFAULT-heap buffers go through D3D12MA when the flag is on.
+        HRESULT result = E_FAIL;
+        if (heapType == D3D12_HEAP_TYPE_DEFAULT)
+        {
+            if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(description, state, nullptr))
+            {
+                created.Attach(allocated);
+                result = S_OK;
+            }
+        }
+        if (!created)
+        {
+            result = g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, state, nullptr,
+                                                       IID_PPV_ARGS(&created));
+        }
         if (FAILED(result))
         {
             Debug::Log("DXR: buffer allocation failed (0x%08X)\n", static_cast<unsigned int>(result));
@@ -239,15 +253,23 @@ namespace
         {
             return true;
         }
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         const auto description = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16_FLOAT, width, height, 1, 1, 1, 0,
                                                               D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         ComPtr<ID3D12Resource> created;
-        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
-                                                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
-                                                     IID_PPV_ARGS(&created))))
+        if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(
+                description, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr))
         {
-            return false;
+            created.Attach(allocated);
+        }
+        else
+        {
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+                                                         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+                                                         IID_PPV_ARGS(&created))))
+            {
+                return false;
+            }
         }
         created->SetName(L"Raytraced Sun Shadow and AO");
         frame.Result = move(created);
@@ -279,15 +301,23 @@ namespace
         {
             return true;
         }
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         const auto description =
             CD3DX12_RESOURCE_DESC::Tex2D(format, width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         ComPtr<ID3D12Resource> created;
-        if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
-                                                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
-                                                     IID_PPV_ARGS(&created))))
+        if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(
+                description, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr))
         {
-            return false;
+            created.Attach(allocated);
+        }
+        else
+        {
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+                                                         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+                                                         IID_PPV_ARGS(&created))))
+            {
+                return false;
+            }
         }
         created->SetName(index < 4 ? L"NRD Primary Surface Guide (shared)" : L"NRD Ambient Guide (shared)");
         guide = move(created);
