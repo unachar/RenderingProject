@@ -197,6 +197,54 @@ float3 DirectLight(float3 position, float3 normal, float3 V, float3 albedo, floa
     {
         const float4 lightA = Lights[i * 2 + 0];
         const float4 lightB = Lights[i * 2 + 1];
+        if (lightA.w > 2.5f)
+        {
+            continue; // continuation slot of a quad light
+        }
+        if (lightA.w > 1.5f)
+        {
+            // Quad area light (type 2): solid-angle NEE. Slots:
+            // A = (corner, 2), B = (edgeU, 0), C = (edgeV, 0),
+            // D = (emission, intensity).
+            const float4 lightC = Lights[i * 2 + 2];
+            const float4 lightD = Lights[i * 2 + 3];
+            ++i;
+            const float3 edgeU = lightB.xyz;
+            const float3 edgeV = lightC.xyz;
+            const float3 normalRaw = cross(edgeU, edgeV);
+            const float area = length(normalRaw);
+            if (area <= 1e-8f)
+            {
+                continue;
+            }
+            const float3 lightNormal = normalRaw / area;
+            const float2 quadSample = rng.Next2();
+            const float3 lightPoint = lightA.xyz + edgeU * quadSample.x + edgeV * quadSample.y;
+            const float3 toLightQ = lightPoint - position;
+            const float distance2 = dot(toLightQ, toLightQ);
+            const float distanceQ = sqrt(distance2);
+            const float3 Lq = toLightQ / max(distanceQ, 1e-5f);
+            const float cosLight = dot(lightNormal, -Lq);
+            const float NdotLq = dot(normal, Lq);
+            if (cosLight <= 0.0f || NdotLq <= 0.0f)
+            {
+                continue;
+            }
+            if (Occluded(position + normal * 1e-3f, Lq, distanceQ * 0.999f))
+            {
+                continue;
+            }
+            const float pdf = distance2 / (area * cosLight);
+            const float3 Hq = normalize(Lq + V);
+            const float NdotVq = max(dot(normal, V), 1e-4f);
+            const float Dq = DistributionGGX(max(dot(normal, Hq), 0.0f), roughness);
+            const float3 Fq = FresnelSchlick(max(dot(Hq, V), 0.0f), F0);
+            const float Gq = GeometrySmith1(NdotVq, roughness) * GeometrySmith1(NdotLq, roughness);
+            const float3 specularQ = Dq * Fq * Gq / max(4.0f * NdotVq * NdotLq, 1e-4f);
+            const float3 diffuseQ = albedo * (1.0f - Fq) * (1.0f - metallic) / REF_PI;
+            result += (diffuseQ + specularQ) * (lightD.xyz * lightD.w) * (NdotLq / pdf);
+            continue;
+        }
         float3 L;
         float lightDistance;
         float3 radiance;
@@ -254,11 +302,19 @@ float3 TracePath(float3 origin, float3 direction, inout Rng rng)
         }
         const float4 mat0 = MaterialData[surface.Material * 3 + 0];
         const float4 mat1 = MaterialData[surface.Material * 3 + 1];
+        const float4 mat2 = MaterialData[surface.Material * 3 + 2];
         const float3 albedo = mat0.rgb;
         const float metallic = mat0.w;
         const float3 emission = mat1.rgb;
         const float roughness = clamp(mat1.w, 0.03f, 1.0f);
-        radiance += throughput * emission;
+        // NEE-registered light sources (mat2.x) contribute through
+        // DirectLight; counting their emission on BSDF hits too
+        // would double-count. Camera rays still see them. (MIS is
+        // the recorded follow-up.)
+        if (mat2.x < 0.5f || depth == 0u)
+        {
+            radiance += throughput * emission;
+        }
 
         const float3 V = -rayDirection;
         radiance += throughput * DirectLight(surface.Position, surface.Normal, V, albedo, roughness, metallic, rng);
