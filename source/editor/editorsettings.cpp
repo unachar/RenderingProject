@@ -315,6 +315,28 @@ void ImGuiManager::DrawProjectSettingsWindow()
             RendererSettings::SetTwoPhaseOcclusionEnabled(twoPhase);
         }
 
+        ImGui::SeparatorText("実験的機能 (統合評価中)");
+        bool useD3d12Ma = RendererSettings::GetUseD3D12MemoryAllocator();
+        if (ImGui::Checkbox("D3D12 Memory Allocator", &useD3d12Ma))
+        {
+            RendererSettings::SetUseD3D12MemoryAllocator(useD3d12Ma);
+        }
+        bool useSpdHiZ = RendererSettings::GetUseFidelityFxSpdHiZ();
+        if (ImGui::Checkbox("FidelityFX SPD Hi-Z", &useSpdHiZ))
+        {
+            RendererSettings::SetUseFidelityFxSpdHiZ(useSpdHiZ);
+        }
+        bool useDecals = RendererSettings::GetUseDBufferDecals();
+        if (ImGui::Checkbox("DBuffer デカール", &useDecals))
+        {
+            RendererSettings::SetUseDBufferDecals(useDecals);
+        }
+        bool useProbes = RendererSettings::GetUseLocalReflectionProbes();
+        if (ImGui::Checkbox("ローカル反射プローブ", &useProbes))
+        {
+            RendererSettings::SetUseLocalReflectionProbes(useProbes);
+        }
+
         ImGui::SeparatorText("GPU Memory");
         auto& memory = GpuMemoryBudget::Options;
         ImGui::Checkbox("VRAM 予算に合わせて常駐量を制限", &memory.Enabled);
