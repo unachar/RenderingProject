@@ -4,7 +4,8 @@ param(
     [switch]$SkipFallback,
     [switch]$NoDlssSdk,
     [switch]$RayTelemetry,
-    [switch]$NoNrdSdk
+    [switch]$NoNrdSdk,
+    [ValidateRange(1, 1800)][int]$StartupTimeoutSeconds = 180
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,9 +62,9 @@ function Invoke-SmokeTest([string]$Name, [bool]$DisableFeatures) {
     $started = Get-Date
     $executable = Join-Path $workspace "bin\x64\$Configuration\DirectX12.exe"
     $process = Start-Process -FilePath $executable -WorkingDirectory $workspace -WindowStyle Hidden -PassThru
-    if (-not $process.WaitForExit(180000)) {
+    if (-not $process.WaitForExit($StartupTimeoutSeconds * 1000)) {
         $process.Kill()
-        throw "$Name exceeded 180 seconds."
+        throw "$Name exceeded $StartupTimeoutSeconds seconds."
     }
     $process.Refresh()
     $destination = Join-Path $resultsDirectory "$configurationLabel-$Name"

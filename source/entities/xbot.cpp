@@ -13,7 +13,12 @@ void XBot::Create()
     const auto modelPosition = XMFLOAT3(-5.0f, 10.0f, 10.0f);
     const auto modelScale = XMFLOAT3(0.01f, 0.01f, 0.01f);
 
-    const auto modelPath = "asset\\model\\bal.fbx";
+    const char* modelPath = "asset\\model\\bal.fbx";
+    if (IsFeatureSmokeTestEnabled())
+    {
+        // The smoke test must use its shipped fixture, independent of the user's startup asset.
+        modelPath = "asset\\model\\XBot.fbx";
+    }
 
     const char* vmdPath = "asset\\model\\animation\\kasou.vmd";
     constexpr bool isConvert = true;

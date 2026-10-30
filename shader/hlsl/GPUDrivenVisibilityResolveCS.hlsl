@@ -92,7 +92,8 @@ bool Reconstruct(uint4 id, float2 pixel, uint2 extent, out PSInput3D input)
     return all(isfinite(input.WorldPos)) && all(isfinite(input.TexCoord));
 }
 
-GBufferOutput Shade(PSInput3D input, uint4 id, uint2 extent)
+#if GEOMETRIC_SPECULAR_AA
+void PrepareVisibilityMaterialGradients(PSInput3D input, uint4 id, uint2 extent)
 {
     PSInput3D x, y;
     bool vx = Reconstruct(id, input.Position.xy + float2(1, 0), extent, x);
@@ -101,6 +102,26 @@ GBufferOutput Shade(PSInput3D input, uint4 id, uint2 extent)
     VisibilityUvDy = vy ? y.TexCoord - input.TexCoord : 0;
     VisibilityWorldDx = vx ? x.WorldPos - input.WorldPos : 0;
     VisibilityWorldDy = vy ? y.WorldPos - input.WorldPos : 0;
+    // Reconstruct extrapolates this triangle, never a neighboring visibility-buffer triangle.
+    VisibilityNormalDx = GeometricSpecularAA::NormalDifference(input.Normal.xyz, x.Normal.xyz, vx);
+    VisibilityNormalDy = GeometricSpecularAA::NormalDifference(input.Normal.xyz, y.Normal.xyz, vy);
+}
+#endif
+
+GBufferOutput Shade(PSInput3D input, uint4 id, uint2 extent)
+{
+#if GEOMETRIC_SPECULAR_AA
+    PrepareVisibilityMaterialGradients(input, id, extent);
+#else
+    // Preserve the original OFF path, including compiler inlining and operation order.
+    PSInput3D x, y;
+    bool vx = Reconstruct(id, input.Position.xy + float2(1, 0), extent, x);
+    bool vy = Reconstruct(id, input.Position.xy + float2(0, 1), extent, y);
+    VisibilityUvDx = vx ? x.TexCoord - input.TexCoord : 0;
+    VisibilityUvDy = vy ? y.TexCoord - input.TexCoord : 0;
+    VisibilityWorldDx = vx ? x.WorldPos - input.WorldPos : 0;
+    VisibilityWorldDy = vy ? y.WorldPos - input.WorldPos : 0;
+#endif
     return EvaluateMaterial(input, (id.w & 1u) != 0);
 }
 

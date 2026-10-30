@@ -7,6 +7,9 @@ float3 ReconstructPostProcessCameraOriginCommon(float3 worldPosition, float3 cam
 #ifdef SHADER_VISIBILITY_RESOLVE
 static float2 VisibilityUvDx, VisibilityUvDy;
 static float3 VisibilityWorldDx, VisibilityWorldDy;
+#if GEOMETRIC_SPECULAR_AA
+static float3 VisibilityNormalDx, VisibilityNormalDy;
+#endif
 #endif
 #pragma warning(disable : 4000)
 #include "SceneRayShadow.hlsli"

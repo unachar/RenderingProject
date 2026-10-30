@@ -1,3 +1,6 @@
+#ifndef GEOMETRIC_SPECULAR_AA
+#define GEOMETRIC_SPECULAR_AA 0
+#endif
 #define SHADER_3D
 #ifndef SHADER_VISIBILITY_RESOLVE
 #define POM_PIXEL_DEPTH_OUTPUT
@@ -14,9 +17,26 @@ SamplerState g_SamplerState : register(s0);
 
 #include "MaterialSurface.hlsli"
 #include "NormalMapDecode.hlsli"
+#if GEOMETRIC_SPECULAR_AA
+#include "GeometricSpecularAA.hlsli"
+#endif
 
 GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
 {
+#if GEOMETRIC_SPECULAR_AA
+    // Evaluate derivatives before any alpha/backface discard or material-dependent branch.
+    // Geometry normals deliberately exclude normal-map and height-map frequencies.
+#ifdef SHADER_VISIBILITY_RESOLVE
+    float3 geometryNormalDx = VisibilityNormalDx;
+    float3 geometryNormalDy = VisibilityNormalDy;
+#else
+    float3 geometryNormal = GeometricSpecularAA::GeometryNormal(In.Normal.xyz);
+    float3 geometryNormalDx = ddx(geometryNormal);
+    float3 geometryNormalDy = ddy(geometryNormal);
+#endif
+    float geometryGradientSquared = GeometricSpecularAA::FiniteGradientSquared(
+        dot(geometryNormalDx, geometryNormalDx), dot(geometryNormalDy, geometryNormalDy));
+#endif
 #ifdef SHADER_GPU_DRIVEN
     uint materialID = gSceneInstances[In.InstanceID].MaterialIndex;
     uint address = materialID * GPU_SCENE_MATERIAL_STRIDE;
@@ -134,6 +154,10 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
     output.Material.g = usePartParams ? partParams.Basic.y : assetRoughness;
     output.Material.b = usePartParams ? partParams.Basic.z : mFresnel;
     output.Material.a = materialPartId;
+#if GEOMETRIC_SPECULAR_AA
+    output.Material.g = GeometricSpecularAA::FilterMaterialRoughness(
+        output.Material.g, geometryGradientSquared, materialPartId);
+#endif
     output.Shadow.r = usePartParams ? partParams.Shadow0.x : ShadowThreshold;
     output.Shadow.g = usePartParams ? partParams.Shadow0.y : ShadowSoftness;
     output.Shadow.b = usePartParams ? partParams.Shadow0.z : ShadowStrength;

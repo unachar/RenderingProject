@@ -924,9 +924,16 @@ bool GraphicsDevice::CheckDeviceHealth(HRESULT operationResult, const char* oper
                     }
                     fprintf(log, "\n");
                 }
+                UINT precedingContext = UINT_MAX;
                 for (UINT contextIndex = 0; contextIndex < node->BreadcrumbContextsCount; ++contextIndex)
                 {
                     const auto& context = node->pBreadcrumbContexts[contextIndex];
+                    if (context.BreadcrumbIndex <= completed &&
+                        (precedingContext == UINT_MAX ||
+                         context.BreadcrumbIndex > node->pBreadcrumbContexts[precedingContext].BreadcrumbIndex))
+                    {
+                        precedingContext = contextIndex;
+                    }
                     if (context.BreadcrumbIndex + 32u >= completed && context.BreadcrumbIndex <= completed + 4u)
                     {
                         const wchar_t* contextName;
@@ -939,6 +946,20 @@ bool GraphicsDevice::CheckDeviceHealth(HRESULT operationResult, const char* oper
                             contextName = L"<unnamed>";
                         }
                         fprintf(log, "  Context[%u] @%u: %ls\n", contextIndex, context.BreadcrumbIndex, contextName);
+                    }
+                }
+                // A long pass can start well before the small operation window above.
+                if (precedingContext != UINT_MAX)
+                {
+                    const auto& context = node->pBreadcrumbContexts[precedingContext];
+                    if (context.BreadcrumbIndex + 32u < completed)
+                    {
+                        const wchar_t* contextName = L"<unnamed>";
+                        if (context.pContextString)
+                        {
+                            contextName = context.pContextString;
+                        }
+                        fprintf(log, "  Last preceding context @%u: %ls\n", context.BreadcrumbIndex, contextName);
                     }
                 }
             }

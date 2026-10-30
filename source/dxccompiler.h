@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include "dxcshadercache.h"
+#include "dxccompilerpolicy.h"
 
 #pragma comment(lib, "dxcompiler.lib")
 
@@ -243,6 +244,9 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(LPCWSTR fileName, const D3D_SHADE
         AddArgument(argumentStorage, L"-Zi");
         AddArgument(argumentStorage, L"-Qembed_debug");
     }
+
+    DxcCompilerPolicy::AppendReflectionArguments(argumentStorage, flags1,
+                                                DxcCompilerPolicy::KeepReflectionRequested());
 
     if ((flags1 & D3DCOMPILE_SKIP_OPTIMIZATION) != 0)
     {

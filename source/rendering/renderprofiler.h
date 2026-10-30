@@ -15,6 +15,7 @@
 #include "virtualgeometry/virtualgeometryconfig.h"
 #include "rendermeasurement.h"
 #include "raytelemetry.h"
+#include "gpumarkers.h"
 
 class RenderProfiler final
 {
@@ -630,7 +631,7 @@ class RenderProfiler final
         const UINT beginLocal = s_ActiveSlot->TimestampQueryCount++;
         const UINT endLocal = s_ActiveSlot->TimestampQueryCount++;
         const UINT absoluteBegin = s_ActiveFrameIndex * kMaxTimestampQueriesPerFrame + beginLocal;
-        commandList->SetMarker(0, name, static_cast<UINT>(strlen(name)));
+        GpuMarkers::Write(commandList, name);
         commandList->EndQuery(s_TimestampHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, absoluteBegin);
 
         const UINT parent = s_OpenGpuEvents.empty() ? RenderMeasurement::NoParent : s_OpenGpuEvents.back();
