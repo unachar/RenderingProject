@@ -336,6 +336,11 @@ void ImGuiManager::DrawProjectSettingsWindow()
         {
             RendererSettings::SetUseLocalReflectionProbes(useProbes);
         }
+        bool useSsr = RendererSettings::GetUseScreenSpaceReflections();
+        if (ImGui::Checkbox("スクリーンスペース反射 (SSR)", &useSsr))
+        {
+            RendererSettings::SetUseScreenSpaceReflections(useSsr);
+        }
 
         ImGui::SeparatorText("GPU Memory");
         auto& memory = GpuMemoryBudget::Options;

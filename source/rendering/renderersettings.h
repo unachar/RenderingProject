@@ -321,6 +321,19 @@ class RendererSettings
         SetValue(s_UseDBufferDecals, value);
     }
 
+    // Native Hi-Z screen-space reflections (see
+    // docs/rendering-technology-ssr-design.md): specular fallback
+    // between probe/IBL and DXR reflections.
+    static bool GetUseScreenSpaceReflections()
+    {
+        return s_UseScreenSpaceReflections;
+    }
+
+    static void SetUseScreenSpaceReflections(bool value)
+    {
+        SetValue(s_UseScreenSpaceReflections, value);
+    }
+
     // Stage 2 J: local reflection probes override the global
     // environment texture while the camera is inside a probe volume.
     static bool GetUseLocalReflectionProbes()
@@ -736,6 +749,7 @@ class RendererSettings
     inline static bool s_UseFidelityFxSpdHiZ = false;
     inline static bool s_UseDBufferDecals = false;
     inline static bool s_UseLocalReflectionProbes = false;
+    inline static bool s_UseScreenSpaceReflections = false;
     inline static bool s_SsaoEnabled = true;
     inline static float s_SsaoRadius = 1.15f;
     inline static float s_SsaoPower = 1.35f;

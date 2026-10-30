@@ -1015,6 +1015,8 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\rendering\reflectionprobes.h" />
     <ClCompile Include="source\rendering\referencecapture.cpp" />
     <ClInclude Include="source\rendering\referencecapture.h" />
+    <ClCompile Include="source\rendering\screenspacereflections.cpp" />
+    <ClInclude Include="source\rendering\screenspacereflections.h" />
     <ClInclude Include="source\rendering\lumenscheduler.h" />
     <ClInclude Include="source\rendering\lumencachemath.h" />
     <ClInclude Include="source\rendering\rayreflections.h" />
