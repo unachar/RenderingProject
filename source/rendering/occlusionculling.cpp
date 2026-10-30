@@ -2,6 +2,7 @@
 #include "occlusionculling.h"
 #include "gpudriven/gpudrivenrenderer.h"
 #include "graphicsdevice.h"
+#include "memoryallocator.h"
 #include "renderersettings.h"
 #include "rendererstate.h"
 #include "rendergraph.h"
@@ -60,16 +61,31 @@ static bool LoadPipeline(const wchar_t* path, ComPtr<ID3D12PipelineState>& outpu
     return LoadPipeline(path, g_RootSignature.Get(), output);
 }
 
+// DEFAULT-heap resource creation for this file: through D3D12MA when the
+// flag is on (allocation lifetime bound to the resource), else committed.
+static bool CreateOcclusionResource(ID3D12Device* device, const D3D12_RESOURCE_DESC& description,
+                                    D3D12_RESOURCE_STATES initialState, const D3D12_CLEAR_VALUE* clearValue,
+                                    ID3D12Resource** resource)
+{
+    if (ID3D12Resource* allocated =
+            MemoryAllocator::CreateResourceAutoLifetime(description, initialState, clearValue))
+    {
+        *resource = allocated;
+        return true;
+    }
+    auto heapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+    return SUCCEEDED(device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &description,
+                                                     initialState, clearValue, IID_PPV_ARGS(resource)));
+}
+
 // FidelityFX SPD's global atomic counter must start at zero (SPD resets it
 // to zero itself at the end of every completed dispatch). Created once and
 // zeroed with a one-shot upload copy; failure just disables the SPD path.
 static bool CreateSpdCounter(ID3D12Device* device)
 {
-    auto heapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
     auto bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(4, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    if (FAILED(device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &bufferDesc,
-                                               D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                               IID_PPV_ARGS(&g_SpdCounter))))
+    if (!CreateOcclusionResource(device, bufferDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                 g_SpdCounter.GetAddressOf()))
     {
         return false;
     }
@@ -255,15 +271,14 @@ bool OcclusionCulling::Resize(UINT width, UINT height)
     g_PreviousValid = g_CurrentValid = false;
     g_PreviousIndex = 0;
     g_CurrentIndex = 1;
-    auto heapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
     auto resourceDesc =
         CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32_FLOAT, width, height, 1, static_cast<UINT16>(g_MipCount), 1, 0,
                                      D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     for (UINT texture = 0; texture < 2; ++texture)
     {
         g_HiZ[texture].Reset();
-        if (FAILED(g_Device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, ReadState(),
-                                                     nullptr, IID_PPV_ARGS(&g_HiZ[texture]))))
+        if (!CreateOcclusionResource(g_Device.Get(), resourceDesc, ReadState(), nullptr,
+                                     g_HiZ[texture].GetAddressOf()))
         {
             return false;
         }
@@ -297,9 +312,8 @@ bool OcclusionCulling::Resize(UINT width, UINT height)
     clear.Format = DXGI_FORMAT_D32_FLOAT;
     clear.DepthStencil.Depth = 0.0f;
     g_OccluderDepth.Reset();
-    if (FAILED(g_Device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &depthDesc,
-                                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, &clear,
-                                                 IID_PPV_ARGS(&g_OccluderDepth))))
+    if (!CreateOcclusionResource(g_Device.Get(), depthDesc, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, &clear,
+                                 g_OccluderDepth.GetAddressOf()))
     {
         return false;
     }
@@ -327,9 +341,8 @@ bool OcclusionCulling::Resize(UINT width, UINT height)
     {
         const auto debugDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R8G8B8A8_UNORM, 320, 180, 1, 1, 1, 0,
                                                             D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        if (FAILED(g_Device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &debugDesc,
-                                                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
-                                                     IID_PPV_ARGS(&g_DebugTexture))))
+        if (!CreateOcclusionResource(g_Device.Get(), debugDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+                                     g_DebugTexture.GetAddressOf()))
         {
             return false;
         }
