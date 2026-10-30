@@ -13,6 +13,7 @@
 #include "visibility/gpuvisibilityvalidation.h"
 #include "rendercapture.h"
 #include "referencecapture.h"
+#include "referencefixture.h"
 #include "referenceintegrator.h"
 #include "rendertargets.h"
 #include "graphicsdevice.h"
