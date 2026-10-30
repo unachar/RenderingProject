@@ -105,3 +105,4 @@ imgui.ini
 /EditorCache/
 
 /Data/Cache/ModelMaps/
+__pycache__/
