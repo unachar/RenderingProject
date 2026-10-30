@@ -31,7 +31,6 @@ void RenderFrame::BeginDraw()
     }
     GpuMemoryBudget::Update();
     MemoryAllocator::LogStatisticsPeriodically();
-    ReflectionProbes::UpdateActiveEnvironment(m_CommandList.Get());
     ModelManager::CollectRetiredAnimModels();
     RenderTargets::UpdateMemoryPolicy();
     Raytracing::ReleaseInactiveResources();
@@ -42,6 +41,9 @@ void RenderFrame::BeginDraw()
     m_CommandList->Reset(m_CommandAllocator[m_FrameIndex].Get(), nullptr);
     RenderProfiler::BeginFrame(m_Device.Get(), m_CommandQueue.Get(), m_CommandList.Get(), m_FrameIndex);
     TextureManager::UpdateStreaming(m_CommandList.Get());
+    // After the command list reset: probe sync may record prefilter
+    // dispatches into it (they would be wiped by an earlier call).
+    ReflectionProbes::UpdateActiveEnvironment(m_CommandList.Get());
     NoiseCacheBindings::BeginFrame(m_CommandList.Get());
 
     m_CommandList->RSSetViewports(1, &m_Viewport);
