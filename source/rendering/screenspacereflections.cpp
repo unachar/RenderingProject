@@ -12,8 +12,14 @@ namespace ScreenSpaceReflections
     {
         ComPtr<ID3D12RootSignature> g_RootSignature;
         ComPtr<ID3D12PipelineState> g_Pso;
-        ComPtr<ID3D12DescriptorHeap> g_Heap; // 0: result SRV, 1: result UAV
+        ComPtr<ID3D12RootSignature> g_ResolveRootSignature;
+        ComPtr<ID3D12PipelineState> g_ResolvePso;
+        ComPtr<ID3D12DescriptorHeap> g_Heap; // 0: result SRV, 1: result UAV, 2: trace SRV, 3: trace UAV
         ComPtr<ID3D12Resource> g_Result;
+        ComPtr<ID3D12Resource> g_TraceResult; // half-resolution trace target (T1)
+        uint32_t g_TraceWidth = 0;
+        uint32_t g_TraceHeight = 0;
+        bool g_TraceInSrvState = false;
         uint32_t g_ResultWidth = 0;
         uint32_t g_ResultHeight = 0;
         UINT g_DescriptorIncrement = 0;
@@ -76,13 +82,48 @@ namespace ScreenSpaceReflections
             }
             D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
             heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-            heapDesc.NumDescriptors = 2;
+            heapDesc.NumDescriptors = 4;
             heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
             if (FAILED(device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&g_Heap))))
             {
                 return false;
             }
             g_DescriptorIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            // Resolve pipeline (bilateral upsample of the half-res trace).
+            CD3DX12_DESCRIPTOR_RANGE resolveRanges[4];
+            resolveRanges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+            resolveRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
+            resolveRanges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);
+            resolveRanges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
+            CD3DX12_ROOT_PARAMETER resolveParameters[5];
+            resolveParameters[0].InitAsConstants(8, 0);
+            for (int i = 0; i < 4; ++i)
+            {
+                resolveParameters[1 + i].InitAsDescriptorTable(1, &resolveRanges[i], D3D12_SHADER_VISIBILITY_ALL);
+            }
+            CD3DX12_ROOT_SIGNATURE_DESC resolveRootDesc(_countof(resolveParameters), resolveParameters, 0, nullptr,
+                                                        D3D12_ROOT_SIGNATURE_FLAG_NONE);
+            ComPtr<ID3DBlob> resolveSerialized;
+            if (FAILED(D3D12SerializeRootSignature(&resolveRootDesc, D3D_ROOT_SIGNATURE_VERSION_1, &resolveSerialized,
+                                                   &errors)) ||
+                FAILED(device->CreateRootSignature(0, resolveSerialized->GetBufferPointer(),
+                                                   resolveSerialized->GetBufferSize(),
+                                                   IID_PPV_ARGS(&g_ResolveRootSignature))))
+            {
+                return false;
+            }
+            ComPtr<ID3DBlob> resolveShader;
+            if (FAILED(D3DReadFileToBlob(L"shader/hlsl/build/ScreenSpaceReflectionsResolveCS.cso", &resolveShader)))
+            {
+                return false;
+            }
+            D3D12_COMPUTE_PIPELINE_STATE_DESC resolvePso{};
+            resolvePso.pRootSignature = g_ResolveRootSignature.Get();
+            resolvePso.CS = CD3DX12_SHADER_BYTECODE(resolveShader.Get());
+            if (FAILED(device->CreateComputePipelineState(&resolvePso, IID_PPV_ARGS(&g_ResolvePso))))
+            {
+                return false;
+            }
             return true;
         }
     } // namespace
@@ -166,6 +207,36 @@ namespace ScreenSpaceReflections
         uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
         device->CreateUnorderedAccessView(result.Get(), nullptr, &uavDesc,
                                           CD3DX12_CPU_DESCRIPTOR_HANDLE(heapCpu, 1, increment));
+        // Half-resolution trace target (T1), same format.
+        const uint32_t traceWidth = (width + 1) / 2;
+        const uint32_t traceHeight = (height + 1) / 2;
+        const auto traceDescription = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT, traceWidth,
+                                                                   traceHeight, 1, 1, 1, 0,
+                                                                   D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        ComPtr<ID3D12Resource> traceResult;
+        if (ID3D12Resource* traceAllocated = MemoryAllocator::CreateResourceAutoLifetime(
+                traceDescription, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr))
+        {
+            traceResult.Attach(traceAllocated);
+        }
+        else
+        {
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &traceDescription,
+                                                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                       IID_PPV_ARGS(&traceResult))))
+            {
+                return false;
+            }
+        }
+        device->CreateShaderResourceView(traceResult.Get(), &srvDesc,
+                                         CD3DX12_CPU_DESCRIPTOR_HANDLE(heapCpu, 2, increment));
+        device->CreateUnorderedAccessView(traceResult.Get(), nullptr, &uavDesc,
+                                          CD3DX12_CPU_DESCRIPTOR_HANDLE(heapCpu, 3, increment));
+        g_TraceResult = traceResult;
+        g_TraceWidth = traceWidth;
+        g_TraceHeight = traceHeight;
+        g_TraceInSrvState = false;
         g_Result = result;
         g_ResultWidth = width;
         g_ResultHeight = height;
@@ -181,6 +252,10 @@ namespace ScreenSpaceReflections
     void ReleaseResultTarget()
     {
         g_Result.Reset();
+        g_TraceResult.Reset();
+        g_TraceWidth = 0;
+        g_TraceHeight = 0;
+        g_TraceInSrvState = false;
         g_ResultWidth = 0;
         g_ResultHeight = 0;
         g_ResultProduced = false;
@@ -205,22 +280,42 @@ namespace ScreenSpaceReflections
 
     bool Execute(ID3D12GraphicsCommandList* commandList, ID3D12DescriptorHeap* engineHeap, const TraceInputs& inputs)
     {
-        if (commandList == nullptr || engineHeap == nullptr || !g_Result || !g_Pso)
+        if (commandList == nullptr || engineHeap == nullptr || !g_Result || !g_TraceResult || !g_Pso || !g_ResolvePso)
         {
             return false;
         }
-        commandList->SetComputeRootSignature(g_RootSignature.Get());
-        commandList->SetPipelineState(g_Pso.Get());
         ID3D12DescriptorHeap* heaps[] = {engineHeap, g_Heap.Get()};
         commandList->SetDescriptorHeaps(2, heaps);
-        commandList->SetComputeRoot32BitConstants(0, 52, &inputs.Constants, 0);
+        const auto heapGpu = g_Heap->GetGPUDescriptorHandleForHeapStart();
+        // Trace at half resolution into the trace target.
+        if (g_TraceInSrvState)
+        {
+            D3D12_RESOURCE_BARRIER toUav = CD3DX12_RESOURCE_BARRIER::Transition(
+                g_TraceResult.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            commandList->ResourceBarrier(1, &toUav);
+            g_TraceInSrvState = false;
+        }
+        TraceConstants traceConstants = inputs.Constants;
+        traceConstants.Resolution[0] = static_cast<float>(g_TraceWidth);
+        traceConstants.Resolution[1] = static_cast<float>(g_TraceHeight);
+        traceConstants.InvResolution[0] = 1.0f / static_cast<float>(g_TraceWidth);
+        traceConstants.InvResolution[1] = 1.0f / static_cast<float>(g_TraceHeight);
+        traceConstants.GBufferScale = 2;
+        commandList->SetComputeRootSignature(g_RootSignature.Get());
+        commandList->SetPipelineState(g_Pso.Get());
+        commandList->SetComputeRoot32BitConstants(0, 52, &traceConstants, 0);
         commandList->SetComputeRootDescriptorTable(1, inputs.DepthSrv);
         commandList->SetComputeRootDescriptorTable(2, inputs.HiZSrv);
         commandList->SetComputeRootDescriptorTable(3, inputs.NormalSrv);
         commandList->SetComputeRootDescriptorTable(4, inputs.PreviousColorSrv);
         commandList->SetComputeRootDescriptorTable(5, inputs.MaterialSrv);
-        commandList->SetComputeRootDescriptorTable(
-            6, CD3DX12_GPU_DESCRIPTOR_HANDLE(g_Heap->GetGPUDescriptorHandleForHeapStart(), 1, g_DescriptorIncrement));
+        commandList->SetComputeRootDescriptorTable(6, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapGpu, 3, g_DescriptorIncrement));
+        commandList->Dispatch((g_TraceWidth + 7) / 8, (g_TraceHeight + 7) / 8, 1);
+        D3D12_RESOURCE_BARRIER traceToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+            g_TraceResult.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        commandList->ResourceBarrier(1, &traceToSrv);
+        g_TraceInSrvState = true;
+        // Bilateral resolve into the full-resolution result.
         if (g_ResultInSrvState)
         {
             D3D12_RESOURCE_BARRIER toUav = CD3DX12_RESOURCE_BARRIER::Transition(
@@ -228,6 +323,30 @@ namespace ScreenSpaceReflections
             commandList->ResourceBarrier(1, &toUav);
             g_ResultInSrvState = false;
         }
+        struct ResolveConstants
+        {
+            uint32_t FullResolution[2];
+            float InvFullResolution[2];
+            float DepthNumerator;
+            float DepthDenominator;
+            uint32_t HalfResolution[2];
+        };
+        ResolveConstants resolve{};
+        resolve.FullResolution[0] = g_ResultWidth;
+        resolve.FullResolution[1] = g_ResultHeight;
+        resolve.InvFullResolution[0] = 1.0f / static_cast<float>(g_ResultWidth);
+        resolve.InvFullResolution[1] = 1.0f / static_cast<float>(g_ResultHeight);
+        resolve.DepthNumerator = inputs.Constants.DepthNumerator;
+        resolve.DepthDenominator = inputs.Constants.DepthDenominator;
+        resolve.HalfResolution[0] = g_TraceWidth;
+        resolve.HalfResolution[1] = g_TraceHeight;
+        commandList->SetComputeRootSignature(g_ResolveRootSignature.Get());
+        commandList->SetPipelineState(g_ResolvePso.Get());
+        commandList->SetComputeRoot32BitConstants(0, 8, &resolve, 0);
+        commandList->SetComputeRootDescriptorTable(1, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapGpu, 2, g_DescriptorIncrement));
+        commandList->SetComputeRootDescriptorTable(2, inputs.DepthSrv);
+        commandList->SetComputeRootDescriptorTable(3, inputs.NormalSrv);
+        commandList->SetComputeRootDescriptorTable(4, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapGpu, 1, g_DescriptorIncrement));
         commandList->Dispatch((g_ResultWidth + 7) / 8, (g_ResultHeight + 7) / 8, 1);
         D3D12_RESOURCE_BARRIER toSrv = CD3DX12_RESOURCE_BARRIER::Transition(
             g_Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);

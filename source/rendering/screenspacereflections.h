@@ -62,7 +62,7 @@ namespace ScreenSpaceReflections
         float CameraPosition[3];
         float Padding0;
         float CameraForward[3];
-        float Padding1;
+        uint32_t GBufferScale; // 1 = full-res trace, 2 = half-res trace (T1)
     };
 
     struct TraceInputs

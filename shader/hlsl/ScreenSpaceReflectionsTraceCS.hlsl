@@ -40,7 +40,7 @@ cbuffer TraceConstants : register(b0)
     float3 CameraPosition;
     float TracePadding0;
     float3 CameraForward;
-    float TracePadding1;
+    uint GBufferScale; // full-res GBuffer texel = pixel * GBufferScale (1 full-res trace, 2 half-res)
 };
 
 float ViewZFromStoredDepth(float storedDepth)
@@ -77,13 +77,14 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     const float2 uv = (float2(pixel) + 0.5f) * InvResolution;
     ReflectionResult[pixel] = float4(0.0f, 0.0f, 0.0f, 0.0f);
 
-    const float depth = SceneDepth.Load(int3(pixel, 0));
+    const int3 gbufferPixel = int3(pixel * max(GBufferScale, 1u), 0);
+    const float depth = SceneDepth.Load(gbufferPixel);
     if (depth <= 1e-7f)
     {
         return; // sky (reverse-Z far)
     }
     const float3 worldPosition = WorldPositionFromDepth(uv, depth);
-    const float3 worldNormal = normalize(GBufferNormal.Load(int3(pixel, 0)).rgb * 2.0f - 1.0f);
+    const float3 worldNormal = normalize(GBufferNormal.Load(gbufferPixel).rgb * 2.0f - 1.0f);
     const float3 V = normalize(worldPosition - CameraPosition);
     const float3 R = reflect(V, worldNormal);
     if (dot(R, CameraForward) <= 0.001f)
@@ -168,7 +169,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     // Per-pixel roughness of the reflecting surface (material
     // GBuffer g channel) drives the prefilter mip; the constant is
     // only a fallback for pixels without a material entry.
-    const float roughness = GBufferMaterial.Load(int3(pixel, 0)).g;
+    const float roughness = GBufferMaterial.Load(gbufferPixel).g;
     const float effectiveRoughness = roughness > 0.001f ? roughness : FallbackRoughness;
     const float3 radiance = PreviousSceneColor.SampleLevel(LinearSampler, hitUv, effectiveRoughness * 4.0f).rgb;
     ReflectionResult[pixel] = float4(radiance, confidence);
