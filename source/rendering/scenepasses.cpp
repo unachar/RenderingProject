@@ -1,5 +1,8 @@
 #include "pch.h"
 #include "memoryallocator.h"
+#include "surfacedecals.h"
+#include "camera.h"
+#include "componentmanager.h"
 #include "noisecachebindings.h"
 #include "renderprofiler.h"
 #include "megalights.h"
@@ -686,6 +689,54 @@ bool ScenePasses::BuildOcclusionHierarchyAndBeginPhaseTwo()
     return OcclusionCulling::GetPhase() == 2u;
 }
 
+void ScenePasses::ApplySurfaceDecals()
+{
+    if (!RendererSettings::GetUseDBufferDecals() || SurfaceDecals::Count() == 0)
+    {
+        return;
+    }
+    SurfaceDecals::RenderParams params{};
+    params.Device = m_Device.Get();
+    params.List = m_CommandList.Get();
+    params.EngineHeap = m_CbvHeap.Get();
+    params.Width = m_SceneWidth;
+    params.Height = m_SceneHeight;
+
+    const EntityID camera = Camera::GetCameraEntity();
+    XMMATRIX view = XMMatrixIdentity();
+    XMMATRIX projection = XMMatrixIdentity();
+    Camera::GetCameraMatrices(camera, view, projection);
+    XMFLOAT4X4 invViewProjection{};
+    XMStoreFloat4x4(&invViewProjection, XMMatrixTranspose(XMMatrixInverse(nullptr, view * projection)));
+    memcpy(params.InvViewProjection, &invViewProjection, sizeof(invViewProjection));
+    XMFLOAT3 cameraPosition{0.0f, 0.0f, 5.0f};
+    if (camera != g_kINVALID_ENTITY && ComponentManager::HasComponent<TransformComponent>(camera))
+    {
+        cameraPosition = ComponentManager::GetComponentUnchecked<TransformComponent>(camera).Position;
+    }
+    params.CameraPosition[0] = cameraPosition.x;
+    params.CameraPosition[1] = cameraPosition.y;
+    params.CameraPosition[2] = cameraPosition.z;
+    params.CameraPosition[3] = 1.0f;
+
+    const UINT increment = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    const auto gpuHandle = [&](UINT index) {
+        return CD3DX12_GPU_DESCRIPTOR_HANDLE(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(), index, increment);
+    };
+    params.DepthSrv = gpuHandle(m_UseLowResDepth ? g_kLOW_RES_DEPTH_SRV_INDEX : g_kDEPTH_SRV_INDEX);
+    params.GBufferNormalSrv = m_GBufferSrvHandles[static_cast<UINT>(GBufferType::NORMAL)];
+    params.TextureTable = gpuHandle(g_kTEXTURE_SRV_START_INDEX);
+    const GBufferType types[3] = {GBufferType::BASE_COLOR, GBufferType::NORMAL, GBufferType::MATERIAL};
+    for (UINT i = 0; i < 3; ++i)
+    {
+        const UINT type = static_cast<UINT>(types[i]);
+        params.GBufferTargets[i] = m_GBufferTargets[type].Get();
+        params.GBufferRtvs[i] = m_GBufferRtvHandles[type];
+        params.GBufferFormats[i] = m_kDeferredRtvFormats[type];
+    }
+    SurfaceDecals::Render(params);
+}
+
 void ScenePasses::EndScenePass()
 {
     if (!GetRenderTarget(RenderTargetType::Scene))
@@ -752,6 +803,7 @@ void ScenePasses::EndScenePass()
             {
                 m_DepthStencilState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
             }
+            ApplySurfaceDecals();
             m_IsDeferredGeometryPass = false;
             m_IsSceneColorForwardPass = false;
             return;
@@ -789,6 +841,7 @@ void ScenePasses::EndScenePass()
         }
 
         m_CommandList->ResourceBarrier(barrierCount, barriers);
+        ApplySurfaceDecals();
         m_IsDeferredGeometryPass = false;
         m_IsSceneColorForwardPass = false;
         return;
