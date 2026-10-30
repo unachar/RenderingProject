@@ -1479,7 +1479,12 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
 #ifdef SHADER_RAYTRACING
     if (SceneRayFlags.x > 0.5f || RaytracingFlags.w > 0.5f)
     {
-        envSpecular = RaytracingFlags.w > 0.5f ? RaytracedReflections.SampleLevel(TextureSampler, screenUv, 0).rgb : 0;
+        const float4 tracedReflection = RaytracedReflections.SampleLevel(TextureSampler, screenUv, 0);
+        // RaytracingFlags.w == 2 marks the screen-space result: blend
+        // it over the environment specular by its confidence (alpha).
+        envSpecular = RaytracingFlags.w > 1.5f
+                          ? lerp(envSpecular, tracedReflection.rgb, tracedReflection.a)
+                          : (RaytracingFlags.w > 0.5f ? tracedReflection.rgb : 0);
     }
 #endif
 
