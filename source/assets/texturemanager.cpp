@@ -13,6 +13,7 @@
 #include <filesystem>
 #include "frameconstants.h"
 #include "gpumemorybudget.h"
+#include "memoryallocator.h"
 #include "graphicslog.h"
 #include <atomic>
 #include <unordered_set>
@@ -468,11 +469,20 @@ ComPtr<ID3D12Resource> LoadTextureToDevice(ID3D12Device* device, const TexMetada
     desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
     desc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
-    auto defaultHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    HRESULT hr = device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                 D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&texture));
+    HRESULT hr = S_OK;
+    if (ID3D12Resource* allocated =
+            MemoryAllocator::CreateResourceAutoLifetime(desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr))
+    {
+        texture.Attach(allocated);
+    }
+    else
+    {
+        auto defaultHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        hr = device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &desc,
+                                             D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&texture));
+    }
 
-    if (FAILED(hr))
+    if (FAILED(hr) || !texture)
     {
         Debug::Log("ERROR: CreateCommittedResource(Texture) failed (HRESULT: 0x%08X)\n", hr);
         return nullptr;
@@ -894,9 +904,18 @@ ComPtr<ID3D12Resource> TextureManager::CreateSolidColorTexture(ID3D12Device* dev
     desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 
     ComPtr<ID3D12Resource> texture;
-    auto defaultHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-    HRESULT hr = device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                 D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&texture));
+    HRESULT hr = S_OK;
+    if (ID3D12Resource* allocated =
+            MemoryAllocator::CreateResourceAutoLifetime(desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr))
+    {
+        texture.Attach(allocated);
+    }
+    else
+    {
+        auto defaultHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+        hr = device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &desc,
+                                             D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&texture));
+    }
     if (FAILED(hr) || !texture)
     {
         Debug::Log("ERROR: Failed to create solid color texture resource\n");

@@ -22,6 +22,15 @@ namespace MemoryAllocator
                                    const D3D12_CLEAR_VALUE* clearValue = nullptr);
     void ReleaseResource(ID3D12Resource* resource);
 
+    // Like CreateResource, but the allocation's lifetime is bound to the
+    // resource itself through ID3D12Object private data (the same pattern
+    // TextureManager uses for TextureHeapLifetime): the allocation is freed
+    // when the resource's last reference goes away, so callers can hold the
+    // result in a plain ComPtr and must NOT call ReleaseResource() on it.
+    ID3D12Resource* CreateResourceAutoLifetime(const D3D12_RESOURCE_DESC& description,
+                                               D3D12_RESOURCE_STATES initialState,
+                                               const D3D12_CLEAR_VALUE* clearValue = nullptr);
+
     struct Statistics
     {
         uint64_t AllocatedBytes = 0;
