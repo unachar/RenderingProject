@@ -63,6 +63,9 @@ namespace
     };
 
     XMMATRIX g_ShadowLightViewProjections[RendererState::g_kMAX_SHADOW_LIGHTS]{};
+    XMFLOAT4X4 g_ShadowLightViews[RendererState::g_kMAX_SHADOW_LIGHTS]{};
+    XMFLOAT4X4 g_ShadowLightProjections[RendererState::g_kMAX_SHADOW_LIGHTS]{};
+    bool g_ShadowLightViewPartsValid[RendererState::g_kMAX_SHADOW_LIGHTS]{};
     XMFLOAT4 g_ShadowMapParams[RendererState::g_kMAX_SHADOW_LIGHTS]{};
     EntityID g_ShadowLightEntities[RendererState::g_kMAX_SHADOW_LIGHTS]{};
     UINT g_ShadowLightCount = 0;
@@ -162,9 +165,12 @@ namespace
     }
 
     void BuildShadowViewProjection(const RuntimeLightState& runtimeLight, XMMATRIX& outLightViewProjection,
-                                   XMFLOAT4& outShadowMapParams);
+                                   XMFLOAT4& outShadowMapParams, XMFLOAT4X4* outView = nullptr,
+                                   XMFLOAT4X4* outProjection = nullptr);
     void BuildVirtualDirectionalShadowViewProjection(const RuntimeLightState& runtimeLight, UINT level,
-                                                     XMMATRIX& outLightViewProjection, XMFLOAT4& outShadowMapParams);
+                                                     XMMATRIX& outLightViewProjection, XMFLOAT4& outShadowMapParams,
+                                                     XMFLOAT4X4* outView = nullptr,
+                                                     XMFLOAT4X4* outProjection = nullptr);
     bool IsShadowBoundsEntity(EntityID entity);
     bool IsShadowCasterVisible(EntityID entity, const XMMATRIX& transposedViewProjection);
 
@@ -233,6 +239,7 @@ namespace
         g_CachedAnyLight = {};
         g_CachedShadowLight = {};
         g_ShadowLightCount = 0;
+        memset(g_ShadowLightViewPartsValid, 0, sizeof(g_ShadowLightViewPartsValid));
         g_ShadowRenderPassCount = 0;
         g_VirtualShadowLightEntity = g_kINVALID_ENTITY;
         g_VirtualShadowLevelCount = 0;
@@ -368,7 +375,10 @@ namespace
                         }
                         BuildVirtualDirectionalShadowViewProjection(shadowLight, shadowLevel,
                                                                     g_ShadowLightViewProjections[viewIndex],
-                                                                    g_ShadowMapParams[viewIndex]);
+                                                                    g_ShadowMapParams[viewIndex],
+                                                                    &g_ShadowLightViews[viewIndex],
+                                                                    &g_ShadowLightProjections[viewIndex]);
+                        g_ShadowLightViewPartsValid[viewIndex] = true;
                         g_VirtualShadowViewProjections[level] = g_ShadowLightViewProjections[viewIndex];
                         g_VirtualShadowParams[level] =
                             XMFLOAT4(static_cast<float>(viewIndex), g_ShadowMapParams[viewIndex].x,
@@ -379,7 +389,10 @@ namespace
                 {
                     g_ShadowLightEntities[g_ShadowLightCount] = entity;
                     BuildShadowViewProjection(shadowLight, g_ShadowLightViewProjections[g_ShadowLightCount],
-                                              g_ShadowMapParams[g_ShadowLightCount]);
+                                              g_ShadowMapParams[g_ShadowLightCount],
+                                              &g_ShadowLightViews[g_ShadowLightCount],
+                                              &g_ShadowLightProjections[g_ShadowLightCount]);
+                    g_ShadowLightViewPartsValid[g_ShadowLightCount] = true;
                     ++g_ShadowLightCount;
                 }
             }
@@ -985,7 +998,7 @@ namespace
     }
 
     void BuildShadowViewProjection(const RuntimeLightState& runtimeLight, XMMATRIX& outLightViewProjection,
-                                   XMFLOAT4& outShadowMapParams)
+                                   XMFLOAT4& outShadowMapParams, XMFLOAT4X4* outView, XMFLOAT4X4* outProjection)
     {
         XMFLOAT3 lightDirection;
         if (runtimeLight.HasLight)
@@ -1110,12 +1123,21 @@ namespace
             shadowSize = RendererState::GetShadowMapSize();
         }
         outLightViewProjection = XMMatrixTranspose(lightView * lightProjection);
+        if (outView)
+        {
+            XMStoreFloat4x4(outView, lightView);
+        }
+        if (outProjection)
+        {
+            XMStoreFloat4x4(outProjection, lightProjection);
+        }
         outShadowMapParams = XMFLOAT4(1.0f / static_cast<float>(shadowSize), RendererSettings::GetShadowDepthBias(),
                                       RendererSettings::GetShadowNormalBias(), 1.0f);
     }
 
     void BuildVirtualDirectionalShadowViewProjection(const RuntimeLightState& runtimeLight, UINT level,
-                                                     XMMATRIX& outLightViewProjection, XMFLOAT4& outShadowMapParams)
+                                                     XMMATRIX& outLightViewProjection, XMFLOAT4& outShadowMapParams,
+                                                     XMFLOAT4X4* outView, XMFLOAT4X4* outProjection)
     {
         XMFLOAT3 direction = runtimeLight.Component.Direction;
         XMVECTOR lightDirection = XMVectorSet(direction.x, direction.y, direction.z, 0.0f);
@@ -1211,6 +1233,14 @@ namespace
         const float shadowFarClip = max(300.0f, radius * 8.0f);
         const XMMATRIX projection = XMMatrixOrthographicLH(radius * 2.0f, radius * 2.0f, 0.1f, shadowFarClip);
         outLightViewProjection = XMMatrixTranspose(view * projection);
+        if (outView)
+        {
+            XMStoreFloat4x4(outView, view);
+        }
+        if (outProjection)
+        {
+            XMStoreFloat4x4(outProjection, projection);
+        }
 
         const float biasScale = (300.0f - 0.1f) / max(shadowFarClip - 0.1f, 0.0001f);
         float virtualLevelBiasScale;
@@ -1330,6 +1360,21 @@ XMMATRIX LightingResources::GetCurrentShadowViewProjection()
     }
 
     return XMMatrixTranspose(g_ShadowRenderPasses[g_CurrentShadowPassIndex].ViewProjection);
+}
+
+bool LightingResources::GetShadowViewParts(UINT shadowIndex, XMFLOAT4X4& outView, XMFLOAT4X4& outProjection)
+{
+    if (!g_LightCacheValid)
+    {
+        RebuildLightCache();
+    }
+    if (shadowIndex >= g_ShadowLightCount || !g_ShadowLightViewPartsValid[shadowIndex])
+    {
+        return false;
+    }
+    outView = g_ShadowLightViews[shadowIndex];
+    outProjection = g_ShadowLightProjections[shadowIndex];
+    return true;
 }
 
 D3D12_GPU_VIRTUAL_ADDRESS LightingResources::GetShadowConstantBufferAddress(UINT shadowIndex)

@@ -228,7 +228,7 @@ bool Reserve(uint counter, uint amount, uint limit, out uint base)
     {
         Success[id.x] = 0;
     }
-    if (id.x == 0)
+    if (id.x == 0 && PageCount != 0)
     {
         PageRequests.Store4(0, uint4(0, 0, 0, 0));
     }

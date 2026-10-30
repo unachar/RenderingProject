@@ -514,6 +514,18 @@ namespace MeshShaderRenderer
             MeshletManager::Prepare(graph, meshes);
             VirtualGeometryTraversal::Prepare(graph,
                                               {instances, objects, count, objectResource, countResource, capacity});
+            if (VirtualGeometryTraversal::GetSettings().ShadowTraversal)
+            {
+                VirtualGeometryTraversal::ViewInput shadowView;
+                if (LightingResources::GetShadowViewParts(0, shadowView.View, shadowView.Projection))
+                {
+                    shadowView.PreviousView = shadowView.View;
+                    shadowView.PreviousProjection = shadowView.Projection;
+                    shadowView.ViewportHeight = float(RendererState::GetShadowMapSize());
+                    VirtualGeometryTraversal::PrepareShadowView(
+                        graph, {instances, objects, count, objectResource, countResource, capacity}, shadowView);
+                }
+            }
             const bool overdraw =
                 VirtualGeometryTraversal::GetSettings().View == VirtualGeometryTraversal::DebugView::Overdraw;
             VirtualGeometryBinning::BeginFrame(s.NativeBinnedOpaquePSO.Get() && s.NativeBinnedVelocityPSO.Get() &&

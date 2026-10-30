@@ -52,6 +52,9 @@ class LightingResources : protected RendererState
                                   bool& clearLayer);
     static void SetCurrentShadowPassIndex(UINT index);
     static XMMATRIX GetCurrentShadowViewProjection();
+    // Separate (non-transposed) view/projection for a built shadow light view,
+    // for consumers that need the view on its own (e.g. VG shadow traversal).
+    static bool GetShadowViewParts(UINT shadowIndex, XMFLOAT4X4& outView, XMFLOAT4X4& outProjection);
     static void GetCurrentShadowLight(XMFLOAT4& positionType, XMFLOAT4& direction);
     static D3D12_GPU_VIRTUAL_ADDRESS GetCurrentShadowConstantBufferAddress();
     static D3D12_GPU_VIRTUAL_ADDRESS GetShadowConstantBufferAddress(UINT shadowIndex);

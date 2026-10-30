@@ -71,6 +71,11 @@ namespace VirtualGeometryTraversal
         struct Frame
         {
             GpuSceneBuffer States, Visible, Counters, Arguments, Success, Queue;
+            // Shadow view output set: the shadow traversal must never write
+            // the camera's visible list (casters outside the camera frustum
+            // would be missed and camera clusters would be overwritten).
+            GpuSceneBuffer ShadowStates, ShadowVisible, ShadowCounters, ShadowArguments, ShadowSuccess, ShadowQueue;
+            GpuSceneBuffer ShadowTemporalCounters;
             GpuSceneBuffer HistoryHeaders, First, Deferred, Second, Combined, TemporalCounters, TemporalArguments;
             ComPtr<ID3D12Resource> TemporalReadback;
             uint64_t SampleFence = 0;
@@ -82,6 +87,8 @@ namespace VirtualGeometryTraversal
         {
             Settings Options;
             Constants Parameters;
+            Constants ShadowParameters;
+            bool ShadowViewActive = false;
             FrameInputs Inputs;
             std::array<Frame, GpuSceneBuffer::FrameCount> Frames;
             uint32_t FrameIndex = 0;
@@ -196,7 +203,8 @@ namespace VirtualGeometryTraversal
             return graph.ImportResource(resource);
         }
 
-        void Bind(ID3D12GraphicsCommandList* list, uint32_t temporalPhase = 0)
+        void Bind(ID3D12GraphicsCommandList* list, uint32_t temporalPhase = 0,
+                  const Constants* overrideConstants = nullptr, bool shadowOutputs = false)
         {
             auto& state = Data();
             auto& frame = Current();
@@ -216,15 +224,19 @@ namespace VirtualGeometryTraversal
             {
                 list->SetComputeRootShaderResourceView(index, sources[index]->GetGPUVirtualAddress());
             }
-            GpuSceneBuffer* outputs[] = {&frame.States,    &frame.Visible, &frame.Counters,
-                                         &frame.Arguments, &frame.Success, &frame.Queue};
+            GpuSceneBuffer* outputs[] =
+                shadowOutputs ? std::array<GpuSceneBuffer*, 6>{&frame.ShadowStates, &frame.ShadowVisible,
+                                                               &frame.ShadowCounters, &frame.ShadowArguments,
+                                                               &frame.ShadowSuccess, &frame.ShadowQueue}
+                              : std::array<GpuSceneBuffer*, 6>{&frame.States, &frame.Visible, &frame.Counters,
+                                                               &frame.Arguments, &frame.Success, &frame.Queue};
             for (uint32_t index = 0; index < 6; ++index)
             {
                 list->SetComputeRootUnorderedAccessView(9 + index, outputs[index]->Resource()->GetGPUVirtualAddress());
             }
             list->SetComputeRootDescriptorTable(15, temporalPhase == 2 ? OcclusionCulling::GetCurrentSrv()
                                                                        : OcclusionCulling::GetPreviousSrv());
-            auto constants = state.Parameters;
+            auto constants = overrideConstants ? *overrideConstants : state.Parameters;
             constants.TemporalPhase = temporalPhase;
             if (temporalPhase == 0 && constants.TwoPass)
             {
@@ -248,13 +260,61 @@ namespace VirtualGeometryTraversal
             }
             list->SetComputeRootUnorderedAccessView(21, state.History.Resource()->GetGPUVirtualAddress());
             list->SetComputeRootShaderResourceView(22, frame.HistoryHeaders.Resource()->GetGPUVirtualAddress());
-            GpuSceneBuffer* temporal[] = {&frame.First,    &frame.Deferred,         &frame.Second,
-                                          &frame.Combined, &frame.TemporalCounters, &frame.TemporalArguments};
+            GpuSceneBuffer* temporal[] =
+                shadowOutputs ? std::array<GpuSceneBuffer*, 6>{&frame.ShadowQueue, &frame.ShadowQueue,
+                                                               &frame.ShadowQueue, &frame.ShadowQueue,
+                                                               &frame.ShadowTemporalCounters, &frame.ShadowArguments}
+                              : std::array<GpuSceneBuffer*, 6>{&frame.First, &frame.Deferred, &frame.Second,
+                                                               &frame.Combined, &frame.TemporalCounters,
+                                                               &frame.TemporalArguments};
             for (uint32_t index = 0; index < 6; ++index)
             {
                 list->SetComputeRootUnorderedAccessView(23 + index,
                                                         temporal[index]->Resource()->GetGPUVirtualAddress());
             }
+        }
+
+        // Fills the view-dependent fields of the traversal constants from an
+        // explicit view instead of reading the camera from GraphicsDevice
+        // globals. The camera path passes the active camera; a shadow view
+        // passes the light's matrices with PredictiveStreaming off and its
+        // shadow-map height as ViewportHeight, which makes the orthographic
+        // branch of the traversal shader select clusters by texel error.
+        void FillViewConstants(Constants& parameters, const ViewInput& input)
+        {
+            const auto view = XMLoadFloat4x4(&input.View);
+            const auto projection = XMLoadFloat4x4(&input.Projection);
+            XMStoreFloat4x4(&parameters.VP, view * projection);
+            XMStoreFloat4x4(&parameters.PreviousVP, XMLoadFloat4x4(&input.PreviousView) *
+                                                        XMLoadFloat4x4(&input.PreviousProjection));
+            XMStoreFloat4(&parameters.Camera, XMMatrixInverse(nullptr, view).r[3]);
+            parameters.Camera.w = 0;
+            parameters.StreamingPadding[0] = parameters.StreamingPadding[1] = 0;
+            if (input.PredictiveStreaming)
+            {
+                const auto& options = Data().Options;
+                const auto currentWorld = XMMatrixInverse(nullptr, view);
+                const auto previousWorld = XMMatrixInverse(nullptr, XMLoadFloat4x4(&input.PreviousView));
+                const float seconds = static_cast<float>(std::clamp(World::GetFrameTimeMs() * 0.001, 0.001, 0.1));
+                const auto velocity = (currentWorld.r[3] - previousWorld.r[3]) / seconds;
+                const auto predictedOffset =
+                    velocity * std::clamp(options.PrefetchSeconds, 0.0f, 2.0f) + currentWorld.r[2] * 2.0f;
+                const float length = XMVectorGetX(XMVector3Length(predictedOffset));
+                if (std::isfinite(length) && length > 0.001f && std::isfinite(options.MaxPrefetchDistance))
+                {
+                    XMFLOAT3 direction;
+                    XMStoreFloat3(&direction, XMVector3Normalize(predictedOffset));
+                    auto pack = [](float value) {
+                        return static_cast<uint32_t>(std::clamp((value * 0.5f + 0.5f) * 1023.0f, 0.0f, 1023.0f) + 0.5f);
+                    };
+                    parameters.StreamingPadding[0] =
+                        pack(direction.x) | (pack(direction.y) << 10) | (pack(direction.z) << 20);
+                    parameters.StreamingPadding[1] = 1;
+                    parameters.Camera.w = std::min(length, std::max(0.0f, options.MaxPrefetchDistance));
+                }
+            }
+            parameters.ProjectionPixels = 0.5f * input.ViewportHeight * std::abs(input.Projection._22);
+            parameters.OrthographicProjection = fabsf(input.Projection._44) > 0.5f ? 1u : 0u;
         }
 
         void PollTemporalStatistics()
@@ -463,6 +523,21 @@ namespace VirtualGeometryTraversal
         return Current().Success;
     }
 
+    GpuSceneBuffer& ShadowVisibleBuffer()
+    {
+        return Current().ShadowVisible;
+    }
+
+    GpuSceneBuffer& ShadowCounterBuffer()
+    {
+        return Current().ShadowCounters;
+    }
+
+    GpuSceneBuffer& ShadowArgumentBuffer()
+    {
+        return Current().ShadowArguments;
+    }
+
     const std::array<uint32_t, 64>& DebugCounters()
     {
         return Data().Debug;
@@ -510,44 +585,31 @@ namespace VirtualGeometryTraversal
         }
         ensure(frame.TemporalCounters, 192, 4);
         ensure(frame.TemporalArguments, 3, 12);
+        bool shadowTraversal = state.Options.Enabled && state.Options.ShadowTraversal;
+        ensure(frame.ShadowSuccess, inputs.ObjectCapacity, 4);
+        ensure(frame.ShadowCounters, 64, 4);
+        ensure(frame.ShadowArguments, 1, 12);
+        ensure(frame.ShadowStates, shadowTraversal ? scratch : 1, 4);
+        ensure(frame.ShadowQueue, shadowTraversal ? scratch : 1, 4);
+        ensure(frame.ShadowVisible, shadowTraversal ? selectedCapacity : 1, 16);
+        ensure(frame.ShadowTemporalCounters, 192, 4);
         VirtualGeometryResources::Prepare(graph);
         PrepareHistory(graph);
         Initialize();
         auto& p = state.Parameters;
-        XMMATRIX view, projection;
-        Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
-        XMStoreFloat4x4(&p.VP, view * projection);
-        XMStoreFloat4x4(&p.PreviousVP, XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix()) *
-                                           XMLoadFloat4x4(&GraphicsDevice::GetPreviousProjectionMatrix()));
-        XMStoreFloat4(&p.Camera, XMMatrixInverse(nullptr, view).r[3]);
-        p.Camera.w = 0;
-        p.StreamingPadding[0] = p.StreamingPadding[1] = 0;
-        if (state.Options.PredictiveStreaming && !GPUVisibility::CameraCut() && state.Options.ForceHierarchyLevel < 0)
+        ViewInput cameraView;
         {
-            const auto currentWorld = XMMatrixInverse(nullptr, view);
-            const auto previousWorld =
-                XMMatrixInverse(nullptr, XMLoadFloat4x4(&GraphicsDevice::GetPreviousViewMatrix()));
-            const float seconds = static_cast<float>(std::clamp(World::GetFrameTimeMs() * 0.001, 0.001, 0.1));
-            const auto velocity = (currentWorld.r[3] - previousWorld.r[3]) / seconds;
-            const auto predictedOffset =
-                velocity * std::clamp(state.Options.PrefetchSeconds, 0.0f, 2.0f) + currentWorld.r[2] * 2.0f;
-            const float length = XMVectorGetX(XMVector3Length(predictedOffset));
-            if (std::isfinite(length) && length > 0.001f && std::isfinite(state.Options.MaxPrefetchDistance))
-            {
-                XMFLOAT3 direction;
-                XMStoreFloat3(&direction, XMVector3Normalize(predictedOffset));
-                auto pack = [](float value) {
-                    return static_cast<uint32_t>(std::clamp((value * 0.5f + 0.5f) * 1023.0f, 0.0f, 1023.0f) + 0.5f);
-                };
-                p.StreamingPadding[0] = pack(direction.x) | (pack(direction.y) << 10) | (pack(direction.z) << 20);
-                p.StreamingPadding[1] = 1;
-                p.Camera.w = std::min(length, std::max(0.0f, state.Options.MaxPrefetchDistance));
-            }
+            XMMATRIX view, projection;
+            Camera::GetCameraMatrices(Camera::GetCameraEntity(), view, projection);
+            XMStoreFloat4x4(&cameraView.View, view);
+            XMStoreFloat4x4(&cameraView.Projection, projection);
         }
-        XMFLOAT4X4 projectionValues;
-        XMStoreFloat4x4(&projectionValues, projection);
-        p.ProjectionPixels = 0.5f * float(GraphicsDevice::GetSceneHeight()) * std::abs(projectionValues._22);
-        p.OrthographicProjection = fabsf(projectionValues._44) > 0.5f ? 1u : 0u;
+        cameraView.PreviousView = GraphicsDevice::GetPreviousViewMatrix();
+        cameraView.PreviousProjection = GraphicsDevice::GetPreviousProjectionMatrix();
+        cameraView.ViewportHeight = float(GraphicsDevice::GetSceneHeight());
+        cameraView.PredictiveStreaming = state.Options.PredictiveStreaming && !GPUVisibility::CameraCut() &&
+                                         state.Options.ForceHierarchyLevel < 0;
+        FillViewConstants(p, cameraView);
         p.TargetPixels = std::max(0.01f, state.Options.TargetErrorPixels);
         p.ForceLevel = std::clamp(state.Options.ForceHierarchyLevel, -1, 31);
         p.Capacity = selectedCapacity;
@@ -759,6 +821,154 @@ namespace VirtualGeometryTraversal
                     list->Dispatch(1, 1, 1);
                 });
         }
+    }
+
+    bool ShadowViewActive()
+    {
+        return Data().ShadowViewActive;
+    }
+
+    // Registers the traversal passes for one shadow view (v1: a single light
+    // view per frame). Must be called after Prepare() for the same frame.
+    // The shadow view runs with occlusion and LOD hysteresis off and with
+    // PageCount zeroed, so it never clears the camera's streaming feedback or
+    // LOD history; its clusters land in the dedicated shadow buffers.
+    bool PrepareShadowView(RenderGraph& graph, const FrameInputs& inputs, const ViewInput& view)
+    {
+        auto& state = Data();
+        state.ShadowViewActive = false;
+        if (!state.Options.Enabled || !state.Options.ShadowTraversal || !state.Active)
+        {
+            return false;
+        }
+        auto& frame = Current();
+        auto& shadow = state.ShadowParameters;
+        shadow = state.Parameters;
+        FillViewConstants(shadow, view);
+        shadow.Enabled = 1;
+        shadow.TwoPass = 0;
+        shadow.Occlusion = 0;
+        shadow.HysteresisEnabled = 0;
+        shadow.ResetHistory = 0;
+        shadow.TemporalPhase = 0;
+        shadow.PageCount = 0;
+        shadow.Frustum = state.Options.FrustumCulling;
+        shadow.Cone = state.Options.ConeCulling;
+        auto stats = Import(graph, "Nanite Shadow Counters", frame.ShadowCounters,
+                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        auto success = Import(graph, "Nanite Shadow Instance Routing", frame.ShadowSuccess,
+                              D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        auto visible = Import(graph, "Shadow Visible Virtual Clusters", frame.ShadowVisible,
+                              D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        auto arguments = Import(graph, "Nanite Shadow Dispatch Arguments", frame.ShadowArguments,
+                                D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+        auto states = Import(graph, "Nanite Shadow Group States", frame.ShadowStates,
+                             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        auto queue = Import(graph, "Nanite Shadow Traversal Queue", frame.ShadowQueue,
+                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        auto temporalCounters = Import(graph, "Native shadow temporal counters", frame.ShadowTemporalCounters,
+                                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        auto history = Import(graph, "Native LOD history", state.History, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        auto historyHeaders = Import(graph, "Native LOD identities", frame.HistoryHeaders,
+                                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        auto residency = Import(graph, "Geometry Residency", VirtualGeometryStreaming::ResidencyBuffer(),
+                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        std::vector<RenderGraph::ResourceHandle> feedback;
+        for (auto* buffer : {&VirtualGeometryStreaming::RequestBitsBuffer(),
+                             &VirtualGeometryStreaming::RequestBuffer(), &VirtualGeometryStreaming::UsageBuffer()})
+        {
+            feedback.push_back(Import(graph, "Geometry Feedback", *buffer, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+        }
+        std::vector<RenderGraph::ResourceHandle> assetHandles;
+        GpuSceneBuffer* assets[] = {
+            &VirtualGeometryResources::AssetBuffer(), &VirtualGeometryResources::ClusterBuffer(),
+            &VirtualGeometryResources::GroupBuffer(), &VirtualGeometryResources::HierarchyIndexBuffer(),
+            &VirtualGeometryResources::RootBuffer()};
+        for (auto* buffer : assets)
+        {
+            assetHandles.push_back(
+                Import(graph, "Nanite Asset SRV", *buffer, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
+        }
+        auto external = [&](ID3D12Resource* resource, const char* name, D3D12_RESOURCE_STATES read) {
+            auto existing = graph.FindImportedResource(resource);
+            if (existing.IsValid())
+            {
+                return existing;
+            }
+            RenderGraph::ImportedResource input{};
+            input.Name = name;
+            input.Resource = resource;
+            input.InitialState = input.FinalState = read;
+            input.HasFinalState = true;
+            return graph.ImportResource(input);
+        };
+        auto material =
+            external(GpuScene::MaterialBuffer(), "Nanite Materials", D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        graph.AddPass(
+            "Nanite Shadow Reset",
+            [=](RenderGraph::PassBuilder& b) {
+                b.Write(stats, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+                    .Write(success, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                b.Write(temporalCounters, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                for (auto handle : feedback)
+                {
+                    b.Write(handle, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                }
+            },
+            [](ID3D12GraphicsCommandList* list) {
+                Bind(list, 0, &Data().ShadowParameters, true);
+                list->SetPipelineState(Data().ResetPSO.Get());
+                uint32_t resetCount =
+                    std::max({192u, Data().Inputs.ObjectCapacity, (Data().ShadowParameters.PageCount + 31) / 32,
+                              Data().ShadowParameters.ResetHistory ? Data().ShadowParameters.HistoryCapacity : 0u});
+                list->Dispatch(std::max(1u, (resetCount + 63) / 64), 1, 1);
+            });
+        graph.AddPass(
+            "Nanite Shadow Traversal",
+            [=](RenderGraph::PassBuilder& b) {
+                b.Read(inputs.Instances, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+                    .Read(inputs.Objects, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+                    .Read(inputs.Count, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+                    .Read(material, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                for (auto handle : assetHandles)
+                {
+                    b.Read(handle, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                }
+                b.Read(residency, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                b.Read(historyHeaders, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+                    .ReadWrite(history, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+                    .ReadWrite(temporalCounters, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                for (auto handle : feedback)
+                {
+                    b.ReadWrite(handle, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                }
+                b.ReadWrite(stats, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+                    .Write(success, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+                    .Write(visible, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+                    .Write(states, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+                    .Write(queue, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            },
+            [](ID3D12GraphicsCommandList* list) {
+                RenderProfiler::ScopedEvent profile("Nanite Shadow Traversal", list);
+                Bind(list, 0, &Data().ShadowParameters, true);
+                list->SetPipelineState(Data().TraversePSO.Get());
+                uint32_t count = Data().Inputs.ObjectCapacity;
+                uint32_t x = std::min(std::max(1u, count), 65535u);
+                list->Dispatch(x, std::max(1u, (count + x - 1) / x), 1);
+            });
+        graph.AddPass(
+            "Nanite Shadow Indirect Dispatch",
+            [=](RenderGraph::PassBuilder& b) {
+                b.ReadWrite(stats, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+                    .Write(arguments, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            },
+            [](ID3D12GraphicsCommandList* list) {
+                Bind(list, 0, &Data().ShadowParameters, true);
+                list->SetPipelineState(Data().ArgumentsPSO.Get());
+                list->Dispatch(1, 1, 1);
+            });
+        state.ShadowViewActive = true;
+        return true;
     }
 
     void RecordFeedback(RenderGraph& graph)

@@ -27,6 +27,7 @@ namespace VirtualGeometryTraversal
         float HysteresisFraction = 0.1f;
         int ForceHierarchyLevel = -1;
         bool FrustumCulling = true, ConeCulling = true, OcclusionCulling = true;
+        bool ShadowTraversal = false;
         bool LevelColors = false, DebugReadback = false;
         DebugView View = DebugView::None;
         bool AutoGrowBuffers = true;
@@ -45,8 +46,23 @@ namespace VirtualGeometryTraversal
         uint32_t ObjectCapacity = 0;
     };
 
+    // One view's traversal inputs. The camera path fills this from the active
+    // camera; a shadow view fills it from the light's view/projection, so the
+    // traversal no longer assumes the camera is the only possible view.
+    struct ViewInput
+    {
+        XMFLOAT4X4 View{};
+        XMFLOAT4X4 Projection{};
+        XMFLOAT4X4 PreviousView{};
+        XMFLOAT4X4 PreviousProjection{};
+        float ViewportHeight = 1.0f;
+        bool PredictiveStreaming = false;
+    };
+
     Settings& GetSettings();
     void Prepare(RenderGraph& graph, const FrameInputs& inputs);
+    bool PrepareShadowView(RenderGraph& graph, const FrameInputs& inputs, const ViewInput& view);
+    bool ShadowViewActive();
     bool Active();
     enum class RasterPhase
     {
@@ -82,6 +98,9 @@ namespace VirtualGeometryTraversal
     GpuSceneBuffer& CounterBuffer();
     GpuSceneBuffer& ArgumentBuffer();
     GpuSceneBuffer& SuccessBuffer();
+    GpuSceneBuffer& ShadowVisibleBuffer();
+    GpuSceneBuffer& ShadowCounterBuffer();
+    GpuSceneBuffer& ShadowArgumentBuffer();
     const std::array<uint32_t, 64>& DebugCounters();
     void EndFrame();
     void Shutdown();
