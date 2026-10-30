@@ -56,6 +56,28 @@ targets XML is well-formed with 34 tracked DXC outputs.
   shadow path; the legacy path still draws every caster, so coverage
   differences show up as shadow detail, never as missing shadows.
 
+## Also landed in the 50-push batch (continued)
+
+- Stage 1D completion work: DecalComponent + per-frame registry
+  sync, scene save/load + undo snapshots, editor inspector section
+  and hierarchy create-menu entry.
+- Stage 2 J local reflection probes: design, flag, component +
+  registry (priority/nearest selection, CPU-tested), active-probe
+  environment override plumbing, runtime GGX prefilter
+  (EnvironmentPrefilterCS + TextureManager::RegisterExternalTexture)
+  for sources without mip chains, save/load, inspector, create menu.
+- Stage 2 H reference path tracer: design + ReferenceCapture job
+  bookkeeping (state machine, deterministic seeds, accumulation
+  target) — integrator shader not yet landed.
+- Native Hi-Z SSR (route chosen over vendoring FidelityFX SSSR):
+  design, flag, reflection-source selection point, Hi-Z trace
+  shader, trace-pass host. Frame wiring is the next step.
+- Stage 1C multi-view shadow design (spot/point/cascades) recorded;
+  implementation not yet started.
+- Settings UI: checkboxes for all integration flags above.
+- Review fix: probe update moved after the frame command-list
+  reset so prefilter dispatches are actually recorded.
+
 ## Also landed in the 50-push batch (pending verification)
 
 - D3D12MA routing completed for the remaining persistent DEFAULT-heap
