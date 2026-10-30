@@ -48,6 +48,8 @@ cbuffer Parameters : register(b0)
     uint HistorySlots, HistoryCapacity, ResetHistory, TwoPass;
     float HysteresisFraction;
     uint HysteresisEnabled, TemporalPhase, OrthographicProjection;
+    uint ShadowBinning; // Stage 1C: split shadow visible list into material bins
+    uint3 BinningPadding;
 };
 
 groupshared uint StateBase, QueueBase, QueueCount, QueueCursor, OutputBase, OutputCount, Accepted;

@@ -51,10 +51,16 @@ namespace VirtualGeometryTraversal
             uint32_t HysteresisEnabled = 0;
             uint32_t TemporalPhase = 0;
             uint32_t OrthographicProjection = 0;
+            // Stage 1C binning: 1 for shadow views (the traversal
+            // splits the visible list into opaque / alpha-tested
+            // bins); the camera view keeps the single-list layout.
+            uint32_t ShadowBinning = 0;
+            uint32_t BinningPadding[3]{};
         };
 
-        static_assert(sizeof(Constants) == 256);
+        static_assert(sizeof(Constants) == 272);
         static_assert(offsetof(Constants, OrthographicProjection) == 252);
+        static_assert(offsetof(Constants, ShadowBinning) == 256);
 
         struct HistoryHeader
         {
@@ -953,6 +959,7 @@ namespace VirtualGeometryTraversal
         state.Shadow(viewId).TraversedProjection = view.Projection;
         FillViewConstants(shadow, view);
         shadow.Enabled = 1;
+        shadow.ShadowBinning = 1;
         shadow.TwoPass = 0;
         shadow.Occlusion = 0;
         shadow.HysteresisEnabled = 0;
