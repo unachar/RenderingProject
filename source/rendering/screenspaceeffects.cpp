@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "memoryallocator.h"
 #include "screenspaceeffects.h"
 #include "rendererstate.h"
 #include "renderersettings.h"
@@ -71,14 +72,27 @@ static bool LoadPipeline(const wchar_t* path, ComPtr<ID3D12PipelineState>& outpu
     return SUCCEEDED(g_Device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&output)));
 }
 
+// DEFAULT-heap creation for this file: through D3D12MA when the flag is
+// on (allocation lifetime bound to the resource), else committed.
+static bool CreateScreenSpaceResource(const D3D12_RESOURCE_DESC& description, D3D12_RESOURCE_STATES initialState,
+                                      ID3D12Resource** resource)
+{
+    if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(description, initialState, nullptr))
+    {
+        *resource = allocated;
+        return true;
+    }
+    auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+    return SUCCEEDED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, initialState,
+                                                       nullptr, IID_PPV_ARGS(resource)));
+}
+
 bool CreateTexture(UINT width, UINT height, UINT16 arraySize, DXGI_FORMAT format, ComPtr<ID3D12Resource>& resource,
                    UINT srvIndex, UINT uavIndex)
 {
-    auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
     auto desc = CD3DX12_RESOURCE_DESC::Tex2D(format, width, height, arraySize, 1, 1, 0,
                                              D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    if (FAILED(g_Device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, kShaderReadState, nullptr,
-                                                 IID_PPV_ARGS(&resource))))
+    if (!CreateScreenSpaceResource(desc, kShaderReadState, resource.GetAddressOf()))
     {
         return false;
     }
@@ -287,12 +301,9 @@ bool ScreenSpaceEffects::Resize(UINT width, UINT height, DXGI_FORMAT lightingFor
         return false;
     }
 
-    auto defaultHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-
     auto historyDesc =
         CD3DX12_RESOURCE_DESC::Tex2D(lightingFormat, width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_NONE);
-    if (FAILED(g_Device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &historyDesc, kShaderReadState,
-                                                 nullptr, IID_PPV_ARGS(&g_History))))
+    if (!CreateScreenSpaceResource(historyDesc, kShaderReadState, g_History.GetAddressOf()))
     {
         return false;
     }
@@ -306,8 +317,7 @@ bool ScreenSpaceEffects::Resize(UINT width, UINT height, DXGI_FORMAT lightingFor
 
     auto rayDesc = CD3DX12_RESOURCE_DESC::Buffer(static_cast<UINT64>(g_RayCount) * sizeof(uint32_t),
                                                  D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    if (FAILED(g_Device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &rayDesc,
-                                                 D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&g_RayOrder))))
+    if (!CreateScreenSpaceResource(rayDesc, D3D12_RESOURCE_STATE_COMMON, g_RayOrder.GetAddressOf()))
     {
         return false;
     }
