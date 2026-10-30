@@ -61,3 +61,27 @@ same.
 Reference images for the fixture scenes, monotonically decreasing
 variance with samples, identical output for identical seeds,
 linear HDR RMSE/SSIM reporting wired into the comparison tooling.
+
+## Progress and follow-ups (500-push run)
+
+Landed: integrator v1 (analytic NEE + GGX/cosine BSDF), Cornell /
+material-test / emissive-panel fixtures, quad area-light NEE with
+the solid-angle PDF, PFM/PPM writers, validation-hook captures.
+
+- **MIS (next)**: flagged light sources currently emit only for
+  camera rays; BSDF hits on them are skipped to avoid
+  double-counting with NEE. Balance-heuristic MIS between the
+  light PDF (solid angle for quads, delta for analytic) and the
+  BSDF PDF (GGX/cosine mixture, already computed for the sampling
+  estimators) removes the bias for glossy chains and lets emission
+  count at every depth. Needs the hit material's light-source flag
+  plus the quad geometry lookup by material — store a
+  material->light index in material entry 3 (.y) when building
+  fixtures.
+- **EXR writer**: PFM is the HDR deliverable today; EXR joins if
+  the comparison tooling standardizes on it.
+- **AOVs** (albedo/normal/depth, direct/indirect split): designed
+  above, not yet emitted by the capture host.
+- **Real-scene captures**: evaluating the engine's packed scene
+  materials in the integrator remains the long-term step; fixture
+  scenes are the contract until then.

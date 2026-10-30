@@ -80,10 +80,25 @@ targets XML is well-formed with 34 tracked DXC outputs.
 - Native Hi-Z SSR completed end to end: frame wiring, world-space
   trace, confidence blending through the raytraced-reflection
   override, per-pixel roughness from the material GBuffer.
+  Temporal quality: T1 half-resolution trace + bilateral resolve
+  and T2 hit-point reprojected accumulation with camera-cut reset
+  are landed; a checkerboard trace mode remains a designed option.
 - Stage 2H reference path tracer: integrator shader (RayQuery,
-  NEE, GGX/diffuse sampling, RR, deterministic seeds), Cornell
-  fixture builder, BLAS/TLAS host, synchronous capture run with
-  readback, PFM/PPM writers. An in-app caller is still TODO.
+  NEE, GGX/diffuse sampling, RR, deterministic seeds), Cornell /
+  material-test / emissive-panel fixtures, quad area-light NEE,
+  BLAS/TLAS host, synchronous capture run with readback, PFM/PPM
+  writers, and the validation-hook caller (env-gated). MIS, AOVs
+  and real-scene captures remain follow-ups in the design doc.
+- Stage 2J: per-probe GGX prefilter, box-projection parallax,
+  probe intensity, and gated bindless two-probe blending
+  (PROBE_BLENDING_BINDLESS awaits root-signature verification);
+  live cubemap capture is designed.
+- D3D12MA remaining exclusions, by design: UPLOAD/READBACK heaps
+  (not allocator territory), the transient aliasing arena (own
+  lifetime model), reserved/tiled streaming resources, mapped
+  primitive geometry, shader-pipeline constant buffers (UPLOAD),
+  OptiX interop (shared handles), and the swap chain. Statistics
+  are surfaced live in the Advanced GPU settings section.
 - Stage 1C multi-view: per-view traversal state pool (4 slots),
   viewId-aware PrepareShadowView/validity/accessors, and
   prepare+draw wiring for every shadow pass (viewId = pass index
