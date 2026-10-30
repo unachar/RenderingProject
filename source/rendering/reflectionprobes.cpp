@@ -237,33 +237,20 @@ namespace ReflectionProbes
                 probe.HalfExtents[2] = (std::max)(probeComponent.InfluenceSize.z, 0.1f) * 0.5f;
                 probe.EnvironmentSrvIndex = found->second;
                 probe.Priority = probeComponent.Priority;
+                probe.Intensity = probeComponent.Intensity;
                 Add(probe);
             });
     }
 
-    void UpdateActiveEnvironment(ID3D12GraphicsCommandList* commandList)
+    namespace
     {
-        if (!RendererSettings::GetUseLocalReflectionProbes())
-        {
-            RendererState::m_EnvironmentTextureOverrideSrvIndex = -1;
-            return;
-        }
-        SyncFromScene(commandList);
-        const EntityID cameraEntity = Camera::GetCameraEntity();
-        if (!ComponentManager::HasComponent<TransformComponent>(cameraEntity))
-        {
-            RendererState::m_EnvironmentTextureOverrideSrvIndex = -1;
-            return;
-        }
-        TransformComponent& cameraTransform = ComponentManager::GetComponent<TransformComponent>(cameraEntity);
-        const float cameraPosition[3] = {cameraTransform.Position.x, cameraTransform.Position.y,
-                                         cameraTransform.Position.z};
-        RendererState::m_EnvironmentTextureOverrideSrvIndex = SelectEnvironmentSrvIndex(cameraPosition);
-    }
+        Probe g_ActiveProbe{};
+        bool g_HasActiveProbe = false;
+    } // namespace
 
-    int SelectEnvironmentSrvIndex(const float cameraPosition[3])
+    const Probe* SelectProbe(const float cameraPosition[3])
     {
-        int bestSrv = -1;
+        const Probe* best = nullptr;
         int bestPriority = 0;
         float bestDistanceSq = 0.0f;
         for (const Probe& probe : g_Probes)
@@ -288,14 +275,63 @@ namespace ReflectionProbes
             {
                 continue;
             }
-            if (bestSrv < 0 || probe.Priority > bestPriority ||
+            if (best == nullptr || probe.Priority > bestPriority ||
                 (probe.Priority == bestPriority && distanceSq < bestDistanceSq))
             {
-                bestSrv = probe.EnvironmentSrvIndex;
+                best = &probe;
                 bestPriority = probe.Priority;
                 bestDistanceSq = distanceSq;
             }
         }
-        return bestSrv;
+        return best;
+    }
+
+    void UpdateActiveEnvironment(ID3D12GraphicsCommandList* commandList)
+    {
+        g_HasActiveProbe = false;
+        if (!RendererSettings::GetUseLocalReflectionProbes())
+        {
+            RendererState::m_EnvironmentTextureOverrideSrvIndex = -1;
+            return;
+        }
+        SyncFromScene(commandList);
+        const EntityID cameraEntity = Camera::GetCameraEntity();
+        if (!ComponentManager::HasComponent<TransformComponent>(cameraEntity))
+        {
+            RendererState::m_EnvironmentTextureOverrideSrvIndex = -1;
+            return;
+        }
+        TransformComponent& cameraTransform = ComponentManager::GetComponent<TransformComponent>(cameraEntity);
+        const float cameraPosition[3] = {cameraTransform.Position.x, cameraTransform.Position.y,
+                                         cameraTransform.Position.z};
+        const Probe* selected = SelectProbe(cameraPosition);
+        RendererState::m_EnvironmentTextureOverrideSrvIndex =
+            selected != nullptr ? selected->EnvironmentSrvIndex : -1;
+        if (selected != nullptr)
+        {
+            g_ActiveProbe = *selected;
+            g_HasActiveProbe = true;
+        }
+    }
+
+    int SelectEnvironmentSrvIndex(const float cameraPosition[3])
+    {
+        const Probe* selected = SelectProbe(cameraPosition);
+        return selected != nullptr ? selected->EnvironmentSrvIndex : -1;
+    }
+
+    bool GetActiveProbeBox(float center[3], float halfExtents[3], float& intensity)
+    {
+        if (!g_HasActiveProbe)
+        {
+            return false;
+        }
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            center[axis] = g_ActiveProbe.Center[axis];
+            halfExtents[axis] = g_ActiveProbe.HalfExtents[axis];
+        }
+        intensity = g_ActiveProbe.Intensity;
+        return true;
     }
 } // namespace ReflectionProbes

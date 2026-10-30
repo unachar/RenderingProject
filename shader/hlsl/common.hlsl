@@ -1233,6 +1233,8 @@ cbuffer PostProcessParams : register(b0)
     float4 WeatherParams1; // 降雪、風の x、風の z、未使用
     float4 QualityFlags;   // エネルギー補償、面光源、OIT の有効フラグ、RT 屈折
     float4 QualityReserved;
+    float4 ProbeBoxCenter;  // Stage 2J: xyz = active local probe center, w = active flag
+    float4 ProbeBoxExtents; // xyz = probe half extents, w = probe intensity
 };
 
 float3 ReconstructPostProcessViewRayCommon(float2 uv)

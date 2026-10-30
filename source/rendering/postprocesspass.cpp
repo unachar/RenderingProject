@@ -25,6 +25,7 @@
 #include "visibilitybuffer.h"
 #include "screenspaceeffects.h"
 #include "screenspacereflections.h"
+#include "reflectionprobes.h"
 #include "occlusionculling.h"
 #include "materialbindings.h"
 #include "systemmanager.h"
@@ -53,6 +54,8 @@ namespace
         XMFLOAT4 RaytracingFlags{};
         XMFLOAT4 RaytracingSunDirection{};
         XMFLOAT4 Quality[11]{}; // 描画品質設定のビット詰め（RenderQuality::Pack）
+        XMFLOAT4 ProbeBoxCenter{};  // xyz: active probe center, w: 1 when a local probe is active
+        XMFLOAT4 ProbeBoxExtents{}; // xyz: probe half extents, w: probe intensity
     };
 
     static_assert(sizeof(PostProcessConstants) <= RendererState::g_kPP_CB_ALIGNED_SIZE);
@@ -111,6 +114,18 @@ void PostProcessPass::UpdateCameraConstants()
         // エネルギー補償と LTC 鏡面反射にはテーブルが必要。
         constants.Quality[9].x = 0.0f;
         constants.Quality[9].y = 0.0f;
+    }
+    // Stage 2 J box projection: the active local probe's box, consumed
+    // by SurfaceLighting to parallax-correct the environment sample.
+    {
+        float center[3] = {};
+        float halfExtents[3] = {};
+        float intensity = 1.0f;
+        if (ReflectionProbes::GetActiveProbeBox(center, halfExtents, intensity))
+        {
+            constants.ProbeBoxCenter = {center[0], center[1], center[2], 1.0f};
+            constants.ProbeBoxExtents = {halfExtents[0], halfExtents[1], halfExtents[2], intensity};
+        }
     }
     memcpy(m_pPostProcessCbvDataBegin + GetPostProcessFrameOffset(), &constants, sizeof(constants));
 }

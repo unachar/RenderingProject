@@ -1465,6 +1465,28 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
     float3 R = reflect(-V, N);
     R = normalize(R);
 
+#if defined(SHADER_POSTPROCESS) || defined(SHADER_FORWARD_LIGHTING)
+    // Stage 2J box projection: when a local reflection probe is
+    // active, project the reflection ray onto the probe's influence
+    // box and sample from the box surface point as seen from the
+    // probe center, which restores parallax the raw direction
+    // loses. No-op for the global environment (flag 0).
+    if (ProbeBoxCenter.w > 0.5f)
+    {
+        const float3 probeLocal = worldPosition - ProbeBoxCenter.xyz;
+        const float3 boxExtents = max(ProbeBoxExtents.xyz, float3(0.05f, 0.05f, 0.05f));
+        const float3 recip = rcp(R); // inf components are fine: the t range checks below reject NaN/inf results
+        const float3 tA = (boxExtents - probeLocal) * recip;
+        const float3 tB = (-boxExtents - probeLocal) * recip;
+        const float3 tMax = max(tA, tB);
+        const float t = min(tMax.x, min(tMax.y, tMax.z));
+        if (t > 0.0f && t < 1e30f)
+        {
+            R = normalize(probeLocal + R * t);
+        }
+    }
+#endif
+
     float2 reflectionUV;
     reflectionUV.x = frac(atan2(R.z, R.x) / (2.0f * PI) + 0.5f);
     reflectionUV.y = acos(clamp(R.y, -1.0f, 1.0f)) / PI;
@@ -1476,6 +1498,12 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
     float maxMip = 8.0f;
 
     float3 envSpecular = EnvironmentTexture.SampleLevel(TextureSampler, reflectionUV, roughness * maxMip).rgb;
+#if defined(SHADER_POSTPROCESS) || defined(SHADER_FORWARD_LIGHTING)
+    if (ProbeBoxCenter.w > 0.5f)
+    {
+        envSpecular *= ProbeBoxExtents.w;
+    }
+#endif
 #ifdef SHADER_RAYTRACING
     if (SceneRayFlags.x > 0.5f || RaytracingFlags.w > 0.5f)
     {
@@ -1489,6 +1517,12 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
 #endif
 
     float3 irradiance = EnvironmentTexture.SampleLevel(TextureSampler, normalUV, maxMip).rgb;
+#if defined(SHADER_POSTPROCESS) || defined(SHADER_FORWARD_LIGHTING)
+    if (ProbeBoxCenter.w > 0.5f)
+    {
+        irradiance *= ProbeBoxExtents.w;
+    }
+#endif
 
     float oneMinusNdotV = 1.0f - NdotV;
     float oneMinusNdotV2 = oneMinusNdotV * oneMinusNdotV;

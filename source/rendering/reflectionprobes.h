@@ -20,6 +20,7 @@ namespace ReflectionProbes
         // or -1 when unresolved.
         int EnvironmentSrvIndex = -1;
         int Priority = 0;
+        float Intensity = 1.0f;
     };
 
     void Clear();
@@ -47,6 +48,10 @@ namespace ReflectionProbes
     // Selection: containing probes only; highest priority wins; ties
     // go to the nearest center.
     int SelectEnvironmentSrvIndex(const float cameraPosition[3]);
+    // The probe selected by the most recent UpdateActiveEnvironment
+    // (box-projection data for the lighting shader). Returns false
+    // when no probe is active this frame.
+    bool GetActiveProbeBox(float center[3], float halfExtents[3], float& intensity);
 
     const std::vector<Probe>& All();
 } // namespace ReflectionProbes
