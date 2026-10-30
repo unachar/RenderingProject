@@ -1,11 +1,19 @@
 # Stage 1C follow-up — VG shadows for multiple views: design
 
-Status of 1C today: the dedicated VG shadow path covers the first
-shadow view (pass 0, the first directional light's first cascade),
-including alpha-tested casters (v2). The remaining ledger limits are
-"shadow pass 0 only" and "no shadow material binning". This document
-designs the multi-view extension; implementation follows the same
-small-step pattern as 1C itself.
+Status: IMPLEMENTED (S1–S3). The traversal state is a 4-slot
+per-view pool, `PrepareShadowView` takes a viewId and prepares one
+traversal per shadow pass, and the mesh-shader shadow draw
+consumes the current pass's slot. Interim mapping: viewId = shadow
+pass index; the lightIndex * 8 + faceOrCascade decomposition lands
+when the pass enumeration exposes it. Remaining ledger item: "no
+shadow material binning" (a separate optimization step).
+
+Status of 1C at design time: the dedicated VG shadow path covered
+the first shadow view (pass 0, the first directional light's first
+cascade), including alpha-tested casters (v2). The remaining ledger
+limits were "shadow pass 0 only" and "no shadow material binning".
+This document designs the multi-view extension; implementation
+followed the same small-step pattern as 1C itself.
 
 ## Why pass 0 only
 

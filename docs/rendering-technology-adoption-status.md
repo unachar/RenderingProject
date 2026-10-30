@@ -74,6 +74,20 @@ targets XML is well-formed with 34 tracked DXC outputs.
   shader, trace-pass host. Frame wiring is the next step.
 - Stage 1C multi-view shadow design (spot/point/cascades) recorded;
   implementation not yet started.
+
+## Landed in the 500-push run (pending verification)
+
+- Native Hi-Z SSR completed end to end: frame wiring, world-space
+  trace, confidence blending through the raytraced-reflection
+  override, per-pixel roughness from the material GBuffer.
+- Stage 2H reference path tracer: integrator shader (RayQuery,
+  NEE, GGX/diffuse sampling, RR, deterministic seeds), Cornell
+  fixture builder, BLAS/TLAS host, synchronous capture run with
+  readback, PFM/PPM writers. An in-app caller is still TODO.
+- Stage 1C multi-view: per-view traversal state pool (4 slots),
+  viewId-aware PrepareShadowView/validity/accessors, and
+  prepare+draw wiring for every shadow pass (viewId = pass index
+  for now). Shadow material binning remains a separate step.
 - Settings UI: checkboxes for all integration flags above.
 - Review fix: probe update moved after the frame command-list
   reset so prefilter dispatches are actually recorded.
