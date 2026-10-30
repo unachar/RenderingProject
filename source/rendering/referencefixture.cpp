@@ -64,10 +64,13 @@ namespace ReferenceFixture
                 return geometryIndex;
             }
             uint32_t AddMaterial(float r, float g, float b, float metallic, float er, float eg, float eb,
-                                 float roughness)
+                                 float roughness, bool lightSource = false)
             {
                 const uint32_t index = static_cast<uint32_t>(Data.MaterialData.size() / 12);
-                const float values[12] = {r, g, b, metallic, er, eg, eb, roughness, 0, 0, 0, 0};
+                // Third entry: x = 1 marks an NEE light source (the
+                // integrator then adds its emission only for camera
+                // rays; deeper hits are the NEE path's job).
+                const float values[12] = {r, g, b, metallic, er, eg, eb, roughness, lightSource ? 1.0f : 0.0f, 0, 0, 0};
                 Data.MaterialData.insert(Data.MaterialData.end(), values, values + 12);
                 return index;
             }
@@ -85,6 +88,15 @@ namespace ReferenceFixture
             {
                 const float values[8] = {x, y, z, 1.0f, r, g, b, intensity};
                 Data.Lights.insert(Data.Lights.end(), values, values + 8);
+            }
+            // Quad area light, two light slots (type 2 + continuation):
+            // (corner, 2) (edgeU, 0) / (edgeV, 0) (emission, intensity).
+            void AddQuadLight(const float corner[3], const float edgeU[3], const float edgeV[3], float r, float g,
+                              float b, float intensity)
+            {
+                const float values[16] = {corner[0], corner[1], corner[2], 2.0f, edgeU[0], edgeU[1], edgeU[2], 0.0f,
+                                          edgeV[0],  edgeV[1],  edgeV[2],  0.0f, r,       g,       b,       intensity};
+                Data.Lights.insert(Data.Lights.end(), values, values + 16);
             }
         };
 
@@ -216,17 +228,24 @@ namespace ReferenceFixture
         const uint32_t cube = builder.AddGeometry(cubeVerts, 8, cubeIndices, 36);
 
         const uint32_t white = builder.AddMaterial(0.73f, 0.73f, 0.73f, 0.0f, 0, 0, 0, 0.9f);
-        const uint32_t panel = builder.AddMaterial(0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 6.0f, 6.0f, 1.0f);
+        const uint32_t panel = builder.AddMaterial(0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 6.0f, 6.0f, 1.0f, true);
 
         builder.AddInstance(quad, white, Compose(2, 2, 1, -kHalfPi, 0, 0, -1, 0));
         builder.AddInstance(quad, white, Compose(2, 2, 1, kHalfPi, 0, 0, 1, 0));
         builder.AddInstance(quad, white, Compose(2, 2, 1, 0, kPi, 0, 0, 1));
         builder.AddInstance(quad, white, Compose(2, 2, 1, 0, kHalfPi, -1, 0, 0));
         builder.AddInstance(quad, white, Compose(2, 2, 1, 0, -kHalfPi, 1, 0, 0));
-        // The only light in the scene: a 1.4 x 1.4 emissive panel.
+        // The only light in the scene: a 1.4 x 1.4 emissive panel,
+        // also registered as a quad area light for NEE. Its world
+        // footprint: corner (-0.7, 0.99, -0.7), edges +X and +Z.
         builder.AddInstance(quad, panel, Compose(1.4f, 1.4f, 1, kHalfPi, 0, 0, 0.99f, 0));
         builder.AddInstance(cube, white, Compose(0.7f, 0.7f, 0.7f, 0, 0.4f, 0.0f, -0.65f, 0.1f));
-        // Deliberately no analytic lights: Lights stays empty.
+        {
+            const float corner[3] = {-0.7f, 0.99f, -0.7f};
+            const float edgeU[3] = {1.4f, 0.0f, 0.0f};
+            const float edgeV[3] = {0.0f, 0.0f, 1.4f};
+            builder.AddQuadLight(corner, edgeU, edgeV, 1.0f, 1.0f, 1.0f, 6.0f);
+        }
 
         builder.Data.CameraPosition[0] = 0.0f;
         builder.Data.CameraPosition[1] = 0.0f;
