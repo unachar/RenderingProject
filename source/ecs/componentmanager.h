@@ -480,6 +480,19 @@ struct DecalComponent
     bool IsActive = true;
 };
 
+// Stage 2 J: local reflection probe. The entity transform is the probe
+// position; InfluenceSize is the full extent of the influence box
+// (axis-aligned in v1). EnvironmentTexturePath is an equirect HDR with
+// prefiltered mips, the same contract as the global environment.
+struct ReflectionProbeComponent
+{
+    XMFLOAT3 InfluenceSize = {10.0f, 5.0f, 10.0f};
+    string EnvironmentTexturePath;
+    int Priority = 0;
+    float Intensity = 1.0f;
+    bool IsActive = true;
+};
+
 // Preserve legacy buffer layouts: stage attenuation is encoded in the density sign.
 inline XMFLOAT4 PackLightExtra(const LightComponent& light)
 {
@@ -653,6 +666,8 @@ inline const ComponentType ComponentType::INSTANCING = ComponentTypeRegistry::Ge
 inline const ComponentType ComponentType::LOD = ComponentTypeRegistry::GetType<LODComponent>();
 inline const ComponentType ComponentType::TIMELINE = ComponentTypeRegistry::GetType<TimelineComponent>();
 inline const ComponentType ComponentType::DECAL = ComponentTypeRegistry::GetType<DecalComponent>();
+inline const ComponentType ComponentType::REFLECTION_PROBE =
+    ComponentTypeRegistry::GetType<ReflectionProbeComponent>();
 inline const ComponentType ComponentType::PROCEDURAL_TERRAIN =
     ComponentTypeRegistry::GetType<ProceduralTerrainComponent>();
 inline const ComponentType ComponentType::PROCEDURAL_MOTION =

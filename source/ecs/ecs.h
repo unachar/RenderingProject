@@ -50,6 +50,7 @@ struct ComponentType
     static const ComponentType LOD;
     static const ComponentType TIMELINE;
     static const ComponentType DECAL;
+    static const ComponentType REFLECTION_PROBE;
     static const ComponentType PROCEDURAL_TERRAIN;
     static const ComponentType PROCEDURAL_MOTION;
 
