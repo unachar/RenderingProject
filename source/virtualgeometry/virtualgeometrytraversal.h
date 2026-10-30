@@ -107,7 +107,9 @@ namespace VirtualGeometryTraversal
     GpuSceneBuffer& ShadowVisibleBuffer();
     GpuSceneBuffer& ShadowVisibleBuffer(uint32_t viewId);
     GpuSceneBuffer& ShadowCounterBuffer();
+    GpuSceneBuffer& ShadowCounterBuffer(uint32_t viewId);
     GpuSceneBuffer& ShadowArgumentBuffer();
+    GpuSceneBuffer& ShadowArgumentBuffer(uint32_t viewId);
     const std::array<uint32_t, 64>& DebugCounters();
     void EndFrame();
     void Shutdown();

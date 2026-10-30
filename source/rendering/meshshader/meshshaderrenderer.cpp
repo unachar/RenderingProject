@@ -537,14 +537,25 @@ namespace MeshShaderRenderer
                                               {instances, objects, count, objectResource, countResource, capacity});
             if (VirtualGeometryTraversal::GetSettings().ShadowTraversal)
             {
-                VirtualGeometryTraversal::ViewInput shadowView;
-                if (LightingResources::GetShadowViewParts(0, shadowView.View, shadowView.Projection))
+                // Stage 1C multi-view: prepare one traversal per shadow
+                // pass, in legacy draw order. The viewId is the pass
+                // index for now (the design's lightIndex * 8 +
+                // faceOrCascade decomposition lands when the pass
+                // enumeration exposes it); passes beyond the traversal
+                // pool simply fail to prepare and stay legacy.
+                for (uint32_t passIndex = 0; passIndex < 4; ++passIndex)
                 {
+                    VirtualGeometryTraversal::ViewInput shadowView;
+                    if (!LightingResources::GetShadowViewParts(passIndex, shadowView.View, shadowView.Projection))
+                    {
+                        break;
+                    }
                     shadowView.PreviousView = shadowView.View;
                     shadowView.PreviousProjection = shadowView.Projection;
                     shadowView.ViewportHeight = float(RendererState::GetShadowMapSize());
                     VirtualGeometryTraversal::PrepareShadowView(
-                        graph, {instances, objects, count, objectResource, countResource, capacity}, shadowView);
+                        graph, {instances, objects, count, objectResource, countResource, capacity}, shadowView,
+                        passIndex);
                 }
             }
             const bool overdraw =
@@ -917,20 +928,21 @@ namespace MeshShaderRenderer
     bool DrawShadow(ID3D12GraphicsCommandList* commands)
     {
         auto& data = Data();
-        if (!IsActive() || data.Failed || !data.NativeShadowPSO || !VirtualGeometryTraversal::ShadowViewActive() ||
-            LightingResources::GetCurrentShadowPassIndex() != 0)
+        const uint32_t viewId = LightingResources::GetCurrentShadowPassIndex();
+        if (!IsActive() || data.Failed || !data.NativeShadowPSO ||
+            !VirtualGeometryTraversal::ShadowViewActive(viewId))
         {
             return false;
         }
         XMFLOAT4X4 lightView, lightProjection;
-        if (!LightingResources::GetShadowViewParts(0, lightView, lightProjection))
+        if (!LightingResources::GetShadowViewParts(viewId, lightView, lightProjection))
         {
             return false;
         }
         // Never bake VG casters into the static shadow cache's stationary
         // target, and never replay a selection whose light view has moved on.
         if (LightingResources::GetShadowCasterSubset() == LightingResources::ShadowCasterSubset::Stationary ||
-            !VirtualGeometryTraversal::ShadowViewStillValid(lightView, lightProjection))
+            !VirtualGeometryTraversal::ShadowViewStillValid(lightView, lightProjection, viewId))
         {
             return false;
         }
@@ -965,8 +977,8 @@ namespace MeshShaderRenderer
                                              VirtualGeometryResources::AssetBuffer().Resource(),
                                              VirtualGeometryResources::TriangleBuffer().Resource(),
                                              VirtualGeometryResources::VertexBuffer().Resource(),
-                                             VirtualGeometryTraversal::ShadowVisibleBuffer().Resource(),
-                                             VirtualGeometryTraversal::ShadowCounterBuffer().Resource()};
+                                             VirtualGeometryTraversal::ShadowVisibleBuffer(viewId).Resource(),
+                                             VirtualGeometryTraversal::ShadowCounterBuffer(viewId).Resource()};
         for (uint32_t index = 0; index < 6; ++index)
         {
             commands->SetGraphicsRootShaderResourceView(7 + index, nativeResources[index]->GetGPUVirtualAddress());
@@ -978,7 +990,7 @@ namespace MeshShaderRenderer
         commands->SetGraphicsRootConstantBufferView(17, LightingResources::GetCurrentLightConstantBufferAddress());
         commands->SetPipelineState(data.NativeShadowPSO.Get());
         commands->ExecuteIndirect(data.MeshSignature.Get(), 1,
-                                  VirtualGeometryTraversal::ShadowArgumentBuffer().Resource(), 0, nullptr, 0);
+                                  VirtualGeometryTraversal::ShadowArgumentBuffer(viewId).Resource(), 0, nullptr, 0);
         return true;
     }
 

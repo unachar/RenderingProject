@@ -585,12 +585,22 @@ namespace VirtualGeometryTraversal
 
     GpuSceneBuffer& ShadowCounterBuffer()
     {
-        return Current().ShadowBuffers().Counters;
+        return ShadowCounterBuffer(0);
+    }
+
+    GpuSceneBuffer& ShadowCounterBuffer(uint32_t viewId)
+    {
+        return Current().ShadowBuffers(viewId < kMaxShadowViews ? viewId : 0).Counters;
     }
 
     GpuSceneBuffer& ShadowArgumentBuffer()
     {
-        return Current().ShadowBuffers().Arguments;
+        return ShadowArgumentBuffer(0);
+    }
+
+    GpuSceneBuffer& ShadowArgumentBuffer(uint32_t viewId)
+    {
+        return Current().ShadowBuffers(viewId < kMaxShadowViews ? viewId : 0).Arguments;
     }
 
     const std::array<uint32_t, 64>& DebugCounters()
