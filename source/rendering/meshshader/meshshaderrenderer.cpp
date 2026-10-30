@@ -51,6 +51,7 @@ namespace MeshShaderRenderer
             ComPtr<ID3D12PipelineState> VelocityPSO, VelocityFallbackPSO;
             ComPtr<ID3D12PipelineState> NativeOpaquePSO, NativeVelocityPSO;
             ComPtr<ID3D12PipelineState> NativeBinnedOpaquePSO, NativeBinnedVelocityPSO;
+            ComPtr<ID3D12PipelineState> NativeShadowPSO;
             ComPtr<ID3D12PipelineState> NativeOverdrawPSO, NativeBinnedOverdrawPSO;
             ComPtr<ID3D12CommandSignature> MeshSignature, FallbackSignature;
             ComPtr<ID3D12CommandSignature> MaterialBinSignature;
@@ -256,6 +257,25 @@ namespace MeshShaderRenderer
             catch (const std::exception& error)
             {
                 WriteGraphicsLog("Native binned raster unavailable; original native path retained: %s\n", error.what());
+            }
+            try
+            {
+                auto shadowMS = Shader("shader/hlsl/build/VirtualGeometryShadowMS.cso");
+                const auto originalDepth = stream.Depth.Value;
+                const auto originalPS = stream.PS.Value;
+                const auto originalTargetCount = stream.Targets.Value.NumRenderTargets;
+                stream.MS.Value = {shadowMS->GetBufferPointer(), shadowMS->GetBufferSize()};
+                stream.PS.Value = {nullptr, 0};
+                stream.Depth.Value.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+                stream.Targets.Value.NumRenderTargets = 0;
+                Check(device2->CreatePipelineState(&meshDesc, IID_PPV_ARGS(&state.NativeShadowPSO)));
+                stream.Depth.Value = originalDepth;
+                stream.PS.Value = originalPS;
+                stream.Targets.Value.NumRenderTargets = originalTargetCount;
+            }
+            catch (const std::exception& error)
+            {
+                WriteGraphicsLog("Native shadow raster unavailable; legacy shadow path retained: %s\n", error.what());
             }
             stream.MS.Value = {ms->GetBufferPointer(), ms->GetBufferSize()};
             stream.PS.Value = {ps->GetBufferPointer(), ps->GetBufferSize()};
@@ -886,6 +906,72 @@ namespace MeshShaderRenderer
     bool DrawVelocity(ID3D12GraphicsCommandList* list, GpuSceneBuffer& vertices)
     {
         return DrawPass(list, vertices, true, VirtualGeometryTraversal::RasterPhase::Combined);
+    }
+
+    // Depth-only raster of the VG shadow traversal result into the shadow map
+    // currently bound by the caller. The traversal runs later in the frame
+    // than the shadow pass, so this consumes the previous frame's shadow
+    // visible list (one frame of caster latency; the legacy path still draws
+    // every caster, so coverage never regresses).
+    bool DrawShadow(ID3D12GraphicsCommandList* commands)
+    {
+        auto& data = Data();
+        if (!IsActive() || data.Failed || !data.NativeShadowPSO || !VirtualGeometryTraversal::ShadowViewActive() ||
+            LightingResources::GetCurrentShadowPassIndex() != 0)
+        {
+            return false;
+        }
+        XMFLOAT4X4 lightView, lightProjection;
+        if (!LightingResources::GetShadowViewParts(0, lightView, lightProjection))
+        {
+            return false;
+        }
+        RenderProfiler::ScopedEvent profile("Nanite Shadow Mesh Shader", commands);
+        ID3D12DescriptorHeap* heap = FrameConstants::GetCbvHeap();
+        commands->SetDescriptorHeaps(1, &heap);
+        commands->SetGraphicsRootSignature(data.OpaqueRoot.Get());
+        NoiseCacheBindings::BindGraphics(commands, NoiseCacheBindings::MeshRoot);
+        ConstantBuffer3D constants{};
+        const auto view = XMLoadFloat4x4(&lightView);
+        const auto projection = XMLoadFloat4x4(&lightProjection);
+        constants.View = XMMatrixTranspose(view);
+        constants.Projection = XMMatrixTranspose(projection);
+        XMFLOAT4 lightPosition;
+        XMStoreFloat4(&lightPosition, XMMatrixInverse(nullptr, view).r[3]);
+        constants.CameraPos = {lightPosition.x, lightPosition.y, lightPosition.z};
+        constants.PreviousViewProjection = XMMatrixTranspose(view * projection);
+        commands->SetGraphicsRootDescriptorTable(1, FrameConstants::AllocateTransientConstantBuffer(constants));
+        commands->SetGraphicsRootShaderResourceView(2, GpuScene::InstanceBuffer()->GetGPUVirtualAddress());
+        commands->SetGraphicsRootShaderResourceView(3, GpuScene::MaterialBuffer()->GetGPUVirtualAddress());
+        commands->SetGraphicsRootShaderResourceView(6, GPUVisibility::ResultBuffer()->GetGPUVirtualAddress());
+        CD3DX12_GPU_DESCRIPTOR_HANDLE textures(heap->GetGPUDescriptorHandleForHeapStart(),
+                                               FrameConstants::g_kTEXTURE_SRV_START_INDEX,
+                                               FrameConstants::GetCbvIncrementSize());
+        commands->SetGraphicsRootDescriptorTable(4, textures);
+        const uint32_t limits[] = {FrameConstants::g_kTEXTURE_SRV_START_INDEX,
+                                   static_cast<uint32_t>(TextureManager::GetDefaultTextureIndex()) -
+                                       FrameConstants::g_kTEXTURE_SRV_START_INDEX,
+                                   static_cast<uint32_t>(GPUVisibility::GetSettings().DebugMode)};
+        commands->SetGraphicsRoot32BitConstants(5, 3, limits, 0);
+        ID3D12Resource* nativeResources[] = {VirtualGeometryResources::ClusterBuffer().Resource(),
+                                             VirtualGeometryResources::AssetBuffer().Resource(),
+                                             VirtualGeometryResources::TriangleBuffer().Resource(),
+                                             VirtualGeometryResources::VertexBuffer().Resource(),
+                                             VirtualGeometryTraversal::ShadowVisibleBuffer().Resource(),
+                                             VirtualGeometryTraversal::ShadowCounterBuffer().Resource()};
+        for (uint32_t index = 0; index < 6; ++index)
+        {
+            commands->SetGraphicsRootShaderResourceView(7 + index, nativeResources[index]->GetGPUVirtualAddress());
+        }
+        commands->SetGraphicsRoot32BitConstant(13, 0, 0);
+        commands->SetGraphicsRootShaderResourceView(
+            14, VirtualGeometryStreaming::ResidencyBuffer().Resource()->GetGPUVirtualAddress());
+        commands->SetGraphicsRootDescriptorTable(15, VirtualGeometryStreaming::PageDescriptors());
+        commands->SetGraphicsRootConstantBufferView(17, LightingResources::GetCurrentLightConstantBufferAddress());
+        commands->SetPipelineState(data.NativeShadowPSO.Get());
+        commands->ExecuteIndirect(data.MeshSignature.Get(), 1,
+                                  VirtualGeometryTraversal::ShadowArgumentBuffer().Resource(), 0, nullptr, 0);
+        return true;
     }
 
     void DrawDebug()

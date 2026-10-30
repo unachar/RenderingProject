@@ -29,7 +29,12 @@ struct PrimitiveOutput
 {
     bool Cull : SV_CullPrimitive;
 };
-#ifdef VIRTUAL_GEOMETRY_VELOCITY
+#ifdef VIRTUAL_GEOMETRY_SHADOW
+struct MeshVertex
+{
+    float4 Position : SV_POSITION;
+};
+#elif defined(VIRTUAL_GEOMETRY_VELOCITY)
 struct MeshVertex
 {
     float4 Position : SV_POSITION;
@@ -214,7 +219,7 @@ float3 NativeDebugColor(VirtualGeometryGPUAsset asset, VirtualGeometryGPUCluster
         vertex.CurrentClip = vertex.Position;
         vertex.PreviousClip = mul(mul(float4(position, 1), instance.PreviousWorld), PreviousViewProjection);
         vertex.MaterialFlags = Materials.Load(item.MaterialIndex * GPU_SCENE_MATERIAL_STRIDE + 40);
-#else
+#elif !defined(VIRTUAL_GEOMETRY_SHADOW)
         if ((asset.Flags & 2u) != 0)
         {
             uint slot = Residency[asset.VertexOffset + cluster.PageIndex].x;

@@ -252,6 +252,10 @@ void RenderSystem::Draw(RenderPass renderPass, bool receivingPostProcessOnly)
             pCommandList->DrawInstanced(mesh.VertexCount, 1, 0, 0);
             GpuObjectCulling::End(pCommandList);
         }
+        if (!transmission)
+        {
+            MeshShaderRenderer::DrawShadow(pCommandList);
+        }
         return;
     }
 

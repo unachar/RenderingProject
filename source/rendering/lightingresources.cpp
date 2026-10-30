@@ -1362,6 +1362,15 @@ XMMATRIX LightingResources::GetCurrentShadowViewProjection()
     return XMMatrixTranspose(g_ShadowRenderPasses[g_CurrentShadowPassIndex].ViewProjection);
 }
 
+UINT LightingResources::GetCurrentShadowPassIndex()
+{
+    if (!g_LightCacheValid)
+    {
+        RebuildLightCache();
+    }
+    return g_CurrentShadowPassIndex;
+}
+
 bool LightingResources::GetShadowViewParts(UINT shadowIndex, XMFLOAT4X4& outView, XMFLOAT4X4& outProjection)
 {
     if (!g_LightCacheValid)

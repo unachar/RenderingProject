@@ -28,6 +28,10 @@ namespace MeshShaderRenderer
     bool Draw(ID3D12GraphicsCommandList* commands, GpuSceneBuffer& globalVertices);
     bool DrawSecondPass(ID3D12GraphicsCommandList* commands, GpuSceneBuffer& globalVertices);
     bool DrawVelocity(ID3D12GraphicsCommandList* commands, GpuSceneBuffer& globalVertices);
+    // Draws the previous frame's VG shadow traversal result into the currently
+    // bound shadow map (depth only). Call inside a shadow pass; no-op unless
+    // the VG shadow traversal is enabled and produced a view.
+    bool DrawShadow(ID3D12GraphicsCommandList* commands);
     void DrawDebug();
     void EndFrame();
     ID3D12Resource* VisibleBuffer();
