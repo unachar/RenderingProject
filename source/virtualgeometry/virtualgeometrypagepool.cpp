@@ -1,4 +1,5 @@
 #include "virtualgeometrypagepool.h"
+#include "memoryallocator.h"
 #include <cstring>
 #include <stdexcept>
 #include <chrono>
@@ -29,6 +30,17 @@ namespace VirtualGeometryStreaming
             description.SampleDesc.Count = 1;
             description.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
             Microsoft::WRL::ComPtr<ID3D12Resource> resource;
+            // Resident pages are many small same-size DEFAULT buffers - a
+            // natural fit for the pooled allocator when the flag is on.
+            if (type == D3D12_HEAP_TYPE_DEFAULT)
+            {
+                if (ID3D12Resource* allocated =
+                        MemoryAllocator::CreateResourceAutoLifetime(description, state, nullptr))
+                {
+                    resource.Attach(allocated);
+                    return resource;
+                }
+            }
             Check(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description, state, nullptr,
                                                   IID_PPV_ARGS(&resource)));
             return resource;
