@@ -49,4 +49,13 @@ namespace ReferenceCapture
     // integrator shader so captures are reproducible across runs and
     // machines.
     uint32_t DeriveSeed(uint32_t pixelIndex, uint32_t sampleIndex);
+
+    // Accumulation targets owned by the active job: an RGBA32F
+    // radiance sum (divide by GetAccumulatedSamples() for the mean).
+    // EnsureTargets (re)creates them at the job's resolution;
+    // ReleaseTargets frees them (also called on Begin with a new
+    // resolution). The integrator dispatch arrives in the next step.
+    bool EnsureTargets(ID3D12Device* device);
+    void ReleaseTargets();
+    ID3D12Resource* GetAccumulationResource();
 } // namespace ReferenceCapture
