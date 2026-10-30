@@ -189,4 +189,246 @@ namespace SurfaceDecals
     {
         return g_SrvHeap->GetGPUDescriptorHandleForHeapStart();
     }
+
+    namespace
+    {
+        ComPtr<ID3D12RootSignature> g_RasterRootSignature;
+        ComPtr<ID3D12PipelineState> g_RasterPso;
+        ComPtr<ID3D12RootSignature> g_CompositeRootSignature;
+        ComPtr<ID3D12PipelineState> g_CompositePso;
+        DXGI_FORMAT g_CompositeFormats[3] = {};
+
+        bool CreateRootSignature(ID3D12Device* device, const D3D12_ROOT_SIGNATURE_DESC& description,
+                                 ComPtr<ID3D12RootSignature>& output)
+        {
+            ComPtr<ID3DBlob> serialized;
+            ComPtr<ID3DBlob> errors;
+            if (FAILED(D3D12SerializeRootSignature(&description, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors)))
+            {
+                return false;
+            }
+            return SUCCEEDED(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
+                                                         IID_PPV_ARGS(&output)));
+        }
+
+        bool LoadShader(const wchar_t* path, ComPtr<ID3DBlob>& output)
+        {
+            return SUCCEEDED(D3DReadFileToBlob(path, &output));
+        }
+
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC BasePsoDesc()
+        {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
+            desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+            desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+            desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+            desc.DepthStencilState.DepthEnable = FALSE;
+            desc.DepthStencilState.StencilEnable = FALSE;
+            desc.SampleMask = UINT_MAX;
+            desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+            desc.SampleDesc.Count = 1;
+            return desc;
+        }
+
+        void EnableOverBlend(D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc, UINT target, UINT writeMask)
+        {
+            auto& rt = desc.BlendState.RenderTarget[target];
+            rt.BlendEnable = TRUE;
+            rt.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+            rt.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+            rt.BlendOp = D3D12_BLEND_OP_ADD;
+            rt.SrcBlendAlpha = D3D12_BLEND_SRC_ALPHA;
+            rt.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+            rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+            rt.RenderTargetWriteMask = static_cast<UINT8>(writeMask);
+        }
+
+        bool EnsureRasterPipeline(ID3D12Device* device)
+        {
+            if (g_RasterPso)
+            {
+                return true;
+            }
+            CD3DX12_DESCRIPTOR_RANGE depthRange(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+            CD3DX12_DESCRIPTOR_RANGE normalRange(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
+            CD3DX12_DESCRIPTOR_RANGE textureRange(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 512, 0, 1);
+            // Depth, GBuffer normal and the material texture heap are
+            // three separate tables: they live in different regions of
+            // the engine heap, so no single table base can span them.
+            CD3DX12_ROOT_PARAMETER params[5]{};
+            params[0].InitAsConstants(20, 0);
+            params[1].InitAsConstants(28, 1);
+            params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+            params[2].InitAsDescriptorTable(1, &depthRange, D3D12_SHADER_VISIBILITY_PIXEL);
+            params[3].InitAsDescriptorTable(1, &normalRange, D3D12_SHADER_VISIBILITY_PIXEL);
+            params[4].InitAsDescriptorTable(1, &textureRange, D3D12_SHADER_VISIBILITY_PIXEL);
+            CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
+            sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            CD3DX12_ROOT_SIGNATURE_DESC rootDesc;
+            rootDesc.Init(_countof(params), params, 1, &sampler,
+                          D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+            if (!CreateRootSignature(device, rootDesc, g_RasterRootSignature))
+            {
+                return false;
+            }
+            ComPtr<ID3DBlob> vs;
+            ComPtr<ID3DBlob> ps;
+            if (!LoadShader(L"shader/hlsl/build/DecalRasterVS.cso", vs) ||
+                !LoadShader(L"shader/hlsl/build/DecalRasterPS.cso", ps))
+            {
+                return false;
+            }
+            auto desc = BasePsoDesc();
+            desc.pRootSignature = g_RasterRootSignature.Get();
+            desc.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+            desc.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+            desc.NumRenderTargets = kDBufferCount;
+            for (UINT i = 0; i < kDBufferCount; ++i)
+            {
+                desc.RTVFormats[i] = kDBufferFormats[i];
+                EnableOverBlend(desc, i, D3D12_COLOR_WRITE_ENABLE_ALL);
+            }
+            desc.BlendState.AlphaToCoverageEnable = FALSE;
+            desc.BlendState.IndependentBlendEnable = TRUE;
+            return SUCCEEDED(device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&g_RasterPso)));
+        }
+
+        bool EnsureCompositePipeline(ID3D12Device* device, const DXGI_FORMAT formats[3])
+        {
+            if (g_CompositePso && std::memcmp(g_CompositeFormats, formats, sizeof(g_CompositeFormats)) == 0)
+            {
+                return true;
+            }
+            g_CompositePso.Reset();
+            if (!g_CompositeRootSignature)
+            {
+                CD3DX12_DESCRIPTOR_RANGE dbufferRange(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0);
+                CD3DX12_ROOT_PARAMETER params[1]{};
+                params[0].InitAsDescriptorTable(1, &dbufferRange, D3D12_SHADER_VISIBILITY_PIXEL);
+                CD3DX12_ROOT_SIGNATURE_DESC rootDesc;
+                rootDesc.Init(_countof(params), params, 0, nullptr,
+                              D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+                if (!CreateRootSignature(device, rootDesc, g_CompositeRootSignature))
+                {
+                    return false;
+                }
+            }
+            ComPtr<ID3DBlob> vs;
+            ComPtr<ID3DBlob> ps;
+            if (!LoadShader(L"shader/hlsl/build/DecalRasterVS.cso", vs) ||
+                !LoadShader(L"shader/hlsl/build/DecalCompositePS.cso", ps))
+            {
+                return false;
+            }
+            auto desc = BasePsoDesc();
+            desc.pRootSignature = g_CompositeRootSignature.Get();
+            desc.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+            desc.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+            desc.NumRenderTargets = 3;
+            const UINT writeMasks[3] = {D3D12_COLOR_WRITE_ENABLE_ALL, D3D12_COLOR_WRITE_ENABLE_ALL,
+                                        D3D12_COLOR_WRITE_ENABLE_GREEN};
+            for (UINT i = 0; i < 3; ++i)
+            {
+                desc.RTVFormats[i] = formats[i];
+                EnableOverBlend(desc, i, writeMasks[i]);
+            }
+            desc.BlendState.IndependentBlendEnable = TRUE;
+            if (FAILED(device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&g_CompositePso))))
+            {
+                return false;
+            }
+            std::memcpy(g_CompositeFormats, formats, sizeof(g_CompositeFormats));
+            return true;
+        }
+    }
+
+    bool Render(const RenderParams& params)
+    {
+        if (Count() == 0 || !params.Device || !params.List)
+        {
+            return true;
+        }
+        if (!EnsureTargets(params.Device, params.Width, params.Height) ||
+            !EnsureRasterPipeline(params.Device) || !EnsureCompositePipeline(params.Device, params.GBufferFormats))
+        {
+            return false;
+        }
+        std::vector<GpuDecal> packed;
+        PackAll(packed);
+        if (packed.empty())
+        {
+            return true;
+        }
+        ID3D12GraphicsCommandList* list = params.List;
+        const D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<float>(params.Width),
+                                      static_cast<float>(params.Height), 0.0f, 1.0f};
+        const D3D12_RECT scissor{0, 0, static_cast<LONG>(params.Width), static_cast<LONG>(params.Height)};
+
+        // Rasterize: DBuffer targets PSR -> RT, one fullscreen draw per
+        // decal in packed (priority) order.
+        D3D12_RESOURCE_BARRIER barriers[kDBufferCount]{};
+        for (uint32_t i = 0; i < kDBufferCount; ++i)
+        {
+            barriers[i] = CD3DX12_RESOURCE_BARRIER::Transition(g_Targets[i].Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                                                               D3D12_RESOURCE_STATE_RENDER_TARGET);
+        }
+        list->ResourceBarrier(kDBufferCount, barriers);
+        D3D12_CPU_DESCRIPTOR_HANDLE rtvs[kDBufferCount];
+        for (uint32_t i = 0; i < kDBufferCount; ++i)
+        {
+            rtvs[i] = TargetRtv(i);
+            const float clear[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            list->ClearRenderTargetView(rtvs[i], clear, 0, nullptr);
+        }
+        list->OMSetRenderTargets(kDBufferCount, rtvs, FALSE, nullptr);
+        list->RSSetViewports(1, &viewport);
+        list->RSSetScissorRects(1, &scissor);
+        ID3D12DescriptorHeap* engineHeap = params.EngineHeap;
+        list->SetDescriptorHeaps(1, &engineHeap);
+        list->SetGraphicsRootSignature(g_RasterRootSignature.Get());
+        list->SetPipelineState(g_RasterPso.Get());
+        list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        float frameConstants[20];
+        std::memcpy(frameConstants, params.InvViewProjection, sizeof(params.InvViewProjection));
+        std::memcpy(frameConstants + 16, params.CameraPosition, sizeof(params.CameraPosition));
+        list->SetGraphicsRoot32BitConstants(0, 20, frameConstants, 0);
+        list->SetGraphicsRootDescriptorTable(2, params.DepthSrv);
+        list->SetGraphicsRootDescriptorTable(3, params.GBufferNormalSrv);
+        list->SetGraphicsRootDescriptorTable(4, params.TextureTable);
+        for (const GpuDecal& decal : packed)
+        {
+            list->SetGraphicsRoot32BitConstants(1, 28, &decal, 0);
+            list->DrawInstanced(3, 1, 0, 0);
+        }
+        for (uint32_t i = 0; i < kDBufferCount; ++i)
+        {
+            barriers[i] = CD3DX12_RESOURCE_BARRIER::Transition(g_Targets[i].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET,
+                                                               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        }
+        list->ResourceBarrier(kDBufferCount, barriers);
+
+        // Composite: GBuffer targets PSR -> RT, one fullscreen draw,
+        // then back to PSR (the state the caller keeps them in).
+        D3D12_RESOURCE_BARRIER gbufferBarriers[3]{};
+        for (uint32_t i = 0; i < 3; ++i)
+        {
+            gbufferBarriers[i] = CD3DX12_RESOURCE_BARRIER::Transition(
+                params.GBufferTargets[i], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        }
+        list->ResourceBarrier(3, gbufferBarriers);
+        list->OMSetRenderTargets(3, params.GBufferRtvs, FALSE, nullptr);
+        ID3D12DescriptorHeap* moduleHeap = TargetSrvHeap();
+        list->SetDescriptorHeaps(1, &moduleHeap);
+        list->SetGraphicsRootSignature(g_CompositeRootSignature.Get());
+        list->SetPipelineState(g_CompositePso.Get());
+        list->SetGraphicsRootDescriptorTable(0, TargetSrvGpuStart());
+        list->DrawInstanced(3, 1, 0, 0);
+        for (uint32_t i = 0; i < 3; ++i)
+        {
+            gbufferBarriers[i] = CD3DX12_RESOURCE_BARRIER::Transition(
+                params.GBufferTargets[i], D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        }
+        list->ResourceBarrier(3, gbufferBarriers);
+        return true;
+    }
 } // namespace SurfaceDecals

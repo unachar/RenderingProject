@@ -79,4 +79,32 @@ namespace SurfaceDecals
     // Start of the shader-visible SRV heap holding the three targets.
     ID3D12DescriptorHeap* TargetSrvHeap();
     D3D12_GPU_DESCRIPTOR_HANDLE TargetSrvGpuStart();
+
+    // ---- Rendering -------------------------------------------------------
+    // Everything Render() needs from the frame. The GBuffer targets
+    // must be in PIXEL_SHADER_RESOURCE state on entry and are returned
+    // to that state; the scene depth is only read. InvViewProjection
+    // is row-major for HLSL mul(float4, M) (the engine convention:
+    // XMMatrixTranspose(XMMatrixInverse(view * projection))).
+    struct RenderParams
+    {
+        ID3D12Device* Device = nullptr;
+        ID3D12GraphicsCommandList* List = nullptr;
+        ID3D12DescriptorHeap* EngineHeap = nullptr;
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        float InvViewProjection[16] = {};
+        float CameraPosition[4] = {};
+        D3D12_GPU_DESCRIPTOR_HANDLE DepthSrv{};
+        D3D12_GPU_DESCRIPTOR_HANDLE GBufferNormalSrv{};
+        D3D12_GPU_DESCRIPTOR_HANDLE TextureTable{};
+        ID3D12Resource* GBufferTargets[3] = {}; // base color, normal, material
+        D3D12_CPU_DESCRIPTOR_HANDLE GBufferRtvs[3] = {};
+        DXGI_FORMAT GBufferFormats[3] = {};
+    };
+
+    // Rasterizes all registered decals into the DBuffer and composites
+    // the result into the GBuffer targets. Returns false when setup
+    // failed before any state changed (safe to skip decals then).
+    bool Render(const RenderParams& params);
 } // namespace SurfaceDecals
