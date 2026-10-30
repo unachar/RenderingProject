@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "memoryallocator.h"
 #include "proceduralnoisecache.h"
 
 namespace ProcStudio
@@ -37,9 +38,17 @@ namespace ProcStudio
             pipeline.CS = {shader->GetBufferPointer(), shader->GetBufferSize()};
             result = device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&m_Pipeline));
         }
-        const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         const auto allocate = [&](UINT64 bytes, ComPtr<ID3D12Resource>& resource) {
             const auto description = CD3DX12_RESOURCE_DESC::Buffer(bytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            // Through D3D12MA when the flag is on; committed fallback.
+            if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(
+                    description, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr))
+            {
+                resource.Reset();
+                resource.Attach(allocated);
+                return S_OK;
+            }
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
             return device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
                                                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
                                                     IID_PPV_ARGS(&resource));
@@ -89,10 +98,18 @@ namespace ProcStudio
         }
         if (SUCCEEDED(result))
         {
-            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
             const auto description = CD3DX12_RESOURCE_DESC::Buffer(32, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-            result = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
-                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&m_FallbackRequests));
+            if (ID3D12Resource* allocated = MemoryAllocator::CreateResourceAutoLifetime(
+                    description, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr))
+            {
+                m_FallbackRequests.Attach(allocated);
+            }
+            else
+            {
+                const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+                result = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &description,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&m_FallbackRequests));
+            }
         }
         if (FAILED(result))
         {
