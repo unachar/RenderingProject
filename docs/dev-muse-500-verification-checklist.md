@@ -40,6 +40,13 @@ gate and the expected observable behavior.
       from the old viewpoint (history reset on forward swing > ~26
       degrees or origin jump > 10 units).
 - [ ] Enable DXR reflections: DXR wins over SSR (tri-state w).
+- [ ] Previous-color source: at native resolution reflections
+      show real scene colors (the trace reads the AA history
+      view there; before 9a994c9f it sampled a target that is
+      only written by the upscale AA branch). Known gap: under
+      DLSS / Bilateral / TSR upscaling the pre-upscale history
+      is not refreshed either, so SSR colors can freeze - decide
+      whether that combination matters before relying on it.
 
 ## 2. Stage 2H reference captures (env-gated)
 
