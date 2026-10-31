@@ -14,6 +14,10 @@ gate and the expected observable behavior.
       virtualgeometrytraversal).
 - [ ] The repo's own VG test programs (tests/virtualgeometry_*)
       still pass - the traversal changes sit under them.
+- [ ] One run with the D3D12 debug/validation layer enabled:
+      no barrier before-state errors (the SSR mip chain had one
+      such bug, fixed in a80ae54d - this run proves the class is
+      clean).
 - [ ] `scripts/test-shader-build-targets.ps1` passes (45 tracked
       DXC outputs).
 - [ ] `tests/shader_scan_tests.py` and `tests/pfm_compare_tests.py`
