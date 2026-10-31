@@ -1,9 +1,15 @@
 # Native Hi-Z SSR — temporal resolve: design
 
-Status: DESIGN. The SSR v1 landed in the 500-push run traces at
-full resolution every frame and blends by per-pixel confidence.
-Two costs remain: full-res Hi-Z marching, and single-frame noise
-on rough surfaces (the previous-color mip sample is one tap).
+Status: IMPLEMENTED in the 500-push run (T1 + T2 + checkerboard
++ prefiltered mip chain + roughness trace-skip). This document
+remains the design record; deltas from the design as built: the
+history blend uses roughness only (hit-distance delta was folded
+into the bilateral weights instead), the accumulation blend
+keeps `max(current.a, history.a)` as the confidence, and the
+checkerboard mode arrived as originally sketched, plus a
+resolve-constants upload fix (28/28 DWORDs). Acceptance
+measurements (GPU ms, stability) are in the 500-push
+verification checklist.
 
 ## Goals
 
