@@ -66,7 +66,7 @@ bool ColorManager::Initialize(const ColorSpaceConfig& config)
 #if RENDERINGPROJECT_USE_OCIO
     try
     {
-        OCIO::ConfigRcPtr loadedConfig;
+        OCIO::ConstConfigRcPtr loadedConfig;
 
         if (!config.configPath.empty())
         {
@@ -98,7 +98,7 @@ bool ColorManager::Initialize(const ColorSpaceConfig& config)
             // Validate working space
             if (!config.workingSpace.empty())
             {
-                const char* workingSpace = m_config->getColorSpace(config.workingSpace.c_str());
+                OCIO::ConstColorSpaceRcPtr workingSpace = m_config->getColorSpace(config.workingSpace.c_str());
                 if (!workingSpace)
                 {
                     Debug::Log("WARNING: Working space '");
@@ -110,42 +110,66 @@ bool ColorManager::Initialize(const ColorSpaceConfig& config)
             // Build display processor
             if (!config.displayDevice.empty() && !config.viewTransform.empty())
             {
-                OCIO::ConstProcessorRcPtr processor = m_config->getProcessor(
+                // v2.3 API: Use DisplayViewHelpers::GetProcessor for display/view
+                OCIO::ConstProcessorRcPtr processor = OCIO::DisplayViewHelpers::GetProcessor(
+                    m_config,
                     OCIO::ROLE_SCENE_LINEAR,
                     config.displayDevice.c_str(),
-                    config.viewTransform.c_str());
+                    config.viewTransform.c_str(),
+                    OCIO::ConstMatrixTransformRcPtr(), // no channel view
+                    OCIO::TRANSFORM_DIR_FORWARD);
 
+                // Apply look transform if specified
                 if (!config.lookTransform.empty())
                 {
-                    processor = m_config->getProcessor(
-                        processor,
-                        config.lookTransform.c_str(),
-                        OCIO::TRANSFORM_DIR_FORWARD);
-                }
-
-                // Apply exposure/gamma if needed
-                if (config.exposure != 0.0f || config.gamma != 2.2f)
-                {
-                    // Create exposure/gamma processor
-                    OCIO::ExposureContrastOpDataRcPtr ecData = OCIO::ExposureContrastOpData::Create();
-                    ecData->setExposure(config.exposure);
-                    ecData->setGamma(config.gamma);
-                    ecData->setStyle(OCIO::ExposureContrastOpData::VIDEO);
-                    OCIO::OpRcPtrVec ops;
-                    OCIO::CreateExposureContrastOp(ops, *ecData, OCIO::TRANSFORM_DIR_FORWARD);
-                    // Chain with display processor
-                    m_displayProcessor = m_config->getProcessor(ops);
+                    OCIO::LookTransformRcPtr lookTransform = OCIO::LookTransform::Create();
+                    lookTransform->setLooks(config.lookTransform.c_str());
+                    lookTransform->setDirection(OCIO::TRANSFORM_DIR_FORWARD);
+                    
+                    // Chain with display processor using GroupTransform
+                    OCIO::GroupTransformRcPtr groupTransform = OCIO::GroupTransform::Create();
+                    groupTransform->appendTransform(processor->createGroupTransform());
+                    groupTransform->appendTransform(lookTransform);
+                    
+                    m_displayProcessor = m_config->getProcessor(groupTransform);
                 }
                 else
                 {
                     m_displayProcessor = processor;
                 }
 
+                // Apply exposure/gamma if needed (v2.3: use ExposureContrastTransform)
+                if (config.exposure != 0.0f || config.gamma != 2.2f)
+                {
+                    // Create exposure/gamma transform
+                    OCIO::ExposureContrastTransformRcPtr ecTransform = OCIO::ExposureContrastTransform::Create();
+                    ecTransform->setExposure(config.exposure);
+                    ecTransform->setGamma(config.gamma);
+                    ecTransform->setStyle(OCIO::EXPOSURE_CONTRAST_VIDEO);
+                    
+                    // Chain with display processor using GroupTransform
+                    OCIO::GroupTransformRcPtr groupTransform = OCIO::GroupTransform::Create();
+                    if (config.lookTransform.empty())
+                    {
+                        groupTransform->appendTransform(m_displayProcessor->createGroupTransform());
+                    }
+                    else
+                    {
+                        groupTransform->appendTransform(m_displayProcessor->createGroupTransform());
+                    }
+                    groupTransform->appendTransform(ecTransform);
+                    
+                    m_displayProcessor = m_config->getProcessor(groupTransform);
+                }
+
                 // Working to display processor
-                m_workingToDisplayProcessor = m_config->getProcessor(
+                m_workingToDisplayProcessor = OCIO::DisplayViewHelpers::GetProcessor(
+                    m_config,
                     OCIO::ROLE_SCENE_LINEAR,
                     config.displayDevice.c_str(),
-                    config.viewTransform.c_str());
+                    config.viewTransform.c_str(),
+                    OCIO::ConstMatrixTransformRcPtr(),
+                    OCIO::TRANSFORM_DIR_FORWARD);
             }
 
             m_enabled = true;
@@ -227,17 +251,16 @@ bool ColorManager::ConvertColorSpace(
 
             if (processor)
             {
-                // Process in chunks for large images
-                const int chunkSize = 1024 * 1024;
-                std::vector<float> buffer(chunkSize * stride);
-
-                for (int y = 0; y < height; ++y)
+                // v2.3 API: Use CPUProcessor for apply with PackedImageDesc
+                OCIO::ConstCPUProcessorRcPtr cpuProcessor = processor->getDefaultCPUProcessor();
+                if (cpuProcessor)
                 {
-                    const float* srcRow = src + y * width * stride;
-                    float* dstRow = dst + y * width * stride;
-                    processor->apply(srcRow, dstRow, width, stride, stride);
+                    OCIO::PackedImageDesc srcImgDesc(const_cast<float*>(src), width, height, channels);
+                    OCIO::PackedImageDesc dstImgDesc(dst, width, height, channels);
+
+                    cpuProcessor->apply(srcImgDesc, dstImgDesc);
+                    return true;
                 }
-                return true;
             }
         }
         catch (const OCIO::Exception&)
@@ -303,13 +326,15 @@ bool ColorManager::ApplyDisplayTransform(
     {
         try
         {
-            for (int y = 0; y < height; ++y)
+            // v2.3 API: Use CPUProcessor for apply with PackedImageDesc
+            OCIO::ConstCPUProcessorRcPtr cpuProcessor = m_displayProcessor->getDefaultCPUProcessor();
+            if (cpuProcessor)
             {
-                const float* srcRow = src + y * width * channels;
-                float* dstRow = dst + y * width * channels;
-                m_displayProcessor->apply(srcRow, dstRow, width, channels, channels);
+                OCIO::PackedImageDesc srcImgDesc(const_cast<float*>(src), width, height, channels);
+                OCIO::PackedImageDesc dstImgDesc(dst, width, height, channels);
+                cpuProcessor->apply(srcImgDesc, dstImgDesc);
+                return true;
             }
-            return true;
         }
         catch (const OCIO::Exception&)
         {
@@ -426,10 +451,10 @@ std::vector<std::string> ColorManager::GetLooks(const std::string& display) cons
 #if RENDERINGPROJECT_USE_OCIO
     if (m_config)
     {
-        int numLooks = m_config->getNumLooks(display.c_str());
+        int numLooks = m_config->getNumLooks();
         for (int i = 0; i < numLooks; ++i)
         {
-            looks.push_back(m_config->getLook(display.c_str(), i));
+            looks.push_back(m_config->getLookNameByIndex(i));
         }
         return looks;
     }
@@ -456,42 +481,63 @@ bool ColorManager::BuildGPUProcessor(
 
             if (processor)
             {
-                // Try to extract 3D LUT
-                OCIO::ConstOpRcPtrVec ops;
-                processor->getOps(ops);
-
-                for (const auto& op : ops)
+                // v2.3 API: Use GPUProcessor and GpuShaderDesc to extract LUTs
+                OCIO::ConstGPUProcessorRcPtr gpuProcessor = processor->getDefaultGPUProcessor();
+                if (gpuProcessor)
                 {
-                    if (op->getType() == OCIO::Op::Lut3DType)
+                    OCIO::GpuShaderDescRcPtr shaderDesc = OCIO::GpuShaderDesc::CreateShaderDesc();
+                    gpuProcessor->extractGpuShaderInfo(shaderDesc);
+
+                    // Extract 3D LUT
+                    unsigned num3DTextures = shaderDesc->getNum3DTextures();
+                    if (num3DTextures > 0)
                     {
-                        OCIO::ConstLut3DOpDataRcPtr lut3D = op->getLut3DOpData();
-                        if (lut3D)
-                        {
-                            outProcessor.lutSize = lut3D->getSize();
-                            const float* lutData = lut3D->getArray();
-                            int numValues = lut3D->getNumValues();
-                            outProcessor.lut3D.assign(lutData, lutData + numValues);
-                            outProcessor.hasLut3D = true;
-                        }
+                        const char* textureName;
+                        const char* samplerName;
+                        unsigned edgelen;
+                        OCIO::Interpolation interpolation;
+                        shaderDesc->get3DTexture(0, textureName, samplerName, edgelen, interpolation);
+                        const float* values;
+                        shaderDesc->get3DTextureValues(0, values);
+                        outProcessor.lutSize = edgelen;
+                        int numValues = edgelen * edgelen * edgelen * 4; // RGBA
+                        outProcessor.lut3D.assign(values, values + numValues);
+                        outProcessor.hasLut3D = true;
                     }
-                    else if (op->getType() == OCIO::Op::Lut1DType)
+
+                    // Extract 1D LUTs
+                    unsigned numTextures = shaderDesc->getNumTextures();
+                    if (numTextures >= 3)
                     {
-                        OCIO::ConstLut1DOpDataRcPtr lut1D = op->getLut1DOpData();
-                        if (lut1D)
+                        for (unsigned i = 0; i < 3 && i < numTextures; ++i)
                         {
-                            outProcessor.lut1DSize = lut1D->getSize();
-                            const float* lutData = lut1D->getArray();
-                            int numChannels = lut1D->getNumChannels();
-                            if (numChannels >= 3)
+                            const char* textureName;
+                            const char* samplerName;
+                            unsigned width, height;
+                            OCIO::GpuShaderDesc::TextureType channel;
+                            OCIO::GpuShaderDesc::TextureDimensions dimensions;
+                            OCIO::Interpolation interpolation;
+                            shaderDesc->getTexture(i, textureName, samplerName, width, height, channel, dimensions, interpolation);
+                            const float* values;
+                            shaderDesc->getTextureValues(i, values);
+                            if (i == 0)
                             {
-                                outProcessor.lut1D_R.assign(lutData, lutData + outProcessor.lut1DSize);
-                                outProcessor.lut1D_G.assign(lutData + outProcessor.lut1DSize, lutData + 2 * outProcessor.lut1DSize);
-                                outProcessor.lut1D_B.assign(lutData + 2 * outProcessor.lut1DSize, lutData + 3 * outProcessor.lut1DSize);
+                                outProcessor.lut1DSize = width;
+                                outProcessor.lut1D_R.assign(values, values + width);
+                            }
+                            else if (i == 1)
+                            {
+                                outProcessor.lut1D_G.assign(values, values + width);
+                            }
+                            else if (i == 2)
+                            {
+                                outProcessor.lut1D_B.assign(values, values + width);
                             }
                         }
                     }
+
+                    return outProcessor.hasLut3D || outProcessor.lut1DSize > 0;
                 }
-                return outProcessor.hasLut3D || outProcessor.lut1DSize > 0;
             }
         }
         catch (const OCIO::Exception&)
@@ -512,41 +558,63 @@ bool ColorManager::BuildDisplayGPUProcessor(const DisplayConfig& displayConfig, 
     {
         try
         {
-            OCIO::ConstOpRcPtrVec ops;
-            m_displayProcessor->getOps(ops);
-
-            for (const auto& op : ops)
+            // v2.3 API: Use GPUProcessor and GpuShaderDesc to extract LUTs
+            OCIO::ConstGPUProcessorRcPtr gpuProcessor = m_displayProcessor->getDefaultGPUProcessor();
+            if (gpuProcessor)
             {
-                if (op->getType() == OCIO::Op::Lut3DType)
+                OCIO::GpuShaderDescRcPtr shaderDesc = OCIO::GpuShaderDesc::CreateShaderDesc();
+                gpuProcessor->extractGpuShaderInfo(shaderDesc);
+
+                // Extract 3D LUT
+                unsigned num3DTextures = shaderDesc->getNum3DTextures();
+                if (num3DTextures > 0)
                 {
-                    OCIO::ConstLut3DOpDataRcPtr lut3D = op->getLut3DOpData();
-                    if (lut3D)
-                    {
-                        outProcessor.lutSize = lut3D->getSize();
-                        const float* lutData = lut3D->getArray();
-                        int numValues = lut3D->getNumValues();
-                        outProcessor.lut3D.assign(lutData, lutData + numValues);
-                        outProcessor.hasLut3D = true;
-                    }
+                    const char* textureName;
+                    const char* samplerName;
+                    unsigned edgelen;
+                    OCIO::Interpolation interpolation;
+                    shaderDesc->get3DTexture(0, textureName, samplerName, edgelen, interpolation);
+                    const float* values;
+                    shaderDesc->get3DTextureValues(0, values);
+                    outProcessor.lutSize = edgelen;
+                    int numValues = edgelen * edgelen * edgelen * 4; // RGBA
+                    outProcessor.lut3D.assign(values, values + numValues);
+                    outProcessor.hasLut3D = true;
                 }
-                else if (op->getType() == OCIO::Op::Lut1DType)
+
+                // Extract 1D LUTs
+                unsigned numTextures = shaderDesc->getNumTextures();
+                if (numTextures >= 3)
                 {
-                    OCIO::ConstLut1DOpDataRcPtr lut1D = op->getLut1DOpData();
-                    if (lut1D)
+                    for (unsigned i = 0; i < 3 && i < numTextures; ++i)
                     {
-                        outProcessor.lut1DSize = lut1D->getSize();
-                        const float* lutData = lut1D->getArray();
-                        int numChannels = lut1D->getNumChannels();
-                        if (numChannels >= 3)
+                        const char* textureName;
+                        const char* samplerName;
+                        unsigned width, height;
+                        OCIO::GpuShaderDesc::TextureType channel;
+                        OCIO::GpuShaderDesc::TextureDimensions dimensions;
+                        OCIO::Interpolation interpolation;
+                        shaderDesc->getTexture(i, textureName, samplerName, width, height, channel, dimensions, interpolation);
+                        const float* values;
+                        shaderDesc->getTextureValues(i, values);
+                        if (i == 0)
                         {
-                            outProcessor.lut1D_R.assign(lutData, lutData + outProcessor.lut1DSize);
-                            outProcessor.lut1D_G.assign(lutData + outProcessor.lut1DSize, lutData + 2 * outProcessor.lut1DSize);
-                            outProcessor.lut1D_B.assign(lutData + 2 * outProcessor.lut1DSize, lutData + 3 * outProcessor.lut1DSize);
+                            outProcessor.lut1DSize = width;
+                            outProcessor.lut1D_R.assign(values, values + width);
+                        }
+                        else if (i == 1)
+                        {
+                            outProcessor.lut1D_G.assign(values, values + width);
+                        }
+                        else if (i == 2)
+                        {
+                            outProcessor.lut1D_B.assign(values, values + width);
                         }
                     }
                 }
+
+                return outProcessor.hasLut3D || outProcessor.lut1DSize > 0;
             }
-            return outProcessor.hasLut3D || outProcessor.lut1DSize > 0;
         }
         catch (const OCIO::Exception&)
         {

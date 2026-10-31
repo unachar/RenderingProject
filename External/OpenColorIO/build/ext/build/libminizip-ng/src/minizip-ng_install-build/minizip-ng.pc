@@ -1,0 +1,14 @@
+prefix=C:/Users/songt/Desktop/Render/External/OpenColorIO/build/ext/dist
+exec_prefix=C:/Users/songt/Desktop/Render/External/OpenColorIO/build/ext/dist
+libdir=C:/Users/songt/Desktop/Render/External/OpenColorIO/build/ext/dist/lib
+sharedlibdir=C:/Users/songt/Desktop/Render/External/OpenColorIO/build/ext/dist/lib
+includedir=C:/Users/songt/Desktop/Render/External/OpenColorIO/build/ext/dist/include/minizip-ng
+
+Name: minizip-ng
+Description: Minizip zip file manipulation library
+Version: 3.0.7
+
+Requires: zlib
+Libs: -L${libdir} -L${sharedlibdir} -lminizip-ng
+Libs.private: -lz
+Cflags: -I${includedir}

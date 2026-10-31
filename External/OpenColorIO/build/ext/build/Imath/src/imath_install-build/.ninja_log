@@ -1,0 +1,9 @@
+# ninja log v7
+48	177	8151580687052878	src/Imath/CMakeFiles/Imath.dir/ImathRandom.cpp.obj	2865bb8574c020b5
+30	575	8151580686867764	src/Imath/CMakeFiles/Imath.dir/ImathFun.cpp.obj	307047890ce44a40
+12	2642	8151580686697746	src/Imath/CMakeFiles/Imath.dir/half.cpp.obj	3d990db5f9761899
+22	2679	8151580686787747	src/Imath/CMakeFiles/Imath.dir/ImathColorAlgo.cpp.obj	bd3324d21c28bfe5
+40	3883	8151580686972903	src/Imath/CMakeFiles/Imath.dir/ImathMatrixAlgo.cpp.obj	51d508c467ba6b6c
+3884	3965	8151580725412822	src/Imath/Imath-3_1.lib	86782c42e1bdfc93
+3966	4410	8151580726227937	CMakeFiles/install.util	7fba377c735801e0
+12	310	8151580898774064	CMakeFiles/install.util	7fba377c735801e0

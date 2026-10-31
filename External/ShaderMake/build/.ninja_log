@@ -1,0 +1,7 @@
+# ninja log v7
+13	154	8151529303329424	ShaderMake/CMakeFiles/ShaderMake.dir/argparse.c.obj	8f30b4eaec44a81a
+6	898	8151529303270207	CMakeFiles/ShaderMakeBlob.dir/ShaderMake/ShaderBlob.cpp.obj	3aad7a65a487e84d
+19	919	8151529303389403	ShaderMake/CMakeFiles/ShaderMake.dir/ShaderBlob.cpp.obj	99e41c6ecca8e09f
+898	955	8151529312181820	ShaderMakeBlob.lib	ee250b8563dcf51
+25	3838	8151529303454487	ShaderMake/CMakeFiles/ShaderMake.dir/ShaderMake.cpp.obj	ec45f8f7ae300284
+3839	4050	8151529341589871	C:/Users/songt/Desktop/Render/External/ShaderMake/upstream/bin/Release/ShaderMake.exe	bbfebab4cc6d208c

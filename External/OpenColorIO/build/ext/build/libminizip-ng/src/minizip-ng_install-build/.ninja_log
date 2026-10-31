@@ -1,0 +1,14 @@
+# ninja log v7
+36	195	8151580709479534	CMakeFiles/minizip-ng.dir/mz_strm_buf.c.obj	b0501a6e0a9f1e78
+44	198	8151580709559552	CMakeFiles/minizip-ng.dir/mz_strm_mem.c.obj	b1c4c93dadada523
+27	199	8151580709394412	CMakeFiles/minizip-ng.dir/mz_strm.c.obj	7ac959e2734f3e69
+70	271	8151580709819541	CMakeFiles/minizip-ng.dir/mz_zip_rw.c.obj	833c19187a5cb2ed
+54	300	8151580709659543	CMakeFiles/minizip-ng.dir/mz_strm_split.c.obj	1c5839ec6780e333
+62	350	8151580709739544	CMakeFiles/minizip-ng.dir/mz_zip.c.obj	eaf2f371c2268b9a
+19	469	8151580709314435	CMakeFiles/minizip-ng.dir/mz_os.c.obj	23cc2da9c460308c
+93	635	8151580710054638	CMakeFiles/minizip-ng.dir/mz_strm_os_win32.c.obj	d375f5ef77199aae
+86	640	8151580709974633	CMakeFiles/minizip-ng.dir/mz_os_win32.c.obj	809a3492aca6518e
+10	98	8151580899522891	CMakeFiles/minizip-ng.dir/mz_crypt.c.obj	b0e824200752cf53
+18	118	8151580899602886	CMakeFiles/minizip-ng.dir/mz_strm_zlib.c.obj	64deb24c229a41bf
+118	269	8151580900603138	libminizip-ng.lib	d08e9b268798cc1b
+269	479	8151580902118420	CMakeFiles/install.util	b1478c94f33ea76f

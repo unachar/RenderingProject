@@ -1,0 +1,5 @@
+# ninja log v7
+67	1306	8151473097652951	CMakeFiles/basisu_encoder.dir/encoder/basisu_resample_filters.cpp.obj	ab4cca179ec68ee3
+110	1324	8151473098088013	CMakeFiles/basisu_encoder.dir/encoder/jpgd.cpp.obj	a66926c3b1e6b201
+60	1512	8151473097582943	CMakeFiles/basisu_encoder.dir/encoder/basisu_resampler.cpp.obj	940a46bcdafdf740
+90	2112	8151473097882899	CMakeFiles/basisu_encoder.dir/encoder/basisu_bc7e_scalar.cpp.obj	72746209feb0e24e

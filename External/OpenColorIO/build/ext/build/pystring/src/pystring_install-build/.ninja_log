@@ -1,0 +1,5 @@
+# ninja log v7
+6	3956	8151580662495697	CMakeFiles/pystring.dir/pystring.cpp.obj	fdcc2c5ef5c1f301
+3958	4043	8151580702012508	pystring.lib	c8d0cf7d70e08a00
+4043	4146	8151580702867633	CMakeFiles/install.util	1212a5f9f7a4e36e
+6	69	8151580897643866	CMakeFiles/install.util	1212a5f9f7a4e36e
