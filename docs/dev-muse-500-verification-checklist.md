@@ -15,7 +15,9 @@ gate and the expected observable behavior.
 - [ ] `scripts/test-shader-build-targets.ps1` passes (45 tracked
       DXC outputs).
 - [ ] `tests/shader_scan_tests.py` and `tests/pfm_compare_tests.py`
-      pass.
+      pass, plus the run's source-contract tests:
+      traversal_binning / ssr_constants / reference_integrator /
+      postprocess_probe contract tests (all under tests/).
 
 ## 1. SSR (flag: スクリーンスペース反射, default OFF)
 
