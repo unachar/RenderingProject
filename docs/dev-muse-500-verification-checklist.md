@@ -77,12 +77,17 @@ gate and the expected observable behavior.
 - [ ] Multiple shadow-casting lights: every shadow pass consumes
       its own VG traversal view (no cross-light shadow bleeding),
       passes beyond 4 views fall back cleanly.
+- [ ] With VSM (virtual shadow maps) enabled: page passes draw
+      the casters of THEIR light (views key by light layer since
+      9e5f93fd, not by pass index) - check a scene where the VSM
+      directional light is not the last shadow light.
 - [ ] Alpha-tested foliage still casts cutout shadows (v2 path).
 
 ## Known follow-ups (not blockers)
 
-- PROBE_BLENDING_BINDLESS stays undefined until item 3's root
-  signature check is done on this machine.
+- The 6-face probe capture pass (see the Stage 2J capture
+  design's scoping note) is the one sized piece of the run's
+  designs not implemented; CaptureLive is inert until it lands.
 - Stage 1C material binning: design + survey landed; the view
   Constants cbuffer has no spare field, so implementation starts
   with growing it (host + HLSL mirror + asserts).

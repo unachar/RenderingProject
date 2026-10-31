@@ -806,9 +806,36 @@ namespace ReferenceIntegrator
         {
             return false;
         }
-        return ReferenceImageIO::WritePfm(pfmPath, result) && ReferenceImageIO::WritePpmPreview(ppmPath, result) &&
-               ReferenceImageIO::WritePfm(albedoPfmPath, albedo) && ReferenceImageIO::WritePfm(normalPfmPath, normal) &&
-               (directPfmPath == nullptr || ReferenceImageIO::WritePfm(directPfmPath, direct));
+        bool ok = ReferenceImageIO::WritePfm(pfmPath, result) && ReferenceImageIO::WritePpmPreview(ppmPath, result) &&
+                  ReferenceImageIO::WritePfm(albedoPfmPath, albedo) &&
+                  ReferenceImageIO::WritePfm(normalPfmPath, normal) &&
+                  (directPfmPath == nullptr || ReferenceImageIO::WritePfm(directPfmPath, direct));
+        // Eyeballable previews next to each PFM (same stem + .ppm):
+        // the PFM is the data of record, the PPM is what a human
+        // opens during verification.
+        if (ok)
+        {
+            const auto previewFor = [](const char* pfm, const CaptureResult& image) {
+                if (pfm == nullptr)
+                {
+                    return true;
+                }
+                std::string ppm = pfm;
+                const size_t dot = ppm.rfind(".pfm");
+                if (dot != std::string::npos)
+                {
+                    ppm.replace(dot, 4, ".ppm");
+                }
+                else
+                {
+                    ppm += ".ppm";
+                }
+                return ReferenceImageIO::WritePpmPreview(ppm.c_str(), image);
+            };
+            ok = previewFor(albedoPfmPath, albedo) && previewFor(normalPfmPath, normal) &&
+                 previewFor(directPfmPath, direct);
+        }
+        return ok;
     }
 
     bool RunCornellCapture(ID3D12Device* device, ID3D12CommandQueue* queue,
