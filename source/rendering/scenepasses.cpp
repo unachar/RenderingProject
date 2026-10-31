@@ -781,7 +781,20 @@ void ScenePasses::ExecuteScreenSpaceReflections()
     inputs.DepthSrv = gpuHandle(m_UseLowResDepth ? g_kLOW_RES_DEPTH_SRV_INDEX : g_kDEPTH_SRV_INDEX);
     inputs.HiZSrv = OcclusionCulling::GetCurrentSrv();
     inputs.NormalSrv = m_GBufferSrvHandles[static_cast<UINT>(GBufferType::NORMAL)];
-    inputs.PreviousColorSrv = GetRenderTargetSrvHandle(RenderTargetType::PreUpscaleAaHistory);
+    // Previous-frame color for the trace. The pre-upscale AA
+    // history target is only refreshed inside the upscale AA
+    // branch of ApplyPostProcess; at native resolution nothing
+    // writes it and the trace would sample a stale (initially
+    // undefined) texture, so use the AA target's history view
+    // instead - ApplyAntiAliasing maintains it at native
+    // resolution and it holds the previous frame's result while
+    // this frame's lighting runs. (Under DLSS / Bilateral / TSR
+    // upscaling the pre-upscale history is likewise not
+    // refreshed; that combination keeps the stale source for
+    // now - see the verification checklist.)
+    const bool ssrNeedsUpscale = m_SceneWidth != m_Width || m_SceneHeight != m_Height;
+    inputs.PreviousColorSrv = ssrNeedsUpscale ? GetRenderTargetSrvHandle(RenderTargetType::PreUpscaleAaHistory)
+                                              : gpuHandle(g_kAA_HISTORY_SRV_INDEX);
     inputs.MaterialSrv = m_GBufferSrvHandles[static_cast<UINT>(GBufferType::MATERIAL)];
     {
         // Previous frame's view-projection for the temporal resolve.
