@@ -77,6 +77,10 @@
     <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
     <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\\native\\bin\\x64\\dxc.exe&quot; -T cs_6_0 -E main -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\ScreenSpaceReflectionsResolveCS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\ScreenSpaceReflectionsResolveCS.hlsl&quot;" />
   </Target>
+  <Target Name="CompileScreenSpaceReflectionsDownsampleShader" Inputs="$(MSBuildThisFileDirectory)shader\hlsl\ScreenSpaceReflectionsDownsampleCS.hlsl;$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props" Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\ScreenSpaceReflectionsDownsampleCS.cso" Condition="'$(Platform)' == 'x64'">
+    <MakeDir Directories="$(MSBuildThisFileDirectory)shader\hlsl\build" />
+    <Exec Command="&quot;$(DirectXShaderCompilerPackageRoot)build\\native\\bin\\x64\\dxc.exe&quot; -T cs_6_0 -E main -O3 -Fo &quot;$(MSBuildThisFileDirectory)shader\hlsl\build\ScreenSpaceReflectionsDownsampleCS.cso&quot; &quot;$(MSBuildThisFileDirectory)shader\hlsl\ScreenSpaceReflectionsDownsampleCS.hlsl&quot;" />
+  </Target>
   <Target Name="CompileDlssHelperShaders" BeforeTargets="ClCompile"
           DependsOnTargets="CompileDlssHelperShadersDlssPrepareCS;CompileDlssHelperShadersDlssCopyCS"
           Condition="'$(EnableDlss)' == 'true' and '$(Platform)' == 'x64'" />

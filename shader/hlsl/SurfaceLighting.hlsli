@@ -1572,7 +1572,11 @@ float3 EvaluateSurfaceEnvironment(SurfaceData surface, float3 viewDir, float3 wo
 #ifdef SHADER_RAYTRACING
     if (SceneRayFlags.x > 0.5f || RaytracingFlags.w > 0.5f)
     {
-        const float4 tracedReflection = RaytracedReflections.SampleLevel(TextureSampler, screenUv, 0);
+        // The SSR result carries a prefiltered mip chain (rough
+        // surfaces sample deeper mips); the raytraced result is
+        // single-mip, where the level clamps to 0 as before.
+        const float reflectionMip = RaytracingFlags.w > 1.5f ? roughness * 4.0f : 0.0f;
+        const float4 tracedReflection = RaytracedReflections.SampleLevel(TextureSampler, screenUv, reflectionMip);
         // RaytracingFlags.w == 2 marks the screen-space result: blend
         // it over the environment specular by its confidence (alpha).
         envSpecular = RaytracingFlags.w > 1.5f

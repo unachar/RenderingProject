@@ -19,6 +19,11 @@ namespace ScreenSpaceReflections
         // 6/7 accumulation SRVs, 8/9 accumulation UAVs.
         ComPtr<ID3D12DescriptorHeap> g_Heap;
         ComPtr<ID3D12Resource> g_Result;
+        uint32_t g_ResultMips = 1;
+        ComPtr<ID3D12RootSignature> g_DownRootSignature;
+        ComPtr<ID3D12PipelineState> g_DownPso;
+        ComPtr<ID3D12DescriptorHeap> g_DownHeap; // 0..3: per-level source SRVs, 4..7: per-level UAVs
+        uint32_t g_DownIncrement = 0;
         ComPtr<ID3D12Resource> g_TraceResult; // half-resolution trace target (T1)
         ComPtr<ID3D12Resource> g_HitPoints;   // half-res hit anchors (T2)
         ComPtr<ID3D12Resource> g_Accumulation[2]; // full-res temporal ping-pong (T2)
@@ -108,6 +113,46 @@ namespace ScreenSpaceReflections
             }
             D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
             heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+            {
+                CD3DX12_DESCRIPTOR_RANGE downRanges[2];
+                downRanges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+                downRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
+                CD3DX12_ROOT_PARAMETER downParameters[3];
+                downParameters[0].InitAsConstants(4, 0);
+                downParameters[1].InitAsDescriptorTable(1, &downRanges[0], D3D12_SHADER_VISIBILITY_ALL);
+                downParameters[2].InitAsDescriptorTable(1, &downRanges[1], D3D12_SHADER_VISIBILITY_ALL);
+                CD3DX12_ROOT_SIGNATURE_DESC downRootDesc(_countof(downParameters), downParameters, 0, nullptr,
+                                                         D3D12_ROOT_SIGNATURE_FLAG_NONE);
+                ComPtr<ID3DBlob> downSerialized;
+                ComPtr<ID3DBlob> downErrors;
+                ComPtr<ID3DBlob> downShader;
+                if (FAILED(D3D12SerializeRootSignature(&downRootDesc, D3D_ROOT_SIGNATURE_VERSION_1, &downSerialized,
+                                                       &downErrors)) ||
+                    FAILED(device->CreateRootSignature(0, downSerialized->GetBufferPointer(),
+                                                       downSerialized->GetBufferSize(),
+                                                       IID_PPV_ARGS(&g_DownRootSignature))) ||
+                    FAILED(D3DReadFileToBlob(L"shader/hlsl/build/ScreenSpaceReflectionsDownsampleCS.cso",
+                                             &downShader)))
+                {
+                    return false;
+                }
+                D3D12_COMPUTE_PIPELINE_STATE_DESC downPso{};
+                downPso.pRootSignature = g_DownRootSignature.Get();
+                downPso.CS = CD3DX12_SHADER_BYTECODE(downShader.Get());
+                if (FAILED(device->CreateComputePipelineState(&downPso, IID_PPV_ARGS(&g_DownPso))))
+                {
+                    return false;
+                }
+                D3D12_DESCRIPTOR_HEAP_DESC downHeapDesc{};
+                downHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+                downHeapDesc.NumDescriptors = 8;
+                downHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+                if (FAILED(device->CreateDescriptorHeap(&downHeapDesc, IID_PPV_ARGS(&g_DownHeap))))
+                {
+                    return false;
+                }
+                g_DownIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            }
             heapDesc.NumDescriptors = 10;
             heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
             if (FAILED(device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&g_Heap))))
@@ -210,8 +255,14 @@ namespace ScreenSpaceReflections
         {
             return false;
         }
-        const auto description = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT, width, height, 1, 1, 1,
-                                                               0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        uint32_t resultMips = 1;
+        while (resultMips < 5 && (width >> resultMips) >= 8 && (height >> resultMips) >= 8)
+        {
+            ++resultMips;
+        }
+        const auto description = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT, width, height, 1,
+                                                              static_cast<UINT16>(resultMips), 1, 0,
+                                                              D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         ComPtr<ID3D12Resource> result;
         if (ID3D12Resource* allocated =
                 MemoryAllocator::CreateResourceAutoLifetime(description, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr))
@@ -234,7 +285,7 @@ namespace ScreenSpaceReflections
         srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
         srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
         srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        srvDesc.Texture2D.MipLevels = 1;
+        srvDesc.Texture2D.MipLevels = resultMips;
         device->CreateShaderResourceView(result.Get(), &srvDesc, heapCpu);
         D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
         uavDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -289,10 +340,13 @@ namespace ScreenSpaceReflections
         device->CreateUnorderedAccessView(g_HitPoints.Get(), nullptr, &hitUavDesc,
                                           CD3DX12_CPU_DESCRIPTOR_HANDLE(heapCpu, 5, increment));
         g_HitInSrvState = false;
-        // Temporal accumulation ping-pong (full res).
+        // Temporal accumulation ping-pong (full res, single mip).
+        const auto accumulationDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT, width, height, 1,
+                                                                   1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        srvDesc.Texture2D.MipLevels = 1;
         for (int i = 0; i < 2; ++i)
         {
-            g_Accumulation[i] = CreateTarget(device, description, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            g_Accumulation[i] = CreateTarget(device, accumulationDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
             if (!g_Accumulation[i])
             {
                 return false;
@@ -308,7 +362,34 @@ namespace ScreenSpaceReflections
         g_TraceWidth = traceWidth;
         g_TraceHeight = traceHeight;
         g_TraceInSrvState = false;
+        // Per-level views for the mip-generation chain.
+        if (g_DownHeap)
+        {
+            const UINT downIncrement =
+                device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            const CD3DX12_CPU_DESCRIPTOR_HANDLE downCpu(g_DownHeap->GetCPUDescriptorHandleForHeapStart());
+            for (uint32_t level = 1; level < resultMips; ++level)
+            {
+                D3D12_SHADER_RESOURCE_VIEW_DESC levelSrv{};
+                levelSrv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+                levelSrv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+                levelSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                levelSrv.Texture2D.MostDetailedMip = level - 1;
+                levelSrv.Texture2D.MipLevels = 1;
+                device->CreateShaderResourceView(result.Get(), &levelSrv,
+                                                 CD3DX12_CPU_DESCRIPTOR_HANDLE(downCpu, static_cast<int>(level - 1),
+                                                                               downIncrement));
+                D3D12_UNORDERED_ACCESS_VIEW_DESC levelUav{};
+                levelUav.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+                levelUav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+                levelUav.Texture2D.MipSlice = level;
+                device->CreateUnorderedAccessView(result.Get(), nullptr, &levelUav,
+                                                  CD3DX12_CPU_DESCRIPTOR_HANDLE(downCpu, static_cast<int>(4 + level - 1),
+                                                                                downIncrement));
+            }
+        }
         g_Result = result;
+        g_ResultMips = resultMips;
         g_ResultWidth = width;
         g_ResultHeight = height;
         g_ResultProduced = false;
@@ -476,9 +557,54 @@ namespace ScreenSpaceReflections
         }
         g_AccumulationCurrent = accumulationPrevious;
         g_HistoryValid = true;
-        D3D12_RESOURCE_BARRIER toSrv = CD3DX12_RESOURCE_BARRIER::Transition(
-            g_Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        commandList->ResourceBarrier(1, &toSrv);
+        // Mip chain for roughness-based sampling in the lighting
+        // pass: per-level subresource transitions (each level is
+        // read as SRV by the next), ending with every subresource
+        // in SRV state.
+        if (g_ResultMips > 1 && g_DownPso)
+        {
+            ID3D12DescriptorHeap* downHeaps[] = {g_DownHeap.Get()};
+            commandList->SetDescriptorHeaps(1, downHeaps);
+            commandList->SetComputeRootSignature(g_DownRootSignature.Get());
+            commandList->SetPipelineState(g_DownPso.Get());
+            const UINT downIncrement = g_DownIncrement;
+            const CD3DX12_GPU_DESCRIPTOR_HANDLE downGpu(g_DownHeap->GetGPUDescriptorHandleForHeapStart());
+            struct DownConstants
+            {
+                uint32_t OutputSize[2];
+                uint32_t SourceSize[2];
+            };
+            for (uint32_t level = 1; level < g_ResultMips; ++level)
+            {
+                D3D12_RESOURCE_BARRIER sourceToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+                    g_Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, level - 1);
+                commandList->ResourceBarrier(1, &sourceToSrv);
+                DownConstants down{};
+                down.OutputSize[0] = (std::max)(1u, g_ResultWidth >> level);
+                down.OutputSize[1] = (std::max)(1u, g_ResultHeight >> level);
+                down.SourceSize[0] = (std::max)(1u, g_ResultWidth >> (level - 1));
+                down.SourceSize[1] = (std::max)(1u, g_ResultHeight >> (level - 1));
+                commandList->SetComputeRoot32BitConstants(0, 4, &down, 0);
+                commandList->SetComputeRootDescriptorTable(
+                    1, CD3DX12_GPU_DESCRIPTOR_HANDLE(downGpu, static_cast<int>(level - 1), downIncrement));
+                commandList->SetComputeRootDescriptorTable(
+                    2, CD3DX12_GPU_DESCRIPTOR_HANDLE(downGpu, static_cast<int>(4 + level - 1), downIncrement));
+                commandList->Dispatch((down.OutputSize[0] + 7) / 8, (down.OutputSize[1] + 7) / 8, 1);
+                D3D12_RESOURCE_BARRIER levelToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+                    g_Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, level);
+                commandList->ResourceBarrier(1, &levelToSrv);
+            }
+            ID3D12DescriptorHeap* engineHeaps[] = {engineHeap, g_Heap.Get()};
+            commandList->SetDescriptorHeaps(2, engineHeaps);
+        }
+        else
+        {
+            D3D12_RESOURCE_BARRIER toSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+                g_Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            commandList->ResourceBarrier(1, &toSrv);
+        }
         g_ResultInSrvState = true;
         g_ResultProduced = true;
         return true;
