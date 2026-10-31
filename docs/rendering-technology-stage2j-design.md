@@ -1,5 +1,9 @@
 # Stage 2 J — Local reflection probes: design
 
+Status: IMPLEMENTED (registry, prefilter, box projection,
+intensity, per-pixel two-probe blending). Live cubemap capture
+is split into rendering-technology-stage2j-capture-design.md.
+
 Implements expansion feature J (Phase 2 J in
 `rendering-expansion-progress.md`): local reflection probes with
 box projection and blending, as the reflection fallback when DXR

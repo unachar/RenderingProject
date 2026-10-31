@@ -1,5 +1,9 @@
 # Native Hi-Z screen-space reflections (SSR): design
 
+Status: IMPLEMENTED in the 500-push run (see the temporal design
+for the T1/T2/checkerboard/mip-chain deltas and the adoption
+status doc for the current state).
+
 Follow-up to the FidelityFX SSSR evaluation
 (`rendering-technology-sssr-evaluation.md`): if a screen-space
 specular fallback is needed beyond probes + IBL, build it natively
