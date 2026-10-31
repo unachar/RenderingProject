@@ -123,35 +123,47 @@ namespace ScreenSpaceReflections
                 downParameters[2].InitAsDescriptorTable(1, &downRanges[1], D3D12_SHADER_VISIBILITY_ALL);
                 CD3DX12_ROOT_SIGNATURE_DESC downRootDesc(_countof(downParameters), downParameters, 0, nullptr,
                                                          D3D12_ROOT_SIGNATURE_FLAG_NONE);
+                // The mip chain is an enhancement, not a requirement:
+                // build it into locals and publish only on full
+                // success. Without it the result stays single-mip
+                // (EnsureResultTarget clamps the mip count) and the
+                // trace/resolve path is unaffected.
                 ComPtr<ID3DBlob> downSerialized;
                 ComPtr<ID3DBlob> downErrors;
                 ComPtr<ID3DBlob> downShader;
-                if (FAILED(D3D12SerializeRootSignature(&downRootDesc, D3D_ROOT_SIGNATURE_VERSION_1, &downSerialized,
-                                                       &downErrors)) ||
-                    FAILED(device->CreateRootSignature(0, downSerialized->GetBufferPointer(),
-                                                       downSerialized->GetBufferSize(),
-                                                       IID_PPV_ARGS(&g_DownRootSignature))) ||
-                    FAILED(D3DReadFileToBlob(L"shader/hlsl/build/ScreenSpaceReflectionsDownsampleCS.cso",
-                                             &downShader)))
+                ComPtr<ID3D12RootSignature> downRootSig;
+                ComPtr<ID3D12PipelineState> downPsoObject;
+                ComPtr<ID3D12DescriptorHeap> downHeapObject;
+                bool downOk = SUCCEEDED(D3D12SerializeRootSignature(&downRootDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+                                                                    &downSerialized, &downErrors)) &&
+                              SUCCEEDED(device->CreateRootSignature(0, downSerialized->GetBufferPointer(),
+                                                                    downSerialized->GetBufferSize(),
+                                                                    IID_PPV_ARGS(&downRootSig))) &&
+                              SUCCEEDED(D3DReadFileToBlob(L"shader/hlsl/build/ScreenSpaceReflectionsDownsampleCS.cso",
+                                                          &downShader));
+                if (downOk)
                 {
-                    return false;
+                    D3D12_COMPUTE_PIPELINE_STATE_DESC downPsoDesc{};
+                    downPsoDesc.pRootSignature = downRootSig.Get();
+                    downPsoDesc.CS = CD3DX12_SHADER_BYTECODE(downShader.Get());
+                    downOk = SUCCEEDED(device->CreateComputePipelineState(&downPsoDesc, IID_PPV_ARGS(&downPsoObject)));
                 }
-                D3D12_COMPUTE_PIPELINE_STATE_DESC downPso{};
-                downPso.pRootSignature = g_DownRootSignature.Get();
-                downPso.CS = CD3DX12_SHADER_BYTECODE(downShader.Get());
-                if (FAILED(device->CreateComputePipelineState(&downPso, IID_PPV_ARGS(&g_DownPso))))
+                if (downOk)
                 {
-                    return false;
+                    D3D12_DESCRIPTOR_HEAP_DESC downHeapDesc{};
+                    downHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+                    downHeapDesc.NumDescriptors = 8;
+                    downHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+                    downOk = SUCCEEDED(device->CreateDescriptorHeap(&downHeapDesc, IID_PPV_ARGS(&downHeapObject)));
                 }
-                D3D12_DESCRIPTOR_HEAP_DESC downHeapDesc{};
-                downHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-                downHeapDesc.NumDescriptors = 8;
-                downHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-                if (FAILED(device->CreateDescriptorHeap(&downHeapDesc, IID_PPV_ARGS(&g_DownHeap))))
+                if (downOk)
                 {
-                    return false;
+                    g_DownRootSignature = downRootSig;
+                    g_DownPso = downPsoObject;
+                    g_DownHeap = downHeapObject;
+                    g_DownIncrement =
+                        device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
                 }
-                g_DownIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
             }
             heapDesc.NumDescriptors = 10;
             heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
@@ -259,6 +271,13 @@ namespace ScreenSpaceReflections
         while (resultMips < 5 && (width >> resultMips) >= 8 && (height >> resultMips) >= 8)
         {
             ++resultMips;
+        }
+        if (!g_DownPso)
+        {
+            // No mip-generation pipeline: extra mips would stay
+            // unwritten and the lighting pass samples them by
+            // roughness, so keep the result single-mip.
+            resultMips = 1;
         }
         const auto description = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R16G16B16A16_FLOAT, width, height, 1,
                                                               static_cast<UINT16>(resultMips), 1, 0,
