@@ -1,12 +1,16 @@
 # Stage 1C follow-up — VG shadows for multiple views: design
 
-Status: IMPLEMENTED (S1–S3). The traversal state is a 4-slot
-per-view pool, `PrepareShadowView` takes a viewId and prepares one
-traversal per shadow pass, and the mesh-shader shadow draw
-consumes the current pass's slot. Interim mapping: viewId = shadow
-pass index; the lightIndex * 8 + faceOrCascade decomposition lands
-when the pass enumeration exposes it. Remaining ledger item: "no
-shadow material binning" (a separate optimization step).
+Status: IMPLEMENTED (S1–S3 + binning + layer keying). The
+traversal state is a 4-slot per-view pool, `PrepareShadowView`
+takes a viewId and prepares one traversal per shadow light, and
+the mesh-shader shadow draw consumes the current pass's slot.
+ViewId mapping (resolved): the viewId is the shadow LIGHT index
+(the parts enumeration is per light); DrawShadow keys by the
+render pass's Layer via GetCurrentShadowPassLayer, because
+render passes are not 1:1 with lights — a VSM light emits one
+pass per clipmap page, and page passes share their light's
+frustum-culled slot (a superset of every page frustum). Shadow
+material binning has also landed since (see the binning design).
 
 Status of 1C at design time: the dedicated VG shadow path covered
 the first shadow view (pass 0, the first directional light's first

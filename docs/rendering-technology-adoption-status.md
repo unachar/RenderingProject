@@ -112,8 +112,9 @@ targets XML is well-formed with 34 tracked DXC outputs.
   scripts/parse_vram_log.py summarizes them from logs.
 - Stage 1C multi-view: per-view traversal state pool (4 slots),
   viewId-aware PrepareShadowView/validity/accessors, and
-  prepare+draw wiring for every shadow pass (viewId = pass index
-  for now). Shadow material binning is implemented end to end
+  prepare+draw wiring for every shadow pass (viewId = shadow
+  light index; DrawShadow keys by the render pass's Layer so VSM
+  page passes share their light's view). Shadow material binning is implemented end to end
   (two-sided visible-list allocation, dual indirect commands,
   depth-only opaque draw + alpha binned draw, legacy fallback).
 - Settings UI: checkboxes for all integration flags above.

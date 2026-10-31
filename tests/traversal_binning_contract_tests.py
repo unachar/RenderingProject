@@ -61,6 +61,15 @@ def main():
           "IndirectCommands.Store(20" in traversal_hlsl or "Store(20," in traversal_hlsl,
           "second command must be written at byte offset 20")
 
+    # View keying: traversal slots are per shadow light; DrawShadow
+    # must key by the render pass's layer, never the pass index
+    # (VSM page passes would otherwise fetch another light's view).
+    check("GetCurrentShadowPassLayer()" in mesh_renderer,
+          "DrawShadow must key its traversal view by light layer")
+    lighting = read("source/rendering/lightingresources.cpp")
+    check("g_ShadowRenderPasses[g_CurrentShadowPassIndex].Layer" in lighting,
+          "the layer getter must read the current pass's Layer field")
+
     # Raster side: binned MS include + dual PSO + dual ExecuteIndirect.
     binned = read("shader/hlsl/VirtualGeometryShadowBinnedMS.hlsl")
     check("VIRTUAL_GEOMETRY_BINNED" in binned and "VirtualGeometryMS.hlsl" in binned,
