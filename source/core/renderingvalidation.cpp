@@ -354,8 +354,9 @@ namespace
         const bool ok = ReferenceIntegrator::RunFixtureCaptureWithAovsToFiles(
             GraphicsDevice::GetDevice(), GraphicsDevice::GetCommandQueue(), settings, scene, pfmPath, ppmPath,
             albedoPath, normalPath, directPath);
-        WriteGraphicsLog("Reference capture (Stage 2H, %s): %s (%ux%u, %u spp)\n", fixtureName,
-                         ok ? "PASS" : "FAIL", settings.Width, settings.Height, settings.SamplesPerPixel);
+        WriteGraphicsLog("Reference capture (Stage 2H, %s): %s (%ux%u, %u spp, seed %u)\n", fixtureName,
+                         ok ? "PASS" : "FAIL", settings.Width, settings.Height, settings.SamplesPerPixel,
+                         settings.Seed);
         Check(ok, "reference capture produced PFM and PPM outputs");
     }
 
