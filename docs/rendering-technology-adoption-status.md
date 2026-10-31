@@ -190,3 +190,6 @@ targets XML is well-formed with 34 tracked DXC outputs.
 - XeSS: deferred - DLSS covers the NVIDIA target, TSR is the
   vendor-neutral fallback
   (docs/rendering-technology-xess-evaluation.md).
+- Stage 8 foundation (OMM / RTXTS / DirectStorage / RTXCR):
+  evaluated, all deferred behind profile triggers
+  (docs/rendering-technology-stage8-foundation-evaluation.md).
