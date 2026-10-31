@@ -1371,6 +1371,19 @@ UINT LightingResources::GetCurrentShadowPassIndex()
     return g_CurrentShadowPassIndex;
 }
 
+UINT LightingResources::GetCurrentShadowPassLayer()
+{
+    if (!g_LightCacheValid)
+    {
+        RebuildLightCache();
+    }
+    if (g_CurrentShadowPassIndex >= g_ShadowRenderPassCount)
+    {
+        return 0;
+    }
+    return g_ShadowRenderPasses[g_CurrentShadowPassIndex].Layer;
+}
+
 bool LightingResources::GetShadowViewParts(UINT shadowIndex, XMFLOAT4X4& outView, XMFLOAT4X4& outProjection)
 {
     if (!g_LightCacheValid)

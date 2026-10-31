@@ -550,11 +550,10 @@ namespace MeshShaderRenderer
             if (VirtualGeometryTraversal::GetSettings().ShadowTraversal)
             {
                 // Stage 1C multi-view: prepare one traversal per shadow
-                // pass, in legacy draw order. The viewId is the pass
-                // index for now (the design's lightIndex * 8 +
-                // faceOrCascade decomposition lands when the pass
-                // enumeration exposes it); passes beyond the traversal
-                // pool simply fail to prepare and stay legacy.
+                // light (the parts enumeration is per light). DrawShadow
+                // keys its slot by the render pass's layer, so VSM page
+                // passes share their light's view; lights beyond the
+                // traversal pool simply fail to prepare and stay legacy.
                 for (uint32_t passIndex = 0; passIndex < 4; ++passIndex)
                 {
                     VirtualGeometryTraversal::ViewInput shadowView;
@@ -940,7 +939,12 @@ namespace MeshShaderRenderer
     bool DrawShadow(ID3D12GraphicsCommandList* commands)
     {
         auto& data = Data();
-        const uint32_t viewId = LightingResources::GetCurrentShadowPassIndex();
+        // Traversal views are prepared per shadow LIGHT; the render
+        // pass index diverges from it whenever a VSM light emits
+        // page passes, so key on the pass's layer. Page passes share
+        // their light's view (culled with the light frustum, a
+        // superset of every page frustum).
+        const uint32_t viewId = LightingResources::GetCurrentShadowPassLayer();
         if (!IsActive() || data.Failed || !data.NativeShadowBinnedPSO || !data.NativeShadowDepthPSO ||
             !data.MaterialBinSignature || !VirtualGeometryTraversal::ShadowViewActive(viewId))
         {

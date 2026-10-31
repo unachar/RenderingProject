@@ -53,6 +53,11 @@ class LightingResources : protected RendererState
                                   bool& clearLayer);
     static void SetCurrentShadowPassIndex(UINT index);
     static UINT GetCurrentShadowPassIndex();
+    // The shadow light (layer) the current render pass belongs to.
+    // Render passes are NOT 1:1 with lights (a VSM light emits one
+    // pass per clipmap page), so traversal views key on this, not
+    // on the pass index.
+    static UINT GetCurrentShadowPassLayer();
     static XMMATRIX GetCurrentShadowViewProjection();
     // Separate (non-transposed) view/projection for a built shadow light view,
     // for consumers that need the view on its own (e.g. VG shadow traversal).
