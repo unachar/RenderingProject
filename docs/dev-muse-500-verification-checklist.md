@@ -53,6 +53,11 @@ gate and the expected observable behavior.
 - [ ] `scripts/pfm_compare.py` between the two runs: RMSE 0.
 - [ ] Higher SPP visibly reduces noise in the emissive fixture
       (quad NEE + MIS working).
+- [ ] `DX12_REFERENCE_CAPTURE_FIXTURE=furnace`: the mirror
+      sphere's region mean (scripts/pfm_stat.py over the sphere's
+      pixels in reference_furnace.pfm) approaches the wall
+      emission 3.0 (GGX energy conservation); the rough-metal
+      sphere reads clearly below it.
 
 ## 3. Stage 2J probes
 
