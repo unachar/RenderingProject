@@ -33,7 +33,7 @@ namespace ScreenSpaceReflections
     // Per-frame decision, computed once in RenderFrame::BeginDraw and
     // consumed by the lighting bindings (postprocess constants +
     // scene pass tables) so every consumer agrees.
-    void UpdateFrameSelection(bool dxrReflectionActive);
+    void UpdateFrameSelection(bool dxrReflectionActive, bool deferredPathActive);
     Source GetFrameSource();
     bool IsScreenSpaceSelected();
     // Engine-heap SRV index of the result texture (registered with

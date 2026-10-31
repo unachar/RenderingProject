@@ -46,7 +46,8 @@ void RenderFrame::BeginDraw()
     // After the command list reset: probe sync may record prefilter
     // dispatches into it (they would be wiped by an earlier call).
     ReflectionProbes::UpdateActiveEnvironment(m_CommandList.Get());
-    ScreenSpaceReflections::UpdateFrameSelection(Raytracing::AreReflectionsActive());
+    ScreenSpaceReflections::UpdateFrameSelection(Raytracing::AreReflectionsActive(),
+                                                 m_RenderMode == RenderMode::DEFERRED);
     NoiseCacheBindings::BeginFrame(m_CommandList.Get());
 
     m_CommandList->RSSetViewports(1, &m_Viewport);

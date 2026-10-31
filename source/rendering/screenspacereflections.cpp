@@ -233,9 +233,14 @@ namespace ScreenSpaceReflections
         return Source::Environment;
     }
 
-    void UpdateFrameSelection(bool dxrReflectionActive)
+    void UpdateFrameSelection(bool dxrReflectionActive, bool deferredPathActive)
     {
-        g_FrameSource = SelectSource(dxrReflectionActive, RendererSettings::GetUseScreenSpaceReflections(),
+        // The trace only executes in the deferred EndScenePass; in
+        // forward mode a previously produced result would otherwise
+        // stay selected forever and freeze the reflections at the
+        // mode switch. SSR is a deferred-path feature.
+        g_FrameSource = SelectSource(dxrReflectionActive,
+                                     RendererSettings::GetUseScreenSpaceReflections() && deferredPathActive,
                                      g_ResultProduced && g_Result != nullptr);
     }
 
