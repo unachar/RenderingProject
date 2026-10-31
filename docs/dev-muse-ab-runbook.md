@@ -18,7 +18,8 @@ and the tooling that reads the result.
 
 ## FidelityFX SPD Hi-Z (flag: UseFidelityFxSpdHiZ, default OFF)
 
-- Metric: Hi-Z / occlusion-culling pass GPU ms at 1440p and 4K;
+- Metric: Hi-Z / occlusion-culling pass GPU ms at 1440p and 4K
+  (profiler event: "Hi-Z Build", which covers both generators);
   culling correctness = identical visible-instance counts vs the
   legacy chain in the occlusion debug view.
 - Decide: adopt as default if GPU ms improves >= 5% with no
