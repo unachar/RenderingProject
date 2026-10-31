@@ -16,11 +16,11 @@ RaytracingAccelerationStructure Scene : register(t0);
 StructuredBuffer<float4> InstanceTransforms0 : register(t1); // rows 0..2 + row 3 in the next buffer
 StructuredBuffer<float4> InstanceTransforms1 : register(t2);
 StructuredBuffer<uint4> InstanceInfo : register(t3); // x: geometry, y: material, zw: unused
-StructuredBuffer<float4> MaterialData : register(t4); // 3 entries per material: albedo+metallic, emission+roughness, unused
+StructuredBuffer<float4> MaterialData : register(t4); // 3 entries per material: albedo+metallic, emission+roughness, light flag + light-pair link
 StructuredBuffer<uint4> GeometryInfo : register(t5); // x: index start, y: vertex start, z: index count
 StructuredBuffer<float3> Positions : register(t6);
 StructuredBuffer<uint> Indices : register(t7);
-StructuredBuffer<float4> Lights : register(t8); // 2 entries per light: (pos.xyz, type), (dirOrColor.xyz, intensity)
+StructuredBuffer<float4> Lights : register(t8); // 2 entries per light pair: analytic (pos.xyz, type), (dirOrColor.xyz, intensity); quads use 2 pairs (corner/edgeU/edgeV/emission)
 RWTexture2D<float4> Accumulation : register(u0);
 RWTexture2D<float4> AovAlbedo : register(u1);  // rgb: albedo, a: hit distance (-1 = sky)
 RWTexture2D<float4> AovNormal : register(u2);  // rgb: normal * 0.5 + 0.5, a: metallic
