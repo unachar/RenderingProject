@@ -12,6 +12,8 @@ gate and the expected observable behavior.
       files (screenspacereflections, scenepasses, postprocesspass,
       reflectionprobes, reference*, editorsettings,
       virtualgeometrytraversal).
+- [ ] The repo's own VG test programs (tests/virtualgeometry_*)
+      still pass - the traversal changes sit under them.
 - [ ] `scripts/test-shader-build-targets.ps1` passes (45 tracked
       DXC outputs).
 - [ ] `tests/shader_scan_tests.py` and `tests/pfm_compare_tests.py`
