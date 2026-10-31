@@ -105,3 +105,8 @@ imgui.ini
 /EditorCache/
 
 /Data/Cache/ModelMaps/
+
+# Vendor script references (downloaded sources, not for commit)
+/External/*/upstream/
+*.tar.gz
+*.zip

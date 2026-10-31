@@ -1,0 +1,17 @@
+{
+  "LICENSE.txt": "3d5a69a6f5695507ecc9c412c783ca60572bf878",
+  "NOTICES.txt": "6c079b16c4f0bd4a87785a4b4f775e7b14ed65ba",
+  "README.md": "87964cc58aca59acf9982bd51c076ad3bd1f9f29",
+  "include/D3D12MemAlloc.h": "1a7d9fdbbf81fbd299fe7d5870b54a9433a0097f",
+  "src/CMakeLists.txt": "21312b8abe270e4afadc586dd3102ebed5942126",
+  "src/Common.cpp": "73943cef688f938f4f33062189ba7305bd8155c7",
+  "src/Common.h": "6f150acc169a7a13b7a3718dd9c765f9b551c6b8",
+  "src/D3D12MemAlloc.cpp": "3eeb0468fd7e9e0a1b115f05278baa489d5275e6",
+  "src/D3D12MemAlloc.natvis": "102bc9f01304dea94854c4e506feff1788757593",
+  "src/cmake/config.cmake.in": "3e47daa5ebdea8c0e24dbcdb6292f9983f1c56ed",
+  "src/Shaders/FxBatchCompilerScript.fxbc": "d21c2acf0c2c7c2e3f5ee54b5ab33ba8152f2cd8",
+  "src/Shaders/PS.hlsl": "828c8b21de3a87a088b8329addbedbe22e68d4a4",
+  "src/Shaders/PS_Compiled.h": "495c73b62c0a197e4503cba8c175b15cdd97d877",
+  "src/Shaders/VS.hlsl": "796810d6db62e2c58ecbee5fdab20ea6407d9c54",
+  "src/Shaders/VS_Compiled.h": "2d30bda10ba25de7a1b9a5431055821228602aa6"
+}

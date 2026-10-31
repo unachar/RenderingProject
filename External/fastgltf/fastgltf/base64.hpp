@@ -1,0 +1,91 @@
+/*
+ * Copyright (C) 2022 - 2026 Sean Apeler
+ * This file is part of fastgltf <https://github.com/spnda/fastgltf>.
+ *
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+#ifndef FASTGLTF_BASE_64_HPP
+#define FASTGLTF_BASE_64_HPP
+
+#if !defined(FASTGLTF_MODULE)
+#include <cassert>
+#include <string>
+#endif
+
+#include <fastgltf/error.hpp>
+#include <fastgltf/containers/static_vector.hpp>
+
+namespace fastgltf::base64 {
+	/**
+	 * Calculates the amount of base64 padding chars ('=') at the end of the encoded string.
+	 * @note There's at most 2 padding chars, and this function expects that the input string
+	 * points to the original string that has a size that is a multiple of 4 and is at least
+	 * 4 chars long.
+	 */
+	FASTGLTF_EXPORT constexpr std::size_t getPadding(const std::string_view string) {
+		assert(string.size() >= 4 && string.size() % 4 == 0);
+		const auto size = string.size();
+		for (auto i = 1; i < 4; ++i)
+			if (string[size - i] != '=')
+				return i - 1;
+		return 0;
+	}
+
+	/**
+	 * Calculates the size of the decoded string based on the size of the base64 encoded string and
+	 * the amount of padding the encoded data contains.
+	 */
+	FASTGLTF_EXPORT constexpr std::size_t getDecodedSize(
+			const std::size_t encodedSize, const std::size_t padding) {
+		assert(encodedSize % 4 == 0);
+		return (encodedSize / 4) * 3 - padding;
+	}
+	FASTGLTF_EXPORT [[deprecated("Use getDecodedSize instead.")]] constexpr std::size_t getOutputSize(
+			const std::size_t encodedSize, const std::size_t padding) noexcept {
+		return getDecodedSize(encodedSize, padding);
+	}
+
+	FASTGLTF_EXPORT bool decode_inplace(std::string_view encoded, std::uint8_t* output, std::size_t padding);
+	FASTGLTF_EXPORT Expected<static_vector<std::uint8_t>> decode(std::string_view encoded);
+
+	/**
+	 * Calculates the size of the base64-encoded string for a given input byte count.
+	 * Output is always a multiple of 4 (includes padding).
+	 */
+	FASTGLTF_EXPORT constexpr std::size_t getEncodedSize(const std::size_t dataSize) noexcept {
+		return ((dataSize + 2) / 3) * 4;
+	}
+
+	/**
+	 * Encodes `size` bytes from `data` as base64 into `output`. Caller must ensure `output`
+	 * has at least getEncodedSize(size) bytes available. Pads with '=' to a multiple of 4.
+	 */
+	FASTGLTF_EXPORT void encode_into(const std::uint8_t* data, std::size_t size, char* output);
+
+	/**
+	 * Returns the base64-encoded form of the `size` bytes starting at `data`.
+	 */
+	FASTGLTF_EXPORT [[nodiscard]] std::string encode(const std::uint8_t* data, std::size_t size);
+} // namespace fastgltf::base64
+
+#endif
