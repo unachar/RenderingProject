@@ -29,8 +29,11 @@ only the per-pixel Route A fetch is gated.
 range (postprocess root 39, bound in DrawFullscreenPass to the
 engine texture heap), and DeferredLightingPS defines
 PROBE_BLENDING_BINDLESS itself — per-pixel two-probe blending is
-live in the deferred path. The forward path (modelshaderPS)
-remains gated pending the same audit of its root signature.
+live in the deferred path. The forward path audit also passes:
+the model root signature has bound the space-1 asset texture
+heap at root 18 all along (MaterialSurface.hlsli samples through
+it in production), so modelshaderPS defines the flag too.
+Per-pixel two-probe blending is live in both paths.
 
 Status: DESIGN. Stage 2J v1 selects ONE probe per frame (the
 camera-containing, highest-priority one) and overrides the

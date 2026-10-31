@@ -1,4 +1,8 @@
 #define SHADER_3D
+// Stage 2J: per-pixel two-probe blending via the material texture
+// heap (space 1, root 18 of the model root signature - the same
+// table MaterialSurface.hlsli already samples through).
+#define PROBE_BLENDING_BINDLESS
 #define SHADER_FORWARD_LIGHTING
 #define SHADER_MATERIAL_OPTICS_PREVIEW
 #define POM_PIXEL_DEPTH_OUTPUT
