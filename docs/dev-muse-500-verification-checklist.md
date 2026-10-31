@@ -64,6 +64,8 @@ gate and the expected observable behavior.
 - [ ] Re-run cornell twice with the same seed: outputs identical
       (deterministic).
 - [ ] `scripts/pfm_compare.py` between the two runs: RMSE 0.
+      With `DX12_REFERENCE_CAPTURE_SEED` changed, the outputs
+      differ but stay close (the noise floor for A/B gates).
 - [ ] Higher SPP visibly reduces noise in the emissive fixture
       (quad NEE + MIS working).
 - [ ] `DX12_REFERENCE_CAPTURE_FIXTURE=furnace`: the mirror
