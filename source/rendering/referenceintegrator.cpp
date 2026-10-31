@@ -331,7 +331,7 @@ namespace ReferenceIntegrator
             {
                 parameters[1 + i].InitAsShaderResourceView(i);
             }
-            CD3DX12_DESCRIPTOR_RANGE uavRange(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 0);
+            CD3DX12_DESCRIPTOR_RANGE uavRange(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 4, 0);
             parameters[10].InitAsDescriptorTable(1, &uavRange, D3D12_SHADER_VISIBILITY_ALL);
             CD3DX12_ROOT_SIGNATURE_DESC rootDesc(_countof(parameters), parameters, 0, nullptr,
                                                  D3D12_ROOT_SIGNATURE_FLAG_NONE);
@@ -365,7 +365,7 @@ namespace ReferenceIntegrator
             }
             D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
             heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-            heapDesc.NumDescriptors = 3;
+            heapDesc.NumDescriptors = 4;
             heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
             if (FAILED(device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&g_UavHeap))))
             {
@@ -401,9 +401,11 @@ namespace ReferenceIntegrator
     bool RunFixtureCapture(ID3D12Device* device, ID3D12CommandQueue* queue,
                            const ReferenceCapture::Settings& settings,
                            const ReferenceFixture::SceneData& scene, CaptureResult& result,
-                           CaptureResult* albedoOut = nullptr, CaptureResult* normalOut = nullptr)
+                           CaptureResult* albedoOut = nullptr, CaptureResult* normalOut = nullptr,
+                           CaptureResult* directOut = nullptr)
     {
         const bool wantAovs = albedoOut != nullptr && normalOut != nullptr && g_AovPso;
+        const bool wantDirect = directOut != nullptr;
         result = {};
         if (device == nullptr || queue == nullptr || !EnsurePipeline(device))
         {
@@ -431,6 +433,7 @@ namespace ReferenceIntegrator
         ID3D12Resource* accumulation = ReferenceCapture::GetAccumulationResource();
         ComPtr<ID3D12Resource> aovAlbedo;
         ComPtr<ID3D12Resource> aovNormal;
+        ComPtr<ID3D12Resource> directTarget;
         {
             D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
             uavDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
@@ -460,6 +463,37 @@ namespace ReferenceIntegrator
                                                   CD3DX12_CPU_DESCRIPTOR_HANDLE(
                                                       g_UavHeap->GetCPUDescriptorHandleForHeapStart(), 2, increment));
             }
+            {
+                // Slot 3 (direct split): a real target when requested,
+                // a null UAV otherwise so the table stays valid.
+                const UINT increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                if (wantDirect)
+                {
+                    const auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+                    const auto texDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT, settings.Width,
+                                                                      settings.Height, 1, 1, 1, 0,
+                                                                      D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+                    if (FAILED(device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc,
+                                                               D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                               IID_PPV_ARGS(&directTarget))))
+                    {
+                        return false;
+                    }
+                    device->CreateUnorderedAccessView(directTarget.Get(), nullptr, &uavDesc,
+                                                      CD3DX12_CPU_DESCRIPTOR_HANDLE(
+                                                          g_UavHeap->GetCPUDescriptorHandleForHeapStart(), 3, increment));
+                    device->CreateUnorderedAccessView(directTarget.Get(), nullptr, &uavDesc,
+                                                      CD3DX12_CPU_DESCRIPTOR_HANDLE(
+                                                          g_UavHeapCpu->GetCPUDescriptorHandleForHeapStart(), 3,
+                                                          increment));
+                }
+                else
+                {
+                    device->CreateUnorderedAccessView(nullptr, nullptr, &uavDesc,
+                                                      CD3DX12_CPU_DESCRIPTOR_HANDLE(
+                                                          g_UavHeap->GetCPUDescriptorHandleForHeapStart(), 3, increment));
+                }
+            }
         }
 
         ComPtr<ID3D12CommandAllocator> allocator;
@@ -478,6 +512,14 @@ namespace ReferenceIntegrator
         list->ClearUnorderedAccessViewFloat(g_UavHeap->GetGPUDescriptorHandleForHeapStart(),
                                             g_UavHeapCpu->GetCPUDescriptorHandleForHeapStart(), accumulation,
                                             clearValue, 0, nullptr);
+        if (wantDirect)
+        {
+            const UINT increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            list->ClearUnorderedAccessViewFloat(
+                CD3DX12_GPU_DESCRIPTOR_HANDLE(g_UavHeap->GetGPUDescriptorHandleForHeapStart(), 3, increment),
+                CD3DX12_CPU_DESCRIPTOR_HANDLE(g_UavHeapCpu->GetCPUDescriptorHandleForHeapStart(), 3, increment),
+                directTarget.Get(), clearValue, 0, nullptr);
+        }
 
         // Camera matrices from the fixture suggestion.
         const XMFLOAT3 cameraPosFloat(scene.CameraPosition[0], scene.CameraPosition[1], scene.CameraPosition[2]);
@@ -589,6 +631,36 @@ namespace ReferenceIntegrator
             }
         }
 
+        // Direct split readback staging (recorded with the rest).
+        ComPtr<ID3D12Resource> directReadback;
+        if (wantDirect)
+        {
+            const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
+            const auto desc = CD3DX12_RESOURCE_DESC::Buffer(aovRowPitch * settings.Height);
+            if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                       D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                       IID_PPV_ARGS(&directReadback))))
+            {
+                return false;
+            }
+            D3D12_RESOURCE_BARRIER directToCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+                directTarget.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            list->ResourceBarrier(1, &directToCopy);
+            D3D12_TEXTURE_COPY_LOCATION dest{};
+            dest.pResource = directReadback.Get();
+            dest.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            dest.PlacedFootprint.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+            dest.PlacedFootprint.Width = settings.Width;
+            dest.PlacedFootprint.Height = settings.Height;
+            dest.PlacedFootprint.Depth = 1;
+            dest.PlacedFootprint.RowPitch = static_cast<UINT>(aovRowPitch);
+            D3D12_TEXTURE_COPY_LOCATION src{};
+            src.pResource = directTarget.Get();
+            src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            src.SubresourceIndex = 0;
+            list->CopyTextureRegion(&dest, 0, 0, 0, &src, nullptr);
+        }
+
         // Readback: accumulation -> readback buffer.
         const uint64_t rowPitch = (static_cast<uint64_t>(settings.Width) * 16 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) &
                                   ~(static_cast<uint64_t>(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) - 1);
@@ -651,6 +723,31 @@ namespace ReferenceIntegrator
             }
         }
         readback->Unmap(0, nullptr);
+        if (wantDirect)
+        {
+            void* directMapped = nullptr;
+            const D3D12_RANGE directRange{0, static_cast<SIZE_T>(aovRowPitch * settings.Height)};
+            if (FAILED(directReadback->Map(0, &directRange, &directMapped)))
+            {
+                return false;
+            }
+            directOut->Width = settings.Width;
+            directOut->Height = settings.Height;
+            directOut->Samples = ReferenceCapture::GetAccumulatedSamples();
+            directOut->Pixels.resize(static_cast<size_t>(settings.Width) * settings.Height * 4);
+            const float invDirectSamples = 1.0f / static_cast<float>(directOut->Samples);
+            for (uint32_t y = 0; y < settings.Height; ++y)
+            {
+                const float* srcRow =
+                    reinterpret_cast<const float*>(static_cast<const uint8_t*>(directMapped) + aovRowPitch * y);
+                float* dstRow = &directOut->Pixels[static_cast<size_t>(y) * settings.Width * 4];
+                for (size_t i = 0; i < static_cast<size_t>(settings.Width) * 4; ++i)
+                {
+                    dstRow[i] = srcRow[i] * invDirectSamples;
+                }
+            }
+            directReadback->Unmap(0, nullptr);
+        }
         if (wantAovs)
         {
             auto fillAov = [&](ID3D12Resource* buffer, CaptureResult& out) {
@@ -698,17 +795,20 @@ namespace ReferenceIntegrator
     bool RunFixtureCaptureWithAovsToFiles(ID3D12Device* device, ID3D12CommandQueue* queue,
                                           const ReferenceCapture::Settings& settings,
                                           const ReferenceFixture::SceneData& scene, const char* pfmPath,
-                                          const char* ppmPath, const char* albedoPfmPath, const char* normalPfmPath)
+                                          const char* ppmPath, const char* albedoPfmPath, const char* normalPfmPath,
+                                          const char* directPfmPath)
     {
         CaptureResult result;
         CaptureResult albedo;
         CaptureResult normal;
-        if (!RunFixtureCapture(device, queue, settings, scene, result, &albedo, &normal))
+        CaptureResult direct;
+        if (!RunFixtureCapture(device, queue, settings, scene, result, &albedo, &normal, &direct))
         {
             return false;
         }
         return ReferenceImageIO::WritePfm(pfmPath, result) && ReferenceImageIO::WritePpmPreview(ppmPath, result) &&
-               ReferenceImageIO::WritePfm(albedoPfmPath, albedo) && ReferenceImageIO::WritePfm(normalPfmPath, normal);
+               ReferenceImageIO::WritePfm(albedoPfmPath, albedo) && ReferenceImageIO::WritePfm(normalPfmPath, normal) &&
+               (directPfmPath == nullptr || ReferenceImageIO::WritePfm(directPfmPath, direct));
     }
 
     bool RunCornellCapture(ID3D12Device* device, ID3D12CommandQueue* queue,

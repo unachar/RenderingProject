@@ -24,6 +24,7 @@ StructuredBuffer<float4> Lights : register(t8); // 2 entries per light: (pos.xyz
 RWTexture2D<float4> Accumulation : register(u0);
 RWTexture2D<float4> AovAlbedo : register(u1);  // rgb: albedo, a: hit distance (-1 = sky)
 RWTexture2D<float4> AovNormal : register(u2);  // rgb: normal * 0.5 + 0.5, a: metallic
+RWTexture2D<float4> DirectAccumulation : register(u3); // direct-light split (first-bounce), same accumulation convention
 
 cbuffer ReferenceConstants : register(b0)
 {
@@ -331,7 +332,7 @@ float3 DirectLight(float3 position, float3 normal, float3 V, float3 albedo, floa
     return result;
 }
 
-float3 TracePath(float3 origin, float3 direction, inout Rng rng)
+float3 TracePath(float3 origin, float3 direction, inout Rng rng, inout float3 directOut)
 {
     float3 radiance = float3(0.0f, 0.0f, 0.0f);
     float3 throughput = float3(1.0f, 1.0f, 1.0f);
@@ -356,20 +357,29 @@ float3 TracePath(float3 origin, float3 direction, inout Rng rng)
         // Light-source materials (mat2.x, linked pair in mat2.y):
         // BSDF-sampled emission, MIS-weighted against the light's
         // own sampling density; camera rays take it whole.
+        float3 emissionTerm;
         if (mat2.x > 0.5f && mat2.y > 0.5f && depth > 0u)
         {
             const uint pairIndex = (uint)(mat2.y - 0.5f);
             const float lightPdf = QuadLightPdf(pairIndex, rayOrigin, surface.Position, rayDirection);
             const float misWeight = previousBsdfPdf / max(previousBsdfPdf + lightPdf, 1e-6f);
-            radiance += throughput * emission * misWeight;
+            emissionTerm = throughput * emission * misWeight;
         }
         else
         {
-            radiance += throughput * emission;
+            emissionTerm = throughput * emission;
         }
+        radiance += emissionTerm;
 
         const float3 V = -rayDirection;
-        radiance += throughput * DirectLight(surface.Position, surface.Normal, V, albedo, roughness, metallic, rng);
+        const float3 directTerm =
+            throughput * DirectLight(surface.Position, surface.Normal, V, albedo, roughness, metallic, rng);
+        radiance += directTerm;
+        if (depth == 0u)
+        {
+            // Direct split: first-bounce emission + direct lighting.
+            directOut += emissionTerm + directTerm;
+        }
 
         // Sample the BSDF: GGX lobe with probability specularWeight,
         // cosine diffuse otherwise; each branch divides by its
@@ -427,6 +437,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     const uint2 pixel = dispatchThreadId.xy;
     const uint pixelIndex = pixel.y * Resolution.x + pixel.x;
     float3 sum = float3(0.0f, 0.0f, 0.0f);
+    float3 directTotal = float3(0.0f, 0.0f, 0.0f);
     for (uint s = 0; s < SamplesInDispatch; ++s)
     {
         const uint sampleIndex = SampleOffset + s;
@@ -436,10 +447,14 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         const float2 ndc = (float2(pixel) + jitter) / float2(Resolution) * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f);
         const float4 farPoint = mul(float4(ndc, 0.0f, 1.0f), InvViewProjection);
         const float3 direction = normalize(farPoint.xyz / farPoint.w - CameraPosition);
-        sum += TracePath(CameraPosition, direction, rng);
+        float3 directSum = float3(0.0f, 0.0f, 0.0f);
+        sum += TracePath(CameraPosition, direction, rng, directSum);
+        directTotal += directSum;
     }
     const float4 previous = Accumulation[pixel];
     Accumulation[pixel] = float4(previous.rgb + sum, previous.a);
+    const float4 previousDirect = DirectAccumulation[pixel];
+    DirectAccumulation[pixel] = float4(previousDirect.rgb + directTotal, previousDirect.a);
 }
 
 #endif // REFERENCE_AOV_ENTRY

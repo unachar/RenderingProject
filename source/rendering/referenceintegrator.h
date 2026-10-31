@@ -66,5 +66,5 @@ namespace ReferenceIntegrator
                                           const ReferenceCapture::Settings& settings,
                                           const ReferenceFixture::SceneData& scene, const char* pfmPath,
                                           const char* ppmPath, const char* albedoPfmPath,
-                                          const char* normalPfmPath);
+                                          const char* normalPfmPath, const char* directPfmPath = nullptr);
 } // namespace ReferenceIntegrator

@@ -343,9 +343,11 @@ namespace
         sprintf_s(ppmPath, "reference_%s.ppm", fixtureName);
         sprintf_s(albedoPath, "reference_%s_albedo.pfm", fixtureName);
         sprintf_s(normalPath, "reference_%s_normal.pfm", fixtureName);
+        char directPath[64]{};
+        sprintf_s(directPath, "reference_%s_direct.pfm", fixtureName);
         const bool ok = ReferenceIntegrator::RunFixtureCaptureWithAovsToFiles(
             GraphicsDevice::GetDevice(), GraphicsDevice::GetCommandQueue(), settings, scene, pfmPath, ppmPath,
-            albedoPath, normalPath);
+            albedoPath, normalPath, directPath);
         WriteGraphicsLog("Reference capture (Stage 2H, %s): %s (%ux%u, %u spp)\n", fixtureName,
                          ok ? "PASS" : "FAIL", settings.Width, settings.Height, settings.SamplesPerPixel);
         Check(ok, "reference capture produced PFM and PPM outputs");
