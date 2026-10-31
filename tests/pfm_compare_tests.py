@@ -30,6 +30,7 @@ def main():
         write_pfm(same_path, 2, 1, pixels)
         result = pfm_compare.compare(ref_path, same_path)
         assert result["rmse"] == 0.0 and result["max_err"] == 0.0, result
+        assert abs(result["ssim"] - 1.0) < 1e-9, result
 
         shifted = [v + 0.1 for v in pixels]
         write_pfm(off_path, 2, 1, shifted)
@@ -47,6 +48,7 @@ def main():
         write_pfm(flip_path, 2, 2, img[6:] + img[:6])
         result = pfm_compare.compare(ref_path, flip_path)
         assert result["rmse"] > 0.5, result
+        assert result["ssim"] < 0.5, result
     print("pfm_compare tests passed")
     return 0
 
