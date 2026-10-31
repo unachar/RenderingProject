@@ -191,6 +191,11 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
         m_CommandList->SetGraphicsRootDescriptorTable(
             38, CD3DX12_GPU_DESCRIPTOR_HANDLE(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
                                               RendererState::g_kTEXTURE_SRV_START_INDEX, m_CbvIncrementSize));
+        // Root 39: the same texture heap in space 1 for
+        // MaterialTextureHeap.hlsli consumers (Stage 2J Route A).
+        m_CommandList->SetGraphicsRootDescriptorTable(
+            39, CD3DX12_GPU_DESCRIPTOR_HANDLE(m_CbvHeap->GetGPUDescriptorHandleForHeapStart(),
+                                              RendererState::g_kTEXTURE_SRV_START_INDEX, m_CbvIncrementSize));
 
         RenderFrame::SetDescriptorHeap();
 

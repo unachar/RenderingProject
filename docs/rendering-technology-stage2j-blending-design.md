@@ -25,6 +25,13 @@ engine texture heap to it in DrawFullscreenPass). The frame-global
 top-2 selection and remainder weighting stay live either way;
 only the per-pixel Route A fetch is gated.
 
+**Update (same day):** the deferred path now has the space-1
+range (postprocess root 39, bound in DrawFullscreenPass to the
+engine texture heap), and DeferredLightingPS defines
+PROBE_BLENDING_BINDLESS itself — per-pixel two-probe blending is
+live in the deferred path. The forward path (modelshaderPS)
+remains gated pending the same audit of its root signature.
+
 Status: DESIGN. Stage 2J v1 selects ONE probe per frame (the
 camera-containing, highest-priority one) and overrides the
 environment texture for the whole frame; box projection (landed in

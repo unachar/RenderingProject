@@ -220,7 +220,7 @@ static void ShaderLogToFile(const char* msg)
 bool ShaderPipelines::CreatePostProcessPipeline()
 {
     ShaderLogToFile("PP: setup ranges\n");
-    CD3DX12_DESCRIPTOR_RANGE ranges[19];
+    CD3DX12_DESCRIPTOR_RANGE ranges[20];
     ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 0);
     ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6);
     ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 7);
@@ -244,7 +244,11 @@ bool ShaderPipelines::CreatePostProcessPipeline()
     // 38：MegaLights M7 のライトのテクスチャ（エンジンのテクスチャ SRV 512 個、t0 space5）
     CD3DX12_DESCRIPTOR_RANGE megaLightTextures;
     megaLightTextures.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 512, 0, 5);
-    CD3DX12_ROOT_PARAMETER params[39];
+    // Stage 2J Route A: the material texture heap in space 1 (the
+    // register space MaterialTextureHeap.hlsli declares), bound to
+    // the same engine texture heap as the space-5 table at root 38.
+    ranges[19].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 512, 0, 1);
+    CD3DX12_ROOT_PARAMETER params[40];
     params[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
     params[1].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
     params[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -290,6 +294,7 @@ bool ShaderPipelines::CreatePostProcessPipeline()
     //   M4: 可視ライトハッシュ（デバッグ表示用）
     params[37].InitAsShaderResourceView(50, 0, D3D12_SHADER_VISIBILITY_PIXEL);
     params[38].InitAsDescriptorTable(1, &megaLightTextures, D3D12_SHADER_VISIBILITY_PIXEL);
+    params[39].InitAsDescriptorTable(1, &ranges[19], D3D12_SHADER_VISIBILITY_PIXEL);
     CD3DX12_STATIC_SAMPLER_DESC samplers[4]{};
     samplers[0] = CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
 

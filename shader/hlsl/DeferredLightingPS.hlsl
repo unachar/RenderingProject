@@ -1,4 +1,8 @@
 Texture2D<float4> MaterialEmissionAO : register(t33);
+// Stage 2J: per-pixel two-probe blending samples probe textures
+// through the material texture heap; the postprocess root
+// signature binds that heap in space 1 at root 39.
+#define PROBE_BLENDING_BINDLESS
 #define SHADER_POSTPROCESS
 #define SHADER_3D
 #include "common.hlsl"
