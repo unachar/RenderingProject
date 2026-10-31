@@ -17,7 +17,9 @@ gate and the expected observable behavior.
 - [ ] `tests/shader_scan_tests.py` and `tests/pfm_compare_tests.py`
       pass, plus the run's source-contract tests:
       traversal_binning / ssr_constants / reference_integrator /
-      postprocess_probe contract tests (all under tests/).
+      postprocess_probe contract tests (all under tests/), plus
+      shader_build_targets_contract_tests.py, the Linux port of
+      the PowerShell targets gate.
       Already green on the Linux side, together with the DXC
       compile sweep (`scripts/compile_check_linux.sh`, 17/17
       entry points) - the Windows build above is the remaining
