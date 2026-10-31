@@ -37,7 +37,8 @@ and the tooling that reads the result.
 ## SSR (flag: UseScreenSpaceReflections, default OFF)
 
 - Metrics per sub-mode (base / checkerboard / roughness limit
-  0.5): SSR pass GPU ms (trace + resolve + downsample chain),
+  0.5): SSR pass GPU ms (profiler events: SSR Trace, SSR
+  Resolve, SSR MipChain),
   temporal stability (per-pixel variance of the reflection over
   60 static frames), and the checklist's visual items.
 - Decide per sub-mode: checkerboard ships if trace ms roughly
