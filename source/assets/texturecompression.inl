@@ -1,6 +1,7 @@
 // texturemanager.cpp の末尾から取り込まれる実装（プロジェクトへのファイル追加を不要にするため .inl）。
 #include "DirectXTex.h"
 #include "texturecompression.h"
+#include "texturecachestorage.h"
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -100,27 +101,7 @@ namespace TextureCompressionDetail
         {
             return;
         }
-        std::error_code error;
-        const auto directory = TextureCompression::CacheDirectory();
-        std::filesystem::create_directories(directory, error);
-        if (error)
-        {
-            return;
-        }
-        const auto target = CacheFile(cacheKey);
-        const auto temporary = target.wstring() + L"." + std::to_wstring(GetCurrentProcessId()) + L"." +
-                               std::to_wstring(GetCurrentThreadId()) + L".tmp";
-        if (FAILED(SaveToDDSFile(image.GetImages(), image.GetImageCount(), image.GetMetadata(), DDS_FLAGS_NONE,
-                                 temporary.c_str())))
-        {
-            std::filesystem::remove(temporary, error);
-            return;
-        }
-        // 読み手には完成したファイルかキャッシュミスのどちらかだけが見える。
-        if (!MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING))
-        {
-            std::filesystem::remove(temporary, error);
-        }
+        TextureCacheStorage::Store(CacheFile(cacheKey), image);
     }
 
     // バックグラウンド圧縮用の単一ワーカー。終了時に破棄しないようにヒープへ置き、スレッドは切り離す。
@@ -319,19 +300,10 @@ namespace TextureCompression
         {
             return false;
         }
-        const auto file = CacheFile(cacheKey);
-        std::error_code error;
-        if (!std::filesystem::exists(file, error))
-        {
-            return false;
-        }
         ScratchImage cached;
         TexMetadata cachedMetadata{};
-        if (FAILED(LoadFromDDSFile(file.c_str(), DDS_FLAGS_NONE, &cachedMetadata, cached)) ||
-            !IsCompressed(cachedMetadata.format))
+        if (!TextureCacheStorage::Load(CacheFile(cacheKey), cachedMetadata, cached))
         {
-            // 壊れたキャッシュは削除して作り直す。
-            std::filesystem::remove(file, error);
             return false;
         }
         metadata = cachedMetadata;

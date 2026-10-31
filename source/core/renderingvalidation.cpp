@@ -3,6 +3,7 @@
 #include "thumbnailvalidation.h"
 #include "cloud/cloudvalidation.h"
 #include "renderingvalidation.h"
+#include "geometricaavalidation.h"
 #include "meshlets/meshletvalidation.h"
 #include "virtualgeometry/virtualgeometryvalidation.h"
 #include "virtualgeometry/virtualgeometryproduction.h"
@@ -926,6 +927,13 @@ bool RenderingValidation::IsEnabled()
 
 void RenderingValidation::BeforeFrame(uint64_t frame)
 {
+    if (GeometricAaValidation::Enabled())
+    {
+        ImGuiManager::m_HdrEnabled = true;
+        ImGuiManager::m_ToneMapEnabled = true;
+        GeometricAaValidation::BeforeFrame(frame);
+        return;
+    }
     if (!VmdCameraTestPath().empty())
     {
         BeforeVmdCameraTestFrame(frame);
@@ -1274,6 +1282,11 @@ void RenderingValidation::BeforeFrame(uint64_t frame)
 
 void RenderingValidation::AfterFrame(uint64_t frame)
 {
+    if (GeometricAaValidation::Enabled())
+    {
+        GeometricAaValidation::AfterFrame(frame);
+        return;
+    }
     if (!VmdCameraTestPath().empty())
     {
         AfterVmdCameraTestFrame(frame);
@@ -1656,6 +1669,7 @@ void RenderingValidation::AfterFrame(uint64_t frame)
 
 bool RenderingValidation::Finish()
 {
+    if (GeometricAaValidation::Enabled()) return GeometricAaValidation::Finish();
     if (!VmdCameraTestPath().empty())
     {
         Check(g_VmdCameraTest.Completed, "complete VMD GameCamera play/pause/stop sequence");

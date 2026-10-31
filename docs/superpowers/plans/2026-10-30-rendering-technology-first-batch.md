@@ -33,10 +33,10 @@
 
 **Interfaces:** DxcCompilerPolicy::ShouldStripReflection(unsigned flags, bool keepReflection) -> bool. Uses D3DCOMPILE_DEBUG supplied from existing DXC API header. The helper appends -Qstrip_reflect before CachePath is calculated.
 
-- [ ] Write/run failing tests for Debug, Release, environment override and cache argument separation.
-- [ ] Add helper and runtime compile option using existing flags and environment-query conventions.
-- [ ] Run policy tests; compile PS/VS/CS with real DXC and compare execution-relevant container parts and sizes.
-- [ ] Preserve Debug shader info; verify user override; record totals and limitations.
+- [x] Write/run failing tests for Debug, Release, environment override and cache argument separation.
+- [x] Add helper and runtime compile option using existing flags and environment-query conventions.
+- [x] Run policy tests; compile PS/VS/CS with real DXC and compare execution-relevant container parts and sizes.
+- [x] Preserve Debug shader info; verify user override; record totals and limitations.
 
 ### Task B: Opt-in geometric specular AA
 
@@ -44,16 +44,16 @@
 
 **Interfaces:** shared scalar FilterGeometricRoughness(float roughness, float normalGradientSquared, float varianceScale, float threshold) -> float. HLSL wrapper derives gradients in PS or receives same-triangle gradients in Compute. GEOMETRIC_SPECULAR_AA defaults 0.
 
-- [ ] Write/run failing production-math tests for zero gradients/settings, r=0/1, monotonicity, large gradients and finite checks.
-- [ ] Implement scalar filter and guarded derivative inputs with finite fallback, preserving OFF calculation.
-- [ ] Attach final roughness filter only to eligible PBR GBuffer classes, after part/asset selection. Compute interpolated geometry normals before normal-map changes.
-- [ ] Test production math, compile PS/GPU Driven/Visibility CS ON/OFF and validate dependency tracking.
-- [ ] Add GPU fixture using real production shader function for roughness outputs and disabled/Toon behavior; run full renderer smoke if available.
-- [ ] Record actual image/timing coverage and any pending temporal-quality benchmark; keep feature OFF unless evidence justifies enabling.
+- [x] Write/run failing production-math tests for zero gradients/settings, r=0/1, monotonicity, large gradients and finite checks.
+- [x] Implement scalar filter and guarded derivative inputs with finite fallback, preserving OFF calculation.
+- [x] Attach final roughness filter only to eligible PBR GBuffer classes, after part/asset selection. Compute interpolated geometry normals before normal-map changes.
+- [x] Test production math, compile PS/GPU Driven/Visibility CS ON/OFF and validate dependency tracking.
+- [x] Add GPU fixture using real production shader function for roughness outputs and disabled/Toon behavior; run full renderer smoke if available.
+- [x] Record actual image/timing coverage and any pending temporal-quality benchmark; keep feature OFF unless evidence justifies enabling.
 
 ### Final validation and review
 
-- [ ] Build affected code and shaders; run focused regression checks and renderer smoke.
-- [ ] Get independent review, address actionable findings, rerun only affected checks.
-- [ ] Update checked steps, survey and validation evidence; report unfinished parts of the broad goal accurately.
+- [x] Full renderer regression acceptance: Debug build/focused checks pass; retained/default policy features84 andfallback84 pass after descriptor fix. Latest fixed-clock default features84/fallback84 pass, and five feature captures exactly match the fixed-clock retained baseline. This does not prove AA ON temporal quality/performance or complete the broad100-repository goal.
+- [x] Get independent review, address actionable findings, rerun only affected checks.
+- [x] Update checked steps, survey and validation evidence; report unfinished parts of the broad goal accurately.
 

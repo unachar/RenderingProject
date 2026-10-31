@@ -25,7 +25,7 @@
 namespace
 {
     constexpr UINT kFrameCount = RendererState::g_kFRAME_COUNT;
-    constexpr UINT kSrvStart = RendererState::g_kHIZ_MIP_SRV_START_INDEX + 2 * RendererState::g_kHIZ_MAX_MIPS;
+    constexpr UINT kSrvStart = RendererState::g_kRAY_SHADOW_SRV_START_INDEX;
     constexpr UINT kUavStart = kSrvStart + kFrameCount;
     constexpr UINT kFallbackSrv = kUavStart + kFrameCount;
     constexpr UINT kGuideUavStart = kSrvStart + 16; // 既存の DXR と DLSS の記述子領域の後に配置する

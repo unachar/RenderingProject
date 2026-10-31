@@ -51,8 +51,8 @@ float4 Pixel(RasterInput input) : SV_Target
     float3 dy = ddy(normal);
     float gradient = GeometricSpecularAA::FiniteGradientSquared(dot(dx, dx), dot(dy, dy));
     float materialClass = 11;
-    if (input.Position.x >= 8 && input.Position.x < 16) materialClass = 1;
-    if (input.Position.x >= 16 && input.Position.x < 24) materialClass = 0;
+    if (input.Position.x >= 8 && input.Position.x < 16) materialClass = 4; // ShaderClass::Toon
+    if (input.Position.x >= 16 && input.Position.x < 24) materialClass = 10; // ShaderClass::Unlit
     return float4(GeometricSpecularAA::FilterMaterialRoughness(0.04f, gradient, materialClass),
                   0.04f, gradient, materialClass);
 }

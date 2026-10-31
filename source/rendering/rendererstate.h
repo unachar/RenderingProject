@@ -249,9 +249,8 @@ class RendererState
     static constexpr UINT g_kHIZ_MAX_MIPS = 16;
     static constexpr UINT g_kHIZ_UAV_START_INDEX = g_kHIZ_SRV_START_INDEX + 2;
     static constexpr UINT g_kHIZ_MIP_SRV_START_INDEX = g_kHIZ_UAV_START_INDEX + 2 * g_kHIZ_MAX_MIPS;
-    static constexpr UINT g_kHIZ_SOURCE_SRV_INDEX = g_kHIZ_MIP_SRV_START_INDEX + 2 * g_kHIZ_MAX_MIPS;
-    static constexpr UINT g_kHIZ_DEBUG_SRV_INDEX = g_kHIZ_SOURCE_SRV_INDEX + 1;
-    static constexpr UINT g_kHIZ_DEBUG_UAV_INDEX = g_kHIZ_SOURCE_SRV_INDEX + 2;
+    static constexpr UINT g_kRAY_SHADOW_SRV_START_INDEX =
+        g_kHIZ_MIP_SRV_START_INDEX + 2 * g_kHIZ_MAX_MIPS;
 
     static constexpr UINT g_kMATERIAL_PREVIEW_SRV_INDEX = g_kDEPTH_SRV_INDEX + 256;
     static constexpr UINT g_kTRANSMITTANCE_SHADOW_LAYERS = 4;
@@ -281,6 +280,15 @@ class RendererState
     static constexpr UINT g_kQUALITY_DESCRIPTOR_COUNT = 16;
     static_assert(g_kQUALITY_DESCRIPTOR_START + g_kQUALITY_DESCRIPTOR_COUNT <= g_kMATERIAL_PREVIEW_SRV_INDEX,
                   "Render quality descriptors overlap the material preview range");
+    // Keep auxiliary Hi-Z views after the existing DXR/DLSS, cloud, atmosphere and quality ranges.
+    static constexpr UINT g_kHIZ_SOURCE_SRV_INDEX = g_kQUALITY_DESCRIPTOR_START + g_kQUALITY_DESCRIPTOR_COUNT;
+    static constexpr UINT g_kHIZ_DEBUG_SRV_INDEX = g_kHIZ_SOURCE_SRV_INDEX + 1;
+    static constexpr UINT g_kHIZ_DEBUG_UAV_INDEX = g_kHIZ_SOURCE_SRV_INDEX + 2;
+    static_assert(g_kHIZ_DEBUG_UAV_INDEX < g_kRAY_SHADOW_SRV_START_INDEX ||
+                      g_kHIZ_SOURCE_SRV_INDEX >= g_kRAY_SHADOW_SRV_START_INDEX + g_kFRAME_COUNT,
+                  "Hi-Z auxiliary descriptors overlap ray shadow SRVs");
+    static_assert(g_kHIZ_DEBUG_UAV_INDEX < g_kMATERIAL_PREVIEW_SRV_INDEX,
+                  "Hi-Z auxiliary descriptors overlap the material preview range");
     static_assert(g_kHIZ_DEBUG_UAV_INDEX <= g_kENGINE_DESCRIPTOR_END,
                   "The Hi-Z descriptor range exceeds the engine-owned descriptor range.");
     static constexpr UINT g_kMAX_DYNAMIC_VERTICES = 65536;

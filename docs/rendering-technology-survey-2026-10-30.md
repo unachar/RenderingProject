@@ -36,7 +36,7 @@ facebook/zstd は meta/zstd へ転送されたため移転先を確認。README�
 |5|[google/filament](https://github.com/google/filament/blob/main/README.md)|小型PBR実装。幾何スペキュラAAを初回候補に選定。既存DFG・多重散乱補償は維持。|
 |6|[NVIDIA-RTX/NRD](https://github.com/NVIDIA-RTX/NRD/blob/master/README.md)|既存External/NRDと連携コードあり。更新前に入出力の法線・粗さ・viewZ・motion契約とバージョン差分を確認。|
 |7|[AcademySoftwareFoundation/OpenColorIO](https://github.com/AcademySoftwareFoundation/OpenColorIO/blob/main/README.md)|カラー管理。AgX/ACES近似の追加とは別に入出力色空間・OCIO設定を扱う。色変換の二重適用を防ぐ。|
-|8|[NVIDIA-RTX/STBN](https://github.com/NVIDIA-RTX/STBN/blob/main/README.md)|事前生成STBN。既存R2/R4サンプルと固定条件で比較。テクスチャ資産・周期・空間相関・履歴ノイズを検証。|
+|8|[NVIDIA-RTX/STBN](https://github.com/NVIDIA-RTX/STBN/blob/main/README.md)|[追加source audit](rendering-technology-stbn-source-audit-2026-10-31.md)。既存R2/R4あり、baseline試験PASS。初回候補はAO低SPP。型/PDF/8bit export/非商用・商用両licenseを確認。RG8なら候補本体2MiB、実data未取得・効果未測定。4D/影8phaseを一括置換しない。|
 |9|[NVIDIAGameWorks/Falcor](https://github.com/NVIDIAGameWorks/Falcor/blob/master/README.md)|DX12/Vulkan研究基盤。RenderGraphとReSTIR PTの設計参考。エンジン全置換は選択しない。|
 |10|[GPUOpen-Effects/FidelityFX-CACAO](https://github.com/GPUOpen-Effects/FidelityFX-CACAO/blob/master/readme.md)|CACAO。既存visibility-bitmask AOと同半径・画質で比較する代替候補。AOの二重乗算を避ける。|
 |11|[pboechat/PCSS](https://github.com/pboechat/PCSS/blob/master/README.md)|OpenGLのPCSS例。既存影フィルターのblocker searchとpenumbra計算を確認して不足のみ追加。利用条件は本文確認。|
@@ -70,7 +70,7 @@ facebook/zstd は meta/zstd へ転送されたため移転先を確認。README�
 |39|[billtruong003/stylized-toon-world-kit](https://github.com/billtruong003/stylized-toon-world-kit/blob/main/README.md)|Unity6向けstylized shader群。環境表現・低負荷variantの参考。SRP固有処理を直接移植しない。|
 |40|[NguyenDucThuan2209/AnimeShader](https://github.com/NguyenDucThuan2209/AnimeShader/blob/master/README.md)|学習用URP Toonの短い実装。多灯・影・輪郭を既存Toonと比較。製品版NiloToonを含むとは扱わない。|
 |41|[guillaumeblanc/ozz-animation](https://github.com/guillaumeblanc/ozz-animation/blob/master/README.md)|SIMD骨格アニメーション。既存VMD/IK/morph/DQSを保持し、汎用clip samplingのバッチ化候補。|
-|42|[nfrechette/acl](https://github.com/nfrechette/acl/blob/develop/README.md)|アニメーション圧縮。offline cookとruntime decodeを対で導入候補。位置/角度/末端誤差とメモリ・CPUを実クリップで比較。|
+|42|[acl](https://github.com/nfrechette/acl/tree/3ee568542eca4428e1041908b4a644b98e7885bd)|固定ソースとRTM/ライセンス・raw sample/loop/誤差契約を追加調査。実FBX3clipで現行整数キー選択と時刻補間の差を測定。圧縮誤差と再生方式の差を分ける必要。ACL自体は未ビルド。[調査と比較](rendering-technology-acl-source-audit-2026-10-31.md)。|
 |43|[skiriushichev/eely](https://github.com/skiriushichev/eely/blob/master/README.md)|engine-agnostic骨格/グラフ。既存timelineとpose cacheがあるため全置換せず機能差を抽出。|
 |44|[thecomet/ik](https://github.com/thecomet/ik/blob/master/README.md)|FABRIKと1/2-bone IK。既存Humanoid IKとの精度・収束を比較。MMDのIK順序・可動域を壊さない。|
 |45|[chengkehan/GPUSkinning](https://github.com/chengkehan/GPUSkinning/blob/master/README.md)|Unity GPU skinning。既にcompute skinningがある。crowd向けbakeと共有poseを別候補とする。|
@@ -82,11 +82,11 @@ facebook/zstd は meta/zstd へ転送されたため移転先を確認。README�
 |51|[spnda/fastgltf](https://github.com/spnda/fastgltf/blob/main/README.md)|高速glTF 2.0読み込み。AssimpのglTF部分だけを選択式で比較。extension/座標系/skin/morphを一致させる。|
 |52|[ufbx/ufbx](https://github.com/ufbx/ufbx/blob/main/README.md)|単一ファイルFBX loader。FBX限定のimport候補。Assimpとbind pose・単位・pivot・アニメーションを比較。|
 |53|[microsoft/DirectStorage](https://github.com/microsoft/DirectStorage/blob/main/README.md)|高速非同期IO/GPU展開。VG/texture streamingに候補。NVMe能力・圧縮方式・キャンセル・Fence所有権が前提。|
-|54|[facebook/zstd](https://github.com/meta/zstd/blob/dev/README.md)|可逆圧縮。モデル/アニメーションcacheのサイズ削減候補。既存VG codecやBCへ無条件に重ねずdecode時間も測定。|
+|54|[zstd](https://github.com/meta/zstd/tree/f8745da6ff1ad1e7bab384bd1f9d742439278e99)|承認済みの静的統合を実装。v1読込維持、縮む新規保存だけv2。固定3,207件の比較でヘッダー込み125.46→84.97MB（32.27%減）、byte完全一致。warm Load合計727→913msへ増加。Debug全体/描画回帰PASS、5枚×2経路RGB完全一致。[測定と制約](rendering-technology-zstd-validation.md)。|
 |55|[tinyobjloader/tinyobjloader](https://github.com/tinyobjloader/tinyobjloader/blob/release/README.md)|OBJ loader。OBJ専用の軽量import候補。material/triangulation/頂点属性をAssimpと比較。|
 |56|[google/draco](https://github.com/google/draco/blob/main/README.md)|mesh圧縮。既存meshoptimizer/VG量子化と競合。glTF拡張入力とoffline配送用に限定して容量/誤差を比較。|
-|57|[BinomialLLC/basis_universal](https://github.com/BinomialLLC/basis_universal/blob/master/README.md)|GPUテクスチャのsupercompression。asset cookとtranscodeの候補。BC resident容量と配布容量を区別。|
-|58|[KhronosGroup/KTX-Software](https://github.com/KhronosGroup/KTX-Software/blob/main/README.md)|KTX2コンテナとツール。basis/KTX連携でportable asset pipeline候補。既存DDS/BC cacheと比較。|
+|57|[basis_universal](https://github.com/BinomialLLC/basis_universal/blob/073eb6a0a34a23d77e75e54f41dcd9653a52da83/transcoder/basisu_transcoder.h)|公開APIを追加調査。BC5第二成分のAlpha契約と既存RG法線の違いを確認。DDS65件122.1MBを棚卸し、実変換・画質/速度比較は未実施。[調査と制約](rendering-technology-ktx-basis-source-audit-2026-10-31.md)。|
+|58|[KTX-Software](https://github.com/KhronosGroup/KTX-Software/blob/00d67536657e0e1563d5ed94772c7bd1556b917b/lib/src/basis_transcode.cpp)|固定版のDFD/channel、ライセンス例外、mip別zstd復元を確認。既存65DDS/441mipの可逆圧縮比較ではBC本体122.10→44.18MB、byte完全一致。KTX2自体は未生成・未導入。[比較と制約](rendering-technology-texture-storage-probe.md)。|
 |59|[jkuhlmann/cgltf](https://github.com/jkuhlmann/cgltf/blob/master/README.md)|軽量glTF loader。fastgltfとの二重実装を避け、速度・extension・依存量でどちらかを選ぶ。|
 |60|[ibireme/yyjson](https://github.com/ibireme/yyjson/blob/master/README.md)|高速JSON。既存scene/asset JSONの計測後に判断。型・エラー位置・保存互換性を維持。|
 |61|[iryoku/smaa](https://github.com/iryoku/smaa/blob/master/README.md)|SMAA。native解像度・非temporalのAA候補。TSR/DLSSに常時重ねず選択式で比較。|

@@ -94,7 +94,7 @@
       "license": "NOASSERTION",
       "archived": false,
       "pushed_at": "2025-02-05T22:31:38Z",
-      "assessment": "事前生成STBN。既存R2/R4サンプルと固定条件で比較。テクスチャ資産・周期・空間相関・履歴ノイズを検証。",
+      "assessment": "追加source audit: docs/rendering-technology-stbn-source-audit-2026-10-31.md。既存R2/R4 baseline試験PASS。AO低SPPが初回候補。型/PDF/8bit export/非商用・商用両licenseを確認。128x128x64 RG8本体は仮定上2MiB、実data未取得・効果未測定。4Dと影8phaseを一括置換しない。",
       "readmeUrl": "https://github.com/NVIDIA-RTX/STBN/blob/main/README.md",
       "readmeCharacters": 2437
     },
@@ -496,7 +496,7 @@
       "license": "MIT",
       "archived": false,
       "pushed_at": "2025-11-26T02:28:49Z",
-      "assessment": "アニメーション圧縮。offline cookとruntime decodeを対で導入候補。位置/角度/末端誤差とメモリ・CPUを実クリップで比較。",
+      "assessment": "固定develop3ee56854（version2.1.99）とRTM113ca0d0のMIT/依存、raw sample/parent/precision/loop/rounding/誤差metric契約を追加調査。実FBX3clipのnative inventoryと整数キー対時刻補間比較を実行。idle/standupはローカル最大回転差5.299/3.444degで、ACL誤差との混同を防ぐ必要。VMD/IK/morphは別経路。ACL自体は未ビルド・未導入。docs/rendering-technology-acl-source-audit-2026-10-31.md。",
       "readmeUrl": "https://github.com/nfrechette/acl/blob/develop/README.md",
       "readmeCharacters": 11674
     },
@@ -639,7 +639,7 @@
       "license": "NOASSERTION",
       "archived": false,
       "pushed_at": "2026-10-06T01:11:59Z",
-      "assessment": "可逆圧縮。モデル/アニメーションcacheのサイズ削減候補。既存VG codecやBCへ無条件に重ねずdecode時間も測定。",
+      "assessment": "固定f8745da6のzstd1.5.7を承認済み設計で静的統合。旧v1読込とbeneficial-only v2保存。固定3207件の比較でヘッダー込み125458634→84967209bytes（32.2747%減）、byte完全一致。warm Load合計727.458→912.591msへ増加。Debug全体ビルド/描画features84とfallback84 PASS、5枚×2のRGB完全一致。元cacheの一括変換なし。docs/rendering-technology-zstd-validation.md。",
       "readmeUrl": "https://github.com/meta/zstd/blob/dev/README.md",
       "readmeCharacters": 11836
     },
@@ -675,7 +675,7 @@
       "license": "Apache-2.0",
       "archived": false,
       "pushed_at": "2026-10-23T22:56:08Z",
-      "assessment": "GPUテクスチャのsupercompression。asset cookとtranscodeの候補。BC resident容量と配布容量を区別。",
+      "assessment": "固定073eb6a0の公開API・Apache LICENSEを追加調査。BC4/5/7変換があるがBC5第二成分はAlpha契約で、既存RG法線の無条件移行は不可。DDS65件122108212bytesを棚卸し。実変換・画質/速度比較は未実施。docs/rendering-technology-ktx-basis-source-audit-2026-10-31.md。",
       "readmeUrl": "https://github.com/BinomialLLC/basis_universal/blob/master/README.md",
       "readmeCharacters": 48196
     },
@@ -687,7 +687,7 @@
       "license": "NOASSERTION",
       "archived": false,
       "pushed_at": "2026-10-30T07:24:37Z",
-      "assessment": "KTX2コンテナとツール。basis/KTX連携でportable asset pipeline候補。既存DDS/BC cacheと比較。",
+      "assessment": "固定00d67536のLICENSE/CMake/basis_transcode/texture2.cを追加調査。DFD channel・ライセンス例外・mip別zstd復元を確認。既存65DDS/441mipのBC本体は独立mip zstd level3で122098992→44178806bytes、全byte一致。DDS全体は122108212→43981032bytes（63.98%減）、復元+DDSメモリ読込は65件計102.94ms（非圧縮基準23.91ms）。KTX2自体は未生成・未導入。docs/rendering-technology-texture-storage-probe.md。",
       "readmeUrl": "https://github.com/KhronosGroup/KTX-Software/blob/main/README.md",
       "readmeCharacters": 8939
     },

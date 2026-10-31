@@ -9,7 +9,10 @@ $developerCommand = Join-Path $installation 'Common7/Tools/VsDevCmd.bat'
 Push-Location $workspace
 try {
     New-Item -ItemType Directory -Path bin/validation -Force | Out-Null
+    . "$PSScriptRoot/zstd-test-build.ps1"
+    $zstdObject = Get-ZstdTestObject $developerCommand
     $command = 'cl.exe /nologo /utf-8 /EHsc /std:c++17 /O2 /I source /I packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\include tests\shader_cache_tests.cpp /Fe:bin\validation\shader_cache_tests.exe /Fo:bin\validation\shader_cache_tests.obj /link /LIBPATH:packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native\lib\x64 d3dcompiler.lib'
+    $command = $command.Replace(' /link ', (' "{0}" /link ' -f $zstdObject))
     & $env:ComSpec /d /c ('"{0}" -no_logo -arch=amd64 -host_arch=amd64 && {1}' -f $developerCommand, $command)
     if ($LASTEXITCODE -ne 0) {
         throw 'Shader cache test compilation failed.'

@@ -1600,6 +1600,12 @@
     <ClCompile Include="source\core\materialvalidation.cpp">
       <Filter>core</Filter>
     </ClCompile>
+    <ClCompile Include="source\core\geometricaavalidation.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
+    <ClInclude Include="source\core\geometricaavalidation.h">
+      <Filter>core</Filter>
+    </ClInclude>
     <ClInclude Include="source\core\materialvalidation.h">
       <Filter>core</Filter>
     </ClInclude>
@@ -1628,5 +1634,14 @@
     <ClInclude Include="source\rendering\animationpreviewcontext.h">
       <Filter>rendering</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="External\zstd\zstd.c" />
+    <ClInclude Include="source\shadercachecodec.h" />
+    <ClInclude Include="source\assets\texturecachecodec.h"><Filter>assets</Filter></ClInclude>
+    <ClInclude Include="source\assets\texturecachestorage.h"><Filter>assets</Filter></ClInclude>
+    <ClInclude Include="External\zstd\zstd.h" />
+    <ClInclude Include="External\zstd\zstd_errors.h" />
+    <None Include="External\zstd\LICENSE" />
   </ItemGroup>
 </Project>

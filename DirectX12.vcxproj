@@ -1307,6 +1307,7 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\core\materialvalidation.cpp" />
+    <ClCompile Include="source\core\geometricaavalidation.cpp" />
     <ClCompile Include="source\core\givalidation.cpp" />
     <ClCompile Include="source\core\temporallightingvalidation.cpp" />
     <ClCompile Include="source\core\celestialocclusionvalidation.cpp" />
@@ -1314,6 +1315,7 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\core\temporallightingvalidation.h" />
     <ClInclude Include="source\core\givalidation.h" />
     <ClInclude Include="source\core\materialvalidation.h" />
+    <ClInclude Include="source\core\geometricaavalidation.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\assets\materialscenereferences.cpp" />
@@ -1388,4 +1390,25 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     </ClCompile>
     <ClInclude Include="source\virtualgeometry\virtualgeometrystreamingvalidation.h" />
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="External\zstd\zstd.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+      <LanguageStandard>Default</LanguageStandard>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
+      <Optimization>MaxSpeed</Optimization>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClInclude Include="source\shadercachecodec.h" />
+    <ClInclude Include="source\assets\texturecachecodec.h" />
+    <ClInclude Include="source\assets\texturecachestorage.h" />
+    <ClInclude Include="External\zstd\zstd.h" />
+    <ClInclude Include="External\zstd\zstd_errors.h" />
+    <None Include="External\zstd\LICENSE" />
+  </ItemGroup>
+  <Target Name="CopyZstdLicense" AfterTargets="Build">
+    <MakeDir Directories="$(OutDir)licenses" />
+    <Copy SourceFiles="$(ProjectDir)External\zstd\LICENSE" DestinationFiles="$(OutDir)licenses\zstd-LICENSE.txt" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

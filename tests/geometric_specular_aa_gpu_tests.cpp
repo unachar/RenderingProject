@@ -252,6 +252,8 @@ int main()
                 for (UINT x = 0; x < Width; ++x)
                 {
                     const float* pixelValue = row + x * 4;
+                    const double expectedClass = (x < 8 || x >= 24) ? 11 : (x < 16 ? 4 : 10);
+                    Near(pixelValue[3], expectedClass, "actual PBR / Toon / Unlit class IDs");
                     const bool filtered = enabled && x >= 24;
                     double expected = 0.04f;
                     if (filtered)

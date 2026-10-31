@@ -8,6 +8,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "shadercachecodec.h"
 
 // プリプロセス済みソースには間接的な include の内容も含まれる。DXIL の再利用前に、
 // コンパイラ引数とコンパイラ実行ファイルの識別情報も合わせてハッシュ化する。
@@ -15,13 +16,7 @@ namespace DxcShaderCache
 {
     inline uint64_t Hash(const void* data, size_t size, uint64_t hash = 14695981039346656037ull)
     {
-        const auto* bytes = static_cast<const unsigned char*>(data);
-        for (size_t index = 0; index < size; ++index)
-        {
-            hash ^= bytes[index];
-            hash *= 1099511628211ull;
-        }
-        return hash;
+        return ShaderCacheCodec::Hash(data, size, hash);
     }
 
     inline std::wstring CompilerIdentity()
@@ -96,34 +91,40 @@ namespace DxcShaderCache
 
     inline bool Load(const std::filesystem::path& path, std::vector<char>& object, std::string& diagnostics)
     {
+        object.clear();
+        diagnostics.clear();
         if (path.empty())
         {
             return false;
         }
-        std::ifstream stream(path, std::ios::binary | std::ios::ate);
-        // 確保量を制限し、読み込み前に切り詰められたキャッシュや旧形式を拒否する。
-        constexpr uint64_t magic = 0x3143584443484143ull;
-        uint64_t header[4]{};
-        const auto fileSize = stream.tellg();
-        stream.seekg(0);
-        stream.read(reinterpret_cast<char*>(header), sizeof(header));
-        if (!stream || header[0] != magic || header[1] > 64 * 1024 * 1024 || header[2] > 1024 * 1024 ||
-            fileSize != sizeof(header) + header[1] + header[2])
+        try
+        {
+            std::ifstream stream(path, std::ios::binary | std::ios::ate);
+            const std::streamoff fileSize = stream.tellg();
+            if (fileSize < 32 || fileSize > static_cast<std::streamoff>(
+                ShaderCacheCodec::MaxObjectBytes + ShaderCacheCodec::MaxDiagnosticBytes + 48)) return false;
+            std::array<uint64_t, 6> words{};
+            stream.seekg(0);
+            stream.read(reinterpret_cast<char*>(words.data()), 32);
+            if (words[0] == ShaderCacheCodec::MagicV2)
+                stream.read(reinterpret_cast<char*>(words.data() + 4), 16);
+            ShaderCacheCodec::Header header;
+            if (!stream || !ShaderCacheCodec::ParseHeader(words, static_cast<uint64_t>(fileSize), header))
+                return false;
+            std::vector<char> payload(static_cast<size_t>(header.storedBytes));
+            stream.read(payload.data(), static_cast<std::streamsize>(payload.size()));
+            return stream && ShaderCacheCodec::DecodePayload(header, payload, object, diagnostics);
+        }
+        catch (const std::bad_alloc&)
         {
             return false;
         }
-        object.resize(static_cast<size_t>(header[1]));
-        diagnostics.resize(static_cast<size_t>(header[2]));
-        stream.read(object.data(), static_cast<std::streamsize>(object.size()));
-        stream.read(diagnostics.data(), static_cast<std::streamsize>(diagnostics.size()));
-        return stream && !object.empty() &&
-               Hash(diagnostics.data(), diagnostics.size(), Hash(object.data(), object.size())) == header[3];
     }
 
     inline void Store(const std::filesystem::path& path, const void* object, size_t size,
                       const std::string& diagnostics)
     {
-        if (path.empty())
+        if (path.empty() || !object || !ShaderCacheCodec::ValidSizes(size, diagnostics.size()))
         {
             return;
         }
@@ -135,13 +136,25 @@ namespace DxcShaderCache
         }
         const auto temporary = path.wstring() + L"." + std::to_wstring(GetCurrentProcessId()) + L"." +
                                std::to_wstring(GetCurrentThreadId()) + L".tmp";
+        std::vector<char> compressed;
+        const bool useCompression = ShaderCacheCodec::TryCompress(object, size, diagnostics, compressed);
         {
             std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
-            const uint64_t header[] = {0x3143584443484143ull, size, diagnostics.size(),
-                                       Hash(diagnostics.data(), diagnostics.size(), Hash(object, size))};
-            stream.write(reinterpret_cast<const char*>(header), sizeof(header));
-            stream.write(static_cast<const char*>(object), static_cast<std::streamsize>(size));
-            stream.write(diagnostics.data(), static_cast<std::streamsize>(diagnostics.size()));
+            const uint64_t checksum = Hash(diagnostics.data(), diagnostics.size(), Hash(object, size));
+            if (useCompression)
+            {
+                const uint64_t header[] = {ShaderCacheCodec::MagicV2, 1, size, diagnostics.size(),
+                                           compressed.size(), checksum};
+                stream.write(reinterpret_cast<const char*>(header), sizeof(header));
+                stream.write(compressed.data(), static_cast<std::streamsize>(compressed.size()));
+            }
+            else
+            {
+                const uint64_t header[] = {ShaderCacheCodec::MagicV1, size, diagnostics.size(), checksum};
+                stream.write(reinterpret_cast<const char*>(header), sizeof(header));
+                stream.write(static_cast<const char*>(object), static_cast<std::streamsize>(size));
+                stream.write(diagnostics.data(), static_cast<std::streamsize>(diagnostics.size()));
+            }
             stream.close();
             if (stream.fail())
             {

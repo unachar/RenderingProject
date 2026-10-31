@@ -10,7 +10,10 @@ try {
     [xml]$packages = Get-Content packages.config
     $version = ($packages.packages.package | Where-Object id -eq 'Microsoft.Direct3D.DXC').version
     $dxcRoot = Join-Path $workspace "packages/Microsoft.Direct3D.DXC.$version/build/native"
+    . "$PSScriptRoot/zstd-test-build.ps1"
+    $zstdObject = Get-ZstdTestObject $developer
     $command = 'cl /nologo /utf-8 /EHsc /W4 /std:c++17 /I "{0}/include" tests/dxccompilerpolicy_tests.cpp /Fe:bin/validation/technology/dxccompilerpolicy_tests.exe /Fo:bin/validation/technology/dxccompilerpolicy_tests.obj /link /LIBPATH:"{0}/lib/x64" d3dcompiler.lib d3d12.lib dxgi.lib' -f $dxcRoot
+    $command = $command.Replace(' /link ', (' "{0}" /link ' -f $zstdObject))
     & $env:ComSpec /d /c ('"{0}" -no_logo -arch=amd64 -host_arch=amd64 && {1}' -f $developer, $command)
     if ($LASTEXITCODE) { throw 'DXC policy test compilation failed.' }
     $previousPath = $env:PATH

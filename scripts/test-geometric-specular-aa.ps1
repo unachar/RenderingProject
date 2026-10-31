@@ -1,4 +1,4 @@
-param([switch]$Shaders, [switch]$Gpu)
+param([switch]$Shaders, [switch]$Gpu, [switch]$QualityProbe)
 $ErrorActionPreference = 'Stop'
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -13,11 +13,21 @@ try {
     if ($LASTEXITCODE) { throw 'Geometric specular AA test compilation failed.' }
     & ./bin/validation/technology/geometric_specular_aa_tests.exe
     if ($LASTEXITCODE) { throw 'Geometric specular AA math tests failed.' }
+    if ($QualityProbe) {
+        $command = 'cl /nologo /utf-8 /EHsc /W4 /WX /std:c++17 /O2 tests/geometric_specular_aa_quality_probe.cpp /Fe:bin/validation/technology/geometric-aa-quality.exe /Fo:bin/validation/technology/geometric-aa-quality.obj'
+        & $env:ComSpec /d /c ('"{0}" -no_logo -arch=amd64 -host_arch=amd64 && {1}' -f $developer, $command)
+        if ($LASTEXITCODE) { throw 'Geometric specular AA quality probe compilation failed.' }
+        & ./bin/validation/technology/geometric-aa-quality.exe bin/validation/technology/geometric-aa-quality.csv
+        if ($LASTEXITCODE) { throw 'Geometric specular AA quality reference failed.' }
+    }
     [xml]$packages = Get-Content packages.config
     $version = ($packages.packages.package | Where-Object id -eq 'Microsoft.Direct3D.DXC').version
     $dxcRoot = Join-Path $workspace "packages/Microsoft.Direct3D.DXC.$version/build/native"
     if ($Gpu) {
+        . "$PSScriptRoot/zstd-test-build.ps1"
+        $zstdObject = Get-ZstdTestObject $developer
         $command = 'cl /nologo /utf-8 /EHsc /W4 /std:c++17 /I "{0}/include" tests/geometric_specular_aa_gpu_tests.cpp /Fe:bin/validation/technology/geometric_specular_aa_gpu_tests.exe /Fo:bin/validation/technology/geometric_specular_aa_gpu_tests.obj /link /LIBPATH:"{0}/lib/x64" d3dcompiler.lib d3d12.lib dxgi.lib' -f $dxcRoot
+        $command = $command.Replace(' /link ', (' "{0}" /link ' -f $zstdObject))
         & $env:ComSpec /d /c ('"{0}" -no_logo -arch=amd64 -host_arch=amd64 && {1}' -f $developer, $command)
         if ($LASTEXITCODE) { throw 'Geometric specular AA GPU fixture compilation failed.' }
         $previousPath = $env:PATH

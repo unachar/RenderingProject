@@ -14,7 +14,10 @@ try {
     & $env:ComSpec /d /c $command
     if ($LASTEXITCODE) { throw 'Thumbnail dispatch tests failed.' }
     $dxc = 'packages\Microsoft.Direct3D.DXC.1.9.2602.24\build\native'
+    . "$PSScriptRoot/zstd-test-build.ps1"
+    $zstdObject = Get-ZstdTestObject $developerCommand
     $command = '"{0}" -no_logo -arch=amd64 -host_arch=amd64 && cl /nologo /std:c++20 /EHsc /W4 /utf-8 {1} /I source /I {2}\include tests\thumbnail_compiler_tests.cpp /Fe:build\thumbnail-tests\compiler-{3}.exe /Fo:build\thumbnail-tests\ /link /LIBPATH:{2}\lib\x64 d3dcompiler.lib' -f $developerCommand, $flags, $dxc, $Configuration
+    $command = $command.Replace(' /link ', (' "{0}" /link ' -f $zstdObject))
     & $env:ComSpec /d /c $command
     if ($LASTEXITCODE) { throw 'Thumbnail compiler test build failed.' }
     foreach ($library in @('dxcompiler.dll', 'dxil.dll')) {

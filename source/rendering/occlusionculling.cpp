@@ -306,6 +306,13 @@ void OcclusionCulling::BuildPyramid(ID3D12GraphicsCommandList* commands, ID3D12R
                 list->SetComputeRootDescriptorTable(1, Gpu(RendererState::g_kHIZ_UAV_START_INDEX +
                                                            g_CurrentIndex * RendererState::g_kHIZ_MAX_MIPS + mip));
                 const UINT width = max(g_Width >> mip, 1u), height = max(g_Height >> mip, 1u);
+#ifdef _DEBUG
+                // Identify the exact reduction and descriptor pair if DRED reports a stalled dispatch.
+                char marker[160]{};
+                sprintf_s(marker, "Hi-Z mip %u/%u %ux%u texture=%u sourceMip=%u", mip, g_MipCount,
+                          width, height, g_CurrentIndex, mip == 0 ? 0 : mip - 1);
+                GpuMarkers::Write(list, marker);
+#endif
                 const UINT constants[4] = {width, height, 0, 0};
                 list->SetComputeRoot32BitConstants(2, 4, constants, 0);
                 list->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
