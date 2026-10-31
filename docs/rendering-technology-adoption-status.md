@@ -175,5 +175,18 @@ targets XML is well-formed with 34 tracked DXC outputs.
   a native Hi-Z screen-space specular pass against the engine's own
   Hi-Z/history is the preferred route if the fallback is needed
   beyond probes + IBL.
-- Stage 1C remaining v1 limits: shadow pass 0 only (first directional
-  view), no shadow material binning.
+- Color management: the OpenColorIO runtime is not adopted; the
+  pipeline spec (linear Rec.709 working space, single view
+  transform) is recorded in
+  docs/rendering-technology-color-management-design.md. Revisit
+  with HDR display output or EXR interchange.
+- fastgltf: deferred - assimp post-processing is load-bearing;
+  adoption gates (parse-profile + parity harness) in
+  docs/rendering-technology-fastgltf-evaluation.md.
+- GI radiance caches (SHaRC / RTXGI / NRC): keep the incumbent
+  spatial hash cache; the deciding comparison is empirical
+  against the Stage 2H oracle
+  (docs/rendering-technology-gi-cache-evaluation.md).
+- XeSS: deferred - DLSS covers the NVIDIA target, TSR is the
+  vendor-neutral fallback
+  (docs/rendering-technology-xess-evaluation.md).
