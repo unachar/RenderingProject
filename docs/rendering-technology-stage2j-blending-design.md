@@ -35,7 +35,8 @@ heap at root 18 all along (MaterialSurface.hlsli samples through
 it in production), so modelshaderPS defines the flag too.
 Per-pixel two-probe blending is live in both paths.
 
-Status: DESIGN. Stage 2J v1 selects ONE probe per frame (the
+Pre-implementation state (for context): Stage 2J v1 selects ONE
+probe per frame (the
 camera-containing, highest-priority one) and overrides the
 environment texture for the whole frame; box projection (landed in
 the 500-push run) corrects parallax for that probe. Limits: a hard

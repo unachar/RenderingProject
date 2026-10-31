@@ -1,9 +1,9 @@
 # Stage 1C follow-up — shadow material binning: design
 
 Status: IMPLEMENTED (all three steps, plus the layer-keyed view
-fix). Multi-view VG shadows are implemented (S1–S3);
-the remaining 1C ledger item is "no shadow material binning".
-Today the dedicated shadow draw runs one ExecuteIndirect over
+fix). Multi-view VG shadows are implemented (S1–S3) and shadow
+material binning is implemented with them. For context, before
+this work the dedicated shadow draw ran one ExecuteIndirect over
 the view's visible list with the alpha-tested mesh/pixel shader
 pair for every caster: correct for all materials (v2 resolves
 material data per cluster in the PS), but opaque casters pay the

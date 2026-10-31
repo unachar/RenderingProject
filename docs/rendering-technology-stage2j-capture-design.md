@@ -1,6 +1,10 @@
 # Stage 2J follow-up — live cubemap capture for probes: design
 
-Status: DESIGN. Probes today sample authored equirect environment
+Status: PARTIALLY IMPLEMENTED - cube->equirect conversion, the
+capture scratch target, the face matrices, and the CaptureLive
+component flag (inspector + scene serialization) have landed;
+only the 6-face scene capture pass remains (scoped at the end
+of this doc as its own reviewed change). Probes today sample authored equirect environment
 textures (optionally GGX-prefiltered by EnvironmentPrefilterCS).
 A probe that reflects the ACTUAL scene needs a live capture:
 render the scene into a cubemap at the probe position, convert to
