@@ -23,6 +23,10 @@ gate and the expected observable behavior.
 
 - [ ] Flag OFF: frame identical to before the run (selection state
       stays env IBL).
+- [ ] The very first frame after enabling SSR shows plain env
+      reflections, not a one-frame flash of the environment
+      texture sampled as the SSR result (tri-state guard,
+      b59d5a63).
 - [ ] Flag ON in a scene with glossy floors: reflections appear
       after 1 frame of lag; moving the camera keeps them stable
       (T2 hit-point accumulation), no smearing trails on rough
