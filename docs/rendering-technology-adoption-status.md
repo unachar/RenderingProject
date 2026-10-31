@@ -104,7 +104,7 @@ targets XML is well-formed with 34 tracked DXC outputs.
   FIXTURE overrides). Tooling: pfm_compare (RMSE / rel-RMSE /
   windowed SSIM / --region), pfm_stat, parse_vram_log, and the
   Linux DXC compile sweep (scripts/compile_check_linux.sh,
-  15/15 entry points). Real-scene captures remain the long-term
+  17/17 entry points). Real-scene captures remain the long-term
   follow-up in the design doc.
 - Stage 2J: per-probe GGX prefilter, box-projection parallax,
   probe intensity, and per-pixel two-probe blending (Route A)
