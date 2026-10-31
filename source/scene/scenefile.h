@@ -1042,6 +1042,7 @@ namespace SceneFile
         a("priority", c.Priority);
         a("intensity", c.Intensity);
         a("generatePrefilter", c.GeneratePrefilter);
+        a("captureLive", c.CaptureLive);
         a("active", c.IsActive);
     }
 

@@ -633,6 +633,11 @@ void ImGuiManager::DrawInspectorWindow()
         changed |= ImGui::DragInt("優先度", &probe.Priority, 1.0f);
         changed |= ImGui::DragFloat("強度", &probe.Intensity, 0.01f, 0.0f, 10.0f);
         changed |= ImGui::Checkbox("プリフィルタ生成", &probe.GeneratePrefilter);
+        changed |= ImGui::Checkbox("ライブキャプチャ", &probe.CaptureLive);
+        if (probe.CaptureLive)
+        {
+            ImGui::TextDisabled("環境テクスチャより優先 (キャプチャパス実装後に有効)");
+        }
         char buffer[512];
         strncpy_s(buffer, probe.EnvironmentTexturePath.c_str(), _TRUNCATE);
         if (ImGui::InputText("環境テクスチャ", buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue))
