@@ -56,6 +56,10 @@ gate and the expected observable behavior.
       from the old viewpoint (history reset on forward swing > ~26
       degrees or origin jump > 10 units).
 - [ ] Enable DXR reflections: DXR wins over SSR (tri-state w).
+- [ ] Switch the render mode deferred -> forward with SSR ON:
+      reflections fall back to env/DXR (no frozen SSR image from
+      the last deferred frame); switching back resumes SSR
+      (b3f327a7).
 - [ ] Previous-color source: at native resolution reflections
       show real scene colors (the trace reads the AA history
       view there; before 9a994c9f it sampled a target that is

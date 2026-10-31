@@ -13,7 +13,7 @@ the checklist for the simultaneous-enablement acceptance run.
 | Shadow material binning | Always on inside the dedicated path | Whole dedicated draw returns false -> legacy submission (missing PSO or command signature) |
 | Alpha-tested VG shadows | Material shadow mode data | Materials outside modes [1,2] are discarded by the shadow PS; unclassified casters take the opaque bin |
 | DBuffer decals | `UseDBufferDecals` (OFF) | No decal composite; the separate LightRenderMode::Decal feature is unaffected |
-| SSR | `UseScreenSpaceReflections` (OFF) | Selection state stays env IBL (w=0); DXR reflections (w=1) outrank SSR whenever active |
+| SSR | `UseScreenSpaceReflections` (OFF) | Selection state stays env IBL (w=0); DXR reflections (w=1) outrank SSR whenever active; SSR is never selected in forward render mode (its trace runs in the deferred pass) |
 | SSR checkerboard | `UseSsrCheckerboard` (OFF) | Full half-res trace every frame |
 | SSR roughness skip | `SsrRoughnessLimit` = 1.0 | No per-pixel skip (the pre-run behavior) |
 | Local reflection probes | `UseLocalReflectionProbes` (OFF) | Global environment texture everywhere |
