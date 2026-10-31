@@ -58,5 +58,7 @@ the adoption status for the current state of the branch.
   capture metrics (RMSE / SSIM / region stats).
 - `scripts/parse_vram_log.py` - D3D12MA log summaries.
 - `scripts/compile_check_linux.sh` - Linux DXC compile sweep.
+- `scripts/run_linux_gates.sh` - every Linux-runnable gate in
+  one command (Python suites + the compile sweep).
 - `tests/` - shader scan, PFM tooling tests, and the source
   contract tests for the run's cross-file agreements.

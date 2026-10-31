@@ -24,8 +24,9 @@ gate and the expected observable behavior.
       the PowerShell targets gate.
       Already green on the Linux side, together with the DXC
       compile sweep (`scripts/compile_check_linux.sh`, 17/17
-      entry points) - the Windows build above is the remaining
-      gate. (Two pre-existing Linux-side failures are NOT from
+      entry points) - re-run both anytime with
+      `scripts/run_linux_gates.sh`. The Windows build above is
+      the remaining gate. (Two pre-existing Linux-side failures are NOT from
       this run, verified identical at the batch base d526b6d0:
       dxc_build_contract_tests.py needs Windows vswhere, and
       stage_light_resolve_tests.py's extracted code relies on
