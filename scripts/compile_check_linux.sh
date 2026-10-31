@@ -23,6 +23,8 @@ done
 check ps_6_0 main shader/hlsl/DeferredLightingPS.hlsl -I shader/hlsl
 check ps_6_0 main shader/hlsl/modelshaderPS.hlsl -I shader/hlsl
 check ms_6_5 main shader/hlsl/VirtualGeometryShadowBinnedMS.hlsl -I shader/hlsl
+check ms_6_5 main shader/hlsl/VirtualGeometryShadowMS.hlsl -I shader/hlsl
+check cs_6_0 main shader/hlsl/HiZSpdCS.hlsl -I shader/hlsl
 check cs_6_0 main shader/hlsl/ScreenSpaceReflectionsTraceCS.hlsl
 check cs_6_0 main shader/hlsl/ScreenSpaceReflectionsResolveCS.hlsl
 check cs_6_0 main shader/hlsl/ScreenSpaceReflectionsDownsampleCS.hlsl
