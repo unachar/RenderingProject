@@ -80,29 +80,42 @@ targets XML is well-formed with 34 tracked DXC outputs.
 - Native Hi-Z SSR completed end to end: frame wiring, world-space
   trace, confidence blending through the raytraced-reflection
   override, per-pixel roughness from the material GBuffer.
-  Temporal quality: T1 half-resolution trace + bilateral resolve
-  and T2 hit-point reprojected accumulation with camera-cut reset
-  are landed; a checkerboard trace mode remains a designed option.
+  Temporal quality: T1 half-resolution trace + bilateral resolve,
+  T2 hit-point reprojected accumulation with camera-cut reset,
+  checkerboard trace mode (with the resolve-constants fix that
+  lets its parity reach the resolve), a prefiltered result mip
+  chain sampled at roughness * 4, and a per-pixel roughness
+  trace-skip limit are all landed behind the default-OFF flag.
 - Stage 2H reference path tracer: integrator shader (RayQuery,
   NEE, GGX/diffuse sampling, RR, deterministic seeds), Cornell /
-  material-test / emissive-panel fixtures, quad area-light NEE,
-  BLAS/TLAS host, synchronous capture run with readback, PFM/PPM
-  writers, and the validation-hook caller (env-gated). MIS, AOVs
-  and real-scene captures remain follow-ups in the design doc.
+  material-test / emissive-panel fixtures, quad area-light NEE
+  with balance-heuristic MIS, BLAS/TLAS host, synchronous capture
+  run with readback, PFM/PPM writers, first-hit albedo/normal
+  AOVs, a direct/indirect split output, and the validation-hook
+  caller (env-gated). Real-scene captures remain the long-term
+  follow-up in the design doc.
 - Stage 2J: per-probe GGX prefilter, box-projection parallax,
-  probe intensity, and gated bindless two-probe blending
-  (PROBE_BLENDING_BINDLESS awaits root-signature verification);
-  live cubemap capture is designed.
+  probe intensity, and per-pixel two-probe blending (Route A)
+  compiled into both lighting paths after the root-signature
+  audit (postprocess root 39 binds the space-1 heap; the model
+  root signature already bound it at root 18). Live cubemap
+  capture: conversion, scratch, face matrices, the CaptureLive
+  component flag + inspector + scene serialization landed; the
+  6-face scene capture pass is scoped in the capture design as
+  its own reviewed change.
 - D3D12MA remaining exclusions, by design: UPLOAD/READBACK heaps
   (not allocator territory), the transient aliasing arena (own
   lifetime model), reserved/tiled streaming resources, mapped
   primitive geometry, shader-pipeline constant buffers (UPLOAD),
   OptiX interop (shared handles), and the swap chain. Statistics
-  are surfaced live in the Advanced GPU settings section.
+  are surfaced live in the Advanced GPU settings section, and
+  scripts/parse_vram_log.py summarizes them from logs.
 - Stage 1C multi-view: per-view traversal state pool (4 slots),
   viewId-aware PrepareShadowView/validity/accessors, and
   prepare+draw wiring for every shadow pass (viewId = pass index
-  for now). Shadow material binning remains a separate step.
+  for now). Shadow material binning is implemented end to end
+  (two-sided visible-list allocation, dual indirect commands,
+  depth-only opaque draw + alpha binned draw, legacy fallback).
 - Settings UI: checkboxes for all integration flags above.
 - Review fix: probe update moved after the frame command-list
   reset so prefilter dispatches are actually recorded.
