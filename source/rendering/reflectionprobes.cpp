@@ -257,7 +257,7 @@ namespace ReflectionProbes
         D3D12_RESOURCE_BARRIER toSrv = CD3DX12_RESOURCE_BARRIER::Transition(
             output.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         commandList->ResourceBarrier(1, &toSrv);
-        return TextureManager::RegisterExternalTexture(registrationName, output);
+        return TextureManager::ReplaceExternalTexture(registrationName, output);
     }
 
     namespace
@@ -386,7 +386,7 @@ namespace ReflectionProbes
         D3D12_RESOURCE_BARRIER toSrv = CD3DX12_RESOURCE_BARRIER::Transition(
             output.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         commandList->ResourceBarrier(1, &toSrv);
-        return TextureManager::RegisterExternalTexture(registrationName, output);
+        return TextureManager::ReplaceExternalTexture(registrationName, output);
     }
 
     void SyncFromScene(ID3D12GraphicsCommandList* commandList)

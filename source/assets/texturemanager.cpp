@@ -128,6 +128,14 @@ struct RetiredTextureHeap
 };
 
 static vector<RetiredTextureHeap> g_RetiredTextureHeaps;
+
+struct RetiredExternalResource
+{
+    ComPtr<ID3D12Resource> Resource;
+    uint64_t Fence = 0;
+};
+
+static vector<RetiredExternalResource> g_RetiredExternalResources;
 static uint64_t g_StreamingFrame = 1;
 static bool g_ReservedResourcesSupported = false;
 
@@ -1047,6 +1055,7 @@ void TextureManager::Uninit()
     m_ErrorTexture.Reset();
     g_StreamingUploads.clear();
     g_RetiredTextureHeaps.clear();
+    g_RetiredExternalResources.clear();
     g_UploadPool.clear();
     g_DeferredUploadReturns.clear();
     g_ReservedResourcesSupported = false;
@@ -1493,6 +1502,47 @@ int TextureManager::RegisterExternalTexture(const char* name, ComPtr<ID3D12Resou
     return srvIndex;
 }
 
+int TextureManager::ReplaceExternalTexture(const char* name, ComPtr<ID3D12Resource> resource)
+{
+    if (name == nullptr || !resource)
+    {
+        return GetErrorTextureIndex();
+    }
+    const string key = name;
+    int srvIndex = -1;
+    ComPtr<ID3D12Resource> previous;
+    {
+        lock_guard<mutex> lock(g_TextureMutex);
+        auto it = m_Textures.find(key);
+        if (it != m_Textures.end())
+        {
+            srvIndex = it->second.SrvIndex;
+            previous = it->second.Resource;
+        }
+    }
+    if (srvIndex < 0)
+    {
+        return RegisterExternalTexture(name, resource);
+    }
+    TextureManager::CreateShaderResourceView(resource.Get(), resource->GetDesc(), srvIndex, 0);
+    {
+        lock_guard<mutex> lock(g_TextureMutex);
+        auto it = m_Textures.find(key);
+        if (it != m_Textures.end() && it->second.SrvIndex == srvIndex)
+        {
+            it->second.Resource = resource;
+        }
+    }
+    if (previous && previous != resource)
+    {
+        // The old resource may still be sampled by frames already
+        // submitted; it is released once their fence passes (the
+        // purge runs in UpdateStreaming, like retired heaps).
+        g_RetiredExternalResources.push_back({previous, 0});
+    }
+    return srvIndex;
+}
+
 int TextureManager::GetDefaultTextureIndex()
 {
     lock_guard<mutex> lock(g_TextureMutex);
@@ -1616,6 +1666,13 @@ void TextureManager::OnFrameSubmitted(uint64_t fence)
             retired.Fence = fence;
         }
     }
+    for (auto& retired : g_RetiredExternalResources)
+    {
+        if (retired.Fence == 0)
+        {
+            retired.Fence = fence;
+        }
+    }
     for (auto& upload : g_StreamingUploads)
     {
         if (upload.Fence == 0)
@@ -1634,6 +1691,11 @@ void TextureManager::UpdateStreaming(ID3D12GraphicsCommandList* commandList)
                                               return retired.Fence != 0 && retired.Fence <= completed;
                                           }),
                                 g_RetiredTextureHeaps.end());
+    g_RetiredExternalResources.erase(remove_if(g_RetiredExternalResources.begin(), g_RetiredExternalResources.end(),
+                                               [completed](const auto& retired) {
+                                                   return retired.Fence != 0 && retired.Fence <= completed;
+                                               }),
+                                     g_RetiredExternalResources.end());
     for (auto it = g_StreamingUploads.begin(); it != g_StreamingUploads.end();)
     {
         if (it->Fence != 0 && it->Fence <= completed)

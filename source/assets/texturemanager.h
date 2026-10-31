@@ -58,6 +58,12 @@ class TextureManager
     // returns its SRV index, or the error texture index on failure.
     // Re-registering the same name returns the existing index.
     static int RegisterExternalTexture(const char* name, ComPtr<ID3D12Resource> resource);
+    // Like RegisterExternalTexture, but when the name is already
+    // registered the SRV slot is re-pointed at the new resource
+    // (same index) and the previous resource is retired until the
+    // submitted-frame fence passes. For producers that refresh
+    // their output in place (live probe captures).
+    static int ReplaceExternalTexture(const char* name, ComPtr<ID3D12Resource> resource);
     static int GetDefaultTextureIndex();
     static ComPtr<ID3D12Resource> GetTextureResource(int srvIndex);
     static UINT GetTextureResidentMip(int srvIndex);
