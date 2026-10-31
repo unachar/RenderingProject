@@ -18,6 +18,10 @@ gate and the expected observable behavior.
       pass, plus the run's source-contract tests:
       traversal_binning / ssr_constants / reference_integrator /
       postprocess_probe contract tests (all under tests/).
+      Already green on the Linux side, together with the DXC
+      compile sweep (`scripts/compile_check_linux.sh`, 17/17
+      entry points) - the Windows build above is the remaining
+      gate.
 
 ## 1. SSR (flag: スクリーンスペース反射, default OFF)
 
