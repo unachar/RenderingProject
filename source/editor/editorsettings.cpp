@@ -357,6 +357,11 @@ void ImGuiManager::DrawProjectSettingsWindow()
         {
             RendererSettings::SetUseSsrCheckerboard(useCheckerboard);
         }
+        float ssrRoughnessLimit = RendererSettings::GetSsrRoughnessLimit();
+        if (ImGui::SliderFloat("SSR 粗さ上限 (超えると未トレース)", &ssrRoughnessLimit, 0.1f, 1.0f))
+        {
+            RendererSettings::SetSsrRoughnessLimit(ssrRoughnessLimit);
+        }
 
         ImGui::SeparatorText("GPU Memory");
         auto& memory = GpuMemoryBudget::Options;

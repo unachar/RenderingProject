@@ -827,6 +827,7 @@ void ScenePasses::ExecuteScreenSpaceReflections()
     constants.StridePixels = 8.0f;
     constants.EdgeFade = 0.08f;
     constants.FallbackRoughness = 0.5f;
+    constants.RoughnessLimit = RendererSettings::GetSsrRoughnessLimit();
     XMFLOAT3 cameraPosition{0.0f, 0.0f, 5.0f};
     if (camera != g_kINVALID_ENTITY && ComponentManager::HasComponent<TransformComponent>(camera))
     {

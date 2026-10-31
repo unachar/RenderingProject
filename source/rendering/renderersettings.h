@@ -344,6 +344,18 @@ class RendererSettings
         SetValue(s_UseSsrCheckerboard, value);
     }
 
+    // Roughness above which the SSR trace is skipped per pixel
+    // (1.0 = never skip, the pre-500-run behavior).
+    static float GetSsrRoughnessLimit()
+    {
+        return s_SsrRoughnessLimit;
+    }
+
+    static void SetSsrRoughnessLimit(float value)
+    {
+        SetValue(s_SsrRoughnessLimit, value);
+    }
+
     // Stage 2 J: local reflection probes override the global
     // environment texture while the camera is inside a probe volume.
     static bool GetUseLocalReflectionProbes()
@@ -761,6 +773,7 @@ class RendererSettings
     inline static bool s_UseLocalReflectionProbes = false;
     inline static bool s_UseScreenSpaceReflections = false;
     inline static bool s_UseSsrCheckerboard = false;
+    inline static float s_SsrRoughnessLimit = 1.0f;
     inline static bool s_SsaoEnabled = true;
     inline static float s_SsaoRadius = 1.15f;
     inline static float s_SsaoPower = 1.35f;
