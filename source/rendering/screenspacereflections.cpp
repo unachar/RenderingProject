@@ -73,7 +73,7 @@ namespace ScreenSpaceReflections
             ranges[5].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
             ranges[6].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 1);
             CD3DX12_ROOT_PARAMETER parameters[8];
-            parameters[0].InitAsConstants(52, 0);
+            parameters[0].InitAsConstants(56, 0);
             for (int i = 0; i < 7; ++i)
             {
                 parameters[1 + i].InitAsDescriptorTable(1, &ranges[i], D3D12_SHADER_VISIBILITY_ALL);
@@ -169,7 +169,7 @@ namespace ScreenSpaceReflections
             resolveRanges[6].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
             resolveRanges[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 1);
             CD3DX12_ROOT_PARAMETER resolveParameters[9];
-            resolveParameters[0].InitAsConstants(26, 0);
+            resolveParameters[0].InitAsConstants(28, 0);
             for (int i = 0; i < 8; ++i)
             {
                 resolveParameters[1 + i].InitAsDescriptorTable(1, &resolveRanges[i], D3D12_SHADER_VISIBILITY_ALL);
@@ -466,7 +466,7 @@ namespace ScreenSpaceReflections
         ++g_FrameCounter;
         commandList->SetComputeRootSignature(g_RootSignature.Get());
         commandList->SetPipelineState(g_Pso.Get());
-        commandList->SetComputeRoot32BitConstants(0, 52, &traceConstants, 0);
+        commandList->SetComputeRoot32BitConstants(0, 56, &traceConstants, 0);
         commandList->SetComputeRootDescriptorTable(1, inputs.DepthSrv);
         commandList->SetComputeRootDescriptorTable(2, inputs.HiZSrv);
         commandList->SetComputeRootDescriptorTable(3, inputs.NormalSrv);
@@ -537,7 +537,7 @@ namespace ScreenSpaceReflections
         resolve.CheckerboardParity = checkerboardParity;
         commandList->SetComputeRootSignature(g_ResolveRootSignature.Get());
         commandList->SetPipelineState(g_ResolvePso.Get());
-        commandList->SetComputeRoot32BitConstants(0, 26, &resolve, 0);
+        commandList->SetComputeRoot32BitConstants(0, 28, &resolve, 0);
         commandList->SetComputeRootDescriptorTable(1, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapGpu, 2, g_DescriptorIncrement));
         commandList->SetComputeRootDescriptorTable(2, inputs.DepthSrv);
         commandList->SetComputeRootDescriptorTable(3, inputs.NormalSrv);

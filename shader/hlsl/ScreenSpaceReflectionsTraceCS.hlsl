@@ -42,6 +42,8 @@ cbuffer TraceConstants : register(b0)
     float CheckerboardParity; // < 0: off; 0/1: trace only pixels with (x+y)&1 == parity
     float3 CameraForward;
     uint GBufferScale; // full-res GBuffer texel = pixel * GBufferScale (1 full-res trace, 2 half-res)
+    float RoughnessLimit; // surfaces rougher than this skip the trace (env/probe fallback)
+    float3 TracePadding;
 };
 
 float ViewZFromStoredDepth(float storedDepth)
@@ -93,6 +95,19 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         return; // sky (reverse-Z far)
     }
     const float3 worldPosition = WorldPositionFromDepth(uv, depth);
+    if (RoughnessLimit < 0.999f)
+    {
+        // Rough surfaces gain nothing from a sharp screen-space
+        // trace (the prefiltered env/probe term covers them):
+        // skip the march and let confidence stay 0. Mirrors the
+        // roughness read further below.
+        const float skipRoughness = GBufferMaterial.Load(gbufferPixel).g;
+        const float skipEffective = skipRoughness > 0.001f ? skipRoughness : FallbackRoughness;
+        if (skipEffective > RoughnessLimit)
+        {
+            return;
+        }
+    }
     const float3 worldNormal = normalize(GBufferNormal.Load(gbufferPixel).rgb * 2.0f - 1.0f);
     const float3 V = normalize(worldPosition - CameraPosition);
     const float3 R = reflect(V, worldNormal);

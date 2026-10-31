@@ -63,6 +63,8 @@ namespace ScreenSpaceReflections
         float CheckerboardParity = -1.0f; // < 0: off; 0/1: traced pixel parity
         float CameraForward[3];
         uint32_t GBufferScale; // 1 = full-res trace, 2 = half-res trace (T1)
+        float RoughnessLimit = 1.0f; // surfaces rougher than this skip the trace
+        float Padding[3] = {0.0f, 0.0f, 0.0f};
     };
 
     struct TraceInputs
