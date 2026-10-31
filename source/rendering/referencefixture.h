@@ -40,4 +40,9 @@ namespace ReferenceFixture
     // baseline for emissive sampling / MIS work: BSDF sampling must
     // find the panel unaided.
     SceneData BuildEmissivePanel();
+    // White furnace: a closed emissive box (uniform radiance from
+    // all directions) around mirror / rough-metal / glossy
+    // spheres - the GGX energy-conservation check. The mirror
+    // sphere's mean radiance must approach the wall emission.
+    SceneData BuildFurnaceTest();
 } // namespace ReferenceFixture

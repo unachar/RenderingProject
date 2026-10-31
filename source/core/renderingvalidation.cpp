@@ -331,10 +331,12 @@ namespace
         GetEnvironmentVariableA("DX12_REFERENCE_CAPTURE_FIXTURE", fixture, sizeof(fixture));
         const bool materials = strcmp(fixture, "materials") == 0;
         const bool emissive = strcmp(fixture, "emissive") == 0;
+        const bool furnace = strcmp(fixture, "furnace") == 0;
         const ReferenceFixture::SceneData scene = materials ? ReferenceFixture::BuildMaterialTest()
+                                                  : furnace ? ReferenceFixture::BuildFurnaceTest()
                                                   : emissive ? ReferenceFixture::BuildEmissivePanel()
                                                              : ReferenceFixture::BuildCornellBox();
-        const char* fixtureName = materials ? "materials" : emissive ? "emissive" : "cornell";
+        const char* fixtureName = materials ? "materials" : furnace ? "furnace" : emissive ? "emissive" : "cornell";
         char pfmPath[64]{};
         char ppmPath[64]{};
         char albedoPath[64]{};

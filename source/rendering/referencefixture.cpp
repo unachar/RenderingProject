@@ -67,9 +67,11 @@ namespace ReferenceFixture
                                  float roughness, bool lightSource = false)
             {
                 const uint32_t index = static_cast<uint32_t>(Data.MaterialData.size() / 12);
-                // Third entry: x = 1 marks an NEE light source (the
-                // integrator then adds its emission only for camera
-                // rays; deeper hits are the NEE path's job).
+                // Third entry: x = 1 marks a light-source material.
+                // Only LINKED sources (MarkMaterialLight) take the
+                // MIS path in the integrator; unlinked emissive
+                // materials emit at every depth and are never
+                // NEE-sampled, so nothing double-counts.
                 const float values[12] = {r, g, b, metallic, er, eg, eb, roughness, lightSource ? 1.0f : 0.0f, 0, 0, 0};
                 Data.MaterialData.insert(Data.MaterialData.end(), values, values + 12);
                 return index;
@@ -264,6 +266,75 @@ namespace ReferenceFixture
         builder.Data.CameraTarget[1] = 0.0f;
         builder.Data.CameraTarget[2] = 0.0f;
         builder.Data.CameraFovYRadians = 0.9f;
+        return builder.Data;
+    }
+
+    SceneData BuildFurnaceTest()
+    {
+        Builder builder;
+        const float quadVerts[12] = {-0.5f, -0.5f, 0, 0.5f, -0.5f, 0, 0.5f, 0.5f, 0, -0.5f, 0.5f, 0};
+        const uint32_t quadIndices[6] = {0, 1, 2, 0, 2, 3};
+        const uint32_t quad = builder.AddGeometry(quadVerts, 4, quadIndices, 6);
+
+        // Unit-diameter UV sphere (same generator as the material test).
+        constexpr uint32_t kSphereWidth = 48;
+        constexpr uint32_t kSphereHeight = 32;
+        std::vector<float> sphereVerts;
+        std::vector<uint32_t> sphereIndices;
+        sphereVerts.reserve(static_cast<size_t>(kSphereWidth + 1) * (kSphereHeight + 1) * 3);
+        for (uint32_t y = 0; y <= kSphereHeight; ++y)
+        {
+            const float theta = kPi * static_cast<float>(y) / static_cast<float>(kSphereHeight);
+            for (uint32_t x = 0; x <= kSphereWidth; ++x)
+            {
+                const float phi = 2.0f * kPi * static_cast<float>(x) / static_cast<float>(kSphereWidth);
+                sphereVerts.push_back(0.5f * std::sin(theta) * std::cos(phi));
+                sphereVerts.push_back(0.5f * std::cos(theta));
+                sphereVerts.push_back(0.5f * std::sin(theta) * std::sin(phi));
+            }
+        }
+        for (uint32_t y = 0; y < kSphereHeight; ++y)
+        {
+            for (uint32_t x = 0; x < kSphereWidth; ++x)
+            {
+                const uint32_t a = y * (kSphereWidth + 1) + x;
+                const uint32_t b = a + 1;
+                const uint32_t c = a + kSphereWidth + 1;
+                const uint32_t d = c + 1;
+                sphereIndices.insert(sphereIndices.end(), {a, c, b, b, c, d});
+            }
+        }
+        const uint32_t sphere = builder.AddGeometry(sphereVerts.data(),
+                                                    static_cast<uint32_t>(sphereVerts.size() / 3),
+                                                    sphereIndices.data(),
+                                                    static_cast<uint32_t>(sphereIndices.size()));
+
+        // White furnace: every wall emits the same radiance (3.0),
+        // unlinked, so BSDF-sampled hits count it from all
+        // directions. No analytic lights at all.
+        const uint32_t furnace = builder.AddMaterial(0.0f, 0.0f, 0.0f, 0.0f, 3.0f, 3.0f, 3.0f, 1.0f);
+        const uint32_t mirror = builder.AddMaterial(1.0f, 1.0f, 1.0f, 1.0f, 0, 0, 0, 0.03f);
+        const uint32_t roughMetal = builder.AddMaterial(1.0f, 1.0f, 1.0f, 1.0f, 0, 0, 0, 0.4f);
+        const uint32_t glossy = builder.AddMaterial(0.9f, 0.9f, 0.9f, 0.0f, 0, 0, 0, 0.1f);
+
+        builder.AddInstance(quad, furnace, Compose(4, 4, 1, -kHalfPi, 0, 0, -2, 0));
+        builder.AddInstance(quad, furnace, Compose(4, 4, 1, kHalfPi, 0, 0, 2, 0));
+        builder.AddInstance(quad, furnace, Compose(4, 4, 1, 0, kPi, 0, 0, 2));
+        builder.AddInstance(quad, furnace, Compose(4, 4, 1, 0, kHalfPi, -2, 0, 0));
+        builder.AddInstance(quad, furnace, Compose(4, 4, 1, 0, -kHalfPi, 2, 0, 0));
+        builder.AddInstance(quad, furnace, Compose(4, 4, 1, 0, 0, 0, 0, -2));
+
+        builder.AddInstance(sphere, mirror, Compose(1.1f, 1.1f, 1.1f, 0, 0, -0.85f, -0.15f, 0.3f));
+        builder.AddInstance(sphere, roughMetal, Compose(1.1f, 1.1f, 1.1f, 0, 0, 0.85f, -0.15f, 0.3f));
+        builder.AddInstance(sphere, glossy, Compose(0.8f, 0.8f, 0.8f, 0, 0, 0.0f, 0.75f, -0.5f));
+
+        builder.Data.CameraPosition[0] = 0.0f;
+        builder.Data.CameraPosition[1] = 0.1f;
+        builder.Data.CameraPosition[2] = -1.85f;
+        builder.Data.CameraTarget[0] = 0.0f;
+        builder.Data.CameraTarget[1] = 0.05f;
+        builder.Data.CameraTarget[2] = 0.0f;
+        builder.Data.CameraFovYRadians = 0.85f;
         return builder.Data;
     }
 } // namespace ReferenceFixture
