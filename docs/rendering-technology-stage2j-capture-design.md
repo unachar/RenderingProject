@@ -54,6 +54,22 @@ it through the same SRV plumbing.
   opaque scene into the scratch from a probe position), wiring
   CaptureLive probes through conversion + prefilter in
   SyncFromScene, and the refresh scheduling of step 3.
+- Scoping of the capture pass (surveyed 2026-10-31): the engine
+  has no offscreen scene-render API today — ScenePasses is bound
+  to the main frame's targets and the scene camera entity, and no
+  other cubemap scene capture exists in the tree. The viable
+  route is a dedicated capture camera entity plus a target swap
+  inside the frame's opaque+lighting segment: RenderFrame queues
+  at most one capture per frame (round-robin over CaptureLive
+  probes), points the capture camera at the probe position with
+  GetCaptureFaceMatrices per face, renders the six faces into the
+  scratch slices, then SyncFromScene converts + prefilters the
+  result and registers it as that probe's environment. Estimated
+  at several hundred lines across renderframe/scenepasses with
+  real regression surface on the main pass, so it lands as its
+  own reviewed change rather than inside an automated batch; the
+  inspector checkbox is present but inert until then (labelled
+  as such in the UI).
 
 ## Acceptance
 
