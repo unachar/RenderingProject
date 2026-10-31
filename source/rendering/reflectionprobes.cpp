@@ -5,6 +5,7 @@
 #include "componentmanager.h"
 #include "graphicsdevice.h"
 #include "memoryallocator.h"
+#include "renderprofiler.h"
 #include "renderersettings.h"
 #include "rendererstate.h"
 #include "texturemanager.h"
@@ -157,6 +158,7 @@ namespace ReflectionProbes
         {
             return sourceSrvIndex;
         }
+        RenderProfiler::ScopedEvent profile("Reflection Probe Prefilter", commandList);
         const D3D12_RESOURCE_DESC sourceDesc = source->GetDesc();
         if (sourceDesc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || sourceDesc.MipLevels >= kPrefilterLevels)
         {

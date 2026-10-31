@@ -2,6 +2,7 @@
 #include "surfacedecals.h"
 #include "memoryallocator.h"
 #include "componentmanager.h"
+#include "renderprofiler.h"
 #include "rendererstate.h"
 #include "texturemanager.h"
 
@@ -416,6 +417,7 @@ namespace SurfaceDecals
         {
             return true;
         }
+        RenderProfiler::ScopedEvent profile("DBuffer Decals", params.List);
         ID3D12GraphicsCommandList* list = params.List;
         const D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<float>(params.Width),
                                       static_cast<float>(params.Height), 0.0f, 1.0f};
