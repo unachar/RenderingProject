@@ -1,0 +1,10 @@
+{
+  "LICENSE.txt": "f86945350eb0514c335688e3babc185d3fddb22f",
+  "README.md": "390574d3881d7a27099689aed9bf2d93c3ed2cea",
+  "libraries/RTXTF-Library/LICENSE.txt": "f86945350eb0514c335688e3babc185d3fddb22f",
+  "libraries/RTXTF-Library/README.md": "8192cf14254bb0a0cca7bd2ab7b19ee9177ebab0",
+  "libraries/RTXTF-Library/STFDefinitions.h": "79fd2aa2e9de0219f8ec1b2f2cb795fc395efd88",
+  "libraries/RTXTF-Library/STFMacros.hlsli": "5e1f1b45809adf65f6cc6712364e68e1cc259d82",
+  "libraries/RTXTF-Library/STFSamplerState.hlsli": "7a6cf23671ab3ac7af041688cea67973deeedc1f",
+  "libraries/RTXTF-Library/STFSamplerStateImpl.hlsli": "2b782101336eb13845a52047d15324449e02ca28"
+}

@@ -1,0 +1,10 @@
+{
+  "LICENSE.txt": "9556c6a46cec856baa95cea0880a0d7052900d32",
+  "README.md": "6b73a9f6ad29e95b93c19e64323df67857f28398",
+  "ShaderMake/argparse.c": "12f7214cc6fa31f0e9ec1550b4f06c0e2ec1983c",
+  "ShaderMake/argparse.h": "562c6f51f2df7efbcc86878dd31818f498f8c820",
+  "ShaderMake/CMakeLists.txt": "b72fefeef569602aaa6e1d2eb8bebe52df952adf",
+  "ShaderMake/ShaderBlob.cpp": "c6f0b43791c75c22a502c7c9bfab635069ea347a",
+  "ShaderMake/ShaderBlob.h": "550311107b4e5389b476526b2fa4399af327d482",
+  "ShaderMake/ShaderMake.cpp": "9658b10286bcce6f6b589276a3792faa10f1f1ba"
+}

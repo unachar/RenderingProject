@@ -1,0 +1,21 @@
+{
+  "LICENSE.txt": "af0f489e662568d63cb1215a00940e4931343914",
+  "README.md": "223b9668d9d80204bfe9dbc617f639973d4f1be3",
+  "inc/MIT.txt": "478eb06298afb556e6248b434b7aec2c93ea4bdb",
+  "inc/xell/xell.h": "1c86828aa6ca820fae4e1508c5a1db0c637fb370",
+  "inc/xell/xell_d3d12.h": "d6f5cfbc005a29ba113bec691a614f91ffea410e",
+  "inc/xess/xess.h": "5d16b101994190f22cdf43e695ca1fccc9a79a1d",
+  "inc/xess/xess_d3d11.h": "a25a0aaa3448f5bf7717b9e5b0f135beb00f6bf8",
+  "inc/xess/xess_d3d12.h": "5359b2292dfa6c182b21dbf413cfaed435ab396a",
+  "inc/xess/xess_d3d12_debug.h": "ff0cc3867bea00481f6af7f678383f39c4b36350",
+  "inc/xess/xess_debug.h": "fbd39df389d86d486d602dab0b1ce11259e1133a",
+  "inc/xess/xess_vk.h": "1349d81d4474975e8dccd5783ceae5d8dc2d9de8",
+  "inc/xess/xess_vk_debug.h": "a621a74cf2357ea91ccfe093b354a98be122aeda",
+  "inc/xess_fg/xefg_swapchain.h": "f85b52fb828cf1e77c2d0b52e27a40eac6acdfff",
+  "inc/xess_fg/xefg_swapchain_d3d12.h": "a9b95d5b1f9ca5aa86d63a0c5ce96149844b06bc",
+  "inc/xess_fg/xefg_swapchain_debug.h": "b13f4e8598be6cc369ab7fe491f2df4b22d463db",
+  "lib/libxell.lib": "1814394255177cddefafc136add48125395a8318",
+  "lib/libxess.lib": "a48d04ec39f6d1a59c3bd5232ea3ed63541c468e",
+  "lib/libxess_dx11.lib": "fda817b7bb82a24f03173118be6f88b318168ed5",
+  "lib/libxess_fg.lib": "c35d91800b1b0e7363e0c7abea6105afc1147bf0"
+}

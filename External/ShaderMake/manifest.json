@@ -1,0 +1,23 @@
+{
+  "repository": "https://github.com/NVIDIA-RTX/ShaderMake",
+  "version": "1.0.0",
+  "commit": "main",
+  "sha256": {
+    "LICENSE.txt": "9a15ad379b80dd0cf5df71dc394ca940fb31f58aa6098f6e74c499a845edfc32",
+    "upstream/.clang-format": "795f9f31be63111b45b6ccd8da91ba095886ff15abfc134e2babeee24aa580eb",
+    "upstream/.github/workflows/build.yml": "e3bb77327f3c2cbf1156b929e73e793c2c55793007a3087337707291e6eff399",
+    "upstream/.github/workflows/cla.yml": "15d063ce283d08b329d13fe58525b682d6c2e4af1f1c7a2d8f386daf137c7f77",
+    "upstream/.gitignore": "bf703a7c40b561a8e310d2778d1a39e5e9a927dbc177b93719f209bf4c462e64",
+    "upstream/CLA.txt": "549d61a678f5061c5bc0e5a206fd3b806c3d699822296b4a30303d0f6e2be985",
+    "upstream/CMakeLists.txt": "77e89ba09e5806fb2a4b0edc929fd0dba623fb8982cbcbc9d6f38f8febd510fa",
+    "upstream/LICENSE.txt": "9a15ad379b80dd0cf5df71dc394ca940fb31f58aa6098f6e74c499a845edfc32",
+    "upstream/README.md": "9011b7d54053e00257aedc83336be1207a21fa5592ad27bf9400b6db73450fd0",
+    "upstream/ShaderMake/argparse.c": "1071c7e30dd1afee04d69fdc1e647eccce002179793eb17789ed2c510834aaea",
+    "upstream/ShaderMake/argparse.h": "1dbdd5a603c416d9afc8179271ab4ed8f370473c38e7a12e4853181770c724ce",
+    "upstream/ShaderMake/CMakeLists.txt": "82b158afafb92683df5820f38dd8572b8ac8a0ca948af50193ae04d691895674",
+    "upstream/ShaderMake/ShaderBlob.cpp": "8ec0bc8333c42ab737eb0e3194b2bd1df6ffadeac46ca7759d7168f9fbaaaef6",
+    "upstream/ShaderMake/ShaderBlob.h": "d3a4e39d5e91597d8123c1799b1966deae227d26d90368ce7e187a6844e5340a",
+    "upstream/ShaderMake/ShaderMake.cpp": "585b872da31ef66e71d09a1462dd42e600d509bed3610027cfae18f3f6a02c35",
+    "upstream/ThirdPartyLicenses.txt": "67ae7c453a274236b963f2289ac8b8db33c66ed6b5f296d6ebea823e21e46fb5"
+  }
+}

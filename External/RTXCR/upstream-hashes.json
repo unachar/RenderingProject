@@ -1,0 +1,20 @@
+{
+  "License.txt": "e51e51f04b30ac2acdb4f1a987c087319cfb6aff",
+  "README.md": "ed9e579a44cf262d0425411c8bfe438a2dca63d7",
+  "libraries/rtxcr/geometry/License.txt": "f86945350eb0514c335688e3babc185d3fddb22f",
+  "libraries/rtxcr/geometry/README.md": "e4c2901dd7cff10419f980db636f3f5692fe9809",
+  "libraries/rtxcr/geometry/include/CurveTessellation.h": "8a842be377687ba9595b31c8a3790c8db841817a",
+  "libraries/rtxcr/geometry/include/CurveTessellationMath.h": "6dd0df29a97d2ac1441c0c8102baf4529f6ef39e",
+  "libraries/rtxcr/geometry/shaders/include/rtxcr/geometry.hlsli": "d0a6d2e3ab6cd2c6a92e3bde7277b6c6a05df0d7",
+  "libraries/rtxcr/material/License.txt": "f86945350eb0514c335688e3babc185d3fddb22f",
+  "libraries/rtxcr/material/README.md": "635bfbaee1058eb548cc8b25bc62ca9106f68fae",
+  "libraries/rtxcr/material/shaders/include/rtxcr/HairChiangBSDF.hlsli": "075e7274a5a57e9873f81b3b48cb1cbf773fbbf2",
+  "libraries/rtxcr/material/shaders/include/rtxcr/HairFarFieldBCSDF.hlsli": "4adb509a2e70697b07ee02210d44bf0106f1e15d",
+  "libraries/rtxcr/material/shaders/include/rtxcr/HairMaterial.hlsli": "800fceb6d4903be43c7232200857efc7bfc324c3",
+  "libraries/rtxcr/material/shaders/include/rtxcr/SubsurfaceMaterial.hlsli": "f630e64c681957a13ccda3dc316b0a2defc58f56",
+  "libraries/rtxcr/material/shaders/include/rtxcr/SubsurfaceScattering.hlsli": "fb8f2cd042a7e13aab1b59342e06f4b52fc8705f",
+  "libraries/rtxcr/material/shaders/include/rtxcr/Transmission.hlsli": "3c3aeca83d888899ca5ed94e11f16009f02a8099",
+  "libraries/rtxcr/material/shaders/include/rtxcr/utils/RtxcrBsdf.hlsli": "12bb3163b6877cc254a9bf22709ee511d6deba9d",
+  "libraries/rtxcr/material/shaders/include/rtxcr/utils/RtxcrHairBsdfHelper.hlsli": "b2b446251d3fc8d82edbf72432f76e1de24abc73",
+  "libraries/rtxcr/material/shaders/include/rtxcr/utils/RtxcrMath.hlsli": "9aa058c14c84ed36856c9e3ddba6248ed65b5c88"
+}

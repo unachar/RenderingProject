@@ -1,0 +1,11 @@
+{
+  "license.txt": "cc2870eb2b4e3349c9d0a532b6805e5b856f0bf9",
+  "NOTICES.txt": "3275ec9f8199e40d74c4378fefadf50f498b02ff",
+  "ffx-cacao/inc/ffx_cacao.h": "f270b46bc20e5b645b121b2f18908ac85742ed3f",
+  "ffx-cacao/inc/ffx_cacao_impl.h": "f5a723d2c7551a2007932a6d1ab77ca68d6fd51a",
+  "ffx-cacao/src/ffx_cacao.cpp": "0c20374a698c2e00b1a5941f913735c45eb63561",
+  "ffx-cacao/src/ffx_cacao.hlsl": "58dd95f14baaf026f99ac68b4e8bef2f7f2681d3",
+  "ffx-cacao/src/ffx_cacao_bindings.hlsl": "2af3b4c0fec94caec06d3a36f54b2036e3530b81",
+  "ffx-cacao/src/ffx_cacao_defines.h": "ff825e081cc9d1dfa0858df727ebeca1e423b189",
+  "ffx-cacao/src/ffx_cacao_impl.cpp": "18aef4fb0525d7c18057f3a9405932f441860d9a"
+}
