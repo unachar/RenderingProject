@@ -93,8 +93,12 @@ targets XML is well-formed with 34 tracked DXC outputs.
   at native resolution is the AA history view (the pre-upscale
   history it used before is only written by the upscale AA
   branch; DLSS/Bilateral/TSR upscaling keeps the stale source -
-  documented gap); and the tri-state w=2 requires a registered
-  result texture, matching the binding guard.
+  documented gap); the tri-state w=2 requires a registered
+  result texture, matching the binding guard; SSR is never
+  selected in forward render mode (its trace runs in the
+  deferred pass - a mode switch no longer freezes a stale
+  result); and the mip chain's per-level barrier before-states
+  are exact (validation-layer clean by construction).
 - Stage 2H reference path tracer: integrator shader (RayQuery,
   NEE, GGX/diffuse sampling, RR, deterministic seeds), Cornell /
   material-test / emissive-panel fixtures, quad area-light NEE
