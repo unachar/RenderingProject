@@ -12,7 +12,7 @@ gate and the expected observable behavior.
       files (screenspacereflections, scenepasses, postprocesspass,
       reflectionprobes, reference*, editorsettings,
       virtualgeometrytraversal).
-- [ ] `scripts/test-shader-build-targets.ps1` passes (43 tracked
+- [ ] `scripts/test-shader-build-targets.ps1` passes (45 tracked
       DXC outputs).
 - [ ] `tests/shader_scan_tests.py` and `tests/pfm_compare_tests.py`
       pass.
@@ -26,7 +26,14 @@ gate and the expected observable behavior.
       (T2 hit-point accumulation), no smearing trails on rough
       surfaces (roughness-scaled blend).
 - [ ] Checkerboard sub-flag ON: no visible checker pattern in
-      motion; GPU ms of the SSR trace roughly halves.
+      motion; GPU ms of the SSR trace roughly halves. (The
+      resolve-constants fix in 970b4aae is what makes the parity
+      reach the resolve at all - this check validates it.)
+- [ ] Rough surfaces with SSR ON: reflections look soft, not
+      mirror-sharp (prefiltered mip chain, sampled at
+      roughness * 4); lowering the SSR 粗さ上限 slider below a
+      surface's roughness removes its trace (env fallback) and
+      lowers SSR GPU cost.
 - [ ] Teleport the camera (scene/camera cut): no ghost reflections
       from the old viewpoint (history reset on forward swing > ~26
       degrees or origin jump > 10 units).
@@ -35,8 +42,9 @@ gate and the expected observable behavior.
 ## 2. Stage 2H reference captures (env-gated)
 
 - [ ] `DX12_REFERENCE_CAPTURE_TEST=1` run writes
-      reference_cornell.pfm/.ppm + _albedo/_normal PFMs next to the
-      exe; log line reports PASS.
+      reference_cornell.pfm/.ppm + _albedo/_normal/_direct PFMs
+      next to the exe; log line reports PASS. beauty - direct is
+      everywhere >= ~0 (the indirect remainder).
 - [ ] `DX12_REFERENCE_CAPTURE_FIXTURE=materials` and `=emissive`
       variants write their files; the emissive render is lit only
       by the panel (soft ceiling glow, no point-light hot spot).
@@ -48,11 +56,11 @@ gate and the expected observable behavior.
 
 ## 3. Stage 2J probes
 
-- [ ] Two overlapping probes: the frame no longer hard-switches
-      the environment at the boundary (frame-global top-2 is
-      selected; per-pixel blending activates once
-      PROBE_BLENDING_BINDLESS is enabled after checking the
-      deferred/forward root signatures bind the space-1 heap).
+- [ ] Two overlapping probes: reflections blend per-pixel
+      across the overlap (Route A is compiled into both
+      DeferredLightingPS and modelshaderPS); the frame-global
+      top-2 selection drives the weights with the global
+      environment as the remainder.
 - [ ] Probe Intensity now scales the probe contribution.
 - [ ] Inside a probe box, reflections sample from the box surface
       (parallax), not from infinity.
