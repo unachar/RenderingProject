@@ -23,7 +23,9 @@ contract:
   selection: DXR result > SSR result > probe/environment IBL.
 - Selection lives in one place on the CPU side (which texture and
   flag values the frame binds), keeping the shader change to the
-  existing branch.
+  existing branch. SSR is a deferred-path feature: in forward
+  render mode the selection never picks it (the trace runs in
+  the deferred EndScenePass).
 
 ## Pipeline
 
