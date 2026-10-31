@@ -213,10 +213,18 @@ void PostProcessPass::ApplyPostProcess(const PostProcessComponent& config)
             // RaytracingFlags.w: 0 = environment IBL, 1 = raytraced
             // reflection result, 2 = screen-space reflection result
             // (blended by confidence in SurfaceLighting.hlsli).
+            // w = 2 requires a registered SSR result: selection
+            // alone is set in BeginDraw, before the first Execute
+            // registers the texture (and Execute can fail). The
+            // table-16 binding below applies the same >= 0 guard;
+            // without it here the shader would take the SSR
+            // branch and sample the environment texture as if it
+            // were the reflection result.
             params.RaytracingFlags = XMFLOAT4(static_cast<float>(Raytracing::IsActive()),
                                               static_cast<float>(Raytracing::UsesRaytracedAmbientOcclusion()),
                                               static_cast<float>(Raytracing::UsesRaytracedShadows()),
-                                              ScreenSpaceReflections::IsScreenSpaceSelected()
+                                              (ScreenSpaceReflections::IsScreenSpaceSelected() &&
+                                               ScreenSpaceReflections::GetResultEngineSrvIndex() >= 0)
                                                   ? 2.0f
                                                   : static_cast<float>(Raytracing::AreReflectionsActive()));
             params.RaytracingSunDirection = Raytracing::GetSunDirection();
