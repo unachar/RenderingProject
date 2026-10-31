@@ -146,6 +146,9 @@ targets XML is well-formed with 34 tracked DXC outputs.
   implementation; revisit AO only with a fixed-scene comparison.
 - RTXDI: license review required before any adoption (comparison
   only); MegaLights already covers the many-lights use case.
+- Tracy: evaluated (docs/rendering-technology-tracy-evaluation.md)
+  - adopt later as an opt-in TRACY_ON_DEMAND trace alongside the
+  existing CSV/GPU measurement; not landed in this run.
 - STBN sampling: deferred 2026-10-31. The engine has no shared
   R2/R4 sampling-sequence module or blue-noise asset for STBN to
   replace (each stochastic subsystem hashes independently), and the
