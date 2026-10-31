@@ -352,6 +352,7 @@ void ImGuiManager::DrawProjectSettingsWindow()
         {
             RendererSettings::SetUseScreenSpaceReflections(useSsr);
         }
+        ImGui::BeginDisabled(!useSsr);
         bool useCheckerboard = RendererSettings::GetUseSsrCheckerboard();
         if (ImGui::Checkbox("SSR チェッカーボードトレース", &useCheckerboard))
         {
@@ -362,6 +363,7 @@ void ImGuiManager::DrawProjectSettingsWindow()
         {
             RendererSettings::SetSsrRoughnessLimit(ssrRoughnessLimit);
         }
+        ImGui::EndDisabled();
 
         ImGui::SeparatorText("GPU Memory");
         auto& memory = GpuMemoryBudget::Options;
