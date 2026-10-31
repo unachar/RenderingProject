@@ -15,6 +15,8 @@ Windows build.
 | `reference_integrator_contract_tests.py` | Stage 2H: 30-DWORD constants, UAV range, scene-buffer register order (host enum vs shader t1..t8). |
 | `postprocess_probe_contract_tests.py` | Stage 2J: PostProcessParams probe tail at byte 400 in both layout descriptions, 480-byte CB. |
 | `shader_build_targets_contract_tests.py` | Linux port of `scripts/test-shader-build-targets.ps1`: 45 tracked DXC outputs, no duplicates, dependency existence. |
+| `decal_layout_contract_tests.py` | Stage 1D: GpuDecal (112 B) vs the DecalData cbuffer field order. |
+| `spd_layout_contract_tests.py` | SPD Hi-Z: SpdConstants field order vs the host's 4-DWORD upload and counter root UAV. |
 
 The contract tests exist because these agreements (constant
 sizes, register orders, byte offsets) are invisible to both
