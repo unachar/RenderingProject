@@ -791,6 +791,7 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\rendering\occlusionculling.cpp" />
     <ClCompile Include="source\rendering\meshshaderpipeline.cpp" />
     <ClCompile Include="source\rendering\lightinstancebuilder.cpp" />
+    <ClCompile Include="source\rendering\colormanagement.cpp" />
     <ClCompile Include="source\entities\sky.cpp" />
     <ClCompile Include="source\scene\sun.cpp" />
     <ClCompile Include="source\models\staticmodel.cpp" />

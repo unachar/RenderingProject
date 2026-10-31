@@ -15,6 +15,20 @@
     <CudaHeaderRoot>$(MSBuildThisFileDirectory)External\CUDA\sdk\include\</CudaHeaderRoot>
     <EnableOptix Condition="'$(EnableOptix)' == '' and '$(Platform)' == 'x64' and Exists('$(OptixSdkRoot)include\optix.h') and Exists('$(CudaHeaderRoot)cuda.h')">true</EnableOptix>
     <EnableOptix Condition="'$(EnableOptix)' == ''">false</EnableOptix>
+    <OcioRoot>$(MSBuildThisFileDirectory)External\OpenColorIO\</OcioRoot>
+    <EnableOcio Condition="'$(EnableOcio)' == '' and '$(Platform)' == 'x64' and Exists('$(OcioRoot)include\OpenColorIO\OpenColorIO.h') and Exists('$(OcioRoot)lib\OpenColorIO.lib')">true</EnableOcio>
+    <EnableOcio Condition="'$(EnableOcio)' == ''">false</EnableOcio>
+    <AclRoot>$(MSBuildThisFileDirectory)External\ACL\</AclRoot>
+    <EnableAcl Condition="'$(EnableAcl)' == '' and '$(Platform)' == 'x64' and Exists('$(AclRoot)acl\compression\compress.h') and Exists('$(AclRoot)lib\acl.lib')">true</EnableAcl>
+    <EnableAcl Condition="'$(EnableAcl)' == ''">false</EnableAcl>
+    <KtxRoot>$(MSBuildThisFileDirectory)External\KTX-Software\</KtxRoot>
+    <BasisRoot>$(MSBuildThisFileDirectory)External\basis_universal\</BasisRoot>
+    <EnableBasis Condition="'$(EnableBasis)' == '' and '$(Platform)' == 'x64' and Exists('$(BasisRoot)transcoder\basisu_transcoder.h') and Exists('$(BasisRoot)lib\basisu.lib')">true</EnableBasis>
+    <EnableBasis Condition="'$(EnableBasis)' == ''">false</EnableBasis>
+    <EnableKtx Condition="'$(EnableKtx)' == '' and '$(Platform)' == 'x64' and Exists('$(KtxRoot)include\ktx.h') and Exists('$(KtxRoot)lib\ktx.lib')">true</EnableKtx>
+    <EnableKtx Condition="'$(EnableKtx)' == ''">false</EnableKtx>
+    <ShaderMakeRoot>$(MSBuildThisFileDirectory)External\ShaderMake\</ShaderMakeRoot>
+    <EnableShaderMake>false</EnableShaderMake>
   </PropertyGroup>
 
 
@@ -76,6 +90,61 @@
     <Link>
       <AdditionalLibraryDirectories>$(NrdSdkRoot)_Bin\$(Configuration);$(NrdSdkRoot)_Build\_deps\shadermake-build\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>NRD.lib;ShaderMakeBlob.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableOcio)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(OcioRoot)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_OCIO=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(OcioRoot)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>OpenColorIO.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableAcl)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(AclRoot)acl;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_ACL=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(AclRoot)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>acl.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableKtx)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(KtxRoot)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_KTX=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(KtxRoot)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>ktx.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableBasis)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(BasisRoot)transcoder;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_BASIS=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(BasisRoot)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>basisu.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableShaderMake)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ShaderMakeRoot)ShaderMake;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_SHADERMAKE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(ShaderMakeRoot)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>ShaderMake.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
 
