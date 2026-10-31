@@ -86,6 +86,14 @@ targets XML is well-formed with 34 tracked DXC outputs.
   lets its parity reach the resolve), a prefiltered result mip
   chain sampled at roughness * 4, and a per-pixel roughness
   trace-skip limit are all landed behind the default-OFF flag.
+  Robustness fixes found by audit during the run: the mip chain
+  is optional (a missing downsample CSO no longer fails SSR,
+  and the result clamps to one mip); the previous-color source
+  at native resolution is the AA history view (the pre-upscale
+  history it used before is only written by the upscale AA
+  branch; DLSS/Bilateral/TSR upscaling keeps the stale source -
+  documented gap); and the tri-state w=2 requires a registered
+  result texture, matching the binding guard.
 - Stage 2H reference path tracer: integrator shader (RayQuery,
   NEE, GGX/diffuse sampling, RR, deterministic seeds), Cornell /
   material-test / emissive-panel fixtures, quad area-light NEE
