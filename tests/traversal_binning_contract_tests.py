@@ -79,6 +79,16 @@ def main():
     check(mesh_renderer.count("ExecuteIndirect") >= 2,
           "renderer must issue indirect draws")
 
+    # Per-view counters: every shadow slot owns a 64-DWORD Counters
+    # buffer (the Statistics scratch, bytes 28/96 live there), ensured
+    # in Prepare for slot 0 and lazily in PrepareShadowView for the
+    # rest - a shared buffer would let one view's Reset clobber
+    # another view's bin counts.
+    check("ensure(frame.ShadowBuffers().Counters, 64, 4)" in traversal_cpp,
+          "Prepare must ensure slot-0 shadow Counters at 64 DWORDs")
+    check("ensureSlot(shadowBuffers.Counters, 64, 4)" in traversal_cpp,
+          "PrepareShadowView must ensure its slot's Counters at 64 DWORDs")
+
     print("traversal binning contract tests passed")
     return 0
 

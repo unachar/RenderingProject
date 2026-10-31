@@ -99,8 +99,12 @@ targets XML is well-formed with 34 tracked DXC outputs.
   material-test / emissive-panel fixtures, quad area-light NEE
   with balance-heuristic MIS, BLAS/TLAS host, synchronous capture
   run with readback, PFM/PPM writers, first-hit albedo/normal
-  AOVs, a direct/indirect split output, and the validation-hook
-  caller (env-gated). Real-scene captures remain the long-term
+  AOVs, a direct/indirect split output, a white-furnace fixture,
+  and the validation-hook caller (env-gated; SIZE / SPP / SEED /
+  FIXTURE overrides). Tooling: pfm_compare (RMSE / rel-RMSE /
+  windowed SSIM / --region), pfm_stat, parse_vram_log, and the
+  Linux DXC compile sweep (scripts/compile_check_linux.sh,
+  15/15 entry points). Real-scene captures remain the long-term
   follow-up in the design doc.
 - Stage 2J: per-probe GGX prefilter, box-projection parallax,
   probe intensity, and per-pixel two-probe blending (Route A)
