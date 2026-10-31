@@ -1,10 +1,9 @@
 # Stage 2J follow-up — live cubemap capture for probes: design
 
-Status: PARTIALLY IMPLEMENTED - cube->equirect conversion, the
-capture scratch target, the face matrices, and the CaptureLive
-component flag (inspector + scene serialization) have landed;
-only the 6-face scene capture pass remains (scoped at the end
-of this doc as its own reviewed change). Probes today sample authored equirect environment
+Status: IMPLEMENTED - the 6-face capture pass, conversion,
+prefilter, registration and round-robin scheduling have all
+landed (see "As built" at the end of this doc for the route and
+its v1 limits). Probes today sample authored equirect environment
 textures (optionally GGX-prefiltered by EnvironmentPrefilterCS).
 A probe that reflects the ACTUAL scene needs a live capture:
 render the scene into a cubemap at the probe position, convert to
@@ -59,21 +58,54 @@ it through the same SRV plumbing.
   CaptureLive probes through conversion + prefilter in
   SyncFromScene, and the refresh scheduling of step 3.
 - Scoping of the capture pass (surveyed 2026-10-31): the engine
-  has no offscreen scene-render API today — ScenePasses is bound
-  to the main frame's targets and the scene camera entity, and no
-  other cubemap scene capture exists in the tree. The viable
-  route is a dedicated capture camera entity plus a target swap
-  inside the frame's opaque+lighting segment: RenderFrame queues
-  at most one capture per frame (round-robin over CaptureLive
-  probes), points the capture camera at the probe position with
-  GetCaptureFaceMatrices per face, renders the six faces into the
-  scratch slices, then SyncFromScene converts + prefilters the
-  result and registers it as that probe's environment. Estimated
-  at several hundred lines across renderframe/scenepasses with
-  real regression surface on the main pass, so it lands as its
-  own reviewed change rather than inside an automated batch; the
-  inspector checkbox is present but inert until then (labelled
-  as such in the UI).
+  has no offscreen scene-render API — ScenePasses is bound to
+  the main frame's targets and the scene camera entity, and no
+  other cubemap scene capture exists in the tree.
+
+## As built (2026-10-31)
+
+The capture landed on a different, lower-risk route than the
+target swap scoped above — the MaterialPreview precedent:
+`MaterialPreview::Render` already renders production-shaded
+geometry into an offscreen target from `RenderFrame::EndDraw`
+(after the main passes) with its own targets and full state
+restoration, proving the integration point. The probe capture
+(`ReflectionProbes::ProcessPendingCaptures`, called from EndDraw
+next to the preview) does the same:
+
+- One dirty probe per frame, round-robin by entity id
+  (`CaptureState` per entity in the probes module; SyncFromScene
+  refreshes centers and marks a state dirty on first sight and
+  on moves > 5 cm; states of deleted or un-flagged probes are
+  pruned).
+- Per face: `ScenePasses::BeginPass` with the model root
+  signature (real scene lights, shadow maps, environment and
+  post-process constants), root 17 bound to the scene light
+  constant buffer like the production mesh draws, then every
+  opaque static model is drawn forward-lit with the production
+  model shaders — per-entity `ConstantBuffer3D` with the face
+  matrices from GetCaptureFaceMatrices, world from the
+  transform, material fields following the instancing path's
+  constants rules (mesh texture fallback included). Faces render
+  into the shared scratch slices (128x128) over a private depth
+  target, reverse-Z like the rest of the engine.
+- The cube is then converted (256x128 equirect) and prefiltered
+  through the landed steps, and published via the new
+  `TextureManager::ReplaceExternalTexture`, which re-points the
+  probe's SRV slot at the fresh texture and fence-retires the
+  previous one — so a refresh replaces the capture in place
+  under `probe://capture/<entity>[#prefiltered]`.
+- Selection needs no changes: SyncFromScene resolves a
+  CaptureLive probe to its capture SRV once one exists (the
+  authored texture is served until then).
+
+V1 limits, deliberate: animated/skinned models and
+GPU-driven-only geometry (no StaticModelComponent) are not
+captured; transparent materials are skipped; captures reuse the
+main frame's forward-lighting bindings, so a MegaLights grid
+built for the main camera may imprint on captured lighting;
+refresh triggers are first-sight and probe movement (no
+scene-dirty signal yet).
 
 ## Acceptance
 

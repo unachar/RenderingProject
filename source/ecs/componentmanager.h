@@ -493,9 +493,10 @@ struct ReflectionProbeComponent
     // When the source texture lacks a prefiltered mip chain, generate
     // one at runtime with the GGX prefilter (Stage 2 J step 5).
     bool GeneratePrefilter = false;
-    // Stage 2J live capture: when set (and EnvironmentTexturePath is
-    // empty), the probe's environment comes from a live cubemap
-    // capture at the probe position instead of an authored texture.
+    // Stage 2J live capture: when set, the probe's environment
+    // comes from a live cubemap capture at the probe position and
+    // takes priority over the authored texture (which is served
+    // until the first capture completes).
     bool CaptureLive = false;
     bool IsActive = true;
 };

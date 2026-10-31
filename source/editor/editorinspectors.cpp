@@ -636,7 +636,7 @@ void ImGuiManager::DrawInspectorWindow()
         changed |= ImGui::Checkbox("ライブキャプチャ", &probe.CaptureLive);
         if (probe.CaptureLive)
         {
-            ImGui::TextDisabled("環境テクスチャより優先 (キャプチャパス実装後に有効)");
+            ImGui::TextDisabled("環境テクスチャより優先 (1フレーム1プローブずつキャプチャ)");
         }
         char buffer[512];
         strncpy_s(buffer, probe.EnvironmentTexturePath.c_str(), _TRUNCATE);

@@ -116,10 +116,15 @@ targets XML is well-formed with 34 tracked DXC outputs.
   compiled into both lighting paths after the root-signature
   audit (postprocess root 39 binds the space-1 heap; the model
   root signature already bound it at root 18). Live cubemap
-  capture: conversion, scratch, face matrices, the CaptureLive
-  component flag + inspector + scene serialization landed; the
-  6-face scene capture pass is scoped in the capture design as
-  its own reviewed change.
+  capture IMPLEMENTED: conversion, scratch, face matrices, the
+  CaptureLive component flag + inspector + scene serialization,
+  and the 6-face capture pass itself - a forward-lit
+  static-model render from RenderFrame::EndDraw on the
+  MaterialPreview precedent (one probe per frame, round-robin;
+  refresh on first sight and on probe movement), published
+  through TextureManager::ReplaceExternalTexture. V1 limits
+  (no skinned/GPU-driven-only geometry, no transparents) are
+  recorded in the capture design doc.
 - D3D12MA remaining exclusions, by design: UPLOAD/READBACK heaps
   (not allocator territory), the transient aliasing arena (own
   lifetime model), reserved/tiled streaming resources, mapped

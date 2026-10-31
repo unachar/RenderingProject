@@ -124,13 +124,28 @@ gate and the expected observable behavior.
       directional light is not the last shadow light.
 - [ ] Alpha-tested foliage still casts cutout shadows (v2 path).
 
+## 5. Stage 2J live probe capture (landed after the run)
+
+- [ ] A CaptureLive probe in a room with colored walls: after a
+      second or two the probe's reflections show the room (not
+      the authored texture / sky); with an authored texture set,
+      the texture is served until the first capture completes,
+      then the capture takes over.
+- [ ] Move the probe in the editor: the capture refreshes
+      (one probe per frame; with several live probes they
+      refresh round-robin - watch the "Reflection Probe
+      Capture" profiler event, at most one per frame).
+- [ ] Frame cost: steady state (no probe moved) shows no
+      capture events; a capture frame adds one 6-face 128x128
+      static-model pass.
+- [ ] Uncheck ライブキャプチャ: the probe falls back to its
+      authored texture from the next frame.
+
 ## Known follow-ups (not blockers)
 
-- The 6-face probe capture pass (see the Stage 2J capture
-  design's scoping note) is the one sized piece of the run's
-  designs not implemented; CaptureLive is inert until it lands.
-- Stage 1C material binning: design + survey landed; the view
-  Constants cbuffer has no spare field, so implementation starts
-  with growing it (host + HLSL mirror + asserts).
-- Probe live capture: cube->equirect conversion landed; the
-  6-face scene capture pass is the remaining step.
+- Stage 2H real-scene captures (the integrator takes fixture
+  scenes only) remain the long-term follow-up.
+- Probe capture v1 limits: animated/skinned and
+  GPU-driven-only geometry is not captured, transparent
+  materials are skipped, and refresh triggers are first-sight
+  and probe movement only (no scene-dirty signal).

@@ -43,21 +43,31 @@ namespace ReflectionProbes
     int GeneratePrefilteredEnvironment(ID3D12GraphicsCommandList* commandList, int sourceSrvIndex,
                                        const char* registrationName);
 
-    // Live capture step 1: converts a captured cubemap (6+ slices)
-    // into an equirect texture registered under registrationName,
-    // ready to feed GeneratePrefilteredEnvironment. Returns the
-    // engine SRV index or -1 on failure.
+    // Live capture: converts a captured cubemap (6+ slices, left
+    // in NON_PIXEL_SHADER_RESOURCE state by the caller) into an
+    // equirect texture registered under registrationName, ready
+    // to feed GeneratePrefilteredEnvironment. Returns the engine
+    // SRV index or -1 on failure. Re-converting under the same
+    // name replaces the previous texture in place.
     int ConvertCubeToEquirect(ID3D12GraphicsCommandList* commandList, ID3D12Resource* cubeResource,
                               uint32_t width, uint32_t height, const char* registrationName);
 
-    // Live capture step 2: the shared cubemap scratch target all
-    // probe captures render into (6 slices, RGBA16F, RTV + SRV),
+    // Live capture: the shared cubemap scratch target all probe
+    // captures render into (6 slices, RGBA16F, RTV + SRV),
     // recreated when the requested face size changes, plus the
     // standard cube-face view/projection matrices (90-degree FOV)
-    // for a capture at a world position. The scene capture pass
-    // itself is the remaining step of the capture design.
+    // for a capture at a world position.
     ID3D12Resource* EnsureCaptureScratch(uint32_t faceSize);
     void GetCaptureFaceMatrices(uint32_t face, const float position[3], float view[16], float projection[16]);
+
+    // Live capture: renders at most one dirty CaptureLive probe
+    // per call (round-robin) into the shared scratch, converts and
+    // prefilters it, and publishes the result as that probe's
+    // environment. Called from RenderFrame::EndDraw, after the
+    // main passes, following the MaterialPreview offscreen-render
+    // precedent; a probe that has never been captured keeps
+    // serving its authored texture (or stays inactive).
+    void ProcessPendingCaptures(ID3D12GraphicsCommandList* commandList);
 
     // Returns the environment SRV index of the active probe for the
     // given camera position, or -1 when no probe contains it.

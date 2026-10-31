@@ -85,6 +85,11 @@ void RenderFrame::EndDraw()
 {
     AnimationPreviewWindow::Render();
     MaterialPreview::Render();
+    // Stage 2J live probe capture: at most one probe per frame,
+    // rendered offscreen here (after the main passes) like the
+    // material preview above; the frame state it touches
+    // (viewport/scissor, render targets) is restored below.
+    ReflectionProbes::ProcessPendingCaptures(m_CommandList.Get());
     AssetThumbnailManager::ProcessGenerationBudget();
     {
         RenderProfiler::ScopedEvent profile("Procedural Color Tile Update", m_CommandList.Get());

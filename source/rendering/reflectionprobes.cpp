@@ -4,10 +4,18 @@
 #include "frameconstants.h"
 #include "componentmanager.h"
 #include "graphicsdevice.h"
+#include "lightingresources.h"
+#include "materialbindings.h"
+#include "materialmanager.h"
 #include "memoryallocator.h"
+#include "modelmanager.h"
 #include "renderprofiler.h"
 #include "renderersettings.h"
 #include "rendererstate.h"
+#include "scenepasses.h"
+#include "shaderdescription.h"
+#include "shaderpipelines.h"
+#include "staticmodel.h"
 #include "texturemanager.h"
 
 #include <cmath>
@@ -389,29 +397,447 @@ namespace ReflectionProbes
         return TextureManager::ReplaceExternalTexture(registrationName, output);
     }
 
+    namespace
+    {
+        // Live capture state per probe entity. SyncFromScene
+        // refreshes Center every frame and marks the state dirty
+        // when the probe appears or moves; ProcessPendingCaptures
+        // (RenderFrame::EndDraw) serves one dirty state per frame.
+        struct CaptureState
+        {
+            int SrvIndex = -1;
+            bool Dirty = true;
+            float Center[3] = {0.0f, 0.0f, 0.0f};
+            float CapturedCenter[3] = {0.0f, 0.0f, 0.0f};
+            bool HasCapture = false;
+        };
+
+        std::unordered_map<EntityID, CaptureState> g_CaptureStates;
+        EntityID g_LastCaptureEntity = g_kINVALID_ENTITY;
+        bool g_HasLastCapture = false;
+
+        constexpr uint32_t kCaptureFaceSize = 128;
+        constexpr uint32_t kCaptureEquirectWidth = 256;
+        constexpr uint32_t kCaptureEquirectHeight = 128;
+
+        // Capture-only render resources: per-slice RTVs over the
+        // shared scratch, one depth target, and forward-lit model
+        // PSOs (the production model shaders, following the
+        // MaterialPreview recipe) in the three material cull
+        // variants.
+        ComPtr<ID3D12DescriptorHeap> g_CaptureRtvHeap;
+        ComPtr<ID3D12DescriptorHeap> g_CaptureDsvHeap;
+        ComPtr<ID3D12Resource> g_CaptureDepth;
+        ID3D12Resource* g_CaptureViewsFor = nullptr;
+        D3D12_RESOURCE_STATES g_CaptureScratchState = D3D12_RESOURCE_STATE_COMMON;
+        ComPtr<ID3D12PipelineState> g_CapturePsos[3];
+        bool g_CapturePsoFailed = false;
+
+        bool EnsureCaptureViews(ID3D12Device* device, ID3D12Resource* scratch)
+        {
+            if (g_CaptureViewsFor == scratch && g_CaptureRtvHeap && g_CaptureDepth)
+            {
+                return true;
+            }
+            const D3D12_RESOURCE_DESC scratchDesc = scratch->GetDesc();
+            const uint32_t faceSize = static_cast<uint32_t>(scratchDesc.Width);
+            D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
+            heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+            heapDesc.NumDescriptors = 6;
+            if (FAILED(device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&g_CaptureRtvHeap))))
+            {
+                return false;
+            }
+            heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+            heapDesc.NumDescriptors = 1;
+            if (FAILED(device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&g_CaptureDsvHeap))))
+            {
+                return false;
+            }
+            const UINT rtvIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+            for (uint32_t face = 0; face < 6; ++face)
+            {
+                D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
+                rtvDesc.Format = scratchDesc.Format;
+                rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
+                rtvDesc.Texture2DArray.MipSlice = 0;
+                rtvDesc.Texture2DArray.FirstArraySlice = face;
+                rtvDesc.Texture2DArray.ArraySize = 1;
+                device->CreateRenderTargetView(scratch, &rtvDesc,
+                                               CD3DX12_CPU_DESCRIPTOR_HANDLE(
+                                                   g_CaptureRtvHeap->GetCPUDescriptorHandleForHeapStart(),
+                                                   static_cast<int>(face), rtvIncrement));
+            }
+            const auto depthDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_D32_FLOAT, faceSize, faceSize, 1, 1, 1,
+                                                                0, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
+            D3D12_CLEAR_VALUE clear{};
+            clear.Format = DXGI_FORMAT_D32_FLOAT;
+            clear.DepthStencil.Depth = 0.0f;
+            g_CaptureDepth.Reset();
+            if (ID3D12Resource* allocated =
+                    MemoryAllocator::CreateResourceAutoLifetime(depthDesc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear))
+            {
+                g_CaptureDepth.Attach(allocated);
+            }
+            else
+            {
+                const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+                if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &depthDesc,
+                                                           D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear,
+                                                           IID_PPV_ARGS(&g_CaptureDepth))))
+                {
+                    return false;
+                }
+            }
+            device->CreateDepthStencilView(g_CaptureDepth.Get(), nullptr,
+                                           g_CaptureDsvHeap->GetCPUDescriptorHandleForHeapStart());
+            g_CaptureViewsFor = scratch;
+            g_CaptureScratchState = D3D12_RESOURCE_STATE_COMMON;
+            return true;
+        }
+
+        bool EnsureCapturePsos(ID3D12Device* device)
+        {
+            if (g_CapturePsos[0])
+            {
+                return true;
+            }
+            if (g_CapturePsoFailed)
+            {
+                return false;
+            }
+            ComPtr<ID3DBlob> vertex;
+            ComPtr<ID3DBlob> pixel;
+            ShaderDescription shader{};
+            shader.csoPath = "shader/hlsl/build/modelshaderVS.cso";
+            shader.ppBlob = vertex.GetAddressOf();
+            if (!ShaderPipelines::LoadShaderBlob(shader))
+            {
+                g_CapturePsoFailed = true;
+                return false;
+            }
+            shader.csoPath = "shader/hlsl/build/modelshaderPS.cso";
+            shader.ppBlob = pixel.GetAddressOf();
+            if (!ShaderPipelines::LoadShaderBlob(shader))
+            {
+                g_CapturePsoFailed = true;
+                return false;
+            }
+            const D3D12_INPUT_ELEMENT_DESC layout[] = {
+                {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+                {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+                {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+                {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}};
+            const D3D12_CULL_MODE cullModes[3] = {D3D12_CULL_MODE_BACK, D3D12_CULL_MODE_NONE, D3D12_CULL_MODE_FRONT};
+            for (int variant = 0; variant < 3; ++variant)
+            {
+                D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
+                desc.pRootSignature = ShaderPipelines::GetModelRootSignature();
+                desc.VS = CD3DX12_SHADER_BYTECODE(vertex.Get());
+                desc.PS = CD3DX12_SHADER_BYTECODE(pixel.Get());
+                desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+                desc.RasterizerState.CullMode = cullModes[variant];
+                desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+                desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER; // reverse-Z
+                desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+                desc.SampleMask = UINT_MAX;
+                desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+                desc.NumRenderTargets = 1;
+                desc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+                desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+                desc.SampleDesc.Count = 1;
+                desc.InputLayout = {layout, _countof(layout)};
+                if (FAILED(device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&g_CapturePsos[variant]))))
+                {
+                    g_CapturePsoFailed = true;
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Renders the scene's opaque static models into the six
+        // scratch faces from the probe position (forward lit with
+        // the scene's own lights, shadow maps and environment via
+        // the standard BeginPass bindings), then converts and
+        // prefilters the cube and publishes it as the probe's
+        // environment. Animated/skinned and GPU-driven-only
+        // geometry is not captured in this version.
+        bool CaptureProbe(ID3D12GraphicsCommandList* commandList, EntityID entity, CaptureState& state)
+        {
+            ID3D12Device* device = GraphicsDevice::GetDevice();
+            ID3D12Resource* scratch = EnsureCaptureScratch(kCaptureFaceSize);
+            if (device == nullptr || scratch == nullptr || !EnsureCaptureViews(device, scratch) ||
+                !EnsureCapturePsos(device))
+            {
+                return false;
+            }
+            RenderProfiler::ScopedEvent profile("Reflection Probe Capture", commandList);
+            const float center[3] = {state.Center[0], state.Center[1], state.Center[2]};
+            {
+                D3D12_RESOURCE_BARRIER toRt = CD3DX12_RESOURCE_BARRIER::Transition(
+                    scratch, g_CaptureScratchState, D3D12_RESOURCE_STATE_RENDER_TARGET);
+                commandList->ResourceBarrier(1, &toRt);
+                g_CaptureScratchState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+            }
+            ScenePasses::BeginPass(ShaderPipelines::GetModelRootSignature(),
+                                   D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            // b5 (root 17) takes the same light constant buffer the
+            // production mesh draws bind.
+            if (const D3D12_GPU_VIRTUAL_ADDRESS lights = LightingResources::GetCurrentLightConstantBufferAddress())
+            {
+                commandList->SetGraphicsRootConstantBufferView(17, lights);
+            }
+            const UINT rtvIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+            const CD3DX12_CPU_DESCRIPTOR_HANDLE rtvBase(g_CaptureRtvHeap->GetCPUDescriptorHandleForHeapStart());
+            const CD3DX12_CPU_DESCRIPTOR_HANDLE dsv(g_CaptureDsvHeap->GetCPUDescriptorHandleForHeapStart());
+            const D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<float>(kCaptureFaceSize),
+                                          static_cast<float>(kCaptureFaceSize), 0.0f, 1.0f};
+            const D3D12_RECT scissor{0, 0, static_cast<LONG>(kCaptureFaceSize),
+                                     static_cast<LONG>(kCaptureFaceSize)};
+            commandList->RSSetViewports(1, &viewport);
+            commandList->RSSetScissorRects(1, &scissor);
+            const float clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+            const int defaultTexture = TextureManager::GetDefaultTextureIndex();
+            const UINT cbvIncrement = FrameConstants::GetCbvIncrementSize();
+            const CD3DX12_GPU_DESCRIPTOR_HANDLE heapStart(FrameConstants::GetCbvHeap()->GetGPUDescriptorHandleForHeapStart());
+            bool exhausted = false;
+            for (uint32_t face = 0; face < 6 && !exhausted; ++face)
+            {
+                const CD3DX12_CPU_DESCRIPTOR_HANDLE rtv(rtvBase, static_cast<int>(face), rtvIncrement);
+                commandList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+                commandList->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
+                commandList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
+                float viewData[16];
+                float projectionData[16];
+                GetCaptureFaceMatrices(face, center, viewData, projectionData);
+                XMFLOAT4X4 viewStored{};
+                XMFLOAT4X4 projectionStored{};
+                std::memcpy(&viewStored, viewData, sizeof(viewStored));
+                std::memcpy(&projectionStored, projectionData, sizeof(projectionStored));
+                const XMMATRIX viewProjection = XMMatrixTranspose(XMLoadFloat4x4(&viewStored)) *
+                                                XMMatrixTranspose(XMLoadFloat4x4(&projectionStored));
+                ComponentManager::ForEach<StaticModelComponent, TransformComponent>(
+                    [&](EntityID modelEntity, StaticModelComponent& modelComponent,
+                        TransformComponent& transform) {
+                        if (exhausted)
+                        {
+                            return;
+                        }
+                        StaticModelResource* model = ModelManager::GetStaticModel(modelComponent.ModelId);
+                        if (model == nullptr)
+                        {
+                            return;
+                        }
+                        MaterialComponent fallback{};
+                        const MaterialComponent* materialSource = &fallback;
+                        if (ComponentManager::HasComponent<MaterialComponent>(modelEntity))
+                        {
+                            materialSource = &ComponentManager::GetComponentUnchecked<MaterialComponent>(modelEntity);
+                        }
+                        const MaterialComponent& material = MaterialManager::Resolve(*materialSource);
+                        if (material.IsTransparent)
+                        {
+                            return;
+                        }
+                        const int cullVariant = material.AssetCull == MaterialCull::None
+                                                    ? 1
+                                                    : (material.AssetCull == MaterialCull::Front ? 2 : 0);
+                        commandList->SetPipelineState(g_CapturePsos[cullVariant].Get());
+                        MaterialBindings::SetMaterial(modelEntity, material);
+                        for (UINT meshIndex = 0; meshIndex < model->GetMeshCount(); ++meshIndex)
+                        {
+                            const StaticMeshData& mesh = model->GetMeshData(meshIndex);
+                            if (mesh.IndexCount == 0)
+                            {
+                                continue;
+                            }
+                            ConstantBuffer3D constants{};
+                            constants.World = XMMatrixTranspose(XMLoadFloat4x4(&transform.WorldMatrix));
+                            constants.PreviousWorld = constants.World;
+                            constants.View = XMLoadFloat4x4(&viewStored);
+                            constants.Projection = XMLoadFloat4x4(&projectionStored);
+                            constants.PreviousViewProjection = XMMatrixTranspose(viewProjection);
+                            constants.CameraPos = {center[0], center[1], center[2]};
+                            constants.ViewportSize = {static_cast<float>(kCaptureFaceSize),
+                                                      static_cast<float>(kCaptureFaceSize)};
+                            const bool useModelTexture = material.RuntimeHandle == 0 &&
+                                                         !material.LiveSurfaceOverride && mesh.TextureIndex >= 0;
+                            constants.UseTexture = (material.UseTexture || useModelTexture) ? 1 : 0;
+                            constants.UseNormalMap = material.NormalMapID >= 0 ? 1 : 0;
+                            constants.FlipNormal = 0;
+                            if (materialSource == &fallback)
+                            {
+                                // No material component: shade as a
+                                // plain PBR surface, like the
+                                // material preview's house material.
+                                constants.MaterialMode = 1;
+                                constants.ShaderClass = static_cast<int>(ShaderClass::PBR);
+                            }
+                            else
+                            {
+                                constants.MaterialMode = static_cast<int>(material.ShaderClassMode);
+                                constants.ShaderClass = static_cast<int>(material.ShaderClass);
+                            }
+                            constants.MaterialMetallic = material.Metallic;
+                            constants.MaterialRoughness = material.Roughness;
+                            constants.MaterialFresnel = material.Fresnel;
+                            constants.MaterialAlpha = material.Alpha;
+                            constants.MaterialIsTransparent = 0;
+                            const auto drawConstants = FrameConstants::AllocateTransientConstantBuffer(constants);
+                            if (!drawConstants.ptr)
+                            {
+                                exhausted = true;
+                                return;
+                            }
+                            commandList->SetGraphicsRootDescriptorTable(0, drawConstants);
+                            const int albedo = material.TextureID >= 0
+                                                   ? material.TextureID
+                                                   : (mesh.TextureIndex >= 0 ? mesh.TextureIndex : defaultTexture);
+                            const int normal = material.NormalMapID >= 0 ? material.NormalMapID : defaultTexture;
+                            commandList->SetGraphicsRootDescriptorTable(
+                                1, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapStart, albedo, cbvIncrement));
+                            commandList->SetGraphicsRootDescriptorTable(
+                                6, CD3DX12_GPU_DESCRIPTOR_HANDLE(heapStart, normal, cbvIncrement));
+                            commandList->IASetVertexBuffers(0, 1, &mesh.VertexBufferView);
+                            commandList->IASetIndexBuffer(&mesh.IndexBufferView);
+                            commandList->DrawIndexedInstanced(mesh.IndexCount, 1, 0, 0, 0);
+                        }
+                    });
+            }
+            {
+                D3D12_RESOURCE_BARRIER toSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+                    scratch, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                commandList->ResourceBarrier(1, &toSrv);
+                g_CaptureScratchState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            }
+            if (exhausted)
+            {
+                return false;
+            }
+            const std::string base = "probe://capture/" + std::to_string(entity);
+            const int equirect = ConvertCubeToEquirect(commandList, scratch, kCaptureEquirectWidth,
+                                                       kCaptureEquirectHeight, base.c_str());
+            if (equirect < 0)
+            {
+                return false;
+            }
+            const std::string prefiltered = base + "#prefiltered";
+            const int srv = GeneratePrefilteredEnvironment(commandList, equirect, prefiltered.c_str());
+            if (srv < 0)
+            {
+                return false;
+            }
+            state.SrvIndex = srv;
+            state.CapturedCenter[0] = center[0];
+            state.CapturedCenter[1] = center[1];
+            state.CapturedCenter[2] = center[2];
+            state.HasCapture = true;
+            state.Dirty = false;
+            return true;
+        }
+    } // namespace
+
+    void ProcessPendingCaptures(ID3D12GraphicsCommandList* commandList)
+    {
+        if (commandList == nullptr || !RendererSettings::GetUseLocalReflectionProbes())
+        {
+            return;
+        }
+        // Round-robin: the dirty probe with the smallest entity id
+        // after the last served one, wrapping to the smallest.
+        EntityID chosen = g_kINVALID_ENTITY;
+        EntityID smallest = g_kINVALID_ENTITY;
+        for (const auto& [entity, state] : g_CaptureStates)
+        {
+            if (!state.Dirty)
+            {
+                continue;
+            }
+            if (smallest == g_kINVALID_ENTITY || entity < smallest)
+            {
+                smallest = entity;
+            }
+            if (g_HasLastCapture && entity > g_LastCaptureEntity &&
+                (chosen == g_kINVALID_ENTITY || entity < chosen))
+            {
+                chosen = entity;
+            }
+        }
+        if (chosen == g_kINVALID_ENTITY)
+        {
+            chosen = smallest;
+        }
+        if (chosen == g_kINVALID_ENTITY)
+        {
+            return;
+        }
+        CaptureProbe(commandList, chosen, g_CaptureStates[chosen]);
+        g_LastCaptureEntity = chosen;
+        g_HasLastCapture = true;
+    }
+
     void SyncFromScene(ID3D12GraphicsCommandList* commandList)
     {
         Clear();
         static std::unordered_map<std::string, int> textureCache;
         static std::unordered_set<std::string> prefilterAttempted;
+        std::unordered_set<EntityID> liveCaptureEntities;
         ComponentManager::ForEach<ReflectionProbeComponent, TransformComponent>(
             [&](EntityID entity, ReflectionProbeComponent& probeComponent, TransformComponent& transform) {
-                (void)entity;
-                if (!probeComponent.IsActive || probeComponent.EnvironmentTexturePath.empty())
+                if (!probeComponent.IsActive)
                 {
                     return;
                 }
-                auto found = textureCache.find(probeComponent.EnvironmentTexturePath);
-                if (found == textureCache.end())
+                int authoredIndex = -1;
+                if (!probeComponent.EnvironmentTexturePath.empty())
                 {
-                    int srvIndex = TextureManager::LoadTexture(probeComponent.EnvironmentTexturePath.c_str());
-                    if (probeComponent.GeneratePrefilter && commandList != nullptr &&
-                        prefilterAttempted.insert(probeComponent.EnvironmentTexturePath).second)
+                    auto found = textureCache.find(probeComponent.EnvironmentTexturePath);
+                    if (found == textureCache.end())
                     {
-                        const std::string registration = probeComponent.EnvironmentTexturePath + "#prefiltered";
-                        srvIndex = GeneratePrefilteredEnvironment(commandList, srvIndex, registration.c_str());
+                        int srvIndex = TextureManager::LoadTexture(probeComponent.EnvironmentTexturePath.c_str());
+                        if (probeComponent.GeneratePrefilter && commandList != nullptr &&
+                            prefilterAttempted.insert(probeComponent.EnvironmentTexturePath).second)
+                        {
+                            const std::string registration = probeComponent.EnvironmentTexturePath + "#prefiltered";
+                            srvIndex = GeneratePrefilteredEnvironment(commandList, srvIndex, registration.c_str());
+                        }
+                        found = textureCache.emplace(probeComponent.EnvironmentTexturePath, srvIndex).first;
                     }
-                    found = textureCache.emplace(probeComponent.EnvironmentTexturePath, srvIndex).first;
+                    authoredIndex = found->second;
+                }
+                int srvIndex = authoredIndex;
+                if (probeComponent.CaptureLive)
+                {
+                    liveCaptureEntities.insert(entity);
+                    CaptureState& state = g_CaptureStates[entity];
+                    state.Center[0] = transform.Position.x;
+                    state.Center[1] = transform.Position.y;
+                    state.Center[2] = transform.Position.z;
+                    if (state.HasCapture)
+                    {
+                        float moveSq = 0.0f;
+                        for (int axis = 0; axis < 3; ++axis)
+                        {
+                            const float delta = state.Center[axis] - state.CapturedCenter[axis];
+                            moveSq += delta * delta;
+                        }
+                        if (moveSq > 0.05f * 0.05f)
+                        {
+                            state.Dirty = true;
+                        }
+                    }
+                    // The capture wins once one exists; until the
+                    // first capture lands the probe keeps serving
+                    // its authored texture (or stays inactive).
+                    if (state.SrvIndex >= 0)
+                    {
+                        srvIndex = state.SrvIndex;
+                    }
+                }
+                if (srvIndex < 0 && !probeComponent.CaptureLive)
+                {
+                    return;
                 }
                 Probe probe{};
                 probe.Center[0] = transform.Position.x;
@@ -420,11 +846,25 @@ namespace ReflectionProbes
                 probe.HalfExtents[0] = (std::max)(probeComponent.InfluenceSize.x, 0.1f) * 0.5f;
                 probe.HalfExtents[1] = (std::max)(probeComponent.InfluenceSize.y, 0.1f) * 0.5f;
                 probe.HalfExtents[2] = (std::max)(probeComponent.InfluenceSize.z, 0.1f) * 0.5f;
-                probe.EnvironmentSrvIndex = found->second;
+                probe.EnvironmentSrvIndex = srvIndex;
                 probe.Priority = probeComponent.Priority;
                 probe.Intensity = probeComponent.Intensity;
                 Add(probe);
             });
+        // States of probes that were deleted or stopped capturing
+        // are dropped; their registered textures stay in
+        // TextureManager (bounded by the probe count).
+        for (auto it = g_CaptureStates.begin(); it != g_CaptureStates.end();)
+        {
+            if (liveCaptureEntities.find(it->first) == liveCaptureEntities.end())
+            {
+                it = g_CaptureStates.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
     }
 
     namespace
