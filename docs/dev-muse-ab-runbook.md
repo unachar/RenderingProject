@@ -58,3 +58,7 @@ and the tooling that reads the result.
 - Convergence: rel-RMSE of cornell at 256 spp vs 4096 spp
   decreases monotonically; direct + indirect (beauty - direct)
   stays non-negative.
+- Furnace: mirror-sphere region (`pfm_stat.py --region`, or
+  `pfm_compare.py --region` between two seeds for the noise
+  floor) approaches the wall emission 3.0; the rough-metal
+  region sits clearly below it.
