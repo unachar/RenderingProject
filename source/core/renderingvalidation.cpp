@@ -327,6 +327,10 @@ namespace
         {
             settings.SamplesPerPixel = static_cast<uint32_t>(atoi(value));
         }
+        if (GetEnvironmentVariableA("DX12_REFERENCE_CAPTURE_SEED", value, sizeof(value)) && atoi(value) > 0)
+        {
+            settings.Seed = static_cast<uint32_t>(atoi(value));
+        }
         char fixture[32]{};
         GetEnvironmentVariableA("DX12_REFERENCE_CAPTURE_FIXTURE", fixture, sizeof(fixture));
         const bool materials = strcmp(fixture, "materials") == 0;
