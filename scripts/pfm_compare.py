@@ -41,6 +41,10 @@ def compare(reference_path, candidate_path):
     cw, ch, cc, cand = read_pfm(candidate_path)
     if (rw, rh, rc) != (cw, ch, cc):
         raise ValueError(f"dimension mismatch: {rw}x{rh}x{rc} vs {cw}x{ch}x{cc}")
+    return compare_data(rw, rh, rc, ref, cand)
+
+
+def compare_data(rw, rh, rc, ref, cand):
     sum_sq = 0.0
     sum_ref = 0.0
     max_err = 0.0
@@ -103,20 +107,46 @@ def _tonemapped_ssim(ref, cand, width, height, channels):
     return total / windows if windows else 1.0
 
 
+def crop(width, height, channels, data, region):
+    """region = (x, y, w, h) in top-first coordinates."""
+    x, y, w, h = region
+    if x < 0 or y < 0 or w <= 0 or h <= 0 or x + w > width or y + h > height:
+        raise ValueError(f"region {region} outside {width}x{height}")
+    out = []
+    for row in range(y, y + h):
+        start = (row * width + x) * channels
+        out.extend(data[start:start + w * channels])
+    return w, h, channels, out
+
+
 def main(argv):
     args = [a for a in argv if not a.startswith("--")]
     max_rel = None
     min_ssim = None
+    region = None
     for a in argv:
         if a.startswith("--max-rel-rmse="):
             max_rel = float(a.split("=", 1)[1])
         if a.startswith("--min-ssim="):
             min_ssim = float(a.split("=", 1)[1])
+        if a.startswith("--region="):
+            region = tuple(int(v) for v in a.split("=", 1)[1].split(","))
+            if len(region) != 4:
+                print("pfm_compare: --region needs x,y,w,h")
+                return 2
     if len(args) != 3:
         print(__doc__)
         return 2
     try:
-        result = compare(args[1], args[2])
+        if region is None:
+            result = compare(args[1], args[2])
+        else:
+            rw, rh, rc, ref = crop(*read_pfm(args[1]), region)
+            cw, ch, cc, cand = crop(*read_pfm(args[2]), region)
+            if (rw, rh, rc) != (cw, ch, cc):
+                print("pfm_compare: region/channel mismatch")
+                return 2
+            result = compare_data(rw, rh, rc, ref, cand)
     except (ValueError, struct.error, OSError) as exc:
         print(f"pfm_compare: {exc}")
         return 2

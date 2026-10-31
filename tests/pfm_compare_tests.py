@@ -49,6 +49,21 @@ def main():
         result = pfm_compare.compare(ref_path, flip_path)
         assert result["rmse"] > 0.5, result
         assert result["ssim"] < 0.9, result
+        # Region compare: differences outside the region are
+        # ignored; an out-of-bounds region is an error.
+        import subprocess
+        script = os.path.join(os.path.dirname(__file__), "..", "scripts", "pfm_compare.py")
+        noisy_path = os.path.join(tmp, "noisy.pfm")
+        noisy = [9.0, 9.0, 9.0, 0.0, 1.0, 0.0,
+                 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+        write_pfm(noisy_path, 2, 2, noisy)
+        proc = subprocess.run([sys.executable, script, ref_path, noisy_path, "--region=1,0,1,1"],
+                              capture_output=True, text=True)
+        assert proc.returncode == 0 and "RMSE 0 " in proc.stdout, (proc.stdout, proc.returncode)
+        proc = subprocess.run([sys.executable, script, ref_path, noisy_path, "--region=1,0,2,1"],
+                              capture_output=True, text=True)
+        assert proc.returncode == 2, proc.returncode
+
     print("pfm_compare tests passed")
     return 0
 
