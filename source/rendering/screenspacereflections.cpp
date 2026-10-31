@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "screenspacereflections.h"
 #include "memoryallocator.h"
+#include "renderprofiler.h"
 #include "renderersettings.h"
 #include "texturemanager.h"
 
@@ -483,7 +484,9 @@ namespace ScreenSpaceReflections
         const int checkerboardParity = inputs.Checkerboard ? static_cast<int>(g_FrameCounter & 1u) : -1;
         traceConstants.CheckerboardParity = static_cast<float>(checkerboardParity);
         ++g_FrameCounter;
-        commandList->SetComputeRootSignature(g_RootSignature.Get());
+        {
+            RenderProfiler::ScopedEvent traceProfile("SSR Trace", commandList);
+            commandList->SetComputeRootSignature(g_RootSignature.Get());
         commandList->SetPipelineState(g_Pso.Get());
         commandList->SetComputeRoot32BitConstants(0, 56, &traceConstants, 0);
         commandList->SetComputeRootDescriptorTable(1, inputs.DepthSrv);
@@ -506,9 +509,11 @@ namespace ScreenSpaceReflections
                                                  D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
             CD3DX12_RESOURCE_BARRIER::Transition(g_HitPoints.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                                  D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
-        commandList->ResourceBarrier(2, traceToSrv);
-        g_TraceInSrvState = true;
-        g_HitInSrvState = true;
+            commandList->ResourceBarrier(2, traceToSrv);
+            g_TraceInSrvState = true;
+            g_HitInSrvState = true;
+        }
+        RenderProfiler::ScopedEvent resolveProfile("SSR Resolve", commandList);
         // Bilateral resolve into the full-resolution result.
         if (g_ResultInSrvState)
         {
@@ -582,6 +587,7 @@ namespace ScreenSpaceReflections
         // in SRV state.
         if (g_ResultMips > 1 && g_DownPso)
         {
+            RenderProfiler::ScopedEvent chainProfile("SSR MipChain", commandList);
             ID3D12DescriptorHeap* downHeaps[] = {g_DownHeap.Get()};
             commandList->SetDescriptorHeaps(1, downHeaps);
             commandList->SetComputeRootSignature(g_DownRootSignature.Get());
