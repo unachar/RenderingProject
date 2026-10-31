@@ -193,3 +193,7 @@ targets XML is well-formed with 34 tracked DXC outputs.
 - Stage 8 foundation (OMM / RTXTS / DirectStorage / RTXCR):
   evaluated, all deferred behind profile triggers
   (docs/rendering-technology-stage8-foundation-evaluation.md).
+- Stage 4 asset pipeline (ACL / zstd / KTX2-Basis / ufbx):
+  evaluated; ACL is the strongest candidate on a bake-time
+  track, the rest wait on a load/memory profile
+  (docs/rendering-technology-stage4-asset-evaluation.md).
