@@ -3,7 +3,8 @@
 Consolidated record for the long-term engine plan
 (`ULTIMATE_ENGINE_PLAN.md`). All integrations follow the same rules:
 settings flag with the existing path as fallback, A/B on the same
-scene/camera, license checked before vendoring.
+scene/camera, license checked before vendoring. For the full
+document set see `dev-muse-index.md`.
 
 ## Verified on the user's Windows machine (2026-10-31)
 
