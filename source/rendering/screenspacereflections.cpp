@@ -606,10 +606,18 @@ namespace ScreenSpaceReflections
             };
             for (uint32_t level = 1; level < g_ResultMips; ++level)
             {
-                D3D12_RESOURCE_BARRIER sourceToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
-                    g_Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, level - 1);
-                commandList->ResourceBarrier(1, &sourceToSrv);
+                // Only mip 0 still sits in UAV state (the resolve
+                // wrote it); mip L-1 >= 1 was transitioned to SRV
+                // at the end of the previous iteration, so a
+                // repeated UAV->SRV barrier would declare a wrong
+                // before-state.
+                if (level == 1)
+                {
+                    D3D12_RESOURCE_BARRIER sourceToSrv = CD3DX12_RESOURCE_BARRIER::Transition(
+                        g_Result.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, 0);
+                    commandList->ResourceBarrier(1, &sourceToSrv);
+                }
                 DownConstants down{};
                 down.OutputSize[0] = (std::max)(1u, g_ResultWidth >> level);
                 down.OutputSize[1] = (std::max)(1u, g_ResultHeight >> level);
