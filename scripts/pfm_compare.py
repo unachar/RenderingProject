@@ -68,24 +68,39 @@ def _luminance(values, channels):
 
 
 def _tonemapped_ssim(ref, cand, width, height, channels):
-    # Global SSIM on Reinhard-tonemapped luminance: HDR values are
-    # unbounded, so structure is judged after x / (1 + x), matching
-    # the preview writer's curve family.
-    a = [max(v, 0.0) for v in _luminance(ref, channels)]
-    b = [max(v, 0.0) for v in _luminance(cand, channels)]
-    a = [v / (1.0 + v) for v in a]
-    b = [v / (1.0 + v) for v in b]
-    n = len(a)
-    mean_a = sum(a) / n
-    mean_b = sum(b) / n
-    var_a = sum((v - mean_a) ** 2 for v in a) / n
-    var_b = sum((v - mean_b) ** 2 for v in b) / n
-    cov = sum((x - mean_a) * (y - mean_b) for x, y in zip(a, b)) / n
+    # Windowed SSIM (8x8 blocks) on Reinhard-tonemapped luminance:
+    # HDR values are unbounded, so structure is judged after
+    # x / (1 + x), matching the preview writer's curve family.
+    lum_a = _luminance(ref, channels)
+    lum_b = _luminance(cand, channels)
+    tonemapped_a = [max(v, 0.0) for v in lum_a]
+    tonemapped_b = [max(v, 0.0) for v in lum_b]
+    tonemapped_a = [v / (1.0 + v) for v in tonemapped_a]
+    tonemapped_b = [v / (1.0 + v) for v in tonemapped_b]
     c1 = 0.01 ** 2
     c2 = 0.03 ** 2
-    numerator = (2 * mean_a * mean_b + c1) * (2 * cov + c2)
-    denominator = (mean_a ** 2 + mean_b ** 2 + c1) * (var_a + var_b + c2)
-    return numerator / denominator if denominator > 0 else 1.0
+    total = 0.0
+    windows = 0
+    for wy in range(0, height, 8):
+        for wx in range(0, width, 8):
+            a = []
+            b = []
+            for y in range(wy, min(wy + 8, height)):
+                row = y * width
+                for x in range(wx, min(wx + 8, width)):
+                    a.append(tonemapped_a[row + x])
+                    b.append(tonemapped_b[row + x])
+            n = len(a)
+            mean_a = sum(a) / n
+            mean_b = sum(b) / n
+            var_a = sum((v - mean_a) ** 2 for v in a) / n
+            var_b = sum((v - mean_b) ** 2 for v in b) / n
+            cov = sum((x - mean_a) * (y - mean_b) for x, y in zip(a, b)) / n
+            numerator = (2 * mean_a * mean_b + c1) * (2 * cov + c2)
+            denominator = (mean_a ** 2 + mean_b ** 2 + c1) * (var_a + var_b + c2)
+            total += numerator / denominator if denominator > 0 else 1.0
+            windows += 1
+    return total / windows if windows else 1.0
 
 
 def main(argv):
@@ -102,7 +117,7 @@ def main(argv):
         return 2
     try:
         result = compare(args[1], args[2])
-    except (ValueError, struct.error) as exc:
+    except (ValueError, struct.error, OSError) as exc:
         print(f"pfm_compare: {exc}")
         return 2
     print(f"RMSE {result['rmse']:.6g}  rel-RMSE {result['rel_rmse']:.4%}  "
