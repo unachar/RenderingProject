@@ -19,16 +19,18 @@
     <EnableOcio Condition="'$(EnableOcio)' == '' and '$(Platform)' == 'x64' and Exists('$(OcioRoot)include\OpenColorIO\OpenColorIO.h') and Exists('$(OcioRoot)lib\OpenColorIO.lib')">true</EnableOcio>
     <EnableOcio Condition="'$(EnableOcio)' == ''">false</EnableOcio>
     <AclRoot>$(MSBuildThisFileDirectory)External\ACL\</AclRoot>
-    <EnableAcl Condition="'$(EnableAcl)' == '' and '$(Platform)' == 'x64' and Exists('$(AclRoot)acl\compression\compress.h')">true</EnableAcl>
+    <EnableAcl Condition="'$(EnableAcl)' == '' and '$(Platform)' == 'x64' and Exists('$(AclRoot)upstream\includes\acl\compression\compress.h') and Exists('$(AclRoot)upstream\external\rtm\includes\rtm\quatf.h')">true</EnableAcl>
     <EnableAcl Condition="'$(EnableAcl)' == ''">false</EnableAcl>
     <KtxRoot>$(MSBuildThisFileDirectory)External\KTX-Software\</KtxRoot>
+    <KtxSdkRoot Condition="'$(KtxSdkRoot)' == ''">$(KtxRoot)install-dx12\</KtxSdkRoot>
     <BasisRoot>$(MSBuildThisFileDirectory)External\basis_universal\</BasisRoot>
     <EnableBasis>false</EnableBasis>
-    <EnableKtx Condition="'$(EnableKtx)' == '' and '$(Platform)' == 'x64' and Exists('$(KtxRoot)include\ktx.h') and Exists('$(KtxRoot)lib\ktx.lib')">true</EnableKtx>
+    <EnableKtx Condition="'$(EnableKtx)' == '' and '$(Platform)' == 'x64' and Exists('$(KtxSdkRoot)include\ktx.h') and Exists('$(KtxSdkRoot)include\KHR\khr_df.h') and Exists('$(KtxSdkRoot)lib\ktx.lib') and Exists('$(KtxSdkRoot)bin\ktx.dll')">true</EnableKtx>
     <EnableKtx Condition="'$(EnableKtx)' == ''">false</EnableKtx>
     <ShaderMakeRoot>$(MSBuildThisFileDirectory)External\ShaderMake\</ShaderMakeRoot>
     <EnableShaderMake Condition="'$(EnableShaderMake)' == '' and '$(Platform)' == 'x64' and Exists('$(ShaderMakeRoot)ShaderMake\ShaderMake.cpp')">true</EnableShaderMake>
     <EnableShaderMake Condition="'$(EnableShaderMake)' == ''">false</EnableShaderMake>
+    <EnableTracy Condition="'$(EnableTracy)' == ''">false</EnableTracy>
   </PropertyGroup>
 
 
@@ -106,18 +108,18 @@
 
   <ItemDefinitionGroup Condition="'$(EnableAcl)' == 'true' and '$(Platform)' == 'x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>$(AclRoot)upstream\includes;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(AclRoot)upstream\includes;$(AclRoot)upstream\external\rtm\includes;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>RENDERINGPROJECT_USE_ACL=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
 
   <ItemDefinitionGroup Condition="'$(EnableKtx)' == 'true' and '$(Platform)' == 'x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>$(KtxRoot)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(KtxSdkRoot)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>RENDERINGPROJECT_USE_KTX=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
-      <AdditionalLibraryDirectories>$(KtxRoot)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(KtxSdkRoot)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>ktx.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
@@ -138,11 +140,26 @@
       <AdditionalIncludeDirectories>$(ShaderMakeRoot)ShaderMake;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>RENDERINGPROJECT_USE_SHADERMAKE=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
-    <Link>
+    <!-- NRD must use its matching-configuration ShaderMakeBlob, not the standalone Release build. -->
+    <Link Condition="'$(EnableNrd)' != 'true'">
       <AdditionalLibraryDirectories>$(ShaderMakeRoot)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>ShaderMakeBlob.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(EnableTracy)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <PreprocessorDefinitions>TRACY_ENABLE;TRACY_ON_DEMAND;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>ws2_32.lib;dbghelp.lib;advapi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup Condition="'$(EnableTracy)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile Include="$(MSBuildThisFileDirectory)External\tracy\public\TracyClient.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+  </ItemGroup>
 
 
 

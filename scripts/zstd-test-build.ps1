@@ -33,7 +33,7 @@ function Get-ZstdAllocationTestObjects([string] $DeveloperCommand) {
         }
     }
     if ($rebuild) {
-        $command = 'cl /nologo /TC /std:c17 /O2 /MT /Z7 /W0 /DTEXTURE_ZSTD_ALLOCATOR_SHIM /FI:"{0}" /c "{1}" /Fo:"{2}"' -f $shim, $source, $object
+        $command = 'cl /nologo /TC /std:c17 /O2 /MT /Z7 /W0 /DTEXTURE_ZSTD_ALLOCATOR_SHIM /FI"{0}" /c "{1}" /Fo:"{2}"' -f $shim, $source, $object
         & $env:ComSpec /d /c ('"{0}" -no_logo -arch=amd64 -host_arch=amd64 && {1}' -f $DeveloperCommand, $command) | Out-Host
         if ($LASTEXITCODE) { throw 'zstd allocator-injection build failed.' }
         $command = 'cl /nologo /TC /std:c17 /O2 /MT /Z7 /W4 /c "{0}" /Fo:"{1}"' -f $allocator, $allocatorObject

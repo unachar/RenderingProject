@@ -1001,6 +1001,7 @@ bool AnimationModelResource::LoadAnimation(const char* fileName, const char* nam
     const auto previous = m_Animation.find(animationName);
     if (previous != m_Animation.end())
     {
+        m_AclClips.clear();
         aiReleaseImport(previous->second);
     }
     m_Animation[animationName] = anim;
@@ -1057,6 +1058,7 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
     const auto previous = m_Animation.find(animationName);
     if (previous != m_Animation.end())
     {
+        m_AclClips.clear();
         aiReleaseImport(previous->second);
         m_Animation.erase(previous);
         m_NodeAnimChannelCache.clear();
@@ -1308,6 +1310,9 @@ void AnimationModelResource::Uninit()
     m_BoneNames.clear();
     m_BoneIndexMap.clear();
     m_NodeAnimChannelCache.clear();
+    m_AclClips.clear();
+    m_AclPoseScratch1.clear();
+    m_AclPoseScratch2.clear();
     m_SkinningMatrixCount = 0;
     m_BoneParentMap.clear();
     m_PmxAppendConstraints.clear();

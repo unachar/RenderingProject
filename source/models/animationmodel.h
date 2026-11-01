@@ -16,6 +16,7 @@
 #include "toonoutlinebuilder.h"
 #include "vmdanimationimpoter.h"
 #include "animationplayback.h"
+#include "fbxaclclip.h"
 #include "pmxphysicsdata.h"
 #include "modelresourcemap.h"
 #include "vmdretarget.h"
@@ -397,6 +398,10 @@ class AnimationModelResource
     int ResolveMeshTextureIndex(const aiMesh* mesh, const char* fileName, const string& dirPath) const;
     aiNodeAnim* FindNodeAnimChannelCached(aiAnimation* animation, const string& boneName);
     mutable unordered_map<const aiAnimation*, unordered_map<string, aiNodeAnim*>> m_NodeAnimChannelCache{};
+    unordered_map<const aiAnimation*, AnimationCompression::FbxAclClip> m_AclClips;
+    vector<AnimationCompression::LocalPose> m_AclPoseScratch1;
+    vector<AnimationCompression::LocalPose> m_AclPoseScratch2;
+    bool TrySampleAclClip(aiAnimation* animation, float seconds, vector<AnimationCompression::LocalPose>& output);
     uint32_t m_SkinningMatrixCount = 0;
     bool LoadVmdAnimation(const char* fileName, const char* name);
     void UpdateVmdBoneMatrices(const VmdAnimation* animation1, float frame1, const VmdAnimation* animation2,

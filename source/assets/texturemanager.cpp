@@ -3,6 +3,7 @@
 #include "DirectXTex.h"
 #include "texturemanager.h"
 #include "texturecompression.h"
+#include "ktxbasis.h"
 #include "iesprofile.h"
 #include "componentmanager.h"
 #include "renderersettings.h"
@@ -172,7 +173,8 @@ string MakeTextureCacheKey(const filesystem::path& sourcePath)
     return key;
 }
 
-HRESULT LoadImageFromFile(const wchar_t* wPath, TexMetadata& metadata, ScratchImage& image)
+HRESULT LoadImageFromFile(const wchar_t* wPath, TexMetadata& metadata, ScratchImage& image,
+                          TextureUsage usage = TextureUsage::Color)
 {
     filesystem::path path(wPath);
     string ext = path.extension().string();
@@ -183,6 +185,12 @@ HRESULT LoadImageFromFile(const wchar_t* wPath, TexMetadata& metadata, ScratchIm
     if (ext == ".dds")
     {
         return LoadFromDDSFile(wPath, DDS_FLAGS_NONE, &metadata, image);
+    }
+    if (ext == ".ktx2")
+    {
+        const HRESULT loaded = KtxBasis::LoadFile(path, usage, metadata, image);
+        // Material shaders currently bind Texture2D, not array/cube views.
+        return SUCCEEDED(loaded) && metadata.arraySize != 1 ? E_NOTIMPL : loaded;
     }
 
     HRESULT hr = LoadFromWICFile(wPath, WIC_FLAGS_NONE, &metadata, image);
@@ -198,6 +206,11 @@ HRESULT LoadImageFromMemory(const uint8_t* data, size_t size, TexMetadata& metad
     if (!data || size == 0)
     {
         return E_INVALIDARG;
+    }
+    if (KtxBasis::IsKtx2(data, size))
+    {
+        const HRESULT loaded = KtxBasis::Load(data, size, TextureUsage::Color, metadata, image);
+        return SUCCEEDED(loaded) && metadata.arraySize != 1 ? E_NOTIMPL : loaded;
     }
 
     HRESULT hr = E_FAIL;
@@ -1114,7 +1127,7 @@ static HRESULT LoadCompressedOrSource(const filesystem::path& path, TextureUsage
     {
         return S_OK;
     }
-    HRESULT hr = LoadImageFromFile(path.c_str(), metadata, image);
+    HRESULT hr = LoadImageFromFile(path.c_str(), metadata, image, usage);
     if (FAILED(hr))
     {
         return hr;

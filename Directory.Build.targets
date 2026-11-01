@@ -42,6 +42,31 @@
   <Target Name="CopyNrdLicense" AfterTargets="Build" Condition="'$(EnableNrd)' == 'true' and '$(Platform)' == 'x64'">
     <Copy SourceFiles="$(NrdSdkRoot)LICENSE.txt" DestinationFiles="$(OutDir)NVIDIA_NRD_LICENSE.txt" SkipUnchangedFiles="true" />
   </Target>
+  <Target Name="CopyOcioRuntime" AfterTargets="Build" Condition="'$(EnableOcio)' == 'true' and '$(Platform)' == 'x64'">
+    <ItemGroup>
+      <_OcioRuntime Include="$(OcioRoot)install\bin\OpenColorIO*.dll" />
+    </ItemGroup>
+    <Error Condition="'@(_OcioRuntime)' == ''" Text="OpenColorIO is enabled but its runtime DLL is missing from $(OcioRoot)install\bin." />
+    <Copy SourceFiles="@(_OcioRuntime)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(OcioRoot)LICENSE" DestinationFiles="$(OutDir)OpenColorIO_LICENSE.txt" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="CopyTracyLicense" AfterTargets="Build" Condition="'$(EnableTracy)' == 'true' and '$(Platform)' == 'x64'">
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)External\tracy\LICENSE" DestinationFiles="$(OutDir)Tracy_LICENSE.txt" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="CopyAclLicenses" AfterTargets="Build" Condition="'$(EnableAcl)' == 'true' and '$(Platform)' == 'x64'">
+    <Copy SourceFiles="$(AclRoot)LICENSE" DestinationFiles="$(OutDir)ACL_LICENSE.txt" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(AclRoot)upstream\external\rtm\LICENSE" DestinationFiles="$(OutDir)RTM_LICENSE.txt" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="CopyKtxRuntime" AfterTargets="Build" Condition="'$(EnableKtx)' == 'true' and '$(Platform)' == 'x64'">
+    <Copy SourceFiles="$(KtxSdkRoot)bin\ktx.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(KtxRoot)LICENSE.md" DestinationFiles="$(OutDir)KTX_LICENSE.md" SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <_KtxLicense Include="$(KtxRoot)upstream\LICENSES\*.txt" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_KtxLicense)" DestinationFolder="$(OutDir)KTX-LICENSES" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(KtxRoot)upstream\external\basis_universal\LICENSE" DestinationFiles="$(OutDir)BasisUniversal_LICENSE.txt" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(KtxRoot)upstream\external\basis_universal\NOTICE" DestinationFiles="$(OutDir)BasisUniversal_NOTICE.txt" SkipUnchangedFiles="true" />
+  </Target>
   <Target Name="CompileRaytracingShader" BeforeTargets="ClCompile" DependsOnTargets="CompileRaytracingShaderRaytracingCS" Condition="'$(Platform)' == 'x64'" />
 
   <Target Name="CompileRaytracingShaderRaytracingCS" Inputs="$(MSBuildThisFileDirectory)shader\hlsl\noise.hlsl;$(MSBuildThisFileDirectory)shader\hlsl\RaytracingCS.hlsl;$(RayTelemetryShaderInputs);$(MSBuildThisFileFullPath);$(MSBuildThisFileDirectory)Directory.Build.props" Outputs="$(MSBuildThisFileDirectory)shader\hlsl\build\RaytracingCS.cso" Condition="'$(Platform)' == 'x64'">

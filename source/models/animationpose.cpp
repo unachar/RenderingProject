@@ -5,6 +5,32 @@
 
 using namespace AnimationMath;
 
+bool AnimationModelResource::TrySampleAclClip(aiAnimation* animation, float seconds,
+                                              vector<AnimationCompression::LocalPose>& output)
+{
+    static const bool enabled = [] {
+        char value[2]{};
+        return GetEnvironmentVariableA("DX12_USE_ACL_ANIMATION", value, sizeof(value)) == 1 && value[0] == '1';
+    }();
+    if (!enabled || !animation)
+    {
+        return false;
+    }
+    try
+    {
+        auto [found, inserted] = m_AclClips.try_emplace(animation);
+        if (inserted && !found->second.Build(*animation))
+        {
+            Debug::Log("ACL: keeping legacy FBX sampling: %s\n", found->second.LastError().c_str());
+        }
+        return found->second.Sample(seconds, output);
+    }
+    catch (const std::bad_alloc&)
+    {
+        return false;
+    }
+}
+
 aiNodeAnim* AnimationModelResource::FindNodeAnimChannelCached(aiAnimation* animation, const string& boneName)
 {
     if (!animation)
@@ -456,8 +482,8 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation
         aiVector3D pos1(0.0f, 0.0f, 0.0f);
         SampleVmdBoneTrackCached(binding.PrimaryTrack, currentFrame1, binding.PrimaryCursor, rotation1, pos1);
         SampleVmdRootMotion(binding.PrimaryRootMotion, currentFrame1, nullptr, rotation1, pos1);
-        SampleVmdTorsoCompensation(binding.PrimaryTorsoCompensation, currentFrame1, nullptr,
-                                   binding.Retarget, binding.BasePosition, rotation1, pos1);
+        SampleVmdTorsoCompensation(binding.PrimaryTorsoCompensation, currentFrame1, nullptr, binding.Retarget,
+                                   binding.BasePosition, rotation1, pos1);
 
         aiQuaternion rotation = rotation1;
         aiVector3D pos = pos1;
@@ -467,8 +493,8 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const VmdAnimation* animation
             aiVector3D pos2(0.0f, 0.0f, 0.0f);
             SampleVmdBoneTrackCached(binding.SecondaryTrack, currentFrame2, binding.SecondaryCursor, rotation2, pos2);
             SampleVmdRootMotion(binding.SecondaryRootMotion, currentFrame2, nullptr, rotation2, pos2);
-            SampleVmdTorsoCompensation(binding.SecondaryTorsoCompensation, currentFrame2, nullptr,
-                                       binding.Retarget, binding.BasePosition, rotation2, pos2);
+            SampleVmdTorsoCompensation(binding.SecondaryTorsoCompensation, currentFrame2, nullptr, binding.Retarget,
+                                       binding.BasePosition, rotation2, pos2);
             pos = pos1 * (1.0f - safeBlendRate) + pos2 * safeBlendRate;
             aiQuaternion::Interpolate(rotation, rotation1, rotation2, safeBlendRate);
             rotation.Normalize();
@@ -545,8 +571,8 @@ void AnimationModelResource::UpdateVmdBoneMatrices(const vector<AnimationPlaybac
         }
 
         SampleVmdRootMotion(binding.RootMotion, 0.0f, &m_VmdLayerFramesScratch, rotation, position);
-        SampleVmdTorsoCompensation(binding.TorsoCompensation, 0.0f, &m_VmdLayerFramesScratch,
-                                   binding.Retarget, binding.BasePosition, rotation, position);
+        SampleVmdTorsoCompensation(binding.TorsoCompensation, 0.0f, &m_VmdLayerFramesScratch, binding.Retarget,
+                                   binding.BasePosition, rotation, position);
         VmdRetarget::Apply(binding.Retarget, rotation, position);
         aiQuaternion localRotation = binding.BaseRotation * rotation;
         localRotation.Normalize();
@@ -736,74 +762,42 @@ void AnimationModelResource::UpdateBoneMatrices(const char* animName1, float fra
         return nodeAnim->mPositionKeys[keyIndex].mValue;
     };
 
+    const bool useAcl1 = TrySampleAclClip(animation1, frame1, m_AclPoseScratch1);
+    const bool sameSample = animation1 == animation2 && frame1 == frame2;
+    const bool useAcl2 = sameSample ? useAcl1 : TrySampleAclClip(animation2, frame2, m_AclPoseScratch2);
+    const auto& decoded2 = sameSample ? m_AclPoseScratch1 : m_AclPoseScratch2;
+    const auto* acl1 = useAcl1 ? &m_AclClips.at(animation1) : nullptr;
+    const auto* acl2 = useAcl2 ? &m_AclClips.at(animation2) : nullptr;
+    auto samplePose = [&](aiNodeAnim* channel, const aiAnimation* animation, float seconds,
+                          const AnimationCompression::FbxAclClip* compressed,
+                          const vector<AnimationCompression::LocalPose>& decoded) {
+        if (compressed)
+        {
+            const uint32_t index = compressed->FindChannel(channel);
+            if (index < decoded.size())
+            {
+                return decoded[index];
+            }
+        }
+        const float rate =
+            animation && animation->mTicksPerSecond != 0 ? static_cast<float>(animation->mTicksPerSecond) : 25.0f;
+        const double duration = animation ? animation->mDuration : 0.0;
+        return AnimationCompression::LocalPose{sampleRotationKey(channel, seconds * rate, duration),
+                                               samplePositionKey(channel, seconds * rate, duration)};
+    };
+
     for (auto& pair : m_Bone)
     {
         Bone* bonePtr = &pair.second;
         aiNodeAnim* nodeAnim1 = FindNodeAnimChannelCached(animation1, pair.first);
         aiNodeAnim* nodeAnim2 = FindNodeAnimChannelCached(animation2, pair.first);
 
-        float ticksPerSecond1;
-        if ((animation1 && animation1->mTicksPerSecond != 0))
-        {
-            ticksPerSecond1 = static_cast<float>(animation1->mTicksPerSecond);
-        }
-        else
-        {
-            ticksPerSecond1 = 25.0f;
-        }
-        float ticksPerSecond2;
-        if ((animation2 && animation2->mTicksPerSecond != 0))
-        {
-            ticksPerSecond2 = static_cast<float>(animation2->mTicksPerSecond);
-        }
-        else
-        {
-            ticksPerSecond2 = 25.0f;
-        }
-
-        const float timeInTicks1 = frame1 * ticksPerSecond1;
-        const float timeInTicks2 = frame2 * ticksPerSecond2;
-
-        double animationDuration;
-        if (animation1)
-        {
-            animationDuration = animation1->mDuration;
-        }
-        else
-        {
-            animationDuration = 0.0;
-        }
-        aiQuaternion rotation1 = sampleRotationKey(nodeAnim1, timeInTicks1, animationDuration);
-        double animationDurationValue;
-        if (animation1)
-        {
-            animationDurationValue = animation1->mDuration;
-        }
-        else
-        {
-            animationDurationValue = 0.0;
-        }
-        aiVector3D pos1 = samplePositionKey(nodeAnim1, timeInTicks1, animationDurationValue);
-        double animationDuration3;
-        if (animation2)
-        {
-            animationDuration3 = animation2->mDuration;
-        }
-        else
-        {
-            animationDuration3 = 0.0;
-        }
-        aiQuaternion rotation2 = sampleRotationKey(nodeAnim2, timeInTicks2, animationDuration3);
-        double animationDuration4;
-        if (animation2)
-        {
-            animationDuration4 = animation2->mDuration;
-        }
-        else
-        {
-            animationDuration4 = 0.0;
-        }
-        aiVector3D pos2 = samplePositionKey(nodeAnim2, timeInTicks2, animationDuration4);
+        const auto pose1 = samplePose(nodeAnim1, animation1, frame1, acl1, m_AclPoseScratch1);
+        const auto pose2 = samplePose(nodeAnim2, animation2, frame2, acl2, decoded2);
+        const auto& rotation1 = pose1.Rotation;
+        const auto& rotation2 = pose2.Rotation;
+        const auto& pos1 = pose1.Position;
+        const auto& pos2 = pose2.Position;
 
         const aiVector3D pos = pos1 * (1.f - blendRate) + pos2 * blendRate;
 
@@ -867,7 +861,10 @@ void AnimationModelResource::SampleVmdRootMotion(vector<VmdRootMotionBinding>& b
         float sampleFrame = frame;
         if (layerFrames)
         {
-            if (binding.LayerIndex >= layerFrames->size()) continue;
+            if (binding.LayerIndex >= layerFrames->size())
+            {
+                continue;
+            }
             sampleFrame = (*layerFrames)[binding.LayerIndex];
         }
         aiQuaternion delta;
@@ -884,13 +881,19 @@ void AnimationModelResource::SampleVmdRootMotion(vector<VmdRootMotionBinding>& b
 void AnimationModelResource::SampleVmdTorsoCompensation(VmdRootMotionBinding& binding, float frame,
                                                         const vector<float>* layerFrames,
                                                         const VmdRetarget::Transform& transform,
-                                                        const aiVector3D& bindPosition,
-                                                        aiQuaternion& rotation, aiVector3D& position)
+                                                        const aiVector3D& bindPosition, aiQuaternion& rotation,
+                                                        aiVector3D& position)
 {
-    if (!binding.Track) return;
+    if (!binding.Track)
+    {
+        return;
+    }
     if (layerFrames)
     {
-        if (binding.LayerIndex >= layerFrames->size()) return;
+        if (binding.LayerIndex >= layerFrames->size())
+        {
+            return;
+        }
         frame = (*layerFrames)[binding.LayerIndex];
     }
     aiQuaternion lowerRotation;

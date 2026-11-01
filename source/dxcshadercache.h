@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include "shadercachecodec.h"
+#include "cachecompressionpolicy.h"
 
 // プリプロセス済みソースには間接的な include の内容も含まれる。DXIL の再利用前に、
 // コンパイラ引数とコンパイラ実行ファイルの識別情報も合わせてハッシュ化する。
@@ -101,16 +102,23 @@ namespace DxcShaderCache
         {
             std::ifstream stream(path, std::ios::binary | std::ios::ate);
             const std::streamoff fileSize = stream.tellg();
-            if (fileSize < 32 || fileSize > static_cast<std::streamoff>(
-                ShaderCacheCodec::MaxObjectBytes + ShaderCacheCodec::MaxDiagnosticBytes + 48)) return false;
+            if (fileSize < 32 || fileSize > static_cast<std::streamoff>(ShaderCacheCodec::MaxObjectBytes +
+                                                                        ShaderCacheCodec::MaxDiagnosticBytes + 48))
+            {
+                return false;
+            }
             std::array<uint64_t, 6> words{};
             stream.seekg(0);
             stream.read(reinterpret_cast<char*>(words.data()), 32);
             if (words[0] == ShaderCacheCodec::MagicV2)
+            {
                 stream.read(reinterpret_cast<char*>(words.data() + 4), 16);
+            }
             ShaderCacheCodec::Header header;
             if (!stream || !ShaderCacheCodec::ParseHeader(words, static_cast<uint64_t>(fileSize), header))
+            {
                 return false;
+            }
             std::vector<char> payload(static_cast<size_t>(header.storedBytes));
             stream.read(payload.data(), static_cast<std::streamsize>(payload.size()));
             return stream && ShaderCacheCodec::DecodePayload(header, payload, object, diagnostics);
@@ -137,14 +145,15 @@ namespace DxcShaderCache
         const auto temporary = path.wstring() + L"." + std::to_wstring(GetCurrentProcessId()) + L"." +
                                std::to_wstring(GetCurrentThreadId()) + L".tmp";
         std::vector<char> compressed;
-        const bool useCompression = ShaderCacheCodec::TryCompress(object, size, diagnostics, compressed);
+        const bool useCompression = CacheCompressionPolicy::PreferSmallerFiles() &&
+                                    ShaderCacheCodec::TryCompress(object, size, diagnostics, compressed);
         {
             std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
             const uint64_t checksum = Hash(diagnostics.data(), diagnostics.size(), Hash(object, size));
             if (useCompression)
             {
-                const uint64_t header[] = {ShaderCacheCodec::MagicV2, 1, size, diagnostics.size(),
-                                           compressed.size(), checksum};
+                const uint64_t header[] = {ShaderCacheCodec::MagicV2, 1,       size, diagnostics.size(),
+                                           compressed.size(),         checksum};
                 stream.write(reinterpret_cast<const char*>(header), sizeof(header));
                 stream.write(compressed.data(), static_cast<std::streamsize>(compressed.size()));
             }

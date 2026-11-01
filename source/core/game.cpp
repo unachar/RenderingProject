@@ -22,6 +22,7 @@
 #include <unordered_set>
 #include "renderframe.h"
 #include "performancegovernor.h"
+#include "../../External/tracy/public/tracy/Tracy.hpp"
 
 vector<unique_ptr<EntityBase>>& Game::GetEntities()
 {
@@ -101,6 +102,7 @@ void Game::Uninit()
 
 void Game::Run()
 {
+    ZoneScopedN("Game frame");
     const uint64_t previousSerial = RenderProfiler::GetFrameSerial();
     const auto frameBegin = std::chrono::steady_clock::now();
     RenderConfiguration::ApplyPendingRenderMode();
@@ -115,10 +117,12 @@ void Game::Run()
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frameBegin).count();
         RenderProfiler::RecordCpuFrameTime(RenderProfiler::GetFrameSerial(), milliseconds);
     }
+    FrameMark;
 }
 
 void Game::Update()
 {
+    ZoneScopedN("Game update");
     World::Update();
     Input::Update();
 
@@ -134,6 +138,7 @@ void Game::Update()
 
 void Game::Draw()
 {
+    ZoneScopedN("Game draw submission");
     RenderFrame::BeginDraw();
 
     RenderProfiler::DrawImGuiWindow();

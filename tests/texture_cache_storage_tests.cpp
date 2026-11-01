@@ -120,6 +120,26 @@ int main(int argc, char**)
         filesystem::create_directories(directory);
         filesystem::current_path(directory);
         auto image = MakeBc4Image();
+        SetEnvironmentVariableA("DX12_COMPRESS_CACHES", "0");
+        const filesystem::path speedPath = "speed.dds";
+        Check(TextureCacheStorage::Store(speedPath, image), "speed preference texture store");
+        Check(filesystem::exists(speedPath) && !filesystem::exists(TextureCacheStorage::CompressedPath(speedPath)),
+              "speed preference stores raw DDS");
+        SetEnvironmentVariableA("DX12_COMPRESS_CACHES", nullptr);
+        Check(TextureCacheStorage::Store(speedPath, image), "explicit compressed texture store");
+        Check(filesystem::exists(TextureCacheStorage::CompressedPath(speedPath)),
+              "explicit compression creates sidecar");
+        SetEnvironmentVariableA("DX12_COMPRESS_CACHES", "0");
+        auto replacement = MakeBc4Image();
+        replacement.GetPixels()[0] ^= 1;
+        Check(TextureCacheStorage::Store(speedPath, replacement), "replace compressed texture with raw");
+        Check(!filesystem::exists(TextureCacheStorage::CompressedPath(speedPath)),
+              "raw replacement removes stale sidecar");
+        ScratchImage speedLoaded;
+        TexMetadata speedMetadata{};
+        Check(TextureCacheStorage::Load(speedPath, speedMetadata, speedLoaded), "raw replacement loads");
+        Equal(replacement, speedLoaded);
+        SetEnvironmentVariableA("DX12_COMPRESS_CACHES", "1");
         const auto raw = TextureCompressionDetail::CacheFile(1);
         filesystem::create_directories(raw.parent_path());
         Check(SUCCEEDED(SaveToDDSFile(image.GetImages(), image.GetImageCount(), image.GetMetadata(), DDS_FLAGS_NONE, raw.c_str())), "legacy fixture write");

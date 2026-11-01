@@ -108,7 +108,7 @@ namespace
         // ファイル：右上を折った紙 + 種類ごとの色帯 + 拡張子
         ImU32 accent = IM_COL32(120, 170, 230, 255);
         if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".bmp" ||
-            extension == ".tga" || extension == ".dds" || extension == ".hdr")
+            extension == ".tga" || extension == ".dds" || extension == ".hdr" || extension == ".ktx2")
         {
             accent = IM_COL32(90, 200, 110, 255);
         }
@@ -1424,7 +1424,8 @@ bool ImGuiManager::IsTextureFile(const filesystem::path& path)
     transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
         return static_cast<char>(tolower(c));
     });
-    return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".dds";
+    return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".dds" ||
+           ext == ".ktx2";
 }
 
 bool ImGuiManager::IsModelFile(const filesystem::path& path)

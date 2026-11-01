@@ -795,6 +795,12 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\entities\sky.cpp" />
     <ClCompile Include="source\scene\sun.cpp" />
     <ClCompile Include="source\models\staticmodel.cpp" />
+    <ClCompile Include="source\models\fbxaclclip.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="source\rendering\ktxbasis.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="source\systems\animationsystem.cpp" />
     <ClCompile Include="source\systems\camerasystem.cpp" />
     <ClCompile Include="source\systems\debugsystem.cpp" />
@@ -831,6 +837,8 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClInclude Include="source\models\lookatsolver.h" />
     <ClInclude Include="source\systems\lookatsystem.h" />
     <ClInclude Include="source\models\animationmodel.h" />
+    <ClInclude Include="source\models\fbxaclclip.h" />
+    <ClInclude Include="source\rendering\ktxbasis.h" />
     <ClInclude Include="source\models\pmxloader.h" />
     <ClInclude Include="source\models\vmdanimationimpoter.h" />
     <ClInclude Include="source\scene\camera.h" />

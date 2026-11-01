@@ -92,6 +92,18 @@ int main()
         const auto path = directory / "roundtrip.bin";
         const std::vector<char> input(8192, 'x');
         const std::string warning = "warning: preserved diagnostics";
+        SetEnvironmentVariableA("DX12_COMPRESS_CACHES", "0");
+        DxcShaderCache::Store(path, input.data(), input.size(), warning);
+        uint64_t defaultMagic = 0;
+        const Bytes defaultFile = Read(path);
+        std::memcpy(&defaultMagic, defaultFile.data(), sizeof(defaultMagic));
+        Check(defaultMagic == ShaderCacheCodec::MagicV1, "speed preference stores raw shader data");
+        Bytes defaultOutput;
+        std::string defaultDiagnostics;
+        Check(DxcShaderCache::Load(path, defaultOutput, defaultDiagnostics) && defaultOutput == input &&
+                  defaultDiagnostics == warning,
+              "speed preference preserves shader and diagnostics");
+        SetEnvironmentVariableA("DX12_COMPRESS_CACHES", nullptr);
         DxcShaderCache::Store(path, input.data(), input.size(), warning);
         uint64_t magic = 0;
         std::ifstream stream(path, std::ios::binary);

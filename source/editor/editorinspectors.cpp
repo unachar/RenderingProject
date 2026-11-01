@@ -260,7 +260,9 @@ bool ImGuiManager::DrawLiveMonitorFrames(EntityID entity, size_t monitorIndex, L
     if (ImGui::Button("画像をここにドロップ\nクリックして画像を選択", ImVec2(-1, 54)))
     {
         filesystem::path image;
-        if (ProceduralIO::OpenFileDialog(L"画像 (*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.dds)\0*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.dds\0", image))
+        if (ProceduralIO::OpenFileDialog(
+                L"画像 (*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.dds;*.ktx2)\0*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.dds;*.ktx2\0",
+                image))
         {
             changed |= AppendLiveMonitorImages(monitor, {image});
         }

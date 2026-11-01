@@ -4,6 +4,7 @@
 #include "graphicsdevice.h"
 #include "frameconstants.h"
 #include "texturemanager.h"
+#include "ktxbasis.h"
 #include "materialmanager.h"
 #include "assets/noiseasset.h"
 #include "assets/thumbnailcache.h"
@@ -48,7 +49,11 @@ namespace
             return static_cast<char>(std::tolower(c));
         });
         HRESULT result = E_FAIL;
-        if (!source.Encoded.empty())
+        if (KtxBasis::IsKtx2(source.Encoded.data(), source.Encoded.size()))
+        {
+            result = KtxBasis::Load(source.Encoded.data(), source.Encoded.size(), TextureUsage::Color, metadata, image);
+        }
+        else if (!source.Encoded.empty())
         {
             result = DirectX::LoadFromWICMemory(source.Encoded.data(), source.Encoded.size(), DirectX::WIC_FLAGS_NONE,
                                                 &metadata, image);
@@ -65,6 +70,10 @@ namespace
         else if (extension == ".dds")
         {
             result = DirectX::LoadFromDDSFile(source.Path.c_str(), DirectX::DDS_FLAGS_NONE, &metadata, image);
+        }
+        else if (extension == ".ktx2")
+        {
+            result = KtxBasis::LoadFile(source.Path, TextureUsage::Color, metadata, image);
         }
         else if (extension == ".tga")
         {
