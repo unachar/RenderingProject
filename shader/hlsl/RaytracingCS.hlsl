@@ -28,6 +28,7 @@ cbuffer RaytracingConstants : register(b0)
 };
 
 #include "../../source/rendering/stablesampling.h"
+#include "Stbn.hlsli"
 
 float Random(uint value)
 {
@@ -147,7 +148,8 @@ float TraceHitDistance(float3 origin, float3 direction, float distance, bool clo
             float ambientRadius = radius;
             if (Stability.x > .5)
             {
-                SamplePair sequenceSample = SampleSequence(pixel.x, pixel.y, ExtentSamples.w, 4u + sample);
+                SamplePair fallback = SampleSequence(pixel.x, pixel.y, ExtentSamples.w, 4u + sample);
+                SamplePair sequenceSample = StbnSequence(pixel, ExtentSamples.w, 4u, fallback, sample);
                 float ambientAngle = sequenceSample.y * 6.28318530718f;
                 ambientRadius = sqrt(sequenceSample.x);
                 ambientDisk = float2(cos(ambientAngle), sin(ambientAngle)) * ambientRadius;

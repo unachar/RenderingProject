@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "noisecachebindings.h"
+#include "stbn.h"
 #include "envflags.h"
 #include "cpuculling.h"
 #include "rayreflections.h"
@@ -19,6 +20,7 @@
 #include "lumensurfacecache.h"
 #include "temporalhistory.h"
 #include "gpumemorybudget.h"
+#include "shader16bit.h"
 #include <map>
 #include <algorithm>
 
@@ -34,8 +36,8 @@ namespace
     constexpr UINT kReSTIRDescriptors = 20;
     constexpr UINT kLumenDescriptors = 24;
     constexpr UINT kVertexDescriptors = 40;
-    // ワールド空間の放射照度キャッシュ（ハッシュグリッド）。2^18 セルで、キーは1 MiB、蓄積値は4 MiB、
-    // 解決済み値は4 MiB、経過フレーム数は1 MiB。
+    // 2^18 セル。既存経路はキー1 + 蓄積8 + 解決済み8 + 年齢1 = 18 MiB。
+    // SHaRC はキー2 + 蓄積4 + 解決済み4 + ロック1 = 11 MiB。
     constexpr UINT kCacheCapacity = 1u << 18;
     constexpr UINT kIndexDescriptors = kVertexDescriptors + kMaximumMeshes;
     constexpr UINT kTextureDescriptors = kIndexDescriptors + kMaximumMeshes;
@@ -74,6 +76,7 @@ namespace
         XMFLOAT4 AdaptiveSampling{};
         XMUINT4 ReSTIRState{}; // 履歴有効、リザーバー幅、空間可視性、未使用
         XMFLOAT4 Stability{};
+        XMFLOAT4 SharcPreviousCamera{};
     };
 
     struct ReflectionLight
@@ -94,6 +97,7 @@ namespace
     {
         ComPtr<ID3D12Resource> Keys, Accumulation, Resolved, Ages;
         bool NeedsClear = true;
+        bool Sharc = false;
     };
 
     struct FrameResources
@@ -163,6 +167,9 @@ namespace
     UINT g_ReservoirWidth = 0, g_ReservoirHeight = 0, g_ReservoirCurrent = 0;
     bool g_ReSTIRHistoryValid = false;
     RadianceCache g_Cache;
+    ComPtr<ID3D12PipelineState> g_SharcTrace, g_SharcTraceTelemetry, g_SharcResolve, g_SharcClear;
+    bool g_SharcPipelinesTried = false;
+    XMFLOAT4 g_SharcPreviousCamera{};
     LumenSurfaceCache g_Lumen;
     ComPtr<ID3D12PipelineState> g_LumenBounds, g_LumenCapture, g_LumenClear, g_LumenLighting, g_LumenGather;
     ComPtr<ID3D12PipelineState> g_LumenCaptureTelemetry, g_LumenLightingTelemetry, g_LumenGatherTelemetry;
@@ -387,7 +394,7 @@ namespace
         return true;
     }
 
-    bool CreateRadianceCache()
+    bool CreateRadianceCache(bool sharc = false)
     {
         const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
         const auto create = [&](ComPtr<ID3D12Resource>& buffer, UINT64 bytes, const wchar_t* name) {
@@ -402,14 +409,44 @@ namespace
             return true;
         };
         g_Cache.NeedsClear = true;
-        return create(g_Cache.Keys, kCacheCapacity * 4ull, L"GI Radiance Cache Keys") &&
-               create(g_Cache.Accumulation, kCacheCapacity * 32ull, L"GI Radiance Cache Accumulation") &&
-               create(g_Cache.Resolved, kCacheCapacity * 32ull, L"GI Radiance Cache Resolved") &&
-               create(g_Cache.Ages, kCacheCapacity * 4ull, L"GI Radiance Cache Ages");
+        g_Cache.Sharc = sharc;
+        UINT64 keyStride = 4;
+        UINT64 signalStride = 32;
+        if (sharc)
+        {
+            keyStride = 8;
+            signalStride = 16;
+        }
+        const bool created =
+            create(g_Cache.Keys, kCacheCapacity * keyStride, L"GI Radiance Cache Keys") &&
+            create(g_Cache.Accumulation, kCacheCapacity * signalStride, L"GI Radiance Cache Accumulation") &&
+            create(g_Cache.Resolved, kCacheCapacity * signalStride, L"GI Radiance Cache Resolved") &&
+            create(g_Cache.Ages, kCacheCapacity * 4ull, L"GI Radiance Cache Ages / SHaRC Locks");
+        if (!created)
+        {
+            g_Cache = {};
+        }
+        return created;
     }
 
     void WriteCacheDescriptors(ID3D12DescriptorHeap* heap)
     {
+        if (g_Cache.Sharc)
+        {
+            ID3D12Resource* buffers[] = {g_Cache.Keys.Get(), g_Cache.Accumulation.Get(), g_Cache.Resolved.Get(),
+                                         g_Cache.Ages.Get()};
+            const UINT strides[] = {8, 16, 16, 4};
+            for (UINT index = 0; index < 4; ++index)
+            {
+                D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};
+                desc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+                desc.Buffer.NumElements = kCacheCapacity;
+                desc.Buffer.StructureByteStride = strides[index];
+                g_Device->CreateUnorderedAccessView(buffers[index], nullptr, &desc,
+                                                    Cpu(heap, kCacheDescriptors + index));
+            }
+            return;
+        }
         const auto raw = [&](ID3D12Resource* buffer, UINT index) {
             D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};
             desc.Format = DXGI_FORMAT_R32_TYPELESS;
@@ -439,13 +476,27 @@ namespace
         commands->ResourceBarrier(4, barriers);
     }
 
-    bool CompileRadiancePipeline(const char* entry, ComPtr<ID3D12PipelineState>& pipeline, bool telemetry = false)
+    bool CompileRadiancePipeline(const char* entry, ComPtr<ID3D12PipelineState>& pipeline, bool telemetry = false,
+                                 bool sharc = false)
     {
-        const D3D_SHADER_MACRO defines[] = {
-            {"USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0"}, {"ENABLE_RAY_TELEMETRY", telemetry ? "1" : "0"}, {}};
+        const D3D_SHADER_MACRO defines[] = {{"USE_NRD", NrdDenoiser::IsCompiled() ? "1" : "0"},
+                                            {"ENABLE_RAY_TELEMETRY", telemetry ? "1" : "0"},
+                                            {"RTXGI_SHARC", sharc ? "1" : "0"},
+                                            {}};
         ComPtr<ID3DBlob> blob, errors;
-        if (FAILED(D3DCompileFromFile(L"shader/hlsl/RayReflectionsCS.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-                                      entry, "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors)))
+        HRESULT compiled = E_FAIL;
+        if (sharc)
+        {
+            compiled = Shader16Bit::CompileNative(L"shader/hlsl/RayReflectionsCS.hlsl", defines, entry, "cs_6_5",
+                                                  D3DCOMPILE_OPTIMIZATION_LEVEL3, &blob, &errors);
+        }
+        else
+        {
+            compiled =
+                D3DCompileFromFile(L"shader/hlsl/RayReflectionsCS.hlsl", defines, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                                   entry, "cs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors);
+        }
+        if (FAILED(compiled))
         {
             g_LastShaderError = string(entry) + ": " +
                                 (errors ? static_cast<const char*>(errors->GetBufferPointer()) : "compile failed");
@@ -462,6 +513,25 @@ namespace
         }
         g_LastShaderError = string(entry) + ": CreateComputePipelineState failed";
         return false;
+    }
+
+    bool EnsureSharcPipelines()
+    {
+        if (!g_SharcPipelinesTried)
+        {
+            g_SharcPipelinesTried = true;
+            if (Shader16Bit::IsAvailable())
+            {
+                CompileRadiancePipeline("TraceDiffuse", g_SharcTrace, false, true);
+                CompileRadiancePipeline("ResolveRadianceCache", g_SharcResolve, false, true);
+                CompileRadiancePipeline("ClearRadianceCache", g_SharcClear, false, true);
+            }
+            WriteGraphicsLog("RTXGI SHaRC: ready=%u native16=%u capacity=%u cacheBytes=%llu\n",
+                             static_cast<UINT>(g_SharcTrace && g_SharcResolve && g_SharcClear),
+                             static_cast<UINT>(Shader16Bit::IsAvailable()), kCacheCapacity,
+                             static_cast<unsigned long long>(kCacheCapacity) * 44);
+        }
+        return g_SharcTrace && g_SharcResolve && g_SharcClear;
     }
 
     bool EnsureTelemetryPipelines()
@@ -518,7 +588,7 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     ranges[12].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 11, 0);
     ranges[13].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 11, 0, 11, 3);
     ranges[14].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kMaximumMeshes, 0, 12); // POM の高さマップ
-    CD3DX12_ROOT_PARAMETER parameters[24];
+    CD3DX12_ROOT_PARAMETER parameters[25];
     parameters[0].InitAsShaderResourceView(25);
     parameters[1].InitAsShaderResourceView(0);
     parameters[2].InitAsConstantBufferView(6);
@@ -542,6 +612,7 @@ bool RayReflections::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* engi
     parameters[21].InitAsDescriptorTable(1, &ranges[14]);
     parameters[22].InitAsShaderResourceView(0, 15);
     parameters[23].InitAsUnorderedAccessView(0, 15);
+    parameters[24].InitAsShaderResourceView(0, 16);
     const CD3DX12_STATIC_SAMPLER_DESC samplers[2] = {
         CD3DX12_STATIC_SAMPLER_DESC(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_WRAP,
                                     D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP),
@@ -668,6 +739,12 @@ void RayReflections::Shutdown()
     g_CacheClear.Reset();
     g_Cache = {};
     g_CacheWasEnabled = false;
+    g_SharcTrace.Reset();
+    g_SharcTraceTelemetry.Reset();
+    g_SharcResolve.Reset();
+    g_SharcClear.Reset();
+    g_SharcPipelinesTried = false;
+    g_SharcPreviousCamera = {};
     g_GiActive = g_GiHistoryValid = false;
     g_GiEmissionSignature = 0;
     g_GiEmissionStableFrames = kGiEmissionRestartQuietFrames;
@@ -695,7 +772,8 @@ void RayReflections::ReleaseInactiveResources()
     const bool gi = settings.Enabled && RendererSettings::GetRealtimeGiEnabled();
     const bool lumen = gi && RendererSettings::GetLumenEnabled();
     const bool reservoir = gi && !lumen && RenderQuality::Get().ReSTIRGI;
-    const bool cache = gi && (lumen || RendererSettings::GetGiRadianceCacheEnabled());
+    const bool cache =
+        gi && (lumen || RendererSettings::GetRtxgiEnabled() || RendererSettings::GetGiRadianceCacheEnabled());
     const bool optix = settings.Denoise && settings.RadianceDenoiser == Raytracing::DenoiserType::Optix &&
                        OptixDenoiser::IsAvailable();
     const bool nrd = settings.Denoise && !optix;
@@ -1070,10 +1148,44 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     constants.GiParameters = {RendererSettings::GetGiDistance(), RendererSettings::GetRealtimeGiIntensity(),
                               static_cast<float>(useGiDenoiser), static_cast<float>(emitters.size())};
     const bool lumenRequested = RendererSettings::GetLumenEnabled();
+    bool sharc = RendererSettings::GetRtxgiEnabled() && EnsureSharcPipelines();
+    if (sharc && RayTelemetry::Requested() && !g_SharcTraceTelemetry)
+    {
+        sharc = CompileRadiancePipeline("TraceDiffuse", g_SharcTraceTelemetry, true, true);
+    }
+    const bool cacheBackendChanged = g_Cache.Sharc != sharc;
+    if (cacheBackendChanged)
+    {
+        // Descriptors in older frame slots still refer to these buffers.
+        if (!GraphicsDevice::WaitForGpuIdle())
+        {
+            return false;
+        }
+        g_Cache = {};
+        g_CacheWasEnabled = false;
+        g_GiHistoryValid = false;
+        g_ReSTIRHistoryValid = false;
+        g_BudgetValid = false;
+    }
+    constants.SharcPreviousCamera = g_SharcPreviousCamera;
+    if (cacheBackendChanged || nrdFrame.ResetHistory)
+    {
+        constants.SharcPreviousCamera = constants.Camera;
+    }
+    g_SharcPreviousCamera = constants.Camera;
     // Lumen のワールド空間放射輝度キャッシュは常にハッシュグリッドを使う（キー空間をソルトで分離）。
     const bool cacheEnabled = RendererSettings::GetRealtimeGiEnabled() &&
-                              (lumenRequested || RendererSettings::GetGiRadianceCacheEnabled()) &&
-                              (g_Cache.Keys || CreateRadianceCache()) && g_CacheResolve && g_CacheClear;
+                              (sharc || lumenRequested || RendererSettings::GetGiRadianceCacheEnabled()) &&
+                              (g_Cache.Keys || CreateRadianceCache(sharc)) && g_CacheResolve && g_CacheClear;
+    if (sharc && !cacheEnabled)
+    {
+        g_Status = "RTXGI SHaRC キャッシュ確保失敗";
+        return false;
+    }
+    if (sharc && nrdFrame.ResetHistory)
+    {
+        g_Cache.NeedsClear = true;
+    }
     if (cacheEnabled && !g_CacheWasEnabled)
     {
         g_Cache.NeedsClear = true;
@@ -1194,7 +1306,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     g_Lumen.WriteDescriptors(g_Device.Get(), slot, Cpu(frame.Heap.Get(), kLumenDescriptors), g_Increment);
     const bool reuse = adaptive && g_AdaptiveValid && !nrdFrame.ResetHistory && g_AdaptiveSignature == signature &&
                        nrdFrame.Sequence == g_AdaptiveSequence + 1u;
-    const bool budget = budgetRequested && cacheEnabled && !restir && velocity && g_BudgetValid &&
+    const bool budget = budgetRequested && !sharc && cacheEnabled && !restir && velocity && g_BudgetValid &&
                         !nrdFrame.ResetHistory && g_BudgetSignature == signature &&
                         nrdFrame.Sequence == g_BudgetSequence + 1u;
     if (budgetRequested && cacheEnabled && (!g_BudgetValid || g_BudgetSignature != signature || nrdFrame.ResetHistory))
@@ -1280,6 +1392,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         ID3D12DescriptorHeap* heaps[] = {frame.Heap.Get()};
         commands->SetDescriptorHeaps(1, heaps);
         commands->SetComputeRootSignature(g_Root.Get());
+        Stbn::Bind(commands, 24);
         NoiseCacheBindings::BindCompute(commands, NoiseCacheBindings::ReflectionRoot);
         commands->SetPipelineState(pipeline);
         commands->SetComputeRootShaderResourceView(0, scene->GetGPUVirtualAddress());
@@ -1440,7 +1553,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     }
     if (RendererSettings::GetRealtimeGiEnabled())
     {
-        RenderProfiler::ScopedEvent profile("Realtime GI", commands);
+        RenderProfiler::ScopedEvent profile(sharc ? "RTXGI SHaRC" : "Realtime GI", commands);
         RenderProfiler::ScopedEvent traceProfile("Realtime GI Trace", commands);
         Transition(commands, frame.GiNoisy.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -1448,12 +1561,21 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         if (cacheEnabled && g_Cache.NeedsClear)
         {
-            bind(g_CacheClear.Get());
+            bind(sharc ? g_SharcClear.Get() : g_CacheClear.Get());
             commands->Dispatch(kCacheCapacity / 64, 1, 1);
             CacheBarrier(commands);
             g_Cache.NeedsClear = false;
         }
-        bind(instrumented ? g_GiTraceTelemetry.Get() : g_GiTrace.Get());
+        ID3D12PipelineState* giTrace = g_GiTrace.Get();
+        if (sharc)
+        {
+            giTrace = instrumented ? g_SharcTraceTelemetry.Get() : g_SharcTrace.Get();
+        }
+        else if (instrumented)
+        {
+            giTrace = g_GiTraceTelemetry.Get();
+        }
+        bind(giTrace);
         commands->SetComputeRootDescriptorTable(5, Gpu(frame.Heap.Get(), 8));
         commands->SetComputeRootDescriptorTable(6, Gpu(frame.Heap.Get(), 6));
         UINT traceWidth = frame.Width;
@@ -1482,7 +1604,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         {
             // このフレームのサンプルをセルへ平均化し、長く未使用のセルを失効させる。
             CacheBarrier(commands);
-            commands->SetPipelineState(g_CacheResolve.Get());
+            commands->SetPipelineState(sharc ? g_SharcResolve.Get() : g_CacheResolve.Get());
             commands->Dispatch(kCacheCapacity / 64, 1, 1);
             CacheBarrier(commands);
         }
@@ -1576,6 +1698,14 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
                    : lumenRequested ? "Lumen 初期化失敗。既存 DXR GI を使用中"
                    : restir         ? "Realtime GI 動作中（ReSTIR）"
                                     : "Realtime GI 動作中";
+        if (sharc)
+        {
+            g_Status = "RTXGI SHaRC 動作中（拡散放射照度キャッシュ）";
+        }
+        else if (RendererSettings::GetRtxgiEnabled())
+        {
+            g_Status = "RTXGI SHaRC 利用不可。既存 DXR GI を使用中（ログを確認）";
+        }
     }
     else
     {

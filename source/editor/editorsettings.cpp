@@ -403,8 +403,8 @@ void ImGuiManager::DrawProjectSettingsWindow()
         ImGui::EndDisabled();
 
         int giMode = static_cast<int>(RendererSettings::GetGiMode());
-        const char* giModes[] = {"Off", "SSGI", "Realtime GI (DXR)", "Lumen-style GI (DXR)"};
-        if (ImGui::Combo("Global Illumination", &giMode, giModes, 4))
+        const char* giModes[] = {"Off", "SSGI", "Realtime GI (DXR)", "Lumen-style GI (DXR)", "RTXGI SHaRC (DXR)"};
+        if (ImGui::Combo("Global Illumination", &giMode, giModes, IM_ARRAYSIZE(giModes)))
         {
             RendererSettings::SetGiMode(static_cast<GlobalIlluminationMode>(giMode));
         }
@@ -946,11 +946,13 @@ void ImGuiManager::DrawProjectSettingsWindow()
                 RendererSettings::SetGiDistance(giDistance);
             }
             bool radianceCache = RendererSettings::GetGiRadianceCacheEnabled();
+            ImGui::BeginDisabled(RendererSettings::GetRtxgiEnabled());
             if (ImGui::Checkbox("放射キャッシュ（多重バウンス）", &radianceCache))
             {
                 RendererSettings::SetGiRadianceCacheEnabled(radianceCache);
             }
-            ImGui::BeginDisabled(!radianceCache);
+            ImGui::EndDisabled();
+            ImGui::BeginDisabled(!radianceCache && !RendererSettings::GetRtxgiEnabled());
             float cacheCell = RendererSettings::GetGiRadianceCacheCellSize();
             if (ImGui::SliderFloat("キャッシュセルサイズ", &cacheCell, 0.05f, 1.0f, "%.2f m"))
             {
@@ -1916,7 +1918,7 @@ void ImGuiManager::LoadProjectSettings()
             }
             else if (key == "gi_mode")
             {
-                RendererSettings::SetGiMode(static_cast<GlobalIlluminationMode>(clamp(stoi(value), 0, 3)));
+                RendererSettings::SetGiMode(static_cast<GlobalIlluminationMode>(clamp(stoi(value), 0, 4)));
             }
             else if (key == "lumen_capture_budget")
             {

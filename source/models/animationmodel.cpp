@@ -985,7 +985,7 @@ bool AnimationModelResource::LoadAnimation(const char* fileName, const char* nam
     {
         Debug::Log("ERROR: Animation file has no animation tracks: %s (meshes=%u, materials=%u)\n", fileName,
                    anim->mNumMeshes, anim->mNumMaterials);
-        aiReleaseImport(anim);
+        ReleaseModelScene(anim);
         return false;
     }
 
@@ -1002,7 +1002,7 @@ bool AnimationModelResource::LoadAnimation(const char* fileName, const char* nam
     if (previous != m_Animation.end())
     {
         m_AclClips.clear();
-        aiReleaseImport(previous->second);
+        ReleaseModelScene(previous->second);
     }
     m_Animation[animationName] = anim;
     m_NodeAnimChannelCache.clear();
@@ -1059,7 +1059,7 @@ bool AnimationModelResource::LoadVmdAnimation(const char* fileName, const char* 
     if (previous != m_Animation.end())
     {
         m_AclClips.clear();
-        aiReleaseImport(previous->second);
+        ReleaseModelScene(previous->second);
         m_Animation.erase(previous);
         m_NodeAnimChannelCache.clear();
     }
@@ -1351,14 +1351,14 @@ void AnimationModelResource::Uninit()
         }
         else
         {
-            aiReleaseImport(m_AiScene);
+            ReleaseModelScene(m_AiScene);
         }
         m_AiScene = nullptr;
         m_OwnsGeneratedAiScene = false;
     }
     for (auto& pair : m_Animation)
     {
-        aiReleaseImport(pair.second);
+        ReleaseModelScene(pair.second);
     }
     m_Animation.clear();
     m_VmdAnimations.clear();

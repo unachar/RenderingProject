@@ -2,8 +2,12 @@
 
 #include "cimport.h"
 #include "scene.h"
+#include "fastgltfimport.h"
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -42,6 +46,27 @@ inline const aiScene* ImportModelScene(const char* fileName, unsigned int flags)
 {
     const filesystem::path path = ModelPathFromUtf8(fileName);
     const string extension = ModelPathLowerExtension(path);
+    const auto fastgltf = std::getenv("DX12_USE_FASTGLTF");
+    const bool gltfInput = extension == ".gltf" || extension == ".glb" || extension == ".vrm";
+    const bool disableFast = fastgltf && std::strcmp(fastgltf, "0") == 0;
+    const bool preferFast =
+        gltfInput && !disableFast && (FastGltfImport::Available() || (fastgltf && std::strcmp(fastgltf, "1") == 0));
+    auto tryFast = [&]() -> const aiScene* {
+        char error[512]{};
+        if (const auto scene = FastGltfImport::Load(fileName, flags, error, sizeof(error)))
+        {
+            return scene;
+        }
+        std::fprintf(stderr, "fastgltf fallback: %s: %s\n", fileName, error);
+        return nullptr;
+    };
+    if (preferFast)
+    {
+        if (const auto scene = tryFast())
+        {
+            return scene;
+        }
+    }
     const char* formatHint = nullptr;
     if (extension == ".vrm")
     {
@@ -81,4 +106,12 @@ inline const aiScene* ImportModelScene(const char* fileName, unsigned int flags)
     }
 
     return aiImportFileFromMemory(bytes.data(), static_cast<unsigned int>(bytes.size()), flags, formatHint);
+}
+
+inline void ReleaseModelScene(const aiScene* scene)
+{
+    if (!FastGltfImport::Release(scene))
+    {
+        aiReleaseImport(scene);
+    }
 }

@@ -66,9 +66,11 @@ cbuffer ReflectionConstants : register(b6)
     float4 AdaptiveSampling;
     uint4 ReSTIRState; // history valid, reservoir width (traced columns), spatial visibility, 反射レイの粗さ上限 × 1000
     float4 ReflectionStability;
+    float4 SharcPreviousCamera;
 };
 
 #include "../../source/rendering/stablesampling.h"
+#include "Stbn.hlsli"
 // Screen depth includes POM, but world/TLAS geometry remains on the original mesh.
 float3 ReflectionMeshPosition(float3 position, uint2 pixel)
 {
@@ -267,6 +269,9 @@ bool ReSTIRVisiblePoint(uint2 pixel, out float3 position, out float3 normal, out
 // GI レイがキャッシュ済みセルにヒットすると、1 回反射の放射輝度に albedo/pi * E_cache を加える。
 // 間接光がフレームをまたいで伝播し、1 回の参照コストで多重反射を実現する。
 // ---------------------------------------------------------------------------------------------
+#if RTXGI_SHARC
+#include "RtxgiSharcIrradiance.hlsli"
+#else
 RWByteAddressBuffer CacheKeys : register(u0, space7);
 RWByteAddressBuffer CacheAccumulation : register(u1, space7); // uint4：rgb の固定小数点値、サンプル数
 
@@ -391,6 +396,8 @@ void CacheInsert(float3 position, float3 normal, float3 irradiance, float hitDis
     CacheAccumulation.InterlockedAdd(address + 12, 1u, ignored);
     CacheAccumulation.InterlockedMax(address + 16, asuint(clamp(hitDistance, 0, 65504)), ignored);
 }
+
+#endif
 
 // NVIDIA MathLib v11 と同様の有界 VNDF サンプリング。反射レイを面の上側に保つ。
 // https://github.com/NVIDIA-RTX/MathLib/blob/aa432ad9a80691eb8c3ec4d576bbad5ac100fdc8/ml.hlsli
@@ -936,6 +943,7 @@ bool AdaptiveReflection(uint2 pixel, float depth, float3 position, float3 normal
         // チェッカーボードで飛ばしたフレームはサンプル番号に数えない。
         SamplePair reflectionSample =
             SampleSequence(pixel.x, pixel.y, PixelSampleIndex(ReflectionExtent.z, checkerboard), 3u);
+        reflectionSample = StbnSequence(pixel, PixelSampleIndex(ReflectionExtent.z, checkerboard), 5u, reflectionSample);
         random = float2(reflectionSample.x, reflectionSample.y);
     }
     // 粗い面ではヒットのシェーディングを省くが、空を使う前の可視性レイは必要。
@@ -1213,6 +1221,7 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2
     float4 world = mul(float4(uv.x * 2 - 1, 1 - uv.y * 2, depth, 1), ReflectionInvViewProjection);
     float3 position = world.xyz / world.w;
     float3 normal = normalize(ReflectionNormal.Load(int3(pixel, 0)).xyz * 2 - 1);
+#if !RTXGI_SHARC
     float3 lumenIrradiance;
     float lumenDistance;
     if (LumenGatherIrradiance(position, normal, pixel, lumenIrradiance, lumenDistance))
@@ -1226,6 +1235,7 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2
 #endif
         return;
     }
+#endif
     uint period = max(1u, (uint)AdaptiveSampling.w);
     if (period > 1 && ((ReflectionHash(pixel.x + pixel.y * ReflectionExtent.x) + ReflectionExtent.z) % period) != 0)
     {
@@ -1270,6 +1280,7 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2
     {
         SamplePair sequenceSample =
             SampleSequence(pixel.x, pixel.y, PixelSampleIndex(ReflectionExtent.z, checkerboard), 0u);
+        sequenceSample = StbnSequence(pixel, PixelSampleIndex(ReflectionExtent.z, checkerboard), 0u, sequenceSample, 0u, true);
         random = float2(sequenceSample.x, sequenceSample.y);
     }
     float radius = sqrt(random.x);
@@ -1442,6 +1453,7 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2
 // ---------------------------------------------------------------------------------------------
 // 放射輝度キャッシュの保守（セルごとに 1 スレッド）。
 // ---------------------------------------------------------------------------------------------
+#if !RTXGI_SHARC
 [numthreads(64, 1, 1)] void ResolveRadianceCache(uint3 id : SV_DispatchThreadID)
 {
     uint slot = id.x;
@@ -1492,6 +1504,7 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2
     CacheAges.Store(slot * 4, 0u);
 }
 
+#endif
 // ---------------------------------------------------------------------------------------------
 // ReSTIR GI の各パス（追跡解像度でディスパッチする）。
 // ---------------------------------------------------------------------------------------------
@@ -1680,5 +1693,7 @@ float ReSTIRJacobian(GiReservoir sample, float3 neighbourPosition, float3 positi
 #endif
 }
 
+#if !RTXGI_SHARC
 #include "LumenPasses.hlsli"
+#endif
 

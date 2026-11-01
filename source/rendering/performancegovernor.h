@@ -365,7 +365,8 @@ class PerformanceGovernor final
         {
             v.GiMode = s_Base.GiMode;
         }
-        else if (s_Base.GiMode == GlobalIlluminationMode::Realtime || s_Base.GiMode == GlobalIlluminationMode::Lumen)
+        else if (s_Base.GiMode == GlobalIlluminationMode::Realtime || s_Base.GiMode == GlobalIlluminationMode::Lumen ||
+                 s_Base.GiMode == GlobalIlluminationMode::RtxgiSharc)
         {
             if (t <= 1)
             {

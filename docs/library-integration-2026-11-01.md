@@ -52,8 +52,9 @@ Tracy有効版の実レンダラーは3フレーム描画して正常終了し�
 |候補|確認した状態|次の実装・採用条件|
 |---|---|---|
 |ACL|実FBX codecと任意再生経路を実装、3実資産で容量・CPU・ローカル誤差比較。既存方式が速いため標準を維持|[比較記録](acl-fbx-comparison-2026-11-01.md)。原キー二重保持を解くcook形式、階層適用後の誤差、VMD用codecは未完了|
-|KTX/Basis|`ktxbasis.cpp`あり、vcxproj未接続、Basis無効|固定SDKの実APIへ接続し、BC形式・sRGB・mip・法線channel・速度・容量を比較|
-|fastgltf / Draco|製品sourceからSDK利用を検出せず|glTF入力を実装し、Assimpと座標・材質・skin/morphを揃えて速度・メモリ比較|
+|KTX/Basis|実SDKへ接続しKTX2入力・native encode・カラーBasis transcodeを実装。65件の速度・容量・全画素比較で既存キャッシュを維持|[比較記録](ktx2-comparison-2026-11-01.md)。Basis法線channel、単体.basis、実資産の非可逆画質・GPU表示検証は未完了|
+|fastgltf|専用DLLのモデル変換backendへ接続。階層・基本材質・skin・静的morph・線形animationを比較。既存で誤読・クラッシュする有効な入力のため、対応glTFは新経路を先行させ、未対応機能はAssimpへ戻す|[比較記録](fastgltf-comparison-2026-11-01.md)。実アニメーション資産で約15%遅い結果があり、コピー削減、非線形animation、extensions、メモリ・画面検証を継続|
+|Draco|圧縮glTF meshの属性ID・mapping・型・normalized・skinを実装。容量・速度・誤差をzstd/meshoptimizerと比較し、入力対応として採用|[比較記録](draco-comparison-2026-11-01.md)。単体.drc、cook/export、一般実資産の量子化品質は未完了。既存cacheの自動量子化はしない|
 |OpenColorIO|ビルド設定・ColorManager・postprocessからの呼出あり|既存経路との二重変換を確認し、実出力の色・GPU負荷を検証|
 |ShaderMake|props設定あり、既存DXCのreflection strip比較済み|既存MSBuildに対する追加実装の役割を整理し、ビルド時間・出力を比較|
 |tracy|今回CPU frame/update/drawを任意ビルドで接続、SDK・実レンダラー有効/無効ビルドとsmoke合格|収集クライアントでのcapture確認、接続中の負荷とGPUトレースを検証|

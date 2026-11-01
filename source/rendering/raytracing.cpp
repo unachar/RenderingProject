@@ -13,6 +13,7 @@
 #include "renderersettings.h"
 #include "rendertargets.h"
 #include "graphicsdevice.h"
+#include "stbn.h"
 #include "materialmanager.h"
 #include "materialsystem.h"
 #include "temporalhistorycontext.h"
@@ -1280,7 +1281,12 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
     ranges[5].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4);
     ranges[6].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 5);
     ranges[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6);
-    CD3DX12_ROOT_PARAMETER parameters[11];
+    if (!Stbn::Initialize(device, GraphicsDevice::GetCommandQueue()))
+    {
+        WriteGraphicsLog("STBN: GPU upload failed\n");
+        return false;
+    }
+    CD3DX12_ROOT_PARAMETER parameters[12];
     parameters[0].InitAsShaderResourceView(0);
     for (UINT index = 0; index < 3; ++index)
     {
@@ -1292,7 +1298,8 @@ bool Raytracing::Initialize(ID3D12Device* device, ID3D12DescriptorHeap* heap, UI
         parameters[index + 2].InitAsDescriptorTable(1, &ranges[index]);
     }
     parameters[10].InitAsUnorderedAccessView(0, 9);
-    const CD3DX12_ROOT_SIGNATURE_DESC rootDescription(11, parameters);
+    parameters[11].InitAsShaderResourceView(0, 16);
+    const CD3DX12_ROOT_SIGNATURE_DESC rootDescription(_countof(parameters), parameters);
     ComPtr<ID3DBlob> serialized;
     ComPtr<ID3DBlob> errors;
     if (FAILED(D3D12SerializeRootSignature(&rootDescription, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors)) ||
@@ -1371,6 +1378,7 @@ void Raytracing::Shutdown()
     g_TelemetryPipeline.Reset();
     g_TelemetryPipelineTried = false;
     RayReflections::Shutdown();
+    Stbn::Shutdown();
     OptixDenoiser::Shutdown();
     g_NrdSun.reset();
     g_NrdWidth = g_NrdHeight = g_NrdDispatchCount = 0;
@@ -1623,6 +1631,7 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
     {
         commandList->SetComputeRootUnorderedAccessView(10, RayTelemetry::Data().Address());
     }
+    Stbn::Bind(commandList, 11);
     commandList->SetComputeRootShaderResourceView(0, frame.TopLevel->GetGPUVirtualAddress());
     commandList->SetComputeRootDescriptorTable(1, depthSrv);
     commandList->SetComputeRootDescriptorTable(2, normalSrv);

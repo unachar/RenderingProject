@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
-    <RayTelemetryShaderInputs>$(MSBuildThisFileDirectory)shader\hlsl\RayTelemetry.hlsli;$(MSBuildThisFileDirectory)source\rendering\raytelemetrylayout.h;$(MSBuildThisFileDirectory)source\rendering\stablesampling.h</RayTelemetryShaderInputs>
+    <RayTelemetryShaderInputs>$(MSBuildThisFileDirectory)shader\hlsl\RayTelemetry.hlsli;$(MSBuildThisFileDirectory)source\rendering\raytelemetrylayout.h;$(MSBuildThisFileDirectory)source\rendering\stablesampling.h;$(MSBuildThisFileDirectory)shader\hlsl\Stbn.hlsli</RayTelemetryShaderInputs>
   </PropertyGroup>
 
 
@@ -52,6 +52,15 @@
   </Target>
   <Target Name="CopyTracyLicense" AfterTargets="Build" Condition="'$(EnableTracy)' == 'true' and '$(Platform)' == 'x64'">
     <Copy SourceFiles="$(MSBuildThisFileDirectory)External\tracy\LICENSE" DestinationFiles="$(OutDir)Tracy_LICENSE.txt" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="CopyFastGltfLicenses" AfterTargets="Build" Condition="'$(EnableFastGltf)' == 'true' and '$(Platform)' == 'x64'">
+    <ItemGroup>
+      <FastGltfDependencyLicenses Include="$(FastGltfRoot)dependency-licenses\*" />
+    </ItemGroup>
+    <Copy SourceFiles="$(FastGltfRoot)LICENSE.md" DestinationFiles="$(OutDir)fastgltf_LICENSE.md" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(FastGltfSdkRoot)bin\FastGltfAdapter.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)External\Draco\LICENSE" DestinationFiles="$(OutDir)Draco_LICENSE.txt" SkipUnchangedFiles="true" Condition="Exists('$(MSBuildThisFileDirectory)External\Draco\LICENSE')" />
+    <Copy SourceFiles="@(FastGltfDependencyLicenses)" DestinationFolder="$(OutDir)fastgltf-LICENSES" SkipUnchangedFiles="true" />
   </Target>
   <Target Name="CopyAclLicenses" AfterTargets="Build" Condition="'$(EnableAcl)' == 'true' and '$(Platform)' == 'x64'">
     <Copy SourceFiles="$(AclRoot)LICENSE" DestinationFiles="$(OutDir)ACL_LICENSE.txt" SkipUnchangedFiles="true" />

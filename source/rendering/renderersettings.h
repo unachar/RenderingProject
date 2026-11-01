@@ -33,7 +33,8 @@ enum class GlobalIlluminationMode : int
     Off,
     ScreenSpace,
     Realtime,
-    Lumen
+    Lumen,
+    RtxgiSharc
 };
 
 class RendererSettings
@@ -153,7 +154,13 @@ class RendererSettings
 
     static bool GetRealtimeGiEnabled()
     {
-        return s_GiMode == GlobalIlluminationMode::Realtime || s_GiMode == GlobalIlluminationMode::Lumen;
+        return s_GiMode == GlobalIlluminationMode::Realtime || s_GiMode == GlobalIlluminationMode::Lumen ||
+               s_GiMode == GlobalIlluminationMode::RtxgiSharc;
+    }
+
+    static bool GetRtxgiEnabled()
+    {
+        return s_GiMode == GlobalIlluminationMode::RtxgiSharc;
     }
 
     static bool GetLumenEnabled()

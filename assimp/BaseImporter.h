@@ -52,7 +52,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Exceptional.h"
 
 #include "types.h"
-#include "ProgressHandler.hpp>
+#include "ProgressHandler.hpp"
 #include <set>
 #include <vector>
 #include <memory>

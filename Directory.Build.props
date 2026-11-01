@@ -31,6 +31,11 @@
     <EnableShaderMake Condition="'$(EnableShaderMake)' == '' and '$(Platform)' == 'x64' and Exists('$(ShaderMakeRoot)ShaderMake\ShaderMake.cpp')">true</EnableShaderMake>
     <EnableShaderMake Condition="'$(EnableShaderMake)' == ''">false</EnableShaderMake>
     <EnableTracy Condition="'$(EnableTracy)' == ''">false</EnableTracy>
+    <FastGltfRoot>$(MSBuildThisFileDirectory)External\fastgltf\</FastGltfRoot>
+    <FastGltfSdkRoot Condition="'$(FastGltfSdkRoot)' == '' and Exists('$(FastGltfRoot)install-dx12-md\Release\bin\FastGltfAdapter.dll') and Exists('$(FastGltfRoot)install-dx12-md\Release\lib\FastGltfAdapter.lib')">$(FastGltfRoot)install-dx12-md\Release\</FastGltfSdkRoot>
+    <FastGltfSdkRoot Condition="'$(FastGltfSdkRoot)' == ''">$(FastGltfRoot)install-dx12\Release\</FastGltfSdkRoot>
+    <EnableFastGltf Condition="'$(EnableFastGltf)' == '' and '$(Platform)' == 'x64' and Exists('$(FastGltfSdkRoot)lib\FastGltfAdapter.lib') and Exists('$(FastGltfSdkRoot)bin\FastGltfAdapter.dll')">true</EnableFastGltf>
+    <EnableFastGltf Condition="'$(EnableFastGltf)' == ''">false</EnableFastGltf>
   </PropertyGroup>
 
 
@@ -153,6 +158,15 @@
     </ClCompile>
     <Link>
       <AdditionalDependencies>ws2_32.lib;dbghelp.lib;advapi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(EnableFastGltf)' == 'true' and '$(Platform)' == 'x64'">
+    <ClCompile>
+      <PreprocessorDefinitions>RENDERINGPROJECT_USE_FASTGLTF=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(FastGltfSdkRoot)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>FastGltfAdapter.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup Condition="'$(EnableTracy)' == 'true' and '$(Platform)' == 'x64'">

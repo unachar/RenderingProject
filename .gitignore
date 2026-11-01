@@ -108,5 +108,14 @@ imgui.ini
 
 # Vendor script references (downloaded sources, not for commit)
 /External/*/upstream/
+/External/fastgltf/build-dx12-*/
+/External/fastgltf/install-dx12/
+/External/fastgltf/install-dx12-md/
+/External/fastgltf/build-adapter/
+/External/fastgltf/build-adapter-md/
+/External/Draco/build-dx12/
+/External/Draco/install-dx12/
+/External/Draco/build-dx12-md/
+/External/Draco/install-dx12-md/
 *.tar.gz
 *.zip

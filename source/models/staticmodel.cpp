@@ -1421,7 +1421,7 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
         }
         else
         {
-            aiReleaseImport(scene);
+            ReleaseModelScene(scene);
         }
         scene = nullptr;
     };
