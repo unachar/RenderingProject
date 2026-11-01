@@ -27,7 +27,7 @@
     "normalScale" : 8.0,
     "parallaxDepth" : 0.0,
     "parallaxSteps" : 32.0,
-    "roughness" : 0.0,
+    "roughness" : 0.31000000238418579,
     "shadingModel" : 0,
     "shadingStrength" : 1.0,
     "thickness" : 0.10000000149011612,
