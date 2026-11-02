@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "materialgraph.h"
 #include <json/json.h>
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -57,7 +58,85 @@ namespace
           {"Opacity", Type::Scalar, {1}},
           {"Opacity Mask", Type::Scalar, {1}},
           {"AO", Type::Scalar, {1}}}},
-        {Kind::Group, "Comment Group", Type::Numeric, {}}};
+        {Kind::Group, "Comment Group", Type::Numeric, {}},
+        {Kind::Constant2Vector, "Constant2Vector", Type::Vector2, {}},
+        {Kind::Constant3Vector, "Constant3Vector", Type::Vector3, {}},
+        {Kind::Constant4Vector, "Constant4Vector", Type::Vector4, {}},
+        {Kind::TextureCoordinate, "TexCoord", Type::Vector2, {}},
+        {Kind::Panner,
+         "Panner",
+         Type::Vector2,
+         {{"Coordinate", Type::Vector2}, {"Time", Type::Scalar}, {"Speed", Type::Vector2, {0.1f, 0.0f}}}},
+        {Kind::Rotator,
+         "Rotator",
+         Type::Vector2,
+         {{"Coordinate", Type::Vector2},
+          {"Time", Type::Scalar},
+          {"Speed", Type::Scalar, {0.25f}},
+          {"Center", Type::Vector2, {0.5f, 0.5f}}}},
+        {Kind::Abs, "Abs", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Ceil, "Ceil", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Floor, "Floor", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Frac, "Frac", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Round, "Round", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Truncate, "Truncate", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Sign, "Sign", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::OneMinus, "OneMinus", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Saturate, "Saturate", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::SquareRoot, "SquareRoot", Type::Numeric, {{"Input", Type::Numeric, {1, 1, 1, 1}}}},
+        {Kind::Sine, "Sine", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Cosine, "Cosine", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Tangent, "Tangent", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Arcsine, "Arcsine", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Arccosine, "Arccosine", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Arctangent, "Arctangent", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Exponential, "Exponential", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Logarithm2, "Logarithm2", Type::Numeric, {{"Input", Type::Numeric, {1, 1, 1, 1}}}},
+        {Kind::DDX, "DDX", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::DDY, "DDY", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::Power, "Power", Type::Numeric, {{"Base", Type::Numeric, {1, 1, 1, 1}}, {"Exp", Type::Scalar, {2}}}},
+        {Kind::Min, "Min", Type::Numeric, {{"A", Type::Numeric}, {"B", Type::Numeric}}},
+        {Kind::Max, "Max", Type::Numeric, {{"A", Type::Numeric}, {"B", Type::Numeric}}},
+        {Kind::Fmod, "Fmod", Type::Numeric, {{"A", Type::Numeric}, {"B", Type::Numeric, {1, 1, 1, 1}}}},
+        {Kind::Step, "Step", Type::Numeric, {{"Y", Type::Numeric, {0.5f, 0.5f, 0.5f, 0.5f}}, {"X", Type::Numeric}}},
+        {Kind::Arctangent2, "Arctangent2", Type::Numeric, {{"Y", Type::Numeric}, {"X", Type::Numeric, {1, 1, 1, 1}}}},
+        {Kind::ConstantBiasScale,
+         "ConstantBiasScale",
+         Type::Numeric,
+         {{"Input", Type::Numeric}, {"Bias", Type::Scalar, {1}}, {"Scale", Type::Scalar, {0.5f}}}},
+        {Kind::CrossProduct,
+         "Cross Product",
+         Type::Vector3,
+         {{"A", Type::Vector3, {1, 0, 0}}, {"B", Type::Vector3, {0, 1, 0}}}},
+        {Kind::Distance, "Distance", Type::Scalar, {{"A", Type::Vector3}, {"B", Type::Vector3}}},
+        {Kind::Length, "Length", Type::Scalar, {{"Input", Type::Numeric}}},
+        {Kind::AppendVector, "Append", Type::Numeric, {{"A", Type::Numeric}, {"B", Type::Numeric}}},
+        {Kind::ComponentMask, "Component Mask", Type::Numeric, {{"Input", Type::Numeric}}},
+        {Kind::ReflectionVector, "Reflection Vector", Type::Vector3, {}},
+        {Kind::Desaturation,
+         "Desaturation",
+         Type::Vector3,
+         {{"Input", Type::Vector3, {1, 1, 1}}, {"Fraction", Type::Scalar, {1}}}},
+        {Kind::If,
+         "If",
+         Type::Numeric,
+         {{"A", Type::Scalar},
+          {"B", Type::Scalar},
+          {"A > B", Type::Numeric, {1, 1, 1, 1}},
+          {"A == B", Type::Numeric},
+          {"A < B", Type::Numeric}}},
+        {Kind::SphereMask,
+         "Sphere Mask",
+         Type::Scalar,
+         {{"A", Type::Vector3}, {"B", Type::Vector3}, {"Radius", Type::Scalar, {0.5f}}, {"Hardness", Type::Scalar, {0.5f}}}},
+        {Kind::CheapContrast, "Cheap Contrast", Type::Scalar, {{"In", Type::Scalar}, {"Contrast", Type::Scalar, {1}}}},
+        {Kind::Noise, "Noise", Type::Scalar, {{"Position", Type::Vector3}, {"Scale", Type::Scalar, {4}}}},
+        {Kind::Reroute, "Reroute", Type::Numeric, {{"In", Type::Numeric}}}};
+
+    int Dimensions(Type type)
+    {
+        return type == Type::Numeric ? 1 : static_cast<int>(type);
+    }
 
     bool Compatible(Type source, Type target)
     {
@@ -125,6 +204,24 @@ uint64_t MaterialGraph::AddNode(MaterialNodeKind kind, float x, float y)
     node.Kind = kind;
     node.Name = definition.Name;
     node.Position = {x, y};
+    switch (kind)
+    {
+        case Kind::TextureCoordinate:
+            node.Value = {1, 1, 0, 0}; // UTiling, VTiling
+            break;
+        case Kind::ComponentMask:
+            node.Value = {1, 1, 0, 0}; // R, G
+            break;
+        case Kind::Constant4Vector:
+            node.Value = {0, 0, 0, 1};
+            break;
+        case Kind::Group:
+            node.Name = "Comment";
+            node.Value = {0.30f, 0.42f, 0.60f, 1.0f}; // コメント色
+            break;
+        default:
+            break;
+    }
     for (size_t i = 0; i < definition.Inputs.size(); ++i)
     {
         node.InputPins.push_back(m_NextId++);
@@ -293,6 +390,27 @@ MaterialGraphType MaterialGraph::OutputType(uint64_t id, std::vector<uint64_t>& 
     {
         return definition.OutputType;
     }
+    auto linkedType = [&](size_t input, Type fallback) {
+        const auto* link = input < node->InputPins.size() ? InputLink(node->InputPins[input]) : nullptr;
+        const auto* source = link ? FindPinNode(link->SourcePin) : nullptr;
+        return source ? OutputType(source->Id, visiting) : fallback;
+    };
+    if (node->Kind == Kind::AppendVector)
+    {
+        visiting.push_back(id);
+        const int count = Dimensions(linkedType(0, Type::Scalar)) + Dimensions(linkedType(1, Type::Scalar));
+        visiting.pop_back();
+        return static_cast<Type>(std::clamp(count, 1, 4));
+    }
+    if (node->Kind == Kind::ComponentMask)
+    {
+        int count = 0;
+        for (float flag : node->Value)
+        {
+            count += flag > 0.5f ? 1 : 0;
+        }
+        return static_cast<Type>(std::clamp(count, 1, 4));
+    }
     visiting.push_back(id);
     Type result = Type::Scalar;
     for (const auto pin : node->InputPins)
@@ -307,6 +425,12 @@ MaterialGraphType MaterialGraph::OutputType(uint64_t id, std::vector<uint64_t>& 
     }
     visiting.pop_back();
     return result;
+}
+
+MaterialGraphType MaterialGraph::ResolveOutputType(uint64_t node) const
+{
+    std::vector<uint64_t> visiting;
+    return OutputType(node, visiting);
 }
 
 bool MaterialGraph::CanConnect(uint64_t source, uint64_t target, std::string& error) const
@@ -425,6 +549,25 @@ bool MaterialGraph::Validate(std::string& error) const
         return false;
     }
     std::unordered_set<uint64_t> targets;
+    for (const auto& node : Nodes)
+    {
+        if (node.Kind == Kind::AppendVector)
+        {
+            std::vector<uint64_t> visiting;
+            int count = 0;
+            for (const auto pin : node.InputPins)
+            {
+                const auto* link = InputLink(pin);
+                const auto* source = link ? FindPinNode(link->SourcePin) : nullptr;
+                count += source ? Dimensions(OutputType(source->Id, visiting)) : 1;
+            }
+            if (count > 4)
+            {
+                error = "Append: the combined vector exceeds 4 components.";
+                return false;
+            }
+        }
+    }
     for (const auto& link : Links)
     {
         if (!unique(link.Id) || !targets.insert(link.TargetPin).second ||
@@ -439,7 +582,8 @@ bool MaterialGraph::Validate(std::string& error) const
     }
     for (const auto& node : Nodes)
     {
-        if (Definition(node.Kind).OutputType != Type::Numeric || node.Kind == Kind::Output)
+        if (Definition(node.Kind).OutputType != Type::Numeric || node.Kind == Kind::Output ||
+            node.Kind == Kind::AppendVector || node.Kind == Kind::ComponentMask)
         {
             continue;
         }
@@ -498,6 +642,18 @@ std::string MaterialGraph::Serialize() const
         for (const float component : node.GroupSize)
         {
             value["size"].append(component);
+        }
+        if (node.Width > 0.0f)
+        {
+            value["width"] = node.Width;
+        }
+        if (node.Height > 0.0f)
+        {
+            value["height"] = node.Height;
+        }
+        if (!node.Comment.empty())
+        {
+            value["comment"] = node.Comment;
         }
         document["nodes"].append(std::move(value));
     }
@@ -570,6 +726,21 @@ bool MaterialGraph::Deserialize(const std::string& contents, MaterialGraph& grap
         {
             error = "Malformed node values or position.";
             return false;
+        }
+        // 追加項目（旧バージョンのファイルには無い）
+        if (value.isMember("width") && value["width"].isNumeric())
+        {
+            const float width = value["width"].asFloat();
+            node.Width = std::isfinite(width) ? std::clamp(width, 0.0f, 1024.0f) : 0.0f;
+        }
+        if (value.isMember("height") && value["height"].isNumeric())
+        {
+            const float height = value["height"].asFloat();
+            node.Height = std::isfinite(height) ? std::clamp(height, 0.0f, 2048.0f) : 0.0f;
+        }
+        if (value.isMember("comment") && value["comment"].isString())
+        {
+            node.Comment = value["comment"].asString();
         }
         for (const auto& pin : value["inputs"])
         {

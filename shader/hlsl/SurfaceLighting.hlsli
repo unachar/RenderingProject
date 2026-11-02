@@ -1074,7 +1074,11 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
     {
         // MegaLights M1 グリッドのライト：DXR 影モードならライト中心へ影のレイを 1 本
         const float maximumDistance = min(length(lightPositionType.xyz - worldPos), SceneRayParameters.x);
-        shadowVisibility = TraceSceneShadow(worldPos + g_PomShadowOffset, normal, singleDir, maximumDistance);
+        // 最適化：点 / スポット光で N・L < -0.6 なら、ラップ照明（最大 0.55）を含めても寄与が 0 なので
+        // 影レイを省く（面光源の矩形 / カプセル / ボリュームは中心方向と寄与が一致しないので対象外）
+        shadowVisibility = lightPositionType.w < 2.5f && dot(normal, singleDir) < -0.6f
+                               ? 0.0f
+                               : TraceSceneShadow(worldPos + g_PomShadowOffset, normal, singleDir, maximumDistance);
     }
 #endif
     float3 authoredLightColor = max(lightColorData.rgb, float3(0.0f, 0.0f, 0.0f));

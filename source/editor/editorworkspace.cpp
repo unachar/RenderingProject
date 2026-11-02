@@ -1,6 +1,7 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "editorworkspace.h"
 #include "materialasset.h"
+#include "editorpreferences.h"
 #include <imgui_internal.h>
 #include <json/json.h>
 #include <fstream>
@@ -188,7 +189,23 @@ bool EditorWindowRegistry::BeginEditorWindow(const char* title, bool* open, ImGu
     {
         return false;
     }
-    const char* maximizeLabel = workspaces.IsMaximized(area->Id) ? "戻す##AreaMaximize" : "最大化##AreaMaximize";
+    const bool ctrlSpace = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+                           !ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyCtrl &&
+                           ImGui::IsKeyPressed(ImGuiKey_Space, false);
+    if (ctrlSpace)
+    {
+        workspaces.RequestMaximize(area->Id);
+    }
+    if (!EditorPreferences::Get().ShowAreaHeaders && !workspaces.IsMaximized(area->Id))
+    {
+        // ヘッダー非表示（設定）時は最大化している領域以外ではヘッダー行を省略する。Ctrl+Space は有効
+        return true;
+    }
+    // Blender のエリアヘッダーのように、1 行・小さめのフレームで表示する
+    const float uiScale = EditorPreferences::Get().UiScale;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f * uiScale, 1.0f * uiScale));
+    const bool maximized = workspaces.IsMaximized(area->Id);
+    const char* maximizeLabel = maximized ? "⤡##AreaMaximize" : "⤢##AreaMaximize";
     const float availableWidth = ImGui::GetContentRegionAvail().x;
     const float maximizeWidth =
         ImGui::CalcTextSize(maximizeLabel, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
@@ -198,10 +215,10 @@ bool EditorWindowRegistry::BeginEditorWindow(const char* title, bool* open, ImGu
     {
         selectorWidth -= maximizeWidth + ImGui::GetStyle().ItemSpacing.x;
     }
-    ImGui::SetNextItemWidth((std::max)(1.0f, (std::min)(240.0f, selectorWidth)));
+    ImGui::SetNextItemWidth((std::max)(1.0f, (std::min)(200.0f * uiScale, selectorWidth)));
     const auto selected = registry.m_AreaTypes.find(area->Id);
     const auto& typeId = selected == registry.m_AreaTypes.end() ? area->Id : selected->second;
-    if (ImGui::BeginCombo("##EditorType", label.substr(0, label.find("###")).c_str()))
+    if (ImGui::BeginCombo("##EditorType", label.substr(0, label.find("###")).c_str(), ImGuiComboFlags_HeightLarge))
     {
         for (const auto& type : registry.m_Windows)
         {
@@ -219,18 +236,14 @@ bool EditorWindowRegistry::BeginEditorWindow(const char* title, bool* open, ImGu
     ImGui::SetItemTooltip("Editor Type: 配置とサイズを維持して、この領域の機能を切り替えます");
     if (controlsFitOnOneRow)
     {
-        ImGui::SameLine();
+        ImGui::SameLine(ImGui::GetCursorPosX() + availableWidth - maximizeWidth);
     }
     if (ImGui::SmallButton(maximizeLabel))
     {
         workspaces.RequestMaximize(area->Id);
     }
-    ImGui::SetItemTooltip("Ctrl+Space: この領域を最大化 / 元の配置に戻す");
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput &&
-        ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Space, false))
-    {
-        workspaces.RequestMaximize(area->Id);
-    }
+    ImGui::SetItemTooltip(maximized ? "元の配置に戻す (Ctrl+Space)" : "この領域を最大化 (Ctrl+Space)");
+    ImGui::PopStyleVar();
     ImGui::Separator();
     return true;
 }
@@ -533,30 +546,45 @@ void EditorWorkspaceManager::BeginFrame()
 
 void EditorWorkspaceManager::DrawTabs()
 {
-    float tabsWidth = ImGui::GetFrameHeight();
-    for (const auto& workspace : m_Workspaces)
-    {
-        tabsWidth += ImGui::CalcTextSize(workspace.Name.c_str()).x + 24.0f + ImGui::GetStyle().ItemSpacing.x;
-    }
-    float height = ImGui::GetFrameHeightWithSpacing();
-    if (tabsWidth > ImGui::GetContentRegionAvail().x)
-    {
-        height += ImGui::GetStyle().ScrollbarSize;
-    }
-    ImGui::BeginChild("WorkspaceTabs", ImVec2(0, height), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+    // メインメニューバー内に描く（Blender のトップバーと同じ位置）。
+    const float uiScale = EditorPreferences::Get().UiScale;
+    const ImVec4 accent = EditorPreferences::Accent();
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f * uiScale, ImGui::GetStyle().ItemSpacing.y));
+    ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.5f, 0.5f));
+    const float reserveRight = 300.0f * uiScale; // シーン名と検索ボタンの領域
+    size_t overflowFrom = m_Workspaces.size();
     for (size_t i = 0; i < m_Workspaces.size(); ++i)
     {
         auto& workspace = m_Workspaces[i];
+        const float width = ImGui::CalcTextSize(workspace.Name.c_str()).x + 22.0f * uiScale;
         if (i != 0)
         {
             ImGui::SameLine();
         }
+        if (i != 0 && ImGui::GetContentRegionAvail().x - width < reserveRight + ImGui::GetFrameHeight())
+        {
+            overflowFrom = i;
+            break;
+        }
         ImGui::PushID(workspace.Id.c_str());
-        const float width = ImGui::CalcTextSize(workspace.Name.c_str()).x + 24.0f;
-        if (ImGui::Selectable((workspace.Name + "###WorkspaceTab").c_str(), i == m_Active, 0,
+        const bool active = i == m_Active;
+        const ImVec2 start = ImGui::GetCursorScreenPos();
+        if (active)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        }
+        if (ImGui::Selectable((workspace.Name + "###WorkspaceTab").c_str(), active, 0,
                               ImVec2(width, ImGui::GetFrameHeight())))
         {
             Queue(Action::Switch, workspace.Id);
+        }
+        if (active)
+        {
+            ImGui::PopStyleColor(2);
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImVec2(start.x, start.y + ImGui::GetFrameHeight() - 2.0f * uiScale),
+                ImVec2(start.x + width, start.y + ImGui::GetFrameHeight()), ImGui::GetColorU32(accent));
         }
         ImGui::SetItemTooltip("Workspace: %s\n右クリック: 名前変更 / 複製 / 移動 / 削除", workspace.Name.c_str());
         if (ImGui::BeginPopupContextItem("WorkspaceMenu"))
@@ -571,6 +599,7 @@ void EditorWorkspaceManager::DrawTabs()
                 m_Rename[0] != '\0')
             {
                 workspace.Name = m_Rename;
+                m_ForceSave = true;
                 ImGui::CloseCurrentPopup();
             }
             if (ImGui::MenuItem("複製", nullptr, false, m_Workspaces.size() < MaxWorkspaces))
@@ -598,20 +627,71 @@ void EditorWorkspaceManager::DrawTabs()
         }
         ImGui::PopID();
     }
+    if (overflowFrom < m_Workspaces.size())
+    {
+        // 入りきらない Workspace はドロップダウンにまとめる
+        if (ImGui::BeginMenu("»##WorkspaceOverflow"))
+        {
+            for (size_t i = overflowFrom; i < m_Workspaces.size(); ++i)
+            {
+                if (ImGui::MenuItem(m_Workspaces[i].Name.c_str(), nullptr, i == m_Active))
+                {
+                    Queue(Action::Switch, m_Workspaces[i].Id);
+                }
+            }
+            ImGui::EndMenu();
+        }
+    }
     ImGui::SameLine();
     ImGui::BeginDisabled(m_Workspaces.size() >= MaxWorkspaces);
-    if (ImGui::SmallButton("+##AddWorkspace"))
+    if (ImGui::Selectable("+##AddWorkspace", false, 0, ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight())))
     {
         Queue(Action::Add, {});
     }
+    ImGui::SetItemTooltip("Workspace を追加");
     ImGui::EndDisabled();
+    ImGui::PopStyleVar(2);
     if (!m_SaveError.empty())
     {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1, 0.55f, 0.25f, 1), "レイアウト保存エラー");
         ImGui::SetItemTooltip("%s", m_SaveError.c_str());
     }
-    ImGui::EndChild();
+}
+
+void EditorWorkspaceManager::RequestSwitch(size_t index)
+{
+    if (m_Initialized && index < m_Workspaces.size())
+    {
+        Queue(Action::Switch, m_Workspaces[index].Id);
+    }
+}
+
+uint64_t EditorWorkspaceManager::VisibilitySignature() const
+{
+    // FNV-1a。表示中のウィンドウとエリアタイプの組み合わせが変わったかだけを検出する
+    uint64_t hash = 1469598103934665603ull;
+    auto mix = [&hash](const std::string& text) {
+        for (unsigned char c : text)
+        {
+            hash = (hash ^ c) * 1099511628211ull;
+        }
+        hash = (hash ^ 0xFFu) * 1099511628211ull;
+    };
+    for (const auto& window : m_Registry.Windows())
+    {
+        if (*window.Visible)
+        {
+            mix(window.Id);
+        }
+    }
+    for (const auto& [area, type] : m_Registry.AreaTypes())
+    {
+        mix(area);
+        mix(type);
+    }
+    mix(std::to_string(m_Active));
+    return hash;
 }
 
 ImGuiID EditorWorkspaceManager::DockspaceId() const
@@ -822,13 +902,25 @@ void EditorWorkspaceManager::Save()
 
 void EditorWorkspaceManager::AutoSave()
 {
-    if (m_Initialized && ImGui::GetTime() >= m_NextSave && !ImGui::IsAnyItemActive() &&
-        !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+    if (!m_Initialized || ImGui::GetTime() < m_NextSave || ImGui::IsAnyItemActive() ||
+        ImGui::IsMouseDown(ImGuiMouseButton_Left))
     {
-        CaptureActive();
-        Save();
-        m_NextSave = ImGui::GetTime() + 2.0;
+        return;
     }
+    m_NextSave = ImGui::GetTime() + 2.0;
+    // 最適化：ドッキング配置（ImGui の ini）も表示ウィンドウも変わっていなければ、
+    // 2 秒ごとの SaveIniSettingsToMemory と JSON 生成を丸ごと省く。
+    ImGuiIO& io = ImGui::GetIO();
+    const uint64_t signature = VisibilitySignature();
+    if (!m_ForceSave && !io.WantSaveIniSettings && signature == m_LastVisibilitySignature)
+    {
+        return;
+    }
+    io.WantSaveIniSettings = false;
+    m_LastVisibilitySignature = signature;
+    m_ForceSave = false;
+    CaptureActive();
+    Save();
 }
 
 void EditorWorkspaceManager::Shutdown()

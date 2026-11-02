@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "inputsystem.h"
 #include "input.h"
+#include "viewportinputgate.h"
 #include "componentmanager.h"
 #include "camera.h"
 #include "world.h"
@@ -36,7 +37,7 @@ void InputSystem::Update()
         }
 
         const bool isCamera = ComponentManager::HasComponent<CameraComponent>(e);
-        const bool allowTransformInput = !isCamera || Input::IsKeyHeld(VK_RBUTTON);
+        const bool allowTransformInput = !isCamera || ViewportInputGate::CameraLookActive();
 
         if (allowTransformInput)
         {

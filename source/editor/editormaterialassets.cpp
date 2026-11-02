@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "editorworkspace.h"
 #include "imguimanager.h"
 #include "materialmanager.h"
@@ -281,7 +281,27 @@ void ImGuiManager::DrawMaterialEditorWindow()
     if (showMaterialGraph)
     {
         ImGui::Separator();
+        // UE のマテリアルエディターと同じく、左にプレビュー、右にグラフ。境界はドラッグで幅を変更できる
+        static float previewWidth = 300.0f;
+        const float total = ImGui::GetContentRegionAvail().x;
+        previewWidth = clamp(previewWidth, 160.0f, (std::max)(160.0f, total - 240.0f));
+        ImGui::BeginChild("GraphPreviewPane", ImVec2(previewWidth, 0), ImGuiChildFlags_Borders);
+        MaterialGraphEditor::DrawPreviewPanel(openMaterial);
+        ImGui::EndChild();
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::InvisibleButton("##GraphPreviewSplitter", ImVec2(6.0f, (std::max)(ImGui::GetContentRegionAvail().y, 1.0f)));
+        if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+        {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        }
+        if (ImGui::IsItemActive())
+        {
+            previewWidth += ImGui::GetIO().MouseDelta.x;
+        }
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::BeginChild("GraphCanvasPane", ImVec2(0, 0));
         MaterialGraphEditor::Draw(openMaterial);
+        ImGui::EndChild();
         ImGui::End();
         return;
     }

@@ -1,5 +1,7 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "editorworkspace.h"
+#include "editorshell.h"
+#include "editorpreferences.h"
 #include "editorscenenavigation.h"
 #include "imguimanager.h"
 #include <unordered_map>
@@ -59,6 +61,50 @@ namespace
     };
 
     PrimitiveCreationState primitiveCreation;
+
+    struct OutlinerTypeInfo
+    {
+        const char* Icon;
+        const char* Type;
+        ImU32 Color;
+    };
+
+    OutlinerTypeInfo ClassifyOutlinerEntity(EntityID entity)
+    {
+        if (ComponentManager::HasComponent<SunComponent>(entity))
+        {
+            return {"☀", "Sun", IM_COL32(255, 196, 64, 255)};
+        }
+        if (ComponentManager::HasComponent<LightComponent>(entity))
+        {
+            return {"✦", "Light", IM_COL32(255, 220, 110, 255)};
+        }
+        if (ComponentManager::HasComponent<CameraComponent>(entity))
+        {
+            return {"◉", "Camera", IM_COL32(186, 150, 255, 255)};
+        }
+        if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
+        {
+            return {"◆", "Skeletal", IM_COL32(255, 150, 80, 255)};
+        }
+        if (ComponentManager::HasComponent<StaticModelComponent>(entity))
+        {
+            return {"◆", "StaticMesh", IM_COL32(90, 200, 250, 255)};
+        }
+        if (ComponentManager::HasComponent<ProceduralTerrainComponent>(entity))
+        {
+            return {"▲", "Terrain", IM_COL32(120, 210, 120, 255)};
+        }
+        if (ComponentManager::HasComponent<MeshComponent>(entity))
+        {
+            return {"■", "Mesh", IM_COL32(110, 190, 235, 255)};
+        }
+        if (ComponentManager::HasComponent<TimelineComponent>(entity))
+        {
+            return {"◷", "Timeline", IM_COL32(230, 140, 200, 255)};
+        }
+        return {"○", "Empty", IM_COL32(150, 150, 150, 255)};
+    }
 }
 
 void ImGuiManager::DrawSceneViewWindow()
@@ -67,64 +113,19 @@ void ImGuiManager::DrawSceneViewWindow()
     const auto previousPosition = m_SceneViewPos;
     const auto previousSize = m_SceneViewSize;
     ImGui::SetNextWindowSize(ImVec2(860.0f, 520.0f), ImGuiCond_FirstUseEver);
-    if (!EditorWindowRegistry::BeginEditorWindow("シーンビュー", &m_ShowSceneViewWindow))
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f, 4.0f));
+    const bool expanded = EditorWindowRegistry::BeginEditorWindow("シーンビュー", &m_ShowSceneViewWindow);
+    ImGui::PopStyleVar();
+    if (!expanded)
     {
         ImGui::End();
         return;
     }
 
-    // Unityと同じ並び・キー：ハンド Q / 移動 W / 回転 E / スケール R、X でローカル/グローバル切り替え
-    const char* toolLabels[] = {"ハンド Q", "移動 W", "回転 E", "スケール R"};
-    const int toolOperations[] = {3, 0, 1, 2};
-    const float toolbarWidth = ImGui::GetContentRegionAvail().x;
-    const float toolSpacing = ImGui::GetStyle().ItemSpacing.x;
-    float rowWidth = 0.0f;
-    for (int tool = 0; tool < 4; ++tool)
-    {
-        const float toolWidth = ImGui::CalcTextSize(toolLabels[tool]).x + 16.0f;
-        if (tool > 0 && rowWidth + toolSpacing + toolWidth <= toolbarWidth)
-        {
-            ImGui::SameLine();
-            rowWidth += toolSpacing;
-        }
-        else
-        {
-            rowWidth = 0.0f;
-        }
-        if (ImGui::Selectable(toolLabels[tool], m_GizmoOperation == toolOperations[tool], 0,
-                              ImVec2(toolWidth, ImGui::GetFrameHeight())))
-        {
-            m_GizmoOperation = toolOperations[tool];
-        }
-        rowWidth += toolWidth;
-    }
-    {
-        const char* spaceLabel = m_GizmoLocalSpace ? "ローカル X" : "グローバル X";
-        const float spaceWidth = ImGui::CalcTextSize(spaceLabel).x + 16.0f;
-        if (rowWidth + toolSpacing + spaceWidth <= toolbarWidth)
-        {
-            ImGui::SameLine();
-            rowWidth += toolSpacing;
-        }
-        else
-        {
-            rowWidth = 0.0f;
-        }
-        if (ImGui::Selectable(spaceLabel, false, 0, ImVec2(spaceWidth, ImGui::GetFrameHeight())))
-        {
-            m_GizmoLocalSpace = !m_GizmoLocalSpace;
-        }
-        rowWidth += spaceWidth;
-    }
-    const float lightToggleWidth =
-        ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("ライト可視化").x;
-    if (rowWidth + toolSpacing + lightToggleWidth <= toolbarWidth)
-    {
-        ImGui::SameLine();
-    }
-    ImGui::Checkbox("ライト可視化", &m_ShowLightDebug);
+    // UE / Blender 風のビューポートヘッダー：変形ツール（Q/W/E/R）・座標系（X）・スナップ・表示・追加
+    EditorShell::DrawViewportHeader();
 
-    ImGui::Separator();
+    const auto& preferences = EditorPreferences::Get();
     const bool sceneFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     if (sceneFocused && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsingAny() &&
         ImGui::IsKeyPressed(ImGuiKey_Delete, false))
@@ -132,7 +133,12 @@ void ImGuiManager::DrawSceneViewWindow()
         DeleteSelectedEntity();
     }
     ImVec2 available = ImGui::GetContentRegionAvail();
-    available.y -= ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+    // ステータスバーを表示している場合、操作ヒントはそちらに出すので画面を広く使う
+    const bool showHintLine = !preferences.ShowStatusBar;
+    if (showHintLine)
+    {
+        available.y -= ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+    }
     const float sceneAspect = GraphicsDevice::GetSceneAspectRatio();
     if (available.x <= 1.0f || available.y <= 1.0f)
     {
@@ -162,17 +168,13 @@ void ImGuiManager::DrawSceneViewWindow()
     m_SceneViewSize = imageSize;
 
     D3D12_GPU_DESCRIPTOR_HANDLE handle = RenderTargets::GetEditorSceneSrvHandle();
-    ImGui::Image((ImTextureData*)handle.ptr, imageSize);
+    // 修正：ImTextureData* へのキャストは ImGui 1.92 で管理テクスチャとして扱われ、GPU ハンドルを
+    // CPU ポインタとして参照してしまう。ほかの箇所と同じく ImTextureID で渡す。
+    ImGui::Image(static_cast<ImTextureID>(handle.ptr), imageSize);
     const bool thisHovered = ImGui::IsItemHovered();
     m_IsSceneViewHovered = thisHovered;
+    // ドロップ先はどちらも Image（直前のアイテム）。後続の InvisibleButton より前に処理する
     DrawMaterialDropTarget();
-    VirtualGeometryDebug::DrawViewport(ImGui::GetWindowDrawList(), cursor, imageSize, m_SelectedEntity);
-    ImGuizmo::SetID(static_cast<int>(ImGui::GetID("SceneTransformGizmo")));
-    DrawTransformGizmo();
-    m_SceneGizmoCapturesMouse |= ImGuizmo::IsUsing() || (thisHovered && ImGuizmo::IsOver());
-    // Unity風のシーンビュー操作（ホイール / 中ボタンパン / Alt+左オービット / Fフォーカス）と統計表示
-    EditorSceneNavigation::DrawOverlay(ImGui::GetWindowDrawList(), cursor, imageSize);
-
     if (ImGui::BeginDragDropTarget())
     {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH"))
@@ -189,9 +191,38 @@ void ImGuiManager::DrawSceneViewWindow()
         ImGui::EndDragDropTarget();
     }
 
-    ImGui::SetCursorPos(ImVec2(imageCursor.x, imageCursor.y + available.y + ImGui::GetStyle().ItemSpacing.y));
-    ImGui::TextDisabled(
-        "左: 選択 / 右ドラッグ+WASD: 飛行 / 中ドラッグ: パン / Alt+左: 回転 / ホイール: ズーム / F: フォーカス");
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    VirtualGeometryDebug::DrawViewport(drawList, cursor, imageSize, m_SelectedEntity);
+    ImGuizmo::SetID(static_cast<int>(ImGui::GetID("SceneTransformGizmo")));
+    DrawTransformGizmo();
+    m_SceneGizmoCapturesMouse |= ImGuizmo::IsUsing() || (thisHovered && ImGuizmo::IsOver());
+    if (preferences.ShowViewportStats)
+    {
+        EditorSceneNavigation::DrawOverlay(drawList, cursor, imageSize);
+    }
+    // 右上のナビゲーションギズモ（軸クリックで視点切り替え / ドラッグでオービット）
+    m_SceneGizmoCapturesMouse |= EditorShell::DrawNavigationGizmo(drawList, cursor, imageSize);
+
+    // 再生中は UE と同じくビューポートの枠をハイライトする
+    if (ProjectManager::IsPlaying())
+    {
+        const ImVec4 color = ProjectManager::IsPaused() ? EditorPreferences::Warning() : EditorPreferences::Success();
+        drawList->AddRect(cursor, ImVec2(cursor.x + imageSize.x, cursor.y + imageSize.y), ImGui::GetColorU32(color),
+                          0.0f, 0, 2.0f * preferences.UiScale);
+    }
+
+    if (showHintLine)
+    {
+        ImGui::SetCursorPos(ImVec2(imageCursor.x, imageCursor.y + available.y + ImGui::GetStyle().ItemSpacing.y));
+        ImGui::TextDisabled("左: 選択 / 右ドラッグ+WASD: 飛行 / 中ドラッグ: パン / Alt+左: 回転 / ホイール: ズーム / F: "
+                            "フォーカス / Z: パイ / Shift+A: 追加");
+    }
+    else
+    {
+        // 画像の下にカーソルを動かした状態で End しないよう、境界を確定させる空アイテムを置く
+        ImGui::SetCursorPos(ImVec2(imageCursor.x, imageCursor.y + available.y));
+        ImGui::Dummy(ImVec2(0.0f, 0.0f));
+    }
     if (!thisHovered && previousHovered)
     {
         m_SceneViewPos = previousPosition;
@@ -208,6 +239,10 @@ void ImGuiManager::UpdateSceneNavigation()
 
 void ImGuiManager::DrawTransformGizmo()
 {
+    if (m_GizmoOperation == 3)
+    {
+        return; // ハンドツール：ギズモを出さない（行列の取得・計算もしない）
+    }
     if (m_SelectedEntity == g_kINVALID_ENTITY || !Registry::IsAlive(m_SelectedEntity) ||
         !ComponentManager::HasComponent<TransformComponent>(m_SelectedEntity))
     {
@@ -235,10 +270,6 @@ void ImGuiManager::DrawTransformGizmo()
     XMFLOAT4X4 modelMatrix{};
     XMStoreFloat4x4(&modelMatrix, BuildWorldMatrix(transform));
 
-    if (m_GizmoOperation == 3)
-    {
-        return; // ハンドツール：ギズモを出さない
-    }
     const ImGuizmo::OPERATION operation = GetGizmoOperationFromIndex(m_GizmoOperation);
     // スケールは常にローカル。それ以外は X キーで切り替えたモードに従う（Unityと同じ）。
     const ImGuizmo::MODE mode = (m_GizmoLocalSpace || operation == ImGuizmo::SCALE) ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
@@ -247,7 +278,13 @@ void ImGuiManager::DrawTransformGizmo()
     ImGuizmo::SetOrthographic(false);
     ImGuizmo::SetRect(m_SceneViewPos.x, m_SceneViewPos.y, m_SceneViewSize.x, m_SceneViewSize.y);
 
-    if (!ImGuizmo::Manipulate(&viewMatrix._11, &projectionMatrix._11, operation, mode, &modelMatrix._11))
+    // パイメニュー表示中はギズモに入力を渡さない。スナップは設定値（Ctrl で反転）。
+    ImGuizmo::Enable(!EditorShell::IsPieOpen());
+    const float* snap = EditorShell::GizmoSnap(m_GizmoOperation);
+    const bool manipulated =
+        ImGuizmo::Manipulate(&viewMatrix._11, &projectionMatrix._11, operation, mode, &modelMatrix._11, nullptr, snap);
+    ImGuizmo::Enable(true);
+    if (!manipulated)
     {
         return;
     }
@@ -284,6 +321,72 @@ void ImGuiManager::DrawTransformGizmo()
     ApplySelectionTransform(beforeTransform, after);
 }
 
+EntityID ImGuiManager::CreatePrimitiveEntity(const char* name, ObjectType type)
+{
+    auto entity =
+        World::CreateEntity().Add<TransformComponent>().Add<MeshComponent>().Add<MaterialComponent>().Add<NameComponent>();
+    entity.SetName(name);
+    auto& material = entity.Get<MaterialComponent>();
+    material.Metallic = 0.0f;
+    material.Roughness = 0.5f;
+    material.Fresnel = 0.04f;
+    material.ShaderClassMode = MaterialMode::Manual;
+    material.ShaderClass = ShaderClass::PBR;
+    material.UseTexture = false;
+    VertexResource resource{};
+    resource.entityid = entity.GetID();
+    resource.color = Color::WHITE;
+    resource.objectType = type;
+    PrimitiveSettings settings;
+    if (type == ObjectType::CAPSULE)
+    {
+        settings.Rings = 8;
+    }
+    PrimitiveGeometry::CreateObjectVertex(resource, settings);
+    if (!entity.Get<MeshComponent>().VertexBuffer)
+    {
+        AddLog("シェイプ作成失敗: %s", name);
+        World::DestroyEntity(entity);
+        return g_kINVALID_ENTITY;
+    }
+    SelectEntity(entity.GetID());
+    primitiveCreation = {};
+    primitiveCreation.Entity = m_SelectedEntity;
+    primitiveCreation.Type = type;
+    primitiveCreation.Settings = settings;
+    primitiveCreation.Open = true;
+    primitiveCreation.FocusRequested = true;
+    AddLog("シェイプ追加: %s #%u", name, m_SelectedEntity);
+    return m_SelectedEntity;
+}
+
+EntityID ImGuiManager::CreateEmptyEntity()
+{
+    auto group = World::CreateEntity().Add<TransformComponent>().Add<NameComponent>();
+    group.SetName("GameObject");
+    EntitySnapshot missing{};
+    missing.Entity = group.GetID();
+    PushUndoSnapshot(missing);
+    return group.GetID();
+}
+
+EntityID ImGuiManager::CreateGameCameraEntity()
+{
+    int cameraNumber = 1;
+    for (EntityID candidate : World::GetView<CameraComponent>())
+    {
+        if (ComponentManager::GetComponentUnchecked<CameraComponent>(candidate).IsGameCamera)
+        {
+            ++cameraNumber;
+        }
+    }
+    const EntityID camera =
+        Camera::CreateGameCamera("GameCamera " + to_string(cameraNumber), {5.0f, 4.0f, -10.0f}, {0.0f, 3.0f, 0.0f},
+                                 XM_PIDIV4, Camera::GetGameCameraEntity() == g_kINVALID_ENTITY);
+    AddLog("GameCamera追加: #%u", camera);
+    return camera;
+}
+
 void ImGuiManager::DrawPrimitiveCreationMenu()
 {
     struct PrimitiveEntry
@@ -307,47 +410,10 @@ void ImGuiManager::DrawPrimitiveCreationMenu()
     const auto drawEntries = [&](const auto& entries) {
         for (const auto& entry : entries)
         {
-            if (!ImGui::MenuItem(entry.Label))
+            if (ImGui::MenuItem(entry.Label))
             {
-                continue;
+                CreatePrimitiveEntity(entry.Name, entry.Type);
             }
-            auto entity = World::CreateEntity()
-                              .Add<TransformComponent>()
-                              .Add<MeshComponent>()
-                              .Add<MaterialComponent>()
-                              .Add<NameComponent>();
-            entity.SetName(entry.Name);
-            auto& material = entity.Get<MaterialComponent>();
-            material.Metallic = 0.0f;
-            material.Roughness = 0.5f;
-            material.Fresnel = 0.04f;
-            material.ShaderClassMode = MaterialMode::Manual;
-            material.ShaderClass = ShaderClass::PBR;
-            material.UseTexture = false;
-            VertexResource resource{};
-            resource.entityid = entity.GetID();
-            resource.color = Color::WHITE;
-            resource.objectType = entry.Type;
-            PrimitiveSettings settings;
-            if (entry.Type == ObjectType::CAPSULE)
-            {
-                settings.Rings = 8;
-            }
-            PrimitiveGeometry::CreateObjectVertex(resource, settings);
-            if (!entity.Get<MeshComponent>().VertexBuffer)
-            {
-                AddLog("シェイプ作成失敗: %s", entry.Name);
-                World::DestroyEntity(entity);
-                continue;
-            }
-            m_SelectedEntity = entity.GetID();
-            primitiveCreation = {};
-            primitiveCreation.Entity = m_SelectedEntity;
-            primitiveCreation.Type = entry.Type;
-            primitiveCreation.Settings = settings;
-            primitiveCreation.Open = true;
-            primitiveCreation.FocusRequested = true;
-            AddLog("シェイプ追加: %s #%u", entry.Name, m_SelectedEntity);
         }
     };
     if (ImGui::BeginMenu("2Dオブジェクト"))
@@ -495,28 +561,12 @@ void ImGuiManager::DrawHierarchyWindow()
     {
         if (ImGui::MenuItem("空のオブジェクト"))
         {
-            auto group = World::CreateEntity().Add<TransformComponent>().Add<NameComponent>();
-            group.SetName("GameObject");
-            SelectEntity(group.GetID());
-            EntitySnapshot missing{};
-            missing.Entity = group.GetID();
-            PushUndoSnapshot(missing);
+            SelectEntity(CreateEmptyEntity());
         }
         DrawPrimitiveCreationMenu();
         if (ImGui::MenuItem("GameCamera"))
         {
-            int cameraNumber = 1;
-            for (EntityID candidate : World::GetView<CameraComponent>())
-            {
-                if (ComponentManager::GetComponentUnchecked<CameraComponent>(candidate).IsGameCamera)
-                {
-                    ++cameraNumber;
-                }
-            }
-            m_SelectedEntity = Camera::CreateGameCamera("GameCamera " + to_string(cameraNumber), {5.0f, 4.0f, -10.0f},
-                                                        {0.0f, 3.0f, 0.0f}, XM_PIDIV4,
-                                                        Camera::GetGameCameraEntity() == g_kINVALID_ENTITY);
-            AddLog("GameCamera追加: #%u", m_SelectedEntity);
+            SelectEntity(CreateGameCameraEntity());
         }
         if (ImGui::BeginMenu("ライト"))
         {
@@ -564,15 +614,24 @@ void ImGuiManager::DrawHierarchyWindow()
         }
     }
     totalCount = static_cast<int>(all.size());
+    // 最適化：親の存在確認を線形探索（O(n^2)）からハッシュ集合（O(n)）に変更
+    const unordered_set<EntityID> allSet(all.begin(), all.end());
+    const unordered_set<EntityID> selectedSet(m_SelectedEntities.begin(), m_SelectedEntities.end());
+    children.reserve(all.size() + 1);
     for (EntityID entity : all)
     {
         EntityID parent = SceneHierarchy::Parent(entity);
-        if (find(all.begin(), all.end(), parent) == all.end())
+        if (!allSet.contains(parent))
         {
             parent = g_kINVALID_ENTITY;
         }
         children[parent].push_back(entity);
     }
+    // 種類アイコン（UE のアウトライナー風）。アイコン分の空白をラベルの先頭に確保する
+    const auto& outlinerPreferences = EditorPreferences::Get();
+    const float iconSlot = ImGui::CalcTextSize("◆").x + 6.0f * outlinerPreferences.UiScale;
+    const float spaceWidth = (std::max)(ImGui::CalcTextSize(" ").x, 1.0f);
+    const string iconPadding(static_cast<size_t>(ceilf(iconSlot / spaceWidth)), ' ');
     EntityID clicked = g_kINVALID_ENTITY;
     static EntityID pendingClick = g_kINVALID_ENTITY;
     static bool selectionDragged = false;
@@ -592,11 +651,13 @@ void ImGuiManager::DrawHierarchyWindow()
         visible.push_back(entity);
         ImGui::PushID(static_cast<int>(entity));
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
-        if (IsEntitySelected(entity))
+        if (selectedSet.contains(entity))
         {
             flags |= ImGuiTreeNodeFlags_Selected;
         }
-        if (children[entity].empty() || entityFilter.IsActive())
+        const auto childList = children.find(entity);
+        const bool hasChildren = childList != children.end() && !childList->second.empty();
+        if (!hasChildren || entityFilter.IsActive())
         {
             flags |= ImGuiTreeNodeFlags_Leaf;
         }
@@ -605,10 +666,30 @@ void ImGuiManager::DrawHierarchyWindow()
         {
             ImGui::PushStyleColor(ImGuiCol_Text, kPrefabColor);
         }
-        const bool open = ImGui::TreeNodeEx("Entity", flags, "%s", displayName.c_str());
+        const bool open = ImGui::TreeNodeEx("Entity", flags, "%s%s", iconPadding.c_str(), displayName.c_str());
         if (prefab)
         {
             ImGui::PopStyleColor();
+        }
+        {
+            const OutlinerTypeInfo info = ClassifyOutlinerEntity(entity);
+            const ImVec2 rowMin = ImGui::GetItemRectMin();
+            const ImVec2 rowMax = ImGui::GetItemRectMax();
+            const float textY = rowMin.y + (rowMax.y - rowMin.y - ImGui::GetTextLineHeight()) * 0.5f;
+            ImDrawList* rowDraw = ImGui::GetWindowDrawList();
+            rowDraw->AddText(ImVec2(rowMin.x + ImGui::GetTreeNodeToLabelSpacing(), textY), info.Color, info.Icon);
+            if (outlinerPreferences.ShowOutlinerTypeColumn)
+            {
+                const float typeWidth = ImGui::CalcTextSize(info.Type).x;
+                const float nameEnd = rowMin.x + ImGui::GetTreeNodeToLabelSpacing() +
+                                      ImGui::CalcTextSize(iconPadding.c_str()).x +
+                                      ImGui::CalcTextSize(displayName.c_str()).x;
+                const float typeX = rowMax.x - typeWidth - 6.0f;
+                if (typeX > nameEnd + 16.0f)
+                {
+                    rowDraw->AddText(ImVec2(typeX, textY), ImGui::GetColorU32(ImGuiCol_TextDisabled), info.Type);
+                }
+            }
         }
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
         {
@@ -664,9 +745,9 @@ void ImGuiManager::DrawHierarchyWindow()
         }
         if (open)
         {
-            if (!entityFilter.IsActive())
+            if (!entityFilter.IsActive() && hasChildren)
             {
-                for (EntityID child : children[entity])
+                for (EntityID child : childList->second)
                 {
                     drawEntity(child);
                 }

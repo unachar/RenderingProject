@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "editorworkspace.h"
 #include "gpuscene/gpuscene.h"
 #include "gpudriven/gpudrivenrenderer.h"
@@ -7,6 +7,7 @@
 #include "virtualgeometry/virtualgeometrydebug.h"
 #include "cloud/cloudrenderer.h"
 #include "imguimanager.h"
+#include "editorshell.h"
 #include "gbufferpreview.h"
 #include "advancedeffects.h"
 #include "editorwidgets.h"
@@ -363,7 +364,13 @@ void ImGuiManager::DrawAtmosphereWindow()
 
 void ImGuiManager::DrawLogWindow()
 {
+    // UE の Output Log / Blender の Info エディター風：重要度フィルター、時刻、重複のまとめ表示、コピー
     static ImGuiTextFilter logFilter;
+    static bool showLevel[4] = {true, true, true, true};
+    static vector<int> visibleLogs;
+    static uint64_t cachedRevision = ~0ull;
+    static string cachedFilter;
+    static int cachedMask = -1;
     ImGui::SetNextWindowSize(ImVec2(620.0f, 220.0f), ImGuiCond_FirstUseEver);
     if (!EditorWindowRegistry::BeginEditorWindow("ログ", &m_ShowLogWindow))
     {
@@ -371,37 +378,132 @@ void ImGuiManager::DrawLogWindow()
         return;
     }
 
+    std::lock_guard<std::recursive_mutex> lock(m_LogMutex);
     if (ImGui::Button("クリア"))
     {
         m_Logs.clear();
+        for (auto& count : m_LogCounts)
+        {
+            count = 0;
+        }
+        ++m_LogRevision;
     }
     ImGui::SameLine();
+    struct LevelToggle
+    {
+        EditorShell::LogLevel Level;
+        const char* Name;
+    };
+    const LevelToggle toggles[] = {{EditorShell::LogLevel::Info, "情報"},
+                                   {EditorShell::LogLevel::Success, "成功"},
+                                   {EditorShell::LogLevel::Warning, "警告"},
+                                   {EditorShell::LogLevel::Error, "エラー"}};
+    for (const auto& toggle : toggles)
+    {
+        const int index = static_cast<int>(toggle.Level);
+        char label[64];
+        snprintf(label, sizeof(label), "%s %s %u##LogLevel%d", EditorShell::LogLevelIcon(toggle.Level), toggle.Name,
+                 m_LogCounts[index], index);
+        const ImVec4 color = EditorShell::LogLevelColor(toggle.Level);
+        ImGui::PushStyleColor(ImGuiCol_Text, showLevel[index] ? color : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::PushStyleColor(ImGuiCol_Button, showLevel[index] ? ImGui::GetStyleColorVec4(ImGuiCol_FrameBg)
+                                                                : ImVec4(0, 0, 0, 0));
+        if (ImGui::SmallButton(label))
+        {
+            showLevel[index] = !showLevel[index];
+        }
+        ImGui::PopStyleColor(2);
+        ImGui::SameLine();
+    }
     ImGui::Checkbox("末尾を追従", &m_LogAutoScroll);
+    ImGui::SameLine();
+    const bool copyRequested = ImGui::SmallButton("コピー");
+    ImGui::SetItemTooltip("表示中のログをクリップボードにコピー（各行は右クリックでコピー）");
     DrawSearchField("LogSearch", "ログを検索...", logFilter);
     ImGui::Separator();
 
-    vector<int> visibleLogs;
-    for (int i = 0; i < static_cast<int>(m_Logs.size()); ++i)
+    // 最適化：フィルター結果はログ追加・フィルター変更時だけ作り直す（以前は毎フレーム全件走査）
+    int mask = 0;
+    for (int i = 0; i < 4; ++i)
     {
-        if (logFilter.PassFilter(m_Logs[i].c_str()))
+        mask |= showLevel[i] ? (1 << i) : 0;
+    }
+    if (cachedRevision != m_LogRevision || cachedMask != mask || cachedFilter != logFilter.InputBuf)
+    {
+        cachedRevision = m_LogRevision;
+        cachedMask = mask;
+        cachedFilter = logFilter.InputBuf;
+        visibleLogs.clear();
+        visibleLogs.reserve(m_Logs.size());
+        for (int i = 0; i < static_cast<int>(m_Logs.size()); ++i)
         {
-            visibleLogs.push_back(i);
+            const auto& entry = m_Logs[i];
+            if ((mask & (1 << (entry.Level & 3))) && logFilter.PassFilter(entry.Text.c_str()))
+            {
+                visibleLogs.push_back(i);
+            }
         }
     }
+    if (copyRequested)
+    {
+        string text;
+        for (int index : visibleLogs)
+        {
+            const auto& entry = m_Logs[index];
+            text += "[";
+            text += entry.Clock;
+            text += "] ";
+            text += entry.Text;
+            if (entry.Repeat > 1)
+            {
+                text += " (x" + to_string(entry.Repeat) + ")";
+            }
+            text += "\n";
+        }
+        ImGui::SetClipboardText(text.c_str());
+    }
+
     ImGui::TextDisabled("%d / %d 件", static_cast<int>(visibleLogs.size()), static_cast<int>(m_Logs.size()));
-    ImGui::BeginChild("LogScroll", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+    ImGui::BeginChild("LogScroll", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
     const bool wasAtBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f;
     if (visibleLogs.empty())
     {
         ImGui::TextUnformatted("表示するログがありません。");
     }
+    const ImVec4 dim = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
     ImGuiListClipper clipper;
     clipper.Begin(static_cast<int>(visibleLogs.size()));
     while (clipper.Step())
     {
         for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
         {
-            ImGui::TextUnformatted(m_Logs[visibleLogs[i]].c_str());
+            const auto& entry = m_Logs[visibleLogs[i]];
+            const auto level = static_cast<EditorShell::LogLevel>(entry.Level & 3);
+            ImGui::PushID(i);
+            ImGui::TextColored(dim, "%s", entry.Clock);
+            ImGui::SameLine();
+            ImGui::TextColored(EditorShell::LogLevelColor(level), "%s", EditorShell::LogLevelIcon(level));
+            ImGui::SameLine();
+            if (level == EditorShell::LogLevel::Warning || level == EditorShell::LogLevel::Error)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorShell::LogLevelColor(level));
+                ImGui::TextUnformatted(entry.Text.c_str());
+                ImGui::PopStyleColor();
+            }
+            else
+            {
+                ImGui::TextUnformatted(entry.Text.c_str());
+            }
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+            {
+                ImGui::SetClipboardText(entry.Text.c_str());
+            }
+            if (entry.Repeat > 1)
+            {
+                ImGui::SameLine();
+                ImGui::TextColored(EditorShell::LogLevelColor(EditorShell::LogLevel::Warning), "×%u", entry.Repeat);
+            }
+            ImGui::PopID();
         }
     }
     if (m_LogAutoScroll && wasAtBottom)

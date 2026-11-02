@@ -5,7 +5,7 @@
 //  描画品質を段階（Tier）で自動調整する。
 //
 //  ・可変レイトレーシング : サンプル数 / AO / 反射 / シャドウ距離 / レイトレ自体のON/OFF
-//  ・可変GI              : Realtime → ScreenSpace → Off、GI距離・強度
+//  ・可変GI              : モードは固定。トレース距離 / 静止画素の更新間引き / Lumen 更新量・プローブ密度
 //  ・ライト              : 画面内ライト数 / シャドウ付きライト数 / ボリューメトリック数
 //  ・シャドウ            : 仮想シャドウのクリップマップ段数、コンタクトシャドウ段数
 //  ・自作Nanite          : 許容誤差（ピクセル）を段階的に大きくする
@@ -179,18 +179,18 @@ class PerformanceGovernor final
                     s_BudgetMs);
         ImGui::Checkbox("解像度も下げてよい", &s_Options.AllowResolutionScaling);
         ImGui::SliderFloat("GPU予算の割合", &s_Options.BudgetHeadroom, 0.6f, 1.0f, "%.2f");
-        if (ImGui::Checkbox("機能の自動OFFを許可（GI / RT反射 / AO）", &s_Options.AllowFeatureToggles))
+        if (ImGui::Checkbox("機能の自動OFFを許可（RT反射 / AO。GI は切り替えません）", &s_Options.AllowFeatureToggles))
         {
             Apply();
         }
         if (s_Tier > 0)
         {
             const Baseline now = ReadCurrent();
-            if (now.GiMode != s_Base.GiMode || now.RtReflections != s_Base.RtReflections ||
+            if (now.RtReflections != s_Base.RtReflections ||
                 now.RtAmbientOcclusion != s_Base.RtAmbientOcclusion)
             {
                 ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f),
-                                   "自動調整で GI / RT 反射 / AO の一部を一時的に OFF にしています");
+                                   "自動調整で RT 反射 / AO の一部を一時的に OFF にしています");
             }
         }
         if (s_ResolutionReduced)
@@ -219,6 +219,11 @@ class PerformanceGovernor final
         float RtShadowDistance = 500.0f;
         GlobalIlluminationMode GiMode = GlobalIlluminationMode::ScreenSpace;
         float GiDistance = 40.0f;
+        // GI のコスト（モードは変えずに、更新量・密度だけを下げる）
+        bool GiUpdateBudget = true;
+        int LumenCaptureBudget = 4;
+        int LumenLightingBudget = 4;
+        int LumenProbeSpacing = 8;
         bool Ssao = true;
         int ContactSteps = 12;
         int VirtualLevels = 4;
@@ -291,6 +296,10 @@ class PerformanceGovernor final
         b.RtShadowDistance = rt.ShadowDistance;
         b.GiMode = RendererSettings::GetGiMode();
         b.GiDistance = RendererSettings::GetGiDistance();
+        b.GiUpdateBudget = RendererSettings::GetGiUpdateBudgetEnabled();
+        b.LumenCaptureBudget = RendererSettings::GetLumenCaptureBudget();
+        b.LumenLightingBudget = RendererSettings::GetLumenLightingBudget();
+        b.LumenProbeSpacing = RendererSettings::GetLumenProbeSpacing();
         b.Ssao = RendererSettings::GetSsaoEnabled();
         b.ContactSteps = RendererSettings::GetContactShadowSteps();
         b.VirtualLevels = RendererSettings::GetVirtualClipmapLevels();
@@ -327,6 +336,10 @@ class PerformanceGovernor final
         absorb(s_Base.RtShadowDistance, now.RtShadowDistance, s_Applied.RtShadowDistance);
         absorb(s_Base.GiMode, now.GiMode, s_Applied.GiMode);
         absorb(s_Base.GiDistance, now.GiDistance, s_Applied.GiDistance);
+        absorb(s_Base.GiUpdateBudget, now.GiUpdateBudget, s_Applied.GiUpdateBudget);
+        absorb(s_Base.LumenCaptureBudget, now.LumenCaptureBudget, s_Applied.LumenCaptureBudget);
+        absorb(s_Base.LumenLightingBudget, now.LumenLightingBudget, s_Applied.LumenLightingBudget);
+        absorb(s_Base.LumenProbeSpacing, now.LumenProbeSpacing, s_Applied.LumenProbeSpacing);
         absorb(s_Base.Ssao, now.Ssao, s_Applied.Ssao);
         absorb(s_Base.ContactSteps, now.ContactSteps, s_Applied.ContactSteps);
         absorb(s_Base.VirtualLevels, now.VirtualLevels, s_Applied.VirtualLevels);
@@ -359,32 +372,23 @@ class PerformanceGovernor final
         v.RtEnabled = s_Base.RtEnabled;
 
         // ---- 可変GI ----
+        // 修正：GI モード（Off / SSGI / Realtime / Lumen / SHaRC）は自動調整で切り替えない。
+        // 目標 120fps に届かない環境では、保存済みの「機能の自動OFFを許可」が有効だと
+        // 段階 2 以上で DXR GI → SSGI、段階 5 で GI OFF となり、どの GI を選んでも効かなかった。
+        // 負荷は GI のトレース距離（＝レイの長さ / BVH 走査量）だけで調整する。
         static const float kGiDist[kTierCount] = {1.0f, 0.8f, 0.6f, 0.45f, 0.35f, 0.25f};
         v.GiDistance = (std::max)(1.0f, s_Base.GiDistance * kGiDist[t]);
-        if (!toggles)
-        {
-            v.GiMode = s_Base.GiMode;
-        }
-        else if (s_Base.GiMode == GlobalIlluminationMode::Realtime || s_Base.GiMode == GlobalIlluminationMode::Lumen ||
-                 s_Base.GiMode == GlobalIlluminationMode::RtxgiSharc)
-        {
-            if (t <= 1)
-            {
-                v.GiMode = s_Base.GiMode;
-            }
-            else if (t <= 4)
-            {
-                v.GiMode = GlobalIlluminationMode::ScreenSpace;
-            }
-            else
-            {
-                v.GiMode = GlobalIlluminationMode::Off;
-            }
-        }
-        else if (s_Base.GiMode == GlobalIlluminationMode::ScreenSpace)
-        {
-            v.GiMode = t <= 4 ? GlobalIlluminationMode::ScreenSpace : GlobalIlluminationMode::Off;
-        }
+        v.GiMode = s_Base.GiMode;
+        // 段階 2 以上では静止画素の GI 更新を間引く（ユーザーが OFF でも一時的に ON）
+        v.GiUpdateBudget = s_Base.GiUpdateBudget || t >= 2;
+        // Lumen：1 フレームあたりのサーフェスキャッシュ更新量と、スクリーンプローブの密度を下げる
+        static const float kLumenUpdate[kTierCount] = {1.0f, 0.75f, 0.5f, 0.5f, 0.25f, 0.25f};
+        static const int kProbeSpacing[kTierCount] = {0, 0, 2, 4, 4, 8}; // 基準値への加算（px）
+        v.LumenCaptureBudget =
+            (std::max)(1, static_cast<int>(static_cast<float>(s_Base.LumenCaptureBudget) * kLumenUpdate[t] + 0.5f));
+        v.LumenLightingBudget =
+            (std::max)(1, static_cast<int>(static_cast<float>(s_Base.LumenLightingBudget) * kLumenUpdate[t] + 0.5f));
+        v.LumenProbeSpacing = (std::min)(16, s_Base.LumenProbeSpacing + kProbeSpacing[t]);
         v.Ssao = s_Base.Ssao && (!toggles || t <= 4);
 
         // ---- シャドウ ----
@@ -422,6 +426,10 @@ class PerformanceGovernor final
         rt.ShadowDistance = v.RtShadowDistance;
         RendererSettings::SetGiMode(v.GiMode);
         RendererSettings::SetGiDistance(v.GiDistance);
+        RendererSettings::SetGiUpdateBudgetEnabled(v.GiUpdateBudget);
+        RendererSettings::SetLumenCaptureBudget(v.LumenCaptureBudget);
+        RendererSettings::SetLumenLightingBudget(v.LumenLightingBudget);
+        RendererSettings::SetLumenProbeSpacing(v.LumenProbeSpacing);
         RendererSettings::SetSsaoEnabled(v.Ssao);
         RendererSettings::SetContactShadowSteps(v.ContactSteps);
         RendererSettings::SetVirtualClipmapLevels(v.VirtualLevels);

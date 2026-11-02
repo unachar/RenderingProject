@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "envflags.h"
 #include "thumbnailvalidation.h"
 #include "materialmanager.h"
@@ -46,6 +46,9 @@
 
 #include "editorwidgets.h"
 #include "editorworkspace.h"
+#include "editorshell.h"
+#include "viewportinputgate.h"
+#include "editorpreferences.h"
 #include <imgui_internal.h> // DockBuilder は同梱の docking ブランチで提供される。
 
 using namespace EditorWidgets;
@@ -99,14 +102,12 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
     io.ConfigDockingWithShift = false;
 
     WriteGraphicsLog("ImGui: style\n");
+    EditorPreferences::Load(); // テーマ / UI スケール / フォント / スナップ設定
     StyleModernSlim();
 
     WriteGraphicsLog("ImGui: load font\n");
-    const char* fontPath = "C:\\Windows\\Fonts\\msgothic.ttc";
-    if (filesystem::exists(fontPath))
-    {
-        io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
-    }
+    // 游ゴシック → メイリオ → MS ゴシックの順に探し、アイコン用に Segoe UI Symbol を合成する
+    EditorPreferences::LoadFonts();
 
     WriteGraphicsLog("ImGui: Win32 backend\n");
     if (!ImGui_ImplWin32_Init(hwnd))
@@ -223,6 +224,8 @@ void ImGuiManager::Update()
 
     InitializeWorkspaces();
     EditorWorkspaceManager::Get().BeginFrame();
+    // テーマ / UI スケールの変更は NewFrame の前にまとめて反映する（フレーム途中でサイズが変わらないように）
+    EditorPreferences::ApplyPending();
     ImGui_ImplDX12_NewFrame();
     ImGui_ImplWin32_NewFrame();
     MaterialValidation::BeforeEditorFrame();
@@ -282,8 +285,11 @@ void ImGuiManager::Update()
         RequestNewScene();
     }
     ProcessDroppedFiles();
+    EditorShell::HandleGlobalShortcuts(); // F1 ショートカット一覧 / F3 コマンド検索 / Ctrl+, 設定
+    // マテリアルグラフ操作中の Q / W / E / R（整列・配置キー）でギズモが切り替わらないようにする
     const bool canSwitchGizmo = !io.WantTextInput && !ImGui::IsAnyItemActive() &&
-                                !ImGui::IsMouseDown(ImGuiMouseButton_Right) && !ImGuizmo::IsUsingAny();
+                                !ImGui::IsMouseDown(ImGuiMouseButton_Right) && !ImGuizmo::IsUsingAny() &&
+                                !MaterialGraphEditor::HasFocus();
     if (canSwitchGizmo)
     {
         // Unityと同じ割り当て
@@ -346,6 +352,9 @@ void ImGuiManager::Update()
         CancelRename();
     }
     DrawEditorMainMenu();
+    // メインツールバー / ステータスバーはドックスペースより先に作り、作業領域から差し引く
+    EditorShell::DrawToolbar();
+    EditorShell::DrawStatusBar();
     DrawDockSpace();
     m_IsSceneViewHovered = false;
     m_SceneGizmoCapturesMouse = false;
@@ -353,6 +362,16 @@ void ImGuiManager::Update()
     BeginMaterialEditorFrame();
     AnimationPreviewWindow::BeginFrame();
     EditorWorkspaceManager::Get().Registry().DrawVisibleWindows();
+    // パイメニュー / Shift+A / テンキー視点 / 視点アニメーション（ピッキングより前に入力を確保する）
+    EditorShell::UpdateViewportInteractions();
+    // 右クリックでの視点回転 / WASD 移動は、3D ビューポート上で押し始めたときだけ有効にする
+    ViewportInputGate::Update(ImGui::IsMouseDown(ImGuiMouseButton_Right),
+                              ImGui::IsMouseClicked(ImGuiMouseButton_Right) && m_IsSceneViewHovered &&
+                                  !EditorShell::IsPieOpen());
+    if (ViewportInputGate::g_RightLookActive)
+    {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_None); // フライ中はカーソルを隠す（UE と同じ）
+    }
     UpdateSceneNavigation();
     if (m_IsSceneViewHovered)
         PickEntityFromMouse();
@@ -363,6 +382,7 @@ void ImGuiManager::Update()
     MaterialGraphEditor::SaveRecovery();
     EditorWorkspaceManager::Get().AutoSave();
     DrawScenePopups();
+    EditorShell::DrawOverlays(); // コマンド検索 / 追加メニュー / ショートカット一覧 / 通知トースト
     FinalizeUndoCaptureIfIdle();
     UpdateSceneTracking();
     static double nextSettingsSave = 0.0;
@@ -370,6 +390,10 @@ void ImGuiManager::Update()
         ImGui::GetTime() >= nextSettingsSave)
     {
         SaveProjectSettings();
+        if (!RenderingValidation::IsEnabled())
+        {
+            EditorPreferences::SaveIfChanged();
+        }
         nextSettingsSave = ImGui::GetTime() + 2.0;
     }
 }
@@ -391,8 +415,8 @@ void ImGuiManager::DrawDockSpace()
     ImGui::Begin("EditorDockSpace", nullptr, hostFlags);
     ImGui::PopStyleVar(3);
 
+    // Workspace タブはメインメニューバー内（Blender のトップバーと同じ位置）に移動した
     auto& workspaces = EditorWorkspaceManager::Get();
-    workspaces.DrawTabs();
     if (m_ResetEditorLayout)
     {
         workspaces.RequestReset();
@@ -408,6 +432,9 @@ void ImGuiManager::DrawEditorMainMenu()
     {
         return;
     }
+    auto& preferences = EditorPreferences::Get();
+    ImGui::TextColored(EditorPreferences::Accent(), "◆");
+    ImGui::SetItemTooltip("RenderingProject Editor");
 
     if (ImGui::BeginMenu("ファイル"))
     {
@@ -431,7 +458,7 @@ void ImGuiManager::DrawEditorMainMenu()
     }
     if (ImGui::BeginMenu("編集"))
     {
-        if (ImGui::MenuItem("元に戻す", "Ctrl+Z", false, !m_UndoStack.empty()))
+        if (ImGui::MenuItem("元に戻す", "Ctrl+Z", false, !m_UndoStack.empty() || m_HasPendingUndo))
         {
             Undo();
         }
@@ -439,116 +466,94 @@ void ImGuiManager::DrawEditorMainMenu()
         {
             Redo();
         }
+        ImGui::Separator();
+        const bool hasSelection = m_SelectedEntity != g_kINVALID_ENTITY && Registry::IsAlive(m_SelectedEntity);
+        if (ImGui::MenuItem("複製", "Ctrl+D", false, hasSelection))
+        {
+            DuplicateSelectedEntity();
+        }
+        if (ImGui::MenuItem("削除", "Delete", false, hasSelection))
+        {
+            DeleteSelectedEntity();
+        }
+        if (ImGui::MenuItem("選択解除", nullptr, false, hasSelection))
+        {
+            SelectEntity(g_kINVALID_ENTITY);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Undo History"))
+        {
+            EditorWorkspaceManager::Get().Registry().ShowEditorType("history");
+        }
+        if (ImGui::MenuItem("エディター設定", "Ctrl+,"))
+        {
+            EditorWorkspaceManager::Get().Registry().ShowEditorType("preferences");
+        }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("作成"))
+    {
+        EditorShell::DrawAddMenuItems();
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("表示"))
+    {
+        EditorShell::DrawViewMenuItems();
+        ImGui::Separator();
+        ImGui::MenuItem("メインツールバー", nullptr, &preferences.ShowToolbar);
+        ImGui::MenuItem("ステータスバー", nullptr, &preferences.ShowStatusBar);
+        ImGui::MenuItem("パネルヘッダー", nullptr, &preferences.ShowAreaHeaders);
+        ImGui::MenuItem("通知トースト", nullptr, &preferences.ShowToasts);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("ウィンドウ"))
     {
         EditorWorkspaceManager::Get().Registry().DrawWindowMenu();
         ImGui::Separator();
+        if (ImGui::BeginMenu("Workspace"))
+        {
+            auto& workspaces = EditorWorkspaceManager::Get();
+            for (size_t i = 0; i < workspaces.WorkspaceCount(); ++i)
+            {
+                if (ImGui::MenuItem(workspaces.WorkspaceName(i).c_str(), nullptr, i == workspaces.ActiveWorkspace()))
+                {
+                    workspaces.RequestSwitch(i);
+                }
+            }
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("Workspaceの初期レイアウトに戻す"))
             EditorWorkspaceManager::Get().RequestReset();
         ImGui::EndMenu();
     }
-    ImGui::SameLine();
-    if (ImGui::BeginMenu("ライト追加"))
+    if (ImGui::BeginMenu("ヘルプ"))
     {
-        if (ImGui::MenuItem("Directional"))
+        if (ImGui::MenuItem("ショートカット一覧", "F1"))
         {
-            m_SelectedEntity = CreateLightEntity(LightType::Directional);
+            EditorShell::ToggleShortcutHelp();
         }
-        if (ImGui::MenuItem("Point"))
+        if (ImGui::MenuItem("コマンド検索", "F3"))
         {
-            m_SelectedEntity = CreateLightEntity(LightType::Point);
-        }
-        if (ImGui::MenuItem("Rect Area"))
-        {
-            m_SelectedEntity = CreateLightEntity(LightType::Rect);
-        }
-        if (ImGui::MenuItem("Capsule"))
-        {
-            m_SelectedEntity = CreateLightEntity(LightType::Capsule);
-        }
-        if (ImGui::MenuItem("Spot"))
-        {
-            m_SelectedEntity = CreateLightEntity(LightType::Spot);
-        }
-        if (ImGui::MenuItem("Volume"))
-        {
-            m_SelectedEntity = CreateLightEntity(LightType::Volume);
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Sun"))
-        {
-            m_SelectedEntity = Sun::CreateDefault();
+            EditorShell::OpenCommandPalette();
         }
         ImGui::EndMenu();
     }
 
-    const float playControlsWidth = 184.0f;
-    const float centeredX =
-        max((ImGui::GetIO().DisplaySize.x - playControlsWidth) * 0.5f, ImGui::GetCursorPosX() + 12.0f);
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(centeredX);
-    ImVec4 playColor(0.10f, 0.38f, 0.22f, 1.0f);
-    ImVec4 playHoveredColor(0.14f, 0.48f, 0.28f, 1.0f);
-    ImVec4 playActiveColor(0.08f, 0.30f, 0.18f, 1.0f);
-    if (ProjectManager::IsPlaying())
-    {
-        playColor = ImVec4(0.48f, 0.18f, 0.18f, 1.0f);
-        playHoveredColor = ImVec4(0.60f, 0.24f, 0.24f, 1.0f);
-        playActiveColor = ImVec4(0.38f, 0.14f, 0.14f, 1.0f);
-    }
-    ImGui::PushStyleColor(ImGuiCol_Button, playColor);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, playHoveredColor);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, playActiveColor);
-    const char* statusText;
-    if (ProjectManager::IsPlaying())
-    {
-        statusText = "停止##ProjectPlay";
-    }
-    else
-    {
-        statusText = "再生##ProjectPlay";
-    }
-    if (ImGui::Button(statusText, ImVec2(88.0f, 0.0f)))
-    {
-        ProjectManager::TogglePlay();
-    }
-    ImGui::PopStyleColor(3);
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!ProjectManager::IsPlaying());
-    const char* statusTextValue;
-    if (ProjectManager::IsPaused())
-    {
-        statusTextValue = "再開##ProjectPause";
-    }
-    else
-    {
-        statusTextValue = "一時停止##ProjectPause";
-    }
-    if (ImGui::Button(statusTextValue, ImVec2(88.0f, 0.0f)))
-    {
-        ProjectManager::TogglePause();
-    }
-    ImGui::EndDisabled();
+    // Blender のトップバーと同じく、メニューの右に Workspace タブを並べる
+    ImGui::SameLine(0.0f, 18.0f * preferences.UiScale);
+    EditorWorkspaceManager::Get().DrawTabs();
 
-    if (ImGui::GetContentRegionAvail().x > 120.0f)
+    if (!preferences.ShowToolbar)
     {
-        ImGui::SameLine();
-        if (ProjectManager::IsPaused())
+        // ツールバー非表示時の再生ボタン
+        ImGui::SameLine(0.0f, 12.0f * preferences.UiScale);
+        if (ImGui::SmallButton(ProjectManager::IsPlaying() ? "■ 停止##MenuPlay" : "▶ 再生##MenuPlay"))
         {
-            ImGui::TextUnformatted("一時停止中");
-        }
-        else if (ProjectManager::IsPlaying())
-        {
-            ImGui::TextUnformatted("実行中");
-        }
-        else
-        {
-            ImGui::TextUnformatted("編集中");
+            ProjectManager::TogglePlay();
         }
     }
-
+    ImGui::SameLine();
+    EditorShell::DrawMainMenuRightSide();
     ImGui::EndMainMenuBar();
 }
 
@@ -582,171 +587,46 @@ void ImGuiManager::AddLog(const char* fmt, ...)
     va_start(args, fmt);
     vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
-    m_Logs.emplace_back(buffer);
-    if (m_Logs.size() > 1000)
+
+    const EditorShell::LogLevel level = EditorShell::ClassifyLog(buffer);
     {
-        m_Logs.erase(m_Logs.begin());
+        // 修正：ワーカースレッド（非同期の読み込み / 保存）からの AddLog と描画の競合を防ぐ
+        std::lock_guard<std::recursive_mutex> lock(m_LogMutex);
+        if (!m_Logs.empty() && m_Logs.back().Text == buffer)
+        {
+            // 同じメッセージの連続は 1 行にまとめる（UE の Message Log と同じ）
+            ++m_Logs.back().Repeat;
+        }
+        else
+        {
+            LogEntry entry;
+            entry.Text = buffer;
+            entry.Level = static_cast<uint8_t>(level);
+            entry.Time = static_cast<double>(GetTickCount64()) / 1000.0;
+            SYSTEMTIME now{};
+            GetLocalTime(&now);
+            snprintf(entry.Clock, sizeof(entry.Clock), "%02u:%02u:%02u", static_cast<unsigned>(now.wHour),
+                     static_cast<unsigned>(now.wMinute), static_cast<unsigned>(now.wSecond));
+            m_Logs.push_back(std::move(entry));
+            ++m_LogCounts[static_cast<size_t>(level) & 3];
+            // 最適化：vector::erase(begin) の O(n) をやめ、deque の pop_front（O(1)）にする
+            while (m_Logs.size() > kMaxLogEntries)
+            {
+                --m_LogCounts[m_Logs.front().Level & 3];
+                m_Logs.pop_front();
+            }
+        }
+        ++m_LogRevision;
     }
+    EditorShell::PushToast(level, buffer);
     Debug::Log("%s\n", buffer);
 }
 
 void ImGuiManager::StyleModernSlim()
 {
-    auto& style = ImGui::GetStyle();
-    ImVec4* colors = style.Colors;
-
-    colors[ImGuiCol_Text] = ImVec4(0.86f, 0.89f, 0.92f, 1.00f);
-    colors[ImGuiCol_TextDisabled] = ImVec4(0.60f, 0.64f, 0.69f, 1.00f);
-    colors[ImGuiCol_WindowBg] = ImVec4(0.075f, 0.080f, 0.090f, 0.98f);
-    colors[ImGuiCol_ChildBg] = ImVec4(0.060f, 0.065f, 0.074f, 0.82f);
-    colors[ImGuiCol_PopupBg] = ImVec4(0.080f, 0.086f, 0.098f, 0.98f);
-    colors[ImGuiCol_Border] = ImVec4(0.20f, 0.23f, 0.27f, 0.72f);
-    colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_FrameBg] = ImVec4(0.115f, 0.125f, 0.142f, 1.00f);
-    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.155f, 0.175f, 0.205f, 1.00f);
-    colors[ImGuiCol_FrameBgActive] = ImVec4(0.105f, 0.190f, 0.255f, 1.00f);
-    colors[ImGuiCol_TitleBg] = ImVec4(0.050f, 0.055f, 0.064f, 1.00f);
-    colors[ImGuiCol_TitleBgActive] = ImVec4(0.080f, 0.092f, 0.108f, 1.00f);
-    colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.050f, 0.055f, 0.064f, 0.92f);
-    colors[ImGuiCol_MenuBarBg] = ImVec4(0.070f, 0.077f, 0.090f, 1.00f);
-    colors[ImGuiCol_ScrollbarBg] = ImVec4(0.055f, 0.060f, 0.070f, 0.82f);
-    colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.22f, 0.25f, 0.29f, 0.86f);
-    colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.30f, 0.35f, 0.40f, 0.92f);
-    colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.38f, 0.44f, 0.50f, 1.00f);
-    colors[ImGuiCol_CheckMark] = ImVec4(0.18f, 0.68f, 0.82f, 1.00f);
-    colors[ImGuiCol_SliderGrab] = ImVec4(0.18f, 0.62f, 0.76f, 1.00f);
-    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.28f, 0.78f, 0.92f, 1.00f);
-    colors[ImGuiCol_Button] = ImVec4(0.13f, 0.16f, 0.19f, 1.00f);
-    colors[ImGuiCol_ButtonHovered] = ImVec4(0.18f, 0.23f, 0.27f, 1.00f);
-    colors[ImGuiCol_ButtonActive] = ImVec4(0.12f, 0.44f, 0.56f, 1.00f);
-    colors[ImGuiCol_Header] = ImVec4(0.13f, 0.18f, 0.22f, 0.78f);
-    colors[ImGuiCol_HeaderHovered] = ImVec4(0.17f, 0.34f, 0.42f, 0.86f);
-    colors[ImGuiCol_HeaderActive] = ImVec4(0.16f, 0.50f, 0.62f, 0.96f);
-    colors[ImGuiCol_Separator] = colors[ImGuiCol_Border];
-    colors[ImGuiCol_SeparatorHovered] = ImVec4(0.18f, 0.68f, 0.82f, 0.78f);
-    colors[ImGuiCol_SeparatorActive] = ImVec4(0.18f, 0.68f, 0.82f, 1.00f);
-    colors[ImGuiCol_ResizeGrip] = ImVec4(0.18f, 0.68f, 0.82f, 0.18f);
-    colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.18f, 0.68f, 0.82f, 0.58f);
-    colors[ImGuiCol_ResizeGripActive] = ImVec4(0.18f, 0.68f, 0.82f, 0.92f);
-
-    auto lerp = [](ImVec4 a, ImVec4 b, float t) {
-        return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
-    };
-
-    colors[ImGuiCol_Tab] = lerp(colors[ImGuiCol_Header], colors[ImGuiCol_TitleBgActive], 0.80f);
-    colors[ImGuiCol_TabHovered] = colors[ImGuiCol_HeaderHovered];
-    colors[ImGuiCol_TabActive] = lerp(colors[ImGuiCol_HeaderActive], colors[ImGuiCol_TitleBgActive], 0.60f);
-    colors[ImGuiCol_TabUnfocused] = lerp(colors[ImGuiCol_Tab], colors[ImGuiCol_TitleBg], 0.80f);
-    colors[ImGuiCol_TabUnfocusedActive] = lerp(colors[ImGuiCol_TabActive], colors[ImGuiCol_TitleBg], 0.40f);
-    colors[ImGuiCol_TabSelectedOverline] = ImVec4(0.28f, 0.78f, 0.92f, 0.88f);
-    colors[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0.18f, 0.52f, 0.62f, 0.58f);
-
-    ImVec4 ha = colors[ImGuiCol_HeaderActive];
-    colors[ImGuiCol_DockingPreview] = ImVec4(ha.x, ha.y, ha.z, ha.w * 0.7f);
-
-    colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.060f, 0.065f, 0.074f, 1.00f);
-    colors[ImGuiCol_TableHeaderBg] = ImVec4(0.095f, 0.110f, 0.128f, 1.00f);
-    colors[ImGuiCol_TableBorderStrong] = ImVec4(0.19f, 0.22f, 0.26f, 1.00f);
-    colors[ImGuiCol_TableBorderLight] = ImVec4(0.14f, 0.16f, 0.19f, 1.00f);
-    colors[ImGuiCol_TableRowBg] = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
-    colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.13f, 0.15f, 0.18f, 0.28f);
-    colors[ImGuiCol_PlotLines] = ImVec4(0.52f, 0.58f, 0.64f, 1.00f);
-    colors[ImGuiCol_PlotLinesHovered] = ImVec4(0.28f, 0.78f, 0.92f, 1.00f);
-    colors[ImGuiCol_PlotHistogram] = ImVec4(0.18f, 0.68f, 0.82f, 1.00f);
-    colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.36f, 0.82f, 0.96f, 1.00f);
-    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.18f, 0.68f, 0.82f, 0.28f);
-    colors[ImGuiCol_DragDropTarget] = ImVec4(0.28f, 0.78f, 0.92f, 0.86f);
-    colors[ImGuiCol_NavHighlight] = ImVec4(0.28f, 0.78f, 0.92f, 0.96f);
-    colors[ImGuiCol_NavWindowingHighlight] = ImVec4(0.82f, 0.90f, 0.96f, 0.72f);
-    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.02f, 0.025f, 0.030f, 0.48f);
-    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.02f, 0.025f, 0.030f, 0.62f);
-
-    style.WindowPadding = ImVec2(8.0f, 8.0f);
-    style.FramePadding = ImVec2(8.0f, 4.0f);
-    style.CellPadding = ImVec2(5.0f, 3.0f);
-    style.ItemSpacing = ImVec2(8.0f, 6.0f);
-    style.ItemInnerSpacing = ImVec2(5.0f, 3.0f);
-    style.IndentSpacing = 14.0f;
-    style.ScrollbarSize = 14.0f;
-    style.GrabMinSize = 12.0f;
-
-    style.WindowBorderSize = 1.0f;
-    style.ChildBorderSize = 1.0f;
-    style.PopupBorderSize = 1.0f;
-    style.FrameBorderSize = 1.0f;
-    style.TabBorderSize = 0.0f;
-    style.TabBarBorderSize = 1.0f;
-    style.TabBarOverlineSize = 1.5f;
-
-    style.WindowRounding = 3.0f;
-    style.ChildRounding = 2.0f;
-    style.FrameRounding = 2.0f;
-    style.GrabRounding = 2.0f;
-    style.PopupRounding = 3.0f;
-    style.ScrollbarRounding = 2.0f;
-    style.TabRounding = 2.0f;
-    style.WindowMenuButtonPosition = ImGuiDir_Right;
-
-    // ---- Unity（Dark/Pro スキン）に近い配色で上書きする ----
-    {
-        const ImVec4 panel(0.157f, 0.157f, 0.157f, 1.00f);  // #282828
-        const ImVec4 window(0.220f, 0.220f, 0.220f, 1.00f); // #383838
-        const ImVec4 header(0.243f, 0.243f, 0.243f, 1.00f); // #3E3E3E
-        const ImVec4 field(0.165f, 0.165f, 0.165f, 1.00f);  // #2A2A2A
-        const ImVec4 hover(0.270f, 0.270f, 0.270f, 1.00f);
-        const ImVec4 selection(0.172f, 0.365f, 0.529f, 1.00f); // #2C5D87（Unityの選択色）
-        const ImVec4 accent(0.235f, 0.533f, 0.808f, 1.00f);
-        colors[ImGuiCol_Text] = ImVec4(0.824f, 0.824f, 0.824f, 1.00f);
-        colors[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.50f, 0.50f, 1.00f);
-        colors[ImGuiCol_WindowBg] = window;
-        colors[ImGuiCol_ChildBg] = window;
-        colors[ImGuiCol_PopupBg] = ImVec4(0.200f, 0.200f, 0.200f, 0.98f);
-        colors[ImGuiCol_Border] = ImVec4(0.098f, 0.098f, 0.098f, 1.00f);
-        colors[ImGuiCol_FrameBg] = field;
-        colors[ImGuiCol_FrameBgHovered] = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
-        colors[ImGuiCol_FrameBgActive] = ImVec4(0.130f, 0.130f, 0.130f, 1.00f);
-        colors[ImGuiCol_TitleBg] = panel;
-        colors[ImGuiCol_TitleBgActive] = panel;
-        colors[ImGuiCol_TitleBgCollapsed] = panel;
-        colors[ImGuiCol_MenuBarBg] = ImVec4(0.098f, 0.098f, 0.098f, 1.00f);
-        colors[ImGuiCol_ScrollbarBg] = window;
-        colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.37f, 0.37f, 0.37f, 1.00f);
-        colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.45f, 0.45f, 0.45f, 1.00f);
-        colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.52f, 0.52f, 0.52f, 1.00f);
-        colors[ImGuiCol_CheckMark] = ImVec4(0.85f, 0.85f, 0.85f, 1.00f);
-        colors[ImGuiCol_SliderGrab] = ImVec4(0.55f, 0.55f, 0.55f, 1.00f);
-        colors[ImGuiCol_SliderGrabActive] = accent;
-        colors[ImGuiCol_Button] = ImVec4(0.345f, 0.345f, 0.345f, 1.00f); // #585858
-        colors[ImGuiCol_ButtonHovered] = ImVec4(0.404f, 0.404f, 0.404f, 1.00f);
-        colors[ImGuiCol_ButtonActive] = ImVec4(0.275f, 0.376f, 0.486f, 1.00f);
-        colors[ImGuiCol_Header] = selection;
-        colors[ImGuiCol_HeaderHovered] = hover;
-        colors[ImGuiCol_HeaderActive] = selection;
-        colors[ImGuiCol_Separator] = ImVec4(0.098f, 0.098f, 0.098f, 1.00f);
-        colors[ImGuiCol_SeparatorHovered] = accent;
-        colors[ImGuiCol_SeparatorActive] = accent;
-        colors[ImGuiCol_ResizeGrip] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-        colors[ImGuiCol_ResizeGripHovered] = accent;
-        colors[ImGuiCol_ResizeGripActive] = accent;
-        colors[ImGuiCol_Tab] = panel;
-        colors[ImGuiCol_TabHovered] = header;
-        colors[ImGuiCol_TabSelected] = window;
-        colors[ImGuiCol_TabSelectedOverline] = accent;
-        colors[ImGuiCol_TabDimmed] = panel;
-        colors[ImGuiCol_TabDimmedSelected] = header;
-        colors[ImGuiCol_DockingPreview] = ImVec4(accent.x, accent.y, accent.z, 0.6f);
-        colors[ImGuiCol_DockingEmptyBg] = panel;
-        colors[ImGuiCol_TextSelectedBg] = ImVec4(selection.x, selection.y, selection.z, 0.8f);
-        colors[ImGuiCol_NavCursor] = accent;
-        colors[ImGuiCol_TableHeaderBg] = header;
-        style.WindowRounding = 0.0f;
-        style.TabRounding = 0.0f;
-        style.FrameRounding = 2.0f;
-        style.FrameBorderSize = 0.0f;
-    }
+    // 配色・余白・角丸はエディター設定（Unreal / Blender / Unity / Midnight）から生成する
+    EditorPreferences::ApplyNow();
 }
-
-
 
 void ImGuiManager::DrawAdjustmentPanel()
 {

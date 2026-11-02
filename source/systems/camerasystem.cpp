@@ -7,6 +7,7 @@
 #include "graphicsdevice.h"
 #include "world.h"
 #include "input.h"
+#include "viewportinputgate.h"
 #include "camera.h"
 #include "projectmanager.h"
 #include "dlssupscaler.h"
@@ -63,7 +64,7 @@ void CameraSystem::Update()
             }
         }
 
-        if (isActive && cam.AllowUserControl && !cam.Animation.IsActive && Input::IsKeyHeld(VK_RBUTTON))
+        if (isActive && cam.AllowUserControl && !cam.Animation.IsActive && ViewportInputGate::CameraLookActive())
         {
             const POINT mouseDelta = Input::GetMouseDelta();
             const float sensitivity = 0.004f;
@@ -80,7 +81,7 @@ void CameraSystem::Update()
         }
 
         if (isActive && !ProjectManager::IsPlaying() && !cam.IsGameCamera && cam.AllowUserControl &&
-            Input::IsKeyHeld(VK_RBUTTON))
+            ViewportInputGate::CameraLookActive())
         {
             XMFLOAT3 input = {};
             if (Input::IsKeyHeld('A'))

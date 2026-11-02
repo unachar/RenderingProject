@@ -4,6 +4,7 @@
 #include "animationpreviewwindow.h"
 #include "proceduralstudiowindow.h"
 #include "sequencerbridge.h"
+#include "editorshell.h"
 
 void ImGuiManager::InitializeWorkspaces()
 {
@@ -62,10 +63,16 @@ void ImGuiManager::InitializeWorkspaces()
             {"project_settings", "環境設定", "環境設定", &m_ShowProjectSettingsWindow, DrawProjectSettingsWindow});
         registry.RegisterWindow(
             {"physics_settings", "物理設定", "物理設定", &m_ShowPhysicsSettingsWindow, DrawPhysicsSettingsWindow});
+        registry.RegisterWindow(
+            {"history", "Undo History", "Undo History", &m_ShowHistoryWindow, EditorShell::DrawHistoryWindow});
+        registry.RegisterWindow({"preferences", "Editor Preferences", "エディター設定", &m_ShowPreferencesWindow,
+                                 EditorShell::DrawPreferencesWindow});
     }
-    char validationMode[8]{};
-    const bool validation =
-        GetEnvironmentVariableA("DX12_VALIDATION_MODE", validationMode, sizeof(validationMode)) > 0 &&
-        atoi(validationMode) != 0;
+    // 最適化：環境変数の確認は初回だけ（以前は毎フレーム GetEnvironmentVariableA を呼んでいた）
+    static const bool validation = [] {
+        char validationMode[8]{};
+        return GetEnvironmentVariableA("DX12_VALIDATION_MODE", validationMode, sizeof(validationMode)) > 0 &&
+               atoi(validationMode) != 0;
+    }();
     workspaces.Initialize(!validation);
 }

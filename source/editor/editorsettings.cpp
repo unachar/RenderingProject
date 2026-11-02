@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "editorworkspace.h"
 #include "gpumemorybudget.h"
 #include "rendertargets.h"
@@ -960,23 +960,32 @@ void ImGuiManager::DrawProjectSettingsWindow()
             {
                 RendererSettings::SetGiRadianceCacheCellSize(cacheCell);
             }
+            bool updateBudget = RendererSettings::GetGiUpdateBudgetEnabled();
+            if (ImGui::Checkbox("静止画素の更新を間引く（GI 更新予算）", &updateBudget))
+            {
+                RendererSettings::SetGiUpdateBudgetEnabled(updateBudget);
+            }
+            ImGui::SetItemTooltip("動いていない画素は 4 フレームに 1 回だけレイを撃ち、残りは放射キャッシュを使います。\n"
+                                  "放射キャッシュが必要です。ReSTIR / SHaRC 使用時は各自の再利用を使うため無効です。");
             int cacheHistory = RendererSettings::GetGiRadianceCacheHistory();
             if (ImGui::SliderInt("キャッシュ履歴フレーム", &cacheHistory, 4, 128))
             {
                 RendererSettings::SetGiRadianceCacheHistory(cacheHistory);
             }
             ImGui::EndDisabled();
-            if (!Raytracing::IsAvailable() || !Raytracing::GetSettings().Enabled)
+            if (!Raytracing::IsAvailable())
             {
-                ImGui::TextWrapped("Realtime GI requires DXR Tier 1.1 and enabled ray tracing.");
+                ImGui::TextWrapped("DXR GI には DXR Tier 1.1 対応 GPU が必要です。");
             }
-            // 動作状態の診断（ON にしても効かない時に原因を表示する）
+            // 動作状態の診断（ON にしても効かない時に原因を表示する）。
+            // DXR GI は「レイトレーシング」の ON/OFF とは独立して動作する。
             const bool giRunning = Raytracing::IsGiActive();
+            const char* reason = giRunning                       ? RayReflections::GetStatus()
+                                 : !Raytracing::IsAvailable()    ? Raytracing::GetStatus()
+                                 : RenderConfiguration::GetRenderMode() != RenderMode::DEFERRED ? "ディファード描画でのみ動作します（描画モードを確認）"
+                                                                 : RayReflections::GetStatus();
             ImGui::TextColored(giRunning ? ImVec4(0.4f, 0.9f, 0.4f, 1.0f) : ImVec4(1.0f, 0.55f, 0.3f, 1.0f), "状態: %s",
-                               giRunning ? RayReflections::GetStatus()
-                                         : (!Raytracing::IsAvailable()           ? Raytracing::GetStatus()
-                                            : !Raytracing::GetSettings().Enabled ? "レイトレーシングが OFF です"
-                                                                                 : RayReflections::GetStatus()));
+                               reason);
             if (RayReflections::GetLastShaderError()[0] != '\0' && ImGui::TreeNode("シェーダーエラー"))
             {
                 ImGui::TextWrapped("%s", RayReflections::GetLastShaderError());
@@ -1739,6 +1748,7 @@ string ImGuiManager::SerializeProjectSettings()
     stream << "gi_radiance_cache=" << static_cast<int>(RendererSettings::GetGiRadianceCacheEnabled()) << '\n';
     stream << "gi_radiance_cache_cell=" << RendererSettings::GetGiRadianceCacheCellSize() << '\n';
     stream << "gi_radiance_cache_history=" << RendererSettings::GetGiRadianceCacheHistory() << '\n';
+    stream << "gi_update_budget=" << static_cast<int>(RendererSettings::GetGiUpdateBudgetEnabled()) << '\n';
     stream << "ray_binning=" << (static_cast<int>(RendererSettings::GetRayBinningEnabled())) << '\n';
     stream << "anti_aliasing=" << static_cast<int>(RendererState::m_AntiAliasingMode) << '\n';
     stream << "hdr=" << (static_cast<int>(m_HdrEnabled)) << '\n';
@@ -1959,6 +1969,10 @@ void ImGuiManager::LoadProjectSettings()
             else if (key == "gi_radiance_cache_history")
             {
                 RendererSettings::SetGiRadianceCacheHistory(stoi(value));
+            }
+            else if (key == "gi_update_budget")
+            {
+                RendererSettings::SetGiUpdateBudgetEnabled(stoi(value) != 0);
             }
             else if (key == "ray_binning")
             {

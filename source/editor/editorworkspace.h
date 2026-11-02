@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <cstdint>
 #include <imgui.h>
 
 // Window IDs are persistence keys; labels can be translated without changing them.
@@ -61,8 +62,27 @@ class EditorWorkspaceManager
     }
 
     void Initialize(bool persistent);
+
+    size_t WorkspaceCount() const
+    {
+        return m_Workspaces.size();
+    }
+
+    const std::string& WorkspaceName(size_t index) const
+    {
+        static const std::string empty;
+        return index < m_Workspaces.size() ? m_Workspaces[index].Name : empty;
+    }
+
+    size_t ActiveWorkspace() const
+    {
+        return m_Active;
+    }
+
+    void RequestSwitch(size_t index);
     // Apply queued changes before NewFrame, never while docking windows are being submitted.
     void BeginFrame();
+    // メインメニューバーの中に Blender 風の Workspace タブを描く
     void DrawTabs();
     void DrawDockSpace();
     void RequestReset();
@@ -112,6 +132,7 @@ class EditorWorkspaceManager
     Workspace MakeWorkspace(const std::string& name, const std::string& preset);
     void Queue(Action action, const std::string& id);
     ImGuiID DockspaceId() const;
+    uint64_t VisibilitySignature() const;
 
     EditorWindowRegistry m_Registry;
     std::vector<Workspace> m_Workspaces;
@@ -121,6 +142,8 @@ class EditorWorkspaceManager
     bool m_Persistent = true;
     bool m_BuildLayout = false;
     double m_NextSave = 0;
+    uint64_t m_LastVisibilitySignature = 0;
+    bool m_ForceSave = true;
     Action m_Action = Action::None;
     std::string m_ActionId;
     std::string m_LastSaved;

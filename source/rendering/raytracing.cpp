@@ -118,7 +118,26 @@ namespace
         // 置き換えたリソースは、このフレームのフェンスが再利用されるまで保持する。
         vector<ComPtr<ID3D12Resource>> Retired;
         UINT Height = 0;
+        // TLAS の再構築スキップ用（同じスロットで前回ビルドした内容）
+        uint64_t TopLevelHash = 0;
+        UINT TopLevelCount = 0;
+        bool TopLevelValid = false;
+        // TLAS のプレビルド情報（インスタンス数が同じなら再照会しない）
+        UINT PrebuildCount = 0;
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO PrebuildSizes{};
     };
+
+    // FNV-1a（64bit）。インスタンス記述子（変換・マスク・BLAS アドレス）の一致判定に使う
+    uint64_t HashBytes(const void* data, size_t size)
+    {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        uint64_t hash = 14695981039346656037ull;
+        for (size_t i = 0; i < size; ++i)
+        {
+            hash = (hash ^ bytes[i]) * 1099511628211ull;
+        }
+        return hash;
+    }
 
     struct Constants
     {
@@ -741,8 +760,12 @@ namespace
             inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE |
                            D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
         }
-        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes{};
-        g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &sizes);
+        if (frame.PrebuildCount != g_InstanceCount)
+        {
+            g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &frame.PrebuildSizes);
+            frame.PrebuildCount = g_InstanceCount;
+        }
+        const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes = frame.PrebuildSizes;
         // リフィットは同じ頂点形式でのみ可能。リフィットを重ねると BVH が劣化するため、
         // 一定回数ごとにフルビルドへ切り替える（1 フレームの再構築数は予算で分散）。
         bool update = geometry.Deforming && level.Result && level.Quantized == quantized;
@@ -1149,8 +1172,28 @@ namespace
         g_InstanceCount = static_cast<UINT>(instances.size());
         if (instances.empty())
         {
+            frame.TopLevelValid = false;
             return false;
         }
+        // 最適化：インスタンスが前回このスロットで構築したときと完全に同じで、BLAS の書き込み
+        // （ビルド / リフィット / コンパクション）も無ければ、TLAS は同一なので再構築しない。
+        // 静的シーンやカメラだけが動く場面で、毎フレームの TLAS ビルドとアップロードを省く。
+        bool anyBottomWritten = false;
+        for (const auto& [unused, bottom] : frame.Geometry)
+        {
+            if (bottom.LastBuilt == g_Serial)
+            {
+                anyBottomWritten = true;
+                break;
+            }
+        }
+        const uint64_t instanceHash = HashBytes(instances.data(), instances.size() * sizeof(instances.front()));
+        if (!anyBottomWritten && frame.TopLevelValid && frame.TopLevel && frame.TopLevelHash == instanceHash &&
+            frame.TopLevelCount == g_InstanceCount)
+        {
+            return true;
+        }
+        frame.TopLevelValid = false;
         if (!EnsureBuffer(frame.Instances, instances.size() * sizeof(instances.front()), D3D12_HEAP_TYPE_UPLOAD,
                           D3D12_RESOURCE_STATE_GENERIC_READ, L"TLAS Instance Descriptions"))
         {
@@ -1170,8 +1213,12 @@ namespace
         inputs.NumDescs = g_InstanceCount;
         inputs.InstanceDescs = frame.Instances->GetGPUVirtualAddress();
         inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
-        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes{};
-        g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &sizes);
+        if (frame.PrebuildCount != g_InstanceCount)
+        {
+            g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &frame.PrebuildSizes);
+            frame.PrebuildCount = g_InstanceCount;
+        }
+        const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes = frame.PrebuildSizes;
         if (!EnsureBuffer(frame.TopLevel, sizes.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
                           D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene TLAS") ||
             !EnsureBuffer(frame.Scratch, sizes.ScratchDataSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
@@ -1186,6 +1233,9 @@ namespace
         commandList->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
         const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(frame.TopLevel.Get());
         commandList->ResourceBarrier(1, &barrier);
+        frame.TopLevelHash = instanceHash;
+        frame.TopLevelCount = g_InstanceCount;
+        frame.TopLevelValid = true;
         return true;
     }
 
@@ -1416,9 +1466,9 @@ void Raytracing::ReleaseInactiveResources()
     {
         return;
     }
-    const bool needed =
-        g_Settings.Enabled && (UsesRaytracedShadows() || UsesRaytracedAmbientOcclusion() || g_Settings.Reflections ||
-                               RendererSettings::GetRealtimeGiEnabled() || RenderQuality::Get().RaytracedRefraction);
+    const bool needed = RendererSettings::GetRealtimeGiEnabled() ||
+                        (g_Settings.Enabled && (UsesRaytracedShadows() || UsesRaytracedAmbientOcclusion() ||
+                                                g_Settings.Reflections || RenderQuality::Get().RaytracedRefraction));
     const bool releaseSun = g_NrdSun && (!needed || !g_Settings.Denoise || !UsesRaytracedShadows());
     const bool releaseAmbient = g_NrdAmbient && (!needed || !g_Settings.Denoise || !UsesRaytracedAmbientOcclusion());
     bool releaseScene = false;
@@ -1490,10 +1540,11 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         }
     };
     updateLighting(false);
-    if (!IsAvailable() || !g_Settings.Enabled ||
-        (!UsesRaytracedShadows() && !UsesRaytracedAmbientOcclusion() && !g_Settings.Reflections &&
-         !RendererSettings::GetRealtimeGiEnabled() && !RenderQuality::Get().RaytracedRefraction) ||
-        !commandList || !depth || !normal)
+    // 修正：DXR GI は RT の ON/OFF（g_Settings.Enabled）に関係なく実行する
+    const bool giRequested = RendererSettings::GetRealtimeGiEnabled();
+    const bool rtFeatures = g_Settings.Enabled && (UsesRaytracedShadows() || UsesRaytracedAmbientOcclusion() ||
+                                                   g_Settings.Reflections || RenderQuality::Get().RaytracedRefraction);
+    if (!IsAvailable() || !(rtFeatures || giRequested) || !commandList || !depth || !normal)
     {
         g_NrdHistoryValid = false;
         return;
@@ -1755,12 +1806,12 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     g_Active = true;
     updateLighting(true);
-    if (g_Settings.Reflections || RendererSettings::GetRealtimeGiEnabled())
+    if (RadianceRequested())
     {
         RenderProfiler::ScopedEvent reflectionProfile("DXR Radiance (Reflections / GI)", commandList);
         const bool radianceReady = RayReflections::Execute(commandList, frame.TopLevel.Get(), frame.SceneGeometry,
                                                            nrdFrame, frame.Guides, g_Settings.Denoise);
-        g_ReflectionsActive = radianceReady && g_Settings.Reflections;
+        g_ReflectionsActive = radianceReady && ReflectionsRequested();
         g_GiActive = radianceReady && RendererSettings::GetRealtimeGiEnabled() && RayReflections::IsGiActive();
     }
     if (g_ReflectionsActive || g_GiActive)
@@ -1782,6 +1833,16 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
 bool Raytracing::IsAvailable()
 {
     return g_Pipeline != nullptr;
+}
+
+bool Raytracing::ReflectionsRequested()
+{
+    return g_Settings.Enabled && g_Settings.Reflections;
+}
+
+bool Raytracing::RadianceRequested()
+{
+    return ReflectionsRequested() || RendererSettings::GetRealtimeGiEnabled();
 }
 
 bool Raytracing::UsesRaytracedShadows()

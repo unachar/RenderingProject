@@ -7,7 +7,7 @@
 //   ・中ボタンドラッグ      : パン
 //   ・Alt + 左ドラッグ      : 注視点を中心にオービット
 //   ・F                    : 選択中オブジェクトにフォーカス（滑らかに移動）
-//   ・右上に FPS / GPU / 品質段階 のオーバーレイ
+//   ・左上に FPS / GPU / 品質段階 のオーバーレイ（右上はナビゲーションギズモ）
 // ============================================================================
 #include <imgui.h>
 #include "componentmanager.h"
@@ -194,7 +194,7 @@ namespace EditorSceneNavigation
         }
     }
 
-    // シーンビュー右上の統計表示
+    // シーンビュー左上の統計表示
     inline void DrawOverlay(ImDrawList* drawList, ImVec2 position, ImVec2 size)
     {
         if (!drawList || size.x < 200.0f || size.y < 80.0f)
@@ -215,8 +215,9 @@ namespace EditorSceneNavigation
         const float lineHeight = ImGui::GetTextLineHeight();
         float width = (std::max)((std::max)(ImGui::CalcTextSize(line0).x, ImGui::CalcTextSize(line1).x),
                                  ImGui::CalcTextSize(line2).x);
-        const ImVec2 boxMin(position.x + size.x - width - 20.0f, position.y + 8.0f);
-        const ImVec2 boxMax(position.x + size.x - 8.0f, boxMin.y + lineHeight * 3.0f + 10.0f);
+        // 右上はナビゲーションギズモ（UE / Blender と同じ配置）なので、統計は左上に表示する
+        const ImVec2 boxMin(position.x + 8.0f, position.y + 8.0f);
+        const ImVec2 boxMax(boxMin.x + width + 12.0f, boxMin.y + lineHeight * 3.0f + 10.0f);
         drawList->AddRectFilled(boxMin, boxMax, IM_COL32(20, 20, 20, 170), 4.0f);
         const ImU32 fpsColor =
             fps >= target * 0.97f ? IM_COL32(120, 220, 140, 255)

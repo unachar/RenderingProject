@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "pch.h"
 #include "ecs.h"
 #include "materialasset.h"
@@ -6,6 +6,9 @@
 #include <d3d12.h>
 #include <filesystem>
 #include <unordered_set>
+#include <deque>
+#include <mutex>
+#include <cstdint>
 #include <imgui.h>
 #include <imgui_impl_dx12.h>
 #include <imgui_impl_win32.h>
@@ -26,6 +29,7 @@ class ImGuiManager
     friend class MaterialValidation;
     friend class AnimationPreviewWindow;
     friend class SequencerEditorBridgeImpl;
+    friend class EditorShell;
 
   private:
     inline static bool m_IsClosing = false;
@@ -110,7 +114,22 @@ class ImGuiManager
         int Frame = 0;
     };
     inline static vector<TimelineAnimationDropTarget> m_TimelineAnimationDropTargets;
-    inline static vector<string> m_Logs;
+    // ---- ログ（コンソール）：重要度・時刻・連続重複のまとめ表示。ワーカースレッドからも安全に追加できる
+    struct LogEntry
+    {
+        string Text;
+        uint8_t Level = 0; // EditorShell::LogLevel
+        uint32_t Repeat = 1;
+        double Time = 0.0;
+        char Clock[9]{};
+    };
+    static constexpr size_t kMaxLogEntries = 2000;
+    inline static deque<LogEntry> m_Logs;
+    inline static std::recursive_mutex m_LogMutex;
+    inline static uint64_t m_LogRevision = 0;
+    inline static uint32_t m_LogCounts[4]{};
+    inline static bool m_ShowHistoryWindow = false;
+    inline static bool m_ShowPreferencesWindow = false;
     inline static EntityID m_RenamingEntity = g_kINVALID_ENTITY;
     inline static string m_RenameBuffer;
 
@@ -177,6 +196,9 @@ class ImGuiManager
     static void DrawEditorMainMenu();
     static void DrawHierarchyWindow();
     static void DrawPrimitiveCreationMenu();
+    static EntityID CreatePrimitiveEntity(const char* name, ObjectType type);
+    static EntityID CreateEmptyEntity();
+    static EntityID CreateGameCameraEntity();
     static void DrawPrimitiveSettingsWindow();
     static void DrawInspectorWindow();
     static bool DrawLiveMonitorFrames(EntityID entity, size_t monitorIndex, LiveMonitorBinding& monitor);

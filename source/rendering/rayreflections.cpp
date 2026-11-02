@@ -345,7 +345,7 @@ namespace
             g_Device->CreateUnorderedAccessView(result.Get(), nullptr, &uav, Cpu(frame.Heap.Get(), firstUav + 1));
             return true;
         };
-        if (Raytracing::GetSettings().Reflections &&
+        if (Raytracing::ReflectionsRequested() &&
             !ensureSignal(g_Shared.Noisy, g_Shared.Result, frame.Noisy, frame.Result, 4, kResultSrv,
                           L"Ray Reflection Radiance"))
         {
@@ -768,8 +768,8 @@ void RayReflections::ReleaseInactiveResources()
         return;
     }
     const auto& settings = Raytracing::GetSettings();
-    const bool reflection = settings.Enabled && settings.Reflections;
-    const bool gi = settings.Enabled && RendererSettings::GetRealtimeGiEnabled();
+    const bool reflection = Raytracing::ReflectionsRequested();
+    const bool gi = RendererSettings::GetRealtimeGiEnabled(); // RT の ON/OFF とは独立
     const bool lumen = gi && RendererSettings::GetLumenEnabled();
     const bool reservoir = gi && !lumen && RenderQuality::GetGiResamplingMode() != 0;
     const bool cache =
@@ -1222,9 +1222,11 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
                                  static_cast<float>(kCacheCapacity),
                                  static_cast<float>(RendererSettings::GetGiRadianceCacheHistory())};
     static const bool adaptiveRequested = ReadEnvironmentFlagOnce("DX12_ADAPTIVE_REFLECTIONS");
-    static const bool budgetRequested = ReadEnvironmentFlagOnce("DX12_GI_UPDATE_BUDGET");
+    // 以前は環境変数でしか有効にできなかった。設定（既定 ON）から有効化する。環境変数でも強制できる
+    static const bool budgetForced = ReadEnvironmentFlagOnce("DX12_GI_UPDATE_BUDGET");
+    const bool budgetRequested = budgetForced || RendererSettings::GetGiUpdateBudgetEnabled();
     const bool adaptive = adaptiveRequested && !lumenRequested && velocity && g_AdaptiveCapture &&
-                          Raytracing::GetSettings().Reflections && EnsureAdaptiveHistory(frame.Width, frame.Height);
+                          Raytracing::ReflectionsRequested() && EnsureAdaptiveHistory(frame.Width, frame.Height);
     uint64_t signature = 1469598103934665603ull;
     for (const auto& entry : geometry)
     {
@@ -1311,13 +1313,15 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     g_Lumen.WriteDescriptors(g_Device.Get(), slot, Cpu(frame.Heap.Get(), kLumenDescriptors), g_Increment);
     const bool reuse = adaptive && g_AdaptiveValid && !nrdFrame.ResetHistory && g_AdaptiveSignature == signature &&
                        nrdFrame.Sequence == g_AdaptiveSequence + 1u;
+    // 修正（GI 更新予算を既定 ON にしたため）：以前はシーンの署名が変わるたびに放射キャッシュを全消去していた。
+    // 太陽が動く / スキンメッシュがある場面では毎フレーム消去され、多重バウンスのキャッシュが育たなかった。
+    // 署名が変わった直後は消去せず、8 フレーム安定するまで間引きを止める（キャッシュは履歴上限で更新される）。
+    static uint32_t budgetQuietFrames = 0;
+    budgetQuietFrames = (g_BudgetValid && g_BudgetSignature == signature && !nrdFrame.ResetHistory)
+                            ? (std::min)(budgetQuietFrames + 1u, 1024u)
+                            : 0u;
     const bool budget = budgetRequested && !sharc && cacheEnabled && !restir && velocity && g_BudgetValid &&
-                        !nrdFrame.ResetHistory && g_BudgetSignature == signature &&
-                        nrdFrame.Sequence == g_BudgetSequence + 1u;
-    if (budgetRequested && cacheEnabled && (!g_BudgetValid || g_BudgetSignature != signature || nrdFrame.ResetHistory))
-    {
-        g_Cache.NeedsClear = true;
-    }
+                        budgetQuietFrames >= 8u && nrdFrame.Sequence == g_BudgetSequence + 1u;
     constants.AdaptiveSampling = {adaptive ? 1.f : 0.f, reuse ? 1.f : 0.f, .2f, budget ? 4.f : 1.f};
     g_BudgetSignature = signature;
     g_BudgetSequence = nrdFrame.Sequence;
@@ -1471,7 +1475,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         commands->Dispatch((parameters.Grid.x * parameters.Grid.y + 7) / 8, 1, 1);
         g_Lumen.Barrier(commands);
     }
-    if (Raytracing::GetSettings().Reflections)
+    if (Raytracing::ReflectionsRequested())
     {
         RenderProfiler::ScopedEvent reflectionProfile("DXR Reflections", commands);
         RenderProfiler::ScopedEvent traceProfile("DXR Reflections Trace", commands);

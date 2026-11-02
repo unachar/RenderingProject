@@ -37,7 +37,55 @@ enum class MaterialNodeKind
     CameraVector,
     Time,
     Output,
-    Group
+    Group,
+    // ---- 以下は UE のマテリアルノードに合わせて追加（シリアライズは名前で行うので末尾に追加する）
+    Constant2Vector,
+    Constant3Vector,
+    Constant4Vector,
+    TextureCoordinate,
+    Panner,
+    Rotator,
+    // 単項演算（Abs〜DDY は連続していること）
+    Abs,
+    Ceil,
+    Floor,
+    Frac,
+    Round,
+    Truncate,
+    Sign,
+    OneMinus,
+    Saturate,
+    SquareRoot,
+    Sine,
+    Cosine,
+    Tangent,
+    Arcsine,
+    Arccosine,
+    Arctangent,
+    Exponential,
+    Logarithm2,
+    DDX,
+    DDY,
+    // 二項演算（Power〜Arctangent2 は連続していること）
+    Power,
+    Min,
+    Max,
+    Fmod,
+    Step,
+    Arctangent2,
+    ConstantBiasScale,
+    CrossProduct,
+    Distance,
+    Length,
+    AppendVector,
+    ComponentMask,
+    ReflectionVector,
+    Desaturation,
+    If,
+    SphereMask,
+    CheapContrast,
+    Noise,
+    Reroute
 };
 
 struct MaterialGraphInput
@@ -66,6 +114,9 @@ struct MaterialGraphNode
     uint64_t OutputPin = 0;
     std::array<float, 2> Position{};
     std::array<float, 2> GroupSize{400.0f, 250.0f};
+    float Width = 0.0f;  // ノード本体の幅（0 = 既定）。右端 / 右下のグリップで変更する
+    float Height = 0.0f; // ノード本体の高さ（0 = 内容に合わせる）。下端 / 右下のグリップで変更する
+    std::string Comment; // ノードの上に表示するコメント（UE のノードコメント）
 };
 
 struct MaterialGraphLink
@@ -97,6 +148,8 @@ class MaterialGraph
     const MaterialGraphNode* FindNode(uint64_t node) const;
     const MaterialGraphNode* FindPinNode(uint64_t pin, bool* input = nullptr, size_t* index = nullptr) const;
     const MaterialGraphLink* InputLink(uint64_t pin) const;
+    // ノード出力の型（Numeric の演算は入力から決まる。Append / Component Mask は成分数から決まる）
+    MaterialGraphType ResolveOutputType(uint64_t node) const;
     bool Validate(std::string& error) const;
     std::string Serialize() const;
     static bool Deserialize(const std::string& contents, MaterialGraph& graph, std::string& error);
