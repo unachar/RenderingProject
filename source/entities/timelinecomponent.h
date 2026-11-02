@@ -29,6 +29,10 @@ enum class TimelineProperty : int
     AnimationTime,
     EmissiveIntensity,
     EmissiveColor,
+    // Appended values keep the integer ids stored in existing .scene / .prefab files stable.
+    LightInnerAngle, // degrees, same unit as LightComponent::InnerAngle
+    LightOuterAngle, // degrees, same unit as LightComponent::OuterAngle
+    CameraCut,       // clip range = the target camera is the main game camera (applied while playing)
 };
 
 enum class TimelineInterpolation : int
@@ -38,6 +42,7 @@ enum class TimelineInterpolation : int
     EaseIn,
     EaseOut,
     EaseInOut,
+    CubicBezier, // Uses TimelineKeyframe::Bezier (x1, y1, x2, y2) for the segment to the next key.
 };
 
 struct TimelineKeyframe
@@ -45,6 +50,8 @@ struct TimelineKeyframe
     float Time = 0.0f;
     DirectX::XMFLOAT4 Value = {0, 0, 0, 0};
     TimelineInterpolation Interpolation = TimelineInterpolation::Linear;
+    // CSS style cubic-bezier control points in normalized segment space. x is clamped to [0, 1].
+    DirectX::XMFLOAT4 Bezier = {0.42f, 0.0f, 0.58f, 1.0f};
 };
 
 struct TimelineClipData
@@ -67,6 +74,9 @@ struct TimelineTrackData
     bool HasDefaultValue = false;
     int FogVolumeIndex = 0;
     DirectX::XMFLOAT4 DefaultValue = {0, 0, 0, 0};
+    // When no clip covers the time, hold the nearest key value instead of DefaultValue.
+    // Sequencer-created keyframe tracks enable it; older data keeps the previous behaviour.
+    bool HoldOutside = false;
     vector<TimelineClipData> Clips{};
     // VMD files are layered in this order and share the AnimationTime clock.
     vector<string> AnimationPaths;
@@ -104,11 +114,16 @@ struct StageLightGroup
 
 struct LiveMonitorBinding
 {
+    bool Enabled = true;
     EntityID Target = g_kINVALID_ENTITY;
     EntityID SurroundLight = g_kINVALID_ENTITY;
     vector<string> Frames;
     float FramesPerSecond = 30.0f;
     float StartTime = 0.0f;
+    // <= StartTime: open ended (previous behaviour). Otherwise frames stop updating after EndTime.
+    float EndTime = 0.0f;
+    // Seconds into the image sequence shown at StartTime (slip / trim of the clip head).
+    float Offset = 0.0f;
     float EmissiveIntensity = 3.0f;
     float LightIntensity = 5.0f;
     bool Loop = true;
@@ -119,7 +134,11 @@ struct TimelineComponent
     // LiveDirector uses the audio device position, rather than accumulating frame time.
     string MusicPath;
     float MusicOffset = 0.0f;
+    float MusicVolume = 1.0f;
     float BeatsPerMinute = 120.0f;
+    int BeatsPerBar = 4;
+    // Frames per second used for frame display and frame snapping. 0 = project target frame rate.
+    float FrameRate = 0.0f;
     float BeatOffset = 0.0f;
     bool SeekRequested = false;
     string PlaybackError;
@@ -135,3 +154,4 @@ struct TimelineComponent
     vector<StageLightGroup> LightGroups;
     vector<LiveMonitorBinding> Monitors;
 };
+

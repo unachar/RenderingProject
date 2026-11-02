@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "timelinesystem.h"
+#include "timelinecurve.h"
 #include "world.h"
 #include "componentmanager.h"
 #include "projectmanager.h"
@@ -57,6 +58,7 @@ namespace
             timeline.SeekRequested = true;
         }
         auto& music = *entry;
+        music.Player.SetVolume(timeline.MusicVolume);
         timeline.MusicDuration = static_cast<float>(music.Player.DurationSeconds());
         const float end = min(timeline.Duration, max(0.0f, timeline.MusicDuration - timeline.MusicOffset));
         if (timeline.SeekRequested || music.Offset != timeline.MusicOffset)
@@ -109,56 +111,7 @@ namespace
     }
 }
 
-float ApplyEase(float value, TimelineInterpolation interpolation)
-{
-    value = clamp(value, 0.0f, 1.0f);
-    switch (interpolation)
-    {
-        case TimelineInterpolation::Step:
-            return 0.0f;
-        case TimelineInterpolation::EaseIn:
-            return value * value;
-        case TimelineInterpolation::EaseOut:
-            return 1.0f - (1.0f - value) * (1.0f - value);
-        case TimelineInterpolation::EaseInOut:
-            if (value < 0.5f)
-            {
-                return 2.0f * value * value;
-            }
-            return 1.0f - powf(-2.0f * value + 2.0f, 2.0f) * 0.5f;
-        default:
-            return value;
-    }
-}
-
-XMFLOAT4 LerpValue(const XMFLOAT4& a, const XMFLOAT4& b, float t)
-{
-    return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t};
-}
-
-XMFLOAT4 SampleClip(const TimelineClipData& clip, float localTime)
-{
-    if (clip.Keys.empty())
-    {
-        return {};
-    }
-    if (localTime <= clip.Keys.front().Time)
-    {
-        return clip.Keys.front().Value;
-    }
-    for (size_t i = 1; i < clip.Keys.size(); ++i)
-    {
-        const auto& right = clip.Keys[i];
-        if (localTime < right.Time)
-        {
-            const auto& left = clip.Keys[i - 1];
-            const float span = max(0.00001f, right.Time - left.Time);
-            const float t = ApplyEase((localTime - left.Time) / span, left.Interpolation);
-            return LerpValue(left.Value, right.Value, t);
-        }
-    }
-    return clip.Keys.back().Value;
-}
+// キー補間・クリップ評価は TimelineCurve（timelinecurve.h）に集約。Sequencer の曲線表示も同じ実装を使う。
 
 void ApplyProperty(EntityID target, TimelineProperty property, const XMFLOAT4& value, int fogVolume)
 {
@@ -245,6 +198,21 @@ void ApplyProperty(EntityID target, TimelineProperty property, const XMFLOAT4& v
                 light.VolumeDensity = max(0.0f, value.x);
                 light.AffectsVolumetrics = light.VolumeDensity > 0.0f;
                 break;
+        }
+    }
+    if ((property == TimelineProperty::LightInnerAngle || property == TimelineProperty::LightOuterAngle) &&
+        ComponentManager::HasComponent<LightComponent>(target))
+    {
+        // インスペクターと同じ範囲（度）。外角は内角より大きく保つ。
+        auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(target);
+        if (property == TimelineProperty::LightInnerAngle)
+        {
+            light.InnerAngle = clamp(value.x, 0.1f, 89.0f);
+            light.OuterAngle = max(light.OuterAngle, light.InnerAngle + 0.1f);
+        }
+        else
+        {
+            light.OuterAngle = clamp(value.x, light.InnerAngle + 0.1f, 89.5f);
         }
     }
     if (property >= TimelineProperty::BloomThreshold && property <= TimelineProperty::BloomRadius &&
@@ -385,33 +353,38 @@ void TimeLineSystem::Update()
             timeline.IsPlaying = timeline.PlayOnAwake;
             timeline.PlaybackError.clear();
         }
-        if (!timeline.MusicPath.empty())
-        {
-            if (timeline.PlaybackError.empty() || timeline.IsPlaying || timeline.SeekRequested)
-            {
-                UpdateMusic(entity, timeline);
-            }
-        }
-        else if (timeline.IsPlaying)
-        {
-            timeline.CurrentTime += deltaTime * timeline.Speed;
-            if (timeline.CurrentTime >= timeline.Duration || timeline.CurrentTime < 0.0f)
-            {
-                if (timeline.Loop && timeline.Duration > 0.0f)
-                {
-                    Camera::NotifyCut();
-                    timeline.CurrentTime =
-                        fmodf(fmodf(timeline.CurrentTime, timeline.Duration) + timeline.Duration, timeline.Duration);
-                }
-                else
-                {
-                    timeline.CurrentTime = clamp(timeline.CurrentTime, 0.0f, timeline.Duration);
-                    timeline.IsPlaying = false;
-                }
-            }
-        }
-        EvaluateComponent(timeline);
+        AdvanceComponent(entity, timeline, deltaTime);
     });
+}
+
+void TimeLineSystem::AdvanceComponent(EntityID entity, TimelineComponent& timeline, float deltaTime)
+{
+    if (!timeline.MusicPath.empty())
+    {
+        if (timeline.PlaybackError.empty() || timeline.IsPlaying || timeline.SeekRequested)
+        {
+            UpdateMusic(entity, timeline);
+        }
+    }
+    else if (timeline.IsPlaying)
+    {
+        timeline.CurrentTime += deltaTime * timeline.Speed;
+        if (timeline.CurrentTime >= timeline.Duration || timeline.CurrentTime < 0.0f)
+        {
+            if (timeline.Loop && timeline.Duration > 0.0f)
+            {
+                Camera::NotifyCut();
+                timeline.CurrentTime =
+                    fmodf(fmodf(timeline.CurrentTime, timeline.Duration) + timeline.Duration, timeline.Duration);
+            }
+            else
+            {
+                timeline.CurrentTime = clamp(timeline.CurrentTime, 0.0f, timeline.Duration);
+                timeline.IsPlaying = false;
+            }
+        }
+    }
+    EvaluateComponent(timeline);
 }
 
 void TimeLineSystem::Uninit()
@@ -541,6 +514,17 @@ XMFLOAT4 TimeLineSystem::ReadProperty(EntityID target, TimelineProperty property
                 result.x = light.VolumeDensity;
                 break;
         }
+    }
+    if ((property == TimelineProperty::LightInnerAngle || property == TimelineProperty::LightOuterAngle) &&
+        ComponentManager::HasComponent<LightComponent>(target))
+    {
+        const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(target);
+        found = true;
+        result.x = property == TimelineProperty::LightInnerAngle ? light.InnerAngle : light.OuterAngle;
+    }
+    if (property == TimelineProperty::CameraCut && ComponentManager::HasComponent<CameraComponent>(target))
+    {
+        found = true;
     }
     if (property >= TimelineProperty::BloomThreshold && property <= TimelineProperty::BloomRadius &&
         ComponentManager::HasComponent<PostProcessComponent>(target))
@@ -727,15 +711,12 @@ void TimeLineSystem::EvaluateComponent(TimelineComponent& timeline)
     }
     for (const auto& monitor : timeline.Monitors)
     {
-        if (monitor.Frames.empty() || !ComponentManager::HasComponent<MaterialComponent>(monitor.Target))
+        size_t frame = 0;
+        if (!ComponentManager::HasComponent<MaterialComponent>(monitor.Target) ||
+            !TimelineCurve::MonitorFrame(monitor, timeline.CurrentTime, frame))
         {
             continue;
         }
-        const double frameTime = max(0.0, static_cast<double>(timeline.CurrentTime - monitor.StartTime)) *
-                                 max(0.001f, monitor.FramesPerSecond);
-        const size_t frame = monitor.Loop
-                                 ? static_cast<size_t>(fmod(frameTime, static_cast<double>(monitor.Frames.size())))
-                                 : static_cast<size_t>(min(frameTime, static_cast<double>(monitor.Frames.size() - 1)));
         const string& path = monitor.Frames[frame];
         const int texture = TextureManager::LoadTexture(filesystem::u8path(path));
         if (texture < 0)
@@ -769,67 +750,33 @@ void TimeLineSystem::EvaluateComponent(TimelineComponent& timeline)
     }
     for (auto& track : timeline.Tracks)
     {
-        if (!track.Enabled || !Registry::IsAlive(track.Target))
+        if (!track.Enabled || !Registry::IsAlive(track.Target) || track.Property == TimelineProperty::CameraCut)
         {
             continue;
         }
-        XMFLOAT4 accumulated{};
-        float totalWeight = 0.0f;
-        for (auto& clip : track.Clips)
+        XMFLOAT4 value{};
+        const auto sample = TimelineCurve::EvaluateTrack(track, timeline.CurrentTime, value);
+        if (sample == TimelineCurve::TrackSample::None)
         {
-            if (!clip.Enabled || clip.Duration <= 0.0f || timeline.CurrentTime < clip.StartTime ||
-                timeline.CurrentTime > clip.StartTime + clip.Duration || clip.Keys.empty())
-            {
-                continue;
-            }
-            const float local = timeline.CurrentTime - clip.StartTime;
-            float weight = 1.0f;
-            if (clip.BlendIn > 0.0f)
-            {
-                weight = min(weight, local / clip.BlendIn);
-            }
-            if (clip.BlendOut > 0.0f)
-            {
-                weight = min(weight, (clip.Duration - local) / clip.BlendOut);
-            }
-            weight = clamp(weight, 0.0f, 1.0f);
-            const XMFLOAT4 value = SampleClip(clip, local);
-            accumulated.x += value.x * weight;
-            accumulated.y += value.y * weight;
-            accumulated.z += value.z * weight;
-            accumulated.w += value.w * weight;
-            totalWeight += weight;
-        }
-        if (totalWeight <= 0.0f)
-        {
-            if (track.HasDefaultValue)
-            {
-                if (track.Property == TimelineProperty::AnimationTime && !PrepareTrackAnimations(track))
-                {
-                    continue;
-                }
-                ApplyProperty(track.Target, track.Property, track.DefaultValue, track.FogVolumeIndex);
-            }
             continue;
         }
-        if (totalWeight < 1.0f && track.HasDefaultValue)
-        {
-            const float baseWeight = 1.0f - totalWeight;
-            accumulated.x += track.DefaultValue.x * baseWeight;
-            accumulated.y += track.DefaultValue.y * baseWeight;
-            accumulated.z += track.DefaultValue.z * baseWeight;
-            accumulated.w += track.DefaultValue.w * baseWeight;
-            totalWeight = 1.0f;
-        }
-        const float invWeight = 1.0f / totalWeight;
-        accumulated.x *= invWeight;
-        accumulated.y *= invWeight;
-        accumulated.z *= invWeight;
-        accumulated.w *= invWeight;
         if (track.Property == TimelineProperty::AnimationTime && !PrepareTrackAnimations(track))
         {
             continue;
         }
-        ApplyProperty(track.Target, track.Property, accumulated, track.FogVolumeIndex);
+        ApplyProperty(track.Target, track.Property, value, track.FogVolumeIndex);
+    }
+    // カメラカット：再生中（Play / 一時停止）のみ、メインのゲームカメラを切り替える。
+    // 編集中に切り替えるとシーンの IsMainGameCamera が変わり保存内容に影響するため適用しない。
+    if (ProjectManager::IsPlaying())
+    {
+        const EntityID cut = TimelineCurve::FindCameraCut(timeline, timeline.CurrentTime);
+        if (cut != g_kINVALID_ENTITY && Registry::IsAlive(cut) && ComponentManager::HasComponent<CameraComponent>(cut) &&
+            Camera::GetGameCameraEntity() != cut)
+        {
+            Camera::SetMainGameCamera(cut);
+            Camera::NotifyCut();
+        }
     }
 }
+

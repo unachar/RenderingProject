@@ -9,6 +9,7 @@
 #include "imguimanager.h"
 #include "proceduralstudiowindow.h"
 #include "animationpreviewwindow.h"
+#include "sequencerbridge.h"
 #include "modelmanager.h"
 #include "world.h"
 #include "camera.h"
@@ -71,6 +72,8 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
     IMGUI_CHECKVERSION();
     WriteGraphicsLog("ImGui: create context\n");
     ImGui::CreateContext();
+    // シーケンサーの表示設定（[RPSequencer]）を editor_layout.cfg から読めるよう、読み込み前に登録する
+    SequencerEditorBridge::RegisterSettings();
     ImGuizmo::SetImGuiContext(ImGui::GetCurrentContext());
     ImGuiIO& io = ImGui::GetIO();
     char validationMode[8]{};
@@ -174,6 +177,7 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
 
 void ImGuiManager::Uninit()
 {
+    SequencerEditorBridge::Shutdown();
     GBufferPreview::Shutdown();
     ImGui_ImplDX12_Shutdown();
     ImGui_ImplWin32_Shutdown();
@@ -399,6 +403,7 @@ void ImGuiManager::Update()
         ProceduralStudioWindow::Draw(&m_ShowProceduralStudioWindow);
     }
     AnimationPreviewWindow::Draw(&m_ShowAnimationPreviewWindow);
+    SequencerEditorBridge::Draw(&m_ShowSequencerWindow);
     if (m_ShowRaytracingWindow)
     {
         DrawRaytracingWindow();
@@ -597,6 +602,7 @@ void ImGuiManager::DrawDockSpace()
         ImGui::DockBuilderDockWindow("レンダーコントロール", right);
         ImGui::DockBuilderDockWindow("プロジェクト", bottom);
         ImGui::DockBuilderDockWindow("ログ", bottom);
+        ImGui::DockBuilderDockWindow("シーケンサー", bottom);
         ImGui::DockBuilderFinish(dockspaceId);
         m_ResetEditorLayout = false;
     }
@@ -673,6 +679,7 @@ void ImGuiManager::DrawEditorMainMenu()
         ImGui::MenuItem("プロシージャルスタジオ (テクスチャ / モデル / フラクタル)", nullptr,
                         &m_ShowProceduralStudioWindow);
         ImGui::MenuItem("アニメーションプレビュー", nullptr, &m_ShowAnimationPreviewWindow);
+        ImGui::MenuItem("シーケンサー (Timeline)", nullptr, &m_ShowSequencerWindow);
         ImGui::MenuItem("レイトレーシング", nullptr, &m_ShowRaytracingWindow);
         ImGui::Separator();
         ImGui::MenuItem("メッシュ単位のアウトライン", nullptr, &m_ShowMeshOutlineWindow);
@@ -982,4 +989,5 @@ void ImGuiManager::StyleModernSlim()
         style.FrameBorderSize = 0.0f;
     }
 }
+
 

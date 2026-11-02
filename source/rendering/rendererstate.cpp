@@ -78,6 +78,7 @@ ComPtr<ID3D12RootSignature> RendererState::m_UpscaleRootSignature;
 unordered_map<PostProcessType, ComPtr<ID3D12PipelineState>> RendererState::m_PostProcessPsoMap;
 ComPtr<ID3D12PipelineState> RendererState::m_BloomExtractPso;
 ComPtr<ID3D12PipelineState> RendererState::m_DeferredLightingPso;
+ComPtr<ID3D12PipelineState> RendererState::m_DeferredLightingRasterPso;
 ComPtr<ID3D12PipelineState> RendererState::m_AtmospherePso;
 ComPtr<ID3D12PipelineState> RendererState::m_UpscaleBilateralPso;
 ComPtr<ID3D12PipelineState> RendererState::m_UpscaleDepthPso;

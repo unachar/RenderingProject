@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // ============================================================================
 // SceneFile : .scene ファイル（JSON）の読み書きとシーンの変更検知用ハッシュ。ヘッダーのみ。
 //
@@ -1317,7 +1317,10 @@ namespace SceneFile
     {
         a("music", c.MusicPath);
         a("musicOffset", c.MusicOffset);
+        a("musicVolume", c.MusicVolume);
         a("bpm", c.BeatsPerMinute);
+        a("beatsPerBar", c.BeatsPerBar);
+        a("frameRate", c.FrameRate);
         a("beatOffset", c.BeatOffset);
         a("duration", c.Duration);
         a("speed", c.Speed);
@@ -1343,11 +1346,14 @@ namespace SceneFile
             });
         });
         a.Array("monitors", c.Monitors, [](Archive& m, LiveMonitorBinding& monitor) {
+            m("enabled", monitor.Enabled);
             m.Entity("target", monitor.Target);
             m.Entity("surroundLight", monitor.SurroundLight);
             m("frames", monitor.Frames);
             m("fps", monitor.FramesPerSecond);
             m("start", monitor.StartTime);
+            m("end", monitor.EndTime);
+            m("offset", monitor.Offset);
             m("emissiveIntensity", monitor.EmissiveIntensity);
             m("lightIntensity", monitor.LightIntensity);
             m("loop", monitor.Loop);
@@ -1360,6 +1366,7 @@ namespace SceneFile
             t("fogVolume", track.FogVolumeIndex);
             t("hasDefault", track.HasDefaultValue);
             t("default", track.DefaultValue);
+            t("holdOutside", track.HoldOutside);
             t("animationPaths", track.AnimationPaths);
             t.Array("clips", track.Clips, [](Archive& k, TimelineClipData& clip) {
                 k("name", clip.Name);
@@ -1372,6 +1379,7 @@ namespace SceneFile
                     f("time", key.Time);
                     f("value", key.Value);
                     f("interpolation", key.Interpolation);
+                    f("bezier", key.Bezier);
                 });
             });
         });
@@ -1434,3 +1442,4 @@ namespace SceneFile
         });
     }
 } // 名前空間 SceneFile の終わり。
+

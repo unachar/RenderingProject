@@ -25,6 +25,7 @@ class ImGuiManager
     friend class RenderingValidation;
     friend class MaterialValidation;
     friend class AnimationPreviewWindow;
+    friend class SequencerEditorBridgeImpl;
 
   private:
     inline static bool m_IsClosing = false;
@@ -62,6 +63,7 @@ class ImGuiManager
     inline static bool m_ShowProceduralWindow = false;
     inline static bool m_ShowProceduralStudioWindow = false;
     inline static bool m_ShowAnimationPreviewWindow = false;
+    inline static bool m_ShowSequencerWindow = true;
     inline static bool m_ShowRaytracingWindow = false;
     inline static bool m_ShowProjectSettingsWindow = false;
     inline static bool m_ShowPhysicsSettingsWindow = false;
@@ -429,4 +431,5 @@ class ImGuiManager
         return m_Exposure;
     }
 };
+
 

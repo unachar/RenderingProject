@@ -322,6 +322,7 @@ void RenderConfiguration::ApplyPendingHdr()
     m_PsoCache.clear();
     m_PostProcessPsoMap.clear();
     m_DeferredLightingPso.Reset();
+    m_DeferredLightingRasterPso.Reset();
     m_AtmospherePso.Reset();
 
     for (EntityID entity : World::GetView<ShaderComponent>())

@@ -260,6 +260,26 @@ namespace LiveMusic
             return m_Voice != nullptr;
         }
 
+        // 0 = 無音、1 = 原音。シークでボイスを作り直しても維持する。
+        void SetVolume(float volume)
+        {
+            volume = std::isfinite(volume) ? std::clamp(volume, 0.0f, 4.0f) : 1.0f;
+            if (volume == m_Volume)
+            {
+                return;
+            }
+            m_Volume = volume;
+            if (m_Voice)
+            {
+                m_Voice->SetVolume(m_Volume);
+            }
+        }
+
+        float Volume() const
+        {
+            return m_Volume;
+        }
+
       private:
         static bool Read(std::ifstream& f, void* bytes, size_t size)
         {
@@ -285,6 +305,7 @@ namespace LiveMusic
             {
                 return false;
             }
+            m_Voice->SetVolume(m_Volume);
             m_OffsetFrames = std::min(frame, m_TotalFrames);
             if (m_OffsetFrames == m_TotalFrames)
             {
@@ -318,6 +339,8 @@ namespace LiveMusic
         WAVEFORMATEX m_Format{};
         std::vector<uint8_t> m_Pcm;
         uint64_t m_TotalFrames = 0, m_OffsetFrames = 0;
+        float m_Volume = 1.0f;
         bool m_Playing = false;
     };
 } // namespace LiveMusic
+

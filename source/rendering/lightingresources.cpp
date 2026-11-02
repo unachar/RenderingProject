@@ -1448,41 +1448,44 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
         static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_RESIDENT_PAGES_PER_DIMENSION),
         static_cast<float>(RendererState::g_kVIRTUAL_SHADOW_PAGES_PER_DIMENSION));
     UINT distanceFieldCount = 0;
-    for (EntityID entity : World::GetView<TransformComponent, AABBComponent>())
+    if (RendererSettings::GetDistanceFieldShadowsEnabled())
     {
-        if (distanceFieldCount >= RendererState::g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS)
+        for (EntityID entity : World::GetView<TransformComponent, AABBComponent>())
         {
-            break;
-        }
-        if (!IsShadowBoundsEntity(entity))
-        {
-            continue;
-        }
-        // 箱の距離場では、部分的な減衰や色付きの減衰を表現できない。
-        if (ComponentManager::HasComponent<MaterialComponent>(entity))
-        {
-            const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
-            bool opaque = false;
-            for (size_t slot = 0; slot < max(size_t(1), source.MaterialSlots.size()); ++slot)
+            if (distanceFieldCount >= RendererState::g_kMAX_DISTANCE_FIELD_SHADOW_OBJECTS)
             {
-                opaque |= MaterialSystem::CastsShadowInPass(MaterialManager::Resolve(source, slot), false);
+                break;
             }
-            if (!opaque)
+            if (!IsShadowBoundsEntity(entity))
             {
                 continue;
             }
+            // 箱の距離場では、部分的な減衰や色付きの減衰を表現できない。
+            if (ComponentManager::HasComponent<MaterialComponent>(entity))
+            {
+                const auto& source = ComponentManager::GetComponentUnchecked<MaterialComponent>(entity);
+                bool opaque = false;
+                for (size_t slot = 0; slot < max(size_t(1), source.MaterialSlots.size()); ++slot)
+                {
+                    opaque |= MaterialSystem::CastsShadowInPass(MaterialManager::Resolve(source, slot), false);
+                }
+                if (!opaque)
+                {
+                    continue;
+                }
+            }
+            const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+            const auto& aabb = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
+            const XMFLOAT3 center = {transform.Position.x + aabb.Center.x * transform.Scale.x,
+                                     transform.Position.y + aabb.Center.y * transform.Scale.y,
+                                     transform.Position.z + aabb.Center.z * transform.Scale.z};
+            const XMFLOAT3 extents = {max(fabsf(aabb.Extents.x * transform.Scale.x), 0.02f),
+                                      max(fabsf(aabb.Extents.y * transform.Scale.y), 0.02f),
+                                      max(fabsf(aabb.Extents.z * transform.Scale.z), 0.02f)};
+            constants.DistanceFieldData0[distanceFieldCount] = XMFLOAT4(center.x, center.y, center.z, 1.0f);
+            constants.DistanceFieldData1[distanceFieldCount] = XMFLOAT4(extents.x, extents.y, extents.z, 0.0f);
+            ++distanceFieldCount;
         }
-        const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
-        const auto& aabb = ComponentManager::GetComponentUnchecked<AABBComponent>(entity);
-        const XMFLOAT3 center = {transform.Position.x + aabb.Center.x * transform.Scale.x,
-                                 transform.Position.y + aabb.Center.y * transform.Scale.y,
-                                 transform.Position.z + aabb.Center.z * transform.Scale.z};
-        const XMFLOAT3 extents = {max(fabsf(aabb.Extents.x * transform.Scale.x), 0.02f),
-                                  max(fabsf(aabb.Extents.y * transform.Scale.y), 0.02f),
-                                  max(fabsf(aabb.Extents.z * transform.Scale.z), 0.02f)};
-        constants.DistanceFieldData0[distanceFieldCount] = XMFLOAT4(center.x, center.y, center.z, 1.0f);
-        constants.DistanceFieldData1[distanceFieldCount] = XMFLOAT4(extents.x, extents.y, extents.z, 0.0f);
-        ++distanceFieldCount;
     }
     float distanceFieldLightCount;
     if (RendererSettings::GetDistanceFieldShadowsEnabled())

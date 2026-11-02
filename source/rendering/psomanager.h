@@ -37,10 +37,7 @@ class PsoManager : protected RendererState
 
     static ID3D12PipelineState* GetPostProcessPso(PostProcessType type);
 
-    static ID3D12PipelineState* GetDeferredLightingPso()
-    {
-        return m_DeferredLightingPso.Get();
-    }
+    static ID3D12PipelineState* GetDeferredLightingPso();
 
     static ID3D12PipelineState* GetAtmospherePso()
     {

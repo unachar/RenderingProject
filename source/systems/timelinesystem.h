@@ -17,6 +17,9 @@ class TimeLineSystem : public SystemBase
     static void Clear();
     static void SuspendAudio(bool close = false);
     static void EvaluateComponent(TimelineComponent& timeline);
+    // 1 つの TimelineComponent の再生を進めて評価する（曲同期を含む）。Update と Sequencer の編集時プレビューが共有する。
+    static void AdvanceComponent(EntityID entity, TimelineComponent& timeline, float deltaTime);
     static bool PrepareTrackAnimations(TimelineTrackData& track);
     static XMFLOAT4 ReadProperty(EntityID target, TimelineProperty property, bool* valid = nullptr, int fogVolume = 0);
 };
+

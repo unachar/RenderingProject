@@ -1429,4 +1429,14 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <MakeDir Directories="$(OutDir)licenses" />
     <Copy SourceFiles="$(ProjectDir)External\zstd\LICENSE" DestinationFiles="$(OutDir)licenses\zstd-LICENSE.txt" SkipUnchangedFiles="true" />
   </Target>
+  <ItemGroup Label="Sequencer">
+    <ClCompile Include="source\editor\sequencerwindow.cpp" />
+    <ClCompile Include="source\editor\sequencerbridge.cpp" />
+    <ClCompile Include="source\editor\sequencerwaveform.cpp" />
+    <ClInclude Include="source\editor\sequencerwindow.h" />
+    <ClInclude Include="source\editor\sequencerbridge.h" />
+    <ClInclude Include="source\editor\sequencerbackend.h" />
+    <ClInclude Include="source\editor\sequencerwaveform.h" />
+    <ClInclude Include="source\entities\timelinecurve.h" />
+  </ItemGroup>
 </Project>

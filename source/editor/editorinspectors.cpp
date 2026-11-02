@@ -2044,6 +2044,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
             changed = true;
         }
         changed |= ImGui::DragFloat("曲の開始位置 (秒)", &timeline.MusicOffset, 0.01f, 0.0f, 36000.0f);
+        changed |= ImGui::SliderFloat("曲の音量", &timeline.MusicVolume, 0.0f, 2.0f);
         changed |= ImGui::DragFloat("BPM", &timeline.BeatsPerMinute, 0.1f, 1.0f, 1000.0f);
         changed |= ImGui::DragFloat("先頭ビート (秒)", &timeline.BeatOffset, 0.01f);
         ImGui::Text("Beat %.2f", (timeline.CurrentTime - timeline.BeatOffset) * timeline.BeatsPerMinute / 60.0f);
@@ -2207,7 +2208,10 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
                     changed |= editEntity("発光メッシュ Entity", monitor.Target);
                     changed |= editEntity("周辺照明 Rect Entity", monitor.SurroundLight);
                     changed |= ImGui::DragFloat("FPS", &monitor.FramesPerSecond, 0.1f, 0.01f, 240.0f);
+                    changed |= ImGui::Checkbox("有効##Monitor", &monitor.Enabled);
                     changed |= ImGui::DragFloat("開始 (秒)", &monitor.StartTime, 0.01f, 0.0f, timeline.Duration);
+                    changed |= ImGui::DragFloat("終了 (秒, 0=制限なし)", &monitor.EndTime, 0.01f, 0.0f, timeline.Duration);
+                    changed |= ImGui::DragFloat("オフセット (秒)", &monitor.Offset, 0.01f, 0.0f, 36000.0f);
                     changed |= ImGui::DragFloat("発光強度", &monitor.EmissiveIntensity, 0.1f, 0.0f, 10000.0f);
                     changed |= ImGui::DragFloat("周辺照明の強度", &monitor.LightIntensity, 0.1f, 0.0f, 100000.0f);
                     changed |= ImGui::Checkbox("連番ループ", &monitor.Loop);
@@ -2250,7 +2254,10 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
                                        "Fog / Color",
                                        "Animation / Time (seconds)",
                                        "Material / Emissive Intensity",
-                                       "Material / Emissive Color"};
+                                       "Material / Emissive Color",
+                                       "Light / Spot Inner Angle",
+                                       "Light / Spot Outer Angle",
+                                       "Camera / Camera Cut"};
         if (ImGui::Button("+ Track"))
         {
             TimelineTrackData track{};
@@ -2326,6 +2333,7 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
                     track.HasDefaultValue = valid;
                     changed = true;
                 }
+                changed |= ImGui::Checkbox("クリップ外は最寄りのキー値を保持", &track.HoldOutside);
                 if (track.Property == TimelineProperty::AnimationTime &&
                     ComponentManager::HasComponent<AnimationModelComponent>(track.Target))
                 {
@@ -2436,12 +2444,20 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
                                 {
                                     changed |= ImGui::DragFloat("値", &key.Value.x, 0.01f);
                                 }
-                                const char* easing[] = {"Step", "Linear", "Ease In", "Ease Out", "Ease In Out"};
+                                const char* easing[] = {"Step", "Linear", "Ease In", "Ease Out", "Ease In Out",
+                                                        "Cubic Bezier"};
                                 int interpolation = static_cast<int>(key.Interpolation);
                                 if (ImGui::Combo("補間", &interpolation, easing, IM_ARRAYSIZE(easing)))
                                 {
-                                    key.Interpolation = static_cast<TimelineInterpolation>(clamp(interpolation, 0, 4));
+                                    key.Interpolation = static_cast<TimelineInterpolation>(
+                                        clamp(interpolation, 0, IM_ARRAYSIZE(easing) - 1));
                                     changed = true;
+                                }
+                                if (key.Interpolation == TimelineInterpolation::CubicBezier)
+                                {
+                                    changed |= ImGui::DragFloat4("Bezier (x1 y1 x2 y2)", &key.Bezier.x, 0.01f);
+                                    key.Bezier.x = clamp(key.Bezier.x, 0.0f, 1.0f);
+                                    key.Bezier.z = clamp(key.Bezier.z, 0.0f, 1.0f);
                                 }
                                 if (ImGui::Button("Key削除"))
                                 {
@@ -2897,3 +2913,4 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
         ImGui::Checkbox("ポストプロセス使用", &sprite.UsePostProcess);
     }
 }
+

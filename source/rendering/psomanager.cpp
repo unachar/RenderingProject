@@ -9,6 +9,7 @@
 #include "renderersettings.h"
 #include "visibilitybuffer.h"
 #include "shaderdescription.h"
+#include "raytracing.h"
 
 bool PsoManager::CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc, const char* debugName,
                                              ComPtr<ID3D12PipelineState>& outPso)
@@ -844,6 +845,7 @@ bool PsoManager::CreatePostProcessPipelines()
 
 bool PsoManager::CreateDeferredLightingPipeline()
 {
+    m_DeferredLightingRasterPso.Reset();
     ShaderDescription resource{};
     resource.vsPath = "shader\\hlsl\\build\\postProcessVS.cso";
     resource.psPath = "shader\\hlsl\\build\\DeferredLightingPS.cso";
@@ -876,7 +878,32 @@ bool PsoManager::CreateDeferredLightingPipeline()
     psoDesc.RTVFormats[0] = m_SceneColorFormat;
     psoDesc.SampleDesc.Count = 1;
 
-    return CreateGraphicsPipelineState(psoDesc, "deferred lighting", m_DeferredLightingPso);
+    if (!CreateGraphicsPipelineState(psoDesc, "deferred lighting", m_DeferredLightingPso))
+    {
+        return false;
+    }
+    if (!Raytracing::IsAvailable())
+    {
+        return true;
+    }
+
+    // RT OFF ではレイ命令を含まないシェーダーを使い、レジスターなどの負荷も減らす。
+    resource.psBlob.Reset();
+    if (!ShaderPipelines::LoadShaderBlob(psResource, false))
+    {
+        return false;
+    }
+    psoDesc.PS = CD3DX12_SHADER_BYTECODE(resource.psBlob.Get());
+    return CreateGraphicsPipelineState(psoDesc, "deferred lighting (raster)", m_DeferredLightingRasterPso);
+}
+
+ID3D12PipelineState* PsoManager::GetDeferredLightingPso()
+{
+    if (!Raytracing::GetSettings().Enabled && m_DeferredLightingRasterPso)
+    {
+        return m_DeferredLightingRasterPso.Get();
+    }
+    return m_DeferredLightingPso.Get();
 }
 
 bool PsoManager::CreateAtmospherePso()

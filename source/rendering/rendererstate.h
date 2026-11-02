@@ -110,6 +110,7 @@ class RendererState
     static unordered_map<PostProcessType, ComPtr<ID3D12PipelineState>> m_PostProcessPsoMap;
     static ComPtr<ID3D12PipelineState> m_BloomExtractPso;
     static ComPtr<ID3D12PipelineState> m_DeferredLightingPso;
+    static ComPtr<ID3D12PipelineState> m_DeferredLightingRasterPso;
     static ComPtr<ID3D12PipelineState> m_AtmospherePso;
     static ComPtr<ID3D12PipelineState> m_UpscaleBilateralPso;
     static ComPtr<ID3D12PipelineState> m_UpscaleDepthPso;

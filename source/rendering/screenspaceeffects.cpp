@@ -338,7 +338,8 @@ void ScreenSpaceEffects::Execute(ID3D12GraphicsCommandList* commandList, ID3D12R
                                  D3D12_GPU_DESCRIPTOR_HANDLE depthSrv, D3D12_GPU_DESCRIPTOR_HANDLE normalSrv,
                                  UINT frameIndex)
 {
-    if (!commandList || !depth || !normal || !IsAvailable())
+    if (!commandList || !depth || !normal || !IsAvailable() ||
+        (!RendererSettings::GetSsaoEnabled() && !RendererSettings::GetSsgiEnabled()))
     {
         return;
     }
@@ -436,6 +437,11 @@ void ScreenSpaceEffects::Execute(ID3D12GraphicsCommandList* commandList, ID3D12R
 
 void ScreenSpaceEffects::CaptureHistory(ID3D12GraphicsCommandList* commandList, ID3D12Resource* lighting)
 {
+    if (!RendererSettings::GetSsgiEnabled())
+    {
+        g_HistoryValid = false;
+        return;
+    }
     if (!commandList || !lighting || !g_History)
     {
         return;

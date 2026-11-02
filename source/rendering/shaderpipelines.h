@@ -5,7 +5,7 @@
 class ShaderPipelines : protected RendererState
 {
   public:
-    static bool LoadShaderBlob(const ShaderDescription& resource);
+    static bool LoadShaderBlob(const ShaderDescription& resource, bool allowRaytracing = true);
     static bool CreateVertexShader(const ShaderDescription& resource);
     static bool CreatePixelShader(const ShaderDescription& resource);
     static bool CreateModelPipeline();

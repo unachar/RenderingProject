@@ -65,7 +65,7 @@ bool ShaderPipelines::CreateSkinningPipeline()
     return PsoManager::CreateSkinningPso();
 }
 
-bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource)
+bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource, bool allowRaytracing)
 {
     const char* csoPath = resource.csoPath;
     ID3DBlob** ppBlob = resource.ppBlob;
@@ -78,12 +78,13 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource)
     string key = csoPath;
     replace(key.begin(), key.end(), '\\', '/');
     const string leaf = filesystem::path(key).filename().string();
-    const bool modernShaders = Raytracing::IsAvailable() || g_BindlessShaderSettings.Enabled;
+    const bool raytracing = allowRaytracing && Raytracing::IsAvailable();
+    const bool modernShaders = raytracing || g_BindlessShaderSettings.Enabled;
     const bool scenePixelShader = leaf.find("PS") != string::npos && modernShaders;
     const bool sceneVertexShader = leaf.find("VS") != string::npos && modernShaders;
     const bool sceneGeometryShader = leaf.find("GS") != string::npos && modernShaders;
     const bool compileModern = scenePixelShader || sceneVertexShader || sceneGeometryShader;
-    const string cacheKey = key + (compileModern ? ":DXIL" : "") + (Raytracing::IsAvailable() ? ":DXR" : "") +
+    const string cacheKey = key + (compileModern ? ":DXIL" : "") + (raytracing ? ":DXR" : "") +
                             (g_BindlessShaderSettings.Enabled ? ":Bindless" : "");
 
     {
@@ -121,7 +122,7 @@ bool ShaderPipelines::LoadShaderBlob(const ShaderDescription& resource)
             const auto sourcePath = filesystem::path(source).wstring();
             const D3D_SHADER_MACRO defines[] = {{"SHADER_RAYTRACING", "1"}, {}};
             ComPtr<ID3DBlob> errors;
-            hr = D3DCompileFromFile(sourcePath.c_str(), Raytracing::IsAvailable() ? defines : nullptr,
+            hr = D3DCompileFromFile(sourcePath.c_str(), raytracing ? defines : nullptr,
                                     D3D_COMPILE_STANDARD_FILE_INCLUDE, "main",
                                     scenePixelShader    ? "ps_6_5"
                                     : sceneVertexShader ? "vs_6_5"
