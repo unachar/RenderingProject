@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props" Condition="Exists('packages\Microsoft.Direct3D.D3D12.1.619.0\build\native\Microsoft.Direct3D.D3D12.props')" />
   <ItemGroup Label="ProjectConfigurations">
@@ -757,6 +757,29 @@ if exist "$(ProjectDir)External\NRD\dll\x64\*.dll" copy /Y "$(ProjectDir)Externa
     <ClCompile Include="source\entities\cube.cpp" />
     <ClCompile Include="source\entities\field.cpp" />
     <ClCompile Include="source\editor\imguimanager.cpp" />
+    <ClCompile Include="External\imgui-node-editor\crude_json.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="External\imgui-node-editor\imgui_canvas.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="External\imgui-node-editor\imgui_node_editor.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="External\imgui-node-editor\imgui_node_editor_api.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="source\editor\materialgrapheditor.cpp" />
+    <ClInclude Include="source\editor\materialgrapheditor.h" />
+    <ClCompile Include="source\rendering\materialgraphshader.cpp" />
+    <ClInclude Include="source\rendering\materialgraphshader.h" />
+    <ClCompile Include="source\assets\materialgraphcompiler.cpp" />
+    <ClInclude Include="source\assets\materialgraphcompiler.h" />
+    <ClCompile Include="source\assets\materialgraph.cpp" />
+    <ClInclude Include="source\assets\materialgraph.h" />
+    <ClCompile Include="source\editor\editorworkspace.cpp" />
+    <ClCompile Include="source\editor\editorworkspaces.cpp" />
+    <ClInclude Include="source\editor\editorworkspace.h" />
     <ClCompile Include="source\models\animationmodel.cpp" />
     <ClCompile Include="source\models\pmxloader.cpp" />
     <ClCompile Include="source\models\vmdanimationimpoter.cpp" />

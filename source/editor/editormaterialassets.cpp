@@ -1,8 +1,10 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "editorworkspace.h"
 #include "imguimanager.h"
 #include "materialmanager.h"
 #include "materialopticsui.h"
 #include "materialpreview.h"
+#include "materialgrapheditor.h"
 #include "materialvalidation.h"
 #include "graphicslog.h"
 #include <imgui_internal.h>
@@ -24,6 +26,7 @@ namespace
     bool closeRequested = false;
     bool promptRequested = false;
     bool editorFocused = false;
+    bool showMaterialGraph = true;
     bool focusEditorRequested = false;
     bool pendingEdit = false;
     MaterialEdit editStart;
@@ -131,7 +134,8 @@ void ImGuiManager::OpenMaterialAsset(AssetHandle handle)
         return;
     }
     FinishMaterialEdit();
-    if (openMaterial != 0 && openMaterial != handle && MaterialManager::GetRuntime(openMaterial).Dirty)
+    if (openMaterial != 0 && openMaterial != handle && (MaterialManager::GetRuntime(openMaterial).Dirty ||
+        MaterialGraphEditor::HasUnsavedChanges(openMaterial)))
     {
         requestedMaterial = handle;
         closeRequested = false;
@@ -139,17 +143,30 @@ void ImGuiManager::OpenMaterialAsset(AssetHandle handle)
         return;
     }
     openMaterial = handle;
+    EditorWorkspaceManager::Get().Registry().ShowEditorType("material");
     m_ShowMaterialEditorWindow = true;
     focusEditorRequested = true;
 }
 
 bool ImGuiManager::MaterialEditorHasFocus()
 {
-    return editorFocused && openMaterial != 0 && m_ShowMaterialEditorWindow;
+    return editorFocused && openMaterial != 0 &&
+           EditorWorkspaceManager::Get().Registry().IsTypeVisible("material");
+}
+
+void ImGuiManager::BeginMaterialEditorFrame()
+{
+    editorFocused = false;
+    MaterialGraphEditor::BeginFrame();
 }
 
 void ImGuiManager::MaterialEditorUndo(bool redo)
 {
+    if (MaterialGraphEditor::HasFocus())
+    {
+        MaterialGraphEditor::Undo(redo);
+        return;
+    }
     FinishMaterialEdit();
     if (openMaterial == 0)
     {
@@ -185,7 +202,7 @@ void ImGuiManager::DrawMaterialEditorWindow()
     auto& runtime = MaterialManager::GetRuntime(openMaterial);
     const auto name = AssetName(openMaterial, "Default");
     string title = "Material: " + name;
-    if (runtime.Dirty)
+    if (runtime.Dirty || MaterialGraphEditor::HasUnsavedChanges(openMaterial))
     {
         title += " *";
     }
@@ -197,8 +214,8 @@ void ImGuiManager::DrawMaterialEditorWindow()
         ImGui::SetNextWindowFocus();
         focusEditorRequested = false;
     }
-    const bool expanded = ImGui::Begin(title.c_str(), &visible);
-    editorFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    const bool expanded = EditorWindowRegistry::BeginEditorWindow(title.c_str(), &visible);
+    editorFocused |= ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     if (!visible)
     {
         FinishMaterialEdit();
@@ -214,13 +231,17 @@ void ImGuiManager::DrawMaterialEditorWindow()
     if (ImGui::Button("Save"))
     {
         FinishMaterialEdit();
-        MaterialManager::Save(openMaterial);
+        if (MaterialGraphEditor::Save(openMaterial))
+        {
+            MaterialManager::Save(openMaterial);
+        }
     }
     ImGui::SameLine();
     if (ImGui::Button("Revert"))
     {
         FinishMaterialEdit();
         const auto before = runtime.Editing;
+        MaterialGraphEditor::Revert(openMaterial);
         if (MaterialManager::Revert(openMaterial) && before != runtime.Editing)
         {
             materialUndo[openMaterial].push_back(before);
@@ -230,10 +251,39 @@ void ImGuiManager::DrawMaterialEditorWindow()
     const auto revertMinimum = ImGui::GetItemRectMin();
     const auto revertMaximum = ImGui::GetItemRectMax();
     MaterialValidation::CaptureDropTarget("Revert", revertMinimum.x, revertMinimum.y, revertMaximum.x, revertMaximum.y);
+    ImGui::SameLine();
+    if (ImGui::Button("Close Material"))
+    {
+        FinishMaterialEdit();
+        closeRequested = true;
+        requestedMaterial = 0;
+        promptRequested = true;
+    }
+
     if (editorFocused && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false))
     {
         FinishMaterialEdit();
-        MaterialManager::Save(openMaterial);
+        if (MaterialGraphEditor::Save(openMaterial))
+        {
+            MaterialManager::Save(openMaterial);
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Selectable("Graph", showMaterialGraph, 0, ImVec2(64, ImGui::GetFrameHeight())))
+    {
+        showMaterialGraph = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Selectable("Properties", !showMaterialGraph, 0, ImVec2(96, ImGui::GetFrameHeight())))
+    {
+        showMaterialGraph = false;
+    }
+    if (showMaterialGraph)
+    {
+        ImGui::Separator();
+        MaterialGraphEditor::Draw(openMaterial);
+        ImGui::End();
+        return;
     }
     ImGui::SameLine();
     MaterialPreview::DrawControls();
@@ -413,24 +463,21 @@ void ImGuiManager::DrawMaterialEditorWindow()
 
 void ImGuiManager::DrawMaterialAssetClosePrompt()
 {
-    if (openMaterial != 0 && !m_ShowMaterialEditorWindow)
-    {
-        closeRequested = true;
-        requestedMaterial = 0;
-        promptRequested = true;
-        m_ShowMaterialEditorWindow = true;
-    }
     if (promptRequested)
     {
         promptRequested = false;
-        if (openMaterial != 0 && MaterialManager::GetRuntime(openMaterial).Dirty)
+        if (openMaterial != 0 && (MaterialManager::GetRuntime(openMaterial).Dirty ||
+            MaterialGraphEditor::HasUnsavedChanges(openMaterial)))
         {
             ImGui::OpenPopup("Material has unsaved changes");
         }
         else
         {
             openMaterial = requestedMaterial;
-            m_ShowMaterialEditorWindow = !closeRequested;
+            if (openMaterial != 0)
+            {
+                EditorWorkspaceManager::Get().Registry().ShowEditorType("material");
+            }
         }
     }
     if (ImGui::BeginPopupModal("Material has unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
@@ -440,15 +487,21 @@ void ImGuiManager::DrawMaterialAssetClosePrompt()
         {
             ImGui::TextWrapped("%s", MaterialManager::GetRuntime(openMaterial).Error.c_str());
         }
+        const char* graphError = MaterialGraphEditor::LastError(openMaterial);
+        if (graphError[0] != '\0')
+        {
+            ImGui::TextWrapped("%s", graphError);
+        }
         bool finish = false;
         if (ImGui::Button("Save"))
         {
-            finish = MaterialManager::Save(openMaterial);
+            finish = MaterialGraphEditor::Save(openMaterial) && MaterialManager::Save(openMaterial);
         }
         ImGui::SameLine();
         if (ImGui::Button("Discard"))
         {
             MaterialManager::Discard(openMaterial);
+            MaterialGraphEditor::Revert(openMaterial);
             finish = true;
         }
         ImGui::SameLine();
@@ -461,7 +514,10 @@ void ImGuiManager::DrawMaterialAssetClosePrompt()
         if (finish)
         {
             openMaterial = requestedMaterial;
-            m_ShowMaterialEditorWindow = !closeRequested;
+            if (openMaterial != 0)
+            {
+                EditorWorkspaceManager::Get().Registry().ShowEditorType("material");
+            }
             focusEditorRequested = !closeRequested;
             ImGui::CloseCurrentPopup();
         }

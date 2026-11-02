@@ -1,8 +1,9 @@
-// ============================================================================
+﻿// ============================================================================
 // SequencerWindow : ライブ演出用タイムライン UI（Dear ImGui + ImDrawList）。
 //  データ操作は TimelineCurve、エンジン連携は ISequencerBackend を経由する。
 // ============================================================================
-#include "pch.h" // プロジェクトのプリコンパイル済みヘッダー（テストでは空のスタブ）
+#include "pch.h"
+#include "editorworkspace.h" // プロジェクトのプリコンパイル済みヘッダー（テストでは空のスタブ）
 #ifdef min
 #undef min
 #endif
@@ -978,6 +979,11 @@ void SequencerWindow::SetPlaying(TimelineComponent& timeline, bool playing)
 
 void SequencerWindow::TickPlayback(TimelineComponent& timeline)
 {
+    if (m_LastPlaybackFrame == ImGui::GetFrameCount())
+    {
+        return;
+    }
+    m_LastPlaybackFrame = ImGui::GetFrameCount();
     if (!m_Backend.IsSimulationRunning() && (timeline.IsPlaying || m_WasPlaying))
     {
         // TimeLineSystem は Play 中しか更新されないため、編集中のプレビュー再生はここで同じ処理を進める。
@@ -1482,7 +1488,7 @@ void SequencerWindow::Draw(bool* open)
         g_PersistedLoaded = false;
     }
     ImGui::SetNextWindowSize(ImVec2(1280.0f, 420.0f), ImGuiCond_FirstUseEver);
-    const bool visible = ImGui::Begin("シーケンサー", open,
+    const bool visible = EditorWindowRegistry::BeginEditorWindow("シーケンサー", open,
                                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
                                           ImGuiWindowFlags_NoNavInputs);
     TimelineComponent* timeline = visible ? ResolveTimeline() : nullptr;

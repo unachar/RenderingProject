@@ -3,6 +3,7 @@
 class AnimationPreviewWindow
 {
   public:
+    static void BeginFrame();
     static void Draw(bool* open);
     static void Render();
     static void Shutdown();

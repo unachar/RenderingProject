@@ -1,4 +1,5 @@
 ﻿#include "pch.h"
+#include "editorworkspace.h"
 #include "editorscenenavigation.h"
 #include "imguimanager.h"
 #include <unordered_map>
@@ -62,9 +63,11 @@ namespace
 
 void ImGuiManager::DrawSceneViewWindow()
 {
-    m_IsSceneViewHovered = false;
+    const bool previousHovered = m_IsSceneViewHovered;
+    const auto previousPosition = m_SceneViewPos;
+    const auto previousSize = m_SceneViewSize;
     ImGui::SetNextWindowSize(ImVec2(860.0f, 520.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("シーンビュー"))
+    if (!EditorWindowRegistry::BeginEditorWindow("シーンビュー", &m_ShowSceneViewWindow))
     {
         ImGui::End();
         return;
@@ -123,7 +126,7 @@ void ImGuiManager::DrawSceneViewWindow()
 
     ImGui::Separator();
     const bool sceneFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-    if (sceneFocused && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing() &&
+    if (sceneFocused && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsingAny() &&
         ImGui::IsKeyPressed(ImGuiKey_Delete, false))
     {
         DeleteSelectedEntity();
@@ -160,12 +163,14 @@ void ImGuiManager::DrawSceneViewWindow()
 
     D3D12_GPU_DESCRIPTOR_HANDLE handle = RenderTargets::GetEditorSceneSrvHandle();
     ImGui::Image((ImTextureData*)handle.ptr, imageSize);
-    m_IsSceneViewHovered = ImGui::IsItemHovered();
+    const bool thisHovered = ImGui::IsItemHovered();
+    m_IsSceneViewHovered = thisHovered;
     DrawMaterialDropTarget();
     VirtualGeometryDebug::DrawViewport(ImGui::GetWindowDrawList(), cursor, imageSize, m_SelectedEntity);
+    ImGuizmo::SetID(static_cast<int>(ImGui::GetID("SceneTransformGizmo")));
     DrawTransformGizmo();
+    m_SceneGizmoCapturesMouse |= ImGuizmo::IsUsing() || (thisHovered && ImGuizmo::IsOver());
     // Unity風のシーンビュー操作（ホイール / 中ボタンパン / Alt+左オービット / Fフォーカス）と統計表示
-    EditorSceneNavigation::Update(m_IsSceneViewHovered, m_SelectedEntity, ImGuizmo::IsUsing());
     EditorSceneNavigation::DrawOverlay(ImGui::GetWindowDrawList(), cursor, imageSize);
 
     if (ImGui::BeginDragDropTarget())
@@ -187,7 +192,18 @@ void ImGuiManager::DrawSceneViewWindow()
     ImGui::SetCursorPos(ImVec2(imageCursor.x, imageCursor.y + available.y + ImGui::GetStyle().ItemSpacing.y));
     ImGui::TextDisabled(
         "左: 選択 / 右ドラッグ+WASD: 飛行 / 中ドラッグ: パン / Alt+左: 回転 / ホイール: ズーム / F: フォーカス");
+    if (!thisHovered && previousHovered)
+    {
+        m_SceneViewPos = previousPosition;
+        m_SceneViewSize = previousSize;
+    }
+    m_IsSceneViewHovered = thisHovered || previousHovered;
     ImGui::End();
+}
+
+void ImGuiManager::UpdateSceneNavigation()
+{
+    EditorSceneNavigation::Update(m_IsSceneViewHovered, m_SelectedEntity, m_SceneGizmoCapturesMouse);
 }
 
 void ImGuiManager::DrawTransformGizmo()
@@ -434,7 +450,7 @@ void ImGuiManager::DrawHierarchyWindow()
     SyncEntitySelection();
     ImGui::SetNextWindowPos(ImVec2(8.0f, 32.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(260.0f, 420.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("ヒエラルキー", &m_ShowHierarchyWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("ヒエラルキー", &m_ShowHierarchyWindow))
     {
         ImGui::End();
         return;
@@ -1121,7 +1137,7 @@ void ImGuiManager::PickEntityFromMouse()
 {
     ImGuiIO& io = ImGui::GetIO();
     if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left) || io.KeyAlt || // Alt+左ドラッグはオービット操作
-        !m_IsSceneViewHovered || ImGuizmo::IsOver() || ImGuizmo::IsUsing())
+        !m_IsSceneViewHovered || m_SceneGizmoCapturesMouse)
     {
         return;
     }

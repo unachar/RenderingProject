@@ -103,6 +103,7 @@ imgui.ini
 *.vgmesh
 /asset/virtualgeometry-cache/*.vgmesh.meta
 /EditorCache/
+/Save/editor_workspaces.json
 
 /Data/Cache/ModelMaps/
 

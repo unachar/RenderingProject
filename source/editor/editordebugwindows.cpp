@@ -1,4 +1,5 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "editorworkspace.h"
 #include "gpuscene/gpuscene.h"
 #include "gpudriven/gpudrivenrenderer.h"
 #include "visibility/gpuvisibility.h"
@@ -33,7 +34,7 @@ using namespace EditorWidgets;
 void ImGuiManager::DrawPerformanceWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(260.0f, 150.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("パフォーマンス", &m_ShowPerformanceWindow, ImGuiWindowFlags_AlwaysAutoResize))
+    if (!EditorWindowRegistry::BeginEditorWindow("パフォーマンス", &m_ShowPerformanceWindow, ImGuiWindowFlags_AlwaysAutoResize))
     {
         ImGui::End();
         return;
@@ -86,7 +87,7 @@ void ImGuiManager::DrawPerformanceWindow()
 void ImGuiManager::DrawRenderDebuggerWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(420.0f, 360.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("描画概要", &m_ShowRenderDebugger))
+    if (!EditorWindowRegistry::BeginEditorWindow("描画概要", &m_ShowRenderDebugger))
     {
         ImGui::End();
         return;
@@ -117,22 +118,23 @@ void ImGuiManager::DrawRenderFeatureWindows()
 {
     const struct FeatureWindow
     {
+        const char* Id;
         const char* Title;
         bool* IsOpen;
         void (*DrawContent)();
     } windows[] = {
-        {"GPU Scene", &m_ShowGpuSceneWindow, GpuScene::DrawDebug},
-        {"GPU Driven Rendering", &m_ShowGpuDrivenWindow, GPUDrivenRenderer::DrawDebug},
-        {"Visibility", &m_ShowVisibilityWindow, GPUVisibility::DrawDebug},
-        {"Mesh Shader", &m_ShowMeshShaderWindow, MeshShaderRenderer::DrawDebug},
-        {"Nanite / LOD", &m_ShowVirtualGeometryWindow, VirtualGeometryDebug::DrawControls},
-        {"プロシージャルクラウド", &m_ShowCloudWindow, CloudRenderer::DrawDebugUI},
-        {"テクスチャ一覧", &m_ShowTextureListWindow, DrawTextureListContent},
+        {"gpu_scene", "GPU Scene", &m_ShowGpuSceneWindow, GpuScene::DrawDebug},
+        {"gpu_driven", "GPU Driven Rendering", &m_ShowGpuDrivenWindow, GPUDrivenRenderer::DrawDebug},
+        {"visibility", "Visibility", &m_ShowVisibilityWindow, GPUVisibility::DrawDebug},
+        {"mesh_shader", "Mesh Shader", &m_ShowMeshShaderWindow, MeshShaderRenderer::DrawDebug},
+        {"virtual_geometry", "Nanite / LOD", &m_ShowVirtualGeometryWindow, VirtualGeometryDebug::DrawControls},
+        {"clouds", "プロシージャルクラウド", &m_ShowCloudWindow, CloudRenderer::DrawDebugUI},
+        {"textures", "テクスチャ一覧", &m_ShowTextureListWindow, DrawTextureListContent},
     };
 
     for (const auto& window : windows)
     {
-        if (!*window.IsOpen)
+        if (!*window.IsOpen || !EditorWorkspaceManager::Get().IsAreaDrawn(window.Id))
         {
             continue;
         }
@@ -163,7 +165,7 @@ void ImGuiManager::DrawTextureListContent()
 void ImGuiManager::DrawGBufferWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(700.0f, 560.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Gバッファ", &m_ShowGBufferWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("Gバッファ", &m_ShowGBufferWindow))
     {
         ImGui::End();
         return;
@@ -251,7 +253,7 @@ void ImGuiManager::DrawGBufferWindow()
 void ImGuiManager::DrawAtmosphereWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(470.0f, 680.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("大気シミュレーション", &m_ShowAtmosphereWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("大気シミュレーション", &m_ShowAtmosphereWindow))
     {
         ImGui::End();
         return;
@@ -363,7 +365,7 @@ void ImGuiManager::DrawLogWindow()
 {
     static ImGuiTextFilter logFilter;
     ImGui::SetNextWindowSize(ImVec2(620.0f, 220.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("ログ", &m_ShowLogWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("ログ", &m_ShowLogWindow))
     {
         ImGui::End();
         return;
@@ -413,7 +415,7 @@ void ImGuiManager::DrawLogWindow()
 void ImGuiManager::DrawMeshOutlineWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(760.0f, 420.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("メッシュ単位のアウトライン", &m_ShowMeshOutlineWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("メッシュ単位のアウトライン", &m_ShowMeshOutlineWindow))
     {
         ImGui::End();
         return;
@@ -442,7 +444,7 @@ void ImGuiManager::DrawMeshOutlineWindow()
 void ImGuiManager::DrawMeshShadingWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(760.0f, 420.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("メッシュ単位のシェーディング", &m_ShowMeshShadingWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("メッシュ単位のシェーディング", &m_ShowMeshShadingWindow))
     {
         ImGui::End();
         return;

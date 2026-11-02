@@ -1,8 +1,9 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "envflags.h"
 #include "thumbnailvalidation.h"
 #include "materialmanager.h"
 #include "materialpreview.h"
+#include "materialgrapheditor.h"
 #include "materialvalidation.h"
 #include "cloud/cloudrenderer.h"
 #include "renderingvalidation.h"
@@ -44,6 +45,7 @@
 #include "gbufferpreview.h"
 
 #include "editorwidgets.h"
+#include "editorworkspace.h"
 #include <imgui_internal.h> // DockBuilder は同梱の docking ブランチで提供される。
 
 using namespace EditorWidgets;
@@ -177,6 +179,8 @@ bool ImGuiManager::Init(HWND hwnd, ID3D12Device* device, ID3D12CommandQueue* com
 
 void ImGuiManager::Uninit()
 {
+    MaterialGraphEditor::Shutdown();
+    EditorWorkspaceManager::Get().Shutdown();
     SequencerEditorBridge::Shutdown();
     GBufferPreview::Shutdown();
     ImGui_ImplDX12_Shutdown();
@@ -217,6 +221,8 @@ void ImGuiManager::Update()
     // シーンの切り替え・新規作成・終了は、描画前のこの位置でまとめて実行する
     ProcessSceneAction();
 
+    InitializeWorkspaces();
+    EditorWorkspaceManager::Get().BeginFrame();
     ImGui_ImplDX12_NewFrame();
     ImGui_ImplWin32_NewFrame();
     MaterialValidation::BeforeEditorFrame();
@@ -277,7 +283,7 @@ void ImGuiManager::Update()
     }
     ProcessDroppedFiles();
     const bool canSwitchGizmo = !io.WantTextInput && !ImGui::IsAnyItemActive() &&
-                                !ImGui::IsMouseDown(ImGuiMouseButton_Right) && !ImGuizmo::IsUsing();
+                                !ImGui::IsMouseDown(ImGuiMouseButton_Right) && !ImGuizmo::IsUsingAny();
     if (canSwitchGizmo)
     {
         // Unityと同じ割り当て
@@ -307,7 +313,7 @@ void ImGuiManager::Update()
     }
     // Ctrl+D：複製（Unityと同じ）。入力中・ギズモ操作中・カメラ飛行中・マテリアルエディター操作中は無効
     if (!io.WantTextInput && io.KeyCtrl && !io.KeyShift && !io.KeyAlt && !ImGui::IsAnyItemActive() &&
-        !ImGuizmo::IsUsing() && !ImGui::IsMouseDown(ImGuiMouseButton_Right) && !MaterialEditorHasFocus() &&
+        !ImGuizmo::IsUsingAny() && !ImGui::IsMouseDown(ImGuiMouseButton_Right) && !MaterialEditorHasFocus() &&
         !m_AssetBrowserFocused && // アセットブラウザでの Ctrl+D はアセットの複製
         ImGui::IsKeyPressed(ImGuiKey_D, false))
     {
@@ -341,221 +347,21 @@ void ImGuiManager::Update()
     }
     DrawEditorMainMenu();
     DrawDockSpace();
-    DrawSceneViewWindow();
-    PickEntityFromMouse();
-    if (m_ShowHierarchyWindow)
-    {
-        DrawHierarchyWindow();
-    }
+    m_IsSceneViewHovered = false;
+    m_SceneGizmoCapturesMouse = false;
+    m_AssetBrowserFocused = false;
+    BeginMaterialEditorFrame();
+    AnimationPreviewWindow::BeginFrame();
+    EditorWorkspaceManager::Get().Registry().DrawVisibleWindows();
+    UpdateSceneNavigation();
+    if (m_IsSceneViewHovered)
+        PickEntityFromMouse();
     DrawPrimitiveSettingsWindow();
-    if (m_ShowInspectorWindow)
-    {
-        DrawInspectorWindow();
-    }
-    if (m_ShowAssetBrowser)
-    {
-        DrawAssetBrowserWindow();
-    }
-    if (m_ShowRenderDebugger)
-    {
-        DrawRenderDebuggerWindow();
-    }
     DrawRenderFeatureWindows();
-    if (m_ShowGBufferWindow)
-    {
-        DrawGBufferWindow();
-    }
-    if (m_ShowLogWindow)
-    {
-        DrawLogWindow();
-    }
-    if (m_ShowPerformanceWindow)
-    {
-        DrawPerformanceWindow();
-    }
-    if (m_ShowMaterialEditorWindow)
-    {
-        DrawMaterialEditorWindow();
-    }
     DrawMaterialAssetClosePrompt();
-    if (m_ShowRimSettingsWindow)
-    {
-        DrawRimSettingsWindow();
-    }
-    if (m_ShowMeshOutlineWindow)
-    {
-        DrawMeshOutlineWindow();
-    }
-    if (m_ShowMeshShadingWindow)
-    {
-        DrawMeshShadingWindow();
-    }
-    if (m_ShowAtmosphereWindow)
-    {
-        DrawAtmosphereWindow();
-    }
-    if (m_ShowProceduralWindow)
-    {
-        DrawProceduralWindow();
-    }
-    if (m_ShowProceduralStudioWindow)
-    {
-        ProceduralStudioWindow::Draw(&m_ShowProceduralStudioWindow);
-    }
-    AnimationPreviewWindow::Draw(&m_ShowAnimationPreviewWindow);
-    SequencerEditorBridge::Draw(&m_ShowSequencerWindow);
-    if (m_ShowRaytracingWindow)
-    {
-        DrawRaytracingWindow();
-    }
-    if (m_ShowProjectSettingsWindow)
-    {
-        DrawProjectSettingsWindow();
-    }
-    if (m_ShowPhysicsSettingsWindow)
-    {
-        DrawPhysicsSettingsWindow();
-    }
 
-    if (m_ShowAdjustmentPanel)
-    {
-        ImGui::SetNextWindowSize(ImVec2(360.0f, 520.0f), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin("レンダーコントロール", &m_ShowAdjustmentPanel))
-        {
-            const float fps = World::GetFrameRate();
-            ImVec4 healthyColor;
-            if (fps >= 55.0f)
-            {
-                healthyColor = ImVec4(0.34f, 0.86f, 0.62f, 1.0f);
-            }
-            else
-            {
-                ImVec4 statusColor;
-                if (fps >= 30.0f)
-                {
-                    statusColor = ImVec4(0.96f, 0.72f, 0.28f, 1.0f);
-                }
-                else
-                {
-                    statusColor = ImVec4(0.96f, 0.38f, 0.38f, 1.0f);
-                }
-                healthyColor = (statusColor);
-            }
-            ImGui::TextColored(ImVec4(0.28f, 0.78f, 0.92f, 1.0f), "DIRECTX 12  /  DEFERRED");
-            ImGui::SameLine();
-            ImGui::TextColored(healthyColor, "%.1f FPS", fps);
-            ImGui::TextDisabled("%u x %u  |  internal %u x %u  |  %.2f ms", GraphicsDevice::GetWidth(),
-                                GraphicsDevice::GetHeight(), GraphicsDevice::GetSceneWidth(),
-                                GraphicsDevice::GetSceneHeight(), World::GetFrameTimeMs());
-
-            ImGui::Spacing();
-            ImGui::SeparatorText("映像パイプライン");
-            m_cameraPostProcess = static_cast<int>(Camera::GetCameraPostProcess());
-            if (m_cameraPostProcess < 0 || m_cameraPostProcess >= static_cast<int>(PostProcessType::COUNT))
-            {
-                m_cameraPostProcess = 0;
-            }
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::Combo("##CameraPostProcess", &m_cameraPostProcess, m_cameraPostProcessModeItems,
-                             IM_ARRAYSIZE(m_cameraPostProcessModeItems)))
-            {
-                Camera::SetCameraPostProcess(static_cast<PostProcessType>(m_cameraPostProcess));
-            }
-
-            m_antiAliasingMode = static_cast<int>(RendererState::m_AntiAliasingMode);
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::Combo("アンチエイリアシング", &m_antiAliasingMode, m_antiAliasingModeItems,
-                             IM_ARRAYSIZE(m_antiAliasingModeItems)))
-            {
-                RendererState::m_AntiAliasingMode = static_cast<AntiAliasingMode>(m_antiAliasingMode);
-                RendererState::m_TaaFrameIndex = 0;
-            }
-
-            DrawUpscaleControls();
-
-            ImGui::Spacing();
-            ImGui::SeparatorText("カラー");
-            if (ImGui::Checkbox("HDR シーンカラー", &m_HdrEnabled))
-            {
-                RenderConfiguration::SetHdr(m_HdrEnabled);
-            }
-            ImGui::SameLine();
-            ImGui::Checkbox("ACES", &m_ToneMapEnabled);
-            ImGui::SetNextItemWidth(-1.0f);
-            ImGui::SliderFloat("露光", &m_Exposure, 0.01f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
-
-            float postProcessIntensity = Camera::GetCameraPostProcessIntensity();
-            const PostProcessType activePostProcess = Camera::GetCameraPostProcess();
-            ImGui::BeginDisabled(activePostProcess == PostProcessType::NONE);
-            ImGui::SetNextItemWidth(-1.0f);
-            float maxPostProcessIntensity;
-            if (activePostProcess == PostProcessType::BLOOM)
-            {
-                maxPostProcessIntensity = 5.0f;
-            }
-            else
-            {
-                maxPostProcessIntensity = 1.0f;
-            }
-            if (ImGui::SliderFloat("エフェクト強度", &postProcessIntensity, 0.0f, maxPostProcessIntensity, "%.2f"))
-            {
-                Camera::SetCameraPostProcessIntensity(postProcessIntensity);
-            }
-            if (activePostProcess == PostProcessType::BLOOM)
-            {
-                float bloomThreshold = Camera::GetCameraBloomThreshold();
-                float bloomSoftKnee = Camera::GetCameraBloomSoftKnee();
-                float bloomRadius = Camera::GetCameraBloomRadius();
-                ImGui::SetNextItemWidth(-1.0f);
-                if (ImGui::SliderFloat("Bloom しきい値", &bloomThreshold, 0.0f, 16.0f, "%.2f"))
-                {
-                    Camera::SetCameraBloomThreshold(bloomThreshold);
-                }
-                ImGui::SetNextItemWidth(-1.0f);
-                if (ImGui::SliderFloat("Bloom Soft Knee", &bloomSoftKnee, 0.0f, 1.0f, "%.2f"))
-                {
-                    Camera::SetCameraBloomSoftKnee(bloomSoftKnee);
-                }
-                ImGui::SetNextItemWidth(-1.0f);
-                if (ImGui::SliderFloat("Bloom 半径", &bloomRadius, 0.25f, 4.0f, "%.2f"))
-                {
-                    Camera::SetCameraBloomRadius(bloomRadius);
-                }
-            }
-            ImGui::EndDisabled();
-
-            ImGui::Spacing();
-            ImGui::SeparatorText("フレーム制御");
-            DrawFpsMeter();
-            bool vsyncEnabled = World::IsVSyncEnabled();
-            if (ImGui::Checkbox("垂直同期", &vsyncEnabled))
-            {
-                World::SetVSyncEnabled(vsyncEnabled);
-            }
-            ImGui::SameLine();
-            bool fixedFrameRateEnabled = World::IsFixedFrameRateEnabled();
-            if (ImGui::Checkbox("FPS 固定", &fixedFrameRateEnabled))
-            {
-                World::SetFixedFrameRateEnabled(fixedFrameRateEnabled);
-            }
-            int targetFrameRate = World::GetTargetFrameRate();
-            ImGui::BeginDisabled(!fixedFrameRateEnabled);
-            ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::SliderInt("目標 FPS", &targetFrameRate, 15, 360))
-            {
-                World::SetTargetFrameRate(targetFrameRate);
-            }
-            ImGui::EndDisabled();
-
-            ImGui::Spacing();
-            if (ImGui::Button("GBuffer を表示", ImVec2(-1.0f, 0.0f)))
-            {
-                m_ShowGBufferWindow = true;
-            }
-        }
-        ImGui::End();
-    }
-
+    MaterialGraphEditor::SaveRecovery();
+    EditorWorkspaceManager::Get().AutoSave();
     DrawScenePopups();
     FinalizeUndoCaptureIfIdle();
     UpdateSceneTracking();
@@ -570,7 +376,6 @@ void ImGuiManager::Update()
 
 void ImGuiManager::DrawDockSpace()
 {
-    ImGuiDockNodeFlags dockspaceFlags = ImGuiDockNodeFlags_PassthruCentralNode;
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -586,27 +391,14 @@ void ImGuiManager::DrawDockSpace()
     ImGui::Begin("EditorDockSpace", nullptr, hostFlags);
     ImGui::PopStyleVar(3);
 
-    ImGuiID dockspaceId = ImGui::GetID("MainEditorDockSpace");
-    if (m_ResetEditorLayout || !ImGui::DockBuilderGetNode(dockspaceId))
+    auto& workspaces = EditorWorkspaceManager::Get();
+    workspaces.DrawTabs();
+    if (m_ResetEditorLayout)
     {
-        ImGui::DockBuilderRemoveNode(dockspaceId);
-        ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
-        ImGui::DockBuilderSetNodeSize(dockspaceId, viewport->WorkSize);
-        ImGuiID center = dockspaceId;
-        const ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.27f, nullptr, &center);
-        const ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
-        const ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.32f, nullptr, &center);
-        ImGui::DockBuilderDockWindow("ヒエラルキー", left);
-        ImGui::DockBuilderDockWindow("シーンビュー", center);
-        ImGui::DockBuilderDockWindow("インスペクター", right);
-        ImGui::DockBuilderDockWindow("レンダーコントロール", right);
-        ImGui::DockBuilderDockWindow("プロジェクト", bottom);
-        ImGui::DockBuilderDockWindow("ログ", bottom);
-        ImGui::DockBuilderDockWindow("シーケンサー", bottom);
-        ImGui::DockBuilderFinish(dockspaceId);
+        workspaces.RequestReset();
         m_ResetEditorLayout = false;
     }
-    ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), dockspaceFlags);
+    workspaces.DrawDockSpace();
     ImGui::End();
 }
 
@@ -651,46 +443,10 @@ void ImGuiManager::DrawEditorMainMenu()
     }
     if (ImGui::BeginMenu("ウィンドウ"))
     {
-        ImGui::MenuItem("ヒエラルキー", nullptr, &m_ShowHierarchyWindow);
-        ImGui::MenuItem("インスペクター", nullptr, &m_ShowInspectorWindow);
-        ImGui::MenuItem("レンダーコントロール", nullptr, &m_ShowAdjustmentPanel);
-        ImGui::MenuItem("プロジェクト", nullptr, &m_ShowAssetBrowser);
-        if (ImGui::BeginMenu("描画デバッグ"))
-        {
-            ImGui::MenuItem("描画概要", nullptr, &m_ShowRenderDebugger);
-            ImGui::MenuItem("GPU Scene", nullptr, &m_ShowGpuSceneWindow);
-            ImGui::MenuItem("GPU Driven Rendering", nullptr, &m_ShowGpuDrivenWindow);
-            ImGui::MenuItem("Visibility", nullptr, &m_ShowVisibilityWindow);
-            ImGui::MenuItem("Mesh Shader", nullptr, &m_ShowMeshShaderWindow);
-            ImGui::MenuItem("Nanite / LOD", nullptr, &m_ShowVirtualGeometryWindow);
-            ImGui::MenuItem("プロシージャルクラウド", nullptr, &m_ShowCloudWindow);
-            ImGui::MenuItem("テクスチャ一覧", nullptr, &m_ShowTextureListWindow);
-            ImGui::EndMenu();
-        }
-        ImGui::MenuItem("Gバッファ", nullptr, &m_ShowGBufferWindow);
-        ImGui::MenuItem("ログ", nullptr, &m_ShowLogWindow);
-        ImGui::MenuItem("パフォーマンス", nullptr, &m_ShowPerformanceWindow);
-        ImGui::MenuItem("環境設定", nullptr, &m_ShowProjectSettingsWindow);
-        ImGui::MenuItem("物理設定", nullptr, &m_ShowPhysicsSettingsWindow);
-        ImGui::MenuItem("マテリアルエディター", nullptr, &m_ShowMaterialEditorWindow);
-        ImGui::MenuItem("リム設定", nullptr, &m_ShowRimSettingsWindow);
-        ImGui::MenuItem("大気シミュレーション", nullptr, &m_ShowAtmosphereWindow);
-        ImGui::MenuItem("プロシージャルエディター", nullptr, &m_ShowProceduralWindow);
-        ImGui::MenuItem("プロシージャルスタジオ (テクスチャ / モデル / フラクタル)", nullptr,
-                        &m_ShowProceduralStudioWindow);
-        ImGui::MenuItem("アニメーションプレビュー", nullptr, &m_ShowAnimationPreviewWindow);
-        ImGui::MenuItem("シーケンサー (Timeline)", nullptr, &m_ShowSequencerWindow);
-        ImGui::MenuItem("レイトレーシング", nullptr, &m_ShowRaytracingWindow);
+        EditorWorkspaceManager::Get().Registry().DrawWindowMenu();
         ImGui::Separator();
-        ImGui::MenuItem("メッシュ単位のアウトライン", nullptr, &m_ShowMeshOutlineWindow);
-        ImGui::MenuItem("メッシュ単位のシェーディング", nullptr, &m_ShowMeshShadingWindow);
-        ImGui::Separator();
-        if (ImGui::MenuItem("標準レイアウトに戻す"))
-        {
-            m_ResetEditorLayout = true;
-            m_ShowHierarchyWindow = m_ShowInspectorWindow = m_ShowAssetBrowser = true;
-            m_ShowAdjustmentPanel = true;
-        }
+        if (ImGui::MenuItem("Workspaceの初期レイアウトに戻す"))
+            EditorWorkspaceManager::Get().RequestReset();
         ImGui::EndMenu();
     }
     ImGui::SameLine();
@@ -991,3 +747,145 @@ void ImGuiManager::StyleModernSlim()
 }
 
 
+
+void ImGuiManager::DrawAdjustmentPanel()
+{
+    if (m_ShowAdjustmentPanel)
+    {
+        ImGui::SetNextWindowSize(ImVec2(360.0f, 520.0f), ImGuiCond_FirstUseEver);
+        if (EditorWindowRegistry::BeginEditorWindow("レンダーコントロール", &m_ShowAdjustmentPanel))
+        {
+            const float fps = World::GetFrameRate();
+            ImVec4 healthyColor;
+            if (fps >= 55.0f)
+            {
+                healthyColor = ImVec4(0.34f, 0.86f, 0.62f, 1.0f);
+            }
+            else
+            {
+                ImVec4 statusColor;
+                if (fps >= 30.0f)
+                {
+                    statusColor = ImVec4(0.96f, 0.72f, 0.28f, 1.0f);
+                }
+                else
+                {
+                    statusColor = ImVec4(0.96f, 0.38f, 0.38f, 1.0f);
+                }
+                healthyColor = (statusColor);
+            }
+            ImGui::TextColored(ImVec4(0.28f, 0.78f, 0.92f, 1.0f), "DIRECTX 12  /  DEFERRED");
+            ImGui::SameLine();
+            ImGui::TextColored(healthyColor, "%.1f FPS", fps);
+            ImGui::TextDisabled("%u x %u  |  internal %u x %u  |  %.2f ms", GraphicsDevice::GetWidth(),
+                                GraphicsDevice::GetHeight(), GraphicsDevice::GetSceneWidth(),
+                                GraphicsDevice::GetSceneHeight(), World::GetFrameTimeMs());
+
+            ImGui::Spacing();
+            ImGui::SeparatorText("映像パイプライン");
+            m_cameraPostProcess = static_cast<int>(Camera::GetCameraPostProcess());
+            if (m_cameraPostProcess < 0 || m_cameraPostProcess >= static_cast<int>(PostProcessType::COUNT))
+            {
+                m_cameraPostProcess = 0;
+            }
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::Combo("##CameraPostProcess", &m_cameraPostProcess, m_cameraPostProcessModeItems,
+                             IM_ARRAYSIZE(m_cameraPostProcessModeItems)))
+            {
+                Camera::SetCameraPostProcess(static_cast<PostProcessType>(m_cameraPostProcess));
+            }
+
+            m_antiAliasingMode = static_cast<int>(RendererState::m_AntiAliasingMode);
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::Combo("アンチエイリアシング", &m_antiAliasingMode, m_antiAliasingModeItems,
+                             IM_ARRAYSIZE(m_antiAliasingModeItems)))
+            {
+                RendererState::m_AntiAliasingMode = static_cast<AntiAliasingMode>(m_antiAliasingMode);
+                RendererState::m_TaaFrameIndex = 0;
+            }
+
+            DrawUpscaleControls();
+
+            ImGui::Spacing();
+            ImGui::SeparatorText("カラー");
+            if (ImGui::Checkbox("HDR シーンカラー", &m_HdrEnabled))
+            {
+                RenderConfiguration::SetHdr(m_HdrEnabled);
+            }
+            ImGui::SameLine();
+            ImGui::Checkbox("ACES", &m_ToneMapEnabled);
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::SliderFloat("露光", &m_Exposure, 0.01f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+
+            float postProcessIntensity = Camera::GetCameraPostProcessIntensity();
+            const PostProcessType activePostProcess = Camera::GetCameraPostProcess();
+            ImGui::BeginDisabled(activePostProcess == PostProcessType::NONE);
+            ImGui::SetNextItemWidth(-1.0f);
+            float maxPostProcessIntensity;
+            if (activePostProcess == PostProcessType::BLOOM)
+            {
+                maxPostProcessIntensity = 5.0f;
+            }
+            else
+            {
+                maxPostProcessIntensity = 1.0f;
+            }
+            if (ImGui::SliderFloat("エフェクト強度", &postProcessIntensity, 0.0f, maxPostProcessIntensity, "%.2f"))
+            {
+                Camera::SetCameraPostProcessIntensity(postProcessIntensity);
+            }
+            if (activePostProcess == PostProcessType::BLOOM)
+            {
+                float bloomThreshold = Camera::GetCameraBloomThreshold();
+                float bloomSoftKnee = Camera::GetCameraBloomSoftKnee();
+                float bloomRadius = Camera::GetCameraBloomRadius();
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::SliderFloat("Bloom しきい値", &bloomThreshold, 0.0f, 16.0f, "%.2f"))
+                {
+                    Camera::SetCameraBloomThreshold(bloomThreshold);
+                }
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::SliderFloat("Bloom Soft Knee", &bloomSoftKnee, 0.0f, 1.0f, "%.2f"))
+                {
+                    Camera::SetCameraBloomSoftKnee(bloomSoftKnee);
+                }
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::SliderFloat("Bloom 半径", &bloomRadius, 0.25f, 4.0f, "%.2f"))
+                {
+                    Camera::SetCameraBloomRadius(bloomRadius);
+                }
+            }
+            ImGui::EndDisabled();
+
+            ImGui::Spacing();
+            ImGui::SeparatorText("フレーム制御");
+            DrawFpsMeter();
+            bool vsyncEnabled = World::IsVSyncEnabled();
+            if (ImGui::Checkbox("垂直同期", &vsyncEnabled))
+            {
+                World::SetVSyncEnabled(vsyncEnabled);
+            }
+            ImGui::SameLine();
+            bool fixedFrameRateEnabled = World::IsFixedFrameRateEnabled();
+            if (ImGui::Checkbox("FPS 固定", &fixedFrameRateEnabled))
+            {
+                World::SetFixedFrameRateEnabled(fixedFrameRateEnabled);
+            }
+            int targetFrameRate = World::GetTargetFrameRate();
+            ImGui::BeginDisabled(!fixedFrameRateEnabled);
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::SliderInt("目標 FPS", &targetFrameRate, 15, 360))
+            {
+                World::SetTargetFrameRate(targetFrameRate);
+            }
+            ImGui::EndDisabled();
+
+            ImGui::Spacing();
+            if (ImGui::Button("GBuffer を表示", ImVec2(-1.0f, 0.0f)))
+            {
+                m_ShowGBufferWindow = true;
+            }
+        }
+        ImGui::End();
+    }
+}

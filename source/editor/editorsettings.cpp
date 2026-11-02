@@ -1,4 +1,5 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "editorworkspace.h"
 #include "gpumemorybudget.h"
 #include "rendertargets.h"
 #include "performancegovernor.h"
@@ -54,7 +55,7 @@ using namespace EditorWidgets;
 void ImGuiManager::DrawPhysicsSettingsWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(430.0f, 420.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("物理設定", &m_ShowPhysicsSettingsWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("物理設定", &m_ShowPhysicsSettingsWindow))
     {
         ImGui::End();
         return;
@@ -155,7 +156,7 @@ void ImGuiManager::DrawPhysicsSettingsWindow()
 void ImGuiManager::DrawProjectSettingsWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(520.0f, 560.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("環境設定", &m_ShowProjectSettingsWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("環境設定", &m_ShowProjectSettingsWindow))
     {
         ImGui::End();
         return;

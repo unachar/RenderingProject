@@ -1,0 +1,228 @@
+{
+  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":604,\"y\":69}},\"node:10\":{\"location\":{\"x\":40,\"y\":29}},\"node:13\":{\"location\":{\"x\":40,\"y\":170}},\"node:16\":{\"location\":{\"x\":40,\"y\":280}},\"node:19\":{\"location\":{\"x\":40,\"y\":390}},\"node:22\":{\"location\":{\"x\":364,\"y\":403}},\"node:26\":{\"location\":{\"x\":931,\"y\":435}},\"node:32\":{\"location\":{\"x\":344,\"y\":573}},\"node:34\":{\"location\":{\"x\":120,\"y\":619}}},\"selection\":null,\"view\":{\"scroll\":{\"x\":9.9999847412109375,\"y\":44.9999732971191406},\"visible_rect\":{\"max\":{\"x\":1276,\"y\":560},\"min\":{\"x\":6.66666698455810547,\"y\":30}},\"zoom\":1.5}}",
+  "links" : 
+  [
+    {
+      "id" : 12,
+      "source" : 11,
+      "target" : 2
+    },
+    {
+      "id" : 15,
+      "source" : 14,
+      "target" : 3
+    },
+    {
+      "id" : 21,
+      "source" : 20,
+      "target" : 6
+    },
+    {
+      "id" : 30,
+      "source" : 17,
+      "target" : 23
+    },
+    {
+      "id" : 31,
+      "source" : 25,
+      "target" : 4
+    }
+  ],
+  "nodes" : 
+  [
+    {
+      "id" : 1,
+      "inputs" : 
+      [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "kind" : "Material Output",
+      "name" : "Material Output",
+      "output" : 0,
+      "position" : 
+      [
+        604.0,
+        69.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 10,
+      "inputs" : [],
+      "kind" : "Color Parameter",
+      "name" : "Base Color",
+      "output" : 11,
+      "position" : 
+      [
+        40.0,
+        29.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "id" : 13,
+      "inputs" : [],
+      "kind" : "Scalar Parameter",
+      "name" : "Metallic",
+      "output" : 14,
+      "position" : 
+      [
+        40.0,
+        170.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.21299999952316284,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 16,
+      "inputs" : [],
+      "kind" : "Scalar Parameter",
+      "name" : "Roughness",
+      "output" : 17,
+      "position" : 
+      [
+        40.0,
+        280.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.5,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 19,
+      "inputs" : [],
+      "kind" : "Vector Parameter",
+      "name" : "Emissive",
+      "output" : 20,
+      "position" : 
+      [
+        40.0,
+        390.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 22,
+      "inputs" : 
+      [
+        23,
+        24
+      ],
+      "kind" : "Multiply",
+      "name" : "Multiply",
+      "output" : 25,
+      "position" : 
+      [
+        364.0,
+        403.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 26,
+      "inputs" : 
+      [
+        27,
+        28
+      ],
+      "kind" : "Multiply",
+      "name" : "Multiply",
+      "output" : 29,
+      "position" : 
+      [
+        931.0,
+        435.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "version" : 1
+}

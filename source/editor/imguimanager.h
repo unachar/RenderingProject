@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "pch.h"
 #include "ecs.h"
 #include "materialasset.h"
@@ -37,6 +37,7 @@ class ImGuiManager
     inline static int m_antiAliasingMode = 0;
     inline static const char* m_antiAliasingModeItems[] = {"なし", "FXAA", "TAA"};
     inline static EntityID m_SelectedEntity = g_kINVALID_ENTITY;
+    inline static bool m_ShowSceneViewWindow = true;
     inline static bool m_ShowHierarchyWindow = true;
     inline static bool m_ShowInspectorWindow = true;
     inline static bool m_ResetEditorLayout = false;
@@ -77,6 +78,7 @@ class ImGuiManager
     inline static ImVec2 m_SceneViewPos = {0.0f, 0.0f};
     inline static ImVec2 m_SceneViewSize = {1.0f, 1.0f};
     inline static bool m_IsSceneViewHovered = false;
+    inline static bool m_SceneGizmoCapturesMouse = false;
     inline static ImVec2 m_LastPickMouse = {-10000.0f, -10000.0f};
     inline static vector<EntityID> m_LastPickCandidates;
     inline static filesystem::path m_AssetRoot = "asset";
@@ -167,7 +169,10 @@ class ImGuiManager
 
     static void StyleModernSlim();
     static void DrawDockSpace();
+    static void InitializeWorkspaces();
+    static void DrawAdjustmentPanel();
     static void DrawSceneViewWindow();
+    static void UpdateSceneNavigation();
     static void DrawTransformGizmo();
     static void DrawEditorMainMenu();
     static void DrawHierarchyWindow();
@@ -194,6 +199,7 @@ class ImGuiManager
     static void DrawMaterialAssetClosePrompt();
     static void MaterialEditorUndo(bool redo);
     static bool MaterialEditorHasFocus();
+    static void BeginMaterialEditorFrame();
     static void AssignMaterialAsset(EntityID entity, size_t slot, AssetHandle handle);
     static void DrawMaterialDropTarget();
     static void DrawRimSettingsWindow();

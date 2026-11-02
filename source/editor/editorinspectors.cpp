@@ -1,4 +1,5 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "editorworkspace.h"
 #include "materialmanager.h"
 #include "assetthumbnailmanager.h"
 #include "modelmeshtable.h"
@@ -428,7 +429,7 @@ void ImGuiManager::DrawInspectorWindow()
     m_TimelineAnimationDropTargets.clear();
     SyncEntitySelection();
     ImGui::SetNextWindowSize(ImVec2(312.0f, 520.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("インスペクター", &m_ShowInspectorWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("インスペクター", &m_ShowInspectorWindow))
     {
         ImGui::End();
         return;
@@ -609,7 +610,7 @@ void ImGuiManager::DrawInspectorWindow()
 void ImGuiManager::DrawLegacyMaterialEditorWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(380.0f, 560.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("マテリアルエディター", &m_ShowMaterialEditorWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("マテリアルエディター", &m_ShowMaterialEditorWindow))
     {
         ImGui::End();
         return;
@@ -639,7 +640,7 @@ void ImGuiManager::DrawLegacyMaterialEditorWindow()
 void ImGuiManager::DrawRimSettingsWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(420.0f, 560.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("リム設定", &m_ShowRimSettingsWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("リム設定", &m_ShowRimSettingsWindow))
     {
         ImGui::End();
         return;

@@ -349,7 +349,7 @@ void ImGuiManager::BeginUndoCapture(EntityID entity, const EntitySnapshot& befor
 
 void ImGuiManager::FinalizeUndoCaptureIfIdle(bool force)
 {
-    if (!m_HasPendingUndo || (!force && (ImGui::IsAnyItemActive() || ImGuizmo::IsUsing())))
+    if (!m_HasPendingUndo || (!force && (ImGui::IsAnyItemActive() || ImGuizmo::IsUsingAny())))
     {
         return;
     }
