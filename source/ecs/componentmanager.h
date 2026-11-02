@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "ecs.h"
 #include "materialasset.h"
 #include "procedural/proceduraltextureparams.h"
@@ -343,6 +343,29 @@ struct MaterialComponent
     vector<MeshOutlineOverride> ToonMeshOutlineOverrides{};
     vector<float> ToonMeshOutlineWidthScales{};
     vector<MeshShadingOverride> MeshShadingOverrides{};
+    // メカクレ（前髪越しに目・眉を透かす）。PMX / VRM / FBX 共通。対象メッシュは読み込み時の
+    // 名前分類（MeshSemanticFlags）と下の名前フィルターで決まる。
+    bool MekakureEnabled = false;
+    float MekakureOpacity = 0.55f;      // 髪越しに見える目の不透明度
+    float MekakureDepth = 0.06f;        // 透過を許す奥行き（ワールド単位）。後頭部越しには透けない
+    float MekakureFadeStart = 0.35f;    // N・V がこの値以上で完全に表示
+    float MekakureFadeEnd = 0.05f;      // N・V がこの値以下で非表示（横顔・後ろ向きで消える）
+    int MekakureTargetMask = 60;        // MeshSemantic_Eye | EyeHighlight | Brow | Lash
+    string MekakureIncludeNames;        // 追加対象（カンマ区切り・部分一致）
+    string MekakureExcludeNames;        // 除外（カンマ区切り・部分一致）
+    // 透過マスク：前髪のどこから目を透かすか（学マス方式：髪テクスチャのアルファで範囲と透け具合を制御）
+    int MekakureMaskSource = 0;         // 0: なし, 1: 髪テクスチャのアルファ, 2: 専用マスク画像（R）
+    string MekakureMaskPath;            // 専用マスク画像（髪の UV 空間）
+    float MekakureMaskStrength = 1.0f;  // マスクの効き
+    bool MekakureMaskInvert = false;    // 白黒を反転
+    // ライブトゥーンのマテリアルテクスチャ（トゥーン系クラスのみ）
+    string LiveToonDefPath;             // Def：R = 影しきい値の補正(0.5 で変化なし), G = 境界のぼかし倍率, B = 質感ランプのマスク
+    float LiveToonDefStrength = 1.0f;
+    string LiveToonFacePath;            // 顔陰影反転：R = 影側でも光を残す領域（頬など）
+    float LiveToonFaceStrength = 1.0f;
+    string LiveToonTextureRampPath;     // 質感ランプ：横軸 = 視線角度（正面→縁）
+    float LiveToonTextureRampMultiply = 1.0f;
+    float LiveToonTextureRampAdd = 0.0f;
     float Alpha = 1.0f;
     MaterialShadowMode ShadowMode = MaterialShadowMode::Auto;
     float ShadowCutoff = 0.5f;
@@ -738,3 +761,4 @@ class ComponentManager
         Registry::RemoveComponent(entity, types...);
     }
 };
+

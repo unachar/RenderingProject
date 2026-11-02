@@ -118,26 +118,14 @@ namespace
         // 置き換えたリソースは、このフレームのフェンスが再利用されるまで保持する。
         vector<ComPtr<ID3D12Resource>> Retired;
         UINT Height = 0;
-        // TLAS の再構築スキップ用（同じスロットで前回ビルドした内容）
-        uint64_t TopLevelHash = 0;
-        UINT TopLevelCount = 0;
-        bool TopLevelValid = false;
-        // TLAS のプレビルド情報（インスタンス数が同じなら再照会しない）
-        UINT PrebuildCount = 0;
+        // TLAS のプレビルド情報のキャッシュ。TLAS の必要サイズは「インスタンス数・ビルドフラグ」だけで
+        // 決まる（インスタンスの変換や参照 BLAS には依存しない）ため、同じ条件なら再照会しない。
+        // UINT_MAX は未照会。リソース解放時は g_Frames = {} で初期化される。
+        UINT PrebuildCount = UINT_MAX;
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS PrebuildFlags =
+            D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
         D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO PrebuildSizes{};
     };
-
-    // FNV-1a（64bit）。インスタンス記述子（変換・マスク・BLAS アドレス）の一致判定に使う
-    uint64_t HashBytes(const void* data, size_t size)
-    {
-        const auto* bytes = static_cast<const unsigned char*>(data);
-        uint64_t hash = 14695981039346656037ull;
-        for (size_t i = 0; i < size; ++i)
-        {
-            hash = (hash ^ bytes[i]) * 1099511628211ull;
-        }
-        return hash;
-    }
 
     struct Constants
     {
@@ -760,12 +748,8 @@ namespace
             inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE |
                            D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
         }
-        if (frame.PrebuildCount != g_InstanceCount)
-        {
-            g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &frame.PrebuildSizes);
-            frame.PrebuildCount = g_InstanceCount;
-        }
-        const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes = frame.PrebuildSizes;
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes{};
+        g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &sizes);
         // リフィットは同じ頂点形式でのみ可能。リフィットを重ねると BVH が劣化するため、
         // 一定回数ごとにフルビルドへ切り替える（1 フレームの再構築数は予算で分散）。
         bool update = geometry.Deforming && level.Result && level.Quantized == quantized;
@@ -1172,28 +1156,8 @@ namespace
         g_InstanceCount = static_cast<UINT>(instances.size());
         if (instances.empty())
         {
-            frame.TopLevelValid = false;
             return false;
         }
-        // 最適化：インスタンスが前回このスロットで構築したときと完全に同じで、BLAS の書き込み
-        // （ビルド / リフィット / コンパクション）も無ければ、TLAS は同一なので再構築しない。
-        // 静的シーンやカメラだけが動く場面で、毎フレームの TLAS ビルドとアップロードを省く。
-        bool anyBottomWritten = false;
-        for (const auto& [unused, bottom] : frame.Geometry)
-        {
-            if (bottom.LastBuilt == g_Serial)
-            {
-                anyBottomWritten = true;
-                break;
-            }
-        }
-        const uint64_t instanceHash = HashBytes(instances.data(), instances.size() * sizeof(instances.front()));
-        if (!anyBottomWritten && frame.TopLevelValid && frame.TopLevel && frame.TopLevelHash == instanceHash &&
-            frame.TopLevelCount == g_InstanceCount)
-        {
-            return true;
-        }
-        frame.TopLevelValid = false;
         if (!EnsureBuffer(frame.Instances, instances.size() * sizeof(instances.front()), D3D12_HEAP_TYPE_UPLOAD,
                           D3D12_RESOURCE_STATE_GENERIC_READ, L"TLAS Instance Descriptions"))
         {
@@ -1213,12 +1177,21 @@ namespace
         inputs.NumDescs = g_InstanceCount;
         inputs.InstanceDescs = frame.Instances->GetGPUVirtualAddress();
         inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
-        if (frame.PrebuildCount != g_InstanceCount)
+        // 最適化：ドライバーへのサイズ照会は、インスタンス数かフラグが変わったときだけ行う。
+        // TLAS 自体は従来どおり毎フレーム構築する（構築内容・タイミングは変更なし）。
+        if (frame.PrebuildCount != g_InstanceCount || frame.PrebuildFlags != inputs.Flags)
         {
+            frame.PrebuildSizes = {};
             g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &frame.PrebuildSizes);
             frame.PrebuildCount = g_InstanceCount;
+            frame.PrebuildFlags = inputs.Flags;
         }
         const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes = frame.PrebuildSizes;
+        if (sizes.ResultDataMaxSizeInBytes == 0)
+        {
+            frame.PrebuildCount = UINT_MAX; // 照会失敗時は次フレームで再照会する
+            return false;
+        }
         if (!EnsureBuffer(frame.TopLevel, sizes.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
                           D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene TLAS") ||
             !EnsureBuffer(frame.Scratch, sizes.ScratchDataSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
@@ -1233,9 +1206,6 @@ namespace
         commandList->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
         const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(frame.TopLevel.Get());
         commandList->ResourceBarrier(1, &barrier);
-        frame.TopLevelHash = instanceHash;
-        frame.TopLevelCount = g_InstanceCount;
-        frame.TopLevelValid = true;
         return true;
     }
 

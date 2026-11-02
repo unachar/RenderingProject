@@ -7,6 +7,7 @@
 #include "virtualgeometry/virtualgeometrydebug.h"
 #include "cloud/cloudrenderer.h"
 #include "imguimanager.h"
+#include "renderquality.h"
 #include "editorshell.h"
 #include "gbufferpreview.h"
 #include "advancedeffects.h"
@@ -352,6 +353,24 @@ void ImGuiManager::DrawAtmosphereWindow()
         {
             m_SelectedEntity = firstSun;
         }
+    }
+
+    ImGui::SeparatorText("レンズフレア（太陽）");
+    {
+        auto& rq = RenderQuality::Get();
+        ImGui::Checkbox("太陽のレンズフレア", &rq.SunFlare);
+        ImGui::SetItemTooltip("Sun の位置から、グレア・光芒・ゴースト・ハローを描きます。\n"
+                              "建物や木で太陽が隠れると自動で消えます（深度で判定）。");
+        ImGui::BeginDisabled(!rq.SunFlare);
+        ImGui::SliderFloat("全体の強さ##SunFlare", &rq.SunFlareIntensity, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("グレア（にじみ）", &rq.SunFlareGlare, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("光芒", &rq.SunFlareStarburst, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("ゴースト", &rq.SunFlareGhosts, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("虹色のハロー", &rq.SunFlareHalo, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("横長ストリーク", &rq.SunFlareAnamorphic, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderInt("絞り羽根の枚数", &rq.SunFlareBlades, 4, 12);
+        ImGui::SetItemTooltip("ゴーストの多角形の形と、光芒の本数（枚数 × 2）が変わります");
+        ImGui::EndDisabled();
     }
 
     if (ImGui::Button("大気をリセット"))

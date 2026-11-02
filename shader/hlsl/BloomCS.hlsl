@@ -23,7 +23,25 @@ cbuffer BloomConstants : register(b0)
     float Time;
     float WindX;
     uint FirstLevel;
-    uint Flags; // bit0 = ブルーム、bit1 = フレア、bit2 = 雨、bit3 = 雪
+    uint Flags; // bit0 = ブルーム、bit1 = フレア、bit2 = 雨、bit3 = 雪、bit4 = 太陽のレンズフレア
+};
+
+// 太陽のレンズフレア（AdvancedEffects::SunFlareConstants と同じ並び）
+cbuffer SunFlareConstants : register(b1)
+{
+    float2 SunUv;      // 太陽の画面 UV（画面外のこともある）
+    float SunVisible;  // 画面内 / 高度によるフェード
+    float SunAspect;   // 幅 / 高さ
+    float3 SunColor;   // 太陽光の色 × 強度（線形 HDR）
+    float SunFlareIntensity;
+    float SunGlare;
+    float SunStarburst;
+    float SunGhosts;
+    float SunHalo;
+    float SunAnamorphic;
+    float SunBlades;
+    float SunRotation;
+    float SunUnused;
 };
 
 Texture2D<float4> Source0 : register(t0);
@@ -210,7 +228,152 @@ float SnowLayer(float2 uv, float scale, float speed, float seed, float aspect)
     return smoothstep(radius, radius * 0.4f, length(local - center));
 }
 
-[numthreads(8, 8, 1)] void BloomCombine(uint3 id : SV_DispatchThreadID) {
+// =============================================================================================
+// 太陽のレンズフレア（大気シミュレーションの太陽から生成。参照：実写の逆光）
+//  ・グレア     : 太陽の周りの明るいにじみ（ベーリンググレア）
+//  ・光芒       : 絞り羽根の回折による放射状の光条（羽根の枚数 × 2 本）と細かい筋
+//  ・ゴースト   : 太陽 → 画面中心 → 反対側の軸上に並ぶ、絞りの形（多角形）の反射像。縁は色収差で虹色
+//  ・ハロー     : 太陽を囲む淡い虹色のリング
+//  ・ストリーク : アナモルフィックレンズ風の横長の光（任意）
+//  遮蔽は 8x8 グループ単位で、太陽の円盤の周りの深度 64 点を調べて空の割合を求める（建物・木の裏で消える）
+// =============================================================================================
+groupshared float gs_SunOcclusion[64];
+
+float SunFlareHash(float x)
+{
+    return frac(sin(x * 127.1f) * 43758.5453f);
+}
+
+// 正 N 角形（中心からの距離を多角形の内接円で正規化）。N が大きいほど円に近い
+float PolygonDistance(float2 p, float blades, float rotation)
+{
+    const float sector = 6.28318530718f / blades;
+    float angle = atan2(p.y, p.x) + rotation;
+    float local = fmod(angle + 31.4159265f * blades, sector) - sector * 0.5f; // 正の剰余
+    return length(p) * cos(local) / cos(sector * 0.5f);
+}
+
+// 1 つのゴースト。R/G/B で半径を少し変えて縁に色収差を出す
+float3 SunGhost(float2 p, float2 center, float radius, float3 tint, float ringWeight)
+{
+    float3 result;
+    [unroll] for (int channel = 0; channel < 3; ++channel)
+    {
+        const float r = radius * (1.0f + (channel - 1) * 0.035f);
+        const float d = PolygonDistance(p - center, SunBlades, SunRotation * 2.0f) / r;
+        const float body = smoothstep(1.0f, 0.82f, d); // 内側は塗り、縁はやわらかく
+        const float ring = exp(-pow((d - 0.94f) * 14.0f, 2.0f));
+        result[channel] = body * (0.55f + 0.45f * d) + ring * ringWeight;
+    }
+    return result * tint;
+}
+
+float SunOcclusionTap(uint index)
+{
+    // 太陽の円盤（視直径 約 0.5 度）より少し広い範囲を、黄金角のらせんで 64 点
+    const float t = (index + 0.5f) / 64.0f;
+    const float angle = index * 2.39996323f;
+    const float radius = sqrt(t) * 0.012f;
+    float2 uv = SunUv + float2(cos(angle) / max(SunAspect, 0.01f), sin(angle)) * radius;
+    if (any(uv < 0.0f) || any(uv > 1.0f))
+    {
+        return 1.0f; // 画面外の部分は遮蔽物が分からないので見えているとみなす
+    }
+    // 逆 Z：空（何も描かれていない）は深度 0
+    return SceneDepth.SampleLevel(LinearClamp, uv, 0) <= 0.0f ? 1.0f : 0.0f;
+}
+
+float3 SunLensFlare(float2 uv, float visibility)
+{
+    // アスペクト補正した画面中心基準の座標
+    const float2 aspect = float2(SunAspect, 1.0f);
+    const float2 p = (uv - 0.5f) * aspect;
+    const float2 sun = (SunUv - 0.5f) * aspect;
+    const float2 toSun = p - sun;
+    const float distance = length(toSun);
+    const float3 sunLight = SunColor * (SunFlareIntensity * visibility);
+    float3 result = 0.0f;
+
+    // ---- グレア：芯の明るい点 + 広いにじみ（距離の逆二乗で減衰）
+    const float core = 1.0f / (1.0f + pow(distance * 90.0f, 2.0f));
+    const float veil = 1.0f / (1.0f + pow(distance * 9.0f, 2.0f));
+    result += (core * 2.0f + veil * 0.12f) * SunGlare;
+
+    // ---- 光芒：羽根の数 × 2 本の主光条 + ハッシュで揺らした細い筋
+    {
+        const float angle = atan2(toSun.y, toSun.x) - SunRotation;
+        const float rays = pow(abs(cos(angle * SunBlades * 0.5f)), 220.0f);
+        const float fine = SunFlareHash(floor((angle + 3.14159265f) * 60.0f));
+        const float streaks = pow(abs(cos(angle * 37.0f + fine * 6.28f)), 60.0f) * fine;
+        const float falloff = 1.0f / (1.0f + distance * 7.0f) * exp(-distance * 2.2f);
+        result += (rays * 0.9f + streaks * 0.35f) * falloff * 0.6f * SunStarburst;
+    }
+
+    // ---- ゴースト：太陽と画面中心を結ぶ軸上（反対側へ伸びる）
+    if (SunGhosts > 0.0f)
+    {
+        // 太陽が画面中心に近いほどゴーストが重なって明るい
+        const float centered = saturate(1.0f - length(sun) * 0.9f);
+        // 位置（軸上の比率：1 = 太陽、0 = 中心、負 = 反対側）、半径、色
+        static const float3 kGhosts[8] = {float3(0.62f, 0.016f, 0.0f), float3(0.35f, 0.035f, 1.0f),
+                                          float3(0.12f, 0.010f, 2.0f), float3(-0.18f, 0.060f, 3.0f),
+                                          float3(-0.42f, 0.022f, 4.0f), float3(-0.70f, 0.105f, 5.0f),
+                                          float3(-1.05f, 0.040f, 6.0f), float3(-1.40f, 0.150f, 7.0f)};
+        static const float3 kTints[8] = {float3(1.0f, 0.65f, 0.30f), float3(0.35f, 1.0f, 0.55f),
+                                         float3(1.0f, 0.85f, 0.45f), float3(0.55f, 0.35f, 1.0f),
+                                         float3(0.40f, 0.95f, 0.65f), float3(0.70f, 0.40f, 0.95f),
+                                         float3(1.0f, 0.55f, 0.35f), float3(0.45f, 0.65f, 1.0f)};
+        float3 ghosts = 0.0f;
+        [unroll] for (int ghost = 0; ghost < 8; ++ghost)
+        {
+            const float2 center = sun * kGhosts[ghost].x;
+            const float radius = kGhosts[ghost].y * (1.0f + length(sun) * 0.6f);
+            // 小さいゴーストは明るく、大きいものは淡く（同じ光量が広がる）
+            const float brightness = 0.02f / (radius + 0.02f);
+            ghosts += SunGhost(p, center, radius, kTints[ghost], 0.6f) * brightness;
+        }
+        result += ghosts * 0.04f * (0.35f + 0.65f * centered) * SunGhosts;
+    }
+
+    // ---- ハロー：太陽を囲む虹色のリング（波長ごとに半径を変える）
+    if (SunHalo > 0.0f)
+    {
+        float3 halo;
+        [unroll] for (int channel = 0; channel < 3; ++channel)
+        {
+            const float radius = 0.30f + channel * 0.012f;
+            halo[channel] = exp(-pow((distance - radius) * 38.0f, 2.0f));
+        }
+        result += halo * 0.012f * SunHalo;
+    }
+
+    // ---- アナモルフィック・ストリーク
+    if (SunAnamorphic > 0.0f)
+    {
+        const float streak = exp(-abs(toSun.y) * 260.0f) * exp(-abs(toSun.x) * 1.6f);
+        result += streak * float3(0.55f, 0.75f, 1.0f) * 0.08f * SunAnamorphic;
+    }
+    return result * sunLight;
+}
+
+[numthreads(8, 8, 1)] void BloomCombine(uint3 id : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex) {
+    // 太陽の遮蔽（グループ全体で 64 点を分担）。早期 return より前に行う（バリアを全スレッドで通過させる）
+    float sunVisibility = 0.0f;
+    if ((Flags & 16u) != 0)
+    {
+        gs_SunOcclusion[groupIndex] = SunOcclusionTap(groupIndex);
+        GroupMemoryBarrierWithGroupSync();
+        [unroll] for (uint stride = 32; stride > 0; stride >>= 1)
+        {
+            if (groupIndex < stride)
+            {
+                gs_SunOcclusion[groupIndex] += gs_SunOcclusion[groupIndex + stride];
+            }
+            GroupMemoryBarrierWithGroupSync();
+        }
+        // 一部が隠れると急に暗くなる（実際のフレアも絞りに入る光量にほぼ比例）
+        sunVisibility = (gs_SunOcclusion[0] / 64.0f) * SunVisible;
+    }
     if (any(id.xy >= DestinationSize))
     {
         return;
@@ -227,6 +390,10 @@ float SnowLayer(float2 uv, float scale, float speed, float seed, float aspect)
     if ((Flags & 2u) != 0)
     {
         color += LensFlare(uv) * FlareIntensity * 0.05f;
+    }
+    if ((Flags & 16u) != 0 && sunVisibility > 0.0001f)
+    {
+        color += SunLensFlare(uv, sunVisibility);
     }
     float ambient = dot(bloom, kLuma) + 0.02f;
     if ((Flags & 4u) != 0)

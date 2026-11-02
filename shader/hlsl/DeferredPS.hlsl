@@ -17,6 +17,8 @@ SamplerState g_SamplerState : register(s0);
 
 #include "MaterialSurface.hlsli"
 #include "NormalMapDecode.hlsli"
+#include "ToonLighting.hlsli"
+#include "LiveToonMaterial.hlsli"
 #if GEOMETRIC_SPECULAR_AA
 #include "GeometricSpecularAA.hlsli"
 #endif
@@ -162,6 +164,29 @@ GBufferOutput ShadeGBuffer(PSInput3D In, bool frontFace)
     output.Shadow.g = usePartParams ? partParams.Shadow0.y : ShadowSoftness;
     output.Shadow.b = usePartParams ? partParams.Shadow0.z : ShadowStrength;
     output.Shadow.a = EncodeShadingModel(assetMaterial, 0.0f);
+    // ライブトゥーンのマテリアルテクスチャ（Def / 顔陰影反転 / 質感ランプ）
+    // Visibility 解決（コンピュート）では暗黙微分の Sample が使えないので対象外。
+#ifndef SHADER_VISIBILITY_RESOLVE
+    {
+#ifdef SHADER_GPU_DRIVEN
+        uint4 liveToonTextures = asuint(LoadSceneMaterialVector(gSceneMaterials, materialID, 190u));
+        float4 liveToonParams = LoadSceneMaterialVector(gSceneMaterials, materialID, 191u);
+#else
+        uint4 liveToonTextures = LiveToonTextures;
+        float4 liveToonParams = LiveToonMaterialParams;
+#endif
+        LiveToonMaterialSurface toonSurface;
+        toonSurface.Albedo = output.Color.rgb;
+        toonSurface.ShadowThreshold = output.Shadow.r;
+        toonSurface.ShadowSoftness = output.Shadow.g;
+        ApplyLiveToonMaterialTextures(liveToonTextures, liveToonParams, materialUv, normal,
+                                      SurfaceViewDirectionCommon(In.WorldPos, In.CameraPos), materialPartId,
+                                      g_SamplerState, toonSurface);
+        output.Color.rgb = toonSurface.Albedo;
+        output.Shadow.r = toonSurface.ShadowThreshold;
+        output.Shadow.g = toonSurface.ShadowSoftness;
+    }
+#endif
     // POM セルフシャドウ（主光源）。
     WriteAssetParallaxSelfShadow(pom, In.WorldPos, g_SamplerState, output.Shadow, output.Material.a);
     output.Color.a = 1.0f;
@@ -198,3 +223,4 @@ GBufferDepthOutput main(PSInput3D In, bool frontFace : SV_IsFrontFace)
     return output;
 }
 #endif
+

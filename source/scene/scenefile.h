@@ -1169,6 +1169,25 @@ namespace SceneFile
         a("meshOutlineOverrides", c.ToonMeshOutlineOverrides);
         a("meshOutlineWidthScales", c.ToonMeshOutlineWidthScales);
         a("meshShadingOverrides", c.MeshShadingOverrides);
+        a("mekakureEnabled", c.MekakureEnabled);
+        a("mekakureOpacity", c.MekakureOpacity);
+        a("mekakureDepth", c.MekakureDepth);
+        a("mekakureFadeStart", c.MekakureFadeStart);
+        a("mekakureFadeEnd", c.MekakureFadeEnd);
+        a("mekakureTargetMask", c.MekakureTargetMask);
+        a("mekakureInclude", c.MekakureIncludeNames);
+        a("mekakureExclude", c.MekakureExcludeNames);
+        a("mekakureMaskSource", c.MekakureMaskSource);
+        a("mekakureMaskPath", c.MekakureMaskPath);
+        a("mekakureMaskStrength", c.MekakureMaskStrength);
+        a("mekakureMaskInvert", c.MekakureMaskInvert);
+        a("liveToonDefPath", c.LiveToonDefPath);
+        a("liveToonDefStrength", c.LiveToonDefStrength);
+        a("liveToonFacePath", c.LiveToonFacePath);
+        a("liveToonFaceStrength", c.LiveToonFaceStrength);
+        a("liveToonTextureRampPath", c.LiveToonTextureRampPath);
+        a("liveToonTextureRampMultiply", c.LiveToonTextureRampMultiply);
+        a("liveToonTextureRampAdd", c.LiveToonTextureRampAdd);
         a("alpha", c.Alpha);
         a("shadowMode", c.ShadowMode);
         a("shadowCutoff", c.ShadowCutoff);
@@ -1442,4 +1461,5 @@ namespace SceneFile
         });
     }
 } // 名前空間 SceneFile の終わり。
+
 

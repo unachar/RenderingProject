@@ -120,7 +120,7 @@ float TraceHitDistance(float3 origin, float3 direction, float distance, bool clo
         float2 disk = float2(cos(angle), sin(angle)) * radius;
         if (Features.x != 0 && SunDirection.w > 0.5f && sunBackFacing)
         {
-            // shadow += 0
+            // shadow += 0（裏面は常に影）
 #if USE_NRD
             if (sample == 0)
             {

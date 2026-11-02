@@ -21217,6 +21217,7 @@ void ImGuiManager::DuplicateSelectedAssets()
 #include "virtualgeometry/virtualgeometrydebug.h"
 #include "cloud/cloudrenderer.h"
 #include "imguimanager.h"
+#include "renderquality.h"
 #include "editorshell.h"
 #include "gbufferpreview.h"
 #include "advancedeffects.h"
@@ -21562,6 +21563,24 @@ void ImGuiManager::DrawAtmosphereWindow()
         {
             m_SelectedEntity = firstSun;
         }
+    }
+
+    ImGui::SeparatorText("レンズフレア（太陽）");
+    {
+        auto& rq = RenderQuality::Get();
+        ImGui::Checkbox("太陽のレンズフレア", &rq.SunFlare);
+        ImGui::SetItemTooltip("Sun の位置から、グレア・光芒・ゴースト・ハローを描きます。\n"
+                              "建物や木で太陽が隠れると自動で消えます（深度で判定）。");
+        ImGui::BeginDisabled(!rq.SunFlare);
+        ImGui::SliderFloat("全体の強さ##SunFlare", &rq.SunFlareIntensity, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("グレア（にじみ）", &rq.SunFlareGlare, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("光芒", &rq.SunFlareStarburst, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("ゴースト", &rq.SunFlareGhosts, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("虹色のハロー", &rq.SunFlareHalo, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("横長ストリーク", &rq.SunFlareAnamorphic, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderInt("絞り羽根の枚数", &rq.SunFlareBlades, 4, 12);
+        ImGui::SetItemTooltip("ゴーストの多角形の形と、光芒の本数（枚数 × 2）が変わります");
+        ImGui::EndDisabled();
     }
 
     if (ImGui::Button("大気をリセット"))
@@ -27357,7 +27376,11 @@ void ImGuiManager::DrawSceneViewWindow()
     const auto previousSize = m_SceneViewSize;
     ImGui::SetNextWindowSize(ImVec2(860.0f, 520.0f), ImGuiCond_FirstUseEver);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f, 4.0f));
-    const bool expanded = EditorWindowRegistry::BeginEditorWindow("シーンビュー", &m_ShowSceneViewWindow);
+    // 修正：ギズモの上で左ドラッグすると、ImGui がウィンドウ本体のドラッグ（ウィンドウ移動 / ドック解除）を
+    // 開始してギズモ操作と競合していた。前フレームでギズモにカーソルが乗っていた / 操作中ならウィンドウ移動を止める。
+    static bool gizmoHotLastFrame = false;
+    const ImGuiWindowFlags sceneFlags = gizmoHotLastFrame || ImGuizmo::IsUsingAny() ? ImGuiWindowFlags_NoMove : 0;
+    const bool expanded = EditorWindowRegistry::BeginEditorWindow("シーンビュー", &m_ShowSceneViewWindow, sceneFlags);
     ImGui::PopStyleVar();
     if (!expanded)
     {
@@ -27438,7 +27461,10 @@ void ImGuiManager::DrawSceneViewWindow()
     VirtualGeometryDebug::DrawViewport(drawList, cursor, imageSize, m_SelectedEntity);
     ImGuizmo::SetID(static_cast<int>(ImGui::GetID("SceneTransformGizmo")));
     DrawTransformGizmo();
-    m_SceneGizmoCapturesMouse |= ImGuizmo::IsUsing() || (thisHovered && ImGuizmo::IsOver());
+    // 修正：ホバー判定を Image に限定しない（ギズモの軸が画像の端からはみ出しても掴めるように）
+    const bool gizmoHot = ImGuizmo::IsUsing() || ImGuizmo::IsOver();
+    gizmoHotLastFrame = gizmoHot;
+    m_SceneGizmoCapturesMouse |= gizmoHot;
     if (preferences.ShowViewportStats)
     {
         EditorSceneNavigation::DrawOverlay(drawList, cursor, imageSize);
@@ -27521,12 +27547,20 @@ void ImGuiManager::DrawTransformGizmo()
     ImGuizmo::SetOrthographic(false);
     ImGuizmo::SetRect(m_SceneViewPos.x, m_SceneViewPos.y, m_SceneViewSize.x, m_SceneViewSize.y);
 
-    // パイメニュー表示中はギズモに入力を渡さない。スナップは設定値（Ctrl で反転）。
-    ImGuizmo::Enable(!EditorShell::IsPieOpen());
+    // パイメニュー表示中はギズモに入力を渡さない。
+    // 修正：以前は毎フレーム Enable(false/true) を呼んでいた。ImGuizmo の Enable(false) は操作中の状態
+    // （mbUsing）を破棄するため、状態が変わったときだけ呼ぶ。
+    static bool gizmoEnabled = true;
+    const bool enableGizmo = !EditorShell::IsPieOpen();
+    if (enableGizmo != gizmoEnabled)
+    {
+        ImGuizmo::Enable(enableGizmo);
+        gizmoEnabled = enableGizmo;
+    }
+    // スナップは設定値（Ctrl で反転）
     const float* snap = EditorShell::GizmoSnap(m_GizmoOperation);
     const bool manipulated =
         ImGuizmo::Manipulate(&viewMatrix._11, &projectionMatrix._11, operation, mode, &modelMatrix._11, nullptr, snap);
-    ImGuizmo::Enable(true);
     if (!manipulated)
     {
         return;
@@ -31692,23 +31726,32 @@ void ImGuiManager::DrawProjectSettingsWindow()
             {
                 RendererSettings::SetGiRadianceCacheCellSize(cacheCell);
             }
+            bool updateBudget = RendererSettings::GetGiUpdateBudgetEnabled();
+            if (ImGui::Checkbox("静止画素の更新を間引く（GI 更新予算）", &updateBudget))
+            {
+                RendererSettings::SetGiUpdateBudgetEnabled(updateBudget);
+            }
+            ImGui::SetItemTooltip("動いていない画素は 4 フレームに 1 回だけレイを撃ち、残りは放射キャッシュを使います。\n"
+                                  "放射キャッシュが必要です。ReSTIR / SHaRC 使用時は各自の再利用を使うため無効です。");
             int cacheHistory = RendererSettings::GetGiRadianceCacheHistory();
             if (ImGui::SliderInt("キャッシュ履歴フレーム", &cacheHistory, 4, 128))
             {
                 RendererSettings::SetGiRadianceCacheHistory(cacheHistory);
             }
             ImGui::EndDisabled();
-            if (!Raytracing::IsAvailable() || !Raytracing::GetSettings().Enabled)
+            if (!Raytracing::IsAvailable())
             {
-                ImGui::TextWrapped("Realtime GI requires DXR Tier 1.1 and enabled ray tracing.");
+                ImGui::TextWrapped("DXR GI には DXR Tier 1.1 対応 GPU が必要です。");
             }
-            // 動作状態の診断（ON にしても効かない時に原因を表示する）
+            // 動作状態の診断（ON にしても効かない時に原因を表示する）。
+            // DXR GI は「レイトレーシング」の ON/OFF とは独立して動作する。
             const bool giRunning = Raytracing::IsGiActive();
+            const char* reason = giRunning                       ? RayReflections::GetStatus()
+                                 : !Raytracing::IsAvailable()    ? Raytracing::GetStatus()
+                                 : RenderConfiguration::GetRenderMode() != RenderMode::DEFERRED ? "ディファード描画でのみ動作します（描画モードを確認）"
+                                                                 : RayReflections::GetStatus();
             ImGui::TextColored(giRunning ? ImVec4(0.4f, 0.9f, 0.4f, 1.0f) : ImVec4(1.0f, 0.55f, 0.3f, 1.0f), "状態: %s",
-                               giRunning ? RayReflections::GetStatus()
-                                         : (!Raytracing::IsAvailable()           ? Raytracing::GetStatus()
-                                            : !Raytracing::GetSettings().Enabled ? "レイトレーシングが OFF です"
-                                                                                 : RayReflections::GetStatus()));
+                               reason);
             if (RayReflections::GetLastShaderError()[0] != '\0' && ImGui::TreeNode("シェーダーエラー"))
             {
                 ImGui::TextWrapped("%s", RayReflections::GetLastShaderError());
@@ -32218,6 +32261,14 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("quality.LensFlare", rq.LensFlare, 0, 1);
     field("quality.LensFlareIntensity", rq.LensFlareIntensity, 0, 10);
     field("quality.LensFlareHalo", rq.LensFlareHalo, 0, 10);
+    field("quality.SunFlare", rq.SunFlare, 0, 1);
+    field("quality.SunFlareIntensity", rq.SunFlareIntensity, 0, 10);
+    field("quality.SunFlareGlare", rq.SunFlareGlare, 0, 10);
+    field("quality.SunFlareStarburst", rq.SunFlareStarburst, 0, 10);
+    field("quality.SunFlareGhosts", rq.SunFlareGhosts, 0, 10);
+    field("quality.SunFlareHalo", rq.SunFlareHalo, 0, 10);
+    field("quality.SunFlareAnamorphic", rq.SunFlareAnamorphic, 0, 10);
+    field("quality.SunFlareBlades", rq.SunFlareBlades, 4, 12);
     field("quality.WeatherEnabled", rq.WeatherEnabled, 0, 1);
     field("quality.RainIntensity", rq.RainIntensity, 0, 1);
     field("quality.Wetness", rq.Wetness, 0, 1);
@@ -32471,6 +32522,7 @@ string ImGuiManager::SerializeProjectSettings()
     stream << "gi_radiance_cache=" << static_cast<int>(RendererSettings::GetGiRadianceCacheEnabled()) << '\n';
     stream << "gi_radiance_cache_cell=" << RendererSettings::GetGiRadianceCacheCellSize() << '\n';
     stream << "gi_radiance_cache_history=" << RendererSettings::GetGiRadianceCacheHistory() << '\n';
+    stream << "gi_update_budget=" << static_cast<int>(RendererSettings::GetGiUpdateBudgetEnabled()) << '\n';
     stream << "ray_binning=" << (static_cast<int>(RendererSettings::GetRayBinningEnabled())) << '\n';
     stream << "anti_aliasing=" << static_cast<int>(RendererState::m_AntiAliasingMode) << '\n';
     stream << "hdr=" << (static_cast<int>(m_HdrEnabled)) << '\n';
@@ -32691,6 +32743,10 @@ void ImGuiManager::LoadProjectSettings()
             else if (key == "gi_radiance_cache_history")
             {
                 RendererSettings::SetGiRadianceCacheHistory(stoi(value));
+            }
+            else if (key == "gi_update_budget")
+            {
+                RendererSettings::SetGiUpdateBudgetEnabled(stoi(value) != 0);
             }
             else if (key == "ray_binning")
             {
@@ -34431,14 +34487,28 @@ bool EditorShell::DrawNavigationGizmo(ImDrawList* drawList, ImVec2 imageMin, ImV
     // 注意：InvisibleButton の後でカーソルを戻すと、アイテムなしでカーソルを動かしたことになり
     // ImGui 1.92 の「SetCursorPos()/SetCursorScreenPos() to extend window boundaries」エラーになる。
     // 呼び出し側（シーンビュー）は以降カーソルを使わないので、元に戻さない。
-    ImGui::SetCursorScreenPos(ImVec2(center.x - radius, center.y - radius));
-    ImGui::InvisibleButton("##NavigationGizmo", ImVec2(radius * 2.0f, radius * 2.0f));
+    // 修正：ボタンは常に置かず、カーソルが円の中にあるとき（またはドラッグ中）だけ置く。
+    // 以前は常に四角いボタンを置いていたため、その範囲（とホバー履歴）が ImGuizmo の
+    // 「他のアイテムがホバーされていない」判定を妨げ、右上付近でギズモを掴めないことがあった。
+    static bool navActiveLastFrame = false;
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     const float dx = mouse.x - center.x;
     const float dy = mouse.y - center.y;
     const bool inDisk = dx * dx + dy * dy <= radius * radius;
-    const bool hovered = ImGui::IsItemHovered() && inDisk;
-    const bool active = ImGui::IsItemActive();
+    bool hovered = false;
+    bool active = false;
+    bool activated = false;
+    bool deactivated = false;
+    if ((inDisk && !ImGuizmo::IsUsingAny()) || navActiveLastFrame)
+    {
+        ImGui::SetCursorScreenPos(ImVec2(center.x - radius, center.y - radius));
+        ImGui::InvisibleButton("##NavigationGizmo", ImVec2(radius * 2.0f, radius * 2.0f));
+        hovered = ImGui::IsItemHovered() && inDisk;
+        active = ImGui::IsItemActive();
+        activated = ImGui::IsItemActivated();
+        deactivated = ImGui::IsItemDeactivated();
+    }
+    navActiveLastFrame = active;
 
     const float bubble = 9.0f * scale;
     int hoveredItem = -1;
@@ -34456,7 +34526,7 @@ bool EditorShell::DrawNavigationGizmo(ImDrawList* drawList, ImVec2 imageMin, ImV
             }
         }
     }
-    if (ImGui::IsItemActivated())
+    if (activated)
     {
         g_NavPressedAxis = hoveredItem;
     }
@@ -34469,7 +34539,7 @@ bool EditorShell::DrawNavigationGizmo(ImDrawList* drawList, ImVec2 imageMin, ImV
             OrbitEditorCamera(delta.x * 0.008f, delta.y * 0.008f);
         }
     }
-    if (ImGui::IsItemDeactivated() && g_NavPressedAxis >= 0)
+    if (deactivated && g_NavPressedAxis >= 0)
     {
         const AxisItem& item = items[g_NavPressedAxis];
         float direction[3] = {0.0f, 0.0f, 0.0f};
@@ -77121,7 +77191,7 @@ class AdvancedEffects final
         }
         const auto& quality = RenderQuality::Get();
         const bool weather = quality.WeatherEnabled && (quality.RainIntensity > 0.001f || quality.SnowFall > 0.001f);
-        const bool bloom = (quality.DualBloom && s_BloomRequested) || quality.LensFlare || weather;
+        const bool bloom = (quality.DualBloom && s_BloomRequested) || quality.LensFlare || quality.SunFlare || weather;
         const bool lens = s_Settings.HalfResolutionLens && (s_Settings.MotionBlur || s_Settings.DepthOfField);
         const bool any = s_Settings.FroxelFog || s_Settings.AutoExposure || s_Settings.MotionBlur ||
                          s_Settings.DepthOfField || bloom;
@@ -77190,7 +77260,7 @@ class AdvancedEffects final
         const bool weather = quality.WeatherEnabled;
         const bool dualBloom = quality.DualBloom && s_BloomRequested;
         const bool bloomPass =
-            s_BloomAvailable && (dualBloom || quality.LensFlare ||
+            s_BloomAvailable && (dualBloom || quality.LensFlare || quality.SunFlare ||
                                  (weather && (quality.RainIntensity > 0.001f || quality.SnowFall > 0.001f)));
         if (!s_Available || !commands || !scene || !depth || !(fog || exposure || motionBlur || dof || bloomPass))
         {
@@ -77432,17 +77502,104 @@ class AdvancedEffects final
 
     static_assert(sizeof(BloomConstants) == 64);
 
+    // 太陽のレンズフレア（b1）。太陽の画面位置・色は CPU で求め、遮蔽は GPU で深度から判定する
+    struct SunFlareConstants
+    {
+        float SunU, SunV, Visible, Aspect;          // 画面 UV、画面内フェード、幅 / 高さ
+        float ColorR, ColorG, ColorB, Intensity;    // 太陽光の色 × 強度
+        float Glare, Starburst, Ghosts, Halo;       // 各成分の強さ
+        float Anamorphic, Blades, Rotation, Unused; // ストリーク、絞り羽根の枚数、光芒の回転
+    };
+
+    static_assert(sizeof(SunFlareConstants) == 64);
+
+    // 大気シミュレーションの太陽（最初の Sun の物理平行光）を画面へ投影する
+    static SunFlareConstants ComputeSunFlare(const RenderQuality::Settings& quality)
+    {
+        SunFlareConstants flare{};
+        flare.Aspect = static_cast<float>(s_Width) / static_cast<float>((std::max)(s_Height, 1u));
+        if (!quality.SunFlare || quality.SunFlareIntensity <= 0.0f)
+        {
+            return flare;
+        }
+        const auto suns = World::GetView<SunComponent, LightComponent>();
+        if (suns.empty())
+        {
+            return flare;
+        }
+        const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(*suns.begin());
+        if (!light.IsActive || light.Type != LightType::Directional || light.Intensity <= 0.0f)
+        {
+            return flare;
+        }
+        XMVECTOR towardSun = XMLoadFloat3(&light.Direction);
+        if (XMVectorGetX(XMVector3LengthSq(towardSun)) < 1e-8f)
+        {
+            return flare;
+        }
+        towardSun = XMVector3Normalize(towardSun);
+        const float elevation = XMVectorGetY(towardSun);
+        // 地平線の下では出さない。地平線付近は大気の消散で弱く、色は太陽光の色（夕日は赤）に従う
+        const float elevationFade = std::clamp((elevation + 0.02f) / 0.08f, 0.0f, 1.0f);
+        if (elevationFade <= 0.0f)
+        {
+            return flare;
+        }
+        const EntityID camera = Camera::GetCameraEntity();
+        if (camera == g_kINVALID_ENTITY || !ComponentManager::HasComponent<TransformComponent>(camera))
+        {
+            return flare;
+        }
+        XMMATRIX view, projection;
+        Camera::GetCameraMatrices(camera, view, projection);
+        // 方向ベクトルとして投影（w = 0）：カメラ位置に依存しない無限遠の点
+        const XMVECTOR clip = XMVector4Transform(XMVectorSetW(towardSun, 0.0f), view * projection);
+        const float w = XMVectorGetW(clip);
+        if (w <= 1e-5f)
+        {
+            return flare; // カメラの後ろ
+        }
+        const float ndcX = XMVectorGetX(clip) / w;
+        const float ndcY = XMVectorGetY(clip) / w;
+        // 画面外に少し出ていても、にじみは残す（画面端の外 30% でフェードアウト）
+        const float edge = (std::max)(fabsf(ndcX), fabsf(ndcY));
+        const float screenFade = std::clamp((1.3f - edge) / 0.3f, 0.0f, 1.0f);
+        if (screenFade <= 0.0f)
+        {
+            return flare;
+        }
+        flare.SunU = ndcX * 0.5f + 0.5f;
+        flare.SunV = -ndcY * 0.5f + 0.5f;
+        flare.Visible = screenFade * elevationFade;
+        flare.ColorR = (std::max)(light.Color.x, 0.0f) * light.Intensity;
+        flare.ColorG = (std::max)(light.Color.y, 0.0f) * light.Intensity;
+        flare.ColorB = (std::max)(light.Color.z, 0.0f) * light.Intensity;
+        flare.Intensity = quality.SunFlareIntensity;
+        flare.Glare = (std::max)(0.0f, quality.SunFlareGlare);
+        flare.Starburst = (std::max)(0.0f, quality.SunFlareStarburst);
+        flare.Ghosts = (std::max)(0.0f, quality.SunFlareGhosts);
+        flare.Halo = (std::max)(0.0f, quality.SunFlareHalo);
+        flare.Anamorphic = (std::max)(0.0f, quality.SunFlareAnamorphic);
+        flare.Blades = static_cast<float>(std::clamp(quality.SunFlareBlades, 4, 12));
+        // 光芒はカメラの向きに合わせてわずかに回転する（静止時は固定）
+        XMFLOAT4X4 viewMatrix;
+        XMStoreFloat4x4(&viewMatrix, view);
+        flare.Rotation = atan2f(viewMatrix._21, viewMatrix._11) * 0.5f;
+        return flare;
+    }
+
     static bool InitializeBloom(ID3D12Device* device)
     {
         CD3DX12_DESCRIPTOR_RANGE ranges[2];
         ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 0, 0);
         ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 4);
-        CD3DX12_ROOT_PARAMETER parameters[2];
+        CD3DX12_ROOT_PARAMETER parameters[3];
         parameters[0].InitAsConstants(sizeof(BloomConstants) / 4, 0);
         parameters[1].InitAsDescriptorTable(2, ranges);
+        parameters[2].InitAsConstants(sizeof(SunFlareConstants) / 4, 1); // 太陽のレンズフレア（b1）
         const CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
                                                   D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP);
-        const CD3DX12_ROOT_SIGNATURE_DESC root(2, parameters, 1, &sampler);
+        const CD3DX12_ROOT_SIGNATURE_DESC root(3, parameters, 1, &sampler);
         ComPtr<ID3DBlob> blob, errors;
         if (FAILED(D3D12SerializeRootSignature(&root, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)) ||
             FAILED(device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(),
@@ -77584,6 +77741,11 @@ class AdvancedEffects final
         commands->SetDescriptorHeaps(1, heaps);
         commands->SetComputeRootSignature(s_BloomRoot.Get());
         BloomConstants constants{};
+        {
+            // b1 は合成パスだけが使うが、ルート引数は全ディスパッチで初期化しておく（デバッグレイヤー対策）
+            const SunFlareConstants noFlare{};
+            commands->SetComputeRoot32BitConstants(2, sizeof(noFlare) / 4, &noFlare, 0);
+        }
         constants.Threshold = (std::max)(0.0f, quality.BloomThreshold);
         constants.Radius = std::clamp(quality.BloomRadius, 0.0f, 1.0f);
         const auto mipSize = [](UINT size, UINT mip) {
@@ -77672,10 +77834,13 @@ class AdvancedEffects final
         constants.Time = s_Time;
         constants.WindX = quality.WindX;
         constants.FirstLevel = 0;
+        const SunFlareConstants sunFlare = ComputeSunFlare(quality);
         constants.Flags = (dualBloom ? 1u : 0u) | (quality.LensFlare ? 2u : 0u) |
-                          (constants.RainIntensity > 0.001f ? 4u : 0u) | (constants.SnowIntensity > 0.001f ? 8u : 0u);
+                          (constants.RainIntensity > 0.001f ? 4u : 0u) | (constants.SnowIntensity > 0.001f ? 8u : 0u) |
+                          (sunFlare.Visible > 0.0f ? 16u : 0u);
         commands->SetPipelineState(s_BloomCombinePso.Get());
         commands->SetComputeRoot32BitConstants(0, sizeof(constants) / 4, &constants, 0);
+        commands->SetComputeRoot32BitConstants(2, sizeof(sunFlare) / 4, &sunFlare, 0);
         const UINT flareMip = (std::min)(2u, s_BloomLevels - 1);
         commands->SetComputeRootDescriptorTable(
             1, WriteBloomTable(tableBase + 2 * kMaxBloomLevels,
@@ -109262,7 +109427,7 @@ class PbrLuts final
 //  描画品質を段階（Tier）で自動調整する。
 //
 //  ・可変レイトレーシング : サンプル数 / AO / 反射 / シャドウ距離 / レイトレ自体のON/OFF
-//  ・可変GI              : Realtime → ScreenSpace → Off、GI距離・強度
+//  ・可変GI              : モードは固定。トレース距離 / 静止画素の更新間引き / Lumen 更新量・プローブ密度
 //  ・ライト              : 画面内ライト数 / シャドウ付きライト数 / ボリューメトリック数
 //  ・シャドウ            : 仮想シャドウのクリップマップ段数、コンタクトシャドウ段数
 //  ・自作Nanite          : 許容誤差（ピクセル）を段階的に大きくする
@@ -109436,18 +109601,18 @@ class PerformanceGovernor final
                     s_BudgetMs);
         ImGui::Checkbox("解像度も下げてよい", &s_Options.AllowResolutionScaling);
         ImGui::SliderFloat("GPU予算の割合", &s_Options.BudgetHeadroom, 0.6f, 1.0f, "%.2f");
-        if (ImGui::Checkbox("機能の自動OFFを許可（GI / RT反射 / AO）", &s_Options.AllowFeatureToggles))
+        if (ImGui::Checkbox("機能の自動OFFを許可（RT反射 / AO。GI は切り替えません）", &s_Options.AllowFeatureToggles))
         {
             Apply();
         }
         if (s_Tier > 0)
         {
             const Baseline now = ReadCurrent();
-            if (now.GiMode != s_Base.GiMode || now.RtReflections != s_Base.RtReflections ||
+            if (now.RtReflections != s_Base.RtReflections ||
                 now.RtAmbientOcclusion != s_Base.RtAmbientOcclusion)
             {
                 ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f),
-                                   "自動調整で GI / RT 反射 / AO の一部を一時的に OFF にしています");
+                                   "自動調整で RT 反射 / AO の一部を一時的に OFF にしています");
             }
         }
         if (s_ResolutionReduced)
@@ -109476,6 +109641,11 @@ class PerformanceGovernor final
         float RtShadowDistance = 500.0f;
         GlobalIlluminationMode GiMode = GlobalIlluminationMode::ScreenSpace;
         float GiDistance = 40.0f;
+        // GI のコスト（モードは変えずに、更新量・密度だけを下げる）
+        bool GiUpdateBudget = false;
+        int LumenCaptureBudget = 4;
+        int LumenLightingBudget = 4;
+        int LumenProbeSpacing = 8;
         bool Ssao = true;
         int ContactSteps = 12;
         int VirtualLevels = 4;
@@ -109548,6 +109718,10 @@ class PerformanceGovernor final
         b.RtShadowDistance = rt.ShadowDistance;
         b.GiMode = RendererSettings::GetGiMode();
         b.GiDistance = RendererSettings::GetGiDistance();
+        b.GiUpdateBudget = RendererSettings::GetGiUpdateBudgetEnabled();
+        b.LumenCaptureBudget = RendererSettings::GetLumenCaptureBudget();
+        b.LumenLightingBudget = RendererSettings::GetLumenLightingBudget();
+        b.LumenProbeSpacing = RendererSettings::GetLumenProbeSpacing();
         b.Ssao = RendererSettings::GetSsaoEnabled();
         b.ContactSteps = RendererSettings::GetContactShadowSteps();
         b.VirtualLevels = RendererSettings::GetVirtualClipmapLevels();
@@ -109584,6 +109758,10 @@ class PerformanceGovernor final
         absorb(s_Base.RtShadowDistance, now.RtShadowDistance, s_Applied.RtShadowDistance);
         absorb(s_Base.GiMode, now.GiMode, s_Applied.GiMode);
         absorb(s_Base.GiDistance, now.GiDistance, s_Applied.GiDistance);
+        absorb(s_Base.GiUpdateBudget, now.GiUpdateBudget, s_Applied.GiUpdateBudget);
+        absorb(s_Base.LumenCaptureBudget, now.LumenCaptureBudget, s_Applied.LumenCaptureBudget);
+        absorb(s_Base.LumenLightingBudget, now.LumenLightingBudget, s_Applied.LumenLightingBudget);
+        absorb(s_Base.LumenProbeSpacing, now.LumenProbeSpacing, s_Applied.LumenProbeSpacing);
         absorb(s_Base.Ssao, now.Ssao, s_Applied.Ssao);
         absorb(s_Base.ContactSteps, now.ContactSteps, s_Applied.ContactSteps);
         absorb(s_Base.VirtualLevels, now.VirtualLevels, s_Applied.VirtualLevels);
@@ -109616,32 +109794,23 @@ class PerformanceGovernor final
         v.RtEnabled = s_Base.RtEnabled;
 
         // ---- 可変GI ----
+        // 修正：GI モード（Off / SSGI / Realtime / Lumen / SHaRC）は自動調整で切り替えない。
+        // 目標 120fps に届かない環境では、保存済みの「機能の自動OFFを許可」が有効だと
+        // 段階 2 以上で DXR GI → SSGI、段階 5 で GI OFF となり、どの GI を選んでも効かなかった。
+        // 負荷は GI のトレース距離（＝レイの長さ / BVH 走査量）だけで調整する。
         static const float kGiDist[kTierCount] = {1.0f, 0.8f, 0.6f, 0.45f, 0.35f, 0.25f};
         v.GiDistance = (std::max)(1.0f, s_Base.GiDistance * kGiDist[t]);
-        if (!toggles)
-        {
-            v.GiMode = s_Base.GiMode;
-        }
-        else if (s_Base.GiMode == GlobalIlluminationMode::Realtime || s_Base.GiMode == GlobalIlluminationMode::Lumen ||
-                 s_Base.GiMode == GlobalIlluminationMode::RtxgiSharc)
-        {
-            if (t <= 1)
-            {
-                v.GiMode = s_Base.GiMode;
-            }
-            else if (t <= 4)
-            {
-                v.GiMode = GlobalIlluminationMode::ScreenSpace;
-            }
-            else
-            {
-                v.GiMode = GlobalIlluminationMode::Off;
-            }
-        }
-        else if (s_Base.GiMode == GlobalIlluminationMode::ScreenSpace)
-        {
-            v.GiMode = t <= 4 ? GlobalIlluminationMode::ScreenSpace : GlobalIlluminationMode::Off;
-        }
+        v.GiMode = s_Base.GiMode;
+        // 段階 2 以上では静止画素の GI 更新を間引く（ユーザーが OFF でも一時的に ON）
+        v.GiUpdateBudget = s_Base.GiUpdateBudget; // 自動では切り替えない
+        // Lumen：1 フレームあたりのサーフェスキャッシュ更新量と、スクリーンプローブの密度を下げる
+        static const float kLumenUpdate[kTierCount] = {1.0f, 0.75f, 0.5f, 0.5f, 0.25f, 0.25f};
+        static const int kProbeSpacing[kTierCount] = {0, 0, 2, 4, 4, 8}; // 基準値への加算（px）
+        v.LumenCaptureBudget =
+            (std::max)(1, static_cast<int>(static_cast<float>(s_Base.LumenCaptureBudget) * kLumenUpdate[t] + 0.5f));
+        v.LumenLightingBudget =
+            (std::max)(1, static_cast<int>(static_cast<float>(s_Base.LumenLightingBudget) * kLumenUpdate[t] + 0.5f));
+        v.LumenProbeSpacing = (std::min)(16, s_Base.LumenProbeSpacing + kProbeSpacing[t]);
         v.Ssao = s_Base.Ssao && (!toggles || t <= 4);
 
         // ---- シャドウ ----
@@ -109679,6 +109848,10 @@ class PerformanceGovernor final
         rt.ShadowDistance = v.RtShadowDistance;
         RendererSettings::SetGiMode(v.GiMode);
         RendererSettings::SetGiDistance(v.GiDistance);
+        RendererSettings::SetGiUpdateBudgetEnabled(v.GiUpdateBudget);
+        RendererSettings::SetLumenCaptureBudget(v.LumenCaptureBudget);
+        RendererSettings::SetLumenLightingBudget(v.LumenLightingBudget);
+        RendererSettings::SetLumenProbeSpacing(v.LumenProbeSpacing);
         RendererSettings::SetSsaoEnabled(v.Ssao);
         RendererSettings::SetContactShadowSteps(v.ContactSteps);
         RendererSettings::SetVirtualClipmapLevels(v.VirtualLevels);
@@ -113328,7 +113501,7 @@ namespace
             g_Device->CreateUnorderedAccessView(result.Get(), nullptr, &uav, Cpu(frame.Heap.Get(), firstUav + 1));
             return true;
         };
-        if (Raytracing::GetSettings().Reflections &&
+        if (Raytracing::ReflectionsRequested() &&
             !ensureSignal(g_Shared.Noisy, g_Shared.Result, frame.Noisy, frame.Result, 4, kResultSrv,
                           L"Ray Reflection Radiance"))
         {
@@ -113751,8 +113924,8 @@ void RayReflections::ReleaseInactiveResources()
         return;
     }
     const auto& settings = Raytracing::GetSettings();
-    const bool reflection = settings.Enabled && settings.Reflections;
-    const bool gi = settings.Enabled && RendererSettings::GetRealtimeGiEnabled();
+    const bool reflection = Raytracing::ReflectionsRequested();
+    const bool gi = RendererSettings::GetRealtimeGiEnabled(); // RT の ON/OFF とは独立
     const bool lumen = gi && RendererSettings::GetLumenEnabled();
     const bool reservoir = gi && !lumen && RenderQuality::GetGiResamplingMode() != 0;
     const bool cache =
@@ -114205,9 +114378,11 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
                                  static_cast<float>(kCacheCapacity),
                                  static_cast<float>(RendererSettings::GetGiRadianceCacheHistory())};
     static const bool adaptiveRequested = ReadEnvironmentFlagOnce("DX12_ADAPTIVE_REFLECTIONS");
-    static const bool budgetRequested = ReadEnvironmentFlagOnce("DX12_GI_UPDATE_BUDGET");
+    // 以前は環境変数でしか有効にできなかった。設定（既定 ON）から有効化する。環境変数でも強制できる
+    static const bool budgetForced = ReadEnvironmentFlagOnce("DX12_GI_UPDATE_BUDGET");
+    const bool budgetRequested = budgetForced || RendererSettings::GetGiUpdateBudgetEnabled();
     const bool adaptive = adaptiveRequested && !lumenRequested && velocity && g_AdaptiveCapture &&
-                          Raytracing::GetSettings().Reflections && EnsureAdaptiveHistory(frame.Width, frame.Height);
+                          Raytracing::ReflectionsRequested() && EnsureAdaptiveHistory(frame.Width, frame.Height);
     uint64_t signature = 1469598103934665603ull;
     for (const auto& entry : geometry)
     {
@@ -114454,7 +114629,7 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
         commands->Dispatch((parameters.Grid.x * parameters.Grid.y + 7) / 8, 1, 1);
         g_Lumen.Barrier(commands);
     }
-    if (Raytracing::GetSettings().Reflections)
+    if (Raytracing::ReflectionsRequested())
     {
         RenderProfiler::ScopedEvent reflectionProfile("DXR Reflections", commands);
         RenderProfiler::ScopedEvent traceProfile("DXR Reflections Trace", commands);
@@ -115257,26 +115432,14 @@ namespace
         // 置き換えたリソースは、このフレームのフェンスが再利用されるまで保持する。
         vector<ComPtr<ID3D12Resource>> Retired;
         UINT Height = 0;
-        // TLAS の再構築スキップ用（同じスロットで前回ビルドした内容）
-        uint64_t TopLevelHash = 0;
-        UINT TopLevelCount = 0;
-        bool TopLevelValid = false;
-        // TLAS のプレビルド情報（インスタンス数が同じなら再照会しない）
-        UINT PrebuildCount = 0;
+        // TLAS のプレビルド情報のキャッシュ。TLAS の必要サイズは「インスタンス数・ビルドフラグ」だけで
+        // 決まる（インスタンスの変換や参照 BLAS には依存しない）ため、同じ条件なら再照会しない。
+        // UINT_MAX は未照会。リソース解放時は g_Frames = {} で初期化される。
+        UINT PrebuildCount = UINT_MAX;
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS PrebuildFlags =
+            D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
         D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO PrebuildSizes{};
     };
-
-    // FNV-1a（64bit）。インスタンス記述子（変換・マスク・BLAS アドレス）の一致判定に使う
-    uint64_t HashBytes(const void* data, size_t size)
-    {
-        const auto* bytes = static_cast<const unsigned char*>(data);
-        uint64_t hash = 14695981039346656037ull;
-        for (size_t i = 0; i < size; ++i)
-        {
-            hash = (hash ^ bytes[i]) * 1099511628211ull;
-        }
-        return hash;
-    }
 
     struct Constants
     {
@@ -115899,12 +116062,8 @@ namespace
             inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE |
                            D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
         }
-        if (frame.PrebuildCount != g_InstanceCount)
-        {
-            g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &frame.PrebuildSizes);
-            frame.PrebuildCount = g_InstanceCount;
-        }
-        const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes = frame.PrebuildSizes;
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes{};
+        g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &sizes);
         // リフィットは同じ頂点形式でのみ可能。リフィットを重ねると BVH が劣化するため、
         // 一定回数ごとにフルビルドへ切り替える（1 フレームの再構築数は予算で分散）。
         bool update = geometry.Deforming && level.Result && level.Quantized == quantized;
@@ -116311,28 +116470,8 @@ namespace
         g_InstanceCount = static_cast<UINT>(instances.size());
         if (instances.empty())
         {
-            frame.TopLevelValid = false;
             return false;
         }
-        // 最適化：インスタンスが前回このスロットで構築したときと完全に同じで、BLAS の書き込み
-        // （ビルド / リフィット / コンパクション）も無ければ、TLAS は同一なので再構築しない。
-        // 静的シーンやカメラだけが動く場面で、毎フレームの TLAS ビルドとアップロードを省く。
-        bool anyBottomWritten = false;
-        for (const auto& [unused, bottom] : frame.Geometry)
-        {
-            if (bottom.LastBuilt == g_Serial)
-            {
-                anyBottomWritten = true;
-                break;
-            }
-        }
-        const uint64_t instanceHash = HashBytes(instances.data(), instances.size() * sizeof(instances.front()));
-        if (!anyBottomWritten && frame.TopLevelValid && frame.TopLevel && frame.TopLevelHash == instanceHash &&
-            frame.TopLevelCount == g_InstanceCount)
-        {
-            return true;
-        }
-        frame.TopLevelValid = false;
         if (!EnsureBuffer(frame.Instances, instances.size() * sizeof(instances.front()), D3D12_HEAP_TYPE_UPLOAD,
                           D3D12_RESOURCE_STATE_GENERIC_READ, L"TLAS Instance Descriptions"))
         {
@@ -116352,12 +116491,21 @@ namespace
         inputs.NumDescs = g_InstanceCount;
         inputs.InstanceDescs = frame.Instances->GetGPUVirtualAddress();
         inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
-        if (frame.PrebuildCount != g_InstanceCount)
+        // 最適化：ドライバーへのサイズ照会は、インスタンス数かフラグが変わったときだけ行う。
+        // TLAS 自体は従来どおり毎フレーム構築する（構築内容・タイミングは変更なし）。
+        if (frame.PrebuildCount != g_InstanceCount || frame.PrebuildFlags != inputs.Flags)
         {
+            frame.PrebuildSizes = {};
             g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &frame.PrebuildSizes);
             frame.PrebuildCount = g_InstanceCount;
+            frame.PrebuildFlags = inputs.Flags;
         }
         const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes = frame.PrebuildSizes;
+        if (sizes.ResultDataMaxSizeInBytes == 0)
+        {
+            frame.PrebuildCount = UINT_MAX; // 照会失敗時は次フレームで再照会する
+            return false;
+        }
         if (!EnsureBuffer(frame.TopLevel, sizes.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
                           D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene TLAS") ||
             !EnsureBuffer(frame.Scratch, sizes.ScratchDataSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
@@ -116372,9 +116520,6 @@ namespace
         commandList->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
         const auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(frame.TopLevel.Get());
         commandList->ResourceBarrier(1, &barrier);
-        frame.TopLevelHash = instanceHash;
-        frame.TopLevelCount = g_InstanceCount;
-        frame.TopLevelValid = true;
         return true;
     }
 
@@ -116605,9 +116750,9 @@ void Raytracing::ReleaseInactiveResources()
     {
         return;
     }
-    const bool needed =
-        g_Settings.Enabled && (UsesRaytracedShadows() || UsesRaytracedAmbientOcclusion() || g_Settings.Reflections ||
-                               RendererSettings::GetRealtimeGiEnabled() || RenderQuality::Get().RaytracedRefraction);
+    const bool needed = RendererSettings::GetRealtimeGiEnabled() ||
+                        (g_Settings.Enabled && (UsesRaytracedShadows() || UsesRaytracedAmbientOcclusion() ||
+                                                g_Settings.Reflections || RenderQuality::Get().RaytracedRefraction));
     const bool releaseSun = g_NrdSun && (!needed || !g_Settings.Denoise || !UsesRaytracedShadows());
     const bool releaseAmbient = g_NrdAmbient && (!needed || !g_Settings.Denoise || !UsesRaytracedAmbientOcclusion());
     bool releaseScene = false;
@@ -116679,10 +116824,11 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         }
     };
     updateLighting(false);
-    if (!IsAvailable() || !g_Settings.Enabled ||
-        (!UsesRaytracedShadows() && !UsesRaytracedAmbientOcclusion() && !g_Settings.Reflections &&
-         !RendererSettings::GetRealtimeGiEnabled() && !RenderQuality::Get().RaytracedRefraction) ||
-        !commandList || !depth || !normal)
+    // 修正：DXR GI は RT の ON/OFF（g_Settings.Enabled）に関係なく実行する
+    const bool giRequested = RendererSettings::GetRealtimeGiEnabled();
+    const bool rtFeatures = g_Settings.Enabled && (UsesRaytracedShadows() || UsesRaytracedAmbientOcclusion() ||
+                                                   g_Settings.Reflections || RenderQuality::Get().RaytracedRefraction);
+    if (!IsAvailable() || !(rtFeatures || giRequested) || !commandList || !depth || !normal)
     {
         g_NrdHistoryValid = false;
         return;
@@ -116944,12 +117090,12 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     g_Active = true;
     updateLighting(true);
-    if (g_Settings.Reflections || RendererSettings::GetRealtimeGiEnabled())
+    if (RadianceRequested())
     {
         RenderProfiler::ScopedEvent reflectionProfile("DXR Radiance (Reflections / GI)", commandList);
         const bool radianceReady = RayReflections::Execute(commandList, frame.TopLevel.Get(), frame.SceneGeometry,
                                                            nrdFrame, frame.Guides, g_Settings.Denoise);
-        g_ReflectionsActive = radianceReady && g_Settings.Reflections;
+        g_ReflectionsActive = radianceReady && ReflectionsRequested();
         g_GiActive = radianceReady && RendererSettings::GetRealtimeGiEnabled() && RayReflections::IsGiActive();
     }
     if (g_ReflectionsActive || g_GiActive)
@@ -116971,6 +117117,16 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
 bool Raytracing::IsAvailable()
 {
     return g_Pipeline != nullptr;
+}
+
+bool Raytracing::ReflectionsRequested()
+{
+    return g_Settings.Enabled && g_Settings.Reflections;
+}
+
+bool Raytracing::RadianceRequested()
+{
+    return ReflectionsRequested() || RendererSettings::GetRealtimeGiEnabled();
 }
 
 bool Raytracing::UsesRaytracedShadows()
@@ -117293,6 +117449,11 @@ class Raytracing
     static void Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource* depth, ID3D12Resource* normal,
                         D3D12_GPU_DESCRIPTOR_HANDLE depthSrv, D3D12_GPU_DESCRIPTOR_HANDLE normalSrv, UINT frameIndex);
     static bool IsAvailable();
+    // RT 反射を実行するか（レイトレーシング ON かつ 反射 ON）
+    static bool ReflectionsRequested();
+    // DXR GI（Realtime / Lumen / SHaRC）は「レイトレーシング」の ON/OFF に関係なく動かす。
+    // 以前は RT を OFF にしていると GI モードを選んでも何も起きなかった。
+    static bool RadianceRequested();
     static bool UsesRaytracedShadows();
     static bool UsesRaytracedAmbientOcclusion();
     static bool IsActive();
@@ -118652,6 +118813,19 @@ class RendererSettings
     }
 
     // 複数バウンスのリアルタイム GI 用の、ワールド空間放射照度キャッシュ。
+    // GI 更新予算：画素が静止していて放射キャッシュにヒットする場合、レイを 4 フレームに 1 回だけ撃ち、
+    // それ以外のフレームはキャッシュ値を使う（DXR GI のレイ数を静止時に最大 1/4 へ削減）。
+    // ReSTIR / SHaRC 使用時は各自の時間方向再利用があるため適用されない。
+    static bool GetGiUpdateBudgetEnabled()
+    {
+        return s_GiUpdateBudget;
+    }
+
+    static void SetGiUpdateBudgetEnabled(bool value)
+    {
+        SetValue(s_GiUpdateBudget, value);
+    }
+
     static bool GetGiRadianceCacheEnabled()
     {
         return s_GiRadianceCacheEnabled;
@@ -119113,6 +119287,7 @@ class RendererSettings
     inline static bool s_GiRadianceCacheEnabled = true;
     inline static float s_GiRadianceCacheCellSize = 0.25f;
     inline static int s_GiRadianceCacheHistory = 32;
+    inline static bool s_GiUpdateBudget = false; // 既定 OFF（元の動作）
     inline static bool s_RayBinningEnabled = true;
     inline static bool s_TextureStreamingEnabled = true;
     inline static bool s_ReservedResourcesEnabled = true;
@@ -122041,6 +122216,15 @@ struct RenderQualitySettings
     bool LensFlare = false;
     float LensFlareIntensity = 0.35f;
     float LensFlareHalo = 0.25f;
+    // --- 太陽のレンズフレア（大気シミュレーションの太陽から生成） ---
+    bool SunFlare = true;
+    float SunFlareIntensity = 1.0f;  // 全体
+    float SunFlareGlare = 1.0f;      // 太陽の周りのにじみ（ベーリンググレア）
+    float SunFlareStarburst = 1.0f;  // 光芒（絞り羽根の回折）
+    float SunFlareGhosts = 1.0f;     // ゴースト（レンズ面の反射）
+    float SunFlareHalo = 0.5f;       // 虹色のリング
+    float SunFlareAnamorphic = 0.0f; // 横方向のストリーク
+    int SunFlareBlades = 6;          // 絞り羽根の枚数（ゴーストの多角形 / 光芒の本数）
     // --- 天候 ---
     bool WeatherEnabled = false;
     float RainIntensity = 0.0f; // 雨粒（画面）と濡れの進行速度
@@ -155225,7 +155409,25 @@ cbuffer BloomConstants : register(b0)
     float Time;
     float WindX;
     uint FirstLevel;
-    uint Flags; // bit0 = ブルーム、bit1 = フレア、bit2 = 雨、bit3 = 雪
+    uint Flags; // bit0 = ブルーム、bit1 = フレア、bit2 = 雨、bit3 = 雪、bit4 = 太陽のレンズフレア
+};
+
+// 太陽のレンズフレア（AdvancedEffects::SunFlareConstants と同じ並び）
+cbuffer SunFlareConstants : register(b1)
+{
+    float2 SunUv;      // 太陽の画面 UV（画面外のこともある）
+    float SunVisible;  // 画面内 / 高度によるフェード
+    float SunAspect;   // 幅 / 高さ
+    float3 SunColor;   // 太陽光の色 × 強度（線形 HDR）
+    float SunFlareIntensity;
+    float SunGlare;
+    float SunStarburst;
+    float SunGhosts;
+    float SunHalo;
+    float SunAnamorphic;
+    float SunBlades;
+    float SunRotation;
+    float SunUnused;
 };
 
 Texture2D<float4> Source0 : register(t0);
@@ -155412,7 +155614,152 @@ float SnowLayer(float2 uv, float scale, float speed, float seed, float aspect)
     return smoothstep(radius, radius * 0.4f, length(local - center));
 }
 
-[numthreads(8, 8, 1)] void BloomCombine(uint3 id : SV_DispatchThreadID) {
+// =============================================================================================
+// 太陽のレンズフレア（大気シミュレーションの太陽から生成。参照：実写の逆光）
+//  ・グレア     : 太陽の周りの明るいにじみ（ベーリンググレア）
+//  ・光芒       : 絞り羽根の回折による放射状の光条（羽根の枚数 × 2 本）と細かい筋
+//  ・ゴースト   : 太陽 → 画面中心 → 反対側の軸上に並ぶ、絞りの形（多角形）の反射像。縁は色収差で虹色
+//  ・ハロー     : 太陽を囲む淡い虹色のリング
+//  ・ストリーク : アナモルフィックレンズ風の横長の光（任意）
+//  遮蔽は 8x8 グループ単位で、太陽の円盤の周りの深度 64 点を調べて空の割合を求める（建物・木の裏で消える）
+// =============================================================================================
+groupshared float gs_SunOcclusion[64];
+
+float SunFlareHash(float x)
+{
+    return frac(sin(x * 127.1f) * 43758.5453f);
+}
+
+// 正 N 角形（中心からの距離を多角形の内接円で正規化）。N が大きいほど円に近い
+float PolygonDistance(float2 p, float blades, float rotation)
+{
+    const float sector = 6.28318530718f / blades;
+    float angle = atan2(p.y, p.x) + rotation;
+    float local = fmod(angle + 31.4159265f * blades, sector) - sector * 0.5f; // 正の剰余
+    return length(p) * cos(local) / cos(sector * 0.5f);
+}
+
+// 1 つのゴースト。R/G/B で半径を少し変えて縁に色収差を出す
+float3 SunGhost(float2 p, float2 center, float radius, float3 tint, float ringWeight)
+{
+    float3 result;
+    [unroll] for (int channel = 0; channel < 3; ++channel)
+    {
+        const float r = radius * (1.0f + (channel - 1) * 0.035f);
+        const float d = PolygonDistance(p - center, SunBlades, SunRotation * 2.0f) / r;
+        const float body = smoothstep(1.0f, 0.82f, d); // 内側は塗り、縁はやわらかく
+        const float ring = exp(-pow((d - 0.94f) * 14.0f, 2.0f));
+        result[channel] = body * (0.55f + 0.45f * d) + ring * ringWeight;
+    }
+    return result * tint;
+}
+
+float SunOcclusionTap(uint index)
+{
+    // 太陽の円盤（視直径 約 0.5 度）より少し広い範囲を、黄金角のらせんで 64 点
+    const float t = (index + 0.5f) / 64.0f;
+    const float angle = index * 2.39996323f;
+    const float radius = sqrt(t) * 0.012f;
+    float2 uv = SunUv + float2(cos(angle) / max(SunAspect, 0.01f), sin(angle)) * radius;
+    if (any(uv < 0.0f) || any(uv > 1.0f))
+    {
+        return 1.0f; // 画面外の部分は遮蔽物が分からないので見えているとみなす
+    }
+    // 逆 Z：空（何も描かれていない）は深度 0
+    return SceneDepth.SampleLevel(LinearClamp, uv, 0) <= 0.0f ? 1.0f : 0.0f;
+}
+
+float3 SunLensFlare(float2 uv, float visibility)
+{
+    // アスペクト補正した画面中心基準の座標
+    const float2 aspect = float2(SunAspect, 1.0f);
+    const float2 p = (uv - 0.5f) * aspect;
+    const float2 sun = (SunUv - 0.5f) * aspect;
+    const float2 toSun = p - sun;
+    const float distance = length(toSun);
+    const float3 sunLight = SunColor * (SunFlareIntensity * visibility);
+    float3 result = 0.0f;
+
+    // ---- グレア：芯の明るい点 + 広いにじみ（距離の逆二乗で減衰）
+    const float core = 1.0f / (1.0f + pow(distance * 90.0f, 2.0f));
+    const float veil = 1.0f / (1.0f + pow(distance * 9.0f, 2.0f));
+    result += (core * 2.0f + veil * 0.12f) * SunGlare;
+
+    // ---- 光芒：羽根の数 × 2 本の主光条 + ハッシュで揺らした細い筋
+    {
+        const float angle = atan2(toSun.y, toSun.x) - SunRotation;
+        const float rays = pow(abs(cos(angle * SunBlades * 0.5f)), 220.0f);
+        const float fine = SunFlareHash(floor((angle + 3.14159265f) * 60.0f));
+        const float streaks = pow(abs(cos(angle * 37.0f + fine * 6.28f)), 60.0f) * fine;
+        const float falloff = 1.0f / (1.0f + distance * 7.0f) * exp(-distance * 2.2f);
+        result += (rays * 0.9f + streaks * 0.35f) * falloff * 0.6f * SunStarburst;
+    }
+
+    // ---- ゴースト：太陽と画面中心を結ぶ軸上（反対側へ伸びる）
+    if (SunGhosts > 0.0f)
+    {
+        // 太陽が画面中心に近いほどゴーストが重なって明るい
+        const float centered = saturate(1.0f - length(sun) * 0.9f);
+        // 位置（軸上の比率：1 = 太陽、0 = 中心、負 = 反対側）、半径、色
+        static const float3 kGhosts[8] = {float3(0.62f, 0.016f, 0.0f), float3(0.35f, 0.035f, 1.0f),
+                                          float3(0.12f, 0.010f, 2.0f), float3(-0.18f, 0.060f, 3.0f),
+                                          float3(-0.42f, 0.022f, 4.0f), float3(-0.70f, 0.105f, 5.0f),
+                                          float3(-1.05f, 0.040f, 6.0f), float3(-1.40f, 0.150f, 7.0f)};
+        static const float3 kTints[8] = {float3(1.0f, 0.65f, 0.30f), float3(0.35f, 1.0f, 0.55f),
+                                         float3(1.0f, 0.85f, 0.45f), float3(0.55f, 0.35f, 1.0f),
+                                         float3(0.40f, 0.95f, 0.65f), float3(0.70f, 0.40f, 0.95f),
+                                         float3(1.0f, 0.55f, 0.35f), float3(0.45f, 0.65f, 1.0f)};
+        float3 ghosts = 0.0f;
+        [unroll] for (int ghost = 0; ghost < 8; ++ghost)
+        {
+            const float2 center = sun * kGhosts[ghost].x;
+            const float radius = kGhosts[ghost].y * (1.0f + length(sun) * 0.6f);
+            // 小さいゴーストは明るく、大きいものは淡く（同じ光量が広がる）
+            const float brightness = 0.02f / (radius + 0.02f);
+            ghosts += SunGhost(p, center, radius, kTints[ghost], 0.6f) * brightness;
+        }
+        result += ghosts * 0.04f * (0.35f + 0.65f * centered) * SunGhosts;
+    }
+
+    // ---- ハロー：太陽を囲む虹色のリング（波長ごとに半径を変える）
+    if (SunHalo > 0.0f)
+    {
+        float3 halo;
+        [unroll] for (int channel = 0; channel < 3; ++channel)
+        {
+            const float radius = 0.30f + channel * 0.012f;
+            halo[channel] = exp(-pow((distance - radius) * 38.0f, 2.0f));
+        }
+        result += halo * 0.012f * SunHalo;
+    }
+
+    // ---- アナモルフィック・ストリーク
+    if (SunAnamorphic > 0.0f)
+    {
+        const float streak = exp(-abs(toSun.y) * 260.0f) * exp(-abs(toSun.x) * 1.6f);
+        result += streak * float3(0.55f, 0.75f, 1.0f) * 0.08f * SunAnamorphic;
+    }
+    return result * sunLight;
+}
+
+[numthreads(8, 8, 1)] void BloomCombine(uint3 id : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex) {
+    // 太陽の遮蔽（グループ全体で 64 点を分担）。早期 return より前に行う（バリアを全スレッドで通過させる）
+    float sunVisibility = 0.0f;
+    if ((Flags & 16u) != 0)
+    {
+        gs_SunOcclusion[groupIndex] = SunOcclusionTap(groupIndex);
+        GroupMemoryBarrierWithGroupSync();
+        [unroll] for (uint stride = 32; stride > 0; stride >>= 1)
+        {
+            if (groupIndex < stride)
+            {
+                gs_SunOcclusion[groupIndex] += gs_SunOcclusion[groupIndex + stride];
+            }
+            GroupMemoryBarrierWithGroupSync();
+        }
+        // 一部が隠れると急に暗くなる（実際のフレアも絞りに入る光量にほぼ比例）
+        sunVisibility = (gs_SunOcclusion[0] / 64.0f) * SunVisible;
+    }
     if (any(id.xy >= DestinationSize))
     {
         return;
@@ -155429,6 +155776,10 @@ float SnowLayer(float2 uv, float scale, float speed, float seed, float aspect)
     if ((Flags & 2u) != 0)
     {
         color += LensFlare(uv) * FlareIntensity * 0.05f;
+    }
+    if ((Flags & 16u) != 0 && sunVisibility > 0.0001f)
+    {
+        color += SunLensFlare(uv, sunVisibility);
     }
     float ambient = dot(bloom, kLuma) + 0.02f;
     if ((Flags & 4u) != 0)
@@ -155636,15 +155987,20 @@ CloudOutput MarchCloud(float2 uv, float2 pixel)
     }
     float3 moonDirection = VirtualMoonDirection();
     float3 moonRadiance = VirtualMoonIrradiance() * CelestialAtmosphereTransmission(heightBounds.x, moonDirection);
-    float moonPhase = CloudHG(dot(ray, moonDirection));
-    float phase = CloudHG(dot(ray, sunDirection));
+    const float sunCosine = dot(ray, sunDirection);
+    const float moonCosine = dot(ray, moonDirection);
     float3 solarBottom = sunRadiance * CelestialAtmosphereTransmission(heightBounds.x, sunDirection);
     float3 solarTop = sunRadiance * CelestialAtmosphereTransmission(heightBounds.y, sunDirection);
+    const bool sunLit = any(solarTop > 0) && sunDirection.y > -0.02;
+    const bool moonLit = any(moonRadiance > 0) && moonDirection.y > 0;
     float twilight = smoothstep(-0.12, 0.04, sunDirection.y) * (1 - smoothstep(0.04, 0.30, sunDirection.y));
     float3 ambientColor = lerp(float3(0.006, 0.009, 0.016),
                                max(AtmosphereColor0.rgb, 0) * max(SkyParameters.z, 0) * 0.05, SkyParameters.y);
     ambientColor = lerp(ambientColor, float3(0.12, 0.035, 0.018) * max(SkyParameters.z, 0) * 0.05, twilight);
     float3 ambient = ambientColor * CloudLighting.y;
+    // 光マーチの長さ：雲の厚みに比例（数 km の全区間ではなく、自己遮蔽に効く範囲）
+    const float layerThickness = max(heightBounds.y - heightBounds.x, 1.0);
+    const float lightMarchLength = clamp(layerThickness * 0.6, 50.0, 3000.0);
     // ピクセルごとに安定した IGN。時間方向の再投影がないため、フレームごとに乱数を変えない。
     float jitter = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
     float offset = lerp(0.5, jitter, CloudLighting.w);
@@ -155656,36 +156012,95 @@ CloudOutput MarchCloud(float2 uv, float2 pixel)
     float weightedDepth = 0;
     uint steps = 0;
     float occupiedDistance = 0;
+    const float extinction = max(CloudShape.w, 0.000001);
     [loop] for (uint interval = 0; interval < intervalCount; ++interval)
     {
-        float intervalLength = intervals[interval].y - intervals[interval].x;
+        float intervalStart = intervals[interval].x;
+        float intervalLength = intervals[interval].y - intervalStart;
         occupiedDistance += intervalLength;
-        float stepLength = intervalLength / CloudQuality.x;
-        [loop] for (uint i = 0; i < CloudQuality.x; ++i)
+        // 最適化：空白は 4 倍の粗いステップ（基本形状のみ）で進み、雲に当たったら 1 ステップ戻って細かく進む。
+        // 細かいステップは従来と同じ長さ（区間 / ステップ数）なので、密な部分の品質は落ちない。
+        const float fineStep = intervalLength / max((float)CloudQuality.x, 1.0);
+        const float coarseStep = fineStep * 4.0;
+        float distance = intervalStart + offset * fineStep;
+        bool fine = false;
+        uint emptyRun = 0;
+        const uint maxIterations = CloudQuality.x * 3u + 8u;
+        [loop] for (uint iteration = 0; iteration < maxIterations && distance < intervals[interval].y; ++iteration)
         {
-            ++steps;
-            float distance = intervals[interval].x + (i + offset) * stepLength;
             float3 position = origin + ray * distance;
+            if (!fine)
+            {
+                // 粗い探索
+                ++steps;
+                if (CloudDensityLod(position, false) < 0.00001 && CloudQuality.z != 3)
+                {
+                    distance += coarseStep;
+                    continue;
+                }
+                // 雲に入った：1 粗ステップ分戻って細かいステップへ
+                fine = true;
+                emptyRun = 0;
+                distance = max(intervalStart + offset * fineStep, distance - coarseStep + fineStep);
+                continue;
+            }
+            ++steps;
             float density = CloudDensity(position);
             if (density < 0.00001 && CloudQuality.z != 3)
             {
+                // 連続して空なら粗い探索へ戻る
+                if (++emptyRun >= 6)
+                {
+                    fine = false;
+                }
+                distance += fineStep;
                 continue;
             }
-            float3 solarIncident =
-                lerp(solarBottom, solarTop,
-                     saturate((position.y - heightBounds.x) / max(heightBounds.y - heightBounds.x, 0.01)));
-            float lightT = any(solarIncident > 0) ? CloudLightTransmittance(position, sunDirection) : 1;
-            float moonT = any(moonRadiance > 0) ? CloudSolarTransmittance(position, moonDirection) : 1;
-            float powder = 1 + CloudLighting.z * (1 - exp(-2 * density));
-            float3 lighting = (solarIncident * phase * lightT + moonRadiance * moonPhase * moonT) * powder + ambient;
-            float sampleT = exp(-density * CloudShape.w * stepLength);
+            emptyRun = 0;
+            float heightFraction = saturate((position.y - heightBounds.x) / layerThickness);
+            float3 solarIncident = lerp(solarBottom, solarTop, heightFraction);
+
+            // ---- 光の透過（指数間隔の光マーチ）
+            float sunDepth = sunLit ? CloudMarchOpticalDepth(position, sunDirection, lightMarchLength) : 0;
+            float moonDepth = moonLit ? CloudMarchOpticalDepth(position, moonDirection, lightMarchLength) : 0;
+
+            // ---- 多重散乱の近似（Wrenninge 2013 のオクターブ法）
+            //  オクターブごとに消散 a^n、寄与 b^n、位相の異方性 c^n を下げる。
+            //  厚い雲の内部が真っ黒にならず、明るい縁と柔らかな陰影になる。
+            float3 sunLight = 0;
+            float3 moonLight = 0;
+            float contribution = 1;
+            float attenuation = 1;
+            float anisotropy = 1;
+            [unroll] for (uint octave = 0; octave < 3; ++octave)
+            {
+                float g = CloudLighting.x * anisotropy;
+                sunLight += contribution * exp(-sunDepth * extinction * attenuation) * CloudDualPhase(sunCosine, g);
+                moonLight += contribution * exp(-moonDepth * extinction * attenuation) * CloudDualPhase(moonCosine, g);
+                contribution *= 0.5;
+                attenuation *= 0.4;
+                anisotropy *= 0.5;
+            }
+            // 3 オクターブの合計（1 + 0.5 + 0.25）で正規化し、薄い雲の明るさは従来と揃える
+            sunLight *= 1.0 / 1.75;
+            moonLight *= 1.0 / 1.75;
+            float powder = 1 + CloudLighting.z * (1 - exp(-2 * density)); // 従来と同じパウダー効果
+            // 環境光：雲の上部ほど空に開けていて明るい
+            float3 ambientSample = ambient * lerp(0.45, 1.25, heightFraction);
+            float3 lighting = (solarIncident * sunLight * (sunLit ? 1 : 0) + moonRadiance * moonLight * (moonLit ? 1 : 0)) *
+                                  powder +
+                              ambientSample;
+
+            // ---- ステップ内の解析積分（散乱アルベド 1）：ステップ長が変わっても明るさが変わらない
+            float sampleT = exp(-density * extinction * fineStep);
             float weight = transmittance * (1 - sampleT);
             scattering += weight * lighting;
             debugLighting += lighting;
-            densityIntegral += density * stepLength;
+            densityIntegral += density * fineStep;
             weightedDepth += distance * weight;
             depthWeight += weight;
             transmittance *= sampleT;
+            distance += fineStep;
             if (transmittance < 0.01)
             {
                 break;
@@ -155716,7 +156131,7 @@ CloudOutput MarchCloud(float2 uv, float2 pixel)
     }
     if (CloudQuality.z == 5)
     {
-        output.Color = float4((float(steps) / (CloudQuality.x * intervalCount)).xxx, 0);
+        output.Color = float4(saturate(float(steps) / (CloudQuality.x * intervalCount)).xxx, 0);
     }
     return output;
 }
@@ -155897,7 +156312,9 @@ uint CloudIntervals(float3 origin, float3 direction, float limit, out float2 int
     return mergedCount;
 }
 
-float CloudLayerDensity(float3 worldPosition, CloudLayerParameters layer, uint index)
+// detail = false は基本形状だけを返す（詳細ノイズの 3D サンプルを省く）。
+// 空白のスキップと、遠い光のサンプルで使う。浸食は輪郭を削るだけなので、基本形状は上限として安全。
+float CloudLayerDensityLod(float3 worldPosition, CloudLayerParameters layer, uint index, bool detail)
 {
     if (layer.Layer.z <= 0 || layer.Layer.w <= 0)
     {
@@ -155920,10 +156337,23 @@ float CloudLayerDensity(float3 worldPosition, CloudLayerParameters layer, uint i
     {
         return 0;
     }
+    // 上部ほど丸く（積雲のカリフラワー状）、下部ほど平らになる高さ依存の形状
+    float coverageShape = shape * gradient;
+    if (!detail)
+    {
+        return saturate(coverageShape) * layer.Layer.w;
+    }
     float3 detailUv = worldPosition * layer.Shape.y + noiseOffset;
     detailUv.xz -= layer.Wind.zw;
-    float detail = CloudDetailNoise.SampleLevel(CloudWrap, detailUv, 0);
-    return saturate(shape * gradient - detail * layer.Shape.z * (1 - shape)) * layer.Layer.w;
+    float detailNoise = CloudDetailNoise.SampleLevel(CloudWrap, detailUv, 0);
+    // 下側は細かく（ちぎれた雲底）、上側はふくらんだ（反転した）詳細で浸食する
+    float detailModifier = lerp(detailNoise, 1 - detailNoise, saturate(height * 4.0));
+    return saturate(coverageShape - detailModifier * layer.Shape.z * (1 - coverageShape)) * layer.Layer.w;
+}
+
+float CloudLayerDensity(float3 worldPosition, CloudLayerParameters layer, uint index)
+{
+    return CloudLayerDensityLod(worldPosition, layer, index, true);
 }
 
 float CloudDensity(float3 worldPosition)
@@ -155940,10 +156370,66 @@ float CloudDensity(float3 worldPosition)
     return density;
 }
 
+float CloudDensityLod(float3 worldPosition, bool detail)
+{
+    float density = CloudLayerDensityLod(worldPosition, GetCloudLayer(0), 0, detail);
+    [branch] if (CloudQuality.w <= 1)
+    {
+        return density;
+    }
+    [loop] for (uint index = 1; index < CloudQuality.w; ++index)
+    {
+        density += CloudLayerDensityLod(worldPosition, GetCloudLayer(index), index, detail);
+    }
+    return density;
+}
+
+// 雲の内部の照明用の光マーチ。地表の影用（CloudLightTransmittance）とは別。
+//  ・距離を指数的に伸ばす（近くは細かく、遠くは粗く）。全区間（数 km）を等分していた従来より、
+//    自己遮蔽の細部が出て、サンプル数も少なくて済む
+//  ・最初の 2 サンプル以外は基本形状のみ（詳細ノイズを省く）
+//  ・最後に長いサンプルを 1 つ追加して、遠くの雲の塊による遮蔽も拾う
+float CloudMarchOpticalDepth(float3 position, float3 towardLight, float maxDistance)
+{
+    const uint stepCount = clamp(CloudQuality.y, 2u, 16u);
+    float opticalDepth = 0;
+    float previous = 0;
+    // 1 + r + r^2 + ... = maxDistance になる公比 r = 1.6 の等比数列
+    const float ratio = 1.6;
+    float first = maxDistance * (ratio - 1) / (pow(ratio, (float)stepCount) - 1);
+    float segment = first;
+    [loop] for (uint i = 0; i < stepCount; ++i)
+    {
+        float distance = previous + segment * 0.5;
+        float density = CloudDensityLod(position + towardLight * distance, i < 2);
+        opticalDepth += density * segment;
+        previous += segment;
+        segment *= ratio;
+        if (opticalDepth * CloudShape.w > 9.21)
+        {
+            return opticalDepth;
+        }
+    }
+    // 遠方の塊：光線方向に maxDistance の 3 倍先を 1 サンプル
+    opticalDepth += CloudDensityLod(position + towardLight * (maxDistance * 2.5), false) * maxDistance * 2.0;
+    return opticalDepth;
+}
+
 float CloudHG(float cosine)
 {
     float g = CloudLighting.x;
     return (1 - g * g) / (12.566370614 * pow(max(1 + g * g - 2 * g * cosine, 0.001), 1.5));
+}
+
+float CloudHGg(float cosine, float g)
+{
+    return (1 - g * g) / (12.566370614 * pow(max(1 + g * g - 2 * g * cosine, 0.001), 1.5));
+}
+
+// 二重ローブ（前方の銀の縁 + 弱い後方散乱）。設定の g を前方ローブに使う
+float CloudDualPhase(float cosine, float g)
+{
+    return lerp(CloudHGg(cosine, -0.25 * saturate(g / 0.85)), CloudHGg(cosine, g), 0.75);
 }
 
 float CloudLightTransmittance(float3 position, float3 towardSun)
@@ -156981,7 +157467,9 @@ float3 ApplyAtmosphereToLightCommon(float3 worldPos, float3 lightDir, float3 lig
     float viewDistance = length(toCamera);
     float3 viewToCamera = SafeNormalizeCommon(toCamera, -lightDir);
     float3 toLight = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
-    float cosTheta = clamp(dot(toLight, viewToCamera), -1.0f, 1.0f);
+    // 修正：位相関数の角度は「光の進行方向（-toLight）」と「カメラへ向かう散乱方向」の内積。
+    // 以前は符号が逆で、Mie の前方散乱ピークが太陽の反対側（地面の下の「月」の位置）に出ていた。
+    float cosTheta = clamp(dot(-toLight, viewToCamera), -1.0f, 1.0f);
 
     float opticalDepth =
         AtmosphereDensityCommon(worldPos) * (1.0f - exp(-viewDistance * max(AtmosphereParams1.w, 0.0001f)));
@@ -157014,7 +157502,9 @@ float3 AtmosphereSingleScatterFromDensityCommon(float sampleDensity, float3 view
                                                 float3 lightColor)
 {
     float3 toLight = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
-    float cosTheta = clamp(dot(toLight, viewToCamera), -1.0f, 1.0f);
+    // 修正：位相関数の角度は「光の進行方向（-toLight）」と「カメラへ向かう散乱方向」の内積。
+    // 以前は符号が逆で、Mie の前方散乱ピークが太陽の反対側（地面の下の「月」の位置）に出ていた。
+    float cosTheta = clamp(dot(-toLight, viewToCamera), -1.0f, 1.0f);
     float rayleighPhase = RayleighPhaseCommon(cosTheta);
     float miePhase = HenyeyGreensteinCommon(cosTheta, AtmosphereParams1.z);
     float3 rayleigh = AtmosphereColor0.rgb * max(AtmosphereParams0.y, 0.0f) * rayleighPhase;
@@ -157266,7 +157756,7 @@ float3 RayMarchAtmosphereViewCommon(float3 worldPos, Texture2DArray<float> shado
                 step(2.5f, LightPositionTypes[lightIndex].w) * step(LightPositionTypes[lightIndex].w, 3.5f);
             float localVolumeStepBoost = lerp(1.0f, 0.35f / max(AtmosphereParams1.w, 0.0001f), localLight);
             float phase = saturate(
-                HenyeyGreensteinCommon(clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
+                HenyeyGreensteinCommon(clamp(dot(-singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
             float shaftBoost = lerp(0.55f, 1.75f, phase) * lerp(1.0f, 2.35f, volumeLight);
             float3 singleAtmosphere =
                 AtmosphereSingleScatterFromDensityCommon(sampleDensity, viewToCamera, singleDir, shadowedColor);
@@ -157293,7 +157783,7 @@ float3 RayMarchAtmosphereViewCommon(float3 worldPos, Texture2DArray<float> shado
             float volumeLight = step(2.5f, LightPositionType.w) * step(LightPositionType.w, 3.5f);
             float localVolumeStepBoost = lerp(1.0f, 0.35f / max(AtmosphereParams1.w, 0.0001f), localLight);
             float phase = saturate(
-                HenyeyGreensteinCommon(clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
+                HenyeyGreensteinCommon(clamp(dot(-singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
             float shaftBoost = lerp(0.55f, 1.75f, phase) * lerp(1.0f, 2.35f, volumeLight);
             float3 singleAtmosphere =
                 AtmosphereSingleScatterFromDensityCommon(sampleDensity, viewToCamera, singleDir, shadowedColor);
@@ -157328,7 +157818,8 @@ float3 AtmosphereBackgroundCommon(float2 uv)
         lightColor = max(LightColors[0].rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColors[0].a, 0.0f);
     }
 
-    float cosTheta = clamp(dot(lightDir, -viewDir), -1.0f, 1.0f);
+    // 修正：AtmosphereGBufferPS / SkyAtmosphere と同じ向き（太陽の方向を見たときに前方散乱が最大）
+    float cosTheta = clamp(dot(lightDir, viewDir), -1.0f, 1.0f);
     float rayleighPhase = RayleighPhaseCommon(cosTheta);
     float miePhase = HenyeyGreensteinCommon(cosTheta, AtmosphereParams1.z);
     float skyDensity = max(AtmosphereParams0.w, 0.0f) * lerp(1.15f, 0.35f, saturate(uv.y));
@@ -171142,7 +171633,7 @@ float TraceHitDistance(float3 origin, float3 direction, float distance, bool clo
         float2 disk = float2(cos(angle), sin(angle)) * radius;
         if (Features.x != 0 && SunDirection.w > 0.5f && sunBackFacing)
         {
-            // shadow += 0
+            // shadow += 0（裏面は常に影）
 #if USE_NRD
             if (sample == 0)
             {
@@ -173675,7 +174166,7 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
         // MegaLights M1 グリッドのライト：DXR 影モードならライト中心へ影のレイを 1 本
         const float maximumDistance = min(length(lightPositionType.xyz - worldPos), SceneRayParameters.x);
         // 最適化：点 / スポット光で N・L < -0.6 なら、ラップ照明（最大 0.55）を含めても寄与が 0 なので
-        // 影レイを省く（面光源の矩形 / カプセル / ボリュームは中心方向と寄与が一致しないので対象外）
+        // 影レイを省く（矩形 / カプセル / ボリュームは中心方向と寄与が一致しないので対象外）
         shadowVisibility = lightPositionType.w < 2.5f && dot(normal, singleDir) < -0.6f
                                ? 0.0f
                                : TraceSceneShadow(worldPos + g_PomShadowOffset, normal, singleDir, maximumDistance);

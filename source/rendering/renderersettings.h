@@ -720,7 +720,7 @@ class RendererSettings
     inline static bool s_GiRadianceCacheEnabled = true;
     inline static float s_GiRadianceCacheCellSize = 0.25f;
     inline static int s_GiRadianceCacheHistory = 32;
-    inline static bool s_GiUpdateBudget = true;
+    inline static bool s_GiUpdateBudget = false; // 既定 OFF（元の動作）
     inline static bool s_RayBinningEnabled = true;
     inline static bool s_TextureStreamingEnabled = true;
     inline static bool s_ReservedResourcesEnabled = true;

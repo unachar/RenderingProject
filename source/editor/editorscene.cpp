@@ -114,7 +114,11 @@ void ImGuiManager::DrawSceneViewWindow()
     const auto previousSize = m_SceneViewSize;
     ImGui::SetNextWindowSize(ImVec2(860.0f, 520.0f), ImGuiCond_FirstUseEver);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f, 4.0f));
-    const bool expanded = EditorWindowRegistry::BeginEditorWindow("シーンビュー", &m_ShowSceneViewWindow);
+    // 修正：ギズモの上で左ドラッグすると、ImGui がウィンドウ本体のドラッグ（ウィンドウ移動 / ドック解除）を
+    // 開始してギズモ操作と競合していた。前フレームでギズモにカーソルが乗っていた / 操作中ならウィンドウ移動を止める。
+    static bool gizmoHotLastFrame = false;
+    const ImGuiWindowFlags sceneFlags = gizmoHotLastFrame || ImGuizmo::IsUsingAny() ? ImGuiWindowFlags_NoMove : 0;
+    const bool expanded = EditorWindowRegistry::BeginEditorWindow("シーンビュー", &m_ShowSceneViewWindow, sceneFlags);
     ImGui::PopStyleVar();
     if (!expanded)
     {
@@ -195,7 +199,10 @@ void ImGuiManager::DrawSceneViewWindow()
     VirtualGeometryDebug::DrawViewport(drawList, cursor, imageSize, m_SelectedEntity);
     ImGuizmo::SetID(static_cast<int>(ImGui::GetID("SceneTransformGizmo")));
     DrawTransformGizmo();
-    m_SceneGizmoCapturesMouse |= ImGuizmo::IsUsing() || (thisHovered && ImGuizmo::IsOver());
+    // 修正：ホバー判定を Image に限定しない（ギズモの軸が画像の端からはみ出しても掴めるように）
+    const bool gizmoHot = ImGuizmo::IsUsing() || ImGuizmo::IsOver();
+    gizmoHotLastFrame = gizmoHot;
+    m_SceneGizmoCapturesMouse |= gizmoHot;
     if (preferences.ShowViewportStats)
     {
         EditorSceneNavigation::DrawOverlay(drawList, cursor, imageSize);
@@ -278,12 +285,20 @@ void ImGuiManager::DrawTransformGizmo()
     ImGuizmo::SetOrthographic(false);
     ImGuizmo::SetRect(m_SceneViewPos.x, m_SceneViewPos.y, m_SceneViewSize.x, m_SceneViewSize.y);
 
-    // パイメニュー表示中はギズモに入力を渡さない。スナップは設定値（Ctrl で反転）。
-    ImGuizmo::Enable(!EditorShell::IsPieOpen());
+    // パイメニュー表示中はギズモに入力を渡さない。
+    // 修正：以前は毎フレーム Enable(false/true) を呼んでいた。ImGuizmo の Enable(false) は操作中の状態
+    // （mbUsing）を破棄するため、状態が変わったときだけ呼ぶ。
+    static bool gizmoEnabled = true;
+    const bool enableGizmo = !EditorShell::IsPieOpen();
+    if (enableGizmo != gizmoEnabled)
+    {
+        ImGuizmo::Enable(enableGizmo);
+        gizmoEnabled = enableGizmo;
+    }
+    // スナップは設定値（Ctrl で反転）
     const float* snap = EditorShell::GizmoSnap(m_GizmoOperation);
     const bool manipulated =
         ImGuizmo::Manipulate(&viewMatrix._11, &projectionMatrix._11, operation, mode, &modelMatrix._11, nullptr, snap);
-    ImGuizmo::Enable(true);
     if (!manipulated)
     {
         return;

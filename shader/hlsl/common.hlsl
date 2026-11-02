@@ -275,6 +275,12 @@ cbuffer LightParams : register(b1)
     float4 SkySunDirection;
     float4 SkyParameters;
     float4 LightIesProfiles[MAX_SHADER_LIGHTS]; // x: 配光テクスチャ番号+1、y: 軸回りの回転（周）
+    // ライブ用トゥーンスタイル（source/rendering/livetoonstyle.h と同じ並び）
+    float4 LiveToonStyle0; // x: ブレンド, y: 影乗算色の効き, z: 加算ライトの回り込み, w: 加算ライトの強さ
+    float4 LiveToonStyle1; // rgb: 影の乗算色, w: 肌の血色
+    float4 LiveToonStyle2; // x: ソフトリム, y: ハードリム, z: リム幅, w: リムのライト色
+    float4 LiveToonStyle3; // x: ランプスペキュラ, y: 天使の輪, z: 環境スペキュラ, w: 落ち影の濃さ
+    float4 LiveToonStyle4; // x: 陰影ランプのテクスチャ番号（<0 で無効）, y: 陰影ランプの強さ
 };
 
 StructuredBuffer<uint> LightTileIndices : register(t11);
@@ -471,7 +477,9 @@ float3 ApplyAtmosphereToLightCommon(float3 worldPos, float3 lightDir, float3 lig
     float viewDistance = length(toCamera);
     float3 viewToCamera = SafeNormalizeCommon(toCamera, -lightDir);
     float3 toLight = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
-    float cosTheta = clamp(dot(toLight, viewToCamera), -1.0f, 1.0f);
+    // 修正：位相関数の角度は「光の進行方向（-toLight）」と「カメラへ向かう散乱方向」の内積。
+    // 以前は符号が逆で、Mie の前方散乱ピークが太陽の反対側（地面の下の「月」の位置）に出ていた。
+    float cosTheta = clamp(dot(-toLight, viewToCamera), -1.0f, 1.0f);
 
     float opticalDepth =
         AtmosphereDensityCommon(worldPos) * (1.0f - exp(-viewDistance * max(AtmosphereParams1.w, 0.0001f)));
@@ -504,7 +512,9 @@ float3 AtmosphereSingleScatterFromDensityCommon(float sampleDensity, float3 view
                                                 float3 lightColor)
 {
     float3 toLight = SafeNormalizeCommon(lightDir, float3(0.0f, 1.0f, 0.0f));
-    float cosTheta = clamp(dot(toLight, viewToCamera), -1.0f, 1.0f);
+    // 修正：位相関数の角度は「光の進行方向（-toLight）」と「カメラへ向かう散乱方向」の内積。
+    // 以前は符号が逆で、Mie の前方散乱ピークが太陽の反対側（地面の下の「月」の位置）に出ていた。
+    float cosTheta = clamp(dot(-toLight, viewToCamera), -1.0f, 1.0f);
     float rayleighPhase = RayleighPhaseCommon(cosTheta);
     float miePhase = HenyeyGreensteinCommon(cosTheta, AtmosphereParams1.z);
     float3 rayleigh = AtmosphereColor0.rgb * max(AtmosphereParams0.y, 0.0f) * rayleighPhase;
@@ -756,7 +766,7 @@ float3 RayMarchAtmosphereViewCommon(float3 worldPos, Texture2DArray<float> shado
                 step(2.5f, LightPositionTypes[lightIndex].w) * step(LightPositionTypes[lightIndex].w, 3.5f);
             float localVolumeStepBoost = lerp(1.0f, 0.35f / max(AtmosphereParams1.w, 0.0001f), localLight);
             float phase = saturate(
-                HenyeyGreensteinCommon(clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
+                HenyeyGreensteinCommon(clamp(dot(-singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
             float shaftBoost = lerp(0.55f, 1.75f, phase) * lerp(1.0f, 2.35f, volumeLight);
             float3 singleAtmosphere =
                 AtmosphereSingleScatterFromDensityCommon(sampleDensity, viewToCamera, singleDir, shadowedColor);
@@ -783,7 +793,7 @@ float3 RayMarchAtmosphereViewCommon(float3 worldPos, Texture2DArray<float> shado
             float volumeLight = step(2.5f, LightPositionType.w) * step(LightPositionType.w, 3.5f);
             float localVolumeStepBoost = lerp(1.0f, 0.35f / max(AtmosphereParams1.w, 0.0001f), localLight);
             float phase = saturate(
-                HenyeyGreensteinCommon(clamp(dot(singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
+                HenyeyGreensteinCommon(clamp(dot(-singleDir, viewToCamera), -1.0f, 1.0f), AtmosphereParams1.z) * 6.0f);
             float shaftBoost = lerp(0.55f, 1.75f, phase) * lerp(1.0f, 2.35f, volumeLight);
             float3 singleAtmosphere =
                 AtmosphereSingleScatterFromDensityCommon(sampleDensity, viewToCamera, singleDir, shadowedColor);
@@ -818,7 +828,8 @@ float3 AtmosphereBackgroundCommon(float2 uv)
         lightColor = max(LightColors[0].rgb, float3(0.0f, 0.0f, 0.0f)) * max(LightColors[0].a, 0.0f);
     }
 
-    float cosTheta = clamp(dot(lightDir, -viewDir), -1.0f, 1.0f);
+    // 修正：AtmosphereGBufferPS / SkyAtmosphere と同じ向き（太陽の方向を見たときに前方散乱が最大）
+    float cosTheta = clamp(dot(lightDir, viewDir), -1.0f, 1.0f);
     float rayleighPhase = RayleighPhaseCommon(cosTheta);
     float miePhase = HenyeyGreensteinCommon(cosTheta, AtmosphereParams1.z);
     float skyDensity = max(AtmosphereParams0.w, 0.0f) * lerp(1.15f, 0.35f, saturate(uv.y));
@@ -1093,6 +1104,9 @@ cbuffer PBRParams : register(b2)
     uint4 AssetTextures;
     float4 AssetParallax;
     ProceduralTexture::Parameters AssetNoise[3]; // Base Color, Normal, Height. Width is enabled.
+    // ライブトゥーンのマテリアルテクスチャ（ベクトル 190, 191。GPU Scene の 192 ベクトルにちょうど収まる）
+    uint4 LiveToonTextures;       // x: Def, y: 顔陰影反転, z: 質感ランプ（テクスチャ表の番号、UINT_MAX で無効）, w: フラグ
+    float4 LiveToonMaterialParams; // x: Def の強さ, y: 顔陰影反転の強さ, z: 質感ランプ（乗算）, w: 質感ランプ（加算）
 };
 
 MaterialPartShaderParams ResolveMaterialPartParams(float materialPartId)
@@ -1391,4 +1405,5 @@ float3 ReconstructPostProcessWorldPositionCommon(float2 uv, float depth)
 }
 
 #endif
+
 

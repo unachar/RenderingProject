@@ -1549,14 +1549,28 @@ bool EditorShell::DrawNavigationGizmo(ImDrawList* drawList, ImVec2 imageMin, ImV
     // 注意：InvisibleButton の後でカーソルを戻すと、アイテムなしでカーソルを動かしたことになり
     // ImGui 1.92 の「SetCursorPos()/SetCursorScreenPos() to extend window boundaries」エラーになる。
     // 呼び出し側（シーンビュー）は以降カーソルを使わないので、元に戻さない。
-    ImGui::SetCursorScreenPos(ImVec2(center.x - radius, center.y - radius));
-    ImGui::InvisibleButton("##NavigationGizmo", ImVec2(radius * 2.0f, radius * 2.0f));
+    // 修正：ボタンは常に置かず、カーソルが円の中にあるとき（またはドラッグ中）だけ置く。
+    // 以前は常に四角いボタンを置いていたため、その範囲（とホバー履歴）が ImGuizmo の
+    // 「他のアイテムがホバーされていない」判定を妨げ、右上付近でギズモを掴めないことがあった。
+    static bool navActiveLastFrame = false;
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     const float dx = mouse.x - center.x;
     const float dy = mouse.y - center.y;
     const bool inDisk = dx * dx + dy * dy <= radius * radius;
-    const bool hovered = ImGui::IsItemHovered() && inDisk;
-    const bool active = ImGui::IsItemActive();
+    bool hovered = false;
+    bool active = false;
+    bool activated = false;
+    bool deactivated = false;
+    if ((inDisk && !ImGuizmo::IsUsingAny()) || navActiveLastFrame)
+    {
+        ImGui::SetCursorScreenPos(ImVec2(center.x - radius, center.y - radius));
+        ImGui::InvisibleButton("##NavigationGizmo", ImVec2(radius * 2.0f, radius * 2.0f));
+        hovered = ImGui::IsItemHovered() && inDisk;
+        active = ImGui::IsItemActive();
+        activated = ImGui::IsItemActivated();
+        deactivated = ImGui::IsItemDeactivated();
+    }
+    navActiveLastFrame = active;
 
     const float bubble = 9.0f * scale;
     int hoveredItem = -1;
@@ -1574,7 +1588,7 @@ bool EditorShell::DrawNavigationGizmo(ImDrawList* drawList, ImVec2 imageMin, ImV
             }
         }
     }
-    if (ImGui::IsItemActivated())
+    if (activated)
     {
         g_NavPressedAxis = hoveredItem;
     }
@@ -1587,7 +1601,7 @@ bool EditorShell::DrawNavigationGizmo(ImDrawList* drawList, ImVec2 imageMin, ImV
             OrbitEditorCamera(delta.x * 0.008f, delta.y * 0.008f);
         }
     }
-    if (ImGui::IsItemDeactivated() && g_NavPressedAxis >= 0)
+    if (deactivated && g_NavPressedAxis >= 0)
     {
         const AxisItem& item = items[g_NavPressedAxis];
         float direction[3] = {0.0f, 0.0f, 0.0f};

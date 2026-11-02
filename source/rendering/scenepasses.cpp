@@ -20,6 +20,7 @@
 #include "screenspaceeffects.h"
 #include "graphicslog.h"
 #include "gpumemorybudget.h"
+#include "mekakure.h"
 
 namespace
 {
@@ -447,13 +448,22 @@ void ScenePasses::BeginHdrTransparentPass()
 
 void ScenePasses::EndHdrTransparentPass()
 {
-    Raytracing::EndGlassRead(m_CommandList.Get());
     if (TransparencyEffects::IsOitPassActive())
     {
         TransparencyEffects::EndTransparentPass(m_CommandList.Get(), GetRenderTargetRtvHandle(RenderTargetType::Scene),
                                                 m_Viewport, m_ScissorRect);
         RenderFrame::SetDescriptorHeap();
     }
+    // メカクレ：半透明（OIT の合成を含む）の後、ガラス用のスキン頂点読み取りを終える前に重ねる。
+    {
+        RenderProfiler::ScopedEvent profile("Mekakure", m_CommandList.Get());
+        const UINT depthIndex = m_UseLowResDepth ? g_kLOW_DEPTH_READ_DSV_INDEX : g_kFULL_DEPTH_READ_DSV_INDEX;
+        CD3DX12_CPU_DESCRIPTOR_HANDLE dsv(m_DsvHeap->GetCPUDescriptorHandleForHeapStart(), depthIndex,
+                                          m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV));
+        Mekakure::Render(m_CommandList.Get(), GetRenderTargetRtvHandle(RenderTargetType::Scene), dsv, m_Viewport,
+                         m_ScissorRect);
+    }
+    Raytracing::EndGlassRead(m_CommandList.Get());
     auto* depth = m_UseLowResDepth ? m_LowResDepthBuffer.Get() : m_DepthStencilBuffer.Get();
     auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
         depth,
@@ -893,3 +903,4 @@ void ScenePasses::EndVelocityBuffer()
                                              D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     m_CommandList->ResourceBarrier(1, &toVelocitySrv);
 }
+

@@ -220,7 +220,7 @@ class PerformanceGovernor final
         GlobalIlluminationMode GiMode = GlobalIlluminationMode::ScreenSpace;
         float GiDistance = 40.0f;
         // GI のコスト（モードは変えずに、更新量・密度だけを下げる）
-        bool GiUpdateBudget = true;
+        bool GiUpdateBudget = false;
         int LumenCaptureBudget = 4;
         int LumenLightingBudget = 4;
         int LumenProbeSpacing = 8;
@@ -380,7 +380,7 @@ class PerformanceGovernor final
         v.GiDistance = (std::max)(1.0f, s_Base.GiDistance * kGiDist[t]);
         v.GiMode = s_Base.GiMode;
         // 段階 2 以上では静止画素の GI 更新を間引く（ユーザーが OFF でも一時的に ON）
-        v.GiUpdateBudget = s_Base.GiUpdateBudget || t >= 2;
+        v.GiUpdateBudget = s_Base.GiUpdateBudget; // 自動では切り替えない
         // Lumen：1 フレームあたりのサーフェスキャッシュ更新量と、スクリーンプローブの密度を下げる
         static const float kLumenUpdate[kTierCount] = {1.0f, 0.75f, 0.5f, 0.5f, 0.25f, 0.25f};
         static const int kProbeSpacing[kTierCount] = {0, 0, 2, 4, 4, 8}; // 基準値への加算（px）

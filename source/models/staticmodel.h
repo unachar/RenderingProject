@@ -58,6 +58,8 @@ struct StaticMeshData
     string MaterialName{};
     float MaterialPartId = 10.0f;
     float AppliedMaterialPartId = 10.0f;
+    uint32_t SemanticFlags = 0; // MeshSemanticFlags（materialpartresolver.h）。読み込み時に 1 回だけ計算。
+    string SemanticKey{};       // 小文字化した "material mesh"。メカクレの名前フィルター用。
     bool DefaultToonOutlineEnabled = true;
     vector<StaticModelVertex> CpuVertices{};
     array<Meshlets::Asset, LodCount> MeshletLODs{};
@@ -217,3 +219,4 @@ class StaticModelResource
     vector<uint64_t> m_VGDependencyHashes;
     vector<std::filesystem::file_time_type> m_VGDependencyTimes;
 };
+

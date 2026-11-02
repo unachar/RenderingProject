@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "livetoonstyle.h"
 #include "editorworkspace.h"
 #include "gpumemorybudget.h"
 #include "rendertargets.h"
@@ -1389,6 +1390,35 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("editor.ShowProjectSettingsWindow", m_ShowProjectSettingsWindow, 0, 1);
     field("editor.ShowPhysicsSettingsWindow", m_ShowPhysicsSettingsWindow, 0, 1);
     field("editor.ShowLightDebug", m_ShowLightDebug, 0, 1);
+    // ライブ用トゥーンスタイル（シーン全体）
+    auto& liveToon = LiveToonStyle::Get();
+    field("livetoon.Blend", liveToon.Blend, 0.0, 1.0);
+    field("livetoon.ShadowTintStrength", liveToon.ShadowTintStrength, 0.0, 1.0);
+    field("livetoon.AdditiveSoftness", liveToon.AdditiveSoftness, 0.0, 1.0);
+    field("livetoon.AdditiveGain", liveToon.AdditiveGain, 0.0, 3.0);
+    field("livetoon.ShadowTintR", liveToon.ShadowTint.x, 0.0, 1.0);
+    field("livetoon.ShadowTintG", liveToon.ShadowTint.y, 0.0, 1.0);
+    field("livetoon.ShadowTintB", liveToon.ShadowTint.z, 0.0, 1.0);
+    field("livetoon.SkinWarmth", liveToon.SkinWarmth, 0.0, 1.0);
+    field("livetoon.RimSoft", liveToon.RimSoft, 0.0, 2.0);
+    field("livetoon.RimHard", liveToon.RimHard, 0.0, 2.0);
+    field("livetoon.RimWidth", liveToon.RimWidth, 0.02, 1.0);
+    field("livetoon.RimLightTint", liveToon.RimLightTint, 0.0, 1.0);
+    field("livetoon.RampSpecular", liveToon.RampSpecular, 0.0, 2.0);
+    field("livetoon.HairAngelRing", liveToon.HairAngelRing, 0.0, 2.0);
+    field("livetoon.EnvSpecular", liveToon.EnvSpecular, 0.0, 2.0);
+    field("livetoon.CastShadowDensity", liveToon.CastShadowDensity, 0.0, 1.0);
+    field("livetoon.ShadowRampStrength", liveToon.ShadowRampStrength, 0.0, 1.0);
+    // 陰影ランプのパス（文字列。数値用の EditorConfig::Value は使えないので直接扱う）
+    if (output)
+    {
+        *output << "livetoon.ShadowRampPath=" << liveToon.ShadowRampPath << '\n';
+    }
+    else if (key == "livetoon.ShadowRampPath")
+    {
+        liveToon.ShadowRampPath = value;
+        matched = true;
+    }
     field("editor.gizmo", m_GizmoOperation, 0, 3);
     field("editor.log_auto_scroll", m_LogAutoScroll, 0, 1);
     // 自動品質調整（可変レイトレーシング / 可変GI など）の設定
@@ -1495,6 +1525,14 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("quality.LensFlare", rq.LensFlare, 0, 1);
     field("quality.LensFlareIntensity", rq.LensFlareIntensity, 0, 10);
     field("quality.LensFlareHalo", rq.LensFlareHalo, 0, 10);
+    field("quality.SunFlare", rq.SunFlare, 0, 1);
+    field("quality.SunFlareIntensity", rq.SunFlareIntensity, 0, 10);
+    field("quality.SunFlareGlare", rq.SunFlareGlare, 0, 10);
+    field("quality.SunFlareStarburst", rq.SunFlareStarburst, 0, 10);
+    field("quality.SunFlareGhosts", rq.SunFlareGhosts, 0, 10);
+    field("quality.SunFlareHalo", rq.SunFlareHalo, 0, 10);
+    field("quality.SunFlareAnamorphic", rq.SunFlareAnamorphic, 0, 10);
+    field("quality.SunFlareBlades", rq.SunFlareBlades, 4, 12);
     field("quality.WeatherEnabled", rq.WeatherEnabled, 0, 1);
     field("quality.RainIntensity", rq.RainIntensity, 0, 1);
     field("quality.Wetness", rq.Wetness, 0, 1);
@@ -2160,3 +2198,4 @@ void ImGuiManager::LoadProjectSettings()
         m_StartupScenePath.clear();
     }
 }
+

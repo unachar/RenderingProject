@@ -281,7 +281,7 @@ class AdvancedEffects final
         }
         const auto& quality = RenderQuality::Get();
         const bool weather = quality.WeatherEnabled && (quality.RainIntensity > 0.001f || quality.SnowFall > 0.001f);
-        const bool bloom = (quality.DualBloom && s_BloomRequested) || quality.LensFlare || weather;
+        const bool bloom = (quality.DualBloom && s_BloomRequested) || quality.LensFlare || quality.SunFlare || weather;
         const bool lens = s_Settings.HalfResolutionLens && (s_Settings.MotionBlur || s_Settings.DepthOfField);
         const bool any = s_Settings.FroxelFog || s_Settings.AutoExposure || s_Settings.MotionBlur ||
                          s_Settings.DepthOfField || bloom;
@@ -350,7 +350,7 @@ class AdvancedEffects final
         const bool weather = quality.WeatherEnabled;
         const bool dualBloom = quality.DualBloom && s_BloomRequested;
         const bool bloomPass =
-            s_BloomAvailable && (dualBloom || quality.LensFlare ||
+            s_BloomAvailable && (dualBloom || quality.LensFlare || quality.SunFlare ||
                                  (weather && (quality.RainIntensity > 0.001f || quality.SnowFall > 0.001f)));
         if (!s_Available || !commands || !scene || !depth || !(fog || exposure || motionBlur || dof || bloomPass))
         {
@@ -592,17 +592,104 @@ class AdvancedEffects final
 
     static_assert(sizeof(BloomConstants) == 64);
 
+    // 太陽のレンズフレア（b1）。太陽の画面位置・色は CPU で求め、遮蔽は GPU で深度から判定する
+    struct SunFlareConstants
+    {
+        float SunU, SunV, Visible, Aspect;          // 画面 UV、画面内フェード、幅 / 高さ
+        float ColorR, ColorG, ColorB, Intensity;    // 太陽光の色 × 強度
+        float Glare, Starburst, Ghosts, Halo;       // 各成分の強さ
+        float Anamorphic, Blades, Rotation, Unused; // ストリーク、絞り羽根の枚数、光芒の回転
+    };
+
+    static_assert(sizeof(SunFlareConstants) == 64);
+
+    // 大気シミュレーションの太陽（最初の Sun の物理平行光）を画面へ投影する
+    static SunFlareConstants ComputeSunFlare(const RenderQuality::Settings& quality)
+    {
+        SunFlareConstants flare{};
+        flare.Aspect = static_cast<float>(s_Width) / static_cast<float>((std::max)(s_Height, 1u));
+        if (!quality.SunFlare || quality.SunFlareIntensity <= 0.0f)
+        {
+            return flare;
+        }
+        const auto suns = World::GetView<SunComponent, LightComponent>();
+        if (suns.empty())
+        {
+            return flare;
+        }
+        const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(*suns.begin());
+        if (!light.IsActive || light.Type != LightType::Directional || light.Intensity <= 0.0f)
+        {
+            return flare;
+        }
+        XMVECTOR towardSun = XMLoadFloat3(&light.Direction);
+        if (XMVectorGetX(XMVector3LengthSq(towardSun)) < 1e-8f)
+        {
+            return flare;
+        }
+        towardSun = XMVector3Normalize(towardSun);
+        const float elevation = XMVectorGetY(towardSun);
+        // 地平線の下では出さない。地平線付近は大気の消散で弱く、色は太陽光の色（夕日は赤）に従う
+        const float elevationFade = std::clamp((elevation + 0.02f) / 0.08f, 0.0f, 1.0f);
+        if (elevationFade <= 0.0f)
+        {
+            return flare;
+        }
+        const EntityID camera = Camera::GetCameraEntity();
+        if (camera == g_kINVALID_ENTITY || !ComponentManager::HasComponent<TransformComponent>(camera))
+        {
+            return flare;
+        }
+        XMMATRIX view, projection;
+        Camera::GetCameraMatrices(camera, view, projection);
+        // 方向ベクトルとして投影（w = 0）：カメラ位置に依存しない無限遠の点
+        const XMVECTOR clip = XMVector4Transform(XMVectorSetW(towardSun, 0.0f), view * projection);
+        const float w = XMVectorGetW(clip);
+        if (w <= 1e-5f)
+        {
+            return flare; // カメラの後ろ
+        }
+        const float ndcX = XMVectorGetX(clip) / w;
+        const float ndcY = XMVectorGetY(clip) / w;
+        // 画面外に少し出ていても、にじみは残す（画面端の外 30% でフェードアウト）
+        const float edge = (std::max)(fabsf(ndcX), fabsf(ndcY));
+        const float screenFade = std::clamp((1.3f - edge) / 0.3f, 0.0f, 1.0f);
+        if (screenFade <= 0.0f)
+        {
+            return flare;
+        }
+        flare.SunU = ndcX * 0.5f + 0.5f;
+        flare.SunV = -ndcY * 0.5f + 0.5f;
+        flare.Visible = screenFade * elevationFade;
+        flare.ColorR = (std::max)(light.Color.x, 0.0f) * light.Intensity;
+        flare.ColorG = (std::max)(light.Color.y, 0.0f) * light.Intensity;
+        flare.ColorB = (std::max)(light.Color.z, 0.0f) * light.Intensity;
+        flare.Intensity = quality.SunFlareIntensity;
+        flare.Glare = (std::max)(0.0f, quality.SunFlareGlare);
+        flare.Starburst = (std::max)(0.0f, quality.SunFlareStarburst);
+        flare.Ghosts = (std::max)(0.0f, quality.SunFlareGhosts);
+        flare.Halo = (std::max)(0.0f, quality.SunFlareHalo);
+        flare.Anamorphic = (std::max)(0.0f, quality.SunFlareAnamorphic);
+        flare.Blades = static_cast<float>(std::clamp(quality.SunFlareBlades, 4, 12));
+        // 光芒はカメラの向きに合わせてわずかに回転する（静止時は固定）
+        XMFLOAT4X4 viewMatrix;
+        XMStoreFloat4x4(&viewMatrix, view);
+        flare.Rotation = atan2f(viewMatrix._21, viewMatrix._11) * 0.5f;
+        return flare;
+    }
+
     static bool InitializeBloom(ID3D12Device* device)
     {
         CD3DX12_DESCRIPTOR_RANGE ranges[2];
         ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 0, 0);
         ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 4);
-        CD3DX12_ROOT_PARAMETER parameters[2];
+        CD3DX12_ROOT_PARAMETER parameters[3];
         parameters[0].InitAsConstants(sizeof(BloomConstants) / 4, 0);
         parameters[1].InitAsDescriptorTable(2, ranges);
+        parameters[2].InitAsConstants(sizeof(SunFlareConstants) / 4, 1); // 太陽のレンズフレア（b1）
         const CD3DX12_STATIC_SAMPLER_DESC sampler(0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
                                                   D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP);
-        const CD3DX12_ROOT_SIGNATURE_DESC root(2, parameters, 1, &sampler);
+        const CD3DX12_ROOT_SIGNATURE_DESC root(3, parameters, 1, &sampler);
         ComPtr<ID3DBlob> blob, errors;
         if (FAILED(D3D12SerializeRootSignature(&root, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)) ||
             FAILED(device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(),
@@ -744,6 +831,11 @@ class AdvancedEffects final
         commands->SetDescriptorHeaps(1, heaps);
         commands->SetComputeRootSignature(s_BloomRoot.Get());
         BloomConstants constants{};
+        {
+            // b1 は合成パスだけが使うが、ルート引数は全ディスパッチで初期化しておく（デバッグレイヤー対策）
+            const SunFlareConstants noFlare{};
+            commands->SetComputeRoot32BitConstants(2, sizeof(noFlare) / 4, &noFlare, 0);
+        }
         constants.Threshold = (std::max)(0.0f, quality.BloomThreshold);
         constants.Radius = std::clamp(quality.BloomRadius, 0.0f, 1.0f);
         const auto mipSize = [](UINT size, UINT mip) {
@@ -832,10 +924,13 @@ class AdvancedEffects final
         constants.Time = s_Time;
         constants.WindX = quality.WindX;
         constants.FirstLevel = 0;
+        const SunFlareConstants sunFlare = ComputeSunFlare(quality);
         constants.Flags = (dualBloom ? 1u : 0u) | (quality.LensFlare ? 2u : 0u) |
-                          (constants.RainIntensity > 0.001f ? 4u : 0u) | (constants.SnowIntensity > 0.001f ? 8u : 0u);
+                          (constants.RainIntensity > 0.001f ? 4u : 0u) | (constants.SnowIntensity > 0.001f ? 8u : 0u) |
+                          (sunFlare.Visible > 0.0f ? 16u : 0u);
         commands->SetPipelineState(s_BloomCombinePso.Get());
         commands->SetComputeRoot32BitConstants(0, sizeof(constants) / 4, &constants, 0);
+        commands->SetComputeRoot32BitConstants(2, sizeof(sunFlare) / 4, &sunFlare, 0);
         const UINT flareMip = (std::min)(2u, s_BloomLevels - 1);
         commands->SetComputeRootDescriptorTable(
             1, WriteBloomTable(tableBase + 2 * kMaxBloomLevels,

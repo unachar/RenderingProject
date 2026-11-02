@@ -1313,15 +1313,13 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     g_Lumen.WriteDescriptors(g_Device.Get(), slot, Cpu(frame.Heap.Get(), kLumenDescriptors), g_Increment);
     const bool reuse = adaptive && g_AdaptiveValid && !nrdFrame.ResetHistory && g_AdaptiveSignature == signature &&
                        nrdFrame.Sequence == g_AdaptiveSequence + 1u;
-    // 修正（GI 更新予算を既定 ON にしたため）：以前はシーンの署名が変わるたびに放射キャッシュを全消去していた。
-    // 太陽が動く / スキンメッシュがある場面では毎フレーム消去され、多重バウンスのキャッシュが育たなかった。
-    // 署名が変わった直後は消去せず、8 フレーム安定するまで間引きを止める（キャッシュは履歴上限で更新される）。
-    static uint32_t budgetQuietFrames = 0;
-    budgetQuietFrames = (g_BudgetValid && g_BudgetSignature == signature && !nrdFrame.ResetHistory)
-                            ? (std::min)(budgetQuietFrames + 1u, 1024u)
-                            : 0u;
     const bool budget = budgetRequested && !sharc && cacheEnabled && !restir && velocity && g_BudgetValid &&
-                        budgetQuietFrames >= 8u && nrdFrame.Sequence == g_BudgetSequence + 1u;
+                        !nrdFrame.ResetHistory && g_BudgetSignature == signature &&
+                        nrdFrame.Sequence == g_BudgetSequence + 1u;
+    if (budgetRequested && cacheEnabled && (!g_BudgetValid || g_BudgetSignature != signature || nrdFrame.ResetHistory))
+    {
+        g_Cache.NeedsClear = true;
+    }
     constants.AdaptiveSampling = {adaptive ? 1.f : 0.f, reuse ? 1.f : 0.f, .2f, budget ? 4.f : 1.f};
     g_BudgetSignature = signature;
     g_BudgetSequence = nrdFrame.Sequence;

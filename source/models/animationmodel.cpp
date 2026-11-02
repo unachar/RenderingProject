@@ -425,7 +425,16 @@ bool AnimationModelResource::Load(const char* fileName, ID3D12Device* device, bo
             material->Get(AI_MATKEY_COLOR_DIFFUSE, diffuse);
             material->Get(AI_MATKEY_OPACITY, opacity);
         }
-        const float materialPartId = ResolveMaterialPartId(m_AiScene, mesh);
+        // 名前は上で取得済み。部位 ID と意味フラグを 1 回の走査で求める（マテリアル名の再取得を省く）。
+        float materialPartId = 10.0f;
+        if (mesh->mMaterialIndex < m_AiScene->mNumMaterials)
+        {
+            MeshSemanticInfo semantic =
+                ResolveMeshSemantics(materialName.C_Str(), mesh->mName.C_Str(), mesh->mMaterialIndex);
+            materialPartId = semantic.MaterialPartId;
+            m_Meshes[m].SemanticFlags = semantic.Flags;
+            m_Meshes[m].SemanticKey = std::move(semantic.Key);
+        }
         m_Meshes[m].MaterialName = materialName.C_Str();
         m_Meshes[m].MaterialPartId = materialPartId;
         m_Meshes[m].DefaultToonOutlineEnabled = materialPartId != 3.0f;
@@ -1363,3 +1372,4 @@ void AnimationModelResource::Uninit()
     m_Animation.clear();
     m_VmdAnimations.clear();
 }
+

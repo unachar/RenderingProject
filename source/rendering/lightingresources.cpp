@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "livetoonstyle.h"
 #include "gpumemorybudget.h"
 #include "rendertargets.h"
 #include "envflags.h"
@@ -143,6 +144,7 @@ namespace
         XMFLOAT4 SkySunDirection{};
         XMFLOAT4 SkyParameters{};
         XMFLOAT4 LightIesProfiles[RendererState::g_kMAX_SHADER_LIGHTS]{};
+        XMFLOAT4 LiveToonStyle[5]{}; // livetoonstyle.h（HLSL: LiveToonStyle0..3）
     };
 
     static_assert(sizeof(LightConstants) <= RendererState::g_kLIGHT_CB_ALIGNED_SIZE,
@@ -1412,6 +1414,7 @@ void LightingResources::UpdateLightConstantBuffer(float deferredLightStrength)
     }
     const RuntimeLightState& runtimeLight = *runtimeLightSelection;
     LightConstants constants{};
+    LiveToonStyle::Write(constants.LiveToonStyle);
     Raytracing::BeginLightList();
     WriteAtmosphereConstants(constants);
     for (UINT i = 0; i < RendererState::g_kMAX_SHADER_LIGHTS; ++i)
@@ -2169,3 +2172,4 @@ bool LightingResources::GetShadowPassInfo(UINT shadowIndex, UINT& layer, D3D12_V
     clearLayer = pass.ClearLayer;
     return true;
 }
+

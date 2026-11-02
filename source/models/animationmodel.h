@@ -177,6 +177,8 @@ struct MeshData
     string MeshName{};
     string MaterialName{};
     float MaterialPartId = 10.0f;
+    uint32_t SemanticFlags = 0; // MeshSemanticFlags（materialpartresolver.h）。読み込み時に 1 回だけ計算。
+    string SemanticKey{};       // 小文字化した "material mesh"。メカクレの名前フィルター用。
     bool DefaultToonOutlineEnabled = true;
 
     const D3D12_INDEX_BUFFER_VIEW& GetLodIndexBufferView(UINT lod) const
@@ -530,3 +532,4 @@ class AnimationModelResource
         return !m_PmxRigidBodies.empty();
     }
 };
+

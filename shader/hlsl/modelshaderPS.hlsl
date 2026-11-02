@@ -261,6 +261,7 @@ float3 ComputeRefraction(SurfaceData surface, float3 position, float3 normal, fl
 #include "GeometryGlass.hlsli"
 #include "MaterialOpticsPreview.hlsli"
 #include "NormalMapDecode.hlsli"
+#include "LiveToonMaterial.hlsli"
 
 static float g_PomForwardDepth = 0.0f;
 
@@ -350,6 +351,21 @@ float4 ShadeForward(in PSInput3D In)
     float shadowThreshold = shadowParams.r;
     float shadowSoftness = max(shadowParams.g, 0.0001f);
     float shadowStrength = saturate(shadowParams.b);
+#ifndef IMPOSTOR_FORWARD
+    // ライブトゥーンのマテリアルテクスチャ（Def / 顔陰影反転 / 質感ランプ）。Deferred と同じ処理。
+    {
+        LiveToonMaterialSurface toonSurface;
+        toonSurface.Albedo = baseColor.rgb;
+        toonSurface.ShadowThreshold = shadowThreshold;
+        toonSurface.ShadowSoftness = shadowSoftness;
+        ApplyLiveToonMaterialTextures(LiveToonTextures, LiveToonMaterialParams, materialUv, surfaceNormal,
+                                      SurfaceViewDirectionCommon(In.WorldPos, CameraPos), shaderClass,
+                                      g_SamplerState, toonSurface);
+        baseColor.rgb = toonSurface.Albedo;
+        shadowThreshold = toonSurface.ShadowThreshold;
+        shadowSoftness = max(toonSurface.ShadowSoftness, 0.0001f);
+    }
+#endif
 
     if (IsLiveToonClass(shaderClass) && !transparent)
     {
@@ -365,7 +381,13 @@ float4 ShadeForward(in PSInput3D In)
             material.rgb, shadowSoftness, directLight, toonDirection, toonColor,
             attenuation, volume, range, visibility);
         float3 irradiance = SampleEnvironmentLatLong(surfaceNormal, 1.0f);
-        float3 color = directLight + EvaluateLiveToonAmbient(baseColor.rgb, irradiance, shaderClass);
+        float3 color = directLight + EvaluateLiveToonAmbientStyled(baseColor.rgb, irradiance, shaderClass);
+        [branch] if (LiveToonStyle3.z > 0.0f && LiveToonStyle0.x > 0.0f)
+        {
+            float3 environment = SampleEnvironmentLatLong(reflect(-toonView, surfaceNormal), 0.5f);
+            color += EvaluateLiveToonEnvironmentSpecular(baseColor.rgb, surfaceNormal, toonView, environment,
+                                                         shaderClass);
+        }
         color *= assetEmissionAO.a;
         // Reuse the same GI/fog/emission composition as Deferred.
         float2 screenUv = In.Position.xy / max(ViewportSize, float2(1.0f, 1.0f));
@@ -590,7 +612,8 @@ struct ForwardOutput
     float HardwareDepth : SV_DepthLessEqual; // POM のピクセル深度オフセット（常に補間深度以下）
 };
 
-#ifndef IMPOSTOR_FORWARD
+// MODEL_SHADER_NO_ENTRY：ShadeForward だけを再利用するシェーダー（MekakurePS など）用。
+#if !defined(IMPOSTOR_FORWARD) && !defined(MODEL_SHADER_NO_ENTRY)
 ForwardOutput main(in PSInput3D In)
 {
     float4 premultiplied = ShadeForward(In);
@@ -606,3 +629,4 @@ ForwardOutput main(in PSInput3D In)
     return output;
 }
 #endif
+
