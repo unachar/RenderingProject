@@ -6,7 +6,15 @@ param(
     [ValidateRange(2,100000)][int]$MeasuredFrames = 600,
     [ValidateRange(1,10)][int]$Pairs = 2,
     [string]$BaselineExecutable,
-    [string]$CandidateExecutable
+    [string]$CandidateExecutable,
+    [ValidateSet('saved','deterministic','megalights','rtxdi')][string]$BaselineLighting = 'saved',
+    [ValidateSet('saved','deterministic','megalights','rtxdi')][string]$CandidateLighting = 'saved',
+    [ValidateSet('saved','raw','native','rtxdi')][string]$BaselineGi = 'saved',
+    [ValidateSet('saved','raw','native','rtxdi')][string]$CandidateGi = 'saved',
+    [ValidateSet('saved','direct','raytracing','restir')][string]$LightingWorkload = 'saved',
+    [switch]$DynamicLights,
+    [string]$Scene,
+    [switch]$NativeResolution
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'renderbenchmark-comparison.ps1')
@@ -16,6 +24,22 @@ New-Item -ItemType Directory -Path $results -Force | Out-Null
 Push-Location -LiteralPath $workspace
 $savedEnvironment = @{}
 $savedFiles = @{}
+function Restore-BenchmarkSettings {
+    foreach ($settingsFile in $savedFiles.Keys) {
+        if ($null -ne $savedFiles[$settingsFile]) {
+            if ((Test-Path -LiteralPath $settingsFile) -and
+                [Convert]::ToBase64String([IO.File]::ReadAllBytes($settingsFile)) -ceq [Convert]::ToBase64String($savedFiles[$settingsFile])) {
+                continue
+            }
+            $temporaryFile = $settingsFile + '.benchmark-restore.tmp'
+            [IO.File]::WriteAllBytes($temporaryFile, $savedFiles[$settingsFile])
+            Move-Item -LiteralPath $temporaryFile -Destination $settingsFile -Force
+        }
+        elseif (Test-Path -LiteralPath $settingsFile) {
+            Remove-Item -LiteralPath $settingsFile
+        }
+    }
+}
 try {
     $savedEnvironment['_CL_'] = [Environment]::GetEnvironmentVariable('_CL_', 'Process')
     # 既存の検証スクリプトに合わせ、デバッグ情報をオブジェクトへ埋め込むことで、
@@ -27,9 +51,8 @@ try {
         if (-not $installation) {
             throw 'Visual Studio C++ tools are required.'
         }
-        $developerCommand = Join-Path $installation 'Common7/Tools/VsDevCmd.bat'
-        $command = '"{0}" -no_logo -arch=amd64 -host_arch=amd64 && MSBuild.exe DirectX12.vcxproj /t:Build /p:Configuration={1} /p:Platform=x64 /m:2 /v:quiet /nologo' -f $developerCommand, $Configuration
-        & $env:ComSpec /d /c $command *> build/render-benchmark-build.log
+        $msbuild = Join-Path $installation 'MSBuild/Current/Bin/amd64/MSBuild.exe'
+        & $msbuild DirectX12.sln /t:Build "/p:Configuration=$Configuration" /p:Platform=x64 /p:CL_MPCount=4 /m:1 /nr:false /v:quiet /nologo *> build/render-benchmark-build.log
         if ($LASTEXITCODE -ne 0) {
             Get-Content build/render-benchmark-build.log | Select-String 'error ' | Select-Object -First 15
             throw 'Benchmark build failed. See build/render-benchmark-build.log.'
@@ -47,7 +70,8 @@ try {
         candidate = (Resolve-Path -LiteralPath $CandidateExecutable).Path
     }
     $names = @('DX12_VALIDATION_MODE', 'DX12_STARTUP_SMOKE_FRAMES', 'DX12_FEATURE_SMOKE_TEST',
-        'DX12_RENDER_BENCHMARK', 'DX12_RENDER_BENCHMARK_WARMUP', 'DX12_RENDER_BENCHMARK_SAMPLES', 'DX12_RENDER_BENCHMARK_RUN', 'DX12_RAY_TELEMETRY')
+        'DX12_RENDER_BENCHMARK', 'DX12_RENDER_BENCHMARK_WARMUP', 'DX12_RENDER_BENCHMARK_SAMPLES', 'DX12_RENDER_BENCHMARK_RUN', 'DX12_RAY_TELEMETRY', 'DX12_DIRECT_LIGHTING',
+        'DX12_GI_RESAMPLING', 'DX12_BENCHMARK_LIGHTING_WORKLOAD', 'DX12_BENCHMARK_DYNAMIC_LIGHTS', 'DX12_RENDER_BENCHMARK_NATIVE')
     $names += @(Get-ChildItem Env: | Where-Object { $_.Name -match '^DX12_.*(TEST|SMOKE|BENCH)' } | ForEach-Object Name)
     foreach ($name in ($names | Sort-Object -Unique)) {
         $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -71,6 +95,9 @@ try {
     $env:DX12_RENDER_BENCHMARK_WARMUP = [string]$WarmupFrames
     $env:DX12_RENDER_BENCHMARK_SAMPLES = [string]$MeasuredFrames
     $env:DX12_RAY_TELEMETRY = [string][int]$RayTelemetry.IsPresent
+    $env:DX12_BENCHMARK_LIGHTING_WORKLOAD = $LightingWorkload
+    $env:DX12_BENCHMARK_DYNAMIC_LIGHTS = [string][int]$DynamicLights.IsPresent
+    $env:DX12_RENDER_BENCHMARK_NATIVE = [string][int]$NativeResolution.IsPresent
     $driverData = $null
     try {
         $driverData = @(Get-CimInstance Win32_VideoController | Sort-Object PNPDeviceID | Select-Object PNPDeviceID, DriverVersion, Name) | ConvertTo-Json -Compress
@@ -87,14 +114,27 @@ try {
         }
         $runs = @{}
         foreach ($role in $order) {
+            $lighting = if ($role -eq 'baseline') { $BaselineLighting } else { $CandidateLighting }
+            $env:DX12_DIRECT_LIGHTING = if ($lighting -eq 'saved') { $null } else { $lighting }
+            $gi = if ($role -eq 'baseline') { $BaselineGi } else { $CandidateGi }
+            $env:DX12_GI_RESAMPLING = if ($gi -eq 'saved') { $null } else { $gi }
             # 各プロセスの起動前に、保存済みのUIと設定を同じ状態へ戻す。
-            foreach ($path in $savedFiles.Keys) {
-                if ($null -ne $savedFiles[$path]) {
-                    [IO.File]::WriteAllBytes($path, $savedFiles[$path])
+            Restore-BenchmarkSettings
+            if ($Scene) {
+                $scenePath = (Resolve-Path -LiteralPath (Join-Path $workspace $Scene)).Path
+                if (-not $scenePath.StartsWith($workspace + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw 'Benchmark scene must be inside the workspace.'
                 }
-                elseif (Test-Path -LiteralPath $path) {
-                    Remove-Item -LiteralPath $path
+                $relativeScene = $scenePath.Substring($workspace.Length + 1).Replace('\','/')
+                $settingsPath = Join-Path $workspace 'Save/project_environment.cfg'
+                $settings = [IO.File]::ReadAllText($settingsPath)
+                if ($settings -notmatch '(?m)^scene=') {
+                    throw 'Saved settings have no startup scene field.'
                 }
+                $settings = [regex]::Replace($settings, '(?m)^scene=[^\r\n]*', { param($match) "scene=$relativeScene" })
+                $temporarySettings = $settingsPath + '.benchmark-scene.tmp'
+                [IO.File]::WriteAllText($temporarySettings, $settings, [Text.UTF8Encoding]::new($false))
+                Move-Item -LiteralPath $temporarySettings -Destination $settingsPath -Force
             }
             $env:DX12_RENDER_BENCHMARK_RUN = "$session-$pair-$role"
             $run = Join-Path $results $env:DX12_RENDER_BENCHMARK_RUN
@@ -131,6 +171,26 @@ try {
                 throw "Rendering benchmark failed: $run (exit $($process.ExitCode))"
             }
             $frames = @(Import-Csv -LiteralPath (Join-Path $run 'frames.csv'))
+            $passes = @(Import-Csv -LiteralPath (Join-Path $run 'passes.csv'))
+            if ($lighting -eq 'rtxdi' -and -not ($passes | Where-Object { $_.Name -eq 'RTXDI Spatial' })) {
+                throw "RTXDI direct-lighting pass did not execute: $run"
+            }
+            if ($LightingWorkload -in @('raytracing','restir')) {
+                if ($frames | Where-Object { $_.GiActive -ne '1' }) {
+                    throw "Traced GI was not active in every measured frame: $run"
+                }
+            }
+            if ($gi -in @('native','rtxdi') -and $LightingWorkload -ne 'direct') {
+                $expectedPass = if ($gi -eq 'rtxdi') { 'RTXDI GI Spatial' } else { 'ReSTIR GI Spatial' }
+                if (-not ($passes | Where-Object { $_.Name -eq $expectedPass })) {
+                    throw "Requested GI resampling pass did not execute: $run"
+                }
+            }
+            if ($lighting -in @('megalights','rtxdi') -and $frames[0].PSObject.Properties['LocalLights']) {
+                if ($frames | Where-Object { [int]$_.LocalLights -le 0 }) {
+                    throw "No local lights submitted during comparison: $run"
+                }
+            }
             $conditions = [ordered]@{}
             foreach ($line in (Get-Content -LiteralPath (Join-Path $run 'metadata.txt'))) {
                 $parts = $line.Split('=',2)
@@ -144,6 +204,12 @@ try {
             $conditions.settings_sha256 = (Get-FileHash -LiteralPath (Join-Path $run 'settings.cfg') -Algorithm SHA256).Hash
             $conditions.os = [Environment]::OSVersion.VersionString
             $conditions.driver = $driverData
+            $lightingShaderHashes = @(
+                'shader/hlsl/RtxdiSampleCS.hlsl', 'shader/hlsl/MegaLightsSampleCS.hlsl',
+                'shader/hlsl/MegaLightsCommon.hlsli', 'shader/hlsl/RayReflectionsCS.hlsl',
+                'shader/hlsl/DeferredLightingPS.hlsl', 'shader/hlsl/SurfaceLighting.hlsli'
+            ) | ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $workspace $_) -Algorithm SHA256).Hash }
+            $conditions.lighting_shaders_sha256 = $lightingShaderHashes -join ':'
             $manifest = [ordered]@{
                 schema = 1
                 binary = @{ path = $executables[$role]; sha256 = (Get-FileHash -LiteralPath $executables[$role] -Algorithm SHA256).Hash }
@@ -154,21 +220,14 @@ try {
             $runs[$role] = $run
             Write-Output "$role $pair complete: $run"
         }
-        $comparison = Compare-RenderBenchmarkRuns $runs.baseline $runs.candidate
+        $comparison = Compare-RenderBenchmarkRuns $runs.baseline $runs.candidate -CompareDirectLighting:($BaselineLighting -ne $CandidateLighting) -CompareGiResampling:($BaselineGi -ne $CandidateGi)
         $comparisons += $comparison
         $comparison | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $results "$session-$pair-comparison.json") -Encoding UTF8
         Write-Output ("{0}: GPU {1:N2}%, whole frame {2:N2}% (quality adoption unverified)" -f $comparison.BinaryComparison, $comparison.GpuChangePercent, $comparison.FrameChangePercent)
     }
     $comparisons | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $results "$session-comparisons.json") -Encoding UTF8
 } finally {
-    foreach ($path in $savedFiles.Keys) {
-        if ($null -ne $savedFiles[$path]) {
-            [IO.File]::WriteAllBytes($path, $savedFiles[$path])
-        }
-        elseif (Test-Path -LiteralPath $path) {
-            Remove-Item -LiteralPath $path
-        }
-    }
+    Restore-BenchmarkSettings
     foreach ($name in $savedEnvironment.Keys) {
         [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process')
     }

@@ -15,6 +15,9 @@
 #include "nrddenoiser.h"
 #include "graphicslog.h"
 #include "rendercapture.h"
+#include "megalights.h"
+#include "renderquality.h"
+#include "renderersettings.h"
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -29,6 +32,14 @@ namespace
         uint64_t LocalUsage = 0;
         uint64_t LocalBudget = 0;
         bool MemoryValid = false;
+        int DirectLighting = 0;
+        UINT LocalLights = 0;
+        bool RtxdiHistory = false;
+        double RtxdiBufferMB = 0.0;
+        int GiResampling = 0;
+        bool GiActive = false;
+        UINT LightSamples = 0;
+        UINT LightSampleScale = 1;
         UINT InputWidth = 0, InputHeight = 0, OutputWidth = 0, OutputHeight = 0;
     };
 
@@ -46,6 +57,74 @@ namespace
     bool g_SettingsCaptured = false;
     bool g_NativeResolution = false;
     bool g_LowResolution250p = false;
+    std::string g_LightingWorkload = "saved";
+    bool g_DynamicLights = false;
+    struct MovingLight
+    {
+        EntityID Entity;
+        XMFLOAT3 Position;
+        float Intensity;
+    };
+    std::vector<MovingLight> g_MovingLights;
+    bool g_MovingLightsCaptured = false;
+
+    void ApplyLightingWorkload(uint64_t frame)
+    {
+        if (g_LightingWorkload != "saved")
+        {
+            auto& rays = Raytracing::GetSettings();
+            rays.Enabled = true;
+            rays.RenderMode = Raytracing::Mode::Full;
+            rays.Shadows = true;
+            rays.Reflections = g_LightingWorkload != "direct";
+            rays.AmbientOcclusion = g_LightingWorkload != "direct";
+            MegaLights::GetSettings().Enabled = true;
+            RenderQuality::Get().ReSTIRGI = g_LightingWorkload == "restir";
+            if (g_LightingWorkload == "direct")
+            {
+                RendererSettings::SetGiMode(GlobalIlluminationMode::Off);
+            }
+            else
+            {
+                RendererSettings::SetGiMode(GlobalIlluminationMode::Realtime);
+                RendererSettings::SetGiRadianceCacheEnabled(false);
+            }
+        }
+        if (!g_DynamicLights || frame == 0)
+        {
+            return;
+        }
+        if (!g_MovingLightsCaptured)
+        {
+            for (EntityID entity : World::GetView<LightComponent, TransformComponent>())
+            {
+                const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(entity);
+                if (!light.IsActive || (light.Type != LightType::Point && light.Type != LightType::Spot && light.Type != LightType::Rect))
+                {
+                    continue;
+                }
+                const auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(entity);
+                g_MovingLights.push_back({entity, transform.Position, light.Intensity});
+            }
+            g_MovingLightsCaptured = true;
+            if (g_MovingLights.empty())
+            {
+                throw std::runtime_error("Dynamic-light workload has no active local lights");
+            }
+        }
+        const float time = static_cast<float>(frame) / 60.0f;
+        for (const auto& moving : g_MovingLights)
+        {
+            auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(moving.Entity);
+            auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(moving.Entity);
+            const float phase = static_cast<float>(moving.Entity % 29u) * 0.21666156f;
+            transform.Position = moving.Position;
+            transform.Position.x += 1.5f * sinf(time * 1.2f + phase);
+            transform.Position.z += 1.5f * cosf(time * 1.2f + phase);
+            transform.IsDirty = true;
+            light.Intensity = moving.Intensity * (0.65f + 0.35f * sinf(time * 2.3f + phase));
+        }
+    }
 
     float BenchmarkScale()
     {
@@ -97,6 +176,14 @@ namespace
             Hash(hash, &transform.Rotation, sizeof(transform.Rotation));
             Hash(hash, &transform.Scale, sizeof(transform.Scale));
         }
+        if (g_DynamicLights)
+        {
+            for (const auto& moving : g_MovingLights)
+            {
+                const auto& light = ComponentManager::GetComponentUnchecked<LightComponent>(moving.Entity);
+                Hash(hash, &light.Intensity, sizeof(light.Intensity));
+            }
+        }
         return hash;
     }
 
@@ -128,6 +215,20 @@ namespace
 
     void Initialize()
     {
+        char workload[32]{};
+        GetEnvironmentVariableA("DX12_BENCHMARK_LIGHTING_WORKLOAD", workload, sizeof(workload));
+        if (workload[0])
+        {
+            g_LightingWorkload = workload;
+        }
+        if (g_LightingWorkload != "saved" && g_LightingWorkload != "direct" &&
+            g_LightingWorkload != "raytracing" && g_LightingWorkload != "restir")
+        {
+            throw std::runtime_error("Unknown lighting benchmark workload");
+        }
+        char dynamicLights[8]{};
+        g_DynamicLights = GetEnvironmentVariableA("DX12_BENCHMARK_DYNAMIC_LIGHTS", dynamicLights, sizeof(dynamicLights)) && atoi(dynamicLights) != 0;
+        ApplyLightingWorkload(0);
         char native[8]{};
         g_NativeResolution = GetEnvironmentVariableA("DX12_RENDER_BENCHMARK_NATIVE", native, sizeof(native)) > 0 &&
                              atoi(native) != 0;
@@ -156,7 +257,7 @@ namespace
         g_Frames << std::setprecision(17);
         g_Passes << std::setprecision(17);
         g_Frames
-            << "Serial,FrameIndex,FrameMs,CpuFrameMs,CpuRenderMs,GpuMs,GpuValid,SceneSignature,InputWidth,InputHeight,OutputWidth,OutputHeight,ProcessLocalUsageBytes,LocalBudgetBytes,ManagedAllocationBytes,RayCount,HistoryRejectionRate,ReflectionRays,GiRays,RadianceShadowRays,ReSTIRVisibilityRays,ShadowRays,AoRays,RayTelemetryValid,RayActiveProviders,RayMeasuredProviders\n";
+            << "Serial,FrameIndex,FrameMs,CpuFrameMs,CpuRenderMs,GpuMs,GpuValid,SceneSignature,InputWidth,InputHeight,OutputWidth,OutputHeight,ProcessLocalUsageBytes,LocalBudgetBytes,ManagedAllocationBytes,RayCount,HistoryRejectionRate,ReflectionRays,GiRays,RadianceShadowRays,ReSTIRVisibilityRays,ShadowRays,AoRays,RayTelemetryValid,RayActiveProviders,RayMeasuredProviders,DirectLightingMode,LocalLights,RtxdiHistoryValid,RtxdiBufferMB,GiResamplingMode,GiActive,LightSamplesPerPixel,LightSampleScale\n";
         g_Passes << "Serial,Name,CpuInclusiveMs,GpuInclusiveMs,GpuExclusiveMs,Events,ValidGpuEvents,DroppedGpuEvents\n";
         if (!g_Frames || !g_Passes)
         {
@@ -175,6 +276,9 @@ namespace
             << "requested_input_width=" << BenchmarkWidth() << "\nrequested_input_height=" << BenchmarkHeight()
             << "\nrequested_output_width=1280\nrequested_output_height=720\n";
         metadata << "gpu_scope=direct-frame-commands\n";
+        metadata << "direct_lighting=" << static_cast<int>(MegaLights::GetRequestedMode()) << '\n';
+        metadata << "gi_resampling=" << RenderQuality::GetGiResamplingMode()
+                 << "\nlighting_workload=" << g_LightingWorkload << "\ndynamic_lights=" << g_DynamicLights << '\n';
         metadata << "ray_telemetry_requested=" << RayTelemetry::Requested()
                  << "\nray_telemetry_scope=radiance-and-shadow-ao\n";
         metadata << "final_capture=png\n";
@@ -268,7 +372,9 @@ namespace
             }
         }
         g_Frames << ',' << snapshot.Rays.Valid << ',' << snapshot.Rays.ActiveProviders << ','
-                 << snapshot.Rays.MeasuredProviders << '\n';
+                 << snapshot.Rays.MeasuredProviders << ',' << metadata.DirectLighting << ',' << metadata.LocalLights
+                 << ',' << metadata.RtxdiHistory << ',' << metadata.RtxdiBufferMB << ',' << metadata.GiResampling
+                 << ',' << metadata.GiActive << ',' << metadata.LightSamples << ',' << metadata.LightSampleScale << '\n';
         for (const auto& pass : snapshot.Passes)
         {
             g_Passes << sample.Serial << ',';
@@ -330,6 +436,7 @@ void RenderBenchmark::BeforeFrame(uint64_t frame)
             g_CameraTarget = ComponentManager::GetComponentUnchecked<CameraComponent>(Camera::GetCameraEntity()).Target;
             RenderConfiguration::Resize(1280, 720);
         }
+        ApplyLightingWorkload(frame);
         auto& transform = ComponentManager::GetComponentUnchecked<TransformComponent>(Camera::GetCameraEntity());
         auto& camera = ComponentManager::GetComponentUnchecked<CameraComponent>(Camera::GetCameraEntity());
         transform.Position = g_CameraOrigin;
@@ -359,6 +466,30 @@ void RenderBenchmark::AfterFrame()
         return;
     }
     Metadata metadata;
+    const auto& lighting = MegaLights::GetStats();
+    const auto requestedLighting = MegaLights::GetRequestedMode();
+    metadata.DirectLighting = static_cast<int>(lighting.ActiveMode);
+    if (lighting.RtxdiActive)
+    {
+        metadata.DirectLighting = static_cast<int>(MegaLights::Mode::Rtxdi);
+    }
+    metadata.LocalLights = lighting.SubmittedLights;
+    metadata.RtxdiHistory = lighting.RtxdiHistoryValid;
+    metadata.RtxdiBufferMB = lighting.RtxdiBufferMB;
+    metadata.GiResampling = RenderQuality::GetGiResamplingMode();
+    metadata.GiActive = Raytracing::IsGiActive();
+    metadata.LightSamples = lighting.SamplesPerPixel;
+    metadata.LightSampleScale = lighting.SampleScale;
+    if (RenderProfiler::GetFrameSerial() >= g_FirstSerial + g_Warmup &&
+        MegaLights::GetSettings().Enabled &&
+        ((requestedLighting == MegaLights::Mode::Rtxdi && !lighting.RtxdiActive) ||
+         (requestedLighting == MegaLights::Mode::Stochastic && lighting.ActiveMode != MegaLights::Mode::Stochastic)))
+    {
+        g_Failed = true;
+        WriteGraphicsLog("Render benchmark: requested direct lighting unavailable: %s\n",
+                         lighting.FallbackReason ? lighting.FallbackReason : "path did not execute");
+        return;
+    }
     metadata.SceneSignature = SceneSignature();
     metadata.InputWidth = GraphicsDevice::GetSceneWidth();
     metadata.InputHeight = GraphicsDevice::GetSceneHeight();

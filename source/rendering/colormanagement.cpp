@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "colormanagement.h"
+#include "graphicslog.h"
 
 #if RENDERINGPROJECT_USE_OCIO
 #include <OpenColorIO/OpenColorIO.h>
@@ -8,209 +9,227 @@ namespace OCIO = OCIO_NAMESPACE;
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 namespace ColorManagement
 {
 
-ColorManager& ColorManager::Get()
-{
-    static ColorManager instance;
-    return instance;
-}
+    ColorManager& ColorManager::Get()
+    {
+        static ColorManager instance;
+        return instance;
+    }
 
-ColorManager::~ColorManager()
-{
-    Shutdown();
-}
+    ColorManager::~ColorManager()
+    {
+        Shutdown();
+    }
 
-bool ColorManager::Initialize(const ColorSpaceConfig& config)
-{
-    m_enabled = false;
+    bool ColorManager::Initialize(const ColorSpaceConfig& config)
+    {
+        Shutdown();
+        if (!config.enableOCIO)
+        {
+            return false;
+        }
 
-    // Initialize built-in color spaces
-    m_builtinSpaces = {
-        {"ACES - ACEScg", "scene_linear", true},
-        {"ACES2065-1", "scene_linear", true},
-        {"ACEScg", "scene_linear", true},
-        {"ACEScc", "scene_linear", false},
-        {"ACEScct", "scene_linear", false},
-        {"ARRI LogC3", "scene_linear", false},
-        {"ARRI LogC4", "scene_linear", false},
-        {"Blackmagic Design Film", "scene_linear", false},
-        {"Canon Log", "scene_linear", false},
-        {"Canon Log 2", "scene_linear", false},
-        {"Canon Log 3", "scene_linear", false},
-        {"DCI-P3", "display_linear", false},
-        {"Display P3", "display_linear", false},
-        {"ERIMM RGB", "scene_linear", true},
-        {"FilmLight E-Gamut", "scene_linear", false},
-        {"ITU-R BT.2020", "display_linear", false},
-        {"ITU-R BT.709", "display_linear", false},
-        {"Linear sRGB", "display_linear", false},
-        {"Log3G10", "scene_linear", false},
-        {"Log3G12", "scene_linear", false},
-        {"Panasonic V-Log", "scene_linear", false},
-        {"REDLog3G10", "scene_linear", false},
-        {"REDLogFilm", "scene_linear", false},
-        {"Rec.2020", "display_linear", false},
-        {"Rec.709", "display_linear", false},
-        {"sRGB", "display_linear", false},
-        {"Sony S-Log", "scene_linear", false},
-        {"Sony S-Log2", "scene_linear", false},
-        {"Sony S-Log3", "scene_linear", false},
-        {"Utility - Linear - sRGB", "display_linear", false},
-        {"Utility - Raw", "scene_linear", true},
-        {"Utility - sRGB - Texture", "display_linear", false},
-    };
+        // Initialize built-in color spaces
+        m_builtinSpaces = {
+            {"ACES - ACEScg", "scene_linear", true},
+            {"ACES2065-1", "scene_linear", true},
+            {"ACEScg", "scene_linear", true},
+            {"ACEScc", "scene_linear", false},
+            {"ACEScct", "scene_linear", false},
+            {"ARRI LogC3", "scene_linear", false},
+            {"ARRI LogC4", "scene_linear", false},
+            {"Blackmagic Design Film", "scene_linear", false},
+            {"Canon Log", "scene_linear", false},
+            {"Canon Log 2", "scene_linear", false},
+            {"Canon Log 3", "scene_linear", false},
+            {"DCI-P3", "display_linear", false},
+            {"Display P3", "display_linear", false},
+            {"ERIMM RGB", "scene_linear", true},
+            {"FilmLight E-Gamut", "scene_linear", false},
+            {"ITU-R BT.2020", "display_linear", false},
+            {"ITU-R BT.709", "display_linear", false},
+            {"Linear sRGB", "display_linear", false},
+            {"Log3G10", "scene_linear", false},
+            {"Log3G12", "scene_linear", false},
+            {"Panasonic V-Log", "scene_linear", false},
+            {"REDLog3G10", "scene_linear", false},
+            {"REDLogFilm", "scene_linear", false},
+            {"Rec.2020", "display_linear", false},
+            {"Rec.709", "display_linear", false},
+            {"sRGB", "display_linear", false},
+            {"Sony S-Log", "scene_linear", false},
+            {"Sony S-Log2", "scene_linear", false},
+            {"Sony S-Log3", "scene_linear", false},
+            {"Utility - Linear - sRGB", "display_linear", false},
+            {"Utility - Raw", "scene_linear", true},
+            {"Utility - sRGB - Texture", "display_linear", false},
+        };
 
 #if RENDERINGPROJECT_USE_OCIO
-    try
-    {
-        OCIO::ConstConfigRcPtr loadedConfig;
+        try
+        {
+            OCIO::ConstConfigRcPtr loadedConfig;
 
-        if (!config.configPath.empty())
-        {
-            loadedConfig = OCIO::Config::CreateFromFile(config.configPath.c_str());
-        }
-        else
-        {
-            // Try to find OCIO config from environment
-            const char* ocioEnv = std::getenv("OCIO");
-            if (ocioEnv && *ocioEnv)
+            if (!config.configPath.empty())
             {
-                loadedConfig = OCIO::Config::CreateFromFile(ocioEnv);
+                loadedConfig = OCIO::Config::CreateFromFile(config.configPath.c_str());
             }
             else
             {
-                // Create a minimal built-in config
-                loadedConfig = OCIO::Config::Create();
-            }
-        }
-
-        if (!loadedConfig)
-        {
-            Debug::Log("WARNING: Failed to load OCIO config, using built-in transforms\n");
-        }
-        else
-        {
-            m_config = loadedConfig;
-
-            // Validate working space
-            if (!config.workingSpace.empty())
-            {
-                OCIO::ConstColorSpaceRcPtr workingSpace = m_config->getColorSpace(config.workingSpace.c_str());
-                if (!workingSpace)
+                // Try to find OCIO config from environment
+                const char* ocioEnv = std::getenv("OCIO");
+                if (ocioEnv && *ocioEnv)
                 {
-                    Debug::Log("WARNING: Working space '");
-                    Debug::Log(config.workingSpace.c_str());
-                    Debug::Log("' not found in OCIO config\n");
-                }
-            }
-
-            // Build display processor
-            if (!config.displayDevice.empty() && !config.viewTransform.empty())
-            {
-                // v2.3 API: Use DisplayViewHelpers::GetProcessor for display/view
-                OCIO::ConstProcessorRcPtr processor = OCIO::DisplayViewHelpers::GetProcessor(
-                    m_config,
-                    OCIO::ROLE_SCENE_LINEAR,
-                    config.displayDevice.c_str(),
-                    config.viewTransform.c_str(),
-                    OCIO::ConstMatrixTransformRcPtr(), // no channel view
-                    OCIO::TRANSFORM_DIR_FORWARD);
-
-                // Apply look transform if specified
-                if (!config.lookTransform.empty())
-                {
-                    OCIO::LookTransformRcPtr lookTransform = OCIO::LookTransform::Create();
-                    lookTransform->setLooks(config.lookTransform.c_str());
-                    lookTransform->setDirection(OCIO::TRANSFORM_DIR_FORWARD);
-                    
-                    // Chain with display processor using GroupTransform
-                    OCIO::GroupTransformRcPtr groupTransform = OCIO::GroupTransform::Create();
-                    groupTransform->appendTransform(processor->createGroupTransform());
-                    groupTransform->appendTransform(lookTransform);
-                    
-                    m_displayProcessor = m_config->getProcessor(groupTransform);
+                    loadedConfig = OCIO::Config::CreateFromFile(ocioEnv);
                 }
                 else
                 {
-                    m_displayProcessor = processor;
+                    // Config::Create() is empty and has no scene_linear role or displays.
+                    loadedConfig = OCIO::Config::CreateFromBuiltinConfig("cg-config-v2.1.0_aces-v1.3_ocio-v2.3");
+                }
+            }
+
+            if (!loadedConfig)
+            {
+                Debug::Log("WARNING: Failed to load OCIO config, using built-in transforms\n");
+            }
+            else
+            {
+                m_config = loadedConfig;
+
+                loadedConfig->validate();
+                std::string workingSpace = config.workingSpace;
+                if (workingSpace.empty())
+                {
+                    workingSpace = OCIO::ROLE_SCENE_LINEAR;
+                }
+                if (!m_config->getColorSpace(workingSpace.c_str()))
+                {
+                    throw std::runtime_error("Working color space not found in OCIO config: " + workingSpace);
                 }
 
-                // Apply exposure/gamma if needed (v2.3: use ExposureContrastTransform)
-                if (config.exposure != 0.0f || config.gamma != 2.2f)
+                std::string display = config.displayDevice;
+                if (display.empty())
                 {
-                    // Create exposure/gamma transform
-                    OCIO::ExposureContrastTransformRcPtr ecTransform = OCIO::ExposureContrastTransform::Create();
-                    ecTransform->setExposure(config.exposure);
-                    ecTransform->setGamma(config.gamma);
-                    ecTransform->setStyle(OCIO::EXPOSURE_CONTRAST_VIDEO);
-                    
-                    // Chain with display processor using GroupTransform
-                    OCIO::GroupTransformRcPtr groupTransform = OCIO::GroupTransform::Create();
-                    if (config.lookTransform.empty())
+                    display = m_config->getDefaultDisplay();
+                }
+                std::string view = config.viewTransform;
+                if (view.empty())
+                {
+                    view = m_config->getDefaultView(display.c_str());
+                }
+
+                // Build display processor
+                if (!display.empty() && !view.empty())
+                {
+                    // v2.3 API: Use DisplayViewHelpers::GetProcessor for display/view
+                    OCIO::ConstProcessorRcPtr processor = OCIO::DisplayViewHelpers::GetProcessor(
+                        m_config, workingSpace.c_str(), display.c_str(), view.c_str(),
+                        OCIO::ConstMatrixTransformRcPtr(), // no channel view
+                        OCIO::TRANSFORM_DIR_FORWARD);
+
+                    // Apply look transform if specified
+                    if (!config.lookTransform.empty())
                     {
-                        groupTransform->appendTransform(m_displayProcessor->createGroupTransform());
+                        OCIO::LookTransformRcPtr lookTransform = OCIO::LookTransform::Create();
+                        lookTransform->setLooks(config.lookTransform.c_str());
+                        lookTransform->setDirection(OCIO::TRANSFORM_DIR_FORWARD);
+
+                        // Chain with display processor using GroupTransform
+                        OCIO::GroupTransformRcPtr groupTransform = OCIO::GroupTransform::Create();
+                        groupTransform->appendTransform(processor->createGroupTransform());
+                        groupTransform->appendTransform(lookTransform);
+
+                        m_displayProcessor = m_config->getProcessor(groupTransform);
                     }
                     else
                     {
-                        groupTransform->appendTransform(m_displayProcessor->createGroupTransform());
+                        m_displayProcessor = processor;
                     }
-                    groupTransform->appendTransform(ecTransform);
-                    
-                    m_displayProcessor = m_config->getProcessor(groupTransform);
+
+                    // Apply exposure/gamma if needed (v2.3: use ExposureContrastTransform)
+                    if (config.exposure != 0.0f || config.gamma != 2.2f)
+                    {
+                        // Create exposure/gamma transform
+                        OCIO::ExposureContrastTransformRcPtr ecTransform = OCIO::ExposureContrastTransform::Create();
+                        ecTransform->setExposure(config.exposure);
+                        ecTransform->setGamma(config.gamma);
+                        ecTransform->setStyle(OCIO::EXPOSURE_CONTRAST_VIDEO);
+
+                        // Chain with display processor using GroupTransform
+                        OCIO::GroupTransformRcPtr groupTransform = OCIO::GroupTransform::Create();
+                        if (config.lookTransform.empty())
+                        {
+                            groupTransform->appendTransform(m_displayProcessor->createGroupTransform());
+                        }
+                        else
+                        {
+                            groupTransform->appendTransform(m_displayProcessor->createGroupTransform());
+                        }
+                        groupTransform->appendTransform(ecTransform);
+
+                        m_displayProcessor = m_config->getProcessor(groupTransform);
+                    }
+
+                    // Working to display processor
+                    m_workingToDisplayProcessor = OCIO::DisplayViewHelpers::GetProcessor(
+                        m_config, workingSpace.c_str(), display.c_str(), view.c_str(),
+                        OCIO::ConstMatrixTransformRcPtr(), OCIO::TRANSFORM_DIR_FORWARD);
                 }
 
-                // Working to display processor
-                m_workingToDisplayProcessor = OCIO::DisplayViewHelpers::GetProcessor(
-                    m_config,
-                    OCIO::ROLE_SCENE_LINEAR,
-                    config.displayDevice.c_str(),
-                    config.viewTransform.c_str(),
-                    OCIO::ConstMatrixTransformRcPtr(),
-                    OCIO::TRANSFORM_DIR_FORWARD);
+                if (!m_displayProcessor)
+                {
+                    throw std::runtime_error("OCIO config has no usable display/view");
+                }
+                m_enabled = true;
+                Debug::Log("OpenColorIO initialized successfully\n");
+                WriteGraphicsLog("OpenColorIO initialized: config=%s working=%s display=%s view=%s\n",
+                                 m_config->getName(), workingSpace.c_str(), display.c_str(), view.c_str());
+                return true;
             }
+        }
+        catch (const OCIO::Exception& e)
+        {
+            WriteGraphicsLog("OCIO initialization error: %s\n", e.what());
+            Debug::Log("OCIO initialization error: ");
+            Debug::Log("%s", e.what());
+            Debug::Log("\n");
+        }
+        catch (const std::exception& e)
+        {
+            WriteGraphicsLog("OCIO initialization error: %s\n", e.what());
+            Debug::Log("OCIO initialization error: ");
+            Debug::Log("%s", e.what());
+            Debug::Log("\n");
+        }
+#endif
 
+        Shutdown();
+        // Fallback: enable built-in transforms even without OCIO
+        if (config.enableOCIO)
+        {
             m_enabled = true;
-            Debug::Log("OpenColorIO initialized successfully\n");
+            Debug::Log("Color management enabled with built-in transforms (OCIO not available)\n");
+            WriteGraphicsLog("Color management enabled with built-in transforms (OCIO not available)\n");
             return true;
         }
-    }
-    catch (const OCIO::Exception& e)
-    {
-        Debug::Log("OCIO initialization error: ");
-        Debug::Log(e.what());
-        Debug::Log("\n");
-    }
-    catch (const std::exception& e)
-    {
-        Debug::Log("OCIO initialization error: ");
-        Debug::Log(e.what());
-        Debug::Log("\n");
-    }
-#endif
 
-    // Fallback: enable built-in transforms even without OCIO
-    if (config.enableOCIO)
-    {
-        m_enabled = true;
-        Debug::Log("Color management enabled with built-in transforms (OCIO not available)\n");
-        return true;
+        return false;
     }
 
-    return false;
-}
-
-void ColorManager::Shutdown()
-{
+    void ColorManager::Shutdown()
+    {
 #if RENDERINGPROJECT_USE_OCIO
-    m_displayProcessor.reset();
-    m_workingToDisplayProcessor.reset();
-    m_config.reset();
+        m_displayProcessor.reset();
+        m_workingToDisplayProcessor.reset();
+        m_config.reset();
 #endif
-    m_enabled = false;
-}
+        m_enabled = false;
+    }
 
 bool ColorManager::IsOCIOAvailable() const
 {

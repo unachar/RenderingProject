@@ -14,6 +14,13 @@
 #endif
 
 #include "RayTelemetry.hlsli"
+#include "Rtxdi/GI/ReSTIRGIParameters.h"
+// SDK storage helpers are unused: the engine retains its byte-address layout.
+// DXC strips this unreferenced resource and the SDK storage helpers from each entry point.
+#define RTXDI_GI_RESERVOIR_BUFFER RtxdiGiUnusedStorage
+#define RTXDI_ENABLE_STORE_RESERVOIR 0
+RWStructuredBuffer<RTXDI_PackedGIReservoir> RtxdiGiUnusedStorage : register(u2, space8);
+#include "Rtxdi/GI/Reservoir.hlsli"
 #include "ProceduralTexture.hlsli"
 Texture2D<float> ReflectionDepth : register(t1);
 Texture2D<float4> ReflectionNormal : register(t2);
@@ -117,6 +124,27 @@ struct GiReservoir
     float VisibleDepth; // リザーバーを生成・保持するピクセルの線形ビュー深度
     float3 VisibleNormal;
 };
+
+RTXDI_GIReservoir ToRtxdiGi(GiReservoir source)
+{
+    RTXDI_GIReservoir reservoir = RTXDI_EmptyGIReservoir();
+    reservoir.position = source.Position;
+    reservoir.normal = source.Normal;
+    reservoir.radiance = source.Radiance;
+    reservoir.weightSum = source.W;
+    reservoir.M = uint(source.M);
+    return reservoir;
+}
+
+GiReservoir FromRtxdiGi(RTXDI_GIReservoir reservoir, GiReservoir surface)
+{
+    surface.Position = reservoir.position;
+    surface.Normal = reservoir.normal;
+    surface.Radiance = reservoir.radiance;
+    surface.W = reservoir.weightSum;
+    surface.M = float(reservoir.M);
+    return surface;
+}
 
 // ベクトル条件式を使わず成分ごとの符号を求める（HLSL 2021 ではベクトル条件式が無効）。
 float2 OctSign(float2 v)
@@ -1551,6 +1579,23 @@ float3 SampleEmissiveIrradiance(float3 position, float3 normal, uint seed, uint2
     float weightCurrent = targetCurrent * current.W * current.M;
     float weightHistory = targetHistory * history.W * history.M;
     float weightSum = weightCurrent + weightHistory;
+    if (ReSTIRParameters.x > 1.5f)
+    {
+        RTXDI_GIReservoir combined = RTXDI_EmptyGIReservoir();
+        RTXDI_CombineGIReservoirs(combined, ToRtxdiGi(current), 0.5f, targetCurrent);
+        const bool historySelected = RTXDI_CombineGIReservoirs(combined, ToRtxdiGi(history), ReSTIRRandom(state), targetHistory);
+        float selected = targetCurrent;
+        if (historySelected)
+        {
+            selected = targetHistory;
+        }
+        RTXDI_FinalizeGIResampling(combined, 1.0f, float(combined.M) * selected);
+        GiReservoir result = FromRtxdiGi(combined, current);
+        result.VisibleDepth = viewDepth;
+        result.VisibleNormal = normal;
+        StoreReservoir(ReservoirCurrent, index, result);
+        return;
+    }
     GiReservoir result = current;
     float selectedTarget = targetCurrent;
     if (weightSum > 0.0f && ReSTIRRandom(state) * weightSum < weightHistory)
@@ -1603,6 +1648,11 @@ float ReSTIRJacobian(GiReservoir sample, float3 neighbourPosition, float3 positi
     float selectedTarget = centerTarget;
     float weightSum = centerTarget * center.W * center.M;
     float totalM = center.M;
+    RTXDI_GIReservoir sdkReservoir = RTXDI_EmptyGIReservoir();
+    if (ReSTIRParameters.x > 1.5f)
+    {
+        RTXDI_CombineGIReservoirs(sdkReservoir, ToRtxdiGi(center), 0.5f, centerTarget);
+    }
     uint samples = (uint)ReSTIRParameters.z;
     float radius = ReSTIRParameters.w;
     float columnScale = GiParameters.z > 0.5f ? 0.5f : 1.0f;
@@ -1646,13 +1696,38 @@ float ReSTIRJacobian(GiReservoir sample, float3 neighbourPosition, float3 positi
         float weight = reuse.Selection;
         weightSum += weight;
         totalM += neighbour.M;
-        if (weight > 0.0f && ReSTIRRandom(state) * weightSum < weight)
+        bool selectNeighbor = false;
+        if (weight > 0.0f)
+        {
+            const float random = ReSTIRRandom(state);
+            if (ReSTIRParameters.x > 1.5f)
+            {
+                RTXDI_GIReservoir sdkNeighbor = ToRtxdiGi(neighbour);
+                sdkNeighbor.weightSum *= jacobian;
+                selectNeighbor = RTXDI_CombineGIReservoirs(sdkReservoir, sdkNeighbor, random, target);
+            }
+            else
+            {
+                selectNeighbor = random * weightSum < weight;
+            }
+        }
+        else if (ReSTIRParameters.x > 1.5f)
+        {
+            sdkReservoir.M += uint(neighbour.M);
+        }
+        if (selectNeighbor)
         {
             result = neighbour;
             selectedTarget = target;
         }
     }
     float W = selectedTarget > 0.0f ? weightSum / (totalM * selectedTarget) : 0.0f;
+    if (ReSTIRParameters.x > 1.5f)
+    {
+        RTXDI_FinalizeGIResampling(sdkReservoir, 1.0f, float(sdkReservoir.M) * selectedTarget);
+        result = FromRtxdiGi(sdkReservoir, center);
+        W = sdkReservoir.weightSum;
+    }
     float3 direction = result.Position - position;
     float sampleDistance = length(direction);
     direction /= max(sampleDistance, 0.0001f);

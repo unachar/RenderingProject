@@ -133,6 +133,9 @@ namespace Shader16Bit
         }
         std::vector<LPCWSTR> arguments = {path, L"-E", entryName.c_str(), L"-T", targetName.c_str(),
                                           L"-enable-16bit-types"};
+        // RayReflectionsCS also includes RTXDI when compiled for the SHaRC path.
+        arguments.push_back(L"-I");
+        arguments.push_back(L"External/RTXDI/Include");
         if (!includeDirectory.empty())
         {
             arguments.push_back(L"-I");

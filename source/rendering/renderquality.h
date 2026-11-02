@@ -68,6 +68,7 @@ struct RenderQualitySettings
     bool RaytracedRefraction = true;
     // --- ReSTIRによる大域照明（ReSTIR GI） ---
     bool ReSTIRGI = true;
+    bool RtxdiGI = false; // GI リザーバーの統合・正規化に RTXDI SDK を使う
     int ReSTIRTemporalMaxM = 20; // 時間方向の履歴上限
     int ReSTIRSpatialSamples = 4;
     float ReSTIRSpatialRadius = 24.0f; // ピクセル
@@ -82,6 +83,37 @@ class RenderQuality final
     static Settings& Get()
     {
         return s_Settings;
+    }
+
+    // 0: raw traced GI, 1: engine ReSTIR, 2: RTXDI SDK reservoir core.
+    static int GetGiResamplingMode()
+    {
+        static const int overrideMode = []() {
+            char value[24]{};
+            GetEnvironmentVariableA("DX12_GI_RESAMPLING", value, sizeof(value));
+            if (strcmp(value, "raw") == 0)
+            {
+                return 0;
+            }
+            if (strcmp(value, "native") == 0)
+            {
+                return 1;
+            }
+            if (strcmp(value, "rtxdi") == 0)
+            {
+                return 2;
+            }
+            return -1;
+        }();
+        if (overrideMode >= 0)
+        {
+            return overrideMode;
+        }
+        if (!s_Settings.ReSTIRGI)
+        {
+            return 0;
+        }
+        return s_Settings.RtxdiGI ? 2 : 1;
     }
 
     // 設定を拡張 PostProcessParams ブロック（11 x float4）に詰める。

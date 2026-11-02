@@ -79,7 +79,7 @@ function Get-RenderBenchmarkRun([string]$Path) {
     return [pscustomobject]@{ Manifest = $manifest; Frames = $indexed; Stats = [pscustomobject]$stats }
 }
 
-function Compare-RenderBenchmarkRuns([string]$FirstPath, [string]$SecondPath) {
+function Compare-RenderBenchmarkRuns([string]$FirstPath, [string]$SecondPath, [switch]$CompareDirectLighting, [switch]$CompareGiResampling) {
     $first = Get-RenderBenchmarkRun $FirstPath
     $second = Get-RenderBenchmarkRun $SecondPath
     $keys = @($first.Manifest.conditions.PSObject.Properties.Name | Sort-Object)
@@ -88,6 +88,20 @@ function Compare-RenderBenchmarkRuns([string]$FirstPath, [string]$SecondPath) {
         throw 'Comparison conditions have different fields.'
     }
     foreach ($key in $keys) {
+        if ($CompareGiResampling -and $key -eq 'gi_resampling') {
+            if ([string]$first.Manifest.conditions.$key -notin @('0','1','2') -or
+                [string]$second.Manifest.conditions.$key -notin @('0','1','2')) {
+                throw 'Unsupported GI resampling comparison mode.'
+            }
+            continue
+        }
+        if ($CompareDirectLighting -and $key -eq 'direct_lighting') {
+            if ([string]$first.Manifest.conditions.$key -notin @('0','1','3') -or
+                [string]$second.Manifest.conditions.$key -notin @('0','1','3')) {
+                throw 'Unsupported direct lighting comparison mode.'
+            }
+            continue
+        }
         if ([string]$first.Manifest.conditions.$key -cne [string]$second.Manifest.conditions.$key) {
             throw "Comparison condition differs: $key"
         }
@@ -97,10 +111,20 @@ function Compare-RenderBenchmarkRuns([string]$FirstPath, [string]$SecondPath) {
             $first.Frames[$index].SceneSignature -cne $second.Frames[$index].SceneSignature) {
             throw "Scene or camera replay differs at frame $index."
         }
+        if ($first.Frames[$index].DirectLightingMode -in @('1','3') -and
+            $second.Frames[$index].DirectLightingMode -in @('1','3')) {
+            foreach ($samplingField in @('LightSamplesPerPixel','LightSampleScale')) {
+                if ($first.Frames[$index].$samplingField -ne $second.Frames[$index].$samplingField) {
+                    throw "Direct lighting sample budget differs: $samplingField at frame $index."
+                }
+            }
+        }
     }
     return [pscustomobject]@{
         First = $first.Stats
         Second = $second.Stats
+        DirectLighting = @($first.Manifest.conditions.direct_lighting, $second.Manifest.conditions.direct_lighting)
+        GiResampling = @($first.Manifest.conditions.gi_resampling, $second.Manifest.conditions.gi_resampling)
         BinaryComparison = if ($first.Manifest.binary.sha256 -eq $second.Manifest.binary.sha256) {
             'A/A'
         } else {

@@ -29,6 +29,7 @@
 #include "renderprofiler.h"
 #include "raytracing.h"
 #include "nrddenoiser.h"
+#include "psomanager.h"
 #include <memory>
 #include "camera.h"
 #include <cmath>
@@ -42,6 +43,7 @@ class MegaLights final
         Deterministic = 0, // M1：セル内の全ライトを評価
         Stochastic = 1,    // M2：N 個のサンプル + 影レイ（PBR 面のみ。DXR が必要）
         Reference = 2,     // 検証：全ライト × 面上の複数点の影レイ（PBR 面のみ。DXR が必要）
+        Rtxdi = 3,         // RTXDI SDK の RIS と時間・空間リザーバー再利用
     };
 
     struct Settings
@@ -54,6 +56,7 @@ class MegaLights final
         // ---- M2段階
         int EvaluationMode = static_cast<int>(Mode::Deterministic);
         int SamplesPerPixel = 2;     // 1 / 2 / 4（解像度に応じて自動で下げる）
+        int RtxdiCandidates = 8;     // リザーバーごとの一様初期候補数
         bool HalfResolution = false; // 半解像度サンプリング（サンプル数・影レイが 1/4）
         // ---- M7段階
         bool Translucency = true; // Forward / 半透明もグリッドで評価する（グリッドを視錐台全体で構築）
@@ -100,6 +103,9 @@ class MegaLights final
         UINT CoarseIndices = 0, FineIndices = 0; // 数フレーム前の GPU 実測
         UINT OverflowCells = 0, MaxLightsPerCell = 0;
         bool Built = false;
+        bool RtxdiActive = false;
+        bool RtxdiHistoryValid = false;
+        double RtxdiBufferMB = 0.0;
         // ---- M2段階
         Mode ActiveMode = Mode::Deterministic; // このフレームに実際に使った評価方式
         const char* FallbackReason = nullptr;  // 要求した方式が使えなかった理由
@@ -167,6 +173,33 @@ class MegaLights final
     static const Stats& GetStats()
     {
         return s_Stats;
+    }
+
+    static Mode GetRequestedMode()
+    {
+        // Process-local override keeps saved settings identical for A/B measurements.
+        static const int overrideMode = []() {
+            char value[32]{};
+            GetEnvironmentVariableA("DX12_DIRECT_LIGHTING", value, sizeof(value));
+            if (strcmp(value, "rtxdi") == 0)
+            {
+                return 3;
+            }
+            if (strcmp(value, "megalights") == 0)
+            {
+                return 1;
+            }
+            if (strcmp(value, "deterministic") == 0)
+            {
+                return 0;
+            }
+            return -1;
+        }();
+        if (overrideMode >= 0)
+        {
+            return static_cast<Mode>(overrideMode);
+        }
+        return static_cast<Mode>(std::clamp(s_Settings.EvaluationMode, 0, 3));
     }
 
     static bool IsAvailable()
@@ -314,6 +347,10 @@ class MegaLights final
         s_HasSerial = true;
         s_LastSerial = frameSerial;
         s_Slot = frameIndex % kFrames;
+        if (s_MappedLights)
+        {
+            memset(s_MappedLights + s_Slot * kLightStride + kLightDataBytes, 0xff, g_kMAX_ENTITIES * sizeof(UINT));
+        }
         ++s_FrameCounter;
         RetireTick();
         ReadStats();
@@ -368,6 +405,11 @@ class MegaLights final
             return false;
         }
         memcpy(s_MappedLights + s_Slot * kLightStride + s_LightCount * sizeof(GpuLight), &light, sizeof(GpuLight));
+        if (entity < g_kMAX_ENTITIES)
+        {
+            memcpy(s_MappedLights + s_Slot * kLightStride + kLightDataBytes + entity * sizeof(UINT),
+                   &s_LightCount, sizeof(s_LightCount));
+        }
         HashBytes(s_LightHash, &light, sizeof(light)); // 累積のリセット判定用（アップロードヒープは読み戻さない）
         if (entity >= s_EntityInGrid.size())
         {
@@ -394,6 +436,7 @@ class MegaLights final
         s_Stats.Built = false;
         s_Stats.ActiveMode = Mode::Deterministic;
         s_Stats.FallbackReason = nullptr;
+        s_Stats.RtxdiActive = false;
         ID3D12Resource* depth = gbuffer ? gbuffer[2] : nullptr;
         if (!commands || !heap || !depth || !IsEnabled() || !s_HasSerial || s_SlotBuilt[s_Slot])
         {
@@ -417,9 +460,14 @@ class MegaLights final
         }
 
         // ---- M2段階：このフレームの評価方式を決める
-        const Mode requested = static_cast<Mode>(std::clamp(s_Settings.EvaluationMode, 0, 2));
+        const Mode requested = GetRequestedMode();
         const D3D12_GPU_VIRTUAL_ADDRESS scene = Raytracing::GetSceneAddress();
         Mode mode = requested;
+        bool rtxdi = requested == Mode::Rtxdi;
+        if (rtxdi)
+        {
+            mode = Mode::Stochastic;
+        }
         UINT samplesPerPixel = 0;
         if (requested != Mode::Deterministic)
         {
@@ -440,7 +488,16 @@ class MegaLights final
             s_SampleScale = s_Settings.HalfResolution ? 2u : 1u;
             s_SampleWidth = (width + s_SampleScale - 1) / s_SampleScale;
             s_SampleHeight = (height + s_SampleScale - 1) / s_SampleScale;
-            samplesPerPixel = ChooseSamplesPerPixel(s_SampleWidth, s_SampleHeight);
+            samplesPerPixel = ChooseSamplesPerPixel(s_SampleWidth, s_SampleHeight, rtxdi);
+            if (rtxdi && samplesPerPixel == 0 && s_SampleScale == 1)
+            {
+                // A full-resolution 1080p surface history exceeds the RTXDI budget.
+                // Reduce the sample grid explicitly; the statistics expose the actual scale.
+                s_SampleScale = 2;
+                s_SampleWidth = (width + 1) / 2;
+                s_SampleHeight = (height + 1) / 2;
+                samplesPerPixel = ChooseSamplesPerPixel(s_SampleWidth, s_SampleHeight, true);
+            }
             if (samplesPerPixel == 0 || !EnsureSamples(s_SampleWidth, s_SampleHeight, samplesPerPixel))
             {
                 mode = Mode::Deterministic;
@@ -449,6 +506,19 @@ class MegaLights final
             }
         }
         // ---- M3段階：デノイズするか
+        rtxdi = rtxdi && mode == Mode::Stochastic;
+        if (rtxdi && (!s_RtxdiInitial || !s_RtxdiSpatial || !EnsureRtxdi(samplesPerPixel)))
+        {
+            mode = Mode::Deterministic;
+            rtxdi = false;
+            s_Stats.FallbackReason = "RTXDI のシェーダーまたはバッファが利用できません";
+        }
+        const bool rtxdiHistory = rtxdi && s_RtxdiLastFrame != 0 && s_RtxdiLastFrame + 1 == s_FrameCounter &&
+                                  s_RtxdiCamera == Camera::GetCameraEntity() &&
+                                  !s_DenoiseResetRequested;
+        s_RtxdiHistoryValid = rtxdiHistory;
+        s_Stats.RtxdiHistoryValid = rtxdiHistory;
+        s_Stats.RtxdiActive = rtxdi;
         bool denoise = false;
         s_Stats.DenoiseFallback = nullptr;
         if (mode == Mode::Stochastic && s_Settings.Denoise)
@@ -470,7 +540,7 @@ class MegaLights final
         const UINT hashTilesX = (width + 7) / 8, hashTilesY = (height + 7) / 8;
         bool guide = false;
         bool hashBuild = false;
-        if (mode == Mode::Stochastic && s_Settings.Guide && s_HashAvailable && EnsureHash(hashTilesX, hashTilesY))
+        if (mode == Mode::Stochastic && !rtxdi && s_Settings.Guide && s_HashAvailable && EnsureHash(hashTilesX, hashTilesY))
         {
             hashBuild = true;
             const EntityID camera = Camera::GetCameraEntity();
@@ -578,7 +648,7 @@ class MegaLights final
         // ---- M2段階：ML3 ライトの選択 → ML5 影レイ
         if (sampling)
         {
-            RenderProfiler::ScopedEvent sampleProfile("MegaLights Sample + Trace", commands);
+            RenderProfiler::ScopedEvent sampleProfile(rtxdi ? "RTXDI Sample + Trace" : "MegaLights Sample + Trace", commands);
             const UINT hashCurrent = s_HashIndex, hashPrevious = s_HashIndex ^ 1u;
             barriers.clear();
             Transition(barriers, s_Samples.Get(), s_SamplesState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -586,6 +656,12 @@ class MegaLights final
             Transition(barriers, s_TraceList.Get(), s_TraceListState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             Transition(barriers, s_WorldList.Get(), s_WorldListState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             Transition(barriers, s_TraceCounters.Get(), s_TraceCountersState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            if (rtxdi)
+            {
+                Transition(barriers, s_RtxdiInitialBuffer.Get(), s_RtxdiInitialState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                Transition(barriers, s_RtxdiHistory[s_FrameCounter & 1u].Get(), s_RtxdiHistoryState[s_FrameCounter & 1u], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                Transition(barriers, s_RtxdiHistory[(s_FrameCounter & 1u) ^ 1u].Get(), s_RtxdiHistoryState[(s_FrameCounter & 1u) ^ 1u], D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            }
             if (hashBuild)
             {
                 Transition(barriers, s_Hash[hashPrevious].Get(), s_HashState[hashPrevious],
@@ -627,8 +703,28 @@ class MegaLights final
             commands->SetPipelineState(s_ClassifyTiles.Get());
             commands->Dispatch(sampleGroupsX, sampleGroupsY, 1);
             UavBarrier(commands, {s_TraceCounters.Get(), s_TileList.Get(), s_Samples.Get()});
-            indirect(s_ArgsTiles.Get(), 0, s_SampleLights.Get(),
-                     {s_Samples.Get(), s_TraceList.Get(), s_TraceCounters.Get()});
+            if (rtxdi)
+            {
+                {
+                    RenderProfiler::ScopedEvent initialProfile("RTXDI Initial + Temporal", commands);
+                    commands->SetPipelineState(s_RtxdiInitial.Get());
+                    commands->Dispatch(sampleGroupsX, sampleGroupsY, 1);
+                    UavBarrier(commands, {s_RtxdiInitialBuffer.Get()});
+                }
+                {
+                    RenderProfiler::ScopedEvent spatialProfile("RTXDI Spatial", commands);
+                    commands->SetPipelineState(s_RtxdiSpatial.Get());
+                    commands->Dispatch(sampleGroupsX, sampleGroupsY, 1);
+                    UavBarrier(commands, {s_Samples.Get(), s_TraceList.Get(), s_TraceCounters.Get(), s_RtxdiInitialBuffer.Get(), s_RtxdiHistory[s_FrameCounter & 1u].Get()});
+                }
+                s_RtxdiLastFrame = s_FrameCounter;
+                s_RtxdiCamera = Camera::GetCameraEntity();
+            }
+            else
+            {
+                indirect(s_ArgsTiles.Get(), 0, s_SampleLights.Get(),
+                         {s_Samples.Get(), s_TraceList.Get(), s_TraceCounters.Get()});
+            }
             indirect(s_ArgsTrace.Get(), 12, s_ScreenTrace.Get(),
                      {s_Samples.Get(), s_WorldList.Get(), s_TraceCounters.Get()});
             indirect(s_ArgsWorld.Get(), 24, s_WorldTrace.Get(), {s_Samples.Get()});
@@ -848,16 +944,15 @@ class MegaLights final
         }
         s_ShadePso.Reset();
         ComPtr<ID3DBlob> vs, ps, errors;
-        if (FAILED(D3DReadFileToBlob(L"shader/hlsl/build/postProcessVS.cso", &vs)))
+        // The shared .cso can be SM5 DXBC. This PS is SM6 DXIL, so compile a
+        // matching fullscreen VS instead of mixing shader-model generations.
+        if (FAILED(D3DCompileFromFile(L"shader/hlsl/postProcessVS.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                                      "main", "vs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &vs, &errors)))
         {
-            if (FAILED(D3DCompileFromFile(L"shader/hlsl/postProcessVS.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-                                          "main", "vs_6_5", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &vs, &errors)))
-            {
-                WriteGraphicsLog("MegaLights: postProcessVS unavailable %s\n",
-                                 errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
-                s_ShadeFailed = true;
-                return nullptr;
-            }
+            WriteGraphicsLog("MegaLights: postProcessVS unavailable %s\n",
+                             errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
+            s_ShadeFailed = true;
+            return nullptr;
         }
         errors.Reset();
         const D3D_SHADER_MACRO defines[] = {{"SHADER_RAYTRACING", "1"}, {}};
@@ -877,15 +972,16 @@ class MegaLights final
         desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
         desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
         desc.BlendState.RenderTarget[0].RenderTargetWriteMask = 0; // カラーは書かない（UAV だけ）
+        desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
         desc.DepthStencilState.DepthEnable = FALSE;
         desc.SampleMask = UINT_MAX;
         desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         desc.NumRenderTargets = 1;
         desc.RTVFormats[0] = sceneFormat;
         desc.SampleDesc.Count = 1;
-        if (FAILED(s_Device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&s_ShadePso))))
+        if (!PsoManager::CreateGraphicsPipelineState(desc, "MegaLightsShadePS", s_ShadePso))
         {
-            WriteGraphicsLog("MegaLights: MegaLightsShadePS pipeline failed\n");
+            WriteGraphicsLog("MegaLights: MegaLightsShadePS pipeline failed (see PSO diagnostics)\n");
             s_ShadeFailed = true;
             return nullptr;
         }
@@ -1101,11 +1197,15 @@ class MegaLights final
         // ---- M5段階
         XMFLOAT4 ScreenTrace; // ステップ数, 最大距離（px）, 厚み（m）, 自己遮蔽よけ（px）
         XMUINT4 SampleGrid;   // サンプル空間の幅, 高さ, 縮小率, 代表ピクセルの回転
+        XMUINT4 Rtxdi;
     };
 
-    static_assert(sizeof(Constants) == 288, "MegaLightGridConstants layout mismatch");
+    static_assert(sizeof(Constants) == 304, "MegaLightGridConstants layout mismatch");
     static constexpr UINT kConstantStride = 512;
-    static constexpr UINT64 kLightStride = (sizeof(GpuLight) * kMaxLights + 255u) & ~255ull;
+    static constexpr UINT64 kLightDataBytes = sizeof(GpuLight) * kMaxLights;
+    // Forward SRVs use FirstElement in 96-byte units; root views also need 256-byte slot alignment.
+    static constexpr UINT64 kLightStride =
+        ((kLightDataBytes + g_kMAX_ENTITIES * sizeof(UINT) + 767ull) / 768ull) * 768ull;
     static constexpr UINT kFlagStochastic = 1u, kFlagReference = 2u, kFlagAccumulate = 4u, kFlagHasReference = 8u,
                           kFlagDenoised = 16u, kFlagGuide = 32u, kFlagScreenTrace = 64u;
     static constexpr UINT kGridVolumetric = 1u << 16; // Grid.w：フォグ用に視錐台全体を構築
@@ -1536,7 +1636,7 @@ class MegaLights final
     {
         CD3DX12_DESCRIPTOR_RANGE gbufferRange;
         gbufferRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 8, 8);
-        CD3DX12_ROOT_PARAMETER parameters[17];
+        CD3DX12_ROOT_PARAMETER parameters[21];
         parameters[0].InitAsConstantBufferView(0);
         parameters[1].InitAsShaderResourceView(1);
         parameters[2].InitAsShaderResourceView(3);
@@ -1549,6 +1649,10 @@ class MegaLights final
         parameters[9].InitAsUnorderedAccessView(2);
         parameters[10].InitAsShaderResourceView(6);
         parameters[11].InitAsUnorderedAccessView(3);
+        parameters[17].InitAsUnorderedAccessView(9);
+        parameters[18].InitAsUnorderedAccessView(10);
+        parameters[19].InitAsShaderResourceView(16);
+        parameters[20].InitAsShaderResourceView(17);
         for (UINT uav = 0; uav < 5; ++uav)
         {
             parameters[12 + uav].InitAsUnorderedAccessView(4 + uav);
@@ -1573,6 +1677,8 @@ class MegaLights final
             return false;
         }
         // M4 は失敗しても M2 は使える（ガイドなし）
+        CompileEntries(device, L"shader/hlsl/RtxdiSampleCS.hlsl", s_SampleRoot.Get(),
+                       {{"RtxdiInitialTemporal", &s_RtxdiInitial}, {"RtxdiSpatial", &s_RtxdiSpatial}});
         s_HashAvailable = CompileEntries(device, L"shader/hlsl/MegaLightsSampleCS.hlsl", s_SampleRoot.Get(),
                                          {{"BuildHash", &s_BuildHash}});
         if (!s_HashAvailable)
@@ -1611,6 +1717,15 @@ class MegaLights final
     {
         s_SampleRoot.Reset();
         s_SampleLights.Reset();
+        s_RtxdiInitial.Reset();
+        s_RtxdiSpatial.Reset();
+        s_RtxdiInitialBuffer.Reset();
+        for (auto& history : s_RtxdiHistory)
+        {
+            history.Reset();
+        }
+        s_RtxdiWidth = s_RtxdiHeight = s_RtxdiSpp = 0;
+        s_RtxdiLastFrame = 0;
         s_ScreenTrace.Reset();
         s_WorldTrace.Reset();
         s_ErrorReduce.Reset();
@@ -1680,6 +1795,11 @@ class MegaLights final
                                                     s_TraceCounters ? s_TraceCounters->GetGPUVirtualAddress() : dummy);
         commands->SetComputeRootUnorderedAccessView(16,
                                                     s_DispatchArgs ? s_DispatchArgs->GetGPUVirtualAddress() : dummy);
+        commands->SetComputeRootUnorderedAccessView(17, s_RtxdiInitialBuffer ? s_RtxdiInitialBuffer->GetGPUVirtualAddress() : dummy);
+        const UINT current = static_cast<UINT>(s_FrameCounter & 1u);
+        commands->SetComputeRootUnorderedAccessView(18, s_RtxdiHistory[current] ? s_RtxdiHistory[current]->GetGPUVirtualAddress() : dummy);
+        commands->SetComputeRootShaderResourceView(19, s_RtxdiHistory[current ^ 1u] ? s_RtxdiHistory[current ^ 1u]->GetGPUVirtualAddress() : lights);
+        commands->SetComputeRootShaderResourceView(20, lights + kLightDataBytes);
     }
 
     static void UavBarrier(ID3D12GraphicsCommandList* commands, std::initializer_list<ID3D12Resource*> resources)
@@ -1745,7 +1865,7 @@ class MegaLights final
     }
 
     // 解像度とメモリ上限から N を決める（1 / 2 / 4）
-    static UINT ChooseSamplesPerPixel(UINT width, UINT height)
+    static UINT ChooseSamplesPerPixel(UINT width, UINT height, bool rtxdi = false)
     {
         UINT requested =
             static_cast<UINT>(std::clamp(s_Settings.SamplesPerPixel, 1, static_cast<int>(kMaxSamplesPerPixel)));
@@ -1761,12 +1881,23 @@ class MegaLights final
         {
             requested = 1;
         }
-        const UINT64 perSample = static_cast<UINT64>(width) * height * 16ull;
-        while (requested > 1 && perSample * requested > kSampleBudgetBytes)
+        UINT64 bytesPerSample = 16ull;
+        UINT64 budget = kSampleBudgetBytes;
+        if (rtxdi)
+        {
+            bytesPerSample = 288ull;
+            budget = 384ull << 20;
+        }
+        const UINT64 perSample = static_cast<UINT64>(width) * height * bytesPerSample;
+        while (requested > 1 && perSample * requested > budget)
         {
             requested /= 2;
         }
-        return perSample * requested > kSampleBudgetBytes * 2 ? 0u : requested;
+        if (rtxdi)
+        {
+            return perSample * requested > budget ? 0u : requested;
+        }
+        return perSample * requested > budget * 2 ? 0u : requested;
     }
 
     // 解像度に合わせてグリッドを確保（大きくなったときだけ作り直す。古いものは GPU が使い終わるまで保持）
@@ -1811,6 +1942,44 @@ class MegaLights final
             s_CoarseCellsState = D3D12_RESOURCE_STATE_COMMON;
             s_CoarseCellCapacity = coarseCells;
         }
+        return true;
+    }
+
+    static bool EnsureRtxdi(UINT spp)
+    {
+        if (s_RtxdiWidth == s_SampleWidth && s_RtxdiHeight == s_SampleHeight && s_RtxdiSpp == spp &&
+            s_RtxdiInitialBuffer && s_RtxdiHistory[0] && s_RtxdiHistory[1])
+        {
+            return true;
+        }
+        s_RtxdiLastFrame = 0;
+        const UINT64 bytes = static_cast<UINT64>(s_SampleWidth) * s_SampleHeight * spp * 96ull;
+        // Keep the three surface/reservoir buffers within an explicit 384 MiB budget.
+        if (bytes * 3 > (384ull << 20))
+        {
+            return false;
+        }
+        Retire(s_RtxdiInitialBuffer);
+        if (!CreateBuffer(s_RtxdiInitialBuffer, bytes, D3D12_HEAP_TYPE_DEFAULT,
+                          D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON, L"RTXDI Initial Reservoirs"))
+        {
+            return false;
+        }
+        s_RtxdiInitialState = D3D12_RESOURCE_STATE_COMMON;
+        for (UINT index = 0; index < 2; ++index)
+        {
+            Retire(s_RtxdiHistory[index]);
+            if (!CreateBuffer(s_RtxdiHistory[index], bytes, D3D12_HEAP_TYPE_DEFAULT,
+                              D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON, L"RTXDI History Reservoirs"))
+            {
+                return false;
+            }
+            s_RtxdiHistoryState[index] = D3D12_RESOURCE_STATE_COMMON;
+        }
+        s_RtxdiWidth = s_SampleWidth;
+        s_RtxdiHeight = s_SampleHeight;
+        s_RtxdiSpp = spp;
+        s_Stats.RtxdiBufferMB = static_cast<double>(bytes * 3) / (1024.0 * 1024.0);
         return true;
     }
 
@@ -2156,6 +2325,7 @@ class MegaLights final
                                 kCoarseCapacity};
             constants.Screen = {static_cast<UINT>(depthDesc.Width), depthDesc.Height, coarseX, coarseY};
             constants.Stochastic = {flags, samplesPerPixel, static_cast<UINT>(s_FrameCounter), s_AccumulatedFrames};
+            constants.Rtxdi = {s_RtxdiHistoryValid ? 1u : 0u, static_cast<UINT>(std::clamp(s_Settings.RtxdiCandidates, 1, 64)), g_kMAX_ENTITIES, 0u};
             // ハッシュのビットを残す確率（ML7）は Grid.w の 8〜15bit（0..255）。bit0 はグリッド有効
             constants.Grid.w |= static_cast<UINT>(std::clamp(s_Settings.GuideKeep, 0.0f, 1.0f) * 255.0f + 0.5f) << 8;
             constants.SampleGrid = {s_SampleWidth ? s_SampleWidth : static_cast<UINT>(depthDesc.Width),
@@ -2271,6 +2441,14 @@ class MegaLights final
     static inline ComPtr<ID3D12RootSignature> s_Root, s_SampleRoot;
     static inline ComPtr<ID3D12PipelineState> s_ClearCounters, s_TileSliceMask, s_CoarseCull, s_FineCull;
     static inline ComPtr<ID3D12PipelineState> s_SampleLights, s_ScreenTrace, s_WorldTrace, s_ErrorReduce;
+    static inline ComPtr<ID3D12PipelineState> s_RtxdiInitial, s_RtxdiSpatial;
+    static inline ComPtr<ID3D12Resource> s_RtxdiInitialBuffer, s_RtxdiHistory[2];
+    static inline D3D12_RESOURCE_STATES s_RtxdiInitialState = D3D12_RESOURCE_STATE_COMMON;
+    static inline D3D12_RESOURCE_STATES s_RtxdiHistoryState[2] = {D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COMMON};
+    static inline UINT s_RtxdiWidth = 0, s_RtxdiHeight = 0, s_RtxdiSpp = 0;
+    static inline uint64_t s_RtxdiLastFrame = 0;
+    static inline EntityID s_RtxdiCamera = 0;
+    static inline bool s_RtxdiHistoryValid = false;
     static inline ComPtr<ID3D12Resource> s_Constants, s_LightUpload, s_Dummy;
     static inline ComPtr<ID3D12Resource> s_TileMasks, s_CoarseCells, s_CoarseIndices, s_FineCells, s_FineIndices,
         s_Counters, s_Readback;

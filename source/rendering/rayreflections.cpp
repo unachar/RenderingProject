@@ -771,7 +771,7 @@ void RayReflections::ReleaseInactiveResources()
     const bool reflection = settings.Enabled && settings.Reflections;
     const bool gi = settings.Enabled && RendererSettings::GetRealtimeGiEnabled();
     const bool lumen = gi && RendererSettings::GetLumenEnabled();
-    const bool reservoir = gi && !lumen && RenderQuality::Get().ReSTIRGI;
+    const bool reservoir = gi && !lumen && RenderQuality::GetGiResamplingMode() != 0;
     const bool cache =
         gi && (lumen || RendererSettings::GetRtxgiEnabled() || RendererSettings::GetGiRadianceCacheEnabled());
     const bool optix = settings.Denoise && settings.RadianceDenoiser == Raytracing::DenoiserType::Optix &&
@@ -1193,13 +1193,18 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
     g_CacheWasEnabled = cacheEnabled;
     const auto& quality = RenderQuality::Get();
     const UINT reservoirWidth = useGiDenoiser ? (frame.Width + 1) / 2 : frame.Width;
-    const bool restir = RendererSettings::GetRealtimeGiEnabled() && !lumenRequested && quality.ReSTIRGI && velocity &&
+    const bool restir = RendererSettings::GetRealtimeGiEnabled() && !lumenRequested && RenderQuality::GetGiResamplingMode() != 0 && velocity &&
                         g_ReSTIRTemporal && g_ReSTIRSpatial && EnsureReservoirs(reservoirWidth, frame.Height);
     if (!restir || nrdFrame.ResetHistory)
     {
         g_ReSTIRHistoryValid = restir && g_ReSTIRHistoryValid && !nrdFrame.ResetHistory;
     }
-    constants.ReSTIRParameters = {restir ? 1.0f : 0.0f,
+    float resamplingMode = 0.0f;
+    if (restir)
+    {
+        resamplingMode = static_cast<float>(RenderQuality::GetGiResamplingMode());
+    }
+    constants.ReSTIRParameters = {resamplingMode,
                                   static_cast<float>(std::clamp(quality.ReSTIRTemporalMaxM, 1, 64)),
                                   static_cast<float>(std::clamp(quality.ReSTIRSpatialSamples, 0, 16)),
                                   std::clamp(quality.ReSTIRSpatialRadius, 1.0f, 64.0f)};
@@ -1590,11 +1595,17 @@ bool RayReflections::Execute(ID3D12GraphicsCommandList* commands, ID3D12Resource
             const D3D12_RESOURCE_BARRIER uav[] = {CD3DX12_RESOURCE_BARRIER::UAV(g_Reservoirs[g_ReservoirCurrent].Get()),
                                                   CD3DX12_RESOURCE_BARRIER::UAV(frame.GiNoisy.Get())};
             commands->ResourceBarrier(2, uav);
-            commands->SetPipelineState(g_ReSTIRTemporal.Get());
-            commands->Dispatch((reservoirWidth + 7) / 8, (frame.Height + 7) / 8, 1);
+            {
+                RenderProfiler::ScopedEvent temporalProfile(resamplingMode > 1.5f ? "RTXDI GI Temporal" : "ReSTIR GI Temporal", commands);
+                commands->SetPipelineState(g_ReSTIRTemporal.Get());
+                commands->Dispatch((reservoirWidth + 7) / 8, (frame.Height + 7) / 8, 1);
+            }
             commands->ResourceBarrier(2, uav);
-            commands->SetPipelineState(instrumented ? g_ReSTIRSpatialTelemetry.Get() : g_ReSTIRSpatial.Get());
-            commands->Dispatch((reservoirWidth + 7) / 8, (frame.Height + 7) / 8, 1);
+            {
+                RenderProfiler::ScopedEvent spatialProfile(resamplingMode > 1.5f ? "RTXDI GI Spatial" : "ReSTIR GI Spatial", commands);
+                commands->SetPipelineState(instrumented ? g_ReSTIRSpatialTelemetry.Get() : g_ReSTIRSpatial.Get());
+                commands->Dispatch((reservoirWidth + 7) / 8, (frame.Height + 7) / 8, 1);
+            }
             commands->ResourceBarrier(2, uav);
             // このフレームの時間リザーバーを次のフレームの履歴にする。
             g_ReservoirCurrent ^= 1u;

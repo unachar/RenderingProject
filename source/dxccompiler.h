@@ -231,6 +231,9 @@ inline HRESULT WINAPI DxcCompileFromFileCompat(LPCWSTR fileName, const D3D_SHADE
     }
 
     const filesystem::path sourcePath(fileName);
+    // RTXDI headers use SDK-root-relative includes (Rtxdi/...).
+    AddArgument(argumentStorage, L"-I");
+    AddArgument(argumentStorage, L"External/RTXDI/Include");
     if (!sourcePath.parent_path().empty())
     {
         AddArgument(argumentStorage, L"-I");

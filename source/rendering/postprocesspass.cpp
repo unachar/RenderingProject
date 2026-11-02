@@ -125,11 +125,6 @@ void InitializeColorManagement()
 {
     if (!s_ColorManagementInitialized)
     {
-        s_ColorConfig.configPath = "";
-        s_ColorConfig.workingSpace = "ACES - ACEScg";
-        s_ColorConfig.displayDevice = "sRGB";
-        s_ColorConfig.viewTransform = "sRGB";
-        s_ColorConfig.lookTransform = "";
         s_ColorConfig.exposure = ImGuiManager::GetExposure();
         s_ColorConfig.gamma = 2.2f;
         s_ColorConfig.enableOCIO = true;
@@ -137,12 +132,11 @@ void InitializeColorManagement()
         ColorManagement::GetColorManager().Initialize(s_ColorConfig);
         s_ColorManagementInitialized = true;
     }
-    else
+    else if (s_ColorConfig.exposure != ImGuiManager::GetExposure())
     {
         // Update exposure from ImGui
-        ColorManagement::ColorSpaceConfig currentConfig = s_ColorConfig;
-        currentConfig.exposure = ImGuiManager::GetExposure();
-        ColorManagement::GetColorManager().Initialize(currentConfig);
+        s_ColorConfig.exposure = ImGuiManager::GetExposure();
+        ColorManagement::GetColorManager().Initialize(s_ColorConfig);
     }
 }
 

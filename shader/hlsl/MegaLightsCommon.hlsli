@@ -71,6 +71,7 @@ cbuffer MegaLightGridConstants : register(MEGALIGHTS_CB_REGISTER)
     // ---- M5 段階
     float4 MLScreenTrace; // 最大ステップ数, 最大距離（ピクセル）, 厚み（m）, 自己遮蔽を避ける距離（ピクセル）
     uint4 MLSampleGrid;   // サンプル空間の幅, 高さ, 縮小率（1 / 2）, 代表ピクセルの回転（0..3）
+    uint4 MLRtxdi;        // 履歴有効、初期候補数、Entity数上限、予約
 };
 
 bool MLLightCastsShadow(MegaLightData light)

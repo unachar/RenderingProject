@@ -2,6 +2,42 @@
 #define RENDER_NOISE_HLSL
 
 // Include-only noise library. No shader entry point or resource bindings.
+// File-global, compile-time constants shared by all noise hash implementations.
+// Preserve these exact values: changing them changes generated noise patterns.
+namespace NoiseHashConstants
+{
+    static const uint MixMultiplierA = 0x7feb352du;
+    static const uint MixMultiplierB = 0x846ca68bu;
+    static const uint CoordinateMultiplierX = 0x8da6b343u;
+    static const uint CoordinateMultiplierY = 0xd8163841u;
+    static const uint CoordinateMultiplierZ = 0xcb1ab31fu;
+    static const uint FeatureSeedY = 0x68bc21ebu;
+    static const uint FeatureSeedZ = 0x02e5be93u;
+    static const uint CellValueSeed = 0xb5297a4du;
+    static const uint SequenceMultiplier = 0x9e3779b9u;
+    static const uint FeatureRadiusSeed = 0x1b56c4e9u;
+    static const uint FeaturePhaseSeed = 0x967a889bu;
+    static const uint DeformationMultiplierY = 0x85ebca6bu;
+    static const uint CloudMultiplierX = 1597334677u;
+    static const uint CloudMultiplierY = 3812015801u;
+    static const uint CloudMultiplierZ = 2798796415u;
+    static const uint SpectralWaveStride = 1013u;
+    static const uint SpectralPhaseStride = 7919u;
+    static const uint VectorOffsetY = 17u;
+    static const uint VectorOffsetZ = 31u;
+    static const uint MixShiftFirst = 16u;
+    static const uint MixShiftSecond = 15u;
+    static const uint FractionShift = 8u;
+    static const float HashToUnitScale = 16777216.0;
+    static const float HashToUnit32Scale = 4294967296.0;
+    static const float HashFloatMultiplier = 0.1031f;
+    static const float HashFloatOffset = 33.33f;
+    static const float ContactShadowMultiplier = 52.9829189f;
+    static const float ContactShadowDotX = 0.06711056f;
+    static const float ContactShadowDotY = 0.00583715f;
+}
+
+
 namespace TextureNoise
 {
     static const uint BasisPerlin = 0;
@@ -44,22 +80,22 @@ namespace TextureNoise
 
     uint Hash(uint value)
     {
-        value ^= value >> 16;
-        value *= 0x7feb352d;
-        value ^= value >> 15;
-        value *= 0x846ca68b;
-        return value ^ (value >> 16);
+        value ^= value >> NoiseHashConstants::MixShiftFirst;
+        value *= NoiseHashConstants::MixMultiplierA;
+        value ^= value >> NoiseHashConstants::MixShiftSecond;
+        value *= NoiseHashConstants::MixMultiplierB;
+        return value ^ (value >> NoiseHashConstants::MixShiftFirst);
     }
 
     uint Hash3(int3 cell, uint seed)
     {
-        return Hash((uint)cell.x * 0x8da6b343 ^
-                    Hash((uint)cell.y * 0xd8163841 ^ Hash((uint)cell.z * 0xcb1ab31f ^ seed)));
+        return Hash((uint) cell.x * NoiseHashConstants::CoordinateMultiplierX ^
+                    Hash((uint) cell.y * NoiseHashConstants::CoordinateMultiplierY ^ Hash((uint) cell.z * NoiseHashConstants::CoordinateMultiplierZ ^ seed)));
     }
 
     float Unit(uint h)
     {
-        return (h >> 8) / 16777216.0;
+        return (h >> NoiseHashConstants::FractionShift) / NoiseHashConstants::HashToUnitScale;
     }
 
     int Wrap(int value, int period)
@@ -116,18 +152,21 @@ namespace TextureNoise
 
     float2 Worley(float3 p, uint seed, int period)
     {
-        int3 cell = (int3)floor(p);
+        int3 cell = (int3) floor(p);
         float2 distances = 1e9;
-        [loop] for (int z = -1; z <= 1; ++z)
+        [loop]
+        for (int z = -1; z <= 1; ++z)
         {
-            [loop] for (int y = -1; y <= 1; ++y)
+            [loop]
+            for (int y = -1; y <= 1; ++y)
             {
-                [loop] for (int x = -1; x <= 1; ++x)
+                [loop]
+                for (int x = -1; x <= 1; ++x)
                 {
                     int3 neighbor = cell + int3(x, y, z);
                     uint h = Hash3(WrapCell(neighbor, period), seed);
                     float3 featurePosition =
-                        neighbor + float3(Unit(h), Unit(Hash(h ^ 0x68bc21eb)), Unit(Hash(h ^ 0x02e5be93)));
+                        neighbor + float3(Unit(h), Unit(Hash(h ^ NoiseHashConstants::FeatureSeedY)), Unit(Hash(h ^ NoiseHashConstants::FeatureSeedZ)));
                     float distance = dot(featurePosition - p, featurePosition - p);
                     if (distance < distances.x)
                     {
@@ -153,11 +192,12 @@ namespace TextureNoise
                 basis == BasisWorley ? saturate(distances.x * 1.2) : saturate((distances.y - distances.x) * 2);
             return value * 2 - 1;
         }
-        int3 cell = (int3)floor(p);
+        int3 cell = (int3) floor(p);
         float3 local = p - cell;
         float3 fade = local * local * local * (local * (local * 6 - 15) + 10);
         float corners[8];
-        [unroll] for (int index = 0; index < 8; ++index)
+        [unroll]
+        for (int index = 0; index < 8; ++index)
         {
             int3 offset = int3(index & 1, (index >> 1) & 1, (index >> 2) & 1);
             uint h = Hash3(WrapCell(cell + offset, period), seed);
@@ -206,7 +246,8 @@ namespace TextureNoise
         const int jy = b > a || b >= c ? 1 : 0;
         const int jz = c > a || c > b ? 1 : 0;
         float sum = 0;
-        [loop] for (int corner = 0; corner < 4; ++corner)
+        [loop]
+        for (int corner = 0; corner < 4; ++corner)
         {
             const int dx = corner == 0 ? 0 : (corner == 1 ? ix : (corner == 2 ? jx : 1));
             const int dy = corner == 0 ? 0 : (corner == 1 ? iy : (corner == 2 ? jy : 1));
@@ -233,11 +274,14 @@ namespace TextureNoise
         const float pz = z - floor(z / period) * period;
         const float u = Fade(px / period), v = Fade(py / period), w = Fade(pz / period);
         float sum = 0;
-        [loop] for (int dz = 0; dz < 2; ++dz)
+        [loop]
+        for (int dz = 0; dz < 2; ++dz)
         {
-            [loop] for (int dy = 0; dy < 2; ++dy)
+            [loop]
+            for (int dy = 0; dy < 2; ++dy)
             {
-                [loop] for (int dx = 0; dx < 2; ++dx)
+                [loop]
+                for (int dx = 0; dx < 2; ++dx)
                 {
                     sum += SimplexRaw(px - dx * period, py - dy * period, pz - dz * period, seed) *
                            (dx == 0 ? 1 - u : u) * (dy == 0 ? 1 - v : v) * (dz == 0 ? 1 - w : w);
@@ -253,45 +297,51 @@ namespace TextureNoise
         const int iz = int(floor(z));
         uint nearestHash = HashXYZ(Wrap(ix, period), Wrap(iy, period), Wrap(iz, period), seed);
         const float centerX = ix + Unit(nearestHash) - x;
-        const float centerY = iy + Unit(Hash(nearestHash ^ 0x68bc21ebu)) - y;
-        const float centerZ = iz + Unit(Hash(nearestHash ^ 0x02e5be93u)) - z;
+        const float centerY = iy + Unit(Hash(nearestHash ^ NoiseHashConstants::FeatureSeedY)) - y;
+        const float centerZ = iz + Unit(Hash(nearestHash ^ NoiseHashConstants::FeatureSeedZ)) - z;
         float nearest = centerX * centerX + centerY * centerY + centerZ * centerZ;
         int nearestOrder = 62; // Center of the original 5x5x5 traversal; preserve ties.
         // Keep the radius-two search, but reject cells whose entire box is farther
         // than an already known feature. No UV quantization or baked image is used.
-        [loop] for (int dz = -2; dz <= 2; ++dz)
+        [loop]
+        for (int dz = -2; dz <= 2; ++dz)
         {
             const float lowerZ = max(0.0f, max(iz + dz - z, z - (iz + dz + 1)));
             const float distanceZ = lowerZ * lowerZ;
             // A small conservative margin keeps rounded distance bounds from rejecting ties.
-            [branch] if (distanceZ > nearest + 1e-6f)
+            [branch]
+            if (distanceZ > nearest + 1e-6f)
             {
                 continue;
             }
             const int wrappedZ = Wrap(iz + dz, period);
-            const uint zHash = Hash((uint)wrappedZ * 0xcb1ab31fu ^ seed);
-            [loop] for (int dy = -2; dy <= 2; ++dy)
+            const uint zHash = Hash((uint) wrappedZ * NoiseHashConstants::CoordinateMultiplierZ ^ seed);
+            [loop]
+            for (int dy = -2; dy <= 2; ++dy)
             {
                 const float lowerY = max(0.0f, max(iy + dy - y, y - (iy + dy + 1)));
                 const float distanceYZ = lowerY * lowerY + distanceZ;
-                [branch] if (distanceYZ > nearest + 1e-6f)
+                [branch]
+                if (distanceYZ > nearest + 1e-6f)
                 {
                     continue;
                 }
                 const int wrappedY = Wrap(iy + dy, period);
-                const uint yzHash = Hash((uint)wrappedY * 0xd8163841u ^ zHash);
-                [loop] for (int dx = -2; dx <= 2; ++dx)
+                const uint yzHash = Hash((uint) wrappedY * NoiseHashConstants::CoordinateMultiplierY ^ zHash);
+                [loop]
+                for (int dx = -2; dx <= 2; ++dx)
                 {
                     const float lowerX = max(0.0f, max(ix + dx - x, x - (ix + dx + 1)));
-                    [branch] if (lowerX * lowerX + distanceYZ > nearest + 1e-6f)
+                    [branch]
+                    if (lowerX * lowerX + distanceYZ > nearest + 1e-6f)
                     {
                         continue;
                     }
                     // The Y/Z hash is fixed for this row; reuse it for every X cell.
-                    const uint h = Hash((uint)Wrap(ix + dx, period) * 0x8da6b343u ^ yzHash);
+                    const uint h = Hash((uint) Wrap(ix + dx, period) * NoiseHashConstants::CoordinateMultiplierX ^ yzHash);
                     const float a = ix + dx + Unit(h) - x;
-                    const float b = iy + dy + Unit(Hash(h ^ 0x68bc21ebu)) - y;
-                    const float c = iz + dz + Unit(Hash(h ^ 0x02e5be93u)) - z;
+                    const float b = iy + dy + Unit(Hash(h ^ NoiseHashConstants::FeatureSeedY)) - y;
+                    const float c = iz + dz + Unit(Hash(h ^ NoiseHashConstants::FeatureSeedZ)) - z;
                     const float d = a * a + b * b + c * c;
                     const int order = (dz + 2) * 25 + (dy + 2) * 5 + dx + 2;
                     if (d < nearest || (d == nearest && order < nearestOrder))
@@ -303,7 +353,7 @@ namespace TextureNoise
                 }
             }
         }
-        return Unit(Hash(nearestHash ^ 0xb5297a4du)) * 2 - 1;
+        return Unit(Hash(nearestHash ^ NoiseHashConstants::CellValueSeed)) * 2 - 1;
     }
 
     float Flow(float x, float y, float z, uint seed, int period, float phase)
@@ -314,11 +364,14 @@ namespace TextureNoise
         const float u = Fade(a), v = Fade(b), w = Fade(c);
         const float co = cos(phase), si = sin(phase);
         float sum = 0;
-        [loop] for (int dz = 0; dz < 2; ++dz)
+        [loop]
+        for (int dz = 0; dz < 2; ++dz)
         {
-            [loop] for (int dy = 0; dy < 2; ++dy)
+            [loop]
+            for (int dy = 0; dy < 2; ++dy)
             {
-                [loop] for (int dx = 0; dx < 2; ++dx)
+                [loop]
+                for (int dx = 0; dx < 2; ++dx)
                 {
                     const uint h = HashXYZ(Wrap(ix + dx, period), Wrap(iy + dy, period), Wrap(iz + dz, period), seed);
                     // Rotate each lattice gradient, rather than translating the field.
@@ -336,7 +389,7 @@ namespace TextureNoise
         // Curl of three independent scalar potentials; do not normalize the
         // vector, since doing so would destroy its divergence-free property.
         const float e = 0.002f;
-        const uint sy = seed ^ 0x68bc21ebu, sz = seed ^ 0x02e5be93u;
+        const uint sy = seed ^ NoiseHashConstants::FeatureSeedY, sz = seed ^ NoiseHashConstants::FeatureSeedZ;
         const float cx = (Perlin(x, y + e, z, sz, period) - Perlin(x, y - e, z, sz, period) -
                           Perlin(x, y, z + e, sy, period) + Perlin(x, y, z - e, sy, period)) /
                          (2 * e);
@@ -356,12 +409,13 @@ namespace TextureNoise
         // No spatial lattice. Integer wavevectors for periodic synthesis, random
         // continuous wavevectors otherwise. Harmonic uses one fundamental + overtones.
         const uint fundamental = Hash(seed);
-        [loop] for (int wave = 0; wave < 16; ++wave)
+        [loop]
+        for (int wave = 0; wave < 16; ++wave)
         {
-            const uint h = harmonic ? fundamental : Hash(seed + uint(wave) * 1013u);
+            const uint h = harmonic ? fundamental : Hash(seed + uint(wave) * NoiseHashConstants::SpectralWaveStride);
             float a = Unit(h) * 2 - 1;
-            float b = Unit(Hash(h ^ 0x68bc21ebu)) * 2 - 1;
-            float c = Unit(Hash(h ^ 0x02e5be93u)) * 2 - 1;
+            float b = Unit(Hash(h ^ NoiseHashConstants::FeatureSeedY)) * 2 - 1;
+            float c = Unit(Hash(h ^ NoiseHashConstants::FeatureSeedZ)) * 2 - 1;
             if (period > 0)
             {
                 a = floor(a * period + 0.5f) / period;
@@ -374,7 +428,7 @@ namespace TextureNoise
             }
             const float multiple = harmonic ? float(wave + 1) : 1.0f;
             const float amplitude = harmonic ? 1.0f / (multiple * multiple) : 1.0f;
-            const float phase = tau * Unit(Hash(seed + uint(wave) * 7919u));
+            const float phase = tau * Unit(Hash(seed + uint(wave) * NoiseHashConstants::SpectralPhaseStride));
             sum += sin(tau * multiple * (a * x + b * y + c * z) + phase) * amplitude;
             norm += amplitude;
         }
@@ -398,28 +452,32 @@ namespace TextureNoise
         float real = 0, imaginary = 0, spots = 0;
         const float stretch = clamp(anisotropy, 1.0f, 8.0f);
         const float frequency = clamp(kernelFrequency, 0.25f, 8.0f);
-        [loop] for (int dz = -1; dz <= 1; ++dz)
+        [loop]
+        for (int dz = -1; dz <= 1; ++dz)
         {
-            [loop] for (int dy = -1; dy <= 1; ++dy)
+            [loop]
+            for (int dy = -1; dy <= 1; ++dy)
             {
-                [loop] for (int dx = -1; dx <= 1; ++dx)
+                [loop]
+                for (int dx = -1; dx <= 1; ++dx)
                 {
                     const uint cellHash =
                         HashXYZ(Wrap(ix + dx, period), Wrap(iy + dy, period), Wrap(iz + dz, period), seed);
                     // Two stratified random impulses per cell: bounded work and no empty support holes.
-                    [loop] for (int impulse = 0; impulse < 2; ++impulse)
+                    [loop]
+                    for (int impulse = 0; impulse < 2; ++impulse)
                     {
-                        const uint h = Hash(cellHash + uint(impulse) * 0x9e3779b9u);
+                        const uint h = Hash(cellHash + uint(impulse) * NoiseHashConstants::SequenceMultiplier);
                         const float a = x - (ix + dx + Unit(h));
-                        const float b = y - (iy + dy + Unit(Hash(h ^ 0x68bc21ebu)));
-                        const float c = z - (iz + dz + Unit(Hash(h ^ 0x02e5be93u)));
+                        const float b = y - (iy + dy + Unit(Hash(h ^ NoiseHashConstants::FeatureSeedY)));
+                        const float c = z - (iz + dz + Unit(Hash(h ^ NoiseHashConstants::FeatureSeedZ)));
                         const float r2 = a * a + b * b + c * c;
                         if (r2 >= 1.0f)
                         {
                             continue;
                         }
                         const float t = 1 - r2;
-                        const float weight = Unit(Hash(h ^ 0xb5297a4du)) * 2 - 1;
+                        const float weight = Unit(Hash(h ^ NoiseHashConstants::CellValueSeed)) * 2 - 1;
                         if (basis == BasisWavelet)
                         {
                             real += weight * CompactWavelet(r2);
@@ -432,18 +490,18 @@ namespace TextureNoise
                         }
                         if (basis == BasisSpot)
                         {
-                            const float radius = 0.2f + 0.35f * Unit(Hash(h ^ 0x1b56c4e9u));
+                            const float radius = 0.2f + 0.35f * Unit(Hash(h ^ NoiseHashConstants::FeatureRadiusSeed));
                             spots = max(spots, 1.0f - Smooth(radius * 0.6f, radius, sqrt(r2)));
                             continue;
                         }
                         const bool directed = basis == BasisAnisotropicGabor || basis == BasisPhasor;
-                        const float angle = directed ? direction : tau * Unit(Hash(h ^ 0x1b56c4e9u));
+                        const float angle = directed ? direction : tau * Unit(Hash(h ^ NoiseHashConstants::FeatureRadiusSeed));
                         const float along = a * cos(angle) + b * sin(angle);
                         const float across = -a * sin(angle) + b * cos(angle);
                         const float envelope =
                             exp(-4.0f * (along * along + across * across * (directed ? stretch : 1.0f) + c * c)) * t *
                             t;
-                        const float theta = tau * frequency * along + phase + tau * Unit(Hash(h ^ 0x967a889bu));
+                        const float theta = tau * frequency * along + phase + tau * Unit(Hash(h ^ NoiseHashConstants::FeaturePhaseSeed));
                         if (basis == BasisLocalRandom)
                         {
                             // Local random-phase synthesis with multiple independent frequencies.
@@ -479,12 +537,12 @@ namespace TextureNoise
             case BasisWorley:
             case BasisCellEdge:
                 return LatticeBasisNoise(basis, float3(x, y, z), seed, period);
-            case BasisWhite: {
-                const int ix = int(floor(x)), iy = int(floor(y));
-                const int iz = int(floor(z));
-                const uint cell = HashXYZ(Wrap(ix, period), Wrap(iy, period), Wrap(iz, period), seed);
-                return Unit(HashXYZ(int((x - ix) * 256), int((y - iy) * 256), int((z - iz) * 256), cell)) * 2 - 1;
-            }
+            case BasisWhite:{
+                    const int ix = int(floor(x)), iy = int(floor(y));
+                    const int iz = int(floor(z));
+                    const uint cell = HashXYZ(Wrap(ix, period), Wrap(iy, period), Wrap(iz, period), seed);
+                    return Unit(HashXYZ(int((x - ix) * 256), int((y - iy) * 256), int((z - iz) * 256), cell)) * 2 - 1;
+                }
             case BasisSimplex:
                 return Simplex(x, y, z, seed, period);
             case BasisVoronoi:
@@ -502,19 +560,19 @@ namespace TextureNoise
             case BasisLocalRandom:
             case BasisPhasor:
                 return KernelNoise(basis, x, y, z, seed, period, direction, anisotropy, kernelFrequency, phase);
-            case BasisCurl: {
-                const float3 curl = CurlVector(x, y, z, seed, period);
-                return curl[2] / (1.0f + abs(curl[2]));
-            }
+            case BasisCurl:{
+                    const float3 curl = CurlVector(x, y, z, seed, period);
+                    return curl[2] / (1.0f + abs(curl[2]));
+                }
             case BasisValueGradient:
                 return 0.5f * (ValueNoise(x, y, z, seed, period) + Perlin(x, y, z, seed, period));
-            case BasisChevron: {
-                const float tau = 6.28318530718f;
-                const float offset = Unit(Hash(seed));
-                const float v = y + offset;
-                const float chevronWave = abs((v - floor(v)) * 2 - 1);
-                return sin(tau * (x + chevronWave + offset + phase / tau));
-            }
+            case BasisChevron:{
+                    const float tau = 6.28318530718f;
+                    const float offset = Unit(Hash(seed));
+                    const float v = y + offset;
+                    const float chevronWave = abs((v - floor(v)) * 2 - 1);
+                    return sin(tau * (x + chevronWave + offset + phase / tau));
+                }
             case BasisLatticeFree:
             case BasisHarmonic:
                 return Spectral(x, y, z, seed, period, basis == BasisHarmonic);
@@ -543,12 +601,13 @@ namespace TextureNoise
         float weight = 1;
         // Keep the full basis evaluator at one call site, including unfractalized noise.
         int octaveCount = fractal == FractalNone ? 1 : clamp(settings.Octaves, 1, 12);
-        [loop] for (int octave = 0; octave < octaveCount; ++octave)
+        [loop]
+        for (int octave = 0; octave < octaveCount; ++octave)
         {
-            int period = tileable ? max(1, (int)floor(frequency + 0.5)) : 0;
-            float scale = tileable ? (float)period : frequency;
+            int period = tileable ? max(1, (int) floor(frequency + 0.5)) : 0;
+            float scale = tileable ? (float) period : frequency;
             float n =
-                BasisNoiseConfigured(basis, p.x * scale, p.y * scale, p.z * scale, Hash(seed + octave * 1013), period,
+                BasisNoiseConfigured(basis, p.x * scale, p.y * scale, p.z * scale, Hash(seed + octave * int(NoiseHashConstants::SpectralWaveStride)), period,
                                      settings.Direction, settings.Anisotropy, settings.KernelFrequency, settings.Phase);
             switch (fractal)
             {
@@ -562,23 +621,23 @@ namespace TextureNoise
                     weight *= 1.0 + n * amplitude;
                     sum = weight - 1.0;
                     break;
-                case FractalHeterogeneous: {
-                    float signal = (n + settings.RidgeOffset) * amplitude;
-                    sum += octave == 0 ? signal : signal * sum;
-                    break;
-                }
+                case FractalHeterogeneous:{
+                        float signal = (n + settings.RidgeOffset) * amplitude;
+                        sum += octave == 0 ? signal : signal * sum;
+                        break;
+                    }
                 case FractalBillow:
                     sum += (abs(n) * 2 - 1) * amplitude;
                     break;
                 case FractalTurbulence:
                     sum += abs(n) * amplitude;
                     break;
-                case FractalHybrid: {
-                    float signal = (n + settings.RidgeOffset * 0.7) * amplitude;
-                    sum += octave == 0 ? signal : signal * min(weight, 1.0);
-                    weight = min(weight * signal * 2, 1.0);
-                    break;
-                }
+                case FractalHybrid:{
+                        float signal = (n + settings.RidgeOffset * 0.7) * amplitude;
+                        sum += octave == 0 ? signal : signal * min(weight, 1.0);
+                        weight = min(weight * signal * 2, 1.0);
+                        break;
+                    }
                 default:
                     sum += n * amplitude;
                     break;
@@ -617,7 +676,8 @@ namespace TextureNoise
         float2 warp = 0;
         float result = 0;
         // Share the basis evaluator across the two warp samples and the final sample.
-        [loop] for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
+        [loop]
+        for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
         {
             float3 position = p;
             uint sampleSeed = seed;
@@ -632,7 +692,7 @@ namespace TextureNoise
                 else if (sampleIndex == 1)
                 {
                     position += float3(1.7, 9.2, 4.1);
-                    sampleSeed ^= 0x9e3779b9;
+                    sampleSeed ^= NoiseHashConstants::SequenceMultiplier;
                 }
                 else
                 {
@@ -660,12 +720,12 @@ namespace DeformationNoise
 {
     uint NoiseHash(int2 cell, uint seed)
     {
-        uint value = uint(cell.x) * 0x9e3779b9u ^ uint(cell.y) * 0x85ebca6bu ^ seed;
-        value ^= value >> 16;
-        value *= 0x7feb352du;
-        value ^= value >> 15;
-        value *= 0x846ca68bu;
-        return value ^ (value >> 16);
+        uint value = uint(cell.x) * NoiseHashConstants::SequenceMultiplier ^ uint(cell.y) * NoiseHashConstants::DeformationMultiplierY ^ seed;
+        value ^= value >> NoiseHashConstants::MixShiftFirst;
+        value *= NoiseHashConstants::MixMultiplierA;
+        value ^= value >> NoiseHashConstants::MixShiftSecond;
+        value *= NoiseHashConstants::MixMultiplierB;
+        return value ^ (value >> NoiseHashConstants::MixShiftFirst);
     }
 
     float Gradient(int2 cell, float2 delta, uint seed)
@@ -710,23 +770,23 @@ namespace DeformationNoise
 // 格子ハッシュは整数座標をラップするため、テクスチャは周期的になる。
 uint CloudHash(uint value)
 {
-    value ^= value >> 16;
-    value *= 0x7feb352du;
-    value ^= value >> 15;
-    value *= 0x846ca68bu;
-    return value ^ (value >> 16);
+    value ^= value >> NoiseHashConstants::MixShiftFirst;
+    value *= NoiseHashConstants::MixMultiplierA;
+    value ^= value >> NoiseHashConstants::MixShiftSecond;
+    value *= NoiseHashConstants::MixMultiplierB;
+    return value ^ (value >> NoiseHashConstants::MixShiftFirst);
 }
 
 uint LatticeHash(int3 cell, int period, uint seed)
 {
     // 負の格子セルを含め、全オクターブの周期は 2 のべき乗。
     uint3 wrapped = uint3(cell) & uint(period - 1);
-    return CloudHash(wrapped.x * 1597334677u ^ wrapped.y * 3812015801u ^ wrapped.z * 2798796415u ^ seed);
+    return CloudHash(wrapped.x * NoiseHashConstants::CloudMultiplierX ^ wrapped.y * NoiseHashConstants::CloudMultiplierY ^ wrapped.z * NoiseHashConstants::CloudMultiplierZ ^ seed);
 }
 
 float3 HashVector(uint value)
 {
-    return float3(CloudHash(value), CloudHash(value + 17u), CloudHash(value + 31u)) / 4294967296.0;
+    return float3(CloudHash(value), CloudHash(value + NoiseHashConstants::VectorOffsetY), CloudHash(value + NoiseHashConstants::VectorOffsetZ)) / NoiseHashConstants::HashToUnit32Scale;
 }
 
 float PeriodicPerlin(float3 uv, int period, uint seed)
@@ -736,11 +796,14 @@ float PeriodicPerlin(float3 uv, int period, uint seed)
     float3 f = frac(p);
     float3 blend = f * f * f * (f * (f * 6 - 15) + 10);
     float result = 0;
-    [unroll] for (int z = 0; z < 2; ++z)
+    [unroll]
+    for (int z = 0; z < 2; ++z)
     {
-        [unroll] for (int y = 0; y < 2; ++y)
+        [unroll]
+        for (int y = 0; y < 2; ++y)
         {
-            [unroll] for (int x = 0; x < 2; ++x)
+            [unroll]
+            for (int x = 0; x < 2; ++x)
             {
                 int3 corner = int3(x, y, z);
                 float3 gradient = HashVector(LatticeHash(cell + corner, period, seed)) * 2 - 1;
@@ -758,11 +821,14 @@ float PeriodicWorley(float3 uv, int period, uint seed)
     float3 p = uv * period;
     int3 cell = int3(floor(p));
     float nearest = 3;
-    [loop] for (int z = -1; z <= 1; ++z)
+    [loop]
+    for (int z = -1; z <= 1; ++z)
     {
-        [loop] for (int y = -1; y <= 1; ++y)
+        [loop]
+        for (int y = -1; y <= 1; ++y)
         {
-            [loop] for (int x = -1; x <= 1; ++x)
+            [loop]
+            for (int x = -1; x <= 1; ++x)
             {
                 int3 neighbor = cell + int3(x, y, z);
                 float3 offset = neighbor + HashVector(LatticeHash(neighbor, period, seed)) - p;
@@ -781,8 +847,8 @@ float WorleyFbm(float3 uv, uint seed)
 
 float Hash13Common(float3 p)
 {
-    p = frac(p * 0.1031f);
-    p += dot(p, p.yzx + 33.33f);
+    p = frac(p * NoiseHashConstants::HashFloatMultiplier);
+    p += dot(p, p.yzx + NoiseHashConstants::HashFloatOffset);
     return frac((p.x + p.y) * p.z);
 }
 
@@ -813,14 +879,14 @@ float ValueNoiseCommon(float3 p)
 // Screen-space hashes for weather, lens effects and contact shadow sampling.
 float Hash21(float2 p)
 {
-    float3 p3 = frac(float3(p.xyx) * 0.1031f);
-    p3 += dot(p3, p3.yzx + 33.33f);
+    float3 p3 = frac(float3(p.xyx) * NoiseHashConstants::HashFloatMultiplier);
+    p3 += dot(p3, p3.yzx + NoiseHashConstants::HashFloatOffset);
     return frac((p3.x + p3.y) * p3.z);
 }
 
 float ContactShadowPixelNoise(float2 pixelPosition)
 {
-    return frac(52.9829189f * frac(dot(pixelPosition, float2(0.06711056f, 0.00583715f))));
+    return frac(NoiseHashConstants::ContactShadowMultiplier * frac(dot(pixelPosition, float2(NoiseHashConstants::ContactShadowDotX, NoiseHashConstants::ContactShadowDotY))));
 }
 
 float WeatherValueNoise(float2 p)

@@ -542,7 +542,7 @@ void ImGuiManager::DrawProjectSettingsWindow()
                 ImGui::BeginDisabled(!mega.Enabled);
 
                 const char* modes[] = {"M1: 全ライトを評価", "M2: 確率的サンプリング + 影レイ",
-                                       "リファレンス（検証用・重い）"};
+                                       "リファレンス（検証用・重い）", "RTXDI: 時間・空間リザーバー再利用"};
                 ImGui::Combo("評価方式", &mega.EvaluationMode, modes, IM_ARRAYSIZE(modes));
                 if (ImGui::IsItemHovered())
                 {
@@ -550,7 +550,7 @@ void ImGuiManager::DrawProjectSettingsWindow()
                         "M2 / リファレンスは PBR 面のみ（Toon / Lit などは M1 のまま）。レイトレーシングの TLAS が必要です。\n"
                         "M2 はデノイズ前なのでノイズが乗るのが正常です（M3 でデノイズ）。");
                 }
-                ImGui::BeginDisabled(mega.EvaluationMode != 1);
+                ImGui::BeginDisabled(mega.EvaluationMode != 1 && mega.EvaluationMode != 3);
                 int sppIndex = mega.SamplesPerPixel >= 4 ? 2 : mega.SamplesPerPixel >= 2 ? 1 : 0;
                 const char* sppNames[] = {"1", "2", "4"};
                 if (ImGui::Combo("サンプル数 / ピクセル", &sppIndex, sppNames, IM_ARRAYSIZE(sppNames)))
@@ -617,7 +617,7 @@ void ImGuiManager::DrawProjectSettingsWindow()
                 }
                 ImGui::EndDisabled();
 
-                ImGui::BeginDisabled(mega.EvaluationMode != 1 || !MegaLights::IsDenoiseAvailable());
+                ImGui::BeginDisabled((mega.EvaluationMode != 1 && mega.EvaluationMode != 3) || !MegaLights::IsDenoiseAvailable());
                 ImGui::Checkbox("デノイズ (M3)", &mega.Denoise);
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 {
@@ -877,6 +877,7 @@ void ImGuiManager::DrawProjectSettingsWindow()
             ImGui::SeparatorText("ReSTIR GI");
             ImGui::Checkbox("ReSTIR GI (時間・空間リサンプリング)", &rq.ReSTIRGI);
             ImGui::BeginDisabled(!rq.ReSTIRGI);
+            ImGui::Checkbox("RTXDI SDK で GI リザーバーを再サンプリング", &rq.RtxdiGI);
             ImGui::SliderInt("時間方向の履歴上限 M", &rq.ReSTIRTemporalMaxM, 1, 64);
             ImGui::SliderInt("空間サンプル数", &rq.ReSTIRSpatialSamples, 0, 8);
             ImGui::SliderFloat("空間半径 (px)", &rq.ReSTIRSpatialRadius, 4.0f, 48.0f, "%.0f");
@@ -1419,7 +1420,8 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("megalights.DebugView", megaLights.DebugView, 0, 9);
     field("megalights.SliceFar", megaLights.SliceFar, 20.0, 5000.0);
     field("megalights.HeatmapMax", megaLights.HeatmapMax, 1, 256);
-    field("megalights.EvaluationMode", megaLights.EvaluationMode, 0, 2);
+    field("megalights.EvaluationMode", megaLights.EvaluationMode, 0, 3);
+    field("megalights.RtxdiCandidates", megaLights.RtxdiCandidates, 1, 64);
     field("megalights.SamplesPerPixel", megaLights.SamplesPerPixel, 1, 4);
     field("megalights.UniformMix", megaLights.UniformMix, 0.001, 1.0);
     field("megalights.ReferenceRays", megaLights.ReferenceRays, 1, 64);
@@ -1496,6 +1498,7 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("quality.RaytracedRefraction", rq.RaytracedRefraction, 0, 1);
     field("quality.ReSTIRGI", rq.ReSTIRGI, 0, 1);
     field("quality.ReSTIRTemporalMaxM", rq.ReSTIRTemporalMaxM, 1, 64);
+    field("quality.RtxdiGI", rq.RtxdiGI, 0, 1);
     field("quality.ReSTIRSpatialSamples", rq.ReSTIRSpatialSamples, 0, 16);
     field("quality.ReSTIRSpatialRadius", rq.ReSTIRSpatialRadius, 1, 64);
     field("quality.ReSTIRSpatialVisibility", rq.ReSTIRSpatialVisibility, 0, 1);

@@ -103,12 +103,15 @@ bool GraphicsDevice::Init(HWND hwnd)
     const bool requestGpuValidation =
         GetEnvironmentVariableA("DX12_GPU_BASED_VALIDATION", gpuValidation, sizeof(gpuValidation)) &&
         atoi(gpuValidation) != 0;
+    char debugLayer[8]{};
+    const bool requestDebugLayer =
+        GetEnvironmentVariableA("DX12_DEBUG_LAYER", debugLayer, sizeof(debugLayer)) && atoi(debugLayer) != 0;
 #ifdef _DEBUG
     constexpr bool defaultDebugLayer = true;
 #else
     constexpr bool defaultDebugLayer = false;
 #endif
-    if (defaultDebugLayer || requestGpuValidation)
+    if (defaultDebugLayer || requestDebugLayer || requestGpuValidation)
     {
         ComPtr<ID3D12Debug> debugController;
         if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))

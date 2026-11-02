@@ -22,9 +22,10 @@ namespace ColorManagement
     struct ColorSpaceConfig
     {
         std::string configPath;
-        std::string workingSpace = "ACES - ACEScg";
-        std::string displayDevice = "sRGB";
-        std::string viewTransform = "sRGB";
+        std::string workingSpace = "ACEScg";
+        // Empty display/view selects the defaults of the loaded OCIO config.
+        std::string displayDevice;
+        std::string viewTransform;
         std::string lookTransform = "";
         float exposure = 0.0f;
         float gamma = 2.2f;
