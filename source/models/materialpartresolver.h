@@ -3,10 +3,42 @@
 #include "material.h"
 #include "scene.h"
 #include <algorithm>
-#include <cctype>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
+
+// ---------------------------------------------------------------------------------------------
+// メッシュ名 / マテリアル名の分類（PMX / VRM / FBX / glTF 共通）
+//
+// 最適化：
+//  - 以前は ResolveMaterialPartId の中で AI_MATKEY_NAME を再取得し、「material + " " + mesh」の
+//    文字列を毎回組み立て直してトークン表を最大 8 回走査していた。
+//  - ここでは読み込み側ですでに取得済みの名前を受け取り、ASCII だけを小文字化した 1 本のキー
+//    （MeshSemanticKey）を 1 回だけ作る。部位 ID とメカクレ用の意味フラグを同じ走査で求め、
+//    キーは MeshData に保存して毎フレームの名前フィルター判定でも再利用する。
+//  - tolower はロケール依存で UTF-8 の多バイト文字を壊すことがあるため、ASCII だけを変換する。
+//    これで「前髪」「目」「眉」などの日本語トークンも安全に照合できる。
+// ---------------------------------------------------------------------------------------------
+
+enum MeshSemanticFlags : uint32_t
+{
+    MeshSemantic_None = 0,
+    MeshSemantic_Hair = 1u << 0,
+    MeshSemantic_Bangs = 1u << 1,         // 前髪
+    MeshSemantic_Eye = 1u << 2,           // 白目 / 瞳 / 虹彩
+    MeshSemantic_EyeHighlight = 1u << 3,  // 目のハイライト
+    MeshSemantic_Brow = 1u << 4,          // 眉
+    MeshSemantic_Lash = 1u << 5,          // まつ毛 / アイライン
+    MeshSemantic_Face = 1u << 6,
+    MeshSemantic_Skin = 1u << 7,
+    MeshSemantic_Cloth = 1u << 8,
+    MeshSemantic_Accessory = 1u << 9,
+};
+
+// メカクレで髪越しに透かす既定の対象。
+inline constexpr uint32_t kMekakureDefaultTargetMask =
+    MeshSemantic_Eye | MeshSemantic_EyeHighlight | MeshSemantic_Brow | MeshSemantic_Lash;
 
 inline const vector<string_view> kMaterialPartWearMaterialTokens = {"wear", "other"};
 
@@ -22,19 +54,43 @@ inline const vector<string_view> kMaterialPartSkinTokens = {"skin", "body", "fac
 
 inline const vector<string_view> kMaterialPartClothTokens = {"cloth", "dress", "shoe", "socks", "skirt"};
 
+// 意味フラグ用のトークン（部位 ID の判定とは独立。部位 ID の結果は従来と完全に同じ）。
+// VRoid 系 VRM（F00_000_00_FaceBrow_00_FACE など）、MMD 系 PMX（前髪 / 目 / 眉 / まつ毛）、
+// 一般的な FBX（Eye_L, Brow, Lashes, Bangs）を想定。
+inline const vector<string_view> kSemanticBangsTokens = {"bang", "fringe", "maegami", "front_hair", "fronthair",
+                                                         "hair_front", "hairfront", "\xE5\x89\x8D\xE9\xAB\xAA" /*前髪*/};
+inline const vector<string_view> kSemanticHairTokens = {"hair", "kami", "\xE9\xAB\xAA" /*髪*/, "\xE3\x81\x8B\xE3\x81\xBF" /*かみ*/};
+inline const vector<string_view> kSemanticHighlightTokens = {
+    "highlight", "eye_hl", "eyehl", "hilight", "\xE3\x83\x8F\xE3\x82\xA4\xE3\x83\xA9\xE3\x82\xA4\xE3\x83\x88" /*ハイライト*/};
+inline const vector<string_view> kSemanticLashTokens = {
+    "lash",       "eyeline",    "eye_line", "matsuge",
+    "\xE3\x81\xBE\xE3\x81\xA4\xE6\xAF\x9B" /*まつ毛*/, "\xE3\x81\xBE\xE3\x81\xA4\xE3\x81\x92" /*まつげ*/,
+    "\xE7\x9D\xAB" /*睫*/, "\xE4\xBA\x8C\xE9\x87\x8D" /*二重*/};
+inline const vector<string_view> kSemanticBrowTokens = {"brow", "mayu", "\xE7\x9C\x89" /*眉*/};
+inline const vector<string_view> kSemanticEyeTokens = {
+    "eye",  "iris", "pupil", "hitomi", "shirome",
+    "\xE7\x9E\xB3" /*瞳*/, "\xE7\x99\xBD\xE7\x9B\xAE" /*白目*/, "\xE7\x9B\xAE" /*目*/};
+inline const vector<string_view> kSemanticFaceTokens = {"face", "head", "kao", "\xE9\xA1\x94" /*顔*/};
+inline const vector<string_view> kSemanticSkinTokens = {"skin", "body", "hada", "\xE8\x82\x8C" /*肌*/};
+
 inline string MaterialPartToLowerString(string value)
 {
-    transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-        return static_cast<char>(tolower(c));
-    });
+    // ASCII だけを小文字化する（UTF-8 の後続バイトを壊さない）。
+    for (char& c : value)
+    {
+        if (c >= 'A' && c <= 'Z')
+        {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
     return value;
 }
 
-inline bool MaterialPartContainsAnyToken(const string& value, const vector<string_view>& tokens)
+inline bool MaterialPartContainsAnyToken(string_view value, const vector<string_view>& tokens)
 {
     for (string_view token : tokens)
     {
-        if (value.find(token) != string::npos)
+        if (value.find(token) != string_view::npos)
         {
             return true;
         }
@@ -42,50 +98,150 @@ inline bool MaterialPartContainsAnyToken(const string& value, const vector<strin
     return false;
 }
 
+struct MeshSemanticInfo
+{
+    float MaterialPartId = 10.0f;
+    uint32_t Flags = MeshSemantic_None;
+    string Key; // 小文字化した "material mesh"。名前フィルター用に保存する。
+};
+
+// 取得済みの名前から部位 ID と意味フラグを 1 回で求める。
+inline MeshSemanticInfo ResolveMeshSemantics(string_view materialNameRaw, string_view meshNameRaw,
+                                             unsigned int materialIndex)
+{
+    MeshSemanticInfo info;
+    info.Key.reserve(materialNameRaw.size() + meshNameRaw.size() + 1);
+    info.Key.append(materialNameRaw);
+    info.Key.push_back(' ');
+    info.Key.append(meshNameRaw);
+    info.Key = MaterialPartToLowerString(std::move(info.Key));
+
+    const string_view key = info.Key;
+    const string_view materialName = key.substr(0, materialNameRaw.size());
+    const string_view meshName = key.substr(materialNameRaw.size() + 1);
+
+    // --- 部位 ID（従来の ResolveMaterialPartId と同じ優先順位・同じ結果） ---
+    const bool hairToken = MaterialPartContainsAnyToken(key, kMaterialPartHairTokens);
+    const bool skinToken = MaterialPartContainsAnyToken(key, kMaterialPartSkinTokens);
+    if (MaterialPartContainsAnyToken(materialName, kMaterialPartWearMaterialTokens) ||
+        MaterialPartContainsAnyToken(meshName, kMaterialPartWearMeshTokens) ||
+        (materialName.find("face_alpha") != string_view::npos && meshName.find("other") != string_view::npos) ||
+        MaterialPartContainsAnyToken(key, kMaterialPartAccessoryTokens))
+    {
+        info.MaterialPartId = 2.0f;
+        info.Flags |= MeshSemantic_Accessory;
+    }
+    else if (hairToken)
+    {
+        info.MaterialPartId = 1.0f;
+    }
+    else if (skinToken)
+    {
+        info.MaterialPartId = 3.0f;
+    }
+    else if (MaterialPartContainsAnyToken(key, kMaterialPartClothTokens))
+    {
+        info.MaterialPartId = 2.0f;
+        info.Flags |= MeshSemantic_Cloth;
+    }
+    else if (materialIndex == 0)
+    {
+        info.MaterialPartId = 1.0f;
+    }
+    else if (materialIndex == 2)
+    {
+        info.MaterialPartId = 3.0f;
+    }
+    else
+    {
+        info.MaterialPartId = 2.0f;
+    }
+
+    // --- 意味フラグ（目・眉・まつ毛は髪より優先して判定） ---
+    const bool highlight = MaterialPartContainsAnyToken(key, kSemanticHighlightTokens);
+    const bool lash = MaterialPartContainsAnyToken(key, kSemanticLashTokens);
+    const bool brow = MaterialPartContainsAnyToken(key, kSemanticBrowTokens);
+    const bool eye = MaterialPartContainsAnyToken(key, kSemanticEyeTokens);
+    if (highlight && (eye || key.find("hl") != string_view::npos))
+    {
+        info.Flags |= MeshSemantic_EyeHighlight;
+    }
+    if (lash)
+    {
+        info.Flags |= MeshSemantic_Lash;
+    }
+    if (brow)
+    {
+        info.Flags |= MeshSemantic_Brow;
+    }
+    if (eye && !lash && !brow)
+    {
+        info.Flags |= MeshSemantic_Eye;
+    }
+    const bool facialPart = (info.Flags & kMekakureDefaultTargetMask) != 0;
+    if (!facialPart)
+    {
+        if (MaterialPartContainsAnyToken(key, kSemanticBangsTokens))
+        {
+            info.Flags |= MeshSemantic_Hair | MeshSemantic_Bangs;
+        }
+        else if (MaterialPartContainsAnyToken(key, kSemanticHairTokens))
+        {
+            info.Flags |= MeshSemantic_Hair;
+        }
+        if (MaterialPartContainsAnyToken(key, kSemanticFaceTokens))
+        {
+            info.Flags |= MeshSemantic_Face;
+        }
+        if (MaterialPartContainsAnyToken(key, kSemanticSkinTokens))
+        {
+            info.Flags |= MeshSemantic_Skin;
+        }
+    }
+    return info;
+}
+
+// 互換 API（既存呼び出し用）。新規コードは ResolveMeshSemantics を使う。
 inline float ResolveMaterialPartId(const aiScene* scene, const aiMesh* mesh)
 {
     if (!scene || !mesh || mesh->mMaterialIndex >= scene->mNumMaterials)
     {
         return 10.0f;
     }
-
-    const aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
     aiString name;
-    material->Get(AI_MATKEY_NAME, name);
-    const string materialName = MaterialPartToLowerString(name.C_Str());
-    const string meshName = MaterialPartToLowerString(mesh->mName.C_Str());
-    const string lowerName = materialName + " " + meshName;
+    scene->mMaterials[mesh->mMaterialIndex]->Get(AI_MATKEY_NAME, name);
+    return ResolveMeshSemantics(name.C_Str(), mesh->mName.C_Str(), mesh->mMaterialIndex).MaterialPartId;
+}
 
-    if (MaterialPartContainsAnyToken(materialName, kMaterialPartWearMaterialTokens) ||
-        MaterialPartContainsAnyToken(meshName, kMaterialPartWearMeshTokens) ||
-        (materialName.find("face_alpha") != string::npos && meshName.find("other") != string::npos) ||
-        MaterialPartContainsAnyToken(lowerName, kMaterialPartAccessoryTokens))
+// カンマ区切りの名前フィルター（小文字化済みキーに対して部分一致）。空なら false。
+inline bool MeshSemanticKeyMatchesFilter(string_view key, string_view filter)
+{
+    size_t begin = 0;
+    while (begin < filter.size())
     {
-        return 2.0f;
+        size_t end = filter.find(',', begin);
+        if (end == string_view::npos)
+        {
+            end = filter.size();
+        }
+        string_view token = filter.substr(begin, end - begin);
+        while (!token.empty() && (token.front() == ' ' || token.front() == '\t'))
+        {
+            token.remove_prefix(1);
+        }
+        while (!token.empty() && (token.back() == ' ' || token.back() == '\t'))
+        {
+            token.remove_suffix(1);
+        }
+        if (!token.empty())
+        {
+            const string lowered = MaterialPartToLowerString(string(token));
+            if (key.find(lowered) != string_view::npos)
+            {
+                return true;
+            }
+        }
+        begin = end + 1;
     }
-
-    if (MaterialPartContainsAnyToken(lowerName, kMaterialPartHairTokens))
-    {
-        return 1.0f;
-    }
-
-    if (MaterialPartContainsAnyToken(lowerName, kMaterialPartSkinTokens))
-    {
-        return 3.0f;
-    }
-
-    if (MaterialPartContainsAnyToken(lowerName, kMaterialPartClothTokens))
-    {
-        return 2.0f;
-    }
-
-    if (mesh->mMaterialIndex == 0)
-    {
-        return 1.0f;
-    }
-    if (mesh->mMaterialIndex == 2)
-    {
-        return 3.0f;
-    }
-    return 2.0f;
+    return false;
 }

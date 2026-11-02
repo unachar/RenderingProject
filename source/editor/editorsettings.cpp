@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "livetoonstyle.h"
+#include "editorworkspace.h"
 #include "gpumemorybudget.h"
 #include "rendertargets.h"
 #include "performancegovernor.h"
@@ -54,7 +56,7 @@ using namespace EditorWidgets;
 void ImGuiManager::DrawPhysicsSettingsWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(430.0f, 420.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("物理設定", &m_ShowPhysicsSettingsWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("物理設定", &m_ShowPhysicsSettingsWindow))
     {
         ImGui::End();
         return;
@@ -155,7 +157,7 @@ void ImGuiManager::DrawPhysicsSettingsWindow()
 void ImGuiManager::DrawProjectSettingsWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(520.0f, 560.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("環境設定", &m_ShowProjectSettingsWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("環境設定", &m_ShowProjectSettingsWindow))
     {
         ImGui::End();
         return;
@@ -959,23 +961,32 @@ void ImGuiManager::DrawProjectSettingsWindow()
             {
                 RendererSettings::SetGiRadianceCacheCellSize(cacheCell);
             }
+            bool updateBudget = RendererSettings::GetGiUpdateBudgetEnabled();
+            if (ImGui::Checkbox("静止画素の更新を間引く（GI 更新予算）", &updateBudget))
+            {
+                RendererSettings::SetGiUpdateBudgetEnabled(updateBudget);
+            }
+            ImGui::SetItemTooltip("動いていない画素は 4 フレームに 1 回だけレイを撃ち、残りは放射キャッシュを使います。\n"
+                                  "放射キャッシュが必要です。ReSTIR / SHaRC 使用時は各自の再利用を使うため無効です。");
             int cacheHistory = RendererSettings::GetGiRadianceCacheHistory();
             if (ImGui::SliderInt("キャッシュ履歴フレーム", &cacheHistory, 4, 128))
             {
                 RendererSettings::SetGiRadianceCacheHistory(cacheHistory);
             }
             ImGui::EndDisabled();
-            if (!Raytracing::IsAvailable() || !Raytracing::GetSettings().Enabled)
+            if (!Raytracing::IsAvailable())
             {
-                ImGui::TextWrapped("Realtime GI requires DXR Tier 1.1 and enabled ray tracing.");
+                ImGui::TextWrapped("DXR GI には DXR Tier 1.1 対応 GPU が必要です。");
             }
-            // 動作状態の診断（ON にしても効かない時に原因を表示する）
+            // 動作状態の診断（ON にしても効かない時に原因を表示する）。
+            // DXR GI は「レイトレーシング」の ON/OFF とは独立して動作する。
             const bool giRunning = Raytracing::IsGiActive();
+            const char* reason = giRunning                       ? RayReflections::GetStatus()
+                                 : !Raytracing::IsAvailable()    ? Raytracing::GetStatus()
+                                 : RenderConfiguration::GetRenderMode() != RenderMode::DEFERRED ? "ディファード描画でのみ動作します（描画モードを確認）"
+                                                                 : RayReflections::GetStatus();
             ImGui::TextColored(giRunning ? ImVec4(0.4f, 0.9f, 0.4f, 1.0f) : ImVec4(1.0f, 0.55f, 0.3f, 1.0f), "状態: %s",
-                               giRunning ? RayReflections::GetStatus()
-                                         : (!Raytracing::IsAvailable()           ? Raytracing::GetStatus()
-                                            : !Raytracing::GetSettings().Enabled ? "レイトレーシングが OFF です"
-                                                                                 : RayReflections::GetStatus()));
+                               reason);
             if (RayReflections::GetLastShaderError()[0] != '\0' && ImGui::TreeNode("シェーダーエラー"))
             {
                 ImGui::TextWrapped("%s", RayReflections::GetLastShaderError());
@@ -1379,6 +1390,35 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("editor.ShowProjectSettingsWindow", m_ShowProjectSettingsWindow, 0, 1);
     field("editor.ShowPhysicsSettingsWindow", m_ShowPhysicsSettingsWindow, 0, 1);
     field("editor.ShowLightDebug", m_ShowLightDebug, 0, 1);
+    // ライブ用トゥーンスタイル（シーン全体）
+    auto& liveToon = LiveToonStyle::Get();
+    field("livetoon.Blend", liveToon.Blend, 0.0, 1.0);
+    field("livetoon.ShadowTintStrength", liveToon.ShadowTintStrength, 0.0, 1.0);
+    field("livetoon.AdditiveSoftness", liveToon.AdditiveSoftness, 0.0, 1.0);
+    field("livetoon.AdditiveGain", liveToon.AdditiveGain, 0.0, 3.0);
+    field("livetoon.ShadowTintR", liveToon.ShadowTint.x, 0.0, 1.0);
+    field("livetoon.ShadowTintG", liveToon.ShadowTint.y, 0.0, 1.0);
+    field("livetoon.ShadowTintB", liveToon.ShadowTint.z, 0.0, 1.0);
+    field("livetoon.SkinWarmth", liveToon.SkinWarmth, 0.0, 1.0);
+    field("livetoon.RimSoft", liveToon.RimSoft, 0.0, 2.0);
+    field("livetoon.RimHard", liveToon.RimHard, 0.0, 2.0);
+    field("livetoon.RimWidth", liveToon.RimWidth, 0.02, 1.0);
+    field("livetoon.RimLightTint", liveToon.RimLightTint, 0.0, 1.0);
+    field("livetoon.RampSpecular", liveToon.RampSpecular, 0.0, 2.0);
+    field("livetoon.HairAngelRing", liveToon.HairAngelRing, 0.0, 2.0);
+    field("livetoon.EnvSpecular", liveToon.EnvSpecular, 0.0, 2.0);
+    field("livetoon.CastShadowDensity", liveToon.CastShadowDensity, 0.0, 1.0);
+    field("livetoon.ShadowRampStrength", liveToon.ShadowRampStrength, 0.0, 1.0);
+    // 陰影ランプのパス（文字列。数値用の EditorConfig::Value は使えないので直接扱う）
+    if (output)
+    {
+        *output << "livetoon.ShadowRampPath=" << liveToon.ShadowRampPath << '\n';
+    }
+    else if (key == "livetoon.ShadowRampPath")
+    {
+        liveToon.ShadowRampPath = value;
+        matched = true;
+    }
     field("editor.gizmo", m_GizmoOperation, 0, 3);
     field("editor.log_auto_scroll", m_LogAutoScroll, 0, 1);
     // 自動品質調整（可変レイトレーシング / 可変GI など）の設定
@@ -1485,6 +1525,14 @@ bool ImGuiManager::PersistentSettings(ostream* output, const string& key, const 
     field("quality.LensFlare", rq.LensFlare, 0, 1);
     field("quality.LensFlareIntensity", rq.LensFlareIntensity, 0, 10);
     field("quality.LensFlareHalo", rq.LensFlareHalo, 0, 10);
+    field("quality.SunFlare", rq.SunFlare, 0, 1);
+    field("quality.SunFlareIntensity", rq.SunFlareIntensity, 0, 10);
+    field("quality.SunFlareGlare", rq.SunFlareGlare, 0, 10);
+    field("quality.SunFlareStarburst", rq.SunFlareStarburst, 0, 10);
+    field("quality.SunFlareGhosts", rq.SunFlareGhosts, 0, 10);
+    field("quality.SunFlareHalo", rq.SunFlareHalo, 0, 10);
+    field("quality.SunFlareAnamorphic", rq.SunFlareAnamorphic, 0, 10);
+    field("quality.SunFlareBlades", rq.SunFlareBlades, 4, 12);
     field("quality.WeatherEnabled", rq.WeatherEnabled, 0, 1);
     field("quality.RainIntensity", rq.RainIntensity, 0, 1);
     field("quality.Wetness", rq.Wetness, 0, 1);
@@ -1738,6 +1786,7 @@ string ImGuiManager::SerializeProjectSettings()
     stream << "gi_radiance_cache=" << static_cast<int>(RendererSettings::GetGiRadianceCacheEnabled()) << '\n';
     stream << "gi_radiance_cache_cell=" << RendererSettings::GetGiRadianceCacheCellSize() << '\n';
     stream << "gi_radiance_cache_history=" << RendererSettings::GetGiRadianceCacheHistory() << '\n';
+    stream << "gi_update_budget=" << static_cast<int>(RendererSettings::GetGiUpdateBudgetEnabled()) << '\n';
     stream << "ray_binning=" << (static_cast<int>(RendererSettings::GetRayBinningEnabled())) << '\n';
     stream << "anti_aliasing=" << static_cast<int>(RendererState::m_AntiAliasingMode) << '\n';
     stream << "hdr=" << (static_cast<int>(m_HdrEnabled)) << '\n';
@@ -1959,6 +2008,10 @@ void ImGuiManager::LoadProjectSettings()
             {
                 RendererSettings::SetGiRadianceCacheHistory(stoi(value));
             }
+            else if (key == "gi_update_budget")
+            {
+                RendererSettings::SetGiUpdateBudgetEnabled(stoi(value) != 0);
+            }
             else if (key == "ray_binning")
             {
                 RendererSettings::SetRayBinningEnabled(stoi(value) != 0);
@@ -2145,3 +2198,4 @@ void ImGuiManager::LoadProjectSettings()
         m_StartupScenePath.clear();
     }
 }
+

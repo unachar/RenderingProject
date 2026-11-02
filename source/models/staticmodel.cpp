@@ -1187,6 +1187,12 @@ bool StaticModelResource::LoadDerivedVirtualGeometry(const char* fileName, ID3D1
                                           static_cast<uint32_t>(mesh.MaterialIndex)) == materialIds->end()) return false;
             mesh.MaterialPartId = entry["part"].asFloat();
             mesh.AppliedMaterialPartId = mesh.MaterialPartId;
+            {
+                MeshSemanticInfo semantic = ResolveMeshSemantics(mesh.MaterialName, mesh.MeshName,
+                                                                 static_cast<unsigned int>(mesh.MaterialIndex));
+                mesh.SemanticFlags = semantic.Flags;
+                mesh.SemanticKey = std::move(semantic.Key);
+            }
             mesh.VirtualGeometrySettings = settings;
             auto runtime = std::make_shared<VirtualGeometryRuntime::RuntimeAsset>(*mesh.VirtualGeometryLODs[0]);
             runtime->ImportSettings = settings;
@@ -1458,7 +1464,13 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
             material->Get(AI_MATKEY_COLOR_DIFFUSE, diffuse);
             material->Get(AI_MATKEY_OPACITY, opacity);
         }
-        const float materialPartId = ResolveMaterialPartId(scene, mesh);
+        // 名前は上で取得済み。部位 ID と意味フラグを 1 回の走査で求める（マテリアル名の再取得を省く）。
+        MeshSemanticInfo semantic{};
+        if (mesh->mMaterialIndex < scene->mNumMaterials)
+        {
+            semantic = ResolveMeshSemantics(materialName.C_Str(), mesh->mName.C_Str(), mesh->mMaterialIndex);
+        }
+        const float materialPartId = semantic.MaterialPartId;
         const XMFLOAT4 meshDiffuse(diffuse.r, diffuse.g, diffuse.b, materialPartId);
 
         vector<StaticModelVertex> vertices(mesh->mNumVertices);
@@ -1557,6 +1569,8 @@ bool StaticModelResource::LoadAssimpModel(const char* fileName, ID3D12Device* de
         meshData.MaterialName = materialName.C_Str();
         meshData.MaterialPartId = materialPartId;
         meshData.AppliedMaterialPartId = meshData.MaterialPartId;
+        meshData.SemanticFlags = semantic.Flags;
+        meshData.SemanticKey = std::move(semantic.Key);
         meshData.DefaultToonOutlineEnabled = materialPartId != 3.0f;
         meshData.CpuVertices = vertices;
         meshData.CpuIndices.assign(indices.begin(), indices.end());
@@ -1815,3 +1829,4 @@ void StaticModelResource::RefreshResourceMap(const char* fileName, bool isConver
         Debug::Log("WARNING: Model map cache could not be saved: %s\n", fileName);
     }
 }
+

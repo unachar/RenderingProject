@@ -1,4 +1,5 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "editorworkspace.h"
 #include "animationpreviewwindow.h"
 #include "animationpreviewstate.h"
 #include "animationpreviewcontext.h"
@@ -36,6 +37,7 @@ namespace
         shared_ptr<AnimationModelResource> SourceOwner;
         int SelectedClip = -1;
         bool Visible = false;
+        int LastPlaybackFrame = -1;
         bool ImportSelection = false;
         char ModelInput[2048]{};
         char ClipInput[2048]{};
@@ -510,6 +512,7 @@ namespace
 
 void AnimationPreviewWindow::OpenForSelection()
 {
+    EditorWorkspaceManager::Get().Registry().ShowEditorType("animation");
     ImGuiManager::m_ShowAnimationPreviewWindow = true;
     preview.ImportSelection = true;
 }
@@ -565,15 +568,19 @@ void AnimationPreviewWindow::ApplyToSelection()
     preview.Status = "選択モデルに適用しました。シーンを保存すると、次回もこの設定で開きます。";
 }
 
-void AnimationPreviewWindow::Draw(bool* open)
+void AnimationPreviewWindow::BeginFrame()
 {
     preview.Visible = false;
+}
+
+void AnimationPreviewWindow::Draw(bool* open)
+{
     if (!open || !*open)
     {
         return;
     }
     ImGui::SetNextWindowSize(ImVec2(1150, 780), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("アニメーションプレビュー", open))
+    if (!EditorWindowRegistry::BeginEditorWindow("アニメーションプレビュー", open))
     {
         ImGui::End();
         return;
@@ -629,7 +636,11 @@ void AnimationPreviewWindow::Draw(bool* open)
         ImGui::EndChild();
         ImGui::EndTable();
     }
-    preview.Playback.Advance(ImGui::GetIO().DeltaTime, AnimationPreview::Duration(preview.Clips));
+    if (preview.LastPlaybackFrame != ImGui::GetFrameCount())
+    {
+        preview.LastPlaybackFrame = ImGui::GetFrameCount();
+        preview.Playback.Advance(ImGui::GetIO().DeltaTime, AnimationPreview::Duration(preview.Clips));
+    }
     UpdatePose();
     ImGui::End();
 }

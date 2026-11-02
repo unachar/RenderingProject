@@ -228,7 +228,17 @@ float4 ShadeDeferred(PSInputPostProcess input)
         float2 environmentUv = float2(frac(atan2(surfaceNormal.z, surfaceNormal.x) / (2.0f * PI) + 0.5f),
                                       acos(clamp(surfaceNormal.y, -1.0f, 1.0f)) / PI);
         float3 irradiance = EnvironmentTexture.SampleLevel(TextureSampler, environmentUv, 8.0f).rgb;
-        baseColor.rgb = pbrDirectLight + EvaluateLiveToonAmbient(baseColor.rgb, irradiance, shaderClass);
+        const float3 toonAlbedo = baseColor.rgb;
+        baseColor.rgb = pbrDirectLight + EvaluateLiveToonAmbientStyled(toonAlbedo, irradiance, shaderClass);
+        [branch] if (LiveToonStyle3.z > 0.0f && LiveToonStyle0.x > 0.0f)
+        {
+            float3 reflected = reflect(-viewDir, surfaceNormal);
+            float2 reflectedUv = float2(frac(atan2(reflected.z, reflected.x) / (2.0f * PI) + 0.5f),
+                                        acos(clamp(reflected.y, -1.0f, 1.0f)) / PI);
+            float3 environment = EnvironmentTexture.SampleLevel(TextureSampler, reflectedUv, 4.0f).rgb;
+            baseColor.rgb += EvaluateLiveToonEnvironmentSpecular(toonAlbedo, surfaceNormal, viewDir, environment,
+                                                                 shaderClass);
+        }
     }
     [branch] if (shadow || lit)
     {
@@ -538,4 +548,5 @@ float4 MegaLightsShadePS(PSInputPostProcess input) : SV_Target
     MegaLightRaw[linearIndex] = result;
     return 0.0f;
 }
+
 

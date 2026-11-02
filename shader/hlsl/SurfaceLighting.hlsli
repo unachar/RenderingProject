@@ -973,6 +973,8 @@ float3 MLRectTextureMean(uint textureIndex)
         .rgb;
 }
 #endif
+// ライブトゥーン：陰影ランプをエンジンのテクスチャ表（MegaLightTextures）から読むため、その宣言の後に置く。
+#include "LiveToonStyle.hlsli"
 // ---------------------------------------------------------------------------------------------
 // 1 ライト分の評価（従来のライトループの本体を関数化。結果は acc に加算）
 //   cbIndex >= 0 : LightParams 配列のライト。シャドウマップ / VSM / DXR 影 / コンタクト影 / 雲影は従来どおり
@@ -1074,7 +1076,11 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
     {
         // MegaLights M1 グリッドのライト：DXR 影モードならライト中心へ影のレイを 1 本
         const float maximumDistance = min(length(lightPositionType.xyz - worldPos), SceneRayParameters.x);
-        shadowVisibility = TraceSceneShadow(worldPos + g_PomShadowOffset, normal, singleDir, maximumDistance);
+        // 最適化：点 / スポット光で N・L < -0.6 なら、ラップ照明（最大 0.55）を含めても寄与が 0 なので
+        // 影レイを省く（矩形 / カプセル / ボリュームは中心方向と寄与が一致しないので対象外）
+        shadowVisibility = lightPositionType.w < 2.5f && dot(normal, singleDir) < -0.6f
+                               ? 0.0f
+                               : TraceSceneShadow(worldPos + g_PomShadowOffset, normal, singleDir, maximumDistance);
     }
 #endif
     float3 authoredLightColor = max(lightColorData.rgb, float3(0.0f, 0.0f, 0.0f));
@@ -1148,11 +1154,19 @@ void AccumulateSurfaceLight(int cbIndex, float4 lightDirection, float4 lightPosi
         }
     }
 
-    if (IsLiveToonClass(g_LiveToonClass))
+    [branch] if (IsLiveToonClass(g_LiveToonClass))
     {
-        acc.PbrDirect += sampleWeight * EvaluateLiveToonLight(
-            albedo, normal, viewDir, singleDir, singleColor, g_LiveToonClass, materialData.g,
-            g_LiveToonShadow.x, shadowSoftness, g_LiveToonShadow.y);
+        // ライブスタイルは影を陰影の乗算色にまとめるため、影なしの放射輝度と可視率を分けて渡す。
+        // 大気の適用は lightColor に線形なので、singleColor = toonRadiance * shadowVisibility と一致する。
+        float3 toonRadiance = authoredLightColor * lightIntensityValue * singleAttenuation;
+        if (!decalLight)
+        {
+            float toonVolume = 0.0f;
+            toonRadiance = ApplyAtmosphereToLightCommon(worldPos, singleDir, toonRadiance, toonVolume);
+        }
+        acc.PbrDirect += sampleWeight * EvaluateLiveToonLightStyled(
+            albedo, normal, viewDir, singleDir, toonRadiance, shadowVisibility, decalLight ? 1.0f : lightPositionType.w,
+            g_LiveToonClass, materialData.g, g_LiveToonShadow.x, shadowSoftness, g_LiveToonShadow.y);
     }
 
     float weight = max(dot(authoredLightColor * lightIntensityValue, float3(0.299f, 0.587f, 0.114f)), 0.0001f) *
@@ -1409,9 +1423,9 @@ void ResolveSurfaceLightAggregateShadowed(float3 worldPos, float3 worldPosDx, fl
         }
         if (IsLiveToonClass(g_LiveToonClass))
         {
-            pbrDirectLight = EvaluateLiveToonLight(
-                albedo, normal, viewDir, lightDir, lightColor, g_LiveToonClass, materialData.g,
-                g_LiveToonShadow.x, shadowSoftness, g_LiveToonShadow.y);
+            pbrDirectLight = EvaluateLiveToonLightStyled(
+                albedo, normal, viewDir, lightDir, lightColor, float3(1.0f, 1.0f, 1.0f), LightPositionType.w,
+                g_LiveToonClass, materialData.g, g_LiveToonShadow.x, shadowSoftness, g_LiveToonShadow.y);
         }
         volumeScatter = legacyVolume * max(LightColor.a, 0.0f);
         rangeBlend = saturate((max(LightDirection.w, 1.0f) - 1.0f) / 7.0f);
@@ -1609,4 +1623,5 @@ float3 ApplySurfaceScreenEffects(float3 color, float3 emissive, float2 screenUv,
     return color;
 }
 #endif
+
 

@@ -108,13 +108,27 @@ float TraceHitDistance(float3 origin, float3 direction, float distance, bool clo
 #endif
     float3 sunTangent = Tangent(SunDirection.xyz);
     float3 sunBitangent = cross(SunDirection.xyz, sunTangent);
+    // 最適化：N・L < -0.6 の面は、ライティング側のラップ（最大 0.55：肌の散乱 / ターミネーター）を
+    // 含めても太陽光の寄与が 0 になるため、可視性の値は結果に影響しない。トレースを省き 0 とする。
+    // NRD の半影入力も従来どおり 0（N・L <= 0 の扱い）。
+    const bool sunBackFacing = dot(normal, SunDirection.xyz) < -0.6f;
     for (uint sample = 0; sample < ExtentSamples.z; ++sample)
     {
         uint seed = pixel.x + pixel.y * ExtentSamples.x + sample * 9781u + ExtentSamples.w * 104729u;
         float angle = Random(seed + 17u) * 6.28318530718f;
         float radius = sqrt(Random(seed + 31u));
         float2 disk = float2(cos(angle), sin(angle)) * radius;
-        if (Features.x != 0 && SunDirection.w > 0.5f)
+        if (Features.x != 0 && SunDirection.w > 0.5f && sunBackFacing)
+        {
+            // shadow += 0（裏面は常に影）
+#if USE_NRD
+            if (sample == 0)
+            {
+                penumbra = 0;
+            }
+#endif
+        }
+        else if (Features.x != 0 && SunDirection.w > 0.5f)
         {
             float2 shadowDisk = disk;
             if (Stability.x > .5)

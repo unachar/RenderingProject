@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "livetoonstyle.h"
 #include "transmittanceshadows.h"
 #include "materialbindings.h"
 #include "graphicsdevice.h"
@@ -80,7 +81,11 @@ namespace
         XMUINT4 AssetTextures{UINT32_MAX, UINT32_MAX, UINT32_MAX, 0}; // MR、AO、発光、サーフェスとカリングのフラグ。
         XMFLOAT4 AssetParallax{0, 32, -1, 0};
         std::array<ProcStudio::TextureGpuParams, 3> AssetNoise{};
+        XMUINT4 LiveToonTextures{UINT32_MAX, UINT32_MAX, UINT32_MAX, 0}; // Def、顔陰影反転、質感ランプ
+        XMFLOAT4 LiveToonMaterialParams{1, 1, 1, 0};
     };
+    static_assert(offsetof(PBRConstants, LiveToonTextures) == 190 * sizeof(XMFLOAT4));
+    static_assert(sizeof(PBRConstants) <= GpuSceneMaterialParameterVectors * sizeof(XMFLOAT4));
 
     static_assert(offsetof(PBRConstants, AssetNoise) == 151 * sizeof(XMFLOAT4));
     static_assert(offsetof(PBRConstants, AssetTextures) == 149 * sizeof(XMFLOAT4));
@@ -191,6 +196,11 @@ namespace
                 // EncodeShadingModel）：ビット4～6がモデル、8～15が強度。
                 ((min(material.ShadingModel, 7u) & 7u) << 4) |
                 (static_cast<uint32_t>(clamp(material.ShadingStrength, 0.0f, 1.0f) * 255.0f + 0.5f) << 8)};
+        constants.LiveToonTextures = {LiveToonTextures::ResolveHeapOffset(material.LiveToonDefPath),
+                                      LiveToonTextures::ResolveHeapOffset(material.LiveToonFacePath),
+                                      LiveToonTextures::ResolveHeapOffset(material.LiveToonTextureRampPath), 0u};
+        constants.LiveToonMaterialParams = {material.LiveToonDefStrength, material.LiveToonFaceStrength,
+                                            material.LiveToonTextureRampMultiply, material.LiveToonTextureRampAdd};
         return constants;
     }
 
@@ -372,6 +382,7 @@ bool MaterialBindings::SetPreviewMaterial(const MaterialComponent& material, ID3
     const uint32_t heightIndex = offset(material.HeightTextureID);
     constants.AssetParallax.z = heightIndex < 512u ? static_cast<float>(heightIndex) : -1.0f;
     constants.AssetParallax.w = static_cast<float>(textureBase);
+    constants.LiveToonTextures = {UINT32_MAX, UINT32_MAX, UINT32_MAX, 0u}; // プレビューはテクスチャ基点が異なる
     uint8_t* mapped = nullptr;
     if (FAILED(buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))))
     {
@@ -492,3 +503,4 @@ void MaterialBindings::UpdateDeferredLightingMaterial()
         memcpy(pbrDst, &pbrConstants, sizeof(pbrConstants));
     }
 }
+

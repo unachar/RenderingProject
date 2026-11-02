@@ -1,0 +1,165 @@
+{
+  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":580,\"y\":80}},\"node:10\":{\"location\":{\"x\":40,\"y\":20}},\"node:13\":{\"location\":{\"x\":40,\"y\":170}},\"node:16\":{\"location\":{\"x\":40,\"y\":280}},\"node:19\":{\"location\":{\"x\":40,\"y\":390}}},\"selection\":null,\"view\":{\"scroll\":{\"x\":-52.5601539611816406,\"y\":-76.2438583374023438},\"visible_rect\":{\"max\":{\"x\":686.92724609375,\"y\":443.60601806640625},\"min\":{\"x\":-86.07281494140625,\"y\":-125.798721313476562}},\"zoom\":0.60413968563079834}}",
+  "links" : 
+  [
+    {
+      "id" : 12,
+      "source" : 11,
+      "target" : 2
+    },
+    {
+      "id" : 15,
+      "source" : 14,
+      "target" : 3
+    },
+    {
+      "id" : 18,
+      "source" : 17,
+      "target" : 4
+    },
+    {
+      "id" : 21,
+      "source" : 20,
+      "target" : 6
+    }
+  ],
+  "nodes" : 
+  [
+    {
+      "id" : 1,
+      "inputs" : 
+      [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "kind" : "Material Output",
+      "name" : "Material Output",
+      "output" : 0,
+      "position" : 
+      [
+        580.0,
+        80.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 10,
+      "inputs" : [],
+      "kind" : "Color Parameter",
+      "name" : "Base Color",
+      "output" : 11,
+      "position" : 
+      [
+        40.0,
+        20.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "id" : 13,
+      "inputs" : [],
+      "kind" : "Scalar Parameter",
+      "name" : "Metallic",
+      "output" : 14,
+      "position" : 
+      [
+        40.0,
+        170.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 16,
+      "inputs" : [],
+      "kind" : "Scalar Parameter",
+      "name" : "Roughness",
+      "output" : 17,
+      "position" : 
+      [
+        40.0,
+        280.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 19,
+      "inputs" : [],
+      "kind" : "Vector Parameter",
+      "name" : "Emissive",
+      "output" : 20,
+      "position" : 
+      [
+        40.0,
+        390.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "version" : 1
+}

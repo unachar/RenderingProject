@@ -1,0 +1,231 @@
+{
+  "editor" : "{\"nodes\":{\"node:1\":{\"location\":{\"x\":424,\"y\":-233}},\"node:13\":{\"location\":{\"x\":-195,\"y\":-111}},\"node:16\":{\"location\":{\"x\":-195,\"y\":177}},\"node:19\":{\"location\":{\"x\":-163,\"y\":481}},\"node:22\":{\"location\":{\"x\":127,\"y\":133}},\"node:26\":{\"location\":{\"x\":931,\"y\":435}},\"node:32\":{\"location\":{\"x\":-437,\"y\":-356}}},\"selection\":null,\"view\":{\"scroll\":{\"x\":-453.359222412109375,\"y\":-470.5},\"visible_rect\":{\"max\":{\"x\":52,\"y\":286},\"min\":{\"x\":-453,\"y\":-470}},\"zoom\":1}}",
+  "links" : 
+  [
+    {
+      "id" : 15,
+      "source" : 14,
+      "target" : 3
+    },
+    {
+      "id" : 21,
+      "source" : 20,
+      "target" : 6
+    },
+    {
+      "id" : 30,
+      "source" : 17,
+      "target" : 23
+    },
+    {
+      "id" : 31,
+      "source" : 25,
+      "target" : 4
+    },
+    {
+      "id" : 35,
+      "source" : 34,
+      "target" : 2
+    }
+  ],
+  "nodes" : 
+  [
+    {
+      "id" : 1,
+      "inputs" : 
+      [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "kind" : "Material Output",
+      "name" : "Material Output",
+      "output" : 0,
+      "position" : 
+      [
+        424.0,
+        -233.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 13,
+      "inputs" : [],
+      "kind" : "Scalar Parameter",
+      "name" : "Metallic",
+      "output" : 14,
+      "position" : 
+      [
+        -195.0,
+        -111.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.21299999952316284,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 16,
+      "inputs" : [],
+      "kind" : "Scalar Parameter",
+      "name" : "Roughness",
+      "output" : 17,
+      "position" : 
+      [
+        -195.0,
+        177.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.5,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 19,
+      "inputs" : [],
+      "kind" : "Vector Parameter",
+      "name" : "Emissive",
+      "output" : 20,
+      "position" : 
+      [
+        -163.0,
+        481.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 22,
+      "inputs" : 
+      [
+        23,
+        24
+      ],
+      "kind" : "Multiply",
+      "name" : "Multiply",
+      "output" : 25,
+      "position" : 
+      [
+        127.0,
+        133.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 26,
+      "inputs" : 
+      [
+        27,
+        28
+      ],
+      "kind" : "Multiply",
+      "name" : "Multiply",
+      "output" : 29,
+      "position" : 
+      [
+        931.0,
+        435.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:0000000000000000",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id" : 32,
+      "inputs" : 
+      [
+        33
+      ],
+      "kind" : "Texture Sample",
+      "name" : "Texture Sample",
+      "output" : 34,
+      "position" : 
+      [
+        -437.0,
+        -356.0
+      ],
+      "size" : 
+      [
+        400.0,
+        250.0
+      ],
+      "texture" : "guid:c10f984bc75ee1f5",
+      "value" : 
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "version" : 1
+}

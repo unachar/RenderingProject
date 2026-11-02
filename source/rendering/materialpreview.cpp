@@ -411,29 +411,59 @@ void MaterialPreview::SetVisible(bool visible)
 
 void MaterialPreview::DrawControls()
 {
-    ImGui::SetNextItemWidth(95);
-    ImGui::Combo("##PreviewMesh", &preview.Shape, "Sphere\0Cube\0Plane\0");
-    ImGui::SameLine();
-    if (ImGui::Button("Reset Camera"))
+    // 形状：球 / キューブ / 平面 のセグメントボタン（UE のプレビューツールバーと同じ並び）
+    static const char* kShapes[] = {"球", "キューブ", "平面"};
+    const float available = ImGui::GetContentRegionAvail().x;
+    const float spacing = 1.0f;
+    const float buttonWidth = (std::max)(40.0f, (std::min)(80.0f, (available - spacing * 2.0f) / 3.0f));
+    for (int i = 0; i < 3; ++i)
     {
-        preview.Yaw = 0.45f;
-        preview.Pitch = 0.2f;
-        preview.Distance = 4.5f;
+        if (i > 0)
+        {
+            ImGui::SameLine(0.0f, spacing);
+        }
+        const bool active = preview.Shape == i;
+        if (active)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
+        }
+        ImGui::PushID(i);
+        if (ImGui::Button(kShapes[i], ImVec2(buttonWidth, 0.0f)))
+        {
+            preview.Shape = i;
+        }
+        ImGui::PopID();
+        if (active)
+        {
+            ImGui::PopStyleColor(2);
+        }
     }
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(95);
-    ImGui::SliderFloat("Light", &preview.LightIntensity, 0, 5);
-    ImGui::SameLine();
+
     const bool glassMaterial =
         preview.Material != 0 && MaterialManager::GetRuntime(preview.Material).Binding.Transmission > 0.0f;
     ImGui::BeginDisabled(glassMaterial);
-    ImGui::Checkbox("Scene IBL", &preview.SceneEnvironment);
+    ImGui::Checkbox("IBL（シーン環境光）", &preview.SceneEnvironment);
     ImGui::EndDisabled();
     if (glassMaterial)
     {
         ImGui::SetItemTooltip(
             "IBL is disabled for transmissive glass. Direct lighting and refracted background remain enabled.");
     }
+    else
+    {
+        ImGui::SetItemTooltip("シーンの空 / 環境マップで照らします（反射・金属の見え方を確認できます）");
+    }
+    ImGui::SetNextItemWidth((std::max)(80.0f, ImGui::GetContentRegionAvail().x * 0.6f));
+    ImGui::SliderFloat("ライト", &preview.LightIntensity, 0, 5);
+    if (ImGui::Button("カメラをリセット"))
+    {
+        preview.Yaw = 0.45f;
+        preview.Pitch = 0.2f;
+        preview.Distance = 4.5f;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("ドラッグ: 回転 / ホイール: ズーム");
 }
 
 void MaterialPreview::DrawImage(AssetHandle material)
@@ -448,7 +478,7 @@ void MaterialPreview::DrawImage(AssetHandle material)
     const auto available = ImGui::GetContentRegionAvail();
     const float side = min(available.x, available.y);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-    ImGui::ImageButton("##PreviewOrbit", reinterpret_cast<ImTextureData*>(preview.GpuSrv().ptr), ImVec2(side, side),
+    ImGui::ImageButton("##PreviewOrbit", static_cast<ImTextureID>(preview.GpuSrv().ptr), ImVec2(side, side),
                        ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0));
     ImGui::PopStyleVar();
     const auto imageMinimum = ImGui::GetItemRectMin();

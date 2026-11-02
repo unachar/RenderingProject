@@ -118,6 +118,13 @@ namespace
         // 置き換えたリソースは、このフレームのフェンスが再利用されるまで保持する。
         vector<ComPtr<ID3D12Resource>> Retired;
         UINT Height = 0;
+        // TLAS のプレビルド情報のキャッシュ。TLAS の必要サイズは「インスタンス数・ビルドフラグ」だけで
+        // 決まる（インスタンスの変換や参照 BLAS には依存しない）ため、同じ条件なら再照会しない。
+        // UINT_MAX は未照会。リソース解放時は g_Frames = {} で初期化される。
+        UINT PrebuildCount = UINT_MAX;
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS PrebuildFlags =
+            D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO PrebuildSizes{};
     };
 
     struct Constants
@@ -1170,8 +1177,21 @@ namespace
         inputs.NumDescs = g_InstanceCount;
         inputs.InstanceDescs = frame.Instances->GetGPUVirtualAddress();
         inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
-        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes{};
-        g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &sizes);
+        // 最適化：ドライバーへのサイズ照会は、インスタンス数かフラグが変わったときだけ行う。
+        // TLAS 自体は従来どおり毎フレーム構築する（構築内容・タイミングは変更なし）。
+        if (frame.PrebuildCount != g_InstanceCount || frame.PrebuildFlags != inputs.Flags)
+        {
+            frame.PrebuildSizes = {};
+            g_Device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &frame.PrebuildSizes);
+            frame.PrebuildCount = g_InstanceCount;
+            frame.PrebuildFlags = inputs.Flags;
+        }
+        const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO sizes = frame.PrebuildSizes;
+        if (sizes.ResultDataMaxSizeInBytes == 0)
+        {
+            frame.PrebuildCount = UINT_MAX; // 照会失敗時は次フレームで再照会する
+            return false;
+        }
         if (!EnsureBuffer(frame.TopLevel, sizes.ResultDataMaxSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
                           D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, L"Scene TLAS") ||
             !EnsureBuffer(frame.Scratch, sizes.ScratchDataSizeInBytes, D3D12_HEAP_TYPE_DEFAULT,
@@ -1416,9 +1436,9 @@ void Raytracing::ReleaseInactiveResources()
     {
         return;
     }
-    const bool needed =
-        g_Settings.Enabled && (UsesRaytracedShadows() || UsesRaytracedAmbientOcclusion() || g_Settings.Reflections ||
-                               RendererSettings::GetRealtimeGiEnabled() || RenderQuality::Get().RaytracedRefraction);
+    const bool needed = RendererSettings::GetRealtimeGiEnabled() ||
+                        (g_Settings.Enabled && (UsesRaytracedShadows() || UsesRaytracedAmbientOcclusion() ||
+                                                g_Settings.Reflections || RenderQuality::Get().RaytracedRefraction));
     const bool releaseSun = g_NrdSun && (!needed || !g_Settings.Denoise || !UsesRaytracedShadows());
     const bool releaseAmbient = g_NrdAmbient && (!needed || !g_Settings.Denoise || !UsesRaytracedAmbientOcclusion());
     bool releaseScene = false;
@@ -1490,10 +1510,11 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
         }
     };
     updateLighting(false);
-    if (!IsAvailable() || !g_Settings.Enabled ||
-        (!UsesRaytracedShadows() && !UsesRaytracedAmbientOcclusion() && !g_Settings.Reflections &&
-         !RendererSettings::GetRealtimeGiEnabled() && !RenderQuality::Get().RaytracedRefraction) ||
-        !commandList || !depth || !normal)
+    // 修正：DXR GI は RT の ON/OFF（g_Settings.Enabled）に関係なく実行する
+    const bool giRequested = RendererSettings::GetRealtimeGiEnabled();
+    const bool rtFeatures = g_Settings.Enabled && (UsesRaytracedShadows() || UsesRaytracedAmbientOcclusion() ||
+                                                   g_Settings.Reflections || RenderQuality::Get().RaytracedRefraction);
+    if (!IsAvailable() || !(rtFeatures || giRequested) || !commandList || !depth || !normal)
     {
         g_NrdHistoryValid = false;
         return;
@@ -1755,12 +1776,12 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     g_Active = true;
     updateLighting(true);
-    if (g_Settings.Reflections || RendererSettings::GetRealtimeGiEnabled())
+    if (RadianceRequested())
     {
         RenderProfiler::ScopedEvent reflectionProfile("DXR Radiance (Reflections / GI)", commandList);
         const bool radianceReady = RayReflections::Execute(commandList, frame.TopLevel.Get(), frame.SceneGeometry,
                                                            nrdFrame, frame.Guides, g_Settings.Denoise);
-        g_ReflectionsActive = radianceReady && g_Settings.Reflections;
+        g_ReflectionsActive = radianceReady && ReflectionsRequested();
         g_GiActive = radianceReady && RendererSettings::GetRealtimeGiEnabled() && RayReflections::IsGiActive();
     }
     if (g_ReflectionsActive || g_GiActive)
@@ -1782,6 +1803,16 @@ void Raytracing::Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource*
 bool Raytracing::IsAvailable()
 {
     return g_Pipeline != nullptr;
+}
+
+bool Raytracing::ReflectionsRequested()
+{
+    return g_Settings.Enabled && g_Settings.Reflections;
+}
+
+bool Raytracing::RadianceRequested()
+{
+    return ReflectionsRequested() || RendererSettings::GetRealtimeGiEnabled();
 }
 
 bool Raytracing::UsesRaytracedShadows()

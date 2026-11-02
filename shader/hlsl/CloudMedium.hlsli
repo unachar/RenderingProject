@@ -134,7 +134,9 @@ uint CloudIntervals(float3 origin, float3 direction, float limit, out float2 int
     return mergedCount;
 }
 
-float CloudLayerDensity(float3 worldPosition, CloudLayerParameters layer, uint index)
+// detail = false は基本形状だけを返す（詳細ノイズの 3D サンプルを省く）。
+// 空白のスキップと、遠い光のサンプルで使う。浸食は輪郭を削るだけなので、基本形状は上限として安全。
+float CloudLayerDensityLod(float3 worldPosition, CloudLayerParameters layer, uint index, bool detail)
 {
     if (layer.Layer.z <= 0 || layer.Layer.w <= 0)
     {
@@ -157,10 +159,23 @@ float CloudLayerDensity(float3 worldPosition, CloudLayerParameters layer, uint i
     {
         return 0;
     }
+    // 上部ほど丸く（積雲のカリフラワー状）、下部ほど平らになる高さ依存の形状
+    float coverageShape = shape * gradient;
+    if (!detail)
+    {
+        return saturate(coverageShape) * layer.Layer.w;
+    }
     float3 detailUv = worldPosition * layer.Shape.y + noiseOffset;
     detailUv.xz -= layer.Wind.zw;
-    float detail = CloudDetailNoise.SampleLevel(CloudWrap, detailUv, 0);
-    return saturate(shape * gradient - detail * layer.Shape.z * (1 - shape)) * layer.Layer.w;
+    float detailNoise = CloudDetailNoise.SampleLevel(CloudWrap, detailUv, 0);
+    // 下側は細かく（ちぎれた雲底）、上側はふくらんだ（反転した）詳細で浸食する
+    float detailModifier = lerp(detailNoise, 1 - detailNoise, saturate(height * 4.0));
+    return saturate(coverageShape - detailModifier * layer.Shape.z * (1 - coverageShape)) * layer.Layer.w;
+}
+
+float CloudLayerDensity(float3 worldPosition, CloudLayerParameters layer, uint index)
+{
+    return CloudLayerDensityLod(worldPosition, layer, index, true);
 }
 
 float CloudDensity(float3 worldPosition)
@@ -177,10 +192,66 @@ float CloudDensity(float3 worldPosition)
     return density;
 }
 
+float CloudDensityLod(float3 worldPosition, bool detail)
+{
+    float density = CloudLayerDensityLod(worldPosition, GetCloudLayer(0), 0, detail);
+    [branch] if (CloudQuality.w <= 1)
+    {
+        return density;
+    }
+    [loop] for (uint index = 1; index < CloudQuality.w; ++index)
+    {
+        density += CloudLayerDensityLod(worldPosition, GetCloudLayer(index), index, detail);
+    }
+    return density;
+}
+
+// 雲の内部の照明用の光マーチ。地表の影用（CloudLightTransmittance）とは別。
+//  ・距離を指数的に伸ばす（近くは細かく、遠くは粗く）。全区間（数 km）を等分していた従来より、
+//    自己遮蔽の細部が出て、サンプル数も少なくて済む
+//  ・最初の 2 サンプル以外は基本形状のみ（詳細ノイズを省く）
+//  ・最後に長いサンプルを 1 つ追加して、遠くの雲の塊による遮蔽も拾う
+float CloudMarchOpticalDepth(float3 position, float3 towardLight, float maxDistance)
+{
+    const uint stepCount = clamp(CloudQuality.y, 2u, 16u);
+    float opticalDepth = 0;
+    float previous = 0;
+    // 1 + r + r^2 + ... = maxDistance になる公比 r = 1.6 の等比数列
+    const float ratio = 1.6;
+    float first = maxDistance * (ratio - 1) / (pow(ratio, (float)stepCount) - 1);
+    float segment = first;
+    [loop] for (uint i = 0; i < stepCount; ++i)
+    {
+        float distance = previous + segment * 0.5;
+        float density = CloudDensityLod(position + towardLight * distance, i < 2);
+        opticalDepth += density * segment;
+        previous += segment;
+        segment *= ratio;
+        if (opticalDepth * CloudShape.w > 9.21)
+        {
+            return opticalDepth;
+        }
+    }
+    // 遠方の塊：光線方向に maxDistance の 3 倍先を 1 サンプル
+    opticalDepth += CloudDensityLod(position + towardLight * (maxDistance * 2.5), false) * maxDistance * 2.0;
+    return opticalDepth;
+}
+
 float CloudHG(float cosine)
 {
     float g = CloudLighting.x;
     return (1 - g * g) / (12.566370614 * pow(max(1 + g * g - 2 * g * cosine, 0.001), 1.5));
+}
+
+float CloudHGg(float cosine, float g)
+{
+    return (1 - g * g) / (12.566370614 * pow(max(1 + g * g - 2 * g * cosine, 0.001), 1.5));
+}
+
+// 二重ローブ（前方の銀の縁 + 弱い後方散乱）。設定の g を前方ローブに使う
+float CloudDualPhase(float cosine, float g)
+{
+    return lerp(CloudHGg(cosine, -0.25 * saturate(g / 0.85)), CloudHGg(cosine, g), 0.75);
 }
 
 float CloudLightTransmittance(float3 position, float3 towardSun)

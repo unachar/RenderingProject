@@ -54,6 +54,15 @@ struct RenderQualitySettings
     bool LensFlare = false;
     float LensFlareIntensity = 0.35f;
     float LensFlareHalo = 0.25f;
+    // --- 太陽のレンズフレア（大気シミュレーションの太陽から生成） ---
+    bool SunFlare = true;
+    float SunFlareIntensity = 1.0f;  // 全体
+    float SunFlareGlare = 1.0f;      // 太陽の周りのにじみ（ベーリンググレア）
+    float SunFlareStarburst = 1.0f;  // 光芒（絞り羽根の回折）
+    float SunFlareGhosts = 1.0f;     // ゴースト（レンズ面の反射）
+    float SunFlareHalo = 0.5f;       // 虹色のリング
+    float SunFlareAnamorphic = 0.0f; // 横方向のストリーク
+    int SunFlareBlades = 6;          // 絞り羽根の枚数（ゴーストの多角形 / 光芒の本数）
     // --- 天候 ---
     bool WeatherEnabled = false;
     float RainIntensity = 0.0f; // 雨粒（画面）と濡れの進行速度

@@ -62,6 +62,11 @@ class Raytracing
     static void Execute(ID3D12GraphicsCommandList* commandList, ID3D12Resource* depth, ID3D12Resource* normal,
                         D3D12_GPU_DESCRIPTOR_HANDLE depthSrv, D3D12_GPU_DESCRIPTOR_HANDLE normalSrv, UINT frameIndex);
     static bool IsAvailable();
+    // RT 反射を実行するか（レイトレーシング ON かつ 反射 ON）
+    static bool ReflectionsRequested();
+    // DXR GI（Realtime / Lumen / SHaRC）は「レイトレーシング」の ON/OFF に関係なく動かす。
+    // 以前は RT を OFF にしていると GI モードを選んでも何も起きなかった。
+    static bool RadianceRequested();
     static bool UsesRaytracedShadows();
     static bool UsesRaytracedAmbientOcclusion();
     static bool IsActive();

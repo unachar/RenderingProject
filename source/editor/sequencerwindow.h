@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // ============================================================================
 // SequencerWindow : ライブ演出用タイムライン（Dear ImGui + ImDrawList）。
 //
@@ -428,6 +428,7 @@ class SequencerWindow
     uint64_t m_LastChecksum = 0;
     uint64_t m_LastHistoryRevision = 0;
     bool m_WasPlaying = false;
+    int m_LastPlaybackFrame = -1;
     float m_LastEvaluatedTime = -1.0f;
 
     // 曲線エディター

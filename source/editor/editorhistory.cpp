@@ -1,6 +1,7 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "materialmanager.h"
 #include "imguimanager.h"
+#include "editorpreferences.h"
 #include "editorwidgets.h"
 #include "sun.h"
 #include "world.h"
@@ -349,7 +350,7 @@ void ImGuiManager::BeginUndoCapture(EntityID entity, const EntitySnapshot& befor
 
 void ImGuiManager::FinalizeUndoCaptureIfIdle(bool force)
 {
-    if (!m_HasPendingUndo || (!force && (ImGui::IsAnyItemActive() || ImGuizmo::IsUsing())))
+    if (!m_HasPendingUndo || (!force && (ImGui::IsAnyItemActive() || ImGuizmo::IsUsingAny())))
     {
         return;
     }
@@ -375,9 +376,11 @@ void ImGuiManager::PushUndoGroup(const vector<EntitySnapshot>& snapshots)
     }
     ++m_EditRevision;
     m_UndoStack.push_back(snapshots);
-    if (m_UndoStack.size() > 10)
+    // 上限はエディター設定（既定 30、以前は 10 固定）
+    const size_t limit = static_cast<size_t>((std::max)(EditorPreferences::Get().UndoLimit, 1));
+    if (m_UndoStack.size() > limit)
     {
-        m_UndoStack.erase(m_UndoStack.begin());
+        m_UndoStack.erase(m_UndoStack.begin(), m_UndoStack.begin() + (m_UndoStack.size() - limit));
     }
     m_RedoStack.clear();
 }

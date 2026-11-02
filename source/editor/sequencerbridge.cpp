@@ -281,7 +281,9 @@ class SequencerEditorBridgeImpl final : public ISequencerBackend
         {
             return false;
         }
-        ImGui::Image((ImTextureData*)handle.ptr, ImVec2(width, height));
+        // ImTextureData* にキャストすると ImGui 1.92 では「管理テクスチャ」として扱われ、
+        // GPU ディスクリプタのアドレスを CPU ポインタとして参照してしまう。ImTextureID で渡す。
+        ImGui::Image(static_cast<ImTextureID>(handle.ptr), ImVec2(width, height));
         return true;
     }
 

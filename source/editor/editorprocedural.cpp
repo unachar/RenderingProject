@@ -1,4 +1,5 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "editorworkspace.h"
 #include "dlssupscaler.h"
 #include "imguimanager.h"
 #include "proceduralscene.h"
@@ -60,7 +61,7 @@ void ImGuiManager::DrawProceduralWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(800.0f, 670.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSizeConstraints(ImVec2(600.0f, 360.0f), ImVec2(FLT_MAX, FLT_MAX));
-    if (!ImGui::Begin("プロシージャルエディター", &m_ShowProceduralWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("プロシージャルエディター", &m_ShowProceduralWindow))
     {
         ImGui::End();
         return;
@@ -326,7 +327,7 @@ void ImGuiManager::DrawProceduralWindow()
 void ImGuiManager::DrawRaytracingWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(440.0f, 370.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("レイトレーシング", &m_ShowRaytracingWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("レイトレーシング", &m_ShowRaytracingWindow))
     {
         ImGui::End();
         return;

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "editorworkspace.h"
 #include "gpuscene/gpuscene.h"
 #include "gpudriven/gpudrivenrenderer.h"
 #include "visibility/gpuvisibility.h"
@@ -6,6 +7,8 @@
 #include "virtualgeometry/virtualgeometrydebug.h"
 #include "cloud/cloudrenderer.h"
 #include "imguimanager.h"
+#include "renderquality.h"
+#include "editorshell.h"
 #include "gbufferpreview.h"
 #include "advancedeffects.h"
 #include "editorwidgets.h"
@@ -33,7 +36,7 @@ using namespace EditorWidgets;
 void ImGuiManager::DrawPerformanceWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(260.0f, 150.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("パフォーマンス", &m_ShowPerformanceWindow, ImGuiWindowFlags_AlwaysAutoResize))
+    if (!EditorWindowRegistry::BeginEditorWindow("パフォーマンス", &m_ShowPerformanceWindow, ImGuiWindowFlags_AlwaysAutoResize))
     {
         ImGui::End();
         return;
@@ -86,7 +89,7 @@ void ImGuiManager::DrawPerformanceWindow()
 void ImGuiManager::DrawRenderDebuggerWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(420.0f, 360.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("描画概要", &m_ShowRenderDebugger))
+    if (!EditorWindowRegistry::BeginEditorWindow("描画概要", &m_ShowRenderDebugger))
     {
         ImGui::End();
         return;
@@ -117,22 +120,23 @@ void ImGuiManager::DrawRenderFeatureWindows()
 {
     const struct FeatureWindow
     {
+        const char* Id;
         const char* Title;
         bool* IsOpen;
         void (*DrawContent)();
     } windows[] = {
-        {"GPU Scene", &m_ShowGpuSceneWindow, GpuScene::DrawDebug},
-        {"GPU Driven Rendering", &m_ShowGpuDrivenWindow, GPUDrivenRenderer::DrawDebug},
-        {"Visibility", &m_ShowVisibilityWindow, GPUVisibility::DrawDebug},
-        {"Mesh Shader", &m_ShowMeshShaderWindow, MeshShaderRenderer::DrawDebug},
-        {"Nanite / LOD", &m_ShowVirtualGeometryWindow, VirtualGeometryDebug::DrawControls},
-        {"プロシージャルクラウド", &m_ShowCloudWindow, CloudRenderer::DrawDebugUI},
-        {"テクスチャ一覧", &m_ShowTextureListWindow, DrawTextureListContent},
+        {"gpu_scene", "GPU Scene", &m_ShowGpuSceneWindow, GpuScene::DrawDebug},
+        {"gpu_driven", "GPU Driven Rendering", &m_ShowGpuDrivenWindow, GPUDrivenRenderer::DrawDebug},
+        {"visibility", "Visibility", &m_ShowVisibilityWindow, GPUVisibility::DrawDebug},
+        {"mesh_shader", "Mesh Shader", &m_ShowMeshShaderWindow, MeshShaderRenderer::DrawDebug},
+        {"virtual_geometry", "Nanite / LOD", &m_ShowVirtualGeometryWindow, VirtualGeometryDebug::DrawControls},
+        {"clouds", "プロシージャルクラウド", &m_ShowCloudWindow, CloudRenderer::DrawDebugUI},
+        {"textures", "テクスチャ一覧", &m_ShowTextureListWindow, DrawTextureListContent},
     };
 
     for (const auto& window : windows)
     {
-        if (!*window.IsOpen)
+        if (!*window.IsOpen || !EditorWorkspaceManager::Get().IsAreaDrawn(window.Id))
         {
             continue;
         }
@@ -163,7 +167,7 @@ void ImGuiManager::DrawTextureListContent()
 void ImGuiManager::DrawGBufferWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(700.0f, 560.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Gバッファ", &m_ShowGBufferWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("Gバッファ", &m_ShowGBufferWindow))
     {
         ImGui::End();
         return;
@@ -251,7 +255,7 @@ void ImGuiManager::DrawGBufferWindow()
 void ImGuiManager::DrawAtmosphereWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(470.0f, 680.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("大気シミュレーション", &m_ShowAtmosphereWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("大気シミュレーション", &m_ShowAtmosphereWindow))
     {
         ImGui::End();
         return;
@@ -351,6 +355,24 @@ void ImGuiManager::DrawAtmosphereWindow()
         }
     }
 
+    ImGui::SeparatorText("レンズフレア（太陽）");
+    {
+        auto& rq = RenderQuality::Get();
+        ImGui::Checkbox("太陽のレンズフレア", &rq.SunFlare);
+        ImGui::SetItemTooltip("Sun の位置から、グレア・光芒・ゴースト・ハローを描きます。\n"
+                              "建物や木で太陽が隠れると自動で消えます（深度で判定）。");
+        ImGui::BeginDisabled(!rq.SunFlare);
+        ImGui::SliderFloat("全体の強さ##SunFlare", &rq.SunFlareIntensity, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("グレア（にじみ）", &rq.SunFlareGlare, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("光芒", &rq.SunFlareStarburst, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("ゴースト", &rq.SunFlareGhosts, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("虹色のハロー", &rq.SunFlareHalo, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("横長ストリーク", &rq.SunFlareAnamorphic, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderInt("絞り羽根の枚数", &rq.SunFlareBlades, 4, 12);
+        ImGui::SetItemTooltip("ゴーストの多角形の形と、光芒の本数（枚数 × 2）が変わります");
+        ImGui::EndDisabled();
+    }
+
     if (ImGui::Button("大気をリセット"))
     {
         Atmosphere::Reset();
@@ -361,45 +383,146 @@ void ImGuiManager::DrawAtmosphereWindow()
 
 void ImGuiManager::DrawLogWindow()
 {
+    // UE の Output Log / Blender の Info エディター風：重要度フィルター、時刻、重複のまとめ表示、コピー
     static ImGuiTextFilter logFilter;
+    static bool showLevel[4] = {true, true, true, true};
+    static vector<int> visibleLogs;
+    static uint64_t cachedRevision = ~0ull;
+    static string cachedFilter;
+    static int cachedMask = -1;
     ImGui::SetNextWindowSize(ImVec2(620.0f, 220.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("ログ", &m_ShowLogWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("ログ", &m_ShowLogWindow))
     {
         ImGui::End();
         return;
     }
 
+    std::lock_guard<std::recursive_mutex> lock(m_LogMutex);
     if (ImGui::Button("クリア"))
     {
         m_Logs.clear();
+        for (auto& count : m_LogCounts)
+        {
+            count = 0;
+        }
+        ++m_LogRevision;
     }
     ImGui::SameLine();
+    struct LevelToggle
+    {
+        EditorShell::LogLevel Level;
+        const char* Name;
+    };
+    const LevelToggle toggles[] = {{EditorShell::LogLevel::Info, "情報"},
+                                   {EditorShell::LogLevel::Success, "成功"},
+                                   {EditorShell::LogLevel::Warning, "警告"},
+                                   {EditorShell::LogLevel::Error, "エラー"}};
+    for (const auto& toggle : toggles)
+    {
+        const int index = static_cast<int>(toggle.Level);
+        char label[64];
+        snprintf(label, sizeof(label), "%s %s %u##LogLevel%d", EditorShell::LogLevelIcon(toggle.Level), toggle.Name,
+                 m_LogCounts[index], index);
+        const ImVec4 color = EditorShell::LogLevelColor(toggle.Level);
+        ImGui::PushStyleColor(ImGuiCol_Text, showLevel[index] ? color : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::PushStyleColor(ImGuiCol_Button, showLevel[index] ? ImGui::GetStyleColorVec4(ImGuiCol_FrameBg)
+                                                                : ImVec4(0, 0, 0, 0));
+        if (ImGui::SmallButton(label))
+        {
+            showLevel[index] = !showLevel[index];
+        }
+        ImGui::PopStyleColor(2);
+        ImGui::SameLine();
+    }
     ImGui::Checkbox("末尾を追従", &m_LogAutoScroll);
+    ImGui::SameLine();
+    const bool copyRequested = ImGui::SmallButton("コピー");
+    ImGui::SetItemTooltip("表示中のログをクリップボードにコピー（各行は右クリックでコピー）");
     DrawSearchField("LogSearch", "ログを検索...", logFilter);
     ImGui::Separator();
 
-    vector<int> visibleLogs;
-    for (int i = 0; i < static_cast<int>(m_Logs.size()); ++i)
+    // 最適化：フィルター結果はログ追加・フィルター変更時だけ作り直す（以前は毎フレーム全件走査）
+    int mask = 0;
+    for (int i = 0; i < 4; ++i)
     {
-        if (logFilter.PassFilter(m_Logs[i].c_str()))
+        mask |= showLevel[i] ? (1 << i) : 0;
+    }
+    if (cachedRevision != m_LogRevision || cachedMask != mask || cachedFilter != logFilter.InputBuf)
+    {
+        cachedRevision = m_LogRevision;
+        cachedMask = mask;
+        cachedFilter = logFilter.InputBuf;
+        visibleLogs.clear();
+        visibleLogs.reserve(m_Logs.size());
+        for (int i = 0; i < static_cast<int>(m_Logs.size()); ++i)
         {
-            visibleLogs.push_back(i);
+            const auto& entry = m_Logs[i];
+            if ((mask & (1 << (entry.Level & 3))) && logFilter.PassFilter(entry.Text.c_str()))
+            {
+                visibleLogs.push_back(i);
+            }
         }
     }
+    if (copyRequested)
+    {
+        string text;
+        for (int index : visibleLogs)
+        {
+            const auto& entry = m_Logs[index];
+            text += "[";
+            text += entry.Clock;
+            text += "] ";
+            text += entry.Text;
+            if (entry.Repeat > 1)
+            {
+                text += " (x" + to_string(entry.Repeat) + ")";
+            }
+            text += "\n";
+        }
+        ImGui::SetClipboardText(text.c_str());
+    }
+
     ImGui::TextDisabled("%d / %d 件", static_cast<int>(visibleLogs.size()), static_cast<int>(m_Logs.size()));
-    ImGui::BeginChild("LogScroll", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+    ImGui::BeginChild("LogScroll", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
     const bool wasAtBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f;
     if (visibleLogs.empty())
     {
         ImGui::TextUnformatted("表示するログがありません。");
     }
+    const ImVec4 dim = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
     ImGuiListClipper clipper;
     clipper.Begin(static_cast<int>(visibleLogs.size()));
     while (clipper.Step())
     {
         for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
         {
-            ImGui::TextUnformatted(m_Logs[visibleLogs[i]].c_str());
+            const auto& entry = m_Logs[visibleLogs[i]];
+            const auto level = static_cast<EditorShell::LogLevel>(entry.Level & 3);
+            ImGui::PushID(i);
+            ImGui::TextColored(dim, "%s", entry.Clock);
+            ImGui::SameLine();
+            ImGui::TextColored(EditorShell::LogLevelColor(level), "%s", EditorShell::LogLevelIcon(level));
+            ImGui::SameLine();
+            if (level == EditorShell::LogLevel::Warning || level == EditorShell::LogLevel::Error)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorShell::LogLevelColor(level));
+                ImGui::TextUnformatted(entry.Text.c_str());
+                ImGui::PopStyleColor();
+            }
+            else
+            {
+                ImGui::TextUnformatted(entry.Text.c_str());
+            }
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+            {
+                ImGui::SetClipboardText(entry.Text.c_str());
+            }
+            if (entry.Repeat > 1)
+            {
+                ImGui::SameLine();
+                ImGui::TextColored(EditorShell::LogLevelColor(EditorShell::LogLevel::Warning), "×%u", entry.Repeat);
+            }
+            ImGui::PopID();
         }
     }
     if (m_LogAutoScroll && wasAtBottom)
@@ -413,7 +536,7 @@ void ImGuiManager::DrawLogWindow()
 void ImGuiManager::DrawMeshOutlineWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(760.0f, 420.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("メッシュ単位のアウトライン", &m_ShowMeshOutlineWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("メッシュ単位のアウトライン", &m_ShowMeshOutlineWindow))
     {
         ImGui::End();
         return;
@@ -442,7 +565,7 @@ void ImGuiManager::DrawMeshOutlineWindow()
 void ImGuiManager::DrawMeshShadingWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(760.0f, 420.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("メッシュ単位のシェーディング", &m_ShowMeshShadingWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("メッシュ単位のシェーディング", &m_ShowMeshShadingWindow))
     {
         ImGui::End();
         return;

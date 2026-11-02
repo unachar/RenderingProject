@@ -73,15 +73,20 @@ CloudOutput MarchCloud(float2 uv, float2 pixel)
     }
     float3 moonDirection = VirtualMoonDirection();
     float3 moonRadiance = VirtualMoonIrradiance() * CelestialAtmosphereTransmission(heightBounds.x, moonDirection);
-    float moonPhase = CloudHG(dot(ray, moonDirection));
-    float phase = CloudHG(dot(ray, sunDirection));
+    const float sunCosine = dot(ray, sunDirection);
+    const float moonCosine = dot(ray, moonDirection);
     float3 solarBottom = sunRadiance * CelestialAtmosphereTransmission(heightBounds.x, sunDirection);
     float3 solarTop = sunRadiance * CelestialAtmosphereTransmission(heightBounds.y, sunDirection);
+    const bool sunLit = any(solarTop > 0) && sunDirection.y > -0.02;
+    const bool moonLit = any(moonRadiance > 0) && moonDirection.y > 0;
     float twilight = smoothstep(-0.12, 0.04, sunDirection.y) * (1 - smoothstep(0.04, 0.30, sunDirection.y));
     float3 ambientColor = lerp(float3(0.006, 0.009, 0.016),
                                max(AtmosphereColor0.rgb, 0) * max(SkyParameters.z, 0) * 0.05, SkyParameters.y);
     ambientColor = lerp(ambientColor, float3(0.12, 0.035, 0.018) * max(SkyParameters.z, 0) * 0.05, twilight);
     float3 ambient = ambientColor * CloudLighting.y;
+    // 光マーチの長さ：雲の厚みに比例（数 km の全区間ではなく、自己遮蔽に効く範囲）
+    const float layerThickness = max(heightBounds.y - heightBounds.x, 1.0);
+    const float lightMarchLength = clamp(layerThickness * 0.6, 50.0, 3000.0);
     // ピクセルごとに安定した IGN。時間方向の再投影がないため、フレームごとに乱数を変えない。
     float jitter = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
     float offset = lerp(0.5, jitter, CloudLighting.w);
@@ -93,36 +98,95 @@ CloudOutput MarchCloud(float2 uv, float2 pixel)
     float weightedDepth = 0;
     uint steps = 0;
     float occupiedDistance = 0;
+    const float extinction = max(CloudShape.w, 0.000001);
     [loop] for (uint interval = 0; interval < intervalCount; ++interval)
     {
-        float intervalLength = intervals[interval].y - intervals[interval].x;
+        float intervalStart = intervals[interval].x;
+        float intervalLength = intervals[interval].y - intervalStart;
         occupiedDistance += intervalLength;
-        float stepLength = intervalLength / CloudQuality.x;
-        [loop] for (uint i = 0; i < CloudQuality.x; ++i)
+        // 最適化：空白は 4 倍の粗いステップ（基本形状のみ）で進み、雲に当たったら 1 ステップ戻って細かく進む。
+        // 細かいステップは従来と同じ長さ（区間 / ステップ数）なので、密な部分の品質は落ちない。
+        const float fineStep = intervalLength / max((float)CloudQuality.x, 1.0);
+        const float coarseStep = fineStep * 4.0;
+        float distance = intervalStart + offset * fineStep;
+        bool fine = false;
+        uint emptyRun = 0;
+        const uint maxIterations = CloudQuality.x * 3u + 8u;
+        [loop] for (uint iteration = 0; iteration < maxIterations && distance < intervals[interval].y; ++iteration)
         {
-            ++steps;
-            float distance = intervals[interval].x + (i + offset) * stepLength;
             float3 position = origin + ray * distance;
+            if (!fine)
+            {
+                // 粗い探索
+                ++steps;
+                if (CloudDensityLod(position, false) < 0.00001 && CloudQuality.z != 3)
+                {
+                    distance += coarseStep;
+                    continue;
+                }
+                // 雲に入った：1 粗ステップ分戻って細かいステップへ
+                fine = true;
+                emptyRun = 0;
+                distance = max(intervalStart + offset * fineStep, distance - coarseStep + fineStep);
+                continue;
+            }
+            ++steps;
             float density = CloudDensity(position);
             if (density < 0.00001 && CloudQuality.z != 3)
             {
+                // 連続して空なら粗い探索へ戻る
+                if (++emptyRun >= 6)
+                {
+                    fine = false;
+                }
+                distance += fineStep;
                 continue;
             }
-            float3 solarIncident =
-                lerp(solarBottom, solarTop,
-                     saturate((position.y - heightBounds.x) / max(heightBounds.y - heightBounds.x, 0.01)));
-            float lightT = any(solarIncident > 0) ? CloudLightTransmittance(position, sunDirection) : 1;
-            float moonT = any(moonRadiance > 0) ? CloudSolarTransmittance(position, moonDirection) : 1;
-            float powder = 1 + CloudLighting.z * (1 - exp(-2 * density));
-            float3 lighting = (solarIncident * phase * lightT + moonRadiance * moonPhase * moonT) * powder + ambient;
-            float sampleT = exp(-density * CloudShape.w * stepLength);
+            emptyRun = 0;
+            float heightFraction = saturate((position.y - heightBounds.x) / layerThickness);
+            float3 solarIncident = lerp(solarBottom, solarTop, heightFraction);
+
+            // ---- 光の透過（指数間隔の光マーチ）
+            float sunDepth = sunLit ? CloudMarchOpticalDepth(position, sunDirection, lightMarchLength) : 0;
+            float moonDepth = moonLit ? CloudMarchOpticalDepth(position, moonDirection, lightMarchLength) : 0;
+
+            // ---- 多重散乱の近似（Wrenninge 2013 のオクターブ法）
+            //  オクターブごとに消散 a^n、寄与 b^n、位相の異方性 c^n を下げる。
+            //  厚い雲の内部が真っ黒にならず、明るい縁と柔らかな陰影になる。
+            float3 sunLight = 0;
+            float3 moonLight = 0;
+            float contribution = 1;
+            float attenuation = 1;
+            float anisotropy = 1;
+            [unroll] for (uint octave = 0; octave < 3; ++octave)
+            {
+                float g = CloudLighting.x * anisotropy;
+                sunLight += contribution * exp(-sunDepth * extinction * attenuation) * CloudDualPhase(sunCosine, g);
+                moonLight += contribution * exp(-moonDepth * extinction * attenuation) * CloudDualPhase(moonCosine, g);
+                contribution *= 0.5;
+                attenuation *= 0.4;
+                anisotropy *= 0.5;
+            }
+            // 3 オクターブの合計（1 + 0.5 + 0.25）で正規化し、薄い雲の明るさは従来と揃える
+            sunLight *= 1.0 / 1.75;
+            moonLight *= 1.0 / 1.75;
+            float powder = 1 + CloudLighting.z * (1 - exp(-2 * density)); // 従来と同じパウダー効果
+            // 環境光：雲の上部ほど空に開けていて明るい
+            float3 ambientSample = ambient * lerp(0.45, 1.25, heightFraction);
+            float3 lighting = (solarIncident * sunLight * (sunLit ? 1 : 0) + moonRadiance * moonLight * (moonLit ? 1 : 0)) *
+                                  powder +
+                              ambientSample;
+
+            // ---- ステップ内の解析積分（散乱アルベド 1）：ステップ長が変わっても明るさが変わらない
+            float sampleT = exp(-density * extinction * fineStep);
             float weight = transmittance * (1 - sampleT);
             scattering += weight * lighting;
             debugLighting += lighting;
-            densityIntegral += density * stepLength;
+            densityIntegral += density * fineStep;
             weightedDepth += distance * weight;
             depthWeight += weight;
             transmittance *= sampleT;
+            distance += fineStep;
             if (transmittance < 0.01)
             {
                 break;
@@ -153,7 +217,7 @@ CloudOutput MarchCloud(float2 uv, float2 pixel)
     }
     if (CloudQuality.z == 5)
     {
-        output.Color = float4((float(steps) / (CloudQuality.x * intervalCount)).xxx, 0);
+        output.Color = float4(saturate(float(steps) / (CloudQuality.x * intervalCount)).xxx, 0);
     }
     return output;
 }

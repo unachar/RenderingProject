@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "editorworkspace.h"
 #include "materialmanager.h"
 #include "assetthumbnailmanager.h"
 #include "modelmeshtable.h"
@@ -23,7 +24,11 @@
 #include "scenehierarchy.h"
 #include "gpuscene/gpuscenechanges.h"
 #include "impostorrenderer.h"
+#include "livetoonstyle.h"
+#include "materialpartresolver.h"
 #include <fstream>
+#include <array>
+#include <unordered_map>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
@@ -428,7 +433,7 @@ void ImGuiManager::DrawInspectorWindow()
     m_TimelineAnimationDropTargets.clear();
     SyncEntitySelection();
     ImGui::SetNextWindowSize(ImVec2(312.0f, 520.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("インスペクター", &m_ShowInspectorWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("インスペクター", &m_ShowInspectorWindow))
     {
         ImGui::End();
         return;
@@ -609,7 +614,7 @@ void ImGuiManager::DrawInspectorWindow()
 void ImGuiManager::DrawLegacyMaterialEditorWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(380.0f, 560.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("マテリアルエディター", &m_ShowMaterialEditorWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("マテリアルエディター", &m_ShowMaterialEditorWindow))
     {
         ImGui::End();
         return;
@@ -636,10 +641,85 @@ void ImGuiManager::DrawLegacyMaterialEditorWindow()
     ImGui::End();
 }
 
+// テクスチャのパス入力（UTF-8）。エクスプローラーからパスを貼り付けて Enter で確定。
+static bool DrawLiveToonPathInput(const char* label, string& path)
+{
+    // 入力中の文字列はフレームをまたいで保持し、編集中でないときだけパスから同期する。
+    static std::unordered_map<ImGuiID, std::array<char, 512>> buffers;
+    auto& buffer = buffers[ImGui::GetID(label)];
+    bool changed = false;
+    const bool committed =
+        ImGui::InputText(label, buffer.data(), buffer.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+    if (!ImGui::IsItemActive() && !committed)
+    {
+        strncpy_s(buffer.data(), buffer.size(), path.c_str(), _TRUNCATE);
+    }
+    if (committed)
+    {
+        string value = buffer.data();
+        // 「パスのコピー」で付く引用符を外す
+        if (value.size() >= 2 && value.front() == '"' && value.back() == '"')
+        {
+            value = value.substr(1, value.size() - 2);
+        }
+        path = value;
+        changed = true;
+    }
+    if (!path.empty())
+    {
+        ImGui::SameLine();
+        ImGui::PushID(label);
+        if (ImGui::SmallButton("×"))
+        {
+            path.clear();
+            changed = true;
+        }
+        ImGui::PopID();
+        if (LiveToonTextures::ResolveDescriptor(path) < 0)
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "読み込めません: %s", path.c_str());
+        }
+    }
+    return changed;
+}
+
+// ライブ用トゥーンスタイル（シーン全体）。Forward / Deferred 共通で LightParams に入る。
+static void DrawLiveToonStyleControls()
+{
+    auto& s = LiveToonStyle::Get();
+    ImGui::TextWrapped("学マスのライブ風シェーディング（シーン全体）。トゥーン系クラス（髪・服・肌・トゥーン）に適用されます。");
+    ImGui::SliderFloat("ライブスタイル適用", &s.Blend, 0.0f, 1.0f);
+    ImGui::SeparatorText("メインライト（平行光源）");
+    ImGui::ColorEdit3("影の乗算色", &s.ShadowTint.x, ImGuiColorEditFlags_Float);
+    ImGui::SliderFloat("乗算色の効き", &s.ShadowTintStrength, 0.0f, 1.0f);
+    ImGui::SliderFloat("肌の血色", &s.SkinWarmth, 0.0f, 1.0f);
+    ImGui::SliderFloat("落ち影の濃さ", &s.CastShadowDensity, 0.0f, 1.0f);
+    ImGui::SeparatorText("加算ライト（点 / スポット / 矩形）");
+    ImGui::SliderFloat("回り込み", &s.AdditiveSoftness, 0.0f, 1.0f);
+    ImGui::SliderFloat("加算ライト強度", &s.AdditiveGain, 0.0f, 3.0f);
+    ImGui::SeparatorText("リム");
+    ImGui::SliderFloat("ソフトリム", &s.RimSoft, 0.0f, 2.0f);
+    ImGui::SliderFloat("ハードリム", &s.RimHard, 0.0f, 2.0f);
+    ImGui::SliderFloat("リム幅", &s.RimWidth, 0.02f, 1.0f);
+    ImGui::SliderFloat("リムのライト色", &s.RimLightTint, 0.0f, 1.0f);
+    ImGui::SeparatorText("スペキュラ");
+    ImGui::SliderFloat("ランプスペキュラ", &s.RampSpecular, 0.0f, 2.0f);
+    ImGui::SliderFloat("天使の輪（髪）", &s.HairAngelRing, 0.0f, 2.0f);
+    ImGui::SliderFloat("環境スペキュラ", &s.EnvSpecular, 0.0f, 2.0f);
+    ImGui::SeparatorText("陰影ランプ（シーン全体）");
+    ImGui::TextWrapped("横軸 = 影（左）→ 光（右）。上半分 = 肌、下半分 = 肌以外。パスを貼り付けて Enter。");
+    DrawLiveToonPathInput("陰影ランプ画像", s.ShadowRampPath);
+    ImGui::SliderFloat("陰影ランプの強さ", &s.ShadowRampStrength, 0.0f, 1.0f);
+    if (ImGui::Button("ライブスタイルを標準値に戻す"))
+    {
+        LiveToonStyle::Reset();
+    }
+}
+
 void ImGuiManager::DrawRimSettingsWindow()
 {
     ImGui::SetNextWindowSize(ImVec2(420.0f, 560.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("リム設定", &m_ShowRimSettingsWindow))
+    if (!EditorWindowRegistry::BeginEditorWindow("リム設定", &m_ShowRimSettingsWindow))
     {
         ImGui::End();
         return;
@@ -649,6 +729,8 @@ void ImGuiManager::DrawRimSettingsWindow()
         !ComponentManager::HasComponent<MaterialComponent>(m_SelectedEntity))
     {
         ImGui::TextUnformatted("リムを設定するマテリアル付きオブジェクトを選択してください");
+        ImGui::Separator();
+        DrawLiveToonStyleControls();
         ImGui::End();
         return;
     }
@@ -736,6 +818,11 @@ void ImGuiManager::DrawRimSettingsWindow()
                 }
                 ImGui::PopID();
             }
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("ライブトゥーン"))
+        {
+            DrawLiveToonStyleControls();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -879,6 +966,124 @@ void ImGuiManager::DrawMaterialInspector(EntityID entity)
     changed |= ImGui::SliderFloat("アウトライン幅", &material.ToonOutlineWidth, 0.0f, 0.20f);
     changed |= ImGui::SliderFloat("スクリーン幅px", &material.ToonOutlineScreenWidth, 0.0f, 24.0f, "%.1f");
     changed |= ImGui::SliderFloat("TEO幅スケール", &material.ToonOutlineTeoWidthScale, 0.0f, 3.0f);
+
+    if (IsModelMaterialEntity(entity))
+    {
+        ImGui::SeparatorText("メカクレ（前髪越しの目）");
+        changed |= ImGui::Checkbox("メカクレ有効", &material.MekakureEnabled);
+        ImGui::BeginDisabled(!material.MekakureEnabled);
+        changed |= ImGui::SliderFloat("透け具合", &material.MekakureOpacity, 0.0f, 1.0f);
+        changed |= ImGui::SliderFloat("透過する奥行き", &material.MekakureDepth, 0.0f, 0.5f, "%.3f");
+        ImGui::SetItemTooltip("目の手前この距離（ワールド単位）以内の遮蔽物だけ透けます。後頭部越しには透けません。");
+        changed |= ImGui::SliderFloat("フェード開始 N・V", &material.MekakureFadeStart, 0.0f, 1.0f);
+        changed |= ImGui::SliderFloat("フェード終了 N・V", &material.MekakureFadeEnd, -1.0f, 1.0f);
+        struct MaskItem
+        {
+            const char* Label;
+            uint32_t Bit;
+        };
+        const MaskItem maskItems[] = {{"目", MeshSemantic_Eye},
+                                      {"目ハイライト", MeshSemantic_EyeHighlight},
+                                      {"眉", MeshSemantic_Brow},
+                                      {"まつ毛", MeshSemantic_Lash},
+                                      {"顔", MeshSemantic_Face}};
+        for (size_t i = 0; i < std::size(maskItems); ++i)
+        {
+            bool on = (static_cast<uint32_t>(material.MekakureTargetMask) & maskItems[i].Bit) != 0;
+            if (i != 0)
+            {
+                ImGui::SameLine();
+            }
+            if (ImGui::Checkbox(maskItems[i].Label, &on))
+            {
+                uint32_t mask = static_cast<uint32_t>(material.MekakureTargetMask);
+                mask = on ? (mask | maskItems[i].Bit) : (mask & ~maskItems[i].Bit);
+                material.MekakureTargetMask = static_cast<int>(mask);
+                changed = true;
+            }
+        }
+        char includeBuffer[256]{};
+        char excludeBuffer[256]{};
+        strncpy_s(includeBuffer, material.MekakureIncludeNames.c_str(), _TRUNCATE);
+        strncpy_s(excludeBuffer, material.MekakureExcludeNames.c_str(), _TRUNCATE);
+        if (ImGui::InputText("追加対象名", includeBuffer, IM_ARRAYSIZE(includeBuffer)))
+        {
+            material.MekakureIncludeNames = includeBuffer;
+            changed = true;
+        }
+        ImGui::SetItemTooltip("メッシュ名 / マテリアル名の部分一致。カンマ区切り（例: eye_L, 瞳）");
+        if (ImGui::InputText("除外名", excludeBuffer, IM_ARRAYSIZE(excludeBuffer)))
+        {
+            material.MekakureExcludeNames = excludeBuffer;
+            changed = true;
+        }
+        const char* maskSources[] = {"なし（奥行きだけで判定）", "髪テクスチャのアルファ", "専用マスク画像（R）"};
+        changed |= ImGui::Combo("透過マスク", &material.MekakureMaskSource, maskSources, IM_ARRAYSIZE(maskSources));
+        ImGui::SetItemTooltip("前髪のどこから・どれだけ目を透かすか。白 = 透かす、黒 = 透かさない（髪の UV 空間）。");
+        if (material.MekakureMaskSource == 2)
+        {
+            changed |= DrawLiveToonPathInput("マスク画像", material.MekakureMaskPath);
+        }
+        if (material.MekakureMaskSource != 0)
+        {
+            changed |= ImGui::SliderFloat("マスクの効き", &material.MekakureMaskStrength, 0.0f, 1.0f);
+            changed |= ImGui::Checkbox("マスク反転", &material.MekakureMaskInvert);
+        }
+        if (ImGui::TreeNode("対象メッシュの確認"))
+        {
+            auto listMesh = [&](const string& meshName, const string& materialName, const string& key, uint32_t flags) {
+                const bool excluded = !material.MekakureExcludeNames.empty() &&
+                                      MeshSemanticKeyMatchesFilter(key, material.MekakureExcludeNames);
+                const bool target = !excluded && ((flags & static_cast<uint32_t>(material.MekakureTargetMask)) != 0 ||
+                                                  (!material.MekakureIncludeNames.empty() &&
+                                                   MeshSemanticKeyMatchesFilter(key, material.MekakureIncludeNames)));
+                if (!target)
+                {
+                    return;
+                }
+                ImGui::BulletText("%s / %s", meshName.c_str(), materialName.c_str());
+            };
+            if (ComponentManager::HasComponent<AnimationModelComponent>(entity))
+            {
+                const auto& component = ComponentManager::GetComponentUnchecked<AnimationModelComponent>(entity);
+                if (auto* model = component.ModelId >= 0 ? ModelManager::GetAnimModel(component.ModelId) : nullptr)
+                {
+                    for (UINT m = 0; m < model->GetMeshCount(); ++m)
+                    {
+                        const auto& mesh = model->GetMeshData(m);
+                        listMesh(mesh.MeshName, mesh.MaterialName, mesh.SemanticKey, mesh.SemanticFlags);
+                    }
+                }
+            }
+            else if (ComponentManager::HasComponent<StaticModelComponent>(entity))
+            {
+                const auto& component = ComponentManager::GetComponentUnchecked<StaticModelComponent>(entity);
+                if (auto* model = component.ModelId >= 0 ? ModelManager::GetStaticModel(component.ModelId) : nullptr)
+                {
+                    for (UINT m = 0; m < model->GetMeshCount(); ++m)
+                    {
+                        const auto& mesh = model->GetMeshData(m);
+                        listMesh(mesh.MeshName, mesh.MaterialName, mesh.SemanticKey, mesh.SemanticFlags);
+                    }
+                }
+            }
+            ImGui::TreePop();
+        }
+        ImGui::EndDisabled();
+    }
+
+    ImGui::SeparatorText("ライブトゥーンのテクスチャ");
+    ImGui::TextWrapped("トゥーン系クラス（髪・服・肌・トゥーン）に適用。パスを貼り付けて Enter。");
+    changed |= DrawLiveToonPathInput("Def テクスチャ", material.LiveToonDefPath);
+    ImGui::SetItemTooltip("R = 影しきい値の補正（0.5 で変化なし）、G = 境界のぼかし倍率、B = 質感ランプのマスク");
+    changed |= ImGui::SliderFloat("Def の強さ", &material.LiveToonDefStrength, 0.0f, 2.0f);
+    changed |= DrawLiveToonPathInput("顔陰影反転", material.LiveToonFacePath);
+    ImGui::SetItemTooltip("R = 影側でも光を残す領域（頬など）");
+    changed |= ImGui::SliderFloat("顔陰影反転の強さ", &material.LiveToonFaceStrength, 0.0f, 1.0f);
+    changed |= DrawLiveToonPathInput("質感ランプ", material.LiveToonTextureRampPath);
+    ImGui::SetItemTooltip("横軸 = 視線角度（左 = 正面、右 = 縁）。オーロラ素材・偏光塗料風の色変化");
+    changed |= ImGui::SliderFloat("質感ランプ（乗算）", &material.LiveToonTextureRampMultiply, 0.0f, 1.0f);
+    changed |= ImGui::SliderFloat("質感ランプ（加算）", &material.LiveToonTextureRampAdd, 0.0f, 1.0f);
 
     if (changed)
     {
@@ -2913,4 +3118,5 @@ void ImGuiManager::DrawComponentInspector(EntityID entity)
         ImGui::Checkbox("ポストプロセス使用", &sprite.UsePostProcess);
     }
 }
+
 

@@ -6,6 +6,9 @@
 #include <d3d12.h>
 #include <filesystem>
 #include <unordered_set>
+#include <deque>
+#include <mutex>
+#include <cstdint>
 #include <imgui.h>
 #include <imgui_impl_dx12.h>
 #include <imgui_impl_win32.h>
@@ -26,6 +29,7 @@ class ImGuiManager
     friend class MaterialValidation;
     friend class AnimationPreviewWindow;
     friend class SequencerEditorBridgeImpl;
+    friend class EditorShell;
 
   private:
     inline static bool m_IsClosing = false;
@@ -37,6 +41,7 @@ class ImGuiManager
     inline static int m_antiAliasingMode = 0;
     inline static const char* m_antiAliasingModeItems[] = {"なし", "FXAA", "TAA"};
     inline static EntityID m_SelectedEntity = g_kINVALID_ENTITY;
+    inline static bool m_ShowSceneViewWindow = true;
     inline static bool m_ShowHierarchyWindow = true;
     inline static bool m_ShowInspectorWindow = true;
     inline static bool m_ResetEditorLayout = false;
@@ -77,6 +82,7 @@ class ImGuiManager
     inline static ImVec2 m_SceneViewPos = {0.0f, 0.0f};
     inline static ImVec2 m_SceneViewSize = {1.0f, 1.0f};
     inline static bool m_IsSceneViewHovered = false;
+    inline static bool m_SceneGizmoCapturesMouse = false;
     inline static ImVec2 m_LastPickMouse = {-10000.0f, -10000.0f};
     inline static vector<EntityID> m_LastPickCandidates;
     inline static filesystem::path m_AssetRoot = "asset";
@@ -108,7 +114,22 @@ class ImGuiManager
         int Frame = 0;
     };
     inline static vector<TimelineAnimationDropTarget> m_TimelineAnimationDropTargets;
-    inline static vector<string> m_Logs;
+    // ---- ログ（コンソール）：重要度・時刻・連続重複のまとめ表示。ワーカースレッドからも安全に追加できる
+    struct LogEntry
+    {
+        string Text;
+        uint8_t Level = 0; // EditorShell::LogLevel
+        uint32_t Repeat = 1;
+        double Time = 0.0;
+        char Clock[9]{};
+    };
+    static constexpr size_t kMaxLogEntries = 2000;
+    inline static deque<LogEntry> m_Logs;
+    inline static std::recursive_mutex m_LogMutex;
+    inline static uint64_t m_LogRevision = 0;
+    inline static uint32_t m_LogCounts[4]{};
+    inline static bool m_ShowHistoryWindow = false;
+    inline static bool m_ShowPreferencesWindow = false;
     inline static EntityID m_RenamingEntity = g_kINVALID_ENTITY;
     inline static string m_RenameBuffer;
 
@@ -167,11 +188,17 @@ class ImGuiManager
 
     static void StyleModernSlim();
     static void DrawDockSpace();
+    static void InitializeWorkspaces();
+    static void DrawAdjustmentPanel();
     static void DrawSceneViewWindow();
+    static void UpdateSceneNavigation();
     static void DrawTransformGizmo();
     static void DrawEditorMainMenu();
     static void DrawHierarchyWindow();
     static void DrawPrimitiveCreationMenu();
+    static EntityID CreatePrimitiveEntity(const char* name, ObjectType type);
+    static EntityID CreateEmptyEntity();
+    static EntityID CreateGameCameraEntity();
     static void DrawPrimitiveSettingsWindow();
     static void DrawInspectorWindow();
     static bool DrawLiveMonitorFrames(EntityID entity, size_t monitorIndex, LiveMonitorBinding& monitor);
@@ -194,6 +221,7 @@ class ImGuiManager
     static void DrawMaterialAssetClosePrompt();
     static void MaterialEditorUndo(bool redo);
     static bool MaterialEditorHasFocus();
+    static void BeginMaterialEditorFrame();
     static void AssignMaterialAsset(EntityID entity, size_t slot, AssetHandle handle);
     static void DrawMaterialDropTarget();
     static void DrawRimSettingsWindow();

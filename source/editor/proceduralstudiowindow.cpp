@@ -1,4 +1,5 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "editorworkspace.h"
 #include "proceduralstudiowindow.h"
 #include "proceduralstudio.h"
 #include "proceduraltexturegpu.h"
@@ -760,6 +761,7 @@ namespace ProcStudioEditorDetail
         int Tiles = 1;
         float Slice = 0.5f;
         bool Animate = false;
+        int LastAnimationFrame = -1;
         float AnimationSpeed = 1.0f;
         int SaveResolution = 2;    // 256, 512, 1024, 2048, 4096
         int ModelExportFormat = 0; // OBJ, FBX (ASCII)
@@ -2281,7 +2283,7 @@ namespace ProcStudioEditorDetail
         }
         s.Img.DropRects.clear();
         ImGui::SetNextWindowSize(ImVec2(1040, 680), ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin("プロシージャルスタジオ", open))
+        if (!EditorWindowRegistry::BeginEditorWindow("プロシージャルスタジオ", open))
         {
             ImGui::End();
             return;
@@ -2525,8 +2527,9 @@ namespace ProcStudioEditorDetail
         }
 
         // 水のアニメーションでは時刻を進め、頻度制限付きのジョブで再生成する。
-        if (s.Animate)
+        if (s.Animate && s.LastAnimationFrame != ImGui::GetFrameCount())
         {
+            s.LastAnimationFrame = ImGui::GetFrameCount();
             const float delta = ImGui::GetIO().DeltaTime * s.AnimationSpeed;
             if (s.Mode == Category::Texture && s.Texture.Kind == TextureKind::FractalWater)
             {

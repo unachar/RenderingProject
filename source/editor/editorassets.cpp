@@ -1,4 +1,5 @@
-#include "pch.h"
+﻿#include "pch.h"
+#include "editorworkspace.h"
 #include "materialmanager.h"
 #include "assetthumbnailmanager.h"
 #include "assetbrowserlisting.h"
@@ -242,13 +243,12 @@ void ImGuiManager::DrawAssetBrowserWindow()
     {
         ImGui::SetNextWindowSize(ImVec2(720.0f, 260.0f), ImGuiCond_FirstUseEver);
     }
-    if (!ImGui::Begin("プロジェクト", &m_ShowAssetBrowser))
+    if (!EditorWindowRegistry::BeginEditorWindow("プロジェクト", &m_ShowAssetBrowser))
     {
-        m_AssetBrowserFocused = false;
         ImGui::End();
         return;
     }
-    m_AssetBrowserFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    m_AssetBrowserFocused |= ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
     error_code ec;
     static bool assetRootChecked = false;

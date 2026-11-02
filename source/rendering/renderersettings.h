@@ -246,6 +246,19 @@ class RendererSettings
     }
 
     // 複数バウンスのリアルタイム GI 用の、ワールド空間放射照度キャッシュ。
+    // GI 更新予算：画素が静止していて放射キャッシュにヒットする場合、レイを 4 フレームに 1 回だけ撃ち、
+    // それ以外のフレームはキャッシュ値を使う（DXR GI のレイ数を静止時に最大 1/4 へ削減）。
+    // ReSTIR / SHaRC 使用時は各自の時間方向再利用があるため適用されない。
+    static bool GetGiUpdateBudgetEnabled()
+    {
+        return s_GiUpdateBudget;
+    }
+
+    static void SetGiUpdateBudgetEnabled(bool value)
+    {
+        SetValue(s_GiUpdateBudget, value);
+    }
+
     static bool GetGiRadianceCacheEnabled()
     {
         return s_GiRadianceCacheEnabled;
@@ -707,6 +720,7 @@ class RendererSettings
     inline static bool s_GiRadianceCacheEnabled = true;
     inline static float s_GiRadianceCacheCellSize = 0.25f;
     inline static int s_GiRadianceCacheHistory = 32;
+    inline static bool s_GiUpdateBudget = false; // 既定 OFF（元の動作）
     inline static bool s_RayBinningEnabled = true;
     inline static bool s_TextureStreamingEnabled = true;
     inline static bool s_ReservedResourcesEnabled = true;
